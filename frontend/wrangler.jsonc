@@ -1,0 +1,12 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "vibing-farmer",
+  // Vite build output. Pages serves this as static assets; with no top-level
+  // 404.html, Pages auto-treats it as a single-page app and falls back to
+  // index.html for client-side routes (/replay, /explorer, ...).
+  "pages_build_output_dir": "./dist",
+  "compatibility_date": "2026-06-13",
+  // nodejs_compat: the /api/* Functions reuse Node-style handlers that read
+  // process.env and dynamically import @uxly/1shot-client + viem.
+  "compatibility_flags": ["nodejs_compat"]
+}

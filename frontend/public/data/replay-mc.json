@@ -1,0 +1,25 @@
+{
+  "label": "Historical replay — not a prediction",
+  "seed": 12648430,
+  "assumptions": {
+    "manualDelay": "lognormal median 25min p95 2h (Monte Carlo)",
+    "agenticDelay": "first block after signal (~12-24s) — deterministic, no MC",
+    "blocksPerMin": 5,
+    "iterations": 1000,
+    "groundTruthSource": "frontend/public/data/replay-usdc-depeg.json"
+  },
+  "manual": {
+    "p5": 700084341121469600000,
+    "p50": 702381467976903400000,
+    "p95": 703462366382381300000
+  },
+  "agentic": {
+    "deterministic": 700875391021734400000,
+    "basis": "first block after signal (~12-24s)"
+  },
+  "provenance": {
+    "signalBlock": 16800000,
+    "chainId": 1,
+    "depegDate": "2023-03-11"
+  }
+}

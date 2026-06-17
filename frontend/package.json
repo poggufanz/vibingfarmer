@@ -1,0 +1,46 @@
+{
+  "name": "vibing-farmer-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "lint": "eslint .",
+    "format": "prettier --write \"src/**/*.{js,jsx,css}\" \"api/**/*.js\"",
+    "format:check": "prettier --check \"src/**/*.{js,jsx,css}\" \"api/**/*.js\"",
+    "pages:dev": "npm run build && wrangler pages dev",
+    "pages:deploy": "npm run build && wrangler pages deploy"
+  },
+  "dependencies": {
+    "@coinbase/cdp-sdk": "^1.51.0",
+    "@metamask/smart-accounts-kit": "1.6.0",
+    "@uxly/1shot-client": "^1.3.2",
+    "@vitejs/plugin-react": "^4.3.1",
+    "dotenv": "^17.4.2",
+    "ethers": "^6.13.0",
+    "framer-motion": "^12.40.0",
+    "libsodium-wrappers-sumo": "^0.8.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-force-graph-2d": "^1.27.0",
+    "react-router-dom": "^6.30.4",
+    "viem": "^2.52.2",
+    "vite": "^5.4.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.4",
+    "@vitest/coverage-v8": "^2.1.9",
+    "eslint": "^9.39.4",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.6.0",
+    "prettier": "^3.8.4",
+    "tsx": "^4.22.4",
+    "vitest": "^2.1.9",
+    "wrangler": "^4.0.0"
+  }
+}

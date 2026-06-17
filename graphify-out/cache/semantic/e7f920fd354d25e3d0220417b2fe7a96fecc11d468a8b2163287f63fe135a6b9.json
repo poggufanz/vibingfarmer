@@ -1,0 +1,1 @@
+{"nodes": [{"id": "react_native_rule_state_ground_truth", "label": "State Must Represent Ground Truth", "file_type": "code", "source_file": ".claude/skills/vercel-react-native-skills/rules/state-ground-truth.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}], "edges": [], "hyperedges": []}

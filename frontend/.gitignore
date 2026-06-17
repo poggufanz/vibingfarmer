@@ -1,0 +1,15 @@
+node_modules/
+dist/
+*.local
+.vite/
+dev-server.log
+*.log
+*.env
+*.env.local
+*.env.development
+*.env.production
+*.env.test
+.DS_Store
+.idea/
+.vscode/
+*.svelte

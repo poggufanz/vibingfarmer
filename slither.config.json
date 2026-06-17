@@ -1,0 +1,6 @@
+{
+  "filter_paths": "lib/|test/",
+  "exclude_informational": false,
+  "exclude_low": false,
+  "detectors_to_exclude": "reentrancy-balance"
+}

@@ -1,0 +1,1 @@
+{"nodes": [{"id": "server_after_nonblocking", "label": "Use after() for Non-Blocking Operations", "file_type": "concept", "source_file": ".kiro/skills/vercel-react-best-practices/rules/server-after-nonblocking.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}], "edges": [], "hyperedges": []}

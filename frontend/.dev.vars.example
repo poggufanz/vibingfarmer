@@ -1,0 +1,43 @@
+# Local secrets for `wrangler pages dev` (Cloudflare's local Functions runtime).
+# Copy to `frontend/.dev.vars` (gitignored) and fill in. These mirror the
+# server-side (NON-VITE_) vars in .env.example — they are read by the /api/*
+# Pages Functions via context.env → process.env, never bundled to the client.
+#
+# In production set the SAME keys as encrypted env vars in the Cloudflare Pages
+# dashboard (Settings → Variables and Secrets), or via `wrangler pages secret put`.
+
+# Mark the deployment as production so the API proxies never trust localhost origins.
+NODE_ENV=production
+
+# Origin allowlist for the /api/* proxies. Set to your Pages URL(s), comma-separated.
+# e.g. https://vibing-farmer.pages.dev,https://your-custom-domain.com
+ALLOWED_ORIGIN=https://vibing-farmer.pages.dev
+
+# DeepSeek — server-side AI key (read by /api/ai). OPTIONAL / host-funded.
+# The app is BYOK-first (users paste their own key in Settings). Set this only for an
+# out-of-box "host demo key" that anonymous visitors spend. LOCKDOWN: do NOT set it in
+# the Cloudflare Pages dashboard → /api/ai 503s → app uses the deterministic fallback.
+DEEPSEEK_API_KEY=sk-your_deepseek_key
+
+# Tavily web search — server-side key (read by /api/search). OPTIONAL / host-funded,
+# same BYOK model. Leave unset on a lockdown deploy; users can bring their own Tavily key.
+TAVILY_API_KEY=tvly-...
+
+# 1Shot Managed API — makes relays REAL + gas-abstracted on Base Sepolia (read by /api/relay).
+# From app.1shotapi.com: API Keys (key+secret), Organizations → business id.
+# Auto-provisions a Base Sepolia server wallet on first call — fund it with testnet ETH.
+ONESHOT_KEY=your_1shot_api_key
+ONESHOT_SECRET=your_1shot_api_secret
+ONESHOT_BIZ_ID=your_1shot_business_id
+
+# Server-controlled deposit target (the proxy NEVER trusts a client-supplied address).
+# Base Sepolia AgentVaultDepositor — must match src/config.js AGENT_VAULT_DEPOSITOR_ADDRESS.
+AGENT_VAULT_DEPOSITOR_ADDRESS=0xbf2091Fe26183369ae9f0Ba4735190F5fec7686c
+
+# Optional: custom RPC for the relay's on-chain replay/code checks (defaults to https://sepolia.base.org).
+RPC_URL=https://sepolia.base.org
+
+# Optional: trusted proxy hops for rate-limit client-IP resolution.
+# Cloudflare sets CF-Connecting-IP (mapped to x-real-ip by the adapter), so the
+# default 1 is fine; only change if you front Pages with another proxy.
+TRUST_PROXY_HOPS=1

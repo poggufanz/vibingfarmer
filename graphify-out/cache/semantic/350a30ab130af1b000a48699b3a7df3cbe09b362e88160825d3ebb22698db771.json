@@ -1,0 +1,1 @@
+{"nodes": [{"id": "server_serialization", "label": "Minimize Serialization at RSC Boundaries", "file_type": "concept", "source_file": ".kiro/skills/vercel-react-best-practices/rules/server-serialization.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}], "edges": [], "hyperedges": []}

@@ -1,0 +1,62 @@
+# Foundry
+/out
+/cache
+/broadcast
+/artifacts
+
+# Forge coverage
+lcov.info
+coverage/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Cloudflare Pages / Wrangler
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+.wrangler/
+frontend/dist/
+
+# Node (npx serve, tooling)
+node_modules/
+.pnp
+.pnp.js
+
+# Vite/Vitest cache (created at repo root when run via npm --prefix frontend exec)
+.vite/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Deploy artifacts (fill after deploy)
+# VAULT_DEPOSITOR_ADDRESS and MOCK_VAULT_ADDRESS go in .env, not committed
+
+# Context mode cache
+.ctx/
+
+# Playwright
+test-results/
+playwright-report/
+blob-report/
+
+# Planning (personal notes, not for repo)
+docs/
+.playwright-mcp/
+.kiro/
+
+frontend/getUsdc.mjs
+
+
+# Internal docs / AI instructions (local only)

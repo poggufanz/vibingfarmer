@@ -1,0 +1,301 @@
+{
+  "version": 1,
+  "skills": {
+    "1shot-api": {
+      "source": "1Shot-API/skills",
+      "sourceType": "github",
+      "skillPath": "1shot-api/SKILL.md",
+      "computedHash": "0117735b84b96a0d4d46788101d81c86dea031b5448517782c35fd009f146e46"
+    },
+    "API Integration Specialist": {
+      "source": "davila7/claude-code-templates",
+      "sourceType": "github",
+      "computedHash": "79be72a11a9a834165f0e123a1e6234cb737928c00bbe6612820c74db0c4dd94"
+    },
+    "Accessibility Auditor": {
+      "source": "davila7/claude-code-templates",
+      "sourceType": "github",
+      "computedHash": "2baea5fb7c1becea5a7f4b075220ee8a1dcf3cc101859a92430661a3dd5f3351"
+    },
+    "Data Privacy Compliance": {
+      "source": "davila7/claude-code-templates",
+      "sourceType": "github",
+      "computedHash": "146751418c73c0a06026fb7c5e9db7229c7c40f4f523631af66f53e5427ccd4c"
+    },
+    "ads": {
+      "source": "coreyhaines31/marketingskills",
+      "sourceType": "github",
+      "skillPath": "skills/ads/SKILL.md",
+      "computedHash": "350c7857b946c68b105fe867505a4f5cf8f694cdb54923f055215a546cbeb6ce"
+    },
+    "agentic-payments": {
+      "source": "stellar/stellar-dev-skill",
+      "sourceType": "github",
+      "skillPath": "skills/agentic-payments/SKILL.md",
+      "computedHash": "0a2495bd73f67bc9dfb704d108af52a2449710fa9ace68b5fd1326ab09a4ef8b"
+    },
+    "architecture-designer": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "baf0fa47580f4e9fd1fd910cbc2e800edace76e3506823110b5ecfd761a9a9bf"
+    },
+    "assets": {
+      "source": "stellar/stellar-dev-skill",
+      "sourceType": "github",
+      "skillPath": "skills/assets/SKILL.md",
+      "computedHash": "16c00358fa5ba0cc56d448152c0fd508e071b8984b931e71b1198d9465dacbf9"
+    },
+    "avoid-ai-writing": {
+      "source": "sickn33/antigravity-awesome-skills",
+      "sourceType": "github",
+      "computedHash": "b55857d2e6f51a8d8ad5ebce735b1a82f7728d0a03a5d731bff39cbde573ec1d"
+    },
+    "better-auth-security-best-practices": {
+      "source": "better-auth/skills",
+      "sourceType": "github",
+      "computedHash": "ed38caef4b297cc399d717258d6ea4e6ecb8894c453c83450064c7e7c6e5cc02"
+    },
+    "blockchain-developer": {
+      "source": "sickn33/antigravity-awesome-skills",
+      "sourceType": "github",
+      "computedHash": "33849fd8d3dbc7e550c19b492f8e140118bd3a58b8c9fcb6389ff07d4b218549"
+    },
+    "build-graph": {
+      "source": "tirth8205/code-review-graph",
+      "sourceType": "github",
+      "skillPath": "skills/build-graph/SKILL.md",
+      "computedHash": "ae4760f61632866c69df9bdf6ecf54d1444a3e6bea012310e122d9175f3bd813"
+    },
+    "caveman": {
+      "source": "juliusbrussee/caveman",
+      "sourceType": "github",
+      "skillPath": "skills/caveman/SKILL.md",
+      "computedHash": "b0e7741886c0c32270cedc1a2fc21c2879d90964d3ce00f24952de7064613404"
+    },
+    "code-review": {
+      "source": "anthropics/knowledge-work-plugins",
+      "sourceType": "github",
+      "skillPath": "engineering/skills/code-review/SKILL.md",
+      "computedHash": "2b1ac29c8d03ecdd6dbb9d0ebc8cdb05965151bedceed36f262546785b3123bc"
+    },
+    "cognitive-fluency-psychology": {
+      "source": "flpbalada/my-opencode-config",
+      "sourceType": "github",
+      "computedHash": "191b7c5d22d5afbe622f0a5ab7a8d4712ceb8faf489e2b88c35dc1924a71ca59"
+    },
+    "create-technical-spike": {
+      "source": "github/awesome-copilot",
+      "sourceType": "github",
+      "computedHash": "e711706b4aebacac01bcc025e19bcf0e88bf784cbe6419ddf07c2be67c501f33"
+    },
+    "ctf-web": {
+      "source": "ljagiello/ctf-skills",
+      "sourceType": "github",
+      "computedHash": "aeeadc00edfe95d498a3b3b685dcb776975588bf98b8432e44ef647469ecad38"
+    },
+    "dapp": {
+      "source": "stellar/stellar-dev-skill",
+      "sourceType": "github",
+      "skillPath": "skills/dapp/SKILL.md",
+      "computedHash": "382bd695bb3ac8c35a6b699558f0cafa43ec8a32a15608b618abad312b5a1b40"
+    },
+    "data": {
+      "source": "stellar/stellar-dev-skill",
+      "sourceType": "github",
+      "skillPath": "skills/data/SKILL.md",
+      "computedHash": "c7c38e73ad94f216bdaa03a4ed14d3c29314a068f7f7057f3e01855f722f9711"
+    },
+    "database-schema-designer": {
+      "source": "softaworks/agent-toolkit",
+      "sourceType": "github",
+      "computedHash": "f23c909d45c6207e974dbce0db4c648de13d586abb37057cfec34d62f25bb526"
+    },
+    "design-taste-frontend": {
+      "source": "Leonxlnx/taste-skill",
+      "sourceType": "github",
+      "skillPath": "skills/taste-skill/SKILL.md",
+      "computedHash": "899b84384f74f540ea5284d9b2e9234e050998b42eacc805410b518d4226c0b3"
+    },
+    "docs-generator": {
+      "source": "poggufanz/docs-generator-skill",
+      "sourceType": "github",
+      "skillPath": "skills/docs-generator/SKILL.md",
+      "computedHash": "d1cbbf0a9e5b8c3e7a1e5b2c3a4f5d6e7f8g9h0i1j2k3l4m5n6o7p8q9r0s1t2u3v4"
+    },
+    "finance-expert": {
+      "source": "personamanagmentlayer/pcl",
+      "sourceType": "github",
+      "computedHash": "83ff6d943fe47f1cec6c79b2d364303c2e058366c3fdfc6bc5938539cc914b33"
+    },
+    "humanizer": {
+      "source": "softaworks/agent-toolkit",
+      "sourceType": "github",
+      "computedHash": "c948e831d5fdfbe2e1fbbba1ebf8ab410a8f077ba529ddd522fd9ae40e6cc653"
+    },
+    "improve": {
+      "source": "shadcn/improve",
+      "sourceType": "github",
+      "skillPath": "skills/improve/SKILL.md",
+      "computedHash": "19d620a60ec3b9917621e8da3db49d4094de574d8b1e1527e5948a2588f74c07"
+    },
+    "machine-learning-engineer": {
+      "source": "404kidwiz/claude-supercode-skills",
+      "sourceType": "github",
+      "computedHash": "9ee82bcdf7af1efce0672befbf37187806dcd31f11a54284489b79b15b1265fb"
+    },
+    "marketing-psychology": {
+      "source": "coreyhaines31/marketingskills",
+      "sourceType": "github",
+      "skillPath": "skills/marketing-psychology/SKILL.md",
+      "computedHash": "d057044710ce7b7f9b90b84b3ab64e9359aaf47982b922ec10daca3822185ede"
+    },
+    "mobile-android-design": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "computedHash": "f664cf000475eb1fb2e61dfdbdfd311cca595154ddc63e76ac6444a07b86346a"
+    },
+    "mobile-developer": {
+      "source": "sickn33/antigravity-awesome-skills",
+      "sourceType": "github",
+      "computedHash": "52b357d99db5a518d8104617171bdb32877fec2a7070b3c99f2d9cbe3861bc21"
+    },
+    "next-best-practices": {
+      "source": "vercel-labs/next-skills",
+      "sourceType": "github",
+      "computedHash": "c31ddd68ba5798a79a516c619b1e1fc4408cc4876ad600fefa4f5add4425719d"
+    },
+    "privacy-policy": {
+      "source": "phuryn/pm-skills",
+      "sourceType": "github",
+      "computedHash": "4f79d99d3bc7d1a14108bbff25d28cce0f86a70d89edb1ef908f30001b176a9c"
+    },
+    "prompt-engineering": {
+      "source": "inferen-sh/skills",
+      "sourceType": "github",
+      "computedHash": "4a25e9e94d34856b6b61403afdbebf4483204c6e992ed3059090b6f82cddf6ed"
+    },
+    "prompt-optimizer": {
+      "source": "affaan-m/everything-claude-code",
+      "sourceType": "github",
+      "computedHash": "eac7e4542b5cd1613ccf46e1d85ffd154cebf2de91e279bdf6508a7f66e04dcc"
+    },
+    "psychologist-analyst": {
+      "source": "rysweet/amplihack",
+      "sourceType": "github",
+      "computedHash": "191b7c5d22d5afbe622f0a5ab7a8d4712ceb8faf489e2b88c35dc1924a71ca59"
+    },
+    "public-relayer": {
+      "source": "1Shot-API/skills",
+      "sourceType": "github",
+      "skillPath": "public-relayer/SKILL.md",
+      "computedHash": "7f2ed4b3cf0313fea0eb9fd76e3c2a20114c9c81dd253da7a7f7703144f9ff3a"
+    },
+    "rag-architect": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "9e73a9440ca7f419a192901bf38e8c61e7449e0e9340b6f3507b85ca249dce42"
+    },
+    "rag-implementation": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "computedHash": "0a68c672384c5c6aa7acb286c18f8eb9dce53a058062a8951ac0adca4d01d4ea"
+    },
+    "security-review": {
+      "source": "affaan-m/everything-claude-code",
+      "sourceType": "github",
+      "computedHash": "77465a6213cf679cac8aa50ee3b9ba8438b44fcf7bd7f082ed4f16e9db846acd"
+    },
+    "senior-data-scientist": {
+      "source": "davila7/claude-code-templates",
+      "sourceType": "github",
+      "computedHash": "42804288d4f9036199a5e8ff73ceda214ae8c12bf04e712577b0eb9751c69710"
+    },
+    "setup-stellar-contracts": {
+      "source": "openzeppelin/openzeppelin-skills",
+      "sourceType": "github",
+      "skillPath": "skills/setup-stellar-contracts/SKILL.md",
+      "computedHash": "481f206fb4cc8b294ca66b8bdd72c74c93a8c6bc97994c7afa2c15af21cf5a60"
+    },
+    "soroban": {
+      "source": "stellar/stellar-dev-skill",
+      "sourceType": "github",
+      "skillPath": "skills/soroban/SKILL.md",
+      "computedHash": "80c7bd3a3c89d4e3134603b2bf203de1a6ca8e011e966cecdd1651e1af4c0923"
+    },
+    "standards": {
+      "source": "stellar/stellar-dev-skill",
+      "sourceType": "github",
+      "skillPath": "skills/standards/SKILL.md",
+      "computedHash": "a1fff1ebbd3dd0b9336d3d47a545386be72c45e5a985d78eb82341de68311c8a"
+    },
+    "ui-ux-pro-max": {
+      "source": "nextlevelbuilder/ui-ux-pro-max-skill",
+      "sourceType": "github",
+      "computedHash": "6337038fe1fe6bbe1b9f252ab678ee575859190bab6f0f246f4061824eb40875"
+    },
+    "ux-researcher": {
+      "source": "dylantarre/animation-principles",
+      "sourceType": "github",
+      "skillPath": "skills/03-by-role-persona/ux-researcher/SKILL.md",
+      "computedHash": "dec6c0fe23f39ba1b06c317c59425a890707e74665eec3896be1e185deb19579"
+    },
+    "vercel-react-best-practices": {
+      "source": "vercel-labs/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/react-best-practices/SKILL.md",
+      "computedHash": "ca7b0c0c6e5f2750043f7f0cd72d16ac4e2abc48f9b5500d047a4b77a2506212"
+    },
+    "vercel-react-native-skills": {
+      "source": "vercel-labs/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/react-native-skills/SKILL.md",
+      "computedHash": "41d24eafa7c3d82e270439808f7cfbc4d51aeb2d14f2809a2267c16275784d06"
+    },
+    "vercel-react-view-transitions": {
+      "source": "vercel-labs/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/react-view-transitions/SKILL.md",
+      "computedHash": "c8952fc9127fa0564d0cb71dccb4215a5608ac933b5831104f09173a97a46f85"
+    },
+    "vite": {
+      "source": "antfu/skills",
+      "sourceType": "github",
+      "skillPath": "skills/vite/SKILL.md",
+      "computedHash": "1cdc4bbecaa89544e6ef92566b015db989994bf90c4472683ac64f7a114dc3af"
+    },
+    "web3-expert": {
+      "source": "oimiragieo/agent-studio",
+      "sourceType": "github",
+      "computedHash": "91d65af034f2e8e9fe9e324cc36b7022b82ec21d92a6262f204d8174df30a0cb"
+    },
+    "web3-frontend": {
+      "source": "pluginagentmarketplace/custom-plugin-blockchain",
+      "sourceType": "github",
+      "computedHash": "57a9ea01b1aa16a165739dbe6261ed7410b3a42514d0c28ed665513433234f08"
+    },
+    "webauthn-prf-wallet": {
+      "source": "1Shot-API/skills",
+      "sourceType": "github",
+      "skillPath": "webauthn-prf-wallet/SKILL.md",
+      "computedHash": "9025f8f823ef3d11b755c193eccdf17e13651e5db98932dac0538f93e0e594b6"
+    },
+    "wrangler": {
+      "source": "cloudflare/skills",
+      "sourceType": "github",
+      "skillPath": "skills/wrangler/SKILL.md",
+      "computedHash": "d2094f7a5a76414fc0cd365fd8ddba3258c2135a1d468b78213c0fa02c309b9b"
+    },
+    "writing-plans": {
+      "source": "obra/superpowers",
+      "sourceType": "github",
+      "skillPath": "skills/writing-plans/SKILL.md",
+      "computedHash": "2b986445454a025ca2c3839f8a2024747e8cce0517948437232cd113d2719060"
+    },
+    "zk-proofs": {
+      "source": "stellar/stellar-dev-skill",
+      "sourceType": "github",
+      "skillPath": "skills/zk-proofs/SKILL.md",
+      "computedHash": "1425ff3c98ee963bcb0bb13d620df0d637e969201797e0974c1debe0dfa6c885"
+    }
+  }
+}

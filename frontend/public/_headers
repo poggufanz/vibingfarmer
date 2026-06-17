@@ -1,0 +1,10 @@
+# Cloudflare Pages security headers (applied to every response).
+# Intentionally NO Content-Security-Policy: the app loads Google Fonts, ESM
+# modules, a canvas force-graph, and talks to RPC/proxy endpoints — a strict CSP
+# would need per-source tuning before it ships. Add one deliberately, don't guess.
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
+  Strict-Transport-Security: max-age=31536000; includeSubDomains

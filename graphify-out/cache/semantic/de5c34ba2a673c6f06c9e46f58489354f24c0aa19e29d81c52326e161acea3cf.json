@@ -1,0 +1,1 @@
+{"nodes": [{"id": "rerender_use_deferred_value", "label": "Use useDeferredValue for Expensive Derived Renders", "file_type": "concept", "source_file": ".kiro/skills/vercel-react-best-practices/rules/rerender-use-deferred-value.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}], "edges": [], "hyperedges": []}

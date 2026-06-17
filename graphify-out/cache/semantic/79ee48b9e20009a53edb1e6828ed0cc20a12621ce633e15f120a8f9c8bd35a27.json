@@ -1,0 +1,1 @@
+{"nodes": [{"id": "advanced_init_once", "label": "Initialize App Once, Not Per Mount", "file_type": "concept", "source_file": ".kiro/skills/vercel-react-best-practices/rules/advanced-init-once.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}], "edges": [], "hyperedges": []}
