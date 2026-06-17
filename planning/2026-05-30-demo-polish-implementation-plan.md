@@ -147,7 +147,7 @@ git commit -m "fix: remove dead __activate_edit_mode wire from AgentDashboard"
 Append to `.env.example` (and your local `.env`):
 
 ```
-VITE_GITHUB_URL=https://github.com/poggufanz/yield-vibing
+VITE_GITHUB_URL=https://github.com/poggufanz/vibing-farmer
 VITE_HACKQUEST_URL=https://www.hackquest.io/
 ```
 

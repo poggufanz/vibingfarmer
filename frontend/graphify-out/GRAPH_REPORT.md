@@ -1,4 +1,4 @@
-# Graph Report - C:\SharredData\project\competition\yield-vibing\frontend  (2026-06-17)
+# Graph Report - C:\SharredData\project\competition\vibing-farmer\frontend  (2026-06-17)
 
 ## Corpus Check
 - cluster-only mode — file stats not available

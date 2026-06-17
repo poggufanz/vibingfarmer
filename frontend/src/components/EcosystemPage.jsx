@@ -85,7 +85,7 @@ const STANDARDS = [
   { id: 'ERC-8004', desc: 'AI agent identity',          link: 'https://eips.ethereum.org/EIPS/eip-8004' },
 ]
 
-const GITHUB_URL = 'https://github.com/poggufanz/yield-vibing'
+const GITHUB_URL = 'https://github.com/poggufanz/vibing-farmer'
 
 // Static colored diagram — dangerouslySetInnerHTML is safe: fully hardcoded, no user input.
 const DIAGRAM_HTML =

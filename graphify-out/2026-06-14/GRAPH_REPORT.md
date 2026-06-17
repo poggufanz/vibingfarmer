@@ -1,4 +1,4 @@
-# Graph Report - yield-vibing  (2026-06-14)
+# Graph Report - vibing-farmer  (2026-06-14)
 
 ## Corpus Check
 - 1097 files · ~976,727 words

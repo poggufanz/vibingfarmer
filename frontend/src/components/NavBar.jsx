@@ -8,7 +8,7 @@
 
 import { useNavigate, useLocation } from 'react-router-dom'
 
-const GITHUB_URL = 'https://github.com/poggufanz/yield-vibing'
+const GITHUB_URL = 'https://github.com/poggufanz/vibing-farmer'
 const WHITEPAPER_URL = '/vibing-farmer-whitepaper.pdf'
 
 function Wordmark() {

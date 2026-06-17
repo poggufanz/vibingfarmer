@@ -413,10 +413,10 @@ Run: `graphify update .`
 ## Task 5: Persist findings + workflow preference to memory + CLAUDE.md
 
 **Files:**
-- Create: `C:\Users\mfaiq\.claude\projects\C--SharredData-project-competition-yield-vibing\memory\session-functioncall-redemption.md`
-- Create: `C:\Users\mfaiq\.claude\projects\C--SharredData-project-competition-yield-vibing\memory\feedback-inline-execution-default.md`
-- Modify: `C:\Users\mfaiq\.claude\projects\C--SharredData-project-competition-yield-vibing\memory\MEMORY.md` (add index lines)
-- Modify: `C:\SharredData\project\competition\yield-vibing\CLAUDE.md` (Key Implementation Notes + a workflow note)
+- Create: `C:\Users\mfaiq\.claude\projects\C--SharredData-project-competition-vibing-farmer\memory\session-functioncall-redemption.md`
+- Create: `C:\Users\mfaiq\.claude\projects\C--SharredData-project-competition-vibing-farmer\memory\feedback-inline-execution-default.md`
+- Modify: `C:\Users\mfaiq\.claude\projects\C--SharredData-project-competition-vibing-farmer\memory\MEMORY.md` (add index lines)
+- Modify: `C:\SharredData\project\competition\vibing-farmer\CLAUDE.md` (Key Implementation Notes + a workflow note)
 
 - [ ] **Step 1: Write the memory file**
 

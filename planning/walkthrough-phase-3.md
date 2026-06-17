@@ -15,7 +15,7 @@ _Tanpa Sepolia deploy dulu — test frontend flow + fallback_
 
 ### 2. Jalankan frontend
 ```
-npx serve C:\SharredData\project\competition\yield-vibing\frontend
+npx serve C:\SharredData\project\competition\vibing-farmer\frontend
 ```
 Buka: http://localhost:3000
 
@@ -228,7 +228,7 @@ Feedback: Done.
 
 ### 4. Restart serve + ulangi flow
 ```
-npx serve C:\SharredData\project\competition\yield-vibing\frontend
+npx serve C:\SharredData\project\competition\vibing-farmer\frontend
 ```
 Kali ini 1Shot relay akan hit contract asli → full flow sukses, worker nodes hijau, shares tercatat.
 Feedback: Done, sedikit pertanyaan apakah di cmd dari step 2 deploy ke sepolia harus jalan terus jangan sampai berhenti di `You are using a deprecated V1 endpoint, switch to Etherscan API V2 using https://docs.etherscan.io/v2-migration` atau harus jalan terus?.

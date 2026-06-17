@@ -110,7 +110,7 @@ Ambil semua API key hari ini. Jangan tunggu sampai implementation.
 ### A. Init Foundry Project
 
 ```bash
-# Di root yield-vibing/
+# Di root vibing-farmer/
 forge init --no-git   # --no-git karena repo sudah ada
 
 # Rename default folders sesuai GETTING_STARTED.md
@@ -180,7 +180,7 @@ type nul > frontend\style.css
 
 Verify struktur:
 ```
-yield-vibing/
+vibing-farmer/
 ├── contracts/
 │   ├── VaultDepositor.sol   (empty)
 │   └── MockVault.sol        (empty)
@@ -299,7 +299,7 @@ try {
           tokenAddress: USDC_SEPOLIA,
           periodAmount: '10000000',   // 10 USDC
           periodDuration: 86400,
-          justification: 'Test permission for yield-vibing'
+          justification: 'Test permission for vibing-farmer'
         }
       },
       rules: [{

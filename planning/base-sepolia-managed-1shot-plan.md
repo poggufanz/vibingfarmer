@@ -92,10 +92,10 @@ E. Cosmetic (low priority): sepolia.etherscan.io → sepolia.basescan.org links;
 - Connect MetaMask Flask → auto-add Base Sepolia → deposit → real tx on sepolia.basescan.org.
 - A2A: RedelegationCreated/Redeemed events fire with real delegation hashes.
 
-PS C:\SharredData\project\competition\yield-vibing> claude
+PS C:\SharredData\project\competition\vibing-farmer> claude
  ▐▛███▜▌   Claude Code v2.1.161
 ▝▜█████▛▘  Opus 4.8 with high effort · Claude Pro
-  ▘▘ ▝▝    C:\SharredData\project\competition\yield-vibing
+  ▘▘ ▝▝    C:\SharredData\project\competition\vibing-farmer
 
  ⚠ 2 setup issues: MCP · /doctor
 
@@ -331,14 +331,14 @@ real dan A2A juga
 ● I now have the complete managed-API flow. It's a major refactor + needs external setup only you can do (1Shot account, API key+secret, business
   ID, a Base Sepolia server wallet funded with testnet ETH). Let me ground the plan in our actual proxy pattern before writing it.
 
-● Bash(cd "C:\SharredData\project\competition\yield-vibing" && ls api/ 2>/dev/null; echo "---PKG type+deps---"; node -e "const
+● Bash(cd "C:\SharredData\project\competition\vibing-farmer" && ls api/ 2>/dev/null; echo "---PKG type+deps---"; node -e "const
       p=require('./package.json');console.log(…)
   ⎿  ---PKG type+deps---
      ---frontend pkg---
      type: module
      … +10 lines (ctrl+o to expand)
 
-● Bash(cd "C:\SharredData\project\competition\yield-vibing" && find . -path ./node_modules -prune -o -name "*.js" -path "*api*" -print 2>/dev/null |
+● Bash(cd "C:\SharredData\project\competition\vibing-farmer" && find . -path ./node_modules -prune -o -name "*.js" -path "*api*" -print 2>/dev/null |
       grep -iv node_modu…)
   ⎿  ./frontend/api/ai.js
      ./frontend/api/search.js
@@ -477,7 +477,7 @@ real dan A2A juga
 
 ● Chain migration functionally complete. Now write the plan for the credential-gated managed-API piece. Plan goes to planning/ (gitignored).
 
-● Bash(cd "C:\SharredData\project\competition\yield-vibing" && mkdir -p planning 2>/dev/null && echo ok)
+● Bash(cd "C:\SharredData\project\competition\vibing-farmer" && mkdir -p planning 2>/dev/null && echo ok)
   ⎿  ok
 
 ● Write(planning\base-sepolia-managed-1shot-plan.md)

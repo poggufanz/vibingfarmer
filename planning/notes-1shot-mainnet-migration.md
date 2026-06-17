@@ -135,11 +135,11 @@ vault deposit, withdraw, alert, smart account kit, 1shot, A2A, venice AI, dll. d
   ⎿  Loaded ..\..\..\..\Users\mfaiq\.claude\rules\ecc\typescript\security.md
   ⎿  Loaded ..\..\..\..\Users\mfaiq\.claude\rules\ecc\typescript\testing.md
 ▝▜█████▛▘  Opus 4.8 with high effort · Claude Pro
-  ▘▘ ▝▝    C:\SharredData\project\competition\yield-vibing
+  ▘▘ ▝▝    C:\SharredData\project\competition\vibing-farmer
 
  ‼ 2 setup issues: MCP · /doctor
 ▝▜█████▛▘  Opus 4.8 with high effort · Claude Pro
-  ▘▘ ▝▝    C:\SharredData\project\competition\yield-vibing
+  ▘▘ ▝▝    C:\SharredData\project\competition\vibing-farmer
 
  ‼ 2 setup issues: MCP · /doctor
 
@@ -427,11 +427,11 @@ Copyright (C) Microsoft Corporation. All rights reserved.
 
 Install the latest PowerShell for new features and improvements! https://aka.ms/PSWindows
 
-PS C:\Users\mfaiq> cd C:\SharredData\project\competition\yield-vibing
-PS C:\SharredData\project\competition\yield-vibing> claude
+PS C:\Users\mfaiq> cd C:\SharredData\project\competition\vibing-farmer
+PS C:\SharredData\project\competition\vibing-farmer> claude
  ▐▛███▜▌   Claude Code v2.1.161
 ▝▜█████▛▘  Opus 4.8 with high effort · Claude Pro
-  ▘▘ ▝▝    C:\SharredData\project\competition\yield-vibing
+  ▘▘ ▝▝    C:\SharredData\project\competition\vibing-farmer
 
  ⚠ 2 setup issues: MCP · /doctor
 
@@ -532,7 +532,7 @@ PS C:\SharredData\project\competition\yield-vibing> claude
    27   'http://localhost:5173',
    28   'http://localhost:4173',
    29   // Add your Vercel domain after deploy:
-   30   // 'https://yield-vibing.vercel.app',
+   30   // 'https://vibing-farmer.vercel.app',
    31   ...(process.env.ALLOWED_ORIGIN ? process.env.ALLOWED_ORIGIN.split(',').map(o => o.trim()) : []),
    32 ].filter(Boolean)
    33
@@ -818,7 +818,7 @@ PS C:\SharredData\project\competition\yield-vibing> claude
 
 ● Update .env.example.
 
-● Bash(cd "C:\SharredData\project\competition\yield-vibing" && find . -name ".env.example" -not -path "*/node_modules/*")
+● Bash(cd "C:\SharredData\project\competition\vibing-farmer" && find . -name ".env.example" -not -path "*/node_modules/*")
   ⎿  ./.env.example
      ./frontend/.env.example
 
@@ -856,7 +856,7 @@ PS C:\SharredData\project\competition\yield-vibing> claude
 
 ● Update plan status.
 
-● Update(C:\SharredData\project\competition\yield-vibing\planning\base-sepolia-managed-1shot-plan.md)
+● Update(C:\SharredData\project\competition\vibing-farmer\planning\base-sepolia-managed-1shot-plan.md)
   ⎿  Added 12 lines, removed 1 line
       38    like the keyless relayer_send7710Transaction) OR if we must register AgentVaultDepositor methods
       39    in the 1Shot dashboard. This determines the proxy shape. Check Public Relayer Spec / Dev Platform Spec.
