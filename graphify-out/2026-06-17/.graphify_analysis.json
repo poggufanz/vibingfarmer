@@ -11869,7 +11869,7 @@
       "agents_skills_web3_frontend_skill_md_web3_frontend_skill_topics_covered"
     ],
     "617": [
-      "c_sharreddata_project_competition_yield_vibing_lib_openzeppelin_contracts_scripts_prepack_sh__entry",
+      "c_sharreddata_project_competition_vibing_farmer_lib_openzeppelin_contracts_scripts_prepack_sh__entry",
       "scripts_prepack",
       "scripts_prepack_mkdirp",
       "workflow_pack",
@@ -12390,7 +12390,7 @@
       "gap_style"
     ],
     "695": [
-      "c_sharreddata_project_competition_yield_vibing_lib_openzeppelin_contracts_scripts_checks_coverage_sh__entry",
+      "c_sharreddata_project_competition_vibing_farmer_lib_openzeppelin_contracts_scripts_checks_coverage_sh__entry",
       "checks_coverage",
       "checks_coverage_coverage",
       "checks_coverage_foundry_fuzz_runs"
@@ -12746,17 +12746,17 @@
       "audits_readme_formal_verification"
     ],
     "758": [
-      "c_sharreddata_project_competition_yield_vibing_lib_openzeppelin_contracts_scripts_release_workflow_publish_sh__entry",
+      "c_sharreddata_project_competition_vibing_farmer_lib_openzeppelin_contracts_scripts_release_workflow_publish_sh__entry",
       "workflow_publish",
       "workflow_publish_delete_tag"
     ],
     "759": [
-      "c_sharreddata_project_competition_yield_vibing_lib_openzeppelin_contracts_scripts_upgradeable_patch_apply_sh__entry",
+      "c_sharreddata_project_competition_vibing_farmer_lib_openzeppelin_contracts_scripts_upgradeable_patch_apply_sh__entry",
       "upgradeable_patch_apply",
       "upgradeable_patch_apply_error"
     ],
     "760": [
-      "c_sharreddata_project_competition_yield_vibing_lib_openzeppelin_contracts_scripts_upgradeable_patch_save_sh__entry",
+      "c_sharreddata_project_competition_vibing_farmer_lib_openzeppelin_contracts_scripts_upgradeable_patch_save_sh__entry",
       "upgradeable_patch_save",
       "upgradeable_patch_save_error"
     ],
@@ -12944,31 +12944,31 @@
       "code_review_skill"
     ],
     "799": [
-      "c_sharreddata_project_competition_yield_vibing_lib_openzeppelin_contracts_scripts_checks_generation_sh__entry",
+      "c_sharreddata_project_competition_vibing_farmer_lib_openzeppelin_contracts_scripts_checks_generation_sh__entry",
       "checks_generation"
     ],
     "800": [
-      "c_sharreddata_project_competition_yield_vibing_lib_openzeppelin_contracts_scripts_git_user_config_sh__entry",
+      "c_sharreddata_project_competition_vibing_farmer_lib_openzeppelin_contracts_scripts_git_user_config_sh__entry",
       "scripts_git_user_config"
     ],
     "801": [
-      "c_sharreddata_project_competition_yield_vibing_lib_openzeppelin_contracts_scripts_release_version_sh__entry",
+      "c_sharreddata_project_competition_vibing_farmer_lib_openzeppelin_contracts_scripts_release_version_sh__entry",
       "release_version"
     ],
     "802": [
-      "c_sharreddata_project_competition_yield_vibing_lib_openzeppelin_contracts_scripts_release_workflow_exit_prerelease_sh__entry",
+      "c_sharreddata_project_competition_vibing_farmer_lib_openzeppelin_contracts_scripts_release_workflow_exit_prerelease_sh__entry",
       "workflow_exit_prerelease"
     ],
     "803": [
-      "c_sharreddata_project_competition_yield_vibing_lib_openzeppelin_contracts_scripts_release_workflow_start_sh__entry",
+      "c_sharreddata_project_competition_vibing_farmer_lib_openzeppelin_contracts_scripts_release_workflow_start_sh__entry",
       "workflow_start"
     ],
     "804": [
-      "c_sharreddata_project_competition_yield_vibing_lib_openzeppelin_contracts_scripts_upgradeable_transpile_onto_sh__entry",
+      "c_sharreddata_project_competition_vibing_farmer_lib_openzeppelin_contracts_scripts_upgradeable_transpile_onto_sh__entry",
       "upgradeable_transpile_onto"
     ],
     "805": [
-      "c_sharreddata_project_competition_yield_vibing_lib_openzeppelin_contracts_scripts_upgradeable_transpile_sh__entry",
+      "c_sharreddata_project_competition_vibing_farmer_lib_openzeppelin_contracts_scripts_upgradeable_transpile_sh__entry",
       "upgradeable_transpile"
     ],
     "806": [

@@ -323,8 +323,8 @@ export default function ExplorerPage() {
           <div className="ex-oslist">
             <div className="ex-osrow">
               <span className="ex-osrow__k">GitHub</span>
-              <a className="ex-osrow__v" href="https://github.com/poggufanz/vibing-farmer" target="_blank" rel="noreferrer noopener">
-                github.com/poggufanz/vibing-farmer <span aria-hidden="true">↗</span>
+              <a className="ex-osrow__v" href="https://github.com/poggufanz/vibingfarmer" target="_blank" rel="noreferrer noopener">
+                github.com/poggufanz/vibingfarmer <span aria-hidden="true">↗</span>
               </a>
             </div>
             <div className="ex-osrow">

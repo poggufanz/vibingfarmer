@@ -6671,7 +6671,7 @@
       "beacon_upgradeablebeacon_test_loadfixture"
     ],
     "239": [
-      "c_sharreddata_project_competition_yield_vibing_lib_openzeppelin_contracts_scripts_prepack_sh__entry",
+      "c_sharreddata_project_competition_vibing_farmer_lib_openzeppelin_contracts_scripts_prepack_sh__entry",
       "scripts_prepack",
       "scripts_prepack_mkdirp",
       "workflow_pack",
@@ -6858,7 +6858,7 @@
       "gap_style"
     ],
     "266": [
-      "c_sharreddata_project_competition_yield_vibing_lib_openzeppelin_contracts_scripts_checks_coverage_sh__entry",
+      "c_sharreddata_project_competition_vibing_farmer_lib_openzeppelin_contracts_scripts_checks_coverage_sh__entry",
       "checks_coverage",
       "checks_coverage_coverage",
       "checks_coverage_foundry_fuzz_runs"
@@ -6935,17 +6935,17 @@
       "agents_skills_web3_frontend_skill"
     ],
     "279": [
-      "c_sharreddata_project_competition_yield_vibing_lib_openzeppelin_contracts_scripts_release_workflow_publish_sh__entry",
+      "c_sharreddata_project_competition_vibing_farmer_lib_openzeppelin_contracts_scripts_release_workflow_publish_sh__entry",
       "workflow_publish",
       "workflow_publish_delete_tag"
     ],
     "280": [
-      "c_sharreddata_project_competition_yield_vibing_lib_openzeppelin_contracts_scripts_upgradeable_patch_apply_sh__entry",
+      "c_sharreddata_project_competition_vibing_farmer_lib_openzeppelin_contracts_scripts_upgradeable_patch_apply_sh__entry",
       "upgradeable_patch_apply",
       "upgradeable_patch_apply_error"
     ],
     "281": [
-      "c_sharreddata_project_competition_yield_vibing_lib_openzeppelin_contracts_scripts_upgradeable_patch_save_sh__entry",
+      "c_sharreddata_project_competition_vibing_farmer_lib_openzeppelin_contracts_scripts_upgradeable_patch_save_sh__entry",
       "upgradeable_patch_save",
       "upgradeable_patch_save_error"
     ],
@@ -7063,31 +7063,31 @@
       "code_review_skill"
     ],
     "305": [
-      "c_sharreddata_project_competition_yield_vibing_lib_openzeppelin_contracts_scripts_checks_generation_sh__entry",
+      "c_sharreddata_project_competition_vibing_farmer_lib_openzeppelin_contracts_scripts_checks_generation_sh__entry",
       "checks_generation"
     ],
     "306": [
-      "c_sharreddata_project_competition_yield_vibing_lib_openzeppelin_contracts_scripts_git_user_config_sh__entry",
+      "c_sharreddata_project_competition_vibing_farmer_lib_openzeppelin_contracts_scripts_git_user_config_sh__entry",
       "scripts_git_user_config"
     ],
     "307": [
-      "c_sharreddata_project_competition_yield_vibing_lib_openzeppelin_contracts_scripts_release_version_sh__entry",
+      "c_sharreddata_project_competition_vibing_farmer_lib_openzeppelin_contracts_scripts_release_version_sh__entry",
       "release_version"
     ],
     "308": [
-      "c_sharreddata_project_competition_yield_vibing_lib_openzeppelin_contracts_scripts_release_workflow_exit_prerelease_sh__entry",
+      "c_sharreddata_project_competition_vibing_farmer_lib_openzeppelin_contracts_scripts_release_workflow_exit_prerelease_sh__entry",
       "workflow_exit_prerelease"
     ],
     "309": [
-      "c_sharreddata_project_competition_yield_vibing_lib_openzeppelin_contracts_scripts_release_workflow_start_sh__entry",
+      "c_sharreddata_project_competition_vibing_farmer_lib_openzeppelin_contracts_scripts_release_workflow_start_sh__entry",
       "workflow_start"
     ],
     "310": [
-      "c_sharreddata_project_competition_yield_vibing_lib_openzeppelin_contracts_scripts_upgradeable_transpile_onto_sh__entry",
+      "c_sharreddata_project_competition_vibing_farmer_lib_openzeppelin_contracts_scripts_upgradeable_transpile_onto_sh__entry",
       "upgradeable_transpile_onto"
     ],
     "311": [
-      "c_sharreddata_project_competition_yield_vibing_lib_openzeppelin_contracts_scripts_upgradeable_transpile_sh__entry",
+      "c_sharreddata_project_competition_vibing_farmer_lib_openzeppelin_contracts_scripts_upgradeable_transpile_sh__entry",
       "upgradeable_transpile"
     ],
     "312": [
