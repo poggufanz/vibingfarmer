@@ -163,7 +163,7 @@ describe('evaluateGates', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing/frontend && npx vitest run src/strategy/gates.test.js"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer/frontend && npx vitest run src/strategy/gates.test.js"`
 Expected: FAIL — `Failed to resolve import './gates.js'`.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -252,7 +252,7 @@ export function evaluateGates(state, idea) {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing/frontend && npx vitest run src/strategy/gates.test.js"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer/frontend && npx vitest run src/strategy/gates.test.js"`
 Expected: PASS — all tests green.
 
 - [ ] **Step 5: Commit**
@@ -309,7 +309,7 @@ Append to `frontend/src/strategy/monitorLoop.test.js`, inside the `describe('cre
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing/frontend && npx vitest run src/strategy/monitorLoop.test.js"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer/frontend && npx vitest run src/strategy/monitorLoop.test.js"`
 Expected: FAIL — the gated test reaches `council`/`simulate` because no gate short-circuit exists yet.
 
 - [ ] **Step 3: Update the loop signature + JSDoc**
@@ -372,7 +372,7 @@ with:
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing/frontend && npx vitest run src/strategy/monitorLoop.test.js"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer/frontend && npx vitest run src/strategy/monitorLoop.test.js"`
 Expected: PASS — all monitorLoop tests green, including the three new ones.
 
 - [ ] **Step 6: Commit**
@@ -415,7 +415,7 @@ In the `createMonitorLoop({ ... })` config, add the `gates` field directly after
 
 - [ ] **Step 3: Verify the bundle builds (no test for the wiring itself)**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing/frontend && npx vite build"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer/frontend && npx vite build"`
 Expected: build succeeds with no unresolved-import errors.
 
 - [ ] **Step 4: Commit**
@@ -471,7 +471,7 @@ import { riskCeiling, enforceActionSpace, ACTION_SPACE, buildStrategyState } fro
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing/frontend && npx vitest run src/strategy/mdp.test.js"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer/frontend && npx vitest run src/strategy/mdp.test.js"`
 Expected: FAIL — `gas-spike` not present because `buildStrategyState` ignores `gas`.
 
 - [ ] **Step 3: Make `buildStrategyState` gas-aware**
@@ -512,7 +512,7 @@ to:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing/frontend && npx vitest run src/strategy/mdp.test.js"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer/frontend && npx vitest run src/strategy/mdp.test.js"`
 Expected: PASS.
 
 - [ ] **Step 5: Capture the latest gas snapshot in app.jsx**
@@ -558,7 +558,7 @@ In the `createMonitorLoop` config, change the `getState` (lines 462–469) to in
 
 - [ ] **Step 7: Verify the build**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing/frontend && npx vite build"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer/frontend && npx vite build"`
 Expected: build succeeds.
 
 - [ ] **Step 8: Commit**
@@ -600,7 +600,7 @@ If `cycleJournal.test.js` does not import `getJournalSummary` / `clearCycles` / 
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing/frontend && npx vitest run src/strategy/cycleJournal.test.js"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer/frontend && npx vitest run src/strategy/cycleJournal.test.js"`
 Expected: FAIL — `s.gated` is `undefined`.
 
 - [ ] **Step 3: Add `gated` to the journal summary**
@@ -625,7 +625,7 @@ export function getJournalSummary() {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing/frontend && npx vitest run src/strategy/cycleJournal.test.js"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer/frontend && npx vitest run src/strategy/cycleJournal.test.js"`
 Expected: PASS.
 
 - [ ] **Step 5: Render the gated verdict in `agents.jsx`**
@@ -700,7 +700,7 @@ And after the `.loop-badge.idle` rule (line 3319) add:
 
 - [ ] **Step 8: Verify the build**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing/frontend && npx vite build"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer/frontend && npx vite build"`
 Expected: build succeeds.
 
 - [ ] **Step 9: Commit**
@@ -718,17 +718,17 @@ git commit -m "feat: surface gated verdict in the monitor-loop journal UI"
 
 - [ ] **Step 1: Run the full strategy test suite**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing/frontend && npx vitest run src/strategy/"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer/frontend && npx vitest run src/strategy/"`
 Expected: PASS — gates, monitorLoop, mdp, cycleJournal suites all green, no regressions.
 
 - [ ] **Step 2: Run the complete test suite**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing/frontend && npx vitest run"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer/frontend && npx vitest run"`
 Expected: PASS — full suite green.
 
 - [ ] **Step 3: Production build**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing/frontend && npx vite build"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer/frontend && npx vite build"`
 Expected: build succeeds.
 
 - [ ] **Step 4: Refresh the knowledge graph**

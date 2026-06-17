@@ -12,8 +12,8 @@ Sebelum merekam atau mempresentasikan, pastikan kondisi lingkungan pengujian ada
 1. **MetaMask Flask:** Terinstal di browser demo (bukan MetaMask biasa). Versi ≥ 13.9.0 untuk mendukung ERC-7715 secara penuh.
 2. **Saldo Tes:** Akun Sepolia terhubung dan memiliki saldo tes minimal **100 USDC** dan sedikit **Sepolia ETH** untuk inisialisasi awal.
 3. **Kontrak Pintar:** 
-   - Kontrak [AgentRegistry.sol](file:///c:/SharredData/project/competition/yield-vibing/contracts/AgentRegistry.sol) dan [AgentVaultDepositor.sol](file:///c:/SharredData/project/competition/yield-vibing/contracts/AgentVaultDepositor.sol) sudah dideploy di Sepolia.
-   - Alamat kontrak sudah tercantum di file konfigurasi [config.js](file:///c:/SharredData/project/competition/yield-vibing/frontend/src/config.js).
+   - Kontrak [AgentRegistry.sol](file:///c:/SharredData/project/competition/vibing-farmer/contracts/AgentRegistry.sol) dan [AgentVaultDepositor.sol](file:///c:/SharredData/project/competition/vibing-farmer/contracts/AgentVaultDepositor.sol) sudah dideploy di Sepolia.
+   - Alamat kontrak sudah tercantum di file konfigurasi [config.js](file:///c:/SharredData/project/competition/vibing-farmer/frontend/src/config.js).
 4. **Kunci API Venice:** Konfigurasi `VENICE_API_KEY` aktif di `.env` (memakai model `llama-3.3-70b` untuk perumusan strategi pintar).
 5. **Browser:** http://localhost:3000 sudah terbuka dan bersih dari state sesi lama (klik "Reset" jika diperlukan).
 
@@ -22,11 +22,11 @@ Sebelum merekam atau mempresentasikan, pastikan kondisi lingkungan pengujian ada
 ## 2. Struktur Visual & Komponen Codebase
 
 Dalam demo ini, kita akan menyoroti bagaimana antarmuka (UI) berinteraksi langsung dengan kode logis aplikasi:
-- **Upgrades EIP-7702:** Kode inisialisasi di [wallet.js](file:///c:/SharredData/project/competition/yield-vibing/frontend/src/wallet.js) memicu upgrade EOA pengguna menjadi *Smart Account*.
-- **Rekomendasi Venice AI:** Logika pemanggilan API Venice di [venice.js](file:///c:/SharredData/project/competition/yield-vibing/frontend/src/venice.js) memicu pembuatan strategi deposit multi-vault.
-- **Persetujuan Batasan Kriptografis (ERC-7715):** Kontrak [AgentRegistry.sol](file:///c:/SharredData/project/competition/yield-vibing/contracts/AgentRegistry.sol) membatasi agen agar hanya bisa menyetor sesuai batas nominal, vault tertentu, dan batas waktu kedaluwarsa.
-- **Eksekusi Swarm Tanpa Gas (1Shot Relayer):** Melalui [worker.js](file:///c:/SharredData/project/competition/yield-vibing/frontend/src/worker.js) dan [relay.js](file:///c:/SharredData/project/competition/yield-vibing/frontend/src/relay.js), agen menandatangani pesan EIP-712 yang kemudian disiarkan secara gasless oleh 1Shot Relayer ke fungsi `executeAgentDeposit` di [AgentVaultDepositor.sol](file:///c:/SharredData/project/competition/yield-vibing/contracts/AgentVaultDepositor.sol).
-- **Grafik Obsidian-Style (vis.js):** Perubahan status agen divisualisasikan secara real-time pada komponen grafis [AgentGraph` di `agents.jsx](file:///c:/SharredData/project/competition/yield-vibing/frontend/src/agents.jsx).
+- **Upgrades EIP-7702:** Kode inisialisasi di [wallet.js](file:///c:/SharredData/project/competition/vibing-farmer/frontend/src/wallet.js) memicu upgrade EOA pengguna menjadi *Smart Account*.
+- **Rekomendasi Venice AI:** Logika pemanggilan API Venice di [venice.js](file:///c:/SharredData/project/competition/vibing-farmer/frontend/src/venice.js) memicu pembuatan strategi deposit multi-vault.
+- **Persetujuan Batasan Kriptografis (ERC-7715):** Kontrak [AgentRegistry.sol](file:///c:/SharredData/project/competition/vibing-farmer/contracts/AgentRegistry.sol) membatasi agen agar hanya bisa menyetor sesuai batas nominal, vault tertentu, dan batas waktu kedaluwarsa.
+- **Eksekusi Swarm Tanpa Gas (1Shot Relayer):** Melalui [worker.js](file:///c:/SharredData/project/competition/vibing-farmer/frontend/src/worker.js) dan [relay.js](file:///c:/SharredData/project/competition/vibing-farmer/frontend/src/relay.js), agen menandatangani pesan EIP-712 yang kemudian disiarkan secara gasless oleh 1Shot Relayer ke fungsi `executeAgentDeposit` di [AgentVaultDepositor.sol](file:///c:/SharredData/project/competition/vibing-farmer/contracts/AgentVaultDepositor.sol).
+- **Grafik Obsidian-Style (vis.js):** Perubahan status agen divisualisasikan secara real-time pada komponen grafis [AgentGraph` di `agents.jsx](file:///c:/SharredData/project/competition/vibing-farmer/frontend/src/agents.jsx).
 
 ---
 
@@ -259,8 +259,8 @@ Here is the complete word-for-word voiceover script for recording your demo vide
 Jika juri atau penilai menanyakan detail codebase selama sesi tanya jawab (Q&A), Anda bisa merujuk ke bagian berkas berikut:
 
 1. **Bagaimana Agen Membatasi Transaksi?**
-   - Rujuk ke fungsi `executeAgentDeposit` pada baris 66-103 di [AgentVaultDepositor.sol](file:///c:/SharredData/project/competition/yield-vibing/contracts/AgentVaultDepositor.sol). Tunjukkan pemeriksaan `ECDSA.recover` dan pembacaan scope dari `registry.scopeOf(agent)`.
+   - Rujuk ke fungsi `executeAgentDeposit` pada baris 66-103 di [AgentVaultDepositor.sol](file:///c:/SharredData/project/competition/vibing-farmer/contracts/AgentVaultDepositor.sol). Tunjukkan pemeriksaan `ECDSA.recover` dan pembacaan scope dari `registry.scopeOf(agent)`.
 2. **Di mana Status Kunci Agen Ephemeral Dikelola?**
-   - Rujuk ke berkas [keyVault.js](file:///c:/SharredData/project/competition/yield-vibing/frontend/src/strategy/keyVault.js) untuk fungsi enkripsi (`sealKey`, `openKey`) dan berkas [worker.js](file:///c:/SharredData/project/competition/yield-vibing/frontend/src/worker.js) fungsi `setupKey()` baris 175-199.
+   - Rujuk ke berkas [keyVault.js](file:///c:/SharredData/project/competition/vibing-farmer/frontend/src/strategy/keyVault.js) untuk fungsi enkripsi (`sealKey`, `openKey`) dan berkas [worker.js](file:///c:/SharredData/project/competition/vibing-farmer/frontend/src/worker.js) fungsi `setupKey()` baris 175-199.
 3. **Bagaimana Penggabungan Batch Otorisasi Terjadi?**
-   - Tunjukkan fungsi `dispatch()` baris 43-243 di [orchestrator.js](file:///c:/SharredData/project/competition/yield-vibing/frontend/src/orchestrator.js), khususnya proses pembentukan array panggilan transaksi (`calls.push(buildAuthorizeSessionKeyCall(...))`) yang kemudian dikirim via `batchCalls` di baris 132.
+   - Tunjukkan fungsi `dispatch()` baris 43-243 di [orchestrator.js](file:///c:/SharredData/project/competition/vibing-farmer/frontend/src/orchestrator.js), khususnya proses pembentukan array panggilan transaksi (`calls.push(buildAuthorizeSessionKeyCall(...))`) yang kemudian dikirim via `batchCalls` di baris 132.

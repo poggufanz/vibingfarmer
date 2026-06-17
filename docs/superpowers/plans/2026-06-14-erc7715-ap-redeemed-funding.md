@@ -142,7 +142,7 @@ function test_depositHeld_depositsFromContractBalance() public {
 
 - [ ] **Step 2: Run it — expect FAIL (no such function)**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge test --match-test test_depositHeld_depositsFromContractBalance -vvv"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge test --match-test test_depositHeld_depositsFromContractBalance -vvv"`
 Expected: FAIL — `depositHeld`/`hashHeldDeposit` not found.
 
 - [ ] **Step 3: Implement on `AgentVaultDepositor.sol`**
@@ -212,7 +212,7 @@ Add after `hashDeposit`:
 
 - [ ] **Step 4: Run test — expect PASS**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge test --match-test test_depositHeld_depositsFromContractBalance -vvv"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge test --match-test test_depositHeld_depositsFromContractBalance -vvv"`
 Expected: PASS.
 
 - [ ] **Step 5: Add guard tests**
@@ -250,14 +250,14 @@ function test_sweepStranded_onlyGuardian() public {
 
 - [ ] **Step 6: Run all depositor tests — expect PASS**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge test --match-contract AgentVaultDepositor -vvv"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge test --match-contract AgentVaultDepositor -vvv"`
 Expected: PASS.
 
 - [ ] **Step 7: Update ZeroCustody invariant**
 
 In `test/ZeroCustody.t.sol`, change the invariant to allow transient custody but assert no permanent custody: after any `depositHeld`, `usdc.balanceOf(depositor) == reserves[usdc]` (i.e. only in-flight reserves, which net to 0 outside a call). Add a `sweepStranded` handler so the fuzzer can drain surplus and the invariant `balanceOf == 0` holds at rest.
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge test --match-contract ZeroCustody -vvv"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge test --match-contract ZeroCustody -vvv"`
 Expected: PASS.
 
 - [ ] **Step 8: Commit**
@@ -279,7 +279,7 @@ The constructor is unchanged (`registry_`, `guardian_`), so `script/Deploy.s.sol
 
 - [ ] **Step 1: Build + deploy**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge build && forge script script/Deploy.s.sol --rpc-url \$BASE_SEPOLIA_RPC --broadcast --verify"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge build && forge script script/Deploy.s.sol --rpc-url \$BASE_SEPOLIA_RPC --broadcast --verify"`
 Expected: prints new `AgentVaultDepositor` address. (Reuse the existing `AgentRegistry 0x1f5eb2…` + `MockVault 0xDff362…` — only the depositor changes.)
 
 - [ ] **Step 2: Record the new address**

@@ -273,19 +273,19 @@ Foundry runs in WSL. Never run `forge`/`cast`/`anvil` in PowerShell.
 
 ```bash
 # Build
-wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge build"
+wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge build"
 
 # Unit tests (excludes fork tests)
-wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge test --no-match-contract Fork -vv"
+wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge test --no-match-contract Fork -vv"
 
 # Fork tests only
-wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge test --match-contract Fork -vv"
+wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge test --match-contract Fork -vv"
 
 # Coverage
-wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge coverage"
+wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge coverage"
 
 # Deploy to Base Sepolia
-wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge script script/Deploy.s.sol --rpc-url \$BASE_SEPOLIA_RPC --broadcast --verify"
+wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge script script/Deploy.s.sol --rpc-url \$BASE_SEPOLIA_RPC --broadcast --verify"
 ```
 
 ---

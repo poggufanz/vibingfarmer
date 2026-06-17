@@ -292,7 +292,7 @@ Security invariants (revert, never silent fail):
 wsl -e bash -c "curl -L https://foundry.paradigm.xyz | bash && foundryup"
 
 # 2. Install OpenZeppelin (WSL)
-wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge install OpenZeppelin/openzeppelin-contracts"
+wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge install OpenZeppelin/openzeppelin-contracts"
 
 # 3. Copy env
 cp .env.example .env

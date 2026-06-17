@@ -114,7 +114,7 @@ contract MorphoForkTest is Test {
 
 - [ ] **Step 3: Run the fork test (skips cleanly if env/addresses unset)**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge test --match-contract MorphoForkTest -vvv"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge test --match-contract MorphoForkTest -vvv"`
 Expected: PASS once `BASE_MAINNET_RPC` + the `[VERIFY]` Morpho vault address are set. If the vault address is still zero, the `require` halts with a clear message — fill it from Morpho docs, do not guess.
 
 - [ ] **Step 4: Commit**
@@ -245,7 +245,7 @@ depth = 50
 fail_on_revert = false
 ```
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge test --match-contract DepositorInvariantTest -vvv"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge test --match-contract DepositorInvariantTest -vvv"`
 Expected: PASS (256×50 ≈ 12.8k calls). Tune `runs`/`depth` upward if time allows.
 
 - [ ] **Step 4: Commit**
@@ -335,7 +335,7 @@ contract DestructiveTest is Test {
 
 - [ ] **Step 2: Run**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge test --match-contract DestructiveTest -vvv"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge test --match-contract DestructiveTest -vvv"`
 Expected: PASS — every escape attempt mentions scope.
 
 - [ ] **Step 3: Run the drills against the LIVE Base Sepolia deployment, record results into the threat model**

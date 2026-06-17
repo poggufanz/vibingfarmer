@@ -11,7 +11,7 @@
 **Tech Stack:** Solidity `^0.8.24`, Foundry (runs in **WSL only**), OpenZeppelin Contracts ≥5.x (`ReentrancyGuard`, `Pausable`, `SafeERC20`, `IERC4626`, `IERC20`, `EIP712`, `ECDSA`).
 
 > **WSL command form** (from CLAUDE.md — never run `forge` in PowerShell):
-> `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && <forge cmd>"`
+> `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && <forge cmd>"`
 
 ---
 
@@ -93,7 +93,7 @@ sequenceDiagram
 
 - [ ] **Step 4: Verify no stale approve/deposit-via-7715 claim remains**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && grep -rin '7715' docs/ README.md | grep -iE 'approve|deposit|swap'"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && grep -rin '7715' docs/ README.md | grep -iE 'approve|deposit|swap'"`
 Expected: no line claiming approve/deposit/swap is authorized *by* 7715. (Lines that say 7715 only releases `transfer` are fine.)
 
 - [ ] **Step 5: Commit**
@@ -177,7 +177,7 @@ contract MockERC20 is ERC20 {
 
 - [ ] **Step 3: Run the test to verify it fails**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge test --match-contract AgentRegistryTest -vvv"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge test --match-contract AgentRegistryTest -vvv"`
 Expected: FAIL — `AgentRegistry.sol` does not exist / compile error.
 
 - [ ] **Step 4: Write AgentRegistry.sol**
@@ -313,7 +313,7 @@ contract AgentRegistry {
 
 - [ ] **Step 5: Run the happy-path test to verify it passes**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge test --match-contract AgentRegistryTest -vvv"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge test --match-contract AgentRegistryTest -vvv"`
 Expected: PASS.
 
 - [ ] **Step 6: Add negative + period unit tests**
@@ -378,7 +378,7 @@ Append to `test/AgentRegistry.t.sol`:
 
 - [ ] **Step 7: Run to verify all pass**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge test --match-contract AgentRegistryTest -vvv"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge test --match-contract AgentRegistryTest -vvv"`
 Expected: PASS (all cases).
 
 - [ ] **Step 8: Commit**
@@ -494,7 +494,7 @@ contract AgentVaultDepositorTest is Test {
 
 - [ ] **Step 3: Run to verify it fails**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge test --match-contract AgentVaultDepositorTest -vvv"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge test --match-contract AgentVaultDepositorTest -vvv"`
 Expected: FAIL — new constructor/signature don't exist yet.
 
 - [ ] **Step 4: Rewrite AgentVaultDepositor.sol**
@@ -606,7 +606,7 @@ contract AgentVaultDepositor is ReentrancyGuard, Pausable, EIP712 {
 
 - [ ] **Step 5: Run the happy-path test to verify it passes**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge test --match-test test_deposit_movesRealTokens_sharesToOwner -vvv"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge test --match-test test_deposit_movesRealTokens_sharesToOwner -vvv"`
 Expected: PASS.
 
 - [ ] **Step 6: Add the malicious-worker matrix + idempotency + cap tests**
@@ -668,7 +668,7 @@ Append to `test/AgentVaultDepositor.t.sol`:
 
 - [ ] **Step 7: Run the full depositor suite**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge test --match-contract AgentVaultDepositorTest -vvv"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge test --match-contract AgentVaultDepositorTest -vvv"`
 Expected: PASS (all).
 
 - [ ] **Step 8: Commit**
@@ -742,7 +742,7 @@ Append to `test/AgentVaultDepositor.t.sol` (add `import {FeeOnTransferERC20} fro
 
 - [ ] **Step 3: Run to verify it passes (no impl change needed — proves balance-delta works)**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge test --match-test test_feeOnTransfer -vvv"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge test --match-test test_feeOnTransfer -vvv"`
 Expected: PASS. If it FAILS, the depositor is trusting `amount` instead of the delta — fix Step 4 of Task 3.
 
 - [ ] **Step 4: Commit**
@@ -762,7 +762,7 @@ git commit -m "test(contracts): fee-on-transfer balance-delta + minAmount protec
 
 - [ ] **Step 1: Grep for any transfer to a worker/session address**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && grep -rinE 'transfer\(|to:\s*(worker|session|agent)' frontend/src/relay.js frontend/src/worker.js frontend/src/skills.js"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && grep -rinE 'transfer\(|to:\s*(worker|session|agent)' frontend/src/relay.js frontend/src/worker.js frontend/src/skills.js"`
 Expected: the only legitimate recipient of user funds is `AgentVaultDepositor`. If any line routes user tokens to a worker/session EOA, that is a finding — record it in the commit body and fix it (recipient must be the depositor).
 
 - [ ] **Step 2: Write an on-chain invariant test asserting worker custody is always zero**
@@ -814,7 +814,7 @@ contract ZeroCustodyTest is Test {
 
 - [ ] **Step 3: Run**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge test --match-contract ZeroCustodyTest -vvv"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge test --match-contract ZeroCustodyTest -vvv"`
 Expected: PASS.
 
 - [ ] **Step 4: Commit**
@@ -844,7 +844,7 @@ fs_permissions = [{ access = "read-write", path = "./deployments" }]
 
 Then create the directory so the first write lands:
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && mkdir -p deployments && touch deployments/.gitkeep"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && mkdir -p deployments && touch deployments/.gitkeep"`
 Expected: `deployments/.gitkeep` exists. (Also confirm `deployments/base-sepolia.json` will be ignored or committed per your preference — the `.gitkeep` keeps the empty dir tracked.)
 
 - [ ] **Step 1: Rewrite Deploy.s.sol to deploy both contracts + wire depositor**
@@ -900,7 +900,7 @@ USDC_BASE_SEPOLIA=0x...   # [VERIFY] Circle developer docs → USDC Base Sepolia
 
 - [ ] **Step 3: Dry-run compile the script (no broadcast)**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge build script/Deploy.s.sol"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge build script/Deploy.s.sol"`
 Expected: compiles clean.
 
 - [ ] **Step 4: Commit**
@@ -916,12 +916,12 @@ git commit -m "feat(deploy): deploy registry+depositor, emit deployments/base-se
 
 - [ ] **Step 1: Run the entire forge suite**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge test -vv"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge test -vv"`
 Expected: all green.
 
 - [ ] **Step 2: Coverage on the two core contracts (target ≥ 80%)**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge coverage --match-contract 'AgentRegistry|AgentVaultDepositor'"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge coverage --match-contract 'AgentRegistry|AgentVaultDepositor'"`
 Expected: ≥ 80% lines for both. If under, add the missing negative-branch test, then re-run.
 
 - [ ] **Step 3: Commit any added coverage tests**

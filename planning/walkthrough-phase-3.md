@@ -139,9 +139,9 @@ ETHERSCAN_API_KEY=...
 
 ### 2. Deploy
 ```
-wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && source .env && ~/.foundry/bin/forge script script/Deploy.s.sol --rpc-url \$SEPOLIA_RPC --broadcast --verify"
+wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && source .env && ~/.foundry/bin/forge script script/Deploy.s.sol --rpc-url \$SEPOLIA_RPC --broadcast --verify"
 ``` 
-Result: p0ggufanz@p0ggufanz:/mnt/c/SharredData/project/competition/yield-vibing$ source .env && ~/.foundry/bin/forge script script/Deploy.s.sol --rpc-url $SEPOLIA_RPC --broadcast --verify
+Result: p0ggufanz@p0ggufanz:/mnt/c/SharredData/project/competition/vibing-farmer$ source .env && ~/.foundry/bin/forge script script/Deploy.s.sol --rpc-url $SEPOLIA_RPC --broadcast --verify
 [⠆] Compiling...
 No files changed, compilation skipped
 Script ran successfully.

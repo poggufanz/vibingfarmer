@@ -52,7 +52,7 @@ fs_permissions = [{ access = "read-write", path = "./frontend/public/data" }]
 - [ ] **Step 2: Create the output directory (cheatcodes do not mkdir)**
 
 ```bash
-wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && mkdir -p frontend/public/data && touch frontend/public/data/.gitkeep"
+wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && mkdir -p frontend/public/data && touch frontend/public/data/.gitkeep"
 ```
 
 - [ ] **Step 3: Record the verified depeg signal block as a constant**
@@ -81,7 +81,7 @@ library DepegConstants {
 > `cast block <old>` succeeds on ANY full node — headers/bodies are kept by everyone; only OLD STATE needs archive. A block-header check gives false confidence, then the fork test fails later with a confusing error. Query *state* at the old block instead:
 
 ```bash
-wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge build test/simulation/_constants.sol && cast balance 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 --block 16800000 --rpc-url \$MAINNET_RPC"
+wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge build test/simulation/_constants.sol && cast balance 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 --block 16800000 --rpc-url \$MAINNET_RPC"
 ```
 
 Expected: a balance prints → the endpoint truly serves historical state (archive). If it errors with "missing trie node" / "state not available", the RPC is NOT archival — STOP and ask the user for an archive endpoint. (If `$MAINNET_RPC` is empty inside WSL, `export MAINNET_RPC=...` in the WSL shell first — `cast` does not read `.env`.)
@@ -157,7 +157,7 @@ contract TimelineReplayTest is Test {
 
 - [ ] **Step 2: Run the fork test**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge test --match-contract TimelineReplayTest -vvv"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge test --match-contract TimelineReplayTest -vvv"`
 Expected: PASS; `frontend/public/data/replay-usdc-depeg.json` written with 5 `delay_*` exits + provenance (`signalBlock`, `chainId`, `depegDate`, `amountInUsdc`). If `exactInputSingle` reverts, the pool/fee/router constant is wrong at that block — fix the `[VERIFY]` constants, do not hand-roll x*y=k. If `writeJson` reverts → §0 blocker (a): re-check `fs_permissions` + that `frontend/public/data/` exists.
 
 - [ ] **Step 3: Sanity-check one exit against historical price**
@@ -328,7 +328,7 @@ Expected: PASS.
 - [ ] **Step 5: Generate replay-mc.json from the ground truth (fixed seed)**
 
 ```bash
-wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && npm --prefix frontend exec -- tsx -e \"import {readFileSync,writeFileSync} from 'fs';import {run} from './scripts/replay/monteCarlo.ts';const g=JSON.parse(readFileSync('frontend/public/data/replay-usdc-depeg.json','utf8'));writeFileSync('frontend/public/data/replay-mc.json',JSON.stringify({...run(g,1000,0xC0FFEE), provenance:{signalBlock:g.signalBlock,chainId:g.chainId,depegDate:g.depegDate}},null,2));\""
+wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && npm --prefix frontend exec -- tsx -e \"import {readFileSync,writeFileSync} from 'fs';import {run} from './scripts/replay/monteCarlo.ts';const g=JSON.parse(readFileSync('frontend/public/data/replay-usdc-depeg.json','utf8'));writeFileSync('frontend/public/data/replay-mc.json',JSON.stringify({...run(g,1000,0xC0FFEE), provenance:{signalBlock:g.signalBlock,chainId:g.chainId,depegDate:g.depegDate}},null,2));\""
 ```
 Expected: `frontend/public/data/replay-mc.json` written with `manual` P5/P50/P95, `agentic.deterministic`, `seed`, `assumptions`, and `provenance` copied from the ground truth. (Re-running with the same seed must produce identical numbers — that is the reproducibility AC. **[VERIFY] `tsx` available via the frontend install**; if not, `npm --prefix frontend i -D tsx`.)
 
@@ -401,7 +401,7 @@ Add a `Replay` entry to the screen switch / nav in `frontend/src/app.js` (or whe
 
 - [ ] **Step 3: Remove the Aladdin / 6-variable concept from docs**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && grep -rinl 'Aladdin\|6-variable\|six-variable\|6 variabel' docs/"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && grep -rinl 'Aladdin\|6-variable\|six-variable\|6 variabel' docs/"`
 For each file, delete the Aladdin/6-variable paragraph and replace with a one-line pointer: `> Forward-looking scenarios are scoped to the Historical Replay (see frontend replay page) — not a predictive model.`
 
 - [ ] **Step 4: Verify the page loads against the static files**

@@ -14,7 +14,7 @@
 
 ## Conventions
 
-- **Foundry only in WSL.** Prefix: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && <cmd>"`.
+- **Foundry only in WSL.** Prefix: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && <cmd>"`.
 - **Frontend dev server:** `cd frontend && npm run dev` (Vite). Used for manual smoke verification.
 - **`planning/` is gitignored.** This plan is not committed.
 - **Verification reality:** the frontend has no unit-test harness wired. For pure functions we add a tiny check; for UI wiring, verification is a **manual browser smoke step** with an exact expected observation. Where a step says "smoke", open the dev server and follow the stated check.
@@ -239,12 +239,12 @@ Add their addresses to the console output block:
 
 - [ ] **Step 2: Build (RED→GREEN compile)**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge build"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge build"`
 Expected: compiles clean.
 
 - [ ] **Step 3: Run existing tests**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge test"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge test"`
 Expected: all pass (no behavior change to MockVault).
 
 - [ ] **Step 4: Commit**
@@ -261,7 +261,7 @@ git commit -m "feat: deploy MockVault C and D for hybrid vault realism"
 
 - [ ] **Step 1: Deploy**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge script script/Deploy.s.sol --rpc-url $SEPOLIA_RPC --broadcast --verify"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge script script/Deploy.s.sol --rpc-url $SEPOLIA_RPC --broadcast --verify"`
 Expected: 4 MockVault addresses + 1 depositor printed.
 
 - [ ] **Step 2: Record the 4 vault addresses + depositor**
@@ -270,7 +270,7 @@ Copy `MOCK_VAULT_A/B/C/D_ADDRESS` and `AGENT_VAULT_DEPOSITOR_ADDRESS` into `.env
 
 - [ ] **Step 3: Sanity-read one vault on-chain**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && cast call <VAULT_C_ADDR> 'apyBps()(uint256)' --rpc-url $SEPOLIA_RPC"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && cast call <VAULT_C_ADDR> 'apyBps()(uint256)' --rpc-url $SEPOLIA_RPC"`
 Expected: `940`.
 
 - [ ] **Step 4: Commit** (only if any tracked file changed; `.env` is gitignored — likely nothing to commit. Skip if clean.)
@@ -730,7 +730,7 @@ git commit -m "chore: trim informational console.log from client happy path"
 
 - [ ] **Step 1: Measure**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge coverage"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge coverage"`
 Expected: a coverage table for `AgentVaultDepositor.sol` + `MockVault.sol`. Record the percentages.
 
 - [ ] **Step 2: Identify gaps**
@@ -762,7 +762,7 @@ Fill each body using the existing test file's setup helpers and the real API (`g
 
 - [ ] **Step 3: Run — expect RED where a check is missing, GREEN where already enforced**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge test --match-contract AgentVaultDepositor -vvv"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge test --match-contract AgentVaultDepositor -vvv"`
 
 - [ ] **Step 4: If any invariant test fails, fix the contract (CEI/revert), not the test.** Re-run until green.
 
@@ -788,7 +788,7 @@ git commit -m "test: security/edge coverage for AgentVaultDepositor (scope, expi
 
 - [ ] **Step 3: Build + test**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge build && forge test"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge build && forge test"`
 Expected: green.
 
 - [ ] **Step 4: Commit**

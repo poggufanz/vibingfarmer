@@ -659,7 +659,7 @@ contract PauseInvariantTest is Test {
 
 - [ ] **Step 2: Run**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge test --match-contract PauseInvariantTest -vvv"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge test --match-contract PauseInvariantTest -vvv"`
 Expected: PASS.
 
 - [ ] **Step 3: Commit**
@@ -726,7 +726,7 @@ Append to `docs/technical-security-privacy.md`:
 
 - [ ] **Step 3: Verify the docs render the key facts**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && grep -c 'capPerPeriod' docs/technical-threat-model.md && grep -c 'Key lifecycle' docs/technical-security-privacy.md"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && grep -c 'capPerPeriod' docs/technical-threat-model.md && grep -c 'Key lifecycle' docs/technical-security-privacy.md"`
 Expected: both ≥ 1.
 
 - [ ] **Step 4: Commit**

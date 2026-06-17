@@ -112,7 +112,7 @@ These are confirmed by reading the code, not speculation. They seed the workstre
 
 ## 5. Constraints & environment
 
-- **Foundry runs in WSL only** — `forge`/`cast` via `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && …"`. Never in PowerShell.
+- **Foundry runs in WSL only** — `forge`/`cast` via `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && …"`. Never in PowerShell.
 - **`planning/` is gitignored** — this spec and the implementation plan are not committed.
 - Frontend: React 18 + Vite, ethers v6, vis/React-Flow graph. Dev: `npx serve frontend/` or vite dev.
 - Mainnet target (future, for context): Base / Base Sepolia (1Shot relayer unsupported on Eth Sepolia per migration note) — out of scope this cycle.

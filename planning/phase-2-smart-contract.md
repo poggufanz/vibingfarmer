@@ -21,7 +21,7 @@ remappings = [
 
 - [ ] Verify build setelah edit:
   ```bash
-  wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && ~/.foundry/bin/forge build"
+  wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && ~/.foundry/bin/forge build"
   # Expected: Compiler run successful, no warnings
   ```
 
@@ -151,7 +151,7 @@ contract MockVaultTest is Test {
 
 - [ ] Jalankan tests MockVault:
   ```bash
-  wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && ~/.foundry/bin/forge test --match-contract MockVaultTest -vv"
+  wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && ~/.foundry/bin/forge test --match-contract MockVaultTest -vv"
   # Expected: 8 tests PASS
   ```
 
@@ -239,7 +239,7 @@ contract AgentVaultDepositor is ReentrancyGuard {
 
 - [ ] Verify build:
   ```bash
-  wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && ~/.foundry/bin/forge build"
+  wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && ~/.foundry/bin/forge build"
   # Expected: Compiler run successful
   ```
 
@@ -297,7 +297,7 @@ Tambahkan function berikut ke dalam contract (sebelum `}` penutup):
 
 - [ ] Verify build:
   ```bash
-  wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && ~/.foundry/bin/forge build"
+  wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && ~/.foundry/bin/forge build"
   ```
 
 - [ ] Commit:
@@ -573,13 +573,13 @@ contract AgentVaultDepositorTest is Test {
 
 - [ ] Jalankan semua tests:
   ```bash
-  wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && ~/.foundry/bin/forge test -vv"
+  wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && ~/.foundry/bin/forge test -vv"
   # Expected: semua PASS (≥ 20 tests)
   ```
 
 - [ ] Jalankan fuzz tests:
   ```bash
-  wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && ~/.foundry/bin/forge test --match-test testFuzz -vv --fuzz-runs 500"
+  wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && ~/.foundry/bin/forge test --match-test testFuzz -vv --fuzz-runs 500"
   # Expected: semua PASS
   ```
 
@@ -631,7 +631,7 @@ contract Deploy is Script {
 
 - [ ] Dry-run deploy (tanpa broadcast):
   ```bash
-  wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && ~/.foundry/bin/forge script script/Deploy.s.sol -vv"
+  wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && ~/.foundry/bin/forge script script/Deploy.s.sol -vv"
   # Expected: simulasi OK, print 3 addresses
   ```
 
@@ -647,7 +647,7 @@ contract Deploy is Script {
 
 - [ ] Jalankan coverage:
   ```bash
-  wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && ~/.foundry/bin/forge coverage"
+  wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && ~/.foundry/bin/forge coverage"
   ```
 
   Expected:
@@ -678,7 +678,7 @@ Cek manual sebelum Phase 2 dinyatakan selesai:
 ## Gate Check — Phase 2 Complete?
 
 ```bash
-wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && ~/.foundry/bin/forge test && ~/.foundry/bin/forge coverage"
+wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && ~/.foundry/bin/forge test && ~/.foundry/bin/forge coverage"
 ```
 
 - [ ] Semua tests PASS

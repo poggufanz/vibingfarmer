@@ -840,7 +840,7 @@ Expected: `function convertToAssets(uint256 shares) public pure returns (uint256
 
 - [ ] **Step 4: Run the contract tests (WSL only)**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge test --match-contract MockVault -vvv"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge test --match-contract MockVault -vvv"`
 Expected: PASS, including `testYieldAccruesOverTime`.
 
 - [ ] **Step 5: Commit (only if a test was added)**
@@ -884,7 +884,7 @@ Expected: build succeeds, no unresolved import (e.g. the removed `sleep`).
 
 - [ ] **Step 3: Contract tests (WSL)**
 
-Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge test"`
+Run: `wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge test"`
 Expected: all PASS.
 
 - [ ] **Step 4: Grep the whole tree for remaining simulation artifacts**

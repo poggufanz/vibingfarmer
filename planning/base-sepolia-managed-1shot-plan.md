@@ -557,7 +557,7 @@ real dan A2A juga
 ● 3 hal yang harus kamu lakukan sekarang:
 
   1. Redeploy contracts ke Base Sepolia
-  wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge script script/Deploy.s.sol --rpc-url https://sepolia.base.org
+  wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge script script/Deploy.s.sol --rpc-url https://sepolia.base.org
   --broadcast"
   Butuh: deployer PRIVATE_KEY + Base Sepolia ETH (faucet: https://faucet.quicknode.com/base/sepolia)
 

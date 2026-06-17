@@ -1,6 +1,6 @@
 Created At: 2026-05-30T13:59:04Z
 Completed At: 2026-05-30T13:59:04Z
-File Path: `file:///c:/SharredData/project/competition/yield-vibing/docs/business-roadmap-backlog.md`
+File Path: `file:///c:/SharredData/project/competition/vibing-farmer/docs/business-roadmap-backlog.md`
 
 # Roadmap & Backlog — Vibing Farmer
 

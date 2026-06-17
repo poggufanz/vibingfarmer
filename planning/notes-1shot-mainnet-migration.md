@@ -33,7 +33,7 @@ _Disimpan 2026-05-28. Konteks: Sepolia tidak didukung 1Shot, relay disimulasi un
 
 2. Deploy contracts:
    ```bash
-   wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && source .env && ~/.foundry/bin/forge script script/Deploy.s.sol --rpc-url https://sepolia.base.org --broadcast"
+   wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && source .env && ~/.foundry/bin/forge script script/Deploy.s.sol --rpc-url https://sepolia.base.org --broadcast"
    ```
 
 3. Update `frontend/config.js`:

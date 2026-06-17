@@ -206,22 +206,22 @@ docs/                                # All in English
 
 ```bash
 # Build
-wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge build"
+wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge build"
 
 # Test all
-wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge test"
+wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge test"
 
 # Single test verbose
-wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge test --match-test testFunctionName -vvv"
+wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge test --match-test testFunctionName -vvv"
 
 # Fuzz test
-wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge test --match-test testFuzz -vvv --fuzz-runs 1000"
+wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge test --match-test testFuzz -vvv --fuzz-runs 1000"
 
 # Coverage (target ≥ 80%)
-wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge coverage"
+wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge coverage"
 
 # Deploy to Sepolia
-wsl -e bash -c "cd /mnt/c/SharredData/project/competition/yield-vibing && forge script script/Deploy.s.sol --rpc-url \$SEPOLIA_RPC --broadcast --verify"
+wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge script script/Deploy.s.sol --rpc-url \$SEPOLIA_RPC --broadcast --verify"
 ```
 
 > ⚠️ **Foundry runs in WSL only.** Never run `forge`/`cast`/`anvil` directly in PowerShell — it will fail.

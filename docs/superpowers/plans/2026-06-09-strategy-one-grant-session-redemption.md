@@ -924,7 +924,7 @@ Expected: graph regenerated (AST-only, no API cost).
 
 - [ ] **Step 3: Sanity-grep for leftover popup sources**
 
-Run: `cd /c/SharredData/project/competition/yield-vibing && grep -rn "batchCalls\|grantAgentPermissionOnChain\|executeAgentDepositOnChain" frontend/src/ | grep -v ".test.js"`
+Run: `cd /c/SharredData/project/competition/vibing-farmer && grep -rn "batchCalls\|grantAgentPermissionOnChain\|executeAgentDepositOnChain" frontend/src/ | grep -v ".test.js"`
 Expected: each remaining call is now behind a `hasSession()` guard or a documented fallback (orchestrator batch, relay fallbacks, background-agent harvest/withdraw which are out of /strategy scope).
 
 - [ ] **Step 4: Final commit (if graph changed)**
