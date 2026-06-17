@@ -52,7 +52,7 @@ playwright-report/
 blob-report/
 
 # Planning (personal notes, not for repo)
-docs/
+docs/migration_stellar.md
 .playwright-mcp/
 .kiro/
 

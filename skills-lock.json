@@ -2,7 +2,7 @@
   "version": 1,
   "skills": {
     "1shot-api": {
-      "source": "1Shot-API/skills",
+      "source": "1shot-api/skills",
       "sourceType": "github",
       "skillPath": "1shot-api/SKILL.md",
       "computedHash": "0117735b84b96a0d4d46788101d81c86dea031b5448517782c35fd009f146e46"
@@ -136,7 +136,7 @@
       "source": "shadcn/improve",
       "sourceType": "github",
       "skillPath": "skills/improve/SKILL.md",
-      "computedHash": "19d620a60ec3b9917621e8da3db49d4094de574d8b1e1527e5948a2588f74c07"
+      "computedHash": "553713a1b9af40ec50c4018f75b8974bf728fe5abc8e125b748e2d718d5c31ea"
     },
     "machine-learning-engineer": {
       "source": "404kidwiz/claude-supercode-skills",
@@ -164,6 +164,12 @@
       "sourceType": "github",
       "computedHash": "c31ddd68ba5798a79a516c619b1e1fc4408cc4876ad600fefa4f5add4425719d"
     },
+    "pdf": {
+      "source": "openai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/.curated/pdf/SKILL.md",
+      "computedHash": "af1e0791f5356b6de053e6b97d7703fe0d7ea1997371b9023afd4720bebcf93f"
+    },
     "privacy-policy": {
       "source": "phuryn/pm-skills",
       "sourceType": "github",
@@ -185,7 +191,7 @@
       "computedHash": "191b7c5d22d5afbe622f0a5ab7a8d4712ceb8faf489e2b88c35dc1924a71ca59"
     },
     "public-relayer": {
-      "source": "1Shot-API/skills",
+      "source": "1shot-api/skills",
       "sourceType": "github",
       "skillPath": "public-relayer/SKILL.md",
       "computedHash": "7f2ed4b3cf0313fea0eb9fd76e3c2a20114c9c81dd253da7a7f7703144f9ff3a"
