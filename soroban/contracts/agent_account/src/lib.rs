@@ -1,6 +1,8 @@
 #![no_std]
 use soroban_sdk::{contract, contractimpl, Env};
 
+mod account;
+
 #[contract]
 pub struct AgentAccount;
 
