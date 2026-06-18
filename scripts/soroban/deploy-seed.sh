@@ -8,7 +8,7 @@ SOROBAN="$ROOT/soroban"
 OUT="$ROOT/deployments/stellar-testnet.json"
 
 stellar keys address vf-deployer >/dev/null 2>&1 || \
-  stellar keys generate --global vf-deployer --network "$NET" --fund
+  stellar keys generate vf-deployer --network "$NET" --fund
 ADMIN=$(stellar keys address vf-deployer)
 
 ( cd "$SOROBAN" && stellar contract build )
