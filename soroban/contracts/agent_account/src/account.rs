@@ -2,22 +2,21 @@ use soroban_sdk::auth::{Context, CustomAccountInterface};
 use soroban_sdk::crypto::Hash;
 use soroban_sdk::{contractimpl, BytesN, Env, Vec};
 
+use crate::types::AccountError;
 use crate::{AgentAccount, AgentAccountArgs, AgentAccountClient};
 
-// Probe: confirm the CustomAccountInterface signature compiles against the pinned SDK.
-// Signature/Error are placeholders for this probe ONLY; Task 2 replaces them.
 #[contractimpl]
 impl CustomAccountInterface for AgentAccount {
-    type Signature = BytesN<64>;
-    type Error = soroban_sdk::Error;
+    type Signature = BytesN<64>; // single ed25519 signature over the payload
+    type Error = AccountError;
 
     #[allow(non_snake_case)]
     fn __check_auth(
         _env: Env,
         _signature_payload: Hash<32>,
-        _signatures: BytesN<64>,
+        _signature: BytesN<64>,
         _auth_contexts: Vec<Context>,
-    ) -> Result<(), Self::Error> {
-        Ok(())
+    ) -> Result<(), AccountError> {
+        Ok(()) // real enforcement lands in Task 3 + Task 4
     }
 }
