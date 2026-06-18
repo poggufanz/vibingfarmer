@@ -1,8 +1,8 @@
 use soroban_sdk::auth::{Context, CustomAccountInterface};
 use soroban_sdk::crypto::Hash;
-use soroban_sdk::{contractimpl, BytesN, Env, Vec};
+use soroban_sdk::{contractimpl, Bytes, BytesN, Env, Vec};
 
-use crate::types::AccountError;
+use crate::types::{AccountError, DataKey};
 use crate::{AgentAccount, AgentAccountArgs, AgentAccountClient};
 
 #[contractimpl]
@@ -12,11 +12,22 @@ impl CustomAccountInterface for AgentAccount {
 
     #[allow(non_snake_case)]
     fn __check_auth(
-        _env: Env,
-        _signature_payload: Hash<32>,
-        _signature: BytesN<64>,
+        env: Env,
+        signature_payload: Hash<32>,
+        signature: BytesN<64>,
         _auth_contexts: Vec<Context>,
     ) -> Result<(), AccountError> {
-        Ok(()) // real enforcement lands in Task 3 + Task 4
+        let pubkey: BytesN<32> = env
+            .storage()
+            .instance()
+            .get(&DataKey::Signer)
+            .ok_or(AccountError::NotInit)?;
+
+        // ed25519_verify panics on a bad signature; that panic is the rejection.
+        // Hash<32> -> Bytes via `From<Hash<N>> for Bytes` (SDK 26).
+        let payload: Bytes = signature_payload.into();
+        env.crypto().ed25519_verify(&pubkey, &payload, &signature);
+
+        Ok(()) // scope enforcement lands in Task 4
     }
 }
