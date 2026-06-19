@@ -157,7 +157,7 @@ ON-CHAIN (Soroban / Rust)
 | **RWA compliance token** (REVISED — see ADR-A below) | **SEP-57 / ERC-3643 (T-REX) via OZ audited RWA module**, primary | Classic asset + `auth_required` + SAC; pure SEP-41 custom | Purpose-built for regulated RWA: identity registry (KYC/AML) + compliance framework + transfer controls + freeze + recovery, **audited by OZ** (kills the "custom audit surface" objection). `auth_required` kept as fallback if tooling support blocks. |
 | **KYC verification** (who qualifies — see ADR-B) | **zkPass off-chain zkTLS proof** → writes verified status into T-REX identity registry (or `auth_required` allowlist in fallback) | zkPass proof verified on-chain on Soroban (no Stellar support); naive raw-ID upload | Privacy-preserving (raw ID never sent to us); least effort; layers cleanly ABOVE the token-standard gate. Optional trust-min upgrade = own Groth16 verifier on-chain (BLS12-381). |
 | Vault standard | **SEP-56** tokenized vault (OZ vaults module) | Hand-rolled shares | SEP-56 = ERC-4626 equivalent; reuse audited primitive instead of reinventing |
-| Yield mechanism (OPEN — see §6.1) | Decide in spec 1c | — | Share-price growth (SEP-56 default) vs FOBXX-faithful stable-NAV + daily dividend. These conflict; pick per product intent. |
+| Yield mechanism (**LOCKED 2026-06-18**) | **(b) FOBXX-faithful: stable $1.00 NAV + daily dividend** (mint/distribute new units) | (a) SEP-56 share-price growth | Product mocks a real money-market RWA (FOBXX/BENJI); faithful daily-dividend behavior matches the asset we claim. Cost: drip + unit-distribution machinery layered on the SEP-56 vault. |
 | Compliance | On-chain guardrail mirrors off-chain Aladdin caps | Trust off-chain only | Crypto boundary = contract reverts bad trades regardless of AI |
 | Gasless | fee-bump / OZ Relayer (Stellar-native) | Port 1Shot | 1Shot is EVM; OZ Relayer is the Stellar equivalent |
 | Aladdin compute | Off-chain brain, on-chain enforce | On-chain Monte Carlo | On-chain simulation infeasible/expensive |
@@ -205,14 +205,20 @@ Three real options on Stellar for the KYC'd RWA token. Honest tradeoff — not a
 
 **Impacts:** sub-project 1b (registry/allowlist authorize fn must be callable by a trusted KYC-backend signer), sub-project 3 (frontend integrates the zkPass TransGate flow), + new optional sub-project 5 for B2 (Groth16 verifier).
 
-### 6.1 Yield-model decision (OPEN — resolve in spec 1c)
+### 6.1 Yield-model decision (**LOCKED 2026-06-18 → (b) FOBXX-faithful**)
 
 The product claims to "mock a yield-bearing RWA (T-bill / money-market)." Real money-market funds (e.g. FOBXX/BENJI) hold **stable $1.00 NAV + distribute yield as daily dividend** (more token units), and FOBXX is **multichain** (8 chains), not Stellar-exclusive. Two mock models, mutually exclusive:
 
 - **(a) SEP-56 share-price growth** — fixed shares, asset/share ratio grows. Cleaner accounting, default for SEP-56/4626 vaults. **Not** faithful to FOBXX behavior.
-- **(b) FOBXX-faithful** — stable NAV + daily dividend (mint/distribute new units). Matches the asset we claim to mock; more moving parts.
+- **(b) FOBXX-faithful** ← **CHOSEN** — stable $1.00 NAV + daily dividend (mint/distribute new units). Matches the asset we claim to mock; more moving parts.
 
-Pick (a) unless the demo narrative needs FOBXX fidelity, then (b). Do **not** claim "mocks FOBXX" while shipping (a) — that's a framing/impl mismatch (the original doc's sin).
+**Decision:** (b). The demo narrative claims to mock FOBXX/BENJI money-market RWA, so the vault must behave faithfully — stable NAV, daily dividend distributing new units pro-rata. Avoids the framing/impl mismatch §3 flags as "the original doc's sin" (claiming FOBXX while shipping share-growth).
+
+**Impl consequences for sub-project 1c (pin these in the 1c plan):**
+- Vault still built on the SEP-56 / OZ vaults primitive for deposit/redeem/accounting, but the **accrual path is dividend-based**, not share-price-based: NAV per unit held ~stable; yield realized as **newly minted RWA units distributed pro-rata** to holders.
+- Need a **dividend distribution mechanism**: an admin/oracle **drip** action (mock yield source) that mints+distributes on a cadence (daily epoch). Decide drip trigger in 1c (admin oracle call vs time/epoch-based claim-on-interaction). Lean claim-on-interaction to avoid unbounded loops + per-holder gas.
+- **Storage/TTL:** per-holder dividend accounting (last-claimed epoch, cumulative-per-unit index) must `extend_ttl`; favor a **cumulative-dividend-index** pattern (O(1) per holder, no iteration) over per-holder push.
+- Distinct from the **agent guardrail** (#4) and **T-REX transfer compliance** — dividend logic is vault-internal accounting only.
 
 ## 7. Decomposition (each = own spec → plan → build)
 
@@ -227,7 +233,16 @@ Pick (a) unless the demo narrative needs FOBXX fidelity, then (b). Do **not** cl
 3. Frontend chain layer (SDK + passkey wallet + tx + event indexing)
 4. Aladdin risk engine + AI council re-point + yield orchestration
 5. (optional/future) On-chain ZK-KYC — Groth16 verifier via BLS12-381 (ADR-B2), trust-minimized
+6. EVM decommission (LAST) — delete Solidity (contracts/ test/ script/ foundry.toml lib/),
+     deployments/base-sepolia.json, EVM frontend chain-layer (worker.js EIP-712, relay.js 1Shot,
+     x402.js, redelegation.js, EVM parts of wallet.js/config.js), ethers/viem deps. Keep reused
+     AI brain (venice/council/MonteCarlo/strategy) + force-graph UI + orchestrator logic.
 ```
+
+**Sub-project 6 (EVM decommission) gating:** runs **only after** 3 + 4 are cut over to Soroban and
+verified end-to-end on testnet. Do not delete EVM early — it is the working reference during
+migration, and the frontend mixes trash (chain layer) with reuse (UI/brain), so premature deletion
+risks breaking live code. Destructive + hard to reverse: gate behind a green testnet run.
 
 **Dependencies / order:** 0 gates everything. 1 gates 2/3/4 (they target contract
 interfaces). Recommended build order: 1 → 2 → 3 → 4. Within 1: 1a + 1b in parallel, then
