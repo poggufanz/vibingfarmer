@@ -34,6 +34,38 @@ DEMO_AGENT=$(stellar contract deploy \
      --signer "0000000000000000000000000000000000000000000000000000000000000000" \
      --scope "{\"owner\":\"$ADMIN\",\"vault\":\"$VAULT\",\"token\":\"$TOKEN\",\"cap_per_period\":\"1000000000\",\"period_duration\":86400,\"spent_in_period\":\"0\",\"period_start\":0,\"expiry\":4000000000,\"revoked\":false}")
 
+# ---- 1b: RWA (T-REX) stack (OZ README deploy order) ----
+CTI=$(stellar contract deploy --wasm "$WASM_DIR/claim_topics_and_issuers.wasm" \
+  --source vf-deployer --network "$NET" -- --admin "$ADMIN" --manager "$ADMIN")
+CLAIM_ISSUER=$(stellar contract deploy --wasm "$WASM_DIR/claim_issuer.wasm" \
+  --source vf-deployer --network "$NET" -- --owner "$ADMIN")
+IRS=$(stellar contract deploy --wasm "$WASM_DIR/identity_registry_storage.wasm" \
+  --source vf-deployer --network "$NET" -- --admin "$ADMIN" --manager "$ADMIN")
+VERIFIER=$(stellar contract deploy --wasm "$WASM_DIR/identity_verifier.wasm" \
+  --source vf-deployer --network "$NET" \
+  -- --admin "$ADMIN" --manager "$ADMIN" \
+     --identity_registry_storage "$IRS" --claim_topics_and_issuers "$CTI")
+COMPLIANCE=$(stellar contract deploy --wasm "$WASM_DIR/compliance.wasm" \
+  --source vf-deployer --network "$NET" -- --admin "$ADMIN" --manager "$ADMIN")
+ALLOW_MOD=$(stellar contract deploy --wasm "$WASM_DIR/compliance_allow.wasm" \
+  --source vf-deployer --network "$NET" -- --admin "$ADMIN" --manager "$ADMIN" --compliance "$COMPLIANCE")
+TOKEN=$(stellar contract deploy --wasm "$WASM_DIR/rwa_token.wasm" \
+  --source vf-deployer --network "$NET" \
+  -- --name "Mock RWA" --symbol "mRWA" --admin "$ADMIN" --manager "$ADMIN" \
+     --compliance "$COMPLIANCE" --identity_verifier "$VERIFIER")
+
+# Configure: KYC topic 1, trust the claim issuer for it.
+stellar contract invoke --id "$CTI" --source vf-deployer --network "$NET" \
+  -- add_claim_topic --claim_topic 1 --operator "$ADMIN"
+stellar contract invoke --id "$CTI" --source vf-deployer --network "$NET" \
+  -- add_trusted_issuer --trusted_issuer "$CLAIM_ISSUER" --claim_topics '[1]' --operator "$ADMIN"
+
+# Bind the token to the IRS + compliance (required before mint/transfer; see OZ README).
+stellar contract invoke --id "$IRS" --source vf-deployer --network "$NET" \
+  -- bind_token --token "$TOKEN" --operator "$ADMIN"
+stellar contract invoke --id "$COMPLIANCE" --source vf-deployer --network "$NET" \
+  -- bind_token --token "$TOKEN" --operator "$ADMIN"
+
 cat > "$OUT" <<JSON
 {
   "network": "testnet",
@@ -41,7 +73,17 @@ cat > "$OUT" <<JSON
   "rpc": "https://soroban-testnet.stellar.org",
   "registry": "$REGISTRY",
   "agentAccountWasmHash": "$ACCT_HASH",
-  "demoAgentAccount": "$DEMO_AGENT"
+  "demoAgentAccount": "$DEMO_AGENT",
+  "rwa": {
+    "claimTopicsAndIssuers": "$CTI",
+    "claimIssuer": "$CLAIM_ISSUER",
+    "identityRegistryStorage": "$IRS",
+    "identityVerifier": "$VERIFIER",
+    "compliance": "$COMPLIANCE",
+    "complianceAllowModule": "$ALLOW_MOD",
+    "token": "$TOKEN",
+    "decimals": 7
+  }
 }
 JSON
 echo "Wrote $OUT"

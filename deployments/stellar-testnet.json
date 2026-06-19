@@ -4,5 +4,15 @@
   "rpc": "https://soroban-testnet.stellar.org",
   "registry": "CAEHOZGUGVNRCAFVJCSR3B2EFJ55LEA34S76HTRQGH7XSPBO7YIMNZOQ",
   "agentAccountWasmHash": "69c9fc66d486de0920fa7ab4bdb5ce2e75d02d4a3804862d9618ab66f8bb9517",
-  "demoAgentAccount": "CCRG37UTQ2BRCJSA3WYZIUTSGZVLYQ7C4EET2WYUWLU4NAWTETGB77JW"
+  "demoAgentAccount": "CCRG37UTQ2BRCJSA3WYZIUTSGZVLYQ7C4EET2WYUWLU4NAWTETGB77JW",
+  "rwa": {
+    "claimTopicsAndIssuers": "",
+    "claimIssuer": "",
+    "identityRegistryStorage": "",
+    "identityVerifier": "",
+    "compliance": "",
+    "complianceAllowModule": "",
+    "token": "",
+    "decimals": 7
+  }
 }
