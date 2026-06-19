@@ -53,9 +53,41 @@ stellar contract invoke --id "$IRS" --source vf-deployer --network "$NET" \
 stellar contract invoke --id "$COMPLIANCE" --source vf-deployer --network "$NET" \
   -- bind_token --token "$TOKEN" --operator "$ADMIN"
 
+# ---- 1c: RWA vault (FOBXX-faithful, stable-NAV daily-dividend) ----
+VAULT=$(stellar contract deploy --wasm "$WASM_DIR/rwa_vault.wasm" \
+  --source vf-deployer --network "$NET" \
+  -- --admin "$ADMIN" --token "$TOKEN" \
+     --name "Vibing Vault mRWA" --symbol "vfmRWA")
+
+# Load-bearing T-REX consequence: the vault must be a verified mRWA holder or
+# deposit/drip/redeem/claim revert at the token move. Register its identity + IRS entry
+# + whitelist it in the compliance allow module.
+VAULT_IDENTITY=$(stellar contract deploy --wasm "$WASM_DIR/identity.wasm" \
+  --source vf-deployer --network "$NET" -- --owner "$ADMIN")
+# `--initial_profiles` mirrors the CountryData{Individual(Residence(360)), metadata:None}
+# Val the Task-4 integration test uses; confirm the exact JSON shape against
+# `stellar contract info --id "$IRS"` if the invoke rejects.
+stellar contract invoke --id "$IRS" --source vf-deployer --network "$NET" \
+  -- add_identity --account "$VAULT" --identity "$VAULT_IDENTITY" \
+     --initial_profiles '[{"country":{"Individual":{"Residence":360}},"metadata":null}]' \
+     --operator "$ADMIN"
+stellar contract invoke --id "$ALLOW_MOD" --source vf-deployer --network "$NET" \
+  -- allow_account --account "$VAULT" --operator "$ADMIN"
+
+# The topic-1 KYC claim for the vault identity must be signed by the trusted claim-issuer
+# key (off-chain Ed25519) and stored in $VAULT_IDENTITY. This is the SAME off-chain signing
+# step 1b deferred for per-investor claims (see docs/soroban-kyc-seam.md). Sign the canonical
+# message (0x01 || network_id || issuer.to_xdr || $VAULT_IDENTITY.to_xdr || topic||nonce ||
+# claim_data) with the issuer secret, then:
+#   stellar contract invoke --id "$VAULT_IDENTITY" --source vf-deployer --network "$NET" \
+#     -- add_claim --topic 1 --scheme 101 --issuer "$CLAIM_ISSUER" \
+#        --signature <sig_data> --data <claim_data> --uri <uri>
+# The Rust integration test (Task 4) is the authoritative proof of the on-chain path.
+
 REGISTRY="$REGISTRY" ACCT_HASH="$ACCT_HASH" DEMO_AGENT="$DEMO_AGENT" \
 CTI="$CTI" CLAIM_ISSUER="$CLAIM_ISSUER" IRS="$IRS" VERIFIER="$VERIFIER" \
-COMPLIANCE="$COMPLIANCE" ALLOW_MOD="$ALLOW_MOD" TOKEN="$TOKEN" OUT="$OUT" \
+COMPLIANCE="$COMPLIANCE" ALLOW_MOD="$ALLOW_MOD" TOKEN="$TOKEN" \
+VAULT="$VAULT" VAULT_IDENTITY="$VAULT_IDENTITY" OUT="$OUT" \
 python3 <<'PY'
 import json, os
 out = {
@@ -73,7 +105,10 @@ out = {
     "compliance": os.environ["COMPLIANCE"],
     "complianceAllowModule": os.environ["ALLOW_MOD"],
     "token": os.environ["TOKEN"],
-    "decimals": 7
+    "decimals": 7,
+    "vault": os.environ["VAULT"],
+    "vaultIdentity": os.environ["VAULT_IDENTITY"],
+    "vaultShareSymbol": "vfmRWA"
   }
 }
 with open(os.environ["OUT"], "w") as f:

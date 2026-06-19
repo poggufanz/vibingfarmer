@@ -13,6 +13,9 @@
     "compliance": "CAHWFX4WHG3CV6PKB7ONIAL2NZTY7YTTB6MCX2GCDZX5DQ4FS4TL6EGA",
     "complianceAllowModule": "CCCZXQ3BLQXX3XSZDYLR77GDFKOAZAE3YZ355INZKMOUJUNN3XC3MZPX",
     "token": "CC4VN43PWNULKUGIPE7UW62NYXCOWUICMMV4FASEGFUFWYOPOHZOLNGO",
-    "decimals": 7
+    "decimals": 7,
+    "vault": "",
+    "vaultIdentity": "",
+    "vaultShareSymbol": "vfmRWA"
   }
 }
