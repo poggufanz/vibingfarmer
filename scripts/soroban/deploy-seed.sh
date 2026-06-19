@@ -15,24 +15,11 @@ ADMIN=$(stellar keys address vf-deployer)
 WASM_DIR="$SOROBAN/target/wasm32-unknown-unknown/release"
 [ -f "$WASM_DIR/registry.wasm" ] || WASM_DIR="$SOROBAN/target/wasm32v1-none/release"
 
-REGISTRY=$(stellar contract deploy \
-  --wasm "$WASM_DIR/registry.wasm" \
-  --source vf-deployer --network "$NET" \
-  -- --admin "$ADMIN")
-
-ACCT_HASH=$(stellar contract upload \
-  --wasm "$WASM_DIR/agent_account.wasm" \
-  --source vf-deployer --network "$NET")
-
-# Seed one demo agent account (owner=admin, dummy signer, far-future expiry).
-VAULT="$ADMIN"  # placeholder until 1c vault exists; replace post-1c
-TOKEN="$ADMIN"
-DEMO_AGENT=$(stellar contract deploy \
-  --wasm "$WASM_DIR/agent_account.wasm" \
-  --source vf-deployer --network "$NET" \
-  -- --owner "$ADMIN" \
-     --signer "0000000000000000000000000000000000000000000000000000000000000000" \
-     --scope "{\"owner\":\"$ADMIN\",\"vault\":\"$VAULT\",\"token\":\"$TOKEN\",\"cap_per_period\":\"1000000000\",\"period_duration\":86400,\"spent_in_period\":\"0\",\"period_start\":0,\"expiry\":4000000000,\"revoked\":false}")
+# 1a (registry + demo agent account) already live on testnet — reuse, do NOT
+# redeploy (would orphan the existing 1a contracts and churn addresses).
+REGISTRY=$(python3 -c "import json;print(json.load(open('$OUT'))['registry'])")
+ACCT_HASH=$(python3 -c "import json;print(json.load(open('$OUT'))['agentAccountWasmHash'])")
+DEMO_AGENT=$(python3 -c "import json;print(json.load(open('$OUT'))['demoAgentAccount'])")
 
 # ---- 1b: RWA (T-REX) stack (OZ README deploy order) ----
 CTI=$(stellar contract deploy --wasm "$WASM_DIR/claim_topics_and_issuers.wasm" \
@@ -66,24 +53,31 @@ stellar contract invoke --id "$IRS" --source vf-deployer --network "$NET" \
 stellar contract invoke --id "$COMPLIANCE" --source vf-deployer --network "$NET" \
   -- bind_token --token "$TOKEN" --operator "$ADMIN"
 
-cat > "$OUT" <<JSON
-{
+REGISTRY="$REGISTRY" ACCT_HASH="$ACCT_HASH" DEMO_AGENT="$DEMO_AGENT" \
+CTI="$CTI" CLAIM_ISSUER="$CLAIM_ISSUER" IRS="$IRS" VERIFIER="$VERIFIER" \
+COMPLIANCE="$COMPLIANCE" ALLOW_MOD="$ALLOW_MOD" TOKEN="$TOKEN" OUT="$OUT" \
+python3 <<'PY'
+import json, os
+out = {
   "network": "testnet",
   "passphrase": "Test SDF Network ; September 2015",
   "rpc": "https://soroban-testnet.stellar.org",
-  "registry": "$REGISTRY",
-  "agentAccountWasmHash": "$ACCT_HASH",
-  "demoAgentAccount": "$DEMO_AGENT",
+  "registry": os.environ["REGISTRY"],
+  "agentAccountWasmHash": os.environ["ACCT_HASH"],
+  "demoAgentAccount": os.environ["DEMO_AGENT"],
   "rwa": {
-    "claimTopicsAndIssuers": "$CTI",
-    "claimIssuer": "$CLAIM_ISSUER",
-    "identityRegistryStorage": "$IRS",
-    "identityVerifier": "$VERIFIER",
-    "compliance": "$COMPLIANCE",
-    "complianceAllowModule": "$ALLOW_MOD",
-    "token": "$TOKEN",
+    "claimTopicsAndIssuers": os.environ["CTI"],
+    "claimIssuer": os.environ["CLAIM_ISSUER"],
+    "identityRegistryStorage": os.environ["IRS"],
+    "identityVerifier": os.environ["VERIFIER"],
+    "compliance": os.environ["COMPLIANCE"],
+    "complianceAllowModule": os.environ["ALLOW_MOD"],
+    "token": os.environ["TOKEN"],
     "decimals": 7
   }
 }
-JSON
+with open(os.environ["OUT"], "w") as f:
+    json.dump(out, f, indent=2)
+    f.write("\n")
+PY
 echo "Wrote $OUT"
