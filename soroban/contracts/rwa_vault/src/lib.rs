@@ -58,6 +58,17 @@ impl RwaVault {
     pub fn drip_epoch(e: &Env) -> u64 {
         get_drip_epoch(e)
     }
+
+    // ----- deposit / redeem -----
+    /// deposit(from, amount) -> shares minted. fn-symbol `deposit`, amount = args[1] (1a pin).
+    pub fn deposit(e: &Env, from: Address, amount: i128) -> Result<i128, types::VaultError> {
+        vault::deposit(e, from, amount)
+    }
+
+    /// redeem(from, shares) -> assets returned (1:1, stable NAV).
+    pub fn redeem(e: &Env, from: Address, shares: i128) -> Result<i128, types::VaultError> {
+        vault::redeem(e, from, shares)
+    }
 }
 
 #[contractimpl(contracttrait)]
