@@ -122,7 +122,7 @@ fn test_deposit_blocked_when_paused_redeem_allowed() {
     fund_and_approve(&env, &token, &admin, &alice, &vault_addr, 100 * U7);
     vault.deposit(&alice, &(100 * U7));
     vault.pause(&admin);
-    assert!(vault.try_deposit(&alice, &(1 * U7)).is_err()); // deposit gated
+    assert!(vault.try_deposit(&alice, &U7).is_err()); // deposit gated (1.0 unit)
     assert_eq!(vault.redeem(&alice, &(50 * U7)), 50 * U7);  // redeem still works
 }
 
