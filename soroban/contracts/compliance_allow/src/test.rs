@@ -20,15 +20,15 @@ fn test_allow_gates_can_transfer() {
     let to = Address::generate(&env);
 
     // Nobody allowed yet -> transfer disallowed. (trait sig: from, to, amount, token)
-    assert_eq!(client.can_transfer(&from, &to, &100i128, &token), false);
+    assert!(!client.can_transfer(&from, &to, &100i128, &token));
 
     // Allow both parties -> transfer allowed.
     client.allow_account(&from, &admin);
     client.allow_account(&to, &admin);
-    assert_eq!(client.can_transfer(&from, &to, &100i128, &token), true);
+    assert!(client.can_transfer(&from, &to, &100i128, &token));
 
     // can_create gates on the recipient only.
-    assert_eq!(client.can_create(&to, &100i128, &token), true);
+    assert!(client.can_create(&to, &100i128, &token));
     let stranger = Address::generate(&env);
-    assert_eq!(client.can_create(&stranger, &100i128, &token), false);
+    assert!(!client.can_create(&stranger, &100i128, &token));
 }
