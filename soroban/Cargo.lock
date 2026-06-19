@@ -1253,6 +1253,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "rwa_vault"
+version = "0.1.0"
+dependencies = [
+ "claim_issuer",
+ "claim_topics_and_issuers",
+ "compliance",
+ "ed25519-dalek",
+ "identity",
+ "identity_registry_storage",
+ "identity_verifier",
+ "rwa_token",
+ "soroban-sdk",
+ "stellar-access",
+ "stellar-contract-utils",
+ "stellar-macros",
+ "stellar-tokens",
+]
+
+[[package]]
 name = "schemars"
 version = "0.8.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"

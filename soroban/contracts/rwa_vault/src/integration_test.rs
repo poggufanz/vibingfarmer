@@ -227,3 +227,57 @@ fn test_deposit_reverts_when_vault_is_not_a_verified_holder() {
 
     assert!(vault.try_deposit(&alice, &(100 * U7)).is_err()); // vault not verified => reverts
 }
+
+/// Off-chain claim generator (NOT part of the suite — `#[ignore]`d).
+///
+/// `scripts/soroban/deploy-seed.sh` runs this to mint a real Ed25519 topic-1 KYC
+/// claim for the deployed vault identity, so the vault registers as a verified
+/// `mRWA` holder on testnet. It reuses the audited [`sign_kyc_claim`] path
+/// verbatim; the ONLY testnet-specific input is the ledger `network_id`
+/// (`SHA-256` of the network passphrase), which the on-chain
+/// `build_claim_message` reads from `e.ledger().network_id()`.
+///
+/// Run (from `soroban/`, WSL login shell):
+/// ```sh
+/// CLAIM_ISSUER=C... VAULT_IDENTITY=C... \
+///   cargo test -p rwa_vault gen_testnet_vault_claim -- --ignored --nocapture
+/// ```
+/// Emits `SIGNER_PUBKEY=`, `SIGNER_SIG_DATA=`, `SIGNER_CLAIM_DATA=` (hex) lines.
+#[test]
+#[ignore = "off-chain claim generator; needs CLAIM_ISSUER + VAULT_IDENTITY env vars"]
+fn gen_testnet_vault_claim() {
+    use soroban_sdk::testutils::Ledger as _;
+
+    let env = Env::default();
+
+    // Testnet network id = SHA-256(passphrase). Compute it the way the host does
+    // so the signed message matches on-chain verification exactly.
+    let passphrase = b"Test SDF Network ; September 2015";
+    let network_id = env
+        .crypto()
+        .sha256(&Bytes::from_slice(&env, passphrase))
+        .to_array();
+    env.ledger().with_mut(|li| li.network_id = network_id);
+
+    let issuer_str = std::env::var("CLAIM_ISSUER").expect("CLAIM_ISSUER env var required");
+    let identity_str = std::env::var("VAULT_IDENTITY").expect("VAULT_IDENTITY env var required");
+    let claim_issuer = Address::from_string(&String::from_str(&env, &issuer_str));
+    let identity = Address::from_string(&String::from_str(&env, &identity_str));
+
+    // Well-known test issuer key (secret = 0x00..00); matches `build_trex`'s
+    // `allow_key`. Topic 1 (KYC), nonce 0 (first claim for this identity+topic).
+    let secret = [0u8; 32];
+    let (sig_data, claim_data) = sign_kyc_claim(&env, &claim_issuer, &identity, &secret, 1u32, 0u32);
+
+    let to_hex = |b: &Bytes| -> std::string::String {
+        let mut s = std::string::String::with_capacity((b.len() as usize) * 2);
+        for byte in b.iter() {
+            s.push_str(&std::format!("{byte:02x}"));
+        }
+        s
+    };
+
+    std::println!("SIGNER_PUBKEY={}", to_hex(&sig_data.slice(0..32)));
+    std::println!("SIGNER_SIG_DATA={}", to_hex(&sig_data));
+    std::println!("SIGNER_CLAIM_DATA={}", to_hex(&claim_data));
+}

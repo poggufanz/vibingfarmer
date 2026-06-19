@@ -54,35 +54,56 @@ stellar contract invoke --id "$COMPLIANCE" --source vf-deployer --network "$NET"
   -- bind_token --token "$TOKEN" --operator "$ADMIN"
 
 # ---- 1c: RWA vault (FOBXX-faithful, stable-NAV daily-dividend) ----
+# Load-bearing T-REX consequence: the vault must be a verified mRWA holder, or
+# deposit/drip/redeem/claim revert at the token move. Verifying it requires the
+# full KYC path — identity contract + IRS entry + compliance allowlist + a real
+# topic-1 KYC claim signed by the trusted issuer key. We mirror the audited
+# integration test exactly (issuer secret = 0x00..00, scheme 101 = Ed25519).
+
+# (1) Deploy the vault's identity first — the signed claim binds to the identity,
+#     not the vault, so it can be produced before the vault exists.
+VAULT_IDENTITY=$(stellar contract deploy --wasm "$WASM_DIR/identity.wasm" \
+  --source vf-deployer --network "$NET" -- --owner "$ADMIN")
+
+# (2) Mint the real Ed25519 topic-1 claim for this identity. The generator reuses
+#     the audited sign_kyc_claim path and signs over the testnet network id, so the
+#     message matches the on-chain build_claim_message byte-for-byte.
+SIGNER_OUT=$(cd "$SOROBAN" && CLAIM_ISSUER="$CLAIM_ISSUER" VAULT_IDENTITY="$VAULT_IDENTITY" \
+  cargo test -p rwa_vault gen_testnet_vault_claim -- --ignored --nocapture 2>/dev/null)
+PUBKEY=$(printf '%s\n' "$SIGNER_OUT"    | sed -n 's/^SIGNER_PUBKEY=//p'      | tr -d '\r')
+SIG_DATA=$(printf '%s\n' "$SIGNER_OUT"  | sed -n 's/^SIGNER_SIG_DATA=//p'    | tr -d '\r')
+CLAIM_DATA=$(printf '%s\n' "$SIGNER_OUT" | sed -n 's/^SIGNER_CLAIM_DATA=//p' | tr -d '\r')
+[ -n "$PUBKEY" ] && [ -n "$SIG_DATA" ] && [ -n "$CLAIM_DATA" ] || {
+  echo "ERROR: claim generator produced no signature (build failed?)" >&2; exit 1; }
+
+# (3) Trust the issuer signing key for topic 1 on the claim issuer (registry = CTI).
+stellar contract invoke --id "$CLAIM_ISSUER" --source vf-deployer --network "$NET" \
+  -- allow_key --public_key "$PUBKEY" --registry "$CTI" --claim_topic 1
+
+# (4) Store the signed KYC claim on the vault identity.
+stellar contract invoke --id "$VAULT_IDENTITY" --source vf-deployer --network "$NET" \
+  -- add_claim --topic 1 --scheme 101 --issuer "$CLAIM_ISSUER" \
+     --signature "$SIG_DATA" --data "$CLAIM_DATA" \
+     --uri "https://vibing.farm/claim/vault-kyc"
+
+# (5) Deploy the vault, then register its identity in the IRS + compliance allowlist.
 VAULT=$(stellar contract deploy --wasm "$WASM_DIR/rwa_vault.wasm" \
   --source vf-deployer --network "$NET" \
   -- --admin "$ADMIN" --token "$TOKEN" \
      --name "Vibing Vault mRWA" --symbol "vfmRWA")
-
-# Load-bearing T-REX consequence: the vault must be a verified mRWA holder or
-# deposit/drip/redeem/claim revert at the token move. Register its identity + IRS entry
-# + whitelist it in the compliance allow module.
-VAULT_IDENTITY=$(stellar contract deploy --wasm "$WASM_DIR/identity.wasm" \
-  --source vf-deployer --network "$NET" -- --owner "$ADMIN")
-# `--initial_profiles` mirrors the CountryData{Individual(Residence(360)), metadata:None}
-# Val the Task-4 integration test uses; confirm the exact JSON shape against
-# `stellar contract info --id "$IRS"` if the invoke rejects.
+# add_identity requires >=1 country entry. `initial_profiles` is `Vec<Val>`
+# (exported name; trait source calls it country_data_list), so stellar-cli parses
+# each element with stellar-xdr's `serde::Deserialize for ScVal` (snake_case tags),
+# NOT the convenience-struct form. The tagged JSON below is the exact ScVal that
+# `CountryData{ country: Individual(Residence(360)), metadata: None }.into_val()`
+# produces — verified offline to be byte-for-byte identical (struct->sorted ScMap,
+# tuple-variant enum->ScVec[Symbol,..], Option::None->Void="void").
 stellar contract invoke --id "$IRS" --source vf-deployer --network "$NET" \
   -- add_identity --account "$VAULT" --identity "$VAULT_IDENTITY" \
-     --initial_profiles '[{"country":{"Individual":{"Residence":360}},"metadata":null}]' \
+     --initial_profiles '[{"map":[{"key":{"symbol":"country"},"val":{"vec":[{"symbol":"Individual"},{"vec":[{"symbol":"Residence"},{"u32":360}]}]}},{"key":{"symbol":"metadata"},"val":"void"}]}]' \
      --operator "$ADMIN"
 stellar contract invoke --id "$ALLOW_MOD" --source vf-deployer --network "$NET" \
   -- allow_account --account "$VAULT" --operator "$ADMIN"
-
-# The topic-1 KYC claim for the vault identity must be signed by the trusted claim-issuer
-# key (off-chain Ed25519) and stored in $VAULT_IDENTITY. This is the SAME off-chain signing
-# step 1b deferred for per-investor claims (see docs/soroban-kyc-seam.md). Sign the canonical
-# message (0x01 || network_id || issuer.to_xdr || $VAULT_IDENTITY.to_xdr || topic||nonce ||
-# claim_data) with the issuer secret, then:
-#   stellar contract invoke --id "$VAULT_IDENTITY" --source vf-deployer --network "$NET" \
-#     -- add_claim --topic 1 --scheme 101 --issuer "$CLAIM_ISSUER" \
-#        --signature <sig_data> --data <claim_data> --uri <uri>
-# The Rust integration test (Task 4) is the authoritative proof of the on-chain path.
 
 REGISTRY="$REGISTRY" ACCT_HASH="$ACCT_HASH" DEMO_AGENT="$DEMO_AGENT" \
 CTI="$CTI" CLAIM_ISSUER="$CLAIM_ISSUER" IRS="$IRS" VERIFIER="$VERIFIER" \
