@@ -104,3 +104,60 @@ guardrail. 1d may be added as a `compliance_allow`-style module (implementing th
 audited `ComplianceModule` trait: `can_transfer`/`can_create`/`on_transfer`/
 `on_created`/`on_destroyed`) OR enforced in the vault — that decision is 1d's,
 not 1b's.
+
+## RWA vault (`rwa_vault`, struct `RwaVault`) — pinned by sub-project 1c
+
+> **Primitive decision (Task 0):** yield model **(b)** is LOCKED (stable $1.00 NAV +
+> daily dividend). ERC-4626 / the OZ "vault module" implements model **(a)** (share-price
+> growth) — the spec's explicitly-rejected option — so the position ledger is built on the
+> audited OZ `fungible::Base` (per-holder balance + total supply + 7-dp metadata) with
+> deposit/redeem (1:1) + a cumulative-dividend-per-share index hand-rolled on top.
+
+- Model: **FOBXX-faithful (spec §6.1 (b), LOCKED)** — stable $1.00 NAV (shares 1:1 with
+  principal) + daily dividend (new mRWA units distributed pro-rata). NOT ERC-4626
+  share-growth. Position ledger built on OZ `fungible::Base`; yield on a cumulative-
+  dividend-per-share index (O(1) per holder, claim-on-interaction).
+- Share token: decimals **7**, symbol `vfmRWA`, **non-transferable** (no transfer/approve
+  exposed — positions move only via deposit/redeem; keeps the dividend index sound).
+- Constructor: `__constructor(admin: Address, token: Address, name: String, symbol: String)`
+  where `token` = the 1b mRWA SEP-41 token.
+- `deposit(from: Address, amount: i128) -> i128` (shares) — **1a-pinned** fn-symbol
+  `deposit`, amount = args[1]. Pause-gated. 1:1 shares. Pulls mRWA via
+  `transfer_from(spender = vault, from, to = vault, amount)` (consumes `allowance[from][vault]`).
+- `redeem(from: Address, shares: i128) -> i128` (assets) — NOT pause-gated. 1:1 principal.
+  Auth: `Base::burn` enforces `from.require_auth()` (do not double-auth `from`).
+- `drip(amount: i128)` — admin-only mock yield source; pulls mRWA from the admin treasury
+  and bumps the dividend index. Pause-gated. (Autonomous cadence = sub-project 4.)
+- `claim(holder: Address) -> i128` — permissionless; pays the holder their accrued mRWA
+  dividend. NOT pause-gated.
+- `claimable(holder: Address) -> i128` — view.
+- Reads: `admin`, `token`, `decimals`(=7), `balance(id)`, `total_shares`, `total_principal`,
+  `acc_div_per_share`, `drip_epoch`.
+- Events: `vault_deposit`, `vault_redeem`, `vault_drip`, `vault_claim` (force-graph monitor
+  subscribes via RPC getEvents).
+- Admin is stored in OZ access-control storage (`AccessControlStorageKey::Admin`), NOT a
+  custom `DataKey::Admin` — a unit variant `Admin` encodes to the identical
+  `Vec[Symbol("Admin")]` storage key and would collide (→ `AdminAlreadySet` #2006).
+
+### CONSEQUENCE — vault is a verified mRWA holder (load-bearing)
+The vault holds/moves mRWA, so it MUST be a KYC-verified identity (IRS + topic-1 claim
+from a trusted issuer) or whitelisted by a compliance module — registered at deploy time
+(deploy-seed.sh). Otherwise deposit/drip/redeem/claim revert at the token transfer. Holders
+(users/agents) and the admin treasury must likewise be verified mRWA holders.
+
+### Agent-deposit auth-tree consequence (for 2/4 — NOT solved in 1c)
+1a's `__check_auth` permits a single `deposit@vault` context. The vault deliberately pulls
+via `transfer_from` (vault = spender, self-authorized) so a 1a agent `from` authorizes ONLY
+`deposit@vault` — no nested `transfer@token` context (which `token.transfer(from,..)` would
+add and 1a would reject). The open question — who grants `allowance[*][vault]` (the agent
+cannot self-`approve` under 1a; the spec's "approve once" implies the OWNER grants it, and
+the beneficial holder/shares question follows) — is an auth-tree assembly decision owned by
+sub-project **2 (relay)** + **4 (orchestrator)**. 1c tests use a plain verified holder as
+`from` with a pre-set allowance.
+
+### Yield vs principal vs agent caps vs T-REX (do not conflate)
+- Vault **principal** (1:1 shares, stable NAV) and vault **dividend** (cumulative index)
+  are vault-internal accounting only.
+- The **agent allocation/exposure caps** (Aladdin limits) are sub-project **1d** — distinct.
+- The **T-REX transfer compliance** (who may hold/transfer mRWA) is sub-project **1b** —
+  distinct; the vault is a holder subject to it (see consequence above).
