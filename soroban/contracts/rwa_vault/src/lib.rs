@@ -69,6 +69,22 @@ impl RwaVault {
     pub fn redeem(e: &Env, from: Address, shares: i128) -> Result<i128, types::VaultError> {
         vault::redeem(e, from, shares)
     }
+
+    // ----- FOBXX-faithful yield -----
+    /// Admin-only mock yield source: fund + distribute a dividend pro-rata (FOBXX-faithful).
+    pub fn drip(e: &Env, amount: i128) -> Result<(), types::VaultError> {
+        vault::drip(e, amount)
+    }
+
+    /// Permissionless: pay `holder` their accrued mRWA dividend. Returns amount paid.
+    pub fn claim(e: &Env, holder: Address) -> Result<i128, types::VaultError> {
+        vault::claim(e, holder)
+    }
+
+    /// View: mRWA dividend currently claimable by `holder`.
+    pub fn claimable(e: &Env, holder: Address) -> i128 {
+        vault::claimable(e, holder)
+    }
 }
 
 #[contractimpl(contracttrait)]

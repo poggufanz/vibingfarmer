@@ -125,3 +125,95 @@ fn test_deposit_blocked_when_paused_redeem_allowed() {
     assert!(vault.try_deposit(&alice, &(1 * U7)).is_err()); // deposit gated
     assert_eq!(vault.redeem(&alice, &(50 * U7)), 50 * U7);  // redeem still works
 }
+
+// Admin funds itself an mRWA yield treasury and approves the vault to pull it on drip.
+fn fund_admin_treasury(env: &Env, token: &Address, admin: &Address, vault: &Address, amount: i128) {
+    StellarAssetClient::new(env, token).mint(admin, &amount);
+    let exp = env.ledger().sequence() + 100_000;
+    TokenClient::new(env, token).approve(admin, vault, &amount, &exp);
+}
+
+#[test]
+fn test_drip_distributes_pro_rata_across_holders() {
+    let env = Env::default();
+    let (vault, admin, token) = setup(&env);
+    let vault_addr = vault.address.clone();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    fund_and_approve(&env, &token, &admin, &alice, &vault_addr, 300 * U7);
+    fund_and_approve(&env, &token, &admin, &bob, &vault_addr, 100 * U7);
+    vault.deposit(&alice, &(300 * U7)); // 300 shares
+    vault.deposit(&bob, &(100 * U7));   // 100 shares  (total 400)
+
+    fund_admin_treasury(&env, &token, &admin, &vault_addr, 40 * U7);
+    vault.drip(&(40 * U7)); // 40 mRWA over 400 shares => 0.1 per share
+
+    assert_eq!(vault.claimable(&alice), 30 * U7); // 300 * 0.1
+    assert_eq!(vault.claimable(&bob), 10 * U7);   // 100 * 0.1
+    assert_eq!(vault.drip_epoch(), 1);
+
+    let paid = vault.claim(&alice);
+    assert_eq!(paid, 30 * U7);
+    assert_eq!(TokenClient::new(&env, &token).balance(&alice), 30 * U7); // dividend in mRWA units
+    assert_eq!(vault.claimable(&alice), 0);
+    assert_eq!(vault.claimable(&bob), 10 * U7); // bob untouched
+}
+
+#[test]
+fn test_nav_stays_stable_after_drip() {
+    // Shares are 1:1 with principal regardless of drips → NAV ≈ $1.00 (model (b)).
+    let env = Env::default();
+    let (vault, admin, token) = setup(&env);
+    let vault_addr = vault.address.clone();
+    let alice = Address::generate(&env);
+    fund_and_approve(&env, &token, &admin, &alice, &vault_addr, 100 * U7);
+    vault.deposit(&alice, &(100 * U7));
+    fund_admin_treasury(&env, &token, &admin, &vault_addr, 50 * U7);
+    vault.drip(&(50 * U7));
+    // Redeeming all shares returns exactly the principal (not principal + yield):
+    let assets = vault.redeem(&alice, &(100 * U7));
+    assert_eq!(assets, 100 * U7);            // stable NAV: 1 share -> 1 asset
+    assert_eq!(vault.claimable(&alice), 50 * U7); // yield is a separate claimable dividend
+}
+
+#[test]
+fn test_deposit_after_drip_does_not_dilute_existing_dividend() {
+    // settle-on-interaction: a late depositor must not retroactively claim past drips.
+    let env = Env::default();
+    let (vault, admin, token) = setup(&env);
+    let vault_addr = vault.address.clone();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    fund_and_approve(&env, &token, &admin, &alice, &vault_addr, 100 * U7);
+    fund_and_approve(&env, &token, &admin, &bob, &vault_addr, 100 * U7);
+
+    vault.deposit(&alice, &(100 * U7)); // 100 shares, only holder
+    fund_admin_treasury(&env, &token, &admin, &vault_addr, 10 * U7);
+    vault.drip(&(10 * U7));             // alice entitled to all 10
+
+    vault.deposit(&bob, &(100 * U7));   // bob joins AFTER the drip
+    assert_eq!(vault.claimable(&alice), 10 * U7); // alice keeps the full 10
+    assert_eq!(vault.claimable(&bob), 0);         // bob gets nothing from the past drip
+
+    fund_admin_treasury(&env, &token, &admin, &vault_addr, 20 * U7);
+    vault.drip(&(20 * U7));             // 20 over 200 shares => 0.1 each
+    assert_eq!(vault.claimable(&alice), 20 * U7); // 10 + 10
+    assert_eq!(vault.claimable(&bob), 10 * U7);   // 0 + 10
+}
+
+#[test]
+fn test_drip_with_no_shares_rejected() {
+    let env = Env::default();
+    let (vault, admin, token) = setup(&env);
+    let vault_addr = vault.address.clone();
+    fund_admin_treasury(&env, &token, &admin, &vault_addr, 10 * U7);
+    assert!(vault.try_drip(&(10 * U7)).is_err()); // no shares => NoShares
+}
+
+#[test]
+fn test_claim_nothing_rejected() {
+    let env = Env::default();
+    let (vault, _admin, _token) = setup(&env);
+    let alice = Address::generate(&env);
+    assert!(vault.try_claim(&alice).is_err()); // NothingToClaim
+}
