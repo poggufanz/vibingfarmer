@@ -7,6 +7,7 @@ const TTL_THRESHOLD: u32 = 17_280;
 const TTL_EXTEND: u32 = 518_400;
 
 impl Registry {
+    #[allow(clippy::too_many_arguments)] // EIP-712 scope grant legitimately needs every field
     pub(crate) fn authorize_impl(
         env: &Env,
         owner: Address,

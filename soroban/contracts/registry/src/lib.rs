@@ -16,6 +16,7 @@ impl Registry {
         env.storage().instance().set(&DataKey::Admin, &admin);
     }
 
+    #[allow(clippy::too_many_arguments)] // EIP-712 scope grant legitimately needs every field
     pub fn authorize(
         env: Env,
         owner: Address,
