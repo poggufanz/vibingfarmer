@@ -37,8 +37,26 @@ function pruneSeen(now) {
   for (const [k, v] of _seen) if (now - v.at > SEEN_TTL_MS) _seen.delete(k)
 }
 
-// Replaced by a real implementation in Task 4. No-op when vaultAddr is falsy.
-export function assertVaultDeposit(_inner, _vaultAddr, _sdk) {}
+/**
+ * Reject anything that is not a single InvokeHostFunction calling `vaultAddr`.deposit.
+ * No-op when vaultAddr is falsy. Throws RelayError on mismatch.
+ */
+export function assertVaultDeposit(inner, vaultAddr, sdk) {
+  if (!vaultAddr) return
+  const ops = inner.operations || []
+  if (ops.length !== 1 || ops[0].type !== 'invokeHostFunction') {
+    throw new RelayError('relay sponsors a single vault deposit only')
+  }
+  const hf = ops[0].func
+  if (hf.switch().name !== 'hostFunctionTypeInvokeContract') {
+    throw new RelayError('inner op is not a contract invocation')
+  }
+  const ic = hf.invokeContract()
+  const contract = sdk.Address.fromScAddress(ic.contractAddress()).toString()
+  const fnName = ic.functionName().toString()
+  if (contract !== vaultAddr) throw new RelayError('inner tx does not target the vault')
+  if (fnName !== 'deposit') throw new RelayError('inner tx is not a deposit')
+}
 
 /** Poll getTransaction until it leaves NOT_FOUND, or the budget is spent. */
 async function pollResult(rpcServer, hash, tries, intervalMs) {

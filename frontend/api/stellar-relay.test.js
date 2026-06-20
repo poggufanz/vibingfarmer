@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { feeBumpAndSubmit, RelayError, _clearSeen } from './stellar-relay.js'
+import { feeBumpAndSubmit, RelayError, _clearSeen, assertVaultDeposit } from './stellar-relay.js'
 
 const PASS = 'Test SDF Network ; September 2015'
 const SECRET = 'SABCD' // never parsed — Keypair.fromSecret is faked below
@@ -86,5 +86,50 @@ describe('feeBumpAndSubmit', () => {
     })
     expect(out.status).toBe('PENDING')
     expect(out.hash).toBe('OUTERHASH')
+  })
+})
+
+const VAULT = 'CCTGGJVVY45DYDDXM3XBFEJ2OT2J2ZT6HIXZEQKXU7Z53TH3YSZJC3PF'
+
+// A fake inner tx whose single op decodes to invokeContract(contractStr, fnStr).
+function depositTx(contractStr, fnStr) {
+  return {
+    operations: [
+      {
+        type: 'invokeHostFunction',
+        func: {
+          switch: () => ({ name: 'hostFunctionTypeInvokeContract' }),
+          invokeContract: () => ({
+            contractAddress: () => ({ __sc: contractStr }),
+            functionName: () => fnStr, // ScSymbol stringifies to the symbol
+          }),
+        },
+      },
+    ],
+  }
+}
+// Fake Address.fromScAddress: reads back the contract string our fixture tucked in.
+const sdkAddr = { Address: { fromScAddress: (sc) => ({ toString: () => sc.__sc }) } }
+
+describe('assertVaultDeposit', () => {
+  it('passes a single deposit op to the configured vault', () => {
+    expect(() => assertVaultDeposit(depositTx(VAULT, 'deposit'), VAULT, sdkAddr)).not.toThrow()
+  })
+  it('rejects a call to a different contract', () => {
+    expect(() => assertVaultDeposit(depositTx('CWRONG', 'deposit'), VAULT, sdkAddr)).toThrow(RelayError)
+  })
+  it('rejects a non-deposit function', () => {
+    expect(() => assertVaultDeposit(depositTx(VAULT, 'redeem'), VAULT, sdkAddr)).toThrow(RelayError)
+  })
+  it('rejects a multi-operation tx', () => {
+    const tx = depositTx(VAULT, 'deposit')
+    tx.operations.push(tx.operations[0])
+    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr)).toThrow(RelayError)
+  })
+  it('rejects a non-invoke op', () => {
+    expect(() => assertVaultDeposit({ operations: [{ type: 'payment' }] }, VAULT, sdkAddr)).toThrow(RelayError)
+  })
+  it('is a no-op when vaultAddr is empty (pre-wiring / smoke bypass)', () => {
+    expect(() => assertVaultDeposit(depositTx('CANY', 'anything'), '', sdkAddr)).not.toThrow()
   })
 })
