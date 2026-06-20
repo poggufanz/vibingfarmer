@@ -41,7 +41,7 @@ fn test_constructor_stores_scope_and_key() {
     let got = client.scope_of();
     assert_eq!(got.vault, vault);
     assert_eq!(got.cap_per_period, 1_000_000_000);
-    assert_eq!(got.revoked, false);
+    assert!(!got.revoked);
     assert_eq!(client.signer(), pubkey);
 }
 
@@ -339,4 +339,98 @@ fn constructor_self_approves_vault_for_cap() {
     // Assert: the agent pre-approved the vault to pull `cap` of the token.
     let allowance = soroban_sdk::token::TokenClient::new(&env, &token).allowance(&agent, &vault);
     assert_eq!(allowance, cap);
+}
+
+// --- Task 3: owner_withdraw exit sweep ---
+#[test]
+fn owner_withdraw_sweeps_principal_back_to_owner() {
+    // Arrange: token + vault + agent (constructor pre-approves the vault).
+    let env = Env::default();
+    env.mock_all_auths();
+    let owner = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(admin.clone());
+    let token = sac.address();
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    let token_client = soroban_sdk::token::TokenClient::new(&env, &token);
+    let vault = env.register(
+        rwa_vault::RwaVault,
+        (
+            admin.clone(),
+            token.clone(),
+            soroban_sdk::String::from_str(&env, "Vault"),
+            soroban_sdk::String::from_str(&env, "vfVLT"),
+        ),
+    );
+    let signer = BytesN::from_array(&env, &[7u8; 32]);
+    let cap: i128 = 100_000_000;
+    let s = AgentScope {
+        owner: owner.clone(),
+        vault: vault.clone(),
+        token: token.clone(),
+        cap_per_period: cap,
+        period_duration: 3600,
+        spent_in_period: 0,
+        period_start: 0,
+        expiry: env.ledger().timestamp() + 3600,
+        revoked: false,
+    };
+    let agent = env.register(AgentAccount, (owner.clone(), signer, s));
+
+    // Fund the agent and deposit (mock_all_auths stands in for the session-key path here;
+    // the real session-key auth tree is Phase 2). Shares mint to the agent.
+    token_admin.mint(&agent, &60_000_000);
+    crate::vault_client::VaultClient::new(&env, &vault).deposit(&agent, &50_000_000);
+    assert_eq!(
+        crate::vault_client::VaultClient::new(&env, &vault).balance(&agent),
+        50_000_000
+    );
+
+    // Act: owner sweeps everything back.
+    let swept = AgentAccountClient::new(&env, &agent).owner_withdraw(&owner);
+
+    // Assert: agent emptied, owner holds principal (50m redeemed + 10m never deposited).
+    assert_eq!(
+        crate::vault_client::VaultClient::new(&env, &vault).balance(&agent),
+        0
+    );
+    assert_eq!(token_client.balance(&agent), 0);
+    assert_eq!(token_client.balance(&owner), 60_000_000);
+    assert_eq!(swept, 60_000_000);
+}
+
+#[test]
+fn owner_withdraw_rejects_non_owner() {
+    let env = Env::default();
+    let owner = Address::generate(&env);
+    let stranger = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(admin.clone());
+    let token = sac.address();
+    let vault = Address::generate(&env);
+    let signer = BytesN::from_array(&env, &[7u8; 32]);
+    let s = AgentScope {
+        owner: owner.clone(),
+        vault,
+        token,
+        cap_per_period: 1,
+        period_duration: 3600,
+        spent_in_period: 0,
+        period_start: 0,
+        expiry: env.ledger().timestamp() + 3600,
+        revoked: false,
+    };
+    let agent = env.register(AgentAccount, (owner.clone(), signer, s));
+    // Only the stranger authorizes — owner.require_auth() must fail.
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &stranger,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &agent,
+            fn_name: "owner_withdraw",
+            args: (stranger.clone(),).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    let res = AgentAccountClient::new(&env, &agent).try_owner_withdraw(&stranger);
+    assert!(res.is_err());
 }

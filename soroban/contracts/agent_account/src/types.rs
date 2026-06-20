@@ -39,4 +39,7 @@ pub enum AccountError {
     BadSignature = 8,
     UnexpectedContexts = 9,
     InvalidAmount = 10,
+    // owner_withdraw (Task 3) — appended; existing discriminants unchanged.
+    NotOwner = 20,
+    NothingToWithdraw = 21,
 }

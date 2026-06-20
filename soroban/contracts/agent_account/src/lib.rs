@@ -8,7 +8,8 @@ mod test;
 pub mod types;
 pub mod vault_client;
 
-use types::{AgentScope, DataKey};
+use types::{AccountError, AgentScope, DataKey};
+use vault_client::VaultClient;
 
 // Allowance lives this many ledgers (~30 days at 5s) — long enough to outlast any session scope.
 const APPROVE_TTL_LEDGERS: u32 = 518_400;
@@ -59,6 +60,72 @@ impl AgentAccount {
 
     pub fn scope_of(env: Env) -> AgentScope {
         env.storage().instance().get(&DataKey::Scope).unwrap()
+    }
+
+    /// Owner-gated exit. Redeems all of the agent's vault shares, claims any accrued dividend,
+    /// and transfers the agent's whole asset balance to `to`. Authorized by the OWNER (not the
+    /// session key) and by THIS contract as invoker for its own redeem/transfer sub-calls.
+    /// Returns the asset amount swept to `to`.
+    pub fn owner_withdraw(env: Env, to: Address) -> Result<i128, AccountError> {
+        let owner: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Owner)
+            .ok_or(AccountError::NotInit)?;
+        owner.require_auth();
+
+        let scope: AgentScope = env
+            .storage()
+            .instance()
+            .get(&DataKey::Scope)
+            .ok_or(AccountError::NotInit)?;
+        let current = env.current_contract_address();
+        let vault = scope.vault.clone();
+        let token = scope.token.clone();
+        let vault_client = VaultClient::new(&env, &vault);
+        let token_client = TokenClient::new(&env, &token);
+
+        // 1. Redeem all shares (vault.redeem calls from.require_auth() on the agent → invoker auth).
+        let shares = vault_client.balance(&current);
+        if shares > 0 {
+            env.authorize_as_current_contract(vec![
+                &env,
+                InvokerContractAuthEntry::Contract(SubContractInvocation {
+                    context: ContractContext {
+                        contract: vault.clone(),
+                        fn_name: Symbol::new(&env, "redeem"),
+                        args: (current.clone(), shares).into_val(&env),
+                    },
+                    sub_invocations: vec![&env],
+                }),
+            ]);
+            vault_client.redeem(&current, &shares);
+        }
+
+        // 2. Claim any dividend — best-effort. The vault traps with NothingToClaim when there is
+        //    no dividend; that must never block the sweep of shares + principal.
+        let _ = vault_client.try_claim(&current);
+
+        // 3. Sweep the agent's whole asset balance to `to` (token.transfer needs agent auth → invoker).
+        let bal = token_client.balance(&current);
+        if bal <= 0 {
+            return Err(AccountError::NothingToWithdraw);
+        }
+        env.authorize_as_current_contract(vec![
+            &env,
+            InvokerContractAuthEntry::Contract(SubContractInvocation {
+                context: ContractContext {
+                    contract: token.clone(),
+                    fn_name: Symbol::new(&env, "transfer"),
+                    args: (current.clone(), to.clone(), bal).into_val(&env),
+                },
+                sub_invocations: vec![&env],
+            }),
+        ]);
+        token_client.transfer(&current, &to, &bal);
+
+        env.storage().instance().extend_ttl(17_280, 518_400);
+        Ok(bal)
     }
 
     pub fn signer(env: Env) -> BytesN<32> {
