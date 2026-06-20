@@ -1,11 +1,20 @@
 # Design Spec 0 — Stellar/Soroban Migration + RWA-Fi Evolution
 
 **Date:** 2026-06-18
-**Status:** Draft for review
+**Status:** ⛔ RWA-Fi direction CANCELLED 2026-06-20 — reverted to plain DeFi yield farming
 **Type:** Master architecture / product definition (sub-project 0 — gates 1–4)
 **Author:** brainstorming session (caveman-ultra)
 
 > Local-only doc. `docs/superpowers/` is gitignored per project rule — do **not** commit.
+
+> **⛔ CANCELLED 2026-06-20 (commit 52bf9a5 on `iq`).** The RWA-Fi layer was removed and
+> the product returned to **plain DeFi yield farming on Soroban**. Dropped: 1b (T-REX
+> rwa_token + identity/claim stack + compliance) and 1d (compliance guardrail). The
+> `rwa_vault` is now a plain yield vault over any SEP-41/SAC asset (stable-NAV
+> daily-dividend yield). **Kept:** 1a (agent accounts + registry) and 2 (gasless fee-bump
+> relay). Redeployed to testnet — vault `CCDXZ6BUA7TPR3EXQWJWUD7EYR6OUMJRYIKYXPE53HRJOJFY5CXEHTN5`,
+> token (plain SAC `VFUSD`) `CAJSGONIIU4QPLNIVVOO7QCYC2LWGYMGXTD7BXSSNIQWWDHWFQTSAEB4`.
+> Everything below documents the abandoned RWA-Fi plan — keep for history only.
 
 ---
 
