@@ -7,6 +7,7 @@ use stellar_tokens::fungible::Base;
 
 pub mod types;
 pub mod storage;
+mod guardrail_iface;
 mod vault;
 mod test;
 mod integration_test;

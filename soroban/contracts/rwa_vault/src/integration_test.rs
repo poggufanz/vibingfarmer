@@ -300,3 +300,151 @@ fn gen_testnet_vault_claim() {
     std::println!("SIGNER_SIG_DATA={}", to_hex(&sig_data));
     std::println!("SIGNER_CLAIM_DATA={}", to_hex(&claim_data));
 }
+
+use soroban_sdk::testutils::Ledger as _;
+
+// Deploys registry+guardrail, the KYC-verified vault, and an agent scoped to it. Returns
+// everything the cap tests need. `cap`/`max_exposure`/`max_pct_bps` parameterize the policy.
+struct Wired {
+    vault: RwaVaultClient<'static>,
+    guard: guardrail::GuardrailClient<'static>,
+    owner: Address,
+    vault_id: Address,
+}
+fn wire_full(env: &Env, t: &Trex, agent: &Address, cap: i128, max_exposure: i128, max_pct_bps: u32) -> Wired {
+    let owner = Address::generate(env);
+    let reg_id = env.register(registry::Registry, (t.admin.clone(),));
+    let guard_id = env.register(guardrail::Guardrail, (t.admin.clone(), reg_id.clone()));
+    let vault_id = env.register(
+        RwaVault,
+        (
+            t.admin.clone(),
+            t.token.clone(),
+            guard_id.clone(),
+            String::from_str(env, "Vibing Vault mRWA"),
+            String::from_str(env, "vfmRWA"),
+        ),
+    );
+    kyc_verify(env, t, &vault_id);
+    registry::RegistryClient::new(env, &reg_id).authorize(
+        &owner, agent, &vault_id, &t.token, &cap, &86_400u64, &4_000_000_000u64,
+    );
+    guardrail::GuardrailClient::new(env, &guard_id).set_policy(&owner, agent, &max_exposure, &max_pct_bps);
+    Wired {
+        vault: RwaVaultClient::new(env, &vault_id),
+        guard: guardrail::GuardrailClient::new(env, &guard_id),
+        owner,
+        vault_id,
+    }
+}
+
+#[test]
+fn test_guardrail_within_caps_deposit_succeeds_end_to_end() {
+    let env = Env::default();
+    let t = build_trex(&env);
+    let alice = Address::generate(&env);
+    kyc_verify(&env, &t, &alice);
+    let w = wire_full(&env, &t, &alice, 1_000 * U7, 1_000 * U7, 10_000); // permissive
+
+    mint_mrwa(&env, &t, &alice, 1_000 * U7);
+    let exp = env.ledger().sequence() + 100_000;
+    TokenClient::new(&env, &t.token).approve(&alice, &w.vault_id, &(1_000 * U7), &exp);
+
+    assert_eq!(w.vault.deposit(&alice, &(500 * U7)), 500 * U7);
+    assert_eq!(w.vault.total_principal(), 500 * U7);
+    assert_eq!(w.guard.position_of(&alice, &w.vault_id), 500 * U7);
+    let _ = w.owner;
+}
+
+#[test]
+fn test_guardrail_reverts_over_spend_cap() {
+    let env = Env::default();
+    let t = build_trex(&env);
+    let alice = Address::generate(&env);
+    kyc_verify(&env, &t, &alice);
+    let w = wire_full(&env, &t, &alice, 100 * U7, 1_000 * U7, 10_000); // spend cap = 100
+
+    mint_mrwa(&env, &t, &alice, 1_000 * U7);
+    let exp = env.ledger().sequence() + 100_000;
+    TokenClient::new(&env, &t.token).approve(&alice, &w.vault_id, &(1_000 * U7), &exp);
+
+    assert_eq!(w.vault.deposit(&alice, &(100 * U7)), 100 * U7); // at the cap
+    assert!(w.vault.try_deposit(&alice, &U7).is_err()); // over spend cap → revert, no mint
+    assert_eq!(w.vault.total_principal(), 100 * U7); // unchanged by the reverted deposit
+}
+
+#[test]
+fn test_guardrail_reverts_over_exposure_cap() {
+    let env = Env::default();
+    let t = build_trex(&env);
+    let alice = Address::generate(&env);
+    kyc_verify(&env, &t, &alice);
+    let w = wire_full(&env, &t, &alice, 1_000 * U7, 100 * U7, 10_000); // exposure cap = 100
+
+    mint_mrwa(&env, &t, &alice, 1_000 * U7);
+    let exp = env.ledger().sequence() + 100_000;
+    TokenClient::new(&env, &t.token).approve(&alice, &w.vault_id, &(1_000 * U7), &exp);
+
+    assert_eq!(w.vault.deposit(&alice, &(100 * U7)), 100 * U7);
+    assert!(w.vault.try_deposit(&alice, &U7).is_err()); // over exposure cap → revert
+}
+
+#[test]
+fn test_guardrail_de_peg_set_nav_reverts_now_out_of_policy_deposit() {
+    // Two vaults, one owner, 60% cap. Establish a 50/50 portfolio, then an upward NAV move
+    // on vault A revalues A's whole position over the cap → the next deposit into A reverts.
+    let env = Env::default();
+    let t = build_trex(&env);
+    let alice = Address::generate(&env); // agent for vault A
+    let bravo = Address::generate(&env); // agent for vault B
+    kyc_verify(&env, &t, &alice);
+    kyc_verify(&env, &t, &bravo);
+
+    // Shared owner + registry + guardrail; two KYC-verified vaults A and B.
+    let owner = Address::generate(&env);
+    let reg_id = env.register(registry::Registry, (t.admin.clone(),));
+    let guard_id = env.register(guardrail::Guardrail, (t.admin.clone(), reg_id.clone()));
+    let mk_vault = |env: &Env| {
+        let id = env.register(
+            RwaVault,
+            (
+                t.admin.clone(),
+                t.token.clone(),
+                guard_id.clone(),
+                String::from_str(env, "Vibing Vault mRWA"),
+                String::from_str(env, "vfmRWA"),
+            ),
+        );
+        kyc_verify(env, &t, &id);
+        id
+    };
+    let vault_a = mk_vault(&env);
+    let vault_b = mk_vault(&env);
+
+    let reg = registry::RegistryClient::new(&env, &reg_id);
+    let guard = guardrail::GuardrailClient::new(&env, &guard_id);
+    reg.authorize(&owner, &alice, &vault_a, &t.token, &(10_000 * U7), &86_400u64, &4_000_000_000u64);
+    reg.authorize(&owner, &bravo, &vault_b, &t.token, &(10_000 * U7), &86_400u64, &4_000_000_000u64);
+    guard.set_policy(&owner, &alice, &(10_000 * U7), &6_000u32); // 60%
+    guard.set_policy(&owner, &bravo, &(10_000 * U7), &6_000u32);
+
+    // Fund + approve both agents for both vaults.
+    mint_mrwa(&env, &t, &alice, 10_000 * U7);
+    mint_mrwa(&env, &t, &bravo, 10_000 * U7);
+    let exp = env.ledger().sequence() + 100_000;
+    let token = TokenClient::new(&env, &t.token);
+    token.approve(&alice, &vault_a, &(10_000 * U7), &exp);
+    token.approve(&bravo, &vault_b, &(10_000 * U7), &exp);
+
+    let va = RwaVaultClient::new(&env, &vault_a);
+    let vb = RwaVaultClient::new(&env, &vault_b);
+
+    // Establish 100 in A (sole-asset, exempt) and 100 in B (50% — in policy).
+    va.deposit(&alice, &(100 * U7));
+    vb.deposit(&bravo, &(100 * U7));
+
+    // DE-PEG: admin doubles vault A's NAV. A's full 100-unit position now revalues at 2e7,
+    // while the running total only partly reflects it → the next deposit into A trips 60%.
+    guard.set_nav(&vault_a, &(2 * U7)); // 2e7 = $2.00 (NAV broke off $1.00)
+    assert!(va.try_deposit(&alice, &(1 * U7)).is_err()); // AllocCapExceeded → reverts the trade
+}

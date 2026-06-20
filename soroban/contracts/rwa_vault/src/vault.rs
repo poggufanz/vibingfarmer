@@ -6,7 +6,7 @@ use stellar_tokens::fungible::Base;
 use crate::storage::{extend_instance, get_token, get_total_principal, set_total_principal, SCALE};
 use crate::storage::get_guardrail;
 use crate::types::{Deposit, Redeem, VaultError};
-use guardrail::GuardrailClient;
+use crate::guardrail_iface::GuardrailClient;
 
 // Re-export of the dividend settle helpers (Task 3 fills the bodies).
 use crate::vault::dividend::{settle, sync_debt};
