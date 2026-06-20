@@ -66,7 +66,9 @@ fn enforce(env: &Env, contexts: &Vec<Context>) -> Result<(), AccountError> {
     }
 
     env.storage().instance().set(&DataKey::Scope, &scope);
-    env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND);
+    env.storage()
+        .instance()
+        .extend_ttl(TTL_THRESHOLD, TTL_EXTEND);
     Ok(())
 }
 

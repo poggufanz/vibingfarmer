@@ -6,6 +6,7 @@ version = 4
 name = "agent_account"
 version = "0.1.0"
 dependencies = [
+ "rwa_vault",
  "soroban-sdk",
 ]
 
