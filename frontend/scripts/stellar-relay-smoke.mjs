@@ -29,7 +29,7 @@ const secret = process.env.STELLAR_RELAYER_SECRET
 if (!secret) throw new Error('STELLAR_RELAYER_SECRET not set (generate + fund a testnet key first)')
 
 const deployments = JSON.parse(readFileSync(new URL('../../deployments/stellar-testnet.json', import.meta.url)))
-const VAULT = deployments.rwa.vault
+const VAULT = deployments.vault.address
 const server = new rpc.Server(RPC)
 const horizon = new Horizon.Server('https://horizon-testnet.stellar.org')
 const sdk = { TransactionBuilder, FeeBumpTransaction, Keypair, Address }
