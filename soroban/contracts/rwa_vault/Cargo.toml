@@ -12,9 +12,11 @@ stellar-tokens = { workspace = true }
 stellar-access = { workspace = true }
 stellar-contract-utils = { workspace = true }
 stellar-macros = { workspace = true }
+guardrail = { path = "../guardrail" }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+registry = { path = "../registry" }
 rwa_token = { path = "../rwa_token" }
 claim_topics_and_issuers = { path = "../claim_topics_and_issuers" }
 claim_issuer = { path = "../claim_issuer" }

@@ -7,6 +7,7 @@ pub enum DataKey {
     // (`AccessControlStorageKey::Admin`). A `DataKey::Admin` unit variant would encode to
     // the identical `Vec[Symbol("Admin")]` storage key and collide (→ AdminAlreadySet).
     Token,            // mRWA token address (SEP-41)
+    Guardrail,        // compliance guardrail contract address (1d)
     AccDivPerShare,   // cumulative dividend per share, scaled by SCALE (i128)
     TotalPrincipal,   // sum of deposited assets backing shares 1:1 (i128)
     DripEpoch,        // monotonically increasing dividend epoch (u64)

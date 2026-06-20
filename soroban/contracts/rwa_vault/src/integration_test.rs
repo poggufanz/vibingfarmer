@@ -165,16 +165,26 @@ fn test_end_to_end_deposit_drip_claim_redeem_with_real_trex_token() {
     let alice = Address::generate(&env);
     kyc_verify(&env, &t, &alice);
 
-    // Deploy the vault, THEN KYC-verify the vault address (load-bearing consequence).
+    // Deploy registry + guardrail, register the guarded vault, enroll alice permissively,
+    // THEN KYC-verify the vault address (load-bearing consequence).
+    let owner = Address::generate(&env);
+    let reg_id = env.register(registry::Registry, (t.admin.clone(),));
+    let guard_id = env.register(guardrail::Guardrail, (t.admin.clone(), reg_id.clone()));
     let vault_id = env.register(
         RwaVault,
         (
             t.admin.clone(),
             t.token.clone(),
+            guard_id.clone(),
             String::from_str(&env, "Vibing Vault mRWA"),
             String::from_str(&env, "vfmRWA"),
         ),
     );
+    // Now that we know vault_id, scope alice to it and police her permissively.
+    registry::RegistryClient::new(&env, &reg_id).authorize(
+        &owner, &alice, &vault_id, &t.token, &(1_000_000 * U7), &86_400u64, &4_000_000_000u64,
+    );
+    guardrail::GuardrailClient::new(&env, &guard_id).set_policy(&owner, &alice, &(1_000_000 * U7), &10_000u32);
     kyc_verify(&env, &t, &vault_id);
 
     let vault = RwaVaultClient::new(&env, &vault_id);
@@ -209,16 +219,25 @@ fn test_deposit_reverts_when_vault_is_not_a_verified_holder() {
     let alice = Address::generate(&env);
     kyc_verify(&env, &t, &alice);
 
-    // Vault deployed but NOT KYC-verified → token transfer to it must fail the T-REX gate.
+    // Vault deployed (guardrail-wired) but NOT KYC-verified → alice passes the guardrail
+    // (enrolled, in-policy) then the token transfer to the vault fails the T-REX gate.
+    let owner = Address::generate(&env);
+    let reg_id = env.register(registry::Registry, (t.admin.clone(),));
+    let guard_id = env.register(guardrail::Guardrail, (t.admin.clone(), reg_id.clone()));
     let vault_id = env.register(
         RwaVault,
         (
             t.admin.clone(),
             t.token.clone(),
+            guard_id.clone(),
             String::from_str(&env, "Vibing Vault mRWA"),
             String::from_str(&env, "vfmRWA"),
         ),
     );
+    registry::RegistryClient::new(&env, &reg_id).authorize(
+        &owner, &alice, &vault_id, &t.token, &(1_000_000 * U7), &86_400u64, &4_000_000_000u64,
+    );
+    guardrail::GuardrailClient::new(&env, &guard_id).set_policy(&owner, &alice, &(1_000_000 * U7), &10_000u32);
     let vault = RwaVaultClient::new(&env, &vault_id);
     let token = TokenClient::new(&env, &t.token);
     mint_mrwa(&env, &t, &alice, 100 * U7);

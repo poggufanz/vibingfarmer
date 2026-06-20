@@ -4,7 +4,9 @@ use stellar_macros::when_not_paused;
 use stellar_tokens::fungible::Base;
 
 use crate::storage::{extend_instance, get_token, get_total_principal, set_total_principal, SCALE};
+use crate::storage::get_guardrail;
 use crate::types::{Deposit, Redeem, VaultError};
+use guardrail::GuardrailClient;
 
 // Re-export of the dividend settle helpers (Task 3 fills the bodies).
 use crate::vault::dividend::{settle, sync_debt};
@@ -20,6 +22,12 @@ pub fn deposit(e: &Env, from: Address, amount: i128) -> Result<i128, VaultError>
         return Err(VaultError::InvalidAmount);
     }
     from.require_auth();
+
+    // Compliance guardrail: enforce spend/exposure/%-alloc caps BEFORE any mint. The vault
+    // is the invoker, so consume's `vault.require_auth()` is auto-satisfied — no `from`
+    // context is added (1a-compatible auth tree). An over-cap deposit reverts here.
+    let vault_self = e.current_contract_address();
+    GuardrailClient::new(e, &get_guardrail(e)).consume(&from, &vault_self, &amount);
 
     let token = get_token(e);
     let vault = e.current_contract_address();
@@ -55,6 +63,10 @@ pub fn redeem(e: &Env, from: Address, shares: i128) -> Result<i128, VaultError> 
     let assets = shares; // 1:1
     set_total_principal(e, get_total_principal(e) - assets);
     sync_debt(e, &from);
+
+    // Decrement guardrail accounting on exit (no policy check). Vault is the invoker.
+    let vault_self = e.current_contract_address();
+    GuardrailClient::new(e, &get_guardrail(e)).release(&from, &vault_self, &shares);
 
     let token = get_token(e);
     let vault = e.current_contract_address();
