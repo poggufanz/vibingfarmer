@@ -14,7 +14,7 @@ describe('stellar config', () => {
     expect(SOROBAN_RPC_URL).toBe('https://soroban-testnet.stellar.org')
   })
   it('matches the deployed vault from deployments/stellar-testnet.json', () => {
-    expect(SOROBAN_VAULT_ADDRESS).toBe('CCTGGJVVY45DYDDXM3XBFEJ2OT2J2ZT6HIXZEQKXU7Z53TH3YSZJC3PF')
+    expect(SOROBAN_VAULT_ADDRESS).toBe('CCDXZ6BUA7TPR3EXQWJWUD7EYR6OUMJRYIKYXPE53HRJOJFY5CXEHTN5')
   })
   it('routes to the new stellar relay proxy (NOT the EVM /api/relay)', () => {
     expect(RELAY_PROXY_URL).toBe('/api/stellar-relay')

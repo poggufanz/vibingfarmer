@@ -7,14 +7,12 @@ use stellar_tokens::fungible::Base;
 
 pub mod types;
 pub mod storage;
-mod guardrail_iface;
 mod vault;
 mod test;
-mod integration_test;
 
 use storage::{
-    extend_instance, get_acc, get_drip_epoch, get_guardrail, get_token, get_total_principal,
-    set_acc, set_drip_epoch, set_guardrail, set_token, set_total_principal,
+    extend_instance, get_acc, get_drip_epoch, get_token, get_total_principal,
+    set_acc, set_drip_epoch, set_token, set_total_principal,
 };
 
 #[contract]
@@ -22,19 +20,17 @@ pub struct RwaVault;
 
 #[contractimpl]
 impl RwaVault {
-    /// Deployed once. `token` = the 1b mRWA SEP-41 token; `guardrail` = the 1d compliance
-    /// guardrail this vault routes every deposit/redeem through.
+    /// Deployed once. `token` = the yield-farming asset (SEP-41 token / SAC) this vault
+    /// accepts for deposits and pays dividends in.
     pub fn __constructor(
         e: &Env,
         admin: Address,
         token: Address,
-        guardrail: Address,
         name: String,
         symbol: String,
     ) {
-        Base::set_metadata(e, 7, name, symbol); // 7 decimals (match mRWA)
+        Base::set_metadata(e, 7, name, symbol); // 7 decimals (match the asset)
         set_token(e, &token);
-        set_guardrail(e, &guardrail);
         set_acc(e, 0);
         set_total_principal(e, 0);
         set_drip_epoch(e, 0);
@@ -48,9 +44,6 @@ impl RwaVault {
     }
     pub fn token(e: &Env) -> Address {
         get_token(e)
-    }
-    pub fn guardrail(e: &Env) -> Address {
-        get_guardrail(e)
     }
     pub fn decimals(_e: &Env) -> u32 {
         7
@@ -89,12 +82,12 @@ impl RwaVault {
         vault::drip(e, amount)
     }
 
-    /// Permissionless: pay `holder` their accrued mRWA dividend. Returns amount paid.
+    /// Permissionless: pay `holder` their accrued asset dividend. Returns amount paid.
     pub fn claim(e: &Env, holder: Address) -> Result<i128, types::VaultError> {
         vault::claim(e, holder)
     }
 
-    /// View: mRWA dividend currently claimable by `holder`.
+    /// View: asset dividend currently claimable by `holder`.
     pub fn claimable(e: &Env, holder: Address) -> i128 {
         vault::claimable(e, holder)
     }

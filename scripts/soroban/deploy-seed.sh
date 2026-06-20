@@ -2,6 +2,13 @@
 set -euo pipefail
 # Run from WSL: bash scripts/soroban/deploy-seed.sh
 # Requires: stellar-cli, a funded testnet identity named "vf-deployer".
+#
+# Deploys the plain DeFi yield-farming stack on Soroban testnet:
+#   - reuses the live 1a registry + demo agent account (does NOT redeploy them)
+#   - deploys a plain SAC asset (no auth_required) as the yield-farming token
+#   - deploys the yield vault wired to that token
+#   - authorizes the demo agent in the registry, scoped to the new vault + token
+# No RWA/KYC/compliance/guardrail (that layer was removed — plain yield farming).
 NET=testnet
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SOROBAN="$ROOT/soroban"
@@ -15,126 +22,33 @@ ADMIN=$(stellar keys address vf-deployer)
 WASM_DIR="$SOROBAN/target/wasm32-unknown-unknown/release"
 [ -f "$WASM_DIR/registry.wasm" ] || WASM_DIR="$SOROBAN/target/wasm32v1-none/release"
 
-# 1a (registry + demo agent account) already live on testnet — reuse, do NOT
-# redeploy (would orphan the existing 1a contracts and churn addresses).
+# 1a (registry + demo agent account) + the relayer pubkey already live on testnet —
+# reuse, do NOT redeploy (would orphan the existing 1a contracts and churn addresses).
 REGISTRY=$(python3 -c "import json;print(json.load(open('$OUT'))['registry'])")
 ACCT_HASH=$(python3 -c "import json;print(json.load(open('$OUT'))['agentAccountWasmHash'])")
 DEMO_AGENT=$(python3 -c "import json;print(json.load(open('$OUT'))['demoAgentAccount'])")
+RELAYER=$(python3 -c "import json;print(json.load(open('$OUT')).get('relayer',''))")
 
-# ---- 1b: RWA (T-REX) stack (OZ README deploy order) ----
-CTI=$(stellar contract deploy --wasm "$WASM_DIR/claim_topics_and_issuers.wasm" \
-  --source vf-deployer --network "$NET" -- --admin "$ADMIN" --manager "$ADMIN")
-CLAIM_ISSUER=$(stellar contract deploy --wasm "$WASM_DIR/claim_issuer.wasm" \
-  --source vf-deployer --network "$NET" -- --owner "$ADMIN")
-IRS=$(stellar contract deploy --wasm "$WASM_DIR/identity_registry_storage.wasm" \
-  --source vf-deployer --network "$NET" -- --admin "$ADMIN" --manager "$ADMIN")
-VERIFIER=$(stellar contract deploy --wasm "$WASM_DIR/identity_verifier.wasm" \
-  --source vf-deployer --network "$NET" \
-  -- --admin "$ADMIN" --manager "$ADMIN" \
-     --identity_registry_storage "$IRS" --claim_topics_and_issuers "$CTI")
-COMPLIANCE=$(stellar contract deploy --wasm "$WASM_DIR/compliance.wasm" \
-  --source vf-deployer --network "$NET" -- --admin "$ADMIN" --manager "$ADMIN")
-ALLOW_MOD=$(stellar contract deploy --wasm "$WASM_DIR/compliance_allow.wasm" \
-  --source vf-deployer --network "$NET" -- --admin "$ADMIN" --manager "$ADMIN" --compliance "$COMPLIANCE")
-TOKEN=$(stellar contract deploy --wasm "$WASM_DIR/rwa_token.wasm" \
-  --source vf-deployer --network "$NET" \
-  -- --name "Mock RWA" --symbol "mRWA" --admin "$ADMIN" --manager "$ADMIN" \
-     --compliance "$COMPLIANCE" --identity_verifier "$VERIFIER")
+# ---- token: plain SAC asset (no auth_required = open holding, plain DeFi) ----
+# The deployer is the asset issuer + SAC admin, so it can mint the demo treasury.
+ASSET="VFUSD:$ADMIN"
+stellar contract asset deploy --asset "$ASSET" --source vf-deployer --network "$NET" 2>/dev/null || true
+TOKEN=$(stellar contract id asset --asset "$ASSET" --network "$NET")
 
-# Configure: KYC topic 1, trust the claim issuer for it.
-stellar contract invoke --id "$CTI" --source vf-deployer --network "$NET" \
-  -- add_claim_topic --claim_topic 1 --operator "$ADMIN"
-stellar contract invoke --id "$CTI" --source vf-deployer --network "$NET" \
-  -- add_trusted_issuer --trusted_issuer "$CLAIM_ISSUER" --claim_topics '[1]' --operator "$ADMIN"
-
-# Bind the token to the IRS + compliance (required before mint/transfer; see OZ README).
-stellar contract invoke --id "$IRS" --source vf-deployer --network "$NET" \
-  -- bind_token --token "$TOKEN" --operator "$ADMIN"
-stellar contract invoke --id "$COMPLIANCE" --source vf-deployer --network "$NET" \
-  -- bind_token --token "$TOKEN" --operator "$ADMIN"
-
-# ---- 1d: compliance guardrail (Aladdin caps) ----
-# Singleton policy + accounting layer over the deployed 1a registry. Admin = deployer
-# (the set_nav / de-peg authority). Reads agent scope from the existing registry.
-GUARDRAIL=$(stellar contract deploy --wasm "$WASM_DIR/guardrail.wasm" \
-  --source vf-deployer --network "$NET" \
-  -- --admin "$ADMIN" --registry "$REGISTRY")
-
-# ---- 1c: RWA vault (FOBXX-faithful, stable-NAV daily-dividend) ----
-# Load-bearing T-REX consequence: the vault must be a verified mRWA holder, or
-# deposit/drip/redeem/claim revert at the token move. Verifying it requires the
-# full KYC path — identity contract + IRS entry + compliance allowlist + a real
-# topic-1 KYC claim signed by the trusted issuer key. We mirror the audited
-# integration test exactly (issuer secret = 0x00..00, scheme 101 = Ed25519).
-
-# (1) Deploy the vault's identity first — the signed claim binds to the identity,
-#     not the vault, so it can be produced before the vault exists.
-VAULT_IDENTITY=$(stellar contract deploy --wasm "$WASM_DIR/identity.wasm" \
-  --source vf-deployer --network "$NET" -- --owner "$ADMIN")
-
-# (2) Mint the real Ed25519 topic-1 claim for this identity. The generator reuses
-#     the audited sign_kyc_claim path and signs over the testnet network id, so the
-#     message matches the on-chain build_claim_message byte-for-byte.
-SIGNER_OUT=$(cd "$SOROBAN" && CLAIM_ISSUER="$CLAIM_ISSUER" VAULT_IDENTITY="$VAULT_IDENTITY" \
-  cargo test -p rwa_vault gen_testnet_vault_claim -- --ignored --nocapture 2>/dev/null)
-PUBKEY=$(printf '%s\n' "$SIGNER_OUT"    | sed -n 's/^SIGNER_PUBKEY=//p'      | tr -d '\r')
-SIG_DATA=$(printf '%s\n' "$SIGNER_OUT"  | sed -n 's/^SIGNER_SIG_DATA=//p'    | tr -d '\r')
-CLAIM_DATA=$(printf '%s\n' "$SIGNER_OUT" | sed -n 's/^SIGNER_CLAIM_DATA=//p' | tr -d '\r')
-[ -n "$PUBKEY" ] && [ -n "$SIG_DATA" ] && [ -n "$CLAIM_DATA" ] || {
-  echo "ERROR: claim generator produced no signature (build failed?)" >&2; exit 1; }
-
-# (3) Trust the issuer signing key for topic 1 on the claim issuer (registry = CTI).
-stellar contract invoke --id "$CLAIM_ISSUER" --source vf-deployer --network "$NET" \
-  -- allow_key --public_key "$PUBKEY" --registry "$CTI" --claim_topic 1
-
-# (4) Store the signed KYC claim on the vault identity.
-stellar contract invoke --id "$VAULT_IDENTITY" --source vf-deployer --network "$NET" \
-  -- add_claim --topic 1 --scheme 101 --issuer "$CLAIM_ISSUER" \
-     --signature "$SIG_DATA" --data "$CLAIM_DATA" \
-     --uri "https://vibing.farm/claim/vault-kyc"
-
-# (5) Deploy the vault, then register its identity in the IRS + compliance allowlist.
+# ---- yield vault (stable-NAV, daily-dividend yield) ----
 VAULT=$(stellar contract deploy --wasm "$WASM_DIR/rwa_vault.wasm" \
   --source vf-deployer --network "$NET" \
-  -- --admin "$ADMIN" --token "$TOKEN" --guardrail "$GUARDRAIL" \
-     --name "Vibing Vault mRWA" --symbol "vfmRWA")
-# add_identity requires >=1 country entry. `initial_profiles` is `Vec<Val>`
-# (exported name; trait source calls it country_data_list), so stellar-cli parses
-# each element with stellar-xdr's `serde::Deserialize for ScVal` (snake_case tags),
-# NOT the convenience-struct form. The tagged JSON below is the exact ScVal that
-# `CountryData{ country: Individual(Residence(360)), metadata: None }.into_val()`
-# produces — verified offline to be byte-for-byte identical (struct->sorted ScMap,
-# tuple-variant enum->ScVec[Symbol,..], Option::None->Void="void").
-stellar contract invoke --id "$IRS" --source vf-deployer --network "$NET" \
-  -- add_identity --account "$VAULT" --identity "$VAULT_IDENTITY" \
-     --initial_profiles '[{"map":[{"key":{"symbol":"country"},"val":{"vec":[{"symbol":"Individual"},{"vec":[{"symbol":"Residence"},{"u32":360}]}]}},{"key":{"symbol":"metadata"},"val":"void"}]}]' \
-     --operator "$ADMIN"
-stellar contract invoke --id "$ALLOW_MOD" --source vf-deployer --network "$NET" \
-  -- allow_account --account "$VAULT" --operator "$ADMIN"
+  -- --admin "$ADMIN" --token "$TOKEN" --name "Vibing Vault" --symbol "vfVLT")
 
-# ---- 1d demo policy: police the existing 1a demo agent for the guardrail ----
-# set_policy is owner-gated (owner == the agent's registry-record owner). The 1a deploy
-# authorized DEMO_AGENT with ADMIN (vf-deployer) as owner, so ADMIN can set the policy.
-# Permissive demo limits: 100k-unit exposure, 50% max per-vault allocation.
-#
-# The 1a deploy created the demo agent ACCOUNT but never authorized it in the registry, so
-# it has no AgentRecord — `set_policy` reads `record_of(agent).owner`, which traps on the
-# missing record. So authorize the demo agent here (owner = ADMIN/vf-deployer) scoped to the
-# NEW vault + token. This both gives `set_policy` a record to read AND wires the demo agent
-# for a live deposit through the new vault (`consume` checks `rec.vault == vault`).
+# ---- wire the demo agent: authorize it in the registry, scoped to the new vault+token ----
+# The 1a deploy created the demo agent ACCOUNT but never gave it a registry record. Authorize
+# it here (owner = ADMIN/vf-deployer) so its deposits target the new vault. Permissive demo cap.
 stellar contract invoke --id "$REGISTRY" --source vf-deployer --network "$NET" \
   -- authorize --owner "$ADMIN" --agent "$DEMO_AGENT" --vault "$VAULT" --token "$TOKEN" \
      --cap_per_period 1000000000000 --period_duration 86400 --expiry 4000000000
-# Permissive demo limits: 100k-unit exposure, 50% max per-vault allocation.
-stellar contract invoke --id "$GUARDRAIL" --source vf-deployer --network "$NET" \
-  -- set_policy --owner "$ADMIN" --agent "$DEMO_AGENT" \
-     --max_exposure 1000000000000 --max_pct_bps 5000
 
-REGISTRY="$REGISTRY" ACCT_HASH="$ACCT_HASH" DEMO_AGENT="$DEMO_AGENT" \
-GUARDRAIL="$GUARDRAIL" \
-CTI="$CTI" CLAIM_ISSUER="$CLAIM_ISSUER" IRS="$IRS" VERIFIER="$VERIFIER" \
-COMPLIANCE="$COMPLIANCE" ALLOW_MOD="$ALLOW_MOD" TOKEN="$TOKEN" \
-VAULT="$VAULT" VAULT_IDENTITY="$VAULT_IDENTITY" OUT="$OUT" \
+REGISTRY="$REGISTRY" ACCT_HASH="$ACCT_HASH" DEMO_AGENT="$DEMO_AGENT" RELAYER="$RELAYER" \
+TOKEN="$TOKEN" VAULT="$VAULT" OUT="$OUT" \
 python3 <<'PY'
 import json, os
 out = {
@@ -142,21 +56,14 @@ out = {
   "passphrase": "Test SDF Network ; September 2015",
   "rpc": "https://soroban-testnet.stellar.org",
   "registry": os.environ["REGISTRY"],
+  "relayer": os.environ["RELAYER"],
   "agentAccountWasmHash": os.environ["ACCT_HASH"],
   "demoAgentAccount": os.environ["DEMO_AGENT"],
-  "guardrail": os.environ["GUARDRAIL"],
-  "rwa": {
-    "claimTopicsAndIssuers": os.environ["CTI"],
-    "claimIssuer": os.environ["CLAIM_ISSUER"],
-    "identityRegistryStorage": os.environ["IRS"],
-    "identityVerifier": os.environ["VERIFIER"],
-    "compliance": os.environ["COMPLIANCE"],
-    "complianceAllowModule": os.environ["ALLOW_MOD"],
+  "vault": {
+    "address": os.environ["VAULT"],
     "token": os.environ["TOKEN"],
     "decimals": 7,
-    "vault": os.environ["VAULT"],
-    "vaultIdentity": os.environ["VAULT_IDENTITY"],
-    "vaultShareSymbol": "vfmRWA"
+    "shareSymbol": "vfVLT"
   }
 }
 with open(os.environ["OUT"], "w") as f:
@@ -164,3 +71,5 @@ with open(os.environ["OUT"], "w") as f:
     f.write("\n")
 PY
 echo "Wrote $OUT"
+echo "VAULT=$VAULT TOKEN=$TOKEN"
+echo "Next: sync frontend/src/stellar/config.js SOROBAN_VAULT_ADDRESS=$VAULT"

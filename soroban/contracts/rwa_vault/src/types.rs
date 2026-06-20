@@ -6,8 +6,7 @@ pub enum DataKey {
     // NOTE: no `Admin` key here — the admin lives in OZ access-control storage
     // (`AccessControlStorageKey::Admin`). A `DataKey::Admin` unit variant would encode to
     // the identical `Vec[Symbol("Admin")]` storage key and collide (→ AdminAlreadySet).
-    Token,            // mRWA token address (SEP-41)
-    Guardrail,        // compliance guardrail contract address (1d)
+    Token,            // yield-farming asset token address (SEP-41 / SAC)
     AccDivPerShare,   // cumulative dividend per share, scaled by SCALE (i128)
     TotalPrincipal,   // sum of deposited assets backing shares 1:1 (i128)
     DripEpoch,        // monotonically increasing dividend epoch (u64)
@@ -52,5 +51,5 @@ pub struct Drip {
 #[contractevent(topics = ["vault_claim"])]
 pub struct Claim {
     pub holder: Address,
-    pub amount: i128, // mRWA dividend paid out
+    pub amount: i128, // asset dividend paid out
 }

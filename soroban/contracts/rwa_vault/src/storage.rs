@@ -24,13 +24,6 @@ pub fn get_token(e: &Env) -> Address {
     e.storage().instance().get(&DataKey::Token).unwrap()
 }
 
-pub fn set_guardrail(e: &Env, guardrail: &Address) {
-    e.storage().instance().set(&DataKey::Guardrail, guardrail);
-}
-pub fn get_guardrail(e: &Env) -> Address {
-    e.storage().instance().get(&DataKey::Guardrail).unwrap()
-}
-
 pub fn set_acc(e: &Env, acc: i128) {
     e.storage().instance().set(&DataKey::AccDivPerShare, &acc);
 }

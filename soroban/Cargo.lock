@@ -293,46 +293,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "claim_issuer"
-version = "0.1.0"
-dependencies = [
- "soroban-sdk",
- "stellar-access",
- "stellar-macros",
- "stellar-tokens",
-]
-
-[[package]]
-name = "claim_topics_and_issuers"
-version = "0.1.0"
-dependencies = [
- "soroban-sdk",
- "stellar-access",
- "stellar-macros",
- "stellar-tokens",
-]
-
-[[package]]
-name = "compliance"
-version = "0.1.0"
-dependencies = [
- "soroban-sdk",
- "stellar-access",
- "stellar-macros",
- "stellar-tokens",
-]
-
-[[package]]
-name = "compliance_allow"
-version = "0.1.0"
-dependencies = [
- "soroban-sdk",
- "stellar-access",
- "stellar-macros",
- "stellar-tokens",
-]
-
-[[package]]
 name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -773,14 +733,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "guardrail"
-version = "0.1.0"
-dependencies = [
- "registry",
- "soroban-sdk",
-]
-
-[[package]]
 name = "hash32"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -879,38 +831,6 @@ name = "ident_case"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
-
-[[package]]
-name = "identity"
-version = "0.1.0"
-dependencies = [
- "soroban-sdk",
- "stellar-access",
- "stellar-macros",
- "stellar-tokens",
-]
-
-[[package]]
-name = "identity_registry_storage"
-version = "0.1.0"
-dependencies = [
- "soroban-sdk",
- "stellar-access",
- "stellar-macros",
- "stellar-tokens",
-]
-
-[[package]]
-name = "identity_verifier"
-version = "0.1.0"
-dependencies = [
- "claim_topics_and_issuers",
- "identity_registry_storage",
- "soroban-sdk",
- "stellar-access",
- "stellar-macros",
- "stellar-tokens",
-]
 
 [[package]]
 name = "indexmap"
@@ -1243,37 +1163,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 
 [[package]]
-name = "rwa_token"
-version = "0.1.0"
-dependencies = [
- "claim_issuer",
- "claim_topics_and_issuers",
- "compliance",
- "ed25519-dalek",
- "identity",
- "identity_registry_storage",
- "identity_verifier",
- "soroban-sdk",
- "stellar-access",
- "stellar-contract-utils",
- "stellar-macros",
- "stellar-tokens",
-]
-
-[[package]]
 name = "rwa_vault"
 version = "0.1.0"
 dependencies = [
- "claim_issuer",
- "claim_topics_and_issuers",
- "compliance",
- "ed25519-dalek",
- "guardrail",
- "identity",
- "identity_registry_storage",
- "identity_verifier",
- "registry",
- "rwa_token",
  "soroban-sdk",
  "stellar-access",
  "stellar-contract-utils",
