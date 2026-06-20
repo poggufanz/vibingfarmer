@@ -52,7 +52,9 @@ describe('runRiskSimulation', () => {
   test('panic tail is materially worse than calm (honest spread)', () => {
     // Arrange
     const calm = fuseRiskParams({ context: { turbulence: 'calm', drawdownPct: 0, apyTrendPct: 8 } })
-    const panic = fuseRiskParams({ context: { turbulence: 'turbulent', drawdownPct: -12, apyTrendPct: 8 } })
+    const panic = fuseRiskParams({
+      context: { turbulence: 'turbulent', drawdownPct: -12, apyTrendPct: 8 },
+    })
     // Act
     const calmSim = runRiskSimulation(BASKET, calm, SIM_OPTS)
     const panicSim = runRiskSimulation(BASKET, panic, SIM_OPTS)

@@ -64,11 +64,22 @@ export async function buildPermission(result, ctx = {}) {
 export async function confirmPermission(permission, answer, deps = {}) {
   const { execute, onReject } = deps
   if (permission?.outcome !== 'converge' || permission?.recommend !== 'proceed') {
-    try { onReject?.(permission) } catch { /* logging must never block the stop */ }
-    return { executed: false, reason: `not approved by council: ${permission?.outcome}/${permission?.recommend}` }
+    try {
+      onReject?.(permission)
+    } catch {
+      /* logging must never block the stop */
+    }
+    return {
+      executed: false,
+      reason: `not approved by council: ${permission?.outcome}/${permission?.recommend}`,
+    }
   }
   if (answer !== true) {
-    try { onReject?.(permission) } catch { /* ignore */ }
+    try {
+      onReject?.(permission)
+    } catch {
+      /* ignore */
+    }
     return { executed: false, reason: 'declined by human' }
   }
   if (typeof execute !== 'function') {

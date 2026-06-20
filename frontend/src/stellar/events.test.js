@@ -43,15 +43,27 @@ describe('event indexer', () => {
         contractId: VAULT,
         pagingToken: '0002',
         ledger: 43,
-      }),
+      })
     )
     const delta = eventToGraphDelta(e)
     expect(delta.edge).toEqual({ source: agent, target: VAULT, kind: 'deposit' })
   })
 
   it('pollEvents dedups already-seen cursors and returns only new decoded events', async () => {
-    const recA = fakeRecord({ type: 'vault_drip', fields: { amount: 1n }, contractId: VAULT, pagingToken: '0010', ledger: 50 })
-    const recB = fakeRecord({ type: 'vault_claim', fields: { holder: agent, amount: 2n }, contractId: VAULT, pagingToken: '0011', ledger: 51 })
+    const recA = fakeRecord({
+      type: 'vault_drip',
+      fields: { amount: 1n },
+      contractId: VAULT,
+      pagingToken: '0010',
+      ledger: 50,
+    })
+    const recB = fakeRecord({
+      type: 'vault_claim',
+      fields: { holder: agent, amount: 2n },
+      contractId: VAULT,
+      pagingToken: '0011',
+      ledger: 51,
+    })
     const fakeServer = {
       getLatestLedger: vi.fn(async () => ({ sequence: 60 })),
       getEvents: vi.fn(async () => ({ events: [recA, recB], latestLedger: 60 })),

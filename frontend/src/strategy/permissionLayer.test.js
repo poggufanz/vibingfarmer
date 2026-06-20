@@ -12,7 +12,10 @@ const METRICS = { cvar95: -2.4, worst: -4.3, mean: 0.6 }
 describe('buildPermission', () => {
   test('falls back to a deterministic template when no LLM is provided', async () => {
     // Arrange / Act
-    const p = await buildPermission(converged('proceed'), { metrics: METRICS, riskTier: 'moderate' })
+    const p = await buildPermission(converged('proceed'), {
+      metrics: METRICS,
+      riskTier: 'moderate',
+    })
     // Assert
     expect(p.recommend).toBe('proceed')
     expect(p.sentence).toContain('2.4%') // loss-framed CVaR surfaced honestly
@@ -24,8 +27,16 @@ describe('buildPermission', () => {
     const good = vi.fn().mockResolvedValue('Risk is up, but mostly from gas — proceed?')
     const bad = vi.fn().mockRejectedValue(new Error('LLM down'))
     // Act
-    const a = await buildPermission(converged('proceed'), { metrics: METRICS, riskTier: 'moderate', summarize: good })
-    const b = await buildPermission(converged('proceed'), { metrics: METRICS, riskTier: 'moderate', summarize: bad })
+    const a = await buildPermission(converged('proceed'), {
+      metrics: METRICS,
+      riskTier: 'moderate',
+      summarize: good,
+    })
+    const b = await buildPermission(converged('proceed'), {
+      metrics: METRICS,
+      riskTier: 'moderate',
+      summarize: bad,
+    })
     // Assert
     expect(a.sentence).toBe('Risk is up, but mostly from gas — proceed?')
     expect(b.sentence).toContain('2.4%') // template fallback, never throws
@@ -33,8 +44,10 @@ describe('buildPermission', () => {
 
   test('no-consensus recommends hold', async () => {
     // Arrange / Act
-    const p = await buildPermission({ outcome: 'no-consensus', proposal: { recommend: 'hold' }, citedRules: [] },
-      { metrics: METRICS, riskTier: 'moderate' })
+    const p = await buildPermission(
+      { outcome: 'no-consensus', proposal: { recommend: 'hold' }, citedRules: [] },
+      { metrics: METRICS, riskTier: 'moderate' }
+    )
     // Assert
     expect(p.recommend).toBe('hold')
   })

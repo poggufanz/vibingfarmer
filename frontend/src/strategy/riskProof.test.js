@@ -43,8 +43,12 @@ describe('Phase-1 honest-spread proof (regression)', () => {
 
   test('same rule, two distributions, two verdicts', () => {
     // Arrange
-    const calm = checkTailCompliance(runMarket({ turbulence: 'calm', drawdownPct: 0 }), { riskTier: 'moderate' })
-    const panic = checkTailCompliance(runMarket({ turbulence: 'turbulent', drawdownPct: -12 }), { riskTier: 'moderate' })
+    const calm = checkTailCompliance(runMarket({ turbulence: 'calm', drawdownPct: 0 }), {
+      riskTier: 'moderate',
+    })
+    const panic = checkTailCompliance(runMarket({ turbulence: 'turbulent', drawdownPct: -12 }), {
+      riskTier: 'moderate',
+    })
     // Assert
     expect(calm.citedRule).toBe(panic.citedRule)
     expect(calm.verdict).not.toBe(panic.verdict)

@@ -42,12 +42,16 @@ export async function readContract({ contract, method, args = [], server }) {
   const s = server || (await rpcServer())
   const { Contract, TransactionBuilder, Account, Keypair, BASE_FEE } = await sdk()
   const source = new Account(Keypair.random().publicKey(), '0') // reads never touch sequence
-  const tx = new TransactionBuilder(source, { fee: BASE_FEE, networkPassphrase: NETWORK_PASSPHRASE })
+  const tx = new TransactionBuilder(source, {
+    fee: BASE_FEE,
+    networkPassphrase: NETWORK_PASSPHRASE,
+  })
     .addOperation(new Contract(contract).call(method, ...encodeArgs(args)))
     .setTimeout(30)
     .build()
   const sim = await s.simulateTransaction(tx)
-  if (sim.error || !sim.result) throw new Error(`read simulation failed: ${sim.error || 'no result'}`)
+  if (sim.error || !sim.result)
+    throw new Error(`read simulation failed: ${sim.error || 'no result'}`)
   return fromScVal(sim.result.retval)
 }
 
@@ -62,7 +66,10 @@ export async function buildInvokeTx({ source, contract, method, args = [], serve
   const s = server || (await rpcServer())
   const { Contract, TransactionBuilder, BASE_FEE } = await sdk()
   const account = await s.getAccount(source) // sequence for the source (must exist + be funded)
-  const raw = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: NETWORK_PASSPHRASE })
+  const raw = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: NETWORK_PASSPHRASE,
+  })
     .addOperation(new Contract(contract).call(method, ...encodeArgs(args)))
     .setTimeout(60)
     .build()

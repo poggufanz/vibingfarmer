@@ -27,7 +27,7 @@ describe('soroban client', () => {
         contract: 'CCDXZ6BUA7TPR3EXQWJWUD7EYR6OUMJRYIKYXPE53HRJOJFY5CXEHTN5',
         method: 'decimals',
         server: fakeServer,
-      }),
+      })
     ).rejects.toThrow(/simulation failed/i)
   })
 

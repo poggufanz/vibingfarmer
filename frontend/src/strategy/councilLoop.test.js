@@ -9,7 +9,10 @@ const VETO_METRICS = { cvar95: -8, worst: -14, mean: 0.5 }
 // Near the floor: CVaR -4.6 passes -5 but with < 1pp headroom → ambiguous.
 const NEAR_METRICS = { cvar95: -4.6, worst: -9, mean: 0.4 }
 
-const proposalFor = (m) => ({ allocation: [{ vault: 'A', weight: 1 }], citedNumbers: { cvar95: m.cvar95 } })
+const proposalFor = (m) => ({
+  allocation: [{ vault: 'A', weight: 1 }],
+  citedNumbers: { cvar95: m.cvar95 },
+})
 
 describe('councilLoop exits', () => {
   test('clear pass converges to proceed WITHOUT an AI call', async () => {
@@ -18,7 +21,7 @@ describe('councilLoop exits', () => {
     // Act
     const r = await councilLoop(
       { metrics: PASS_METRICS, proposal: proposalFor(PASS_METRICS), riskTier: 'moderate' },
-      { decide, maxIter: 2 },
+      { decide, maxIter: 2 }
     )
     // Assert
     expect(r.outcome).toBe('converge')
@@ -33,7 +36,7 @@ describe('councilLoop exits', () => {
     // Act
     const r = await councilLoop(
       { metrics: VETO_METRICS, proposal: proposalFor(VETO_METRICS), riskTier: 'moderate' },
-      { decide, maxIter: 2 },
+      { decide, maxIter: 2 }
     )
     // Assert
     expect(r.outcome).toBe('converge')
@@ -49,7 +52,7 @@ describe('councilLoop exits', () => {
     // Act
     const r = await councilLoop(
       { metrics: VETO_METRICS, proposal: lyingProposal, riskTier: 'moderate' },
-      { decide, maxIter: 2 },
+      { decide, maxIter: 2 }
     )
     // Assert
     expect(r.outcome).toBe('fatal')
@@ -62,7 +65,7 @@ describe('councilLoop exits', () => {
     // Act
     const r = await councilLoop(
       { metrics: NEAR_METRICS, proposal: proposalFor(NEAR_METRICS), riskTier: 'moderate' },
-      { decide, maxIter: 2 },
+      { decide, maxIter: 2 }
     )
     // Assert
     expect(r.outcome).toBe('converge')
@@ -76,7 +79,7 @@ describe('councilLoop exits', () => {
     // Act
     const r = await councilLoop(
       { metrics: NEAR_METRICS, proposal: proposalFor(NEAR_METRICS), riskTier: 'moderate' },
-      { decide, maxIter: 2 },
+      { decide, maxIter: 2 }
     )
     // Assert
     expect(r.outcome).toBe('no-consensus')
@@ -88,7 +91,7 @@ describe('councilLoop exits', () => {
     // Arrange / Act
     const r = await councilLoop(
       { metrics: NEAR_METRICS, proposal: proposalFor(NEAR_METRICS), riskTier: 'moderate' },
-      { maxIter: 2 },
+      { maxIter: 2 }
     )
     // Assert
     expect(r.outcome).toBe('no-consensus')

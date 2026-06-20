@@ -18,7 +18,7 @@ describe('runRiskCouncil end to end', () => {
     // Arrange / Act
     const out = await runRiskCouncil(
       { ...BASE, context: { turbulence: 'calm', drawdownPct: 0, apyTrendPct: 8 } },
-      OPTS,
+      OPTS
     )
     // Assert
     expect(out.sim.metrics.cvar95).toBeGreaterThan(-3)
@@ -32,7 +32,7 @@ describe('runRiskCouncil end to end', () => {
     // Arrange / Act
     const out = await runRiskCouncil(
       { ...BASE, context: { turbulence: 'turbulent', drawdownPct: -12, apyTrendPct: 8 } },
-      OPTS,
+      OPTS
     )
     // Assert
     expect(out.sim.metrics.cvar95).toBeLessThan(-5)
@@ -47,7 +47,7 @@ describe('runRiskCouncil end to end', () => {
     // Act
     const out = await runRiskCouncil(
       { ...BASE, context: { turbulence: 'calm', drawdownPct: 0, apyTrendPct: 8 } },
-      { ...OPTS, execute },
+      { ...OPTS, execute }
     )
     // Assert
     expect(execute).not.toHaveBeenCalled()
@@ -59,7 +59,7 @@ describe('runRiskCouncil end to end', () => {
     // Arrange / Act
     const out = await runRiskCouncil(
       { ...BASE, context: { turbulence: 'calm', drawdownPct: 0, apyTrendPct: 8 } },
-      OPTS,
+      OPTS
     )
     // Assert
     expect(out.council.outcome).not.toBe('fatal')

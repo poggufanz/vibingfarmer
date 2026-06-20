@@ -17,7 +17,13 @@ import { buildPermission } from './permissionLayer.js'
  * @returns {Promise<{sim:object, council:object, permission:object, proposalCited:{cvar95:number}, awaitingHuman:true, executed:false}>}
  */
 export async function runRiskCouncil(input, deps = {}) {
-  const { basket, riskTier = 'moderate', context = {}, deepRequested = false, proposal = {} } = input
+  const {
+    basket,
+    riskTier = 'moderate',
+    context = {},
+    deepRequested = false,
+    proposal = {},
+  } = input
   const { decide, summarize, maxIter, runs, horizonDays, seed } = deps
 
   // 1. Fuse params + run the honest-spread simulation.
@@ -29,7 +35,10 @@ export async function runRiskCouncil(input, deps = {}) {
   const fullProposal = { ...proposal, citedNumbers: proposalCited }
 
   // 3. Debate (deterministic short-circuit; bounded AI tie-break only on ambiguity).
-  const council = await councilLoop({ metrics: sim.metrics, proposal: fullProposal, riskTier }, { decide, maxIter })
+  const council = await councilLoop(
+    { metrics: sim.metrics, proposal: fullProposal, riskTier },
+    { decide, maxIter }
+  )
 
   // 4. One-sentence human gate. We STOP here — no execution on this path.
   const permission = await buildPermission(council, { metrics: sim.metrics, riskTier, summarize })

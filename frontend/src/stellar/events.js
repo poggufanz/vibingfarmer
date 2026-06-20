@@ -35,7 +35,10 @@ export function decodeEvent(rec) {
 export function eventToGraphDelta(e) {
   switch (e.type) {
     case 'agent_authorized':
-      return { node: { id: e.data.agent, kind: 'agent' }, edge: { source: e.data.owner, target: e.data.agent, kind: 'owns' } }
+      return {
+        node: { id: e.data.agent, kind: 'agent' },
+        edge: { source: e.data.owner, target: e.data.agent, kind: 'owns' },
+      }
     case 'agent_revoked':
       return { node: { id: e.data.agent, kind: 'agent', revoked: true } }
     case 'vault_deposit':

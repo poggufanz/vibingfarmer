@@ -41,7 +41,12 @@ describe('feeBumpAndSubmit', () => {
     const { sdk, signSpy, buildFeeBumpTransaction } = makeSdk({ innerHashHex: '11' })
     const rpc = makeRpc({ getStatuses: ['NOT_FOUND', 'SUCCESS'] })
     const out = await feeBumpAndSubmit({
-      xdr: 'INNERXDR', secret: SECRET, passphrase: PASS, vaultAddr: '', sdk, rpcServer: rpc,
+      xdr: 'INNERXDR',
+      secret: SECRET,
+      passphrase: PASS,
+      vaultAddr: '',
+      sdk,
+      rpcServer: rpc,
     })
     expect(out).toEqual({ hash: 'OUTERHASH', status: 'SUCCESS', relayer: 'GREL' })
     expect(buildFeeBumpTransaction).toHaveBeenCalledOnce()
@@ -53,7 +58,14 @@ describe('feeBumpAndSubmit', () => {
     const { sdk } = makeSdk({ alreadyBumped: true })
     const rpc = makeRpc()
     await expect(
-      feeBumpAndSubmit({ xdr: 'X', secret: SECRET, passphrase: PASS, vaultAddr: '', sdk, rpcServer: rpc })
+      feeBumpAndSubmit({
+        xdr: 'X',
+        secret: SECRET,
+        passphrase: PASS,
+        vaultAddr: '',
+        sdk,
+        rpcServer: rpc,
+      })
     ).rejects.toBeInstanceOf(RelayError)
     expect(rpc.sendTransaction).not.toHaveBeenCalled()
   })
@@ -62,17 +74,38 @@ describe('feeBumpAndSubmit', () => {
     const { sdk } = makeSdk({ innerHashHex: '22' })
     const rpc = makeRpc({ sendStatus: 'ERROR' })
     await expect(
-      feeBumpAndSubmit({ xdr: 'X', secret: SECRET, passphrase: PASS, vaultAddr: '', sdk, rpcServer: rpc })
+      feeBumpAndSubmit({
+        xdr: 'X',
+        secret: SECRET,
+        passphrase: PASS,
+        vaultAddr: '',
+        sdk,
+        rpcServer: rpc,
+      })
     ).rejects.toBeInstanceOf(RelayError)
   })
 
   it('short-circuits a replayed inner tx without re-broadcasting (same inner hash)', async () => {
     const a = makeSdk({ innerHashHex: '33' })
     const rpcA = makeRpc({ getStatuses: ['SUCCESS'] })
-    await feeBumpAndSubmit({ xdr: 'X', secret: SECRET, passphrase: PASS, vaultAddr: '', sdk: a.sdk, rpcServer: rpcA })
+    await feeBumpAndSubmit({
+      xdr: 'X',
+      secret: SECRET,
+      passphrase: PASS,
+      vaultAddr: '',
+      sdk: a.sdk,
+      rpcServer: rpcA,
+    })
     const b = makeSdk({ innerHashHex: '33' }) // same inner hash → duplicate
     const rpcB = makeRpc({ getStatuses: ['SUCCESS'] })
-    const out = await feeBumpAndSubmit({ xdr: 'X', secret: SECRET, passphrase: PASS, vaultAddr: '', sdk: b.sdk, rpcServer: rpcB })
+    const out = await feeBumpAndSubmit({
+      xdr: 'X',
+      secret: SECRET,
+      passphrase: PASS,
+      vaultAddr: '',
+      sdk: b.sdk,
+      rpcServer: rpcB,
+    })
     expect(out.status).toBe('duplicate')
     expect(rpcB.sendTransaction).not.toHaveBeenCalled()
   })
@@ -81,8 +114,14 @@ describe('feeBumpAndSubmit', () => {
     const { sdk } = makeSdk({ innerHashHex: '44' })
     const rpc = makeRpc({ getStatuses: [] }) // always NOT_FOUND
     const out = await feeBumpAndSubmit({
-      xdr: 'X', secret: SECRET, passphrase: PASS, vaultAddr: '', sdk, rpcServer: rpc,
-      pollTries: 2, pollIntervalMs: 0,
+      xdr: 'X',
+      secret: SECRET,
+      passphrase: PASS,
+      vaultAddr: '',
+      sdk,
+      rpcServer: rpc,
+      pollTries: 2,
+      pollIntervalMs: 0,
     })
     expect(out.status).toBe('PENDING')
     expect(out.hash).toBe('OUTERHASH')
@@ -116,7 +155,9 @@ describe('assertVaultDeposit', () => {
     expect(() => assertVaultDeposit(depositTx(VAULT, 'deposit'), VAULT, sdkAddr)).not.toThrow()
   })
   it('rejects a call to a different contract', () => {
-    expect(() => assertVaultDeposit(depositTx('CWRONG', 'deposit'), VAULT, sdkAddr)).toThrow(RelayError)
+    expect(() => assertVaultDeposit(depositTx('CWRONG', 'deposit'), VAULT, sdkAddr)).toThrow(
+      RelayError
+    )
   })
   it('rejects a non-deposit function', () => {
     expect(() => assertVaultDeposit(depositTx(VAULT, 'redeem'), VAULT, sdkAddr)).toThrow(RelayError)
@@ -127,7 +168,9 @@ describe('assertVaultDeposit', () => {
     expect(() => assertVaultDeposit(tx, VAULT, sdkAddr)).toThrow(RelayError)
   })
   it('rejects a non-invoke op', () => {
-    expect(() => assertVaultDeposit({ operations: [{ type: 'payment' }] }, VAULT, sdkAddr)).toThrow(RelayError)
+    expect(() => assertVaultDeposit({ operations: [{ type: 'payment' }] }, VAULT, sdkAddr)).toThrow(
+      RelayError
+    )
   })
   it('is a no-op when vaultAddr is empty (pre-wiring / smoke bypass)', () => {
     expect(() => assertVaultDeposit(depositTx('CANY', 'anything'), '', sdkAddr)).not.toThrow()
