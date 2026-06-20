@@ -117,15 +117,15 @@ stellar contract invoke --id "$ALLOW_MOD" --source vf-deployer --network "$NET" 
 # authorized DEMO_AGENT with ADMIN (vf-deployer) as owner, so ADMIN can set the policy.
 # Permissive demo limits: 100k-unit exposure, 50% max per-vault allocation.
 #
-# NOTE (verify before a LIVE agent deposit, owned by sub-projects 2/4): the demo agent's
-# registry record still points at the OLD (1c) vault. set_policy only checks the OWNER, so
-# it succeeds regardless — but `consume` checks `rec.vault == vault`, so a live deposit
-# through the NEW vault also needs the demo agent RE-AUTHORIZED in the registry to the new
-# VAULT address (owner-signed). That re-auth is a 2/4 concern; 1d's proof is the integration
-# test. If you want a live demo now, uncomment the re-authorize line below.
-# stellar contract invoke --id "$REGISTRY" --source vf-deployer --network "$NET" \
-#   -- authorize --owner "$ADMIN" --agent "$DEMO_AGENT" --vault "$VAULT" --token "$TOKEN" \
-#      --cap_per_period 1000000000000 --period_duration 86400 --expiry 4000000000
+# The 1a deploy created the demo agent ACCOUNT but never authorized it in the registry, so
+# it has no AgentRecord — `set_policy` reads `record_of(agent).owner`, which traps on the
+# missing record. So authorize the demo agent here (owner = ADMIN/vf-deployer) scoped to the
+# NEW vault + token. This both gives `set_policy` a record to read AND wires the demo agent
+# for a live deposit through the new vault (`consume` checks `rec.vault == vault`).
+stellar contract invoke --id "$REGISTRY" --source vf-deployer --network "$NET" \
+  -- authorize --owner "$ADMIN" --agent "$DEMO_AGENT" --vault "$VAULT" --token "$TOKEN" \
+     --cap_per_period 1000000000000 --period_duration 86400 --expiry 4000000000
+# Permissive demo limits: 100k-unit exposure, 50% max per-vault allocation.
 stellar contract invoke --id "$GUARDRAIL" --source vf-deployer --network "$NET" \
   -- set_policy --owner "$ADMIN" --agent "$DEMO_AGENT" \
      --max_exposure 1000000000000 --max_pct_bps 5000
