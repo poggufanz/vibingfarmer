@@ -1,5 +1,7 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, Address, BytesN, Env};
+use soroban_sdk::auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation};
+use soroban_sdk::token::TokenClient;
+use soroban_sdk::{contract, contractimpl, vec, Address, BytesN, Env, IntoVal, Symbol};
 
 mod account;
 mod test;
@@ -8,6 +10,9 @@ pub mod vault_client;
 
 use types::{AgentScope, DataKey};
 
+// Allowance lives this many ledgers (~30 days at 5s) — long enough to outlast any session scope.
+const APPROVE_TTL_LEDGERS: u32 = 518_400;
+
 #[contract]
 pub struct AgentAccount;
 
@@ -15,10 +20,41 @@ pub struct AgentAccount;
 impl AgentAccount {
     /// Deployed once per worker agent. `owner` = the human EOA that granted the
     /// scope; `signer` = the ephemeral ed25519 session pubkey the worker signs with.
+    /// The constructor also self-approves the vault to pull up to `cap_per_period` of
+    /// the asset, so the deployed vault's `transfer_from(spender=vault, from=agent)`
+    /// works without the (deposit-only) session key ever signing an `approve`.
     pub fn __constructor(env: Env, owner: Address, signer: BytesN<32>, scope: AgentScope) {
         env.storage().instance().set(&DataKey::Owner, &owner);
         env.storage().instance().set(&DataKey::Signer, &signer);
         env.storage().instance().set(&DataKey::Scope, &scope);
+
+        // Invoker-contract auth: authorize THIS contract's own sub-invocation of token.approve.
+        // Bypasses __check_auth (that path is reserved for the session key + deposit only).
+        let current = env.current_contract_address();
+        let expiration_ledger = env.ledger().sequence() + APPROVE_TTL_LEDGERS;
+        env.authorize_as_current_contract(vec![
+            &env,
+            InvokerContractAuthEntry::Contract(SubContractInvocation {
+                context: ContractContext {
+                    contract: scope.token.clone(),
+                    fn_name: Symbol::new(&env, "approve"),
+                    args: (
+                        current.clone(),
+                        scope.vault.clone(),
+                        scope.cap_per_period,
+                        expiration_ledger,
+                    )
+                        .into_val(&env),
+                },
+                sub_invocations: vec![&env],
+            }),
+        ]);
+        TokenClient::new(&env, &scope.token).approve(
+            &current,
+            &scope.vault,
+            &scope.cap_per_period,
+            &expiration_ledger,
+        );
     }
 
     pub fn scope_of(env: Env) -> AgentScope {
@@ -30,6 +66,6 @@ impl AgentAccount {
     }
 
     pub fn version(_env: Env) -> u32 {
-        1
+        2
     }
 }

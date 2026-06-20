@@ -18,12 +18,20 @@ fn scope(_env: &Env, owner: &Address, vault: &Address, token: &Address) -> Agent
     }
 }
 
+// A real Stellar Asset Contract token. Registration runs the agent constructor's
+// self-approve (Task 2), which cross-calls `token.approve` — so the scope's token must
+// be a live SAC, not a bare generated address, or the constructor traps (MissingValue).
+fn sac_token(env: &Env) -> Address {
+    let admin = Address::generate(env);
+    env.register_stellar_asset_contract_v2(admin).address()
+}
+
 #[test]
 fn test_constructor_stores_scope_and_key() {
     let env = Env::default();
     let owner = Address::generate(&env);
     let vault = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = sac_token(&env);
     let pubkey = BytesN::from_array(&env, &[7u8; 32]);
     let s = scope(&env, &owner, &vault, &token);
 
@@ -48,7 +56,7 @@ fn test_check_auth_rejects_bad_signature() {
     let env = Env::default();
     let owner = Address::generate(&env);
     let vault = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = sac_token(&env);
     // Random pubkey we do NOT hold the secret for → any signature must fail.
     let pubkey = BytesN::from_array(&env, &[9u8; 32]);
     let s = scope(&env, &owner, &vault, &token);
@@ -94,7 +102,7 @@ fn test_scope_rejects_wrong_vault() {
     let owner = Address::generate(&env);
     let vault = Address::generate(&env);
     let wrong_vault = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = sac_token(&env);
     let pubkey = BytesN::from_array(&env, &[1u8; 32]);
     let id = env.register(
         AgentAccount,
@@ -119,7 +127,7 @@ fn test_scope_rejects_when_revoked() {
     env.ledger().set_timestamp(1000);
     let owner = Address::generate(&env);
     let vault = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = sac_token(&env);
     let pubkey = BytesN::from_array(&env, &[1u8; 32]);
     let mut s = scope(&env, &Address::generate(&env), &vault, &token);
     s.revoked = true;
@@ -137,7 +145,7 @@ fn test_scope_rejects_when_expired() {
     env.ledger().set_timestamp(5_000_000_000); // past the far-future expiry
     let owner = Address::generate(&env);
     let vault = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = sac_token(&env);
     let pubkey = BytesN::from_array(&env, &[1u8; 32]);
     let id = env.register(
         AgentAccount,
@@ -160,7 +168,7 @@ fn test_scope_rejects_over_cap() {
     env.ledger().set_timestamp(1000);
     let owner = Address::generate(&env);
     let vault = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = sac_token(&env);
     let pubkey = BytesN::from_array(&env, &[1u8; 32]);
     let id = env.register(
         AgentAccount,
@@ -183,7 +191,7 @@ fn test_scope_accumulates_and_resets_period() {
     env.ledger().set_timestamp(1000);
     let owner = Address::generate(&env);
     let vault = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = sac_token(&env);
     let pubkey = BytesN::from_array(&env, &[1u8; 32]);
     let id = env.register(
         AgentAccount,
@@ -271,7 +279,7 @@ fn test_cap_never_exceeded_property() {
     env.ledger().set_timestamp(1000);
     let owner = Address::generate(&env);
     let vault = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token = sac_token(&env);
     let pubkey = BytesN::from_array(&env, &[1u8; 32]);
     let id = env.register(
         AgentAccount,
@@ -300,4 +308,35 @@ fn test_cap_never_exceeded_property() {
         accepted,
         cap
     );
+}
+
+// --- Task 2: constructor self-approves the vault for cap ---
+#[test]
+fn constructor_self_approves_vault_for_cap() {
+    // Arrange
+    let env = Env::default();
+    env.mock_all_auths();
+    let owner = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(admin.clone());
+    let token = sac.address();
+    let vault = Address::generate(&env); // any address; approve does not call it
+    let signer = BytesN::from_array(&env, &[7u8; 32]);
+    let cap: i128 = 100_000_000;
+    let s = AgentScope {
+        owner: owner.clone(),
+        vault: vault.clone(),
+        token: token.clone(),
+        cap_per_period: cap,
+        period_duration: 3600,
+        spent_in_period: 0,
+        period_start: 0,
+        expiry: env.ledger().timestamp() + 3600,
+        revoked: false,
+    };
+    // Act: deploy the agent with the constructor.
+    let agent = env.register(AgentAccount, (owner.clone(), signer, s));
+    // Assert: the agent pre-approved the vault to pull `cap` of the token.
+    let allowance = soroban_sdk::token::TokenClient::new(&env, &token).allowance(&agent, &vault);
+    assert_eq!(allowance, cap);
 }
