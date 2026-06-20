@@ -98,12 +98,18 @@ fn test_scope_rejects_wrong_vault() {
     let pubkey = BytesN::from_array(&env, &[1u8; 32]);
     let id = env.register(
         AgentAccount,
-        (owner, pubkey, scope(&env, &Address::generate(&env), &vault, &token)),
+        (
+            owner,
+            pubkey,
+            scope(&env, &Address::generate(&env), &vault, &token),
+        ),
     );
     let agent = Address::generate(&env);
     let ctx = deposit_ctx(&env, &wrong_vault, &agent, 10);
     // enforce_scope is the unit under test (auth-independent):
-    let res = env.as_contract(&id, || AgentAccount::enforce_scope_for_test(env.clone(), ctx));
+    let res = env.as_contract(&id, || {
+        AgentAccount::enforce_scope_for_test(env.clone(), ctx)
+    });
     assert_eq!(res, Err(AccountError::VaultMismatch));
 }
 
@@ -119,7 +125,9 @@ fn test_scope_rejects_when_revoked() {
     s.revoked = true;
     let id = env.register(AgentAccount, (owner, pubkey, s));
     let ctx = deposit_ctx(&env, &vault, &Address::generate(&env), 10);
-    let res = env.as_contract(&id, || AgentAccount::enforce_scope_for_test(env.clone(), ctx));
+    let res = env.as_contract(&id, || {
+        AgentAccount::enforce_scope_for_test(env.clone(), ctx)
+    });
     assert_eq!(res, Err(AccountError::Revoked));
 }
 
@@ -133,10 +141,16 @@ fn test_scope_rejects_when_expired() {
     let pubkey = BytesN::from_array(&env, &[1u8; 32]);
     let id = env.register(
         AgentAccount,
-        (owner, pubkey, scope(&env, &Address::generate(&env), &vault, &token)),
+        (
+            owner,
+            pubkey,
+            scope(&env, &Address::generate(&env), &vault, &token),
+        ),
     );
     let ctx = deposit_ctx(&env, &vault, &Address::generate(&env), 10);
-    let res = env.as_contract(&id, || AgentAccount::enforce_scope_for_test(env.clone(), ctx));
+    let res = env.as_contract(&id, || {
+        AgentAccount::enforce_scope_for_test(env.clone(), ctx)
+    });
     assert_eq!(res, Err(AccountError::Expired));
 }
 
@@ -150,10 +164,16 @@ fn test_scope_rejects_over_cap() {
     let pubkey = BytesN::from_array(&env, &[1u8; 32]);
     let id = env.register(
         AgentAccount,
-        (owner, pubkey, scope(&env, &Address::generate(&env), &vault, &token)),
+        (
+            owner,
+            pubkey,
+            scope(&env, &Address::generate(&env), &vault, &token),
+        ),
     );
     let ctx = deposit_ctx(&env, &vault, &Address::generate(&env), 2_000_000_000); // > 1,000,000,000 cap
-    let res = env.as_contract(&id, || AgentAccount::enforce_scope_for_test(env.clone(), ctx));
+    let res = env.as_contract(&id, || {
+        AgentAccount::enforce_scope_for_test(env.clone(), ctx)
+    });
     assert_eq!(res, Err(AccountError::CapExceeded));
 }
 
@@ -167,19 +187,29 @@ fn test_scope_accumulates_and_resets_period() {
     let pubkey = BytesN::from_array(&env, &[1u8; 32]);
     let id = env.register(
         AgentAccount,
-        (owner, pubkey, scope(&env, &Address::generate(&env), &vault, &token)),
+        (
+            owner,
+            pubkey,
+            scope(&env, &Address::generate(&env), &vault, &token),
+        ),
     );
 
     // First spend of 600 units (cap is 1,000) → ok, spent=600.
     let ctx1 = deposit_ctx(&env, &vault, &Address::generate(&env), 600_000_000);
     assert!(env
-        .as_contract(&id, || AgentAccount::enforce_scope_for_test(env.clone(), ctx1))
+        .as_contract(&id, || AgentAccount::enforce_scope_for_test(
+            env.clone(),
+            ctx1
+        ))
         .is_ok());
 
     // Second spend of 600 in same period → would total 1,200 > cap → reject.
     let ctx2 = deposit_ctx(&env, &vault, &Address::generate(&env), 600_000_000);
     assert_eq!(
-        env.as_contract(&id, || AgentAccount::enforce_scope_for_test(env.clone(), ctx2)),
+        env.as_contract(&id, || AgentAccount::enforce_scope_for_test(
+            env.clone(),
+            ctx2
+        )),
         Err(AccountError::CapExceeded)
     );
 
@@ -187,8 +217,50 @@ fn test_scope_accumulates_and_resets_period() {
     env.ledger().set_timestamp(1000 + 86_401);
     let ctx3 = deposit_ctx(&env, &vault, &Address::generate(&env), 600_000_000);
     assert!(env
-        .as_contract(&id, || AgentAccount::enforce_scope_for_test(env.clone(), ctx3))
+        .as_contract(&id, || AgentAccount::enforce_scope_for_test(
+            env.clone(),
+            ctx3
+        ))
         .is_ok());
+}
+
+// --- Task 1: local vault client interface (no wasm import) ---
+#[test]
+fn vault_client_iface_compiles_and_calls() {
+    // Arrange: register the real vault (via its struct type — rwa_vault exposes no WASM
+    // const, and a dev-dep struct registration keeps cross-contract calls working in the
+    // test env while avoiding the 1d build-time wasm link collision) and a SAC token.
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(admin.clone());
+    let token = sac.address();
+    let vault = env.register(
+        rwa_vault::RwaVault,
+        (
+            admin.clone(),
+            token.clone(),
+            soroban_sdk::String::from_str(&env, "Vault"),
+            soroban_sdk::String::from_str(&env, "vfVLT"),
+        ),
+    );
+    // Act: call deposit through OUR local client (proves the iface matches the deployed vault).
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    let holder = Address::generate(&env);
+    token_admin.mint(&holder, &100_000_000);
+    soroban_sdk::token::TokenClient::new(&env, &token).approve(
+        &holder,
+        &vault,
+        &100_000_000,
+        &1_000_000,
+    );
+    let shares = crate::vault_client::VaultClient::new(&env, &vault).deposit(&holder, &50_000_000);
+    // Assert
+    assert_eq!(shares, 50_000_000); // 1:1 stable NAV
+    assert_eq!(
+        crate::vault_client::VaultClient::new(&env, &vault).balance(&holder),
+        50_000_000
+    );
 }
 
 #[test]
@@ -203,18 +275,29 @@ fn test_cap_never_exceeded_property() {
     let pubkey = BytesN::from_array(&env, &[1u8; 32]);
     let id = env.register(
         AgentAccount,
-        (owner, pubkey, scope(&env, &Address::generate(&env), &vault, &token)),
+        (
+            owner,
+            pubkey,
+            scope(&env, &Address::generate(&env), &vault, &token),
+        ),
     );
     let cap = 1_000_000_000i128;
     let mut accepted = 0i128;
     for chunk in [300_000_000i128, 300_000_000, 300_000_000, 300_000_000] {
         let ctx = deposit_ctx(&env, &vault, &Address::generate(&env), chunk);
         if env
-            .as_contract(&id, || AgentAccount::enforce_scope_for_test(env.clone(), ctx))
+            .as_contract(&id, || {
+                AgentAccount::enforce_scope_for_test(env.clone(), ctx)
+            })
             .is_ok()
         {
             accepted += chunk;
         }
     }
-    assert!(accepted <= cap, "accepted {} exceeded cap {}", accepted, cap);
+    assert!(
+        accepted <= cap,
+        "accepted {} exceeded cap {}",
+        accepted,
+        cap
+    );
 }

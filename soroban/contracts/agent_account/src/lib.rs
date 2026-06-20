@@ -2,8 +2,9 @@
 use soroban_sdk::{contract, contractimpl, Address, BytesN, Env};
 
 mod account;
-pub mod types;
 mod test;
+pub mod types;
+pub mod vault_client;
 
 use types::{AgentScope, DataKey};
 
