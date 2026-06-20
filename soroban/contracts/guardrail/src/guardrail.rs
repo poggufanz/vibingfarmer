@@ -36,3 +36,77 @@ pub fn set_policy(
     storage::extend_instance(e);
     Ok(())
 }
+
+/// Vault-only deposit gate. Enforces spend (per-agent) + exposure (per-owner,vault) +
+/// %-allocation (per-owner, NAV-valued) caps; reverts out-of-policy; commits accounting.
+pub fn consume(e: &Env, agent: Address, vault: Address, amount: i128) -> Result<(), GuardrailError> {
+    vault.require_auth(); // invoker-auth: only the real vault, acting for itself
+    if amount <= 0 {
+        return Err(GuardrailError::InvalidAmount);
+    }
+
+    // ---- registry scope (fail-closed: record_of panics on an unknown agent) ----
+    let rec = RegistryClient::new(e, &storage::get_registry(e)).record_of(&agent);
+    let owner = rec.owner;
+    if rec.revoked {
+        return Err(GuardrailError::Revoked);
+    }
+    let now = e.ledger().timestamp();
+    if now >= rec.expiry {
+        return Err(GuardrailError::Expired);
+    }
+    if rec.vault != vault {
+        return Err(GuardrailError::WrongVault);
+    }
+
+    let policy = storage::get_policy(e, &agent).ok_or(GuardrailError::PolicyNotSet)?;
+
+    // ---- (1) SPEND cap (per-agent, units) ----
+    let mut spend = storage::get_spend(e, &agent);
+    if now.saturating_sub(spend.period_start) >= rec.period_duration {
+        spend.spent_in_period = 0;
+        spend.period_start = now;
+    }
+    let new_spent = spend
+        .spent_in_period
+        .checked_add(amount)
+        .ok_or(GuardrailError::MathOverflow)?;
+    if new_spent > rec.cap_per_period {
+        return Err(GuardrailError::SpendCapExceeded);
+    }
+
+    // ---- (2) EXPOSURE cap (per-owner x vault, units) ----
+    let pos = storage::get_position(e, &owner, &vault);
+    let new_pos = pos.checked_add(amount).ok_or(GuardrailError::MathOverflow)?;
+    if new_pos > policy.max_exposure {
+        return Err(GuardrailError::ExposureCapExceeded);
+    }
+
+    // ---- (3) %-ALLOCATION cap (per-owner, value-weighted) ----
+    let nav = storage::get_nav(e, &vault);
+    let amount_val = amount.checked_mul(nav).ok_or(GuardrailError::MathOverflow)?;
+    let new_pos_val = new_pos.checked_mul(nav).ok_or(GuardrailError::MathOverflow)?;
+    let total = storage::get_total_value(e, &owner);
+    let new_total = total.checked_add(amount_val).ok_or(GuardrailError::MathOverflow)?;
+    // ponytail: sole-asset exemption. A single-asset portfolio is trivially 100%, so the
+    // %-cap can only bind once a 2nd vault holds value (new_total > new_pos_val). Without
+    // this, any max_pct_bps < 10000 would revert the owner's very first deposit and the
+    // portfolio could never bootstrap (orchestrator funds N vaults as N sequential txs).
+    if new_pos_val != new_total {
+        let lhs = new_pos_val.checked_mul(10_000).ok_or(GuardrailError::MathOverflow)?;
+        let rhs = (policy.max_pct_bps as i128)
+            .checked_mul(new_total)
+            .ok_or(GuardrailError::MathOverflow)?;
+        if lhs > rhs {
+            return Err(GuardrailError::AllocCapExceeded);
+        }
+    }
+
+    // ---- commit ----
+    storage::set_position(e, &owner, &vault, new_pos);
+    storage::set_total_value(e, &owner, new_total);
+    spend.spent_in_period = new_spent;
+    storage::set_spend(e, &agent, &spend);
+    storage::extend_instance(e);
+    Ok(())
+}

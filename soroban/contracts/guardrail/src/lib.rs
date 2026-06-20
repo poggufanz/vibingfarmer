@@ -35,7 +35,11 @@ impl Guardrail {
         guardrail::set_policy(e, owner, agent, max_exposure, max_pct_bps)
     }
 
-    // consume + release land in Tasks 2–3.
+    pub fn consume(e: &Env, agent: Address, vault: Address, amount: i128) -> Result<(), GuardrailError> {
+        guardrail::consume(e, agent, vault, amount)
+    }
+
+    // release lands in Task 3.
 
     // ----- read views -----
     pub fn admin(e: &Env) -> Address {
