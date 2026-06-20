@@ -6410,14 +6410,14 @@
     "semantic_hash": "062089e6d8945bc80507078e34b5f11b"
   },
   "frontend/scripts/stellar-relay-smoke.mjs": {
-    "mtime": 1781955865.7181668,
-    "ast_hash": "130e9247cbaa62dc6f1d4083dee982ee",
-    "semantic_hash": "130e9247cbaa62dc6f1d4083dee982ee"
+    "mtime": 1781965720.573776,
+    "ast_hash": "ba27b9496b66d61c40c4904bd33e18ae",
+    "semantic_hash": "ba27b9496b66d61c40c4904bd33e18ae"
   },
   "frontend/src/stellar/config.js": {
-    "mtime": 1781959257.98543,
-    "ast_hash": "2a6013ef29d334e09dc2e098d8d1a523",
-    "semantic_hash": "2a6013ef29d334e09dc2e098d8d1a523"
+    "mtime": 1781967799.296162,
+    "ast_hash": "ee8b5490d0ea868026f1cbae1a8ed7c2",
+    "semantic_hash": "ee8b5490d0ea868026f1cbae1a8ed7c2"
   },
   "frontend/src/stellar/relay.js": {
     "mtime": 1781954698.5777655,
@@ -6475,9 +6475,9 @@
     "semantic_hash": "48acc75e80d376d7ccd0951c8b5963b9"
   },
   "docs/soroban-interfaces.md": {
-    "mtime": 1781932478.183491,
-    "ast_hash": "cdda3b64e4c1598549aea907691606b4",
-    "semantic_hash": "cdda3b64e4c1598549aea907691606b4"
+    "mtime": 1781961510.7355733,
+    "ast_hash": "a2d2c0116bc18a0d012887bfd9362d7b",
+    "semantic_hash": "a2d2c0116bc18a0d012887bfd9362d7b"
   },
   "docs/superpowers/plans/2026-06-18-soroban-1a-agent-accounts-registry.md": {
     "mtime": 1781724907.0650957,
@@ -6495,9 +6495,9 @@
     "semantic_hash": "09f795062282c09a25344bbcbf4aa443"
   },
   "docs/superpowers/specs/2026-06-18-stellar-soroban-rwafi-migration-design.md": {
-    "mtime": 1781727370.3647158,
-    "ast_hash": "62ba6015707c7ff224b76739250b0f3f",
-    "semantic_hash": "62ba6015707c7ff224b76739250b0f3f"
+    "mtime": 1781960399.2590098,
+    "ast_hash": "19c03b3a8c5befa1ae4c4f187f5cb0a3",
+    "semantic_hash": "19c03b3a8c5befa1ae4c4f187f5cb0a3"
   },
   "docs/superpowers/specs/2026-06-20-soroban-1d-compliance-guardrail-design.md": {
     "mtime": 1781914121.179956,
@@ -6513,5 +6513,80 @@
     "mtime": 1781954175.4565542,
     "ast_hash": "d879c233f07491d6af8784aab0ccaf90",
     "semantic_hash": "d879c233f07491d6af8784aab0ccaf90"
+  },
+  "frontend/scripts/stellar-chain-smoke.mjs": {
+    "mtime": 1781968265.6394098,
+    "ast_hash": "e55c43d774055b899b4528791aaa7ac4",
+    "semantic_hash": "e55c43d774055b899b4528791aaa7ac4"
+  },
+  "frontend/src/stellar/client.js": {
+    "mtime": 1781974787.1477034,
+    "ast_hash": "c8e08f33a993a132f000b5390a4e8118",
+    "semantic_hash": "c8e08f33a993a132f000b5390a4e8118"
+  },
+  "frontend/src/stellar/events.js": {
+    "mtime": 1781974787.2011466,
+    "ast_hash": "8bd21b145dd2d659f661c7deca44e60d",
+    "semantic_hash": "8bd21b145dd2d659f661c7deca44e60d"
+  },
+  "frontend/src/stellar/index.js": {
+    "mtime": 1781968223.1541083,
+    "ast_hash": "e067b335920c677b0d883241f9c06538",
+    "semantic_hash": "e067b335920c677b0d883241f9c06538"
+  },
+  "frontend/src/stellar/scval.js": {
+    "mtime": 1781967848.5508256,
+    "ast_hash": "5ff8972277a17dd30d13bf42a2d5f019",
+    "semantic_hash": "5ff8972277a17dd30d13bf42a2d5f019"
+  },
+  "frontend/src/stellar/sessionKey.js": {
+    "mtime": 1781968399.453186,
+    "ast_hash": "4252c7bd48ce8824ef03af81d0d84e36",
+    "semantic_hash": "4252c7bd48ce8824ef03af81d0d84e36"
+  },
+  "frontend/src/stellar/walletKit.js": {
+    "mtime": 1781968140.1001644,
+    "ast_hash": "a00e1e02ea2e5c42d10561d2b6b5d27e",
+    "semantic_hash": "a00e1e02ea2e5c42d10561d2b6b5d27e"
+  },
+  "frontend/src/stellar/walletKitLoader.js": {
+    "mtime": 1781968126.469246,
+    "ast_hash": "e50047fe22b68a4b6b29b2221db8485e",
+    "semantic_hash": "e50047fe22b68a4b6b29b2221db8485e"
+  },
+  "frontend/src/strategy/behavioral.js": {
+    "mtime": 1781976866.272113,
+    "ast_hash": "580ee07c16000a9d7acc1c45db7af593",
+    "semantic_hash": "580ee07c16000a9d7acc1c45db7af593"
+  },
+  "frontend/src/strategy/complianceCorpus.js": {
+    "mtime": 1781976866.2913983,
+    "ast_hash": "3e64e8763c67e070ca47a3e9e25026cd",
+    "semantic_hash": "3e64e8763c67e070ca47a3e9e25026cd"
+  },
+  "frontend/src/strategy/councilLoop.js": {
+    "mtime": 1781978711.378086,
+    "ast_hash": "312496c79d53b2ae2e25d2f308a057be",
+    "semantic_hash": "312496c79d53b2ae2e25d2f308a057be"
+  },
+  "frontend/src/strategy/permissionLayer.js": {
+    "mtime": 1781980760.662825,
+    "ast_hash": "895293eeaa43c1740798c75fe1b2a111",
+    "semantic_hash": "895293eeaa43c1740798c75fe1b2a111"
+  },
+  "frontend/src/strategy/riskCouncil.js": {
+    "mtime": 1781980760.6835713,
+    "ast_hash": "dd1b62f2429a07b0294b28015c756b3b",
+    "semantic_hash": "dd1b62f2429a07b0294b28015c756b3b"
+  },
+  "frontend/src/strategy/riskMetrics.js": {
+    "mtime": 1781974514.720296,
+    "ast_hash": "6ef5248a4149a0bfbf599f6ccd6e8292",
+    "semantic_hash": "6ef5248a4149a0bfbf599f6ccd6e8292"
+  },
+  "frontend/src/strategy/riskParams.js": {
+    "mtime": 1781978380.5945413,
+    "ast_hash": "58f415a9640d905c73cd42a31186894e",
+    "semantic_hash": "58f415a9640d905c73cd42a31186894e"
   }
 }
