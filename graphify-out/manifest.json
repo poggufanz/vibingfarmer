@@ -660,9 +660,9 @@
     "semantic_hash": "02b4e5ada6dd44cf816e79d9ff021c60"
   },
   "frontend/vite.config.js": {
-    "mtime": 1781415826.6652656,
-    "ast_hash": "b088fb7b14e9f4b6da6a654d791229f2",
-    "semantic_hash": "b088fb7b14e9f4b6da6a654d791229f2"
+    "mtime": 1781954918.0099077,
+    "ast_hash": "2859bc70a3f632688f359f0c4cd77f11",
+    "semantic_hash": "2859bc70a3f632688f359f0c4cd77f11"
   },
   "lib/forge-std/scripts/vm.py": {
     "mtime": 1780913747.2215157,
@@ -3605,9 +3605,9 @@
     "semantic_hash": "e9325200b86a2c27c64c4458e7943e34"
   },
   "AGENTS.md": {
-    "mtime": 1780913747.132,
-    "ast_hash": "8edd0eae2c2b1a8be220dc4edd25f8ff",
-    "semantic_hash": "8edd0eae2c2b1a8be220dc4edd25f8ff"
+    "mtime": 1781723498.9239857,
+    "ast_hash": "f333b2254488b9dd2b4d15aa1f6e5c6a",
+    "semantic_hash": "f333b2254488b9dd2b4d15aa1f6e5c6a"
   },
   "DESIGN.md": {
     "mtime": 1780913747.1330004,
@@ -3615,9 +3615,9 @@
     "semantic_hash": "651a25dcc6617f433dd7c544467417ab"
   },
   "README.md": {
-    "mtime": 1781379102.9886603,
-    "ast_hash": "22797d72903ade489e38fa90a436ffc8",
-    "semantic_hash": "22797d72903ade489e38fa90a436ffc8"
+    "mtime": 1781723498.919988,
+    "ast_hash": "36b2f95cd13df7c41bfa027f06416eb5",
+    "semantic_hash": "36b2f95cd13df7c41bfa027f06416eb5"
   },
   "design/agentdashboard/src/imports/DESIGN.md": {
     "mtime": 1780805101.268,
@@ -3685,14 +3685,14 @@
     "semantic_hash": "c3aaf373daa8bdc203210bdce6b90fd4"
   },
   "planning/2026-05-30-demo-polish-implementation-plan.md": {
-    "mtime": 1780146081.8662224,
-    "ast_hash": "df8225100cebd1e4f3d49d2ee075e37d",
-    "semantic_hash": "df8225100cebd1e4f3d49d2ee075e37d"
+    "mtime": 1781723795.9742324,
+    "ast_hash": "11ec13e994cec2743d67598fcf8e82d1",
+    "semantic_hash": "11ec13e994cec2743d67598fcf8e82d1"
   },
   "planning/2026-05-30-demo-polish-plan-design.md": {
-    "mtime": 1780145893.865615,
-    "ast_hash": "99ae69f9d5672337b6621b7abed44d98",
-    "semantic_hash": "99ae69f9d5672337b6621b7abed44d98"
+    "mtime": 1781723498.9239857,
+    "ast_hash": "931d6632d7609f20780b08e1f096c17c",
+    "semantic_hash": "931d6632d7609f20780b08e1f096c17c"
   },
   "planning/async-state-audit.md": {
     "mtime": 1780147212.1887743,
@@ -3700,9 +3700,9 @@
     "semantic_hash": "59d8d5ccfecb2e94811c71a9225695b0"
   },
   "planning/base-sepolia-managed-1shot-plan.md": {
-    "mtime": 1780480047.8814194,
-    "ast_hash": "465a56b91621c4fe3371323a96d15723",
-    "semantic_hash": "465a56b91621c4fe3371323a96d15723"
+    "mtime": 1781723619.9701016,
+    "ast_hash": "5a09621ff0bec60749ee578840aebabb",
+    "semantic_hash": "5a09621ff0bec60749ee578840aebabb"
   },
   "planning/convert-vite-react.md": {
     "mtime": 1780028759.3778484,
@@ -3715,9 +3715,9 @@
     "semantic_hash": "a9c43d8d93d95a6e1eb9b3cb6f263226"
   },
   "planning/notes-1shot-mainnet-migration.md": {
-    "mtime": 1780481840.4858541,
-    "ast_hash": "245a1fb0e22ad78844117f14bfd1305f",
-    "semantic_hash": "245a1fb0e22ad78844117f14bfd1305f"
+    "mtime": 1781723619.9681027,
+    "ast_hash": "37359106fbf211ee2e8eaedcb213331a",
+    "semantic_hash": "37359106fbf211ee2e8eaedcb213331a"
   },
   "planning/notes-eip7702-erc7715.md": {
     "mtime": 1779884420.7211356,
@@ -3725,14 +3725,14 @@
     "semantic_hash": "06ec1768cc0f2d37461756095991eb47"
   },
   "planning/phase-1-fondasi.md": {
-    "mtime": 1779793273.832709,
-    "ast_hash": "03cd8648795cd1e9e765ec539a5d669c",
-    "semantic_hash": "03cd8648795cd1e9e765ec539a5d669c"
+    "mtime": 1781723619.9681027,
+    "ast_hash": "ae8912dd3f61f5c65989ea72d3c3f9be",
+    "semantic_hash": "ae8912dd3f61f5c65989ea72d3c3f9be"
   },
   "planning/phase-2-smart-contract.md": {
-    "mtime": 1779863045.296003,
-    "ast_hash": "2e6f7b413b21e47b794db17db629c1a9",
-    "semantic_hash": "2e6f7b413b21e47b794db17db629c1a9"
+    "mtime": 1781723498.9239857,
+    "ast_hash": "a42c4bba9b6b5460f0e2046f0c669e50",
+    "semantic_hash": "a42c4bba9b6b5460f0e2046f0c669e50"
   },
   "planning/phase-3-integration.md": {
     "mtime": 1779886278.123572,
@@ -3760,9 +3760,9 @@
     "semantic_hash": "4a2f34f7802938a45ae1a671357e5c92"
   },
   "planning/walkthrough-phase-3.md": {
-    "mtime": 1779970956.3702812,
-    "ast_hash": "27451e2392ccb379951e29a71032ac81",
-    "semantic_hash": "27451e2392ccb379951e29a71032ac81"
+    "mtime": 1781723619.9711025,
+    "ast_hash": "ead6b69f829421809fd1393c798da81c",
+    "semantic_hash": "ead6b69f829421809fd1393c798da81c"
   },
   ".agents/skills/architecture-designer/references/adr-template.md": {
     "mtime": 1774700875.9027436,
@@ -4085,19 +4085,19 @@
     "semantic_hash": "a7f1f1cad52b42fb510313084d57cd45"
   },
   "CLAUDE.md": {
-    "mtime": 1781433157.372667,
-    "ast_hash": "6cb06ea4c152b4e03abdd633d4b6ebd1",
-    "semantic_hash": "6cb06ea4c152b4e03abdd633d4b6ebd1"
+    "mtime": 1781723498.922986,
+    "ast_hash": "367d44a7ede3e52dd0b2a93f2603c7d3",
+    "semantic_hash": "367d44a7ede3e52dd0b2a93f2603c7d3"
   },
   "GETTING_STARTED.md": {
-    "mtime": 1780913747.133999,
-    "ast_hash": "fbaf54df44720ec3cdea8c0e938be4ee",
-    "semantic_hash": "fbaf54df44720ec3cdea8c0e938be4ee"
+    "mtime": 1781723498.922986,
+    "ast_hash": "90046f84dc9d8bded9404d3930019404",
+    "semantic_hash": "90046f84dc9d8bded9404d3930019404"
   },
   "docs/business-impact-model.md": {
-    "mtime": 1780913747.144001,
-    "ast_hash": "33c7d1bd29381276d78cd8b1391af5f4",
-    "semantic_hash": "33c7d1bd29381276d78cd8b1391af5f4"
+    "mtime": 1781723498.9274995,
+    "ast_hash": "477948c832e3d62af2b72866ecd2ca6d",
+    "semantic_hash": "477948c832e3d62af2b72866ecd2ca6d"
   },
   "prd.md": {
     "mtime": 1781433326.0780625,
@@ -4215,9 +4215,9 @@
     "semantic_hash": "2568b6bf94dbbe22b711b37bd96158c8"
   },
   "docs/business-roadmap-backlog.md": {
-    "mtime": 1780913747.144001,
-    "ast_hash": "4d0e8e959c499557f17511252fef89eb",
-    "semantic_hash": "4d0e8e959c499557f17511252fef89eb"
+    "mtime": 1781723498.9274995,
+    "ast_hash": "cf4128d99acd1d84c6e140d092b087e4",
+    "semantic_hash": "cf4128d99acd1d84c6e140d092b087e4"
   },
   "docs/product-features-complete.md": {
     "mtime": 1780913747.1450007,
@@ -5600,9 +5600,9 @@
     "semantic_hash": "e485d4c9b746d4d6e28731eac9bc2f86"
   },
   "docs/superpowers/plans/2026-06-09-strategy-one-grant-session-redemption.md": {
-    "mtime": 1780942995.45479,
-    "ast_hash": "778f2800a0c2acf230a2bedfc80dc18f",
-    "semantic_hash": "778f2800a0c2acf230a2bedfc80dc18f"
+    "mtime": 1781723498.9314976,
+    "ast_hash": "fd94cf10c3fcb89bb77023a1a98400d3",
+    "semantic_hash": "fd94cf10c3fcb89bb77023a1a98400d3"
   },
   "planning/inspiration/SAK.md": {
     "mtime": 1780941785.5555873,
@@ -5670,9 +5670,9 @@
     "semantic_hash": "de87e18ec483646336dceff4328788ce"
   },
   "docs/superpowers/plans/2026-06-09-session-redeemable-contract-calls.md": {
-    "mtime": 1780999505.2362044,
-    "ast_hash": "ba2c5ab64228fa4e3e9af1418337df93",
-    "semantic_hash": "ba2c5ab64228fa4e3e9af1418337df93"
+    "mtime": 1781723619.9941037,
+    "ast_hash": "9ef122cf4a7760fc4b1673f643e73680",
+    "semantic_hash": "9ef122cf4a7760fc4b1673f643e73680"
   },
   "frontend/src/venice.test.js": {
     "mtime": 1781073459.8230965,
@@ -5705,9 +5705,9 @@
     "semantic_hash": "8cddcbbf51d5aac272a3cd09379a9c5c"
   },
   "docs/superpowers/plans/2026-06-10-desimulate-layers.md": {
-    "mtime": 1781073278.8330827,
-    "ast_hash": "41dec2f0a3849379ce7112b97dd46377",
-    "semantic_hash": "41dec2f0a3849379ce7112b97dd46377"
+    "mtime": 1781723498.9305022,
+    "ast_hash": "a7d74d2d0fb5c62f51c75c6d5e4b518b",
+    "semantic_hash": "a7d74d2d0fb5c62f51c75c6d5e4b518b"
   },
   "docs/superpowers/plans/2026-06-10-strategy-dag-parallel-fetch.md": {
     "mtime": 1781079778.350791,
@@ -5715,9 +5715,9 @@
     "semantic_hash": "ffda84baaf8281a953f1be0c273ff7f9"
   },
   "docs/superpowers/plans/2026-06-10-fast-fail-gates.md": {
-    "mtime": 1781095375.871868,
-    "ast_hash": "732ce1b2faf7642e255b541674ef9f75",
-    "semantic_hash": "732ce1b2faf7642e255b541674ef9f75"
+    "mtime": 1781723498.9305022,
+    "ast_hash": "9fac284a139d05dbca6178828eb622fe",
+    "semantic_hash": "9fac284a139d05dbca6178828eb622fe"
   },
   "frontend/src/strategy/gates.js": {
     "mtime": 1781097845.240854,
@@ -5865,24 +5865,24 @@
     "semantic_hash": "f56557b0f32aa58038a3e8d386adbea2"
   },
   "docs/superpowers/plans/2026-06-11-roadmap-v2-phase1-trust-foundation.md": {
-    "mtime": 1781174822.4275188,
-    "ast_hash": "bbfef18a512c48b5cee51237010ccc5a",
-    "semantic_hash": "bbfef18a512c48b5cee51237010ccc5a"
+    "mtime": 1781723498.9305022,
+    "ast_hash": "15b7dbdaa45f264d13308e4e7d8fb689",
+    "semantic_hash": "15b7dbdaa45f264d13308e4e7d8fb689"
   },
   "docs/superpowers/plans/2026-06-11-roadmap-v2-phase2-ops-security.md": {
-    "mtime": 1781175278.0929203,
-    "ast_hash": "2c587c9848c9b059cb4d6fe6a0bd5b07",
-    "semantic_hash": "2c587c9848c9b059cb4d6fe6a0bd5b07"
+    "mtime": 1781723498.9305022,
+    "ast_hash": "ce21d3ef7569c0a4e7e1ce73ff195a31",
+    "semantic_hash": "ce21d3ef7569c0a4e7e1ce73ff195a31"
   },
   "docs/superpowers/plans/2026-06-11-roadmap-v2-phase3-historical-replay.md": {
-    "mtime": 1781175472.5000305,
-    "ast_hash": "a4085f13ca0d16ab712d282b72d05a7b",
-    "semantic_hash": "a4085f13ca0d16ab712d282b72d05a7b"
+    "mtime": 1781723498.9305022,
+    "ast_hash": "a26389da0796394011fb64e6528d279f",
+    "semantic_hash": "a26389da0796394011fb64e6528d279f"
   },
   "docs/superpowers/plans/2026-06-11-roadmap-v2-phase4-real-integration.md": {
-    "mtime": 1781177456.2990844,
-    "ast_hash": "87a1303789421951320ae19d7f0f29ae",
-    "semantic_hash": "87a1303789421951320ae19d7f0f29ae"
+    "mtime": 1781723498.9305022,
+    "ast_hash": "834df3f439bf76e7e20b720d1a6868f8",
+    "semantic_hash": "834df3f439bf76e7e20b720d1a6868f8"
   },
   "docs/superpowers/plans/2026-06-11-roadmap-v2-phase5-refactor-ux.md": {
     "mtime": 1781178142.8195472,
@@ -5975,9 +5975,9 @@
     "semantic_hash": "eb634e72d2e9899fc848af697632a262"
   },
   "docs/demo-script-indonesian.md": {
-    "mtime": 1781310821.7363067,
-    "ast_hash": "31eff8fc2fa47ea6bd035d9b4c9e88af",
-    "semantic_hash": "31eff8fc2fa47ea6bd035d9b4c9e88af"
+    "mtime": 1781723498.9274995,
+    "ast_hash": "6c05e3ab7337920b2cd6d6e6380525d5",
+    "semantic_hash": "6c05e3ab7337920b2cd6d6e6380525d5"
   },
   "frontend/eslint.config.js": {
     "mtime": 1781379181.741162,
@@ -6030,24 +6030,24 @@
     "semantic_hash": ""
   },
   ".kiro/skills/improve/SKILL.md": {
-    "mtime": 1781357546.0699105,
-    "ast_hash": "55801ab47f30ea97921d5e3833f94395",
-    "semantic_hash": ""
+    "mtime": 1781723047.9455914,
+    "ast_hash": "08d8c0e2e0f8b40b4148d053e4b20816",
+    "semantic_hash": "08d8c0e2e0f8b40b4148d053e4b20816"
   },
   ".kiro/skills/improve/references/audit-playbook.md": {
-    "mtime": 1781357546.0709162,
-    "ast_hash": "0d1c50b73c3115257076cfaf805d1aff",
-    "semantic_hash": ""
+    "mtime": 1781723047.9455914,
+    "ast_hash": "b4756f2930da5511ab2106a28c0b3d58",
+    "semantic_hash": "b4756f2930da5511ab2106a28c0b3d58"
   },
   ".kiro/skills/improve/references/closing-the-loop.md": {
-    "mtime": 1781357546.0709162,
-    "ast_hash": "3f3b117ca721613e0d0801e51932b942",
-    "semantic_hash": ""
+    "mtime": 1781723047.9465914,
+    "ast_hash": "49c3b9aab0f34bbf4978d82ac88db5fb",
+    "semantic_hash": "49c3b9aab0f34bbf4978d82ac88db5fb"
   },
   ".kiro/skills/improve/references/plan-template.md": {
-    "mtime": 1781357546.0719156,
+    "mtime": 1781723047.9465914,
     "ast_hash": "f98eafbd9b71b84ec77788305e315e03",
-    "semantic_hash": ""
+    "semantic_hash": "f98eafbd9b71b84ec77788305e315e03"
   },
   "frontend/src/x402.js": {
     "mtime": 1781379069.7728808,
@@ -6315,9 +6315,9 @@
     "semantic_hash": "56c1e18f86d608d2bc2b384b6c7647fd"
   },
   "docs/superpowers/plans/2026-06-14-erc7715-ap-redeemed-funding.md": {
-    "mtime": 1781452797.5956652,
-    "ast_hash": "b32fa45a18e47799b66808ed4b2d6e47",
-    "semantic_hash": "b32fa45a18e47799b66808ed4b2d6e47"
+    "mtime": 1781723498.9305022,
+    "ast_hash": "dff2b377f45dfdcdb0349ce4b4a377ed",
+    "semantic_hash": "dff2b377f45dfdcdb0349ce4b4a377ed"
   },
   "docs/superpowers/plans/SPIKE-7715-redeem-result.md": {
     "mtime": 1781453404.6077778,
@@ -6325,9 +6325,9 @@
     "semantic_hash": "beee86c31f1cea0dc4defb87c9d9859a"
   },
   "scripts/soroban/deploy-seed.sh": {
-    "mtime": 1781933776.0209734,
-    "ast_hash": "130cb402968e7b2598438ff440a87b77",
-    "semantic_hash": "130cb402968e7b2598438ff440a87b77"
+    "mtime": 1781958529.6261494,
+    "ast_hash": "c06d40dafc31868bcdcd7069036c9276",
+    "semantic_hash": "c06d40dafc31868bcdcd7069036c9276"
   },
   "soroban/contracts/agent_account/src/account.rs": {
     "mtime": 1781772579.888935,
@@ -6349,136 +6349,6 @@
     "ast_hash": "4f4ea97e8c616910283914c871a22a84",
     "semantic_hash": "4f4ea97e8c616910283914c871a22a84"
   },
-  "soroban/contracts/claim_issuer/src/contract.rs": {
-    "mtime": 1781832503.3128946,
-    "ast_hash": "bd39858fca604e4d1e5a620c3b014ee3",
-    "semantic_hash": "bd39858fca604e4d1e5a620c3b014ee3"
-  },
-  "soroban/contracts/claim_issuer/src/lib.rs": {
-    "mtime": 1781832581.9119875,
-    "ast_hash": "c9e103ba229e1711c4159147927f172d",
-    "semantic_hash": "c9e103ba229e1711c4159147927f172d"
-  },
-  "soroban/contracts/claim_issuer/src/test.rs": {
-    "mtime": 1781832715.4238448,
-    "ast_hash": "3e080f1b0b4031bb851a24e62dbfa40c",
-    "semantic_hash": "3e080f1b0b4031bb851a24e62dbfa40c"
-  },
-  "soroban/contracts/claim_topics_and_issuers/src/contract.rs": {
-    "mtime": 1781832503.289263,
-    "ast_hash": "e709076a98177460b015483ab7c8126c",
-    "semantic_hash": "e709076a98177460b015483ab7c8126c"
-  },
-  "soroban/contracts/claim_topics_and_issuers/src/lib.rs": {
-    "mtime": 1781832565.362434,
-    "ast_hash": "c9e103ba229e1711c4159147927f172d",
-    "semantic_hash": "c9e103ba229e1711c4159147927f172d"
-  },
-  "soroban/contracts/claim_topics_and_issuers/src/test.rs": {
-    "mtime": 1781832571.8035877,
-    "ast_hash": "9654492eba98796607c91ec56d1fd5bd",
-    "semantic_hash": "9654492eba98796607c91ec56d1fd5bd"
-  },
-  "soroban/contracts/compliance/src/contract.rs": {
-    "mtime": 1781833087.823345,
-    "ast_hash": "6af4e8e95b075a393015f0aab81071eb",
-    "semantic_hash": "6af4e8e95b075a393015f0aab81071eb"
-  },
-  "soroban/contracts/compliance/src/lib.rs": {
-    "mtime": 1781833103.8253543,
-    "ast_hash": "c9e103ba229e1711c4159147927f172d",
-    "semantic_hash": "c9e103ba229e1711c4159147927f172d"
-  },
-  "soroban/contracts/compliance/src/test.rs": {
-    "mtime": 1781833111.2322688,
-    "ast_hash": "1397a4490337264e478d52bb980d85fe",
-    "semantic_hash": "1397a4490337264e478d52bb980d85fe"
-  },
-  "soroban/contracts/compliance_allow/src/contract.rs": {
-    "mtime": 1781833204.877984,
-    "ast_hash": "f4ee25d7839b0dc9763ca677d1f1c216",
-    "semantic_hash": "f4ee25d7839b0dc9763ca677d1f1c216"
-  },
-  "soroban/contracts/compliance_allow/src/lib.rs": {
-    "mtime": 1781833121.1201153,
-    "ast_hash": "c9e103ba229e1711c4159147927f172d",
-    "semantic_hash": "c9e103ba229e1711c4159147927f172d"
-  },
-  "soroban/contracts/compliance_allow/src/test.rs": {
-    "mtime": 1781861183.6348672,
-    "ast_hash": "7fef50f730115d9ef384aa6bb2044efc",
-    "semantic_hash": "7fef50f730115d9ef384aa6bb2044efc"
-  },
-  "soroban/contracts/guardrail/src/guardrail.rs": {
-    "mtime": 1781931678.9031968,
-    "ast_hash": "1f1b1b33d1f2362c196a5a8d1ead802b",
-    "semantic_hash": "1f1b1b33d1f2362c196a5a8d1ead802b"
-  },
-  "soroban/contracts/guardrail/src/lib.rs": {
-    "mtime": 1781931681.3597562,
-    "ast_hash": "c53c297155f787e05b0cc1c08b78d57c",
-    "semantic_hash": "c53c297155f787e05b0cc1c08b78d57c"
-  },
-  "soroban/contracts/guardrail/src/storage.rs": {
-    "mtime": 1781915510.6313305,
-    "ast_hash": "98975d3a4e5c96de4d1f6d5c997eb8e9",
-    "semantic_hash": "98975d3a4e5c96de4d1f6d5c997eb8e9"
-  },
-  "soroban/contracts/guardrail/src/test.rs": {
-    "mtime": 1781915785.8578649,
-    "ast_hash": "a50ea7fa6aebe0d8a3ace20239a590a0",
-    "semantic_hash": "a50ea7fa6aebe0d8a3ace20239a590a0"
-  },
-  "soroban/contracts/guardrail/src/types.rs": {
-    "mtime": 1781916960.1837955,
-    "ast_hash": "7740e2b718fc09878c7d84e43b91f162",
-    "semantic_hash": "7740e2b718fc09878c7d84e43b91f162"
-  },
-  "soroban/contracts/identity/src/contract.rs": {
-    "mtime": 1781832503.3128946,
-    "ast_hash": "c5d4a4274518a6f8af4776fc68320d9f",
-    "semantic_hash": "c5d4a4274518a6f8af4776fc68320d9f"
-  },
-  "soroban/contracts/identity/src/lib.rs": {
-    "mtime": 1781832599.2426145,
-    "ast_hash": "c9e103ba229e1711c4159147927f172d",
-    "semantic_hash": "c9e103ba229e1711c4159147927f172d"
-  },
-  "soroban/contracts/identity/src/test.rs": {
-    "mtime": 1781832822.7972798,
-    "ast_hash": "1b7b28cec0911ffa2b889660b1bbec01",
-    "semantic_hash": "1b7b28cec0911ffa2b889660b1bbec01"
-  },
-  "soroban/contracts/identity_registry_storage/src/contract.rs": {
-    "mtime": 1781832503.3340082,
-    "ast_hash": "f7a6937fda1afc8f347f365f85860110",
-    "semantic_hash": "f7a6937fda1afc8f347f365f85860110"
-  },
-  "soroban/contracts/identity_registry_storage/src/lib.rs": {
-    "mtime": 1781832617.459129,
-    "ast_hash": "c9e103ba229e1711c4159147927f172d",
-    "semantic_hash": "c9e103ba229e1711c4159147927f172d"
-  },
-  "soroban/contracts/identity_registry_storage/src/test.rs": {
-    "mtime": 1781832881.350262,
-    "ast_hash": "5a6439f1b9959abc8771b64e4169c014",
-    "semantic_hash": "5a6439f1b9959abc8771b64e4169c014"
-  },
-  "soroban/contracts/identity_verifier/src/contract.rs": {
-    "mtime": 1781833269.872643,
-    "ast_hash": "dfc6243c2c7be7e2cc9cd44c134cce53",
-    "semantic_hash": "dfc6243c2c7be7e2cc9cd44c134cce53"
-  },
-  "soroban/contracts/identity_verifier/src/lib.rs": {
-    "mtime": 1781833281.2079482,
-    "ast_hash": "c9e103ba229e1711c4159147927f172d",
-    "semantic_hash": "c9e103ba229e1711c4159147927f172d"
-  },
-  "soroban/contracts/identity_verifier/src/test.rs": {
-    "mtime": 1781833289.2684054,
-    "ast_hash": "cac6cafd9f106740f8a936445279bfa2",
-    "semantic_hash": "cac6cafd9f106740f8a936445279bfa2"
-  },
   "soroban/contracts/registry/src/lib.rs": {
     "mtime": 1781915916.7059124,
     "ast_hash": "d9b45c0dfa78c1233d98c5e2ff20236d",
@@ -6499,69 +6369,149 @@
     "ast_hash": "83e28897d94537ae42aced4bcd9eaf71",
     "semantic_hash": "83e28897d94537ae42aced4bcd9eaf71"
   },
-  "soroban/contracts/rwa_token/src/contract.rs": {
-    "mtime": 1781833390.757444,
-    "ast_hash": "ecb0bb7c06006109c249b5500edc6c08",
-    "semantic_hash": "ecb0bb7c06006109c249b5500edc6c08"
-  },
-  "soroban/contracts/rwa_token/src/integration_test.rs": {
-    "mtime": 1781833923.8204217,
-    "ast_hash": "3889dc751cf829855d639dfa330dd23c",
-    "semantic_hash": "3889dc751cf829855d639dfa330dd23c"
-  },
-  "soroban/contracts/rwa_token/src/lib.rs": {
-    "mtime": 1781860133.665897,
-    "ast_hash": "9f67d02d583ebc6f68d381e99256ef2f",
-    "semantic_hash": "9f67d02d583ebc6f68d381e99256ef2f"
-  },
-  "soroban/contracts/rwa_token/src/seam_test.rs": {
-    "mtime": 1781860840.74096,
-    "ast_hash": "9cedda2a6967067a6c1b2535d13fde49",
-    "semantic_hash": "9cedda2a6967067a6c1b2535d13fde49"
-  },
-  "soroban/contracts/rwa_token/src/test.rs": {
-    "mtime": 1781833470.7338748,
-    "ast_hash": "6108352f8f46363aa80640a41776bd39",
-    "semantic_hash": "6108352f8f46363aa80640a41776bd39"
-  },
-  "soroban/contracts/rwa_vault/src/guardrail_iface.rs": {
-    "mtime": 1781931872.1268003,
-    "ast_hash": "392d4dd7e2d624ce705924014c69797f",
-    "semantic_hash": "392d4dd7e2d624ce705924014c69797f"
-  },
-  "soroban/contracts/rwa_vault/src/integration_test.rs": {
-    "mtime": 1781916439.7605934,
-    "ast_hash": "0d785d38872b4d1ab73947ac7875eb62",
-    "semantic_hash": "0d785d38872b4d1ab73947ac7875eb62"
-  },
   "soroban/contracts/rwa_vault/src/lib.rs": {
-    "mtime": 1781931704.228999,
-    "ast_hash": "6ba8fe2b9401218e6108252105639305",
-    "semantic_hash": "6ba8fe2b9401218e6108252105639305"
+    "mtime": 1781959731.781718,
+    "ast_hash": "085c95f9394b77660062658b1da13419",
+    "semantic_hash": "085c95f9394b77660062658b1da13419"
   },
   "soroban/contracts/rwa_vault/src/storage.rs": {
-    "mtime": 1781916086.862046,
-    "ast_hash": "8db98c425719f294ef94bbc055b97fe1",
-    "semantic_hash": "8db98c425719f294ef94bbc055b97fe1"
+    "mtime": 1781958183.6519165,
+    "ast_hash": "ddc5f5c6451f8de46a11ee7f36904d9b",
+    "semantic_hash": "ddc5f5c6451f8de46a11ee7f36904d9b"
   },
   "soroban/contracts/rwa_vault/src/test.rs": {
-    "mtime": 1781916202.1710742,
-    "ast_hash": "b3841dd5d9b64cf0eaac03f1e05e168d",
-    "semantic_hash": "b3841dd5d9b64cf0eaac03f1e05e168d"
+    "mtime": 1781958300.1357048,
+    "ast_hash": "2d75a32adddcb5077fa8cfb58b72a142",
+    "semantic_hash": "2d75a32adddcb5077fa8cfb58b72a142"
   },
   "soroban/contracts/rwa_vault/src/types.rs": {
-    "mtime": 1781916084.3120668,
-    "ast_hash": "d6e763d38490e0dbc46cddfccbeda152",
-    "semantic_hash": "d6e763d38490e0dbc46cddfccbeda152"
+    "mtime": 1781959737.1452906,
+    "ast_hash": "2b3773aa7c4e5efbfc344fdd83bfb5fb",
+    "semantic_hash": "2b3773aa7c4e5efbfc344fdd83bfb5fb"
   },
   "soroban/contracts/rwa_vault/src/vault.rs": {
-    "mtime": 1781931702.4911475,
-    "ast_hash": "8dd63233d9ef4398799f520dda49f95e",
-    "semantic_hash": "8dd63233d9ef4398799f520dda49f95e"
+    "mtime": 1781958231.2643898,
+    "ast_hash": "697c4c5eef01d9efafd0b252efe1f273",
+    "semantic_hash": "697c4c5eef01d9efafd0b252efe1f273"
   },
   "soroban/contracts/rwa_vault/src/vault/dividend.rs": {
     "mtime": 1781867673.2878978,
     "ast_hash": "daca5eaed40fa2775e3051fdb98109fd",
     "semantic_hash": "daca5eaed40fa2775e3051fdb98109fd"
+  },
+  "frontend/api/stellar-relay.js": {
+    "mtime": 1781954843.8696225,
+    "ast_hash": "7fa398d3eb773adaeddf21b48a7dc77a",
+    "semantic_hash": "7fa398d3eb773adaeddf21b48a7dc77a"
+  },
+  "frontend/functions/api/stellar-relay.js": {
+    "mtime": 1781954886.0504193,
+    "ast_hash": "062089e6d8945bc80507078e34b5f11b",
+    "semantic_hash": "062089e6d8945bc80507078e34b5f11b"
+  },
+  "frontend/scripts/stellar-relay-smoke.mjs": {
+    "mtime": 1781955865.7181668,
+    "ast_hash": "130e9247cbaa62dc6f1d4083dee982ee",
+    "semantic_hash": "130e9247cbaa62dc6f1d4083dee982ee"
+  },
+  "frontend/src/stellar/config.js": {
+    "mtime": 1781959257.98543,
+    "ast_hash": "2a6013ef29d334e09dc2e098d8d1a523",
+    "semantic_hash": "2a6013ef29d334e09dc2e098d8d1a523"
+  },
+  "frontend/src/stellar/relay.js": {
+    "mtime": 1781954698.5777655,
+    "ast_hash": "03829006ca9f321e737f185baa9050d6",
+    "semantic_hash": "03829006ca9f321e737f185baa9050d6"
+  },
+  ".claude/skills/soroban/SKILL.md": {
+    "mtime": 1781722766.0960214,
+    "ast_hash": "5511027dfe477974ce7ffdd0f7532252",
+    "semantic_hash": "5511027dfe477974ce7ffdd0f7532252"
+  },
+  ".claude/skills/standards/SKILL.md": {
+    "mtime": 1781723131.0616727,
+    "ast_hash": "2d0888d4def0df91b4a25281dbe77682",
+    "semantic_hash": "2d0888d4def0df91b4a25281dbe77682"
+  },
+  ".claude/skills/zk-proofs/SKILL.md": {
+    "mtime": 1781723177.6656518,
+    "ast_hash": "095e61be3680a73b753da52037d31b3d",
+    "semantic_hash": "095e61be3680a73b753da52037d31b3d"
+  },
+  ".kiro/skills/agentic-payments/SKILL.md": {
+    "mtime": 1781722932.3477776,
+    "ast_hash": "c1827a01e86cee2068fbe8c0f08ea170",
+    "semantic_hash": "c1827a01e86cee2068fbe8c0f08ea170"
+  },
+  ".kiro/skills/assets/SKILL.md": {
+    "mtime": 1781722980.7990403,
+    "ast_hash": "0a93eb78a7ec2c7bf0f6e45180a1e9da",
+    "semantic_hash": "0a93eb78a7ec2c7bf0f6e45180a1e9da"
+  },
+  ".kiro/skills/dapp/SKILL.md": {
+    "mtime": 1781723018.1413178,
+    "ast_hash": "2fdfb9e576a65cdc55f7c0297620847f",
+    "semantic_hash": "2fdfb9e576a65cdc55f7c0297620847f"
+  },
+  ".kiro/skills/data/SKILL.md": {
+    "mtime": 1781723031.1877024,
+    "ast_hash": "934659034035ab2da8b0e0d813156c4f",
+    "semantic_hash": "934659034035ab2da8b0e0d813156c4f"
+  },
+  ".kiro/skills/pdf/SKILL.md": {
+    "mtime": 1781723077.3193865,
+    "ast_hash": "b7003d3e25312f362d934cc0895f37d5",
+    "semantic_hash": "b7003d3e25312f362d934cc0895f37d5"
+  },
+  ".kiro/skills/setup-stellar-contracts/SKILL.md": {
+    "mtime": 1781723113.804551,
+    "ast_hash": "962a2875ba91bbffacd2039d96ea17e4",
+    "semantic_hash": "962a2875ba91bbffacd2039d96ea17e4"
+  },
+  "docs/migration_stellar.md": {
+    "mtime": 1781715626.5186675,
+    "ast_hash": "48acc75e80d376d7ccd0951c8b5963b9",
+    "semantic_hash": "48acc75e80d376d7ccd0951c8b5963b9"
+  },
+  "docs/soroban-interfaces.md": {
+    "mtime": 1781932478.183491,
+    "ast_hash": "cdda3b64e4c1598549aea907691606b4",
+    "semantic_hash": "cdda3b64e4c1598549aea907691606b4"
+  },
+  "docs/superpowers/plans/2026-06-18-soroban-1a-agent-accounts-registry.md": {
+    "mtime": 1781724907.0650957,
+    "ast_hash": "481005e4eee79e7d78947aad5b3977c8",
+    "semantic_hash": "481005e4eee79e7d78947aad5b3977c8"
+  },
+  "docs/superpowers/plans/2026-06-19-soroban-1c-vault-fobxx-yield.md": {
+    "mtime": 1781864606.717295,
+    "ast_hash": "30187a73f485aa767425aaa836885fd3",
+    "semantic_hash": "30187a73f485aa767425aaa836885fd3"
+  },
+  "docs/superpowers/plans/2026-06-20-soroban-1d-compliance-guardrail.md": {
+    "mtime": 1781915169.3139677,
+    "ast_hash": "09f795062282c09a25344bbcbf4aa443",
+    "semantic_hash": "09f795062282c09a25344bbcbf4aa443"
+  },
+  "docs/superpowers/specs/2026-06-18-stellar-soroban-rwafi-migration-design.md": {
+    "mtime": 1781727370.3647158,
+    "ast_hash": "62ba6015707c7ff224b76739250b0f3f",
+    "semantic_hash": "62ba6015707c7ff224b76739250b0f3f"
+  },
+  "docs/superpowers/specs/2026-06-20-soroban-1d-compliance-guardrail-design.md": {
+    "mtime": 1781914121.179956,
+    "ast_hash": "1f683dbefef31bc73853785c6b7ab119",
+    "semantic_hash": "1f683dbefef31bc73853785c6b7ab119"
+  },
+  "soroban/README.md": {
+    "mtime": 1781771426.8059454,
+    "ast_hash": "3437c122ca836d00fbc16a500e33d4dc",
+    "semantic_hash": "3437c122ca836d00fbc16a500e33d4dc"
+  },
+  "docs/superpowers/plans/2026-06-20-soroban-2-gasless-relay.md": {
+    "mtime": 1781954175.4565542,
+    "ast_hash": "d879c233f07491d6af8784aab0ccaf90",
+    "semantic_hash": "d879c233f07491d6af8784aab0ccaf90"
   }
 }
