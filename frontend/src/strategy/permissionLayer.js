@@ -16,7 +16,9 @@ function templateSentence(result, metrics, riskTier) {
     return 'The numbers did not reconcile against the simulation — stopping for safety. Nothing will run.'
   }
   if (result.outcome === 'no-consensus') {
-    return `The council could not agree within ${result.iterations ?? 'the'} rounds — no clear edge. Hold for now?`
+    // Yes/No polarity must match the gate: answer===true means EXECUTE, so every
+    // human-facing question asks "Proceed…?" — never "Hold?" (which would invert intent).
+    return `The council could not agree within ${result.iterations ?? 'the'} rounds — no clear edge, recommend holding. Proceed anyway?`
   }
   if (result.proposal?.recommend === 'proceed') {
     return `Projected worst-case (5%) loss is about ${loss}% — within your ${riskTier} limit. Proceed with the rebalance?`
