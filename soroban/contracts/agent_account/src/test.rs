@@ -434,3 +434,36 @@ fn owner_withdraw_rejects_non_owner() {
     let res = AgentAccountClient::new(&env, &agent).try_owner_withdraw(&stranger);
     assert!(res.is_err());
 }
+
+// --- Task 4: the session-key (__check_auth) path stays deposit-only after Tasks 2/3 ---
+#[test]
+fn session_key_path_still_rejects_non_deposit_contexts() {
+    let env = Env::default();
+    let token = sac_token(&env);
+    let vault = Address::generate(&env);
+    let signer = BytesN::from_array(&env, &[7u8; 32]);
+    let s = AgentScope {
+        owner: Address::generate(&env),
+        vault: vault.clone(),
+        token: token.clone(),
+        cap_per_period: 1_000,
+        period_duration: 3600,
+        spent_in_period: 0,
+        period_start: 0,
+        expiry: env.ledger().timestamp() + 3600,
+        revoked: false,
+    };
+    let agent = env.register(AgentAccount, (Address::generate(&env), signer, s));
+
+    // An `approve@token` context must be rejected by the deposit-only enforcer — the session
+    // key never gained approve power (the self-approve / withdraw use invoker / owner auth).
+    let approve_ctx = Context::Contract(ContractContext {
+        contract: token,
+        fn_name: symbol_short!("approve"),
+        args: (1i128,).into_val(&env),
+    });
+    let res = env.as_contract(&agent, || {
+        AgentAccount::enforce_scope_for_test(env.clone(), Vec::from_array(&env, [approve_ctx]))
+    });
+    assert!(res.is_err()); // rejected — only deposit@vault is allowed for the session key
+}
