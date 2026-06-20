@@ -8,7 +8,7 @@ import { Keypair } from '@stellar/stellar-sdk'
  * @property {string}   publicKey     G... ed25519 strkey
  * @property {Uint8Array} rawPublicKey 32-byte ed25519 public key (BytesN<32> for the registry)
  * @property {string}   secret        S... secret (keep client-side only; never send to the relay)
- * @property {(payload: Uint8Array) => Buffer} sign  64-byte ed25519 signature over the payload
+ * @property {(payload: Uint8Array) => Uint8Array} sign  64-byte ed25519 signature over the payload
  */
 
 /**
@@ -22,6 +22,6 @@ export function newSessionKey(secret) {
     publicKey: kp.publicKey(),
     rawPublicKey: kp.rawPublicKey(),
     secret: kp.secret(),
-    sign: (payload) => kp.sign(Buffer.from(payload)),
+    sign: (payload) => kp.sign(Uint8Array.from(payload)),
   }
 }
