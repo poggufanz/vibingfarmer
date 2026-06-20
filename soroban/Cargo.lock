@@ -773,6 +773,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "guardrail"
+version = "0.1.0"
+dependencies = [
+ "registry",
+ "soroban-sdk",
+]
+
+[[package]]
 name = "hash32"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1260,9 +1268,11 @@ dependencies = [
  "claim_topics_and_issuers",
  "compliance",
  "ed25519-dalek",
+ "guardrail",
  "identity",
  "identity_registry_storage",
  "identity_verifier",
+ "registry",
  "rwa_token",
  "soroban-sdk",
  "stellar-access",

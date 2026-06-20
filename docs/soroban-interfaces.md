@@ -119,8 +119,9 @@ not 1b's.
   dividend-per-share index (O(1) per holder, claim-on-interaction).
 - Share token: decimals **7**, symbol `vfmRWA`, **non-transferable** (no transfer/approve
   exposed — positions move only via deposit/redeem; keeps the dividend index sound).
-- Constructor: `__constructor(admin: Address, token: Address, name: String, symbol: String)`
-  where `token` = the 1b mRWA SEP-41 token.
+- Constructor: `__constructor(admin: Address, token: Address, guardrail: Address, name: String, symbol: String)`
+  where `token` = the 1b mRWA SEP-41 token and `guardrail` = the 1d compliance guardrail this
+  vault routes every deposit/redeem through. Read via `guardrail() -> Address`.
 - `deposit(from: Address, amount: i128) -> i128` (shares) — **1a-pinned** fn-symbol
   `deposit`, amount = args[1]. Pause-gated. 1:1 shares. Pulls mRWA via
   `transfer_from(spender = vault, from, to = vault, amount)` (consumes `allowance[from][vault]`).
@@ -161,3 +162,31 @@ sub-project **2 (relay)** + **4 (orchestrator)**. 1c tests use a plain verified 
 - The **agent allocation/exposure caps** (Aladdin limits) are sub-project **1d** — distinct.
 - The **T-REX transfer compliance** (who may hold/transfer mRWA) is sub-project **1b** —
   distinct; the vault is a holder subject to it (see consequence above).
+
+## Compliance Guardrail (`guardrail`) — pinned by sub-project 1d
+
+Singleton Aladdin-cap enforcer over the 1a registry. Deployed addr in
+`deployments/stellar-testnet.json` → `guardrail`. The 1c vault is redeployed with this
+address and routes every deposit/redeem through it (deposit→`consume` before mint,
+redeem→`release` after burn).
+
+### Entrypoints
+- `__constructor(admin: Address, registry: Address)` — admin = set_nav authority; registry = 1a registry addr.
+- `set_nav(vault: Address, nav: i128)` — admin-auth. Per-vault NAV (7-dp; default 1e7 = $1.00). The de-peg lever.
+- `set_policy(owner, agent, max_exposure: i128, max_pct_bps: u32)` — owner-auth; owner must equal the agent's registry-record owner. `max_pct_bps` ≤ 10000.
+- `consume(agent, vault, amount: i128)` — VAULT-ONLY (invoker auth). Enforces spend (per-agent, from registry `cap_per_period`) + exposure (per-owner×vault `max_exposure`) + %-allocation (per-owner, NAV-valued `max_pct_bps`). Reverts out-of-policy BEFORE the mint. Called by `rwa_vault.deposit`.
+- `release(agent, vault, amount: i128)` — VAULT-ONLY. Decrements accounting on redeem (no checks). Called by `rwa_vault.redeem`.
+- Views: `policy_of(agent)`, `spend_of(agent)`, `total_value_of(agent)`, `position_of(agent, vault)`, `nav_of(vault)`, `admin()`, `registry()`.
+
+### Errors
+`InvalidAmount, Revoked, Expired, WrongVault, PolicyNotSet, SpendCapExceeded, ExposureCapExceeded, AllocCapExceeded, MathOverflow, NotOwner`.
+
+### Keying + known simplification
+Spend keyed by agent (per-worker rate); exposure/total-value/position keyed by owner
+(cross-vault portfolio). `total_value` is a running weighted sum: `set_nav` does not
+retro-revalue holders (no agent iteration) — exact under stable NAV, bounded drift on a
+mid-life NAV change. The first deposit into an owner's empty portfolio (`total_value == 0`)
+is exempt from the %-alloc check (a sole asset is trivially 100%); the cap binds once any
+value exists. For sub-projects 2/4: an agent deposit needs the agent (a) authorized in the
+1a registry scoped to the CURRENT vault address and (b) policed via `set_policy`; `consume`
+is invoker-auth, so the agent's signature covers only `deposit@vault`.

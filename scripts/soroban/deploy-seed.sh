@@ -53,6 +53,13 @@ stellar contract invoke --id "$IRS" --source vf-deployer --network "$NET" \
 stellar contract invoke --id "$COMPLIANCE" --source vf-deployer --network "$NET" \
   -- bind_token --token "$TOKEN" --operator "$ADMIN"
 
+# ---- 1d: compliance guardrail (Aladdin caps) ----
+# Singleton policy + accounting layer over the deployed 1a registry. Admin = deployer
+# (the set_nav / de-peg authority). Reads agent scope from the existing registry.
+GUARDRAIL=$(stellar contract deploy --wasm "$WASM_DIR/guardrail.wasm" \
+  --source vf-deployer --network "$NET" \
+  -- --admin "$ADMIN" --registry "$REGISTRY")
+
 # ---- 1c: RWA vault (FOBXX-faithful, stable-NAV daily-dividend) ----
 # Load-bearing T-REX consequence: the vault must be a verified mRWA holder, or
 # deposit/drip/redeem/claim revert at the token move. Verifying it requires the
@@ -89,7 +96,7 @@ stellar contract invoke --id "$VAULT_IDENTITY" --source vf-deployer --network "$
 # (5) Deploy the vault, then register its identity in the IRS + compliance allowlist.
 VAULT=$(stellar contract deploy --wasm "$WASM_DIR/rwa_vault.wasm" \
   --source vf-deployer --network "$NET" \
-  -- --admin "$ADMIN" --token "$TOKEN" \
+  -- --admin "$ADMIN" --token "$TOKEN" --guardrail "$GUARDRAIL" \
      --name "Vibing Vault mRWA" --symbol "vfmRWA")
 # add_identity requires >=1 country entry. `initial_profiles` is `Vec<Val>`
 # (exported name; trait source calls it country_data_list), so stellar-cli parses
@@ -105,7 +112,26 @@ stellar contract invoke --id "$IRS" --source vf-deployer --network "$NET" \
 stellar contract invoke --id "$ALLOW_MOD" --source vf-deployer --network "$NET" \
   -- allow_account --account "$VAULT" --operator "$ADMIN"
 
+# ---- 1d demo policy: police the existing 1a demo agent for the guardrail ----
+# set_policy is owner-gated (owner == the agent's registry-record owner). The 1a deploy
+# authorized DEMO_AGENT with ADMIN (vf-deployer) as owner, so ADMIN can set the policy.
+# Permissive demo limits: 100k-unit exposure, 50% max per-vault allocation.
+#
+# NOTE (verify before a LIVE agent deposit, owned by sub-projects 2/4): the demo agent's
+# registry record still points at the OLD (1c) vault. set_policy only checks the OWNER, so
+# it succeeds regardless — but `consume` checks `rec.vault == vault`, so a live deposit
+# through the NEW vault also needs the demo agent RE-AUTHORIZED in the registry to the new
+# VAULT address (owner-signed). That re-auth is a 2/4 concern; 1d's proof is the integration
+# test. If you want a live demo now, uncomment the re-authorize line below.
+# stellar contract invoke --id "$REGISTRY" --source vf-deployer --network "$NET" \
+#   -- authorize --owner "$ADMIN" --agent "$DEMO_AGENT" --vault "$VAULT" --token "$TOKEN" \
+#      --cap_per_period 1000000000000 --period_duration 86400 --expiry 4000000000
+stellar contract invoke --id "$GUARDRAIL" --source vf-deployer --network "$NET" \
+  -- set_policy --owner "$ADMIN" --agent "$DEMO_AGENT" \
+     --max_exposure 1000000000000 --max_pct_bps 5000
+
 REGISTRY="$REGISTRY" ACCT_HASH="$ACCT_HASH" DEMO_AGENT="$DEMO_AGENT" \
+GUARDRAIL="$GUARDRAIL" \
 CTI="$CTI" CLAIM_ISSUER="$CLAIM_ISSUER" IRS="$IRS" VERIFIER="$VERIFIER" \
 COMPLIANCE="$COMPLIANCE" ALLOW_MOD="$ALLOW_MOD" TOKEN="$TOKEN" \
 VAULT="$VAULT" VAULT_IDENTITY="$VAULT_IDENTITY" OUT="$OUT" \
@@ -118,6 +144,7 @@ out = {
   "registry": os.environ["REGISTRY"],
   "agentAccountWasmHash": os.environ["ACCT_HASH"],
   "demoAgentAccount": os.environ["DEMO_AGENT"],
+  "guardrail": os.environ["GUARDRAIL"],
   "rwa": {
     "claimTopicsAndIssuers": os.environ["CTI"],
     "claimIssuer": os.environ["CLAIM_ISSUER"],
