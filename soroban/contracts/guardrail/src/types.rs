@@ -1,4 +1,25 @@
-use soroban_sdk::{contracterror, contracttype, Address};
+use soroban_sdk::{contractclient, contracterror, contracttype, Address, Env};
+
+/// Local mirror of the 1a registry's `AgentRecord` (frozen contract). Kept as a thin
+/// `#[contractclient]` interface instead of a path-dependency so the registry's contract
+/// symbols (`__constructor`, …) are NOT linked into the guardrail wasm. Field names must
+/// match the registry's storage layout exactly (struct encodes as a name-keyed map).
+#[contracttype]
+#[derive(Clone)]
+pub struct AgentRecord {
+    pub owner: Address,
+    pub vault: Address,
+    pub token: Address,
+    pub cap_per_period: i128,
+    pub period_duration: u64,
+    pub expiry: u64,
+    pub revoked: bool,
+}
+
+#[contractclient(name = "RegistryClient")]
+pub trait RegistryInterface {
+    fn record_of(e: Env, agent: Address) -> AgentRecord;
+}
 
 #[contracttype]
 #[derive(Clone)]

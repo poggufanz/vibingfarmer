@@ -1,8 +1,7 @@
 use soroban_sdk::{Address, Env};
-use registry::RegistryClient;
 
 use crate::storage;
-use crate::types::{GuardrailError, Policy};
+use crate::types::{GuardrailError, Policy, RegistryClient};
 
 /// Admin-set per-vault NAV knob (the de-peg lever, §2.1). Admin-auth, positive only.
 pub fn set_nav(e: &Env, vault: Address, nav: i128) -> Result<(), GuardrailError> {
@@ -88,11 +87,14 @@ pub fn consume(e: &Env, agent: Address, vault: Address, amount: i128) -> Result<
     let new_pos_val = new_pos.checked_mul(nav).ok_or(GuardrailError::MathOverflow)?;
     let total = storage::get_total_value(e, &owner);
     let new_total = total.checked_add(amount_val).ok_or(GuardrailError::MathOverflow)?;
-    // ponytail: sole-asset exemption. A single-asset portfolio is trivially 100%, so the
-    // %-cap can only bind once a 2nd vault holds value (new_total > new_pos_val). Without
-    // this, any max_pct_bps < 10000 would revert the owner's very first deposit and the
-    // portfolio could never bootstrap (orchestrator funds N vaults as N sequential txs).
-    if new_pos_val != new_total {
+    // ponytail: empty-portfolio bootstrap exemption. The very first deposit into an owner's
+    // empty portfolio (total == 0) is trivially 100%, so any max_pct_bps < 10000 would revert
+    // it and the portfolio could never bootstrap (orchestrator funds N vaults as N sequential
+    // txs; only the first sees total == 0). The cap binds on every later deposit. NOTE: we key
+    // off `total == 0`, NOT `new_pos_val == new_total` — under a NAV bump a single vault's
+    // revalued worth can transiently equal the running total without being the sole asset, and
+    // a `new_pos_val == new_total` test would wrongly exempt (and bypass) that de-peg case.
+    if total != 0 {
         let lhs = new_pos_val.checked_mul(10_000).ok_or(GuardrailError::MathOverflow)?;
         let rhs = (policy.max_pct_bps as i128)
             .checked_mul(new_total)

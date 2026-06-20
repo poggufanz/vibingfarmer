@@ -8,7 +8,7 @@ crate-type = ["cdylib", "lib"]
 
 [dependencies]
 soroban-sdk = { workspace = true }
-registry = { path = "../registry" }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+registry = { path = "../registry" }

@@ -1,13 +1,12 @@
 #![no_std]
 use soroban_sdk::{contract, contractimpl, Address, Env};
-use registry::RegistryClient;
 
 pub mod types;
 pub mod storage;
 mod guardrail;
 mod test;
 
-use types::{GuardrailError, Policy, SpendState};
+use types::{GuardrailError, Policy, RegistryClient, SpendState};
 
 #[contract]
 pub struct Guardrail;
