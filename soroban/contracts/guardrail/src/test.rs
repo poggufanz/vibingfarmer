@@ -208,3 +208,39 @@ fn test_consume_overflow_guarded() {
     // amount * nav (1e7) overflows i128 in the alloc valuation → MathOverflow, not a panic.
     assert!(c.guard.try_consume(&c.agent, &c.vault, &(i128::MAX / 2)).is_err());
 }
+
+#[test]
+fn test_release_decrements_position_and_total() {
+    let env = Env::default();
+    let c = setup(&env);
+    c.guard.set_policy(&c.owner, &c.agent, &(1_000_000 * U7), &10_000u32);
+    c.guard.consume(&c.agent, &c.vault, &(100 * U7));
+    assert_eq!(c.guard.position_of(&c.agent, &c.vault), 100 * U7);
+
+    c.guard.release(&c.agent, &c.vault, &(30 * U7));
+    assert_eq!(c.guard.position_of(&c.agent, &c.vault), 70 * U7);
+    // total_value also drops by 30 * nav → re-deposit of 30 succeeds within the same caps:
+    c.guard.consume(&c.agent, &c.vault, &(30 * U7));
+    assert_eq!(c.guard.position_of(&c.agent, &c.vault), 100 * U7);
+}
+
+#[test]
+fn test_release_saturates_at_zero() {
+    let env = Env::default();
+    let c = setup(&env);
+    c.guard.set_policy(&c.owner, &c.agent, &(1_000_000 * U7), &10_000u32);
+    c.guard.consume(&c.agent, &c.vault, &(70 * U7));
+    c.guard.release(&c.agent, &c.vault, &(1_000 * U7)); // over-release → floors at 0
+    assert_eq!(c.guard.position_of(&c.agent, &c.vault), 0);
+    assert_eq!(c.guard.total_value_of(&c.agent), 0);
+}
+
+#[test]
+fn test_release_requires_vault_invoker_auth() {
+    let env = Env::default();
+    let c = setup(&env);
+    c.guard.set_policy(&c.owner, &c.agent, &(1_000_000 * U7), &10_000u32);
+    c.guard.consume(&c.agent, &c.vault, &(50 * U7));
+    env.set_auths(&[]);
+    assert!(c.guard.try_release(&c.agent, &c.vault, &(10 * U7)).is_err());
+}

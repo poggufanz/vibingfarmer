@@ -110,3 +110,22 @@ pub fn consume(e: &Env, agent: Address, vault: Address, amount: i128) -> Result<
     storage::extend_instance(e);
     Ok(())
 }
+
+/// Vault-only exit path. Decrements the owner's position + running total (saturating at 0).
+/// No policy checks — redeems are always allowed.
+pub fn release(e: &Env, agent: Address, vault: Address, amount: i128) -> Result<(), GuardrailError> {
+    vault.require_auth();
+    if amount <= 0 {
+        return Err(GuardrailError::InvalidAmount);
+    }
+    let owner = RegistryClient::new(e, &storage::get_registry(e)).record_of(&agent).owner;
+    let nav = storage::get_nav(e, &vault);
+    let amount_val = amount.checked_mul(nav).ok_or(GuardrailError::MathOverflow)?;
+
+    let new_pos = (storage::get_position(e, &owner, &vault) - amount).max(0);
+    let new_total = (storage::get_total_value(e, &owner) - amount_val).max(0);
+    storage::set_position(e, &owner, &vault, new_pos);
+    storage::set_total_value(e, &owner, new_total);
+    storage::extend_instance(e);
+    Ok(())
+}

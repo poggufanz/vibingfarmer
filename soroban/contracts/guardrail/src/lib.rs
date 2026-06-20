@@ -39,7 +39,9 @@ impl Guardrail {
         guardrail::consume(e, agent, vault, amount)
     }
 
-    // release lands in Task 3.
+    pub fn release(e: &Env, agent: Address, vault: Address, amount: i128) -> Result<(), GuardrailError> {
+        guardrail::release(e, agent, vault, amount)
+    }
 
     // ----- read views -----
     pub fn admin(e: &Env) -> Address {
