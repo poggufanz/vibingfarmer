@@ -17,6 +17,7 @@
   "dependencies": {
     "@coinbase/cdp-sdk": "^1.51.0",
     "@metamask/smart-accounts-kit": "1.6.0",
+    "@stellar/stellar-sdk": "^16.0.1",
     "@uxly/1shot-client": "^1.3.2",
     "@vitejs/plugin-react": "^4.3.1",
     "dotenv": "^17.4.2",
