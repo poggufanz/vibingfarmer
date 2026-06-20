@@ -15,8 +15,9 @@ export const SOROBAN_VAULT_ADDRESS = 'CCDXZ6BUA7TPR3EXQWJWUD7EYR6OUMJRYIKYXPE53H
 export const SOROBAN_REGISTRY_ADDRESS = 'CAEHOZGUGVNRCAFVJCSR3B2EFJ55LEA34S76HTRQGH7XSPBO7YIMNZOQ'
 // Yield-farming asset (plain SAC VFUSD, 7 decimals). The vault pulls + pays dividends in it.
 export const SOROBAN_TOKEN_ADDRESS = 'CAJSGONIIU4QPLNIVVOO7QCYC2LWGYMGXTD7BXSSNIQWWDHWFQTSAEB4'
-// Pre-seeded demo agent custom account (1a) — used by the smoke script + demo flows.
-export const SOROBAN_DEMO_AGENT = 'CCRG37UTQ2BRCJSA3WYZIUTSGZVLYQ7C4EET2WYUWLU4NAWTETGB77JW'
+// Pre-seeded demo agent custom account (1a, v2 — constructor self-approves the vault for cap).
+// Used by the smoke script + demo flows. Owner = vf-deployer; signer in deployments JSON.
+export const SOROBAN_DEMO_AGENT = 'CD3MQJ4YZQ5MDSKDETEFZMDV5J5URVXM46NY5Y3RICUOVJJOFIZTKJ7K'
 // Token + vault-share decimals (both 7). Amounts are i128 in base units (1 VFUSD = 10_000_000).
 export const SOROBAN_DECIMALS = 7
 
