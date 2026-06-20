@@ -15,15 +15,16 @@ function templateSentence(result, metrics, riskTier) {
   if (result.outcome === 'fatal') {
     return 'The numbers did not reconcile against the simulation — stopping for safety. Nothing will run.'
   }
+  // Fail-closed gate: only a converged 'proceed' is executable, so only the proceed
+  // sentence poses a Yes/No. Every hold path ends "Nothing will run." — no
+  // "Proceed anyway?" affordance the gate would refuse anyway.
   if (result.outcome === 'no-consensus') {
-    // Yes/No polarity must match the gate: answer===true means EXECUTE, so every
-    // human-facing question asks "Proceed…?" — never "Hold?" (which would invert intent).
-    return `The council could not agree within ${result.iterations ?? 'the'} rounds — no clear edge, recommend holding. Proceed anyway?`
+    return `The council could not agree within ${result.iterations ?? 'the'} rounds — no clear edge, recommend holding. Nothing will run.`
   }
   if (result.proposal?.recommend === 'proceed') {
     return `Projected worst-case (5%) loss is about ${loss}% — within your ${riskTier} limit. Proceed with the rebalance?`
   }
-  return `Projected worst-case (5%) loss of about ${loss}% reaches your ${riskTier} risk floor — recommend holding. Proceed anyway?`
+  return `Projected worst-case (5%) loss of about ${loss}% reaches your ${riskTier} risk floor — recommend holding. Nothing will run.`
 }
 
 /**
@@ -49,9 +50,12 @@ export async function buildPermission(result, ctx = {}) {
 }
 
 /**
- * The Yes/No gate. Executes ONLY on an explicit boolean true and never on a fatal
- * council exit. Any other answer (No, undefined, a truthy non-true) is a rejection
- * routed to the injected onReject sink for ACE learning.
+ * The Yes/No gate. Fail-closed allow-list: executes ONLY when the council's own
+ * deterministic decision was an affirmative converge+proceed AND the human answered
+ * an explicit boolean true. Every other state — fatal, no-consensus, a converged
+ * hold, or any unknown future outcome string — is refused even on a Yes, so the gate
+ * can never drift open (WAJIB BERHENTI). Any refusal/decline is routed to the
+ * injected onReject sink for ACE learning.
  * @param {{outcome:string, recommend:string, payload:any}} permission
  * @param {boolean} answer must be strictly `true` to proceed
  * @param {{execute?:(payload:any)=>Promise<any>, onReject?:(permission:object)=>any}} deps
@@ -59,9 +63,9 @@ export async function buildPermission(result, ctx = {}) {
  */
 export async function confirmPermission(permission, answer, deps = {}) {
   const { execute, onReject } = deps
-  if (permission?.outcome === 'fatal') {
+  if (permission?.outcome !== 'converge' || permission?.recommend !== 'proceed') {
     try { onReject?.(permission) } catch { /* logging must never block the stop */ }
-    return { executed: false, reason: 'fatal: numbers did not reconcile' }
+    return { executed: false, reason: `not approved by council: ${permission?.outcome}/${permission?.recommend}` }
   }
   if (answer !== true) {
     try { onReject?.(permission) } catch { /* ignore */ }

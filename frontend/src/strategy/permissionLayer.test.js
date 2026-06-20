@@ -79,4 +79,24 @@ describe('confirmPermission (WAJIB BERHENTI)', () => {
     expect(r.executed).toBe(false)
     expect(execute).not.toHaveBeenCalled()
   })
+
+  test('fail-closed: no-consensus, unknown outcome, and a converged hold never execute on Yes', async () => {
+    // Arrange — only converge+proceed is executable; everything else stays shut.
+    const execute = vi.fn()
+    const onReject = vi.fn()
+    const blocked = [
+      { outcome: 'no-consensus', recommend: 'hold', payload: {} },
+      { outcome: 'unknown', recommend: 'proceed', payload: {} },
+      { outcome: 'converge', recommend: 'hold', payload: {} },
+    ]
+    // Act
+    const results = []
+    for (const permission of blocked) {
+      results.push(await confirmPermission(permission, true, { execute, onReject }))
+    }
+    // Assert
+    expect(results.every((r) => r.executed === false)).toBe(true)
+    expect(execute).not.toHaveBeenCalled()
+    expect(onReject).toHaveBeenCalledTimes(3)
+  })
 })
