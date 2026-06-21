@@ -45,7 +45,7 @@ export async function signAgentDepositEntries({ tx, sessionKey, validUntilLedger
           nonce: creds.nonce(),
           signatureExpirationLedger: validUntilLedger,
           invocation: entry.rootInvocation(),
-        }),
+        })
       )
       const payload = hash(preimage.toXDR())
       const sig = Buffer.from(sessionKey.sign(new Uint8Array(payload))) // 64-byte ed25519

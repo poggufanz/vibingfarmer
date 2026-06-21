@@ -41,7 +41,7 @@ export function onAgentEvent(callback) {
 }
 
 function emit(event) {
-  listeners.forEach(cb => cb(event))
+  listeners.forEach((cb) => cb(event))
 }
 
 async function handleWorkerMessage(e) {
@@ -58,7 +58,8 @@ async function handleWorkerMessage(e) {
       break
     case 'RISK_SCAN_RESULT': {
       const severity = await classifyRisk(payload.searchAnswer, payload.protocol)
-      if (severity === 'high' || severity === 'medium') emit({ kind: 'risk_alert', severity, ...payload })
+      if (severity === 'high' || severity === 'medium')
+        emit({ kind: 'risk_alert', severity, ...payload })
       break
     }
     case 'MONITOR_ERROR':
@@ -74,14 +75,34 @@ async function handleWorkerMessage(e) {
 // per-agent address (exec state) as `agentAddress`.
 
 /** Emergency exit — called from a risk alert. User-signed owner_withdraw (one popup). */
-export async function emergencyWithdraw(vaultAddress, amount, userAddress, agentAddress = SOROBAN_DEMO_AGENT) {
+export async function emergencyWithdraw(
+  vaultAddress,
+  amount,
+  userAddress,
+  agentAddress = SOROBAN_DEMO_AGENT
+) {
   const { hash } = await ownerWithdraw({ owner: userAddress, agentAddress, to: userAddress })
-  saveTransaction({ txHash: hash, vaultName: 'Emergency Exit', vaultAddress: agentAddress, workerLabel: 'RiskWatcher', network: 'stellar-testnet' })
+  saveTransaction({
+    txHash: hash,
+    vaultName: 'Emergency Exit',
+    vaultAddress: agentAddress,
+    workerLabel: 'RiskWatcher',
+    network: 'stellar-testnet',
+  })
   return hash
 }
 
 /** Manual exit from the dashboard. Returns { txHash, status }. */
-export async function withdrawFromVault(vaultAddress, amount, userAddress, agentAddress = SOROBAN_DEMO_AGENT) {
-  const { hash, status } = await ownerWithdraw({ owner: userAddress, agentAddress, to: userAddress })
+export async function withdrawFromVault(
+  vaultAddress,
+  amount,
+  userAddress,
+  agentAddress = SOROBAN_DEMO_AGENT
+) {
+  const { hash, status } = await ownerWithdraw({
+    owner: userAddress,
+    agentAddress,
+    to: userAddress,
+  })
   return { txHash: hash, status }
 }

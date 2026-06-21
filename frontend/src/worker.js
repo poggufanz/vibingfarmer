@@ -53,7 +53,9 @@ export class WorkerAgent {
   async setupKey() {
     this.emit('step', { step: 'key-setup', status: 'pending' })
     if (!this.sessionKey) this.sessionKey = newSessionKey()
-    this.memoryEntries.push(createEntry('key-setup', 'success', { signer: this.sessionKey.publicKey }))
+    this.memoryEntries.push(
+      createEntry('key-setup', 'success', { signer: this.sessionKey.publicKey })
+    )
     this.emit('step', { step: 'key-setup', status: 'done', address: this.sessionKey.publicKey })
     return this.sessionKey
   }
@@ -63,7 +65,9 @@ export class WorkerAgent {
       this.emit('started', { agentId: this.agentId, vault: this.vault })
       await this.setupKey()
       if (!this.agentAddress)
-        throw new Error('agentAddress missing — orchestrator must deploy + authorize the agent first')
+        throw new Error(
+          'agentAddress missing — orchestrator must deploy + authorize the agent first'
+        )
 
       // Pre-submit circuit breaker. The relayer pays the fee, so gas is always "fresh" on this
       // path (no EVM gasFeeProvider) — pass a current timestamp so only the rate-anomaly guard
@@ -97,12 +101,12 @@ export class WorkerAgent {
       const minted = await this.verifyMinted(baseline)
       if (!minted)
         throw new Error(
-          'deposit not confirmed on-chain: vault shares did not increase (likely __check_auth/cap reject)',
+          'deposit not confirmed on-chain: vault shares did not increase (likely __check_auth/cap reject)'
         )
 
       const lesson = buildLesson(this.vault, { shares: this.amount.toString() })
       this.memoryEntries.push(
-        createEntry('deposit', 'success', { txHash: res.hash, gasMethod: 'relayer' }, lesson),
+        createEntry('deposit', 'success', { txHash: res.hash, gasMethod: 'relayer' }, lesson)
       )
       writeMemory(this.agentId, this.sessionId, this.vault, this.memoryEntries)
       this.emit('completed', {
@@ -114,7 +118,9 @@ export class WorkerAgent {
       })
       return { success: true, txHash: res.hash }
     } catch (err) {
-      this.memoryEntries.push(createEntry('deposit', 'failed', {}, buildLesson(this.vault, { error: err.message })))
+      this.memoryEntries.push(
+        createEntry('deposit', 'failed', {}, buildLesson(this.vault, { error: err.message }))
+      )
       writeMemory(this.agentId, this.sessionId, this.vault, this.memoryEntries)
       this.emit('failed', { agentId: this.agentId, vault: this.vault, error: err.message })
       return { success: false, error: err.message }

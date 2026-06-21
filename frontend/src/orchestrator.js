@@ -69,8 +69,8 @@ export class OrchestratorAgent {
         }).then((skill) => {
           saveSkill(plan.agentId, skill)
           return { agentId: plan.agentId, skill }
-        }),
-      ),
+        })
+      )
     )
     this.onEvent('orchestrator-step', { step: 'generating-skills', status: 'done' })
 
@@ -106,7 +106,7 @@ export class OrchestratorAgent {
           sessionId: this.sessionId,
           onEvent: this.onEvent,
           agentAddress: SOROBAN_DEMO_AGENT,
-        }),
+        })
     )
 
     // One user-signed authorize + fund per agent (no EIP-5792 batch — the wallet kit signs each).

@@ -56,14 +56,18 @@ describe('orchestrator (Stellar authorize + fund + dispatch)', () => {
     const res = await orch.dispatch(strategy, 100)
     expect(authorizeAndFundAgentMock).toHaveBeenCalledTimes(2)
     expect(authorizeAndFundAgentMock).toHaveBeenCalledWith(
-      expect.objectContaining({ owner: 'GUSER', agentAddress: 'CDEMOAGENT' }),
+      expect.objectContaining({ owner: 'GUSER', agentAddress: 'CDEMOAGENT' })
     )
     expect(res.completed).toBe(2)
   })
 
   it('emits AgentScopeAuthorized per worker for the revoke UI', async () => {
     const events = []
-    const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 's3', onEvent: (n, d) => events.push({ n, d }) })
+    const orch = new OrchestratorAgent({
+      user: 'GUSER',
+      sessionId: 's3',
+      onEvent: (n, d) => events.push({ n, d }),
+    })
     await orch.dispatch(strategy, 100)
     const scoped = events.filter((e) => e.n === 'AgentScopeAuthorized')
     expect(scoped).toHaveLength(2)

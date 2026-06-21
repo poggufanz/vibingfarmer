@@ -8,7 +8,12 @@
 // aggregate path and is never on the critical path. Pure + deterministic: RNG is
 // seeded, no network, no storage. (Full 4-signal fan-out is Phase 2.)
 
-import { aggregateStress, emergentStress, routeBehavior, simulateCorrelatedPath } from './behavioral.js'
+import {
+  aggregateStress,
+  emergentStress,
+  routeBehavior,
+  simulateCorrelatedPath,
+} from './behavioral.js'
 import { riskMetrics } from './riskMetrics.js'
 import { makeRng } from './rng.js'
 

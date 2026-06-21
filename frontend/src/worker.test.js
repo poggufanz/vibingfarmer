@@ -44,7 +44,7 @@ describe('WorkerAgent (Stellar)', () => {
     expect(res.success).toBe(true)
     expect(res.txHash).toBe('abc123')
     expect(runAgentDeposit).toHaveBeenCalledWith(
-      expect.objectContaining({ agentAddress: 'CCRG...AGENT', amount: 50_000_000n }),
+      expect.objectContaining({ agentAddress: 'CCRG...AGENT', amount: 50_000_000n })
     )
   })
 

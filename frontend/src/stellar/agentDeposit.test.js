@@ -12,14 +12,14 @@ function fakeTxWithAgentEntry(env) {
     function: xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
       new xdr.InvokeContractArgs({
         contractAddress: Address.fromString(
-          'CCDXZ6BUA7TPR3EXQWJWUD7EYR6OUMJRYIKYXPE53HRJOJFY5CXEHTN5',
+          'CCDXZ6BUA7TPR3EXQWJWUD7EYR6OUMJRYIKYXPE53HRJOJFY5CXEHTN5'
         ).toScAddress(),
         functionName: 'deposit',
         args: [
           Address.fromString(agentAddress).toScVal(),
           nativeToScVal(50000000n, { type: 'i128' }),
         ],
-      }),
+      })
     ),
     subInvocations: [],
   })
@@ -74,7 +74,7 @@ describe('balance reads', () => {
     // Act
     const shares = await readVaultShares(
       'CCRG37UTQ2BRCJSA3WYZIUTSGZVLYQ7C4EET2WYUWLU4NAWTETGB77JW',
-      { server: fakeServer },
+      { server: fakeServer }
     )
     // Assert
     expect(shares).toBe(50000000n)
