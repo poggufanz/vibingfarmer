@@ -504,58 +504,29 @@ const App = () => {
     persistPositions(realAddress, agentData.positions)
   }, [agentData.positions, realAddress])
 
-  // Event-driven sync: re-read chain the instant a real Deposit/Withdraw lands for this
-  // user — no waiting on the worker's poll. Debounced so a burst of parallel deposits
-  // collapses into ONE reconcile. Listens + reads via the dedicated read-only provider
-  // (getReadProvider) — never the wallet's BrowserProvider, which -32603s while a
-  // wallet_* RPC is pending. applyChainPositions is authoritative (can lower on
-  // withdraw), unlike the raise-only connect-time merge that protects unconfirmed seeds.
+  // Position reconcile against Stellar. The autonomous deposit lands via the relayer
+  // (no browser-visible depositor event to listen for, unlike the EVM log), so we poll
+  // the agent's vault-share balance and apply it authoritatively. applyChainPositions
+  // can lower a balance (after owner_withdraw) and prune a fully-swept vault. The worker
+  // also emits a 'position' event on deposit — this is the cold-reconcile cross-check.
   useE(() => {
     if (!realAddress) return
-    const provider = getReadProvider()
-    const contract = new ethers.Contract(AGENT_VAULT_DEPOSITOR_ADDRESS, DEPOSITOR_ABI, provider)
-    let timer = null
+    let alive = true
     const sync = async () => {
-      const chain = await reconcilePositionsFromChain(realAddress)
-      if (!chain) return
+      const chain = await reconcilePositionsFromChain(realAddress).catch(() => null)
+      if (!alive || !chain) return
       setAgentData((d) => ({
         ...d,
         positions: applyChainPositions(d.positions, chain),
         lastUpdated: Date.now(),
       }))
     }
-    const onEvent = () => {
-      clearTimeout(timer)
-      timer = setTimeout(sync, 1500)
-    }
-    // v2 depositor: AgentDepositExecuted(agent, owner, vault, token, assetsIn, sharesOut, execId).
-    // owner is the 2nd indexed topic → filter on it. Withdraws are user-signed ERC-4626 txs
-    // (no depositor event); handleWithdrawSuccess updates positions directly, so we only
-    // need the deposit listener here.
-    const depFilter = contract.filters.AgentDepositExecuted(null, realAddress)
-
-    const onDepositEvent = (agent, owner, vault, token, assetsIn, sharesOut, execId, event) => {
-      const vaultMeta = VAULT_CATALOG.find((v) => v.address.toLowerCase() === vault.toLowerCase())
-      const amountUsdc = Number(assetsIn) / 1e6
-      if (amountUsdc > 0) {
-        saveTransaction({
-          txHash: event?.log?.transactionHash || event?.transactionHash,
-          vaultName: vaultMeta?.name || `Vault ${vault.slice(0, 6)}…`,
-          vaultAddress: vault,
-          protocol: vaultMeta?.protocol,
-          apy: vaultMeta?.apy,
-          amountUsdc,
-          workerLabel: vaultMeta?.name || `Vault ${vault.slice(0, 10)}…`,
-          network: 'sepolia',
-        })
-      }
-      onEvent() // Also trigger position sync after 1.5s debounce
-    }
-
-    contract.on(depFilter, onDepositEvent)
+    sync() // once on connect
+    // ponytail: 15s poll. A Soroban event subscription would make it instant if needed.
+    const id = setInterval(sync, 15000)
     return () => {
-      clearTimeout(timer)
-      contract.off(depFilter, onDepositEvent)
+      alive = false
+      clearInterval(id)
     }
   }, [realAddress])
 
