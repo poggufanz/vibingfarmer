@@ -3,8 +3,11 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { withdrawFromVault } from '../agents/agentController.js'
 import { saveTransaction } from '../history.js'
-import { readVaultDepositTimestamp } from '../wallet.js'
 import { loadSettings, t } from '../settingsStore.js'
+
+// The v2 vault exposes no per-deposit timestamp, so "time deposited" is unknown (renders "-").
+// Kept as a 0-stub so the modal effect below is unchanged. ponytail: no chain read to wire here.
+const readVaultDepositTimestamp = async () => 0
 
 const fmtDur = (secAgo) => {
   if (!secAgo || secAgo <= 0) return '-'

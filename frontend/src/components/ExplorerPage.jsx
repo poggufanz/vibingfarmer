@@ -8,78 +8,56 @@
 // from style.css so it re-themes with the rest of the app.
 
 import { useEffect, useState } from 'react'
-import { ethers } from 'ethers'
 import {
-  AGENT_VAULT_DEPOSITOR_ADDRESS,
-  MOCK_VAULT_A_ADDRESS,
-  MOCK_VAULT_B_ADDRESS,
-  MOCK_VAULT_C_ADDRESS,
-  MOCK_VAULT_D_ADDRESS,
-  VAULT_ABI,
-  SEPOLIA_CHAIN_ID,
-} from '../config.js'
-import { getReadProvider } from '../readProvider.js'
+  SOROBAN_REGISTRY_ADDRESS,
+  SOROBAN_VAULT_ADDRESS,
+  SOROBAN_TOKEN_ADDRESS,
+  SOROBAN_DEMO_AGENT,
+  SOROBAN_DECIMALS,
+} from '../stellar/config.js'
+import { readVaultShares } from '../stellar/agentDeposit.js'
 import { getStrategies } from '../history.js'
 import NavBar from './NavBar.jsx'
 
 /* ----------------------------- constants ----------------------------- */
 
-const ETHERSCAN_ADDR = 'https://sepolia.basescan.org/address/'
-const SOURCIFY = `https://sourcify.dev/#/lookup/${SEPOLIA_CHAIN_ID}/`
-
-// Demo wallet whose deposits seed the public "total deposits" stat.
-const DEMO_WALLET = '0x9f07f7f9f2c6e7103f3c6ee3955f19c3751a559a'
-
-// Hardcoded from the test suite — verifiable via `forge test` / `forge coverage`.
-const TESTS_PASSING = '57 / 57'
-const COVERAGE = '93.3%'
+const STELLAR_EXPERT = 'https://stellar.expert/explorer/testnet/contract/'
+const DECIMALS_DIV = 10 ** SOROBAN_DECIMALS // 1 VFUSD = 10_000_000 base units (7-dp)
 
 const CONTRACTS = [
   {
-    name: 'AgentVaultDepositor',
+    name: 'AgentRegistry',
     type: 'CORE',
-    address: AGENT_VAULT_DEPOSITOR_ADDRESS,
-    description: 'Permission validation · Strategy attestation · Emergency exit',
-    sourcify: true,
+    address: SOROBAN_REGISTRY_ADDRESS,
+    description: 'Per-agent scope · authorize · revoke (kill switch)',
   },
   {
-    name: 'MockVault USDC-A',
+    name: 'YieldVault · vfVLT',
     type: 'VAULT',
-    protocol: 'aave-v3',
-    address: MOCK_VAULT_A_ADDRESS,
-    description: 'ERC-4626 · 4.8% APY · Lending',
+    protocol: 'soroban',
+    address: SOROBAN_VAULT_ADDRESS,
+    description: 'SEP-41 shares · cumulative-dividend yield',
   },
   {
-    name: 'MockVault USDC-B',
-    type: 'VAULT',
-    protocol: 'morpho-blue',
-    address: MOCK_VAULT_B_ADDRESS,
-    description: 'ERC-4626 · 6.1% APY · Lending',
-  },
-  {
-    name: 'MockVault USDC-C',
-    type: 'VAULT',
-    protocol: 'pendle-v2',
-    address: MOCK_VAULT_C_ADDRESS,
-    description: 'ERC-4626 · 9.4% APY · Yield tokenization',
-  },
-  {
-    name: 'MockVault USDC-D',
-    type: 'VAULT',
-    protocol: 'fluid',
-    address: MOCK_VAULT_D_ADDRESS,
-    description: 'ERC-4626 · 5.2% APY · Lending',
+    name: 'VFUSD',
+    type: 'TOKEN',
+    protocol: 'SAC',
+    address: SOROBAN_TOKEN_ADDRESS,
+    description: 'Stellar Asset Contract · 7 decimals · farming asset',
   },
 ]
 
+// Deployed-contract count + the soroban/ unit-test count (grep-verifiable: 27 #[test]s).
+const CONTRACT_COUNT = String(CONTRACTS.length)
+const CONTRACT_TESTS = '27'
+
 const SECURITY = [
-  'ReentrancyGuard on all state-changing functions',
-  'CEI (Checks-Effects-Interactions) pattern enforced',
-  'ERC-7715 permission scope: vault-specific, amount-capped, time-limited',
-  'Emergency revocation: user can cancel all permissions instantly',
-  'Strategy attestation: AI reasoning hashed on-chain (tamper-proof)',
-  'CORS allowlist on AI proxy (YV-001)',
-  'Cryptographic SIWE nonce (YV-002)',
+  'Per-agent scope on AgentRegistry: vault + token + cap + expiry',
+  'Owner can revoke any agent instantly — user-signed, works even if the relayer is down',
+  'Agent custom account __check_auth signs only within the granted scope',
+  'Gasless relay fee-bumps deposit invokes only (defense-in-depth + per-IP rate limit)',
+  'Soroban auth nonce + signature-expiration ledger guard against replay',
+  'Strategy hash (sha256): AI reasoning is off-chain verifiable (tamper-evident)',
 ]
 
 /* ----------------------------- helpers ----------------------------- */
@@ -97,38 +75,19 @@ function timeAgo(ts) {
 
 const shortHash = (h) => (h ? `${String(h).slice(0, 10)}…` : '0x…')
 
-// Sum the demo wallet's USDC across every unique vault. Reads through the
-// dedicated read-only provider; isolates per-vault failures. Returns a number
-// (USDC) or null when every read fails — caller renders "--" on null.
+// Live: the demo agent's vault-share balance (i128 base units, 7-dp) → VFUSD. readVaultShares
+// catches its own RPC errors and returns null; we surface that as "--" (never a fake 0).
 async function fetchTotalDeposits() {
-  const provider = getReadProvider()
-  const addresses = [...new Set(CONTRACTS.filter((c) => c.type === 'VAULT').map((c) => c.address))]
-
-  const results = await Promise.allSettled(
-    addresses.map(async (addr) => {
-      const contract = new ethers.Contract(addr, VAULT_ABI, provider)
-      const shares = await contract.balanceOf(DEMO_WALLET)
-      if (shares === 0n) return 0n
-      return contract.convertToAssets(shares)
-    })
-  )
-
-  let anyOk = false
-  let total = 0n
-  for (const r of results) {
-    if (r.status === 'fulfilled') {
-      anyOk = true
-      total += r.value
-    }
-  }
-  if (!anyOk) return null
-  return Number(total) / 1e6
+  const shares = await readVaultShares(SOROBAN_DEMO_AGENT)
+  if (shares == null) return null
+  return Number(shares) / DECIMALS_DIV
 }
 
 /* ----------------------------- pieces ----------------------------- */
 
 function TypeBadge({ type }) {
-  return <span className={`ex-badge ex-badge--${type.toLowerCase()}`}>{type === 'CORE' ? 'CORE CONTRACT' : 'VAULT'}</span>
+  const label = type === 'CORE' ? 'CORE CONTRACT' : type
+  return <span className={`ex-badge ex-badge--${type.toLowerCase()}`}>{label}</span>
 }
 
 function ContractCard({ contract, copied, onCopy }) {
@@ -158,14 +117,9 @@ function ContractCard({ contract, copied, onCopy }) {
       <p className="ex-card__desc">{contract.description}</p>
 
       <div className="ex-card__links">
-        <a className="ex-extlink" href={`${ETHERSCAN_ADDR}${contract.address}`} target="_blank" rel="noreferrer noopener">
-          View on Etherscan <span aria-hidden="true">↗</span>
+        <a className="ex-extlink" href={`${STELLAR_EXPERT}${contract.address}`} target="_blank" rel="noreferrer noopener">
+          View on Stellar Expert <span aria-hidden="true">↗</span>
         </a>
-        {contract.sourcify && (
-          <a className="ex-extlink" href={`${SOURCIFY}${contract.address}`} target="_blank" rel="noreferrer noopener">
-            View on Sourcify <span aria-hidden="true">↗</span>
-          </a>
-        )}
       </div>
     </article>
   )
@@ -243,7 +197,7 @@ export default function ExplorerPage() {
   // loading branch never reaches .toLocaleString, so render can't throw.
   const depositsLabel =
     totalDeposits == null ? '--'
-    : `${totalDeposits.toLocaleString(undefined, { maximumFractionDigits: 0 })} USDC`
+    : `${totalDeposits.toLocaleString(undefined, { maximumFractionDigits: 0 })} VFUSD`
 
   return (
     <div className="ex-page">
@@ -255,11 +209,11 @@ export default function ExplorerPage() {
         <header className="ex-header">
           <div className="ex-header__top">
             <h1 className="ex-title">Explorer</h1>
-            <span className="ex-net"><span className="ex-net__dot" /> Base Sepolia testnet · live</span>
+            <span className="ex-net"><span className="ex-net__dot" /> Stellar testnet · live</span>
           </div>
           <p className="ex-lede">
-            On-chain verification for Vibing Farmer. Every contract, transaction, and
-            strategy attestation is publicly verifiable.
+            On-chain verification for Vibing Farmer. Every deployed contract and live vault
+            balance is publicly verifiable on Stellar; strategy hashes verify off-chain.
           </p>
         </header>
 
@@ -277,13 +231,13 @@ export default function ExplorerPage() {
         <section className="ex-section" aria-labelledby="ex-stats">
           <div className="ex-section__head">
             <h2 id="ex-stats" className="ex-section__title">Live Stats</h2>
-            <span className="ex-section__note">fetched from Base Sepolia RPC · updated live</span>
+            <span className="ex-section__note">fetched from Soroban RPC · updated live</span>
           </div>
           <div className="ex-stats">
             <StatBlock label="Total Deposits" value={depositsLabel} loading={loadingDeposits} />
             <StatBlock label="Strategy Attestations" value={attestationCount > 0 ? `${attestationCount}` : '0'} />
-            <StatBlock label="Tests Passing" value={TESTS_PASSING} />
-            <StatBlock label="Coverage" value={COVERAGE} />
+            <StatBlock label="Contracts" value={CONTRACT_COUNT} />
+            <StatBlock label="Contract Tests" value={CONTRACT_TESTS} />
           </div>
         </section>
 
@@ -291,16 +245,16 @@ export default function ExplorerPage() {
         <section className="ex-section" aria-labelledby="ex-attest">
           <h2 id="ex-attest" className="ex-section__title">Strategy Attestations</h2>
           <p className="ex-section__sub">
-            Most recent on-chain strategy attestations (StrategyAttested events):
+            Recent strategy hashes (sha256, off-chain verifiable — re-derivable from the strategy JSON):
           </p>
           <AttestationsTable strategies={strategies} />
           <a
             className="ex-extlink ex-extlink--block"
-            href={`${ETHERSCAN_ADDR}${AGENT_VAULT_DEPOSITOR_ADDRESS}#events`}
+            href={`${STELLAR_EXPERT}${SOROBAN_VAULT_ADDRESS}`}
             target="_blank"
             rel="noreferrer noopener"
           >
-            View all on Etherscan <span aria-hidden="true">↗</span>
+            View the vault on Stellar Expert <span aria-hidden="true">↗</span>
           </a>
         </section>
 
@@ -477,6 +431,7 @@ function ExplorerStyle() {
 }
 .ex-badge--core { color: var(--accent-fg, #0e0f0c); background: var(--accent, #cfff3d); }
 .ex-badge--vault { color: var(--text-muted, #95958a); background: var(--bg-elev, #22231d); border: 1px solid var(--border, rgba(255,255,255,0.06)); }
+.ex-badge--token { color: var(--text-muted, #95958a); background: var(--bg-elev, #22231d); border: 1px solid var(--border, rgba(255,255,255,0.06)); }
 
 .ex-addr {
   appearance: none;

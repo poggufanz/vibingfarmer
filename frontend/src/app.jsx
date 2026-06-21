@@ -27,18 +27,12 @@ import {
 } from './agents.jsx'
 import { useTweaks, TweaksPanel, TweakSection, TweakRadio } from './tweaks-panel.jsx'
 
-import { ethers } from 'ethers'
 import {
   connectWallet,
-  requestERC7715Permission,
-  switchToSepolia,
-  getProvider,
-  revokeAgentDirect,
-  readScope,
-  onContractEvent,
-  getAccountsSilent,
-  onAccountsChanged,
-} from './wallet.js'
+  getUserAddress,
+  revokeAgentOnChain,
+  subscribeAgentRevoked,
+} from './stellar/index.js'
 import { generateStrategy } from './venice.js'
 import { saveResume, loadResume, clearResume } from './strategy/sessionResume.js'
 import { attestStrategyOnChain, formatAttestation } from './attestation.js'
@@ -48,14 +42,7 @@ import OnboardingFlow from './components/OnboardingFlow.jsx'
 import { OrchestratorAgent } from './orchestrator.js'
 import { makeAgentId } from './worker.js'
 import { ownerWithdraw } from './stellar/exit.js'
-import {
-  VAULT_CATALOG,
-  VENICE_TIMEOUT_MS,
-  AGENT_VAULT_DEPOSITOR_ADDRESS,
-  DEPOSITOR_ABI,
-  AGENT_REGISTRY_ADDRESS,
-  REGISTRY_ABI,
-} from './config.js'
+import { VAULT_CATALOG, VENICE_TIMEOUT_MS } from './config.js'
 import {
   loadPersistedPositions,
   persistPositions,
@@ -63,7 +50,6 @@ import {
   mergePositions,
   applyChainPositions,
 } from './positionsStore.js'
-import { getReadProvider } from './readProvider.js'
 import SkillDrawer from './components/SkillDrawer.jsx'
 import HistoryPanel from './components/HistoryPanel.jsx'
 import { saveTransaction } from './history.js'
@@ -295,15 +281,15 @@ const App = () => {
   // True when a refresh re-entered an active session (drives the Home banner).
   const [sessionResumed, setSessionResumed] = useS(false)
 
-  // Silent wallet reconnect + session resume on page load. Without this, a refresh
-  // drops realAddress/stage/strategy (all in-memory) so the app looks logged-out and
-  // the monitor loop never reboots even with an active vault. We re-read the already-
-  // authorized account via eth_accounts (NO MetaMask popup); if a resume snapshot
-  // exists we restore stage='done' + strategy, which makes the loop effect (below)
-  // start the monitor loop again. Mount-only so it can't yank an in-wizard connect.
+  // Wallet reconnect + session resume on page load. Without this, a refresh drops
+  // realAddress/stage/strategy (all in-memory) so the app looks logged-out and the monitor loop
+  // never reboots even with an active vault. We ask the wallet kit for its current address; if a
+  // resume snapshot exists we restore stage='done' + strategy, which makes the loop effect (below)
+  // start the monitor loop again. If no wallet is selected yet (fresh reload) getUserAddress
+  // rejects and the catch leaves the app logged-out until the user reconnects. Mount-only.
   useE(() => {
     let alive = true
-    getAccountsSilent()
+    getUserAddress()
       .then((addr) => {
         if (!alive || !addr) return
         setRealAddress(addr)
@@ -322,21 +308,6 @@ const App = () => {
     return () => {
       alive = false
     }
-  }, [])
-
-  // Track MetaMask account switch / disconnect / lock so the UI never shows a stale
-  // wallet. Empty list = locked/disconnected → drop the session view.
-  useE(() => {
-    const off = onAccountsChanged((accounts) => {
-      const next = accounts?.[0] || null
-      if (!next) {
-        setRealAddress(null)
-        setConnectPhase('idle')
-      } else {
-        setRealAddress(next)
-      }
-    })
-    return off
   }, [])
 
   // 30-second tick to refresh countdown displays
@@ -841,11 +812,11 @@ const App = () => {
       detail: `Venice AI flagged ${alert.toProtocol} at ${alert.toApy}% vs ${alert.fromVault} at ${alert.fromApy}% (+${alert.apyGain}%). Rebalancing requests a fresh ERC-7715 permission for the new vault.`,
     })
 
-  // Kill switch — user-signed AgentRegistry.revokeAgent (works even if the relayer is down).
-  // Optimistically flip the row; the on-chain AgentRevoked subscription confirms it.
+  // Kill switch — user-signed Registry.revoke (works even if the relayer is down).
+  // Optimistically flip the row; the on-chain agent_revoked subscription confirms it.
   const handleRevokeAgent = async (agent) => {
     try {
-      const tx = await revokeAgentDirect(agent)
+      const { hash: tx } = await revokeAgentOnChain({ owner: realAddress, agent })
       setScopes((prev) =>
         prev.map((s) =>
           s.agent?.toLowerCase() === agent.toLowerCase() ? { ...s, revoked: true } : s
@@ -863,26 +834,18 @@ const App = () => {
     }
   }
 
-  // Live AgentRevoked subscription — flips a scope row to "revoked" the instant the event lands,
-  // whether revoked from this UI or elsewhere. Filtered to the connected owner.
+  // Live agent_revoked subscription — flips a scope row to "revoked" the instant the event lands,
+  // whether revoked from this UI or elsewhere. subscribeAgentRevoked already filters to the owner.
   useE(() => {
     if (!realAddress) return
-    let off = null
-    onContractEvent('AgentRevoked', (owner, agent) => {
-      if (String(owner).toLowerCase() !== realAddress.toLowerCase()) return
+    const off = subscribeAgentRevoked(realAddress, (agent) => {
       setScopes((prev) =>
         prev.map((s) =>
           s.agent?.toLowerCase() === String(agent).toLowerCase() ? { ...s, revoked: true } : s
         )
       )
     })
-      .then((unsub) => {
-        off = unsub
-      })
-      .catch(() => {})
-    return () => {
-      if (off) off()
-    }
+    return off
   }, [realAddress])
 
   // After a withdraw: reduce/remove the position, sync the worker, stop the agent if empty
@@ -910,9 +873,8 @@ const App = () => {
       meta: `withdrew ${shortAddr(vaultAddress)} · position updated`,
       detail: 'Position balance updated after withdraw; agent monitoring config synced.',
     })
-    // Optimistic subtract above can drift (partial fills, share-price). Chain = truth — but
-    // getReadProvider() is a DIFFERENT RPC than the wallet that just mined the withdraw, so a
-    // read fired immediately after tx.wait() often lags a block and returns the PRE-withdraw
+    // Optimistic subtract above can drift (partial fills, share-price). Chain = truth — but the
+    // Soroban RPC read can lag the ledger that just settled the withdraw, returning the PRE-withdraw
     // balance. Committing that stale read would bounce the UI right back up to the old number
     // (the bug: "balance doesn't update after withdraw") — and there's no withdraw event
     // listener to re-correct it. So we poll, and only commit the chain snapshot once it
@@ -1607,14 +1569,6 @@ const App = () => {
     setSessionResumed(false)
     addLog({ event: 'PermissionRevoked', meta: 'wallet disconnected · session cleared' })
   }
-  const handleSwitchNetwork = async () => {
-    try {
-      await switchToSepolia()
-      addLog({ event: 'Connected', meta: 'network · Base Sepolia' })
-    } catch (e) {
-      addLog({ event: 'AgentFailed', meta: `switch network failed: ${e.message}` })
-    }
-  }
   const handleResetAgentSettings = () => {
     setAgentSettings({ ...AGENT_SETTINGS_DEFAULTS })
     setAgentEnabled(true)
@@ -2077,7 +2031,6 @@ const App = () => {
                 onResetAgentSettings={handleResetAgentSettings}
                 onConnect={handleConnect}
                 onDisconnect={handleDisconnect}
-                onSwitchNetwork={handleSwitchNetwork}
                 onRevoke={handleRevoke}
               />
             }

@@ -8,7 +8,6 @@ import {
   MOCK_VAULT_B_ADDRESS,
   MOCK_VAULT_C_ADDRESS,
   MOCK_VAULT_D_ADDRESS,
-  SEPOLIA_CHAIN_ID,
   VENICE_BASE_URL,
   DEEPSEEK_BASE_URL,
 } from '../config.js'
@@ -311,7 +310,6 @@ export default function SettingsPage({
   onResetAgentSettings,
   onConnect,
   onDisconnect,
-  onSwitchNetwork,
   onRevoke,
 }) {
   const [s, setS] = useState(loadSettings)
@@ -810,27 +808,6 @@ export default function SettingsPage({
                     </button>
                     <button type="button" style={miniBtn} onClick={onDisconnect}>
                       Disconnect
-                    </button>
-                  </Row>
-                  <Divider />
-                  <Row
-                    label={
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
-                        <span
-                          style={{
-                            width: 8,
-                            height: 8,
-                            borderRadius: '50%',
-                            background: 'var(--ok)',
-                          }}
-                        />
-                        Base Sepolia testnet
-                      </span>
-                    }
-                    desc={`Chain ID: ${SEPOLIA_CHAIN_ID}`}
-                  >
-                    <button type="button" style={miniBtn} onClick={onSwitchNetwork}>
-                      Switch network
                     </button>
                   </Row>
                   <Divider />
