@@ -40,9 +40,6 @@ import {
   onAccountsChanged,
 } from './wallet.js'
 import { generateStrategy } from './venice.js'
-import { saveGrant, clearGrant, hasValidGrant } from './strategy/grantStore.js'
-import { initSession, clearSession, hasSession, saveSessionGrant } from './strategy/session.js'
-import { rehydrateSession } from './strategy/rehydrate.js'
 import { saveResume, loadResume, clearResume } from './strategy/sessionResume.js'
 import { attestStrategyOnChain, formatAttestation } from './attestation.js'
 import { detectMetaMaskVersion } from './flaskDetect.js'
@@ -298,17 +295,6 @@ const App = () => {
   // True when a refresh re-entered an active session (drives the Home banner).
   const [sessionResumed, setSessionResumed] = useS(false)
 
-  // Rehydrate the single grant on mount: if a valid ERC-7715 grant is persisted,
-  // re-boot the ERC-7710 session so the user is never re-prompted within 24h.
-  useE(() => {
-    const r = rehydrateSession()
-    if (r.active) {
-      setPermActive(true)
-      setPermExpiresAt(r.expiresAt)
-      setPermContext(r.permissionContext)
-    }
-  }, [])
-
   // Silent wallet reconnect + session resume on page load. Without this, a refresh
   // drops realAddress/stage/strategy (all in-memory) so the app looks logged-out and
   // the monitor loop never reboots even with an active vault. We re-read the already-
@@ -321,9 +307,7 @@ const App = () => {
       .then((addr) => {
         if (!alive || !addr) return
         setRealAddress(addr)
-        // A persisted grant means the user already upgraded → restore full auth phase,
-        // otherwise show a plain connected (eoa) state.
-        setConnectPhase(hasValidGrant() ? 'upgraded' : 'connected')
+        setConnectPhase('connected')
         const snap = loadResume(addr)
         if (snap?.strategy?.agents?.length) {
           setStrategy(snap.strategy)
@@ -378,7 +362,6 @@ const App = () => {
   // Tracks which user addresses have had session key setup done (survives re-renders).
   const [loopTick, setLoopTick] = useS(0)
   const [loopPhase, setLoopPhase] = useS(null) // live pipeline phase from monitorLoop onPhase
-  const [permContext, setPermContext] = useS(null)
   const [veniceAuth, setVeniceAuth] = useS(null)
   const [mmVersion, setMmVersion] = useS(null) // MetaMask flavor/version — Flask detection (once on mount)
   const [onboarded, setOnboarded] = useS(() => localStorage.getItem('yv_onboarded') === 'true')
@@ -1205,13 +1188,6 @@ const App = () => {
   }
 
   const handleSkillsContinue = () => {
-    // A valid persisted grant means the user already signed once — skip the
-    // permission card entirely and go straight to execution (true "ask once").
-    if (hasSession() && permActive && permContext) {
-      setStage('execute')
-      startExecution(permContext)
-      return
-    }
     setStage('permission')
   }
 
@@ -1622,11 +1598,8 @@ const App = () => {
     setConnectPhase('idle')
     setConnectError(null)
     setPermActive(false)
-    setPermContext(null)
     setPermError(null)
     setPermExpiresAt(null)
-    clearSession()
-    clearGrant()
     clearResume(realAddress)
     setSessionResumed(false)
     setVeniceAuth(null)
@@ -1640,8 +1613,6 @@ const App = () => {
   const handleRevoke = () => {
     setPermActive(false)
     setPermExpiresAt(null)
-    clearSession()
-    clearGrant()
     clearResume(realAddress)
     setSessionResumed(false)
     ;(strategy?.agents || []).forEach((a) =>
@@ -1659,11 +1630,8 @@ const App = () => {
     setRealAddress(null)
     setConnectPhase('idle')
     setPermActive(false)
-    setPermContext(null)
     setPermExpiresAt(null)
     setVeniceAuth(null)
-    clearSession()
-    clearGrant()
     clearResume(realAddress)
     setSessionResumed(false)
     addLog({ event: 'PermissionRevoked', meta: 'wallet disconnected · session cleared' })
