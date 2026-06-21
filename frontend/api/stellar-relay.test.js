@@ -7,13 +7,25 @@ const SECRET = 'SABCD' // never parsed — Keypair.fromSecret is faked below
 // Fake SDK. fromXDR returns a fake inner Transaction; buildFeeBumpTransaction returns a fake
 // fee-bump with a sign() spy; instanceof FeeBumpTransaction is used to reject already-bumped tx.
 class FakeFeeBump {}
-function makeSdk({ innerFee = '100000', innerHashHex = 'aa', alreadyBumped = false } = {}) {
+function makeSdk({
+  innerFee = '100000',
+  innerHashHex = 'aa',
+  alreadyBumped = false,
+  innerSource = undefined,
+} = {}) {
   const signSpy = vi.fn()
+  const innerSignSpy = vi.fn()
   const builtFeeBump = { sign: signSpy }
   const buildFeeBumpTransaction = vi.fn(() => builtFeeBump)
   const inner = alreadyBumped
     ? new FakeFeeBump()
-    : { fee: innerFee, operations: [], hash: () => Buffer.from(innerHashHex, 'hex') }
+    : {
+        fee: innerFee,
+        source: innerSource,
+        operations: [],
+        hash: () => Buffer.from(innerHashHex, 'hex'),
+        sign: innerSignSpy,
+      }
   return {
     sdk: {
       TransactionBuilder: { fromXDR: vi.fn(() => inner), buildFeeBumpTransaction },
@@ -22,6 +34,7 @@ function makeSdk({ innerFee = '100000', innerHashHex = 'aa', alreadyBumped = fal
       Address: {},
     },
     signSpy,
+    innerSignSpy,
     buildFeeBumpTransaction,
     builtFeeBump,
   }
@@ -52,6 +65,40 @@ describe('feeBumpAndSubmit', () => {
     expect(buildFeeBumpTransaction).toHaveBeenCalledOnce()
     expect(signSpy).toHaveBeenCalledOnce()
     expect(rpc.sendTransaction).toHaveBeenCalledOnce()
+  })
+
+  it('signs the inner tx when the relayer is its source (agent-deposit path), then fee-bumps', async () => {
+    const { sdk, innerSignSpy, signSpy, buildFeeBumpTransaction } = makeSdk({
+      innerHashHex: '55',
+      innerSource: 'GREL', // inner source == relayer pubkey → relay must sign the inner envelope
+    })
+    const rpc = makeRpc({ getStatuses: ['SUCCESS'] })
+    const out = await feeBumpAndSubmit({
+      xdr: 'INNERXDR',
+      secret: SECRET,
+      passphrase: PASS,
+      vaultAddr: '',
+      sdk,
+      rpcServer: rpc,
+    })
+    expect(out.status).toBe('SUCCESS')
+    expect(innerSignSpy).toHaveBeenCalledOnce() // the new branch: relayer signs the inner tx
+    expect(signSpy).toHaveBeenCalledOnce() // still fee-bumped + signed
+    expect(buildFeeBumpTransaction).toHaveBeenCalledOnce()
+  })
+
+  it('does NOT sign the inner tx when its source differs from the relayer (separate funded source)', async () => {
+    const { sdk, innerSignSpy } = makeSdk({ innerHashHex: '56', innerSource: 'GOTHER' })
+    const rpc = makeRpc({ getStatuses: ['SUCCESS'] })
+    await feeBumpAndSubmit({
+      xdr: 'INNERXDR',
+      secret: SECRET,
+      passphrase: PASS,
+      vaultAddr: '',
+      sdk,
+      rpcServer: rpc,
+    })
+    expect(innerSignSpy).not.toHaveBeenCalled() // client already signed it; relay only fee-bumps
   })
 
   it('rejects an already-fee-bumped inner tx (the relay must be the fee source)', async () => {

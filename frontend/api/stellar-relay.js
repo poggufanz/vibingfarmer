@@ -110,6 +110,13 @@ export async function feeBumpAndSubmit({
 
   try {
     const kp = Keypair.fromSecret(secret)
+    // Agent-deposit path: the inner tx's source IS the relayer (the client cannot sign as the
+    // relayer), so the relay signs the inner envelope here. This is tx-level source/sequence auth
+    // only — the deposit itself is still authorized by the agent custom account's __check_auth
+    // Soroban auth entry (session-key signed, client-side), and the vault.deposit allowlist
+    // already bounds what the relayer will sponsor. When the inner source differs (a separate
+    // funded source, e.g. the relay smoke), the client already signed it — leave it untouched.
+    if (inner.source === kp.publicKey()) inner.sign(kp)
     const baseFee = (BigInt(inner.fee) + FEE_MARGIN).toString()
     const feeBump = TransactionBuilder.buildFeeBumpTransaction(kp, baseFee, inner, passphrase)
     feeBump.sign(kp)
