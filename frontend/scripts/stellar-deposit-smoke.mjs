@@ -1,6 +1,8 @@
 // Live-testnet proof of the gasless agent deposit. Funds the demo agent (if needed) then runs
 // a real session-key-signed deposit through the relay and asserts the vault share balance rose.
 // Run: node scripts/stellar-deposit-smoke.mjs  (NOT part of vitest run; needs DEMO_AGENT_SECRET)
+// DEMO_AGENT_SECRET is loaded from the gitignored frontend/.env (or pass it inline in the env).
+import 'dotenv/config'
 import { newSessionKey } from '../src/stellar/sessionKey.js'
 import { runAgentDeposit, readVaultShares } from '../src/stellar/agentDeposit.js'
 import { SOROBAN_DEMO_AGENT } from '../src/stellar/config.js'
