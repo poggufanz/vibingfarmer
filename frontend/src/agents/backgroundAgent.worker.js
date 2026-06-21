@@ -1,21 +1,15 @@
 // backgroundAgent.worker.js
 // Runs in a separate thread. Polls on intervals, posts findings to the main thread.
 // Does NOT execute transactions — it detects + notifies; main thread handles execution.
-// Uses raw JSON-RPC (fetch) so the worker bundles without ethers.
+// Pure fetch (DeFiLlama + the /api/search proxy) — no chain SDK in the worker. On-chain
+// position reconciliation lives on the main thread (Stellar reconcilePositionsFromChain).
 
 const INTERVALS = {
-  position: 5 * 60 * 1000,   // 5 min — slow backstop; event listener handles real-time sync
   apy: 10 * 60 * 1000,       // 10 min — APY drift + rebalance opportunity
   risk: 15 * 60 * 1000,      // 15 min — security news scan
 }
 
-// Verified against deployed MockVault ABI (cast sig). The v2 MockVault is plain ERC-4626 —
-// no on-chain rewards accrual — so only the ERC-20 balanceOf is read here.
-const SELECTORS = {
-  balanceOf: '0x70a08231',           // balanceOf(address)
-}
-
-let config = null // { userAddress, activeVaults, rpcUrl, tavilyKey, supportedProtocols, thresholds }
+let config = null // { userAddress, activeVaults, supportedProtocols, thresholds }
 let timers = []
 
 self.onmessage = (e) => {
@@ -37,7 +31,6 @@ self.onmessage = (e) => {
 function startMonitoring() {
   stopMonitoring()
   // Run each monitor immediately, then on interval. Each is independent — one crash never stops others.
-  runPositionCheck(); timers.push(setInterval(runPositionCheck, INTERVALS.position))
   runApyCheck(); timers.push(setInterval(runApyCheck, INTERVALS.apy))
   runRiskCheck(); timers.push(setInterval(runRiskCheck, INTERVALS.risk))
 }
@@ -47,21 +40,8 @@ function stopMonitoring() {
   timers = []
 }
 
-// ─── Monitor 1: Position (on-chain balance + accrued yield) ───────────────────
-async function runPositionCheck() {
-  if (!config?.rpcUrl) return
-  try {
-    for (const vault of config.activeVaults) {
-      const balance = await ethCall(vault.address, 'balanceOf', config.userAddress)
-      self.postMessage({
-        type: 'POSITION_UPDATE',
-        payload: { vaultAddress: vault.address, vaultName: vault.name, balance, unclaimedRewards: '0', timestamp: Date.now() },
-      })
-    }
-  } catch (err) {
-    self.postMessage({ type: 'MONITOR_ERROR', payload: { monitor: 'position', error: err.message } })
-  }
-}
+// Position reconciliation is NOT a worker monitor — the main thread reads vault shares from
+// Soroban (reconcilePositionsFromChain) on mount, on each sync tick, and after withdraws.
 
 // ─── Monitor 2: APY Drift + Rebalance Opportunity (DeFiLlama) ──────────────────
 async function runApyCheck() {
@@ -140,20 +120,3 @@ async function runRiskCheck() {
   }
 }
 
-// ─── Helper: raw JSON-RPC eth_call for single-address view functions ──────────
-async function ethCall(to, method, addressParam) {
-  const addr = addressParam.toLowerCase().replace('0x', '').padStart(64, '0')
-  const data = SELECTORS[method] + addr
-  const res = await fetch(config.rpcUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [{ to, data }, 'latest'] }),
-  })
-  const json = await res.json()
-  if (json.error) throw new Error(json.error.message || 'eth_call failed')
-  // Empty hex '0x' (no contract code on this network, or view returned nothing) is
-  // truthy, so `|| '0x0'` won't catch it — BigInt('0x') throws. Treat as zero.
-  const result = json.result
-  if (!result || result === '0x') return '0'
-  return BigInt(result).toString()
-}

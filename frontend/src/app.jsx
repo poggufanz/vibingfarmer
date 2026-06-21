@@ -612,7 +612,6 @@ const App = () => {
     startBackgroundAgent({
       userAddress: realAddress,
       activeVaults,
-      rpcUrl: import.meta.env.VITE_RPC_URL,
       // Tavily key no longer passed to client — risk scan routes through /api/search proxy.
       supportedProtocols: ['aave-v3', 'morpho-blue', 'spark', 'fluid'],
       thresholds: { ...agentSettings, autoHarvest: false },

@@ -23,19 +23,14 @@ DEEPSEEK_API_KEY=sk-your_deepseek_key
 # same BYOK model. Leave unset on a lockdown deploy; users can bring their own Tavily key.
 TAVILY_API_KEY=tvly-...
 
-# 1Shot Managed API — makes relays REAL + gas-abstracted on Base Sepolia (read by /api/relay).
-# From app.1shotapi.com: API Keys (key+secret), Organizations → business id.
-# Auto-provisions a Base Sepolia server wallet on first call — fund it with testnet ETH.
-ONESHOT_KEY=your_1shot_api_key
-ONESHOT_SECRET=your_1shot_api_secret
-ONESHOT_BIZ_ID=your_1shot_business_id
-
-# Server-controlled deposit target (the proxy NEVER trusts a client-supplied address).
-# Base Sepolia AgentVaultDepositor — must match src/config.js AGENT_VAULT_DEPOSITOR_ADDRESS.
-AGENT_VAULT_DEPOSITOR_ADDRESS=0xbf2091Fe26183369ae9f0Ba4735190F5fec7686c
-
-# Optional: custom RPC for the relay's on-chain replay/code checks (defaults to https://sepolia.base.org).
-RPC_URL=https://sepolia.base.org
+# ─── Soroban gasless relay (read by /api/stellar-relay) ───
+# Relayer keypair SECRET (S...). Server-only — never expose to the client bundle.
+# Generate + fund on testnet:  stellar keys generate relayer --network testnet --fund
+# then read the secret with:    stellar keys show relayer
+STELLAR_RELAYER_SECRET=S...
+SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
+STELLAR_NETWORK_PASSPHRASE=Test SDF Network ; September 2015
+SOROBAN_VAULT_ADDRESS=CCDXZ6BUA7TPR3EXQWJWUD7EYR6OUMJRYIKYXPE53HRJOJFY5CXEHTN5
 
 # Optional: trusted proxy hops for rate-limit client-IP resolution.
 # Cloudflare sets CF-Connecting-IP (mapped to x-real-ip by the adapter), so the
