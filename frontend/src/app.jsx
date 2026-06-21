@@ -52,6 +52,7 @@ import FlaskGate from './components/FlaskGate.jsx'
 import OnboardingFlow from './components/OnboardingFlow.jsx'
 import { OrchestratorAgent } from './orchestrator.js'
 import { makeAgentId } from './worker.js'
+import { ownerWithdraw } from './stellar/exit.js'
 import {
   VAULT_CATALOG,
   VENICE_TIMEOUT_MS,
@@ -1246,57 +1247,17 @@ const App = () => {
   const handlePermConfirm = async () => {
     setPermPhase('idle')
     setPermError(null)
-    try {
-      // Cap the ONE Advanced Permission at the total planned deposit (USDC units). Each worker
-      // redeems a slice of this single grant, so the period cap must cover the sum of all vaults.
-      const capUnits = BigInt(Math.floor((Number(amount) || 0) * 1e6))
-      const permResult = await requestERC7715Permission(capUnits, 86400)
-      const expiresAtMs = Date.now() + 86400 * 1000
-
-      // If delegationManager is missing here, session redemption never boots and
-      // every later action falls back to the popup-per-call path — surface the
-      // grant context to the activity log so that's diagnosable without devtools.
-      const gp = permResult.grantedPermissions
-      addLog({
-        event: 'PermissionGranted',
-        meta: `erc-7715 granted · chain ${gp?.[0]?.chainId ?? '?'} · delegationManager ${permResult.delegationManager ? shortAddr(permResult.delegationManager) : 'missing'}`,
-        detail: `context: ${shortAddr(gp?.[0]?.context || permResult.permissionContext || '')}\nsignerMeta: ${JSON.stringify(gp?.[0]?.signerMeta)}\naccountMeta: ${JSON.stringify(gp?.[0]?.accountMeta)}`,
-      })
-
-      // Boot the ERC-7710 session + persist the single grant → all later actions
-      // redeem with zero popup, and reload/re-entry within 24h skips this step.
-      if (permResult.delegationManager) {
-        initSession({
-          permissionContext: permResult.permissionContext,
-          delegationManager: permResult.delegationManager,
-        })
-        saveSessionGrant({
-          permissionContext: permResult.permissionContext,
-          delegationManager: permResult.delegationManager,
-          expiresAt: expiresAtMs,
-        })
-      }
-
-      setPermContext(permResult.permissionContext)
-      setPermActive(true)
-      setPermExpiresAt(expiresAtMs)
-      const ag = strategy?.agents || []
-      ag.forEach((a) =>
-        addLog({
-          event: 'PermissionGranted',
-          agent: a.id,
-          meta: `vault ${shortAddr(a.vault.addr)} · ${a.allocation} usdc max`,
-        })
-      )
-      setTimeout(() => {
-        setStage('execute')
-        startExecution(permResult.permissionContext)
-      }, 600)
-    } catch (err) {
-      setPermPhase('idle')
-      setPermError(err.message)
-      addLog({ event: 'AgentFailed', meta: `permission denied: ${err.message}` })
-    }
+    // Stellar path: there is no ERC-7715 grant step. The per-agent authorize + fund (one
+    // user-signed wallet-kit tx per agent) happens inside orchestrator.dispatch. Just advance
+    // to execute and let the orchestrator prompt the wallet.
+    const expiresAtMs = Date.now() + 86400 * 1000
+    setPermActive(true)
+    setPermExpiresAt(expiresAtMs)
+    addLog({ event: 'PermissionGranted', meta: 'stellar · authorize + fund per agent at execute' })
+    setTimeout(() => {
+      setStage('execute')
+      startExecution()
+    }, 600)
   }
 
   /* ----- EXECUTE (step 05) — real parallel agents ----- */
@@ -1317,9 +1278,8 @@ const App = () => {
     }))
   }
 
-  const startExecution = (ctx) => {
+  const startExecution = () => {
     if (!strategy) return
-    const resolvedCtx = ctx || permContext
 
     // Pre-compute sessionId and build hex→designId map BEFORE orchestrator starts.
     // Orchestrator uses makeAgentId(index, sessionId) — same function, same sessionId = same hex.
@@ -1344,29 +1304,10 @@ const App = () => {
 
     const orch = new OrchestratorAgent({
       user: realAddress,
-      permissionContext: resolvedCtx,
       veniceAuth: veniceAuth,
       devApiKey: devApiKey || null,
       sessionId,
       onEvent: (evName, data) => {
-        // A2A redelegation events → activity log (orchestrator → worker hand-off proof)
-        if (evName === 'RedelegationCreated') {
-          const vaultLetter = String.fromCharCode(64 + (data.workerId || 1))
-          addLog({
-            event: 'RedelegationCreated',
-            agent: `orchestrator → ${data.to}`,
-            meta: `${data.allocationUsdc} USDC · vault ${vaultLetter} · limitedCalls: 3 · ${shortAddr(data.delegationHash)}`,
-          })
-          return
-        }
-        if (evName === 'RedelegationRedeemed') {
-          addLog({
-            event: 'RedelegationRedeemed',
-            agent: data.to || `worker-${data.workerId}`,
-            meta: `deposit executed · tx ${shortAddr(data.txHash)}`,
-          })
-          return
-        }
         if (evName === 'skill-gen-failed') {
           const dId = agentMapRef.current?.[data.agentId] || data.agentId
           addLog({
