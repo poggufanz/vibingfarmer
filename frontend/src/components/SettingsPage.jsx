@@ -22,7 +22,6 @@ import {
 } from '../history.js'
 import { fmtRemaining } from '../ui.js'
 
-
 const short = (a) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '-')
 const eyebrow = {
   fontSize: 11,

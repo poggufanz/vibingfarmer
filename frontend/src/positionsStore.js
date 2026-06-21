@@ -54,10 +54,15 @@ export function persistPositions(address, positions) {
  * @param {{ agents?: string[], server?: object }} [opts]
  * @returns {Promise<Object|null>}
  */
-export async function reconcilePositionsFromChain(address, { agents = [SOROBAN_DEMO_AGENT], server } = {}) {
+export async function reconcilePositionsFromChain(
+  address,
+  { agents = [SOROBAN_DEMO_AGENT], server } = {}
+) {
   if (!address) return null
 
-  const results = await Promise.allSettled(agents.map((agent) => readVaultShares(agent, { server })))
+  const results = await Promise.allSettled(
+    agents.map((agent) => readVaultShares(agent, { server }))
+  )
 
   let anyOk = false
   let total = 0n
@@ -72,10 +77,13 @@ export async function reconcilePositionsFromChain(address, { agents = [SOROBAN_D
   // ponytail: balance is base-unit (7-dp) string — render sites must divide by 1e7
   // (SOROBAN_DECIMALS), not the legacy EVM 1e6. Single vault for the demo.
   return {
-    [SOROBAN_VAULT_ADDRESS]: { vaultName: VAULT_NAME, balance: total.toString(), unclaimedRewards: '0' },
+    [SOROBAN_VAULT_ADDRESS]: {
+      vaultName: VAULT_NAME,
+      balance: total.toString(),
+      unclaimedRewards: '0',
+    },
   }
 }
-
 
 // Merge position maps keyed by vault address (case-insensitive). Balances only ever
 // INCREASE via merge — withdraw handlers are the only path that lowers them. Idempotent:
@@ -88,7 +96,11 @@ export function mergePositions(prev, incoming) {
     const key = Object.keys(merged).find((k) => k.toLowerCase() === addr.toLowerCase()) || addr
     const curBal = BigInt(merged[key]?.balance || '0')
     const newBal = BigInt(pos.balance || '0')
-    merged[key] = { ...merged[key], ...pos, balance: (newBal > curBal ? newBal : curBal).toString() }
+    merged[key] = {
+      ...merged[key],
+      ...pos,
+      balance: (newBal > curBal ? newBal : curBal).toString(),
+    }
   }
   return merged
 }
@@ -103,7 +115,10 @@ export function applyChainPositions(prev, chain) {
   for (const [addr, pos] of Object.entries(chain || {})) {
     if (!pos) continue
     const key = Object.keys(positions).find((k) => k.toLowerCase() === addr.toLowerCase()) || addr
-    if (BigInt(pos.balance || '0') === 0n) { delete positions[key]; continue }
+    if (BigInt(pos.balance || '0') === 0n) {
+      delete positions[key]
+      continue
+    }
     positions[key] = { ...positions[key], ...pos }
   }
   return positions
