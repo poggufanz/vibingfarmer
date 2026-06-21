@@ -627,18 +627,15 @@ const StrategyCard = ({ strategy, skillSource, onProceed, onRegenerate, strategy
           {attestation ? (
             <>
               <span style={{ color: "var(--ok)", fontSize: 8 }}>●</span>
-              <span>Strategy attested on-chain</span>
+              <span>Strategy hash (off-chain verifiable)</span>
               <span style={{ color: "var(--text-faint)" }}>·</span>
               <span>Hash: {attestation.hash}</span>
-              <a href={attestation.etherscanUrl} target="_blank" rel="noopener noreferrer" className="accent" style={{ textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 3 }}>
-                Verify on Etherscan <Icon name="external" size={11} />
-              </a>
-              <span style={{ color: "var(--text-faint)", marginLeft: "auto" }}>Powered by ERC-8004 · tamper-proof AI reasoning</span>
+              <span style={{ color: "var(--text-faint)", marginLeft: "auto" }}>Deterministic · reproducible from strategy JSON</span>
             </>
           ) : attesting ? (
             <>
               <span style={{ color: "var(--text-faint)", fontSize: 8 }}>○</span>
-              <span>Attesting strategy on-chain…</span>
+              <span>Hashing strategy…</span>
             </>
           ) : (
             <>
