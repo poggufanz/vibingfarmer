@@ -31,7 +31,6 @@ import { ethers } from 'ethers'
 import {
   connectWallet,
   requestERC7715Permission,
-  signSiweForVenice,
   switchToSepolia,
   getProvider,
   revokeAgentDirect,
@@ -40,7 +39,6 @@ import {
   getAccountsSilent,
   onAccountsChanged,
 } from './wallet.js'
-import { getX402Balance, canUseX402 } from './x402.js'
 import { generateStrategy } from './venice.js'
 import { saveGrant, clearGrant, hasValidGrant } from './strategy/grantStore.js'
 import { initSession, clearSession, hasSession, saveSessionGrant } from './strategy/session.js'
@@ -1144,32 +1142,13 @@ const App = () => {
   }
 
   const handleUpgrade = async () => {
+    // ponytail: Venice x402 wallet-funded inference removed (single-chain Stellar; no EVM SIWE).
+    // AI strategist runs via Settings keys / host proxy / deterministic fallback. veniceAuth stays
+    // null — resolveProvider degrades cleanly. Re-add a Stellar-native paid-inference path here later.
     setConnectPhase('upgrading')
-    // Try Venice x402 SIWE signing — wallet now connected, no API key needed
-    if (realAddress && !devApiKey) {
-      try {
-        const auth = await signSiweForVenice(realAddress)
-        // Gate on prepaid balance: only use the x402 path when the wallet can
-        // actually pay. Known-unfunded → skip (resolveProvider falls to API key /
-        // proxy) instead of silently 402-failing into the hardcoded fallback.
-        const bal = await getX402Balance(realAddress, auth)
-        if (canUseX402(bal)) {
-          setVeniceAuth(auth)
-          const note = bal ? ` · balance $${bal.balanceUsd.toFixed(2)}` : ''
-          addLog({ event: 'Authorized', meta: `venice x402 auth signed · SIWE${note}` })
-        } else {
-          addLog({
-            event: 'Authorized',
-            meta: `venice x402 wallet unfunded ($${bal.balanceUsd.toFixed(2)}) · using API key / fallback`,
-          })
-        }
-      } catch (e) {
-        console.warn('[app] SIWE signing skipped:', e.message)
-      }
-    }
     setTimeout(() => {
       setConnectPhase('upgraded')
-      addLog({ event: 'Authorized', meta: 'eip-7702 · handled by MetaMask SAK · gas 0' })
+      addLog({ event: 'Authorized', meta: 'session ready · gas sponsored by relayer' })
     }, speed * 0.8)
   }
 

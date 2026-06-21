@@ -21,10 +21,7 @@ import {
   clearAllHistory,
 } from '../history.js'
 import { fmtRemaining } from '../ui.js'
-import { signSiweForVenice } from '../wallet.js'
-import { getX402Balance } from '../x402.js'
 
-const X402_DOCS_URL = 'https://docs.venice.ai/guides/integrations/x402-venice-api'
 
 const short = (a) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '-')
 const eyebrow = {
@@ -324,7 +321,6 @@ export default function SettingsPage({
   const [confirmClear, setConfirmClear] = useState(false)
   const [copied, setCopied] = useState(false)
   const [, setTick] = useState(0)
-  const [x402, setX402] = useState({ state: 'idle', bal: null }) // idle | checking | done | error
   const refresh = () => setTick((x) => x + 1)
 
   const set = (key, val) => {
@@ -386,20 +382,6 @@ export default function SettingsPage({
       setTest((t) => ({ ...t, deepseek: 'unreachable' }))
     } finally {
       to.done()
-    }
-  }
-  // x402 balance: sign a fresh SIWE header (MetaMask) then read the prepaid balance.
-  // Read-only — no funds move. Needs a connected wallet.
-  const checkX402 = async () => {
-    if (!userAddress) return
-    setX402({ state: 'checking', bal: null })
-    try {
-      const auth = await signSiweForVenice(userAddress)
-      const bal = await getX402Balance(userAddress, auth)
-      setX402({ state: bal ? 'done' : 'error', bal })
-    } catch (e) {
-      console.warn('[settings] x402 balance check failed:', e.message)
-      setX402({ state: 'error', bal: null })
     }
   }
   const testTavily = async () => {
@@ -711,59 +693,6 @@ export default function SettingsPage({
                 onTest={testDeepSeek}
                 testState={test.deepseek}
               />
-              <Row
-                label="x402 wallet balance"
-                desc="Prepaid USDC on Base mainnet for wallet-paid inference. Top-up runs from a funded wallet/agent, not this UI — see the Venice x402 docs."
-              >
-                <button
-                  type="button"
-                  style={miniBtn}
-                  disabled={!userAddress || x402.state === 'checking'}
-                  onClick={checkX402}
-                >
-                  {x402.state === 'checking' ? 'Checking…' : 'Check balance'}
-                </button>
-              </Row>
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 10,
-                  flexWrap: 'wrap',
-                  marginTop: 2,
-                }}
-              >
-                {!userAddress && (
-                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                    Connect a wallet to check x402 balance.
-                  </span>
-                )}
-                {x402.state === 'done' &&
-                  x402.bal &&
-                  (x402.bal.canConsume ? (
-                    <span style={{ fontSize: 11, color: 'var(--ok)' }}>
-                      ✓ ${x402.bal.balanceUsd.toFixed(2)} spendable · ready for x402
-                    </span>
-                  ) : (
-                    <span style={{ fontSize: 11, color: 'var(--warn)' }}>
-                      ⚠ ${x402.bal.balanceUsd.toFixed(2)} · not enough to consume — top up
-                      {x402.bal.suggestedTopUpUsd ? ` ~$${x402.bal.suggestedTopUpUsd}` : ''}
-                    </span>
-                  ))}
-                {x402.state === 'error' && (
-                  <span style={{ fontSize: 11, color: 'var(--warn)' }}>
-                    ⚠ couldn’t read balance (unfunded wallet or CORS)
-                  </span>
-                )}
-                <a
-                  href={X402_DOCS_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{ ...miniBtn, textDecoration: 'none' }}
-                >
-                  How to top up ↗
-                </a>
-              </div>
               <Divider />
               <SubLabel>Vault Data Source</SubLabel>
               <Radio
