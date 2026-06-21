@@ -1,22 +1,23 @@
 // defiLlama.js
 // Fetches real vault data from DeFiLlama Yields API.
-// Maps real protocol names to MockVault addresses for Base Sepolia execution.
+// Maps real protocol names to the Soroban vault for execution (the AI reasons over real
+// Ethereum-mainnet yield data, but every deposit executes on our single Soroban testnet vault).
 // Never throws — returns fallback catalog on any failure.
 
-import { MOCK_VAULT_A_ADDRESS, MOCK_VAULT_B_ADDRESS } from './config.js'
+import { SOROBAN_VAULT_ADDRESS } from './stellar/config.js'
 
 const DEFILLAMA_ENDPOINT = 'https://yields.llama.fi/pools'
 const DEFILLAMA_TIMEOUT_MS = 10000
 
-// Protocols we support + their MockVault mapping on Base Sepolia
-// Real protocol → MockVault address for execution
+// Protocols we support (keys = the supported-protocol allowlist). Every protocol executes on
+// the single Soroban vault — the on-chain deposit target, regardless of the reference protocol.
 const PROTOCOL_VAULT_MAP = {
-  'aave-v3':    MOCK_VAULT_A_ADDRESS,
-  'morpho-blue': MOCK_VAULT_B_ADDRESS,
-  'pendle':     MOCK_VAULT_B_ADDRESS,
-  'fluid':      MOCK_VAULT_A_ADDRESS,
-  'compound-v3': MOCK_VAULT_A_ADDRESS,
-  'spark':      MOCK_VAULT_A_ADDRESS,
+  'aave-v3':     SOROBAN_VAULT_ADDRESS,
+  'morpho-blue': SOROBAN_VAULT_ADDRESS,
+  'pendle':      SOROBAN_VAULT_ADDRESS,
+  'fluid':       SOROBAN_VAULT_ADDRESS,
+  'compound-v3': SOROBAN_VAULT_ADDRESS,
+  'spark':       SOROBAN_VAULT_ADDRESS,
 }
 
 // Risk tier mapping per protocol
@@ -88,7 +89,7 @@ export async function fetchDeFiLlamaVaults() {
       defillamaPool: pool.pool, // real mainnet pool address (display only)
       poolId: pool.pool, // DeFiLlama pool UUID — used for APY history fetch
 
-      // Execution info (MockVault on Base Sepolia)
+      // Execution info (single Soroban vault — the on-chain deposit target)
       address: PROTOCOL_VAULT_MAP[pool.project],
 
       // Risk metadata
@@ -173,7 +174,7 @@ function getFallbackCatalog() {
       tvlFormatted: '$2.1B',
       chain: 'Ethereum',
       symbol: 'USDC',
-      address: MOCK_VAULT_A_ADDRESS,
+      address: SOROBAN_VAULT_ADDRESS,
       risk: 'low',
       yield_source: 'lending',
       drawdown: '-1.2',
@@ -188,7 +189,7 @@ function getFallbackCatalog() {
       tvlFormatted: '$800M',
       chain: 'Ethereum',
       symbol: 'USDC',
-      address: MOCK_VAULT_B_ADDRESS,
+      address: SOROBAN_VAULT_ADDRESS,
       risk: 'medium',
       yield_source: 'curated',
       drawdown: '-2.8',
@@ -203,7 +204,7 @@ function getFallbackCatalog() {
       tvlFormatted: '$400M',
       chain: 'Ethereum',
       symbol: 'USDC',
-      address: MOCK_VAULT_B_ADDRESS,
+      address: SOROBAN_VAULT_ADDRESS,
       risk: 'high',
       yield_source: 'structured',
       drawdown: '-6.5',
@@ -218,7 +219,7 @@ function getFallbackCatalog() {
       tvlFormatted: '$300M',
       chain: 'Ethereum',
       symbol: 'USDC',
-      address: MOCK_VAULT_A_ADDRESS,
+      address: SOROBAN_VAULT_ADDRESS,
       risk: 'high',
       yield_source: 'hybrid',
       drawdown: '-4.1',

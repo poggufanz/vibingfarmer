@@ -41,23 +41,12 @@ export default defineConfig(({ mode }) => {
         output: {
           manualChunks(id) {
             if (!id.includes('node_modules')) return
-            // Only split the heavy, self-contained web3 + motion clusters. The
-            // force-graph cluster (react-force-graph -> kapsule -> force-graph ->
-            // d3-*) plus React are left to Rollup's automatic chunking: hand-cut
-            // 'graph' vs catch-all 'vendor' chunks formed a graph<->vendor import
-            // cycle, which crashed at runtime with a TDZ ReferenceError
-            // ("Cannot access 'zn' before initialization"). Auto-chunking keeps
-            // force-graph in the lazy route chunks that import it and orders
-            // initializers correctly.
-            if (
-              id.includes('ethers') ||
-              id.includes('viem') ||
-              id.includes('@metamask') ||
-              id.includes('/ox/') ||
-              id.includes('@coinbase') ||
-              id.includes('libsodium')
-            )
-              return 'web3'
+            // Split only the heavy, self-contained motion cluster. The force-graph cluster
+            // (react-force-graph -> kapsule -> force-graph -> d3-*) plus React are left to
+            // Rollup's automatic chunking: hand-cut 'graph' vs catch-all 'vendor' chunks formed a
+            // graph<->vendor import cycle, which crashed at runtime with a TDZ ReferenceError
+            // ("Cannot access 'zn' before initialization"). Auto-chunking keeps force-graph in the
+            // lazy route chunks that import it and orders initializers correctly.
             if (id.includes('framer-motion')) return 'motion'
             return undefined
           },

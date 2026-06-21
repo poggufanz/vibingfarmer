@@ -2,15 +2,12 @@
 // Full settings panel. Agent config lives in app state (yv_agent_settings); the rest
 // persists via settingsStore (individual yv_* keys). Renders when view === 'settings'.
 import React, { useState } from 'react'
+import { VENICE_BASE_URL, DEEPSEEK_BASE_URL } from '../config.js'
 import {
-  AGENT_VAULT_DEPOSITOR_ADDRESS,
-  MOCK_VAULT_A_ADDRESS,
-  MOCK_VAULT_B_ADDRESS,
-  MOCK_VAULT_C_ADDRESS,
-  MOCK_VAULT_D_ADDRESS,
-  VENICE_BASE_URL,
-  DEEPSEEK_BASE_URL,
-} from '../config.js'
+  SOROBAN_REGISTRY_ADDRESS,
+  SOROBAN_VAULT_ADDRESS,
+  SOROBAN_TOKEN_ADDRESS,
+} from '../stellar/config.js'
 import { loadSettings, saveSetting, SETTINGS_DEFAULTS } from '../settingsStore.js'
 import {
   getHistorySummary,
@@ -275,12 +272,12 @@ const ContractRow = ({ name, addr }) => (
     <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
       <span className="mono">{short(addr)}</span>
       <a
-        href={`https://sourcify.dev/#/lookup/${addr}`}
+        href={`https://stellar.expert/explorer/testnet/contract/${addr}`}
         target="_blank"
         rel="noopener noreferrer"
         style={{ ...miniBtn, textDecoration: 'none' }}
       >
-        ↗ Sourcify
+        ↗ Explorer
       </a>
     </span>
   </div>
@@ -1014,11 +1011,9 @@ export default function SettingsPage({
                 ))}
               </div>
               <Divider />
-              <ContractRow name="AgentVaultDepositor" addr={AGENT_VAULT_DEPOSITOR_ADDRESS} />
-              <ContractRow name="MockVault A" addr={MOCK_VAULT_A_ADDRESS} />
-              <ContractRow name="MockVault B" addr={MOCK_VAULT_B_ADDRESS} />
-              <ContractRow name="MockVault C" addr={MOCK_VAULT_C_ADDRESS} />
-              <ContractRow name="MockVault D" addr={MOCK_VAULT_D_ADDRESS} />
+              <ContractRow name="AgentRegistry" addr={SOROBAN_REGISTRY_ADDRESS} />
+              <ContractRow name="YieldVault (vfVLT)" addr={SOROBAN_VAULT_ADDRESS} />
+              <ContractRow name="VFUSD token" addr={SOROBAN_TOKEN_ADDRESS} />
               <Divider />
               <div style={{ fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 1.6 }}>
                 Powered by: MetaMask Smart Accounts Kit × 1Shot API × Venice AI

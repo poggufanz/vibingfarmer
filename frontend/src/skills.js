@@ -1,18 +1,20 @@
 // Skill file generator + localStorage persistence + editor UI
 
-import { AGENT_VAULT_DEPOSITOR_ADDRESS } from './config.js'
+import { SOROBAN_VAULT_ADDRESS } from './stellar/config.js'
 
 const SKILLS_STORAGE_KEY = 'yv_skills'
 
-// Single fund path: every generated skill's execution target is the depositor — never a
-// worker EOA. Source the address from the deployed config (validated, real — NOT a
+// Single fund path: every generated skill's execution target is the vault — never a worker
+// key. Source the address from the deployed Stellar config (validated, real — NOT a
 // placeholder), with an optional Vite env override. A non-address would be a runtime
 // footgun, so resolve it loudly at module load.
-const ADDR_RE = /^0x[0-9a-fA-F]{40}$/
+const ADDR_RE = /^C[A-Z2-7]{55}$/ // Stellar contract strkey (C + 55 base32 chars)
 export const DEPOSITOR_TARGET =
-  (import.meta.env?.VITE_DEPOSITOR_ADDRESS) || AGENT_VAULT_DEPOSITOR_ADDRESS
+  import.meta.env?.VITE_DEPOSITOR_ADDRESS || SOROBAN_VAULT_ADDRESS
 if (!DEPOSITOR_TARGET || !ADDR_RE.test(DEPOSITOR_TARGET)) {
-  throw new Error('DEPOSITOR_TARGET missing or not a 20-byte address — check config.js / VITE_DEPOSITOR_ADDRESS')
+  throw new Error(
+    'DEPOSITOR_TARGET missing or not a Stellar contract address (C...) — check stellar/config.js / VITE_DEPOSITOR_ADDRESS'
+  )
 }
 
 // Escape before interpolating into innerHTML — skill JSON is user-editable and
@@ -43,7 +45,7 @@ export function buildSkill({ vault, token, amount, worker }) {
   }
   const steps = [{ kind: 'deposit', target: DEPOSITOR_TARGET, vault, token, amount: String(amount) }]
   for (const s of steps) {
-    if (s.target.toLowerCase() !== DEPOSITOR_TARGET.toLowerCase()) {
+    if (s.target !== DEPOSITOR_TARGET) {
       throw new Error(`illegal skill target ${s.target} — only the depositor is allowed`)
     }
   }
