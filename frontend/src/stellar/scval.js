@@ -22,6 +22,15 @@ export function i128ScVal(amount) {
 }
 
 /**
+ * Encode a u64 (period duration / expiry / ledger time). Accepts BigInt or Number.
+ * @param {bigint | number} n
+ * @returns {import('@stellar/stellar-sdk').xdr.ScVal}
+ */
+export function u64ScVal(n) {
+  return nativeToScVal(BigInt(n), { type: 'u64' })
+}
+
+/**
  * Decode any ScVal to its native JS value (i128 → BigInt, address → strkey, symbol → string…).
  * @param {import('@stellar/stellar-sdk').xdr.ScVal} sv
  * @returns {unknown}
