@@ -384,35 +384,30 @@
     "ast_hash": "e0000c0d4594a3775691b88fe292419a",
     "semantic_hash": "e0000c0d4594a3775691b88fe292419a"
   },
-  "frontend/api/relay.js": {
-    "mtime": 1781493418.2593544,
-    "ast_hash": "9ceb4d2461ba010ac21adbf352260494",
-    "semantic_hash": "9ceb4d2461ba010ac21adbf352260494"
-  },
   "frontend/api/search.js": {
     "mtime": 1780913817.107088,
     "ast_hash": "2e18a2088f82dfed536e8afee5cf2ede",
     "semantic_hash": "2e18a2088f82dfed536e8afee5cf2ede"
   },
   "frontend/src/agents.jsx": {
-    "mtime": 1781276785.9652967,
-    "ast_hash": "6b032e86310916a5926afeb6b78f30a0",
-    "semantic_hash": "6b032e86310916a5926afeb6b78f30a0"
+    "mtime": 1782028569.3827813,
+    "ast_hash": "244ef0947ff36311e8cedd3a6648fc9f",
+    "semantic_hash": "244ef0947ff36311e8cedd3a6648fc9f"
   },
   "frontend/src/agents/agentController.js": {
-    "mtime": 1781260110.2204337,
-    "ast_hash": "88abe5bb8080c79844f50e6c428c55d0",
-    "semantic_hash": "88abe5bb8080c79844f50e6c428c55d0"
+    "mtime": 1782026075.7671304,
+    "ast_hash": "c0578b1e18f3d403e87c1a4dfd2e2803",
+    "semantic_hash": "c0578b1e18f3d403e87c1a4dfd2e2803"
   },
   "frontend/src/agents/backgroundAgent.worker.js": {
-    "mtime": 1781260700.8020945,
-    "ast_hash": "8e803117209bb759870e55b042d4418d",
-    "semantic_hash": "8e803117209bb759870e55b042d4418d"
+    "mtime": 1782053667.2425053,
+    "ast_hash": "841798a950f86e198daa92f4d2636d0c",
+    "semantic_hash": "841798a950f86e198daa92f4d2636d0c"
   },
   "frontend/src/app.jsx": {
-    "mtime": 1781456667.0318048,
-    "ast_hash": "d23b308e0e2bafecd6839b833084f591",
-    "semantic_hash": "d23b308e0e2bafecd6839b833084f591"
+    "mtime": 1782052503.855845,
+    "ast_hash": "1cea1ce9cc394c92cf56f1b9e2eb6dd4",
+    "semantic_hash": "1cea1ce9cc394c92cf56f1b9e2eb6dd4"
   },
   "frontend/src/apyHistory.js": {
     "mtime": 1780913747.1789987,
@@ -420,9 +415,9 @@
     "semantic_hash": "087371ed43cd829b4097fd8b5d802c8c"
   },
   "frontend/src/attestation.js": {
-    "mtime": 1781260143.4014716,
-    "ast_hash": "698db92d4f84cc1e7a6cd6dedec36f99",
-    "semantic_hash": "698db92d4f84cc1e7a6cd6dedec36f99"
+    "mtime": 1782026739.4634438,
+    "ast_hash": "1e5d741d6ef7a5683d666420b67c62c7",
+    "semantic_hash": "1e5d741d6ef7a5683d666420b67c62c7"
   },
   "frontend/src/components.jsx": {
     "mtime": 1781341154.0914862,
@@ -445,9 +440,9 @@
     "semantic_hash": "f306215df69c9d925a35a239d31b4e86"
   },
   "frontend/src/components/ExplorerPage.jsx": {
-    "mtime": 1781723795.9752305,
-    "ast_hash": "44f62f165e41736ba532f8871edfa067",
-    "semantic_hash": "44f62f165e41736ba532f8871edfa067"
+    "mtime": 1782053667.0243368,
+    "ast_hash": "6f9a6a8415e54893a53f19ad23c29f58",
+    "semantic_hash": "6f9a6a8415e54893a53f19ad23c29f58"
   },
   "frontend/src/components/FlaskGate.jsx": {
     "mtime": 1780913747.1850004,
@@ -485,9 +480,9 @@
     "semantic_hash": "5a666b14ae93b795a2f4c6e8db35728d"
   },
   "frontend/src/components/SettingsPage.jsx": {
-    "mtime": 1781424634.1456494,
-    "ast_hash": "097a1189a82000a3d9f98e40f574e72b",
-    "semantic_hash": "097a1189a82000a3d9f98e40f574e72b"
+    "mtime": 1782050286.5794172,
+    "ast_hash": "7fef24e4a1958c6279f07a8e0a068e9c",
+    "semantic_hash": "7fef24e4a1958c6279f07a8e0a068e9c"
   },
   "frontend/src/components/SignatureMark.jsx": {
     "mtime": 1780913747.1900053,
@@ -520,19 +515,19 @@
     "semantic_hash": "b46b673447307e8414b0c7f53ca9588c"
   },
   "frontend/src/components/WithdrawModal.jsx": {
-    "mtime": 1781349721.3956754,
-    "ast_hash": "2d9e40e931b565de39648e5edcd04dfc",
-    "semantic_hash": "2d9e40e931b565de39648e5edcd04dfc"
+    "mtime": 1782042703.9588723,
+    "ast_hash": "b82c99e295b623943a9f47bed01ea54d",
+    "semantic_hash": "b82c99e295b623943a9f47bed01ea54d"
   },
   "frontend/src/config.js": {
-    "mtime": 1781507094.2131543,
-    "ast_hash": "e61220e769d9a88bef475b28f12220b4",
-    "semantic_hash": "e61220e769d9a88bef475b28f12220b4"
+    "mtime": 1782050687.8207226,
+    "ast_hash": "0737d7a6aaa5af74d2c0b43a90036798",
+    "semantic_hash": "0737d7a6aaa5af74d2c0b43a90036798"
   },
   "frontend/src/defiLlama.js": {
-    "mtime": 1780913747.195005,
-    "ast_hash": "72cf180a09d3b33d508552587bf80866",
-    "semantic_hash": "72cf180a09d3b33d508552587bf80866"
+    "mtime": 1782053667.1124296,
+    "ast_hash": "dd26b35642aada0db6a14f1e197d5b4b",
+    "semantic_hash": "dd26b35642aada0db6a14f1e197d5b4b"
   },
   "frontend/src/devFlag.js": {
     "mtime": 1780913747.195005,
@@ -570,34 +565,19 @@
     "semantic_hash": "61c0ebf2b214c2f4b2fa59659d1f3f74"
   },
   "frontend/src/orchestrator.js": {
-    "mtime": 1781507094.4079387,
-    "ast_hash": "ca5d1772a89a6db97f882805eb4c1626",
-    "semantic_hash": "ca5d1772a89a6db97f882805eb4c1626"
+    "mtime": 1782026075.5601978,
+    "ast_hash": "7131cce6baf3e3d4b89d2a5e77ad43b9",
+    "semantic_hash": "7131cce6baf3e3d4b89d2a5e77ad43b9"
   },
   "frontend/src/positionsStore.js": {
-    "mtime": 1781281230.0900173,
-    "ast_hash": "076cd1302bb8caf2ac68212f729a65c4",
-    "semantic_hash": "076cd1302bb8caf2ac68212f729a65c4"
+    "mtime": 1782028569.4084752,
+    "ast_hash": "b65e2dc0965c3e90707c141d45028476",
+    "semantic_hash": "b65e2dc0965c3e90707c141d45028476"
   },
   "frontend/src/positionsStore.test.js": {
     "mtime": 1780913747.2000043,
     "ast_hash": "053ec5cfa6ebe7116afb8e12b6ba590e",
     "semantic_hash": "053ec5cfa6ebe7116afb8e12b6ba590e"
-  },
-  "frontend/src/readProvider.js": {
-    "mtime": 1780913747.2000043,
-    "ast_hash": "15a259bcc2a6c45f7b7611b1b6aa4bc0",
-    "semantic_hash": "15a259bcc2a6c45f7b7611b1b6aa4bc0"
-  },
-  "frontend/src/redelegation.js": {
-    "mtime": 1780913747.2010062,
-    "ast_hash": "e14e3608e8492c04cd2fd362c3b18caa",
-    "semantic_hash": "e14e3608e8492c04cd2fd362c3b18caa"
-  },
-  "frontend/src/relay.js": {
-    "mtime": 1781507094.3254547,
-    "ast_hash": "169336f9d444cee8573f3296901b75dd",
-    "semantic_hash": "169336f9d444cee8573f3296901b75dd"
   },
   "frontend/src/router.js": {
     "mtime": 1780913817.1260889,
@@ -620,9 +600,9 @@
     "semantic_hash": "39d95305004d883a6ffac27cbacdd771"
   },
   "frontend/src/skills.js": {
-    "mtime": 1781260069.0131269,
-    "ast_hash": "f4dda05cfb7ea08f4509464e99368dbd",
-    "semantic_hash": "f4dda05cfb7ea08f4509464e99368dbd"
+    "mtime": 1782053667.056873,
+    "ast_hash": "a157313905582efda4836e817e7bd7c9",
+    "semantic_hash": "a157313905582efda4836e817e7bd7c9"
   },
   "frontend/src/skills.jsx": {
     "mtime": 1780913747.2045164,
@@ -649,1385 +629,15 @@
     "ast_hash": "821580ae42a910c216299886d39b8213",
     "semantic_hash": "821580ae42a910c216299886d39b8213"
   },
-  "frontend/src/wallet.js": {
-    "mtime": 1781460100.0888834,
-    "ast_hash": "28d5bce771599f373678fa481f595f02",
-    "semantic_hash": "28d5bce771599f373678fa481f595f02"
-  },
   "frontend/src/worker.js": {
-    "mtime": 1781507094.3749197,
-    "ast_hash": "02b4e5ada6dd44cf816e79d9ff021c60",
-    "semantic_hash": "02b4e5ada6dd44cf816e79d9ff021c60"
+    "mtime": 1782026075.5052023,
+    "ast_hash": "c211280c5445f0eaf2dfd7c2df270763",
+    "semantic_hash": "c211280c5445f0eaf2dfd7c2df270763"
   },
   "frontend/vite.config.js": {
-    "mtime": 1781954918.0099077,
-    "ast_hash": "2859bc70a3f632688f359f0c4cd77f11",
-    "semantic_hash": "2859bc70a3f632688f359f0c4cd77f11"
-  },
-  "lib/forge-std/scripts/vm.py": {
-    "mtime": 1780913747.2215157,
-    "ast_hash": "64877ecf58ec49c31185c8151b1496c2",
-    "semantic_hash": "64877ecf58ec49c31185c8151b1496c2"
-  },
-  "lib/openzeppelin-contracts/.mocharc.js": {
-    "mtime": 1779795313.2268517,
-    "ast_hash": "aceb38e47ae149916deac4356592c805",
-    "semantic_hash": "aceb38e47ae149916deac4356592c805"
-  },
-  "lib/openzeppelin-contracts/.solcover.js": {
-    "mtime": 1779795313.230852,
-    "ast_hash": "6f6467c1813a11cc28f32c06a691dba8",
-    "semantic_hash": "6f6467c1813a11cc28f32c06a691dba8"
-  },
-  "lib/openzeppelin-contracts/docs/config.js": {
-    "mtime": 1779795315.157271,
-    "ast_hash": "19cf1ce3c221bcdae9b385a61ae2f0ba",
-    "semantic_hash": "19cf1ce3c221bcdae9b385a61ae2f0ba"
-  },
-  "lib/openzeppelin-contracts/docs/templates/helpers.js": {
-    "mtime": 1779795315.3786592,
-    "ast_hash": "f14da7920b0d3482e4adfe6d169bafe5",
-    "semantic_hash": "f14da7920b0d3482e4adfe6d169bafe5"
-  },
-  "lib/openzeppelin-contracts/docs/templates/properties.js": {
-    "mtime": 1779795319.5989718,
-    "ast_hash": "7939e8783c16c1780ccd55c891d602f5",
-    "semantic_hash": "7939e8783c16c1780ccd55c891d602f5"
-  },
-  "lib/openzeppelin-contracts/eslint.config.mjs": {
-    "mtime": 1779795315.3878362,
-    "ast_hash": "cd3e864cf2478c4f54b3dfef4d3c7d98",
-    "semantic_hash": "cd3e864cf2478c4f54b3dfef4d3c7d98"
-  },
-  "lib/openzeppelin-contracts/fv/run.js": {
-    "mtime": 1779795315.5013914,
-    "ast_hash": "ee4d712345d7d9a942ba7f317e852b11",
-    "semantic_hash": "ee4d712345d7d9a942ba7f317e852b11"
-  },
-  "lib/openzeppelin-contracts/hardhat.config.js": {
-    "mtime": 1779795315.684891,
-    "ast_hash": "f3b7b37d8b24edb7e865c003d276511b",
-    "semantic_hash": "f3b7b37d8b24edb7e865c003d276511b"
-  },
-  "lib/openzeppelin-contracts/hardhat/async-test-sanity.js": {
-    "mtime": 1779795315.6880162,
-    "ast_hash": "d032e05f240ffbce294e5c0fe36656b7",
-    "semantic_hash": "d032e05f240ffbce294e5c0fe36656b7"
-  },
-  "lib/openzeppelin-contracts/hardhat/env-artifacts.js": {
-    "mtime": 1779795315.6905272,
-    "ast_hash": "64931bc9f9974e0ed76570015f58e96a",
-    "semantic_hash": "64931bc9f9974e0ed76570015f58e96a"
-  },
-  "lib/openzeppelin-contracts/hardhat/ignore-unreachable-warnings.js": {
-    "mtime": 1779795315.693532,
-    "ast_hash": "a1e6bea4c0ac681a3154dd047fc800f8",
-    "semantic_hash": "a1e6bea4c0ac681a3154dd047fc800f8"
-  },
-  "lib/openzeppelin-contracts/hardhat/remappings.js": {
-    "mtime": 1779795315.6955335,
-    "ast_hash": "f629fe91ea69e6b2c343044b5b03e257",
-    "semantic_hash": "f629fe91ea69e6b2c343044b5b03e257"
-  },
-  "lib/openzeppelin-contracts/hardhat/skip-foundry-tests.js": {
-    "mtime": 1779795315.6975315,
-    "ast_hash": "d6e4990dc941571393d44d21695a10a7",
-    "semantic_hash": "d6e4990dc941571393d44d21695a10a7"
-  },
-  "lib/openzeppelin-contracts/hardhat/task-test-get-files.js": {
-    "mtime": 1779795315.7005324,
-    "ast_hash": "f81d2c2c8ba18a854db3b378291793d1",
-    "semantic_hash": "f81d2c2c8ba18a854db3b378291793d1"
-  },
-  "lib/openzeppelin-contracts/lib/forge-std/scripts/vm.py": {
-    "mtime": 1779795335.9529836,
-    "ast_hash": "1d9309f36c1efc8f10a971bc5a170fb5",
-    "semantic_hash": "1d9309f36c1efc8f10a971bc5a170fb5"
-  },
-  "lib/openzeppelin-contracts/scripts/checks/compare-layout.js": {
-    "mtime": 1779795315.7325997,
-    "ast_hash": "48c381aea77590132a301a2d7ed0af20",
-    "semantic_hash": "48c381aea77590132a301a2d7ed0af20"
-  },
-  "lib/openzeppelin-contracts/scripts/checks/compareGasReports.js": {
-    "mtime": 1779795315.737604,
-    "ast_hash": "fbdfbe8aa07af21766da887b2a903c28",
-    "semantic_hash": "fbdfbe8aa07af21766da887b2a903c28"
-  },
-  "lib/openzeppelin-contracts/scripts/checks/coverage.sh": {
-    "mtime": 1779795315.7406087,
-    "ast_hash": "05af2ec223022272c65f71c7fcb1ff69",
-    "semantic_hash": "05af2ec223022272c65f71c7fcb1ff69"
-  },
-  "lib/openzeppelin-contracts/scripts/checks/extract-layout.js": {
-    "mtime": 1779795315.7436087,
-    "ast_hash": "3698edb15d8ceffe5ac21b0a2950a4fd",
-    "semantic_hash": "3698edb15d8ceffe5ac21b0a2950a4fd"
-  },
-  "lib/openzeppelin-contracts/scripts/checks/generation.sh": {
-    "mtime": 1779795315.745609,
-    "ast_hash": "c9f9705f471e93b3eab4aaa153529ea0",
-    "semantic_hash": "c9f9705f471e93b3eab4aaa153529ea0"
-  },
-  "lib/openzeppelin-contracts/scripts/checks/inheritance-ordering.js": {
-    "mtime": 1779795319.645119,
-    "ast_hash": "92db08dda2827ff818dc3a47144f9bf2",
-    "semantic_hash": "92db08dda2827ff818dc3a47144f9bf2"
-  },
-  "lib/openzeppelin-contracts/scripts/checks/pragma-validity.js": {
-    "mtime": 1779795315.753116,
-    "ast_hash": "1d8efd3e7211fa0bbff92643153c242a",
-    "semantic_hash": "1d8efd3e7211fa0bbff92643153c242a"
-  },
-  "lib/openzeppelin-contracts/scripts/fetch-common-contracts.js": {
-    "mtime": 1779795315.755116,
-    "ast_hash": "cbe663282355eab681bd6388ddb72e0d",
-    "semantic_hash": "cbe663282355eab681bd6388ddb72e0d"
-  },
-  "lib/openzeppelin-contracts/scripts/gen-nav.js": {
-    "mtime": 1779795315.7576208,
-    "ast_hash": "37718f0d1517a2f2f3ae84928882fa8c",
-    "semantic_hash": "37718f0d1517a2f2f3ae84928882fa8c"
-  },
-  "lib/openzeppelin-contracts/scripts/generate/format-lines.js": {
-    "mtime": 1779795315.762419,
-    "ast_hash": "6c48e41852049b9cd18ae7a46ea5b251",
-    "semantic_hash": "6c48e41852049b9cd18ae7a46ea5b251"
-  },
-  "lib/openzeppelin-contracts/scripts/generate/helpers/sanitize.js": {
-    "mtime": 1779795315.7702055,
-    "ast_hash": "c0111bb65297b9eb4b3ba14e406c0713",
-    "semantic_hash": "c0111bb65297b9eb4b3ba14e406c0713"
-  },
-  "lib/openzeppelin-contracts/scripts/generate/run.js": {
-    "mtime": 1779795315.773206,
-    "ast_hash": "8bf97ff4e14d45bb88d9cde4f2cddd8b",
-    "semantic_hash": "8bf97ff4e14d45bb88d9cde4f2cddd8b"
-  },
-  "lib/openzeppelin-contracts/scripts/generate/templates/Arrays.js": {
-    "mtime": 1779795315.779537,
-    "ast_hash": "a62e8e06b0a8f93de76955a30eed4fe3",
-    "semantic_hash": "a62e8e06b0a8f93de76955a30eed4fe3"
-  },
-  "lib/openzeppelin-contracts/scripts/generate/templates/Arrays.opts.js": {
-    "mtime": 1779795315.7855456,
-    "ast_hash": "580762f388bb95e2428c56e23ec03a11",
-    "semantic_hash": "580762f388bb95e2428c56e23ec03a11"
-  },
-  "lib/openzeppelin-contracts/scripts/generate/templates/Checkpoints.js": {
-    "mtime": 1779795315.7895417,
-    "ast_hash": "98f7c741ff3831bdd0b2ed10e7a3879c",
-    "semantic_hash": "98f7c741ff3831bdd0b2ed10e7a3879c"
-  },
-  "lib/openzeppelin-contracts/scripts/generate/templates/Checkpoints.opts.js": {
-    "mtime": 1779795315.7930129,
-    "ast_hash": "9f05493aa80ba9f7c838b61d21df7af7",
-    "semantic_hash": "9f05493aa80ba9f7c838b61d21df7af7"
-  },
-  "lib/openzeppelin-contracts/scripts/generate/templates/Checkpoints.t.js": {
-    "mtime": 1779795315.7960117,
-    "ast_hash": "1d70939a0b79d147914ff092b1fbf7fa",
-    "semantic_hash": "1d70939a0b79d147914ff092b1fbf7fa"
-  },
-  "lib/openzeppelin-contracts/scripts/generate/templates/Enumerable.opts.js": {
-    "mtime": 1779795315.8000128,
-    "ast_hash": "4f4bd3af083e405c5e32293d82d1cb8e",
-    "semantic_hash": "4f4bd3af083e405c5e32293d82d1cb8e"
-  },
-  "lib/openzeppelin-contracts/scripts/generate/templates/EnumerableMap.js": {
-    "mtime": 1779795315.8055797,
-    "ast_hash": "c3fff44831cb52462748ebca41b88214",
-    "semantic_hash": "c3fff44831cb52462748ebca41b88214"
-  },
-  "lib/openzeppelin-contracts/scripts/generate/templates/EnumerableSet.js": {
-    "mtime": 1779795315.8095841,
-    "ast_hash": "d35e3fc7d4d34d48977ea44ba4f357f9",
-    "semantic_hash": "d35e3fc7d4d34d48977ea44ba4f357f9"
-  },
-  "lib/openzeppelin-contracts/scripts/generate/templates/MerkleProof.js": {
-    "mtime": 1779795315.8135836,
-    "ast_hash": "95fdb5e2bb272a5e0999ad410c1c8b13",
-    "semantic_hash": "95fdb5e2bb272a5e0999ad410c1c8b13"
-  },
-  "lib/openzeppelin-contracts/scripts/generate/templates/MerkleProof.opts.js": {
-    "mtime": 1779795315.8165798,
-    "ast_hash": "d224a38b404e92c26501a7c30938d278",
-    "semantic_hash": "d224a38b404e92c26501a7c30938d278"
-  },
-  "lib/openzeppelin-contracts/scripts/generate/templates/Packing.js": {
-    "mtime": 1779795315.8205857,
-    "ast_hash": "13e1e9be762d6338fd6c5000c7c3344e",
-    "semantic_hash": "13e1e9be762d6338fd6c5000c7c3344e"
-  },
-  "lib/openzeppelin-contracts/scripts/generate/templates/Packing.opts.js": {
-    "mtime": 1779795315.8255877,
-    "ast_hash": "11914a47e4f63cd0f031fd4d2e57f12a",
-    "semantic_hash": "11914a47e4f63cd0f031fd4d2e57f12a"
-  },
-  "lib/openzeppelin-contracts/scripts/generate/templates/Packing.t.js": {
-    "mtime": 1779795315.8285835,
-    "ast_hash": "c0fbc210396240508ce2c670827aa464",
-    "semantic_hash": "c0fbc210396240508ce2c670827aa464"
-  },
-  "lib/openzeppelin-contracts/scripts/generate/templates/SafeCast.js": {
-    "mtime": 1779795315.832087,
-    "ast_hash": "e0016e944bcee9390865b83383076ed0",
-    "semantic_hash": "e0016e944bcee9390865b83383076ed0"
-  },
-  "lib/openzeppelin-contracts/scripts/generate/templates/Slot.opts.js": {
-    "mtime": 1779795315.8360968,
-    "ast_hash": "4f58e0ecb99ab0e05a8cf3384f31c731",
-    "semantic_hash": "4f58e0ecb99ab0e05a8cf3384f31c731"
-  },
-  "lib/openzeppelin-contracts/scripts/generate/templates/SlotDerivation.js": {
-    "mtime": 1779795315.840098,
-    "ast_hash": "1250fb06aba310c54923170a71c142f2",
-    "semantic_hash": "1250fb06aba310c54923170a71c142f2"
-  },
-  "lib/openzeppelin-contracts/scripts/generate/templates/SlotDerivation.t.js": {
-    "mtime": 1779795315.8440971,
-    "ast_hash": "5006e8eba0590790db7b8e3fe376ffb6",
-    "semantic_hash": "5006e8eba0590790db7b8e3fe376ffb6"
-  },
-  "lib/openzeppelin-contracts/scripts/generate/templates/StorageSlot.js": {
-    "mtime": 1779795315.8470995,
-    "ast_hash": "ec2c646bed777712deb8c68d01839f7f",
-    "semantic_hash": "ec2c646bed777712deb8c68d01839f7f"
-  },
-  "lib/openzeppelin-contracts/scripts/generate/templates/StorageSlotMock.js": {
-    "mtime": 1779795315.8516178,
-    "ast_hash": "28714a9d227d5bc41d8313aa1aca7e60",
-    "semantic_hash": "28714a9d227d5bc41d8313aa1aca7e60"
-  },
-  "lib/openzeppelin-contracts/scripts/generate/templates/TransientSlot.js": {
-    "mtime": 1779795315.8566139,
-    "ast_hash": "b03f1d6729d7d38d254785c4e5e4396a",
-    "semantic_hash": "b03f1d6729d7d38d254785c4e5e4396a"
-  },
-  "lib/openzeppelin-contracts/scripts/generate/templates/TransientSlotMock.js": {
-    "mtime": 1779795315.860133,
-    "ast_hash": "234ac59388b6db321ca4345f7270ec75",
-    "semantic_hash": "234ac59388b6db321ca4345f7270ec75"
-  },
-  "lib/openzeppelin-contracts/scripts/generate/templates/conversion.js": {
-    "mtime": 1779795315.863134,
-    "ast_hash": "33ede54424daa088643570d297a19ead",
-    "semantic_hash": "33ede54424daa088643570d297a19ead"
-  },
-  "lib/openzeppelin-contracts/scripts/get-contracts-metadata.js": {
-    "mtime": 1779795315.866131,
-    "ast_hash": "2c59ea6ab0516f79b47b5fe12e2e3ced",
-    "semantic_hash": "2c59ea6ab0516f79b47b5fe12e2e3ced"
-  },
-  "lib/openzeppelin-contracts/scripts/git-user-config.sh": {
-    "mtime": 1779795315.869131,
-    "ast_hash": "3437e55d1a06afbe472432ea77a4d3f6",
-    "semantic_hash": "3437e55d1a06afbe472432ea77a4d3f6"
-  },
-  "lib/openzeppelin-contracts/scripts/helpers.js": {
-    "mtime": 1779795315.8721297,
-    "ast_hash": "9d416ff09cd7f8be65cd9cc8c1656b05",
-    "semantic_hash": "9d416ff09cd7f8be65cd9cc8c1656b05"
-  },
-  "lib/openzeppelin-contracts/scripts/minimize-pragma.js": {
-    "mtime": 1779795315.8741293,
-    "ast_hash": "8064b4a51bc08700682dc679ed6e0301",
-    "semantic_hash": "8064b4a51bc08700682dc679ed6e0301"
-  },
-  "lib/openzeppelin-contracts/scripts/prepack.sh": {
-    "mtime": 1779795315.8761294,
-    "ast_hash": "df39cdf0af36fc1fbab26ab3b2e273c8",
-    "semantic_hash": "df39cdf0af36fc1fbab26ab3b2e273c8"
-  },
-  "lib/openzeppelin-contracts/scripts/prepare-docs.sh": {
-    "mtime": 1779795315.8791342,
-    "ast_hash": "fae35aba3aee09416b6795dbb557b04d",
-    "semantic_hash": "fae35aba3aee09416b6795dbb557b04d"
-  },
-  "lib/openzeppelin-contracts/scripts/release/format-changelog.js": {
-    "mtime": 1779795315.8831346,
-    "ast_hash": "eeab4e065d30d15adec0b17ff1f9cce2",
-    "semantic_hash": "eeab4e065d30d15adec0b17ff1f9cce2"
-  },
-  "lib/openzeppelin-contracts/scripts/release/synchronize-versions.js": {
-    "mtime": 1779795315.888135,
-    "ast_hash": "79b5fd2e4df605c9391757a4cc90b075",
-    "semantic_hash": "79b5fd2e4df605c9391757a4cc90b075"
-  },
-  "lib/openzeppelin-contracts/scripts/release/update-comment.js": {
-    "mtime": 1779795315.891135,
-    "ast_hash": "2d278d876bed6ebe0ee4e864d547fe6a",
-    "semantic_hash": "2d278d876bed6ebe0ee4e864d547fe6a"
-  },
-  "lib/openzeppelin-contracts/scripts/release/version.sh": {
-    "mtime": 1779795315.8931549,
-    "ast_hash": "fe74ac00c2451c9538922dda1e373ce1",
-    "semantic_hash": "fe74ac00c2451c9538922dda1e373ce1"
-  },
-  "lib/openzeppelin-contracts/scripts/release/workflow/check-upgradeable.sh": {
-    "mtime": 1779795315.8987486,
-    "ast_hash": "17c72879433b1769378c1b61a1ca869a",
-    "semantic_hash": "17c72879433b1769378c1b61a1ca869a"
-  },
-  "lib/openzeppelin-contracts/scripts/release/workflow/exit-prerelease.sh": {
-    "mtime": 1779795315.903793,
-    "ast_hash": "e0e7e5fb1cb518212ccc33dc1e32b673",
-    "semantic_hash": "e0e7e5fb1cb518212ccc33dc1e32b673"
-  },
-  "lib/openzeppelin-contracts/scripts/release/workflow/github-release.js": {
-    "mtime": 1779795315.9069383,
-    "ast_hash": "51885bbbf1630c2cc439cb3a45e9c68b",
-    "semantic_hash": "51885bbbf1630c2cc439cb3a45e9c68b"
-  },
-  "lib/openzeppelin-contracts/scripts/release/workflow/integrity-check.sh": {
-    "mtime": 1779795315.909943,
-    "ast_hash": "14af2f32f1acb14ac7c1203fff52e4d2",
-    "semantic_hash": "14af2f32f1acb14ac7c1203fff52e4d2"
-  },
-  "lib/openzeppelin-contracts/scripts/release/workflow/pack.sh": {
-    "mtime": 1779795315.9129434,
-    "ast_hash": "6aa0b3ca763f83c33d6302997fd535b9",
-    "semantic_hash": "6aa0b3ca763f83c33d6302997fd535b9"
-  },
-  "lib/openzeppelin-contracts/scripts/release/workflow/publish.sh": {
-    "mtime": 1779795315.9169455,
-    "ast_hash": "200e612d8ab3156e118533663d98285d",
-    "semantic_hash": "200e612d8ab3156e118533663d98285d"
-  },
-  "lib/openzeppelin-contracts/scripts/release/workflow/rerun.js": {
-    "mtime": 1779795315.920745,
-    "ast_hash": "bf475f3d05905cf719353cfb3f2e1813",
-    "semantic_hash": "bf475f3d05905cf719353cfb3f2e1813"
-  },
-  "lib/openzeppelin-contracts/scripts/release/workflow/set-changesets-pr-title.js": {
-    "mtime": 1779795315.9237874,
-    "ast_hash": "69800696342383a93faf2174bd43e577",
-    "semantic_hash": "69800696342383a93faf2174bd43e577"
-  },
-  "lib/openzeppelin-contracts/scripts/release/workflow/start.sh": {
-    "mtime": 1779795315.9279554,
-    "ast_hash": "69cbe598393174fe4ba7ae3899ac4ca5",
-    "semantic_hash": "69cbe598393174fe4ba7ae3899ac4ca5"
-  },
-  "lib/openzeppelin-contracts/scripts/release/workflow/state.js": {
-    "mtime": 1779795315.9311187,
-    "ast_hash": "8a957d53eec2aa7fb601fef15c4f4bda",
-    "semantic_hash": "8a957d53eec2aa7fb601fef15c4f4bda"
-  },
-  "lib/openzeppelin-contracts/scripts/remove-ignored-artifacts.js": {
-    "mtime": 1779795315.9331856,
-    "ast_hash": "95b1c0459bf03ec66f0e9bcb0d5227fa",
-    "semantic_hash": "95b1c0459bf03ec66f0e9bcb0d5227fa"
-  },
-  "lib/openzeppelin-contracts/scripts/set-max-old-space-size.sh": {
-    "mtime": 1779795315.9372406,
-    "ast_hash": "71daabb3e3bab6776da907f81bfe24d7",
-    "semantic_hash": "71daabb3e3bab6776da907f81bfe24d7"
-  },
-  "lib/openzeppelin-contracts/scripts/solc-versions.js": {
-    "mtime": 1779795315.939289,
-    "ast_hash": "f4d1441f452e2651de0ec3f281134b90",
-    "semantic_hash": "f4d1441f452e2651de0ec3f281134b90"
-  },
-  "lib/openzeppelin-contracts/scripts/solhint-custom/index.js": {
-    "mtime": 1779795319.653125,
-    "ast_hash": "c338fef8ffbf4b7e75a4442770dd01f0",
-    "semantic_hash": "c338fef8ffbf4b7e75a4442770dd01f0"
-  },
-  "lib/openzeppelin-contracts/scripts/update-docs-branch.js": {
-    "mtime": 1779795315.9552975,
-    "ast_hash": "f0916c74426da9a8509bc34516e45e1e",
-    "semantic_hash": "f0916c74426da9a8509bc34516e45e1e"
-  },
-  "lib/openzeppelin-contracts/scripts/upgradeable/patch-apply.sh": {
-    "mtime": 1779795315.9786642,
-    "ast_hash": "a8a3bcca5c43dbb87723acdb2fcae8bb",
-    "semantic_hash": "a8a3bcca5c43dbb87723acdb2fcae8bb"
-  },
-  "lib/openzeppelin-contracts/scripts/upgradeable/patch-save.sh": {
-    "mtime": 1779795315.9817417,
-    "ast_hash": "523812d135053e1f6fd818d4e4adb48a",
-    "semantic_hash": "523812d135053e1f6fd818d4e4adb48a"
-  },
-  "lib/openzeppelin-contracts/scripts/upgradeable/transpile-onto.sh": {
-    "mtime": 1779795315.9859245,
-    "ast_hash": "5fc64b00d834487eacf006b1033d1d20",
-    "semantic_hash": "5fc64b00d834487eacf006b1033d1d20"
-  },
-  "lib/openzeppelin-contracts/scripts/upgradeable/transpile.sh": {
-    "mtime": 1779795315.990206,
-    "ast_hash": "874dfcaa60c16050998a079a3916961e",
-    "semantic_hash": "874dfcaa60c16050998a079a3916961e"
-  },
-  "lib/openzeppelin-contracts/solhint.config.js": {
-    "mtime": 1779795315.997359,
-    "ast_hash": "00f16bdafb9230dcbe5dbbc85894a1c9",
-    "semantic_hash": "00f16bdafb9230dcbe5dbbc85894a1c9"
-  },
-  "lib/openzeppelin-contracts/test/access/AccessControl.behavior.js": {
-    "mtime": 1779795316.0083108,
-    "ast_hash": "578bd33dfddb0baf2c2a7f7e89c307cc",
-    "semantic_hash": "578bd33dfddb0baf2c2a7f7e89c307cc"
-  },
-  "lib/openzeppelin-contracts/test/access/AccessControl.test.js": {
-    "mtime": 1779795316.0113423,
-    "ast_hash": "a1a038c8478c4531c518274ff54a28eb",
-    "semantic_hash": "a1a038c8478c4531c518274ff54a28eb"
-  },
-  "lib/openzeppelin-contracts/test/access/Ownable.test.js": {
-    "mtime": 1779795316.014764,
-    "ast_hash": "ee0acff4719740e4af071869c1d1e324",
-    "semantic_hash": "ee0acff4719740e4af071869c1d1e324"
-  },
-  "lib/openzeppelin-contracts/test/access/Ownable2Step.test.js": {
-    "mtime": 1779795316.017825,
-    "ast_hash": "9917f19bba7302f7fc2cde91913efcff",
-    "semantic_hash": "9917f19bba7302f7fc2cde91913efcff"
-  },
-  "lib/openzeppelin-contracts/test/access/extensions/AccessControlDefaultAdminRules.test.js": {
-    "mtime": 1779795316.0252078,
-    "ast_hash": "85c276ac7470d790fcbcface4f160218",
-    "semantic_hash": "85c276ac7470d790fcbcface4f160218"
-  },
-  "lib/openzeppelin-contracts/test/access/extensions/AccessControlEnumerable.test.js": {
-    "mtime": 1779795316.0303621,
-    "ast_hash": "293fd5417cb1dd6c44814360050e8842",
-    "semantic_hash": "293fd5417cb1dd6c44814360050e8842"
-  },
-  "lib/openzeppelin-contracts/test/access/manager/AccessManaged.test.js": {
-    "mtime": 1779795316.0381756,
-    "ast_hash": "9755677375e563ec82c7b78cfc3fc754",
-    "semantic_hash": "9755677375e563ec82c7b78cfc3fc754"
-  },
-  "lib/openzeppelin-contracts/test/access/manager/AccessManager.behavior.js": {
-    "mtime": 1779795319.70016,
-    "ast_hash": "487740e16bd3108a53c14125537f5e77",
-    "semantic_hash": "487740e16bd3108a53c14125537f5e77"
-  },
-  "lib/openzeppelin-contracts/test/access/manager/AccessManager.predicate.js": {
-    "mtime": 1779795319.7211795,
-    "ast_hash": "3ae818dc59f04227b91c2dc8a4391ad1",
-    "semantic_hash": "3ae818dc59f04227b91c2dc8a4391ad1"
-  },
-  "lib/openzeppelin-contracts/test/access/manager/AccessManager.test.js": {
-    "mtime": 1779795319.7312772,
-    "ast_hash": "c826c4472df520641587cb6673965036",
-    "semantic_hash": "c826c4472df520641587cb6673965036"
-  },
-  "lib/openzeppelin-contracts/test/access/manager/AuthorityUtils.test.js": {
-    "mtime": 1779795316.0591202,
-    "ast_hash": "5a672a3216eefdba8e1cc461aeef62b7",
-    "semantic_hash": "5a672a3216eefdba8e1cc461aeef62b7"
-  },
-  "lib/openzeppelin-contracts/test/account/Account.behavior.js": {
-    "mtime": 1779795316.064146,
-    "ast_hash": "698014e779ef4b4457dd90d7cc651b87",
-    "semantic_hash": "698014e779ef4b4457dd90d7cc651b87"
-  },
-  "lib/openzeppelin-contracts/test/account/Account.test.js": {
-    "mtime": 1779795316.0691462,
-    "ast_hash": "21586ae90bafbe088b4259f52934ab96",
-    "semantic_hash": "21586ae90bafbe088b4259f52934ab96"
-  },
-  "lib/openzeppelin-contracts/test/account/AccountECDSA.test.js": {
-    "mtime": 1779795316.0721452,
-    "ast_hash": "bec214339095ba95d6bb6ac013189cb3",
-    "semantic_hash": "bec214339095ba95d6bb6ac013189cb3"
-  },
-  "lib/openzeppelin-contracts/test/account/AccountEIP7702.test.js": {
-    "mtime": 1779795316.078894,
-    "ast_hash": "4be4455eb92bfc6c0074a87d9d1332a2",
-    "semantic_hash": "4be4455eb92bfc6c0074a87d9d1332a2"
-  },
-  "lib/openzeppelin-contracts/test/account/AccountERC7913.test.js": {
-    "mtime": 1779795316.0814242,
-    "ast_hash": "a5197ca00f7969d8ec72650c365af19b",
-    "semantic_hash": "a5197ca00f7969d8ec72650c365af19b"
-  },
-  "lib/openzeppelin-contracts/test/account/AccountMultiSigner.test.js": {
-    "mtime": 1779795319.743276,
-    "ast_hash": "fdb0e5a373848eb0fa3404271fea55ec",
-    "semantic_hash": "fdb0e5a373848eb0fa3404271fea55ec"
-  },
-  "lib/openzeppelin-contracts/test/account/AccountMultiSignerWeighted.test.js": {
-    "mtime": 1779795316.0890174,
-    "ast_hash": "c8172b12719cc0eceeca10c766e7e775",
-    "semantic_hash": "c8172b12719cc0eceeca10c766e7e775"
-  },
-  "lib/openzeppelin-contracts/test/account/AccountP256.test.js": {
-    "mtime": 1779795316.09215,
-    "ast_hash": "705b5d92b28158e3da4963bc2b93e65f",
-    "semantic_hash": "705b5d92b28158e3da4963bc2b93e65f"
-  },
-  "lib/openzeppelin-contracts/test/account/AccountRSA.test.js": {
-    "mtime": 1779795316.0952718,
-    "ast_hash": "da3e32178cff4b5dc5db219dfa09d8e5",
-    "semantic_hash": "da3e32178cff4b5dc5db219dfa09d8e5"
-  },
-  "lib/openzeppelin-contracts/test/account/AccountWebAuthn.test.js": {
-    "mtime": 1779795316.0973377,
-    "ast_hash": "e984589b27445b54893ac764c09a8f3e",
-    "semantic_hash": "e984589b27445b54893ac764c09a8f3e"
-  },
-  "lib/openzeppelin-contracts/test/account/examples/AccountEIP7702WithModulesMock.test.js": {
-    "mtime": 1779795316.1055357,
-    "ast_hash": "86c59c5daa8a6667483ea2ad3cb045b7",
-    "semantic_hash": "86c59c5daa8a6667483ea2ad3cb045b7"
-  },
-  "lib/openzeppelin-contracts/test/account/extensions/AccountERC7579.behavior.js": {
-    "mtime": 1779795319.7542744,
-    "ast_hash": "245c7bc62df95fce90e6f660ce1c7983",
-    "semantic_hash": "245c7bc62df95fce90e6f660ce1c7983"
-  },
-  "lib/openzeppelin-contracts/test/account/extensions/AccountERC7579.test.js": {
-    "mtime": 1779795316.1187322,
-    "ast_hash": "fd28c5784feecdc130a621f5e10b4821",
-    "semantic_hash": "fd28c5784feecdc130a621f5e10b4821"
-  },
-  "lib/openzeppelin-contracts/test/account/extensions/AccountERC7579Hooked.test.js": {
-    "mtime": 1779795316.1234832,
-    "ast_hash": "154095472a0796c24a5e25a1ca9f9744",
-    "semantic_hash": "154095472a0796c24a5e25a1ca9f9744"
-  },
-  "lib/openzeppelin-contracts/test/account/extensions/ERC7821.behavior.js": {
-    "mtime": 1779795316.1265676,
-    "ast_hash": "425f7cbf0b58b85c8c03a447f2ecf335",
-    "semantic_hash": "425f7cbf0b58b85c8c03a447f2ecf335"
-  },
-  "lib/openzeppelin-contracts/test/account/utils/EIP7702Utils.test.js": {
-    "mtime": 1779795316.1339123,
-    "ast_hash": "82af86e0d57cd58a5dfc36d6b518ce98",
-    "semantic_hash": "82af86e0d57cd58a5dfc36d6b518ce98"
-  },
-  "lib/openzeppelin-contracts/test/account/utils/draft-ERC4337Utils.test.js": {
-    "mtime": 1779795319.7632856,
-    "ast_hash": "a1f68936cf2cc1e780b064351008f56e",
-    "semantic_hash": "a1f68936cf2cc1e780b064351008f56e"
-  },
-  "lib/openzeppelin-contracts/test/account/utils/draft-ERC7579Utils.test.js": {
-    "mtime": 1779795316.147351,
-    "ast_hash": "cf4d4f5453cb785420b4b99b61b9d240",
-    "semantic_hash": "cf4d4f5453cb785420b4b99b61b9d240"
-  },
-  "lib/openzeppelin-contracts/test/crosschain/BridgeERC20.behavior.js": {
-    "mtime": 1779795319.7692795,
-    "ast_hash": "28f97b17c6bdd3c4882f8fed8651a404",
-    "semantic_hash": "28f97b17c6bdd3c4882f8fed8651a404"
-  },
-  "lib/openzeppelin-contracts/test/crosschain/BridgeERC20.test.js": {
-    "mtime": 1779795316.165128,
-    "ast_hash": "db202ea722dd7917acaadd8248069857",
-    "semantic_hash": "db202ea722dd7917acaadd8248069857"
-  },
-  "lib/openzeppelin-contracts/test/crosschain/ERC7786Recipient.test.js": {
-    "mtime": 1779795316.1781287,
-    "ast_hash": "fc3bc07d23f56003dcef28d38486eb91",
-    "semantic_hash": "fc3bc07d23f56003dcef28d38486eb91"
-  },
-  "lib/openzeppelin-contracts/test/finance/VestingWallet.behavior.js": {
-    "mtime": 1779795316.1822178,
-    "ast_hash": "f43e22601d537362ca50775bdac7751c",
-    "semantic_hash": "f43e22601d537362ca50775bdac7751c"
-  },
-  "lib/openzeppelin-contracts/test/finance/VestingWallet.test.js": {
-    "mtime": 1779795316.18622,
-    "ast_hash": "bc1054aded3f58ba8623c52d1507d998",
-    "semantic_hash": "bc1054aded3f58ba8623c52d1507d998"
-  },
-  "lib/openzeppelin-contracts/test/finance/VestingWalletCliff.test.js": {
-    "mtime": 1779795316.189498,
-    "ast_hash": "c3187bf1d4953817b7f2f3777c20db78",
-    "semantic_hash": "c3187bf1d4953817b7f2f3777c20db78"
-  },
-  "lib/openzeppelin-contracts/test/governance/Governor.test.js": {
-    "mtime": 1779795319.7759597,
-    "ast_hash": "1e0a7ce27f1c5850051dd92174af73c6",
-    "semantic_hash": "1e0a7ce27f1c5850051dd92174af73c6"
-  },
-  "lib/openzeppelin-contracts/test/governance/TimelockController.test.js": {
-    "mtime": 1779795316.2055576,
-    "ast_hash": "cefe869c2c81b3b507a4d730fa9afad1",
-    "semantic_hash": "cefe869c2c81b3b507a4d730fa9afad1"
-  },
-  "lib/openzeppelin-contracts/test/governance/extensions/GovernorCountingFractional.test.js": {
-    "mtime": 1779795319.7829604,
-    "ast_hash": "777a74bf392b2d2274dc1755c91390d0",
-    "semantic_hash": "777a74bf392b2d2274dc1755c91390d0"
-  },
-  "lib/openzeppelin-contracts/test/governance/extensions/GovernorCountingOverridable.test.js": {
-    "mtime": 1779795319.78896,
-    "ast_hash": "fdfff05770502989dbc7c2e3a00c7bed",
-    "semantic_hash": "fdfff05770502989dbc7c2e3a00c7bed"
-  },
-  "lib/openzeppelin-contracts/test/governance/extensions/GovernorERC721.test.js": {
-    "mtime": 1779795319.7969604,
-    "ast_hash": "0d2aa2913ab8429858dd93a46c0ecff4",
-    "semantic_hash": "0d2aa2913ab8429858dd93a46c0ecff4"
-  },
-  "lib/openzeppelin-contracts/test/governance/extensions/GovernorNoncesKeyed.test.js": {
-    "mtime": 1779795319.802964,
-    "ast_hash": "436d60707717f894cc1b9b3be1df2a27",
-    "semantic_hash": "436d60707717f894cc1b9b3be1df2a27"
-  },
-  "lib/openzeppelin-contracts/test/governance/extensions/GovernorPreventLateQuorum.test.js": {
-    "mtime": 1779795319.8099654,
-    "ast_hash": "bd03b392cd62d5479ea499054e91a9e6",
-    "semantic_hash": "bd03b392cd62d5479ea499054e91a9e6"
-  },
-  "lib/openzeppelin-contracts/test/governance/extensions/GovernorProposalGuardian.test.js": {
-    "mtime": 1779795319.816541,
-    "ast_hash": "73f3abcbd1a7f41a1291954fa04293b5",
-    "semantic_hash": "73f3abcbd1a7f41a1291954fa04293b5"
-  },
-  "lib/openzeppelin-contracts/test/governance/extensions/GovernorSequentialProposalId.test.js": {
-    "mtime": 1779795319.8225415,
-    "ast_hash": "d7e6f5af482ec0b9119b6ce28292af01",
-    "semantic_hash": "d7e6f5af482ec0b9119b6ce28292af01"
-  },
-  "lib/openzeppelin-contracts/test/governance/extensions/GovernorStorage.test.js": {
-    "mtime": 1779795319.829744,
-    "ast_hash": "920e8ee8a20b632bc6503f762559e41c",
-    "semantic_hash": "920e8ee8a20b632bc6503f762559e41c"
-  },
-  "lib/openzeppelin-contracts/test/governance/extensions/GovernorSuperQuorum.test.js": {
-    "mtime": 1779795319.8361588,
-    "ast_hash": "5193327f3530bdae80ed3ff201808a75",
-    "semantic_hash": "5193327f3530bdae80ed3ff201808a75"
-  },
-  "lib/openzeppelin-contracts/test/governance/extensions/GovernorTimelockAccess.test.js": {
-    "mtime": 1779795319.8501565,
-    "ast_hash": "cbb1881158a6b0da36c0296da2d5ea4b",
-    "semantic_hash": "cbb1881158a6b0da36c0296da2d5ea4b"
-  },
-  "lib/openzeppelin-contracts/test/governance/extensions/GovernorTimelockCompound.test.js": {
-    "mtime": 1779795319.8581629,
-    "ast_hash": "e6c0e117821ed1c5a6a8476deed52270",
-    "semantic_hash": "e6c0e117821ed1c5a6a8476deed52270"
-  },
-  "lib/openzeppelin-contracts/test/governance/extensions/GovernorTimelockControl.test.js": {
-    "mtime": 1779795319.865161,
-    "ast_hash": "655cb98fe4d6b1bf172e6e8814367e95",
-    "semantic_hash": "655cb98fe4d6b1bf172e6e8814367e95"
-  },
-  "lib/openzeppelin-contracts/test/governance/extensions/GovernorVotesQuorumFraction.test.js": {
-    "mtime": 1779795319.8731797,
-    "ast_hash": "d315d7ea25df68374e32142539fa6481",
-    "semantic_hash": "d315d7ea25df68374e32142539fa6481"
-  },
-  "lib/openzeppelin-contracts/test/governance/extensions/GovernorVotesSuperQuorumFraction.test.js": {
-    "mtime": 1779795319.8811872,
-    "ast_hash": "8ccad670b30fdfdc739cf2c2691351aa",
-    "semantic_hash": "8ccad670b30fdfdc739cf2c2691351aa"
-  },
-  "lib/openzeppelin-contracts/test/governance/extensions/GovernorWithParams.test.js": {
-    "mtime": 1779795319.8881924,
-    "ast_hash": "d03c2c6d5babad6ed0eaa6d6238b00bb",
-    "semantic_hash": "d03c2c6d5babad6ed0eaa6d6238b00bb"
-  },
-  "lib/openzeppelin-contracts/test/governance/utils/ERC6372.behavior.js": {
-    "mtime": 1779795319.9007077,
-    "ast_hash": "2027406755c96f74e697f059808c8d62",
-    "semantic_hash": "2027406755c96f74e697f059808c8d62"
-  },
-  "lib/openzeppelin-contracts/test/governance/utils/Votes.behavior.js": {
-    "mtime": 1779795319.9107075,
-    "ast_hash": "7fda2881201f1d135016575627374368",
-    "semantic_hash": "7fda2881201f1d135016575627374368"
-  },
-  "lib/openzeppelin-contracts/test/governance/utils/Votes.test.js": {
-    "mtime": 1779795319.9257278,
-    "ast_hash": "fb4fa27f9ab0f7f253ac6494935f8a20",
-    "semantic_hash": "fb4fa27f9ab0f7f253ac6494935f8a20"
-  },
-  "lib/openzeppelin-contracts/test/governance/utils/VotesExtended.test.js": {
-    "mtime": 1779795319.9352593,
-    "ast_hash": "6fc6a1b142724eb367efe37197950e2f",
-    "semantic_hash": "6fc6a1b142724eb367efe37197950e2f"
-  },
-  "lib/openzeppelin-contracts/test/helpers/access-manager.js": {
-    "mtime": 1779795316.293225,
-    "ast_hash": "4b6287c5b08e82f9fc8d294adcc9a9b2",
-    "semantic_hash": "4b6287c5b08e82f9fc8d294adcc9a9b2"
-  },
-  "lib/openzeppelin-contracts/test/helpers/account.js": {
-    "mtime": 1779795316.2962294,
-    "ast_hash": "834d4860acec984e8b748693d3467e33",
-    "semantic_hash": "834d4860acec984e8b748693d3467e33"
-  },
-  "lib/openzeppelin-contracts/test/helpers/chains.js": {
-    "mtime": 1779795316.2994657,
-    "ast_hash": "df6d67909472cf5d362434a4b5f5d872",
-    "semantic_hash": "df6d67909472cf5d362434a4b5f5d872"
-  },
-  "lib/openzeppelin-contracts/test/helpers/constants.js": {
-    "mtime": 1779795316.3043284,
-    "ast_hash": "c65b418ac0d20c041b4e3b347bb70863",
-    "semantic_hash": "c65b418ac0d20c041b4e3b347bb70863"
-  },
-  "lib/openzeppelin-contracts/test/helpers/deploy.js": {
-    "mtime": 1779795316.307841,
-    "ast_hash": "bfc1ca1dba5f6168e39a72372d5cddf1",
-    "semantic_hash": "bfc1ca1dba5f6168e39a72372d5cddf1"
-  },
-  "lib/openzeppelin-contracts/test/helpers/eip712-types.js": {
-    "mtime": 1779795316.314893,
-    "ast_hash": "1d9366a7e678ec64f30b089fc1211309",
-    "semantic_hash": "1d9366a7e678ec64f30b089fc1211309"
-  },
-  "lib/openzeppelin-contracts/test/helpers/eip712.js": {
-    "mtime": 1779795316.3427372,
-    "ast_hash": "4524b261312cdf835f8c3b9f07cbc3c3",
-    "semantic_hash": "4524b261312cdf835f8c3b9f07cbc3c3"
-  },
-  "lib/openzeppelin-contracts/test/helpers/enums.js": {
-    "mtime": 1779795316.3507354,
-    "ast_hash": "e2d5ae0118354eb5838f7e2fced7667e",
-    "semantic_hash": "e2d5ae0118354eb5838f7e2fced7667e"
-  },
-  "lib/openzeppelin-contracts/test/helpers/erc4337.js": {
-    "mtime": 1779795316.358253,
-    "ast_hash": "a16e22261d7a64c48899d9dcf99366ab",
-    "semantic_hash": "a16e22261d7a64c48899d9dcf99366ab"
-  },
-  "lib/openzeppelin-contracts/test/helpers/erc7579.js": {
-    "mtime": 1779795316.3627641,
-    "ast_hash": "a5a3015b2f8241230ced8de3f2b172d2",
-    "semantic_hash": "a5a3015b2f8241230ced8de3f2b172d2"
-  },
-  "lib/openzeppelin-contracts/test/helpers/erc7739.js": {
-    "mtime": 1779795316.366763,
-    "ast_hash": "c6e3b08a9b0e6e3bcfb43e1c234205e1",
-    "semantic_hash": "c6e3b08a9b0e6e3bcfb43e1c234205e1"
-  },
-  "lib/openzeppelin-contracts/test/helpers/governance.js": {
-    "mtime": 1779795319.947261,
-    "ast_hash": "e86ac411be41fd07b61ef87f6a9e640a",
-    "semantic_hash": "e86ac411be41fd07b61ef87f6a9e640a"
-  },
-  "lib/openzeppelin-contracts/test/helpers/iterate.js": {
-    "mtime": 1779795316.3767684,
-    "ast_hash": "4f7143547c2e721db44a1f4388567f08",
-    "semantic_hash": "4f7143547c2e721db44a1f4388567f08"
-  },
-  "lib/openzeppelin-contracts/test/helpers/math.js": {
-    "mtime": 1779795316.3807642,
-    "ast_hash": "4ee37157e203692dd0cafe97ad4471b4",
-    "semantic_hash": "4ee37157e203692dd0cafe97ad4471b4"
-  },
-  "lib/openzeppelin-contracts/test/helpers/methods.js": {
-    "mtime": 1779795316.387781,
-    "ast_hash": "4cd748fb73fb2359230beff00e092345",
-    "semantic_hash": "4cd748fb73fb2359230beff00e092345"
-  },
-  "lib/openzeppelin-contracts/test/helpers/precompiles.js": {
-    "mtime": 1779795316.3927739,
-    "ast_hash": "9d21ef78786ecdecf14f9ac1f34a440b",
-    "semantic_hash": "9d21ef78786ecdecf14f9ac1f34a440b"
-  },
-  "lib/openzeppelin-contracts/test/helpers/random.js": {
-    "mtime": 1779795316.3957722,
-    "ast_hash": "843da19de05adc2a6ce595c2c11f10bd",
-    "semantic_hash": "843da19de05adc2a6ce595c2c11f10bd"
-  },
-  "lib/openzeppelin-contracts/test/helpers/signers.js": {
-    "mtime": 1779795319.9537723,
-    "ast_hash": "bb7e94642b5f3b99015a9f87ccd1dc9e",
-    "semantic_hash": "bb7e94642b5f3b99015a9f87ccd1dc9e"
-  },
-  "lib/openzeppelin-contracts/test/helpers/storage.js": {
-    "mtime": 1779795316.4022815,
-    "ast_hash": "cdbe5d43efab2fdd68b8491d09e654c0",
-    "semantic_hash": "cdbe5d43efab2fdd68b8491d09e654c0"
-  },
-  "lib/openzeppelin-contracts/test/helpers/strings.js": {
-    "mtime": 1779795316.4059627,
-    "ast_hash": "a43b0973acc045670fbf39c708ffa30f",
-    "semantic_hash": "a43b0973acc045670fbf39c708ffa30f"
-  },
-  "lib/openzeppelin-contracts/test/helpers/time.js": {
-    "mtime": 1779795319.962783,
-    "ast_hash": "d8763ce0ee21458a410626a56fd85452",
-    "semantic_hash": "d8763ce0ee21458a410626a56fd85452"
-  },
-  "lib/openzeppelin-contracts/test/helpers/trie.js": {
-    "mtime": 1779795319.96978,
-    "ast_hash": "2d75becc81b0d8ada77ae6df7776b798",
-    "semantic_hash": "2d75becc81b0d8ada77ae6df7776b798"
-  },
-  "lib/openzeppelin-contracts/test/helpers/txpool.js": {
-    "mtime": 1779795316.4159746,
-    "ast_hash": "5be8404c30f43e517e4d534285581bce",
-    "semantic_hash": "5be8404c30f43e517e4d534285581bce"
-  },
-  "lib/openzeppelin-contracts/test/metatx/ERC2771Context.test.js": {
-    "mtime": 1779795316.4209757,
-    "ast_hash": "73cebfedecebdd394756947622747605",
-    "semantic_hash": "73cebfedecebdd394756947622747605"
-  },
-  "lib/openzeppelin-contracts/test/metatx/ERC2771Forwarder.test.js": {
-    "mtime": 1779795319.9788108,
-    "ast_hash": "95406c4892b25e8d799b1339737c6c55",
-    "semantic_hash": "95406c4892b25e8d799b1339737c6c55"
-  },
-  "lib/openzeppelin-contracts/test/proxy/Clones.behaviour.js": {
-    "mtime": 1779795316.433823,
-    "ast_hash": "625430ad630fdf7925ad7bfe4275814b",
-    "semantic_hash": "625430ad630fdf7925ad7bfe4275814b"
-  },
-  "lib/openzeppelin-contracts/test/proxy/Clones.test.js": {
-    "mtime": 1779795316.441644,
-    "ast_hash": "6aa294f550cc1fdf7456c4d099da4777",
-    "semantic_hash": "6aa294f550cc1fdf7456c4d099da4777"
-  },
-  "lib/openzeppelin-contracts/test/proxy/ERC1967/ERC1967Proxy.test.js": {
-    "mtime": 1779795316.4483137,
-    "ast_hash": "3dc255ca63c04b9e3102621691450e56",
-    "semantic_hash": "3dc255ca63c04b9e3102621691450e56"
-  },
-  "lib/openzeppelin-contracts/test/proxy/ERC1967/ERC1967Utils.test.js": {
-    "mtime": 1779795316.4533246,
-    "ast_hash": "ff3fae03bf66216834afb6694064d587",
-    "semantic_hash": "ff3fae03bf66216834afb6694064d587"
-  },
-  "lib/openzeppelin-contracts/test/proxy/Proxy.behaviour.js": {
-    "mtime": 1779795316.4568949,
-    "ast_hash": "1a11e1279c5c529e935d0150a91bfff8",
-    "semantic_hash": "1a11e1279c5c529e935d0150a91bfff8"
-  },
-  "lib/openzeppelin-contracts/test/proxy/beacon/BeaconProxy.test.js": {
-    "mtime": 1779795316.4643118,
-    "ast_hash": "875416548ce741fa3518a96e3f1c3fc1",
-    "semantic_hash": "875416548ce741fa3518a96e3f1c3fc1"
-  },
-  "lib/openzeppelin-contracts/test/proxy/beacon/UpgradeableBeacon.test.js": {
-    "mtime": 1779795316.470557,
-    "ast_hash": "201c68152507436d71af2c85a95b2e73",
-    "semantic_hash": "201c68152507436d71af2c85a95b2e73"
-  },
-  "lib/openzeppelin-contracts/test/proxy/transparent/ProxyAdmin.test.js": {
-    "mtime": 1779795316.4787903,
-    "ast_hash": "f6d2d0684ce9f252d8ab776e7da3082f",
-    "semantic_hash": "f6d2d0684ce9f252d8ab776e7da3082f"
-  },
-  "lib/openzeppelin-contracts/test/proxy/transparent/TransparentUpgradeableProxy.behaviour.js": {
-    "mtime": 1779795316.4849079,
-    "ast_hash": "8dc8dc8a5f3cb2634bbe96a01bfeeecf",
-    "semantic_hash": "8dc8dc8a5f3cb2634bbe96a01bfeeecf"
-  },
-  "lib/openzeppelin-contracts/test/proxy/transparent/TransparentUpgradeableProxy.test.js": {
-    "mtime": 1779795316.4900448,
-    "ast_hash": "16250d0a9ca05d6e0a3f3034f80ec72a",
-    "semantic_hash": "16250d0a9ca05d6e0a3f3034f80ec72a"
-  },
-  "lib/openzeppelin-contracts/test/proxy/utils/Initializable.test.js": {
-    "mtime": 1779795316.4962542,
-    "ast_hash": "ffa77c64913ac0bf5ba1ee51fee9c3ad",
-    "semantic_hash": "ffa77c64913ac0bf5ba1ee51fee9c3ad"
-  },
-  "lib/openzeppelin-contracts/test/proxy/utils/UUPSUpgradeable.test.js": {
-    "mtime": 1779795316.5013855,
-    "ast_hash": "6a3fddd41fddc40b1a431a9d2a6ce55a",
-    "semantic_hash": "6a3fddd41fddc40b1a431a9d2a6ce55a"
-  },
-  "lib/openzeppelin-contracts/test/sanity.test.js": {
-    "mtime": 1779795316.5054474,
-    "ast_hash": "d5e4cd79fa9268060c17d85dc8793d83",
-    "semantic_hash": "d5e4cd79fa9268060c17d85dc8793d83"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC1155/ERC1155.behavior.js": {
-    "mtime": 1779795316.5149364,
-    "ast_hash": "e960d2dddab9dde84efbe35817e4ea73",
-    "semantic_hash": "e960d2dddab9dde84efbe35817e4ea73"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC1155/ERC1155.test.js": {
-    "mtime": 1779795316.5203073,
-    "ast_hash": "686561ce21615173f4af537aa9db3235",
-    "semantic_hash": "686561ce21615173f4af537aa9db3235"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC1155/extensions/ERC1155Burnable.test.js": {
-    "mtime": 1779795316.5286517,
-    "ast_hash": "8d2fa6cd6556acfab33c2d834799ba3c",
-    "semantic_hash": "8d2fa6cd6556acfab33c2d834799ba3c"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC1155/extensions/ERC1155Pausable.test.js": {
-    "mtime": 1779795316.5406647,
-    "ast_hash": "2dca20f39aa36fa5d58667d394588f7c",
-    "semantic_hash": "2dca20f39aa36fa5d58667d394588f7c"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC1155/extensions/ERC1155Supply.test.js": {
-    "mtime": 1779795316.5446653,
-    "ast_hash": "6a7b7482d7cf960427139661117b65e4",
-    "semantic_hash": "6a7b7482d7cf960427139661117b65e4"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC1155/extensions/ERC1155URIStorage.test.js": {
-    "mtime": 1779795316.5506687,
-    "ast_hash": "d85f5163b29ada7eeb5eb765d72c376f",
-    "semantic_hash": "d85f5163b29ada7eeb5eb765d72c376f"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC1155/utils/ERC1155Holder.test.js": {
-    "mtime": 1779795316.5606973,
-    "ast_hash": "928dd1d76d471c4444f54d10807c7761",
-    "semantic_hash": "928dd1d76d471c4444f54d10807c7761"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC1155/utils/ERC1155Utils.test.js": {
-    "mtime": 1779795316.5666964,
-    "ast_hash": "6d0d8db817ca04d3c9bf77b0d57cecad",
-    "semantic_hash": "6d0d8db817ca04d3c9bf77b0d57cecad"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC20/ERC20.behavior.js": {
-    "mtime": 1779795316.574109,
-    "ast_hash": "c0fb3defba19fb037d8400c59dc75579",
-    "semantic_hash": "c0fb3defba19fb037d8400c59dc75579"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC20/ERC20.test.js": {
-    "mtime": 1779795316.5793123,
-    "ast_hash": "c23cb7d83064ee9e9edd90187f4c74df",
-    "semantic_hash": "c23cb7d83064ee9e9edd90187f4c74df"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC20/extensions/ERC1363.test.js": {
-    "mtime": 1779795316.5877788,
-    "ast_hash": "3bf1755574cb871d2dd9d55469354059",
-    "semantic_hash": "3bf1755574cb871d2dd9d55469354059"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC20/extensions/ERC20Burnable.test.js": {
-    "mtime": 1779795316.5930126,
-    "ast_hash": "c52618b8a936917d3dc3a078323dd159",
-    "semantic_hash": "c52618b8a936917d3dc3a078323dd159"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC20/extensions/ERC20Capped.test.js": {
-    "mtime": 1779795316.597191,
-    "ast_hash": "5b9837045d2a65cc67ff62537a05e250",
-    "semantic_hash": "5b9837045d2a65cc67ff62537a05e250"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC20/extensions/ERC20Crosschain.test.js": {
-    "mtime": 1779795316.6017613,
-    "ast_hash": "e7d9fb7e3dac09a8ea4e3a980fc705bf",
-    "semantic_hash": "e7d9fb7e3dac09a8ea4e3a980fc705bf"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC20/extensions/ERC20FlashMint.test.js": {
-    "mtime": 1779795316.606989,
-    "ast_hash": "485e882ce26e48c850357854ee8d163c",
-    "semantic_hash": "485e882ce26e48c850357854ee8d163c"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC20/extensions/ERC20Pausable.test.js": {
-    "mtime": 1779795316.6113691,
-    "ast_hash": "abfb39101d88f4bd86c52cdcd38d8a39",
-    "semantic_hash": "abfb39101d88f4bd86c52cdcd38d8a39"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC20/extensions/ERC20Permit.test.js": {
-    "mtime": 1779795316.6155095,
-    "ast_hash": "78ce14bec5fc67dd73b7c856c5231363",
-    "semantic_hash": "78ce14bec5fc67dd73b7c856c5231363"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC20/extensions/ERC20Votes.test.js": {
-    "mtime": 1779795320.0008154,
-    "ast_hash": "6e447106d6622d838fc6de5e37989552",
-    "semantic_hash": "6e447106d6622d838fc6de5e37989552"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC20/extensions/ERC20Wrapper.test.js": {
-    "mtime": 1779795316.6257403,
-    "ast_hash": "90a9888057fab1c882a5b1ad897b701a",
-    "semantic_hash": "90a9888057fab1c882a5b1ad897b701a"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC20/extensions/ERC4626.test.js": {
-    "mtime": 1779795316.6359916,
-    "ast_hash": "f732b784d5b8d3931f0c42bd5db01d45",
-    "semantic_hash": "f732b784d5b8d3931f0c42bd5db01d45"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC20/extensions/draft-ERC20Bridgeable.test.js": {
-    "mtime": 1779795316.6409953,
-    "ast_hash": "ef98fec9a0393a4fe518458a031e04b5",
-    "semantic_hash": "ef98fec9a0393a4fe518458a031e04b5"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC20/extensions/draft-ERC20TemporaryApproval.test.js": {
-    "mtime": 1779795316.6463428,
-    "ast_hash": "1ce34ac90b7a774d91cf6a14ede93bcf",
-    "semantic_hash": "1ce34ac90b7a774d91cf6a14ede93bcf"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC20/utils/SafeERC20.test.js": {
-    "mtime": 1779795320.0185056,
-    "ast_hash": "8ddd4e8d86ffaee5c781f95c5a2aaa65",
-    "semantic_hash": "8ddd4e8d86ffaee5c781f95c5a2aaa65"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC6909/ERC6909.behavior.js": {
-    "mtime": 1779795316.6625311,
-    "ast_hash": "d5ffc396c953576d234146bbd201f5ea",
-    "semantic_hash": "d5ffc396c953576d234146bbd201f5ea"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC6909/ERC6909.test.js": {
-    "mtime": 1779795316.6665354,
-    "ast_hash": "842ba6649a09ffd9a802c9a7bdd4f317",
-    "semantic_hash": "842ba6649a09ffd9a802c9a7bdd4f317"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC6909/extensions/ERC6909ContentURI.test.js": {
-    "mtime": 1779795316.676535,
-    "ast_hash": "3b8cf0e1c2bc857cfedd7da3b452d888",
-    "semantic_hash": "3b8cf0e1c2bc857cfedd7da3b452d888"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC6909/extensions/ERC6909Metadata.test.js": {
-    "mtime": 1779795316.681537,
-    "ast_hash": "7e60c6631d7befb6f18d6c379bd8378e",
-    "semantic_hash": "7e60c6631d7befb6f18d6c379bd8378e"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC6909/extensions/ERC6909TokenSupply.test.js": {
-    "mtime": 1779795316.6855435,
-    "ast_hash": "d221ebd3a30f3402c51dd6680aa592b7",
-    "semantic_hash": "d221ebd3a30f3402c51dd6680aa592b7"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC721/ERC721.behavior.js": {
-    "mtime": 1779795316.6931453,
-    "ast_hash": "549c398cc03de3390d5ba31e25465a11",
-    "semantic_hash": "549c398cc03de3390d5ba31e25465a11"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC721/ERC721.test.js": {
-    "mtime": 1779795316.698248,
-    "ast_hash": "bc88f2e3f7d1229e01d496a8054ea052",
-    "semantic_hash": "bc88f2e3f7d1229e01d496a8054ea052"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC721/ERC721Enumerable.test.js": {
-    "mtime": 1779795316.7012942,
-    "ast_hash": "d844da64054b809ba1f3ee73780bc43f",
-    "semantic_hash": "d844da64054b809ba1f3ee73780bc43f"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC721/extensions/ERC721Burnable.test.js": {
-    "mtime": 1779795316.71048,
-    "ast_hash": "98ac53d94f9d5a054995bc92a73148f3",
-    "semantic_hash": "98ac53d94f9d5a054995bc92a73148f3"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC721/extensions/ERC721Consecutive.test.js": {
-    "mtime": 1779795316.720487,
-    "ast_hash": "669daa017ca2e8c967812653538d1b64",
-    "semantic_hash": "669daa017ca2e8c967812653538d1b64"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC721/extensions/ERC721Pausable.test.js": {
-    "mtime": 1779795316.729265,
-    "ast_hash": "571e36ce042c6d0d1b5d5781ea4cacc1",
-    "semantic_hash": "571e36ce042c6d0d1b5d5781ea4cacc1"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC721/extensions/ERC721Royalty.test.js": {
-    "mtime": 1779795316.7332652,
-    "ast_hash": "614737b17ed78f26d338e4e482548a6f",
-    "semantic_hash": "614737b17ed78f26d338e4e482548a6f"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC721/extensions/ERC721URIStorage.test.js": {
-    "mtime": 1779795316.7392645,
-    "ast_hash": "acc80589fd3ebd2fdd6a0f692e5119db",
-    "semantic_hash": "acc80589fd3ebd2fdd6a0f692e5119db"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC721/extensions/ERC721Votes.test.js": {
-    "mtime": 1779795320.0375402,
-    "ast_hash": "90253ef1837f1180fb91f89a6644e757",
-    "semantic_hash": "90253ef1837f1180fb91f89a6644e757"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC721/extensions/ERC721Wrapper.test.js": {
-    "mtime": 1779795316.7472696,
-    "ast_hash": "29f8332150eea7e8b988b6034a537634",
-    "semantic_hash": "29f8332150eea7e8b988b6034a537634"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC721/utils/ERC721Holder.test.js": {
-    "mtime": 1779795316.7567813,
-    "ast_hash": "92cc2e317e791c5a6fd8f45ab2e1c638",
-    "semantic_hash": "92cc2e317e791c5a6fd8f45ab2e1c638"
-  },
-  "lib/openzeppelin-contracts/test/token/ERC721/utils/ERC721Utils.test.js": {
-    "mtime": 1779795316.762289,
-    "ast_hash": "9e21d26b4e3af0bc6843e755f16566bf",
-    "semantic_hash": "9e21d26b4e3af0bc6843e755f16566bf"
-  },
-  "lib/openzeppelin-contracts/test/token/common/ERC2981.behavior.js": {
-    "mtime": 1779795316.7682886,
-    "ast_hash": "c9c57eb894e7b4dbd69c2ef23473334d",
-    "semantic_hash": "c9c57eb894e7b4dbd69c2ef23473334d"
-  },
-  "lib/openzeppelin-contracts/test/utils/Address.test.js": {
-    "mtime": 1779795316.774787,
-    "ast_hash": "e666ff08bf8b8b2fe5534516b292a80a",
-    "semantic_hash": "e666ff08bf8b8b2fe5534516b292a80a"
-  },
-  "lib/openzeppelin-contracts/test/utils/Arrays.test.js": {
-    "mtime": 1779795316.7824667,
-    "ast_hash": "ccc9c7a0b63d182c6c4ab46f5363c93b",
-    "semantic_hash": "ccc9c7a0b63d182c6c4ab46f5363c93b"
-  },
-  "lib/openzeppelin-contracts/test/utils/Base58.test.js": {
-    "mtime": 1779795316.7894711,
-    "ast_hash": "7fef158c62370fcd1dd193201eb57885",
-    "semantic_hash": "7fef158c62370fcd1dd193201eb57885"
-  },
-  "lib/openzeppelin-contracts/test/utils/Base64.test.js": {
-    "mtime": 1779795316.7954698,
-    "ast_hash": "ec96077a29c2e5ede4c0394323e39ef5",
-    "semantic_hash": "ec96077a29c2e5ede4c0394323e39ef5"
-  },
-  "lib/openzeppelin-contracts/test/utils/Blockhash.test.js": {
-    "mtime": 1779795316.8019817,
-    "ast_hash": "5f3787cef2b93ddef0bc9866e90fb276",
-    "semantic_hash": "5f3787cef2b93ddef0bc9866e90fb276"
-  },
-  "lib/openzeppelin-contracts/test/utils/Bytes.test.js": {
-    "mtime": 1779795316.8090098,
-    "ast_hash": "6ce7edae045948bfcc30e9716ba9740f",
-    "semantic_hash": "6ce7edae045948bfcc30e9716ba9740f"
-  },
-  "lib/openzeppelin-contracts/test/utils/CAIP.test.js": {
-    "mtime": 1779795316.8115225,
-    "ast_hash": "0fca0363b667ea5dfea05ee8227834d5",
-    "semantic_hash": "0fca0363b667ea5dfea05ee8227834d5"
-  },
-  "lib/openzeppelin-contracts/test/utils/Calldata.test.js": {
-    "mtime": 1779795316.8145225,
-    "ast_hash": "d5b9aa7c53998c99e97b26491329662c",
-    "semantic_hash": "d5b9aa7c53998c99e97b26491329662c"
-  },
-  "lib/openzeppelin-contracts/test/utils/Context.behavior.js": {
-    "mtime": 1779795316.8175225,
-    "ast_hash": "3e122d5f30f4c062b407c9f7b5c4bd27",
-    "semantic_hash": "3e122d5f30f4c062b407c9f7b5c4bd27"
-  },
-  "lib/openzeppelin-contracts/test/utils/Context.test.js": {
-    "mtime": 1779795316.8205314,
-    "ast_hash": "67b581d5b5b76f1dd14351517adf2846",
-    "semantic_hash": "67b581d5b5b76f1dd14351517adf2846"
-  },
-  "lib/openzeppelin-contracts/test/utils/Create2.test.js": {
-    "mtime": 1779795316.827531,
-    "ast_hash": "6f562a3ff40483148b01698352d1b55a",
-    "semantic_hash": "6f562a3ff40483148b01698352d1b55a"
-  },
-  "lib/openzeppelin-contracts/test/utils/LowLevelCall.test.js": {
-    "mtime": 1779795316.8415637,
-    "ast_hash": "5e9f723f77317f712e7e0d23c36555dc",
-    "semantic_hash": "5e9f723f77317f712e7e0d23c36555dc"
-  },
-  "lib/openzeppelin-contracts/test/utils/Memory.test.js": {
-    "mtime": 1779795316.8475676,
-    "ast_hash": "23e17ff7cdfa8d0c2f6f650bb7803390",
-    "semantic_hash": "23e17ff7cdfa8d0c2f6f650bb7803390"
-  },
-  "lib/openzeppelin-contracts/test/utils/Multicall.test.js": {
-    "mtime": 1779795316.850567,
-    "ast_hash": "fb04ae51120e9be21b6d9f567bc00fe8",
-    "semantic_hash": "fb04ae51120e9be21b6d9f567bc00fe8"
-  },
-  "lib/openzeppelin-contracts/test/utils/Nonces.behavior.js": {
-    "mtime": 1779795316.854569,
-    "ast_hash": "0342c5ec604f4083908950c0c299420a",
-    "semantic_hash": "0342c5ec604f4083908950c0c299420a"
-  },
-  "lib/openzeppelin-contracts/test/utils/Nonces.test.js": {
-    "mtime": 1779795316.858088,
-    "ast_hash": "d1068f4f893cf762bdb9f0677946a822",
-    "semantic_hash": "d1068f4f893cf762bdb9f0677946a822"
-  },
-  "lib/openzeppelin-contracts/test/utils/NoncesKeyed.test.js": {
-    "mtime": 1779795316.864603,
-    "ast_hash": "51fa03fc4b317e4a478739dd3dd95bc8",
-    "semantic_hash": "51fa03fc4b317e4a478739dd3dd95bc8"
-  },
-  "lib/openzeppelin-contracts/test/utils/Packing.test.js": {
-    "mtime": 1779795316.871117,
-    "ast_hash": "306036ba6eed6ca944f9f53b87cb8a36",
-    "semantic_hash": "306036ba6eed6ca944f9f53b87cb8a36"
-  },
-  "lib/openzeppelin-contracts/test/utils/Panic.test.js": {
-    "mtime": 1779795316.873873,
-    "ast_hash": "16a99c84015149ffeb61a99bbfcf63ee",
-    "semantic_hash": "16a99c84015149ffeb61a99bbfcf63ee"
-  },
-  "lib/openzeppelin-contracts/test/utils/Pausable.test.js": {
-    "mtime": 1779795316.876856,
-    "ast_hash": "d5cc7141466f28748e12b8fd12b8dc58",
-    "semantic_hash": "d5cc7141466f28748e12b8fd12b8dc58"
-  },
-  "lib/openzeppelin-contracts/test/utils/RLP.test.js": {
-    "mtime": 1779795316.882871,
-    "ast_hash": "761e7c82852995075d4a498d8f010fa9",
-    "semantic_hash": "761e7c82852995075d4a498d8f010fa9"
-  },
-  "lib/openzeppelin-contracts/test/utils/ReentrancyGuard.test.js": {
-    "mtime": 1779795316.8858714,
-    "ast_hash": "4bd2872b4fc77c16540767925ee6b9bb",
-    "semantic_hash": "4bd2872b4fc77c16540767925ee6b9bb"
-  },
-  "lib/openzeppelin-contracts/test/utils/RelayedCall.test.js": {
-    "mtime": 1779795320.046541,
-    "ast_hash": "5f9788622a73e98669ddb8e3d503568c",
-    "semantic_hash": "5f9788622a73e98669ddb8e3d503568c"
-  },
-  "lib/openzeppelin-contracts/test/utils/ShortStrings.test.js": {
-    "mtime": 1779795316.8958714,
-    "ast_hash": "4b6b2c004875c6496b80d70589474c91",
-    "semantic_hash": "4b6b2c004875c6496b80d70589474c91"
-  },
-  "lib/openzeppelin-contracts/test/utils/SlotDerivation.test.js": {
-    "mtime": 1779795316.9064188,
-    "ast_hash": "1df64bfee3350b5e70f971b85b08d4da",
-    "semantic_hash": "1df64bfee3350b5e70f971b85b08d4da"
-  },
-  "lib/openzeppelin-contracts/test/utils/StorageSlot.test.js": {
-    "mtime": 1779795316.9094162,
-    "ast_hash": "a0fadbc13771f77b299b8fbdeff18be3",
-    "semantic_hash": "a0fadbc13771f77b299b8fbdeff18be3"
-  },
-  "lib/openzeppelin-contracts/test/utils/Strings.test.js": {
-    "mtime": 1779795316.9161887,
-    "ast_hash": "5a34b8ccad659708e80504f365b65cf0",
-    "semantic_hash": "5a34b8ccad659708e80504f365b65cf0"
-  },
-  "lib/openzeppelin-contracts/test/utils/TransientSlot.test.js": {
-    "mtime": 1779795316.9181874,
-    "ast_hash": "5dbbbea5f1a3dad9c348fbf4cbc32b4f",
-    "semantic_hash": "5dbbbea5f1a3dad9c348fbf4cbc32b4f"
-  },
-  "lib/openzeppelin-contracts/test/utils/cryptography/ECDSA.test.js": {
-    "mtime": 1779795320.0605495,
-    "ast_hash": "41e4afa18509fd8e85bc2ae94ee87056",
-    "semantic_hash": "41e4afa18509fd8e85bc2ae94ee87056"
-  },
-  "lib/openzeppelin-contracts/test/utils/cryptography/EIP712.test.js": {
-    "mtime": 1779795316.9312499,
-    "ast_hash": "306e4fc1dfa160669aff29d7b9f8e6fd",
-    "semantic_hash": "306e4fc1dfa160669aff29d7b9f8e6fd"
-  },
-  "lib/openzeppelin-contracts/test/utils/cryptography/ERC1271.behavior.js": {
-    "mtime": 1779795316.934254,
-    "ast_hash": "7a6e25d51901f64930efd6a7ff1b96be",
-    "semantic_hash": "7a6e25d51901f64930efd6a7ff1b96be"
-  },
-  "lib/openzeppelin-contracts/test/utils/cryptography/ERC7739.test.js": {
-    "mtime": 1779795316.939253,
-    "ast_hash": "1accb246f410bc33b2240a7ed30fdb00",
-    "semantic_hash": "1accb246f410bc33b2240a7ed30fdb00"
-  },
-  "lib/openzeppelin-contracts/test/utils/cryptography/ERC7739Utils.test.js": {
-    "mtime": 1779795316.9432535,
-    "ast_hash": "7e88e177a402990e930de1c332c975f6",
-    "semantic_hash": "7e88e177a402990e930de1c332c975f6"
-  },
-  "lib/openzeppelin-contracts/test/utils/cryptography/MerkleProof.test.js": {
-    "mtime": 1779795320.0695496,
-    "ast_hash": "129999950aad0553307d975c0691c22f",
-    "semantic_hash": "129999950aad0553307d975c0691c22f"
-  },
-  "lib/openzeppelin-contracts/test/utils/cryptography/MessageHashUtils.test.js": {
-    "mtime": 1779795316.9542732,
-    "ast_hash": "eb5c04a492e82969805650ee148ab4a7",
-    "semantic_hash": "eb5c04a492e82969805650ee148ab4a7"
-  },
-  "lib/openzeppelin-contracts/test/utils/cryptography/P256.test.js": {
-    "mtime": 1779795320.0915847,
-    "ast_hash": "2b862c6221e2e4c3ac93c037cb5cc705",
-    "semantic_hash": "2b862c6221e2e4c3ac93c037cb5cc705"
-  },
-  "lib/openzeppelin-contracts/test/utils/cryptography/RSA.helper.js": {
-    "mtime": 1779795316.9658551,
-    "ast_hash": "1ca13bb8e09fdf2318011a231926c7e4",
-    "semantic_hash": "1ca13bb8e09fdf2318011a231926c7e4"
-  },
-  "lib/openzeppelin-contracts/test/utils/cryptography/RSA.test.js": {
-    "mtime": 1779795316.9698558,
-    "ast_hash": "1d9d51efad32bf7e2dc0651e2ffa07a3",
-    "semantic_hash": "1d9d51efad32bf7e2dc0651e2ffa07a3"
-  },
-  "lib/openzeppelin-contracts/test/utils/cryptography/SignatureChecker.test.js": {
-    "mtime": 1779795316.994864,
-    "ast_hash": "2a206636e57ee4d41cf0115a1e140266",
-    "semantic_hash": "2a206636e57ee4d41cf0115a1e140266"
-  },
-  "lib/openzeppelin-contracts/test/utils/cryptography/TrieProof.test.js": {
-    "mtime": 1779795320.1035998,
-    "ast_hash": "d715bd119cf1e7483b1aa104ef027062",
-    "semantic_hash": "d715bd119cf1e7483b1aa104ef027062"
-  },
-  "lib/openzeppelin-contracts/test/utils/draft-InteroperableAddress.test.js": {
-    "mtime": 1779795317.017171,
-    "ast_hash": "8faab9d698e7a6d923f333a840125e74",
-    "semantic_hash": "8faab9d698e7a6d923f333a840125e74"
-  },
-  "lib/openzeppelin-contracts/test/utils/introspection/ERC165.test.js": {
-    "mtime": 1779795317.0243635,
-    "ast_hash": "87781e2b371781a8f2a89f1af7da3570",
-    "semantic_hash": "87781e2b371781a8f2a89f1af7da3570"
-  },
-  "lib/openzeppelin-contracts/test/utils/introspection/ERC165Checker.test.js": {
-    "mtime": 1779795317.0285666,
-    "ast_hash": "66d81e97763d08ab39752c2cfa8e98c9",
-    "semantic_hash": "66d81e97763d08ab39752c2cfa8e98c9"
-  },
-  "lib/openzeppelin-contracts/test/utils/introspection/SupportsInterface.behavior.js": {
-    "mtime": 1779795317.0321796,
-    "ast_hash": "9b4bf8d808158c487a2ba94e88e48468",
-    "semantic_hash": "9b4bf8d808158c487a2ba94e88e48468"
-  },
-  "lib/openzeppelin-contracts/test/utils/math/Math.test.js": {
-    "mtime": 1779795317.0461917,
-    "ast_hash": "e85dd8c65a0e6f8fa5b93d5339b4f6c1",
-    "semantic_hash": "e85dd8c65a0e6f8fa5b93d5339b4f6c1"
-  },
-  "lib/openzeppelin-contracts/test/utils/math/SafeCast.test.js": {
-    "mtime": 1779795317.0501902,
-    "ast_hash": "c3747ea7fb347a1c2a0061de5ab93329",
-    "semantic_hash": "c3747ea7fb347a1c2a0061de5ab93329"
-  },
-  "lib/openzeppelin-contracts/test/utils/math/SignedMath.test.js": {
-    "mtime": 1779795317.0597005,
-    "ast_hash": "c6e5922df3edcae09a16c7263fb5db52",
-    "semantic_hash": "c6e5922df3edcae09a16c7263fb5db52"
-  },
-  "lib/openzeppelin-contracts/test/utils/structs/BitMap.test.js": {
-    "mtime": 1779795317.0726717,
-    "ast_hash": "a594a900137c4be0e42551d709614e49",
-    "semantic_hash": "a594a900137c4be0e42551d709614e49"
-  },
-  "lib/openzeppelin-contracts/test/utils/structs/Checkpoints.test.js": {
-    "mtime": 1779795317.079922,
-    "ast_hash": "d60e0559bb2be26b43a0c5722551de1f",
-    "semantic_hash": "d60e0559bb2be26b43a0c5722551de1f"
-  },
-  "lib/openzeppelin-contracts/test/utils/structs/CircularBuffer.test.js": {
-    "mtime": 1779795317.0833364,
-    "ast_hash": "1d16e6b1f1dd5619c04536bd6daa93f3",
-    "semantic_hash": "1d16e6b1f1dd5619c04536bd6daa93f3"
-  },
-  "lib/openzeppelin-contracts/test/utils/structs/DoubleEndedQueue.test.js": {
-    "mtime": 1779795317.0883477,
-    "ast_hash": "720a71ddfc11163b96058c15ce65bbb3",
-    "semantic_hash": "720a71ddfc11163b96058c15ce65bbb3"
-  },
-  "lib/openzeppelin-contracts/test/utils/structs/EnumerableMap.behavior.js": {
-    "mtime": 1779795317.0923457,
-    "ast_hash": "39fdd3d031ff4044b1b66df5d01bcf57",
-    "semantic_hash": "39fdd3d031ff4044b1b66df5d01bcf57"
-  },
-  "lib/openzeppelin-contracts/test/utils/structs/EnumerableMap.test.js": {
-    "mtime": 1779795317.095346,
-    "ast_hash": "20d829fd2d9b5c0b5cac5b1a83690b89",
-    "semantic_hash": "20d829fd2d9b5c0b5cac5b1a83690b89"
-  },
-  "lib/openzeppelin-contracts/test/utils/structs/EnumerableSet.behavior.js": {
-    "mtime": 1779795317.0993462,
-    "ast_hash": "e8704a0b62ffe4c685c9129871255f6e",
-    "semantic_hash": "e8704a0b62ffe4c685c9129871255f6e"
-  },
-  "lib/openzeppelin-contracts/test/utils/structs/EnumerableSet.test.js": {
-    "mtime": 1779795317.102851,
-    "ast_hash": "213ba58415db6e18861376ef3ca9a2ed",
-    "semantic_hash": "213ba58415db6e18861376ef3ca9a2ed"
-  },
-  "lib/openzeppelin-contracts/test/utils/structs/Heap.test.js": {
-    "mtime": 1779795317.1112225,
-    "ast_hash": "79a1567a80b7b55c0101f36efc7778e3",
-    "semantic_hash": "79a1567a80b7b55c0101f36efc7778e3"
-  },
-  "lib/openzeppelin-contracts/test/utils/structs/MerkleTree.test.js": {
-    "mtime": 1779795317.115228,
-    "ast_hash": "439a6196b7f55889546cfdf366b3694f",
-    "semantic_hash": "439a6196b7f55889546cfdf366b3694f"
-  },
-  "lib/openzeppelin-contracts/test/utils/types/Time.test.js": {
-    "mtime": 1779795320.1207666,
-    "ast_hash": "eed3f47479bfdd5d3da61d1d0f3169b5",
-    "semantic_hash": "eed3f47479bfdd5d3da61d1d0f3169b5"
+    "mtime": 1782051904.293781,
+    "ast_hash": "45a698f755c6b93b820fd86df8a3e658",
+    "semantic_hash": "45a698f755c6b93b820fd86df8a3e658"
   },
   ".agents/skills/accessibility-auditor/SKILL.md": {
     "mtime": 1774700739.3030677,
@@ -3674,16 +2284,6 @@
     "ast_hash": "deea903756de32eab1639f1644fb6acc",
     "semantic_hash": "deea903756de32eab1639f1644fb6acc"
   },
-  "lib/forge-std/README.md": {
-    "mtime": 1780913747.2195175,
-    "ast_hash": "34f6cf21ed28dce99bb357b92ac457ab",
-    "semantic_hash": "34f6cf21ed28dce99bb357b92ac457ab"
-  },
-  "lib/openzeppelin-contracts/README.md": {
-    "mtime": 1779795313.2473657,
-    "ast_hash": "c3aaf373daa8bdc203210bdce6b90fd4",
-    "semantic_hash": "c3aaf373daa8bdc203210bdce6b90fd4"
-  },
   "planning/2026-05-30-demo-polish-implementation-plan.md": {
     "mtime": 1781723795.9742324,
     "ast_hash": "11ec13e994cec2743d67598fcf8e82d1",
@@ -3868,46 +2468,6 @@
     "mtime": 1780805101.349,
     "ast_hash": "ce8b823ee3c2ebc3ed282bd4d10c5181",
     "semantic_hash": "ce8b823ee3c2ebc3ed282bd4d10c5181"
-  },
-  "lib/openzeppelin-contracts/CHANGELOG.md": {
-    "mtime": 1779795313.2348535,
-    "ast_hash": "9611c2e362f24efefc20c9f86cca3ecd",
-    "semantic_hash": "9611c2e362f24efefc20c9f86cca3ecd"
-  },
-  "lib/openzeppelin-contracts/CONTRIBUTING.md": {
-    "mtime": 1779795313.2393658,
-    "ast_hash": "53de1c337438c000c0cdc679e10e15b8",
-    "semantic_hash": "53de1c337438c000c0cdc679e10e15b8"
-  },
-  "lib/openzeppelin-contracts/GUIDELINES.md": {
-    "mtime": 1779795313.243366,
-    "ast_hash": "00a357cad7b9c8ef89de8d2bb9865e9a",
-    "semantic_hash": "00a357cad7b9c8ef89de8d2bb9865e9a"
-  },
-  "lib/openzeppelin-contracts/RELEASING.md": {
-    "mtime": 1779795313.2493653,
-    "ast_hash": "5d61e20f5571854dd4f9dc2112ed0a2a",
-    "semantic_hash": "5d61e20f5571854dd4f9dc2112ed0a2a"
-  },
-  "lib/openzeppelin-contracts/SECURITY.md": {
-    "mtime": 1779795319.2503698,
-    "ast_hash": "5de554004ad1f64f4372d9bce5baff4e",
-    "semantic_hash": "5de554004ad1f64f4372d9bce5baff4e"
-  },
-  "lib/openzeppelin-contracts/lib/erc4626-tests/README.md": {
-    "mtime": 1779795334.5931754,
-    "ast_hash": "ca9cb62ef6a364d3f3aa1f78c4dcf5fb",
-    "semantic_hash": "ca9cb62ef6a364d3f3aa1f78c4dcf5fb"
-  },
-  "lib/openzeppelin-contracts/lib/forge-std/README.md": {
-    "mtime": 1779795335.943983,
-    "ast_hash": "23eea7deba989292512400dcba3cb614",
-    "semantic_hash": "23eea7deba989292512400dcba3cb614"
-  },
-  "lib/openzeppelin-contracts/lib/halmos-cheatcodes/README.md": {
-    "mtime": 1779795336.9655354,
-    "ast_hash": "ac2474555733eda7a1b561b4a1c2975f",
-    "semantic_hash": "ac2474555733eda7a1b561b4a1c2975f"
   },
   "frontend/.vite/deps/chunk-4XEC7FFE.js": {
     "mtime": 1780914377.17817,
@@ -4233,11 +2793,6 @@
     "mtime": 1780913747.1509998,
     "ast_hash": "20b6ad54653b95378003f483552552f8",
     "semantic_hash": "20b6ad54653b95378003f483552552f8"
-  },
-  "lib/openzeppelin-contracts/docs/README.md": {
-    "mtime": 1779795315.1516175,
-    "ast_hash": "4d076b2a9b7a5dd58af4f8e9616de732",
-    "semantic_hash": "4d076b2a9b7a5dd58af4f8e9616de732"
   },
   ".claude/skills/vercel-react-native-skills/README.md": {
     "mtime": 1780913747.0981827,
@@ -5494,110 +4049,10 @@
     "ast_hash": "55623203270bbf3f69e88bae87468f31",
     "semantic_hash": "55623203270bbf3f69e88bae87468f31"
   },
-  "lib/forge-std/CONTRIBUTING.md": {
-    "mtime": 1780913747.217515,
-    "ast_hash": "ed16ffb7f5e40f7367a9bd4648e3283d",
-    "semantic_hash": "ed16ffb7f5e40f7367a9bd4648e3283d"
-  },
-  "lib/forge-std/RELEASE_CHECKLIST.md": {
-    "mtime": 1780913747.2195175,
-    "ast_hash": "8e9cc1c02c895f63c77d6bfdc4ba996c",
-    "semantic_hash": "8e9cc1c02c895f63c77d6bfdc4ba996c"
-  },
-  "lib/openzeppelin-contracts/.github/ISSUE_TEMPLATE/bug_report.md": {
-    "mtime": 1779795313.1422658,
-    "ast_hash": "5830fbdda62e1e5f48e39f6a433fc0eb",
-    "semantic_hash": "5830fbdda62e1e5f48e39f6a433fc0eb"
-  },
-  "lib/openzeppelin-contracts/.github/ISSUE_TEMPLATE/feature_request.md": {
-    "mtime": 1779795313.1527917,
-    "ast_hash": "dc5ed643b46c3f427842a45b7de8d1ae",
-    "semantic_hash": "dc5ed643b46c3f427842a45b7de8d1ae"
-  },
-  "lib/openzeppelin-contracts/.github/PULL_REQUEST_TEMPLATE.md": {
-    "mtime": 1779795313.155796,
-    "ast_hash": "037b980bf7a16454d69fb5376faeedbb",
-    "semantic_hash": "037b980bf7a16454d69fb5376faeedbb"
-  },
-  "lib/openzeppelin-contracts/CODE_OF_CONDUCT.md": {
-    "mtime": 1779795313.237366,
-    "ast_hash": "f176df1d83cee62bc6a0426ff6f87a83",
-    "semantic_hash": "f176df1d83cee62bc6a0426ff6f87a83"
-  },
-  "lib/openzeppelin-contracts/audits/2017-03.md": {
-    "mtime": 1779795313.2558825,
-    "ast_hash": "a13c81cac367c60736f2f86e2dc94af2",
-    "semantic_hash": "a13c81cac367c60736f2f86e2dc94af2"
-  },
-  "lib/openzeppelin-contracts/audits/README.md": {
-    "mtime": 1779795319.2543743,
-    "ast_hash": "8d38ebd10706175863326e3732274223",
-    "semantic_hash": "8d38ebd10706175863326e3732274223"
-  },
-  "lib/openzeppelin-contracts/fv/README.md": {
-    "mtime": 1779795315.3982153,
-    "ast_hash": "7c5ea726a58d8311caa5e90f8210b011",
-    "semantic_hash": "7c5ea726a58d8311caa5e90f8210b011"
-  },
-  "lib/openzeppelin-contracts/lib/forge-std/CONTRIBUTING.md": {
-    "mtime": 1779795335.9389794,
-    "ast_hash": "d60b4187f3ffa89f346861f97585ab72",
-    "semantic_hash": "d60b4187f3ffa89f346861f97585ab72"
-  },
-  "lib/openzeppelin-contracts/scripts/upgradeable/README.md": {
-    "mtime": 1779795315.9603739,
-    "ast_hash": "f94b3111238f624ff438be82237e75e7",
-    "semantic_hash": "f94b3111238f624ff438be82237e75e7"
-  },
-  "lib/openzeppelin-contracts/test/TESTING.md": {
-    "mtime": 1779795316.0013604,
-    "ast_hash": "2a8cc1eb910b5404c455ffbcea0dc62f",
-    "semantic_hash": "2a8cc1eb910b5404c455ffbcea0dc62f"
-  },
   "frontend/src/orchestrator.test.js": {
     "mtime": 1780943699.405987,
     "ast_hash": "522adbcd80edcfe00130d770bf58e934",
     "semantic_hash": "522adbcd80edcfe00130d770bf58e934"
-  },
-  "frontend/src/relay.test.js": {
-    "mtime": 1780943653.2819476,
-    "ast_hash": "7d7f6cf5bd146f62873e3a8c6ef3eb70",
-    "semantic_hash": "7d7f6cf5bd146f62873e3a8c6ef3eb70"
-  },
-  "frontend/src/strategy/grantStore.js": {
-    "mtime": 1780943210.930238,
-    "ast_hash": "6705af069dbbd8315dabd506431f8314",
-    "semantic_hash": "6705af069dbbd8315dabd506431f8314"
-  },
-  "frontend/src/strategy/grantStore.test.js": {
-    "mtime": 1780943192.4523134,
-    "ast_hash": "10a86130684aea56767f1c19e6ca107b",
-    "semantic_hash": "10a86130684aea56767f1c19e6ca107b"
-  },
-  "frontend/src/strategy/rehydrate.js": {
-    "mtime": 1780943803.9159286,
-    "ast_hash": "de67e9da6bd26446d499ad55b388511c",
-    "semantic_hash": "de67e9da6bd26446d499ad55b388511c"
-  },
-  "frontend/src/strategy/rehydrate.test.js": {
-    "mtime": 1780943789.8925126,
-    "ast_hash": "eaf88eabc72ef85d921794f1e43116e2",
-    "semantic_hash": "eaf88eabc72ef85d921794f1e43116e2"
-  },
-  "frontend/src/strategy/session.js": {
-    "mtime": 1781473397.750173,
-    "ast_hash": "a38c59660b076d9b73c1d15e440dccc6",
-    "semantic_hash": "a38c59660b076d9b73c1d15e440dccc6"
-  },
-  "frontend/src/strategy/session.test.js": {
-    "mtime": 1780944965.1225996,
-    "ast_hash": "6c5ea9272160701d8975e0c0e740777c",
-    "semantic_hash": "6c5ea9272160701d8975e0c0e740777c"
-  },
-  "frontend/src/wallet.test.js": {
-    "mtime": 1780943376.210338,
-    "ast_hash": "e485d4c9b746d4d6e28731eac9bc2f86",
-    "semantic_hash": "e485d4c9b746d4d6e28731eac9bc2f86"
   },
   "docs/superpowers/plans/2026-06-09-strategy-one-grant-session-redemption.md": {
     "mtime": 1781723498.9314976,
@@ -5695,9 +4150,9 @@
     "semantic_hash": "b2b1642f36565db56f8a5f7cd9cf3995"
   },
   "frontend/src/strategy/gasSnapshot.js": {
-    "mtime": 1781079818.885592,
-    "ast_hash": "d61be0e5a0d4426baafa192d8eaea3b3",
-    "semantic_hash": "d61be0e5a0d4426baafa192d8eaea3b3"
+    "mtime": 1782028432.887951,
+    "ast_hash": "0580745a9fabbf228b132dac4634426d",
+    "semantic_hash": "0580745a9fabbf228b132dac4634426d"
   },
   "frontend/src/strategy/gasSnapshot.test.js": {
     "mtime": 1781079917.9650743,
@@ -5809,20 +4264,10 @@
     "ast_hash": "6ad6caaec5aba14f70fe2bd3b4962d5a",
     "semantic_hash": "6ad6caaec5aba14f70fe2bd3b4962d5a"
   },
-  "frontend/src/strategy/gasFeeProvider.js": {
-    "mtime": 1781201210.44748,
-    "ast_hash": "61c57348ca8bc6f91e67505a7aa719b2",
-    "semantic_hash": "61c57348ca8bc6f91e67505a7aa719b2"
-  },
   "frontend/src/strategy/keyStore.js": {
     "mtime": 1781201100.0000596,
     "ast_hash": "e00288109e6804ffc36fc341953ed602",
     "semantic_hash": "e00288109e6804ffc36fc341953ed602"
-  },
-  "frontend/src/strategy/keyVault.js": {
-    "mtime": 1781286255.0149953,
-    "ast_hash": "3593222b44f6b8191f8c3dd16d3907b6",
-    "semantic_hash": "3593222b44f6b8191f8c3dd16d3907b6"
   },
   "frontend/src/strategy/submitGate.js": {
     "mtime": 1781286295.0188289,
@@ -5923,11 +4368,6 @@
     "mtime": 1781333406.480688,
     "ast_hash": "e30bc81df2eba37144382a15b2f11a3b",
     "semantic_hash": "e30bc81df2eba37144382a15b2f11a3b"
-  },
-  "frontend/functions/api/relay.js": {
-    "mtime": 1781333410.436752,
-    "ast_hash": "912340f815717c27b28df94118641235",
-    "semantic_hash": "912340f815717c27b28df94118641235"
   },
   "frontend/functions/api/search.js": {
     "mtime": 1781333408.0023248,
@@ -6049,15 +4489,10 @@
     "ast_hash": "f98eafbd9b71b84ec77788305e315e03",
     "semantic_hash": "f98eafbd9b71b84ec77788305e315e03"
   },
-  "frontend/src/x402.js": {
-    "mtime": 1781379069.7728808,
-    "ast_hash": "e91ce4837a175254a580e227bfa04996",
-    "semantic_hash": "e91ce4837a175254a580e227bfa04996"
-  },
   "frontend/src/strategy/sessionResume.js": {
-    "mtime": 1781421924.4924839,
-    "ast_hash": "3b250c1c0c770f99e21e107978e64b6f",
-    "semantic_hash": "3b250c1c0c770f99e21e107978e64b6f"
+    "mtime": 1782027978.3666766,
+    "ast_hash": "6bacf418c7712a9af2b195fef96edd61",
+    "semantic_hash": "6bacf418c7712a9af2b195fef96edd61"
   },
   ".agents/skills/webauthn-prf-wallet/assets/WalletIframeSketch.ts": {
     "mtime": 1781723308.9939232,
@@ -6148,11 +4583,6 @@
     "mtime": 1781723309.0007799,
     "ast_hash": "2ebb15de17054b28e52b1e73cb2b8f95",
     "semantic_hash": "2ebb15de17054b28e52b1e73cb2b8f95"
-  },
-  "frontend/src/redeem.js": {
-    "mtime": 1781460100.0857022,
-    "ast_hash": "03ebfc05533e70d647668bb1d1d7e199",
-    "semantic_hash": "03ebfc05533e70d647668bb1d1d7e199"
   },
   ".agents/skills/webauthn-prf-wallet/README.md": {
     "mtime": 1781723308.992924,
@@ -6330,24 +4760,24 @@
     "semantic_hash": "c06d40dafc31868bcdcd7069036c9276"
   },
   "soroban/contracts/agent_account/src/account.rs": {
-    "mtime": 1781772579.888935,
-    "ast_hash": "be65244517f43f356bb75523db47d422",
-    "semantic_hash": "be65244517f43f356bb75523db47d422"
+    "mtime": 1781991936.349604,
+    "ast_hash": "98914f14533a887350fb977c3f8dae1f",
+    "semantic_hash": "98914f14533a887350fb977c3f8dae1f"
   },
   "soroban/contracts/agent_account/src/lib.rs": {
-    "mtime": 1781772167.7399642,
-    "ast_hash": "af05931a21e1ea3892fc2a47adf39540",
-    "semantic_hash": "af05931a21e1ea3892fc2a47adf39540"
+    "mtime": 1781992400.342542,
+    "ast_hash": "83d0971e79735bf0e4dbc126380aef79",
+    "semantic_hash": "83d0971e79735bf0e4dbc126380aef79"
   },
   "soroban/contracts/agent_account/src/test.rs": {
-    "mtime": 1781772605.834661,
-    "ast_hash": "9d6df5322585edce4b5fe460189a3be5",
-    "semantic_hash": "9d6df5322585edce4b5fe460189a3be5"
+    "mtime": 1781992560.572593,
+    "ast_hash": "7c7314e04d64fc7d453094dcb871780b",
+    "semantic_hash": "7c7314e04d64fc7d453094dcb871780b"
   },
   "soroban/contracts/agent_account/src/types.rs": {
-    "mtime": 1781772160.1330237,
-    "ast_hash": "4f4ea97e8c616910283914c871a22a84",
-    "semantic_hash": "4f4ea97e8c616910283914c871a22a84"
+    "mtime": 1781992295.5104923,
+    "ast_hash": "38b133abac56909bba1fc0fa984b0051",
+    "semantic_hash": "38b133abac56909bba1fc0fa984b0051"
   },
   "soroban/contracts/registry/src/lib.rs": {
     "mtime": 1781915916.7059124,
@@ -6400,9 +4830,9 @@
     "semantic_hash": "daca5eaed40fa2775e3051fdb98109fd"
   },
   "frontend/api/stellar-relay.js": {
-    "mtime": 1781954843.8696225,
-    "ast_hash": "7fa398d3eb773adaeddf21b48a7dc77a",
-    "semantic_hash": "7fa398d3eb773adaeddf21b48a7dc77a"
+    "mtime": 1782024598.8477068,
+    "ast_hash": "cea2680c2eaa63a48b1c4790ac31ebc0",
+    "semantic_hash": "cea2680c2eaa63a48b1c4790ac31ebc0"
   },
   "frontend/functions/api/stellar-relay.js": {
     "mtime": 1781954886.0504193,
@@ -6415,9 +4845,9 @@
     "semantic_hash": "ba27b9496b66d61c40c4904bd33e18ae"
   },
   "frontend/src/stellar/config.js": {
-    "mtime": 1781967799.296162,
-    "ast_hash": "ee8b5490d0ea868026f1cbae1a8ed7c2",
-    "semantic_hash": "ee8b5490d0ea868026f1cbae1a8ed7c2"
+    "mtime": 1781995073.9933467,
+    "ast_hash": "99970c4948d5bd1093519b604d3ffc6c",
+    "semantic_hash": "99970c4948d5bd1093519b604d3ffc6c"
   },
   "frontend/src/stellar/relay.js": {
     "mtime": 1781954698.5777655,
@@ -6520,9 +4950,9 @@
     "semantic_hash": "e55c43d774055b899b4528791aaa7ac4"
   },
   "frontend/src/stellar/client.js": {
-    "mtime": 1781974787.1477034,
-    "ast_hash": "c8e08f33a993a132f000b5390a4e8118",
-    "semantic_hash": "c8e08f33a993a132f000b5390a4e8118"
+    "mtime": 1782024817.9950023,
+    "ast_hash": "051b0ca9890a2103f144142753945bb3",
+    "semantic_hash": "051b0ca9890a2103f144142753945bb3"
   },
   "frontend/src/stellar/events.js": {
     "mtime": 1781974787.2011466,
@@ -6530,14 +4960,14 @@
     "semantic_hash": "8bd21b145dd2d659f661c7deca44e60d"
   },
   "frontend/src/stellar/index.js": {
-    "mtime": 1781968223.1541083,
-    "ast_hash": "e067b335920c677b0d883241f9c06538",
-    "semantic_hash": "e067b335920c677b0d883241f9c06538"
+    "mtime": 1782042337.125469,
+    "ast_hash": "cf221ad5ff894ae3a8764ced19ed67c1",
+    "semantic_hash": "cf221ad5ff894ae3a8764ced19ed67c1"
   },
   "frontend/src/stellar/scval.js": {
-    "mtime": 1781967848.5508256,
-    "ast_hash": "5ff8972277a17dd30d13bf42a2d5f019",
-    "semantic_hash": "5ff8972277a17dd30d13bf42a2d5f019"
+    "mtime": 1782024803.146373,
+    "ast_hash": "ecdcf843e89a4c5c4bc5a67e498f5085",
+    "semantic_hash": "ecdcf843e89a4c5c4bc5a67e498f5085"
   },
   "frontend/src/stellar/sessionKey.js": {
     "mtime": 1781968399.453186,
@@ -6585,8 +5015,78 @@
     "semantic_hash": "6ef5248a4149a0bfbf599f6ccd6e8292"
   },
   "frontend/src/strategy/riskParams.js": {
-    "mtime": 1781978380.5945413,
-    "ast_hash": "58f415a9640d905c73cd42a31186894e",
-    "semantic_hash": "58f415a9640d905c73cd42a31186894e"
+    "mtime": 1782026075.320186,
+    "ast_hash": "61a0eb7375e06133be47405ae94af5f0",
+    "semantic_hash": "61a0eb7375e06133be47405ae94af5f0"
+  },
+  "frontend/scripts/stellar-deposit-smoke.mjs": {
+    "mtime": 1782025699.6204739,
+    "ast_hash": "bfe957e0874493ca1e11fd0621978133",
+    "semantic_hash": "bfe957e0874493ca1e11fd0621978133"
+  },
+  "frontend/src/stellar/agentDeposit.js": {
+    "mtime": 1782026075.4003253,
+    "ast_hash": "7f831de8be6157af1bff9d04928e8ed8",
+    "semantic_hash": "7f831de8be6157af1bff9d04928e8ed8"
+  },
+  "frontend/src/stellar/agentSetup.js": {
+    "mtime": 1782024847.8322935,
+    "ast_hash": "6ecd276f47c5c5926f0d5cc3e6146386",
+    "semantic_hash": "6ecd276f47c5c5926f0d5cc3e6146386"
+  },
+  "frontend/src/stellar/exit.js": {
+    "mtime": 1782025027.3334565,
+    "ast_hash": "c1b74663532782828bfc5c3a413e93cf",
+    "semantic_hash": "c1b74663532782828bfc5c3a413e93cf"
+  },
+  "frontend/src/stellar/revoke.js": {
+    "mtime": 1782042319.041511,
+    "ast_hash": "a52c0bba5a17ee84e0dc94993a8dfb0c",
+    "semantic_hash": "a52c0bba5a17ee84e0dc94993a8dfb0c"
+  },
+  "soroban/contracts/agent_account/src/vault_client.rs": {
+    "mtime": 1781991889.1418364,
+    "ast_hash": "9c4b8269f4d245ddbed5eefa2571742d",
+    "semantic_hash": "9c4b8269f4d245ddbed5eefa2571742d"
+  },
+  "docs/superpowers/plans/2026-06-20-stellar-frontend-chain-layer.md": {
+    "mtime": 1781967016.1568484,
+    "ast_hash": "4d618ea37991d724dc3bd868453c9365",
+    "semantic_hash": "4d618ea37991d724dc3bd868453c9365"
+  },
+  "docs/superpowers/plans/2026-06-21-risk-council-permission-pipeline.md": {
+    "mtime": 1781976852.2624216,
+    "ast_hash": "eedf7b2217c49523adb1c0f7d967ec9b",
+    "semantic_hash": "eedf7b2217c49523adb1c0f7d967ec9b"
+  },
+  "docs/superpowers/specs/2026-06-20-risk-council-permission-pipeline-design.md": {
+    "mtime": 1781974714.621849,
+    "ast_hash": "88a8f75d9d2ab8aa15c70b549721433e",
+    "semantic_hash": "88a8f75d9d2ab8aa15c70b549721433e"
+  },
+  "planning/inspiration/alternate_future_simulation.md": {
+    "mtime": 1781969254.2988274,
+    "ast_hash": "d70e53383287c976e117361c1027be23",
+    "semantic_hash": "d70e53383287c976e117361c1027be23"
+  },
+  "planning/inspiration/behavioral_simulation.md": {
+    "mtime": 1781969403.181049,
+    "ast_hash": "c6f0deb628e65228f31d46cc73ad13df",
+    "semantic_hash": "c6f0deb628e65228f31d46cc73ad13df"
+  },
+  "planning/inspiration/caveman.md": {
+    "mtime": 1781969361.9685338,
+    "ast_hash": "290982679769d5e2c620c84745162832",
+    "semantic_hash": "290982679769d5e2c620c84745162832"
+  },
+  "planning/inspiration/council_advanced.md": {
+    "mtime": 1781969296.7635224,
+    "ast_hash": "6d4931dff6d163cd8726fcb1def27230",
+    "semantic_hash": "6d4931dff6d163cd8726fcb1def27230"
+  },
+  "planning/inspiration/mirofish.md": {
+    "mtime": 1781970422.975861,
+    "ast_hash": "ea80b6556c8a93b05055768b7d2042c7",
+    "semantic_hash": "ea80b6556c8a93b05055768b7d2042c7"
   }
 }
