@@ -117,7 +117,12 @@ function ContractCard({ contract, copied, onCopy }) {
       <p className="ex-card__desc">{contract.description}</p>
 
       <div className="ex-card__links">
-        <a className="ex-extlink" href={`${STELLAR_EXPERT}${contract.address}`} target="_blank" rel="noreferrer noopener">
+        <a
+          className="ex-extlink"
+          href={`${STELLAR_EXPERT}${contract.address}`}
+          target="_blank"
+          rel="noreferrer noopener"
+        >
           View on Stellar Expert <span aria-hidden="true">↗</span>
         </a>
       </div>
@@ -180,24 +185,34 @@ export default function ExplorerPage() {
   useEffect(() => {
     let alive = true
     fetchTotalDeposits()
-      .then((v) => { if (alive) setTotalDeposits(v) })
-      .catch(() => { if (alive) setTotalDeposits(null) })
-    return () => { alive = false }
+      .then((v) => {
+        if (alive) setTotalDeposits(v)
+      })
+      .catch(() => {
+        if (alive) setTotalDeposits(null)
+      })
+    return () => {
+      alive = false
+    }
   }, [])
 
   const copy = (address) => {
-    navigator.clipboard?.writeText(address).then(() => {
-      setCopied(address)
-      setTimeout(() => setCopied((c) => (c === address ? null : c)), 2000)
-    }).catch(() => {})
+    navigator.clipboard
+      ?.writeText(address)
+      .then(() => {
+        setCopied(address)
+        setTimeout(() => setCopied((c) => (c === address ? null : c)), 2000)
+      })
+      .catch(() => {})
   }
 
   const loadingDeposits = totalDeposits === undefined
   // == null covers BOTH null (reads failed) and undefined (still loading) — the
   // loading branch never reaches .toLocaleString, so render can't throw.
   const depositsLabel =
-    totalDeposits == null ? '--'
-    : `${totalDeposits.toLocaleString(undefined, { maximumFractionDigits: 0 })} VFUSD`
+    totalDeposits == null
+      ? '--'
+      : `${totalDeposits.toLocaleString(undefined, { maximumFractionDigits: 0 })} VFUSD`
 
   return (
     <div className="ex-page">
@@ -209,17 +224,21 @@ export default function ExplorerPage() {
         <header className="ex-header">
           <div className="ex-header__top">
             <h1 className="ex-title">Explorer</h1>
-            <span className="ex-net"><span className="ex-net__dot" /> Stellar testnet · live</span>
+            <span className="ex-net">
+              <span className="ex-net__dot" /> Stellar testnet · live
+            </span>
           </div>
           <p className="ex-lede">
-            On-chain verification for Vibing Farmer. Every deployed contract and live vault
-            balance is publicly verifiable on Stellar; strategy hashes verify off-chain.
+            On-chain verification for Vibing Farmer. Every deployed contract and live vault balance
+            is publicly verifiable on Stellar; strategy hashes verify off-chain.
           </p>
         </header>
 
         {/* ---------- contracts ---------- */}
         <section className="ex-section" aria-labelledby="ex-contracts">
-          <h2 id="ex-contracts" className="ex-section__title">Deployed Contracts</h2>
+          <h2 id="ex-contracts" className="ex-section__title">
+            Deployed Contracts
+          </h2>
           <div className="ex-cards">
             {CONTRACTS.map((c) => (
               <ContractCard key={c.address + c.name} contract={c} copied={copied} onCopy={copy} />
@@ -230,12 +249,17 @@ export default function ExplorerPage() {
         {/* ---------- live stats ---------- */}
         <section className="ex-section" aria-labelledby="ex-stats">
           <div className="ex-section__head">
-            <h2 id="ex-stats" className="ex-section__title">Live Stats</h2>
+            <h2 id="ex-stats" className="ex-section__title">
+              Live Stats
+            </h2>
             <span className="ex-section__note">fetched from Soroban RPC · updated live</span>
           </div>
           <div className="ex-stats">
             <StatBlock label="Total Deposits" value={depositsLabel} loading={loadingDeposits} />
-            <StatBlock label="Strategy Attestations" value={attestationCount > 0 ? `${attestationCount}` : '0'} />
+            <StatBlock
+              label="Strategy Attestations"
+              value={attestationCount > 0 ? `${attestationCount}` : '0'}
+            />
             <StatBlock label="Contracts" value={CONTRACT_COUNT} />
             <StatBlock label="Contract Tests" value={CONTRACT_TESTS} />
           </div>
@@ -243,9 +267,12 @@ export default function ExplorerPage() {
 
         {/* ---------- attestations ---------- */}
         <section className="ex-section" aria-labelledby="ex-attest">
-          <h2 id="ex-attest" className="ex-section__title">Strategy Attestations</h2>
+          <h2 id="ex-attest" className="ex-section__title">
+            Strategy Attestations
+          </h2>
           <p className="ex-section__sub">
-            Recent strategy hashes (sha256, off-chain verifiable — re-derivable from the strategy JSON):
+            Recent strategy hashes (sha256, off-chain verifiable — re-derivable from the strategy
+            JSON):
           </p>
           <AttestationsTable strategies={strategies} />
           <a
@@ -260,10 +287,14 @@ export default function ExplorerPage() {
 
         {/* ---------- security ---------- */}
         <section className="ex-section" aria-labelledby="ex-security">
-          <h2 id="ex-security" className="ex-section__title">Security</h2>
+          <h2 id="ex-security" className="ex-section__title">
+            Security
+          </h2>
           <ul className="ex-seclist">
             {SECURITY.map((item) => (
-              <li key={item} className="ex-secitem">{item}</li>
+              <li key={item} className="ex-secitem">
+                {item}
+              </li>
             ))}
           </ul>
           <p className="ex-disclaimer">
@@ -273,11 +304,18 @@ export default function ExplorerPage() {
 
         {/* ---------- open source ---------- */}
         <section className="ex-section ex-section--os" aria-labelledby="ex-os">
-          <h2 id="ex-os" className="ex-section__title">Open Source</h2>
+          <h2 id="ex-os" className="ex-section__title">
+            Open Source
+          </h2>
           <div className="ex-oslist">
             <div className="ex-osrow">
               <span className="ex-osrow__k">GitHub</span>
-              <a className="ex-osrow__v" href="https://github.com/poggufanz/vibingfarmer" target="_blank" rel="noreferrer noopener">
+              <a
+                className="ex-osrow__v"
+                href="https://github.com/poggufanz/vibingfarmer"
+                target="_blank"
+                rel="noreferrer noopener"
+              >
                 github.com/poggufanz/vibingfarmer <span aria-hidden="true">↗</span>
               </a>
             </div>

@@ -5,8 +5,8 @@
 // position reconciliation lives on the main thread (Stellar reconcilePositionsFromChain).
 
 const INTERVALS = {
-  apy: 10 * 60 * 1000,       // 10 min — APY drift + rebalance opportunity
-  risk: 15 * 60 * 1000,      // 15 min — security news scan
+  apy: 10 * 60 * 1000, // 10 min — APY drift + rebalance opportunity
+  risk: 15 * 60 * 1000, // 15 min — security news scan
 }
 
 let config = null // { userAddress, activeVaults, supportedProtocols, thresholds }
@@ -31,8 +31,10 @@ self.onmessage = (e) => {
 function startMonitoring() {
   stopMonitoring()
   // Run each monitor immediately, then on interval. Each is independent — one crash never stops others.
-  runApyCheck(); timers.push(setInterval(runApyCheck, INTERVALS.apy))
-  runRiskCheck(); timers.push(setInterval(runRiskCheck, INTERVALS.risk))
+  runApyCheck()
+  timers.push(setInterval(runApyCheck, INTERVALS.apy))
+  runRiskCheck()
+  timers.push(setInterval(runRiskCheck, INTERVALS.risk))
 }
 
 function stopMonitoring() {
@@ -51,7 +53,9 @@ async function runApyCheck() {
     const { data } = await res.json()
 
     for (const vault of config.activeVaults) {
-      const pool = data.find(p => p.project === vault.protocol && p.chain === 'Ethereum' && p.symbol?.includes('USDC'))
+      const pool = data.find(
+        (p) => p.project === vault.protocol && p.chain === 'Ethereum' && p.symbol?.includes('USDC')
+      )
       if (!pool) continue
       const currentApy = pool.apy
       const baselineApy = vault.depositApy
@@ -61,23 +65,42 @@ async function runApyCheck() {
         if (driftPct < -(config.thresholds.apyDropPct || 20)) {
           self.postMessage({
             type: 'APY_DRIFT',
-            payload: { vaultName: vault.name, baselineApy, currentApy, driftPct: driftPct.toFixed(1), severity: driftPct < -40 ? 'high' : 'medium', timestamp: Date.now() },
+            payload: {
+              vaultName: vault.name,
+              baselineApy,
+              currentApy,
+              driftPct: driftPct.toFixed(1),
+              severity: driftPct < -40 ? 'high' : 'medium',
+              timestamp: Date.now(),
+            },
           })
         }
       }
 
       // A BETTER vault exists → rebalance opportunity (propose only)
-      const betterPools = data.filter(p =>
-        p.chain === 'Ethereum' && p.symbol?.includes('USDC') &&
-        p.apy > currentApy + (config.thresholds.rebalanceThresholdPct || 1.5) &&
-        p.tvlUsd > 1_000_000 && config.supportedProtocols.includes(p.project)
-      ).sort((a, b) => b.apy - a.apy)
+      const betterPools = data
+        .filter(
+          (p) =>
+            p.chain === 'Ethereum' &&
+            p.symbol?.includes('USDC') &&
+            p.apy > currentApy + (config.thresholds.rebalanceThresholdPct || 1.5) &&
+            p.tvlUsd > 1_000_000 &&
+            config.supportedProtocols.includes(p.project)
+        )
+        .sort((a, b) => b.apy - a.apy)
 
       if (betterPools.length > 0) {
         const best = betterPools[0]
         self.postMessage({
           type: 'REBALANCE_OPPORTUNITY',
-          payload: { fromVault: vault.name, fromApy: currentApy, toProtocol: best.project, toApy: best.apy, apyGain: (best.apy - currentApy).toFixed(2), timestamp: Date.now() },
+          payload: {
+            fromVault: vault.name,
+            fromApy: currentApy,
+            toProtocol: best.project,
+            toApy: best.apy,
+            apyGain: (best.apy - currentApy).toFixed(2),
+            timestamp: Date.now(),
+          },
         })
       }
     }
@@ -99,7 +122,12 @@ async function runRiskCheck() {
       const res = await fetch('/api/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query, search_depth: 'basic', max_results: 3, include_answer: true }),
+        body: JSON.stringify({
+          query,
+          search_depth: 'basic',
+          max_results: 3,
+          include_answer: true,
+        }),
       })
       const data = await res.json()
       // Post raw findings — main thread asks Venice AI to classify severity
@@ -110,7 +138,7 @@ async function runRiskCheck() {
           vaultAddress: vault.address,
           protocol: vault.protocol,
           searchAnswer: data.answer || '',
-          sources: (data.results || []).map(r => ({ title: r.title, url: r.url })),
+          sources: (data.results || []).map((r) => ({ title: r.title, url: r.url })),
           timestamp: Date.now(),
         },
       })
@@ -119,4 +147,3 @@ async function runRiskCheck() {
     self.postMessage({ type: 'MONITOR_ERROR', payload: { monitor: 'risk', error: err.message } })
   }
 }
-

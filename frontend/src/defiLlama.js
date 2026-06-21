@@ -12,22 +12,22 @@ const DEFILLAMA_TIMEOUT_MS = 10000
 // Protocols we support (keys = the supported-protocol allowlist). Every protocol executes on
 // the single Soroban vault — the on-chain deposit target, regardless of the reference protocol.
 const PROTOCOL_VAULT_MAP = {
-  'aave-v3':     SOROBAN_VAULT_ADDRESS,
+  'aave-v3': SOROBAN_VAULT_ADDRESS,
   'morpho-blue': SOROBAN_VAULT_ADDRESS,
-  'pendle':      SOROBAN_VAULT_ADDRESS,
-  'fluid':       SOROBAN_VAULT_ADDRESS,
+  pendle: SOROBAN_VAULT_ADDRESS,
+  fluid: SOROBAN_VAULT_ADDRESS,
   'compound-v3': SOROBAN_VAULT_ADDRESS,
-  'spark':       SOROBAN_VAULT_ADDRESS,
+  spark: SOROBAN_VAULT_ADDRESS,
 }
 
 // Risk tier mapping per protocol
 const PROTOCOL_RISK_MAP = {
-  'aave-v3':     'low',
+  'aave-v3': 'low',
   'compound-v3': 'low',
-  'spark':       'low',
+  spark: 'low',
   'morpho-blue': 'medium',
-  'fluid':       'high',
-  'pendle':      'high',
+  fluid: 'high',
+  pendle: 'high',
 }
 
 /**
@@ -44,7 +44,7 @@ export async function fetchDeFiLlamaVaults() {
   try {
     const res = await fetch(DEFILLAMA_ENDPOINT, {
       signal: controller.signal,
-      headers: { 'Accept': 'application/json' },
+      headers: { Accept: 'application/json' },
     })
 
     clearTimeout(timeoutId)
@@ -60,13 +60,14 @@ export async function fetchDeFiLlamaVaults() {
     const supportedProtocols = Object.keys(PROTOCOL_VAULT_MAP)
 
     const filtered = data
-      .filter(pool =>
-        pool.chain === 'Ethereum' &&
-        pool.symbol?.toUpperCase().includes('USDC') &&
-        supportedProtocols.includes(pool.project) &&
-        pool.tvlUsd > 1_000_000 && // min $1M TVL — filter dust pools
-        pool.apy > 0 &&
-        pool.ilRisk !== 'yes' // exclude IL-risk pools; API returns "no"/"yes" (not bool)
+      .filter(
+        (pool) =>
+          pool.chain === 'Ethereum' &&
+          pool.symbol?.toUpperCase().includes('USDC') &&
+          supportedProtocols.includes(pool.project) &&
+          pool.tvlUsd > 1_000_000 && // min $1M TVL — filter dust pools
+          pool.apy > 0 &&
+          pool.ilRisk !== 'yes' // exclude IL-risk pools; API returns "no"/"yes" (not bool)
       )
       .sort((a, b) => b.tvlUsd - a.tvlUsd) // sort by TVL descending
       .slice(0, 6) // take top 6 by TVL
@@ -77,7 +78,7 @@ export async function fetchDeFiLlamaVaults() {
     }
 
     // Map to vault catalog format
-    const vaults = filtered.map(pool => ({
+    const vaults = filtered.map((pool) => ({
       // Display info (real from DeFiLlama)
       name: formatVaultName(pool.project, pool.symbol),
       protocol: pool.project,
@@ -104,7 +105,6 @@ export async function fetchDeFiLlamaVaults() {
 
     console.log(`[DeFiLlama] Fetched ${vaults.length} real vaults`)
     return vaults
-
   } catch (err) {
     clearTimeout(timeoutId)
     if (err.name === 'AbortError') {
@@ -120,12 +120,12 @@ export async function fetchDeFiLlamaVaults() {
 
 function formatVaultName(project, symbol) {
   const names = {
-    'aave-v3':     'Aave v3',
+    'aave-v3': 'Aave v3',
     'morpho-blue': 'Morpho Blue',
-    'pendle':      'Pendle Finance',
-    'fluid':       'Fluid Protocol',
+    pendle: 'Pendle Finance',
+    fluid: 'Fluid Protocol',
     'compound-v3': 'Compound v3',
-    'spark':       'Spark Protocol',
+    spark: 'Spark Protocol',
   }
   return `${names[project] || project} ${symbol}`
 }
@@ -138,24 +138,24 @@ function formatTVL(tvlUsd) {
 
 function getYieldSource(project) {
   const map = {
-    'aave-v3':     'lending',
+    'aave-v3': 'lending',
     'morpho-blue': 'curated',
-    'pendle':      'structured',
-    'fluid':       'hybrid',
+    pendle: 'structured',
+    fluid: 'hybrid',
     'compound-v3': 'lending',
-    'spark':       'lending',
+    spark: 'lending',
   }
   return map[project] || 'lending'
 }
 
 function getDrawdown(project) {
   const map = {
-    'aave-v3':     '-1.2',
+    'aave-v3': '-1.2',
     'morpho-blue': '-2.8',
-    'pendle':      '-6.5',
-    'fluid':       '-4.1',
+    pendle: '-6.5',
+    fluid: '-4.1',
     'compound-v3': '-1.5',
-    'spark':       '-1.3',
+    spark: '-1.3',
   }
   return map[project] || '-2.0'
 }
