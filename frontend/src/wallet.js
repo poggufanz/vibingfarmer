@@ -16,6 +16,11 @@ import { getReadProvider } from './readProvider.js'
 import { prepareSessionAccount, saveSessionGrant, getSessionAddress } from './strategy/session.js'
 import { getRelayerAddress } from './relay.js'
 
+// Stellar connector re-exports — the connected-app path now uses these. The EVM fns below stay
+// until the SP6 decommission removes them (docs/superpowers/plans/2026-06-21-evm-decommission.md).
+// The legacy EVM connector is exported as `connectWalletEvm`.
+export { connectWallet, getUserAddress, signTxXdr } from './stellar/walletKit.js'
+
 /**
  * Normalize the wallet_requestExecutionPermissions result into the fields the
  * session layer needs. SAK returns an array of PermissionResponse objects, each
@@ -113,11 +118,13 @@ async function switchOrAddChain() {
 }
 
 /**
- * Connect MetaMask Flask, switch to Sepolia if needed.
+ * Connect MetaMask Flask, switch to Sepolia if needed. LEGACY EVM connector — the connected-app
+ * path now uses the Stellar `connectWallet` re-exported at the top of this module. Kept until the
+ * SP6 decommission removes the EVM stack (docs/superpowers/plans/2026-06-21-evm-decommission.md).
  * Returns connected account address.
  * @returns {Promise<string>} account address
  */
-export async function connectWallet() {
+export async function connectWalletEvm() {
   if (!window.ethereum) throw new Error('MetaMask Flask not found. Install Flask 13.9+.')
 
   // Request accounts
