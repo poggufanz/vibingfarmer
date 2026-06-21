@@ -2,7 +2,6 @@ import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import aiProxy from './api/ai.js'
 import searchProxy from './api/search.js'
-import relayProxy from './api/relay.js'
 import stellarRelayProxy from './api/stellar-relay.js'
 
 export default defineConfig(({ mode }) => {
@@ -10,18 +9,6 @@ export default defineConfig(({ mode }) => {
   if (env.DEEPSEEK_API_KEY) process.env.DEEPSEEK_API_KEY = env.DEEPSEEK_API_KEY
   if (env.TAVILY_API_KEY) process.env.TAVILY_API_KEY = env.TAVILY_API_KEY
   if (env.ALLOWED_ORIGIN) process.env.ALLOWED_ORIGIN = env.ALLOWED_ORIGIN
-  // Propagate the RPC URL to process.env so the server-side relay proxy (api/relay.js)
-  // uses the SAME (Alchemy) RPC as the client for its hasCode/executed guards. Without
-  // this it falls back to the rate-limited public sepolia.base.org → getCode fails →
-  // hasCode fail-opens → the codeless-depositor guard is silently disabled (the no-op
-  // relay-to-dead-address bug). RPC_URL is first in api/relay.js rpcUrl() precedence.
-  if (env.VITE_RPC_URL) process.env.RPC_URL = env.VITE_RPC_URL
-  // 1Shot Managed API creds — server-side only, never exposed to the client bundle.
-  if (env.ONESHOT_KEY) process.env.ONESHOT_KEY = env.ONESHOT_KEY
-  if (env.ONESHOT_SECRET) process.env.ONESHOT_SECRET = env.ONESHOT_SECRET
-  if (env.ONESHOT_BIZ_ID) process.env.ONESHOT_BIZ_ID = env.ONESHOT_BIZ_ID
-  if (env.AGENT_VAULT_DEPOSITOR_ADDRESS)
-    process.env.AGENT_VAULT_DEPOSITOR_ADDRESS = env.AGENT_VAULT_DEPOSITOR_ADDRESS
 
   // Soroban gasless relay (sub-project 2) — server-side only, never in the client bundle.
   if (env.STELLAR_RELAYER_SECRET) process.env.STELLAR_RELAYER_SECRET = env.STELLAR_RELAYER_SECRET
@@ -35,13 +22,11 @@ export default defineConfig(({ mode }) => {
     configureServer(s) {
       s.middlewares.use('/api/ai', aiProxy)
       s.middlewares.use('/api/search', searchProxy)
-      s.middlewares.use('/api/relay', relayProxy)
       s.middlewares.use('/api/stellar-relay', stellarRelayProxy)
     },
     configurePreviewServer(s) {
       s.middlewares.use('/api/ai', aiProxy)
       s.middlewares.use('/api/search', searchProxy)
-      s.middlewares.use('/api/relay', relayProxy)
       s.middlewares.use('/api/stellar-relay', stellarRelayProxy)
     },
   }
