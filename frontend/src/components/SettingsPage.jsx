@@ -2,16 +2,12 @@
 // Full settings panel. Agent config lives in app state (yv_agent_settings); the rest
 // persists via settingsStore (individual yv_* keys). Renders when view === 'settings'.
 import React, { useState } from 'react'
+import { VENICE_BASE_URL, DEEPSEEK_BASE_URL } from '../config.js'
 import {
-  AGENT_VAULT_DEPOSITOR_ADDRESS,
-  MOCK_VAULT_A_ADDRESS,
-  MOCK_VAULT_B_ADDRESS,
-  MOCK_VAULT_C_ADDRESS,
-  MOCK_VAULT_D_ADDRESS,
-  SEPOLIA_CHAIN_ID,
-  VENICE_BASE_URL,
-  DEEPSEEK_BASE_URL,
-} from '../config.js'
+  SOROBAN_REGISTRY_ADDRESS,
+  SOROBAN_VAULT_ADDRESS,
+  SOROBAN_TOKEN_ADDRESS,
+} from '../stellar/config.js'
 import { loadSettings, saveSetting, SETTINGS_DEFAULTS } from '../settingsStore.js'
 import {
   getHistorySummary,
@@ -21,10 +17,6 @@ import {
   clearAllHistory,
 } from '../history.js'
 import { fmtRemaining } from '../ui.js'
-import { signSiweForVenice } from '../wallet.js'
-import { getX402Balance } from '../x402.js'
-
-const X402_DOCS_URL = 'https://docs.venice.ai/guides/integrations/x402-venice-api'
 
 const short = (a) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '-')
 const eyebrow = {
@@ -280,12 +272,12 @@ const ContractRow = ({ name, addr }) => (
     <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
       <span className="mono">{short(addr)}</span>
       <a
-        href={`https://sourcify.dev/#/lookup/${addr}`}
+        href={`https://stellar.expert/explorer/testnet/contract/${addr}`}
         target="_blank"
         rel="noopener noreferrer"
         style={{ ...miniBtn, textDecoration: 'none' }}
       >
-        ↗ Sourcify
+        ↗ Explorer
       </a>
     </span>
   </div>
@@ -315,7 +307,6 @@ export default function SettingsPage({
   onResetAgentSettings,
   onConnect,
   onDisconnect,
-  onSwitchNetwork,
   onRevoke,
 }) {
   const [s, setS] = useState(loadSettings)
@@ -324,7 +315,6 @@ export default function SettingsPage({
   const [confirmClear, setConfirmClear] = useState(false)
   const [copied, setCopied] = useState(false)
   const [, setTick] = useState(0)
-  const [x402, setX402] = useState({ state: 'idle', bal: null }) // idle | checking | done | error
   const refresh = () => setTick((x) => x + 1)
 
   const set = (key, val) => {
@@ -386,20 +376,6 @@ export default function SettingsPage({
       setTest((t) => ({ ...t, deepseek: 'unreachable' }))
     } finally {
       to.done()
-    }
-  }
-  // x402 balance: sign a fresh SIWE header (MetaMask) then read the prepaid balance.
-  // Read-only — no funds move. Needs a connected wallet.
-  const checkX402 = async () => {
-    if (!userAddress) return
-    setX402({ state: 'checking', bal: null })
-    try {
-      const auth = await signSiweForVenice(userAddress)
-      const bal = await getX402Balance(userAddress, auth)
-      setX402({ state: bal ? 'done' : 'error', bal })
-    } catch (e) {
-      console.warn('[settings] x402 balance check failed:', e.message)
-      setX402({ state: 'error', bal: null })
     }
   }
   const testTavily = async () => {
@@ -711,59 +687,6 @@ export default function SettingsPage({
                 onTest={testDeepSeek}
                 testState={test.deepseek}
               />
-              <Row
-                label="x402 wallet balance"
-                desc="Prepaid USDC on Base mainnet for wallet-paid inference. Top-up runs from a funded wallet/agent, not this UI — see the Venice x402 docs."
-              >
-                <button
-                  type="button"
-                  style={miniBtn}
-                  disabled={!userAddress || x402.state === 'checking'}
-                  onClick={checkX402}
-                >
-                  {x402.state === 'checking' ? 'Checking…' : 'Check balance'}
-                </button>
-              </Row>
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 10,
-                  flexWrap: 'wrap',
-                  marginTop: 2,
-                }}
-              >
-                {!userAddress && (
-                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                    Connect a wallet to check x402 balance.
-                  </span>
-                )}
-                {x402.state === 'done' &&
-                  x402.bal &&
-                  (x402.bal.canConsume ? (
-                    <span style={{ fontSize: 11, color: 'var(--ok)' }}>
-                      ✓ ${x402.bal.balanceUsd.toFixed(2)} spendable · ready for x402
-                    </span>
-                  ) : (
-                    <span style={{ fontSize: 11, color: 'var(--warn)' }}>
-                      ⚠ ${x402.bal.balanceUsd.toFixed(2)} · not enough to consume — top up
-                      {x402.bal.suggestedTopUpUsd ? ` ~$${x402.bal.suggestedTopUpUsd}` : ''}
-                    </span>
-                  ))}
-                {x402.state === 'error' && (
-                  <span style={{ fontSize: 11, color: 'var(--warn)' }}>
-                    ⚠ couldn’t read balance (unfunded wallet or CORS)
-                  </span>
-                )}
-                <a
-                  href={X402_DOCS_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{ ...miniBtn, textDecoration: 'none' }}
-                >
-                  How to top up ↗
-                </a>
-              </div>
               <Divider />
               <SubLabel>Vault Data Source</SubLabel>
               <Radio
@@ -882,27 +805,6 @@ export default function SettingsPage({
                     </button>
                     <button type="button" style={miniBtn} onClick={onDisconnect}>
                       Disconnect
-                    </button>
-                  </Row>
-                  <Divider />
-                  <Row
-                    label={
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
-                        <span
-                          style={{
-                            width: 8,
-                            height: 8,
-                            borderRadius: '50%',
-                            background: 'var(--ok)',
-                          }}
-                        />
-                        Base Sepolia testnet
-                      </span>
-                    }
-                    desc={`Chain ID: ${SEPOLIA_CHAIN_ID}`}
-                  >
-                    <button type="button" style={miniBtn} onClick={onSwitchNetwork}>
-                      Switch network
                     </button>
                   </Row>
                   <Divider />
@@ -1109,11 +1011,9 @@ export default function SettingsPage({
                 ))}
               </div>
               <Divider />
-              <ContractRow name="AgentVaultDepositor" addr={AGENT_VAULT_DEPOSITOR_ADDRESS} />
-              <ContractRow name="MockVault A" addr={MOCK_VAULT_A_ADDRESS} />
-              <ContractRow name="MockVault B" addr={MOCK_VAULT_B_ADDRESS} />
-              <ContractRow name="MockVault C" addr={MOCK_VAULT_C_ADDRESS} />
-              <ContractRow name="MockVault D" addr={MOCK_VAULT_D_ADDRESS} />
+              <ContractRow name="AgentRegistry" addr={SOROBAN_REGISTRY_ADDRESS} />
+              <ContractRow name="YieldVault (vfVLT)" addr={SOROBAN_VAULT_ADDRESS} />
+              <ContractRow name="VFUSD token" addr={SOROBAN_TOKEN_ADDRESS} />
               <Divider />
               <div style={{ fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 1.6 }}>
                 Powered by: MetaMask Smart Accounts Kit × 1Shot API × Venice AI

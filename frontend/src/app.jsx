@@ -27,24 +27,13 @@ import {
 } from './agents.jsx'
 import { useTweaks, TweaksPanel, TweakSection, TweakRadio } from './tweaks-panel.jsx'
 
-import { ethers } from 'ethers'
 import {
   connectWallet,
-  requestERC7715Permission,
-  signSiweForVenice,
-  switchToSepolia,
-  getProvider,
-  revokeAgentDirect,
-  readScope,
-  onContractEvent,
-  getAccountsSilent,
-  onAccountsChanged,
-} from './wallet.js'
-import { getX402Balance, canUseX402 } from './x402.js'
+  getUserAddress,
+  revokeAgentOnChain,
+  subscribeAgentRevoked,
+} from './stellar/index.js'
 import { generateStrategy } from './venice.js'
-import { saveGrant, clearGrant, hasValidGrant } from './strategy/grantStore.js'
-import { initSession, clearSession, hasSession, saveSessionGrant } from './strategy/session.js'
-import { rehydrateSession } from './strategy/rehydrate.js'
 import { saveResume, loadResume, clearResume } from './strategy/sessionResume.js'
 import { attestStrategyOnChain, formatAttestation } from './attestation.js'
 import { detectMetaMaskVersion } from './flaskDetect.js'
@@ -52,14 +41,8 @@ import FlaskGate from './components/FlaskGate.jsx'
 import OnboardingFlow from './components/OnboardingFlow.jsx'
 import { OrchestratorAgent } from './orchestrator.js'
 import { makeAgentId } from './worker.js'
-import {
-  VAULT_CATALOG,
-  VENICE_TIMEOUT_MS,
-  AGENT_VAULT_DEPOSITOR_ADDRESS,
-  DEPOSITOR_ABI,
-  AGENT_REGISTRY_ADDRESS,
-  REGISTRY_ABI,
-} from './config.js'
+import { ownerWithdraw } from './stellar/exit.js'
+import { VAULT_CATALOG, VENICE_TIMEOUT_MS } from './config.js'
 import {
   loadPersistedPositions,
   persistPositions,
@@ -67,7 +50,6 @@ import {
   mergePositions,
   applyChainPositions,
 } from './positionsStore.js'
-import { getReadProvider } from './readProvider.js'
 import SkillDrawer from './components/SkillDrawer.jsx'
 import HistoryPanel from './components/HistoryPanel.jsx'
 import { saveTransaction } from './history.js'
@@ -299,32 +281,19 @@ const App = () => {
   // True when a refresh re-entered an active session (drives the Home banner).
   const [sessionResumed, setSessionResumed] = useS(false)
 
-  // Rehydrate the single grant on mount: if a valid ERC-7715 grant is persisted,
-  // re-boot the ERC-7710 session so the user is never re-prompted within 24h.
-  useE(() => {
-    const r = rehydrateSession()
-    if (r.active) {
-      setPermActive(true)
-      setPermExpiresAt(r.expiresAt)
-      setPermContext(r.permissionContext)
-    }
-  }, [])
-
-  // Silent wallet reconnect + session resume on page load. Without this, a refresh
-  // drops realAddress/stage/strategy (all in-memory) so the app looks logged-out and
-  // the monitor loop never reboots even with an active vault. We re-read the already-
-  // authorized account via eth_accounts (NO MetaMask popup); if a resume snapshot
-  // exists we restore stage='done' + strategy, which makes the loop effect (below)
-  // start the monitor loop again. Mount-only so it can't yank an in-wizard connect.
+  // Wallet reconnect + session resume on page load. Without this, a refresh drops
+  // realAddress/stage/strategy (all in-memory) so the app looks logged-out and the monitor loop
+  // never reboots even with an active vault. We ask the wallet kit for its current address; if a
+  // resume snapshot exists we restore stage='done' + strategy, which makes the loop effect (below)
+  // start the monitor loop again. If no wallet is selected yet (fresh reload) getUserAddress
+  // rejects and the catch leaves the app logged-out until the user reconnects. Mount-only.
   useE(() => {
     let alive = true
-    getAccountsSilent()
+    getUserAddress()
       .then((addr) => {
         if (!alive || !addr) return
         setRealAddress(addr)
-        // A persisted grant means the user already upgraded → restore full auth phase,
-        // otherwise show a plain connected (eoa) state.
-        setConnectPhase(hasValidGrant() ? 'upgraded' : 'connected')
+        setConnectPhase('connected')
         const snap = loadResume(addr)
         if (snap?.strategy?.agents?.length) {
           setStrategy(snap.strategy)
@@ -339,21 +308,6 @@ const App = () => {
     return () => {
       alive = false
     }
-  }, [])
-
-  // Track MetaMask account switch / disconnect / lock so the UI never shows a stale
-  // wallet. Empty list = locked/disconnected → drop the session view.
-  useE(() => {
-    const off = onAccountsChanged((accounts) => {
-      const next = accounts?.[0] || null
-      if (!next) {
-        setRealAddress(null)
-        setConnectPhase('idle')
-      } else {
-        setRealAddress(next)
-      }
-    })
-    return off
   }, [])
 
   // 30-second tick to refresh countdown displays
@@ -379,7 +333,6 @@ const App = () => {
   // Tracks which user addresses have had session key setup done (survives re-renders).
   const [loopTick, setLoopTick] = useS(0)
   const [loopPhase, setLoopPhase] = useS(null) // live pipeline phase from monitorLoop onPhase
-  const [permContext, setPermContext] = useS(null)
   const [veniceAuth, setVeniceAuth] = useS(null)
   const [mmVersion, setMmVersion] = useS(null) // MetaMask flavor/version — Flask detection (once on mount)
   const [onboarded, setOnboarded] = useS(() => localStorage.getItem('yv_onboarded') === 'true')
@@ -522,58 +475,29 @@ const App = () => {
     persistPositions(realAddress, agentData.positions)
   }, [agentData.positions, realAddress])
 
-  // Event-driven sync: re-read chain the instant a real Deposit/Withdraw lands for this
-  // user — no waiting on the worker's poll. Debounced so a burst of parallel deposits
-  // collapses into ONE reconcile. Listens + reads via the dedicated read-only provider
-  // (getReadProvider) — never the wallet's BrowserProvider, which -32603s while a
-  // wallet_* RPC is pending. applyChainPositions is authoritative (can lower on
-  // withdraw), unlike the raise-only connect-time merge that protects unconfirmed seeds.
+  // Position reconcile against Stellar. The autonomous deposit lands via the relayer
+  // (no browser-visible depositor event to listen for, unlike the EVM log), so we poll
+  // the agent's vault-share balance and apply it authoritatively. applyChainPositions
+  // can lower a balance (after owner_withdraw) and prune a fully-swept vault. The worker
+  // also emits a 'position' event on deposit — this is the cold-reconcile cross-check.
   useE(() => {
     if (!realAddress) return
-    const provider = getReadProvider()
-    const contract = new ethers.Contract(AGENT_VAULT_DEPOSITOR_ADDRESS, DEPOSITOR_ABI, provider)
-    let timer = null
+    let alive = true
     const sync = async () => {
-      const chain = await reconcilePositionsFromChain(realAddress)
-      if (!chain) return
+      const chain = await reconcilePositionsFromChain(realAddress).catch(() => null)
+      if (!alive || !chain) return
       setAgentData((d) => ({
         ...d,
         positions: applyChainPositions(d.positions, chain),
         lastUpdated: Date.now(),
       }))
     }
-    const onEvent = () => {
-      clearTimeout(timer)
-      timer = setTimeout(sync, 1500)
-    }
-    // v2 depositor: AgentDepositExecuted(agent, owner, vault, token, assetsIn, sharesOut, execId).
-    // owner is the 2nd indexed topic → filter on it. Withdraws are user-signed ERC-4626 txs
-    // (no depositor event); handleWithdrawSuccess updates positions directly, so we only
-    // need the deposit listener here.
-    const depFilter = contract.filters.AgentDepositExecuted(null, realAddress)
-
-    const onDepositEvent = (agent, owner, vault, token, assetsIn, sharesOut, execId, event) => {
-      const vaultMeta = VAULT_CATALOG.find((v) => v.address.toLowerCase() === vault.toLowerCase())
-      const amountUsdc = Number(assetsIn) / 1e6
-      if (amountUsdc > 0) {
-        saveTransaction({
-          txHash: event?.log?.transactionHash || event?.transactionHash,
-          vaultName: vaultMeta?.name || `Vault ${vault.slice(0, 6)}…`,
-          vaultAddress: vault,
-          protocol: vaultMeta?.protocol,
-          apy: vaultMeta?.apy,
-          amountUsdc,
-          workerLabel: vaultMeta?.name || `Vault ${vault.slice(0, 10)}…`,
-          network: 'sepolia',
-        })
-      }
-      onEvent() // Also trigger position sync after 1.5s debounce
-    }
-
-    contract.on(depFilter, onDepositEvent)
+    sync() // once on connect
+    // ponytail: 15s poll. A Soroban event subscription would make it instant if needed.
+    const id = setInterval(sync, 15000)
     return () => {
-      clearTimeout(timer)
-      contract.off(depFilter, onDepositEvent)
+      alive = false
+      clearInterval(id)
     }
   }, [realAddress])
 
@@ -688,7 +612,6 @@ const App = () => {
     startBackgroundAgent({
       userAddress: realAddress,
       activeVaults,
-      rpcUrl: import.meta.env.VITE_RPC_URL,
       // Tavily key no longer passed to client — risk scan routes through /api/search proxy.
       supportedProtocols: ['aave-v3', 'morpho-blue', 'spark', 'fluid'],
       thresholds: { ...agentSettings, autoHarvest: false },
@@ -888,11 +811,11 @@ const App = () => {
       detail: `Venice AI flagged ${alert.toProtocol} at ${alert.toApy}% vs ${alert.fromVault} at ${alert.fromApy}% (+${alert.apyGain}%). Rebalancing requests a fresh ERC-7715 permission for the new vault.`,
     })
 
-  // Kill switch — user-signed AgentRegistry.revokeAgent (works even if the relayer is down).
-  // Optimistically flip the row; the on-chain AgentRevoked subscription confirms it.
+  // Kill switch — user-signed Registry.revoke (works even if the relayer is down).
+  // Optimistically flip the row; the on-chain agent_revoked subscription confirms it.
   const handleRevokeAgent = async (agent) => {
     try {
-      const tx = await revokeAgentDirect(agent)
+      const { hash: tx } = await revokeAgentOnChain({ owner: realAddress, agent })
       setScopes((prev) =>
         prev.map((s) =>
           s.agent?.toLowerCase() === agent.toLowerCase() ? { ...s, revoked: true } : s
@@ -910,26 +833,18 @@ const App = () => {
     }
   }
 
-  // Live AgentRevoked subscription — flips a scope row to "revoked" the instant the event lands,
-  // whether revoked from this UI or elsewhere. Filtered to the connected owner.
+  // Live agent_revoked subscription — flips a scope row to "revoked" the instant the event lands,
+  // whether revoked from this UI or elsewhere. subscribeAgentRevoked already filters to the owner.
   useE(() => {
     if (!realAddress) return
-    let off = null
-    onContractEvent('AgentRevoked', (owner, agent) => {
-      if (String(owner).toLowerCase() !== realAddress.toLowerCase()) return
+    const off = subscribeAgentRevoked(realAddress, (agent) => {
       setScopes((prev) =>
         prev.map((s) =>
           s.agent?.toLowerCase() === String(agent).toLowerCase() ? { ...s, revoked: true } : s
         )
       )
     })
-      .then((unsub) => {
-        off = unsub
-      })
-      .catch(() => {})
-    return () => {
-      if (off) off()
-    }
+    return off
   }, [realAddress])
 
   // After a withdraw: reduce/remove the position, sync the worker, stop the agent if empty
@@ -957,9 +872,8 @@ const App = () => {
       meta: `withdrew ${shortAddr(vaultAddress)} · position updated`,
       detail: 'Position balance updated after withdraw; agent monitoring config synced.',
     })
-    // Optimistic subtract above can drift (partial fills, share-price). Chain = truth — but
-    // getReadProvider() is a DIFFERENT RPC than the wallet that just mined the withdraw, so a
-    // read fired immediately after tx.wait() often lags a block and returns the PRE-withdraw
+    // Optimistic subtract above can drift (partial fills, share-price). Chain = truth — but the
+    // Soroban RPC read can lag the ledger that just settled the withdraw, returning the PRE-withdraw
     // balance. Committing that stale read would bounce the UI right back up to the old number
     // (the bug: "balance doesn't update after withdraw") — and there's no withdraw event
     // listener to re-correct it. So we poll, and only commit the chain snapshot once it
@@ -1143,32 +1057,13 @@ const App = () => {
   }
 
   const handleUpgrade = async () => {
+    // ponytail: Venice x402 wallet-funded inference removed (single-chain Stellar; no EVM SIWE).
+    // AI strategist runs via Settings keys / host proxy / deterministic fallback. veniceAuth stays
+    // null — resolveProvider degrades cleanly. Re-add a Stellar-native paid-inference path here later.
     setConnectPhase('upgrading')
-    // Try Venice x402 SIWE signing — wallet now connected, no API key needed
-    if (realAddress && !devApiKey) {
-      try {
-        const auth = await signSiweForVenice(realAddress)
-        // Gate on prepaid balance: only use the x402 path when the wallet can
-        // actually pay. Known-unfunded → skip (resolveProvider falls to API key /
-        // proxy) instead of silently 402-failing into the hardcoded fallback.
-        const bal = await getX402Balance(realAddress, auth)
-        if (canUseX402(bal)) {
-          setVeniceAuth(auth)
-          const note = bal ? ` · balance $${bal.balanceUsd.toFixed(2)}` : ''
-          addLog({ event: 'Authorized', meta: `venice x402 auth signed · SIWE${note}` })
-        } else {
-          addLog({
-            event: 'Authorized',
-            meta: `venice x402 wallet unfunded ($${bal.balanceUsd.toFixed(2)}) · using API key / fallback`,
-          })
-        }
-      } catch (e) {
-        console.warn('[app] SIWE signing skipped:', e.message)
-      }
-    }
     setTimeout(() => {
       setConnectPhase('upgraded')
-      addLog({ event: 'Authorized', meta: 'eip-7702 · handled by MetaMask SAK · gas 0' })
+      addLog({ event: 'Authorized', meta: 'session ready · gas sponsored by relayer' })
     }, speed * 0.8)
   }
 
@@ -1225,13 +1120,6 @@ const App = () => {
   }
 
   const handleSkillsContinue = () => {
-    // A valid persisted grant means the user already signed once — skip the
-    // permission card entirely and go straight to execution (true "ask once").
-    if (hasSession() && permActive && permContext) {
-      setStage('execute')
-      startExecution(permContext)
-      return
-    }
     setStage('permission')
   }
 
@@ -1246,57 +1134,17 @@ const App = () => {
   const handlePermConfirm = async () => {
     setPermPhase('idle')
     setPermError(null)
-    try {
-      // Cap the ONE Advanced Permission at the total planned deposit (USDC units). Each worker
-      // redeems a slice of this single grant, so the period cap must cover the sum of all vaults.
-      const capUnits = BigInt(Math.floor((Number(amount) || 0) * 1e6))
-      const permResult = await requestERC7715Permission(capUnits, 86400)
-      const expiresAtMs = Date.now() + 86400 * 1000
-
-      // If delegationManager is missing here, session redemption never boots and
-      // every later action falls back to the popup-per-call path — surface the
-      // grant context to the activity log so that's diagnosable without devtools.
-      const gp = permResult.grantedPermissions
-      addLog({
-        event: 'PermissionGranted',
-        meta: `erc-7715 granted · chain ${gp?.[0]?.chainId ?? '?'} · delegationManager ${permResult.delegationManager ? shortAddr(permResult.delegationManager) : 'missing'}`,
-        detail: `context: ${shortAddr(gp?.[0]?.context || permResult.permissionContext || '')}\nsignerMeta: ${JSON.stringify(gp?.[0]?.signerMeta)}\naccountMeta: ${JSON.stringify(gp?.[0]?.accountMeta)}`,
-      })
-
-      // Boot the ERC-7710 session + persist the single grant → all later actions
-      // redeem with zero popup, and reload/re-entry within 24h skips this step.
-      if (permResult.delegationManager) {
-        initSession({
-          permissionContext: permResult.permissionContext,
-          delegationManager: permResult.delegationManager,
-        })
-        saveSessionGrant({
-          permissionContext: permResult.permissionContext,
-          delegationManager: permResult.delegationManager,
-          expiresAt: expiresAtMs,
-        })
-      }
-
-      setPermContext(permResult.permissionContext)
-      setPermActive(true)
-      setPermExpiresAt(expiresAtMs)
-      const ag = strategy?.agents || []
-      ag.forEach((a) =>
-        addLog({
-          event: 'PermissionGranted',
-          agent: a.id,
-          meta: `vault ${shortAddr(a.vault.addr)} · ${a.allocation} usdc max`,
-        })
-      )
-      setTimeout(() => {
-        setStage('execute')
-        startExecution(permResult.permissionContext)
-      }, 600)
-    } catch (err) {
-      setPermPhase('idle')
-      setPermError(err.message)
-      addLog({ event: 'AgentFailed', meta: `permission denied: ${err.message}` })
-    }
+    // Stellar path: there is no ERC-7715 grant step. The per-agent authorize + fund (one
+    // user-signed wallet-kit tx per agent) happens inside orchestrator.dispatch. Just advance
+    // to execute and let the orchestrator prompt the wallet.
+    const expiresAtMs = Date.now() + 86400 * 1000
+    setPermActive(true)
+    setPermExpiresAt(expiresAtMs)
+    addLog({ event: 'PermissionGranted', meta: 'stellar · authorize + fund per agent at execute' })
+    setTimeout(() => {
+      setStage('execute')
+      startExecution()
+    }, 600)
   }
 
   /* ----- EXECUTE (step 05) — real parallel agents ----- */
@@ -1317,9 +1165,8 @@ const App = () => {
     }))
   }
 
-  const startExecution = (ctx) => {
+  const startExecution = () => {
     if (!strategy) return
-    const resolvedCtx = ctx || permContext
 
     // Pre-compute sessionId and build hex→designId map BEFORE orchestrator starts.
     // Orchestrator uses makeAgentId(index, sessionId) — same function, same sessionId = same hex.
@@ -1344,29 +1191,10 @@ const App = () => {
 
     const orch = new OrchestratorAgent({
       user: realAddress,
-      permissionContext: resolvedCtx,
       veniceAuth: veniceAuth,
       devApiKey: devApiKey || null,
       sessionId,
       onEvent: (evName, data) => {
-        // A2A redelegation events → activity log (orchestrator → worker hand-off proof)
-        if (evName === 'RedelegationCreated') {
-          const vaultLetter = String.fromCharCode(64 + (data.workerId || 1))
-          addLog({
-            event: 'RedelegationCreated',
-            agent: `orchestrator → ${data.to}`,
-            meta: `${data.allocationUsdc} USDC · vault ${vaultLetter} · limitedCalls: 3 · ${shortAddr(data.delegationHash)}`,
-          })
-          return
-        }
-        if (evName === 'RedelegationRedeemed') {
-          addLog({
-            event: 'RedelegationRedeemed',
-            agent: data.to || `worker-${data.workerId}`,
-            meta: `deposit executed · tx ${shortAddr(data.txHash)}`,
-          })
-          return
-        }
         if (evName === 'skill-gen-failed') {
           const dId = agentMapRef.current?.[data.agentId] || data.agentId
           addLog({
@@ -1702,11 +1530,8 @@ const App = () => {
     setConnectPhase('idle')
     setConnectError(null)
     setPermActive(false)
-    setPermContext(null)
     setPermError(null)
     setPermExpiresAt(null)
-    clearSession()
-    clearGrant()
     clearResume(realAddress)
     setSessionResumed(false)
     setVeniceAuth(null)
@@ -1720,8 +1545,6 @@ const App = () => {
   const handleRevoke = () => {
     setPermActive(false)
     setPermExpiresAt(null)
-    clearSession()
-    clearGrant()
     clearResume(realAddress)
     setSessionResumed(false)
     ;(strategy?.agents || []).forEach((a) =>
@@ -1739,22 +1562,11 @@ const App = () => {
     setRealAddress(null)
     setConnectPhase('idle')
     setPermActive(false)
-    setPermContext(null)
     setPermExpiresAt(null)
     setVeniceAuth(null)
-    clearSession()
-    clearGrant()
     clearResume(realAddress)
     setSessionResumed(false)
     addLog({ event: 'PermissionRevoked', meta: 'wallet disconnected · session cleared' })
-  }
-  const handleSwitchNetwork = async () => {
-    try {
-      await switchToSepolia()
-      addLog({ event: 'Connected', meta: 'network · Base Sepolia' })
-    } catch (e) {
-      addLog({ event: 'AgentFailed', meta: `switch network failed: ${e.message}` })
-    }
   }
   const handleResetAgentSettings = () => {
     setAgentSettings({ ...AGENT_SETTINGS_DEFAULTS })
@@ -2218,7 +2030,6 @@ const App = () => {
                 onResetAgentSettings={handleResetAgentSettings}
                 onConnect={handleConnect}
                 onDisconnect={handleDisconnect}
-                onSwitchNetwork={handleSwitchNetwork}
                 onRevoke={handleRevoke}
               />
             }

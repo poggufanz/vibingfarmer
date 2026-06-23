@@ -5,10 +5,17 @@
 // it reset to {}, so the home page looked like the user never farmed. This module
 // (1) caches positions in localStorage for instant restore, and
 // (2) reconciles against on-chain balances (source of truth) in the background.
+//
+// Stellar model: vault shares are held by the agent custom account (deposit mints
+// to `from` = the agent), NOT the user — the user exits via owner_withdraw. So a
+// "position" is read as the agent's vault-share balance. The demo uses one agent
+// (SOROBAN_DEMO_AGENT) + one vault; pass `agents` for a multi-agent session.
 
-import { ethers } from 'ethers'
-import { VAULT_CATALOG, VAULT_ABI } from './config.js'
-import { getReadProvider } from './readProvider.js'
+import { SOROBAN_VAULT_ADDRESS, SOROBAN_DEMO_AGENT } from './stellar/config.js'
+import { readVaultShares } from './stellar/agentDeposit.js'
+
+// Single demo vault has no on-chain name field — label it for the positions list.
+const VAULT_NAME = 'VFUSD Yield Vault'
 
 const keyFor = (addr) => `yv_positions_${String(addr).toLowerCase()}`
 
@@ -33,69 +40,50 @@ export function persistPositions(address, positions) {
 }
 
 /**
- * Reconcile positions against chain. Reads balanceOf + convertToAssets per unique
- * vault. Returns a positions map ({ [vaultAddr]: { vaultName, balance, unclaimedRewards } }),
- * or null when all reads fail.
+ * Reconcile positions against the Stellar vault. Sums the vault-share balance across
+ * every agent the user funded (shares are i128 base units, 7-dp). Returns a positions
+ * map ({ [vaultAddr]: { vaultName, balance, unclaimedRewards } }), or null when EVERY
+ * read fails so callers keep the cached snapshot instead of wiping it.
  *
- * Successfully-read vaults are ALWAYS included — including those with balance '0'. The
- * zero entries are how an authoritative consumer (applyChainPositions) learns a vault was
- * fully withdrawn and must be PRUNED. A read that throws stays absent (vs. an explicit '0'),
- * so a transient RPC failure can never be mistaken for a withdrawal.
+ * A balance of '0' is an explicit entry (not absent) so an authoritative consumer
+ * (applyChainPositions) can PRUNE a fully-swept vault. readVaultShares returns null on
+ * RPC failure (it catches), so a transient failure stays out of the total — never
+ * mistaken for a withdrawal.
  *
- * Reads go through the dedicated read-only provider (getReadProvider) — NEVER the
- * wallet's BrowserProvider, which throws -32603 while a wallet_* RPC is pending.
- * Never throws — per-vault failures are isolated via Promise.allSettled.
- *
- * When batch txs contain multiple internal deposit calls, each call emits a separate
- * DepositExecuted event. The on-chain balance read reflects all of them, so we must
- * read from ALL vaults in VAULT_CATALOG to capture all deposits across all tx hashes.
+ * @param {string} address - connected user wallet (kept for caller/localStorage compat)
+ * @param {{ agents?: string[], server?: object }} [opts]
+ * @returns {Promise<Object|null>}
  */
-export async function reconcilePositionsFromChain(address) {
+export async function reconcilePositionsFromChain(
+  address,
+  { agents = [SOROBAN_DEMO_AGENT], server } = {}
+) {
   if (!address) return null
-  const provider = getReadProvider()
-
-  // Unique vault addresses (catalog maps multiple protocols to shared MockVaults).
-  // CRITICAL: must read from ALL unique vaults to capture deposits from all tx hashes.
-  const seen = new Set()
-  const vaults = VAULT_CATALOG.filter((v) => {
-    const a = v.address?.toLowerCase()
-    if (!a || seen.has(a)) return false
-    seen.add(a)
-    return true
-  })
 
   const results = await Promise.allSettled(
-    vaults.map(async (v) => {
-      const contract = new ethers.Contract(v.address, VAULT_ABI, provider)
-      // Shares are minted to the user (receiver=user in AgentVaultDepositor.executeAgentDeposit)
-      const shares = await contract.balanceOf(address)
-      // Explicit zero entry (not null) so authoritative consumers can prune a withdrawn vault.
-      if (shares === 0n) return [v.address, { vaultName: v.name, balance: '0', unclaimedRewards: '0' }]
-      const assets = await contract.convertToAssets(shares)
-      // v2 MockVault is plain ERC-4626 — yield is share-price appreciation, realized on
-      // withdraw; there is no separate unclaimed-rewards balance to read.
-      return [v.address, {
-        vaultName: v.name,
-        balance: assets.toString(),
-        unclaimedRewards: '0',
-      }]
-    })
+    agents.map((agent) => readVaultShares(agent, { server }))
   )
 
   let anyOk = false
-  const positions = {}
+  let total = 0n
   for (const r of results) {
-    if (r.status === 'fulfilled') {
+    if (r.status === 'fulfilled' && r.value != null) {
       anyOk = true
-      if (r.value) positions[r.value[0]] = r.value[1]
+      total += BigInt(r.value)
     }
   }
+  if (!anyOk) return null
 
-  // If every read failed, return null so callers keep the cached snapshot instead
-  // of wiping it with a falsely-empty result.
-  return anyOk ? positions : null
+  // ponytail: balance is base-unit (7-dp) string — render sites must divide by 1e7
+  // (SOROBAN_DECIMALS), not the legacy EVM 1e6. Single vault for the demo.
+  return {
+    [SOROBAN_VAULT_ADDRESS]: {
+      vaultName: VAULT_NAME,
+      balance: total.toString(),
+      unclaimedRewards: '0',
+    },
+  }
 }
-
 
 // Merge position maps keyed by vault address (case-insensitive). Balances only ever
 // INCREASE via merge — withdraw handlers are the only path that lowers them. Idempotent:
@@ -108,7 +96,11 @@ export function mergePositions(prev, incoming) {
     const key = Object.keys(merged).find((k) => k.toLowerCase() === addr.toLowerCase()) || addr
     const curBal = BigInt(merged[key]?.balance || '0')
     const newBal = BigInt(pos.balance || '0')
-    merged[key] = { ...merged[key], ...pos, balance: (newBal > curBal ? newBal : curBal).toString() }
+    merged[key] = {
+      ...merged[key],
+      ...pos,
+      balance: (newBal > curBal ? newBal : curBal).toString(),
+    }
   }
   return merged
 }
@@ -123,7 +115,10 @@ export function applyChainPositions(prev, chain) {
   for (const [addr, pos] of Object.entries(chain || {})) {
     if (!pos) continue
     const key = Object.keys(positions).find((k) => k.toLowerCase() === addr.toLowerCase()) || addr
-    if (BigInt(pos.balance || '0') === 0n) { delete positions[key]; continue }
+    if (BigInt(pos.balance || '0') === 0n) {
+      delete positions[key]
+      continue
+    }
     positions[key] = { ...positions[key], ...pos }
   }
   return positions

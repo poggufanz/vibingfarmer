@@ -1,14 +1,16 @@
 // attestation.js
-// Hashes Venice AI strategy output and attests it on-chain.
-// Creates a verifiable, tamper-proof record of the AI reasoning (ERC-8004 aligned).
+// Hashes Venice AI strategy output into a deterministic, off-chain-verifiable record.
+// (Single-chain Stellar: there is no on-chain attestation tx today — the depositor is
+// deposit-only. We compute a reproducible strategyHash; anyone can re-derive it from the
+// strategy JSON. An on-chain Soroban attestation can be added later as an additive feature.)
 
-import { ethers } from 'ethers'
+import { hash } from '@stellar/stellar-sdk' // sync sha256 (already a dep — no ethers)
 
 /**
- * Hash strategy + reasoning into a deterministic bytes32.
+ * Hash strategy + reasoning into a deterministic 0x-prefixed 32-byte hex string.
  * Anyone can reproduce this hash from the original strategy JSON.
  * @param {object} strategy - raw Venice AI strategy (selected_vaults schema)
- * @returns {string} bytes32 keccak256 hash
+ * @returns {string} 0x-prefixed sha256 hash (bytes32-shaped)
  */
 export function hashStrategy(strategy) {
   const payload = JSON.stringify({
@@ -22,14 +24,15 @@ export function hashStrategy(strategy) {
     strategySource: strategy.generatedBy,
     timestamp: Math.floor(Date.now() / 1000),
   })
-  return ethers.keccak256(ethers.toUtf8Bytes(payload))
+  const digest = hash(Buffer.from(payload, 'utf8')) // 32-byte sha256
+  return '0x' + Buffer.from(digest).toString('hex')
 }
 
 /**
- * Strategy attestation. The Roadmap v2 AgentVaultDepositor is deposit-only and carries NO
- * attestStrategy method, so there is no on-chain attestation tx. We still compute the
- * deterministic strategyHash (verifiable off-chain by reproducing it from the strategy JSON)
- * and return it without a txHash. NEVER blocking — strategy execution always continues.
+ * Strategy attestation. No on-chain tx (the Stellar vault is deposit-only and carries no
+ * attest method). We compute the deterministic strategyHash (verifiable off-chain by
+ * reproducing it from the strategy JSON) and return it without a txHash. NEVER blocking —
+ * strategy execution always continues.
  * @param {object} strategy - raw Venice AI strategy output
  * @returns {Promise<{strategyHash}|null>}
  */
@@ -53,7 +56,7 @@ export function formatAttestation(attestation) {
     hash: attestation.strategyHash.slice(0, 10) + '...',
     fullHash: attestation.strategyHash,
     txHash: attestation.txHash || null,
-    etherscanUrl: attestation.txHash ? `https://sepolia.basescan.org/tx/${attestation.txHash}` : null,
-    label: attestation.txHash ? 'Strategy attested on-chain' : 'Strategy hash (off-chain verifiable)',
+    explorerUrl: null, // off-chain hash — no tx to link
+    label: 'Strategy hash (off-chain verifiable)',
   }
 }

@@ -5,8 +5,8 @@
 // worth restoring — anything else is treated as "no session to resume".
 //
 // SECURITY: stores only non-secret UI state (stage, amount, risk, strategy meta).
-// The ERC-7715 grant + ephemeral session key live elsewhere (grantStore/session)
-// and are never written here.
+// The ephemeral session key lives elsewhere (stellar/sessionKey + keyVault) and is
+// never written here.
 
 const keyFor = (address) => `yv_resume_${String(address).toLowerCase()}`
 

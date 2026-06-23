@@ -39,6 +39,8 @@ Timeline: 20 days total (26 Mei – 15 Juni 2026)
 | 4 — Polish | 14–17 | ✅ Done | Bug fix, AI skill gen, memory UI, Monte Carlo/replay/attestation, demo video |
 | 5 — Publish | 18–20 | ⬜ | Open source publishing |
 
+> **EVM decommissioned 2026-06-21 (sub-project 6).** The Solidity stack, the EVM frontend chain-layer, and the ethers/viem/1Shot dependencies were removed. Vibing Farmer is now **single-chain on Stellar/Soroban** — chain code lives in `soroban/` (contracts) and `frontend/src/stellar/` (client). The architecture, ADR, contract, and user-flow sections below describe the original EVM design and are retained as **migration history** — for the live system read `soroban/` + `frontend/src/stellar/` and `deployments/stellar-testnet.json`.
+
 **All 4 original spikes resolved — see `docs/spikes/` (historical; some superseded by ADRs below, e.g. ERC-7715 → AgentRegistry, Venice-only → DeepSeek/Venice/fallback chain).**
 
 ## Planning Rules
@@ -202,29 +204,25 @@ docs/                                # All in English
 
 ## Commands
 
-### Smart Contracts (Foundry — WSL only)
+### Smart Contracts (Soroban — Rust, WSL only)
 
 ```bash
-# Build
-wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge build"
+# Build all contracts to wasm
+wsl -e bash -lc "cd /mnt/c/SharredData/project/competition/vibing-farmer/soroban && stellar contract build"
 
 # Test all
-wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge test"
+wsl -e bash -lc "cd /mnt/c/SharredData/project/competition/vibing-farmer/soroban && cargo test"
 
 # Single test verbose
-wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge test --match-test testFunctionName -vvv"
+wsl -e bash -lc "cd /mnt/c/SharredData/project/competition/vibing-farmer/soroban && cargo test test_name -- --nocapture"
 
-# Fuzz test
-wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge test --match-test testFuzz -vvv --fuzz-runs 1000"
+# Clippy (lint — treat warnings as errors)
+wsl -e bash -lc "cd /mnt/c/SharredData/project/competition/vibing-farmer/soroban && cargo clippy --all-targets -- -D warnings"
 
-# Coverage (target ≥ 80%)
-wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge coverage"
-
-# Deploy to Base Sepolia
-wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge script script/Deploy.s.sol --rpc-url \$BASE_SEPOLIA_RPC --broadcast --verify"
+# Deploy to testnet — see soroban/deploy-seed.sh (deploys registry + vault + token, seeds the demo agent)
 ```
 
-> ⚠️ **Foundry runs in WSL only.** Never run `forge`/`cast`/`anvil` directly in PowerShell — it will fail.
+> ⚠️ **Soroban tooling runs in WSL only.** Run `cargo`/`stellar` under `wsl -e bash -lc`, never directly in PowerShell. Deployed addresses live in `deployments/stellar-testnet.json`.
 
 ### Frontend
 
@@ -241,22 +239,22 @@ cd frontend && npm run build
 
 ### Environment Variables
 
-Copy `.env.example` → `.env` before deployment or API testing:
+Copy `frontend/.env.example` → `.env.local` (Vite dev) and `frontend/.dev.vars.example` → `.dev.vars` (Cloudflare Pages dev) before API testing or deployment:
 
 ```bash
-BASE_SEPOLIA_RPC=https://sepolia.base.org
-PRIVATE_KEY=0x...                      # deployer key (never commit)
-USDC_BASE_SEPOLIA=0x036CbD53842c5426634e7929541eC2318f3dCF7e
-VAULT_DEPOSITOR_ADDRESS=0x...          # filled after deploy
-MOCK_VAULT_ADDRESS=0x...               # filled after deploy
+# Server-side (Cloudflare Pages env vars / .dev.vars, NOT VITE_ prefixed)
+DEEPSEEK_API_KEY=...                    # optional host AI key (BYOK-first; leave unset for lockdown)
+TAVILY_API_KEY=...                      # optional, live market context
+ALLOWED_ORIGIN=https://your-app.pages.dev
 
-# Server-side (Cloudflare Pages env vars, NOT VITE_ prefixed)
-DEEPSEEK_API_KEY=...                   # default AI provider
-ONESHOT_KEY=... / ONESHOT_SECRET=... / ONESHOT_BIZ_ID=...  # 1Shot Managed API
-TAVILY_API_KEY=...                     # optional, live market context
+# Soroban gasless relay (read by /api/stellar-relay)
+STELLAR_RELAYER_SECRET=S...             # relayer keypair secret, server-only — fund on testnet
+SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
+STELLAR_NETWORK_PASSPHRASE=Test SDF Network ; September 2015
+SOROBAN_VAULT_ADDRESS=CCDXZ6BU...       # deposit target (see deployments/stellar-testnet.json)
 ```
 
-1Shot Managed API requires server-held credentials (`ONESHOT_*`) — user pays 0 gas. Venice AI is wallet-funded via x402/SIWE, no server key needed for it.
+The Soroban relay fee-bumps agent transactions from a funded `STELLAR_RELAYER_SECRET` keypair — the user pays 0 gas. AI keys are BYOK-first (users paste their own in Settings); leave host keys unset for a lockdown deploy.
 
 ---
 

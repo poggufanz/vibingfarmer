@@ -7,6 +7,6 @@
   "pages_build_output_dir": "./dist",
   "compatibility_date": "2026-06-13",
   // nodejs_compat: the /api/* Functions reuse Node-style handlers that read
-  // process.env and dynamically import @uxly/1shot-client + viem.
+  // process.env and dynamically import @stellar/stellar-sdk (the gasless relay).
   "compatibility_flags": ["nodejs_compat"]
 }
