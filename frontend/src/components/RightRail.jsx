@@ -29,7 +29,7 @@ const WalletPanel = ({ phase, address }) => {
         <div>
           <div className="wallet-addr">{shortAddr(address)}</div>
           <div className={`wallet-type ${isSmart ? "active" : ""}`}>
-            {isSmart ? "EIP-7702 active" : "Regular EOA"}
+            {isSmart ? "Session keys active" : "Standard wallet"}
           </div>
         </div>
         <div className="wallet-actions">
@@ -46,9 +46,9 @@ const WalletPanel = ({ phase, address }) => {
           </button>
           <a
             className="wallet-action"
-            title="View on Basescan"
-            aria-label="View on Basescan"
-            href={`https://sepolia.basescan.org/address/${address}`}
+            title="View on Stellar Expert"
+            aria-label="View on Stellar Expert"
+            href={`https://stellar.expert/explorer/testnet/contract/${address}`}
             target="_blank"
             rel="noopener noreferrer"
           >
@@ -66,7 +66,7 @@ const PermissionPanel = ({ active, strategy, onRevoke, expiresAt }) => {
     <div className="panel">
       <div className="panel-head">
         <div className="panel-title">Active permissions</div>
-        <span className="panel-meta">ERC-7715 · batch</span>
+        <span className="panel-meta">session scope · batch</span>
       </div>
       <div className={`perm-status ${active ? "active" : ""}`}>
         {active ? `${agents.length} permission · ${fmtRemaining(expiresAt) || '-'}` : "No active permission"}
@@ -157,7 +157,7 @@ const ActivityPanel = ({ logs }) => {
                       {l.detail || l.meta}
                       {l.txHash && (
                         <div style={{ marginTop: 3 }}>
-                          TX: <a href={`https://sepolia.basescan.org/tx/${l.txHash}`} target="_blank" rel="noopener noreferrer" style={{ color: "var(--info)" }}>{shortAddr(l.txHash)} ↗</a>
+                          TX: <a href={`https://stellar.expert/explorer/testnet/tx/${l.txHash}`} target="_blank" rel="noopener noreferrer" style={{ color: "var(--info)" }}>{shortAddr(l.txHash)} ↗</a>
                         </div>
                       )}
                     </div>

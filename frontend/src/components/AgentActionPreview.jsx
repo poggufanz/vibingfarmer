@@ -36,7 +36,7 @@ export default function AgentActionPreview({ preview, onConfirm, onCancel }) {
               <Row k="From" v={preview.vaultName} />
               <Row k="Amount" v={`${preview.amountUsdc} USDC (${preview.pctLabel})`} />
               <Row k="To" v={`${preview.toShort} (your wallet)`} />
-              <Row k="Gas" v="~0 · 1Shot relayer" />
+              <Row k="Gas" v="~0 · fee-bump relayer" />
               <Row k="Est. receive" v={`~${preview.amountUsdc} USDC`} />
               <Row k="Time" v="~30 seconds" />
             </>
@@ -45,14 +45,14 @@ export default function AgentActionPreview({ preview, onConfirm, onCancel }) {
               <Row k="Vault" v={preview.vaultName} />
               <Row k="Rewards" v={`${preview.rewardsUsdc} USDC unclaimed`} />
               <Row k="Action" v="Claim accrued yield" />
-              <Row k="Gas" v="~0 · 1Shot relayer" />
+              <Row k="Gas" v="~0 · fee-bump relayer" />
             </>
           )}
         </div>
 
         {isWithdraw && (
           <p className="lede" style={{ fontSize: 11, marginTop: 4 }}>
-            ⚠ Uses your active ERC-7715 withdraw permission.
+            ⚠ Uses your active Soroban session-key scope.
           </p>
         )}
 

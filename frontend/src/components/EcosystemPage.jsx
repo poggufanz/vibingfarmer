@@ -15,41 +15,51 @@ import NavBar from './NavBar.jsx'
 // rendered uniform in currentColor so no per-partner accent competes with brand.
 const PARTNERS = [
   {
-    name: 'MetaMask',
-    subtitle: 'Smart Accounts Kit',
+    name: 'Stellar / Soroban',
+    subtitle: 'Single-Chain Smart Contracts',
+    category: 'CHAIN',
+    description:
+      'Soroban contracts on Stellar. The registry enforces per-agent ed25519 session-key scopes; the vault holds funds. Every authorize, deposit, and attestation is verifiable on Stellar testnet.',
+    tags: ['Soroban', 'ed25519 auth', 'Testnet'],
+    link: 'https://stellar.org/soroban',
+    mark: 'ST',
+  },
+  {
+    name: 'Freighter',
+    subtitle: 'Stellar Wallet',
     category: 'WALLET',
     description:
-      'EIP-7702 smart account upgrade and ERC-7715 scoped permission delegation. The wallet layer that makes bounded autonomy possible.',
-    tags: ['EIP-7702', 'ERC-7715', 'Flask 13.9+'],
-    link: 'https://docs.metamask.io/smart-accounts-kit',
-    mark: 'MM',
+      'A standard Stellar wallet (Freighter / xBull / Albedo). One signature authorizes and funds each agent — no smart-account upgrade, no browser permission prompt.',
+    tags: ['Freighter', 'xBull', 'Albedo'],
+    link: 'https://www.freighter.app',
+    mark: 'FR',
+  },
+  {
+    name: 'Fee-bump Relayer',
+    subtitle: 'Gas Abstraction',
+    category: 'RELAYER',
+    description:
+      'A funded relayer fee-bumps every agent transaction. Vibing Farmer users pay $0 in gas — the agent signs with its ed25519 key, the relayer pays.',
+    tags: ['Fee-bump', 'Gas 0', 'ed25519'],
+    link: 'https://developers.stellar.org/docs/learn/fundamentals/transactions/fee-bump-transactions',
+    mark: 'FB',
   },
   {
     name: 'Venice AI',
     subtitle: 'Privacy-First AI Brain',
     category: 'AI',
     description:
-      'Zero-retention inference via TEE + E2EE. 200+ open-source models. Vibing Farmer uses Venice to generate yield strategies with full privacy.',
-    tags: ['llama-3.3-70b', 'TEE', 'Zero-retention'],
+      'Zero-retention inference via TEE + E2EE, wallet-funded through x402 + SIWE. DeepSeek V4 is the default strategist. Both generate yield strategies and per-agent skill sets.',
+    tags: ['x402', 'TEE', 'DeepSeek V4'],
     link: 'https://venice.ai',
     mark: 'VA',
-  },
-  {
-    name: '1Shot API',
-    subtitle: 'Gasless Relayer',
-    category: 'RELAYER',
-    description:
-      'Permissionless EIP-7710 relayer. Vibing Farmer agents pay $0 in gas. 1Shot sponsors every execution via stablecoin gas payments.',
-    tags: ['EIP-7710', 'Gas abstraction', 'Stablecoin'],
-    link: 'https://1shotapi.com',
-    mark: '1S',
   },
   {
     name: 'DeFiLlama',
     subtitle: 'Live Yield Data',
     category: 'DATA',
     description:
-      'Real-time APY and TVL data from 1000+ DeFi protocols. Venice AI receives live market data before generating any strategy recommendation.',
+      'Real-time APY and TVL data from 1000+ DeFi protocols. The AI strategist receives live market data before generating any strategy recommendation.',
     tags: ['APY', 'TVL', 'Real-time'],
     link: 'https://defillama.com',
     mark: 'DL',
@@ -59,55 +69,42 @@ const PARTNERS = [
     subtitle: 'Market Intelligence',
     category: 'SEARCH',
     description:
-      'AI-powered web search for real-time market context and security signals. Risk watcher uses Tavily to detect protocol exploits before they affect positions.',
+      'AI-powered web search for real-time market context and security signals. The risk watcher uses Tavily to detect protocol exploits before they affect positions.',
     tags: ['Risk signals', 'Market intel', 'AI search'],
     link: 'https://tavily.com',
     mark: 'TV',
   },
-  {
-    name: 'Base Sepolia',
-    subtitle: 'L2 Testnet',
-    category: 'CHAIN',
-    description:
-      'All Vibing Farmer contracts are deployed and verified on Base Sepolia. Every transaction, permission, and attestation is publicly verifiable on-chain.',
-    tags: ['Chain ID 84532', 'OP Stack L2', 'Verified'],
-    link: 'https://sepolia.basescan.org',
-    mark: 'BS',
-  },
 ]
 
 const STANDARDS = [
-  { id: 'EIP-7702', desc: 'Smart account delegation',   link: 'https://eips.ethereum.org/EIPS/eip-7702' },
-  { id: 'ERC-7715', desc: 'Scoped permissions',         link: 'https://eips.ethereum.org/EIPS/eip-7715' },
-  { id: 'EIP-7710', desc: 'Delegation redemption',      link: 'https://eips.ethereum.org/EIPS/eip-7710' },
-  { id: 'ERC-4626', desc: 'Tokenized vault standard',   link: 'https://eips.ethereum.org/EIPS/eip-4626' },
-  { id: 'x402',     desc: 'HTTP-native payments',       link: 'https://x402.org' },
-  { id: 'ERC-8004', desc: 'AI agent identity',          link: 'https://eips.ethereum.org/EIPS/eip-8004' },
+  { id: 'Soroban Auth',   desc: 'ed25519 session-key scopes',  link: 'https://developers.stellar.org/docs/build/guides/auth' },
+  { id: 'SEP-41',         desc: 'Token interface',             link: 'https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0041.md' },
+  { id: 'Fee-bump',       desc: 'Gas-abstracted transactions', link: 'https://developers.stellar.org/docs/learn/fundamentals/transactions/fee-bump-transactions' },
+  { id: 'Soroban Events', desc: 'On-chain audit trail',        link: 'https://developers.stellar.org/docs/build/guides/events' },
+  { id: 'x402',           desc: 'HTTP-native payments',        link: 'https://x402.org' },
+  { id: 'Blend',          desc: 'Real-yield lending (WIP)',    link: 'https://www.blend.capital' },
 ]
 
 const GITHUB_URL = 'https://github.com/poggufanz/vibingfarmer'
 
 // Static colored diagram — dangerouslySetInnerHTML is safe: fully hardcoded, no user input.
 const DIAGRAM_HTML =
-`<span class="eco-d-base">User Wallet</span>
+`<span class="eco-d-base">User Wallet</span> <span class="eco-d-muted">(Freighter / xBull / Albedo)</span>
     │
-    │  <span class="eco-d-accent">EIP-7702 (MetaMask Flask)</span>
+    │  <span class="eco-d-accent">one signature · authorize + fund</span>
     ▼
-<span class="eco-d-base">Smart Account</span> ─── <span class="eco-d-accent">ERC-7715 Permission</span>
-    │
-    │  AI Strategy
-    │  <span class="eco-d-muted">Venice AI ← DeFiLlama APY ← Tavily Context</span>
+<span class="eco-d-base">AI Strategy</span>
+    <span class="eco-d-muted">Venice AI / DeepSeek ← DeFiLlama APY ← Tavily Context</span>
     ▼
-<span class="eco-d-bright">AgentVaultDepositor.sol</span>
+<span class="eco-d-bright">Registry (Soroban)</span> ─── <span class="eco-d-accent">ed25519 session-key scope</span>
     │
-    ├── Worker-1 ──► Vault A <span class="eco-d-muted">(aave-v3)</span>
-    │                 <span class="eco-d-muted">ERC-4626</span>
-    └── Worker-2 ──► Vault B <span class="eco-d-muted">(morpho-blue)</span>
-                      <span class="eco-d-muted">ERC-4626</span>
+    ├── Worker-1 ──► <span class="eco-d-base">Vault</span> <span class="eco-d-muted">(USDC)</span>
+    └── Worker-2 ──► <span class="eco-d-base">Vault</span> <span class="eco-d-muted">(USDC)</span>
+                      <span class="eco-d-muted">Soroban</span>
     │
-    │  <span class="eco-d-accent">Gas: $0 (1Shot · EIP-7710)</span>
+    │  <span class="eco-d-accent">Gas: $0 (fee-bump relayer)</span>
     ▼
-<span class="eco-d-muted">Base Sepolia</span>`
+<span class="eco-d-muted">Stellar testnet</span>`
 
 /* ------------------------------------------------------------------ */
 /* components                                                            */
@@ -153,7 +150,7 @@ function StandardBadge({ standard }) {
       <span className="eco-std__id">{standard.id}</span>
       <span className="eco-std__desc">{standard.desc}</span>
       <span className="eco-std__view">
-        View EIP <span aria-hidden="true">↗</span>
+        View doc <span aria-hidden="true">↗</span>
       </span>
     </a>
   )
@@ -200,8 +197,8 @@ export default function EcosystemPage() {
         <header className="eco-header">
           <h1 className="eco-title">Ecosystem</h1>
           <p className="eco-lede">
-            The infrastructure powering Vibing Farmer. Built on battle-tested
-            primitives, privacy-first AI, and permissionless relaying.
+            The infrastructure powering Vibing Farmer. Built on Soroban smart
+            contracts, privacy-first AI, and gas-abstracted fee-bump relaying.
           </p>
         </header>
 
@@ -232,7 +229,7 @@ export default function EcosystemPage() {
             ref={diagramRef}
             className="eco-diagram"
             role="img"
-            aria-label="Architecture: user wallet via EIP-7702 to smart account with ERC-7715 permission; Venice AI + DeFiLlama + Tavily generate strategy; AgentVaultDepositor.sol dispatches parallel workers to ERC-4626 vaults; 1Shot EIP-7710 relayer pays all gas on Base Sepolia"
+            aria-label="Architecture: user wallet (Freighter / xBull / Albedo) signs once to authorize and fund agents; Venice AI / DeepSeek + DeFiLlama + Tavily generate the strategy; the Soroban registry enforces ed25519 session-key scopes while parallel workers deposit to the Soroban vault; a fee-bump relayer pays all gas on Stellar testnet"
           >
             <pre
               className="eco-diagram__pre"

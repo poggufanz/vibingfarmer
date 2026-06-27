@@ -51,8 +51,8 @@ export function saveTransaction({
   apy,
   workerLabel,
   workerId,
-  gasPayedBy,  // '1shot-relayer' always
-  network,     // 'sepolia'
+  gasPayedBy,  // 'fee-bump-relayer' always
+  network,     // 'stellar-testnet'
 }) {
   addEntry(KEYS.transactions, {
     type: 'transaction',
@@ -64,8 +64,8 @@ export function saveTransaction({
     apy,
     workerLabel,
     workerId,
-    gasPayedBy: gasPayedBy || '1shot-relayer',
-    network: network || 'sepolia',
+    gasPayedBy: gasPayedBy || 'fee-bump-relayer',
+    network: network || 'stellar-testnet',
     status: 'confirmed',
     timestamp: Date.now(),
   })

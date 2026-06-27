@@ -22,13 +22,13 @@ function ApyValue({ value, delay = 0 }) {
   )
 }
 
-const FLASK_URL = 'https://metamask.io/flask/'
+const WALLET_URL = 'https://www.freighter.app/'
 const SEED = VAULT_CATALOG.slice(0, 3).map((v) => ({ name: v.name, protocol: v.protocol, apy: v.apy, poolId: null }))
 
 const HOW_STEPS = [
   { n: '01', title: 'Venice AI picks the best vault for your risk.', sub: 'Live market data, not guesswork.' },
   { n: '02', title: 'You approve one permission with hard limits.', sub: 'Max amount and vault are yours to set. Revoke anytime.' },
-  { n: '03', title: 'Agents execute automatically. You pay zero gas.', sub: '1Shot relayer covers the gas.' },
+  { n: '03', title: 'Agents execute automatically. You pay zero gas.', sub: 'Fee-bump relayer covers the gas.' },
   { n: '04', title: 'Background agent monitors 24/7.', sub: 'APY drops or risk spikes, you get alerted.' },
 ]
 
@@ -51,8 +51,8 @@ function ValueScreen({ vaults, histories, onConnect }) {
           </button>
 
           <div className="foot-note onb-foot">
-            Already have MetaMask Flask? Connect above.<br />
-            Need Flask? <a href={FLASK_URL} target="_blank" rel="noopener noreferrer" className="onb-link">Download in 2 minutes</a>
+            Already have Freighter / xBull / Albedo? Connect above.<br />
+            Need a wallet? <a href={WALLET_URL} target="_blank" rel="noopener noreferrer" className="onb-link">Get Freighter in 2 minutes</a>
           </div>
         </div>
 

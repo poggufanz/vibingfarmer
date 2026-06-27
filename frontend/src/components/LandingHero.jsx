@@ -29,15 +29,15 @@ const SCENE_2 = {
     'Venice AI picks the optimal vault allocation',
     'Three-specialist AI Council (Yield, Risk, Market) deliberates',
     'Monte Carlo simulation projects risk & returns',
-    '1Shot relayer pays all gas. You pay $0',
+    'fee-bump relayer pays all gas. You pay $0',
   ],
 }
 
 const SCENE_3 = {
   heading: ['Permission-bounded', 'autonomy.'],
   features: [
-    'EIP-7702 smart account upgrade',
-    'ERC-7715 scoped permissions & AgentRegistry',
+    'Soroban session-key scopes',
+    'ed25519 agent auth & on-chain registry',
     'Parallel worker agents execute using ephemeral keys',
     'On-chain strategy attestation (ERC-8004)',
   ],
@@ -95,7 +95,7 @@ function HeroSection({ onStart }) {
   return (
     <section className="vf-hero">
       <div className="vf-hero__copy">
-        <p className="vf-hero__eyebrow">Autonomous yield · Base Sepolia testnet</p>
+        <p className="vf-hero__eyebrow">Autonomous yield · Stellar testnet</p>
         <h1 className="vf-hero__headline">
           <span>Set your yield once.</span>
           <span className="vf-hero__headline-soft">Agents farm it forever.</span>
@@ -153,7 +153,7 @@ function CtaBlock({ onStart }) {
       <button className="vf-cta__btn" onClick={onStart}>
         Start farming <span aria-hidden="true">→</span>
       </button>
-      <p className="vf-cta__sub">Base Sepolia testnet · MetaMask Flask</p>
+      <p className="vf-cta__sub">Stellar testnet · Freighter / xBull / Albedo</p>
     </div>
   )
 }

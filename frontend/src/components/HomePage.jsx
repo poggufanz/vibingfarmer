@@ -286,7 +286,7 @@ export default function HomePage({
             }}
           >
             <span className="live-dot" />
-            relayer 1Shot · gas 0 · network sepolia
+            relayer fee-bump · gas 0 · Stellar testnet
           </div>
         </div>
       </div>

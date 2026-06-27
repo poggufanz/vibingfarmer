@@ -36,7 +36,7 @@ export default function SkillDetailModal({ agent, skill, state, onClose, onAppro
 
   const info = translateSkill(agent, skill);
   const vaultAddr = skill.target?.vault || agent.vault?.addr || '';
-  const network   = skill.target?.chain || 'sepolia';
+  const network   = skill.target?.chain || 'stellar-testnet';
   const rawExpiry = String(skill.guards?.expiresIn || '86400').replace(/[^0-9]/g, '');
   const hours = Math.floor((parseInt(rawExpiry, 10) || 86400) / 3600);
   const isApproved = state === 'approved';
@@ -63,12 +63,12 @@ export default function SkillDetailModal({ agent, skill, state, onClose, onAppro
             {shortAddr(vaultAddr)} · {network}
             {vaultAddr && (
               <a
-                href={`https://sepolia.basescan.org/address/${vaultAddr}`}
+                href={`https://stellar.expert/explorer/testnet/contract/${vaultAddr}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="skill-detail-link"
               >
-                View on Etherscan ↗
+                View on Stellar Expert ↗
               </a>
             )}
           </div>

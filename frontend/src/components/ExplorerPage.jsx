@@ -1,7 +1,7 @@
 // ExplorerPage.jsx
 // Public on-chain verification surface for Vibing Farmer. No wallet required —
 // judges and users can audit every deployed contract, live stat, and strategy
-// attestation against Base Sepolia directly.
+// attestation against Stellar testnet directly.
 //
 // Aesthetic: matches LandingHero's editorial-finance terminal — dark canvas,
 // single acid accent, mono for every address/hash/stat. Inherits palette tokens

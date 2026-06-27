@@ -47,11 +47,11 @@ export const buildSkillForAgent = (agent, riskProfile) => {
     name: agent.skillName,
     version: "1.2.0",
     agent: agent.id,
-    description: `${agent.role} · single-vault deposit via ERC-7715 scoped permission`,
+    description: `${agent.role} · single-vault deposit via Soroban session-key scope`,
     target: {
       vault: agent.vault.addr,
       protocol: agent.vault.protocol,
-      chain: "sepolia",
+      chain: "stellar-testnet",
     },
     steps: [
       { id: "swap",    action: "uniswap_v3_swap",  params: { tokenIn: "USDC", tokenOut: "USDC", maxSlippageBps: 5 } },

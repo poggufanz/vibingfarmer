@@ -1127,7 +1127,7 @@ const App = () => {
   const handlePermConfirm = async () => {
     setPermPhase('idle')
     setPermError(null)
-    // Stellar path: there is no ERC-7715 grant step. The per-agent authorize + fund (one
+    // Stellar path: there is no EVM-style permission-grant step. The per-agent authorize + fund (one
     // user-signed wallet-kit tx per agent) happens inside orchestrator.dispatch. Just advance
     // to execute and let the orchestrator prompt the wallet.
     const expiresAtMs = Date.now() + 86400 * 1000
@@ -1279,7 +1279,7 @@ const App = () => {
                     title: `${stepName} ${data.status === 'done' ? 'confirmed' : 'executing'}`,
                     meta: data.txHash
                       ? `tx ${shortAddr(data.txHash)}${data.gasMethod === 'user-signed' ? ' · ⚠ user-signed' : ''}`
-                      : 'via 1Shot relayer',
+                      : 'via fee-bump relayer',
                     hash: data.txHash || null,
                     t: nowT(),
                   },
@@ -1367,7 +1367,7 @@ const App = () => {
               apy: ag.vault.apy,
               workerLabel: ag.name,
               workerId: ag.id,
-              network: 'sepolia',
+              network: 'stellar-testnet',
             })
         }
 

@@ -1,6 +1,6 @@
 // frontend/src/strategy/submitGate.js
 // One responsibility: decide whether a single deposit may be submitted RIGHT NOW.
-// Soft circuit breaker; the hard stop is AgentVaultDepositor.pause() on-chain.
+// Soft circuit breaker; the hard stop is the Soroban vault's pause() on-chain.
 // Three guards, cheapest first:
 //   1. stale_gas    — snapshot older than maxGasAgeMs (or missing)
 //   2. uneconomic   — gas cost >= expected benefit (the Hermes fast-fail idea)

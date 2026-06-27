@@ -80,7 +80,7 @@ export default function WithdrawModal({ vault, balance, unclaimedRewards = 0, us
     const units = toBaseUnits(parsed).toString()
     try {
       const result = await withdrawFromVault(vault.address, units, userAddress)
-      saveTransaction({ txHash: result.txHash, vaultName: vault.name, vaultAddress: vault.address, protocol: vault.protocol, amountUsdc: parsed, apy: vault.apy, type: 'withdraw', network: 'sepolia' })
+      saveTransaction({ txHash: result.txHash, vaultName: vault.name, vaultAddress: vault.address, protocol: vault.protocol, amountUsdc: parsed, apy: vault.apy, type: 'withdraw', network: 'stellar-testnet' })
       setStatus('done')
       onSuccess(vault.address, units)
       setTimeout(onClose, 700)
@@ -92,7 +92,7 @@ export default function WithdrawModal({ vault, balance, unclaimedRewards = 0, us
   return (
     <div className="modal-backdrop" onClick={() => status !== 'loading' && onClose()}>
       <div className="modal" role="dialog" aria-modal="true" aria-labelledby="withdraw-title" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
-        <div className="modal-eyebrow">withdraw · 1Shot relayer</div>
+        <div className="modal-eyebrow">withdraw · fee-bump relayer</div>
         <h3 className="modal-title" id="withdraw-title">{t(lang, 'withdraw')} from {vault.name}</h3>
 
         <div className="act-meta" style={{ fontSize: 11, margin: '8px 0 6px' }}>Available: <span className="mono">{balUsdc.toFixed(2)} USDC</span></div>
@@ -117,7 +117,7 @@ export default function WithdrawModal({ vault, balance, unclaimedRewards = 0, us
         <div style={{ borderTop: '.5px solid rgba(255,255,255,.08)', margin: '10px 0' }} />
         <Row k="You receive" v={`~${(valid ? parsed : 0).toFixed(2)} USDC`} />
         <Row k="+ Rewards" v={`+${rewardsUsdc.toFixed(2)} USDC (preserved)`} color="var(--ok)" />
-        <Row k="Gas" v="~0 · 1Shot relayer" />
+        <Row k="Gas" v="~0 · fee-bump relayer" />
         <Row k="Permission" v="active" />
         <Row k="Est. time" v="~30 seconds" />
 

@@ -53,7 +53,7 @@ const InputScreen = ({ amount, setAmount, risk, setRisk, onSubmit }) => {
       </h1>
       <p className="lede">
         AI generates the strategy: how many worker agents are needed, which vault each agent handles,
-        and which skills they run. All transactions are relayed via 1Shot, so you pay zero gas. The permissions you grant
+        and which skills they run. All transactions are fee-bumped by the relayer, so you pay zero gas. The permissions you grant
         are scoped per agent · no agent can act outside its designated vault boundaries.
       </p>
 
@@ -111,7 +111,7 @@ const InputScreen = ({ amount, setAmount, risk, setRisk, onSubmit }) => {
    01b — AI Thinking (strategy generation)
    ============================================ */
 const THINK_STEPS = [
-  { label: "Scanning 24 active vaults on Base Sepolia" },
+  { label: "Scanning active vaults on Stellar testnet" },
   { label: "Structuring allocation per risk profile" },
   { label: "Generating strategy via AI" },
 ];
@@ -172,46 +172,32 @@ const ThinkingCard = ({ phase, times = [] }) => {
 };
 
 /* ============================================
-   02 — Connect & EIP-7702 upgrade
+   02 — Connect & authorize agent session
    ============================================ */
-const ConnectCard = ({ phase, error, mmVersion, onConnect, onUpgrade, onDone, onCancel }) => {
+const ConnectCard = ({ phase, error, onConnect, onUpgrade, onDone, onCancel }) => {
   return (
     <section className="card enter">
       <div className="eyebrow">
         <span className="num">02</span>
-        <span>Connect · EIP-7702 upgrade</span>
+        <span>Connect · authorize agents</span>
         <span className="rule" />
-        <span>required for ERC-7715</span>
+        <span>Stellar session keys</span>
       </div>
 
       <h1 className="h-display">
-        Upgrade your account to a smart account · single signature, reversible.
+        Connect your wallet · one signature authorizes every agent.
       </h1>
       <p className="lede">
-        Your MetaMask account is currently a standard EOA. EIP-7702 sets delegation code on your existing account,
-        activating it as a smart account without changing wallets. Afterwards, the orchestrator can spawn worker
-        agents, each with scoped permissions.
+        Connect a standard Stellar wallet (Freighter / xBull / Albedo). One signature per agent grants a capped,
+        expiring ed25519 session-key scope on the registry — no account upgrade, no browser permission prompt.
+        The orchestrator then spawns worker agents, each bounded by its own scope.
       </p>
-
-      {mmVersion && mmVersion.type !== "none" && (
-        <div className="mono" style={{ fontSize: 11, marginTop: 14, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", color: mmVersion.supportsERC7715 ? "var(--ok)" : "var(--warn)" }}>
-          <span style={{ fontSize: 8 }}>●</span>
-          {mmVersion.isFlask ? (
-            <span>MetaMask Flask {mmVersion.version} ✓ · ERC-7715 supported</span>
-          ) : (
-            <>
-              <span>MetaMask stable detected · Flask required for permissions</span>
-              <a href="https://metamask.io/flask/" target="_blank" rel="noopener noreferrer" className="accent" style={{ textDecoration: "none" }}>Switch to Flask →</a>
-            </>
-          )}
-        </div>
-      )}
 
       {phase === "idle" && (
         <div className="action-row">
-          <div className="foot-note">Ensure MetaMask Flask is connected to the <b>Base Sepolia</b> testnet.</div>
+          <div className="foot-note">Connect Freighter, xBull, or Albedo on <b>Stellar testnet</b>.</div>
           <button className="btn btn-primary btn-lg" onClick={onConnect}>
-            Connect MetaMask <Icon name="arrow" size={14} />
+            Connect wallet <Icon name="arrow" size={14} />
           </button>
         </div>
       )}
@@ -221,8 +207,8 @@ const ConnectCard = ({ phase, error, mmVersion, onConnect, onUpgrade, onDone, on
           domain="vibing-farmer.app"
           title="Connection request"
           rows={[
-            { k: "request", v: "eth_requestAccounts" },
-            { k: "network", v: "Base Sepolia · 84532" },
+            { k: "request", v: "getPublicKey" },
+            { k: "network", v: "Stellar testnet" },
             { k: "status", v: "awaiting user…" },
           ]}
           pending
@@ -233,16 +219,16 @@ const ConnectCard = ({ phase, error, mmVersion, onConnect, onUpgrade, onDone, on
         <>
           <MmDialog
             domain="vibing-farmer.app"
-            title="EIP-7702 authorization"
+            title="Authorize agent session"
             rows={[
-              { k: "delegate to", v: "MetaMask Smart Account v1.2", accent: true },
-              { k: "chainId", v: "84532" },
-              { k: "nonce", v: "7" },
-              { k: "expiry", v: "ephemeral · single tx" },
+              { k: "grant", v: "ed25519 session-key scope", accent: true },
+              { k: "network", v: "Stellar testnet" },
+              { k: "cap", v: "per-agent · capped" },
+              { k: "expiry", v: "bounded · expiring" },
             ]}
           />
           <div className="action-row">
-            <div className="foot-note">Authorization transaction will be relayed via 1Shot · gas <b>0</b>.</div>
+            <div className="foot-note">Authorization transaction is fee-bumped by the relayer · gas <b>0</b>.</div>
             <div className="flex gap-2">
               <button className="btn btn-ghost" onClick={onCancel}>Cancel</button>
               <button className="btn btn-primary" onClick={onUpgrade}>
@@ -255,12 +241,12 @@ const ConnectCard = ({ phase, error, mmVersion, onConnect, onUpgrade, onDone, on
 
       {phase === "upgrading" && (
         <MmDialog
-          domain="MetaMask Flask"
-          title="Smart account active"
+          domain="Stellar Wallet"
+          title="Agent session active"
           rows={[
-            { k: "type", v: "EIP-7702 · delegated EOA", accent: true },
-            { k: "relayer", v: "1Shot Permissionless · EIP-7710" },
-            { k: "gas paid", v: "by relayer · user 0 ETH", accent: true },
+            { k: "type", v: "ed25519 session key", accent: true },
+            { k: "relayer", v: "fee-bump relayer" },
+            { k: "gas paid", v: "by relayer · user 0 XLM", accent: true },
             { k: "status", v: "confirming…" },
           ]}
           pending
@@ -281,13 +267,9 @@ const MmDialog = ({ domain, title, rows, pending }) => (
     <div className="mm-pop-head">
       <div className="mm-brand">
         <div className="mm-mark">
-          <img 
-            src="https://images.ctfassets.net/clixtyxoaeas/4ES1xXFPTzqLsOumTgHcMd/e5bcf8648eeea657850731684ee4942b/MetaMask-icon-fox-developer.svg" 
-            alt="MetaMask Logo" 
-            style={{ width: 14, height: 14, display: "block" }} 
-          />
+          <span aria-hidden="true" style={{ fontSize: 10, lineHeight: "14px" }}>✦</span>
         </div>
-        <span className="mm-name">MetaMask</span>
+        <span className="mm-name">Stellar Wallet</span>
       </div>
       <span className="mm-domain">{domain}</span>
     </div>
@@ -318,11 +300,11 @@ const UpgradedCallout = ({ onDone }) => (
     }}>
       <div>
         <div className="mono" style={{ fontSize: 11, color: "var(--accent)", letterSpacing: "-0.01em", marginBottom: 8 }}>
-          ✓ smart account active
+          ✓ agent session active
         </div>
-        <div className="h-sub">EOA successfully upgraded. EIP-7702 is active via MetaMask SAK.</div>
+        <div className="h-sub">Wallet connected. ed25519 session keys are authorized on the registry.</div>
         <div className="mono" style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 6, letterSpacing: "-0.01em" }}>
-          eip-7702 · handled internally by MetaMask Flask · gas 0
+          session keys · gas 0 · fee-bump relayer
         </div>
       </div>
       <button className="btn btn-primary" onClick={onDone}>
@@ -345,9 +327,9 @@ const PermissionCard = ({ strategy, onGrant, phase, error, onConfirm, onReject }
     <section className="card enter">
       <div className="eyebrow">
         <span className="num">04</span>
-        <span>Scoped permission · ERC-7715 · sign once</span>
+        <span>Scoped session key · sign once</span>
         <span className="rule" />
-        <span>then fully autonomous · ERC-7710 redemption</span>
+        <span>then fully autonomous · ed25519 agent auth</span>
       </div>
 
       <h1 className="h-display">
@@ -355,8 +337,8 @@ const PermissionCard = ({ strategy, onGrant, phase, error, onConfirm, onReject }
       </h1>
       <p className="lede">
         This single signature grants a scoped, expiring permission. From here, the orchestrator and every worker
-        execute Swap → Approve → Deposit by <b>redeeming</b> this grant — no further MetaMask prompts. Outside the
-        granted scope, <span className="mono">AgentVaultDepositor.sol</span> still <b>reverts</b>.
+        execute their deposit within this scope — no further wallet prompts. Outside the
+        granted scope, the <span className="mono">Soroban vault</span> still <b>reverts</b>.
       </p>
 
       <div className="perm-doc">
@@ -410,7 +392,7 @@ const PermissionCard = ({ strategy, onGrant, phase, error, onConfirm, onReject }
           </button>
         )}
         {phase === "prompting" && (
-          <span className="foot-note mono">awaiting metamask…</span>
+          <span className="foot-note mono">awaiting wallet…</span>
         )}
       </div>
 
@@ -429,20 +411,16 @@ const MmPermissionModal = ({ strategy, onConfirm, onReject }) => {
   return (
     <div className="modal-backdrop" onClick={onReject}>
       <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-eyebrow">wallet_requestExecutionPermissions · batch</div>
+        <div className="modal-eyebrow">authorize agent session · batch</div>
         <h3 className="modal-title">Approve {agents.length} execution permission{agents.length === 1 ? "" : "s"}?</h3>
 
         <div className="mm-pop" style={{ marginTop: 0 }}>
           <div className="mm-pop-head">
             <div className="mm-brand">
               <div className="mm-mark">
-                <img 
-                  src="https://images.ctfassets.net/clixtyxoaeas/4ES1xXFPTzqLsOumTgHcMd/e5bcf8648eeea657850731684ee4942b/MetaMask-icon-fox-developer.svg" 
-                  alt="MetaMask Logo" 
-                  style={{ width: 14, height: 14, display: "block" }} 
-                />
+                <span aria-hidden="true" style={{ fontSize: 10, lineHeight: "14px" }}>✦</span>
               </div>
-              <span className="mm-name">MetaMask</span>
+              <span className="mm-name">Stellar Wallet</span>
             </div>
             <span className="mm-domain">vibing-farmer.app</span>
           </div>
@@ -524,17 +502,17 @@ const SuccessCard = ({ strategy, onAgain, address }) => {
 
       <div className="action-row" style={{ marginTop: 36 }}>
         <div className="foot-note">
-          Basescan · <span style={{ color: "var(--text)" }}>{agents.length * 3} tx confirmed</span> ·
-          gas paid by <b>1Shot relayer</b>
+          Stellar Expert · <span style={{ color: "var(--text)" }}>{agents.length * 3} tx confirmed</span> ·
+          gas paid by <b>fee-bump relayer</b>
         </div>
         <div className="flex gap-2">
           <a
             className="btn btn-ghost"
-            href={address ? `https://sepolia.basescan.org/address/${address}` : "https://sepolia.basescan.org"}
+            href={address ? `https://stellar.expert/explorer/testnet/account/${address}` : "https://stellar.expert/explorer/testnet"}
             target="_blank"
             rel="noopener noreferrer"
           >
-            View on Basescan <Icon name="external" size={13} />
+            View on Stellar Expert <Icon name="external" size={13} />
           </a>
           <button className="btn btn-primary" onClick={onAgain}>
             Deposit again <Icon name="plus" size={14} />

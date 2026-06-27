@@ -941,7 +941,7 @@ const ExecuteCard = ({ strategy, execMap, paletteIsLight, onOpenMemory, onDone }
     <section className="card enter exec-card-wrap">
       <div className="eyebrow">
         <span className="num">05</span>
-        <span>Agents executing · 1Shot relayer · parallel</span>
+        <span>Agents executing · fee-bump relayer · parallel</span>
         <span className="rule" />
         <span>gas paid by relayer</span>
       </div>

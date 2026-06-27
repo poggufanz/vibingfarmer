@@ -94,12 +94,12 @@ const TopBar = ({ walletConnected, onReset, railCollapsed, onToggleRail, notific
           <span className="vibing">farmer</span>
         </div>
         <span className="brand-net mono">
-          <span className="dot" />sepolia
+          <span className="dot" />Stellar testnet
         </span>
       </div>
       <div className="topbar-right">
         <span className="topbar-meta">
-          relayer&nbsp;<b>1Shot</b>&nbsp;·&nbsp;gas&nbsp;<b>0</b>
+          relayer&nbsp;<b>fee-bump</b>&nbsp;·&nbsp;gas&nbsp;<b>0</b>
         </span>
         <button className="icon-btn" title="restart flow" aria-label="restart flow" onClick={onReset}><Icon name="refresh" /></button>
         {notifications}

@@ -55,8 +55,8 @@ export default function TxDetailPage() {
         <button onClick={() => { if (window.history.length > 1) window.history.back(); else navigateTo('history'); }} style={backBtn}>← Back</button>
         <div className="mono" style={{ marginTop: 28, color: 'var(--text-muted)', fontSize: 14 }}>transaction not found</div>
         <div style={{ marginTop: 16, display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-          <a href={`https://sepolia.basescan.org/tx/${txHash}`} target="_blank" rel="noopener noreferrer" style={extLink}>
-            View on Basescan ↗
+          <a href={`https://stellar.expert/explorer/testnet/tx/${txHash}`} target="_blank" rel="noopener noreferrer" style={extLink}>
+            View on Stellar Expert ↗
           </a>
           <button onClick={() => { if (window.history.length > 1) window.history.back(); else navigateTo('history'); }} style={{ ...backBtn, textDecoration: 'none' }}>← Back</button>
         </div>
@@ -73,8 +73,8 @@ export default function TxDetailPage() {
     { label: 'Amount',      value: `${tx.amountUsdc} USDC` },
     { label: 'APY',         value: tx.apy ? `${tx.apy}%` : '-' },
     { label: 'Worker',      value: tx.workerId || '-' },
-    { label: 'Gas paid by', value: tx.gasPayedBy || '1shot-relayer', highlight: true },
-    { label: 'Network',     value: `${tx.network || 'base sepolia'} testnet` },
+    { label: 'Gas paid by', value: tx.gasPayedBy || 'fee-bump-relayer', highlight: true },
+    { label: 'Network',     value: `${tx.network || 'Stellar'} testnet` },
   ]
 
   return (
@@ -105,8 +105,8 @@ export default function TxDetailPage() {
           <button style={{ ...backBtn, fontSize: 11, color: copied ? 'var(--ok)' : 'var(--text-muted)' }} onClick={handleCopy}>
             {copied ? 'copied!' : '[copy]'}
           </button>
-          <a href={`https://sepolia.basescan.org/tx/${txHash}`} target="_blank" rel="noopener noreferrer" style={extLink}>
-            View on Base Sepolia Basescan ↗
+          <a href={`https://stellar.expert/explorer/testnet/tx/${txHash}`} target="_blank" rel="noopener noreferrer" style={extLink}>
+            View on Stellar Expert ↗
           </a>
         </div>
       </div>
