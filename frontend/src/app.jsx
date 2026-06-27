@@ -1463,14 +1463,14 @@ const App = () => {
     }
     // Allocation-based FALLBACK only — used when the chain read is unavailable (no RPC)
     // or a vault reads 0 (deposit tx not yet mined). Stored in raw token
-    // units (allocation USDC * 1e6); the display layer divides by 1e6.
+    // 7-dp base units (allocation USDC * 1e7); display divides by 1e7 (toDisplay).
     const seedPositions = {}
     ;(strategy?.agents || []).forEach((a) => {
       if (execMap[a.id]?.status === 'confirmed') {
         const addr = a.vault.addr
         const prev = seedPositions[addr]
         const prevBal = BigInt(prev?.balance || '0')
-        const newBal = BigInt(Math.round(a.allocation * 1e6))
+        const newBal = toBaseUnits(a.allocation)
         seedPositions[addr] = {
           vaultName: a.vault.name,
           balance: (prevBal + newBal).toString(), // sum if multiple agents target same vault

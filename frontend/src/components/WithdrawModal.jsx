@@ -77,7 +77,7 @@ export default function WithdrawModal({ vault, balance, unclaimedRewards = 0, us
   const handleConfirm = async () => {
     if (!valid || status !== 'idle') return
     setStatus('loading'); setError(null)
-    const units = BigInt(Math.floor(parsed * 1e6)).toString()
+    const units = toBaseUnits(parsed).toString()
     try {
       const result = await withdrawFromVault(vault.address, units, userAddress)
       saveTransaction({ txHash: result.txHash, vaultName: vault.name, vaultAddress: vault.address, protocol: vault.protocol, amountUsdc: parsed, apy: vault.apy, type: 'withdraw', network: 'sepolia' })

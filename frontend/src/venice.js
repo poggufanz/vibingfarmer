@@ -8,6 +8,7 @@ import {
   VAULT_CATALOG,
 } from './config.js'
 import { loadVaultSkill } from './skillLoader.js'
+import { toBaseUnits } from './stellar/format.js'
 import { fetchMarketContext } from './marketSearch.js'
 import { fetchDeFiLlamaVaults } from './defiLlama.js'
 import { runStrategyFetchDag } from './strategy/fetchDag.js'
@@ -374,7 +375,7 @@ export async function generateAgentSkills({ agentId, vault, amount, veniceAuth, 
         maxRetries: 2,
         timeoutSeconds: 30,
       },
-      deposit: { maxAmount: String(Math.floor(amount * 1e6)), vaultAddress: vault, expiresAt },
+      deposit: { maxAmount: toBaseUnits(amount).toString(), vaultAddress: vault, expiresAt },
     },
     generatedBy: 'fallback',
     approvedByUser: false,
@@ -405,7 +406,7 @@ Respond with JSON schema:
   "vaultAddress": "${vault}",
   "skills": {
     "swap": { "required": false, "maxSlippage": 0.5, "dexPreference": "uniswap-v3", "maxRetries": 2, "timeoutSeconds": 30 },
-    "deposit": { "maxAmount": "${Math.floor(amount * 1e6)}", "vaultAddress": "${vault}", "expiresAt": ${expiresAt} }
+    "deposit": { "maxAmount": "${toBaseUnits(amount)}", "vaultAddress": "${vault}", "expiresAt": ${expiresAt} }
   },
   "generatedBy": "${provider.name}",
   "approvedByUser": false
