@@ -4,6 +4,72 @@ use soroban_sdk::testutils::Address as _;
 use soroban_sdk::token::{StellarAssetClient, TokenClient};
 use soroban_sdk::{Address, Env, String};
 
+use crate::blend::{Positions, Request, SUPPLY, WITHDRAW};
+use soroban_sdk::{contract, contractimpl, Map, Vec};
+
+// Minimal in-test stand-in for a Blend v2 pool. Tracks each supplier's underlying balance
+// and moves the real SAC token. `accrue` simulates borrower interest by crediting a
+// supplier (the test must also mint the matching tokens into the pool).
+#[contract]
+pub struct MockBlendPool;
+
+#[contractimpl]
+impl MockBlendPool {
+    pub fn __constructor(e: &Env, token: Address) {
+        e.storage().instance().set(&MOCK_TOKEN, &token);
+    }
+
+    pub fn submit_with_allowance(
+        e: &Env,
+        from: Address,
+        _spender: Address,
+        to: Address,
+        requests: Vec<Request>,
+    ) -> Positions {
+        let token: Address = e.storage().instance().get(&MOCK_TOKEN).unwrap();
+        let pool = e.current_contract_address();
+        for req in requests.iter() {
+            if req.request_type == SUPPLY {
+                TokenClient::new(e, &token).transfer_from(&pool, &from, &pool, &req.amount);
+                let bal = mock_supplied(e, &from) + req.amount;
+                e.storage().persistent().set(&MockKey::Supplied(from.clone()), &bal);
+            } else if req.request_type == WITHDRAW {
+                let held = mock_supplied(e, &from);
+                let amt = if req.amount > held { held } else { req.amount };
+                TokenClient::new(e, &token).transfer(&pool, &to, &amt);
+                e.storage().persistent().set(&MockKey::Supplied(from.clone()), &(held - amt));
+            }
+        }
+        Positions {
+            liabilities: Map::new(e),
+            collateral: Map::new(e),
+            supply: Map::new(e),
+        }
+    }
+
+    /// Test-only: simulate accrued interest for `who`. Caller must have minted `extra`
+    /// tokens into this pool's balance beforehand.
+    pub fn accrue(e: &Env, who: Address, extra: i128) {
+        let bal = mock_supplied(e, &who) + extra;
+        e.storage().persistent().set(&MockKey::Supplied(who), &bal);
+    }
+
+    pub fn supplied(e: &Env, who: Address) -> i128 {
+        mock_supplied(e, &who)
+    }
+}
+
+const MOCK_TOKEN: soroban_sdk::Symbol = soroban_sdk::symbol_short!("MTOKEN");
+
+#[soroban_sdk::contracttype]
+enum MockKey {
+    Supplied(Address),
+}
+
+fn mock_supplied(e: &Env, who: &Address) -> i128 {
+    e.storage().persistent().get(&MockKey::Supplied(who.clone())).unwrap_or(0)
+}
+
 const U7: i128 = 10_000_000; // 1.0 unit at 7 decimals
 
 pub(crate) struct Ctx {
@@ -49,6 +115,13 @@ fn fund_admin_treasury(env: &Env, ctx: &Ctx, amount: i128) {
     StellarAssetClient::new(env, &ctx.token).mint(&ctx.admin, &amount);
     let exp = env.ledger().sequence() + 100_000;
     TokenClient::new(env, &ctx.token).approve(&ctx.admin, &ctx.vault.address, &amount, &exp);
+}
+
+// Registers a mock Blend pool on the same SAC asset and wires it into the vault.
+fn with_blend_pool(env: &Env, ctx: &Ctx) -> MockBlendPoolClient<'static> {
+    let pool_id = env.register(MockBlendPool, (ctx.token.clone(),));
+    ctx.vault.set_pool(&ctx.admin, &pool_id);
+    MockBlendPoolClient::new(env, &pool_id)
 }
 
 #[test]
