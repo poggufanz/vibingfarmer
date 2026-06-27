@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { withdrawFromVault } from '../agents/agentController.js'
 import { saveTransaction } from '../history.js'
 import { loadSettings, t } from '../settingsStore.js'
+import { toDisplay, toBaseUnits } from '../stellar/format.js'
 
 // The v2 vault exposes no per-deposit timestamp, so "time deposited" is unknown (renders "-").
 // Kept as a 0-stub so the modal effect below is unchanged. ponytail: no chain read to wire here.
@@ -50,8 +51,8 @@ const friendlyError = (err) => {
 
 export default function WithdrawModal({ vault, balance, unclaimedRewards = 0, userAddress, onClose, onSuccess }) {
   const { language: lang } = loadSettings()
-  const balUsdc = Number(balance || 0) / 1e6
-  const rewardsUsdc = Number(unclaimedRewards || 0) / 1e6
+  const balUsdc = toDisplay(balance)
+  const rewardsUsdc = toDisplay(unclaimedRewards)
   const [amount, setAmount] = useState(balUsdc.toFixed(2))
   const [status, setStatus] = useState('idle') // idle | loading | done
   const [error, setError] = useState(null)

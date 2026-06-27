@@ -5,6 +5,7 @@
 // for that vocabulary. Pure functions only — no React, no network, no storage.
 
 import { VAULT_CATALOG } from '../config.js'
+import { toDisplay } from '../stellar/format.js'
 
 /** Risk ordering used by the action-space ceiling. Lower = safer. */
 export const RISK_RANK = { low: 0, medium: 1, high: 2 }
@@ -88,7 +89,7 @@ export function buildStrategyState({ amountUsdc, riskLevel, numVaults, vaultData
   const holdings = positions || {}
   const heldUnits = Object.values(holdings).reduce((s, p) => s + Number(p && p.balance || 0), 0)
   return {
-    capital: { amountUsdc: Number(amountUsdc) || 0, heldUsdc: heldUnits / 1e6 },
+    capital: { amountUsdc: Number(amountUsdc) || 0, heldUsdc: toDisplay(heldUnits) },
     profile: { riskLevel: normalizeRisk(riskLevel), numVaults: Number(numVaults) || 1 },
     portfolio: { holdings, heldVaultCount: Object.keys(holdings).length },
     market: deriveSignals(marketContext, gas),

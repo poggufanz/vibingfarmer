@@ -6,6 +6,7 @@ import { fetchDeFiLlamaVaults } from '../defiLlama.js'
 import { fetchApyHistory } from '../apyHistory.js'
 import { generateSparkline, calcApyStats } from '../sparkline.js'
 import { useNavigateTo } from '../router.js'
+import { toDisplay } from '../stellar/format.js'
 
 const short = (a) => (a ? `${a.slice(0, 10)}…${a.slice(-8)}` : '')
 
@@ -62,7 +63,7 @@ export default function VaultDetailPage({ positions = {} }) {
   const posEntry = catalog.address
     ? Object.entries(positions).find(([a]) => a.toLowerCase() === catalog.address.toLowerCase())
     : null
-  const posBalance = posEntry ? Number(posEntry[1].balance || 0) / 1e6 : null
+  const posBalance = posEntry ? toDisplay(posEntry[1].balance) : null
 
   const handleFarm = () => {
     sessionStorage.setItem('yv_prefill_protocol', protocol)

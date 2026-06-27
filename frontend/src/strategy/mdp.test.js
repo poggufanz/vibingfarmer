@@ -43,10 +43,10 @@ describe('buildStrategyState', () => {
     expect(s.universe[0].riskTier).toBe('low')
     expect(s.market.turbulence).toBe('elevated')
   })
-  it('derives heldUsdc from 6-decimal position balances', () => {
+  it('derives heldUsdc from 7-decimal position balances', () => {
     const s = buildStrategyState({
       amountUsdc: 1000, riskLevel: 'low', numVaults: 1, vaultData, marketContext: null,
-      positions: { '0xAAA': { balance: '2500000' } }, // 2.5 USDC
+      positions: { '0xAAA': { balance: '25000000' } }, // 2.5 USDC (7-dp)
     })
     expect(s.capital.heldUsdc).toBeCloseTo(2.5, 5)
     expect(s.portfolio.heldVaultCount).toBe(1)

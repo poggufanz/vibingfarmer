@@ -34,6 +34,7 @@ import {
   subscribeAgentRevoked,
 } from './stellar/index.js'
 import { generateStrategy } from './venice.js'
+import { toDisplay, toBaseUnits } from './stellar/format.js'
 import { saveResume, loadResume, clearResume } from './strategy/sessionResume.js'
 import { attestStrategyOnChain, formatAttestation } from './attestation.js'
 import { detectMetaMaskVersion } from './flaskDetect.js'
@@ -1934,8 +1935,8 @@ const App = () => {
                               {shortAddr(s.agent)}
                             </div>
                             <div style={{ fontSize: 10.5, opacity: 0.6 }}>
-                              cap {(Number(s.capPerPeriod) / 1e6).toFixed(2)} · max-at-risk{' '}
-                              {(Number(s.maxAtRisk) / 1e6).toFixed(2)} USDC
+                              cap {toDisplay(s.capPerPeriod).toFixed(2)} · max-at-risk{' '}
+                              {toDisplay(s.maxAtRisk).toFixed(2)} USDC
                             </div>
                           </div>
                           {s.revoked ? (

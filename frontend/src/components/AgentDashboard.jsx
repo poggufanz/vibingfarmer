@@ -4,9 +4,10 @@
 import React, { useState, useEffect } from 'react'
 import WithdrawModal from './WithdrawModal.jsx'
 import { loadSettings, t } from '../settingsStore.js'
+import { toDisplay } from '../stellar/format.js'
 
 const POSITION_INTERVAL = 5 * 60 * 1000 // mirrors worker INTERVALS.position
-const u = (units) => Number(units || 0) / 1e6
+const u = toDisplay
 const fmt = (units) => u(units).toFixed(2)
 const short = (a) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '')
 const formatTime = (ts, now = Date.now()) => {
@@ -111,7 +112,7 @@ export default function AgentDashboard({
                 fontSize: '2.4rem', fontWeight: 500, lineHeight: 1,
                 letterSpacing: '-0.03em', color: 'var(--text)',
               }}>
-                {(totalUnits / 1e6).toFixed(2)}
+                {toDisplay(totalUnits).toFixed(2)}
               </span>
               <span style={{ ...mono, color: 'var(--text-faint)', paddingBottom: 3 }}>USDC</span>
             </div>
@@ -121,7 +122,7 @@ export default function AgentDashboard({
           </div>
           <div style={{ textAlign: 'right', flexShrink: 0 }}>
             <div className="tnum" style={{ fontSize: 15, fontWeight: 500, color: earnedUnits > 0 ? 'var(--ok)' : 'var(--text-faint)' }}>
-              +{(earnedUnits / 1e6).toFixed(4)}
+              +{toDisplay(earnedUnits).toFixed(4)}
             </div>
             <div style={{ ...mono, color: 'var(--text-faint)', marginTop: 3 }}>
               earned · {formatTime(lastUpdated, now)}

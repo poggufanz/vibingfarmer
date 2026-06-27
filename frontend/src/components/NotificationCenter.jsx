@@ -7,6 +7,7 @@ import { AlertCard } from './AlertCard.jsx'
 import AgentActionPreview from './AgentActionPreview.jsx'
 import { loadSettings } from '../settingsStore.js'
 import { Icon } from '../components.jsx'
+import { toDisplay } from '../stellar/format.js'
 
 const short = (a) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '')
 
@@ -43,7 +44,7 @@ export default function NotificationCenter({
     const amtUnits = settings.emergencyFull ? bal : Math.floor(bal * (settings.emergencyPct || 50) / 100)
     setPreview({
       kind: 'withdraw', alert: a, vaultName: a.vaultName,
-      amountUsdc: (amtUnits / 1e6).toFixed(2),
+      amountUsdc: toDisplay(amtUnits).toFixed(2),
       pctLabel: settings.emergencyFull ? 'full position' : `${settings.emergencyPct || 50}% · your setting`,
       toShort: short(userAddress),
     })

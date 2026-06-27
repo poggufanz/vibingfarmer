@@ -12,12 +12,13 @@
 
 import { useEffect, useState } from 'react'
 import NavBar from './NavBar.jsx'
+import { toDisplay } from '../stellar/format.js'
 
 const GROUND_URL = '/data/replay-usdc-depeg.json'
 const MC_URL = '/data/replay-mc.json'
 
 const fmtWeth = (wei) => `${(Number(wei) / 1e18).toFixed(2)} WETH`
-const fmtUsdc = (raw) => `${(Number(raw) / 1e6).toLocaleString()} USDC`
+const fmtUsdc = (raw) => `${toDisplay(raw).toLocaleString()} USDC`
 const fmtSeed = (seed) => `${seed} (0x${Number(seed).toString(16).toUpperCase()})`
 
 /* ----------------------------- data hook ----------------------------- */
