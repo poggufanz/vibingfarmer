@@ -68,3 +68,10 @@ pub fn get_pending(e: &Env, holder: &Address) -> i128 {
         .get(&DataKey::Pending(holder.clone()))
         .unwrap_or(0)
 }
+
+pub fn set_pool(e: &Env, pool: &Address) {
+    e.storage().instance().set(&DataKey::Pool, pool);
+}
+pub fn get_pool(e: &Env) -> Option<Address> {
+    e.storage().instance().get(&DataKey::Pool)
+}

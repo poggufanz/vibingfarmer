@@ -65,6 +65,21 @@ fn test_constructor_stores_config_and_metadata() {
 }
 
 #[test]
+fn test_pool_unset_by_default_then_set_once() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    assert_eq!(ctx.vault.pool(), None);
+
+    let pool = Address::generate(&env);
+    ctx.vault.set_pool(&ctx.admin, &pool);
+    assert_eq!(ctx.vault.pool(), Some(pool.clone()));
+
+    // second set must fail (one-time wiring)
+    let pool2 = Address::generate(&env);
+    assert!(ctx.vault.try_set_pool(&ctx.admin, &pool2).is_err());
+}
+
+#[test]
 fn test_pause_is_admin_gated() {
     let env = Env::default();
     let ctx = setup(&env);

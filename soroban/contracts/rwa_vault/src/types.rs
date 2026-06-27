@@ -12,6 +12,7 @@ pub enum DataKey {
     DripEpoch,        // monotonically increasing dividend epoch (u64)
     RewardDebt(Address), // per-holder accounted dividend baseline (i128)
     Pending(Address),    // per-holder settled-but-unclaimed dividend (i128)
+    Pool,                // optional Blend lending pool address (yield source)
 }
 
 #[contracterror]
@@ -24,6 +25,8 @@ pub enum VaultError {
     InsufficientShares = 4,  // redeem more than held
     MathOverflow = 5,
     NothingToClaim = 6,
+    PoolNotSet = 7,      // harvest/Blend op attempted with no pool wired
+    PoolAlreadySet = 8,  // set_pool called twice
 }
 
 #[contractevent(topics = ["vault_deposit"])]
