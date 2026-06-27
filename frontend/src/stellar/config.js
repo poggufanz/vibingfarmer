@@ -21,5 +21,12 @@ export const SOROBAN_DEMO_AGENT = 'CD3MQJ4YZQ5MDSKDETEFZMDV5J5URVXM46NY5Y3RICUOV
 // Token + vault-share decimals (both 7). Amounts are i128 in base units (1 VFUSD = 10_000_000).
 export const SOROBAN_DECIMALS = 7
 
+// Real-yield source (sub-project #2): Blend Capital v2 lending pool the vault supplies into.
+// Empty until the testnet cutover (spec §4.1/§7) redeploys the vault on Blend USDC and runs
+// set_pool. Nothing consumes this yet — it surfaces the live yield source for UI/docs.
+// Testnet V2 pool + USDC reserve (re-verify live before wiring — see spec §7):
+export const SOROBAN_BLEND_POOL_ADDRESS = ''
+export const SOROBAN_BLEND_USDC_ADDRESS = 'CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU'
+
 // New gasless relay endpoint. Distinct from the EVM /api/relay (decommissioned in step 6).
 export const RELAY_PROXY_URL = '/api/stellar-relay'
