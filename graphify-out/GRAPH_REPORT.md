@@ -1,15 +1,16 @@
-# Graph Report - C:\SharredData\project\competition\vibing-farmer  (2026-06-22)
+# Graph Report - vibing-farmer  (2026-06-27)
 
 ## Corpus Check
-- cluster-only mode — file stats not available
+- 1085 files · ~1,180,058 words
+- Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 10322 nodes · 12437 edges · 900 communities (777 shown, 123 thin omitted)
-- Extraction: 97% EXTRACTED · 3% INFERRED · 0% AMBIGUOUS · INFERRED: 336 edges (avg confidence: 0.8)
+- 12930 nodes · 16852 edges · 942 communities (838 shown, 104 thin omitted)
+- Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 348 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `7d78be24`
+- Built from commit: `7a8a07f2`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -583,7 +584,6 @@
 - [[_COMMUNITY_Community 567|Community 567]]
 - [[_COMMUNITY_Community 568|Community 568]]
 - [[_COMMUNITY_Community 569|Community 569]]
-- [[_COMMUNITY_Community 570|Community 570]]
 - [[_COMMUNITY_Community 571|Community 571]]
 - [[_COMMUNITY_Community 572|Community 572]]
 - [[_COMMUNITY_Community 573|Community 573]]
@@ -794,6 +794,7 @@
 - [[_COMMUNITY_Community 780|Community 780]]
 - [[_COMMUNITY_Community 781|Community 781]]
 - [[_COMMUNITY_Community 782|Community 782]]
+- [[_COMMUNITY_Community 783|Community 783]]
 - [[_COMMUNITY_Community 784|Community 784]]
 - [[_COMMUNITY_Community 785|Community 785]]
 - [[_COMMUNITY_Community 786|Community 786]]
@@ -834,6 +835,8 @@
 - [[_COMMUNITY_Community 825|Community 825]]
 - [[_COMMUNITY_Community 826|Community 826]]
 - [[_COMMUNITY_Community 827|Community 827]]
+- [[_COMMUNITY_Community 828|Community 828]]
+- [[_COMMUNITY_Community 829|Community 829]]
 - [[_COMMUNITY_Community 830|Community 830]]
 - [[_COMMUNITY_Community 831|Community 831]]
 - [[_COMMUNITY_Community 832|Community 832]]
@@ -854,6 +857,8 @@
 - [[_COMMUNITY_Community 847|Community 847]]
 - [[_COMMUNITY_Community 848|Community 848]]
 - [[_COMMUNITY_Community 849|Community 849]]
+- [[_COMMUNITY_Community 850|Community 850]]
+- [[_COMMUNITY_Community 851|Community 851]]
 - [[_COMMUNITY_Community 852|Community 852]]
 - [[_COMMUNITY_Community 853|Community 853]]
 - [[_COMMUNITY_Community 854|Community 854]]
@@ -898,24 +903,63 @@
 - [[_COMMUNITY_Community 897|Community 897]]
 - [[_COMMUNITY_Community 898|Community 898]]
 - [[_COMMUNITY_Community 899|Community 899]]
+- [[_COMMUNITY_Community 900|Community 900]]
+- [[_COMMUNITY_Community 901|Community 901]]
+- [[_COMMUNITY_Community 902|Community 902]]
+- [[_COMMUNITY_Community 903|Community 903]]
+- [[_COMMUNITY_Community 904|Community 904]]
+- [[_COMMUNITY_Community 905|Community 905]]
+- [[_COMMUNITY_Community 906|Community 906]]
+- [[_COMMUNITY_Community 907|Community 907]]
+- [[_COMMUNITY_Community 908|Community 908]]
+- [[_COMMUNITY_Community 909|Community 909]]
+- [[_COMMUNITY_Community 910|Community 910]]
+- [[_COMMUNITY_Community 911|Community 911]]
+- [[_COMMUNITY_Community 912|Community 912]]
+- [[_COMMUNITY_Community 913|Community 913]]
+- [[_COMMUNITY_Community 914|Community 914]]
+- [[_COMMUNITY_Community 915|Community 915]]
+- [[_COMMUNITY_Community 916|Community 916]]
+- [[_COMMUNITY_Community 917|Community 917]]
+- [[_COMMUNITY_Community 918|Community 918]]
+- [[_COMMUNITY_Community 919|Community 919]]
+- [[_COMMUNITY_Community 920|Community 920]]
+- [[_COMMUNITY_Community 921|Community 921]]
+- [[_COMMUNITY_Community 922|Community 922]]
+- [[_COMMUNITY_Community 923|Community 923]]
+- [[_COMMUNITY_Community 924|Community 924]]
+- [[_COMMUNITY_Community 925|Community 925]]
+- [[_COMMUNITY_Community 926|Community 926]]
+- [[_COMMUNITY_Community 927|Community 927]]
+- [[_COMMUNITY_Community 928|Community 928]]
+- [[_COMMUNITY_Community 929|Community 929]]
+- [[_COMMUNITY_Community 930|Community 930]]
+- [[_COMMUNITY_Community 931|Community 931]]
+- [[_COMMUNITY_Community 932|Community 932]]
+- [[_COMMUNITY_Community 933|Community 933]]
+- [[_COMMUNITY_Community 934|Community 934]]
+- [[_COMMUNITY_Community 935|Community 935]]
+- [[_COMMUNITY_Community 936|Community 936]]
+- [[_COMMUNITY_Community 937|Community 937]]
+- [[_COMMUNITY_Community 938|Community 938]]
 
 ## God Nodes (most connected - your core abstractions)
-1. `cn()` - 202 edges
-2. `CTF Web - Advanced Server-Side Techniques` - 92 edges
+1. `cn()` - 226 edges
+2. `CTF Web - Advanced Server-Side Techniques` - 96 edges
 3. `Psychologist Analyst` - 90 edges
-4. `React View Transitions (SKILL.md)` - 75 edges
-5. `CTF Web Exploitation` - 73 edges
-6. `CTF Web Exploitation` - 72 edges
-7. `CTF Web Exploitation` - 69 edges
-8. `App()` - 58 edges
-9. `Next.js Best Practices` - 54 edges
-10. `Prompt Engineering` - 42 edges
+4. `CTF Web Exploitation` - 86 edges
+5. `CTF Web Exploitation` - 82 edges
+6. `CTF Web Exploitation` - 80 edges
+7. `React View Transitions (SKILL.md)` - 75 edges
+8. `Next.js Best Practices` - 64 edges
+9. `App()` - 57 edges
+10. `App()` - 55 edges
 
 ## Surprising Connections (you probably didn't know these)
+- `AgentAccount` --calls--> `deposit function`  [EXTRACTED]
+  soroban/contracts/agent_account/src/lib.rs → docs/soroban-interfaces.md
 - `Vercel React Best Practices` --semantically_similar_to--> `README (Vibing Farmer)`  [INFERRED] [semantically similar]
   .agents/skills/vercel-react-best-practices/AGENTS.md → README.md
-- `AI Council Strategy Wizard Plan` --references--> `synthesize`  [EXTRACTED]
-  docs/superpowers/plans/2026-06-10-ai-council-strategy-wizard.md → frontend/src/strategy/councilReview.js
 - `Propose Rule (proposeRule)` --implements--> `ACE Loop`  [INFERRED]
   frontend/src/strategy/curator.js → docs/superpowers/plans/2026-06-10-ai-council-strategy-wizard.md
 - `Merge Pass (mergePass)` --implements--> `ACE Loop`  [INFERRED]
@@ -924,6 +968,9 @@
   frontend/src/strategy/prune.js → docs/superpowers/plans/2026-06-10-ai-council-strategy-wizard.md
 
 ## Import Cycles
+- 1-file cycle: `frontend/functions/api/ai.js -> frontend/functions/api/ai.js`
+- 1-file cycle: `frontend/functions/api/search.js -> frontend/functions/api/search.js`
+- 1-file cycle: `frontend/functions/api/stellar-relay.js -> frontend/functions/api/stellar-relay.js`
 - 1-file cycle: `frontend/src/app.jsx -> frontend/src/app.jsx`
 - 1-file cycle: `soroban/contracts/agent_account/src/account.rs -> soroban/contracts/agent_account/src/account.rs`
 - 1-file cycle: `soroban/contracts/agent_account/src/test.rs -> soroban/contracts/agent_account/src/test.rs`
@@ -931,59 +978,59 @@
 - 1-file cycle: `soroban/contracts/rwa_vault/src/storage.rs -> soroban/contracts/rwa_vault/src/storage.rs`
 - 2-file cycle: `frontend/src/app.jsx -> frontend/src/components/NotificationCenter.jsx -> frontend/src/app.jsx`
 
-## Communities (900 total, 123 thin omitted)
+## Communities (942 total, 104 thin omitted)
 
 ### Community 0 - "Cheatcodes Printer"
-Cohesion: 0.02
-Nodes (78): Apache ErrorDocument Expression File Read (Zero HTB), Base64-Encoded Path Traversal (Sharif CTF 2016), Castor XML Deserialization via xsi:type Polymorphism (Atlas HTB), ElasticSearch Groovy script_fields RCE via SSRF (VolgaCTF 2017), HQL Injection via Non-Breaking Space (HackIM 2016), INSERT INTO Dual-Field SQLi Column Shift (CyberSecurityRumble 2016), LaTeX RCE via mpost Restricted write18 Bypass (33C3 CTF 2016), PHP zip:// Wrapper LFI via PNG/ZIP Polyglot (PlaidCTF 2016) (+70 more)
+Cohesion: 0.09
+Nodes (31): Apache ErrorDocument Expression File Read (Zero HTB), Base64-Encoded Path Traversal (Sharif CTF 2016), Castor XML Deserialization via xsi:type Polymorphism (Atlas HTB), CTF Web - Advanced Server-Side Techniques (Part 2), ElasticSearch Groovy script_fields RCE via SSRF (VolgaCTF 2017), HQL Injection via Non-Breaking Space (HackIM 2016), INSERT INTO Dual-Field SQLi Column Shift (CyberSecurityRumble 2016), LaTeX RCE via mpost Restricted write18 Bypass (33C3 CTF 2016) (+23 more)
 
 ### Community 1 - "Cheatcodes Printer"
 Cohesion: 0.05
-Nodes (58): startAutonomousAgent, emergencyWithdraw(), emit(), executeHarvest(), handleWorkerMessage(), harvestVault(), listeners, _loopBus (+50 more)
+Nodes (97): Task 3: De-simulate swap+approve in worker, startAutonomousAgent, emergencyWithdraw(), emit(), executeHarvest(), handleWorkerMessage(), harvestVault(), listeners (+89 more)
 
 ### Community 2 - "Agent Brain UI"
 Cohesion: 0.04
-Nodes (66): 7. Backup & Disaster Recovery, Automated Backups, 10. Dependency Security, 2. Input Validation, 3. SQL Injection Prevention, 5. XSS Prevention, 6. CSRF Protection, 8. Sensitive Data Exposure (+58 more)
+Nodes (76): 3. Network Security, Verification Steps, VPC and Firewall Configuration, 10. Dependency Security, 2. Input Validation, 3. SQL Injection Prevention, 4. Authentication & Authorization, 5. XSS Prevention (+68 more)
 
 ### Community 3 - "Account ERC7913 Tests"
-Cohesion: 0.06
-Nodes (56): Card(), CardAction(), CardContent(), CardDescription(), CardFooter(), CardHeader(), CardTitle(), Input() (+48 more)
+Cohesion: 0.05
+Nodes (62): Card(), CardAction(), CardContent(), CardDescription(), CardFooter(), CardHeader(), CardTitle(), Input() (+54 more)
 
 ### Community 4 - "UI Input and Sheet"
-Cohesion: 0.04
-Nodes (57): 1Shot Managed API, Agent Permissions / Scope, AgentRegistry.sol, ADR Decisions, CLAUDE.md, Commands, Current Phase, Directory Structure (+49 more)
+Cohesion: 0.05
+Nodes (46): 1Shot Managed API, Behavioral Simulation Module (behavioral.js), Risk Metrics (VaR/CVaR), Risk Parameters Module, Agent Permissions / Scope, AgentRegistry.sol, ADR Decisions, CLAUDE.md (+38 more)
 
 ### Community 5 - "Avatar Breadcrumb UI"
 Cohesion: 0.03
-Nodes (62): CTF Web Auth & Access, CTF Web Auth Infra, CTF Web Auth JWT, CTF Web Client Side Advanced, Additional Resources, Apache CVE-2012-0053 HttpOnly Cookie Leak, Apache ErrorDocument Expression File Read (Zero HTB), Apache mod_status Information Disclosure (+54 more)
+Nodes (74): CTF Web Auth & Access, CTF Web Auth Infra, CTF Web Auth JWT, CTF Web Client Side Advanced, Additional Resources, Admin Bot javascript: URL Scheme Bypass, Apache CVE-2012-0053 HttpOnly Cookie Leak, Apache ErrorDocument Expression File Read (Zero HTB) (+66 more)
 
 ### Community 6 - "Agent Memory System"
-Cohesion: 0.05
-Nodes (38): ExplorerPage(), formatTime(), TABS, TxList(), PermissionPanel(), card, ContractRow(), dangerBtn (+30 more)
+Cohesion: 0.04
+Nodes (58): AttestationsTable(), CONTRACT_COUNT, ContractCard(), CONTRACTS, ExplorerPage(), ExplorerStyle(), fetchTotalDeposits(), SECURITY (+50 more)
 
 ### Community 7 - "History and Settings UI"
-Cohesion: 0.10
-Nodes (39): AccessControl, DataKey, Pausable, Address, Env, Result, VaultError, Address (+31 more)
+Cohesion: 0.09
+Nodes (42): AccessControl, DataKey, Pausable, Address, Env, Result, VaultError, Address (+34 more)
 
 ### Community 8 - "EIP-7702 Account Tests"
 Cohesion: 0.03
-Nodes (59): Additional Resources, Apache CVE-2012-0053 HttpOnly Cookie Leak, Apache ErrorDocument Expression File Read (Zero HTB), Apache mod_status Information Disclosure, Auth & Access Control Quick Reference, Base64 Decode Leniency and Parameter Override for Signature Bypass (BCTF 2016), basename() Bypass for Hidden Files, Chrome Unicode URL Normalization Bypass (RCTF 2017) (+51 more)
+Nodes (71): Additional Resources, Admin Bot javascript: URL Scheme Bypass, Apache CVE-2012-0053 HttpOnly Cookie Leak, Apache ErrorDocument Expression File Read (Zero HTB), Apache mod_status Information Disclosure, Auth & Access Control Quick Reference, Base64 Decode Leniency and Parameter Override for Signature Bypass (BCTF 2016), basename() Bypass for Hidden Files (+63 more)
 
 ### Community 9 - "App Explorer Background"
 Cohesion: 0.03
-Nodes (59): CTF Web Auth & Access Control Reference, Additional Resources, Apache CVE-2012-0053 HttpOnly Cookie Leak, Apache ErrorDocument Expression File Read (Zero HTB), Apache mod_status Information Disclosure, Auth & Access Control Quick Reference, Base64 Decode Leniency and Parameter Override for Signature Bypass (BCTF 2016), basename() Bypass for Hidden Files (+51 more)
+Nodes (69): XSSI via JSONP Callback, CTF Web Auth & Access Control Reference, Additional Resources, Apache CVE-2012-0053 HttpOnly Cookie Leak, Apache ErrorDocument Expression File Read (Zero HTB), Apache mod_status Information Disclosure, Auth & Access Control Quick Reference, Base64 Decode Leniency and Parameter Override for Signature Bypass (BCTF 2016) (+61 more)
 
 ### Community 10 - "Frontend Best Practices"
-Cohesion: 0.04
-Nodes (55): Abstract, Accessibility, Availability, Choosing Animation Style, CSS Pseudo-Elements, Next.js Integration, Styling with View Transition Classes, Table of Contents (+47 more)
+Cohesion: 0.05
+Nodes (62): Installation, React View Transitions Skill, Resources, Skill Structure, What This Skill Covers, Accessibility, Animation Triggers, Availability (+54 more)
 
 ### Community 11 - "Council Decision UI"
-Cohesion: 0.05
-Nodes (40): card, cardPad, dot(), eyebrow, fmtAmt(), formatTime(), getTrendingVaults(), HomePage() (+32 more)
+Cohesion: 0.06
+Nodes (38): card, cardPad, dot(), eyebrow, fmtAmt(), formatTime(), getTrendingVaults(), HomePage() (+30 more)
 
 ### Community 12 - "Agent Dashboard UI"
-Cohesion: 0.04
-Nodes (56): AgentVaultDepositor, AgentVaultDepositor, EIP-7702, ERC-7715, MetaMask Flask, MockVault, vis.js Network, DelegationManager (+48 more)
+Cohesion: 0.07
+Nodes (40): AgentVaultDepositor, AgentVaultDepositor, EIP-7702, ERC-7715, MetaMask Flask, MockVault, vis.js Network, DelegationManager (+32 more)
 
 ### Community 13 - "Autonomous Agent Controller"
 Cohesion: 0.04
@@ -991,75 +1038,71 @@ Nodes (10): COUNCIL, CouncilEvent, CycleState, geist, mono, SectionId, StageStat
 
 ### Community 14 - "Vault Onboarding Flow"
 Cohesion: 0.04
-Nodes (54): DeFiLlama API, EIP-712, EVM 1Shot relay (api/relay.js), expo-image, Zustand, MetaMask Flask, AgentRegistry.spec (Phase 1), Architecture (+46 more)
+Nodes (52): EIP-712, EVM 1Shot relay (api/relay.js), expo-image, Zustand, MetaMask Flask, AgentRegistry.spec (Phase 1), Architecture, CI pipeline (+44 more)
 
 ### Community 15 - "Alert Dialog UI"
-Cohesion: 0.04
-Nodes (46): Best Practices, Integration with Amplihack, Links, Overview, Common Pitfalls to Avoid, Continuous Improvement, Core Philosophy: Psychological Thinking, Integration with Other Analysts (+38 more)
+Cohesion: 0.09
+Nodes (33): Common Pitfalls to Avoid, Continuous Improvement, Core Philosophy: Psychological Thinking, Example 1: Decision-Making - Financial Market Panic, Example 2: Group Dynamics - Groupthink in Policy Disaster, Example 3: Trauma Response - Mass Shooting Psychological Impacts, Integration with Other Analysts, Psychologist Analyst Skill (+25 more)
 
 ### Community 16 - "Merkle Trie Proofs"
-Cohesion: 0.05
-Nodes (47): EVM Decommission, positionsStore (EVM), readProvider (EVM), Stellar Chain Layer, Attestation Contract (Soroban), strategyHash, Behavioral Simulation Module (behavioral.js), Risk Metrics (VaR/CVaR) (+39 more)
+Cohesion: 0.07
+Nodes (31): EVM Decommission, positionsStore (EVM), readProvider (EVM), Stellar Chain Layer, AgentAccount (Soroban), owner_withdraw, agentDeposit.js, Session Key (Stellar) (+23 more)
 
 ### Community 17 - "Pragma Validity Check"
-Cohesion: 0.07
-Nodes (37): ALLOWED_MODELS, handler(), onRequest, readBody(), allowedOrigins(), applyCors(), _buckets, clientIp() (+29 more)
+Cohesion: 0.08
+Nodes (38): figmaAssetResolver(), ALLOWED_MODELS, handler(), onRequest, readBody(), allowedOrigins(), applyCors(), _buckets (+30 more)
 
 ### Community 18 - "Figma AI Resolver"
 Cohesion: 0.06
-Nodes (23): STEP_LABELS, SkillCard(), React, formatProtocol(), PROTOCOL_NAMES, translateSkill(), VAULT_LETTERS, Avatar() (+15 more)
-
-### Community 19 - "P256 Account Tests"
-Cohesion: 0.05
-Nodes (29): STEPS, ActivityPanel(), EVENT_STYLES, PalettePicker(), PALETTES, SkillPanel(), WalletPanel(), RISK_OPTIONS (+21 more)
+Nodes (25): React, Avatar(), AvatarFallback(), AvatarImage(), Badge(), badgeVariants, Checkbox(), HoverCardContent() (+17 more)
 
 ### Community 20 - "Access Manager Tests"
-Cohesion: 0.04
-Nodes (43): Algorithm Confusion (RS256 to HS256), Algorithm None, CTF Web - JWT & JWE Token Attacks, JWE Token Forgery with Exposed Public Key (UTCTF 2026), JWT Balance Replay (MetaShop Pattern), KID Path Traversal (Crypto-Cat), Table of Contents, Unverified Signature (Crypto-Cat) (+35 more)
+Cohesion: 0.17
+Nodes (11): Apache Guacamole Connection Parameter Extraction (Barrier HTB), Base64 Decode Leniency and Parameter Override for Signature Bypass (BCTF 2016), CI/CD Variable Credential Theft (Barrier HTB), CORS Misconfiguration, CTF Web - OAuth, SAML & Infrastructure Auth Attacks, Git History Credential Leakage (Barrier HTB), Identity Provider API Takeover (Barrier HTB), Login Page Poisoning for Credential Harvesting (Watcher HTB) (+3 more)
 
 ### Community 21 - "Agent Analyzer Composer"
-Cohesion: 0.04
-Nodes (44): ABI Coder v1 vs v2 - Dirty Address Bypass, Auth Implementation (Python), Challenge Infrastructure Pattern, Complete Exploit Flow (House of Illusions), CTF Web - Web3 / Blockchain Challenges, Groth16 Proof Forgery for Blockchain Governance (DiceCTF 2026), Non-Standard ABI Calldata Encoding, Phantom Market Unresolve + Force-Funding (DiceCTF 2026) (+36 more)
+Cohesion: 0.12
+Nodes (15): ABI Coder v1 vs v2 - Dirty Address Bypass, Auth Implementation (Python), Challenge Infrastructure Pattern, Complete Exploit Flow (House of Illusions), CTF Web - Web3 / Blockchain Challenges, Delegatecall Storage Context Abuse (EHAX 2026), EIP-1967 Proxy Pattern Exploitation, Groth16 Proof Forgery for Blockchain Governance (DiceCTF 2026) (+7 more)
 
 ### Community 22 - "EIP-712 Hash Tests"
-Cohesion: 0.04
-Nodes (45): Animation Timing, Backdrop-Blur Workaround, Card Expand/Collapse with `startTransition`, Common Mistakes, Cross-Fade Without Remount, CSS Animation Recipes, Directional Navigation, Exclude Elements with `useOptimistic` (+37 more)
+Cohesion: 0.08
+Nodes (23): Backdrop-Blur Workaround, Common Mistakes, CSS Animation Recipes, Directional Navigation, Fade, Implementation Workflow, Persistent Element Isolation, Reduced Motion (+15 more)
 
 ### Community 23 - "Governor Timelock Tests"
-Cohesion: 0.04
-Nodes (45): Animation Timing, Backdrop-Blur Workaround, Card Expand/Collapse with `startTransition`, Common Mistakes, Cross-Fade Without Remount, CSS Animation Recipes, Directional Navigation, Exclude Elements with `useOptimistic` (+37 more)
+Cohesion: 0.08
+Nodes (23): Backdrop-Blur Workaround, Common Mistakes, CSS Animation Recipes, Directional Navigation, Fade, Implementation Workflow, Persistent Element Isolation, Reduced Motion (+15 more)
 
 ### Community 24 - "UI Component Library"
-Cohesion: 0.04
-Nodes (37): Demo-Polish Plan Design Spec, SKILL.md (1shot-api), 1. Security & Privacy Overview, 2. Data Classification, 3. Threat Model, 4. Security Controls, 6. Pre-Deployment Security Checklist, API Security (+29 more)
+Cohesion: 0.17
+Nodes (10): 1. Security & Privacy Overview, 2. Data Classification, 4. Security Controls, 5. Compliance, 6. Pre-Deployment Security Checklist, API Security, Frontend, Key lifecycle (worker / session keys) (+2 more)
 
 ### Community 25 - "Badge and Hover Card"
-Cohesion: 0.05
-Nodes (38): Key Terminology, License, Prerequisites, Purpose, Documentation, Migrations, Normalization (SQL), Pre-Design (+30 more)
+Cohesion: 0.09
+Nodes (32): Anti-Patterns, Commands, Core Principles, Database Schema Designer, Extension Points, Key Terms, Process Overview, Quick Reference (+24 more)
 
 ### Community 26 - "Access Control Tests"
-Cohesion: 0.08
-Nodes (39): Defensive Ideas, Fast-Fail Gates, FinRL, Gas Spike Signal, capitalGate, evaluateGates, gasGate, turbulenceGate (+31 more)
+Cohesion: 0.15
+Nodes (16): Defensive Ideas, Fast-Fail Gates, FinRL, Gas Spike Signal, Offensive Ideas, Background (read before starting), Fast-Fail Gates Implementation Plan, File Structure (+8 more)
 
 ### Community 27 - "Account Behavior Tests"
-Cohesion: 0.07
-Nodes (28): AgentDashboard(), ALERT_META, alertLine(), fmt(), formatTime(), mono, sectionLabel, textBtn() (+20 more)
+Cohesion: 0.05
+Nodes (44): withdrawFromVault(), AgentDashboard(), ALERT_META, alertLine(), fmt(), formatTime(), mono, sectionLabel (+36 more)
 
 ### Community 28 - "ERC20 Behavior Tests"
-Cohesion: 0.05
-Nodes (40): Bundling, Error Handling, Font Optimization, Functions, Image Optimization, Metadata & OG Images, Next.js Best Practices, Parallel & Intercepting Routes (+32 more)
+Cohesion: 0.04
+Nodes (50): Async Patterns, Bundling, Data Patterns, Debug Tricks, Directives, Error Handling, File Conventions, Font Optimization (+42 more)
 
 ### Community 29 - "Ecosystem Partner Page"
-Cohesion: 0.05
-Nodes (35): Bite-Sized Task Granularity, Execution Handoff, File Structure, No Placeholders, Overview, Plan Document Header, Remember, Scope Check (+27 more)
+Cohesion: 0.06
+Nodes (54): Bite-Sized Task Granularity, Execution Handoff, File Structure, No Placeholders, Overview, Plan Document Header, Remember, Scope Check (+46 more)
 
 ### Community 30 - "ERC7739 Utils Tests"
-Cohesion: 0.06
-Nodes (15): PARTNERS, STANDARDS, groupV, lineV, SCENE_2, SCENE_3, SCENE_VIDEO, fmtSeed() (+7 more)
+Cohesion: 0.08
+Nodes (22): EcoStyle(), EcosystemPage(), PartnerCard(), PARTNERS, StandardBadge(), STANDARDS, groupV, lineV (+14 more)
 
 ### Community 31 - "Governor Nonces Keyed"
-Cohesion: 0.05
-Nodes (36): Chroma Setup, Database Comparison Matrix, Decision Flowchart, HNSW Parameters, Index Tuning Guide, pgvector Setup, Pinecone Setup, Qdrant Setup (+28 more)
+Cohesion: 0.06
+Nodes (47): Chroma Setup, Collection per Tenant (High Isolation), Database Comparison Matrix, Decision Flowchart, HNSW Parameters, Index Tuning Guide, Metadata Filtering (Qdrant/Weaviate), Multi-Tenancy Patterns (+39 more)
 
 ### Community 32 - "ERC20 Temporary Approval"
 Cohesion: 0.05
@@ -1071,163 +1114,163 @@ Nodes (36): 10. Security, 11. Children's Privacy, 12. Contact and Rights, 13. Po
 
 ### Community 34 - "Home Page Transaction List"
 Cohesion: 0.07
-Nodes (34): addTransitionType, Animation Timing, Card Expand/Collapse with `startTransition`, Cross-Fade Without Remount, Exclude Elements with `useOptimistic`, Floating Elements, Isolate Elements from Parent Animations, Patterns and Guidelines (+26 more)
+Nodes (36): addTransitionType, Animation Timing, Card Expand/Collapse with `startTransition`, Cross-Fade Without Remount, Exclude Elements with `useOptimistic`, Floating Elements, Isolate Elements from Parent Animations, Patterns and Guidelines (+28 more)
 
 ### Community 35 - "Strategy Console Market"
-Cohesion: 0.06
-Nodes (36): Complete Optimized Pipeline, Contextual Compression, Extractive Compression with Cross-Encoder, HyDE (Hypothetical Document Embeddings), Metadata Filtering, Multi-HyDE (Multiple Perspectives), Multi-Tenant Filtering, Optimization Techniques Overview (+28 more)
+Cohesion: 0.09
+Nodes (32): 1. Metadata Filtering, 2. Maximal Marginal Relevance (MMR), 3. Reranking with Cross-Encoder, 4. Cohere Rerank, Retrieval Optimization, Cohere Rerank, ColBERT-Style Late Interaction, Complete Optimized Pipeline (+24 more)
 
 ### Community 36 - "Playbook Curator"
-Cohesion: 0.06
-Nodes (33): Cloud & Infrastructure Security, Common Cloud Security Misconfigurations, RDS Public Access, Resources, S3 Bucket Exposure, When to Activate, Automated Security Tests, Resources (+25 more)
+Cohesion: 0.09
+Nodes (24): Cloud & Infrastructure Security Skill, Common Cloud Security Misconfigurations, Pre-Deployment Cloud Security Checklist, RDS Public Access, Resources, S3 Bucket Exposure, When to Activate, Cloud & Infrastructure Security Skill (+16 more)
 
 ### Community 37 - "Catalog State Management"
-Cohesion: 0.06
-Nodes (35): HomePage.jsx Component, Conventions, File map, Demo Polish Implementation Plan, Self-review notes, Task 10: Make the AI-model setting honest (D1), Task 11: Honest connection tests (F3), Task 12: Fix mis-typed failure logs (E1) (+27 more)
+Cohesion: 0.22
+Nodes (12): HomePage.jsx Component, Conventions, Demo-Polish Implementation Plan, File map, Demo Polish Implementation Plan, Self-review notes, Task 24: Full happy-path smoke + demo-path checklist, Task 2: Remove dead edit-mode wire (D2) (+4 more)
 
 ### Community 38 - "Account Impersonation Tests"
-Cohesion: 0.06
-Nodes (35): AgentRegistry Smart Contract, AgentVaultDepositor Smart Contract, Roadmap & Backlog Document, Demo Script Indonesian, De-Simulate All Layers Plan (2026-06-10), 1. Persiapan Demo (Pre-Recording Checklist), 2. Struktur Visual & Komponen Codebase, 3. Garis Besar Alur Demo (Timeline) (+27 more)
+Cohesion: 0.21
+Nodes (12): AgentRegistry Smart Contract, AgentVaultDepositor Smart Contract, Roadmap & Backlog Document, Demo Script Indonesian, De-Simulate All Layers Plan (2026-06-10), Fast-Fail Gates Plan (2026-06-10), Visualization graph module (graph.js), MockVault Smart Contract (+4 more)
 
 ### Community 39 - "ERC4337 Helper"
 Cohesion: 0.07
 Nodes (32): Strategy State/Action/Reward Formalization, EIP-7702, ERC-7710, ERC-7715, ethers v6, cdp, publicClient, MetaMask Flask (+24 more)
 
 ### Community 40 - "Governor Helper"
-Cohesion: 0.06
-Nodes (31): Best Practices for AI Agents, Document Structure, File Naming Conventions, Phase 1: Information Gathering, Phase 2: Validation & Testing, Phase 3: Decision & Documentation, Research Strategy, Tools Usage (+23 more)
+Cohesion: 0.10
+Nodes (28): Best Practices for AI Agents, Create Technical Spike Document, Document Structure, File Naming Conventions, Phase 1: Information Gathering, Phase 2: Validation & Testing, Phase 3: Decision & Documentation, Research Strategy (+20 more)
 
 ### Community 41 - "Test Set Generators"
-Cohesion: 0.07
-Nodes (34): Async Cookies and Headers, Async Params and SearchParams, generateMetadata, Migration Codemod, Pages and Layouts, Synchronous Components, Quick Reference, usePathname (+26 more)
+Cohesion: 0.09
+Nodes (23): Quick Reference, Suspense Boundaries, usePathname, useSearchParams, Quick Reference, Suspense Boundaries, usePathname, useSearchParams (+15 more)
 
 ### Community 42 - "Bridge ERC20 Tests"
-Cohesion: 0.06
-Nodes (33): Chunk Size Selection Guide, Contextual/Agentic Chunking, Late Chunking (for Long-Context Embeddings), Metadata Enrichment, Propositions-Based Chunking, Quick Reference, Recursive Character Splitting (LangChain Style), Related Skills (+25 more)
+Cohesion: 0.24
+Nodes (13): Chunk Size Selection Guide, Chunking Strategies, Contextual/Agentic Chunking, Fixed-Size Chunking, Late Chunking (for Long-Context Embeddings), Metadata Enrichment, Propositions-Based Chunking, Quick Reference (+5 more)
 
 ### Community 43 - "ERC721 Votes Tests"
-Cohesion: 0.06
-Nodes (33): BGE-M3 (Multi-lingual, Multi-granularity), Cohere Embeddings, Cohere Input Types, Dimension Trade-offs, Model Comparison Matrix, Model Selection Flowchart, Open Source Models (Sentence Transformers), OpenAI Embeddings (+25 more)
+Cohesion: 0.07
+Nodes (40): Batching Strategy, BGE-M3 (Multi-lingual, Multi-granularity), Caching Embeddings, Cohere Embeddings, Cohere Input Types, Dimension Trade-offs, Embedding Fine-Tuning, Embedding Models (+32 more)
 
 ### Community 44 - "Access Manager Behavior"
-Cohesion: 0.09
-Nodes (29): File Structure, Final verification, Playbook Storage Implementation Plan, Spec coverage map, Task 10: Wire the Curator into `app.jsx`, Task 1: Seed catalog (`seeds.js`), Task 2: Rule store — records, CRUD, seed upsert (`ruleStore.js`), Task 3: Rule store — counters & weight (`ruleStore.js`) (+21 more)
+Cohesion: 0.06
+Nodes (59): Council, Deterministic Consensus Gate, File Structure, Final verification, Playbook Storage Implementation Plan, Spec coverage map, Task 10: Wire the Curator into `app.jsx`, Task 1: Seed catalog (`seeds.js`) (+51 more)
 
 ### Community 45 - "Governor Storage Tests"
-Cohesion: 0.06
-Nodes (29): After Response, Common Examples, Functions, Generate Functions, Navigation Hooks (Client), Request/Response, Server Functions, Static Generation (+21 more)
+Cohesion: 0.05
+Nodes (36): After Response, Common Examples, Functions, Generate Functions, Navigation, Navigation Hooks (Client), Request/Response, Server Functions (+28 more)
 
 ### Community 46 - "Vesting Wallet Tests"
-Cohesion: 0.07
-Nodes (33): 1. IAM & Access Control, 3. Network Security, 4. Logging & Monitoring, 5. CI/CD Pipeline Security, 6. Cloudflare & CDN Security, Cloudflare Security Configuration, CloudWatch/Logging Configuration, Multi-Factor Authentication (MFA) (+25 more)
+Cohesion: 0.11
+Nodes (22): 1. IAM & Access Control, 3. Network Security, 4. Logging & Monitoring, 5. CI/CD Pipeline Security, 6. Cloudflare & CDN Security, 7. Backup & Disaster Recovery, Automated Backups, Cloud Security Checklist (+14 more)
 
 ### Community 47 - "Command Dialog UI"
 Cohesion: 0.07
 Nodes (18): React Compiler, Re-render Optimization, Destructure Functions Early in Render (React Compiler), Defer State Reads to Usage Point, Narrow Effect Dependencies, Calculate Derived State During Rendering, Subscribe to Derived State, Use Functional setState Updates (+10 more)
 
 ### Community 48 - "Psychology Personality Models"
-Cohesion: 0.06
-Nodes (31): Non-Functional Requirements Checklist, Quick Reference, Template, Design Template, Quick Reference, System Design Template, Availability, Cost (+23 more)
+Cohesion: 0.05
+Nodes (39): Availability, Cost, Maintainability, NFR Categories, Non-Functional Requirements Checklist, Performance, Quick Reference, Reliability (+31 more)
 
 ### Community 49 - "Agent Graph Strategy"
-Cohesion: 0.06
-Nodes (29): Constraints, Core Workflow, MUST DO, MUST NOT DO, Reference Guide, Role Definition, When to Use This Skill, Architecture Designer (+21 more)
+Cohesion: 0.08
+Nodes (32): Architecture Designer, Constraints, Core Workflow, MUST DO, MUST NOT DO, Reference Guide, Role Definition, When to Use This Skill (+24 more)
 
 ### Community 50 - "Storage Slot Derivation"
-Cohesion: 0.11
-Nodes (29): credBlob, ethers, HKDF Derivation, Iframe Isolation Pattern, Iframe Isolation, Iframe Isolation for Wallet Operations, largeBlob, LongBlob Fallback (+21 more)
+Cohesion: 0.09
+Nodes (32): File Layout You Should End Up With, Getting Started Checklist, Implementation Workflow, Package Installation, Quick Reference, Security Notes, WebAuthn PRF Wallet, When NOT to use this skill (+24 more)
 
 ### Community 51 - "ERC2771 Context Tests"
-Cohesion: 0.06
-Nodes (21): lucide-react, AccordionContent(), AccordionItem(), AccordionTrigger(), Breadcrumb(), BreadcrumbEllipsis(), BreadcrumbItem(), BreadcrumbPage() (+13 more)
+Cohesion: 0.18
+Nodes (7): SelectContent(), SelectItem(), SelectLabel(), SelectScrollDownButton(), SelectScrollUpButton(), SelectSeparator(), SelectTrigger()
 
 ### Community 52 - "Async Patterns Reference"
-Cohesion: 0.09
-Nodes (28): frontend/src/app.jsx, DAG, frontend/src/strategy/fetchDag.js, frontend/src/strategy/gasSnapshot.js, Market context, frontend/src/strategy/mdp.js, On-chain signals, Parallel fetch (+20 more)
+Cohesion: 0.04
+Nodes (92): frontend/src/app.jsx, DAG, frontend/src/strategy/fetchDag.js, fetchMarketContext, frontend/src/strategy/gasSnapshot.js, loadVaultSkill, Market context, frontend/src/strategy/mdp.js (+84 more)
 
 ### Community 53 - "Enumerable Map Tests"
-Cohesion: 0.07
-Nodes (29): Aave v3 USDC Vault, Default Vault Advisor Skill, Aave v3 (USDC), AVAILABLE VAULTS FOR THIS SESSION, Fluid Protocol (USDC), HOW TO USE LIVE MARKET CONTEXT, OUTPUT REQUIREMENTS, Pendle Finance (PT-USDC) (+21 more)
+Cohesion: 0.08
+Nodes (31): Aave v3 USDC Vault, Default Vault Advisor Skill, Aave v3 (USDC), AVAILABLE VAULTS FOR THIS SESSION, Fluid Protocol (USDC), HOW TO USE LIVE MARKET CONTEXT, Morpho Blue (USDC), OUTPUT REQUIREMENTS (+23 more)
 
 ### Community 54 - "Autonomous Decision Loop"
 Cohesion: 0.06
-Nodes (31): 1st Normal Form (1NF), 2nd Normal Form (2NF), 3rd Normal Form (3NF), Adding a Column (Zero-Downtime), Boolean, Composite Index Order, Date/Time Types, Embedded Document (+23 more)
+Nodes (32): 1st Normal Form (1NF), 2nd Normal Form (2NF), 3rd Normal Form (3NF), Adding a Column (Zero-Downtime), Boolean, Composite Index Order, Date/Time Types, Embedded Document (+24 more)
 
 ### Community 55 - "Gate Check Filters"
 Cohesion: 0.06
-Nodes (31): 1st Normal Form (1NF), 2nd Normal Form (2NF), 3rd Normal Form (3NF), Adding a Column (Zero-Downtime), Boolean, Composite Index Order, Date/Time Types, Embedded Document (+23 more)
+Nodes (32): 1st Normal Form (1NF), 2nd Normal Form (2NF), 3rd Normal Form (3NF), Adding a Column (Zero-Downtime), Boolean, Composite Index Order, Date/Time Types, Embedded Document (+24 more)
 
 ### Community 56 - "Governor Quorum Fraction"
 Cohesion: 0.06
-Nodes (31): 1st Normal Form (1NF), 2nd Normal Form (2NF), 3rd Normal Form (3NF), Adding a Column (Zero-Downtime), Boolean, Composite Index Order, Date/Time Types, Embedded Document (+23 more)
+Nodes (32): 1st Normal Form (1NF), 2nd Normal Form (2NF), 3rd Normal Form (3NF), Adding a Column (Zero-Downtime), Boolean, Composite Index Order, Date/Time Types, Embedded Document (+24 more)
 
 ### Community 57 - "Template Generator"
-Cohesion: 0.16
-Nodes (28): fetchMarketContext, loadVaultSkill, councilSpecialistVerdict, enforceActionSpace, parseSpecialistVerdict, Task 1: Harden Venice AI output validation, fetchMarketContext(), formatMarketContext() (+20 more)
+Cohesion: 0.04
+Nodes (48): 1. Campaign Goals, 2. Product & Offer, 3. Audience, 4. Current State, Account Organization, Ad Copy Frameworks, Attribution Considerations, Audience Targeting Overview (+40 more)
 
 ### Community 58 - "Multi Signer Weighted Tests"
-Cohesion: 0.07
-Nodes (30): Edge Runtime, Node.js Runtime (Default), BGE / E5 (Open Source), Cohere embed-v3, OpenAI text-embedding-3-large, OpenAI text-embedding-3-small, Voyage AI, Chroma (+22 more)
+Cohesion: 0.08
+Nodes (36): Edge Runtime, Node.js Runtime (Default), When to Use Each, BGE / E5 (Open Source), Cohere embed-v3, OpenAI text-embedding-3-large, OpenAI text-embedding-3-small, Voyage AI (+28 more)
 
 ### Community 59 - "React Best Practices"
-Cohesion: 0.07
-Nodes (29): Advanced Patterns, Further Reading, Overview, Pattern 1: Distributed Processing, Pattern 2: Real-Time Systems, Pattern 3: ML at Scale, Tools & Technologies, Advanced Patterns (+21 more)
+Cohesion: 0.09
+Nodes (28): Advanced Patterns, Best Practices, Code Quality, Experiment Design Frameworks, Further Reading, Overview, Pattern 1: Distributed Processing, Pattern 2: Real-Time Systems (+20 more)
 
 ### Community 60 - "Vault Depositor CTF"
-Cohesion: 0.07
-Nodes (29): Advanced Patterns, Further Reading, Overview, Pattern 1: Distributed Processing, Pattern 2: Real-Time Systems, Pattern 3: ML at Scale, Tools & Technologies, Best Practices (+21 more)
+Cohesion: 0.06
+Nodes (44): Advanced Patterns, Best Practices, Code Quality, Feature Engineering Patterns, Further Reading, Overview, Pattern 1: Distributed Processing, Pattern 2: Real-Time Systems (+36 more)
 
 ### Community 61 - "Experiment Designer"
 Cohesion: 0.09
 Nodes (28): Backdrop-Blur Workaround, CSS Animation Recipes, Directional Navigation, Fade, Persistent Element Isolation, Reduced Motion, Scale, Separate Enter/Exit Classes (+20 more)
 
 ### Community 62 - "Feature Engineering Pipeline"
-Cohesion: 0.07
-Nodes (29): 1. Roadmap Summary, 2. Priority Matrix (MoSCoW), 3. Milestones per Phase, 4. Core Feature Backlog, 5. Risks & Mitigation, Contracts (Priority: Critical), Could Have, Frontend — Agent System (Priority: Critical) (+21 more)
+Cohesion: 0.06
+Nodes (33): 1. Roadmap Summary, 2. Priority Matrix (MoSCoW), 3. Milestones per Phase, 4. Core Feature Backlog, 5. Risks & Mitigation, Contracts (Priority: Critical), Could Have, Frontend — Agent System (Priority: Critical) (+25 more)
 
 ### Community 63 - "Model Evaluation Suite"
-Cohesion: 0.09
-Nodes (29): Code — `frontend/src/core/fetcher.js`, Code — `frontend/src/core/gates.js`, Code — `frontend/src/core/loop.js`, Code — `frontend/src/core/state.js`, Code — `frontend/src/council/consensus.js`, Code — `frontend/src/council/council.js`, Code — `frontend/src/execution/executor.js`, Code — `frontend/src/main.js` (+21 more)
+Cohesion: 0.06
+Nodes (44): Code — `frontend/src/core/fetcher.js`, Code — `frontend/src/core/gates.js`, Code — `frontend/src/core/loop.js`, Code — `frontend/src/core/state.js`, Code — `frontend/src/council/consensus.js`, Code — `frontend/src/council/council.js`, Code — `frontend/src/execution/executor.js`, Code — `frontend/src/main.js` (+36 more)
 
 ### Community 64 - "Blockchain Developer Skills"
-Cohesion: 0.09
-Nodes (27): Best Practices, Category: General, Common Issues, Common Tasks, Core Concepts, Key Principles, Overview, Related Resources (+19 more)
+Cohesion: 0.08
+Nodes (30): Basic Usage, Best Practices, Category: General, Common Issues, Common Tasks, Core Concepts, Key Principles, Overview (+22 more)
 
 ### Community 65 - "Gas Report Comparison"
-Cohesion: 0.09
-Nodes (24): LoopStatusPanel, react-force-graph-2d, AGENT_PROTOCOLS, agoLabel(), computeOrchestratorState(), COUNCIL_RESOLVED_LABEL, COUNCIL_ROLE_META, COUNCIL_SIGNAL_TONE (+16 more)
+Cohesion: 0.08
+Nodes (34): LoopStatusPanel, AGENT_PROTOCOLS, computeOrchestratorState(), ExecuteCard(), STEP_IDS, STEP_LABELS, AGENT_PROTOCOLS, agoLabel() (+26 more)
 
 ### Community 66 - "ERC4626 Token Tests"
-Cohesion: 0.18
-Nodes (19): main(), authorizeAndFundAgent(), buildInvokeTx(), encodeArgs(), horizonNativeBalance(), poll(), readContract(), rpcServer() (+11 more)
+Cohesion: 0.15
+Nodes (25): Freighter Wallet, main(), authorizeAndFundAgent(), buildInvokeTx(), encodeArgs(), horizonNativeBalance(), poll(), readContract() (+17 more)
 
 ### Community 67 - "Constants and Authority Utils"
-Cohesion: 0.08
-Nodes (26): 1Shot API, Base Sepolia + Real 1Shot (Managed API) + Real A2A Plan, Base Sepolia, 1Shot API (Managed Dev Platform), BLOCKED on USER (external, I cannot do these), ✅ BUILT (2026-06-03 — creds in .env.local, risk resolved), ✅ DONE (2026-06-03 cont. — cosmetic item E), DONE (this session — mechanical chain migration, no creds needed) (+18 more)
+Cohesion: 0.09
+Nodes (27): 1Shot API, Base Sepolia + Real 1Shot (Managed API) + Real A2A Plan, Base Sepolia, 1Shot API (Managed Dev Platform), Base Sepolia + Real 1Shot (Managed API) + Real A2A — Plan, BLOCKED on USER (external, I cannot do these), ✅ BUILT (2026-06-03 — creds in .env.local, risk resolved), Decision (+19 more)
 
 ### Community 68 - "Time Utilities Tests"
-Cohesion: 0.07
-Nodes (28): File Conventions Reference, Intercepting Routes, Middleware / Proxy, Next.js 14-15: `middleware.ts`, Next.js 16+: `proxy.ts`, Private Folders, Project Structure, Route Segments (+20 more)
+Cohesion: 0.08
+Nodes (34): File Conventions, File Conventions Reference, Intercepting Routes, Middleware / Proxy, Next.js 14-15: `middleware.ts`, Next.js 16+: `proxy.ts`, Parallel Routes, Private Folders (+26 more)
 
 ### Community 69 - "RAG Implementation Skills"
-Cohesion: 0.07
-Nodes (28): Build-time vs Runtime, Environment Variables, Health Check Endpoint, OpenNext: Serverless Without Vercel, PM2 Deployment, Pre-Deployment Checklist, Quick Start: Standalone Output, Runtime Configuration (+20 more)
+Cohesion: 0.10
+Nodes (28): Docker Compose, Docker Deployment, Dockerfile, Health Check Endpoint, OpenNext: Serverless Without Vercel, PM2 Deployment, Pre-Deployment Checklist, Quick Start: Standalone Output (+20 more)
 
 ### Community 70 - "ERC6909 Token Supply"
-Cohesion: 0.08
-Nodes (22): Import from Design System Folder, Keep List Items Lightweight, Install Native Dependencies in App Directory, AI Engineer, Rule Sections Index, Pass Primitives for Memoization, Single Dependency Versions Across Monorepo, Use Native Navigators (+14 more)
+Cohesion: 0.07
+Nodes (20): Import from Design System Folder, Hoist Intl Formatter Creation, Use Compressed Images in Lists, Avoid Inline Objects in renderItem, Keep List Items Lightweight, Use Item Types for Heterogeneous Lists, Install Native Dependencies in App Directory, Rule Sections Index (+12 more)
 
 ### Community 71 - "ERC721 Behavior Tests"
-Cohesion: 0.09
-Nodes (28): Fallback Recommendation Data, kimi-k2-6, Llama 3.3 70B, Mock Vault, OpenAI API, OpenAI SDK, Sepolia Testnet, System Prompt Template (+20 more)
+Cohesion: 0.19
+Nodes (13): Fallback Recommendation Data, Mock Vault, OpenAI SDK, Sepolia Testnet, System Prompt Template, USDC Token, Vault Recommendation Feature, executeDeposit Function (+5 more)
 
 ### Community 72 - "Governor Core Tests"
-Cohesion: 0.09
-Nodes (25): Business Impact & Value Model Document, Business Roadmap and Backlog, Phase 3 Integration, Phase 4 Polish, EIP-7702 Smart Account Upgrade, ERC-7715, localStorage, MetaMask Flask (+17 more)
+Cohesion: 0.07
+Nodes (28): Business Impact & Value Model Document, Business Roadmap and Backlog, Phase 3 Integration, Phase 4 Polish, EIP-7702 Smart Account Upgrade, localStorage, MetaMask Flask, 1Shot Relayer (+20 more)
 
 ### Community 73 - "Timelock Controller Tests"
-Cohesion: 0.07
-Nodes (28): Behavior Change (COM-B Model), Cialdini's Persuasion Principles, Cognitive Load Theory, Common Patterns, Core Frameworks, Dual-Process Theory (Kahneman), In Decision Making, In Social Judgment (+20 more)
+Cohesion: 0.09
+Nodes (21): Behavior Change (COM-B Model), Cialdini's Persuasion Principles, Cognitive Load Theory, Common Patterns, Core Frameworks, Dual-Process Theory (Kahneman), In Decision Making, In Social Judgment (+13 more)
 
 ### Community 74 - "Menubar UI"
 Cohesion: 0.08
@@ -1239,31 +1282,31 @@ Nodes (26): 1. Missing Alt Text for Images, 1. Perceivable, 2. Low Color Contras
 
 ### Community 76 - "Blueprint Skills"
 Cohesion: 0.07
-Nodes (26): Affine Cipher OTP Brute-Force (UTCTF 2026), Apache mod_status Information Disclosure + Session Forging (29c3 CTF 2012), Blind NoSQL with Binary Search, Broken Auth: Always-True Hash Check (0xFun 2026), Client-Side Access Gate Bypass, Cookie Manipulation, CTF Web - Auth & Access Control Attacks, Custom Linear MAC/Signature Forgery (Nullcon 2026) (+18 more)
+Nodes (27): Affine Cipher OTP Brute-Force (UTCTF 2026), Apache mod_status Information Disclosure + Session Forging (29c3 CTF 2012), Blind NoSQL with Binary Search, Broken Auth: Always-True Hash Check (0xFun 2026), Client-Side Access Gate Bypass, Cookie Manipulation, CTF Web - Auth & Access Control Attacks, Custom Linear MAC/Signature Forgery (Nullcon 2026) (+19 more)
 
 ### Community 77 - "Withdrawal Settings UI"
 Cohesion: 0.07
-Nodes (24): Available Tools, Example: Get Errors, `get_errors`, `get_logs`, `get_page_metadata`, `get_project_metadata`, `get_routes`, `get_server_action_by_id` (+16 more)
+Nodes (30): Available Tools, Debug Tricks, Example: Get Errors, `get_errors`, `get_logs`, `get_page_metadata`, `get_project_metadata`, `get_routes` (+22 more)
 
 ### Community 78 - "ERC1155 Multi Token Tests"
-Cohesion: 0.09
-Nodes (27): Browser-only APIs, Common Causes and Fixes, Date/Time Rendering, Debugging, Error Signs, Invalid HTML Nesting, Random Values or IDs, Third-party Scripts (+19 more)
+Cohesion: 0.20
+Nodes (11): Debugging, Error Signs, Hydration Errors, Debugging, Error Signs, Hydration Errors, Debugging, Error Signs (+3 more)
 
 ### Community 79 - "Agent Executor"
-Cohesion: 0.07
-Nodes (27): Behavior Change (COM-B Model), Cialdini's Persuasion Principles, Cognitive Load Theory, Common Patterns, Core Frameworks, Dual-Process Theory (Kahneman), In Decision Making, In Social Judgment (+19 more)
+Cohesion: 0.13
+Nodes (21): Behavior Change (COM-B Model), Cialdini's Persuasion Principles, Cognitive Load Theory, Core Frameworks, Dual-Process Theory (Kahneman), Essential Books, In Decision Making, In Social Judgment (+13 more)
 
 ### Community 80 - "Governor Timelock Control"
-Cohesion: 0.07
-Nodes (26): Advanced Patterns, Core Principles, Further Reading, Overview, Pattern 1: Distributed Processing, Pattern 2: Real-Time Systems, Pattern 3: ML at Scale, Performance by Design (+18 more)
+Cohesion: 0.05
+Nodes (48): Advanced Patterns, Best Practices, Code Quality, Core Principles, Further Reading, Overview, Pattern 1: Distributed Processing, Pattern 2: Real-Time Systems (+40 more)
 
 ### Community 81 - "Math Utilities Tests"
-Cohesion: 0.07
-Nodes (23): 10.1 Use Compound Components Over Polymorphic Children, 10. Design System, 14.1 Load fonts natively at build time, 14. Fonts, Abstract, References, Table of Contents, Full Compiled Document (+15 more)
+Cohesion: 0.26
+Nodes (11): Full Compiled Document, How to Use, React Native Skills, Rule Categories by Priority, When to Apply, Full Compiled Document, How to Use, React Native Skills (+3 more)
 
 ### Community 82 - "Skills Management UI"
-Cohesion: 0.07
-Nodes (16): Hoist Intl Formatter Creation, Pass Primitives to List Items for Memoization, Use Single Dependency Versions Across Monorepo, Minimize State Variables and Derive Values, Never Use && with Potentially Falsy Values, Wrap Strings in Text Components, Use Compound Components Over Polymorphic Children, Hoist Intl Formatter Creation (+8 more)
+Cohesion: 0.06
+Nodes (21): Prefer useDerivedValue Over useAnimatedReaction, Use GestureDetector for Animated Press States, Pass Primitives to List Items for Memoization, Use Single Dependency Versions Across Monorepo, Use fallback state instead of initialState, Never Use && with Potentially Falsy Values, Prefer useDerivedValue Over useAnimatedReaction, Use GestureDetector for Animated Press States (+13 more)
 
 ### Community 83 - "Tweak Controls UI"
 Cohesion: 0.10
@@ -1274,8 +1317,8 @@ Cohesion: 0.07
 Nodes (26): 1. Missing Alt Text for Images, 1. Perceivable, 2. Low Color Contrast, 2. Operable, 3. Non-Semantic HTML, 3. Understandable, 4. Missing Form Labels, 4. Robust (+18 more)
 
 ### Community 85 - "Server Cache Strategies"
-Cohesion: 0.08
-Nodes (27): ACC Summary, EvoDS Schema, localStorage, Decision Log, accSummary, buildDecisionRecord, clearDecisions, 12. Implementation Notes (+19 more)
+Cohesion: 0.05
+Nodes (54): DecisionLogPanel, ACC Summary, Calibration, EvoDS Schema, localStorage, Never-Stop Loop, Decision Log, accSummary (+46 more)
 
 ### Community 86 - "Packing Utilities"
 Cohesion: 0.07
@@ -1286,68 +1329,72 @@ Cohesion: 0.07
 Nodes (26): Available Commands, Avoid, Basic Schema Design, Best Practices, Database Schema Designer, Do, How It Works, Key Features (+18 more)
 
 ### Community 88 - "Security Exploits CVEs"
-Cohesion: 0.08
-Nodes (24): Adaptive Context Compression (ACC), Agentic RL, AI Council, AI Council Strategy Wizard Plan, app.jsx (Main App Component), Consensus Gate, CouncilInput, councilOutcome (+16 more)
+Cohesion: 0.06
+Nodes (42): ACE Loop, Adaptive Context Compression (ACC), Agentic RL, AI Council, AI Council Strategy Wizard Plan, app.jsx (Main App Component), buildCouncilInput, Consensus Gate (+34 more)
 
 ### Community 89 - "EIP-7702 Account Tests"
-Cohesion: 0.09
-Nodes (25): Common Patterns, Common Pitfalls, Cross-References, Logging & Observability, Package Setup, Parameter Validation, Quick Start, Retry & Error Handling (+17 more)
+Cohesion: 0.10
+Nodes (22): Common Patterns, Common Pitfalls, Cross-References, Package Setup, Quick Start, Security Checklist, "Transaction pending forever", Troubleshooting (+14 more)
 
 ### Community 90 - "Agent Graph Strategy"
-Cohesion: 0.08
-Nodes (25): Affine Cipher OTP Brute-Force (UTCTF 2026), Apache mod_status Information Disclosure + Session Forging (29c3 CTF 2012), Blind NoSQL with Binary Search, Broken Auth: Always-True Hash Check (0xFun 2026), Client-Side Access Gate Bypass, Cookie Manipulation, CTF Web - Auth & Access Control Attacks, Custom Linear MAC/Signature Forgery (Nullcon 2026) (+17 more)
+Cohesion: 0.07
+Nodes (26): Affine Cipher OTP Brute-Force (UTCTF 2026), Apache mod_status Information Disclosure + Session Forging (29c3 CTF 2012), Blind NoSQL with Binary Search, Broken Auth: Always-True Hash Check (0xFun 2026), Client-Side Access Gate Bypass, Cookie Manipulation, CTF Web - Auth & Access Control Attacks, Custom Linear MAC/Signature Forgery (Nullcon 2026) (+18 more)
 
 ### Community 91 - "Tweaks Panel"
-Cohesion: 0.08
-Nodes (25): AAEncode/JJEncode JS Deobfuscation (0xFun 2026), Broken Auth via Truthy Hash Check (0xFun 2026), Chrome Referrer Leak via Link Header (2025), CTF Web - CVEs & Browser Vulnerabilities, CVE-2012-0053: Apache HttpOnly Cookie Leak via 400 Bad Request (RC3 CTF 2016), CVE-2021-22204: ExifTool DjVu Perl Injection, CVE-2023-27350: PaperCut NG Authentication Bypass + RCE (Bamboo HTB), CVE-2024-22120: Zabbix Time-Based Blind SQLi (Watcher HTB) (+17 more)
+Cohesion: 0.07
+Nodes (26): AAEncode/JJEncode JS Deobfuscation (0xFun 2026), Broken Auth via Truthy Hash Check (0xFun 2026), Chrome Referrer Leak via Link Header (2025), CTF Web - CVEs & Browser Vulnerabilities, CVE-2012-0053: Apache HttpOnly Cookie Leak via 400 Bad Request (RC3 CTF 2016), CVE-2021-22204: ExifTool DjVu Perl Injection, CVE-2023-27350: PaperCut NG Authentication Bypass + RCE (Bamboo HTB), CVE-2024-22120: Zabbix Time-Based Blind SQLi (Watcher HTB) (+18 more)
 
 ### Community 92 - "Governor Super Quorum"
-Cohesion: 0.08
-Nodes (25): 13. Em Dash Overuse, 14. Overuse of Boldface, 15. Inline-Header Vertical Lists, 16. Title Case in Headings, 17. Emojis, 18. Curly Quotation Marks, 19. Collaborative Communication Artifacts, 20. Knowledge-Cutoff Disclaimers (+17 more)
+Cohesion: 0.07
+Nodes (26): 10. Rule of Three Overuse, 11. Elegant Variation (Synonym Cycling), 12. False Ranges, 19. Collaborative Communication Artifacts, 20. Knowledge-Cutoff Disclaimers, 21. Sycophantic/Servile Tone, 22. Filler Phrases, 23. Excessive Hedging (+18 more)
+
+### Community 93 - "Deploy Random Tests"
+Cohesion: 0.11
+Nodes (13): TweakButton(), TweakColor(), TweakNumber(), TweakRadio(), TweakRow(), TweakSection(), TweakSelect(), TweakSlider() (+5 more)
 
 ### Community 94 - "Array Utilities"
 Cohesion: 0.08
 Nodes (25): 1. Finance Project (`eval/finance`), 1. Offline Adaptation Mode, 1. The Generator Agent, 2. Online Adaptation Mode, 2. The Reflector Agent, 2. Web Navigation Projects (`eval/mind2web` & `eval/mind2web2`), 3. Evaluation Only Mode, 3. The Curator Agent (+17 more)
 
 ### Community 95 - "Storage Slot Low-Level"
-Cohesion: 0.08
-Nodes (25): Affine Cipher OTP Brute-Force (UTCTF 2026), Apache mod_status Information Disclosure + Session Forging (29c3 CTF 2012), Blind NoSQL with Binary Search, Broken Auth: Always-True Hash Check (0xFun 2026), Client-Side Access Gate Bypass, Cookie Manipulation, CTF Web - Auth & Access Control Attacks, Custom Linear MAC/Signature Forgery (Nullcon 2026) (+17 more)
+Cohesion: 0.07
+Nodes (26): Affine Cipher OTP Brute-Force (UTCTF 2026), Apache mod_status Information Disclosure + Session Forging (29c3 CTF 2012), Blind NoSQL with Binary Search, Broken Auth: Always-True Hash Check (0xFun 2026), Client-Side Access Gate Bypass, Cookie Manipulation, CTF Web - Auth & Access Control Attacks, Custom Linear MAC/Signature Forgery (Nullcon 2026) (+18 more)
 
 ### Community 96 - "Bytes Manipulation Tests"
-Cohesion: 0.08
-Nodes (25): AAEncode/JJEncode JS Deobfuscation (0xFun 2026), Broken Auth via Truthy Hash Check (0xFun 2026), Chrome Referrer Leak via Link Header (2025), CTF Web - CVEs & Browser Vulnerabilities, CVE-2012-0053: Apache HttpOnly Cookie Leak via 400 Bad Request (RC3 CTF 2016), CVE-2021-22204: ExifTool DjVu Perl Injection, CVE-2023-27350: PaperCut NG Authentication Bypass + RCE (Bamboo HTB), CVE-2024-22120: Zabbix Time-Based Blind SQLi (Watcher HTB) (+17 more)
+Cohesion: 0.07
+Nodes (26): AAEncode/JJEncode JS Deobfuscation (0xFun 2026), Broken Auth via Truthy Hash Check (0xFun 2026), Chrome Referrer Leak via Link Header (2025), CTF Web - CVEs & Browser Vulnerabilities, CVE-2012-0053: Apache HttpOnly Cookie Leak via 400 Bad Request (RC3 CTF 2016), CVE-2021-22204: ExifTool DjVu Perl Injection, CVE-2023-27350: PaperCut NG Authentication Bypass + RCE (Bamboo HTB), CVE-2024-22120: Zabbix Time-Based Blind SQLi (Watcher HTB) (+18 more)
 
 ### Community 97 - "Vite Build Reference"
-Cohesion: 0.08
-Nodes (24): AAEncode/JJEncode JS Deobfuscation (0xFun 2026), Broken Auth via Truthy Hash Check (0xFun 2026), Chrome Referrer Leak via Link Header (2025), CTF Web - CVEs & Browser Vulnerabilities, CVE-2012-0053: Apache HttpOnly Cookie Leak via 400 Bad Request (RC3 CTF 2016), CVE-2023-27350: PaperCut NG Authentication Bypass + RCE (Bamboo HTB), CVE-2024-22120: Zabbix Time-Based Blind SQLi (Watcher HTB), CVE-2024-28184: WeasyPrint Attachment SSRF / File Read (+16 more)
+Cohesion: 0.07
+Nodes (27): AAEncode/JJEncode JS Deobfuscation (0xFun 2026), Broken Auth via Truthy Hash Check (0xFun 2026), Chrome Referrer Leak via Link Header (2025), CTF Web - CVEs & Browser Vulnerabilities, CVE-2012-0053: Apache HttpOnly Cookie Leak via 400 Bad Request (RC3 CTF 2016), CVE-2021-22204: ExifTool DjVu Perl Injection, CVE-2023-27350: PaperCut NG Authentication Bypass + RCE (Bamboo HTB), CVE-2024-22120: Zabbix Time-Based Blind SQLi (Watcher HTB) (+19 more)
 
 ### Community 98 - "Security and Audit Skills"
-Cohesion: 0.11
-Nodes (12): main(), Production-grade experiment designer, Validate configuration, Main processing logic, main(), Production-grade experiment designer, Validate configuration, Main processing logic (+4 more)
+Cohesion: 0.13
+Nodes (15): ExperimentDesigner, main(), Production-grade experiment designer, Validate configuration, Main processing logic, ExperimentDesigner, main(), Production-grade experiment designer (+7 more)
 
 ### Community 99 - "React Native Animations"
-Cohesion: 0.11
-Nodes (12): main(), Production-grade feature engineering pipeline, Validate configuration, Main processing logic, main(), Production-grade feature engineering pipeline, Validate configuration, Main processing logic (+4 more)
+Cohesion: 0.13
+Nodes (15): FeatureEngineeringPipeline, main(), Production-grade feature engineering pipeline, Validate configuration, Main processing logic, FeatureEngineeringPipeline, main(), Production-grade feature engineering pipeline (+7 more)
 
 ### Community 100 - "Technical Spike Skills"
-Cohesion: 0.11
-Nodes (12): main(), Production-grade model evaluation suite, Validate configuration, Main processing logic, main(), Production-grade model evaluation suite, Validate configuration, Main processing logic (+4 more)
+Cohesion: 0.13
+Nodes (15): main(), ModelEvaluationSuite, Production-grade model evaluation suite, Validate configuration, Main processing logic, main(), ModelEvaluationSuite, Production-grade model evaluation suite (+7 more)
 
 ### Community 101 - "MetaMask Connect UI"
-Cohesion: 0.09
-Nodes (23): Web3 Frontend, Anti-Patterns to Avoid, Category-Specific Patterns: General, Common Integration Points, Design Patterns, ✅ Do: Handle Explicitly, ❌ Don't: Swallow Exceptions, Pattern 1: Input Validation (+15 more)
+Cohesion: 0.05
+Nodes (38): Web3 Frontend, Basic Usage, Best Practices, Category: General, Common Issues, Common Tasks, Core Concepts, Key Principles (+30 more)
 
 ### Community 102 - "React Re-render Optimization"
-Cohesion: 0.15
-Nodes (23): allocationsFromStrategy, cadCAD, cadCAD Inspiration, deriveScenarioParams, Executor, Experiment, gaussian, makeRng (+15 more)
+Cohesion: 0.13
+Nodes (27): allocationsFromStrategy, cadCAD, cadCAD Inspiration, deriveScenarioParams, Executor, Experiment, gaussian, makeRng (+19 more)
 
 ### Community 103 - "Slot Derivation Tests"
-Cohesion: 0.11
-Nodes (25): 1Shot Relayer, EIP-7710, EIP-7702, MetaMask Flask, ERC-7715 Scoped Permissions, MetaMask Flask, wallet_revokeExecutionPermission RPC, Delegation Framework (+17 more)
+Cohesion: 0.18
+Nodes (15): 1Shot Relayer, EIP-7710, ethers.js, AgentVaultDepositor, CEI Pattern, nonReentrant, ReentrancyGuard, Sepolia (+7 more)
 
 ### Community 104 - "Transient Storage Slots"
-Cohesion: 0.10
-Nodes (17): CONTRACT_COUNT, CONTRACTS, fetchTotalDeposits(), SECURITY, shortHash(), ExplorerPage, MOCK_VAULT_B_ADDRESS, MOCK_VAULT_C_ADDRESS (+9 more)
+Cohesion: 0.04
+Nodes (48): Account Loading, Best Practices, Common Operations, Data Lake, Endpoints, Endpoints, Environment-Based Setup, Error Handling (+40 more)
 
 ### Community 105 - "Time Utility Tests"
 Cohesion: 0.08
@@ -1358,43 +1405,43 @@ Cohesion: 0.09
 Nodes (15): lru-cache, Vercel Fluid Compute, React.cache(), Server-Side Performance, Use after() for Non-Blocking Operations, Authenticate Server Actions Like API Routes, Cross-Request LRU Caching, Per-Request Deduplication with React.cache() (+7 more)
 
 ### Community 107 - "Form Field UI"
-Cohesion: 0.18
+Cohesion: 0.22
 Nodes (21): RwaVaultClient, Address, Env, GuardrailClient, RegistryClient, Ctx, fund_admin_treasury(), fund_and_approve() (+13 more)
 
 ### Community 108 - "WebAuthn Account Tests"
-Cohesion: 0.16
-Nodes (15): aggregateStress(), clamp(), emergentStress(), routeBehavior(), simulateCorrelatedPath(), checkTailCompliance(), retrieveRules(), RULES (+7 more)
+Cohesion: 0.11
+Nodes (28): DELAY_KEYS(), Ground, interpolateExit(), lognormalSample(), mulberry32(), run(), summarize(), aggregateStress() (+20 more)
 
 ### Community 109 - "Positions Store"
-Cohesion: 0.10
-Nodes (21): CTF Web - Deserialization & Execution Attacks, Java XMLDecoder Deserialization RCE (HackIM 2016), PHP Serialization Length Manipulation via Filter Word Expansion (0CTF 2016), Pickle Chaining via STOP Opcode Stripping (VolgaCTF 2013), Table of Contents, CTF Web - Deserialization & Execution Attacks, Java XMLDecoder Deserialization RCE (HackIM 2016), PHP Serialization Length Manipulation via Filter Word Expansion (0CTF 2016) (+13 more)
+Cohesion: 0.07
+Nodes (28): CTF Web - Deserialization & Execution Attacks, Java Deserialization (ysoserial), Java XMLDecoder Deserialization RCE (HackIM 2016), PHP Serialization Length Manipulation via Filter Word Expansion (0CTF 2016), Pickle Chaining via STOP Opcode Stripping (VolgaCTF 2013), Python Pickle Deserialization, Race Conditions (TOCTOU), Table of Contents (+20 more)
 
 ### Community 110 - "Governor Sequential ID"
 Cohesion: 0.08
-Nodes (23): Example Interactions, Integration with Other Skills, Machine Learning Engineer, ML Deployment Components, Purpose, Scenario 1: Real-time Inference API Deployment, Scenario 2: Multi-model Serving Platform, Scenario 3: Edge Deployment for IoT (+15 more)
+Nodes (25): Example Interactions, Integration with Other Skills, Machine Learning Engineer, ML Deployment Components, Output Format, Purpose, Scenario 1: Real-time Inference API Deployment, Scenario 2: Multi-model Serving Platform (+17 more)
 
 ### Community 111 - "Governor Compound Timelock"
-Cohesion: 0.09
-Nodes (21): cairo contract rules, Consolidated Skills, hardhat development workflow, Memory Protocol (MANDATORY), solidity best practices, cairo contract rules, Consolidated Skills, hardhat development workflow (+13 more)
+Cohesion: 0.13
+Nodes (22): cairo contract rules, Consolidated Skills, hardhat development workflow, Memory Protocol (MANDATORY), solidity best practices, Web3 Expert, web3 expert, cairo contract rules (+14 more)
 
 ### Community 112 - "List Performance Optimization"
 Cohesion: 0.08
-Nodes (23): 1. Wallet Integration, 2. Transaction Management, 3. Signing & Auth, 4. React Hooks, Code Examples, Common Patterns, Common Pitfalls, Cross-References (+15 more)
+Nodes (25): 1. Wallet Integration, 2. Transaction Management, 3. Signing & Auth, 4. React Hooks, Code Examples, Common Patterns, Common Pitfalls, Connect Wallet (+17 more)
 
 ### Community 113 - "Rendering Performance Tips"
 Cohesion: 0.08
-Nodes (23): 1. Wallet Integration, 2. Transaction Management, 3. Signing & Auth, 4. React Hooks, Code Examples, Common Patterns, Common Pitfalls, Cross-References (+15 more)
+Nodes (25): 1. Wallet Integration, 2. Transaction Management, 3. Signing & Auth, 4. React Hooks, Code Examples, Common Patterns, Common Pitfalls, Connect Wallet (+17 more)
 
 ### Community 114 - "Array Sorting Tests"
 Cohesion: 0.08
 Nodes (23): Decision Log + ACC Verdicts Implementation Plan, File Structure, Final verification, Self-Review (author checklist — completed), Task 1: ACC summary helper, Task 2: buildDecisionRecord, Task 3: localStorage store + read API, Task 4: Wire recordDecision into the monitor loop (+15 more)
 
 ### Community 115 - "RSA Account Tests"
-Cohesion: 0.09
-Nodes (20): Do Not Use When, Related Components, When to Use, Blueprint, Blueprint Skill, Do Not Use When, Related Components, When to Use (+12 more)
+Cohesion: 0.14
+Nodes (15): Do Not Use When, Prompt Optimizer, Related Components, When to Use, Blueprint, Blueprint Skill, Skill Stocktake, TDD Workflow (+7 more)
 
 ### Community 116 - "Background Agent Monitoring"
-Cohesion: 0.11
+Cohesion: 0.14
 Nodes (22): AuthResult, bytesToArrayBuffer(), decodeBase64URLOrBase64ToUint8Array(), FullAuthResult, normalizePrfOutput(), PrfExtensionResults, PrfRequestOptions, RpcEnvelope (+14 more)
 
 ### Community 117 - "Engineering Roles"
@@ -1402,28 +1449,28 @@ Cohesion: 0.09
 Nodes (22): Advanced Mobile Features, App Store Optimization, Architecture & Design Patterns, Behavioral Traits, Capabilities, Cross-Platform Development, Data Management & Sync, DevOps & Deployment (+14 more)
 
 ### Community 118 - "Architecture Design Templates"
-Cohesion: 0.09
-Nodes (22): 1. Install MetaMask Flask, 1. Siapkan .env, 2. Deploy, 2. Jalankan frontend, 3. Update config.js, 4. Restart serve + ulangi flow, Checklist Walkthrough, Deploy ke Sepolia (full test — end-to-end) (+14 more)
+Cohesion: 0.20
+Nodes (10): 1. Install MetaMask Flask, 1. Siapkan .env, 2. Deploy, 2. Jalankan frontend, Checklist Walkthrough, Deploy ke Sepolia (full test — end-to-end), Persiapan (5 menit), Test Venice AI (opsional — jika punya API key) (+2 more)
 
 ### Community 119 - "ERC2981 Royalty Tests"
 Cohesion: 0.09
-Nodes (21): Animated Content, Animated Visibility, Animations, Basic LazyColumn, Content Loading Pattern, Date and Time Pickers, Dialogs and Bottom Sheets, Forms and Input (+13 more)
+Nodes (22): Alert Dialog, Animated Content, Animated Visibility, Animations, Basic LazyColumn, Content Loading Pattern, Date and Time Pickers, Dialogs and Bottom Sheets (+14 more)
 
 ### Community 120 - "On-Chain Signal Fetcher"
-Cohesion: 0.10
-Nodes (21): 1. Async Client Components Are Invalid, 2. Non-Serializable Props to Client Components, 3. Server Actions Are the Exception, Detection Rules, Quick Reference, Bundling, Font Optimization, Functions (+13 more)
+Cohesion: 0.07
+Nodes (27): Async Patterns, Bundling, Data Patterns, Debug Tricks, Directives, Error Handling, File Conventions, Font Optimization (+19 more)
 
 ### Community 121 - "Web Security Injections"
 Cohesion: 0.13
-Nodes (20): Don't Put Script in Head, Google Analytics, Google Tag Manager, Inline Scripts Need ID, Loading Strategies, Other Third-Party Scripts, Quick Reference, Scripts (+12 more)
+Nodes (19): Don't Put Script in Head, Google Analytics, Google Tag Manager, Inline Scripts Need ID, Loading Strategies, Other Third-Party Scripts, Quick Reference, Scripts (+11 more)
 
 ### Community 122 - "Main App Activity Panel"
 Cohesion: 0.09
-Nodes (21): Anti-Patterns, Example 1: Real-Time Inference API for Production, Example 2: Multi-Model Serving Platform, Example 3: Edge Deployment for Mobile Devices, Example Interactions, Examples, Integration with Other Skills, Machine Learning Engineer (+13 more)
+Nodes (22): Anti-Patterns, Example 1: Real-Time Inference API for Production, Example 2: Multi-Model Serving Platform, Example 3: Edge Deployment for Mobile Devices, Example Interactions, Examples, Integration with Other Skills, Machine Learning Engineer (+14 more)
 
 ### Community 123 - "React Native Navigation"
 Cohesion: 0.09
-Nodes (21): Animated Content, Animated Visibility, Animations, Basic LazyColumn, Content Loading Pattern, Date and Time Pickers, Dialogs and Bottom Sheets, Forms and Input (+13 more)
+Nodes (22): Alert Dialog, Animated Content, Animated Visibility, Animations, Basic LazyColumn, Content Loading Pattern, Date and Time Pickers, Dialogs and Bottom Sheets (+14 more)
 
 ### Community 124 - "Governor Fractional Counting"
 Cohesion: 0.09
@@ -1431,23 +1478,23 @@ Nodes (21): 10. Resources, 1. Peta Struktur Repositori, 2. Konsep Inti: Empat La
 
 ### Community 125 - "Governor Late Quorum"
 Cohesion: 0.09
-Nodes (21): Anti-Patterns, Example 1: Real-Time Inference API for Production, Example 2: Multi-Model Serving Platform, Example 3: Edge Deployment for Mobile Devices, Example Interactions, Examples, Integration with Other Skills, Machine Learning Engineer (+13 more)
+Nodes (22): Anti-Patterns, Example 1: Real-Time Inference API for Production, Example 2: Multi-Model Serving Platform, Example 3: Edge Deployment for Mobile Devices, Example Interactions, Examples, Integration with Other Skills, Machine Learning Engineer (+14 more)
 
 ### Community 126 - "Governor With Params"
 Cohesion: 0.09
-Nodes (21): Animated Content, Animated Visibility, Animations, Basic LazyColumn, Content Loading Pattern, Date and Time Pickers, Dialogs and Bottom Sheets, Forms and Input (+13 more)
+Nodes (22): Alert Dialog, Animated Content, Animated Visibility, Animations, Basic LazyColumn, Content Loading Pattern, Date and Time Pickers, Dialogs and Bottom Sheets (+14 more)
 
 ### Community 127 - "Chain Address CAIP"
-Cohesion: 0.10
-Nodes (20): Database Types, Decision Matrix, Document (MongoDB, Firestore), Key-Value (Redis, DynamoDB), Relational (PostgreSQL, MySQL), Time-Series (TimescaleDB, InfluxDB), Database Types, Decision Matrix (+12 more)
+Cohesion: 0.13
+Nodes (24): Database Selection, Database Types, Decision Matrix, Document (MongoDB, Firestore), Key-Value (Redis, DynamoDB), Quick Reference, Relational (PostgreSQL, MySQL), Time-Series (TimescaleDB, InfluxDB) (+16 more)
 
 ### Community 128 - "Minimal Proxy Clones"
 Cohesion: 0.10
 Nodes (20): Alternative Blockchain Ecosystems, Behavioral Traits, Blockchain Infrastructure & DevOps, Capabilities, DeFi Protocol Development, Do not use this skill when, Enterprise Blockchain Integration, Ethereum Ecosystem & Layer 2 Solutions (+12 more)
 
 ### Community 129 - "Navigation Generator"
-Cohesion: 0.10
-Nodes (20): Blockchain Rule (Optional), Common Mistakes, Do Not Use, Docs Generator, Example: docs/product-demo-scenario.md, Generation Rules, Inputs, Manifest (Overwrite These Files) (+12 more)
+Cohesion: 0.08
+Nodes (25): Blockchain Rule (Optional), Common Mistakes, Do Not Use, Docs Generator, Example: docs/product-demo-scenario.md, Generation Rules, Inputs, Manifest (Overwrite These Files) (+17 more)
 
 ### Community 130 - "Scenario Simulator"
 Cohesion: 0.10
@@ -1458,12 +1505,12 @@ Cohesion: 0.10
 Nodes (19): Always Use next/image, Blur Placeholder, Common Mistakes, Image Optimization, Priority Loading, Remote Images Configuration, Required Props, Responsive Images (+11 more)
 
 ### Community 132 - "Merkle Tree Tests"
-Cohesion: 0.10
-Nodes (20): Detection, Use Node.js Runtime by Default, Detection, Use Node.js Runtime by Default, Detection, Edge Runtime, Node.js Runtime (Default), Use Node.js Runtime by Default (+12 more)
+Cohesion: 0.09
+Nodes (21): 1. Async Client Components Are Invalid, 2. Non-Serializable Props to Client Components, 3. Server Actions Are the Exception, Detection Rules, Quick Reference, RSC Boundaries, Bundling, Debug Tricks (+13 more)
 
 ### Community 133 - "Chart UI Components"
-Cohesion: 0.10
-Nodes (20): Advanced RAG Patterns, Chroma (Local Development), Document Chunking Strategies, Evaluation Metrics, Markdown Header Splitter, Pattern 1: Hybrid Search with RRF, Pattern 2: Multi-Query Retrieval, Pattern 3: Contextual Compression (+12 more)
+Cohesion: 0.11
+Nodes (17): Chroma (Local Development), Contextual Prompt with Citations, Document Chunking Strategies, Evaluation Metrics, Markdown Header Splitter, pgvector (PostgreSQL), Pinecone (Serverless), Prompt Engineering for RAG (+9 more)
 
 ### Community 134 - "Drawer UI"
 Cohesion: 0.10
@@ -1474,44 +1521,44 @@ Cohesion: 0.10
 Nodes (20): Android Navigation Patterns, Back Handler, Basic Deep Link Setup, Basic Navigation, Bottom Nav with Badges, Bottom Navigation, Deep Linking, Handling Intent in Activity (+12 more)
 
 ### Community 136 - "Experiment Designer"
-Cohesion: 0.10
-Nodes (20): 1. Vector Databases, 2. Embeddings, 3. Retrieval Strategies, 4. Reranking, Advanced RAG Patterns, Chroma (Local Development), Core Components, Evaluation Metrics (+12 more)
+Cohesion: 0.07
+Nodes (27): 1. Metadata Filtering, 1. Vector Databases, 2. Embeddings, 2. Maximal Marginal Relevance (MMR), 3. Reranking with Cross-Encoder, 3. Retrieval Strategies, 4. Cohere Rerank, 4. Reranking (+19 more)
 
 ### Community 137 - "Feature Engineering Pipeline"
 Cohesion: 0.10
 Nodes (20): Alternative Blockchain Ecosystems, Behavioral Traits, Blockchain Infrastructure & DevOps, Capabilities, DeFi Protocol Development, Do not use this skill when, Enterprise Blockchain Integration, Ethereum Ecosystem & Layer 2 Solutions (+12 more)
 
 ### Community 138 - "Model Evaluation Suite"
-Cohesion: 0.10
-Nodes (20): 13. Em Dash Overuse, 14. Overuse of Boldface, 15. Inline-Header Vertical Lists, 16. Title Case in Headings, 17. Emojis, 18. Curly Quotation Marks, 19. Collaborative Communication Artifacts, 20. Knowledge-Cutoff Disclaimers (+12 more)
+Cohesion: 0.08
+Nodes (25): 19. Collaborative Communication Artifacts, 1. Undue Emphasis on Significance, Legacy, and Broader Trends, 20. Knowledge-Cutoff Disclaimers, 21. Sycophantic/Servile Tone, 22. Filler Phrases, 23. Excessive Hedging, 24. Generic Positive Conclusions, 2. Undue Emphasis on Notability and Media Coverage (+17 more)
 
 ### Community 139 - "Autonomous Loop Panel"
-Cohesion: 0.10
-Nodes (21): Behavior Change (COM-B Model), Cialdini's Persuasion Principles, Cognitive Load Theory, Common Patterns, Core Frameworks, Dual-Process Theory (Kahneman), In Decision Making, In Social Judgment (+13 more)
+Cohesion: 0.12
+Nodes (16): Quick Reference, Behavior Change (COM-B Model), Essential Books, In Decision Making, In Social Judgment, Integration Tips, Key Cognitive Biases, Mental Models (+8 more)
 
 ### Community 140 - "Goal Configuration"
-Cohesion: 0.10
-Nodes (20): 1. Vector Databases, 2. Embeddings, 3. Retrieval Strategies, 4. Reranking, Advanced RAG Patterns, Chroma (Local Development), Core Components, Evaluation Metrics (+12 more)
+Cohesion: 0.07
+Nodes (28): 1. Vector Databases, 2. Embeddings, 3. Retrieval Strategies, 4. Reranking, Advanced RAG Patterns, Chroma (Local Development), Contextual Prompt with Citations, Core Components (+20 more)
 
 ### Community 141 - "Execution Plan Verification"
 Cohesion: 0.12
 Nodes (14): Command(), CommandGroup(), CommandInput(), CommandItem(), CommandList(), CommandSeparator(), CommandShortcut(), Dialog() (+6 more)
 
 ### Community 142 - "ERC7579 Account Tests"
-Cohesion: 0.16
-Nodes (13): Task 2: Surface the real gas-payment method, Task 3: De-simulate swap+approve in worker, buildLesson(), loadAllMemory(), readMemory(), writeMemory(), approveSkill(), esc() (+5 more)
+Cohesion: 0.42
+Nodes (9): allSkillsApproved(), approveSkill(), buildSkill(), clearSkills(), esc(), loadAllSkills(), loadSkill(), renderSkillEditor() (+1 more)
 
 ### Community 143 - "ERC7579 Hooked Tests"
-Cohesion: 0.10
-Nodes (19): RAG Implementation Skill, 1. Chunking Documents, 2. Generating Embeddings & Indexing, 3. Hybrid Search (Vector + BM25), 4. Reranking Top-K Results, 5. Retrieval Evaluation, Constraints, Core Workflow (+11 more)
+Cohesion: 0.13
+Nodes (14): RAG Implementation Skill, Constraints, Core Workflow, MUST DO, MUST NOT DO, Output Templates, RAG Architect, Reference Guide (+6 more)
 
 ### Community 144 - "ERC20 Voting Tests"
 Cohesion: 0.10
-Nodes (17): Common Mistakes, Quick Start, Related Skills, Contextual Prompt with Citations, Common Mistakes, Quick Start, Related Skills, Contextual Prompt with Citations (+9 more)
+Nodes (26): Code Review, Common Mistakes, Content Writing, Image Generation, Prompt Engineering Guide, Prompt Templates, Quick Start, Related Skills (+18 more)
 
 ### Community 145 - "Governor Overridable Counting"
 Cohesion: 0.11
-Nodes (19): Accessibility, Available Domains, Available Stacks, Common Sticking Points, How to Use, Layout, Light/Dark Mode, Must Use (+11 more)
+Nodes (22): Accessibility, Available Domains, Available Stacks, Common Sticking Points, How to Use, Interaction, Layout, Light/Dark Mode (+14 more)
 
 ### Community 146 - "Governor Proposal Guardian"
 Cohesion: 0.16
@@ -1526,8 +1573,8 @@ Cohesion: 0.10
 Nodes (19): 1. Async Client Components Are Invalid, 2. Non-Serializable Props to Client Components, 3. Server Actions Are the Exception, Detection Rules, Quick Reference, RSC Boundaries, Common Mistakes, Display Strategy (+11 more)
 
 ### Community 149 - "Session Memory Storage"
-Cohesion: 0.11
-Nodes (19): Accessibility, Available Domains, Available Stacks, Common Sticking Points, How to Use, Layout, Light/Dark Mode, Must Use (+11 more)
+Cohesion: 0.09
+Nodes (23): Available Domains, Available Stacks, Example Workflow, How to Use, How to Use This Skill, Must Use, Output Formats, Prerequisites (+15 more)
 
 ### Community 150 - "Transparent Proxy Tests"
 Cohesion: 0.10
@@ -1535,139 +1582,139 @@ Nodes (19): Avoid Duplicate Fetches, Basic OG Image, Custom Fonts, Dynamic Metad
 
 ### Community 151 - "Context Menu UI"
 Cohesion: 0.11
-Nodes (19): Accessibility, Available Domains, Available Stacks, Common Sticking Points, How to Use, Layout, Light/Dark Mode, Must Use (+11 more)
+Nodes (21): Accessibility, Available Domains, Available Stacks, Common Sticking Points, How to Use, Layout, Light/Dark Mode, Must Use (+13 more)
 
 ### Community 152 - "Extended Voting Tests"
-Cohesion: 0.10
-Nodes (20): 1. Venice AI Coordinator, 2. Skill System (Required), 3. Agent Swarm (Parallel Execution), 4. Memory System (Required), 5. Real-time vis.js Graph, 6. Wallet & Permission Layer, Core Architecture, Core Deliverables Checklist (+12 more)
+Cohesion: 0.07
+Nodes (27): 1. AI Strategist, 1. Venice AI Coordinator, 2. Skill System, 2. Skill System (Required), 3. Agent Swarm (Parallel Execution), 4. Memory System, 4. Memory System (Required), 5. Real-time Agent Graph (+19 more)
 
 ### Community 153 - "Design Decisions EIPs"
-Cohesion: 0.22
-Nodes (17): Get Rules (getRules), getCounters(), increment(), read(), write(), addRule(), clearPlaybook(), deleteRule() (+9 more)
+Cohesion: 0.04
+Nodes (47): 1. Evolusi Arsitektur: Monte Carlo ➡️ Aladdin Framework, 🐹 1. Go SDK (Infrastruktur Backend & Data Ingestion) [1, 2], 1. Melalui Protokol DeFi Berbasis Soroban (Smart Contract), 🏦 1. Mengapa Masuk Kategori RWA?, 🌟 1. Menjual Sisi "Reksa Dana Indonesia" (Target Utama Juri), 🧩 1. Pemetaan Framework: Foundry vs Stellar (Soroban), 🦀 1. Rust adalah Fondasi untuk "Smart Contract" (On-Chain), 1. Translasi Arsitektur: EVM ke Stellar (Soroban) (+39 more)
 
 ### Community 154 - "Engineering Roles"
-Cohesion: 0.14
-Nodes (13): AlertDialogCancel(), AlertDialogContent(), AlertDialogDescription(), AlertDialogFooter(), AlertDialogOverlay(), AlertDialogTitle(), Button(), buttonVariants (+5 more)
+Cohesion: 0.10
+Nodes (19): lucide-react, AlertDialogAction(), AlertDialogCancel(), AlertDialogContent(), AlertDialogDescription(), AlertDialogFooter(), AlertDialogHeader(), AlertDialogOverlay() (+11 more)
 
 ### Community 155 - "Android Compose Navigation"
-Cohesion: 0.15
-Nodes (14): Agent Smart Accounts, __check_auth, OZ Smart Accounts, Registry (thin), CustomAccountInterface, Address, AgentScope, BytesN (+6 more)
+Cohesion: 0.12
+Nodes (18): Agent Smart Accounts, __check_auth, OZ Smart Accounts, Registry (thin), CustomAccountInterface, Agent account (`agent_account`), AgentScope, Enforcement contract (what __check_auth allows) (+10 more)
 
 ### Community 156 - "AI Council Simulation"
-Cohesion: 0.11
-Nodes (18): AngularJS 1.x Sandbox Escape via charAt/trim Override (Google CTF 2017), Cache Poisoning, Client-Side Path Traversal (CSPT), Content-Type via File Extension, CSS/JS Paywall Bypass, CTF Web - Client-Side Attacks, DOM Clobbering + MIME Mismatch, DOM XSS via jQuery Hashchange (Crypto-Cat) (+10 more)
+Cohesion: 0.10
+Nodes (19): Admin Bot javascript: URL Scheme Bypass (DiceCTF 2026), AngularJS 1.x Sandbox Escape via charAt/trim Override (Google CTF 2017), Cache Poisoning, Client-Side Path Traversal (CSPT), Content-Type via File Extension, CSS/JS Paywall Bypass, CTF Web - Client-Side Attacks, DOM Clobbering + MIME Mismatch (+11 more)
 
 ### Community 157 - "Transaction Detail Page"
-Cohesion: 0.11
-Nodes (19): Step 1 — Identify RSC via HTTP headers, Step 2 — Exploit Flight deserialization for RCE, Step 3 — Exfiltrate data via NEXT_REDIRECT, Step 4 — Bypass WAF keyword filters, Step 5 — Post-RCE enumeration, Step 6 — Lateral movement to internal services, Step 1 — Identify RSC via HTTP headers, Step 2 — Exploit Flight deserialization for RCE (+11 more)
+Cohesion: 0.16
+Nodes (22): React Server Components Flight Protocol RCE (Ehax 2026), Step 1 — Identify RSC via HTTP headers, Step 2 — Exploit Flight deserialization for RCE, Step 3 — Exfiltrate data via NEXT_REDIRECT, Step 4 — Bypass WAF keyword filters, Step 5 — Post-RCE enumeration, Step 6 — Lateral movement to internal services, React Server Components Flight Protocol RCE (Ehax 2026) (+14 more)
 
 ### Community 158 - "ERC7786 Recipient Tests"
-Cohesion: 0.11
-Nodes (18): Basic XXE, CTF Web - Server-Side Injection Attacks, Curl Redirect Chain Bypass, DNS Rebinding for TOCTOU, GraphQL Injection and Exploitation (Hack.lu CTF 2020, HeroCTF v5), Host Header SSRF (MireaCTF), Introspection and Schema Discovery, OOB XXE with External DTD (+10 more)
+Cohesion: 0.09
+Nodes (21): Basic XXE, Command Injection, CTF Web - Server-Side Injection Attacks, Curl Redirect Chain Bypass, DNS Rebinding for TOCTOU, Git CLI Newline Injection via URL Path (BSidesSF 2026), Host Header SSRF (MireaCTF), Incomplete Blocklist Bypass (+13 more)
 
 ### Community 159 - "Merkle Proof Tests"
-Cohesion: 0.11
-Nodes (19): CTF Web - SQL Injection Techniques, Hex Encoding for Quote Bypass, information_schema.processlist Race Condition Leak (SECUINSIDE 2017), MySQL Column Truncation (VolgaCTF 2014), MySQL information_schema.processList Trick, MySQL Session Variable for Dual-Value Injection (MeePwn CTF 2017), PHP PCRE Backtrack Limit WAF Bypass (SECUINSIDE 2017), Shift-JIS Encoding SQL Injection (Boston Key Party 2016) (+11 more)
+Cohesion: 0.10
+Nodes (20): Backslash Escape Quote Bypass, CTF Web - SQL Injection Techniques, Hex Encoding for Quote Bypass, information_schema.processlist Race Condition Leak (SECUINSIDE 2017), MySQL Column Truncation (VolgaCTF 2014), MySQL information_schema.processList Trick, MySQL Session Variable for Dual-Value Injection (MeePwn CTF 2017), PHP PCRE Backtrack Limit WAF Bypass (SECUINSIDE 2017) (+12 more)
 
 ### Community 160 - "RSA Helper Tests"
-Cohesion: 0.11
-Nodes (18): 19. Collaborative Communication Artifacts, 20. Knowledge-Cutoff Disclaimers, 21. Sycophantic/Servile Tone, 22. Filler Phrases, 23. Excessive Hedging, 24. Generic Positive Conclusions, After (has a pulse):, Before (clean but soulless): (+10 more)
+Cohesion: 0.07
+Nodes (26): 10. Rule of Three Overuse, 11. Elegant Variation (Synonym Cycling), 12. False Ranges, 19. Collaborative Communication Artifacts, 20. Knowledge-Cutoff Disclaimers, 21. Sycophantic/Servile Tone, 22. Filler Phrases, 23. Excessive Hedging (+18 more)
 
 ### Community 161 - "ERC1967 Proxy Tests"
 Cohesion: 0.11
 Nodes (18): Avoid Duplicate Fetches, Basic OG Image, Custom Fonts, Dynamic Metadata, Dynamic OG Image, File Naming, Important Rules, Important: Server Components Only (+10 more)
 
 ### Community 162 - "ERC20 Pausable Tests"
-Cohesion: 0.15
-Nodes (18): Evaluation Criteria, Evaluation Dimensions, Expected Analysis Elements, For Automated Testing (Claude Agent SDK), For Continuous Improvement, For Self-Assessment, Overall Quiz Assessment, Passing Criteria (+10 more)
+Cohesion: 0.10
+Nodes (26): Evaluation Criteria, Evaluation Criteria, Evaluation Criteria, Evaluation Criteria, Evaluation Criteria, Evaluation Dimensions, Expected Analysis Elements, Expected Analysis Elements (+18 more)
 
 ### Community 163 - "Graphify Skill Tools"
-Cohesion: 0.11
-Nodes (18): 12.1 Import from Design System Folder, 4.1 Never Track Scroll Position in useState, 7.1 State Must Represent Ground Truth, 10. Design System (design-system), 11. Monorepo (monorepo), 12. Third-Party Dependencies (imports), 14. Fonts (fonts), 2. List Performance (list-performance) (+10 more)
+Cohesion: 0.10
+Nodes (20): 12.1 Import from Design System Folder, 12. Third-Party Dependencies, 4.1 Never Track Scroll Position in useState, 4. Scroll Performance, 10. Design System (design-system), 11. Monorepo (monorepo), 12. Third-Party Dependencies (imports), 13. JavaScript (js) (+12 more)
 
 ### Community 164 - "Packing Force Deploy"
 Cohesion: 0.11
 Nodes (18): Shared Element Transitions, Shared Element Transitions, Layout-Level ViewTransition, `loading.tsx` as Suspense Boundary, Next.js Implementation Additions, Programmatic Navigation, Same-Route Dynamic Segment Transitions, Server Components (+10 more)
 
 ### Community 165 - "Git Update Comment"
-Cohesion: 0.11
-Nodes (17): Config Migration, Custom Transform Targets, esbuild → oxc, Gradual Migration, JSX Configuration, New Capabilities, Overriding Vite in Frameworks, Performance Impact (+9 more)
+Cohesion: 0.12
+Nodes (24): Config Migration, Custom Transform Targets, esbuild → oxc, Gradual Migration, JSX Configuration, New Capabilities, Overriding Vite in Frameworks, Performance Impact (+16 more)
 
 ### Community 166 - "Checkpoint Tests"
-Cohesion: 0.11
-Nodes (19): Business Impact Model, 1. Business Impact Summary, 1Shot API Ecosystem, 2. Problem & Market Pain, 3. Value Model & Benefits, 4. Impact on Key Stakeholders, 5. KPIs & Impact Indicators, 6. Business Narrative: Web3 → Web4 (+11 more)
+Cohesion: 0.18
+Nodes (10): Business Impact Model, 1. Business Impact Summary, 3. Value Model & Benefits, 5. KPIs & Impact Indicators, 6. Business Narrative: Web3 → Web4, Benefits per Stakeholder, Business Impact & Value Model — Vibing Farmer, Core Value Proposition (+2 more)
 
 ### Community 167 - "Address Coder Tests"
 Cohesion: 0.11
 Nodes (18): Avoid Duplicate Fetches, Basic OG Image, Custom Fonts, Dynamic Metadata, Dynamic OG Image, File Naming, Important Rules, Important: Server Components Only (+10 more)
 
 ### Community 168 - "Interoperable Address CAIP"
-Cohesion: 0.15
-Nodes (18): Evaluation Criteria, Evaluation Dimensions, Expected Analysis Elements, For Automated Testing (Claude Agent SDK), For Continuous Improvement, For Self-Assessment, Overall Quiz Assessment, Passing Criteria (+10 more)
+Cohesion: 0.10
+Nodes (26): Evaluation Criteria, Evaluation Criteria, Evaluation Criteria, Evaluation Criteria, Evaluation Criteria, Evaluation Dimensions, Expected Analysis Elements, Expected Analysis Elements (+18 more)
 
 ### Community 169 - "Short String Encoding"
 Cohesion: 0.11
 Nodes (18): Best Practices, Common Commands, Core Expertise, Development, Main Capabilities, Pattern 1: Scalable Data Processing, Pattern 2: ML Model Deployment, Pattern 3: Real-Time Inference (+10 more)
 
 ### Community 170 - "Storage Slot Tests"
-Cohesion: 0.11
-Nodes (19): 0. Spike Status — All Resolved ✅, 1. MVP Scope, 2. Target Directory Structure, 3. Build Order, 4. Contract Spec, 5. Frontend Module Responsibilities, 6. Integration Points & Gotchas, 7. Environment Setup (+11 more)
+Cohesion: 0.10
+Nodes (20): 0. Spike Status — All Resolved ✅, 1. MVP Scope, 2. Target Directory Structure, 3. Build Order, 4. Contract Spec, 5. Frontend Module Responsibilities, 6. Integration Points & Gotchas, 7. Environment Setup (+12 more)
 
 ### Community 171 - "Votes Tests"
-Cohesion: 0.11
-Nodes (18): AngularJS 1.x Sandbox Escape via charAt/trim Override (Google CTF 2017), Cache Poisoning, Client-Side Path Traversal (CSPT), Content-Type via File Extension, CSS/JS Paywall Bypass, CTF Web - Client-Side Attacks, DOM Clobbering + MIME Mismatch, DOM XSS via jQuery Hashchange (Crypto-Cat) (+10 more)
+Cohesion: 0.10
+Nodes (19): Admin Bot javascript: URL Scheme Bypass (DiceCTF 2026), AngularJS 1.x Sandbox Escape via charAt/trim Override (Google CTF 2017), Cache Poisoning, Client-Side Path Traversal (CSPT), Content-Type via File Extension, CSS/JS Paywall Bypass, CTF Web - Client-Side Attacks, DOM Clobbering + MIME Mismatch (+11 more)
 
 ### Community 172 - "Demo Polish Plan"
-Cohesion: 0.15
-Nodes (18): Evaluation Criteria, Evaluation Dimensions, Expected Analysis Elements, For Automated Testing (Claude Agent SDK), For Continuous Improvement, For Self-Assessment, Overall Quiz Assessment, Passing Criteria (+10 more)
+Cohesion: 0.10
+Nodes (26): Evaluation Criteria, Evaluation Criteria, Evaluation Criteria, Evaluation Criteria, Evaluation Criteria, Evaluation Dimensions, Expected Analysis Elements, Expected Analysis Elements (+18 more)
 
 ### Community 173 - "DeFi Vault Advisors"
 Cohesion: 0.11
 Nodes (18): Best Practices, Common Commands, Core Expertise, Development, Main Capabilities, Pattern 1: Scalable Data Processing, Pattern 2: ML Model Deployment, Pattern 3: Real-Time Inference (+10 more)
 
 ### Community 174 - "Beacon Proxy Tests"
-Cohesion: 0.11
-Nodes (18): Playbook Storage Design Spec, 1. Motivation, 2. Architecture + Storage Schema, 3. Seed migration, 4. Prune (automatic, deterministic), 5. Merge (lexical dedup / refine), 6. Curator / grow, 7. Wiring (exact touch points) (+10 more)
+Cohesion: 0.15
+Nodes (19): Playbook Storage Design Spec, 1. Motivation, 2. Architecture + Storage Schema, 3. Seed migration, 4. Prune (automatic, deterministic), 5. Merge (lexical dedup / refine), 6. Curator / grow, 7. Wiring (exact touch points) (+11 more)
 
 ### Community 175 - "Storage Layout Extraction"
 Cohesion: 0.11
 Nodes (10): Rendering Performance, Use Activity Component for Show/Hide, Animate SVG Wrapper Instead of SVG Element, Use Explicit Conditional Rendering, Hoist Static JSX Elements, Prevent Hydration Mismatch Without Flickering, Use React DOM Resource Hints, Use defer or async on Script Tags (+2 more)
 
 ### Community 176 - "ECDSA Signature Tests"
-Cohesion: 0.29
-Nodes (6): 1Shot Relayer, Skill System, createEntry(), readVaultShares(), User, Worker Agent
+Cohesion: 0.10
+Nodes (27): Task 2: Surface the real gas-payment method, 1Shot Relayer, Memory System, 1Shot API, sessionKey, buildLesson(), createEntry(), loadAllMemory() (+19 more)
 
 ### Community 177 - "P256 Signature Tests"
-Cohesion: 0.11
-Nodes (17): CQRS (Command Query Responsibility Segregation), Event-Driven, Microservices, Monolith, Pattern Comparison, CQRS (Command Query Responsibility Segregation), Event-Driven, Microservices (+9 more)
+Cohesion: 0.14
+Nodes (21): Architecture Patterns, CQRS (Command Query Responsibility Segregation), Event-Driven, Microservices, Monolith, Pattern Comparison, Quick Reference, Architecture Patterns (+13 more)
 
 ### Community 178 - "Governor ERC721 Tests"
 Cohesion: 0.12
-Nodes (17): Affected Libraries, Common Vectors, CommonJS Escape, CTF Web - Node.js Prototype Pollution & VM Escape, Detection, ESM-Compatible Escape (CVE-2025-61927), Full Chain: Prototype Pollution to VM Escape RCE (4llD4y), Gadget: Library Settings via Prototype Chain (+9 more)
+Nodes (19): Affected Libraries, Common Vectors, CommonJS Escape, CTF Web - Node.js Prototype Pollution & VM Escape, Detection, ESM-Compatible Escape (CVE-2025-61927), flatnest Circular Reference Bypass (CVE-2023-26135), Full Chain: Prototype Pollution to VM Escape RCE (4llD4y) (+11 more)
 
 ### Community 179 - "Task Runner"
 Cohesion: 0.11
 Nodes (17): 24 Patterns Detected (with Before/After Examples), Communication Patterns, Content Patterns, Filler and Hedging, Full Example, Humanizer, Installation, Key Insight from Wikipedia (+9 more)
 
 ### Community 180 - "Storage Slot Helpers"
-Cohesion: 0.16
-Nodes (18): Basic Usage, Dynamic Route Handlers, Environment Behavior, GET Handler Conflicts with page.tsx, Request Helpers, Response Helpers, Supported Methods, When to Use Route Handlers vs Server Actions (+10 more)
+Cohesion: 0.10
+Nodes (28): Basic Usage, Dynamic Route Handlers, Environment Behavior, GET Handler Conflicts with page.tsx, Request Helpers, Response Helpers, Route Handlers, Supported Methods (+20 more)
 
 ### Community 181 - "Fetch Common Contracts"
-Cohesion: 0.11
-Nodes (18): Action Description, Basic Structure, Camera Movement, Chain-of-Thought, Composition Control, Constraint Setting, Few-Shot Examples, Image Generation Prompting (+10 more)
+Cohesion: 0.10
+Nodes (20): Action Description, Basic Structure, Basic Structure, Basic Structure, Camera Movement, Chain-of-Thought, Composition Control, Constraint Setting (+12 more)
 
 ### Community 182 - "Artifact Cleanup"
 Cohesion: 0.11
-Nodes (17): Best Practices, Common Commands, Core Expertise, Development, Main Capabilities, Pattern 1: Scalable Data Processing, Pattern 2: ML Model Deployment, Pattern 3: Real-Time Inference (+9 more)
+Nodes (18): Best Practices, Common Commands, Core Expertise, Development, Main Capabilities, Pattern 1: Scalable Data Processing, Pattern 2: ML Model Deployment, Pattern 3: Real-Time Inference (+10 more)
 
 ### Community 183 - "Docs Branch Update"
-Cohesion: 0.11
-Nodes (16): build, createServer, JavaScript API, loadEnv, Multi-Page App, preview, resolveConfig, SSR Development (+8 more)
+Cohesion: 0.09
+Nodes (26): build, Build and SSR, createServer, JavaScript API, Library Mode, loadEnv, Multi-Page App, Multiple Entries (+18 more)
 
 ### Community 184 - "Safe Cast Utilities"
 Cohesion: 0.11
-Nodes (17): AngularJS 1.x Sandbox Escape via charAt/trim Override (Google CTF 2017), Cache Poisoning, Content-Type via File Extension, CSS/JS Paywall Bypass, CTF Web - Client-Side Attacks, DOM Clobbering + MIME Mismatch, DOM XSS via jQuery Hashchange (Crypto-Cat), DOMPurify Bypass via Trusted Backend Routes (+9 more)
+Nodes (18): Admin Bot javascript: URL Scheme Bypass (DiceCTF 2026), AngularJS 1.x Sandbox Escape via charAt/trim Override (Google CTF 2017), Cache Poisoning, Content-Type via File Extension, CSS/JS Paywall Bypass, CTF Web - Client-Side Attacks, DOM Clobbering + MIME Mismatch, DOM XSS via jQuery Hashchange (Crypto-Cat) (+10 more)
 
 ### Community 185 - "Decision Logger"
 Cohesion: 0.11
@@ -1678,36 +1725,36 @@ Cohesion: 0.11
 Nodes (17): 24 Patterns Detected (with Before/After Examples), Communication Patterns, Content Patterns, Filler and Hedging, Full Example, Humanizer, Installation, Key Insight from Wikipedia (+9 more)
 
 ### Community 187 - "ERC1155 Utils Tests"
-Cohesion: 0.11
-Nodes (18): Action Description, Basic Structure, Camera Movement, Chain-of-Thought, Composition Control, Constraint Setting, Few-Shot Examples, Image Generation Prompting (+10 more)
+Cohesion: 0.10
+Nodes (20): Action Description, Basic Structure, Basic Structure, Basic Structure, Camera Movement, Chain-of-Thought, Composition Control, Constraint Setting (+12 more)
 
 ### Community 188 - "ERC721 Utils Tests"
 Cohesion: 0.11
 Nodes (17): Example: docs/produk-demo-skenario.md, Blockchain Rule (Optional), Common Mistakes, Do Not Use, Docs Generator, Generation Rules, Inputs, Manifest (Overwrite These Files) (+9 more)
 
 ### Community 189 - "Memory Tests"
-Cohesion: 0.10
-Nodes (20): Best Practices, Code Quality, Reliability, Best Practices, Code Quality, Reliability, Best Practices, Code Quality (+12 more)
+Cohesion: 0.29
+Nodes (12): 1. Correctness / Bugs, 2. Security, 3. Performance, 4. Test Coverage, 5. Tech Debt & Architecture, 6. Dependencies & Migrations, 7. DX & Tooling, 8. Docs (+4 more)
 
 ### Community 190 - "React Native Skills"
 Cohesion: 0.11
 Nodes (17): 24 Patterns Detected (with Before/After Examples), Communication Patterns, Content Patterns, Filler and Hedging, Full Example, Humanizer, Installation, Key Insight from Wikipedia (+9 more)
 
 ### Community 191 - "Vite Build SSR"
-Cohesion: 0.11
-Nodes (18): Action Description, Basic Structure, Camera Movement, Chain-of-Thought, Composition Control, Constraint Setting, Few-Shot Examples, Image Generation Prompting (+10 more)
+Cohesion: 0.09
+Nodes (24): Action Description, Basic Structure, Basic Structure, Basic Structure, Camera Movement, Chain-of-Thought, Common Mistakes, Composition Control (+16 more)
 
 ### Community 192 - "Skill Validation"
-Cohesion: 0.29
-Nodes (17): Address, AgentScope, Context, Env, Vec, deposit_ctx(), sac_token(), scope() (+9 more)
+Cohesion: 0.26
+Nodes (20): Address, AgentScope, Context, Env, Vec, deposit_ctx(), owner_withdraw_rejects_non_owner(), owner_withdraw_sweeps_principal_back_to_owner() (+12 more)
 
 ### Community 193 - "Bundle Size Optimization"
-Cohesion: 0.12
-Nodes (14): Accessibility Auditor Skill, Integration with Other Methods, Quick Reference, Resources, When to Use This Skill, Integration with Other Methods, Quick Reference, Resources (+6 more)
+Cohesion: 0.07
+Nodes (38): Accessibility Auditor Skill, Brand Names, Cognitive Effort Discounting (COGED), Cognitive Fluency - Psychology of Ease, Common Fluency Killers, Content Problems, Core Principle, Design Problems (+30 more)
 
 ### Community 194 - "Storage Layout Comparison"
-Cohesion: 0.29
-Nodes (7): Availability, Cost, Maintainability, NFR Categories, Reliability, Scalability, Security
+Cohesion: 0.05
+Nodes (41): Asset Flags, Asset Identifiers, Asset Issuance, Asset Types, Authorize Trustline, Best Practices, Check Trustline Status, Clawback Tokens (+33 more)
 
 ### Community 195 - "Skill Validation"
 Cohesion: 0.12
@@ -1718,27 +1765,27 @@ Cohesion: 0.12
 Nodes (17): 10. Security, 11. Children's Privacy, 12. Contact and Rights, 13. Policy Changes, 14. Additional Provisions, 1. Information We Collect, 2. How We Collect Information, 3. How We Use Information (+9 more)
 
 ### Community 197 - "Strategy Configuration"
-Cohesion: 0.12
-Nodes (17): 9.1 Measuring View Dimensions, 9.2 Modern React Native Styling Patterns, 9.3 Use contentInset for Dynamic ScrollView Spacing, 9.5 Use expo-image for Optimized Images, 9.6 Use Galeria for Image Galleries and Lightbox, 9.7 Use Native Menus for Dropdowns and Context Menus, 9.8 Use Native Modals Over JS-Based Bottom Sheets, 9.9 Use Pressable Instead of Touchable Components (+9 more)
+Cohesion: 0.16
+Nodes (21): 9.1 Measuring View Dimensions, 9.2 Modern React Native Styling Patterns, 9.3 Use contentInset for Dynamic ScrollView Spacing, 9.4 Use contentInsetAdjustmentBehavior for Safe Areas, 9.5 Use expo-image for Optimized Images, 9.6 Use Galeria for Image Galleries and Lightbox, 9.7 Use Native Menus for Dropdowns and Context Menus, 9.8 Use Native Modals Over JS-Based Bottom Sheets (+13 more)
 
 ### Community 198 - "ERC1967 Utils Tests"
 Cohesion: 0.12
-Nodes (13): Prefer useDerivedValue Over useAnimatedReaction, Animate Transform and Opacity Instead of Layout Properties, Prefer useDerivedValue Over useAnimatedReaction, Animate Transform and Opacity Instead of Layout Properties, Gesture Handler, React Compiler, React Native Reanimated, Destructure Functions Early in Render (React Compiler) (+5 more)
+Nodes (13): Animate Transform and Opacity Instead of Layout Properties, Use a List Virtualizer for Any List, Animate Transform and Opacity Instead of Layout Properties, Use a List Virtualizer for Any List, FlashList, LegendList, FlashList, LegendList (+5 more)
 
 ### Community 199 - "Community 199"
 Cohesion: 0.12
 Nodes (16): Built-in Constants, CSS Modules, Custom Queries, Custom Variables, Eager Loading, Environment Variables, Glob Import, HMR API (+8 more)
 
 ### Community 200 - "Community 200"
-Cohesion: 0.18
-Nodes (17): AuthProvider component, Ethers.js library, HKDF-SHA-256 → secp256k1 derivation pipeline, InfoLabel (ETH_KEY_DERIVATION_LABEL), LongBlob fallback mechanism (credBlob / largeBlob), LongBlob Fallback & Recovery Phrase, Next.js + @simplewebauthn Reference Implementation, Postmate library (iframe RPC) (+9 more)
+Cohesion: 0.10
+Nodes (25): `/api/auth/login`, `/api/auth/logout`, `/api/auth/register`, Next.js config tweaks, Next.js + @simplewebauthn Reference Implementation, Putting it together, Route handlers, Shared constant (+17 more)
 
 ### Community 201 - "Community 201"
 Cohesion: 0.12
 Nodes (17): Cache Handler, Client Components, Design Taste Frontend, Incremental Static Regeneration, Next.js Functions, Docker Compose, Docker Deployment, Dockerfile (+9 more)
 
 ### Community 202 - "Community 202"
-Cohesion: 0.12
+Cohesion: 0.11
 Nodes (17): Backslash Escape Quote Bypass, CTF Web - SQL Injection Techniques, Hex Encoding for Quote Bypass, information_schema.processlist Race Condition Leak (SECUINSIDE 2017), MySQL Column Truncation (VolgaCTF 2014), MySQL information_schema.processList Trick, MySQL Session Variable for Dual-Value Injection (MeePwn CTF 2017), PHP PCRE Backtrack Limit WAF Bypass (SECUINSIDE 2017) (+9 more)
 
 ### Community 203 - "Community 203"
@@ -1758,8 +1805,8 @@ Cohesion: 0.12
 Nodes (16): Anti-Patterns, Banking Integration, Best Practices, Core Concepts, Data Handling, Finance Expert, Financial Calculations, Financial Systems (+8 more)
 
 ### Community 207 - "Community 207"
-Cohesion: 0.12
-Nodes (16): Android Navigation Patterns, Back Handler, Basic Deep Link Setup, Bottom Nav with Badges, Bottom Navigation, Deep Linking, Handling Intent in Activity, Modal Navigation Drawer (+8 more)
+Cohesion: 0.10
+Nodes (20): Android Navigation Patterns, Back Handler, Basic Deep Link Setup, Basic Navigation, Bottom Nav with Badges, Bottom Navigation, Deep Linking, Handling Intent in Activity (+12 more)
 
 ### Community 208 - "Community 208"
 Cohesion: 0.12
@@ -1782,32 +1829,32 @@ Cohesion: 0.12
 Nodes (15): Apache Guacamole Connection Parameter Extraction (Barrier HTB), Base64 Decode Leniency and Parameter Override for Signature Bypass (BCTF 2016), CI/CD Variable Credential Theft (Barrier HTB), CORS Misconfiguration, CTF Web - OAuth, SAML & Infrastructure Auth Attacks, Git History Credential Leakage (Barrier HTB), Identity Provider API Takeover (Barrier HTB), Login Page Poisoning for Credential Harvesting (Watcher HTB) (+7 more)
 
 ### Community 213 - "Community 213"
-Cohesion: 0.12
-Nodes (15): React Directives, `'use cache'`, `'use client'`, `'use server'`, React Directives, `'use cache'`, `'use client'`, `'use server'` (+7 more)
+Cohesion: 0.10
+Nodes (21): Directives, Next.js Directive, React Directives, `'use cache'`, `'use client'`, `'use server'`, Directives, Next.js Directive (+13 more)
 
 ### Community 214 - "Community 214"
 Cohesion: 0.12
 Nodes (15): Before You Publish, Content Guidelines, Important Disclaimer, Input Arguments, Key Compliance Reminders, Privacy Policy Generator, Process, Purpose (+7 more)
 
 ### Community 215 - "Community 215"
-Cohesion: 0.12
-Nodes (16): Part 1: Summary, Part 2: Full Privacy Policy Document, Part 3: Customization and Compliance Notes, Footer, Section 1: Prompt Diagnosis, Section 2: Recommended ECC Components, Section 3: Optimized Prompt — Full Version, Section 4: Optimized Prompt — Quick Version (+8 more)
+Cohesion: 0.27
+Nodes (12): Output Format, Part 1: Summary, Part 2: Full Privacy Policy Document, Part 3: Customization and Compliance Notes, Footer, Output Format, Section 1: Prompt Diagnosis, Section 2: Recommended ECC Components (+4 more)
 
 ### Community 216 - "Community 216"
 Cohesion: 0.12
 Nodes (15): 10. Exaggeration, 11. Solid Drawing, 12. Appeal, 1. Squash and Stretch, 2. Anticipation, 3. Staging, 4. Straight Ahead vs Pose to Pose, 5. Follow Through and Overlapping Action (+7 more)
 
 ### Community 217 - "Community 217"
-Cohesion: 0.13
-Nodes (16): Animation (HIGH), Navigation (HIGH), 1. List Performance (CRITICAL), 4. UI Patterns (HIGH), 5. State Management (MEDIUM), 6. Rendering (MEDIUM), 7. Monorepo (MEDIUM), 8. Configuration (LOW) (+8 more)
+Cohesion: 0.11
+Nodes (20): Animation (HIGH), Navigation (HIGH), 1. List Performance (CRITICAL), 2. Animation (HIGH), 3. Navigation (HIGH), 4. UI Patterns (HIGH), 5. State Management (MEDIUM), 6. Rendering (MEDIUM) (+12 more)
 
 ### Community 218 - "Community 218"
-Cohesion: 0.16
-Nodes (16): Cloudflare Workers, Pages, Vitest (Testing), Wrangler Skill, Config Binding, Hyperdrive (Database Accelerator), List Models, Manage Buckets (+8 more)
+Cohesion: 0.18
+Nodes (11): Config Binding, Config Binding, Config Binding, Config Binding, Hyperdrive (Database Accelerator), Manage Buckets, Manage Configs, Manage Objects (+3 more)
 
 ### Community 219 - "Community 219"
-Cohesion: 0.12
-Nodes (15): Smart Contract: AgentVaultDepositor.sol, 1. Event Model Summary, 1Shot Permissionless Relayer, 1Shot Relay — Request per Worker Agent, 1Shot Relay — Response, 2. API & Event Reference, 3. Complete Payload Schemas, 4. Complete Sequence Diagram (+7 more)
+Cohesion: 0.33
+Nodes (6): 1Shot Relay — Request per Worker Agent, 1Shot Relay — Response, 3. Complete Payload Schemas, ERC-7715 — Permission Request per Agent, Venice AI — Expected Response, Venice AI — Strategy + Skill Generation Request
 
 ### Community 220 - "Community 220"
 Cohesion: 0.12
@@ -1818,16 +1865,16 @@ Cohesion: 0.12
 Nodes (15): 10. Exaggeration, 11. Solid Drawing, 12. Appeal, 1. Squash and Stretch, 2. Anticipation, 3. Staging, 4. Straight Ahead vs Pose to Pose, 5. Follow Through and Overlapping Action (+7 more)
 
 ### Community 222 - "Community 222"
-Cohesion: 0.12
-Nodes (15): Basic Usage, Best Practices, Category: General, Common Issues, Common Tasks, Core Concepts, Key Principles, Overview (+7 more)
+Cohesion: 0.05
+Nodes (40): Admin Patterns, Alternative Languages, Architecture Overview, Authorization, Basic Contract, Build Contract, Building and Deploying, Calling Another Contract (+32 more)
 
 ### Community 223 - "Community 223"
 Cohesion: 0.12
-Nodes (15): CSS Font Glyph Width + Container Query Exfiltration, Chrome Unicode URL Normalization Bypass (RCTF 2017), Client-Side HMAC Bypass via Leaked JS Secret (Codegate 2013), Cross-Origin XSS via Shared Parent Domain Cookie Injection (0CTF 2017), CSP Bypass via Cloud Function Whitelisted Domain (BSidesSF 2025), CSP Bypass via link prefetch (Boston Key Party 2016), CSP Nonce Bypass via base Tag Hijacking (BSidesSF 2026), CTF Web - Advanced Client-Side Attacks (+7 more)
+Nodes (15): Chrome Unicode URL Normalization Bypass (RCTF 2017), Client-Side HMAC Bypass via Leaked JS Secret (Codegate 2013), Cross-Origin XSS via Shared Parent Domain Cookie Injection (0CTF 2017), CSP Bypass via Cloud Function Whitelisted Domain (BSidesSF 2025), CSP Bypass via link prefetch (Boston Key Party 2016), CSP Nonce Bypass via base Tag Hijacking (BSidesSF 2026), CSS Font Glyph Width + Container Query Exfiltration (UNbreakable 2026), CTF Web - Advanced Client-Side Attacks (+7 more)
 
 ### Community 224 - "Community 224"
-Cohesion: 0.24
-Nodes (15): Council, Deterministic Consensus Gate, ACC Summary (accSummary), Build Decision Record (buildDecisionRecord), avgConf(), clampConf(), councilVerdict(), firstNonDeposit() (+7 more)
+Cohesion: 0.06
+Nodes (34): Account Balance, Basic Payment, Basic Setup, Building ScVal Arguments, Connect Wallet Button, Contract State, Data Fetching, Environment Configuration (+26 more)
 
 ### Community 225 - "Community 225"
 Cohesion: 0.12
@@ -1838,32 +1885,32 @@ Cohesion: 0.12
 Nodes (15): Affected Libraries, Common Vectors, CommonJS Escape, CTF Web - Node.js Prototype Pollution & VM Escape, Detection, ESM-Compatible Escape (CVE-2025-61927), flatnest Circular Reference Bypass (CVE-2023-26135), Full Chain: Prototype Pollution to VM Escape RCE (4llD4y) (+7 more)
 
 ### Community 227 - "Community 227"
-Cohesion: 0.12
-Nodes (16): 1. IAM & Access Control, 3. Network Security, 4. Logging & Monitoring, 5. CI/CD Pipeline Security, 6. Cloudflare & CDN Security, 7. Backup & Disaster Recovery, Automated Backups, Cloudflare Security Configuration (+8 more)
+Cohesion: 0.06
+Nodes (42): 1. IAM & Access Control, 4. Logging & Monitoring, 5. CI/CD Pipeline Security, 6. Cloudflare & CDN Security, 7. Backup & Disaster Recovery, Automated Backups, Cloud Security Checklist, Cloudflare Security Configuration (+34 more)
 
 ### Community 228 - "Community 228"
 Cohesion: 0.12
 Nodes (10): @mui/material, Bundle Size Optimization, File-System Paths, Import Paths, Prefer Statically Analyzable Paths, Avoid Barrel File Imports, Conditional Module Loading, Defer Non-Critical Third-Party Libraries (+2 more)
 
 ### Community 229 - "Community 229"
-Cohesion: 0.12
-Nodes (15): A. Dev Tools, A. Init Foundry Project, A. Test EIP-7702 Hello World, B. API Keys, B. Buat Skeleton Files, B. Test ERC-7715 Permission Grant, C. Cek Design Prototype, C. Repo Setup (+7 more)
+Cohesion: 0.18
+Nodes (11): A. Dev Tools, A. Test EIP-7702 Hello World, B. API Keys, B. Test ERC-7715 Permission Grant, C. Repo Setup, C. Screenshot & Catat Hasil, Gate Check — Phase 1 Complete?, Hari 1 — Environment + API Keys (26 Mei) (+3 more)
 
 ### Community 230 - "Community 230"
-Cohesion: 0.12
-Nodes (16): 5. Re-render Optimization (rerender), 5.10 Subscribe to Derived State, 5.11 Use Functional setState Updates, 5.12 Use Lazy State Initialization, 5.13 Use Transitions for Non-Urgent Updates, 5.14 Use useDeferredValue for Expensive Derived Renders, 5.15 Use useRef for Transient Values, 5.1 Calculate Derived State During Rendering (+8 more)
+Cohesion: 0.22
+Nodes (17): 5. Re-render Optimization (rerender), 5.10 Subscribe to Derived State, 5.11 Use Functional setState Updates, 5.12 Use Lazy State Initialization, 5.13 Use Transitions for Non-Urgent Updates, 5.14 Use useDeferredValue for Expensive Derived Renders, 5.15 Use useRef for Transient Values, 5.1 Calculate Derived State During Rendering (+9 more)
 
 ### Community 231 - "Community 231"
 Cohesion: 0.13
 Nodes (15): Aladdin Risk Engine, Compliance Guardrail, Gasless Relay, OZ Relayer, OZ RWA Module, RWA-Fi Design (cancelled), SEP-56 Vault, T-REX Token (cancelled) (+7 more)
 
 ### Community 232 - "Community 232"
-Cohesion: 0.13
-Nodes (14): 1. Authentication & Security, 2. Request/Response Handling, 3. Error Handling, 5. Webhook Handling, API Integration Specialist, Authentication Issues, Core Integration Principles, Integration Patterns (+6 more)
+Cohesion: 0.08
+Nodes (24): 1. Authentication & Security, 2. Request/Response Handling, 3. Error Handling, 4. Rate Limiting, 5. Webhook Handling, API Integration Specialist, Authentication Issues, Best Practices (+16 more)
 
 ### Community 233 - "Community 233"
-Cohesion: 0.13
-Nodes (14): Chrome Unicode URL Normalization Bypass (RCTF 2017), Client-Side HMAC Bypass via Leaked JS Secret (Codegate 2013), Cross-Origin XSS via Shared Parent Domain Cookie Injection (0CTF 2017), CSP Bypass via Cloud Function Whitelisted Domain (BSidesSF 2025), CSP Bypass via link prefetch (Boston Key Party 2016), CSP Nonce Bypass via base Tag Hijacking (BSidesSF 2026), CTF Web - Advanced Client-Side Attacks, Hyperscript CDN CSP Bypass (UNbreakable 2026) (+6 more)
+Cohesion: 0.12
+Nodes (16): Chrome Unicode URL Normalization Bypass (RCTF 2017), Client-Side HMAC Bypass via Leaked JS Secret (Codegate 2013), Cross-Origin XSS via Shared Parent Domain Cookie Injection (0CTF 2017), CSP Bypass via Cloud Function Whitelisted Domain (BSidesSF 2025), CSP Bypass via link prefetch (Boston Key Party 2016), CSP Nonce Bypass via base Tag Hijacking (BSidesSF 2026), CSS Font Glyph Width + Container Query Exfiltration (UNbreakable 2026), CTF Web - Advanced Client-Side Attacks (+8 more)
 
 ### Community 234 - "Community 234"
 Cohesion: 0.13
@@ -1874,12 +1921,12 @@ Cohesion: 0.13
 Nodes (15): Appendix B - Canonical Sources (read these before reinventing), Apple Liquid Glass (Apple platforms only), Atlassian, Bootstrap, Carbon, Fluent UI, GOV.UK, Material Web (+7 more)
 
 ### Community 236 - "Community 236"
-Cohesion: 0.13
+Cohesion: 0.12
 Nodes (15): Color Roles Usage, Color System, Custom Color Scheme, Custom Shape Usage, Dynamic Color (Material You), Elevation and Shadows, Extended Colors, Foldable Support (+7 more)
 
 ### Community 237 - "Community 237"
-Cohesion: 0.13
-Nodes (15): Avoiding Data Waterfalls, Client Component Data Fetching, Decision Tree, Option 1: Pass from Server Component (Preferred), Option 2: Fetch on Mount (When Necessary), Option 3: Server Action for Reads (Works But Not Ideal), Pattern 1: Server Components (Preferred for Reads), Pattern 2: Server Actions (Preferred for Mutations) (+7 more)
+Cohesion: 0.16
+Nodes (16): Avoiding Data Waterfalls, Client Component Data Fetching, Data Patterns, Decision Tree, Option 1: Pass from Server Component (Preferred), Option 2: Fetch on Mount (When Necessary), Option 3: Server Action for Reads (Works But Not Ideal), Pattern 1: Server Components (Preferred for Reads) (+8 more)
 
 ### Community 238 - "Community 238"
 Cohesion: 0.14
@@ -1890,16 +1937,16 @@ Cohesion: 0.20
 Nodes (11): Use expo-image for Optimized Images, Use Galeria for Image Galleries and Lightbox, Use expo-image for Optimized Images, Use Galeria for Image Galleries and Lightbox, @nandorojo/galeria, expo-image, expo-image, React Native Image (+3 more)
 
 ### Community 240 - "Community 240"
-Cohesion: 0.15
-Nodes (12): SECP256K1_N, SECP256K1_N, HKDF-SHA-256, secp256k1 Curve, WebAuthn PRF Extension, Counter loop (16 iterations), HKDF-SHA-256, infoLabel (+4 more)
+Cohesion: 0.14
+Nodes (16): bufToHex(), prfToValidEthPrivKey(), SECP256K1_N, bufToHex(), prfToValidEthPrivKey(), SECP256K1_N, HKDF-SHA-256, secp256k1 Curve (+8 more)
 
 ### Community 241 - "Community 241"
-Cohesion: 0.13
-Nodes (14): API Integration Specialist, Best Practices, Common Integration Examples, Integration Patterns, Monitoring, Pagination Handling, Performance, Reliability (+6 more)
+Cohesion: 0.08
+Nodes (24): 1. Authentication & Security, 2. Request/Response Handling, 3. Error Handling, 4. Rate Limiting, 5. Webhook Handling, API Integration Specialist, Authentication Issues, Best Practices (+16 more)
 
 ### Community 242 - "Community 242"
-Cohesion: 0.13
-Nodes (14): Chrome Unicode URL Normalization Bypass (RCTF 2017), Client-Side HMAC Bypass via Leaked JS Secret (Codegate 2013), Cross-Origin XSS via Shared Parent Domain Cookie Injection (0CTF 2017), CSP Bypass via Cloud Function Whitelisted Domain (BSidesSF 2025), CSP Bypass via link prefetch (Boston Key Party 2016), CSP Nonce Bypass via base Tag Hijacking (BSidesSF 2026), CTF Web - Advanced Client-Side Attacks, Hyperscript CDN CSP Bypass (UNbreakable 2026) (+6 more)
+Cohesion: 0.12
+Nodes (15): Chrome Unicode URL Normalization Bypass (RCTF 2017), Client-Side HMAC Bypass via Leaked JS Secret (Codegate 2013), Cross-Origin XSS via Shared Parent Domain Cookie Injection (0CTF 2017), CSP Bypass via Cloud Function Whitelisted Domain (BSidesSF 2025), CSP Bypass via link prefetch (Boston Key Party 2016), CSP Nonce Bypass via base Tag Hijacking (BSidesSF 2026), CSS Font Glyph Width + Container Query Exfiltration (UNbreakable 2026), CTF Web - Advanced Client-Side Attacks (+7 more)
 
 ### Community 243 - "Community 243"
 Cohesion: 0.13
@@ -1910,36 +1957,36 @@ Cohesion: 0.13
 Nodes (15): Appendix B - Canonical Sources (read these before reinventing), Apple Liquid Glass (Apple platforms only), Atlassian, Bootstrap, Carbon, Fluent UI, GOV.UK, Material Web (+7 more)
 
 ### Community 245 - "Community 245"
-Cohesion: 0.13
+Cohesion: 0.12
 Nodes (15): Avoiding Data Waterfalls, Client Component Data Fetching, Data Patterns, Decision Tree, Option 1: Pass from Server Component (Preferred), Option 2: Fetch on Mount (When Necessary), Option 3: Server Action for Reads (Works But Not Ideal), Pattern 1: Server Components (Preferred for Reads) (+7 more)
 
 ### Community 246 - "Community 246"
-Cohesion: 0.17
-Nodes (15): Example Workflow, How to Use This Skill, Step 2: Generate Design System (REQUIRED), Step 2b: Persist Design System (Master + Overrides Pattern), Step 3: Supplement with Detailed Searches (as needed), Step 4: Stack Guidelines, Step 4: Stack Guidelines (React Native), Example Workflow (+7 more)
+Cohesion: 0.11
+Nodes (22): Example Workflow, How to Use This Skill, Step 1: Analyze Requirements, Step 1: Analyze User Requirements, Step 2: Generate Design System (REQUIRED), Step 2: Generate Design System (REQUIRED), Step 2b: Persist Design System (Master + Overrides Pattern), Step 3: Supplement with Detailed Searches (as needed) (+14 more)
 
 ### Community 247 - "Community 247"
-Cohesion: 0.13
-Nodes (14): 10. Design System (design-system), 11. Monorepo (monorepo), 12. Third-Party Dependencies (imports), 14. Fonts (fonts), 1. Core Rendering (rendering), 2. List Performance (list-performance), 3. Animation (animation), 4. Scroll Performance (scroll) (+6 more)
+Cohesion: 0.12
+Nodes (15): 10. Design System (design-system), 11. Monorepo (monorepo), 12. Third-Party Dependencies (imports), 13. JavaScript (js), 14. Fonts (fonts), 1. Core Rendering (rendering), 2. List Performance (list-performance), 3. Animation (animation) (+7 more)
 
 ### Community 248 - "Community 248"
 Cohesion: 0.13
 Nodes (14): 1. Architectural Overview, 2. Design Principles, 3. Architecture Diagram, 4. Data Flow, 5. ADR (Architecture Decision Records), 6. NFR (Non-Functional Requirements), 7. Failure Modes, ADR-01: Foundry as Smart Contract Framework (+6 more)
 
 ### Community 249 - "Community 249"
-Cohesion: 0.13
-Nodes (15): 1. Data Model Summary, 2. On-Chain Storage (Smart Contract), 5. Browser Storage, 6. Core Entities, 7. Core Relationships, 8. Key Queries, 9. Data Retention & Privacy, `AgentVaultDepositor.sol` — State Variables (+7 more)
+Cohesion: 0.10
+Nodes (23): 1. Data Model Summary, 2. On-Chain Storage (Smart Contract), 3. Skill Files (JSON, Local), 4. Memory Files (JSON, Local — Append-Only), 5. Browser Storage, 6. Core Entities, 7. Core Relationships, 8. Key Queries (+15 more)
 
 ### Community 250 - "Community 250"
-Cohesion: 0.13
-Nodes (14): CTF Web - Server-Side Injection Attacks, Curl Redirect Chain Bypass, DNS Rebinding for TOCTOU, GraphQL Injection and Exploitation (Hack.lu CTF 2020, HeroCTF v5), Host Header SSRF (MireaCTF), Introspection and Schema Discovery, PHP File Inclusion / php://filter, PHP Type Juggling (+6 more)
+Cohesion: 0.08
+Nodes (25): Basic XXE, Command Injection, CTF Web - Server-Side Injection Attacks, Curl Redirect Chain Bypass, DNS Rebinding for TOCTOU, Git CLI Newline Injection via URL Path (BSidesSF 2026), GraphQL Injection and Exploitation (Hack.lu CTF 2020, HeroCTF v5), Host Header SSRF (MireaCTF) (+17 more)
 
 ### Community 251 - "Community 251"
-Cohesion: 0.13
+Cohesion: 0.12
 Nodes (15): Avoiding Data Waterfalls, Client Component Data Fetching, Data Patterns, Decision Tree, Option 1: Pass from Server Component (Preferred), Option 2: Fetch on Mount (When Necessary), Option 3: Server Action for Reads (Works But Not Ideal), Pattern 1: Server Components (Preferred for Reads) (+7 more)
 
 ### Community 252 - "Community 252"
-Cohesion: 0.25
-Nodes (14): Narasi, Step 10 — Outcome Tracker, Step 11 — Reflector, Step 12 — Curator, Step 13 — BulletpointAnalyzer (Simplified), Step 1 — Formalize State/Action/Reward, Step 2 — Autonomous Monitor Loop, Step 3 — Parallel Data Fetch (+6 more)
+Cohesion: 0.11
+Nodes (26): Narasi, Narasi, Narasi, Narasi, Narasi, Narasi, Narasi, Narasi (+18 more)
 
 ### Community 253 - "Community 253"
 Cohesion: 0.13
@@ -1950,36 +1997,36 @@ Cohesion: 0.13
 Nodes (14): Background: Why this works without a contract redeploy, Current popup sources being eliminated, Files touched (poros = /strategy), Notes for the implementer, One-Grant Session Redemption for /strategy Wizard — Implementation Plan, Out of Scope (explicitly deferred), Task 1: grantStore — persist the single grant across reloads, Task 2: session.js — ERC-7710 session account + redeem helper (+6 more)
 
 ### Community 255 - "Community 255"
-Cohesion: 0.13
-Nodes (15): 7. JavaScript Performance (js), 7.10 Hoist RegExp Creation, 7.11 Use flatMap to Map and Filter in One Pass, 7.12 Use Loop for Min/Max Instead of Sort, 7.13 Use Set/Map for O(1) Lookups, 7.14 Use toSorted() Instead of sort() for Immutability, 7.1 Avoid Layout Thrashing, 7.2 Build Index Maps for Repeated Lookups (+7 more)
+Cohesion: 0.23
+Nodes (16): 7. JavaScript Performance (js), 7.10 Hoist RegExp Creation, 7.11 Use flatMap to Map and Filter in One Pass, 7.12 Use Loop for Min/Max Instead of Sort, 7.13 Use Set/Map for O(1) Lookups, 7.14 Use toSorted() Instead of sort() for Immutability, 7.1 Avoid Layout Thrashing, 7.2 Build Index Maps for Repeated Lookups (+8 more)
 
 ### Community 256 - "Community 256"
 Cohesion: 0.18
 Nodes (14): ACE Framework, Autoresearch (Karpathy), Autoresearch Analysis, Experiment Loop (test-train-evolve), program.md skill file, DAG-based Workflow, EvoAgentX Analysis, EvoAgentX Framework (+6 more)
 
 ### Community 257 - "Community 257"
-Cohesion: 0.15
-Nodes (13): Bundle Analysis, Bundling, Common Problematic Packages, CSS Imports, Error Signs, ESM/CommonJS Issues, Migrating from Webpack to Turbopack, Polyfills (+5 more)
+Cohesion: 0.14
+Nodes (14): Bundle Analysis, Bundling, Common Problematic Packages, CSS Imports, Error Signs, Error Signs, ESM/CommonJS Issues, Migrating from Webpack to Turbopack (+6 more)
 
 ### Community 258 - "Community 258"
-Cohesion: 0.14
-Nodes (14): Auth Errors, Error Boundaries, Error Hierarchy, `error.tsx`, `global-error.tsx`, Not Found, `not-found.tsx`, Redirects (+6 more)
+Cohesion: 0.22
+Nodes (12): Auth Errors, Error Boundaries, Error Handling, Error Hierarchy, `error.tsx`, `global-error.tsx`, Not Found, `not-found.tsx` (+4 more)
 
 ### Community 259 - "Community 259"
 Cohesion: 0.14
 Nodes (13): Basic Structure, Client-Server Communication, Conditional Application, config, configResolved, configureServer, handleHotUpdate, Plugin Ordering (+5 more)
 
 ### Community 260 - "Community 260"
-Cohesion: 0.20
-Nodes (13): buildCouncilInput, councilReview, buildSpecialistPrompt(), ROLE_LABEL, ROLE_SYSTEM, runSpecialist(), allRuleIds(), isValidRuleForRole() (+5 more)
+Cohesion: 0.09
+Nodes (28): ADR Decisions, Commands, Core Architecture, Core Architecture Focus, Current Phase, Directory Structure, Environment Variables, Frontend (+20 more)
 
 ### Community 261 - "Community 261"
-Cohesion: 0.14
+Cohesion: 0.13
 Nodes (14): Color Roles Usage, Color System, Custom Color Scheme, Custom Shape Usage, Dynamic Color (Material You), Elevation and Shadows, Extended Colors, Foldable Support (+6 more)
 
 ### Community 262 - "Community 262"
-Cohesion: 0.15
-Nodes (13): Bundle Analysis, Bundling, Common Problematic Packages, CSS Imports, Error Signs, ESM/CommonJS Issues, Migrating from Webpack to Turbopack, Polyfills (+5 more)
+Cohesion: 0.14
+Nodes (14): Bundle Analysis, Bundling, Common Problematic Packages, CSS Imports, Error Signs, Error Signs, ESM/CommonJS Issues, Migrating from Webpack to Turbopack (+6 more)
 
 ### Community 263 - "Community 263"
 Cohesion: 0.14
@@ -1990,60 +2037,60 @@ Cohesion: 0.14
 Nodes (5): AGENT_PROTOCOLS, STEP_IDS, STEP_LABELS, NODE_COLOR, NODE_COLOR_LIGHT
 
 ### Community 265 - "Community 265"
-Cohesion: 0.14
-Nodes (14): 2.4.1 DataProcessor (`finrl/meta/data_processor.py`), 2.4.2 StockTradingEnv (`finrl/meta/env_stock_trading/`), 2.4.3 DRL Agents (`finrl/agents/`), 4.3.1 GenerativeAgent (`simulation_engine/agent.py`), 4.3.2 Scratch Memory (`simulation_engine/scratch.py`), 4.3.3 Cognitive Functions (`simulation_engine/cognitive_functions.py`), 9.3.1 Session Account, 9.3.2 Wallet Client (Viem Integration) (+6 more)
+Cohesion: 0.17
+Nodes (17): 2.4.1 DataProcessor (`finrl/meta/data_processor.py`), 2.4.2 StockTradingEnv (`finrl/meta/env_stock_trading/`), 2.4.3 DRL Agents (`finrl/agents/`), 2.4 Core Components Detail, 4.3.1 GenerativeAgent (`simulation_engine/agent.py`), 4.3.2 Scratch Memory (`simulation_engine/scratch.py`), 4.3.3 Cognitive Functions (`simulation_engine/cognitive_functions.py`), 4.3 Core Components Detail (+9 more)
 
 ### Community 266 - "Community 266"
-Cohesion: 0.14
+Cohesion: 0.13
 Nodes (14): Color Roles Usage, Color System, Custom Color Scheme, Custom Shape Usage, Dynamic Color (Material You), Elevation and Shadows, Extended Colors, Foldable Support (+6 more)
 
 ### Community 267 - "Community 267"
-Cohesion: 0.15
-Nodes (13): Bundle Analysis, Bundling, Common Problematic Packages, CSS Imports, Error Signs, ESM/CommonJS Issues, Migrating from Webpack to Turbopack, Polyfills (+5 more)
+Cohesion: 0.14
+Nodes (14): Bundle Analysis, Bundling, Common Problematic Packages, CSS Imports, Error Signs, Error Signs, ESM/CommonJS Issues, Migrating from Webpack to Turbopack (+6 more)
 
 ### Community 268 - "Community 268"
-Cohesion: 0.14
-Nodes (13): 8. Advanced Patterns (advanced), 8.1 Do Not Put Effect Events in Dependency Arrays, 8.2 Initialize App Once, Not Per Mount, 8.3 Store Event Handlers in Refs, 8.4 useEffectEvent for Stable Callback Refs, 1. Eliminating Waterfalls (CRITICAL), 4. Client-Side Data Fetching (MEDIUM-HIGH), Full Compiled Document (+5 more)
+Cohesion: 0.13
+Nodes (14): 1. Eliminating Waterfalls (CRITICAL), 2. Bundle Size Optimization (CRITICAL), 3. Server-Side Performance (HIGH), 4. Client-Side Data Fetching (MEDIUM-HIGH), 5. Re-render Optimization (MEDIUM), 6. Rendering Performance (MEDIUM), 7. JavaScript Performance (LOW-MEDIUM), 8. Advanced Patterns (LOW) (+6 more)
 
 ### Community 269 - "Community 269"
 Cohesion: 0.15
 Nodes (13): ScVal Codec Wrappers, Ephemeral Agent Session Key, Soroban Smart Contract Platform, Soroban Client (read/invoke/submit), Stellar Frontend Chain Layer, Stellar Wallets Kit, Compliance Corpus (DeFi Rules), Council Loop (Bounded Debate) (+5 more)
 
 ### Community 270 - "Community 270"
-Cohesion: 0.15
-Nodes (12): ACE Framework (arXiv 2510.04618), 6.2 Konteks: Kenapa TradingAgents Relevan, 6.3 Arsitektur TradingAgents (Referensi), 6.4 AI Council: Adaptasi untuk DeFi Yield Farming, 6.5 Perbedaan dari TradingAgents Original, 6.7 Debate Rounds: Gap vs TradingAgents, 6.8 Validasi: Kenapa Multi-Agent > Single Agent untuk Use Case Ini, 6.9 Alignment dengan Hackathon Judging Criteria (+4 more)
+Cohesion: 0.22
+Nodes (14): ACE Framework (arXiv 2510.04618), 6.1 Overview, 6.2 Konteks: Kenapa TradingAgents Relevan, 6.3 Arsitektur TradingAgents (Referensi), 6.4 AI Council: Adaptasi untuk DeFi Yield Farming, 6.5 Perbedaan dari TradingAgents Original, 6.7 Debate Rounds: Gap vs TradingAgents, 6.8 Validasi: Kenapa Multi-Agent > Single Agent untuk Use Case Ini (+6 more)
 
 ### Community 271 - "Community 271"
-Cohesion: 0.15
-Nodes (12): ADR Format, ADR Naming Convention, Example: Database Selection, ADR Format, ADR Naming Convention, Example: Database Selection, Quick Reference, Documentation and ADRs Skill (+4 more)
+Cohesion: 0.16
+Nodes (16): ADR Format, ADR Naming Convention, ADR Template, Example: Database Selection, Quick Reference, ADR Format, ADR Naming Convention, ADR Template (+8 more)
 
 ### Community 272 - "Community 272"
 Cohesion: 0.15
-Nodes (13): Custom Fonts, Material 3 Type Scale, Custom Fonts, Material 3 Type Scale, 3. Typography, Aturan headline, Eyebrow lockup pattern, Font stacks (+5 more)
+Nodes (16): Custom Fonts, Material 3 Type Scale, Typography, Custom Fonts, Material 3 Type Scale, Typography, 3. Typography, Aturan headline (+8 more)
 
 ### Community 273 - "Community 273"
-Cohesion: 0.15
-Nodes (13): Advanced Mobile Features, App Store Optimization, Architecture & Design Patterns, Capabilities, Cross-Platform Development, Data Management & Sync, DevOps & Deployment, Flutter & Dart Mastery (+5 more)
+Cohesion: 0.14
+Nodes (14): Advanced Mobile Features, App Store Optimization, Architecture & Design Patterns, Capabilities, Cross-Platform Development, Data Management & Sync, DevOps & Deployment, Flutter & Dart Mastery (+6 more)
 
 ### Community 274 - "Community 274"
-Cohesion: 0.15
-Nodes (13): Advanced Techniques, Iterative Refinement, Multi-Turn Reasoning, System Prompts, Advanced Techniques, Iterative Refinement, Multi-Turn Reasoning, System Prompts (+5 more)
+Cohesion: 0.13
+Nodes (15): Advanced Techniques, Iterative Refinement, Multi-Turn Reasoning, Structured Output, System Prompts, Advanced Techniques, Iterative Refinement, Multi-Turn Reasoning (+7 more)
 
 ### Community 275 - "Community 275"
 Cohesion: 0.15
-Nodes (12): Evaluation Best Practices, Evaluation Framework Overview, Quick Reference, Related Skills, Evaluation Best Practices, Evaluation Framework Overview, Quick Reference, Related Skills (+4 more)
+Nodes (18): Alerting on Quality Degradation, Batch Evaluation Pipeline, Building Custom Evaluation Pipelines, Continuous Monitoring, Core Metrics, Custom RAGAS Evaluation, Evaluation Best Practices, Evaluation Framework Overview (+10 more)
 
 ### Community 276 - "Community 276"
-Cohesion: 0.15
-Nodes (12): 1. Chunking Documents, 2. Generating Embeddings & Indexing, 3. Hybrid Search (Vector + BM25), 4. Reranking Top-K Results, 5. Retrieval Evaluation, Constraints, Core Workflow, Implementation Examples (+4 more)
+Cohesion: 0.14
+Nodes (13): 1. Chunking Documents, 2. Generating Embeddings & Indexing, 3. Hybrid Search (Vector + BM25), 4. Reranking Top-K Results, 5. Retrieval Evaluation, Constraints, Core Workflow, Implementation Examples (+5 more)
 
 ### Community 277 - "Community 277"
-Cohesion: 0.15
-Nodes (13): Cloud Secrets Managers, Secrets Rotation, ✅ ALWAYS Do This, ❌ NEVER Do This, Cloud Secrets Managers, Secrets Rotation, ✅ ALWAYS Do This, ❌ NEVER Do This (+5 more)
+Cohesion: 0.11
+Nodes (23): 2. Secrets Management, Cloud Secrets Managers, Secrets Rotation, Verification Steps, 1. Secrets Management, ✅ ALWAYS Do This, ❌ NEVER Do This, Verification Steps (+15 more)
 
 ### Community 278 - "Community 278"
-Cohesion: 0.15
-Nodes (13): Common Rules for Professional UI, Icons & Visual Elements, Layout & Spacing, Light/Dark Mode Contrast, Common Rules for Professional UI, Icons & Visual Elements, Layout & Spacing, Light/Dark Mode Contrast (+5 more)
+Cohesion: 0.12
+Nodes (16): Common Rules for Professional UI, Icons & Visual Elements, Interaction (App), Layout & Spacing, Light/Dark Mode Contrast, Common Rules for Professional UI, Icons & Visual Elements, Interaction (App) (+8 more)
 
 ### Community 279 - "Community 279"
 Cohesion: 0.21
@@ -2062,20 +2109,20 @@ Cohesion: 0.45
 Nodes (13): assets skill (.claude), dapp skill (.claude), data skill (.claude), soroban skill (.claude), standards skill (.claude), zk-proofs skill (.claude), agentic-payments skill (.kiro), assets skill (.kiro) (+5 more)
 
 ### Community 283 - "Community 283"
-Cohesion: 0.15
-Nodes (13): Animation (HIGH), Core Rendering (CRITICAL), Design System (MEDIUM), Fonts (LOW), List Performance (HIGH), Monorepo (LOW), Navigation (HIGH), React Compiler (MEDIUM) (+5 more)
+Cohesion: 0.13
+Nodes (15): Animation (HIGH), Core Rendering (CRITICAL), Design System (MEDIUM), Fonts (LOW), JavaScript (LOW), List Performance (HIGH), Monorepo (LOW), Navigation (HIGH) (+7 more)
 
 ### Community 284 - "Community 284"
 Cohesion: 0.15
 Nodes (12): Async Config, Basic Setup, build.target, Conditional Config, define (Global Constants), Key Config Options, plugins, resolve.alias (+4 more)
 
 ### Community 285 - "Community 285"
-Cohesion: 0.15
+Cohesion: 0.14
 Nodes (13): 1. Persona Summaries, 2. User Stories per Feature, 3. Non-Functional Notes, Feature: Agent Memory System, Feature: Agent Swarm (Orchestrator + Workers), Feature: ERC-7715 Permission per Agent, Feature: Skill Review + Edit UI, Feature: Venice AI Strategy + Skill Generation (+5 more)
 
 ### Community 286 - "Community 286"
-Cohesion: 0.15
-Nodes (13): Advanced Mobile Features, App Store Optimization, Architecture & Design Patterns, Capabilities, Cross-Platform Development, Data Management & Sync, DevOps & Deployment, Flutter & Dart Mastery (+5 more)
+Cohesion: 0.09
+Nodes (21): Advanced Mobile Features, App Store Optimization, Architecture & Design Patterns, Behavioral Traits, Capabilities, Cross-Platform Development, Data Management & Sync, DevOps & Deployment (+13 more)
 
 ### Community 287 - "Community 287"
 Cohesion: 0.15
@@ -2086,48 +2133,48 @@ Cohesion: 0.15
 Nodes (12): Execution Handoff, File Structure, Self-Review, Simulation Engine Implementation Plan, Task 1: Seeded RNG module, Task 2: `simulatePath` — one alternate future, Task 3: `runScenario` — outcome distribution over N futures, Task 4: `deriveScenarioParams` — context enrichment (+4 more)
 
 ### Community 289 - "Community 289"
-Cohesion: 0.19
-Nodes (11): Address, DataKey, Address, AccountError, AgentScope, Claim, DataKey, Deposit (+3 more)
+Cohesion: 0.20
+Nodes (12): Address, DataKey, Address, DataKey, AccountError, AgentScope, Claim, DataKey (+4 more)
 
 ### Community 290 - "Community 290"
-Cohesion: 0.15
-Nodes (12): API Confirmed: OpenAI-Compatible ✅, Available Models, Final Prompt Template, Latency, Minimal Working Call, Privacy Model ✅, Research Findings, Status History (+4 more)
+Cohesion: 0.22
+Nodes (9): API Confirmed: OpenAI-Compatible ✅, Available Models, Final Prompt Template, Latency, Minimal Working Call, Privacy Model ✅, Research Findings, Using OpenAI SDK (Optional, Cleaner) (+1 more)
 
 ### Community 291 - "Community 291"
-Cohesion: 0.15
-Nodes (12): Actual Permission Object Format, ⚠️ ARCHITECTURE CHANGE: VaultDepositor Must Change, ERC-7715 is a Draft Standard ⚠️, ERC-7715 Scoped Permissions — Grant Flow & Enforcement, Grant Flow — Actual RPC Call, Permission Response Structure, Permission Revocation, Research Findings (+4 more)
+Cohesion: 0.22
+Nodes (9): Actual Permission Object Format, ⚠️ ARCHITECTURE CHANGE: VaultDepositor Must Change, ERC-7715 is a Draft Standard ⚠️, Grant Flow — Actual RPC Call, Permission Response Structure, Permission Revocation, Research Findings, Revised VaultDepositor Permission Model (Option B) (+1 more)
 
 ### Community 292 - "Community 292"
-Cohesion: 0.21
-Nodes (12): CarouselApi, CarouselContent(), CarouselContext, CarouselContextProps, CarouselItem(), CarouselNext(), CarouselOptions, CarouselPlugin (+4 more)
+Cohesion: 0.19
+Nodes (13): Carousel(), CarouselApi, CarouselContent(), CarouselContext, CarouselContextProps, CarouselItem(), CarouselNext(), CarouselOptions (+5 more)
 
 ### Community 293 - "Community 293"
-Cohesion: 0.15
-Nodes (7): DropdownMenuCheckboxItem(), DropdownMenuContent(), DropdownMenuRadioItem(), DropdownMenuSeparator(), DropdownMenuShortcut(), DropdownMenuSubContent(), DropdownMenuSubTrigger()
+Cohesion: 0.12
+Nodes (9): DropdownMenuCheckboxItem(), DropdownMenuContent(), DropdownMenuItem(), DropdownMenuLabel(), DropdownMenuRadioItem(), DropdownMenuSeparator(), DropdownMenuShortcut(), DropdownMenuSubContent() (+1 more)
 
 ### Community 294 - "Community 294"
-Cohesion: 0.22
-Nodes (10): FormControl(), FormDescription(), FormFieldContext, FormFieldContextValue, FormItem(), FormItemContext, FormLabel(), FormMessage() (+2 more)
+Cohesion: 0.20
+Nodes (11): FormControl(), FormDescription(), FormFieldContext, FormFieldContextValue, FormItem(), FormItemContext, FormItemContextValue, FormLabel() (+3 more)
 
 ### Community 295 - "Community 295"
-Cohesion: 0.35
-Nodes (9): AccountError, Hash, BytesN, Context, Env, Result, Vec, AgentAccount (+1 more)
+Cohesion: 0.33
+Nodes (10): AccountError, Hash, AccountError, BytesN, Context, Env, Result, Vec (+2 more)
 
 ### Community 296 - "Community 296"
 Cohesion: 0.29
 Nodes (6): AgentRecord, Address, Env, RegistryError, Result, Registry
 
 ### Community 297 - "Community 297"
-Cohesion: 0.17
-Nodes (11): 1. Right to Access (GDPR Art. 15 / CCPA § 1798.100), 2. Right to Deletion (GDPR Art. 17 / CCPA § 1798.105), 3. Right to Data Portability (GDPR Art. 20), 4. Right to Object (GDPR Art. 21), Data Breach Response Plan, Data Privacy Compliance, Data Protection Impact Assessment (DPIA), Data Subject Rights Implementation (+3 more)
+Cohesion: 0.13
+Nodes (14): 1. Data Minimization, 2. Purpose Limitation, 3. Storage Limitation, CCPA/CPRA (California Consumer Privacy Act), Data Breach Response Plan, Data Privacy Compliance, Data Protection Impact Assessment (DPIA), GDPR (General Data Protection Regulation) (+6 more)
 
 ### Community 298 - "Community 298"
 Cohesion: 0.17
 Nodes (12): 4.10 Quotes & Testimonials, 4.11 Page Theme Lock (Light / Dark Mode Consistency), 4.1 Typography, 4.2 Color Calibration, 4.3 Layout Diversification, 4.4 Materiality, Shadows, Cards, 4.5 Interactive UI States, 4.6 Data & Form Patterns (+4 more)
 
 ### Community 299 - "Community 299"
-Cohesion: 0.17
-Nodes (12): Auto-scaling Strategies, Batch Prediction Systems, Best Practices, Core Capabilities, Edge Deployment, Model Deployment Pipelines, Model Optimization, Monitoring and Observability (+4 more)
+Cohesion: 0.25
+Nodes (8): Auto-scaling Strategies, Batch Prediction Systems, Core Capabilities, Edge Deployment, Model Deployment Pipelines, Multi-model Serving, Real-time Inference, Serving Infrastructure
 
 ### Community 300 - "Community 300"
 Cohesion: 0.17
@@ -2142,16 +2189,16 @@ Cohesion: 0.17
 Nodes (12): Step 10: Ground in Empirical Evidence, Step 11: Synthesize Psychological Analysis, Step 1: Define Psychological Phenomenon, Step 2: Gather Descriptive Information, Step 3: Apply Relevant Psychological Theories, Step 4: Analyze Cognitive Processes, Step 5: Examine Emotional and Motivational Factors, Step 6: Assess Social and Situational Influences (+4 more)
 
 ### Community 303 - "Community 303"
-Cohesion: 0.17
-Nodes (12): API Rate Limiting, Expensive Operations, 1. Authentication & Security, 2. Request/Response Handling, 3. Error Handling, 5. Webhook Handling, Core Integration Principles, API Rate Limiting (+4 more)
+Cohesion: 0.05
+Nodes (42): 10. Dependency Security, 2. Input Validation, 3. SQL Injection Prevention, 4. Authentication & Authorization, 5. XSS Prevention, 7. Rate Limiting, 8. Sensitive Data Exposure, 9. Blockchain Security (Solana) (+34 more)
 
 ### Community 304 - "Community 304"
 Cohesion: 0.17
 Nodes (11): Anti-Patterns to Avoid, Category-Specific Patterns: General, Common Integration Points, Design Patterns, ✅ Do: Handle Explicitly, ❌ Don't: Swallow Exceptions, Pattern 1: Input Validation, Pattern 2: Error Handling (+3 more)
 
 ### Community 305 - "Community 305"
-Cohesion: 0.21
-Nodes (12): Build Graph Skill, Code Review Skill, CSS view-transition pseudo-elements, MCP Tools (list_graph_stats_tool, build_or_update_graph_tool), N+1 Query Problem, Next.js Documentation, OWASP Top 10, React Documentation (+4 more)
+Cohesion: 0.06
+Nodes (33): Anchors & On/Off Ramps, API References, Asset Discovery, CLI Tools, Client SDKs (Application Development), Community Examples, Contract Libraries & Tools, Contract SDK (Soroban Development) (+25 more)
 
 ### Community 306 - "Community 306"
 Cohesion: 0.17
@@ -2162,8 +2209,8 @@ Cohesion: 0.17
 Nodes (11): /code-review, Correctness, How It Works, If Connectors Available, Maintainability, Output, Performance, Review Dimensions (+3 more)
 
 ### Community 308 - "Community 308"
-Cohesion: 0.17
-Nodes (10): CTF Web - Server-Side Injection Attacks, GraphQL Injection and Exploitation (Hack.lu CTF 2020, HeroCTF v5), Introspection and Schema Discovery, PHP File Inclusion / php://filter, PHP Type Juggling, Python str.format() Attribute Traversal (PlaidCTF 2017), Query Batching and Aliasing for Rate Limit Bypass, String Interpolation Injection (+2 more)
+Cohesion: 0.10
+Nodes (19): Basic XXE, CTF Web - Server-Side Injection Attacks, Curl Redirect Chain Bypass, DNS Rebinding for TOCTOU, GraphQL Injection and Exploitation (Hack.lu CTF 2020, HeroCTF v5), Host Header SSRF (MireaCTF), Introspection and Schema Discovery, OOB XXE with External DTD (+11 more)
 
 ### Community 309 - "Community 309"
 Cohesion: 0.17
@@ -2186,19 +2233,19 @@ Cohesion: 0.18
 Nodes (11): Advanced, Build & SSR, CLI Commands, Common Config, Core, Official Plugins, Preferences, Quick Reference (+3 more)
 
 ### Community 314 - "Community 314"
-Cohesion: 0.20
-Nodes (8): 20. Right rail — multi-agent updates, SPEED_MS, TWEAK_DEFAULTS, 20. Right rail — multi-agent updates, ActivityPanel(), EVENT_STYLES, PALETTES, PermissionPanel()
+Cohesion: 0.13
+Nodes (13): 20. Right rail — multi-agent updates, Activity panel, Permission panel, App(), SPEED_MS, TWEAK_DEFAULTS, 20. Right rail — multi-agent updates, Activity panel (+5 more)
 
 ### Community 315 - "Community 315"
-Cohesion: 0.17
-Nodes (12): Auto-scaling Strategies, Batch Prediction Systems, Best Practices, Core Capabilities, Edge Deployment, Model Deployment Pipelines, Model Optimization, Monitoring and Observability (+4 more)
+Cohesion: 0.14
+Nodes (15): Auto-scaling Strategies, Batch Prediction Systems, Best Practices, Best Practices, Core Capabilities, Edge Deployment, Model Deployment Pipelines, Model Optimization (+7 more)
 
 ### Community 316 - "Community 316"
 Cohesion: 0.17
 Nodes (11): 1. Material Design 3 Principles, 2. Jetpack Compose Layout System, 3. Navigation Patterns, 4. Material 3 Theming, 5. Component Examples, Android Mobile Design, Best Practices, Common Issues (+3 more)
 
 ### Community 317 - "Community 317"
-Cohesion: 0.17
+Cohesion: 0.15
 Nodes (12): Auth Errors, Error Boundaries, Error Handling, Error Hierarchy, `error.tsx`, `global-error.tsx`, Not Found, `not-found.tsx` (+4 more)
 
 ### Community 318 - "Community 318"
@@ -2206,7 +2253,7 @@ Cohesion: 0.17
 Nodes (12): Step 10: Ground in Empirical Evidence, Step 11: Synthesize Psychological Analysis, Step 1: Define Psychological Phenomenon, Step 2: Gather Descriptive Information, Step 3: Apply Relevant Psychological Theories, Step 4: Analyze Cognitive Processes, Step 5: Examine Emotional and Motivational Factors, Step 6: Assess Social and Situational Influences (+4 more)
 
 ### Community 319 - "Community 319"
-Cohesion: 0.17
+Cohesion: 0.15
 Nodes (12): Cause A — Buttons genuinely broken (functional bug), Cause B — State desync makes a control LOOK dead (model preference), Cause C — Wallet buttons give NO visible feedback (feels dead), Open questions (need user decision), Phase 0 — Runtime click-audit (confirm the full list), Phase 1 — Fix Test-connection buttons (Cause A), Phase 2 — Fix model-preference desync (Cause B), Phase 3 — Add feedback to wallet buttons (Cause C) (+4 more)
 
 ### Community 320 - "Community 320"
@@ -2222,51 +2269,51 @@ Cohesion: 0.17
 Nodes (11): File Structure, Revision log (review round 1 — 2026-06-11), Roadmap v2 — Phase 1: Trust Foundation Implementation Plan, Self-Review checklist (run before handing off), Task 1: Correct the false ERC-7715 authorization claim in docs, Task 2: AgentRegistry — on-chain scope source of truth, Task 3: AgentVaultDepositor — real-custody execution (Jalur B), Task 4: Fee-on-transfer + zero-shares edge tests (+3 more)
 
 ### Community 323 - "Community 323"
-Cohesion: 0.17
-Nodes (12): 6. Rendering Performance (rendering), 6.10 Use React DOM Resource Hints, 6.11 Use useTransition Over Manual Loading States, 6.1 Animate SVG Wrapper Instead of SVG Element, 6.2 CSS content-visibility for Long Lists, 6.3 Hoist Static JSX Elements, 6.4 Optimize SVG Precision, 6.5 Prevent Hydration Mismatch Without Flickering (+4 more)
+Cohesion: 0.28
+Nodes (13): 6. Rendering Performance (rendering), 6.10 Use React DOM Resource Hints, 6.11 Use useTransition Over Manual Loading States, 6.1 Animate SVG Wrapper Instead of SVG Element, 6.2 CSS content-visibility for Long Lists, 6.3 Hoist Static JSX Elements, 6.4 Optimize SVG Precision, 6.5 Prevent Hydration Mismatch Without Flickering (+5 more)
 
 ### Community 324 - "Community 324"
-Cohesion: 0.29
-Nodes (7): buildAgentDeposit(), runAgentDeposit(), sdk(), signAgentDepositEntries(), getRelayerAddress(), submitViaRelay(), newSessionKey()
+Cohesion: 0.07
+Nodes (29): Best Practices, Cargo.toml for Tests, CI/CD Configuration, CLI Simulation, Comparing Against Deployed Contracts, Differential Testing with Test Snapshots, Documentation, Fork Testing (+21 more)
 
 ### Community 325 - "Community 325"
 Cohesion: 0.17
-Nodes (11): Best Practices, Config Logging, FIRST: Check if Wrangler is installed, and if not, install it, Key Guidelines, Observability, Pages (Frontend Deployment), Quick Reference: Core Commands, Quick Start: New Worker (+3 more)
+Nodes (11): Best Practices, FIRST: Check if Wrangler is installed, and if not, install it, Key Guidelines, Local Testing with Vitest, Pages (Frontend Deployment), Quick Reference: Core Commands, Quick Start: New Worker, Retrieval Sources (+3 more)
 
 ### Community 326 - "Community 326"
 Cohesion: 0.31
 Nodes (10): ethCall(), INTERVALS, runApyCheck(), runPositionCheck(), runRewardCheck(), runRiskCheck(), SELECTORS, startMonitoring() (+2 more)
 
 ### Community 327 - "Community 327"
-Cohesion: 0.18
-Nodes (10): /code-review, Correctness, How It Works, If Connectors Available, Maintainability, Output, Review Dimensions, Security (+2 more)
+Cohesion: 0.17
+Nodes (11): /code-review, Correctness, How It Works, If Connectors Available, Maintainability, Output, Performance, Review Dimensions (+3 more)
 
 ### Community 328 - "Community 328"
-Cohesion: 0.18
+Cohesion: 0.17
 Nodes (11): Complete Example: Photo Gallery Modal, File Structure, Handling Hard Navigation, Parallel & Intercepting Routes, Route Matcher Reference, Step 1: Root Layout with Slot, Step 2: Default File (Critical!), Step 3: Intercepting Route (Modal) (+3 more)
 
 ### Community 329 - "Community 329"
-Cohesion: 0.18
-Nodes (11): Core Rendering (CRITICAL), Design System (MEDIUM), Fonts (LOW), List Performance (HIGH), Monorepo (LOW), React Compiler (MEDIUM), React State (MEDIUM), Rules (+3 more)
+Cohesion: 0.15
+Nodes (13): Core Rendering (CRITICAL), Design System (MEDIUM), Fonts (LOW), JavaScript (LOW), List Performance (HIGH), Monorepo (LOW), React Compiler (MEDIUM), React State (MEDIUM) (+5 more)
 
 ### Community 330 - "Community 330"
 Cohesion: 0.24
 Nodes (11): A2A Redelegation (ERC-7710), Base Sepolia (84532), config.js, 1Shot Managed API, orchestrator.js, redelegation.js, relay.js, 1Shot Permissionless Relayer (+3 more)
 
 ### Community 331 - "Community 331"
-Cohesion: 0.18
-Nodes (10): 1. Data Minimization, 2. Purpose Limitation, 3. Storage Limitation, Data Breach Response Plan, Data Privacy Compliance, Data Protection Impact Assessment (DPIA), Incident Response, Privacy by Design Principles (+2 more)
+Cohesion: 0.13
+Nodes (14): 1. Data Minimization, 2. Purpose Limitation, 3. Storage Limitation, CCPA Compliance, Compliance Checklist, Data Breach Response Plan, Data Privacy Compliance, Data Protection Impact Assessment (DPIA) (+6 more)
 
 ### Community 332 - "Community 332"
 Cohesion: 0.18
 Nodes (10): Anti-Patterns, Commands, Core Principles, Database Schema Designer, Extension Points, Key Terms, Process Overview, Quick Reference (+2 more)
 
 ### Community 333 - "Community 333"
-Cohesion: 0.18
+Cohesion: 0.17
 Nodes (11): Auth Errors, Error Boundaries, Error Handling, Error Hierarchy, `error.tsx`, `global-error.tsx`, Not Found, `not-found.tsx` (+3 more)
 
 ### Community 334 - "Community 334"
-Cohesion: 0.18
+Cohesion: 0.17
 Nodes (11): Complete Example: Photo Gallery Modal, File Structure, Handling Hard Navigation, Parallel & Intercepting Routes, Route Matcher Reference, Step 1: Root Layout with Slot, Step 2: Default File (Critical!), Step 3: Intercepting Route (Modal) (+3 more)
 
 ### Community 335 - "Community 335"
@@ -2278,15 +2325,15 @@ Cohesion: 0.18
 Nodes (10): 9.1 Overview, 9.2.2 Full Permission Lifecycle, 9.4.1 Contoh: ERC-20 Periodic (paling relevan untuk DeFi), 9.4.2 Contoh: ERC-20 Stream (untuk use case continuous), 9.4 Empat Tipe Permission, 9.5 Alur Data End-to-End, 9.6 Requirements & Constraints, 9.7 Perbandingan: Advanced Permissions vs. Regular Delegations (+2 more)
 
 ### Community 337 - "Community 337"
-Cohesion: 0.18
-Nodes (10): API Integration Specialist, Best Practices, Integration Patterns, Monitoring, Pagination Handling, Performance, Reliability, REST API Client Pattern (+2 more)
+Cohesion: 0.08
+Nodes (24): 1. Authentication & Security, 2. Request/Response Handling, 3. Error Handling, 4. Rate Limiting, 5. Webhook Handling, API Integration Specialist, Authentication Issues, Best Practices (+16 more)
 
 ### Community 338 - "Community 338"
-Cohesion: 0.18
-Nodes (10): CCPA/CPRA (California Consumer Privacy Act), Data Breach Response Plan, Data Privacy Compliance, Data Protection Impact Assessment (DPIA), GDPR (General Data Protection Regulation), HIPAA (Health Insurance Portability and Accountability Act), Incident Response, Key Regulations Overview (+2 more)
+Cohesion: 0.11
+Nodes (18): 1. Data Minimization, 2. Purpose Limitation, 3. Storage Limitation, CCPA Compliance, CCPA/CPRA (California Consumer Privacy Act), Compliance Checklist, Data Breach Response Plan, Data Privacy Compliance (+10 more)
 
 ### Community 339 - "Community 339"
-Cohesion: 0.18
+Cohesion: 0.17
 Nodes (11): Complete Example: Photo Gallery Modal, File Structure, Handling Hard Navigation, Parallel & Intercepting Routes, Route Matcher Reference, Step 1: Root Layout with Slot, Step 2: Default File (Critical!), Step 3: Intercepting Route (Modal) (+3 more)
 
 ### Community 340 - "Community 340"
@@ -2302,12 +2349,12 @@ Cohesion: 0.20
 Nodes (7): Client-Side Data Fetching, Deduplicate Global Event Listeners, Version and Minimize localStorage Data, Use Passive Event Listeners for Scrolling Performance, Use SWR for Automatic Deduplication, SWR, Zustand
 
 ### Community 343 - "Community 343"
-Cohesion: 0.18
-Nodes (10): 3. Server-Side Performance (server), 3.10 Use after() for Non-Blocking Operations, 3.1 Authenticate Server Actions Like API Routes, 3.2 Avoid Duplicate Serialization in RSC Props, 3.3 Avoid Shared Module State for Request Data, 3.4 Cross-Request LRU Caching, 3.5 Hoist Static I/O to Module Level, 3.6 Minimize Serialization at RSC Boundaries (+2 more)
+Cohesion: 0.30
+Nodes (12): 3. Server-Side Performance (server), 3.10 Use after() for Non-Blocking Operations, 3.1 Authenticate Server Actions Like API Routes, 3.2 Avoid Duplicate Serialization in RSC Props, 3.3 Avoid Shared Module State for Request Data, 3.4 Cross-Request LRU Caching, 3.5 Hoist Static I/O to Module Level, 3.6 Minimize Serialization at RSC Boundaries (+4 more)
 
 ### Community 344 - "Community 344"
-Cohesion: 0.18
-Nodes (10): Check if Already Upgraded, ⚠️ CRITICAL: MetaMask Flask Required (NOT Regular MetaMask), EIP-7702 + MetaMask Smart Accounts Kit Integration, EIP-7702 on Sepolia — CONFIRMED ✅, EIP-7702 Upgrade Flow (Actual), Frontend Tech Stack Revision, Research Findings, Research Question(s) (+2 more)
+Cohesion: 0.25
+Nodes (8): Viem, Check if Already Upgraded, ⚠️ CRITICAL: MetaMask Flask Required (NOT Regular MetaMask), EIP-7702 on Sepolia — CONFIRMED ✅, EIP-7702 Upgrade Flow (Actual), Frontend Tech Stack Revision, MetaMask Smart Accounts Kit, Research Findings
 
 ### Community 345 - "Community 345"
 Cohesion: 0.22
@@ -2326,28 +2373,28 @@ Cohesion: 0.24
 Nodes (11): Vite Build and SSR Reference, Vite Configuration Reference, Vite Features Reference, Vite Plugin API Reference, Vite Environment API Reference, Vite Generation Info, Oxc Transformer, Rolldown Bundler (+3 more)
 
 ### Community 349 - "Community 349"
-Cohesion: 0.22
-Nodes (10): Conversion Tracking Setup, Platform Setup Checklists, Google Ads, LinkedIn Ads, Marketing Psychology, Marketing Psychology & Mental Models, Mental Models, Meta Ads (+2 more)
+Cohesion: 0.09
+Nodes (21): LinkedIn Ads, Meta Ads, Aggregated Event Measurement, Browser-side checks, Common Mistakes, Conversion tracking, Conversion Tracking Setup, Conversions API (CAPI) (+13 more)
 
 ### Community 350 - "Community 350"
-Cohesion: 0.20
-Nodes (10): API Integration, Categories for Technical Spikes, Performance & Scalability, Platform & Infrastructure, User Experience, Best Practices, Model Optimization, Monitoring and Observability (+2 more)
+Cohesion: 0.29
+Nodes (7): API Integration, Architecture & Design, Categories for Technical Spikes, Performance & Scalability, Platform & Infrastructure, Security & Compliance, User Experience
 
 ### Community 351 - "Community 351"
 Cohesion: 0.20
 Nodes (10): Analysis Pipeline, By Intent Type, By Tech Stack, How It Works, Phase 0: Project Detection, Phase 1: Intent Detection, Phase 2: Scope Assessment, Phase 3: ECC Component Matching (+2 more)
 
 ### Community 352 - "Community 352"
-Cohesion: 0.20
-Nodes (10): Essential Books, Online Resources, Resources, Essential Books, Online Resources, Resources, Quick Reference, Essential Books (+2 more)
+Cohesion: 0.50
+Nodes (4): Essential Books, Online Resources, Quick References, Resources
 
 ### Community 353 - "Community 353"
-Cohesion: 0.20
-Nodes (10): 1. Statistical Methods Advanced, 2. Experiment Design Frameworks, 3. Feature Engineering Patterns, 1. Statistical Methods Advanced, 2. Experiment Design Frameworks, 3. Feature Engineering Patterns, 1. Statistical Methods Advanced, 2. Experiment Design Frameworks (+2 more)
+Cohesion: 0.23
+Nodes (12): 1. Statistical Methods Advanced, 2. Experiment Design Frameworks, 3. Feature Engineering Patterns, Reference Documentation, 1. Statistical Methods Advanced, 2. Experiment Design Frameworks, 3. Feature Engineering Patterns, Reference Documentation (+4 more)
 
 ### Community 354 - "Community 354"
-Cohesion: 0.20
-Nodes (10): 10. Charts & Data (LOW), 1. Accessibility (CRITICAL), 2. Touch & Interaction (CRITICAL), 4. Style Selection (HIGH), 5. Layout & Responsive (HIGH), 6. Typography & Color (MEDIUM), 7. Animation (MEDIUM), 8. Forms & Feedback (MEDIUM) (+2 more)
+Cohesion: 0.18
+Nodes (11): 10. Charts & Data (LOW), 1. Accessibility (CRITICAL), 2. Touch & Interaction (CRITICAL), 3. Performance (HIGH), 4. Style Selection (HIGH), 5. Layout & Responsive (HIGH), 6. Typography & Color (MEDIUM), 7. Animation (MEDIUM) (+3 more)
 
 ### Community 355 - "Community 355"
 Cohesion: 0.20
@@ -2358,8 +2405,8 @@ Cohesion: 0.20
 Nodes (9): Advanced, Build & SSR, CLI Commands, Common Config, Core, Official Plugins, Preferences, Quick Reference (+1 more)
 
 ### Community 357 - "Community 357"
-Cohesion: 0.29
-Nodes (9): getPlatformInfo(), isWebview(), getPlatformInfo(), isWebview(), bowser, isPlatformSupported() function, Platform Support for WebAuthn PRF, Bowser (+1 more)
+Cohesion: 0.15
+Nodes (17): getPlatformInfo(), isPlatformSupported(), isWebview(), Detection code, Feature detection vs. version detection, How to use the result, Platform Support for WebAuthn PRF, Support Matrix (as of early 2026) (+9 more)
 
 ### Community 360 - "Community 360"
 Cohesion: 0.20
@@ -2370,8 +2417,8 @@ Cohesion: 0.20
 Nodes (10): Analysis Pipeline, By Intent Type, By Tech Stack, How It Works, Phase 0: Project Detection, Phase 1: Intent Detection, Phase 2: Scope Assessment, Phase 3: ECC Component Matching (+2 more)
 
 ### Community 362 - "Community 362"
-Cohesion: 0.20
-Nodes (10): 10. Charts & Data (LOW), 1. Accessibility (CRITICAL), 2. Touch & Interaction (CRITICAL), 4. Style Selection (HIGH), 5. Layout & Responsive (HIGH), 6. Typography & Color (MEDIUM), 7. Animation (MEDIUM), 8. Forms & Feedback (MEDIUM) (+2 more)
+Cohesion: 0.18
+Nodes (11): 10. Charts & Data (LOW), 1. Accessibility (CRITICAL), 2. Touch & Interaction (CRITICAL), 3. Performance (HIGH), 4. Style Selection (HIGH), 5. Layout & Responsive (HIGH), 6. Typography & Color (MEDIUM), 7. Animation (MEDIUM) (+3 more)
 
 ### Community 363 - "Community 363"
 Cohesion: 0.20
@@ -2386,12 +2433,12 @@ Cohesion: 0.20
 Nodes (10): Dependency Categories, Seam Discipline, Testing Strategy, Adapter, Depth, Interface, Leverage, Locality (+2 more)
 
 ### Community 366 - "Community 366"
-Cohesion: 0.20
-Nodes (9): 0. Bacaan singkat, 11. Tweakable Surface, 13. Extending the System, 14. Reference Files, 15. Open Questions / Future, 1. Prinsip Desain, 9. Per-Screen Signatures, Anti-patterns yang HARUS dihindari (+1 more)
+Cohesion: 0.08
+Nodes (23): 0. Bacaan singkat, 11. Tweakable Surface, 12. Implementation Notes, 13. Extending the System, 14. Reference Files, 15. Open Questions / Future, 1. Prinsip Desain, 4. Spacing, Radius, Borders (+15 more)
 
 ### Community 367 - "Community 367"
-Cohesion: 0.20
-Nodes (10): 3. Step-by-Step Demo Flow, Step 0: Preparation (Pre-Recording), Step 1: Input Intent into Venice AI (0:00–0:45), Step 2: Review & Approve Skill Sets (0:45–1:15), Step 3: Connect Wallet + EIP-7702 Upgrade (1:15–2:00), Step 4: Grant ERC-7715 Permissions (2:00–2:30), Step 5: Agent Swarm Parallel Execution (2:30–3:30), Step 6: Memory in Node Details (3:30–3:50) (+2 more)
+Cohesion: 0.17
+Nodes (12): 3. Step-by-Step Demo Flow, Step 0: Preparation (Pre-Recording), Step 1: Input Intent into Venice AI (0:00–0:45), Step 2: Review & Approve Skill Sets (0:45–1:15), Step 3: Connect Wallet + EIP-7702 Upgrade (1:15–2:00), Step 4: Grant ERC-7715 Permissions (2:00–2:30), Step 4: Grant the ERC-7715 Advanced Permission (2:00–2:30), Step 5: Agent Swarm Parallel Execution (2:30–3:30) (+4 more)
 
 ### Community 368 - "Community 368"
 Cohesion: 0.20
@@ -2402,12 +2449,12 @@ Cohesion: 0.20
 Nodes (9): 1. Max-loss formula, 2. Compromised server — can vs cannot (post-Phase 1), 3. Relayer trust (1Shot), 4. AI output is untrusted input, 5. Key-material exposure (honest), 6. Destructive-test results, Live drills — Base Sepolia (2026-06-12), Local (Foundry, `test/security/Destructive.t.sol`) (+1 more)
 
 ### Community 370 - "Community 370"
-Cohesion: 0.27
-Nodes (7): Frontend Application, Memory System, Parallel Execution, makeAgentId(), makePlanId(), readTokenBalance(), vis.js Network
+Cohesion: 0.10
+Nodes (21): Attestation Contract (Soroban), strategyHash, Skill System, Venice AI, AI Council, AI Strategist, DeepSeek, Hardcoded Fallback (+13 more)
 
 ### Community 371 - "Community 371"
-Cohesion: 0.20
-Nodes (9): 0. Bacaan singkat, 11. Tweakable Surface, 13. Extending the System, 14. Reference Files, 15. Open Questions / Future, 1. Prinsip Desain, 9. Per-Screen Signatures, Anti-patterns yang HARUS dihindari (+1 more)
+Cohesion: 0.21
+Nodes (14): 0. Bacaan singkat, 11. Tweakable Surface, 13. Extending the System, 14. Reference Files, 15. Open Questions / Future, 1. Prinsip Desain, 4. Spacing, Radius, Borders, 9. Per-Screen Signatures (+6 more)
 
 ### Community 372 - "Community 372"
 Cohesion: 0.20
@@ -2418,12 +2465,12 @@ Cohesion: 0.20
 Nodes (10): 2.1.1. Fase Setup (Lines 5-19), 2.1.2. Aturan Main (Lines 21-37), 2.1.3. The Experiment Loop (Lines 90-114), 2.1. `program.md` — "Otak" Agen (Skill File), 2.2.1. Konstanta Tetap (Lines 30-32), 2.2.2. Data Pipeline, 2.2.3. Dataloader: Best-Fit Packing (Lines 276-337), 2.2.4. Metric Evaluasi: Bits Per Byte (BPB) (Lines 343-365) (+2 more)
 
 ### Community 374 - "Community 374"
-Cohesion: 0.20
-Nodes (9): Anti-Patterns, Commands, Database Schema Designer, Extension Points, Key Terms, Process Overview, Quick Reference, Quick Start (+1 more)
+Cohesion: 0.13
+Nodes (18): Core Principles, Performance by Design, Production-First Design, Security & Privacy, Core Principles, Performance by Design, Production-First Design, Security & Privacy (+10 more)
 
 ### Community 375 - "Community 375"
-Cohesion: 0.20
-Nodes (10): Available Tools, Example: Get Errors, `get_errors`, `get_logs`, `get_page_metadata`, `get_project_metadata`, `get_routes`, `get_server_action_by_id` (+2 more)
+Cohesion: 0.29
+Nodes (7): Available Tools, `get_errors`, `get_logs`, `get_page_metadata`, `get_project_metadata`, `get_routes`, `get_server_action_by_id`
 
 ### Community 376 - "Community 376"
 Cohesion: 0.20
@@ -2434,8 +2481,8 @@ Cohesion: 0.20
 Nodes (10): Analysis Pipeline, By Intent Type, By Tech Stack, How It Works, Phase 0: Project Detection, Phase 1: Intent Detection, Phase 2: Scope Assessment, Phase 3: ECC Component Matching (+2 more)
 
 ### Community 378 - "Community 378"
-Cohesion: 0.20
-Nodes (10): 10. Charts & Data (LOW), 1. Accessibility (CRITICAL), 2. Touch & Interaction (CRITICAL), 4. Style Selection (HIGH), 5. Layout & Responsive (HIGH), 6. Typography & Color (MEDIUM), 7. Animation (MEDIUM), 8. Forms & Feedback (MEDIUM) (+2 more)
+Cohesion: 0.18
+Nodes (11): 10. Charts & Data (LOW), 1. Accessibility (CRITICAL), 2. Touch & Interaction (CRITICAL), 3. Performance (HIGH), 4. Style Selection (HIGH), 5. Layout & Responsive (HIGH), 6. Typography & Color (MEDIUM), 7. Animation (MEDIUM) (+3 more)
 
 ### Community 379 - "Community 379"
 Cohesion: 0.20
@@ -2446,20 +2493,20 @@ Cohesion: 0.20
 Nodes (9): File Structure, Roadmap v2 — Phase 5: Refactor & UX Implementation Plan, Self-Review checklist, Task 1: Extract pure decision logic from execution, Task 2: Re-wire relay to the Phase 1 signature + single fund path, Task 3: Single fund path — generator targets depositor only, Task 4: Single-source permission summary + max-at-risk, Task 5: Revoke UI + AgentRevoked subscription (+1 more)
 
 ### Community 381 - "Community 381"
-Cohesion: 0.20
-Nodes (9): 4. Client-Side Data Fetching (client), 4.1 Deduplicate Global Event Listeners, 4.2 Use Passive Event Listeners for Scrolling Performance, 4.3 Use SWR for Automatic Deduplication, 4.4 Version and Minimize localStorage Data, Abstract, React Best Practices, References (+1 more)
+Cohesion: 0.18
+Nodes (16): 4. Client-Side Data Fetching (client), 8. Advanced Patterns (advanced), 4.1 Deduplicate Global Event Listeners, 4.2 Use Passive Event Listeners for Scrolling Performance, 4.3 Use SWR for Automatic Deduplication, 4.4 Version and Minimize localStorage Data, 4. Client-Side Data Fetching, 8.1 Do Not Put Effect Events in Dependency Arrays (+8 more)
 
 ### Community 382 - "Community 382"
-Cohesion: 0.20
-Nodes (9): 1Shot API Permissionless Relayer — EIP-7710 Gas Abstraction, ✅ Correct Approach: Permissionless Relayer (No API Key Required), ⚠️ MetaMask Delegation Note, Permissionless Relayer Flow, Rate Limits & Cost, Research Findings, Sepolia Support ✅, Status History (+1 more)
+Cohesion: 0.33
+Nodes (6): ✅ Correct Approach: Permissionless Relayer (No API Key Required), ⚠️ MetaMask Delegation Note, Permissionless Relayer Flow, Rate Limits & Cost, Research Findings, Sepolia Support ✅
 
 ### Community 383 - "Community 383"
-Cohesion: 0.20
-Nodes (7): ContextMenuCheckboxItem(), ContextMenuContent(), ContextMenuItem(), ContextMenuRadioItem(), ContextMenuSeparator(), ContextMenuShortcut(), ContextMenuSubContent()
+Cohesion: 0.12
+Nodes (9): ContextMenuCheckboxItem(), ContextMenuContent(), ContextMenuItem(), ContextMenuLabel(), ContextMenuRadioItem(), ContextMenuSeparator(), ContextMenuShortcut(), ContextMenuSubContent() (+1 more)
 
 ### Community 384 - "Community 384"
-Cohesion: 0.22
-Nodes (9): 10. REFERENCE VOCABULARY (Pattern Names the Agent Should Know), Animation Library Choice, Cards & Containers, Galleries & Media, Hero Paradigms, Layout & Grids, Micro-Interactions & Effects, Scroll Animations (+1 more)
+Cohesion: 0.20
+Nodes (10): 10. REFERENCE VOCABULARY (Pattern Names the Agent Should Know), Animation Library Choice, Cards & Containers, Galleries & Media, Hero Paradigms, Layout & Grids, Micro-Interactions & Effects, Navigation & Menus (+2 more)
 
 ### Community 385 - "Community 385"
 Cohesion: 0.22
@@ -2474,16 +2521,16 @@ Cohesion: 0.36
 Nodes (7): Modern React Native Styling Patterns, Modern React Native Styling Patterns, borderCurve: continuous, CSS boxShadow syntax, experimental_backgroundImage, fontWeight for hierarchy, gap layout property
 
 ### Community 388 - "Community 388"
-Cohesion: 0.22
-Nodes (9): CAP-0058 Constructors, CAP-0059 BLS12-381 primitives, Stellar Migration Document, SEP-0041 Soroban Token Interface, Soroban Smart Contract Platform, Soroban Smart Contract Development Skill, Stellar Standards & Ecosystem Skill, Stellar Network (+1 more)
+Cohesion: 0.29
+Nodes (6): Stellar Migration Document, Soroban Smart Contract Platform, Related skills, Soroban Smart Contracts, When to use this skill, Stellar Network
 
 ### Community 389 - "Community 389"
-Cohesion: 0.22
-Nodes (9): 10. REFERENCE VOCABULARY (Pattern Names the Agent Should Know), Animation Library Choice, Cards & Containers, Galleries & Media, Hero Paradigms, Layout & Grids, Micro-Interactions & Effects, Scroll Animations (+1 more)
+Cohesion: 0.20
+Nodes (10): 10. REFERENCE VOCABULARY (Pattern Names the Agent Should Know), Animation Library Choice, Cards & Containers, Galleries & Media, Hero Paradigms, Layout & Grids, Micro-Interactions & Effects, Navigation & Menus (+2 more)
 
 ### Community 390 - "Community 390"
-Cohesion: 0.22
-Nodes (9): Basic Usage, Dynamic Route Handlers, Environment Behavior, GET Handler Conflicts with page.tsx, Request Helpers, Response Helpers, Route Handlers, Supported Methods (+1 more)
+Cohesion: 0.07
+Nodes (26): Agentic Payments: x402 + MPP, Buyer: agent client, Channel lifecycle, Channel mode: high-frequency off-chain payments, Charge mode: per-request payments, Client:, Closing the channel (server-initiated):, Common pitfalls (+18 more)
 
 ### Community 391 - "Community 391"
 Cohesion: 0.22
@@ -2506,12 +2553,12 @@ Cohesion: 0.22
 Nodes (8): 10. Kesimpulan, 1.1. Filosofi Desain: "Tiga File yang Penting", 1.2. Diagram Alur Sistem, 1. Arsitektur Sistem Secara Keseluruhan, 7. Alur Data End-to-End, 9. Perbandingan dengan Paradigma Tradisional, 🔬 Deep Analysis: Sistem Auto Research pada Project `autoresearch`, Update
 
 ### Community 396 - "Community 396"
-Cohesion: 0.22
-Nodes (8): 4.4 Data Flow Detail, 4.5 LLM Integration, 4.6 Evaluation & Validation, 🧠 GenAgents — Generative Simulations of 1,000 People, Quick Reference, Update, 9.2.1 Two-Layer Standard, 9.2 Arsitektur Sistem
+Cohesion: 0.20
+Nodes (9): 4.1 Overview, 4.2 Arsitektur Sistem, 4.4 Data Flow Detail, 4.5 LLM Integration, 4.6 Evaluation & Validation, 4.7 Keunggulan Unik, 🧠 GenAgents — Generative Simulations of 1,000 People, Quick Reference (+1 more)
 
 ### Community 397 - "Community 397"
-Cohesion: 0.22
-Nodes (8): Behavioral Traits, Do not use this skill when, Example Interactions, Instructions, Knowledge Base, Purpose, Response Approach, Use this skill when
+Cohesion: 0.08
+Nodes (24): At recovery, At registration, Authentication flow with LongBlob mode, Choosing a default mode per user, credBlob vs largeBlob, LongBlob Fallback & Recovery Phrase, Multi-passkey support in LongBlob mode, Overview (+16 more)
 
 ### Community 398 - "Community 398"
 Cohesion: 0.22
@@ -2534,12 +2581,12 @@ Cohesion: 0.25
 Nodes (8): Academic Journal Resources, Essential Resources, Key APA Journals and Databases, Professional Organizations and Resources, Reference Materials (Expandable), Seminal Works, Specialized Journals, Textbooks
 
 ### Community 403 - "Community 403"
-Cohesion: 0.25
-Nodes (8): Code-Aware Chunking, Document-Aware Chunking, Fixed-Size Chunking, Markdown Chunking, Percentile-Based Breakpoints, Recursive Character Splitting, Semantic Chunking, When to Use Each Strategy
+Cohesion: 0.22
+Nodes (10): Code-Aware Chunking, Document-Aware Chunking, Document-Aware Chunking, Fixed-Size Chunking, Markdown Chunking, Percentile-Based Breakpoints, Recursive Character Splitting, Semantic Chunking (+2 more)
 
 ### Community 404 - "Community 404"
-Cohesion: 0.29
-Nodes (6): Use a List Virtualizer for Any List, Use a List Virtualizer for Any List, FlashList, LegendList, FlashList, LegendList
+Cohesion: 0.08
+Nodes (25): CAP-0059 BLS12-381 primitives, 1) Verification gateway, 2) Policy-and-proof split, 3) Feature flags and graceful fallback, Architecture patterns, Capability model, Common pitfalls, Example starting points (+17 more)
 
 ### Community 405 - "Community 405"
 Cohesion: 0.25
@@ -2550,16 +2597,16 @@ Cohesion: 0.25
 Nodes (8): 9.A Visual & CSS, 9. AI TELLS (Forbidden Patterns), 9.B Typography, 9.C Layout & Spacing, 9.D Content & Data ("Jane Doe" Effect), 9.E External Resources & Components, 9.F Production-Test Tells (banned outright), 9.G EM-DASH BAN (the single most-violated Tell)
 
 ### Community 407 - "Community 407"
-Cohesion: 0.25
-Nodes (8): Auto-scaling Strategies, Batch Prediction Systems, Core Capabilities, Edge Deployment, Model Deployment Pipelines, Multi-model Serving, Real-time Inference, Serving Infrastructure
+Cohesion: 0.14
+Nodes (15): Auto-scaling Strategies, Batch Prediction Systems, Best Practices, Best Practices, Core Capabilities, Edge Deployment, Model Deployment Pipelines, Model Optimization (+7 more)
 
 ### Community 408 - "Community 408"
 Cohesion: 0.25
 Nodes (8): Academic Journal Resources, Essential Resources, Key APA Journals and Databases, Professional Organizations and Resources, Reference Materials (Expandable), Seminal Works, Specialized Journals, Textbooks
 
 ### Community 409 - "Community 409"
-Cohesion: 0.25
-Nodes (8): Code-Aware Chunking, Document-Aware Chunking, Fixed-Size Chunking, Markdown Chunking, Percentile-Based Breakpoints, Recursive Character Splitting, Semantic Chunking, When to Use Each Strategy
+Cohesion: 0.22
+Nodes (10): Code-Aware Chunking, Document-Aware Chunking, Document-Aware Chunking, Fixed-Size Chunking, Markdown Chunking, Percentile-Based Breakpoints, Recursive Character Splitting, Semantic Chunking (+2 more)
 
 ### Community 410 - "Community 410"
 Cohesion: 0.25
@@ -2570,16 +2617,16 @@ Cohesion: 0.25
 Nodes (8): 2. Color Tokens, Aturan pakai accent, Contrast targets (semua palette), Palette: Acid Yield (default), Palette: Bone Paper (light), Palette: Liquid Mint, Palette: Mono Slate, Token contract (semua palette HARUS define)
 
 ### Community 412 - "Community 412"
-Cohesion: 0.25
-Nodes (8): Per-phase findings, Phase 1 — Trust Foundation, Phase 2 — Ops Security, Phase 3 — Historical Replay, Phase 5 — Refactor & UX, monteCarlo.ts (TS script), Replay static page (JS), TimelineReplay fork test (Solidity)
+Cohesion: 0.29
+Nodes (7): Per-phase findings, Phase 1 — Trust Foundation, Phase 2 — Ops Security, Phase 3 — Historical Replay, Phase 5 — Refactor & UX, monteCarlo.ts (TS script), TimelineReplay fork test (Solidity)
 
 ### Community 413 - "Community 413"
 Cohesion: 0.29
 Nodes (8): gasSnapshot module (JS), keyStore module (JS), PauseInvariantTest (Solidity test), Phase 2 Ops Security Plan, Security Privacy doc (modified), submitGate module (JS), Technical Threat Model (doc), worker.js (modified)
 
 ### Community 414 - "Community 414"
-Cohesion: 0.39
-Nodes (6): Freighter Wallet, connectWallet(), getUserAddress(), signTxXdr(), loadKit(), Stellar Wallets Kit
+Cohesion: 0.08
+Nodes (24): 1. The PRF extension is a deterministic, per-credential secret, 2. The derivation must converge on the same key forever, 3. Isolate the key in an iframe, 4. PRF is primary, LongBlob is the compatibility path, 5. Every wallet operation requires a fresh passkey ceremony, Checking PRF support happens at two different shapes, Core Concepts, Critical Implementation Nuances (+16 more)
 
 ### Community 415 - "Community 415"
 Cohesion: 0.25
@@ -2594,8 +2641,8 @@ Cohesion: 0.25
 Nodes (8): 5.1. Progression Val_BPB, 5.2. Statistik Eksperimen, 5.3. Kategori Eksperimen dan Temuan, 5.4. Observasi Menarik, 5. Analisis Data Eksperimen Nyata, 💥 Crash, ✅ Yang Berhasil (Keep), ❌ Yang Gagal (Discard)
 
 ### Community 418 - "Community 418"
-Cohesion: 0.25
-Nodes (7): 1.1 Overview, 1.4 🔬 Auto Research Pipeline: Paper Survey Workflow, 1.5 Konfigurasi, 🧬 EvoAgentX — Evolutionary Agent Framework, Quick Reference, Update, 2.6 Keunggulan Unik
+Cohesion: 0.18
+Nodes (10): 1.1 Overview, 1.2 Arsitektur Sistem, 1.4 🔬 Auto Research Pipeline: Paper Survey Workflow, 1.5 Konfigurasi, 1.6 Keunggulan Unik, 🧬 EvoAgentX — Evolutionary Agent Framework, Quick Reference, Update (+2 more)
 
 ### Community 419 - "Community 419"
 Cohesion: 0.25
@@ -2606,8 +2653,8 @@ Cohesion: 0.25
 Nodes (8): Academic Journal Resources, Essential Resources, Key APA Journals and Databases, Professional Organizations and Resources, Reference Materials (Expandable), Seminal Works, Specialized Journals, Textbooks
 
 ### Community 421 - "Community 421"
-Cohesion: 0.25
-Nodes (8): Code-Aware Chunking, Document-Aware Chunking, Fixed-Size Chunking, Markdown Chunking, Percentile-Based Breakpoints, Recursive Character Splitting, Semantic Chunking, When to Use Each Strategy
+Cohesion: 0.22
+Nodes (10): Code-Aware Chunking, Document-Aware Chunking, Document-Aware Chunking, Fixed-Size Chunking, Markdown Chunking, Percentile-Based Breakpoints, Recursive Character Splitting, Semantic Chunking (+2 more)
 
 ### Community 422 - "Community 422"
 Cohesion: 0.25
@@ -2626,20 +2673,20 @@ Cohesion: 0.13
 Nodes (13): Improve Skill, Closing the Loop — execute, reconcile, issues, Dispatch, `execute <plan>` — dispatch and review, `--issues` — publish plans as GitHub issues, Preconditions (check all before dispatching), `reconcile` — keep `plans/` alive, Review (the advisor's real job here) (+5 more)
 
 ### Community 426 - "Community 426"
-Cohesion: 0.43
-Nodes (7): DELAY_KEYS(), Ground, interpolateExit(), lognormalSample(), mulberry32(), run(), summarize()
+Cohesion: 0.13
+Nodes (20): Cloud & Infrastructure Security, Automated Security Tests, Pre-Deployment Security Checklist, Resources, Security Review Skill, Security Testing, When to Activate, Automated Security Tests (+12 more)
 
 ### Community 427 - "Community 427"
-Cohesion: 0.29
-Nodes (7): Variant 1: Blind SSRF via Attachment Oracle, Variant 2: Local File Read via file:// Attachment, Variant 1: Blind SSRF via Attachment Oracle, Variant 2: Local File Read via file:// Attachment, Variant 1: Blind SSRF via Attachment Oracle, Variant 2: Local File Read via file:// Attachment, WeasyPrint SSRF & File Read (CVE-2024-28184)
+Cohesion: 0.27
+Nodes (10): Variant 1: Blind SSRF via Attachment Oracle, Variant 2: Local File Read via file:// Attachment, WeasyPrint SSRF & File Read (CVE-2024-28184, Nullcon 2026), Variant 1: Blind SSRF via Attachment Oracle, Variant 2: Local File Read via file:// Attachment, WeasyPrint SSRF & File Read (CVE-2024-28184, Nullcon 2026), Variant 1: Blind SSRF via Attachment Oracle, Variant 2: Local File Read via file:// Attachment (+2 more)
 
 ### Community 428 - "Community 428"
-Cohesion: 0.29
-Nodes (7): CCPA Compliance, Compliance Checklist, HIPAA Compliance, GDPR Compliance, Docs Generator Manifest Rules, Fraud Detection (ML Model), Payment Processing (Stripe Integration)
+Cohesion: 0.25
+Nodes (8): CCPA Compliance, Compliance Checklist, GDPR Compliance, HIPAA Compliance, GDPR Compliance, Docs Generator Manifest Rules, Fraud Detection (ML Model), Payment Processing (Stripe Integration)
 
 ### Community 429 - "Community 429"
-Cohesion: 0.29
-Nodes (7): Consent Requirements (GDPR), Cookie Banner (GDPR Compliant), Consent Requirements (GDPR), Cookie Banner (GDPR Compliant), Consent Management (GDPR), Consent Requirements (GDPR), Cookie Banner (GDPR Compliant)
+Cohesion: 0.27
+Nodes (10): Consent Management, Consent Requirements (GDPR), Cookie Banner (GDPR Compliant), Consent Management, Consent Requirements (GDPR), Cookie Banner (GDPR Compliant), Consent Management (GDPR), Consent Management (+2 more)
 
 ### Community 430 - "Community 430"
 Cohesion: 0.29
@@ -2658,8 +2705,8 @@ Cohesion: 0.29
 Nodes (7): 6.A Hardware Acceleration, 6.B Reduced Motion (mandatory), 6.C Dark Mode (mandatory for any consumer-facing page), 6.D Core Web Vitals Targets, 6.E DOM Cost, 6.F Z-Index Restraint, 6. PERFORMANCE & ACCESSIBILITY GUARDRAILS
 
 ### Community 434 - "Community 434"
-Cohesion: 0.29
-Nodes (7): 10. Rule of Three Overuse, 11. Elegant Variation (Synonym Cycling), 12. False Ranges, 7. Overused "AI Vocabulary" Words, 8. Avoidance of "is"/"are" (Copula Avoidance), 9. Negative Parallelisms, LANGUAGE AND GRAMMAR PATTERNS
+Cohesion: 0.09
+Nodes (23): Availability Heuristic, Bandwagon Effect / Social Proof, Confirmation Bias, Curse of Knowledge, Default Effect, Endowment Effect, Fundamental Attribution Error, Goal-Gradient Effect (+15 more)
 
 ### Community 435 - "Community 435"
 Cohesion: 0.29
@@ -2678,12 +2725,12 @@ Cohesion: 0.29
 Nodes (7): 1. Cognitive Psychology and Decision Making, 2. Behavioral Psychology and Motivation, 3. Social Psychology and Influence, 4. Developmental Psychology, 5. Personality and Individual Differences, 6. Clinical Psychology and Mental Health, Core Capabilities
 
 ### Community 439 - "Community 439"
-Cohesion: 0.29
-Nodes (7): Performance by Design, Production-First Design, Security & Privacy, Performance by Design, Production-First Design, Security & Privacy, Core Principles
+Cohesion: 0.09
+Nodes (23): 10. Soroban Transaction Not Simulated, 11. Freighter Not Detected, 12. Network Mismatch with Wallet, 13. Transaction Timeout, 14. Identity Not Found, 15. Contract Invoke Parsing Errors, 1. Contract Size Exceeds 64KB Limit, 2. `#![no_std]` Missing (+15 more)
 
 ### Community 440 - "Community 440"
-Cohesion: 0.33
-Nodes (7): Example Workflow, How to Use This Skill, Step 2: Generate Design System (REQUIRED), Step 2b: Persist Design System (Master + Overrides Pattern), Step 3: Supplement with Detailed Searches (as needed), Step 4: Stack Guidelines, Step 4: Stack Guidelines (React Native)
+Cohesion: 0.09
+Nodes (23): 1) Explicit upgrade policy, 2) Version tracking, 3) Migration entrypoint, Compliance-oriented token design, Compute, Contract size, DeFi primitives, Design principles (+15 more)
 
 ### Community 441 - "Community 441"
 Cohesion: 0.29
@@ -2714,16 +2761,16 @@ Cohesion: 0.29
 Nodes (7): 6.A Hardware Acceleration, 6.B Reduced Motion (mandatory), 6.C Dark Mode (mandatory for any consumer-facing page), 6.D Core Web Vitals Targets, 6.E DOM Cost, 6.F Z-Index Restraint, 6. PERFORMANCE & ACCESSIBILITY GUARDRAILS
 
 ### Community 448 - "Community 448"
-Cohesion: 0.29
-Nodes (7): 10. Rule of Three Overuse, 11. Elegant Variation (Synonym Cycling), 12. False Ranges, 7. Overused "AI Vocabulary" Words, 8. Avoidance of "is"/"are" (Copula Avoidance), 9. Negative Parallelisms, LANGUAGE AND GRAMMAR PATTERNS
+Cohesion: 0.09
+Nodes (23): Account Merge Attacks, Bug Bounty Programs, Classic Stellar Security, Clawback Awareness, Client-Side Checklist, Contract Development, Core Principle, Cross-Contract Calls (+15 more)
 
 ### Community 449 - "Community 449"
 Cohesion: 0.29
 Nodes (7): 1. Undue Emphasis on Significance, Legacy, and Broader Trends, 2. Undue Emphasis on Notability and Media Coverage, 3. Superficial Analyses with -ing Endings, 4. Promotional and Advertisement-like Language, 5. Vague Attributions and Weasel Words, 6. Outline-like "Challenges and Future Prospects" Sections, CONTENT PATTERNS
 
 ### Community 450 - "Community 450"
-Cohesion: 0.29
-Nodes (7): Footer, Output Format, Section 1: Prompt Diagnosis, Section 2: Recommended ECC Components, Section 3: Optimized Prompt — Full Version, Section 4: Optimized Prompt — Quick Version, Section 5: Enhancement Rationale
+Cohesion: 0.17
+Nodes (11): Do Not Use When, Footer, Output Format, Prompt Optimizer, Related Components, Section 1: Prompt Diagnosis, Section 2: Recommended ECC Components, Section 3: Optimized Prompt — Full Version (+3 more)
 
 ### Community 451 - "Community 451"
 Cohesion: 0.29
@@ -2734,8 +2781,8 @@ Cohesion: 0.38
 Nodes (6): main(), Validate skill configuration file.      Args:         config_path: Path to co, Validate skill directory structure.      Args:         skill_path: Path to sk, Main validation entry point., validate_config(), validate_skill_structure()
 
 ### Community 453 - "Community 453"
-Cohesion: 0.33
-Nodes (7): EIP-7702, EIP-7710, 1Shot Public Relayer, Public Relayer — End-to-End Examples, Public Relayer Reference, 1Shot Public Relayer (EIP-7710) Integration, Relayer RPC Methods
+Cohesion: 0.50
+Nodes (4): EIP-7702, EIP-7710, 1Shot Public Relayer, Relayer RPC Methods
 
 ### Community 454 - "Community 454"
 Cohesion: 0.29
@@ -2750,20 +2797,20 @@ Cohesion: 0.29
 Nodes (7): 1.3.1 Models Layer (`src/evoagentx/models/`), 1.3.2 Agent Layer (`src/evoagentx/agents/`), 1.3.3 Workflow Engine (`src/evoagentx/workflow/`), 1.3.4 Tools & Actions (`src/evoagentx/actions/`), 1.3.5 Benchmarks (`src/evoagentx/benchmark/`), 1.3.6 Evolutionary Optimization (`src/evoagentx/core/`), 1.3 Module-by-Module Breakdown
 
 ### Community 457 - "Community 457"
-Cohesion: 0.29
-Nodes (6): Catatan Implementasi, Consensus Logic (Deterministic), Edge cases yang perlu di-handle, Mapping EvoDS → Vibing Farmer, Narasi, Step 7 — Consensus Gate + Decision Logging
+Cohesion: 0.25
+Nodes (7): Catatan Implementasi, Consensus Logic (Deterministic), Decision Log Schema, Edge cases yang perlu di-handle, Mapping EvoDS → Vibing Farmer, Narasi, Step 7 — Consensus Gate + Decision Logging
 
 ### Community 458 - "Community 458"
-Cohesion: 0.29
-Nodes (6): 2.2 Arsitektur Tiga Layer, 2.3 Automated Trading Research Pipeline, 2.5 Configuration System, 📊 FinRL — Deep Reinforcement Learning for Finance, Quick Reference, Update
+Cohesion: 0.22
+Nodes (8): 2.1 Overview, 2.2 Arsitektur Tiga Layer, 2.3 Automated Trading Research Pipeline, 2.5 Configuration System, 2.6 Keunggulan Unik, 📊 FinRL — Deep Reinforcement Learning for Finance, Quick Reference, Update
 
 ### Community 459 - "Community 459"
 Cohesion: 0.29
 Nodes (7): 10. Rule of Three Overuse, 11. Elegant Variation (Synonym Cycling), 12. False Ranges, 7. Overused "AI Vocabulary" Words, 8. Avoidance of "is"/"are" (Copula Avoidance), 9. Negative Parallelisms, LANGUAGE AND GRAMMAR PATTERNS
 
 ### Community 460 - "Community 460"
-Cohesion: 0.29
-Nodes (7): 1. Undue Emphasis on Significance, Legacy, and Broader Trends, 2. Undue Emphasis on Notability and Media Coverage, 3. Superficial Analyses with -ing Endings, 4. Promotional and Advertisement-like Language, 5. Vague Attributions and Weasel Words, 6. Outline-like "Challenges and Future Prospects" Sections, CONTENT PATTERNS
+Cohesion: 0.09
+Nodes (21): 10. Commands (from CLAUDE.md), 1. TL;DR, 2. Deployment facts (`deployments/stellar-testnet.json`), 3. End-to-end data flow (current, Stellar), 4.1 Stellar chain client — `frontend/src/stellar/`, 4.2 Gasless relay + API security — `frontend/api/`, 4.3 Agent swarm runtime — `frontend/src/`, 4.4 Risk → Council → Permission pipeline — `frontend/src/strategy/` (+13 more)
 
 ### Community 461 - "Community 461"
 Cohesion: 0.29
@@ -2782,28 +2829,28 @@ Cohesion: 0.38
 Nodes (6): main(), Validate skill configuration file.      Args:         config_path: Path to co, Validate skill directory structure.      Args:         skill_path: Path to sk, Main validation entry point., validate_config(), validate_skill_structure()
 
 ### Community 465 - "Community 465"
-Cohesion: 0.29
-Nodes (7): §0.1 Network Config (deployment target), §0.2 Sumber kebenaran eksternal, §0.3 Keputusan arsitektur otorisasi (isi setelah verifikasi), §0 — ATURAN ANTI-HALUSINASI UNTUK AI AGENT (BACA SEBELUM TASK APAPUN), URUTAN EKSEKUSI, Vibing Farmer — Spec-Grade Roadmap v2 (Base Sepolia), Vibing Farmer Roadmap v2
+Cohesion: 0.25
+Nodes (7): §0.1 Network Config (deployment target), §0.2 Sumber kebenaran eksternal, §0.3 Keputusan arsitektur otorisasi (isi setelah verifikasi), §0 — ATURAN ANTI-HALUSINASI UNTUK AI AGENT (BACA SEBELUM TASK APAPUN), FASE 5 — REFACTOR & UX, URUTAN EKSEKUSI, Vibing Farmer — Spec-Grade Roadmap v2 (Base Sepolia)
 
 ### Community 466 - "Community 466"
 Cohesion: 0.29
 Nodes (7): FASE 1 — FONDASI TRUST, Task 1.1 — `fix(docs): koreksi klaim jalur otorisasi`, Task 1.2 — `feat(contracts): AgentRegistry — scope on-chain`, Task 1.3 — `feat(contracts): executeAgentDeposit — SPEC LENGKAP`, Task 1.4 — `feat(contracts): revoke UX-grade`, Task 1.5 — `fix(contracts): audit zero-custody`, Task 1.6 — `feat(contracts): slippage on-chain (untuk step swap)`
 
 ### Community 467 - "Community 467"
-Cohesion: 0.29
-Nodes (7): 1. Eliminating Waterfalls (async), 1.1 Check Cheap Conditions Before Async Flags, 1.2 Defer Await Until Needed, 1.3 Dependency-Based Parallelization, 1.4 Prevent Waterfall Chains in API Routes, 1.5 Promise.all() for Independent Operations, 1.6 Strategic Suspense Boundaries
+Cohesion: 0.43
+Nodes (8): 1. Eliminating Waterfalls (async), 1.1 Check Cheap Conditions Before Async Flags, 1.2 Defer Await Until Needed, 1.3 Dependency-Based Parallelization, 1.4 Prevent Waterfall Chains in API Routes, 1.5 Promise.all() for Independent Operations, 1.6 Strategic Suspense Boundaries, 1. Eliminating Waterfalls
 
 ### Community 468 - "Community 468"
-Cohesion: 0.29
-Nodes (7): 2. Bundle Size Optimization (bundle), 2.1 Avoid Barrel File Imports, 2.2 Conditional Module Loading, 2.3 Defer Non-Critical Third-Party Libraries, 2.4 Dynamic Imports for Heavy Components, 2.5 Prefer Statically Analyzable Paths, 2.6 Preload Based on User Intent
+Cohesion: 0.43
+Nodes (8): 2. Bundle Size Optimization (bundle), 2.1 Avoid Barrel File Imports, 2.2 Conditional Module Loading, 2.3 Defer Non-Critical Third-Party Libraries, 2.4 Dynamic Imports for Heavy Components, 2.5 Prefer Statically Analyzable Paths, 2.6 Preload Based on User Intent, 2. Bundle Size Optimization
 
 ### Community 469 - "Community 469"
 Cohesion: 0.38
 Nodes (5): Address, Env, RegistryError, Result, Registry
 
 ### Community 470 - "Community 470"
-Cohesion: 0.38
-Nodes (6): Address, AgentRecord, DataKey, AgentAuthorized, AgentRevoked, RegistryError
+Cohesion: 0.36
+Nodes (7): Address, AgentRecord, DataKey, AgentAuthorized, AgentRecord, AgentRevoked, RegistryError
 
 ### Community 471 - "Community 471"
 Cohesion: 0.33
@@ -2818,44 +2865,44 @@ Cohesion: 0.33
 Nodes (6): Step 1 — Redirect bot via meta refresh (CSP bypass), Step 2 — Timing oracle via image loads, Step 3 — Character-by-character extraction, Step 4 — Host exploit and tunnel, Why it works, XS-Leak via Image Load Timing + GraphQL CSRF (HTB GrandMonty)
 
 ### Community 474 - "Community 474"
-Cohesion: 0.33
-Nodes (6): Command Injection, Git CLI Newline Injection via URL Path (BSidesSF 2026), Incomplete Blocklist Bypass, Multi-Barcode Concatenation to Shell Injection (BSidesSF 2024), Newline Bypass, Sendmail Parameter Injection via CGI (SECCON 2015)
+Cohesion: 0.09
+Nodes (21): 7 Lensa Pemenang → Ide VF, 7 Pola Kemenangan (lintas project), Bagian 1 — Riset Pemenang WCHL25, Bagian 2 — Innovation Thesis, Bagian 3 — Feature Spec & Roadmap, Bagian 4 — Judging Scorecard, Bagian 5 — Catatan Keamanan Implementasi, Council Loop → WAJIB BERHENTI → Permission Layer (+13 more)
 
 ### Community 475 - "Community 475"
 Cohesion: 0.33
 Nodes (6): 1. Missing `default.tsx` → 404 on Refresh, 2. Modal Persists After Navigation, 3. Nested Parallel Routes Need Defaults Too, 4. Intercepted Route Shows Wrong Content, 5. TypeScript Errors with `params`, Common Gotchas
 
 ### Community 476 - "Community 476"
-Cohesion: 0.33
-Nodes (6): Behavior Change and Habit Formation, Education and Learning Systems, Mental Health and Wellbeing, Team Dynamics and Organizational Behavior, Use Cases, User Experience and Interface Design
+Cohesion: 0.07
+Nodes (28): Behavior Change and Habit Formation, Best Practices, Classic Studies, Cognitive Load Theory, Contemporary Psychologists, Dual-Process Theory, Education and Learning Systems, Essential Reading (+20 more)
 
 ### Community 477 - "Community 477"
-Cohesion: 0.33
-Nodes (6): Cognitive Load Theory, Dual-Process Theory, Key Psychological Principles, Mere Exposure Effect, Operant Conditioning, Social Proof
+Cohesion: 0.09
+Nodes (22): Certora Sunbeam Prover, CLI & SDKs, Contract Libraries, Data Indexing, Developer Tools, Goldsky, Mercury, OpenZeppelin Relayer (+14 more)
 
 ### Community 478 - "Community 478"
-Cohesion: 0.33
-Nodes (6): Key Methods, Method 1: Cognitive Task Analysis, Method 2: Behavior Change Analysis (COM-B), Method 3: Heuristic Evaluation (Cognitive), Method 4: Persona Development (Psychological), Method 5: Mental Model Mapping
+Cohesion: 0.10
+Nodes (19): Async Cookies and Headers, Async Params and SearchParams, Async Patterns, generateMetadata, Migration Codemod, Pages and Layouts, Route Handlers, SearchParams (+11 more)
 
 ### Community 479 - "Community 479"
 Cohesion: 0.33
 Nodes (6): Analysis Rubric, Factors to Consider, Historical Parallels to Consider, Implications to Explore, Questions to Ask, What to Examine
 
 ### Community 480 - "Community 480"
-Cohesion: 0.33
-Nodes (6): Core Analytical Frameworks (Expandable), Framework 1: Biopsychosocial Model, Framework 2: Person-Situation Interaction, Framework 3: Stress and Coping, Framework 4: Social Identity and Group Processes, Framework 5: Motivation and Self-Regulation
+Cohesion: 0.10
+Nodes (18): Core Analytical Frameworks (Expandable), Foundation 1: Cognitive Psychology (Information Processing), Foundation 2: Social Psychology (Situation and Social Influence), Foundation 3: Developmental Psychology (Lifespan Changes), Foundation 4: Clinical Psychology (Mental Health and Psychopathology), Foundation 5: Neuroscience and Biological Psychology, Framework 1: Biopsychosocial Model, Framework 2: Person-Situation Interaction (+10 more)
 
 ### Community 481 - "Community 481"
-Cohesion: 0.33
-Nodes (6): Foundation 1: Cognitive Psychology (Information Processing), Foundation 2: Social Psychology (Situation and Social Influence), Foundation 3: Developmental Psychology (Lifespan Changes), Foundation 4: Clinical Psychology (Mental Health and Psychopathology), Foundation 5: Neuroscience and Biological Psychology, Theoretical Foundations (Expandable)
+Cohesion: 0.13
+Nodes (19): Phase 1 Foundation, Phase 2 Smart Contract, MockVault, OpenZeppelin, A. Deploy.s.sol, A. Isi test/AgentVaultDepositor.t.sol, A. Struct + Grant + Revoke, A. Tambah executeAgentDeposit (+11 more)
 
 ### Community 482 - "Community 482"
-Cohesion: 0.33
-Nodes (6): Method 1: Experimental Method, Method 2: Correlational and Longitudinal Studies, Method 3: Surveys and Self-Report, Method 4: Neuroimaging and Physiological Methods, Method 5: Meta-Analysis, Methodological Approaches (Expandable)
+Cohesion: 0.11
+Nodes (18): 10. UX surface, 11. Key data contracts, 12. Testing plan (Vitest, 80% bar, AAA), 13. Open risks & honest limits (carried into pitch), 14. Phasing, 1. One sentence, 2. Problem & motivation, 3. Scope & non-goals (+10 more)
 
 ### Community 483 - "Community 483"
-Cohesion: 0.33
-Nodes (6): Common Patterns, Composing Shared Elements with List Identity, Enter/Exit, Force Re-Enter with `key`, List Reorder, Suspense Fallback to Content
+Cohesion: 0.07
+Nodes (27): Abstract, Accessibility, Animation Triggers, Availability, Choosing Animation Style, Common Patterns, Composing Shared Elements with List Identity, Core Concepts (+19 more)
 
 ### Community 484 - "Community 484"
 Cohesion: 0.33
@@ -2898,12 +2945,12 @@ Cohesion: 0.33
 Nodes (6): Key Methods, Method 1: Cognitive Task Analysis, Method 2: Behavior Change Analysis (COM-B), Method 3: Heuristic Evaluation (Cognitive), Method 4: Persona Development (Psychological), Method 5: Mental Model Mapping
 
 ### Community 494 - "Community 494"
-Cohesion: 0.33
-Nodes (6): Analysis Rubric, Factors to Consider, Historical Parallels to Consider, Implications to Explore, Questions to Ask, What to Examine
+Cohesion: 0.08
+Nodes (25): Analysis Rubric, Common Pitfalls to Avoid, Continuous Improvement, Core Analytical Frameworks (Expandable), Core Philosophy: Psychological Thinking, Example 1: Decision-Making - Financial Market Panic, Example 2: Group Dynamics - Groupthink in Policy Disaster, Example 3: Trauma Response - Mass Shooting Psychological Impacts (+17 more)
 
 ### Community 495 - "Community 495"
-Cohesion: 0.33
-Nodes (6): Core Analytical Frameworks (Expandable), Framework 1: Biopsychosocial Model, Framework 2: Person-Situation Interaction, Framework 3: Stress and Coping, Framework 4: Social Identity and Group Processes, Framework 5: Motivation and Self-Regulation
+Cohesion: 0.11
+Nodes (17): Apache ErrorDocument Expression File Read (Zero HTB), Base64-Encoded Path Traversal (Sharif CTF 2016), Castor XML Deserialization via xsi:type Polymorphism (Atlas HTB), CTF Web - Advanced Server-Side Techniques (Part 2), ElasticSearch Groovy script_fields RCE via SSRF (VolgaCTF 2017), HQL Injection via Non-Breaking Space (HackIM 2016), INSERT INTO Dual-Field SQLi Column Shift (CyberSecurityRumble 2016), LaTeX RCE via mpost Restricted write18 Bypass (33C3 CTF 2016) (+9 more)
 
 ### Community 496 - "Community 496"
 Cohesion: 0.33
@@ -2918,8 +2965,8 @@ Cohesion: 0.33
 Nodes (6): Chroma, pgvector, Pinecone, Qdrant, Weaviate, When to Use Each
 
 ### Community 499 - "Community 499"
-Cohesion: 0.33
-Nodes (6): Common Patterns, Composing Shared Elements with List Identity, Enter/Exit, Force Re-Enter with `key`, List Reorder, Suspense Fallback to Content
+Cohesion: 0.07
+Nodes (27): Abstract, Accessibility, Animation Triggers, Availability, Choosing Animation Style, Common Patterns, Composing Shared Elements with List Identity, Core Concepts (+19 more)
 
 ### Community 500 - "Community 500"
 Cohesion: 0.33
@@ -2934,11 +2981,11 @@ Cohesion: 0.33
 Nodes (6): 18. Skill Review (step 03), Batch action, Editor, Foot note, Skill card states, Skill JSON schema
 
 ### Community 505 - "Community 505"
-Cohesion: 0.33
+Cohesion: 0.29
 Nodes (6): How to use this file (for the implementing agent), Plan Review Findings — carry-forward ledger, Recurring blockers (highest priority — these have appeared in MORE THAN ONE plan), Plan Review Findings, Recurring Blocker R1, Roadmap v2 INDEX
 
 ### Community 506 - "Community 506"
-Cohesion: 0.33
+Cohesion: 0.29
 Nodes (6): 1. Summary, 3. Priorities (MoSCoW), 4. Platform Considerations, 5. Integration & Dependencies, 6. References, Complete Features — Vibing Farmer
 
 ### Community 507 - "Community 507"
@@ -2954,40 +3001,40 @@ Cohesion: 0.33
 Nodes (5): Avoid AI Writing — Audit & Rewrite, Example, Limitations, What It Detects, When to Use This Skill
 
 ### Community 510 - "Community 510"
-Cohesion: 0.33
-Nodes (6): API Integration, Categories for Technical Spikes, Performance & Scalability, Platform & Infrastructure, Security & Compliance, User Experience
+Cohesion: 0.29
+Nodes (7): API Integration, Architecture & Design, Categories for Technical Spikes, Performance & Scalability, Platform & Infrastructure, Security & Compliance, User Experience
 
 ### Community 511 - "Community 511"
 Cohesion: 0.33
 Nodes (6): Step 1 — Redirect bot via meta refresh (CSP bypass), Step 2 — Timing oracle via image loads, Step 3 — Character-by-character extraction, Step 4 — Host exploit and tunnel, Why it works, XS-Leak via Image Load Timing + GraphQL CSRF (HTB GrandMonty)
 
 ### Community 512 - "Community 512"
-Cohesion: 0.33
-Nodes (6): Command Injection, Git CLI Newline Injection via URL Path (BSidesSF 2026), Incomplete Blocklist Bypass, Multi-Barcode Concatenation to Shell Injection (BSidesSF 2024), Newline Bypass, Sendmail Parameter Injection via CGI (SECCON 2015)
+Cohesion: 0.11
+Nodes (17): Apache ErrorDocument Expression File Read (Zero HTB), Base64-Encoded Path Traversal (Sharif CTF 2016), Castor XML Deserialization via xsi:type Polymorphism (Atlas HTB), CTF Web - Advanced Server-Side Techniques (Part 2), ElasticSearch Groovy script_fields RCE via SSRF (VolgaCTF 2017), HQL Injection via Non-Breaking Space (HackIM 2016), INSERT INTO Dual-Field SQLi Column Shift (CyberSecurityRumble 2016), LaTeX RCE via mpost Restricted write18 Bypass (33C3 CTF 2016) (+9 more)
 
 ### Community 513 - "Community 513"
 Cohesion: 0.33
 Nodes (6): 1. Missing `default.tsx` → 404 on Refresh, 2. Modal Persists After Navigation, 3. Nested Parallel Routes Need Defaults Too, 4. Intercepted Route Shows Wrong Content, 5. TypeScript Errors with `params`, Common Gotchas
 
 ### Community 514 - "Community 514"
-Cohesion: 0.33
-Nodes (6): Behavior Change and Habit Formation, Education and Learning Systems, Mental Health and Wellbeing, Team Dynamics and Organizational Behavior, Use Cases, User Experience and Interface Design
+Cohesion: 0.07
+Nodes (28): Behavior Change and Habit Formation, Best Practices, Classic Studies, Cognitive Load Theory, Contemporary Psychologists, Dual-Process Theory, Education and Learning Systems, Essential Reading (+20 more)
 
 ### Community 515 - "Community 515"
-Cohesion: 0.33
-Nodes (6): Cognitive Load Theory, Dual-Process Theory, Key Psychological Principles, Mere Exposure Effect, Operant Conditioning, Social Proof
+Cohesion: 0.11
+Nodes (17): 10. Success criteria (program-level), 11. Related Skill, 1. Goal, 2. Scope, 3. Source-doc fact-check (neutralize `docs/migration_stellar.md`), 4. EVM → Soroban migration map, 5. Target architecture, 6.1 Yield-model decision (**LOCKED 2026-06-18 → (b) FOBXX-faithful**) (+9 more)
 
 ### Community 516 - "Community 516"
-Cohesion: 0.33
-Nodes (6): Key Methods, Method 1: Cognitive Task Analysis, Method 2: Behavior Change Analysis (COM-B), Method 3: Heuristic Evaluation (Cognitive), Method 4: Persona Development (Psychological), Method 5: Mental Model Mapping
+Cohesion: 0.11
+Nodes (17): 10. Out of scope, 1. Problem, 2.1 NAV source — admin-set per-vault knob, default $1.00, 2. Decision — scope C (full Aladdin allocation caps), 3. Topology, 4.1 State (persistent, `extend_ttl`), 4.2 Entrypoints, 4.3 `consume` logic (deposit path) (+9 more)
 
 ### Community 517 - "Community 517"
-Cohesion: 0.33
-Nodes (6): Analysis Rubric, Factors to Consider, Historical Parallels to Consider, Implications to Explore, Questions to Ask, What to Examine
+Cohesion: 0.08
+Nodes (25): Analysis Rubric, Common Pitfalls to Avoid, Continuous Improvement, Core Analytical Frameworks (Expandable), Core Philosophy: Psychological Thinking, Example 1: Decision-Making - Financial Market Panic, Example 2: Group Dynamics - Groupthink in Policy Disaster, Example 3: Trauma Response - Mass Shooting Psychological Impacts (+17 more)
 
 ### Community 518 - "Community 518"
-Cohesion: 0.33
-Nodes (6): Core Analytical Frameworks (Expandable), Framework 1: Biopsychosocial Model, Framework 2: Person-Situation Interaction, Framework 3: Stress and Coping, Framework 4: Social Identity and Group Processes, Framework 5: Motivation and Self-Regulation
+Cohesion: 0.11
+Nodes (18): Anchor and fiat integration, Auth, identity, and metadata, Contracts and token interfaces, Frequently used contract capabilities, High-value CAPs for Soroban developers, High-value SEPs for app developers, I am building a fungible token, I am building a smart-wallet flow (+10 more)
 
 ### Community 519 - "Community 519"
 Cohesion: 0.33
@@ -3010,16 +3057,16 @@ Cohesion: 0.40
 Nodes (5): ACE Bulletpoint Analyzer, ACE Curator Agent, Deep Analysis of ACE Framework, ACE Generator Agent, ACE Reflector Agent
 
 ### Community 524 - "Community 524"
-Cohesion: 0.40
-Nodes (5): ACE Loop, Propose Rule (proposeRule), Merge Pass (mergePass), Prune Pass (prunePass), Weight (weight)
+Cohesion: 0.17
+Nodes (8): shortAddr(), SkillDetailModal(), STEP_LABELS, SkillCard(), formatProtocol(), PROTOCOL_NAMES, translateSkill(), VAULT_LETTERS
 
 ### Community 525 - "Community 525"
 Cohesion: 0.40
 Nodes (5): Activity (react-native), Compound Components, Pressable, TouchableOpacity, Zeego
 
 ### Community 526 - "Community 526"
-Cohesion: 0.40
-Nodes (5): ADR Example, Architecture Diagram (Mermaid), ADR Example, Architecture Diagram (Mermaid), Output Templates
+Cohesion: 0.38
+Nodes (7): ADR Example, Architecture Diagram (Mermaid), Output Templates, ADR Example, Architecture Diagram (Mermaid), Output Templates, Output Templates
 
 ### Community 527 - "Community 527"
 Cohesion: 0.40
@@ -3034,8 +3081,8 @@ Cohesion: 0.40
 Nodes (5): Basic, Cookie Exfiltration, Filter Bypass, Hex/Unicode Bypass, XSS Payloads
 
 ### Community 530 - "Community 530"
-Cohesion: 0.40
-Nodes (5): How It Works, Phase 1: Analysis, Phase 2: Design, Phase 3: Optimize, Phase 4: Migrate
+Cohesion: 0.09
+Nodes (21): Available Commands, Avoid, Basic Schema Design, Best Practices, Database Schema Designer, Do, How It Works, Key Terminology (+13 more)
 
 ### Community 531 - "Community 531"
 Cohesion: 0.40
@@ -3070,28 +3117,28 @@ Cohesion: 0.40
 Nodes (5): Example 1: Vague Chinese Prompt (Project Detected), Example 2: Moderate English Prompt, Example 3: EPIC Project, Examples, Trigger Examples
 
 ### Community 539 - "Community 539"
-Cohesion: 0.40
-Nodes (5): Classic Studies, Contemporary Psychologists, Essential Reading, Key Frameworks, Resources
+Cohesion: 0.12
+Nodes (16): 1. Masalah yang diselesaikan, 2. Apa yang sebenarnya dihasilkan, 3. Cara kerja: arsitektur fan-out / fan-in, 4. Kenapa hemat token & cepat (jawaban langsung atas kekhawatiran inti), 5. Kenapa LLM tetap dipakai (bukan Monte Carlo murni), 6. Implementasi data: realistis & terjangkau, 7. Momen demo (the wow), 8. Landasan riset (untuk kredibilitas pitch) (+8 more)
 
 ### Community 540 - "Community 540"
 Cohesion: 0.40
 Nodes (5): 1. Vector Databases, 2. Embeddings, 3. Retrieval Strategies, 4. Reranking, Core Components
 
 ### Community 541 - "Community 541"
-Cohesion: 0.40
-Nodes (5): 1.1 Never Use && with Potentially Falsy Values, 1.2 Wrap Strings in Text Components, 1. Core Rendering (rendering), 1.1 Never Use && with Potentially Falsy Values, 1.2 Wrap Strings in Text Components
+Cohesion: 0.38
+Nodes (7): 1.1 Never Use && with Potentially Falsy Values, 1.2 Wrap Strings in Text Components, 1. Core Rendering, 1. Core Rendering (rendering), 1.1 Never Use && with Potentially Falsy Values, 1.2 Wrap Strings in Text Components, 1. Core Rendering
 
 ### Community 542 - "Community 542"
-Cohesion: 0.40
-Nodes (3): Use GestureDetector for Animated Press States, Use GestureDetector for Animated Press States, GestureDetector
+Cohesion: 0.12
+Nodes (16): 1. Masalah: Monte Carlo polos itu naif soal manusia, 2. Dua jenis kedalaman perilaku (menentukan alat mana yang dipakai), 3. Arsitektur: dua mesin + router, 4. Mock agent — INTI (bangun ini dulu), 5. MiroFish deep mode — OPSIONAL (garnish, bukan main course), 6. Positioning: kenapa ini justru lebih kuat dari MiroFish, 7. Urutan jujur untuk hackathon, 8. Batas jujur (+8 more)
 
 ### Community 543 - "Community 543"
 Cohesion: 0.40
 Nodes (3): Optimize List Performance with Stable Object References, Optimize List Performance with Stable Object References, Zustand selector pattern for list items
 
 ### Community 544 - "Community 544"
-Cohesion: 0.40
-Nodes (4): Web3 Expert Research Requirements, Research Areas, Skill Description, Source References
+Cohesion: 0.53
+Nodes (5): Web3 Expert Research Requirements, Research Areas, Skill Description, Source References, web3-expert Research Requirements
 
 ### Community 545 - "Community 545"
 Cohesion: 0.40
@@ -3102,8 +3149,8 @@ Cohesion: 0.40
 Nodes (4): Build Graph, Notes, Steps, When to Use
 
 ### Community 547 - "Community 547"
-Cohesion: 0.40
-Nodes (5): Fluency Audit Framework, Step 1: Identify High-Stakes Content, Step 2: Apply the 5-Second Test, Step 3: Check Fluency Factors, Step 4: Test and Measure
+Cohesion: 0.08
+Nodes (23): Brand Names, Cognitive Effort Discounting (COGED), Cognitive Fluency - Psychology of Ease, Common Fluency Killers, Content Problems, Core Principle, Design Problems, Fluency Audit Framework (+15 more)
 
 ### Community 548 - "Community 548"
 Cohesion: 0.40
@@ -3118,8 +3165,8 @@ Cohesion: 0.40
 Nodes (5): How It Works, Phase 1: Analysis, Phase 2: Design, Phase 3: Optimize, Phase 4: Migrate
 
 ### Community 551 - "Community 551"
-Cohesion: 0.40
-Nodes (5): Key Features, Migration Support, NoSQL Schema Design (MongoDB), Relationship Patterns, SQL Schema Design
+Cohesion: 0.09
+Nodes (21): Available Commands, Avoid, Basic Schema Design, Best Practices, Database Schema Designer, Do, Key Features, Key Terminology (+13 more)
 
 ### Community 552 - "Community 552"
 Cohesion: 0.40
@@ -3142,36 +3189,36 @@ Cohesion: 0.40
 Nodes (5): ISR and Cache Handlers, Redis Cache Handler Example, S3 Cache Handler Example, Solution: Custom Cache Handler, The Problem
 
 ### Community 557 - "Community 557"
-Cohesion: 0.40
-Nodes (5): Claude, FLUX, GPT-4, Model-Specific Tips, Veo
+Cohesion: 0.12
+Nodes (15): ABI Coder v1 vs v2 - Dirty Address Bypass, Auth Implementation (Python), Challenge Infrastructure Pattern, Complete Exploit Flow (House of Illusions), CTF Web - Web3 / Blockchain Challenges, Delegatecall Storage Context Abuse (EHAX 2026), EIP-1967 Proxy Pattern Exploitation, Groth16 Proof Forgery for Blockchain Governance (DiceCTF 2026) (+7 more)
 
 ### Community 558 - "Community 558"
 Cohesion: 0.40
 Nodes (5): Example 1: Vague Chinese Prompt (Project Detected), Example 2: Moderate English Prompt, Example 3: EPIC Project, Examples, Trigger Examples
 
 ### Community 559 - "Community 559"
-Cohesion: 0.40
-Nodes (5): Classic Studies, Contemporary Psychologists, Essential Reading, Key Frameworks, Resources
+Cohesion: 0.16
+Nodes (13): Detection, Runtime Selection, Use Node.js Runtime by Default, Detection, Runtime Selection, Use Node.js Runtime by Default, Detection, Edge Runtime (+5 more)
 
 ### Community 560 - "Community 560"
-Cohesion: 0.40
-Nodes (5): 1. Metadata Filtering, 2. Maximal Marginal Relevance (MMR), 3. Reranking with Cross-Encoder, 4. Cohere Rerank, Retrieval Optimization
+Cohesion: 0.13
+Nodes (15): Assembling the Ethereum wallet, Determinism testing, HKDF parameters, Independent key derivation, `infoLabel` — your per-purpose string constant, Inputs, Pipeline Overview, PRF → Ethereum Private Key Derivation (+7 more)
 
 ### Community 561 - "Community 561"
-Cohesion: 0.40
-Nodes (5): Document Chunking Strategies, Markdown Header Splitter, Recursive Character Text Splitter, Semantic Chunking, Token-Based Splitting
+Cohesion: 0.12
+Nodes (15): ABI Coder v1 vs v2 - Dirty Address Bypass, Auth Implementation (Python), Challenge Infrastructure Pattern, Complete Exploit Flow (House of Illusions), CTF Web - Web3 / Blockchain Challenges, Delegatecall Storage Context Abuse (EHAX 2026), EIP-1967 Proxy Pattern Exploitation, Groth16 Proof Forgery for Blockchain Governance (DiceCTF 2026) (+7 more)
 
 ### Community 562 - "Community 562"
-Cohesion: 0.40
-Nodes (5): Config Migration, Custom Transform Targets, esbuild → oxc, JSX Configuration, rollupOptions → rolldownOptions
+Cohesion: 0.12
+Nodes (16): Allbridge Core, Axelar, Band Protocol, Builder Teams & Companies, Cross-Chain, DIA Oracle, Enterprise Integrations, Gaming & NFTs (+8 more)
 
 ### Community 563 - "Community 563"
-Cohesion: 0.40
-Nodes (4): Research Areas, Skill Description, Source References, Web3 Expert Research Requirements
+Cohesion: 0.53
+Nodes (5): Research Areas, Skill Description, Source References, web3-expert Research Requirements, Web3 Expert Research Requirements
 
 ### Community 564 - "Community 564"
-Cohesion: 0.40
-Nodes (4): Goal, TDD, Test-Driven Development (TDD), Web3 Expert Implementation Template
+Cohesion: 0.38
+Nodes (6): Goal, TDD, Verification, web3-expert Implementation Template, Test-Driven Development (TDD), Web3 Expert Implementation Template
 
 ### Community 565 - "Community 565"
 Cohesion: 0.40
@@ -3193,29 +3240,25 @@ Nodes (5): 19. Memory Panel (per-agent modal), Layout, Memory row structure, Sec
 Cohesion: 0.40
 Nodes (5): 5. Layout, App shell — 3 kolom, Card internal structure, Stage pattern, Step rail (6 langkah · Vibing Farmer)
 
-### Community 570 - "Community 570"
-Cohesion: 0.40
-Nodes (5): 8. Iconography, Active icon set, Aturan, Brand marks, Source
-
 ### Community 571 - "Community 571"
 Cohesion: 0.40
 Nodes (5): Phase 4 — Real Integration, CI workflow (GitHub Actions), Destructive test suite (Solidity), DepositorInvariant test suite, MorphoForkTest (Solidity test)
 
 ### Community 572 - "Community 572"
-Cohesion: 0.40
+Cohesion: 0.33
 Nodes (5): 1. Demo Objectives, 2. Demo Personas, 4. Demo Readiness Checklist, 5. Expected Outcomes, Demo Scenario — Vibing Farmer
 
 ### Community 573 - "Community 573"
-Cohesion: 0.60
-Nodes (5): 3. Skill Files (JSON, Local), 4. Memory Files (JSON, Local — Append-Only), Lifecycle, Path, Schema (per file)
+Cohesion: 0.13
+Nodes (15): Barbell Strategy, Circle of Competence, First Principles, Foundational Thinking Models, Inversion, Jobs to Be Done, Law of Diminishing Returns, Local vs. Global Optima (+7 more)
 
 ### Community 574 - "Community 574"
 Cohesion: 0.40
 Nodes (5): Finance Expert Skill, Open Banking, PCI-DSS, Plaid Docs, Stripe API
 
 ### Community 575 - "Community 575"
-Cohesion: 0.60
-Nodes (5): Humanizer, Humanizer README, Humanizer Skill, Wikipedia: Signs of AI writing, WikiProject AI Cleanup
+Cohesion: 0.13
+Nodes (14): Execution Handoff, File Structure, Global Constraints, Scope boundary (read this), Self-Review, Soroban Sub-Project 1c — FOBXX-Faithful RWA Vault (SEP-56 vault + stable-NAV daily-dividend yield) Implementation Plan, Task 0: Validate the share primitive + lock the model-(b) design decision (decision gate), Task 1: Scaffold the vault crate — types, storage, constructor, read views, pausable (+6 more)
 
 ### Community 576 - "Community 576"
 Cohesion: 0.40
@@ -3250,8 +3293,8 @@ Cohesion: 0.40
 Nodes (5): 8.1. "Program the Researcher, Not the Research", 8.2. Strengths of the Design, 8.3. Limitations dan Trade-offs, 8.4. Future Vision, 8. Design Philosophy dan Key Insights
 
 ### Community 584 - "Community 584"
-Cohesion: 0.40
-Nodes (5): 1. Authentication & Security, 2. Request/Response Handling, 3. Error Handling, 5. Webhook Handling, Core Integration Principles
+Cohesion: 0.13
+Nodes (14): Execution Handoff, File Structure, Global Constraints, PHASE 2 — Frontend Stellar deposit auth-tree, PHASE 3 — Re-point orchestrator / worker / app / wallet, Self-Review (Phases 2 & 3), SP4 Execution Re-point — Phases 2 & 3 (Frontend auth-tree + EVM→Stellar re-point) Implementation Plan, Task 1: `agentDeposit` — sign the deposit auth entry with the session key (+6 more)
 
 ### Community 585 - "Community 585"
 Cohesion: 0.40
@@ -3266,28 +3309,28 @@ Cohesion: 0.40
 Nodes (5): 1. Right to Access (GDPR Art. 15 / CCPA § 1798.100), 2. Right to Deletion (GDPR Art. 17 / CCPA § 1798.105), 3. Right to Data Portability (GDPR Art. 20), 4. Right to Object (GDPR Art. 21), Data Subject Rights Implementation
 
 ### Community 588 - "Community 588"
-Cohesion: 0.40
-Nodes (5): After (has a pulse):, Before (clean but soulless):, How to add voice:, PERSONALITY AND SOUL, Signs of soulless writing (even if technically "clean"):
+Cohesion: 0.13
+Nodes (14): Account Foundation, Account Foundation, Audience Setup, Audience Setup, Contents, Creative, Creative, Pixel & Tracking (+6 more)
 
 ### Community 589 - "Community 589"
-Cohesion: 0.40
-Nodes (5): ISR and Cache Handlers, Redis Cache Handler Example, S3 Cache Handler Example, Solution: Custom Cache Handler, The Problem
+Cohesion: 0.67
+Nodes (3): Redis Cache Handler Example, S3 Cache Handler Example, Solution: Custom Cache Handler
 
 ### Community 590 - "Community 590"
 Cohesion: 0.40
 Nodes (5): Claude, FLUX, GPT-4, Model-Specific Tips, Veo
 
 ### Community 591 - "Community 591"
-Cohesion: 0.40
-Nodes (5): Example 1: Vague Chinese Prompt (Project Detected), Example 2: Moderate English Prompt, Example 3: EPIC Project, Examples, Trigger Examples
+Cohesion: 0.20
+Nodes (9): Do Not Use When, Example 1: Vague Chinese Prompt (Project Detected), Example 2: Moderate English Prompt, Example 3: EPIC Project, Examples, Prompt Optimizer, Related Components, Trigger Examples (+1 more)
 
 ### Community 592 - "Community 592"
-Cohesion: 0.40
-Nodes (5): Classic Studies, Contemporary Psychologists, Essential Reading, Key Frameworks, Resources
+Cohesion: 0.13
+Nodes (15): 10. Effort / sequencing, 11. Open questions, 1. Why (and the honest current state), 2. Goal / Non-goals, 3. Architecture, 4. Contract design (`soroban/contracts/attestation/`), 5. Frontend (`frontend/src/stellar/attestation.js` — new, mirrors `exit.js`/`agentSetup.js`), 6. Gas model decision (pick at impl) (+7 more)
 
 ### Community 593 - "Community 593"
-Cohesion: 0.40
-Nodes (5): Document Chunking Strategies, Markdown Header Splitter, Recursive Character Text Splitter, Semantic Chunking, Token-Based Splitting
+Cohesion: 0.13
+Nodes (14): 1. Context & goal, 2. Why Blend (architecture decision), 3. Requirements, 4.1 Underlying asset migration *(load-bearing — explicitly approved)*, 4.2 Contract diff (~200 LOC; no-op when `pool` unset), 4.3 Accounting invariant, 4.4 Harvest trigger *(default)*, 4. Design (+6 more)
 
 ### Community 594 - "Community 594"
 Cohesion: 0.40
@@ -3302,20 +3345,20 @@ Cohesion: 0.40
 Nodes (5): FASE 4 — REAL INTEGRATION (fork BASE MAINNET), Task 4.1 — `feat: vault riil via fork Base mainnet`, Task 4.2 — invariant test (Foundry): handler dengan `vm.warp` acak; invariants: `spentInPeriod ≤ capPerPeriod`; post-revoke/post-expiry execute selalu revert; total outflow user ≤ max-loss formula; `reserves[token] ≤ balanceOf(depositor)`. Target ≥10.000 runs., Task 4.3 — CI: job unit (`forge test`), job `slither` (continue-on-error dulu), job fork nightly (secrets `MAINNET_RPC`, `BASE_MAINNET_RPC`)., Task 4.4 — `test(security): destructive scenarios di Base Sepolia` (BARU — keuntungan testnet)
 
 ### Community 597 - "Community 597"
-Cohesion: 0.28
-Nodes (6): 1Shot API, createKeyStore(), idbAdapter(), memoryAdapter(), createSubmitGate(), Worker Key Lifecycle
+Cohesion: 0.14
+Nodes (14): 1) List Supported Chains, 2) Fetch Current Gas Fees, 3) Create Server Wallet, 4) List Server Wallets, 5) Update Server Wallet Metadata, 6) Get Signatures From Server Wallets, Authorize Permit2, EIP-3009 (+6 more)
 
 ### Community 598 - "Community 598"
-Cohesion: 0.80
-Nodes (4): assertScope(), maxAtRisk(), toAuthorizeArgs(), toSummary()
+Cohesion: 0.14
+Nodes (14): 1) Search Smart Contracts from Prompt Library, 2) Assure Methods Associated With an Existing Smart Contract Prompt, 3) Functions, Create a New Contract Method (Without Prompt Library), Estimate Gas, List Imported Functions, MCP Tool, Read From Read Functions (+6 more)
 
 ### Community 599 - "Community 599"
 Cohesion: 0.50
 Nodes (4): Alert(), AlertDescription(), AlertTitle(), alertVariants
 
 ### Community 600 - "Community 600"
-Cohesion: 0.40
-Nodes (4): Tabs(), TabsContent(), TabsList(), TabsTrigger()
+Cohesion: 0.14
+Nodes (13): Chunk Size Selection Guide, Chunking Strategies, Contextual/Agentic Chunking, Fixed-Size Chunking, Late Chunking (for Long-Context Embeddings), Metadata Enrichment, Propositions-Based Chunking, Quick Reference (+5 more)
 
 ### Community 601 - "Community 601"
 Cohesion: 0.40
@@ -3326,48 +3369,48 @@ Cohesion: 0.40
 Nodes (5): Build and Push Images, Containers, Manage Containers, Manage External Registries, Manage Images
 
 ### Community 603 - "Community 603"
-Cohesion: 0.40
-Nodes (5): D1 (SQL Database), Execute SQL, Export/Backup, Manage Databases, Migrations
+Cohesion: 0.33
+Nodes (6): Config Binding, D1 (SQL Database), Execute SQL, Export/Backup, Manage Databases, Migrations
 
 ### Community 604 - "Community 604"
-Cohesion: 0.50
-Nodes (4): Best Practices, Monitoring, Reliability, Security
+Cohesion: 0.14
+Nodes (13): Authentication options, Authentication verification, Configuration, CORS and origin checks, Endpoints, Rate limits, Registration options, Registration verification (+5 more)
 
 ### Community 605 - "Community 605"
-Cohesion: 0.50
-Nodes (4): Common Integration Examples, SendGrid Email Sending, Stripe Payment Processing, Twilio SMS
+Cohesion: 0.14
+Nodes (13): Chunk Size Selection Guide, Chunking Strategies, Contextual/Agentic Chunking, Fixed-Size Chunking, Late Chunking (for Long-Context Embeddings), Metadata Enrichment, Propositions-Based Chunking, Quick Reference (+5 more)
 
 ### Community 606 - "Community 606"
-Cohesion: 0.50
-Nodes (4): Brand Names, Landing Pages, Product Interfaces, Real-World Applications
+Cohesion: 0.14
+Nodes (13): Marketing Psychology, Charm Pricing / Left-Digit Effect, How to Use This Skill, Marketing Psychology & Mental Models, Mental Accounting (Pricing), Price Relativity / Good-Better-Best, Pricing Psychology, Quick Reference (+5 more)
 
 ### Community 607 - "Community 607"
-Cohesion: 0.50
-Nodes (4): Cognitive Effort Discounting (COGED), Key Research Findings, Task Perception Studies, Truth and Repetition
+Cohesion: 0.14
+Nodes (14): Anchoring Effect, Authority Bias, Commitment & Consistency, Contrast Effect, Decoy Effect, Door-in-the-Face Technique, Foot-in-the-Door Technique, Framing Effect (+6 more)
 
 ### Community 608 - "Community 608"
 Cohesion: 0.50
 Nodes (4): DOMPurify Bypass via Trusted Backend Routes, Client-Side Path Traversal (CSPT), Cross-Site Scripting (XSS), Server-Side Template Injection (SSTI)
 
 ### Community 609 - "Community 609"
-Cohesion: 0.50
-Nodes (4): Brace Stripping, Double URL Encoding, Path Traversal Bypass Techniques, Python os.path.join
+Cohesion: 0.11
+Nodes (17): basename() Bypass for Hidden Files (Nullcon 2026), Brace Stripping, CTF Web - Advanced Server-Side Techniques, /dev/fd Symlink to Bypass /proc Filter (Google CTF 2017), Double URL Encoding, ExifTool CVE-2021-22204 — DjVu Perl Injection (0xFun 2026), Flask/Werkzeug Debug Mode Exploitation, Go Rune/Byte Length Mismatch + Command Injection (VuwCTF 2025) (+9 more)
 
 ### Community 610 - "Community 610"
-Cohesion: 0.50
-Nodes (4): 1. Data Minimization, 2. Purpose Limitation, 3. Storage Limitation, Privacy by Design Principles
+Cohesion: 0.14
+Nodes (13): Execution Handoff, File Structure, Self-Review, Soroban Sub-Project 1a — Agent Smart Accounts + Thin Registry Implementation Plan, Task 0: Scaffold the Soroban workspace, Task 1: Validate signer backend + pin the SDK auth surface (decision gate), Task 2: Agent account — scope types + constructor, Task 3: Agent account — signature verification in `__check_auth` (+5 more)
 
 ### Community 611 - "Community 611"
-Cohesion: 0.50
-Nodes (4): CCPA/CPRA (California Consumer Privacy Act), GDPR (General Data Protection Regulation), HIPAA (Health Insurance Portability and Accountability Act), Key Regulations Overview
+Cohesion: 0.14
+Nodes (13): File Structure, Global Constraints, Planning decisions (spec gaps resolved while writing this plan), Scope boundary (read this), Self-Review, Soroban Sub-Project 1d — Compliance Guardrail (agent allocation / exposure caps) Implementation Plan, Task 0: Cross-crate client probe (decision gate), Task 1: Scaffold the `guardrail` crate — types, storage, constructor, `set_nav`, `set_policy`, views (+5 more)
 
 ### Community 612 - "Community 612"
-Cohesion: 0.50
-Nodes (4): Available Commands, Basic Schema Design, Request Tips, Usage Examples
+Cohesion: 0.14
+Nodes (13): Context the engineer needs (read before starting), File structure (created/modified across all tasks), Self-review (filled in by the plan author), Stellar Frontend Chain Layer (sub-project 3) Implementation Plan, Task 1: Add the wallet-kit dependency + extend the Stellar config, Task 2: ScVal codec wrappers, Task 3: Soroban client (read / build-invoke / submit / poll / balance), Task 4: Agent session key (ephemeral ed25519 + sign primitive) (+5 more)
 
 ### Community 613 - "Community 613"
-Cohesion: 0.50
-Nodes (4): Constraints, Data Types, Primary Keys, Table Design
+Cohesion: 0.11
+Nodes (17): Constraints, Data Types, Database Schema Design Checklist, Documentation, Foreign Keys, Index Limits, Index Strategy, Indexing (+9 more)
 
 ### Community 614 - "Community 614"
 Cohesion: 0.50
@@ -3378,20 +3421,20 @@ Cohesion: 0.50
 Nodes (4): Example 1: Real-Time Inference API for Production, Example 2: Multi-Model Serving Platform, Example 3: Edge Deployment for Mobile Devices, Examples
 
 ### Community 616 - "Community 616"
-Cohesion: 0.50
-Nodes (4): Code Review, Content Writing, Image Generation, Prompt Templates
+Cohesion: 0.14
+Nodes (14): Context the engineer needs (read before starting), EVM Decommission (sub-project 6, LAST) Implementation Plan, File structure (what this plan touches), ⚠️ PARTIALLY UNBLOCKED — re-point the EVM *features* before this runs clean (updated 2026-06-21), Self-review (filled in by the plan author), Task 0: Precondition gate — prove the Stellar path is load-bearing and EVM is dead, Task 1: Delete the EVM-only leaf chain modules (worker, relay, x402, redelegation, attestation, readProvider, redeem), Task 2: Delete the EVM key/state modules (positionsStore, strategy/keyVault, strategy/session) (+6 more)
 
 ### Community 617 - "Community 617"
-Cohesion: 0.50
-Nodes (4): Example 1: Decision-Making - Financial Market Panic, Example 2: Group Dynamics - Groupthink in Policy Disaster, Example 3: Trauma Response - Mass Shooting Psychological Impacts, Usage Examples
+Cohesion: 0.14
+Nodes (13): Blend Real-Yield Integration Implementation Plan, Execution Handoff, File Structure, Self-Review, Task 0: Pin the Blend ABI in a local client module, Task 1: Add optional pool address storage, Task 2: Mock Blend pool contract for tests, Task 3: deposit supplies into Blend when a pool is set (+5 more)
 
 ### Community 618 - "Community 618"
-Cohesion: 0.50
-Nodes (4): Batching Strategy, Caching Embeddings, Embedding Pipeline Best Practices, Text Preprocessing
+Cohesion: 0.15
+Nodes (13): `/api/auth/login`, `/api/auth/logout`, `/api/auth/register`, Next.js config tweaks, Next.js + @simplewebauthn Reference Implementation, Putting it together, Route handlers, Shared constant (+5 more)
 
 ### Community 619 - "Community 619"
-Cohesion: 0.50
-Nodes (4): Embedding Fine-Tuning, Fine-Tuning with Sentence Transformers, Hard Negative Mining, When to Fine-Tune
+Cohesion: 0.15
+Nodes (13): Assembling the Ethereum wallet, Determinism testing, HKDF parameters, Independent key derivation, `infoLabel` — your per-purpose string constant, Inputs, Pipeline Overview, PRF → Ethereum Private Key Derivation (+5 more)
 
 ### Community 620 - "Community 620"
 Cohesion: 0.50
@@ -3402,180 +3445,196 @@ Cohesion: 0.50
 Nodes (4): BM25 + Vector with Weaviate, Hybrid Search (Vector + Keyword), Pinecone Sparse-Dense, Reciprocal Rank Fusion (RRF)
 
 ### Community 622 - "Community 622"
-Cohesion: 0.50
-Nodes (4): Cohere Rerank, ColBERT-Style Late Interaction, Cross-Encoder Reranking (Open Source), Reranking
+Cohesion: 0.09
+Nodes (21): Cohere Rerank, ColBERT-Style Late Interaction, Complete Optimized Pipeline, Contextual Compression, Cross-Encoder Reranking (Open Source), Extractive Compression with Cross-Encoder, HyDE (Hypothetical Document Embeddings), LLM-Based Query Expansion (+13 more)
 
 ### Community 623 - "Community 623"
-Cohesion: 0.50
-Nodes (4): Collection per Tenant (High Isolation), Metadata Filtering (Qdrant/Weaviate), Multi-Tenancy Patterns, Namespace Isolation (Pinecone)
+Cohesion: 0.15
+Nodes (12): 1. Apa ini, dalam satu kalimat, 2. Posisi dalam sistem (dari mana datang, ke mana pergi), 3. Council: siapa agennya dan kenapa mereka tidak sekadar teater, 4. Autonomous loop: otonom di pikiran, bukan di tindakan, 5. Permission Layer: rem tindakan, 6. Kenapa ini bisa dibangun dengan stack yang ada, 7. Landasan riset (untuk kredibilitas pitch), 8. Batas jujur (apa yang sengaja TIDAK diklaim) (+4 more)
 
 ### Community 624 - "Community 624"
-Cohesion: 0.50
-Nodes (4): 4. Authentication & Authorization, Authorization Checks, JWT Token Handling, Row Level Security (Supabase)
+Cohesion: 0.15
+Nodes (12): 11.1 Project Model ([project.py](file:///c:/SharredData/project/mirofish/MiroFish/backend/app/models/project.py)), 11.2 Task Model ([task.py](file:///c:/SharredData/project/mirofish/MiroFish/backend/app/models/task.py)), 11. Model Data, 12.1 Complete Pipeline, 12.2 Data Flow per Fase, 12. Alur Data End-to-End, 2.1 Struktur Direktori, 2.2 API Blueprint Registration (+4 more)
 
 ### Community 625 - "Community 625"
-Cohesion: 0.50
-Nodes (4): 3.1 Animate Transform and Opacity Instead of Layout Properties, 3.2 Prefer useDerivedValue Over useAnimatedReaction, 3.3 Use GestureDetector for Animated Press States, 3. Animation
+Cohesion: 0.07
+Nodes (26): 10.1 Use Compound Components Over Polymorphic Children, 10. Design System, 11.1 Install Native Dependencies in App Directory, 11.2 Use Single Dependency Versions Across Monorepo, 11. Monorepo, 13.1 Hoist Intl Formatter Creation, 13. JavaScript, 14.1 Load fonts natively at build time (+18 more)
 
 ### Community 626 - "Community 626"
-Cohesion: 0.50
-Nodes (4): 6.1 Minimize State Variables and Derive Values, 6.2 Use fallback state instead of initialState, 6.3 useState Dispatch updaters for State That Depends on Current Value, 6. React State
+Cohesion: 0.15
+Nodes (12): ERC-7715 Advanced-Permissions Redeemed Funding — Implementation Plan, File structure (created / modified), Open risk — resolved by Task 1 (spike) BEFORE the grant grantee is fixed, Self-Review, Task 1: Spike — 1Shot Managed-API redeem capability (DECISION GATE), Task 2: Contract — `depositHeld` + `sweepStranded`, Task 3: Redeploy to Base Sepolia + sync addresses/ABI, Task 4: Frontend — un-mock the real ERC-7715 grant (+4 more)
+
+### Community 627 - "Community 627"
+Cohesion: 0.15
+Nodes (13): Execution Handoff, File Structure, Global Constraints, Phase 2 — Frontend Stellar deposit auth-tree (the hard primitive SP3 deferred), Phase 3 — Re-point orchestrator / worker / app / wallet (EVM → Stellar), Phases 2 & 3 — scoped, NOT in this plan (follow-on plans), Self-Review (Phase 1), SP4 Execution Re-point (EVM → Stellar) Implementation Plan (+5 more)
+
+### Community 628 - "Community 628"
+Cohesion: 0.17
+Nodes (11): Algorithm Confusion (RS256 to HS256), Algorithm None, CTF Web - JWT & JWE Token Attacks, JKU Header Injection (Crypto-Cat), JWE Token Forgery with Exposed Public Key (UTCTF 2026), JWK Header Injection (Crypto-Cat), JWT Balance Replay (MetaShop Pattern), KID Path Traversal (Crypto-Cat) (+3 more)
+
+### Community 629 - "Community 629"
+Cohesion: 0.17
+Nodes (12): Animation Timing, Card Expand/Collapse with `startTransition`, Cross-Fade Without Remount, Exclude Elements with `useOptimistic`, Isolate Elements from Parent Animations, Patterns and Guidelines, Preserve State with Activity, Reusable Animated Collapse (+4 more)
+
+### Community 630 - "Community 630"
+Cohesion: 0.17
+Nodes (11): Architecture, Iframe Isolation for Wallet Operations, Minimizing iframe dependencies, Postmate crash course, Request / response pattern, Same-origin vs third-party iframes, Security checklist, The `allow` attribute is mandatory (+3 more)
 
 ### Community 631 - "Community 631"
-Cohesion: 0.50
-Nodes (4): Animation Triggers, Core Concepts, Critical Placement Rule, The `<ViewTransition>` Component
+Cohesion: 0.17
+Nodes (11): Architecture, Iframe Isolation for Wallet Operations, Minimizing iframe dependencies, Postmate crash course, Request / response pattern, Same-origin vs third-party iframes, Security checklist, The `allow` attribute is mandatory (+3 more)
 
 ### Community 632 - "Community 632"
-Cohesion: 0.50
-Nodes (4): How Multiple VTs Interact, Nested VT Limitation, Two Patterns Coexist, Use `default="none"` Liberally
+Cohesion: 0.17
+Nodes (12): Authentication options, Authentication verification, Configuration, CORS and origin checks, Endpoints, Rate limits, Registration options, Registration verification (+4 more)
 
 ### Community 633 - "Community 633"
-Cohesion: 0.50
-Nodes (4): Animation Triggers, Core Concepts, Critical Placement Rule, The `<ViewTransition>` Component
+Cohesion: 0.17
+Nodes (11): Algorithm Confusion (RS256 to HS256), Algorithm None, CTF Web - JWT & JWE Token Attacks, JKU Header Injection (Crypto-Cat), JWE Token Forgery with Exposed Public Key (UTCTF 2026), JWK Header Injection (Crypto-Cat), JWT Balance Replay (MetaShop Pattern), KID Path Traversal (Crypto-Cat) (+3 more)
 
 ### Community 634 - "Community 634"
-Cohesion: 0.50
-Nodes (4): How Multiple VTs Interact, Nested VT Limitation, Two Patterns Coexist, Use `default="none"` Liberally
+Cohesion: 0.17
+Nodes (12): Animation Timing, Card Expand/Collapse with `startTransition`, Cross-Fade Without Remount, Exclude Elements with `useOptimistic`, Isolate Elements from Parent Animations, Patterns and Guidelines, Preserve State with Activity, Reusable Animated Collapse (+4 more)
 
 ### Community 635 - "Community 635"
-Cohesion: 0.50
-Nodes (4): Web3 Expert Rules, Best Practices, Integration Points, Purpose
+Cohesion: 0.47
+Nodes (5): Web3 Expert Rules, Best Practices, Integration Points, Purpose, web3-expert Rules
 
 ### Community 636 - "Community 636"
-Cohesion: 0.50
-Nodes (3): Web3 Expert Implementation Template, Goal, TDD
+Cohesion: 0.47
+Nodes (5): Web3 Expert Implementation Template, Goal, TDD, Verification, web3-expert Implementation Template
 
 ### Community 638 - "Community 638"
 Cohesion: 0.50
 Nodes (4): borderCurve: continuous, boxShadow, experimental_backgroundImage, gap
 
 ### Community 639 - "Community 639"
-Cohesion: 0.50
-Nodes (4): Authentication Issues, Rate Limiting, Timeout Errors, Troubleshooting
+Cohesion: 0.17
+Nodes (11): 1. Apa ini, dan kenapa komponen mandiri, 2. Dua tugas yang ia lakukan, 3. Kenapa lintas-fitur: siapa saja yang lewat gerbang ini, 4. Peringatan keras soal "eksekusi langsung", 5. Akar konkret: pola yang sudah pernah dibangun, 6. Posisi on-chain vs off-chain, 7. Landasan riset (untuk kredibilitas pitch), 8. Batas jujur (apa yang sengaja TIDAK diklaim) (+3 more)
 
 ### Community 640 - "Community 640"
 Cohesion: 0.50
 Nodes (3): Design Template, Quick Reference, System Design Template
 
 ### Community 641 - "Community 641"
-Cohesion: 0.50
-Nodes (4): Brand Names, Landing Pages, Product Interfaces, Real-World Applications
+Cohesion: 0.17
+Nodes (11): Algorithm Confusion (RS256 to HS256), Algorithm None, CTF Web - JWT & JWE Token Attacks, JKU Header Injection (Crypto-Cat), JWE Token Forgery with Exposed Public Key (UTCTF 2026), JWK Header Injection (Crypto-Cat), JWT Balance Replay (MetaShop Pattern), KID Path Traversal (Crypto-Cat) (+3 more)
 
 ### Community 642 - "Community 642"
-Cohesion: 0.50
-Nodes (4): Cognitive Effort Discounting (COGED), Key Research Findings, Task Perception Studies, Truth and Repetition
+Cohesion: 0.17
+Nodes (11): Example 0 — Browser extension flow (MetaMask + viem + EIP-7715 permissions), Example 1 — Self-sponsored, single chain (getFeeData fallback), Example 1b — Estimate-first, single chain (preferred), Example 2 — Sponsored, single chain (separate sponsor pays the fee), Example 3 — Multichain (fee on chain A, work on chain B), Example 4 — Polling fallback for `relayer_getStatus`, Example 5 — Webhook receiver with Ed25519 verification, Fee math (fallback via `relayer_getFeeData`) (+3 more)
 
 ### Community 643 - "Community 643"
-Cohesion: 0.50
-Nodes (4): Brace Stripping, Double URL Encoding, Path Traversal Bypass Techniques, Python os.path.join
+Cohesion: 0.11
+Nodes (17): basename() Bypass for Hidden Files (Nullcon 2026), Brace Stripping, CTF Web - Advanced Server-Side Techniques, /dev/fd Symlink to Bypass /proc Filter (Google CTF 2017), Double URL Encoding, ExifTool CVE-2021-22204 — DjVu Perl Injection (0xFun 2026), Flask/Werkzeug Debug Mode Exploitation, Go Rune/Byte Length Mismatch + Command Injection (VuwCTF 2025) (+9 more)
 
 ### Community 644 - "Community 644"
-Cohesion: 0.50
-Nodes (4): Basic XXE, OOB XXE with External DTD, XXE via DOCX/Office XML Upload (School CTF 2016), XXE (XML External Entity)
+Cohesion: 0.17
+Nodes (12): Albedo, Beans, Browser Extensions, Freighter, Hana Wallet, LOBSTR, Mobile Wallets, Multi-Wallet Integration (+4 more)
 
 ### Community 645 - "Community 645"
-Cohesion: 0.50
-Nodes (4): Curl Redirect Chain Bypass, DNS Rebinding for TOCTOU, Host Header SSRF (MireaCTF), SSRF
+Cohesion: 0.17
+Nodes (12): Aquarius / AQUA Network, Blend Protocol, DeFi Protocols, DeFindex, DEXs & AMMs, Lending & Borrowing, Orbit CDP Protocol, Phoenix Protocol (+4 more)
 
 ### Community 646 - "Community 646"
-Cohesion: 0.50
-Nodes (4): CCPA Compliance, Compliance Checklist, GDPR Compliance, HIPAA Compliance
+Cohesion: 0.18
+Nodes (11): Config, Construction, createPayLink(amount, description, options?), getPayLink(payLinkId), Install, Integration Flow, Overview, Quick Start (+3 more)
 
 ### Community 647 - "Community 647"
 Cohesion: 0.50
 Nodes (4): CCPA/CPRA (California Consumer Privacy Act), GDPR (General Data Protection Regulation), HIPAA (Health Insurance Portability and Accountability Act), Key Regulations Overview
 
 ### Community 648 - "Community 648"
-Cohesion: 0.50
-Nodes (4): Available Commands, Basic Schema Design, Request Tips, Usage Examples
+Cohesion: 0.18
+Nodes (11): 1) Single Execute, 2) Delegated Single Execute, 3) Batch Execute, 4) Delegated Batch Execute, Additional options for delegated execution, Execution Guidance, Optional execution options, SDK Setup (+3 more)
 
 ### Community 649 - "Community 649"
-Cohesion: 0.50
-Nodes (4): Constraints, Data Types, Primary Keys, Table Design
+Cohesion: 0.11
+Nodes (17): Constraints, Data Types, Database Schema Design Checklist, Documentation, Foreign Keys, Index Limits, Index Strategy, Indexing (+9 more)
 
 ### Community 650 - "Community 650"
 Cohesion: 0.50
 Nodes (4): 7. DIAL DEFINITIONS (Technical Reference), DESIGN_VARIANCE (Level 1-10), MOTION_INTENSITY (Level 1-10), VISUAL_DENSITY (Level 1-10)
 
 ### Community 651 - "Community 651"
-Cohesion: 0.50
-Nodes (4): Code Review, Content Writing, Image Generation, Prompt Templates
+Cohesion: 0.18
+Nodes (11): Layout-Level ViewTransition, `loading.tsx` as Suspense Boundary, Next.js Implementation Additions, Same-Route Dynamic Segment Transitions, Server Components, Server-Side Filtering with `router.replace`, Setup, Shared Elements Across Routes (+3 more)
 
 ### Community 652 - "Community 652"
-Cohesion: 0.50
-Nodes (4): Example 1: Decision-Making - Financial Market Panic, Example 2: Group Dynamics - Groupthink in Policy Disaster, Example 3: Trauma Response - Mass Shooting Psychological Impacts, Usage Examples
+Cohesion: 0.18
+Nodes (10): Credits, How to use this skill, License, Manually, Prerequisites, Runtime dependencies, Security considerations, webauthn-prf-wallet (+2 more)
 
 ### Community 653 - "Community 653"
-Cohesion: 0.50
-Nodes (4): Batching Strategy, Caching Embeddings, Embedding Pipeline Best Practices, Text Preprocessing
+Cohesion: 0.10
+Nodes (20): Batching Strategy, BGE-M3 (Multi-lingual, Multi-granularity), Caching Embeddings, Cohere Embeddings, Cohere Input Types, Dimension Trade-offs, Embedding Fine-Tuning, Embedding Models (+12 more)
 
 ### Community 654 - "Community 654"
-Cohesion: 0.50
-Nodes (4): Embedding Fine-Tuning, Fine-Tuning with Sentence Transformers, Hard Negative Mining, When to Fine-Tune
+Cohesion: 0.18
+Nodes (10): Credits, How to use this skill, License, Manually, Prerequisites, Runtime dependencies, Security considerations, webauthn-prf-wallet (+2 more)
 
 ### Community 655 - "Community 655"
-Cohesion: 0.50
-Nodes (4): Custom RAGAS Evaluation, Installation and Setup, RAGAS Framework, RAGAS Metrics Explained
+Cohesion: 0.12
+Nodes (15): Custom Feedback Functions, Custom RAGAS Evaluation, Evaluation Best Practices, Evaluation Framework Overview, Implementing Core Metrics, Installation and Setup, NDCG (Normalized Discounted Cumulative Gain), Precision, Recall, and Hit Rate (+7 more)
 
 ### Community 656 - "Community 656"
 Cohesion: 0.50
 Nodes (4): BM25 + Vector with Weaviate, Hybrid Search (Vector + Keyword), Pinecone Sparse-Dense, Reciprocal Rank Fusion (RRF)
 
 ### Community 657 - "Community 657"
-Cohesion: 0.50
-Nodes (4): Cohere Rerank, ColBERT-Style Late Interaction, Cross-Encoder Reranking (Open Source), Reranking
+Cohesion: 0.18
+Nodes (11): Layout-Level ViewTransition, `loading.tsx` as Suspense Boundary, Next.js Implementation Additions, Same-Route Dynamic Segment Transitions, Server Components, Server-Side Filtering with `router.replace`, Setup, Shared Elements Across Routes (+3 more)
 
 ### Community 658 - "Community 658"
 Cohesion: 0.50
 Nodes (4): Collection per Tenant (High Isolation), Metadata Filtering (Qdrant/Weaviate), Multi-Tenancy Patterns, Namespace Isolation (Pinecone)
 
 ### Community 659 - "Community 659"
-Cohesion: 0.50
-Nodes (4): 4. Authentication & Authorization, Authorization Checks, JWT Token Handling, Row Level Security (Supabase)
+Cohesion: 0.18
+Nodes (11): 5.1 Simulation Manager ([simulation_manager.py](file:///c:/SharredData/project/mirofish/MiroFish/backend/app/services/simulation_manager.py)), 5.2 Simulation Runner ([simulation_runner.py](file:///c:/SharredData/project/mirofish/MiroFish/backend/app/services/simulation_runner.py)), 5.3 Simulation IPC ([simulation_ipc.py](file:///c:/SharredData/project/mirofish/MiroFish/backend/app/services/simulation_ipc.py)), 5.4 API Endpoints: Simulation, 5. Fase 3 — Simulation Execution, Arsitektur IPC:, Core Simulation Flow:, Data Classes: (+3 more)
 
 ### Community 660 - "Community 660"
-Cohesion: 0.50
-Nodes (4): Core Principles, Performance by Design, Production-First Design, Security & Privacy
+Cohesion: 0.12
+Nodes (16): Advanced Patterns, Best Practices, Code Quality, Core Principles, Experiment Design Frameworks, Further Reading, Overview, Pattern 1: Distributed Processing (+8 more)
 
 ### Community 661 - "Community 661"
-Cohesion: 0.50
-Nodes (4): Advanced Patterns, Pattern 1: Distributed Processing, Pattern 2: Real-Time Systems, Pattern 3: ML at Scale
+Cohesion: 0.18
+Nodes (11): Activation Energy, AIDA Funnel, BJ Fogg Behavior Model, COM-B Model, Design & Delivery Models, EAST Framework, Hick's Law, North Star Metric (+3 more)
 
 ### Community 662 - "Community 662"
-Cohesion: 0.50
-Nodes (4): Best Practices, Code Quality, Performance, Reliability
+Cohesion: 0.18
+Nodes (10): File Structure, Global Constraints, Self-Review, Sub-project 2 — Soroban Gasless Relay (fee-bump) Implementation Plan, Task 1: Dependency + Stellar config constants, Task 2: Client relay helper, Task 3: Server fee-bump core + handler, Task 4: Vault-target allowlist (defense-in-depth) (+2 more)
 
 ### Community 663 - "Community 663"
-Cohesion: 0.50
-Nodes (4): Core Principles, Performance by Design, Production-First Design, Security & Privacy
+Cohesion: 0.18
+Nodes (10): Cognitive Risk → Council → Permission Pipeline Implementation Plan, File Structure, Global Constraints, Out of scope for this plan (follow-ups), Self-Review, Task 1: `riskParams` — param fusion + seeded simulation runner, Task 2: Convert the proof script into a regression test, Task 3: `councilLoop` — bounded debate with deterministic short-circuit (+2 more)
 
 ### Community 664 - "Community 664"
-Cohesion: 0.50
-Nodes (4): 3.1 Animate Transform and Opacity Instead of Layout Properties, 3.2 Prefer useDerivedValue Over useAnimatedReaction, 3.3 Use GestureDetector for Animated Press States, 3. Animation
+Cohesion: 0.07
+Nodes (26): 10.1 Use Compound Components Over Polymorphic Children, 10. Design System, 11.1 Install Native Dependencies in App Directory, 11.2 Use Single Dependency Versions Across Monorepo, 11. Monorepo, 13.1 Hoist Intl Formatter Creation, 13. JavaScript, 14.1 Load fonts natively at build time (+18 more)
 
 ### Community 665 - "Community 665"
-Cohesion: 0.50
-Nodes (4): 6.1 Minimize State Variables and Derive Values, 6.2 Use fallback state instead of initialState, 6.3 useState Dispatch updaters for State That Depends on Current Value, 6. React State
+Cohesion: 0.18
+Nodes (11): Certora Sunbeam Prover, Formal Verification, OpenZeppelin Monitor (Stellar alpha), OpenZeppelin Security Detectors SDK, Runtime Verification — Komet, Scout Soroban (CoinFabrik), Security Knowledge Base, Security Monitoring (Post-Deployment) (+3 more)
 
 ### Community 666 - "Community 666"
-Cohesion: 0.50
-Nodes (4): Animation Triggers, Core Concepts, Critical Placement Rule, The `<ViewTransition>` Component
+Cohesion: 0.20
+Nodes (10): Checking PRF support happens at two different shapes, Critical Implementation Nuances, Iframe `allow` attribute is required, Iframe must not be `display: none` during the passkey ceremony, Platform detection must exclude webviews explicitly, PRF salt encoding, secp256k1 range validation isn't just theoretical, Session doesn't replace passkey for wallet ops (+2 more)
 
 ### Community 667 - "Community 667"
-Cohesion: 0.50
-Nodes (4): How Multiple VTs Interact, Nested VT Limitation, Two Patterns Coexist, Use `default="none"` Liberally
+Cohesion: 0.20
+Nodes (10): AI Engineer, Cloud Architect, Data Engineer, DevOps Engineer, Flutter, ML Engineer, MLOps Engineer, Mobile Developer (+2 more)
 
 ### Community 668 - "Community 668"
-Cohesion: 0.50
-Nodes (4): Animation Triggers, Core Concepts, Critical Placement Rule, The `<ViewTransition>` Component
+Cohesion: 0.27
+Nodes (10): Accessibility, Common Sticking Points, Interaction, Layout, Light/Dark Mode, Pre-Delivery Checklist, Pre-Delivery Checklist, Query Strategy (+2 more)
 
 ### Community 669 - "Community 669"
 Cohesion: 0.50
 Nodes (4): How Multiple VTs Interact, Nested VT Limitation, Two Patterns Coexist, Use `default="none"` Liberally
 
 ### Community 670 - "Community 670"
-Cohesion: 0.50
-Nodes (4): Best Practices, Integration Points, Purpose, Web3 Expert Rules
+Cohesion: 0.47
+Nodes (5): Best Practices, Integration Points, Purpose, web3-expert Rules, Web3 Expert Rules
 
 ### Community 671 - "Community 671"
 Cohesion: 0.50
@@ -3586,131 +3645,131 @@ Cohesion: 0.50
 Nodes (4): 16. Vibing Farmer — multi-agent architecture, Hierarki, Risk profile → jumlah agent, State model — `execMap`
 
 ### Community 673 - "Community 673"
-Cohesion: 0.50
-Nodes (4): 4. Spacing, Radius, Borders, Border, Border radius, Spacing scale
+Cohesion: 0.20
+Nodes (9): Agent-deposit auth-tree consequence (for 2/4 — NOT solved in 1c), Implementation notes (SDK 26.1.0 — verified against live crate), Registry (`registry`), Signer-backend decision (Task 1), Soroban inter-layer interfaces (pinned by sub-project 1a), Vault deposit (implemented by 1c — pinned signature), Yield-farming asset (SEP-41 / SAC token), Yield vault (`rwa_vault`, struct `RwaVault`) — pinned by sub-project 1c (+1 more)
 
 ### Community 674 - "Community 674"
 Cohesion: 0.50
 Nodes (4): 7. Motion, Approved animations, Aturan dasar, Banned animations
 
 ### Community 675 - "Community 675"
-Cohesion: 0.50
-Nodes (4): Disney's 12 Principles of Animation, prefers-reduced-motion media query, UI/UX Pro Max, UX Researcher
+Cohesion: 0.20
+Nodes (10): AgentVaultDepositor, Base Sepolia, Delegation Framework, EIP-7702, ERC-7715, MetaMask Flask, SAK (Smart Accounts Kit), Vite (+2 more)
 
 ### Community 676 - "Community 676"
-Cohesion: 0.67
-Nodes (3): Encode A - Latent Vector, Encode B - JSON Padat, Machine Encode
+Cohesion: 0.11
+Nodes (19): Encode A - Latent Vector, Encode B - JSON Padat, 1. Kenapa dokumen ini ada, 2. Dua hal berbeda yang sama-sama disebut "machine encode", 3. Encode A — Latent vector sejati (butuh local model), 4. Encode B — Kamus sandi / JSON padat (bisa sekarang, tapi bukan inovasi), 5. Apa yang boleh diklaim sekarang vs apa yang tidak, 6. Kalau suatu hari pindah ke local model (+11 more)
 
 ### Community 677 - "Community 677"
 Cohesion: 0.50
 Nodes (4): 16. Vibing Farmer — multi-agent architecture, Hierarki, Risk profile → jumlah agent, State model — `execMap`
 
 ### Community 678 - "Community 678"
-Cohesion: 0.50
-Nodes (4): 4. Spacing, Radius, Borders, Border, Border radius, Spacing scale
+Cohesion: 0.20
+Nodes (9): Dependencies (install if missing), Environment, Final checks, PDF Skill, Quality expectations, Rendering command, Temp and output conventions, When to use (+1 more)
 
 ### Community 679 - "Community 679"
 Cohesion: 0.50
 Nodes (4): 7. Motion, Approved animations, Aturan dasar, Banned animations
 
 ### Community 680 - "Community 680"
-Cohesion: 0.50
-Nodes (4): Authentication Issues, Rate Limiting, Timeout Errors, Troubleshooting
+Cohesion: 0.20
+Nodes (10): Task 1: Fix HomePage landing-screen TDZ crash (C1), WS1 — Critical bug fixes, 4. Workstreams (ordered by demo risk), WS1 — Critical bug fixes (FIRST), WS2 — Dead-button & broken-flow audit, WS3 — Vaults: Hybrid realism, WS4 — Fake/hardcoded → real, WS5 — Error handling & edge states (+2 more)
 
 ### Community 681 - "Community 681"
-Cohesion: 0.50
-Nodes (4): Common Integration Examples, SendGrid Email Sending, Stripe Payment Processing, Twilio SMS
+Cohesion: 0.20
+Nodes (9): Credibility Fixes (Sub-project #1) Implementation Plan, Global Constraints, Notes for the implementer, Task 1: Decimal format helper, Task 2: Apply helper to all display sites (GAP-1 render), Task 3: Functional decimal fixes (seed writer + skill cap), Task 4: Delete dead MetaMask-Flask / ERC-7715 code, Task 5: Purge EVM copy → Stellar truth + frontend `rwa` naming (+1 more)
 
 ### Community 682 - "Community 682"
 Cohesion: 0.50
 Nodes (3): Design Template, Quick Reference, System Design Template
 
 ### Community 683 - "Community 683"
-Cohesion: 0.50
-Nodes (4): Brand Names, Landing Pages, Product Interfaces, Real-World Applications
+Cohesion: 0.20
+Nodes (10): 1Shot Public Relayer (EIP-7710) Integration, Additional resources, Browser extension integration (recommended for UI apps), Browser-flow pitfalls and fixes, Common error codes, Composing with `webauthn-prf-wallet` for a fully non-custodial app, Decisions cheat sheet, Endpoints and packages (+2 more)
 
 ### Community 684 - "Community 684"
-Cohesion: 0.50
-Nodes (4): Cognitive Effort Discounting (COGED), Key Research Findings, Task Perception Studies, Truth and Repetition
+Cohesion: 0.20
+Nodes (10): Anchor Platform, Anchors & On/Off Ramps, Block Explorers, Disbursements, Infrastructure, Stellar Disbursement Platform (SDP), Stellar Lab, Stellar Ramps (+2 more)
 
 ### Community 685 - "Community 685"
 Cohesion: 0.50
 Nodes (4): Brace Stripping, Double URL Encoding, Path Traversal Bypass Techniques, Python os.path.join
 
 ### Community 686 - "Community 686"
-Cohesion: 0.50
-Nodes (4): Basic XXE, OOB XXE with External DTD, XXE via DOCX/Office XML Upload (School CTF 2016), XXE (XML External Entity)
+Cohesion: 0.20
+Nodes (10): Aave V3, Balanced Growth Vault, Conservative Yield Vault, Fluid Protocol, High Yield Vault, Morpho Blue, Pendle Finance, Risk Tier Classification (+2 more)
 
 ### Community 687 - "Community 687"
-Cohesion: 0.50
-Nodes (4): 1. Data Minimization, 2. Purpose Limitation, 3. Storage Limitation, Privacy by Design Principles
+Cohesion: 0.22
+Nodes (9): Client-Side Conventions, Client-Side Integration, Install, Key APIs, One-Time Payment (ERC-3009 signature), Overview, Pay for 402-Protected API (x402Fetch), Quick Start (+1 more)
 
 ### Community 688 - "Community 688"
-Cohesion: 0.50
-Nodes (4): CCPA Compliance, Compliance Checklist, GDPR Compliance, HIPAA Compliance
+Cohesion: 0.22
+Nodes (9): 4.1 Get available webhook event names, 4.2 Webhook triggers, 4.3 Webhook endpoints, 4.4 Webhook deliveries and attempts, MCP Tool, SDK Setup, Topics Covered, Webhook verification (+1 more)
 
 ### Community 689 - "Community 689"
-Cohesion: 0.50
-Nodes (4): Constraints, Data Types, Primary Keys, Table Design
+Cohesion: 0.22
+Nodes (9): 4.1 Ontology Generator ([ontology_generator.py](file:///c:/SharredData/project/mirofish/MiroFish/backend/app/services/ontology_generator.py)), 4.2 Simulation Config Generator ([simulation_config_generator.py](file:///c:/SharredData/project/mirofish/MiroFish/backend/app/services/simulation_config_generator.py)), 4.3 OASIS Profile Generator ([oasis_profile_generator.py](file:///c:/SharredData/project/mirofish/MiroFish/backend/app/services/oasis_profile_generator.py)), 4.4 Zep Entity Reader ([zep_entity_reader.py](file:///c:/SharredData/project/mirofish/MiroFish/backend/app/services/zep_entity_reader.py)), 4. Fase 2 — Simulation Setup, Data Classes:, Data Model:, Main Method: (+1 more)
 
 ### Community 690 - "Community 690"
-Cohesion: 0.50
-Nodes (4): Basic Navigation, Navigation Compose Basics, Navigation with Arguments, Setup and Dependencies
+Cohesion: 0.22
+Nodes (9): Compounding, Critical Mass / Tipping Point, Exploration vs. Exploitation, Feedback Loops, Flywheel Effect, Growth & Scaling Models, Network Effects, Survivorship Bias (+1 more)
 
 ### Community 691 - "Community 691"
 Cohesion: 0.50
 Nodes (4): Code Review, Content Writing, Image Generation, Prompt Templates
 
 ### Community 692 - "Community 692"
-Cohesion: 0.50
-Nodes (4): Example 1: Decision-Making - Financial Market Panic, Example 2: Group Dynamics - Groupthink in Policy Disaster, Example 3: Trauma Response - Mass Shooting Psychological Impacts, Usage Examples
+Cohesion: 0.22
+Nodes (8): Error catalog, Methods covered, Params, Production tips, Public Relayer Reference, `relayer_getStatus`, Result (discriminated by `status`), Table of contents
 
 ### Community 693 - "Community 693"
-Cohesion: 0.50
-Nodes (4): Batching Strategy, Caching Embeddings, Embedding Pipeline Best Practices, Text Preprocessing
+Cohesion: 0.22
+Nodes (9): 1. Missing Authorization Checks, 2. Reinitialization Attacks, 3. Arbitrary Contract Calls, 4. Integer Overflow/Underflow, 5. Storage Key Collisions, 6. Timing/State Race Conditions, 7. TTL/Archival Vulnerabilities, 8. Cross-Contract Call Validation (+1 more)
 
 ### Community 694 - "Community 694"
-Cohesion: 0.50
-Nodes (4): Embedding Fine-Tuning, Fine-Tuning with Sentence Transformers, Hard Negative Mining, When to Fine-Tune
+Cohesion: 0.22
+Nodes (9): Basic Test Setup, Testing Authorization, Testing Cross-Contract Calls, Testing Events, Testing Ledger State, Testing Storage, Testing Time-Dependent Logic, Testing with Specific Auth Requirements (+1 more)
 
 ### Community 695 - "Community 695"
-Cohesion: 0.50
-Nodes (4): Custom RAGAS Evaluation, Installation and Setup, RAGAS Framework, RAGAS Metrics Explained
+Cohesion: 0.22
+Nodes (9): Community Examples, Example Repositories, Official Examples, Oracle Example, OZ Stellar NFT, Soroban Contracts (icolomina), Soroban Example dApp, Soroban Examples (+1 more)
 
 ### Community 696 - "Community 696"
-Cohesion: 0.50
-Nodes (4): Collection per Tenant (High Isolation), Metadata Filtering (Qdrant/Weaviate), Multi-Tenancy Patterns, Namespace Isolation (Pinecone)
+Cohesion: 0.25
+Nodes (4): 1ShotPay Integration, 1ShotPay MCP Tools, Security Notes, SKILL.md (1shot-api)
 
 ### Community 697 - "Community 697"
-Cohesion: 0.50
-Nodes (4): 4. Authentication & Authorization, Authorization Checks, JWT Token Handling, Row Level Security (Supabase)
+Cohesion: 0.25
+Nodes (7): 1Shot API, Error handling, Guides, MCP Server, Quick Start, Required Working Style, Response Template
 
 ### Community 698 - "Community 698"
-Cohesion: 0.50
-Nodes (4): Best Practices, Code Quality, Performance, Reliability
+Cohesion: 0.29
+Nodes (8): Best Practices, Best Practices, Model Optimization, Model Optimization, Monitoring and Observability, Production Serving, Security and Compliance, Security & Compliance
 
 ### Community 699 - "Community 699"
-Cohesion: 0.50
-Nodes (4): Core Principles, Performance by Design, Production-First Design, Security & Privacy
+Cohesion: 0.25
+Nodes (7): Detection code, Feature detection vs. version detection, How to use the result, Platform Support for WebAuthn PRF, Support Matrix (as of early 2026), Updating the matrix, Why webviews fail
 
 ### Community 700 - "Community 700"
-Cohesion: 0.50
-Nodes (4): Advanced Patterns, Pattern 1: Distributed Processing, Pattern 2: Real-Time Systems, Pattern 3: ML at Scale
+Cohesion: 0.25
+Nodes (8): EIP-7702, MetaMask Flask, ERC-7715 Scoped Permissions, MetaMask Flask, wallet_revokeExecutionPermission RPC, Delegation Framework, wallet_requestExecutionPermissions, ERC-7715
 
 ### Community 701 - "Community 701"
-Cohesion: 0.50
-Nodes (4): Core Principles, Performance by Design, Production-First Design, Security & Privacy
+Cohesion: 0.25
+Nodes (8): 4. Voiceover Script - English (with Pronunciation & Stressed Syllables), Scene 1: Introduction & Problem, Scene 2: Wallet Connection & EIP-7702, Scene 3: AI Consultation & Strategy Formulation, Scene 4: Skill Review & ERC-7715 Permission Scoping, Scene 5: Swarm Execution & Fallback Jaringan, Scene 6: Agent Memory & Traceability, Scene 7: Etherscan Verification & Outro
 
 ### Community 702 - "Community 702"
 Cohesion: 0.50
 Nodes (3): 1. Async Actions & State Matrix, 2. Completed Polish Details, Async State Audit & UX Robustness Inventory
 
 ### Community 703 - "Community 703"
-Cohesion: 0.50
-Nodes (4): 1. Smart Contract Verification (`AgentVaultDepositor.sol`), 2. Frontend / Secret Management, 3. Pre-Mainnet Production Roadmap (Future Scope), Security Hardening Checklist (recorded — Sepolia testnet demo)
+Cohesion: 0.25
+Nodes (8): 3. Threat Model, Threat 1: Agent Exceeding Permission, Threat 2: Agent 1 Accessing Agent 2's Vault, Threat 3: Permission Context Leak, Threat 4: Smart Contract Reentrancy, Threat 5: Frontend Injection / XSS, Threat 6: Skill File Tampering (After Approval), Threat 7: Orchestrator Abuse (One Worker Overriding Others)
 
 ### Community 708 - "Community 708"
-Cohesion: 0.50
+Cohesion: 0.40
 Nodes (4): Use contentInsetAdjustmentBehavior for Safe Areas, contentInsetAdjustmentBehavior, SafeAreaView, useSafeAreaInsets
 
 ### Community 709 - "Community 709"
@@ -3730,36 +3789,36 @@ Cohesion: 0.67
 Nodes (3): agent custom account, session account, sub-project 3 (worker/wallet)
 
 ### Community 713 - "Community 713"
-Cohesion: 0.67
-Nodes (3): Common Fluency Killers, Content Problems, Design Problems
+Cohesion: 0.25
+Nodes (8): 3.1 Alur Graph Building, 3.2 File Parser ([file_parser.py](file:///c:/SharredData/project/mirofish/MiroFish/backend/app/utils/file_parser.py)), 3.3 Text Processor ([text_processor.py](file:///c:/SharredData/project/mirofish/MiroFish/backend/app/services/text_processor.py)), 3.4 GraphBuilderService ([graph_builder.py](file:///c:/SharredData/project/mirofish/MiroFish/backend/app/services/graph_builder.py)), 3.5 API Endpoint: Graph, 3. Fase 1 — Graph Building, Key Methods:, LLM Prompt untuk Entity Extraction:
 
 ### Community 714 - "Community 714"
-Cohesion: 0.67
-Nodes (3): Avoid, Best Practices, Do
+Cohesion: 0.25
+Nodes (8): 6.1 Report Agent ([report_agent.py](file:///c:/SharredData/project/mirofish/MiroFish/backend/app/services/report_agent.py)), 6.2 API Endpoints: Report, 6. Fase 4 — Report Generation, Arsitektur ReportAgent:, Konfigurasi ReportAgent:, LLM Prompts (Report Generation):, Report Generation Flow:, Tool Set yang Dimiliki ReportAgent:
 
 ### Community 715 - "Community 715"
-Cohesion: 0.67
-Nodes (3): Foreign Keys, Relationship Types, Relationships
+Cohesion: 0.25
+Nodes (8): Step 1 — Cek halaman load ✅ Fixed, Step 2 — Connect Wallet, Step 3 — Generate Strategy (fallback mode) ✅ Fixed, Step 4 — Klik node di graph ✅ Fixed, Step 5 — Approve & Execute ✅ Fixed, Step 6 — Verifikasi memory tersimpan, Step 7 — Reset, Test Flow (tanpa Sepolia deploy)
 
 ### Community 716 - "Community 716"
-Cohesion: 0.67
-Nodes (3): Index Limits, Index Strategy, Indexing
+Cohesion: 0.25
+Nodes (8): Account Foundation, Ad Extensions, Analytics Integration, Audience Setup, Brand Protection, Campaign Readiness, Conversion Tracking, Google Ads Setup
 
 ### Community 717 - "Community 717"
-Cohesion: 0.67
-Nodes (3): Docker Compose, Docker Deployment, Dockerfile
+Cohesion: 0.11
+Nodes (17): Build-time vs Runtime, Docker Compose, Docker Deployment, Dockerfile, Environment Variables, Health Check Endpoint, Image Optimization, OpenNext: Serverless Without Vercel (+9 more)
 
 ### Community 718 - "Community 718"
-Cohesion: 0.67
-Nodes (3): Image Optimization, Option 1: Built-in (Simple), Option 2: External Loader (Recommended for Scale)
+Cohesion: 0.25
+Nodes (8): Audience Setup, Business Manager Foundation, Catalog (E-commerce), Compliance, Creative Assets, Domain & Aggregated Events, Meta Ads Setup, Pixel & Tracking
 
 ### Community 719 - "Community 719"
 Cohesion: 0.67
 Nodes (3): Alerting on Quality Degradation, Continuous Monitoring, Production Metrics Dashboard
 
 ### Community 720 - "Community 720"
-Cohesion: 0.67
-Nodes (3): Batch Evaluation Pipeline, Building Custom Evaluation Pipelines, LLM-as-Judge Evaluation
+Cohesion: 0.13
+Nodes (14): Batch Evaluation Pipeline, Building Custom Evaluation Pipelines, Debugging Poor Retrieval, Evaluation Best Practices, Evaluation Framework Overview, Implementing Core Metrics, LLM-as-Judge Evaluation, NDCG (Normalized Discounted Cumulative Gain) (+6 more)
 
 ### Community 721 - "Community 721"
 Cohesion: 0.67
@@ -3770,40 +3829,40 @@ Cohesion: 0.67
 Nodes (3): Custom Feedback Functions, Setup and Basic Usage, TruLens Evaluation
 
 ### Community 723 - "Community 723"
-Cohesion: 0.67
-Nodes (3): Debugging Poor Retrieval, Query Analysis, Retrieval Diagnostics
+Cohesion: 0.25
+Nodes (8): Audience Setup, Budget Considerations, Campaign Manager Foundation, Creative Assets, Document Ads (if using), Insight Tag & Tracking, Lead Gen Forms (if using), LinkedIn Ads Setup
 
 ### Community 724 - "Community 724"
-Cohesion: 0.67
-Nodes (3): Implementing Core Metrics, NDCG (Normalized Discounted Cumulative Gain), Precision, Recall, and Hit Rate
+Cohesion: 0.25
+Nodes (7): Breadcrumb(), BreadcrumbEllipsis(), BreadcrumbItem(), BreadcrumbLink(), BreadcrumbList(), BreadcrumbPage(), BreadcrumbSeparator()
 
 ### Community 725 - "Community 725"
-Cohesion: 0.67
-Nodes (3): LLM-Based Query Expansion, Query Expansion, Query Rewriting
+Cohesion: 0.29
+Nodes (6): Environment contract, External x402 Core packages, Install, Package exports, Prerequisites, x402 Facilitator
 
 ### Community 726 - "Community 726"
 Cohesion: 0.67
 Nodes (3): Vercel React Best Practices Rule Template, Vercel React Best Practices Rule Template, Vercel React Best Practices Rule Template
 
 ### Community 727 - "Community 727"
-Cohesion: 0.67
-Nodes (3): 11.1 Install Native Dependencies in App Directory, 11.2 Use Single Dependency Versions Across Monorepo, 11. Monorepo
+Cohesion: 0.48
+Nodes (6): Demo-Polish Plan Design Spec, 1. Goal, 2. Decisions (locked), 5. Constraints & environment, 6. Success criteria, Demo-Polish Plan — Design Spec
 
 ### Community 728 - "Community 728"
-Cohesion: 0.67
-Nodes (3): 8.1 Destructure Functions Early in Render (React Compiler), 8.2 Use .get() and .set() for Reanimated Shared Values (not .value), 8. React Compiler
+Cohesion: 0.29
+Nodes (7): API Integration, Architecture & Design, Categories for Technical Spikes, Performance & Scalability, Platform & Infrastructure, Security & Compliance, User Experience
 
 ### Community 729 - "Community 729"
-Cohesion: 0.67
-Nodes (3): `router.back()` and Browser Back Button, Transition Types, Types and Suspense
+Cohesion: 0.29
+Nodes (7): 13. Em Dash Overuse, 14. Overuse of Boldface, 15. Inline-Header Vertical Lists, 16. Title Case in Headings, 17. Emojis, 18. Curly Quotation Marks, STYLE PATTERNS
 
 ### Community 730 - "Community 730"
-Cohesion: 0.67
-Nodes (3): CSS Pseudo-Elements, Props, Styling with View Transition Classes
+Cohesion: 0.29
+Nodes (7): Quick Analysis Steps, Step 1: Identify Psychological Dimensions (3 min), Step 2: Analyze Cognitive Load (7 min), Step 3: Map Decision Points and Biases (8 min), Step 4: Assess Motivation and Behavior (8 min), Step 5: Evaluate Social and Emotional Factors (7 min), Step 6: Consider Individual Differences (7 min)
 
 ### Community 731 - "Community 731"
-Cohesion: 0.67
-Nodes (3): Basic Usage, Prerequisites, Quick Start
+Cohesion: 0.29
+Nodes (7): 10.1 Tech Stack Frontend, 10.2 Struktur Komponen, 10.3 API Client Layer ([api/index.js](file:///c:/SharredData/project/mirofish/MiroFish/frontend/src/api/index.js)), 10.4 State Management ([store/index.js](file:///c:/SharredData/project/mirofish/MiroFish/frontend/src/store/index.js)), 10.5 UI Flow, 10.6 Vite Configuration, 10. Frontend — Vue.js Application
 
 ### Community 732 - "Community 732"
 Cohesion: 0.67
@@ -3813,29 +3872,33 @@ Nodes (3): Agent Dashboard Attributions, shadcn/ui, Unsplash
 Cohesion: 0.67
 Nodes (3): CCPA, GDPR, Privacy Policy Skill
 
+### Community 734 - "Community 734"
+Cohesion: 0.04
+Nodes (43): SKILL.md (ads), Action-Oriented CTAs, Ad Copy Templates Reference, Before-After-Bridge (BAB), Contents, Copy Testing Priority, CTA Variations, Direct Response (+35 more)
+
 ### Community 735 - "Community 735"
-Cohesion: 0.67
-Nodes (3): Common Fluency Killers, Content Problems, Design Problems
+Cohesion: 0.29
+Nodes (7): 13. Em Dash Overuse, 14. Overuse of Boldface, 15. Inline-Header Vertical Lists, 16. Title Case in Headings, 17. Emojis, 18. Curly Quotation Marks, STYLE PATTERNS
 
 ### Community 736 - "Community 736"
-Cohesion: 0.67
-Nodes (3): Avoid, Best Practices, Do
+Cohesion: 0.38
+Nodes (6): Best Practices, Integration Points, Purpose, web3-expert Rules, Web3 Expert Commands, Web3 Expert Rules
 
 ### Community 737 - "Community 737"
-Cohesion: 0.67
-Nodes (3): Foreign Keys, Relationship Types, Relationships
+Cohesion: 0.29
+Nodes (7): 3. Concrete findings (grounded audit), Code quality, Critical, Dead / non-functional controls, Error-handling gaps, Fake / hardcoded values, Smart contracts
 
 ### Community 738 - "Community 738"
-Cohesion: 0.67
-Nodes (3): Index Limits, Index Strategy, Indexing
+Cohesion: 0.29
+Nodes (6): Chosen grantee (the redeemer that broadcasts the redeem), Notes / risks carried forward, OUTCOME: a, Pinned encodings (Task 5), SPIKE RESULT — 1Shot Managed-API redeemDelegations capability, Verified API call shape (Task 5 — `frontend/api/relay.js` `redeem` action)
 
 ### Community 739 - "Community 739"
 Cohesion: 0.67
 Nodes (3): Build-time vs Runtime, Environment Variables, Runtime Configuration
 
 ### Community 740 - "Community 740"
-Cohesion: 0.67
-Nodes (3): Docker Compose, Docker Deployment, Dockerfile
+Cohesion: 0.29
+Nodes (7): Order of operations, Step 1 — `relayer_getCapabilities`: discover the chain, accepted tokens, and `targetAddress`, Step 2 — Build and sign the bundle (client-side), Step 2b (fallback) — `relayer_getFeeData`: rough quote before the bundle exists, Step 3 — `relayer_estimate7710Transaction` or `relayer_estimate7710TransactionMultichain`: quote the fee (preferred), Step 4 — `relayer_send7710Transaction` or `relayer_send7710TransactionMultichain`: submit the bundle, Step 5 — `relayer_getStatus`: check status (or use webhooks)
 
 ### Community 741 - "Community 741"
 Cohesion: 0.67
@@ -3854,40 +3917,40 @@ Cohesion: 0.67
 Nodes (3): Core Metrics, Generation Metrics, Retrieval Metrics
 
 ### Community 745 - "Community 745"
-Cohesion: 0.67
-Nodes (3): Custom Feedback Functions, Setup and Basic Usage, TruLens Evaluation
+Cohesion: 0.29
+Nodes (6): Build & Test, Code Patterns, OpenZeppelin Dependencies, Platform Notes, Soroban/Stellar Development Setup, Stellar Setup
 
 ### Community 746 - "Community 746"
 Cohesion: 0.67
 Nodes (3): Debugging Poor Retrieval, Query Analysis, Retrieval Diagnostics
 
 ### Community 747 - "Community 747"
-Cohesion: 0.67
-Nodes (3): Implementing Core Metrics, NDCG (Normalized Discounted Cumulative Gain), Precision, Recall, and Hit Rate
+Cohesion: 0.29
+Nodes (7): Funding Programs, Official Directories, Project Directories, SCF Project Tracker, Soroban Audit Bank, Stellar Community Fund (SCF), Stellar Ecosystem Directory
 
 ### Community 748 - "Community 748"
-Cohesion: 0.67
-Nodes (3): LLM-Based Query Expansion, Query Expansion, Query Rewriting
+Cohesion: 0.33
+Nodes (6): Browser-only APIs, Common Causes and Fixes, Date/Time Rendering, Invalid HTML Nesting, Random Values or IDs, Third-party Scripts
 
 ### Community 749 - "Community 749"
-Cohesion: 0.67
-Nodes (3): 11.1 Install Native Dependencies in App Directory, 11.2 Use Single Dependency Versions Across Monorepo, 11. Monorepo
+Cohesion: 0.33
+Nodes (6): Advanced RAG Patterns, Pattern 1: Hybrid Search with RRF, Pattern 2: Multi-Query Retrieval, Pattern 3: Contextual Compression, Pattern 4: Parent Document Retriever, Pattern 5: HyDE (Hypothetical Document Embeddings)
 
 ### Community 750 - "Community 750"
-Cohesion: 0.67
-Nodes (3): 8.1 Destructure Functions Early in Render (React Compiler), 8.2 Use .get() and .set() for Reanimated Shared Values (not .value), 8. React Compiler
+Cohesion: 0.33
+Nodes (6): 1. The PRF extension is a deterministic, per-credential secret, 2. The derivation must converge on the same key forever, 3. Isolate the key in an iframe, 4. PRF is primary, LongBlob is the compatibility path, 5. Every wallet operation requires a fresh passkey ceremony, Core Concepts
 
 ### Community 751 - "Community 751"
-Cohesion: 0.67
-Nodes (3): `router.back()` and Browser Back Button, Transition Types, Types and Suspense
+Cohesion: 0.33
+Nodes (6): Smart Contract: AgentVaultDepositor.sol, 1Shot Permissionless Relayer, 2. API & Event Reference, MetaMask Smart Accounts Kit (JSON-RPC via window.ethereum), Smart Contract Events (`AgentVaultDepositor.sol`), Venice AI API
 
 ### Community 752 - "Community 752"
-Cohesion: 0.67
-Nodes (3): CSS Pseudo-Elements, Props, Styling with View Transition Classes
+Cohesion: 0.33
+Nodes (6): Anthropologist, Cybersecurity, Engineer, Philosopher, Psychologist Analyst README, Sociologist
 
 ### Community 753 - "Community 753"
-Cohesion: 0.67
-Nodes (3): `router.back()` and Browser Back Button, Transition Types, Types and Suspense
+Cohesion: 0.33
+Nodes (5): CAP-0058 Constructors, SEP-0041 Soroban Token Interface, Related skills, Standards, Ecosystem, and Resources, When to use this skill
 
 ### Community 754 - "Community 754"
 Cohesion: 0.67
@@ -3906,32 +3969,32 @@ Cohesion: 0.67
 Nodes (3): 3.1. Branching Model, 3.2. Results Tracking: `results.tsv`, 3. Git-Based Version Control Strategy
 
 ### Community 758 - "Community 758"
-Cohesion: 0.67
-Nodes (3): Common Fluency Killers, Content Problems, Design Problems
+Cohesion: 0.33
+Nodes (6): Browser-only APIs, Common Causes and Fixes, Date/Time Rendering, Invalid HTML Nesting, Random Values or IDs, Third-party Scripts
 
 ### Community 759 - "Community 759"
-Cohesion: 0.67
-Nodes (3): Foreign Keys, Relationship Types, Relationships
+Cohesion: 0.33
+Nodes (6): 1. Chunking Documents, 2. Generating Embeddings & Indexing, 3. Hybrid Search (Vector + BM25), 4. Reranking Top-K Results, 5. Retrieval Evaluation, Implementation Examples
 
 ### Community 760 - "Community 760"
-Cohesion: 0.67
-Nodes (3): Index Limits, Index Strategy, Indexing
+Cohesion: 0.33
+Nodes (6): Advanced RAG Patterns, Pattern 1: Hybrid Search with RRF, Pattern 2: Multi-Query Retrieval, Pattern 3: Contextual Compression, Pattern 4: Parent Document Retriever, Pattern 5: HyDE (Hypothetical Document Embeddings)
 
 ### Community 761 - "Community 761"
-Cohesion: 0.67
-Nodes (3): Image Optimization, Option 1: Built-in (Simple), Option 2: External Loader (Recommended for Scale)
+Cohesion: 0.33
+Nodes (5): 1. Persiapan Demo (Pre-Recording Checklist), 2. Struktur Visual & Komponen Codebase, 3. Garis Besar Alur Demo (Timeline), 5. Peta Alur Kode untuk Troubleshooting saat Demo, Skenario & Naskah Demo Presentasi: Vibing Farmer
 
 ### Community 762 - "Community 762"
-Cohesion: 0.67
-Nodes (3): Alerting on Quality Degradation, Continuous Monitoring, Production Metrics Dashboard
+Cohesion: 0.33
+Nodes (6): Browser-only APIs, Common Causes and Fixes, Date/Time Rendering, Invalid HTML Nesting, Random Values or IDs, Third-party Scripts
 
 ### Community 763 - "Community 763"
-Cohesion: 0.67
-Nodes (3): Batch Evaluation Pipeline, Building Custom Evaluation Pipelines, LLM-as-Judge Evaluation
+Cohesion: 0.33
+Nodes (6): Task 15: Dev-mode flag helper, Task 16: Gate TweaksPanel + Jump-to-step (dev panel), Task 17: UX cursor + interaction states (Q4), Task 18: Extract right-rail panels from app.jsx (Q1), Task 19: Trim stray console.* on the happy path (Q3), WS6 — Dev panel gating + UX refinement
 
 ### Community 764 - "Community 764"
-Cohesion: 0.67
-Nodes (3): Core Metrics, Generation Metrics, Retrieval Metrics
+Cohesion: 0.33
+Nodes (6): 3. Update config.js, 4. Restart serve + ulangi flow, sepolia, sepolia, sepolia, Setting up 1 EVM.
 
 ### Community 765 - "Community 765"
 Cohesion: 0.67
@@ -3949,6 +4012,10 @@ Nodes (3): Implementing Core Metrics, NDCG (Normalized Discounted Cumulative Gai
 Cohesion: 0.67
 Nodes (3): Machine Payments Protocol (MPP), OpenZeppelin Relayer (Channels), x402 Protocol
 
+### Community 769 - "Community 769"
+Cohesion: 0.14
+Nodes (13): Improve vibing farmer berpacu di wizard /strategy:, Narasi, Narasi, Narasi, Narasi, Narasi, Narasi, Narasi (+5 more)
+
 ### Community 770 - "Community 770"
 Cohesion: 0.67
 Nodes (3): Webhook type (0,1,4), relayer_getCapabilities, relayer_send7710Transaction
@@ -3958,44 +4025,272 @@ Cohesion: 0.67
 Nodes (3): Common Issues, Debug Commands, Troubleshooting
 
 ### Community 773 - "Community 773"
-Cohesion: 0.67
-Nodes (3): KV (Key-Value Store), Manage Keys, Manage Namespaces
+Cohesion: 0.20
+Nodes (10): Cloudflare Workers, Pages, Vitest (Testing), Wrangler Skill, Config Binding, KV (Key-Value Store), List Models, Manage Keys (+2 more)
 
 ### Community 774 - "Community 774"
-Cohesion: 0.67
-Nodes (3): Local Testing with Vitest, Test Scheduled Events, Testing
+Cohesion: 0.33
+Nodes (6): Enhanced Conversions, Fire conversion events, Google Ads, Google Tag Manager alternative, Install the Google tag, Set up conversion actions
 
 ### Community 775 - "Community 775"
-Cohesion: 0.67
-Nodes (3): Manage Indexes, Manage Vectors, Vectorize (Vector Database)
+Cohesion: 0.50
+Nodes (4): Config Binding, Manage Indexes, Manage Vectors, Vectorize (Vector Database)
 
 ### Community 776 - "Community 776"
-Cohesion: 0.67
-Nodes (3): Manage Secrets in Store, Manage Stores, Secrets Store
+Cohesion: 0.50
+Nodes (4): Config Binding, Manage Secrets in Store, Manage Stores, Secrets Store
 
 ### Community 777 - "Community 777"
+Cohesion: 0.50
+Nodes (4): Config Binding, Manage Workflow Instances, Manage Workflows, Workflows
+
+### Community 778 - "Community 778"
+Cohesion: 0.33
+Nodes (6): Audit Bank & Audit Firms, Bug Bounty Programs, Formal Verification, Security, Security Resources, Static Analysis
+
+### Community 779 - "Community 779"
+Cohesion: 0.40
+Nodes (5): 7) Delegations, Create Delegation (store in 1Shot API), List Stored Delegations, Redelegate From Provided Delegation, Redelegate From Stored Delegation
+
+### Community 792 - "Community 792"
+Cohesion: 0.40
+Nodes (5): 4) Events, Create a Contract Event, List Imported Events, Query Events With Indexed Arguments, Update Imported Event Details
+
+### Community 793 - "Community 793"
+Cohesion: 0.40
+Nodes (5): 1. Right to Access (GDPR Art. 15 / CCPA § 1798.100), 2. Right to Deletion (GDPR Art. 17 / CCPA § 1798.105), 3. Right to Data Portability (GDPR Art. 20), 4. Right to Object (GDPR Art. 21), Data Subject Rights Implementation
+
+### Community 809 - "Community 809"
+Cohesion: 0.40
+Nodes (5): Common Patterns, Pattern: Cognitive Dissonance, Pattern: Default Effect, Pattern: Social Proof, Pattern: Variable Ratio Reinforcement
+
+### Community 819 - "Community 819"
+Cohesion: 0.40
+Nodes (5): 7.1 State Must Represent Ground Truth, 7. State Architecture, 7. State Architecture (state), 7.1 State Must Represent Ground Truth, 7. State Architecture
+
+### Community 820 - "Community 820"
+Cohesion: 0.22
+Nodes (9): 2.1 Avoid Inline Objects in renderItem, 2.2 Hoist callbacks to the root of lists, 2.3 Keep List Items Lightweight, 2.4 Optimize List Performance with Stable Object References, 2.5 Pass Primitives to List Items for Memoization, 2.6 Use a List Virtualizer for Any List, 2.7 Use Compressed Images in Lists, 2.8 Use Item Types for Heterogeneous Lists (+1 more)
+
+### Community 821 - "Community 821"
+Cohesion: 0.40
+Nodes (4): Logging & Observability, Parameter Validation, Retry & Error Handling, Skill Configuration
+
+### Community 822 - "Community 822"
+Cohesion: 0.40
+Nodes (5): Code Examples, Connect Wallet, Error Handling, Sign Typed Data (EIP-712), Write Contract
+
+### Community 823 - "Community 823"
+Cohesion: 0.40
+Nodes (5): kimi-k2-6, Llama 3.3 70B, OpenAI API, venice-uncensored, Venice AI API
+
+### Community 824 - "Community 824"
+Cohesion: 0.40
+Nodes (5): 1Shot API Ecosystem, 4. Impact on Key Stakeholders, MetaMask Ecosystem, Users (Yield Farmers), Venice AI Ecosystem
+
+### Community 825 - "Community 825"
+Cohesion: 0.40
+Nodes (5): Instal Stellar CLI menggantikan Forge, Langkah 2: Buat Proyek Baru Menggantikan forge init, Langkah 3: Konfigurasi Jaringan Testnet (Menggantikan Sepolia RPC), Langkah 4: Buat Akun Pengembang & Klaim XLM Gratis (Menggantikan Faucet Sepolia), Langkah 5: Kompilasi dan Deploy (Menggantikan forge create / script)
+
+### Community 826 - "Community 826"
+Cohesion: 0.40
+Nodes (4): 1. Event Model Summary, 4. Complete Sequence Diagram, 5. Error Handling & Retry, API & Events — Vibing Farmer
+
+### Community 827 - "Community 827"
+Cohesion: 0.40
+Nodes (5): 8.1 Mengapa Zep?, 8.2 Zep Tools ([zep_tools.py](file:///c:/SharredData/project/mirofish/MiroFish/backend/app/services/zep_tools.py)), 8.3 Zep Graph Memory Updater ([zep_graph_memory_updater.py](file:///c:/SharredData/project/mirofish/MiroFish/backend/app/services/zep_graph_memory_updater.py)), 8.4 Zep Paging Utility ([zep_paging.py](file:///c:/SharredData/project/mirofish/MiroFish/backend/app/utils/zep_paging.py)), 8. Sistem Memori: Zep Cloud Integration
+
+### Community 841 - "Community 841"
+Cohesion: 0.40
+Nodes (5): Catatan Arsitektural Penting, Desain In-Memory, OASIS Integration, Scalability Considerations, Subprocess Architecture
+
+### Community 842 - "Community 842"
+Cohesion: 0.22
+Nodes (9): 2.1 Avoid Inline Objects in renderItem, 2.2 Hoist callbacks to the root of lists, 2.3 Keep List Items Lightweight, 2.4 Optimize List Performance with Stable Object References, 2.5 Pass Primitives to List Items for Memoization, 2.6 Use a List Virtualizer for Any List, 2.7 Use Compressed Images in Lists, 2.8 Use Item Types for Heterogeneous Lists (+1 more)
+
+### Community 843 - "Community 843"
+Cohesion: 0.40
+Nodes (5): Cialdini's Persuasion Principles, Cognitive Load Theory, Core Frameworks, Dual-Process Theory (Kahneman), Self-Determination Theory (Deci & Ryan)
+
+### Community 844 - "Community 844"
+Cohesion: 0.40
+Nodes (5): Common Patterns, Pattern: Cognitive Dissonance, Pattern: Default Effect, Pattern: Social Proof, Pattern: Variable Ratio Reinforcement
+
+### Community 845 - "Community 845"
+Cohesion: 0.40
+Nodes (4): Goal, TDD, Verification, web3-expert Implementation Template
+
+### Community 846 - "Community 846"
+Cohesion: 0.40
+Nodes (5): Task 20: Coverage baseline, Task 21: Add security/edge tests for AgentVaultDepositor, Task 22: NatSpec + event-coverage pass, Task 23: Record the security hardening checklist, WS7 — Smart-contract polish + security checklist
+
+### Community 847 - "Community 847"
+Cohesion: 0.40
+Nodes (5): Task 5: Add MockVault C + D to the deploy script (F2), Task 6: Deploy to Sepolia + capture addresses, Task 7: De-alias the catalog in config.js (F2), Task 8: Update Settings About contract rows, WS3 — Vaults: Hybrid realism
+
+### Community 848 - "Community 848"
+Cohesion: 0.40
+Nodes (4): 1. Interactive Controls Directory, 2. Dead-Button Remediation Summary, Interactive Controls & Dead-Button Audit, SettingsPage.jsx Component
+
+### Community 849 - "Community 849"
+Cohesion: 0.40
+Nodes (5): Advanced Matching, Events API (server-side), Install the TikTok Pixel, Standard events, TikTok
+
+### Community 851 - "Community 851"
+Cohesion: 0.40
+Nodes (5): Behavior, Params, `relayer_estimate7710Transaction`, Result, Wiring to send
+
+### Community 900 - "Community 900"
+Cohesion: 0.40
+Nodes (5): Computing the fee amount, Params, Quote lifetime, `relayer_getFeeData`, Result
+
+### Community 901 - "Community 901"
+Cohesion: 0.40
+Nodes (5): `data` shape, Idempotency, `type` values, Verification protocol, Webhook payload (when `destinationUrl` is set)
+
+### Community 902 - "Community 902"
+Cohesion: 0.40
+Nodes (4): Build, Deploy + seed (testnet), Soroban contracts (Vibing Farmer → Stellar), Test
+
+### Community 903 - "Community 903"
+Cohesion: 0.40
+Nodes (5): Backwards compatibility, Constructor pattern, Contract Constructors (Protocol 22+), Deploy with constructor args (CLI), Rules
+
+### Community 904 - "Community 904"
+Cohesion: 0.40
+Nodes (5): Best Practices, Contract Size Optimization, Gas/Resource Optimization, Security, Storage Efficiency
+
+### Community 905 - "Community 905"
+Cohesion: 0.40
+Nodes (5): Configure for Local Network, Deploy and Test Locally, Fund Test Accounts (Local), Local Testing with Stellar Quickstart, Start Local Network
+
+### Community 906 - "Community 906"
+Cohesion: 0.40
+Nodes (5): Create and Fund Testnet Account, Deploy to Testnet, Network Configuration, Testnet Reset Awareness, Testnet Testing
+
+### Community 907 - "Community 907"
+Cohesion: 0.40
+Nodes (4): EIP-7702 + MetaMask Smart Accounts Kit Integration, Research Question(s), Status History, Summary
+
+### Community 908 - "Community 908"
+Cohesion: 0.40
+Nodes (5): Block Explorers, Data & Analytics, Data Documentation Hub, Data Indexers, Historical Data & Analytics
+
+### Community 909 - "Community 909"
+Cohesion: 0.40
+Nodes (5): Blog Posts & Guides, Developer Tools, Learning Resources, Official Tutorials, Video Content
+
+### Community 910 - "Community 910"
+Cohesion: 0.40
+Nodes (5): Builder Teams & Companies, Community, Developer Resources, Foundation, Key People to Follow
+
+### Community 911 - "Community 911"
+Cohesion: 0.40
+Nodes (5): Example Contracts, Protocol & Specifications, Proving Systems & Tooling, SDK Documentation, Zero-Knowledge Proofs (Status-Sensitive)
+
+### Community 912 - "Community 912"
+Cohesion: 0.40
+Nodes (3): AccordionContent(), AccordionItem(), AccordionTrigger()
+
+### Community 913 - "Community 913"
+Cohesion: 0.40
+Nodes (3): InputOTP(), InputOTPGroup(), InputOTPSlot()
+
+### Community 914 - "Community 914"
+Cohesion: 0.50
+Nodes (4): GraphQL Injection and Exploitation (Hack.lu CTF 2020, HeroCTF v5), Introspection and Schema Discovery, Query Batching and Aliasing for Rate Limit Bypass, String Interpolation Injection
+
+### Community 915 - "Community 915"
+Cohesion: 0.50
+Nodes (4): 6. CSRF Protection, CSRF Tokens, SameSite Cookies, Verification Steps
+
+### Community 918 - "Community 918"
+Cohesion: 0.50
+Nodes (4): OAuth/OIDC Exploitation, OAuth State Parameter CSRF, OIDC ID Token Manipulation, Open Redirect Token Theft
+
+### Community 919 - "Community 919"
+Cohesion: 0.50
+Nodes (4): 2. Problem & Market Pain, Market Validation, Root Cause, Target Segments
+
+### Community 920 - "Community 920"
+Cohesion: 0.50
+Nodes (4): 13.1 System Architecture Overview, 13.2 Memory Architecture, 13.3 LLM Call Distribution, 13. Diagram Arsitektur
+
+### Community 921 - "Community 921"
+Cohesion: 0.50
+Nodes (4): 9.1 LLM Client ([llm_client.py](file:///c:/SharredData/project/mirofish/MiroFish/backend/app/utils/llm_client.py)), 9.2 Retry Mechanism ([retry.py](file:///c:/SharredData/project/mirofish/MiroFish/backend/app/utils/retry.py)), 9.3 Logger ([logger.py](file:///c:/SharredData/project/mirofish/MiroFish/backend/app/utils/logger.py)), 9. Utilitas & Infrastruktur
+
+### Community 922 - "Community 922"
+Cohesion: 0.50
+Nodes (4): Task 10: Make the AI-model setting honest (D1), Task 11: Honest connection tests (F3), Task 9: Real permission countdown (F1), WS4 — Fake/hardcoded → real
+
+### Community 923 - "Community 923"
+Cohesion: 0.50
+Nodes (4): Task 12: Fix mis-typed failure logs (E1), Task 13: Surface failures in the card UI (E2), Task 14: Audit async loading/empty/error states, WS5 — Error handling & edge states
+
+### Community 924 - "Community 924"
+Cohesion: 0.50
+Nodes (4): A. Init Foundry Project, B. Buat Skeleton Files, C. Cek Design Prototype, Hari 2 — Foundry Init + Struktur Kontrak (27 Mei)
+
+### Community 925 - "Community 925"
+Cohesion: 0.50
+Nodes (4): Behavior, Params, `relayer_send7710Transaction`, Result
+
+### Community 926 - "Community 926"
+Cohesion: 0.50
+Nodes (4): Notes, Params, `relayer_getCapabilities`, Result
+
+### Community 927 - "Community 927"
+Cohesion: 0.50
+Nodes (4): Notes, Params, `relayer_estimate7710TransactionMultichain`, Result
+
+### Community 928 - "Community 928"
+Cohesion: 0.50
+Nodes (4): Notes, Params, `relayer_send7710TransactionMultichain`, Result
+
+### Community 929 - "Community 929"
+Cohesion: 0.50
+Nodes (4): Key SEP Standards, Network Upgrades, Protocol & Governance, Stellar Protocol
+
+### Community 930 - "Community 930"
 Cohesion: 0.67
-Nodes (3): Manage Workflow Instances, Manage Workflows, Workflows
+Nodes (3): 1. Gambaran Umum Sistem, File Konfigurasi Utama, Teknologi Inti
+
+### Community 931 - "Community 931"
+Cohesion: 0.67
+Nodes (3): 7.1 Chat dengan ReportAgent, 7.2 Chat dengan Agen Individual, 7. Fase 5 — Deep Interaction
+
+### Community 932 - "Community 932"
+Cohesion: 0.67
+Nodes (3): Delegatecall Storage Context Abuse, Groth16 Proof Forgery, EIP-1967 Proxy Pattern Exploitation
+
+### Community 933 - "Community 933"
+Cohesion: 0.67
+Nodes (3): Config Binding, Manage Pipelines, Pipelines
+
+### Community 934 - "Community 934"
+Cohesion: 0.67
+Nodes (3): Config Logging, Observability, Tail Logs
 
 ## Knowledge Gaps
-- **6397 isolated node(s):** `T`, `mono`, `geist`, `SectionId`, `StageState` (+6392 more)
+- **7227 isolated node(s):** `UserModel`, `AuthResult`, `FullAuthResult`, `PrfExtensionResults`, `PrfRequestOptions` (+7222 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **123 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **104 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `CTF Web Exploitation` connect `App Explorer Background` to `Avatar Breadcrumb UI`, `EIP-7702 Account Tests`, `Community 427`, `Agent Dashboard UI`, `Blueprint Skills`, `Positions Store`, `AI Council Simulation`, `Transaction Detail Page`, `Community 223`?**
-  _High betweenness centrality (0.146) - this node is a cross-community bridge._
-- **Why does `Prompt Engineering` connect `ERC20 Voting Tests` to `Chart UI Components`, `Experiment Designer`, `Community 616`, `Community 651`, `Goal Configuration`, `Community 557`, `Community 590`, `Community 274`, `Community 691`, `RSA Account Tests`, `Fetch Common Contracts`, `Community 537`, `ERC1155 Utils Tests`, `Vite Build SSR`?**
-  _High betweenness centrality (0.079) - this node is a cross-community bridge._
-- **Why does `README (Vibing Farmer)` connect `Merkle Trie Proofs` to `Badge and Hover Card`, `Community 305`?**
-  _High betweenness centrality (0.071) - this node is a cross-community bridge._
+- **Why does `CTF Web Exploitation` connect `App Explorer Background` to `EIP-7702 Account Tests`, `Community 233`, `Community 427`, `Agent Dashboard UI`, `Blueprint Skills`, `Positions Store`, `AI Council Simulation`, `Transaction Detail Page`?**
+  _High betweenness centrality (0.093) - this node is a cross-community bridge._
+- **Why does `Vibing Farmer` connect `Merkle Trie Proofs` to `Community 481`, `Community 370`, `Agent Dashboard UI`, `Community 260`?**
+  _High betweenness centrality (0.070) - this node is a cross-community bridge._
+- **Why does `README (Vibing Farmer)` connect `Merkle Trie Proofs` to `Badge and Hover Card`, `Ecosystem Partner Page`?**
+  _High betweenness centrality (0.068) - this node is a cross-community bridge._
 - **Are the 3 inferred relationships involving `React` (e.g. with `Hydration Errors` and `Pass Primitives for Memoization`) actually correct?**
   _`React` has 3 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 3 inferred relationships involving `React View Transitions (SKILL.md)` (e.g. with `Modern React Native Styling Patterns` and `Next.js Framework`) actually correct?**
-  _`React View Transitions (SKILL.md)` has 3 INFERRED edges - model-reasoned connections that need verification._
-- **What connects `Production-grade experiment designer`, `Validate configuration`, `Main processing logic` to the rest of the system?**
-  _6433 weakly-connected nodes found - possible documentation gaps or missing edges._
+- **What connects `Validate configuration`, `Main processing logic`, `Validate configuration` to the rest of the system?**
+  _7254 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Cheatcodes Printer` be split into smaller, more focused modules?**
-  _Cohesion score 0.023809523809523808 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.09090909090909091 - nodes in this community are weakly interconnected._
+- **Should `Cheatcodes Printer` be split into smaller, more focused modules?**
+  _Cohesion score 0.045981607357057176 - nodes in this community are weakly interconnected._
