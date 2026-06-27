@@ -3,7 +3,9 @@ use soroban_sdk::{Address, Env};
 use stellar_macros::when_not_paused;
 use stellar_tokens::fungible::Base;
 
-use crate::storage::{extend_instance, get_token, get_total_principal, set_total_principal, SCALE};
+use crate::storage::{
+    extend_instance, get_pool, get_token, get_total_principal, set_total_principal, SCALE,
+};
 use crate::types::{Deposit, Redeem, VaultError};
 
 // Re-export of the dividend settle helpers (Task 3 fills the bodies).
@@ -24,6 +26,11 @@ pub fn deposit(e: &Env, from: Address, amount: i128) -> Result<i128, VaultError>
     let token = get_token(e);
     let vault = e.current_contract_address();
     TokenClient::new(e, &token).transfer_from(&vault, &from, &vault, &amount);
+
+    // Park principal in Blend to earn real yield (if wired). Otherwise it sits idle (legacy).
+    if let Some(pool) = get_pool(e) {
+        crate::blend::supply(e, &pool, &token, amount);
+    }
 
     settle(e, &from); // bank any prior dividend at the old balance
     Base::mint(e, &from, amount); // shares == amount (1:1)

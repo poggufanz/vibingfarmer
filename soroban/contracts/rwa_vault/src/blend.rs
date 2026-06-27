@@ -40,3 +40,31 @@ pub trait BlendPool {
         requests: Vec<Request>,
     ) -> Positions;
 }
+
+use soroban_sdk::{token::TokenClient, vec};
+
+const APPROVE_TTL: u32 = 100; // ledgers the pool allowance stays live (consumed same tx)
+
+/// Vault supplies `amount` of `token` into the Blend `pool`. Approves the pool to pull
+/// from the vault, then submits a SUPPLY request. Vault is from/spender/to.
+pub fn supply(e: &Env, pool: &Address, token: &Address, amount: i128) {
+    let vault = e.current_contract_address();
+    let exp = e.ledger().sequence() + APPROVE_TTL;
+    TokenClient::new(e, token).approve(&vault, pool, &amount, &exp);
+    let reqs = vec![
+        e,
+        Request { request_type: SUPPLY, address: token.clone(), amount },
+    ];
+    BlendPoolClient::new(e, pool).submit_with_allowance(&vault, &vault, &vault, &reqs);
+}
+
+/// Vault withdraws `amount` of `token` from the Blend `pool` back to itself.
+/// Blend caps the withdrawal at the vault's available position.
+pub fn withdraw(e: &Env, pool: &Address, token: &Address, amount: i128) {
+    let vault = e.current_contract_address();
+    let reqs = vec![
+        e,
+        Request { request_type: WITHDRAW, address: token.clone(), amount },
+    ];
+    BlendPoolClient::new(e, pool).submit_with_allowance(&vault, &vault, &vault, &reqs);
+}

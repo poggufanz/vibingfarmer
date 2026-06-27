@@ -153,6 +153,24 @@ fn test_pool_unset_by_default_then_set_once() {
 }
 
 #[test]
+fn test_deposit_supplies_into_blend_when_pool_set() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let pool = with_blend_pool(&env, &ctx);
+    let vault_addr = ctx.vault.address.clone();
+
+    let alice = Address::generate(&env);
+    fund_and_approve(&env, &ctx, &alice, 1_000 * U7);
+    ctx.vault.deposit(&alice, &(500 * U7));
+
+    // Shares minted 1:1, but the USDC now lives in Blend, not idle in the vault.
+    assert_eq!(ctx.vault.balance(&alice), 500 * U7);
+    assert_eq!(ctx.vault.total_principal(), 500 * U7);
+    assert_eq!(TokenClient::new(&env, &ctx.token).balance(&vault_addr), 0);
+    assert_eq!(pool.supplied(&vault_addr), 500 * U7);
+}
+
+#[test]
 fn test_pause_is_admin_gated() {
     let env = Env::default();
     let ctx = setup(&env);
