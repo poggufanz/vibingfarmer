@@ -101,6 +101,11 @@ impl RwaVault {
         vault::drip(e, amount)
     }
 
+    /// Permissionless real-yield harvest from the wired Blend pool. Returns interest distributed.
+    pub fn harvest(e: &Env) -> Result<i128, types::VaultError> {
+        vault::harvest(e)
+    }
+
     /// Permissionless: pay `holder` their accrued asset dividend. Returns amount paid.
     pub fn claim(e: &Env, holder: Address) -> Result<i128, types::VaultError> {
         vault::claim(e, holder)

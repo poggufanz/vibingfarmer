@@ -192,6 +192,44 @@ fn test_redeem_withdraws_from_blend() {
 }
 
 #[test]
+fn test_harvest_distributes_blend_interest_as_dividend() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let pool = with_blend_pool(&env, &ctx);
+    let vault_addr = ctx.vault.address.clone();
+
+    let alice = Address::generate(&env);
+    fund_and_approve(&env, &ctx, &alice, 1_000 * U7);
+    ctx.vault.deposit(&alice, &(500 * U7)); // principal now in Blend
+
+    // Simulate 50 units of borrower interest accruing to the vault's Blend position.
+    // The pool must actually hold those tokens to pay them out.
+    StellarAssetClient::new(&env, &ctx.token).mint(&pool.address, &(50 * U7));
+    pool.accrue(&vault_addr, &(50 * U7));
+
+    let harvested = ctx.vault.harvest();
+    assert_eq!(harvested, 50 * U7); // only the interest, not principal
+
+    // Principal is back in Blend; interest sits idle in the vault awaiting claims.
+    assert_eq!(pool.supplied(&vault_addr), 500 * U7);
+    assert_eq!(TokenClient::new(&env, &ctx.token).balance(&vault_addr), 50 * U7);
+    assert_eq!(ctx.vault.total_principal(), 500 * U7);
+
+    // Alice can now claim the full interest (sole holder).
+    assert_eq!(ctx.vault.claimable(&alice), 50 * U7);
+    let paid = ctx.vault.claim(&alice);
+    assert_eq!(paid, 50 * U7);
+    assert_eq!(TokenClient::new(&env, &ctx.token).balance(&alice), 550 * U7);
+}
+
+#[test]
+fn test_harvest_requires_pool() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    assert!(ctx.vault.try_harvest().is_err()); // PoolNotSet
+}
+
+#[test]
 fn test_pause_is_admin_gated() {
     let env = Env::default();
     let ctx = setup(&env);

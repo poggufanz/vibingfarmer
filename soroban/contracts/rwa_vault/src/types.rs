@@ -56,3 +56,11 @@ pub struct Claim {
     pub holder: Address,
     pub amount: i128, // asset dividend paid out
 }
+
+#[contractevent(topics = ["vault_harvest"])]
+pub struct Harvest {
+    pub epoch: u64,
+    pub interest: i128,          // real yield distributed this harvest
+    pub acc_div_per_share: i128, // new cumulative index
+    pub total_shares: i128,
+}
