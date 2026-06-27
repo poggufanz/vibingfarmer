@@ -37,8 +37,6 @@ import { generateStrategy } from './venice.js'
 import { toDisplay, toBaseUnits } from './stellar/format.js'
 import { saveResume, loadResume, clearResume } from './strategy/sessionResume.js'
 import { attestStrategyOnChain, formatAttestation } from './attestation.js'
-import { detectMetaMaskVersion } from './flaskDetect.js'
-import FlaskGate from './components/FlaskGate.jsx'
 import OnboardingFlow from './components/OnboardingFlow.jsx'
 import { OrchestratorAgent } from './orchestrator.js'
 import { makeAgentId } from './worker.js'
@@ -335,16 +333,10 @@ const App = () => {
   const [loopTick, setLoopTick] = useS(0)
   const [loopPhase, setLoopPhase] = useS(null) // live pipeline phase from monitorLoop onPhase
   const [veniceAuth, setVeniceAuth] = useS(null)
-  const [mmVersion, setMmVersion] = useS(null) // MetaMask flavor/version — Flask detection (once on mount)
   const [onboarded, setOnboarded] = useS(() => localStorage.getItem('yv_onboarded') === 'true')
   const [skipLanding, setSkipLanding] = useS(
     () => localStorage.getItem('yv_skip_landing') === 'true'
   )
-
-  // Detect MetaMask flavor/version once on mount — Flask gate for ERC-7715.
-  useE(() => {
-    detectMetaMaskVersion().then(setMmVersion)
-  }, [])
 
   // Strategy Attestation — NON-BLOCKING, best-effort. Fires once a wallet provider
   // exists (post-connect) and the AI strategy carries a deterministic hash. Any
@@ -809,7 +801,7 @@ const App = () => {
     addLog({
       event: 'OrchestratorPlanned',
       meta: `rebalance review · ${alert.fromVault} → ${alert.toProtocol} (+${alert.apyGain}%)`,
-      detail: `Venice AI flagged ${alert.toProtocol} at ${alert.toApy}% vs ${alert.fromVault} at ${alert.fromApy}% (+${alert.apyGain}%). Rebalancing requests a fresh ERC-7715 permission for the new vault.`,
+      detail: `Venice AI flagged ${alert.toProtocol} at ${alert.toApy}% vs ${alert.fromVault} at ${alert.fromApy}% (+${alert.apyGain}%). Rebalancing authorizes a fresh Soroban session-key scope for the new vault.`,
     })
 
   // Kill switch — user-signed Registry.revoke (works even if the relayer is down).
@@ -1711,7 +1703,6 @@ const App = () => {
           <ConnectCard
             phase={connectPhase}
             error={connectError}
-            mmVersion={mmVersion}
             onConnect={handleConnect}
             onUpgrade={handleUpgrade}
             onDone={handleConnectDone}
@@ -1734,13 +1725,6 @@ const App = () => {
           />
         )
       case 'permission':
-        if (mmVersion && !mmVersion.supportsERC7715)
-          return (
-            <FlaskGate
-              detectedType={mmVersion.type}
-              onRetry={() => detectMetaMaskVersion().then(setMmVersion)}
-            />
-          )
         return (
           <PermissionCard
             strategy={strategy}
