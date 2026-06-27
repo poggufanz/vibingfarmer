@@ -65,6 +65,13 @@ pub fn redeem(e: &Env, from: Address, shares: i128) -> Result<i128, VaultError> 
 
     let token = get_token(e);
     let vault = e.current_contract_address();
+    // Pull the redeemed assets out of Blend back into the vault before paying out.
+    // ponytail: assumes pool liquidity is available; if Blend is at 100% utilization the
+    // withdraw under-fills and the transfer below traps — acceptable for testnet/demo,
+    // production would queue a partial redemption.
+    if let Some(pool) = get_pool(e) {
+        crate::blend::withdraw(e, &pool, &token, assets);
+    }
     TokenClient::new(e, &token).transfer(&vault, &from, &assets);
 
     extend_instance(e);
