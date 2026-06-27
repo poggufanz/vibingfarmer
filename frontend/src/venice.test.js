@@ -175,7 +175,7 @@ describe('skill cap is 7-dp', () => {
     try {
       const skill = await generateAgentSkills({ agentId: 'w1', vault: '0xAAA', amount: 100 })
       const maxAmount = skill.skills?.deposit?.maxAmount
-      expect(String(maxAmount)).toBe('1000000000') // 100 * 1e7, not 100 * 1e6
+      expect(String(maxAmount)).toBe('1000000000') // 100 USDC at 7-dp, not the legacy 6-dp scale
     } finally {
       vi.unstubAllGlobals()
     }
