@@ -27,6 +27,9 @@ pub struct Positions {
     pub supply: Map<u32, i128>,
 }
 
+// The trait exists only to generate `BlendPoolClient` (used by `supply`/`withdraw`); the
+// trait name itself is never referenced, so silence the dead-code lint on it.
+#[allow(dead_code)]
 #[contractclient(name = "BlendPoolClient")]
 pub trait BlendPool {
     /// Pulls tokens from `from` via a pre-approved allowance (`from` must `approve` the pool

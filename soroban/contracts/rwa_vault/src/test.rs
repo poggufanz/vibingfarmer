@@ -230,6 +230,31 @@ fn test_harvest_requires_pool() {
 }
 
 #[test]
+fn test_blend_yield_splits_pro_rata_across_holders() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let pool = with_blend_pool(&env, &ctx);
+    let vault_addr = ctx.vault.address.clone();
+
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    fund_and_approve(&env, &ctx, &alice, 1_000 * U7);
+    fund_and_approve(&env, &ctx, &bob, 1_000 * U7);
+
+    ctx.vault.deposit(&alice, &(300 * U7)); // 75%
+    ctx.vault.deposit(&bob, &(100 * U7));   // 25%
+
+    // 80 units interest on 400 principal.
+    StellarAssetClient::new(&env, &ctx.token).mint(&pool.address, &(80 * U7));
+    pool.accrue(&vault_addr, &(80 * U7));
+    ctx.vault.harvest();
+
+    assert_eq!(ctx.vault.claimable(&alice), 60 * U7); // 75% of 80
+    assert_eq!(ctx.vault.claimable(&bob), 20 * U7);   // 25% of 80
+    assert_eq!(pool.supplied(&vault_addr), 400 * U7); // principal intact in Blend
+}
+
+#[test]
 fn test_pause_is_admin_gated() {
     let env = Env::default();
     let ctx = setup(&env);
