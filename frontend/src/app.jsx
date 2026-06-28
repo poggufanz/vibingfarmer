@@ -344,7 +344,7 @@ const App = () => {
   useE(() => {
     if (!rawStrategy?.strategyHash || strategyAttestation || attesting) return
     setAttesting(true)
-    attestStrategyOnChain(rawStrategy)
+    attestStrategyOnChain(rawStrategy, { attester: realAddress })
       .then((a) => setStrategyAttestation(formatAttestation(a)))
       .finally(() => setAttesting(false))
   }, [rawStrategy, realAddress])
