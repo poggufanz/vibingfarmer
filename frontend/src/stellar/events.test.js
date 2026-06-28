@@ -49,6 +49,19 @@ describe('event indexer', () => {
     expect(delta.edge).toEqual({ source: agent, target: VAULT, kind: 'deposit' })
   })
 
+  it('decodes a strategy_attested event', () => {
+    const rec = fakeRecord({
+      type: 'strategy_attested',
+      fields: { attester: agent, strategy_hash: 'ab'.repeat(32), ledger: 99, label: 'venice' },
+      contractId: 'CATTEST_PLACEHOLDER',
+      pagingToken: '0099',
+      ledger: 99,
+    })
+    const e = decodeEvent(rec)
+    expect(e.type).toBe('strategy_attested')
+    expect(e.data.label).toBe('venice')
+  })
+
   it('pollEvents dedups already-seen cursors and returns only new decoded events', async () => {
     const recA = fakeRecord({
       type: 'vault_drip',
