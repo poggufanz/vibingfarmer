@@ -91,6 +91,8 @@ import { reflect } from './strategy/reflector.js'
 import { increment as playbookIncrement, weight as playbookWeight } from './strategy/playbook.js'
 import { saveCycle, getCycles, getJournalSummary } from './strategy/cycleJournal.js'
 import { computeBasket } from './strategy/basketFilter.js'
+import { buildEligibilitySentence, vaultEligibilityLabel } from './strategy/eligibilitySentence.js'
+import { SNAPSHOT } from './strategy/vaultFacts.js'
 import { recordDecision, getDecisions, getDecisionSummary } from './strategy/decisionLog.js'
 import { resolveCouncilConflict, councilSpecialistVerdict, askVeniceJson } from './venice.js'
 import { councilReview, buildCouncilInput } from './strategy/councilReview.js'
@@ -722,6 +724,35 @@ const App = () => {
       },
     })
   }, [strategy, amount, risk])
+
+  // F8 Enforcement-A view-model: per-protocol eligibility verdicts for the approval card. Pure +
+  // snapshot-backed (no live call). The fused sentence anchors on the first survivor.
+  const eligibility = useM(() => {
+    if (!strategy?.agents) return null
+    const { verdictBySlug, survivors } = computeBasket(strategy.agents)
+    const firstSurvivor = survivors[0]
+    const fusedSentence = firstSurvivor
+      ? buildEligibilitySentence(verdictBySlug[firstSurvivor.vault.protocol], {
+          targetMaxLossPct: 5,
+          protocolLabel: SNAPSHOT[firstSurvivor.vault.protocol]?.meta?.label || firstSurvivor.vault.protocol,
+        })
+      : null
+    const rows = strategy.agents.map((a) => {
+      const v = verdictBySlug[a.vault.protocol]
+      const asOf = new Date(SNAPSHOT[a.vault.protocol]?.facts?.tvl?.asOf || 0).toISOString().slice(0, 10)
+      return {
+        id: a.id,
+        eligible: !!v?.eligible,
+        isFixture: !!v?.isFixture,
+        protocolLabel: SNAPSHOT[a.vault.protocol]?.meta?.label || a.vault.protocol,
+        label: vaultEligibilityLabel(v),
+        mainnetLine: `Protocol credibility: ${SNAPSHOT[a.vault.protocol]?.meta?.label || a.vault.protocol} — audited, TVL from snapshot`,
+        testnetLine: 'This deposit: testnet — APR illustrative, realized yield may be ~0',
+        asOf,
+      }
+    })
+    return { fusedSentence, rows }
+  }, [strategy])
 
   // AI Council deliberation for the proposed allocation. Async (3 parallel AI
   // calls + possible synthesis call) so it runs as an effect, not a useMemo. Uses
@@ -1736,6 +1767,7 @@ const App = () => {
         return (
           <PermissionCard
             strategy={strategy}
+            eligibility={eligibility}
             phase={permPhase}
             error={permError}
             onGrant={handleGrant}
