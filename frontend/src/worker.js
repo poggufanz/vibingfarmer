@@ -9,6 +9,7 @@ import { newSessionKey } from './stellar/sessionKey.js'
 import { runAgentDeposit, readVaultShares } from './stellar/agentDeposit.js'
 import { writeMemory, createEntry, buildLesson } from './memory.js'
 import { createSubmitGate } from './strategy/submitGate.js'
+import { MAX_TOKEN_AGE_MS } from './strategy/eligibilityGate.js'
 
 export class WorkerAgent {
   /**
@@ -34,6 +35,7 @@ export class WorkerAgent {
     submitGate,
     verifyAttempts,
     verifyIntervalMs,
+    eligibilityToken,
   }) {
     this.agentId = agentId
     this.user = user
@@ -42,6 +44,7 @@ export class WorkerAgent {
     this.sessionId = sessionId
     this.onEvent = onEvent || (() => {})
     this.agentAddress = agentAddress || null
+    this.eligibilityToken = eligibilityToken || null
     this.sessionKey = sessionKey || null
     this.submitGate = submitGate || createSubmitGate()
     this.verifyAttempts = verifyAttempts ?? 8
@@ -63,6 +66,12 @@ export class WorkerAgent {
   async execute() {
     try {
       this.emit('started', { agentId: this.agentId, vault: this.vault })
+      // Enforcement B (hardening) — internal fail-closed assertion. NOT a security boundary; the
+      // on-chain scope already bounds a malicious client. Blocks accidental code-path skips of the gate.
+      const t = this.eligibilityToken
+      if (!t || t.eligible !== true || Date.now() - t.asOf > MAX_TOKEN_AGE_MS) {
+        throw new Error('eligibility assertion failed — no valid pass token for this deposit')
+      }
       await this.setupKey()
       if (!this.agentAddress)
         throw new Error(

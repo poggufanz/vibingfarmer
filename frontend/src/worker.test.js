@@ -21,6 +21,9 @@ const sessionKey = () => ({
   publicKey: 'GSESSION',
 })
 
+// Fresh pass token so Enforcement B (worker-side assertion) lets execute() proceed.
+const goodToken = () => ({ protocolSlug: 'aave-v3', planIndex: 0, eligible: true, verdictHash: '1', asOf: Date.now() })
+
 describe('WorkerAgent (Stellar)', () => {
   beforeEach(() => vi.clearAllMocks())
 
@@ -37,6 +40,7 @@ describe('WorkerAgent (Stellar)', () => {
       onEvent: () => {},
       agentAddress: 'CCRG...AGENT',
       sessionKey: sessionKey(),
+      eligibilityToken: goodToken(),
     })
     // Act
     const res = await w.execute()
@@ -60,6 +64,7 @@ describe('WorkerAgent (Stellar)', () => {
       onEvent: () => {},
       agentAddress: 'CCRG...AGENT',
       sessionKey: sessionKey(),
+      eligibilityToken: goodToken(),
       verifyAttempts: 2,
       verifyIntervalMs: 0, // keep the test fast
     })
@@ -80,6 +85,7 @@ describe('WorkerAgent (Stellar)', () => {
       onEvent: () => {},
       agentAddress: 'CCRG...AGENT',
       sessionKey: sessionKey(),
+      eligibilityToken: goodToken(),
     })
     const res = await w.execute()
     expect(res.success).toBe(false)
@@ -95,6 +101,7 @@ describe('WorkerAgent (Stellar)', () => {
       sessionId: 's1',
       onEvent: () => {},
       sessionKey: sessionKey(),
+      eligibilityToken: goodToken(),
     })
     const res = await w.execute()
     expect(res.success).toBe(false)
