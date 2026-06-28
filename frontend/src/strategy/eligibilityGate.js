@@ -26,3 +26,55 @@ export function factPresent(field, nowMs) {
 export function allRequiredFactsPresent(facts, nowMs) {
   return REQUIRED_FACTS.every((k) => factPresent(facts?.[k], nowMs))
 }
+
+function pos(field) {
+  const v = field?.value
+  return typeof v === 'number' && v > 0 ? v : null
+}
+
+/** Test 1 — closes problem #5 (ponzi APY). Both operands must be positive verified numbers. */
+export function yieldReality(facts) {
+  const dist = pos(facts?.annualizedDistributed)
+  const rev = pos(facts?.protocolRevenue)
+  if (dist == null || rev == null) {
+    return { ratio: null, verdict: 'unknown', inputs: { dist, rev } }
+  }
+  const ratio = dist / rev
+  return { ratio, verdict: ratio < PONZI_RATIO_MAX ? 'real' : 'ponzi', inputs: { dist, rev } }
+}
+
+const clamp01 = (x) => Math.max(0, Math.min(1, x))
+
+/** Test 2 — closes problem #4 (exploit/hack). Audit is a HARD gate; score grades the rest. */
+export function securityScore(facts) {
+  const auditGate = facts?.audit?.value === 'audited' ? 'pass' : 'fail'
+  const ageSig = clamp01((facts?.ageDays?.value ?? 0) / AGE_CAP_DAYS)
+  const tvl = facts?.tvl?.value ?? 0
+  const tvlSig =
+    tvl <= 0
+      ? 0
+      : clamp01(
+          (Math.log10(tvl) - Math.log10(TVL_FLOOR)) /
+            (Math.log10(TVL_CAP) - Math.log10(TVL_FLOOR))
+        )
+  const adminSig = ADMIN_LEVELS[facts?.adminKey?.value] ?? 0
+  const score = Math.round(100 * (AGE_WEIGHT * ageSig + TVL_WEIGHT * tvlSig + ADMIN_WEIGHT * adminSig))
+  return { score, auditGate, components: { age: ageSig, tvl: tvlSig, adminKey: adminSig } }
+}
+
+/** Combine the two tests into a fail-closed verdict. nowMs defaults to Date.now() in production. */
+export function evaluate(input, nowMs = Date.now()) {
+  const { protocol, facts, isFixture = false } = input
+  const reasons = []
+  const present = allRequiredFactsPresent(facts, nowMs)
+  if (!present) reasons.push('missing or stale required data')
+  const yr = yieldReality(facts)
+  if (yr.verdict === 'ponzi') reasons.push(`yield/revenue ratio ${yr.ratio.toFixed(2)} (ponzi >= ${PONZI_RATIO_MAX})`)
+  if (yr.verdict === 'unknown') reasons.push('yield/revenue unverifiable')
+  const sec = securityScore(facts)
+  if (sec.auditGate === 'fail') reasons.push('unaudited (audit gate)')
+  if (sec.score < SECURITY_MIN) reasons.push(`security ${sec.score}/100 below ${SECURITY_MIN}`)
+  const eligible =
+    present && yr.verdict === 'real' && sec.auditGate === 'pass' && sec.score >= SECURITY_MIN
+  return { protocol, eligible, yieldReality: yr, security: sec, reasons, isFixture, facts }
+}
