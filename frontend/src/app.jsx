@@ -90,6 +90,7 @@ import { councilVerdict } from './strategy/council.js'
 import { reflect } from './strategy/reflector.js'
 import { increment as playbookIncrement, weight as playbookWeight } from './strategy/playbook.js'
 import { saveCycle, getCycles, getJournalSummary } from './strategy/cycleJournal.js'
+import { computeBasket } from './strategy/basketFilter.js'
 import { recordDecision, getDecisions, getDecisionSummary } from './strategy/decisionLog.js'
 import { resolveCouncilConflict, councilSpecialistVerdict, askVeniceJson } from './venice.js'
 import { councilReview, buildCouncilInput } from './strategy/councilReview.js'
@@ -1174,12 +1175,19 @@ const App = () => {
     const init = makeInitialExecState(strategy.agents)
     setExecMap(init)
 
-    // Convert design strategy format → orchestrator's expected { vaults: [...] } format
+    // Enforcement A — eligibility gate. Drop ineligible protocols BEFORE dispatch; all-fail = hard stop.
+    const { survivors, dropped, allFailed } = computeBasket(strategy.agents)
+    dropped.forEach((d) =>
+      addLog({ event: 'VaultRejected', agent: d.agent.id, meta: (d.verdict.reasons || []).join('; ') })
+    )
+    if (allFailed) {
+      addLog({ event: 'ExecutionBlocked', meta: 'No eligible vault — nothing will run.' })
+      setStage('permission') // stay on the approval card; do NOT dispatch
+      return
+    }
+    // dispatchSet ⊆ survivors: only survivors get a plan; allocations re-normalized to sum 1.
     const yvStrategy = {
-      vaults: strategy.agents.map((a) => ({
-        address: a.vault.addr,
-        allocation: a.allocation / strategy.total,
-      })),
+      vaults: survivors.map((a) => ({ address: a.vault.addr, allocation: a.allocationFraction })),
     }
 
     const orch = new OrchestratorAgent({
