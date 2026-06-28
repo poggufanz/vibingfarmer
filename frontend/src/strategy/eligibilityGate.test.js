@@ -1,10 +1,19 @@
 import { describe, it, expect } from 'vitest'
 import {
-  REQUIRED_FACTS, AGE_WEIGHT, TVL_WEIGHT, ADMIN_WEIGHT,
-  MAX_FACT_AGE_MS, factPresent, allRequiredFactsPresent,
+  REQUIRED_FACTS,
+  AGE_WEIGHT,
+  TVL_WEIGHT,
+  ADMIN_WEIGHT,
+  MAX_FACT_AGE_MS,
+  factPresent,
+  allRequiredFactsPresent,
 } from './eligibilityGate.js'
 
 import { yieldReality, securityScore, evaluate } from './eligibilityGate.js'
+import { SECURITY_MIN, TVL_FLOOR, TVL_CAP } from './eligibilityGate.js'
+
+const tvlForSig = (sig) =>
+  10 ** (Math.log10(TVL_FLOOR) + sig * (Math.log10(TVL_CAP) - Math.log10(TVL_FLOOR)))
 
 const NOW = 1_900_000_000_000
 const fresh = (value) => ({ value, source: 'snapshot', asOf: NOW - 1000 })
@@ -21,11 +30,14 @@ describe('weights + presence', () => {
     expect(factPresent({ value: null, source: 'snapshot', asOf: NOW }, NOW)).toBe(false)
   })
   it('a stale field (older than MAX_FACT_AGE) is absent', () => {
-    expect(factPresent({ value: 5, source: 'snapshot', asOf: NOW - MAX_FACT_AGE_MS - 1 }, NOW)).toBe(false)
+    expect(
+      factPresent({ value: 5, source: 'snapshot', asOf: NOW - MAX_FACT_AGE_MS - 1 }, NOW)
+    ).toBe(false)
   })
   it('allRequiredFactsPresent: each required fact absent ALONE fails', () => {
     for (const k of REQUIRED_FACTS) {
-      const f = fullFacts(); f[k] = { value: null, source: 'snapshot', asOf: NOW }
+      const f = fullFacts()
+      f[k] = { value: null, source: 'snapshot', asOf: NOW }
       expect(allRequiredFactsPresent(f, NOW)).toBe(false)
     }
     expect(allRequiredFactsPresent(fullFacts(), NOW)).toBe(true)
@@ -91,28 +103,115 @@ describe('evaluate (combine)', () => {
     expect(evaluate({ protocol: 'blend', facts: mk() }, NOW2).eligible).toBe(true)
   })
   it('fixture => ineligible with both reasons', () => {
-    const v = evaluate({
-      protocol: 'hyperfarm', isFixture: true,
-      facts: mk({
-        audit: { value: 'none', source: 'snapshot', asOf: NOW2 },
-        ageDays: { value: 4, source: 'snapshot', asOf: NOW2 },
-        tvl: { value: 50_000, source: 'snapshot', asOf: NOW2 },
-        adminKey: { value: 'eoa', source: 'snapshot', asOf: NOW2 },
-        annualizedDistributed: { value: 10_000_000, source: 'snapshot', asOf: NOW2 },
-        protocolRevenue: { value: 3_000_000, source: 'snapshot', asOf: NOW2 },
-      }),
-    }, NOW2)
+    const v = evaluate(
+      {
+        protocol: 'hyperfarm',
+        isFixture: true,
+        facts: mk({
+          audit: { value: 'none', source: 'snapshot', asOf: NOW2 },
+          ageDays: { value: 4, source: 'snapshot', asOf: NOW2 },
+          tvl: { value: 50_000, source: 'snapshot', asOf: NOW2 },
+          adminKey: { value: 'eoa', source: 'snapshot', asOf: NOW2 },
+          annualizedDistributed: { value: 10_000_000, source: 'snapshot', asOf: NOW2 },
+          protocolRevenue: { value: 3_000_000, source: 'snapshot', asOf: NOW2 },
+        }),
+      },
+      NOW2
+    )
     expect(v.eligible).toBe(false)
     expect(v.isFixture).toBe(true)
     expect(v.reasons.join(' ')).toMatch(/unaudited/i)
     expect(v.reasons.join(' ')).toMatch(/ratio 3\.3/)
   })
   it('missing fact => fail-closed reject', () => {
-    const v = evaluate({ protocol: 'x', facts: mk({ protocolRevenue: { value: null, source: 'snapshot', asOf: NOW2 } }) }, NOW2)
+    const v = evaluate(
+      {
+        protocol: 'x',
+        facts: mk({ protocolRevenue: { value: null, source: 'snapshot', asOf: NOW2 } }),
+      },
+      NOW2
+    )
     expect(v.eligible).toBe(false)
   })
   it('echoes provenance', () => {
     const v = evaluate({ protocol: 'blend', facts: mk() }, NOW2)
     expect(v.facts.tvl.source).toBe('snapshot')
+  })
+})
+
+describe('securityScore boundary + saturation', () => {
+  const sf2 = (audit, ageDays, tvl, adminKey) => ({
+    audit: { value: audit, source: 'snapshot', asOf: 0 },
+    ageDays: { value: ageDays, source: 'snapshot', asOf: 0 },
+    tvl: { value: tvl, source: 'snapshot', asOf: 0 },
+    adminKey: { value: adminKey, source: 'snapshot', asOf: 0 },
+  })
+  it('score lands exactly on SECURITY_MIN at the pass boundary (ageSig=1, tvlSig=0.75, eoa)', () => {
+    // round(100*(0.30*1 + 0.40*0.75 + 0.30*0)) = round(60) = 60 — pins the >= boundary
+    expect(securityScore(sf2('audited', 180, tvlForSig(0.75), 'eoa')).score).toBe(SECURITY_MIN)
+  })
+  it('one notch below the boundary rejects (tvlSig=0.70 => 58 < 60)', () => {
+    expect(securityScore(sf2('audited', 180, tvlForSig(0.7), 'eoa')).score).toBeLessThan(SECURITY_MIN)
+  })
+  it('TVL at/above TVL_CAP saturates tvlSig to 1', () => {
+    expect(securityScore(sf2('audited', 180, TVL_CAP, 'eoa')).components.tvl).toBe(1)
+    expect(securityScore(sf2('audited', 180, TVL_CAP * 10, 'eoa')).components.tvl).toBe(1)
+  })
+})
+
+describe('evaluate boundary + fail-closed extras', () => {
+  // a vector whose securityScore is exactly SECURITY_MIN, otherwise eligible (audited, real, known admin)
+  const atBoundary = () =>
+    mk({
+      ageDays: { value: 180, source: 'snapshot', asOf: NOW2 },
+      tvl: { value: tvlForSig(0.75), source: 'snapshot', asOf: NOW2 },
+      adminKey: { value: 'eoa', source: 'snapshot', asOf: NOW2 },
+    })
+  it('eligible when score === SECURITY_MIN (>= boundary, not >)', () => {
+    const v = evaluate({ protocol: 'b', facts: atBoundary() }, NOW2)
+    expect(v.security.score).toBe(SECURITY_MIN)
+    expect(v.eligible).toBe(true)
+  })
+  it('rejects an unrecognized adminKey value (fail-closed governance)', () => {
+    const v = evaluate(
+      { protocol: 'b', facts: mk({ adminKey: { value: 'gnosis-x', source: 'snapshot', asOf: NOW2 } }) },
+      NOW2
+    )
+    expect(v.eligible).toBe(false)
+    expect(v.reasons.join(' ')).toMatch(/unrecognized governance/i)
+  })
+  it('each required fact stale ALONE => fail-closed reject with the staleness reason', () => {
+    for (const k of REQUIRED_FACTS) {
+      const facts = mk({
+        [k]: { value: mk()[k].value, source: 'snapshot', asOf: NOW2 - MAX_FACT_AGE_MS - 1 },
+      })
+      const v = evaluate({ protocol: 'b', facts }, NOW2)
+      expect(v.eligible).toBe(false)
+      expect(v.reasons.join(' ')).toMatch(/missing or stale required data/)
+    }
+  })
+  it('audit value "none" yields the distinct audit-gate reason', () => {
+    const v = evaluate(
+      { protocol: 'b', facts: mk({ audit: { value: 'none', source: 'snapshot', asOf: NOW2 } }) },
+      NOW2
+    )
+    expect(v.eligible).toBe(false)
+    expect(v.reasons.join(' ')).toMatch(/unaudited \(audit gate\)/)
+  })
+  it('a below-threshold score reason carries the "our weighting" honesty qualifier', () => {
+    // audited but young + tiny TVL + eoa => score ~1, audit passes => the score reason renders
+    const v = evaluate(
+      {
+        protocol: 'b',
+        facts: mk({
+          ageDays: { value: 4, source: 'snapshot', asOf: NOW2 },
+          tvl: { value: 50_000, source: 'snapshot', asOf: NOW2 },
+          adminKey: { value: 'eoa', source: 'snapshot', asOf: NOW2 },
+        }),
+      },
+      NOW2
+    )
+    expect(v.eligible).toBe(false)
+    expect(v.reasons.join(' ')).toMatch(/security \d+\/100 \(our weighting\) below/)
   })
 })

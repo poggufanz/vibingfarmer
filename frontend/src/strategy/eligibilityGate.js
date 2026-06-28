@@ -6,14 +6,19 @@ export const SECURITY_MIN = 60
 export const AGE_CAP_DAYS = 180
 export const TVL_FLOOR = 100_000
 export const TVL_CAP = 100_000_000
-export const AGE_WEIGHT = 0.30
-export const TVL_WEIGHT = 0.40
-export const ADMIN_WEIGHT = 0.30
+export const AGE_WEIGHT = 0.3
+export const TVL_WEIGHT = 0.4
+export const ADMIN_WEIGHT = 0.3
 export const ADMIN_LEVELS = { timelock_multisig: 1.0, multisig: 0.7, timelock: 0.5, eoa: 0.0 }
 export const MAX_FACT_AGE_MS = 30 * 86_400_000
 export const MAX_TOKEN_AGE_MS = 15 * 60_000
 export const REQUIRED_FACTS = [
-  'annualizedDistributed', 'protocolRevenue', 'audit', 'ageDays', 'tvl', 'adminKey',
+  'annualizedDistributed',
+  'protocolRevenue',
+  'audit',
+  'ageDays',
+  'tvl',
+  'adminKey',
 ]
 
 /** A fact field is present iff it has a non-null value and is not stale. */
@@ -54,11 +59,12 @@ export function securityScore(facts) {
     tvl <= 0
       ? 0
       : clamp01(
-          (Math.log10(tvl) - Math.log10(TVL_FLOOR)) /
-            (Math.log10(TVL_CAP) - Math.log10(TVL_FLOOR))
+          (Math.log10(tvl) - Math.log10(TVL_FLOOR)) / (Math.log10(TVL_CAP) - Math.log10(TVL_FLOOR))
         )
   const adminSig = ADMIN_LEVELS[facts?.adminKey?.value] ?? 0
-  const score = Math.round(100 * (AGE_WEIGHT * ageSig + TVL_WEIGHT * tvlSig + ADMIN_WEIGHT * adminSig))
+  const score = Math.round(
+    100 * (AGE_WEIGHT * ageSig + TVL_WEIGHT * tvlSig + ADMIN_WEIGHT * adminSig)
+  )
   return { score, auditGate, components: { age: ageSig, tvl: tvlSig, adminKey: adminSig } }
 }
 
@@ -69,13 +75,23 @@ export function evaluate(input, nowMs = Date.now()) {
   const present = allRequiredFactsPresent(facts, nowMs)
   if (!present) reasons.push('missing or stale required data')
   const yr = yieldReality(facts)
-  if (yr.verdict === 'ponzi') reasons.push(`yield/revenue ratio ${yr.ratio.toFixed(2)} (ponzi >= ${PONZI_RATIO_MAX})`)
+  if (yr.verdict === 'ponzi')
+    reasons.push(`yield/revenue ratio ${yr.ratio.toFixed(2)} (ponzi >= ${PONZI_RATIO_MAX})`)
   if (yr.verdict === 'unknown') reasons.push('yield/revenue unverifiable')
   const sec = securityScore(facts)
   if (sec.auditGate === 'fail') reasons.push('unaudited (audit gate)')
-  if (sec.score < SECURITY_MIN) reasons.push(`security ${sec.score}/100 below ${SECURITY_MIN}`)
+  if (sec.score < SECURITY_MIN)
+    reasons.push(`security ${sec.score}/100 (our weighting) below ${SECURITY_MIN}`)
+  // Fail-closed: an adminKey value outside ADMIN_LEVELS is unverifiable governance — reject it
+  // rather than silently scoring it 0 (which would conflate "unknown" with the known-worst "eoa").
+  const adminKnown = ADMIN_LEVELS[facts?.adminKey?.value] != null
+  if (present && !adminKnown) reasons.push('unrecognized governance key (unverifiable)')
   const eligible =
-    present && yr.verdict === 'real' && sec.auditGate === 'pass' && sec.score >= SECURITY_MIN
+    present &&
+    adminKnown &&
+    yr.verdict === 'real' &&
+    sec.auditGate === 'pass' &&
+    sec.score >= SECURITY_MIN
   return { protocol, eligible, yieldReality: yr, security: sec, reasons, isFixture, facts }
 }
 
@@ -89,7 +105,13 @@ function hashVerdict(verdict) {
 /** Internal fail-closed assertion token (NOT a security boundary — the on-chain scope bounds malice). */
 export function mintToken(verdict, planIndex, nowMs = Date.now()) {
   if (!verdict.eligible) throw new Error('cannot mint token for ineligible verdict')
-  return { protocolSlug: verdict.protocol, planIndex, eligible: true, verdictHash: hashVerdict(verdict), asOf: nowMs }
+  return {
+    protocolSlug: verdict.protocol,
+    planIndex,
+    eligible: true,
+    verdictHash: hashVerdict(verdict),
+    asOf: nowMs,
+  }
 }
 
 export function verifyToken(token, verdict, nowMs = Date.now()) {

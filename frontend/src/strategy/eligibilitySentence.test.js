@@ -30,4 +30,8 @@ describe('eligibility sentence honesty', () => {
   it('label for a real verdict is ratio+context anchored', () => {
     expect(vaultEligibilityLabel(verdict)).toMatch(/revenue-covered \(ratio 1\.0\)/)
   })
+  it('surfaces no raw mainnet TVL/revenue figure (only the ratio is shown)', () => {
+    // honesty: a 4+ digit run or a $-figure or "TVL" would leak an absolute mainnet number
+    expect(buildEligibilitySentence(verdict, ctx)).not.toMatch(/\$\s?[\d,]{4,}|\bTVL\b/i)
+  })
 })
