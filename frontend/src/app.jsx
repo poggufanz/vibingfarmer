@@ -735,12 +735,15 @@ const App = () => {
     const fusedSentence = firstSurvivor
       ? buildEligibilitySentence(verdictBySlug[firstSurvivor.vault.protocol], {
           targetMaxLossPct: 5,
-          protocolLabel: SNAPSHOT[firstSurvivor.vault.protocol]?.meta?.label || firstSurvivor.vault.protocol,
+          protocolLabel:
+            SNAPSHOT[firstSurvivor.vault.protocol]?.meta?.label || firstSurvivor.vault.protocol,
         })
       : null
     const rows = strategy.agents.map((a) => {
       const v = verdictBySlug[a.vault.protocol]
-      const asOf = new Date(SNAPSHOT[a.vault.protocol]?.facts?.tvl?.asOf || 0).toISOString().slice(0, 10)
+      const asOf = new Date(SNAPSHOT[a.vault.protocol]?.facts?.tvl?.asOf || 0)
+        .toISOString()
+        .slice(0, 10)
       return {
         id: a.id,
         eligible: !!v?.eligible,
@@ -1210,7 +1213,11 @@ const App = () => {
     // Enforcement A — eligibility gate. Drop ineligible protocols BEFORE dispatch; all-fail = hard stop.
     const { verdictBySlug, survivors, dropped, allFailed } = computeBasket(strategy.agents)
     dropped.forEach((d) =>
-      addLog({ event: 'VaultRejected', agent: d.agent.id, meta: (d.verdict.reasons || []).join('; ') })
+      addLog({
+        event: 'VaultRejected',
+        agent: d.agent.id,
+        meta: (d.verdict.reasons || []).join('; '),
+      })
     )
     if (allFailed) {
       addLog({ event: 'ExecutionBlocked', meta: 'No eligible vault — nothing will run.' })

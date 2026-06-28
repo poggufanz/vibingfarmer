@@ -11,12 +11,23 @@ import { WorkerAgent } from './worker.js'
 import { MAX_TOKEN_AGE_MS } from './strategy/eligibilityGate.js'
 
 const NOW = Date.now()
-const goodToken = { protocolSlug: 'aave-v3', planIndex: 0, eligible: true, verdictHash: '123', asOf: NOW }
+const goodToken = {
+  protocolSlug: 'aave-v3',
+  planIndex: 0,
+  eligible: true,
+  verdictHash: '123',
+  asOf: NOW,
+}
 
 function makeWorker(token) {
   return new WorkerAgent({
-    agentId: 'w1', user: 'G...', vault: 'C...', amount: 1n, sessionId: 's',
-    agentAddress: 'CA...', sessionKey: { publicKey: 'GP', rawPublicKey: new Uint8Array(), sign: () => {} },
+    agentId: 'w1',
+    user: 'G...',
+    vault: 'C...',
+    amount: 1n,
+    sessionId: 's',
+    agentAddress: 'CA...',
+    sessionKey: { publicKey: 'GP', rawPublicKey: new Uint8Array(), sign: () => {} },
     eligibilityToken: token,
   })
 }

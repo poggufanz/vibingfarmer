@@ -2,7 +2,12 @@ import { describe, it, expect } from 'vitest'
 import { applyRefresh } from './vaultFacts.js'
 
 const NOW = 2_000_000_000_000
-const entry = { facts: { tvl: { value: 100, source: 'snapshot', asOf: 1 }, audit: { value: 'audited', source: 'snapshot', asOf: 1 } } }
+const entry = {
+  facts: {
+    tvl: { value: 100, source: 'snapshot', asOf: 1 },
+    audit: { value: 'audited', source: 'snapshot', asOf: 1 },
+  },
+}
 
 describe('provenance integrity', () => {
   it('a successful field refresh becomes source live with new asOf', () => {

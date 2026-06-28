@@ -151,7 +151,9 @@ describe('securityScore boundary + saturation', () => {
     expect(securityScore(sf2('audited', 180, tvlForSig(0.75), 'eoa')).score).toBe(SECURITY_MIN)
   })
   it('one notch below the boundary rejects (tvlSig=0.70 => 58 < 60)', () => {
-    expect(securityScore(sf2('audited', 180, tvlForSig(0.7), 'eoa')).score).toBeLessThan(SECURITY_MIN)
+    expect(securityScore(sf2('audited', 180, tvlForSig(0.7), 'eoa')).score).toBeLessThan(
+      SECURITY_MIN
+    )
   })
   it('TVL at/above TVL_CAP saturates tvlSig to 1', () => {
     expect(securityScore(sf2('audited', 180, TVL_CAP, 'eoa')).components.tvl).toBe(1)
@@ -174,7 +176,10 @@ describe('evaluate boundary + fail-closed extras', () => {
   })
   it('rejects an unrecognized adminKey value (fail-closed governance)', () => {
     const v = evaluate(
-      { protocol: 'b', facts: mk({ adminKey: { value: 'gnosis-x', source: 'snapshot', asOf: NOW2 } }) },
+      {
+        protocol: 'b',
+        facts: mk({ adminKey: { value: 'gnosis-x', source: 'snapshot', asOf: NOW2 } }),
+      },
       NOW2
     )
     expect(v.eligible).toBe(false)

@@ -2,10 +2,12 @@ import { describe, it, expect } from 'vitest'
 import { buildEligibilitySentence, vaultEligibilityLabel } from './eligibilitySentence.js'
 
 const verdict = {
-  protocol: 'aave-v3', eligible: true,
+  protocol: 'aave-v3',
+  eligible: true,
   yieldReality: { ratio: 1.0, verdict: 'real' },
   security: { score: 92, auditGate: 'pass' },
-  reasons: [], isFixture: false,
+  reasons: [],
+  isFixture: false,
 }
 const ctx = { targetMaxLossPct: 5, protocolLabel: 'Aave v3 (mainnet)' }
 

@@ -22,7 +22,13 @@ const sessionKey = () => ({
 })
 
 // Fresh pass token so Enforcement B (worker-side assertion) lets execute() proceed.
-const goodToken = () => ({ protocolSlug: 'aave-v3', planIndex: 0, eligible: true, verdictHash: '1', asOf: Date.now() })
+const goodToken = () => ({
+  protocolSlug: 'aave-v3',
+  planIndex: 0,
+  eligible: true,
+  verdictHash: '1',
+  asOf: Date.now(),
+})
 
 describe('WorkerAgent (Stellar)', () => {
   beforeEach(() => vi.clearAllMocks())

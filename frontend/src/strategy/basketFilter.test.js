@@ -20,8 +20,16 @@ describe('filterBasket', () => {
     expect(r.survivors).toHaveLength(0)
   })
   it('survivor fractions are proportional to original allocation', () => {
-    const agents = [agent('w1', 'aave-v3', 30), agent('w2', 'morpho-blue', 10), agent('w3', 'hyperfarm', 60)]
-    const r = filterBasket(agents, { 'aave-v3': V(true), 'morpho-blue': V(true), hyperfarm: V(false) })
+    const agents = [
+      agent('w1', 'aave-v3', 30),
+      agent('w2', 'morpho-blue', 10),
+      agent('w3', 'hyperfarm', 60),
+    ]
+    const r = filterBasket(agents, {
+      'aave-v3': V(true),
+      'morpho-blue': V(true),
+      hyperfarm: V(false),
+    })
     expect(r.survivors.find((s) => s.id === 'w1').allocationFraction).toBeCloseTo(0.75, 6)
     expect(r.survivors.reduce((a, s) => a + s.allocationFraction, 0)).toBeCloseTo(1.0, 6)
   })

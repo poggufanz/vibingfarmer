@@ -18,11 +18,20 @@ const audited = (over) => ({
 
 export const SNAPSHOT = {
   'aave-v3': { facts: audited(), meta: { label: 'Aave v3 (mainnet)' } },
-  'morpho-blue': { facts: audited({ tvl: f(12_000_000), adminKey: f('multisig') }), meta: { label: 'Morpho Blue (mainnet)' } },
-  'pendle-v2': { facts: audited({ ageDays: f(540), tvl: f(8_000_000) }), meta: { label: 'Pendle (mainnet)' } },
-  'fluid': { facts: audited({ tvl: f(5_000_000), adminKey: f('multisig') }), meta: { label: 'Fluid (mainnet)' } },
+  'morpho-blue': {
+    facts: audited({ tvl: f(12_000_000), adminKey: f('multisig') }),
+    meta: { label: 'Morpho Blue (mainnet)' },
+  },
+  'pendle-v2': {
+    facts: audited({ ageDays: f(540), tvl: f(8_000_000) }),
+    meta: { label: 'Pendle (mainnet)' },
+  },
+  fluid: {
+    facts: audited({ tvl: f(5_000_000), adminKey: f('multisig') }),
+    meta: { label: 'Fluid (mainnet)' },
+  },
   // Controlled demo fixture — illustrates rejection. NOT a real vault.
-  'hyperfarm': {
+  hyperfarm: {
     facts: {
       annualizedDistributed: f(10_000_000),
       protocolRevenue: f(3_000_000),

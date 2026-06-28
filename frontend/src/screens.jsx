@@ -521,7 +521,9 @@ const MmPermissionModal = ({ strategy, eligibility, onConfirm, onReject }) => {
 
         {eligibility?.rows?.length > 0 && (
           <div className="elig-panel">
-            {eligibility.fusedSentence && <p className="elig-sentence">{eligibility.fusedSentence}</p>}
+            {eligibility.fusedSentence && (
+              <p className="elig-sentence">{eligibility.fusedSentence}</p>
+            )}
             <ul className="elig-rows">
               {eligibility.rows.map((row) => (
                 <li key={row.id} className={row.eligible ? 'elig-pass' : 'elig-reject'}>
