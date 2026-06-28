@@ -10,3 +10,13 @@ export function resolve(protocol) {
 }
 
 export { SNAPSHOT }
+
+/** Provenance-safe merge: only fully-refreshed fields become source:'live' with a new asOf. */
+export function applyRefresh(entry, refreshed, nowMs) {
+  const facts = { ...entry.facts }
+  for (const [k, value] of Object.entries(refreshed)) {
+    if (value === undefined || value === null) continue // failure/partial → keep snapshot
+    facts[k] = { value, source: 'live', asOf: nowMs }
+  }
+  return { ...entry, facts }
+}
