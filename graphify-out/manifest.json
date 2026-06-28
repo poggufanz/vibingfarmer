@@ -390,8 +390,8 @@
     "semantic_hash": "2e18a2088f82dfed536e8afee5cf2ede"
   },
   "frontend/src/agents.jsx": {
-    "mtime": 1782568429.809794,
-    "ast_hash": "e6fb02da37b96ef4c1fdcf3f5cc05712",
+    "mtime": 1782642581.529951,
+    "ast_hash": "d3daa0b865a6903b66bd22e70cd2be07",
     "semantic_hash": ""
   },
   "frontend/src/agents/agentController.js": {
@@ -405,8 +405,8 @@
     "semantic_hash": "841798a950f86e198daa92f4d2636d0c"
   },
   "frontend/src/app.jsx": {
-    "mtime": 1782568457.0515547,
-    "ast_hash": "fd260202ef0d73c9ddf5179e26c9cbdd",
+    "mtime": 1782648482.654969,
+    "ast_hash": "44b599d57926bb63a9e9b1bcca846b00",
     "semantic_hash": ""
   },
   "frontend/src/apyHistory.js": {
@@ -415,38 +415,38 @@
     "semantic_hash": "087371ed43cd829b4097fd8b5d802c8c"
   },
   "frontend/src/attestation.js": {
-    "mtime": 1782026739.4634438,
-    "ast_hash": "1e5d741d6ef7a5683d666420b67c62c7",
-    "semantic_hash": "1e5d741d6ef7a5683d666420b67c62c7"
+    "mtime": 1782642558.0019953,
+    "ast_hash": "a79d1f0ebf8fef0f2f436925db84495f",
+    "semantic_hash": ""
   },
   "frontend/src/components.jsx": {
-    "mtime": 1782568426.0880294,
-    "ast_hash": "5a49e68fa6c87d876ab87c32370d4cee",
+    "mtime": 1782625628.140665,
+    "ast_hash": "3e554004d1de3888f09ca90d5301f60f",
     "semantic_hash": ""
   },
   "frontend/src/components/AgentActionPreview.jsx": {
-    "mtime": 1782568413.5052807,
-    "ast_hash": "629549fc03125d6f8f36317936d618b3",
+    "mtime": 1782625628.1077988,
+    "ast_hash": "69ff1bb0202aa83881859e41179d3633",
     "semantic_hash": ""
   },
   "frontend/src/components/AgentDashboard.jsx": {
-    "mtime": 1782567661.7940805,
-    "ast_hash": "d1697fce1c71696d3d91522b430213b2",
+    "mtime": 1782625627.8284805,
+    "ast_hash": "2f685505ce0ee306e4a9af5b8d2e0ba2",
     "semantic_hash": ""
   },
   "frontend/src/components/EcosystemPage.jsx": {
-    "mtime": 1782568614.1922724,
-    "ast_hash": "95942297a59736841d2b208126ce0436",
+    "mtime": 1782625628.2208292,
+    "ast_hash": "80c7b32c9fe623efaf858ef67df3c043",
     "semantic_hash": ""
   },
   "frontend/src/components/ExplorerPage.jsx": {
-    "mtime": 1782568359.5022056,
-    "ast_hash": "eb325ac019af04afe99b3cbf1814eb67",
+    "mtime": 1782642723.6350608,
+    "ast_hash": "6d16f086ee4024cda0873df232084ae9",
     "semantic_hash": ""
   },
   "frontend/src/components/HistoryPanel.jsx": {
-    "mtime": 1782568545.566679,
-    "ast_hash": "9b716f2b4ed6bd022f4b8b2e6e9942f8",
+    "mtime": 1782625628.2208292,
+    "ast_hash": "3f563c34020ac597f68d3369b23e211a",
     "semantic_hash": ""
   },
   "frontend/src/components/HomePage.jsx": {
@@ -455,8 +455,8 @@
     "semantic_hash": ""
   },
   "frontend/src/components/LandingHero.jsx": {
-    "mtime": 1782568354.2269378,
-    "ast_hash": "ba7f90615618138cf8d22b4af59e366b",
+    "mtime": 1782625628.0598319,
+    "ast_hash": "bcff0ed948c216a48736405b3746c602",
     "semantic_hash": ""
   },
   "frontend/src/components/NavBar.jsx": {
@@ -465,18 +465,18 @@
     "semantic_hash": "fc70810918ab93a87b2941121853d917"
   },
   "frontend/src/components/OnboardingFlow.jsx": {
-    "mtime": 1782568442.7083032,
-    "ast_hash": "1e864213afe09c6d6f223e7d4ca61381",
+    "mtime": 1782625628.203067,
+    "ast_hash": "c2619176a8d0a0b90c78b97c436a5a76",
     "semantic_hash": ""
   },
   "frontend/src/components/RightRail.jsx": {
-    "mtime": 1782568377.7910256,
-    "ast_hash": "01e0a3bc591ca773c76cdf65ad6df416",
+    "mtime": 1782625628.0973022,
+    "ast_hash": "5278c46d04d2dc6c6bd57df98779d3f8",
     "semantic_hash": ""
   },
   "frontend/src/components/SettingsPage.jsx": {
-    "mtime": 1782568432.192994,
-    "ast_hash": "1c1091e40f4b479615df9bd4561f44be",
+    "mtime": 1782625627.7738912,
+    "ast_hash": "e6416513b9ccc5ea2d7aa17696c97f1b",
     "semantic_hash": ""
   },
   "frontend/src/components/SignatureMark.jsx": {
@@ -485,8 +485,8 @@
     "semantic_hash": "406ca9581cf2ca56892de62a5c4ac3e5"
   },
   "frontend/src/components/SkillDetailModal.jsx": {
-    "mtime": 1782568338.2853508,
-    "ast_hash": "9e16a160fe325c29325e78547f56ed05",
+    "mtime": 1782625628.0448987,
+    "ast_hash": "dbe167a85c72c7836c1bebfff03c13d0",
     "semantic_hash": ""
   },
   "frontend/src/components/SkillDrawer.jsx": {
@@ -500,18 +500,18 @@
     "semantic_hash": "5a29081fb9b3d6ad8dbd2092fb9802cf"
   },
   "frontend/src/components/TxDetailPage.jsx": {
-    "mtime": 1782568331.403264,
-    "ast_hash": "660c4e886a11a7eb9b35e03eaccb48f8",
+    "mtime": 1782625628.0354042,
+    "ast_hash": "465fba082b8414e9a1b6fd2e71d9660f",
     "semantic_hash": ""
   },
   "frontend/src/components/VaultDetailPage.jsx": {
-    "mtime": 1782568387.1634352,
-    "ast_hash": "ecbbc7e3e5b08ae5b8ae7cd56bf8cf33",
+    "mtime": 1782625627.9168093,
+    "ast_hash": "4c610c0a6b50fbc507d358e67ca2bdfd",
     "semantic_hash": ""
   },
   "frontend/src/components/WithdrawModal.jsx": {
-    "mtime": 1782568407.387182,
-    "ast_hash": "4b2e8c7fffef12a669b7e48d303f5711",
+    "mtime": 1782625627.7846537,
+    "ast_hash": "1c20ac2076a28ffb52468968d4b4e38d",
     "semantic_hash": ""
   },
   "frontend/src/config.js": {
@@ -530,8 +530,8 @@
     "semantic_hash": "1277c945c3b6f2d87e65fa72e9eafee1"
   },
   "frontend/src/history.js": {
-    "mtime": 1782568399.3125088,
-    "ast_hash": "f4ca7f33673b4d51fe403a59d37eca93",
+    "mtime": 1782625628.106304,
+    "ast_hash": "9f0a51d7d01c6927b52714bc55bc3dd3",
     "semantic_hash": ""
   },
   "frontend/src/main.jsx": {
@@ -555,9 +555,9 @@
     "semantic_hash": "61c0ebf2b214c2f4b2fa59659d1f3f74"
   },
   "frontend/src/orchestrator.js": {
-    "mtime": 1782026075.5601978,
-    "ast_hash": "7131cce6baf3e3d4b89d2a5e77ad43b9",
-    "semantic_hash": "7131cce6baf3e3d4b89d2a5e77ad43b9"
+    "mtime": 1782648515.0481071,
+    "ast_hash": "a46188562882f702797196dd3913bd6f",
+    "semantic_hash": ""
   },
   "frontend/src/positionsStore.js": {
     "mtime": 1782028569.4084752,
@@ -575,8 +575,8 @@
     "semantic_hash": "1cd233f37604b39fae5d5e672f185bf5"
   },
   "frontend/src/screens.jsx": {
-    "mtime": 1782568845.21209,
-    "ast_hash": "19ff83afa5ca9638f28b23e5be2ba83f",
+    "mtime": 1782648331.7863984,
+    "ast_hash": "d49a4931795d3b1b769a848320f85f97",
     "semantic_hash": ""
   },
   "frontend/src/settingsStore.js": {
@@ -595,8 +595,8 @@
     "semantic_hash": "a157313905582efda4836e817e7bd7c9"
   },
   "frontend/src/skills.jsx": {
-    "mtime": 1782568422.5358224,
-    "ast_hash": "21298aca7110f7096517e360e4ca3ed1",
+    "mtime": 1782625628.12308,
+    "ast_hash": "7653f2edd182a97b38666c1e0ebaa260",
     "semantic_hash": ""
   },
   "frontend/src/sparkline.js": {
@@ -620,9 +620,9 @@
     "semantic_hash": ""
   },
   "frontend/src/worker.js": {
-    "mtime": 1782026075.5052023,
-    "ast_hash": "c211280c5445f0eaf2dfd7c2df270763",
-    "semantic_hash": "c211280c5445f0eaf2dfd7c2df270763"
+    "mtime": 1782648591.201792,
+    "ast_hash": "2a54453260f7327005b888d445c2788e",
+    "semantic_hash": ""
   },
   "frontend/vite.config.js": {
     "mtime": 1782051904.293781,
@@ -2840,8 +2840,8 @@
     "semantic_hash": "a41627b912f5d3ea98df4d030da3db86"
   },
   "frontend/src/strategy/mdp.js": {
-    "mtime": 1782567687.4994948,
-    "ast_hash": "86e6321c10f1d02916977c1a75c4fc18",
+    "mtime": 1782625627.9516115,
+    "ast_hash": "21628ecc0afb251dc749c767ead83be6",
     "semantic_hash": ""
   },
   "frontend/src/strategy/mdp.test.js": {
@@ -4260,8 +4260,8 @@
     "semantic_hash": "e00288109e6804ffc36fc341953ed602"
   },
   "frontend/src/strategy/submitGate.js": {
-    "mtime": 1782568443.9952374,
-    "ast_hash": "68734c37911b669c2b403326e88823e7",
+    "mtime": 1782625628.204813,
+    "ast_hash": "86f2a96d6b8cbc2c3f22680e988670da",
     "semantic_hash": ""
   },
   "docs/superpowers/plans/2026-06-11-playbook-storage.md": {
@@ -4285,8 +4285,8 @@
     "semantic_hash": "6ca29ef28430ad6ffd9caf6835865cef"
   },
   "frontend/src/components/ReplayPage.jsx": {
-    "mtime": 1782567683.8376918,
-    "ast_hash": "0d5743655703fab8492dcf92ed0d3587",
+    "mtime": 1782625627.9334776,
+    "ast_hash": "192f7bbbef277eea0ba6757719b9092c",
     "semantic_hash": ""
   },
   "frontend/src/strategy/permissionScope.js": {
@@ -4365,8 +4365,8 @@
     "semantic_hash": "7211d27e54106a73be70328c3e4160d3"
   },
   "frontend/src/components/NotificationCenter.jsx": {
-    "mtime": 1782567676.5450196,
-    "ast_hash": "8a4bedce5fec302818b59e0f23bec858",
+    "mtime": 1782625627.8959706,
+    "ast_hash": "a8e21685c3e317204ce78a602a4ba66b",
     "semantic_hash": ""
   },
   ".agents/skills/wrangler/SKILL.md": {
@@ -4745,9 +4745,9 @@
     "semantic_hash": "beee86c31f1cea0dc4defb87c9d9859a"
   },
   "scripts/soroban/deploy-seed.sh": {
-    "mtime": 1781958529.6261494,
-    "ast_hash": "c06d40dafc31868bcdcd7069036c9276",
-    "semantic_hash": "c06d40dafc31868bcdcd7069036c9276"
+    "mtime": 1782642320.5670385,
+    "ast_hash": "d864345ba0ef619d30965827c9c31402",
+    "semantic_hash": ""
   },
   "soroban/contracts/agent_account/src/account.rs": {
     "mtime": 1781991936.349604,
@@ -4780,9 +4780,9 @@
     "semantic_hash": "6391db3b8517e6d03208190366fc3e26"
   },
   "soroban/contracts/registry/src/test.rs": {
-    "mtime": 1781772881.776623,
-    "ast_hash": "a66b9cef3ca7205700f0ed7d3e251af0",
-    "semantic_hash": "a66b9cef3ca7205700f0ed7d3e251af0"
+    "mtime": 1782571410.0350568,
+    "ast_hash": "9de89488bb69f5de601e06e79f734eb5",
+    "semantic_hash": ""
   },
   "soroban/contracts/registry/src/types.rs": {
     "mtime": 1781772744.2188873,
@@ -4790,29 +4790,29 @@
     "semantic_hash": "83e28897d94537ae42aced4bcd9eaf71"
   },
   "soroban/contracts/rwa_vault/src/lib.rs": {
-    "mtime": 1781959731.781718,
-    "ast_hash": "085c95f9394b77660062658b1da13419",
-    "semantic_hash": "085c95f9394b77660062658b1da13419"
+    "mtime": 1782571195.8653502,
+    "ast_hash": "b0bd65f95d9cf4287cac46562f98cc78",
+    "semantic_hash": ""
   },
   "soroban/contracts/rwa_vault/src/storage.rs": {
-    "mtime": 1781958183.6519165,
-    "ast_hash": "ddc5f5c6451f8de46a11ee7f36904d9b",
-    "semantic_hash": "ddc5f5c6451f8de46a11ee7f36904d9b"
+    "mtime": 1782570839.3222802,
+    "ast_hash": "aab5b849c09320926ab9f760798e4807",
+    "semantic_hash": ""
   },
   "soroban/contracts/rwa_vault/src/test.rs": {
-    "mtime": 1781958300.1357048,
-    "ast_hash": "2d75a32adddcb5077fa8cfb58b72a142",
-    "semantic_hash": "2d75a32adddcb5077fa8cfb58b72a142"
+    "mtime": 1782571243.9405842,
+    "ast_hash": "0581ff0693d203981185d34ea373457f",
+    "semantic_hash": ""
   },
   "soroban/contracts/rwa_vault/src/types.rs": {
-    "mtime": 1781959737.1452906,
-    "ast_hash": "2b3773aa7c4e5efbfc344fdd83bfb5fb",
-    "semantic_hash": "2b3773aa7c4e5efbfc344fdd83bfb5fb"
+    "mtime": 1782571169.4036102,
+    "ast_hash": "3ee08dd23a6f6c40d285de8547850ce2",
+    "semantic_hash": ""
   },
   "soroban/contracts/rwa_vault/src/vault.rs": {
-    "mtime": 1781958231.2643898,
-    "ast_hash": "697c4c5eef01d9efafd0b252efe1f273",
-    "semantic_hash": "697c4c5eef01d9efafd0b252efe1f273"
+    "mtime": 1782571189.2115119,
+    "ast_hash": "ee377fd9c87c0cbb2f683f317ab497fd",
+    "semantic_hash": ""
   },
   "soroban/contracts/rwa_vault/src/vault/dividend.rs": {
     "mtime": 1781867673.2878978,
@@ -4835,9 +4835,9 @@
     "semantic_hash": "ba27b9496b66d61c40c4904bd33e18ae"
   },
   "frontend/src/stellar/config.js": {
-    "mtime": 1781995073.9933467,
-    "ast_hash": "99970c4948d5bd1093519b604d3ffc6c",
-    "semantic_hash": "99970c4948d5bd1093519b604d3ffc6c"
+    "mtime": 1782642908.1617634,
+    "ast_hash": "5e6812051d1fe5f9e98c3c8cf31a24e2",
+    "semantic_hash": ""
   },
   "frontend/src/stellar/relay.js": {
     "mtime": 1781954698.5777655,
@@ -4940,14 +4940,14 @@
     "semantic_hash": "e55c43d774055b899b4528791aaa7ac4"
   },
   "frontend/src/stellar/client.js": {
-    "mtime": 1782024817.9950023,
-    "ast_hash": "051b0ca9890a2103f144142753945bb3",
-    "semantic_hash": "051b0ca9890a2103f144142753945bb3"
+    "mtime": 1782642396.919793,
+    "ast_hash": "97efde777510a1740799716e176097d7",
+    "semantic_hash": ""
   },
   "frontend/src/stellar/events.js": {
-    "mtime": 1781974787.2011466,
-    "ast_hash": "8bd21b145dd2d659f661c7deca44e60d",
-    "semantic_hash": "8bd21b145dd2d659f661c7deca44e60d"
+    "mtime": 1782642689.637248,
+    "ast_hash": "9303dc4bba4a562bb7b929429ffe3058",
+    "semantic_hash": ""
   },
   "frontend/src/stellar/index.js": {
     "mtime": 1782042337.125469,
@@ -4955,9 +4955,9 @@
     "semantic_hash": "cf221ad5ff894ae3a8764ced19ed67c1"
   },
   "frontend/src/stellar/scval.js": {
-    "mtime": 1782024803.146373,
-    "ast_hash": "ecdcf843e89a4c5c4bc5a67e498f5085",
-    "semantic_hash": "ecdcf843e89a4c5c4bc5a67e498f5085"
+    "mtime": 1782642908.21293,
+    "ast_hash": "2114c080199153d8ffdccb3feeac10d7",
+    "semantic_hash": ""
   },
   "frontend/src/stellar/sessionKey.js": {
     "mtime": 1781968399.453186,
@@ -5495,8 +5495,8 @@
     "semantic_hash": ""
   },
   "docs/CURRENT-STATE.md": {
-    "mtime": 1782492451.4844432,
-    "ast_hash": "054e9bfc4a365c775cdf811613cbbe55",
+    "mtime": 1782628489.7287114,
+    "ast_hash": "b1032c7b73592a5ed9646f77a24e7cdc",
     "semantic_hash": ""
   },
   "docs/superpowers/plans/2026-06-21-evm-decommission.md": {
@@ -5525,8 +5525,8 @@
     "semantic_hash": ""
   },
   "docs/superpowers/specs/2026-06-21-onchain-strategy-attestation-design.md": {
-    "mtime": 1782027520.8968832,
-    "ast_hash": "59206974defb00d85eb0afade5822d44",
+    "mtime": 1782641093.1514475,
+    "ast_hash": "4e632b51ff4bffd6b95802250d148d72",
     "semantic_hash": ""
   },
   "docs/superpowers/specs/2026-06-27-real-yield-vault-blend-design.md": {
@@ -5535,13 +5535,93 @@
     "semantic_hash": ""
   },
   "planning/Vibing_Farmer_Master_Strategy.md": {
-    "mtime": 1782548458.7794774,
-    "ast_hash": "49e53a833566f61af2952126ec368d1e",
+    "mtime": 1782628610.786205,
+    "ast_hash": "64dc4685880c3c80c07c96289cdbcaaa",
     "semantic_hash": ""
   },
   "planning/inspiration/encode.md": {
     "mtime": 1781969336.4599206,
     "ast_hash": "fd1b9b859e0d3a41715cf4928730cbc2",
+    "semantic_hash": ""
+  },
+  "frontend/scripts/refreshVaultFacts.mjs": {
+    "mtime": 1782648712.4397519,
+    "ast_hash": "5f33de8d839a7a4324dff481ee0df15f",
+    "semantic_hash": ""
+  },
+  "frontend/scripts/stellar-attest-smoke.mjs": {
+    "mtime": 1782642481.6674666,
+    "ast_hash": "448b62fb6e652ef470807ccdfe1c4c21",
+    "semantic_hash": ""
+  },
+  "frontend/src/stellar/attestation.js": {
+    "mtime": 1782642445.2022977,
+    "ast_hash": "4fe2ffb38d5d2bc31a45f637814f920b",
+    "semantic_hash": ""
+  },
+  "frontend/src/strategy/basketFilter.js": {
+    "mtime": 1782648059.9487112,
+    "ast_hash": "ef00a5c498b58b45b28500cf2e2ea94e",
+    "semantic_hash": ""
+  },
+  "frontend/src/strategy/eligibilityGate.js": {
+    "mtime": 1782648440.961208,
+    "ast_hash": "b7b74eb314b583ee4589d1c0f4477d35",
+    "semantic_hash": ""
+  },
+  "frontend/src/strategy/eligibilitySentence.js": {
+    "mtime": 1782648007.2033796,
+    "ast_hash": "6efb9498f75ff222c71309d8a716c355",
+    "semantic_hash": ""
+  },
+  "frontend/src/strategy/vaultFacts.js": {
+    "mtime": 1782648698.1093638,
+    "ast_hash": "19e5bab5837ec67baa2a79e8419e7739",
+    "semantic_hash": ""
+  },
+  "frontend/src/strategy/vaultFactsSnapshot.js": {
+    "mtime": 1782647906.7281077,
+    "ast_hash": "e34e356cc2c3dd9c2332b09c4b3808f4",
+    "semantic_hash": ""
+  },
+  "scripts/soroban/blend-roundtrip-smoke.sh": {
+    "mtime": 1782628533.4574687,
+    "ast_hash": "6a4a3bc6ba6c2d31174143e5eb384732",
+    "semantic_hash": ""
+  },
+  "soroban/contracts/attestation/src/lib.rs": {
+    "mtime": 1782642113.1434314,
+    "ast_hash": "e795f7472ba685aec3e742521468f197",
+    "semantic_hash": ""
+  },
+  "soroban/contracts/attestation/src/test.rs": {
+    "mtime": 1782642149.5727513,
+    "ast_hash": "057c6e46b5a048cc0732f25f8ff4cacb",
+    "semantic_hash": ""
+  },
+  "soroban/contracts/rwa_vault/src/blend.rs": {
+    "mtime": 1782571315.5938869,
+    "ast_hash": "7e8cee3a5a078f4c165dc2a1beb3f25f",
+    "semantic_hash": ""
+  },
+  "docs/superpowers/plans/2026-06-28-blend-cutover.md": {
+    "mtime": 1782619700.4354398,
+    "ast_hash": "0345e9162717e77367441d641dde5115",
+    "semantic_hash": ""
+  },
+  "docs/superpowers/plans/2026-06-28-f5-onchain-attestation.md": {
+    "mtime": 1782641832.4772718,
+    "ast_hash": "9bb84461b4cbaaa56dc8d204cfd0d42a",
+    "semantic_hash": ""
+  },
+  "docs/superpowers/plans/2026-06-28-f8-eligibility-gate.md": {
+    "mtime": 1782647626.3297272,
+    "ast_hash": "4ddbe8c573dbc72b847c5f2157acc5bb",
+    "semantic_hash": ""
+  },
+  "docs/superpowers/specs/2026-06-28-f8-eligibility-gate-design.md": {
+    "mtime": 1782648784.905585,
+    "ast_hash": "dd3fda9905975da6a1ee6c56ace82017",
     "semantic_hash": ""
   }
 }
