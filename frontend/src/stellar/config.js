@@ -13,6 +13,9 @@ export const HORIZON_URL = 'https://horizon-testnet.stellar.org'
 export const SOROBAN_VAULT_ADDRESS = 'CBZNITAPHCLSPEXC3UKIERYRUJR56GISM2G2Z5XD6KZH3U4ZZ76XNQOU'
 // Registry (sub-project 1a) — record_of / is_revoked reads + agent_authorized/agent_revoked events.
 export const SOROBAN_REGISTRY_ADDRESS = 'CAEHOZGUGVNRCAFVJCSR3B2EFJ55LEA34S76HTRQGH7XSPBO7YIMNZOQ'
+// On-chain strategy attestation (F5). attest(attester, strategy_hash, label) anchors the AI
+// strategy hash on-chain; user-signed inner tx, relayer fee-bumps so the user pays 0 XLM.
+export const SOROBAN_ATTESTATION_ADDRESS = 'CDDOW2FZ7ALBWBXF22TPMPDHPXSKTMLQGGQWUYX7YOJZAHICD7DUO2K6'
 // Yield-farming asset = Blend testnet USDC (7 decimals) post-cutover — the vault's underlying
 // IS the asset Blend lends, so deposits supply into the pool. Pulls + pays dividends in it.
 export const SOROBAN_TOKEN_ADDRESS = 'CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU'

@@ -68,8 +68,17 @@ stellar contract invoke --id "$REGISTRY" --source vf-deployer --network "$NET" \
   -- authorize --owner "$ADMIN" --agent "$DEMO_AGENT" --vault "$VAULT" --token "$TOKEN" \
      --cap_per_period 1000000000000 --period_duration 86400 --expiry 4000000000
 
+# ---- attestation contract (F5; additive) ----
+# Leaf contract, no constructor args. Reuse an already-recorded address so a reseed never
+# re-deploys it (would orphan the on-chain counters). Deploy only when absent.
+ATTESTATION=$(python3 -c "import json;print(json.load(open('$OUT')).get('attestation',''))" 2>/dev/null || true)
+if [ -z "$ATTESTATION" ]; then
+  ATTESTATION=$(stellar contract deploy --wasm "$WASM_DIR/attestation.wasm" \
+    --source vf-deployer --network "$NET")
+fi
+
 REGISTRY="$REGISTRY" ACCT_HASH="$ACCT_HASH" DEMO_AGENT="$DEMO_AGENT" RELAYER="$RELAYER" \
-TOKEN="$TOKEN" VAULT="$VAULT" BLEND_POOL="${BLEND_POOL:-}" OUT="$OUT" \
+TOKEN="$TOKEN" VAULT="$VAULT" BLEND_POOL="${BLEND_POOL:-}" ATTESTATION="$ATTESTATION" OUT="$OUT" \
 python3 <<'PY'
 import json, os
 vault = {
@@ -91,6 +100,9 @@ out = {
   "demoAgentAccount": os.environ["DEMO_AGENT"],
   "vault": vault
 }
+attestation = os.environ.get("ATTESTATION", "")
+if attestation:
+    out["attestation"] = attestation
 with open(os.environ["OUT"], "w") as f:
     json.dump(out, f, indent=2)
     f.write("\n")
