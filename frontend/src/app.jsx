@@ -91,6 +91,7 @@ import { reflect } from './strategy/reflector.js'
 import { increment as playbookIncrement, weight as playbookWeight } from './strategy/playbook.js'
 import { saveCycle, getCycles, getJournalSummary } from './strategy/cycleJournal.js'
 import { computeBasket } from './strategy/basketFilter.js'
+import { mintToken } from './strategy/eligibilityGate.js'
 import { buildEligibilitySentence, vaultEligibilityLabel } from './strategy/eligibilitySentence.js'
 import { SNAPSHOT } from './strategy/vaultFacts.js'
 import { recordDecision, getDecisions, getDecisionSummary } from './strategy/decisionLog.js'
@@ -1207,7 +1208,7 @@ const App = () => {
     setExecMap(init)
 
     // Enforcement A — eligibility gate. Drop ineligible protocols BEFORE dispatch; all-fail = hard stop.
-    const { survivors, dropped, allFailed } = computeBasket(strategy.agents)
+    const { verdictBySlug, survivors, dropped, allFailed } = computeBasket(strategy.agents)
     dropped.forEach((d) =>
       addLog({ event: 'VaultRejected', agent: d.agent.id, meta: (d.verdict.reasons || []).join('; ') })
     )
@@ -1217,8 +1218,14 @@ const App = () => {
       return
     }
     // dispatchSet ⊆ survivors: only survivors get a plan; allocations re-normalized to sum 1.
+    // Each survivor carries a freshly-minted eligibility token (Enforcement B asserts it worker-side).
     const yvStrategy = {
-      vaults: survivors.map((a) => ({ address: a.vault.addr, allocation: a.allocationFraction })),
+      vaults: survivors.map((a, i) => ({
+        address: a.vault.addr,
+        allocation: a.allocationFraction,
+        protocolSlug: a.vault.protocol,
+        eligibilityToken: mintToken(verdictBySlug[a.vault.protocol], i),
+      })),
     }
 
     const orch = new OrchestratorAgent({

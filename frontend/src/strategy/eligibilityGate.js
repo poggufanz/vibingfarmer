@@ -78,3 +78,22 @@ export function evaluate(input, nowMs = Date.now()) {
     present && yr.verdict === 'real' && sec.auditGate === 'pass' && sec.score >= SECURITY_MIN
   return { protocol, eligible, yieldReality: yr, security: sec, reasons, isFixture, facts }
 }
+
+function hashVerdict(verdict) {
+  const basis = `${verdict.protocol}|${verdict.yieldReality?.verdict}|${verdict.security?.score}|${verdict.security?.auditGate}`
+  let h = 0
+  for (let i = 0; i < basis.length; i++) h = (Math.imul(31, h) + basis.charCodeAt(i)) | 0
+  return String(h >>> 0)
+}
+
+/** Internal fail-closed assertion token (NOT a security boundary — the on-chain scope bounds malice). */
+export function mintToken(verdict, planIndex, nowMs = Date.now()) {
+  if (!verdict.eligible) throw new Error('cannot mint token for ineligible verdict')
+  return { protocolSlug: verdict.protocol, planIndex, eligible: true, verdictHash: hashVerdict(verdict), asOf: nowMs }
+}
+
+export function verifyToken(token, verdict, nowMs = Date.now()) {
+  if (!token || token.eligible !== true) return false
+  if (nowMs - token.asOf > MAX_TOKEN_AGE_MS) return false
+  return token.verdictHash === hashVerdict(verdict)
+}
