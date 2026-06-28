@@ -171,7 +171,10 @@ describe('skill cap is 7-dp', () => {
   it('encodes deposit maxAmount in 7-dp base units', async () => {
     vi.stubGlobal('localStorage', memStore())
     vi.stubGlobal('sessionStorage', memStore())
-    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('no network'))))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new Error('no network')))
+    )
     try {
       const skill = await generateAgentSkills({ agentId: 'w1', vault: '0xAAA', amount: 100 })
       const maxAmount = skill.skills?.deposit?.maxAmount

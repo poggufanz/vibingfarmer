@@ -5,8 +5,8 @@
 
 const KEYS = {
   transactions: 'yv_history_transactions',
-  strategies:   'yv_history_strategies',
-  reasoning:    'yv_history_reasoning',
+  strategies: 'yv_history_strategies',
+  reasoning: 'yv_history_reasoning',
 }
 
 const MAX_ENTRIES = 50
@@ -51,8 +51,8 @@ export function saveTransaction({
   apy,
   workerLabel,
   workerId,
-  gasPayedBy,  // 'fee-bump-relayer' always
-  network,     // 'stellar-testnet'
+  gasPayedBy, // 'fee-bump-relayer' always
+  network, // 'stellar-testnet'
 }) {
   addEntry(KEYS.transactions, {
     type: 'transaction',
@@ -88,15 +88,15 @@ export function saveStrategy({
   amountUsdc,
   riskLevel,
   numVaults,
-  vaultsSelected,      // array of { name, protocol, apy, allocation }
-  strategySource,      // 'venice' | 'deepseek' | 'fallback'
-  skillSource,         // 'default' | 'user-local'
-  vaultDataSource,     // 'defiLlama' | 'fallback'
-  marketContextUsed,   // boolean
-  blendedApy,          // weighted average APY
-  strategyHash,        // bytes32 keccak256 of AI strategy + reasoning (on-chain attestation)
-  dagTimings,          // { skill, pools, gas, positions, market, signals } ms per fetch node
-  dagWallMs,           // total wall time of the parallel fetch DAG
+  vaultsSelected, // array of { name, protocol, apy, allocation }
+  strategySource, // 'venice' | 'deepseek' | 'fallback'
+  skillSource, // 'default' | 'user-local'
+  vaultDataSource, // 'defiLlama' | 'fallback'
+  marketContextUsed, // boolean
+  blendedApy, // weighted average APY
+  strategyHash, // bytes32 keccak256 of AI strategy + reasoning (on-chain attestation)
+  dagTimings, // { skill, pools, gas, positions, market, signals } ms per fetch node
+  dagWallMs, // total wall time of the parallel fetch DAG
 }) {
   addEntry(KEYS.strategies, {
     type: 'strategy',
@@ -134,11 +134,11 @@ export function saveReasoning({
   protocol,
   riskTier,
   yieldSource,
-  reasoning,        // AI-generated reasoning string
+  reasoning, // AI-generated reasoning string
   expectedApy,
   amountUsdc,
   riskLevel,
-  modelUsed,        // 'deepseek-chat' | 'venice/llama-3.3-70b' etc
+  modelUsed, // 'deepseek-chat' | 'venice/llama-3.3-70b' etc
 }) {
   addEntry(KEYS.reasoning, {
     type: 'reasoning',
@@ -177,23 +177,22 @@ export function positionsFromHistory(VAULT_CATALOG) {
   const txs = readStore(KEYS.transactions)
 
   const currentAddresses = (VAULT_CATALOG || [])
-    .map(v => v.address?.toLowerCase())
+    .map((v) => v.address?.toLowerCase())
     .filter(Boolean)
 
   const map = {}
 
   txs
-    .filter(tx => {
+    .filter((tx) => {
       if (!tx.vaultAddress) return true
       return currentAddresses.includes(tx.vaultAddress.toLowerCase())
     })
-    .forEach(tx => {
+    .forEach((tx) => {
       const key = tx.vaultAddress?.toLowerCase() || tx.vaultName
 
       const catalogEntry = (VAULT_CATALOG || []).find(
-        v =>
-          v.protocol === tx.protocol ||
-          v.address?.toLowerCase() === tx.vaultAddress?.toLowerCase()
+        (v) =>
+          v.protocol === tx.protocol || v.address?.toLowerCase() === tx.vaultAddress?.toLowerCase()
       )
 
       const apy = parseFloat(tx.apy) || catalogEntry?.apy || 0
@@ -221,7 +220,7 @@ export function positionsFromHistory(VAULT_CATALOG) {
 // ─── Combined ─────────────────────────────────────────────────────────────────
 
 export function clearAllHistory() {
-  Object.values(KEYS).forEach(k => localStorage.removeItem(k))
+  Object.values(KEYS).forEach((k) => localStorage.removeItem(k))
 }
 
 export function getHistorySummary() {

@@ -16,23 +16,53 @@ import { VAULT_CATALOG } from '../config.js'
 function ApyValue({ value, delay = 0 }) {
   const n = useCountUp(Number(value) || 0, { duration: 1000, delay })
   return (
-    <span className="mono tnum accent" style={{ fontSize: 13, fontWeight: 600, minWidth: 64, textAlign: 'right' }}>
+    <span
+      className="mono tnum accent"
+      style={{ fontSize: 13, fontWeight: 600, minWidth: 64, textAlign: 'right' }}
+    >
       {n.toFixed(1)}% APY
     </span>
   )
 }
 
 const WALLET_URL = 'https://www.freighter.app/'
-const SEED = VAULT_CATALOG.slice(0, 3).map((v) => ({ name: v.name, protocol: v.protocol, apy: v.apy, poolId: null }))
+const SEED = VAULT_CATALOG.slice(0, 3).map((v) => ({
+  name: v.name,
+  protocol: v.protocol,
+  apy: v.apy,
+  poolId: null,
+}))
 
 const HOW_STEPS = [
-  { n: '01', title: 'Venice AI picks the best vault for your risk.', sub: 'Live market data, not guesswork.' },
-  { n: '02', title: 'You approve one permission with hard limits.', sub: 'Max amount and vault are yours to set. Revoke anytime.' },
-  { n: '03', title: 'Agents execute automatically. You pay zero gas.', sub: 'Fee-bump relayer covers the gas.' },
-  { n: '04', title: 'Background agent monitors 24/7.', sub: 'APY drops or risk spikes, you get alerted.' },
+  {
+    n: '01',
+    title: 'Venice AI picks the best vault for your risk.',
+    sub: 'Live market data, not guesswork.',
+  },
+  {
+    n: '02',
+    title: 'You approve one permission with hard limits.',
+    sub: 'Max amount and vault are yours to set. Revoke anytime.',
+  },
+  {
+    n: '03',
+    title: 'Agents execute automatically. You pay zero gas.',
+    sub: 'Fee-bump relayer covers the gas.',
+  },
+  {
+    n: '04',
+    title: 'Background agent monitors 24/7.',
+    sub: 'APY drops or risk spikes, you get alerted.',
+  },
 ]
 
-const scrollWrap = { minHeight: '100vh', overflowY: 'auto', display: 'grid', placeItems: 'center', padding: '40px 32px' }
+const scrollWrap = {
+  minHeight: '100vh',
+  overflowY: 'auto',
+  display: 'grid',
+  placeItems: 'center',
+  padding: '40px 32px',
+}
 
 function ValueScreen({ vaults, histories, onConnect }) {
   return (
@@ -40,39 +70,66 @@ function ValueScreen({ vaults, histories, onConnect }) {
       <div className="onb-split">
         <div className="onb-left">
           <div className="brand brand--hero">
-            <span>vibing</span><span className="slash">/</span><span className="vibing">farmer</span>
+            <span>vibing</span>
+            <span className="slash">/</span>
+            <span className="vibing">farmer</span>
           </div>
 
           <h1 className="h-display onb-h1">Your USDC should be earning.</h1>
-          <p className="lede onb-sub">Set your limits once. Agents farm the best vaults for you, gas-free.</p>
+          <p className="lede onb-sub">
+            Set your limits once. Agents farm the best vaults for you, gas-free.
+          </p>
 
           <button className="btn btn-primary btn-lg onb-cta" onClick={onConnect}>
             Connect wallet &amp; start farming <Icon name="arrow" size={14} />
           </button>
 
           <div className="foot-note onb-foot">
-            Already have Freighter / xBull / Albedo? Connect above.<br />
-            Need a wallet? <a href={WALLET_URL} target="_blank" rel="noopener noreferrer" className="onb-link">Get Freighter in 2 minutes</a>
+            Already have Freighter / xBull / Albedo? Connect above.
+            <br />
+            Need a wallet?{' '}
+            <a href={WALLET_URL} target="_blank" rel="noopener noreferrer" className="onb-link">
+              Get Freighter in 2 minutes
+            </a>
           </div>
         </div>
 
         <div className="onb-right">
-          <div className="onb-sig"><YieldLine height={120} /></div>
-          <div className="onb-rates-label"><span className="live-dot" />Live vault rates</div>
+          <div className="onb-sig">
+            <YieldLine height={120} />
+          </div>
+          <div className="onb-rates-label">
+            <span className="live-dot" />
+            Live vault rates
+          </div>
           <div className="onb-rates">
             {vaults.map((v, i) => {
-              const stats = v.poolId && histories[v.poolId] ? calcApyStats(histories[v.poolId]) : null
+              const stats =
+                v.poolId && histories[v.poolId] ? calcApyStats(histories[v.poolId]) : null
               return (
                 <div key={v.name} className="onb-rate-row rise" style={riseDelay(i, 90, 250)}>
                   <span style={{ flex: 1, fontSize: 13 }}>{v.name}</span>
-                  {stats && <span dangerouslySetInnerHTML={{ __html: generateSparkline(stats.values, { width: 56, height: 22 }) }} />}
+                  {stats && (
+                    <span
+                      dangerouslySetInnerHTML={{
+                        __html: generateSparkline(stats.values, { width: 56, height: 22 }),
+                      }}
+                    />
+                  )}
                   <ApyValue value={v.apy} delay={350 + i * 90} />
                 </div>
               )
             })}
-            <div className="onb-rate-row onb-rate-idle rise" style={riseDelay(vaults.length, 90, 250)}>
-              <span style={{ flex: 1, fontSize: 13, color: 'var(--text-muted)' }}>vs leaving in wallet</span>
-              <span className="mono tnum" style={{ fontSize: 13, color: 'var(--text-faint)' }}>0.0% APY</span>
+            <div
+              className="onb-rate-row onb-rate-idle rise"
+              style={riseDelay(vaults.length, 90, 250)}
+            >
+              <span style={{ flex: 1, fontSize: 13, color: 'var(--text-muted)' }}>
+                vs leaving in wallet
+              </span>
+              <span className="mono tnum" style={{ fontSize: 13, color: 'var(--text-faint)' }}>
+                0.0% APY
+              </span>
             </div>
           </div>
         </div>
@@ -85,21 +142,36 @@ function HowItWorksScreen({ onDone, onSkip }) {
   return (
     <div className="enter" style={scrollWrap}>
       <div style={{ maxWidth: 540, width: '100%', textAlign: 'left' }}>
-        <h1 className="h-display" style={{ fontSize: 28 }}>How Vibing Farmer works</h1>
+        <h1 className="h-display" style={{ fontSize: 28 }}>
+          How Vibing Farmer works
+        </h1>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20, margin: '28px 0' }}>
           {HOW_STEPS.map((s) => (
             <div key={s.n} style={{ display: 'flex', gap: 16, alignItems: 'baseline' }}>
-              <span className="mono accent" style={{ fontSize: 13, fontWeight: 600, flex: 'none', minWidth: 22 }}>{s.n}</span>
+              <span
+                className="mono accent"
+                style={{ fontSize: 13, fontWeight: 600, flex: 'none', minWidth: 22 }}
+              >
+                {s.n}
+              </span>
               <div>
-                <div style={{ fontSize: 14.5, fontWeight: 500, letterSpacing: '-0.01em' }}>{s.title}</div>
-                <div className="lede" style={{ fontSize: 12.5, marginTop: 3 }}>{s.sub}</div>
+                <div style={{ fontSize: 14.5, fontWeight: 500, letterSpacing: '-0.01em' }}>
+                  {s.title}
+                </div>
+                <div className="lede" style={{ fontSize: 12.5, marginTop: 3 }}>
+                  {s.sub}
+                </div>
               </div>
             </div>
           ))}
         </div>
         <div className="action-row" style={{ gap: 10 }}>
-          <button className="btn btn-ghost" onClick={onSkip}>Skip intro</button>
-          <button className="btn btn-primary btn-lg" onClick={onDone}>Start farming <Icon name="arrow" size={14} /></button>
+          <button className="btn btn-ghost" onClick={onSkip}>
+            Skip intro
+          </button>
+          <button className="btn btn-primary btn-lg" onClick={onDone}>
+            Start farming <Icon name="arrow" size={14} />
+          </button>
         </div>
       </div>
     </div>
@@ -119,14 +191,22 @@ export default function OnboardingFlow({ connected, onConnect, onComplete }) {
       const top = vs.slice(0, 3)
       setVaults(top)
       const ids = top.map((v) => v.poolId).filter(Boolean)
-      if (ids.length) fetchApyHistoryBatch(ids).then((m) => { if (alive) setHistories(m) })
+      if (ids.length)
+        fetchApyHistoryBatch(ids).then((m) => {
+          if (alive) setHistories(m)
+        })
     })
-    return () => { alive = false }
+    return () => {
+      alive = false
+    }
   }, [])
 
   // Advance to "how it works" once the wallet connects.
-  useEffect(() => { if (connected && screen === 1) setScreen(2) }, [connected, screen])
+  useEffect(() => {
+    if (connected && screen === 1) setScreen(2)
+  }, [connected, screen])
 
-  if (screen === 1) return <ValueScreen vaults={vaults} histories={histories} onConnect={onConnect} />
+  if (screen === 1)
+    return <ValueScreen vaults={vaults} histories={histories} onConnect={onConnect} />
   return <HowItWorksScreen onDone={onComplete} onSkip={onComplete} />
 }

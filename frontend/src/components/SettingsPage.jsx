@@ -793,9 +793,7 @@ export default function SettingsPage({
                 <>
                   <Row
                     label="Connected Wallet"
-                    desc={
-                      walletPhase === 'upgraded' ? 'Session keys active' : 'Standard wallet'
-                    }
+                    desc={walletPhase === 'upgraded' ? 'Session keys active' : 'Standard wallet'}
                   >
                     <span className="mono" style={{ fontSize: 12 }}>
                       {short(userAddress)}

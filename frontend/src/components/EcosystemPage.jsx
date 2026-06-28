@@ -77,19 +77,34 @@ const PARTNERS = [
 ]
 
 const STANDARDS = [
-  { id: 'Soroban Auth',   desc: 'ed25519 session-key scopes',  link: 'https://developers.stellar.org/docs/build/guides/auth' },
-  { id: 'SEP-41',         desc: 'Token interface',             link: 'https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0041.md' },
-  { id: 'Fee-bump',       desc: 'Gas-abstracted transactions', link: 'https://developers.stellar.org/docs/learn/fundamentals/transactions/fee-bump-transactions' },
-  { id: 'Soroban Events', desc: 'On-chain audit trail',        link: 'https://developers.stellar.org/docs/build/guides/events' },
-  { id: 'x402',           desc: 'HTTP-native payments',        link: 'https://x402.org' },
-  { id: 'Blend',          desc: 'Real-yield lending (WIP)',    link: 'https://www.blend.capital' },
+  {
+    id: 'Soroban Auth',
+    desc: 'ed25519 session-key scopes',
+    link: 'https://developers.stellar.org/docs/build/guides/auth',
+  },
+  {
+    id: 'SEP-41',
+    desc: 'Token interface',
+    link: 'https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0041.md',
+  },
+  {
+    id: 'Fee-bump',
+    desc: 'Gas-abstracted transactions',
+    link: 'https://developers.stellar.org/docs/learn/fundamentals/transactions/fee-bump-transactions',
+  },
+  {
+    id: 'Soroban Events',
+    desc: 'On-chain audit trail',
+    link: 'https://developers.stellar.org/docs/build/guides/events',
+  },
+  { id: 'x402', desc: 'HTTP-native payments', link: 'https://x402.org' },
+  { id: 'Blend', desc: 'Real-yield lending (WIP)', link: 'https://www.blend.capital' },
 ]
 
 const GITHUB_URL = 'https://github.com/poggufanz/vibingfarmer'
 
 // Static colored diagram — dangerouslySetInnerHTML is safe: fully hardcoded, no user input.
-const DIAGRAM_HTML =
-`<span class="eco-d-base">User Wallet</span> <span class="eco-d-muted">(Freighter / xBull / Albedo)</span>
+const DIAGRAM_HTML = `<span class="eco-d-base">User Wallet</span> <span class="eco-d-muted">(Freighter / xBull / Albedo)</span>
     │
     │  <span class="eco-d-accent">one signature · authorize + fund</span>
     ▼
@@ -114,7 +129,9 @@ function PartnerCard({ partner }) {
   return (
     <article className="eco-card">
       <div className="eco-card__head">
-        <span className="eco-card__mark" aria-hidden="true">{partner.mark}</span>
+        <span className="eco-card__mark" aria-hidden="true">
+          {partner.mark}
+        </span>
         <span className="eco-card__cat">{partner.category}</span>
       </div>
       <h3 className="eco-card__name">{partner.name}</h3>
@@ -122,7 +139,9 @@ function PartnerCard({ partner }) {
       <p className="eco-card__desc">{partner.description}</p>
       <div className="eco-card__tags">
         {partner.tags.map((t) => (
-          <span key={t} className="eco-tag">{t}</span>
+          <span key={t} className="eco-tag">
+            {t}
+          </span>
         ))}
       </div>
       <a
@@ -192,19 +211,20 @@ export default function EcosystemPage() {
       <NavBar />
 
       <main className="eco-main">
-
         {/* header */}
         <header className="eco-header">
           <h1 className="eco-title">Ecosystem</h1>
           <p className="eco-lede">
-            The infrastructure powering Vibing Farmer. Built on Soroban smart
-            contracts, privacy-first AI, and gas-abstracted fee-bump relaying.
+            The infrastructure powering Vibing Farmer. Built on Soroban smart contracts,
+            privacy-first AI, and gas-abstracted fee-bump relaying.
           </p>
         </header>
 
         {/* partners */}
         <section className="eco-section" aria-labelledby="eco-sec-partners">
-          <h2 id="eco-sec-partners" className="eco-section__title">Powered by</h2>
+          <h2 id="eco-sec-partners" className="eco-section__title">
+            Powered by
+          </h2>
           <div className="eco-grid">
             {PARTNERS.map((p) => (
               <PartnerCard key={p.name} partner={p} />
@@ -214,7 +234,9 @@ export default function EcosystemPage() {
 
         {/* standards */}
         <section className="eco-section" aria-labelledby="eco-sec-stds">
-          <h2 id="eco-sec-stds" className="eco-section__title">Integrated standards</h2>
+          <h2 id="eco-sec-stds" className="eco-section__title">
+            Integrated standards
+          </h2>
           <div className="eco-stds-wrap">
             {STANDARDS.map((s) => (
               <StandardBadge key={s.id} standard={s} />
@@ -224,7 +246,9 @@ export default function EcosystemPage() {
 
         {/* architecture diagram */}
         <section className="eco-section" aria-labelledby="eco-sec-arch">
-          <h2 id="eco-sec-arch" className="eco-section__title">How they connect</h2>
+          <h2 id="eco-sec-arch" className="eco-section__title">
+            How they connect
+          </h2>
           <div
             ref={diagramRef}
             className="eco-diagram"
@@ -242,7 +266,9 @@ export default function EcosystemPage() {
         {/* CTA */}
         <section className="eco-section eco-section--cta" aria-labelledby="eco-sec-cta">
           <div className="eco-cta__inner">
-            <h2 id="eco-sec-cta" className="eco-cta__heading">Ready to vibe?</h2>
+            <h2 id="eco-sec-cta" className="eco-cta__heading">
+              Ready to vibe?
+            </h2>
             <p className="eco-cta__tagline">
               Set once. <em>Vibe forever.</em>
             </p>
@@ -266,7 +292,6 @@ export default function EcosystemPage() {
           <span className="eco-foot__mark">vibing / farmer</span>
           <span className="eco-foot__tag">Set once. Vibe forever.</span>
         </footer>
-
       </main>
     </div>
   )
