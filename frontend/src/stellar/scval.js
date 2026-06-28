@@ -31,6 +31,29 @@ export function u64ScVal(n) {
 }
 
 /**
+ * Encode a fixed 32-byte value (e.g. a strategy hash) as ScVal::Bytes. Accepts a 0x-prefixed
+ * hex string or raw bytes; rejects anything that isn't exactly 32 bytes.
+ * @param {string | Buffer | Uint8Array} v
+ * @returns {import('@stellar/stellar-sdk').xdr.ScVal}
+ */
+export function bytes32ScVal(v) {
+  const buf =
+    typeof v === 'string' ? Buffer.from(v.replace(/^0x/, ''), 'hex') : Buffer.from(v)
+  if (buf.length !== 32) throw new Error(`bytes32 must be 32 bytes, got ${buf.length}`)
+  return nativeToScVal(buf, { type: 'bytes' })
+}
+
+/**
+ * Encode a string as ScVal::Symbol (provider label / topic). Caller must keep it ≤ 9 chars
+ * for symbol_short! compatibility.
+ * @param {string} s
+ * @returns {import('@stellar/stellar-sdk').xdr.ScVal}
+ */
+export function symbolScVal(s) {
+  return nativeToScVal(String(s), { type: 'symbol' })
+}
+
+/**
  * Decode any ScVal to its native JS value (i128 → BigInt, address → strkey, symbol → string…).
  * @param {import('@stellar/stellar-sdk').xdr.ScVal} sv
  * @returns {unknown}

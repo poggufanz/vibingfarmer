@@ -5,7 +5,7 @@
 // Every networked fn takes an injected `server` so unit tests run without a network. Defaults
 // lazily construct the real SDK so a missing package never breaks the vite config load.
 import { SOROBAN_RPC_URL, HORIZON_URL, NETWORK_PASSPHRASE } from './config.js'
-import { addrScVal, i128ScVal, u64ScVal, fromScVal } from './scval.js'
+import { addrScVal, i128ScVal, u64ScVal, bytes32ScVal, symbolScVal, fromScVal } from './scval.js'
 
 let _sdk = null
 async function sdk() {
@@ -29,6 +29,8 @@ export function encodeArgs(args = []) {
     if (a && typeof a === 'object' && 'addr' in a) return addrScVal(a.addr)
     if (a && typeof a === 'object' && 'i128' in a) return i128ScVal(a.i128)
     if (a && typeof a === 'object' && 'u64' in a) return u64ScVal(a.u64)
+    if (a && typeof a === 'object' && 'bytes32' in a) return bytes32ScVal(a.bytes32)
+    if (a && typeof a === 'object' && 'symbol' in a) return symbolScVal(a.symbol)
     return a // already an ScVal
   })
 }
