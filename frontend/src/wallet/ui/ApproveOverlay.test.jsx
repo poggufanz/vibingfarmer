@@ -5,8 +5,14 @@ import { ApproveOverlay } from './ApproveOverlay.jsx'
 
 describe('Approve overlay (verdict-first)', () => {
   it('shows the F8 verdict above the amount and disables approve when ineligible', () => {
-    render(<ApproveOverlay verdict={{ allow: false, reasons: ['ponzi ratio below 1.5'] }}
-      simulate={{ sharesOut: '0' }} onApprove={vi.fn()} onReject={vi.fn()} />)
+    render(
+      <ApproveOverlay
+        verdict={{ allow: false, reasons: ['ponzi ratio below 1.5'] }}
+        simulate={{ sharesOut: '0' }}
+        onApprove={vi.fn()}
+        onReject={vi.fn()}
+      />
+    )
     const verdict = screen.getByTestId('verdict')
     const amount = screen.getByTestId('amount')
     // verdict appears before amount in the DOM (verdict-first):

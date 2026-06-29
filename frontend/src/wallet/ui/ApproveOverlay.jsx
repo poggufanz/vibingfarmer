@@ -7,7 +7,9 @@ export function ApproveOverlay({ verdict, simulate, onApprove, onReject }) {
       </p>
       <p data-testid="amount">Shares out: {simulate?.sharesOut ?? '—'}</p>
       <button onClick={onReject}>Cancel</button>
-      <button disabled={!eligible} onClick={onApprove}>Approve with Face ID</button>
+      <button disabled={!eligible} onClick={onApprove}>
+        Approve with Face ID
+      </button>
     </div>
   )
 }
