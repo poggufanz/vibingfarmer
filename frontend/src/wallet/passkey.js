@@ -53,24 +53,17 @@ function base64urlNoPad(bytes) {
     .replace(/=+$/, '')
 }
 
-async function sha256(bytes) {
-  // Browser path: crypto.subtle. The hash IS the challenge input — the OZ
-  // webauthn-verifier checks the assertion was made over sha256(authPreimage).
-  if (globalThis.crypto?.subtle) {
-    const d = await globalThis.crypto.subtle.digest('SHA-256', bytes)
-    return new Uint8Array(d)
-  }
-  // Node/test path:
-  const { createHash } = await import('crypto')
-  return Uint8Array.from(createHash('sha256').update(Buffer.from(bytes)).digest())
-}
-
-// Caller passes the 32-byte HashIdPreimage::SorobanAuthorization sha256 (the
-// same hash VF's ed25519 path already signs). We re-hash to bind the WebAuthn
-// challenge, matching the OZ verifier's expectation.
-export async function buildChallenge(authPreimageHash) {
-  const h = await sha256(authPreimageHash)
-  return base64urlNoPad(h)
+// Caller passes the 32-byte signature_payload that Soroban's __check_auth receives:
+// payload = sha256(HashIdPreimage::SorobanAuthorization XDR) — the exact hash VF's
+// ed25519 path already signs. WebAuthn binds it as the challenge with a SINGLE
+// url-safe-unpadded base64 encode (NOT a second sha256): the OZ webauthn-verifier
+// checks clientDataJSON.challenge === base64url(signature_payload), and
+// smart-account-kit's signAuthEntry does the same (`challenge: base64url(payload)`).
+// Verified on-chain at the M0b gate (Task 8). A re-hash here yields ChallengeInvalid
+// (WebAuthnError 3114) because the bytes inside the challenge no longer equal the
+// payload the host passes to __check_auth.
+export function buildChallenge(authPreimageHash) {
+  return base64urlNoPad(authPreimageHash)
 }
 
 export function assertChallengeMatches(clientDataJSON, expectedChallenge) {
