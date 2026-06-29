@@ -34,7 +34,9 @@ describe('passkey wallet account', () => {
     store['vf_wallet_contract'] = 'CCACHED'
     const kit = fakeKit()
     const out = await connectPasskeyWallet({ kit })
-    expect(kit.connectWallet).toHaveBeenCalledWith(expect.objectContaining({ contractId: 'CCACHED' }))
+    expect(kit.connectWallet).toHaveBeenCalledWith(
+      expect.objectContaining({ contractId: 'CCACHED' })
+    )
     expect(out.contractId).toBe('CCACHED')
   })
 })

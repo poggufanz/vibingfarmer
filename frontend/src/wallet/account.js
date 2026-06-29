@@ -35,7 +35,8 @@ export async function connectPasskeyWallet({ contractId, credentialId, kit } = {
   const cached = contractId ?? localStorage.getItem(CACHE_KEY)
   let res
   if (cached) res = await kit.connectWallet({ contractId: cached })
-  else if (credentialId) res = await kit.connectWallet({ credentialId }) // needs indexer
+  else if (credentialId)
+    res = await kit.connectWallet({ credentialId }) // needs indexer
   else res = await kit.connectWallet({ prompt: true })
   if (res?.contractId) localStorage.setItem(CACHE_KEY, res.contractId)
   return { contractId: res.contractId }

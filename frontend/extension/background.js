@@ -6,9 +6,10 @@ export async function handleMessage(msg, env, reply) {
   const pending = env.pending ?? inflight
 
   if (msg.type === 'SIGN_REQUEST') {
-    const base = typeof chrome !== 'undefined' && chrome?.runtime?.getURL
-      ? chrome.runtime.getURL('ceremony.html')
-      : 'ceremony.html'
+    const base =
+      typeof chrome !== 'undefined' && chrome?.runtime?.getURL
+        ? chrome.runtime.getURL('ceremony.html')
+        : 'ceremony.html'
     const url = `${base}?challenge=${encodeURIComponent(msg.challenge)}&rpId=${encodeURIComponent(msg.rpId)}`
     const tab = await tabs.create({ url, active: true })
     pending.set(tab.id, reply)

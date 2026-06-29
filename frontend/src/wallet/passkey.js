@@ -1,6 +1,5 @@
 // secp256r1 (P-256) curve order.
-const SECP256R1_N =
-  0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n
+const SECP256R1_N = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n
 const HALF_N = SECP256R1_N >> 1n
 
 function bytesToBig(b) {
@@ -18,7 +17,8 @@ export function derToRaw(der) {
   i++ // total length
   if (der[i++] !== 0x02) throw new Error('bad DER: no r INTEGER')
   let rLen = der[i++]
-  let r = der.slice(i, i + rLen); i += rLen
+  let r = der.slice(i, i + rLen)
+  i += rLen
   if (der[i++] !== 0x02) throw new Error('bad DER: no s INTEGER')
   let sLen = der[i++]
   let s = der.slice(i, i + sLen)
@@ -46,8 +46,11 @@ export function normalizeLowS(raw) {
 }
 
 function base64urlNoPad(bytes) {
-  return Buffer.from(bytes).toString('base64')
-    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+  return Buffer.from(bytes)
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '')
 }
 
 async function sha256(bytes) {
