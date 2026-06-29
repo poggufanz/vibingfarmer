@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { derToRaw, normalizeLowS } from './passkey.js'
+import { derToRaw, normalizeLowS, buildChallenge, assertChallengeMatches } from './passkey.js'
+import { createHash } from 'crypto'
 
 // secp256r1 curve order n:
 const N = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n
@@ -37,5 +38,24 @@ describe('passkey signature normalization', () => {
     const raw = Uint8Array.from([...r, ...lowS])
     const out = normalizeLowS(raw)
     expect(sToBig(out)).toBe(7n)
+  })
+})
+
+describe('passkey challenge binding', () => {
+  it('challenge == base64url(sha256(preimage)), unpadded, 43 chars for 32B', async () => {
+    const preimage = Uint8Array.from(createHash('sha256').update('vf-auth-entry').digest())
+    const ch = await buildChallenge(preimage)
+    expect(ch).not.toMatch(/[=]/)         // unpadded
+    expect(ch).not.toMatch(/[+/]/)        // url-safe alphabet
+    expect(ch.length).toBe(43)            // sha256 → 32B → 43 base64url chars
+  })
+
+  it('assertChallengeMatches throws when clientDataJSON challenge != expected', async () => {
+    const preimage = Uint8Array.from(createHash('sha256').update('x').digest())
+    const expected = await buildChallenge(preimage)
+    const goodClientData = JSON.stringify({ type: 'webauthn.get', challenge: expected, origin: 'chrome-extension://abc' })
+    const badClientData = JSON.stringify({ type: 'webauthn.get', challenge: 'tampered', origin: 'chrome-extension://abc' })
+    expect(() => assertChallengeMatches(goodClientData, expected)).not.toThrow()
+    expect(() => assertChallengeMatches(badClientData, expected)).toThrow(/challenge mismatch/)
   })
 })

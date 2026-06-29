@@ -44,3 +44,35 @@ export function normalizeLowS(raw) {
   out.set(bigTo32(s), 32)
   return out
 }
+
+function base64urlNoPad(bytes) {
+  return Buffer.from(bytes).toString('base64')
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+async function sha256(bytes) {
+  // Browser path: crypto.subtle. The hash IS the challenge input — the OZ
+  // webauthn-verifier checks the assertion was made over sha256(authPreimage).
+  if (globalThis.crypto?.subtle) {
+    const d = await globalThis.crypto.subtle.digest('SHA-256', bytes)
+    return new Uint8Array(d)
+  }
+  // Node/test path:
+  const { createHash } = await import('crypto')
+  return Uint8Array.from(createHash('sha256').update(Buffer.from(bytes)).digest())
+}
+
+// Caller passes the 32-byte HashIdPreimage::SorobanAuthorization sha256 (the
+// same hash VF's ed25519 path already signs). We re-hash to bind the WebAuthn
+// challenge, matching the OZ verifier's expectation.
+export async function buildChallenge(authPreimageHash) {
+  const h = await sha256(authPreimageHash)
+  return base64urlNoPad(h)
+}
+
+export function assertChallengeMatches(clientDataJSON, expectedChallenge) {
+  const parsed = typeof clientDataJSON === 'string' ? JSON.parse(clientDataJSON) : clientDataJSON
+  if (parsed.challenge !== expectedChallenge) {
+    throw new Error(`challenge mismatch: got ${parsed.challenge}, expected ${expectedChallenge}`)
+  }
+}
