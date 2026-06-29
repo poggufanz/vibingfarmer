@@ -37,8 +37,7 @@ export function u64ScVal(n) {
  * @returns {import('@stellar/stellar-sdk').xdr.ScVal}
  */
 export function bytes32ScVal(v) {
-  const buf =
-    typeof v === 'string' ? Buffer.from(v.replace(/^0x/, ''), 'hex') : Buffer.from(v)
+  const buf = typeof v === 'string' ? Buffer.from(v.replace(/^0x/, ''), 'hex') : Buffer.from(v)
   if (buf.length !== 32) throw new Error(`bytes32 must be 32 bytes, got ${buf.length}`)
   return nativeToScVal(buf, { type: 'bytes' })
 }

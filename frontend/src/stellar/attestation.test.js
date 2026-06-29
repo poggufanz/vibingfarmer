@@ -38,7 +38,11 @@ describe('attestOnChain', () => {
   })
 
   it('truncates label to 9 chars (symbol_short limit) and defaults to "strategy"', async () => {
-    await attestOnChain({ attester: ATTESTER, strategyHash: HASH, label: 'a-very-long-provider-name' })
+    await attestOnChain({
+      attester: ATTESTER,
+      strategyHash: HASH,
+      label: 'a-very-long-provider-name',
+    })
     expect(buildInvokeTx.mock.calls[0][0].args[2]).toEqual({ symbol: 'a-very-lo' })
 
     await attestOnChain({ attester: ATTESTER, strategyHash: HASH })
