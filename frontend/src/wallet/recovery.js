@@ -38,7 +38,13 @@ export async function addRecoverySigner({ accountId, recoveryG, kit }) {
   kit = kit ?? (await makeKit())
   const spec = buildRecoveryRule(accountId)
   const { contextRuleId } = await kit.rules.create({ type: 'custom', params: spec })
-  return kit.signers.addDelegated(contextRuleId, recoveryG)
+  const addDelegatedResult = await kit.signers.addDelegated(contextRuleId, recoveryG)
+  // Surface contextRuleId alongside the delegated-signer result — the rotate step
+  // (rotateToNewPasskey) needs it, and the real SAK addDelegated return shape is
+  // unverified, so the caller must not have to guess. Spreading the SAK result
+  // LAST means an explicit contextRuleId in that result (if any) wins; otherwise
+  // our captured id stands.
+  return { contextRuleId, ...addDelegatedResult }
 }
 
 // Lost-device recovery: add the NEW passkey first, then remove the OLD one.

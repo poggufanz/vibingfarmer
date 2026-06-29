@@ -14,8 +14,12 @@
 //   3. LOST DEVICE → recovery: rotateToNewPasskey() has the recovery signer
 //      authorize add_signer(newPasskey), then remove_signer(oldPasskey) — relayed
 //      via fee-bump (user pays 0 XLM). Add-before-remove: never signer-less.
-//   4. NEGATIVE: the recovery signer attempts a vault deposit → traps on-chain in
-//      __check_auth (its context rule does not permit `deposit`). Funds-safe.
+//   4. NEGATIVE: an UNAUTHORIZED key (random session key) attempts a vault deposit
+//      → rejected on-chain. NOTE: this proves only "an unknown key can't deposit";
+//      the stronger recovery-scope guarantee ("the recovery rule excludes deposit")
+//      is carried by the unit invariant `not.toContain('deposit')` in
+//      recovery.test.js — signing AS the recovery signer is the CAP-71 manual-auth
+//      path we intentionally don't build. Funds-safe either way.
 //
 // Without --submit the script exercises the setup path, prints what WOULD happen,
 // and exits 0 — no testnet state is mutated. Matches the m0b/m2/m3/m4 deferral.
@@ -88,8 +92,9 @@ async function main() {
       console.log('     → kit.signers.addPasskey(...)  (recovery authorizes add_signer(newPasskey))')
       console.log('     → kit.signers.remove(...)       (remove_signer(oldPasskey))')
       console.log('     → relayer fee-bumps the rotate tx (user pays 0 XLM)')
-      console.log('  3. NEGATIVE: recovery signer attempts a vault deposit')
-      console.log('     → __check_auth trap (rule does not permit `deposit`) → REJECTED, funds-safe')
+      console.log('  3. NEGATIVE: an UNAUTHORIZED key attempts a vault deposit → REJECTED on-chain')
+      console.log('     (recovery-scope deposit-exclusion is proven by the unit invariant,')
+      console.log("      recovery.test.js: rule.allowedFns not.toContain('deposit'))")
     }
     process.exit(0)
   }
@@ -116,9 +121,10 @@ async function main() {
     console.log('  → then remove_signer(oldPasskey)  (add-before-remove)')
     console.log('  → relayer fee-bumps (user pays 0 XLM)')
     console.log()
-    console.log('[DRY RUN] NEGATIVE — recovery signer would attempt a vault deposit:')
-    console.log(`  amount: ${DEPOSIT_AMOUNT} base unit`)
-    console.log('  expected: __check_auth trap (rule lacks `deposit`) → on-chain REJECTED')
+    console.log('[DRY RUN] NEGATIVE — an UNAUTHORIZED key would attempt a vault deposit:')
+    console.log(`  amount: ${DEPOSIT_AMOUNT} base unit  (signed with a random key, NOT recovery creds)`)
+    console.log('  expected: on-chain REJECTED. Recovery-scope deposit-exclusion is carried by the')
+    console.log("            unit invariant recovery.test.js: rule.allowedFns not.toContain('deposit')")
     console.log()
     console.log('Run with --submit (+ STELLAR_RELAYER_SECRET + VF_WALLET_CONTRACT_ID + VF_RECOVERY_G) for live execution.')
     process.exit(0)
@@ -141,7 +147,13 @@ async function main() {
     console.error('addRecoverySigner FAILED:', err.message)
     process.exit(1)
   }
-  const contextRuleId = attach?.contextRuleId ?? attach?.ruleId
+  // addRecoverySigner now returns { contextRuleId, ...addDelegatedResult }, so we
+  // read it directly instead of guessing the SAK return shape.
+  const contextRuleId = attach?.contextRuleId
+  if (contextRuleId === undefined) {
+    console.error('addRecoverySigner did not return a contextRuleId — cannot rotate. Aborting.')
+    process.exit(1)
+  }
   console.log()
 
   // ---- 2. lost device → rotate to a fresh passkey ---------------------------
@@ -161,10 +173,24 @@ async function main() {
   }
   console.log()
 
-  // ---- 3. NEGATIVE: recovery signer attempts a deposit → must trap ----------
-  console.log('NEGATIVE: recovery signer attempts a vault deposit (must trap on-chain)…')
+  // ---- 3. NEGATIVE: an UNAUTHORIZED key cannot deposit ----------------------
+  // HONESTY (Task 14 review): this block signs the deposit with a RANDOM session
+  // key, NOT with the recovery G-address credentials. So it proves only "an
+  // unauthorized key is rejected" (trivially true) — it does NOT, on its own,
+  // prove the stronger M5 claim "the recovery signer's rule excludes deposit".
+  // That stronger guarantee is carried ON-CHAIN by the recovery rule's allowedFns
+  // and is asserted as a UNIT INVARIANT in recovery.test.js:
+  //   expect(rule.allowedFns).not.toContain('deposit')
+  // Signing as the recovery signer itself would require building recovery-
+  // credentialed auth entries — the CAP-71 manual-auth-entry path we INTENTIONALLY
+  // do not build (the recovery key is a plain External G-address, used only for
+  // signer-management via the SAK wrappers).
+  // TODO: if/when a recovery-credentialed signing path is ever built, sign this
+  //       deposit attempt with the VF_RECOVERY_G credentials so the trap directly
+  //       exercises the recovery signer's scope (not just an unknown key).
+  console.log('NEGATIVE: an UNAUTHORIZED key attempts a vault deposit (must be rejected)…')
   try {
-    const sessionKey = newSessionKey() // stands in for a recovery-credentialed signer
+    const sessionKey = newSessionKey() // a random key — NOT the recovery credentials
     const tx = await buildAgentDeposit({
       source: smartAccountId,
       vault: SOROBAN_VAULT_ADDRESS,
@@ -178,10 +204,11 @@ async function main() {
       agentAddress: smartAccountId,
     })
     await submitViaRelay({ xdr: signed })
-    console.error('NEGATIVE FAILED: deposit was ACCEPTED — recovery rule is too permissive!')
+    console.error('NEGATIVE FAILED: deposit was ACCEPTED by an unauthorized key!')
     process.exit(1)
   } catch (err) {
-    console.log('NEGATIVE PASSED: deposit trapped on-chain as expected.')
+    console.log('NEGATIVE PASSED: unauthorized-key deposit rejected on-chain as expected.')
+    console.log('  (recovery-scope deposit-exclusion is carried by the unit invariant)')
     console.log('  reason:', err.message)
   }
 

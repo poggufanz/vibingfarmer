@@ -52,7 +52,10 @@ describe('addRecoverySigner', () => {
     expect(calls[0][1].params.allowedFns.sort()).toEqual(['add_signer', 'remove_signer'])
     // delegated signer bound to the returned rule id = recovery G-address
     expect(calls[1]).toEqual(['signers.addDelegated', 7, 'GRECOVERY'])
-    expect(res).toEqual({ ok: true, ruleId: 7, signer: 'GRECOVERY' })
+    // return surfaces contextRuleId (the rotate step needs it) MERGED with the
+    // SAK addDelegated result, so callers never guess the rule id.
+    expect(res.contextRuleId).toBe(7)
+    expect(res).toMatchObject({ ok: true, ruleId: 7, signer: 'GRECOVERY' })
   })
 })
 
@@ -73,7 +76,8 @@ describe('rotateToNewPasskey', () => {
     }
 
     const res = await rotateToNewPasskey({
-      accountId: 'CACCOUNT',
+      // no accountId — rotateToNewPasskey keys off contextRuleId only; passing
+      // accountId would be silently discarded, so the honest API omits it.
       contextRuleId: 3,
       appName: 'Vibing Farmer',
       userName: 'vf-user',
