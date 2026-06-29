@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { createPasskeyWallet, connectPasskeyWallet, sendToken, depositToVault } from './account.js'
+import { createPasskeyWallet, connectPasskeyWallet, sendToken, depositToVault, addAgentSigner } from './account.js'
 
 const store = {}
 beforeEach(() => {
@@ -59,4 +59,14 @@ describe('passkey wallet account', () => {
     const out = await depositToVault({ contractId: 'CWALLET', amount: 10n, eligibility, kit })
     expect(out.xdr).toBe('DXDR')
   })
+})
+
+it('addAgentSigner attaches the ed25519 agent under a scoped context rule', async () => {
+  const kit = {
+    rules: { create: vi.fn(async () => ({ contextRuleId: 3 })) },
+    signers: { addDelegated: vi.fn(async () => ({ ok: true })) },
+  }
+  const out = await addAgentSigner({ agentAddress: 'GAGENT', cap: 100n, vault: 'CVAULT', expiry: 999, kit })
+  expect(kit.signers.addDelegated).toHaveBeenCalledWith(3, 'GAGENT')
+  expect(out.ok).toBe(true)
 })

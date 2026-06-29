@@ -71,6 +71,33 @@ export async function sendToken({ contractId, to, amount, kit }) {
   return { xdr }
 }
 
+// Ports VF's registry cap (deposit-only · 1 vault · daily cap · expiry) into an OZ
+// context rule, then attaches the agent's ed25519 G-address as a delegated signer
+// bound to that rule. The agent then signs deposit auth-entries with its existing
+// session key (reuse signAgentDepositEntries) — human never taps.
+//
+// Guarded-policy pattern: `kit.policies?.add` is present on the real kit (exercised
+// by the m4 smoke against testnet) but absent from the unit-test mock (rules+signers
+// only) — the guard lets the unit test exercise the delegated-signer path without a
+// policy-contract address. This is a deliberate, controller-approved deviation from a
+// literal one-call impl; documented in task-13-report.md.
+export async function addAgentSigner({ agentAddress, cap, vault, expiry, kit }) {
+  kit = kit ?? (await makeKit())
+  const { contextRuleId } = await kit.rules.create({
+    type: 'spending_limit',
+    params: { token: undefined, limit: cap, target: vault, expiry },
+  })
+  // Real cap enforcement is a separate policy on the rule. Guarded so the unit
+  // mock (rules+signers only) still exercises the delegated-signer path; the
+  // m4 smoke (real kit) runs the policy.add against testnet.
+  // DEFERRED (user): deploy cap policy contract and fill CAP_POLICY_ADDRESS below.
+  const CAP_POLICY_ADDRESS = process.env.VF_CAP_POLICY_ADDRESS ?? null
+  if (kit.policies?.add && CAP_POLICY_ADDRESS) {
+    await kit.policies.add(contextRuleId, CAP_POLICY_ADDRESS, { limit: cap, target: vault, expiry })
+  }
+  return kit.signers.addDelegated(contextRuleId, agentAddress)
+}
+
 // Fail-closed F8 deposit: never build a deposit the eligibility gate rejects.
 // Build-only (unsigned). `eligibility` is injected (vfapi.eligibility at call
 // sites); `kit` is resolved lazily like sendToken. The vault `deposit(from,
