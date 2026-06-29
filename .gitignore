@@ -19,6 +19,7 @@ coverage/
 !.dev.vars.example
 .wrangler/
 frontend/dist/
+frontend/extension-dist/
 
 # Node (npx serve, tooling)
 node_modules/
