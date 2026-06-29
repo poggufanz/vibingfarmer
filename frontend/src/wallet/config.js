@@ -4,7 +4,13 @@ import { NETWORK_PASSPHRASE, SOROBAN_RPC_URL, RELAY_PROXY_URL } from '../stellar
 export const RP_ID = import.meta.env?.VITE_VF_RP_ID ?? 'localhost'
 export const RP_NAME = 'Vibing Farmer'
 
-// accountWasmHash + webauthnVerifierAddress are filled in by Task 6 (self-deployed on testnet).
+// Self-deployed on testnet by scripts/soroban/deploy-smart-account.sh (Task 6).
+// Stay null until that runs; the script prints the exact two lines to paste here
+// (synced into deployments/stellar-testnet.json "smartAccount" too — same
+// inline-constant discipline as stellar/config.js).
+export const ACCOUNT_WASM_HASH = null
+export const WEBAUTHN_VERIFIER_ADDRESS = null
+
 export function makeWalletConfig(overrides = {}) {
   return {
     networkPassphrase: NETWORK_PASSPHRASE,
@@ -12,8 +18,8 @@ export function makeWalletConfig(overrides = {}) {
     relayerUrl: RELAY_PROXY_URL,
     rpId: RP_ID,
     rpName: RP_NAME,
-    accountWasmHash: null,
-    webauthnVerifierAddress: null,
+    accountWasmHash: ACCOUNT_WASM_HASH,
+    webauthnVerifierAddress: WEBAUTHN_VERIFIER_ADDRESS,
     ...overrides,
   }
 }
