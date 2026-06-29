@@ -9,9 +9,10 @@ describe('wallet config', () => {
     expect(c.relayerUrl).toBe('/api/stellar-relay')
     expect(c.rpId).toBe(RP_ID)
   })
-  it('exposes wasm/verifier slots that must be set before use', () => {
+  it('has wasm/verifier set to version-matched live testnet artifacts', () => {
     const c = makeWalletConfig()
-    expect('accountWasmHash' in c).toBe(true)
-    expect('webauthnVerifierAddress' in c).toBe(true)
+    // Filled by Task 6 (reused bindings-0.1.2 testnet artifacts) — non-null now.
+    expect(c.accountWasmHash).toMatch(/^[0-9a-f]{64}$/)
+    expect(c.webauthnVerifierAddress).toMatch(/^C[A-Z0-9]{55}$/)
   })
 })
