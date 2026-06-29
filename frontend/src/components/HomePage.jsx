@@ -11,9 +11,10 @@ import { VAULT_CATALOG } from '../config.js'
 import { loadSettings, t } from '../settingsStore.js'
 import { useNavigateTo } from '../router.js'
 import { YieldLine } from './SignatureMark.jsx'
+import { toDisplay } from '../stellar/format.js'
 
 const POLL_MS = 10 * 60 * 1000
-const u = (x) => Number(x || 0) / 1e6
+const u = toDisplay
 const fmtAmt = (n) => (+Number(n || 0).toFixed(2)).toString()
 const formatTime = (ts, now = Date.now()) => {
   if (!ts) return '-'
@@ -285,7 +286,7 @@ export default function HomePage({
             }}
           >
             <span className="live-dot" />
-            relayer 1Shot · gas 0 · network sepolia
+            relayer fee-bump · gas 0 · Stellar testnet
           </div>
         </div>
       </div>

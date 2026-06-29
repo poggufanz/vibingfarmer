@@ -793,9 +793,7 @@ export default function SettingsPage({
                 <>
                   <Row
                     label="Connected Wallet"
-                    desc={
-                      walletPhase === 'upgraded' ? 'eip-7702 active · smart account' : 'regular eoa'
-                    }
+                    desc={walletPhase === 'upgraded' ? 'Session keys active' : 'Standard wallet'}
                   >
                     <span className="mono" style={{ fontSize: 12 }}>
                       {short(userAddress)}
@@ -812,7 +810,7 @@ export default function SettingsPage({
                     label="Active Permissions"
                     desc={
                       permActive
-                        ? `${permissionCount} permission · ${fmtRemaining(permExpiresAt) || '-'} remaining · erc-7715 · batch`
+                        ? `${permissionCount} permission · ${fmtRemaining(permExpiresAt) || '-'} remaining · session scope · batch`
                         : 'no active permission'
                     }
                   >
@@ -823,7 +821,7 @@ export default function SettingsPage({
                     )}
                   </Row>
                   <Divider />
-                  <Row label="Relayer" desc="1Shot permissionless relay · gas cost to user: 0 USDC">
+                  <Row label="Relayer" desc="fee-bump relayer · gas cost to user: 0 USDC">
                     <span />
                   </Row>
                 </>
@@ -959,7 +957,7 @@ export default function SettingsPage({
                 'Host demo key · used only if you set no key AND the deploy configured one; otherwise the app uses a deterministic fallback.',
                 'Tavily · search queries sent to Tavily API.',
                 'DeFiLlama · public API, no wallet data sent.',
-                '1Shot relay · transaction data visible on-chain.',
+                'fee-bump relayer · transaction data visible on-chain.',
                 'All other data stored locally in your browser only.',
               ].map((n) => (
                 <div
@@ -993,7 +991,7 @@ export default function SettingsPage({
               <div style={{ marginTop: 12 }}>
                 {[
                   ['Version', '1.0.0-beta'],
-                  ['Network', 'Base Sepolia'],
+                  ['Network', 'Stellar testnet'],
                   ['Contracts', 'verified on Sourcify'],
                 ].map(([k, v]) => (
                   <div
@@ -1016,15 +1014,15 @@ export default function SettingsPage({
               <ContractRow name="VFUSD token" addr={SOROBAN_TOKEN_ADDRESS} />
               <Divider />
               <div style={{ fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 1.6 }}>
-                Powered by: MetaMask Smart Accounts Kit × 1Shot API × Venice AI
+                Powered by: Soroban session keys × fee-bump relayer × Venice AI
               </div>
               <div style={{ fontSize: 11.5, marginTop: 8, lineHeight: 1.8 }}>
                 {[
-                  '1Shot Gasless Gas Abstraction',
+                  'Fee-bump Relayer Gas Abstraction',
                   'Venice AI Strategy Generator',
                   'Multi-Agent Smart Swarm',
                   'Parallel Swarm Coordination',
-                  'ERC-7715 Scoped Cryptographic Boundaries',
+                  'Soroban Session-Key Scope',
                 ].map((p) => (
                   <div key={p}>
                     <span style={{ color: 'var(--ok)' }}>✓</span> {p}

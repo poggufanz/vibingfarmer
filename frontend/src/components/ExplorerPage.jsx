@@ -1,7 +1,7 @@
 // ExplorerPage.jsx
 // Public on-chain verification surface for Vibing Farmer. No wallet required —
 // judges and users can audit every deployed contract, live stat, and strategy
-// attestation against Base Sepolia directly.
+// attestation against Stellar testnet directly.
 //
 // Aesthetic: matches LandingHero's editorial-finance terminal — dark canvas,
 // single acid accent, mono for every address/hash/stat. Inherits palette tokens
@@ -141,8 +141,44 @@ function StatBlock({ label, value, loading }) {
   )
 }
 
+// Decoded strategy_hash arrives as bytes (BytesN<32>); normalize to a 0x-hex string.
+function hashHex(v) {
+  if (!v) return ''
+  if (typeof v === 'string') return v.startsWith('0x') ? v : '0x' + v
+  try {
+    return '0x' + Buffer.from(v).toString('hex')
+  } catch {
+    return String(v)
+  }
+}
+
+const TX_BASE = 'https://stellar.expert/explorer/testnet/tx/'
+
 function AttestationsTable({ strategies }) {
-  if (!strategies.length) {
+  // On-chain strategy_attested events — the public, immutable proof. Polled best-effort;
+  // the localStorage rows below stay as a fallback so the table is never empty pre-attest.
+  const [onchain, setOnchain] = useState([])
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      try {
+        const { rpcServer } = await import('../stellar/client.js')
+        const { pollEvents } = await import('../stellar/events.js')
+        const server = await rpcServer()
+        const { sequence } = await server.getLatestLedger()
+        const startLedger = Math.max(1, sequence - 8000)
+        const { events } = await pollEvents({ server, startLedger })
+        if (alive) setOnchain(events.filter((e) => e.type === 'strategy_attested'))
+      } catch {
+        /* non-blocking — table still shows localStorage rows */
+      }
+    })()
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  if (!strategies.length && !onchain.length) {
     return (
       <div className="ex-empty">
         No attestations yet. Start a strategy to see on-chain evidence.
@@ -160,6 +196,17 @@ function AttestationsTable({ strategies }) {
           </tr>
         </thead>
         <tbody>
+          {onchain.map((e) => (
+            <tr key={e.cursor || e.txHash}>
+              <td className="ex-table__time">ledger {e.ledger}</td>
+              <td className="ex-table__hash">
+                <a href={`${TX_BASE}${e.txHash}`} target="_blank" rel="noreferrer">
+                  {shortHash(hashHex(e.data?.strategy_hash))} ↗
+                </a>
+              </td>
+              <td className="ex-table__proto">{String(e.data?.label || 'on-chain')}</td>
+            </tr>
+          ))}
           {strategies.map((s) => (
             <tr key={s.id || s.strategyHash || s.timestamp}>
               <td className="ex-table__time">{timeAgo(s.timestamp || s.savedAt || Date.now())}</td>

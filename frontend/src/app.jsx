@@ -34,10 +34,9 @@ import {
   subscribeAgentRevoked,
 } from './stellar/index.js'
 import { generateStrategy } from './venice.js'
+import { toDisplay, toBaseUnits } from './stellar/format.js'
 import { saveResume, loadResume, clearResume } from './strategy/sessionResume.js'
 import { attestStrategyOnChain, formatAttestation } from './attestation.js'
-import { detectMetaMaskVersion } from './flaskDetect.js'
-import FlaskGate from './components/FlaskGate.jsx'
 import OnboardingFlow from './components/OnboardingFlow.jsx'
 import { OrchestratorAgent } from './orchestrator.js'
 import { makeAgentId } from './worker.js'
@@ -91,6 +90,10 @@ import { councilVerdict } from './strategy/council.js'
 import { reflect } from './strategy/reflector.js'
 import { increment as playbookIncrement, weight as playbookWeight } from './strategy/playbook.js'
 import { saveCycle, getCycles, getJournalSummary } from './strategy/cycleJournal.js'
+import { computeBasket } from './strategy/basketFilter.js'
+import { mintToken } from './strategy/eligibilityGate.js'
+import { buildEligibilitySentence, vaultEligibilityLabel } from './strategy/eligibilitySentence.js'
+import { SNAPSHOT } from './strategy/vaultFacts.js'
 import { recordDecision, getDecisions, getDecisionSummary } from './strategy/decisionLog.js'
 import { resolveCouncilConflict, councilSpecialistVerdict, askVeniceJson } from './venice.js'
 import { councilReview, buildCouncilInput } from './strategy/councilReview.js'
@@ -334,16 +337,10 @@ const App = () => {
   const [loopTick, setLoopTick] = useS(0)
   const [loopPhase, setLoopPhase] = useS(null) // live pipeline phase from monitorLoop onPhase
   const [veniceAuth, setVeniceAuth] = useS(null)
-  const [mmVersion, setMmVersion] = useS(null) // MetaMask flavor/version — Flask detection (once on mount)
   const [onboarded, setOnboarded] = useS(() => localStorage.getItem('yv_onboarded') === 'true')
   const [skipLanding, setSkipLanding] = useS(
     () => localStorage.getItem('yv_skip_landing') === 'true'
   )
-
-  // Detect MetaMask flavor/version once on mount — Flask gate for ERC-7715.
-  useE(() => {
-    detectMetaMaskVersion().then(setMmVersion)
-  }, [])
 
   // Strategy Attestation — NON-BLOCKING, best-effort. Fires once a wallet provider
   // exists (post-connect) and the AI strategy carries a deterministic hash. Any
@@ -351,7 +348,7 @@ const App = () => {
   useE(() => {
     if (!rawStrategy?.strategyHash || strategyAttestation || attesting) return
     setAttesting(true)
-    attestStrategyOnChain(rawStrategy)
+    attestStrategyOnChain(rawStrategy, { attester: realAddress })
       .then((a) => setStrategyAttestation(formatAttestation(a)))
       .finally(() => setAttesting(false))
   }, [rawStrategy, realAddress])
@@ -729,6 +726,38 @@ const App = () => {
     })
   }, [strategy, amount, risk])
 
+  // F8 Enforcement-A view-model: per-protocol eligibility verdicts for the approval card. Pure +
+  // snapshot-backed (no live call). The fused sentence anchors on the first survivor.
+  const eligibility = useM(() => {
+    if (!strategy?.agents) return null
+    const { verdictBySlug, survivors } = computeBasket(strategy.agents)
+    const firstSurvivor = survivors[0]
+    const fusedSentence = firstSurvivor
+      ? buildEligibilitySentence(verdictBySlug[firstSurvivor.vault.protocol], {
+          targetMaxLossPct: 5,
+          protocolLabel:
+            SNAPSHOT[firstSurvivor.vault.protocol]?.meta?.label || firstSurvivor.vault.protocol,
+        })
+      : null
+    const rows = strategy.agents.map((a) => {
+      const v = verdictBySlug[a.vault.protocol]
+      const asOf = new Date(SNAPSHOT[a.vault.protocol]?.facts?.tvl?.asOf || 0)
+        .toISOString()
+        .slice(0, 10)
+      return {
+        id: a.id,
+        eligible: !!v?.eligible,
+        isFixture: !!v?.isFixture,
+        protocolLabel: SNAPSHOT[a.vault.protocol]?.meta?.label || a.vault.protocol,
+        label: vaultEligibilityLabel(v),
+        mainnetLine: `Protocol credibility: ${SNAPSHOT[a.vault.protocol]?.meta?.label || a.vault.protocol} — audited, TVL from snapshot`,
+        testnetLine: 'This deposit: testnet — APR illustrative, realized yield may be ~0',
+        asOf,
+      }
+    })
+    return { fusedSentence, rows }
+  }, [strategy])
+
   // AI Council deliberation for the proposed allocation. Async (3 parallel AI
   // calls + possible synthesis call) so it runs as an effect, not a useMemo. Uses
   // the SAME live signals as the simulation panel. AI-only: each specialist retries
@@ -808,7 +837,7 @@ const App = () => {
     addLog({
       event: 'OrchestratorPlanned',
       meta: `rebalance review · ${alert.fromVault} → ${alert.toProtocol} (+${alert.apyGain}%)`,
-      detail: `Venice AI flagged ${alert.toProtocol} at ${alert.toApy}% vs ${alert.fromVault} at ${alert.fromApy}% (+${alert.apyGain}%). Rebalancing requests a fresh ERC-7715 permission for the new vault.`,
+      detail: `Venice AI flagged ${alert.toProtocol} at ${alert.toApy}% vs ${alert.fromVault} at ${alert.fromApy}% (+${alert.apyGain}%). Rebalancing authorizes a fresh Soroban session-key scope for the new vault.`,
     })
 
   // Kill switch — user-signed Registry.revoke (works even if the relayer is down).
@@ -1134,7 +1163,7 @@ const App = () => {
   const handlePermConfirm = async () => {
     setPermPhase('idle')
     setPermError(null)
-    // Stellar path: there is no ERC-7715 grant step. The per-agent authorize + fund (one
+    // Stellar path: there is no EVM-style permission-grant step. The per-agent authorize + fund (one
     // user-signed wallet-kit tx per agent) happens inside orchestrator.dispatch. Just advance
     // to execute and let the orchestrator prompt the wallet.
     const expiresAtMs = Date.now() + 86400 * 1000
@@ -1181,11 +1210,28 @@ const App = () => {
     const init = makeInitialExecState(strategy.agents)
     setExecMap(init)
 
-    // Convert design strategy format → orchestrator's expected { vaults: [...] } format
+    // Enforcement A — eligibility gate. Drop ineligible protocols BEFORE dispatch; all-fail = hard stop.
+    const { verdictBySlug, survivors, dropped, allFailed } = computeBasket(strategy.agents)
+    dropped.forEach((d) =>
+      addLog({
+        event: 'VaultRejected',
+        agent: d.agent.id,
+        meta: (d.verdict.reasons || []).join('; '),
+      })
+    )
+    if (allFailed) {
+      addLog({ event: 'ExecutionBlocked', meta: 'No eligible vault — nothing will run.' })
+      setStage('permission') // stay on the approval card; do NOT dispatch
+      return
+    }
+    // dispatchSet ⊆ survivors: only survivors get a plan; allocations re-normalized to sum 1.
+    // Each survivor carries a freshly-minted eligibility token (Enforcement B asserts it worker-side).
     const yvStrategy = {
-      vaults: strategy.agents.map((a) => ({
+      vaults: survivors.map((a, i) => ({
         address: a.vault.addr,
-        allocation: a.allocation / strategy.total,
+        allocation: a.allocationFraction,
+        protocolSlug: a.vault.protocol,
+        eligibilityToken: mintToken(verdictBySlug[a.vault.protocol], i),
       })),
     }
 
@@ -1286,7 +1332,7 @@ const App = () => {
                     title: `${stepName} ${data.status === 'done' ? 'confirmed' : 'executing'}`,
                     meta: data.txHash
                       ? `tx ${shortAddr(data.txHash)}${data.gasMethod === 'user-signed' ? ' · ⚠ user-signed' : ''}`
-                      : 'via 1Shot relayer',
+                      : 'via fee-bump relayer',
                     hash: data.txHash || null,
                     t: nowT(),
                   },
@@ -1374,7 +1420,7 @@ const App = () => {
               apy: ag.vault.apy,
               workerLabel: ag.name,
               workerId: ag.id,
-              network: 'sepolia',
+              network: 'stellar-testnet',
             })
         }
 
@@ -1462,14 +1508,14 @@ const App = () => {
     }
     // Allocation-based FALLBACK only — used when the chain read is unavailable (no RPC)
     // or a vault reads 0 (deposit tx not yet mined). Stored in raw token
-    // units (allocation USDC * 1e6); the display layer divides by 1e6.
+    // 7-dp base units (allocation USDC * 1e7); display divides by 1e7 (toDisplay).
     const seedPositions = {}
     ;(strategy?.agents || []).forEach((a) => {
       if (execMap[a.id]?.status === 'confirmed') {
         const addr = a.vault.addr
         const prev = seedPositions[addr]
         const prevBal = BigInt(prev?.balance || '0')
-        const newBal = BigInt(Math.round(a.allocation * 1e6))
+        const newBal = toBaseUnits(a.allocation)
         seedPositions[addr] = {
           vaultName: a.vault.name,
           balance: (prevBal + newBal).toString(), // sum if multiple agents target same vault
@@ -1710,7 +1756,6 @@ const App = () => {
           <ConnectCard
             phase={connectPhase}
             error={connectError}
-            mmVersion={mmVersion}
             onConnect={handleConnect}
             onUpgrade={handleUpgrade}
             onDone={handleConnectDone}
@@ -1733,16 +1778,10 @@ const App = () => {
           />
         )
       case 'permission':
-        if (mmVersion && !mmVersion.supportsERC7715)
-          return (
-            <FlaskGate
-              detectedType={mmVersion.type}
-              onRetry={() => detectMetaMaskVersion().then(setMmVersion)}
-            />
-          )
         return (
           <PermissionCard
             strategy={strategy}
+            eligibility={eligibility}
             phase={permPhase}
             error={permError}
             onGrant={handleGrant}
@@ -1934,8 +1973,8 @@ const App = () => {
                               {shortAddr(s.agent)}
                             </div>
                             <div style={{ fontSize: 10.5, opacity: 0.6 }}>
-                              cap {(Number(s.capPerPeriod) / 1e6).toFixed(2)} · max-at-risk{' '}
-                              {(Number(s.maxAtRisk) / 1e6).toFixed(2)} USDC
+                              cap {toDisplay(s.capPerPeriod).toFixed(2)} · max-at-risk{' '}
+                              {toDisplay(s.maxAtRisk).toFixed(2)} USDC
                             </div>
                           </div>
                           {s.revoked ? (

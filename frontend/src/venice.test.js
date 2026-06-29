@@ -1,5 +1,10 @@
-import { describe, it, expect } from 'vitest'
-import { validateVeniceResponse, parseSpecialistVerdict, resolveProvider } from './venice.js'
+import { describe, it, expect, vi } from 'vitest'
+import {
+  validateVeniceResponse,
+  parseSpecialistVerdict,
+  resolveProvider,
+  generateAgentSkills,
+} from './venice.js'
 import { AI_PROXY_URL } from './config.js'
 
 const VAULTS = [
@@ -148,5 +153,34 @@ describe('parseSpecialistVerdict', () => {
     )
     expect(v.citedRules).toEqual([])
     expect(v.concerns).toEqual([])
+  })
+})
+
+describe('skill cap is 7-dp', () => {
+  // Stub storage (so loadSettings works in node) + reject fetch -> AI call fails ->
+  // generateAgentSkills returns its fallback skill, whose deposit cap we assert.
+  const memStore = () => {
+    const m = new Map()
+    return {
+      getItem: (k) => (m.has(k) ? m.get(k) : null),
+      setItem: (k, v) => m.set(k, String(v)),
+      removeItem: (k) => m.delete(k),
+    }
+  }
+
+  it('encodes deposit maxAmount in 7-dp base units', async () => {
+    vi.stubGlobal('localStorage', memStore())
+    vi.stubGlobal('sessionStorage', memStore())
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new Error('no network')))
+    )
+    try {
+      const skill = await generateAgentSkills({ agentId: 'w1', vault: '0xAAA', amount: 100 })
+      const maxAmount = skill.skills?.deposit?.maxAmount
+      expect(String(maxAmount)).toBe('1000000000') // 100 USDC at 7-dp, not the legacy 6-dp scale
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })

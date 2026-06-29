@@ -5,6 +5,7 @@
 // strategy JSON. An on-chain Soroban attestation can be added later as an additive feature.)
 
 import { hash } from '@stellar/stellar-sdk' // sync sha256 (already a dep — no ethers)
+import { attestOnChain } from './stellar/attestation.js'
 
 /**
  * Hash strategy + reasoning into a deterministic 0x-prefixed 32-byte hex string.
@@ -29,17 +30,22 @@ export function hashStrategy(strategy) {
 }
 
 /**
- * Strategy attestation. No on-chain tx (the Stellar vault is deposit-only and carries no
- * attest method). We compute the deterministic strategyHash (verifiable off-chain by
- * reproducing it from the strategy JSON) and return it without a txHash. NEVER blocking —
- * strategy execution always continues.
+ * Strategy attestation. Always computes the deterministic strategyHash (verifiable off-chain
+ * by reproducing it from the strategy JSON). When an `attester` (connected wallet) is given,
+ * additionally anchors the hash on-chain via the Soroban attestation contract (user-signed
+ * inner tx, relayer fee-bumped → 0 XLM for the user) and captures the tx hash. NEVER blocking:
+ * a missing wallet or a relay failure falls back to the off-chain hash; strategy execution
+ * always continues.
  * @param {object} strategy - raw Venice AI strategy output
- * @returns {Promise<{strategyHash}|null>}
+ * @param {{ attester?: string }} [opts]
+ * @returns {Promise<{strategyHash, txHash, explorerUrl}|null>}
  */
-export async function attestStrategyOnChain(strategy) {
+export async function attestStrategyOnChain(strategy, { attester } = {}) {
   try {
     const strategyHash = strategy.strategyHash || hashStrategy(strategy)
-    return { strategyHash, txHash: null, blockNumber: null }
+    if (!attester) return { strategyHash, txHash: null, explorerUrl: null }
+    const r = await attestOnChain({ attester, strategyHash, label: strategy.generatedBy })
+    return { strategyHash, txHash: r?.hash || null, explorerUrl: null }
   } catch (err) {
     console.warn('[Attestation] Skipped (non-blocking):', err.message)
     return null
@@ -52,11 +58,12 @@ export async function attestStrategyOnChain(strategy) {
  */
 export function formatAttestation(attestation) {
   if (!attestation) return null
+  const txHash = attestation.txHash || null
   return {
     hash: attestation.strategyHash.slice(0, 10) + '...',
     fullHash: attestation.strategyHash,
-    txHash: attestation.txHash || null,
-    explorerUrl: null, // off-chain hash — no tx to link
-    label: 'Strategy hash (off-chain verifiable)',
+    txHash,
+    explorerUrl: txHash ? `https://stellar.expert/explorer/testnet/tx/${txHash}` : null,
+    label: txHash ? 'Strategy attested on-chain' : 'Strategy hash (off-chain verifiable)',
   }
 }

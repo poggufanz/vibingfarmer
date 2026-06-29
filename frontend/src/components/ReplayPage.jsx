@@ -12,12 +12,13 @@
 
 import { useEffect, useState } from 'react'
 import NavBar from './NavBar.jsx'
+import { toDisplay } from '../stellar/format.js'
 
 const GROUND_URL = '/data/replay-usdc-depeg.json'
 const MC_URL = '/data/replay-mc.json'
 
 const fmtWeth = (wei) => `${(Number(wei) / 1e18).toFixed(2)} WETH`
-const fmtUsdc = (raw) => `${(Number(raw) / 1e6).toLocaleString()} USDC`
+const fmtUsdc = (raw) => `${toDisplay(raw).toLocaleString()} USDC`
 const fmtSeed = (seed) => `${seed} (0x${Number(seed).toString(16).toUpperCase()})`
 
 /* ----------------------------- data hook ----------------------------- */
@@ -32,9 +33,15 @@ function useReplayData() {
         if (!g.ok || !m.ok) throw new Error('replay data not found')
         return Promise.all([g.json(), m.json()])
       })
-      .then(([ground, mc]) => { if (alive) setState({ ground, mc, error: null }) })
-      .catch((err) => { if (alive) setState({ ground: null, mc: null, error: err.message }) })
-    return () => { alive = false }
+      .then(([ground, mc]) => {
+        if (alive) setState({ ground, mc, error: null })
+      })
+      .catch((err) => {
+        if (alive) setState({ ground: null, mc: null, error: err.message })
+      })
+    return () => {
+      alive = false
+    }
   }, [])
 
   return state
@@ -56,12 +63,23 @@ function OutcomeBand({ manual, agentic }) {
   const scale = (v) => CHART_X0 + ((Number(v) - min) / (max - min)) * CHART_W
 
   return (
-    <svg className="rp-band" viewBox="0 0 640 170" role="img" aria-label="Manual reaction-time band versus agentic deterministic outcome, in WETH received">
+    <svg
+      className="rp-band"
+      viewBox="0 0 640 170"
+      role="img"
+      aria-label="Manual reaction-time band versus agentic deterministic outcome, in WETH received"
+    >
       <line className="rp-axis" x1={CHART_X0} x2={CHART_X1} y1="150" y2="150" />
-      <text className="rp-axis-label" x={CHART_X0} y="166">{fmtWeth(min)}</text>
-      <text className="rp-axis-label rp-axis-label--end" x={CHART_X1} y="166">{fmtWeth(max)}</text>
+      <text className="rp-axis-label" x={CHART_X0} y="166">
+        {fmtWeth(min)}
+      </text>
+      <text className="rp-axis-label rp-axis-label--end" x={CHART_X1} y="166">
+        {fmtWeth(max)}
+      </text>
 
-      <text className="rp-row-label" x={CHART_X0} y="28">Manual — reaction-time variance (P5–P95, P50 marked)</text>
+      <text className="rp-row-label" x={CHART_X0} y="28">
+        Manual — reaction-time variance (P5–P95, P50 marked)
+      </text>
       <rect
         className="rp-band-rect"
         x={scale(manual.p5)}
@@ -72,8 +90,16 @@ function OutcomeBand({ manual, agentic }) {
       />
       <line className="rp-band-p50" x1={scale(manual.p50)} x2={scale(manual.p50)} y1="34" y2="70" />
 
-      <text className="rp-row-label" x={CHART_X0} y="100">Agentic — single deterministic outcome (no variance)</text>
-      <line className="rp-agentic-drop" x1={scale(agentic.deterministic)} x2={scale(agentic.deterministic)} y1="92" y2="150" />
+      <text className="rp-row-label" x={CHART_X0} y="100">
+        Agentic — single deterministic outcome (no variance)
+      </text>
+      <line
+        className="rp-agentic-drop"
+        x1={scale(agentic.deterministic)}
+        x2={scale(agentic.deterministic)}
+        y1="92"
+        y2="150"
+      />
       <circle className="rp-agentic-marker" cx={scale(agentic.deterministic)} cy="110" r="6" />
     </svg>
   )
@@ -113,11 +139,13 @@ export default function ReplayPage() {
         <header className="rp-header">
           <div className="rp-header__top">
             <h1 className="rp-title">Historical Replay</h1>
-            <span className="rp-net"><span className="rp-net__dot" /> static JSON · no wallet · no RPC</span>
+            <span className="rp-net">
+              <span className="rp-net__dot" /> static JSON · no wallet · no RPC
+            </span>
           </div>
           <p className="rp-lede">
-            USDC depeg, March 11 2023 — replayed on a pinned mainnet fork. Real
-            on-chain swaps at five reaction delays; never a prediction.
+            USDC depeg, March 11 2023 — replayed on a pinned mainnet fork. Real on-chain swaps at
+            five reaction delays; never a prediction.
           </p>
         </header>
 
@@ -133,35 +161,53 @@ export default function ReplayPage() {
         {mc && ground && (
           <>
             <section className="rp-section" aria-labelledby="rp-outcome">
-              <h2 id="rp-outcome" className="rp-section__title">Outcome Range</h2>
+              <h2 id="rp-outcome" className="rp-section__title">
+                Outcome Range
+              </h2>
               <p className="rp-section__sub">
-                Swapping {fmtUsdc(ground.amountInUsdc)} for WETH at block {mc.provenance.signalBlock}.
-                Each leg shows what the same swap would have returned at a different reaction delay.
+                Swapping {fmtUsdc(ground.amountInUsdc)} for WETH at block{' '}
+                {mc.provenance.signalBlock}. Each leg shows what the same swap would have returned
+                at a different reaction delay.
               </p>
               <OutcomeBand manual={mc.manual} agentic={mc.agentic} />
               <div className="rp-stats">
                 <StatBlock label="Manual P5" value={fmtWeth(mc.manual.p5)} />
                 <StatBlock label="Manual P50" value={fmtWeth(mc.manual.p50)} />
                 <StatBlock label="Manual P95" value={fmtWeth(mc.manual.p95)} />
-                <StatBlock label="Agentic (deterministic)" value={fmtWeth(mc.agentic.deterministic)} />
+                <StatBlock
+                  label="Agentic (deterministic)"
+                  value={fmtWeth(mc.agentic.deterministic)}
+                />
               </div>
             </section>
 
             <section className="rp-section" aria-labelledby="rp-assumptions">
-              <h2 id="rp-assumptions" className="rp-section__title">Assumptions</h2>
+              <h2 id="rp-assumptions" className="rp-section__title">
+                Assumptions
+              </h2>
               <div className="rp-arows">
-                <AssumptionRow label="Ground truth source" value={mc.assumptions.groundTruthSource} />
+                <AssumptionRow
+                  label="Ground truth source"
+                  value={mc.assumptions.groundTruthSource}
+                />
                 <AssumptionRow label="Amount in" value={fmtUsdc(ground.amountInUsdc)} />
                 <AssumptionRow label="Manual delay model" value={mc.assumptions.manualDelay} />
                 <AssumptionRow label="Agentic delay model" value={mc.assumptions.agenticDelay} />
-                <AssumptionRow label="Iterations" value={mc.assumptions.iterations.toLocaleString()} />
+                <AssumptionRow
+                  label="Iterations"
+                  value={mc.assumptions.iterations.toLocaleString()}
+                />
                 <AssumptionRow label="Seed" value={fmtSeed(mc.seed)} />
-                <AssumptionRow label="Signal block" value={`#${mc.provenance.signalBlock.toLocaleString()}`} />
+                <AssumptionRow
+                  label="Signal block"
+                  value={`#${mc.provenance.signalBlock.toLocaleString()}`}
+                />
                 <AssumptionRow label="Chain ID" value={mc.provenance.chainId} />
                 <AssumptionRow label="Depeg date" value={mc.provenance.depegDate} />
               </div>
               <p className="rp-disclaimer">
-                {mc.label}. Forward-looking scenarios are scoped to this replay — not a predictive model.
+                {mc.label}. Forward-looking scenarios are scoped to this replay — not a predictive
+                model.
               </p>
             </section>
           </>

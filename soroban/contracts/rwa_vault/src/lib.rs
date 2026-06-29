@@ -7,12 +7,13 @@ use stellar_tokens::fungible::Base;
 
 pub mod types;
 pub mod storage;
+mod blend;
 mod vault;
 mod test;
 
 use storage::{
-    extend_instance, get_acc, get_drip_epoch, get_token, get_total_principal,
-    set_acc, set_drip_epoch, set_token, set_total_principal,
+    extend_instance, get_acc, get_drip_epoch, get_pool, get_token, get_total_principal,
+    set_acc, set_drip_epoch, set_pool, set_token, set_total_principal,
 };
 
 #[contract]
@@ -64,6 +65,24 @@ impl RwaVault {
     pub fn drip_epoch(e: &Env) -> u64 {
         get_drip_epoch(e)
     }
+    pub fn pool(e: &Env) -> Option<Address> {
+        get_pool(e)
+    }
+
+    /// One-time admin wiring of the Blend lending pool. Once set, deposits supply into it.
+    pub fn set_pool(e: &Env, caller: Address, pool: Address) -> Result<(), types::VaultError> {
+        let admin = access_control::get_admin(e).unwrap();
+        if admin != caller {
+            return Err(types::VaultError::PoolNotSet); // not admin
+        }
+        caller.require_auth();
+        if get_pool(e).is_some() {
+            return Err(types::VaultError::PoolAlreadySet);
+        }
+        set_pool(e, &pool);
+        extend_instance(e);
+        Ok(())
+    }
 
     // ----- deposit / redeem -----
     /// deposit(from, amount) -> shares minted. fn-symbol `deposit`, amount = args[1] (1a pin).
@@ -80,6 +99,11 @@ impl RwaVault {
     /// Admin-only mock yield source: fund + distribute a dividend pro-rata (FOBXX-faithful).
     pub fn drip(e: &Env, amount: i128) -> Result<(), types::VaultError> {
         vault::drip(e, amount)
+    }
+
+    /// Permissionless real-yield harvest from the wired Blend pool. Returns interest distributed.
+    pub fn harvest(e: &Env) -> Result<i128, types::VaultError> {
+        vault::harvest(e)
     }
 
     /// Permissionless: pay `holder` their accrued asset dividend. Returns amount paid.

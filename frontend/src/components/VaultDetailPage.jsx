@@ -6,14 +6,46 @@ import { fetchDeFiLlamaVaults } from '../defiLlama.js'
 import { fetchApyHistory } from '../apyHistory.js'
 import { generateSparkline, calcApyStats } from '../sparkline.js'
 import { useNavigateTo } from '../router.js'
+import { toDisplay } from '../stellar/format.js'
 
 const short = (a) => (a ? `${a.slice(0, 10)}…${a.slice(-8)}` : '')
 
-const backBtn = { appearance: 'none', border: 0, background: 'transparent', font: 'inherit', fontSize: 12, color: 'var(--text-muted)', cursor: 'pointer', padding: 0, textDecoration: 'underline' }
+const backBtn = {
+  appearance: 'none',
+  border: 0,
+  background: 'transparent',
+  font: 'inherit',
+  fontSize: 12,
+  color: 'var(--text-muted)',
+  cursor: 'pointer',
+  padding: 0,
+  textDecoration: 'underline',
+}
 const divider = { borderTop: '1px solid var(--border)', margin: '20px 0' }
-const sectionLabel = { fontSize: 11, color: 'var(--text-muted)', textTransform: 'capitalize', letterSpacing: '0.01em', fontWeight: 500 }
-const metricCard = { background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', padding: '10px 12px' }
-const pillBtn = { appearance: 'none', border: '.5px solid rgba(255,255,255,.18)', borderRadius: 5, background: 'rgba(255,255,255,.06)', color: 'inherit', font: 'inherit', fontSize: 10.5, padding: '4px 9px', cursor: 'pointer' }
+const sectionLabel = {
+  fontSize: 11,
+  color: 'var(--text-muted)',
+  textTransform: 'capitalize',
+  letterSpacing: '0.01em',
+  fontWeight: 500,
+}
+const metricCard = {
+  background: 'var(--bg-card)',
+  border: '1px solid var(--border)',
+  borderRadius: 'var(--radius-md)',
+  padding: '10px 12px',
+}
+const pillBtn = {
+  appearance: 'none',
+  border: '.5px solid rgba(255,255,255,.18)',
+  borderRadius: 5,
+  background: 'rgba(255,255,255,.06)',
+  color: 'inherit',
+  font: 'inherit',
+  fontSize: 10.5,
+  padding: '4px 9px',
+  cursor: 'pointer',
+}
 const extLink = { color: 'var(--text-muted)', fontSize: 11, textDecoration: 'underline' }
 
 export default function VaultDetailPage({ positions = {} }) {
@@ -37,32 +69,55 @@ export default function VaultDetailPage({ positions = {} }) {
     const pid = liveData?.poolId
     if (!pid) return
     let alive = true
-    fetchApyHistory(pid).then((h) => { if (alive && h) setApyStats(calcApyStats(h)) })
-    return () => { alive = false }
+    fetchApyHistory(pid).then((h) => {
+      if (alive && h) setApyStats(calcApyStats(h))
+    })
+    return () => {
+      alive = false
+    }
   }, [liveData?.poolId])
 
   if (!catalog) {
     return (
       <div className="stage enter" style={{ maxWidth: 600, margin: '0 auto', padding: 32 }}>
-        <button onClick={() => { if (window.history.length > 1) window.history.back(); else navigateTo('home'); }} style={backBtn}>← Back</button>
-        <div className="mono" style={{ marginTop: 28, color: 'var(--text-muted)', fontSize: 14 }}>vault not found</div>
+        <button
+          onClick={() => {
+            if (window.history.length > 1) window.history.back()
+            else navigateTo('home')
+          }}
+          style={backBtn}
+        >
+          ← Back
+        </button>
+        <div className="mono" style={{ marginTop: 28, color: 'var(--text-muted)', fontSize: 14 }}>
+          vault not found
+        </div>
         <div className="mono" style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 6 }}>
           No vault data for protocol: {protocol}
         </div>
-        <button onClick={() => { if (window.history.length > 1) window.history.back(); else navigateTo('home'); }} style={{ ...backBtn, marginTop: 18 }}>← Back</button>
+        <button
+          onClick={() => {
+            if (window.history.length > 1) window.history.back()
+            else navigateTo('home')
+          }}
+          style={{ ...backBtn, marginTop: 18 }}
+        >
+          ← Back
+        </button>
       </div>
     )
   }
 
   const apy = liveData?.apy ?? catalog.apy
   const tvl = liveData?.tvlFormatted ?? '-'
-  const riskColor = catalog.risk === 'low' ? 'var(--ok)' : catalog.risk === 'medium' ? '#f59e0b' : '#f97316'
+  const riskColor =
+    catalog.risk === 'low' ? 'var(--ok)' : catalog.risk === 'medium' ? '#f59e0b' : '#f97316'
 
   // User position — match by contract address
   const posEntry = catalog.address
     ? Object.entries(positions).find(([a]) => a.toLowerCase() === catalog.address.toLowerCase())
     : null
-  const posBalance = posEntry ? Number(posEntry[1].balance || 0) / 1e6 : null
+  const posBalance = posEntry ? toDisplay(posEntry[1].balance) : null
 
   const handleFarm = () => {
     sessionStorage.setItem('yv_prefill_protocol', protocol)
@@ -73,15 +128,33 @@ export default function VaultDetailPage({ positions = {} }) {
 
   return (
     <div className="stage enter" style={{ maxWidth: 600, margin: '0 auto', padding: 32 }}>
-      <button onClick={() => { if (window.history.length > 1) window.history.back(); else navigateTo('home'); }} style={backBtn}>← Back to Vaults</button>
+      <button
+        onClick={() => {
+          if (window.history.length > 1) window.history.back()
+          else navigateTo('home')
+        }}
+        style={backBtn}
+      >
+        ← Back to Vaults
+      </button>
 
       <div style={{ marginTop: 22 }}>
-        <span className="mono" style={{ fontSize: 10, color: 'var(--text-faint)', letterSpacing: '-0.01em', textTransform: 'lowercase' }}>
+        <span
+          className="mono"
+          style={{
+            fontSize: 10,
+            color: 'var(--text-faint)',
+            letterSpacing: '-0.01em',
+            textTransform: 'lowercase',
+          }}
+        >
           {protocol}
         </span>
       </div>
       <h2 style={{ fontSize: 22, fontWeight: 600, margin: '4px 0 6px' }}>{catalog.name}</h2>
-      <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0, lineHeight: 1.5 }}>{catalog.description}</p>
+      <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0, lineHeight: 1.5 }}>
+        {catalog.description}
+      </p>
 
       <div style={divider} />
 
@@ -94,7 +167,16 @@ export default function VaultDetailPage({ positions = {} }) {
           { label: 'Yield Source', value: catalog.yield_source },
         ].map(({ label, value, color }) => (
           <div key={label} style={metricCard}>
-            <div className="mono" style={{ fontSize: 9, color: 'var(--text-faint)', textTransform: 'lowercase', letterSpacing: '-0.01em', marginBottom: 6 }}>
+            <div
+              className="mono"
+              style={{
+                fontSize: 9,
+                color: 'var(--text-faint)',
+                textTransform: 'lowercase',
+                letterSpacing: '-0.01em',
+                marginBottom: 6,
+              }}
+            >
               {label}
             </div>
             <div style={{ fontSize: 13, fontWeight: 500, color: color || 'inherit' }}>{value}</div>
@@ -109,11 +191,20 @@ export default function VaultDetailPage({ positions = {} }) {
             <span>APY 7d</span>
             <span className="apy-avg">7d avg: {apyStats.avg7d}%</span>
           </div>
-          <span dangerouslySetInnerHTML={{ __html: generateSparkline(apyStats.values, { width: 280, height: 48, strokeWidth: 2 }) }} />
+          <span
+            dangerouslySetInnerHTML={{
+              __html: generateSparkline(apyStats.values, {
+                width: 280,
+                height: 48,
+                strokeWidth: 2,
+              }),
+            }}
+          />
           <div className="apy-chart-labels">
             <span>{apyStats.values[0]?.toFixed(1)}%</span>
             <span className={parseFloat(apyStats.change7d) >= 0 ? 'up' : 'down'}>
-              {parseFloat(apyStats.change7d) >= 0 ? '+' : ''}{apyStats.change7d}pp 7d
+              {parseFloat(apyStats.change7d) >= 0 ? '+' : ''}
+              {apyStats.change7d}pp 7d
             </span>
             <span>{apyStats.current}%</span>
           </div>
@@ -130,9 +221,7 @@ export default function VaultDetailPage({ positions = {} }) {
           {' · '}
           {catalog.description}
           {catalog.drawdown && (
-            <span style={{ color: 'var(--text-faint)' }}>
-              {' '}· max drawdown {catalog.drawdown}%
-            </span>
+            <span style={{ color: 'var(--text-faint)' }}> · max drawdown {catalog.drawdown}%</span>
           )}
         </div>
       </div>
@@ -143,15 +232,32 @@ export default function VaultDetailPage({ positions = {} }) {
           <div style={divider} />
           <div>
             <div style={sectionLabel}>YOUR POSITION</div>
-            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginTop: 10, gap: 16 }}>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                justifyContent: 'space-between',
+                marginTop: 10,
+                gap: 16,
+              }}
+            >
               <div>
-                <span className="tnum" style={{ fontSize: 18, fontWeight: 500 }}>{posBalance.toFixed(2)}</span>
-                <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 6 }}>USDC · {Number(apy).toFixed(1)}% APY</span>
-                <div className="mono tnum" style={{ fontSize: 11, color: 'var(--ok)', marginTop: 5 }}>
-                  +{(posBalance * Number(apy) / 100 / 365).toFixed(4)} USDC/day estimated
+                <span className="tnum" style={{ fontSize: 18, fontWeight: 500 }}>
+                  {posBalance.toFixed(2)}
+                </span>
+                <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 6 }}>
+                  USDC · {Number(apy).toFixed(1)}% APY
+                </span>
+                <div
+                  className="mono tnum"
+                  style={{ fontSize: 11, color: 'var(--ok)', marginTop: 5 }}
+                >
+                  +{((posBalance * Number(apy)) / 100 / 365).toFixed(4)} USDC/day estimated
                 </div>
               </div>
-              <button style={pillBtn} onClick={() => navigateTo('agent')}>Withdraw →</button>
+              <button style={pillBtn} onClick={() => navigateTo('agent')}>
+                Withdraw →
+              </button>
             </div>
           </div>
         </>
@@ -161,17 +267,35 @@ export default function VaultDetailPage({ positions = {} }) {
 
       {/* Contract address */}
       <div>
-        <div style={sectionLabel}>CONTRACT (Base Sepolia testnet)</div>
-        <div className="mono" style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8, display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+        <div style={sectionLabel}>CONTRACT (Stellar testnet)</div>
+        <div
+          className="mono"
+          style={{
+            fontSize: 11,
+            color: 'var(--text-muted)',
+            marginTop: 8,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 14,
+            flexWrap: 'wrap',
+          }}
+        >
           <span>{short(catalog.address)}</span>
-          <a href={`https://sepolia.basescan.org/address/${catalog.address}`} target="_blank" rel="noopener noreferrer" style={extLink}>
-            View on Basescan ↗
+          <a
+            href={`https://stellar.expert/explorer/testnet/contract/${catalog.address}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={extLink}
+          >
+            View on Stellar Expert ↗
           </a>
         </div>
       </div>
 
       <div style={{ marginTop: 28, display: 'flex', justifyContent: 'flex-end' }}>
-        <button className="btn btn-primary" onClick={handleFarm}>Farm this vault →</button>
+        <button className="btn btn-primary" onClick={handleFarm}>
+          Farm this vault →
+        </button>
       </div>
     </div>
   )

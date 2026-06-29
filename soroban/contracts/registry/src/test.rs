@@ -24,13 +24,13 @@ fn test_authorize_then_query_then_revoke() {
     let rec = client.record_of(&agent);
     assert_eq!(rec.owner, owner);
     assert_eq!(rec.vault, vault);
-    assert_eq!(rec.revoked, false);
-    assert_eq!(client.is_revoked(&agent), false);
+    assert!(!rec.revoked);
+    assert!(!client.is_revoked(&agent));
 
     client.revoke(&owner, &agent);
     // revoke emits exactly one event.
     assert_eq!(env.events().all().events().len(), 1);
-    assert_eq!(client.is_revoked(&agent), true);
+    assert!(client.is_revoked(&agent));
 }
 
 #[test]

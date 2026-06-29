@@ -3,7 +3,9 @@ use soroban_sdk::{Address, Env};
 use stellar_macros::when_not_paused;
 use stellar_tokens::fungible::Base;
 
-use crate::storage::{extend_instance, get_token, get_total_principal, set_total_principal, SCALE};
+use crate::storage::{
+    extend_instance, get_pool, get_token, get_total_principal, set_total_principal, SCALE,
+};
 use crate::types::{Deposit, Redeem, VaultError};
 
 // Re-export of the dividend settle helpers (Task 3 fills the bodies).
@@ -24,6 +26,11 @@ pub fn deposit(e: &Env, from: Address, amount: i128) -> Result<i128, VaultError>
     let token = get_token(e);
     let vault = e.current_contract_address();
     TokenClient::new(e, &token).transfer_from(&vault, &from, &vault, &amount);
+
+    // Park principal in Blend to earn real yield (if wired). Otherwise it sits idle (legacy).
+    if let Some(pool) = get_pool(e) {
+        crate::blend::supply(e, &pool, &token, amount);
+    }
 
     settle(e, &from); // bank any prior dividend at the old balance
     Base::mint(e, &from, amount); // shares == amount (1:1)
@@ -58,6 +65,13 @@ pub fn redeem(e: &Env, from: Address, shares: i128) -> Result<i128, VaultError> 
 
     let token = get_token(e);
     let vault = e.current_contract_address();
+    // Pull the redeemed assets out of Blend back into the vault before paying out.
+    // ponytail: assumes pool liquidity is available; if Blend is at 100% utilization the
+    // withdraw under-fills and the transfer below traps — acceptable for testnet/demo,
+    // production would queue a partial redemption.
+    if let Some(pool) = get_pool(e) {
+        crate::blend::withdraw(e, &pool, &token, assets);
+    }
     TokenClient::new(e, &token).transfer(&vault, &from, &assets);
 
     extend_instance(e);
@@ -101,6 +115,53 @@ pub fn drip(e: &Env, amount: i128) -> Result<(), VaultError> {
     extend_instance(e);
     Drip { epoch, amount, acc_div_per_share: acc, total_shares: supply }.publish(e);
     Ok(())
+}
+
+use crate::types::Harvest;
+
+/// Permissionless real-yield harvest. Withdraws the vault's entire Blend position, measures
+/// `interest = vault_balance − total_principal`, re-supplies the principal, and bumps the
+/// dividend index with the interest (which stays idle in the vault for `claim`).
+/// ponytail: withdraw-all + re-supply is 2 pool calls per harvest (gas) and reads interest
+/// from the realized balance delta instead of Blend's bToken exchange-rate — robust and
+/// exact for demo; a production build would read the reserve b_rate to avoid the round-trip.
+#[when_not_paused]
+pub fn harvest(e: &Env) -> Result<i128, VaultError> {
+    let pool = get_pool(e).ok_or(VaultError::PoolNotSet)?;
+    let supply = Base::total_supply(e);
+    if supply <= 0 {
+        return Err(VaultError::NoShares);
+    }
+
+    let token = get_token(e);
+    let vault = e.current_contract_address();
+    let principal = get_total_principal(e);
+
+    // Pull everything out of Blend. i128::MAX → Blend caps at the full position.
+    let before = TokenClient::new(e, &token).balance(&vault);
+    crate::blend::withdraw(e, &pool, &token, i128::MAX);
+    let after = TokenClient::new(e, &token).balance(&vault);
+    let pulled = after - before;
+
+    let interest = pulled - principal;
+    if interest <= 0 {
+        // Nothing earned yet — put principal back and report zero.
+        crate::blend::supply(e, &pool, &token, pulled);
+        return Ok(0);
+    }
+
+    // Re-supply principal; keep `interest` idle in the vault for claims.
+    crate::blend::supply(e, &pool, &token, principal);
+
+    let add = interest.checked_mul(SCALE).ok_or(VaultError::MathOverflow)? / supply;
+    let acc = get_acc(e).checked_add(add).ok_or(VaultError::MathOverflow)?;
+    set_acc(e, acc);
+    let epoch = get_drip_epoch(e) + 1;
+    set_drip_epoch(e, epoch);
+
+    extend_instance(e);
+    Harvest { epoch, interest, acc_div_per_share: acc, total_shares: supply }.publish(e);
+    Ok(interest)
 }
 
 /// Permissionless claim that always pays the holder. Settles, zeroes Pending, transfers

@@ -46,6 +46,8 @@ export class OrchestratorAgent {
       index: i,
       agentId: makeAgentId(i, this.sessionId),
       vault: v.address,
+      protocolSlug: v.protocolSlug || null,
+      eligibilityToken: v.eligibilityToken || null,
       amountVfusd: totalAmount * v.allocation,
       amountUnits: BigInt(Math.floor(totalAmount * v.allocation * BASE_UNIT)),
     }))
@@ -106,6 +108,7 @@ export class OrchestratorAgent {
           sessionId: this.sessionId,
           onEvent: this.onEvent,
           agentAddress: SOROBAN_DEMO_AGENT,
+          eligibilityToken: p.eligibilityToken,
         })
     )
 

@@ -853,12 +853,23 @@ const StrategyCard = ({
           {attestation ? (
             <>
               <span style={{ color: 'var(--ok)', fontSize: 8 }}>●</span>
-              <span>Strategy hash (off-chain verifiable)</span>
+              <span>{attestation.label}</span>
               <span style={{ color: 'var(--text-faint)' }}>·</span>
               <span>Hash: {attestation.hash}</span>
-              <span style={{ color: 'var(--text-faint)', marginLeft: 'auto' }}>
-                Deterministic · reproducible from strategy JSON
-              </span>
+              {attestation.explorerUrl ? (
+                <a
+                  href={attestation.explorerUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ marginLeft: 'auto', color: 'var(--accent)' }}
+                >
+                  View on-chain ↗
+                </a>
+              ) : (
+                <span style={{ color: 'var(--text-faint)', marginLeft: 'auto' }}>
+                  Deterministic · reproducible from strategy JSON
+                </span>
+              )}
             </>
           ) : attesting ? (
             <>
@@ -941,7 +952,7 @@ const ExecuteCard = ({ strategy, execMap, paletteIsLight, onOpenMemory, onDone }
     <section className="card enter exec-card-wrap">
       <div className="eyebrow">
         <span className="num">05</span>
-        <span>Agents executing · 1Shot relayer · parallel</span>
+        <span>Agents executing · fee-bump relayer · parallel</span>
         <span className="rule" />
         <span>gas paid by relayer</span>
       </div>

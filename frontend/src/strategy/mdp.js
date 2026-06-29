@@ -5,6 +5,7 @@
 // for that vocabulary. Pure functions only — no React, no network, no storage.
 
 import { VAULT_CATALOG } from '../config.js'
+import { toDisplay } from '../stellar/format.js'
 
 /** Risk ordering used by the action-space ceiling. Lower = safer. */
 export const RISK_RANK = { low: 0, medium: 1, high: 2 }
@@ -18,7 +19,15 @@ export function normalizeRisk(risk) {
 }
 
 const TURBULENT_KEYWORDS = ['exploit', 'hack', 'depeg', 'collapse', 'insolven', 'drain', 'attack']
-const ELEVATED_KEYWORDS = ['volatil', 'uncertain', 'compress', 'caution', 'outflow', 'liquidat', 'downturn']
+const ELEVATED_KEYWORDS = [
+  'volatil',
+  'uncertain',
+  'compress',
+  'caution',
+  'outflow',
+  'liquidat',
+  'downturn',
+]
 
 /**
  * FinRL turbulence-index analog: classify the market regime from the live
@@ -83,12 +92,20 @@ function toObservation(v) {
  * @param {{ level:'normal'|'elevated'|'high', gwei:number }|null} [p.gas]  // optional live gas snapshot
  * @returns {Object} StrategyState
  */
-export function buildStrategyState({ amountUsdc, riskLevel, numVaults, vaultData, marketContext, positions = {}, gas = null }) {
+export function buildStrategyState({
+  amountUsdc,
+  riskLevel,
+  numVaults,
+  vaultData,
+  marketContext,
+  positions = {},
+  gas = null,
+}) {
   const universe = (vaultData && vaultData.length ? vaultData : VAULT_CATALOG).map(toObservation)
   const holdings = positions || {}
-  const heldUnits = Object.values(holdings).reduce((s, p) => s + Number(p && p.balance || 0), 0)
+  const heldUnits = Object.values(holdings).reduce((s, p) => s + Number((p && p.balance) || 0), 0)
   return {
-    capital: { amountUsdc: Number(amountUsdc) || 0, heldUsdc: heldUnits / 1e6 },
+    capital: { amountUsdc: Number(amountUsdc) || 0, heldUsdc: toDisplay(heldUnits) },
     profile: { riskLevel: normalizeRisk(riskLevel), numVaults: Number(numVaults) || 1 },
     portfolio: { holdings, heldVaultCount: Object.keys(holdings).length },
     market: deriveSignals(marketContext, gas),
@@ -138,10 +155,15 @@ export function enforceActionSpace(proposed, state) {
 
   const kept = (proposed || []).filter((p) => {
     const obs = byAddr.get(String(p.address).toLowerCase())
-    if (!obs) { violations.push(`unknown vault ${p.address}`); return false }
+    if (!obs) {
+      violations.push(`unknown vault ${p.address}`)
+      return false
+    }
     const tier = RISK_RANK[normalizeRisk(p.risk_tier || obs.riskTier)]
     if (tier > ceiling) {
-      violations.push(`${obs.protocol} (${normalizeRisk(p.risk_tier || obs.riskTier)}) exceeds ${RANK_TO_TIER[ceiling]} ceiling under ${state.market.turbulence} market`)
+      violations.push(
+        `${obs.protocol} (${normalizeRisk(p.risk_tier || obs.riskTier)}) exceeds ${RANK_TO_TIER[ceiling]} ceiling under ${state.market.turbulence} market`
+      )
       return false
     }
     return true
@@ -149,7 +171,9 @@ export function enforceActionSpace(proposed, state) {
 
   let pool = kept
   if (!pool.length) {
-    const safest = [...state.universe].sort((a, b) => RISK_RANK[a.riskTier] - RISK_RANK[b.riskTier])[0]
+    const safest = [...state.universe].sort(
+      (a, b) => RISK_RANK[a.riskTier] - RISK_RANK[b.riskTier]
+    )[0]
     if (safest) {
       pool = [{ address: safest.address, allocation: 1, risk_tier: safest.riskTier }]
       violations.push('all proposals gated — fell back to safest vault')
@@ -157,7 +181,10 @@ export function enforceActionSpace(proposed, state) {
   }
 
   const sum = pool.reduce((s, p) => s + (Number(p.allocation) || 0), 0) || 1
-  const allocations = pool.map((p) => ({ ...p, allocation: +((Number(p.allocation) || 0) / sum).toFixed(4) }))
+  const allocations = pool.map((p) => ({
+    ...p,
+    allocation: +((Number(p.allocation) || 0) / sum).toFixed(4),
+  }))
   return { allocations, violations }
 }
 
@@ -178,7 +205,8 @@ export function scoreReward(allocations, state) {
   ;(allocations || []).forEach((a) => {
     const obs = byAddr.get(String(a.address).toLowerCase()) || {}
     const w = Number(a.allocation) || 0
-    const apy = Number(a.expected_apy != null ? a.expected_apy : (a.apy != null ? a.apy : obs.apy)) || 0
+    const apy =
+      Number(a.expected_apy != null ? a.expected_apy : a.apy != null ? a.apy : obs.apy) || 0
     const draw = Math.abs(Number(a.drawdown != null ? a.drawdown : obs.drawdown) || 0)
     blended += w * apy
     drawWeighted += w * draw
@@ -188,7 +216,13 @@ export function scoreReward(allocations, state) {
   const riskPenalty = +(drawWeighted * turbMult).toFixed(2)
   const riskAdjustedScore = +(blended / (riskWeighted || 1)).toFixed(2)
   const projectedAnnualUsdc = +((blended / 100) * (state.capital.amountUsdc || 0)).toFixed(2)
-  return { blendedApy: +blended.toFixed(2), riskPenalty, riskAdjustedScore, projectedAnnualUsdc, turbulence: state.market.turbulence }
+  return {
+    blendedApy: +blended.toFixed(2),
+    riskPenalty,
+    riskAdjustedScore,
+    projectedAnnualUsdc,
+    turbulence: state.market.turbulence,
+  }
 }
 
 /**
@@ -202,5 +236,9 @@ export function realizedReward(memoryEntries) {
   const ok = e.filter((m) => m.status === 'success').length
   const slip = e.reduce((s, m) => s + (Number(m.slippageActual) || 0), 0)
   const gas = e.reduce((s, m) => s + (Number(m.gasUsed) || 0), 0)
-  return { successRate: +(ok / e.length).toFixed(2), avgSlippage: +(slip / e.length).toFixed(3), totalGas: gas }
+  return {
+    successRate: +(ok / e.length).toFixed(2),
+    avgSlippage: +(slip / e.length).toFixed(3),
+    totalGas: gas,
+  }
 }

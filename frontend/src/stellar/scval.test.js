@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { Keypair, scValToNative } from '@stellar/stellar-sdk'
-import { addrScVal, i128ScVal, fromScVal } from './scval.js'
+import { addrScVal, i128ScVal, fromScVal, bytes32ScVal, symbolScVal } from './scval.js'
+import { encodeArgs } from './client.js'
 
 describe('scval codec', () => {
   it('round-trips an i128 amount (BigInt) through ScVal', () => {
@@ -24,5 +25,30 @@ describe('scval codec', () => {
     // build a symbol the SDK way and confirm our decoder matches scValToNative
     const sv = i128ScVal(7n)
     expect(fromScVal(sv)).toBe(scValToNative(sv))
+  })
+})
+
+describe('bytes32ScVal', () => {
+  it('encodes a 0x-prefixed hex string to 32-byte ScVal bytes', () => {
+    const hex = '0x' + 'ab'.repeat(32)
+    const sv = bytes32ScVal(hex)
+    expect(sv.switch().name).toBe('scvBytes')
+    expect(sv.bytes().length).toBe(32)
+  })
+})
+
+describe('symbolScVal', () => {
+  it('encodes a string to an ScVal symbol', () => {
+    const sv = symbolScVal('venice')
+    expect(sv.switch().name).toBe('scvSymbol')
+  })
+})
+
+describe('encodeArgs dispatch', () => {
+  it('maps {bytes32} and {symbol} tags to the right ScVals', () => {
+    const [b, s] = encodeArgs([{ bytes32: '0x' + '01'.repeat(32) }, { symbol: 'strategy' }])
+    expect(b.switch().name).toBe('scvBytes')
+    expect(b.bytes().length).toBe(32)
+    expect(s.switch().name).toBe('scvSymbol')
   })
 })

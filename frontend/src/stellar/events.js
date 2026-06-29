@@ -1,12 +1,17 @@
 // Soroban event indexer for the force-graph monitor. Polls RPC getEvents for the registry +
 // vault, decodes each record (topic symbol + value map) to a typed event, dedups on the paging
 // token, and maps to a graph delta. The live graph wiring is sub-project 4.
-import { SOROBAN_REGISTRY_ADDRESS, SOROBAN_VAULT_ADDRESS } from './config.js'
+import {
+  SOROBAN_REGISTRY_ADDRESS,
+  SOROBAN_VAULT_ADDRESS,
+  SOROBAN_ATTESTATION_ADDRESS,
+} from './config.js'
 import { fromScVal } from './scval.js'
 import { rpcServer } from './client.js'
 
 // Contracts we watch + the event topic-symbols each emits (docs/soroban-interfaces.md).
-const WATCHED = [SOROBAN_REGISTRY_ADDRESS, SOROBAN_VAULT_ADDRESS]
+// Attestation (F5) emits strategy_attested — surfaced in the public Explorer feed.
+const WATCHED = [SOROBAN_REGISTRY_ADDRESS, SOROBAN_VAULT_ADDRESS, SOROBAN_ATTESTATION_ADDRESS]
 
 /**
  * Decode one RPC getEvents record into a typed event.
