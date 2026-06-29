@@ -48,12 +48,21 @@ describe('passkey signature normalization', () => {
 })
 
 describe('passkey challenge binding', () => {
-  it('challenge == base64url(sha256(preimage)), unpadded, 43 chars for 32B', async () => {
+  it('challenge == base64url(payload), unpadded, 43 chars for 32B', async () => {
     const preimage = Uint8Array.from(createHash('sha256').update('vf-auth-entry').digest())
     const ch = await buildChallenge(preimage)
+    // Value assertion (not just format): buildChallenge single-encodes the
+    // already-hashed payload. A re-introduced double-hash (base64url(sha256(payload)))
+    // would change the value and fail here — the format-only checks below could not.
+    const expected = Buffer.from(preimage)
+      .toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '')
+    expect(ch).toBe(expected)
     expect(ch).not.toMatch(/[=]/) // unpadded
     expect(ch).not.toMatch(/[+/]/) // url-safe alphabet
-    expect(ch.length).toBe(43) // sha256 → 32B → 43 base64url chars
+    expect(ch.length).toBe(43) // 32B payload → 43 base64url chars
   })
 
   it('assertChallengeMatches throws when clientDataJSON challenge != expected', async () => {
