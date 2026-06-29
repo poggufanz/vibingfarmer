@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { derToRaw, normalizeLowS, buildChallenge, assertChallengeMatches } from './passkey.js'
+import { derToRaw, normalizeLowS, buildChallenge, assertChallengeMatches, runCeremony } from './passkey.js'
 import { createHash } from 'crypto'
 
 // secp256r1 curve order n:
@@ -57,5 +57,24 @@ describe('passkey challenge binding', () => {
     const badClientData = JSON.stringify({ type: 'webauthn.get', challenge: 'tampered', origin: 'chrome-extension://abc' })
     expect(() => assertChallengeMatches(goodClientData, expected)).not.toThrow()
     expect(() => assertChallengeMatches(badClientData, expected)).toThrow(/challenge mismatch/)
+  })
+})
+
+describe('passkey ceremony runner', () => {
+  it('passes the bound challenge to the authenticator and returns normalized parts', async () => {
+    const fakeAssertion = {
+      response: {
+        authenticatorData: new Uint8Array([0xaa]).buffer,
+        clientDataJSON: new TextEncoder().encode(
+          JSON.stringify({ type: 'webauthn.get', challenge: 'CH', origin: 'chrome-extension://x' })
+        ).buffer,
+        signature: Uint8Array.from([0x30, 0x44, 0x02, 0x20, ...new Uint8Array(32).fill(1), 0x02, 0x20, ...new Uint8Array(32).fill(2)]).buffer,
+      },
+    }
+    const provider = { get: async (opts) => { provider.seen = opts; return fakeAssertion } }
+    const out = await runCeremony({ kind: 'get', challenge: 'CH', rpId: 'localhost', provider })
+    // challenge reached the authenticator:
+    expect(new TextDecoder().decode(provider.seen.publicKey.challenge)).toContain('CH')
+    expect(out.signature.length).toBe(64) // DER → raw, already low-S
   })
 })

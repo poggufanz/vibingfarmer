@@ -76,3 +76,45 @@ export function assertChallengeMatches(clientDataJSON, expectedChallenge) {
     throw new Error(`challenge mismatch: got ${parsed.challenge}, expected ${expectedChallenge}`)
   }
 }
+
+function b64urlToBytes(s) {
+  s = s.replace(/-/g, '+').replace(/_/g, '/')
+  return Uint8Array.from(Buffer.from(s, 'base64'))
+}
+
+// In production, the popup posts {kind, challenge, rpId} to the ceremony TAB
+// (the OS prompt closes the popup); the tab calls navigator.credentials and
+// posts the assertion back. `provider` defaults to navigator.credentials so the
+// same function runs in the tab and in tests (injected fake).
+export async function runCeremony({ kind, challenge, rpId, allowCredentials, provider }) {
+  const creds = provider ?? globalThis.navigator?.credentials
+  if (!creds) throw new Error('no credentials provider (run inside the ceremony tab)')
+  const challengeBytes = new TextEncoder().encode(challenge)
+  let assertion
+  if (kind === 'get') {
+    assertion = await creds.get({
+      publicKey: {
+        challenge: challengeBytes,
+        rpId,
+        allowCredentials: allowCredentials ?? [],
+        userVerification: 'required',
+      },
+    })
+  } else {
+    throw new Error(`create ceremony handled by SAK.createWallet, not runCeremony`)
+  }
+  const r = assertion.response
+  const rawSig = normalizeLowS(derToRaw(new Uint8Array(r.signature)))
+  return {
+    authenticatorData: new Uint8Array(r.authenticatorData),
+    clientDataJSON: new TextDecoder().decode(r.clientDataJSON),
+    signature: rawSig,
+  }
+}
+
+// Layout the OZ webauthn-verifier expects for sig_data: authenticatorData +
+// clientDataJSON + the 64-byte low-S signature. Exact field packing is verified
+// on-chain in Task 8; keep this the single place that assembles it.
+export function assembleSecp256r1Signature({ authenticatorData, clientDataJSON, signature }) {
+  return { authenticatorData, clientDataJSON: new TextEncoder().encode(clientDataJSON), signature }
+}
