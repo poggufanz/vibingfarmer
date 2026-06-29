@@ -1,6 +1,7 @@
 import { WALLET_CONFIG } from './config.js'
-import { rpcServer } from '../stellar/client.js'
-import { SOROBAN_TOKEN_ADDRESS } from '../stellar/config.js'
+import { rpcServer, buildInvokeTx } from '../stellar/client.js'
+import { SOROBAN_TOKEN_ADDRESS, SOROBAN_VAULT_ADDRESS } from '../stellar/config.js'
+import { toBaseUnits } from '../stellar/format.js'
 
 const CACHE_KEY = 'vf_wallet_contract'
 
@@ -49,4 +50,43 @@ export async function readBalance(contractId, { server } = {}) {
     token: SOROBAN_TOKEN_ADDRESS,
     server: server ?? (await rpcServer()),
   })
+}
+
+// Builds the UNSIGNED token transfer invocation, sourced from the passkey smart
+// account. Signing (passkey ceremony) + relay happen in the UI flow / smoke
+// scripts — this stays build-only to honor the non-custodial line. `kit` is
+// resolved lazily (makeKit is async — a default param would make it a Promise);
+// injected kits short-circuit the await. Mirrors createPasskeyWallet's pattern.
+export async function sendToken({ contractId, to, amount, kit }) {
+  kit = kit ?? (await makeKit())
+  const units = typeof amount === 'bigint' ? amount : toBaseUnits(amount)
+  // Prefer the SDK's assembled-XDR path; fall back to buildInvokeTx on the token.
+  if (kit.wallet?.transfer) return kit.wallet.transfer({ from: contractId, to, amount: units })
+  const { xdr } = await buildInvokeTx({
+    source: contractId,
+    contract: SOROBAN_TOKEN_ADDRESS,
+    method: 'transfer',
+    args: [{ addr: contractId }, { addr: to }, { i128: units }],
+  })
+  return { xdr }
+}
+
+// Fail-closed F8 deposit: never build a deposit the eligibility gate rejects.
+// Build-only (unsigned). `eligibility` is injected (vfapi.eligibility at call
+// sites); `kit` is resolved lazily like sendToken. The vault `deposit(from,
+// amount)` arg shape matches buildAgentDeposit in stellar/agentDeposit.js.
+export async function depositToVault({ contractId, amount, eligibility, kit }) {
+  const verdict = await eligibility({ vault: SOROBAN_VAULT_ADDRESS, amount })
+  if (!verdict.allow) throw new Error(`ineligible: ${(verdict.reasons ?? []).join('; ')}`)
+  kit = kit ?? (await makeKit())
+  const units = typeof amount === 'bigint' ? amount : toBaseUnits(amount)
+  if (kit.wallet?.deposit)
+    return kit.wallet.deposit({ from: contractId, vault: SOROBAN_VAULT_ADDRESS, amount: units })
+  const { xdr } = await buildInvokeTx({
+    source: contractId,
+    contract: SOROBAN_VAULT_ADDRESS,
+    method: 'deposit',
+    args: [{ addr: contractId }, { i128: units }],
+  })
+  return { xdr }
 }

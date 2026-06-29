@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { createPasskeyWallet, connectPasskeyWallet } from './account.js'
+import { createPasskeyWallet, connectPasskeyWallet, sendToken, depositToVault } from './account.js'
 
 const store = {}
 beforeEach(() => {
@@ -38,5 +38,25 @@ describe('passkey wallet account', () => {
       expect.objectContaining({ contractId: 'CCACHED' })
     )
     expect(out.contractId).toBe('CCACHED')
+  })
+
+  it('sendToken builds an unsigned token transfer XDR scoped to the passkey account', async () => {
+    const kit = { wallet: { transfer: vi.fn(async () => ({ xdr: 'TXDR' })) } }
+    const out = await sendToken({ contractId: 'CWALLET', to: 'CDEST', amount: 5n, kit })
+    expect(out.xdr).toBe('TXDR')
+  })
+
+  it('depositToVault refuses to build when F8 says ineligible (fail-closed)', async () => {
+    const eligibility = vi.fn(async () => ({ allow: false, reasons: ['stale facts'] }))
+    await expect(
+      depositToVault({ contractId: 'CWALLET', amount: 10n, eligibility })
+    ).rejects.toThrow(/ineligible|not eligible/i)
+  })
+
+  it('depositToVault builds an unsigned vault deposit when eligible', async () => {
+    const eligibility = vi.fn(async () => ({ allow: true, reasons: [] }))
+    const kit = { wallet: { deposit: vi.fn(async () => ({ xdr: 'DXDR' })) } }
+    const out = await depositToVault({ contractId: 'CWALLET', amount: 10n, eligibility, kit })
+    expect(out.xdr).toBe('DXDR')
   })
 })
