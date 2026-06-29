@@ -1,0 +1,41 @@
+import { describe, it, expect } from 'vitest'
+import { derToRaw, normalizeLowS } from './passkey.js'
+
+// secp256r1 curve order n:
+const N = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n
+const HALF_N = N >> 1n
+
+function sToBig(raw) {
+  return BigInt('0x' + Buffer.from(raw.slice(32, 64)).toString('hex'))
+}
+
+describe('passkey signature normalization', () => {
+  it('derToRaw extracts 64-byte r||s from a DER ECDSA signature', () => {
+    // DER: 30 44 02 20 <32B r> 02 20 <32B s>
+    const r = new Uint8Array(32).fill(0x11)
+    const s = new Uint8Array(32).fill(0x22)
+    const der = Uint8Array.from([0x30, 0x44, 0x02, 0x20, ...r, 0x02, 0x20, ...s])
+    const raw = derToRaw(der)
+    expect(raw.length).toBe(64)
+    expect(Buffer.from(raw.slice(0, 32)).toString('hex')).toBe('11'.repeat(32))
+    expect(Buffer.from(raw.slice(32)).toString('hex')).toBe('22'.repeat(32))
+  })
+
+  it('normalizeLowS flips a high-S signature to n - s', () => {
+    const r = new Uint8Array(32).fill(0x01)
+    const highS = BigInt('0x' + (N - 5n).toString(16).padStart(64, '0'))
+    const sBytes = Uint8Array.from(Buffer.from(highS.toString(16).padStart(64, '0'), 'hex'))
+    const raw = Uint8Array.from([...r, ...sBytes])
+    const out = normalizeLowS(raw)
+    expect(sToBig(out)).toBe(5n) // n - (n-5) = 5, which is <= n/2
+    expect(sToBig(out) <= HALF_N).toBe(true)
+  })
+
+  it('normalizeLowS leaves an already-low-S signature untouched', () => {
+    const r = new Uint8Array(32).fill(0x01)
+    const lowS = Uint8Array.from(Buffer.from((7n).toString(16).padStart(64, '0'), 'hex'))
+    const raw = Uint8Array.from([...r, ...lowS])
+    const out = normalizeLowS(raw)
+    expect(sToBig(out)).toBe(7n)
+  })
+})
