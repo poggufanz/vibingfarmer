@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "VF Wallet",
+  "version": "0.1.0",
+  "minimum_chrome_version": "122",
+  "action": { "default_popup": "popup.html" },
+  "background": { "service_worker": "background.js", "type": "module" },
+  "host_permissions": ["https://<VF_API_HOST>/*"],
+  "web_accessible_resources": [
+    { "resources": ["ceremony.html", "ceremony.js"], "matches": ["<all_urls>"] }
+  ],
+  "permissions": ["storage", "tabs"]
+}

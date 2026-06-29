@@ -12,7 +12,8 @@
     "format": "prettier --write \"src/**/*.{js,jsx,css}\" \"api/**/*.js\"",
     "format:check": "prettier --check \"src/**/*.{js,jsx,css}\" \"api/**/*.js\"",
     "pages:dev": "npm run build && wrangler pages dev",
-    "pages:deploy": "npm run build && wrangler pages deploy"
+    "pages:deploy": "npm run build && wrangler pages deploy",
+    "build:ext": "vite build -c extension/vite.config.extension.js"
   },
   "dependencies": {
     "@creit.tech/stellar-wallets-kit": "^2.3.0",
@@ -24,6 +25,7 @@
     "react-dom": "^18.3.1",
     "react-force-graph-2d": "^1.27.0",
     "react-router-dom": "^6.30.4",
+    "smart-account-kit": "0.2.10",
     "vite": "^5.4.0",
     "zod": "^3.25.76"
   },
