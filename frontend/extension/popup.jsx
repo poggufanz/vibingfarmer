@@ -14,14 +14,24 @@ import { ApproveOverlay } from '../src/wallet/ui/ApproveOverlay.jsx'
 import { HonestyLabels } from '../src/wallet/ui/HonestyLabels.jsx'
 import { toDisplay } from '../src/stellar/format.js'
 import { SOROBAN_VAULT_ADDRESS } from '../src/stellar/config.js'
+import { RP_ID } from '../src/wallet/config.js'
+import { buildChallenge } from '../src/wallet/passkey.js'
 
 // Ceremony runs in the extension TAB — Face ID closes the popup.
 // Post SIGN_REQUEST to the background SW; it opens ceremony.html in a new tab.
-function postSignRequest(xdr) {
+//
+// challenge is demo-bound to the tx bytes for the Face-ID round-trip:
+//   base64url(sha256(xdrBytes)) — a well-formed 43-char WebAuthn challenge.
+// The REAL auth-entry binding (base64url(sha256(SorobanAuth preimage))) + on-chain
+// submit run in the smoke/testnet batch (see scripts/m0b-passkey-authentry-smoke.mjs).
+async function postSignRequest(xdr) {
+  const xdrBytes = Uint8Array.from(atob(xdr), (c) => c.charCodeAt(0))
+  const hashBuf = await crypto.subtle.digest('SHA-256', xdrBytes)
+  const challenge = buildChallenge(new Uint8Array(hashBuf))
   chrome.runtime.sendMessage({
     type: 'SIGN_REQUEST',
-    challenge: xdr,
-    rpId: location.hostname || 'localhost',
+    challenge,
+    rpId: RP_ID,
   })
 }
 
@@ -125,7 +135,7 @@ function Popup() {
   function refreshBalance(contractId) {
     readBalance(contractId)
       .then((b) => setBalance(b))
-      .catch(() => {})
+      .catch(() => setBalance('—'))
   }
 
   // Restore cached wallet on mount (no-arg = reads vf_wallet_contract from localStorage)
@@ -176,8 +186,10 @@ function Popup() {
         amount: sendAmount,
       })
       // Builds UNSIGNED xdr → ceremony tab signs → submit in user-greenlit demo batch
-      postSignRequest(xdr)
-      setStatus('signing in ceremony tab… (testnet submit runs in the demo batch)')
+      await postSignRequest(xdr)
+      setStatus(
+        'Face-ID ceremony demo — challenge bound to tx bytes. Verified on-chain submit runs in the testnet batch.'
+      )
       setScreen('signing-pending')
     } catch (e) {
       setError(e.message)
@@ -207,8 +219,10 @@ function Popup() {
         amount: BigInt(Math.round(parseFloat(depositAmount) * 1e7)),
         eligibility,
       })
-      postSignRequest(xdr)
-      setStatus('signing in ceremony tab… (testnet submit runs in the demo batch)')
+      await postSignRequest(xdr)
+      setStatus(
+        'Face-ID ceremony demo — challenge bound to tx bytes. Verified on-chain submit runs in the testnet batch.'
+      )
       setDepositVerdict(null)
       setScreen('signing-pending')
     } catch (e) {
@@ -276,7 +290,11 @@ function Popup() {
       <div style={S.wrap}>
         <h2 style={S.h1}>VF Wallet</h2>
         <p style={S.info}>{status}</p>
-        <p style={S.info}>The ceremony tab handles Face ID. This popup may be dismissed.</p>
+        <p style={S.info}>
+          This is a ceremony round-trip — the Face-ID prompt opens in the ceremony tab. No transfer
+          is submitted yet; the verified on-chain submit runs in the testnet batch. This popup may
+          be dismissed.
+        </p>
         <button style={S.btn} onClick={() => nav('home')}>
           Back to home
         </button>
@@ -301,7 +319,11 @@ function Popup() {
         </button>
         <p>
           <strong>Balance:</strong>{' '}
-          {balance !== null ? `${toDisplay(balance).toFixed(7)} USDC` : 'loading…'}
+          {balance === null
+            ? 'loading…'
+            : balance === '—'
+              ? '— USDC'
+              : `${toDisplay(balance).toFixed(7)} USDC`}
         </p>
         {error && <p style={S.err}>{error}</p>}
         {status && <p style={S.info}>{status}</p>}
@@ -332,9 +354,7 @@ function Popup() {
         <button style={S.btnPrimary} onClick={handleSend} disabled={!sendTo || !sendAmount}>
           Approve with Face ID
         </button>
-        <p style={S.info}>
-          Builds unsigned XDR &rarr; ceremony tab &rarr; submit in demo batch.
-        </p>
+        <p style={S.info}>Builds unsigned XDR &rarr; ceremony tab &rarr; submit in demo batch.</p>
         <NavBar onNav={nav} />
       </div>
     )
@@ -381,9 +401,7 @@ function Popup() {
         <p>
           <strong>Primary:</strong> Passkey (Face ID) &mdash; on-device secp256r1.
         </p>
-        <p style={S.info}>
-          Additional signers are managed on the Recovery and Agent screens.
-        </p>
+        <p style={S.info}>Additional signers are managed on the Recovery and Agent screens.</p>
         {error && <p style={S.err}>{error}</p>}
         {status && <p style={S.info}>{status}</p>}
         <NavBar onNav={nav} />
@@ -451,14 +469,11 @@ function Popup() {
         />
         {error && <p style={S.err}>{error}</p>}
         {status && <p style={S.info}>{status}</p>}
-        <button
-          style={S.btnPrimary}
-          onClick={handleAddAgent}
-          disabled={!agentAddress || !agentCap}
-        >
+        <button style={S.btnPrimary} onClick={handleAddAgent} disabled={!agentAddress || !agentCap}>
           Grant agent scope (ceremony required)
         </button>
         <p style={S.info}>Scope: 7-day expiry, capped at entered amount, vault-restricted.</p>
+        <HonestyLabels scope="agent" />
         <NavBar onNav={nav} />
       </div>
     )

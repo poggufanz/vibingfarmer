@@ -27,4 +27,9 @@ describe('HonestyLabels', () => {
     render(<HonestyLabels />)
     expect(screen.getByTestId('honesty-global')).toBeTruthy()
   })
+
+  it('renders the agent cap label in agent scope', () => {
+    render(<HonestyLabels scope="agent" />)
+    expect(screen.getByTestId('honesty-agent').textContent).toMatch(/not yet enforced on-chain/)
+  })
 })

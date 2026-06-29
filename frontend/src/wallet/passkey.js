@@ -101,9 +101,13 @@ export async function runCeremony({ kind, challenge, rpId, allowCredentials, pro
   }
   const r = assertion.response
   const rawSig = normalizeLowS(derToRaw(new Uint8Array(r.signature)))
+  const clientDataJSON = new TextDecoder().decode(r.clientDataJSON)
+  // Defense-in-depth: verify the challenge survived the round-trip before returning.
+  // On-chain already catches a mismatch; this surfaces it early in tests and the tab.
+  assertChallengeMatches(clientDataJSON, challenge)
   return {
     authenticatorData: new Uint8Array(r.authenticatorData),
-    clientDataJSON: new TextDecoder().decode(r.clientDataJSON),
+    clientDataJSON,
     signature: rawSig,
   }
 }

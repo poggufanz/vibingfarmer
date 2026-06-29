@@ -1,10 +1,11 @@
 // frontend/src/wallet/ui/HonestyLabels.jsx
 // Honesty labels rendered as first-class UI per project policy ("prove claims in code").
-// Four claims, scoped so only the relevant subset appears on each screen.
+// Five claims, scoped so only the relevant subset appears on each screen.
 //
 // scope "global"   → labels 3 + 4 (welcome, home footer)
 // scope "deposit"  → label 1 (near ApproveOverlay)
 // scope "recovery" → label 2 (recovery screen)
+// scope "agent"    → label 5 (agent screen)
 
 const LABELS = {
   deposit:
@@ -14,10 +15,12 @@ const LABELS = {
   testnet: '⚠ Everything here is testnet-grade only — do not use real funds.',
   protocol:
     '⚠ Passkey-on-Stellar is mainnet-live at the protocol layer, but these wallet contracts are testnet PoC-grade.',
+  agent:
+    '⚠ Agent spending cap is not yet enforced on-chain (cap policy contract undeployed) — testnet PoC.',
 }
 
 /**
- * @param {{ scope?: 'global' | 'deposit' | 'recovery' }} props
+ * @param {{ scope?: 'global' | 'deposit' | 'recovery' | 'agent' }} props
  */
 export function HonestyLabels({ scope = 'global' }) {
   const s = {
@@ -40,6 +43,13 @@ export function HonestyLabels({ scope = 'global' }) {
     return (
       <p data-testid="honesty-recovery" style={s}>
         {LABELS.recovery}
+      </p>
+    )
+  }
+  if (scope === 'agent') {
+    return (
+      <p data-testid="honesty-agent" style={s}>
+        {LABELS.agent}
       </p>
     )
   }
