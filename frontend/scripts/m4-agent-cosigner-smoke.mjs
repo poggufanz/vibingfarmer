@@ -32,23 +32,9 @@
 //   cd frontend && npx vite-node scripts/m4-agent-cosigner-smoke.mjs
 //   cd frontend && npx vite-node scripts/m4-agent-cosigner-smoke.mjs --submit   (needs relayer secret)
 
-import {
-  Keypair,
-  TransactionBuilder,
-  Operation,
-  Contract,
-  Address,
-  xdr,
-  hash,
-  StrKey,
-  BASE_FEE,
-  rpc,
-} from '@stellar/stellar-sdk'
-import { createHash, webcrypto } from 'node:crypto'
+import { TransactionBuilder, xdr, rpc } from '@stellar/stellar-sdk'
 
-import { normalizeLowS, buildChallenge, assembleSecp256r1Signature } from '../src/wallet/passkey.js'
 import { NETWORK_PASSPHRASE, SOROBAN_RPC_URL, SOROBAN_VAULT_ADDRESS } from '../src/stellar/config.js'
-import { ACCOUNT_WASM_HASH, WEBAUTHN_VERIFIER_ADDRESS, RP_ID } from '../src/wallet/config.js'
 import { newSessionKey } from '../src/stellar/sessionKey.js'
 import {
   signAgentDepositEntries,
@@ -59,87 +45,16 @@ import { getRelayerAddress, submitViaRelay } from '../src/stellar/relay.js'
 import { addAgentSigner } from '../src/wallet/account.js'
 
 const SUBMIT = process.argv.includes('--submit')
-const FRIENDBOT = 'https://friendbot.stellar.org'
 const DEPOSIT_AMOUNT = 1n        // 1 base unit — minimal, just to exercise the path
 const CAP_AMOUNT = 1000n         // cap for the context rule (in base units)
 const OVER_CAP_AMOUNT = 9999n   // amount that should exceed cap → on-chain reject
 const server = new rpc.Server(SOROBAN_RPC_URL)
-const sha256 = (b) => new Uint8Array(createHash('sha256').update(Buffer.from(b)).digest())
-const subtle = webcrypto.subtle
 
-// ---- synthetic P-256 signer (same recipe as m0b/m2/m3, Node has no WebAuthn) ----
-async function makeSyntheticSigner() {
-  const keyPair = await subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify'])
-  const pubDer = Buffer.from(await subtle.exportKey('spki', keyPair.publicKey))
-  // Uncompressed secp256r1 point: skip the 26-byte SPKI header → raw 65 bytes
-  const rawPub = pubDer.slice(pubDer.length - 65)
-  const compressedPub = Buffer.alloc(33)
-  compressedPub[0] = rawPub[31] % 2 === 0 ? 0x02 : 0x03 // y-parity
-  rawPub.copy(compressedPub, 1, 1, 33) // x coordinate
-
-  const kp = {
-    publicKey: rawPub,
-    compressedPublicKey: compressedPub,
-    sign: async (data) => {
-      const sig = await subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, keyPair.privateKey, data)
-      return normalizeLowS(new Uint8Array(sig))
-    },
-  }
-
-  // key_data = compressed pub + RP-ID hash (matches webauthn-verifier's External signer layout)
-  const rpIdHash = sha256(RP_ID)
-  const keyData = Buffer.concat([compressedPub, rpIdHash])
-  return { kp, keyData }
-}
-
-async function fundFriendbot(address) {
-  const res = await fetch(`${FRIENDBOT}?addr=${address}`)
-  if (!res.ok) throw new Error(`Friendbot failed: ${res.status}`)
-}
-
-async function deploySmartAccount({ deployer, keyData }) {
-  const deployerAcct = await server.getAccount(deployer.publicKey())
-
-  // Upload+instantiate the smart_account wasm with the passkey External signer
-  const installOp = Operation.uploadContractWasm({
-    wasm: Buffer.from(ACCOUNT_WASM_HASH, 'hex'),
-  })
-
-  // Use the pre-deployed smart-account wasm hash (pinned in ACCOUNT_WASM_HASH)
-  const contractId = StrKey.encodeContract(
-    hash(
-      xdr.HashIdPreimage.envelopeTypeContractId(
-        new xdr.HashIdPreimageContractId({
-          networkId: hash(Buffer.from(NETWORK_PASSPHRASE)),
-          contractIdPreimage: xdr.ContractIdPreimage.contractIdPreimageFromAddress(
-            new xdr.ContractIdPreimageFromAddress({
-              address: Address.fromString(deployer.publicKey()).toScAddress(),
-              salt: Buffer.alloc(32),
-            })
-          ),
-        })
-      ).toXDR()
-    )
-  )
-
-  // Deploy via the SAK helper (headless path — avoids WebAuthn)
-  const deployTx = new TransactionBuilder(deployerAcct, {
-    fee: BASE_FEE,
-    networkPassphrase: NETWORK_PASSPHRASE,
-  })
-    .addOperation(
-      Operation.createStellarAccount({
-        destination: deployer.publicKey(),
-        startingBalance: '0',
-      })
-    )
-    .setTimeout(300)
-    .build()
-
-  // In headless mode we just derive the contractId — the actual deploy is user-deferred.
-  // Print it so the user can fund + register the passkey signer manually if needed.
-  return { contractId, deployerAcct }
-}
+// This smoke CONNECTS an existing deployed passkey smart account (via
+// VF_WALLET_CONTRACT_ID) exactly like the sibling m0b/m2/m3 smokes operate on a
+// known account — it does NOT deploy in-script. (An earlier draft carried a
+// headless-deploy branch that fed the wasm HASH to uploadContractWasm, which
+// needs the wasm BYTECODE; that branch was removed in the Task 13 review.)
 
 // ---- m4 main ---------------------------------------------------------------
 async function main() {
@@ -307,8 +222,7 @@ async function runAutonomousDeposit({ smartAccountId, amount, sessionKey, relaye
   })
 
   // Reconstruct the tx from XDR so we can pass it to signAgentDepositEntries.
-  const { TransactionBuilder: TB } = await import('@stellar/stellar-sdk')
-  const tx = TB.fromEnvelope(
+  const tx = TransactionBuilder.fromEnvelope(
     xdr.TransactionEnvelope.fromXDR(unsigned, 'base64'),
     NETWORK_PASSPHRASE
   )

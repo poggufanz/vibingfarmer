@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { createPasskeyWallet, connectPasskeyWallet, sendToken, depositToVault, addAgentSigner } from './account.js'
+import {
+  createPasskeyWallet,
+  connectPasskeyWallet,
+  sendToken,
+  depositToVault,
+  addAgentSigner,
+} from './account.js'
 
 const store = {}
 beforeEach(() => {
@@ -66,7 +72,18 @@ it('addAgentSigner attaches the ed25519 agent under a scoped context rule', asyn
     rules: { create: vi.fn(async () => ({ contextRuleId: 3 })) },
     signers: { addDelegated: vi.fn(async () => ({ ok: true })) },
   }
-  const out = await addAgentSigner({ agentAddress: 'GAGENT', cap: 100n, vault: 'CVAULT', expiry: 999, kit })
+  const out = await addAgentSigner({
+    agentAddress: 'GAGENT',
+    cap: 100n,
+    vault: 'CVAULT',
+    expiry: 999,
+    kit,
+  })
+  // Lock the scope-declaration shape at the unit layer (deposit-only · 1-vault · cap · expiry).
+  expect(kit.rules.create).toHaveBeenCalledWith({
+    type: 'spending_limit',
+    params: { token: undefined, limit: 100n, target: 'CVAULT', expiry: 999 },
+  })
   expect(kit.signers.addDelegated).toHaveBeenCalledWith(3, 'GAGENT')
   expect(out.ok).toBe(true)
 })
