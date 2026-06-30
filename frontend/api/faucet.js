@@ -18,6 +18,42 @@ const TOKEN_ADDR = () => process.env.SOROBAN_TOKEN_ADDRESS || ''
 export const CAP_BASE_UNITS = 100n * 10n ** 7n
 const DEFAULT_BASE_UNITS = 10n * 10n ** 7n // 10 tokens default
 
+// Daily caps on top of the per-IP rate limit (_guard). Keyed by recipient + a global ceiling.
+export const PER_RECIPIENT_DAILY_CAP = 300n * 10n ** 7n // 300 tokens / address / 24h
+export const GLOBAL_DAILY_CAP = 5_000n * 10n ** 7n // 5000 tokens / 24h total
+const DAY_MS = 24 * 60 * 60 * 1000
+
+// ponytail: in-memory accounting, resets on serverless cold start — a best-effort abuse bound,
+// not a hard guarantee. Move to KV / Durable Object if cold-start reset becomes exploitable.
+const _spent = new Map() // recipient -> { total: bigint, windowStart: number }
+let _globalTotal = 0n
+let _globalWindowStart = 0
+
+/** Effective dispensed amount: clamp to [_, CAP_BASE_UNITS], default when unset/non-positive. */
+export function effectiveAmount(amount) {
+  return amount && BigInt(amount) > 0n
+    ? BigInt(amount) > CAP_BASE_UNITS
+      ? CAP_BASE_UNITS
+      : BigInt(amount)
+    : DEFAULT_BASE_UNITS
+}
+
+/** Reserve `amount` for `to` against daily caps. Returns false (and records nothing) if exceeded. */
+export function reserveDaily(to, amount, now = Date.now()) {
+  if (now - _globalWindowStart > DAY_MS) {
+    _globalWindowStart = now
+    _globalTotal = 0n
+  }
+  const rec = _spent.get(to)
+  const valid = rec && now - rec.windowStart <= DAY_MS
+  const prior = valid ? rec.total : 0n
+  if (prior + amount > PER_RECIPIENT_DAILY_CAP) return false
+  if (_globalTotal + amount > GLOBAL_DAILY_CAP) return false
+  _spent.set(to, { total: prior + amount, windowStart: valid ? rec.windowStart : now })
+  _globalTotal += amount
+  return true
+}
+
 export class FaucetError extends Error {}
 
 /**
@@ -36,12 +72,7 @@ export async function dispenseToken({
   pollIntervalMs = 1500,
 }) {
   const { Keypair, TransactionBuilder, Contract, Address, xdr, BASE_FEE, rpc } = sdk
-  const capped =
-    amount && BigInt(amount) > 0n
-      ? BigInt(amount) > CAP_BASE_UNITS
-        ? CAP_BASE_UNITS
-        : BigInt(amount)
-      : DEFAULT_BASE_UNITS
+  const capped = effectiveAmount(amount)
   const kp = Keypair.fromSecret(secret)
   const source = await rpcServer.getAccount(kp.publicKey())
   const op = new Contract(token).call(
@@ -84,6 +115,10 @@ function bad(res, msg) {
   res.statusCode = 400
   return res.end(JSON.stringify({ error: msg }))
 }
+function tooMany(res, msg) {
+  res.statusCode = 429
+  return res.end(JSON.stringify({ error: msg }))
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -109,10 +144,12 @@ export default async function handler(req, res) {
       return res.end(JSON.stringify({ error: 'Faucet token unset', configured: false }))
     }
     const mod = await import('@stellar/stellar-sdk')
+    if (!mod.StrKey.isValidContract(body.to)) return bad(res, 'Invalid recipient')
+    if (!reserveDaily(body.to, effectiveAmount(body.amount)))
+      return tooMany(res, 'Daily faucet cap reached')
     const sdk = {
       Keypair: mod.Keypair,
       TransactionBuilder: mod.TransactionBuilder,
-      Operation: mod.Operation,
       Contract: mod.Contract,
       Address: mod.Address,
       xdr: mod.xdr,

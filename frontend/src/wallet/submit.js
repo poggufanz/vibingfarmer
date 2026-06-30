@@ -11,7 +11,7 @@ import {
   getRelayerAddress as realGetRelayer,
 } from '../stellar/relay.js'
 import { readVaultShares } from '../stellar/agentDeposit.js'
-import { rpcServer } from '../stellar/client.js'
+import { rpcServer, encodeArgs } from '../stellar/client.js'
 import { buildApprove } from './account.js'
 import { NETWORK_PASSPHRASE, SOROBAN_VAULT_ADDRESS } from '../stellar/config.js'
 
@@ -142,29 +142,21 @@ async function defaultSignSubmitApprove({
   ephemeral,
 }) {
   const sdk = await import('@stellar/stellar-sdk')
-  const { TransactionBuilder, Operation, Contract, Address, xdr, BASE_FEE, rpc } = sdk
+  const { TransactionBuilder, Operation, Contract, BASE_FEE, rpc } = sdk
   const units = typeof amount === 'bigint' ? amount : BigInt(amount)
   const latest = await server.getLatestLedger()
   const expiryLedger = latest.sequence + expiryLedgers
-  const { method, contract: tokenContract } = buildApprove({
+  // Build the approve op from buildApprove's args via the same encodeArgs the rest of the
+  // client uses — keeps the real path covered by buildApprove/encodeArgs tests instead of a
+  // hand-rolled parallel copy (XDR is canonical, so this is byte-identical to the old operands).
+  const { method, contract: tokenContract, args } = buildApprove({
     contractId,
     vault,
     amount: units,
     expiryLedger,
   })
   const ephAcct = await getAccountWithRetry(server, ephemeral.publicKey())
-  const approveOp = new Contract(tokenContract).call(
-    method,
-    Address.fromString(contractId).toScVal(),
-    Address.fromString(vault).toScVal(),
-    xdr.ScVal.scvI128(
-      new xdr.Int128Parts({
-        hi: xdr.Int64.fromString('0'),
-        lo: xdr.Uint64.fromString(units.toString()),
-      })
-    ),
-    xdr.ScVal.scvU32(expiryLedger)
-  )
+  const approveOp = new Contract(tokenContract).call(method, ...encodeArgs(args))
   const recRaw = new TransactionBuilder(ephAcct, {
     fee: BASE_FEE,
     networkPassphrase: NETWORK_PASSPHRASE,

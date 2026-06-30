@@ -1,5 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import handler, { dispenseToken, CAP_BASE_UNITS } from './faucet.js'
+import handler, {
+  dispenseToken,
+  CAP_BASE_UNITS,
+  effectiveAmount,
+  reserveDaily,
+  PER_RECIPIENT_DAILY_CAP,
+} from './faucet.js'
+
+const tok = (n) => BigInt(n) * 10n ** 7n
 
 function mockRes() {
   return {
@@ -47,6 +55,54 @@ describe('/api/faucet handler', () => {
     const res = mockRes()
     await handler(mockReq({}, { method: 'GET' }), res)
     expect(res.statusCode).toBe(405)
+  })
+
+  it('400 on a recipient that is not a valid contract StrKey', async () => {
+    process.env.VF_FAUCET_SECRET = 'SSECRET'
+    const res = mockRes()
+    await handler(mockReq({ action: 'dispense', to: 'not-a-contract' }), res)
+    expect(res.statusCode).toBe(400)
+    expect(JSON.parse(res.body)).toMatchObject({ error: 'Invalid recipient' })
+  })
+})
+
+describe('effectiveAmount (clamp)', () => {
+  it('defaults to 10 tokens when unset, zero, or non-positive', () => {
+    expect(effectiveAmount(undefined)).toBe(tok(10))
+    expect(effectiveAmount(0)).toBe(tok(10))
+    expect(effectiveAmount(-5)).toBe(tok(10))
+  })
+  it('caps at CAP_BASE_UNITS and passes valid amounts through', () => {
+    expect(effectiveAmount(10n ** 18n)).toBe(CAP_BASE_UNITS)
+    expect(effectiveAmount(tok(25))).toBe(tok(25))
+  })
+})
+
+describe('reserveDaily (daily caps)', () => {
+  // Each test uses a `now` >1 day from the others so the global window resets at its first call,
+  // isolating the shared module-level accounting.
+  const T = 1_000_000_000_000
+  const DAY = 24 * 60 * 60 * 1000
+
+  it('rejects once a recipient exceeds the per-recipient daily cap', () => {
+    expect(reserveDaily('rA', tok(100), T)).toBe(true)
+    expect(reserveDaily('rA', tok(250), T)).toBe(false) // 100+250 > 300 cap
+  })
+
+  it('resets a recipient window after 24h', () => {
+    const t = T + 10 * DAY
+    expect(reserveDaily('rB', PER_RECIPIENT_DAILY_CAP, t)).toBe(true)
+    expect(reserveDaily('rB', tok(1), t)).toBe(false) // at cap, same window
+    expect(reserveDaily('rB', tok(1), t + DAY + 1)).toBe(true) // new window
+  })
+
+  it('rejects once the global daily cap is reached across recipients', () => {
+    const t = T + 100 * DAY
+    // 16 recipients × 300 = 4800 ≤ 5000 global cap; the 17th (5100) trips the global ceiling.
+    for (let i = 0; i < 16; i++) {
+      expect(reserveDaily(`g${i}`, PER_RECIPIENT_DAILY_CAP, t)).toBe(true)
+    }
+    expect(reserveDaily('g16', PER_RECIPIENT_DAILY_CAP, t)).toBe(false)
   })
 })
 
