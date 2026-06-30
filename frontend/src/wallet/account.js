@@ -117,3 +117,17 @@ export async function depositToVault({ contractId, amount, eligibility, kit }) {
   })
   return { xdr }
 }
+
+// Build-only (pure, no RPC) token.approve invocation: from=account, spender=vault.
+// `expiryLedger` is an ABSOLUTE ledger number (SEP-41: must be >= current ledger, else
+// only valid for amount 0). submitApprove (submit.js) computes it from getLatestLedger,
+// wraps this with source = an ephemeral fee-payer, and passkey-signs the from auth entry.
+// Mirrors depositToVault's build-only discipline; consumed via buildInvokeTx's encodeArgs.
+export function buildApprove({ contractId, vault = SOROBAN_VAULT_ADDRESS, amount, expiryLedger }) {
+  const units = typeof amount === 'bigint' ? amount : toBaseUnits(amount)
+  return {
+    contract: SOROBAN_TOKEN_ADDRESS,
+    method: 'approve',
+    args: [{ addr: contractId }, { addr: vault }, { i128: units }, { u32: expiryLedger }],
+  }
+}

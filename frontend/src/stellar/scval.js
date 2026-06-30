@@ -31,6 +31,16 @@ export function u64ScVal(n) {
 }
 
 /**
+ * Encode a u32 scalar (e.g. SAC approve expiration_ledger — an absolute ledger number).
+ * Accepts BigInt or Number.
+ * @param {bigint | number} n
+ * @returns {import('@stellar/stellar-sdk').xdr.ScVal}
+ */
+export function u32ScVal(n) {
+  return nativeToScVal(BigInt(n), { type: 'u32' })
+}
+
+/**
  * Encode a fixed 32-byte value (e.g. a strategy hash) as ScVal::Bytes. Accepts a 0x-prefixed
  * hex string or raw bytes; rejects anything that isn't exactly 32 bytes.
  * @param {string | Buffer | Uint8Array} v

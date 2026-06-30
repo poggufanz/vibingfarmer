@@ -5,7 +5,9 @@ import {
   sendToken,
   depositToVault,
   addAgentSigner,
+  buildApprove,
 } from './account.js'
+import { SOROBAN_TOKEN_ADDRESS, SOROBAN_VAULT_ADDRESS } from '../stellar/config.js'
 
 const store = {}
 beforeEach(() => {
@@ -86,4 +88,28 @@ it('addAgentSigner attaches the ed25519 agent under a scoped context rule', asyn
   })
   expect(kit.signers.addDelegated).toHaveBeenCalledWith(3, 'GAGENT')
   expect(out.ok).toBe(true)
+})
+
+describe('buildApprove', () => {
+  it('builds an approve invocation: from=account, spender=vault, i128 amount, u32 expiry', () => {
+    const out = buildApprove({
+      contractId: 'CACCOUNT',
+      vault: SOROBAN_VAULT_ADDRESS,
+      amount: 5n,
+      expiryLedger: 123456,
+    })
+    expect(out.contract).toBe(SOROBAN_TOKEN_ADDRESS)
+    expect(out.method).toBe('approve')
+    expect(out.args).toEqual([
+      { addr: 'CACCOUNT' },
+      { addr: SOROBAN_VAULT_ADDRESS },
+      { i128: 5n },
+      { u32: 123456 },
+    ])
+  })
+
+  it('defaults the spender to the configured vault', () => {
+    const out = buildApprove({ contractId: 'CACCOUNT', amount: 1n, expiryLedger: 9 })
+    expect(out.args[1]).toEqual({ addr: SOROBAN_VAULT_ADDRESS })
+  })
 })
