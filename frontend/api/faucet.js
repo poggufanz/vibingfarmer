@@ -24,16 +24,36 @@ export class FaucetError extends Error {}
  * transfer(from=treasury, to, amount) of the SAC token; treasury (secret) signs the source.
  * @returns {Promise<{ hash, status }>}
  */
-export async function dispenseToken({ secret, token, to, amount, passphrase, sdk, rpcServer, pollTries = 10, pollIntervalMs = 1500 }) {
+export async function dispenseToken({
+  secret,
+  token,
+  to,
+  amount,
+  passphrase,
+  sdk,
+  rpcServer,
+  pollTries = 10,
+  pollIntervalMs = 1500,
+}) {
   const { Keypair, TransactionBuilder, Operation, Contract, Address, xdr, BASE_FEE, rpc } = sdk
-  const capped = amount && BigInt(amount) > 0n ? (BigInt(amount) > CAP_BASE_UNITS ? CAP_BASE_UNITS : BigInt(amount)) : DEFAULT_BASE_UNITS
+  const capped =
+    amount && BigInt(amount) > 0n
+      ? BigInt(amount) > CAP_BASE_UNITS
+        ? CAP_BASE_UNITS
+        : BigInt(amount)
+      : DEFAULT_BASE_UNITS
   const kp = Keypair.fromSecret(secret)
   const source = await rpcServer.getAccount(kp.publicKey())
   const op = new Contract(token).call(
     'transfer',
     Address.fromString(kp.publicKey()).toScVal(),
     Address.fromString(to).toScVal(),
-    xdr.ScVal.scvI128(new xdr.Int128Parts({ hi: xdr.Int64.fromString('0'), lo: xdr.Uint64.fromString(capped.toString()) }))
+    xdr.ScVal.scvI128(
+      new xdr.Int128Parts({
+        hi: xdr.Int64.fromString('0'),
+        lo: xdr.Uint64.fromString(capped.toString()),
+      })
+    )
   )
   const raw = new TransactionBuilder(source, { fee: BASE_FEE, networkPassphrase: passphrase })
     .addOperation(op)
@@ -90,11 +110,25 @@ export default async function handler(req, res) {
     }
     const mod = await import('@stellar/stellar-sdk')
     const sdk = {
-      Keypair: mod.Keypair, TransactionBuilder: mod.TransactionBuilder, Operation: mod.Operation,
-      Contract: mod.Contract, Address: mod.Address, xdr: mod.xdr, BASE_FEE: mod.BASE_FEE, rpc: mod.rpc,
+      Keypair: mod.Keypair,
+      TransactionBuilder: mod.TransactionBuilder,
+      Operation: mod.Operation,
+      Contract: mod.Contract,
+      Address: mod.Address,
+      xdr: mod.xdr,
+      BASE_FEE: mod.BASE_FEE,
+      rpc: mod.rpc,
     }
     const rpcServer = new mod.rpc.Server(RPC_URL())
-    const out = await dispenseToken({ secret, token, to: body.to, amount: body.amount, passphrase: PASSPHRASE(), sdk, rpcServer })
+    const out = await dispenseToken({
+      secret,
+      token,
+      to: body.to,
+      amount: body.amount,
+      passphrase: PASSPHRASE(),
+      sdk,
+      rpcServer,
+    })
     return res.end(JSON.stringify(out))
   } catch (err) {
     console.error('[api/faucet] error:', err?.message || err)

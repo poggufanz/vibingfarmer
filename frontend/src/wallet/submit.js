@@ -142,7 +142,12 @@ async function defaultSignSubmitApprove({
   const units = typeof amount === 'bigint' ? amount : BigInt(amount)
   const latest = await server.getLatestLedger()
   const expiryLedger = latest.sequence + expiryLedgers
-  const { method, contract: tokenContract } = buildApprove({ contractId, vault, amount: units, expiryLedger })
+  const { method, contract: tokenContract } = buildApprove({
+    contractId,
+    vault,
+    amount: units,
+    expiryLedger,
+  })
   const ephAcct = await getAccountWithRetry(server, ephemeral.publicKey())
   const approveOp = new Contract(tokenContract).call(
     method,

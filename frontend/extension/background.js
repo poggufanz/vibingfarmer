@@ -33,7 +33,8 @@ export async function handleMessage(msg, env, reply) {
       sharesAfter: msg.sharesAfter,
       error: msg.error,
     }
-    if (storageSession?.set) await storageSession.set({ vf_last_result: { ...result, at: Date.now() } })
+    if (storageSession?.set)
+      await storageSession.set({ vf_last_result: { ...result, at: Date.now() } })
     // Forward to an open popup (best-effort; the popup may have been dismissed by Face-ID).
     runtime?.sendMessage?.(result)
     const r = pending.get(msg.tabId)

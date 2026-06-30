@@ -1,4 +1,4 @@
-import { makeKit, connectPasskeyWallet } from '../src/wallet/account.js'
+import { makeKit, connectPasskeyWallet, readBalance } from '../src/wallet/account.js'
 import { submitDeposit, submitApprove } from '../src/wallet/submit.js'
 import { eligibility as vfEligibility, vaultFacts } from '../src/vfapi/client.js'
 
@@ -22,8 +22,12 @@ async function loadParams() {
 // default path; if SAK needs an explicit credentialId, thread one through
 // account.js connectPasskeyWallet → submitDeposit/submitApprove.
 ;(async () => {
-  const { tabId, p } = await loadParams()
+  let tabId
+  let p = {}
   try {
+    const loaded = await loadParams()
+    tabId = loaded.tabId
+    p = loaded.p
     const kit = await makeKit()
     await connectPasskeyWallet({ contractId: p.contractId, kit })
     let out
@@ -47,7 +51,6 @@ async function loadParams() {
     } else if (action === 'approve') {
       setStatus('Enabling deposits — funding + Face ID…')
       // Idempotent: mint only if the balance is low, then (re)issue the approve.
-      const { readBalance } = await import('../src/wallet/account.js')
       const bal = await readBalance(p.contractId)
       if (!bal || bal < 10n ** 7n) {
         await fetch('/api/faucet', {
