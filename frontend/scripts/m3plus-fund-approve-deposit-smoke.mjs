@@ -8,13 +8,14 @@
 // Run (vite-node; needs the dev server up for /api/faucet + /api/stellar-relay):
 //   cd frontend && VF_RELAY_URL=http://localhost:5173 npx vite-node scripts/m3plus-fund-approve-deposit-smoke.mjs --submit
 
-import { Keypair, TransactionBuilder, Operation, Contract, Address, xdr, hash, StrKey, BASE_FEE, rpc } from '@stellar/stellar-sdk'
+import { Keypair, TransactionBuilder, Operation, Address, xdr, hash, StrKey, BASE_FEE, rpc } from '@stellar/stellar-sdk'
 import { createHash, webcrypto } from 'node:crypto'
 import { normalizeLowS, buildChallenge, assembleSecp256r1Signature } from '../src/wallet/passkey.js'
-import { NETWORK_PASSPHRASE, SOROBAN_RPC_URL, SOROBAN_VAULT_ADDRESS, SOROBAN_TOKEN_ADDRESS } from '../src/stellar/config.js'
+import { NETWORK_PASSPHRASE, SOROBAN_RPC_URL, SOROBAN_VAULT_ADDRESS } from '../src/stellar/config.js'
 import { ACCOUNT_WASM_HASH, WEBAUTHN_VERIFIER_ADDRESS, RP_ID } from '../src/wallet/config.js'
-import { readVaultShares, readTokenBalance } from '../src/stellar/agentDeposit.js'
+import { readTokenBalance } from '../src/stellar/agentDeposit.js'
 import { eligibility as vfEligibility, vaultFacts } from '../src/vfapi/client.js'
+import { submitApprove, submitDeposit } from '../src/wallet/submit.js'
 
 const FAUCET_URL = (process.env.VF_RELAY_URL || 'http://localhost:5173') + '/api/faucet'
 const FRIENDBOT = 'https://friendbot.stellar.org'
@@ -175,41 +176,6 @@ async function dispense(to) {
   return res.json()
 }
 
-// Build + synthetic-sign + submit a SAC approve from an ephemeral self-paid source.
-async function approveViaPasskey({ contractId, kp, keyData }) {
-  const ephemeral = Keypair.random()
-  await fundFriendbot(ephemeral.publicKey())
-  const ephAcct = await getAccountWithRetry(ephemeral.publicKey())
-  const latest = await server.getLatestLedger()
-  const expiry = latest.sequence + 17_280
-  const op = new Contract(SOROBAN_TOKEN_ADDRESS).call(
-    'approve',
-    Address.fromString(contractId).toScVal(),
-    Address.fromString(SOROBAN_VAULT_ADDRESS).toScVal(),
-    xdr.ScVal.scvI128(new xdr.Int128Parts({ hi: xdr.Int64.fromString('0'), lo: xdr.Uint64.fromString((100n * 10n ** 7n).toString()) })),
-    xdr.ScVal.scvU32(expiry)
-  )
-  const recRaw = new TransactionBuilder(ephAcct, { fee: BASE_FEE, networkPassphrase: NETWORK_PASSPHRASE }).addOperation(op).setTimeout(60).build()
-  const recSim = await server.simulateTransaction(recRaw)
-  if (rpc.Api.isSimulationError(recSim)) throw new Error(`approve rec-sim failed: ${recSim.error}`)
-  const entry = await signAuthEntryWithPasskey({ entry: recSim.result.auth[0], kp, keyData })
-  // Fresh source for the submitted tx — recRaw's build() bumped ephAcct's in-memory seq; nothing
-  // submitted yet, so a fresh fetch gives the true on-chain seq (avoids txBadSeq).
-  const enfAcct = await getAccountWithRetry(ephemeral.publicKey())
-  const enforcedRaw = new TransactionBuilder(enfAcct, {
-    fee: (BigInt(recSim.minResourceFee ?? '0') + BigInt(BASE_FEE) * 100n).toString(),
-    networkPassphrase: NETWORK_PASSPHRASE,
-  }).setSorobanData(recSim.transactionData.build()).addOperation(Operation.invokeHostFunction({ func: recRaw.operations[0].func, auth: [entry] })).setTimeout(60).build()
-  const enfSim = await server.simulateTransaction(enforcedRaw)
-  if (rpc.Api.isSimulationError(enfSim)) throw new Error(`approve enf-sim failed: ${enfSim.error}`)
-  const prepared = rpc.assembleTransaction(enforcedRaw, enfSim).build()
-  prepared.sign(ephemeral)
-  const sent = await server.sendTransaction(prepared)
-  if (sent.status === 'ERROR') throw new Error(`approve rejected: ${JSON.stringify(sent.errorResult ?? sent)}`)
-  await waitSuccess(sent.hash, 'approve')
-  console.log('approve OK:', sent.hash)
-}
-
 async function main() {
   console.log('=== M3+ fund -> approve -> deposit smoke ===')
   const { facts } = vaultFacts(process.env.VF_PROTOCOL || 'aave-v3')
@@ -229,52 +195,41 @@ async function main() {
     if (bal && bal > 0n) { console.log('balance:', bal.toString()); break }
     await new Promise((r) => setTimeout(r, 1500))
   }
-  await approveViaPasskey({ contractId, kp, keyData })
-
-  const sharesBefore = await readVaultShares(contractId, { server })
-  // deposit leg: build (source=relayer), synthetic-sign, relay — identical to m3 lines 263-332
-  // (mirrors that block, substituting the relayer source for the deployer source).
-  const relayerAddr = (await (await fetch((process.env.VF_RELAY_URL || 'http://localhost:5173') + '/api/stellar-relay', {
-    method: 'POST', headers: { 'Content-Type': 'application/json', origin: process.env.VF_RELAY_URL || 'http://localhost:5173' },
-    body: JSON.stringify({ action: 'wallet' }),
-  })).json()).address
-  const relayerAcct = await getAccountWithRetry(relayerAddr)
-  const depositOp = new Contract(SOROBAN_VAULT_ADDRESS).call(
-    'deposit',
-    Address.fromString(contractId).toScVal(),
-    xdr.ScVal.scvI128(new xdr.Int128Parts({ hi: xdr.Int64.fromString('0'), lo: xdr.Uint64.fromString(DEPOSIT_AMOUNT.toString()) }))
-  )
-  const recRaw = new TransactionBuilder(relayerAcct, { fee: BASE_FEE, networkPassphrase: NETWORK_PASSPHRASE }).addOperation(depositOp).setTimeout(60).build()
-  const recSim = await server.simulateTransaction(recRaw)
-  if (rpc.Api.isSimulationError(recSim)) throw new Error(`deposit rec-sim failed: ${recSim.error}`)
-  const entry = await signAuthEntryWithPasskey({ entry: recSim.result.auth[0], kp, keyData })
-  // Fresh relayer source for the submitted tx — recRaw's build() bumped relayerAcct's in-memory
-  // seq; nothing submitted yet, so a fresh fetch gives the true on-chain seq (avoids txBadSeq).
-  const enfAcct = await getAccountWithRetry(relayerAddr)
-  const enforcedRaw = new TransactionBuilder(enfAcct, {
-    fee: (BigInt(recSim.minResourceFee ?? '0') + BigInt(BASE_FEE) * 100n).toString(), networkPassphrase: NETWORK_PASSPHRASE,
-  }).setSorobanData(recSim.transactionData.build()).addOperation(Operation.invokeHostFunction({ func: recRaw.operations[0].func, auth: [entry] })).setTimeout(60).build()
-  const enfSim = await server.simulateTransaction(enforcedRaw)
-  if (rpc.Api.isSimulationError(enfSim)) throw new Error(`deposit enf-sim failed: ${enfSim.error}`)
-  const preparedXdr = rpc.assembleTransaction(enforcedRaw, enfSim).build().toEnvelope().toXDR('base64')
-  // Forge the Origin header: node fetch sends none, and the relay's applyCors allowlists the dev
-  // origin. A real browser popup auto-sends Origin, so production uses src/stellar/relay.js
-  // submitViaRelay directly (covered by the manual Chrome E2E); the headless smoke posts inline.
+  // Production-path approve + deposit: call the same submit.js wrappers the browser popup uses,
+  // injecting only the headless seams. This exercises the REAL defaultSignSubmitApprove /
+  // defaultBuildDepositInner assemblers — no hand-rolled parallel copy that can drift out of sync.
+  //   kit   — synthetic-P256 signer stands in for the browser's Face-ID kit.signAuthEntry.
+  //   relay — forged-Origin POST: node fetch sends no Origin, and the relay's applyCors allowlists
+  //           the dev origin (a real popup auto-sends it, so production uses relay.js directly).
+  const kit = { signAuthEntry: (entry) => signAuthEntryWithPasskey({ entry, kp, keyData }) }
   const relayOrigin = process.env.VF_RELAY_URL || 'http://localhost:5173'
-  const relayRes = await fetch(relayOrigin + '/api/stellar-relay', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', origin: relayOrigin },
-    body: JSON.stringify({ action: 'submit', xdr: preparedXdr }),
-  })
-  if (!relayRes.ok) throw new Error(`relay HTTP ${relayRes.status}: ${await relayRes.text()}`)
-  const relayed = await relayRes.json()
-  if (!relayed || relayed.configured === false || relayed.error || !relayed.hash)
-    throw new Error(`relay rejected (check STELLAR_RELAYER_SECRET + dev server): ${JSON.stringify(relayed)}`)
-  console.log('deposit relayed:', relayed.hash, relayed.status)
-  await waitSuccess(relayed.hash, 'deposit') // confirm on-chain before reading shares
-  const sharesAfter = await readVaultShares(contractId, { server })
-  console.log('shares:', sharesBefore?.toString(), '->', sharesAfter?.toString())
-  if (sharesBefore != null && sharesAfter != null && sharesAfter > sharesBefore) console.log('SHARES MINTED — m3+ end-to-end passed.')
+  const relayPost = (body) =>
+    fetch(relayOrigin + '/api/stellar-relay', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', origin: relayOrigin },
+      body: JSON.stringify(body),
+    })
+  const relay = {
+    getRelayerAddress: async () => (await (await relayPost({ action: 'wallet' })).json()).address,
+    submitViaRelay: async ({ xdr: envXdr }) => {
+      const res = await relayPost({ action: 'submit', xdr: envXdr })
+      if (!res.ok) throw new Error(`relay HTTP ${res.status}: ${await res.text()}`)
+      const relayed = await res.json()
+      if (!relayed || relayed.configured === false || relayed.error || !relayed.hash)
+        throw new Error(`relay rejected (check STELLAR_RELAYER_SECRET + dev server): ${JSON.stringify(relayed)}`)
+      await waitSuccess(relayed.hash, 'deposit') // confirm on-chain before submitDeposit reads shares
+      return { hash: relayed.hash, status: relayed.status }
+    },
+  }
+
+  const approved = await submitApprove({ contractId, amount: 100n * 10n ** 7n, kit, server })
+  console.log('approve OK:', approved.hash)
+
+  const dep = await submitDeposit({ contractId, amount: DEPOSIT_AMOUNT, eligibility, kit, server, relay })
+  console.log('deposit relayed:', dep.hash, dep.status)
+  console.log('shares:', dep.sharesBefore?.toString(), '->', dep.sharesAfter?.toString())
+  if (dep.sharesBefore != null && dep.sharesAfter != null && dep.sharesAfter > dep.sharesBefore)
+    console.log('SHARES MINTED — m3+ end-to-end passed.')
   else throw new Error('shares did not increase')
 }
 
