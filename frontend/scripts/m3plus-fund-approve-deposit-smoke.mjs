@@ -191,7 +191,10 @@ async function approveViaPasskey({ contractId, kp, keyData }) {
   const recSim = await server.simulateTransaction(recRaw)
   if (rpc.Api.isSimulationError(recSim)) throw new Error(`approve rec-sim failed: ${recSim.error}`)
   const entry = await signAuthEntryWithPasskey({ entry: recSim.result.auth[0], kp, keyData })
-  const enforcedRaw = new TransactionBuilder(ephAcct, {
+  // Fresh source for the submitted tx — recRaw's build() bumped ephAcct's in-memory seq; nothing
+  // submitted yet, so a fresh fetch gives the true on-chain seq (avoids txBadSeq).
+  const enfAcct = await getAccountWithRetry(ephemeral.publicKey())
+  const enforcedRaw = new TransactionBuilder(enfAcct, {
     fee: (BigInt(recSim.minResourceFee ?? '0') + BigInt(BASE_FEE) * 100n).toString(),
     networkPassphrase: NETWORK_PASSPHRASE,
   }).setSorobanData(recSim.transactionData.build()).addOperation(Operation.invokeHostFunction({ func: recRaw.operations[0].func, auth: [entry] })).setTimeout(60).build()
@@ -243,7 +246,10 @@ async function main() {
   const recSim = await server.simulateTransaction(recRaw)
   if (rpc.Api.isSimulationError(recSim)) throw new Error(`deposit rec-sim failed: ${recSim.error}`)
   const entry = await signAuthEntryWithPasskey({ entry: recSim.result.auth[0], kp, keyData })
-  const enforcedRaw = new TransactionBuilder(relayerAcct, {
+  // Fresh relayer source for the submitted tx — recRaw's build() bumped relayerAcct's in-memory
+  // seq; nothing submitted yet, so a fresh fetch gives the true on-chain seq (avoids txBadSeq).
+  const enfAcct = await getAccountWithRetry(relayerAddr)
+  const enforcedRaw = new TransactionBuilder(enfAcct, {
     fee: (BigInt(recSim.minResourceFee ?? '0') + BigInt(BASE_FEE) * 100n).toString(), networkPassphrase: NETWORK_PASSPHRASE,
   }).setSorobanData(recSim.transactionData.build()).addOperation(Operation.invokeHostFunction({ func: recRaw.operations[0].func, auth: [entry] })).setTimeout(60).build()
   const enfSim = await server.simulateTransaction(enforcedRaw)

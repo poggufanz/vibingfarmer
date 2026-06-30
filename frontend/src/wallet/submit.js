@@ -81,7 +81,11 @@ async function defaultBuildDepositInner({ contractId, amount, vault, relayer, ki
   const entries = recSim.result?.auth ?? []
   if (entries.length !== 1) throw new Error(`expected 1 auth entry, got ${entries.length}`)
   const signed = await kit.signAuthEntry(entries[0]) // Face-ID; SAK owns the ceremony
-  const enforcedRaw = new TransactionBuilder(relayerAcct, {
+  // Re-fetch the source for the SUBMITTED tx: recRaw's build() already bumped relayerAcct's
+  // in-memory sequence, and nothing has been submitted yet, so a fresh fetch yields the true
+  // on-chain seq → the enforced tx gets the correct next sequence (avoids txBadSeq).
+  const enfAcct = await server.getAccount(relayer)
+  const enforcedRaw = new TransactionBuilder(enfAcct, {
     fee: (BigInt(recSim.minResourceFee ?? '0') + BigInt(BASE_FEE) * 100n).toString(),
     networkPassphrase: NETWORK_PASSPHRASE,
   })
@@ -173,7 +177,10 @@ async function defaultSignSubmitApprove({
   const entries = recSim.result?.auth ?? []
   if (entries.length !== 1) throw new Error(`expected 1 auth entry, got ${entries.length}`)
   const signed = await kit.signAuthEntry(entries[0]) // Face-ID over the approve auth entry
-  const enforcedRaw = new TransactionBuilder(ephAcct, {
+  // Fresh source for the SUBMITTED tx — recRaw's build() bumped ephAcct's in-memory sequence;
+  // nothing submitted yet, so a fresh fetch gives the true on-chain seq (avoids txBadSeq).
+  const enfAcct = await server.getAccount(ephemeral.publicKey())
+  const enforcedRaw = new TransactionBuilder(enfAcct, {
     fee: (BigInt(recSim.minResourceFee ?? '0') + BigInt(BASE_FEE) * 100n).toString(),
     networkPassphrase: NETWORK_PASSPHRASE,
   })
