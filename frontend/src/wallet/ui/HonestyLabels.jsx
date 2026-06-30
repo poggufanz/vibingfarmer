@@ -6,32 +6,37 @@
 // scope "deposit"  → label 1 (near ApproveOverlay)
 // scope "recovery" → label 2 (recovery screen)
 // scope "agent"    → label 5 (agent screen)
+//
+// Self-contained dark-warn styling (Acid Yield --warn) so it stays legible on the
+// wallet popup without depending on the popup stylesheet. No emoji per DESIGN §1.
 
 const LABELS = {
   deposit:
-    '⚠ F8 eligibility is app-layer only — not enforced on-chain (off-chain check, fail-closed).',
-  recovery:
-    '⚠ Recovery key is VF-custodied — a centralisation trade-off; guard this key carefully.',
-  testnet: '⚠ Everything here is testnet-grade only — do not use real funds.',
+    'F8 eligibility is app-layer only, not enforced on-chain (off-chain check, fail-closed).',
+  recovery: 'Recovery key is VF-custodied, a centralisation trade-off. Guard this key carefully.',
+  testnet: 'Everything here is testnet-grade only. Do not use real funds.',
   protocol:
-    '⚠ Passkey-on-Stellar is mainnet-live at the protocol layer, but these wallet contracts are testnet PoC-grade.',
+    'Passkey-on-Stellar is mainnet-live at the protocol layer, but these wallet contracts are testnet PoC-grade.',
   agent:
-    '⚠ Agent spending cap is not yet enforced on-chain (cap policy contract undeployed) — testnet PoC.',
+    'Agent spending cap is not yet enforced on-chain (cap policy contract undeployed). Testnet PoC.',
+}
+
+const s = {
+  fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+  fontSize: 11,
+  lineHeight: 1.5,
+  color: '#f0b54a',
+  background: 'rgba(240,181,74,0.08)',
+  border: '1px solid rgba(240,181,74,0.28)',
+  borderRadius: 6,
+  padding: '7px 9px',
+  margin: '4px 0',
 }
 
 /**
  * @param {{ scope?: 'global' | 'deposit' | 'recovery' | 'agent' }} props
  */
 export function HonestyLabels({ scope = 'global' }) {
-  const s = {
-    fontSize: 11,
-    color: '#856404',
-    background: '#fff3cd',
-    border: '1px solid #ffc107',
-    borderRadius: 4,
-    padding: '4px 6px',
-    margin: '4px 0',
-  }
   if (scope === 'deposit') {
     return (
       <p data-testid="honesty-deposit" style={s}>
