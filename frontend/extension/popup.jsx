@@ -14,25 +14,11 @@ import { ApproveOverlay } from '../src/wallet/ui/ApproveOverlay.jsx'
 import { HonestyLabels } from '../src/wallet/ui/HonestyLabels.jsx'
 import { toDisplay } from '../src/stellar/format.js'
 import { SOROBAN_VAULT_ADDRESS } from '../src/stellar/config.js'
-import { RP_ID } from '../src/wallet/config.js'
-import { buildChallenge } from '../src/wallet/passkey.js'
 
 // Ceremony runs in the extension TAB — Face ID closes the popup.
 // Post SIGN_REQUEST to the background SW; it opens ceremony.html in a new tab.
-//
-// challenge is demo-bound to the tx bytes for the Face-ID round-trip:
-//   base64url(sha256(xdrBytes)) — a well-formed 43-char WebAuthn challenge.
-// The REAL auth-entry binding (base64url(sha256(SorobanAuth preimage))) + on-chain
-// submit run in the smoke/testnet batch (see scripts/m0b-passkey-authentry-smoke.mjs).
-async function postSignRequest(xdr) {
-  const xdrBytes = Uint8Array.from(atob(xdr), (c) => c.charCodeAt(0))
-  const hashBuf = await crypto.subtle.digest('SHA-256', xdrBytes)
-  const challenge = buildChallenge(new Uint8Array(hashBuf))
-  chrome.runtime.sendMessage({
-    type: 'SIGN_REQUEST',
-    challenge,
-    rpId: RP_ID,
-  })
+function postSignRequest(action, params) {
+  chrome.runtime.sendMessage({ type: 'SIGN_REQUEST', action, params })
 }
 
 const S = {
@@ -121,6 +107,9 @@ function Popup() {
   const [agentAddress, setAgentAddress] = useState('')
   const [agentCap, setAgentCap] = useState('')
 
+  // Result
+  const [lastTx, setLastTx] = useState(null)
+
   function clear() {
     setError('')
     setStatus('')
@@ -151,6 +140,29 @@ function Popup() {
       })
   }, [])
 
+  // Recover last ceremony result on reopen (popup may have been dismissed during Face-ID)
+  useEffect(() => {
+    chrome.storage?.session?.get?.('vf_last_result').then((g) => {
+      const r = g?.vf_last_result
+      if (r) applyResult(r)
+    })
+    const onMsg = (m) => { if (m?.type === 'SIGN_RESULT') applyResult(m) }
+    chrome.runtime?.onMessage?.addListener(onMsg)
+    return () => chrome.runtime?.onMessage?.removeListener(onMsg)
+  }, [])
+
+  function applyResult(r) {
+    if (!r.ok) { setError(r.error || 'Ceremony failed'); setScreen('home'); return }
+    if (r.action === 'deposit') {
+      const minted = BigInt(r.sharesAfter ?? '0') - BigInt(r.sharesBefore ?? '0')
+      setStatus(`Minted ${minted} shares. tx: ${r.hash}`)
+    } else if (r.action === 'approve') {
+      setStatus('Deposits enabled — you can deposit now.')
+    }
+    setLastTx(r.hash || null)
+    setScreen('result')
+  }
+
   async function handleCreate() {
     clear()
     setScreen('creating')
@@ -180,17 +192,14 @@ function Popup() {
   async function handleSend() {
     clear()
     try {
-      const { xdr } = await sendToken({
+      await sendToken({
         contractId: wallet.contractId,
         to: sendTo,
         amount: sendAmount,
       })
-      // Builds UNSIGNED xdr → ceremony tab signs → submit in user-greenlit demo batch
-      await postSignRequest(xdr)
       setStatus(
-        'Face-ID ceremony demo — challenge bound to tx bytes. Verified on-chain submit runs in the testnet batch.'
+        "Built the unsigned transfer XDR. On-chain send isn't wired in this build — Deposit is the live on-chain path."
       )
-      setScreen('signing-pending')
     } catch (e) {
       setError(e.message)
     }
@@ -210,23 +219,33 @@ function Popup() {
     }
   }
 
+  async function handleEnableDeposits() {
+    clear()
+    setStatus('Opening Enable-deposits ceremony…')
+    postSignRequest('approve', { contractId: wallet.contractId })
+    setScreen('signing-pending')
+  }
+
   async function handleDepositApprove() {
     clear()
     try {
-      // depositToVault re-checks eligibility internally (fail-closed F8 gate)
-      const { xdr } = await depositToVault({
+      // Re-run the F8 gate in-popup for an early verdict; the ceremony re-asserts fail-closed.
+      await depositToVault({
         contractId: wallet.contractId,
         amount: BigInt(Math.round(parseFloat(depositAmount) * 1e7)),
         eligibility,
       })
-      await postSignRequest(xdr)
-      setStatus(
-        'Face-ID ceremony demo — challenge bound to tx bytes. Verified on-chain submit runs in the testnet batch.'
-      )
+      postSignRequest('deposit', { contractId: wallet.contractId, amount: depositAmount })
+      setStatus('Opening deposit ceremony — approve with Face ID in the new tab…')
       setDepositVerdict(null)
       setScreen('signing-pending')
     } catch (e) {
-      setError(e.message)
+      // An allowance/balance trap routes the user to Enable deposits instead of failing.
+      if (/allowance|balance|insufficient/i.test(e.message)) {
+        setError('Deposits not enabled yet — tap "Enable deposits" first.')
+      } else {
+        setError(e.message)
+      }
     }
   }
 
@@ -291,13 +310,35 @@ function Popup() {
         <h2 style={S.h1}>VF Wallet</h2>
         <p style={S.info}>{status}</p>
         <p style={S.info}>
-          This is a ceremony round-trip — the Face-ID prompt opens in the ceremony tab. No transfer
-          is submitted yet; the verified on-chain submit runs in the testnet batch. This popup may
-          be dismissed.
+          Approve with Face ID in the ceremony tab. This popup may be dismissed — reopen it to see
+          the result.
         </p>
         <button style={S.btn} onClick={() => nav('home')}>
           Back to home
         </button>
+      </div>
+    )
+  }
+
+  if (screen === 'result') {
+    return (
+      <div style={S.wrap}>
+        <h2 style={S.h1}>VF Wallet</h2>
+        <p data-testid="result-status" style={S.info}>{status}</p>
+        {lastTx && (
+          <a
+            href={`https://stellar.expert/explorer/testnet/tx/${lastTx}`}
+            target="_blank"
+            rel="noreferrer"
+            style={{ fontSize: 11, display: 'block', marginTop: 4 }}
+          >
+            View on Stellar Expert
+          </a>
+        )}
+        <button style={S.btn} onClick={() => setScreen('home')}>
+          Done
+        </button>
+        <NavBar onNav={nav} />
       </div>
     )
   }
@@ -354,7 +395,7 @@ function Popup() {
         <button style={S.btnPrimary} onClick={handleSend} disabled={!sendTo || !sendAmount}>
           Approve with Face ID
         </button>
-        <p style={S.info}>Builds unsigned XDR &rarr; ceremony tab &rarr; submit in demo batch.</p>
+        <p style={S.info}>Builds unsigned XDR locally. On-chain send is not wired in this build — Deposit is the live on-chain path.</p>
         <NavBar onNav={nav} />
       </div>
     )
@@ -380,6 +421,9 @@ function Popup() {
             Check eligibility
           </button>
         )}
+        <button style={S.btn} onClick={handleEnableDeposits}>
+          Enable deposits
+        </button>
         {depositVerdict && (
           <ApproveOverlay
             verdict={depositVerdict}
