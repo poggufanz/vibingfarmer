@@ -14,7 +14,6 @@ import { normalizeLowS, buildChallenge, assembleSecp256r1Signature } from '../sr
 import { NETWORK_PASSPHRASE, SOROBAN_RPC_URL, SOROBAN_VAULT_ADDRESS, SOROBAN_TOKEN_ADDRESS } from '../src/stellar/config.js'
 import { ACCOUNT_WASM_HASH, WEBAUTHN_VERIFIER_ADDRESS, RP_ID } from '../src/wallet/config.js'
 import { readVaultShares, readTokenBalance } from '../src/stellar/agentDeposit.js'
-import { submitViaRelay } from '../src/stellar/relay.js'
 import { eligibility as vfEligibility, vaultFacts } from '../src/vfapi/client.js'
 
 const FAUCET_URL = (process.env.VF_RELAY_URL || 'http://localhost:5173') + '/api/faucet'
@@ -22,7 +21,10 @@ const FRIENDBOT = 'https://friendbot.stellar.org'
 const server = new rpc.Server(SOROBAN_RPC_URL)
 const sha256 = (b) => new Uint8Array(createHash('sha256').update(Buffer.from(b)).digest())
 const subtle = webcrypto.subtle
-const DEPOSIT_AMOUNT = 1n
+// 1 USDC (7-decimal base units). Must clear Blend's supply minimum — a dust amount like 1n
+// (0.0000001 USDC) mints 0 bTokens and the pool rejects submit_with_allowance with Error #1216.
+// Faucet dispenses 10 USDC and we approve 100, so 1 USDC is well within balance + allowance.
+const DEPOSIT_AMOUNT = 10_000_000n
 
 // ---- copied verbatim from m3-deposit-smoke.mjs (unchanged): ----
 //   fundFriendbot, getAccountWithRetry, waitSuccess, externalSignerScVal,
@@ -255,9 +257,21 @@ async function main() {
   const enfSim = await server.simulateTransaction(enforcedRaw)
   if (rpc.Api.isSimulationError(enfSim)) throw new Error(`deposit enf-sim failed: ${enfSim.error}`)
   const preparedXdr = rpc.assembleTransaction(enforcedRaw, enfSim).build().toEnvelope().toXDR('base64')
-  const relayed = await submitViaRelay({ xdr: preparedXdr })
-  if (!relayed) throw new Error('relay unconfigured — set STELLAR_RELAYER_SECRET + start dev server')
+  // Forge the Origin header: node fetch sends none, and the relay's applyCors allowlists the dev
+  // origin. A real browser popup auto-sends Origin, so production uses src/stellar/relay.js
+  // submitViaRelay directly (covered by the manual Chrome E2E); the headless smoke posts inline.
+  const relayOrigin = process.env.VF_RELAY_URL || 'http://localhost:5173'
+  const relayRes = await fetch(relayOrigin + '/api/stellar-relay', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', origin: relayOrigin },
+    body: JSON.stringify({ action: 'submit', xdr: preparedXdr }),
+  })
+  if (!relayRes.ok) throw new Error(`relay HTTP ${relayRes.status}: ${await relayRes.text()}`)
+  const relayed = await relayRes.json()
+  if (!relayed || relayed.configured === false || relayed.error || !relayed.hash)
+    throw new Error(`relay rejected (check STELLAR_RELAYER_SECRET + dev server): ${JSON.stringify(relayed)}`)
   console.log('deposit relayed:', relayed.hash, relayed.status)
+  await waitSuccess(relayed.hash, 'deposit') // confirm on-chain before reading shares
   const sharesAfter = await readVaultShares(contractId, { server })
   console.log('shares:', sharesBefore?.toString(), '->', sharesAfter?.toString())
   if (sharesBefore != null && sharesAfter != null && sharesAfter > sharesBefore) console.log('SHARES MINTED — m3+ end-to-end passed.')
