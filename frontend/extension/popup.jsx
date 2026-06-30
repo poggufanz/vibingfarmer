@@ -146,13 +146,19 @@ function Popup() {
       const r = g?.vf_last_result
       if (r) applyResult(r)
     })
-    const onMsg = (m) => { if (m?.type === 'SIGN_RESULT') applyResult(m) }
+    const onMsg = (m) => {
+      if (m?.type === 'SIGN_RESULT') applyResult(m)
+    }
     chrome.runtime?.onMessage?.addListener(onMsg)
     return () => chrome.runtime?.onMessage?.removeListener(onMsg)
   }, [])
 
   function applyResult(r) {
-    if (!r.ok) { setError(r.error || 'Ceremony failed'); setScreen('home'); return }
+    if (!r.ok) {
+      setError(r.error || 'Ceremony failed')
+      setScreen('home')
+      return
+    }
     if (r.action === 'deposit') {
       const minted = BigInt(r.sharesAfter ?? '0') - BigInt(r.sharesBefore ?? '0')
       setStatus(`Minted ${minted} shares. tx: ${r.hash}`)
@@ -324,7 +330,9 @@ function Popup() {
     return (
       <div style={S.wrap}>
         <h2 style={S.h1}>VF Wallet</h2>
-        <p data-testid="result-status" style={S.info}>{status}</p>
+        <p data-testid="result-status" style={S.info}>
+          {status}
+        </p>
         {lastTx && (
           <a
             href={`https://stellar.expert/explorer/testnet/tx/${lastTx}`}
@@ -395,7 +403,10 @@ function Popup() {
         <button style={S.btnPrimary} onClick={handleSend} disabled={!sendTo || !sendAmount}>
           Approve with Face ID
         </button>
-        <p style={S.info}>Builds unsigned XDR locally. On-chain send is not wired in this build — Deposit is the live on-chain path.</p>
+        <p style={S.info}>
+          Builds unsigned XDR locally. On-chain send is not wired in this build — Deposit is the
+          live on-chain path.
+        </p>
         <NavBar onNav={nav} />
       </div>
     )
