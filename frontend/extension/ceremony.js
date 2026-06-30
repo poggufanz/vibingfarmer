@@ -1,6 +1,7 @@
 import { makeKit, connectPasskeyWallet, readBalance } from '../src/wallet/account.js'
 import { submitDeposit, submitApprove } from '../src/wallet/submit.js'
 import { eligibility as vfEligibility, vaultFacts } from '../src/vfapi/client.js'
+import { FAUCET_PROXY_URL } from '../src/stellar/config.js'
 
 const params = new URLSearchParams(location.search)
 const action = params.get('action')
@@ -54,7 +55,7 @@ async function loadParams() {
       const bal = await readBalance(p.contractId)
       let dispensed = true
       if (!bal || bal < 10n ** 7n) {
-        const faucetRes = await fetch('/api/faucet', {
+        const faucetRes = await fetch(FAUCET_PROXY_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: 'dispense', to: p.contractId }),

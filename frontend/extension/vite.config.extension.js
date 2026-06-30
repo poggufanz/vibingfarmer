@@ -1,13 +1,34 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { resolve } from 'path'
+import { copyFileSync } from 'node:fs'
 
-// Second build target: emits the unpacked MV3 extension.
+// Second build target: emits the unpacked MV3 extension into ../extension-dist.
+// root = this dir so the HTML entries emit flat at the dist root (not nested under extension/),
+// keeping each page's relative script refs valid and the manifest's popup.html / ceremony.html
+// paths correct. A closeBundle hook copies manifest.json in (publicDir is off).
+const OUT = resolve(__dirname, '../extension-dist')
+
 export default defineConfig({
-  plugins: [react()],
+  root: __dirname,
+  plugins: [
+    react(),
+    {
+      name: 'copy-manifest',
+      closeBundle() {
+        copyFileSync(resolve(__dirname, 'manifest.json'), resolve(OUT, 'manifest.json'))
+      },
+    },
+  ],
   publicDir: false,
+  // Inline the backend origin so the packed chrome-extension:// pages call absolute /api/* URLs
+  // instead of relative ones (which resolve to the extension origin and 404). Build with
+  // VF_API_BASE=http://localhost:5173 (dev) or the deployed Pages origin.
+  define: {
+    'process.env.VF_API_BASE': JSON.stringify(process.env.VF_API_BASE || ''),
+  },
   build: {
-    outDir: resolve(__dirname, '../extension-dist'),
+    outDir: OUT,
     emptyOutDir: true,
     rollupOptions: {
       input: {

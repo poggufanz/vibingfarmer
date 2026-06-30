@@ -39,5 +39,13 @@ export const SOROBAN_BLEND_USDC_ADDRESS = 'CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJ
 // (e.g. http://localhost:5173/api/stellar-relay). typeof guard keeps it browser-safe; unset in
 // vitest → relative default (config/relay tests still assert '/api/stellar-relay').
 // ponytail: env override, not a config object — one knob, the only one a headless run needs.
-export const RELAY_PROXY_URL =
-  (typeof process !== 'undefined' && process.env && process.env.VF_RELAY_URL) || '/api/stellar-relay'
+// Extension build injects VF_API_BASE (absolute origin of the running backend) so the packed
+// chrome-extension:// pages can reach /api/* — a same-origin relative path resolves to the
+// extension origin (chrome-extension://<id>/api/...) and 404s. Web app + headless smokes leave
+// VF_API_BASE unset → relative path / the VF_RELAY_URL knob, exactly as before (tests see defaults).
+const API_BASE = (typeof process !== 'undefined' && process.env && process.env.VF_API_BASE) || ''
+const VF_RELAY = (typeof process !== 'undefined' && process.env && process.env.VF_RELAY_URL) || ''
+export const RELAY_PROXY_URL = API_BASE
+  ? `${API_BASE}/api/stellar-relay`
+  : VF_RELAY || '/api/stellar-relay'
+export const FAUCET_PROXY_URL = API_BASE ? `${API_BASE}/api/faucet` : '/api/faucet'
