@@ -35,7 +35,7 @@ export async function dispenseToken({
   pollTries = 10,
   pollIntervalMs = 1500,
 }) {
-  const { Keypair, TransactionBuilder, Operation, Contract, Address, xdr, BASE_FEE, rpc } = sdk
+  const { Keypair, TransactionBuilder, Contract, Address, xdr, BASE_FEE, rpc } = sdk
   const capped =
     amount && BigInt(amount) > 0n
       ? BigInt(amount) > CAP_BASE_UNITS

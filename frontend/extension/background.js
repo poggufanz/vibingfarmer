@@ -36,7 +36,8 @@ export async function handleMessage(msg, env, reply) {
     if (storageSession?.set)
       await storageSession.set({ vf_last_result: { ...result, at: Date.now() } })
     // Forward to an open popup (best-effort; the popup may have been dismissed by Face-ID).
-    runtime?.sendMessage?.(result)
+    // In MV3 when no popup is open, sendMessage rejects — catch silently (result is persisted).
+    runtime?.sendMessage?.(result)?.catch(() => {})
     const r = pending.get(msg.tabId)
     if (r) {
       r(result)

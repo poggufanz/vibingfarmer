@@ -52,15 +52,21 @@ async function loadParams() {
       setStatus('Enabling deposits — funding + Face ID…')
       // Idempotent: mint only if the balance is low, then (re)issue the approve.
       const bal = await readBalance(p.contractId)
+      let dispensed = true
       if (!bal || bal < 10n ** 7n) {
-        await fetch('/api/faucet', {
+        const faucetRes = await fetch('/api/faucet', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: 'dispense', to: p.contractId }),
         })
+        dispensed = faucetRes.ok
       }
       out = await submitApprove({ contractId: p.contractId, amount: 100n * 10n ** 7n, kit })
-      setStatus('Deposits enabled.')
+      setStatus(
+        dispensed
+          ? 'Deposits enabled.'
+          : 'Approval set — but test tokens were not dispensed (faucet unavailable). Your balance may be 0; deposit may fail until funded.'
+      )
       chrome.runtime.sendMessage({
         type: 'CEREMONY_RESULT',
         tabId,
