@@ -1,56 +1,44 @@
 import { describe, it, expect, vi } from 'vitest'
 import { handleMessage } from './background.js'
 
-describe('background message router', () => {
-  it('opens a ceremony tab for SIGN_REQUEST and resolves with the assertion', async () => {
+describe('background router — action ceremony', () => {
+  it('opens ceremony.html with the action and stashes params in session storage', async () => {
     const tabs = { create: vi.fn(async () => ({ id: 7 })) }
-    const pending = new Map()
-    const reply = vi.fn()
+    const session = { set: vi.fn(async () => {}) }
     await handleMessage(
-      { type: 'SIGN_REQUEST', challenge: 'CH', rpId: 'localhost' },
-      { tabs, pending },
-      reply
+      { type: 'SIGN_REQUEST', action: 'deposit', params: { contractId: 'CACCT', amount: '1.5' } },
+      { tabs, storageSession: session },
+      vi.fn()
     )
     expect(tabs.create).toHaveBeenCalledWith(
-      expect.objectContaining({ url: expect.stringContaining('ceremony.html') })
+      expect.objectContaining({ url: expect.stringContaining('action=deposit'), active: true })
     )
-    // ceremony tab posts the result back:
-    await handleMessage(
-      { type: 'CEREMONY_RESULT', tabId: 7, assertion: { signature: [1] } },
-      { tabs, pending },
-      reply
+    expect(session.set).toHaveBeenCalledWith(
+      expect.objectContaining({ ['vf_params_7']: { contractId: 'CACCT', amount: '1.5' } })
     )
-    expect(reply).toHaveBeenCalledWith(expect.objectContaining({ type: 'SIGN_RESULT' }))
   })
 
-  it('ignores CEREMONY_RESULT for unknown tabId', async () => {
-    const tabs = { create: vi.fn(async () => ({ id: 99 })) }
-    const pending = new Map()
-    const reply = vi.fn()
+  it('persists CEREMONY_RESULT to session and forwards it to the popup', async () => {
+    const session = { set: vi.fn(async () => {}) }
+    const runtime = { sendMessage: vi.fn() }
     await handleMessage(
-      { type: 'CEREMONY_RESULT', tabId: 999, assertion: { signature: [2] } },
-      { tabs, pending },
-      reply
+      {
+        type: 'CEREMONY_RESULT',
+        action: 'deposit',
+        ok: true,
+        hash: 'H',
+        status: 'SUCCESS',
+        sharesBefore: '0',
+        sharesAfter: '5',
+      },
+      { storageSession: session, runtime },
+      vi.fn()
     )
-    expect(reply).not.toHaveBeenCalled()
-  })
-
-  it('removes pending entry after resolving', async () => {
-    const tabs = { create: vi.fn(async () => ({ id: 42 })) }
-    const pending = new Map()
-    const reply = vi.fn()
-    await handleMessage(
-      { type: 'SIGN_REQUEST', challenge: 'C2', rpId: 'example.com' },
-      { tabs, pending },
-      reply
+    expect(session.set).toHaveBeenCalledWith(
+      expect.objectContaining({ vf_last_result: expect.objectContaining({ ok: true, hash: 'H' }) })
     )
-    expect(pending.size).toBe(1)
-    await handleMessage(
-      { type: 'CEREMONY_RESULT', tabId: 42, assertion: { signature: [3] } },
-      { tabs, pending },
-      reply
+    expect(runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'SIGN_RESULT', ok: true, hash: 'H' })
     )
-    expect(pending.size).toBe(0)
-    expect(reply).toHaveBeenCalledWith({ type: 'SIGN_RESULT', assertion: { signature: [3] } })
   })
 })
