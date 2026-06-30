@@ -1,7 +1,13 @@
 import { NETWORK_PASSPHRASE, SOROBAN_RPC_URL, RELAY_PROXY_URL } from '../stellar/config.js'
 
-// RP-ID is the host the extension claims via host_permissions (Task 0 manifest).
-export const RP_ID = import.meta.env?.VITE_VF_RP_ID ?? 'localhost'
+// RP-ID = the WebAuthn relying-party domain. Web app: 'localhost' (a valid registrable domain
+// that matches its origin). Extension: a chrome-extension:// origin REJECTS any explicit rpId
+// ("<id> is an invalid domain"), so build with VITE_VF_RP_ID=origin (or empty) → RP_ID undefined
+// → rpId is omitted and Chrome defaults the relying party to the extension's own origin (the only
+// rpId a chrome-extension page can use). Applies to BOTH the register and sign WebAuthn calls,
+// since SAK reads rpId from this config (account.js makeKit → new SmartAccountKit(WALLET_CONFIG)).
+const rawRpId = import.meta.env?.VITE_VF_RP_ID ?? 'localhost'
+export const RP_ID = rawRpId && rawRpId !== 'origin' ? rawRpId : undefined
 export const RP_NAME = 'Vibing Farmer'
 
 // Version-matched OZ smart-account artifacts for smart-account-kit-bindings 0.1.2.
@@ -23,7 +29,8 @@ export function makeWalletConfig(overrides = {}) {
     networkPassphrase: NETWORK_PASSPHRASE,
     rpcUrl: SOROBAN_RPC_URL,
     relayerUrl: RELAY_PROXY_URL,
-    rpId: RP_ID,
+    // Omit rpId entirely when undefined (extension build) so SAK/WebAuthn default to the origin.
+    ...(RP_ID ? { rpId: RP_ID } : {}),
     rpName: RP_NAME,
     accountWasmHash: ACCOUNT_WASM_HASH,
     webauthnVerifierAddress: WEBAUTHN_VERIFIER_ADDRESS,

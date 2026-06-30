@@ -95,9 +95,16 @@ Run the experiment and record the outcome — that *is* the Gate 2 finding:
   succeed without hardware, isolating the rpId/origin question from the biometric hardware.
 - **Real:** Windows 11 Windows Hello (face/fingerprint/PIN). Win11, not "Face-ID".
 
-If the extension origin rejects `rpId=localhost`, rebuild with the extension id as the RP ID and
-retry: `$env:VITE_VF_RP_ID='<id>'` (note: WebAuthn support for `chrome-extension://` rpIds is
-version-dependent — capture the exact console error if it fails; that error is the deliverable).
+A `chrome-extension://` origin rejects ANY explicit rpId (`<id> is an invalid domain`) — confirmed.
+The fix is to OMIT rpId so Chrome defaults the relying party to the extension's own origin. Build the
+extension with `VITE_VF_RP_ID=origin` (→ `RP_ID` undefined → SAK omits rpId on both the register and
+sign WebAuthn calls):
+
+```powershell
+$env:VF_API_BASE='http://localhost:5173'; $env:VITE_VF_RP_ID='origin'; npm run build:ext
+```
+
+The web app build leaves `VITE_VF_RP_ID` unset → `rpId='localhost'` (valid for its origin).
 
 ### 6. Click through
 
