@@ -34,4 +34,10 @@ export const SOROBAN_BLEND_POOL_ADDRESS = 'CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZE
 export const SOROBAN_BLEND_USDC_ADDRESS = 'CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU'
 
 // New gasless relay endpoint. Distinct from the EVM /api/relay (decommissioned in step 6).
-export const RELAY_PROXY_URL = '/api/stellar-relay'
+// Browser uses the same-origin relative path. Headless smokes (vite-node/node) have no fetch
+// origin, so they set VF_RELAY_URL to the running dev server's absolute endpoint
+// (e.g. http://localhost:5173/api/stellar-relay). typeof guard keeps it browser-safe; unset in
+// vitest → relative default (config/relay tests still assert '/api/stellar-relay').
+// ponytail: env override, not a config object — one knob, the only one a headless run needs.
+export const RELAY_PROXY_URL =
+  (typeof process !== 'undefined' && process.env && process.env.VF_RELAY_URL) || '/api/stellar-relay'
