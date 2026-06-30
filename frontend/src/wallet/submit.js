@@ -6,7 +6,10 @@
 //   submitApprove  — source = an ephemeral Friendbot-funded fee-payer; self-paid via RPC
 //                    (the relay is deposit-only and refuses a non-deposit).
 
-import { submitViaRelay as realSubmitViaRelay, getRelayerAddress as realGetRelayer } from '../stellar/relay.js'
+import {
+  submitViaRelay as realSubmitViaRelay,
+  getRelayerAddress as realGetRelayer,
+} from '../stellar/relay.js'
 import { readVaultShares } from '../stellar/agentDeposit.js'
 import { rpcServer } from '../stellar/client.js'
 import { buildApprove } from './account.js'
@@ -59,9 +62,17 @@ async function defaultBuildDepositInner({ contractId, amount, vault, relayer, ki
   const depositOp = new Contract(vault).call(
     'deposit',
     Address.fromString(contractId).toScVal(),
-    xdr.ScVal.scvI128(new xdr.Int128Parts({ hi: xdr.Int64.fromString('0'), lo: xdr.Uint64.fromString(units.toString()) }))
+    xdr.ScVal.scvI128(
+      new xdr.Int128Parts({
+        hi: xdr.Int64.fromString('0'),
+        lo: xdr.Uint64.fromString(units.toString()),
+      })
+    )
   )
-  const recRaw = new TransactionBuilder(relayerAcct, { fee: BASE_FEE, networkPassphrase: NETWORK_PASSPHRASE })
+  const recRaw = new TransactionBuilder(relayerAcct, {
+    fee: BASE_FEE,
+    networkPassphrase: NETWORK_PASSPHRASE,
+  })
     .addOperation(depositOp)
     .setTimeout(60)
     .build()
@@ -117,23 +128,38 @@ async function defaultMakeEphemeral() {
 }
 
 // Real approve assembler (covered by the m3plus smoke). source = ephemeral (self-paid).
-async function defaultSignSubmitApprove({ contractId, amount, vault, expiryLedgers, kit, server, ephemeral }) {
+async function defaultSignSubmitApprove({
+  contractId,
+  amount,
+  vault,
+  expiryLedgers,
+  kit,
+  server,
+  ephemeral,
+}) {
   const sdk = await import('@stellar/stellar-sdk')
   const { TransactionBuilder, Operation, Contract, Address, xdr, BASE_FEE, rpc } = sdk
   const units = typeof amount === 'bigint' ? amount : BigInt(amount)
   const latest = await server.getLatestLedger()
   const expiryLedger = latest.sequence + expiryLedgers
-  const { method, args } = buildApprove({ contractId, vault, amount: units, expiryLedger })
-  void args // shape asserted by the buildApprove unit test; built explicitly below for SDK ScVals
+  const { method, contract: tokenContract } = buildApprove({ contractId, vault, amount: units, expiryLedger })
   const ephAcct = await getAccountWithRetry(server, ephemeral.publicKey())
-  const approveOp = new Contract(/* token */ buildApprove({ contractId, vault, amount: units, expiryLedger }).contract).call(
+  const approveOp = new Contract(tokenContract).call(
     method,
     Address.fromString(contractId).toScVal(),
     Address.fromString(vault).toScVal(),
-    xdr.ScVal.scvI128(new xdr.Int128Parts({ hi: xdr.Int64.fromString('0'), lo: xdr.Uint64.fromString(units.toString()) })),
+    xdr.ScVal.scvI128(
+      new xdr.Int128Parts({
+        hi: xdr.Int64.fromString('0'),
+        lo: xdr.Uint64.fromString(units.toString()),
+      })
+    ),
     xdr.ScVal.scvU32(expiryLedger)
   )
-  const recRaw = new TransactionBuilder(ephAcct, { fee: BASE_FEE, networkPassphrase: NETWORK_PASSPHRASE })
+  const recRaw = new TransactionBuilder(ephAcct, {
+    fee: BASE_FEE,
+    networkPassphrase: NETWORK_PASSPHRASE,
+  })
     .addOperation(approveOp)
     .setTimeout(60)
     .build()
@@ -155,7 +181,8 @@ async function defaultSignSubmitApprove({ contractId, amount, vault, expiryLedge
   const prepared = rpc.assembleTransaction(enforcedRaw, enfSim).build()
   prepared.sign(ephemeral) // self-paid: ephemeral signs the source (relay is deposit-only)
   const sent = await server.sendTransaction(prepared)
-  if (sent.status === 'ERROR') throw new Error(`approve rejected: ${JSON.stringify(sent.errorResult ?? sent)}`)
+  if (sent.status === 'ERROR')
+    throw new Error(`approve rejected: ${JSON.stringify(sent.errorResult ?? sent)}`)
   const r = await waitSuccess(server, sent.hash, 'approve')
   return { hash: sent.hash, status: r.status }
 }

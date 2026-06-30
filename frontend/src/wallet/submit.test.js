@@ -26,7 +26,9 @@ describe('submitDeposit (orchestration)', () => {
       readShares,
     })
     expect(okElig).toHaveBeenCalled()
-    expect(buildInner).toHaveBeenCalledWith(expect.objectContaining({ relayer: 'GRELAYER', contractId: 'CACCT' }))
+    expect(buildInner).toHaveBeenCalledWith(
+      expect.objectContaining({ relayer: 'GRELAYER', contractId: 'CACCT' })
+    )
     expect(relay.submitViaRelay).toHaveBeenCalledWith({ xdr: 'INNERXDR' })
     expect(out).toEqual({ hash: 'HASH', status: 'SUCCESS', sharesBefore: 0n, sharesAfter: 5n })
   })
@@ -52,7 +54,15 @@ describe('submitDeposit (orchestration)', () => {
   it('surfaces an honest error when the relay is unconfigured', async () => {
     const relay = { getRelayerAddress: vi.fn(async () => null), submitViaRelay: vi.fn() }
     await expect(
-      submitDeposit({ contractId: 'CACCT', amount: 1n, eligibility: okElig, kit: {}, relay, buildInner: vi.fn(), readShares: vi.fn(async () => 0n) })
+      submitDeposit({
+        contractId: 'CACCT',
+        amount: 1n,
+        eligibility: okElig,
+        kit: {},
+        relay,
+        buildInner: vi.fn(),
+        readShares: vi.fn(async () => 0n),
+      })
     ).rejects.toThrow(/relay unavailable/)
   })
 })
