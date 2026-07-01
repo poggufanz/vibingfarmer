@@ -15,6 +15,15 @@ export function isKnownVault(address) {
   return vault ? { hit: true, vault } : { hit: false }
 }
 
+// Vault eligibility verdict for a destination. Non-vault addresses are not gated — shared by
+// previewSend (UI hint) and sendPayment (fail-closed enforcement before signing).
+async function vaultVerdict(to, amount) {
+  const known = isKnownVault(to)
+  if (!known.hit) return { hit: false }
+  const e = await eligibility({ vault: known.vault.protocol, amount })
+  return { hit: true, name: known.vault.name, allow: e.allow, reasons: e.reasons }
+}
+
 function toAsset(asset) {
   return asset === 'XLM' ? Asset.native() : new Asset(asset.code, asset.issuer)
 }
@@ -44,16 +53,15 @@ export async function buildPaymentXdr({
 export async function previewSend({ from, to, asset, amount, memo, horizon = horizonServer() }) {
   const { xdr } = await buildPaymentXdr({ from, to, asset, amount, memo, horizon })
   const confirm = decodeForConfirm(xdr)
-  const known = isKnownVault(to)
-  let vault = { hit: false }
-  if (known.hit) {
-    const e = await eligibility({ vault: known.vault.protocol, amount })
-    vault = { hit: true, name: known.vault.name, allow: e.allow, reasons: e.reasons }
-  }
+  const vault = await vaultVerdict(to, amount)
   return { confirm, vault }
 }
 
 export async function sendPayment({ from, to, asset, amount, memo, horizon = horizonServer() }) {
+  const vault = await vaultVerdict(to, amount) // F8 fail-closed BEFORE any signing
+  if (vault.hit && !vault.allow) {
+    throw new Error(`ineligible: ${(vault.reasons ?? []).join('; ')}`)
+  }
   const { tx } = await buildPaymentXdr({ from, to, asset, amount, memo, horizon })
   await withSecret(async (kp) => tx.sign(kp))
   const res = await horizon.submitTransaction(tx)
