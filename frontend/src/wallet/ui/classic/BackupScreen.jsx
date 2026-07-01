@@ -22,17 +22,18 @@ export default function BackupScreen({ mnemonic, indices, onConfirm, onSkip, err
       </p>
 
       <div className={'vf-phrase' + (revealed ? ' revealed' : ' blurred')} aria-live="polite">
-        {revealed
-          ? words.map((w, i) => (
-              <span key={i} className="vf-word" spellCheck={false}>
-                <span className="vf-word-idx">{i + 1}.</span> <span className="vf-word-text">{w}</span>
-              </span>
-            ))
-          : (
-              <button className="vf-btn" onClick={() => setRevealed(true)}>
-                Reveal phrase
-              </button>
-            )}
+        {revealed ? (
+          words.map((w, i) => (
+            <span key={i} className="vf-word" spellCheck={false}>
+              <span className="vf-word-idx">{i + 1}.</span>{' '}
+              <span className="vf-word-text">{w}</span>
+            </span>
+          ))
+        ) : (
+          <button className="vf-btn" onClick={() => setRevealed(true)}>
+            Reveal phrase
+          </button>
+        )}
       </div>
       {/* No Copy button by design (clipboard is malware-readable). */}
 
