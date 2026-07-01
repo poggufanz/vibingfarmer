@@ -2,7 +2,7 @@
 import { Horizon } from '@stellar/stellar-sdk'
 import { HORIZON_URL } from '../stellar/config.js'
 import { generate24, keypairFromMnemonic, keypairFromSecret } from './classicKeypair.js'
-import { encryptSecret, saveWallet, getWallet } from './vault.js'
+import { encryptSecret, saveWallet, decryptWithKey } from './vault.js'
 import { unlock, getUnlocked, lock } from './session.js'
 
 let _horizon
@@ -45,8 +45,6 @@ export async function unlockWallet(publicKey, password) {
 export async function withSecret(fn) {
   const u = await getUnlocked()
   if (!u) throw new Error('locked')
-  const { decryptWithKey } = await import('./vault.js')
-  const { keypairFromSecret } = await import('./classicKeypair.js')
   let secret = null
   let bytes = null
   try {
