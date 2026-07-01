@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { resolve } from 'path'
-import { copyFileSync } from 'node:fs'
+import { copyFileSync, cpSync } from 'node:fs'
 
 // Second build target: emits the unpacked MV3 extension into ../extension-dist.
 // root = this dir so the HTML entries emit flat at the dist root (not nested under extension/),
@@ -17,6 +17,11 @@ export default defineConfig({
       name: 'copy-manifest',
       closeBundle() {
         copyFileSync(resolve(__dirname, 'manifest.json'), resolve(OUT, 'manifest.json'))
+        copyFileSync(
+          resolve(__dirname, 'vibing_farmer.logo.svg'),
+          resolve(OUT, 'vibing_farmer.logo.svg')
+        )
+        cpSync(resolve(__dirname, 'icons'), resolve(OUT, 'icons'), { recursive: true })
       },
     },
   ],

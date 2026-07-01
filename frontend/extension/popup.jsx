@@ -43,8 +43,8 @@ const CSS = `
 
 /* header */
 .vf-head{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--border)}
-.vf-logo{width:32px;height:32px;flex:0 0 32px;display:grid;place-items:center;border:1px solid var(--border-strong);
-  border-radius:var(--r-sm);font-family:var(--mono);font-weight:600;font-size:14px;color:var(--accent)}
+.vf-logo{width:32px;height:32px;flex:0 0 32px;border-radius:var(--r-sm);overflow:hidden;display:grid;place-items:center}
+.vf-logo img{width:100%;height:100%;display:block}
 .vf-brand{display:flex;flex-direction:column;line-height:1.2;flex:1;min-width:0}
 .vf-brand-name{font-weight:500;font-size:14px}
 .vf-brand-sub{font-family:var(--mono);font-size:10px;color:var(--text-faint)}
@@ -179,7 +179,9 @@ function Shell({ children, nav, active, onNav }) {
     <div className="vf">
       <style>{CSS}</style>
       <header className="vf-head">
-        <div className="vf-logo">v/</div>
+        <div className="vf-logo">
+          <img src="./vibing_farmer.logo.svg" alt="Vibing Farmer" />
+        </div>
         <div className="vf-brand">
           <div className="vf-brand-name">VF Wallet</div>
           <div className="vf-brand-sub">passkey · secp256r1</div>
@@ -298,7 +300,14 @@ function Popup() {
       setScreen('home')
       refreshBalance(w.contractId)
     } catch (e) {
-      setError(e.message)
+      // No cached wallet → connect falls to passkey discovery (kit prompt:true); SAK throws
+      // "Could not determine credential ID" when there's no passkey to restore on this origin.
+      const noWallet = /credential|could not determine/i.test(e.message || '')
+      setError(
+        noWallet
+          ? 'No wallet found on this device. Tap "Create new wallet · Face ID" to make one first.'
+          : e.message
+      )
     }
   }
 
