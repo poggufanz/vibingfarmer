@@ -1,6 +1,9 @@
 import { HORIZON_URL } from '../stellar/config.js'
 
-export async function fetchHistory(publicKey, { fetchImpl = fetch, limit = 20, horizonUrl = HORIZON_URL } = {}) {
+export async function fetchHistory(
+  publicKey,
+  { fetchImpl = fetch, limit = 20, horizonUrl = HORIZON_URL } = {}
+) {
   const url = `${horizonUrl}/accounts/${publicKey}/payments?order=desc&limit=${limit}`
   const r = await fetchImpl(url)
   if (!r.ok) return []
@@ -15,7 +18,10 @@ export async function fetchHistory(publicKey, { fetchImpl = fetch, limit = 20, h
         type: x.type,
         from: x.from ?? x.funder,
         to,
-        asset: x.asset_type === 'native' || x.type === 'create_account' ? 'XLM' : `${x.asset_code}:${x.asset_issuer}`,
+        asset:
+          x.asset_type === 'native' || x.type === 'create_account'
+            ? 'XLM'
+            : `${x.asset_code}:${x.asset_issuer}`,
         amount: x.amount ?? x.starting_balance,
         createdAt: x.created_at,
         direction: to === publicKey ? 'in' : 'out',

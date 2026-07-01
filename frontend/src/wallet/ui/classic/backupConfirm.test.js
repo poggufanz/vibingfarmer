@@ -13,7 +13,12 @@ describe('backupConfirm', () => {
 
   it('accepts correct words (case/space-insensitive), rejects wrong', () => {
     const m = 'alpha bravo charlie delta echo foxtrot'
-    expect(checkConfirm(m, [{ index: 1, word: 'Bravo' }, { index: 3, word: ' delta ' }])).toBe(true)
+    expect(
+      checkConfirm(m, [
+        { index: 1, word: 'Bravo' },
+        { index: 3, word: ' delta ' },
+      ])
+    ).toBe(true)
     expect(checkConfirm(m, [{ index: 1, word: 'wrong' }])).toBe(false)
   })
 })
