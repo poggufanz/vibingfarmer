@@ -20,7 +20,12 @@ function decodeOp(op) {
     }
   }
   if (op.type === 'createAccount') {
-    return { type: 'createAccount', decodable: true, destination: op.destination, amount: op.startingBalance }
+    return {
+      type: 'createAccount',
+      decodable: true,
+      destination: op.destination,
+      amount: op.startingBalance,
+    }
   }
   // Soroban invokeHostFunction and everything else: DO NOT decode to text.
   return { type: op.type, decodable: false }

@@ -19,13 +19,22 @@ function toAsset(asset) {
   return asset === 'XLM' ? Asset.native() : new Asset(asset.code, asset.issuer)
 }
 
-export async function buildPaymentXdr({ from, to, asset, amount, memo, horizon = horizonServer() }) {
+export async function buildPaymentXdr({
+  from,
+  to,
+  asset,
+  amount,
+  memo,
+  horizon = horizonServer(),
+}) {
   const account = await horizon.loadAccount(from)
   const builder = new TransactionBuilder(account, {
     fee: BASE_FEE,
     networkPassphrase: NETWORK_PASSPHRASE,
   })
-    .addOperation(Operation.payment({ destination: to, asset: toAsset(asset), amount: String(amount) }))
+    .addOperation(
+      Operation.payment({ destination: to, asset: toAsset(asset), amount: String(amount) })
+    )
     .setTimeout(300)
   if (memo) builder.addMemo(Memo.text(memo))
   const tx = builder.build()

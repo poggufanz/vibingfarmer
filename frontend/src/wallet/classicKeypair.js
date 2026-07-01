@@ -1,9 +1,5 @@
 import { Keypair, StrKey } from '@stellar/stellar-sdk'
-import {
-  generateMnemonic,
-  mnemonicToSeedSync,
-  validateMnemonic,
-} from '@scure/bip39'
+import { generateMnemonic, mnemonicToSeedSync, validateMnemonic } from '@scure/bip39'
 import { wordlist } from '@scure/bip39/wordlists/english'
 import { derivePath } from 'ed25519-hd-key'
 

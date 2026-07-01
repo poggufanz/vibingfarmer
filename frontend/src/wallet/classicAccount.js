@@ -37,7 +37,9 @@ export async function importFromMnemonic({ mnemonic, password, label, index = 0 
 }
 
 export { lock }
-export async function unlockWallet(publicKey, password) { return unlock(publicKey, password) }
+export async function unlockWallet(publicKey, password) {
+  return unlock(publicKey, password)
+}
 
 // Reconstruct secret -> keypair -> run fn -> wipe. Secret bytes never persisted.
 export async function withSecret(fn) {
@@ -64,7 +66,12 @@ export async function readBalances(publicKey, { horizon = horizonServer() } = {}
     return acc.balances.map((b) =>
       b.asset_type === 'native'
         ? { asset: 'XLM', code: 'XLM', issuer: null, balance: b.balance }
-        : { asset: `${b.asset_code}:${b.asset_issuer}`, code: b.asset_code, issuer: b.asset_issuer, balance: b.balance },
+        : {
+            asset: `${b.asset_code}:${b.asset_issuer}`,
+            code: b.asset_code,
+            issuer: b.asset_issuer,
+            balance: b.balance,
+          }
     )
   } catch (e) {
     if (e?.response?.status === 404) return null // unfunded

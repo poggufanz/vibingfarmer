@@ -149,7 +149,11 @@ async function defaultSignSubmitApprove({
   // Build the approve op from buildApprove's args via the same encodeArgs the rest of the
   // client uses — keeps the real path covered by buildApprove/encodeArgs tests instead of a
   // hand-rolled parallel copy (XDR is canonical, so this is byte-identical to the old operands).
-  const { method, contract: tokenContract, args } = buildApprove({
+  const {
+    method,
+    contract: tokenContract,
+    args,
+  } = buildApprove({
     contractId,
     vault,
     amount: units,

@@ -16,13 +16,15 @@ export function ub64(str) {
 }
 
 export async function deriveKey(password, salt, iters = 600000) {
-  const base = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveKey'])
+  const base = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, [
+    'deriveKey',
+  ])
   return crypto.subtle.deriveKey(
     { name: 'PBKDF2', salt, iterations: iters, hash: 'SHA-256' },
     base,
     { name: 'AES-GCM', length: 256 },
     true, // extractable: session caches the exported JWK (Task 3)
-    ['encrypt', 'decrypt'],
+    ['encrypt', 'decrypt']
   )
 }
 
@@ -34,12 +36,18 @@ export async function encryptSecret(secret, password) {
   return {
     version: 1,
     kdf: { name: 'PBKDF2', hash: 'SHA-256', iters: 600000 },
-    salt: b64(salt), iv: b64(iv), ciphertext: b64(ct),
+    salt: b64(salt),
+    iv: b64(iv),
+    ciphertext: b64(ct),
   }
 }
 
 export async function decryptWithKey(blob, key) {
-  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: ub64(blob.iv) }, key, ub64(blob.ciphertext))
+  const pt = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: ub64(blob.iv) },
+    key,
+    ub64(blob.ciphertext)
+  )
   return dec.decode(pt)
 }
 

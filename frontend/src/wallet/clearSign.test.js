@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest'
-import { TransactionBuilder, Account, Operation, Asset, BASE_FEE, Memo, Keypair } from '@stellar/stellar-sdk'
+import {
+  TransactionBuilder,
+  Account,
+  Operation,
+  Asset,
+  BASE_FEE,
+  Memo,
+  Keypair,
+} from '@stellar/stellar-sdk'
 import { NETWORK_PASSPHRASE } from '../stellar/config.js'
 import { decodeForConfirm } from './clearSign.js'
 
