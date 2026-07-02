@@ -697,24 +697,42 @@ function Popup() {
             setErr('')
             try {
               await C.doUnlock(cw.publicKey, pw)
-              setCw((s) => ({ ...s, unlocked: true }))
-              if (cw.needsBackup) {
-                // Pending backup survived a popup close — decrypt the mnemonic with the
-                // password just used to unlock, then route through the same backup-confirm
-                // gate a fresh create would, so it can never be silently skipped.
-                const mnemonic = await C.revealBackup(cw.publicKey, pw)
-                setBackup({
-                  mnemonic,
-                  indices: pickConfirmIndices(24, 3),
-                  publicKey: cw.publicKey,
-                })
-                setScreen('classic-backup')
-              } else {
-                setScreen('classic-home')
-                refresh(cw.publicKey)
-              }
             } catch (e) {
               setErr('Wrong password.')
+              setBusy(false)
+              return
+            }
+            setCw((s) => ({ ...s, unlocked: true }))
+            if (!cw.needsBackup) {
+              setScreen('classic-home')
+              refresh(cw.publicKey)
+              setBusy(false)
+              return
+            }
+            try {
+              // Pending backup survived a popup close — decrypt the mnemonic with the
+              // password just used to unlock, then route through the same backup-confirm
+              // gate a fresh create would, so it can never be silently skipped.
+              const mnemonic = await C.revealBackup(cw.publicKey, pw)
+              setBackup({
+                mnemonic,
+                indices: pickConfirmIndices(24, 3),
+                publicKey: cw.publicKey,
+              })
+              setScreen('classic-backup')
+            } catch (e) {
+              // The password was already proven correct above — this failure means the
+              // backup blob itself is missing/corrupt, so the words are unrecoverable and
+              // retrying the password cannot help. Do not wedge a healthy, already-unlocked
+              // wallet behind a dead backup gate: clear it, route home, and tell the truth
+              // instead of the misleading "Wrong password." from the outer catch.
+              await C.confirmBackup(cw.publicKey)
+              setCw((s) => ({ ...s, needsBackup: false }))
+              setScreen('classic-home')
+              refresh(cw.publicKey)
+              setErr(
+                'Backup phrase unavailable. Use Settings → Export secret as your wallet backup.'
+              )
             } finally {
               setBusy(false)
             }
@@ -793,6 +811,10 @@ function Popup() {
               setScreen('classic-activity')
             } catch (e) {
               setErr(String(e?.message || e))
+              // Drop the stale confirm card on failure too — one error message, and the
+              // user must re-Review (re-run preview/clear-sign) rather than re-confirming
+              // a preview that may no longer match reality.
+              setPreview(null)
             } finally {
               setBusy(false)
             }
