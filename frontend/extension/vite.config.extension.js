@@ -32,6 +32,16 @@ export default defineConfig({
   define: {
     'process.env.VF_API_BASE': JSON.stringify(process.env.VF_API_BASE || ''),
   },
+  resolve: {
+    alias: {
+      // cipher-base (via ed25519-hd-key → create-hmac) requires the node
+      // builtin 'stream', which vite externalizes to an empty stub in browser
+      // builds — Transform.call(this) then crashes on first HMAC use.
+      // readable-stream implements the same API and is already bundled via
+      // hash-base, so alias the builtin onto it.
+      stream: 'readable-stream',
+    },
+  },
   build: {
     outDir: OUT,
     emptyOutDir: true,
