@@ -7,6 +7,8 @@ import { listKeys, createKey, deleteKey } from './keys.js'
 import vaultFacts from './vault-facts.js'
 import eligibility from './eligibility.js'
 import prices from './prices.js'
+import buildTx from './build-tx.js'
+import simulate from './simulate.js'
 
 export const routes = {
   'GET /auth/challenge': authChallenge,
@@ -17,7 +19,9 @@ export const routes = {
   'GET /vault-facts': vaultFacts,
   'POST /eligibility': eligibility,
   'GET /prices': prices,
-  // Tasks 9-11 register: build-tx, simulate, submit, scan, strategy
+  'POST /build-tx': buildTx,
+  'POST /simulate': simulate,
+  // Tasks 10-11 register: submit, scan, strategy
 }
 
 export function subPath(req) {
