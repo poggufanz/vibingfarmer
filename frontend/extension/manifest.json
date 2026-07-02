@@ -27,5 +27,5 @@
   "web_accessible_resources": [
     { "resources": ["ceremony.html", "ceremony.js"], "matches": ["<all_urls>"] }
   ],
-  "permissions": ["storage", "tabs"]
+  "permissions": ["storage", "tabs", "alarms"]
 }
