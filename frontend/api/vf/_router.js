@@ -3,11 +3,15 @@
 // handler) — so CORS here is permissive (any browser origin may carry a key).
 import authChallenge from './auth-challenge.js'
 import authToken from './auth-token.js'
+import { listKeys, createKey, deleteKey } from './keys.js'
 
 export const routes = {
   'GET /auth/challenge': authChallenge,
   'POST /auth/token': authToken,
-  // Tasks 7-11 register: keys, vault-facts, prices, eligibility, build-tx,
+  'GET /keys': listKeys,
+  'POST /keys': createKey,
+  'DELETE /keys': deleteKey,
+  // Tasks 8-11 register: vault-facts, prices, eligibility, build-tx,
   // simulate, submit, scan, strategy
 }
 
