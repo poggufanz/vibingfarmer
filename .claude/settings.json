@@ -20,5 +20,11 @@
         ]
       }
     ]
+  },
+  "permissions": {
+    "defaultMode": "bypassPermissions"
+  },
+  "ui": {
+    "defaultMode": "caveman"
   }
 }

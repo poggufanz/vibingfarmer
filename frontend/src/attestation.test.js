@@ -8,7 +8,9 @@ import { attestStrategyOnChain, formatAttestation, hashStrategy } from './attest
 import { attestOnChain } from './stellar/attestation.js'
 
 const strategy = {
-  selected_vaults: [{ address: 'C1', protocol: 'Blend', allocation: 100, expected_apy: 5, reasoning: 'x' }],
+  selected_vaults: [
+    { address: 'C1', protocol: 'Blend', allocation: 100, expected_apy: 5, reasoning: 'x' },
+  ],
   generatedBy: 'venice',
 }
 
@@ -19,7 +21,7 @@ describe('attestStrategyOnChain', () => {
     attestOnChain.mockResolvedValue({ hash: 'TX123', status: 'SUCCESS' })
     const r = await attestStrategyOnChain(strategy, { attester: 'GUSER' })
     expect(attestOnChain).toHaveBeenCalledWith(
-      expect.objectContaining({ attester: 'GUSER', label: 'venice' }),
+      expect.objectContaining({ attester: 'GUSER', label: 'venice' })
     )
     expect(r.txHash).toBe('TX123')
     expect(r.strategyHash).toMatch(/^0x[0-9a-f]{64}$/)

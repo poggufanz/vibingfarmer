@@ -32,6 +32,10 @@ SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
 STELLAR_NETWORK_PASSPHRASE=Test SDF Network ; September 2015
 SOROBAN_VAULT_ADDRESS=CCDXZ6BUA7TPR3EXQWJWUD7EYR6OUMJRYIKYXPE53HRJOJFY5CXEHTN5
 
+# Testnet token faucet (server-only; leave unset to disable /api/faucet with 503)
+VF_FAUCET_SECRET=S...                    # vf-deployer secret; treasury must hold testnet Blend USDC
+SOROBAN_TOKEN_ADDRESS=CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU
+
 # Optional: trusted proxy hops for rate-limit client-IP resolution.
 # Cloudflare sets CF-Connecting-IP (mapped to x-real-ip by the adapter), so the
 # default 1 is fine; only change if you front Pages with another proxy.

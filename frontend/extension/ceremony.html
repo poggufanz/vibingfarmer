@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>VF Wallet — Passkey ceremony</title>
+    <meta name="color-scheme" content="dark" />
+    <link rel="icon" type="image/svg+xml" href="./vibing_farmer.logo.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+    />
+    <style>
+      :root {
+        --bg: #0e0f0c;
+        --card: #1a1b16;
+        --border: rgba(236, 235, 225, 0.14);
+        --text: #ecebe1;
+        --muted: #95958a;
+        --faint: #56564f;
+        --accent: #cfff3d;
+        --font: 'Geist', system-ui, -apple-system, sans-serif;
+        --mono: 'JetBrains Mono', ui-monospace, monospace;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--bg);
+        color: var(--text);
+        font-family: var(--font);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .ceremony {
+        width: 360px;
+        max-width: calc(100vw - 32px);
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 28px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .logo {
+        width: 32px;
+        height: 32px;
+        border-radius: 6px;
+        overflow: hidden;
+        display: grid;
+        place-items: center;
+      }
+      .logo img {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+      .brand-name {
+        font-weight: 500;
+        font-size: 14px;
+      }
+      .brand-sub {
+        font-family: var(--mono);
+        font-size: 10px;
+        color: var(--faint);
+      }
+      .eyebrow {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--faint);
+        text-transform: lowercase;
+      }
+      .eyebrow .dot {
+        color: var(--accent);
+      }
+      h1 {
+        margin: 0;
+        font-size: 19px;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+      }
+      #status {
+        margin: 0;
+        font-family: var(--mono);
+        font-size: 12.5px;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+      .note {
+        margin: 0;
+        font-size: 11.5px;
+        color: var(--faint);
+        line-height: 1.5;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="ceremony">
+      <div class="head">
+        <div class="logo"><img src="./vibing_farmer.logo.svg" alt="Vibing Farmer" /></div>
+        <div>
+          <div class="brand-name">VF Wallet</div>
+          <div class="brand-sub">passkey · secp256r1</div>
+        </div>
+      </div>
+      <div class="eyebrow"><span class="dot">·</span> ceremony · face id</div>
+      <h1>Passkey ceremony</h1>
+      <p id="status">Starting passkey ceremony…</p>
+      <p class="note">Approve with Face ID when prompted. This tab closes automatically when done.</p>
+    </div>
+    <script type="module" src="./ceremony.js"></script>
+  </body>
+</html>
