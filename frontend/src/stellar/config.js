@@ -15,7 +15,8 @@ export const SOROBAN_VAULT_ADDRESS = 'CBZNITAPHCLSPEXC3UKIERYRUJR56GISM2G2Z5XD6K
 export const SOROBAN_REGISTRY_ADDRESS = 'CAEHOZGUGVNRCAFVJCSR3B2EFJ55LEA34S76HTRQGH7XSPBO7YIMNZOQ'
 // On-chain strategy attestation (F5). attest(attester, strategy_hash, label) anchors the AI
 // strategy hash on-chain; user-signed inner tx, relayer fee-bumps so the user pays 0 XLM.
-export const SOROBAN_ATTESTATION_ADDRESS = 'CDDOW2FZ7ALBWBXF22TPMPDHPXSKTMLQGGQWUYX7YOJZAHICD7DUO2K6'
+export const SOROBAN_ATTESTATION_ADDRESS =
+  'CDDOW2FZ7ALBWBXF22TPMPDHPXSKTMLQGGQWUYX7YOJZAHICD7DUO2K6'
 // Yield-farming asset = Blend testnet USDC (7 decimals) post-cutover — the vault's underlying
 // IS the asset Blend lends, so deposits supply into the pool. Pulls + pays dividends in it.
 export const SOROBAN_TOKEN_ADDRESS = 'CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU'
@@ -33,4 +34,18 @@ export const SOROBAN_BLEND_POOL_ADDRESS = 'CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZE
 export const SOROBAN_BLEND_USDC_ADDRESS = 'CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU'
 
 // New gasless relay endpoint. Distinct from the EVM /api/relay (decommissioned in step 6).
-export const RELAY_PROXY_URL = '/api/stellar-relay'
+// Browser uses the same-origin relative path. Headless smokes (vite-node/node) have no fetch
+// origin, so they set VF_RELAY_URL to the running dev server's absolute endpoint
+// (e.g. http://localhost:5173/api/stellar-relay). typeof guard keeps it browser-safe; unset in
+// vitest → relative default (config/relay tests still assert '/api/stellar-relay').
+// ponytail: env override, not a config object — one knob, the only one a headless run needs.
+// Extension build injects VF_API_BASE (absolute origin of the running backend) so the packed
+// chrome-extension:// pages can reach /api/* — a same-origin relative path resolves to the
+// extension origin (chrome-extension://<id>/api/...) and 404s. Web app + headless smokes leave
+// VF_API_BASE unset → relative path / the VF_RELAY_URL knob, exactly as before (tests see defaults).
+const API_BASE = (typeof process !== 'undefined' && process.env && process.env.VF_API_BASE) || ''
+const VF_RELAY = (typeof process !== 'undefined' && process.env && process.env.VF_RELAY_URL) || ''
+export const RELAY_PROXY_URL = API_BASE
+  ? `${API_BASE}/api/stellar-relay`
+  : VF_RELAY || '/api/stellar-relay'
+export const FAUCET_PROXY_URL = API_BASE ? `${API_BASE}/api/faucet` : '/api/faucet'

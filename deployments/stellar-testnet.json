@@ -16,5 +16,20 @@
     "decimals": 7,
     "shareSymbol": "vfVLT",
     "blendPool": "CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF"
+  },
+  "smartAccount": {
+    "accountWasmHash": "a12e8fa9621efd20315753bd4007d974390e31fbcb4a7ddc4dd0a0dec728bf2e",
+    "webauthnVerifierAddress": "CBSHV66WG7UV6FQVUTB67P3DZUEJ2KJ5X6JKQH5MFRAAFNFJUAJVXJYV",
+    "ed25519VerifierAddress": "CDGMOL3BP6Y6LYOXXTRNXBNJ2SLNTQ47BGG3LOS2OBBE657E3NYCN54B",
+    "nativeTokenContract": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    "indexerUrl": "https://smart-account-indexer.sdf-ecosystem.workers.dev",
+    "sakVersion": "0.2.10",
+    "bindingsVersion": "0.1.2",
+    "ozContractsVersion": "pre-v0.7 (SAK bindings 0.1.2 @ ff0eb9d8, rs-sdk 23.2.1)",
+    "source": "reused live bindings-0.1.2 demo-env testnet artifacts (not self-deployed); v0.7.2 tag drifted to get_context_rules_count and does NOT match bindings 0.1.2",
+    "wasmSha256": {
+      "smart_account": "a12e8fa9621efd20315753bd4007d974390e31fbcb4a7ddc4dd0a0dec728bf2e",
+      "webauthn_verifier": "7ff7bc8306cb5ea306249905c751beb8b4017e2d66accef571d554485787854a"
+    }
   }
 }

@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import aiProxy from './api/ai.js'
 import searchProxy from './api/search.js'
 import stellarRelayProxy from './api/stellar-relay.js'
+import faucetProxy from './api/faucet.js'
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '') // all vars (incl. non-VITE server-side)
@@ -16,6 +17,8 @@ export default defineConfig(({ mode }) => {
   if (env.STELLAR_NETWORK_PASSPHRASE)
     process.env.STELLAR_NETWORK_PASSPHRASE = env.STELLAR_NETWORK_PASSPHRASE
   if (env.SOROBAN_VAULT_ADDRESS) process.env.SOROBAN_VAULT_ADDRESS = env.SOROBAN_VAULT_ADDRESS
+  if (env.VF_FAUCET_SECRET) process.env.VF_FAUCET_SECRET = env.VF_FAUCET_SECRET
+  if (env.SOROBAN_TOKEN_ADDRESS) process.env.SOROBAN_TOKEN_ADDRESS = env.SOROBAN_TOKEN_ADDRESS
 
   const apiProxyPlugin = {
     name: 'api-proxy',
@@ -23,11 +26,13 @@ export default defineConfig(({ mode }) => {
       s.middlewares.use('/api/ai', aiProxy)
       s.middlewares.use('/api/search', searchProxy)
       s.middlewares.use('/api/stellar-relay', stellarRelayProxy)
+      s.middlewares.use('/api/faucet', faucetProxy)
     },
     configurePreviewServer(s) {
       s.middlewares.use('/api/ai', aiProxy)
       s.middlewares.use('/api/search', searchProxy)
       s.middlewares.use('/api/stellar-relay', stellarRelayProxy)
+      s.middlewares.use('/api/faucet', faucetProxy)
     },
   }
 
