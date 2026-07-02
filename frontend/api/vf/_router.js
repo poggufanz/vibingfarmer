@@ -11,6 +11,7 @@ import buildTx from './build-tx.js'
 import simulate from './simulate.js'
 import submit from './submit.js'
 import scan from './scan.js'
+import strategy from './strategy.js'
 
 export const routes = {
   'GET /auth/challenge': authChallenge,
@@ -25,7 +26,7 @@ export const routes = {
   'POST /simulate': simulate,
   'POST /submit': submit,
   'POST /scan': scan,
-  // Task 11 registers: strategy
+  'POST /strategy': strategy,
 }
 
 export function subPath(req) {
