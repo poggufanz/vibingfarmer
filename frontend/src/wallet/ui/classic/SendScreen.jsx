@@ -5,12 +5,12 @@ export default function SendScreen({ from, onPreview, onConfirm, preview, busy, 
   const [to, setTo] = useState('')
   const [amount, setAmount] = useState('')
   const [memo, setMemo] = useState('')
+  const [reviewed, setReviewed] = useState(null)
 
   const stale =
     !!preview &&
-    (preview.confirm.ops[0]?.destination !== to ||
-      preview.confirm.ops[0]?.amount !== amount ||
-      (preview.confirm.memo || '') !== memo)
+    !!reviewed &&
+    (to !== reviewed.to || amount !== reviewed.amount || memo !== reviewed.memo)
 
   return (
     <div className="vf-screen vf-send">
@@ -30,7 +30,10 @@ export default function SendScreen({ from, onPreview, onConfirm, preview, busy, 
       <button
         className="vf-btn"
         disabled={busy || !to || !amount}
-        onClick={() => onPreview({ from, to, asset: 'XLM', amount, memo })}
+        onClick={() => {
+          setReviewed({ to, amount, memo })
+          onPreview({ from, to, asset: 'XLM', amount, memo })
+        }}
       >
         Review
       </button>
