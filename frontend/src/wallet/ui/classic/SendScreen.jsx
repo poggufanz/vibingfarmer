@@ -6,6 +6,12 @@ export default function SendScreen({ from, onPreview, onConfirm, preview, busy, 
   const [amount, setAmount] = useState('')
   const [memo, setMemo] = useState('')
 
+  const stale =
+    !!preview &&
+    (preview.confirm.ops[0]?.destination !== to ||
+      preview.confirm.ops[0]?.amount !== amount ||
+      (preview.confirm.memo || '') !== memo)
+
   return (
     <div className="vf-screen vf-send">
       <h2>Send</h2>
@@ -48,7 +54,9 @@ export default function SendScreen({ from, onPreview, onConfirm, preview, busy, 
             <>
               <ApproveOverlay
                 verdict={preview.vault}
-                onApprove={() => onConfirm({ from, to, asset: 'XLM', amount, memo })}
+                onApprove={() => {
+                  if (!stale) onConfirm({ from, to, asset: 'XLM', amount, memo })
+                }}
                 onReject={() => {}}
               />
               <p className="vf-warn">
@@ -58,9 +66,10 @@ export default function SendScreen({ from, onPreview, onConfirm, preview, busy, 
             </>
           )}
           {error && <p className="vf-error">{error}</p>}
+          {stale && <p className="vf-hint">Inputs changed — click Review again.</p>}
           <button
             className="vf-btn primary"
-            disabled={busy}
+            disabled={busy || stale}
             onClick={() => onConfirm({ from, to, asset: 'XLM', amount, memo })}
           >
             {busy ? 'Sending…' : 'Confirm & send'}
