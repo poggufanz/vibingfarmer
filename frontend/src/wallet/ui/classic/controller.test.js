@@ -28,6 +28,7 @@ import {
   bootstrap,
   doCreate,
   confirmBackup,
+  revealBackup,
   doImport,
   doUnlock,
   doLock,
@@ -58,11 +59,37 @@ describe('classic controller', () => {
   })
 
   it('bootstrap reports a wallet after create + backup confirm', async () => {
-    await doCreate('Main', 'pw12pw12pw12')
-    await confirmBackup()
+    const { publicKey } = await doCreate('Main', 'pw12pw12pw12')
+    await confirmBackup(publicKey)
     const b = await bootstrap()
     expect(b.hasWallet).toBe(true)
     expect(b.publicKey).toMatch(/^G/)
+  })
+
+  it('create without confirming persists the pending-backup gate — a FRESH bootstrap call (modeling the popup having closed and reopened) still reports it, not just in-memory state', async () => {
+    const { publicKey } = await doCreate('Main', 'pw12pw12pw12')
+    const b = await bootstrap()
+    expect(b.hasWallet).toBe(true)
+    expect(b.needsBackup).toBe(true)
+    expect(b.publicKey).toBe(publicKey)
+  })
+
+  it('revealBackup decrypts the same mnemonic doCreate returned when given the correct password, and rejects a wrong password', async () => {
+    const { publicKey, mnemonic } = await doCreate('Main', 'pw12pw12pw12')
+    await expect(revealBackup(publicKey, 'totally-wrong-pw')).rejects.toThrow()
+    const revealed = await revealBackup(publicKey, 'pw12pw12pw12')
+    expect(revealed).toBe(mnemonic)
+  })
+
+  it('confirmBackup clears the gate and deletes the mnemonic blob — bootstrap reports needsBackup false and revealBackup now throws', async () => {
+    const { publicKey } = await doCreate('Main', 'pw12pw12pw12')
+    await confirmBackup(publicKey)
+
+    const b = await bootstrap()
+    expect(b.needsBackup).toBe(false)
+    expect(b.hasWallet).toBe(true)
+
+    await expect(revealBackup(publicKey, 'pw12pw12pw12')).rejects.toThrow()
   })
 
   it('doImport routes a valid secret key to importFromSecret', async () => {
@@ -80,7 +107,7 @@ describe('classic controller', () => {
 
   it('doUnlock/doLock round-trip; doExport is password-gated against the vault record', async () => {
     const { publicKey } = await doCreate('Main', 'pw12pw12pw12')
-    await confirmBackup()
+    await confirmBackup(publicKey)
     await doLock()
 
     await expect(doExport(publicKey, 'totally-wrong-pw')).rejects.toThrow()
@@ -99,9 +126,7 @@ describe('classic controller', () => {
   })
 
   it('refreshHome degrades to balance-only display when the price feed is unavailable', async () => {
-    readBalances.mockResolvedValueOnce([
-      { asset: 'XLM', code: 'XLM', issuer: null, balance: '10' },
-    ])
+    readBalances.mockResolvedValueOnce([{ asset: 'XLM', code: 'XLM', issuer: null, balance: '10' }])
     fetchXlmUsd.mockResolvedValueOnce(null).mockResolvedValueOnce(null)
     const r = await refreshHome('GXXXX')
     expect(r.unfunded).toBe(false)

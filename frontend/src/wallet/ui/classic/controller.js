@@ -2,7 +2,7 @@
 // Thin orchestration between the classic wallet modules (vault/session/classicAccount/send/
 // prices/history) and the popup UI. Framework-light by design: plain async functions the popup
 // calls, storing results in its own useState — this file owns no React state itself.
-import { listWallets, getWallet, decryptSecret } from '../../vault.js'
+import { listWallets, getWallet, saveWallet, decryptSecret, encryptSecret } from '../../vault.js'
 import { isUnlocked, lock, installAutoLock } from '../../session.js'
 import {
   createClassicWallet,
@@ -18,27 +18,51 @@ import { previewSend, sendPayment } from '../../send.js'
 import { fetchXlmUsd, portfolioValue } from '../../prices.js'
 import { fetchHistory } from '../../history.js'
 
-let _pendingBackup = false // set true between create and confirmBackup
-
 export async function bootstrap() {
   const wallets = await listWallets()
   const w = wallets[0]
   return {
-    hasWallet: Boolean(w) && !_pendingBackup,
+    hasWallet: Boolean(w),
     publicKey: w?.publicKey ?? null,
     unlocked: await isUnlocked(),
+    needsBackup: Boolean(w?.needsBackup),
   }
 }
 
+// The pending-backup gate is persisted in the vault record itself (needsBackup +
+// an encrypted mnemonicBlob), NOT in module-scope state: MV3 popups are non-persistent
+// and can close between create and "Confirm & finish", which would otherwise reset an
+// in-memory flag and silently strand the 24 words with no way to see them again.
+// storage.local only ever holds the AES-GCM ciphertext here, never the plaintext phrase.
 export async function doCreate(label, password) {
   const { publicKey, mnemonic } = await createClassicWallet({ label, password })
-  _pendingBackup = true
+  const rec = await getWallet(publicKey)
+  await saveWallet({
+    ...rec,
+    needsBackup: true,
+    mnemonicBlob: await encryptSecret(mnemonic, password),
+  })
   return { publicKey, mnemonic, needsBackup: true, indices: pickConfirmIndices(24, 3) }
 }
 
-export function confirmBackup() {
-  _pendingBackup = false
-  return Promise.resolve(true)
+// Finalizes the backup: clears the gate and deletes the encrypted mnemonic blob outright
+// (show-once semantics — no ciphertext lingers after the user has confirmed the backup).
+export async function confirmBackup(publicKey) {
+  const rec = await getWallet(publicKey)
+  if (!rec) throw new Error('wallet not found')
+  const { mnemonicBlob, ...rest } = rec
+  await saveWallet({ ...rest, needsBackup: false })
+  return true
+}
+
+// Re-derives the mnemonic from the persisted blob for the popup-reopen path (backup was
+// pending when the popup closed). Wrong password throws via the AES-GCM auth tag — never
+// caught-and-continued — and the decrypted string must only ever live in transient React
+// state in the caller, never written back to storage.
+export async function revealBackup(publicKey, password) {
+  const rec = await getWallet(publicKey)
+  if (!rec?.mnemonicBlob) throw new Error('no pending backup for this wallet')
+  return decryptSecret(rec.mnemonicBlob, password)
 }
 
 export async function doImport(input, password, label) {

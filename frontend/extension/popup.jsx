@@ -23,6 +23,7 @@ import ReceiveScreen from '../src/wallet/ui/classic/ReceiveScreen.jsx'
 import HistoryScreen from '../src/wallet/ui/classic/HistoryScreen.jsx'
 import UnlockScreen from '../src/wallet/ui/classic/UnlockScreen.jsx'
 import SettingsScreen from '../src/wallet/ui/classic/SettingsScreen.jsx'
+import { pickConfirmIndices } from '../src/wallet/ui/classic/backupConfirm.js'
 import * as C from '../src/wallet/ui/classic/controller.js'
 
 // Ceremony runs in the extension TAB — Face ID closes the popup.
@@ -235,6 +236,15 @@ button.link{background:none;border:none;padding:0;cursor:pointer;font:inherit}
 .vf-settings label{flex-direction:row;align-items:center;justify-content:space-between;
   font-family:var(--font);font-size:13px;color:var(--text)}
 
+/* screen-root tweaks — modest, screen-specific spacing/emphasis on top of .vf-screen */
+.vf-create{gap:16px}
+.vf-backup h2{color:var(--warn)}
+.vf-import textarea{font-family:var(--mono);font-size:12px;resize:vertical}
+.vf-home{gap:18px}
+.vf-send label{gap:4px}
+.vf-receive{align-items:center;text-align:center}
+.vf-receive .vf-address-full{text-align:left}
+
 @media (prefers-reduced-motion:reduce){
   .vf-main{animation:none}.blink{animation:none}
 }
@@ -302,7 +312,13 @@ function Popup() {
   const [error, setError] = useState('')
 
   // Classic (seed-phrase) wallet state
-  const [cw, setCw] = useState({ ready: false, hasWallet: false, publicKey: null, unlocked: false })
+  const [cw, setCw] = useState({
+    ready: false,
+    hasWallet: false,
+    publicKey: null,
+    unlocked: false,
+    needsBackup: false,
+  })
   const [backup, setBackup] = useState(null) // { mnemonic, indices, publicKey }
   const [preview, setPreview] = useState(null)
   const [portfolio, setPortfolio] = useState(null)
@@ -366,8 +382,18 @@ function Popup() {
   useEffect(() => {
     C.armAutoLock()
     C.bootstrap().then((b) => {
-      setCw({ ready: true, hasWallet: b.hasWallet, publicKey: b.publicKey, unlocked: b.unlocked })
-      if (b.hasWallet && !b.unlocked) setScreen('classic-unlock')
+      setCw({
+        ready: true,
+        hasWallet: b.hasWallet,
+        publicKey: b.publicKey,
+        unlocked: b.unlocked,
+        needsBackup: b.needsBackup,
+      })
+      // A pending backup always routes through unlock first — even if the session is already
+      // unlocked — because the password is what re-derives the mnemonic from its encrypted
+      // blob (revealBackup). This is the popup-reopen path: create → close popup before
+      // confirming → reopen → still gated, never silently dropped into home.
+      if (b.hasWallet && (b.needsBackup || !b.unlocked)) setScreen('classic-unlock')
       else if (b.hasWallet) {
         setScreen('classic-home')
         refresh(b.publicKey)
@@ -603,15 +629,29 @@ function Popup() {
           error={err}
           onConfirm={async () => {
             setErr('')
-            await C.confirmBackup()
-            setCw((s) => ({ ...s, hasWallet: true, publicKey: backup.publicKey, unlocked: true }))
+            await C.confirmBackup(backup.publicKey)
+            setCw((s) => ({
+              ...s,
+              hasWallet: true,
+              publicKey: backup.publicKey,
+              unlocked: true,
+              needsBackup: false,
+            }))
+            setBackup(null) // decrypted mnemonic never outlives the backup screen
             setScreen('classic-home')
             refresh(backup.publicKey)
           }}
           onSkip={async () => {
             setErr('')
-            await C.confirmBackup()
-            setCw((s) => ({ ...s, hasWallet: true, publicKey: backup.publicKey, unlocked: true }))
+            await C.confirmBackup(backup.publicKey)
+            setCw((s) => ({
+              ...s,
+              hasWallet: true,
+              publicKey: backup.publicKey,
+              unlocked: true,
+              needsBackup: false,
+            }))
+            setBackup(null) // decrypted mnemonic never outlives the backup screen
             setScreen('classic-home')
             refresh(backup.publicKey)
           }}
@@ -658,8 +698,21 @@ function Popup() {
             try {
               await C.doUnlock(cw.publicKey, pw)
               setCw((s) => ({ ...s, unlocked: true }))
-              setScreen('classic-home')
-              refresh(cw.publicKey)
+              if (cw.needsBackup) {
+                // Pending backup survived a popup close — decrypt the mnemonic with the
+                // password just used to unlock, then route through the same backup-confirm
+                // gate a fresh create would, so it can never be silently skipped.
+                const mnemonic = await C.revealBackup(cw.publicKey, pw)
+                setBackup({
+                  mnemonic,
+                  indices: pickConfirmIndices(24, 3),
+                  publicKey: cw.publicKey,
+                })
+                setScreen('classic-backup')
+              } else {
+                setScreen('classic-home')
+                refresh(cw.publicKey)
+              }
             } catch (e) {
               setErr('Wrong password.')
             } finally {
@@ -745,6 +798,7 @@ function Popup() {
             }
           }}
         />
+        {err && <p className="vf-error">{err}</p>}
       </Shell>
     )
   }
@@ -842,8 +896,8 @@ function Popup() {
             ) : (
               <>
                 <p className="vf-warn">
-                  This is your ONLY secret key. Anyone with it controls this wallet. Shown once —
-                  it will not be shown again.
+                  This is your ONLY secret key. Anyone with it controls this wallet. Shown once — it
+                  will not be shown again.
                 </p>
                 <code className="vf-address-full">{exportForm.secret}</code>
                 <button
