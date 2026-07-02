@@ -56,6 +56,18 @@ async function handleWorkerMessage(e) {
     case 'REBALANCE_OPPORTUNITY':
       emit({ kind: 'rebalance_proposal', ...payload }) // propose only — never auto-execute
       break
+    case 'DRAWDOWN_ALERT':
+      emit({
+        kind: 'risk_alert',
+        severity: 'high',
+        reason: 'drawdown_exceeded',
+        vaultName: payload.vaultName,
+        vaultAddress: payload.vaultAddress,
+        protocol: payload.protocol,
+        searchAnswer: `Drawdown of ${payload.protocol} (${payload.drawdown}%) exceeds your configured limit of ${payload.maxDrawdown}%!`,
+        timestamp: payload.timestamp,
+      })
+      break
     case 'RISK_SCAN_RESULT': {
       const severity = await classifyRisk(payload.searchAnswer, payload.protocol)
       if (severity === 'high' || severity === 'medium')

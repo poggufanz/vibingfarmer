@@ -42,6 +42,9 @@ import { OrchestratorAgent } from './orchestrator.js'
 import { makeAgentId } from './worker.js'
 import { ownerWithdraw } from './stellar/exit.js'
 import { VAULT_CATALOG, VENICE_TIMEOUT_MS } from './config.js'
+import { SOROBAN_VAULT_ADDRESS, SOROBAN_DEMO_AGENT } from './stellar/config.js'
+import { evaluateExit } from './strategy/autoExit/engine.js'
+import { runAutonomousExit } from './agents/exitExecutor.js'
 import {
   loadPersistedPositions,
   persistPositions,
@@ -114,6 +117,10 @@ const AGENT_SETTINGS_DEFAULTS = {
   apyInterval: 10,
   riskInterval: 15,
   rewardInterval: 5,
+  maxDrawdownPct: 10.0,
+  discordWebhookUrl: '',
+  telegramToken: '',
+  telegramChatId: '',
 }
 const loadAgentSettings = () => {
   try {
@@ -123,6 +130,74 @@ const loadAgentSettings = () => {
     }
   } catch {
     return { ...AGENT_SETTINGS_DEFAULTS }
+  }
+}
+
+const sendPushNotification = async (ev, passedSettings) => {
+  const isAlert = ['risk_alert', 'apy_drift', 'rebalance_proposal', 'harvest_ready'].includes(ev.kind)
+  if (!isAlert) return
+
+  let settings = passedSettings
+  if (!settings) {
+    try {
+      settings = {
+        ...AGENT_SETTINGS_DEFAULTS,
+        ...JSON.parse(localStorage.getItem('yv_agent_settings') || '{}'),
+      }
+    } catch {
+      settings = { ...AGENT_SETTINGS_DEFAULTS }
+    }
+  }
+
+  let title = 'Vibing Farmer · Alert'
+  let detail = ''
+
+  if (ev.kind === 'rebalance_proposal') {
+    title = '🔄 Rebalance Opportunity Detected'
+    detail = `Venice AI flagged ${ev.toProtocol} at ${ev.toApy}% vs your current ${ev.fromVault} at ${ev.fromApy}% (potential gain: +${ev.apyGain}%).`
+  } else if (ev.kind === 'risk_alert') {
+    title = `🚨 Risk Alert [Severity: ${ev.severity.toUpperCase()}]`
+    detail = `Signal on ${ev.vaultName}: ${ev.searchAnswer || 'Security concern detected.'}`
+  } else if (ev.kind === 'apy_drift') {
+    title = '⚠ APY Drop Detected'
+    detail = `APY on ${ev.vaultName} dropped from ${ev.baselineApy}% to ${ev.currentApy}% (${ev.driftPct}%).`
+  } else if (ev.kind === 'harvest_ready') {
+    title = '🟢 Yield Harvest Ready'
+    detail = `${ev.rewardsUsdc} USDC accrued on ${ev.vaultName} is ready to claim.`
+  }
+
+  const messageText = `*${title}*\n\n${detail}\n\n_Time: ${new Date(ev.timestamp || Date.now()).toLocaleString()}_`
+
+  // Send Discord notification
+  if (settings.discordWebhookUrl) {
+    try {
+      await fetch(settings.discordWebhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content: `🚨 **${title}**\n${detail}`,
+        }),
+      })
+    } catch (e) {
+      console.warn('[Notification] Discord failed:', e.message)
+    }
+  }
+
+  // Send Telegram notification
+  if (settings.telegramToken && settings.telegramChatId) {
+    try {
+      await fetch(`https://api.telegram.org/bot${settings.telegramToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: settings.telegramChatId,
+          text: messageText,
+          parse_mode: 'Markdown',
+        }),
+      })
+    } catch (e) {
+      console.warn('[Notification] Telegram failed:', e.message)
+    }
   }
 }
 
@@ -291,6 +366,19 @@ const App = () => {
   // start the monitor loop again. If no wallet is selected yet (fresh reload) getUserAddress
   // rejects and the catch leaves the app logged-out until the user reconnects. Mount-only.
   useE(() => {
+    window.triggerTestAlert = () => {
+      handleAgentEvent({
+        kind: 'risk_alert',
+        severity: 'high',
+        reason: 'drawdown_exceeded',
+        vaultName: 'VFUSD Yield Vault',
+        vaultAddress: 'CBZNITAPHCLSPEXC3UKIERYRUJR56GISM2G2Z5XD6KZH3U4ZZ76XNQOU',
+        protocol: 'aave-v3',
+        searchAnswer: 'Drawdown of aave-v3 (15.0%) exceeds your configured limit of 10.0%!',
+        timestamp: Date.now(),
+      })
+    }
+
     let alive = true
     getUserAddress()
       .then((addr) => {
@@ -310,6 +398,7 @@ const App = () => {
       .catch(() => {})
     return () => {
       alive = false
+      delete window.triggerTestAlert
     }
   }, [])
 
@@ -564,6 +653,9 @@ const App = () => {
     // Alert kinds — dedupe by kind+vault, newest first, cap at 8
     const key = `${ev.kind}:${ev.vaultAddress || ev.vaultName || ''}`
     const id = `${key}:${ev.timestamp || Date.now()}`
+    const isNew = !agentData.alerts.some(
+      (a) => `${a.kind}:${a.vaultAddress || a.vaultName || ''}` === key
+    )
     setAgentData((d) => ({
       ...d,
       alerts: [
@@ -571,6 +663,9 @@ const App = () => {
         ...d.alerts.filter((a) => `${a.kind}:${a.vaultAddress || a.vaultName || ''}` !== key),
       ].slice(0, 8),
     }))
+    if (isNew) {
+      sendPushNotification(ev, agentSettings)
+    }
     const detail =
       ev.kind === 'rebalance_proposal'
         ? `Venice AI flagged ${ev.toProtocol} at ${ev.toApy}% vs your ${ev.fromVault} at ${ev.fromApy}% · capture +${ev.apyGain}% by rebalancing.`
@@ -627,6 +722,7 @@ const App = () => {
           marketContext: marketLive,
           positions: agentData.positions,
           gas: latestGasRef.current,
+          maxDrawdownPct: agentSettings.maxDrawdownPct,
         }),
       runGates: (proposed, state) => enforceActionSpace(proposed, state),
       gates: (state, idea) => evaluateGates(state, idea),
@@ -686,6 +782,108 @@ const App = () => {
       setLoopPhase(null)
     }
   }, [stage, agentEnabled, realAddress, strategy])
+
+  // ── Autonomous Auto-Exit monitor loop ──
+  useE(() => {
+    if (!realAddress || stage !== 'done' || !agentEnabled) return
+    let active = true
+
+    const checkExit = async () => {
+      const storedRules = localStorage.getItem(`yv_exit_rules_${realAddress}`)
+      if (!storedRules) return
+      const rules = JSON.parse(storedRules)
+      if (!rules.authorized) return
+
+      const stateForExit = {
+        portfolio: { holdings: agentData.positions },
+        universe: Object.keys(agentData.positions).map((addr) => {
+          const cat =
+            VAULT_CATALOG.find((v) => v.addr.toLowerCase() === addr.toLowerCase()) || {}
+          const pos = agentData.positions[addr] || {}
+          return {
+            address: addr,
+            protocol: cat.protocol || 'blend',
+            apy: Number(cat.apy || 6.5),
+            tvl: cat.tvl || 25_000_000,
+            drawdown: Number(pos.drawdown || 0),
+          }
+        }),
+        market: {
+          utilization: 0.96, // default utilization for simulation
+          signals: [],
+        },
+      }
+
+      const result = evaluateExit(rules, stateForExit, {
+        nowMs: Date.now(),
+        lastExitTripAt: Number(
+          localStorage.getItem(`yv_last_exit_trip_${realAddress}`) || '0'
+        ),
+      })
+
+      if (result.tripped && active) {
+        localStorage.setItem(`yv_last_exit_trip_${realAddress}`, String(Date.now()))
+        addLog({
+          event: 'AgentFailed',
+          meta: `🚨 Auto-Exit Triggered: ${result.reason}`,
+          detail: `Trigger: ${result.trigger}. Launching autonomous exit...`,
+        })
+
+        // Surface a critical risk alert
+        setAgentData((d) => ({
+          ...d,
+          alerts: [
+            {
+              id: `exit-alert-${Date.now()}`,
+              kind: 'risk_alert',
+              severity: 'critical',
+              vaultName: 'VFUSD Yield Vault',
+              vaultAddress: SOROBAN_VAULT_ADDRESS,
+              message: `Auto-Exit Triggered: ${result.reason}`,
+              timestamp: Date.now(),
+            },
+            ...d.alerts,
+          ],
+        }))
+
+        try {
+          const txRes = await runAutonomousExit({
+            agentAddress: SOROBAN_DEMO_AGENT,
+            ownerAddress: realAddress,
+          })
+          addLog({
+            event: 'AgentCompleted',
+            meta: `✓ Autonomous Exit Succeeded! Tx: ${txRes.hash.slice(0, 8)}...`,
+            detail: 'All vault shares redeemed and USDC principal returned to owner wallet.',
+          })
+
+          const chain = await reconcileWithRetry(realAddress)
+          if (chain) {
+            setAgentData((d) => ({
+              ...d,
+              positions: applyChainPositions(d.positions, chain),
+              lastUpdated: Date.now(),
+            }))
+          }
+        } catch (err) {
+          console.error('[AutoExit] Autonomous exit failed:', err)
+          addLog({
+            event: 'AgentFailed',
+            meta: `✗ Auto-Exit Failed: ${err.message}`,
+            detail: 'Please execute emergency withdraw manually.',
+          })
+        }
+      }
+    }
+
+    const intervalId = setInterval(checkExit, 15000)
+    checkExit()
+
+    return () => {
+      active = false
+      clearInterval(intervalId)
+    }
+  }, [realAddress, stage, agentEnabled, agentData.positions])
 
   // Persist a resume snapshot whenever the user is in an active ('done') session, so a
   // refresh can re-enter it (the mount effect reads this back). Only 'done' sessions —
@@ -2070,6 +2268,7 @@ const App = () => {
                 onConnect={handleConnect}
                 onDisconnect={handleDisconnect}
                 onRevoke={handleRevoke}
+                addLog={addLog}
               />
             }
           />

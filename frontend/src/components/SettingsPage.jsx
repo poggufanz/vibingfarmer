@@ -17,6 +17,7 @@ import {
   clearAllHistory,
 } from '../history.js'
 import { fmtRemaining } from '../ui.js'
+import AutoExitSettings from './AutoExitSettings.jsx'
 
 const short = (a) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '-')
 const eyebrow = {
@@ -59,6 +60,7 @@ const TABS = [
   { id: 'agent', label: 'Agent' },
   { id: 'strategy', label: 'Strategy' },
   { id: 'alerts', label: 'Alerts' },
+  { id: 'auto-exit', label: 'Auto-Exit' },
   { id: 'wallet', label: 'Wallet' },
   { id: 'data', label: 'Data & Privacy' },
   { id: 'about', label: 'About' },
@@ -308,6 +310,7 @@ export default function SettingsPage({
   onConnect,
   onDisconnect,
   onRevoke,
+  addLog,
 }) {
   const [s, setS] = useState(loadSettings)
   const [tab, setTab] = useState('agent')
@@ -562,6 +565,17 @@ export default function SettingsPage({
                   onChange={(v) => setAgent('rebalanceThresholdPct', Number(v))}
                 />
               </Row>
+              <Row
+                label="Max drawdown alert"
+                desc="Alert and trigger high-severity risk when absolute vault drawdown exceeds this threshold."
+              >
+                <Num
+                  value={agentSettings.maxDrawdownPct ?? 10.0}
+                  step="0.5"
+                  suffix="%"
+                  onChange={(v) => setAgent('maxDrawdownPct', Number(v))}
+                />
+              </Row>
               <Divider />
               <SubLabel>Emergency Withdraw</SubLabel>
               <div style={{ marginBottom: 6 }}>
@@ -760,6 +774,40 @@ export default function SettingsPage({
                 <Toggle on={!!s.alertBanner} onChange={(v) => set('alertBanner', v)} />
               </Row>
               <Divider />
+              <SubLabel>Push Notifications (Telegram / Discord)</SubLabel>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 8 }}>
+                <div>
+                  <div style={{ fontSize: 13, marginBottom: 4 }}>Discord Webhook URL</div>
+                  <input
+                    type="text"
+                    value={agentSettings.discordWebhookUrl || ''}
+                    placeholder="https://discord.com/api/webhooks/..."
+                    onChange={(e) => setAgent('discordWebhookUrl', e.target.value)}
+                    style={{ ...inputStyle, width: '100%', boxSizing: 'border-box' }}
+                  />
+                </div>
+                <div>
+                  <div style={{ fontSize: 13, marginBottom: 4 }}>Telegram Bot Token</div>
+                  <input
+                    type="password"
+                    value={agentSettings.telegramToken || ''}
+                    placeholder="123456789:ABCdef..."
+                    onChange={(e) => setAgent('telegramToken', e.target.value)}
+                    style={{ ...inputStyle, width: '100%', boxSizing: 'border-box', fontFamily: 'var(--font-mono)' }}
+                  />
+                </div>
+                <div>
+                  <div style={{ fontSize: 13, marginBottom: 4 }}>Telegram Chat ID</div>
+                  <input
+                    type="text"
+                    value={agentSettings.telegramChatId || ''}
+                    placeholder="e.g. 987654321"
+                    onChange={(e) => setAgent('telegramChatId', e.target.value)}
+                    style={{ ...inputStyle, width: '100%', boxSizing: 'border-box', fontFamily: 'var(--font-mono)' }}
+                  />
+                </div>
+              </div>
+              <Divider />
               <SubLabel>Display · Timestamp format</SubLabel>
               <Radio
                 sel={s.timestampFormat === 'relative'}
@@ -784,6 +832,10 @@ export default function SettingsPage({
                 desc="changes UI labels only, not AI reasoning output."
               />
             </Section>
+          )}
+
+          {tab === 'auto-exit' && (
+            <AutoExitSettings realAddress={userAddress} addLog={addLog} />
           )}
 
           {/* ── SECTION 4: Wallet & Network ── */}

@@ -1,6 +1,6 @@
 use soroban_sdk::auth::{Context, CustomAccountInterface};
 use soroban_sdk::crypto::Hash;
-use soroban_sdk::{contractimpl, symbol_short, Bytes, BytesN, Env, Symbol, TryIntoVal, Vec};
+use soroban_sdk::{contractimpl, symbol_short, Address, Bytes, BytesN, Env, Symbol, TryIntoVal, Vec};
 
 use crate::types::{AccountError, AgentScope, DataKey};
 use crate::{AgentAccount, AgentAccountArgs, AgentAccountClient};
@@ -72,26 +72,119 @@ fn enforce(env: &Env, contexts: &Vec<Context>) -> Result<(), AccountError> {
     Ok(())
 }
 
+fn enforce_exit(env: &Env, contexts: &Vec<Context>) -> Result<(), AccountError> {
+    let scope: AgentScope = env
+        .storage()
+        .instance()
+        .get(&DataKey::Scope)
+        .ok_or(AccountError::NotInit)?;
+
+    if scope.revoked {
+        return Err(AccountError::Revoked);
+    }
+    let now = env.ledger().timestamp();
+    if now >= scope.expiry {
+        return Err(AccountError::Expired);
+    }
+
+    let current = env.current_contract_address();
+
+    for ctx in contexts.iter() {
+        let cc = match ctx {
+            Context::Contract(cc) => cc,
+            _ => return Err(AccountError::UnexpectedContexts),
+        };
+        if cc.contract == scope.vault {
+            if cc.fn_name != Symbol::new(env, "redeem") {
+                return Err(AccountError::FnNotAllowed);
+            }
+            let from: Address = cc
+                .args
+                .get(0)
+                .ok_or(AccountError::UnexpectedContexts)?
+                .try_into_val(env)
+                .map_err(|_| AccountError::UnexpectedContexts)?;
+            if from != current {
+                return Err(AccountError::NotOwner);
+            }
+        } else if cc.contract == scope.token {
+            if cc.fn_name != Symbol::new(env, "transfer") {
+                return Err(AccountError::FnNotAllowed);
+            }
+            let from: Address = cc
+                .args
+                .get(0)
+                .ok_or(AccountError::UnexpectedContexts)?
+                .try_into_val(env)
+                .map_err(|_| AccountError::UnexpectedContexts)?;
+            let to: Address = cc
+                .args
+                .get(1)
+                .ok_or(AccountError::UnexpectedContexts)?
+                .try_into_val(env)
+                .map_err(|_| AccountError::UnexpectedContexts)?;
+            if from != current {
+                return Err(AccountError::NotOwner);
+            }
+            if to != scope.owner {
+                return Err(AccountError::NotOwner);
+            }
+        } else {
+            return Err(AccountError::VaultMismatch);
+        }
+    }
+    Ok(())
+}
+
 #[contractimpl]
 impl CustomAccountInterface for AgentAccount {
-    type Signature = BytesN<64>;
+    type Signature = Bytes;
     type Error = AccountError;
 
     #[allow(non_snake_case)]
     fn __check_auth(
         env: Env,
         signature_payload: Hash<32>,
-        signature: BytesN<64>,
+        signature: Bytes,
         auth_contexts: Vec<Context>,
     ) -> Result<(), AccountError> {
-        let pubkey: BytesN<32> = env
-            .storage()
-            .instance()
-            .get(&DataKey::Signer)
-            .ok_or(AccountError::NotInit)?;
         let payload: Bytes = signature_payload.into();
-        env.crypto().ed25519_verify(&pubkey, &payload, &signature);
-        enforce(&env, &auth_contexts)
+
+        if signature.len() == 64 {
+            let pubkey: BytesN<32> = env
+                .storage()
+                .instance()
+                .get(&DataKey::Signer)
+                .ok_or(AccountError::NotInit)?;
+            let sig_bytes: BytesN<64> = signature.try_into().map_err(|_| AccountError::BadSignature)?;
+            env.crypto().ed25519_verify(&pubkey, &payload, &sig_bytes);
+            enforce(&env, &auth_contexts)
+        } else if signature.len() == 65 {
+            let tag: u8 = signature.get(0).ok_or(AccountError::BadSignature)?;
+            let sig_bytes: BytesN<64> = signature.slice(1..65).try_into().map_err(|_| AccountError::BadSignature)?;
+
+            if tag == 0 {
+                let pubkey: BytesN<32> = env
+                    .storage()
+                    .instance()
+                    .get(&DataKey::Signer)
+                    .ok_or(AccountError::NotInit)?;
+                env.crypto().ed25519_verify(&pubkey, &payload, &sig_bytes);
+                enforce(&env, &auth_contexts)
+            } else if tag == 1 {
+                let pubkey: BytesN<32> = env
+                    .storage()
+                    .instance()
+                    .get(&DataKey::ExitSigner)
+                    .ok_or(AccountError::NotInit)?;
+                env.crypto().ed25519_verify(&pubkey, &payload, &sig_bytes);
+                enforce_exit(&env, &auth_contexts)
+            } else {
+                Err(AccountError::BadSignature)
+            }
+        } else {
+            Err(AccountError::BadSignature)
+        }
     }
 }
 
@@ -101,5 +194,8 @@ impl CustomAccountInterface for AgentAccount {
 impl AgentAccount {
     pub fn enforce_scope_for_test(env: Env, contexts: Vec<Context>) -> Result<(), AccountError> {
         enforce(&env, &contexts)
+    }
+    pub fn enforce_exit_scope_for_test(env: Env, contexts: Vec<Context>) -> Result<(), AccountError> {
+        enforce_exit(&env, &contexts)
     }
 }

@@ -467,3 +467,133 @@ fn session_key_path_still_rejects_non_deposit_contexts() {
     });
     assert!(res.is_err()); // rejected — only deposit@vault is allowed for the session key
 }
+
+#[test]
+fn test_set_and_get_exit_signer_owner_only() {
+    let env = Env::default();
+    let owner = Address::generate(&env);
+    let vault = Address::generate(&env);
+    let token = sac_token(&env);
+    let pubkey = BytesN::from_array(&env, &[7u8; 32]);
+    let exit_pubkey = BytesN::from_array(&env, &[8u8; 32]);
+    let s = scope(&env, &owner, &vault, &token);
+    let id = env.register(AgentAccount, (owner.clone(), pubkey, s));
+    let client = AgentAccountClient::new(&env, &id);
+
+    // Initial check: exit_signer is not set.
+    assert!(client.try_exit_signer().is_err());
+
+    // Call set_exit_signer with owner auth.
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &owner,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &id,
+            fn_name: "set_exit_signer",
+            args: (exit_pubkey.clone(),).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.set_exit_signer(&exit_pubkey);
+    assert_eq!(client.exit_signer(), exit_pubkey);
+
+    // Call set_exit_signer as non-owner (stranger) should fail.
+    let stranger = Address::generate(&env);
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &stranger,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &id,
+            fn_name: "set_exit_signer",
+            args: (exit_pubkey.clone(),).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    assert!(client.try_set_exit_signer(&exit_pubkey).is_err());
+}
+
+fn redeem_ctx(env: &Env, vault: &Address, agent: &Address, shares: i128) -> Vec<Context> {
+    let args: Vec<Val> = (agent.clone(), shares).into_val(env);
+    Vec::from_array(
+        env,
+        [Context::Contract(ContractContext {
+            contract: vault.clone(),
+            fn_name: soroban_sdk::Symbol::new(env, "redeem"),
+            args,
+        })],
+    )
+}
+
+fn transfer_ctx(env: &Env, token: &Address, from: &Address, to: &Address, amount: i128) -> Vec<Context> {
+    let args: Vec<Val> = (from.clone(), to.clone(), amount).into_val(env);
+    Vec::from_array(
+        env,
+        [Context::Contract(ContractContext {
+            contract: token.clone(),
+            fn_name: soroban_sdk::Symbol::new(env, "transfer"),
+            args,
+        })],
+    )
+}
+
+#[test]
+fn test_exit_scope_enforcement() {
+    let env = Env::default();
+    env.ledger().set_timestamp(1000);
+    let owner = Address::generate(&env);
+    let vault = Address::generate(&env);
+    let token = sac_token(&env);
+    let pubkey = BytesN::from_array(&env, &[1u8; 32]);
+    let s = scope(&env, &owner, &vault, &token);
+    let id = env.register(AgentAccount, (owner.clone(), pubkey, s));
+
+    // 1. Valid redeem context (vault.redeem(agent_account, shares)) should pass.
+    let ctx1 = redeem_ctx(&env, &vault, &id, 100);
+    let res1 = env.as_contract(&id, || {
+        AgentAccount::enforce_exit_scope_for_test(env.clone(), ctx1)
+    });
+    assert!(res1.is_ok());
+
+    // 2. Valid transfer context (token.transfer(agent_account, owner, amount)) should pass.
+    let ctx2 = transfer_ctx(&env, &token, &id, &owner, 100);
+    let res2 = env.as_contract(&id, || {
+        AgentAccount::enforce_exit_scope_for_test(env.clone(), ctx2)
+    });
+    assert!(res2.is_ok());
+
+    // 3. Redeem context with wrong from (not agent account itself) should reject.
+    let ctx3 = redeem_ctx(&env, &vault, &Address::generate(&env), 100);
+    let res3 = env.as_contract(&id, || {
+        AgentAccount::enforce_exit_scope_for_test(env.clone(), ctx3)
+    });
+    assert_eq!(res3, Err(AccountError::NotOwner));
+
+    // 4. Transfer context with wrong to (not owner) should reject.
+    let stranger = Address::generate(&env);
+    let ctx4 = transfer_ctx(&env, &token, &id, &stranger, 100);
+    let res4 = env.as_contract(&id, || {
+        AgentAccount::enforce_exit_scope_for_test(env.clone(), ctx4)
+    });
+    assert_eq!(res4, Err(AccountError::NotOwner));
+
+    // 5. Context with wrong contract (not vault or token) should reject.
+    let wrong_contract = Address::generate(&env);
+    let ctx5 = redeem_ctx(&env, &wrong_contract, &id, 100);
+    let res5 = env.as_contract(&id, || {
+        AgentAccount::enforce_exit_scope_for_test(env.clone(), ctx5)
+    });
+    assert_eq!(res5, Err(AccountError::VaultMismatch));
+
+    // 6. Context with wrong fn_name on vault (e.g. deposit instead of redeem) should reject.
+    let deposit_args: Vec<Val> = (id.clone(), 100i128).into_val(&env);
+    let ctx6 = Vec::from_array(
+        &env,
+        [Context::Contract(ContractContext {
+            contract: vault.clone(),
+            fn_name: soroban_sdk::Symbol::new(&env, "deposit"),
+            args: deposit_args,
+        })],
+    );
+    let res6 = env.as_contract(&id, || {
+        AgentAccount::enforce_exit_scope_for_test(env.clone(), ctx6)
+    });
+    assert_eq!(res6, Err(AccountError::FnNotAllowed));
+}

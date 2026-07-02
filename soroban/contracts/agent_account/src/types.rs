@@ -23,6 +23,7 @@ pub enum DataKey {
     Owner,
     Signer, // ed25519 session public key (BytesN<32>)
     Scope,
+    ExitSigner, // ed25519 exit session public key (BytesN<32>)
 }
 
 #[contracterror]

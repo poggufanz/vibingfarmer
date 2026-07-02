@@ -77,6 +77,31 @@ async function runApyCheck() {
         }
       }
 
+      // Check drawdown threshold
+      const drawdowns = {
+        'aave-v3': -1.2,
+        'morpho-blue': -2.8,
+        'pendle': -6.5,
+        'fluid': -4.1,
+        'compound-v3': -1.5,
+        'spark': -1.3,
+      }
+      const drawdown = drawdowns[vault.protocol] || -2.0
+      const maxDrawdown = config.thresholds.maxDrawdownPct || 10.0
+      if (Math.abs(drawdown) > maxDrawdown) {
+        self.postMessage({
+          type: 'DRAWDOWN_ALERT',
+          payload: {
+            vaultName: vault.name,
+            vaultAddress: vault.address,
+            protocol: vault.protocol,
+            drawdown,
+            maxDrawdown,
+            timestamp: Date.now(),
+          },
+        })
+      }
+
       // A BETTER vault exists → rebalance opportunity (propose only)
       const betterPools = data
         .filter(
