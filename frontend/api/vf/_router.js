@@ -9,6 +9,8 @@ import eligibility from './eligibility.js'
 import prices from './prices.js'
 import buildTx from './build-tx.js'
 import simulate from './simulate.js'
+import submit from './submit.js'
+import scan from './scan.js'
 
 export const routes = {
   'GET /auth/challenge': authChallenge,
@@ -21,7 +23,9 @@ export const routes = {
   'GET /prices': prices,
   'POST /build-tx': buildTx,
   'POST /simulate': simulate,
-  // Tasks 10-11 register: submit, scan, strategy
+  'POST /submit': submit,
+  'POST /scan': scan,
+  // Task 11 registers: strategy
 }
 
 export function subPath(req) {
