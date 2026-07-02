@@ -128,6 +128,24 @@ impl AgentAccount {
         Ok(bal)
     }
 
+    pub fn set_exit_signer(env: Env, exit_signer: BytesN<32>) -> Result<(), AccountError> {
+        let owner: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Owner)
+            .ok_or(AccountError::NotInit)?;
+        owner.require_auth();
+        env.storage().instance().set(&DataKey::ExitSigner, &exit_signer);
+        Ok(())
+    }
+
+    pub fn exit_signer(env: Env) -> Result<BytesN<32>, AccountError> {
+        env.storage()
+            .instance()
+            .get(&DataKey::ExitSigner)
+            .ok_or(AccountError::NotInit)
+    }
+
     pub fn signer(env: Env) -> BytesN<32> {
         env.storage().instance().get(&DataKey::Signer).unwrap()
     }

@@ -17,6 +17,7 @@ import {
   clearAllHistory,
 } from '../history.js'
 import { fmtRemaining } from '../ui.js'
+import AutoExitSettings from './AutoExitSettings.jsx'
 
 const short = (a) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '-')
 const eyebrow = {
@@ -59,6 +60,7 @@ const TABS = [
   { id: 'agent', label: 'Agent' },
   { id: 'strategy', label: 'Strategy' },
   { id: 'alerts', label: 'Alerts' },
+  { id: 'auto-exit', label: 'Auto-Exit' },
   { id: 'wallet', label: 'Wallet' },
   { id: 'data', label: 'Data & Privacy' },
   { id: 'about', label: 'About' },
@@ -308,6 +310,7 @@ export default function SettingsPage({
   onConnect,
   onDisconnect,
   onRevoke,
+  addLog,
 }) {
   const [s, setS] = useState(loadSettings)
   const [tab, setTab] = useState('agent')
@@ -829,6 +832,10 @@ export default function SettingsPage({
                 desc="changes UI labels only, not AI reasoning output."
               />
             </Section>
+          )}
+
+          {tab === 'auto-exit' && (
+            <AutoExitSettings realAddress={userAddress} addLog={addLog} />
           )}
 
           {/* ── SECTION 4: Wallet & Network ── */}
