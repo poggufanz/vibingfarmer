@@ -117,7 +117,7 @@ describe('buildPaymentXdr', () => {
 })
 
 describe('previewSend', () => {
-  it('reports the vault verdict for a known-vault destination, confirm still present', async () => {
+  it('reports the vault verdict for a known-vault destination without building a payment', async () => {
     eligibility.mockResolvedValueOnce({ allow: false, reasons: ['x'] })
     const horizon = stubHorizon()
 
@@ -130,7 +130,14 @@ describe('previewSend', () => {
     })
 
     expect(result.confirm).toBeDefined()
-    expect(result.confirm.kind).toBe('payment')
+    expect(result.confirm.kind).toBe('vault')
+    expect(result.confirm.decodable).toBe(false)
+    expect(result.confirm.ops[0]).toEqual({
+      destination: VAULT_CATALOG[0].address,
+      asset: 'XLM',
+      amount: '1.0000000',
+    })
+    expect(horizon.loadAccount).not.toHaveBeenCalled()
     expect(result.vault).toEqual({
       hit: true,
       name: VAULT_CATALOG[0].name,
@@ -141,6 +148,27 @@ describe('previewSend', () => {
       vault: VAULT_CATALOG[0].protocol,
       amount: '1.0000000',
     })
+  })
+
+  it('does not throw for the REAL catalog C-address vault (gate step 5 regression)', async () => {
+    eligibility.mockResolvedValueOnce({ allow: true, reasons: [] })
+    const horizon = stubHorizon()
+    // entry 1+ keep the real Soroban C-address (the file-level mock only swaps entry 0);
+    // Operation.payment would throw "destination is invalid" on it if previewSend built the XDR
+    const cVault = VAULT_CATALOG[1]
+
+    const result = await previewSend({
+      from: FROM,
+      to: cVault.address,
+      asset: 'XLM',
+      amount: '5',
+      horizon,
+    })
+
+    expect(result.vault.hit).toBe(true)
+    expect(result.vault.name).toBe(cVault.name)
+    expect(result.confirm.ops[0].destination).toBe(cVault.address)
+    expect(horizon.loadAccount).not.toHaveBeenCalled()
   })
 
   it('does not gate a non-vault destination', async () => {

@@ -51,10 +51,24 @@ export async function buildPaymentXdr({
 }
 
 export async function previewSend({ from, to, asset, amount, memo, horizon = horizonServer() }) {
-  const { xdr } = await buildPaymentXdr({ from, to, asset, amount, memo, horizon })
-  const confirm = decodeForConfirm(xdr)
+  // Vault check FIRST: catalog vaults are Soroban C-addresses, which Operation.payment
+  // rejects ("destination is invalid") — building the XDR first would throw before the
+  // F8 verdict + "use Deposit" guard could ever render. Nothing is signed on this path.
   const vault = await vaultVerdict(to, amount)
-  return { confirm, vault }
+  if (vault.hit) {
+    return {
+      confirm: {
+        fee: BASE_FEE,
+        memo: memo || '',
+        ops: [{ destination: to, asset: asset === 'XLM' ? 'XLM' : asset.code, amount: String(amount) }],
+        kind: 'vault',
+        decodable: false,
+      },
+      vault,
+    }
+  }
+  const { xdr } = await buildPaymentXdr({ from, to, asset, amount, memo, horizon })
+  return { confirm: decodeForConfirm(xdr), vault }
 }
 
 export async function sendPayment({ from, to, asset, amount, memo, horizon = horizonServer() }) {
