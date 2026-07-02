@@ -40,3 +40,9 @@ SOROBAN_TOKEN_ADDRESS=CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU
 # Cloudflare sets CF-Connecting-IP (mapped to x-real-ip by the adapter), so the
 # default 1 is fine; only change if you front Pages with another proxy.
 TRUST_PROXY_HOPS=1
+
+# ─── VF API gate (SEP-10 portal + gateway) ───
+VF_AUTH_SIGNING_KEY=S...        # server SEP-10 signing keypair secret (testnet)
+VF_JWT_SECRET=change-me-32-chars-min
+VF_HOME_DOMAIN=localhost:5173   # SEP-10 home_domain / web_auth_domain
+VF_GLOBAL_DAILY_CAP=5000        # global upstream budget per scope per day
