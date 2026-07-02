@@ -17,6 +17,9 @@ const audited = (over) => ({
 })
 
 export const SNAPSHOT = {
+  // The product's own vetted vault (single-chain Stellar/Soroban Blend USDC). Same
+  // PLACEHOLDER-provenance discipline as the rest — refresh before demo.
+  'blend-usdc': { facts: audited(), meta: { label: 'Blend USDC (Stellar)' } },
   'aave-v3': { facts: audited(), meta: { label: 'Aave v3 (mainnet)' } },
   'morpho-blue': {
     facts: audited({ tvl: f(12_000_000), adminKey: f('multisig') }),
