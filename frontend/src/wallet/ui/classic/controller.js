@@ -2,7 +2,7 @@
 // Thin orchestration between the classic wallet modules (vault/session/classicAccount/send/
 // prices/history) and the popup UI. Framework-light by design: plain async functions the popup
 // calls, storing results in its own useState — this file owns no React state itself.
-import { listWallets, getWallet, saveWallet, decryptSecret, encryptSecret } from '../../vault.js'
+import { listWallets, getWallet, saveWallet, decryptSecret } from '../../vault.js'
 import { isUnlocked, lock, installAutoLock } from '../../session.js'
 import {
   createClassicWallet,
@@ -34,13 +34,14 @@ export async function bootstrap() {
 // and can close between create and "Confirm & finish", which would otherwise reset an
 // in-memory flag and silently strand the 24 words with no way to see them again.
 // storage.local only ever holds the AES-GCM ciphertext here, never the plaintext phrase.
+// classicAccount writes the record + gate in ONE atomic saveWallet call (pendingBackup:
+// true) — there is no second save here, so there is no window where a flagless record
+// can be persisted while the mnemonic is lost.
 export async function doCreate(label, password) {
-  const { publicKey, mnemonic } = await createClassicWallet({ label, password })
-  const rec = await getWallet(publicKey)
-  await saveWallet({
-    ...rec,
-    needsBackup: true,
-    mnemonicBlob: await encryptSecret(mnemonic, password),
+  const { publicKey, mnemonic } = await createClassicWallet({
+    label,
+    password,
+    pendingBackup: true,
   })
   return { publicKey, mnemonic, needsBackup: true, indices: pickConfirmIndices(24, 3) }
 }

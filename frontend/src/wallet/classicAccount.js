@@ -11,18 +11,28 @@ export function horizonServer() {
   return _horizon
 }
 
-async function persistAndUnlock({ keypair, label, password }) {
+async function persistAndUnlock({ keypair, label, password, extra = {} }) {
   const publicKey = keypair.publicKey()
   const blob = await encryptSecret(keypair.secret(), password)
-  await saveWallet({ label, publicKey, blob, createdAt: Date.now() })
+  await saveWallet({ label, publicKey, blob, createdAt: Date.now(), ...extra })
   await unlock(publicKey, password)
   return publicKey
 }
 
-export async function createClassicWallet({ label, password }) {
+// pendingBackup: when true, the 24-word mnemonic is encrypted and folded into the SAME
+// saveWallet call that persists the account record (needsBackup + mnemonicBlob alongside
+// label/publicKey/blob). This closes the creation-time race where a second, later save
+// added the backup gate: an MV3 popup teardown between the two saves could persist a
+// flagless record and silently lose the mnemonic. One record, written once, either has
+// the full backup gate or never existed. Default false leaves every other caller/test
+// (import paths) producing the exact same record shape as before.
+export async function createClassicWallet({ label, password, pendingBackup = false }) {
   const mnemonic = generate24()
   const keypair = keypairFromMnemonic(mnemonic, 0)
-  const publicKey = await persistAndUnlock({ keypair, label, password })
+  const extra = pendingBackup
+    ? { needsBackup: true, mnemonicBlob: await encryptSecret(mnemonic, password) }
+    : {}
+  const publicKey = await persistAndUnlock({ keypair, label, password, extra })
   return { publicKey, mnemonic }
 }
 

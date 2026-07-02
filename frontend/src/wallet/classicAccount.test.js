@@ -2,6 +2,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { installChromeMock } from './testUtils.js'
 import { createClassicWallet, importFromSecret, withSecret } from './classicAccount.js'
+import { getWallet, decryptSecret } from './vault.js'
 import { isUnlocked, lock } from './session.js'
 
 beforeEach(() => {
@@ -60,5 +61,35 @@ describe('classicAccount', () => {
     })
     await lock()
     await expect(withSecret(async () => 1)).rejects.toThrow('locked')
+  })
+
+  it('createClassicWallet({ pendingBackup: true }) persists needsBackup + a decryptable mnemonicBlob in ONE atomic save — no second save layered on top', async () => {
+    const setSpy = vi.spyOn(globalThis.chrome.storage.local, 'set')
+    const { publicKey, mnemonic } = await createClassicWallet({
+      label: 'Main',
+      password: 'pw12pw12pw12',
+      pendingBackup: true,
+    })
+
+    // Exactly one storage.local.set call for the whole create — proves the record and
+    // the backup gate land together, closing the creation-time race (flagless record
+    // persisted while the mnemonic is lost between two separate saves).
+    expect(setSpy).toHaveBeenCalledTimes(1)
+
+    const rec = await getWallet(publicKey)
+    expect(rec.needsBackup).toBe(true)
+    expect(rec.mnemonicBlob).toBeTruthy()
+    const revealed = await decryptSecret(rec.mnemonicBlob, 'pw12pw12pw12')
+    expect(revealed).toBe(mnemonic)
+  })
+
+  it('createClassicWallet default (pendingBackup omitted) persists NEITHER needsBackup nor mnemonicBlob', async () => {
+    const { publicKey } = await createClassicWallet({
+      label: 'Main',
+      password: 'pw12pw12pw12',
+    })
+    const rec = await getWallet(publicKey)
+    expect(rec.needsBackup).toBeUndefined()
+    expect(rec.mnemonicBlob).toBeUndefined()
   })
 })

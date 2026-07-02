@@ -105,6 +105,18 @@ describe('classic controller', () => {
     await expect(doImport('not a key or phrase', 'pw12pw12pw12', 'x')).rejects.toThrow()
   })
 
+  it('doImport never sets the pending-backup gate — bootstrap reports needsBackup false for an imported wallet', async () => {
+    const r = await doImport(
+      'SBGWSG6BTNCKCOB3DIFBGCVMUPQFYPA2G4O34RMTB343OYPXU5DJDVMN',
+      'pw12pw12pw12',
+      'Imp'
+    )
+    const b = await bootstrap()
+    expect(b.hasWallet).toBe(true)
+    expect(b.publicKey).toBe(r.publicKey)
+    expect(b.needsBackup).toBe(false)
+  })
+
   it('doUnlock/doLock round-trip; doExport is password-gated against the vault record', async () => {
     const { publicKey } = await doCreate('Main', 'pw12pw12pw12')
     await confirmBackup(publicKey)
