@@ -114,6 +114,10 @@ const AGENT_SETTINGS_DEFAULTS = {
   apyInterval: 10,
   riskInterval: 15,
   rewardInterval: 5,
+  maxDrawdownPct: 10.0,
+  discordWebhookUrl: '',
+  telegramToken: '',
+  telegramChatId: '',
 }
 const loadAgentSettings = () => {
   try {
@@ -123,6 +127,74 @@ const loadAgentSettings = () => {
     }
   } catch {
     return { ...AGENT_SETTINGS_DEFAULTS }
+  }
+}
+
+const sendPushNotification = async (ev, passedSettings) => {
+  const isAlert = ['risk_alert', 'apy_drift', 'rebalance_proposal', 'harvest_ready'].includes(ev.kind)
+  if (!isAlert) return
+
+  let settings = passedSettings
+  if (!settings) {
+    try {
+      settings = {
+        ...AGENT_SETTINGS_DEFAULTS,
+        ...JSON.parse(localStorage.getItem('yv_agent_settings') || '{}'),
+      }
+    } catch {
+      settings = { ...AGENT_SETTINGS_DEFAULTS }
+    }
+  }
+
+  let title = 'Vibing Farmer · Alert'
+  let detail = ''
+
+  if (ev.kind === 'rebalance_proposal') {
+    title = '🔄 Rebalance Opportunity Detected'
+    detail = `Venice AI flagged ${ev.toProtocol} at ${ev.toApy}% vs your current ${ev.fromVault} at ${ev.fromApy}% (potential gain: +${ev.apyGain}%).`
+  } else if (ev.kind === 'risk_alert') {
+    title = `🚨 Risk Alert [Severity: ${ev.severity.toUpperCase()}]`
+    detail = `Signal on ${ev.vaultName}: ${ev.searchAnswer || 'Security concern detected.'}`
+  } else if (ev.kind === 'apy_drift') {
+    title = '⚠ APY Drop Detected'
+    detail = `APY on ${ev.vaultName} dropped from ${ev.baselineApy}% to ${ev.currentApy}% (${ev.driftPct}%).`
+  } else if (ev.kind === 'harvest_ready') {
+    title = '🟢 Yield Harvest Ready'
+    detail = `${ev.rewardsUsdc} USDC accrued on ${ev.vaultName} is ready to claim.`
+  }
+
+  const messageText = `*${title}*\n\n${detail}\n\n_Time: ${new Date(ev.timestamp || Date.now()).toLocaleString()}_`
+
+  // Send Discord notification
+  if (settings.discordWebhookUrl) {
+    try {
+      await fetch(settings.discordWebhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content: `🚨 **${title}**\n${detail}`,
+        }),
+      })
+    } catch (e) {
+      console.warn('[Notification] Discord failed:', e.message)
+    }
+  }
+
+  // Send Telegram notification
+  if (settings.telegramToken && settings.telegramChatId) {
+    try {
+      await fetch(`https://api.telegram.org/bot${settings.telegramToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: settings.telegramChatId,
+          text: messageText,
+          parse_mode: 'Markdown',
+        }),
+      })
+    } catch (e) {
+      console.warn('[Notification] Telegram failed:', e.message)
+    }
   }
 }
 
@@ -291,6 +363,19 @@ const App = () => {
   // start the monitor loop again. If no wallet is selected yet (fresh reload) getUserAddress
   // rejects and the catch leaves the app logged-out until the user reconnects. Mount-only.
   useE(() => {
+    window.triggerTestAlert = () => {
+      handleAgentEvent({
+        kind: 'risk_alert',
+        severity: 'high',
+        reason: 'drawdown_exceeded',
+        vaultName: 'VFUSD Yield Vault',
+        vaultAddress: 'CBZNITAPHCLSPEXC3UKIERYRUJR56GISM2G2Z5XD6KZH3U4ZZ76XNQOU',
+        protocol: 'aave-v3',
+        searchAnswer: 'Drawdown of aave-v3 (15.0%) exceeds your configured limit of 10.0%!',
+        timestamp: Date.now(),
+      })
+    }
+
     let alive = true
     getUserAddress()
       .then((addr) => {
@@ -310,6 +395,7 @@ const App = () => {
       .catch(() => {})
     return () => {
       alive = false
+      delete window.triggerTestAlert
     }
   }, [])
 
@@ -564,6 +650,9 @@ const App = () => {
     // Alert kinds — dedupe by kind+vault, newest first, cap at 8
     const key = `${ev.kind}:${ev.vaultAddress || ev.vaultName || ''}`
     const id = `${key}:${ev.timestamp || Date.now()}`
+    const isNew = !agentData.alerts.some(
+      (a) => `${a.kind}:${a.vaultAddress || a.vaultName || ''}` === key
+    )
     setAgentData((d) => ({
       ...d,
       alerts: [
@@ -571,6 +660,9 @@ const App = () => {
         ...d.alerts.filter((a) => `${a.kind}:${a.vaultAddress || a.vaultName || ''}` !== key),
       ].slice(0, 8),
     }))
+    if (isNew) {
+      sendPushNotification(ev, agentSettings)
+    }
     const detail =
       ev.kind === 'rebalance_proposal'
         ? `Venice AI flagged ${ev.toProtocol} at ${ev.toApy}% vs your ${ev.fromVault} at ${ev.fromApy}% · capture +${ev.apyGain}% by rebalancing.`
@@ -627,6 +719,7 @@ const App = () => {
           marketContext: marketLive,
           positions: agentData.positions,
           gas: latestGasRef.current,
+          maxDrawdownPct: agentSettings.maxDrawdownPct,
         }),
       runGates: (proposed, state) => enforceActionSpace(proposed, state),
       gates: (state, idea) => evaluateGates(state, idea),

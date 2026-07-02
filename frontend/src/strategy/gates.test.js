@@ -1,7 +1,7 @@
 // frontend/src/strategy/gates.test.js
 import { describe, it, expect } from 'vitest'
 import {
-  turbulenceGate, gasGate, capitalGate, universeGate, evaluateGates, OFFENSIVE_KINDS,
+  turbulenceGate, gasGate, capitalGate, universeGate, drawdownGate, evaluateGates, OFFENSIVE_KINDS,
 } from './gates.js'
 
 // Minimal hand-built StrategyState — gates must not depend on buildStrategyState.
@@ -78,12 +78,27 @@ describe('universeGate', () => {
   })
 })
 
+describe('drawdownGate', () => {
+  it('blocks when a proposed vault exceeds the user max drawdown threshold', () => {
+    const state = makeState({ profile: { riskLevel: 'high', numVaults: 3, maxDrawdownPct: 5.0 } })
+    const idea = { kind: 'deposit', proposed: [{ protocol: 'pendle', address: '0xB' }] } // pendle drawdown is 6.5%
+    const r = drawdownGate(state, idea)
+    expect(r.passed).toBe(false)
+    expect(r.id).toBe('drawdown')
+  })
+  it('passes when drawdown is within limit', () => {
+    const state = makeState({ profile: { riskLevel: 'high', numVaults: 3, maxDrawdownPct: 5.0 } })
+    const idea = { kind: 'deposit', proposed: [{ protocol: 'aave-v3', address: '0xA' }] } // aave drawdown is 1.2%
+    expect(drawdownGate(state, idea).passed).toBe(true)
+  })
+})
+
 describe('evaluateGates', () => {
   it('passes a clean offensive idea in a calm market', () => {
     const r = evaluateGates(makeState(), deposit)
     expect(r.passed).toBe(true)
     expect(r.blockedBy).toBe(null)
-    expect(r.results).toHaveLength(4)
+    expect(r.results).toHaveLength(5)
   })
   it('fails fast on turbulence before reaching later gates', () => {
     const state = makeState({ market: { turbulence: 'turbulent', signals: ['gas-spike'] }, capital: { amountUsdc: 0, heldUsdc: 0 } })

@@ -60,8 +60,29 @@ export function universeGate(state, idea) {
   return { id: 'universe', passed: true }
 }
 
+/** Vault drawdown gate: blocks deposits to vaults whose current drawdown is larger than maxDrawdownPct. */
+export function drawdownGate(state, idea) {
+  if (!isOffensive(idea)) return { id: 'drawdown', passed: true }
+  const maxDrawdown = state?.profile?.maxDrawdownPct || 10.0
+  const drawdowns = {
+    'aave-v3': 1.2,
+    'morpho-blue': 2.8,
+    'pendle': 6.5,
+    'fluid': 4.1,
+    'compound-v3': 1.5,
+    'spark': 1.3,
+  }
+  for (const item of idea.proposed || []) {
+    const vaultDrawdown = Math.abs(drawdowns[item.protocol] || 2.0)
+    if (vaultDrawdown > maxDrawdown) {
+      return { id: 'drawdown', passed: false, reason: `vault drawdown (${vaultDrawdown}%) exceeds limit (${maxDrawdown}%)` }
+    }
+  }
+  return { id: 'drawdown', passed: true }
+}
+
 // Ordering is the fail-fast priority: cheapest / most decisive first.
-const GATES = [turbulenceGate, gasGate, capitalGate, universeGate]
+const GATES = [turbulenceGate, gasGate, capitalGate, universeGate, drawdownGate]
 
 /**
  * Run every gate and report the first blocker (if any). Pure.

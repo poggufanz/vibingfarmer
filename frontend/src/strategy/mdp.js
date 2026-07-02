@@ -100,13 +100,18 @@ export function buildStrategyState({
   marketContext,
   positions = {},
   gas = null,
+  maxDrawdownPct,
 }) {
   const universe = (vaultData && vaultData.length ? vaultData : VAULT_CATALOG).map(toObservation)
   const holdings = positions || {}
   const heldUnits = Object.values(holdings).reduce((s, p) => s + Number((p && p.balance) || 0), 0)
   return {
     capital: { amountUsdc: Number(amountUsdc) || 0, heldUsdc: toDisplay(heldUnits) },
-    profile: { riskLevel: normalizeRisk(riskLevel), numVaults: Number(numVaults) || 1 },
+    profile: {
+      riskLevel: normalizeRisk(riskLevel),
+      numVaults: Number(numVaults) || 1,
+      maxDrawdownPct: maxDrawdownPct != null ? Number(maxDrawdownPct) : 10.0,
+    },
     portfolio: { holdings, heldVaultCount: Object.keys(holdings).length },
     market: deriveSignals(marketContext, gas),
     universe,

@@ -562,6 +562,17 @@ export default function SettingsPage({
                   onChange={(v) => setAgent('rebalanceThresholdPct', Number(v))}
                 />
               </Row>
+              <Row
+                label="Max drawdown alert"
+                desc="Alert and trigger high-severity risk when absolute vault drawdown exceeds this threshold."
+              >
+                <Num
+                  value={agentSettings.maxDrawdownPct ?? 10.0}
+                  step="0.5"
+                  suffix="%"
+                  onChange={(v) => setAgent('maxDrawdownPct', Number(v))}
+                />
+              </Row>
               <Divider />
               <SubLabel>Emergency Withdraw</SubLabel>
               <div style={{ marginBottom: 6 }}>
@@ -759,6 +770,40 @@ export default function SettingsPage({
               >
                 <Toggle on={!!s.alertBanner} onChange={(v) => set('alertBanner', v)} />
               </Row>
+              <Divider />
+              <SubLabel>Push Notifications (Telegram / Discord)</SubLabel>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 8 }}>
+                <div>
+                  <div style={{ fontSize: 13, marginBottom: 4 }}>Discord Webhook URL</div>
+                  <input
+                    type="text"
+                    value={agentSettings.discordWebhookUrl || ''}
+                    placeholder="https://discord.com/api/webhooks/..."
+                    onChange={(e) => setAgent('discordWebhookUrl', e.target.value)}
+                    style={{ ...inputStyle, width: '100%', boxSizing: 'border-box' }}
+                  />
+                </div>
+                <div>
+                  <div style={{ fontSize: 13, marginBottom: 4 }}>Telegram Bot Token</div>
+                  <input
+                    type="password"
+                    value={agentSettings.telegramToken || ''}
+                    placeholder="123456789:ABCdef..."
+                    onChange={(e) => setAgent('telegramToken', e.target.value)}
+                    style={{ ...inputStyle, width: '100%', boxSizing: 'border-box', fontFamily: 'var(--font-mono)' }}
+                  />
+                </div>
+                <div>
+                  <div style={{ fontSize: 13, marginBottom: 4 }}>Telegram Chat ID</div>
+                  <input
+                    type="text"
+                    value={agentSettings.telegramChatId || ''}
+                    placeholder="e.g. 987654321"
+                    onChange={(e) => setAgent('telegramChatId', e.target.value)}
+                    style={{ ...inputStyle, width: '100%', boxSizing: 'border-box', fontFamily: 'var(--font-mono)' }}
+                  />
+                </div>
+              </div>
               <Divider />
               <SubLabel>Display · Timestamp format</SubLabel>
               <Radio

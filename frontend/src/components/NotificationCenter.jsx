@@ -49,24 +49,10 @@ export default function NotificationCenter({
   const requestHarvest = (a) =>
     setPreview({ kind: 'harvest', alert: a, vaultName: a.vaultName, rewardsUsdc: a.rewardsUsdc })
   const requestWithdraw = (a) => {
-    const bal = Number(positions[a.vaultAddress]?.balance || 0)
-    const amtUnits = settings.emergencyFull
-      ? bal
-      : Math.floor((bal * (settings.emergencyPct || 50)) / 100)
-    setPreview({
-      kind: 'withdraw',
-      alert: a,
-      vaultName: a.vaultName,
-      amountUsdc: toDisplay(amtUnits).toFixed(2),
-      pctLabel: settings.emergencyFull
-        ? 'full position'
-        : `${settings.emergencyPct || 50}% · your setting`,
-      toShort: short(userAddress),
-    })
+    onEmergencyWithdraw?.(a)
   }
   const confirmPreview = () => {
     if (preview?.kind === 'harvest') onHarvest?.(preview.alert)
-    else if (preview?.kind === 'withdraw') onEmergencyWithdraw?.(preview.alert)
     setPreview(null)
   }
 
