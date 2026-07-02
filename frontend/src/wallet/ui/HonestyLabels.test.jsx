@@ -32,4 +32,11 @@ describe('HonestyLabels', () => {
     render(<HonestyLabels scope="agent" />)
     expect(screen.getByTestId('honesty-agent').textContent).toMatch(/not yet enforced on-chain/)
   })
+
+  it('renders the in-memory session-key label in session-key scope', () => {
+    render(<HonestyLabels scope="session-key" />)
+    expect(screen.getByTestId('honesty-session-key').textContent).toMatch(
+      /chrome\.storage\.session/
+    )
+  })
 })

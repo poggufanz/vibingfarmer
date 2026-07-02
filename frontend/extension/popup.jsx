@@ -14,6 +14,16 @@ import { ApproveOverlay } from '../src/wallet/ui/ApproveOverlay.jsx'
 import { HonestyLabels } from '../src/wallet/ui/HonestyLabels.jsx'
 import { toDisplay } from '../src/stellar/format.js'
 import { SOROBAN_VAULT_ADDRESS } from '../src/stellar/config.js'
+import CreateScreen from '../src/wallet/ui/classic/CreateScreen.jsx'
+import BackupScreen from '../src/wallet/ui/classic/BackupScreen.jsx'
+import ImportScreen from '../src/wallet/ui/classic/ImportScreen.jsx'
+import HomeScreen from '../src/wallet/ui/classic/HomeScreen.jsx'
+import SendScreen from '../src/wallet/ui/classic/SendScreen.jsx'
+import ReceiveScreen from '../src/wallet/ui/classic/ReceiveScreen.jsx'
+import HistoryScreen from '../src/wallet/ui/classic/HistoryScreen.jsx'
+import UnlockScreen from '../src/wallet/ui/classic/UnlockScreen.jsx'
+import SettingsScreen from '../src/wallet/ui/classic/SettingsScreen.jsx'
+import * as C from '../src/wallet/ui/classic/controller.js'
 
 // Ceremony runs in the extension TAB — Face ID closes the popup.
 // Post SIGN_REQUEST to the background SW; it opens ceremony.html in a new tab.
@@ -139,12 +149,102 @@ const CSS = `
 .vf-tab:hover{color:var(--text-muted)}
 .vf-tab.active{color:var(--text);border-bottom-color:var(--accent)}
 
+/* inline text-link button (reuses .link's look on a <button>) */
+button.link{background:none;border:none;padding:0;cursor:pointer;font:inherit}
+
+/* ---------------------------------------------------------------------- */
+/* Classic (seed-phrase / ed25519) wallet screens — same Acid Yield tokens */
+/* as above, extended with the vf-* classes the classic screens render.   */
+/* ---------------------------------------------------------------------- */
+.vf-screen{display:flex;flex-direction:column;gap:14px}
+.vf-screen h2{margin:0;font-size:18px;font-weight:600;letter-spacing:-.01em;color:var(--text)}
+.vf-screen > label{display:flex;flex-direction:column;gap:6px;font-family:var(--mono);font-size:11px;
+  color:var(--text-faint)}
+.vf-screen input,.vf-screen textarea{font-family:var(--font);font-size:13px;color:var(--text);
+  background:var(--bg-elev);border:1px solid var(--border);border-radius:var(--r-md);padding:10px 12px}
+.vf-screen input:focus,.vf-screen textarea:focus{border-color:var(--border-accent);outline:none}
+.vf-screen input[type=password]{font-family:var(--mono)}
+.vf-screen input[type=number]{width:76px;font-family:var(--mono)}
+
+/* buttons (classic screens use vf-btn; passkey screens keep btn/btn-primary/btn-ghost above) */
+.vf-btn{font-family:var(--font);font-size:13px;font-weight:500;padding:11px 16px;border-radius:var(--r-md);
+  border:1px solid var(--border-strong);background:transparent;color:var(--text);cursor:pointer;
+  transition:background .12s ease,border-color .12s ease;text-align:center}
+.vf-btn:hover:not(:disabled){background:var(--bg-elev)}
+.vf-btn:disabled{opacity:.4;cursor:not-allowed}
+.vf-btn.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+.vf-btn.primary:hover:not(:disabled){background:#dbff66}
+.vf-btn.ghost{background:transparent;border-color:transparent;color:var(--text-muted)}
+.vf-btn.ghost:hover:not(:disabled){color:var(--text);background:var(--bg-elev)}
+
+/* feedback text */
+.vf-hint{margin:0;font-size:11.5px;color:var(--text-faint)}
+.vf-error{margin:0;font-size:12px;color:var(--danger)}
+.vf-muted{color:var(--text-faint);font-family:var(--mono);font-size:11px}
+.vf-warn{margin:0;font-family:var(--mono);font-size:11px;line-height:1.5;color:var(--warn);
+  background:rgba(240,181,74,.08);border:1px solid rgba(240,181,74,.28);border-radius:var(--r-sm);
+  padding:9px 11px}
+
+/* backup phrase grid + confirm */
+.vf-phrase{display:grid;grid-template-columns:repeat(3,1fr);gap:8px 10px;padding:14px;
+  background:var(--bg-card);border:1px solid var(--border-strong);border-radius:var(--r-lg)}
+.vf-phrase.blurred{display:flex;justify-content:center;padding:24px 12px}
+.vf-word{font-family:var(--mono);font-size:12px;display:flex;gap:4px;color:var(--text)}
+.vf-word-idx{color:var(--text-faint)}
+.vf-word-text{color:var(--text)}
+.vf-confirm{display:flex;flex-direction:column;gap:10px;padding-top:8px;border-top:1px solid var(--border)}
+
+/* home balance card + actions + token list */
+.vf-balance-card{display:flex;flex-direction:column;gap:6px;padding:16px;background:var(--bg-card);
+  border:1px solid var(--border-strong);border-radius:var(--r-lg)}
+.vf-portfolio{font-family:var(--mono);font-weight:500;font-size:clamp(28px,10vw,38px);
+  letter-spacing:-.02em;color:var(--text)}
+.vf-address{font-family:var(--mono);font-size:11px;color:var(--text-faint)}
+.vf-fund{display:flex;flex-direction:column;gap:8px;padding:12px;border:1px dashed var(--border-strong);
+  border-radius:var(--r-md);font-size:12px;color:var(--text-muted)}
+.vf-actions{display:flex;gap:8px}
+.vf-actions .vf-btn{flex:1}
+.vf-tokens{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.vf-tokens li{display:flex;justify-content:space-between;gap:10px;padding:9px 0;
+  border-bottom:1px solid var(--border);font-family:var(--mono);font-size:12px;color:var(--text)}
+.vf-tokens li:last-child{border-bottom:none}
+
+/* send confirm card */
+.vf-confirm-card{display:flex;flex-direction:column;gap:10px;padding:14px;background:var(--bg-card);
+  border:1px solid var(--border-strong);border-radius:var(--r-lg)}
+.vf-confirm-card dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:4px 10px}
+.vf-confirm-card dt{font-family:var(--mono);font-size:11px;color:var(--text-faint)}
+.vf-confirm-card dd{margin:0;font-family:var(--mono);font-size:12px;color:var(--text);word-break:break-all}
+
+/* receive */
+.vf-qr{display:block;margin:0 auto;border-radius:var(--r-md);background:#fff;padding:8px}
+.vf-address-full{display:block;font-family:var(--mono);font-size:11px;word-break:break-all;
+  color:var(--text-muted);background:var(--bg-elev);border:1px solid var(--border);
+  border-radius:var(--r-md);padding:10px 12px}
+
+/* history */
+.vf-history{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.vf-history li{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:10px 0;
+  border-bottom:1px solid var(--border);font-family:var(--mono);font-size:12px}
+.vf-history li:last-child{border-bottom:none}
+.vf-history li.in span:first-child{color:var(--ok)}
+.vf-history time{color:var(--text-faint);font-size:10px}
+
+/* unlock / settings / export */
+.vf-unlock,.vf-settings,.vf-export{gap:14px}
+.vf-settings label{flex-direction:row;align-items:center;justify-content:space-between;
+  font-family:var(--font);font-size:13px;color:var(--text)}
+
 @media (prefers-reduced-motion:reduce){
   .vf-main{animation:none}.blink{animation:none}
 }
 `
 
 const NAV_TABS = ['home', 'send', 'deposit', 'signers', 'recovery', 'activity', 'agent']
+// Classic (seed-phrase) wallet has its own, smaller tab set — deposit-only-via-Send,
+// no signer/agent ceremonies. Kept as a separate const per the plan rather than branching
+// NAV_TABS itself, so the passkey tab list is untouched.
+const NAV_TABS_CLASSIC = ['home', 'send', 'receive', 'activity', 'settings']
 
 function Eyebrow({ sec, meta }) {
   return (
@@ -157,10 +257,10 @@ function Eyebrow({ sec, meta }) {
   )
 }
 
-function NavBar({ onNav, active }) {
+function NavBar({ tabs = NAV_TABS, onNav, active }) {
   return (
     <nav className="vf-nav">
-      {NAV_TABS.map((t) => (
+      {tabs.map((t) => (
         <button
           key={t}
           className={'vf-tab' + (t === active ? ' active' : '')}
@@ -174,7 +274,7 @@ function NavBar({ onNav, active }) {
   )
 }
 
-function Shell({ children, nav, active, onNav }) {
+function Shell({ children, nav, active, tabs, onNav, sub = 'passkey · secp256r1' }) {
   return (
     <div className="vf">
       <style>{CSS}</style>
@@ -184,22 +284,34 @@ function Shell({ children, nav, active, onNav }) {
         </div>
         <div className="vf-brand">
           <div className="vf-brand-name">VF Wallet</div>
-          <div className="vf-brand-sub">passkey · secp256r1</div>
+          <div className="vf-brand-sub">{sub}</div>
         </div>
         <span className="vf-net">testnet</span>
       </header>
       <div className="vf-main">{children}</div>
-      {nav && <NavBar onNav={onNav} active={active} />}
+      {nav && <NavBar tabs={tabs} onNav={onNav} active={active} />}
     </div>
   )
 }
 
 function Popup() {
-  const [screen, setScreen] = useState('welcome')
+  const [screen, setScreen] = useState('loading')
   const [wallet, setWallet] = useState(null)
   const [balance, setBalance] = useState(null)
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
+
+  // Classic (seed-phrase) wallet state
+  const [cw, setCw] = useState({ ready: false, hasWallet: false, publicKey: null, unlocked: false })
+  const [backup, setBackup] = useState(null) // { mnemonic, indices, publicKey }
+  const [preview, setPreview] = useState(null)
+  const [portfolio, setPortfolio] = useState(null)
+  const [unfunded, setUnfunded] = useState(false)
+  const [activity, setActivity] = useState([])
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const [autoLockMin, setAutoLockMin] = useState(10)
+  const [exportForm, setExportForm] = useState({ open: false, pw: '', secret: null, error: '' })
 
   // Send form
   const [sendTo, setSendTo] = useState('')
@@ -236,6 +348,51 @@ function Popup() {
       .catch(() => setBalance('-'))
   }
 
+  // ── Classic (seed-phrase) wallet: bootstrap + nav + handlers ──────────────
+  // Classic is the default wallet type. If a classic wallet already exists it routes straight
+  // to unlock/home; otherwise it lands on create. The passkey auto-reconnect effect below is
+  // untouched — if a passkey wallet is cached it still takes over (pre-existing behavior).
+  async function refresh(pk) {
+    setErr('')
+    try {
+      const r = await C.refreshHome(pk)
+      setUnfunded(r.unfunded)
+      setPortfolio(r.portfolio)
+    } catch (e) {
+      setErr(String(e?.message || e))
+    }
+  }
+
+  useEffect(() => {
+    C.armAutoLock()
+    C.bootstrap().then((b) => {
+      setCw({ ready: true, hasWallet: b.hasWallet, publicKey: b.publicKey, unlocked: b.unlocked })
+      if (b.hasWallet && !b.unlocked) setScreen('classic-unlock')
+      else if (b.hasWallet) {
+        setScreen('classic-home')
+        refresh(b.publicKey)
+      } else setScreen('classic-create')
+    })
+  }, [])
+
+  // Single nav handler for every classic tab. Clears the send preview on every navigation
+  // (not just the home → send entry) so a stale clear-sign snapshot can never leak into a
+  // fresh visit to Send, wipes any revealed export secret out of state, and loads Activity's
+  // history on demand.
+  function classicNav(t) {
+    setErr('')
+    setPreview(null)
+    setExportForm({ open: false, pw: '', secret: null, error: '' })
+    if (t === 'activity') {
+      setScreen('classic-activity')
+      C.loadActivity(cw.publicKey)
+        .then(setActivity)
+        .catch((e) => setErr(String(e?.message || e)))
+      return
+    }
+    setScreen('classic-' + t)
+  }
+
   // Restore cached wallet on mount (no-arg = reads vf_wallet_contract from localStorage)
   useEffect(() => {
     connectPasskeyWallet()
@@ -245,7 +402,7 @@ function Popup() {
         refreshBalance(w.contractId)
       })
       .catch(() => {
-        // No cached wallet — remain on welcome screen
+        // No cached wallet — remain on whatever the classic bootstrap above decided
       })
   }, [])
 
@@ -399,7 +556,323 @@ function Popup() {
     }
   }
 
-  // ── SCREENS ──────────────────────────────────────────────────────────────
+  // ── CLASSIC (seed-phrase / ed25519) SCREENS ───────────────────────────────
+  // Classic is the default wallet type; the passkey screens below are unmodified and remain
+  // reachable via the "switch to passkey wallet" links on classic-create/classic-settings.
+
+  if (screen === 'classic-create') {
+    return (
+      <Shell sub="classic · ed25519">
+        <CreateScreen
+          busy={busy}
+          error={err}
+          onGoImport={() => {
+            setErr('')
+            setScreen('classic-import')
+          }}
+          onCreate={async (label, pw) => {
+            setBusy(true)
+            setErr('')
+            try {
+              const r = await C.doCreate(label, pw)
+              setBackup({ mnemonic: r.mnemonic, indices: r.indices, publicKey: r.publicKey })
+              setScreen('classic-backup')
+            } catch (e) {
+              setErr(String(e?.message || e))
+            } finally {
+              setBusy(false)
+            }
+          }}
+        />
+        <p className="vf-hint">
+          Prefer Face ID?{' '}
+          <button className="link" onClick={() => setScreen('welcome')}>
+            Use a passkey wallet instead
+          </button>
+        </p>
+      </Shell>
+    )
+  }
+
+  if (screen === 'classic-backup') {
+    return (
+      <Shell sub="classic · ed25519">
+        <BackupScreen
+          mnemonic={backup.mnemonic}
+          indices={backup.indices}
+          error={err}
+          onConfirm={async () => {
+            setErr('')
+            await C.confirmBackup()
+            setCw((s) => ({ ...s, hasWallet: true, publicKey: backup.publicKey, unlocked: true }))
+            setScreen('classic-home')
+            refresh(backup.publicKey)
+          }}
+          onSkip={async () => {
+            setErr('')
+            await C.confirmBackup()
+            setCw((s) => ({ ...s, hasWallet: true, publicKey: backup.publicKey, unlocked: true }))
+            setScreen('classic-home')
+            refresh(backup.publicKey)
+          }}
+        />
+      </Shell>
+    )
+  }
+
+  if (screen === 'classic-import') {
+    return (
+      <Shell sub="classic · ed25519">
+        <ImportScreen
+          busy={busy}
+          error={err}
+          onImport={async (input, pw, label) => {
+            setBusy(true)
+            setErr('')
+            try {
+              const r = await C.doImport(input, pw, label)
+              setCw({ ready: true, hasWallet: true, publicKey: r.publicKey, unlocked: true })
+              setScreen('classic-home')
+              refresh(r.publicKey)
+            } catch (e) {
+              setErr(String(e?.message || e))
+            } finally {
+              setBusy(false)
+            }
+          }}
+        />
+      </Shell>
+    )
+  }
+
+  if (screen === 'classic-unlock') {
+    return (
+      <Shell sub="classic · ed25519">
+        <UnlockScreen
+          publicKey={cw.publicKey}
+          busy={busy}
+          error={err}
+          onUnlock={async (pw) => {
+            setBusy(true)
+            setErr('')
+            try {
+              await C.doUnlock(cw.publicKey, pw)
+              setCw((s) => ({ ...s, unlocked: true }))
+              setScreen('classic-home')
+              refresh(cw.publicKey)
+            } catch (e) {
+              setErr('Wrong password.')
+            } finally {
+              setBusy(false)
+            }
+          }}
+        />
+      </Shell>
+    )
+  }
+
+  if (screen === 'classic-home') {
+    return (
+      <Shell nav active="home" tabs={NAV_TABS_CLASSIC} onNav={classicNav} sub="classic · ed25519">
+        <HomeScreen
+          publicKey={cw.publicKey}
+          portfolio={portfolio}
+          unfunded={unfunded}
+          busy={busy}
+          onFund={async () => {
+            setBusy(true)
+            setErr('')
+            try {
+              await C.doFund(cw.publicKey)
+              await refresh(cw.publicKey)
+            } catch (e) {
+              setErr(String(e?.message || e))
+            } finally {
+              setBusy(false)
+            }
+          }}
+          onSend={() => {
+            setPreview(null)
+            setErr('')
+            setScreen('classic-send')
+          }}
+          onReceive={() => setScreen('classic-receive')}
+        />
+        {err && <p className="vf-error">{err}</p>}
+        <HonestyLabels scope="global" />
+      </Shell>
+    )
+  }
+
+  if (screen === 'classic-send') {
+    return (
+      <Shell nav active="send" tabs={NAV_TABS_CLASSIC} onNav={classicNav} sub="classic · ed25519">
+        <SendScreen
+          from={cw.publicKey}
+          preview={preview}
+          busy={busy}
+          error={err}
+          onPreview={async (params) => {
+            // Preview is ONLY ever set here, from a successful controller call — never
+            // injected from any other path — and always cleared first so a failed refresh
+            // can't leave a stale confirm-card on screen.
+            setPreview(null)
+            setBusy(true)
+            setErr('')
+            try {
+              const r = await C.doPreview(params)
+              setPreview(r)
+            } catch (e) {
+              setErr(String(e?.message || e))
+            } finally {
+              setBusy(false)
+            }
+          }}
+          onConfirm={async (params) => {
+            setBusy(true)
+            setErr('')
+            try {
+              await C.doSend(params)
+              setPreview(null)
+              await refresh(cw.publicKey)
+              const items = await C.loadActivity(cw.publicKey)
+              setActivity(items)
+              setScreen('classic-activity')
+            } catch (e) {
+              setErr(String(e?.message || e))
+            } finally {
+              setBusy(false)
+            }
+          }}
+        />
+      </Shell>
+    )
+  }
+
+  if (screen === 'classic-receive') {
+    return (
+      <Shell
+        nav
+        active="receive"
+        tabs={NAV_TABS_CLASSIC}
+        onNav={classicNav}
+        sub="classic · ed25519"
+      >
+        <ReceiveScreen publicKey={cw.publicKey} />
+      </Shell>
+    )
+  }
+
+  if (screen === 'classic-activity') {
+    return (
+      <Shell
+        nav
+        active="activity"
+        tabs={NAV_TABS_CLASSIC}
+        onNav={classicNav}
+        sub="classic · ed25519"
+      >
+        {err && <p className="vf-error">{err}</p>}
+        <HistoryScreen items={activity} />
+      </Shell>
+    )
+  }
+
+  if (screen === 'classic-settings') {
+    return (
+      <Shell
+        nav
+        active="settings"
+        tabs={NAV_TABS_CLASSIC}
+        onNav={classicNav}
+        sub="classic · ed25519"
+      >
+        <SettingsScreen
+          autoLockMin={autoLockMin}
+          onSetAutoLock={setAutoLockMin}
+          onLock={async () => {
+            await C.doLock()
+            setCw((s) => ({ ...s, unlocked: false }))
+            setExportForm({ open: false, pw: '', secret: null, error: '' })
+            setScreen('classic-unlock')
+          }}
+          onExport={() => setExportForm({ open: true, pw: '', secret: null, error: '' })}
+        />
+        <HonestyLabels scope="session-key" />
+
+        {exportForm.open && (
+          <div className="vf-screen vf-export">
+            {!exportForm.secret ? (
+              <>
+                <label>
+                  Password
+                  <input
+                    type="password"
+                    autoComplete="current-password"
+                    value={exportForm.pw}
+                    onChange={(e) =>
+                      setExportForm((f) => ({ ...f, pw: e.target.value, error: '' }))
+                    }
+                  />
+                </label>
+                {exportForm.error && <p className="vf-error">{exportForm.error}</p>}
+                <div className="vf-actions">
+                  <button
+                    className="vf-btn primary"
+                    disabled={!exportForm.pw}
+                    onClick={async () => {
+                      try {
+                        const secret = await C.doExport(cw.publicKey, exportForm.pw)
+                        setExportForm((f) => ({ ...f, secret, pw: '', error: '' }))
+                      } catch {
+                        setExportForm((f) => ({ ...f, error: 'Wrong password.' }))
+                      }
+                    }}
+                  >
+                    Reveal secret
+                  </button>
+                  <button
+                    className="vf-btn ghost"
+                    onClick={() => setExportForm({ open: false, pw: '', secret: null, error: '' })}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="vf-warn">
+                  This is your ONLY secret key. Anyone with it controls this wallet. Shown once —
+                  it will not be shown again.
+                </p>
+                <code className="vf-address-full">{exportForm.secret}</code>
+                <button
+                  className="vf-btn primary"
+                  onClick={() => setExportForm({ open: false, pw: '', secret: null, error: '' })}
+                >
+                  Done — hide it
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
+        <p className="vf-hint">
+          <button
+            className="link"
+            onClick={() => {
+              setExportForm({ open: false, pw: '', secret: null, error: '' })
+              setScreen('welcome')
+            }}
+          >
+            Switch to passkey wallet
+          </button>
+        </p>
+      </Shell>
+    )
+  }
+
+  // ── SCREENS (passkey) ──────────────────────────────────────────────────────
 
   if (screen === 'welcome') {
     return (
