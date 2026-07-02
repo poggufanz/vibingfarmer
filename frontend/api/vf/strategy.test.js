@@ -6,13 +6,22 @@ import { issueKey } from './_keystore.js'
 
 function mockRes() {
   return {
-    statusCode: 200, headers: {}, body: '',
-    setHeader(k, v) { this.headers[k] = v },
-    end(s) { this.body = s ?? ''; return this },
+    statusCode: 200,
+    headers: {},
+    body: '',
+    setHeader(k, v) {
+      this.headers[k] = v
+    },
+    end(s) {
+      this.body = s ?? ''
+      return this
+    },
   }
 }
 const mk = (body, key) => ({
-  method: 'POST', url: '/strategy', body,
+  method: 'POST',
+  url: '/strategy',
+  body,
   headers: { 'x-real-ip': '4.4.4.4', ...(key ? { authorization: `Bearer ${key}` } : {}) },
 })
 
@@ -21,7 +30,11 @@ beforeEach(async () => {
   delete process.env.DEEPSEEK_API_KEY
   process.env.VF_VAULT_CATALOG = 'blend-usdc'
   ;({ key } = await issueKey(storeFrom({}), {
-    owner: 'GST', scopes: ['strategy'], rateLimit: 50, env: 'test', expiresAt: null,
+    owner: 'GST',
+    scopes: ['strategy'],
+    rateLimit: 50,
+    env: 'test',
+    expiresAt: null,
   }))
 })
 afterEach(() => vi.unstubAllGlobals())
@@ -39,10 +52,17 @@ describe('equalSplit', () => {
 
 describe('parseLlmPlan', () => {
   it('accepts a valid plan, rejects bad pct sums / unknown protocols / garbage', () => {
-    const ok = parseLlmPlan('{"allocations":[{"protocol":"blend-usdc","pct":100}],"reasoning":"r"}', ['blend-usdc'])
+    const ok = parseLlmPlan(
+      '{"allocations":[{"protocol":"blend-usdc","pct":100}],"reasoning":"r"}',
+      ['blend-usdc']
+    )
     expect(ok.allocations[0].pct).toBe(100)
-    expect(parseLlmPlan('{"allocations":[{"protocol":"evil","pct":100}]}', ['blend-usdc'])).toBeNull()
-    expect(parseLlmPlan('{"allocations":[{"protocol":"blend-usdc","pct":80}]}', ['blend-usdc'])).toBeNull()
+    expect(
+      parseLlmPlan('{"allocations":[{"protocol":"evil","pct":100}]}', ['blend-usdc'])
+    ).toBeNull()
+    expect(
+      parseLlmPlan('{"allocations":[{"protocol":"blend-usdc","pct":80}]}', ['blend-usdc'])
+    ).toBeNull()
     expect(parseLlmPlan('not json', ['blend-usdc'])).toBeNull()
   })
 })
@@ -58,11 +78,25 @@ describe('POST /strategy', () => {
   })
   it('uses the LLM plan when the upstream answers valid JSON', async () => {
     process.env.DEEPSEEK_API_KEY = 'k'
-    vi.stubGlobal('fetch', vi.fn(async () =>
-      new Response(JSON.stringify({
-        choices: [{ message: { content: '{"allocations":[{"protocol":"blend-usdc","pct":100}],"reasoning":"solid"}' } }],
-      }), { status: 200 })
-    ))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              choices: [
+                {
+                  message: {
+                    content:
+                      '{"allocations":[{"protocol":"blend-usdc","pct":100}],"reasoning":"solid"}',
+                  },
+                },
+              ],
+            }),
+            { status: 200 }
+          )
+      )
+    )
     const res = mockRes()
     await vfRouter(mk({ amountUsd: 100, riskLevel: 'medium', vaultCount: 1 }, key), res)
     const out = JSON.parse(res.body)
@@ -71,9 +105,15 @@ describe('POST /strategy', () => {
   })
   it('falls back when the LLM returns garbage', async () => {
     process.env.DEEPSEEK_API_KEY = 'k'
-    vi.stubGlobal('fetch', vi.fn(async () =>
-      new Response(JSON.stringify({ choices: [{ message: { content: 'nonsense' } }] }), { status: 200 })
-    ))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ choices: [{ message: { content: 'nonsense' } }] }), {
+            status: 200,
+          })
+      )
+    )
     const res = mockRes()
     await vfRouter(mk({ amountUsd: 100, riskLevel: 'high', vaultCount: 1 }, key), res)
     expect(JSON.parse(res.body).source).toBe('fallback')

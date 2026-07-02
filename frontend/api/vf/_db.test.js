@@ -2,9 +2,17 @@ import { describe, it, expect } from 'vitest'
 import { memoryStore, storeFrom } from './_db.js'
 
 const row = (over = {}) => ({
-  id: 'vfk_1', key_hash: 'h1', key_hint: 'vf_test_ab12', owner: 'GAAA',
-  scopes: '["market"]', rate_limit: 60, expires_at: null, enabled: 1,
-  created_at: 1000, last_used_at: null, ...over,
+  id: 'vfk_1',
+  key_hash: 'h1',
+  key_hint: 'vf_test_ab12',
+  owner: 'GAAA',
+  scopes: '["market"]',
+  rate_limit: 60,
+  expires_at: null,
+  enabled: 1,
+  created_at: 1000,
+  last_used_at: null,
+  ...over,
 })
 
 describe('memoryStore', () => {

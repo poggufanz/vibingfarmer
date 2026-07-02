@@ -5,13 +5,22 @@ import { signJwt } from './_jwt.js'
 
 function mockRes() {
   return {
-    statusCode: 200, headers: {}, body: '',
-    setHeader(k, v) { this.headers[k] = v },
-    end(s) { this.body = s ?? ''; return this },
+    statusCode: 200,
+    headers: {},
+    body: '',
+    setHeader(k, v) {
+      this.headers[k] = v
+    },
+    end(s) {
+      this.body = s ?? ''
+      return this
+    },
   }
 }
 const mk = (method, url, body, jwt) => ({
-  method, url, body,
+  method,
+  url,
+  body,
   headers: { 'x-real-ip': '8.8.8.8', ...(jwt ? { authorization: `Bearer ${jwt}` } : {}) },
 })
 

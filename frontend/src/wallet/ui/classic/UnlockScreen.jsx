@@ -16,8 +16,8 @@ export default function UnlockScreen({ publicKey, onUnlock, error, busy }) {
         onKeyDown={(e) => e.key === 'Enter' && onUnlock(pw)}
       />
       <p className="vf-hint">
-        This password unlocks the local vault in this browser. It is not a recovery method — your
-        24 words are.
+        This password unlocks the local vault in this browser. It is not a recovery method — your 24
+        words are.
       </p>
       {error && <p className="vf-error">{error}</p>}
       <button className="vf-btn primary" disabled={busy || !pw} onClick={() => onUnlock(pw)}>

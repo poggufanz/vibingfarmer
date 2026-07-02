@@ -19,7 +19,12 @@ const bearer = (req) => {
   return h.startsWith('Bearer ') ? h.slice(7).trim() : ''
 }
 
-export async function requireVfKey(req, res, store, { scope, endpoint = scope, nowMs = Date.now() }) {
+export async function requireVfKey(
+  req,
+  res,
+  store,
+  { scope, endpoint = scope, nowMs = Date.now() }
+) {
   const token = bearer(req)
   if (!token) return send(res, 401, { error: 'Missing API key' })
   const v = await verifyKey(store, token, nowMs)
@@ -42,7 +47,9 @@ export async function requireVfKey(req, res, store, { scope, endpoint = scope, n
   await store.usage.log(v.keyId, day, endpoint)
   await store.keys.touch(v.keyId, Math.floor(nowMs / 1000))
   // lazy prune: drop windows older than 2 windows (keeps daily __global rows)
-  await store.counters.pruneBefore(windowStart - 2 * WINDOW_MS > dayStart ? dayStart : windowStart - 2 * WINDOW_MS)
+  await store.counters.pruneBefore(
+    windowStart - 2 * WINDOW_MS > dayStart ? dayStart : windowStart - 2 * WINDOW_MS
+  )
   return { keyId: v.keyId, scopes: v.scopes }
 }
 

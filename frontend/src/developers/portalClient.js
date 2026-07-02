@@ -9,7 +9,9 @@ async function jfetch(url, opts = {}) {
 }
 
 export async function signIn({ account, signChallenge }) {
-  const { transaction } = await jfetch(`${base}/auth/challenge?account=${encodeURIComponent(account)}`)
+  const { transaction } = await jfetch(
+    `${base}/auth/challenge?account=${encodeURIComponent(account)}`
+  )
   const signed = await signChallenge(transaction)
   const { token } = await jfetch(`${base}/auth/token`, {
     method: 'POST',
@@ -34,9 +36,11 @@ export async function createKey(jwt, { scopes, env, rateLimit }) {
 }
 
 export async function revokeKey(jwt, id) {
-  return (await jfetch(`${base}/keys`, {
-    method: 'DELETE',
-    headers: authed(jwt),
-    body: JSON.stringify({ id }),
-  })).revoked
+  return (
+    await jfetch(`${base}/keys`, {
+      method: 'DELETE',
+      headers: authed(jwt),
+      body: JSON.stringify({ id }),
+    })
+  ).revoked
 }

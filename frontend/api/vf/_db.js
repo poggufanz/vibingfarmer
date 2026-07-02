@@ -11,7 +11,9 @@ export function memoryStore() {
   return {
     _usage: usage,
     keys: {
-      async insert(row) { rows.set(row.id, { ...row }) },
+      async insert(row) {
+        rows.set(row.id, { ...row })
+      },
       async getByHash(hash) {
         for (const r of rows.values()) if (r.key_hash === hash) return { ...r }
         return null
@@ -59,11 +61,24 @@ export function d1Store(db) {
             `INSERT INTO api_keys (id, key_hash, key_hint, owner, scopes, rate_limit, expires_at, enabled, created_at, last_used_at)
              VALUES (?,?,?,?,?,?,?,?,?,?)`
           )
-          .bind(r.id, r.key_hash, r.key_hint, r.owner, r.scopes, r.rate_limit, r.expires_at, r.enabled, r.created_at, r.last_used_at)
+          .bind(
+            r.id,
+            r.key_hash,
+            r.key_hint,
+            r.owner,
+            r.scopes,
+            r.rate_limit,
+            r.expires_at,
+            r.enabled,
+            r.created_at,
+            r.last_used_at
+          )
           .run()
       },
       async getByHash(hash) {
-        return (await db.prepare(`SELECT * FROM api_keys WHERE key_hash = ?`).bind(hash).first()) ?? null
+        return (
+          (await db.prepare(`SELECT * FROM api_keys WHERE key_hash = ?`).bind(hash).first()) ?? null
+        )
       },
       async list(owner) {
         const { results } = await db

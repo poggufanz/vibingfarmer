@@ -29,7 +29,13 @@ export async function createKey(req, res) {
   const parsed = IssueSchema.safeParse(req.body ?? {})
   if (!parsed.success) return json(res, 400, { error: 'Invalid key request' })
   const { scopes, env, rateLimit, expiresAt } = parsed.data
-  const out = await issueKey(storeFrom(req), { owner: session.sub, scopes, rateLimit, env, expiresAt })
+  const out = await issueKey(storeFrom(req), {
+    owner: session.sub,
+    scopes,
+    rateLimit,
+    env,
+    expiresAt,
+  })
   json(res, 200, out) // { id, key (ONLY time plaintext leaves the server), hint }
 }
 

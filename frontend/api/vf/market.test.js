@@ -5,27 +5,44 @@ import { issueKey } from './_keystore.js'
 
 function mockRes() {
   return {
-    statusCode: 200, headers: {}, body: '',
-    setHeader(k, v) { this.headers[k] = v },
-    end(s) { this.body = s ?? ''; return this },
+    statusCode: 200,
+    headers: {},
+    body: '',
+    setHeader(k, v) {
+      this.headers[k] = v
+    },
+    end(s) {
+      this.body = s ?? ''
+      return this
+    },
   }
 }
 const mk = (method, url, body, key) => ({
-  method, url, body,
+  method,
+  url,
+  body,
   headers: { 'x-real-ip': '7.7.7.7', ...(key ? { authorization: `Bearer ${key}` } : {}) },
 })
 
 let key
 beforeEach(async () => {
   ;({ key } = await issueKey(storeFrom({}), {
-    owner: 'GMKT', scopes: ['market'], rateLimit: 100, env: 'test', expiresAt: null,
+    owner: 'GMKT',
+    scopes: ['market'],
+    rateLimit: 100,
+    env: 'test',
+    expiresAt: null,
   }))
 })
 afterEach(() => vi.unstubAllGlobals())
 
 describe('market endpoints', () => {
   it('all three 401 without a key', async () => {
-    for (const [m, u] of [['GET', '/vault-facts?protocol=blend-usdc'], ['POST', '/eligibility'], ['GET', '/prices']]) {
+    for (const [m, u] of [
+      ['GET', '/vault-facts?protocol=blend-usdc'],
+      ['POST', '/eligibility'],
+      ['GET', '/prices'],
+    ]) {
       const res = mockRes()
       await vfRouter(mk(m, u), res)
       expect(res.statusCode).toBe(401)
@@ -41,7 +58,15 @@ describe('market endpoints', () => {
   })
   it('eligibility evaluates and returns allow/verdict/reasons', async () => {
     const res = mockRes()
-    await vfRouter(mk('POST', '/eligibility', { vault: 'CVAULT', amount: '10000000', protocol: 'blend-usdc' }, key), res)
+    await vfRouter(
+      mk(
+        'POST',
+        '/eligibility',
+        { vault: 'CVAULT', amount: '10000000', protocol: 'blend-usdc' },
+        key
+      ),
+      res
+    )
     expect(res.statusCode).toBe(200)
     const out = JSON.parse(res.body)
     expect(typeof out.allow).toBe('boolean')
@@ -53,12 +78,25 @@ describe('market endpoints', () => {
     expect(res.statusCode).toBe(400)
   })
   it('prices proxies DeFiLlama and never echoes upstream errors', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ coins: { 'coingecko:stellar': { price: 0.5 } } }), { status: 200 })))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ coins: { 'coingecko:stellar': { price: 0.5 } } }), {
+            status: 200,
+          })
+      )
+    )
     let res = mockRes()
     await vfRouter(mk('GET', '/prices?coins=coingecko:stellar', undefined, key), res)
     expect(JSON.parse(res.body).coins['coingecko:stellar'].price).toBe(0.5)
 
-    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('SECRET-INTERNAL-DETAIL') }))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('SECRET-INTERNAL-DETAIL')
+      })
+    )
     res = mockRes()
     await vfRouter(mk('GET', '/prices', undefined, key), res)
     expect(res.statusCode).toBe(502)

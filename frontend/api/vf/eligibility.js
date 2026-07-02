@@ -11,7 +11,10 @@ const json = (res, status, obj) => {
 }
 
 export default async function handler(req, res) {
-  const ctx = await requireVfKey(req, res, storeFrom(req), { scope: 'market', endpoint: 'eligibility' })
+  const ctx = await requireVfKey(req, res, storeFrom(req), {
+    scope: 'market',
+    endpoint: 'eligibility',
+  })
   if (!ctx) return
   const { vault, amount, protocol } = req.body ?? {}
   let amt

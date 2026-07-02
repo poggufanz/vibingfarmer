@@ -10,7 +10,11 @@ const json = (res, status, obj) => {
 export async function simulateCore({ xdr, passphrase, rpcServer, parse }) {
   const tx = parse(xdr, passphrase)
   const sim = await rpcServer.simulateTransaction(tx)
-  return { ok: !sim.error, error: sim.error ? 'simulation failed' : undefined, latestLedger: sim.latestLedger }
+  return {
+    ok: !sim.error,
+    error: sim.error ? 'simulation failed' : undefined,
+    latestLedger: sim.latestLedger,
+  }
 }
 
 export default async function handler(req, res) {
@@ -20,10 +24,14 @@ export default async function handler(req, res) {
   if (typeof xdr !== 'string' || !xdr) return json(res, 400, { error: 'Missing xdr' })
   try {
     const sdk = await import('@stellar/stellar-sdk')
-    const rpcServer = new sdk.rpc.Server(process.env.SOROBAN_RPC_URL || 'https://soroban-testnet.stellar.org')
+    const rpcServer = new sdk.rpc.Server(
+      process.env.SOROBAN_RPC_URL || 'https://soroban-testnet.stellar.org'
+    )
     const passphrase = process.env.STELLAR_NETWORK_PASSPHRASE || 'Test SDF Network ; September 2015'
     const out = await simulateCore({
-      xdr, passphrase, rpcServer,
+      xdr,
+      passphrase,
+      rpcServer,
       parse: (x, p) => sdk.TransactionBuilder.fromXDR(x, p),
     })
     json(res, 200, out)

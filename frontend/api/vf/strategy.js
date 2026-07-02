@@ -22,7 +22,10 @@ const InputSchema = z.object({
 export function equalSplit(protocols, vaultCount) {
   const picks = protocols.slice(0, Math.max(1, Math.min(vaultCount, protocols.length)))
   const base = Math.floor(100 / picks.length)
-  return picks.map((protocol, i) => ({ protocol, pct: i === 0 ? 100 - base * (picks.length - 1) : base }))
+  return picks.map((protocol, i) => ({
+    protocol,
+    pct: i === 0 ? 100 - base * (picks.length - 1) : base,
+  }))
 }
 
 export function parseLlmPlan(text, protocols) {
@@ -49,7 +52,10 @@ export default async function handler(req, res) {
   const parsed = InputSchema.safeParse(req.body ?? {})
   if (!parsed.success) return json(res, 400, { error: 'Invalid strategy request' })
   const { amountUsd, riskLevel, vaultCount } = parsed.data
-  const protocols = (process.env.VF_VAULT_CATALOG || 'blend-usdc').split(',').map((s) => s.trim()).filter(Boolean)
+  const protocols = (process.env.VF_VAULT_CATALOG || 'blend-usdc')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
 
   const apiKey = process.env.DEEPSEEK_API_KEY
   if (apiKey) {

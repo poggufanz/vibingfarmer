@@ -9,13 +9,22 @@ const VAULT = 'CBZNITAPHCLSPEXC3UKIERYRUJR56GISM2G2Z5XD6KZH3U4ZZ76XNQOU'
 
 function mockRes() {
   return {
-    statusCode: 200, headers: {}, body: '',
-    setHeader(k, v) { this.headers[k] = v },
-    end(s) { this.body = s ?? ''; return this },
+    statusCode: 200,
+    headers: {},
+    body: '',
+    setHeader(k, v) {
+      this.headers[k] = v
+    },
+    end(s) {
+      this.body = s ?? ''
+      return this
+    },
   }
 }
 const mk = (method, url, body, key) => ({
-  method, url, body,
+  method,
+  url,
+  body,
   headers: { 'x-real-ip': '5.5.5.5', ...(key ? { authorization: `Bearer ${key}` } : {}) },
 })
 
@@ -24,8 +33,24 @@ beforeEach(async () => {
   process.env.STELLAR_RELAYER_SECRET = ''
   process.env.SOROBAN_VAULT_ADDRESS = VAULT
   const s = storeFrom({})
-  submitKey = (await issueKey(s, { owner: 'GS', scopes: ['submit'], rateLimit: 50, env: 'test', expiresAt: null })).key
-  scanKey = (await issueKey(s, { owner: 'GS', scopes: ['scan'], rateLimit: 50, env: 'test', expiresAt: null })).key
+  submitKey = (
+    await issueKey(s, {
+      owner: 'GS',
+      scopes: ['submit'],
+      rateLimit: 50,
+      env: 'test',
+      expiresAt: null,
+    })
+  ).key
+  scanKey = (
+    await issueKey(s, {
+      owner: 'GS',
+      scopes: ['scan'],
+      rateLimit: 50,
+      env: 'test',
+      expiresAt: null,
+    })
+  ).key
 })
 
 describe('/submit', () => {

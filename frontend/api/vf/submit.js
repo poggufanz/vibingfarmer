@@ -24,7 +24,9 @@ export default async function handler(req, res) {
   try {
     const sdk = await import('@stellar/stellar-sdk')
     const { feeBumpAndSubmit } = await import('../stellar-relay.js')
-    const rpcServer = new sdk.rpc.Server(process.env.SOROBAN_RPC_URL || 'https://soroban-testnet.stellar.org')
+    const rpcServer = new sdk.rpc.Server(
+      process.env.SOROBAN_RPC_URL || 'https://soroban-testnet.stellar.org'
+    )
     const out = await submitCore({
       xdr,
       deps: {
@@ -32,7 +34,8 @@ export default async function handler(req, res) {
           feeBumpAndSubmit({
             xdr: x,
             secret,
-            passphrase: process.env.STELLAR_NETWORK_PASSPHRASE || 'Test SDF Network ; September 2015',
+            passphrase:
+              process.env.STELLAR_NETWORK_PASSPHRASE || 'Test SDF Network ; September 2015',
             vaultAddr: process.env.SOROBAN_VAULT_ADDRESS || '',
             sdk,
             rpcServer,

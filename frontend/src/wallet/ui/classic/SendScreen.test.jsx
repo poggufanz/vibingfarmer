@@ -45,7 +45,9 @@ describe('SendScreen', () => {
     fireEvent.click(screen.getByRole('button', { name: /review/i }))
     expect(onPreview).toHaveBeenCalledWith(expect.objectContaining({ to: 'GYOU', amount: '1' }))
     // parent supplies the canonicalized preview → confirm still enabled (snapshot match)
-    rerender(<SendScreen from="GME" onPreview={onPreview} onConfirm={onConfirm} preview={preview} />)
+    rerender(
+      <SendScreen from="GME" onPreview={onPreview} onConfirm={onConfirm} preview={preview} />
+    )
     const confirm = screen.getByRole('button', { name: /confirm & send/i })
     expect(confirm.disabled).toBe(false)
     // edit destination after preview → stale → confirm blocked
@@ -73,7 +75,9 @@ describe('SendScreen', () => {
     fireEvent.change(screen.getByLabelText(/destination/i), { target: { value: 'GVAULT' } })
     fireEvent.change(screen.getByLabelText(/amount/i), { target: { value: '1' } })
     fireEvent.click(screen.getByRole('button', { name: /review/i }))
-    rerender(<SendScreen from="GME" onPreview={onPreview} onConfirm={onConfirm} preview={preview} />)
+    rerender(
+      <SendScreen from="GME" onPreview={onPreview} onConfirm={onConfirm} preview={preview} />
+    )
     // edit amount after preview → stale, even though ApproveOverlay's own eligible
     // check (verdict.allow) would otherwise leave its approve button enabled
     fireEvent.change(screen.getByLabelText(/amount/i), { target: { value: '2' } })

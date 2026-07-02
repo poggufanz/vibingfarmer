@@ -5,13 +5,22 @@ import { verifyJwt } from './_jwt.js'
 
 function mockRes() {
   return {
-    statusCode: 200, headers: {}, body: '',
-    setHeader(k, v) { this.headers[k] = v },
-    end(s) { this.body = s ?? ''; return this },
+    statusCode: 200,
+    headers: {},
+    body: '',
+    setHeader(k, v) {
+      this.headers[k] = v
+    },
+    end(s) {
+      this.body = s ?? ''
+      return this
+    },
   }
 }
 const mk = (method, url, body) => ({
-  method, url, body,
+  method,
+  url,
+  body,
   headers: { origin: 'http://localhost:5173', 'x-real-ip': '9.9.9.9' },
 })
 

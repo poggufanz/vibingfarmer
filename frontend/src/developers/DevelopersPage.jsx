@@ -65,7 +65,9 @@ export default function DevelopersPage() {
                     type="checkbox"
                     checked={scopes.includes(s)}
                     onChange={() =>
-                      setScopes((cur) => (cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]))
+                      setScopes((cur) =>
+                        cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]
+                      )
                     }
                   />
                   {s}

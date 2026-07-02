@@ -15,7 +15,10 @@ const base = () => ({
 
 describe('SEP-10', () => {
   it('challenge is a server-signed tx for the requested account', async () => {
-    const { transaction, network_passphrase } = await buildChallenge({ account: client.publicKey(), ...base() })
+    const { transaction, network_passphrase } = await buildChallenge({
+      account: client.publicKey(),
+      ...base(),
+    })
     expect(network_passphrase).toBe(NET)
     const tx = TransactionBuilder.fromXDR(transaction, NET)
     expect(tx.signatures).toHaveLength(1)

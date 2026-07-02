@@ -6,9 +6,21 @@ import DevelopersPage from './DevelopersPage.jsx'
 vi.mock('./portalClient.js', () => ({
   signIn: vi.fn(async () => 'JWT'),
   listKeys: vi.fn(async () => [
-    { id: 'vfk_1', key_hint: 'vf_test_ab12…', scopes: '["market"]', enabled: 1, created_at: 1, last_used_at: null, rate_limit: 60 },
+    {
+      id: 'vfk_1',
+      key_hint: 'vf_test_ab12…',
+      scopes: '["market"]',
+      enabled: 1,
+      created_at: 1,
+      last_used_at: null,
+      rate_limit: 60,
+    },
   ]),
-  createKey: vi.fn(async () => ({ id: 'vfk_2', key: 'vf_test_PLAINTEXT_ONCE', hint: 'vf_test_PL…' })),
+  createKey: vi.fn(async () => ({
+    id: 'vfk_2',
+    key: 'vf_test_PLAINTEXT_ONCE',
+    hint: 'vf_test_PL…',
+  })),
   revokeKey: vi.fn(async () => true),
 }))
 vi.mock('./walletSign.js', () => ({

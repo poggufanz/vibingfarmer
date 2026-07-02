@@ -9,11 +9,14 @@ const json = (res, status, obj) => {
 }
 
 export async function buildDepositCore({ from, amount, vault, passphrase, rpcServer }) {
-  const { Contract, TransactionBuilder, Address, nativeToScVal, BASE_FEE } = await import('@stellar/stellar-sdk')
+  const { Contract, TransactionBuilder, Address, nativeToScVal, BASE_FEE } =
+    await import('@stellar/stellar-sdk')
   const account = await rpcServer.getAccount(from)
   const contract = new Contract(vault)
   const tx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: passphrase })
-    .addOperation(contract.call('deposit', new Address(from).toScVal(), nativeToScVal(amount, { type: 'i128' })))
+    .addOperation(
+      contract.call('deposit', new Address(from).toScVal(), nativeToScVal(amount, { type: 'i128' }))
+    )
     .setTimeout(300)
     .build()
   const prepared = await rpcServer.prepareTransaction(tx)
@@ -38,9 +41,13 @@ export default async function handler(req, res) {
   }
   try {
     const { rpc } = await import('@stellar/stellar-sdk')
-    const rpcServer = new rpc.Server(process.env.SOROBAN_RPC_URL || 'https://soroban-testnet.stellar.org')
+    const rpcServer = new rpc.Server(
+      process.env.SOROBAN_RPC_URL || 'https://soroban-testnet.stellar.org'
+    )
     const out = await buildDepositCore({
-      from, amount: amt, vault,
+      from,
+      amount: amt,
+      vault,
       passphrase: process.env.STELLAR_NETWORK_PASSPHRASE || 'Test SDF Network ; September 2015',
       rpcServer,
     })

@@ -4,7 +4,8 @@ import { StellarWalletsKit, WalletNetwork, allowAllModules } from '@creit.tech/s
 
 let kit
 function getKit() {
-  if (!kit) kit = new StellarWalletsKit({ network: WalletNetwork.TESTNET, modules: allowAllModules() })
+  if (!kit)
+    kit = new StellarWalletsKit({ network: WalletNetwork.TESTNET, modules: allowAllModules() })
   return kit
 }
 

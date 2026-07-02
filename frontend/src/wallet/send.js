@@ -60,7 +60,9 @@ export async function previewSend({ from, to, asset, amount, memo, horizon = hor
       confirm: {
         fee: BASE_FEE,
         memo: memo || '',
-        ops: [{ destination: to, asset: asset === 'XLM' ? 'XLM' : asset.code, amount: String(amount) }],
+        ops: [
+          { destination: to, asset: asset === 'XLM' ? 'XLM' : asset.code, amount: String(amount) },
+        ],
         kind: 'vault',
         decodable: false,
       },
