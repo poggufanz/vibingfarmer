@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { memoryStore } from './_db.js'
-import { generateKey, issueKey, verifyKey, revokeKey, sha256Hex, SCOPES } from './_keystore.js'
+import { generateKey, issueKey, verifyKey, revokeKey, sha256Hex } from './_keystore.js'
 
 describe('generateKey', () => {
   it('prefixes by env and uses base62 payload', () => {

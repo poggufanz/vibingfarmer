@@ -7,7 +7,7 @@ export function memoryStore() {
   const rows = new Map() // id -> row
   const counters = new Map() // `${keyId}|${window}` -> count
   const usage = new Map() // `${keyId}|${day}|${endpoint}` -> count
-  const pub = ({ key_hash, ...rest }) => rest
+  const pub = ({ key_hash: _omit, ...rest }) => rest // strip the hash from public rows
   return {
     _usage: usage,
     keys: {

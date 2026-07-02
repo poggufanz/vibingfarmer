@@ -35,6 +35,22 @@ export function subPath(req) {
   return (i >= 0 ? pathname.slice(i + '/api/vf'.length) : pathname) || '/'
 }
 
+// In vite dev middleware `req` is a raw Node stream — req.body is unparsed. The Pages
+// adapter and unit tests pre-set req.body (object), so this early-returns there and the
+// stream/Buffer path only runs under raw Node, where both exist. Mirrors api/faucet.js.
+async function ensureBody(req) {
+  if (req.method === 'GET' || req.method === 'HEAD') return
+  if (req.body && typeof req.body === 'object') return
+  const chunks = []
+  try {
+    for await (const c of req) chunks.push(c)
+    const raw = Buffer.concat(chunks).toString('utf8')
+    req.body = raw ? JSON.parse(raw) : {}
+  } catch {
+    req.body = {} // malformed body → handler validation rejects it downstream
+  }
+}
+
 export default async function vfRouter(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS')
@@ -43,6 +59,7 @@ export default async function vfRouter(req, res) {
     res.statusCode = 204
     return res.end('')
   }
+  await ensureBody(req)
   const handler = routes[`${req.method} ${subPath(req)}`]
   if (!handler) {
     res.statusCode = 404
