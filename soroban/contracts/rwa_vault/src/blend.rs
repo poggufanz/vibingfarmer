@@ -56,7 +56,11 @@ pub fn supply(e: &Env, pool: &Address, token: &Address, amount: i128) {
     TokenClient::new(e, token).approve(&vault, pool, &amount, &exp);
     let reqs = vec![
         e,
-        Request { request_type: SUPPLY, address: token.clone(), amount },
+        Request {
+            request_type: SUPPLY,
+            address: token.clone(),
+            amount,
+        },
     ];
     BlendPoolClient::new(e, pool).submit_with_allowance(&vault, &vault, &vault, &reqs);
 }
@@ -67,7 +71,11 @@ pub fn withdraw(e: &Env, pool: &Address, token: &Address, amount: i128) {
     let vault = e.current_contract_address();
     let reqs = vec![
         e,
-        Request { request_type: WITHDRAW, address: token.clone(), amount },
+        Request {
+            request_type: WITHDRAW,
+            address: token.clone(),
+            amount,
+        },
     ];
     BlendPoolClient::new(e, pool).submit_with_allowance(&vault, &vault, &vault, &reqs);
 }

@@ -5,16 +5,17 @@ use stellar_contract_utils::pausable::{self as pausable, Pausable};
 use stellar_macros::only_admin;
 use stellar_tokens::fungible::Base;
 
-pub mod types;
 pub mod storage;
+pub mod types;
+// Local Blend client. The vault no longer touches pools directly (dividend/harvest removed
+// in Task 6); the module is retained for Task 7's strategy router and is dead code until
+// then, so silence its unused-item lints.
+#[allow(dead_code)]
 mod blend;
-mod vault;
 mod test;
+mod vault;
 
-use storage::{
-    extend_instance, get_acc, get_drip_epoch, get_pool, get_token, get_total_principal,
-    set_acc, set_drip_epoch, set_pool, set_token, set_total_principal,
-};
+use storage::{extend_instance, get_token, set_token};
 
 #[contract]
 pub struct RwaVault;
@@ -22,19 +23,11 @@ pub struct RwaVault;
 #[contractimpl]
 impl RwaVault {
     /// Deployed once. `token` = the yield-farming asset (SEP-41 token / SAC) this vault
-    /// accepts for deposits and pays dividends in.
-    pub fn __constructor(
-        e: &Env,
-        admin: Address,
-        token: Address,
-        name: String,
-        symbol: String,
-    ) {
+    /// accepts for deposits and pays out on redeem. The vault is a share-ledger priced by
+    /// exchange rate: `price_per_share = total_assets / total_supply`.
+    pub fn __constructor(e: &Env, admin: Address, token: Address, name: String, symbol: String) {
         Base::set_metadata(e, 7, name, symbol); // 7 decimals (match the asset)
         set_token(e, &token);
-        set_acc(e, 0);
-        set_total_principal(e, 0);
-        set_drip_epoch(e, 0);
         access_control::set_admin(e, &admin); // powers only_admin (pause/unpause)
         extend_instance(e);
     }
@@ -56,32 +49,17 @@ impl RwaVault {
     pub fn total_shares(e: &Env) -> i128 {
         Base::total_supply(e)
     }
-    pub fn total_principal(e: &Env) -> i128 {
-        get_total_principal(e)
-    }
-    pub fn acc_div_per_share(e: &Env) -> i128 {
-        get_acc(e)
-    }
-    pub fn drip_epoch(e: &Env) -> u64 {
-        get_drip_epoch(e)
-    }
-    pub fn pool(e: &Env) -> Option<Address> {
-        get_pool(e)
+
+    /// Total assets backing every share. This task: idle USDC only (Task 7 adds the sum of
+    /// strategy balances).
+    pub fn total_assets(e: &Env) -> i128 {
+        vault::total_assets(e)
     }
 
-    /// One-time admin wiring of the Blend lending pool. Once set, deposits supply into it.
-    pub fn set_pool(e: &Env, caller: Address, pool: Address) -> Result<(), types::VaultError> {
-        let admin = access_control::get_admin(e).unwrap();
-        if admin != caller {
-            return Err(types::VaultError::PoolNotSet); // not admin
-        }
-        caller.require_auth();
-        if get_pool(e).is_some() {
-            return Err(types::VaultError::PoolAlreadySet);
-        }
-        set_pool(e, &pool);
-        extend_instance(e);
-        Ok(())
+    /// Exchange rate: assets per share scaled by `PPS_SCALE` (7dp). `1e7` == 1.0. Compound
+    /// gains (Task 8) raise `total_assets`, so each share prices higher over time.
+    pub fn price_per_share(e: &Env) -> i128 {
+        vault::price_per_share(e)
     }
 
     // ----- deposit / redeem -----
@@ -90,30 +68,9 @@ impl RwaVault {
         vault::deposit(e, from, amount)
     }
 
-    /// redeem(from, shares) -> assets returned (1:1, stable NAV).
+    /// redeem(from, shares) -> assets returned pro-rata at the current exchange rate.
     pub fn redeem(e: &Env, from: Address, shares: i128) -> Result<i128, types::VaultError> {
         vault::redeem(e, from, shares)
-    }
-
-    // ----- FOBXX-faithful yield -----
-    /// Admin-only mock yield source: fund + distribute a dividend pro-rata (FOBXX-faithful).
-    pub fn drip(e: &Env, amount: i128) -> Result<(), types::VaultError> {
-        vault::drip(e, amount)
-    }
-
-    /// Permissionless real-yield harvest from the wired Blend pool. Returns interest distributed.
-    pub fn harvest(e: &Env) -> Result<i128, types::VaultError> {
-        vault::harvest(e)
-    }
-
-    /// Permissionless: pay `holder` their accrued asset dividend. Returns amount paid.
-    pub fn claim(e: &Env, holder: Address) -> Result<i128, types::VaultError> {
-        vault::claim(e, holder)
-    }
-
-    /// View: asset dividend currently claimable by `holder`.
-    pub fn claimable(e: &Env, holder: Address) -> i128 {
-        vault::claimable(e, holder)
     }
 }
 

@@ -6,13 +6,10 @@ pub enum DataKey {
     // NOTE: no `Admin` key here — the admin lives in OZ access-control storage
     // (`AccessControlStorageKey::Admin`). A `DataKey::Admin` unit variant would encode to
     // the identical `Vec[Symbol("Admin")]` storage key and collide (→ AdminAlreadySet).
-    Token,            // yield-farming asset token address (SEP-41 / SAC)
-    AccDivPerShare,   // cumulative dividend per share, scaled by SCALE (i128)
-    TotalPrincipal,   // sum of deposited assets backing shares 1:1 (i128)
-    DripEpoch,        // monotonically increasing dividend epoch (u64)
-    RewardDebt(Address), // per-holder accounted dividend baseline (i128)
-    Pending(Address),    // per-holder settled-but-unclaimed dividend (i128)
-    Pool,                // optional Blend lending pool address (yield source)
+    Token, // yield-farming asset token address (SEP-41 / SAC)
+           // Task 7 adds the strategy registry keys (Strategies, Keeper, LastRebalance,
+           // CooldownS, MaxMoveBps) here when the router lands — deferred to keep this
+           // task's clippy gate clean (no never-constructed variants).
 }
 
 #[contracterror]
@@ -21,46 +18,25 @@ pub enum DataKey {
 pub enum VaultError {
     NotInit = 1,
     InvalidAmount = 2,
-    NoShares = 3,            // drip with zero total supply
-    InsufficientShares = 4,  // redeem more than held
+    InsufficientShares = 4, // redeem more shares than held
     MathOverflow = 5,
-    NothingToClaim = 6,
-    PoolNotSet = 7,      // harvest/Blend op attempted with no pool wired
-    PoolAlreadySet = 8,  // set_pool called twice
+    // Strategy-router errors (10-15) and the Compound/Rebalance events are added by
+    // Tasks 7-9 as they are constructed — front-loading unused variants here would trip
+    // the `-D warnings` clippy gate, so they are deferred to the tasks that use them.
+    FirstDepositTooSmall = 16, // first deposit below MIN_FIRST_DEPOSIT (inflation guard)
+    InsufficientLiquidity = 17, // redeem cannot be covered by idle assets (idle-only this task)
 }
 
 #[contractevent(topics = ["vault_deposit"])]
 pub struct Deposit {
     pub holder: Address,
-    pub amount: i128, // assets in
-    pub shares: i128, // shares minted (== amount, stable NAV)
+    pub amount: i128, // assets pulled in
+    pub shares: i128, // shares minted at the current exchange rate
 }
 
 #[contractevent(topics = ["vault_redeem"])]
 pub struct Redeem {
     pub holder: Address,
-    pub shares: i128,
-    pub assets: i128, // == shares, stable NAV
-}
-
-#[contractevent(topics = ["vault_drip"])]
-pub struct Drip {
-    pub epoch: u64,
-    pub amount: i128,            // dividend funded this epoch
-    pub acc_div_per_share: i128, // new cumulative index
-    pub total_shares: i128,
-}
-
-#[contractevent(topics = ["vault_claim"])]
-pub struct Claim {
-    pub holder: Address,
-    pub amount: i128, // asset dividend paid out
-}
-
-#[contractevent(topics = ["vault_harvest"])]
-pub struct Harvest {
-    pub epoch: u64,
-    pub interest: i128,          // real yield distributed this harvest
-    pub acc_div_per_share: i128, // new cumulative index
-    pub total_shares: i128,
+    pub shares: i128, // shares burned
+    pub assets: i128, // assets paid out at the current exchange rate
 }

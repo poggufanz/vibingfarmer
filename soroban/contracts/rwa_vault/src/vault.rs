@@ -3,19 +3,43 @@ use soroban_sdk::{Address, Env};
 use stellar_macros::when_not_paused;
 use stellar_tokens::fungible::Base;
 
-use crate::storage::{
-    extend_instance, get_pool, get_token, get_total_principal, set_total_principal, SCALE,
-};
+use crate::storage::{extend_instance, get_token};
 use crate::types::{Deposit, Redeem, VaultError};
 
-// Re-export of the dividend settle helpers (Task 3 fills the bodies).
-use crate::vault::dividend::{settle, sync_debt};
+/// Shares minted to the vault itself on the first deposit and locked forever. Guards against
+/// the classic ERC-4626 inflation / first-depositor donation attack: an attacker can no
+/// longer own 100% of a 1-share supply and round every later depositor's shares to zero.
+const DEAD_SHARES: i128 = 1000;
+/// Minimum first deposit (1 USDC at 7dp). Keeps DEAD_SHARES an immaterial slice and makes
+/// the initial price-per-share meaningful.
+const MIN_FIRST_DEPOSIT: i128 = 1_0000000;
+/// Fixed-point scale for `price_per_share` (7dp): 1e7 == 1.0 asset per share.
+pub const PPS_SCALE: i128 = 1_0000000;
 
-pub mod dividend; // Task 3
+/// Total assets backing every share. This task: idle USDC held by the vault only.
+/// Task 7 sums the strategy-registry balances here once the router lands.
+pub fn total_assets(e: &Env) -> i128 {
+    let token = get_token(e);
+    let me = e.current_contract_address();
+    TokenClient::new(e, &token).balance(&me)
+    // Task 7: + sum(StrategyClient::new(e, &s).balance()) over the strategy registry
+}
 
-/// deposit(from, amount) -> shares. Pinned by 1a: fn-symbol `deposit`, amount = args[1].
-/// Stable NAV → shares == amount. Pulls the asset via transfer_from (vault = spender) so an
-/// agent `from` authorizes only the `deposit@vault` context (see plan auth-tree note).
+/// Exchange rate: assets per share scaled by `PPS_SCALE` (7dp). An empty vault prices a
+/// share at exactly 1.0 so the first deposit mints shares 1:1 with assets.
+pub fn price_per_share(e: &Env) -> i128 {
+    let supply = Base::total_supply(e);
+    if supply == 0 {
+        PPS_SCALE
+    } else {
+        total_assets(e) * PPS_SCALE / supply
+    }
+}
+
+/// deposit(from, amount) -> shares minted at the current exchange rate. Pinned by 1a:
+/// fn-symbol `deposit`, amount = args[1]. Pulls the asset via `transfer_from` (vault =
+/// spender) so an agent `from` authorizes only the `deposit@vault` context. Assets park
+/// idle in the vault (no pool/strategy call until Task 7). Pause-gated.
 #[when_not_paused]
 pub fn deposit(e: &Env, from: Address, amount: i128) -> Result<i128, VaultError> {
     if amount <= 0 {
@@ -23,166 +47,83 @@ pub fn deposit(e: &Env, from: Address, amount: i128) -> Result<i128, VaultError>
     }
     from.require_auth();
 
+    let supply = Base::total_supply(e);
+    // Capture assets BEFORE pulling `amount` in — the share ratio prices against the
+    // pre-deposit total.
+    let assets_before = total_assets(e);
+
     let token = get_token(e);
-    let vault = e.current_contract_address();
-    TokenClient::new(e, &token).transfer_from(&vault, &from, &vault, &amount);
+    let me = e.current_contract_address();
+    TokenClient::new(e, &token).transfer_from(&me, &from, &me, &amount);
 
-    // Park principal in Blend to earn real yield (if wired). Otherwise it sits idle (legacy).
-    if let Some(pool) = get_pool(e) {
-        crate::blend::supply(e, &pool, &token, amount);
-    }
-
-    settle(e, &from); // bank any prior dividend at the old balance
-    Base::mint(e, &from, amount); // shares == amount (1:1)
-    set_total_principal(e, get_total_principal(e) + amount);
-    sync_debt(e, &from); // reset reward debt to the new balance
-
-    extend_instance(e);
-    Deposit { holder: from, amount, shares: amount }.publish(e);
-    Ok(amount)
-}
-
-/// redeem(from, shares) -> assets. Not pause-gated (holders can always exit).
-/// Stable NAV → assets == shares. Pays principal via transfer from the vault's own
-/// address (contract self-auth).
-pub fn redeem(e: &Env, from: Address, shares: i128) -> Result<i128, VaultError> {
+    let shares = if supply == 0 {
+        if amount < MIN_FIRST_DEPOSIT {
+            return Err(VaultError::FirstDepositTooSmall);
+        }
+        // Inflation-attack guard: carve DEAD_SHARES out of the first deposit and mint them
+        // to the vault itself where they stay locked forever.
+        Base::mint(e, &me, DEAD_SHARES);
+        amount - DEAD_SHARES
+    } else {
+        amount.checked_mul(supply).ok_or(VaultError::MathOverflow)? / assets_before
+    };
     if shares <= 0 {
         return Err(VaultError::InvalidAmount);
     }
 
-    let bal = Base::balance(e, &from);
-    if bal < shares {
+    Base::mint(e, &from, shares);
+    extend_instance(e);
+    Deposit {
+        holder: from,
+        amount,
+        shares,
+    }
+    .publish(e);
+    Ok(shares)
+}
+
+/// redeem(from, shares) -> assets paid at the current exchange rate. Not pause-gated
+/// (holders can always exit). Pro-rata: assets = shares * total_assets / total_supply.
+pub fn redeem(e: &Env, from: Address, shares: i128) -> Result<i128, VaultError> {
+    if shares <= 0 {
+        return Err(VaultError::InvalidAmount);
+    }
+    if Base::balance(e, &from) < shares {
         return Err(VaultError::InsufficientShares);
     }
 
-    settle(e, &from);
-    // `Base::burn` enforces `from.require_auth()` itself — do NOT call it again above, or the
-    // same address is authorized twice in one tree → Error(Auth, ExistingValue).
+    let assets = shares
+        .checked_mul(total_assets(e))
+        .ok_or(VaultError::MathOverflow)?
+        / Base::total_supply(e);
+
+    // `Base::burn` enforces `from.require_auth()` itself — do NOT auth `from` again above, or
+    // the same address is authorized twice in one tree → Error(Auth, ExistingValue).
     Base::burn(e, &from, shares);
-    let assets = shares; // 1:1
-    set_total_principal(e, get_total_principal(e) - assets);
-    sync_debt(e, &from);
+    ensure_idle(e, assets)?;
 
     let token = get_token(e);
-    let vault = e.current_contract_address();
-    // Pull the redeemed assets out of Blend back into the vault before paying out.
-    // ponytail: assumes pool liquidity is available; if Blend is at 100% utilization the
-    // withdraw under-fills and the transfer below traps — acceptable for testnet/demo,
-    // production would queue a partial redemption.
-    if let Some(pool) = get_pool(e) {
-        crate::blend::withdraw(e, &pool, &token, assets);
-    }
-    TokenClient::new(e, &token).transfer(&vault, &from, &assets);
+    let me = e.current_contract_address();
+    TokenClient::new(e, &token).transfer(&me, &from, &assets);
 
     extend_instance(e);
-    Redeem { holder: from, shares, assets }.publish(e);
+    Redeem {
+        holder: from,
+        shares,
+        assets,
+    }
+    .publish(e);
     Ok(assets)
 }
 
-use crate::storage::{get_acc, get_drip_epoch, set_acc, set_drip_epoch};
-use crate::types::{Claim, Drip};
-use stellar_access::access_control;
-
-/// Admin-triggered mock yield source. Pulls `amount` of the asset from the admin treasury
-/// into the vault and bumps the cumulative dividend index (daily-dividend style yield).
-/// Pause-gated.
-#[when_not_paused]
-pub fn drip(e: &Env, amount: i128) -> Result<(), VaultError> {
-    if amount <= 0 {
-        return Err(VaultError::InvalidAmount);
-    }
-    // Admin lives in OZ access-control storage (see types.rs note). Its `require_auth`
-    // gates the drip; the treasury `transfer(from = admin)` below auths admin again, but at
-    // a distinct (cross-contract) tree node, so no ExistingValue conflict.
-    let admin = access_control::get_admin(e).expect("admin not set");
-    admin.require_auth();
-
-    let supply = Base::total_supply(e);
-    if supply <= 0 {
-        return Err(VaultError::NoShares);
-    }
-
+/// Ensure the vault can cover a `assets` payout. This task deposits park idle, so the idle
+/// balance always covers a pro-rata redemption. Task 7 replaces this with in-order draining
+/// of the strategy registry back into idle before paying out.
+fn ensure_idle(e: &Env, assets: i128) -> Result<(), VaultError> {
     let token = get_token(e);
-    let vault = e.current_contract_address();
-    TokenClient::new(e, &token).transfer(&admin, &vault, &amount); // treasury -> vault
-
-    let add = amount.checked_mul(SCALE).ok_or(VaultError::MathOverflow)? / supply;
-    let acc = get_acc(e).checked_add(add).ok_or(VaultError::MathOverflow)?;
-    set_acc(e, acc);
-    let epoch = get_drip_epoch(e) + 1;
-    set_drip_epoch(e, epoch);
-
-    extend_instance(e);
-    Drip { epoch, amount, acc_div_per_share: acc, total_shares: supply }.publish(e);
+    let me = e.current_contract_address();
+    if TokenClient::new(e, &token).balance(&me) < assets {
+        return Err(VaultError::InsufficientLiquidity);
+    }
     Ok(())
-}
-
-use crate::types::Harvest;
-
-/// Permissionless real-yield harvest. Withdraws the vault's entire Blend position, measures
-/// `interest = vault_balance − total_principal`, re-supplies the principal, and bumps the
-/// dividend index with the interest (which stays idle in the vault for `claim`).
-/// ponytail: withdraw-all + re-supply is 2 pool calls per harvest (gas) and reads interest
-/// from the realized balance delta instead of Blend's bToken exchange-rate — robust and
-/// exact for demo; a production build would read the reserve b_rate to avoid the round-trip.
-#[when_not_paused]
-pub fn harvest(e: &Env) -> Result<i128, VaultError> {
-    let pool = get_pool(e).ok_or(VaultError::PoolNotSet)?;
-    let supply = Base::total_supply(e);
-    if supply <= 0 {
-        return Err(VaultError::NoShares);
-    }
-
-    let token = get_token(e);
-    let vault = e.current_contract_address();
-    let principal = get_total_principal(e);
-
-    // Pull everything out of Blend. i128::MAX → Blend caps at the full position.
-    let before = TokenClient::new(e, &token).balance(&vault);
-    crate::blend::withdraw(e, &pool, &token, i128::MAX);
-    let after = TokenClient::new(e, &token).balance(&vault);
-    let pulled = after - before;
-
-    let interest = pulled - principal;
-    if interest <= 0 {
-        // Nothing earned yet — put principal back and report zero.
-        crate::blend::supply(e, &pool, &token, pulled);
-        return Ok(0);
-    }
-
-    // Re-supply principal; keep `interest` idle in the vault for claims.
-    crate::blend::supply(e, &pool, &token, principal);
-
-    let add = interest.checked_mul(SCALE).ok_or(VaultError::MathOverflow)? / supply;
-    let acc = get_acc(e).checked_add(add).ok_or(VaultError::MathOverflow)?;
-    set_acc(e, acc);
-    let epoch = get_drip_epoch(e) + 1;
-    set_drip_epoch(e, epoch);
-
-    extend_instance(e);
-    Harvest { epoch, interest, acc_div_per_share: acc, total_shares: supply }.publish(e);
-    Ok(interest)
-}
-
-/// Permissionless claim that always pays the holder. Settles, zeroes Pending, transfers
-/// the accrued dividend out. Not pause-gated.
-pub fn claim(e: &Env, holder: Address) -> Result<i128, VaultError> {
-    settle(e, &holder);
-    let amount = crate::storage::get_pending(e, &holder);
-    if amount <= 0 {
-        return Err(VaultError::NothingToClaim);
-    }
-    crate::storage::set_pending(e, &holder, 0);
-
-    let token = get_token(e);
-    let vault = e.current_contract_address();
-    TokenClient::new(e, &token).transfer(&vault, &holder, &amount);
-
-    extend_instance(e);
-    Claim { holder, amount }.publish(e);
-    Ok(amount)
-}
-
-pub fn claimable(e: &Env, holder: Address) -> i128 {
-    dividend::claimable(e, &holder)
 }
