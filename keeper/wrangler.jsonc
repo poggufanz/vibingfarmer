@@ -1,0 +1,15 @@
+{
+  "name": "vf-keeper",
+  "main": "src/index.js",
+  "compatibility_date": "2025-06-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "triggers": { "crons": ["*/15 * * * *"] },
+  "vars": {
+    "SOROBAN_RPC_URL": "https://soroban-testnet.stellar.org",
+    "NETWORK_PASSPHRASE": "Test SDF Network ; September 2015",
+    "VAULT_ADDRESS": "", "STRATEGY_1": "", "STRATEGY_2": "",
+    "POOL_1": "CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF", "POOL_2": "",
+    "USDC": "CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU"
+  }
+  // secret: STELLAR_RELAYER_SECRET via `wrangler secret put` (user-run at deploy)
+}

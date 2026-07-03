@@ -1,0 +1,4 @@
+{ "name": "vf-keeper", "private": true, "type": "module",
+  "scripts": { "dev": "wrangler dev --test-scheduled", "test": "vitest run" },
+  "dependencies": { "@stellar/stellar-sdk": "^13.0.0" },
+  "devDependencies": { "wrangler": "^4.0.0", "vitest": "^3.0.0" } }
