@@ -28,14 +28,30 @@ impl Registry {
             expiry,
             revoked: false,
         };
-        env.storage().persistent().set(&DataKey::Record(agent.clone()), &rec);
         env.storage()
             .persistent()
-            .extend_ttl(&DataKey::Record(agent.clone()), TTL_THRESHOLD, TTL_EXTEND);
-        AgentAuthorized { owner, agent, vault, token, cap_per_period, expiry }.publish(env);
+            .set(&DataKey::Record(agent.clone()), &rec);
+        env.storage().persistent().extend_ttl(
+            &DataKey::Record(agent.clone()),
+            TTL_THRESHOLD,
+            TTL_EXTEND,
+        );
+        AgentAuthorized {
+            owner,
+            agent,
+            vault,
+            token,
+            cap_per_period,
+            expiry,
+        }
+        .publish(env);
     }
 
-    pub(crate) fn revoke_impl(env: &Env, owner: Address, agent: Address) -> Result<(), RegistryError> {
+    pub(crate) fn revoke_impl(
+        env: &Env,
+        owner: Address,
+        agent: Address,
+    ) -> Result<(), RegistryError> {
         owner.require_auth();
         let mut rec: AgentRecord = env
             .storage()
@@ -46,7 +62,9 @@ impl Registry {
             return Err(RegistryError::NotOwner);
         }
         rec.revoked = true;
-        env.storage().persistent().set(&DataKey::Record(agent.clone()), &rec);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Record(agent.clone()), &rec);
         AgentRevoked { owner, agent }.publish(env);
         Ok(())
     }

@@ -16,7 +16,15 @@ fn test_authorize_then_query_then_revoke() {
     let vault = Address::generate(&env);
     let token = Address::generate(&env);
 
-    client.authorize(&owner, &agent, &vault, &token, &1_000_000_000i128, &86_400u64, &4_000_000_000u64);
+    client.authorize(
+        &owner,
+        &agent,
+        &vault,
+        &token,
+        &1_000_000_000i128,
+        &86_400u64,
+        &4_000_000_000u64,
+    );
     // SDK 26 `events().all()` returns only the LAST invocation's events, so assert
     // right after each emitting call: authorize emits exactly one event.
     assert_eq!(env.events().all().events().len(), 1);
@@ -46,7 +54,15 @@ fn test_revoke_requires_owner() {
     let token = Address::generate(&env);
 
     env.mock_all_auths();
-    client.authorize(&owner, &agent, &vault, &token, &10i128, &10u64, &4_000_000_000u64);
+    client.authorize(
+        &owner,
+        &agent,
+        &vault,
+        &token,
+        &10i128,
+        &10u64,
+        &4_000_000_000u64,
+    );
 
     // Stranger tries to revoke with no auths set → must fail.
     env.set_auths(&[]);
