@@ -1,0 +1,59 @@
+// keeper/test/apr.test.js — extracted-module smoke test (T2 Fix 3 dedup). Fixtures mirror
+// frontend/src/stellar/vaultReads.test.js's estimateSupplyAprBps cases (same math, now a single
+// shared implementation) so the expected bps values are traceable back to an already-verified
+// result, not numbers invented for this file.
+import { describe, it, expect } from 'vitest';
+import { estimateSupplyAprBps } from '../src/apr.js';
+
+describe('estimateSupplyAprBps', () => {
+  const baseConfig = {
+    util: 6_000_000n, // 60% target
+    max_util: 9_500_000n, // 95% ceiling
+    r_base: 0n,
+    r_one: 1_000_000n,
+    r_two: 5_000_000n,
+    r_three: 15_000_000n,
+  };
+
+  it('estimates supply APR when utilization is below target', () => {
+    const reserve = {
+      config: baseConfig,
+      data: {
+        b_supply: 1000n,
+        b_rate: 1_000_000_000_000n,
+        d_supply: 500n,
+        d_rate: 1_000_000_000_000n,
+        ir_mod: 10_000_000n,
+      },
+    };
+    expect(estimateSupplyAprBps(reserve, 0n)).toBe(416);
+  });
+
+  it('estimates a higher supply APR once utilization crosses target (kinked curve)', () => {
+    const reserve = {
+      config: baseConfig,
+      data: {
+        b_supply: 1000n,
+        b_rate: 1_000_000_000_000n,
+        d_supply: 800n,
+        d_rate: 1_000_000_000_000n,
+        ir_mod: 10_000_000n,
+      },
+    };
+    expect(estimateSupplyAprBps(reserve, 0n)).toBe(3085);
+  });
+
+  it('returns 0 rather than dividing by zero when nothing is supplied', () => {
+    const reserve = {
+      config: baseConfig,
+      data: {
+        b_supply: 0n,
+        b_rate: 1_000_000_000_000n,
+        d_supply: 0n,
+        d_rate: 1_000_000_000_000n,
+        ir_mod: 10_000_000n,
+      },
+    };
+    expect(estimateSupplyAprBps(reserve, 0n)).toBe(0);
+  });
+});
