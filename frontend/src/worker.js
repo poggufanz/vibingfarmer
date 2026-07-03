@@ -107,13 +107,19 @@ export class WorkerAgent {
       if (res.status !== 'SUCCESS') throw new Error(`relay reported ${res.status}`)
 
       // A relayer accepting a job is not a deposit. Confirm shares actually minted.
-      const minted = await this.verifyMinted(baseline)
+      const { minted, shares: sharesMinted } = await this.verifyMinted(baseline)
       if (!minted)
         throw new Error(
           'deposit not confirmed on-chain: vault shares did not increase (likely __check_auth/cap reject)'
         )
 
-      const lesson = buildLesson(this.vault, { shares: this.amount.toString() })
+      // Real minted-shares delta, not the deposited amount — the vault is exchange-rate priced
+      // (price_per_share may differ from 1:1 once the autofarm vault compounds), so shares
+      // received can differ from assets deposited. Fall back to the requested amount only when
+      // the baseline read itself failed (verifyMinted couldn't measure a delta at all).
+      const lesson = buildLesson(this.vault, {
+        shares: (sharesMinted ?? this.amount).toString(),
+      })
       this.memoryEntries.push(
         createEntry('deposit', 'success', { txHash: res.hash, gasMethod: 'relayer' }, lesson)
       )
@@ -136,16 +142,23 @@ export class WorkerAgent {
     }
   }
 
-  /** Poll vault shares until they exceed the pre-deposit baseline. Null baseline → can't verify → true. */
+  /**
+   * Poll vault shares until they exceed the pre-deposit baseline.
+   * @param {bigint|null} baseline pre-deposit share balance
+   * @returns {Promise<{minted: boolean, shares: bigint|null}>} `shares` is the REAL minted
+   *   delta (cur - baseline) — the vault is exchange-rate priced, so this can differ from the
+   *   deposited amount. null baseline → can't verify → minted true, shares null (caller falls
+   *   back to the requested amount, the only honest guess available).
+   */
   async verifyMinted(baseline) {
-    if (baseline == null) return true
+    if (baseline == null) return { minted: true, shares: null }
     const attempts = this.verifyAttempts
     for (let i = 0; i < attempts; i++) {
       const cur = await readVaultShares(this.agentAddress)
-      if (cur != null && cur > baseline) return true
+      if (cur != null && cur > baseline) return { minted: true, shares: cur - baseline }
       if (i < attempts - 1) await new Promise((r) => setTimeout(r, this.verifyIntervalMs))
     }
-    return false
+    return { minted: false, shares: null }
   }
 
   emit(eventName, data) {

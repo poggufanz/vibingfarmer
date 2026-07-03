@@ -22,6 +22,9 @@ import {
   MemoryModal,
   LoopStatusPanel,
   DecisionLogPanel,
+  AgentGraph,
+  buildAutofarmGraphData,
+  rebalancePulseKey,
   buildStrategy,
   makeInitialExecState,
 } from './agents.jsx'
@@ -47,8 +50,13 @@ import {
   SOROBAN_DEMO_AGENT,
   SOROBAN_RPC_URL,
   SOROBAN_AUTOFARM_VAULT_ADDRESS,
+  SOROBAN_STRATEGY_1_ADDRESS,
+  SOROBAN_BLEND_POOL_ADDRESS,
+  SOROBAN_KEEPER_ADDRESS,
 } from './stellar/config.js'
 import { fetchKeeperEvents } from './stellar/keeperEvents.js'
+import { readPricePerShare, readStrategies, readSupplyAprBps } from './stellar/vaultReads.js'
+import KeeperPanel from './components/KeeperPanel.jsx'
 import { evaluateExit } from './strategy/autoExit/engine.js'
 import { runAutonomousExit } from './agents/exitExecutor.js'
 import {
@@ -110,6 +118,19 @@ import { councilReview, buildCouncilInput } from './strategy/councilReview.js'
 import { councilOutcome } from './strategy/outcome.js'
 import { proposeRule } from './strategy/curator.js'
 import { upsertSeeds, getRules, addRule, replaceAll } from './strategy/ruleStore.js'
+
+// vf-autofarm: strategy address → { label, poolAddress, poolLabel } for the KeeperPanel APR
+// display + the force-graph's strategy→pool edge. Static because the vault contract exposes no
+// strategy→pool lookup and only ONE strategy is live today (Task 1 spike found a self-deployed
+// second pool can't reach Active status on testnet — see
+// docs/superpowers/plans/2026-07-03-vf-autofarm-progress.md). Extend this map when strategy #2 ships.
+const AUTOFARM_STRATEGY_META = {
+  [SOROBAN_STRATEGY_1_ADDRESS]: {
+    label: 'Strategy 1',
+    poolAddress: SOROBAN_BLEND_POOL_ADDRESS,
+    poolLabel: 'TestnetV2 pool',
+  },
+}
 
 /* ---------- Background agent settings (localStorage: yv_agent_settings) ---------- */
 const AGENT_SETTINGS_DEFAULTS = {
@@ -472,6 +493,11 @@ const App = () => {
   )
   const [agentSettings, setAgentSettings] = useS(loadAgentSettings)
   const [agentData, setAgentData] = useS({ positions: {}, alerts: [], lastUpdated: null })
+  // vf-autofarm KeeperPanel state — populated by the SAME 15s poll that already fetches
+  // keeper events below (keeperLedgerRef), never a second interval.
+  const [keeperActivity, setKeeperActivity] = useS([]) // newest-first, capped — feeds KeeperPanel
+  const [autofarmReads, setAutofarmReads] = useS({ pricePerShare: null, strategies: [] })
+  const [rebalancePulse, setRebalancePulse] = useS(null) // { key, ts } — force-graph edge pulse
 
   const [sbExtended, setSbExtended] = useS(() => localStorage.getItem('yv_sb_extended') === 'true')
   const [railCollapsed, setRailCollapsed] = useS(
@@ -612,31 +638,80 @@ const App = () => {
           keeperLedgerRef.current
         )
         if (!alive) return
+        // KeeperPanel activity feed — separate from the deduped/capped-at-8 alerts list above
+        // (handleAgentEvent keeps only the LATEST of each kind for notifications; the panel
+        // wants its own short history of real keeper actions).
+        const newActivity = []
         for (const ev of events) {
           keeperLedgerRef.current = Math.max(keeperLedgerRef.current || 0, ev.ledger + 1)
           if (ev.type === 'compound') {
-            handleAgentEvent({
+            const item = {
+              id: `compound:${ev.ledger}`,
               kind: 'compound_executed',
               vaultName: 'Autofarm vault',
               totalGainUsdc: toDisplay(ev.totalGain).toFixed(2),
               pricePerShare: toDisplay(ev.pricePerShare).toFixed(4),
               txHash: ev.txHash,
               timestamp: Date.now(),
-            })
+            }
+            handleAgentEvent(item)
+            newActivity.push(item)
           } else if (ev.type === 'rebalance') {
-            handleAgentEvent({
+            const item = {
+              id: `rebalance:${ev.ledger}`,
               kind: 'rebalance_executed',
               vaultName: 'Autofarm vault',
+              from: ev.from,
+              to: ev.to,
               fromLabel: shortAddr(ev.from),
               toLabel: shortAddr(ev.to),
               amountUsdc: toDisplay(ev.amount).toFixed(2),
               txHash: ev.txHash,
               timestamp: Date.now(),
-            })
+            }
+            handleAgentEvent(item)
+            newActivity.push(item)
+            // Pulse the force-graph edge between the two strategies/vault this rebalance moved
+            // funds between (rebalancePulseKey is direction-independent — see agents.jsx).
+            setRebalancePulse({ key: rebalancePulseKey(ev.from, ev.to), ts: Date.now() })
           }
+        }
+        if (newActivity.length) {
+          setKeeperActivity((prev) => [...newActivity.reverse(), ...prev].slice(0, 20))
         }
       } catch {
         // transient RPC failure — the next 15s tick retries
+      }
+      // Live autofarm vault reads for the KeeperPanel: price-per-share + registered strategies,
+      // each paired with a best-effort Blend supply-APR estimate. Best-effort end to end — a
+      // failed read leaves the panel showing "--", never a fake number.
+      try {
+        const [pps, strategyAddrs] = await Promise.all([
+          readPricePerShare(SOROBAN_AUTOFARM_VAULT_ADDRESS),
+          readStrategies(SOROBAN_AUTOFARM_VAULT_ADDRESS),
+        ])
+        if (!alive) return
+        const strategies = await Promise.all(
+          strategyAddrs.map(async (addr) => {
+            const meta = AUTOFARM_STRATEGY_META[addr] || {}
+            const aprBps = meta.poolAddress ? await readSupplyAprBps(meta.poolAddress) : null
+            return {
+              address: addr,
+              label: meta.label || shortAddr(addr),
+              poolAddress: meta.poolAddress || null,
+              poolLabel: meta.poolLabel || null,
+              aprPct: aprBps == null ? null : aprBps / 100,
+            }
+          })
+        )
+        if (alive) {
+          setAutofarmReads({
+            pricePerShare: pps == null ? null : toDisplay(pps).toFixed(4),
+            strategies,
+          })
+        }
+      } catch {
+        // transient RPC failure — the next 15s tick retries; panel keeps its last-known reads
       }
     }
     sync() // once on connect
@@ -2090,6 +2165,23 @@ const App = () => {
     }
   })
 
+  // vf-autofarm keeper/strategy/pool force-graph cluster (Task 15). Memoized on the strategy
+  // address list (not the whole `autofarmReads.strategies` array, which gets a new reference
+  // every 15s poll even when addresses are unchanged) so the canvas physics don't reheat/jitter
+  // on every tick — only when the registered strategy set actually changes.
+  const autofarmStrategyKey = autofarmReads.strategies
+    .map((s) => `${s.address}:${s.poolAddress || ''}`)
+    .join(',')
+  const autofarmGraphData = useM(
+    () =>
+      buildAutofarmGraphData({
+        vaultAddress: SOROBAN_AUTOFARM_VAULT_ADDRESS,
+        keeperAddress: SOROBAN_KEEPER_ADDRESS,
+        strategies: autofarmReads.strategies,
+      }),
+    [autofarmStrategyKey]
+  )
+
   // Public pages — standalone full-bleed, own NavBar, no wallet required.
   // Checked before every gate so judges and visitors can browse without connecting.
   if (location.pathname === '/explorer') {
@@ -2308,6 +2400,23 @@ const App = () => {
                             summary={getDecisionSummary()}
                           />
                         )
+                      }
+                      keeperPanel={
+                        <>
+                          <KeeperPanel
+                            events={keeperActivity}
+                            pricePerShare={autofarmReads.pricePerShare}
+                            strategies={autofarmReads.strategies}
+                          />
+                          <div style={{ marginTop: 14 }}>
+                            <AgentGraph
+                              graphData={autofarmGraphData}
+                              execMap={{}}
+                              paletteIsLight={paletteIsLight}
+                              pulseEdge={rebalancePulse}
+                            />
+                          </div>
+                        </>
                       }
                     />
                   </Suspense>

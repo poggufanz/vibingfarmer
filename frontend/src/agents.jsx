@@ -142,7 +142,17 @@ const GRAPH_COLOR_LIGHT = {
   skipped: '#6b7280',
   failed: '#a83a3a',
 }
-const GROUP_BASE = { orchestrator: '#cfff3d', vault: '#6366f1' }
+const GROUP_BASE = {
+  orchestrator: '#cfff3d',
+  vault: '#6366f1',
+  // vf-autofarm keeper/strategy/pool cluster (static — these nodes have no per-run execMap
+  // entry, so they never transition idle/running/confirmed like a worker's steps do).
+  keeper: '#f0b54a',
+  strategy: '#6fe39a',
+  pool: '#7a9fff',
+}
+// Canvas strokeStyle can't resolve CSS custom properties — literal hex mirroring --accent.
+const PULSE_COLOR = '#cfff3d'
 
 const computeOrchestratorState = (execMap) => {
   const vals = Object.values(execMap)
@@ -156,7 +166,15 @@ const computeOrchestratorState = (execMap) => {
    Agent Graph — force-directed network (Obsidian-style)
    Topology: Orchestrator → Workers → Steps (Swap/Approve/Deposit) → Vault
    ============================================ */
-const NODE_R = { orchestrator: 9, worker: 6.5, step: 4, vault: 6.5 }
+const NODE_R = {
+  orchestrator: 9,
+  worker: 6.5,
+  step: 4,
+  vault: 6.5,
+  keeper: 6.5,
+  strategy: 6,
+  pool: 5.5,
+}
 
 // Stable node/link objects — only rebuilt when the strategy changes,
 // so the physics simulation keeps positions across exec-state updates.
@@ -180,6 +198,42 @@ const buildGraphData = (strategy) => {
   return { nodes, links }
 }
 
+// Normalized edge id — direction-independent, so a Rebalance event's (from, to) pair matches
+// regardless of which strategy/pseudo-target the vault treats as source vs. target on-chain
+// (the de-risk-to-idle fallback can rebalance strategy→vault OR vault→strategy).
+export const rebalancePulseKey = (a, b) => [a, b].filter(Boolean).sort().join('->')
+
+const pulseLink = (a, b) => ({ source: a, target: b, pulseKey: rebalancePulseKey(a, b) })
+
+/**
+ * Static keeper/strategy/pool subgraph — the Autofarm vault's automation topology (vf-autofarm
+ * Task 15), distinct from the per-session Orchestrator→Worker→Steps→Vault graph above. Always
+ * present on the canvas (react-force-graph lays out disconnected components independently) so
+ * the keeper's real architecture is visible even outside an active deposit session.
+ * @param {{ vaultAddress?: string, keeperAddress?: string, strategies?: Array<{address:string, label?:string, poolAddress?:string, poolLabel?:string}> }} p
+ * @returns {{ nodes: object[], links: object[] }}
+ */
+export const buildAutofarmGraphData = ({ vaultAddress, keeperAddress, strategies = [] } = {}) => {
+  if (!vaultAddress) return { nodes: [], links: [] }
+  const nodes = [{ id: vaultAddress, name: 'Autofarm vault', kind: 'vault' }]
+  const links = []
+  if (keeperAddress) {
+    nodes.push({ id: keeperAddress, name: 'Keeper', kind: 'keeper' })
+    links.push(pulseLink(keeperAddress, vaultAddress))
+  }
+  strategies.forEach((s, i) => {
+    if (!s?.address) return
+    nodes.push({ id: s.address, name: s.label || `Strategy ${i + 1}`, kind: 'strategy' })
+    links.push(pulseLink(s.address, vaultAddress))
+    if (s.poolAddress) {
+      const poolId = `pool:${s.poolAddress}`
+      nodes.push({ id: poolId, name: s.poolLabel || 'Blend pool', kind: 'pool' })
+      links.push(pulseLink(s.address, poolId))
+    }
+  })
+  return { nodes, links }
+}
+
 const stepState = (ex) => {
   const d = ex.steps?.deposit
   return d === 'confirmed'
@@ -196,6 +250,10 @@ const nodeColor = (node, execMap, palette) => {
     const s = computeOrchestratorState(execMap)
     return s === 'idle' ? GROUP_BASE.orchestrator : palette[s] || palette.idle
   }
+  // Keeper/strategy/pool nodes are static (no per-run exec state) — always their group color.
+  if (node.kind === 'keeper' || node.kind === 'strategy' || node.kind === 'pool') {
+    return GROUP_BASE[node.kind]
+  }
   const ex = execMap[node.agentId] || { status: 'idle', steps: {} }
   if (node.kind === 'worker') return palette[ex.status] || palette.idle
   if (node.kind === 'step') return palette[ex.steps?.[node.stepId] || 'idle'] || palette.idle
@@ -205,21 +263,43 @@ const nodeColor = (node, execMap, palette) => {
 
 const nodeRunning = (node, execMap) => {
   if (node.kind === 'orchestrator') return computeOrchestratorState(execMap) === 'running'
+  if (node.kind === 'keeper' || node.kind === 'strategy' || node.kind === 'pool') return false
   const ex = execMap[node.agentId] || { status: 'idle', steps: {} }
   if (node.kind === 'worker') return ex.status === 'running'
   if (node.kind === 'step') return ex.steps?.[node.stepId] === 'running'
   return stepState(ex) === 'running'
 }
 
-const AgentGraph = ({ strategy, execMap, onAgentClick, paletteIsLight }) => {
+const AgentGraph = ({
+  strategy,
+  execMap,
+  onAgentClick,
+  paletteIsLight,
+  graphData: graphDataProp,
+  pulseEdge,
+}) => {
   const fgRef = useRAg(null)
   const wrapRef = useRAg(null)
   const execRef = useRAg(execMap)
   const fittedRef = useRAg(false)
   const [size, setSize] = useSAg({ w: 0, h: 0 })
+  const [activePulseKey, setActivePulseKey] = useSAg(null)
   execRef.current = execMap
   const palette = paletteIsLight ? GRAPH_COLOR_LIGHT : GRAPH_COLOR
-  const data = useMAg(() => buildGraphData(strategy), [strategy])
+  // `graphData` lets a caller drive the canvas from a pre-built {nodes,links} shape (the
+  // vf-autofarm keeper/strategy/pool cluster — buildAutofarmGraphData) instead of deriving it
+  // from a per-session `strategy` — the same component either way, per-run vs. static topology.
+  const data = useMAg(() => graphDataProp || buildGraphData(strategy), [strategy, graphDataProp])
+
+  // `pulseEdge` = { key, ts } — a rebalance_executed keeper event highlights the matching edge
+  // for ~2.5s, mirroring the running-node glow's transient-state pattern above (shadowBlur on
+  // nodeRunning) but applied to a link instead of a node.
+  useEAg(() => {
+    if (!pulseEdge?.key) return undefined
+    setActivePulseKey(pulseEdge.key)
+    const t = setTimeout(() => setActivePulseKey(null), 2600)
+    return () => clearTimeout(t)
+  }, [pulseEdge?.key, pulseEdge?.ts])
 
   // Measure container so the canvas fills it
   useEAg(() => {
@@ -286,8 +366,14 @@ const AgentGraph = ({ strategy, execMap, onAgentClick, paletteIsLight }) => {
             ctx.arc(node.x, node.y, (NODE_R[node.kind] || 5) + 2, 0, 2 * Math.PI)
             ctx.fill()
           }}
-          linkColor={() => (paletteIsLight ? '#c4c1b8' : '#3a3a32')}
-          linkWidth={1}
+          linkColor={(link) =>
+            link.pulseKey && link.pulseKey === activePulseKey
+              ? PULSE_COLOR
+              : paletteIsLight
+                ? '#c4c1b8'
+                : '#3a3a32'
+          }
+          linkWidth={(link) => (link.pulseKey && link.pulseKey === activePulseKey ? 2.5 : 1)}
           cooldownTicks={120}
           onEngineStop={() => {
             if (!fittedRef.current && fgRef.current) {
