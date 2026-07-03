@@ -12,6 +12,16 @@ pub enum DataKey {
     LastRebalance, // ledger timestamp of the last rebalance; constructor seeds it to 0
     CooldownS,     // min seconds between rebalances (enforced starting Task 9)
     MaxMoveBps,    // max bps of total_assets movable per rebalance (enforced starting Task 9)
+    // Task R1 — appended (not inserted) below the Task 9 keys: a `#[contracttype]`
+    // unit-variant enum encodes each variant by its OWN name (see the `Admin` NOTE above), so
+    // adding these here cannot shift or collide with any already-live storage entry on the
+    // wasm-upgraded vault.
+    LastCompound, // ledger timestamp of the last successful compound. Absent (NOT 0) until
+    // the first compound EVER succeeds — deliberately not seeded by the constructor (unlike
+    // LastRebalance), since a wasm upgrade never re-runs it; see storage::get_last_compound.
+    CompoundCooldownS, // min seconds between compounds. Absent key falls back to
+                       // storage::DEFAULT_COMPOUND_COOLDOWN_S, so an already-deployed vault
+                       // gets the gate for free on upgrade with no constructor re-run needed.
 }
 
 #[contracterror]
@@ -22,11 +32,13 @@ pub enum VaultError {
     InvalidAmount = 2,
     InsufficientShares = 4, // redeem more shares than held
     MathOverflow = 5,
-    StrategyNotFound = 10,     // remove_strategy: address isn't in the registry
-    TooManyStrategies = 11,    // add_strategy: registry already holds MAX_STRATEGIES (4)
-    StrategyNotEmpty = 12,     // remove_strategy: strategy.balance() != 0
-    NotKeeper = 13, // compound/rebalance: caller isn't the registered keeper (or none set)
-    CooldownActive = 14, // rebalance: called again before `cooldown_s` elapsed since the last one
+    StrategyNotFound = 10,  // remove_strategy: address isn't in the registry
+    TooManyStrategies = 11, // add_strategy: registry already holds MAX_STRATEGIES (4)
+    StrategyNotEmpty = 12,  // remove_strategy: strategy.balance() != 0
+    NotKeeper = 13,         // compound/rebalance: caller isn't the registered keeper (or none set)
+    CooldownActive = 14,    // rebalance OR compound (Task R1): called again before its own
+    // cooldown (`CooldownS`/`CompoundCooldownS`) elapsed since its own last call — shared
+    // variant, reused rather than adding a near-duplicate error code for the same condition
     MoveTooLarge = 15, // rebalance: amount <= 0, or exceeds `max_move_bps` of `from`'s balance
     FirstDepositTooSmall = 16, // first deposit below MIN_FIRST_DEPOSIT (inflation guard)
     InsufficientLiquidity = 17, // redeem cannot be covered even after draining strategies

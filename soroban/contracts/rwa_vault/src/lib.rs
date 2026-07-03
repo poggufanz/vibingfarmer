@@ -110,11 +110,17 @@ impl RwaVault {
     pub fn set_limits(e: &Env, cooldown_s: u64, max_move_bps: u32) {
         vault::set_limits(e, cooldown_s, max_move_bps)
     }
+    /// Admin-only. Sets the min seconds between `compound` calls (Task R1). Kept separate
+    /// from `set_limits` (rebalance-only) — see `vault::set_compound_cooldown`.
+    pub fn set_compound_cooldown(e: &Env, cooldown_s: u64) {
+        vault::set_compound_cooldown(e, cooldown_s)
+    }
 
     // ----- keeper ops (Task 8) -----
-    /// Keeper-only. Harvests every registered strategy's realized gain into idle, then
-    /// sweeps all idle back into strategies pro-rata. `min_outs` is indexed by
-    /// `strategies()` order; its length must match. Returns the total gain realized.
+    /// Keeper-only, cooldown-gated (Task R1) and per-strategy fault-isolated. Harvests every
+    /// registered strategy's realized gain into idle, then sweeps all idle back into
+    /// strategies pro-rata. `min_outs` is indexed by `strategies()` order; its length must
+    /// match. Returns the total gain realized.
     pub fn compound(e: &Env, min_outs: Vec<i128>) -> Result<i128, types::VaultError> {
         vault::compound(e, min_outs)
     }
