@@ -13,7 +13,7 @@ import {
 import { readVaultShares } from '../stellar/agentDeposit.js'
 import { rpcServer, encodeArgs } from '../stellar/client.js'
 import { buildApprove } from './account.js'
-import { NETWORK_PASSPHRASE, SOROBAN_VAULT_ADDRESS } from '../stellar/config.js'
+import { NETWORK_PASSPHRASE, SOROBAN_ACTIVE_VAULT_ADDRESS } from '../stellar/config.js'
 
 const FRIENDBOT = 'https://friendbot.stellar.org'
 const APPROVE_TTL_LEDGERS = 17_280 // ~24h on testnet (5s ledgers); allowance auto-expires after
@@ -35,7 +35,7 @@ export async function submitDeposit({
   amount,
   eligibility,
   kit,
-  vault = SOROBAN_VAULT_ADDRESS,
+  vault = SOROBAN_ACTIVE_VAULT_ADDRESS,
   relay = realRelay,
   server,
   readShares = readVaultShares,
@@ -107,7 +107,7 @@ async function defaultBuildDepositInner({ contractId, amount, vault, relayer, ki
 export async function submitApprove({
   contractId,
   amount,
-  vault = SOROBAN_VAULT_ADDRESS,
+  vault = SOROBAN_ACTIVE_VAULT_ADDRESS,
   expiryLedgers = APPROVE_TTL_LEDGERS,
   kit,
   server,

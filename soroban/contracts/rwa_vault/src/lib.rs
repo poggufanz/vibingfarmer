@@ -1,20 +1,29 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, Address, Env, String, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String, Symbol, Vec};
 use stellar_access::access_control::{self as access_control, AccessControl};
 use stellar_contract_utils::pausable::{self as pausable, Pausable};
 use stellar_macros::only_admin;
 use stellar_tokens::fungible::Base;
 
-pub mod types;
 pub mod storage;
-mod blend;
-mod vault;
 mod test;
+pub mod types;
+mod vault;
+// The `StrategyIface` trait exists only to generate `StrategyClient` (used across
+// `vault::total_assets`/`ensure_idle`/`compound`); the trait itself is never implemented or
+// named as a bound — silence the dead-code lint on the whole module rather than the locked
+// trait body.
+#[allow(dead_code)]
+mod strategy_client;
 
 use storage::{
-    extend_instance, get_acc, get_drip_epoch, get_pool, get_token, get_total_principal,
-    set_acc, set_drip_epoch, set_pool, set_token, set_total_principal,
+    extend_instance, get_token, set_cooldown_s, set_last_rebalance, set_max_move_bps, set_token,
 };
+
+/// Rebalance cooldown default (Task 9 enforces it): 24h between rebalances.
+const DEFAULT_COOLDOWN_S: u64 = 86_400;
+/// Rebalance per-move cap default (Task 9 enforces it): 50% of `total_assets` per call.
+const DEFAULT_MAX_MOVE_BPS: u32 = 5_000;
 
 #[contract]
 pub struct RwaVault;
@@ -22,20 +31,15 @@ pub struct RwaVault;
 #[contractimpl]
 impl RwaVault {
     /// Deployed once. `token` = the yield-farming asset (SEP-41 token / SAC) this vault
-    /// accepts for deposits and pays dividends in.
-    pub fn __constructor(
-        e: &Env,
-        admin: Address,
-        token: Address,
-        name: String,
-        symbol: String,
-    ) {
+    /// accepts for deposits and pays out on redeem. The vault is a share-ledger priced by
+    /// exchange rate: `price_per_share = total_assets / total_supply`.
+    pub fn __constructor(e: &Env, admin: Address, token: Address, name: String, symbol: String) {
         Base::set_metadata(e, 7, name, symbol); // 7 decimals (match the asset)
         set_token(e, &token);
-        set_acc(e, 0);
-        set_total_principal(e, 0);
-        set_drip_epoch(e, 0);
         access_control::set_admin(e, &admin); // powers only_admin (pause/unpause)
+        set_cooldown_s(e, DEFAULT_COOLDOWN_S);
+        set_max_move_bps(e, DEFAULT_MAX_MOVE_BPS);
+        set_last_rebalance(e, 0);
         extend_instance(e);
     }
 
@@ -56,32 +60,17 @@ impl RwaVault {
     pub fn total_shares(e: &Env) -> i128 {
         Base::total_supply(e)
     }
-    pub fn total_principal(e: &Env) -> i128 {
-        get_total_principal(e)
-    }
-    pub fn acc_div_per_share(e: &Env) -> i128 {
-        get_acc(e)
-    }
-    pub fn drip_epoch(e: &Env) -> u64 {
-        get_drip_epoch(e)
-    }
-    pub fn pool(e: &Env) -> Option<Address> {
-        get_pool(e)
+
+    /// Total assets backing every share. This task: idle USDC only (Task 7 adds the sum of
+    /// strategy balances).
+    pub fn total_assets(e: &Env) -> i128 {
+        vault::total_assets(e)
     }
 
-    /// One-time admin wiring of the Blend lending pool. Once set, deposits supply into it.
-    pub fn set_pool(e: &Env, caller: Address, pool: Address) -> Result<(), types::VaultError> {
-        let admin = access_control::get_admin(e).unwrap();
-        if admin != caller {
-            return Err(types::VaultError::PoolNotSet); // not admin
-        }
-        caller.require_auth();
-        if get_pool(e).is_some() {
-            return Err(types::VaultError::PoolAlreadySet);
-        }
-        set_pool(e, &pool);
-        extend_instance(e);
-        Ok(())
+    /// Exchange rate: assets per share scaled by `PPS_SCALE` (7dp). `1e7` == 1.0. Compound
+    /// gains (Task 8) raise `total_assets`, so each share prices higher over time.
+    pub fn price_per_share(e: &Env) -> i128 {
+        vault::price_per_share(e)
     }
 
     // ----- deposit / redeem -----
@@ -90,30 +79,67 @@ impl RwaVault {
         vault::deposit(e, from, amount)
     }
 
-    /// redeem(from, shares) -> assets returned (1:1, stable NAV).
+    /// redeem(from, shares) -> assets returned pro-rata at the current exchange rate.
     pub fn redeem(e: &Env, from: Address, shares: i128) -> Result<i128, types::VaultError> {
         vault::redeem(e, from, shares)
     }
 
-    // ----- FOBXX-faithful yield -----
-    /// Admin-only mock yield source: fund + distribute a dividend pro-rata (FOBXX-faithful).
-    pub fn drip(e: &Env, amount: i128) -> Result<(), types::VaultError> {
-        vault::drip(e, amount)
+    // ----- strategy registry (Task 7) -----
+    /// Registered strategy addresses, in drain order.
+    pub fn strategies(e: &Env) -> Vec<Address> {
+        vault::strategies(e)
+    }
+    /// Admin-only. Registers a strategy; rejects a 5th (`TooManyStrategies`).
+    pub fn add_strategy(e: &Env, strategy: Address) -> Result<(), types::VaultError> {
+        vault::add_strategy(e, strategy)
+    }
+    /// Admin-only. Deregisters a strategy once its `balance()` is 0.
+    pub fn remove_strategy(e: &Env, strategy: Address) -> Result<(), types::VaultError> {
+        vault::remove_strategy(e, strategy)
+    }
+    /// Admin-only. Sets the keeper permitted to call `compound`/`rebalance` (Task 8/9).
+    pub fn set_keeper(e: &Env, keeper: Address) {
+        vault::set_keeper_addr(e, keeper)
+    }
+    /// The address currently permitted to call `compound`/`rebalance` (Task 8/9).
+    pub fn keeper(e: &Env) -> Address {
+        vault::keeper(e)
+    }
+    /// Admin-only. Sets the rebalance cooldown (seconds) and per-move cap (bps), both
+    /// enforced starting Task 9.
+    pub fn set_limits(e: &Env, cooldown_s: u64, max_move_bps: u32) {
+        vault::set_limits(e, cooldown_s, max_move_bps)
     }
 
-    /// Permissionless real-yield harvest from the wired Blend pool. Returns interest distributed.
-    pub fn harvest(e: &Env) -> Result<i128, types::VaultError> {
-        vault::harvest(e)
+    // ----- keeper ops (Task 8) -----
+    /// Keeper-only. Harvests every registered strategy's realized gain into idle, then
+    /// sweeps all idle back into strategies pro-rata. `min_outs` is indexed by
+    /// `strategies()` order; its length must match. Returns the total gain realized.
+    pub fn compound(e: &Env, min_outs: Vec<i128>) -> Result<i128, types::VaultError> {
+        vault::compound(e, min_outs)
     }
 
-    /// Permissionless: pay `holder` their accrued asset dividend. Returns amount paid.
-    pub fn claim(e: &Env, holder: Address) -> Result<i128, types::VaultError> {
-        vault::claim(e, holder)
+    // ----- keeper ops (Task 9) -----
+    /// Keeper-only. Moves `amount` from strategy `from` into `to` — `to` may be another
+    /// registered strategy, or this vault's own address (de-risk-to-idle fallback). Gated by
+    /// a cooldown and a per-move cap (both set via `set_limits`).
+    pub fn rebalance(
+        e: &Env,
+        from: Address,
+        to: Address,
+        amount: i128,
+    ) -> Result<(), types::VaultError> {
+        vault::rebalance(e, from, to, amount)
     }
 
-    /// View: asset dividend currently claimable by `holder`.
-    pub fn claimable(e: &Env, holder: Address) -> i128 {
-        vault::claimable(e, holder)
+    // ----- admin escape hatches (Task 9) -----
+    /// Admin-only, NOT pause-gated. Drains `strategy` fully back to vault idle.
+    pub fn emergency_withdraw(e: &Env, strategy: Address) {
+        vault::emergency_withdraw(e, strategy)
+    }
+    /// Admin-only. Swaps the contract's wasm.
+    pub fn upgrade(e: &Env, new_wasm_hash: BytesN<32>) {
+        vault::upgrade(e, new_wasm_hash)
     }
 }
 

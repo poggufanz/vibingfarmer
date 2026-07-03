@@ -1,9 +1,9 @@
 #![no_std]
 use soroban_sdk::{contract, contractimpl, Address, Env};
 
-pub mod types;
 mod registry;
 mod test;
+pub mod types;
 
 use types::{AgentRecord, DataKey, RegistryError};
 
@@ -27,7 +27,16 @@ impl Registry {
         period_duration: u64,
         expiry: u64,
     ) {
-        Self::authorize_impl(&env, owner, agent, vault, token, cap_per_period, period_duration, expiry);
+        Self::authorize_impl(
+            &env,
+            owner,
+            agent,
+            vault,
+            token,
+            cap_per_period,
+            period_duration,
+            expiry,
+        );
     }
 
     pub fn revoke(env: Env, owner: Address, agent: Address) -> Result<(), RegistryError> {
@@ -35,7 +44,10 @@ impl Registry {
     }
 
     pub fn record_of(env: Env, agent: Address) -> AgentRecord {
-        env.storage().persistent().get(&DataKey::Record(agent)).unwrap()
+        env.storage()
+            .persistent()
+            .get(&DataKey::Record(agent))
+            .unwrap()
     }
 
     pub fn is_revoked(env: Env, agent: Address) -> bool {

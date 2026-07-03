@@ -4,6 +4,7 @@
 import {
   SOROBAN_REGISTRY_ADDRESS,
   SOROBAN_VAULT_ADDRESS,
+  SOROBAN_ACTIVE_VAULT_ADDRESS,
   SOROBAN_ATTESTATION_ADDRESS,
 } from './config.js'
 import { fromScVal } from './scval.js'
@@ -11,7 +12,14 @@ import { rpcServer } from './client.js'
 
 // Contracts we watch + the event topic-symbols each emits (docs/soroban-interfaces.md).
 // Attestation (F5) emits strategy_attested — surfaced in the public Explorer feed.
-const WATCHED = [SOROBAN_REGISTRY_ADDRESS, SOROBAN_VAULT_ADDRESS, SOROBAN_ATTESTATION_ADDRESS]
+// Post-cutover the ACTIVE (autofarm) vault is the live deposit target; the old vault stays
+// watched so historical sessions keep rendering.
+const WATCHED = [
+  SOROBAN_REGISTRY_ADDRESS,
+  SOROBAN_VAULT_ADDRESS,
+  SOROBAN_ACTIVE_VAULT_ADDRESS,
+  SOROBAN_ATTESTATION_ADDRESS,
+]
 
 /**
  * Decode one RPC getEvents record into a typed event.

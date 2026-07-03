@@ -1,8 +1,17 @@
 import { describe, it, expect, vi } from 'vitest'
+import { nativeToScVal } from '@stellar/stellar-sdk'
 import { i128ScVal } from './scval.js'
-import { readContract, submitUserTx } from './client.js'
+import { encodeArgs, readContract, submitUserTx } from './client.js'
 
 describe('soroban client', () => {
+  it('encodeArgs passes a pre-built raw ScVal through unchanged', () => {
+    // js-xdr puts every union-arm accessor on ScVal's prototype, so `'i128' in scval` is true
+    // for ANY ScVal — without a raw-ScVal guard this Vec<i128> would hit the i128 branch and throw.
+    const vec = nativeToScVal([1n, 2n], { type: 'i128' })
+    const [out] = encodeArgs([vec])
+    expect(out).toBe(vec)
+  })
+
   it('readContract simulates a read-only call and decodes the retval to native', async () => {
     // fake server: simulateTransaction returns a successful sim carrying an i128 retval
     const fakeServer = {

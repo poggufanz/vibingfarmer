@@ -22,6 +22,9 @@ import {
   MemoryModal,
   LoopStatusPanel,
   DecisionLogPanel,
+  AgentGraph,
+  buildAutofarmGraphData,
+  rebalancePulseKey,
   buildStrategy,
   makeInitialExecState,
 } from './agents.jsx'
@@ -42,7 +45,18 @@ import { OrchestratorAgent } from './orchestrator.js'
 import { makeAgentId } from './worker.js'
 import { ownerWithdraw } from './stellar/exit.js'
 import { VAULT_CATALOG, VENICE_TIMEOUT_MS } from './config.js'
-import { SOROBAN_VAULT_ADDRESS, SOROBAN_DEMO_AGENT } from './stellar/config.js'
+import {
+  SOROBAN_ACTIVE_VAULT_ADDRESS,
+  SOROBAN_DEMO_AGENT,
+  SOROBAN_RPC_URL,
+  SOROBAN_AUTOFARM_VAULT_ADDRESS,
+  SOROBAN_STRATEGY_1_ADDRESS,
+  SOROBAN_BLEND_POOL_ADDRESS,
+  SOROBAN_KEEPER_ADDRESS,
+} from './stellar/config.js'
+import { fetchKeeperEvents } from './stellar/keeperEvents.js'
+import { readPricePerShare, readStrategies, readSupplyAprBps } from './stellar/vaultReads.js'
+import KeeperPanel from './components/KeeperPanel.jsx'
 import { evaluateExit } from './strategy/autoExit/engine.js'
 import { runAutonomousExit } from './agents/exitExecutor.js'
 import {
@@ -105,6 +119,19 @@ import { councilOutcome } from './strategy/outcome.js'
 import { proposeRule } from './strategy/curator.js'
 import { upsertSeeds, getRules, addRule, replaceAll } from './strategy/ruleStore.js'
 
+// vf-autofarm: strategy address → { label, poolAddress, poolLabel } for the KeeperPanel APR
+// display + the force-graph's strategy→pool edge. Static because the vault contract exposes no
+// strategy→pool lookup and only ONE strategy is live today (Task 1 spike found a self-deployed
+// second pool can't reach Active status on testnet — see
+// docs/superpowers/plans/2026-07-03-vf-autofarm-progress.md). Extend this map when strategy #2 ships.
+const AUTOFARM_STRATEGY_META = {
+  [SOROBAN_STRATEGY_1_ADDRESS]: {
+    label: 'Strategy 1',
+    poolAddress: SOROBAN_BLEND_POOL_ADDRESS,
+    poolLabel: 'TestnetV2 pool',
+  },
+}
+
 /* ---------- Background agent settings (localStorage: yv_agent_settings) ---------- */
 const AGENT_SETTINGS_DEFAULTS = {
   autoHarvest: false,
@@ -135,9 +162,14 @@ const loadAgentSettings = () => {
 }
 
 const sendPushNotification = async (ev, passedSettings) => {
-  const isAlert = ['risk_alert', 'apy_drift', 'rebalance_proposal', 'harvest_ready'].includes(
-    ev.kind
-  )
+  const isAlert = [
+    'risk_alert',
+    'apy_drift',
+    'rebalance_proposal',
+    'harvest_ready',
+    'compound_executed',
+    'rebalance_executed',
+  ].includes(ev.kind)
   if (!isAlert) return
 
   let settings = passedSettings
@@ -167,6 +199,12 @@ const sendPushNotification = async (ev, passedSettings) => {
   } else if (ev.kind === 'harvest_ready') {
     title = '🟢 Yield Harvest Ready'
     detail = `${ev.rewardsUsdc} USDC accrued on ${ev.vaultName} is ready to claim.`
+  } else if (ev.kind === 'compound_executed') {
+    title = '✓ Keeper Compounded'
+    detail = `${ev.vaultName} · +${ev.totalGainUsdc} USDC reinvested · price/share ${ev.pricePerShare}. No action needed.`
+  } else if (ev.kind === 'rebalance_executed') {
+    title = '⇄ Keeper Rebalanced'
+    detail = `${ev.vaultName} · ${ev.fromLabel} → ${ev.toLabel} · ${ev.amountUsdc} USDC moved. No action needed.`
   }
 
   const messageText = `*${title}*\n\n${detail}\n\n_Time: ${new Date(ev.timestamp || Date.now()).toLocaleString()}_`
@@ -425,6 +463,10 @@ const App = () => {
   const loopRef = useR(null)
   const latestGasRef = useR(null) // last live gas snapshot { level, gwei } for the monitor loop
   const hydratedRef = useR(null) // address whose cached positions have finished restoring
+  // Ledger cursor for the vf-autofarm keeper event feed (Compound/Rebalance) — undefined until
+  // the first successful fetch, after which it advances past every event we've already alerted
+  // on so the same 15s poll never re-notifies for the same keeper action.
+  const keeperLedgerRef = useR(undefined)
   // Tracks which user addresses have had session key setup done (survives re-renders).
   const [loopTick, setLoopTick] = useS(0)
   const [loopPhase, setLoopPhase] = useS(null) // live pipeline phase from monitorLoop onPhase
@@ -451,6 +493,11 @@ const App = () => {
   )
   const [agentSettings, setAgentSettings] = useS(loadAgentSettings)
   const [agentData, setAgentData] = useS({ positions: {}, alerts: [], lastUpdated: null })
+  // vf-autofarm KeeperPanel state — populated by the SAME 15s poll that already fetches
+  // keeper events below (keeperLedgerRef), never a second interval.
+  const [keeperActivity, setKeeperActivity] = useS([]) // newest-first, capped — feeds KeeperPanel
+  const [autofarmReads, setAutofarmReads] = useS({ pricePerShare: null, strategies: [] })
+  const [rebalancePulse, setRebalancePulse] = useS(null) // { key, ts } — force-graph edge pulse
 
   const [sbExtended, setSbExtended] = useS(() => localStorage.getItem('yv_sb_extended') === 'true')
   const [railCollapsed, setRailCollapsed] = useS(
@@ -574,12 +621,98 @@ const App = () => {
     let alive = true
     const sync = async () => {
       const chain = await reconcilePositionsFromChain(realAddress).catch(() => null)
-      if (!alive || !chain) return
-      setAgentData((d) => ({
-        ...d,
-        positions: applyChainPositions(d.positions, chain),
-        lastUpdated: Date.now(),
-      }))
+      if (alive && chain) {
+        setAgentData((d) => ({
+          ...d,
+          positions: applyChainPositions(d.positions, chain),
+          lastUpdated: Date.now(),
+        }))
+      }
+      // vf-autofarm keeper event feed (Compound/Rebalance) — piggybacks this SAME 15s poll
+      // rather than opening a second interval. keeperLedgerRef advances past every ledger
+      // already alerted on, so a re-poll never re-notifies for the same keeper action.
+      try {
+        const events = await fetchKeeperEvents(
+          SOROBAN_RPC_URL,
+          SOROBAN_AUTOFARM_VAULT_ADDRESS,
+          keeperLedgerRef.current
+        )
+        if (!alive) return
+        // KeeperPanel activity feed — separate from the deduped/capped-at-8 alerts list above
+        // (handleAgentEvent keeps only the LATEST of each kind for notifications; the panel
+        // wants its own short history of real keeper actions).
+        const newActivity = []
+        for (const ev of events) {
+          keeperLedgerRef.current = Math.max(keeperLedgerRef.current || 0, ev.ledger + 1)
+          if (ev.type === 'compound') {
+            const item = {
+              id: `compound:${ev.ledger}`,
+              kind: 'compound_executed',
+              vaultName: 'Autofarm vault',
+              totalGainUsdc: toDisplay(ev.totalGain).toFixed(2),
+              pricePerShare: toDisplay(ev.pricePerShare).toFixed(4),
+              txHash: ev.txHash,
+              timestamp: Date.now(),
+            }
+            handleAgentEvent(item)
+            newActivity.push(item)
+          } else if (ev.type === 'rebalance') {
+            const item = {
+              id: `rebalance:${ev.ledger}`,
+              kind: 'rebalance_executed',
+              vaultName: 'Autofarm vault',
+              from: ev.from,
+              to: ev.to,
+              fromLabel: shortAddr(ev.from),
+              toLabel: shortAddr(ev.to),
+              amountUsdc: toDisplay(ev.amount).toFixed(2),
+              txHash: ev.txHash,
+              timestamp: Date.now(),
+            }
+            handleAgentEvent(item)
+            newActivity.push(item)
+            // Pulse the force-graph edge between the two strategies/vault this rebalance moved
+            // funds between (rebalancePulseKey is direction-independent — see agents.jsx).
+            setRebalancePulse({ key: rebalancePulseKey(ev.from, ev.to), ts: Date.now() })
+          }
+        }
+        if (newActivity.length) {
+          setKeeperActivity((prev) => [...newActivity.reverse(), ...prev].slice(0, 20))
+        }
+      } catch {
+        // transient RPC failure — the next 15s tick retries
+      }
+      // Live autofarm vault reads for the KeeperPanel: price-per-share + registered strategies,
+      // each paired with a best-effort Blend supply-APR estimate. Best-effort end to end — a
+      // failed read leaves the panel showing "--", never a fake number.
+      try {
+        const [pps, strategyAddrs] = await Promise.all([
+          readPricePerShare(SOROBAN_AUTOFARM_VAULT_ADDRESS),
+          readStrategies(SOROBAN_AUTOFARM_VAULT_ADDRESS),
+        ])
+        if (!alive) return
+        const strategies = await Promise.all(
+          strategyAddrs.map(async (addr) => {
+            const meta = AUTOFARM_STRATEGY_META[addr] || {}
+            const aprBps = meta.poolAddress ? await readSupplyAprBps(meta.poolAddress) : null
+            return {
+              address: addr,
+              label: meta.label || shortAddr(addr),
+              poolAddress: meta.poolAddress || null,
+              poolLabel: meta.poolLabel || null,
+              aprPct: aprBps == null ? null : aprBps / 100,
+            }
+          })
+        )
+        if (alive) {
+          setAutofarmReads({
+            pricePerShare: pps == null ? null : toDisplay(pps).toFixed(4),
+            strategies,
+          })
+        }
+      } catch {
+        // transient RPC failure — the next 15s tick retries; panel keeps its last-known reads
+      }
     }
     sync() // once on connect
     // ponytail: 15s poll. A Soroban event subscription would make it instant if needed.
@@ -678,10 +811,22 @@ const App = () => {
             ? `APY on ${ev.vaultName} dropped to ${ev.currentApy}% (from ${ev.baselineApy}%, ${ev.driftPct}%).`
             : ev.kind === 'harvest_ready'
               ? `${ev.rewardsUsdc} USDC accrued on ${ev.vaultName} · ready to claim.`
-              : ''
+              : ev.kind === 'compound_executed'
+                ? `Keeper compounded ${ev.vaultName} · +${ev.totalGainUsdc} USDC · price/share ${ev.pricePerShare}.`
+                : ev.kind === 'rebalance_executed'
+                  ? `Keeper rebalanced ${ev.vaultName} · ${ev.fromLabel} → ${ev.toLabel} · ${ev.amountUsdc} USDC moved.`
+                  : ''
     addLog({
-      event: ev.kind === 'risk_alert' ? 'AgentFailed' : 'OrchestratorPlanned',
-      meta: `${ev.kind.replace(/_/g, ' ')} · ${ev.vaultName || ev.fromVault || ''}`,
+      event:
+        ev.kind === 'risk_alert'
+          ? 'AgentFailed'
+          : ev.kind === 'compound_executed'
+            ? 'AgentCompleted'
+            : ev.kind === 'rebalance_executed'
+              ? 'RedelegationCreated'
+              : 'OrchestratorPlanned',
+      meta: `${ev.kind.replace(/_/g, ' ')} · ${ev.vaultName || ev.fromVault || ''}${ev.txHash ? ` · tx ${shortAddr(ev.txHash)}` : ''}`,
+      txHash: ev.txHash,
       detail,
     })
   }
@@ -838,7 +983,7 @@ const App = () => {
               kind: 'risk_alert',
               severity: 'critical',
               vaultName: 'VFUSD Yield Vault',
-              vaultAddress: SOROBAN_VAULT_ADDRESS,
+              vaultAddress: SOROBAN_ACTIVE_VAULT_ADDRESS,
               message: `Auto-Exit Triggered: ${result.reason}`,
               timestamp: Date.now(),
             },
@@ -2020,6 +2165,23 @@ const App = () => {
     }
   })
 
+  // vf-autofarm keeper/strategy/pool force-graph cluster (Task 15). Memoized on the strategy
+  // address list (not the whole `autofarmReads.strategies` array, which gets a new reference
+  // every 15s poll even when addresses are unchanged) so the canvas physics don't reheat/jitter
+  // on every tick — only when the registered strategy set actually changes.
+  const autofarmStrategyKey = autofarmReads.strategies
+    .map((s) => `${s.address}:${s.poolAddress || ''}`)
+    .join(',')
+  const autofarmGraphData = useM(
+    () =>
+      buildAutofarmGraphData({
+        vaultAddress: SOROBAN_AUTOFARM_VAULT_ADDRESS,
+        keeperAddress: SOROBAN_KEEPER_ADDRESS,
+        strategies: autofarmReads.strategies,
+      }),
+    [autofarmStrategyKey]
+  )
+
   // Public pages — standalone full-bleed, own NavBar, no wallet required.
   // Checked before every gate so judges and visitors can browse without connecting.
   if (location.pathname === '/explorer') {
@@ -2238,6 +2400,23 @@ const App = () => {
                             summary={getDecisionSummary()}
                           />
                         )
+                      }
+                      keeperPanel={
+                        <>
+                          <KeeperPanel
+                            events={keeperActivity}
+                            pricePerShare={autofarmReads.pricePerShare}
+                            strategies={autofarmReads.strategies}
+                          />
+                          <div style={{ marginTop: 14 }}>
+                            <AgentGraph
+                              graphData={autofarmGraphData}
+                              execMap={{}}
+                              paletteIsLight={paletteIsLight}
+                              pulseEdge={rebalancePulse}
+                            />
+                          </div>
+                        </>
                       }
                     />
                   </Suspense>

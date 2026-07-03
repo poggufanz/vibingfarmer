@@ -7,6 +7,5 @@ use soroban_sdk::{contractclient, Address, Env};
 pub trait VaultInterface {
     fn deposit(env: Env, from: Address, amount: i128) -> i128;
     fn redeem(env: Env, from: Address, shares: i128) -> i128;
-    fn claim(env: Env, holder: Address) -> i128;
     fn balance(env: Env, id: Address) -> i128;
 }

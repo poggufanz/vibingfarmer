@@ -177,8 +177,10 @@ describe('feeBumpAndSubmit', () => {
 
 const VAULT = 'CCTGGJVVY45DYDDXM3XBFEJ2OT2J2ZT6HIXZEQKXU7Z53TH3YSZJC3PF'
 
-// A fake inner tx whose single op decodes to invokeContract(contractStr, fnStr).
-function depositTx(contractStr, fnStr) {
+const TOKEN = 'CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU'
+
+// A fake inner tx whose single op decodes to invokeContract(contractStr, fnStr, args).
+function depositTx(contractStr, fnStr, args = []) {
   return {
     operations: [
       {
@@ -188,26 +190,53 @@ function depositTx(contractStr, fnStr) {
           invokeContract: () => ({
             contractAddress: () => ({ __sc: contractStr }),
             functionName: () => fnStr, // ScSymbol stringifies to the symbol
+            args: () => args,
           }),
         },
       },
     ],
   }
 }
-// Fake Address.fromScAddress: reads back the contract string our fixture tucked in.
-const sdkAddr = { Address: { fromScAddress: (sc) => ({ toString: () => sc.__sc }) } }
+// Fake Address decoders: read back the string our fixture tucked in.
+const sdkAddr = {
+  Address: {
+    fromScAddress: (sc) => ({ toString: () => sc.__sc }),
+    fromScVal: (v) => ({ toString: () => v.__addr }),
+  },
+}
 
 describe('assertVaultDeposit', () => {
   it('passes a single deposit op to the configured vault', () => {
     expect(() => assertVaultDeposit(depositTx(VAULT, 'deposit'), VAULT, sdkAddr)).not.toThrow()
+  })
+  it('passes a vault redeem (F11 exit leg 1)', () => {
+    expect(() => assertVaultDeposit(depositTx(VAULT, 'redeem'), VAULT, sdkAddr)).not.toThrow()
   })
   it('rejects a call to a different contract', () => {
     expect(() => assertVaultDeposit(depositTx('CWRONG', 'deposit'), VAULT, sdkAddr)).toThrow(
       RelayError
     )
   })
-  it('rejects a non-deposit function', () => {
-    expect(() => assertVaultDeposit(depositTx(VAULT, 'redeem'), VAULT, sdkAddr)).toThrow(RelayError)
+  it('rejects a non-deposit/redeem vault function', () => {
+    expect(() => assertVaultDeposit(depositTx(VAULT, 'withdraw'), VAULT, sdkAddr)).toThrow(
+      RelayError
+    )
+  })
+  it('passes a token transfer from a contract (agent) address when tokenAddr is set', () => {
+    const tx = depositTx(TOKEN, 'transfer', [{ __addr: 'CAGENT' }, { __addr: 'GOWNER' }])
+    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN)).not.toThrow()
+  })
+  it('rejects a token transfer from a G account (relayer is not a public gas faucet)', () => {
+    const tx = depositTx(TOKEN, 'transfer', [{ __addr: 'GSOMEONE' }, { __addr: 'GOWNER' }])
+    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN)).toThrow(RelayError)
+  })
+  it('rejects a token transfer when tokenAddr is not configured (fail closed)', () => {
+    const tx = depositTx(TOKEN, 'transfer', [{ __addr: 'CAGENT' }, { __addr: 'GOWNER' }])
+    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr)).toThrow(RelayError)
+  })
+  it('rejects non-transfer token functions', () => {
+    const tx = depositTx(TOKEN, 'approve', [{ __addr: 'CAGENT' }])
+    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN)).toThrow(RelayError)
   })
   it('rejects a multi-operation tx', () => {
     const tx = depositTx(VAULT, 'deposit')

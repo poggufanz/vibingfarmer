@@ -6,9 +6,10 @@ import { VENICE_BASE_URL, DEEPSEEK_BASE_URL } from '../config.js'
 import {
   SOROBAN_REGISTRY_ADDRESS,
   SOROBAN_VAULT_ADDRESS,
+  SOROBAN_ACTIVE_VAULT_ADDRESS,
   SOROBAN_TOKEN_ADDRESS,
 } from '../stellar/config.js'
-import { loadSettings, saveSetting, SETTINGS_DEFAULTS } from '../settingsStore.js'
+import { loadSettings, saveSetting, SETTINGS_DEFAULTS, t } from '../settingsStore.js'
 import {
   getHistorySummary,
   clearTransactions,
@@ -492,10 +493,7 @@ export default function SettingsPage({
               </Row>
               <Divider />
               <SubLabel>Harvest Settings</SubLabel>
-              <Row
-                label="Auto-harvest"
-                desc="Automatically claim and compound rewards when threshold is reached. If OFF, agent notifies you and you harvest manually."
-              >
+              <Row label={t(language, 'automationLabel')} desc={t(language, 'automationDesc')}>
                 <Toggle
                   on={!!agentSettings.autoHarvest}
                   onChange={(v) => setAgent('autoHarvest', v)}
@@ -793,7 +791,12 @@ export default function SettingsPage({
                     value={agentSettings.telegramToken || ''}
                     placeholder="123456789:ABCdef..."
                     onChange={(e) => setAgent('telegramToken', e.target.value)}
-                    style={{ ...inputStyle, width: '100%', boxSizing: 'border-box', fontFamily: 'var(--font-mono)' }}
+                    style={{
+                      ...inputStyle,
+                      width: '100%',
+                      boxSizing: 'border-box',
+                      fontFamily: 'var(--font-mono)',
+                    }}
                   />
                 </div>
                 <div>
@@ -803,7 +806,12 @@ export default function SettingsPage({
                     value={agentSettings.telegramChatId || ''}
                     placeholder="e.g. 987654321"
                     onChange={(e) => setAgent('telegramChatId', e.target.value)}
-                    style={{ ...inputStyle, width: '100%', boxSizing: 'border-box', fontFamily: 'var(--font-mono)' }}
+                    style={{
+                      ...inputStyle,
+                      width: '100%',
+                      boxSizing: 'border-box',
+                      fontFamily: 'var(--font-mono)',
+                    }}
                   />
                 </div>
               </div>
@@ -834,9 +842,7 @@ export default function SettingsPage({
             </Section>
           )}
 
-          {tab === 'auto-exit' && (
-            <AutoExitSettings realAddress={userAddress} addLog={addLog} />
-          )}
+          {tab === 'auto-exit' && <AutoExitSettings realAddress={userAddress} addLog={addLog} />}
 
           {/* ── SECTION 4: Wallet & Network ── */}
           {tab === 'wallet' && (
@@ -1062,7 +1068,8 @@ export default function SettingsPage({
               </div>
               <Divider />
               <ContractRow name="AgentRegistry" addr={SOROBAN_REGISTRY_ADDRESS} />
-              <ContractRow name="YieldVault (vfVLT)" addr={SOROBAN_VAULT_ADDRESS} />
+              <ContractRow name="Autofarm Vault (vfVLT)" addr={SOROBAN_ACTIVE_VAULT_ADDRESS} />
+              <ContractRow name="Legacy vault (1:1)" addr={SOROBAN_VAULT_ADDRESS} />
               <ContractRow name="VFUSD token" addr={SOROBAN_TOKEN_ADDRESS} />
               <Divider />
               <div style={{ fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 1.6 }}>

@@ -30,12 +30,7 @@ impl Attestation {
     /// Record a strategy hash on-chain for `attester`. Bumps the attester's
     /// counter, emits StrategyAttested, returns the new count. Leaf call —
     /// no cross-contract invocation, no admin.
-    pub fn attest(
-        env: Env,
-        attester: Address,
-        strategy_hash: BytesN<32>,
-        label: Symbol,
-    ) -> u32 {
+    pub fn attest(env: Env, attester: Address, strategy_hash: BytesN<32>, label: Symbol) -> u32 {
         attester.require_auth();
 
         let key = DataKey::Counter(attester.clone());

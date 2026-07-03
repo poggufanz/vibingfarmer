@@ -11,8 +11,11 @@
 // "position" is read as the agent's vault-share balance. The demo uses one agent
 // (SOROBAN_DEMO_AGENT) + one vault; pass `agents` for a multi-agent session.
 
-import { SOROBAN_VAULT_ADDRESS, SOROBAN_DEMO_AGENT } from './stellar/config.js'
+import { SOROBAN_ACTIVE_VAULT_ADDRESS, SOROBAN_DEMO_AGENT } from './stellar/config.js'
 import { readVaultShares } from './stellar/agentDeposit.js'
+import { readPricePerShare } from './stellar/vaultReads.js'
+
+const PPS_SCALE = 10_000_000n // price_per_share is 7-dp fixed point (1_0000000 == 1.0)
 
 // Single demo vault has no on-chain name field — label it for the positions list.
 const VAULT_NAME = 'VFUSD Yield Vault'
@@ -74,12 +77,24 @@ export async function reconcilePositionsFromChain(
   }
   if (!anyOk) return null
 
+  // Autofarm vault shares are exchange-rate priced (NOT 1:1 with USDC) — convert to asset
+  // value via price_per_share so `balance` stays in the asset base units every display and
+  // seed path already uses. pps read failure → null (keep the cached snapshot; a 1:1 guess
+  // would silently misreport value).
+  let assets = 0n
+  if (total > 0n) {
+    const pps = await readPricePerShare(SOROBAN_ACTIVE_VAULT_ADDRESS, { server })
+    if (pps == null) return null
+    assets = (total * pps) / PPS_SCALE
+  }
+
   // ponytail: balance is base-unit (7-dp) string — render sites must divide by 1e7
   // (SOROBAN_DECIMALS), not the legacy EVM 1e6. Single vault for the demo.
   return {
-    [SOROBAN_VAULT_ADDRESS]: {
+    [SOROBAN_ACTIVE_VAULT_ADDRESS]: {
       vaultName: VAULT_NAME,
-      balance: total.toString(),
+      balance: assets.toString(),
+      shares: total.toString(),
       unclaimedRewards: '0',
     },
   }

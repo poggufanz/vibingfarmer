@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { submitDeposit, submitApprove } from './submit.js'
-import { SOROBAN_VAULT_ADDRESS } from '../stellar/config.js'
+import { SOROBAN_ACTIVE_VAULT_ADDRESS } from '../stellar/config.js'
 
 describe('submitDeposit (orchestration)', () => {
   const okElig = vi.fn(async () => ({ allow: true, reasons: [] }))
@@ -75,7 +75,7 @@ describe('submitApprove (orchestration)', () => {
     const out = await submitApprove({
       contractId: 'CACCT',
       amount: 100n,
-      vault: SOROBAN_VAULT_ADDRESS,
+      vault: SOROBAN_ACTIVE_VAULT_ADDRESS,
       kit: {},
       server: {},
       fund,
@@ -85,7 +85,7 @@ describe('submitApprove (orchestration)', () => {
     expect(makeEphemeral).toHaveBeenCalled()
     expect(fund).toHaveBeenCalledWith('GEPHEMERAL')
     expect(signSubmitApprove).toHaveBeenCalledWith(
-      expect.objectContaining({ contractId: 'CACCT', vault: SOROBAN_VAULT_ADDRESS })
+      expect.objectContaining({ contractId: 'CACCT', vault: SOROBAN_ACTIVE_VAULT_ADDRESS })
     )
     expect(out).toEqual({ hash: 'AHASH', status: 'SUCCESS' })
   })

@@ -20,9 +20,11 @@ export const SOROBAN_ATTESTATION_ADDRESS =
 // Yield-farming asset = Blend testnet USDC (7 decimals) post-cutover — the vault's underlying
 // IS the asset Blend lends, so deposits supply into the pool. Pulls + pays dividends in it.
 export const SOROBAN_TOKEN_ADDRESS = 'CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU'
-// Pre-seeded demo agent custom account (1a, v2 — constructor self-approves the vault for cap).
+// Pre-seeded demo agent custom account (1a, v3 — scope pins the AUTOFARM vault; constructor
+// self-approves it for the cap). __check_auth scope is constructor-only, so the cutover needed
+// a fresh deploy: v2 CD3MQJ4Y… stays pinned to the old 1:1 vault (kept on-chain for history).
 // Used by the smoke script + demo flows. Owner = vf-deployer; signer in deployments JSON.
-export const SOROBAN_DEMO_AGENT = 'CD3MQJ4YZQ5MDSKDETEFZMDV5J5URVXM46NY5Y3RICUOVJJOFIZTKJ7K'
+export const SOROBAN_DEMO_AGENT = 'CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC'
 // Token + vault-share decimals (both 7). Amounts are i128 in base units (1 VFUSD = 10_000_000).
 export const SOROBAN_DECIMALS = 7
 
@@ -32,6 +34,26 @@ export const SOROBAN_DECIMALS = 7
 // Testnet V2 pool + USDC reserve (re-verified live at cutover — see spec §7):
 export const SOROBAN_BLEND_POOL_ADDRESS = 'CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF'
 export const SOROBAN_BLEND_USDC_ADDRESS = 'CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU'
+
+// Autofarm vault + strategy (sub-project vf-autofarm, Task 11). A NEW vault instance — the
+// strategy-registry-capable wasm (add_strategy/set_keeper/compound/rebalance, Tasks 2-10) —
+// deployed alongside `SOROBAN_VAULT_ADDRESS` above (the old vault predates that wasm and is
+// kept for history/rollback; NOT yet flipped as the app's live deposit target — that cutover
+// is a separate, later step). Single-strategy: Task 1's spike found a self-deployed second
+// Blend pool cannot reach Active status on testnet without seeding real backstop capital
+// (OWN_POOL_VIABLE=false), so this vault runs one Blend strategy on the same TestnetV2 pool
+// and relies on the de-risk-to-idle rebalance fallback (rebalance(to=vault)) in place of a
+// second strategy/pool. See docs/superpowers/plans/2026-07-03-vf-autofarm-progress.md.
+export const SOROBAN_AUTOFARM_VAULT_ADDRESS =
+  'CB5VKYDUIYX3RZWGVLKKNBPG7V7Z5JIHF2QPNQKWKAHVA3IPSLFZJDYU'
+export const SOROBAN_STRATEGY_1_ADDRESS = 'CCH424TVLTP2P3URNRGGF26X24XRPBVBXCRZ6QBCWLSX6KH4QZSLNBC2'
+// The app's LIVE deposit target (cutover, handoff §1). Points at the autofarm vault: shares are
+// exchange-rate priced (price_per_share ≠ 1:1) — every USDC display must convert shares via pps.
+// The relay's server-side allowlist (SOROBAN_VAULT_ADDRESS env in .dev.vars / Pages env) must be
+// set to this same address or every deposit is refused. Old 1:1 vault above kept for rollback.
+export const SOROBAN_ACTIVE_VAULT_ADDRESS = SOROBAN_AUTOFARM_VAULT_ADDRESS
+// Keeper (compound/rebalance caller) — same relayer G-address as the gasless-relay signer.
+export const SOROBAN_KEEPER_ADDRESS = 'GBVJ34MT4GDKZJGILI6DRYGD75ZNUBJGGZIDUV7IPFNVVDWGE5GBLV3X'
 
 // New gasless relay endpoint. Distinct from the EVM /api/relay (decommissioned in step 6).
 // Browser uses the same-origin relative path. Headless smokes (vite-node/node) have no fetch

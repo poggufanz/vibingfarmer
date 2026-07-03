@@ -9,7 +9,11 @@
 // BytesN<64> signature exactly. (stellar-sdk's authorizeEntry helper packs signatures for
 // Keypair signers; a custom account expects the bare sig — see pin-at-impl note.)
 import { rpcServer, buildInvokeTx, readContract } from './client.js'
-import { SOROBAN_VAULT_ADDRESS, SOROBAN_TOKEN_ADDRESS, NETWORK_PASSPHRASE } from './config.js'
+import {
+  SOROBAN_ACTIVE_VAULT_ADDRESS,
+  SOROBAN_TOKEN_ADDRESS,
+  NETWORK_PASSPHRASE,
+} from './config.js'
 import { getRelayerAddress, submitViaRelay } from './relay.js'
 
 let _sdk = null
@@ -57,40 +61,71 @@ export async function signAgentDepositEntries({ tx, sessionKey, validUntilLedger
 
 /**
  * Build the invoke (source = relayer), assemble it, then sign the agent's deposit auth entry.
- * @param {{agentAddress:string, amount:bigint, relayer:string, sessionKey:object, server?:object}} p
+ * @param {{agentAddress:string, amount:bigint, relayer:string, sessionKey:object, vault?:string, server?:object}} p
  * @returns {Promise<{xdr:string}>}
  */
-export async function buildAgentDeposit({ agentAddress, amount, relayer, sessionKey, server }) {
+export async function buildAgentDeposit({
+  agentAddress,
+  amount,
+  relayer,
+  sessionKey,
+  vault = SOROBAN_ACTIVE_VAULT_ADDRESS,
+  server,
+}) {
   const s = server || (await rpcServer())
   const { tx } = await buildInvokeTx({
     source: relayer,
-    contract: SOROBAN_VAULT_ADDRESS,
+    contract: vault,
     method: 'deposit',
     args: [{ addr: agentAddress }, { i128: BigInt(amount) }],
     server: s,
   })
   const latest = await s.getLatestLedger()
   const validUntilLedger = latest.sequence + AUTH_TTL_LEDGERS
-  return signAgentDepositEntries({ tx, sessionKey, validUntilLedger, agentAddress, server: s })
+  const { xdr: signedXdr } = await signAgentDepositEntries({
+    tx,
+    sessionKey,
+    validUntilLedger,
+    agentAddress,
+    server: s,
+  })
+
+  // Re-simulate WITH the signed entry (enforcing mode). The first prepare ran in recording
+  // mode, which SKIPS the custom account's __check_auth — its assembled footprint can miss
+  // the agent contract's instance/wasm/nonce entries and the submit then traps with
+  // scecExceededLimit "contract instance outside of the footprint". The ed25519 signature
+  // covers (network id, nonce, expiration ledger, invocation) only — NOT footprint or
+  // resources — so re-assembling around the same signed entry is safe.
+  const { TransactionBuilder } = await sdk()
+  const signedTx = TransactionBuilder.fromXDR(signedXdr, NETWORK_PASSPHRASE)
+  const prepared = await s.prepareTransaction(signedTx)
+  return { xdr: prepared.toEnvelope().toXDR('base64') }
 }
 
 /**
  * Full gasless deposit: resolve the relayer, build + sign, submit via the relay.
- * @param {{agentAddress:string, amount:bigint, sessionKey:object, server?:object}} p
+ * @param {{agentAddress:string, amount:bigint, sessionKey:object, vault?:string, server?:object}} p
  * @returns {Promise<{hash:string, status:string, relayer?:string}|null>} null if relay unconfigured
  */
-export async function runAgentDeposit({ agentAddress, amount, sessionKey, server }) {
+export async function runAgentDeposit({ agentAddress, amount, sessionKey, vault, server }) {
   const relayer = await getRelayerAddress()
   if (!relayer) return null
-  const { xdr } = await buildAgentDeposit({ agentAddress, amount, relayer, sessionKey, server })
+  const { xdr } = await buildAgentDeposit({
+    agentAddress,
+    amount,
+    relayer,
+    sessionKey,
+    vault,
+    server,
+  })
   return submitViaRelay({ xdr })
 }
 
 /** Vault-share balance (i128 base units) of `addr`, or null on RPC failure. */
-export async function readVaultShares(addr, { server } = {}) {
+export async function readVaultShares(addr, { vault = SOROBAN_ACTIVE_VAULT_ADDRESS, server } = {}) {
   try {
     const v = await readContract({
-      contract: SOROBAN_VAULT_ADDRESS,
+      contract: vault,
       method: 'balance',
       args: [{ addr }],
       server,

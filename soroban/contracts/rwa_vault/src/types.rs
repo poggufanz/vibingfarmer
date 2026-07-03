@@ -6,13 +6,12 @@ pub enum DataKey {
     // NOTE: no `Admin` key here — the admin lives in OZ access-control storage
     // (`AccessControlStorageKey::Admin`). A `DataKey::Admin` unit variant would encode to
     // the identical `Vec[Symbol("Admin")]` storage key and collide (→ AdminAlreadySet).
-    Token,            // yield-farming asset token address (SEP-41 / SAC)
-    AccDivPerShare,   // cumulative dividend per share, scaled by SCALE (i128)
-    TotalPrincipal,   // sum of deposited assets backing shares 1:1 (i128)
-    DripEpoch,        // monotonically increasing dividend epoch (u64)
-    RewardDebt(Address), // per-holder accounted dividend baseline (i128)
-    Pending(Address),    // per-holder settled-but-unclaimed dividend (i128)
-    Pool,                // optional Blend lending pool address (yield source)
+    Token,         // yield-farming asset token address (SEP-41 / SAC)
+    Strategies,    // Vec<Address> — registered strategies, drained in order on redeem
+    Keeper,        // address allowed to call compound/rebalance (Task 8/9)
+    LastRebalance, // ledger timestamp of the last rebalance; constructor seeds it to 0
+    CooldownS,     // min seconds between rebalances (enforced starting Task 9)
+    MaxMoveBps,    // max bps of total_assets movable per rebalance (enforced starting Task 9)
 }
 
 #[contracterror]
@@ -21,46 +20,42 @@ pub enum DataKey {
 pub enum VaultError {
     NotInit = 1,
     InvalidAmount = 2,
-    NoShares = 3,            // drip with zero total supply
-    InsufficientShares = 4,  // redeem more than held
+    InsufficientShares = 4, // redeem more shares than held
     MathOverflow = 5,
-    NothingToClaim = 6,
-    PoolNotSet = 7,      // harvest/Blend op attempted with no pool wired
-    PoolAlreadySet = 8,  // set_pool called twice
+    StrategyNotFound = 10,     // remove_strategy: address isn't in the registry
+    TooManyStrategies = 11,    // add_strategy: registry already holds MAX_STRATEGIES (4)
+    StrategyNotEmpty = 12,     // remove_strategy: strategy.balance() != 0
+    NotKeeper = 13, // compound/rebalance: caller isn't the registered keeper (or none set)
+    CooldownActive = 14, // rebalance: called again before `cooldown_s` elapsed since the last one
+    MoveTooLarge = 15, // rebalance: amount <= 0, or exceeds `max_move_bps` of `from`'s balance
+    FirstDepositTooSmall = 16, // first deposit below MIN_FIRST_DEPOSIT (inflation guard)
+    InsufficientLiquidity = 17, // redeem cannot be covered even after draining strategies
+    StrategyAlreadyRegistered = 18, // add_strategy: address is already in the registry
 }
 
 #[contractevent(topics = ["vault_deposit"])]
 pub struct Deposit {
     pub holder: Address,
-    pub amount: i128, // assets in
-    pub shares: i128, // shares minted (== amount, stable NAV)
+    pub amount: i128, // assets pulled in
+    pub shares: i128, // shares minted at the current exchange rate
 }
 
 #[contractevent(topics = ["vault_redeem"])]
 pub struct Redeem {
     pub holder: Address,
-    pub shares: i128,
-    pub assets: i128, // == shares, stable NAV
+    pub shares: i128, // shares burned
+    pub assets: i128, // assets paid out at the current exchange rate
 }
 
-#[contractevent(topics = ["vault_drip"])]
-pub struct Drip {
-    pub epoch: u64,
-    pub amount: i128,            // dividend funded this epoch
-    pub acc_div_per_share: i128, // new cumulative index
-    pub total_shares: i128,
+#[contractevent(topics = ["vault_compound"])]
+pub struct Compound {
+    pub total_gain: i128,      // USDC gain realized across every strategy this call
+    pub price_per_share: i128, // exchange rate immediately after the sweep (7dp, PPS_SCALE)
 }
 
-#[contractevent(topics = ["vault_claim"])]
-pub struct Claim {
-    pub holder: Address,
-    pub amount: i128, // asset dividend paid out
-}
-
-#[contractevent(topics = ["vault_harvest"])]
-pub struct Harvest {
-    pub epoch: u64,
-    pub interest: i128,          // real yield distributed this harvest
-    pub acc_div_per_share: i128, // new cumulative index
-    pub total_shares: i128,
+#[contractevent(topics = ["vault_rebalance"])]
+pub struct Rebalance {
+    pub from: Address, // strategy drained
+    pub to: Address,   // strategy credited, or the vault's own address (de-risk-to-idle)
+    pub amount: i128,  // actual amount moved (the `from` strategy's real `withdraw` return)
 }

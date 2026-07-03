@@ -1,6 +1,8 @@
 use soroban_sdk::auth::{Context, CustomAccountInterface};
 use soroban_sdk::crypto::Hash;
-use soroban_sdk::{contractimpl, symbol_short, Address, Bytes, BytesN, Env, Symbol, TryIntoVal, Vec};
+use soroban_sdk::{
+    contractimpl, symbol_short, Address, Bytes, BytesN, Env, Symbol, TryIntoVal, Vec,
+};
 
 use crate::types::{AccountError, AgentScope, DataKey};
 use crate::{AgentAccount, AgentAccountArgs, AgentAccountClient};
@@ -156,12 +158,17 @@ impl CustomAccountInterface for AgentAccount {
                 .instance()
                 .get(&DataKey::Signer)
                 .ok_or(AccountError::NotInit)?;
-            let sig_bytes: BytesN<64> = signature.try_into().map_err(|_| AccountError::BadSignature)?;
+            let sig_bytes: BytesN<64> = signature
+                .try_into()
+                .map_err(|_| AccountError::BadSignature)?;
             env.crypto().ed25519_verify(&pubkey, &payload, &sig_bytes);
             enforce(&env, &auth_contexts)
         } else if signature.len() == 65 {
             let tag: u8 = signature.get(0).ok_or(AccountError::BadSignature)?;
-            let sig_bytes: BytesN<64> = signature.slice(1..65).try_into().map_err(|_| AccountError::BadSignature)?;
+            let sig_bytes: BytesN<64> = signature
+                .slice(1..65)
+                .try_into()
+                .map_err(|_| AccountError::BadSignature)?;
 
             if tag == 0 {
                 let pubkey: BytesN<32> = env
@@ -195,7 +202,10 @@ impl AgentAccount {
     pub fn enforce_scope_for_test(env: Env, contexts: Vec<Context>) -> Result<(), AccountError> {
         enforce(&env, &contexts)
     }
-    pub fn enforce_exit_scope_for_test(env: Env, contexts: Vec<Context>) -> Result<(), AccountError> {
+    pub fn enforce_exit_scope_for_test(
+        env: Env,
+        contexts: Vec<Context>,
+    ) -> Result<(), AccountError> {
         enforce_exit(&env, &contexts)
     }
 }

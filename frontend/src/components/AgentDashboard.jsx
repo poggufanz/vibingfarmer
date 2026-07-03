@@ -72,6 +72,7 @@ export default function AgentDashboard({
   loopPanel = null,
   loopStatus = null,
   decisionPanel = null,
+  keeperPanel = null,
 }) {
   const [now, setNow] = useState(Date.now())
   const [withdrawVault, setWithdrawVault] = useState(null)
@@ -384,6 +385,13 @@ export default function AgentDashboard({
         <div style={{ paddingTop: 20, borderTop: '1px solid var(--border)', marginTop: 20 }}>
           <div style={sectionLabel}>Decision Log</div>
           {decisionPanel}
+        </div>
+      )}
+
+      {keeperPanel && (
+        <div style={{ paddingTop: 20, borderTop: '1px solid var(--border)', marginTop: 20 }}>
+          <div style={sectionLabel}>Keeper · autonomous compounding</div>
+          {keeperPanel}
         </div>
       )}
 

@@ -2829,6 +2829,38 @@ input, select, textarea {
 
 
 /* ============================================
+   Keeper Panel (vf-autofarm) — autonomous compound/rebalance activity
+   ============================================ */
+.keeper-panel { display: flex; flex-direction: column; gap: 4px; }
+
+.keeper-pps { padding-bottom: 16px; margin-bottom: 4px; border-bottom: 1px solid var(--border); }
+.keeper-pps .label { display: block; margin-top: 4px; color: var(--text-faint); font-size: 10.5px; }
+
+.keeper-section { padding-top: 14px; }
+.keeper-section-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-faint);
+  margin-bottom: 8px;
+}
+
+.keeper-empty { color: var(--text-faint); padding: 10px 2px; }
+
+.keeper-action-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text); }
+.keeper-action-dot { font-size: 12px; flex-shrink: 0; }
+.keeper-action-text { flex: 1; }
+.keeper-action-meta { color: var(--text-faint); font-size: 10.5px; flex-shrink: 0; }
+
+.keeper-strategy-list { display: flex; flex-direction: column; gap: 8px; }
+.keeper-strategy-row {
+  display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--text);
+  padding: 8px 0; border-bottom: 1px solid var(--border);
+}
+.keeper-strategy-row:last-child { border-bottom: none; padding-bottom: 0; }
+.keeper-strategy-name { flex: 1; }
+.keeper-strategy-pool { color: var(--text-faint); font-size: 10.5px; }
+.keeper-strategy-apr { color: var(--accent); font-size: 11px; flex-shrink: 0; }
+
+
+/* ============================================
    Global scrollbar hide — maintain scroll functionality
    ============================================ */
 * {

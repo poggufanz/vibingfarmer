@@ -6,7 +6,11 @@ import { connectWallet } from './walletSign.js'
 // selectable picker post-connect (same rows, same truth).
 const SCOPE_INFO = [
   { id: 'strategy', endpoints: 'POST /strategy', note: 'ai allocation · market context' },
-  { id: 'market', endpoints: '/vault-facts · /prices · /eligibility', note: 'read-only market data' },
+  {
+    id: 'market',
+    endpoints: '/vault-facts · /prices · /eligibility',
+    note: 'read-only market data',
+  },
   { id: 'tx', endpoints: '/build-tx · /simulate', note: 'unsigned xdr only' },
   { id: 'submit', endpoints: 'POST /submit', note: 'fee-bump relay · deposit-only' },
   { id: 'scan', endpoints: 'POST /scan', note: 'risk verdict' },
@@ -14,7 +18,11 @@ const SCOPE_INFO = [
 
 const shortAddr = (g) => (g ? `${g.slice(0, 6)}…${g.slice(-4)}` : '')
 const fmtDate = (sec) =>
-  new Date(sec * 1000).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })
+  new Date(sec * 1000).toLocaleDateString('id-ID', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  })
 
 const sectionTitle = {
   fontFamily: 'var(--font-mono)',
@@ -93,8 +101,8 @@ export default function DevelopersPage() {
         <h1 className="h-display">Satu key, semua service.</h1>
         <p className="lede">
           Sign-in pakai wallet Stellar, generate API key ber-scope, lalu panggil strategy, risk
-          scan, sampai gasless deposit relay. Upstream secrets tetap di server VF — yang kamu
-          pegang cuma satu key <span className="mono">vf_</span>.
+          scan, sampai gasless deposit relay. Upstream secrets tetap di server VF — yang kamu pegang
+          cuma satu key <span className="mono">vf_</span>.
         </p>
 
         {error && (
@@ -166,7 +174,10 @@ export default function DevelopersPage() {
                         {on ? '✓ ' : ''}
                         {s.id}
                       </span>
-                      <span className="perm-doc-v" style={{ color: on ? undefined : 'var(--text-faint)' }}>
+                      <span
+                        className="perm-doc-v"
+                        style={{ color: on ? undefined : 'var(--text-faint)' }}
+                      >
                         {s.endpoints}
                         <span className="annot">{s.note}</span>
                       </span>
@@ -203,7 +214,11 @@ export default function DevelopersPage() {
               <span className="foot-note">
                 rate limit 60 req/min · <b>revocable</b> kapan aja
               </span>
-              <button className="btn btn-primary" onClick={onGenerate} disabled={scopes.length === 0}>
+              <button
+                className="btn btn-primary"
+                onClick={onGenerate}
+                disabled={scopes.length === 0}
+              >
                 Generate key
               </button>
             </div>

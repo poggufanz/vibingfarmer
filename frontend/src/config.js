@@ -1,7 +1,7 @@
 // App configuration — AI providers + the vault catalog. Single-chain Stellar: the EVM stack was
 // decommissioned 2026-06-21, so all chain addresses now live in stellar/config.js. This file holds
 // only chain-agnostic app config plus the AI advisor's vault universe.
-import { SOROBAN_VAULT_ADDRESS } from './stellar/config.js'
+import { SOROBAN_ACTIVE_VAULT_ADDRESS } from './stellar/config.js'
 
 // APIs
 export const VENICE_BASE_URL = 'https://api.venice.ai/api/v1'
@@ -25,7 +25,7 @@ export const VAULT_CATALOG = [
   {
     name: 'Aave v3 USDC',
     protocol: 'aave-v3',
-    address: SOROBAN_VAULT_ADDRESS,
+    address: SOROBAN_ACTIVE_VAULT_ADDRESS,
     apy: 4.8,
     risk: 'low',
     yield_source: 'lending',
@@ -37,7 +37,7 @@ export const VAULT_CATALOG = [
   {
     name: 'Morpho Blue USDC',
     protocol: 'morpho-blue',
-    address: SOROBAN_VAULT_ADDRESS,
+    address: SOROBAN_ACTIVE_VAULT_ADDRESS,
     apy: 6.1,
     risk: 'medium',
     yield_source: 'curated',
@@ -49,7 +49,7 @@ export const VAULT_CATALOG = [
   {
     name: 'Pendle PT-USDC',
     protocol: 'pendle-v2',
-    address: SOROBAN_VAULT_ADDRESS,
+    address: SOROBAN_ACTIVE_VAULT_ADDRESS,
     apy: 9.4,
     risk: 'high',
     yield_source: 'structured',
@@ -61,7 +61,7 @@ export const VAULT_CATALOG = [
   {
     name: 'Fluid USDC',
     protocol: 'fluid',
-    address: SOROBAN_VAULT_ADDRESS,
+    address: SOROBAN_ACTIVE_VAULT_ADDRESS,
     apy: 5.2,
     risk: 'high',
     yield_source: 'hybrid',

@@ -19,6 +19,7 @@ const PASSPHRASE = () =>
 const RPC_URL = () => process.env.SOROBAN_RPC_URL || 'https://soroban-testnet.stellar.org'
 const RELAYER_SECRET = () => process.env.STELLAR_RELAYER_SECRET || ''
 const VAULT_ADDR = () => process.env.SOROBAN_VAULT_ADDRESS || ''
+const TOKEN_ADDR = () => process.env.SOROBAN_TOKEN_ADDRESS || ''
 
 // Fee-bump base fee = inner fee + this margin (stroops). 0.1 XLM is generous on testnet and
 // safely clears the SDK's "fee-bump fee >= inner fee" floor for our single-op deposit txs.
@@ -38,14 +39,18 @@ function pruneSeen(now) {
 }
 
 /**
- * Reject anything that is not a single InvokeHostFunction calling `vaultAddr`.deposit.
+ * Allowlist the inner tx the relay will sponsor: a single InvokeHostFunction calling
+ * `vaultAddr`.deposit, `vaultAddr`.redeem (F11 exit leg 1), or — when tokenAddr is set —
+ * `tokenAddr`.transfer whose `from` is a contract address (F11 exit leg 2: the agent custom
+ * account's own __check_auth still gates the transfer to `to == scope.owner` on-chain; this
+ * server-side check only stops the relayer sponsoring arbitrary G-account token moves).
  * No-op when vaultAddr is falsy. Throws RelayError on mismatch.
  */
-export function assertVaultDeposit(inner, vaultAddr, sdk) {
+export function assertVaultDeposit(inner, vaultAddr, sdk, tokenAddr = '') {
   if (!vaultAddr) return
   const ops = inner.operations || []
   if (ops.length !== 1 || ops[0].type !== 'invokeHostFunction') {
-    throw new RelayError('relay sponsors a single vault deposit only')
+    throw new RelayError('relay sponsors a single contract invocation only')
   }
   const hf = ops[0].func
   if (hf.switch().name !== 'hostFunctionTypeInvokeContract') {
@@ -54,8 +59,20 @@ export function assertVaultDeposit(inner, vaultAddr, sdk) {
   const ic = hf.invokeContract()
   const contract = sdk.Address.fromScAddress(ic.contractAddress()).toString()
   const fnName = ic.functionName().toString()
-  if (contract !== vaultAddr) throw new RelayError('inner tx does not target the vault')
-  if (fnName !== 'deposit') throw new RelayError('inner tx is not a deposit')
+  if (contract === vaultAddr) {
+    if (fnName !== 'deposit' && fnName !== 'redeem') {
+      throw new RelayError('inner tx is not a vault deposit/redeem')
+    }
+    return
+  }
+  if (tokenAddr && contract === tokenAddr && fnName === 'transfer') {
+    const from = sdk.Address.fromScVal(ic.args()[0]).toString()
+    if (!from.startsWith('C')) {
+      throw new RelayError('relay sponsors agent-account transfers only')
+    }
+    return
+  }
+  throw new RelayError('inner tx does not target the vault')
 }
 
 /** Poll getTransaction until it leaves NOT_FOUND, or the budget is spent. */
@@ -84,6 +101,7 @@ export async function feeBumpAndSubmit({
   secret,
   passphrase,
   vaultAddr,
+  tokenAddr = '',
   sdk,
   rpcServer,
   pollTries = 10,
@@ -95,7 +113,7 @@ export async function feeBumpAndSubmit({
   if (inner instanceof FeeBumpTransaction) {
     throw new RelayError('inner tx is already fee-bumped')
   }
-  assertVaultDeposit(inner, vaultAddr, sdk)
+  assertVaultDeposit(inner, vaultAddr, sdk, tokenAddr)
 
   // Replay short-circuit (don't pay to re-broadcast a spent inner tx).
   const innerHash = inner.hash().toString('hex')
@@ -187,6 +205,7 @@ export default async function handler(req, res) {
           secret,
           passphrase: PASSPHRASE(),
           vaultAddr: VAULT_ADDR(),
+          tokenAddr: TOKEN_ADDR(),
           sdk,
           rpcServer,
         })

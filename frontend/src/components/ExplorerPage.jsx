@@ -10,7 +10,7 @@
 import { useEffect, useState } from 'react'
 import {
   SOROBAN_REGISTRY_ADDRESS,
-  SOROBAN_VAULT_ADDRESS,
+  SOROBAN_ACTIVE_VAULT_ADDRESS,
   SOROBAN_TOKEN_ADDRESS,
   SOROBAN_DEMO_AGENT,
   SOROBAN_DECIMALS,
@@ -32,11 +32,11 @@ const CONTRACTS = [
     description: 'Per-agent scope · authorize · revoke (kill switch)',
   },
   {
-    name: 'YieldVault · vfVLT',
+    name: 'Autofarm Vault · vfVLT',
     type: 'VAULT',
     protocol: 'soroban',
-    address: SOROBAN_VAULT_ADDRESS,
-    description: 'SEP-41 shares · cumulative-dividend yield',
+    address: SOROBAN_ACTIVE_VAULT_ADDRESS,
+    description: 'SEP-41 shares · exchange-rate yield (keeper compound raises price-per-share)',
   },
   {
     name: 'VFUSD',
@@ -324,7 +324,7 @@ export default function ExplorerPage() {
           <AttestationsTable strategies={strategies} />
           <a
             className="ex-extlink ex-extlink--block"
-            href={`${STELLAR_EXPERT}${SOROBAN_VAULT_ADDRESS}`}
+            href={`${STELLAR_EXPERT}${SOROBAN_ACTIVE_VAULT_ADDRESS}`}
             target="_blank"
             rel="noreferrer noopener"
           >
