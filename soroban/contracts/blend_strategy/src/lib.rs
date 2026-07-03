@@ -72,4 +72,41 @@ impl BlendStrategy {
     pub fn balance(e: Env) -> i128 {
         storage::get_principal(&e)
     }
+
+    /// Withdraws the entire Blend position, re-supplies the book principal, and forwards
+    /// the realized interest (the delta) to the vault. `min_out` is unused this task — it
+    /// becomes the BLND-swap floor once Task 5 wires the claim + swap path.
+    pub fn harvest(e: Env, min_out: i128) -> i128 {
+        let vault = storage::get_vault(&e);
+        vault.require_auth();
+        let _ = min_out; // used from Task 5 (BLND swap)
+
+        let token = storage::get_token(&e);
+        let me = e.current_contract_address();
+        let principal = storage::get_principal(&e);
+        if principal == 0 {
+            return 0;
+        }
+
+        let tk = TokenClient::new(&e, &token);
+        let before = tk.balance(&me);
+        blend::withdraw(&e, &storage::get_pool(&e), &token, i128::MAX);
+        let pulled = tk.balance(&me) - before;
+        blend::supply(&e, &storage::get_pool(&e), &token, principal.min(pulled));
+        let gain = tk.balance(&me) - before; // whatever remains after re-supply
+        if gain > 0 {
+            tk.transfer(&me, &vault, &gain);
+        }
+
+        types::StrategyHarvest {
+            interest: gain,
+            blnd_claimed: 0,
+            blnd_swapped: 0,
+            usdc_out: gain,
+            blnd_held: 0,
+        }
+        .publish(&e);
+        storage::extend_instance(&e);
+        gain
+    }
 }

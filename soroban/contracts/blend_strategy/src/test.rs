@@ -33,6 +33,9 @@ impl MockBlendPool {
                 e.storage()
                     .persistent()
                     .set(&MockKey::Supplied(from.clone()), &bal);
+                // Task 4: `credit_yield` has no `who` — remember the (sole) supplier so it
+                // knows whose position to credit.
+                e.storage().instance().set(&MOCK_SUPPLIER, &from);
             } else if req.request_type == WITHDRAW {
                 let held = mock_supplied(e, &from);
                 let amt = if req.amount > held { held } else { req.amount };
@@ -48,9 +51,25 @@ impl MockBlendPool {
             supply: Map::new(e),
         }
     }
+
+    /// Test-only: simulate Blend interest accruing to the sole supplier's position. Mints
+    /// `amount` extra tokens into the pool's own balance (so a subsequent withdraw-all can
+    /// actually pay it out) and credits the last-seen supplier's tracked position.
+    pub fn credit_yield(e: &Env, amount: i128) {
+        let token: Address = e.storage().instance().get(&MOCK_TOKEN).unwrap();
+        let pool = e.current_contract_address();
+        StellarAssetClient::new(e, &token).mint(&pool, &amount);
+
+        let supplier: Address = e.storage().instance().get(&MOCK_SUPPLIER).unwrap();
+        let bal = mock_supplied(e, &supplier) + amount;
+        e.storage()
+            .persistent()
+            .set(&MockKey::Supplied(supplier), &bal);
+    }
 }
 
 const MOCK_TOKEN: soroban_sdk::Symbol = soroban_sdk::symbol_short!("MTOKEN");
+const MOCK_SUPPLIER: soroban_sdk::Symbol = soroban_sdk::symbol_short!("MSUPPL");
 
 #[soroban_sdk::contracttype]
 enum MockKey {
@@ -78,7 +97,11 @@ pub(crate) struct Ctx {
 // real); mints it 1000 USDC and approves the strategy to pull on deposit, matching the
 // "vault approves strategy before deposit" contract noted in the task brief.
 fn setup(e: &Env) -> Ctx {
-    e.mock_all_auths();
+    // `_allowing_non_root_auth`: `credit_yield` (Task 4) mints via `StellarAssetClient` from
+    // *inside* the mock pool contract, so the SAC's admin auth is nested one level below the
+    // pool's own top-level invocation — plain `mock_all_auths` rejects that as "not tied to
+    // the root contract invocation".
+    e.mock_all_auths_allowing_non_root_auth();
     let admin = Address::generate(e);
     let sac = e.register_stellar_asset_contract_v2(admin.clone());
     let token = sac.address();
@@ -165,4 +188,66 @@ fn deposit_rejects_non_vault_caller() {
     e.set_auths(&[]);
 
     assert!(ctx.strategy.try_deposit(&(10 * U7)).is_err());
+}
+
+#[test]
+fn withdraw_rejects_non_vault_caller() {
+    let e = Env::default();
+    let ctx = setup(&e);
+    ctx.strategy.deposit(&(100 * U7));
+    // Same auth gate as deposit — withdraw's `vault.require_auth()` must also fail closed
+    // once the blanket auth mock is stripped.
+    e.set_auths(&[]);
+
+    assert!(ctx.strategy.try_withdraw(&(10 * U7)).is_err());
+}
+
+#[test]
+fn harvest_realizes_interest_and_forwards_to_vault() {
+    let e = Env::default();
+    let ctx = setup(&e);
+    ctx.strategy.deposit(&(100 * U7));
+
+    let pool = MockBlendPoolClient::new(&e, &ctx.pool);
+    pool.credit_yield(&(7 * U7));
+
+    let harvested = ctx.strategy.harvest(&0);
+
+    assert_eq!(harvested, 7 * U7);
+    // vault: 1000 - 100 (deposit) + 7 (harvested interest) = 907
+    assert_eq!(
+        TokenClient::new(&e, &ctx.token).balance(&ctx.vault),
+        907 * U7
+    );
+    // Principal re-supplied in full — book balance unchanged by harvest.
+    assert_eq!(ctx.strategy.balance(), 100 * U7);
+}
+
+#[test]
+fn harvest_zero_interest_returns_zero() {
+    let e = Env::default();
+    let ctx = setup(&e);
+    ctx.strategy.deposit(&(100 * U7));
+
+    let harvested = ctx.strategy.harvest(&0);
+
+    assert_eq!(harvested, 0);
+    assert_eq!(ctx.strategy.balance(), 100 * U7);
+    // vault: 1000 - 100 (deposit), untouched by a zero-gain harvest.
+    assert_eq!(
+        TokenClient::new(&e, &ctx.token).balance(&ctx.vault),
+        900 * U7
+    );
+}
+
+#[test]
+fn harvest_rejects_non_vault_caller() {
+    let e = Env::default();
+    let ctx = setup(&e);
+    ctx.strategy.deposit(&(100 * U7));
+    // Same auth gate as deposit/withdraw — harvest's `vault.require_auth()` must also fail
+    // closed once the blanket auth mock is stripped.
+    e.set_auths(&[]);
+
+    assert!(ctx.strategy.try_harvest(&0).is_err());
 }
