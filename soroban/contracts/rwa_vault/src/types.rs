@@ -29,6 +29,7 @@ pub enum VaultError {
     // those tasks construct them, to keep this task's `-D warnings` clippy gate clean.
     FirstDepositTooSmall = 16, // first deposit below MIN_FIRST_DEPOSIT (inflation guard)
     InsufficientLiquidity = 17, // redeem cannot be covered even after draining strategies
+    StrategyAlreadyRegistered = 18, // add_strategy: address is already in the registry
 }
 
 #[contractevent(topics = ["vault_deposit"])]

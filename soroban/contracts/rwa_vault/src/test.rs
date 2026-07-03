@@ -336,6 +336,29 @@ fn admin_registers_strategies_max_four() {
 }
 
 #[test]
+fn add_strategy_rejects_duplicate() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let strat = deploy_mock_strategy(&env, &ctx);
+    ctx.vault.add_strategy(&strat);
+    fund_strategy(&env, &ctx, &strat, 10 * U7);
+
+    assert_eq!(ctx.vault.strategies().len(), 1);
+    assert_eq!(ctx.vault.total_assets(), 10 * U7);
+
+    // Re-registering the SAME address must be rejected — otherwise `total_assets` would sum
+    // the strategy's `balance()` twice (once per registry entry), inflating `price_per_share`.
+    assert_eq!(
+        ctx.vault.try_add_strategy(&strat),
+        Err(Ok(VaultError::StrategyAlreadyRegistered))
+    );
+
+    // Rejected duplicate didn't grow the registry or change what total_assets reports.
+    assert_eq!(ctx.vault.strategies().len(), 1);
+    assert_eq!(ctx.vault.total_assets(), 10 * U7);
+}
+
+#[test]
 fn remove_requires_empty() {
     let env = Env::default();
     let ctx = setup(&env);
@@ -357,6 +380,22 @@ fn remove_requires_empty() {
         ctx.vault.try_remove_strategy(&strat),
         Err(Ok(VaultError::StrategyNotFound))
     );
+}
+
+#[test]
+fn remove_strategy_admin_only() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let strat = deploy_mock_strategy(&env, &ctx);
+    ctx.vault.add_strategy(&strat); // balance() stays 0 — nothing funded
+
+    env.set_auths(&[]); // no admin signature present → must fail
+    assert!(ctx.vault.try_remove_strategy(&strat).is_err());
+    assert_eq!(ctx.vault.strategies().len(), 1); // rejected call left the registry untouched
+
+    env.mock_all_auths();
+    ctx.vault.remove_strategy(&strat);
+    assert_eq!(ctx.vault.strategies().len(), 0);
 }
 
 #[test]
@@ -408,6 +447,18 @@ fn set_keeper_admin_only() {
     env.mock_all_auths();
     ctx.vault.set_keeper(&keeper);
     assert_eq!(ctx.vault.keeper(), keeper);
+}
+
+#[test]
+fn set_limits_admin_only() {
+    let env = Env::default();
+    let ctx = setup(&env);
+
+    env.set_auths(&[]); // no admin signature present → must fail
+    assert!(ctx.vault.try_set_limits(&3600u64, &1_000u32).is_err());
+
+    env.mock_all_auths();
+    ctx.vault.set_limits(&3600u64, &1_000u32); // admin call succeeds without panicking
 }
 
 #[test]

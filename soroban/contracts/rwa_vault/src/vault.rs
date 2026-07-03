@@ -45,10 +45,15 @@ pub fn strategies(e: &Env) -> Vec<Address> {
     get_strategies(e)
 }
 
-/// Admin-only. Appends `strategy` to the registry; rejects a 5th entry.
+/// Admin-only. Appends `strategy` to the registry; rejects a 5th entry and rejects
+/// re-registering an address already present (a duplicate entry would make `total_assets`
+/// sum that strategy's `balance()` twice, inflating `price_per_share`).
 pub fn add_strategy(e: &Env, strategy: Address) -> Result<(), VaultError> {
     require_admin(e);
     let mut list = get_strategies(e);
+    if list.first_index_of(&strategy).is_some() {
+        return Err(VaultError::StrategyAlreadyRegistered);
+    }
     if list.len() >= MAX_STRATEGIES {
         return Err(VaultError::TooManyStrategies);
     }
