@@ -30,7 +30,7 @@ TAVILY_API_KEY=tvly-...
 STELLAR_RELAYER_SECRET=S...
 SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
 STELLAR_NETWORK_PASSPHRASE=Test SDF Network ; September 2015
-SOROBAN_VAULT_ADDRESS=CCDXZ6BUA7TPR3EXQWJWUD7EYR6OUMJRYIKYXPE53HRJOJFY5CXEHTN5
+SOROBAN_VAULT_ADDRESS=CB5VKYDUIYX3RZWGVLKKNBPG7V7Z5JIHF2QPNQKWKAHVA3IPSLFZJDYU
 
 # Testnet token faucet (server-only; leave unset to disable /api/faucet with 503)
 VF_FAUCET_SECRET=S...                    # vf-deployer secret; treasury must hold testnet Blend USDC

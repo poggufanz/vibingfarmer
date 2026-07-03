@@ -20,9 +20,11 @@ export const SOROBAN_ATTESTATION_ADDRESS =
 // Yield-farming asset = Blend testnet USDC (7 decimals) post-cutover — the vault's underlying
 // IS the asset Blend lends, so deposits supply into the pool. Pulls + pays dividends in it.
 export const SOROBAN_TOKEN_ADDRESS = 'CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU'
-// Pre-seeded demo agent custom account (1a, v2 — constructor self-approves the vault for cap).
+// Pre-seeded demo agent custom account (1a, v3 — scope pins the AUTOFARM vault; constructor
+// self-approves it for the cap). __check_auth scope is constructor-only, so the cutover needed
+// a fresh deploy: v2 CD3MQJ4Y… stays pinned to the old 1:1 vault (kept on-chain for history).
 // Used by the smoke script + demo flows. Owner = vf-deployer; signer in deployments JSON.
-export const SOROBAN_DEMO_AGENT = 'CD3MQJ4YZQ5MDSKDETEFZMDV5J5URVXM46NY5Y3RICUOVJJOFIZTKJ7K'
+export const SOROBAN_DEMO_AGENT = 'CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC'
 // Token + vault-share decimals (both 7). Amounts are i128 in base units (1 VFUSD = 10_000_000).
 export const SOROBAN_DECIMALS = 7
 

@@ -78,7 +78,24 @@ export async function buildAgentDeposit({
   })
   const latest = await s.getLatestLedger()
   const validUntilLedger = latest.sequence + AUTH_TTL_LEDGERS
-  return signAgentDepositEntries({ tx, sessionKey, validUntilLedger, agentAddress, server: s })
+  const { xdr: signedXdr } = await signAgentDepositEntries({
+    tx,
+    sessionKey,
+    validUntilLedger,
+    agentAddress,
+    server: s,
+  })
+
+  // Re-simulate WITH the signed entry (enforcing mode). The first prepare ran in recording
+  // mode, which SKIPS the custom account's __check_auth — its assembled footprint can miss
+  // the agent contract's instance/wasm/nonce entries and the submit then traps with
+  // scecExceededLimit "contract instance outside of the footprint". The ed25519 signature
+  // covers (network id, nonce, expiration ledger, invocation) only — NOT footprint or
+  // resources — so re-assembling around the same signed entry is safe.
+  const { TransactionBuilder } = await sdk()
+  const signedTx = TransactionBuilder.fromXDR(signedXdr, NETWORK_PASSPHRASE)
+  const prepared = await s.prepareTransaction(signedTx)
+  return { xdr: prepared.toEnvelope().toXDR('base64') }
 }
 
 /**
