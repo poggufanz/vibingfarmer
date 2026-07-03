@@ -9,7 +9,11 @@
 // BytesN<64> signature exactly. (stellar-sdk's authorizeEntry helper packs signatures for
 // Keypair signers; a custom account expects the bare sig — see pin-at-impl note.)
 import { rpcServer, buildInvokeTx, readContract } from './client.js'
-import { SOROBAN_ACTIVE_VAULT_ADDRESS, SOROBAN_TOKEN_ADDRESS, NETWORK_PASSPHRASE } from './config.js'
+import {
+  SOROBAN_ACTIVE_VAULT_ADDRESS,
+  SOROBAN_TOKEN_ADDRESS,
+  NETWORK_PASSPHRASE,
+} from './config.js'
 import { getRelayerAddress, submitViaRelay } from './relay.js'
 
 let _sdk = null

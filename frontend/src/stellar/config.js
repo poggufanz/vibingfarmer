@@ -44,7 +44,8 @@ export const SOROBAN_BLEND_USDC_ADDRESS = 'CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJ
 // (OWN_POOL_VIABLE=false), so this vault runs one Blend strategy on the same TestnetV2 pool
 // and relies on the de-risk-to-idle rebalance fallback (rebalance(to=vault)) in place of a
 // second strategy/pool. See docs/superpowers/plans/2026-07-03-vf-autofarm-progress.md.
-export const SOROBAN_AUTOFARM_VAULT_ADDRESS = 'CB5VKYDUIYX3RZWGVLKKNBPG7V7Z5JIHF2QPNQKWKAHVA3IPSLFZJDYU'
+export const SOROBAN_AUTOFARM_VAULT_ADDRESS =
+  'CB5VKYDUIYX3RZWGVLKKNBPG7V7Z5JIHF2QPNQKWKAHVA3IPSLFZJDYU'
 export const SOROBAN_STRATEGY_1_ADDRESS = 'CCH424TVLTP2P3URNRGGF26X24XRPBVBXCRZ6QBCWLSX6KH4QZSLNBC2'
 // The app's LIVE deposit target (cutover, handoff §1). Points at the autofarm vault: shares are
 // exchange-rate priced (price_per_share ≠ 1:1) — every USDC display must convert shares via pps.
