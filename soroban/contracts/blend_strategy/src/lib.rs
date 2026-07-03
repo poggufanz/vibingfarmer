@@ -100,28 +100,34 @@ impl BlendStrategy {
 
         // Claim BLND emissions — best-effort. Testnet pools may have emissions disabled, in
         // which case the pool traps and `try_claim` swallows it so interest-only harvest
-        // proceeds normally (see `harvest_survives_no_emissions`).
+        // proceeds normally (see `harvest_survives_no_emissions`). Snapshot the pre-claim
+        // balance so the event can report THIS round's claim delta, not the full (possibly
+        // carried-over from a prior `min_out == 0` harvest) balance.
+        let blnd = storage::get_blnd(&e);
+        let blnd_client = TokenClient::new(&e, &blnd);
+        let blnd_before = blnd_client.balance(&me);
+
         let pool_client = blend::BlendPoolClient::new(&e, &storage::get_pool(&e));
         let ids = vec![&e, storage::get_reserve_token_id(&e)];
         let _ = pool_client.try_claim(&me, &ids, &me);
-        let blnd = storage::get_blnd(&e);
-        let blnd_client = TokenClient::new(&e, &blnd);
-        let blnd_claimed = blnd_client.balance(&me);
+        let blnd_bal = blnd_client.balance(&me);
+        let blnd_claimed = blnd_bal - blnd_before; // this round's claim delta, for the event
 
-        // Swap the full BLND balance to the underlying token when the caller opts in via
+        // Swap the full BLND balance (this round's claim plus any held-over balance from a
+        // prior `min_out == 0` harvest) to the underlying token when the caller opts in via
         // `min_out > 0` (`0` means hold BLND on the strategy instead). Unlike the claim, the
         // swap is NOT best-effort — a slippage revert must abort the whole harvest so a bad
         // swap can never land partially.
         let mut swapped = 0i128;
-        if blnd_claimed > 0 && min_out > 0 {
+        if blnd_bal > 0 && min_out > 0 {
             let router = storage::get_router(&e);
             let exp = e.ledger().sequence() + SWAP_APPROVE_TTL;
-            blnd_client.approve(&me, &router, &blnd_claimed, &exp);
+            blnd_client.approve(&me, &router, &blnd_bal, &exp);
             let path = vec![&e, blnd.clone(), token.clone()];
             let deadline = e.ledger().timestamp() + SWAP_DEADLINE_SECS;
             let amounts = soroswap::SoroswapRouterClient::new(&e, &router)
-                .swap_exact_tokens_for_tokens(&blnd_claimed, &min_out, &path, &me, &deadline);
-            swapped = amounts.get(amounts.len() - 1).unwrap_or(0);
+                .swap_exact_tokens_for_tokens(&blnd_bal, &min_out, &path, &me, &deadline);
+            swapped = amounts.get(amounts.len().saturating_sub(1)).unwrap_or(0);
         }
 
         let resupply = principal.min(pulled);

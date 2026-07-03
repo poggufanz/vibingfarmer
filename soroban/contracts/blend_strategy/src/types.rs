@@ -19,7 +19,7 @@ pub enum DataKey {
 #[contractevent(topics = ["strategy_harvest"])]
 pub struct StrategyHarvest {
     pub interest: i128, // realized Blend interest forwarded to the vault (excludes swap)
-    pub blnd_claimed: i128, // BLND balance held after this harvest's claim
+    pub blnd_claimed: i128, // THIS round's BLND claim delta (excludes any carried-over balance)
     pub blnd_swapped: i128, // underlying-token proceeds from swapping the claimed BLND
     pub usdc_out: i128, // total underlying token sent to the vault this harvest
     pub blnd_held: i128, // BLND left on the strategy after (claimed but not swapped)

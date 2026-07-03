@@ -1,8 +1,9 @@
 #![cfg(test)]
+use crate::types::StrategyHarvest;
 use crate::{BlendStrategy, BlendStrategyClient};
 use soroban_sdk::testutils::{Address as _, Events as _};
 use soroban_sdk::token::{StellarAssetClient, TokenClient};
-use soroban_sdk::{contract, contractimpl, Address, Env, Map, Vec};
+use soroban_sdk::{contract, contractimpl, Address, Env, Event, Map, Vec};
 
 use crate::blend::{Positions, Request, SUPPLY, WITHDRAW};
 
@@ -494,4 +495,63 @@ fn swap_slippage_reverts_whole_harvest() {
         TokenClient::new(&e, &ctx.token).balance(&ctx.vault),
         900 * U7 // no partial transfer landed
     );
+}
+
+#[test]
+fn harvest_blnd_claimed_reports_round_delta_not_carryover() {
+    let e = Env::default();
+    let ctx = setup(&e);
+    ctx.strategy.deposit(&(100 * U7));
+
+    let pool = MockBlendPoolClient::new(&e, &ctx.pool);
+
+    // Round 1: 30 BLND emitted, held on the strategy (min_out == 0 -> no swap). Nothing was
+    // carried over before this round, so the claim delta equals the full claimed balance.
+    pool.enable_emissions(&ctx.blnd, &(30 * U7));
+    let harvested1 = ctx.strategy.harvest(&0);
+    // `events().all()` reflects only the LAST contract invocation — capture it immediately,
+    // before any other client call (even a read-only `balance()`) becomes the new "last".
+    let events1 = e.events().all();
+
+    assert_eq!(harvested1, 0);
+    assert_eq!(
+        TokenClient::new(&e, &ctx.blnd).balance(&ctx.strategy.address),
+        30 * U7 // held, not swapped
+    );
+    // `.last()` — our custom event publishes after the internal resupply/transfer calls, so it
+    // sorts last among this invocation's events (published in call order).
+    let event1 = events1.events().last().unwrap();
+    let expected1 = StrategyHarvest {
+        interest: 0,
+        blnd_claimed: 30 * U7,
+        blnd_swapped: 0,
+        usdc_out: 0,
+        blnd_held: 30 * U7,
+    }
+    .to_xdr(&e, &ctx.strategy.address);
+    assert_eq!(event1, &expected1);
+
+    // Round 2: a NEW 20 BLND is emitted on top of the 30 held over from round one (50 total on
+    // the strategy). min_out > 0 triggers the swap, which sweeps the FULL 50 BLND balance — but
+    // the event's `blnd_claimed` must report only this round's delta (20), never the
+    // accumulated 50.
+    pool.enable_emissions(&ctx.blnd, &(20 * U7));
+    let harvested2 = ctx.strategy.harvest(&U7); // floor of 1 token, well under the 5-token payout
+    let events2 = e.events().all();
+
+    assert_eq!(harvested2, 5 * U7); // 50 BLND * 1/10 router rate
+    assert_eq!(
+        TokenClient::new(&e, &ctx.blnd).balance(&ctx.strategy.address),
+        0 // fully swept by the swap — the whole 50, not just this round's 20
+    );
+    let event2 = events2.events().last().unwrap();
+    let expected2 = StrategyHarvest {
+        interest: 0,
+        blnd_claimed: 20 * U7, // this round's delta — NOT the accumulated 50
+        blnd_swapped: 5 * U7,
+        usdc_out: 5 * U7,
+        blnd_held: 0,
+    }
+    .to_xdr(&e, &ctx.strategy.address);
+    assert_eq!(event2, &expected2);
 }
