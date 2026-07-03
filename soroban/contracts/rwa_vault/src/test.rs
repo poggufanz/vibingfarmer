@@ -1,10 +1,10 @@
 #![cfg(test)]
-use crate::types::{Compound, VaultError};
+use crate::types::{Compound, Rebalance, VaultError};
 use crate::vault::DEAD_SHARES;
 use crate::{RwaVault, RwaVaultClient};
-use soroban_sdk::testutils::{Address as _, Events as _};
+use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _};
 use soroban_sdk::token::{StellarAssetClient, TokenClient};
-use soroban_sdk::{Address, Env, Event, String, Vec};
+use soroban_sdk::{Address, BytesN, Env, Event, String, Vec};
 
 const U7: i128 = 10_000_000; // 1.0 unit at 7 decimals (1 USDC)
 
@@ -678,4 +678,203 @@ fn price_per_share_increases_after_compound() {
     let pps_after = ctx.vault.price_per_share();
 
     assert!(pps_after > pps_before);
+}
+
+// ----- Task 9: keeper-gated rebalance (cooldown + caps), admin emergency_withdraw/upgrade -----
+
+#[test]
+fn rebalance_moves_within_caps_and_sets_cooldown() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let strat1 = deploy_mock_strategy(&env, &ctx);
+    let strat2 = deploy_mock_strategy(&env, &ctx);
+    ctx.vault.add_strategy(&strat1);
+    ctx.vault.add_strategy(&strat2);
+    fund_strategy(&env, &ctx, &strat1, 100 * U7);
+
+    let keeper = Address::generate(&env);
+    ctx.vault.set_keeper(&keeper);
+
+    // `Env::default()` starts ledger timestamp at 0, but `LastRebalance` is ALSO seeded to 0
+    // by the constructor — `now < last_rebalance + cooldown_s` would read `0 < 86_400` and
+    // wrongly block the very first-ever rebalance. On a real chain `now` is a huge Unix
+    // timestamp so this never bites; here we bump past it to mirror realistic chain time.
+    env.ledger().set_timestamp(100_000);
+
+    // Default max_move_bps = 5000 (50%) — moving exactly 50 of 100 sits AT the cap, not over.
+    ctx.vault.rebalance(&strat1, &strat2, &(50 * U7));
+    // `events().all()` reflects only the LAST contract invocation — capture immediately.
+    let events = env.events().all();
+
+    assert_eq!(MockStrategyClient::new(&env, &strat1).balance(), 50 * U7);
+    assert_eq!(MockStrategyClient::new(&env, &strat2).balance(), 50 * U7);
+
+    let event = events.events().last().unwrap();
+    let expected_event = Rebalance {
+        from: strat1.clone(),
+        to: strat2.clone(),
+        amount: 50 * U7,
+    }
+    .to_xdr(&env, &ctx.vault.address);
+    assert_eq!(event, &expected_event);
+}
+
+#[test]
+fn rebalance_cooldown_blocks_second_call() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let strat1 = deploy_mock_strategy(&env, &ctx);
+    let strat2 = deploy_mock_strategy(&env, &ctx);
+    ctx.vault.add_strategy(&strat1);
+    ctx.vault.add_strategy(&strat2);
+    fund_strategy(&env, &ctx, &strat1, 100 * U7);
+
+    let keeper = Address::generate(&env);
+    ctx.vault.set_keeper(&keeper);
+
+    // Bump past the seeded-0 LastRebalance/cooldown edge (see comment in the caps test above)
+    // before the very first rebalance ever made on this vault.
+    env.ledger().set_timestamp(100_000);
+
+    ctx.vault.rebalance(&strat1, &strat2, &(10 * U7)); // strat1=90, strat2=10
+
+    // Immediate second call — still within the default 24h cooldown → blocked.
+    assert_eq!(
+        ctx.vault.try_rebalance(&strat2, &strat1, &(5 * U7)),
+        Err(Ok(VaultError::CooldownActive))
+    );
+    // Rejected call left balances untouched.
+    assert_eq!(MockStrategyClient::new(&env, &strat1).balance(), 90 * U7);
+    assert_eq!(MockStrategyClient::new(&env, &strat2).balance(), 10 * U7);
+
+    // Bump ledger timestamp past the cooldown window → the same move now succeeds.
+    let now = env.ledger().timestamp();
+    env.ledger().set_timestamp(now + 86_400);
+    ctx.vault.rebalance(&strat2, &strat1, &(5 * U7)); // 5 == 50% of strat2's 10 — at the cap
+    assert_eq!(MockStrategyClient::new(&env, &strat1).balance(), 95 * U7);
+    assert_eq!(MockStrategyClient::new(&env, &strat2).balance(), 5 * U7);
+}
+
+#[test]
+fn rebalance_over_cap_rejected() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let strat1 = deploy_mock_strategy(&env, &ctx);
+    let strat2 = deploy_mock_strategy(&env, &ctx);
+    ctx.vault.add_strategy(&strat1);
+    ctx.vault.add_strategy(&strat2);
+    fund_strategy(&env, &ctx, &strat1, 100 * U7);
+
+    let keeper = Address::generate(&env);
+    ctx.vault.set_keeper(&keeper);
+    env.ledger().set_timestamp(100_000); // past the seeded-0 LastRebalance/cooldown edge
+
+    // Default max_move_bps = 5000 (50%) — moving 51 of 100 exceeds the cap.
+    assert_eq!(
+        ctx.vault.try_rebalance(&strat1, &strat2, &(51 * U7)),
+        Err(Ok(VaultError::MoveTooLarge))
+    );
+    // Rejected move left balances untouched.
+    assert_eq!(MockStrategyClient::new(&env, &strat1).balance(), 100 * U7);
+    assert_eq!(MockStrategyClient::new(&env, &strat2).balance(), 0);
+}
+
+#[test]
+fn rebalance_unregistered_strategy_rejected() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let strat1 = deploy_mock_strategy(&env, &ctx);
+    ctx.vault.add_strategy(&strat1);
+    fund_strategy(&env, &ctx, &strat1, 100 * U7);
+    let unregistered = deploy_mock_strategy(&env, &ctx); // never registered
+
+    let keeper = Address::generate(&env);
+    ctx.vault.set_keeper(&keeper);
+
+    assert_eq!(
+        ctx.vault.try_rebalance(&strat1, &unregistered, &(10 * U7)),
+        Err(Ok(VaultError::StrategyNotFound))
+    );
+    assert_eq!(
+        ctx.vault.try_rebalance(&unregistered, &strat1, &(10 * U7)),
+        Err(Ok(VaultError::StrategyNotFound))
+    );
+}
+
+#[test]
+fn rebalance_to_idle_derisks() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let strat1 = deploy_mock_strategy(&env, &ctx);
+    ctx.vault.add_strategy(&strat1);
+    fund_strategy(&env, &ctx, &strat1, 100 * U7);
+
+    let keeper = Address::generate(&env);
+    ctx.vault.set_keeper(&keeper);
+    env.ledger().set_timestamp(100_000); // past the seeded-0 LastRebalance/cooldown edge
+    let vault_addr = ctx.vault.address.clone();
+
+    // `to == vault_addr` is the de-risk-to-idle fallback: Task 1's spike proved a second
+    // on-chain Blend pool isn't viable on testnet, so the live demo rebalances between
+    // strategy #1 and idle instead of strategy #1 and a second strategy.
+    ctx.vault.rebalance(&strat1, &vault_addr, &(40 * U7));
+    let events = env.events().all();
+
+    assert_eq!(MockStrategyClient::new(&env, &strat1).balance(), 60 * U7);
+    // Funds landed idle in the vault — no redeposit into a second strategy.
+    assert_eq!(
+        TokenClient::new(&env, &ctx.token).balance(&vault_addr),
+        40 * U7
+    );
+
+    let event = events.events().last().unwrap();
+    let expected_event = Rebalance {
+        from: strat1.clone(),
+        to: vault_addr.clone(),
+        amount: 40 * U7,
+    }
+    .to_xdr(&env, &ctx.vault.address);
+    assert_eq!(event, &expected_event);
+}
+
+#[test]
+fn emergency_withdraw_drains_to_idle_even_when_paused() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let alice = Address::generate(&env);
+    fund_and_approve(&env, &ctx, &alice, 100 * U7);
+    let alice_shares = ctx.vault.deposit(&alice, &(100 * U7)); // idle = 100*U7
+
+    // Fund a strategy directly (bypassing deposit's idle-park) so it holds a balance to
+    // drain.
+    let strat = deploy_mock_strategy(&env, &ctx);
+    ctx.vault.add_strategy(&strat);
+    fund_strategy(&env, &ctx, &strat, 50 * U7);
+
+    ctx.vault.pause(&ctx.admin);
+
+    // emergency_withdraw is NOT pause-gated — it's the escape hatch you need WHILE paused.
+    ctx.vault.emergency_withdraw(&strat);
+    assert_eq!(MockStrategyClient::new(&env, &strat).balance(), 0);
+
+    // Now empty — remove_strategy succeeds (also not pause-gated; admin-only).
+    ctx.vault.remove_strategy(&strat);
+    assert_eq!(ctx.vault.strategies().len(), 0);
+
+    // redeem still works while paused (redeem was never pause-gated).
+    let assets = ctx.vault.redeem(&alice, &alice_shares);
+    assert!(assets > 0);
+}
+
+#[test]
+fn upgrade_admin_only() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let fake_hash = BytesN::from_array(&env, &[9u8; 32]);
+
+    // No admin signature present at all → auth error, not a logic error. (The wasm swap
+    // itself needs a real second uploaded wasm — covered by the live testnet smoke, not this
+    // unit suite; here we only prove the auth gate.)
+    env.set_auths(&[]);
+    assert!(ctx.vault.try_upgrade(&fake_hash).is_err());
 }

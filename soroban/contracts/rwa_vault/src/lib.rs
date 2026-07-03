@@ -1,5 +1,5 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, Address, Env, String, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String, Symbol, Vec};
 use stellar_access::access_control::{self as access_control, AccessControl};
 use stellar_contract_utils::pausable::{self as pausable, Pausable};
 use stellar_macros::only_admin;
@@ -117,6 +117,29 @@ impl RwaVault {
     /// `strategies()` order; its length must match. Returns the total gain realized.
     pub fn compound(e: &Env, min_outs: Vec<i128>) -> Result<i128, types::VaultError> {
         vault::compound(e, min_outs)
+    }
+
+    // ----- keeper ops (Task 9) -----
+    /// Keeper-only. Moves `amount` from strategy `from` into `to` — `to` may be another
+    /// registered strategy, or this vault's own address (de-risk-to-idle fallback). Gated by
+    /// a cooldown and a per-move cap (both set via `set_limits`).
+    pub fn rebalance(
+        e: &Env,
+        from: Address,
+        to: Address,
+        amount: i128,
+    ) -> Result<(), types::VaultError> {
+        vault::rebalance(e, from, to, amount)
+    }
+
+    // ----- admin escape hatches (Task 9) -----
+    /// Admin-only, NOT pause-gated. Drains `strategy` fully back to vault idle.
+    pub fn emergency_withdraw(e: &Env, strategy: Address) {
+        vault::emergency_withdraw(e, strategy)
+    }
+    /// Admin-only. Swaps the contract's wasm.
+    pub fn upgrade(e: &Env, new_wasm_hash: BytesN<32>) {
+        vault::upgrade(e, new_wasm_hash)
     }
 }
 

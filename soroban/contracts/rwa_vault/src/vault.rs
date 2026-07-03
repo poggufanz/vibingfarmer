@@ -1,15 +1,16 @@
 use soroban_sdk::token::TokenClient;
-use soroban_sdk::{Address, Env, Vec};
+use soroban_sdk::{Address, BytesN, Env, Vec};
 use stellar_access::access_control;
 use stellar_macros::when_not_paused;
 use stellar_tokens::fungible::Base;
 
 use crate::storage::{
-    extend_instance, get_keeper, get_strategies, get_token, set_cooldown_s, set_keeper,
-    set_max_move_bps, set_strategies,
+    extend_instance, get_cooldown_s, get_keeper, get_last_rebalance, get_max_move_bps,
+    get_strategies, get_token, set_cooldown_s, set_keeper, set_last_rebalance, set_max_move_bps,
+    set_strategies,
 };
 use crate::strategy_client::StrategyClient;
-use crate::types::{Compound, Deposit, Redeem, VaultError};
+use crate::types::{Compound, Deposit, Rebalance, Redeem, VaultError};
 
 /// Shares minted to the vault itself on the first deposit and locked forever. Guards against
 /// the classic ERC-4626 inflation / first-depositor donation attack: an attacker can no
@@ -296,4 +297,65 @@ pub fn compound(e: &Env, min_outs: Vec<i128>) -> Result<i128, VaultError> {
     .publish(e);
     extend_instance(e);
     Ok(total_gain)
+}
+
+/// Keeper-only. Moves `amount` out of registered strategy `from` and into `to` — where `to`
+/// is either another registered strategy, or this vault's own address as a de-risk-to-idle
+/// pseudo-target (Task 1's spike proved a second on-chain Blend pool isn't viable on
+/// testnet, so the live demo rebalances between strategy #1 and idle rather than between two
+/// strategies). When `to` is the vault itself, the approve+deposit leg is skipped — `from`'s
+/// `withdraw` already transferred the funds to the vault, which IS idle.
+///
+/// Gated by a cooldown (`cooldown_s` seconds since `last_rebalance`) and a per-move cap
+/// (`max_move_bps` of `from`'s CURRENT balance, re-read fresh every call so the cap always
+/// reflects the strategy's live size rather than a stale snapshot).
+pub fn rebalance(e: &Env, from: Address, to: Address, amount: i128) -> Result<(), VaultError> {
+    require_keeper(e)?;
+    let strategies = get_strategies(e);
+    let me = e.current_contract_address();
+    if !strategies.contains(&from) || (!strategies.contains(&to) && to != me) {
+        return Err(VaultError::StrategyNotFound);
+    }
+    let now = e.ledger().timestamp();
+    if now < get_last_rebalance(e) + get_cooldown_s(e) {
+        return Err(VaultError::CooldownActive);
+    }
+    let from_bal = StrategyClient::new(e, &from).balance();
+    if amount <= 0 || amount > from_bal * i128::from(get_max_move_bps(e)) / 10_000 {
+        return Err(VaultError::MoveTooLarge);
+    }
+    let got = StrategyClient::new(e, &from).withdraw(&amount);
+    if to != me {
+        let token = get_token(e);
+        let exp = e.ledger().sequence() + 100;
+        TokenClient::new(e, &token).approve(&me, &to, &got, &exp);
+        StrategyClient::new(e, &to).deposit(&got);
+    }
+    set_last_rebalance(e, now);
+    Rebalance {
+        from,
+        to,
+        amount: got,
+    }
+    .publish(e);
+    extend_instance(e);
+    Ok(())
+}
+
+/// Admin-only escape hatch. NOT pause-gated — this is exactly the tool an admin needs when a
+/// strategy is misbehaving badly enough to pause the vault. Drains `strategy` fully back to
+/// vault idle via `withdraw(i128::MAX)`, the same MAX-drain convention `ensure_idle` and
+/// `harvest` already rely on to mean "everything the strategy actually holds."
+pub fn emergency_withdraw(e: &Env, strategy: Address) {
+    require_admin(e);
+    StrategyClient::new(e, &strategy).withdraw(&i128::MAX);
+    extend_instance(e);
+}
+
+/// Admin-only. Swaps the contract's wasm to `new_wasm_hash` — the upgrade escape hatch.
+/// Only the auth gate is unit-tested here; a real wasm swap needs a second uploaded wasm and
+/// is covered by the live testnet smoke instead (Task 16).
+pub fn upgrade(e: &Env, new_wasm_hash: BytesN<32>) {
+    require_admin(e);
+    e.deployer().update_current_contract_wasm(new_wasm_hash);
 }

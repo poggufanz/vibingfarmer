@@ -38,16 +38,34 @@ pub fn set_keeper(e: &Env, keeper: &Address) {
     e.storage().instance().set(&DataKey::Keeper, keeper);
 }
 
-/// Read by `rebalance`'s cooldown gate (Task 9). Constructor seeds this to 0.
+/// Read by `rebalance`'s cooldown gate (Task 9). Constructor seeds this to 0, so the very
+/// first rebalance ever called always passes the cooldown check regardless of ledger time.
 pub fn set_last_rebalance(e: &Env, ts: u64) {
     e.storage().instance().set(&DataKey::LastRebalance, &ts);
 }
+pub fn get_last_rebalance(e: &Env) -> u64 {
+    e.storage()
+        .instance()
+        .get(&DataKey::LastRebalance)
+        .unwrap_or(0)
+}
 
-// Getters for CooldownS/MaxMoveBps are added by Task 9's rebalance cooldown gate — adding
-// them unused here now would trip the `-D warnings` clippy gate.
 pub fn set_cooldown_s(e: &Env, v: u64) {
     e.storage().instance().set(&DataKey::CooldownS, &v);
 }
+/// Read by `rebalance`'s cooldown gate (Task 9). Constructor seeds this via `set_limits`'s
+/// default (`DEFAULT_COOLDOWN_S`), so this only falls back to 0 pre-constructor.
+pub fn get_cooldown_s(e: &Env) -> u64 {
+    e.storage().instance().get(&DataKey::CooldownS).unwrap_or(0)
+}
 pub fn set_max_move_bps(e: &Env, v: u32) {
     e.storage().instance().set(&DataKey::MaxMoveBps, &v);
+}
+/// Read by `rebalance`'s per-move cap (Task 9). Constructor seeds this via `set_limits`'s
+/// default (`DEFAULT_MAX_MOVE_BPS`).
+pub fn get_max_move_bps(e: &Env) -> u32 {
+    e.storage()
+        .instance()
+        .get(&DataKey::MaxMoveBps)
+        .unwrap_or(0)
 }
