@@ -4,6 +4,7 @@
 //
 // Every networked fn takes an injected `server` so unit tests run without a network. Defaults
 // lazily construct the real SDK so a missing package never breaks the vite config load.
+import { xdr } from '@stellar/stellar-sdk'
 import { SOROBAN_RPC_URL, HORIZON_URL, NETWORK_PASSPHRASE } from './config.js'
 import {
   addrScVal,
@@ -34,6 +35,9 @@ export async function rpcServer() {
 // passthrough. Keeps call sites declarative: encodeArgs([{ addr: from }, { i128: amount }]).
 export function encodeArgs(args = []) {
   return args.map((a) => {
+    // Raw ScVal first: js-xdr unions expose EVERY arm accessor on the prototype, so the
+    // `'i128' in a` / `'addr' in a` sniffs below are true for any ScVal and would misroute it.
+    if (a instanceof xdr.ScVal) return a
     if (a && typeof a === 'object' && 'addr' in a) return addrScVal(a.addr)
     if (a && typeof a === 'object' && 'i128' in a) return i128ScVal(a.i128)
     if (a && typeof a === 'object' && 'u64' in a) return u64ScVal(a.u64)
