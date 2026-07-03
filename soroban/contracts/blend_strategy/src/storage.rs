@@ -32,9 +32,7 @@ pub fn get_token(e: &Env) -> Address {
 pub fn set_blnd(e: &Env, blnd: &Address) {
     e.storage().instance().set(&DataKey::Blnd, blnd);
 }
-/// Unused until `harvest` (Task 4/5) claims BLND rewards. Stored now so the wiring
-/// survives across the constructor boundary without a re-deploy.
-#[allow(dead_code)]
+/// Read by `harvest`'s BLND claim + swap path.
 pub fn get_blnd(e: &Env) -> Address {
     e.storage().instance().get(&DataKey::Blnd).unwrap()
 }
@@ -42,8 +40,7 @@ pub fn get_blnd(e: &Env) -> Address {
 pub fn set_router(e: &Env, router: &Address) {
     e.storage().instance().set(&DataKey::Router, router);
 }
-/// Unused until `harvest` (Task 4/5) routes BLND -> Token swaps.
-#[allow(dead_code)]
+/// Read by `harvest` to route BLND -> Token swaps through Soroswap.
 pub fn get_router(e: &Env) -> Address {
     e.storage().instance().get(&DataKey::Router).unwrap()
 }
@@ -51,8 +48,7 @@ pub fn get_router(e: &Env) -> Address {
 pub fn set_reserve_token_id(e: &Env, id: u32) {
     e.storage().instance().set(&DataKey::ReserveTokenId, &id);
 }
-/// Unused until `harvest` (Task 4/5) reads the live bToken NAV via this reserve index.
-#[allow(dead_code)]
+/// Read by `harvest` and passed to the pool's `claim` as the reserve index to claim for.
 pub fn get_reserve_token_id(e: &Env) -> u32 {
     e.storage()
         .instance()

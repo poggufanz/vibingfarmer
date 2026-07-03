@@ -27,14 +27,14 @@ pub struct Positions {
     pub supply: Map<u32, i128>,
 }
 
-// The trait exists only to generate `BlendPoolClient` (used by `supply`/`withdraw`); the
-// trait name itself is never referenced, so silence the dead-code lint on it.
+// The trait exists only to generate `BlendPoolClient` (used by `supply`/`withdraw`/`claim`);
+// the trait name itself is never referenced, so silence the dead-code lint on it.
 #[allow(dead_code)]
 #[contractclient(name = "BlendPoolClient")]
 pub trait BlendPool {
     /// Pulls tokens from `from` via a pre-approved allowance (`from` must `approve` the pool
-    /// first). `spender`/`to` are the pool's accounting/recipient address — the vault passes
-    /// its own address for all three.
+    /// first). `spender`/`to` are the pool's accounting/recipient address — the strategy
+    /// passes its own address for all three.
     fn submit_with_allowance(
         e: Env,
         from: Address,
@@ -42,18 +42,23 @@ pub trait BlendPool {
         to: Address,
         requests: Vec<Request>,
     ) -> Positions;
+
+    /// Claims pending BLND emissions for `from`'s positions in the given reserves, crediting
+    /// `to`. Returns the amount claimed. Testnet pools may have emissions disabled, in which
+    /// case this traps — `harvest` wraps the call in `try_claim` so that's best-effort.
+    fn claim(e: Env, from: Address, reserve_token_ids: Vec<u32>, to: Address) -> i128;
 }
 
 use soroban_sdk::{token::TokenClient, vec};
 
 const APPROVE_TTL: u32 = 100; // ledgers the pool allowance stays live (consumed same tx)
 
-/// Vault supplies `amount` of `token` into the Blend `pool`. Approves the pool to pull
-/// from the vault, then submits a SUPPLY request. Vault is from/spender/to.
+/// Strategy supplies `amount` of `token` into the Blend `pool`. Approves the pool to pull
+/// from itself, then submits a SUPPLY request. The strategy is from/spender/to.
 pub fn supply(e: &Env, pool: &Address, token: &Address, amount: i128) {
-    let vault = e.current_contract_address();
+    let me = e.current_contract_address();
     let exp = e.ledger().sequence() + APPROVE_TTL;
-    TokenClient::new(e, token).approve(&vault, pool, &amount, &exp);
+    TokenClient::new(e, token).approve(&me, pool, &amount, &exp);
     let reqs = vec![
         e,
         Request {
@@ -62,13 +67,13 @@ pub fn supply(e: &Env, pool: &Address, token: &Address, amount: i128) {
             amount,
         },
     ];
-    BlendPoolClient::new(e, pool).submit_with_allowance(&vault, &vault, &vault, &reqs);
+    BlendPoolClient::new(e, pool).submit_with_allowance(&me, &me, &me, &reqs);
 }
 
-/// Vault withdraws `amount` of `token` from the Blend `pool` back to itself.
-/// Blend caps the withdrawal at the vault's available position.
+/// Strategy withdraws `amount` of `token` from the Blend `pool` back to itself.
+/// Blend caps the withdrawal at the strategy's available position.
 pub fn withdraw(e: &Env, pool: &Address, token: &Address, amount: i128) {
-    let vault = e.current_contract_address();
+    let me = e.current_contract_address();
     let reqs = vec![
         e,
         Request {
@@ -77,5 +82,5 @@ pub fn withdraw(e: &Env, pool: &Address, token: &Address, amount: i128) {
             amount,
         },
     ];
-    BlendPoolClient::new(e, pool).submit_with_allowance(&vault, &vault, &vault, &reqs);
+    BlendPoolClient::new(e, pool).submit_with_allowance(&me, &me, &me, &reqs);
 }

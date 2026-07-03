@@ -1,18 +1,22 @@
 #![no_std]
 mod blend;
+mod soroswap;
 mod storage;
 mod test;
 mod types;
 
-use soroban_sdk::{contract, contractimpl, token::TokenClient, Address, Env};
+use soroban_sdk::{contract, contractimpl, token::TokenClient, vec, Address, Env};
 
 #[contract]
 pub struct BlendStrategy;
 
+const SWAP_APPROVE_TTL: u32 = 100; // ledgers the router allowance stays live (consumed same tx)
+const SWAP_DEADLINE_SECS: u64 = 300; // seconds until the swap quote expires
+
 #[contractimpl]
 impl BlendStrategy {
-    /// Deployed once per (vault, pool) pair. `blnd`/`router`/`reserve_token_id` are wired
-    /// now but only consumed by `harvest` in Task 4/5.
+    /// Deployed once per (vault, pool) pair. `blnd`/`router`/`reserve_token_id` feed
+    /// `harvest`'s BLND emissions claim + Soroswap swap.
     pub fn __constructor(
         e: Env,
         vault: Address,
@@ -73,13 +77,14 @@ impl BlendStrategy {
         storage::get_principal(&e)
     }
 
-    /// Withdraws the entire Blend position, re-supplies the book principal, and forwards
-    /// the realized interest (the delta) to the vault. `min_out` is unused this task — it
-    /// becomes the BLND-swap floor once Task 5 wires the claim + swap path.
+    /// Withdraws the entire Blend position, claims any pending BLND emissions (best-effort —
+    /// testnet pools may have emissions off), swaps the full BLND balance to the underlying
+    /// token via Soroswap when `min_out > 0` (`0` = hold BLND on the strategy instead),
+    /// re-supplies the book principal, and forwards whatever remains (Blend interest + swap
+    /// proceeds) to the vault.
     pub fn harvest(e: Env, min_out: i128) -> i128 {
         let vault = storage::get_vault(&e);
         vault.require_auth();
-        let _ = min_out; // used from Task 5 (BLND swap)
 
         let token = storage::get_token(&e);
         let me = e.current_contract_address();
@@ -92,7 +97,35 @@ impl BlendStrategy {
         let before = tk.balance(&me);
         blend::withdraw(&e, &storage::get_pool(&e), &token, i128::MAX);
         let pulled = tk.balance(&me) - before;
-        blend::supply(&e, &storage::get_pool(&e), &token, principal.min(pulled));
+
+        // Claim BLND emissions — best-effort. Testnet pools may have emissions disabled, in
+        // which case the pool traps and `try_claim` swallows it so interest-only harvest
+        // proceeds normally (see `harvest_survives_no_emissions`).
+        let pool_client = blend::BlendPoolClient::new(&e, &storage::get_pool(&e));
+        let ids = vec![&e, storage::get_reserve_token_id(&e)];
+        let _ = pool_client.try_claim(&me, &ids, &me);
+        let blnd = storage::get_blnd(&e);
+        let blnd_client = TokenClient::new(&e, &blnd);
+        let blnd_claimed = blnd_client.balance(&me);
+
+        // Swap the full BLND balance to the underlying token when the caller opts in via
+        // `min_out > 0` (`0` means hold BLND on the strategy instead). Unlike the claim, the
+        // swap is NOT best-effort — a slippage revert must abort the whole harvest so a bad
+        // swap can never land partially.
+        let mut swapped = 0i128;
+        if blnd_claimed > 0 && min_out > 0 {
+            let router = storage::get_router(&e);
+            let exp = e.ledger().sequence() + SWAP_APPROVE_TTL;
+            blnd_client.approve(&me, &router, &blnd_claimed, &exp);
+            let path = vec![&e, blnd.clone(), token.clone()];
+            let deadline = e.ledger().timestamp() + SWAP_DEADLINE_SECS;
+            let amounts = soroswap::SoroswapRouterClient::new(&e, &router)
+                .swap_exact_tokens_for_tokens(&blnd_claimed, &min_out, &path, &me, &deadline);
+            swapped = amounts.get(amounts.len() - 1).unwrap_or(0);
+        }
+
+        let resupply = principal.min(pulled);
+        blend::supply(&e, &storage::get_pool(&e), &token, resupply);
         if pulled < principal {
             // Pool shortfall (socialized bad debt): Blend returned less than book principal.
             // Mark the book down to what was actually recovered and re-supplied so `balance()`
@@ -100,20 +133,23 @@ impl BlendStrategy {
             // `price_per_share` off a phantom balance.
             storage::set_principal(&e, pulled);
         }
-        let gain = tk.balance(&me) - before; // whatever remains after re-supply
-        if gain > 0 {
-            tk.transfer(&me, &vault, &gain);
+
+        let usdc_out = tk.balance(&me) - before; // Blend interest + swap proceeds combined
+        let interest = usdc_out - swapped;
+        if usdc_out > 0 {
+            tk.transfer(&me, &vault, &usdc_out);
         }
+        let blnd_held = blnd_client.balance(&me);
 
         types::StrategyHarvest {
-            interest: gain,
-            blnd_claimed: 0,
-            blnd_swapped: 0,
-            usdc_out: gain,
-            blnd_held: 0,
+            interest,
+            blnd_claimed,
+            blnd_swapped: swapped,
+            usdc_out,
+            blnd_held,
         }
         .publish(&e);
         storage::extend_instance(&e);
-        gain
+        usdc_out
     }
 }
