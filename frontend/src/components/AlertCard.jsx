@@ -6,12 +6,17 @@ import { useState } from 'react'
 import { t } from '../settingsStore.js'
 
 const ALERT_META = {
-  harvest_ready:      { dot: '🟢', color: 'var(--ok)',     title: 'Harvest ready' },
-  harvest_executed:   { dot: '✓',  color: 'var(--ok)',     title: 'Harvested' },
-  harvest_failed:     { dot: '✕',  color: 'var(--danger)', title: 'Harvest failed' },
-  rebalance_proposal: { dot: '◉',  color: 'var(--info)',   title: 'Rebalance opportunity' },
-  apy_drift:          { dot: '⚠',  color: 'var(--warn)',   title: 'APY drop' },
-  risk_alert:         { dot: '🚨', color: 'var(--danger)', title: 'Risk detected' },
+  harvest_ready:       { dot: '🟢', color: 'var(--ok)',     title: 'Harvest ready' },
+  harvest_executed:    { dot: '✓',  color: 'var(--ok)',     title: 'Harvested' },
+  harvest_failed:      { dot: '✕',  color: 'var(--danger)', title: 'Harvest failed' },
+  rebalance_proposal:  { dot: '◉',  color: 'var(--info)',   title: 'Rebalance opportunity' },
+  apy_drift:           { dot: '⚠',  color: 'var(--warn)',   title: 'APY drop' },
+  risk_alert:          { dot: '🚨', color: 'var(--danger)', title: 'Risk detected' },
+  // vf-autofarm keeper feed — the keeper Worker's own compound/rebalance calls, surfaced
+  // read-only. These are facts the keeper already acted on, not proposals awaiting a decision.
+  compound_executed:   { dot: '✓',  color: 'var(--ok)',     title: 'Compounded' },
+  rebalance_executed:  { dot: '⇄',  color: 'var(--info)',   title: 'Rebalanced' },
+  blnd_held:           { dot: '⚠',  color: 'var(--warn)',   title: 'BLND held' },
 }
 
 const alertLine = (a) => {
@@ -22,6 +27,9 @@ const alertLine = (a) => {
     case 'rebalance_proposal': return `${a.fromVault} ${a.fromApy}% → ${a.toProtocol} ${a.toApy}% (+${a.apyGain}%)`
     case 'apy_drift':          return `${a.vaultName} · ${a.baselineApy}% → ${a.currentApy}% (${a.driftPct}%)`
     case 'risk_alert':         return `${a.vaultName} · security signal detected`
+    case 'compound_executed':  return `${a.vaultName} · ${a.totalGainUsdc} USDC gained · price/share ${a.pricePerShare}`
+    case 'rebalance_executed': return `${a.vaultName} · ${a.fromLabel} → ${a.toLabel} · ${a.amountUsdc} USDC moved`
+    case 'blnd_held':          return `${a.vaultName} · ${a.blndHeld} BLND held, not swapped`
     default:                   return a.vaultName || ''
   }
 }
@@ -32,6 +40,9 @@ const whyText = (a) => {
     case 'rebalance_proposal': return `${a.toProtocol} currently offers ${a.toApy}% vs your ${a.fromVault} position at ${a.fromApy}% · a ${a.apyGain}% gap. Rebalancing would capture that extra yield (break-even after gas: ~2 days).`
     case 'risk_alert':         return `Severity ${a.severity} · classified by Venice AI. ${(a.searchAnswer || '').slice(0, 180)}`
     case 'harvest_ready':      return `${a.rewardsUsdc} USDC of yield has accrued and is ready to claim. Claiming resets the accrual clock.`
+    case 'compound_executed':  return `The keeper harvested every strategy and reinvested the gain automatically — no action needed. Price per share is now ${a.pricePerShare}, reflecting the real compounding.`
+    case 'rebalance_executed': return `The keeper moved funds from ${a.fromLabel} to ${a.toLabel} to chase a better rate, within its on-chain cooldown and size-cap limits — no action needed.`
+    case 'blnd_held':          return `BLND rewards were claimed but held rather than swapped this round (no swap route or a zero min-out) — no USDC value has been realized from them yet.`
     default:                   return a.error || ''
   }
 }
@@ -56,14 +67,18 @@ export function AlertCard({ alert, lang = 'en', onHarvest, onEmergencyWithdraw, 
     alert.kind === 'risk_alert'         ? 'var(--danger)' :
     alert.severity === 'high'           ? 'var(--danger)' :
     alert.kind === 'apy_drift'          ? 'var(--warn)'   :
+    alert.kind === 'blnd_held'          ? 'var(--warn)'   :
     alert.severity === 'medium'         ? 'var(--warn)'   :
     alert.kind === 'rebalance_proposal' ? 'var(--info)'   :
+    alert.kind === 'rebalance_executed' ? 'var(--info)'   :
     meta.color
 
   const bgTint =
     alert.kind === 'risk_alert'         ? 'rgba(255,116,121,0.04)' :
     alert.kind === 'apy_drift'          ? 'rgba(240,181,74,0.04)'  :
+    alert.kind === 'blnd_held'          ? 'rgba(240,181,74,0.04)'  :
     alert.kind === 'rebalance_proposal' ? 'rgba(122,159,255,0.04)' :
+    alert.kind === 'rebalance_executed' ? 'rgba(122,159,255,0.04)' :
     'rgba(111,227,154,0.04)'
 
   return (

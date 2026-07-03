@@ -42,7 +42,13 @@ import { OrchestratorAgent } from './orchestrator.js'
 import { makeAgentId } from './worker.js'
 import { ownerWithdraw } from './stellar/exit.js'
 import { VAULT_CATALOG, VENICE_TIMEOUT_MS } from './config.js'
-import { SOROBAN_VAULT_ADDRESS, SOROBAN_DEMO_AGENT } from './stellar/config.js'
+import {
+  SOROBAN_VAULT_ADDRESS,
+  SOROBAN_DEMO_AGENT,
+  SOROBAN_RPC_URL,
+  SOROBAN_AUTOFARM_VAULT_ADDRESS,
+} from './stellar/config.js'
+import { fetchKeeperEvents } from './stellar/keeperEvents.js'
 import { evaluateExit } from './strategy/autoExit/engine.js'
 import { runAutonomousExit } from './agents/exitExecutor.js'
 import {
@@ -135,9 +141,14 @@ const loadAgentSettings = () => {
 }
 
 const sendPushNotification = async (ev, passedSettings) => {
-  const isAlert = ['risk_alert', 'apy_drift', 'rebalance_proposal', 'harvest_ready'].includes(
-    ev.kind
-  )
+  const isAlert = [
+    'risk_alert',
+    'apy_drift',
+    'rebalance_proposal',
+    'harvest_ready',
+    'compound_executed',
+    'rebalance_executed',
+  ].includes(ev.kind)
   if (!isAlert) return
 
   let settings = passedSettings
@@ -167,6 +178,12 @@ const sendPushNotification = async (ev, passedSettings) => {
   } else if (ev.kind === 'harvest_ready') {
     title = '🟢 Yield Harvest Ready'
     detail = `${ev.rewardsUsdc} USDC accrued on ${ev.vaultName} is ready to claim.`
+  } else if (ev.kind === 'compound_executed') {
+    title = '✓ Keeper Compounded'
+    detail = `${ev.vaultName} · +${ev.totalGainUsdc} USDC reinvested · price/share ${ev.pricePerShare}. No action needed.`
+  } else if (ev.kind === 'rebalance_executed') {
+    title = '⇄ Keeper Rebalanced'
+    detail = `${ev.vaultName} · ${ev.fromLabel} → ${ev.toLabel} · ${ev.amountUsdc} USDC moved. No action needed.`
   }
 
   const messageText = `*${title}*\n\n${detail}\n\n_Time: ${new Date(ev.timestamp || Date.now()).toLocaleString()}_`
@@ -425,6 +442,10 @@ const App = () => {
   const loopRef = useR(null)
   const latestGasRef = useR(null) // last live gas snapshot { level, gwei } for the monitor loop
   const hydratedRef = useR(null) // address whose cached positions have finished restoring
+  // Ledger cursor for the vf-autofarm keeper event feed (Compound/Rebalance) — undefined until
+  // the first successful fetch, after which it advances past every event we've already alerted
+  // on so the same 15s poll never re-notifies for the same keeper action.
+  const keeperLedgerRef = useR(undefined)
   // Tracks which user addresses have had session key setup done (survives re-renders).
   const [loopTick, setLoopTick] = useS(0)
   const [loopPhase, setLoopPhase] = useS(null) // live pipeline phase from monitorLoop onPhase
@@ -574,12 +595,49 @@ const App = () => {
     let alive = true
     const sync = async () => {
       const chain = await reconcilePositionsFromChain(realAddress).catch(() => null)
-      if (!alive || !chain) return
-      setAgentData((d) => ({
-        ...d,
-        positions: applyChainPositions(d.positions, chain),
-        lastUpdated: Date.now(),
-      }))
+      if (alive && chain) {
+        setAgentData((d) => ({
+          ...d,
+          positions: applyChainPositions(d.positions, chain),
+          lastUpdated: Date.now(),
+        }))
+      }
+      // vf-autofarm keeper event feed (Compound/Rebalance) — piggybacks this SAME 15s poll
+      // rather than opening a second interval. keeperLedgerRef advances past every ledger
+      // already alerted on, so a re-poll never re-notifies for the same keeper action.
+      try {
+        const events = await fetchKeeperEvents(
+          SOROBAN_RPC_URL,
+          SOROBAN_AUTOFARM_VAULT_ADDRESS,
+          keeperLedgerRef.current
+        )
+        if (!alive) return
+        for (const ev of events) {
+          keeperLedgerRef.current = Math.max(keeperLedgerRef.current || 0, ev.ledger + 1)
+          if (ev.type === 'compound') {
+            handleAgentEvent({
+              kind: 'compound_executed',
+              vaultName: 'Autofarm vault',
+              totalGainUsdc: toDisplay(ev.totalGain).toFixed(2),
+              pricePerShare: toDisplay(ev.pricePerShare).toFixed(4),
+              txHash: ev.txHash,
+              timestamp: Date.now(),
+            })
+          } else if (ev.type === 'rebalance') {
+            handleAgentEvent({
+              kind: 'rebalance_executed',
+              vaultName: 'Autofarm vault',
+              fromLabel: shortAddr(ev.from),
+              toLabel: shortAddr(ev.to),
+              amountUsdc: toDisplay(ev.amount).toFixed(2),
+              txHash: ev.txHash,
+              timestamp: Date.now(),
+            })
+          }
+        }
+      } catch {
+        // transient RPC failure — the next 15s tick retries
+      }
     }
     sync() // once on connect
     // ponytail: 15s poll. A Soroban event subscription would make it instant if needed.
@@ -678,10 +736,22 @@ const App = () => {
             ? `APY on ${ev.vaultName} dropped to ${ev.currentApy}% (from ${ev.baselineApy}%, ${ev.driftPct}%).`
             : ev.kind === 'harvest_ready'
               ? `${ev.rewardsUsdc} USDC accrued on ${ev.vaultName} · ready to claim.`
-              : ''
+              : ev.kind === 'compound_executed'
+                ? `Keeper compounded ${ev.vaultName} · +${ev.totalGainUsdc} USDC · price/share ${ev.pricePerShare}.`
+                : ev.kind === 'rebalance_executed'
+                  ? `Keeper rebalanced ${ev.vaultName} · ${ev.fromLabel} → ${ev.toLabel} · ${ev.amountUsdc} USDC moved.`
+                  : ''
     addLog({
-      event: ev.kind === 'risk_alert' ? 'AgentFailed' : 'OrchestratorPlanned',
-      meta: `${ev.kind.replace(/_/g, ' ')} · ${ev.vaultName || ev.fromVault || ''}`,
+      event:
+        ev.kind === 'risk_alert'
+          ? 'AgentFailed'
+          : ev.kind === 'compound_executed'
+            ? 'AgentCompleted'
+            : ev.kind === 'rebalance_executed'
+              ? 'RedelegationCreated'
+              : 'OrchestratorPlanned',
+      meta: `${ev.kind.replace(/_/g, ' ')} · ${ev.vaultName || ev.fromVault || ''}${ev.txHash ? ` · tx ${shortAddr(ev.txHash)}` : ''}`,
+      txHash: ev.txHash,
       detail,
     })
   }

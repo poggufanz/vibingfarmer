@@ -8,7 +8,7 @@ import {
   SOROBAN_VAULT_ADDRESS,
   SOROBAN_TOKEN_ADDRESS,
 } from '../stellar/config.js'
-import { loadSettings, saveSetting, SETTINGS_DEFAULTS } from '../settingsStore.js'
+import { loadSettings, saveSetting, SETTINGS_DEFAULTS, t } from '../settingsStore.js'
 import {
   getHistorySummary,
   clearTransactions,
@@ -492,10 +492,7 @@ export default function SettingsPage({
               </Row>
               <Divider />
               <SubLabel>Harvest Settings</SubLabel>
-              <Row
-                label="Auto-harvest"
-                desc="Automatically claim and compound rewards when threshold is reached. If OFF, agent notifies you and you harvest manually."
-              >
+              <Row label={t(language, 'automationLabel')} desc={t(language, 'automationDesc')}>
                 <Toggle
                   on={!!agentSettings.autoHarvest}
                   onChange={(v) => setAgent('autoHarvest', v)}

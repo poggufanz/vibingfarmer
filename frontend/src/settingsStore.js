@@ -83,6 +83,11 @@ export const I18N = {
     harvest: 'Harvest',
     dismiss: 'Dismiss',
     newStrategy: 'New Strategy',
+    // vf-autofarm: compounding/rebalancing is now the keeper's job, vault-wide — this toggle
+    // no longer triggers any execution. Copy must say so plainly (see settings-honesty task).
+    automationLabel: 'Compound & rebalance alerts',
+    automationDesc:
+      'Automation runs vault-wide via the keeper. This toggle controls your notifications.',
   },
   id: {
     depositAmount: 'Jumlah deposit',
@@ -105,6 +110,9 @@ export const I18N = {
     harvest: 'Panen',
     dismiss: 'Abaikan',
     newStrategy: 'Strategi Baru',
+    automationLabel: 'Notifikasi compound & rebalance',
+    automationDesc:
+      'Otomatisasi berjalan di seluruh vault melalui keeper. Toggle ini hanya mengatur notifikasi Anda.',
   },
 }
 
