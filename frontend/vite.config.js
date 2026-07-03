@@ -4,6 +4,7 @@ import aiProxy from './api/ai.js'
 import searchProxy from './api/search.js'
 import stellarRelayProxy from './api/stellar-relay.js'
 import faucetProxy from './api/faucet.js'
+import vfRouter from './api/vf/_router.js'
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '') // all vars (incl. non-VITE server-side)
@@ -20,15 +21,24 @@ export default defineConfig(({ mode }) => {
   if (env.VF_FAUCET_SECRET) process.env.VF_FAUCET_SECRET = env.VF_FAUCET_SECRET
   if (env.SOROBAN_TOKEN_ADDRESS) process.env.SOROBAN_TOKEN_ADDRESS = env.SOROBAN_TOKEN_ADDRESS
 
+  // VF API gate (SEP-10 portal + gateway) — server-side only, never in the client bundle.
+  if (env.VF_AUTH_SIGNING_KEY) process.env.VF_AUTH_SIGNING_KEY = env.VF_AUTH_SIGNING_KEY
+  if (env.VF_JWT_SECRET) process.env.VF_JWT_SECRET = env.VF_JWT_SECRET
+  if (env.VF_HOME_DOMAIN) process.env.VF_HOME_DOMAIN = env.VF_HOME_DOMAIN
+  if (env.VF_GLOBAL_DAILY_CAP) process.env.VF_GLOBAL_DAILY_CAP = env.VF_GLOBAL_DAILY_CAP
+  if (env.VF_VAULT_CATALOG) process.env.VF_VAULT_CATALOG = env.VF_VAULT_CATALOG
+
   const apiProxyPlugin = {
     name: 'api-proxy',
     configureServer(s) {
+      s.middlewares.use('/api/vf', vfRouter)
       s.middlewares.use('/api/ai', aiProxy)
       s.middlewares.use('/api/search', searchProxy)
       s.middlewares.use('/api/stellar-relay', stellarRelayProxy)
       s.middlewares.use('/api/faucet', faucetProxy)
     },
     configurePreviewServer(s) {
+      s.middlewares.use('/api/vf', vfRouter)
       s.middlewares.use('/api/ai', aiProxy)
       s.middlewares.use('/api/search', searchProxy)
       s.middlewares.use('/api/stellar-relay', stellarRelayProxy)

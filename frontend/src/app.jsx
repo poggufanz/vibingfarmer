@@ -69,6 +69,7 @@ const LandingHero = lazy(() => import('./components/LandingHero.jsx'))
 const ExplorerPage = lazy(() => import('./components/ExplorerPage.jsx'))
 const EcosystemPage = lazy(() => import('./components/EcosystemPage.jsx'))
 const ReplayPage = lazy(() => import('./components/ReplayPage.jsx'))
+const DevelopersPage = lazy(() => import('./developers/DevelopersPage.jsx'))
 import SettingsPage from './components/SettingsPage.jsx'
 import {
   WalletPanel,
@@ -134,7 +135,9 @@ const loadAgentSettings = () => {
 }
 
 const sendPushNotification = async (ev, passedSettings) => {
-  const isAlert = ['risk_alert', 'apy_drift', 'rebalance_proposal', 'harvest_ready'].includes(ev.kind)
+  const isAlert = ['risk_alert', 'apy_drift', 'rebalance_proposal', 'harvest_ready'].includes(
+    ev.kind
+  )
   if (!isAlert) return
 
   let settings = passedSettings
@@ -797,8 +800,7 @@ const App = () => {
       const stateForExit = {
         portfolio: { holdings: agentData.positions },
         universe: Object.keys(agentData.positions).map((addr) => {
-          const cat =
-            VAULT_CATALOG.find((v) => v.addr.toLowerCase() === addr.toLowerCase()) || {}
+          const cat = VAULT_CATALOG.find((v) => v.addr.toLowerCase() === addr.toLowerCase()) || {}
           const pos = agentData.positions[addr] || {}
           return {
             address: addr,
@@ -816,9 +818,7 @@ const App = () => {
 
       const result = evaluateExit(rules, stateForExit, {
         nowMs: Date.now(),
-        lastExitTripAt: Number(
-          localStorage.getItem(`yv_last_exit_trip_${realAddress}`) || '0'
-        ),
+        lastExitTripAt: Number(localStorage.getItem(`yv_last_exit_trip_${realAddress}`) || '0'),
       })
 
       if (result.tripped && active) {
@@ -2277,6 +2277,14 @@ const App = () => {
             element={<VaultDetailPage positions={agentData.positions} />}
           />
           <Route path="/tx/:txHash" element={<TxDetailPage />} />
+          <Route
+            path="/developers"
+            element={
+              <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
+                <DevelopersPage />
+              </Suspense>
+            }
+          />
           <Route path="*" element={<Navigate to="/home" replace />} />
         </Routes>
       </main>
