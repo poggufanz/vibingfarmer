@@ -113,12 +113,10 @@ export class WorkerAgent {
           'deposit not confirmed on-chain: vault shares did not increase (likely __check_auth/cap reject)'
         )
 
-      // Real minted-shares delta (cur - baseline), not the deposited amount. This is PROPHYLACTIC,
-      // not a fix to a live bug: today's deposit target is SOROBAN_VAULT_ADDRESS, the old 1:1
-      // dividend vault, so this delta always equals the deposited amount — a harmless no-op. It
-      // becomes load-bearing once the deposit path is cut over to the exchange-rate autofarm
-      // vault (SOROBAN_AUTOFARM_VAULT_ADDRESS, price_per_share != 1:1 after compounding), where
-      // shares received legitimately differ from assets deposited. Fall back to the requested
+      // Real minted-shares delta (cur - baseline), not the deposited amount. LOAD-BEARING since
+      // the cutover: the deposit target is the exchange-rate autofarm vault
+      // (SOROBAN_ACTIVE_VAULT_ADDRESS, price_per_share != 1:1 after compounding), so shares
+      // received legitimately differ from assets deposited. Fall back to the requested
       // amount only when the baseline read itself failed (verifyMinted couldn't measure a delta).
       const lesson = buildLesson(this.vault, {
         shares: (sharesMinted ?? this.amount).toString(),

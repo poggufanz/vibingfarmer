@@ -1,6 +1,6 @@
 // Skill file generator + localStorage persistence + editor UI
 
-import { SOROBAN_VAULT_ADDRESS } from './stellar/config.js'
+import { SOROBAN_ACTIVE_VAULT_ADDRESS } from './stellar/config.js'
 
 const SKILLS_STORAGE_KEY = 'yv_skills'
 
@@ -9,7 +9,7 @@ const SKILLS_STORAGE_KEY = 'yv_skills'
 // placeholder), with an optional Vite env override. A non-address would be a runtime
 // footgun, so resolve it loudly at module load.
 const ADDR_RE = /^C[A-Z2-7]{55}$/ // Stellar contract strkey (C + 55 base32 chars)
-export const DEPOSITOR_TARGET = import.meta.env?.VITE_DEPOSITOR_ADDRESS || SOROBAN_VAULT_ADDRESS
+export const DEPOSITOR_TARGET = import.meta.env?.VITE_DEPOSITOR_ADDRESS || SOROBAN_ACTIVE_VAULT_ADDRESS
 if (!DEPOSITOR_TARGET || !ADDR_RE.test(DEPOSITOR_TARGET)) {
   throw new Error(
     'DEPOSITOR_TARGET missing or not a Stellar contract address (C...) — check stellar/config.js / VITE_DEPOSITOR_ADDRESS'

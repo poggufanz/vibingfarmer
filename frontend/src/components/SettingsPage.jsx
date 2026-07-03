@@ -6,6 +6,7 @@ import { VENICE_BASE_URL, DEEPSEEK_BASE_URL } from '../config.js'
 import {
   SOROBAN_REGISTRY_ADDRESS,
   SOROBAN_VAULT_ADDRESS,
+  SOROBAN_ACTIVE_VAULT_ADDRESS,
   SOROBAN_TOKEN_ADDRESS,
 } from '../stellar/config.js'
 import { loadSettings, saveSetting, SETTINGS_DEFAULTS, t } from '../settingsStore.js'
@@ -1059,7 +1060,8 @@ export default function SettingsPage({
               </div>
               <Divider />
               <ContractRow name="AgentRegistry" addr={SOROBAN_REGISTRY_ADDRESS} />
-              <ContractRow name="YieldVault (vfVLT)" addr={SOROBAN_VAULT_ADDRESS} />
+              <ContractRow name="Autofarm Vault (vfVLT)" addr={SOROBAN_ACTIVE_VAULT_ADDRESS} />
+              <ContractRow name="Legacy vault (1:1)" addr={SOROBAN_VAULT_ADDRESS} />
               <ContractRow name="VFUSD token" addr={SOROBAN_TOKEN_ADDRESS} />
               <Divider />
               <div style={{ fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 1.6 }}>

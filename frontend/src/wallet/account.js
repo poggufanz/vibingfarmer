@@ -1,6 +1,6 @@
 import { WALLET_CONFIG } from './config.js'
 import { rpcServer, buildInvokeTx } from '../stellar/client.js'
-import { SOROBAN_TOKEN_ADDRESS, SOROBAN_VAULT_ADDRESS } from '../stellar/config.js'
+import { SOROBAN_TOKEN_ADDRESS, SOROBAN_ACTIVE_VAULT_ADDRESS } from '../stellar/config.js'
 import { toBaseUnits } from '../stellar/format.js'
 
 const CACHE_KEY = 'vf_wallet_contract'
@@ -103,15 +103,15 @@ export async function addAgentSigner({ agentAddress, cap, vault, expiry, kit }) 
 // sites); `kit` is resolved lazily like sendToken. The vault `deposit(from,
 // amount)` arg shape matches buildAgentDeposit in stellar/agentDeposit.js.
 export async function depositToVault({ contractId, amount, eligibility, kit }) {
-  const verdict = await eligibility({ vault: SOROBAN_VAULT_ADDRESS, amount })
+  const verdict = await eligibility({ vault: SOROBAN_ACTIVE_VAULT_ADDRESS, amount })
   if (!verdict.allow) throw new Error(`ineligible: ${(verdict.reasons ?? []).join('; ')}`)
   kit = kit ?? (await makeKit())
   const units = typeof amount === 'bigint' ? amount : toBaseUnits(amount)
   if (kit.wallet?.deposit)
-    return kit.wallet.deposit({ from: contractId, vault: SOROBAN_VAULT_ADDRESS, amount: units })
+    return kit.wallet.deposit({ from: contractId, vault: SOROBAN_ACTIVE_VAULT_ADDRESS, amount: units })
   const { xdr } = await buildInvokeTx({
     source: contractId,
-    contract: SOROBAN_VAULT_ADDRESS,
+    contract: SOROBAN_ACTIVE_VAULT_ADDRESS,
     method: 'deposit',
     args: [{ addr: contractId }, { i128: units }],
   })
@@ -123,7 +123,7 @@ export async function depositToVault({ contractId, amount, eligibility, kit }) {
 // only valid for amount 0). submitApprove (submit.js) computes it from getLatestLedger,
 // wraps this with source = an ephemeral fee-payer, and passkey-signs the from auth entry.
 // Mirrors depositToVault's build-only discipline; consumed via buildInvokeTx's encodeArgs.
-export function buildApprove({ contractId, vault = SOROBAN_VAULT_ADDRESS, amount, expiryLedger }) {
+export function buildApprove({ contractId, vault = SOROBAN_ACTIVE_VAULT_ADDRESS, amount, expiryLedger }) {
   const units = typeof amount === 'bigint' ? amount : toBaseUnits(amount)
   return {
     contract: SOROBAN_TOKEN_ADDRESS,

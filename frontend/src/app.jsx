@@ -46,7 +46,7 @@ import { makeAgentId } from './worker.js'
 import { ownerWithdraw } from './stellar/exit.js'
 import { VAULT_CATALOG, VENICE_TIMEOUT_MS } from './config.js'
 import {
-  SOROBAN_VAULT_ADDRESS,
+  SOROBAN_ACTIVE_VAULT_ADDRESS,
   SOROBAN_DEMO_AGENT,
   SOROBAN_RPC_URL,
   SOROBAN_AUTOFARM_VAULT_ADDRESS,
@@ -983,7 +983,7 @@ const App = () => {
               kind: 'risk_alert',
               severity: 'critical',
               vaultName: 'VFUSD Yield Vault',
-              vaultAddress: SOROBAN_VAULT_ADDRESS,
+              vaultAddress: SOROBAN_ACTIVE_VAULT_ADDRESS,
               message: `Auto-Exit Triggered: ${result.reason}`,
               timestamp: Date.now(),
             },

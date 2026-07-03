@@ -44,6 +44,11 @@ export const SOROBAN_BLEND_USDC_ADDRESS = 'CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJ
 // second strategy/pool. See docs/superpowers/plans/2026-07-03-vf-autofarm-progress.md.
 export const SOROBAN_AUTOFARM_VAULT_ADDRESS = 'CB5VKYDUIYX3RZWGVLKKNBPG7V7Z5JIHF2QPNQKWKAHVA3IPSLFZJDYU'
 export const SOROBAN_STRATEGY_1_ADDRESS = 'CCH424TVLTP2P3URNRGGF26X24XRPBVBXCRZ6QBCWLSX6KH4QZSLNBC2'
+// The app's LIVE deposit target (cutover, handoff §1). Points at the autofarm vault: shares are
+// exchange-rate priced (price_per_share ≠ 1:1) — every USDC display must convert shares via pps.
+// The relay's server-side allowlist (SOROBAN_VAULT_ADDRESS env in .dev.vars / Pages env) must be
+// set to this same address or every deposit is refused. Old 1:1 vault above kept for rollback.
+export const SOROBAN_ACTIVE_VAULT_ADDRESS = SOROBAN_AUTOFARM_VAULT_ADDRESS
 // Keeper (compound/rebalance caller) — same relayer G-address as the gasless-relay signer.
 export const SOROBAN_KEEPER_ADDRESS = 'GBVJ34MT4GDKZJGILI6DRYGD75ZNUBJGGZIDUV7IPFNVVDWGE5GBLV3X'
 

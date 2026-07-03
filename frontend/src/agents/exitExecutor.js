@@ -2,10 +2,13 @@
 // Autonomous exit executor. Signs and submits scoped exit transactions.
 
 import { rpcServer, buildInvokeTx } from '../stellar/client.js';
-import { SOROBAN_VAULT_ADDRESS, SOROBAN_TOKEN_ADDRESS, NETWORK_PASSPHRASE } from '../stellar/config.js';
+import { SOROBAN_ACTIVE_VAULT_ADDRESS, SOROBAN_TOKEN_ADDRESS, NETWORK_PASSPHRASE } from '../stellar/config.js';
 import { getRelayerAddress, submitViaRelay } from '../stellar/relay.js';
 import { readVaultShares } from '../stellar/agentDeposit.js';
+import { readPricePerShare } from '../stellar/vaultReads.js';
 import { loadExitKey } from '../wallet/exitKey.js';
+
+const PPS_SCALE = 10_000_000n; // price_per_share 7-dp fixed point
 
 let _sdk = null;
 async function sdk() {
@@ -55,13 +58,15 @@ export async function signAgentExitEntries({ tx, exitKeypair, validUntilLedger, 
 
 /**
  * Build the double-operation exit transaction: redeem then transfer.
+ * `transferAmount` is the ASSET amount the redeem pays out — on the autofarm vault shares are
+ * exchange-rate priced, so it is shares × price_per_share (NOT shares 1:1 like the old vault).
  */
-export async function buildAgentExit({ agentAddress, ownerAddress, shares, relayer, exitKeypair, server }) {
+export async function buildAgentExit({ agentAddress, ownerAddress, shares, transferAmount, relayer, exitKeypair, server }) {
   const s = server || (await rpcServer());
   const { Contract, TransactionBuilder, BASE_FEE } = await sdk();
 
   const account = await s.getAccount(relayer);
-  const vaultContract = new Contract(SOROBAN_VAULT_ADDRESS);
+  const vaultContract = new Contract(SOROBAN_ACTIVE_VAULT_ADDRESS);
   const tokenContract = new Contract(SOROBAN_TOKEN_ADDRESS);
 
   // args shape:
@@ -72,7 +77,7 @@ export async function buildAgentExit({ agentAddress, ownerAddress, shares, relay
     networkPassphrase: NETWORK_PASSPHRASE,
   })
     .addOperation(vaultContract.call('redeem', agentAddress, shares))
-    .addOperation(tokenContract.call('transfer', agentAddress, ownerAddress, shares))
+    .addOperation(tokenContract.call('transfer', agentAddress, ownerAddress, transferAmount ?? shares))
     .setTimeout(60);
 
   const prepared = await s.prepareTransaction(txBuilder.build());
@@ -103,6 +108,16 @@ export async function runAutonomousExit({ agentAddress, ownerAddress, server }) 
     throw new Error('No vault shares to exit');
   }
 
+  // 1b. Convert shares → expected redeem payout via price_per_share. Floors twice (pps floors,
+  // then this multiply floors) so the computed amount is ≤ what redeem actually pays — the
+  // transfer can never exceed the agent's post-redeem balance; pps only rises (keeper compound),
+  // so any drift between build and submit leaves dust with the agent, never a failed transfer.
+  const pps = await readPricePerShare(SOROBAN_ACTIVE_VAULT_ADDRESS, { server: s });
+  if (pps == null) {
+    throw new Error('price_per_share read failed — cannot size the exit transfer');
+  }
+  const transferAmount = (shares * pps) / PPS_SCALE;
+
   // 2. Fetch relayer address
   const relayer = await getRelayerAddress();
   if (!relayer) {
@@ -114,6 +129,7 @@ export async function runAutonomousExit({ agentAddress, ownerAddress, server }) 
     agentAddress,
     ownerAddress,
     shares,
+    transferAmount,
     relayer,
     exitKeypair,
     server: s
