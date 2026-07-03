@@ -291,7 +291,11 @@ describe('runAutonomousExit', () => {
     submitViaRelayMock.mockImplementationOnce(
       () => new Promise((res) => (releaseSubmit = () => res({ hash: 'H', status: 'SUCCESS' })))
     )
-    const first = runAutonomousExit({ agentAddress: AGENT, ownerAddress: OWNER, server: fakeServer })
+    const first = runAutonomousExit({
+      agentAddress: AGENT,
+      ownerAddress: OWNER,
+      server: fakeServer,
+    })
     await vi.waitFor(() => expect(submitViaRelayMock).toHaveBeenCalled())
     // Act + Assert: second run for the SAME agent rejects immediately
     await expect(

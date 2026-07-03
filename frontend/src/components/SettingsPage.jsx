@@ -791,7 +791,12 @@ export default function SettingsPage({
                     value={agentSettings.telegramToken || ''}
                     placeholder="123456789:ABCdef..."
                     onChange={(e) => setAgent('telegramToken', e.target.value)}
-                    style={{ ...inputStyle, width: '100%', boxSizing: 'border-box', fontFamily: 'var(--font-mono)' }}
+                    style={{
+                      ...inputStyle,
+                      width: '100%',
+                      boxSizing: 'border-box',
+                      fontFamily: 'var(--font-mono)',
+                    }}
                   />
                 </div>
                 <div>
@@ -801,7 +806,12 @@ export default function SettingsPage({
                     value={agentSettings.telegramChatId || ''}
                     placeholder="e.g. 987654321"
                     onChange={(e) => setAgent('telegramChatId', e.target.value)}
-                    style={{ ...inputStyle, width: '100%', boxSizing: 'border-box', fontFamily: 'var(--font-mono)' }}
+                    style={{
+                      ...inputStyle,
+                      width: '100%',
+                      boxSizing: 'border-box',
+                      fontFamily: 'var(--font-mono)',
+                    }}
                   />
                 </div>
               </div>
@@ -832,9 +842,7 @@ export default function SettingsPage({
             </Section>
           )}
 
-          {tab === 'auto-exit' && (
-            <AutoExitSettings realAddress={userAddress} addLog={addLog} />
-          )}
+          {tab === 'auto-exit' && <AutoExitSettings realAddress={userAddress} addLog={addLog} />}
 
           {/* ── SECTION 4: Wallet & Network ── */}
           {tab === 'wallet' && (
