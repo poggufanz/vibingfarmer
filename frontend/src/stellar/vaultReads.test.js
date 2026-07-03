@@ -1,7 +1,12 @@
 // frontend/src/stellar/vaultReads.test.js
 import { describe, test, expect } from 'vitest'
 import { xdr, Address, nativeToScVal } from '@stellar/stellar-sdk'
-import { readPricePerShare, readStrategies, estimateSupplyAprBps } from './vaultReads.js'
+import {
+  readPricePerShare,
+  readStrategies,
+  estimateSupplyAprBps,
+  readSupplyAprBps,
+} from './vaultReads.js'
 
 // Stand-in strkeys (same ones agentDeposit.test.js already uses) — any syntactically valid
 // C-address works since these reads never touch the network.
@@ -113,5 +118,49 @@ describe('estimateSupplyAprBps', () => {
       },
     }
     expect(estimateSupplyAprBps(reserve, 0n)).toBe(0)
+  })
+})
+
+describe('readSupplyAprBps', () => {
+  // Same fixture as the "below target" estimateSupplyAprBps case above (416 bps) — reused here
+  // so the expected bps is traceable back to an already-asserted pure-function result, not a
+  // number invented for this test.
+  const reserve = {
+    config: {
+      util: 6_000_000n,
+      max_util: 9_500_000n,
+      r_base: 0n,
+      r_one: 1_000_000n,
+      r_two: 5_000_000n,
+      r_three: 15_000_000n,
+    },
+    data: {
+      b_supply: 1000n,
+      b_rate: 1_000_000_000_000n,
+      d_supply: 500n,
+      d_rate: 1_000_000_000_000n,
+      ir_mod: 10_000_000n,
+    },
+  }
+  const poolConfig = { bstop_rate: 0n }
+
+  test('composes get_reserve + get_config (two reads) into the same bps estimateSupplyAprBps would produce', async () => {
+    let calls = 0
+    const fakeServer = {
+      simulateTransaction: async () => {
+        calls += 1
+        // 1st call is get_reserve, 2nd is get_config — mirrors readSupplyAprBps's call order.
+        const retval = nativeToScVal(calls === 1 ? reserve : poolConfig)
+        return { result: { retval } }
+      },
+    }
+    const bps = await readSupplyAprBps(VAULT, { server: fakeServer })
+    expect(calls).toBe(2)
+    expect(bps).toBe(416)
+  })
+
+  test('returns null (not a throw) when either read fails', async () => {
+    const fakeServer = { simulateTransaction: async () => ({ error: 'boom' }) }
+    await expect(readSupplyAprBps(VAULT, { server: fakeServer })).resolves.toBeNull()
   })
 })
