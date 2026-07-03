@@ -28,9 +28,11 @@ pub fn set_strategies(e: &Env, list: &Vec<Address>) {
     e.storage().instance().set(&DataKey::Strategies, list);
 }
 
-/// Read by `compound`/`rebalance` (Task 8/9) to gate keeper-only calls.
-pub fn get_keeper(e: &Env) -> Address {
-    e.storage().instance().get(&DataKey::Keeper).unwrap()
+/// Read by `compound`/`rebalance` (Task 8/9) to gate keeper-only calls. `None` until
+/// `set_keeper` is first called — `require_keeper` (Task 8) treats that as `NotKeeper`
+/// rather than unwrapping and panicking.
+pub fn get_keeper(e: &Env) -> Option<Address> {
+    e.storage().instance().get(&DataKey::Keeper)
 }
 pub fn set_keeper(e: &Env, keeper: &Address) {
     e.storage().instance().set(&DataKey::Keeper, keeper);

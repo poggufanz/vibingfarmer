@@ -1,10 +1,10 @@
 #![cfg(test)]
-use crate::types::VaultError;
+use crate::types::{Compound, VaultError};
 use crate::vault::DEAD_SHARES;
 use crate::{RwaVault, RwaVaultClient};
-use soroban_sdk::testutils::Address as _;
+use soroban_sdk::testutils::{Address as _, Events as _};
 use soroban_sdk::token::{StellarAssetClient, TokenClient};
-use soroban_sdk::{Address, Env, String};
+use soroban_sdk::{Address, Env, Event, String, Vec};
 
 const U7: i128 = 10_000_000; // 1.0 unit at 7 decimals (1 USDC)
 
@@ -23,6 +23,7 @@ mod mock_strategy {
         Vault,
         Token,
         Principal,
+        HarvestGain, // Task 8: configurable harvest() payout, set via `set_harvest_gain`
     }
 
     #[contract]
@@ -73,14 +74,39 @@ mod mock_strategy {
             e.storage().instance().get(&DataKey::Principal).unwrap_or(0)
         }
 
-        pub fn harvest(_e: Env, _min_out: i128) -> i128 {
-            0 // not exercised until Task 8's compound
+        /// Test-configurable harvest: transfers the amount set by `set_harvest_gain` to the
+        /// vault and returns it, mirroring the real strategy — realized gain moves out,
+        /// book `Principal` (the deposited amount) is untouched. Resets the configured gain
+        /// to 0 so a second `harvest()` without reconfiguring yields nothing (mirrors real
+        /// interest being consumed once realized).
+        pub fn harvest(e: Env, _min_out: i128) -> i128 {
+            let vault: Address = e.storage().instance().get(&DataKey::Vault).unwrap();
+            vault.require_auth();
+            let gain: i128 = e
+                .storage()
+                .instance()
+                .get(&DataKey::HarvestGain)
+                .unwrap_or(0);
+            if gain > 0 {
+                let token: Address = e.storage().instance().get(&DataKey::Token).unwrap();
+                let me = e.current_contract_address();
+                TokenClient::new(&e, &token).transfer(&me, &vault, &gain);
+                e.storage().instance().set(&DataKey::HarvestGain, &0i128);
+            }
+            gain
         }
 
         /// Test-only hook: force `balance()` (book principal) to diverge from the strategy's
         /// actual token holdings, simulating a socialized-loss / broken-strategy scenario.
         pub fn set_principal(e: Env, v: i128) {
             e.storage().instance().set(&DataKey::Principal, &v);
+        }
+
+        /// Test-only hook: configure the gain the next `harvest()` call realizes and
+        /// transfers to the vault. The caller must separately fund this contract's token
+        /// balance with at least `v` extra (beyond its principal) — see `fund_strategy_gain`.
+        pub fn set_harvest_gain(e: Env, v: i128) {
+            e.storage().instance().set(&DataKey::HarvestGain, &v);
         }
     }
 }
@@ -147,6 +173,15 @@ fn deploy_mock_strategy(env: &Env, ctx: &Ctx) -> Address {
 fn fund_strategy(env: &Env, ctx: &Ctx, strategy: &Address, amount: i128) {
     StellarAssetClient::new(env, &ctx.token).mint(strategy, &amount);
     MockStrategyClient::new(env, strategy).set_principal(&amount);
+}
+
+// Funds `amount` of "harvest gain" tokens directly to `strategy` (extra, beyond its
+// Principal-tracked funds) and configures its next `harvest()` call to realize exactly
+// `amount` — mirrors a real strategy's yield accruing in the underlying position ahead of
+// a keeper's `compound` call.
+fn fund_strategy_gain(env: &Env, ctx: &Ctx, strategy: &Address, amount: i128) {
+    StellarAssetClient::new(env, &ctx.token).mint(strategy, &amount);
+    MockStrategyClient::new(env, strategy).set_harvest_gain(&amount);
 }
 
 #[test]
@@ -503,4 +538,144 @@ fn ensure_idle_insolvent_errors() {
         ctx.vault.try_redeem(&alice, &alice_shares),
         Err(Ok(VaultError::InsufficientLiquidity))
     );
+}
+
+// ----- Task 8: keeper-gated compound (harvest all + reinvest idle pro-rata) -----
+
+#[test]
+fn compound_harvests_all_and_reinvests_idle_pro_rata() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let alice = Address::generate(&env);
+    fund_and_approve(&env, &ctx, &alice, 100 * U7);
+    ctx.vault.deposit(&alice, &(100 * U7)); // idle = 100*U7, supply = 100*U7
+
+    let strat1 = deploy_mock_strategy(&env, &ctx);
+    let strat2 = deploy_mock_strategy(&env, &ctx);
+    ctx.vault.add_strategy(&strat1);
+    ctx.vault.add_strategy(&strat2);
+    fund_strategy(&env, &ctx, &strat1, 60 * U7); // pre-harvest balance 60
+    fund_strategy(&env, &ctx, &strat2, 40 * U7); // pre-harvest balance 40
+    fund_strategy_gain(&env, &ctx, &strat1, 6 * U7); // harvest() yields 6
+    fund_strategy_gain(&env, &ctx, &strat2, 4 * U7); // harvest() yields 4
+
+    let keeper = Address::generate(&env);
+    ctx.vault.set_keeper(&keeper);
+
+    let min_outs = Vec::from_array(&env, [0i128, 0i128]);
+    let total_gain = ctx.vault.compound(&min_outs);
+    // `events().all()` reflects only the LAST contract invocation — capture immediately.
+    let events = env.events().all();
+
+    assert_eq!(total_gain, 10 * U7);
+    let expected_pps = ctx.vault.price_per_share();
+    let event = events.events().last().unwrap();
+    let expected_event = Compound {
+        total_gain: 10 * U7,
+        price_per_share: expected_pps,
+    }
+    .to_xdr(&env, &ctx.vault.address);
+    assert_eq!(event, &expected_event);
+
+    // idle 100 (deposit) + 10 (harvested) = 110, swept pro-rata by PRE-harvest 60:40 →
+    // 66/44. The vault ends with zero idle; each strategy's book grows by its cut.
+    let vault_addr = ctx.vault.address.clone();
+    assert_eq!(TokenClient::new(&env, &ctx.token).balance(&vault_addr), 0);
+    assert_eq!(
+        MockStrategyClient::new(&env, &strat1).balance(),
+        60 * U7 + 66 * U7
+    );
+    assert_eq!(
+        MockStrategyClient::new(&env, &strat2).balance(),
+        40 * U7 + 44 * U7
+    );
+}
+
+#[test]
+fn compound_all_zero_balances_goes_to_first_strategy() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let alice = Address::generate(&env);
+    fund_and_approve(&env, &ctx, &alice, 100 * U7);
+    ctx.vault.deposit(&alice, &(100 * U7)); // idle = 100*U7
+
+    // Two freshly-registered strategies, both balance() == 0 — nothing to ratio by.
+    let strat1 = deploy_mock_strategy(&env, &ctx);
+    let strat2 = deploy_mock_strategy(&env, &ctx);
+    ctx.vault.add_strategy(&strat1);
+    ctx.vault.add_strategy(&strat2);
+
+    let keeper = Address::generate(&env);
+    ctx.vault.set_keeper(&keeper);
+
+    let min_outs = Vec::from_array(&env, [0i128, 0i128]);
+    let total_gain = ctx.vault.compound(&min_outs);
+    assert_eq!(total_gain, 0);
+
+    // The entire idle goes to strategies[0] only — not split, since there's no ratio.
+    let vault_addr = ctx.vault.address.clone();
+    assert_eq!(TokenClient::new(&env, &ctx.token).balance(&vault_addr), 0);
+    assert_eq!(MockStrategyClient::new(&env, &strat1).balance(), 100 * U7);
+    assert_eq!(MockStrategyClient::new(&env, &strat2).balance(), 0);
+}
+
+#[test]
+fn compound_requires_keeper() {
+    let env = Env::default();
+    let ctx = setup(&env);
+
+    // Keeper never set → clean NotKeeper, not a panic on an unwrap.
+    assert_eq!(
+        ctx.vault.try_compound(&Vec::new(&env)),
+        Err(Ok(VaultError::NotKeeper))
+    );
+
+    // Keeper set, but no authorization at all is present for this call — `require_auth`
+    // on the stored keeper address has nothing to satisfy it, so the call still fails.
+    let keeper = Address::generate(&env);
+    ctx.vault.set_keeper(&keeper);
+    env.set_auths(&[]);
+    assert!(ctx.vault.try_compound(&Vec::new(&env)).is_err());
+}
+
+#[test]
+fn compound_min_outs_length_mismatch_rejected() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let strat1 = deploy_mock_strategy(&env, &ctx);
+    ctx.vault.add_strategy(&strat1);
+
+    let keeper = Address::generate(&env);
+    ctx.vault.set_keeper(&keeper);
+
+    // 1 strategy registered, 2 min_outs supplied — length mismatch.
+    let min_outs = Vec::from_array(&env, [0i128, 0i128]);
+    assert_eq!(
+        ctx.vault.try_compound(&min_outs),
+        Err(Ok(VaultError::InvalidAmount))
+    );
+}
+
+#[test]
+fn price_per_share_increases_after_compound() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let alice = Address::generate(&env);
+    fund_and_approve(&env, &ctx, &alice, 100 * U7);
+    ctx.vault.deposit(&alice, &(100 * U7));
+
+    let strat1 = deploy_mock_strategy(&env, &ctx);
+    ctx.vault.add_strategy(&strat1);
+    fund_strategy(&env, &ctx, &strat1, 50 * U7);
+    fund_strategy_gain(&env, &ctx, &strat1, 5 * U7);
+
+    let keeper = Address::generate(&env);
+    ctx.vault.set_keeper(&keeper);
+
+    let pps_before = ctx.vault.price_per_share();
+    let min_outs = Vec::from_array(&env, [0i128]);
+    ctx.vault.compound(&min_outs);
+    let pps_after = ctx.vault.price_per_share();
+
+    assert!(pps_after > pps_before);
 }

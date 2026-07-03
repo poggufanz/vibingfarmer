@@ -9,10 +9,10 @@ pub mod storage;
 mod test;
 pub mod types;
 mod vault;
-// The `StrategyIface` trait exists only to generate `StrategyClient` (used by
-// `vault::total_assets`/`ensure_idle` this task); the trait itself is never implemented or
-// named as a bound, and `deposit`/`harvest` aren't called until Tasks 8/9 — silence the
-// dead-code lint on the whole module rather than the locked trait body.
+// The `StrategyIface` trait exists only to generate `StrategyClient` (used across
+// `vault::total_assets`/`ensure_idle`/`compound`); the trait itself is never implemented or
+// named as a bound — silence the dead-code lint on the whole module rather than the locked
+// trait body.
 #[allow(dead_code)]
 mod strategy_client;
 
@@ -109,6 +109,14 @@ impl RwaVault {
     /// enforced starting Task 9.
     pub fn set_limits(e: &Env, cooldown_s: u64, max_move_bps: u32) {
         vault::set_limits(e, cooldown_s, max_move_bps)
+    }
+
+    // ----- keeper ops (Task 8) -----
+    /// Keeper-only. Harvests every registered strategy's realized gain into idle, then
+    /// sweeps all idle back into strategies pro-rata. `min_outs` is indexed by
+    /// `strategies()` order; its length must match. Returns the total gain realized.
+    pub fn compound(e: &Env, min_outs: Vec<i128>) -> Result<i128, types::VaultError> {
+        vault::compound(e, min_outs)
     }
 }
 

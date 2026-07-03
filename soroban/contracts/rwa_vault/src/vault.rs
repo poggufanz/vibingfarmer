@@ -9,7 +9,7 @@ use crate::storage::{
     set_max_move_bps, set_strategies,
 };
 use crate::strategy_client::StrategyClient;
-use crate::types::{Deposit, Redeem, VaultError};
+use crate::types::{Compound, Deposit, Redeem, VaultError};
 
 /// Shares minted to the vault itself on the first deposit and locked forever. Guards against
 /// the classic ERC-4626 inflation / first-depositor donation attack: an attacker can no
@@ -88,9 +88,21 @@ pub fn set_keeper_addr(e: &Env, keeper: Address) {
 }
 
 /// The address currently permitted to call `compound`/`rebalance` (Task 8/9). Panics if
-/// `set_keeper` has never been called.
+/// `set_keeper` has never been called — `compound`'s own `require_keeper` gate is the
+/// non-panicking existence check used on the hot path.
 pub fn keeper(e: &Env) -> Address {
-    get_keeper(e)
+    get_keeper(e).unwrap()
+}
+
+/// Keeper-only gate for `compound`/`rebalance` (Task 8/9). Returns `NotKeeper` cleanly
+/// (never panics) when no keeper has ever been set. Otherwise requires the STORED keeper
+/// address's own authorization — `require_auth` is invoked on the exact address read from
+/// storage, so only that address's signature can satisfy it; there is no separate "caller"
+/// parameter to compare against.
+fn require_keeper(e: &Env) -> Result<(), VaultError> {
+    let keeper = get_keeper(e).ok_or(VaultError::NotKeeper)?;
+    keeper.require_auth();
+    Ok(())
 }
 
 /// Admin-only. Sets the rebalance cooldown (seconds) and per-move cap (bps of
@@ -218,4 +230,70 @@ fn ensure_idle(e: &Env, needed: i128) -> Result<(), VaultError> {
         return Err(VaultError::InsufficientLiquidity);
     }
     Ok(())
+}
+
+/// Keeper-only. Harvests every registered strategy's realized gain into vault idle, then
+/// sweeps ALL idle (pre-existing user deposits + this call's harvested gains) back into
+/// strategies pro-rata by PRE-harvest balances. `total_assets` grows by `total_gain` while
+/// `total_supply` is unchanged, so `price_per_share` rises — this is how yield reaches every
+/// shareholder without a separate claim step. Called by the off-chain keeper every ~15 min.
+pub fn compound(e: &Env, min_outs: Vec<i128>) -> Result<i128, VaultError> {
+    require_keeper(e)?;
+    let strategies = get_strategies(e);
+    if min_outs.len() != strategies.len() {
+        return Err(VaultError::InvalidAmount);
+    }
+    let mut total_gain = 0i128;
+    // Captured BEFORE harvesting — the sweep below must split idle by what each strategy
+    // held going in, not by post-harvest balances (harvest doesn't change `balance()`,
+    // but capturing first keeps the pro-rata split unambiguous either way). Built via a
+    // loop rather than `.collect()` — `soroban_sdk::Vec` has no `FromIterator` impl (it
+    // needs an `Env` to allocate, unlike `std::vec::Vec`).
+    let mut balances: Vec<i128> = Vec::new(e);
+    for s in strategies.iter() {
+        balances.push_back(StrategyClient::new(e, &s).balance());
+    }
+    for (i, s) in strategies.iter().enumerate() {
+        total_gain += StrategyClient::new(e, &s).harvest(&min_outs.get(i as u32).unwrap());
+    }
+
+    // Sweep idle into strategies pro-rata by pre-harvest balances (all zero → strategies[0]
+    // takes everything — there's no ratio to split by yet).
+    let token = get_token(e);
+    let me = e.current_contract_address();
+    let idle = TokenClient::new(e, &token).balance(&me);
+    if idle > 0 && !strategies.is_empty() {
+        let total_bal: i128 = balances.iter().sum();
+        let exp = e.ledger().sequence() + 100;
+        if total_bal == 0 {
+            let s0 = strategies.get(0).unwrap();
+            TokenClient::new(e, &token).approve(&me, &s0, &idle, &exp);
+            StrategyClient::new(e, &s0).deposit(&idle);
+        } else {
+            // LAST strategy gets the remainder rather than its own `idle * bal / total`
+            // share, so integer-division dust is swept in rather than left idle.
+            let mut left = idle;
+            for (i, s) in strategies.iter().enumerate() {
+                let cut = if i as u32 == strategies.len() - 1 {
+                    left
+                } else {
+                    idle * balances.get(i as u32).unwrap() / total_bal
+                };
+                if cut > 0 {
+                    TokenClient::new(e, &token).approve(&me, &s, &cut, &exp);
+                    StrategyClient::new(e, &s).deposit(&cut);
+                    left -= cut;
+                }
+            }
+        }
+    }
+
+    let pps = price_per_share(e);
+    Compound {
+        total_gain,
+        price_per_share: pps,
+    }
+    .publish(e);
+    extend_instance(e);
+    Ok(total_gain)
 }

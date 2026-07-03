@@ -25,8 +25,9 @@ pub enum VaultError {
     StrategyNotFound = 10,  // remove_strategy: address isn't in the registry
     TooManyStrategies = 11, // add_strategy: registry already holds MAX_STRATEGIES (4)
     StrategyNotEmpty = 12,  // remove_strategy: strategy.balance() != 0
-    // NotKeeper=13 (Task 8), CooldownActive=14, MoveTooLarge=15 (Task 9) — deferred until
-    // those tasks construct them, to keep this task's `-D warnings` clippy gate clean.
+    NotKeeper = 13,         // compound/rebalance: caller isn't the registered keeper (or none set)
+    // CooldownActive=14, MoveTooLarge=15 (Task 9) — deferred until that task constructs
+    // them, to keep this task's `-D warnings` clippy gate clean.
     FirstDepositTooSmall = 16, // first deposit below MIN_FIRST_DEPOSIT (inflation guard)
     InsufficientLiquidity = 17, // redeem cannot be covered even after draining strategies
     StrategyAlreadyRegistered = 18, // add_strategy: address is already in the registry
@@ -44,4 +45,10 @@ pub struct Redeem {
     pub holder: Address,
     pub shares: i128, // shares burned
     pub assets: i128, // assets paid out at the current exchange rate
+}
+
+#[contractevent(topics = ["vault_compound"])]
+pub struct Compound {
+    pub total_gain: i128,      // USDC gain realized across every strategy this call
+    pub price_per_share: i128, // exchange rate immediately after the sweep (7dp, PPS_SCALE)
 }
