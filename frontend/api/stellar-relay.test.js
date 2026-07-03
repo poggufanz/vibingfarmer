@@ -222,17 +222,37 @@ describe('assertVaultDeposit', () => {
       RelayError
     )
   })
-  it('passes a token transfer from a contract (agent) address when tokenAddr is set', () => {
+  it('passes a token transfer from an allowlisted agent address when tokenAddr is set', () => {
     const tx = depositTx(TOKEN, 'transfer', [{ __addr: 'CAGENT' }, { __addr: 'GOWNER' }])
-    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN)).not.toThrow()
+    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN, 'CAGENT')).not.toThrow()
   })
   it('rejects a token transfer from a G account (relayer is not a public gas faucet)', () => {
     const tx = depositTx(TOKEN, 'transfer', [{ __addr: 'GSOMEONE' }, { __addr: 'GOWNER' }])
-    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN)).toThrow(RelayError)
+    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN, 'CAGENT')).toThrow(RelayError)
   })
   it('rejects a token transfer when tokenAddr is not configured (fail closed)', () => {
     const tx = depositTx(TOKEN, 'transfer', [{ __addr: 'CAGENT' }, { __addr: 'GOWNER' }])
-    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr)).toThrow(RelayError)
+    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, '', 'CAGENT')).toThrow(RelayError)
+  })
+  it('rejects a non-allowlisted contract address (attacker custom account, was the free-sponsorship hole)', () => {
+    const tx = depositTx(TOKEN, 'transfer', [{ __addr: 'CATTACKER' }, { __addr: 'GOWNER' }])
+    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN, 'CAGENT')).toThrow(RelayError)
+  })
+  it('rejects every transfer when the allowlist is empty but tokenAddr is set (fail closed)', () => {
+    const tx = depositTx(TOKEN, 'transfer', [{ __addr: 'CAGENT' }, { __addr: 'GOWNER' }])
+    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN, '')).toThrow(RelayError)
+    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN)).toThrow(RelayError) // default param
+  })
+  it('accepts a multi-entry allowlist, matching any listed agent (trims whitespace, ignores empty segments)', () => {
+    const tx = depositTx(TOKEN, 'transfer', [{ __addr: 'CAGENT2' }, { __addr: 'GOWNER' }])
+    const list = ' CAGENT1 , CAGENT2 ,,CAGENT3 '
+    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN, list)).not.toThrow()
+  })
+  it('rejects a G-address even when the allowlist string coincidentally contains it as a substring', () => {
+    const tx = depositTx(TOKEN, 'transfer', [{ __addr: 'GOWNER' }, { __addr: 'GOTHER' }])
+    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN, 'CAGENT,GOWNERX')).toThrow(
+      RelayError
+    )
   })
   it('rejects non-transfer token functions', () => {
     const tx = depositTx(TOKEN, 'approve', [{ __addr: 'CAGENT' }])

@@ -1,3 +1,5 @@
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import aiProxy from './api/ai.js'
@@ -5,6 +7,10 @@ import searchProxy from './api/search.js'
 import stellarRelayProxy from './api/stellar-relay.js'
 import faucetProxy from './api/faucet.js'
 import vfRouter from './api/vf/_router.js'
+
+// Repo root (parent of frontend/) — needed below so the dev server's fs.allow boundary covers
+// frontend/src/stellar/vaultReads.js's cross-package import of keeper/src/apr.js.
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '') // all vars (incl. non-VITE server-side)
@@ -20,6 +26,8 @@ export default defineConfig(({ mode }) => {
   if (env.SOROBAN_VAULT_ADDRESS) process.env.SOROBAN_VAULT_ADDRESS = env.SOROBAN_VAULT_ADDRESS
   if (env.VF_FAUCET_SECRET) process.env.VF_FAUCET_SECRET = env.VF_FAUCET_SECRET
   if (env.SOROBAN_TOKEN_ADDRESS) process.env.SOROBAN_TOKEN_ADDRESS = env.SOROBAN_TOKEN_ADDRESS
+  if (env.SOROBAN_AGENT_ALLOWLIST)
+    process.env.SOROBAN_AGENT_ALLOWLIST = env.SOROBAN_AGENT_ALLOWLIST
 
   // VF API gate (SEP-10 portal + gateway) — server-side only, never in the client bundle.
   if (env.VF_AUTH_SIGNING_KEY) process.env.VF_AUTH_SIGNING_KEY = env.VF_AUTH_SIGNING_KEY
@@ -70,6 +78,13 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       historyApiFallback: true,
+      // frontend/src/stellar/vaultReads.js imports keeper/src/apr.js via a relative cross-package
+      // path (T2 Fix 3 dedup) — that file lives outside this Vite root ('.' == frontend/), so the
+      // default fs.allow boundary 403s it under `vite dev`. Widen to the repo root so /@fs/ can
+      // reach it; `vite build` (Rollup) and vitest are unaffected — this only bounds the dev server.
+      fs: {
+        allow: [repoRoot],
+      },
     },
     preview: {
       historyApiFallback: true,
