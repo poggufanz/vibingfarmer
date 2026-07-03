@@ -34,3 +34,11 @@ it('respects cooldown', () => {
   const s = structuredClone(base); s.strategies[1].supplyAprBps = 400; s.lastRebalanceTs = s.nowTs - 100;
   expect(decide(s, cfg).some(x => x.type === 'rebalance')).toBe(false);
 });
+it('does not rebalance when the higher-APR strategy already holds more capital', () => {
+  const s = structuredClone(base);
+  s.strategies[0] = { address: 'S1', balance: 100_0000000n, supplyAprBps: 200, pendingInterest: 0n, blndClaimable: 0n };
+  s.strategies[1] = { address: 'S2', balance: 900_0000000n, supplyAprBps: 500, pendingInterest: 0n, blndClaimable: 0n };
+  // aprDelta = 300 > rebalanceBps (50); cooldown elapsed; but highest-APR (S2) already holds more
+  // balance than lowest-APR (S1) -> imbalance is negative -> no rebalance action should be emitted.
+  expect(decide(s, cfg).some(a => a.type === 'rebalance')).toBe(false);
+});
