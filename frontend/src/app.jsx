@@ -679,8 +679,9 @@ const App = () => {
         if (newActivity.length) {
           setKeeperActivity((prev) => [...newActivity.reverse(), ...prev].slice(0, 20))
         }
-      } catch {
+      } catch (e) {
         // transient RPC failure — the next 15s tick retries
+        console.warn('[app] keeper event read failed:', e)
       }
       // Live autofarm vault reads for the KeeperPanel: price-per-share + registered strategies,
       // each paired with a best-effort Blend supply-APR estimate. Best-effort end to end — a
@@ -710,8 +711,9 @@ const App = () => {
             strategies,
           })
         }
-      } catch {
+      } catch (e) {
         // transient RPC failure — the next 15s tick retries; panel keeps its last-known reads
+        console.warn('[app] keeper vault read failed:', e)
       }
     }
     sync() // once on connect
