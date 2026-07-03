@@ -1,39 +1,49 @@
 // frontend/src/agents/exitExecutor.js
 // Autonomous exit executor. Signs and submits scoped exit transactions.
+//
+// The exit is TWO sequential single-op transactions, not one multi-op tx:
+//   1. vault.redeem(agent, shares)      — burns shares, pays assets to the agent
+//   2. token.transfer(agent, owner, X)  — sweeps the agent's REAL balance to the owner
+// A Stellar tx may carry exactly ONE InvokeHostFunction op (protocol rule since P20), so
+// redeem+transfer cannot share an envelope. Splitting also lets X be the agent's actual
+// post-redeem token balance instead of a shares×price_per_share estimate — price_per_share
+// can DROP between a read and execution (blend_strategy harvest() marks principal down on
+// pool shortfall), and an oversized estimate would make the transfer revert.
 
-import { rpcServer, buildInvokeTx } from '../stellar/client.js';
-import { SOROBAN_ACTIVE_VAULT_ADDRESS, SOROBAN_TOKEN_ADDRESS, NETWORK_PASSPHRASE } from '../stellar/config.js';
-import { getRelayerAddress, submitViaRelay } from '../stellar/relay.js';
-import { readVaultShares } from '../stellar/agentDeposit.js';
-import { readPricePerShare } from '../stellar/vaultReads.js';
-import { loadExitKey } from '../wallet/exitKey.js';
+import { rpcServer, buildInvokeTx } from '../stellar/client.js'
+import {
+  SOROBAN_ACTIVE_VAULT_ADDRESS,
+  SOROBAN_TOKEN_ADDRESS,
+  NETWORK_PASSPHRASE,
+} from '../stellar/config.js'
+import { getRelayerAddress, submitViaRelay } from '../stellar/relay.js'
+import { readVaultShares, readTokenBalance } from '../stellar/agentDeposit.js'
+import { loadExitKey } from '../wallet/exitKey.js'
 
-const PPS_SCALE = 10_000_000n; // price_per_share 7-dp fixed point
-
-let _sdk = null;
+let _sdk = null
 async function sdk() {
-  if (!_sdk) _sdk = await import('@stellar/stellar-sdk');
-  return _sdk;
+  if (!_sdk) _sdk = await import('@stellar/stellar-sdk')
+  return _sdk
 }
 
-const AUTH_TTL_LEDGERS = 360;
+const AUTH_TTL_LEDGERS = 360
 
 /**
  * Sign every auth entry credentialed to `agentAddress` with the exit key (using tag 1).
  */
 export async function signAgentExitEntries({ tx, exitKeypair, validUntilLedger, agentAddress }) {
-  const { xdr, hash, Address } = await sdk();
-  const networkId = hash(Buffer.from(NETWORK_PASSPHRASE));
-  const wantScAddress = Address.fromString(agentAddress).toScAddress().toXDR('base64');
+  const { xdr, hash, Address } = await sdk()
+  const networkId = hash(Buffer.from(NETWORK_PASSPHRASE))
+  const wantScAddress = Address.fromString(agentAddress).toScAddress().toXDR('base64')
 
   for (const op of tx.operations) {
     const entries = op.auth || []
     for (const entry of entries) {
-      if (entry.credentials().switch().name !== 'sorobanCredentialsAddress') continue;
-      const creds = entry.credentials().address();
-      if (creds.address().toXDR('base64') !== wantScAddress) continue; // not this agent
+      if (entry.credentials().switch().name !== 'sorobanCredentialsAddress') continue
+      const creds = entry.credentials().address()
+      if (creds.address().toXDR('base64') !== wantScAddress) continue // not this agent
 
-      creds.signatureExpirationLedger(validUntilLedger);
+      creds.signatureExpirationLedger(validUntilLedger)
       const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
         new xdr.HashIdPreimageSorobanAuthorization({
           networkId,
@@ -41,100 +51,133 @@ export async function signAgentExitEntries({ tx, exitKeypair, validUntilLedger, 
           signatureExpirationLedger: validUntilLedger,
           invocation: entry.rootInvocation(),
         })
-      );
-      const payload = hash(preimage.toXDR());
-      
-      // Sign and prepend Tag 1 (1 byte) for Exit Signer!
-      const rawSig = exitKeypair.sign(new Uint8Array(payload));
-      const sigWithTag = new Uint8Array(65);
-      sigWithTag[0] = 1; // Tag 1 = exit key signature
-      sigWithTag.set(rawSig, 1);
+      )
+      const payload = hash(preimage.toXDR())
 
-      creds.signature(xdr.ScVal.scvBytes(Buffer.from(sigWithTag)));
+      // Sign and prepend Tag 1 (1 byte) for Exit Signer!
+      const rawSig = exitKeypair.sign(new Uint8Array(payload))
+      const sigWithTag = new Uint8Array(65)
+      sigWithTag[0] = 1 // Tag 1 = exit key signature
+      sigWithTag.set(rawSig, 1)
+
+      creds.signature(xdr.ScVal.scvBytes(Buffer.from(sigWithTag)))
     }
   }
-  return { xdr: tx.toEnvelope().toXDR('base64') };
+  return { xdr: tx.toEnvelope().toXDR('base64') }
 }
 
 /**
- * Build the double-operation exit transaction: redeem then transfer.
- * `transferAmount` is the ASSET amount the redeem pays out — on the autofarm vault shares are
- * exchange-rate priced, so it is shares × price_per_share (NOT shares 1:1 like the old vault).
+ * Build one single-op invoke (source = relayer), sign the agent's auth entry with the exit
+ * key, then RE-prepare with the signed entry — the first prepare runs in recording mode,
+ * which skips the custom account's __check_auth, so its footprint can miss the agent
+ * contract's entries and the submit would trap (same fix as buildAgentDeposit).
+ * @returns {Promise<{xdr:string}>}
  */
-export async function buildAgentExit({ agentAddress, ownerAddress, shares, transferAmount, relayer, exitKeypair, server }) {
-  const s = server || (await rpcServer());
-  const { Contract, TransactionBuilder, BASE_FEE } = await sdk();
-
-  const account = await s.getAccount(relayer);
-  const vaultContract = new Contract(SOROBAN_ACTIVE_VAULT_ADDRESS);
-  const tokenContract = new Contract(SOROBAN_TOKEN_ADDRESS);
-
-  // args shape:
-  // redeem(from, shares)
-  // transfer(from, to, amount)
-  const txBuilder = new TransactionBuilder(account, {
-    fee: BASE_FEE,
-    networkPassphrase: NETWORK_PASSPHRASE,
+export async function buildAgentExitTx({
+  contract,
+  method,
+  args,
+  relayer,
+  agentAddress,
+  exitKeypair,
+  server,
+}) {
+  const s = server || (await rpcServer())
+  const { tx } = await buildInvokeTx({ source: relayer, contract, method, args, server: s })
+  const latest = await s.getLatestLedger()
+  const validUntilLedger = latest.sequence + AUTH_TTL_LEDGERS
+  const { xdr: signedXdr } = await signAgentExitEntries({
+    tx,
+    exitKeypair,
+    validUntilLedger,
+    agentAddress,
   })
-    .addOperation(vaultContract.call('redeem', agentAddress, shares))
-    .addOperation(tokenContract.call('transfer', agentAddress, ownerAddress, transferAmount ?? shares))
-    .setTimeout(60);
-
-  const prepared = await s.prepareTransaction(txBuilder.build());
-  const latest = await s.getLatestLedger();
-  const validUntilLedger = latest.sequence + AUTH_TTL_LEDGERS;
-
-  return signAgentExitEntries({ tx: prepared, exitKeypair, validUntilLedger, agentAddress });
+  const { TransactionBuilder } = await sdk()
+  const prepared = await s.prepareTransaction(
+    TransactionBuilder.fromXDR(signedXdr, NETWORK_PASSPHRASE)
+  )
+  return { xdr: prepared.toEnvelope().toXDR('base64') }
 }
 
 /**
  * Run the autonomous exit using the scoped exit key.
+ * Leg 1 redeems all shares; leg 2 transfers the agent's actual token balance to the owner.
+ * If a prior run confirmed the redeem but failed the transfer, re-running self-heals:
+ * shares are 0, so leg 1 is skipped and the stranded balance is swept.
  * @param {{ agentAddress:string, ownerAddress:string, server?:object }} p
- * @returns {Promise<{ hash:string, status:string }>}
+ * @returns {Promise<{ hash:string, status:string, redeemHash:string|null }>}
  */
 export async function runAutonomousExit({ agentAddress, ownerAddress, server }) {
-  const exitKeyData = loadExitKey(agentAddress);
+  const exitKeyData = loadExitKey(agentAddress)
   if (!exitKeyData) {
-    throw new Error('No exit key authorized for this agent');
+    throw new Error('No exit key authorized for this agent')
   }
 
-  const s = server || (await rpcServer());
-  const { Keypair } = await sdk();
-  const exitKeypair = Keypair.fromSecret(exitKeyData.secret);
+  const s = server || (await rpcServer())
+  const { Keypair } = await sdk()
+  const exitKeypair = Keypair.fromSecret(exitKeyData.secret)
 
-  // 1. Fetch current vault shares
-  const shares = await readVaultShares(agentAddress, { server: s });
-  if (!shares || shares <= 0n) {
-    throw new Error('No vault shares to exit');
+  const shares = await readVaultShares(agentAddress, { server: s })
+  if (shares == null) {
+    throw new Error('share balance read failed — cannot exit')
   }
 
-  // 1b. Convert shares → expected redeem payout via price_per_share. Floors twice (pps floors,
-  // then this multiply floors) so the computed amount is ≤ what redeem actually pays — the
-  // transfer can never exceed the agent's post-redeem balance; pps only rises (keeper compound),
-  // so any drift between build and submit leaves dust with the agent, never a failed transfer.
-  const pps = await readPricePerShare(SOROBAN_ACTIVE_VAULT_ADDRESS, { server: s });
-  if (pps == null) {
-    throw new Error('price_per_share read failed — cannot size the exit transfer');
-  }
-  const transferAmount = (shares * pps) / PPS_SCALE;
-
-  // 2. Fetch relayer address
-  const relayer = await getRelayerAddress();
+  const relayer = await getRelayerAddress()
   if (!relayer) {
-    throw new Error('No relayer configured');
+    throw new Error('No relayer configured')
   }
 
-  // 3. Build and sign
-  const { xdr } = await buildAgentExit({
-    agentAddress,
-    ownerAddress,
-    shares,
-    transferAmount,
-    relayer,
-    exitKeypair,
-    server: s
-  });
+  // Leg 1: redeem all shares. Must confirm on-chain before the balance read below —
+  // the payout only exists after the redeem lands.
+  let redeemHash = null
+  if (shares > 0n) {
+    const { xdr } = await buildAgentExitTx({
+      contract: SOROBAN_ACTIVE_VAULT_ADDRESS,
+      method: 'redeem',
+      args: [{ addr: agentAddress }, { i128: shares }],
+      relayer,
+      agentAddress,
+      exitKeypair,
+      server: s,
+    })
+    const res = await submitViaRelay({ xdr })
+    if (!res || res.status !== 'SUCCESS') {
+      throw new Error(`redeem ${res ? res.status : 'relay unreachable'} — exit aborted`)
+    }
+    redeemHash = res.hash
+  }
 
-  // 4. Submit via relayer
-  return submitViaRelay({ xdr });
+  // Size the transfer from the agent's REAL balance — exact by construction, so it can
+  // never exceed what redeem actually paid, and it also sweeps any pre-existing dust.
+  const balance = await readTokenBalance(agentAddress, { server: s })
+  if (balance == null) {
+    throw new Error(
+      `token balance read failed after redeem${redeemHash ? ` (redeem tx ${redeemHash})` : ''} — retry to sweep`
+    )
+  }
+  if (balance <= 0n) {
+    if (redeemHash) {
+      // vault.redeem guards assets>0, so a confirmed redeem always leaves a balance
+      throw new Error(`redeem tx ${redeemHash} confirmed but agent balance is 0`)
+    }
+    throw new Error('No vault shares to exit')
+  }
+
+  // Leg 2: sweep to the owner.
+  const { xdr } = await buildAgentExitTx({
+    contract: SOROBAN_TOKEN_ADDRESS,
+    method: 'transfer',
+    args: [{ addr: agentAddress }, { addr: ownerAddress }, { i128: balance }],
+    relayer,
+    agentAddress,
+    exitKeypair,
+    server: s,
+  })
+  const res = await submitViaRelay({ xdr })
+  if (!res || res.status !== 'SUCCESS') {
+    throw new Error(
+      `transfer ${res ? res.status : 'relay unreachable'} after redeem ${redeemHash ?? '(skipped)'} — funds sit on the agent; re-run to sweep`
+    )
+  }
+  return { hash: res.hash, status: res.status, redeemHash }
 }
