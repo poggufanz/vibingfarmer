@@ -1,6 +1,6 @@
 #![cfg(test)]
 use crate::{BlendStrategy, BlendStrategyClient};
-use soroban_sdk::testutils::Address as _;
+use soroban_sdk::testutils::{Address as _, Events as _};
 use soroban_sdk::token::{StellarAssetClient, TokenClient};
 use soroban_sdk::{contract, contractimpl, Address, Env, Map, Vec};
 
@@ -62,6 +62,17 @@ impl MockBlendPool {
 
         let supplier: Address = e.storage().instance().get(&MOCK_SUPPLIER).unwrap();
         let bal = mock_supplied(e, &supplier) + amount;
+        e.storage()
+            .persistent()
+            .set(&MockKey::Supplied(supplier), &bal);
+    }
+
+    /// Test-only: simulate a Blend pool shortfall (socialized bad debt) — the inverse of
+    /// `credit_yield`. Reduces the sole supplier's tracked position by `amount` without
+    /// moving any tokens, so a subsequent withdraw-all pays out less than was supplied.
+    pub fn haircut_position(e: &Env, amount: i128) {
+        let supplier: Address = e.storage().instance().get(&MOCK_SUPPLIER).unwrap();
+        let bal = mock_supplied(e, &supplier) - amount;
         e.storage()
             .persistent()
             .set(&MockKey::Supplied(supplier), &bal);
@@ -238,6 +249,43 @@ fn harvest_zero_interest_returns_zero() {
         TokenClient::new(&e, &ctx.token).balance(&ctx.vault),
         900 * U7
     );
+}
+
+#[test]
+fn harvest_marks_down_principal_on_shortfall() {
+    let e = Env::default();
+    let ctx = setup(&e);
+    ctx.strategy.deposit(&(100 * U7));
+
+    let pool = MockBlendPoolClient::new(&e, &ctx.pool);
+    // Pool lost 10 to socialized bad debt — withdraw-all now returns only 90 of the 100
+    // book principal.
+    pool.haircut_position(&(10 * U7));
+
+    let harvested = ctx.strategy.harvest(&0);
+
+    assert_eq!(harvested, 0);
+    // No gain to forward — vault balance untouched by a shortfall harvest.
+    assert_eq!(
+        TokenClient::new(&e, &ctx.token).balance(&ctx.vault),
+        900 * U7
+    );
+    // Marked down to what was actually recovered (90), not still overstating 100.
+    assert_eq!(ctx.strategy.balance(), 90 * U7);
+}
+
+#[test]
+fn harvest_zero_principal_returns_zero() {
+    let e = Env::default();
+    let ctx = setup(&e);
+    // No deposit — principal is 0, harvest should short-circuit before touching Blend.
+
+    let harvested = ctx.strategy.harvest(&0);
+
+    assert_eq!(harvested, 0);
+    assert_eq!(ctx.strategy.balance(), 0);
+    // Early-return path never reaches `.publish()` — no event side effects.
+    assert_eq!(e.events().all().events().len(), 0);
 }
 
 #[test]

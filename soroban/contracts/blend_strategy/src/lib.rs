@@ -93,6 +93,13 @@ impl BlendStrategy {
         blend::withdraw(&e, &storage::get_pool(&e), &token, i128::MAX);
         let pulled = tk.balance(&me) - before;
         blend::supply(&e, &storage::get_pool(&e), &token, principal.min(pulled));
+        if pulled < principal {
+            // Pool shortfall (socialized bad debt): Blend returned less than book principal.
+            // Mark the book down to what was actually recovered and re-supplied so `balance()`
+            // stops overstating the position — otherwise Task 6-8 share pricing would inflate
+            // `price_per_share` off a phantom balance.
+            storage::set_principal(&e, pulled);
+        }
         let gain = tk.balance(&me) - before; // whatever remains after re-supply
         if gain > 0 {
             tk.transfer(&me, &vault, &gain);
