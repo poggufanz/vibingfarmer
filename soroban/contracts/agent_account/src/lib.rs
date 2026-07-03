@@ -62,10 +62,10 @@ impl AgentAccount {
         env.storage().instance().get(&DataKey::Scope).unwrap()
     }
 
-    /// Owner-gated exit. Redeems all of the agent's vault shares, claims any accrued dividend,
-    /// and transfers the agent's whole asset balance to `to`. Authorized by the OWNER (not the
-    /// session key) and by THIS contract as invoker for its own redeem/transfer sub-calls.
-    /// Returns the asset amount swept to `to`.
+    /// Owner-gated exit. Redeems all of the agent's vault shares and transfers the agent's
+    /// whole asset balance to `to`. Authorized by the OWNER (not the session key) and by THIS
+    /// contract as invoker for its own redeem/transfer sub-calls. Returns the asset amount
+    /// swept to `to`.
     pub fn owner_withdraw(env: Env, to: Address) -> Result<i128, AccountError> {
         let owner: Address = env
             .storage()
@@ -102,11 +102,7 @@ impl AgentAccount {
             vault_client.redeem(&current, &shares);
         }
 
-        // 2. Claim any dividend — best-effort. The vault traps with NothingToClaim when there is
-        //    no dividend; that must never block the sweep of shares + principal.
-        let _ = vault_client.try_claim(&current);
-
-        // 3. Sweep the agent's whole asset balance to `to` (token.transfer needs agent auth → invoker).
+        // 2. Sweep the agent's whole asset balance to `to` (token.transfer needs agent auth → invoker).
         let bal = token_client.balance(&current);
         if bal <= 0 {
             return Err(AccountError::NothingToWithdraw);
@@ -135,7 +131,9 @@ impl AgentAccount {
             .get(&DataKey::Owner)
             .ok_or(AccountError::NotInit)?;
         owner.require_auth();
-        env.storage().instance().set(&DataKey::ExitSigner, &exit_signer);
+        env.storage()
+            .instance()
+            .set(&DataKey::ExitSigner, &exit_signer);
         Ok(())
     }
 

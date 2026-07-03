@@ -232,6 +232,12 @@ fn test_scope_accumulates_and_resets_period() {
         .is_ok());
 }
 
+// rwa_vault mints this many shares to ITSELF (locked forever) on a vault's first-ever
+// deposit — an inflation-attack guard (rwa_vault::vault::DEAD_SHARES, `pub(crate)` so not
+// importable from here). Every fresh-vault first deposit in this file's tests must dock its
+// expected share count by this amount.
+const VAULT_DEAD_SHARES: i128 = 1000;
+
 // --- Task 1: local vault client interface (no wasm import) ---
 #[test]
 fn vault_client_iface_compiles_and_calls() {
@@ -263,11 +269,12 @@ fn vault_client_iface_compiles_and_calls() {
         &1_000_000,
     );
     let shares = crate::vault_client::VaultClient::new(&env, &vault).deposit(&holder, &50_000_000);
-    // Assert
-    assert_eq!(shares, 50_000_000); // 1:1 stable NAV
+    // Assert: this is the vault's first-ever deposit, so DEAD_SHARES is carved out and locked
+    // in the vault itself — the holder mints amount - DEAD_SHARES, not a flat 1:1.
+    assert_eq!(shares, 50_000_000 - VAULT_DEAD_SHARES);
     assert_eq!(
         crate::vault_client::VaultClient::new(&env, &vault).balance(&holder),
-        50_000_000
+        50_000_000 - VAULT_DEAD_SHARES
     );
 }
 
@@ -378,25 +385,28 @@ fn owner_withdraw_sweeps_principal_back_to_owner() {
     let agent = env.register(AgentAccount, (owner.clone(), signer, s));
 
     // Fund the agent and deposit (mock_all_auths stands in for the session-key path here;
-    // the real session-key auth tree is Phase 2). Shares mint to the agent.
+    // the real session-key auth tree is Phase 2). Shares mint to the agent — this is the
+    // vault's first-ever deposit, so DEAD_SHARES is carved out and locked in the vault itself.
     token_admin.mint(&agent, &60_000_000);
     crate::vault_client::VaultClient::new(&env, &vault).deposit(&agent, &50_000_000);
     assert_eq!(
         crate::vault_client::VaultClient::new(&env, &vault).balance(&agent),
-        50_000_000
+        50_000_000 - VAULT_DEAD_SHARES
     );
 
     // Act: owner sweeps everything back.
     let swept = AgentAccountClient::new(&env, &agent).owner_withdraw(&owner);
 
-    // Assert: agent emptied, owner holds principal (50m redeemed + 10m never deposited).
+    // Assert: agent emptied, owner holds principal (50m redeemed at par minus the
+    // DEAD_SHARES dust permanently locked in the vault, + 10m never deposited). Exit is
+    // redeem-only now (no dividend claim) — nothing else contributes to the swept total.
     assert_eq!(
         crate::vault_client::VaultClient::new(&env, &vault).balance(&agent),
         0
     );
     assert_eq!(token_client.balance(&agent), 0);
-    assert_eq!(token_client.balance(&owner), 60_000_000);
-    assert_eq!(swept, 60_000_000);
+    assert_eq!(token_client.balance(&owner), 60_000_000 - VAULT_DEAD_SHARES);
+    assert_eq!(swept, 60_000_000 - VAULT_DEAD_SHARES);
 }
 
 #[test]
@@ -522,7 +532,13 @@ fn redeem_ctx(env: &Env, vault: &Address, agent: &Address, shares: i128) -> Vec<
     )
 }
 
-fn transfer_ctx(env: &Env, token: &Address, from: &Address, to: &Address, amount: i128) -> Vec<Context> {
+fn transfer_ctx(
+    env: &Env,
+    token: &Address,
+    from: &Address,
+    to: &Address,
+    amount: i128,
+) -> Vec<Context> {
     let args: Vec<Val> = (from.clone(), to.clone(), amount).into_val(env);
     Vec::from_array(
         env,

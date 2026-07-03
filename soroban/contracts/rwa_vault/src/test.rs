@@ -24,6 +24,7 @@ mod mock_strategy {
         Token,
         Principal,
         HarvestGain, // Task 8: configurable harvest() payout, set via `set_harvest_gain`
+        Bricked,     // Task 10: once true, `withdraw` unconditionally traps
     }
 
     #[contract]
@@ -50,10 +51,20 @@ mod mock_strategy {
         }
 
         /// `i128::MAX` (or any amount exceeding actual holdings) drains everything held,
-        /// mirroring the real strategy's cap-at-live-position behavior.
+        /// mirroring the real strategy's cap-at-live-position behavior. Traps unconditionally
+        /// once `set_bricked(true)` has been called — simulating a strategy whose underlying
+        /// protocol position can no longer be exited (Task 10: `redeem_always_works`).
         pub fn withdraw(e: Env, amount: i128) -> i128 {
             let vault: Address = e.storage().instance().get(&DataKey::Vault).unwrap();
             vault.require_auth();
+            let bricked: bool = e
+                .storage()
+                .instance()
+                .get(&DataKey::Bricked)
+                .unwrap_or(false);
+            if bricked {
+                panic!("mock strategy: bricked");
+            }
             let token: Address = e.storage().instance().get(&DataKey::Token).unwrap();
             let me = e.current_contract_address();
             let tk = TokenClient::new(&e, &token);
@@ -107,6 +118,13 @@ mod mock_strategy {
         /// balance with at least `v` extra (beyond its principal) — see `fund_strategy_gain`.
         pub fn set_harvest_gain(e: Env, v: i128) {
             e.storage().instance().set(&DataKey::HarvestGain, &v);
+        }
+
+        /// Test-only hook: once set to `true`, every subsequent `withdraw` call traps —
+        /// simulating a strategy whose underlying protocol position is permanently stuck
+        /// (Task 10: `redeem_always_works`).
+        pub fn set_bricked(e: Env, v: bool) {
+            e.storage().instance().set(&DataKey::Bricked, &v);
         }
     }
 }
@@ -864,6 +882,74 @@ fn emergency_withdraw_drains_to_idle_even_when_paused() {
     // redeem still works while paused (redeem was never pause-gated).
     let assets = ctx.vault.redeem(&alice, &alice_shares);
     assert!(assets > 0);
+}
+
+// ----- Task 10 (vf-autofarm §9): one bricked strategy must not lock ALL user funds -----
+
+#[test]
+fn redeem_always_works() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let alice = Address::generate(&env);
+    fund_and_approve(&env, &ctx, &alice, 10 * U7);
+    ctx.vault.deposit(&alice, &(10 * U7)); // idle = 10*U7, supply = 10*U7 (10x price setup)
+
+    // Register a HEALTHY strategy first, a permanently BRICKED one second — `ensure_idle`
+    // drains registered strategies in list order and stops the moment idle covers the
+    // redeem, so registration order decides whether a given payout ever reaches `bricked`.
+    let healthy = deploy_mock_strategy(&env, &ctx);
+    let bricked = deploy_mock_strategy(&env, &ctx);
+    ctx.vault.add_strategy(&healthy);
+    ctx.vault.add_strategy(&bricked);
+    fund_strategy(&env, &ctx, &healthy, 50 * U7);
+    fund_strategy(&env, &ctx, &bricked, 40 * U7);
+    MockStrategyClient::new(&env, &bricked).set_bricked(&true); // withdraw() now traps
+
+    // total_assets = 10 idle + 50 healthy + 40 bricked = 100*U7 backing 10*U7 shares (10x).
+    assert_eq!(ctx.vault.total_assets(), 100 * U7);
+
+    // 1. A redeem covered by idle + the healthy strategy (40*U7 of the 100*U7 total) succeeds
+    //    WITHOUT ever calling the bricked strategy's withdraw — proving a single bricked
+    //    strategy does not lock every user's funds, only the slice actually parked in it.
+    let assets1 = ctx.vault.redeem(&alice, &(4 * U7));
+    assert_eq!(assets1, 40 * U7);
+    assert_eq!(MockStrategyClient::new(&env, &healthy).balance(), 20 * U7); // 50 - 30 shortfall
+    assert_eq!(MockStrategyClient::new(&env, &bricked).balance(), 40 * U7); // never touched
+
+    // 2. Admin recovery path: even while paused, `emergency_withdraw` still drains the
+    //    HEALTHY strategy's remainder to idle, and `remove_strategy` deregisters it once
+    //    empty — both admin-only escape hatches, neither pause-gated. `bricked` stays
+    //    registered (its balance can never reach 0 — its withdraw always traps), yet the
+    //    vault remains usable.
+    ctx.vault.pause(&ctx.admin);
+    ctx.vault.emergency_withdraw(&healthy);
+    assert_eq!(MockStrategyClient::new(&env, &healthy).balance(), 0);
+    ctx.vault.remove_strategy(&healthy);
+    assert_eq!(
+        ctx.vault.strategies(),
+        Vec::from_array(&env, [bricked.clone()])
+    );
+
+    // total_assets unchanged (20 idle + 40 bricked = 60*U7 backing the 6*U7 shares left) —
+    // funds only moved custody, nothing was gained or lost.
+    assert_eq!(ctx.vault.total_assets(), 60 * U7);
+
+    // 3. A user can still redeem the full recoverable amount (idle) despite the bricked
+    //    strategy remaining registered — `bricked` is the ONLY registered strategy left, so
+    //    this redeem never even enters `ensure_idle`'s drain loop for it (idle alone covers
+    //    the payout). redeem is never pause-gated, so this succeeds while still paused.
+    let assets2 = ctx.vault.redeem(&alice, &(2 * U7));
+    assert_eq!(assets2, 20 * U7);
+    assert_eq!(MockStrategyClient::new(&env, &bricked).balance(), 40 * U7); // still untouched
+
+    // 4. Only the bricked-locked slice is actually unavailable — and that failure is a clean
+    //    revert (via `try_redeem`), not a corrupted or partial payout. Vault state (shares,
+    //    total_assets) is untouched by the failed attempt.
+    let shares_before = ctx.vault.total_shares();
+    let assets_before = ctx.vault.total_assets();
+    assert!(ctx.vault.try_redeem(&alice, &U7).is_err());
+    assert_eq!(ctx.vault.total_shares(), shares_before);
+    assert_eq!(ctx.vault.total_assets(), assets_before);
 }
 
 #[test]
