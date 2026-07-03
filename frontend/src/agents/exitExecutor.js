@@ -99,6 +99,11 @@ export async function buildAgentExitTx({
   return { xdr: prepared.toEnvelope().toXDR('base64') }
 }
 
+// Per-agent in-flight guard: the 15s checkExit interval (app.jsx) can re-fire while a slow
+// relay/RPC leg is still pending; a concurrent second redeem would just fail on-chain, but
+// rejecting early keeps the log clean and avoids a double transfer race after self-heal.
+const _exitInFlight = new Set()
+
 /**
  * Run the autonomous exit using the scoped exit key.
  * Leg 1 redeems all shares; leg 2 transfers the agent's actual token balance to the owner.
@@ -108,6 +113,18 @@ export async function buildAgentExitTx({
  * @returns {Promise<{ hash:string, status:string, redeemHash:string|null }>}
  */
 export async function runAutonomousExit({ agentAddress, ownerAddress, server }) {
+  if (_exitInFlight.has(agentAddress)) {
+    throw new Error('exit already in flight for this agent')
+  }
+  _exitInFlight.add(agentAddress)
+  try {
+    return await _runAutonomousExit({ agentAddress, ownerAddress, server })
+  } finally {
+    _exitInFlight.delete(agentAddress)
+  }
+}
+
+async function _runAutonomousExit({ agentAddress, ownerAddress, server }) {
   const exitKeyData = loadExitKey(agentAddress)
   if (!exitKeyData) {
     throw new Error('No exit key authorized for this agent')

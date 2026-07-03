@@ -148,7 +148,7 @@ describe('signAgentExitEntries', () => {
 
 // ── runAutonomousExit: two sequential single-op txs, balance-sized transfer ───
 describe('runAutonomousExit', () => {
-  test('redeems then transfers the agent\'s REAL post-redeem balance (never a pps estimate)', async () => {
+  test("redeems then transfers the agent's REAL post-redeem balance (never a pps estimate)", async () => {
     // Arrange: 30 shares; post-redeem balance deliberately UNRELATED to shares so any
     // pps-style sizing (shares × price) would produce a different number.
     readVaultSharesMock.mockResolvedValue(30_030_030n)
@@ -281,6 +281,30 @@ describe('runAutonomousExit', () => {
     await expect(
       runAutonomousExit({ agentAddress: AGENT, ownerAddress: OWNER, server: fakeServer })
     ).rejects.toThrow('No relayer configured')
+  })
+
+  test('rejects a concurrent second run for the same agent (in-flight lock)', async () => {
+    // Arrange: park the first run inside the redeem submit
+    readVaultSharesMock.mockResolvedValue(10n)
+    readTokenBalanceMock.mockResolvedValue(5n)
+    let releaseSubmit
+    submitViaRelayMock.mockImplementationOnce(
+      () => new Promise((res) => (releaseSubmit = () => res({ hash: 'H', status: 'SUCCESS' })))
+    )
+    const first = runAutonomousExit({ agentAddress: AGENT, ownerAddress: OWNER, server: fakeServer })
+    await vi.waitFor(() => expect(submitViaRelayMock).toHaveBeenCalled())
+    // Act + Assert: second run for the SAME agent rejects immediately
+    await expect(
+      runAutonomousExit({ agentAddress: AGENT, ownerAddress: OWNER, server: fakeServer })
+    ).rejects.toThrow('already in flight')
+    // Release; first run completes and the lock clears for a fresh run
+    releaseSubmit()
+    await first
+    readVaultSharesMock.mockResolvedValue(0n)
+    readTokenBalanceMock.mockResolvedValue(0n)
+    await expect(
+      runAutonomousExit({ agentAddress: AGENT, ownerAddress: OWNER, server: fakeServer })
+    ).rejects.toThrow('No vault shares to exit') // lock released — normal path error, not "in flight"
   })
 
   test('re-prepares each signed tx before submit (footprint refresh for __check_auth)', async () => {
