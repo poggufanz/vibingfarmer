@@ -21,14 +21,14 @@ import {
   scValToNative,
   xdr,
 } from '@stellar/stellar-sdk';
+import { estimateSupplyAprBps } from './apr.js';
 
 const TX_TIMEOUT_S = 30;
 
-// Blend v2 fixed-point scales (see docs/superpowers/specs/2026-07-03-vf-autofarm-design.md §3):
-// config fractions (util/IR breakpoints) are 1e7 scale; b_rate/d_rate are 1e12 scale.
-const SCALAR_7 = 10_000_000n;
+// Blend v2 fixed-point scale for b_rate/d_rate (see docs/superpowers/specs/
+// 2026-07-03-vf-autofarm-design.md §3). The 1e7 config-fraction scale + bps denominator
+// `estimateSupplyAprBps` also needs now live in ./apr.js with that function (T2 Fix 3 dedup).
 const SCALAR_12 = 1_000_000_000_000n;
-const BPS_DENOMINATOR = 10_000n;
 
 // ----- SDK plumbing -----
 
@@ -36,13 +36,16 @@ function rpcServer(env) {
   return new rpc.Server(env.SOROBAN_RPC_URL);
 }
 
-/** The keeper's only identity: relayer keypair. It is both the tx source (pays gas) and the
- * on-chain `keeper()` the vault's `require_keeper` checks — see task-13 brief / CLAUDE.md. */
-function relayerKeypair(env) {
-  if (!env.STELLAR_RELAYER_SECRET) {
-    throw new Error('STELLAR_RELAYER_SECRET is not set (wrangler secret / .dev.vars)');
+/** The keeper's own identity: STELLAR_KEEPER_SECRET, deliberately separate from
+ * STELLAR_RELAYER_SECRET (the user-facing gasless-relay signer used elsewhere in the app — see
+ * frontend/src/stellar). It is both the tx source (pays gas) and the on-chain `keeper()` the
+ * vault's `require_keeper` checks — see task-13 brief / CLAUDE.md. No fallback to the relayer
+ * secret: fails fast if the keeper's own key is unset (T2 Fix 1, identity split). */
+function keeperKeypair(env) {
+  if (!env.STELLAR_KEEPER_SECRET) {
+    throw new Error('STELLAR_KEEPER_SECRET is not set (wrangler secret / .dev.vars)');
   }
-  return Keypair.fromSecret(env.STELLAR_RELAYER_SECRET);
+  return Keypair.fromSecret(env.STELLAR_KEEPER_SECRET);
 }
 
 function addrScVal(strkey) {
@@ -80,9 +83,9 @@ async function simCall(server, env, simSource, contractId, method, args = []) {
 }
 
 /** Best-effort read: log a warning and fall back rather than fail the whole tick. Used for
- * fields the task brief marks best-effort (blndClaimable, supplyAprBps, lastRebalanceTs,
- * blndQuote) — idle and strategy balance are NOT wrapped here, a failure there is fatal for
- * the tick (readState throws, index.js logs + skips the whole tick). */
+ * fields the task brief marks best-effort (blndClaimable, supplyAprBps, pendingInterest,
+ * lastRebalanceTs, blndQuote) — idle and strategy balance are NOT wrapped here, a failure there
+ * is fatal for the tick (readState throws, index.js logs + skips the whole tick). */
 async function bestEffort(label, fn, fallback) {
   try {
     return await fn();
@@ -123,14 +126,24 @@ async function readStrategyBalance(server, env, simSource, strategyAddress) {
   return BigInt(val ?? 0);
 }
 
-/** bToken (supply-side) `reserve_token_id` for `asset` on `poolAddress` = reserve_list index *
- * 2 + 1 (Blend v2 convention, verified live — Task 1 spike, docs/superpowers/plans/
- * 2026-07-03-vf-autofarm-progress.md). Derived fresh rather than hardcoded so a pool's reserve
- * ordering never silently drifts out from under a magic number. */
-async function deriveReserveTokenId(server, env, simSource, poolAddress, assetAddress) {
+/** Plain reserve-list index of `assetAddress` on `poolAddress`. Derived fresh (not hardcoded) so
+ * a pool's reserve ordering never silently drifts out from under a magic number. This is the key
+ * Blend v2's `Positions` struct (`get_positions` return) uses for its `supply`/`collateral`/
+ * `liabilities` maps — see soroban/contracts/blend_strategy/src/blend.rs `Positions` doc comment
+ * ("Keyed by reserve index"). NOT the bToken `reserve_token_id` (`index*2+1`, see
+ * `deriveReserveTokenId` below) that emissions reads (`get_user_emissions`/`claim`) use. */
+async function deriveReserveIndex(server, env, simSource, poolAddress, assetAddress) {
   const list = await simCall(server, env, simSource, poolAddress, 'get_reserve_list', []);
   const idx = (list || []).findIndex((a) => String(a) === assetAddress);
   if (idx < 0) throw new Error(`asset ${assetAddress} not found in ${poolAddress} reserve list`);
+  return idx;
+}
+
+/** bToken (supply-side) `reserve_token_id` for `asset` on `poolAddress` = reserve index * 2 + 1
+ * (Blend v2 convention, verified live — Task 1 spike, docs/superpowers/plans/
+ * 2026-07-03-vf-autofarm-progress.md). */
+async function deriveReserveTokenId(server, env, simSource, poolAddress, assetAddress) {
+  const idx = await deriveReserveIndex(server, env, simSource, poolAddress, assetAddress);
   return idx * 2 + 1;
 }
 
@@ -150,47 +163,51 @@ async function readBlndClaimable(server, env, simSource, poolAddress, strategyAd
   return 0n; // unrecognized shape — degrade to 0 rather than guess
 }
 
-/**
- * Keeper-side supply-APR ESTIMATE (bps) from Blend's reserve config/data, using the 3-slope
- * kinked-rate curve documented in docs/superpowers/specs/2026-07-03-vf-autofarm-design.md §3
- * (`pool/src/pool/reserve.rs`). This is a JUDGMENT-CALL approximation for cross-strategy
- * rebalance comparison, NOT an authoritative Blend APR source. With only one live strategy
- * today, `decide()`'s rebalance branch never fires regardless of this value (`highest ===
- * lowest` short-circuits — see decide.js `findAprExtremes`/`decideRebalance`); this exists so a
- * future second strategy has a real number to compare against, not a placeholder.
- */
-function estimateSupplyAprBps(reserve, backstopTakeRateFraction) {
-  const { config, data } = reserve;
-  const bSupplyUnderlying = (BigInt(data.b_supply) * BigInt(data.b_rate)) / SCALAR_12;
-  const dSupplyUnderlying = (BigInt(data.d_supply) * BigInt(data.d_rate)) / SCALAR_12;
-  if (bSupplyUnderlying <= 0n) return 0;
-
-  const util = (dSupplyUnderlying * SCALAR_7) / bSupplyUnderlying;
-  const targetUtil = BigInt(config.util);
-  const maxUtil = BigInt(config.max_util);
-  const rBase = BigInt(config.r_base);
-  const rOne = BigInt(config.r_one);
-  const rTwo = BigInt(config.r_two);
-  const rThree = BigInt(config.r_three);
-
-  let borrowRate;
-  if (util <= targetUtil) {
-    borrowRate = rBase + (util * rOne) / (targetUtil || 1n);
-  } else if (util <= maxUtil) {
-    borrowRate = rBase + rOne + ((util - targetUtil) * rTwo) / ((maxUtil - targetUtil) || 1n);
-  } else {
-    borrowRate = rBase + rOne + rTwo + ((util - maxUtil) * rThree) / ((SCALAR_7 - maxUtil) || 1n);
-  }
-  const irMod = BigInt(data.ir_mod); // 1e7 fixed point, 1e7 == 1.0x (no reactivity adjustment yet)
-  const adjustedBorrowRate = (borrowRate * irMod) / SCALAR_7;
-  const supplyRate = (adjustedBorrowRate * util * (SCALAR_7 - backstopTakeRateFraction)) / (SCALAR_7 * SCALAR_7);
-  return Number((supplyRate * BPS_DENOMINATOR) / SCALAR_7);
-}
-
+// estimateSupplyAprBps lives in ./apr.js now (T2 Fix 3 — was duplicated verbatim in
+// frontend/src/stellar/vaultReads.js; extracted to a single pure module both import).
 async function readSupplyAprBps(server, env, simSource, poolAddress) {
   const reserve = await simCall(server, env, simSource, poolAddress, 'get_reserve', [addrScVal(env.USDC)]);
   const poolConfig = await simCall(server, env, simSource, poolAddress, 'get_config', []);
   return estimateSupplyAprBps(reserve, BigInt(poolConfig.bstop_rate));
+}
+
+/**
+ * Pure: live Blend valuation of a strategy's bToken supply position minus its book principal —
+ * the realizable-at-harvest interest `decide()`'s `totalPendingInterest` MIN_COMPOUND gate sums
+ * across strategies (decide.js `decideCompound`; decide.js itself is unchanged by this — it just
+ * finally receives a real, non-zero number here). `positions` is the pool's
+ * `get_positions(strategy)` return, decoded by @stellar/stellar-sdk's `scValToNative` — a Blend
+ * `Map<u32, i128>` decodes to a plain JS object keyed by the numeric-string reserve index (see
+ * `scval.js`'s `scvMap` case: `Object.fromEntries`), which is why `positions.supply[reserveIndex]`
+ * (a bare number) still resolves — JS coerces the property key to a string on access. `bRate` is
+ * that reserve's `get_reserve(asset).data.b_rate` (12-decimal, SCALAR_12 — same scale
+ * `estimateSupplyAprBps` uses). Clamped to 0n: a pool shortfall (live value < book principal —
+ * see blend_strategy.rs `harvest()`'s "pulled < principal" markdown) is a realized loss, not
+ * negative pending interest.
+ * @param {{ supply?: Record<string, bigint|string|number> }} positions decoded Blend `Positions`
+ * @param {number} reserveIndex USDC's plain reserve-list index (`deriveReserveIndex` — NOT the
+ *   `reserve_token_id` emissions reads use)
+ * @param {bigint} bRate pool `get_reserve(USDC).data.b_rate`
+ * @param {bigint} principal strategy `balance()` (book principal)
+ * @returns {bigint}
+ */
+export function computePendingInterest(positions, reserveIndex, bRate, principal) {
+  const bTokenAmount = BigInt(positions?.supply?.[reserveIndex] ?? 0);
+  const liveValue = (bTokenAmount * BigInt(bRate)) / SCALAR_12;
+  const pending = liveValue - BigInt(principal);
+  return pending > 0n ? pending : 0n;
+}
+
+/** Wires `computePendingInterest`'s three RPC-sourced inputs together for one strategy. Fully
+ * best-effort at the call site in `readState` — any failure here (pool doesn't expose
+ * `get_positions`, RPC hiccup) degrades to 0n, same floor the old hardcoded value used. */
+async function readPendingInterest(server, env, simSource, poolAddress, strategyAddress, principal) {
+  const reserveIndex = await deriveReserveIndex(server, env, simSource, poolAddress, env.USDC);
+  const positions = await simCall(server, env, simSource, poolAddress, 'get_positions', [
+    addrScVal(strategyAddress),
+  ]);
+  const reserve = await simCall(server, env, simSource, poolAddress, 'get_reserve', [addrScVal(env.USDC)]);
+  return computePendingInterest(positions, reserveIndex, BigInt(reserve.data.b_rate), principal);
 }
 
 async function readLastRebalanceTs(server, env) {
@@ -231,12 +248,12 @@ async function buildBlndQuote(server, env, simSource, claimableAmounts) {
 
 /**
  * Gather live state into the exact shape `decide()` (./decide.js) consumes.
- * @param {object} env wrangler env (vars + STELLAR_RELAYER_SECRET secret)
+ * @param {object} env wrangler env (vars + STELLAR_KEEPER_SECRET secret)
  * @returns {Promise<import('./decide.js').DecideState>}
  */
 export async function readState(env) {
   const server = rpcServer(env);
-  const simSource = relayerKeypair(env).publicKey(); // funded relayer G-address; also submit's tx source
+  const simSource = keeperKeypair(env).publicKey(); // funded keeper G-address; also submit's tx source
 
   const idle = await readIdle(server, env, simSource);
 
@@ -258,16 +275,16 @@ export async function readState(env) {
       () => readSupplyAprBps(server, env, simSource, pool),
       0,
     );
+    const pendingInterest = await bestEffort(
+      `pendingInterest:${strategy}`,
+      () => readPendingInterest(server, env, simSource, pool, strategy, balance),
+      0n,
+    );
     strategies.push({
       address: strategy,
       balance,
       supplyAprBps,
-      // Book-principal design (blend_strategy.rs `balance()`): interest realizes at harvest,
-      // not read live here. A live estimate would need pool.get_reserve(USDC).b_rate times the
-      // strategy's live bToken position, which the strategy contract doesn't expose today — 0
-      // is an honest floor; `idle > 0` already drives compound on the demo vault regardless
-      // (see decide.js `decideCompound`).
-      pendingInterest: 0n,
+      pendingInterest,
       blndClaimable,
     });
   }
@@ -303,7 +320,7 @@ function buildActionOperation(env, action) {
 }
 
 /**
- * Execute one action `decide()` returned. Flow: re-fetch the source (relayer) account fresh →
+ * Execute one action `decide()` returned. Flow: re-fetch the source (keeper) account fresh →
  * build → simulate+assemble (`prepareTransaction`, one call) → sign → send → poll for
  * confirmation → return the tx hash. Throws on any failure (simulation, send rejection, or
  * non-SUCCESS confirmation) — index.js's per-action try/catch treats that as a graceful skip,
@@ -314,7 +331,7 @@ function buildActionOperation(env, action) {
  */
 export async function submit(env, action) {
   const server = rpcServer(env);
-  const kp = relayerKeypair(env);
+  const kp = keeperKeypair(env);
   // Re-fetch the source account fresh right before building — reusing a stale Account object
   // across multiple tx builds double-increments the sequence number client-side and causes
   // txBadSeq on submit (memory: onchain-live-submit-error-playbook, 2026-06-30).

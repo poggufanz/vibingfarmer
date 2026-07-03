@@ -16,9 +16,10 @@ set -euo pipefail
 #     see docs/superpowers/plans/2026-07-03-vf-autofarm-progress.md. Per the plan's own fallback,
 #     this deploys strategy1 ONLY and relies on the de-risk-to-idle rebalance path
 #     (vault.rebalance(from=strategy1, to=vault), Task 9) instead of a second strategy.
-#   - registers the strategy, sets the keeper (relayer G-address), re-scopes the demo agent's
-#     registry record to this new vault+token (same overwrite-on-redeploy pattern deploy-seed.sh
-#     has always used when the vault address changes, e.g. the Blend cutover)
+#   - registers the strategy, sets the keeper (a DEDICATED keeper G-address, distinct from the
+#     relayer — T2 identity-split fix; pass it via KEEPER_ADDRESS env/arg), re-scopes the demo
+#     agent's registry record to this new vault+token (same overwrite-on-redeploy pattern
+#     deploy-seed.sh has always used when the vault address changes, e.g. the Blend cutover)
 NET=testnet
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SOROBAN="$ROOT/soroban"
@@ -35,9 +36,16 @@ WASM_DIR="$SOROBAN/target/wasm32-unknown-unknown/release"
 # ---- reuse: registry + demo agent (do NOT redeploy — see deploy-seed.sh header) ----
 REGISTRY=$(python3 -c "import json;print(json.load(open('$OUT'))['registry'])")
 DEMO_AGENT=$(python3 -c "import json;print(json.load(open('$OUT'))['demoAgentAccount'])")
-RELAYER=$(python3 -c "import json;print(json.load(open('$OUT')).get('relayer',''))")
-if [ -z "$RELAYER" ]; then
-  echo "ERROR: deployments/stellar-testnet.json missing 'relayer' (needed as keeper) — set it before deploying." >&2
+
+# ---- keeper identity (T2 Fix 1: dedicated keeper key — no longer defaults to the relayer;
+# doubling the two identities was the bug this fixes). Pass explicitly:
+#   KEEPER_ADDRESS=G... bash scripts/soroban/deploy-autofarm.sh
+# (or as the first positional arg). Must be the G-address that will sign with
+# keeper/wrangler.jsonc's STELLAR_KEEPER_SECRET — generate/fund it separately; this script never
+# generates or touches keys.
+KEEPER_ADDRESS="${KEEPER_ADDRESS:-${1:-}}"
+if [ -z "$KEEPER_ADDRESS" ]; then
+  echo "ERROR: KEEPER_ADDRESS not set — pass it as an env var or the first arg (the dedicated keeper G-address; it must NOT be the relayer's). See keeper/wrangler.jsonc's STELLAR_KEEPER_SECRET." >&2
   exit 1
 fi
 
@@ -47,7 +55,7 @@ POOL=CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF     # TestnetV2 Bl
 BLND=CB22KRA3YZVCNCQI64JQ5WE7UY2VAV7WFLK6A2JN3HEX56T2EDAFO7QF
 ROUTER=CCJUD55AG6W5HAI5LRVNKAE5WDP5XGZBUDS5WNTIVDU7O264UZZE7BRD    # Soroswap router
 RESERVE_TOKEN_ID=7                                                 # USDC bToken/supply reserve id (Task 1 spike)
-KEEPER="$RELAYER"   # relayer G-address doubles as compound/rebalance keeper
+KEEPER="$KEEPER_ADDRESS"   # dedicated compound/rebalance keeper — see identity-split note above
 
 echo "ADMIN=$ADMIN"
 echo "REGISTRY=$REGISTRY DEMO_AGENT=$DEMO_AGENT KEEPER=$KEEPER"

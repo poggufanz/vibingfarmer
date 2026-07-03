@@ -14,5 +14,7 @@
     "BLND": "CB22KRA3YZVCNCQI64JQ5WE7UY2VAV7WFLK6A2JN3HEX56T2EDAFO7QF",
     "SOROSWAP_ROUTER": "CCJUD55AG6W5HAI5LRVNKAE5WDP5XGZBUDS5WNTIVDU7O264UZZE7BRD"
   }
-  // secret: STELLAR_RELAYER_SECRET via `wrangler secret put` (user-run at deploy)
+  // secret: STELLAR_KEEPER_SECRET via `wrangler secret put` (user-run at deploy) — the keeper's
+  // own identity, deliberately separate from STELLAR_RELAYER_SECRET (the user-facing gasless
+  // relay used elsewhere in the app).
 }

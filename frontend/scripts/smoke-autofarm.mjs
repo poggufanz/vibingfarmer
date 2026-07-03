@@ -19,14 +19,16 @@
 //   - depositor = VF_FAUCET_SECRET (this is vf-deployer's own secret — confirmed live: `stellar
 //     keys show vf-deployer` returns the exact same value already sitting in .env.local under
 //     that name). Holds Blend testnet USDC (balance verified live before writing this script).
-//   - keeper    = STELLAR_RELAYER_SECRET — the SAME relayer G-address the vault's on-chain
-//     keeper() is set to (Task 11), so signing with it satisfies require_keeper.
+//   - keeper    = STELLAR_KEEPER_SECRET — the vault's on-chain keeper() G-address (Task 11; T2
+//     Fix 1 identity split), so signing with it satisfies require_keeper. Deliberately NOT
+//     STELLAR_RELAYER_SECRET — that's a separate identity used only for the user-facing gasless
+//     relay elsewhere in the app; the keeper never falls back to it.
 //
 // Run (Windows PowerShell, NOT WSL — rollup/win32; WSL is Soroban-CLI-only per CLAUDE.md):
 //   cd frontend
 //   npx vite-node scripts/smoke-autofarm.mjs --submit
 //
-// Needs frontend/.env.local: STELLAR_RELAYER_SECRET, VF_FAUCET_SECRET (both already present).
+// Needs frontend/.env.local: STELLAR_KEEPER_SECRET, VF_FAUCET_SECRET.
 
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
@@ -74,7 +76,7 @@ const KEEPER_DECIDE_CONFIG = {
   slippageBps: 100,
 }
 
-function keeperEnv(relayerSecret) {
+function keeperEnv(keeperSecret) {
   return {
     SOROBAN_RPC_URL,
     NETWORK_PASSPHRASE,
@@ -86,7 +88,7 @@ function keeperEnv(relayerSecret) {
     USDC,
     BLND,
     SOROSWAP_ROUTER,
-    STELLAR_RELAYER_SECRET: relayerSecret,
+    STELLAR_KEEPER_SECRET: keeperSecret,
   }
 }
 
@@ -117,18 +119,18 @@ async function main() {
 
   const depositorSecret = process.env.VF_FAUCET_SECRET // = vf-deployer's own secret (holds Blend USDC)
   if (!depositorSecret) throw new Error('VF_FAUCET_SECRET not set in frontend/.env.local')
-  const relayerSecret = process.env.STELLAR_RELAYER_SECRET
-  if (!relayerSecret) throw new Error('STELLAR_RELAYER_SECRET not set in frontend/.env.local')
+  const keeperSecret = process.env.STELLAR_KEEPER_SECRET
+  if (!keeperSecret) throw new Error('STELLAR_KEEPER_SECRET not set in frontend/.env.local')
 
   const depositor = Keypair.fromSecret(depositorSecret)
-  const relayer = Keypair.fromSecret(relayerSecret)
-  if (relayer.publicKey() !== SOROBAN_KEEPER_ADDRESS) {
-    throw new Error(`STELLAR_RELAYER_SECRET does not match the vault's on-chain keeper() (${SOROBAN_KEEPER_ADDRESS})`)
+  const keeper = Keypair.fromSecret(keeperSecret)
+  if (keeper.publicKey() !== SOROBAN_KEEPER_ADDRESS) {
+    throw new Error(`STELLAR_KEEPER_SECRET does not match the vault's on-chain keeper() (${SOROBAN_KEEPER_ADDRESS})`)
   }
 
   const server = await rpcServer()
   console.log('depositor (vf-deployer):', depositor.publicKey())
-  console.log('keeper (relayer):       ', relayer.publicKey())
+  console.log('keeper:                 ', keeper.publicKey())
   console.log('vault:', VAULT, ' strategy1:', STRATEGY_1)
 
   const usdcStart = await bal(USDC, depositor.publicKey(), server)
@@ -170,7 +172,7 @@ async function main() {
 
   // ================= Step 2: keeper tick #1 -> compound sweeps idle =================
   console.log('\n--- Step 2: keeper tick #1 (compound sweeps idle into strategy1) ---')
-  const env = keeperEnv(relayerSecret)
+  const env = keeperEnv(keeperSecret)
   const idleBefore = await bal(USDC, VAULT, server)
   const stratBefore = await bal(STRATEGY_1, null, server)
   console.log(`pre-tick: idle=${idleBefore} strategy1=${stratBefore}`)
@@ -194,10 +196,12 @@ async function main() {
 
   // ================= Step 3: second tick -> harvest (honest, may be 0 gain) =================
   console.log('\n--- Step 3: keeper tick #2 (harvest) ---')
-  // decide() would return [] here — idle is now ~0 and pendingInterest is a documented
-  // hardcoded-0 read (keeper/src/chain.js), so decideCompound's gate never re-fires on its own.
-  // Drive the SAME on-chain vault.compound(min_outs) action directly through keeper/chain.js's
-  // submit() instead of decide()'s gate (per the brief's explicit allowance) — this exercises
+  // decide() would return [] here — idle is now ~0, and pendingInterest (keeper/src/chain.js's
+  // now-live get_positions/b_rate read, T2 Fix 2) is realistically near-0 too over this short a
+  // hold, well under KEEPER_DECIDE_CONFIG.minCompound — so decideCompound's gate doesn't re-fire
+  // on its own. Drive the SAME on-chain vault.compound(min_outs) action directly through
+  // keeper/chain.js's submit() instead of decide()'s gate (per the brief's explicit allowance) —
+  // this exercises
   // the real harvest path (blend_strategy.rs harvest(): full withdraw + resupply through Blend).
   // Real Blend interest over a short hold is very likely 0, and BLND emissions are off for USDC
   // supply (Task 1 spike) — an honest 0 gain with a SUCCESSFUL tx is the expected PASS here, not
@@ -229,8 +233,8 @@ async function main() {
 
   await invokeAndConfirm({
     server,
-    source: relayer.publicKey(),
-    signer: relayer,
+    source: keeper.publicKey(),
+    signer: keeper,
     contract: VAULT,
     method: 'rebalance',
     args: [{ addr: STRATEGY_1 }, { addr: VAULT }, { i128: rebalanceAmount }],
@@ -290,5 +294,5 @@ if (process.argv.includes('--submit')) {
     process.exitCode = 1
   })
 } else {
-  console.log('dry: module loaded, pass --submit to run live (needs STELLAR_RELAYER_SECRET + VF_FAUCET_SECRET in .env.local)')
+  console.log('dry: module loaded, pass --submit to run live (needs STELLAR_KEEPER_SECRET + VF_FAUCET_SECRET in .env.local)')
 }
