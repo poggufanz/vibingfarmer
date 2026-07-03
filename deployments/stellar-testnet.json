@@ -9,14 +9,37 @@
   "demoAgentVersion": 2,
   "demoAgentOwner": "GCIOUP4UJAAFDBJNP5DY5CFJHBLEKGLHZ5E2AYRIIQ5VOZFVSTPRYHNS",
   "demoAgentSigner": "dd4139236bc836df336b1d6a360ad90d234613950cff078ebc03d28876c1698b",
+  "demoAgentRegistryScopeNote": "Task 11 re-authorized this agent's registry.record_of scope to point at `autofarmVault` (tx 05e6aa03db20372879a13b9d040ef6d019bbae4ba20aab91a93feb4e604d461b), overwriting its prior scope on the old `vault`. registry's authorize() is a plain overwrite-on-write record (no per-agent history) — same pattern deploy-seed.sh has always used when the target vault changes. On-chain vault.deposit() does not gate on registry scope, so the OLD vault's deposit path is unaffected; only code reading registry.record_of(demoAgentAccount) to compare against the OLD vault address will now see a mismatch until re-authorized again.",
   "attestation": "CDDOW2FZ7ALBWBXF22TPMPDHPXSKTMLQGGQWUYX7YOJZAHICD7DUO2K6",
   "vault": {
     "address": "CBZNITAPHCLSPEXC3UKIERYRUJR56GISM2G2Z5XD6KZH3U4ZZ76XNQOU",
     "token": "CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU",
     "decimals": 7,
     "shareSymbol": "vfVLT",
-    "blendPool": "CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF"
+    "blendPool": "CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF",
+    "note": "PRE-autofarm vault (dividend-model wasm, predates add_strategy/set_keeper/compound/rebalance). Kept for history/rollback — superseded by `autofarmVault` below (Task 11, sub-project vf-autofarm)."
   },
+  "autofarmVault": {
+    "address": "CB5VKYDUIYX3RZWGVLKKNBPG7V7Z5JIHF2QPNQKWKAHVA3IPSLFZJDYU",
+    "token": "CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU",
+    "decimals": 7,
+    "shareSymbol": "vfVLT",
+    "name": "Vibing Farmer Autofarm",
+    "strategies": ["CCH424TVLTP2P3URNRGGF26X24XRPBVBXCRZ6QBCWLSX6KH4QZSLNBC2"],
+    "keeper": "GBVJ34MT4GDKZJGILI6DRYGD75ZNUBJGGZIDUV7IPFNVVDWGE5GBLV3X",
+    "note": "Task 11 (sub-project vf-autofarm) deploy. Single-strategy: Task 1 spike found OWN_POOL_VIABLE=false (a self-deployed second Blend pool can't reach Active status without seeding real backstop capital), so this vault runs strategy1 only and relies on the de-risk-to-idle rebalance fallback (rebalance(to=vault)) instead of a second strategy/pool. Deploy tx 492d55911c49eecffe3aba01f5d49f70de56e66ce3f960fab85d950c208e2055; round-trip (1 USDC deposit+redeem) verified live via deployer key, tx f788a432c823d0b6e7ab4d8923bb1dedd44fb7e38c37378aed79143eba3f5334 + 4a650b9ceb3268bfcfbb7cbc3090107998c60df9c2a695b72f8e595e1476dd70."
+  },
+  "strategy1": {
+    "address": "CCH424TVLTP2P3URNRGGF26X24XRPBVBXCRZ6QBCWLSX6KH4QZSLNBC2",
+    "vault": "CB5VKYDUIYX3RZWGVLKKNBPG7V7Z5JIHF2QPNQKWKAHVA3IPSLFZJDYU",
+    "pool": "CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF",
+    "token": "CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU",
+    "blnd": "CB22KRA3YZVCNCQI64JQ5WE7UY2VAV7WFLK6A2JN3HEX56T2EDAFO7QF",
+    "router": "CCJUD55AG6W5HAI5LRVNKAE5WDP5XGZBUDS5WNTIVDU7O264UZZE7BRD",
+    "reserveTokenId": 7,
+    "deployTx": "a347c9b1c3f0bf3ca40007741cf0f851347f81d1aa77e6a9433d8ad0bfc7110a"
+  },
+  "keeper": "GBVJ34MT4GDKZJGILI6DRYGD75ZNUBJGGZIDUV7IPFNVVDWGE5GBLV3X",
   "smartAccount": {
     "accountWasmHash": "a12e8fa9621efd20315753bd4007d974390e31fbcb4a7ddc4dd0a0dec728bf2e",
     "webauthnVerifierAddress": "CBSHV66WG7UV6FQVUTB67P3DZUEJ2KJ5X6JKQH5MFRAAFNFJUAJVXJYV",
