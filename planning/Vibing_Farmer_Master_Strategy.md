@@ -137,10 +137,10 @@ Effort = ideal dev-days. Tim 3+ devs, kapasitas ~42 dev-days (14 hari efektif). 
 | F1 Fix decimal 1e6→1e7 (GAP-1) | **P0** | 1 | ✅ done (sub-proj #1) | Kredibilitas demo |
 | F2 Cleanup jejak EVM (GAP-3) | **P0** | 2 | ✅ done (sub-proj #1) | Kredibilitas demo |
 | F4 Real Yield Vault — Blend Capital (Stellar, GAP-2) | **P0** | 6 | ✅ done — Blend real yield live di testnet (cutover 28 Jun; supply→harvest→redeem terbukti live) | RotateChain, SplitSafe |
-| F5 Audit trail / on-chain proof | **P0** | 3 | 🟡 off-chain hash + journals done; on-chain attest = spec only | OHMS, SplitSafe |
+| F5 Audit trail / on-chain proof | **P0** | 3 | ✅ done — Soroban attestation deployed testnet (CDDOW2FZ…D7DUO2K6) + frontend wired (relayer fee-bump 0 XLM, non-blocking); live smoke tx 8ceb03ee (28 Jun) | OHMS, SplitSafe |
 | F6 Permission Layer (headline) | P1 | 2 | ✅ done | unik VF |
 | F7 AI Council branded + reasoning | P1 | 3 | ✅ done | Plantify |
-| F8 Regulation-aware Risk agent | P1 | 2 | 🟡 corpus + classifyRisk ada; belum jadi gate pra-eksekusi | Fradium, Plantify |
+| F8 Regulation-aware Risk agent | P1 | 2 | ✅ done — fail-closed pre-exec eligibility gate (ponzi<1.5/audit/staleness 30d) + basket filter + worker assert; ⚠️ vaultFacts snapshot placeholder → run refreshVaultFacts.mjs pre-demo | Fradium, Plantify |
 | F9 Auto-Rebalancing engine | P2 | 4 | ⬜ belum (cuma jadi action yg di-reasoning council) | BIT10 |
 | F10 Real-time Risk Alerts | P2 | 3 | ⬜ belum (AlertCard UI doang, no pipeline) | BIT10×RugGuard |
 | F11 Demo video + faucet/guide | **P0** | 2 | ⬜ open (non-kode) | syarat wajib |
@@ -148,15 +148,15 @@ Effort = ideal dev-days. Tim 3+ devs, kapasitas ~42 dev-days (14 hari efektif). 
 
 > **F3 (CCTP bridge Stellar→Base) DIHAPUS** — dual-chain ditolak; single-chain Blend. CCTP cuma transport (mindahin USDC), bukan yield source.
 
-**MVP terkunci:** F1, F2, F4, F5, F6, F7 + F11 + F12.  **Stretch:** F8, F9, F10.
-**Sisa MVP nyata (kode):** F5 (sudah cukup utk hackathon per spec-nya). F4 live cutover ✅ done 28 Jun. Sisanya done / non-kode.
+**MVP terkunci:** F1, F2, F4, F5, F6, F7 + F11 + F12 — semua kode ✅.  **Stretch:** F8 ✅ done, F9 ⬜, F10 ⬜.
+**Sisa MVP nyata (kode):** kosong — F4 live cutover + F5 on-chain attestation + F8 risk gate semua ✅ done 28 Jun. Sisa open = non-kode: F11 (demo video + faucet/guide), F12 (pitch deck).
 
 ### Timeline 18 Hari (3 Track Paralel)
 
 | Fase (tanggal) | Track A (real yield — Blend) | Track B (AI/diff) | Track C (cleanup+submit) |
 |----------------|------------------------------|-------------------|--------------------------|
 | 1 (28 Jun–3 Jul) | Blend cutover §7 (redeploy + wiring + faucet) → smoke | Permission + Council UI polish | ✅ GAP-1/GAP-3 done; mulai pitch |
-| 2 (4–9 Jul) | Frontend Blend wiring + audit trail (F5) | Risk agent (F8) + mulai rebalance | Pitch + faucet/guide |
+| 2 (4–9 Jul) | Frontend Blend wiring + audit trail (F5) ✅ done 28 Jun | Risk agent (F8) ✅ done 28 Jun + mulai rebalance | Pitch + faucet/guide |
 | 3 (10–13 Jul) | Stabilkan + bugfix | Risk Alerts (stretch) | Rekam demo video + dry-run |
 | 4 (14–15 Jul) | Code freeze → submit pagi 15 Jul | — | Isi form submission |
 
