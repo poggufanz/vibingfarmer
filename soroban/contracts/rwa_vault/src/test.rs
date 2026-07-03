@@ -952,6 +952,115 @@ fn redeem_always_works() {
     assert_eq!(ctx.vault.total_assets(), assets_before);
 }
 
+// ----- Fund-handling hardening: deposit divide-by-zero guard + ensure_idle skips bricked -----
+
+#[test]
+fn deposit_after_total_loss_errors_not_panics() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let alice = Address::generate(&env);
+    fund_and_approve(&env, &ctx, &alice, 10 * U7);
+    ctx.vault.deposit(&alice, &(10 * U7)); // idle = 10*U7, supply = 10*U7
+
+    // Sweep idle into a freshly-registered strategy via compound (mirrors the real
+    // yield-farming flow) so idle becomes 0 and the strategy's book Principal becomes 10*U7.
+    let strat = deploy_mock_strategy(&env, &ctx);
+    ctx.vault.add_strategy(&strat);
+    let keeper = Address::generate(&env);
+    ctx.vault.set_keeper(&keeper);
+    ctx.vault.compound(&Vec::from_array(&env, [0i128]));
+    assert_eq!(MockStrategyClient::new(&env, &strat).balance(), 10 * U7);
+    let vault_addr = ctx.vault.address.clone();
+    assert_eq!(TokenClient::new(&env, &ctx.token).balance(&vault_addr), 0);
+
+    // Simulate a TOTAL strategy loss: the underlying position is wiped out, so the
+    // strategy's own book balance() drops to 0 too — total_assets() is now 0 while
+    // total_supply() (DEAD_SHARES + alice's shares) is still > 0.
+    MockStrategyClient::new(&env, &strat).set_principal(&0);
+    assert_eq!(ctx.vault.total_assets(), 0);
+    assert!(ctx.vault.total_shares() > 0);
+
+    // A subsequent deposit must fail CLEANLY (InvalidAmount), not panic/trap on
+    // `amount * supply / assets_before` dividing by a zero `assets_before`.
+    let bob = Address::generate(&env);
+    fund_and_approve(&env, &ctx, &bob, 5 * U7);
+    assert_eq!(
+        ctx.vault.try_deposit(&bob, &(5 * U7)),
+        Err(Ok(VaultError::InvalidAmount))
+    );
+}
+
+#[test]
+fn redeem_skips_bricked_earlier_strategy() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let alice = Address::generate(&env);
+    fund_and_approve(&env, &ctx, &alice, 10 * U7);
+    ctx.vault.deposit(&alice, &(10 * U7)); // idle = 10*U7, supply = 10*U7 (10x price setup)
+
+    // BRICKED registered FIRST, healthy SECOND — ensure_idle drains registered strategies in
+    // list order, so a shortfall that reaches strategy[0] must skip it, not trap the whole
+    // redeem.
+    let bricked = deploy_mock_strategy(&env, &ctx);
+    let healthy = deploy_mock_strategy(&env, &ctx);
+    ctx.vault.add_strategy(&bricked);
+    ctx.vault.add_strategy(&healthy);
+    fund_strategy(&env, &ctx, &bricked, 40 * U7);
+    fund_strategy(&env, &ctx, &healthy, 50 * U7);
+    MockStrategyClient::new(&env, &bricked).set_bricked(&true); // withdraw() now traps
+
+    // total_assets = 10 idle + 40 bricked + 50 healthy = 100*U7 backing 10*U7 shares (10x).
+    assert_eq!(ctx.vault.total_assets(), 100 * U7);
+
+    // Redeem 4*U7 shares -> 40*U7 assets: idle(10) alone doesn't cover it, so ensure_idle must
+    // reach into strategy[0] (bricked) first, get a trap, skip it, and drain the shortfall
+    // from strategy[1] (healthy) instead.
+    let assets = ctx.vault.redeem(&alice, &(4 * U7));
+    assert_eq!(assets, 40 * U7);
+
+    // Bricked strategy was never actually touched — its balance is exactly what it was
+    // funded with.
+    assert_eq!(MockStrategyClient::new(&env, &bricked).balance(), 40 * U7);
+    // Healthy strategy covered the full 30*U7 shortfall (needed 40 - idle 10).
+    assert_eq!(MockStrategyClient::new(&env, &healthy).balance(), 20 * U7);
+    let vault_addr = ctx.vault.address.clone();
+    assert_eq!(TokenClient::new(&env, &ctx.token).balance(&vault_addr), 0);
+}
+
+#[test]
+fn redeem_exceeding_recoverable_errors_insufficient_liquidity() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let alice = Address::generate(&env);
+    fund_and_approve(&env, &ctx, &alice, 10 * U7);
+    ctx.vault.deposit(&alice, &(10 * U7)); // idle = 10*U7, supply = 10*U7 (10x price setup)
+
+    let bricked = deploy_mock_strategy(&env, &ctx);
+    let healthy = deploy_mock_strategy(&env, &ctx);
+    ctx.vault.add_strategy(&bricked);
+    ctx.vault.add_strategy(&healthy);
+    fund_strategy(&env, &ctx, &bricked, 40 * U7);
+    fund_strategy(&env, &ctx, &healthy, 50 * U7);
+    MockStrategyClient::new(&env, &bricked).set_bricked(&true);
+
+    // Max recoverable = idle(10) + healthy(50) = 60*U7; bricked's 40*U7 is permanently stuck.
+    // Redeem shares worth 70*U7 at the 10x price -> exceeds what's recoverable.
+    let shares_before = ctx.vault.total_shares();
+    let assets_before = ctx.vault.total_assets();
+    assert_eq!(
+        ctx.vault.try_redeem(&alice, &(7 * U7)),
+        Err(Ok(VaultError::InsufficientLiquidity))
+    );
+
+    // Clean revert (not a hard panic) — vault state untouched, both strategies untouched
+    // (the whole failed invocation, including healthy's real withdraw, rolls back), no
+    // partial payout.
+    assert_eq!(ctx.vault.total_shares(), shares_before);
+    assert_eq!(ctx.vault.total_assets(), assets_before);
+    assert_eq!(MockStrategyClient::new(&env, &bricked).balance(), 40 * U7);
+    assert_eq!(MockStrategyClient::new(&env, &healthy).balance(), 50 * U7);
+}
+
 #[test]
 fn upgrade_admin_only() {
     let env = Env::default();

@@ -155,6 +155,13 @@ pub fn deposit(e: &Env, from: Address, amount: i128) -> Result<i128, VaultError>
         Base::mint(e, &me, DEAD_SHARES);
         amount - DEAD_SHARES
     } else {
+        // A total strategy loss can leave `total_assets() == 0` while `total_supply() > 0`
+        // (DEAD_SHARES are never burned) — guard the division below the same way `redeem`
+        // already guards its own division, so a subsequent deposit errors cleanly instead of
+        // an i128 divide-by-zero trap permanently bricking deposits.
+        if assets_before <= 0 {
+            return Err(VaultError::InvalidAmount);
+        }
         amount.checked_mul(supply).ok_or(VaultError::MathOverflow)? / assets_before
     };
     if shares <= 0 {
@@ -216,6 +223,13 @@ pub fn redeem(e: &Env, from: Address, shares: i128) -> Result<i128, VaultError> 
 /// A strategy's `balance()` can overstate what it can actually return (a broken/insolvent
 /// strategy) — if idle still falls short after draining every strategy, error out rather
 /// than under-pay silently.
+///
+/// Uses `try_withdraw` (not a hard call) so a single BRICKED strategy (one whose `withdraw`
+/// reverts — e.g. its underlying pool is frozen) can never take down the whole redeem: its
+/// failure is caught and the loop moves on to the next registered strategy. The terminal
+/// idle-shortfall check below still catches a redeem that genuinely can't be covered even
+/// after skipping every unreachable strategy, returning a clean `InsufficientLiquidity`
+/// instead of propagating the bricked strategy's revert.
 fn ensure_idle(e: &Env, needed: i128) -> Result<(), VaultError> {
     let token = get_token(e);
     let me = e.current_contract_address();
@@ -225,7 +239,9 @@ fn ensure_idle(e: &Env, needed: i128) -> Result<(), VaultError> {
             break;
         }
         let shortfall = needed - tk.balance(&me);
-        StrategyClient::new(e, &s).withdraw(&shortfall);
+        if StrategyClient::new(e, &s).try_withdraw(&shortfall).is_err() {
+            continue;
+        }
     }
     if tk.balance(&me) < needed {
         return Err(VaultError::InsufficientLiquidity);
@@ -345,10 +361,13 @@ pub fn rebalance(e: &Env, from: Address, to: Address, amount: i128) -> Result<()
 /// Admin-only escape hatch. NOT pause-gated — this is exactly the tool an admin needs when a
 /// strategy is misbehaving badly enough to pause the vault. Drains `strategy` fully back to
 /// vault idle via `withdraw(i128::MAX)`, the same MAX-drain convention `ensure_idle` and
-/// `harvest` already rely on to mean "everything the strategy actually holds."
+/// `harvest` already rely on to mean "everything the strategy actually holds." Uses
+/// `try_withdraw` (best-effort) rather than a hard call — draining a HEALTHY strategy still
+/// works exactly as before, but calling this on an already-bricked strategy (whose `withdraw`
+/// reverts) simply no-ops instead of reverting the admin's call.
 pub fn emergency_withdraw(e: &Env, strategy: Address) {
     require_admin(e);
-    StrategyClient::new(e, &strategy).withdraw(&i128::MAX);
+    let _ = StrategyClient::new(e, &strategy).try_withdraw(&i128::MAX);
     extend_instance(e);
 }
 
