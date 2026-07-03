@@ -1,4 +1,4 @@
-use soroban_sdk::{contractevent, contracttype};
+use soroban_sdk::{contracterror, contractevent, contracttype};
 
 #[contracttype]
 #[derive(Clone)]
@@ -10,6 +10,15 @@ pub enum DataKey {
     Router,         // Soroswap router — swaps claimed BLND into the underlying token
     ReserveTokenId, // Blend reserve index for this asset (u32) — passed to claim
     Principal,      // book principal deposited into Blend (i128)
+}
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum StrategyError {
+    // deposit: amount <= 0. withdraw: amount <= 0 — the i128::MAX drain sentinel is exempt
+    // since it's a large positive value, not <= 0.
+    InvalidAmount = 1,
 }
 
 /// Emitted by `harvest`. `blnd_claimed`/`blnd_swapped`/`blnd_held` are 0 and

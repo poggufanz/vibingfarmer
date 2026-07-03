@@ -1,5 +1,5 @@
 #![cfg(test)]
-use crate::types::StrategyHarvest;
+use crate::types::{StrategyError, StrategyHarvest};
 use crate::{BlendStrategy, BlendStrategyClient};
 use soroban_sdk::testutils::{Address as _, Events as _};
 use soroban_sdk::token::{StellarAssetClient, TokenClient};
@@ -304,6 +304,23 @@ fn deposit_rejects_non_vault_caller() {
 }
 
 #[test]
+fn deposit_rejects_non_positive_amount() {
+    let e = Env::default();
+    let ctx = setup(&e);
+
+    assert_eq!(
+        ctx.strategy.try_deposit(&0),
+        Err(Ok(StrategyError::InvalidAmount))
+    );
+    assert_eq!(
+        ctx.strategy.try_deposit(&-1),
+        Err(Ok(StrategyError::InvalidAmount))
+    );
+    // Neither rejected call moved any funds or touched book principal.
+    assert_eq!(ctx.strategy.balance(), 0);
+}
+
+#[test]
 fn withdraw_rejects_non_vault_caller() {
     let e = Env::default();
     let ctx = setup(&e);
@@ -313,6 +330,30 @@ fn withdraw_rejects_non_vault_caller() {
     e.set_auths(&[]);
 
     assert!(ctx.strategy.try_withdraw(&(10 * U7)).is_err());
+}
+
+#[test]
+fn withdraw_rejects_non_positive_amount_but_max_still_drains() {
+    let e = Env::default();
+    let ctx = setup(&e);
+    ctx.strategy.deposit(&(100 * U7));
+
+    assert_eq!(
+        ctx.strategy.try_withdraw(&0),
+        Err(Ok(StrategyError::InvalidAmount))
+    );
+    assert_eq!(
+        ctx.strategy.try_withdraw(&-1),
+        Err(Ok(StrategyError::InvalidAmount))
+    );
+    // Book principal untouched by the rejected calls.
+    assert_eq!(ctx.strategy.balance(), 100 * U7);
+
+    // The i128::MAX drain sentinel is a large positive value — exempt from the `amount <= 0`
+    // guard above — and must still fully drain the position.
+    let got = ctx.strategy.withdraw(&i128::MAX);
+    assert_eq!(got, 100 * U7);
+    assert_eq!(ctx.strategy.balance(), 0);
 }
 
 #[test]
@@ -554,4 +595,62 @@ fn harvest_blnd_claimed_reports_round_delta_not_carryover() {
     }
     .to_xdr(&e, &ctx.strategy.address);
     assert_eq!(event2, &expected2);
+}
+
+#[test]
+fn harvest_sweeps_held_blnd_after_principal_drained_to_zero() {
+    let e = Env::default();
+    let ctx = setup(&e);
+    ctx.strategy.deposit(&(100 * U7));
+
+    let pool = MockBlendPoolClient::new(&e, &ctx.pool);
+    pool.enable_emissions(&ctx.blnd, &(50 * U7));
+
+    // Round 1: min_out == 0 -> claim 50 BLND and hold it (no swap). Principal is re-supplied in
+    // full, so `balance()` is untouched.
+    let harvested1 = ctx.strategy.harvest(&0);
+    assert_eq!(harvested1, 0);
+    assert_eq!(
+        TokenClient::new(&e, &ctx.blnd).balance(&ctx.strategy.address),
+        50 * U7
+    );
+    assert_eq!(ctx.strategy.balance(), 100 * U7);
+
+    // Drain the Blend position to 0 (e.g. rebalance-to-idle or emergency_withdraw) — the 50
+    // held BLND from round 1 is untouched by this, since withdraw only moves the underlying
+    // token.
+    let got = ctx.strategy.withdraw(&i128::MAX);
+    assert_eq!(got, 100 * U7);
+    assert_eq!(ctx.strategy.balance(), 0);
+
+    // Round 2: principal == 0 -> the withdraw-all/claim legs are skipped entirely (nothing to
+    // pull or claim against), but the strategy still holds 50 BLND from round 1, so the
+    // swap+forward leg runs when the caller opts in via `min_out > 0`. Router's fixed 1:10 rate
+    // pays 50 BLND -> 5 token; floor comfortably under that.
+    let harvested2 = ctx.strategy.harvest(&(4 * U7));
+    // `events().all()` reflects only the LAST contract invocation — capture it immediately,
+    // before any other client call (even a read-only `balance()`) becomes the new "last".
+    let event2 = e.events().all();
+
+    assert_eq!(harvested2, 5 * U7); // held BLND converted to USDC and forwarded as gain
+    assert_eq!(ctx.strategy.balance(), 0); // still no Blend position — nothing to resupply
+    assert_eq!(
+        TokenClient::new(&e, &ctx.blnd).balance(&ctx.strategy.address),
+        0 // fully swept — nothing held
+    );
+    // vault: 1000 - 100 (deposit) + 100 (drain withdraw) + 5 (swept BLND swap proceeds) = 1005
+    assert_eq!(
+        TokenClient::new(&e, &ctx.token).balance(&ctx.vault),
+        1005 * U7
+    );
+
+    let expected2 = StrategyHarvest {
+        interest: 0,     // no live Blend position this round — nothing to realize
+        blnd_claimed: 0, // no claim leg run — principal was 0
+        blnd_swapped: 5 * U7,
+        usdc_out: 5 * U7,
+        blnd_held: 0,
+    }
+    .to_xdr(&e, &ctx.strategy.address);
+    assert_eq!(event2.events().last().unwrap(), &expected2);
 }
