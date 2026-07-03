@@ -1,12 +1,90 @@
 #![cfg(test)]
 use crate::types::VaultError;
+use crate::vault::DEAD_SHARES;
 use crate::{RwaVault, RwaVaultClient};
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::token::{StellarAssetClient, TokenClient};
 use soroban_sdk::{Address, Env, String};
 
 const U7: i128 = 10_000_000; // 1.0 unit at 7 decimals (1 USDC)
-const DEAD_SHARES: i128 = 1000;
+
+// A minimal strategy contract implementing the locked `StrategyIface` (deposit/withdraw/
+// balance/harvest) over a plain token balance — no Blend, so vault tests stay single-crate.
+// `balance()` reports a separately-tracked `Principal`, not the live token balance, so tests
+// can deliberately desync the two (mirroring blend_strategy's book-vs-live-NAV split) to
+// exercise `ensure_idle`'s insolvency path.
+mod mock_strategy {
+    use soroban_sdk::token::TokenClient;
+    use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
+
+    #[contracttype]
+    #[derive(Clone)]
+    enum DataKey {
+        Vault,
+        Token,
+        Principal,
+    }
+
+    #[contract]
+    pub struct MockStrategy;
+
+    #[contractimpl]
+    impl MockStrategy {
+        pub fn __constructor(e: Env, vault: Address, token: Address) {
+            e.storage().instance().set(&DataKey::Vault, &vault);
+            e.storage().instance().set(&DataKey::Token, &token);
+            e.storage().instance().set(&DataKey::Principal, &0i128);
+        }
+
+        pub fn deposit(e: Env, amount: i128) {
+            let vault: Address = e.storage().instance().get(&DataKey::Vault).unwrap();
+            vault.require_auth();
+            let token: Address = e.storage().instance().get(&DataKey::Token).unwrap();
+            let me = e.current_contract_address();
+            TokenClient::new(&e, &token).transfer_from(&me, &vault, &me, &amount);
+            let principal: i128 = e.storage().instance().get(&DataKey::Principal).unwrap_or(0);
+            e.storage()
+                .instance()
+                .set(&DataKey::Principal, &(principal + amount));
+        }
+
+        /// `i128::MAX` (or any amount exceeding actual holdings) drains everything held,
+        /// mirroring the real strategy's cap-at-live-position behavior.
+        pub fn withdraw(e: Env, amount: i128) -> i128 {
+            let vault: Address = e.storage().instance().get(&DataKey::Vault).unwrap();
+            vault.require_auth();
+            let token: Address = e.storage().instance().get(&DataKey::Token).unwrap();
+            let me = e.current_contract_address();
+            let tk = TokenClient::new(&e, &token);
+            let held = tk.balance(&me);
+            let out = if amount > held { held } else { amount };
+            if out > 0 {
+                tk.transfer(&me, &vault, &out);
+            }
+            let principal: i128 = e.storage().instance().get(&DataKey::Principal).unwrap_or(0);
+            let new_principal = if out >= principal { 0 } else { principal - out };
+            e.storage()
+                .instance()
+                .set(&DataKey::Principal, &new_principal);
+            out
+        }
+
+        pub fn balance(e: Env) -> i128 {
+            e.storage().instance().get(&DataKey::Principal).unwrap_or(0)
+        }
+
+        pub fn harvest(_e: Env, _min_out: i128) -> i128 {
+            0 // not exercised until Task 8's compound
+        }
+
+        /// Test-only hook: force `balance()` (book principal) to diverge from the strategy's
+        /// actual token holdings, simulating a socialized-loss / broken-strategy scenario.
+        pub fn set_principal(e: Env, v: i128) {
+            e.storage().instance().set(&DataKey::Principal, &v);
+        }
+    }
+}
+use mock_strategy::MockStrategyClient;
 
 pub(crate) struct Ctx {
     pub vault: RwaVaultClient<'static>,
@@ -53,6 +131,22 @@ fn donate(env: &Env, ctx: &Ctx, amount: i128) {
     let donor = Address::generate(env);
     StellarAssetClient::new(env, &ctx.token).mint(&donor, &amount);
     TokenClient::new(env, &ctx.token).transfer(&donor, &ctx.vault.address, &amount);
+}
+
+// Deploys a `MockStrategy` wired to `ctx`'s vault + token.
+fn deploy_mock_strategy(env: &Env, ctx: &Ctx) -> Address {
+    env.register(
+        mock_strategy::MockStrategy,
+        (ctx.vault.address.clone(), ctx.token.clone()),
+    )
+}
+
+// Mints `amount` of the vault's asset directly to a strategy's address (simulating assets
+// already parked there — bypasses the strategy's own `deposit`, which is Task 8's concern)
+// and sets its book `Principal` to match, so `balance()` reports `amount`.
+fn fund_strategy(env: &Env, ctx: &Ctx, strategy: &Address, amount: i128) {
+    StellarAssetClient::new(env, &ctx.token).mint(strategy, &amount);
+    MockStrategyClient::new(env, strategy).set_principal(&amount);
 }
 
 #[test]
@@ -212,4 +306,150 @@ fn test_deposit_blocked_when_paused_redeem_allowed() {
     ctx.vault.pause(&ctx.admin);
     assert!(ctx.vault.try_deposit(&alice, &U7).is_err()); // deposit pause-gated
     assert_eq!(ctx.vault.redeem(&alice, &(50 * U7)), 50 * U7); // redeem still works
+}
+
+// ----- Task 7: strategy registry + strategy-draining redeem -----
+
+#[test]
+fn admin_registers_strategies_max_four() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    assert_eq!(ctx.vault.strategies().len(), 0);
+
+    for _ in 0..4 {
+        let s = Address::generate(&env);
+        ctx.vault.add_strategy(&s);
+    }
+    assert_eq!(ctx.vault.strategies().len(), 4);
+
+    let fifth = Address::generate(&env);
+    assert_eq!(
+        ctx.vault.try_add_strategy(&fifth),
+        Err(Ok(VaultError::TooManyStrategies))
+    );
+    assert_eq!(ctx.vault.strategies().len(), 4); // rejected add didn't grow the list
+
+    // Non-admin: no admin signature present at all → auth error, not a logic error.
+    env.set_auths(&[]);
+    let sixth = Address::generate(&env);
+    assert!(ctx.vault.try_add_strategy(&sixth).is_err());
+}
+
+#[test]
+fn remove_requires_empty() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let strat = deploy_mock_strategy(&env, &ctx);
+    ctx.vault.add_strategy(&strat);
+    fund_strategy(&env, &ctx, &strat, 10 * U7);
+
+    assert_eq!(
+        ctx.vault.try_remove_strategy(&strat),
+        Err(Ok(VaultError::StrategyNotEmpty))
+    );
+
+    MockStrategyClient::new(&env, &strat).set_principal(&0);
+    ctx.vault.remove_strategy(&strat);
+    assert_eq!(ctx.vault.strategies().len(), 0);
+
+    // Removing an address that was never registered (or already removed) → StrategyNotFound.
+    assert_eq!(
+        ctx.vault.try_remove_strategy(&strat),
+        Err(Ok(VaultError::StrategyNotFound))
+    );
+}
+
+#[test]
+fn redeem_drains_strategies_in_order() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let alice = Address::generate(&env);
+    fund_and_approve(&env, &ctx, &alice, 10 * U7);
+    ctx.vault.deposit(&alice, &(10 * U7)); // idle = 10*U7, supply = 10*U7
+
+    let strat1 = deploy_mock_strategy(&env, &ctx);
+    let strat2 = deploy_mock_strategy(&env, &ctx);
+    ctx.vault.add_strategy(&strat1);
+    ctx.vault.add_strategy(&strat2);
+    fund_strategy(&env, &ctx, &strat1, 50 * U7);
+    fund_strategy(&env, &ctx, &strat2, 40 * U7);
+
+    // idle 10 + strat1 50 + strat2 40 = 100*U7 total_assets backing 10*U7 shares (10x price).
+    assert_eq!(ctx.vault.total_assets(), 100 * U7);
+    let vault_addr = ctx.vault.address.clone();
+    assert_eq!(
+        TokenClient::new(&env, &ctx.token).balance(&vault_addr),
+        10 * U7
+    );
+
+    // Redeem shares worth exactly 80*U7 assets at the 10x price → 8*U7 shares.
+    let shares_to_redeem = 8 * U7;
+    let assets = ctx.vault.redeem(&alice, &shares_to_redeem);
+    assert_eq!(assets, 80 * U7);
+
+    // Drain order: idle (10) covers none of it alone; strat1 fully drained (50); the
+    // remaining shortfall (20) comes out of strat2, leaving strat2 at 40-20=20. Idle ends
+    // at exactly 0 once the redeem payout goes out.
+    assert_eq!(TokenClient::new(&env, &ctx.token).balance(&vault_addr), 0);
+    assert_eq!(MockStrategyClient::new(&env, &strat1).balance(), 0);
+    assert_eq!(MockStrategyClient::new(&env, &strat2).balance(), 20 * U7);
+    assert_eq!(ctx.vault.total_assets(), 20 * U7); // 100 - 80 redeemed
+}
+
+#[test]
+fn set_keeper_admin_only() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let keeper = Address::generate(&env);
+
+    env.set_auths(&[]); // no admin signature present → must fail
+    assert!(ctx.vault.try_set_keeper(&keeper).is_err());
+
+    env.mock_all_auths();
+    ctx.vault.set_keeper(&keeper);
+    assert_eq!(ctx.vault.keeper(), keeper);
+}
+
+#[test]
+fn deposit_rounding_to_zero_shares_reverts() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let alice = Address::generate(&env);
+    fund_and_approve(&env, &ctx, &alice, 10 * U7);
+    ctx.vault.deposit(&alice, &(10 * U7)); // supply = 10*U7
+
+    // A strategy holding a wildly inflated balance makes total_assets dwarf total_supply,
+    // pushing price_per_share high enough that a tiny deposit rounds down to 0 shares.
+    let strat = deploy_mock_strategy(&env, &ctx);
+    ctx.vault.add_strategy(&strat);
+    fund_strategy(&env, &ctx, &strat, 10 * U7 * 1_000_000);
+
+    let bob = Address::generate(&env);
+    fund_and_approve(&env, &ctx, &bob, U7);
+    assert_eq!(
+        ctx.vault.try_deposit(&bob, &1i128),
+        Err(Ok(VaultError::InvalidAmount))
+    );
+}
+
+#[test]
+fn ensure_idle_insolvent_errors() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let alice = Address::generate(&env);
+    fund_and_approve(&env, &ctx, &alice, 10 * U7);
+    let alice_shares = ctx.vault.deposit(&alice, &(10 * U7)); // idle = 10*U7, supply = 10*U7
+
+    let strat = deploy_mock_strategy(&env, &ctx);
+    ctx.vault.add_strategy(&strat);
+    // Phantom balance: the strategy's book `Principal` (90*U7) overstates what it actually
+    // holds (5*U7) — a broken-strategy / socialized-loss scenario. total_assets() reports
+    // 100*U7 but only 15*U7 physically exists between idle and the strategy.
+    StellarAssetClient::new(&env, &ctx.token).mint(&strat, &(5 * U7));
+    MockStrategyClient::new(&env, &strat).set_principal(&(90 * U7));
+
+    assert_eq!(
+        ctx.vault.try_redeem(&alice, &alice_shares),
+        Err(Ok(VaultError::InsufficientLiquidity))
+    );
 }

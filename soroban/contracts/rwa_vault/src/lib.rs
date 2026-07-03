@@ -6,16 +6,24 @@ use stellar_macros::only_admin;
 use stellar_tokens::fungible::Base;
 
 pub mod storage;
-pub mod types;
-// Local Blend client. The vault no longer touches pools directly (dividend/harvest removed
-// in Task 6); the module is retained for Task 7's strategy router and is dead code until
-// then, so silence its unused-item lints.
-#[allow(dead_code)]
-mod blend;
 mod test;
+pub mod types;
 mod vault;
+// The `StrategyIface` trait exists only to generate `StrategyClient` (used by
+// `vault::total_assets`/`ensure_idle` this task); the trait itself is never implemented or
+// named as a bound, and `deposit`/`harvest` aren't called until Tasks 8/9 — silence the
+// dead-code lint on the whole module rather than the locked trait body.
+#[allow(dead_code)]
+mod strategy_client;
 
-use storage::{extend_instance, get_token, set_token};
+use storage::{
+    extend_instance, get_token, set_cooldown_s, set_last_rebalance, set_max_move_bps, set_token,
+};
+
+/// Rebalance cooldown default (Task 9 enforces it): 24h between rebalances.
+const DEFAULT_COOLDOWN_S: u64 = 86_400;
+/// Rebalance per-move cap default (Task 9 enforces it): 50% of `total_assets` per call.
+const DEFAULT_MAX_MOVE_BPS: u32 = 5_000;
 
 #[contract]
 pub struct RwaVault;
@@ -29,6 +37,9 @@ impl RwaVault {
         Base::set_metadata(e, 7, name, symbol); // 7 decimals (match the asset)
         set_token(e, &token);
         access_control::set_admin(e, &admin); // powers only_admin (pause/unpause)
+        set_cooldown_s(e, DEFAULT_COOLDOWN_S);
+        set_max_move_bps(e, DEFAULT_MAX_MOVE_BPS);
+        set_last_rebalance(e, 0);
         extend_instance(e);
     }
 
@@ -71,6 +82,33 @@ impl RwaVault {
     /// redeem(from, shares) -> assets returned pro-rata at the current exchange rate.
     pub fn redeem(e: &Env, from: Address, shares: i128) -> Result<i128, types::VaultError> {
         vault::redeem(e, from, shares)
+    }
+
+    // ----- strategy registry (Task 7) -----
+    /// Registered strategy addresses, in drain order.
+    pub fn strategies(e: &Env) -> Vec<Address> {
+        vault::strategies(e)
+    }
+    /// Admin-only. Registers a strategy; rejects a 5th (`TooManyStrategies`).
+    pub fn add_strategy(e: &Env, strategy: Address) -> Result<(), types::VaultError> {
+        vault::add_strategy(e, strategy)
+    }
+    /// Admin-only. Deregisters a strategy once its `balance()` is 0.
+    pub fn remove_strategy(e: &Env, strategy: Address) -> Result<(), types::VaultError> {
+        vault::remove_strategy(e, strategy)
+    }
+    /// Admin-only. Sets the keeper permitted to call `compound`/`rebalance` (Task 8/9).
+    pub fn set_keeper(e: &Env, keeper: Address) {
+        vault::set_keeper_addr(e, keeper)
+    }
+    /// The address currently permitted to call `compound`/`rebalance` (Task 8/9).
+    pub fn keeper(e: &Env) -> Address {
+        vault::keeper(e)
+    }
+    /// Admin-only. Sets the rebalance cooldown (seconds) and per-move cap (bps), both
+    /// enforced starting Task 9.
+    pub fn set_limits(e: &Env, cooldown_s: u64, max_move_bps: u32) {
+        vault::set_limits(e, cooldown_s, max_move_bps)
     }
 }
 

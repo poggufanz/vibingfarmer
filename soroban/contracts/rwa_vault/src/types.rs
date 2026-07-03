@@ -6,10 +6,12 @@ pub enum DataKey {
     // NOTE: no `Admin` key here — the admin lives in OZ access-control storage
     // (`AccessControlStorageKey::Admin`). A `DataKey::Admin` unit variant would encode to
     // the identical `Vec[Symbol("Admin")]` storage key and collide (→ AdminAlreadySet).
-    Token, // yield-farming asset token address (SEP-41 / SAC)
-           // Task 7 adds the strategy registry keys (Strategies, Keeper, LastRebalance,
-           // CooldownS, MaxMoveBps) here when the router lands — deferred to keep this
-           // task's clippy gate clean (no never-constructed variants).
+    Token,         // yield-farming asset token address (SEP-41 / SAC)
+    Strategies,    // Vec<Address> — registered strategies, drained in order on redeem
+    Keeper,        // address allowed to call compound/rebalance (Task 8/9)
+    LastRebalance, // ledger timestamp of the last rebalance; constructor seeds it to 0
+    CooldownS,     // min seconds between rebalances (enforced starting Task 9)
+    MaxMoveBps,    // max bps of total_assets movable per rebalance (enforced starting Task 9)
 }
 
 #[contracterror]
@@ -20,11 +22,13 @@ pub enum VaultError {
     InvalidAmount = 2,
     InsufficientShares = 4, // redeem more shares than held
     MathOverflow = 5,
-    // Strategy-router errors (10-15) and the Compound/Rebalance events are added by
-    // Tasks 7-9 as they are constructed — front-loading unused variants here would trip
-    // the `-D warnings` clippy gate, so they are deferred to the tasks that use them.
+    StrategyNotFound = 10,  // remove_strategy: address isn't in the registry
+    TooManyStrategies = 11, // add_strategy: registry already holds MAX_STRATEGIES (4)
+    StrategyNotEmpty = 12,  // remove_strategy: strategy.balance() != 0
+    // NotKeeper=13 (Task 8), CooldownActive=14, MoveTooLarge=15 (Task 9) — deferred until
+    // those tasks construct them, to keep this task's `-D warnings` clippy gate clean.
     FirstDepositTooSmall = 16, // first deposit below MIN_FIRST_DEPOSIT (inflation guard)
-    InsufficientLiquidity = 17, // redeem cannot be covered by idle assets (idle-only this task)
+    InsufficientLiquidity = 17, // redeem cannot be covered even after draining strategies
 }
 
 #[contractevent(topics = ["vault_deposit"])]
