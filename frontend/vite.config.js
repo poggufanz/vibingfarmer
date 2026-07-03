@@ -26,8 +26,7 @@ export default defineConfig(({ mode }) => {
   if (env.SOROBAN_VAULT_ADDRESS) process.env.SOROBAN_VAULT_ADDRESS = env.SOROBAN_VAULT_ADDRESS
   if (env.VF_FAUCET_SECRET) process.env.VF_FAUCET_SECRET = env.VF_FAUCET_SECRET
   if (env.SOROBAN_TOKEN_ADDRESS) process.env.SOROBAN_TOKEN_ADDRESS = env.SOROBAN_TOKEN_ADDRESS
-  if (env.SOROBAN_AGENT_ALLOWLIST)
-    process.env.SOROBAN_AGENT_ALLOWLIST = env.SOROBAN_AGENT_ALLOWLIST
+  if (env.SOROBAN_AGENT_ALLOWLIST) process.env.SOROBAN_AGENT_ALLOWLIST = env.SOROBAN_AGENT_ALLOWLIST
 
   // VF API gate (SEP-10 portal + gateway) — server-side only, never in the client bundle.
   if (env.VF_AUTH_SIGNING_KEY) process.env.VF_AUTH_SIGNING_KEY = env.VF_AUTH_SIGNING_KEY
