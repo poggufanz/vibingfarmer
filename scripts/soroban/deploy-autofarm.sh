@@ -36,6 +36,10 @@ WASM_DIR="$SOROBAN/target/wasm32-unknown-unknown/release"
 REGISTRY=$(python3 -c "import json;print(json.load(open('$OUT'))['registry'])")
 DEMO_AGENT=$(python3 -c "import json;print(json.load(open('$OUT'))['demoAgentAccount'])")
 RELAYER=$(python3 -c "import json;print(json.load(open('$OUT')).get('relayer',''))")
+if [ -z "$RELAYER" ]; then
+  echo "ERROR: deployments/stellar-testnet.json missing 'relayer' (needed as keeper) — set it before deploying." >&2
+  exit 1
+fi
 
 # ---- fixed addresses (Task 1 spike findings + task brief — all verified live on testnet) ----
 TOKEN=CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU    # Blend testnet USDC (vault underlying)
