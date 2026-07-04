@@ -13,6 +13,12 @@ const audited = (over) => ({
   ageDays: f(365),
   tvl: f(25_000_000),
   adminKey: f('timelock_multisig'),
+  // Lifeboat F8 facts — PLACEHOLDER snapshot values (same provenance discipline as above);
+  // verify via refreshVaultFacts.mjs before the demo.
+  oracleType: f('circuit_breaker'),
+  collateralLiquidityDepthUsd: f(1_000_000),
+  poolClass: f('curated'),
+  supplierConcentrationPct: f(25),
   ...over,
 })
 
@@ -42,6 +48,10 @@ export const SNAPSHOT = {
       ageDays: f(4),
       tvl: f(50_000),
       adminKey: f('eoa'),
+      oracleType: f('vwap_no_breaker'),
+      collateralLiquidityDepthUsd: f(40_000),
+      poolClass: f('community'),
+      supplierConcentrationPct: f(80),
     },
     meta: { isFixture: true, label: 'demo fixture — illustrates rejection' },
   },
