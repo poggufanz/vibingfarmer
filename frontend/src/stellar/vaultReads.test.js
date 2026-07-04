@@ -6,6 +6,7 @@ import {
   readStrategies,
   estimateSupplyAprBps,
   readSupplyAprBps,
+  readLifeboatState,
 } from './vaultReads.js'
 
 // Stand-in strkeys (same ones agentDeposit.test.js already uses) — any syntactically valid
@@ -162,5 +163,32 @@ describe('readSupplyAprBps', () => {
   test('returns null (not a throw) when either read fails', async () => {
     const fakeServer = { simulateTransaction: async () => ({ error: 'boom' }) }
     await expect(readSupplyAprBps(VAULT, { server: fakeServer })).resolves.toBeNull()
+  })
+})
+
+describe('readLifeboatState', () => {
+  // mandate_expiry uses a distinctive value (not 0/1/a round demo number) so a camelCase
+  // regression (reading v.mandateExpiry instead of v.mandate_expiry) would surface as
+  // NaN/undefined rather than accidentally matching.
+  test('maps the snake_case struct fields into camelCase, including a null authority', async () => {
+    const lifeboat = {
+      derisked: true,
+      mandate_expiry: 1_800_000_000n,
+      authority: null,
+    }
+    const fakeServer = {
+      simulateTransaction: async () => ({ result: { retval: nativeToScVal(lifeboat) } }),
+    }
+    const state = await readLifeboatState(VAULT, { server: fakeServer })
+    expect(state).toEqual({
+      derisked: true,
+      mandateExpiry: 1_800_000_000,
+      authority: null,
+    })
+  })
+
+  test('returns null on simulation failure rather than throwing', async () => {
+    const fakeServer = { simulateTransaction: async () => ({ error: 'boom' }) }
+    expect(await readLifeboatState(VAULT, { server: fakeServer })).toBeNull()
   })
 })
