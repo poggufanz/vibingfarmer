@@ -1,5 +1,5 @@
 #![cfg(test)]
-use crate::types::{Compound, Rebalance, VaultError};
+use crate::types::{Compound, LifeboatEngaged, LifeboatResumed, Rebalance, VaultError};
 use crate::vault::DEAD_SHARES;
 use crate::{RwaVault, RwaVaultClient};
 use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _};
@@ -1362,7 +1362,22 @@ fn test_emergency_derisk_mandate_gated_and_idempotent() {
 
     arm_lifeboat(&env, &ctx);
     assert_eq!(ctx.vault.emergency_derisk(&1u32), 0); // no strategies: drains 0, engages
+    // `events().all()` reflects only the LAST contract invocation — capture immediately.
+    let events = env.events().all();
+    assert_eq!(events.events().len(), 1);
+    let event = events.events().last().unwrap();
+    let expected_event = LifeboatEngaged {
+        reason_code: 1,
+        drained_total: 0,
+    }
+    .to_xdr(&env, &ctx.vault.address);
+    assert_eq!(event, &expected_event);
+
     assert_eq!(ctx.vault.emergency_derisk(&1u32), 0); // second call: idempotent no-op
+    // Idempotent retry must publish NOTHING — proof a cross-ledger retry can never
+    // double-fire LifeboatEngaged.
+    let retry_events = env.events().all();
+    assert!(retry_events.events().is_empty());
     assert!(ctx.vault.lifeboat_state().derisked);
 }
 
@@ -1384,8 +1399,18 @@ fn test_resume_clears_flag_and_is_noop_when_not_derisked() {
     arm_lifeboat(&env, &ctx);
     ctx.vault.emergency_derisk(&3u32);
     ctx.vault.resume();
+    // `events().all()` reflects only the LAST contract invocation — capture immediately.
+    let events = env.events().all();
+    assert_eq!(events.events().len(), 1);
+    let event = events.events().last().unwrap();
+    let expected_event = LifeboatResumed { idle: 0 }.to_xdr(&env, &ctx.vault.address);
+    assert_eq!(event, &expected_event);
+
     assert!(!ctx.vault.lifeboat_state().derisked);
     ctx.vault.resume(); // not derisked — no-op success
+    // No-op resume must NOT re-fire LifeboatResumed.
+    let retry_events = env.events().all();
+    assert!(retry_events.events().is_empty());
 }
 
 #[test]
