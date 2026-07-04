@@ -28,7 +28,9 @@ const EventRow = ({ ev }) => {
   if (ev.type === 'derisk') {
     return (
       <div className="keeper-action-row">
-        <span className="keeper-action-dot" style={{ color: 'var(--warn)' }} aria-hidden="true">⚠</span>
+        <span className="keeper-action-dot" style={{ color: 'var(--warn)' }} aria-hidden="true">
+          ⚠
+        </span>
         <span className="keeper-action-text">
           Lifeboat engaged · {REASON_LABELS[ev.reasonCode] ?? `reason ${ev.reasonCode}`}
         </span>
@@ -39,7 +41,9 @@ const EventRow = ({ ev }) => {
   if (ev.type === 'resume') {
     return (
       <div className="keeper-action-row">
-        <span className="keeper-action-dot" style={{ color: 'var(--ok)' }} aria-hidden="true">✓</span>
+        <span className="keeper-action-dot" style={{ color: 'var(--ok)' }} aria-hidden="true">
+          ✓
+        </span>
         <span className="keeper-action-text">Resumed · funds re-entering via compound</span>
         <span className="keeper-action-meta mono">{short(ev.txHash)}</span>
       </div>
@@ -47,7 +51,9 @@ const EventRow = ({ ev }) => {
   }
   return (
     <div className="keeper-action-row">
-      <span className="keeper-action-dot" style={{ color: 'var(--info)' }} aria-hidden="true">✎</span>
+      <span className="keeper-action-dot" style={{ color: 'var(--info)' }} aria-hidden="true">
+        ✎
+      </span>
       <span className="keeper-action-text">Mandate updated</span>
       <span className="keeper-action-meta mono">{short(ev.txHash)}</span>
     </div>
@@ -71,9 +77,7 @@ const LifeboatPanel = ({ state = null, events = [], owner = null, onGrant, busy 
     <section className="keeper-panel enter">
       <div className="keeper-pps">
         <span className="figure figure-md tnum">{mode ?? '--'}</span>
-        <span className="label mono">
-          {mode ? BADGE_COPY[mode] : 'lifeboat state unavailable'}
-        </span>
+        <span className="label mono">{mode ? BADGE_COPY[mode] : 'lifeboat state unavailable'}</span>
       </div>
 
       <div className="keeper-section">

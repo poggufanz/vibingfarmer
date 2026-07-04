@@ -7,7 +7,11 @@ import LifeboatPanel from './LifeboatPanel.jsx'
 
 afterEach(cleanup)
 
-const armedState = { derisked: false, mandateExpiry: Math.floor(Date.now() / 1000) + 7200, authority: 'GAUTH' }
+const armedState = {
+  derisked: false,
+  mandateExpiry: Math.floor(Date.now() / 1000) + 7200,
+  authority: 'GAUTH',
+}
 
 describe('LifeboatPanel', () => {
   it('renders ARMED with a countdown when the mandate is live', () => {
@@ -54,7 +58,13 @@ describe('LifeboatPanel', () => {
   })
   it('renders a derisk event row with the shared reason label', () => {
     const events = [
-      { type: 'derisk', reasonCode: 2, drainedTotal: 800_0000000n, txHash: 'abc123def456', timestamp: Date.now() },
+      {
+        type: 'derisk',
+        reasonCode: 2,
+        drainedTotal: 800_0000000n,
+        txHash: 'abc123def456',
+        timestamp: Date.now(),
+      },
     ]
     render(<LifeboatPanel state={armedState} events={events} owner="GOWNER" onGrant={() => {}} />)
     expect(screen.getByText(/Liquidity drop/)).toBeTruthy()

@@ -266,7 +266,10 @@ describe('F8 lifeboat screening facts', () => {
     expect(v.reasons).toContain('oracle without circuit breaker')
   })
   it('unknown oracle type is rejected (fail-closed)', () => {
-    const v = evaluate({ protocol: 'x', facts: healthyFacts({ oracleType: f8('unknown') }) }, F8_NOW)
+    const v = evaluate(
+      { protocol: 'x', facts: healthyFacts({ oracleType: f8('unknown') }) },
+      F8_NOW
+    )
     expect(v.eligible).toBe(false)
   })
   it('thin collateral liquidity is rejected below 250k', () => {

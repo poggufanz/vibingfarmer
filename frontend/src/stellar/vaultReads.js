@@ -105,7 +105,12 @@ export async function readLifeboatState(
   { server } = {}
 ) {
   try {
-    const v = await readContract({ contract: vaultAddress, method: 'lifeboat_state', args: [], server })
+    const v = await readContract({
+      contract: vaultAddress,
+      method: 'lifeboat_state',
+      args: [],
+      server,
+    })
     return {
       derisked: Boolean(v.derisked),
       mandateExpiry: Number(v.mandate_expiry),

@@ -56,7 +56,12 @@ export function decodeKeeperEvent(rec) {
       }
     }
     if (topic === DERISK_TOPIC) {
-      return { ...base, type: 'derisk', reasonCode: Number(data.reason_code), drainedTotal: data.drained_total }
+      return {
+        ...base,
+        type: 'derisk',
+        reasonCode: Number(data.reason_code),
+        drainedTotal: data.drained_total,
+      }
     }
     if (topic === RESUME_TOPIC) {
       return { ...base, type: 'resume', idle: data.idle }
