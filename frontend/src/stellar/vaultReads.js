@@ -92,3 +92,26 @@ export async function readSupplyAprBps(
     return null
   }
 }
+
+/**
+ * Vault lifeboat state — { derisked, mandateExpiry, authority } or null on RPC failure
+ * (callers render "--" / unknown, never a guessed state).
+ * @param {string} [vaultAddress]
+ * @param {{ server?: object }} [opts]
+ * @returns {Promise<{derisked: boolean, mandateExpiry: number, authority: string|null}|null>}
+ */
+export async function readLifeboatState(
+  vaultAddress = SOROBAN_AUTOFARM_VAULT_ADDRESS,
+  { server } = {}
+) {
+  try {
+    const v = await readContract({ contract: vaultAddress, method: 'lifeboat_state', args: [], server })
+    return {
+      derisked: Boolean(v.derisked),
+      mandateExpiry: Number(v.mandate_expiry),
+      authority: v.authority == null ? null : String(v.authority),
+    }
+  } catch {
+    return null
+  }
+}
