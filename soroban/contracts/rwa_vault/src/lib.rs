@@ -127,6 +127,15 @@ impl RwaVault {
     pub fn lifeboat_state(e: &Env) -> types::LifeboatState {
         vault::lifeboat_state(e)
     }
+    /// Keeper-only, mandate-gated. Drains every strategy best-effort and engages the
+    /// Derisked flag, blocking compound/rebalance until `resume`. Idempotent.
+    pub fn emergency_derisk(e: &Env, reason_code: u32) -> Result<i128, types::VaultError> {
+        vault::emergency_derisk(e, reason_code)
+    }
+    /// Keeper-only, mandate-gated. Clears the Derisked flag once the rescue is over.
+    pub fn resume(e: &Env) -> Result<(), types::VaultError> {
+        vault::resume(e)
+    }
 
     // ----- keeper ops (Task 8) -----
     /// Keeper-only, cooldown-gated (Task R1) and per-strategy fault-isolated. Harvests every

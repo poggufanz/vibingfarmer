@@ -1306,3 +1306,118 @@ fn test_set_mandate_can_shorten_to_revoke() {
     ctx.vault.set_mandate(&0);
     assert_eq!(ctx.vault.lifeboat_state().mandate_expiry, 0);
 }
+
+// ===== Lifeboat: emergency_derisk / resume =====
+
+fn arm_lifeboat(env: &Env, ctx: &Ctx) {
+    let authority = Address::generate(env);
+    ctx.vault.set_mandate_authority(&authority);
+    ctx.vault.set_mandate(&(env.ledger().timestamp() + 86_400));
+    let keeper = Address::generate(env);
+    ctx.vault.set_keeper(&keeper);
+}
+
+#[test]
+fn test_emergency_derisk_drains_all_strategies_and_blocks_keeper_ops() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    arm_lifeboat(&env, &ctx);
+    let s1 = deploy_mock_strategy(&env, &ctx);
+    let s2 = deploy_mock_strategy(&env, &ctx);
+    ctx.vault.add_strategy(&s1);
+    ctx.vault.add_strategy(&s2);
+    fund_strategy(&env, &ctx, &s1, 500 * U7);
+    fund_strategy(&env, &ctx, &s2, 300 * U7);
+
+    let drained = ctx.vault.emergency_derisk(&2u32);
+    assert_eq!(drained, 800 * U7);
+    assert!(ctx.vault.lifeboat_state().derisked);
+    // drained funds now sit idle in the vault
+    assert_eq!(
+        TokenClient::new(&env, &ctx.token).balance(&ctx.vault.address),
+        800 * U7
+    );
+    // keeper ops blocked while engaged
+    assert_eq!(
+        ctx.vault.try_rebalance(&s1, &s2, &1),
+        Err(Ok(VaultError::LifeboatEngaged))
+    );
+    assert_eq!(
+        ctx.vault.try_compound(&Vec::from_array(&env, [0i128, 0i128])),
+        Err(Ok(VaultError::LifeboatEngaged))
+    );
+}
+
+#[test]
+fn test_emergency_derisk_mandate_gated_and_idempotent() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    // keeper set but NO mandate at all — fail-closed
+    let keeper = Address::generate(&env);
+    ctx.vault.set_keeper(&keeper);
+    assert_eq!(
+        ctx.vault.try_emergency_derisk(&1u32),
+        Err(Ok(VaultError::MandateExpired))
+    );
+
+    arm_lifeboat(&env, &ctx);
+    assert_eq!(ctx.vault.emergency_derisk(&1u32), 0); // no strategies: drains 0, engages
+    assert_eq!(ctx.vault.emergency_derisk(&1u32), 0); // second call: idempotent no-op
+    assert!(ctx.vault.lifeboat_state().derisked);
+}
+
+#[test]
+fn test_non_keeper_cannot_derisk() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    // keeper never set — require_keeper's NotKeeper, mirrors compound/rebalance
+    assert_eq!(
+        ctx.vault.try_emergency_derisk(&1u32),
+        Err(Ok(VaultError::NotKeeper))
+    );
+}
+
+#[test]
+fn test_resume_clears_flag_and_is_noop_when_not_derisked() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    arm_lifeboat(&env, &ctx);
+    ctx.vault.emergency_derisk(&3u32);
+    ctx.vault.resume();
+    assert!(!ctx.vault.lifeboat_state().derisked);
+    ctx.vault.resume(); // not derisked — no-op success
+}
+
+#[test]
+fn test_expired_mandate_blocks_resume_funds_stay_safe() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let authority = Address::generate(&env);
+    ctx.vault.set_mandate_authority(&authority);
+    let keeper = Address::generate(&env);
+    ctx.vault.set_keeper(&keeper);
+    let now = env.ledger().timestamp();
+    ctx.vault.set_mandate(&(now + 100));
+    ctx.vault.emergency_derisk(&2u32);
+    env.ledger().with_mut(|l| l.timestamp = now + 101); // mandate expires while ENGAGED
+    assert_eq!(ctx.vault.try_resume(), Err(Ok(VaultError::MandateExpired)));
+    assert!(ctx.vault.lifeboat_state().derisked); // expiry can never force funds back in
+}
+
+#[test]
+fn test_derisk_survives_bricked_strategy() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    arm_lifeboat(&env, &ctx);
+    let good = deploy_mock_strategy(&env, &ctx);
+    let bad = deploy_mock_strategy(&env, &ctx);
+    ctx.vault.add_strategy(&good);
+    ctx.vault.add_strategy(&bad);
+    fund_strategy(&env, &ctx, &good, 100 * U7);
+    fund_strategy(&env, &ctx, &bad, 50 * U7);
+    MockStrategyClient::new(&env, &bad).set_bricked(&true); // withdraw now traps
+
+    let drained = ctx.vault.emergency_derisk(&2u32);
+    assert_eq!(drained, 100 * U7); // best-effort: good drained, bad no-oped
+    assert!(ctx.vault.lifeboat_state().derisked); // rescue engages even with a stuck strategy
+}

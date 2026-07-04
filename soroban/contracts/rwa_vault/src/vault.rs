@@ -8,11 +8,14 @@ use crate::storage::{
     extend_instance, get_compound_cooldown_s, get_cooldown_s, get_derisked, get_keeper,
     get_last_compound, get_last_rebalance, get_mandate_authority, get_mandate_expiry,
     get_max_move_bps, get_strategies, get_token, set_compound_cooldown_s, set_cooldown_s,
-    set_keeper, set_last_compound, set_last_rebalance, set_mandate_expiry, set_max_move_bps,
-    set_strategies,
+    set_derisked, set_keeper, set_last_compound, set_last_rebalance, set_mandate_expiry,
+    set_max_move_bps, set_strategies,
 };
 use crate::strategy_client::StrategyClient;
-use crate::types::{Compound, Deposit, LifeboatState, MandateSet, Rebalance, Redeem, VaultError};
+use crate::types::{
+    Compound, Deposit, LifeboatEngaged, LifeboatResumed, LifeboatState, MandateSet, Rebalance,
+    Redeem, VaultError,
+};
 
 /// Shares minted to the vault itself on the first deposit and locked forever. Guards against
 /// the classic ERC-4626 inflation / first-depositor donation attack: an attacker can no
@@ -276,6 +279,9 @@ fn ensure_idle(e: &Env, needed: i128) -> Result<(), VaultError> {
 /// strategy's gain or the rest of the sweep — see each loop's own comment for exactly how it
 /// degrades on failure.
 pub fn compound(e: &Env, min_outs: Vec<i128>) -> Result<i128, VaultError> {
+    if get_derisked(e) {
+        return Err(VaultError::LifeboatEngaged);
+    }
     require_keeper(e)?;
     let now = e.ledger().timestamp();
     // `None` means "never compounded" — deliberately NOT seeded like `LastRebalance` (whose
@@ -374,6 +380,9 @@ pub fn compound(e: &Env, min_outs: Vec<i128>) -> Result<i128, VaultError> {
 /// (`max_move_bps` of `from`'s CURRENT balance, re-read fresh every call so the cap always
 /// reflects the strategy's live size rather than a stale snapshot).
 pub fn rebalance(e: &Env, from: Address, to: Address, amount: i128) -> Result<(), VaultError> {
+    if get_derisked(e) {
+        return Err(VaultError::LifeboatEngaged);
+    }
     require_keeper(e)?;
     let strategies = get_strategies(e);
     let me = e.current_contract_address();
@@ -455,4 +464,56 @@ pub fn lifeboat_state(e: &Env) -> LifeboatState {
         mandate_expiry: get_mandate_expiry(e),
         authority: get_mandate_authority(e),
     }
+}
+
+fn require_mandate(e: &Env) -> Result<(), VaultError> {
+    if e.ledger().timestamp() >= get_mandate_expiry(e) {
+        return Err(VaultError::MandateExpired);
+    }
+    Ok(())
+}
+
+/// THE lifeboat. Keeper-called under a live user mandate. Drains every strategy best-effort
+/// (`try_withdraw(i128::MAX)` — the same MAX-drain + best-effort convention as
+/// `emergency_withdraw`: a bricked strategy no-ops instead of failing the rescue), engages the
+/// Derisked flag (blocks compound/rebalance), and reports what moved. Idempotent: already-
+/// derisked returns Ok(0) so a cross-ledger retry can never double-fire. Deliberately NOT bound
+/// by the rebalance cooldown / max_move_bps — this is the emergency path those limits exist to
+/// protect in normal operation.
+pub fn emergency_derisk(e: &Env, reason_code: u32) -> Result<i128, VaultError> {
+    require_keeper(e)?;
+    if get_derisked(e) {
+        return Ok(0);
+    }
+    require_mandate(e)?;
+    let mut drained_total: i128 = 0;
+    for strategy in get_strategies(e).iter() {
+        if let Ok(Ok(got)) = StrategyClient::new(e, &strategy).try_withdraw(&i128::MAX) {
+            drained_total += got;
+        }
+    }
+    set_derisked(e, true);
+    LifeboatEngaged {
+        reason_code,
+        drained_total,
+    }
+    .publish(e);
+    extend_instance(e);
+    Ok(drained_total)
+}
+
+/// Clears Derisked after all-clear. Mandate-gated like derisk: an expired mandate can never
+/// force funds back into a risky pool — funds stay idle (safe posture) until re-granted.
+/// Re-entry itself is the existing `compound()` sweeping idle; no new supply path.
+pub fn resume(e: &Env) -> Result<(), VaultError> {
+    require_keeper(e)?;
+    if !get_derisked(e) {
+        return Ok(());
+    }
+    require_mandate(e)?;
+    set_derisked(e, false);
+    let idle = TokenClient::new(e, &get_token(e)).balance(&e.current_contract_address());
+    LifeboatResumed { idle }.publish(e);
+    extend_instance(e);
+    Ok(())
 }

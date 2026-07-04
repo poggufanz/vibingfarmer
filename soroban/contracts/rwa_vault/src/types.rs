@@ -94,3 +94,14 @@ pub struct MandateSet {
     pub authority: Address,
     pub expiry: u64,
 }
+
+#[contractevent(topics = ["vault_derisk"])]
+pub struct LifeboatEngaged {
+    pub reason_code: u32, // 1=UTIL_SPIKE 2=LIQ_DROP 3=ORACLE_DIVERGENCE (shared with keeper/UI)
+    pub drained_total: i128,
+}
+
+#[contractevent(topics = ["vault_resume"])]
+pub struct LifeboatResumed {
+    pub idle: i128, // vault token balance right after resume
+}
