@@ -224,6 +224,14 @@ wsl -e bash -lc "cd /mnt/c/SharredData/project/competition/vibing-farmer/soroban
 
 > ⚠️ **Soroban tooling runs in WSL only.** Run `cargo`/`stellar` under `wsl -e bash -lc`, never directly in PowerShell. Deployed addresses live in `deployments/stellar-testnet.json`.
 
+**Lifeboat radar** (long-running ledger-speed reaction process — plain Node, run directly, NOT WSL):
+
+```bash
+cd keeper && node --env-file=.dev.vars src/radar-runner.mjs
+```
+
+The vault's keeper-facing entrypoints also include the lifeboat set: `set_mandate_authority`/`set_mandate` (owner grants/authorizes the de-risk mandate), `emergency_derisk`/`resume` (keeper-submitted, radar-triggered), and `lifeboat_state` (read-only status consumed by the frontend panel and `frontend/scripts/smoke-lifeboat.mjs`).
+
 ### Frontend
 
 ```bash
