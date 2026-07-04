@@ -115,6 +115,18 @@ impl RwaVault {
     pub fn set_compound_cooldown(e: &Env, cooldown_s: u64) {
         vault::set_compound_cooldown(e, cooldown_s)
     }
+    /// Admin-only. Sets the address allowed to grant/renew the lifeboat mandate.
+    pub fn set_mandate_authority(e: &Env, authority: Address) {
+        vault::set_mandate_authority(e, authority)
+    }
+    /// Authority-signed. Grants/renews the time-boxed lifeboat mandate.
+    pub fn set_mandate(e: &Env, expiry: u64) -> Result<(), types::VaultError> {
+        vault::set_mandate(e, expiry)
+    }
+    /// Current lifeboat state: derisked flag, mandate expiry, and authority address.
+    pub fn lifeboat_state(e: &Env) -> types::LifeboatState {
+        vault::lifeboat_state(e)
+    }
 
     // ----- keeper ops (Task 8) -----
     /// Keeper-only, cooldown-gated (Task R1) and per-strategy fault-isolated. Harvests every

@@ -1265,3 +1265,44 @@ fn upgrade_admin_only() {
     env.set_auths(&[]);
     assert!(ctx.vault.try_upgrade(&fake_hash).is_err());
 }
+
+// ===== Lifeboat: mandate plumbing =====
+
+#[test]
+fn test_set_mandate_authority_and_grant() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let authority = Address::generate(&env);
+    ctx.vault.set_mandate_authority(&authority);
+
+    let state = ctx.vault.lifeboat_state();
+    assert_eq!(state.authority, Some(authority.clone()));
+    assert_eq!(state.mandate_expiry, 0);
+    assert!(!state.derisked);
+
+    let expiry = env.ledger().timestamp() + 86_400;
+    ctx.vault.set_mandate(&expiry);
+    assert_eq!(ctx.vault.lifeboat_state().mandate_expiry, expiry);
+}
+
+#[test]
+fn test_set_mandate_without_authority_rejected() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let res = ctx
+        .vault
+        .try_set_mandate(&(env.ledger().timestamp() + 86_400));
+    assert_eq!(res, Err(Ok(VaultError::AuthorityNotSet)));
+}
+
+#[test]
+fn test_set_mandate_can_shorten_to_revoke() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let authority = Address::generate(&env);
+    ctx.vault.set_mandate_authority(&authority);
+    ctx.vault.set_mandate(&(env.ledger().timestamp() + 86_400));
+    // granting an already-past expiry is an immediate disarm — allowed (user revoke)
+    ctx.vault.set_mandate(&0);
+    assert_eq!(ctx.vault.lifeboat_state().mandate_expiry, 0);
+}

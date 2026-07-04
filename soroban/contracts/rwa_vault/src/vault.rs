@@ -5,13 +5,14 @@ use stellar_macros::when_not_paused;
 use stellar_tokens::fungible::Base;
 
 use crate::storage::{
-    extend_instance, get_compound_cooldown_s, get_cooldown_s, get_keeper, get_last_compound,
-    get_last_rebalance, get_max_move_bps, get_strategies, get_token, set_compound_cooldown_s,
-    set_cooldown_s, set_keeper, set_last_compound, set_last_rebalance, set_max_move_bps,
+    extend_instance, get_compound_cooldown_s, get_cooldown_s, get_derisked, get_keeper,
+    get_last_compound, get_last_rebalance, get_mandate_authority, get_mandate_expiry,
+    get_max_move_bps, get_strategies, get_token, set_compound_cooldown_s, set_cooldown_s,
+    set_keeper, set_last_compound, set_last_rebalance, set_mandate_expiry, set_max_move_bps,
     set_strategies,
 };
 use crate::strategy_client::StrategyClient;
-use crate::types::{Compound, Deposit, Rebalance, Redeem, VaultError};
+use crate::types::{Compound, Deposit, LifeboatState, MandateSet, Rebalance, Redeem, VaultError};
 
 /// Shares minted to the vault itself on the first deposit and locked forever. Guards against
 /// the classic ERC-4626 inflation / first-depositor donation attack: an attacker can no
@@ -427,4 +428,31 @@ pub fn emergency_withdraw(e: &Env, strategy: Address) {
 pub fn upgrade(e: &Env, new_wasm_hash: BytesN<32>) {
     require_admin(e);
     e.deployer().update_current_contract_wasm(new_wasm_hash);
+}
+
+/// Admin-only. Sets the address allowed to grant/renew the lifeboat mandate. Exists so the
+/// demo user's wallet signs grants in-app while the vault admin (vf-deployer) stays CLI-only.
+pub fn set_mandate_authority(e: &Env, authority: Address) {
+    require_admin(e);
+    crate::storage::set_mandate_authority(e, &authority);
+    extend_instance(e);
+}
+
+/// Authority-signed. Grants/renews the time-boxed mandate; a past expiry is an immediate
+/// disarm (user revoke). Fail-closed: without a live mandate the keeper cannot act.
+pub fn set_mandate(e: &Env, expiry: u64) -> Result<(), VaultError> {
+    let authority = get_mandate_authority(e).ok_or(VaultError::AuthorityNotSet)?;
+    authority.require_auth();
+    set_mandate_expiry(e, expiry);
+    MandateSet { authority, expiry }.publish(e);
+    extend_instance(e);
+    Ok(())
+}
+
+pub fn lifeboat_state(e: &Env) -> LifeboatState {
+    LifeboatState {
+        derisked: get_derisked(e),
+        mandate_expiry: get_mandate_expiry(e),
+        authority: get_mandate_authority(e),
+    }
 }

@@ -102,3 +102,32 @@ pub fn get_compound_cooldown_s(e: &Env) -> u64 {
         .get(&DataKey::CompoundCooldownS)
         .unwrap_or(DEFAULT_COMPOUND_COOLDOWN_S)
 }
+
+pub fn get_mandate_authority(e: &Env) -> Option<Address> {
+    e.storage().instance().get(&DataKey::MandateAuthority)
+}
+pub fn set_mandate_authority(e: &Env, a: &Address) {
+    e.storage().instance().set(&DataKey::MandateAuthority, a);
+}
+
+/// Absent = 0 = never granted = always expired (fail-closed): the keeper cannot act
+/// until the mandate authority explicitly grants a future expiry.
+pub fn get_mandate_expiry(e: &Env) -> u64 {
+    e.storage()
+        .instance()
+        .get(&DataKey::MandateExpiry)
+        .unwrap_or(0)
+}
+pub fn set_mandate_expiry(e: &Env, ts: u64) {
+    e.storage().instance().set(&DataKey::MandateExpiry, &ts);
+}
+
+pub fn get_derisked(e: &Env) -> bool {
+    e.storage()
+        .instance()
+        .get(&DataKey::Derisked)
+        .unwrap_or(false)
+}
+pub fn set_derisked(e: &Env, v: bool) {
+    e.storage().instance().set(&DataKey::Derisked, &v);
+}
