@@ -13,6 +13,12 @@ const PONZI_FIXTURE = {
   ageDays: { value: 365, asOf: 1_000_000, source: 'snapshot' },
   tvl: { value: 1_000_000, asOf: 1_000_000, source: 'snapshot' },
   adminKey: { value: 'timelock_multisig', asOf: 1_000_000, source: 'snapshot' },
+  // Lifeboat F8 facts — healthy values so this fixture's rejection stays attributable to the
+  // ponzi ratio alone (the thing this test is actually asserting), not the new required facts.
+  oracleType: { value: 'circuit_breaker', asOf: 1_000_000, source: 'snapshot' },
+  collateralLiquidityDepthUsd: { value: 1_000_000, asOf: 1_000_000, source: 'snapshot' },
+  poolClass: { value: 'curated', asOf: 1_000_000, source: 'snapshot' },
+  supplierConcentrationPct: { value: 25, asOf: 1_000_000, source: 'snapshot' },
 }
 
 describe('vfapi thin client', () => {

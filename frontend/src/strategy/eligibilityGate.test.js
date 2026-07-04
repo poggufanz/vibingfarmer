@@ -95,6 +95,12 @@ const mk = (over = {}) => ({
   ageDays: { value: 365, source: 'snapshot', asOf: NOW2 },
   tvl: { value: 25_000_000, source: 'snapshot', asOf: NOW2 },
   adminKey: { value: 'timelock_multisig', source: 'snapshot', asOf: NOW2 },
+  // Lifeboat F8 facts — healthy values so these pre-existing evaluate() tests keep asserting
+  // what they asserted before (ponzi/audit/age/tvl/admin behavior), not the new gate.
+  oracleType: { value: 'circuit_breaker', source: 'snapshot', asOf: NOW2 },
+  collateralLiquidityDepthUsd: { value: 1_000_000, source: 'snapshot', asOf: NOW2 },
+  poolClass: { value: 'curated', source: 'snapshot', asOf: NOW2 },
+  supplierConcentrationPct: { value: 25, source: 'snapshot', asOf: NOW2 },
   ...over,
 })
 
@@ -218,5 +224,75 @@ describe('evaluate boundary + fail-closed extras', () => {
     )
     expect(v.eligible).toBe(false)
     expect(v.reasons.join(' ')).toMatch(/security \d+\/100 \(our weighting\) below/)
+  })
+})
+
+// ===== Lifeboat F8 extension: YieldBlox post-mortem facts =====
+const F8_NOW = Date.parse('2026-07-04T00:00:00Z')
+const f8 = (value) => ({ value, source: 'snapshot', asOf: F8_NOW })
+const healthyFacts = (over = {}) => ({
+  annualizedDistributed: f8(1_000_000),
+  protocolRevenue: f8(1_050_000),
+  audit: f8('audited'),
+  ageDays: f8(365),
+  tvl: f8(25_000_000),
+  adminKey: f8('timelock_multisig'),
+  oracleType: f8('circuit_breaker'),
+  collateralLiquidityDepthUsd: f8(1_000_000),
+  poolClass: f8('curated'),
+  supplierConcentrationPct: f8(25),
+  ...over,
+})
+
+describe('F8 lifeboat screening facts', () => {
+  it('all healthy facts stay eligible', () => {
+    const v = evaluate({ protocol: 'x', facts: healthyFacts() }, F8_NOW)
+    expect(v.eligible).toBe(true)
+  })
+  it('community-managed pool is rejected (the YieldBlox class)', () => {
+    const v = evaluate(
+      { protocol: 'x', facts: healthyFacts({ poolClass: f8('community') }) },
+      F8_NOW
+    )
+    expect(v.eligible).toBe(false)
+    expect(v.reasons).toContain('community-managed pool')
+  })
+  it('VWAP oracle without circuit breaker is rejected', () => {
+    const v = evaluate(
+      { protocol: 'x', facts: healthyFacts({ oracleType: f8('vwap_no_breaker') }) },
+      F8_NOW
+    )
+    expect(v.eligible).toBe(false)
+    expect(v.reasons).toContain('oracle without circuit breaker')
+  })
+  it('unknown oracle type is rejected (fail-closed)', () => {
+    const v = evaluate(
+      { protocol: 'x', facts: healthyFacts({ oracleType: f8('unknown') }) },
+      F8_NOW
+    )
+    expect(v.eligible).toBe(false)
+  })
+  it('thin collateral liquidity is rejected below 250k', () => {
+    const v = evaluate(
+      { protocol: 'x', facts: healthyFacts({ collateralLiquidityDepthUsd: f8(100_000) }) },
+      F8_NOW
+    )
+    expect(v.eligible).toBe(false)
+    expect(v.reasons).toContain('thin collateral liquidity')
+  })
+  it('supplier concentration above 40% is rejected', () => {
+    const v = evaluate(
+      { protocol: 'x', facts: healthyFacts({ supplierConcentrationPct: f8(55) }) },
+      F8_NOW
+    )
+    expect(v.eligible).toBe(false)
+    expect(v.reasons).toContain('supplier concentration too high')
+  })
+  it('a missing new fact fails closed via the required-facts gate', () => {
+    const facts = healthyFacts()
+    delete facts.poolClass
+    const v = evaluate({ protocol: 'x', facts }, F8_NOW)
+    expect(v.eligible).toBe(false)
+    expect(v.reasons).toContain('missing or stale required data')
   })
 })

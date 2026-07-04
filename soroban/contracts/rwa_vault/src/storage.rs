@@ -5,6 +5,14 @@ use crate::types::DataKey;
 const TTL_THRESHOLD: u32 = 17_280; // ~1 day @ 5s ledgers
 const TTL_EXTEND: u32 = 518_400; // ~30 days
 
+/// Fallback for `get_compound_cooldown_s` (Task R1) when `CompoundCooldownS` was never
+/// explicitly set via `set_compound_cooldown`. Matches the off-chain keeper's ~15 min cron
+/// interval, so the gate is a no-op for normal keeper operation with no deploy-time change
+/// required. Deliberately read as a getter fallback rather than seeded by the constructor —
+/// a wasm-upgraded, already-deployed vault never re-runs `__constructor`, so seeding there
+/// would leave old vaults' storage without the key and this default would never apply to them.
+pub const DEFAULT_COMPOUND_COOLDOWN_S: u64 = 600;
+
 pub fn extend_instance(e: &Env) {
     e.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND);
 }
@@ -68,4 +76,58 @@ pub fn get_max_move_bps(e: &Env) -> u32 {
         .instance()
         .get(&DataKey::MaxMoveBps)
         .unwrap_or(0)
+}
+
+/// Read by `compound`'s cooldown gate (Task R1). `None` means "never compounded" — NOT the
+/// same as 0, so the very first compound ever called always passes the gate regardless of
+/// ledger time, mirroring how `get_keeper` (Option) lets `require_keeper` distinguish "never
+/// set" from a real value rather than defaulting to something that could wrongly pass/fail.
+pub fn get_last_compound(e: &Env) -> Option<u64> {
+    e.storage().instance().get(&DataKey::LastCompound)
+}
+pub fn set_last_compound(e: &Env, ts: u64) {
+    e.storage().instance().set(&DataKey::LastCompound, &ts);
+}
+
+/// Admin-only in practice — set exclusively via `vault::set_compound_cooldown`.
+pub fn set_compound_cooldown_s(e: &Env, v: u64) {
+    e.storage().instance().set(&DataKey::CompoundCooldownS, &v);
+}
+/// Read by `compound`'s cooldown gate (Task R1). Falls back to `DEFAULT_COMPOUND_COOLDOWN_S`
+/// when `set_compound_cooldown` has never been called — covers both a fresh vault and an
+/// already-deployed vault immediately after a wasm upgrade (see the constant's own doc).
+pub fn get_compound_cooldown_s(e: &Env) -> u64 {
+    e.storage()
+        .instance()
+        .get(&DataKey::CompoundCooldownS)
+        .unwrap_or(DEFAULT_COMPOUND_COOLDOWN_S)
+}
+
+pub fn get_mandate_authority(e: &Env) -> Option<Address> {
+    e.storage().instance().get(&DataKey::MandateAuthority)
+}
+pub fn set_mandate_authority(e: &Env, a: &Address) {
+    e.storage().instance().set(&DataKey::MandateAuthority, a);
+}
+
+/// Absent = 0 = never granted = always expired (fail-closed): the keeper cannot act
+/// until the mandate authority explicitly grants a future expiry.
+pub fn get_mandate_expiry(e: &Env) -> u64 {
+    e.storage()
+        .instance()
+        .get(&DataKey::MandateExpiry)
+        .unwrap_or(0)
+}
+pub fn set_mandate_expiry(e: &Env, ts: u64) {
+    e.storage().instance().set(&DataKey::MandateExpiry, &ts);
+}
+
+pub fn get_derisked(e: &Env) -> bool {
+    e.storage()
+        .instance()
+        .get(&DataKey::Derisked)
+        .unwrap_or(false)
+}
+pub fn set_derisked(e: &Env, v: bool) {
+    e.storage().instance().set(&DataKey::Derisked, &v);
 }

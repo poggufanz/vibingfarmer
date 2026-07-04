@@ -5,12 +5,17 @@ use stellar_macros::when_not_paused;
 use stellar_tokens::fungible::Base;
 
 use crate::storage::{
-    extend_instance, get_cooldown_s, get_keeper, get_last_rebalance, get_max_move_bps,
-    get_strategies, get_token, set_cooldown_s, set_keeper, set_last_rebalance, set_max_move_bps,
-    set_strategies,
+    extend_instance, get_compound_cooldown_s, get_cooldown_s, get_derisked, get_keeper,
+    get_last_compound, get_last_rebalance, get_mandate_authority, get_mandate_expiry,
+    get_max_move_bps, get_strategies, get_token, set_compound_cooldown_s, set_cooldown_s,
+    set_derisked, set_keeper, set_last_compound, set_last_rebalance, set_mandate_expiry,
+    set_max_move_bps, set_strategies,
 };
 use crate::strategy_client::StrategyClient;
-use crate::types::{Compound, Deposit, Rebalance, Redeem, VaultError};
+use crate::types::{
+    Compound, Deposit, LifeboatEngaged, LifeboatResumed, LifeboatState, MandateSet, Rebalance,
+    Redeem, VaultError,
+};
 
 /// Shares minted to the vault itself on the first deposit and locked forever. Guards against
 /// the classic ERC-4626 inflation / first-depositor donation attack: an attacker can no
@@ -112,6 +117,17 @@ pub fn set_limits(e: &Env, cooldown_s: u64, max_move_bps: u32) {
     require_admin(e);
     set_cooldown_s(e, cooldown_s);
     set_max_move_bps(e, max_move_bps);
+    extend_instance(e);
+}
+
+/// Admin-only. Sets the min seconds between `compound` calls (Task R1), enforced by
+/// `compound` below. A separate fn rather than an added parameter on `set_limits` — that
+/// signature is already called by the deploy script and by existing tests, so changing its
+/// arity would break both. Setting `0` disables the gate outright: `now < last + 0` can never
+/// hold once `last` is in the past (and `now` only ever moves forward).
+pub fn set_compound_cooldown(e: &Env, cooldown_s: u64) {
+    require_admin(e);
+    set_compound_cooldown_s(e, cooldown_s);
     extend_instance(e);
 }
 
@@ -249,13 +265,34 @@ fn ensure_idle(e: &Env, needed: i128) -> Result<(), VaultError> {
     Ok(())
 }
 
-/// Keeper-only. Harvests every registered strategy's realized gain into vault idle, then
-/// sweeps ALL idle (pre-existing user deposits + this call's harvested gains) back into
-/// strategies pro-rata by PRE-harvest balances. `total_assets` grows by `total_gain` while
-/// `total_supply` is unchanged, so `price_per_share` rises — this is how yield reaches every
-/// shareholder without a separate claim step. Called by the off-chain keeper every ~15 min.
+/// Keeper-only, cooldown-gated (Task R1 — `CompoundCooldownS`, default
+/// `DEFAULT_COMPOUND_COOLDOWN_S` when never set; see `storage::get_compound_cooldown_s`).
+/// Harvests every registered strategy's realized gain into vault idle, then sweeps ALL idle
+/// (pre-existing user deposits + this call's harvested gains) back into strategies pro-rata
+/// by PRE-harvest balances. `total_assets` grows by `total_gain` while `total_supply` is
+/// unchanged, so `price_per_share` rises — this is how yield reaches every shareholder
+/// without a separate claim step. Called by the off-chain keeper every ~15 min.
+///
+/// Both the harvest loop and the idle sweep below use `try_`-prefixed strategy calls
+/// (Task R1), the same fault-isolation strategy `ensure_idle` already applies to `withdraw`:
+/// a single BRICKED strategy (harvest or deposit reverting) must never block every OTHER
+/// strategy's gain or the rest of the sweep — see each loop's own comment for exactly how it
+/// degrades on failure.
 pub fn compound(e: &Env, min_outs: Vec<i128>) -> Result<i128, VaultError> {
+    if get_derisked(e) {
+        return Err(VaultError::LifeboatEngaged);
+    }
     require_keeper(e)?;
+    let now = e.ledger().timestamp();
+    // `None` means "never compounded" — deliberately NOT seeded like `LastRebalance` (whose
+    // sentinel-0 seeding happens once, in the constructor, which never re-runs on a wasm
+    // upgrade). Falling back to "gate passes" on `None` means an already-deployed vault's
+    // very first post-upgrade compound is never wrongly blocked by an absent timestamp.
+    if let Some(last) = get_last_compound(e) {
+        if now < last + get_compound_cooldown_s(e) {
+            return Err(VaultError::CooldownActive);
+        }
+    }
     let strategies = get_strategies(e);
     if min_outs.len() != strategies.len() {
         return Err(VaultError::InvalidAmount);
@@ -270,8 +307,16 @@ pub fn compound(e: &Env, min_outs: Vec<i128>) -> Result<i128, VaultError> {
     for s in strategies.iter() {
         balances.push_back(StrategyClient::new(e, &s).balance());
     }
+    // Uses `try_harvest` (not a hard call) — a single BRICKED strategy (one whose `harvest`
+    // reverts) must never stop every OTHER strategy's realized gain from reaching
+    // shareholders. On ANY error (either Result layer — a trap/revert, or a value that fails
+    // to decode) that strategy simply contributes 0 gain this round and the loop moves on;
+    // the keeper retries it on the next compound.
     for (i, s) in strategies.iter().enumerate() {
-        total_gain += StrategyClient::new(e, &s).harvest(&min_outs.get(i as u32).unwrap());
+        let min_out = min_outs.get(i as u32).unwrap();
+        if let Ok(Ok(gain)) = StrategyClient::new(e, &s).try_harvest(&min_out) {
+            total_gain += gain;
+        }
     }
 
     // Sweep idle into strategies pro-rata by pre-harvest balances (all zero → strategies[0]
@@ -285,7 +330,9 @@ pub fn compound(e: &Env, min_outs: Vec<i128>) -> Result<i128, VaultError> {
         if total_bal == 0 {
             let s0 = strategies.get(0).unwrap();
             TokenClient::new(e, &token).approve(&me, &s0, &idle, &exp);
-            StrategyClient::new(e, &s0).deposit(&idle);
+            // `try_deposit`: a BRICKED strategies[0] just leaves `idle` parked in the vault
+            // instead of reverting the whole compound — the next call retries the sweep.
+            let _ = StrategyClient::new(e, &s0).try_deposit(&idle);
         } else {
             // LAST strategy gets the remainder rather than its own `idle * bal / total`
             // share, so integer-division dust is swept in rather than left idle.
@@ -298,8 +345,14 @@ pub fn compound(e: &Env, min_outs: Vec<i128>) -> Result<i128, VaultError> {
                 };
                 if cut > 0 {
                     TokenClient::new(e, &token).approve(&me, &s, &cut, &exp);
-                    StrategyClient::new(e, &s).deposit(&cut);
-                    left -= cut;
+                    // `try_deposit`: only subtract `cut` from `left` on success — a failed
+                    // deposit (bricked strategy) leaves that slice idle instead of the vault
+                    // losing track of it. If the LAST strategy is the one that fails, `left`
+                    // (the remainder it would have absorbed) simply stays idle too — the
+                    // dust-sweep invariant degrades to "leave it idle," never to a lost cut.
+                    if StrategyClient::new(e, &s).try_deposit(&cut).is_ok() {
+                        left -= cut;
+                    }
                 }
             }
         }
@@ -311,6 +364,7 @@ pub fn compound(e: &Env, min_outs: Vec<i128>) -> Result<i128, VaultError> {
         price_per_share: pps,
     }
     .publish(e);
+    set_last_compound(e, now);
     extend_instance(e);
     Ok(total_gain)
 }
@@ -326,6 +380,9 @@ pub fn compound(e: &Env, min_outs: Vec<i128>) -> Result<i128, VaultError> {
 /// (`max_move_bps` of `from`'s CURRENT balance, re-read fresh every call so the cap always
 /// reflects the strategy's live size rather than a stale snapshot).
 pub fn rebalance(e: &Env, from: Address, to: Address, amount: i128) -> Result<(), VaultError> {
+    if get_derisked(e) {
+        return Err(VaultError::LifeboatEngaged);
+    }
     require_keeper(e)?;
     let strategies = get_strategies(e);
     let me = e.current_contract_address();
@@ -341,7 +398,10 @@ pub fn rebalance(e: &Env, from: Address, to: Address, amount: i128) -> Result<()
         return Err(VaultError::MoveTooLarge);
     }
     let got = StrategyClient::new(e, &from).withdraw(&amount);
-    if to != me {
+    // `got` can legitimately be 0 (strategy had nothing recoverable despite its book
+    // balance); the real strategy's `deposit` rejects non-positive amounts, so a zero
+    // move must skip the deposit leg instead of trapping the whole rebalance.
+    if to != me && got > 0 {
         let token = get_token(e);
         let exp = e.ledger().sequence() + 100;
         TokenClient::new(e, &token).approve(&me, &to, &got, &exp);
@@ -377,4 +437,83 @@ pub fn emergency_withdraw(e: &Env, strategy: Address) {
 pub fn upgrade(e: &Env, new_wasm_hash: BytesN<32>) {
     require_admin(e);
     e.deployer().update_current_contract_wasm(new_wasm_hash);
+}
+
+/// Admin-only. Sets the address allowed to grant/renew the lifeboat mandate. Exists so the
+/// demo user's wallet signs grants in-app while the vault admin (vf-deployer) stays CLI-only.
+pub fn set_mandate_authority(e: &Env, authority: Address) {
+    require_admin(e);
+    crate::storage::set_mandate_authority(e, &authority);
+    extend_instance(e);
+}
+
+/// Authority-signed. Grants/renews the time-boxed mandate; a past expiry is an immediate
+/// disarm (user revoke). Fail-closed: without a live mandate the keeper cannot act.
+pub fn set_mandate(e: &Env, expiry: u64) -> Result<(), VaultError> {
+    let authority = get_mandate_authority(e).ok_or(VaultError::AuthorityNotSet)?;
+    authority.require_auth();
+    set_mandate_expiry(e, expiry);
+    MandateSet { authority, expiry }.publish(e);
+    extend_instance(e);
+    Ok(())
+}
+
+pub fn lifeboat_state(e: &Env) -> LifeboatState {
+    LifeboatState {
+        derisked: get_derisked(e),
+        mandate_expiry: get_mandate_expiry(e),
+        authority: get_mandate_authority(e),
+    }
+}
+
+fn require_mandate(e: &Env) -> Result<(), VaultError> {
+    if e.ledger().timestamp() >= get_mandate_expiry(e) {
+        return Err(VaultError::MandateExpired);
+    }
+    Ok(())
+}
+
+/// THE lifeboat. Keeper-called under a live user mandate. Drains every strategy best-effort
+/// (`try_withdraw(i128::MAX)` — the same MAX-drain + best-effort convention as
+/// `emergency_withdraw`: a bricked strategy no-ops instead of failing the rescue), engages the
+/// Derisked flag (blocks compound/rebalance), and reports what moved. Idempotent: already-
+/// derisked returns Ok(0) so a cross-ledger retry can never double-fire. Deliberately NOT bound
+/// by the rebalance cooldown / max_move_bps — this is the emergency path those limits exist to
+/// protect in normal operation.
+pub fn emergency_derisk(e: &Env, reason_code: u32) -> Result<i128, VaultError> {
+    require_keeper(e)?;
+    if get_derisked(e) {
+        return Ok(0);
+    }
+    require_mandate(e)?;
+    let mut drained_total: i128 = 0;
+    for strategy in get_strategies(e).iter() {
+        if let Ok(Ok(got)) = StrategyClient::new(e, &strategy).try_withdraw(&i128::MAX) {
+            drained_total += got;
+        }
+    }
+    set_derisked(e, true);
+    LifeboatEngaged {
+        reason_code,
+        drained_total,
+    }
+    .publish(e);
+    extend_instance(e);
+    Ok(drained_total)
+}
+
+/// Clears Derisked after all-clear. Mandate-gated like derisk: an expired mandate can never
+/// force funds back into a risky pool — funds stay idle (safe posture) until re-granted.
+/// Re-entry itself is the existing `compound()` sweeping idle; no new supply path.
+pub fn resume(e: &Env) -> Result<(), VaultError> {
+    require_keeper(e)?;
+    if !get_derisked(e) {
+        return Ok(());
+    }
+    require_mandate(e)?;
+    set_derisked(e, false);
+    let idle = TokenClient::new(e, &get_token(e)).balance(&e.current_contract_address());
+    LifeboatResumed { idle }.publish(e);
+    extend_instance(e);
+    Ok(())
 }

@@ -5,7 +5,8 @@
 // already carries the agent custom account's __check_auth ed25519 auth entry, signed client-side
 // by the agent session key. The relay only pays the XLM fee. Abuse is bounded by: origin
 // allowlist + per-IP rate limit (_guard.js) AND the vault-target allowlist (assertVaultDeposit,
-// Task 4) so the relayer never sponsors an unrelated transaction. The relayer SECRET is
+// Task 4) — including the SOROBAN_AGENT_ALLOWLIST exact-match check on F11 exit-leg-2 token
+// transfers — so the relayer never sponsors an unrelated transaction. The relayer SECRET is
 // server-held (STELLAR_RELAYER_SECRET) — never in the client bundle.
 //
 // Actions:
@@ -20,6 +21,7 @@ const RPC_URL = () => process.env.SOROBAN_RPC_URL || 'https://soroban-testnet.st
 const RELAYER_SECRET = () => process.env.STELLAR_RELAYER_SECRET || ''
 const VAULT_ADDR = () => process.env.SOROBAN_VAULT_ADDRESS || ''
 const TOKEN_ADDR = () => process.env.SOROBAN_TOKEN_ADDRESS || ''
+const AGENT_ALLOWLIST = () => process.env.SOROBAN_AGENT_ALLOWLIST || ''
 
 // Fee-bump base fee = inner fee + this margin (stroops). 0.1 XLM is generous on testnet and
 // safely clears the SDK's "fee-bump fee >= inner fee" floor for our single-op deposit txs.
@@ -38,15 +40,27 @@ function pruneSeen(now) {
   for (const [k, v] of _seen) if (now - v.at > SEEN_TTL_MS) _seen.delete(k)
 }
 
+// Comma-separated allowlist string → trimmed, non-empty entries (matches _guard.js's
+// allowedOrigins parsing convention).
+function parseAllowlist(raw) {
+  return (raw || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+
 /**
  * Allowlist the inner tx the relay will sponsor: a single InvokeHostFunction calling
  * `vaultAddr`.deposit, `vaultAddr`.redeem (F11 exit leg 1), or — when tokenAddr is set —
- * `tokenAddr`.transfer whose `from` is a contract address (F11 exit leg 2: the agent custom
- * account's own __check_auth still gates the transfer to `to == scope.owner` on-chain; this
- * server-side check only stops the relayer sponsoring arbitrary G-account token moves).
+ * `tokenAddr`.transfer whose `from` is an EXACT match in `agentAllowlist` (F11 exit leg 2:
+ * the agent custom account's own __check_auth still gates the transfer to `to == scope.owner`
+ * on-chain; this server-side check stops the relayer sponsoring transfers for any contract
+ * account outside the allowlist — an attacker's always-auth custom account no longer gets
+ * free fee sponsorship just by starting with 'C'). FAIL CLOSED: tokenAddr set but
+ * agentAllowlist empty/unset rejects every transfer (deposit/redeem branches unaffected).
  * No-op when vaultAddr is falsy. Throws RelayError on mismatch.
  */
-export function assertVaultDeposit(inner, vaultAddr, sdk, tokenAddr = '') {
+export function assertVaultDeposit(inner, vaultAddr, sdk, tokenAddr = '', agentAllowlist = '') {
   if (!vaultAddr) return
   const ops = inner.operations || []
   if (ops.length !== 1 || ops[0].type !== 'invokeHostFunction') {
@@ -67,8 +81,8 @@ export function assertVaultDeposit(inner, vaultAddr, sdk, tokenAddr = '') {
   }
   if (tokenAddr && contract === tokenAddr && fnName === 'transfer') {
     const from = sdk.Address.fromScVal(ic.args()[0]).toString()
-    if (!from.startsWith('C')) {
-      throw new RelayError('relay sponsors agent-account transfers only')
+    if (!parseAllowlist(agentAllowlist).includes(from)) {
+      throw new RelayError('relay sponsors allowlisted agent-account transfers only')
     }
     return
   }
@@ -92,6 +106,7 @@ async function pollResult(rpcServer, hash, tries, intervalMs) {
  * @param {string} p.secret         relayer S... secret
  * @param {string} p.passphrase     network passphrase
  * @param {string} p.vaultAddr      allowlisted deposit target ('' = skip the guard)
+ * @param {string} p.agentAllowlist comma-separated agent accounts allowed as transfer 'from'
  * @param {object} p.sdk            { TransactionBuilder, FeeBumpTransaction, Keypair, Address }
  * @param {object} p.rpcServer      { sendTransaction, getTransaction }
  * @returns {Promise<{ hash, status, relayer }>}
@@ -102,6 +117,7 @@ export async function feeBumpAndSubmit({
   passphrase,
   vaultAddr,
   tokenAddr = '',
+  agentAllowlist = '',
   sdk,
   rpcServer,
   pollTries = 10,
@@ -113,7 +129,7 @@ export async function feeBumpAndSubmit({
   if (inner instanceof FeeBumpTransaction) {
     throw new RelayError('inner tx is already fee-bumped')
   }
-  assertVaultDeposit(inner, vaultAddr, sdk, tokenAddr)
+  assertVaultDeposit(inner, vaultAddr, sdk, tokenAddr, agentAllowlist)
 
   // Replay short-circuit (don't pay to re-broadcast a spent inner tx).
   const innerHash = inner.hash().toString('hex')
@@ -206,6 +222,7 @@ export default async function handler(req, res) {
           passphrase: PASSPHRASE(),
           vaultAddr: VAULT_ADDR(),
           tokenAddr: TOKEN_ADDR(),
+          agentAllowlist: AGENT_ALLOWLIST(),
           sdk,
           rpcServer,
         })

@@ -12,6 +12,22 @@ pub enum DataKey {
     LastRebalance, // ledger timestamp of the last rebalance; constructor seeds it to 0
     CooldownS,     // min seconds between rebalances (enforced starting Task 9)
     MaxMoveBps,    // max bps of total_assets movable per rebalance (enforced starting Task 9)
+    // Task R1 — appended (not inserted) below the Task 9 keys: a `#[contracttype]`
+    // unit-variant enum encodes each variant by its OWN name (see the `Admin` NOTE above), so
+    // adding these here cannot shift or collide with any already-live storage entry on the
+    // wasm-upgraded vault.
+    LastCompound, // ledger timestamp of the last successful compound. Absent (NOT 0) until
+    // the first compound EVER succeeds — deliberately not seeded by the constructor (unlike
+    // LastRebalance), since a wasm upgrade never re-runs it; see storage::get_last_compound.
+    CompoundCooldownS, // min seconds between compounds. Absent key falls back to
+    // storage::DEFAULT_COMPOUND_COOLDOWN_S, so an already-deployed vault
+    // gets the gate for free on upgrade with no constructor re-run needed.
+    // Lifeboat — appended below the Task R1 keys (append-only rule: unit variants encode by
+    // their own name, so adding here cannot shift or collide with live storage — see the
+    // `Admin` NOTE at the top of this enum).
+    MandateAuthority, // Option<Address> — may grant/renew the lifeboat mandate (admin sets once)
+    MandateExpiry,    // u64 unix ts — keeper may derisk/resume only while now < expiry; absent = 0
+    Derisked,         // bool — lifeboat engaged; compound/rebalance blocked while true
 }
 
 #[contracterror]
@@ -22,15 +38,20 @@ pub enum VaultError {
     InvalidAmount = 2,
     InsufficientShares = 4, // redeem more shares than held
     MathOverflow = 5,
-    StrategyNotFound = 10,     // remove_strategy: address isn't in the registry
-    TooManyStrategies = 11,    // add_strategy: registry already holds MAX_STRATEGIES (4)
-    StrategyNotEmpty = 12,     // remove_strategy: strategy.balance() != 0
-    NotKeeper = 13, // compound/rebalance: caller isn't the registered keeper (or none set)
-    CooldownActive = 14, // rebalance: called again before `cooldown_s` elapsed since the last one
+    StrategyNotFound = 10,  // remove_strategy: address isn't in the registry
+    TooManyStrategies = 11, // add_strategy: registry already holds MAX_STRATEGIES (4)
+    StrategyNotEmpty = 12,  // remove_strategy: strategy.balance() != 0
+    NotKeeper = 13,         // compound/rebalance: caller isn't the registered keeper (or none set)
+    CooldownActive = 14,    // rebalance OR compound (Task R1): called again before its own
+    // cooldown (`CooldownS`/`CompoundCooldownS`) elapsed since its own last call — shared
+    // variant, reused rather than adding a near-duplicate error code for the same condition
     MoveTooLarge = 15, // rebalance: amount <= 0, or exceeds `max_move_bps` of `from`'s balance
     FirstDepositTooSmall = 16, // first deposit below MIN_FIRST_DEPOSIT (inflation guard)
     InsufficientLiquidity = 17, // redeem cannot be covered even after draining strategies
     StrategyAlreadyRegistered = 18, // add_strategy: address is already in the registry
+    AuthorityNotSet = 19, // set_mandate: no mandate authority configured yet
+    MandateExpired = 20, // emergency_derisk/resume: mandate absent (0) or now >= expiry
+    LifeboatEngaged = 21, // compound/rebalance: blocked while the vault is derisked
 }
 
 #[contractevent(topics = ["vault_deposit"])]
@@ -58,4 +79,29 @@ pub struct Rebalance {
     pub from: Address, // strategy drained
     pub to: Address,   // strategy credited, or the vault's own address (de-risk-to-idle)
     pub amount: i128,  // actual amount moved (the `from` strategy's real `withdraw` return)
+}
+
+#[contracttype]
+#[derive(Clone)]
+pub struct LifeboatState {
+    pub derisked: bool,
+    pub mandate_expiry: u64,
+    pub authority: Option<Address>,
+}
+
+#[contractevent(topics = ["vault_mandate"])]
+pub struct MandateSet {
+    pub authority: Address,
+    pub expiry: u64,
+}
+
+#[contractevent(topics = ["vault_derisk"])]
+pub struct LifeboatEngaged {
+    pub reason_code: u32, // 1=UTIL_SPIKE 2=LIQ_DROP 3=ORACLE_DIVERGENCE (shared with keeper/UI)
+    pub drained_total: i128,
+}
+
+#[contractevent(topics = ["vault_resume"])]
+pub struct LifeboatResumed {
+    pub idle: i128, // vault token balance right after resume
 }

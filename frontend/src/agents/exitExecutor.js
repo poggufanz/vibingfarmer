@@ -102,7 +102,51 @@ export async function buildAgentExitTx({
 // Per-agent in-flight guard: the 15s checkExit interval (app.jsx) can re-fire while a slow
 // relay/RPC leg is still pending; a concurrent second redeem would just fail on-chain, but
 // rejecting early keeps the log clean and avoids a double transfer race after self-heal.
+// This Set only guards within ONE browser tab (module-level memory) — a second TAB in the
+// same browser has its own JS heap and would race straight past it. The localStorage lock
+// below closes that gap. Two different BROWSERS (or machines) can still race past both guards
+// — that residual ceiling is bounded on-chain: the loser's tx fails sequence/auth validation,
+// wasting at most one tx, never a double spend.
 const _exitInFlight = new Set()
+
+// Cross-tab lock: a shared localStorage key so a second tab (same browser, same agent) sees
+// the first tab's in-progress exit. TTL bounds how long a crashed/closed tab can wedge the
+// lock — after it expires, a fresh run treats the stale entry as free and replaces it.
+const EXIT_LOCK_KEY_PREFIX = 'vf_exit_inflight_'
+const EXIT_LOCK_TTL_MS = 120_000
+
+/**
+ * Acquire the cross-tab lock for `agentAddress`. Returns an ownership token, or null if
+ * another tab holds a non-expired lock. The token ties release to THIS acquisition: a run
+ * that overshoots the TTL and finishes late must not delete a successor's fresh lock, so
+ * release only removes the key when it still holds this run's own token. In a non-browser
+ * environment (no localStorage, e.g. tests/SSR) acquisition always succeeds — the in-memory
+ * Set above is the only guard available there.
+ */
+function acquireExitLock(agentAddress) {
+  const key = EXIT_LOCK_KEY_PREFIX + agentAddress
+  try {
+    const held = localStorage.getItem(key)
+    // Value is `<epoch-ms>:<nonce>`; split tolerates legacy plain-timestamp values.
+    if (held !== null && Date.now() - Number(held.split(':')[0]) < EXIT_LOCK_TTL_MS) {
+      return null
+    }
+    const token = `${Date.now()}:${Math.random().toString(36).slice(2)}`
+    localStorage.setItem(key, token)
+    return token
+  } catch {
+    return 'no-localstorage' // degrade to the in-memory guard only
+  }
+}
+
+function releaseExitLock(agentAddress, token) {
+  try {
+    const key = EXIT_LOCK_KEY_PREFIX + agentAddress
+    if (localStorage.getItem(key) === token) localStorage.removeItem(key)
+  } catch {
+    // no localStorage to clear — nothing was acquired either
+  }
+}
 
 /**
  * Run the autonomous exit using the scoped exit key.
@@ -113,7 +157,13 @@ const _exitInFlight = new Set()
  * @returns {Promise<{ hash:string, status:string, redeemHash:string|null }>}
  */
 export async function runAutonomousExit({ agentAddress, ownerAddress, server }) {
+  // In-memory check FIRST: if this tab already runs an exit, we must not touch the
+  // localStorage lock at all (writing it and then throwing would wedge other tabs).
   if (_exitInFlight.has(agentAddress)) {
+    throw new Error('exit already in flight for this agent')
+  }
+  const lockToken = acquireExitLock(agentAddress)
+  if (lockToken === null) {
     throw new Error('exit already in flight for this agent')
   }
   _exitInFlight.add(agentAddress)
@@ -121,6 +171,7 @@ export async function runAutonomousExit({ agentAddress, ownerAddress, server }) 
     return await _runAutonomousExit({ agentAddress, ownerAddress, server })
   } finally {
     _exitInFlight.delete(agentAddress)
+    releaseExitLock(agentAddress, lockToken)
   }
 }
 

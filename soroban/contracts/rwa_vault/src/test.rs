@@ -1,5 +1,5 @@
 #![cfg(test)]
-use crate::types::{Compound, Rebalance, VaultError};
+use crate::types::{Compound, LifeboatEngaged, LifeboatResumed, Rebalance, VaultError};
 use crate::vault::DEAD_SHARES;
 use crate::{RwaVault, RwaVaultClient};
 use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _};
@@ -25,6 +25,8 @@ mod mock_strategy {
         Principal,
         HarvestGain, // Task 8: configurable harvest() payout, set via `set_harvest_gain`
         Bricked,     // Task 10: once true, `withdraw` unconditionally traps
+        HarvestBricked, // Task R1: once true, `harvest` unconditionally traps
+        DepositBricked, // Task R1: once true, `deposit` unconditionally traps
     }
 
     #[contract]
@@ -41,6 +43,19 @@ mod mock_strategy {
         pub fn deposit(e: Env, amount: i128) {
             let vault: Address = e.storage().instance().get(&DataKey::Vault).unwrap();
             vault.require_auth();
+            // Mirrors the real blend_strategy guard (StrategyError::InvalidAmount) — the
+            // vault must never route a non-positive deposit into a strategy.
+            if amount <= 0 {
+                panic!("mock strategy: non-positive deposit");
+            }
+            let bricked: bool = e
+                .storage()
+                .instance()
+                .get(&DataKey::DepositBricked)
+                .unwrap_or(false);
+            if bricked {
+                panic!("mock strategy: deposit bricked");
+            }
             let token: Address = e.storage().instance().get(&DataKey::Token).unwrap();
             let me = e.current_contract_address();
             TokenClient::new(&e, &token).transfer_from(&me, &vault, &me, &amount);
@@ -93,6 +108,14 @@ mod mock_strategy {
         pub fn harvest(e: Env, _min_out: i128) -> i128 {
             let vault: Address = e.storage().instance().get(&DataKey::Vault).unwrap();
             vault.require_auth();
+            let bricked: bool = e
+                .storage()
+                .instance()
+                .get(&DataKey::HarvestBricked)
+                .unwrap_or(false);
+            if bricked {
+                panic!("mock strategy: harvest bricked");
+            }
             let gain: i128 = e
                 .storage()
                 .instance()
@@ -125,6 +148,20 @@ mod mock_strategy {
         /// (Task 10: `redeem_always_works`).
         pub fn set_bricked(e: Env, v: bool) {
             e.storage().instance().set(&DataKey::Bricked, &v);
+        }
+
+        /// Test-only hook: once set to `true`, every subsequent `harvest` call traps —
+        /// simulating a strategy whose harvest path is broken (Task R1: `compound` must
+        /// isolate this fault, realizing every OTHER strategy's gain regardless).
+        pub fn set_harvest_bricked(e: Env, v: bool) {
+            e.storage().instance().set(&DataKey::HarvestBricked, &v);
+        }
+
+        /// Test-only hook: once set to `true`, every subsequent `deposit` call traps —
+        /// simulating a strategy whose deposit path is broken (Task R1: `compound`'s idle
+        /// sweep must isolate this fault, leaving the cut idle rather than losing it).
+        pub fn set_deposit_bricked(e: Env, v: bool) {
+            e.storage().instance().set(&DataKey::DepositBricked, &v);
         }
     }
 }
@@ -698,6 +735,128 @@ fn price_per_share_increases_after_compound() {
     assert!(pps_after > pps_before);
 }
 
+// ----- Task R1: compound fault isolation (bricked harvest/deposit) + on-chain cooldown -----
+
+#[test]
+fn compound_isolates_bricked_harvest() {
+    let env = Env::default();
+    let ctx = setup(&env);
+
+    // No user deposit needed here — strategies are funded directly, and the assertion below
+    // is purely about `total_gain`, not the idle-sweep math (already covered by
+    // `compound_harvests_all_and_reinvests_idle_pro_rata`).
+    let strat1 = deploy_mock_strategy(&env, &ctx);
+    let strat2 = deploy_mock_strategy(&env, &ctx);
+    ctx.vault.add_strategy(&strat1);
+    ctx.vault.add_strategy(&strat2);
+    fund_strategy(&env, &ctx, &strat1, 60 * U7);
+    fund_strategy(&env, &ctx, &strat2, 40 * U7);
+    fund_strategy_gain(&env, &ctx, &strat1, 6 * U7); // would realize 6 — but harvest is bricked
+    fund_strategy_gain(&env, &ctx, &strat2, 4 * U7); // realizes normally
+    MockStrategyClient::new(&env, &strat1).set_harvest_bricked(&true);
+
+    let keeper = Address::generate(&env);
+    ctx.vault.set_keeper(&keeper);
+
+    let min_outs = Vec::from_array(&env, [0i128, 0i128]);
+    // Must NOT revert despite strat1's harvest trapping.
+    let total_gain = ctx.vault.compound(&min_outs);
+
+    // Only strat2's 4*U7 gain realized — strat1's bricked harvest contributed 0 rather than
+    // reverting the whole call (and definitely not the phantom 6*U7 it never actually paid
+    // out).
+    assert_eq!(total_gain, 4 * U7);
+
+    // `events().all()` reflects only the LAST contract invocation — capture immediately.
+    let events = env.events().all();
+    let event = events.events().last().unwrap();
+    let expected_event = Compound {
+        total_gain: 4 * U7,
+        price_per_share: ctx.vault.price_per_share(),
+    }
+    .to_xdr(&env, &ctx.vault.address);
+    assert_eq!(event, &expected_event);
+}
+
+#[test]
+fn compound_isolates_bricked_deposit_leaves_cut_idle() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let alice = Address::generate(&env);
+    fund_and_approve(&env, &ctx, &alice, 100 * U7);
+    ctx.vault.deposit(&alice, &(100 * U7)); // idle = 100*U7, supply = 100*U7
+
+    let strat = deploy_mock_strategy(&env, &ctx);
+    ctx.vault.add_strategy(&strat);
+    MockStrategyClient::new(&env, &strat).set_deposit_bricked(&true);
+
+    let keeper = Address::generate(&env);
+    ctx.vault.set_keeper(&keeper);
+
+    let assets_before = ctx.vault.total_assets();
+    let min_outs = Vec::from_array(&env, [0i128]);
+    // Must NOT revert despite the strategy's deposit trapping on the sweep attempt.
+    let total_gain = ctx.vault.compound(&min_outs);
+    assert_eq!(total_gain, 0); // strategy never held funds — nothing to harvest
+
+    // The sweep tried to deposit the full 100*U7 idle into the bricked strategy and failed —
+    // the cut stays idle instead of being lost (or double-counted via a partial transfer).
+    let vault_addr = ctx.vault.address.clone();
+    assert_eq!(
+        TokenClient::new(&env, &ctx.token).balance(&vault_addr),
+        100 * U7
+    );
+    assert_eq!(MockStrategyClient::new(&env, &strat).balance(), 0);
+
+    // total_assets is exactly what it was before — a skipped sweep only ever leaves funds in
+    // a different bucket (idle vs. strategy); it can never create or destroy them.
+    assert_eq!(ctx.vault.total_assets(), assets_before);
+}
+
+#[test]
+fn compound_cooldown_blocks_second_call_until_disabled() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let alice = Address::generate(&env);
+    fund_and_approve(&env, &ctx, &alice, 100 * U7);
+    ctx.vault.deposit(&alice, &(100 * U7));
+
+    let strat = deploy_mock_strategy(&env, &ctx);
+    ctx.vault.add_strategy(&strat);
+    fund_strategy(&env, &ctx, &strat, 50 * U7);
+
+    let keeper = Address::generate(&env);
+    ctx.vault.set_keeper(&keeper);
+
+    let min_outs = Vec::from_array(&env, [0i128]);
+    // First-ever compound always passes the cooldown gate — `LastCompound` is absent, not 0
+    // (see storage::get_last_compound), regardless of `Env::default()`'s timestamp-0 start.
+    ctx.vault.compound(&min_outs);
+
+    // Immediate second call, same ledger timestamp — still within the default 600s cooldown.
+    assert_eq!(
+        ctx.vault.try_compound(&min_outs),
+        Err(Ok(VaultError::CooldownActive))
+    );
+
+    // Admin disables the gate outright (cooldown 0) — the very next call now succeeds
+    // immediately, no ledger-time advance needed.
+    ctx.vault.set_compound_cooldown(&0u64);
+    ctx.vault.compound(&min_outs); // no panic == passes
+}
+
+#[test]
+fn set_compound_cooldown_admin_only() {
+    let env = Env::default();
+    let ctx = setup(&env);
+
+    env.set_auths(&[]); // no admin signature present → must fail
+    assert!(ctx.vault.try_set_compound_cooldown(&0u64).is_err());
+
+    env.mock_all_auths();
+    ctx.vault.set_compound_cooldown(&0u64); // admin call succeeds without panicking
+}
+
 // ----- Task 9: keeper-gated rebalance (cooldown + caps), admin emergency_withdraw/upgrade -----
 
 #[test]
@@ -732,6 +891,39 @@ fn rebalance_moves_within_caps_and_sets_cooldown() {
         from: strat1.clone(),
         to: strat2.clone(),
         amount: 50 * U7,
+    }
+    .to_xdr(&env, &ctx.vault.address);
+    assert_eq!(event, &expected_event);
+}
+
+#[test]
+fn rebalance_zero_withdraw_skips_deposit_leg() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let strat1 = deploy_mock_strategy(&env, &ctx);
+    let strat2 = deploy_mock_strategy(&env, &ctx);
+    ctx.vault.add_strategy(&strat1);
+    ctx.vault.add_strategy(&strat2);
+    fund_strategy(&env, &ctx, &strat2, 50 * U7);
+    // strat1's book says 100*U7 but it holds NO tokens — its withdraw returns 0. The
+    // rebalance must skip the deposit leg (the real strategy rejects deposit(0)) instead
+    // of trapping the whole call.
+    MockStrategyClient::new(&env, &strat1).set_principal(&(100 * U7));
+
+    let keeper = Address::generate(&env);
+    ctx.vault.set_keeper(&keeper);
+    env.ledger().set_timestamp(100_000);
+
+    ctx.vault.rebalance(&strat1, &strat2, &(10 * U7));
+    let events = env.events().all();
+
+    // Nothing moved: strat2 untouched, and the event records the actual 0 moved.
+    assert_eq!(MockStrategyClient::new(&env, &strat2).balance(), 50 * U7);
+    let event = events.events().last().unwrap();
+    let expected_event = Rebalance {
+        from: strat1.clone(),
+        to: strat2.clone(),
+        amount: 0,
     }
     .to_xdr(&env, &ctx.vault.address);
     assert_eq!(event, &expected_event);
@@ -1072,4 +1264,185 @@ fn upgrade_admin_only() {
     // unit suite; here we only prove the auth gate.)
     env.set_auths(&[]);
     assert!(ctx.vault.try_upgrade(&fake_hash).is_err());
+}
+
+// ===== Lifeboat: mandate plumbing =====
+
+#[test]
+fn test_set_mandate_authority_and_grant() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let authority = Address::generate(&env);
+    ctx.vault.set_mandate_authority(&authority);
+
+    let state = ctx.vault.lifeboat_state();
+    assert_eq!(state.authority, Some(authority.clone()));
+    assert_eq!(state.mandate_expiry, 0);
+    assert!(!state.derisked);
+
+    let expiry = env.ledger().timestamp() + 86_400;
+    ctx.vault.set_mandate(&expiry);
+    assert_eq!(ctx.vault.lifeboat_state().mandate_expiry, expiry);
+}
+
+#[test]
+fn test_set_mandate_without_authority_rejected() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let res = ctx
+        .vault
+        .try_set_mandate(&(env.ledger().timestamp() + 86_400));
+    assert_eq!(res, Err(Ok(VaultError::AuthorityNotSet)));
+}
+
+#[test]
+fn test_set_mandate_can_shorten_to_revoke() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let authority = Address::generate(&env);
+    ctx.vault.set_mandate_authority(&authority);
+    ctx.vault.set_mandate(&(env.ledger().timestamp() + 86_400));
+    // granting an already-past expiry is an immediate disarm — allowed (user revoke)
+    ctx.vault.set_mandate(&0);
+    assert_eq!(ctx.vault.lifeboat_state().mandate_expiry, 0);
+}
+
+// ===== Lifeboat: emergency_derisk / resume =====
+
+fn arm_lifeboat(env: &Env, ctx: &Ctx) {
+    let authority = Address::generate(env);
+    ctx.vault.set_mandate_authority(&authority);
+    ctx.vault.set_mandate(&(env.ledger().timestamp() + 86_400));
+    let keeper = Address::generate(env);
+    ctx.vault.set_keeper(&keeper);
+}
+
+#[test]
+fn test_emergency_derisk_drains_all_strategies_and_blocks_keeper_ops() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    arm_lifeboat(&env, &ctx);
+    let s1 = deploy_mock_strategy(&env, &ctx);
+    let s2 = deploy_mock_strategy(&env, &ctx);
+    ctx.vault.add_strategy(&s1);
+    ctx.vault.add_strategy(&s2);
+    fund_strategy(&env, &ctx, &s1, 500 * U7);
+    fund_strategy(&env, &ctx, &s2, 300 * U7);
+
+    let drained = ctx.vault.emergency_derisk(&2u32);
+    assert_eq!(drained, 800 * U7);
+    assert!(ctx.vault.lifeboat_state().derisked);
+    // drained funds now sit idle in the vault
+    assert_eq!(
+        TokenClient::new(&env, &ctx.token).balance(&ctx.vault.address),
+        800 * U7
+    );
+    // keeper ops blocked while engaged
+    assert_eq!(
+        ctx.vault.try_rebalance(&s1, &s2, &1),
+        Err(Ok(VaultError::LifeboatEngaged))
+    );
+    assert_eq!(
+        ctx.vault.try_compound(&Vec::from_array(&env, [0i128, 0i128])),
+        Err(Ok(VaultError::LifeboatEngaged))
+    );
+}
+
+#[test]
+fn test_emergency_derisk_mandate_gated_and_idempotent() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    // keeper set but NO mandate at all — fail-closed
+    let keeper = Address::generate(&env);
+    ctx.vault.set_keeper(&keeper);
+    assert_eq!(
+        ctx.vault.try_emergency_derisk(&1u32),
+        Err(Ok(VaultError::MandateExpired))
+    );
+
+    arm_lifeboat(&env, &ctx);
+    assert_eq!(ctx.vault.emergency_derisk(&1u32), 0); // no strategies: drains 0, engages
+    // `events().all()` reflects only the LAST contract invocation — capture immediately.
+    let events = env.events().all();
+    assert_eq!(events.events().len(), 1);
+    let event = events.events().last().unwrap();
+    let expected_event = LifeboatEngaged {
+        reason_code: 1,
+        drained_total: 0,
+    }
+    .to_xdr(&env, &ctx.vault.address);
+    assert_eq!(event, &expected_event);
+
+    assert_eq!(ctx.vault.emergency_derisk(&1u32), 0); // second call: idempotent no-op
+    // Idempotent retry must publish NOTHING — proof a cross-ledger retry can never
+    // double-fire LifeboatEngaged.
+    let retry_events = env.events().all();
+    assert!(retry_events.events().is_empty());
+    assert!(ctx.vault.lifeboat_state().derisked);
+}
+
+#[test]
+fn test_non_keeper_cannot_derisk() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    // keeper never set — require_keeper's NotKeeper, mirrors compound/rebalance
+    assert_eq!(
+        ctx.vault.try_emergency_derisk(&1u32),
+        Err(Ok(VaultError::NotKeeper))
+    );
+}
+
+#[test]
+fn test_resume_clears_flag_and_is_noop_when_not_derisked() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    arm_lifeboat(&env, &ctx);
+    ctx.vault.emergency_derisk(&3u32);
+    ctx.vault.resume();
+    // `events().all()` reflects only the LAST contract invocation — capture immediately.
+    let events = env.events().all();
+    assert_eq!(events.events().len(), 1);
+    let event = events.events().last().unwrap();
+    let expected_event = LifeboatResumed { idle: 0 }.to_xdr(&env, &ctx.vault.address);
+    assert_eq!(event, &expected_event);
+
+    assert!(!ctx.vault.lifeboat_state().derisked);
+    ctx.vault.resume(); // not derisked — no-op success
+    // No-op resume must NOT re-fire LifeboatResumed.
+    let retry_events = env.events().all();
+    assert!(retry_events.events().is_empty());
+}
+
+#[test]
+fn test_expired_mandate_blocks_resume_funds_stay_safe() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let authority = Address::generate(&env);
+    ctx.vault.set_mandate_authority(&authority);
+    let keeper = Address::generate(&env);
+    ctx.vault.set_keeper(&keeper);
+    let now = env.ledger().timestamp();
+    ctx.vault.set_mandate(&(now + 100));
+    ctx.vault.emergency_derisk(&2u32);
+    env.ledger().with_mut(|l| l.timestamp = now + 101); // mandate expires while ENGAGED
+    assert_eq!(ctx.vault.try_resume(), Err(Ok(VaultError::MandateExpired)));
+    assert!(ctx.vault.lifeboat_state().derisked); // expiry can never force funds back in
+}
+
+#[test]
+fn test_derisk_survives_bricked_strategy() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    arm_lifeboat(&env, &ctx);
+    let good = deploy_mock_strategy(&env, &ctx);
+    let bad = deploy_mock_strategy(&env, &ctx);
+    ctx.vault.add_strategy(&good);
+    ctx.vault.add_strategy(&bad);
+    fund_strategy(&env, &ctx, &good, 100 * U7);
+    fund_strategy(&env, &ctx, &bad, 50 * U7);
+    MockStrategyClient::new(&env, &bad).set_bricked(&true); // withdraw now traps
+
+    let drained = ctx.vault.emergency_derisk(&2u32);
+    assert_eq!(drained, 100 * U7); // best-effort: good drained, bad no-oped
+    assert!(ctx.vault.lifeboat_state().derisked); // rescue engages even with a stuck strategy
 }

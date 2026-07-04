@@ -26,7 +26,9 @@
     "shareSymbol": "vfVLT",
     "name": "Vibing Farmer Autofarm",
     "strategies": ["CCH424TVLTP2P3URNRGGF26X24XRPBVBXCRZ6QBCWLSX6KH4QZSLNBC2"],
-    "keeper": "GBVJ34MT4GDKZJGILI6DRYGD75ZNUBJGGZIDUV7IPFNVVDWGE5GBLV3X",
+    "keeper": "GA2CMBS3LRY5MH64KKMHOYVA6WTLPMKRMIWEJDOIGHYPB7WMC3QHRCBU",
+    "keeperNote": "Dedicated keeper identity (review fix: split from the relayer). set_keeper tx 5690e99bfe84740106c7ae015e82f2fb4b54fb99a4bb2ab988db4e05f9e73be9. Secret lives ONLY in frontend/.env.local STELLAR_KEEPER_SECRET (local) / wrangler secret (deployed keeper).",
+    "wasmUpgradeNote": "Live vault wasm upgraded (review fixes: compound try_-call fault isolation + compound cooldown 600s + zero-move rebalance guard), wasm hash 1b54f98906fc8dcb3f44d240ebccd4d5ba3f5f15ef0c47a14a3711e6b04ce186, upgrade tx ae31d87aa35c3c2d2232aea096dad9bd29089372cb9e1917e97782bd55018e48. Storage verified intact post-upgrade (keeper/pps/strategies reads).",
     "note": "Task 11 (sub-project vf-autofarm) deploy. Single-strategy: Task 1 spike found OWN_POOL_VIABLE=false (a self-deployed second Blend pool can't reach Active status without seeding real backstop capital), so this vault runs strategy1 only and relies on the de-risk-to-idle rebalance fallback (rebalance(to=vault)) instead of a second strategy/pool. Deploy tx 492d55911c49eecffe3aba01f5d49f70de56e66ce3f960fab85d950c208e2055; round-trip (1 USDC deposit+redeem) verified live via deployer key, tx f788a432c823d0b6e7ab4d8923bb1dedd44fb7e38c37378aed79143eba3f5334 + 4a650b9ceb3268bfcfbb7cbc3090107998c60df9c2a695b72f8e595e1476dd70."
   },
   "strategy1": {
@@ -39,7 +41,7 @@
     "reserveTokenId": 7,
     "deployTx": "a347c9b1c3f0bf3ca40007741cf0f851347f81d1aa77e6a9433d8ad0bfc7110a"
   },
-  "keeper": "GBVJ34MT4GDKZJGILI6DRYGD75ZNUBJGGZIDUV7IPFNVVDWGE5GBLV3X",
+  "keeper": "GA2CMBS3LRY5MH64KKMHOYVA6WTLPMKRMIWEJDOIGHYPB7WMC3QHRCBU",
   "smartAccount": {
     "accountWasmHash": "a12e8fa9621efd20315753bd4007d974390e31fbcb4a7ddc4dd0a0dec728bf2e",
     "webauthnVerifierAddress": "CBSHV66WG7UV6FQVUTB67P3DZUEJ2KJ5X6JKQH5MFRAAFNFJUAJVXJYV",

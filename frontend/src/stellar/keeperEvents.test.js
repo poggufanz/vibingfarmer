@@ -67,6 +67,55 @@ describe('decodeKeeperEvent', () => {
   })
 })
 
+describe('decodeKeeperEvent — lifeboat topics', () => {
+  it('decodes vault_derisk', () => {
+    const rec = fakeRecord({
+      type: 'vault_derisk',
+      fields: { reason_code: 2, drained_total: 800_0000000n },
+      ledger: 102,
+      pagingToken: '0005',
+    })
+    expect(decodeKeeperEvent(rec)).toEqual({
+      type: 'derisk',
+      ledger: rec.ledger,
+      txHash: rec.txHash,
+      reasonCode: 2,
+      drainedTotal: 800_0000000n,
+    })
+  })
+
+  it('decodes vault_resume', () => {
+    const rec = fakeRecord({
+      type: 'vault_resume',
+      fields: { idle: 800_0000000n },
+      ledger: 103,
+      pagingToken: '0006',
+    })
+    expect(decodeKeeperEvent(rec)).toEqual({
+      type: 'resume',
+      ledger: rec.ledger,
+      txHash: rec.txHash,
+      idle: 800_0000000n,
+    })
+  })
+
+  it('decodes vault_mandate', () => {
+    const rec = fakeRecord({
+      type: 'vault_mandate',
+      fields: { authority: 'GAUTH', expiry: 1_999_999n },
+      ledger: 104,
+      pagingToken: '0007',
+    })
+    expect(decodeKeeperEvent(rec)).toEqual({
+      type: 'mandate',
+      ledger: rec.ledger,
+      txHash: rec.txHash,
+      authority: 'GAUTH',
+      expiry: 1_999_999n,
+    })
+  })
+})
+
 describe('fetchKeeperEvents', () => {
   it('parses a batch of getEvents records into typed keeper events', async () => {
     const recCompound = fakeRecord({

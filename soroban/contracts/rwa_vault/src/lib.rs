@@ -110,11 +110,38 @@ impl RwaVault {
     pub fn set_limits(e: &Env, cooldown_s: u64, max_move_bps: u32) {
         vault::set_limits(e, cooldown_s, max_move_bps)
     }
+    /// Admin-only. Sets the min seconds between `compound` calls (Task R1). Kept separate
+    /// from `set_limits` (rebalance-only) — see `vault::set_compound_cooldown`.
+    pub fn set_compound_cooldown(e: &Env, cooldown_s: u64) {
+        vault::set_compound_cooldown(e, cooldown_s)
+    }
+    /// Admin-only. Sets the address allowed to grant/renew the lifeboat mandate.
+    pub fn set_mandate_authority(e: &Env, authority: Address) {
+        vault::set_mandate_authority(e, authority)
+    }
+    /// Authority-signed. Grants/renews the time-boxed lifeboat mandate.
+    pub fn set_mandate(e: &Env, expiry: u64) -> Result<(), types::VaultError> {
+        vault::set_mandate(e, expiry)
+    }
+    /// Current lifeboat state: derisked flag, mandate expiry, and authority address.
+    pub fn lifeboat_state(e: &Env) -> types::LifeboatState {
+        vault::lifeboat_state(e)
+    }
+    /// Keeper-only, mandate-gated. Drains every strategy best-effort and engages the
+    /// Derisked flag, blocking compound/rebalance until `resume`. Idempotent.
+    pub fn emergency_derisk(e: &Env, reason_code: u32) -> Result<i128, types::VaultError> {
+        vault::emergency_derisk(e, reason_code)
+    }
+    /// Keeper-only, mandate-gated. Clears the Derisked flag once the rescue is over.
+    pub fn resume(e: &Env) -> Result<(), types::VaultError> {
+        vault::resume(e)
+    }
 
     // ----- keeper ops (Task 8) -----
-    /// Keeper-only. Harvests every registered strategy's realized gain into idle, then
-    /// sweeps all idle back into strategies pro-rata. `min_outs` is indexed by
-    /// `strategies()` order; its length must match. Returns the total gain realized.
+    /// Keeper-only, cooldown-gated (Task R1) and per-strategy fault-isolated. Harvests every
+    /// registered strategy's realized gain into idle, then sweeps all idle back into
+    /// strategies pro-rata. `min_outs` is indexed by `strategies()` order; its length must
+    /// match. Returns the total gain realized.
     pub fn compound(e: &Env, min_outs: Vec<i128>) -> Result<i128, types::VaultError> {
         vault::compound(e, min_outs)
     }

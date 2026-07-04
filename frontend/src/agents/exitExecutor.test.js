@@ -327,3 +327,88 @@ describe('runAutonomousExit', () => {
     expect(prepareSpy).toHaveBeenCalledTimes(2)
   })
 })
+
+// ── cross-tab lock: localStorage layered on top of the in-memory Set ──────────
+function stubLocalStorage() {
+  const store = {}
+  vi.stubGlobal('localStorage', {
+    getItem: (k) => (k in store ? store[k] : null),
+    setItem: (k, v) => {
+      store[k] = String(v)
+    },
+    removeItem: (k) => {
+      delete store[k]
+    },
+  })
+  return store
+}
+
+const LOCK_KEY = `vf_exit_inflight_${AGENT}`
+
+describe('runAutonomousExit — cross-tab lock (localStorage)', () => {
+  beforeEach(() => {
+    stubLocalStorage()
+  })
+
+  test('rejects a call while another tab holds a fresh (non-expired) lock', async () => {
+    // Arrange: simulate another tab's lock — this tab's in-memory Set is empty
+    localStorage.setItem(LOCK_KEY, String(Date.now()))
+    readVaultSharesMock.mockResolvedValue(10n)
+    // Act + Assert
+    await expect(
+      runAutonomousExit({ agentAddress: AGENT, ownerAddress: OWNER, server: fakeServer })
+    ).rejects.toThrow('already in flight')
+    expect(submitViaRelayMock).not.toHaveBeenCalled()
+  })
+
+  test('an expired lock is treated as free and replaced, letting the exit proceed', async () => {
+    // Arrange: a lock older than the TTL — e.g. left by a crashed tab
+    localStorage.setItem(LOCK_KEY, String(Date.now() - 130_000))
+    readVaultSharesMock.mockResolvedValue(0n)
+    readTokenBalanceMock.mockResolvedValue(0n)
+    // Act + Assert: reaches the normal no-op error, not the lock rejection
+    await expect(
+      runAutonomousExit({ agentAddress: AGENT, ownerAddress: OWNER, server: fakeServer })
+    ).rejects.toThrow('No vault shares to exit')
+  })
+
+  test('clears the lock after a successful exit', async () => {
+    readVaultSharesMock.mockResolvedValue(10n)
+    readTokenBalanceMock.mockResolvedValue(5n)
+    await runAutonomousExit({ agentAddress: AGENT, ownerAddress: OWNER, server: fakeServer })
+    expect(localStorage.getItem(LOCK_KEY)).toBeNull()
+  })
+
+  test('clears the lock after a failed exit', async () => {
+    loadExitKeyMock.mockReturnValue(null)
+    await expect(
+      runAutonomousExit({ agentAddress: AGENT, ownerAddress: OWNER, server: fakeServer })
+    ).rejects.toThrow('No exit key authorized')
+    expect(localStorage.getItem(LOCK_KEY)).toBeNull()
+  })
+
+  test('degrades to the in-memory guard alone when localStorage throws (non-browser env)', async () => {
+    // Arrange: no Storage in this environment — every access throws
+    vi.stubGlobal('localStorage', undefined)
+    readVaultSharesMock.mockResolvedValue(10n)
+    readTokenBalanceMock.mockResolvedValue(5n)
+    let releaseSubmit
+    submitViaRelayMock.mockImplementationOnce(
+      () => new Promise((res) => (releaseSubmit = () => res({ hash: 'H', status: 'SUCCESS' })))
+    )
+    // Act: first run parks mid-flight; concurrent second run still rejects via the Set alone
+    const first = runAutonomousExit({
+      agentAddress: AGENT,
+      ownerAddress: OWNER,
+      server: fakeServer,
+    })
+    await vi.waitFor(() => expect(submitViaRelayMock).toHaveBeenCalled())
+    await expect(
+      runAutonomousExit({ agentAddress: AGENT, ownerAddress: OWNER, server: fakeServer })
+    ).rejects.toThrow('already in flight')
+    // Assert: releasing lets the first run finish cleanly despite the missing localStorage
+    releaseSubmit()
+    const out = await first
+    expect(out.status).toBe('SUCCESS')
+  })
+})

@@ -12,6 +12,9 @@ export const ADMIN_WEIGHT = 0.3
 export const ADMIN_LEVELS = { timelock_multisig: 1.0, multisig: 0.7, timelock: 0.5, eoa: 0.0 }
 export const MAX_FACT_AGE_MS = 30 * 86_400_000
 export const MAX_TOKEN_AGE_MS = 15 * 60_000
+export const MIN_COLLATERAL_LIQUIDITY_USD = 250_000
+export const MAX_SUPPLIER_CONCENTRATION_PCT = 40
+export const ORACLE_TYPES_OK = ['circuit_breaker']
 export const REQUIRED_FACTS = [
   'annualizedDistributed',
   'protocolRevenue',
@@ -19,6 +22,12 @@ export const REQUIRED_FACTS = [
   'ageDays',
   'tvl',
   'adminKey',
+  // Lifeboat F8 extension — maps the YieldBlox post-mortem (oracle misconfiguration on a
+  // community pool) onto pre-entry screening. Fail-closed like everything else here.
+  'oracleType',
+  'collateralLiquidityDepthUsd',
+  'poolClass',
+  'supplierConcentrationPct',
 ]
 
 /** A fact field is present iff it has a non-null value and is not stale. */
@@ -82,13 +91,35 @@ export function evaluate(input, nowMs = Date.now()) {
   if (sec.auditGate === 'fail') reasons.push('unaudited (audit gate)')
   if (sec.score < SECURITY_MIN)
     reasons.push(`security ${sec.score}/100 (our weighting) below ${SECURITY_MIN}`)
+  // Lifeboat F8 screening — the passive half of the lifeboat: the exploit class that actually
+  // hit Blend (YieldBlox, 2026-02-22) is preventable here, not by any reaction radar.
+  if (facts?.poolClass?.value != null && facts.poolClass.value !== 'curated')
+    reasons.push('community-managed pool')
+  if (facts?.oracleType?.value != null && !ORACLE_TYPES_OK.includes(facts.oracleType.value))
+    reasons.push('oracle without circuit breaker')
+  if (
+    facts?.collateralLiquidityDepthUsd?.value != null &&
+    facts.collateralLiquidityDepthUsd.value < MIN_COLLATERAL_LIQUIDITY_USD
+  )
+    reasons.push('thin collateral liquidity')
+  if (
+    facts?.supplierConcentrationPct?.value != null &&
+    facts.supplierConcentrationPct.value > MAX_SUPPLIER_CONCENTRATION_PCT
+  )
+    reasons.push('supplier concentration too high')
   // Fail-closed: an adminKey value outside ADMIN_LEVELS is unverifiable governance — reject it
   // rather than silently scoring it 0 (which would conflate "unknown" with the known-worst "eoa").
   const adminKnown = ADMIN_LEVELS[facts?.adminKey?.value] != null
   if (present && !adminKnown) reasons.push('unrecognized governance key (unverifiable)')
+  const lifeboatScreenOk =
+    facts?.poolClass?.value === 'curated' &&
+    ORACLE_TYPES_OK.includes(facts?.oracleType?.value) &&
+    (facts?.collateralLiquidityDepthUsd?.value ?? 0) >= MIN_COLLATERAL_LIQUIDITY_USD &&
+    (facts?.supplierConcentrationPct?.value ?? 101) <= MAX_SUPPLIER_CONCENTRATION_PCT
   const eligible =
     present &&
     adminKnown &&
+    lifeboatScreenOk &&
     yr.verdict === 'real' &&
     sec.auditGate === 'pass' &&
     sec.score >= SECURITY_MIN

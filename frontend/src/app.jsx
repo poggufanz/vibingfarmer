@@ -55,8 +55,15 @@ import {
   SOROBAN_KEEPER_ADDRESS,
 } from './stellar/config.js'
 import { fetchKeeperEvents } from './stellar/keeperEvents.js'
-import { readPricePerShare, readStrategies, readSupplyAprBps } from './stellar/vaultReads.js'
+import {
+  readPricePerShare,
+  readStrategies,
+  readSupplyAprBps,
+  readLifeboatState,
+} from './stellar/vaultReads.js'
+import { grantMandate } from './stellar/lifeboat.js'
 import KeeperPanel from './components/KeeperPanel.jsx'
+import LifeboatPanel from './components/LifeboatPanel.jsx'
 import { evaluateExit } from './strategy/autoExit/engine.js'
 import { runAutonomousExit } from './agents/exitExecutor.js'
 import {
@@ -496,6 +503,13 @@ const App = () => {
   // vf-autofarm KeeperPanel state — populated by the SAME 15s poll that already fetches
   // keeper events below (keeperLedgerRef), never a second interval.
   const [keeperActivity, setKeeperActivity] = useS([]) // newest-first, capped — feeds KeeperPanel
+  // vf-lifeboat Task 8 — separate from keeperActivity: KeeperPanel's LastAction assumes every
+  // item is a compound/rebalance alert shape (it treats anything without kind==='compound_executed'
+  // as a rebalance row), so mixing derisk/resume/mandate items into that array would render a
+  // broken "Rebalanced" row whenever a lifeboat event became the newest entry.
+  const [lifeboatState, setLifeboatState] = useS(null) // {derisked, mandateExpiry, authority} | null
+  const [lifeboatActivity, setLifeboatActivity] = useS([]) // newest-first, capped — feeds LifeboatPanel
+  const [lifeboatBusy, setLifeboatBusy] = useS(false)
   const [autofarmReads, setAutofarmReads] = useS({ pricePerShare: null, strategies: [] })
   const [rebalancePulse, setRebalancePulse] = useS(null) // { key, ts } — force-graph edge pulse
 
@@ -642,6 +656,7 @@ const App = () => {
         // (handleAgentEvent keeps only the LATEST of each kind for notifications; the panel
         // wants its own short history of real keeper actions).
         const newActivity = []
+        const newLifeboatActivity = []
         for (const ev of events) {
           keeperLedgerRef.current = Math.max(keeperLedgerRef.current || 0, ev.ledger + 1)
           if (ev.type === 'compound') {
@@ -674,13 +689,22 @@ const App = () => {
             // Pulse the force-graph edge between the two strategies/vault this rebalance moved
             // funds between (rebalancePulseKey is direction-independent — see agents.jsx).
             setRebalancePulse({ key: rebalancePulseKey(ev.from, ev.to), ts: Date.now() })
+          } else if (ev.type === 'derisk' || ev.type === 'resume' || ev.type === 'mandate') {
+            // Lifeboat activity feed (vf-lifeboat) — kept in decodeKeeperEvent's own shape
+            // (type/reasonCode/drainedTotal/txHash) rather than remapped into keeperActivity's
+            // kind-based alert objects; see lifeboatActivity state comment above for why.
+            newLifeboatActivity.push({ ...ev, timestamp: Date.now() })
           }
         }
         if (newActivity.length) {
           setKeeperActivity((prev) => [...newActivity.reverse(), ...prev].slice(0, 20))
         }
-      } catch {
+        if (newLifeboatActivity.length) {
+          setLifeboatActivity((prev) => [...newLifeboatActivity.reverse(), ...prev].slice(0, 20))
+        }
+      } catch (e) {
         // transient RPC failure — the next 15s tick retries
+        console.warn('[app] keeper event read failed:', e)
       }
       // Live autofarm vault reads for the KeeperPanel: price-per-share + registered strategies,
       // each paired with a best-effort Blend supply-APR estimate. Best-effort end to end — a
@@ -710,8 +734,17 @@ const App = () => {
             strategies,
           })
         }
-      } catch {
+      } catch (e) {
         // transient RPC failure — the next 15s tick retries; panel keeps its last-known reads
+        console.warn('[app] keeper vault read failed:', e)
+      }
+      // Lifeboat state (vf-lifeboat) — same 15s poll tick. readLifeboatState() never throws (it
+      // already returns null on RPC failure internally); this catch is defensive only.
+      try {
+        const s = await readLifeboatState(SOROBAN_AUTOFARM_VAULT_ADDRESS)
+        if (alive) setLifeboatState(s)
+      } catch {
+        if (alive) setLifeboatState(null)
       }
     }
     sync() // once on connect
@@ -1218,6 +1251,23 @@ const App = () => {
     })
     return off
   }, [realAddress])
+
+  // Lifeboat mandate grant (vf-lifeboat) — user-signed, time-boxed 24h authority. Re-reads
+  // lifeboat_state() right after the tx lands so the panel's countdown updates immediately
+  // instead of waiting for the next 15s poll tick.
+  const onGrantMandate = async () => {
+    if (!realAddress) return
+    setLifeboatBusy(true)
+    try {
+      await grantMandate({ owner: realAddress })
+      const s = await readLifeboatState()
+      setLifeboatState(s)
+    } catch (e) {
+      console.error('mandate grant failed', e)
+    } finally {
+      setLifeboatBusy(false)
+    }
+  }
 
   // After a withdraw: reduce/remove the position, sync the worker, stop the agent if empty
   const handleWithdrawSuccess = (vaultAddress, withdrawnUnits) => {
@@ -2408,6 +2458,15 @@ const App = () => {
                             pricePerShare={autofarmReads.pricePerShare}
                             strategies={autofarmReads.strategies}
                           />
+                          <div style={{ marginTop: 14 }}>
+                            <LifeboatPanel
+                              state={lifeboatState}
+                              events={lifeboatActivity}
+                              owner={realAddress}
+                              onGrant={onGrantMandate}
+                              busy={lifeboatBusy}
+                            />
+                          </div>
                           <div style={{ marginTop: 14 }}>
                             <AgentGraph
                               graphData={autofarmGraphData}

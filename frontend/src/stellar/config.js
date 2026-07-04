@@ -52,8 +52,10 @@ export const SOROBAN_STRATEGY_1_ADDRESS = 'CCH424TVLTP2P3URNRGGF26X24XRPBVBXCRZ6
 // The relay's server-side allowlist (SOROBAN_VAULT_ADDRESS env in .dev.vars / Pages env) must be
 // set to this same address or every deposit is refused. Old 1:1 vault above kept for rollback.
 export const SOROBAN_ACTIVE_VAULT_ADDRESS = SOROBAN_AUTOFARM_VAULT_ADDRESS
-// Keeper (compound/rebalance caller) — same relayer G-address as the gasless-relay signer.
-export const SOROBAN_KEEPER_ADDRESS = 'GBVJ34MT4GDKZJGILI6DRYGD75ZNUBJGGZIDUV7IPFNVVDWGE5GBLV3X'
+// Keeper (compound/rebalance caller) — DEDICATED identity, deliberately NOT the relayer
+// G-address: a leaked relay secret must not grant keeper powers (and vice versa).
+// Re-pointed on-chain via set_keeper tx 5690e99bfe84740106c7ae015e82f2fb4b54fb99a4bb2ab988db4e05f9e73be9.
+export const SOROBAN_KEEPER_ADDRESS = 'GA2CMBS3LRY5MH64KKMHOYVA6WTLPMKRMIWEJDOIGHYPB7WMC3QHRCBU'
 
 // New gasless relay endpoint. Distinct from the EVM /api/relay (decommissioned in step 6).
 // Browser uses the same-origin relative path. Headless smokes (vite-node/node) have no fetch
