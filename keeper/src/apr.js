@@ -50,3 +50,21 @@ export function estimateSupplyAprBps(reserve, backstopTakeRateFraction) {
   const supplyRate = (adjustedBorrowRate * util * (SCALAR_7 - backstopTakeRateFraction)) / (SCALAR_7 * SCALAR_7);
   return Number((supplyRate * BPS_DENOMINATOR) / SCALAR_7);
 }
+
+/**
+ * Pool utilization in bps from a Blend `get_reserve(asset)` return: borrowed/supplied where
+ * supplied = b_supply*b_rate/1e12 and borrowed = d_supply*d_rate/1e12 (same scales
+ * `estimateSupplyAprBps` uses above). null when nothing is supplied — a 0-supply pool has no
+ * meaningful utilization and the caller (lifeboat radar) must treat that as signal-unavailable,
+ * never as 0% (fail-safe).
+ * @param {{data: object}} reserve Blend pool `get_reserve(asset)` return
+ * @returns {number|null}
+ */
+export function utilizationBps(reserve) {
+  const d = reserve?.data;
+  if (!d) return null;
+  const supplied = (BigInt(d.b_supply) * BigInt(d.b_rate)) / SCALAR_12;
+  if (supplied <= 0n) return null;
+  const borrowed = (BigInt(d.d_supply) * BigInt(d.d_rate)) / SCALAR_12;
+  return Number((borrowed * BPS_DENOMINATOR) / supplied);
+}

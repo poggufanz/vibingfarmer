@@ -21,7 +21,7 @@ import {
   scValToNative,
   xdr,
 } from '@stellar/stellar-sdk';
-import { estimateSupplyAprBps } from './apr.js';
+import { estimateSupplyAprBps, utilizationBps } from './apr.js';
 
 const TX_TIMEOUT_S = 30;
 
@@ -304,6 +304,69 @@ export async function readState(env) {
   return { strategies, idle, lastRebalanceTs, nowTs, blndQuote };
 }
 
+/**
+ * Lifeboat radar read (one per ledger). Signal fields degrade to null on their own failure —
+ * decideLifeboat treats null as "signal unavailable" and never engages on it. Only the vault
+ * `lifeboat_state()` read is fatal (throws): if we cannot even see the vault, the radar tick
+ * logs and skips rather than acting on a guess.
+ * @param {object} env same env object `readState` takes (+ optional POOL_ORACLE)
+ * @returns {Promise<{utilizationBps: number|null, availableLiquidity: bigint|null,
+ *   poolPrice: number|null, derisked: boolean, mandateExpiry: number, nowTs: number}>}
+ */
+export async function readLifeboatChainState(env) {
+  const server = rpcServer(env);
+  const simSource = keeperKeypair(env).publicKey();
+
+  const utilization = await bestEffort(
+    'lifeboat:utilization',
+    async () => {
+      const reserve = await simCall(server, env, simSource, env.POOL_1, 'get_reserve', [addrScVal(env.USDC)]);
+      return utilizationBps(reserve);
+    },
+    null,
+  );
+
+  const availableLiquidity = await bestEffort(
+    'lifeboat:availableLiquidity',
+    async () => {
+      const val = await simCall(server, env, simSource, env.USDC, 'balance', [addrScVal(env.POOL_1)]);
+      return BigInt(val ?? 0);
+    },
+    null,
+  );
+
+  let poolPrice = null;
+  if (env.POOL_ORACLE) {
+    poolPrice = await bestEffort(
+      'lifeboat:poolPrice',
+      async () => {
+        // Blend oracle (SEP-40 style): lastprice(Asset::Stellar(usdc)) -> Option<PriceData>,
+        // price scaled by oracle.decimals().
+        const asset = xdr.ScVal.scvVec([xdr.ScVal.scvSymbol('Stellar'), addrScVal(env.USDC)]);
+        const priceData = await simCall(server, env, simSource, env.POOL_ORACLE, 'lastprice', [asset]);
+        if (priceData == null) return null; // Option::None — no price feed for this asset
+        const decimals = await simCall(server, env, simSource, env.POOL_ORACLE, 'decimals', []);
+        return Number(priceData.price) / 10 ** Number(decimals);
+      },
+      null,
+    );
+  }
+
+  // Fatal on failure by design — no bestEffort wrapper here.
+  const ls = await simCall(server, env, simSource, env.VAULT_ADDRESS, 'lifeboat_state', []);
+
+  const nowTs = await bestEffort('lifeboat:nowTs', () => readLedgerNowTs(server), Math.floor(Date.now() / 1000));
+
+  return {
+    utilizationBps: utilization,
+    availableLiquidity,
+    poolPrice,
+    derisked: Boolean(ls.derisked),
+    mandateExpiry: Number(ls.mandate_expiry),
+    nowTs,
+  };
+}
+
 function buildActionOperation(env, action) {
   if (action.type === 'compound') {
     return new Contract(env.VAULT_ADDRESS).call('compound', i128VecScVal(action.minOuts));
@@ -316,6 +379,12 @@ function buildActionOperation(env, action) {
       i128ScVal(action.amount),
     );
   }
+  if (action.type === 'derisk') {
+    return new Contract(env.VAULT_ADDRESS).call('emergency_derisk', u32ScVal(action.reason));
+  }
+  if (action.type === 'resume') {
+    return new Contract(env.VAULT_ADDRESS).call('resume');
+  }
   throw new Error(`submit: unknown action type "${action.type}"`);
 }
 
@@ -326,7 +395,8 @@ function buildActionOperation(env, action) {
  * non-SUCCESS confirmation) — index.js's per-action try/catch treats that as a graceful skip,
  * no retry (the next 15-min cron tick tries again with fresh state).
  * @param {object} env wrangler env
- * @param {{ type: 'compound', minOuts: bigint[] } | { type: 'rebalance', from: string, to: string, amount: bigint }} action
+ * @param {{ type: 'compound', minOuts: bigint[] } | { type: 'rebalance', from: string, to: string, amount: bigint }
+ *   | { type: 'derisk', reason: number } | { type: 'resume' }} action
  * @returns {Promise<string>} confirmed tx hash
  */
 export async function submit(env, action) {

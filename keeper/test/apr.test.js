@@ -3,7 +3,7 @@
 // shared implementation) so the expected bps values are traceable back to an already-verified
 // result, not numbers invented for this file.
 import { describe, it, expect } from 'vitest';
-import { estimateSupplyAprBps } from '../src/apr.js';
+import { estimateSupplyAprBps, utilizationBps } from '../src/apr.js';
 
 describe('estimateSupplyAprBps', () => {
   const baseConfig = {
@@ -55,5 +55,32 @@ describe('estimateSupplyAprBps', () => {
       },
     };
     expect(estimateSupplyAprBps(reserve, 0n)).toBe(0);
+  });
+});
+
+describe('utilizationBps', () => {
+  // supplied = b_supply*b_rate/1e12, borrowed = d_supply*d_rate/1e12, util = borrowed/supplied
+  it('computes borrowed/supplied in bps from reserve data', () => {
+    const reserve = {
+      data: {
+        b_supply: 1_000_0000000n,
+        b_rate: 1_000_000_000_000n,
+        d_supply: 950_0000000n,
+        d_rate: 1_000_000_000_000n,
+      },
+    };
+    expect(utilizationBps(reserve)).toBe(9500);
+  });
+  it('returns null when nothing is supplied (no meaningful utilization)', () => {
+    const reserve = {
+      data: { b_supply: 0n, b_rate: 1_000_000_000_000n, d_supply: 0n, d_rate: 1_000_000_000_000n },
+    };
+    expect(utilizationBps(reserve)).toBe(null);
+  });
+  it('tolerates string/number field encodings like scValToNative sometimes yields', () => {
+    const reserve = {
+      data: { b_supply: '1000000000', b_rate: '1000000000000', d_supply: '500000000', d_rate: '1000000000000' },
+    };
+    expect(utilizationBps(reserve)).toBe(5000);
   });
 });
