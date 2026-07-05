@@ -34,6 +34,7 @@ const setPoolHash = await wallet.writeContract({
   abi,
   functionName: 'setPool',
   args: [getAddress(initialPool), true],
+  gas: 100_000n, // explicit — the public RPC's estimateGas can hit a node lagging on the just-deployed code and under-estimate (see scripts/set-pool.mjs)
 });
 console.log('setPool tx:', setPoolHash);
 const setPoolRcpt = await pub.waitForTransactionReceipt({ hash: setPoolHash });

@@ -1,0 +1,11 @@
+{
+  "yieldRouter": {
+    "address": "0xF80aa8F571E6d24Ea72F051Fc6F9A9C516727B6d",
+    "deployTx": "0x9252cf9d4b3b131801fcf78e54cd70ab08152cfea39361a6878271791c5cef9c",
+    "initialOwner": "0x9f07F7f9F2C6e7103f3C6eE3955f19c3751a559a",
+    "allowedPools": [
+      "0x389250872044368759D3db5C09b2706A6628d4e0"
+    ],
+    "deployedAt": "2026-07-05T16:03:04.376Z"
+  }
+}
