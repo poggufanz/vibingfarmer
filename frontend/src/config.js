@@ -71,3 +71,51 @@ export const VAULT_CATALOG = [
       'Unified lending + DEX architecture. Highest capital efficiency, highest architectural risk.',
   },
 ]
+
+// Base pool catalog (Approach C, SP3) — the whitelisted ERC-4626 pools the AI strategist can
+// allocate into. Addresses are SP1 deliverables (base-contracts/), synced here as VITE_ env
+// overrides — same fail-loud discipline as VAULT_CATALOG's SOROBAN_ACTIVE_VAULT_ADDRESS.
+// Assumed venue set per the design spec (§9): Aave v3 + Morpho Blue + Moonwell on Base.
+const BASE_POOL_ADDR_RE = /^0x[a-fA-F0-9]{40}$/
+function requireBasePoolAddress(name, value) {
+  if (!value || !BASE_POOL_ADDR_RE.test(value)) {
+    throw new Error(`${name} missing or not a 0x address — set VITE_${name} (see docs/deploy-checklist.md)`)
+  }
+  return value
+}
+
+export const BASE_POOL_CATALOG = [
+  {
+    name: 'Aave v3 USDC (Base)',
+    protocol: 'aave-v3',
+    address: requireBasePoolAddress('BASE_POOL_1_ADDRESS', import.meta.env?.VITE_BASE_POOL_1_ADDRESS),
+    apy: 5.1,
+    risk: 'low',
+    yield_source: 'lending',
+    drawdown: '-1.0',
+    min_capital: 50,
+    description: 'Overcollateralized pooled lending on Base. Deepest liquidity of the Base pool set.',
+  },
+  {
+    name: 'Morpho Blue USDC (Base)',
+    protocol: 'morpho-blue',
+    address: requireBasePoolAddress('BASE_POOL_2_ADDRESS', import.meta.env?.VITE_BASE_POOL_2_ADDRESS),
+    apy: 6.8,
+    risk: 'medium',
+    yield_source: 'curated',
+    drawdown: '-2.5',
+    min_capital: 50,
+    description: 'Curator-managed isolated lending markets on Base. Better yield, curator-dependent risk.',
+  },
+  {
+    name: 'Moonwell USDC (Base)',
+    protocol: 'moonwell',
+    address: requireBasePoolAddress('BASE_POOL_3_ADDRESS', import.meta.env?.VITE_BASE_POOL_3_ADDRESS),
+    apy: 7.4,
+    risk: 'medium',
+    yield_source: 'lending',
+    drawdown: '-3.0',
+    min_capital: 50,
+    description: 'Base-native money market. Deep Base-ecosystem integration, newer than Aave/Compound.',
+  },
+]

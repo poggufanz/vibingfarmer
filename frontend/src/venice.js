@@ -6,6 +6,7 @@ import {
   DEEPSEEK_MODEL,
   AI_PROXY_URL,
   VAULT_CATALOG,
+  BASE_POOL_CATALOG,
 } from './config.js'
 import { loadVaultSkill } from './skillLoader.js'
 import { toBaseUnits } from './stellar/format.js'
@@ -676,6 +677,107 @@ export async function askVeniceJson({ system, user, devApiKey = null, signal }) 
       sig
     )
     return JSON.parse(content)
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
+}
+
+const BASE_MANDATE_TTL_SECONDS = 3600
+// USDC-denominated ERC-4626 pools priced ~1:1 at deposit time; this is a STRATEGY-TIME estimate
+// only. The authoritative minShares used in the real deposit call is recomputed live from the
+// pool's convertToShares() right before dispatch (see base/quotes.js, Task 3.4) — pool share
+// price can drift between allocation and execution, and this fallback does not track that.
+const STRATEGY_TIME_SLIPPAGE_BPS = 50 // 0.5%
+
+function estimateMinSharesAtStrategyTime(amount) {
+  const units = BigInt(Math.round(amount * 1_000_000)) // 6dp, Base-side
+  return (units * BigInt(10_000 - STRATEGY_TIME_SLIPPAGE_BPS)) / 10_000n
+}
+
+function buildBasePoolSkill(pool, amount) {
+  const units = BigInt(Math.round(amount * 1_000_000))
+  return {
+    vaultAddress: pool,
+    maxAmount: units.toString(),
+    expiresAt: Math.floor(Date.now() / 1000) + BASE_MANDATE_TTL_SECONDS,
+  }
+}
+
+/**
+ * AI strategist allocation across the whitelisted Base pools (Approach C, SP3). Mirrors
+ * generateStrategy's provider-resolution + fallback discipline, scoped to a much narrower job:
+ * decide WHICH Base pools and HOW MUCH — not the full MDP/DAG/council machinery generateStrategy
+ * runs for the Stellar advisor (that would be over-engineering for a 3-pool whitelist YAGNI
+ * doesn't ask for here).
+ * @param {{ amount: number, riskLevel: 'low'|'medium'|'high', nPools: number, veniceAuth?: string|null, devApiKey?: string|null, signal?: AbortSignal }} params
+ * @returns {Promise<Array<{ pool: string, protocol: string, amount: number, minShares: bigint, expectedApy: number, riskTier: string, skill: object }>>}
+ */
+export async function allocateBasePools({ amount, riskLevel, nPools, veniceAuth, devApiKey, signal }) {
+  const safeNPools = Math.min(nPools, BASE_POOL_CATALOG.length)
+  const provider = resolveProviderFromSettings({ veniceAuth, devApiKey })
+
+  const buildFallback = () => {
+    const pools = BASE_POOL_CATALOG.slice(0, safeNPools)
+    const perPool = amount / pools.length
+    return pools.map((p) => ({
+      pool: p.address,
+      protocol: p.protocol,
+      amount: perPool,
+      minShares: estimateMinSharesAtStrategyTime(perPool),
+      expectedApy: p.apy,
+      riskTier: p.risk,
+      skill: buildBasePoolSkill(p.address, perPool),
+    }))
+  }
+
+  if (!provider) return buildFallback()
+
+  const controller = signal ? null : new AbortController()
+  const timeout = controller ? setTimeout(() => controller.abort(), VENICE_TIMEOUT_MS) : null
+  const sig = signal || controller.signal
+
+  try {
+    const systemPrompt = `You allocate USDC across a whitelisted set of Base-chain yield pools. Respond ONLY with JSON: {"allocations":[{"address":"0x...","allocation":0.0-1.0,"reasoning":"..."}]}. Only use addresses from the catalog provided.`
+    const userPrompt = `Catalog:\n${JSON.stringify(BASE_POOL_CATALOG, null, 2)}\n\nAllocate ${amount} USDC across up to ${safeNPools} pool(s) for a "${riskLevel}" risk investor. Allocations must sum to 1.0 across the pools you select.`
+    const content = await callChatCompletions(
+      provider.url,
+      provider.model,
+      provider.headers,
+      [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      provider.isVenice,
+      sig
+    )
+    const parsed = JSON.parse(content)
+    const allowedAddresses = new Set(BASE_POOL_CATALOG.map((p) => p.address.toLowerCase()))
+    if (!Array.isArray(parsed.allocations) || parsed.allocations.length === 0) {
+      throw new Error('empty allocations')
+    }
+    const filtered = parsed.allocations.filter((a) => allowedAddresses.has(String(a.address).toLowerCase()))
+    if (filtered.length === 0) throw new Error('no valid (whitelisted) allocations returned')
+    const total = filtered.reduce((s, a) => s + a.allocation, 0)
+    if (total <= 0) throw new Error('allocation sum is not positive')
+
+    return filtered.map((a) => {
+      const catalogEntry = BASE_POOL_CATALOG.find(
+        (p) => p.address.toLowerCase() === String(a.address).toLowerCase()
+      )
+      const poolAmount = amount * (a.allocation / total) // renormalize to 1.0, mirrors enforceActionSpace's spirit
+      return {
+        pool: catalogEntry.address,
+        protocol: catalogEntry.protocol,
+        amount: poolAmount,
+        minShares: estimateMinSharesAtStrategyTime(poolAmount),
+        expectedApy: catalogEntry.apy,
+        riskTier: catalogEntry.risk,
+        skill: buildBasePoolSkill(catalogEntry.address, poolAmount),
+      }
+    })
+  } catch (err) {
+    console.warn('[ai] Base pool allocation failed, using fallback:', err.message)
+    return buildFallback()
   } finally {
     if (timeout) clearTimeout(timeout)
   }
