@@ -7,6 +7,7 @@ import { reconstructSessionClient } from '../src/base/session.mjs';
 import { createUnwindFlow } from '../src/flows/unwind.mjs';
 import { contractStrkeyToBytes32 } from '../src/cctp/reverse.mjs';
 import { MIN_FINALITY_STANDARD, MAX_FEE_STANDARD } from '../src/cctp/constants.mjs';
+import deployments from '../../deployments/base-sepolia.json' with { type: 'json' };
 
 const E = process.env;
 const need = (k) => { if (!E[k] || /FILL_ME/.test(E[k])) throw new Error(`env ${k} missing/unfilled`); return E[k]; };
@@ -27,10 +28,14 @@ async function main() {
     forwarder32: contractStrkeyToBytes32(config.stellar.forwarderAddress),
   });
 
-  console.log('[1-3/3] withdraw + burn-with-hook + relay reverse mint...');
+  const pool = deployments.yieldRouter.allowedPools[0];
+  // Assumes smoke-farm ran first: it deposited 1.0 USDC (1_000_000 at 6dp) into `pool`, which mints
+  // ~1_000_000 shares on a fresh ~1:1 MockERC4626. Redeem them and bridge the ~1.0 USDC back.
+  // Tune shares/burnAmount6dp to the smart account's actual pool balance if the vault rate differs.
+  console.log('[1-3/3] withdraw + burn-with-hook + relay reverse mint...  pool:', pool);
   const result = await unwind({
     approval, signerPrivateKey,
-    redemptions: [{ pool: config.base.yieldRouterAddress, shares: 1n, minAssets: 1n }],
+    redemptions: [{ pool, shares: 1_000_000n, minAssets: 1n }],
     burnAmount6dp: 1_000_000n, stellarRecipient,
     execId: `smoke-unwind-${Date.now()}`,
     chainConfig: { chain: config.base.chain, rpcUrl: config.base.rpcUrl, bundlerRpcUrl: config.base.bundlerRpcUrl },
