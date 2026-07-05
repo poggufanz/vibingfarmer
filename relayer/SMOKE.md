@@ -1,0 +1,9 @@
+## Farm smoke — 2026-07-05T17:36:17.437Z
+- Stellar burn: fd2c29c37c7019cfac7a0bd44f826482d8eadbdfd4e27d07c846254bf55605f8
+- Base mint: 0xcf45174d26777f5a5fed1e3ad1917ff996ab68fa933be4df16cb407e25784506 (minted)
+- Deposits: [{"pool":"0x389250872044368759D3db5C09b2706A6628d4e0","status":"fulfilled","value":{"pool":"0x389250872044368759D3db5C09b2706A6628d4e0","userOpHash":"0x4193fd36a1421b0f62fd186d3f68a4bc0065aa9264ec17b7f0246043051fb554","txHash":"0xc56687053f3764c8160ed8c9d685fe6e1219abfb3be2f42afb7ef0f8106538a5"}}]
+## Unwind smoke — 2026-07-05T17:57:59.796Z
+- Withdraws: [{"status":"fulfilled","value":{"pool":"0x389250872044368759D3db5C09b2706A6628d4e0","userOpHash":"0x1efe87546e9107a9686a3d2d1f69e7c335bf79533fceecbd4a30e10c9368eed6","txHash":"0x59b20fd8a083693181682c7a9ff92567d8d315ba10af156e21437bfdd1eb9393"}}]
+- Base burn: 0x29ab855dbc821c13ebb87cbe14cd3aae677cf67c350b394f94461e334bfe9a66
+- Stellar mint_and_forward: 0dd1cadfe7cc85fa8826c0915054c03c2324bf4e799715ead3d5530508793a5f (minted)
+- Final recipient: GBDQP5E2KCLOBRSI7DHXG7SMD5IQ52DNXYMMQ42DERB3PGQVN6GOJVNZ

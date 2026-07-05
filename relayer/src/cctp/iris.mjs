@@ -2,7 +2,9 @@
 // Ported from spikes/cctp-corridor/roundtrip.mjs `pollIris` (also used for the reverse leg —
 // Iris V2's endpoint shape is identical for both source domains, only sourceDomain changes).
 
-const DEFAULT_MAX_ATTEMPTS = 50;
+// Standard finality (minFinalityThreshold >= 2000) attestation on testnet can take ~13-19 min,
+// so the default poll window must cover it: 300 x 5s = 25 min. Callers can override for Fast finality.
+const DEFAULT_MAX_ATTEMPTS = 300;
 const DEFAULT_INTERVAL_MS = 5000;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
