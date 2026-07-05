@@ -21,7 +21,9 @@ describe('dispatchDeposits', () => {
     const reconstructSessionClientFn = vi.fn().mockResolvedValue(kernelClient);
     const orchestrator = createOrchestrator({
       chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org', bundlerRpcUrl: 'https://rpc.zerodev.app/x',
-      yieldRouterAddress: '0xRouter', sessionPrivateKey: '0xsession', reconstructSessionClientFn,
+      yieldRouterAddress: '0x00000000000000000000000000000000000000f1',
+      usdcAddress: '0x00000000000000000000000000000000000000dd',
+      sessionPrivateKey: '0xsession', reconstructSessionClientFn,
     });
 
     const allocations = [
@@ -46,7 +48,9 @@ describe('dispatchDeposits', () => {
     const reconstructSessionClientFn = vi.fn().mockResolvedValue(kernelClient);
     const orchestrator = createOrchestrator({
       chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org', bundlerRpcUrl: 'https://rpc.zerodev.app/x',
-      yieldRouterAddress: '0xRouter', sessionPrivateKey: '0xsession', reconstructSessionClientFn,
+      yieldRouterAddress: '0x00000000000000000000000000000000000000f1',
+      usdcAddress: '0x00000000000000000000000000000000000000dd',
+      sessionPrivateKey: '0xsession', reconstructSessionClientFn,
     });
 
     const allocations = [

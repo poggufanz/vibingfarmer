@@ -13,6 +13,13 @@ const YIELD_ROUTER_ABI = [{
   ], outputs: [{ name: 'shares', type: 'uint256' }],
 }];
 
+// YieldRouter.deposit pulls USDC via safeTransferFrom(msg.sender, ...), so the smart account must
+// approve the router for `amount` first. Each allocation is one batched userOp: [approve, deposit].
+const APPROVE_ABI = [{
+  type: 'function', name: 'approve', stateMutability: 'nonpayable',
+  inputs: [{ name: 'spender', type: 'address' }, { name: 'amount', type: 'uint256' }], outputs: [{ type: 'bool' }],
+}];
+
 const USEROP_TIMEOUT_MS = 120_000;
 
 /**
@@ -26,7 +33,7 @@ const USEROP_TIMEOUT_MS = 120_000;
  */
 export function createOrchestrator(config) {
   const {
-    chain, rpcUrl, bundlerRpcUrl, yieldRouterAddress, sessionPrivateKey,
+    chain, rpcUrl, bundlerRpcUrl, yieldRouterAddress, usdcAddress, sessionPrivateKey,
     reconstructSessionClientFn = reconstructSessionClient,
   } = config;
 
@@ -43,12 +50,16 @@ export function createOrchestrator(config) {
     });
 
     const settled = await Promise.allSettled(allocations.map(async (allocation) => {
-      const data = encodeFunctionData({
+      const approveData = encodeFunctionData({
+        abi: APPROVE_ABI, functionName: 'approve', args: [yieldRouterAddress, allocation.amount],
+      });
+      const depositData = encodeFunctionData({
         abi: YIELD_ROUTER_ABI, functionName: 'deposit',
         args: [allocation.pool, allocation.amount, allocation.minShares],
       });
       const callData = await kernelClient.account.encodeCalls([
-        { to: yieldRouterAddress, value: 0n, data },
+        { to: usdcAddress, value: 0n, data: approveData },
+        { to: yieldRouterAddress, value: 0n, data: depositData },
       ]);
       const userOpHash = await kernelClient.sendUserOperation({ callData });
       const receipt = await kernelClient.waitForUserOperationReceipt({ hash: userOpHash, timeout: USEROP_TIMEOUT_MS });

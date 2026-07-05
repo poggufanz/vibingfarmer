@@ -20,7 +20,7 @@ describe('unwind', () => {
 
     const { unwind } = createUnwindFlow({
       reconstructSessionClientFn, watcher, domains: { stellar: 27, base: 6 },
-      yieldRouterAddress: '0xRouter',
+      yieldRouterAddress: '0x00000000000000000000000000000000000000f1',
       usdcAddress: '0x00000000000000000000000000000000000000dd',
       tokenMessengerV2Address: '0x00000000000000000000000000000000000000ee',
       forwarder32: `0x${'22'.repeat(32)}`,
@@ -49,7 +49,7 @@ describe('unwind', () => {
 
     const { unwind } = createUnwindFlow({
       reconstructSessionClientFn, watcher, domains: { stellar: 27, base: 6 },
-      yieldRouterAddress: '0xRouter',
+      yieldRouterAddress: '0x00000000000000000000000000000000000000f1',
       usdcAddress: '0x00000000000000000000000000000000000000dd',
       tokenMessengerV2Address: '0x00000000000000000000000000000000000000ee',
       forwarder32: `0x${'22'.repeat(32)}`,
@@ -76,7 +76,7 @@ describe('unwind', () => {
 
     const { unwind } = createUnwindFlow({
       reconstructSessionClientFn, watcher, domains: { stellar: 27, base: 6 },
-      yieldRouterAddress: '0xRouter',
+      yieldRouterAddress: '0x00000000000000000000000000000000000000f1',
       usdcAddress: '0x00000000000000000000000000000000000000dd',
       tokenMessengerV2Address: '0x00000000000000000000000000000000000000ee',
       forwarder32: `0x${'22'.repeat(32)}`,

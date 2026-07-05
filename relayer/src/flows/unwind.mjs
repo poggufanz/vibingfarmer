@@ -55,11 +55,20 @@ export function createUnwindFlow({
     const kernelClient = await reconstructSessionClientFn({ ...chainConfig, approval, sessionPrivateKey: signerPrivateKey });
 
     const withdrawResults = await Promise.allSettled(redemptions.map(async (redemption) => {
-      const data = encodeFunctionData({
+      // YieldRouter.withdraw redeems shares via IERC4626(pool).redeem(shares, router, msg.sender),
+      // which pulls the caller's shares — so the smart account must approve the router for `shares`
+      // on the pool (an ERC-4626 share is an ERC-20) first. One batched userOp: [approve, withdraw].
+      const approveData = encodeFunctionData({
+        abi: APPROVE_ABI, functionName: 'approve', args: [yieldRouterAddress, redemption.shares],
+      });
+      const withdrawData = encodeFunctionData({
         abi: YIELD_ROUTER_WITHDRAW_ABI, functionName: 'withdraw',
         args: [redemption.pool, redemption.shares, redemption.minAssets],
       });
-      const callData = await kernelClient.account.encodeCalls([{ to: yieldRouterAddress, value: 0n, data }]);
+      const callData = await kernelClient.account.encodeCalls([
+        { to: redemption.pool, value: 0n, data: approveData },
+        { to: yieldRouterAddress, value: 0n, data: withdrawData },
+      ]);
       const userOpHash = await kernelClient.sendUserOperation({ callData });
       const receipt = await kernelClient.waitForUserOperationReceipt({ hash: userOpHash });
       return { pool: redemption.pool, userOpHash, txHash: receipt?.receipt?.transactionHash };
