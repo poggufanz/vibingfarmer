@@ -91,5 +91,18 @@ export default defineConfig(({ mode }) => {
     optimizeDeps: {
       include: ['react-force-graph-2d'],
     },
+    // Vitest-only env. base/config.js and src/config.js's BASE_POOL_CATALOG fail loudly at module
+    // load on a missing 0x address (deliberate — see their docstrings). Tests import those modules
+    // statically without real deployments, so provide throwaway placeholder addresses here; a
+    // per-test vi.stubEnv still overrides these (config.test.js relies on that). Never used by
+    // `vite dev`/`vite build` — this key is read only under vitest.
+    test: {
+      env: {
+        VITE_YIELD_ROUTER_ADDRESS: '0x1111111111111111111111111111111111111111',
+        VITE_BASE_POOL_1_ADDRESS: '0x1111111111111111111111111111111111111112',
+        VITE_BASE_POOL_2_ADDRESS: '0x1111111111111111111111111111111111111113',
+        VITE_BASE_POOL_3_ADDRESS: '0x1111111111111111111111111111111111111114',
+      },
+    },
   }
 })
