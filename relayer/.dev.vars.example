@@ -16,9 +16,12 @@ IRIS_URL=https://iris-api-sandbox.circle.com
 # Idempotency store (dev = JSON file; prod swaps to D1, see Task 2.2)
 RELAYER_STORE_PATH=./.relayer-store.dev.json
 
-# Smoke-only (Task 2.4): throwaway dev keypair SIMULATING the user's passkey signature until
-# SP3 ships the real wallet. Never read by relayMint/dispatchDeposits in the production path.
+# Smoke-only: throwaway dev keypair SIMULATING the user's passkey signature until SP3 ships the
+# real wallet. Never read by relayMint/dispatchDeposits in the production path.
 SMOKE_STELLAR_SECRET=SFILL_ME
 SMOKE_STELLAR_PUBLIC=GFILL_ME
 SMOKE_SESSION_PRIVKEY=0xFILL_ME_EPHEMERAL_SESSION_KEY
-SMOKE_SESSION_APPROVAL=FILL_ME_SERIALIZED_APPROVAL_FROM_AN_SP3_MANDATE_CEREMONY
+# Optional: owner (sudo) key for the mandate. Defaults to RELAYER_BASE_PRIVKEY if unset.
+# SMOKE_OWNER_PRIVKEY=0x...
+# Generate by running: node --env-file=.dev.vars smoke/mint-mandate.mjs  (paste its output line here)
+SMOKE_SESSION_APPROVAL=FILL_ME_RUN_smoke/mint-mandate.mjs_TO_GENERATE
