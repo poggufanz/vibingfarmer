@@ -11,6 +11,7 @@ export const ROUTES = {
   SETTINGS: '/settings',
   VAULT:    '/vault/:protocol',
   TX:       '/tx/:txHash',
+  FARM:     '/farm',
 }
 
 /**
