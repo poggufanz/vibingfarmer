@@ -1,0 +1,9 @@
+{
+  "name": "base-contracts-deploy",
+  "private": true,
+  "type": "module",
+  "description": "viem deploy scripts for YieldRouter (Base Sepolia). Run `npm install` here before deploying.",
+  "dependencies": {
+    "viem": "^2.54.3"
+  }
+}
