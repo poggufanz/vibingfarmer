@@ -5,3 +5,8 @@ test = "test"
 script = "script"
 libs = ["lib"]
 solc = "0.8.23"
+
+[invariant]
+runs = 256
+depth = 100
+fail_on_revert = false

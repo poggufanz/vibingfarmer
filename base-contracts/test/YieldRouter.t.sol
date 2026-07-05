@@ -6,6 +6,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {YieldRouter} from "../src/YieldRouter.sol";
 import {MockUSDC} from "./mocks/MockUSDC.sol";
 import {MockERC4626} from "./mocks/MockERC4626.sol";
+import {MockAdversarialERC4626} from "./mocks/MockAdversarialERC4626.sol";
 
 contract YieldRouterTest is Test {
     YieldRouter router;
@@ -83,5 +84,31 @@ contract YieldRouterTest is Test {
         vm.expectRevert(bytes("YieldRouter: pool not allowed"));
         router.deposit(address(unlistedVault), amount, 1);
         vm.stopPrank();
+    }
+
+    function test_deposit_revertsBelowMinShares() public {
+        MockAdversarialERC4626 badVault = new MockAdversarialERC4626(usdc);
+        uint256 amount = 1_000_000; // 1 USDC at 6dp
+
+        vm.prank(owner);
+        router.setPool(address(badVault), true);
+
+        vm.startPrank(user);
+        usdc.approve(address(router), amount);
+        vm.expectRevert(bytes("YieldRouter: slippage, shares < minShares"));
+        router.deposit(address(badVault), amount, 2); // badVault always mints 1 wei — below the floor of 2
+        vm.stopPrank();
+    }
+
+    function test_noArbitraryCall_unknownSelectorReverts() public {
+        (bool ok, ) = address(router).call(abi.encodeWithSignature("sweep(address)", user));
+        assertFalse(ok, "router must not expose a sweep/arbitrary-call surface");
+    }
+
+    function test_noArbitraryCall_rejectsPlainEther() public {
+        vm.deal(user, 1 ether);
+        vm.prank(user);
+        (bool ok, ) = address(router).call{value: 1 ether}("");
+        assertFalse(ok, "router must not accept plain ETH (no receive/fallback)");
     }
 }
