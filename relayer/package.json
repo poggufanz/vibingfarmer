@@ -8,9 +8,10 @@
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^16.0.1",
-    "viem": "^2.54.3",
+    "@zerodev/permissions": "^5.6.3",
     "@zerodev/sdk": "^5.5.10",
-    "@zerodev/permissions": "^5.6.3"
+    "tslib": "^2.8.1",
+    "viem": "^2.54.3"
   },
   "devDependencies": {
     "vitest": "^3.0.0"
