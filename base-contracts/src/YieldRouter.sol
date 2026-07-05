@@ -6,14 +6,15 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {IERC4626} from "./interfaces/IERC4626.sol";
 
 /// @title YieldRouter
-/// @notice Deposits USDC into whitelisted ERC-4626 pools, minting shares
-/// straight to the caller. Holds no funds beyond a single transaction.
+/// @notice Deposits USDC into whitelisted ERC-4626 pools and unwinds back to
+/// the caller. Holds no funds beyond a single transaction.
 contract YieldRouter {
     using SafeERC20 for IERC20;
 
     mapping(address => bool) public allowedPool;
 
     event Deposited(address indexed caller, address indexed pool, uint256 assets, uint256 shares);
+    event Withdrawn(address indexed caller, address indexed pool, uint256 shares, uint256 assets);
 
     // NOTE: unrestricted for now — Task 1.4 adds Ownable + onlyOwner here.
     function setPool(address pool, bool allowed) external {
@@ -34,5 +35,20 @@ contract YieldRouter {
         require(shares >= minShares, "YieldRouter: slippage, shares < minShares");
 
         emit Deposited(msg.sender, pool, amount, shares);
+    }
+
+    /// @notice Redeem `shares` of `pool` on behalf of `msg.sender`, sending
+    /// the underlying asset straight to `msg.sender`. Requires `msg.sender`
+    /// to have approved this router for `shares` on `pool` beforehand
+    /// (standard ERC-4626/ERC-20 allowance — the vault's own `redeem`
+    /// enforces this, the router pulls nothing itself). `pool` must be
+    /// whitelisted; `minAssets` is the slippage floor.
+    function withdraw(address pool, uint256 shares, uint256 minAssets) external returns (uint256 assets) {
+        require(allowedPool[pool], "YieldRouter: pool not allowed");
+
+        assets = IERC4626(pool).redeem(shares, msg.sender, msg.sender);
+        require(assets >= minAssets, "YieldRouter: slippage, assets < minAssets");
+
+        emit Withdrawn(msg.sender, pool, shares, assets);
     }
 }

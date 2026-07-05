@@ -37,4 +37,22 @@ contract YieldRouterTest is Test {
         assertEq(usdc.balanceOf(address(router)), 0, "router holds no USDC (zero-custody)");
         assertEq(usdc.balanceOf(user), 1_000_000_000 - amount, "USDC left the caller");
     }
+
+    function test_withdraw_redeemsSharesToUSDC() public {
+        uint256 amount = 1_000_000; // 1 USDC at 6dp
+
+        vm.startPrank(user);
+        usdc.approve(address(router), amount);
+        uint256 shares = router.deposit(address(vault), amount, 1);
+
+        vault.approve(address(router), shares);
+        uint256 assets = router.withdraw(address(vault), shares, 1);
+        vm.stopPrank();
+
+        assertGt(assets, 0, "assets were redeemed");
+        assertEq(usdc.balanceOf(user), 1_000_000_000, "caller got the USDC back");
+        assertEq(vault.balanceOf(user), 0, "caller's shares were burned");
+        assertEq(vault.balanceOf(address(router)), 0, "router holds no shares (zero-custody)");
+        assertEq(usdc.balanceOf(address(router)), 0, "router holds no USDC (zero-custody)");
+    }
 }
