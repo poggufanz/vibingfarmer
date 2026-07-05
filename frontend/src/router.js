@@ -12,6 +12,7 @@ export const ROUTES = {
   VAULT:    '/vault/:protocol',
   TX:       '/tx/:txHash',
   FARM:     '/farm',
+  WITHDRAW: '/withdraw',
 }
 
 /**
