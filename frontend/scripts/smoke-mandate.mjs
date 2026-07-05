@@ -1,0 +1,90 @@
+// frontend/scripts/smoke-mandate.mjs
+// Live-testnet proof that the PRODUCTION mandate (real passkey owner, real deployed YieldRouter,
+// real whitelisted pools) reproduces every scenario spikes/smart-sessions/session-test.mjs proved
+// PLUS the two SP0 never tested (over-cap, expired) — see Global Constraints. Run:
+//   cd frontend && node scripts/smoke-mandate.mjs
+// Requires: frontend dev server running on the URL below (npm run dev), and the env vars in
+// docs/deploy-checklist.md set in frontend/.env.local.
+//
+// `// VERIFY:` this script uses the raw CDP WebAuthn domain (`WebAuthn.enable` /
+// `WebAuthn.addVirtualAuthenticator`) via Playwright's `page.context().newCDPSession(page)`,
+// which is the lowest-common-denominator approach and should work on any recent Playwright/
+// Chromium pairing. If the installed Playwright version exposes a higher-level virtual-
+// authenticator helper, prefer that instead — check `node_modules/playwright-core`'s API docs
+// for the currently-installed version before assuming this raw-CDP form is still necessary.
+import { chromium } from 'playwright'
+
+const APP_URL = process.env.VF_SMOKE_URL || 'http://localhost:5173'
+const RESULTS = { scenarios: {} }
+
+async function withVirtualAuthenticator(page, fn) {
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send('WebAuthn.enable')
+  const { authenticatorId } = await cdp.send('WebAuthn.addVirtualAuthenticator', {
+    options: {
+      protocol: 'ctap2',
+      transport: 'internal',
+      hasResidentKey: true,
+      hasUserVerification: true,
+      isUserVerified: true,
+    },
+  })
+  try {
+    return await fn(cdp, authenticatorId)
+  } finally {
+    await cdp.send('WebAuthn.removeVirtualAuthenticator', { authenticatorId }).catch(() => {})
+  }
+}
+
+async function main() {
+  const browser = await chromium.launch()
+  const page = await browser.newPage()
+  await page.goto(APP_URL)
+
+  await withVirtualAuthenticator(page, async () => {
+    // 1) Onboard: register the Stellar passkey + the Base owner passkey (both ceremonies now
+    //    complete against the virtual authenticator instead of a human prompt).
+    await page.getByRole('button', { name: /connect|get started/i }).click()
+    await page.getByRole('button', { name: /create.*passkey|register/i }).click()
+    await page.waitForSelector('[data-testid="stellar-wallet-address"]', { timeout: 30_000 })
+    await page.waitForSelector('[data-testid="base-account-address"]', { timeout: 30_000 })
+    RESULTS.onboarded = true
+
+    // 2) Mandate ceremony: ONE passkey approval covering every whitelisted pool.
+    await page.getByRole('button', { name: /set.*mandate|approve.*farming/i }).click()
+    await page.waitForSelector('[data-testid="mandate-serialized-approval"]', { timeout: 60_000 })
+    RESULTS.mandateCreated = true
+
+    // 3) In-policy deposit — expect success (mirrors session-test.mjs Test 1).
+    await page.getByRole('button', { name: /start farming/i }).click()
+    await page.waitForSelector('text=/done/i', { timeout: 120_000 })
+    RESULTS.scenarios.inPolicyDeposit = 'PASS'
+
+    // 4-7) Out-of-policy attempts — drive these through a dev-only exposed test hook rather than
+    // real UI buttons (there is no "sweep" or "wrong pool" button in the product). `// VERIFY:`
+    // wire a small dev-only harness (e.g. `window.__vfDevDispatchRawCall`) that calls
+    // reconstructSessionClient + kernelClient.sendUserOperation directly with a deliberately
+    // out-of-policy call, gated behind `import.meta.env.DEV`, so this smoke can exercise it
+    // without shipping an attacker-usable hook in production.
+    const attempt = async (label, callBuilder) => {
+      const result = await page.evaluate(callBuilder)
+      RESULTS.scenarios[label] = result.executed ? 'FAIL (executed — SECURITY ISSUE)' : 'PASS (blocked)'
+    }
+    await attempt('wrongSelector', () => window.__vfDevDispatchRawCall({ scenario: 'sweep' }))
+    await attempt('wrongTarget', () => window.__vfDevDispatchRawCall({ scenario: 'wrong-target' }))
+    await attempt('overCap', () => window.__vfDevDispatchRawCall({ scenario: 'over-cap' }))
+    await attempt('expired', () => window.__vfDevDispatchRawCall({ scenario: 'expired' }))
+  })
+
+  await browser.close()
+
+  const gate = Object.values(RESULTS.scenarios).every((v) => String(v).startsWith('PASS'))
+  console.log(JSON.stringify(RESULTS, null, 2))
+  console.log(`\nGATE mandate-smoke: ${gate ? 'PASS' : 'FAIL'}`)
+  process.exit(gate ? 0 : 1)
+}
+
+main().catch((err) => {
+  console.error('SMOKE FAILED:', err?.message || err)
+  process.exit(1)
+})
