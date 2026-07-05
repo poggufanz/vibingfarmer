@@ -21,6 +21,9 @@ coverage/
 frontend/dist/
 frontend/extension-dist/
 
+# Relayer idempotency store (dev, file-backed)
+relayer/.relayer-store*.json
+
 # Node (npx serve, tooling)
 node_modules/
 .pnp
@@ -58,6 +61,6 @@ docs/migration_stellar.md
 .kiro/
 
 frontend/getUsdc.mjs
-
+spikes
 
 # Internal docs / AI instructions (local only)

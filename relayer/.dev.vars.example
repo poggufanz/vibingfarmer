@@ -1,0 +1,24 @@
+# Stellar leg — relayer's OWN identity (gas/relay only, never user funds/keys)
+SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
+STELLAR_NETWORK_PASSPHRASE=Test SDF Network ; September 2015
+RELAYER_STELLAR_SECRET=SFILL_ME_RELAYER_OWN_KEYPAIR
+RELAYER_STELLAR_PUBLIC=GFILL_ME_RELAYER_OWN_KEYPAIR
+
+# Base leg — relayer's OWN identity (submits public attested mints, not user funds)
+BASE_SEPOLIA_RPC_URL=https://sepolia.base.org
+RELAYER_BASE_PRIVKEY=0xFILL_ME_RELAYER_OWN_EOA
+ZERODEV_PROJECT_ID=FILL_ME
+YIELD_ROUTER_ADDRESS=0xFILL_ME_FROM_deployments_base-sepolia_json_once_SP1_lands
+
+# CCTP
+IRIS_URL=https://iris-api-sandbox.circle.com
+
+# Idempotency store (dev = JSON file; prod swaps to D1, see Task 2.2)
+RELAYER_STORE_PATH=./.relayer-store.dev.json
+
+# Smoke-only (Task 2.4): throwaway dev keypair SIMULATING the user's passkey signature until
+# SP3 ships the real wallet. Never read by relayMint/dispatchDeposits in the production path.
+SMOKE_STELLAR_SECRET=SFILL_ME
+SMOKE_STELLAR_PUBLIC=GFILL_ME
+SMOKE_SESSION_PRIVKEY=0xFILL_ME_EPHEMERAL_SESSION_KEY
+SMOKE_SESSION_APPROVAL=FILL_ME_SERIALIZED_APPROVAL_FROM_AN_SP3_MANDATE_CEREMONY
