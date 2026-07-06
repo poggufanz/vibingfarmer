@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "postbuild": "node scripts/assert-no-dev-dispatch.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "lint": "eslint .",
