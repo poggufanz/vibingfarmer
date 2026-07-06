@@ -74,6 +74,31 @@ export async function pollFarmStatus({
 }
 
 /**
+ * Register a mandate's session key with the relayer ONCE (controller decision, plan Option 2):
+ * subsequent farm requests reference the mandate by `serializedApproval` alone, so the session
+ * private key crosses the wire exactly one time per mandate, not once per farm dispatch. The
+ * relayer stores it in-memory keyed by `serializedApproval` (see relayer/src/httpRouter.mjs).
+ * Never log `sessionPrivateKey` — this function only ever passes it through to the request body.
+ * @param {{ serializedApproval: string, sessionPrivateKey: string, baseUrl?: string, deps?: { fetchImpl?: Function } }} p
+ * @returns {Promise<{ ok: boolean }>}
+ */
+export async function postMandate({
+  serializedApproval,
+  sessionPrivateKey,
+  baseUrl = DEFAULT_BASE_URL,
+  deps = {},
+}) {
+  const { fetchImpl = fetch } = deps
+  const res = await fetchImpl(`${baseUrl}/mandate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ serializedApproval, sessionPrivateKey }),
+  })
+  if (!res.ok) throw new Error(`mandate registration failed (${res.status})`)
+  return res.json()
+}
+
+/**
  * Hand the (already owner-signed) unwind batch tx hash to the relayer, which watches for the
  * withdraw receipts and relays the reverse CCTP mint back to Stellar.
  * @param {{ unwindTxHash: string, stellarRecipient: string, baseUrl?: string, deps?: { fetchImpl?: Function } }} p

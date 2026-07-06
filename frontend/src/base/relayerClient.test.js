@@ -1,6 +1,6 @@
 // frontend/src/base/relayerClient.test.js
 import { describe, test, expect, vi } from 'vitest'
-import { postFarm, pollFarmStatus, postUnwind } from './relayerClient.js'
+import { postFarm, pollFarmStatus, postUnwind, postMandate } from './relayerClient.js'
 
 describe('postFarm', () => {
   test('POSTs the burn hash + approval + allocations, returns the jobId', async () => {
@@ -67,6 +67,37 @@ describe('pollFarmStatus', () => {
     })
     expect(result.status).toBe('pending')
     expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+})
+
+describe('postMandate', () => {
+  test('POSTs the serializedApproval + sessionPrivateKey once, returns {ok: true}', async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ ok: true }) }))
+    const result = await postMandate({
+      serializedApproval: 'approval-blob',
+      sessionPrivateKey: '0xSECRETKEY',
+      baseUrl: 'https://example.test/api/vf-cross',
+      deps: { fetchImpl: fetchMock },
+    })
+    expect(result).toEqual({ ok: true })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, opts] = fetchMock.mock.calls[0]
+    expect(url).toBe('https://example.test/api/vf-cross/mandate')
+    expect(opts.method).toBe('POST')
+    const body = JSON.parse(opts.body)
+    expect(body).toEqual({ serializedApproval: 'approval-blob', sessionPrivateKey: '0xSECRETKEY' })
+  })
+
+  test('throws a clear error on a non-ok response', async () => {
+    const fetchMock = vi.fn(async () => ({ ok: false, status: 400 }))
+    await expect(
+      postMandate({
+        serializedApproval: 'approval-blob',
+        sessionPrivateKey: '0xSECRETKEY',
+        baseUrl: 'https://example.test/api/vf-cross',
+        deps: { fetchImpl: fetchMock },
+      })
+    ).rejects.toThrow(/mandate registration failed \(400\)/)
   })
 })
 
