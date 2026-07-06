@@ -24,7 +24,11 @@ describe('buildUnwindCalls', () => {
 
   test('rejects an empty withdrawals array', () => {
     expect(() =>
-      buildUnwindCalls({ withdrawals: [], stellarRecipient: STELLAR_RECIPIENT, totalAssetsForBurn: 0n })
+      buildUnwindCalls({
+        withdrawals: [],
+        stellarRecipient: STELLAR_RECIPIENT,
+        totalAssetsForBurn: 0n,
+      })
     ).toThrow(/at least one withdrawal/)
   })
 
@@ -32,7 +36,13 @@ describe('buildUnwindCalls', () => {
     // A recipient too short to be a plausible strkey should be rejected up front, BEFORE any
     // call array is returned — never silently embed a malformed hook.
     expect(() =>
-      buildUnwindCalls({ withdrawals: [{ pool: '0x2222222222222222222222222222222222222222', shares: 1n, minAssets: 1n }], stellarRecipient: 'short', totalAssetsForBurn: 1n })
+      buildUnwindCalls({
+        withdrawals: [
+          { pool: '0x2222222222222222222222222222222222222222', shares: 1n, minAssets: 1n },
+        ],
+        stellarRecipient: 'short',
+        totalAssetsForBurn: 1n,
+      })
     ).toThrow(/strkey/)
   })
 })
@@ -57,7 +67,9 @@ describe('signAndSubmitUnwind', () => {
     const result = await signAndSubmitUnwind({
       ownerKernelAccount: { address: '0xOWNER' },
       publicClient: {},
-      withdrawals: [{ pool: '0x2222222222222222222222222222222222222222', shares: 100n, minAssets: 99n }],
+      withdrawals: [
+        { pool: '0x2222222222222222222222222222222222222222', shares: 100n, minAssets: 99n },
+      ],
       stellarRecipient: STELLAR_RECIPIENT,
       totalAssetsForBurn: 99n,
       deps,
@@ -72,14 +84,19 @@ describe('signAndSubmitUnwind', () => {
       makeGaslessClient: vi.fn(() => ({
         account: { encodeCalls: vi.fn(async (calls) => ({ encoded: calls })) },
         sendUserOperation: vi.fn(async () => 'userop-hash-2'),
-        waitForUserOperationReceipt: vi.fn(async () => ({ success: false, receipt: { transactionHash: '0xFAILED' } })),
+        waitForUserOperationReceipt: vi.fn(async () => ({
+          success: false,
+          receipt: { transactionHash: '0xFAILED' },
+        })),
       })),
     }
     await expect(
       signAndSubmitUnwind({
         ownerKernelAccount: { address: '0xOWNER' },
         publicClient: {},
-        withdrawals: [{ pool: '0x2222222222222222222222222222222222222222', shares: 1n, minAssets: 1n }],
+        withdrawals: [
+          { pool: '0x2222222222222222222222222222222222222222', shares: 1n, minAssets: 1n },
+        ],
         stellarRecipient: STELLAR_RECIPIENT,
         totalAssetsForBurn: 1n,
         deps,

@@ -12,8 +12,16 @@ import { BASE_CHAIN, zerodevRpcUrl, ZERODEV_PROJECT_ID } from './config.js'
  * @param {{ account: object, publicClient: object, projectId?: string, deps?: { makePaymasterClient?: Function, makeAccountClient?: Function } }} p
  * @returns {object} a kernelClient with gas sponsored in USDC via the ZeroDev paymaster
  */
-export function createGaslessKernelClient({ account, publicClient, projectId = ZERODEV_PROJECT_ID, deps = {} }) {
-  const { makePaymasterClient = createZeroDevPaymasterClient, makeAccountClient = createKernelAccountClient } = deps
+export function createGaslessKernelClient({
+  account,
+  publicClient,
+  projectId = ZERODEV_PROJECT_ID,
+  deps = {},
+}) {
+  const {
+    makePaymasterClient = createZeroDevPaymasterClient,
+    makeAccountClient = createKernelAccountClient,
+  } = deps
   const rpc = zerodevRpcUrl(BASE_CHAIN.id, projectId) // throws if projectId is empty
   const paymasterClient = makePaymasterClient({ chain: BASE_CHAIN, transport: http(rpc) })
 

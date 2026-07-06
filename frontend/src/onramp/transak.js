@@ -64,7 +64,11 @@ export function launchWidget(widgetUrl, sdk) {
       // VERIFY: exact TRANSAK_ORDER_SUCCESSFUL payload shape against a live sandbox run before
       // go-live — the SDK docs show the callback signature but not the full orderData schema.
       // https://registry.npmjs.org/@transak/ui-js-sdk
-      resolve({ completed: true, orderId: orderData?.id ?? orderData?.status?.id, network: 'stellar' })
+      resolve({
+        completed: true,
+        orderId: orderData?.id ?? orderData?.status?.id,
+        network: 'stellar',
+      })
     })
     Transak.on(Transak.EVENTS.TRANSAK_WIDGET_CLOSE, () => {
       transak.cleanup()

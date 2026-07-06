@@ -78,10 +78,16 @@ export function evaluateCall({
     const cond = match.args[i]
     if (cond == null) continue // unconstrained argument
     const actual = args[i]
-    if (cond.condition === ParamCondition.EQUAL && String(actual).toLowerCase() !== String(cond.value).toLowerCase()) {
+    if (
+      cond.condition === ParamCondition.EQUAL &&
+      String(actual).toLowerCase() !== String(cond.value).toLowerCase()
+    ) {
       return { allowed: false, reason: `arg ${i} not EQUAL to policy value` }
     }
-    if (cond.condition === ParamCondition.LESS_THAN_OR_EQUAL && !(BigInt(actual) <= BigInt(cond.value))) {
+    if (
+      cond.condition === ParamCondition.LESS_THAN_OR_EQUAL &&
+      !(BigInt(actual) <= BigInt(cond.value))
+    ) {
       return { allowed: false, reason: `arg ${i} exceeds policy cap` }
     }
   }

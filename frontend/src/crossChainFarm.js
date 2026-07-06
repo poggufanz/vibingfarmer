@@ -75,7 +75,11 @@ export async function runFarmFlow({
   onEvent('farm-relay-dispatched', { jobId: dispatch.jobId, sessionKeyAddress })
 
   const finalStatus = await pollFn({ jobId: dispatch.jobId })
-  onEvent('farm-completed', { jobId: dispatch.jobId, status: finalStatus.status, steps: finalStatus.steps })
+  onEvent('farm-completed', {
+    jobId: dispatch.jobId,
+    status: finalStatus.status,
+    steps: finalStatus.steps,
+  })
 
   return { burnHash: burnResult.burnHash, jobId: dispatch.jobId, finalStatus: finalStatus.status }
 }

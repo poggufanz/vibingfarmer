@@ -30,17 +30,23 @@ export function buildForwarderHookData(strkey) {
 export function assertHookData(hookData) {
   const bytes = hookData instanceof Uint8Array ? hookData : new Uint8Array(hookData)
   if (bytes.length < HEADER_LEN) {
-    throw new Error(`hookData too short: expected at least ${HEADER_LEN} bytes, got ${bytes.length}`)
+    throw new Error(
+      `hookData too short: expected at least ${HEADER_LEN} bytes, got ${bytes.length}`
+    )
   }
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
   const version = view.getUint32(24, false)
   if (version !== 0) {
-    throw new Error(`hookData version must be 0, got ${version} — this reverts Error(Contract,#7313) InvalidHookVersion and STRANDS the burned USDC`)
+    throw new Error(
+      `hookData version must be 0, got ${version} — this reverts Error(Contract,#7313) InvalidHookVersion and STRANDS the burned USDC`
+    )
   }
   const declaredLen = view.getUint32(28, false)
   const actualLen = bytes.length - HEADER_LEN
   if (declaredLen !== actualLen) {
-    throw new Error(`hookData declared strkey length ${declaredLen} does not match actual ${actualLen} remaining bytes`)
+    throw new Error(
+      `hookData declared strkey length ${declaredLen} does not match actual ${actualLen} remaining bytes`
+    )
   }
   const strkey = new TextDecoder().decode(bytes.slice(32))
   if (!/^[A-Z2-7]{2,}$/.test(strkey) || strkey.length < 56) {

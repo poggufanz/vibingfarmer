@@ -192,7 +192,15 @@ describe('allocateBasePools', () => {
   // provider decision and, with no configured AI, its deterministic fallback.
   const memStore = () => {
     const m = {}
-    return { getItem: (k) => m[k] ?? null, setItem: (k, v) => { m[k] = v }, removeItem: (k) => { delete m[k] } }
+    return {
+      getItem: (k) => m[k] ?? null,
+      setItem: (k, v) => {
+        m[k] = v
+      },
+      removeItem: (k) => {
+        delete m[k]
+      },
+    }
   }
   beforeEach(() => {
     vi.stubGlobal('localStorage', memStore())

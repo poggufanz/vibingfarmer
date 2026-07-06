@@ -5,7 +5,11 @@
 // adds the two things SP3's mandate/CCTP flows need: a stable `signBurn` ceremony wrapper and a
 // fund-status read, both built on already-proven primitives (kit.signAuthEntry is the same
 // ceremony wallet/submit.js's submitDeposit/submitApprove already use in production).
-import { createPasskeyWallet, makeKit as defaultMakeKit, readBalance as defaultReadBalance } from './account.js'
+import {
+  createPasskeyWallet,
+  makeKit as defaultMakeKit,
+  readBalance as defaultReadBalance,
+} from './account.js'
 import { toDisplay } from '../stellar/format.js'
 
 const APP_NAME = 'Vibing Farmer'
@@ -19,7 +23,11 @@ const APP_NAME = 'Vibing Farmer'
 export async function createStellarPasskeyWallet({ email, deps = {} }) {
   const { makeKit = defaultMakeKit } = deps
   const kit = await makeKit()
-  const { contractId, credentialId } = await createPasskeyWallet({ appName: APP_NAME, userName: email, kit })
+  const { contractId, credentialId } = await createPasskeyWallet({
+    appName: APP_NAME,
+    userName: email,
+    kit,
+  })
 
   return {
     address: contractId,

@@ -38,7 +38,9 @@ describe('createGaslessKernelClient', () => {
     }
     createGaslessKernelClient({ account: {}, publicClient: {}, projectId: 'test-project', deps })
     const result = await capturedPaymaster.getPaymasterData({ sender: '0xACCT' })
-    expect(fakePaymasterClient.sponsorUserOperation).toHaveBeenCalledWith({ userOperation: { sender: '0xACCT' } })
+    expect(fakePaymasterClient.sponsorUserOperation).toHaveBeenCalledWith({
+      userOperation: { sender: '0xACCT' },
+    })
     // getPaymasterData wraps the userOperation and returns sponsorUserOperation's result verbatim.
     expect(result.got).toEqual({ userOperation: { sender: '0xACCT' } })
   })

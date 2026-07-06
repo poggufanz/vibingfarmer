@@ -712,7 +712,14 @@ function buildBasePoolSkill(pool, amount) {
  * @param {{ amount: number, riskLevel: 'low'|'medium'|'high', nPools: number, veniceAuth?: string|null, devApiKey?: string|null, signal?: AbortSignal }} params
  * @returns {Promise<Array<{ pool: string, protocol: string, amount: number, minShares: bigint, expectedApy: number, riskTier: string, skill: object }>>}
  */
-export async function allocateBasePools({ amount, riskLevel, nPools, veniceAuth, devApiKey, signal }) {
+export async function allocateBasePools({
+  amount,
+  riskLevel,
+  nPools,
+  veniceAuth,
+  devApiKey,
+  signal,
+}) {
   const safeNPools = Math.min(nPools, BASE_POOL_CATALOG.length)
   const provider = resolveProviderFromSettings({ veniceAuth, devApiKey })
 
@@ -755,7 +762,9 @@ export async function allocateBasePools({ amount, riskLevel, nPools, veniceAuth,
     if (!Array.isArray(parsed.allocations) || parsed.allocations.length === 0) {
       throw new Error('empty allocations')
     }
-    const filtered = parsed.allocations.filter((a) => allowedAddresses.has(String(a.address).toLowerCase()))
+    const filtered = parsed.allocations.filter((a) =>
+      allowedAddresses.has(String(a.address).toLowerCase())
+    )
     if (filtered.length === 0) throw new Error('no valid (whitelisted) allocations returned')
     const total = filtered.reduce((s, a) => s + a.allocation, 0)
     if (total <= 0) throw new Error('allocation sum is not positive')

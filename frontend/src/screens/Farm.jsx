@@ -57,9 +57,18 @@ export default function Farm({
     } catch {
       setStatus('error')
     }
-  }, [stellarWallet, baseRecipientAddress, sessionKeyAddress, serializedApproval, allocations, amount, onEvent])
+  }, [
+    stellarWallet,
+    baseRecipientAddress,
+    sessionKeyAddress,
+    serializedApproval,
+    allocations,
+    amount,
+    onEvent,
+  ])
 
-  if (!allocations) return <div className="farm-screen farm-screen--loading">Building your allocation…</div>
+  if (!allocations)
+    return <div className="farm-screen farm-screen--loading">Building your allocation…</div>
 
   return (
     <section className="farm-screen">
@@ -78,8 +87,14 @@ export default function Farm({
         Start Farming
       </button>
 
-      {errorMessage && <p className="farm-error" role="alert">{errorMessage}</p>}
-      {status !== 'idle' && status !== 'running' && !errorMessage && <p className="farm-status">{status}</p>}
+      {errorMessage && (
+        <p className="farm-error" role="alert">
+          {errorMessage}
+        </p>
+      )}
+      {status !== 'idle' && status !== 'running' && !errorMessage && (
+        <p className="farm-status">{status}</p>
+      )}
 
       <ol className="farm-event-log">
         {events.map((e) => (

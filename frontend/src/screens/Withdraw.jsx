@@ -6,7 +6,13 @@ import { useState, useCallback } from 'react'
 import { signAndSubmitUnwind } from '../base/withdrawBatch.js'
 import { postUnwind, pollFarmStatus } from '../base/relayerClient.js'
 
-export default function Withdraw({ ownerKernelAccount, publicClient, withdrawals, stellarRecipient, totalAssetsForBurn }) {
+export default function Withdraw({
+  ownerKernelAccount,
+  publicClient,
+  withdrawals,
+  stellarRecipient,
+  totalAssetsForBurn,
+}) {
   const [status, setStatus] = useState('idle') // idle | signing | relaying | polling | done | error
   const [errorMessage, setErrorMessage] = useState(null)
 
@@ -38,10 +44,18 @@ export default function Withdraw({ ownerKernelAccount, publicClient, withdrawals
       <p>
         Unwinds every pool and bridges back to <code>{stellarRecipient}</code>.
       </p>
-      <button type="button" onClick={startWithdraw} disabled={status !== 'idle' && status !== 'error'}>
+      <button
+        type="button"
+        onClick={startWithdraw}
+        disabled={status !== 'idle' && status !== 'error'}
+      >
         Withdraw
       </button>
-      {errorMessage && <p className="withdraw-error" role="alert">{errorMessage}</p>}
+      {errorMessage && (
+        <p className="withdraw-error" role="alert">
+          {errorMessage}
+        </p>
+      )}
       {status !== 'idle' && status !== 'error' && <p className="withdraw-status">{status}</p>}
     </section>
   )

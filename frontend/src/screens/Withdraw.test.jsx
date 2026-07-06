@@ -34,13 +34,19 @@ describe('Withdraw screen', () => {
     fireEvent.click(screen.getByRole('button', { name: /withdraw/i }))
 
     await waitFor(() => expect(signAndSubmitUnwind).toHaveBeenCalled())
-    await waitFor(() => expect(postUnwind).toHaveBeenCalledWith(expect.objectContaining({ unwindTxHash: '0xUNWINDTX' })))
+    await waitFor(() =>
+      expect(postUnwind).toHaveBeenCalledWith(
+        expect.objectContaining({ unwindTxHash: '0xUNWINDTX' })
+      )
+    )
     await waitFor(() => expect(screen.getByText(/done/i)).toBeTruthy())
     expect(screen.getByText(/GRECIPIENT/i)).toBeTruthy()
   })
 
   test('a hookData validation failure never reaches signAndSubmitUnwind and shows a clear error', async () => {
-    signAndSubmitUnwind.mockRejectedValue(new Error('hookData payload does not decode as a plausible Stellar strkey: "short"'))
+    signAndSubmitUnwind.mockRejectedValue(
+      new Error('hookData payload does not decode as a plausible Stellar strkey: "short"')
+    )
 
     render(
       <Withdraw

@@ -131,18 +131,35 @@ describe('createMandate', () => {
 
     // 1) in-policy deposit on pool A within cap -> ALLOWED (mirrors session-test.mjs Test 1)
     expect(
-      evaluateCall({ permissions, to: YIELD_ROUTER_ADDRESS, functionName: 'deposit', args: [POOL_A, 10n, 1n], expiry })
-        .allowed
+      evaluateCall({
+        permissions,
+        to: YIELD_ROUTER_ADDRESS,
+        functionName: 'deposit',
+        args: [POOL_A, 10n, 1n],
+        expiry,
+      }).allowed
     ).toBe(true)
 
     // 2) wrong selector: sweep -> REJECTED (mirrors session-test.mjs Test 2)
     expect(
-      evaluateCall({ permissions, to: YIELD_ROUTER_ADDRESS, functionName: 'sweep', args: [ATTACKER], expiry }).allowed
+      evaluateCall({
+        permissions,
+        to: YIELD_ROUTER_ADDRESS,
+        functionName: 'sweep',
+        args: [ATTACKER],
+        expiry,
+      }).allowed
     ).toBe(false)
 
     // 3) wrong target -> REJECTED (mirrors session-test.mjs Test 3)
     expect(
-      evaluateCall({ permissions, to: ATTACKER, functionName: 'deposit', args: [POOL_A, 10n, 1n], expiry }).allowed
+      evaluateCall({
+        permissions,
+        to: ATTACKER,
+        functionName: 'deposit',
+        args: [POOL_A, 10n, 1n],
+        expiry,
+      }).allowed
     ).toBe(false)
 
     // 4) over cap on pool B -> REJECTED (NEW)

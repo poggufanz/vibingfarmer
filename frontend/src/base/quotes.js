@@ -12,7 +12,12 @@ const DEFAULT_SLIPPAGE_BPS = 50 // 0.5%
  * @param {{ pool: string, amountBaseUnits: bigint, slippageBps?: number, publicClient: object }} p
  * @returns {Promise<bigint>}
  */
-export async function estimateMinShares({ pool, amountBaseUnits, slippageBps = DEFAULT_SLIPPAGE_BPS, publicClient }) {
+export async function estimateMinShares({
+  pool,
+  amountBaseUnits,
+  slippageBps = DEFAULT_SLIPPAGE_BPS,
+  publicClient,
+}) {
   if (typeof amountBaseUnits !== 'bigint' || amountBaseUnits <= 0n) {
     throw new Error(`amountBaseUnits must be a positive bigint, got ${amountBaseUnits}`)
   }

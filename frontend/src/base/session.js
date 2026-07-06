@@ -17,7 +17,12 @@ const KERNEL_VERSION = KERNEL_V3_1
  * @param {{ publicClient: object, serializedApproval: string, sessionPrivateKey: string, deps?: object }} p
  * @returns {Promise<object>} a gasless kernelClient scoped to exactly what the mandate approved
  */
-export async function reconstructSessionClient({ publicClient, serializedApproval, sessionPrivateKey, deps = {} }) {
+export async function reconstructSessionClient({
+  publicClient,
+  serializedApproval,
+  sessionPrivateKey,
+  deps = {},
+}) {
   const {
     keyToAccount = privateKeyToAccount,
     deserialize = deserializePermissionAccount,
@@ -25,7 +30,13 @@ export async function reconstructSessionClient({ publicClient, serializedApprova
   } = deps
 
   const sessionSigner = keyToAccount(sessionPrivateKey)
-  const account = await deserialize(publicClient, ENTRY_POINT, KERNEL_VERSION, serializedApproval, sessionSigner)
+  const account = await deserialize(
+    publicClient,
+    ENTRY_POINT,
+    KERNEL_VERSION,
+    serializedApproval,
+    sessionSigner
+  )
 
   return makeGaslessClient({ account, publicClient })
 }

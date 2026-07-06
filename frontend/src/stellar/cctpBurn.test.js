@@ -7,7 +7,9 @@ describe('evmAddrToBytes32', () => {
     const out = evmAddrToBytes32('0x1111111111111111111111111111111111111111')
     expect(out.length).toBe(32)
     expect(Buffer.from(out.slice(0, 12)).every((b) => b === 0)).toBe(true)
-    expect(Buffer.from(out.slice(12)).toString('hex')).toBe('1111111111111111111111111111111111111111')
+    expect(Buffer.from(out.slice(12)).toString('hex')).toBe(
+      '1111111111111111111111111111111111111111'
+    )
   })
 
   test('rejects a malformed address', () => {
@@ -72,7 +74,9 @@ describe('signAndSubmitStellarBurn', () => {
     expect(burnArgs[0]).toEqual({ addr: 'GWALLET' })
     expect(burnArgs[1]).toEqual({ i128: 5_000_000n })
     expect(burnArgs[2]).toEqual({ u32: 6 })
-    expect(burnArgs[4]).toEqual({ addr: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA' })
+    expect(burnArgs[4]).toEqual({
+      addr: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+    })
     expect(burnArgs[6]).toEqual({ i128: 0n })
     expect(burnArgs[7]).toEqual({ u32: 2000 })
   })

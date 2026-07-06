@@ -15,8 +15,24 @@ import { allocateBasePools } from '../venice.js'
 describe('Farm screen', () => {
   test('shows the AI allocation preview, then runs the farm flow on "Start Farming" and shows progress', async () => {
     allocateBasePools.mockResolvedValue([
-      { pool: '0xAAAA', protocol: 'aave-v3', amount: 60, minShares: 59n, expectedApy: 5.1, riskTier: 'low', skill: {} },
-      { pool: '0xBBBB', protocol: 'morpho-blue', amount: 40, minShares: 39n, expectedApy: 6.8, riskTier: 'medium', skill: {} },
+      {
+        pool: '0xAAAA',
+        protocol: 'aave-v3',
+        amount: 60,
+        minShares: 59n,
+        expectedApy: 5.1,
+        riskTier: 'low',
+        skill: {},
+      },
+      {
+        pool: '0xBBBB',
+        protocol: 'morpho-blue',
+        amount: 40,
+        minShares: 39n,
+        expectedApy: 6.8,
+        riskTier: 'medium',
+        skill: {},
+      },
     ])
     runFarmFlow.mockResolvedValue({ burnHash: 'burn-1', jobId: 'job-1', finalStatus: 'done' })
 
@@ -43,7 +59,15 @@ describe('Farm screen', () => {
 
   test('a staged failure event renders the stage-specific error, not a generic message', async () => {
     allocateBasePools.mockResolvedValue([
-      { pool: '0xAAAA', protocol: 'aave-v3', amount: 100, minShares: 99n, expectedApy: 5.1, riskTier: 'low', skill: {} },
+      {
+        pool: '0xAAAA',
+        protocol: 'aave-v3',
+        amount: 100,
+        minShares: 99n,
+        expectedApy: 5.1,
+        riskTier: 'low',
+        skill: {},
+      },
     ])
     runFarmFlow.mockImplementation(async ({ onEvent }) => {
       onEvent('farm-burn-started', {})

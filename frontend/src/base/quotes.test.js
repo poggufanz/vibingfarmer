@@ -20,7 +20,11 @@ describe('estimateMinShares', () => {
 
   test('defaults slippageBps to 50 (0.5%) when not provided', async () => {
     const publicClient = { readContract: vi.fn(async () => 1_000_000n) }
-    const minShares = await estimateMinShares({ pool: '0xAAAA', amountBaseUnits: 1_000_000n, publicClient })
+    const minShares = await estimateMinShares({
+      pool: '0xAAAA',
+      amountBaseUnits: 1_000_000n,
+      publicClient,
+    })
     expect(minShares).toBe(995_000n)
   })
 

@@ -11,7 +11,8 @@ import { rpcServer } from './client.js'
 import { NETWORK_PASSPHRASE } from './config.js'
 
 // --- Proven testnet constants (spikes/cctp-corridor/addresses.md, confirmed live in SP0) ---
-export const STELLAR_TOKEN_MESSENGER_MINTER = 'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP'
+export const STELLAR_TOKEN_MESSENGER_MINTER =
+  'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP'
 export const STELLAR_USDC_SAC = 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA'
 export const CCTP_STELLAR_DOMAIN = 27
 export const CCTP_BASE_DOMAIN = 6
@@ -52,13 +53,24 @@ async function defaultMakeEphemeral() {
 // kit.signAuthEntry, re-assembles around the signed entry with a freshly-fetched sequence
 // (avoids txBadSeq — same lesson as wallet/submit.js), the ephemeral signs the tx source, submits,
 // and polls to success. Mirrors submit.js's defaultSignSubmitApprove almost exactly.
-async function defaultBuildAndSubmitOp({ contractId, contract, method, args, kit, ephemeral, server }) {
+async function defaultBuildAndSubmitOp({
+  contractId,
+  contract,
+  method,
+  args,
+  kit,
+  ephemeral,
+  server,
+}) {
   const sdk = await import('@stellar/stellar-sdk')
   const { TransactionBuilder, Operation, Contract, Address, xdr, BASE_FEE, rpc } = sdk
   const scArgs = args.map((a) => (a instanceof xdr.ScVal ? a : encodeArg(sdk, a)))
   const ephAcct = await server.getAccount(ephemeral.publicKey())
   const op = new Contract(contract).call(method, ...scArgs)
-  const recRaw = new TransactionBuilder(ephAcct, { fee: BASE_FEE, networkPassphrase: NETWORK_PASSPHRASE })
+  const recRaw = new TransactionBuilder(ephAcct, {
+    fee: BASE_FEE,
+    networkPassphrase: NETWORK_PASSPHRASE,
+  })
     .addOperation(op)
     .setTimeout(60)
     .build()
@@ -83,11 +95,13 @@ async function defaultBuildAndSubmitOp({ contractId, contract, method, args, kit
     .setTimeout(60)
     .build()
   const enfSim = await server.simulateTransaction(enforcedRaw)
-  if (rpc.Api.isSimulationError(enfSim)) throw new Error(`${method} auth sim failed: ${enfSim.error}`)
+  if (rpc.Api.isSimulationError(enfSim))
+    throw new Error(`${method} auth sim failed: ${enfSim.error}`)
   const prepared = rpc.assembleTransaction(enforcedRaw, enfSim).build()
   prepared.sign(ephemeral)
   const sent = await server.sendTransaction(prepared)
-  if (sent.status === 'ERROR') throw new Error(`${method} rejected: ${JSON.stringify(sent.errorResult ?? sent)}`)
+  if (sent.status === 'ERROR')
+    throw new Error(`${method} rejected: ${JSON.stringify(sent.errorResult ?? sent)}`)
   let r = await server.getTransaction(sent.hash)
   for (let i = 0; i < 30 && r.status === 'NOT_FOUND'; i++) {
     await new Promise((res) => setTimeout(res, 1000))
@@ -102,7 +116,8 @@ function encodeArg(sdk, a) {
   if (a && typeof a === 'object' && 'addr' in a) return Address.fromString(a.addr).toScVal()
   if (a && typeof a === 'object' && 'i128' in a) return nativeToScVal(a.i128, { type: 'i128' })
   if (a && typeof a === 'object' && 'u32' in a) return nativeToScVal(a.u32, { type: 'u32' })
-  if (a && typeof a === 'object' && 'bytes32' in a) return xdr.ScVal.scvBytes(Buffer.from(a.bytes32))
+  if (a && typeof a === 'object' && 'bytes32' in a)
+    return xdr.ScVal.scvBytes(Buffer.from(a.bytes32))
   throw new Error(`cctpBurn: unrecognized arg shape ${JSON.stringify(a)}`)
 }
 
@@ -120,7 +135,14 @@ function encodeArg(sdk, a) {
  * }} p
  * @returns {Promise<{ approveHash: string, burnHash: string }>}
  */
-export async function signAndSubmitStellarBurn({ contractId, amountUnits, baseRecipientAddress, kit, server, deps = {} }) {
+export async function signAndSubmitStellarBurn({
+  contractId,
+  amountUnits,
+  baseRecipientAddress,
+  kit,
+  server,
+  deps = {},
+}) {
   const {
     fund = defaultFund,
     makeEphemeral = defaultMakeEphemeral,

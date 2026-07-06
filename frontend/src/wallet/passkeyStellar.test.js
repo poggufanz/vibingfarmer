@@ -21,7 +21,10 @@ beforeEach(() => {
 describe('createStellarPasskeyWallet', () => {
   test('provisions a passkey wallet and returns a G-address + working signBurn', async () => {
     const fakeKit = {
-      createWallet: vi.fn(async () => ({ contractId: 'GAAAAWALLET000000000000000000000000000000000000000000000', credentialId: 'cred-abc' })),
+      createWallet: vi.fn(async () => ({
+        contractId: 'GAAAAWALLET000000000000000000000000000000000000000000000',
+        credentialId: 'cred-abc',
+      })),
       signAuthEntry: vi.fn(async (entry) => ({ ...entry, signed: true })),
     }
     const deps = { makeKit: vi.fn(async () => fakeKit) }
@@ -47,11 +50,10 @@ describe('createStellarPasskeyWallet', () => {
 
     await createStellarPasskeyWallet({ email: 'second@example.com', deps })
 
-    expect(fakeKit.createWallet).toHaveBeenCalledWith(
-      'Vibing Farmer',
-      'second@example.com',
-      { autoSubmit: true, autoFund: true }
-    )
+    expect(fakeKit.createWallet).toHaveBeenCalledWith('Vibing Farmer', 'second@example.com', {
+      autoSubmit: true,
+      autoFund: true,
+    })
   })
 })
 

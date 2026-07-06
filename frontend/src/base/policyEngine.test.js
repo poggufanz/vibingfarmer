@@ -36,7 +36,10 @@ describe('buildDepositPermissions', () => {
 
   test('rejects a non-positive cap', () => {
     expect(() =>
-      buildDepositPermissions({ pools: [{ pool: POOL_A, cap: 0n }], yieldRouterAbi: YIELD_ROUTER_ABI })
+      buildDepositPermissions({
+        pools: [{ pool: POOL_A, cap: 0n }],
+        yieldRouterAbi: YIELD_ROUTER_ABI,
+      })
     ).toThrow(/invalid cap/)
   })
 })

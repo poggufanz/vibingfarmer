@@ -53,7 +53,12 @@ async function forwarderAddressBytes32() {
  * @param {{ withdrawals: Array<{pool:string, shares:bigint, minAssets:bigint}>, stellarRecipient: string, totalAssetsForBurn: bigint, forwarderBytes32?: string }} p
  * @returns {Array<{to:string, data:string}>}
  */
-export function buildUnwindCalls({ withdrawals, stellarRecipient, totalAssetsForBurn, forwarderBytes32 }) {
+export function buildUnwindCalls({
+  withdrawals,
+  stellarRecipient,
+  totalAssetsForBurn,
+  forwarderBytes32,
+}) {
   if (!Array.isArray(withdrawals) || withdrawals.length === 0) {
     throw new Error('buildUnwindCalls requires at least one withdrawal')
   }
@@ -62,7 +67,11 @@ export function buildUnwindCalls({ withdrawals, stellarRecipient, totalAssetsFor
 
   const withdrawCalls = withdrawals.map(({ pool, shares, minAssets }) => ({
     to: YIELD_ROUTER_ADDRESS,
-    data: encodeFunctionData({ abi: YIELD_ROUTER_ABI, functionName: 'withdraw', args: [pool, shares, minAssets] }),
+    data: encodeFunctionData({
+      abi: YIELD_ROUTER_ABI,
+      functionName: 'withdraw',
+      args: [pool, shares, minAssets],
+    }),
   }))
 
   const approveCall = {
@@ -110,13 +119,27 @@ export function buildUnwindCalls({ withdrawals, stellarRecipient, totalAssetsFor
  * }} p
  * @returns {Promise<{ unwindTxHash: string }>}
  */
-export async function signAndSubmitUnwind({ ownerKernelAccount, publicClient, withdrawals, stellarRecipient, totalAssetsForBurn, deps = {} }) {
+export async function signAndSubmitUnwind({
+  ownerKernelAccount,
+  publicClient,
+  withdrawals,
+  stellarRecipient,
+  totalAssetsForBurn,
+  deps = {},
+}) {
   const { makeGaslessClient = createGaslessKernelClient } = deps
   const forwarderBytes32 = await forwarderAddressBytes32()
-  const calls = buildUnwindCalls({ withdrawals, stellarRecipient, totalAssetsForBurn, forwarderBytes32 })
+  const calls = buildUnwindCalls({
+    withdrawals,
+    stellarRecipient,
+    totalAssetsForBurn,
+    forwarderBytes32,
+  })
 
   const kernelClient = makeGaslessClient({ account: ownerKernelAccount, publicClient })
-  const callData = await kernelClient.account.encodeCalls(calls.map((c) => ({ to: c.to, value: 0n, data: c.data })))
+  const callData = await kernelClient.account.encodeCalls(
+    calls.map((c) => ({ to: c.to, value: 0n, data: c.data }))
+  )
   const userOpHash = await kernelClient.sendUserOperation({ callData })
   const receipt = await kernelClient.waitForUserOperationReceipt({ hash: userOpHash })
   const succeeded = receipt?.success === true || receipt?.receipt?.status === 'success'

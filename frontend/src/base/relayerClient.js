@@ -25,7 +25,14 @@ function serializeAllocations(allocations) {
  * @param {{ burnTxHash: string, sourceDomain: number, serializedApproval: string, allocations: Array<object>, baseUrl?: string, deps?: { fetchImpl?: Function } }} p
  * @returns {Promise<{ jobId: string }>}
  */
-export async function postFarm({ burnTxHash, sourceDomain, serializedApproval, allocations, baseUrl = DEFAULT_BASE_URL, deps = {} }) {
+export async function postFarm({
+  burnTxHash,
+  sourceDomain,
+  serializedApproval,
+  allocations,
+  baseUrl = DEFAULT_BASE_URL,
+  deps = {},
+}) {
   const { fetchImpl = fetch } = deps
   const res = await fetchImpl(`${baseUrl}/farm`, {
     method: 'POST',
@@ -72,7 +79,12 @@ export async function pollFarmStatus({
  * @param {{ unwindTxHash: string, stellarRecipient: string, baseUrl?: string, deps?: { fetchImpl?: Function } }} p
  * @returns {Promise<{ jobId: string }>}
  */
-export async function postUnwind({ unwindTxHash, stellarRecipient, baseUrl = DEFAULT_BASE_URL, deps = {} }) {
+export async function postUnwind({
+  unwindTxHash,
+  stellarRecipient,
+  baseUrl = DEFAULT_BASE_URL,
+  deps = {},
+}) {
   const { fetchImpl = fetch } = deps
   const res = await fetchImpl(`${baseUrl}/unwind`, {
     method: 'POST',

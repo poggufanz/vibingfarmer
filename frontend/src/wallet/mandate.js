@@ -36,9 +36,18 @@ const KERNEL_VERSION = KERNEL_V3_1
  * }} p
  * @returns {Promise<{ serializedApproval: string, sessionKeyAddress: string, sessionPrivateKey: string, permissions: Array<object>, expiry: number }>}
  */
-export async function createMandate({ kernelAccount, publicClient, passkeyValidator, pools, expiry, deps = {} }) {
-  if (!Array.isArray(pools) || pools.length === 0) throw new Error('createMandate requires at least one pool')
-  if (!expiry || expiry <= Math.floor(Date.now() / 1000)) throw new Error('expiry must be in the future')
+export async function createMandate({
+  kernelAccount,
+  publicClient,
+  passkeyValidator,
+  pools,
+  expiry,
+  deps = {},
+}) {
+  if (!Array.isArray(pools) || pools.length === 0)
+    throw new Error('createMandate requires at least one pool')
+  if (!expiry || expiry <= Math.floor(Date.now() / 1000))
+    throw new Error('expiry must be in the future')
 
   const {
     genSessionKey = generatePrivateKey,
@@ -61,7 +70,10 @@ export async function createMandate({ kernelAccount, publicClient, passkeyValida
 
   const emptySessionSigner = await makeECDSASigner({ signer: emptyAccount(sessionKeyAddress) })
 
-  const permissions = buildDepositPermissions({ pools, yieldRouterAbi: (await import('../base/config.js')).YIELD_ROUTER_ABI })
+  const permissions = buildDepositPermissions({
+    pools,
+    yieldRouterAbi: (await import('../base/config.js')).YIELD_ROUTER_ABI,
+  })
   const callPolicy = makeCallPolicy({ policyVersion: CallPolicyVersion.V0_0_4, permissions })
   const timestampPolicy = makeTimestampPolicy({ validAfter: 0, validUntil: expiry })
 

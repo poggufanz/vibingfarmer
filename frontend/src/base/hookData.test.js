@@ -18,7 +18,9 @@ describe('buildForwarderHookData', () => {
 
 describe('assertHookData — the #7313 guard', () => {
   test('accepts a well-formed hookData buffer', () => {
-    const hookData = buildForwarderHookData('GCXMZOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO')
+    const hookData = buildForwarderHookData(
+      'GCXMZOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO'
+    )
     expect(() => assertHookData(hookData)).not.toThrow()
   })
 
@@ -26,18 +28,24 @@ describe('assertHookData — the #7313 guard', () => {
     const raw32 = new Uint8Array(32)
     // A raw 32-byte decoded key has version 0 and a zero declared length, so it fails at the
     // strkey/envelope check rather than the version check — either way it must be rejected.
-    expect(() => assertHookData(raw32)).toThrow(/InvalidHookVersion|too short|version|strkey|decode/)
+    expect(() => assertHookData(raw32)).toThrow(
+      /InvalidHookVersion|too short|version|strkey|decode/
+    )
   })
 
   test('rejects a non-zero version byte', () => {
-    const hookData = buildForwarderHookData('GCXMZOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO')
+    const hookData = buildForwarderHookData(
+      'GCXMZOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO'
+    )
     const corrupted = Buffer.from(hookData)
     corrupted.writeUInt32BE(1, 24) // flip version to 1
     expect(() => assertHookData(corrupted)).toThrow(/version/)
   })
 
   test('rejects a declared strkey length that does not match the remaining bytes', () => {
-    const hookData = buildForwarderHookData('GCXMZOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO')
+    const hookData = buildForwarderHookData(
+      'GCXMZOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO'
+    )
     const corrupted = Buffer.from(hookData)
     corrupted.writeUInt32BE(999, 28) // lie about the length
     expect(() => assertHookData(corrupted)).toThrow(/length/)

@@ -31,7 +31,11 @@ describe('runFarmFlow', () => {
       'farm-completed',
     ])
     expect(deps.postFarm).toHaveBeenCalledWith(
-      expect.objectContaining({ burnTxHash: 'burn-1', sourceDomain: 27, serializedApproval: 'approval-blob' })
+      expect.objectContaining({
+        burnTxHash: 'burn-1',
+        sourceDomain: 27,
+        serializedApproval: 'approval-blob',
+      })
     )
   })
 
