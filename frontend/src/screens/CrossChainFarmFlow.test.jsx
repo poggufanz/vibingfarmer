@@ -73,7 +73,20 @@ describe('CrossChainFarmFlow', () => {
   test('walks onboard -> mandate -> farm, registering the mandate exactly once before rendering Farm', async () => {
     createStellarPasskeyWallet.mockResolvedValue(STELLAR_WALLET)
     createBaseSmartAccount.mockResolvedValue(BASE_ACCOUNT)
-    allocateBasePools.mockResolvedValue(ALLOCATIONS)
+    // allocateBasePools is LLM-backed and non-deterministic: a hypothetical second call returns a
+    // DIFFERENT allocation. The farm step must use the FIRST (mandate-time) one — anything else
+    // could fall outside the session-key caps and revert on-chain.
+    allocateBasePools.mockResolvedValueOnce(ALLOCATIONS).mockResolvedValue([
+      {
+        pool: '0xDDDD',
+        protocol: 'drifted-pool',
+        amount: 100,
+        minShares: 99n,
+        expectedApy: 9.9,
+        riskTier: 'high',
+        skill: {},
+      },
+    ])
     createMandate.mockResolvedValue(MANDATE_RESULT)
     postMandate.mockResolvedValue({ ok: true })
 
@@ -109,9 +122,12 @@ describe('CrossChainFarmFlow', () => {
     )
     expect(postMandate).toHaveBeenCalledTimes(1)
 
-    // Farm renders (real component) with the mandate's props once the flow advances.
+    // Farm renders (real component) with the SAME allocations that built the mandate caps —
+    // exactly one allocateBasePools call total; the drifted second result never appears.
     await waitFor(() => expect(screen.getByText(/aave-v3/i)).toBeTruthy())
     expect(screen.getByText(/morpho-blue/i)).toBeTruthy()
+    expect(screen.queryByText(/drifted-pool/i)).toBeNull()
+    expect(allocateBasePools).toHaveBeenCalledTimes(1)
   })
 
   test('surfaces an onboarding error without advancing past the onboard step', async () => {

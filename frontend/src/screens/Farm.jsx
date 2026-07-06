@@ -15,13 +15,23 @@ export default function Farm({
   baseRecipientAddress,
   sessionKeyAddress,
   serializedApproval,
+  allocations: providedAllocations = null,
 }) {
-  const [allocations, setAllocations] = useState(null)
+  // When the caller already computed an allocation (CrossChainFarmFlow does, at mandate time,
+  // and derived the session-key caps from it), it MUST be reused verbatim here: allocateBasePools
+  // is LLM-backed with no determinism guarantee, so a second call could pick a pool or amount
+  // outside the mandate's on-chain policy and the deposit would revert. No prop = the original
+  // standalone behavior (allocate on mount).
+  const [allocations, setAllocations] = useState(providedAllocations)
   const [events, setEvents] = useState([])
   const [status, setStatus] = useState('idle') // idle | allocating | running | done | error
   const [errorMessage, setErrorMessage] = useState(null)
 
   useEffect(() => {
+    if (providedAllocations) {
+      setAllocations(providedAllocations)
+      return undefined
+    }
     let cancelled = false
     setStatus('allocating')
     allocateBasePools({ amount, riskLevel, nPools }).then((result) => {
@@ -33,7 +43,7 @@ export default function Farm({
     return () => {
       cancelled = true
     }
-  }, [amount, riskLevel, nPools])
+  }, [amount, riskLevel, nPools, providedAllocations])
 
   const onEvent = useCallback((name, data) => {
     setEvents((prev) => [...prev, { name, data, at: Date.now() }])

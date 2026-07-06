@@ -197,6 +197,7 @@ export default function CrossChainFarmFlow() {
             baseRecipientAddress={baseAccount.address}
             sessionKeyAddress={sessionKeyAddress}
             serializedApproval={serializedApproval}
+            allocations={allocations}
           />
           <button
             type="button"

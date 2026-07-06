@@ -57,6 +57,48 @@ describe('Farm screen', () => {
     await waitFor(() => expect(screen.getByText(/done/i)).toBeTruthy())
   })
 
+  test('with an allocations prop, never calls allocateBasePools and farms the given allocations verbatim', async () => {
+    allocateBasePools.mockClear() // call history otherwise leaks from earlier tests in this file
+    runFarmFlow.mockClear()
+    runFarmFlow.mockResolvedValue({ burnHash: 'burn-2', jobId: 'job-2', finalStatus: 'done' })
+    const givenAllocations = [
+      {
+        pool: '0xCCCC',
+        protocol: 'seamless',
+        amount: 100,
+        minShares: 99n,
+        expectedApy: 4.2,
+        riskTier: 'low',
+        skill: {},
+      },
+    ]
+
+    render(
+      <Farm
+        amount={100}
+        riskLevel="low"
+        nPools={1}
+        stellarWallet={{ address: 'GWALLET', signBurn: vi.fn() }}
+        baseRecipientAddress="0xBASEACCT"
+        sessionKeyAddress="0xSESSION"
+        serializedApproval="approval-blob"
+        allocations={givenAllocations}
+      />
+    )
+
+    // The mandate-time allocation renders immediately — no second (non-deterministic) LLM call.
+    expect(screen.getByText(/seamless/i)).toBeTruthy()
+    expect(allocateBasePools).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: /start farming/i }))
+    await waitFor(() =>
+      expect(runFarmFlow).toHaveBeenCalledWith(
+        expect.objectContaining({ allocations: givenAllocations })
+      )
+    )
+    expect(allocateBasePools).not.toHaveBeenCalled()
+  })
+
   test('a staged failure event renders the stage-specific error, not a generic message', async () => {
     allocateBasePools.mockResolvedValue([
       {
