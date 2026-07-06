@@ -7,6 +7,7 @@ import searchProxy from './api/search.js'
 import stellarRelayProxy from './api/stellar-relay.js'
 import faucetProxy from './api/faucet.js'
 import vfRouter from './api/vf/_router.js'
+import onrampSessionProxy from './api/onramp-session.js'
 
 // Repo root (parent of frontend/) — needed below so the dev server's fs.allow boundary covers
 // frontend/src/stellar/vaultReads.js's cross-package import of keeper/src/apr.js.
@@ -35,6 +36,12 @@ export default defineConfig(({ mode }) => {
   if (env.VF_GLOBAL_DAILY_CAP) process.env.VF_GLOBAL_DAILY_CAP = env.VF_GLOBAL_DAILY_CAP
   if (env.VF_VAULT_CATALOG) process.env.VF_VAULT_CATALOG = env.VF_VAULT_CATALOG
 
+  // On-ramp widget (SP4) — server-side only, never in the client bundle.
+  if (env.TRANSAK_API_KEY) process.env.TRANSAK_API_KEY = env.TRANSAK_API_KEY
+  if (env.TRANSAK_ACCESS_TOKEN) process.env.TRANSAK_ACCESS_TOKEN = env.TRANSAK_ACCESS_TOKEN
+  if (env.TRANSAK_ENVIRONMENT) process.env.TRANSAK_ENVIRONMENT = env.TRANSAK_ENVIRONMENT
+  if (env.TRANSAK_REFERRER_DOMAIN) process.env.TRANSAK_REFERRER_DOMAIN = env.TRANSAK_REFERRER_DOMAIN
+
   const apiProxyPlugin = {
     name: 'api-proxy',
     configureServer(s) {
@@ -43,6 +50,7 @@ export default defineConfig(({ mode }) => {
       s.middlewares.use('/api/search', searchProxy)
       s.middlewares.use('/api/stellar-relay', stellarRelayProxy)
       s.middlewares.use('/api/faucet', faucetProxy)
+      s.middlewares.use('/api/onramp-session', onrampSessionProxy)
     },
     configurePreviewServer(s) {
       s.middlewares.use('/api/vf', vfRouter)
@@ -50,6 +58,7 @@ export default defineConfig(({ mode }) => {
       s.middlewares.use('/api/search', searchProxy)
       s.middlewares.use('/api/stellar-relay', stellarRelayProxy)
       s.middlewares.use('/api/faucet', faucetProxy)
+      s.middlewares.use('/api/onramp-session', onrampSessionProxy)
     },
   }
 
