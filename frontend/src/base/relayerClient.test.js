@@ -38,6 +38,44 @@ describe('postFarm', () => {
       })
     ).rejects.toThrow(/farm dispatch failed \(502\)/)
   })
+
+  // Locks the wire-boundary fix: `a.amount` is a DISPLAY float everywhere upstream (venice.js's
+  // allocateBasePools, the mandate cap in CrossChainFarmFlow.jsx) — the relayer expects base
+  // units (relayer/src/httpRouter.mjs parseAllocations does BigInt(a.amount)). A bare float would
+  // become dust, and a fractional remainder like 100/3 would throw. serializeAllocations converts
+  // at this seam so nothing upstream has to change.
+  test('serializes a fractional display-float amount to its base-unit string (6dp)', async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ jobId: 'job-1' }) }))
+    const fractional = 100 / 3 // 33.333333333333336 — a real 3-way split remainder
+    await postFarm({
+      burnTxHash: 'abcd',
+      sourceDomain: 27,
+      serializedApproval: 'approval-blob',
+      allocations: [{ pool: '0xAAAA', amount: fractional, minShares: 99n }],
+      baseUrl: 'https://example.test/api/vf-cross',
+      deps: { fetchImpl: fetchMock },
+    })
+    const [, opts] = fetchMock.mock.calls[0]
+    const body = JSON.parse(opts.body)
+    // toBaseChainUnits: BigInt(Math.round(fractional * 1e6)) — verified against config.js, not
+    // assumed: Math.round(33.333333333333336 * 1e6) === 33333333.
+    expect(body.allocations[0].amount).toBe('33333333')
+  })
+
+  test('passes a bigint amount through as-is — it is already base units, never re-scaled', async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ jobId: 'job-1' }) }))
+    await postFarm({
+      burnTxHash: 'abcd',
+      sourceDomain: 27,
+      serializedApproval: 'approval-blob',
+      allocations: [{ pool: '0xAAAA', amount: 60_000_000n, minShares: 99n }],
+      baseUrl: 'https://example.test/api/vf-cross',
+      deps: { fetchImpl: fetchMock },
+    })
+    const [, opts] = fetchMock.mock.calls[0]
+    const body = JSON.parse(opts.body)
+    expect(body.allocations[0].amount).toBe('60000000')
+  })
 })
 
 describe('pollFarmStatus', () => {

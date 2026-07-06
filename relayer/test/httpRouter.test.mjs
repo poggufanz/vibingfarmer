@@ -96,6 +96,50 @@ describe('createRelayerRouter', () => {
       expect(farmFn).not.toHaveBeenCalled();
     });
 
+    // Wire-boundary regression lock (see frontend/src/base/relayerClient.js serializeAllocations):
+    // amount is a DISPLAY float upstream and must be converted to base units before it reaches
+    // this router. A raw display float with a fractional remainder (e.g. from a 3-way split)
+    // is exactly the shape that used to slip through unconverted and throw here.
+    it('400s "invalid allocation" when amount is a raw display float string ("33.333"), same as a malformed amount', async () => {
+      mandates.set('approval-1', '0xsecret-session-key');
+      const res = mockRes();
+      await router(mk('POST', '/api/vf-cross/farm', {
+        burnTxHash: 'burn-1',
+        serializedApproval: 'approval-1',
+        allocations: [{ pool: '0xPoolA', amount: '33.333', minShares: '90' }],
+      }), res);
+      expect(res.statusCode).toBe(400);
+      expect(jsonOf(res).error).toMatch(/invalid allocation/);
+      expect(farmFn).not.toHaveBeenCalled();
+    });
+
+    it('parses a fractional-derived base-unit string (what the fixed client now sends) cleanly to BigInt', async () => {
+      mandates.set('approval-1', '0xsecret-session-key');
+      let resolveFarm;
+      farmFn.mockImplementationOnce(() => new Promise((resolve) => { resolveFarm = resolve; }));
+      const res = mockRes();
+      await router(mk('POST', '/api/vf-cross/farm', {
+        burnTxHash: 'burn-1',
+        serializedApproval: 'approval-1',
+        // 100/3 display float run through toBaseChainUnits (frontend/src/base/config.js) —
+        // the fixed client sends this base-unit string, never the raw "33.333333..." float.
+        allocations: [{ pool: '0xPoolA', amount: '33333333', minShares: '90' }],
+      }), res);
+      expect(res.statusCode).toBe(200);
+      expect(farmFn).toHaveBeenCalledWith({
+        burnTxHash: 'burn-1',
+        execId: 'burn-1',
+        approval: 'approval-1',
+        allocations: [{ pool: '0xPoolA', amount: 33333333n, minShares: 90n }],
+      });
+      resolveFarm({
+        mintResult: { status: 'minted', mintTxHash: '0xmint' },
+        depositResults: [{ status: 'fulfilled', pool: '0xPoolA' }],
+      });
+      const { jobId } = jsonOf(res);
+      await vi.waitFor(() => expect(jobs.get(jobId).status).toBe('done'));
+    });
+
     it('responds with a jobId immediately (job still pending while the flow is in flight), ignores client sourceDomain, converts amounts to BigInt, and resolves to done', async () => {
       mandates.set('approval-1', '0xsecret-session-key');
       // Deferred promise instead of an immediately-resolving mock: proves the HTTP response
