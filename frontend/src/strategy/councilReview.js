@@ -133,7 +133,7 @@ export const DEBATE_ROLE_LABEL = {
   validator: 'Simulation Validator',
 }
 
-const DEBATE_SYSTEM = {
+export const DEBATE_SYSTEM = {
   proposer: `You are the Yield Proposer — an opportunistic strategist seeking profitable deposit opportunities.
 You propose vault allocations and argue WHY they should proceed.
 You respond to compliance concerns by adjusting your proposal.

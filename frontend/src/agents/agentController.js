@@ -55,6 +55,9 @@ async function handleWorkerMessage(e) {
     case 'REBALANCE_OPPORTUNITY':
       emit({ kind: 'rebalance_proposal', ...payload }) // propose only — never auto-execute
       break
+    case 'MARKET_SIGNAL':
+      emit({ kind: 'market_signal', ...payload })
+      break
     case 'RISK_SCAN_RESULT': {
       const severity = await classifyRisk(payload.searchAnswer, payload.protocol)
       if (severity === 'high' || severity === 'medium') emit({ kind: 'risk_alert', severity, ...payload })

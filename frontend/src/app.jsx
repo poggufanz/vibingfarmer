@@ -68,6 +68,7 @@ import {
   applyChainPositions,
 } from './positionsStore.js'
 import { getReadProvider } from './readProvider.js'
+import { diffMarket, fastReeval, loadLatestSnapshot, saveSnapshot } from './strategy/councilMonitor.js'
 import SkillDrawer from './components/SkillDrawer.jsx'
 import HistoryPanel from './components/HistoryPanel.jsx'
 import { saveTransaction } from './history.js'
@@ -276,6 +277,10 @@ const App = () => {
   const councilCitedRef = useR({ citedRules: [], verdict: null })
   const [debateResult, setDebateResult] = useS(null) // debate council result
   const [debateRunning, setDebateRunning] = useS(false) // debate in progress
+
+  // Continuous monitor state
+  const [monitorStatus, setMonitorStatus] = useS({ lastCheck: null, level: 'idle', score: 0, reason: '' })
+  const monitorTimerRef = useR(null)
   const [rawStrategy, setRawStrategy] = useS(null) // raw Venice result (carries strategyHash) for on-chain attestation
   const [strategyAttestation, setStrategyAttestation] = useS(null)
   const [attesting, setAttesting] = useS(false)
@@ -625,6 +630,15 @@ const App = () => {
           },
         }),
       }))
+      return
+    }
+    if (ev.kind === 'market_signal') {
+      const settings = loadSettings()
+      if (!settings.monitorEnabled || !strategy?.agents?.length) {
+        setMonitorStatus((s) => ({ ...s, lastCheck: ev.timestamp, level: 'disabled' }))
+        return
+      }
+      runCouncilMonitorCheck(settings, ev.apyByVault)
       return
     }
     if (ev.kind === 'harvest_executed') {
@@ -1151,6 +1165,84 @@ const App = () => {
       event: 'OrchestratorPlanned',
       meta: `Debate Council · ${result.verdict} · ${result.iterations} iters · converged: ${result.converged}`,
     })
+  }
+
+  const runCouncilMonitorCheck = async (settings, apyByVault = {}) => {
+    if (!strategy?.agents?.length) return
+    const snapshot = loadLatestSnapshot()
+    const currentData = {
+      apyByVault,
+      turbulence: strategy.mdpState?.turbulence || 'calm',
+      gasGwei: latestGasRef.current?.gwei ?? null,
+      estimatedVaR: snapshot?.result?.VaR ?? null,
+      estimatedCVaR: snapshot?.result?.CVaR ?? null,
+      blendedApy: snapshot?.marketData?.blendedApy ?? null,
+    }
+    const diff = diffMarket(currentData, snapshot, settings)
+    setMonitorStatus({ lastCheck: Date.now(), level: diff.level, score: diff.score, reason: diff.reasons[0] || '' })
+
+    if (diff.level === 'skip') return
+
+    if (diff.level === 'fast') {
+      const result = await fastReeval(strategy, snapshot?.result || null, currentData, {
+        devApiKey: devApiKey || null,
+      })
+      if (result.passed) {
+        saveSnapshot(result, currentData)
+        if (settings.autoApprove) return
+        setMonitorStatus((s) => ({ ...s, result: 'approved', permissionSentence: result.permissionSentence }))
+        addLog({
+          event: 'OrchestratorPlanned',
+          meta: `Monitor re-eval · fast pass · confidence ${(result.confidence * 100).toFixed(0)}%`,
+        })
+      } else {
+        setMonitorStatus((s) => ({ ...s, result: 'violation', error: result.error }))
+        addLog({
+          event: 'AgentFailed',
+          meta: `Monitor re-eval · ${result.error}`,
+          detail: (result.violations || []).join('; '),
+        })
+      }
+    }
+
+    if (diff.level === 'full') {
+      setDebateRunning(true)
+      const ctrl = new AbortController()
+      try {
+        const state = buildStrategyState({
+          amountUsdc: Number(amount) || 0,
+          riskLevel: risk,
+          numVaults: strategy.agents.length,
+          vaultData: VAULT_CATALOG,
+          marketContext: marketLive,
+          positions: agentData.positions,
+          gas: latestGasRef.current,
+        })
+        const sim = runSimulation(allocationsFromStrategy(strategy), state, {
+          runs: 200, horizonDays: 30, seed: 1,
+          context: { turbulence: currentData.turbulence, apyTrendPct: 0, gasGwei: currentData.gasGwei },
+        })
+        const input = buildDebateInput(strategy, sim, state)
+        const result = await councilDebate(input, {
+          proposer: proposerVerdict,
+          riskCompliance: riskComplianceVerdict,
+          validator: validatorVerdict,
+          devApiKey: devApiKey || null,
+          signal: ctrl.signal,
+          maxIterations: settings.maxIterations || 5,
+          convergenceThreshold: 0.15,
+        })
+        saveSnapshot(result, currentData)
+        setMonitorStatus((s) => ({ ...s, result: result.verdict === 'keep' ? 'approved' : 'rejected', debateResultId: Date.now() }))
+        addLog({
+          event: result.verdict === 'keep' ? 'OrchestratorPlanned' : 'AgentFailed',
+          meta: `Monitor full debate · ${result.verdict} · ${result.iterations} iters · converged: ${result.converged}`,
+        })
+      } finally {
+        ctrl.abort()
+        setDebateRunning(false)
+      }
+    }
   }
 
   const handleRegenerate = () => {
@@ -2205,6 +2297,7 @@ const App = () => {
                       onDismiss={dismissAlert}
                       onWithdrawSuccess={handleWithdrawSuccess}
                       onNewStrategy={handleAgain}
+                      monitorStatus={monitorStatus}
                       loopStatus={
                         agentEnabled
                           ? {
