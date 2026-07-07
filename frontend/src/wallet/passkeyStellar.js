@@ -36,6 +36,10 @@ export async function createStellarPasskeyWallet({ email, deps = {} }) {
     // `kit.signAuthEntry(entries[0])` ceremony exactly. cctpBurn.js (Task 3.4) calls this once
     // per Soroban invoke (approve, then deposit_for_burn) that needs this wallet's authorization.
     signBurn: (authEntry) => kit.signAuthEntry(authEntry),
+    // crossChainFarm passes this wallet object AS cctpBurn's `kit` (crossChainFarm.js:51), and
+    // cctpBurn calls kit.signAuthEntry directly — expose the kit's ceremony under its own name
+    // too, or the live burn dies with "kit.signAuthEntry is not a function".
+    signAuthEntry: (authEntry, options) => kit.signAuthEntry(authEntry, options),
   }
 }
 

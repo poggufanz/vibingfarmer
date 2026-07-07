@@ -41,6 +41,21 @@ describe('createStellarPasskeyWallet', () => {
     expect(signed.signed).toBe(true)
   })
 
+  test('exposes signAuthEntry itself — crossChainFarm hands this wallet to cctpBurn as its kit', async () => {
+    const fakeKit = {
+      createWallet: vi.fn(async () => ({ contractId: 'GCCCC', credentialId: 'cred-3' })),
+      signAuthEntry: vi.fn(async (entry) => ({ ...entry, signed: true })),
+    }
+    const deps = { makeKit: vi.fn(async () => fakeKit) }
+
+    const wallet = await createStellarPasskeyWallet({ email: 'user@example.com', deps })
+
+    const entry = { kind: 'sorobanCredentialsAddress' }
+    const signed = await wallet.signAuthEntry(entry, { expiration: 123 })
+    expect(fakeKit.signAuthEntry).toHaveBeenCalledWith(entry, { expiration: 123 })
+    expect(signed.signed).toBe(true)
+  })
+
   test('passes the email through as the SAK userName and a stable app name', async () => {
     const fakeKit = {
       createWallet: vi.fn(async () => ({ contractId: 'GBBBB', credentialId: 'cred-2' })),
