@@ -523,9 +523,53 @@ const SimulationPanel = ({ simulation }) => {
   );
 };
 
-const StrategyCard = ({ strategy, skillSource, onProceed, onRegenerate, strategyHash, attestation, attesting, simulation, council, onCouncilRetry }) => {
+const DebatePanel = ({ debateResult }) => {
+  if (!debateResult?.debateLog?.length) return null
+  const { debateLog, iterations, converged, proposer, riskCompliance, validator, gate, permissionSentence } = debateResult
+  const lastIter = debateLog[debateLog.length - 1]
+  return (
+    <div className="debate-panel" style={{ marginTop: 16, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
+      <div className="mono" style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span style={{ color: 'var(--text)' }}>AI Council Debate · {iterations} iteration{iterations > 1 ? 's' : ''}</span>
+        <span style={{ color: converged ? 'var(--ok)' : 'var(--warn, #c87)', fontSize: 11 }}>
+          {converged ? '✓ converged' : '✗ max iterations reached'}
+        </span>
+      </div>
+      {debateLog.map((entry, i) => (
+        <div key={i} style={{ padding: '8px 14px', borderBottom: i < debateLog.length - 1 ? '1px solid var(--border)' : 'none', fontSize: 12 }}>
+          <div style={{ color: 'var(--text-faint)', marginBottom: 4 }}>Iteration {entry.iteration}</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <div style={{ padding: '6px 8px', background: 'rgba(255,165,0,0.08)', borderRadius: 'var(--radius-sm)' }}>
+              <span style={{ color: '#c90', fontWeight: 600 }}>Proposer</span>
+              <div style={{ color: 'var(--text)' }}>{entry.proposer?.action || '?'} · {Math.round((entry.proposer?.confidence ?? 0) * 100)}%</div>
+              {entry.proposer?.arguments?.length > 0 && <div style={{ color: 'var(--text-muted)', fontSize: 10 }}>{entry.proposer.arguments[0]}</div>}
+            </div>
+            <div style={{ padding: '6px 8px', background: 'rgba(0,180,80,0.08)', borderRadius: 'var(--radius-sm)' }}>
+              <span style={{ color: '#0a4', fontWeight: 600 }}>Risk/Compliance</span>
+              <div style={{ color: 'var(--text)' }}>{entry.riskCompliance?.action || '?'} · {Math.round((entry.riskCompliance?.confidence ?? 0) * 100)}%{entry.riskCompliance?.compliancePass === false ? ' · ⚠ FAIL' : ''}</div>
+              {entry.riskCompliance?.violations?.length > 0 && <div style={{ color: 'var(--warn, #c87)', fontSize: 10 }}>{entry.riskCompliance.violations[0]}</div>}
+            </div>
+          </div>
+        </div>
+      ))}
+      {gate && (
+        <div style={{ padding: '8px 14px', borderTop: '2px solid var(--warn, #c87)', fontSize: 11, color: gate.passed ? 'var(--ok)' : 'var(--warn, #c87)' }}>
+          {gate.passed ? '✓ Gate: passed' : `✗ Gate: ${gate.reason}${gate.detail ? ` — ${gate.detail}` : ''}`}
+        </div>
+      )}
+      {permissionSentence && (
+        <div style={{ padding: '10px 14px', background: 'var(--bg-muted, rgba(0,0,0,0.03))', borderTop: '1px solid var(--border)', fontSize: 13, fontWeight: 500, color: 'var(--text)' }}>
+          {permissionSentence}
+        </div>
+      )}
+    </div>
+  )
+}
+
+const StrategyCard = ({ strategy, skillSource, onProceed, onRegenerate, strategyHash, attestation, attesting, simulation, council, onCouncilRetry, onRunCouncil, debateRunning, showRunCouncil }) => {
   const customSkill = skillSource === "user-local" || skillSource === "user-file";
   const shortHash = (h) => h ? `${h.slice(0, 10)}...` : "";
+  const hasDebate = council?.debateLog?.length > 0
   return (
     <section className="rec-card enter">
       <div className="eyebrow">
@@ -618,9 +662,30 @@ const StrategyCard = ({ strategy, skillSource, onProceed, onRegenerate, strategy
         </div>
       )}
 
-      <CouncilPanel council={council} onRetry={onCouncilRetry} />
+      {hasDebate ? (
+        <DebatePanel debateResult={council} />
+      ) : showRunCouncil ? (
+        <div style={{ marginTop: 16, padding: '16px 14px', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
+          {debateRunning ? (
+            <div className="mono" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+              <span className="think-spin" /> Council debate in progress…
+            </div>
+          ) : (
+            <>
+              <div className="mono" style={{ marginBottom: 10, color: 'var(--text-muted)', fontSize: 12 }}>
+                Run an adversarial AI debate between Proposer ↔ Risk/Compliance, then validate against simulation.
+              </div>
+              <button type="button" className="btn btn-primary" onClick={onRunCouncil}>
+                Run Council Review <Icon name="arrow" size={14} />
+              </button>
+            </>
+          )}
+        </div>
+      ) : (
+        <CouncilPanel council={council} onRetry={onCouncilRetry} />
+      )}
 
-      <SimulationPanel simulation={simulation} />
+      <SimulationPanel simulation={simulation} VaR={simulation?.VaR} CVaR={simulation?.CVaR} />
 
       {(attestation || attesting || strategyHash) && (
         <div className="mono" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 16, padding: "9px 12px", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", fontSize: 11, color: "var(--text-muted)" }}>
