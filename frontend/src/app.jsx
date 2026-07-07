@@ -110,8 +110,8 @@ import { reflect } from './strategy/reflector.js'
 import { increment as playbookIncrement, weight as playbookWeight } from './strategy/playbook.js'
 import { saveCycle, getCycles, getJournalSummary } from './strategy/cycleJournal.js'
 import { recordDecision, getDecisions, getDecisionSummary } from './strategy/decisionLog.js'
-import { resolveCouncilConflict, councilSpecialistVerdict, askVeniceJson } from './venice.js'
-import { councilReview, buildCouncilInput } from './strategy/councilReview.js'
+import { resolveCouncilConflict, councilSpecialistVerdict, proposerVerdict, riskComplianceVerdict, validatorVerdict, askVeniceJson } from './venice.js'
+import { councilReview, buildCouncilInput, councilDebate, buildDebateInput } from './strategy/councilReview.js'
 import { councilOutcome } from './strategy/outcome.js'
 import { proposeRule } from './strategy/curator.js'
 import { upsertSeeds, getRules, addRule, replaceAll } from './strategy/ruleStore.js'
@@ -264,7 +264,7 @@ const App = () => {
   const [devApiKey, setDevApiKey] = useS('')
 
   // strategy sub-state
-  const [strategyPhase, setStrategyPhase] = useS('input') // input | thinking | ready
+  const [strategyPhase, setStrategyPhase] = useS('input') // input | thinking | ready | council
   const [thinkingPhase, setThinkingPhase] = useS(0)
   const [thinkTimes, setThinkTimes] = useS([]) // real measured per-step durations (seconds)
   const [slowConfirm, setSlowConfirm] = useS(false) // AI exceeded timeout → ask keep waiting / fallback
@@ -274,6 +274,8 @@ const App = () => {
   const [council, setCouncil] = useS(undefined) // undefined = no strategy yet, null = deliberating
   const [councilRetry, setCouncilRetry] = useS(0) // bump to re-run deliberation
   const councilCitedRef = useR({ citedRules: [], verdict: null })
+  const [debateResult, setDebateResult] = useS(null) // debate council result
+  const [debateRunning, setDebateRunning] = useS(false) // debate in progress
   const [rawStrategy, setRawStrategy] = useS(null) // raw Venice result (carries strategyHash) for on-chain attestation
   const [strategyAttestation, setStrategyAttestation] = useS(null)
   const [attesting, setAttesting] = useS(false)
@@ -806,18 +808,16 @@ const App = () => {
     })
   }, [strategy, amount, risk])
 
-  // AI Council deliberation for the proposed allocation. Async (3 parallel AI
-  // calls + possible synthesis call) so it runs as an effect, not a useMemo. Uses
-  // the SAME live signals as the simulation panel. AI-only: each specialist retries
-  // once; if the provider still fails, the council reports 'unavailable' and the
-  // panel offers a retry — no fabricated verdict.
+  // Auto-run legacy council when strategy becomes ready (backward compat).
+  // For the new debate council, see handleRunCouncil below.
   useE(() => {
     if (!strategy?.agents?.length) {
       setCouncil(undefined)
       return
     }
+    if (strategyPhase === 'council') return
     let cancelled = false
-    setCouncil(null) // → panel shows "deliberating"
+    setCouncil(null)
     const ctrl = new AbortController()
     const state = buildStrategyState({
       amountUsdc: Number(amount) || 0,
@@ -855,7 +855,7 @@ const App = () => {
       cancelled = true
       ctrl.abort()
     }
-  }, [strategy, amount, risk, councilRetry])
+  }, [strategy, strategyPhase, amount, risk, councilRetry])
 
   const handleEmergencyWithdraw = async (alert) => {
     const pos = agentData.positions[alert.vaultAddress]
@@ -1107,6 +1107,51 @@ const App = () => {
   }, [stage, strategyPhase])
 
   const handleAcceptStrategy = () => setStage('connect')
+
+  const handleRunCouncil = async () => {
+    if (!strategy?.agents?.length || debateRunning) return
+    setDebateRunning(true)
+    setDebateResult(null)
+    setStrategyPhase('council')
+    const ctrl = new AbortController()
+    const state = buildStrategyState({
+      amountUsdc: Number(amount) || 0,
+      riskLevel: risk,
+      numVaults: strategy.agents.length,
+      vaultData: VAULT_CATALOG,
+      marketContext: marketLive,
+      positions: agentData.positions,
+      gas: latestGasRef.current,
+    })
+    const sim = runSimulation(allocationsFromStrategy(strategy), state, {
+      runs: 200,
+      horizonDays: 30,
+      seed: 1,
+      context: {
+        turbulence: strategy.mdpState?.turbulence || state.market.turbulence,
+        apyTrendPct: 0,
+        gasGwei: latestGasRef.current?.gwei || null,
+      },
+    })
+    const settings = await loadSettings()
+    const input = buildDebateInput(strategy, sim, state)
+    const result = await councilDebate(input, {
+      proposer: proposerVerdict,
+      riskCompliance: riskComplianceVerdict,
+      validator: validatorVerdict,
+      devApiKey: devApiKey || null,
+      signal: ctrl.signal,
+      maxIterations: settings.maxIterations || 5,
+      convergenceThreshold: 0.15,
+    })
+    setDebateResult(result)
+    setDebateRunning(false)
+    setCouncil(result)
+    addLog({
+      event: 'OrchestratorPlanned',
+      meta: `Debate Council · ${result.verdict} · ${result.iterations} iters · converged: ${result.converged}`,
+    })
+  }
 
   const handleRegenerate = () => {
     setStrategy(null)
@@ -1879,6 +1924,7 @@ const App = () => {
           )
         if (strategyPhase === 'thinking')
           return <ThinkingCard phase={thinkingPhase} times={thinkTimes} />
+        const showDebate = strategyPhase === 'council'
         return (
           <StrategyCard
             strategy={strategy}
@@ -1889,8 +1935,11 @@ const App = () => {
             attestation={strategyAttestation}
             attesting={attesting}
             simulation={simulation}
-            council={council}
+            council={showDebate ? debateResult : council}
             onCouncilRetry={() => setCouncilRetry((n) => n + 1)}
+            onRunCouncil={handleRunCouncil}
+            debateRunning={showDebate && debateRunning}
+            showRunCouncil={!council && !debateResult}
           />
         )
       case 'connect':
