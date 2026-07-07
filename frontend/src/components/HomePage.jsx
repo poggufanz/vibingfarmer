@@ -495,7 +495,7 @@ export default function HomePage({
                   <button
                     className="btn btn-primary"
                     style={{ width: '100%', padding: '10px 16px', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 6 }}
-                    onClick={onStartStrategy}
+                    onClick={() => onStartStrategy(estimateAmount)}
                   >
                     Start Strategy <span style={{ fontSize: 14 }}>→</span>
                   </button>
