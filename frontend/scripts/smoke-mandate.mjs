@@ -39,6 +39,13 @@ async function withVirtualAuthenticator(page, fn) {
 async function main() {
   const browser = await chromium.launch()
   const page = await browser.newPage()
+  // app.jsx gates EVERY route behind two first-visit localStorage flags (yv_skip_landing at
+  // app.jsx:2263, yv_onboarded at app.jsx:2282) — a fresh Playwright profile has neither, so
+  // /farm would render the marketing landing instead of CrossChainFarmFlow. Pre-set both.
+  await page.addInitScript(() => {
+    localStorage.setItem('yv_skip_landing', 'true')
+    localStorage.setItem('yv_onboarded', 'true')
+  })
   await page.goto(`${APP_URL}/farm`)
 
   await withVirtualAuthenticator(page, async () => {
