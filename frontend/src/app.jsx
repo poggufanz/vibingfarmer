@@ -41,6 +41,7 @@ import { toDisplay, toBaseUnits } from './stellar/format.js'
 import { saveResume, loadResume, clearResume } from './strategy/sessionResume.js'
 import { attestStrategyOnChain, formatAttestation } from './attestation.js'
 import OnboardingFlow from './components/OnboardingFlow.jsx'
+import CrossChainFarmFlow from './screens/CrossChainFarmFlow.jsx'
 import { OrchestratorAgent } from './orchestrator.js'
 import { makeAgentId } from './worker.js'
 import { ownerWithdraw } from './stellar/exit.js'
@@ -2523,6 +2524,7 @@ const App = () => {
               </Suspense>
             }
           />
+          <Route path="/farm" element={<CrossChainFarmFlow />} />
           <Route path="*" element={<Navigate to="/home" replace />} />
         </Routes>
       </main>
