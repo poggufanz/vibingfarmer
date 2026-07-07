@@ -24,7 +24,8 @@ const DEFAULT_MAX_TRIES = 40 // ~2 minutes at the default interval
 function serializeAllocations(allocations) {
   return allocations.map((a) => ({
     ...a,
-    amount: typeof a.amount === 'bigint' ? a.amount.toString() : toBaseChainUnits(a.amount).toString(),
+    amount:
+      typeof a.amount === 'bigint' ? a.amount.toString() : toBaseChainUnits(a.amount).toString(),
     minShares: typeof a.minShares === 'bigint' ? a.minShares.toString() : a.minShares,
   }))
 }

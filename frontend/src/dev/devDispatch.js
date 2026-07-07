@@ -49,7 +49,8 @@ export async function dispatchRawCall({
   deps = {},
 } = {}) {
   const fixture = (typeof window !== 'undefined' && window.__vfDevMandateFixture) || {}
-  const src = scenario === 'expired' && fixture.expired ? { ...fixture, ...fixture.expired } : fixture
+  const src =
+    scenario === 'expired' && fixture.expired ? { ...fixture, ...fixture.expired } : fixture
 
   const client = publicClient ?? src.publicClient
   const approval = serializedApproval ?? src.serializedApproval
