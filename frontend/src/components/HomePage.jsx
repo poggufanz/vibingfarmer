@@ -194,6 +194,7 @@ export default function HomePage({
 }) {
   const navigateTo = useNavigateTo()
   const [withdrawVault, setWithdrawVault] = useState(null)
+  const [estimateAmount, setEstimateAmount] = useState(1000)
   const [pulse, setPulse] = useState(
     () => pulseCache || { vaults: SEED, prev: [], fetchedAt: null, live: false }
   )
@@ -431,25 +432,171 @@ export default function HomePage({
           /* ── STATE 2: connected, no positions ── */
           <div style={section}>
             <SectionHead title="Portfolio" />
-            <div style={cardPad}>
-              <div className="tnum" style={{ fontSize: 20, fontWeight: 500 }}>
-                0.00{' '}
-                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                  USDC · no active positions
-                </span>
+            
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr', gap: 20, marginBottom: 20 }} className="vf-empty-grid">
+              
+              {/* Left card: Start Farming & Yield Estimator */}
+              <div style={{ ...cardPad, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: 290 }}>
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
+                    <span style={eyebrow}>Total Balance</span>
+                    <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>Stellar Testnet</span>
+                  </div>
+                  <div className="tnum" style={{ fontSize: '2.2rem', fontWeight: 600, lineHeight: 1, letterSpacing: '-0.03em', color: 'var(--text)' }}>
+                    0.00 <span style={{ fontSize: 13, color: 'var(--text-faint)', fontWeight: 400 }}>USDC</span>
+                  </div>
+                  
+                  {/* Estimator Tool */}
+                  <div style={{ marginTop: 24, padding: '12px 14px', background: 'rgba(255,255,255,0.02)', borderRadius: 8, border: '1px solid rgba(255,255,255,0.04)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                      <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)' }}>Projected Yearly Yield</span>
+                      <span className="mono tnum" style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 'bold' }}>{estimateAmount.toLocaleString()} USDC</span>
+                    </div>
+                    
+                    <input 
+                      type="range" 
+                      min="100" 
+                      max="10000" 
+                      step="100"
+                      value={estimateAmount} 
+                      onChange={(e) => setEstimateAmount(Number(e.target.value))}
+                      style={{ 
+                        width: '100%', 
+                        accentColor: 'var(--accent)', 
+                        height: 4, 
+                        background: 'rgba(255,255,255,0.1)', 
+                        borderRadius: 2,
+                        cursor: 'pointer',
+                        marginBottom: 14
+                      }}
+                    />
+                    
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, textAlign: 'center' }}>
+                      <div style={{ padding: '6px 4px', background: 'rgba(255,255,255,0.03)', borderRadius: 6 }}>
+                        <div style={{ fontSize: 9, textTransform: 'uppercase', opacity: 0.5, letterSpacing: '0.05em' }}>Low Risk</div>
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>4.8% APY</div>
+                        <div className="tnum" style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text)', marginTop: 2 }}>+{(estimateAmount * 0.048).toFixed(2)}</div>
+                      </div>
+                      <div style={{ padding: '6px 4px', background: 'rgba(255,255,255,0.03)', borderRadius: 6 }}>
+                        <div style={{ fontSize: 9, textTransform: 'uppercase', opacity: 0.5, letterSpacing: '0.05em' }}>Medium Risk</div>
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>6.1% APY</div>
+                        <div className="tnum" style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text)', marginTop: 2 }}>+{(estimateAmount * 0.061).toFixed(2)}</div>
+                      </div>
+                      <div style={{ padding: '6px 4px', background: 'rgba(255,255,255,0.03)', borderRadius: 6 }}>
+                        <div style={{ fontSize: 9, textTransform: 'uppercase', opacity: 0.5, letterSpacing: '0.05em' }}>High Risk</div>
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>9.4% APY</div>
+                        <div className="tnum" style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--accent)', marginTop: 2 }}>+{(estimateAmount * 0.094).toFixed(2)}</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                
+                <div style={{ marginTop: 20 }}>
+                  <button
+                    className="btn btn-primary"
+                    style={{ width: '100%', padding: '10px 16px', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 6 }}
+                    onClick={() => onStartStrategy(estimateAmount)}
+                  >
+                    Start Strategy <span style={{ fontSize: 14 }}>→</span>
+                  </button>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 10, fontSize: 10, color: 'var(--text-faint)' }}>
+                    <span style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--accent)' }} />
+                    Gasless deposits via fee-bump relayer
+                  </div>
+                </div>
               </div>
-              <p className="lede" style={{ fontSize: 13, marginTop: 12, maxWidth: 520 }}>
-                Start your first strategy to begin farming. AI will recommend the best vault for
-                your risk profile. Agent will execute automatically · you pay zero gas.
-              </p>
-              <button
-                className="btn btn-primary"
-                style={{ marginTop: 18 }}
-                onClick={onStartStrategy}
-              >
-                Start Strategy →
-              </button>
+              
+              {/* Right card: Featured Opportunities (clickable vaults) */}
+              <div style={cardPad}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
+                  <span style={eyebrow}>Featured Strategies</span>
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Click to farm</span>
+                </div>
+                
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {VAULT_CATALOG.slice(0, 3).map((v) => (
+                    <div 
+                      key={v.protocol}
+                      onClick={() => handleFarm(v)}
+                      style={{
+                        padding: '12px 14px',
+                        background: 'var(--bg-base)',
+                        border: '1px solid var(--border)',
+                        borderRadius: 8,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 12,
+                        transition: 'all 0.2s ease',
+                      }}
+                      className="hover-scale-subtle"
+                    >
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)' }}>{v.name}</div>
+                        <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>{v.yield_source} · min {v.min_capital} USDC</div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div className="tnum" style={{ fontSize: 14, fontWeight: 600, color: 'var(--ok)' }}>{v.apy.toFixed(1)}% APY</div>
+                        <span style={{ 
+                          fontSize: 9, 
+                          textTransform: 'uppercase', 
+                          padding: '1px 6px', 
+                          borderRadius: 4, 
+                          border: `1.5px solid ${v.risk === 'low' ? 'var(--ok)' : v.risk === 'medium' ? 'var(--warn)' : 'var(--accent)'}`,
+                          color: v.risk === 'low' ? 'var(--ok)' : v.risk === 'medium' ? 'var(--warn)' : 'var(--accent)',
+                          fontWeight: 600,
+                          letterSpacing: '0.02em',
+                          display: 'inline-block',
+                          marginTop: 3
+                        }}>
+                          {v.risk}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
+
+            {/* 3-Layer Protection Graphic */}
+            <div style={{ ...cardPad }}>
+              <div style={{ ...eyebrow, marginBottom: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span>Built-in Security: The 3-Layer Yield Protection</span>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }} className="vf-empty-protection">
+                <div style={{ padding: '4px 8px', borderLeft: '2px solid var(--warn)' }}>
+                  <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text)' }}>1. Pre-Flight Verification</div>
+                  <p style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>
+                    Vets yield authenticity. Instantly filters out ponzi-yield architectures and un-audited smart contracts.
+                  </p>
+                </div>
+                <div style={{ padding: '4px 8px', borderLeft: '2px solid var(--accent)' }}>
+                  <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text)' }}>2. Active Risk Guardian</div>
+                  <p style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>
+                    Continuous monitor loops monitor Blend pool utilization, volatility, and protocol TVL changes in real time.
+                  </p>
+                </div>
+                <div style={{ padding: '4px 8px', borderLeft: '2px solid var(--ok)' }}>
+                  <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text)' }}>3. Scoped Keeper Auto-Exit</div>
+                  <p style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>
+                    On-chain scoped session keys execute automatic emergency withdrawals directly back to your address if targets trip.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <style>{`
+              @media (max-width: 768px) {
+                .vf-empty-grid { grid-template-columns: 1fr !important; }
+                .vf-empty-protection { grid-template-columns: 1fr !important; }
+              }
+              .hover-scale-subtle:hover {
+                transform: translateY(-1px);
+                border-color: var(--accent) !important;
+                box-shadow: 0 4px 12px rgba(207, 255, 61, 0.05);
+              }
+            `}</style>
           </div>
         ) : (
           <>

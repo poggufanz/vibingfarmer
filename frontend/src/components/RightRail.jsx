@@ -9,34 +9,61 @@ const WalletPanel = ({ phase, address }) => {
   const [copied, setCopied] = useS(false)
   if (phase === 'none') {
     return (
-      <div className="panel">
-        <div className="panel-head">
-          <div className="panel-title">Wallet</div>
-          <span className="panel-meta">Not connected</span>
+      <div className="panel" style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
+        <div className="panel-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
+          <div className="panel-title" style={{ fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 500, color: 'var(--text)' }}>Wallet</div>
+          <span className="panel-meta" style={{ fontFamily: 'var(--font-mono)', fontSize: '10.5px', color: 'var(--text-faint)' }}>Not connected</span>
         </div>
-        <div className="empty">Not connected yet</div>
+        <div className="empty" style={{
+          padding: '14px', borderRadius: 'var(--radius-md)', background: 'var(--bg-elev)',
+          border: '1px solid var(--border)', color: 'var(--text-faint)', fontFamily: 'var(--font-mono)', fontSize: '11px', textAlign: 'center'
+        }}>
+          Not connected yet
+        </div>
       </div>
     )
   }
   const isSmart = phase === 'upgraded'
   return (
-    <div className="panel">
-      <div className="panel-head">
-        <div className="panel-title">Wallet</div>
-        <span className="panel-meta">{isSmart ? 'Smart account' : 'EOA'}</span>
+    <div className="panel" style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
+      <div className="panel-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
+        <div className="panel-title" style={{ fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 500, color: 'var(--text)' }}>Wallet</div>
+        <span className="panel-meta" style={{ fontFamily: 'var(--font-mono)', fontSize: '10.5px', color: 'var(--text-faint)' }}>{isSmart ? 'Smart account' : 'EOA'}</span>
       </div>
-      <div className="wallet-row">
+      <div className="wallet-row" style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '12px 14px', borderRadius: 'var(--radius-md)',
+        background: 'linear-gradient(135deg, var(--bg-card) 0%, var(--bg-base) 100%)',
+        border: '1px solid var(--border-strong)',
+        boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
+      }}>
         <div>
-          <div className="wallet-addr">{shortAddr(address)}</div>
-          <div className={`wallet-type ${isSmart ? 'active' : ''}`}>
+          <div className="wallet-addr" style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 500, color: 'var(--text)' }}>{shortAddr(address)}</div>
+          <div className={`wallet-type ${isSmart ? 'active' : ''}`} style={{
+            fontFamily: 'var(--font-mono)', fontSize: '10.5px', marginTop: 2,
+            color: isSmart ? 'var(--accent)' : 'var(--text-faint)',
+            display: 'flex', alignItems: 'center', gap: 4
+          }}>
+            <span style={{
+              width: 5, height: 5, borderRadius: '50%',
+              background: isSmart ? 'var(--accent)' : 'var(--text-faint)',
+              display: 'inline-block', boxShadow: isSmart ? '0 0 6px var(--accent)' : 'none'
+            }} />
             {isSmart ? 'Session keys active' : 'Standard wallet'}
           </div>
         </div>
-        <div className="wallet-actions">
+        <div className="wallet-actions" style={{ display: 'flex', gap: 4 }}>
           <button
             className="wallet-action"
             title={copied ? 'Copied' : 'Copy address'}
             aria-label="Copy address"
+            style={{
+              width: 28, height: 28, borderRadius: 'var(--radius-sm)',
+              display: 'grid', placeItems: 'center', border: '1px solid var(--border)',
+              background: copied ? 'var(--accent-soft)' : 'var(--bg-elev)',
+              color: copied ? 'var(--accent)' : 'var(--text-muted)',
+              cursor: 'pointer', transition: 'all 0.15s ease'
+            }}
             onClick={async () => {
               try {
                 await navigator.clipboard.writeText(address)
@@ -56,6 +83,12 @@ const WalletPanel = ({ phase, address }) => {
             href={`https://stellar.expert/explorer/testnet/contract/${address}`}
             target="_blank"
             rel="noopener noreferrer"
+            style={{
+              width: 28, height: 28, borderRadius: 'var(--radius-sm)',
+              display: 'grid', placeItems: 'center', border: '1px solid var(--border)',
+              background: 'var(--bg-elev)', color: 'var(--text-muted)',
+              transition: 'all 0.15s ease'
+            }}
           >
             <Icon name="external" />
           </a>
@@ -68,36 +101,54 @@ const WalletPanel = ({ phase, address }) => {
 const PermissionPanel = ({ active, strategy, onRevoke, expiresAt }) => {
   const agents = strategy?.agents || []
   return (
-    <div className="panel">
-      <div className="panel-head">
-        <div className="panel-title">Active permissions</div>
-        <span className="panel-meta">session scope · batch</span>
+    <div className="panel" style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
+      <div className="panel-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
+        <div className="panel-title" style={{ fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 500, color: 'var(--text)' }}>Active permissions</div>
+        <span className="panel-meta" style={{ fontFamily: 'var(--font-mono)', fontSize: '10.5px', color: 'var(--text-faint)' }}>session scope · batch</span>
       </div>
-      <div className={`perm-status ${active ? 'active' : ''}`}>
+      <div className={`perm-status ${active ? 'active' : ''}`} style={{
+        display: 'flex', alignItems: 'center', gap: 6,
+        fontFamily: 'var(--font-mono)', fontSize: '11.5px',
+        color: active ? 'var(--accent)' : 'var(--text-faint)',
+        marginBottom: active ? 12 : 0
+      }}>
+        <span style={{
+          width: 6, height: 6, borderRadius: '50%',
+          background: active ? 'var(--accent)' : 'var(--text-faint)',
+          boxShadow: active ? '0 0 6px var(--accent)' : 'none'
+        }} />
         {active
-          ? `${agents.length} permission · ${fmtRemaining(expiresAt) || '-'}`
+          ? `${agents.length} permission${agents.length > 1 ? 's' : ''} · ${fmtRemaining(expiresAt) || '-'}`
           : 'No active permission'}
       </div>
       {active && agents.length > 0 && (
-        <>
-          <div className="perm-agent-list">
+        <div style={{
+          background: 'linear-gradient(135deg, var(--bg-card) 0%, var(--bg-base) 100%)',
+          border: '1px solid var(--border-strong)', borderRadius: 'var(--radius-md)',
+          padding: '12px 14px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
+        }}>
+          <div className="perm-agent-list" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {agents.map((a) => (
-              <div key={a.id} className="perm-agent-row">
-                <span className="idx mono">{a.idx}</span>
-                <div className="meta-col">
-                  <div className="agent-name">{a.id}</div>
-                  <div className="mono agent-vault">
+              <div key={a.id} className="perm-agent-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                <span className="idx mono" style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)', minWidth: 16 }}>{a.idx}</span>
+                <div className="meta-col" style={{ flex: 1, minWidth: 0 }}>
+                  <div className="agent-name" style={{ fontSize: '12.5px', fontWeight: 500, color: 'var(--text)' }}>{a.id}</div>
+                  <div className="mono agent-vault" style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)' }}>
                     {a.vault.addr.slice(0, 8)}…{a.vault.addr.slice(-4)}
                   </div>
                 </div>
-                <div className="mono amount tnum">{a.allocation} USDC</div>
+                <div className="mono amount tnum" style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 500, color: 'var(--text)' }}>{a.allocation} USDC</div>
               </div>
             ))}
           </div>
-          <button className="perm-revoke" onClick={onRevoke}>
+          <button className="perm-revoke" onClick={onRevoke} style={{
+            marginTop: 12, width: '100%', padding: '8px 12px', border: '1px solid var(--border)',
+            borderRadius: 'var(--radius-sm)', background: 'var(--bg-elev)', color: 'var(--text-muted)',
+            fontFamily: 'var(--font-mono)', fontSize: '11px', cursor: 'pointer', transition: 'all 0.15s ease'
+          }}>
             Revoke all permissions
           </button>
-        </>
+        </div>
       )}
     </div>
   )
@@ -135,27 +186,40 @@ const ActivityPanel = ({ logs }) => {
   return (
     <div
       className="panel"
-      style={{ borderBottom: 'none', flex: 1, display: 'flex', flexDirection: 'column' }}
+      style={{ borderBottom: 'none', flex: 1, display: 'flex', flexDirection: 'column', padding: '16px 20px' }}
     >
-      <div className="panel-head">
-        <div className="panel-title">Activity</div>
-        <span className="panel-meta">
+      <div className="panel-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
+        <div className="panel-title" style={{ fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 500, color: 'var(--text)' }}>Activity</div>
+        <span className="panel-meta" style={{ fontFamily: 'var(--font-mono)', fontSize: '10.5px', color: 'var(--text-faint)' }}>
           {logs.length ? `${logs.length} events · realtime` : 'Agent events · realtime'}
         </span>
       </div>
       {logs.length === 0 ? (
-        <div className="empty">No events yet</div>
+        <div className="empty" style={{
+          padding: '14px', borderRadius: 'var(--radius-md)', background: 'var(--bg-elev)',
+          border: '1px solid var(--border)', color: 'var(--text-faint)', fontFamily: 'var(--font-mono)', fontSize: '11px', textAlign: 'center'
+        }}>
+          No events yet
+        </div>
       ) : (
         <>
-          <div className="activity" style={{ flex: 1 }}>
+          <div className="activity" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
             {pagedLogs.map((l) => {
               const sty = EVENT_STYLES[l.event] || EVENT_STYLES.OrchestratorPlanned
               const open = openId === l.id
               return (
-                <div key={l.id}>
+                <div key={l.id} style={{
+                  padding: '8px 10px', borderRadius: 'var(--radius-sm)',
+                  background: open ? 'var(--bg-card)' : 'transparent',
+                  border: open ? '1px solid var(--border)' : '1px solid transparent',
+                  transition: 'all 0.15s ease'
+                }}>
                   <div
                     className="act-row"
-                    style={{ cursor: 'pointer' }}
+                    style={{
+                      cursor: 'pointer', display: 'grid', gridTemplateColumns: '18px 1fr auto',
+                      gap: 8, alignItems: 'start'
+                    }}
                     role="button"
                     tabIndex={0}
                     aria-expanded={open}
@@ -170,40 +234,44 @@ const ActivityPanel = ({ logs }) => {
                     <span
                       className="act-marker mono"
                       aria-hidden="true"
-                      style={{ color: sty.color }}
+                      style={{ color: sty.color, fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 'bold' }}
                     >
                       {sty.icon}
                     </span>
                     <div>
-                      <div className="act-title">
-                        <span className="act-event mono">{l.event}</span>
-                        {l.agent && <span className="act-agent mono">{l.agent}</span>}
+                      <div className="act-title" style={{ fontSize: '12.5px', fontWeight: 500, color: 'var(--text)' }}>
+                        <span className="act-event mono" style={{ fontFamily: 'var(--font-mono)' }}>{l.event}</span>
+                        {l.agent && <span className="act-agent mono" style={{
+                          marginLeft: 6, padding: '1px 5px', borderRadius: 4,
+                          background: 'var(--bg-elev)', color: 'var(--text-muted)', fontSize: 10
+                        }}>{l.agent}</span>}
                       </div>
-                      <div className="act-meta">{l.meta}</div>
+                      <div className="act-meta" style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{l.meta}</div>
                     </div>
-                    <span className="act-time">
-                      {l.time} {open ? '▴' : '▾'}
+                    <span className="act-time" style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-faint)', alignSelf: 'start', whiteSpace: 'nowrap' }}>
+                      {l.time} <span style={{ marginLeft: 3 }}>{open ? '▲' : '▼'}</span>
                     </span>
                   </div>
                   {open && (
                     <div
                       className="act-meta"
                       style={{
-                        padding: '2px 0 8px 22px',
-                        fontSize: 10.5,
+                        padding: '6px 0 2px 26px',
+                        fontSize: 11,
                         lineHeight: 1.5,
-                        opacity: 0.85,
+                        color: 'var(--text-muted)',
+                        borderTop: '1px dashed var(--border)'
                       }}
                     >
                       {l.detail || l.meta}
                       {l.txHash && (
-                        <div style={{ marginTop: 3 }}>
+                        <div style={{ marginTop: 4 }}>
                           TX:{' '}
                           <a
                             href={`https://stellar.expert/explorer/testnet/tx/${l.txHash}`}
                             target="_blank"
                             rel="noopener noreferrer"
-                            style={{ color: 'var(--info)' }}
+                            style={{ color: 'var(--accent)', textDecoration: 'underline' }}
                           >
                             {shortAddr(l.txHash)} ↗
                           </a>
@@ -240,7 +308,7 @@ const ActivityPanel = ({ logs }) => {
               >
                 ← Prev
               </button>
-              <span className="mono" style={{ fontSize: 10, color: 'var(--text-faint)' }}>
+              <span className="mono" style={{ fontSize: 10, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)' }}>
                 Page {currentPage} of {totalPages}
               </span>
               <button
@@ -267,20 +335,36 @@ const ActivityPanel = ({ logs }) => {
 const SkillPanel = ({ skillSource, marketLive, vaultLive, onCustomize }) => {
   const custom = skillSource === 'user-local' || skillSource === 'user-file'
   return (
-    <div className="panel">
-      <div className="panel-head">
-        <div className="panel-title">Vault Advisor Skill</div>
-        <button className="panel-meta skill-customize" onClick={onCustomize}>
+    <div className="panel" style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
+      <div className="panel-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
+        <div className="panel-title" style={{ fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 500, color: 'var(--text)' }}>Vault Advisor Skill</div>
+        <button className="panel-meta skill-customize" onClick={onCustomize} style={{
+          background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: '10.5px'
+        }}>
           Customize →
         </button>
       </div>
-      <div className="perm-status active">
-        {custom ? 'Custom strategy' : 'Default strategy by Vibing Farmer'}
-      </div>
-      <div className="skill-sub">
-        {custom ? 'Active · user-defined' : '4 vaults · expert framework'}
-        {marketLive != null && ` · ${marketLive ? 'Live market data' : 'Static context'}`}
-        {vaultLive != null && ` · ${vaultLive ? 'Live vault data' : 'Cached vaults'}`}
+      <div style={{
+        background: 'linear-gradient(135deg, var(--bg-card) 0%, var(--bg-base) 100%)',
+        border: '1px solid var(--border-strong)', borderRadius: 'var(--radius-md)',
+        padding: '12px 14px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
+      }}>
+        <div className="perm-status active" style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          fontFamily: 'var(--font-mono)', fontSize: '11.5px',
+          color: 'var(--text)', marginBottom: 4
+        }}>
+          <span style={{
+            width: 6, height: 6, borderRadius: '50%',
+            background: 'var(--accent)', boxShadow: '0 0 6px var(--accent)'
+          }} />
+          {custom ? 'Custom strategy' : 'Default strategy'}
+        </div>
+        <div className="skill-sub" style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+          {custom ? 'Active · user-defined' : '4 vaults · expert framework'}
+          {marketLive != null && ` · ${marketLive ? 'Live market' : 'Static context'}`}
+          {vaultLive != null && ` · ${vaultLive ? 'Live vaults' : 'Cached'}`}
+        </div>
       </div>
     </div>
   )
@@ -314,7 +398,7 @@ const PALETTES = [
 ]
 
 const PalettePicker = ({ value, onChange }) => (
-  <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
     {PALETTES.map((p) => {
       const on = p.id === value
       return (
@@ -327,17 +411,19 @@ const PalettePicker = ({ value, onChange }) => (
             gridTemplateColumns: 'auto 1fr auto',
             alignItems: 'center',
             gap: 10,
-            padding: '7px 9px',
-            border: on ? '.5px solid rgba(0,0,0,.35)' : '.5px solid rgba(0,0,0,.08)',
-            borderRadius: 7,
-            background: on ? 'rgba(255,255,255,.85)' : 'rgba(255,255,255,.4)',
+            padding: '8px 10px',
+            border: on ? '1px solid var(--border-accent)' : '1px solid var(--border)',
+            borderRadius: 'var(--radius-md)',
+            background: on ? 'var(--bg-elev)' : 'var(--bg-card)',
             cursor: 'pointer',
             textAlign: 'left',
             font: 'inherit',
             color: 'inherit',
+            transition: 'all 0.15s ease',
+            boxShadow: on ? '0 0 12px var(--accent-soft)' : 'none'
           }}
         >
-          <div style={{ display: 'flex', gap: 2 }}>
+          <div style={{ display: 'flex', gap: 3 }}>
             {p.swatch.map((c, i) => (
               <span
                 key={i}
@@ -346,20 +432,20 @@ const PalettePicker = ({ value, onChange }) => (
                   height: 12,
                   borderRadius: 3,
                   background: c,
-                  border: '.5px solid rgba(0,0,0,.1)',
+                  border: '1px solid rgba(255,255,255,0.08)',
                 }}
               />
             ))}
           </div>
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontWeight: 500, fontSize: 11.5 }}>{p.name}</div>
+            <div style={{ fontWeight: 600, fontSize: 11.5, color: on ? 'var(--accent)' : 'var(--text)' }}>{p.name}</div>
             <div
-              style={{ fontSize: 10, color: 'rgba(41,38,27,.55)', marginTop: 1, lineHeight: 1.3 }}
+              style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2, lineHeight: 1.3 }}
             >
               {p.desc}
             </div>
           </div>
-          <span style={{ fontSize: 11, color: on ? 'rgba(41,38,27,.7)' : 'transparent' }}>✓</span>
+          <span style={{ fontSize: 12, fontWeight: 'bold', color: on ? 'var(--accent)' : 'transparent' }}>✓</span>
         </button>
       )
     })}

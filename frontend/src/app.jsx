@@ -1955,12 +1955,10 @@ const App = () => {
     })
   }
 
-  const handleAgain = () => {
+  const handleAgain = (overrideAmount) => {
     setStage('strategy')
     navigate('/strategy')
     setFurthest(0)
-    setStrategyPhase('input')
-    setThinkingPhase(0)
     setStrategy(null)
     setRawStrategy(null)
     setStrategyAttestation(null)
@@ -1980,6 +1978,16 @@ const App = () => {
     setExecMap({})
     setLogs([])
     agentMapRef.current = {}
+
+    if (overrideAmount !== undefined && overrideAmount !== null && (typeof overrideAmount === 'number' || typeof overrideAmount === 'string' || !isNaN(Number(overrideAmount)))) {
+      setAmount(String(overrideAmount))
+      setStrategyPhase('thinking')
+      setThinkingPhase(0)
+      addLog({ event: 'OrchestratorPlanned', meta: `${overrideAmount} usdc · ${risk} risk · planning` })
+    } else {
+      setStrategyPhase('input')
+      setThinkingPhase(0)
+    }
   }
 
   const handleRevoke = () => {

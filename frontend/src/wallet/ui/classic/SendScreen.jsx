@@ -17,30 +17,50 @@ export default function SendScreen({ from, onPreview, onConfirm, preview, busy, 
       <h2>Send</h2>
       <label>
         Destination
-        <input aria-label="destination" value={to} onChange={(e) => setTo(e.target.value)} />
+        <input
+          aria-label="destination"
+          placeholder="G... or federation address"
+          value={to}
+          onChange={(e) => setTo(e.target.value)}
+        />
       </label>
       <label>
         Amount (XLM)
-        <input aria-label="amount" value={amount} onChange={(e) => setAmount(e.target.value)} />
+        <input
+          aria-label="amount"
+          placeholder="0.00"
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+        />
       </label>
       <label>
         Memo (optional)
-        <input value={memo} onChange={(e) => setMemo(e.target.value)} />
+        <input
+          placeholder="Text, ID, or hash"
+          value={memo}
+          onChange={(e) => setMemo(e.target.value)}
+        />
       </label>
       <button
-        className="vf-btn"
+        className="vf-btn primary"
         disabled={busy || !to || !amount}
         onClick={() => {
           setReviewed({ to, amount, memo })
           onPreview({ from, to, asset: 'XLM', amount, memo })
         }}
       >
-        Review
+        {busy ? 'Building…' : 'Review transaction'}
       </button>
 
       {preview && (
         <div className="vf-confirm-card">
-          <h3>Confirm — you are signing this</h3>
+          <h3>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 11l3 3L22 4"></path>
+              <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+            </svg>
+            Confirm transaction
+          </h3>
           <dl>
             <dt>To</dt>
             <dd>{preview.confirm.ops[0]?.destination}</dd>

@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { resolve } from 'path'
-import { copyFileSync, cpSync } from 'node:fs'
+import { copyFileSync, cpSync, readFileSync, writeFileSync } from 'node:fs'
 
 // Second build target: emits the unpacked MV3 extension into ../extension-dist.
 // root = this dir so the HTML entries emit flat at the dist root (not nested under extension/),
@@ -11,6 +11,7 @@ const OUT = resolve(__dirname, '../extension-dist')
 
 export default defineConfig({
   root: __dirname,
+  envDir: resolve(__dirname, '..'),
   plugins: [
     react(),
     {
@@ -21,6 +22,11 @@ export default defineConfig({
           resolve(__dirname, 'vibing_farmer.logo.svg'),
           resolve(OUT, 'vibing_farmer.logo.svg')
         )
+        // Copy background.js directly and remove the "export" keyword so it runs as a classic script
+        const bgContent = readFileSync(resolve(__dirname, 'background.js'), 'utf-8')
+        const cleanBg = bgContent.replace('export async function handleMessage', 'async function handleMessage')
+        writeFileSync(resolve(OUT, 'background.js'), cleanBg)
+
         cpSync(resolve(__dirname, 'icons'), resolve(OUT, 'icons'), { recursive: true })
       },
     },
@@ -49,7 +55,6 @@ export default defineConfig({
       input: {
         popup: resolve(__dirname, 'popup.html'),
         ceremony: resolve(__dirname, 'ceremony.html'),
-        background: resolve(__dirname, 'background.js'),
       },
       output: { entryFileNames: '[name].js', format: 'es' },
     },
