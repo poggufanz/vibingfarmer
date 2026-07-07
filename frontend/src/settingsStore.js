@@ -14,6 +14,8 @@ export const SETTINGS_KEYS = {
   alertBanner: 'yv_alert_banner', // boolean
   timestampFormat: 'yv_timestamp_format', // 'relative' | 'absolute'
   language: 'yv_language', // 'en' | 'id'
+  maxIterations: 'yv_max_iterations', // 1-10, default 5
+  varAlpha: 'yv_var_alpha', // 0.01-0.10, default 0.05
 }
 
 export const SETTINGS_DEFAULTS = {
@@ -28,6 +30,8 @@ export const SETTINGS_DEFAULTS = {
   alertBanner: true,
   timestampFormat: 'relative',
   language: 'en',
+  maxIterations: 5,
+  varAlpha: 0.05,
 }
 
 // Secret API keys live in sessionStorage, not localStorage: they clear on tab
