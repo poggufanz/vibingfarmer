@@ -2,13 +2,15 @@
 // frontend/scripts/assert-no-dev-dispatch.mjs
 // Build-time assert wired as the `postbuild` npm hook (package.json) — npm runs this
 // automatically right after `npm run build`. Proves the dev-only __vfDevDispatchRawCall escape
-// hatch (src/dev/devDispatch.js, DEV-gated import in main.jsx) never ships in the production
-// bundle. Fails the build (non-zero exit) if the symbol is found anywhere under dist/.
+// hatch (src/dev/devDispatch.js, DEV-gated import in main.jsx) AND its companion
+// __vfDevMandateFixture (DEV-gated assignment in src/screens/CrossChainFarmFlow.jsx) never ship
+// in the production bundle. Fails the build (non-zero exit) if either symbol is found anywhere
+// under dist/.
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
 const DIST_DIR = join(process.cwd(), 'dist')
-const FORBIDDEN = '__vfDevDispatchRawCall'
+const FORBIDDEN = ['__vfDevDispatchRawCall', '__vfDevMandateFixture']
 
 function collectFiles(dir) {
   return readdirSync(dir).flatMap((name) => {
@@ -26,12 +28,17 @@ try {
 }
 
 const jsFiles = files.filter((f) => f.endsWith('.js'))
-const hits = jsFiles.filter((f) => readFileSync(f, 'utf8').includes(FORBIDDEN))
+const hits = jsFiles.flatMap((f) => {
+  const content = readFileSync(f, 'utf8')
+  return FORBIDDEN.filter((symbol) => content.includes(symbol)).map((symbol) => ({ f, symbol }))
+})
 
 if (hits.length > 0) {
-  console.error(`assert-no-dev-dispatch: FOUND "${FORBIDDEN}" in production bundle:`)
-  for (const f of hits) console.error(`  ${f}`)
+  console.error(`assert-no-dev-dispatch: FOUND forbidden dev-only symbol(s) in production bundle:`)
+  for (const { f, symbol } of hits) console.error(`  ${symbol} in ${f}`)
   process.exit(1)
 }
 
-console.log(`assert-no-dev-dispatch: OK — "${FORBIDDEN}" absent from ${jsFiles.length} dist .js file(s)`)
+console.log(
+  `assert-no-dev-dispatch: OK — ${FORBIDDEN.map((s) => `"${s}"`).join(', ')} absent from ${jsFiles.length} dist .js file(s)`
+)

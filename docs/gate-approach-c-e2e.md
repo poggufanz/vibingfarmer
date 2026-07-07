@@ -15,7 +15,7 @@ this file is a template until a real run fills it in, not a permanently-empty pl
 | Wrong selector (sweep-equivalent) rejected | _(fill in)_ | |
 | Wrong target rejected | _(fill in)_ | |
 | **Over-cap rejected (NEW vs. SP0)** | _(fill in)_ | |
-| **Expired mandate rejected (NEW vs. SP0)** | _(fill in)_ | |
+| **Expired mandate rejected (NEW vs. SP0)** | SKIP until a separately-issued expired approval is wired into `window.__vfDevMandateFixture.expired` — a skip here is NOT proof of rejection, see `frontend/scripts/smoke-mandate.mjs` | |
 
 ## Manual walk (real device passkey, real Face-ID/Windows-Hello/security key)
 

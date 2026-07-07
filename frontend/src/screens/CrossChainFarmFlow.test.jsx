@@ -7,6 +7,7 @@ import CrossChainFarmFlow from './CrossChainFarmFlow.jsx'
 afterEach(() => {
   cleanup() // @testing-library/react v16 does not auto-clean; unmount between tests
   vi.clearAllMocks() // module-wide vi.mock spies otherwise leak call history across tests
+  delete window.__vfDevMandateFixture // DEV-only global the mandate step writes; never leak across tests
 })
 
 vi.mock('../wallet/passkeyStellar.js', () => ({ createStellarPasskeyWallet: vi.fn() }))
@@ -100,6 +101,11 @@ describe('CrossChainFarmFlow', () => {
       mode: 'register',
     })
 
+    // Mandate step renders both onboarded addresses — smoke-mandate.mjs waits on these testids,
+    // and a real user needs the Stellar address visible to fund the fresh wallet.
+    expect(screen.getByTestId('stellar-wallet-address').textContent).toBe(STELLAR_WALLET.address)
+    expect(screen.getByTestId('base-account-address').textContent).toBe(BASE_ACCOUNT.address)
+
     fireEvent.click(screen.getByRole('button', { name: /create mandate/i }))
 
     await waitFor(() => expect(createMandate).toHaveBeenCalled())
@@ -128,6 +134,21 @@ describe('CrossChainFarmFlow', () => {
     expect(screen.getByText(/morpho-blue/i)).toBeTruthy()
     expect(screen.queryByText(/drifted-pool/i)).toBeNull()
     expect(allocateBasePools).toHaveBeenCalledTimes(1)
+
+    // Farm step renders truncated approval evidence — smoke-mandate.mjs waits on this testid.
+    expect(screen.getByTestId('mandate-serialized-approval').textContent).toBe(
+      `${MANDATE_RESULT.serializedApproval.slice(0, 16)}…`
+    )
+
+    // DEV-only fixture: the smoke script's out-of-policy scenarios (window.__vfDevDispatchRawCall)
+    // read live session material from here instead of vacuously passing. Under vitest,
+    // import.meta.env.DEV is true, so the assignment in handleCreateMandate runs.
+    expect(window.__vfDevMandateFixture).toEqual({
+      publicClient: BASE_ACCOUNT.publicClient,
+      serializedApproval: MANDATE_RESULT.serializedApproval,
+      sessionPrivateKey: MANDATE_RESULT.sessionPrivateKey,
+      pool: ALLOCATIONS[0].pool,
+    })
   })
 
   test('surfaces an onboarding error without advancing past the onboard step', async () => {

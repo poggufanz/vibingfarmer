@@ -13,7 +13,10 @@
 // sessionPrivateKey never leaves the handleCreateMandate closure below: it is read from
 // createMandate's return value, handed to postMandate, and discarded — never stored in state,
 // never logged. postFarm (inside Farm -> crossChainFarm.js) never carries it (controller
-// decision, plan Option 2).
+// decision, plan Option 2). DEV-only exception: when import.meta.env.DEV, the same closure also
+// mirrors the material onto window.__vfDevMandateFixture so scripts/smoke-mandate.mjs's
+// out-of-policy scenarios (via src/dev/devDispatch.js) have real session material to exercise —
+// stripped from production builds, see scripts/assert-no-dev-dispatch.mjs.
 import { useState, useCallback } from 'react'
 import { createStellarPasskeyWallet } from '../wallet/passkeyStellar.js'
 import { createBaseSmartAccount } from '../wallet/passkeyBase.js'
@@ -93,6 +96,19 @@ export default function CrossChainFarmFlow() {
         sessionPrivateKey: mandate.sessionPrivateKey,
       })
 
+      // DEV-only: hands the live session material to the smoke script's out-of-policy scenarios
+      // (window.__vfDevDispatchRawCall). Statically stripped from production builds
+      // (import.meta.env.DEV is compile-time false) — enforced by
+      // scripts/assert-no-dev-dispatch.mjs postbuild.
+      if (import.meta.env.DEV && typeof window !== 'undefined') {
+        window.__vfDevMandateFixture = {
+          publicClient: baseAccount.publicClient,
+          serializedApproval: mandate.serializedApproval,
+          sessionPrivateKey: mandate.sessionPrivateKey,
+          pool: allocs[0].pool,
+        }
+      }
+
       setAllocations(allocs)
       setSerializedApproval(mandate.serializedApproval)
       setSessionKeyAddress(mandate.sessionKeyAddress)
@@ -157,6 +173,12 @@ export default function CrossChainFarmFlow() {
     return (
       <section className="cross-chain-farm-flow cross-chain-farm-flow--mandate">
         <h2>Set your farming mandate</h2>
+        <p>
+          Stellar wallet: <code data-testid="stellar-wallet-address">{stellarWallet.address}</code>
+        </p>
+        <p>
+          Base account: <code data-testid="base-account-address">{baseAccount.address}</code>
+        </p>
         <label>
           Amount (USDC)
           <input type="number" value={amount} onChange={(e) => setAmount(Number(e.target.value))} />
@@ -189,6 +211,12 @@ export default function CrossChainFarmFlow() {
     <div className="cross-chain-farm-flow cross-chain-farm-flow--farm">
       {view === VIEW.FARM && (
         <>
+          <p>
+            Mandate approval:{' '}
+            <code data-testid="mandate-serialized-approval">
+              {serializedApproval && serializedApproval.slice(0, 16)}…
+            </code>
+          </p>
           <Farm
             amount={amount}
             riskLevel={riskLevel}
