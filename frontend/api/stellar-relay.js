@@ -22,6 +22,11 @@ const RELAYER_SECRET = () => process.env.STELLAR_RELAYER_SECRET || ''
 const VAULT_ADDR = () => process.env.SOROBAN_VAULT_ADDRESS || ''
 const TOKEN_ADDR = () => process.env.SOROBAN_TOKEN_ADDRESS || ''
 const AGENT_ALLOWLIST = () => process.env.SOROBAN_AGENT_ALLOWLIST || ''
+// Content-addressed pin of the OZ smart-account wasm SAK deploys (see wallet/config.js
+// ACCOUNT_WASM_HASH — same inline-constant discipline). Env-overridable, never secret.
+const ACCOUNT_WASM_HASH = () =>
+  process.env.SOROBAN_ACCOUNT_WASM_HASH ||
+  'a12e8fa9621efd20315753bd4007d974390e31fbcb4a7ddc4dd0a0dec728bf2e'
 
 // Fee-bump base fee = inner fee + this margin (stroops). 0.1 XLM is generous on testnet and
 // safely clears the SDK's "fee-bump fee >= inner fee" floor for our single-op deposit txs.
@@ -59,15 +64,41 @@ function parseAllowlist(raw) {
  * free fee sponsorship just by starting with 'C'). FAIL CLOSED: tokenAddr set but
  * agentAllowlist empty/unset rejects every transfer (deposit/redeem branches unaffected).
  * No-op when vaultAddr is falsy. Throws RelayError on mismatch.
+ *
+ * When `accountWasmHash` is set, ALSO sponsors a single createContractV2 deploy whose wasm
+ * executable is EXACTLY that hash — SAK's `kit.createWallet(autoSubmit)` posts the passkey
+ * smart-account deploy tx here (bare `{xdr}`, no action). The content-address pin means the
+ * relayer only ever pays to deploy the audited OZ smart-account wasm, never attacker code.
+ * FAIL CLOSED: no pin (default '') → every deploy rejected; V1 createContract and non-wasm
+ * executables (SAC) rejected unconditionally.
  */
-export function assertVaultDeposit(inner, vaultAddr, sdk, tokenAddr = '', agentAllowlist = '') {
+export function assertVaultDeposit(
+  inner,
+  vaultAddr,
+  sdk,
+  tokenAddr = '',
+  agentAllowlist = '',
+  accountWasmHash = ''
+) {
   if (!vaultAddr) return
   const ops = inner.operations || []
   if (ops.length !== 1 || ops[0].type !== 'invokeHostFunction') {
     throw new RelayError('relay sponsors a single contract invocation only')
   }
   const hf = ops[0].func
-  if (hf.switch().name !== 'hostFunctionTypeInvokeContract') {
+  const kind = hf.switch().name
+  if (kind === 'hostFunctionTypeCreateContractV2') {
+    const exec = hf.createContractV2().executable()
+    const isPinnedWasm =
+      accountWasmHash &&
+      exec.switch().name === 'contractExecutableWasm' &&
+      exec.wasmHash().toString('hex') === accountWasmHash
+    if (!isPinnedWasm) {
+      throw new RelayError('relay sponsors smart-account deploys of the pinned wasm only')
+    }
+    return
+  }
+  if (kind !== 'hostFunctionTypeInvokeContract') {
     throw new RelayError('inner op is not a contract invocation')
   }
   const ic = hf.invokeContract()
@@ -118,6 +149,7 @@ export async function feeBumpAndSubmit({
   vaultAddr,
   tokenAddr = '',
   agentAllowlist = '',
+  accountWasmHash = '',
   sdk,
   rpcServer,
   pollTries = 10,
@@ -129,7 +161,7 @@ export async function feeBumpAndSubmit({
   if (inner instanceof FeeBumpTransaction) {
     throw new RelayError('inner tx is already fee-bumped')
   }
-  assertVaultDeposit(inner, vaultAddr, sdk, tokenAddr, agentAllowlist)
+  assertVaultDeposit(inner, vaultAddr, sdk, tokenAddr, agentAllowlist, accountWasmHash)
 
   // Replay short-circuit (don't pay to re-broadcast a spent inner tx).
   const innerHash = inner.hash().toString('hex')
@@ -212,7 +244,10 @@ export default async function handler(req, res) {
       return res.end(JSON.stringify({ address: mod.Keypair.fromSecret(secret).publicKey() }))
     }
 
-    if (body.action === 'submit') {
+    // SAK's RelayerClient.sendXdr (kit.createWallet autoSubmit) posts a bare { xdr } with no
+    // action field — treat it as a submit. The guard inside feeBumpAndSubmit still applies:
+    // only the pinned smart-account deploy or the vault/token allowlist gets sponsored.
+    if (body.action === 'submit' || (!body.action && typeof body.xdr === 'string')) {
       if (typeof body.xdr !== 'string' || !body.xdr) return bad(res, 'Invalid xdr')
       const rpcServer = new mod.rpc.Server(RPC_URL())
       try {
@@ -223,6 +258,7 @@ export default async function handler(req, res) {
           vaultAddr: VAULT_ADDR(),
           tokenAddr: TOKEN_ADDR(),
           agentAllowlist: AGENT_ALLOWLIST(),
+          accountWasmHash: ACCOUNT_WASM_HASH(),
           sdk,
           rpcServer,
         })
