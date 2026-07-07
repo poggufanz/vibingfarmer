@@ -272,3 +272,50 @@ describe('assertVaultDeposit', () => {
     expect(() => assertVaultDeposit(depositTx('CANY', 'anything'), '', sdkAddr)).not.toThrow()
   })
 })
+
+const SAK_WASM = 'a12e8fa9621efd20315753bd4007d974390e31fbcb4a7ddc4dd0a0dec728bf2e'
+
+// A fake inner tx whose single op decodes to createContractV2 with the given wasm executable.
+function deployTx(hashHex, execKind = 'contractExecutableWasm') {
+  return {
+    operations: [
+      {
+        type: 'invokeHostFunction',
+        func: {
+          switch: () => ({ name: 'hostFunctionTypeCreateContractV2' }),
+          createContractV2: () => ({
+            executable: () => ({
+              switch: () => ({ name: execKind }),
+              wasmHash: () => Buffer.from(hashHex, 'hex'),
+            }),
+          }),
+        },
+      },
+    ],
+  }
+}
+
+describe('assertVaultDeposit — smart-account deploy sponsorship (SAK createWallet)', () => {
+  it('passes a createContractV2 deploy of the pinned smart-account wasm', () => {
+    const tx = deployTx(SAK_WASM)
+    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, '', '', SAK_WASM)).not.toThrow()
+  })
+  it('rejects a deploy of any other wasm (attacker contract gets no free deploy)', () => {
+    const tx = deployTx('deadbeef'.repeat(8))
+    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, '', '', SAK_WASM)).toThrow(RelayError)
+  })
+  it('rejects every deploy when no wasm hash is pinned (fail closed, default param)', () => {
+    const tx = deployTx(SAK_WASM)
+    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr)).toThrow(RelayError)
+    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '')).toThrow(RelayError)
+  })
+  it('rejects a non-wasm executable (stellar-asset SAC deploy is not a smart account)', () => {
+    const tx = deployTx(SAK_WASM, 'contractExecutableStellarAsset')
+    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, '', '', SAK_WASM)).toThrow(RelayError)
+  })
+  it('still rejects V1 createContract (SAK posts V2 only — anything else stays closed)', () => {
+    const tx = deployTx(SAK_WASM)
+    tx.operations[0].func.switch = () => ({ name: 'hostFunctionTypeCreateContract' })
+    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, '', '', SAK_WASM)).toThrow(RelayError)
+  })
+})

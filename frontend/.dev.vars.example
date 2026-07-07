@@ -50,3 +50,10 @@ VF_AUTH_SIGNING_KEY=S...        # server SEP-10 signing keypair secret (testnet)
 VF_JWT_SECRET=change-me-32-chars-min
 VF_HOME_DOMAIN=localhost:5173   # SEP-10 home_domain / web_auth_domain
 VF_GLOBAL_DAILY_CAP=5000        # global upstream budget per scope per day
+
+# ─── On-ramp widget (SP4, read by /api/onramp-session) ───
+# Server-only. Get keys from the Transak Partner Dashboard: https://dashboard.transak.com
+TRANSAK_API_KEY=your_transak_api_key
+TRANSAK_ACCESS_TOKEN=your_transak_access_token
+TRANSAK_ENVIRONMENT=STAGING
+TRANSAK_REFERRER_DOMAIN=vibing-farmer.pages.dev

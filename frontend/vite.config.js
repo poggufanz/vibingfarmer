@@ -7,6 +7,7 @@ import searchProxy from './api/search.js'
 import stellarRelayProxy from './api/stellar-relay.js'
 import faucetProxy from './api/faucet.js'
 import vfRouter from './api/vf/_router.js'
+import onrampSessionProxy from './api/onramp-session.js'
 
 // Repo root (parent of frontend/) — needed below so the dev server's fs.allow boundary covers
 // frontend/src/stellar/vaultReads.js's cross-package import of keeper/src/apr.js.
@@ -35,6 +36,12 @@ export default defineConfig(({ mode }) => {
   if (env.VF_GLOBAL_DAILY_CAP) process.env.VF_GLOBAL_DAILY_CAP = env.VF_GLOBAL_DAILY_CAP
   if (env.VF_VAULT_CATALOG) process.env.VF_VAULT_CATALOG = env.VF_VAULT_CATALOG
 
+  // On-ramp widget (SP4) — server-side only, never in the client bundle.
+  if (env.TRANSAK_API_KEY) process.env.TRANSAK_API_KEY = env.TRANSAK_API_KEY
+  if (env.TRANSAK_ACCESS_TOKEN) process.env.TRANSAK_ACCESS_TOKEN = env.TRANSAK_ACCESS_TOKEN
+  if (env.TRANSAK_ENVIRONMENT) process.env.TRANSAK_ENVIRONMENT = env.TRANSAK_ENVIRONMENT
+  if (env.TRANSAK_REFERRER_DOMAIN) process.env.TRANSAK_REFERRER_DOMAIN = env.TRANSAK_REFERRER_DOMAIN
+
   const apiProxyPlugin = {
     name: 'api-proxy',
     configureServer(s) {
@@ -43,6 +50,7 @@ export default defineConfig(({ mode }) => {
       s.middlewares.use('/api/search', searchProxy)
       s.middlewares.use('/api/stellar-relay', stellarRelayProxy)
       s.middlewares.use('/api/faucet', faucetProxy)
+      s.middlewares.use('/api/onramp-session', onrampSessionProxy)
     },
     configurePreviewServer(s) {
       s.middlewares.use('/api/vf', vfRouter)
@@ -50,6 +58,7 @@ export default defineConfig(({ mode }) => {
       s.middlewares.use('/api/search', searchProxy)
       s.middlewares.use('/api/stellar-relay', stellarRelayProxy)
       s.middlewares.use('/api/faucet', faucetProxy)
+      s.middlewares.use('/api/onramp-session', onrampSessionProxy)
     },
   }
 
@@ -90,6 +99,19 @@ export default defineConfig(({ mode }) => {
     },
     optimizeDeps: {
       include: ['react-force-graph-2d'],
+    },
+    // Vitest-only env. base/config.js and src/config.js's BASE_POOL_CATALOG fail loudly at module
+    // load on a missing 0x address (deliberate — see their docstrings). Tests import those modules
+    // statically without real deployments, so provide throwaway placeholder addresses here; a
+    // per-test vi.stubEnv still overrides these (config.test.js relies on that). Never used by
+    // `vite dev`/`vite build` — this key is read only under vitest.
+    test: {
+      env: {
+        VITE_YIELD_ROUTER_ADDRESS: '0x1111111111111111111111111111111111111111',
+        VITE_BASE_POOL_1_ADDRESS: '0x1111111111111111111111111111111111111112',
+        VITE_BASE_POOL_2_ADDRESS: '0x1111111111111111111111111111111111111113',
+        VITE_BASE_POOL_3_ADDRESS: '0x1111111111111111111111111111111111111114',
+      },
     },
   }
 })
