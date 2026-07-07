@@ -45,6 +45,20 @@ async function main() {
   await page.addInitScript(() => {
     localStorage.setItem('yv_skip_landing', 'true')
     localStorage.setItem('yv_onboarded', 'true')
+    // Emulate a real platform authenticator's algorithm support (Windows Hello / Face ID =
+    // ES256, no Ed25519). The CDP virtual authenticator happily honors alg -8, but ZeroDev's
+    // register options list [-8, -7] and its toWebAuthnKey imports the credential as P-256 —
+    // an Ed25519 pick dies there with an (empty-message) DataError. When ES256 (-7) is offered,
+    // drop Ed25519 (-8); SAK's Stellar ceremony offers only -8 and passes through untouched.
+    const c = navigator.credentials
+    const origCreate = c.create.bind(c)
+    c.create = (options) => {
+      const params = options?.publicKey?.pubKeyCredParams
+      if (Array.isArray(params) && params.some((p) => p.alg === -7)) {
+        options.publicKey.pubKeyCredParams = params.filter((p) => p.alg !== -8)
+      }
+      return origCreate(options)
+    }
   })
   await page.goto(`${APP_URL}/farm`)
 

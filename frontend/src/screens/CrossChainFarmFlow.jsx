@@ -68,7 +68,9 @@ export default function CrossChainFarmFlow() {
       setStep(STEP.MANDATE)
     } catch (err) {
       setOnboardStatus('error')
-      setOnboardError(err.message)
+      // A message-less rejection must still surface — an empty error string renders NO alert
+      // and is indistinguishable from a silent hang.
+      setOnboardError(err?.message || String(err))
     }
   }, [email])
 
@@ -116,7 +118,7 @@ export default function CrossChainFarmFlow() {
       setStep(STEP.FARM)
     } catch (err) {
       setMandateStatus('error')
-      setMandateError(err.message)
+      setMandateError(err?.message || String(err))
     }
   }, [amount, riskLevel, nPools, baseAccount])
 
@@ -135,7 +137,7 @@ export default function CrossChainFarmFlow() {
       setView(VIEW.WITHDRAW)
     } catch (err) {
       setPositionsStatus('error')
-      setPositionsError(err.message)
+      setPositionsError(err?.message || String(err))
     }
   }, [allocations, baseAccount])
 
