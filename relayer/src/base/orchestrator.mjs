@@ -1,7 +1,10 @@
 // Fires the AI strategist's per-pool allocations as gasless session-key userOps against
-// YieldRouter.deposit, one per allocation, via Promise.allSettled so a single rejected pool
-// (paused, cap hit, expired session) never aborts the rest of the swarm — the same resilience
-// pattern the existing Stellar worker swarm uses (frontend/src/orchestrator.js).
+// YieldRouter.deposit, one per allocation, SERIALLY, with allSettled-shaped results so a single
+// rejected pool (paused, cap hit, expired session) never aborts the rest of the swarm.
+// Serial is load-bearing, not a style choice: every userOp comes from the SAME session smart
+// account, and the first one carries the account deployment + permission-enable. Dispatching a
+// second op before the first lands makes the bundler simulate the enable again — proven live as
+// `AA23 reverted duplicate permissionHash` (zd_sponsorUserOperation 400) on the 2nd pool.
 
 import { encodeFunctionData } from 'viem';
 import { reconstructSessionClient } from './session.mjs';
@@ -38,9 +41,10 @@ export function createOrchestrator(config) {
   } = config;
 
   /**
-   * Fires one YieldRouter.deposit(pool, amount, minShares) userOp per allocation, in parallel,
-   * via Promise.allSettled. Returns one settled-result entry per allocation, same order/length
-   * — a rejected entry means that pool's slice stays as USDC in the smart account, others proceed.
+   * Fires one YieldRouter.deposit(pool, amount, minShares) userOp per allocation, SERIALLY —
+   * next op only after the previous receipt (see header: duplicate-permissionHash guard).
+   * Returns one allSettled-shaped entry per allocation, same order/length — a rejected entry
+   * means that pool's slice stays as USDC in the smart account, later pools still proceed.
    * @param {string} approval - serialized session approval from the SP3 mandate ceremony
    * @param {{pool:string, amount:bigint, minShares:bigint}[]} allocations
    */
@@ -49,26 +53,34 @@ export function createOrchestrator(config) {
       chain, rpcUrl, bundlerRpcUrl, approval, sessionPrivateKey,
     });
 
-    const settled = await Promise.allSettled(allocations.map(async (allocation) => {
-      const approveData = encodeFunctionData({
-        abi: APPROVE_ABI, functionName: 'approve', args: [yieldRouterAddress, allocation.amount],
-      });
-      const depositData = encodeFunctionData({
-        abi: YIELD_ROUTER_ABI, functionName: 'deposit',
-        args: [allocation.pool, allocation.amount, allocation.minShares],
-      });
-      const callData = await kernelClient.account.encodeCalls([
-        { to: usdcAddress, value: 0n, data: approveData },
-        { to: yieldRouterAddress, value: 0n, data: depositData },
-      ]);
-      const userOpHash = await kernelClient.sendUserOperation({ callData });
-      const receipt = await kernelClient.waitForUserOperationReceipt({ hash: userOpHash, timeout: USEROP_TIMEOUT_MS });
-      const success = receipt?.success === true || receipt?.receipt?.status === 'success';
-      if (!success) throw new Error(`deposit into ${allocation.pool} was mined but did not succeed`);
-      return { pool: allocation.pool, userOpHash, txHash: receipt?.receipt?.transactionHash };
-    }));
-
-    return settled.map((result, i) => ({ pool: allocations[i].pool, ...result }));
+    const results = [];
+    for (const allocation of allocations) {
+      try {
+        const approveData = encodeFunctionData({
+          abi: APPROVE_ABI, functionName: 'approve', args: [yieldRouterAddress, allocation.amount],
+        });
+        const depositData = encodeFunctionData({
+          abi: YIELD_ROUTER_ABI, functionName: 'deposit',
+          args: [allocation.pool, allocation.amount, allocation.minShares],
+        });
+        const callData = await kernelClient.account.encodeCalls([
+          { to: usdcAddress, value: 0n, data: approveData },
+          { to: yieldRouterAddress, value: 0n, data: depositData },
+        ]);
+        const userOpHash = await kernelClient.sendUserOperation({ callData });
+        const receipt = await kernelClient.waitForUserOperationReceipt({ hash: userOpHash, timeout: USEROP_TIMEOUT_MS });
+        const success = receipt?.success === true || receipt?.receipt?.status === 'success';
+        if (!success) throw new Error(`deposit into ${allocation.pool} was mined but did not succeed`);
+        results.push({
+          pool: allocation.pool,
+          status: 'fulfilled',
+          value: { pool: allocation.pool, userOpHash, txHash: receipt?.receipt?.transactionHash },
+        });
+      } catch (reason) {
+        results.push({ pool: allocation.pool, status: 'rejected', reason });
+      }
+    }
+    return results;
   }
 
   return { dispatchDeposits };

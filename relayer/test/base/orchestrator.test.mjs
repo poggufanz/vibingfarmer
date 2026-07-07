@@ -67,4 +67,40 @@ describe('dispatchDeposits', () => {
     expect(results[1].reason.message).toMatch(/pool paused/);
     expect(results[2].status).toBe('fulfilled');
   });
+
+  it('dispatches SERIALLY — the next userOp is not sent until the previous receipt lands (first op deploys the session account + enables the permission; a concurrent second op reverts AA23 "duplicate permissionHash")', async () => {
+    const kernelClient = buildMockKernelClient();
+    let sends = 0;
+    let resolveFirstReceipt;
+    kernelClient.sendUserOperation = vi.fn(async () => `0xop-${++sends}`);
+    kernelClient.waitForUserOperationReceipt = vi.fn(({ hash }) =>
+      hash === '0xop-1'
+        ? new Promise((res) => {
+            resolveFirstReceipt = () =>
+              res({ success: true, receipt: { status: 'success', transactionHash: '0xt1' } });
+          })
+        : Promise.resolve({ success: true, receipt: { status: 'success', transactionHash: '0xt2' } })
+    );
+    const reconstructSessionClientFn = vi.fn().mockResolvedValue(kernelClient);
+    const orchestrator = createOrchestrator({
+      chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org', bundlerRpcUrl: 'https://rpc.zerodev.app/x',
+      yieldRouterAddress: '0x00000000000000000000000000000000000000f1',
+      usdcAddress: '0x00000000000000000000000000000000000000dd',
+      sessionPrivateKey: '0xsession', reconstructSessionClientFn,
+    });
+
+    const allocations = [
+      { pool: '0x00000000000000000000000000000000000000a1', amount: 100n, minShares: 90n },
+      { pool: '0x00000000000000000000000000000000000000b2', amount: 200n, minShares: 190n },
+    ];
+
+    const pending = orchestrator.dispatchDeposits('serialized-approval', allocations);
+    await new Promise((r) => setTimeout(r, 25));
+    expect(kernelClient.sendUserOperation).toHaveBeenCalledTimes(1); // second op MUST wait
+
+    resolveFirstReceipt();
+    const results = await pending;
+    expect(kernelClient.sendUserOperation).toHaveBeenCalledTimes(2);
+    expect(results.every((r) => r.status === 'fulfilled')).toBe(true);
+  });
 });
