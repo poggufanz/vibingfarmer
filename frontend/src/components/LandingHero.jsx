@@ -18,22 +18,22 @@ import NavBar from './NavBar.jsx'
 /* ----------------------------- content ----------------------------- */
 
 const SCENE_2 = {
-  heading: ['Your USDC.', 'Earning yield.', 'Zero gas.'],
+  heading: ['VF Loop Engine.', 'Autonomous Yield.', 'Anti-IL Shield.'],
   features: [
-    'Venice AI picks the optimal vault allocation',
-    'Three-specialist AI Council (Yield, Risk, Market) deliberates',
-    'Monte Carlo simulation projects risk & returns',
-    'fee-bump relayer pays all gas. You pay $0',
+    'Continuous Loops: Automatic yield rebalancing and compounding on Stellar',
+    'AI Council (Yield, Risk, Market) evaluates pool health and anomalies',
+    'Active Impermanent Loss (IL) protection shields your liquidity positions',
+    'Autonomous Exit: Scoped keeper pulls funds to safety within 60 seconds',
   ],
 }
 
 const SCENE_3 = {
-  heading: ['Permission-bounded', 'autonomy.'],
+  heading: ['VF Wallet.', 'Secured and', 'Gas-Abstracted.'],
   features: [
-    'Soroban session-key scopes',
-    'ed25519 agent auth & on-chain registry',
-    'Parallel worker agents execute using ephemeral keys',
-    'On-chain strategy attestation (ERC-8004)',
+    'Smart Account: Secure passkey authentication (Face ID) or Classic mode',
+    'Scan-Before-Send: Built-in safety scanner flags recipient address risks',
+    'Zero Gas fees: Relayer-sponsored transactions protect your capital',
+    'Ephemeral Agent Keys: Permission-bounded execution fully controlled by you',
   ],
 }
 
@@ -89,14 +89,14 @@ function HeroSection({ onStart }) {
   return (
     <section className="vf-hero">
       <div className="vf-hero__copy">
-        <p className="vf-hero__eyebrow">Autonomous yield · Stellar testnet</p>
+        <p className="vf-hero__eyebrow">VF &amp; VF Wallet · Stellar testnet</p>
         <h1 className="vf-hero__headline">
-          <span>Set your yield once.</span>
-          <span className="vf-hero__headline-soft">Agents farm it forever.</span>
+          <span>Self-Custody Wallet.</span>
+          <span className="vf-hero__headline-soft">Autonomous Yield Loops.</span>
         </h1>
         <p className="vf-hero__sub">
-          Permission-bounded agents swap, approve, and deposit across vaults in parallel. Zero gas,
-          fully on-chain, fully revocable.
+          Vibing Farmer (VF) pairs a secure, scan-protected wallet with auto-compounding yield loops.
+          Protect your assets against Impermanent Loss and pool freezes autonomously.
         </p>
         <div className="vf-hero__cta">
           <button className="vf-cta__btn" onClick={onStart}>
@@ -156,14 +156,14 @@ function CtaBlock({ onStart }) {
 function OutroContent({ onStart }) {
   return (
     <>
-      <p className="vf-outro__eyebrow">the vault is open</p>
+      <p className="vf-outro__eyebrow">protect and yield</p>
       <h2 className="vf-outro__title">
-        The agents run.
+        The loops run.
         <br />
-        <span className="vf-outro__title-soft">You don't have to.</span>
+        <span className="vf-outro__title-soft">Your wallet is guarded.</span>
       </h2>
       <p className="vf-outro__sub">
-        Autonomous yield, scoped permissions, zero gas. Set once. Vibe forever.
+        Secure self-custody keys, F8 scan-before-send security, and automatic emergency exits. Set once. Vibe forever.
       </p>
       <CtaBlock onStart={onStart} />
     </>
