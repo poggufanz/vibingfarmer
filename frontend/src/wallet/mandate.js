@@ -23,7 +23,9 @@ const KERNEL_VERSION = KERNEL_V3_1
 
 /**
  * Create the mandate: a fresh ephemeral session key + a call-policy scoped to
- * `YieldRouter.deposit` on exactly `pools`, each capped at its own `cap`, expiring at `expiry`.
+ * `YieldRouter.deposit`, capped at one aggregate per-call amount = max(pool caps) and expiring at
+ * `expiry`. (Per-pool caps are not expressible in @zerodev CallPolicy — see policyEngine module
+ * note; the pool allowlist is enforced on-chain by YieldRouter.deposit's `allowedPool`.)
  * The OWNER (passkey) approves the session key by ADDRESS ONLY (`addressToEmptyAccount`) — the
  * owner-side build here never touches the session private key, mirroring session-test.mjs.
  * @param {{
