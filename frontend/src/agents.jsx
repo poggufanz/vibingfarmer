@@ -1167,6 +1167,8 @@ const LoopStatusPanel = ({ running, summary, rows, phase, nextTickAt, heartbeatM
       : 0
   const lastTs = rows && rows.length ? rows[0].ts : null
   const activeIdx = LOOP_PHASES.indexOf(phase)
+  const latestVerdict = rows && rows.length ? rows[0].verdict : null
+  const latestReason = rows && rows.length ? rows[0].reason : ''
 
   return (
     <div className={`loop-status embedded ${running ? 'is-running' : 'is-stopped'}`}>
@@ -1190,18 +1192,349 @@ const LoopStatusPanel = ({ running, summary, rows, phase, nextTickAt, heartbeatM
           />
         </div>
       )}
+      <style>{`
+        .vf-flowchart-grid {
+          display: grid;
+          grid-template-columns: 1fr auto 1fr auto 1fr auto 1fr auto 1fr auto 1fr;
+          gap: 10px 4px;
+          align-items: center;
+          margin: 18px 0;
+          padding: 14px 10px;
+          background: rgba(255, 255, 255, 0.015);
+          border: 1.5px solid var(--border);
+          border-radius: var(--radius-md);
+          position: relative;
+        }
+        .vf-flowchart-node {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          padding: 8px 4px;
+          border-radius: 6px;
+          border: 1px solid var(--border);
+          background: var(--bg-card);
+          text-align: center;
+          min-height: 48px;
+          transition: all 0.3s ease;
+          position: relative;
+        }
+        .vf-flowchart-node.active {
+          border-color: var(--accent);
+          background: rgba(207, 255, 61, 0.03);
+          box-shadow: 0 0 10px rgba(207, 255, 61, 0.1);
+        }
+        .vf-flowchart-node.active-done {
+          border-color: var(--accent);
+          background: rgba(207, 255, 61, 0.01);
+          opacity: 0.8;
+        }
+        .vf-flowchart-node.highlighted-ok {
+          border-color: var(--ok);
+          background: rgba(0, 230, 115, 0.03);
+        }
+        .vf-flowchart-node.highlighted-warn {
+          border-color: var(--warn);
+          background: rgba(214, 163, 56, 0.03);
+        }
+        .vf-flowchart-node.highlighted-danger {
+          border-color: var(--danger);
+          background: rgba(230, 50, 50, 0.03);
+        }
+        .vf-node-icon {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 16px;
+          height: 16px;
+          margin-bottom: 2px;
+          color: var(--text-faint);
+        }
+        .active .vf-node-icon { color: var(--accent); }
+        .highlighted-ok .vf-node-icon { color: var(--ok); }
+        .highlighted-warn .vf-node-icon { color: var(--warn); }
+        .highlighted-danger .vf-node-icon { color: var(--danger); }
+        .vf-node-label {
+          font-size: 9px;
+          font-weight: 600;
+          letter-spacing: 0.01em;
+          color: var(--text-muted);
+        }
+        .active .vf-node-label { color: var(--text); }
+        .vf-flowchart-arrow {
+          font-size: 11px;
+          color: var(--text-faint);
+          text-align: center;
+          user-select: none;
+        }
+        .vf-flowchart-arrow.active {
+          color: var(--accent);
+          text-shadow: 0 0 4px var(--accent);
+          animation: pulse-arrow 1.5s ease-in-out infinite;
+        }
+        @keyframes pulse-arrow {
+          0%, 100% { opacity: 0.4; }
+          50% { opacity: 1; }
+        }
+        .vf-flowchart-branch-line {
+          display: flex;
+          justify-content: center;
+          color: var(--text-faint);
+          height: 14px;
+        }
+        .vf-flowchart-branch-line.active {
+          color: var(--accent);
+        }
+        .vf-flowchart-exit-node {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 6px 10px;
+          border-radius: 6px;
+          border: 1px dashed var(--border);
+          background: rgba(0, 0, 0, 0.15);
+          min-height: 40px;
+          transition: all 0.3s ease;
+        }
+        .vf-flowchart-exit-node.active {
+          border-style: solid;
+        }
+        .vf-flowchart-exit-node.gated.active {
+          border-color: var(--warn);
+          background: rgba(214, 163, 56, 0.05);
+          box-shadow: 0 0 10px rgba(214, 163, 56, 0.1);
+        }
+        .vf-flowchart-exit-node.discarded.active {
+          border-color: var(--danger);
+          background: rgba(230, 50, 50, 0.05);
+          box-shadow: 0 0 10px rgba(230, 50, 50, 0.1);
+        }
+        .vf-exit-title {
+          font-size: 9px;
+          font-weight: 700;
+          color: var(--text-faint);
+          text-align: left;
+        }
+        .active .vf-exit-title { color: var(--text); }
+        .vf-exit-desc {
+          font-size: 8px;
+          color: var(--text-faint);
+          white-space: nowrap;
+          text-overflow: ellipsis;
+          overflow: hidden;
+          max-width: 90px;
+          text-align: left;
+          margin-top: 1px;
+        }
+        @media (max-width: 768px) {
+          .vf-flowchart-grid {
+            grid-template-columns: 1fr !important;
+            grid-template-rows: auto !important;
+            gap: 10px !important;
+          }
+          .vf-flowchart-arrow {
+            transform: rotate(90deg);
+            margin: 2px 0;
+          }
+          .vf-flowchart-branch-line {
+            display: none !important;
+          }
+          .vf-flowchart-exit-node {
+            grid-column: span 1 !important;
+            grid-row: auto !important;
+            max-width: 100% !important;
+            margin: -4px 0 6px 14px;
+            border-style: solid;
+          }
+          .vf-gate-down-line, .vf-council-down-line, .vf-gated-exit-node, .vf-discarded-exit-node {
+            grid-row: auto !important;
+            grid-column: auto !important;
+          }
+        }
+      `}</style>
 
-      <div className={`loop-rail ${!running ? 'off' : cycling ? 'cycling' : 'sleeping'}`}>
-        {LOOP_PHASES.map((p, i) => (
-          <React.Fragment key={p}>
-            {i > 0 && <span className="loop-rail-link" aria-hidden="true" />}
-            <span
-              className={`loop-stage${phase === p ? ' active' : ''}${cycling && activeIdx > i ? ' done' : ''}`}
-            >
-              {p}
-            </span>
-          </React.Fragment>
-        ))}
+      {running && (
+        <div className="loop-vitals">
+          <span className={`loop-countdown ${cycling ? 'busy' : ''}`}>
+            {cycling
+              ? 'cycle running now'
+              : remaining != null
+                ? `next cycle in ${fmtCountdown(remaining)}`
+                : 'awaiting first heartbeat'}
+          </span>
+          <span className="loop-last">last activity {agoLabel(lastTs, now)}</span>
+        </div>
+      )}
+      {running && (
+        <div className={`loop-heartbeat-track ${cycling ? 'cycling' : ''}`}>
+          <div
+            className="loop-heartbeat-fill"
+            style={{ width: `${cycling ? 100 : pctElapsed}%` }}
+          />
+        </div>
+      )}
+
+      {/* Visual Pipeline Flowchart */}
+      <div className={`vf-flowchart-grid ${!running ? 'off' : cycling ? 'cycling' : 'sleeping'}`} style={{ opacity: running ? 1 : 0.5 }}>
+        {/* Stage 1: Observe */}
+        <div 
+          className={`vf-flowchart-node observe ${phase === 'observe' ? 'active' : cycling && activeIdx > 0 ? 'active-done' : ''} ${!cycling && latestVerdict === 'idle' ? 'highlighted-ok' : ''}`}
+          style={{ gridRow: 1, gridColumn: 1 }}
+          title="Monitors pool APY, TVL, and utilization triggers"
+        >
+          <span className="vf-node-icon">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          </span>
+          <span className="vf-node-label">Observe</span>
+        </div>
+        
+        {/* Arrow 1 */}
+        <div 
+          className={`vf-flowchart-arrow ${running && (phase === 'gate' || activeIdx > 1) ? 'active' : ''}`}
+          style={{ gridRow: 1, gridColumn: 2 }}
+        >
+          →
+        </div>
+        
+        {/* Stage 2: Gate Check */}
+        <div 
+          className={`vf-flowchart-node gate ${phase === 'gate' ? 'active' : cycling && activeIdx > 1 ? 'active-done' : ''} ${!cycling && latestVerdict === 'gated' ? 'highlighted-warn' : ''}`}
+          style={{ gridRow: 1, gridColumn: 3 }}
+          title="Evaluates risk guardrails (e.g. utilization limits)"
+        >
+          <span className="vf-node-icon">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          </span>
+          <span className="vf-node-label">Gate Check</span>
+        </div>
+
+        {/* Gate Down Arrow */}
+        <div 
+          className={`vf-flowchart-branch-line vf-gate-down-line ${!cycling && latestVerdict === 'gated' ? 'active' : ''}`}
+          style={{ gridRow: 2, gridColumn: 3 }}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>
+        </div>
+
+        {/* Gated Exit Node */}
+        <div 
+          className={`vf-flowchart-exit-node gated vf-gated-exit-node ${!cycling && latestVerdict === 'gated' ? 'active' : ''}`}
+          style={{ gridRow: 3, gridColumn: 3 }}
+        >
+          <span className="vf-node-icon">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6M9 9l6 6"/></svg>
+          </span>
+          <div>
+            <div className="vf-exit-title">Gated (Abort)</div>
+            <div className="vf-exit-desc" title={latestVerdict === 'gated' ? latestReason : 'No alerts'}>
+              {latestVerdict === 'gated' ? latestReason : 'Risk limits safe'}
+            </div>
+          </div>
+        </div>
+
+        {/* Arrow 2 */}
+        <div 
+          className={`vf-flowchart-arrow ${running && activeIdx > 1 && latestVerdict !== 'gated' && (phase === 'simulate' || activeIdx > 2) ? 'active' : ''}`}
+          style={{ gridRow: 1, gridColumn: 4 }}
+        >
+          →
+        </div>
+
+        {/* Stage 3: Simulate */}
+        <div 
+          className={`vf-flowchart-node simulate ${phase === 'simulate' ? 'active' : cycling && activeIdx > 2 ? 'active-done' : ''} ${!cycling && latestVerdict === 'keep' ? 'highlighted-ok' : ''}`}
+          style={{ gridRow: 1, gridColumn: 5 }}
+          title="Runs allocation model and Monte Carlo simulations"
+        >
+          <span className="vf-node-icon">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3"/></svg>
+          </span>
+          <span className="vf-node-label">Simulate</span>
+        </div>
+
+        {/* Arrow 3 */}
+        <div 
+          className={`vf-flowchart-arrow ${running && activeIdx > 2 && latestVerdict !== 'gated' && (phase === 'council' || activeIdx > 3) ? 'active' : ''}`}
+          style={{ gridRow: 1, gridColumn: 6 }}
+        >
+          →
+        </div>
+
+        {/* Stage 4: AI Council */}
+        <div 
+          className={`vf-flowchart-node council ${phase === 'council' ? 'active' : cycling && activeIdx > 3 ? 'active-done' : ''} ${!cycling && latestVerdict === 'discard' ? 'highlighted-danger' : ''}`}
+          style={{ gridRow: 1, gridColumn: 7 }}
+          title="Yield, Risk, and Market agents deliberate on-chain allocation"
+        >
+          <span className="vf-node-icon">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          </span>
+          <span className="vf-node-label">AI Council</span>
+        </div>
+
+        {/* Council Down Arrow */}
+        <div 
+          className={`vf-flowchart-branch-line vf-council-down-line ${!cycling && latestVerdict === 'discard' ? 'active' : ''}`}
+          style={{ gridRow: 2, gridColumn: 7 }}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>
+        </div>
+
+        {/* Discard Exit Node */}
+        <div 
+          className={`vf-flowchart-exit-node discarded vf-discarded-exit-node ${!cycling && latestVerdict === 'discard' ? 'active' : ''}`}
+          style={{ gridRow: 3, gridColumn: 7 }}
+        >
+          <span className="vf-node-icon">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2M10 11v6M14 11v6"/></svg>
+          </span>
+          <div>
+            <div className="vf-exit-title">Discard (Decline)</div>
+            <div className="vf-exit-desc" title={latestVerdict === 'discard' ? latestReason : 'No actions discarded'}>
+              {latestVerdict === 'discard' ? latestReason : 'Offer acceptable'}
+            </div>
+          </div>
+        </div>
+
+        {/* Arrow 4 */}
+        <div 
+          className={`vf-flowchart-arrow ${running && activeIdx > 3 && !['gated', 'discard'].includes(latestVerdict) && (phase === 'execute' || activeIdx > 4) ? 'active' : ''}`}
+          style={{ gridRow: 1, gridColumn: 8 }}
+        >
+          →
+        </div>
+
+        {/* Stage 5: Execute */}
+        <div 
+          className={`vf-flowchart-node execute ${phase === 'execute' ? 'active' : cycling && activeIdx > 4 ? 'active-done' : ''} ${!cycling && latestVerdict === 'keep' ? 'highlighted-ok' : ''}`}
+          style={{ gridRow: 1, gridColumn: 9 }}
+          title="Executes on-chain rebalances and deposit swaps"
+        >
+          <span className="vf-node-icon">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          </span>
+          <span className="vf-node-label">Execute</span>
+        </div>
+
+        {/* Arrow 5 */}
+        <div 
+          className={`vf-flowchart-arrow ${running && activeIdx > 4 && latestVerdict === 'keep' && (phase === 'reflect' || activeIdx > 5) ? 'active' : ''}`}
+          style={{ gridRow: 1, gridColumn: 10 }}
+        >
+          →
+        </div>
+
+        {/* Stage 6: Reflect */}
+        <div 
+          className={`vf-flowchart-node reflect ${phase === 'reflect' ? 'active' : ''} ${!cycling && latestVerdict === 'keep' ? 'highlighted-ok' : ''}`}
+          style={{ gridRow: 1, gridColumn: 11 }}
+          title="Saves memory logs and refines future strategy runs"
+        >
+          <span className="vf-node-icon">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+          </span>
+          <span className="vf-node-label">Reflect</span>
+        </div>
       </div>
 
       <div className="loop-chips">
