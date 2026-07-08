@@ -45,10 +45,26 @@ function errorMessage(err) {
  *   flow factory (constructs orchestrator + createFarmFlow); never persists the key it's given.
  * @param {(params: { unwindTxHash: string, stellarRecipient: string }) => Promise<{status:string, mintTxHash?:string}>} deps.relayUnwindMint
  * @param {Map<string, {status:string, steps:Array<object>}>} deps.jobs - jobId -> job record
- * @param {Map<string, string>} deps.mandates - serializedApproval -> sessionPrivateKey (process memory only)
+ * @param {{get:Function, set:Function}} deps.mandates - serializedApproval -> sessionPrivateKey
+ *   (process memory only; a Map or a TTL-evicting store — see mandateStore.mjs)
  * @param {() => string} deps.genId
+ * @param {boolean} [deps.sanitizeErrors=false] - when true, error job records (returned verbatim by
+ *   GET /status) carry a generic message and the real error is logged server-side only. Off by
+ *   default so local dev / the smoke harness keep full detail; the standalone server turns it ON
+ *   unless RELAYER_DEBUG_ERRORS=1 (see server.mjs), so a public deploy never leaks internal error
+ *   strings (RPC URLs, addresses) to whoever holds a jobId.
  */
-export function createRelayerRouter({ buildFarm, relayUnwindMint, jobs, mandates, genId }) {
+export function createRelayerRouter({ buildFarm, relayUnwindMint, jobs, mandates, genId, sanitizeErrors = false }) {
+  // Record a failed job. Client-facing message is generic when sanitizeErrors is on; the real
+  // error is always available server-side (console.error) for debugging. Never stores the key.
+  function recordError(jobId, step, err) {
+    if (sanitizeErrors) {
+      console.error(`[relayer] job ${jobId} step ${step} failed:`, err);
+      jobs.set(jobId, { status: 'error', steps: [{ step, status: 'error', message: 'internal error' }] });
+    } else {
+      jobs.set(jobId, { status: 'error', steps: [{ step, status: 'error', message: errorMessage(err) }] });
+    }
+  }
   function handleMandate(req, res) {
     const { serializedApproval, sessionPrivateKey } = req.body || {};
     if (!serializedApproval || !sessionPrivateKey) {
@@ -76,8 +92,8 @@ export function createRelayerRouter({ buildFarm, relayUnwindMint, jobs, mandates
         ],
       });
     } catch (err) {
-      // Error message only — the sessionPrivateKey must never end up in a job record.
-      jobs.set(jobId, { status: 'error', steps: [{ step: 'farm', status: 'error', message: errorMessage(err) }] });
+      // Error only — the sessionPrivateKey must never end up in a job record.
+      recordError(jobId, 'farm', err);
     }
   }
 
@@ -123,7 +139,7 @@ export function createRelayerRouter({ buildFarm, relayUnwindMint, jobs, mandates
         steps: [{ step: 'mint', status: mintResult.status, mintTxHash: mintResult.mintTxHash }],
       });
     } catch (err) {
-      jobs.set(jobId, { status: 'error', steps: [{ step: 'mint', status: 'error', message: errorMessage(err) }] });
+      recordError(jobId, 'mint', err);
     }
   }
 

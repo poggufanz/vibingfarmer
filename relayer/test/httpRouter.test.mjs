@@ -239,4 +239,44 @@ describe('createRelayerRouter', () => {
       expect(JSON.stringify(jobs.get(jobId))).toMatch(/iris attestation timed out/);
     });
   });
+
+  describe('sanitizeErrors mode (public deploy)', () => {
+    let sanitized;
+    beforeEach(() => {
+      // Same wiring as the default router but with sanitizeErrors on.
+      sanitized = createRelayerRouter({ buildFarm, relayUnwindMint, jobs, mandates, genId, sanitizeErrors: true });
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+    });
+
+    it('replaces a farm error message with a generic one — the raw error never reaches GET /status', async () => {
+      mandates.set('approval-1', '0xsecret-session-key');
+      farmFn.mockRejectedValueOnce(new Error('RPC https://secret-node.internal/xyz refused: 0xPoolA reverted'));
+      const res = mockRes();
+      await sanitized(mk('POST', '/api/vf-cross/farm', {
+        burnTxHash: 'burn-1',
+        serializedApproval: 'approval-1',
+        allocations: [{ pool: '0xPoolA', amount: '100', minShares: '90' }],
+      }), res);
+      const { jobId } = jsonOf(res);
+      await vi.waitFor(() => expect(jobs.get(jobId).status).toBe('error'));
+
+      const statusRes = mockRes();
+      await sanitized(mk('GET', `/api/vf-cross/status/${jobId}`), statusRes);
+      expect(jsonOf(statusRes).steps[0].message).toBe('internal error');
+      expect(statusRes.body).not.toContain('secret-node.internal');
+      expect(console.error).toHaveBeenCalled(); // the real error is still logged server-side
+    });
+
+    it('sanitizes an unwind error too', async () => {
+      relayUnwindMint.mockRejectedValueOnce(new Error('iris https://iris.internal timed out'));
+      const res = mockRes();
+      await sanitized(mk('POST', '/api/vf-cross/unwind', {
+        unwindTxHash: 'unwind-1', stellarRecipient: 'GABCDEF',
+      }), res);
+      const { jobId } = jsonOf(res);
+      await vi.waitFor(() => expect(jobs.get(jobId).status).toBe('error'));
+      expect(JSON.stringify(jobs.get(jobId))).not.toContain('iris.internal');
+      expect(jobs.get(jobId).steps[0].message).toBe('internal error');
+    });
+  });
 });

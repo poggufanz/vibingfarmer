@@ -10,6 +10,9 @@ import { createWatcher } from './cctp/watcher.mjs';
 import { createOrchestrator } from './base/orchestrator.mjs';
 import { createFarmFlow } from './flows/farm.mjs';
 import { createRelayerRouter } from './httpRouter.mjs';
+import { createMandateStore } from './mandateStore.mjs';
+
+const MANDATE_SWEEP_MS = 10 * 60 * 1000; // evict expired session keys every 10 min
 
 /**
  * @param {ReturnType<typeof import('./config.mjs').loadConfig>} config
@@ -19,7 +22,8 @@ export function createRelayerServer(config) {
   const watcher = createWatcher(config);
   const jobs = new Map();
   // serializedApproval -> sessionPrivateKey. Process memory ONLY — never persisted, never logged.
-  const mandates = new Map();
+  // TTL store (not a bare Map) so session keys don't linger in memory past the mandate's lifetime.
+  const mandates = createMandateStore();
 
   // Per-request: each /farm call brings its own ephemeral session key, so the orchestrator (and
   // the kernel client it reconstructs) is built fresh per key rather than shared/cached.
@@ -42,11 +46,25 @@ export function createRelayerServer(config) {
     return watcher.relayMint({ sourceDomain: config.domains.base, burnTxHash: unwindTxHash, execId: unwindTxHash });
   }
 
-  const handler = createRelayerRouter({ buildFarm, relayUnwindMint, jobs, mandates, genId: randomUUID });
+  // Sanitize client-facing error messages unless explicitly debugging (RELAYER_DEBUG_ERRORS=1),
+  // so a public deploy never leaks internal error strings via GET /status. The smoke harness runs
+  // localhost and sets the flag to keep full detail.
+  const handler = createRelayerRouter({
+    buildFarm,
+    relayUnwindMint,
+    jobs,
+    mandates,
+    genId: randomUUID,
+    sanitizeErrors: process.env.RELAYER_DEBUG_ERRORS !== '1',
+  });
 
   function listen(port) {
     const server = createServer(handler);
     server.listen(port);
+    // Periodically drop expired session keys so they don't wait for a matching /farm to be evicted.
+    const sweep = setInterval(() => mandates.sweep(), MANDATE_SWEEP_MS);
+    sweep.unref?.(); // never keep the process alive just for the sweep
+    server.on('close', () => clearInterval(sweep));
     return server;
   }
 
