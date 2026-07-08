@@ -7,7 +7,7 @@
 // catch-all pattern (frontend/functions/api/vf/[[path]].js -> frontend/api/vf/_router.js). If
 // SP2 lands a different path or response shape, only this file's URL-building and response
 // parsing need to change — crossChainFarm.js and the screens never construct URLs themselves.
-import { toBaseChainUnits } from './config.js'
+import { toBaseChainUnits, BASE_USDC_UNIT } from './config.js'
 
 const DEFAULT_BASE_URL = import.meta.env?.VITE_CROSS_RELAYER_BASE || '/api/vf-cross'
 const DEFAULT_POLL_INTERVAL_MS = 3000
@@ -21,12 +21,46 @@ const DEFAULT_MAX_TRIES = 40 // ~2 minutes at the default interval
 // string). Convert here, at the seam, so `a.amount` stays a display value everywhere else (UI,
 // the mandate cap computation). A bigint here is ALREADY base units (defensive — no known caller
 // passes one today) — stringify as-is rather than re-scaling it.
+//
+// Rounding: the per-pool display floats are converted with a largest-remainder rule so the
+// base-unit amounts sum EXACTLY to the base-unit total (round(sum of display amounts)). Rounding
+// each pool independently could overshoot the bridged total by up to ~1 unit per pool; since the
+// relayer deposits each amount verbatim against a fixed bridged balance (no per-op balance
+// capping — see relayer/src/base/orchestrator.mjs), an overshoot strands the last pool's deposit
+// when the account runs dry. Whole-unit remainders go to the pools with the largest fractional
+// parts. Only applies when every amount is a display number; a bigint short-circuits to verbatim.
 function serializeAllocations(allocations) {
-  return allocations.map((a) => ({
+  const serializeMinShares = (a) =>
+    typeof a.minShares === 'bigint' ? a.minShares.toString() : a.minShares
+
+  if (!allocations.every((a) => typeof a.amount === 'number')) {
+    return allocations.map((a) => ({
+      ...a,
+      amount:
+        typeof a.amount === 'bigint' ? a.amount.toString() : toBaseChainUnits(a.amount).toString(),
+      minShares: serializeMinShares(a),
+    }))
+  }
+
+  const targetUnits = toBaseChainUnits(allocations.reduce((s, a) => s + a.amount, 0))
+  const scaled = allocations.map((a) => a.amount * BASE_USDC_UNIT)
+  const floors = scaled.map((r) => BigInt(Math.floor(r)))
+  const distributed = floors.reduce((s, f) => s + f, 0n)
+  // How many whole units the flooring left on the table (normally 0..nPools); clamp defensively.
+  let deficit = Number(targetUnits - distributed)
+  if (deficit < 0) deficit = 0
+  const bumped = new Set(
+    scaled
+      .map((r, i) => ({ i, frac: r - Math.floor(r) }))
+      .sort((a, b) => b.frac - a.frac)
+      .slice(0, deficit)
+      .map((x) => x.i)
+  )
+
+  return allocations.map((a, i) => ({
     ...a,
-    amount:
-      typeof a.amount === 'bigint' ? a.amount.toString() : toBaseChainUnits(a.amount).toString(),
-    minShares: typeof a.minShares === 'bigint' ? a.minShares.toString() : a.minShares,
+    amount: (floors[i] + (bumped.has(i) ? 1n : 0n)).toString(),
+    minShares: serializeMinShares(a),
   }))
 }
 
