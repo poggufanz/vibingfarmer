@@ -103,23 +103,115 @@ const STANDARDS = [
 
 const GITHUB_URL = 'https://github.com/poggufanz/vibingfarmer'
 
-// Static colored diagram — dangerouslySetInnerHTML is safe: fully hardcoded, no user input.
-const DIAGRAM_HTML = `<span class="eco-d-base">User Wallet</span> <span class="eco-d-muted">(Freighter / xBull / Albedo)</span>
-    │
-    │  <span class="eco-d-accent">one signature · authorize + fund</span>
-    ▼
-<span class="eco-d-base">AI Strategy</span>
-    <span class="eco-d-muted">Venice AI / DeepSeek ← DeFiLlama APY ← Tavily Context</span>
-    ▼
-<span class="eco-d-bright">Registry (Soroban)</span> ─── <span class="eco-d-accent">ed25519 session-key scope</span>
-    │
-    ├── Worker-1 ──► <span class="eco-d-base">Vault</span> <span class="eco-d-muted">(USDC)</span>
-    └── Worker-2 ──► <span class="eco-d-base">Vault</span> <span class="eco-d-muted">(USDC)</span>
-                      <span class="eco-d-muted">Soroban</span>
-    │
-    │  <span class="eco-d-accent">Gas: $0 (fee-bump relayer)</span>
-    ▼
-<span class="eco-d-muted">Stellar testnet</span>`
+/* ── Visual architecture diagram (SVG) ── */
+
+// Node layout coordinates (designed for 800×520 viewBox)
+const ARCH_NODES = [
+  { id: 'wallet',   x: 400, y: 40,  label: 'User Wallet',      sub: 'Freighter / xBull / Albedo', icon: 'W', color: '#ecebe1' },
+  { id: 'ai',       x: 400, y: 140, label: 'AI Strategy',       sub: 'Venice AI / DeepSeek',        icon: 'AI', color: '#b8a9ff' },
+  { id: 'registry', x: 400, y: 260, label: 'Registry',          sub: 'Soroban smart contract',      icon: 'RG', color: '#cfff3d', hero: true },
+  { id: 'worker1',  x: 240, y: 370, label: 'Worker-1',          sub: 'Parallel agent',              icon: 'W1', color: '#ffb86c' },
+  { id: 'worker2',  x: 560, y: 370, label: 'Worker-2',          sub: 'Parallel agent',              icon: 'W2', color: '#ffb86c' },
+  { id: 'vault1',   x: 240, y: 460, label: 'Vault (USDC)',      sub: 'Soroban',                     icon: 'V1', color: '#7dd3c0' },
+  { id: 'vault2',   x: 560, y: 460, label: 'Vault (USDC)',      sub: 'Soroban',                     icon: 'V2', color: '#7dd3c0' },
+]
+
+const ARCH_EDGES = [
+  { from: 'wallet',   to: 'ai',       label: 'one signature' },
+  { from: 'ai',       to: 'registry', label: 'strategy + skills' },
+  { from: 'registry', to: 'worker1',  label: 'ed25519 scope' },
+  { from: 'registry', to: 'worker2',  label: 'ed25519 scope' },
+  { from: 'worker1',  to: 'vault1',   label: 'deposit' },
+  { from: 'worker2',  to: 'vault2',   label: 'deposit' },
+]
+
+function ArchNode({ node }) {
+  const w = 200, h = 56, rx = 10
+  return (
+    <g className={'arch-node' + (node.hero ? ' arch-node--hero' : '')}>
+      {node.hero && (
+        <rect
+          x={node.x - w/2 - 4} y={node.y - h/2 - 4}
+          width={w + 8} height={h + 8}
+          rx={rx + 2}
+          className="arch-glow"
+        />
+      )}
+      <rect
+        x={node.x - w/2} y={node.y - h/2}
+        width={w} height={h}
+        rx={rx}
+        className="arch-card"
+        style={{ stroke: node.hero ? 'rgba(207,255,61,0.4)' : undefined }}
+      />
+      {/* icon circle */}
+      <circle cx={node.x - w/2 + 24} cy={node.y} r={14} className="arch-icon-bg" style={{ fill: node.color + '18' , stroke: node.color + '40' }} />
+      <text x={node.x - w/2 + 24} y={node.y + 1} className="arch-icon-text" style={{ fill: node.color }} dominantBaseline="central" textAnchor="middle">
+        {node.icon}
+      </text>
+      {/* labels */}
+      <text x={node.x - w/2 + 48} y={node.y - 6} className="arch-label" style={{ fill: node.hero ? node.color : undefined }}>
+        {node.label}
+      </text>
+      <text x={node.x - w/2 + 48} y={node.y + 10} className="arch-sublabel">
+        {node.sub}
+      </text>
+    </g>
+  )
+}
+
+function ArchEdge({ from, to, label, index }) {
+  const x1 = from.x, y1 = from.y + 28
+  const x2 = to.x,   y2 = to.y - 28
+  const mx = (x1 + x2) / 2, my = (y1 + y2) / 2
+
+  return (
+    <g className="arch-edge">
+      <line x1={x1} y1={y1} x2={x2} y2={y2} className="arch-line" style={{ animationDelay: `${index * 0.3}s` }} />
+      {/* arrowhead */}
+      <polygon
+        points={`${x2},${y2} ${x2-4},${y2-8} ${x2+4},${y2-8}`}
+        className="arch-arrow"
+      />
+      {/* label */}
+      <rect
+        x={mx - label.length * 3.2} y={my - 8}
+        width={label.length * 6.4} height={16}
+        rx={4}
+        className="arch-edge-bg"
+      />
+      <text x={mx} y={my + 1} className="arch-edge-label" textAnchor="middle" dominantBaseline="central">
+        {label}
+      </text>
+    </g>
+  )
+}
+
+function ArchDiagram() {
+  const nodeMap = Object.fromEntries(ARCH_NODES.map(n => [n.id, n]))
+
+  return (
+    <svg className="arch-svg" viewBox="0 0 800 520" role="img" aria-label="Architecture: user wallet signs once, AI strategy generates plan, Registry enforces ed25519 scopes, parallel workers deposit to vaults">
+      <defs>
+        <filter id="arch-glow-f">
+          <feGaussianBlur stdDeviation="8" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+      </defs>
+      {/* gas badge */}
+      <rect x={325} y={494} width={150} height={22} rx={6} className="arch-gas-bg" />
+      <text x={400} y={505} className="arch-gas-text" textAnchor="middle" dominantBaseline="central">
+        Gas: $0 (fee-bump relayer)
+      </text>
+      {/* edges first (behind nodes) */}
+      {ARCH_EDGES.map((e, i) => (
+        <ArchEdge key={i} from={nodeMap[e.from]} to={nodeMap[e.to]} label={e.label} index={i} />
+      ))}
+      {/* nodes */}
+      {ARCH_NODES.map(n => <ArchNode key={n.id} node={n} />)}
+    </svg>
+  )
+}
 
 /* ------------------------------------------------------------------ */
 /* components                                                            */
@@ -252,14 +344,8 @@ export default function EcosystemPage() {
           <div
             ref={diagramRef}
             className="eco-diagram"
-            role="img"
-            aria-label="Architecture: user wallet (Freighter / xBull / Albedo) signs once to authorize and fund agents; Venice AI / DeepSeek + DeFiLlama + Tavily generate the strategy; the Soroban registry enforces ed25519 session-key scopes while parallel workers deposit to the Soroban vault; a fee-bump relayer pays all gas on Stellar testnet"
           >
-            <pre
-              className="eco-diagram__pre"
-              // eslint-disable-next-line react/no-danger
-              dangerouslySetInnerHTML={{ __html: DIAGRAM_HTML }}
-            />
+            <ArchDiagram />
           </div>
         </section>
 
@@ -533,7 +619,7 @@ function EcoStyle() {
   margin-top: auto;
 }
 
-/* ---------- architecture diagram ---------- */
+/* ---------- architecture diagram (SVG) ---------- */
 .eco-diagram {
   opacity: 0;
   transform: translateY(14px);
@@ -546,24 +632,89 @@ function EcoStyle() {
 @media (prefers-reduced-motion: reduce) {
   .eco-diagram { opacity: 1 !important; transform: none !important; transition: none !important; }
 }
-.eco-diagram__pre {
-  font-family: var(--font-mono, "JetBrains Mono", monospace);
-  font-size: clamp(0.72rem, 1vw, 0.84rem);
-  line-height: 1.7;
-  color: var(--text-muted, #95958a);
-  background: var(--bg-card, #1a1b16);
-  border: 1px solid var(--border-strong, rgba(255,255,255,0.13));
-  border-radius: var(--radius-lg, 14px);
-  padding: clamp(1.4rem, 3vw, 2rem) clamp(1.2rem, 3vw, 2.2rem);
-  overflow-x: auto;
-  white-space: pre;
-  -webkit-overflow-scrolling: touch;
-  margin: 0;
+.arch-svg {
+  display: block;
+  width: 100%;
+  max-width: 800px;
+  height: auto;
+  margin: 0 auto;
 }
-.eco-d-accent { color: var(--eco-accent); }
-.eco-d-bright { color: var(--text, #ecebe1); font-weight: 600; }
-.eco-d-base   { color: var(--text, #ecebe1); }
-.eco-d-muted  { color: var(--text-faint, #56564f); }
+.arch-card {
+  fill: var(--bg-card, #1a1b16);
+  stroke: var(--border-strong, rgba(255,255,255,0.13));
+  stroke-width: 1;
+  transition: stroke 200ms ease;
+}
+.arch-node:hover .arch-card {
+  stroke: rgba(207,255,61,0.4);
+}
+.arch-glow {
+  fill: none;
+  stroke: rgba(207,255,61,0.15);
+  stroke-width: 2;
+  filter: url(#arch-glow-f);
+  animation: arch-pulse 3s ease-in-out infinite;
+}
+@keyframes arch-pulse {
+  0%, 100% { stroke: rgba(207,255,61,0.1); }
+  50%      { stroke: rgba(207,255,61,0.3); }
+}
+.arch-icon-bg {
+  stroke-width: 1;
+}
+.arch-icon-text {
+  font-family: var(--font-mono, monospace);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.arch-label {
+  font-family: var(--font-display, "Geist", sans-serif);
+  font-size: 11.5px;
+  font-weight: 600;
+  fill: var(--text, #ecebe1);
+}
+.arch-sublabel {
+  font-family: var(--font-mono, monospace);
+  font-size: 8.5px;
+  fill: var(--text-faint, #56564f);
+}
+.arch-line {
+  stroke: rgba(255,255,255,0.12);
+  stroke-width: 1;
+  stroke-dasharray: 6 4;
+  stroke-dashoffset: 0;
+  animation: arch-dash 8s linear infinite;
+}
+@keyframes arch-dash {
+  to { stroke-dashoffset: -40; }
+}
+.arch-arrow {
+  fill: rgba(255,255,255,0.2);
+}
+.arch-edge-bg {
+  fill: var(--bg-base, #0e0f0c);
+  stroke: var(--border, rgba(255,255,255,0.06));
+  stroke-width: 0.5;
+}
+.arch-edge-label {
+  font-family: var(--font-mono, monospace);
+  font-size: 8px;
+  letter-spacing: 0.03em;
+  fill: var(--text-muted, #95958a);
+}
+.arch-gas-bg {
+  fill: rgba(207,255,61,0.06);
+  stroke: rgba(207,255,61,0.2);
+  stroke-width: 0.5;
+}
+.arch-gas-text {
+  font-family: var(--font-mono, monospace);
+  font-size: 8.5px;
+  font-weight: 600;
+  fill: var(--eco-accent);
+  letter-spacing: 0.03em;
+}
 
 /* ---------- CTA ---------- */
 .eco-cta__inner {
