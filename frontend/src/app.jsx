@@ -74,7 +74,12 @@ import {
   mergePositions,
   applyChainPositions,
 } from './positionsStore.js'
-import { diffMarket, fastReeval, loadLatestSnapshot, saveSnapshot } from './strategy/councilMonitor.js'
+import {
+  diffMarket,
+  fastReeval,
+  loadLatestSnapshot,
+  saveSnapshot,
+} from './strategy/councilMonitor.js'
 import SkillDrawer from './components/SkillDrawer.jsx'
 import HistoryPanel from './components/HistoryPanel.jsx'
 import { saveTransaction } from './history.js'
@@ -122,8 +127,20 @@ import { mintToken } from './strategy/eligibilityGate.js'
 import { buildEligibilitySentence, vaultEligibilityLabel } from './strategy/eligibilitySentence.js'
 import { SNAPSHOT } from './strategy/vaultFacts.js'
 import { recordDecision, getDecisions, getDecisionSummary } from './strategy/decisionLog.js'
-import { resolveCouncilConflict, councilSpecialistVerdict, proposerVerdict, riskComplianceVerdict, validatorVerdict, askVeniceJson } from './venice.js'
-import { councilReview, buildCouncilInput, councilDebate, buildDebateInput } from './strategy/councilReview.js'
+import {
+  resolveCouncilConflict,
+  councilSpecialistVerdict,
+  proposerVerdict,
+  riskComplianceVerdict,
+  validatorVerdict,
+  askVeniceJson,
+} from './venice.js'
+import {
+  councilReview,
+  buildCouncilInput,
+  councilDebate,
+  buildDebateInput,
+} from './strategy/councilReview.js'
 import { councilOutcome } from './strategy/outcome.js'
 import { proposeRule } from './strategy/curator.js'
 import { upsertSeeds, getRules, addRule, replaceAll } from './strategy/ruleStore.js'
@@ -388,7 +405,12 @@ const App = () => {
   const [debateRunning, setDebateRunning] = useS(false) // debate in progress
 
   // Continuous monitor state
-  const [monitorStatus, setMonitorStatus] = useS({ lastCheck: null, level: 'idle', score: 0, reason: '' })
+  const [monitorStatus, setMonitorStatus] = useS({
+    lastCheck: null,
+    level: 'idle',
+    score: 0,
+    reason: '',
+  })
   const monitorTimerRef = useR(null)
   const [rawStrategy, setRawStrategy] = useS(null) // raw Venice result (carries strategyHash) for on-chain attestation
   const [strategyAttestation, setStrategyAttestation] = useS(null)
@@ -1519,7 +1541,12 @@ const App = () => {
       blendedApy: snapshot?.marketData?.blendedApy ?? null,
     }
     const diff = diffMarket(currentData, snapshot, settings)
-    setMonitorStatus({ lastCheck: Date.now(), level: diff.level, score: diff.score, reason: diff.reasons[0] || '' })
+    setMonitorStatus({
+      lastCheck: Date.now(),
+      level: diff.level,
+      score: diff.score,
+      reason: diff.reasons[0] || '',
+    })
 
     if (diff.level === 'skip') return
 
@@ -1530,7 +1557,11 @@ const App = () => {
       if (result.passed) {
         saveSnapshot(result, currentData)
         if (settings.autoApprove) return
-        setMonitorStatus((s) => ({ ...s, result: 'approved', permissionSentence: result.permissionSentence }))
+        setMonitorStatus((s) => ({
+          ...s,
+          result: 'approved',
+          permissionSentence: result.permissionSentence,
+        }))
         addLog({
           event: 'OrchestratorPlanned',
           meta: `Monitor re-eval · fast pass · confidence ${(result.confidence * 100).toFixed(0)}%`,
@@ -1559,8 +1590,14 @@ const App = () => {
           gas: latestGasRef.current,
         })
         const sim = runSimulation(allocationsFromStrategy(strategy), state, {
-          runs: 200, horizonDays: 30, seed: 1,
-          context: { turbulence: currentData.turbulence, apyTrendPct: 0, gasGwei: currentData.gasGwei },
+          runs: 200,
+          horizonDays: 30,
+          seed: 1,
+          context: {
+            turbulence: currentData.turbulence,
+            apyTrendPct: 0,
+            gasGwei: currentData.gasGwei,
+          },
         })
         const input = buildDebateInput(strategy, sim, state)
         const result = await councilDebate(input, {
@@ -1573,7 +1610,11 @@ const App = () => {
           convergenceThreshold: 0.15,
         })
         saveSnapshot(result, currentData)
-        setMonitorStatus((s) => ({ ...s, result: result.verdict === 'keep' ? 'approved' : 'rejected', debateResultId: Date.now() }))
+        setMonitorStatus((s) => ({
+          ...s,
+          result: result.verdict === 'keep' ? 'approved' : 'rejected',
+          debateResultId: Date.now(),
+        }))
         addLog({
           event: result.verdict === 'keep' ? 'OrchestratorPlanned' : 'AgentFailed',
           meta: `Monitor full debate · ${result.verdict} · ${result.iterations} iters · converged: ${result.converged}`,
@@ -1730,7 +1771,13 @@ const App = () => {
 
   const startExecution = () => {
     if (!strategy) return
-    setMonitorStatus({ level: 'skip', score: 0, reason: 'Starting execution...', lastCheck: Date.now(), result: 'approved' })
+    setMonitorStatus({
+      level: 'skip',
+      score: 0,
+      reason: 'Starting execution...',
+      lastCheck: Date.now(),
+      result: 'approved',
+    })
 
     // Pre-compute sessionId and build hex→designId map BEFORE orchestrator starts.
     // Orchestrator uses makeAgentId(index, sessionId) — same function, same sessionId = same hex.
@@ -1996,7 +2043,10 @@ const App = () => {
       })
       .catch((err) => {
         console.warn('[app] orchestrator dispatch failed (simulation mode):', err?.message || err)
-        addLog({ event: 'AgentFailed', meta: `orchestrator error (simulation): ${err?.message || err}` })
+        addLog({
+          event: 'AgentFailed',
+          meta: `orchestrator error (simulation): ${err?.message || err}`,
+        })
         setExecMap((prev) => {
           const next = { ...prev }
           Object.keys(next).forEach((id) => {
@@ -2127,11 +2177,20 @@ const App = () => {
     setLogs([])
     agentMapRef.current = {}
 
-    if (overrideAmount !== undefined && overrideAmount !== null && (typeof overrideAmount === 'number' || typeof overrideAmount === 'string' || !isNaN(Number(overrideAmount)))) {
+    if (
+      overrideAmount !== undefined &&
+      overrideAmount !== null &&
+      (typeof overrideAmount === 'number' ||
+        typeof overrideAmount === 'string' ||
+        !isNaN(Number(overrideAmount)))
+    ) {
       setAmount(String(overrideAmount))
       setStrategyPhase('thinking')
       setThinkingPhase(0)
-      addLog({ event: 'OrchestratorPlanned', meta: `${overrideAmount} usdc · ${risk} risk · planning` })
+      addLog({
+        event: 'OrchestratorPlanned',
+        meta: `${overrideAmount} usdc · ${risk} risk · planning`,
+      })
     } else {
       setStrategyPhase('input')
       setThinkingPhase(0)

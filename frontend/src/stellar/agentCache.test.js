@@ -186,13 +186,9 @@ describe('takeReusableAgent', () => {
   test('exclude prevents one agent from serving two workers of the SAME run', async () => {
     saveCachedAgent({ owner: OWNER, vault: VAULT, network: NET, entry: entry(), storage })
     const exclude = new Set()
-    const first = await takeReusableAgent(
-      takeArgs({ exclude, readScope: async () => scope() })
-    )
+    const first = await takeReusableAgent(takeArgs({ exclude, readScope: async () => scope() }))
     exclude.add(first.agentAddress)
-    const second = await takeReusableAgent(
-      takeArgs({ exclude, readScope: async () => scope() })
-    )
+    const second = await takeReusableAgent(takeArgs({ exclude, readScope: async () => scope() }))
     expect(first.agentAddress).toBe('CAGENT1')
     expect(second).toBeNull()
   })
@@ -200,9 +196,7 @@ describe('takeReusableAgent', () => {
   test('a drained agent is rejected for a large run but reusable once its window rolls', async () => {
     saveCachedAgent({ owner: OWNER, vault: VAULT, network: NET, entry: entry(), storage })
     const drained = scope({ period_start: BigInt(NOW - 100), spent_in_period: 500000000n })
-    expect(
-      await takeReusableAgent(takeArgs({ readScope: async () => drained }))
-    ).toBeNull()
+    expect(await takeReusableAgent(takeArgs({ readScope: async () => drained }))).toBeNull()
     // Same agent, window elapsed → full headroom again.
     saveCachedAgent({ owner: OWNER, vault: VAULT, network: NET, entry: entry(), storage })
     const rolled = scope({ period_start: BigInt(NOW - 86401), spent_in_period: 500000000n })

@@ -273,7 +273,8 @@ describe('orchestrator (Stellar deploy + fund + dispatch)', () => {
     expect(callOrder.filter((c) => c.startsWith('execute:'))).toEqual(['execute:0x1s10'])
     // And the run still reported the setup step done (partial success, not an error abort).
     const stepDone = events.find(
-      (e) => e.n === 'orchestrator-step' && e.d.step === 'authorizing-scope' && e.d.status === 'done'
+      (e) =>
+        e.n === 'orchestrator-step' && e.d.step === 'authorizing-scope' && e.d.status === 'done'
     )
     expect(stepDone).toBeTruthy()
   })

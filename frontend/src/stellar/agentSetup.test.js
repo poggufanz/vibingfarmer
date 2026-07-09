@@ -45,9 +45,9 @@ describe('fundAgent', () => {
 
   test('throws when the funding tx does not confirm (silent PENDING would doom the deposit)', async () => {
     submitUserTx.mockResolvedValueOnce({ hash: 'h2', status: 'PENDING' })
-    await expect(
-      fundAgent({ owner: 'GUSER', agentAddress: 'CAGENT', amount: 1n })
-    ).rejects.toThrow(/funding not confirmed: PENDING/)
+    await expect(fundAgent({ owner: 'GUSER', agentAddress: 'CAGENT', amount: 1n })).rejects.toThrow(
+      /funding not confirmed: PENDING/
+    )
   })
 
   test('rejects after 120s when the wallet popup never resolves (no infinite hang)', async () => {

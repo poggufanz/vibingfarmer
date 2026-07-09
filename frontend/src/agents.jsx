@@ -734,32 +734,106 @@ const SimulationPanel = ({ simulation }) => {
 
 const DebatePanel = ({ debateResult }) => {
   if (!debateResult?.debateLog?.length) return null
-  const { debateLog, iterations, converged, proposer, riskCompliance, validator, gate, permissionSentence, verdict, confidence } = debateResult
+  const {
+    debateLog,
+    iterations,
+    converged,
+    proposer,
+    riskCompliance,
+    validator,
+    gate,
+    permissionSentence,
+    verdict,
+    confidence,
+  } = debateResult
   const lastIter = debateLog[debateLog.length - 1]
   console.log('[DebatePanel] proposer:', proposer, 'verdict:', verdict, 'gate:', gate)
   return (
-    <div className="debate-panel" style={{ marginTop: 16, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
-      <div className="mono" style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ color: 'var(--text)' }}>AI Council Debate · {iterations} iteration{iterations > 1 ? 's' : ''}</span>
+    <div
+      className="debate-panel"
+      style={{
+        marginTop: 16,
+        border: '1px solid var(--border)',
+        borderRadius: 'var(--radius-md)',
+        overflow: 'hidden',
+      }}
+    >
+      <div
+        className="mono"
+        style={{
+          padding: '10px 14px',
+          borderBottom: '1px solid var(--border)',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+        }}
+      >
+        <span style={{ color: 'var(--text)' }}>
+          AI Council Debate · {iterations} iteration{iterations > 1 ? 's' : ''}
+        </span>
         <span style={{ color: converged ? 'var(--ok)' : 'var(--warn, #c87)', fontSize: 11 }}>
           {converged ? '✓ converged' : '✗ max iterations reached'}
         </span>
       </div>
       {debateLog.map((entry, i) => (
-        <div key={i} style={{ padding: '8px 14px', borderBottom: i < debateLog.length - 1 ? '1px solid var(--border)' : 'none', fontSize: 12 }}>
-          <div style={{ color: 'var(--text-faint)', marginBottom: 4 }}>Iteration {entry.iteration}</div>
+        <div
+          key={i}
+          style={{
+            padding: '8px 14px',
+            borderBottom: i < debateLog.length - 1 ? '1px solid var(--border)' : 'none',
+            fontSize: 12,
+          }}
+        >
+          <div style={{ color: 'var(--text-faint)', marginBottom: 4 }}>
+            Iteration {entry.iteration}
+          </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-            <div style={{ padding: '6px 8px', background: 'rgba(255,165,0,0.08)', borderRadius: 'var(--radius-sm)' }}>
+            <div
+              style={{
+                padding: '6px 8px',
+                background: 'rgba(255,165,0,0.08)',
+                borderRadius: 'var(--radius-sm)',
+              }}
+            >
               <span style={{ color: '#c90', fontWeight: 600 }}>Proposer</span>
-              <div style={{ color: 'var(--text)' }}>{entry.proposer?.action || '?'} · {Math.round((entry.proposer?.confidence ?? 0) * 100)}%</div>
-              {entry.proposer?.reasoning && <div style={{ color: 'var(--text-muted)', fontSize: 10, marginTop: 2 }}>{entry.proposer.reasoning}</div>}
-              {entry.proposer?.arguments?.length > 0 && <div style={{ color: 'var(--text-faint)', fontSize: 10 }}>{entry.proposer.arguments.join('; ')}</div>}
+              <div style={{ color: 'var(--text)' }}>
+                {entry.proposer?.action || '?'} ·{' '}
+                {Math.round((entry.proposer?.confidence ?? 0) * 100)}%
+              </div>
+              {entry.proposer?.reasoning && (
+                <div style={{ color: 'var(--text-muted)', fontSize: 10, marginTop: 2 }}>
+                  {entry.proposer.reasoning}
+                </div>
+              )}
+              {entry.proposer?.arguments?.length > 0 && (
+                <div style={{ color: 'var(--text-faint)', fontSize: 10 }}>
+                  {entry.proposer.arguments.join('; ')}
+                </div>
+              )}
             </div>
-            <div style={{ padding: '6px 8px', background: 'rgba(0,180,80,0.08)', borderRadius: 'var(--radius-sm)' }}>
+            <div
+              style={{
+                padding: '6px 8px',
+                background: 'rgba(0,180,80,0.08)',
+                borderRadius: 'var(--radius-sm)',
+              }}
+            >
               <span style={{ color: '#0a4', fontWeight: 600 }}>Risk/Compliance</span>
-              <div style={{ color: 'var(--text)' }}>{entry.riskCompliance?.action || '?'} · {Math.round((entry.riskCompliance?.confidence ?? 0) * 100)}%{entry.riskCompliance?.compliancePass === false ? ' · ⚠ FAIL' : ''}</div>
-              {entry.riskCompliance?.concerns?.length > 0 && <div style={{ color: 'var(--text-muted)', fontSize: 10, marginTop: 2 }}>{entry.riskCompliance.concerns[0]}</div>}
-              {entry.riskCompliance?.violations?.length > 0 && <div style={{ color: 'var(--warn, #c87)', fontSize: 10 }}>Violations: {entry.riskCompliance.violations.join(', ')}</div>}
+              <div style={{ color: 'var(--text)' }}>
+                {entry.riskCompliance?.action || '?'} ·{' '}
+                {Math.round((entry.riskCompliance?.confidence ?? 0) * 100)}%
+                {entry.riskCompliance?.compliancePass === false ? ' · ⚠ FAIL' : ''}
+              </div>
+              {entry.riskCompliance?.concerns?.length > 0 && (
+                <div style={{ color: 'var(--text-muted)', fontSize: 10, marginTop: 2 }}>
+                  {entry.riskCompliance.concerns[0]}
+                </div>
+              )}
+              {entry.riskCompliance?.violations?.length > 0 && (
+                <div style={{ color: 'var(--warn, #c87)', fontSize: 10 }}>
+                  Violations: {entry.riskCompliance.violations.join(', ')}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -770,34 +844,79 @@ const DebatePanel = ({ debateResult }) => {
             {verdict === 'keep' ? '✅' : '✗'} Conclusion — {verdict === 'keep' ? 'KEEP' : 'DISCARD'}
           </div>
           <div style={{ fontSize: 12, lineHeight: 1.6 }}>
-            <div><span style={{ color: '#c90', fontWeight: 600 }}>Proposer:</span> {proposer.action} ({Math.round((proposer.confidence || 0) * 100)}%) · "{proposer.reasoning || ''}"</div>
-            {proposer.arguments?.length > 0 && <div style={{ color: 'var(--text-faint)', fontSize: 11 }}>Arguments: {proposer.arguments.join('; ')}</div>}
+            <div>
+              <span style={{ color: '#c90', fontWeight: 600 }}>Proposer:</span> {proposer.action} (
+              {Math.round((proposer.confidence || 0) * 100)}%) · "{proposer.reasoning || ''}"
+            </div>
+            {proposer.arguments?.length > 0 && (
+              <div style={{ color: 'var(--text-faint)', fontSize: 11 }}>
+                Arguments: {proposer.arguments.join('; ')}
+              </div>
+            )}
           </div>
           {riskCompliance && (
             <div style={{ fontSize: 12, lineHeight: 1.6, marginTop: 4 }}>
-              <div><span style={{ color: '#0a4', fontWeight: 600 }}>Risk/Compliance:</span> {riskCompliance.action} ({Math.round((riskCompliance.confidence || 0) * 100)}% · {riskCompliance.compliancePass ? 'PASS' : 'FAIL'})</div>
-              <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>"{riskCompliance.concerns?.[0] || 'No concerns'}"</div>
-              {riskCompliance.violationsFound?.length > 0 && <div style={{ color: 'var(--warn, #c87)', fontSize: 11 }}>Violations: {riskCompliance.violationsFound.join('; ')}</div>}
+              <div>
+                <span style={{ color: '#0a4', fontWeight: 600 }}>Risk/Compliance:</span>{' '}
+                {riskCompliance.action} ({Math.round((riskCompliance.confidence || 0) * 100)}% ·{' '}
+                {riskCompliance.compliancePass ? 'PASS' : 'FAIL'})
+              </div>
+              <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>
+                "{riskCompliance.concerns?.[0] || 'No concerns'}"
+              </div>
+              {riskCompliance.violationsFound?.length > 0 && (
+                <div style={{ color: 'var(--warn, #c87)', fontSize: 11 }}>
+                  Violations: {riskCompliance.violationsFound.join('; ')}
+                </div>
+              )}
             </div>
           )}
           {validator && (
             <div style={{ fontSize: 12, marginTop: 4 }}>
-              <div><span style={{ fontWeight: 600 }}>Validator:</span> {validator.consistent ? '✅ consistent' : '✗ inconsistent'} · VaR {validator.VaRAcceptable ? 'OK' : 'BREACH'} · CVaR {validator.CVaRAcceptable ? 'OK' : 'BREACH'}</div>
-              {validator.concerns?.length > 0 && <div style={{ color: 'var(--warn, #c87)', fontSize: 11 }}>{validator.concerns.join('; ')}</div>}
+              <div>
+                <span style={{ fontWeight: 600 }}>Validator:</span>{' '}
+                {validator.consistent ? '✅ consistent' : '✗ inconsistent'} · VaR{' '}
+                {validator.VaRAcceptable ? 'OK' : 'BREACH'} · CVaR{' '}
+                {validator.CVaRAcceptable ? 'OK' : 'BREACH'}
+              </div>
+              {validator.concerns?.length > 0 && (
+                <div style={{ color: 'var(--warn, #c87)', fontSize: 11 }}>
+                  {validator.concerns.join('; ')}
+                </div>
+              )}
             </div>
           )}
           <div style={{ color: 'var(--text-faint)', fontSize: 11, marginTop: 4 }}>
-            Confidence (avg): {Math.round((confidence || 0) * 100)}% · Iterations: {iterations} · {converged ? 'Converged' : 'Not converged'}
+            Confidence (avg): {Math.round((confidence || 0) * 100)}% · Iterations: {iterations} ·{' '}
+            {converged ? 'Converged' : 'Not converged'}
           </div>
         </div>
       )}
       {gate && (
-        <div style={{ padding: '8px 14px', borderTop: '1px solid var(--border)', fontSize: 11, color: gate.passed ? 'var(--ok)' : 'var(--warn, #c87)' }}>
-          {gate.passed ? '✓ Gate: passed' : `✗ Gate: ${gate.reason}${gate.detail ? ` — ${gate.detail}` : ''}`}
+        <div
+          style={{
+            padding: '8px 14px',
+            borderTop: '1px solid var(--border)',
+            fontSize: 11,
+            color: gate.passed ? 'var(--ok)' : 'var(--warn, #c87)',
+          }}
+        >
+          {gate.passed
+            ? '✓ Gate: passed'
+            : `✗ Gate: ${gate.reason}${gate.detail ? ` — ${gate.detail}` : ''}`}
         </div>
       )}
       {permissionSentence && (
-        <div style={{ padding: '10px 14px', background: 'var(--bg-muted, rgba(0,0,0,0.03))', borderTop: '1px solid var(--border)', fontSize: 13, fontWeight: 500, color: 'var(--text)' }}>
+        <div
+          style={{
+            padding: '10px 14px',
+            background: 'var(--bg-muted, rgba(0,0,0,0.03))',
+            borderTop: '1px solid var(--border)',
+            fontSize: 13,
+            fontWeight: 500,
+            color: 'var(--text)',
+          }}
+        >
           {permissionSentence}
         </div>
       )}
@@ -805,9 +924,23 @@ const DebatePanel = ({ debateResult }) => {
   )
 }
 
-const StrategyCard = ({ strategy, skillSource, onProceed, onRegenerate, strategyHash, attestation, attesting, simulation, council, onCouncilRetry, onRunCouncil, debateRunning, showRunCouncil }) => {
-  const customSkill = skillSource === "user-local" || skillSource === "user-file";
-  const shortHash = (h) => h ? `${h.slice(0, 10)}...` : "";
+const StrategyCard = ({
+  strategy,
+  skillSource,
+  onProceed,
+  onRegenerate,
+  strategyHash,
+  attestation,
+  attesting,
+  simulation,
+  council,
+  onCouncilRetry,
+  onRunCouncil,
+  debateRunning,
+  showRunCouncil,
+}) => {
+  const customSkill = skillSource === 'user-local' || skillSource === 'user-file'
+  const shortHash = (h) => (h ? `${h.slice(0, 10)}...` : '')
   const hasDebate = council?.debateLog?.length > 0
   return (
     <section className="rec-card enter">
@@ -982,15 +1115,30 @@ const StrategyCard = ({ strategy, skillSource, onProceed, onRegenerate, strategy
       {hasDebate ? (
         <DebatePanel debateResult={council} />
       ) : showRunCouncil ? (
-        <div style={{ marginTop: 16, padding: '16px 14px', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
+        <div
+          style={{
+            marginTop: 16,
+            padding: '16px 14px',
+            border: '1px solid var(--border)',
+            borderRadius: 'var(--radius-md)',
+            textAlign: 'center',
+          }}
+        >
           {debateRunning ? (
-            <div className="mono" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+            <div
+              className="mono"
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10 }}
+            >
               <span className="think-spin" /> Council debate in progress…
             </div>
           ) : (
             <>
-              <div className="mono" style={{ marginBottom: 10, color: 'var(--text-muted)', fontSize: 12 }}>
-                Run an adversarial AI debate between Proposer ↔ Risk/Compliance, then validate against simulation.
+              <div
+                className="mono"
+                style={{ marginBottom: 10, color: 'var(--text-muted)', fontSize: 12 }}
+              >
+                Run an adversarial AI debate between Proposer ↔ Risk/Compliance, then validate
+                against simulation.
               </div>
               <button type="button" className="btn btn-primary" onClick={onRunCouncil}>
                 Run Council Review <Icon name="arrow" size={14} />
@@ -1459,65 +1607,117 @@ const LoopStatusPanel = ({ running, summary, rows, phase, nextTickAt, heartbeatM
       )}
 
       {/* Visual Pipeline Flowchart */}
-      <div className={`vf-flowchart-grid ${!running ? 'off' : cycling ? 'cycling' : 'sleeping'}`} style={{ opacity: running ? 1 : 0.5 }}>
+      <div
+        className={`vf-flowchart-grid ${!running ? 'off' : cycling ? 'cycling' : 'sleeping'}`}
+        style={{ opacity: running ? 1 : 0.5 }}
+      >
         {/* Stage 1: Observe */}
-        <div 
+        <div
           className={`vf-flowchart-node observe ${phase === 'observe' ? 'active' : cycling && activeIdx > 0 ? 'active-done' : ''} ${!cycling && latestVerdict === 'idle' ? 'highlighted-ok' : ''}`}
           style={{ gridRow: 1, gridColumn: 1 }}
           title="Monitors pool APY, TVL, and utilization triggers"
         >
           <span className="vf-node-icon">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <circle cx="11" cy="11" r="8" />
+              <path d="m21 21-4.3-4.3" />
+            </svg>
           </span>
           <span className="vf-node-label">Observe</span>
         </div>
-        
+
         {/* Arrow 1 */}
-        <div 
+        <div
           className={`vf-flowchart-arrow ${running && (phase === 'gate' || activeIdx > 1) ? 'active' : ''}`}
           style={{ gridRow: 1, gridColumn: 2 }}
         >
           →
         </div>
-        
+
         {/* Stage 2: Gate Check */}
-        <div 
+        <div
           className={`vf-flowchart-node gate ${phase === 'gate' ? 'active' : cycling && activeIdx > 1 ? 'active-done' : ''} ${!cycling && latestVerdict === 'gated' ? 'highlighted-warn' : ''}`}
           style={{ gridRow: 1, gridColumn: 3 }}
           title="Evaluates risk guardrails (e.g. utilization limits)"
         >
           <span className="vf-node-icon">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
           </span>
           <span className="vf-node-label">Gate Check</span>
         </div>
 
         {/* Gate Down Arrow */}
-        <div 
+        <div
           className={`vf-flowchart-branch-line vf-gate-down-line ${!cycling && latestVerdict === 'gated' ? 'active' : ''}`}
           style={{ gridRow: 2, gridColumn: 3 }}
         >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="3"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M12 5v14M19 12l-7 7-7-7" />
+          </svg>
         </div>
 
         {/* Gated Exit Node */}
-        <div 
+        <div
           className={`vf-flowchart-exit-node gated vf-gated-exit-node ${!cycling && latestVerdict === 'gated' ? 'active' : ''}`}
           style={{ gridRow: 3, gridColumn: 3 }}
         >
           <span className="vf-node-icon">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6M9 9l6 6"/></svg>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <circle cx="12" cy="12" r="10" />
+              <path d="m15 9-6 6M9 9l6 6" />
+            </svg>
           </span>
           <div>
             <div className="vf-exit-title">Gated (Abort)</div>
-            <div className="vf-exit-desc" title={latestVerdict === 'gated' ? latestReason : 'No alerts'}>
+            <div
+              className="vf-exit-desc"
+              title={latestVerdict === 'gated' ? latestReason : 'No alerts'}
+            >
               {latestVerdict === 'gated' ? latestReason : 'Risk limits safe'}
             </div>
           </div>
         </div>
 
         {/* Arrow 2 */}
-        <div 
+        <div
           className={`vf-flowchart-arrow ${running && activeIdx > 1 && latestVerdict !== 'gated' && (phase === 'simulate' || activeIdx > 2) ? 'active' : ''}`}
           style={{ gridRow: 1, gridColumn: 4 }}
         >
@@ -1525,19 +1725,31 @@ const LoopStatusPanel = ({ running, summary, rows, phase, nextTickAt, heartbeatM
         </div>
 
         {/* Stage 3: Simulate */}
-        <div 
+        <div
           className={`vf-flowchart-node simulate ${phase === 'simulate' ? 'active' : cycling && activeIdx > 2 ? 'active-done' : ''} ${!cycling && latestVerdict === 'keep' ? 'highlighted-ok' : ''}`}
           style={{ gridRow: 1, gridColumn: 5 }}
           title="Runs allocation model and Monte Carlo simulations"
         >
           <span className="vf-node-icon">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3"/></svg>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M3 3v18h18" />
+              <path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3" />
+            </svg>
           </span>
           <span className="vf-node-label">Simulate</span>
         </div>
 
         {/* Arrow 3 */}
-        <div 
+        <div
           className={`vf-flowchart-arrow ${running && activeIdx > 2 && latestVerdict !== 'gated' && (phase === 'council' || activeIdx > 3) ? 'active' : ''}`}
           style={{ gridRow: 1, gridColumn: 6 }}
         >
@@ -1545,43 +1757,82 @@ const LoopStatusPanel = ({ running, summary, rows, phase, nextTickAt, heartbeatM
         </div>
 
         {/* Stage 4: AI Council */}
-        <div 
+        <div
           className={`vf-flowchart-node council ${phase === 'council' ? 'active' : cycling && activeIdx > 3 ? 'active-done' : ''} ${!cycling && latestVerdict === 'discard' ? 'highlighted-danger' : ''}`}
           style={{ gridRow: 1, gridColumn: 7 }}
           title="Yield, Risk, and Market agents deliberate on-chain allocation"
         >
           <span className="vf-node-icon">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+              <circle cx="9" cy="7" r="4" />
+              <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+              <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+            </svg>
           </span>
           <span className="vf-node-label">AI Council</span>
         </div>
 
         {/* Council Down Arrow */}
-        <div 
+        <div
           className={`vf-flowchart-branch-line vf-council-down-line ${!cycling && latestVerdict === 'discard' ? 'active' : ''}`}
           style={{ gridRow: 2, gridColumn: 7 }}
         >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="3"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M12 5v14M19 12l-7 7-7-7" />
+          </svg>
         </div>
 
         {/* Discard Exit Node */}
-        <div 
+        <div
           className={`vf-flowchart-exit-node discarded vf-discarded-exit-node ${!cycling && latestVerdict === 'discard' ? 'active' : ''}`}
           style={{ gridRow: 3, gridColumn: 7 }}
         >
           <span className="vf-node-icon">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2M10 11v6M14 11v6"/></svg>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2M10 11v6M14 11v6" />
+            </svg>
           </span>
           <div>
             <div className="vf-exit-title">Discard (Decline)</div>
-            <div className="vf-exit-desc" title={latestVerdict === 'discard' ? latestReason : 'No actions discarded'}>
+            <div
+              className="vf-exit-desc"
+              title={latestVerdict === 'discard' ? latestReason : 'No actions discarded'}
+            >
               {latestVerdict === 'discard' ? latestReason : 'Offer acceptable'}
             </div>
           </div>
         </div>
 
         {/* Arrow 4 */}
-        <div 
+        <div
           className={`vf-flowchart-arrow ${running && activeIdx > 3 && !['gated', 'discard'].includes(latestVerdict) && (phase === 'execute' || activeIdx > 4) ? 'active' : ''}`}
           style={{ gridRow: 1, gridColumn: 8 }}
         >
@@ -1589,19 +1840,30 @@ const LoopStatusPanel = ({ running, summary, rows, phase, nextTickAt, heartbeatM
         </div>
 
         {/* Stage 5: Execute */}
-        <div 
+        <div
           className={`vf-flowchart-node execute ${phase === 'execute' ? 'active' : cycling && activeIdx > 4 ? 'active-done' : ''} ${!cycling && latestVerdict === 'keep' ? 'highlighted-ok' : ''}`}
           style={{ gridRow: 1, gridColumn: 9 }}
           title="Executes on-chain rebalances and deposit swaps"
         >
           <span className="vf-node-icon">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+            </svg>
           </span>
           <span className="vf-node-label">Execute</span>
         </div>
 
         {/* Arrow 5 */}
-        <div 
+        <div
           className={`vf-flowchart-arrow ${running && activeIdx > 4 && latestVerdict === 'keep' && (phase === 'reflect' || activeIdx > 5) ? 'active' : ''}`}
           style={{ gridRow: 1, gridColumn: 10 }}
         >
@@ -1609,13 +1871,25 @@ const LoopStatusPanel = ({ running, summary, rows, phase, nextTickAt, heartbeatM
         </div>
 
         {/* Stage 6: Reflect */}
-        <div 
+        <div
           className={`vf-flowchart-node reflect ${phase === 'reflect' ? 'active' : ''} ${!cycling && latestVerdict === 'keep' ? 'highlighted-ok' : ''}`}
           style={{ gridRow: 1, gridColumn: 11 }}
           title="Saves memory logs and refines future strategy runs"
         >
           <span className="vf-node-icon">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M12 20h9" />
+              <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+            </svg>
           </span>
           <span className="vf-node-label">Reflect</span>
         </div>

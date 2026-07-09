@@ -377,35 +377,68 @@ export default function AgentDashboard({
       {monitorStatus && (
         <div style={{ paddingTop: 20, borderTop: '1px solid var(--border)', marginTop: 20 }}>
           <div style={sectionLabel}>Council Monitor</div>
-          <div style={{
-            background: 'var(--bg-card)', borderRadius: 'var(--radius-md)',
-            border: '1px solid var(--border)', padding: '14px 16px', marginBottom: 16,
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
-          }}>
+          <div
+            style={{
+              background: 'var(--bg-card)',
+              borderRadius: 'var(--radius-md)',
+              border: '1px solid var(--border)',
+              padding: '14px 16px',
+              marginBottom: 16,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+            }}
+          >
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span style={{
-                width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
-                background: monitorStatus.level === 'disabled' ? 'var(--text-faint)'
-                  : monitorStatus.level === 'skip' ? 'var(--ok)'
-                  : monitorStatus.level === 'fast' || monitorStatus.level === 'full' ? 'var(--warn)'
-                  : monitorStatus.result === 'violation' ? 'var(--danger)' : 'var(--ok)',
-              }} />
+              <span
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: '50%',
+                  flexShrink: 0,
+                  background:
+                    monitorStatus.level === 'disabled'
+                      ? 'var(--text-faint)'
+                      : monitorStatus.level === 'skip'
+                        ? 'var(--ok)'
+                        : monitorStatus.level === 'fast' || monitorStatus.level === 'full'
+                          ? 'var(--warn)'
+                          : monitorStatus.result === 'violation'
+                            ? 'var(--danger)'
+                            : 'var(--ok)',
+                }}
+              />
               <div>
                 <div style={{ ...mono, color: 'var(--text)', fontSize: 11.5 }}>
-                  {monitorStatus.level === 'disabled' ? 'Monitor disabled'
-                    : monitorStatus.level === 'skip' ? 'All clear'
-                    : monitorStatus.level === 'fast' && monitorStatus.result === 'approved' ? 'Fast re-eval passed'
-                    : monitorStatus.level === 'full' && monitorStatus.result === 'approved' ? 'Full debate passed'
-                    : monitorStatus.result === 'rejected' ? 'Council rejected plan'
-                    : monitorStatus.result === 'violation' ? `Violation: ${monitorStatus.error || ''}`
-                    : `Change detected (score ${monitorStatus.score})`}
+                  {monitorStatus.level === 'disabled'
+                    ? 'Monitor disabled'
+                    : monitorStatus.level === 'skip'
+                      ? 'All clear'
+                      : monitorStatus.level === 'fast' && monitorStatus.result === 'approved'
+                        ? 'Fast re-eval passed'
+                        : monitorStatus.level === 'full' && monitorStatus.result === 'approved'
+                          ? 'Full debate passed'
+                          : monitorStatus.result === 'rejected'
+                            ? 'Council rejected plan'
+                            : monitorStatus.result === 'violation'
+                              ? `Violation: ${monitorStatus.error || ''}`
+                              : `Change detected (score ${monitorStatus.score})`}
                 </div>
                 <div style={{ ...mono, fontSize: 10, color: 'var(--text-faint)', marginTop: 3 }}>
                   {monitorStatus.reason}
                 </div>
               </div>
             </div>
-            <div style={{ textAlign: 'right', flexShrink: 0, ...mono, fontSize: 10, color: 'var(--text-faint)' }}>
+            <div
+              style={{
+                textAlign: 'right',
+                flexShrink: 0,
+                ...mono,
+                fontSize: 10,
+                color: 'var(--text-faint)',
+              }}
+            >
               {monitorStatus.lastCheck ? formatTime(monitorStatus.lastCheck, now) : ''}
             </div>
           </div>
