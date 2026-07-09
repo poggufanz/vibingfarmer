@@ -15,41 +15,51 @@ import NavBar from './NavBar.jsx'
 // rendered uniform in currentColor so no per-partner accent competes with brand.
 const PARTNERS = [
   {
-    name: 'MetaMask',
-    subtitle: 'Smart Accounts Kit',
+    name: 'Stellar / Soroban',
+    subtitle: 'Single-Chain Smart Contracts',
+    category: 'CHAIN',
+    description:
+      'Soroban contracts on Stellar. The registry enforces per-agent ed25519 session-key scopes; the vault holds funds. Every authorize, deposit, and attestation is verifiable on Stellar testnet.',
+    tags: ['Soroban', 'ed25519 auth', 'Testnet'],
+    link: 'https://stellar.org/soroban',
+    mark: 'ST',
+  },
+  {
+    name: 'Freighter',
+    subtitle: 'Stellar Wallet',
     category: 'WALLET',
     description:
-      'EIP-7702 smart account upgrade and ERC-7715 scoped permission delegation. The wallet layer that makes bounded autonomy possible.',
-    tags: ['EIP-7702', 'ERC-7715', 'Flask 13.9+'],
-    link: 'https://docs.metamask.io/smart-accounts-kit',
-    mark: 'MM',
+      'A standard Stellar wallet (Freighter / xBull / Albedo). One signature authorizes and funds each agent — no smart-account upgrade, no browser permission prompt.',
+    tags: ['Freighter', 'xBull', 'Albedo'],
+    link: 'https://www.freighter.app',
+    mark: 'FR',
+  },
+  {
+    name: 'Fee-bump Relayer',
+    subtitle: 'Gas Abstraction',
+    category: 'RELAYER',
+    description:
+      'A funded relayer fee-bumps every agent transaction. Vibing Farmer users pay $0 in gas — the agent signs with its ed25519 key, the relayer pays.',
+    tags: ['Fee-bump', 'Gas 0', 'ed25519'],
+    link: 'https://developers.stellar.org/docs/learn/fundamentals/transactions/fee-bump-transactions',
+    mark: 'FB',
   },
   {
     name: 'Venice AI',
     subtitle: 'Privacy-First AI Brain',
     category: 'AI',
     description:
-      'Zero-retention inference via TEE + E2EE. 200+ open-source models. Vibing Farmer uses Venice to generate yield strategies with full privacy.',
-    tags: ['llama-3.3-70b', 'TEE', 'Zero-retention'],
+      'Zero-retention inference via TEE + E2EE, wallet-funded through x402 + SIWE. DeepSeek V4 is the default strategist. Both generate yield strategies and per-agent skill sets.',
+    tags: ['x402', 'TEE', 'DeepSeek V4'],
     link: 'https://venice.ai',
     mark: 'VA',
-  },
-  {
-    name: '1Shot API',
-    subtitle: 'Gasless Relayer',
-    category: 'RELAYER',
-    description:
-      'Permissionless EIP-7710 relayer. Vibing Farmer agents pay $0 in gas. 1Shot sponsors every execution via stablecoin gas payments.',
-    tags: ['EIP-7710', 'Gas abstraction', 'Stablecoin'],
-    link: 'https://1shotapi.com',
-    mark: '1S',
   },
   {
     name: 'DeFiLlama',
     subtitle: 'Live Yield Data',
     category: 'DATA',
     description:
-      'Real-time APY and TVL data from 1000+ DeFi protocols. Venice AI receives live market data before generating any strategy recommendation.',
+      'Real-time APY and TVL data from 1000+ DeFi protocols. The AI strategist receives live market data before generating any strategy recommendation.',
     tags: ['APY', 'TVL', 'Real-time'],
     link: 'https://defillama.com',
     mark: 'DL',
@@ -59,55 +69,149 @@ const PARTNERS = [
     subtitle: 'Market Intelligence',
     category: 'SEARCH',
     description:
-      'AI-powered web search for real-time market context and security signals. Risk watcher uses Tavily to detect protocol exploits before they affect positions.',
+      'AI-powered web search for real-time market context and security signals. The risk watcher uses Tavily to detect protocol exploits before they affect positions.',
     tags: ['Risk signals', 'Market intel', 'AI search'],
     link: 'https://tavily.com',
     mark: 'TV',
   },
-  {
-    name: 'Base Sepolia',
-    subtitle: 'L2 Testnet',
-    category: 'CHAIN',
-    description:
-      'All Vibing Farmer contracts are deployed and verified on Base Sepolia. Every transaction, permission, and attestation is publicly verifiable on-chain.',
-    tags: ['Chain ID 84532', 'OP Stack L2', 'Verified'],
-    link: 'https://sepolia.basescan.org',
-    mark: 'BS',
-  },
 ]
 
 const STANDARDS = [
-  { id: 'EIP-7702', desc: 'Smart account delegation',   link: 'https://eips.ethereum.org/EIPS/eip-7702' },
-  { id: 'ERC-7715', desc: 'Scoped permissions',         link: 'https://eips.ethereum.org/EIPS/eip-7715' },
-  { id: 'EIP-7710', desc: 'Delegation redemption',      link: 'https://eips.ethereum.org/EIPS/eip-7710' },
-  { id: 'ERC-4626', desc: 'Tokenized vault standard',   link: 'https://eips.ethereum.org/EIPS/eip-4626' },
-  { id: 'x402',     desc: 'HTTP-native payments',       link: 'https://x402.org' },
-  { id: 'ERC-8004', desc: 'AI agent identity',          link: 'https://eips.ethereum.org/EIPS/eip-8004' },
+  {
+    id: 'Soroban Auth',
+    desc: 'ed25519 session-key scopes',
+    link: 'https://developers.stellar.org/docs/build/guides/auth',
+  },
+  {
+    id: 'SEP-41',
+    desc: 'Token interface',
+    link: 'https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0041.md',
+  },
+  {
+    id: 'Fee-bump',
+    desc: 'Gas-abstracted transactions',
+    link: 'https://developers.stellar.org/docs/learn/fundamentals/transactions/fee-bump-transactions',
+  },
+  {
+    id: 'Soroban Events',
+    desc: 'On-chain audit trail',
+    link: 'https://developers.stellar.org/docs/build/guides/events',
+  },
+  { id: 'x402', desc: 'HTTP-native payments', link: 'https://x402.org' },
+  { id: 'Blend', desc: 'Real-yield lending (WIP)', link: 'https://www.blend.capital' },
 ]
 
 const GITHUB_URL = 'https://github.com/poggufanz/vibingfarmer'
 
-// Static colored diagram — dangerouslySetInnerHTML is safe: fully hardcoded, no user input.
-const DIAGRAM_HTML =
-`<span class="eco-d-base">User Wallet</span>
-    │
-    │  <span class="eco-d-accent">EIP-7702 (MetaMask Flask)</span>
-    ▼
-<span class="eco-d-base">Smart Account</span> ─── <span class="eco-d-accent">ERC-7715 Permission</span>
-    │
-    │  AI Strategy
-    │  <span class="eco-d-muted">Venice AI ← DeFiLlama APY ← Tavily Context</span>
-    ▼
-<span class="eco-d-bright">AgentVaultDepositor.sol</span>
-    │
-    ├── Worker-1 ──► Vault A <span class="eco-d-muted">(aave-v3)</span>
-    │                 <span class="eco-d-muted">ERC-4626</span>
-    └── Worker-2 ──► Vault B <span class="eco-d-muted">(morpho-blue)</span>
-                      <span class="eco-d-muted">ERC-4626</span>
-    │
-    │  <span class="eco-d-accent">Gas: $0 (1Shot · EIP-7710)</span>
-    ▼
-<span class="eco-d-muted">Base Sepolia</span>`
+/* ── Visual architecture diagram (SVG) ── */
+
+// Node layout coordinates (designed for 800×520 viewBox)
+const ARCH_NODES = [
+  { id: 'wallet',   x: 400, y: 40,  label: 'User Wallet',      sub: 'Freighter / xBull / Albedo', icon: 'W', color: '#ecebe1' },
+  { id: 'ai',       x: 400, y: 140, label: 'AI Strategy',       sub: 'Venice AI / DeepSeek',        icon: 'AI', color: '#b8a9ff' },
+  { id: 'registry', x: 400, y: 260, label: 'Registry',          sub: 'Soroban smart contract',      icon: 'RG', color: '#cfff3d', hero: true },
+  { id: 'worker1',  x: 240, y: 370, label: 'Worker-1',          sub: 'Parallel agent',              icon: 'W1', color: '#ffb86c' },
+  { id: 'worker2',  x: 560, y: 370, label: 'Worker-2',          sub: 'Parallel agent',              icon: 'W2', color: '#ffb86c' },
+  { id: 'vault1',   x: 240, y: 460, label: 'Vault (USDC)',      sub: 'Soroban',                     icon: 'V1', color: '#7dd3c0' },
+  { id: 'vault2',   x: 560, y: 460, label: 'Vault (USDC)',      sub: 'Soroban',                     icon: 'V2', color: '#7dd3c0' },
+]
+
+const ARCH_EDGES = [
+  { from: 'wallet',   to: 'ai',       label: 'one signature' },
+  { from: 'ai',       to: 'registry', label: 'strategy + skills' },
+  { from: 'registry', to: 'worker1',  label: 'ed25519 scope' },
+  { from: 'registry', to: 'worker2',  label: 'ed25519 scope' },
+  { from: 'worker1',  to: 'vault1',   label: 'deposit' },
+  { from: 'worker2',  to: 'vault2',   label: 'deposit' },
+]
+
+function ArchNode({ node }) {
+  const w = 200, h = 56, rx = 10
+  return (
+    <g className={'arch-node' + (node.hero ? ' arch-node--hero' : '')}>
+      {node.hero && (
+        <rect
+          x={node.x - w/2 - 4} y={node.y - h/2 - 4}
+          width={w + 8} height={h + 8}
+          rx={rx + 2}
+          className="arch-glow"
+        />
+      )}
+      <rect
+        x={node.x - w/2} y={node.y - h/2}
+        width={w} height={h}
+        rx={rx}
+        className="arch-card"
+        style={{ stroke: node.hero ? 'rgba(207,255,61,0.4)' : undefined }}
+      />
+      {/* icon circle */}
+      <circle cx={node.x - w/2 + 24} cy={node.y} r={14} className="arch-icon-bg" style={{ fill: node.color + '18' , stroke: node.color + '40' }} />
+      <text x={node.x - w/2 + 24} y={node.y + 1} className="arch-icon-text" style={{ fill: node.color }} dominantBaseline="central" textAnchor="middle">
+        {node.icon}
+      </text>
+      {/* labels */}
+      <text x={node.x - w/2 + 48} y={node.y - 6} className="arch-label" style={{ fill: node.hero ? node.color : undefined }}>
+        {node.label}
+      </text>
+      <text x={node.x - w/2 + 48} y={node.y + 10} className="arch-sublabel">
+        {node.sub}
+      </text>
+    </g>
+  )
+}
+
+function ArchEdge({ from, to, label, index }) {
+  const x1 = from.x, y1 = from.y + 28
+  const x2 = to.x,   y2 = to.y - 28
+  const mx = (x1 + x2) / 2, my = (y1 + y2) / 2
+
+  return (
+    <g className="arch-edge">
+      <line x1={x1} y1={y1} x2={x2} y2={y2} className="arch-line" style={{ animationDelay: `${index * 0.3}s` }} />
+      {/* arrowhead */}
+      <polygon
+        points={`${x2},${y2} ${x2-4},${y2-8} ${x2+4},${y2-8}`}
+        className="arch-arrow"
+      />
+      {/* label */}
+      <rect
+        x={mx - label.length * 3.2} y={my - 8}
+        width={label.length * 6.4} height={16}
+        rx={4}
+        className="arch-edge-bg"
+      />
+      <text x={mx} y={my + 1} className="arch-edge-label" textAnchor="middle" dominantBaseline="central">
+        {label}
+      </text>
+    </g>
+  )
+}
+
+function ArchDiagram() {
+  const nodeMap = Object.fromEntries(ARCH_NODES.map(n => [n.id, n]))
+
+  return (
+    <svg className="arch-svg" viewBox="0 0 800 520" role="img" aria-label="Architecture: user wallet signs once, AI strategy generates plan, Registry enforces ed25519 scopes, parallel workers deposit to vaults">
+      <defs>
+        <filter id="arch-glow-f">
+          <feGaussianBlur stdDeviation="8" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+      </defs>
+      {/* gas badge */}
+      <rect x={325} y={494} width={150} height={22} rx={6} className="arch-gas-bg" />
+      <text x={400} y={505} className="arch-gas-text" textAnchor="middle" dominantBaseline="central">
+        Gas: $0 (fee-bump relayer)
+      </text>
+      {/* edges first (behind nodes) */}
+      {ARCH_EDGES.map((e, i) => (
+        <ArchEdge key={i} from={nodeMap[e.from]} to={nodeMap[e.to]} label={e.label} index={i} />
+      ))}
+      {/* nodes */}
+      {ARCH_NODES.map(n => <ArchNode key={n.id} node={n} />)}
+    </svg>
+  )
+}
 
 /* ------------------------------------------------------------------ */
 /* components                                                            */
@@ -117,7 +221,9 @@ function PartnerCard({ partner }) {
   return (
     <article className="eco-card">
       <div className="eco-card__head">
-        <span className="eco-card__mark" aria-hidden="true">{partner.mark}</span>
+        <span className="eco-card__mark" aria-hidden="true">
+          {partner.mark}
+        </span>
         <span className="eco-card__cat">{partner.category}</span>
       </div>
       <h3 className="eco-card__name">{partner.name}</h3>
@@ -125,7 +231,9 @@ function PartnerCard({ partner }) {
       <p className="eco-card__desc">{partner.description}</p>
       <div className="eco-card__tags">
         {partner.tags.map((t) => (
-          <span key={t} className="eco-tag">{t}</span>
+          <span key={t} className="eco-tag">
+            {t}
+          </span>
         ))}
       </div>
       <a
@@ -153,7 +261,7 @@ function StandardBadge({ standard }) {
       <span className="eco-std__id">{standard.id}</span>
       <span className="eco-std__desc">{standard.desc}</span>
       <span className="eco-std__view">
-        View EIP <span aria-hidden="true">↗</span>
+        View doc <span aria-hidden="true">↗</span>
       </span>
     </a>
   )
@@ -195,19 +303,20 @@ export default function EcosystemPage() {
       <NavBar />
 
       <main className="eco-main">
-
         {/* header */}
         <header className="eco-header">
           <h1 className="eco-title">Ecosystem</h1>
           <p className="eco-lede">
-            The infrastructure powering Vibing Farmer. Built on battle-tested
-            primitives, privacy-first AI, and permissionless relaying.
+            The infrastructure powering Vibing Farmer. Built on Soroban smart contracts,
+            privacy-first AI, and gas-abstracted fee-bump relaying.
           </p>
         </header>
 
         {/* partners */}
         <section className="eco-section" aria-labelledby="eco-sec-partners">
-          <h2 id="eco-sec-partners" className="eco-section__title">Powered by</h2>
+          <h2 id="eco-sec-partners" className="eco-section__title">
+            Powered by
+          </h2>
           <div className="eco-grid">
             {PARTNERS.map((p) => (
               <PartnerCard key={p.name} partner={p} />
@@ -217,7 +326,9 @@ export default function EcosystemPage() {
 
         {/* standards */}
         <section className="eco-section" aria-labelledby="eco-sec-stds">
-          <h2 id="eco-sec-stds" className="eco-section__title">Integrated standards</h2>
+          <h2 id="eco-sec-stds" className="eco-section__title">
+            Integrated standards
+          </h2>
           <div className="eco-stds-wrap">
             {STANDARDS.map((s) => (
               <StandardBadge key={s.id} standard={s} />
@@ -227,25 +338,23 @@ export default function EcosystemPage() {
 
         {/* architecture diagram */}
         <section className="eco-section" aria-labelledby="eco-sec-arch">
-          <h2 id="eco-sec-arch" className="eco-section__title">How they connect</h2>
+          <h2 id="eco-sec-arch" className="eco-section__title">
+            How they connect
+          </h2>
           <div
             ref={diagramRef}
             className="eco-diagram"
-            role="img"
-            aria-label="Architecture: user wallet via EIP-7702 to smart account with ERC-7715 permission; Venice AI + DeFiLlama + Tavily generate strategy; AgentVaultDepositor.sol dispatches parallel workers to ERC-4626 vaults; 1Shot EIP-7710 relayer pays all gas on Base Sepolia"
           >
-            <pre
-              className="eco-diagram__pre"
-              // eslint-disable-next-line react/no-danger
-              dangerouslySetInnerHTML={{ __html: DIAGRAM_HTML }}
-            />
+            <ArchDiagram />
           </div>
         </section>
 
         {/* CTA */}
         <section className="eco-section eco-section--cta" aria-labelledby="eco-sec-cta">
           <div className="eco-cta__inner">
-            <h2 id="eco-sec-cta" className="eco-cta__heading">Ready to vibe?</h2>
+            <h2 id="eco-sec-cta" className="eco-cta__heading">
+              Ready to vibe?
+            </h2>
             <p className="eco-cta__tagline">
               Set once. <em>Vibe forever.</em>
             </p>
@@ -269,7 +378,6 @@ export default function EcosystemPage() {
           <span className="eco-foot__mark">vibing / farmer</span>
           <span className="eco-foot__tag">Set once. Vibe forever.</span>
         </footer>
-
       </main>
     </div>
   )
@@ -511,7 +619,7 @@ function EcoStyle() {
   margin-top: auto;
 }
 
-/* ---------- architecture diagram ---------- */
+/* ---------- architecture diagram (SVG) ---------- */
 .eco-diagram {
   opacity: 0;
   transform: translateY(14px);
@@ -524,24 +632,89 @@ function EcoStyle() {
 @media (prefers-reduced-motion: reduce) {
   .eco-diagram { opacity: 1 !important; transform: none !important; transition: none !important; }
 }
-.eco-diagram__pre {
-  font-family: var(--font-mono, "JetBrains Mono", monospace);
-  font-size: clamp(0.72rem, 1vw, 0.84rem);
-  line-height: 1.7;
-  color: var(--text-muted, #95958a);
-  background: var(--bg-card, #1a1b16);
-  border: 1px solid var(--border-strong, rgba(255,255,255,0.13));
-  border-radius: var(--radius-lg, 14px);
-  padding: clamp(1.4rem, 3vw, 2rem) clamp(1.2rem, 3vw, 2.2rem);
-  overflow-x: auto;
-  white-space: pre;
-  -webkit-overflow-scrolling: touch;
-  margin: 0;
+.arch-svg {
+  display: block;
+  width: 100%;
+  max-width: 800px;
+  height: auto;
+  margin: 0 auto;
 }
-.eco-d-accent { color: var(--eco-accent); }
-.eco-d-bright { color: var(--text, #ecebe1); font-weight: 600; }
-.eco-d-base   { color: var(--text, #ecebe1); }
-.eco-d-muted  { color: var(--text-faint, #56564f); }
+.arch-card {
+  fill: var(--bg-card, #1a1b16);
+  stroke: var(--border-strong, rgba(255,255,255,0.13));
+  stroke-width: 1;
+  transition: stroke 200ms ease;
+}
+.arch-node:hover .arch-card {
+  stroke: rgba(207,255,61,0.4);
+}
+.arch-glow {
+  fill: none;
+  stroke: rgba(207,255,61,0.15);
+  stroke-width: 2;
+  filter: url(#arch-glow-f);
+  animation: arch-pulse 3s ease-in-out infinite;
+}
+@keyframes arch-pulse {
+  0%, 100% { stroke: rgba(207,255,61,0.1); }
+  50%      { stroke: rgba(207,255,61,0.3); }
+}
+.arch-icon-bg {
+  stroke-width: 1;
+}
+.arch-icon-text {
+  font-family: var(--font-mono, monospace);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.arch-label {
+  font-family: var(--font-display, "Geist", sans-serif);
+  font-size: 11.5px;
+  font-weight: 600;
+  fill: var(--text, #ecebe1);
+}
+.arch-sublabel {
+  font-family: var(--font-mono, monospace);
+  font-size: 8.5px;
+  fill: var(--text-faint, #56564f);
+}
+.arch-line {
+  stroke: rgba(255,255,255,0.12);
+  stroke-width: 1;
+  stroke-dasharray: 6 4;
+  stroke-dashoffset: 0;
+  animation: arch-dash 8s linear infinite;
+}
+@keyframes arch-dash {
+  to { stroke-dashoffset: -40; }
+}
+.arch-arrow {
+  fill: rgba(255,255,255,0.2);
+}
+.arch-edge-bg {
+  fill: var(--bg-base, #0e0f0c);
+  stroke: var(--border, rgba(255,255,255,0.06));
+  stroke-width: 0.5;
+}
+.arch-edge-label {
+  font-family: var(--font-mono, monospace);
+  font-size: 8px;
+  letter-spacing: 0.03em;
+  fill: var(--text-muted, #95958a);
+}
+.arch-gas-bg {
+  fill: rgba(207,255,61,0.06);
+  stroke: rgba(207,255,61,0.2);
+  stroke-width: 0.5;
+}
+.arch-gas-text {
+  font-family: var(--font-mono, monospace);
+  font-size: 8.5px;
+  font-weight: 600;
+  fill: var(--eco-accent);
+  letter-spacing: 0.03em;
+}
 
 /* ---------- CTA ---------- */
 .eco-cta__inner {

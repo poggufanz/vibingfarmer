@@ -1,5 +1,10 @@
-import { describe, it, expect } from 'vitest'
-import { validateVeniceResponse, parseSpecialistVerdict, resolveProvider } from './venice.js'
+import { describe, it, test, expect, vi, beforeEach, afterEach } from 'vitest'
+import {
+  validateVeniceResponse,
+  parseSpecialistVerdict,
+  resolveProvider,
+  generateAgentSkills,
+} from './venice.js'
 import { AI_PROXY_URL } from './config.js'
 
 const VAULTS = [
@@ -148,5 +153,98 @@ describe('parseSpecialistVerdict', () => {
     )
     expect(v.citedRules).toEqual([])
     expect(v.concerns).toEqual([])
+  })
+})
+
+describe('skill cap is 7-dp', () => {
+  // Stub storage (so loadSettings works in node) + reject fetch -> AI call fails ->
+  // generateAgentSkills returns its fallback skill, whose deposit cap we assert.
+  const memStore = () => {
+    const m = new Map()
+    return {
+      getItem: (k) => (m.has(k) ? m.get(k) : null),
+      setItem: (k, v) => m.set(k, String(v)),
+      removeItem: (k) => m.delete(k),
+    }
+  }
+
+  it('encodes deposit maxAmount in 7-dp base units', async () => {
+    vi.stubGlobal('localStorage', memStore())
+    vi.stubGlobal('sessionStorage', memStore())
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new Error('no network')))
+    )
+    try {
+      const skill = await generateAgentSkills({ agentId: 'w1', vault: '0xAAA', amount: 100 })
+      const maxAmount = skill.skills?.deposit?.maxAmount
+      expect(String(maxAmount)).toBe('1000000000') // 100 USDC at 7-dp, not the legacy 6-dp scale
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})
+
+// --- Base pool allocation (Approach C, SP3) ---
+describe('allocateBasePools', () => {
+  // resolveProviderFromSettings -> loadSettings reads localStorage/sessionStorage; node env has
+  // neither. Stub them (same approach as the AI-fallback test above) so allocation reaches its
+  // provider decision and, with no configured AI, its deterministic fallback.
+  const memStore = () => {
+    const m = {}
+    return {
+      getItem: (k) => m[k] ?? null,
+      setItem: (k, v) => {
+        m[k] = v
+      },
+      removeItem: (k) => {
+        delete m[k]
+      },
+    }
+  }
+  beforeEach(() => {
+    vi.stubGlobal('localStorage', memStore())
+    vi.stubGlobal('sessionStorage', memStore())
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  test('fallback (no provider configured) splits amount equally across only whitelisted pools, each within its own cap-eligible amount', async () => {
+    const { allocateBasePools } = await import('./venice.js')
+    const result = await allocateBasePools({ amount: 300, riskLevel: 'medium', nPools: 3 })
+
+    expect(result).toHaveLength(3)
+    const { BASE_POOL_CATALOG } = await import('./config.js')
+    const allowedAddresses = new Set(BASE_POOL_CATALOG.map((p) => p.address.toLowerCase()))
+    for (const entry of result) {
+      expect(allowedAddresses.has(entry.pool.toLowerCase())).toBe(true)
+      expect(entry.amount).toBeCloseTo(100, 5)
+      expect(entry.minShares).toBeGreaterThan(0n)
+      expect(entry.skill).toMatchObject({
+        vaultAddress: entry.pool,
+        maxAmount: expect.any(String),
+        expiresAt: expect.any(Number),
+      })
+    }
+    const total = result.reduce((s, e) => s + e.amount, 0)
+    expect(total).toBeCloseTo(300, 5)
+  })
+
+  test('clamps nPools to the catalog size', async () => {
+    const { allocateBasePools } = await import('./venice.js')
+    const result = await allocateBasePools({ amount: 100, riskLevel: 'low', nPools: 50 })
+    const { BASE_POOL_CATALOG } = await import('./config.js')
+    expect(result.length).toBeLessThanOrEqual(BASE_POOL_CATALOG.length)
+  })
+
+  test('every skill has a future expiresAt and a maxAmount matching the allocated amount at 6dp', async () => {
+    const { allocateBasePools } = await import('./venice.js')
+    const nowSec = Math.floor(Date.now() / 1000)
+    const result = await allocateBasePools({ amount: 60, riskLevel: 'high', nPools: 2 })
+    for (const entry of result) {
+      expect(entry.skill.expiresAt).toBeGreaterThan(nowSec)
+      expect(BigInt(entry.skill.maxAmount)).toBe(BigInt(Math.round(entry.amount * 1_000_000)))
+    }
   })
 })
