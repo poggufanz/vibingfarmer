@@ -303,7 +303,7 @@ const mapVeniceToStrategy = (veniceResult, amount, risk) => {
       riskTier: v.risk_tier, // AI metadata → UI
       yieldSource: v.yield_source_type, // AI metadata → UI
       vault: {
-        name: v.name || live.name || cat.name || `MockVault ${i + 1}`,
+        name: v.name || live.name || cat.name || `Pool ${i + 1}`,
         protocol: v.protocol || live.protocol || cat.protocol || PROTOCOLS[i] || 'aave-v3',
         apy: String(v.expected_apy ?? live.apy ?? cat.apy ?? 4.8),
         drawdown: live.drawdown || cat.drawdown || '-1.8',
