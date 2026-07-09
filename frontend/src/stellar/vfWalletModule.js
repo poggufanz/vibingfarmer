@@ -78,11 +78,11 @@ export class VfWalletModule {
     })
   }
 
-  // VF Wallet is testnet-only today (frontend/src/wallet/config.js's WALLET_CONFIG) — no round
-  // trip to the extension needed for a static fact.
+  // Network comes from the per-network config (testnet today; flips with VITE_STELLAR_NETWORK) —
+  // no round trip to the extension needed for a static fact.
   async getNetwork() {
-    const { NETWORK_PASSPHRASE } = await import('./config.js')
-    return { network: 'TESTNET', networkPassphrase: NETWORK_PASSPHRASE }
+    const { NETWORK_PASSPHRASE, STELLAR_NETWORK_LABEL } = await import('./config.js')
+    return { network: STELLAR_NETWORK_LABEL, networkPassphrase: NETWORK_PASSPHRASE }
   }
 
   async disconnect() {
