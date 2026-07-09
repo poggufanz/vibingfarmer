@@ -242,3 +242,30 @@ To demonstrate that Vibing Farmer successfully automates a multi-vault deposit f
 
 ### Scene 8: Reset (15s)
 - Click "Reset" → clears state and localStorage.
+
+---
+
+## 7. Lifeboat Demo Beat (Stellar/Soroban — live system)
+
+> The rest of this document predates the EVM→Stellar migration (see `CLAUDE.md`) and is kept as
+> historical demo-flow reference. This beat covers the automated emergency de-risk feature —
+> vault `emergency_derisk`/`resume`/`lifeboat_state`, the keeper radar (`keeper/src/radar.js`),
+> and the frontend `LifeboatPanel` — as it runs on the live Stellar testnet deploy.
+
+1. **Grant the mandate.** In the LifeboatPanel, click "Grant 24h mandate" → the user signs
+   `set_mandate(expiry = now + 24h)`. The panel flips to **ARMED** with a live countdown to
+   expiry.
+2. **Attack.** Run `whale-sim.mjs --attack` to drain pool liquidity and trigger the
+   liquidity-crunch signal the keeper radar watches for.
+3. **Engage.** Within ~1 ledger (~6 s) [live-measured engage latency to be recorded from the
+   smoke run], the panel flips to **ENGAGED** and a "Lifeboat engaged · Liquidity drop" row
+   appears in the event log — the radar detected the drop, confirmed a live mandate, and
+   submitted `emergency_derisk`.
+4. **Auto-resume.** After the calm window (the all-clear streak) elapses with no danger signal,
+   the radar submits `resume` and the panel returns to **ARMED**.
+5. **Honesty shot.** Let the mandate expire (do not renew it), then run `whale-sim.mjs --attack`
+   again. The radar still detects the danger signal, but the mandate has expired — it fails
+   closed and does NOT de-risk. The panel/log shows **"DISARMED — mandate expired, lifeboat
+   cannot act"**. This is a deliberate demonstration of the safeguard's honest boundary: deposits
+   and redemptions stay open throughout, but the automated de-risk/resume pair is powerless
+   without a live, user-granted mandate.
