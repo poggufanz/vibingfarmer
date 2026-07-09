@@ -111,11 +111,12 @@ impl FundingRouter {
             };
             // Factory deploy: deployer address = this contract, so no extra
             // auth is required. The agent's own constructor self-approves
-            // token -> vault via invoker auth (unchanged).
-            let agent = env
-                .deployer()
-                .with_current_contract(init.salt)
-                .deploy_v2(wasm_hash.clone(), (owner.clone(), init.signer, scope));
+            // token -> vault via invoker auth, and pins THIS router (4th ctor
+            // arg) so its session key may later authorize `pull` on it.
+            let agent = env.deployer().with_current_contract(init.salt).deploy_v2(
+                wasm_hash.clone(),
+                (owner.clone(), init.signer, scope, Some(router.clone())),
+            );
             let key = DataKey::Deployed(agent.clone());
             env.storage().persistent().set(&key, &owner);
             env.storage()

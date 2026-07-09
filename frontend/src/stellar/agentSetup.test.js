@@ -105,7 +105,7 @@ describe('deployAgentForSession (Option B: fresh agent per run)', () => {
   const rawPublicKey = new Uint8Array(32).fill(7)
   const sessionKey = { rawPublicKey, publicKey: 'GSESSION' }
 
-  test('builds the __constructor args: owner, session pubkey, and the AgentScope struct', async () => {
+  test('builds the __constructor args: owner, session pubkey, AgentScope struct, router=None', async () => {
     await deployAgentForSession({
       owner: OWNER,
       sessionKey,
@@ -118,10 +118,13 @@ describe('deployAgentForSession (Option B: fresh agent per run)', () => {
     // Deploy source = the connected user wallet; wasm = the already-uploaded agent_account hash.
     expect(call.source).toBe(OWNER)
     expect(call.wasmHash).toBe(SOROBAN_AGENT_WASM_HASH)
-    const [ownerArg, signerArg, scopeArg] = call.constructorArgs
+    expect(call.constructorArgs).toHaveLength(4)
+    const [ownerArg, signerArg, scopeArg, routerArg] = call.constructorArgs
     expect(ownerArg).toEqual({ addr: OWNER })
     // The EXACT run session pubkey is pinned as the account signer — the whole point of Option B.
     expect(signerArg.bytes32).toBe(rawPublicKey)
+    // Direct (non-router) deploy passes Option::None for the 4th ctor arg — a bare ScVal Void.
+    expect(routerArg.switch().name).toBe('scvVoid')
     const scope = scValToNative(scopeArg)
     expect(scope).toEqual({
       owner: OWNER,

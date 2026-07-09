@@ -72,6 +72,16 @@ export function boolScVal(b) {
 }
 
 /**
+ * Encode Rust `Option::None` for an optional contract arg — ScVal::Void. Soroban encodes
+ * `Option<T>` as the bare inner value for `Some` and Void for `None` (repo lesson: in XDR
+ * JSON that is the bare "void" symbol).
+ * @returns {import('@stellar/stellar-sdk').xdr.ScVal}
+ */
+export function voidScVal() {
+  return xdr.ScVal.scvVoid()
+}
+
+/**
  * Encode a Soroban `#[contracttype]` struct as ScVal::Map. Field values must ALREADY be
  * ScVals (compose with addrScVal / i128ScVal / …). Soroban requires map keys (the field
  * names, as symbols) in lexicographic order or the host rejects the value — sorted here so

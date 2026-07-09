@@ -9,6 +9,7 @@ import {
   symbolScVal,
   boolScVal,
   structScVal,
+  voidScVal,
 } from './scval.js'
 import { encodeArgs } from './client.js'
 
@@ -34,6 +35,11 @@ describe('scval codec', () => {
     // build a symbol the SDK way and confirm our decoder matches scValToNative
     const sv = i128ScVal(7n)
     expect(fromScVal(sv)).toBe(scValToNative(sv))
+  })
+
+  it('voidScVal encodes Option::None as a bare ScVal Void', () => {
+    const sv = voidScVal()
+    expect(sv.switch().name).toBe('scvVoid')
   })
 })
 

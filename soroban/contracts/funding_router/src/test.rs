@@ -137,7 +137,9 @@ fn pull_rejects_agent_not_deployed_by_factory() {
     );
 
     // Attacker deploys the SAME agent code OUTSIDE the factory, claiming the
-    // victim as owner in its scope.
+    // victim as owner in its scope — and even claiming the REAL router as its
+    // deployer (4th ctor arg). Neither helps: `pull` gates on the router's own
+    // Deployed map, which only the factory writes.
     let scope = AgentScope {
         owner: victim.clone(),
         vault: s.vault.clone(),
@@ -155,6 +157,7 @@ fn pull_rejects_agent_not_deployed_by_factory() {
             victim.clone(),
             BytesN::from_array(&s.env, &[9u8; 32]),
             scope,
+            Some(s.router.clone()),
         ),
     );
 
@@ -421,6 +424,49 @@ fn pull_requires_agent_auth() {
     }]);
     client.pull(&agent, &1_000_000);
     assert_eq!(t.balance(&agent), 1_000_000);
+}
+
+// --- one-popup e2e: grant wires THIS router into the agent, whose session-key auth
+// (enforce() pull@router rule, exercised in agent_account's suite) lets it fund itself.
+// Here: grant with the REAL rebuilt wasm -> the agent records the router -> the agent
+// authorizes `pull` -> funds move owner -> agent. ---
+#[test]
+fn grant_wires_router_into_agent_and_agent_authed_pull_funds_it() {
+    let s = setup();
+    s.env.mock_all_auths();
+    let owner = Address::generate(&s.env);
+    mint(&s, &owner, 500_000_000);
+    let client = FundingRouterClient::new(&s.env, &s.router);
+
+    let agents = client.grant(
+        &owner,
+        &100_000_000,
+        &1_000,
+        &vec![&s.env, agent_init(&s.env, &s.vault, 1, 100_000_000)],
+    );
+    let agent = agents.get(0).unwrap();
+
+    // The deployed agent (REAL wasm) recorded THIS router as its deployer —
+    // its __check_auth therefore accepts a session-key-signed pull@router.
+    let ac = agentwasm::Client::new(&s.env, &agent);
+    assert_eq!(ac.router(), Some(s.router.clone()));
+
+    // The agent (and only the agent) authorizes the pull; funds move owner -> agent.
+    s.env.mock_auths(&[MockAuth {
+        address: &agent,
+        invoke: &MockAuthInvoke {
+            contract: &s.router,
+            fn_name: "pull",
+            args: (agent.clone(), 25_000_000i128).into_val(&s.env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.pull(&agent, &25_000_000);
+
+    let t = TokenClient::new(&s.env, &s.token);
+    assert_eq!(t.balance(&agent), 25_000_000);
+    assert_eq!(t.balance(&owner), 475_000_000);
+    assert_eq!(t.balance(&s.router), 0); // still zero custody
 }
 
 // --- input validation: non-positive amounts are rejected everywhere ---
