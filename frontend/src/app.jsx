@@ -1120,7 +1120,8 @@ const App = () => {
     })
   }, [strategy, amount, risk])
 
-  // F8 Enforcement-A view-model: per-protocol eligibility verdicts for the approval card.
+  // F8 Enforcement-A view-model: per-protocol eligibility verdicts for the approval card. Pure +
+  // snapshot-backed (no live call). The fused sentence anchors on the first survivor.
   const eligibility = useM(() => {
     if (!strategy?.agents) return null
     const { verdictBySlug, survivors } = computeBasket(strategy.agents)
@@ -1151,8 +1152,11 @@ const App = () => {
     return { fusedSentence, rows }
   }, [strategy])
 
-  // Auto-run legacy council when strategy becomes ready (backward compat).
-  // For the new debate council, see handleRunCouncil below.
+  // AI Council deliberation for the proposed allocation. Async (3 parallel AI
+  // calls + possible synthesis call) so it runs as an effect, not a useMemo. Uses
+  // the SAME live signals as the simulation panel. AI-only: each specialist retries
+  // once; if the provider still fails, the council reports 'unavailable' and the
+  // panel offers a retry — no fabricated verdict.
   useE(() => {
     if (!strategy?.agents?.length) {
       setCouncil(undefined)

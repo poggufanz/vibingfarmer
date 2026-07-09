@@ -729,86 +729,12 @@ const SimulationPanel = ({ simulation }) => {
         })}
       </div>
     </div>
-  )
-}
+  );
+};
 
-const DebatePanel = ({ debateResult }) => {
-  if (!debateResult?.debateLog?.length) return null
-  const { debateLog, iterations, converged, proposer, riskCompliance, validator, gate, permissionSentence, verdict, confidence } = debateResult
-  const lastIter = debateLog[debateLog.length - 1]
-  console.log('[DebatePanel] proposer:', proposer, 'verdict:', verdict, 'gate:', gate)
-  return (
-    <div className="debate-panel" style={{ marginTop: 16, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
-      <div className="mono" style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ color: 'var(--text)' }}>AI Council Debate · {iterations} iteration{iterations > 1 ? 's' : ''}</span>
-        <span style={{ color: converged ? 'var(--ok)' : 'var(--warn, #c87)', fontSize: 11 }}>
-          {converged ? '✓ converged' : '✗ max iterations reached'}
-        </span>
-      </div>
-      {debateLog.map((entry, i) => (
-        <div key={i} style={{ padding: '8px 14px', borderBottom: i < debateLog.length - 1 ? '1px solid var(--border)' : 'none', fontSize: 12 }}>
-          <div style={{ color: 'var(--text-faint)', marginBottom: 4 }}>Iteration {entry.iteration}</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-            <div style={{ padding: '6px 8px', background: 'rgba(255,165,0,0.08)', borderRadius: 'var(--radius-sm)' }}>
-              <span style={{ color: '#c90', fontWeight: 600 }}>Proposer</span>
-              <div style={{ color: 'var(--text)' }}>{entry.proposer?.action || '?'} · {Math.round((entry.proposer?.confidence ?? 0) * 100)}%</div>
-              {entry.proposer?.reasoning && <div style={{ color: 'var(--text-muted)', fontSize: 10, marginTop: 2 }}>{entry.proposer.reasoning}</div>}
-              {entry.proposer?.arguments?.length > 0 && <div style={{ color: 'var(--text-faint)', fontSize: 10 }}>{entry.proposer.arguments.join('; ')}</div>}
-            </div>
-            <div style={{ padding: '6px 8px', background: 'rgba(0,180,80,0.08)', borderRadius: 'var(--radius-sm)' }}>
-              <span style={{ color: '#0a4', fontWeight: 600 }}>Risk/Compliance</span>
-              <div style={{ color: 'var(--text)' }}>{entry.riskCompliance?.action || '?'} · {Math.round((entry.riskCompliance?.confidence ?? 0) * 100)}%{entry.riskCompliance?.compliancePass === false ? ' · ⚠ FAIL' : ''}</div>
-              {entry.riskCompliance?.concerns?.length > 0 && <div style={{ color: 'var(--text-muted)', fontSize: 10, marginTop: 2 }}>{entry.riskCompliance.concerns[0]}</div>}
-              {entry.riskCompliance?.violations?.length > 0 && <div style={{ color: 'var(--warn, #c87)', fontSize: 10 }}>Violations: {entry.riskCompliance.violations.join(', ')}</div>}
-            </div>
-          </div>
-        </div>
-      ))}
-      {proposer && (
-        <div style={{ padding: '10px 14px', borderTop: '1px solid var(--border)' }}>
-          <div style={{ fontWeight: 600, marginBottom: 6, fontSize: 13 }}>
-            {verdict === 'keep' ? '✅' : '✗'} Conclusion — {verdict === 'keep' ? 'KEEP' : 'DISCARD'}
-          </div>
-          <div style={{ fontSize: 12, lineHeight: 1.6 }}>
-            <div><span style={{ color: '#c90', fontWeight: 600 }}>Proposer:</span> {proposer.action} ({Math.round((proposer.confidence || 0) * 100)}%) · "{proposer.reasoning || ''}"</div>
-            {proposer.arguments?.length > 0 && <div style={{ color: 'var(--text-faint)', fontSize: 11 }}>Arguments: {proposer.arguments.join('; ')}</div>}
-          </div>
-          {riskCompliance && (
-            <div style={{ fontSize: 12, lineHeight: 1.6, marginTop: 4 }}>
-              <div><span style={{ color: '#0a4', fontWeight: 600 }}>Risk/Compliance:</span> {riskCompliance.action} ({Math.round((riskCompliance.confidence || 0) * 100)}% · {riskCompliance.compliancePass ? 'PASS' : 'FAIL'})</div>
-              <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>"{riskCompliance.concerns?.[0] || 'No concerns'}"</div>
-              {riskCompliance.violationsFound?.length > 0 && <div style={{ color: 'var(--warn, #c87)', fontSize: 11 }}>Violations: {riskCompliance.violationsFound.join('; ')}</div>}
-            </div>
-          )}
-          {validator && (
-            <div style={{ fontSize: 12, marginTop: 4 }}>
-              <div><span style={{ fontWeight: 600 }}>Validator:</span> {validator.consistent ? '✅ consistent' : '✗ inconsistent'} · VaR {validator.VaRAcceptable ? 'OK' : 'BREACH'} · CVaR {validator.CVaRAcceptable ? 'OK' : 'BREACH'}</div>
-              {validator.concerns?.length > 0 && <div style={{ color: 'var(--warn, #c87)', fontSize: 11 }}>{validator.concerns.join('; ')}</div>}
-            </div>
-          )}
-          <div style={{ color: 'var(--text-faint)', fontSize: 11, marginTop: 4 }}>
-            Confidence (avg): {Math.round((confidence || 0) * 100)}% · Iterations: {iterations} · {converged ? 'Converged' : 'Not converged'}
-          </div>
-        </div>
-      )}
-      {gate && (
-        <div style={{ padding: '8px 14px', borderTop: '1px solid var(--border)', fontSize: 11, color: gate.passed ? 'var(--ok)' : 'var(--warn, #c87)' }}>
-          {gate.passed ? '✓ Gate: passed' : `✗ Gate: ${gate.reason}${gate.detail ? ` — ${gate.detail}` : ''}`}
-        </div>
-      )}
-      {permissionSentence && (
-        <div style={{ padding: '10px 14px', background: 'var(--bg-muted, rgba(0,0,0,0.03))', borderTop: '1px solid var(--border)', fontSize: 13, fontWeight: 500, color: 'var(--text)' }}>
-          {permissionSentence}
-        </div>
-      )}
-    </div>
-  )
-}
-
-const StrategyCard = ({ strategy, skillSource, onProceed, onRegenerate, strategyHash, attestation, attesting, simulation, council, onCouncilRetry, onRunCouncil, debateRunning, showRunCouncil }) => {
+const StrategyCard = ({ strategy, skillSource, onProceed, onRegenerate, strategyHash, attestation, attesting, simulation, council, onCouncilRetry }) => {
   const customSkill = skillSource === "user-local" || skillSource === "user-file";
   const shortHash = (h) => h ? `${h.slice(0, 10)}...` : "";
-  const hasDebate = council?.debateLog?.length > 0
   return (
     <section className="rec-card enter">
       <div className="eyebrow">

@@ -1,7 +1,14 @@
 {
-  "agentRegistry": "0xC0c4663F248b9DA20eF51F35cfC29C46a1fC8ac0",
-  "agentVaultDepositor": "0x2AF8d77430785A0F97C75575BBFB3661790DD3B4",
-  "chainId": 84532,
-  "mockVault": "0x4518894253CB4E3f3ecf30004559F1395C1f97e3",
-  "usdc": "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+  "yieldRouter": {
+    "address": "0xF80aa8F571E6d24Ea72F051Fc6F9A9C516727B6d",
+    "deployTx": "0x9252cf9d4b3b131801fcf78e54cd70ab08152cfea39361a6878271791c5cef9c",
+    "initialOwner": "0x9f07F7f9F2C6e7103f3C6eE3955f19c3751a559a",
+    "allowedPools": [
+      "0x389250872044368759D3db5C09b2706A6628d4e0",
+      "0x5E843A639F0555E2A6669601621befC887Bdb479",
+      "0xadD3c1A75c7Cef2516b51750959BD829a4AD4761"
+    ],
+    "deployedAt": "2026-07-05T16:03:04.376Z",
+    "poolsNote": "3 MockERC4626(USDC) pools, all whitelisted. Pool1 from SP1; pool2 (0x5E84…, deploy 0x0008401c, setPool 0x79fcc665) + pool3 (0xadD3…, deploy 0x73a54ba6, setPool 0x4d0889b9) added 2026-07-06 for SP3 3-pool catalog."
+  }
 }
