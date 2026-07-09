@@ -7,6 +7,7 @@
 // address }). Networks.TESTNET === the testnet passphrase string, so NETWORK_PASSPHRASE is the
 // correct value for `network`.
 import { NETWORK_PASSPHRASE } from './config.js'
+import { VfWalletModule } from './vfWalletModule.js'
 
 let _kit = null
 
@@ -23,7 +24,10 @@ export async function loadKit() {
   StellarWalletsKit.init({
     theme: SwkAppDarkTheme,
     network: NETWORK_PASSPHRASE,
-    modules: [new FreighterModule(), new xBullModule(), new AlbedoModule()],
+    // VfWalletModule is OUR OWN plain-object ModuleInterface (frontend/src/stellar/vfWalletModule.js)
+    // — it does not import the kit package, so registering it here doesn't break the "only this
+    // file imports @creit.tech/stellar-wallets-kit" rule from the header comment above.
+    modules: [new VfWalletModule(), new FreighterModule(), new xBullModule(), new AlbedoModule()],
   })
   _kit = StellarWalletsKit
   return _kit

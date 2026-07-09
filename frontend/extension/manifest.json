@@ -27,5 +27,18 @@
   "web_accessible_resources": [
     { "resources": ["ceremony.html", "ceremony.js"], "matches": ["<all_urls>"] }
   ],
-  "permissions": ["storage", "tabs", "alarms"]
+  "permissions": ["storage", "tabs", "alarms"],
+  "content_scripts": [
+    {
+      "matches": ["http://localhost:5173/*"],
+      "js": ["providerInject.js"],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["http://localhost:5173/*"],
+      "js": ["providerBridge.js"],
+      "run_at": "document_start"
+    }
+  ]
 }

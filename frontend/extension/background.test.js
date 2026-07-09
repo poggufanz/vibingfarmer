@@ -68,4 +68,26 @@ describe('background router — action ceremony', () => {
     )
     expect(pending.has(42)).toBe(false)
   })
+
+  it('passes through result fields for the generic wallet-kit actions (connect/signTransaction/signAuthEntry) without a fixed allow-list', async () => {
+    const session = { set: vi.fn(async () => {}) }
+    const replyFn = vi.fn()
+    const pending = new Map()
+    pending.set(7, replyFn)
+    await handleMessage(
+      { type: 'CEREMONY_RESULT', tabId: 7, action: 'signTransaction', ok: true, signedTxXdr: 'SXDR', address: 'CACCT' },
+      { storageSession: session, pending },
+      vi.fn()
+    )
+    expect(replyFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'SIGN_RESULT',
+        ok: true,
+        signedTxXdr: 'SXDR',
+        address: 'CACCT',
+      })
+    )
+    // tabId is routing metadata only — never leaks into the result payload the caller sees.
+    expect(replyFn.mock.calls[0][0]).not.toHaveProperty('tabId')
+  })
 })
