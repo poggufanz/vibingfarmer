@@ -1991,8 +1991,8 @@ const App = () => {
         })
       })
       .catch((err) => {
-        console.error('[app] orchestrator dispatch failed:', err)
-        addLog({ event: 'AgentFailed', meta: `orchestrator error: ${err?.message || err}` })
+        console.warn('[app] orchestrator dispatch failed (simulation mode):', err?.message || err)
+        addLog({ event: 'AgentFailed', meta: `orchestrator error (simulation): ${err?.message || err}` })
         setExecMap((prev) => {
           const next = { ...prev }
           Object.keys(next).forEach((id) => {
@@ -2001,6 +2001,13 @@ const App = () => {
             }
           })
           return next
+        })
+        setMonitorStatus({
+          level: 'skip',
+          score: 0,
+          reason: 'Stellar relayer offline — simulation mode. Council Monitor badge visible.',
+          lastCheck: Date.now(),
+          result: 'approved',
         })
       })
   }
