@@ -41,6 +41,7 @@ export class OrchestratorAgent {
    * @returns {Promise<{completed:number, failed:number, results:Array, sessionId:string}>}
    */
   async dispatch(strategy, totalAmount) {
+    if (!this.user) throw new Error('User address is required — wallet not connected')
     const expiry = Math.floor(Date.now() / 1000) + SCOPE_TTL_SECONDS
     const vaultPlans = strategy.vaults.map((v, i) => ({
       index: i,

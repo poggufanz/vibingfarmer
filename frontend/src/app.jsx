@@ -1734,7 +1734,7 @@ const App = () => {
   }
 
   const startExecution = () => {
-    if (!strategy) return
+    if (!strategy || !realAddress) return
     setMonitorStatus({ level: 'skip', score: 0, reason: 'Starting execution...', lastCheck: Date.now(), result: 'approved' })
 
     // Pre-compute sessionId and build hex→designId map BEFORE orchestrator starts.
