@@ -56,6 +56,9 @@ async function handleWorkerMessage(e) {
     case 'REBALANCE_OPPORTUNITY':
       emit({ kind: 'rebalance_proposal', ...payload }) // propose only — never auto-execute
       break
+    case 'MARKET_SIGNAL':
+      emit({ kind: 'market_signal', ...payload })
+      break
     case 'DRAWDOWN_ALERT':
       emit({
         kind: 'risk_alert',

@@ -1,6 +1,6 @@
 // JS ⇄ ScVal codec. Every contract arg is encoded here and every return value decoded here,
 // so the rest of the chain layer never hand-rolls XDR type guesses.
-import { Address, nativeToScVal, scValToNative } from '@stellar/stellar-sdk'
+import { Address, nativeToScVal, scValToNative, xdr } from '@stellar/stellar-sdk'
 
 /**
  * Encode a Stellar address (G... account or C... contract strkey) as an Address ScVal.
@@ -60,6 +60,30 @@ export function bytes32ScVal(v) {
  */
 export function symbolScVal(s) {
   return nativeToScVal(String(s), { type: 'symbol' })
+}
+
+/**
+ * Encode a bool (e.g. AgentScope.revoked) as ScVal::Bool.
+ * @param {boolean} b
+ * @returns {import('@stellar/stellar-sdk').xdr.ScVal}
+ */
+export function boolScVal(b) {
+  return xdr.ScVal.scvBool(Boolean(b))
+}
+
+/**
+ * Encode a Soroban `#[contracttype]` struct as ScVal::Map. Field values must ALREADY be
+ * ScVals (compose with addrScVal / i128ScVal / …). Soroban requires map keys (the field
+ * names, as symbols) in lexicographic order or the host rejects the value — sorted here so
+ * callers can list fields in Rust-struct order for readability.
+ * @param {Record<string, import('@stellar/stellar-sdk').xdr.ScVal>} fields
+ * @returns {import('@stellar/stellar-sdk').xdr.ScVal}
+ */
+export function structScVal(fields) {
+  const entries = Object.entries(fields)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([k, v]) => new xdr.ScMapEntry({ key: symbolScVal(k), val: v }))
+  return xdr.ScVal.scvMap(entries)
 }
 
 /**

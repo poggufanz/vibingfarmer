@@ -28,4 +28,7 @@ export const ROLE_RULES = {
   get yield() { return rulesForRole('yield') },
   get risk() { return rulesForRole('risk') },
   get market() { return rulesForRole('market') },
+  get proposer() { return rulesForRole('proposer') },
+  get 'risk-compliance'() { return rulesForRole('risk-compliance') },
+  get validator() { return rulesForRole('validator') },
 }

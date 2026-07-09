@@ -5,7 +5,7 @@
 // weight()/increment() always hit a record. Seeds are origin:'seed' — protected
 // from hard-delete (retire-only), because the deterministic council still cites them.
 
-const CAT = { yield: 'strategy', risk: 'risk', market: 'gas' }
+const CAT = { yield: 'strategy', risk: 'risk', market: 'gas', 'proposer': 'opportunity', 'risk-compliance': 'compliance', 'validator': 'simulation' }
 
 export function roleToCategory(role) {
   return CAT[role] || 'strategy'
@@ -37,4 +37,18 @@ export const SEED_RULES = [
   seed('market-harvest-timing', 'market', 'Harvest timing is always fine — a free claim has no gas-timing risk.'),
   seed('market-gas-positive', 'market', 'Net expected gain after gas is positive — timing is economically sound.'),
   seed('market-gas-negative', 'market', 'Gas exceeds the expected gain — hold until execution is cheaper.'),
+  // ── council-review debate council (proposer / risk-compliance / validator) ──
+  seed('prop-yield-opportunity', 'proposer', 'High yield temp identified in the current market window — entry is justified.'),
+  seed('prop-risk-adjusted-pos', 'proposer', 'Risk-adjusted return projection is positive after accounting for volatility.'),
+  seed('prop-timing-favorable', 'proposer', 'Market entry timing supports deployment — calm regime with clear signals.'),
+  seed('prop-valuation-attractive', 'proposer', 'Valuation metrics across selected vaults are attractive relative to historical ranges.'),
+  seed('comp-risk-limit-check', 'risk-compliance', 'Proposed allocation stays within the effective risk ceiling for the profile.'),
+  seed('comp-drawdown-bounded', 'risk-compliance', 'Portfolio drawdown at VaR remains within the maximum loss tolerance.'),
+  seed('comp-investor-protection', 'risk-compliance', 'Investor protection thresholds are satisfied — no single vault exceeds concentration limit.'),
+  seed('comp-disclosure-clear', 'risk-compliance', 'Fee structure, lock-up terms, and exit conditions are transparent.'),
+  seed('comp-capital-preserve', 'risk-compliance', 'Capital preservation rule: if VaR exceeds profile max loss, proposal must be rejected.'),
+  seed('val-var-threshold', 'validator', 'VaR at the specified confidence level is within the risk profile tolerance.'),
+  seed('val-cvar-tail-safe', 'validator', 'CVaR tail risk does not exceed the profile maximum acceptable loss.'),
+  seed('val-sim-consistent', 'validator', 'Proposal blended APY is consistent with the Monte Carlo simulation expected value.'),
+  seed('val-outcome-reliable', 'validator', 'Probability of profit is above the minimum threshold for the risk profile.'),
 ]

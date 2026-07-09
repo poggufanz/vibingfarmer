@@ -18,6 +18,7 @@ import { SOROBAN_VAULT_ADDRESS } from '../src/stellar/config.js'
 import CreateScreen from '../src/wallet/ui/classic/CreateScreen.jsx'
 import BackupScreen from '../src/wallet/ui/classic/BackupScreen.jsx'
 import ImportScreen from '../src/wallet/ui/classic/ImportScreen.jsx'
+import OnboardingScreen from '../src/wallet/ui/classic/OnboardingScreen.jsx'
 import HomeScreen from '../src/wallet/ui/classic/HomeScreen.jsx'
 import SendScreen from '../src/wallet/ui/classic/SendScreen.jsx'
 import ReceiveScreen from '../src/wallet/ui/classic/ReceiveScreen.jsx'
@@ -482,7 +483,7 @@ function Popup() {
       else if (b.hasWallet) {
         setScreen('classic-home')
         refresh(b.publicKey)
-      } else setScreen('classic-create')
+      } else setScreen('classic-onboarding')
     })
   }, [])
 
@@ -670,6 +671,14 @@ function Popup() {
   // ── CLASSIC (seed-phrase / ed25519) SCREENS ───────────────────────────────
   // Classic is the default wallet type; the passkey screens below are unmodified and remain
   // reachable via the "switch to passkey wallet" links on classic-create/classic-settings.
+
+  if (screen === 'classic-onboarding') {
+    return (
+      <Shell sub="classic · onboarding">
+        <OnboardingScreen onGetStarted={() => setScreen('classic-create')} />
+      </Shell>
+    )
+  }
 
   if (screen === 'classic-create') {
     return (
@@ -958,6 +967,11 @@ function Popup() {
             setScreen('classic-unlock')
           }}
           onExport={() => setExportForm({ open: true, pw: '', secret: null, error: '' })}
+          onReset={async () => {
+            await chrome.storage.local.clear()
+            await chrome.storage.session?.clear()
+            window.location.reload()
+          }}
         />
         <HonestyLabels scope="session-key" />
 

@@ -93,6 +93,54 @@ export async function buildInvokeTx({ source, contract, method, args = [], serve
   return { tx, xdr: tx.toEnvelope().toXDR('base64') }
 }
 
+/**
+ * Build + simulate-assemble a create-contract-from-wasm-hash deploy (createContractV2, with
+ * constructor args). The deployer address = `source` (the connected user wallet), so the only
+ * auth the simulation records is source-account credentials — signing the tx envelope covers
+ * it; no separate auth-entry signing (the constructor's own token.approve sub-call authorizes
+ * itself via invoker-contract auth inside the wasm). The created contract address is the create
+ * host fn's return value, read from an explicit pre-simulation.
+ * @param {{ source: string, wasmHash: string, constructorArgs?: Array, salt?: Uint8Array,
+ *           server?: object }} p wasmHash = 64-char hex of an ALREADY-uploaded wasm
+ * @returns {Promise<{ tx: object, xdr: string, contractAddress: string }>}
+ */
+export async function buildCreateContractTx({
+  source,
+  wasmHash,
+  constructorArgs = [],
+  salt,
+  server,
+}) {
+  if (!/^[0-9a-f]{64}$/i.test(wasmHash || ''))
+    throw new Error('wasmHash must be a 64-char hex string')
+  const s = server || (await rpcServer())
+  const { TransactionBuilder, Operation, Address, BASE_FEE } = await sdk()
+  const account = await s.getAccount(source)
+  const saltBytes = salt || globalThis.crypto.getRandomValues(new Uint8Array(32))
+  const raw = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: NETWORK_PASSPHRASE,
+  })
+    .addOperation(
+      Operation.createCustomContract({
+        address: new Address(source),
+        wasmHash: Buffer.from(wasmHash, 'hex'),
+        salt: saltBytes,
+        constructorArgs: encodeArgs(constructorArgs),
+      })
+    )
+    .setTimeout(60)
+    .build()
+  // Simulate FIRST to learn the to-be-created contract address (the host fn's retval)…
+  const sim = await s.simulateTransaction(raw)
+  if (sim.error || !sim.result)
+    throw new Error(`deploy simulation failed: ${sim.error || 'no result'}`)
+  const contractAddress = fromScVal(sim.result.retval)
+  // …then prepare (simulate + assemble, sets the resource fee) exactly like buildInvokeTx.
+  const tx = await s.prepareTransaction(raw)
+  return { tx, xdr: tx.toEnvelope().toXDR('base64'), contractAddress }
+}
+
 /** Poll getTransaction until it leaves NOT_FOUND or the budget is spent. */
 async function poll(server, hash, tries, intervalMs) {
   for (let i = 0; i < tries; i++) {

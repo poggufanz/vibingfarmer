@@ -1,6 +1,15 @@
 import { describe, it, expect } from 'vitest'
 import { Keypair, scValToNative } from '@stellar/stellar-sdk'
-import { addrScVal, i128ScVal, fromScVal, bytes32ScVal, symbolScVal } from './scval.js'
+import {
+  addrScVal,
+  i128ScVal,
+  u64ScVal,
+  fromScVal,
+  bytes32ScVal,
+  symbolScVal,
+  boolScVal,
+  structScVal,
+} from './scval.js'
 import { encodeArgs } from './client.js'
 
 describe('scval codec', () => {
@@ -41,6 +50,34 @@ describe('symbolScVal', () => {
   it('encodes a string to an ScVal symbol', () => {
     const sv = symbolScVal('venice')
     expect(sv.switch().name).toBe('scvSymbol')
+  })
+})
+
+describe('boolScVal + structScVal (contracttype struct encoding)', () => {
+  it('encodes booleans as ScVal bool', () => {
+    expect(boolScVal(false).switch().name).toBe('scvBool')
+    expect(fromScVal(boolScVal(true))).toBe(true)
+  })
+
+  it('encodes a struct as a symbol-keyed map that decodes back to the same object', () => {
+    const g = Keypair.random().publicKey()
+    // Fields deliberately OUT of lexicographic order — structScVal must sort them (the
+    // Soroban host rejects unsorted map keys).
+    const sv = structScVal({
+      vault: addrScVal(g),
+      cap_per_period: i128ScVal(50_0000000n),
+      revoked: boolScVal(false),
+      expiry: u64ScVal(4000000000),
+    })
+    expect(sv.switch().name).toBe('scvMap')
+    const keys = sv.map().map((e) => e.key().sym().toString())
+    expect(keys).toEqual(['cap_per_period', 'expiry', 'revoked', 'vault'])
+    expect(scValToNative(sv)).toEqual({
+      cap_per_period: 50_0000000n,
+      expiry: 4000000000n,
+      revoked: false,
+      vault: g,
+    })
   })
 })
 

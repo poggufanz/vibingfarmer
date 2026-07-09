@@ -31,6 +31,9 @@ const NETWORKS = {
     // Pre-seeded demo agent custom account (1a, v3 — scope pins the AUTOFARM vault; constructor
     // self-approves it for the cap). Owner = vf-deployer; signer in deployments JSON.
     demoAgent: 'CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC',
+    // agent_account wasm (already uploaded on-chain) — deployAgentForSession creates the per-run
+    // agent from this hash; the demo agent above stays only for exit settings + smoke scripts.
+    agentWasmHash: '8c607112ba93ff289d30f2c894ca586c745328e5cb2ae6139917c6df540dda62',
     // Real-yield source (#2): Blend Capital v2 lending pool the vault supplies into (re-verified
     // live at cutover — spec §7). blendUsdc = the pool's USDC reserve (same SAC as `token`).
     blendPool: 'CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF',
@@ -55,6 +58,7 @@ const NETWORKS = {
     attestation: null,
     token: null,
     demoAgent: null,
+    agentWasmHash: null,
     blendPool: null,
     blendUsdc: null,
     autofarmVault: null,
@@ -86,6 +90,7 @@ export const SOROBAN_REGISTRY_ADDRESS = pick('VITE_SOROBAN_REGISTRY_ADDRESS', 'r
 export const SOROBAN_ATTESTATION_ADDRESS = pick('VITE_SOROBAN_ATTESTATION_ADDRESS', 'attestation')
 export const SOROBAN_TOKEN_ADDRESS = pick('VITE_SOROBAN_TOKEN_ADDRESS', 'token')
 export const SOROBAN_DEMO_AGENT = pick('VITE_SOROBAN_DEMO_AGENT', 'demoAgent')
+export const SOROBAN_AGENT_WASM_HASH = pick('VITE_SOROBAN_AGENT_WASM_HASH', 'agentWasmHash')
 // Token + vault-share decimals (both 7). Amounts are i128 in base units (1 VFUSD = 10_000_000).
 export const SOROBAN_DECIMALS = 7
 export const SOROBAN_BLEND_POOL_ADDRESS = pick('VITE_SOROBAN_BLEND_POOL_ADDRESS', 'blendPool')
