@@ -1,9 +1,9 @@
 import { WorkerAgent, makeAgentId } from './worker.js'
 import { generateAgentSkills } from './venice.js'
 import { saveSkill } from './skills.js'
-import { authorizeAndFundAgent } from './stellar/agentSetup.js'
+import { authorizeAndFundAgent, deployAgentForSession } from './stellar/agentSetup.js'
 import { readTokenBalance } from './stellar/agentDeposit.js'
-import { SOROBAN_TOKEN_ADDRESS, SOROBAN_DEMO_AGENT, SOROBAN_DECIMALS } from './stellar/config.js'
+import { SOROBAN_TOKEN_ADDRESS, SOROBAN_DECIMALS } from './stellar/config.js'
 
 // Scope window for a dispatch: agents may deposit up to their allocation, within the period.
 const PERIOD_DURATION = 86400
@@ -94,10 +94,10 @@ export class OrchestratorAgent {
       throw new Error(msg)
     }
 
-    // pin: the demo reuses the single pre-deployed agent custom account (SOROBAN_DEMO_AGENT) whose
-    // signer is the demo session key. A multi-agent run must deploy one agent_account per worker
-    // with that worker's fresh session-key pubkey as the signer (the deferred deploy step) —
-    // otherwise __check_auth rejects a deposit signed by a key that isn't the agent's signer.
+    // Option B (fresh agent per run): each worker gets its OWN agent_account instance, deployed
+    // below with that worker's fresh session-key pubkey as the constructor-pinned signer. The
+    // shared pre-deployed demo agent only accepts ITS constructor-pinned key — depositing with
+    // any fresh key failed __check_auth ed25519 verification (Error(Auth, InvalidAction)).
     const workers = vaultPlans.map(
       (p) =>
         new WorkerAgent({
@@ -107,16 +107,31 @@ export class OrchestratorAgent {
           amount: p.amountUnits,
           sessionId: this.sessionId,
           onEvent: this.onEvent,
-          agentAddress: SOROBAN_DEMO_AGENT,
+          agentAddress: null, // set right after the per-worker deploy below
           eligibilityToken: p.eligibilityToken,
         })
     )
 
-    // One user-signed authorize + fund per agent (no EIP-5792 batch — the wallet kit signs each).
+    // Per agent, three user-signed txs (no EIP-5792 batch — the wallet kit signs each): deploy
+    // the agent account pinning the session key, registry-authorize the scope, fund the agent.
     this.onEvent('orchestrator-step', { step: 'authorizing-scope', status: 'pending' })
     try {
       for (const w of workers) {
         await w.setupKey() // ed25519 session key (the on-chain agent signer)
+        // Deploy BEFORE authorize/fund — both need the fresh agent's address. User-signed and
+        // user-paid: the relay's allowlist only fee-bumps vault-deposit invokes, never a deploy.
+        w.agentAddress = await deployAgentForSession({
+          owner: this.user,
+          sessionKey: w.sessionKey,
+          cap: w.amount,
+          periodDuration: PERIOD_DURATION,
+          expiry,
+        })
+        this.onEvent('AgentDeployed', {
+          agentId: w.agentId,
+          agent: w.agentAddress,
+          signer: w.sessionKey.publicKey,
+        })
         await authorizeAndFundAgent({
           owner: this.user,
           agentAddress: w.agentAddress,
