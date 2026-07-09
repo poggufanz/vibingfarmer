@@ -9,36 +9,93 @@ vi.mock('./client.js', () => ({
   submitUserTx: vi.fn().mockResolvedValue({ hash: 'h1', status: 'SUCCESS' }),
 }))
 vi.mock('./walletKit.js', () => ({ signTxXdr: vi.fn().mockResolvedValue('SIGNED') }))
-import { authorizeAndFundAgent, deployAgentForSession } from './agentSetup.js'
+import { fundAgent, registryAuthorizeAgent, deployAgentForSession } from './agentSetup.js'
 import { buildInvokeTx, buildCreateContractTx, submitUserTx } from './client.js'
 import { signTxXdr } from './walletKit.js'
 import {
   SOROBAN_AGENT_WASM_HASH,
   SOROBAN_ACTIVE_VAULT_ADDRESS,
+  SOROBAN_REGISTRY_ADDRESS,
   SOROBAN_TOKEN_ADDRESS,
 } from './config.js'
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // Full reset: the timeout test swaps in a never-resolving signTxXdr implementation — without
+  // mockReset it would leak into every later test (clearAllMocks keeps implementations).
+  signTxXdr.mockReset()
+  signTxXdr.mockResolvedValue('SIGNED')
+  submitUserTx.mockReset()
+  submitUserTx.mockResolvedValue({ hash: 'h1', status: 'SUCCESS' })
 })
 
-describe('authorizeAndFundAgent', () => {
-  test('signs with the user wallet and submits the authorize + fund txs', async () => {
-    const r = await authorizeAndFundAgent({
+describe('fundAgent', () => {
+  test('signs the token.transfer(owner → agent) with the user wallet and submits it', async () => {
+    const r = await fundAgent({ owner: 'GUSER', agentAddress: 'CAGENT', amount: 50_000_000n })
+    expect(buildInvokeTx).toHaveBeenCalledTimes(1)
+    expect(buildInvokeTx.mock.calls[0][0]).toMatchObject({
+      source: 'GUSER',
+      contract: SOROBAN_TOKEN_ADDRESS,
+      method: 'transfer',
+    })
+    expect(signTxXdr).toHaveBeenCalledWith('UNSIGNED')
+    expect(submitUserTx).toHaveBeenCalledWith(expect.objectContaining({ signedXdr: 'SIGNED' }))
+    expect(r.status).toBe('SUCCESS')
+  })
+
+  test('throws when the funding tx does not confirm (silent PENDING would doom the deposit)', async () => {
+    submitUserTx.mockResolvedValueOnce({ hash: 'h2', status: 'PENDING' })
+    await expect(
+      fundAgent({ owner: 'GUSER', agentAddress: 'CAGENT', amount: 1n })
+    ).rejects.toThrow(/funding not confirmed: PENDING/)
+  })
+
+  test('rejects after 120s when the wallet popup never resolves (no infinite hang)', async () => {
+    vi.useFakeTimers()
+    try {
+      signTxXdr.mockImplementation(() => new Promise(() => {})) // popup dismissed / wallet stuck
+      const p = fundAgent({ owner: 'GUSER', agentAddress: 'CAGENT', amount: 1n })
+      const assertion = expect(p).rejects.toThrow(/timed out after 120s/)
+      await vi.advanceTimersByTimeAsync(120_001)
+      await assertion
+      expect(submitUserTx).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('registryAuthorizeAgent (optional record-keeping — off the critical path)', () => {
+  test('signs Registry.authorize with the user wallet and status-checks the submit', async () => {
+    const r = await registryAuthorizeAgent({
       owner: 'GUSER',
-      agentAddress: 'CCRG...',
+      agentAddress: 'CAGENT',
       vault: 'CCDX...',
-      amount: 50_000_000n,
       capPerPeriod: 50_000_000n,
       periodDuration: 3600,
       expiry: 4000000000,
     })
-    expect(signTxXdr).toHaveBeenCalledWith('UNSIGNED')
-    expect(submitUserTx).toHaveBeenCalledWith(expect.objectContaining({ signedXdr: 'SIGNED' }))
-    // Two user-signed txs: registry.authorize + token.transfer (fund).
-    expect(buildInvokeTx).toHaveBeenCalledTimes(2)
-    expect(submitUserTx).toHaveBeenCalledTimes(2)
+    expect(buildInvokeTx).toHaveBeenCalledTimes(1)
+    expect(buildInvokeTx.mock.calls[0][0]).toMatchObject({
+      source: 'GUSER',
+      contract: SOROBAN_REGISTRY_ADDRESS,
+      method: 'authorize',
+    })
     expect(r.status).toBe('SUCCESS')
+  })
+
+  test('throws when the authorize tx does not confirm', async () => {
+    submitUserTx.mockResolvedValueOnce({ hash: 'h3', status: 'FAILED' })
+    await expect(
+      registryAuthorizeAgent({
+        owner: 'GUSER',
+        agentAddress: 'CAGENT',
+        vault: 'CCDX...',
+        capPerPeriod: 1n,
+        periodDuration: 3600,
+        expiry: 4000000000,
+      })
+    ).rejects.toThrow(/authorize not confirmed: FAILED/)
   })
 })
 
