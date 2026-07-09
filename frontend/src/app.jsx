@@ -484,6 +484,19 @@ const App = () => {
     () => localStorage.getItem('yv_skip_landing') === 'true'
   )
 
+  // Synchronize localStorage flags on router pathname change to prevent
+  // navigation locks from public pages back to strategy layout.
+  useE(() => {
+    const isSkip = localStorage.getItem('yv_skip_landing') === 'true'
+    if (isSkip !== skipLanding) {
+      setSkipLanding(isSkip)
+    }
+    const isOnboard = localStorage.getItem('yv_onboarded') === 'true'
+    if (isOnboard !== onboarded) {
+      setOnboarded(isOnboard)
+    }
+  }, [location.pathname])
+
   // Strategy Attestation — NON-BLOCKING, best-effort. Fires once a wallet provider
   // exists (post-connect) and the AI strategy carries a deterministic hash. Any
   // failure/rejection is swallowed by attestStrategyOnChain → strategy still executes.
