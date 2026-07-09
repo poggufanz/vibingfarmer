@@ -308,6 +308,7 @@ const mapVeniceToStrategy = (veniceResult, amount, risk) => {
         protocol: v.protocol || live.protocol || cat.protocol || PROTOCOLS[i] || 'aave-v3',
         apy: String(v.expected_apy ?? live.apy ?? cat.apy ?? 4.8),
         drawdown: live.drawdown || cat.drawdown || '-1.8',
+        risk: v.risk_tier || cat.risk || 'medium',
         addr:
           cat.address ||
           VAULT_CATALOG.find((c) => c.protocol === (v.protocol || ''))?.address ||
@@ -1592,6 +1593,8 @@ const App = () => {
     setSkillStates({})
     setStrategyPhase('thinking')
     setThinkingPhase(0)
+    setDebateResult(null)
+    setCouncil(undefined)
     addLog({ event: 'OrchestratorPlanned', meta: `re-planning · ${amount} usdc · ${risk} risk` })
   }
 
