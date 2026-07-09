@@ -178,6 +178,7 @@ export function buildDebateInput(strategy, simulation, state = {}) {
     CVaR: simulation?.CVaR ?? null,
     expectedValue: simulation?.expectedValue ?? null,
     probProfit: simulation?.probProfit ?? null,
+    maxDrawdownPct: state?.profile?.maxDrawdownPct ?? 10.0,
   }
 }
 
@@ -186,6 +187,7 @@ function buildProposerPrompt(input, riskFeedback) {
   let prompt = `Proposed deposit: ${input.amountUsdc} USDC across ${input.numVaults} vault(s): ${vaults}
 Market regime: ${input.turbulence}
 Profile risk: ${input.riskTier}
+Max drawdown limit: ${input.maxDrawdownPct}%
 Blended APY: ${input.blendedApy}%
 Risk-adjusted projected annual: ${input.projectedAnnualUsdc} USDC`
   if (riskFeedback && riskFeedback.length) {
@@ -199,6 +201,7 @@ function buildRiskCompliancePrompt(input, proposer) {
   let prompt = `Proposed deposit: ${input.amountUsdc} USDC across ${input.numVaults} vault(s): ${vaults}
 Market regime: ${input.turbulence}
 Max drawdown: ${input.maxDrawdown}%
+Max drawdown limit: ${input.maxDrawdownPct}%
 Profile risk: ${input.riskTier}
 
 Proposer argument:

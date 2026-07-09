@@ -1550,15 +1550,16 @@ const App = () => {
       setDebateRunning(true)
       const ctrl = new AbortController()
       try {
-        const state = buildStrategyState({
-          amountUsdc: Number(amount) || 0,
-          riskLevel: risk,
-          numVaults: strategy.agents.length,
-          vaultData: VAULT_CATALOG,
-          marketContext: marketLive,
-          positions: agentData.positions,
-          gas: latestGasRef.current,
-        })
+    const state = buildStrategyState({
+      amountUsdc: Number(amount) || 0,
+      riskLevel: risk,
+      numVaults: strategy.agents.length,
+      vaultData: VAULT_CATALOG,
+      marketContext: marketLive,
+      positions: agentData.positions,
+      gas: latestGasRef.current,
+      maxDrawdownPct: agentSettings.maxDrawdownPct,
+    })
         const sim = runSimulation(allocationsFromStrategy(strategy), state, {
           runs: 200, horizonDays: 30, seed: 1,
           context: { turbulence: currentData.turbulence, apyTrendPct: 0, gasGwei: currentData.gasGwei },
