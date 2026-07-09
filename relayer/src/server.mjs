@@ -11,6 +11,7 @@ import { createOrchestrator } from './base/orchestrator.mjs';
 import { createFarmFlow } from './flows/farm.mjs';
 import { createRelayerRouter } from './httpRouter.mjs';
 import { createMandateStore } from './mandateStore.mjs';
+import { createSqliteStores } from './sqliteStores.mjs';
 
 const MANDATE_SWEEP_MS = 10 * 60 * 1000; // evict expired session keys every 10 min
 
@@ -19,11 +20,16 @@ const MANDATE_SWEEP_MS = 10 * 60 * 1000; // evict expired session keys every 10 
  * @returns {{ handler: Function, listen: (port: number) => import('node:http').Server }}
  */
 export function createRelayerServer(config) {
+  // When RELAYER_DB_PATH is set, sqlite backs the idempotency store + jobs + mandates so a restart
+  // loses nothing (session keys still die at their 1h TTL either way). Build BEFORE createWatcher so
+  // the watcher gets the sqlite-backed idempotency store rather than the file store.
+  const sqlite = config.dbPath ? createSqliteStores(config.dbPath) : null;
+  if (sqlite) config = { ...config, store: sqlite.store };
   const watcher = createWatcher(config);
-  const jobs = new Map();
-  // serializedApproval -> sessionPrivateKey. Process memory ONLY — never persisted, never logged.
-  // TTL store (not a bare Map) so session keys don't linger in memory past the mandate's lifetime.
-  const mandates = createMandateStore();
+  const jobs = sqlite ? sqlite.jobs : new Map();
+  // serializedApproval -> sessionPrivateKey. Memory (or sqlite when RELAYER_DB_PATH is set) — never
+  // logged. TTL store (not a bare Map) so session keys don't linger past the mandate's lifetime.
+  const mandates = sqlite ? sqlite.mandates : createMandateStore();
 
   // Per-request: each /farm call brings its own ephemeral session key, so the orchestrator (and
   // the kernel client it reconstructs) is built fresh per key rather than shared/cached.
