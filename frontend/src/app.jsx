@@ -112,6 +112,7 @@ import { buildStrategyState, enforceActionSpace, scoreReward } from './strategy/
 import { runSimulation, allocationsFromStrategy } from './strategy/simulation.js'
 import { evaluateGates } from './strategy/gates.js'
 import { createMonitorLoop } from './strategy/monitorLoop.js'
+import { primeVaultFacts } from './strategy/vaultFactsLive.js'
 import { councilVerdict } from './strategy/council.js'
 import { reflect } from './strategy/reflector.js'
 import { increment as playbookIncrement, weight as playbookWeight } from './strategy/playbook.js'
@@ -456,6 +457,12 @@ const App = () => {
   useE(() => {
     const id = setInterval(() => setClock((c) => c + 1), 30000)
     return () => clearInterval(id)
+  }, [])
+
+  // Prime live DeFiLlama numerics for the eligibility gate (fire-and-forget; the gate falls back
+  // to the curated snapshot until it lands). Cached 6h in localStorage — ≤1 fetch burst/session.
+  useE(() => {
+    primeVaultFacts()
   }, [])
 
   // execution: map agentId -> { status, steps, hashes, memory, metrics }
