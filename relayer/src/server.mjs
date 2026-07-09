@@ -5,7 +5,7 @@
 // requests), and running standalone keeps relayer secrets out of the Vite dev process.
 
 import { createServer } from 'node:http';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { createWatcher } from './cctp/watcher.mjs';
 import { createOrchestrator } from './base/orchestrator.mjs';
 import { createFarmFlow } from './flows/farm.mjs';
@@ -14,6 +14,24 @@ import { createMandateStore } from './mandateStore.mjs';
 import { createSqliteStores } from './sqliteStores.mjs';
 
 const MANDATE_SWEEP_MS = 10 * 60 * 1000; // evict expired session keys every 10 min
+
+/** Shared-secret gate between the Cloudflare proxy and this relayer. Empty key = open (local dev). */
+export function withProxyKeyAuth(handler, key) {
+  return async function authed(req, res) {
+    if (key) {
+      const got = String(req.headers['x-vf-relayer-key'] || '');
+      const a = Buffer.from(got);
+      const b = Buffer.from(key);
+      const ok = a.length === b.length && timingSafeEqual(a, b);
+      if (!ok) {
+        res.statusCode = 401;
+        res.setHeader('Content-Type', 'application/json');
+        return res.end(JSON.stringify({ error: 'unauthorized' }));
+      }
+    }
+    return handler(req, res);
+  };
+}
 
 /**
  * @param {ReturnType<typeof import('./config.mjs').loadConfig>} config
@@ -55,14 +73,20 @@ export function createRelayerServer(config) {
   // Sanitize client-facing error messages unless explicitly debugging (RELAYER_DEBUG_ERRORS=1),
   // so a public deploy never leaks internal error strings via GET /status. The smoke harness runs
   // localhost and sets the flag to keep full detail.
-  const handler = createRelayerRouter({
-    buildFarm,
-    relayUnwindMint,
-    jobs,
-    mandates,
-    genId: randomUUID,
-    sanitizeErrors: process.env.RELAYER_DEBUG_ERRORS !== '1',
-  });
+  // The Cloudflare Pages proxy (functions/api/vf-cross) sends x-vf-relayer-key on every request;
+  // the VM is otherwise tunnel-only, so this shared secret is what makes the tunnel non-open.
+  // Empty key = local dev (no gate).
+  const handler = withProxyKeyAuth(
+    createRelayerRouter({
+      buildFarm,
+      relayUnwindMint,
+      jobs,
+      mandates,
+      genId: randomUUID,
+      sanitizeErrors: process.env.RELAYER_DEBUG_ERRORS !== '1',
+    }),
+    process.env.RELAYER_PROXY_KEY || '',
+  );
 
   function listen(port) {
     const server = createServer(handler);

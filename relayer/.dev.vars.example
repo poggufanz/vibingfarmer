@@ -20,6 +20,11 @@ RELAYER_STORE_PATH=./.relayer-store.dev.json
 # When set, it overrides RELAYER_STORE_PATH for the idempotency store and backs jobs/mandates too.
 # RELAYER_DB_PATH=./.relayer.dev.db
 
+# Optional: shared secret the Cloudflare Pages proxy (functions/api/vf-cross) must send on
+# x-vf-relayer-key. Empty = local dev (no gate). On the VM it MUST match Cloudflare Pages
+# RELAYER_PROXY_KEY. Generate: openssl rand -hex 32
+# RELAYER_PROXY_KEY=
+
 # Smoke-only: throwaway dev keypair SIMULATING the user's passkey signature until SP3 ships the
 # real wallet. Never read by relayMint/dispatchDeposits in the production path.
 SMOKE_STELLAR_SECRET=SFILL_ME
