@@ -48,8 +48,18 @@ const NETWORKS = {
   mainnet: {
     label: 'PUBLIC',
     passphrase: 'Public Global Stellar Network ; September 2015',
-    rpc: null, horizon: null, vault: null, registry: null, attestation: null, token: null,
-    demoAgent: null, blendPool: null, blendUsdc: null, autofarmVault: null, strategy1: null, keeper: null,
+    rpc: null,
+    horizon: null,
+    vault: null,
+    registry: null,
+    attestation: null,
+    token: null,
+    demoAgent: null,
+    blendPool: null,
+    blendUsdc: null,
+    autofarmVault: null,
+    strategy1: null,
+    keeper: null,
   },
 }
 
@@ -62,7 +72,9 @@ if (!NET) throw new Error(`unknown VITE_STELLAR_NETWORK: ${STELLAR_NETWORK}`)
 const pick = (envKey, field) => {
   const v = env(envKey) || NET[field]
   if (v === null || v === undefined || v === '')
-    throw new Error(`stellar config: ${STELLAR_NETWORK} value for ${field} unfilled (set ${envKey})`)
+    throw new Error(
+      `stellar config: ${STELLAR_NETWORK} value for ${field} unfilled (set ${envKey})`
+    )
   return v
 }
 
@@ -78,7 +90,10 @@ export const SOROBAN_DEMO_AGENT = pick('VITE_SOROBAN_DEMO_AGENT', 'demoAgent')
 export const SOROBAN_DECIMALS = 7
 export const SOROBAN_BLEND_POOL_ADDRESS = pick('VITE_SOROBAN_BLEND_POOL_ADDRESS', 'blendPool')
 export const SOROBAN_BLEND_USDC_ADDRESS = pick('VITE_SOROBAN_BLEND_USDC_ADDRESS', 'blendUsdc')
-export const SOROBAN_AUTOFARM_VAULT_ADDRESS = pick('VITE_SOROBAN_AUTOFARM_VAULT_ADDRESS', 'autofarmVault')
+export const SOROBAN_AUTOFARM_VAULT_ADDRESS = pick(
+  'VITE_SOROBAN_AUTOFARM_VAULT_ADDRESS',
+  'autofarmVault'
+)
 export const SOROBAN_STRATEGY_1_ADDRESS = pick('VITE_SOROBAN_STRATEGY_1_ADDRESS', 'strategy1')
 // The app's LIVE deposit target = the autofarm vault (derived, not separately configured).
 export const SOROBAN_ACTIVE_VAULT_ADDRESS = SOROBAN_AUTOFARM_VAULT_ADDRESS

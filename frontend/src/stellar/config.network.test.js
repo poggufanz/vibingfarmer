@@ -12,14 +12,21 @@ describe('stellar config per-network', () => {
     expect(cfg.STELLAR_NETWORK).toBe('testnet')
     expect(cfg.NETWORK_PASSPHRASE).toBe('Test SDF Network ; September 2015')
     expect(cfg.SOROBAN_RPC_URL).toBe('https://soroban-testnet.stellar.org')
-    expect(cfg.SOROBAN_ACTIVE_VAULT_ADDRESS).toBe('CB5VKYDUIYX3RZWGVLKKNBPG7V7Z5JIHF2QPNQKWKAHVA3IPSLFZJDYU')
+    expect(cfg.SOROBAN_ACTIVE_VAULT_ADDRESS).toBe(
+      'CB5VKYDUIYX3RZWGVLKKNBPG7V7Z5JIHF2QPNQKWKAHVA3IPSLFZJDYU'
+    )
   })
 
   it('per-address env override wins', async () => {
-    vi.stubEnv('VITE_SOROBAN_VAULT_ADDRESS', 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP')
+    vi.stubEnv(
+      'VITE_SOROBAN_VAULT_ADDRESS',
+      'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP'
+    )
     vi.resetModules()
     const cfg = await import('./config.js')
-    expect(cfg.SOROBAN_VAULT_ADDRESS).toBe('CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP')
+    expect(cfg.SOROBAN_VAULT_ADDRESS).toBe(
+      'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP'
+    )
   })
 
   it('selecting mainnet with unfilled addresses throws loudly at import', async () => {

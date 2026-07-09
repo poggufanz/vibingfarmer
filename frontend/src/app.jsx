@@ -1986,11 +1986,20 @@ const App = () => {
     setLogs([])
     agentMapRef.current = {}
 
-    if (overrideAmount !== undefined && overrideAmount !== null && (typeof overrideAmount === 'number' || typeof overrideAmount === 'string' || !isNaN(Number(overrideAmount)))) {
+    if (
+      overrideAmount !== undefined &&
+      overrideAmount !== null &&
+      (typeof overrideAmount === 'number' ||
+        typeof overrideAmount === 'string' ||
+        !isNaN(Number(overrideAmount)))
+    ) {
       setAmount(String(overrideAmount))
       setStrategyPhase('thinking')
       setThinkingPhase(0)
-      addLog({ event: 'OrchestratorPlanned', meta: `${overrideAmount} usdc · ${risk} risk · planning` })
+      addLog({
+        event: 'OrchestratorPlanned',
+        meta: `${overrideAmount} usdc · ${risk} risk · planning`,
+      })
     } else {
       setStrategyPhase('input')
       setThinkingPhase(0)

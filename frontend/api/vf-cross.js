@@ -41,7 +41,10 @@ export default async function handler(req, res, { fetchImpl = fetch } = {}) {
   if (req.method !== 'GET' && req.method !== 'HEAD') init.body = JSON.stringify(req.body ?? {})
 
   try {
-    const upstream = await fetchImpl(`${origin.replace(/\/$/, '')}/api/vf-cross${subPath(req.url)}`, init)
+    const upstream = await fetchImpl(
+      `${origin.replace(/\/$/, '')}/api/vf-cross${subPath(req.url)}`,
+      init
+    )
     const text = await upstream.text()
     res.statusCode = upstream.status
     res.setHeader('Content-Type', 'application/json')
