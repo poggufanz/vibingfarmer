@@ -732,7 +732,8 @@ const SimulationPanel = ({ simulation }) => {
   );
 };
 
-const StrategyCard = ({ strategy, skillSource, onProceed, onRegenerate, strategyHash, attestation, attesting, simulation, council, onCouncilRetry }) => {
+const StrategyCard = ({ strategy, skillSource, onProceed, onRegenerate, strategyHash, attestation, attesting, simulation, council, onCouncilRetry, onRunCouncil, showRunCouncil, debateRunning }) => {
+  const hasDebate = !showRunCouncil && !!council
   const customSkill = skillSource === "user-local" || skillSource === "user-file";
   const shortHash = (h) => h ? `${h.slice(0, 10)}...` : "";
   return (
