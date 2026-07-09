@@ -6,6 +6,7 @@
 import { runRadar } from './radar.js';
 import { defaultConfig } from './lifeboat.js';
 import { readLifeboatChainState, submit } from './chain.js';
+import { createRefPrices } from './refprices.js';
 
 const env = process.env;
 for (const key of ['SOROBAN_RPC_URL', 'NETWORK_PASSPHRASE', 'VAULT_ADDRESS', 'POOL_1', 'USDC', 'STELLAR_KEEPER_SECRET']) {
@@ -28,20 +29,9 @@ async function latestLedger() {
   return Number(body.result.sequence);
 }
 
-// Reference prices for the oracle-divergence detector. Demo: LIFEBOAT_REF_PRICE=1.0 (static).
-// Real deploy: LIFEBOAT_REF_URLS=comma,separated JSON endpoints returning {"price": <number>}.
-async function refPrices() {
-  if (env.LIFEBOAT_REF_PRICE) return [Number(env.LIFEBOAT_REF_PRICE)];
-  if (!env.LIFEBOAT_REF_URLS) return null;
-  const urls = env.LIFEBOAT_REF_URLS.split(',').filter(Boolean);
-  const settled = await Promise.allSettled(
-    urls.map(async (u) =>
-      Number((await (await fetch(u, { signal: AbortSignal.timeout(5000) })).json()).price),
-    ),
-  );
-  const prices = settled.filter((s) => s.status === 'fulfilled').map((s) => s.value);
-  return prices.length > 0 ? prices : null;
-}
+// Reference prices for the oracle-divergence detector — real feeds (per-URL #dot.path fragment,
+// 60s cache, all-failed -> null). Demo: LIFEBOAT_REF_PRICE=1.0 (static). See refprices.js.
+const refPrices = createRefPrices(env);
 
 console.log('[radar] lifeboat radar starting — one evaluation per ledger (~6s), 2s poll');
 runRadar({
