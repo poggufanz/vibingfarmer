@@ -1643,6 +1643,15 @@ input, select, textarea {
   max-width: 480px;
   padding: 28px;
   animation: slideup 0.18s cubic-bezier(0.2, 0.8, 0.2, 1);
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+}
+.modal-scroll-content {
+  flex: 1;
+  overflow-y: auto;
+  margin-right: -12px;
+  padding-right: 12px;
 }
 
 @keyframes slideup {
