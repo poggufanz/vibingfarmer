@@ -958,6 +958,11 @@ function Popup() {
             setScreen('classic-unlock')
           }}
           onExport={() => setExportForm({ open: true, pw: '', secret: null, error: '' })}
+          onReset={async () => {
+            await chrome.storage.local.clear()
+            await chrome.storage.session?.clear()
+            window.location.reload()
+          }}
         />
         <HonestyLabels scope="session-key" />
 

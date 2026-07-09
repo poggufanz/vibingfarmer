@@ -1,4 +1,4 @@
-export default function SettingsScreen({ onLock, onExport, autoLockMin, onSetAutoLock }) {
+export default function SettingsScreen({ onLock, onExport, onReset, autoLockMin, onSetAutoLock }) {
   return (
     <div className="vf-screen vf-settings">
       <h2>Settings</h2>
@@ -58,6 +58,26 @@ export default function SettingsScreen({ onLock, onExport, autoLockMin, onSetAut
             <line x1="12" y1="3" x2="12" y2="15"></line>
           </svg>
           Export secret
+        </button>
+
+        <button
+          className="vf-btn ghost"
+          style={{
+            borderRadius: 0, border: 'none', borderTop: '1px solid var(--border)',
+            display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'flex-start',
+            padding: '14px 14px', color: 'var(--danger)'
+          }}
+          onClick={() => {
+            if (window.confirm("Are you sure you want to reset this wallet? All local keys will be deleted. Make sure you have backed up your recovery phrase!")) {
+              onReset()
+            }
+          }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="3 6 5 6 21 6"></polyline>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+          </svg>
+          Reset Wallet
         </button>
       </div>
     </div>
