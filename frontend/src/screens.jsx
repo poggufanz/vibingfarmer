@@ -483,68 +483,70 @@ const MmPermissionModal = ({ strategy, eligibility, onConfirm, onReject }) => {
           Approve {agents.length} execution permission{agents.length === 1 ? '' : 's'}?
         </h3>
 
-        <div className="mm-pop" style={{ marginTop: 0 }}>
-          <div className="mm-pop-head">
-            <div className="mm-brand">
-              <div className="mm-mark">
-                <span aria-hidden="true" style={{ fontSize: 10, lineHeight: '14px' }}>
-                  ✦
-                </span>
+        <div className="modal-scroll-content" style={{ flex: 1, overflowY: 'auto', marginRight: '-12px', paddingRight: '12px', maxHeight: '55vh' }}>
+          <div className="mm-pop" style={{ marginTop: 0 }}>
+            <div className="mm-pop-head">
+              <div className="mm-brand">
+                <div className="mm-mark">
+                  <span aria-hidden="true" style={{ fontSize: 10, lineHeight: '14px' }}>
+                    ✦
+                  </span>
+                </div>
+                <span className="mm-name">Stellar Wallet</span>
               </div>
-              <span className="mm-name">Stellar Wallet</span>
+              <span className="mm-domain">vibing-farmer.app</span>
             </div>
-            <span className="mm-domain">vibing-farmer.app</span>
-          </div>
-          <div className="mm-body">
-            <div className="row">
-              <span className="k">batch type</span>
-              <span className="v accent">vault-deposit · {agents.length}x</span>
-            </div>
-            <div className="row">
-              <span className="k">total max</span>
-              <span className="v accent">{total.toFixed(2)} USDC</span>
-            </div>
-            {agents.map((a) => (
-              <div className="row" key={a.id}>
-                <span className="k">{a.id}</span>
-                <span className="v">
-                  {a.allocation} USDC · {a.vault.addr.slice(0, 10)}…
-                </span>
+            <div className="mm-body">
+              <div className="row">
+                <span className="k">batch type</span>
+                <span className="v accent">vault-deposit · {agents.length}x</span>
               </div>
-            ))}
-            <div className="row">
-              <span className="k">expires</span>
-              <span className="v">86 400s</span>
-            </div>
-          </div>
-        </div>
-
-        {eligibility?.rows?.length > 0 && (
-          <div className="elig-panel">
-            {eligibility.fusedSentence && (
-              <p className="elig-sentence">{eligibility.fusedSentence}</p>
-            )}
-            <ul className="elig-rows">
-              {eligibility.rows.map((row) => (
-                <li key={row.id} className={row.eligible ? 'elig-pass' : 'elig-reject'}>
-                  <span className="elig-status">{row.eligible ? 'PASS' : 'REJECT'}</span>
-                  <span className={row.eligible ? '' : 'struck'}>{row.protocolLabel}</span>
-                  <span className="elig-label">{row.label}</span>
-                  {row.isFixture && (
-                    <span className="elig-fixture">demo fixture — illustrates rejection</span>
-                  )}
-                  {row.eligible && (
-                    <>
-                      <span className="elig-mainnet">{row.mainnetLine}</span>
-                      <span className="elig-testnet">{row.testnetLine}</span>
-                      <span className="elig-chip">DeFiLlama · asOf {row.asOf}</span>
-                    </>
-                  )}
-                </li>
+              <div className="row">
+                <span className="k">total max</span>
+                <span className="v accent">{total.toFixed(2)} USDC</span>
+              </div>
+              {agents.map((a) => (
+                <div className="row" key={a.id}>
+                  <span className="k">{a.id}</span>
+                  <span className="v">
+                    {a.allocation} USDC · {a.vault.addr.slice(0, 10)}…
+                  </span>
+                </div>
               ))}
-            </ul>
+              <div className="row">
+                <span className="k">expires</span>
+                <span className="v">86 400s</span>
+              </div>
+            </div>
           </div>
-        )}
+
+          {eligibility?.rows?.length > 0 && (
+            <div className="elig-panel">
+              {eligibility.fusedSentence && (
+                <p className="elig-sentence">{eligibility.fusedSentence}</p>
+              )}
+              <ul className="elig-rows">
+                {eligibility.rows.map((row) => (
+                  <li key={row.id} className={row.eligible ? 'elig-pass' : 'elig-reject'}>
+                    <span className="elig-status">{row.eligible ? 'PASS' : 'REJECT'}</span>
+                    <span className={row.eligible ? '' : 'struck'}>{row.protocolLabel}</span>
+                    <span className="elig-label">{row.label}</span>
+                    {row.isFixture && (
+                      <span className="elig-fixture">demo fixture — illustrates rejection</span>
+                    )}
+                    {row.eligible && (
+                      <>
+                        <span className="elig-mainnet">{row.mainnetLine}</span>
+                        <span className="elig-testnet">{row.testnetLine}</span>
+                        <span className="elig-chip">DeFiLlama · asOf {row.asOf}</span>
+                      </>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
 
         <div className="modal-actions">
           <button className="btn btn-ghost" onClick={onReject}>
