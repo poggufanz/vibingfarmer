@@ -109,19 +109,19 @@ function OutcomeBarChart({ manual, agentic }) {
             <div className="rp-bar rp-bar--manual" style={{ width: `${manP50Pct}%` }}>
               <span className="rp-bar-val">{fmtWeth(manP50)}</span>
             </div>
-            {/* Whisker line showing P5 to P95 range */}
-            <div 
-              className="rp-bar-whisker" 
-              style={{ 
-                left: `${manP5Pct}%`, 
-                width: `${manP95Pct - manP5Pct}%` 
-              }}
-            >
-              <div className="rp-whisker-cap rp-whisker-cap--left" />
-              <div className="rp-whisker-cap rp-whisker-cap--right" />
-              <span className="rp-whisker-label rp-whisker-label--left">P5 (worst)</span>
-              <span className="rp-whisker-label rp-whisker-label--right">P95 (best)</span>
-            </div>
+          </div>
+          {/* Whisker line showing P5 to P95 range */}
+          <div 
+            className="rp-bar-whisker" 
+            style={{ 
+              left: `${manP5Pct}%`, 
+              width: `${manP95Pct - manP5Pct}%` 
+            }}
+          >
+            <div className="rp-whisker-cap rp-whisker-cap--left" />
+            <div className="rp-whisker-cap rp-whisker-cap--right" />
+            <span className="rp-whisker-label rp-whisker-label--left">P5 (worst)</span>
+            <span className="rp-whisker-label rp-whisker-label--right">P95 (best)</span>
           </div>
         </div>
       </div>
@@ -634,8 +634,7 @@ function ReplayStyle() {
 }
 .rp-bar-whisker {
   position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
+  top: 42px;
   height: 2px;
   background: rgba(255,255,255,0.25);
   z-index: 1;
@@ -651,7 +650,7 @@ function ReplayStyle() {
 .rp-whisker-cap--right { right: 0; }
 .rp-whisker-label {
   position: absolute;
-  bottom: 8px;
+  top: 8px;
   font-family: var(--font-mono, monospace);
   font-size: 8px;
   color: var(--text-faint, #56564f);
