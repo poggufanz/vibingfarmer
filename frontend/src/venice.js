@@ -35,13 +35,15 @@ import { buildStrategyState, enforceActionSpace, scoreReward, riskCeiling } from
  * @param {Array} messages
  * @param {boolean} isVenice - include venice_parameters when true
  * @param {AbortSignal} signal
+ * @param {number} [temperature] - optional temperature override
  */
-async function callChatCompletions(url, model, headers, messages, isVenice, signal) {
+async function callChatCompletions(url, model, headers, messages, isVenice, signal, temperature) {
   const body = {
     model,
     response_format: { type: 'json_object' },
     messages,
   }
+  if (temperature != null) body.temperature = temperature
   if (isVenice) body.venice_parameters = { include_venice_system_prompt: false }
 
   const response = await fetch(url, {
@@ -646,6 +648,192 @@ export async function councilSpecialistVerdict({
     return parseSpecialistVerdict(JSON.parse(content), role, allowedRuleIds)
   } catch (err) {
     console.warn(`[council] ${role} specialist failed (${provider.name}):`, err.message)
+    return null
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
+}
+
+/**
+ * Parse a proposer verdict: { proposal: {action, reasoning, confidence}, arguments, citedRules }.
+ * @param {object} raw parsed JSON
+ * @param {string[]} allowedRuleIds
+ */
+export function parseProposerVerdict(raw, allowedRuleIds = []) {
+  const action = String(raw?.proposal?.action || '').toUpperCase()
+  if (!VALID_SIGNALS.has(action)) throw new Error(`invalid proposer action: ${raw?.proposal?.action}`)
+  if (!raw?.proposal?.reasoning) throw new Error('proposer reasoning missing')
+  const conf = Math.max(0, Math.min(1, +Number(raw.proposal.confidence).toFixed(3)))
+  const allowed = new Set(allowedRuleIds)
+  const citedRules = Array.isArray(raw.citedRules) ? raw.citedRules.filter((id) => allowed.has(id)) : []
+  const arguments_ = Array.isArray(raw.arguments) ? raw.arguments.map(String).slice(0, 5) : []
+  return {
+    role: 'proposer',
+    action,
+    confidence: Number.isFinite(conf) ? conf : 0,
+    reasoning: String(raw.proposal.reasoning),
+    arguments: arguments_,
+    citedRules,
+    source: 'ai',
+    temperature: 0.9,
+  }
+}
+
+/**
+ * Parse a risk-compliance assessment: { assessment: {action, confidence}, violationsFound, regulationsCited, concerns, compliancePass }.
+ * @param {object} raw parsed JSON
+ * @param {string[]} allowedRuleIds
+ */
+export function parseRiskComplianceVerdict(raw, allowedRuleIds = []) {
+  const action = String(raw?.assessment?.action || '').toUpperCase()
+  if (!VALID_SIGNALS.has(action)) throw new Error(`invalid risk-compliance action: ${raw?.assessment?.action}`)
+  const conf = Math.max(0, Math.min(1, +Number(raw.assessment.confidence).toFixed(3)))
+  const allowed = new Set(allowedRuleIds)
+  const citedRules = Array.isArray(raw.regulationsCited) ? raw.regulationsCited.filter((id) => allowed.has(id)) : []
+  const violations = Array.isArray(raw.violationsFound) ? raw.violationsFound.map(String).slice(0, 5) : []
+  const concerns = Array.isArray(raw.concerns) ? raw.concerns.map(String).slice(0, 4) : []
+  return {
+    role: 'risk-compliance',
+    action,
+    confidence: Number.isFinite(conf) ? conf : 0,
+    violationsFound: violations,
+    regulationsCited: citedRules,
+    concerns,
+    compliancePass: raw.compliancePass === true,
+    source: 'ai',
+    temperature: 0.0,
+  }
+}
+
+/**
+ * Parse a validator verdict: { consistent, VaRAcceptable, CVaRAcceptable, simMatches, concerns, confidence }.
+ * @param {object} raw parsed JSON
+ */
+export function parseValidatorVerdict(raw) {
+  const conf = Math.max(0, Math.min(1, +Number(raw.confidence).toFixed(3)))
+  const concerns = Array.isArray(raw.concerns) ? raw.concerns.map(String).slice(0, 4) : []
+  return {
+    role: 'validator',
+    consistent: raw.consistent === true,
+    VaRAcceptable: raw.VaRAcceptable === true,
+    CVaRAcceptable: raw.CVaRAcceptable === true,
+    simMatches: raw.simMatches === true,
+    concerns,
+    confidence: Number.isFinite(conf) ? conf : 0,
+    source: 'ai',
+    temperature: 0.0,
+  }
+}
+
+/**
+ * Run the Proposer specialist — high temperature, creative yield-seeking.
+ * Responds to risk-compliance feedback when retrying.
+ * @param {{systemPrompt:string, userPrompt:string, allowedRuleIds:string[], devApiKey?:string|null, signal?:AbortSignal}} args
+ * @returns {Promise<ProposerVerdict|null>}
+ */
+export async function proposerVerdict({
+  systemPrompt,
+  userPrompt,
+  allowedRuleIds,
+  devApiKey = null,
+  signal,
+}) {
+  const provider = resolveProviderFromSettings({ devApiKey })
+  const controller = signal ? null : new AbortController()
+  const timeout = controller ? setTimeout(() => controller.abort(), VENICE_TIMEOUT_MS) : null
+  const sig = signal || controller.signal
+  try {
+    const content = await callChatCompletions(
+      provider.url,
+      provider.model,
+      provider.headers,
+      [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      provider.isVenice,
+      sig,
+      0.9
+    )
+    return parseProposerVerdict(JSON.parse(content), allowedRuleIds)
+  } catch (err) {
+    console.warn(`[council] proposer failed (${provider.name}):`, err.message)
+    return null
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
+}
+
+/**
+ * Run the Risk/Compliance specialist — temperature 0.0, strict regulator.
+ * Receives proposer's output and RAG compliance rules.
+ * @param {{systemPrompt:string, userPrompt:string, allowedRuleIds:string[], devApiKey?:string|null, signal?:AbortSignal}} args
+ * @returns {Promise<RiskComplianceVerdict|null>}
+ */
+export async function riskComplianceVerdict({
+  systemPrompt,
+  userPrompt,
+  allowedRuleIds,
+  devApiKey = null,
+  signal,
+}) {
+  const provider = resolveProviderFromSettings({ devApiKey })
+  const controller = signal ? null : new AbortController()
+  const timeout = controller ? setTimeout(() => controller.abort(), VENICE_TIMEOUT_MS) : null
+  const sig = signal || controller.signal
+  try {
+    const content = await callChatCompletions(
+      provider.url,
+      provider.model,
+      provider.headers,
+      [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      provider.isVenice,
+      sig,
+      0.0
+    )
+    return parseRiskComplianceVerdict(JSON.parse(content), allowedRuleIds)
+  } catch (err) {
+    console.warn(`[council] risk-compliance failed (${provider.name}):`, err.message)
+    return null
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
+}
+
+/**
+ * Run the Validator specialist — temperature 0.0, checks proposal vs simulation.
+ * @param {{systemPrompt:string, userPrompt:string, devApiKey?:string|null, signal?:AbortSignal}} args
+ * @returns {Promise<ValidatorVerdict|null>}
+ */
+export async function validatorVerdict({
+  systemPrompt,
+  userPrompt,
+  devApiKey = null,
+  signal,
+}) {
+  const provider = resolveProviderFromSettings({ devApiKey })
+  const controller = signal ? null : new AbortController()
+  const timeout = controller ? setTimeout(() => controller.abort(), VENICE_TIMEOUT_MS) : null
+  const sig = signal || controller.signal
+  try {
+    const content = await callChatCompletions(
+      provider.url,
+      provider.model,
+      provider.headers,
+      [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      provider.isVenice,
+      sig,
+      0.0
+    )
+    return parseValidatorVerdict(JSON.parse(content))
+  } catch (err) {
+    console.warn(`[council] validator failed (${provider.name}):`, err.message)
     return null
   } finally {
     if (timeout) clearTimeout(timeout)

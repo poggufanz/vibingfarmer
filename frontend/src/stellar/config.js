@@ -25,6 +25,13 @@ export const SOROBAN_TOKEN_ADDRESS = 'CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCP
 // a fresh deploy: v2 CD3MQJ4Y… stays pinned to the old 1:1 vault (kept on-chain for history).
 // Used by the smoke script + demo flows. Owner = vf-deployer; signer in deployments JSON.
 export const SOROBAN_DEMO_AGENT = 'CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC'
+// agent_account wasm ALREADY uploaded on-chain (deployments/stellar-testnet.json
+// agentAccountWasmHash) — auto-execute deploys one fresh instance per run from this hash
+// (create-from-wasm-hash, no wasm upload) so the constructor pins THAT run's session pubkey.
+// The demo agent above stays only for paths that need the pre-seeded account (exit settings,
+// smoke scripts).
+export const SOROBAN_AGENT_WASM_HASH =
+  '8c607112ba93ff289d30f2c894ca586c745328e5cb2ae6139917c6df540dda62'
 // Token + vault-share decimals (both 7). Amounts are i128 in base units (1 VFUSD = 10_000_000).
 export const SOROBAN_DECIMALS = 7
 

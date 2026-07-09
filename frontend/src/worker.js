@@ -66,6 +66,16 @@ export class WorkerAgent {
   async execute() {
     try {
       this.emit('started', { agentId: this.agentId, vault: this.vault })
+      // ROOT CAUSE of the "stuck at 6/9" run: the UI progress counts 3 steps per agent
+      // (swap/approve/deposit — app.jsx WORKER_STEP_MAP). 'completed' marks approve+deposit, but
+      // 'swap' is only ever set by a worker step event — and this deposit-only Stellar worker
+      // (unlike the old EVM worker) never emitted one, so every agent topped out at 2/3 and the
+      // run froze at 6/9 "waiting for relayer" forever. Emit it as SKIPPED so 3/3 is reachable.
+      this.emit('step', {
+        step: 'swap',
+        status: 'skipped',
+        reason: 'deposit-only agent — no swap on Stellar',
+      })
       // Enforcement B (hardening) — internal fail-closed assertion. NOT a security boundary; the
       // on-chain scope already bounds a malicious client. Blocks accidental code-path skips of the gate.
       const t = this.eligibilityToken

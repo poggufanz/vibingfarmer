@@ -627,6 +627,64 @@ export default function SettingsPage({
             </Section>
           )}
 
+          {/* ── SECTION 1B: Council Continuous Monitor ── */}
+          {tab === 'agent' && (
+            <Section title="Council Monitor">
+              <Row
+                label="Continuous re-evaluation"
+                desc="When enabled, Council re-evaluates your plan periodically against live market data. Pre-check and APY drift comparison cost $0; fast Risk/Compliance re-eval costs ~$0.0005 per check; full debate costs ~$0.001-0.003."
+              >
+                <Toggle
+                  on={s.monitorEnabled}
+                  onChange={(v) => set('monitorEnabled', v)}
+                  onLabel="Enabled"
+                  offLabel="Disabled"
+                />
+              </Row>
+              {s.monitorEnabled && (
+                <>
+                  <Divider />
+                  <SubLabel>Re-evaluation Thresholds</SubLabel>
+                  <Row
+                    label="APY drift"
+                    desc="Min % APY drift from last council snapshot to trigger a re-evaluation."
+                  >
+                    <Num
+                      value={s.apyDriftThreshold ?? 5}
+                      step="1"
+                      suffix="%"
+                      onChange={(v) => set('apyDriftThreshold', Number(v))}
+                    />
+                  </Row>
+                  <Row
+                    label="VaR breach"
+                    desc="Min % relative VaR change from last council snapshot to trigger a full debate."
+                  >
+                    <Num
+                      value={s.varBreachThreshold ?? 10}
+                      step="1"
+                      suffix="%"
+                      onChange={(v) => set('varBreachThreshold', Number(v))}
+                    />
+                  </Row>
+                  <Divider />
+                  <SubLabel>Autonomy</SubLabel>
+                  <Row
+                    label="Auto-approve"
+                    desc="If fast re-eval passes, update snapshot silently without notification. Only use when you trust the council model after observing its decisions."
+                  >
+                    <Toggle
+                      on={s.autoApprove}
+                      onChange={(v) => set('autoApprove', v)}
+                      onLabel="On (auto-update)"
+                      offLabel="Off (notify)"
+                    />
+                  </Row>
+                </>
+              )}
+            </Section>
+          )}
+
           {/* ── SECTION 2: Vault Strategy ── */}
           {tab === 'strategy' && (
             <Section title="Vault Strategy">

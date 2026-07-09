@@ -52,12 +52,14 @@ async function runApyCheck() {
     const res = await fetch('https://yields.llama.fi/pools')
     const { data } = await res.json()
 
+    const apyByVault = {}
     for (const vault of config.activeVaults) {
       const pool = data.find(
         (p) => p.project === vault.protocol && p.chain === 'Ethereum' && p.symbol?.includes('USDC')
       )
       if (!pool) continue
       const currentApy = pool.apy
+      apyByVault[vault.name] = currentApy
       const baselineApy = vault.depositApy
 
       if (baselineApy > 0) {
@@ -128,6 +130,14 @@ async function runApyCheck() {
           },
         })
       }
+    }
+
+    // Always emit MARKET_SIGNAL with current APY snapshot for council monitor
+    if (Object.keys(apyByVault).length > 0) {
+      self.postMessage({
+        type: 'MARKET_SIGNAL',
+        payload: { apyByVault, timestamp: Date.now() },
+      })
     }
   } catch (err) {
     self.postMessage({ type: 'MONITOR_ERROR', payload: { monitor: 'apy', error: err.message } })

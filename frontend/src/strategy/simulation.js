@@ -60,14 +60,25 @@ export function simulatePath(allocations, state, params, rng, opts = {}) {
   }
 }
 
+/** Compute VaR and CVaR from sorted outcomes at given alpha. */
+function computeVarCvar(sorted, alpha = 0.05) {
+  const n = sorted.length || 1
+  const idx = Math.max(0, Math.min(n - 1, Math.floor(alpha * n)))
+  const VaR = +(sorted[idx] || 0).toFixed(2)
+  const tail = sorted.slice(0, idx + 1)
+  const CVaR = +(tail.reduce((s, x) => s + x, 0) / tail.length).toFixed(2)
+  return { VaR, CVaR }
+}
+
 /** Aggregate raw net-yield outcomes into distribution stats. */
-function distribution(values) {
+function distribution(values, alpha = 0.05) {
   const sorted = [...values].sort((a, b) => a - b)
   const n = sorted.length || 1
   const mean = sorted.reduce((s, x) => s + x, 0) / n
   const variance = sorted.reduce((s, x) => s + (x - mean) ** 2, 0) / n
   const pct = (p) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor(p * (sorted.length - 1))))]
   const profit = sorted.filter((x) => x > 0).length
+  const { VaR, CVaR } = computeVarCvar(sorted, alpha)
   return {
     mean: +mean.toFixed(2),
     std: +Math.sqrt(variance).toFixed(2),
@@ -77,6 +88,8 @@ function distribution(values) {
     p50: +(pct(0.5) || 0).toFixed(2),
     p95: +(pct(0.95) || 0).toFixed(2),
     probProfit: +(profit / n).toFixed(3),
+    VaR,
+    CVaR,
   }
 }
 
@@ -92,12 +105,13 @@ function distribution(values) {
 export function runScenario(allocations, state, params, opts = {}) {
   const runs = opts.runs || DEFAULT_RUNS
   const seed = opts.seed != null ? opts.seed : 1
+  const alpha = opts.alpha != null ? opts.alpha : 0.05
   const outcomes = []
   for (let i = 0; i < runs; i++) {
     const rng = makeRng((seed + i * 2654435761) >>> 0)
     outcomes.push(simulatePath(allocations, state, params, rng, opts).netYieldUsdc)
   }
-  return { name: params.name, runs, ...distribution(outcomes) }
+  return { name: params.name, runs, ...distribution(outcomes, alpha) }
 }
 
 /** Turbulence regime → extra volatility (pct points) added to every scenario. */
@@ -146,12 +160,14 @@ export function runSimulation(allocations, state, opts = {}) {
   const entryGasUsdc = opts.entryGasUsdc != null ? opts.entryGasUsdc : gasToUsdc(context.gasGwei)
   const params = deriveScenarioParams(context)
   const seed = opts.seed != null ? opts.seed : 1
+  const alpha = opts.alpha != null ? opts.alpha : 0.05
   const scenarios = params.map((p, i) =>
     runScenario(allocations, state, p, {
       runs: opts.runs || DEFAULT_RUNS,
       horizonDays: opts.horizonDays || DEFAULT_HORIZON_DAYS,
       entryGasUsdc,
       seed: (seed + i * 7919) >>> 0,
+      alpha,
     })
   )
   const totalWeight = params.reduce((s, p) => s + (Number(p.weight) || 0), 0) || 1
@@ -161,10 +177,18 @@ export function runSimulation(allocations, state, opts = {}) {
   const probProfit = +(
     scenarios.reduce((s, sc, i) => s + sc.probProfit * (Number(params[i].weight) || 0), 0) / totalWeight
   ).toFixed(3)
+  const weightedVaR = +(
+    scenarios.reduce((s, sc, i) => s + sc.VaR * (Number(params[i].weight) || 0), 0) / totalWeight
+  ).toFixed(2)
+  const weightedCVaR = +(
+    scenarios.reduce((s, sc, i) => s + sc.CVaR * (Number(params[i].weight) || 0), 0) / totalWeight
+  ).toFixed(2)
   return {
     scenarios,
     expectedValue,
     probProfit,
+    VaR: weightedVaR,
+    CVaR: weightedCVaR,
     horizonDays: opts.horizonDays || DEFAULT_HORIZON_DAYS,
     runs: opts.runs || DEFAULT_RUNS,
     capitalUsdc: Number(state.capital?.amountUsdc) || 0,

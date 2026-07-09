@@ -1,9 +1,15 @@
 import { WorkerAgent, makeAgentId } from './worker.js'
 import { generateAgentSkills } from './venice.js'
 import { saveSkill } from './skills.js'
-import { authorizeAndFundAgent } from './stellar/agentSetup.js'
+import { deployAgentForSession, fundAgent, registryAuthorizeAgent } from './stellar/agentSetup.js'
+import { saveCachedAgent, takeReusableAgent } from './stellar/agentCache.js'
+import { newSessionKey } from './stellar/sessionKey.js'
 import { readTokenBalance } from './stellar/agentDeposit.js'
-import { SOROBAN_TOKEN_ADDRESS, SOROBAN_DEMO_AGENT, SOROBAN_DECIMALS } from './stellar/config.js'
+import {
+  SOROBAN_TOKEN_ADDRESS,
+  SOROBAN_DECIMALS,
+  SOROBAN_ACTIVE_VAULT_ADDRESS,
+} from './stellar/config.js'
 
 // Scope window for a dispatch: agents may deposit up to their allocation, within the period.
 const PERIOD_DURATION = 86400
@@ -26,12 +32,17 @@ export class OrchestratorAgent {
    * @param {string} config.sessionId
    * @param {function} config.onEvent - (eventName, data) => void
    */
-  constructor({ user, veniceAuth, devApiKey, sessionId, onEvent }) {
+  constructor({ user, veniceAuth, devApiKey, sessionId, onEvent, registryAuthorize = false }) {
     this.user = user
     this.veniceAuth = veniceAuth || null
     this.devApiKey = devApiKey || null
     this.onEvent = onEvent || (() => {})
     this.sessionId = sessionId || `session-${Date.now()}`
+    // Registry.authorize is record-keeping only (deposits are enforced by the agent account's
+    // OWN constructor-pinned scope; nothing on the deposit path reads the Registry). Default
+    // off: it would cost one extra wallet popup per agent. Flip on to also write the on-chain
+    // Registry record (feeds stellar/events.js indexer + the Registry.revoke kill-switch demo).
+    this.registryAuthorize = registryAuthorize
   }
 
   /**
@@ -94,10 +105,10 @@ export class OrchestratorAgent {
       throw new Error(msg)
     }
 
-    // pin: the demo reuses the single pre-deployed agent custom account (SOROBAN_DEMO_AGENT) whose
-    // signer is the demo session key. A multi-agent run must deploy one agent_account per worker
-    // with that worker's fresh session-key pubkey as the signer (the deferred deploy step) —
-    // otherwise __check_auth rejects a deposit signed by a key that isn't the agent's signer.
+    // Option B (fresh agent per run): each worker gets its OWN agent_account instance, deployed
+    // below with that worker's fresh session-key pubkey as the constructor-pinned signer. The
+    // shared pre-deployed demo agent only accepts ITS constructor-pinned key — depositing with
+    // any fresh key failed __check_auth ed25519 verification (Error(Auth, InvalidAction)).
     const workers = vaultPlans.map(
       (p) =>
         new WorkerAgent({
@@ -107,25 +118,87 @@ export class OrchestratorAgent {
           amount: p.amountUnits,
           sessionId: this.sessionId,
           onEvent: this.onEvent,
-          agentAddress: SOROBAN_DEMO_AGENT,
+          agentAddress: null, // set right after the per-worker deploy below
           eligibilityToken: p.eligibilityToken,
         })
     )
 
-    // One user-signed authorize + fund per agent (no EIP-5792 batch — the wallet kit signs each).
+    // User-signed setup, STRICTLY SEQUENTIAL across agents — load-bearing: every setup tx is
+    // sourced from the SAME user account, so each build must fetch the sequence AFTER the
+    // previous tx confirmed (parallel setup = txBadSeq races + a stack of queued wallet popups).
+    // Each helper in agentSetup.js builds its tx immediately before signing (never pre-built)
+    // and hard-checks the submit status; wallet signs are 120s-timeout-capped there so a
+    // dismissed popup fails loudly instead of hanging the run.
+    //
+    // Popup budget per agent: reuse-cache hit = 0 popups (deploy skipped; fund skipped too when
+    // the agent still holds enough of the asset) · fresh agent = 2 (deploy + fund) ·
+    // +1 when registryAuthorize is flipped on. One agent's setup failure marks THAT worker
+    // failed and the run continues; only all-agents-failed aborts.
     this.onEvent('orchestrator-step', { step: 'authorizing-scope', status: 'pending' })
-    try {
-      for (const w of workers) {
-        await w.setupKey() // ed25519 session key (the on-chain agent signer)
-        await authorizeAndFundAgent({
+    const nowSec = Math.floor(Date.now() / 1000)
+    const takenThisRun = new Set() // one cached agent must not serve two workers of this run
+    for (const w of workers) {
+      try {
+        // Reuse a cached agent when its ON-CHAIN scope still allows this deposit (expiry,
+        // revoked, cap headroom via scope_of()) — restores that agent's pinned session key.
+        const cached = await takeReusableAgent({
           owner: this.user,
-          agentAddress: w.agentAddress,
-          vault: w.vault,
+          vault: SOROBAN_ACTIVE_VAULT_ADDRESS,
           amount: w.amount,
-          capPerPeriod: w.amount,
-          periodDuration: PERIOD_DURATION,
-          expiry,
+          nowSec,
+          exclude: takenThisRun,
         })
+        if (cached) {
+          w.sessionKey = newSessionKey(cached.secret) // signer is constructor-pinned to this key
+          await w.setupKey() // idempotent — keeps the restored key, emits the key-setup step
+          w.agentAddress = cached.agentAddress
+        } else {
+          await w.setupKey() // fresh ed25519 session key (the on-chain agent signer)
+          // Deploy BEFORE fund — it needs the fresh agent's address. User-signed and user-paid:
+          // the relay's allowlist only fee-bumps vault-deposit invokes, never a deploy.
+          w.agentAddress = await deployAgentForSession({
+            owner: this.user,
+            sessionKey: w.sessionKey,
+            cap: w.amount,
+            periodDuration: PERIOD_DURATION,
+            expiry,
+          })
+          saveCachedAgent({
+            owner: this.user,
+            vault: SOROBAN_ACTIVE_VAULT_ADDRESS,
+            entry: {
+              agentAddress: w.agentAddress,
+              secret: w.sessionKey.secret,
+              signerPub: w.sessionKey.publicKey,
+              cap: String(w.amount),
+              expiry,
+              createdAt: Date.now(),
+            },
+          })
+        }
+        takenThisRun.add(w.agentAddress)
+        this.onEvent('AgentDeployed', {
+          agentId: w.agentId,
+          agent: w.agentAddress,
+          signer: w.sessionKey.publicKey,
+          reused: Boolean(cached),
+        })
+        if (this.registryAuthorize) {
+          await registryAuthorizeAgent({
+            owner: this.user,
+            agentAddress: w.agentAddress,
+            vault: w.vault,
+            capPerPeriod: w.amount,
+            periodDuration: PERIOD_DURATION,
+            expiry,
+          })
+        }
+        // Fund only the shortfall case: a reused agent may still hold the asset from a run
+        // that failed before its deposit. null (read failed) funds anyway — the safe side.
+        const agentBal = await readTokenBalance(w.agentAddress)
+        if (agentBal == null || agentBal < w.amount) {
+          await fundAgent({ owner: this.user, agentAddress: w.agentAddress, amount: w.amount })
+        }
         w.scopeAuthorized = true
         this.onEvent('AgentScopeAuthorized', {
           agentId: w.agentId,
@@ -136,15 +209,20 @@ export class OrchestratorAgent {
           periodDuration: PERIOD_DURATION,
           expiry,
           authorized: true,
+          registryRecorded: this.registryAuthorize,
         })
+      } catch (err) {
+        // Surface + isolate: THIS worker is out (drives the tile/log 'failed' state), the rest
+        // of the run continues. No infinite "started" limbo, no all-or-nothing abort.
+        w.setupFailed = true
+        w.setupError = `setup failed: ${err.message}`
+        this.onEvent('failed', { agentId: w.agentId, vault: w.vault, error: w.setupError })
       }
-    } catch (err) {
-      this.onEvent('orchestrator-step', {
-        step: 'authorizing-scope',
-        status: 'error',
-        error: err.message,
-      })
-      throw err
+    }
+    if (workers.every((w) => w.setupFailed)) {
+      const msg = `agent setup failed for all ${workers.length} agents — ${workers[0].setupError}`
+      this.onEvent('orchestrator-step', { step: 'authorizing-scope', status: 'error', error: msg })
+      throw new Error(msg)
     }
     this.onEvent('orchestrator-step', { step: 'authorizing-scope', status: 'done' })
 
@@ -154,6 +232,11 @@ export class OrchestratorAgent {
     this.onEvent('orchestrator-step', { step: 'dispatching-agents', status: 'pending' })
     const workerResults = []
     for (let i = 0; i < workers.length; i++) {
+      // A worker whose setup failed was already surfaced ('failed' event) — record and move on.
+      if (workers[i].setupFailed) {
+        workerResults.push({ status: 'rejected', reason: new Error(workers[i].setupError) })
+        continue
+      }
       try {
         const res = await workers[i].execute()
         workerResults.push({ status: 'fulfilled', value: res })
