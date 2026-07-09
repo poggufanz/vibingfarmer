@@ -202,10 +202,10 @@ Max drawdown: ${input.maxDrawdown}%
 Profile risk: ${input.riskTier}
 
 Proposer argument:
-  Action: ${proposer?.proposal?.action || 'unknown'}
-  Reasoning: ${proposer?.proposal?.reasoning || 'none'}
+  Action: ${proposer?.action || 'unknown'}
+  Reasoning: ${proposer?.reasoning || 'none'}
   Arguments: ${(proposer?.arguments || []).join('; ') || 'none'}
-  Confidence: ${proposer?.proposal?.confidence ?? 'n/a'}`
+  Confidence: ${proposer?.confidence ?? 'n/a'}`
   return prompt
 }
 
@@ -217,8 +217,8 @@ VaR (${input.VaR != null ? '95%' : 'n/a'}): ${input.VaR ?? 'n/a'} USDC
 CVaR: ${input.CVaR ?? 'n/a'} USDC
 Probability of profit: ${input.probProfit != null ? (input.probProfit * 100).toFixed(1) : 'n/a'}%
 
-Proposer: ${proposer?.proposal?.action || 'unknown'} (conf ${proposer?.proposal?.confidence ?? 'n/a'})
-Risk/Compliance: ${riskComp?.assessment?.action || 'unknown'} (conf ${riskComp?.assessment?.confidence ?? 'n/a'}, pass: ${riskComp?.compliancePass ?? 'n/a'})
+Proposer: ${proposer?.action || 'unknown'} (conf ${proposer?.confidence ?? 'n/a'})
+Risk/Compliance: ${riskComp?.action || 'unknown'} (conf ${riskComp?.confidence ?? 'n/a'}, pass: ${riskComp?.compliancePass ?? 'n/a'})
 
 Are these numbers consistent? Does the VaR/CVaR stay within acceptable range for a ${input.riskTier} risk profile?`
 }
@@ -307,22 +307,26 @@ export async function councilDebate(input, deps = {}) {
 
   let proposerResult = null
   let riskCompResult = null
+  let lastProposer = null
+  let lastRiskComp = null
   const debateLog = []
 
   for (let i = 0; i < maxIterations; i++) {
     const riskFeedback = riskCompResult?.concerns || null
     proposerResult = await runProposer(input, riskFeedback, sharedDeps)
     if (!proposerResult) {
-      return { verdict: 'unavailable', reason: 'Proposer unavailable — AI call failed', debateLog, iterations: i + 1, converged: false }
+      return { verdict: 'unavailable', reason: 'Proposer unavailable — AI call failed', debateLog, iterations: i + 1, converged: false, proposer: lastProposer, riskCompliance: lastRiskComp, validator: null, gate: null, permissionSentence: null, confidence: lastProposer?.confidence ?? 0 }
     }
+    lastProposer = proposerResult
     riskCompResult = await runRiskCompliance(input, proposerResult, sharedDeps)
     if (!riskCompResult) {
-      return { verdict: 'unavailable', reason: 'Risk/Compliance unavailable — AI call failed', debateLog, iterations: i + 1, converged: false }
+      return { verdict: 'unavailable', reason: 'Risk/Compliance unavailable — AI call failed', debateLog, iterations: i + 1, converged: false, proposer: lastProposer, riskCompliance: lastRiskComp, validator: null, gate: null, permissionSentence: null, confidence: lastProposer?.confidence ?? 0 }
     }
+    lastRiskComp = riskCompResult
     debateLog.push({
       iteration: i + 1,
-      proposer: { action: proposerResult.proposal?.action, confidence: proposerResult.proposal?.confidence, arguments: proposerResult.arguments },
-      riskCompliance: { action: riskCompResult.assessment?.action, confidence: riskCompResult.assessment?.confidence, violations: riskCompResult.violationsFound, compliancePass: riskCompResult.compliancePass },
+      proposer: { action: proposerResult.action, confidence: proposerResult.confidence, reasoning: proposerResult.reasoning, arguments: proposerResult.arguments, citedRules: proposerResult.citedRules },
+      riskCompliance: { action: riskCompResult.action, confidence: riskCompResult.confidence, violations: riskCompResult.violationsFound, concerns: riskCompResult.concerns, compliancePass: riskCompResult.compliancePass },
     })
     if (isConverged(proposerResult, riskCompResult, convergenceThreshold)) {
       break
@@ -348,8 +352,8 @@ export async function councilDebate(input, deps = {}) {
       gate,
       permissionSentence: null,
       confidence: Math.min(
-        proposerResult?.proposal?.confidence ?? 0,
-        riskCompResult?.assessment?.confidence ?? 0
+        proposerResult?.confidence ?? 0,
+        riskCompResult?.confidence ?? 0
       ),
     }
   }
@@ -369,8 +373,8 @@ export async function councilDebate(input, deps = {}) {
     gate,
     permissionSentence: sentence,
     confidence: (
-      (proposerResult?.proposal?.confidence ?? 0) +
-      (riskCompResult?.assessment?.confidence ?? 0) +
+      (proposerResult?.confidence ?? 0) +
+      (riskCompResult?.confidence ?? 0) +
       (validatorResult?.confidence ?? 0)
     ) / 3,
   }

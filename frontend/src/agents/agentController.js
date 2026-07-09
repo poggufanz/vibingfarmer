@@ -5,7 +5,8 @@
 // there is no relayer harvest/withdraw path anymore.
 
 import { saveTransaction } from '../history.js'
-import { withdrawFromVaultOnChain } from '../wallet.js'
+import { ownerWithdraw } from '../stellar/exit.js'
+import { SOROBAN_DEMO_AGENT } from '../stellar/config.js'
 import { classifyRisk } from '../venice.js'
 
 let worker = null
@@ -40,7 +41,7 @@ export function onAgentEvent(callback) {
 }
 
 function emit(event) {
-  listeners.forEach(cb => cb(event))
+  listeners.forEach((cb) => cb(event))
 }
 
 async function handleWorkerMessage(e) {
@@ -58,9 +59,22 @@ async function handleWorkerMessage(e) {
     case 'MARKET_SIGNAL':
       emit({ kind: 'market_signal', ...payload })
       break
+    case 'DRAWDOWN_ALERT':
+      emit({
+        kind: 'risk_alert',
+        severity: 'high',
+        reason: 'drawdown_exceeded',
+        vaultName: payload.vaultName,
+        vaultAddress: payload.vaultAddress,
+        protocol: payload.protocol,
+        searchAnswer: `Drawdown of ${payload.protocol} (${payload.drawdown}%) exceeds your configured limit of ${payload.maxDrawdown}%!`,
+        timestamp: payload.timestamp,
+      })
+      break
     case 'RISK_SCAN_RESULT': {
       const severity = await classifyRisk(payload.searchAnswer, payload.protocol)
-      if (severity === 'high' || severity === 'medium') emit({ kind: 'risk_alert', severity, ...payload })
+      if (severity === 'high' || severity === 'medium')
+        emit({ kind: 'risk_alert', severity, ...payload })
       break
     }
     case 'MONITOR_ERROR':
@@ -69,16 +83,41 @@ async function handleWorkerMessage(e) {
   }
 }
 
-/** Emergency withdraw — called from a risk alert. `amount` is asset units (string/bigint).
- *  User-signed ERC-4626 withdraw (one popup). Same native-gas asterisk as revoke. */
-export async function emergencyWithdraw(vaultAddress, amount, userAddress) {
-  const { txHash } = await withdrawFromVaultOnChain(vaultAddress, amount, userAddress)
-  saveTransaction({ txHash, vaultName: 'Emergency Withdraw', vaultAddress, amountUsdc: Number(amount) / 1e6, workerLabel: 'RiskWatcher', network: 'sepolia' })
-  return txHash
+// Stellar exit: owner_withdraw(to) on the agent custom account redeems the agent's full vault
+// position + sweeps the asset back to the owner (Phase 1). It is by-agent, not by-vault+amount —
+// the `vaultAddress`/`amount` args are kept for caller compatibility but unused on this path.
+// pin: the demo sweeps the single pre-deployed agent; a multi-agent run should pass the tracked
+// per-agent address (exec state) as `agentAddress`.
+
+/** Emergency exit — called from a risk alert. User-signed owner_withdraw (one popup). */
+export async function emergencyWithdraw(
+  vaultAddress,
+  amount,
+  userAddress,
+  agentAddress = SOROBAN_DEMO_AGENT
+) {
+  const { hash } = await ownerWithdraw({ owner: userAddress, agentAddress, to: userAddress })
+  saveTransaction({
+    txHash: hash,
+    vaultName: 'Emergency Exit',
+    vaultAddress: agentAddress,
+    workerLabel: 'RiskWatcher',
+    network: 'stellar-testnet',
+  })
+  return hash
 }
 
-/** Manual withdraw from the dashboard with a user-specified amount (asset units, string/bigint).
- *  Returns { txHash, status }. */
-export async function withdrawFromVault(vaultAddress, amount, userAddress) {
-  return withdrawFromVaultOnChain(vaultAddress, amount, userAddress)
+/** Manual exit from the dashboard. Returns { txHash, status }. */
+export async function withdrawFromVault(
+  vaultAddress,
+  amount,
+  userAddress,
+  agentAddress = SOROBAN_DEMO_AGENT
+) {
+  const { hash, status } = await ownerWithdraw({
+    owner: userAddress,
+    agentAddress,
+    to: userAddress,
+  })
+  return { txHash: hash, status }
 }
