@@ -24,6 +24,9 @@ pub enum DataKey {
     Signer, // ed25519 session public key (BytesN<32>)
     Scope,
     ExitSigner, // ed25519 exit session public key (BytesN<32>)
+    // funding_router that factory-deployed this agent (Address). Set only when the
+    // constructor received Some(router); absent for legacy direct deploys.
+    Router,
 }
 
 #[contracterror]

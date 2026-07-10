@@ -31,9 +31,15 @@ const NETWORKS = {
     // Pre-seeded demo agent custom account (1a, v3 — scope pins the AUTOFARM vault; constructor
     // self-approves it for the cap). Owner = vf-deployer; signer in deployments JSON.
     demoAgent: 'CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC',
-    // agent_account wasm (already uploaded on-chain) — deployAgentForSession creates the per-run
-    // agent from this hash; the demo agent above stays only for exit settings + smoke scripts.
-    agentWasmHash: '8c607112ba93ff289d30f2c894ca586c745328e5cb2ae6139917c6df540dda62',
+    // agent_account wasm v2 (already uploaded on-chain) — deployAgentForSession + the funding
+    // router deploy per-run agents from this hash. v2 adds the 4th ctor arg (router:
+    // Option<Address>) + the pull@router context. The demo agent above stays on the OLD v1 wasm
+    // (8c607112ba…dda62) for paths that need the pre-seeded account (exit settings, smokes).
+    agentWasmHash: '7ced45e735e7e084d96d6a04df7cec6e07bc2b203eedb4d3422949a7e9cca717',
+    // One-popup grant factory + funding gate (funding_router). Owner signs ONE grant tx (nested
+    // SEP-41 approve + agent deploys); worker funding = relayed router.pull (0 popups). The
+    // server relay guard's SOROBAN_ROUTER_ADDRESS env MUST match this exact address.
+    fundingRouter: 'CBEI5VJKKWLXKQUUUETBAPZSQQLH7I57TSIDTMV4WJMBKIGVF7NSNOFY',
     // Real-yield source (#2): Blend Capital v2 lending pool the vault supplies into (re-verified
     // live at cutover — spec §7). blendUsdc = the pool's USDC reserve (same SAC as `token`).
     blendPool: 'CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF',
@@ -59,6 +65,7 @@ const NETWORKS = {
     token: null,
     demoAgent: null,
     agentWasmHash: null,
+    fundingRouter: null,
     blendPool: null,
     blendUsdc: null,
     autofarmVault: null,
@@ -91,6 +98,15 @@ export const SOROBAN_ATTESTATION_ADDRESS = pick('VITE_SOROBAN_ATTESTATION_ADDRES
 export const SOROBAN_TOKEN_ADDRESS = pick('VITE_SOROBAN_TOKEN_ADDRESS', 'token')
 export const SOROBAN_DEMO_AGENT = pick('VITE_SOROBAN_DEMO_AGENT', 'demoAgent')
 export const SOROBAN_AGENT_WASM_HASH = pick('VITE_SOROBAN_AGENT_WASM_HASH', 'agentWasmHash')
+// Optional on purpose (no pick/throw): empty = one-popup flow disabled, legacy path runs.
+export const SOROBAN_FUNDING_ROUTER_ADDRESS =
+  env('VITE_SOROBAN_FUNDING_ROUTER_ADDRESS') || NET.fundingRouter || ''
+// Escape hatch: force the legacy per-agent deploy/fund popup path even when the router is
+// deployed (VITE_LEGACY_AGENT_SETUP=1). env() helper keeps this vitest/node-safe.
+export const LEGACY_AGENT_SETUP = env('VITE_LEGACY_AGENT_SETUP') === '1'
+// The one-popup grant flow is the DEFAULT whenever the router is deployed and the legacy escape
+// hatch is off. Orchestrator + UI branch on this single knob.
+export const USE_FUNDING_ROUTER = Boolean(SOROBAN_FUNDING_ROUTER_ADDRESS) && !LEGACY_AGENT_SETUP
 // Token + vault-share decimals (both 7). Amounts are i128 in base units (1 VFUSD = 10_000_000).
 export const SOROBAN_DECIMALS = 7
 export const SOROBAN_BLEND_POOL_ADDRESS = pick('VITE_SOROBAN_BLEND_POOL_ADDRESS', 'blendPool')

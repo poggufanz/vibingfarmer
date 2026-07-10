@@ -35,7 +35,10 @@ fn test_constructor_stores_scope_and_key() {
     let pubkey = BytesN::from_array(&env, &[7u8; 32]);
     let s = scope(&env, &owner, &vault, &token);
 
-    let id = env.register(AgentAccount, (owner.clone(), pubkey.clone(), s.clone()));
+    let id = env.register(
+        AgentAccount,
+        (owner.clone(), pubkey.clone(), s.clone(), None::<Address>),
+    );
     let client = AgentAccountClient::new(&env, &id);
 
     let got = client.scope_of();
@@ -43,6 +46,8 @@ fn test_constructor_stores_scope_and_key() {
     assert_eq!(got.cap_per_period, 1_000_000_000);
     assert!(!got.revoked);
     assert_eq!(client.signer(), pubkey);
+    // Legacy direct deploy: no funding router stored.
+    assert_eq!(client.router(), None);
 }
 
 // --- Task 3: signature verification ---
@@ -60,7 +65,7 @@ fn test_check_auth_rejects_bad_signature() {
     // Random pubkey we do NOT hold the secret for → any signature must fail.
     let pubkey = BytesN::from_array(&env, &[9u8; 32]);
     let s = scope(&env, &owner, &vault, &token);
-    let id = env.register(AgentAccount, (owner, pubkey, s));
+    let id = env.register(AgentAccount, (owner, pubkey, s, None::<Address>));
 
     // `__` fns are not exposed on the client; the SDK testutils entrypoint for
     // exercising a custom account is `try_invoke_contract_check_auth`. It takes
@@ -110,6 +115,7 @@ fn test_scope_rejects_wrong_vault() {
             owner,
             pubkey,
             scope(&env, &Address::generate(&env), &vault, &token),
+            None::<Address>,
         ),
     );
     let agent = Address::generate(&env);
@@ -131,7 +137,7 @@ fn test_scope_rejects_when_revoked() {
     let pubkey = BytesN::from_array(&env, &[1u8; 32]);
     let mut s = scope(&env, &Address::generate(&env), &vault, &token);
     s.revoked = true;
-    let id = env.register(AgentAccount, (owner, pubkey, s));
+    let id = env.register(AgentAccount, (owner, pubkey, s, None::<Address>));
     let ctx = deposit_ctx(&env, &vault, &Address::generate(&env), 10);
     let res = env.as_contract(&id, || {
         AgentAccount::enforce_scope_for_test(env.clone(), ctx)
@@ -153,6 +159,7 @@ fn test_scope_rejects_when_expired() {
             owner,
             pubkey,
             scope(&env, &Address::generate(&env), &vault, &token),
+            None::<Address>,
         ),
     );
     let ctx = deposit_ctx(&env, &vault, &Address::generate(&env), 10);
@@ -176,6 +183,7 @@ fn test_scope_rejects_over_cap() {
             owner,
             pubkey,
             scope(&env, &Address::generate(&env), &vault, &token),
+            None::<Address>,
         ),
     );
     let ctx = deposit_ctx(&env, &vault, &Address::generate(&env), 2_000_000_000); // > 1,000,000,000 cap
@@ -199,6 +207,7 @@ fn test_scope_accumulates_and_resets_period() {
             owner,
             pubkey,
             scope(&env, &Address::generate(&env), &vault, &token),
+            None::<Address>,
         ),
     );
 
@@ -294,6 +303,7 @@ fn test_cap_never_exceeded_property() {
             owner,
             pubkey,
             scope(&env, &Address::generate(&env), &vault, &token),
+            None::<Address>,
         ),
     );
     let cap = 1_000_000_000i128;
@@ -342,7 +352,7 @@ fn constructor_self_approves_vault_for_cap() {
         revoked: false,
     };
     // Act: deploy the agent with the constructor.
-    let agent = env.register(AgentAccount, (owner.clone(), signer, s));
+    let agent = env.register(AgentAccount, (owner.clone(), signer, s, None::<Address>));
     // Assert: the agent pre-approved the vault to pull `cap` of the token.
     let allowance = soroban_sdk::token::TokenClient::new(&env, &token).allowance(&agent, &vault);
     assert_eq!(allowance, cap);
@@ -382,7 +392,7 @@ fn owner_withdraw_sweeps_principal_back_to_owner() {
         expiry: env.ledger().timestamp() + 3600,
         revoked: false,
     };
-    let agent = env.register(AgentAccount, (owner.clone(), signer, s));
+    let agent = env.register(AgentAccount, (owner.clone(), signer, s, None::<Address>));
 
     // Fund the agent and deposit (mock_all_auths stands in for the session-key path here;
     // the real session-key auth tree is Phase 2). Shares mint to the agent — this is the
@@ -430,7 +440,7 @@ fn owner_withdraw_rejects_non_owner() {
         expiry: env.ledger().timestamp() + 3600,
         revoked: false,
     };
-    let agent = env.register(AgentAccount, (owner.clone(), signer, s));
+    let agent = env.register(AgentAccount, (owner.clone(), signer, s, None::<Address>));
     // Only the stranger authorizes — owner.require_auth() must fail.
     env.mock_auths(&[soroban_sdk::testutils::MockAuth {
         address: &stranger,
@@ -463,7 +473,10 @@ fn session_key_path_still_rejects_non_deposit_contexts() {
         expiry: env.ledger().timestamp() + 3600,
         revoked: false,
     };
-    let agent = env.register(AgentAccount, (Address::generate(&env), signer, s));
+    let agent = env.register(
+        AgentAccount,
+        (Address::generate(&env), signer, s, None::<Address>),
+    );
 
     // An `approve@token` context must be rejected by the deposit-only enforcer — the session
     // key never gained approve power (the self-approve / withdraw use invoker / owner auth).
@@ -487,7 +500,7 @@ fn test_set_and_get_exit_signer_owner_only() {
     let pubkey = BytesN::from_array(&env, &[7u8; 32]);
     let exit_pubkey = BytesN::from_array(&env, &[8u8; 32]);
     let s = scope(&env, &owner, &vault, &token);
-    let id = env.register(AgentAccount, (owner.clone(), pubkey, s));
+    let id = env.register(AgentAccount, (owner.clone(), pubkey, s, None::<Address>));
     let client = AgentAccountClient::new(&env, &id);
 
     // Initial check: exit_signer is not set.
@@ -559,7 +572,7 @@ fn test_exit_scope_enforcement() {
     let token = sac_token(&env);
     let pubkey = BytesN::from_array(&env, &[1u8; 32]);
     let s = scope(&env, &owner, &vault, &token);
-    let id = env.register(AgentAccount, (owner.clone(), pubkey, s));
+    let id = env.register(AgentAccount, (owner.clone(), pubkey, s, None::<Address>));
 
     // 1. Valid redeem context (vault.redeem(agent_account, shares)) should pass.
     let ctx1 = redeem_ctx(&env, &vault, &id, 100);
@@ -612,4 +625,192 @@ fn test_exit_scope_enforcement() {
         AgentAccount::enforce_exit_scope_for_test(env.clone(), ctx6)
     });
     assert_eq!(res6, Err(AccountError::FnNotAllowed));
+}
+
+// --- one-popup grant: the session key may fund itself via the DEPLOYING router only ---
+
+// Build a `pull(agent, amount)` auth context on `router`.
+fn pull_ctx(env: &Env, router: &Address, agent: &Address, amount: i128) -> Vec<Context> {
+    let args: Vec<Val> = (agent.clone(), amount).into_val(env);
+    Vec::from_array(
+        env,
+        [Context::Contract(ContractContext {
+            contract: router.clone(),
+            fn_name: symbol_short!("pull"),
+            args,
+        })],
+    )
+}
+
+#[test]
+fn session_key_accepts_pull_on_deploying_router_without_spending_cap() {
+    let env = Env::default();
+    env.ledger().set_timestamp(1000);
+    let owner = Address::generate(&env);
+    let vault = Address::generate(&env);
+    let token = sac_token(&env);
+    let router = Address::generate(&env);
+    let pubkey = BytesN::from_array(&env, &[1u8; 32]);
+    let id = env.register(
+        AgentAccount,
+        (
+            owner.clone(),
+            pubkey,
+            scope(&env, &owner, &vault, &token),
+            Some(router.clone()),
+        ),
+    );
+    // Constructor stored the deploying router.
+    assert_eq!(
+        AgentAccountClient::new(&env, &id).router(),
+        Some(router.clone())
+    );
+
+    // pull@router is accepted for the session key…
+    let ctx = pull_ctx(&env, &router, &id, 500_000_000);
+    let res = env.as_contract(&id, || {
+        AgentAccount::enforce_scope_for_test(env.clone(), ctx)
+    });
+    assert!(res.is_ok());
+
+    // …and did NOT count toward spent_in_period: a FULL-cap deposit still fits after it
+    // (cap accounting stays deposit-only; funding is bounded by the token allowance).
+    let dep = deposit_ctx(&env, &vault, &id, 1_000_000_000);
+    let res2 = env.as_contract(&id, || {
+        AgentAccount::enforce_scope_for_test(env.clone(), dep)
+    });
+    assert!(res2.is_ok());
+}
+
+#[test]
+fn session_key_rejects_pull_when_router_not_set() {
+    // Legacy direct deploy (router = None): a pull context is just a foreign contract.
+    let env = Env::default();
+    env.ledger().set_timestamp(1000);
+    let owner = Address::generate(&env);
+    let vault = Address::generate(&env);
+    let token = sac_token(&env);
+    let router = Address::generate(&env);
+    let pubkey = BytesN::from_array(&env, &[1u8; 32]);
+    let id = env.register(
+        AgentAccount,
+        (
+            owner.clone(),
+            pubkey,
+            scope(&env, &owner, &vault, &token),
+            None::<Address>,
+        ),
+    );
+    let ctx = pull_ctx(&env, &router, &id, 1_000_000);
+    let res = env.as_contract(&id, || {
+        AgentAccount::enforce_scope_for_test(env.clone(), ctx)
+    });
+    assert_eq!(res, Err(AccountError::VaultMismatch));
+}
+
+#[test]
+fn session_key_rejects_pull_on_other_contract() {
+    // Router IS set, but the pull targets some OTHER contract — refused.
+    let env = Env::default();
+    env.ledger().set_timestamp(1000);
+    let owner = Address::generate(&env);
+    let vault = Address::generate(&env);
+    let token = sac_token(&env);
+    let router = Address::generate(&env);
+    let other = Address::generate(&env);
+    let pubkey = BytesN::from_array(&env, &[1u8; 32]);
+    let id = env.register(
+        AgentAccount,
+        (
+            owner.clone(),
+            pubkey,
+            scope(&env, &owner, &vault, &token),
+            Some(router),
+        ),
+    );
+    let ctx = pull_ctx(&env, &other, &id, 1_000_000);
+    let res = env.as_contract(&id, || {
+        AgentAccount::enforce_scope_for_test(env.clone(), ctx)
+    });
+    assert_eq!(res, Err(AccountError::VaultMismatch));
+}
+
+#[test]
+fn session_key_rejects_non_pull_fn_on_router() {
+    // Router IS set; any fn other than `pull` on it stays forbidden.
+    let env = Env::default();
+    env.ledger().set_timestamp(1000);
+    let owner = Address::generate(&env);
+    let vault = Address::generate(&env);
+    let token = sac_token(&env);
+    let router = Address::generate(&env);
+    let pubkey = BytesN::from_array(&env, &[1u8; 32]);
+    let id = env.register(
+        AgentAccount,
+        (
+            owner.clone(),
+            pubkey,
+            scope(&env, &owner, &vault, &token),
+            Some(router.clone()),
+        ),
+    );
+    let args: Vec<Val> = (id.clone(), 1_000_000i128).into_val(&env);
+    let ctx = Vec::from_array(
+        &env,
+        [Context::Contract(ContractContext {
+            contract: router,
+            fn_name: symbol_short!("transfer"),
+            args,
+        })],
+    );
+    let res = env.as_contract(&id, || {
+        AgentAccount::enforce_scope_for_test(env.clone(), ctx)
+    });
+    assert_eq!(res, Err(AccountError::FnNotAllowed));
+}
+
+#[test]
+fn session_key_pull_still_gated_by_revoked_and_expiry() {
+    // Revoked scope: pull@router refused before any context matching.
+    let env = Env::default();
+    env.ledger().set_timestamp(1000);
+    let owner = Address::generate(&env);
+    let vault = Address::generate(&env);
+    let token = sac_token(&env);
+    let router = Address::generate(&env);
+    let pubkey = BytesN::from_array(&env, &[1u8; 32]);
+    let mut s = scope(&env, &owner, &vault, &token);
+    s.revoked = true;
+    let id = env.register(
+        AgentAccount,
+        (owner.clone(), pubkey.clone(), s, Some(router.clone())),
+    );
+    let ctx = pull_ctx(&env, &router, &id, 1_000_000);
+    let res = env.as_contract(&id, || {
+        AgentAccount::enforce_scope_for_test(env.clone(), ctx)
+    });
+    assert_eq!(res, Err(AccountError::Revoked));
+
+    // Expired scope: same refusal.
+    let env2 = Env::default();
+    env2.ledger().set_timestamp(5_000_000_000); // past the far-future expiry
+    let owner2 = Address::generate(&env2);
+    let vault2 = Address::generate(&env2);
+    let token2 = sac_token(&env2);
+    let router2 = Address::generate(&env2);
+    let pubkey2 = BytesN::from_array(&env2, &[1u8; 32]);
+    let id2 = env2.register(
+        AgentAccount,
+        (
+            owner2.clone(),
+            pubkey2,
+            scope(&env2, &owner2, &vault2, &token2),
+            Some(router2.clone()),
+        ),
+    );
+    let ctx2 = pull_ctx(&env2, &router2, &id2, 1_000_000);
+    let res2 = env2.as_contract(&id2, || {
+        AgentAccount::enforce_scope_for_test(env2.clone(), ctx2)
+    });
+    assert_eq!(res2, Err(AccountError::Expired));
 }

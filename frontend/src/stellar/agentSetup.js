@@ -19,15 +19,17 @@ import {
   SOROBAN_REGISTRY_ADDRESS,
   SOROBAN_TOKEN_ADDRESS,
 } from './config.js'
-import { addrScVal, boolScVal, i128ScVal, structScVal, u64ScVal } from './scval.js'
+import { addrScVal, boolScVal, i128ScVal, structScVal, u64ScVal, voidScVal } from './scval.js'
 
 // Rolling cap window default — mirrors the orchestrator's PERIOD_DURATION.
 const DEFAULT_PERIOD_DURATION = 86400
 // A wallet popup left unanswered must not hang the run: reject after this long.
 export const WALLET_SIGN_TIMEOUT_MS = 120_000
 
-/** Wallet-sign with a hard timeout — a dismissed/stuck popup rejects instead of hanging. */
-async function signWithTimeout(xdr, label) {
+/** Wallet-sign with a hard timeout — a dismissed/stuck popup rejects instead of hanging.
+ *  Exported so the one-popup grant flow (stellar/grant.js) signs its single grant tx through the
+ *  exact same timeout-capped wallet path, not a second hand-rolled copy. */
+export async function signWithTimeout(xdr, label) {
   let timer
   try {
     return await Promise.race([
@@ -81,11 +83,12 @@ export async function deployAgentForSession({
     expiry: u64ScVal(expiry),
     revoked: boolScVal(false),
   })
-  // __constructor(owner: Address, signer: BytesN<32>, scope: AgentScope)
+  // __constructor(owner: Address, signer: BytesN<32>, scope: AgentScope, router: Option<Address>)
+  // Legacy direct deploy — no funding_router deployed this agent, so router = None (ScVal Void).
   const { xdr, contractAddress } = await buildCreateContractTx({
     source: owner,
     wasmHash: SOROBAN_AGENT_WASM_HASH,
-    constructorArgs: [{ addr: owner }, { bytes32: sessionKey.rawPublicKey }, scope],
+    constructorArgs: [{ addr: owner }, { bytes32: sessionKey.rawPublicKey }, scope, voidScVal()],
     server,
   })
   const signed = await signWithTimeout(xdr, 'agent deploy')

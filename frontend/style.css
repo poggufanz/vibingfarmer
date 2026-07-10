@@ -3603,3 +3603,70 @@ details.yv-collapse[open] > summary .yv-caret {
   .topbar { padding: 12px 16px; }
   .topbar-meta { display: none; }
 }
+
+/* ---------- Grant panel (one-popup router grant) ---------- */
+.grant-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 220px) minmax(0, 1fr);
+  gap: 28px;
+  margin: 28px 0 8px;
+  align-items: start;
+}
+
+.grant-field { display: flex; flex-direction: column; gap: 10px; }
+
+.grant-field-k {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  letter-spacing: -0.01em;
+}
+
+.grant-budget-input {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border-strong);
+  padding: 6px 2px 8px;
+  font-size: 28px;
+  font-weight: 500;
+  color: var(--text);
+  letter-spacing: -0.02em;
+  width: 100%;
+  transition: border-color 0.12s ease;
+}
+.grant-budget-input:focus { outline: none; border-bottom-color: var(--accent); }
+.grant-budget-input:disabled { opacity: 0.5; }
+
+.grant-field-hint { font-family: var(--font-mono); font-size: 10.5px; }
+
+.grant-presets { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.btn-chip {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border-strong);
+  padding: 8px 14px;
+  font-size: 12.5px;
+}
+.btn-chip:hover:not(:disabled) { background: var(--bg-elev); color: var(--text); }
+.btn-chip.is-active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.btn-sm { padding: 7px 12px; font-size: 12px; }
+
+.grant-revoke-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+@media (max-width: 640px) {
+  .grant-controls { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+}

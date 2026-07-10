@@ -28,6 +28,9 @@ export default defineConfig(({ mode }) => {
   if (env.VF_FAUCET_SECRET) process.env.VF_FAUCET_SECRET = env.VF_FAUCET_SECRET
   if (env.SOROBAN_TOKEN_ADDRESS) process.env.SOROBAN_TOKEN_ADDRESS = env.SOROBAN_TOKEN_ADDRESS
   if (env.SOROBAN_AGENT_ALLOWLIST) process.env.SOROBAN_AGENT_ALLOWLIST = env.SOROBAN_AGENT_ALLOWLIST
+  // funding_router (one-popup grant) — the relay guard allowlists grant/pull on this address only.
+  // Fail-closed if absent: without the passthrough the dev-server relay refuses every router call.
+  if (env.SOROBAN_ROUTER_ADDRESS) process.env.SOROBAN_ROUTER_ADDRESS = env.SOROBAN_ROUTER_ADDRESS
 
   // VF API gate (SEP-10 portal + gateway) — server-side only, never in the client bundle.
   if (env.VF_AUTH_SIGNING_KEY) process.env.VF_AUTH_SIGNING_KEY = env.VF_AUTH_SIGNING_KEY

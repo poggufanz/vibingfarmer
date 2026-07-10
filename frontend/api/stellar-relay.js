@@ -21,6 +21,8 @@ const RPC_URL = () => process.env.SOROBAN_RPC_URL || 'https://soroban-testnet.st
 const RELAYER_SECRET = () => process.env.STELLAR_RELAYER_SECRET || ''
 const VAULT_ADDR = () => process.env.SOROBAN_VAULT_ADDRESS || ''
 const TOKEN_ADDR = () => process.env.SOROBAN_TOKEN_ADDRESS || ''
+// funding_router for the one-popup grant flow; unset = router relaying disabled (fail closed).
+const ROUTER_ADDR = () => process.env.SOROBAN_ROUTER_ADDRESS || ''
 const AGENT_ALLOWLIST = () => process.env.SOROBAN_AGENT_ALLOWLIST || ''
 // Content-addressed pin of the OZ smart-account wasm SAK deploys (see wallet/config.js
 // ACCOUNT_WASM_HASH — same inline-constant discipline). Env-overridable, never secret.
@@ -71,6 +73,11 @@ function parseAllowlist(raw) {
  * relayer only ever pays to deploy the audited OZ smart-account wasm, never attacker code.
  * FAIL CLOSED: no pin (default '') → every deploy rejected; V1 createContract and non-wasm
  * executables (SAC) rejected unconditionally.
+ *
+ * When `routerAddr` is set (SOROBAN_ROUTER_ADDRESS — the funding_router of the one-popup
+ * grant flow), ALSO sponsors `routerAddr`.grant / `routerAddr`.pull — nothing else on that
+ * contract. FAIL CLOSED: routerAddr unset (default '') → every router call rejected,
+ * byte-identical to the pre-router guard.
  */
 export function assertVaultDeposit(
   inner,
@@ -78,7 +85,8 @@ export function assertVaultDeposit(
   sdk,
   tokenAddr = '',
   agentAllowlist = '',
-  accountWasmHash = ''
+  accountWasmHash = '',
+  routerAddr = ''
 ) {
   if (!vaultAddr) return
   const ops = inner.operations || []
@@ -110,6 +118,12 @@ export function assertVaultDeposit(
     }
     return
   }
+  if (routerAddr && contract === routerAddr) {
+    if (fnName !== 'grant' && fnName !== 'pull') {
+      throw new RelayError('inner tx is not a router grant/pull')
+    }
+    return
+  }
   if (tokenAddr && contract === tokenAddr && fnName === 'transfer') {
     const from = sdk.Address.fromScVal(ic.args()[0]).toString()
     if (!parseAllowlist(agentAllowlist).includes(from)) {
@@ -138,6 +152,7 @@ async function pollResult(rpcServer, hash, tries, intervalMs) {
  * @param {string} p.passphrase     network passphrase
  * @param {string} p.vaultAddr      allowlisted deposit target ('' = skip the guard)
  * @param {string} p.agentAllowlist comma-separated agent accounts allowed as transfer 'from'
+ * @param {string} p.routerAddr     funding_router allowed for grant/pull ('' = router disabled)
  * @param {object} p.sdk            { TransactionBuilder, FeeBumpTransaction, Keypair, Address }
  * @param {object} p.rpcServer      { sendTransaction, getTransaction }
  * @returns {Promise<{ hash, status, relayer }>}
@@ -150,6 +165,7 @@ export async function feeBumpAndSubmit({
   tokenAddr = '',
   agentAllowlist = '',
   accountWasmHash = '',
+  routerAddr = '',
   sdk,
   rpcServer,
   pollTries = 10,
@@ -161,7 +177,7 @@ export async function feeBumpAndSubmit({
   if (inner instanceof FeeBumpTransaction) {
     throw new RelayError('inner tx is already fee-bumped')
   }
-  assertVaultDeposit(inner, vaultAddr, sdk, tokenAddr, agentAllowlist, accountWasmHash)
+  assertVaultDeposit(inner, vaultAddr, sdk, tokenAddr, agentAllowlist, accountWasmHash, routerAddr)
 
   // Replay short-circuit (don't pay to re-broadcast a spent inner tx).
   const innerHash = inner.hash().toString('hex')
@@ -259,6 +275,7 @@ export default async function handler(req, res) {
           tokenAddr: TOKEN_ADDR(),
           agentAllowlist: AGENT_ALLOWLIST(),
           accountWasmHash: ACCOUNT_WASM_HASH(),
+          routerAddr: ROUTER_ADDR(),
           sdk,
           rpcServer,
         })

@@ -36,10 +36,13 @@ const readTokenBalanceMock = vi.fn(async () => null)
 vi.mock('./stellar/agentDeposit.js', () => ({
   readTokenBalance: (...a) => readTokenBalanceMock(...a),
 }))
+// USE_FUNDING_ROUTER false → dispatch takes the LEGACY per-agent deploy/fund path exercised by
+// this whole file. The router (one-popup) path is covered by orchestrator.router.test.js.
 vi.mock('./stellar/config.js', () => ({
   SOROBAN_TOKEN_ADDRESS: 'CTOKEN',
   SOROBAN_DECIMALS: 7,
   SOROBAN_ACTIVE_VAULT_ADDRESS: 'CACTIVEVAULT',
+  USE_FUNDING_ROUTER: false,
 }))
 vi.mock('./venice.js', () => ({ generateAgentSkills: vi.fn(async () => ({})) }))
 vi.mock('./skills.js', () => ({ saveSkill: vi.fn() }))
