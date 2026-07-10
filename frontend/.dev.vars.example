@@ -34,7 +34,7 @@ SOROBAN_VAULT_ADDRESS=CB5VKYDUIYX3RZWGVLKKNBPG7V7Z5JIHF2QPNQKWKAHVA3IPSLFZJDYU
 
 # funding_router for the one-popup grant flow; unset = router relaying disabled
 # (relay then sponsors only router.grant / router.pull on this exact contract)
-SOROBAN_ROUTER_ADDRESS=C...
+SOROBAN_ROUTER_ADDRESS=CBEI5VJKKWLXKQUUUETBAPZSQQLH7I57TSIDTMV4WJMBKIGVF7NSNOFY
 
 # Agents the relay will sponsor F11 exit-leg-2 token.transfer calls for (comma-separated,
 # exact match, fail-closed if empty). Demo agent + your local smoke agent (SMOKE_AGENT_ADDRESS):

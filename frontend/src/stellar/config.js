@@ -25,13 +25,20 @@ export const SOROBAN_TOKEN_ADDRESS = 'CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCP
 // a fresh deploy: v2 CD3MQJ4Y… stays pinned to the old 1:1 vault (kept on-chain for history).
 // Used by the smoke script + demo flows. Owner = vf-deployer; signer in deployments JSON.
 export const SOROBAN_DEMO_AGENT = 'CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC'
-// agent_account wasm ALREADY uploaded on-chain (deployments/stellar-testnet.json
-// agentAccountWasmHash) — auto-execute deploys one fresh instance per run from this hash
-// (create-from-wasm-hash, no wasm upload) so the constructor pins THAT run's session pubkey.
-// The demo agent above stays only for paths that need the pre-seeded account (exit settings,
-// smoke scripts).
+// agent_account wasm (v2) ALREADY uploaded on-chain — auto-execute deploys one fresh instance
+// per run from this hash (create-from-wasm-hash, no wasm upload) so the constructor pins THAT
+// run's session pubkey. v2 adds the 4th constructor arg (router: Option<Address>) + the
+// pull@router context so a session key may authorize the funding_router's `pull` on it; the
+// one-popup grant factory (SOROBAN_FUNDING_ROUTER_ADDRESS below) is pinned to THIS same hash.
+// The demo agent above stays on the OLD v1 wasm (8c607112ba…dda62) for paths that need the
+// pre-seeded account (exit settings, smoke scripts).
 export const SOROBAN_AGENT_WASM_HASH =
-  '8c607112ba93ff289d30f2c894ca586c745328e5cb2ae6139917c6df540dda62'
+  '7ced45e735e7e084d96d6a04df7cec6e07bc2b203eedb4d3422949a7e9cca717'
+// One-popup grant factory + funding gate (funding_router). Owner signs ONE grant tx (covers the
+// nested SEP-41 token.approve + deploys the run's agents); later worker funding is a relayed
+// router.pull (0 popups). The server relay guard's SOROBAN_ROUTER_ADDRESS env MUST match this
+// exact address or grant/pull fee-bumps are refused. Pins agent wasm v2 above + the USDC token.
+export const SOROBAN_FUNDING_ROUTER_ADDRESS = 'CBEI5VJKKWLXKQUUUETBAPZSQQLH7I57TSIDTMV4WJMBKIGVF7NSNOFY'
 // Token + vault-share decimals (both 7). Amounts are i128 in base units (1 VFUSD = 10_000_000).
 export const SOROBAN_DECIMALS = 7
 
