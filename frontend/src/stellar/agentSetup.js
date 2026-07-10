@@ -26,8 +26,10 @@ const DEFAULT_PERIOD_DURATION = 86400
 // A wallet popup left unanswered must not hang the run: reject after this long.
 export const WALLET_SIGN_TIMEOUT_MS = 120_000
 
-/** Wallet-sign with a hard timeout — a dismissed/stuck popup rejects instead of hanging. */
-async function signWithTimeout(xdr, label) {
+/** Wallet-sign with a hard timeout — a dismissed/stuck popup rejects instead of hanging.
+ *  Exported so the one-popup grant flow (stellar/grant.js) signs its single grant tx through the
+ *  exact same timeout-capped wallet path, not a second hand-rolled copy. */
+export async function signWithTimeout(xdr, label) {
   let timer
   try {
     return await Promise.race([

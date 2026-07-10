@@ -38,7 +38,14 @@ export const SOROBAN_AGENT_WASM_HASH =
 // nested SEP-41 token.approve + deploys the run's agents); later worker funding is a relayed
 // router.pull (0 popups). The server relay guard's SOROBAN_ROUTER_ADDRESS env MUST match this
 // exact address or grant/pull fee-bumps are refused. Pins agent wasm v2 above + the USDC token.
-export const SOROBAN_FUNDING_ROUTER_ADDRESS = 'CBEI5VJKKWLXKQUUUETBAPZSQQLH7I57TSIDTMV4WJMBKIGVF7NSNOFY'
+export const SOROBAN_FUNDING_ROUTER_ADDRESS =
+  'CBEI5VJKKWLXKQUUUETBAPZSQQLH7I57TSIDTMV4WJMBKIGVF7NSNOFY'
+// Escape hatch: force the legacy per-agent deploy/fund popup path even when the router is deployed
+// (VITE_LEGACY_AGENT_SETUP=1). Optional-chained so vitest (no import.meta.env) reads undefined → false.
+export const LEGACY_AGENT_SETUP = import.meta.env?.VITE_LEGACY_AGENT_SETUP === '1'
+// The one-popup grant flow is the DEFAULT whenever the router is deployed and the legacy escape
+// hatch is off. Orchestrator + UI branch on this single knob.
+export const USE_FUNDING_ROUTER = Boolean(SOROBAN_FUNDING_ROUTER_ADDRESS) && !LEGACY_AGENT_SETUP
 // Token + vault-share decimals (both 7). Amounts are i128 in base units (1 VFUSD = 10_000_000).
 export const SOROBAN_DECIMALS = 7
 

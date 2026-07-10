@@ -54,7 +54,11 @@ import {
   SOROBAN_STRATEGY_1_ADDRESS,
   SOROBAN_BLEND_POOL_ADDRESS,
   SOROBAN_KEEPER_ADDRESS,
+  SOROBAN_DECIMALS,
+  USE_FUNDING_ROUTER,
 } from './stellar/config.js'
+import GrantPanel from './components/GrantPanel.jsx'
+import { revokeGrant } from './stellar/grant.js'
 import { fetchKeeperEvents } from './stellar/keeperEvents.js'
 import {
   readPricePerShare,
@@ -429,6 +433,12 @@ const App = () => {
 
   const [permPhase, setPermPhase] = useS('idle')
   const [permError, setPermError] = useS(null)
+  // One-popup grant flow (router path). grantPhase drives the GrantPanel button label; the chosen
+  // budget/duration are stashed in a ref so startExecution reads them synchronously when it builds
+  // the orchestrator (state updates are async).
+  const [grantPhase, setGrantPhase] = useS('idle')
+  const [grantError, setGrantError] = useS(null)
+  const grantCfgRef = useR(null)
   const [permActive, setPermActive] = useS(false)
   // Per-agent on-chain scopes (single-source summary + Revoke). Keyed by worker agent address.
   const [scopes, setScopes] = useS([])
@@ -1740,6 +1750,42 @@ const App = () => {
     setStage('permission')
   }
 
+  /* ----- GRANT (step 04, router one-popup path) ----- */
+  // "Grant & run": stash the user's budget + window, then advance to execute. The SINGLE wallet
+  // popup (router.grant) fires inside orchestrator.dispatch → setupViaRouter; every later worker
+  // funding is a relayed router.pull (0 popups).
+  const handleGrantAndRun = ({ budget, durationSeconds }) => {
+    grantCfgRef.current = { budgetUsdc: budget, durationSeconds }
+    setGrantError(null)
+    setGrantPhase('granting')
+    setPermActive(true)
+    setPermExpiresAt(Date.now() + durationSeconds * 1000)
+    addLog({
+      event: 'PermissionGranted',
+      meta: `router grant · ${budget} USDC · ${durationSeconds}s`,
+    })
+    setStage('execute')
+    startExecution()
+  }
+
+  // Kill switch — zero the on-chain allowance in one popup (works even if the relayer is down).
+  const handleRevokeGrant = async () => {
+    if (!realAddress) return
+    setGrantError(null)
+    setGrantPhase('revoking')
+    try {
+      const { hash } = await revokeGrant({ owner: realAddress })
+      addLog({
+        event: 'PermissionRevoked',
+        meta: `router allowance set to 0 · ${hash?.slice(0, 10)}…`,
+      })
+    } catch (err) {
+      setGrantError(err?.message || 'revoke failed')
+    } finally {
+      setGrantPhase('idle')
+    }
+  }
+
   /* ----- PERMISSION (step 04) ----- */
   const handleGrant = () => setPermPhase('prompting')
 
@@ -1830,11 +1876,22 @@ const App = () => {
       })),
     }
 
+    // Router path: pass the user's chosen grant budget (USDC → base units) + window so the ONE
+    // grant popup sizes the allowance. null on the legacy path → orchestrator defaults (budget =
+    // run total, window = SCOPE_TTL_SECONDS).
+    const grantCfg = grantCfgRef.current
+    const grantBudgetUnits =
+      grantCfg?.budgetUsdc != null
+        ? BigInt(Math.floor(grantCfg.budgetUsdc * 10 ** SOROBAN_DECIMALS))
+        : null
+
     const orch = new OrchestratorAgent({
       user: realAddress,
       veniceAuth: veniceAuth,
       devApiKey: devApiKey || null,
       sessionId,
+      grantBudgetUnits,
+      grantDurationSeconds: grantCfg?.durationSeconds || null,
       onEvent: (evName, data) => {
         if (evName === 'skill-gen-failed') {
           const dId = agentMapRef.current?.[data.agentId] || data.agentId
@@ -2405,7 +2462,18 @@ const App = () => {
           />
         )
       case 'permission':
-        return (
+        // Router path: ONE grant popup (budget + window) replaces the per-agent batch. Legacy path
+        // (router unset / VITE_LEGACY_AGENT_SETUP=1) keeps the original PermissionCard flow.
+        return USE_FUNDING_ROUTER ? (
+          <GrantPanel
+            defaultBudget={strategy?.total ?? 100}
+            agentCount={strategy?.agents?.length ?? 0}
+            phase={grantPhase}
+            error={grantError}
+            onGrant={handleGrantAndRun}
+            onRevoke={handleRevokeGrant}
+          />
+        ) : (
           <PermissionCard
             strategy={strategy}
             eligibility={eligibility}
