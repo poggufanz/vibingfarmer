@@ -2668,24 +2668,19 @@ const App = () => {
                           <LoopStatusPanel
                             running={loopRef.current?.isRunning() || false}
                             summary={getJournalSummary()}
-                            rows={getCycles().slice(0, 8)}
+                            rows={getCycles().slice(0, 40)}
                             phase={loopPhase}
                             nextTickAt={loopRef.current?.getNextTickAt() || null}
                             heartbeatMs={
                               loopRef.current?.getHeartbeatMs() ||
                               (agentSettings.apyInterval || 10) * 60 * 1000
                             }
+                            decisionsRows={getDecisions().slice(0, 30)}
+                            decisionsSummary={getDecisionSummary()}
                           />
                         )
                       }
-                      decisionPanel={
-                        agentEnabled && (
-                          <DecisionLogPanel
-                            rows={getDecisions().slice(0, 8)}
-                            summary={getDecisionSummary()}
-                          />
-                        )
-                      }
+                      decisionPanel={null}
                       keeperPanel={
                         <>
                           <KeeperPanel
