@@ -1382,14 +1382,36 @@ const loopRowDetail = (r) => {
   return `observed market · ${r.turbulence || 'calm'} · no action needed`
 }
 
-const LoopStatusPanel = ({ running, summary, rows, phase, nextTickAt, heartbeatMs }) => {
+const LoopStatusPanel = ({
+  running,
+  summary,
+  rows,
+  phase,
+  nextTickAt,
+  heartbeatMs,
+  decisionsRows,
+  decisionsSummary,
+}) => {
   // Internal 1s clock — the countdown and relative timestamps tick even when
   // the loop itself sleeps, which is what makes the panel feel alive.
   const [now, setNow] = useSAg(() => Date.now())
+  const [showLogsModal, setShowLogsModal] = useSAg(() => false)
+
   useEAg(() => {
     const t = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(t)
   }, [])
+
+  useEAg(() => {
+    if (!showLogsModal) return
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setShowLogsModal(false)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [showLogsModal])
 
   const cycling = Boolean(phase && phase !== 'sleep')
   const remaining = running && nextTickAt ? Math.max(0, nextTickAt - now) : null
@@ -1404,20 +1426,61 @@ const LoopStatusPanel = ({ running, summary, rows, phase, nextTickAt, heartbeatM
 
   return (
     <div className={`loop-status embedded ${running ? 'is-running' : 'is-stopped'}`}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+        {running ? (
+          <div className="loop-vitals" style={{ margin: 0 }}>
+            <span className={`loop-countdown ${cycling ? 'busy' : ''}`}>
+              {cycling
+                ? 'cycle running now'
+                : remaining != null
+                  ? `next cycle in ${fmtCountdown(remaining)}`
+                  : 'awaiting first heartbeat'}
+            </span>
+            <span className="loop-last">last activity {agoLabel(lastTs, now)}</span>
+          </div>
+        ) : (
+          <div style={{ fontSize: '11px', color: 'var(--text-faint)', fontFamily: 'var(--font-mono)' }}>
+            Loop is stopped
+          </div>
+        )}
+
+        <button
+          className="btn btn-ghost"
+          onClick={() => setShowLogsModal(true)}
+          style={{
+            padding: '6px 12px',
+            fontSize: '11px',
+            fontFamily: 'var(--font-mono)',
+            borderColor: 'var(--border-strong)',
+            color: 'var(--accent)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            height: '28px',
+            background: 'var(--bg-elev)',
+          }}
+        >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+            <line x1="16" y1="13" x2="8" y2="13" />
+            <line x1="16" y1="17" x2="8" y2="17" />
+          </svg>
+          Decision Log
+        </button>
+      </div>
+
       {running && (
-        <div className="loop-vitals">
-          <span className={`loop-countdown ${cycling ? 'busy' : ''}`}>
-            {cycling
-              ? 'cycle running now'
-              : remaining != null
-                ? `next cycle in ${fmtCountdown(remaining)}`
-                : 'awaiting first heartbeat'}
-          </span>
-          <span className="loop-last">last activity {agoLabel(lastTs, now)}</span>
-        </div>
-      )}
-      {running && (
-        <div className={`loop-heartbeat-track ${cycling ? 'cycling' : ''}`}>
+        <div className={`loop-heartbeat-track ${cycling ? 'cycling' : ''}`} style={{ marginBottom: 12 }}>
           <div
             className="loop-heartbeat-fill"
             style={{ width: `${cycling ? 100 : pctElapsed}%` }}
@@ -1583,6 +1646,22 @@ const LoopStatusPanel = ({ running, summary, rows, phase, nextTickAt, heartbeatM
             grid-column: auto !important;
           }
         }
+        .decision-modal-grid {
+          display: grid;
+          grid-template-columns: 1fr 1.2fr;
+          gap: 24px;
+          align-items: start;
+        }
+        @media (max-width: 768px) {
+          .decision-modal-grid {
+            grid-template-columns: 1fr;
+            gap: 20px;
+          }
+        }
+        .decision-log-trigger:hover {
+          border-color: var(--accent) !important;
+          box-shadow: 0 0 10px rgba(207, 255, 61, 0.15) !important;
+        }
       `}</style>
 
       {running && (
@@ -1666,55 +1745,7 @@ const LoopStatusPanel = ({ running, summary, rows, phase, nextTickAt, heartbeatM
           <span className="vf-node-label">Gate Check</span>
         </div>
 
-        {/* Gate Down Arrow */}
-        <div
-          className={`vf-flowchart-branch-line vf-gate-down-line ${!cycling && latestVerdict === 'gated' ? 'active' : ''}`}
-          style={{ gridRow: 2, gridColumn: 3 }}
-        >
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="3"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M12 5v14M19 12l-7 7-7-7" />
-          </svg>
-        </div>
 
-        {/* Gated Exit Node */}
-        <div
-          className={`vf-flowchart-exit-node gated vf-gated-exit-node ${!cycling && latestVerdict === 'gated' ? 'active' : ''}`}
-          style={{ gridRow: 3, gridColumn: 3 }}
-        >
-          <span className="vf-node-icon">
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <circle cx="12" cy="12" r="10" />
-              <path d="m15 9-6 6M9 9l6 6" />
-            </svg>
-          </span>
-          <div>
-            <div className="vf-exit-title">Gated (Abort)</div>
-            <div
-              className="vf-exit-desc"
-              title={latestVerdict === 'gated' ? latestReason : 'No alerts'}
-            >
-              {latestVerdict === 'gated' ? latestReason : 'Risk limits safe'}
-            </div>
-          </div>
-        </div>
 
         {/* Arrow 2 */}
         <div
@@ -1782,54 +1813,7 @@ const LoopStatusPanel = ({ running, summary, rows, phase, nextTickAt, heartbeatM
           <span className="vf-node-label">AI Council</span>
         </div>
 
-        {/* Council Down Arrow */}
-        <div
-          className={`vf-flowchart-branch-line vf-council-down-line ${!cycling && latestVerdict === 'discard' ? 'active' : ''}`}
-          style={{ gridRow: 2, gridColumn: 7 }}
-        >
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="3"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M12 5v14M19 12l-7 7-7-7" />
-          </svg>
-        </div>
 
-        {/* Discard Exit Node */}
-        <div
-          className={`vf-flowchart-exit-node discarded vf-discarded-exit-node ${!cycling && latestVerdict === 'discard' ? 'active' : ''}`}
-          style={{ gridRow: 3, gridColumn: 7 }}
-        >
-          <span className="vf-node-icon">
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2M10 11v6M14 11v6" />
-            </svg>
-          </span>
-          <div>
-            <div className="vf-exit-title">Discard (Decline)</div>
-            <div
-              className="vf-exit-desc"
-              title={latestVerdict === 'discard' ? latestReason : 'No actions discarded'}
-            >
-              {latestVerdict === 'discard' ? latestReason : 'Offer acceptable'}
-            </div>
-          </div>
-        </div>
 
         {/* Arrow 4 */}
         <div
@@ -1895,35 +1879,95 @@ const LoopStatusPanel = ({ running, summary, rows, phase, nextTickAt, heartbeatM
         </div>
       </div>
 
-      <div className="loop-chips">
-        <span className="loop-chip keep">keep {summary.keep}</span>
-        <span className="loop-chip discard">discard {summary.discard}</span>
-        <span className="loop-chip gated">gated {summary.gated || 0}</span>
-        <span className="loop-chip crash">crash {summary.crash}</span>
-        <span className="loop-chip idle">observe {summary.idle}</span>
-      </div>
+      {showLogsModal && (
+        <div className="modal-backdrop" onClick={() => setShowLogsModal(false)}>
+          <div
+            className="modal decision-modal"
+            role="dialog"
+            aria-modal="true"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: 880, width: '92%', padding: '24px', position: 'relative' }}
+          >
+            <button
+              onClick={() => setShowLogsModal(false)}
+              style={{
+                position: 'absolute',
+                top: '20px',
+                right: '20px',
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--text-faint)',
+                cursor: 'pointer',
+                fontSize: '12px',
+                fontFamily: 'var(--font-mono)',
+              }}
+            >
+              ✕ CLOSE
+            </button>
+            <div className="modal-eyebrow">autonomous monitoring logs</div>
+            <h3 className="modal-title" style={{ marginBottom: 20 }}>
+              Decision Log & Heartbeat Console
+            </h3>
 
-      <div className="loop-rows">
-        {(rows || []).map((r, i) => (
-          <div className="loop-row" key={r.ts || i}>
-            <span className="loop-row-num">#{String(r.cycle).padStart(2, '0')}</span>
-            <span className={`loop-badge ${r.verdict}`}>
-              {r.verdict === 'idle' ? 'observe' : r.verdict}
-            </span>
-            <span className="loop-row-detail" title={loopRowDetail(r)}>
-              {loopRowDetail(r)}
-            </span>
-            <span className="loop-row-time">{agoLabel(r.ts, now)}</span>
+            <div className="modal-scroll-content" style={{ maxHeight: '68vh', overflowY: 'auto' }}>
+              <div className="decision-modal-grid">
+                
+                {/* Left Column: Heartbeat Ticker */}
+                <div className="decision-modal-left">
+                  <div style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', color: 'var(--text-faint)', letterSpacing: '0.05em', marginBottom: 12 }}>
+                    heartbeat ticker journal
+                  </div>
+                  
+                  <div className="loop-chips" style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 16 }}>
+                    <span className="loop-chip keep">keep {summary.keep}</span>
+                    <span className="loop-chip discard">discard {summary.discard}</span>
+                    <span className="loop-chip gated">gated {summary.gated || 0}</span>
+                    <span className="loop-chip crash">crash {summary.crash}</span>
+                    <span className="loop-chip idle">observe {summary.idle}</span>
+                  </div>
+
+                  <div className="loop-rows" style={{ maxHeight: 380, overflowY: 'auto' }}>
+                    {(rows || []).map((r, i) => (
+                      <div className="loop-row" key={r.ts || i}>
+                        <span className="loop-row-num">#{String(r.cycle).padStart(2, '0')}</span>
+                        <span className={`loop-badge ${r.verdict}`}>
+                          {r.verdict === 'idle' ? 'observe' : r.verdict}
+                        </span>
+                        <span className="loop-row-detail" title={loopRowDetail(r)}>
+                          {loopRowDetail(r)}
+                        </span>
+                        <span className="loop-row-time">{agoLabel(r.ts, now)}</span>
+                      </div>
+                    ))}
+                    {(!rows || rows.length === 0) && (
+                      <div className="loop-empty">
+                        {running
+                          ? `No cycles journaled yet. First heartbeat ${remaining != null ? `in ${fmtCountdown(remaining)}` : 'arriving shortly'} — the loop observes, gates, simulates, asks the council, then acts only on a keep verdict.`
+                          : 'Loop is stopped. It starts automatically while the agent is enabled and positions are held.'}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Right Column: AI Council Decision Log */}
+                <div className="decision-modal-right">
+                  <div style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', color: 'var(--text-faint)', letterSpacing: '0.05em', marginBottom: 12 }}>
+                    AI Council decisions
+                  </div>
+                  <DecisionLogPanel rows={decisionsRows} summary={decisionsSummary} />
+                </div>
+
+              </div>
+            </div>
+
+            <div className="modal-actions" style={{ marginTop: 20 }}>
+              <button className="btn btn-ghost" onClick={() => setShowLogsModal(false)} style={{ marginLeft: 'auto' }}>
+                Close
+              </button>
+            </div>
           </div>
-        ))}
-        {(!rows || rows.length === 0) && (
-          <div className="loop-empty">
-            {running
-              ? `No cycles journaled yet. First heartbeat ${remaining != null ? `in ${fmtCountdown(remaining)}` : 'arriving shortly'} — the loop observes, gates, simulates, asks the council, then acts only on a keep verdict.`
-              : 'Loop is stopped. It starts automatically while the agent is enabled and positions are held.'}
-          </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   )
 }
