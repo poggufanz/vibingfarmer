@@ -53,7 +53,7 @@ const CONTRACT_TESTS = '27'
 
 const SECURITY = [
   'Per-agent scope on AgentRegistry: vault + token + cap + expiry',
-  'Owner can revoke any agent instantly — user-signed, works even if the relayer is down',
+  'Owner can revoke any agent instantly (user-signed; works even if the relayer is down)',
   'Agent custom account __check_auth signs only within the granted scope',
   'Gasless relay fee-bumps deposit invokes only (defense-in-depth + per-IP rate limit)',
   'Soroban auth nonce + signature-expiration ledger guard against replay',
@@ -211,7 +211,7 @@ function AttestationsTable({ strategies }) {
             <tr key={s.id || s.strategyHash || s.timestamp}>
               <td className="ex-table__time">{timeAgo(s.timestamp || s.savedAt || Date.now())}</td>
               <td className="ex-table__hash">{shortHash(s.strategyHash)}</td>
-              <td className="ex-table__proto">{s.vaultsSelected?.[0]?.protocol || '—'}</td>
+              <td className="ex-table__proto">{s.vaultsSelected?.[0]?.protocol || '--'}</td>
             </tr>
           ))}
         </tbody>
@@ -318,7 +318,7 @@ export default function ExplorerPage() {
             Strategy Attestations
           </h2>
           <p className="ex-section__sub">
-            Recent strategy hashes (sha256, off-chain verifiable — re-derivable from the strategy
+            Recent strategy hashes (sha256, off-chain verifiable; re-derivable from the strategy
             JSON):
           </p>
           <AttestationsTable strategies={strategies} />
@@ -345,7 +345,7 @@ export default function ExplorerPage() {
             ))}
           </ul>
           <p className="ex-disclaimer">
-            Unaudited — hackathon scope. Production deployment requires third-party audit.
+            Unaudited (hackathon scope). Production deployment requires third-party audit.
           </p>
         </section>
 

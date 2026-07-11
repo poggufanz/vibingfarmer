@@ -226,9 +226,9 @@ const ConnectCard = ({ phase, error, onConnect, onUpgrade, onDone, onCancel }) =
           domain="vibing-farmer.app"
           title="Connection request"
           rows={[
-            { k: 'request', v: 'getPublicKey' },
-            { k: 'network', v: 'Stellar testnet' },
-            { k: 'status', v: 'awaiting user…' },
+            { k: 'Request', v: 'getPublicKey' },
+            { k: 'Network', v: 'Stellar testnet' },
+            { k: 'Status', v: 'Awaiting user…' },
           ]}
           pending
         />
@@ -240,10 +240,10 @@ const ConnectCard = ({ phase, error, onConnect, onUpgrade, onDone, onCancel }) =
             domain="vibing-farmer.app"
             title="Authorize agent session"
             rows={[
-              { k: 'grant', v: 'ed25519 session-key scope', accent: true },
-              { k: 'network', v: 'Stellar testnet' },
-              { k: 'cap', v: 'per-agent · capped' },
-              { k: 'expiry', v: 'bounded · expiring' },
+              { k: 'Grant', v: 'ed25519 session-key scope', accent: true },
+              { k: 'Network', v: 'Stellar testnet' },
+              { k: 'Cap', v: 'Per-agent · capped' },
+              { k: 'Expiry', v: 'Bounded · expiring' },
             ]}
           />
           <div className="action-row">
@@ -267,10 +267,10 @@ const ConnectCard = ({ phase, error, onConnect, onUpgrade, onDone, onCancel }) =
           domain="Stellar Wallet"
           title="Agent session active"
           rows={[
-            { k: 'type', v: 'ed25519 session key', accent: true },
-            { k: 'relayer', v: 'fee-bump relayer' },
-            { k: 'gas paid', v: 'by relayer · user 0 XLM', accent: true },
-            { k: 'status', v: 'confirming…' },
+            { k: 'Type', v: 'ed25519 session key', accent: true },
+            { k: 'Relayer', v: 'Fee-bump relayer' },
+            { k: 'Gas paid', v: 'By relayer · user 0 XLM', accent: true },
+            { k: 'Status', v: 'Confirming…' },
           ]}
           pending
         />
@@ -478,7 +478,7 @@ const MmPermissionModal = ({ strategy, eligibility, onConfirm, onReject }) => {
   return (
     <div className="modal-backdrop" onClick={onReject}>
       <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-eyebrow">authorize agent session · batch</div>
+        <div className="modal-eyebrow">Authorize agent session · Batch</div>
         <h3 className="modal-title">
           Approve {agents.length} execution permission{agents.length === 1 ? '' : 's'}?
         </h3>

@@ -217,7 +217,7 @@ export default function ReplayPage() {
             </span>
           </div>
           <p className="rp-lede">
-            USDC depeg, March 11 2023 — replayed on a pinned mainnet fork. Real on-chain swaps at
+            USDC depeg, March 11 2023, replayed on a pinned mainnet fork. Real on-chain swaps at
             five reaction delays; never a prediction.
           </p>
         </header>
@@ -287,7 +287,7 @@ export default function ReplayPage() {
                 <AssumptionRow label="Depeg date" value={mc.provenance.depegDate} />
               </div>
               <p className="rp-disclaimer">
-                {mc.label}. Forward-looking scenarios are scoped to this replay — not a predictive
+                {mc.label}. Forward-looking scenarios are scoped to this replay, not a predictive
                 model.
               </p>
             </section>

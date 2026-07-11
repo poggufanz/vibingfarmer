@@ -29,7 +29,7 @@ const PARTNERS = [
     subtitle: 'Stellar Wallet',
     category: 'WALLET',
     description:
-      'A standard Stellar wallet (Freighter / xBull / Albedo). One signature authorizes and funds each agent — no smart-account upgrade, no browser permission prompt.',
+      'A standard Stellar wallet (Freighter / xBull / Albedo). One signature authorizes and funds each agent. No smart-account upgrade, no browser permission prompt.',
     tags: ['Freighter', 'xBull', 'Albedo'],
     link: 'https://www.freighter.app',
     mark: 'FR',
@@ -39,7 +39,7 @@ const PARTNERS = [
     subtitle: 'Gas Abstraction',
     category: 'RELAYER',
     description:
-      'A funded relayer fee-bumps every agent transaction. Vibing Farmer users pay $0 in gas — the agent signs with its ed25519 key, the relayer pays.',
+      'A funded relayer fee-bumps every agent transaction. Vibing Farmer users pay $0 in gas: the agent signs with its ed25519 key, the relayer pays.',
     tags: ['Fee-bump', 'Gas 0', 'ed25519'],
     link: 'https://developers.stellar.org/docs/learn/fundamentals/transactions/fee-bump-transactions',
     mark: 'FB',

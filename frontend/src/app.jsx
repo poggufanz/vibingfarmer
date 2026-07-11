@@ -219,22 +219,22 @@ const sendPushNotification = async (ev, passedSettings) => {
   let detail = ''
 
   if (ev.kind === 'rebalance_proposal') {
-    title = '🔄 Rebalance Opportunity Detected'
+    title = 'Rebalance Opportunity Detected'
     detail = `Venice AI flagged ${ev.toProtocol} at ${ev.toApy}% vs your current ${ev.fromVault} at ${ev.fromApy}% (potential gain: +${ev.apyGain}%).`
   } else if (ev.kind === 'risk_alert') {
-    title = `🚨 Risk Alert [Severity: ${ev.severity.toUpperCase()}]`
+    title = `Risk Alert [Severity: ${ev.severity.toUpperCase()}]`
     detail = `Signal on ${ev.vaultName}: ${ev.searchAnswer || 'Security concern detected.'}`
   } else if (ev.kind === 'apy_drift') {
-    title = '⚠ APY Drop Detected'
+    title = 'APY Drop Detected'
     detail = `APY on ${ev.vaultName} dropped from ${ev.baselineApy}% to ${ev.currentApy}% (${ev.driftPct}%).`
   } else if (ev.kind === 'harvest_ready') {
-    title = '🟢 Yield Harvest Ready'
+    title = 'Yield Harvest Ready'
     detail = `${ev.rewardsUsdc} USDC accrued on ${ev.vaultName} is ready to claim.`
   } else if (ev.kind === 'compound_executed') {
-    title = '✓ Keeper Compounded'
+    title = 'Keeper Compounded'
     detail = `${ev.vaultName} · +${ev.totalGainUsdc} USDC reinvested · price/share ${ev.pricePerShare}. No action needed.`
   } else if (ev.kind === 'rebalance_executed') {
-    title = '⇄ Keeper Rebalanced'
+    title = 'Keeper Rebalanced'
     detail = `${ev.vaultName} · ${ev.fromLabel} → ${ev.toLabel} · ${ev.amountUsdc} USDC moved. No action needed.`
   }
 
@@ -247,7 +247,7 @@ const sendPushNotification = async (ev, passedSettings) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          content: `🚨 **${title}**\n${detail}`,
+          content: `**${title}**\n${detail}`,
         }),
       })
     } catch (e) {
@@ -1072,7 +1072,7 @@ const App = () => {
         localStorage.setItem(`yv_last_exit_trip_${realAddress}`, String(Date.now()))
         addLog({
           event: 'AgentFailed',
-          meta: `🚨 Auto-Exit Triggered: ${result.reason}`,
+          meta: `Auto-Exit Triggered: ${result.reason}`,
           detail: `Trigger: ${result.trigger}. Launching autonomous exit...`,
         })
 
@@ -1195,8 +1195,8 @@ const App = () => {
         isFixture: !!v?.isFixture,
         protocolLabel: SNAPSHOT[a.vault.protocol]?.meta?.label || a.vault.protocol,
         label: vaultEligibilityLabel(v),
-        mainnetLine: `Protocol credibility: ${SNAPSHOT[a.vault.protocol]?.meta?.label || a.vault.protocol} — audited, TVL from snapshot`,
-        testnetLine: 'This deposit: testnet — APR illustrative, realized yield may be ~0',
+        mainnetLine: `Protocol credibility: ${SNAPSHOT[a.vault.protocol]?.meta?.label || a.vault.protocol}. Audited, TVL from snapshot`,
+        testnetLine: 'This deposit: testnet. APR illustrative; realized yield may be ~0',
         asOf,
       }
     })
@@ -1868,7 +1868,7 @@ const App = () => {
       })
     )
     if (allFailed) {
-      addLog({ event: 'ExecutionBlocked', meta: 'No eligible vault — nothing will run.' })
+      addLog({ event: 'ExecutionBlocked', meta: 'No eligible vault. Nothing will run.' })
       setStage('permission') // stay on the approval card; do NOT dispatch
       return
     }
@@ -1951,8 +1951,8 @@ const App = () => {
                   ...(cur.memory || []),
                   {
                     status: 'running',
-                    title: 'agent started',
-                    meta: `vault ${shortAddr(data.vault)}`,
+                    title: 'Agent started',
+                    meta: `Vault ${shortAddr(data.vault)}`,
                     t: nowT(),
                   },
                 ],
@@ -1990,8 +1990,8 @@ const App = () => {
                     status: stepStatus,
                     title: `${stepName} ${data.status === 'done' ? 'confirmed' : 'executing'}`,
                     meta: data.txHash
-                      ? `tx ${shortAddr(data.txHash)}${data.gasMethod === 'user-signed' ? ' · ⚠ user-signed' : ''}`
-                      : 'via fee-bump relayer',
+                      ? `Tx ${shortAddr(data.txHash)}${data.gasMethod === 'user-signed' ? ' · user-signed' : ''}`
+                      : 'Via fee-bump relayer',
                     hash: data.txHash || null,
                     t: nowT(),
                   },
@@ -2017,7 +2017,7 @@ const App = () => {
                 data.gasMethod === 'relayer'
                   ? 'gas paid by relayer'
                   : data.gasMethod === 'user-signed'
-                    ? '⚠ gas paid by user · relay not configured'
+                    ? 'Gas paid by user · relay not configured'
                     : ''
               addLog({
                 event: 'DepositExecuted',
@@ -2052,10 +2052,10 @@ const App = () => {
                   ...(cur.memory || []),
                   {
                     status: 'confirmed',
-                    title: 'agent completed',
-                    meta: `tx ${shortAddr(data.txHash)}`,
+                    title: 'Agent completed',
+                    meta: `Tx ${shortAddr(data.txHash)}`,
                     hash: data.txHash,
-                    lesson: `vault deposit complete · strategy executed`,
+                    lesson: `Vault deposit complete · strategy executed`,
                     t: nowT(),
                   },
                 ],
@@ -2066,7 +2066,7 @@ const App = () => {
           addLog({
             event: 'AgentCompleted',
             agent: dId,
-            meta: data.txHash ? `tx ${shortAddr(data.txHash)}` : 'completed · no tx hash',
+            meta: data.txHash ? `Tx ${shortAddr(data.txHash)}` : 'Completed · no tx hash',
           })
           const ag = strategy?.agents?.find((a) => a.id === dId)
           if (ag && data.txHash)
@@ -2096,8 +2096,8 @@ const App = () => {
                   ...(cur.memory || []),
                   {
                     status: 'failed',
-                    title: 'agent failed',
-                    meta: data.error || 'unknown error',
+                    title: 'Agent failed',
+                    meta: data.error || 'Unknown error',
                     t: nowT(),
                   },
                 ],
@@ -2136,7 +2136,7 @@ const App = () => {
         setMonitorStatus({
           level: 'skip',
           score: 0,
-          reason: 'Stellar relayer offline — simulation mode. Council Monitor badge visible.',
+          reason: 'Stellar relayer offline. Simulation mode. Council Monitor badge visible.',
           lastCheck: Date.now(),
           result: 'approved',
         })
@@ -2389,10 +2389,10 @@ const App = () => {
               : [
                   {
                     status: 'confirmed',
-                    title: 'agent completed',
-                    meta: 'position confirmed on-chain',
+                    title: 'Agent completed',
+                    meta: 'Position confirmed on-chain',
                     t: nowT(),
-                    lesson: 'vault deposit complete',
+                    lesson: 'Vault deposit complete',
                   },
                 ],
             metrics: cur?.metrics || {
@@ -2868,7 +2868,7 @@ const App = () => {
       {slowConfirm && (
         <div className="modal-backdrop">
           <div className="modal" role="dialog" aria-modal="true">
-            <div className="modal-eyebrow">AI · timeout</div>
+            <div className="modal-eyebrow">AI · Timeout</div>
             <h3 className="modal-title">AI is still processing · continue waiting?</h3>
             <p className="lede" style={{ marginTop: 8 }}>
               Generation has exceeded {Math.round(VENICE_TIMEOUT_MS / 1000)} seconds. Do you want to

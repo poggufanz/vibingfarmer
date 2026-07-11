@@ -88,7 +88,7 @@ const CSS = `
 .vf-screen{display:flex;flex-direction:column;gap:14px;animation:screenIn .35s var(--ease) forwards}
 
 /* ───── typography ───── */
-.eyebrow{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11px;text-transform:lowercase;color:var(--text-faint)}
+.eyebrow{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11px;color:var(--text-faint)}
 .eyebrow .dot{color:var(--accent)}.eyebrow .sec{color:var(--text-muted)}.eyebrow .rule{flex:1;height:1px;background:var(--border)}
 .vf-h{margin:0;font-size:21px;font-weight:600;letter-spacing:-.02em;text-wrap:balance}
 .lede{margin:0;font-size:13px;color:var(--text-muted);text-wrap:pretty}

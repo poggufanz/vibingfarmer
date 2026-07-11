@@ -427,7 +427,7 @@ const AgentTiles = ({ strategy, execMap, onOpenMemory }) => {
                       : STEP_LABELS[sid]
                   }
                 >
-                  {STEP_LABELS[sid].slice(0, 1).toLowerCase()}
+                  {STEP_LABELS[sid].slice(0, 1).toUpperCase()}
                 </span>
               ))}
               <span className="agent-tile-progress mono">
@@ -465,7 +465,7 @@ const MemoryModal = ({ agentId, strategy, execMap, onClose }) => {
       >
         <div className="memory-modal-head">
           <div>
-            <div className="modal-eyebrow">agent.memory · {agent.id}</div>
+            <div className="modal-eyebrow">Agent memory · {agent.id}</div>
             <h3 className="modal-title">{agent.name}</h3>
             <div className="mono memory-modal-sub">{stateLabel}</div>
           </div>
@@ -476,21 +476,21 @@ const MemoryModal = ({ agentId, strategy, execMap, onClose }) => {
 
         <div className="memory-metrics">
           <div className="memory-metric">
-            <span className="label mono">runs</span>
+            <span className="label mono">Runs</span>
             <span className="val tnum mono">{ex.metrics?.totalRuns ?? 0}</span>
           </div>
           <div className="memory-metric">
-            <span className="label mono">success rate</span>
+            <span className="label mono">Success rate</span>
             <span className="val tnum mono">
               {ex.metrics?.successRate == null ? '-' : `${ex.metrics.successRate}%`}
             </span>
           </div>
           <div className="memory-metric">
-            <span className="label mono">gas paid · user</span>
+            <span className="label mono">Gas paid · User</span>
             <span className="val tnum mono">0 ETH</span>
           </div>
           <div className="memory-metric">
-            <span className="label mono">vault apy</span>
+            <span className="label mono">Vault APY</span>
             <span className="val tnum mono">{agent.vault.apy}%</span>
           </div>
         </div>
@@ -562,9 +562,9 @@ const SCENARIO_META = {
    planning/inspiration/TradingAgents.md)
    ============================================ */
 const COUNCIL_ROLE_META = {
-  yield: { label: 'Yield Analyst', glyph: '📈' },
-  risk: { label: 'Risk Analyst', glyph: '⚠️' },
-  market: { label: 'Market Analyst', glyph: '🌊' },
+  yield: { label: 'Yield Analyst', glyph: 'Y' },
+  risk: { label: 'Risk Analyst', glyph: 'R' },
+  market: { label: 'Market Analyst', glyph: 'M' },
 }
 const COUNCIL_SIGNAL_TONE = {
   DEPOSIT: 'var(--ok)',
@@ -572,9 +572,9 @@ const COUNCIL_SIGNAL_TONE = {
   WITHDRAW: 'var(--bad, #ff7479)',
 }
 const COUNCIL_RESOLVED_LABEL = {
-  veto: 'risk veto',
-  unanimous: 'unanimous',
-  weighted: 'weighted majority',
+  veto: 'Risk veto',
+  unanimous: 'Unanimous',
+  weighted: 'Weighted majority',
   'ai-conflict': 'AI synthesis (split)',
 }
 
@@ -604,11 +604,11 @@ const CouncilPanel = ({ council, onRetry }) => {
 
       {loading ? (
         <div className="council-loading mono">
-          <span className="think-spin" /> specialists analyzing yield · risk · market in parallel…
+          <span className="think-spin" /> Specialists analyzing yield · risk · market in parallel…
         </div>
       ) : unavailable ? (
         <div className="council-loading mono">
-          Council unavailable — the AI provider didn’t respond.
+          Council unavailable. The AI provider did not respond.
           {onRetry && (
             <button type="button" className="btn btn-ghost council-retry" onClick={onRetry}>
               Retry deliberation
@@ -656,7 +656,7 @@ const CouncilPanel = ({ council, onRetry }) => {
                     </div>
                   )}
                   {s.concerns?.length > 0 && (
-                    <div className="council-concerns mono">⚠ {s.concerns.join(' · ')}</div>
+                    <div className="council-concerns mono">{s.concerns.join(' · ')}</div>
                   )}
                 </div>
               )
@@ -665,7 +665,7 @@ const CouncilPanel = ({ council, onRetry }) => {
           <div className="council-foot mono">
             {keep
               ? `Council recommends proceeding (${Math.round(council.confidence * 100)}% confidence). Cited rules earn outcome feedback after deposit.`
-              : `Council advises caution${council.reason ? ` · ${council.reason}` : ''}. You can still proceed — the decision is yours.`}
+              : `Council advises caution${council.reason ? ` · ${council.reason}` : ''}. You can still proceed; the decision is yours.`}
           </div>
         </>
       )}
@@ -693,7 +693,7 @@ const SimulationPanel = ({ simulation }) => {
             {fmt(expectedValue)}
             <span className="unit"> USDC</span>
           </span>
-          <span className="label mono">expected value · probability-weighted net yield</span>
+          <span className="label mono">Expected value · probability-weighted net yield</span>
         </div>
         <div className="sim-ev-prob mono">
           <span className="tnum" style={{ color: 'var(--text)' }}>
@@ -822,7 +822,7 @@ const DebatePanel = ({ debateResult }) => {
               <div style={{ color: 'var(--text)' }}>
                 {entry.riskCompliance?.action || '?'} ·{' '}
                 {Math.round((entry.riskCompliance?.confidence ?? 0) * 100)}%
-                {entry.riskCompliance?.compliancePass === false ? ' · ⚠ FAIL' : ''}
+                {entry.riskCompliance?.compliancePass === false ? ' · FAIL' : ''}
               </div>
               {entry.riskCompliance?.concerns?.length > 0 && (
                 <div style={{ color: 'var(--text-muted)', fontSize: 10, marginTop: 2 }}>
@@ -841,7 +841,7 @@ const DebatePanel = ({ debateResult }) => {
       {proposer && (
         <div style={{ padding: '10px 14px', borderTop: '1px solid var(--border)' }}>
           <div style={{ fontWeight: 600, marginBottom: 6, fontSize: 13 }}>
-            {verdict === 'keep' ? '✅' : '✗'} Conclusion — {verdict === 'keep' ? 'KEEP' : 'DISCARD'}
+            {verdict === 'keep' ? '✓' : '✗'} Conclusion: {verdict === 'keep' ? 'KEEP' : 'DISCARD'}
           </div>
           <div style={{ fontSize: 12, lineHeight: 1.6 }}>
             <div>
@@ -875,7 +875,7 @@ const DebatePanel = ({ debateResult }) => {
             <div style={{ fontSize: 12, marginTop: 4 }}>
               <div>
                 <span style={{ fontWeight: 600 }}>Validator:</span>{' '}
-                {validator.consistent ? '✅ consistent' : '✗ inconsistent'} · VaR{' '}
+                {validator.consistent ? '✓ Consistent' : '✗ Inconsistent'} · VaR{' '}
                 {validator.VaRAcceptable ? 'OK' : 'BREACH'} · CVaR{' '}
                 {validator.CVaRAcceptable ? 'OK' : 'BREACH'}
               </div>
@@ -903,7 +903,7 @@ const DebatePanel = ({ debateResult }) => {
         >
           {gate.passed
             ? '✓ Gate: passed'
-            : `✗ Gate: ${gate.reason}${gate.detail ? ` — ${gate.detail}` : ''}`}
+            : `✗ Gate: ${gate.reason}${gate.detail ? `: ${gate.detail}` : ''}`}
         </div>
       )}
       {permissionSentence && (
@@ -978,7 +978,7 @@ const StrategyCard = ({
             {strategy.blendedApy}
             <span className="unit">% blended APY</span>
           </span>
-          <span className="label">weighted by allocation</span>
+          <span className="label">Weighted by allocation</span>
         </div>
       </div>
 
@@ -992,21 +992,21 @@ const StrategyCard = ({
                 <div className="mono strategy-agent-meta">
                   {a.vault.name} · {a.vault.protocol}
                   {a.vault.tvl && a.vault.tvl !== 'N/A' ? ` · TVL ${a.vault.tvl}` : ''}
-                  {a.vault.isLiveData ? ' · 🟢 live' : ''}
+                  {a.vault.isLiveData ? ' · Live' : ''}
                 </div>
               </div>
             </div>
             <div className="strategy-agent-cells">
               <div className="strategy-cell">
-                <span className="k mono">allocation</span>
+                <span className="k mono">Allocation</span>
                 <span className="v mono tnum">{a.allocation} USDC</span>
               </div>
               <div className="strategy-cell">
-                <span className="k mono">apy</span>
+                <span className="k mono">APY</span>
                 <span className="v mono tnum">{a.vault.apy}%</span>
               </div>
               <div className="strategy-cell">
-                <span className="k mono">drawdown 30d</span>
+                <span className="k mono">Drawdown 30d</span>
                 <span className="v mono tnum">{a.vault.drawdown}%</span>
               </div>
             </div>
@@ -1272,7 +1272,7 @@ const ExecuteCard = ({ strategy, execMap, paletteIsLight, onOpenMemory, onDone }
         <span className="num">05</span>
         <span>Agents executing · fee-bump relayer · parallel</span>
         <span className="rule" />
-        <span>gas paid by relayer</span>
+        <span>Gas paid by relayer</span>
       </div>
 
       <div className="exec-header">
@@ -1288,7 +1288,7 @@ const ExecuteCard = ({ strategy, execMap, paletteIsLight, onOpenMemory, onDone }
           {!allDone && stalled && (
             <div className="exec-live-status mono" style={{ color: 'var(--danger, #e5484d)' }}>
               <span>
-                {failedCount} agent{failedCount > 1 ? 's' : ''} failed — see agent card / console
+                {failedCount} agent{failedCount > 1 ? 's' : ''} failed. See agent card / console
                 for reason
                 {' · '}
                 {fmtCountdown(elapsedMs)} elapsed
@@ -1301,7 +1301,7 @@ const ExecuteCard = ({ strategy, execMap, paletteIsLight, onOpenMemory, onDone }
               <span>
                 {runningCount > 0
                   ? `${runningCount} agent${runningCount > 1 ? 's' : ''} confirming on-chain`
-                  : 'waiting for relayer'}
+                  : 'Waiting for relayer'}
                 {' · '}
                 {fmtCountdown(elapsedMs)} elapsed
               </span>
@@ -1309,7 +1309,7 @@ const ExecuteCard = ({ strategy, execMap, paletteIsLight, onOpenMemory, onDone }
           )}
         </div>
         <div className="exec-progress">
-          <span className="label">progress</span>
+          <span className="label">Progress</span>
           <span className={`value ${allDone ? 'done' : ''}`}>
             {doneSteps}/{totalSteps}
           </span>
@@ -1378,8 +1378,8 @@ const loopRowDetail = (r) => {
   if (r.verdict === 'discard')
     return `${r.reason || 'council declined'}${rules ? ` · ${rules}` : ''}`
   if (r.verdict === 'keep')
-    return `score ${r.score ?? '—'} · ${rules || '—'} · tx ${(r.txHash || '').slice(0, 10)}…`
-  return `observed market · ${r.turbulence || 'calm'} · no action needed`
+    return `Score ${r.score ?? '--'} · ${rules || '--'} · tx ${(r.txHash || '').slice(0, 10)}…`
+  return `Observed market · ${r.turbulence || 'calm'} · no action needed`
 }
 
 const LoopStatusPanel = ({
@@ -1904,7 +1904,7 @@ const LoopStatusPanel = ({
             >
               ✕ CLOSE
             </button>
-            <div className="modal-eyebrow">autonomous monitoring logs</div>
+            <div className="modal-eyebrow">Autonomous monitoring logs</div>
             <h3 className="modal-title" style={{ marginBottom: 20 }}>
               Decision Log & Heartbeat Console
             </h3>
@@ -1931,7 +1931,7 @@ const LoopStatusPanel = ({
                       <div className="loop-row" key={r.ts || i}>
                         <span className="loop-row-num">#{String(r.cycle).padStart(2, '0')}</span>
                         <span className={`loop-badge ${r.verdict}`}>
-                          {r.verdict === 'idle' ? 'observe' : r.verdict}
+                          {r.verdict === 'idle' ? 'Observe' : r.verdict}
                         </span>
                         <span className="loop-row-detail" title={loopRowDetail(r)}>
                           {loopRowDetail(r)}
@@ -1942,7 +1942,7 @@ const LoopStatusPanel = ({
                     {(!rows || rows.length === 0) && (
                       <div className="loop-empty">
                         {running
-                          ? `No cycles journaled yet. First heartbeat ${remaining != null ? `in ${fmtCountdown(remaining)}` : 'arriving shortly'} — the loop observes, gates, simulates, asks the council, then acts only on a keep verdict.`
+                          ? `No cycles journaled yet. First heartbeat ${remaining != null ? `in ${fmtCountdown(remaining)}` : 'arriving shortly'}. The loop observes, gates, simulates, asks the council, then acts only on a keep verdict.`
                           : 'Loop is stopped. It starts automatically while the agent is enabled and positions are held.'}
                       </div>
                     )}

@@ -246,14 +246,14 @@ const ApiKeyField = ({ value, onChange, onClear, onTest, testState }) => {
           {testState === 'testing' ? 'Testing…' : 'Test connection'}
         </button>
         {testState === 'ok' && (
-          <span style={{ fontSize: 11, color: 'var(--ok)' }}>✓ connected</span>
+          <span style={{ fontSize: 11, color: 'var(--ok)' }}>Connected</span>
         )}
         {testState === 'fail' && (
           <span style={{ fontSize: 11, color: 'var(--danger)' }}>✗ rejected (check key)</span>
         )}
         {testState === 'unreachable' && (
           <span style={{ fontSize: 11, color: 'var(--warn)' }}>
-            ⚠ unreachable from browser (CORS/network)
+            Unreachable from browser (CORS/network)
           </span>
         )}
       </div>
@@ -733,7 +733,7 @@ export default function SettingsPage({
               </div>
               <Row
                 label="Venice API Key"
-                desc="Routes strategy to api.venice.ai (Bearer auth). Alternative to the x402 wallet path — not required for it. Stored in this tab's sessionStorage, never sent to our servers."
+                desc="Routes strategy to api.venice.ai (Bearer auth). Alternative to the x402 wallet path; not required for it. Stored in this tab's sessionStorage, never sent to our servers."
               >
                 <span />
               </Row>

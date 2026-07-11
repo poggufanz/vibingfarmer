@@ -145,7 +145,6 @@ export default function VaultDetailPage({ positions = {} }) {
             fontSize: 10,
             color: 'var(--text-faint)',
             letterSpacing: '-0.01em',
-            textTransform: 'lowercase',
           }}
         >
           {protocol}
@@ -172,7 +171,6 @@ export default function VaultDetailPage({ positions = {} }) {
               style={{
                 fontSize: 9,
                 color: 'var(--text-faint)',
-                textTransform: 'lowercase',
                 letterSpacing: '-0.01em',
                 marginBottom: 6,
               }}

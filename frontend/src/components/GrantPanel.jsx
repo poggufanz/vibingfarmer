@@ -47,14 +47,14 @@ export default function GrantPanel({
       <h1 className="h-display">Grant a budget once. Every agent funds and deposits within it.</h1>
       <p className="lede">
         A single signature approves the <span className="mono">funding router</span> to deploy this
-        run’s {agentCount || ''} agent{agentCount === 1 ? '' : 's'} and move up to your budget — for
+        run’s {agentCount || ''} agent{agentCount === 1 ? '' : 's'} and move up to your budget for
         the window you choose. Outside the budget or after it expires, the router can move{' '}
         <b>nothing</b>. Revoke any time.
       </p>
 
       <div className="grant-controls">
         <label className="grant-field">
-          <span className="grant-field-k">budget · USDC</span>
+          <span className="grant-field-k">Budget · USDC</span>
           <input
             className="grant-budget-input mono"
             type="number"
@@ -68,13 +68,13 @@ export default function GrantPanel({
           />
           {!budgetValid && (
             <span className="grant-field-hint" style={{ color: 'var(--danger)' }}>
-              enter a positive amount
+              Enter a positive amount
             </span>
           )}
         </label>
 
         <div className="grant-field">
-          <span className="grant-field-k">valid for</span>
+          <span className="grant-field-k">Valid for</span>
           <div className="grant-presets" role="group" aria-label="grant duration">
             {DURATION_PRESETS.map((d) => (
               <button

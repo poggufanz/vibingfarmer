@@ -208,7 +208,6 @@ export default function TxDetailPage() {
                 style={{
                   fontSize: 9,
                   color: 'var(--text-faint)',
-                  textTransform: 'lowercase',
                   letterSpacing: '-0.01em',
                   marginBottom: 3,
                 }}

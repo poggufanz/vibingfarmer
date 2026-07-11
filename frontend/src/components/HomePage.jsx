@@ -99,7 +99,7 @@ const alertText = (a) => {
   }
 }
 const alertIcon = (a) => {
-  if (a.kind === 'risk_alert' || a.kind === 'apy_drift') return { icon: '⚠', color: 'var(--warn)' }
+  if (a.kind === 'risk_alert' || a.kind === 'apy_drift') return { icon: '!', color: 'var(--warn)' }
   if (a.kind === 'harvest_failed') return { icon: '✗', color: 'var(--danger)' }
   return { icon: '●', color: 'var(--text-muted)' }
 }
@@ -950,7 +950,6 @@ export default function HomePage({
                       style={{
                         fontSize: 9.5,
                         color: 'var(--text-faint)',
-                        textTransform: 'lowercase',
                         letterSpacing: '-0.01em',
                       }}
                     >

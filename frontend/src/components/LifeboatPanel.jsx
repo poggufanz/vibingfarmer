@@ -10,9 +10,9 @@ import { REASON_LABELS, panelState } from '../stellar/lifeboat.js'
 // No leading "ARMED — " prefix here: the figure span above already renders the mode word
 // verbatim, and testing-library's getByText(/ARMED/) etc. must resolve to exactly one node.
 const BADGE_COPY = {
-  ARMED: 'reaction radar live, ~1 ledger (~6s) response',
-  ENGAGED: 'funds parked idle in the vault, safe',
-  DISARMED: 'mandate expired, lifeboat cannot act',
+  ARMED: 'Reaction radar live, ~1 ledger (~6s) response',
+  ENGAGED: 'Funds parked idle in the vault, safe',
+  DISARMED: 'Mandate expired, lifeboat cannot act',
 }
 
 const short = (h) => (h ? `${h.slice(0, 8)}…${h.slice(-6)}` : '')
@@ -29,10 +29,10 @@ const EventRow = ({ ev }) => {
     return (
       <div className="keeper-action-row">
         <span className="keeper-action-dot" style={{ color: 'var(--warn)' }} aria-hidden="true">
-          ⚠
+          !
         </span>
         <span className="keeper-action-text">
-          Lifeboat engaged · {REASON_LABELS[ev.reasonCode] ?? `reason ${ev.reasonCode}`}
+          Lifeboat engaged · {REASON_LABELS[ev.reasonCode] ?? `Reason ${ev.reasonCode}`}
         </span>
         <span className="keeper-action-meta mono">{short(ev.txHash)}</span>
       </div>
@@ -77,17 +77,17 @@ const LifeboatPanel = ({ state = null, events = [], owner = null, onGrant, busy 
     <section className="keeper-panel enter">
       <div className="keeper-pps">
         <span className="figure figure-md tnum">{mode ?? '--'}</span>
-        <span className="label mono">{mode ? BADGE_COPY[mode] : 'lifeboat state unavailable'}</span>
+        <span className="label mono">{mode ? BADGE_COPY[mode] : 'Lifeboat state unavailable'}</span>
       </div>
 
       <div className="keeper-section">
-        <div className="keeper-section-label mono">mandate</div>
+        <div className="keeper-section-label mono">Mandate</div>
         {state && mode !== 'ENGAGED' && (
           <div className="keeper-action-row">
             <span className="keeper-action-text">
               {state.mandateExpiry > nowS
-                ? `expires in ${countdown(state.mandateExpiry, nowS)}`
-                : 'not granted'}
+                ? `Expires in ${countdown(state.mandateExpiry, nowS)}`
+                : 'Not granted'}
             </span>
           </div>
         )}
@@ -97,14 +97,14 @@ const LifeboatPanel = ({ state = null, events = [], owner = null, onGrant, busy 
           disabled={busy || !owner}
           aria-label="renew 24h mandate"
         >
-          {busy ? 'signing…' : 'Renew 24h mandate'}
+          {busy ? 'Signing…' : 'Renew 24h mandate'}
         </button>
       </div>
 
       <div className="keeper-section">
-        <div className="keeper-section-label mono">lifeboat activity</div>
+        <div className="keeper-section-label mono">Lifeboat activity</div>
         {events.length === 0 ? (
-          <div className="keeper-empty mono">no lifeboat events yet</div>
+          <div className="keeper-empty mono">No lifeboat events yet</div>
         ) : (
           events.slice(0, 5).map((ev, i) => <EventRow key={`${ev.txHash}-${i}`} ev={ev} />)
         )}

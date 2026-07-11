@@ -120,10 +120,10 @@ export default function AgentDashboard({
           const cycling = Boolean(loopOn && loopStatus.phase && loopStatus.phase !== 'sleep')
           const on = loopOn || active
           const statusText = !on
-            ? 'stopped'
+            ? 'Stopped'
             : cycling
-              ? `evaluating · ${loopStatus.phase}`
-              : 'monitoring'
+              ? `Evaluating · ${loopStatus.phase}`
+              : 'Monitoring'
           return (
             <span style={{ display: 'flex', alignItems: 'center', gap: 5, ...mono }}>
               <span

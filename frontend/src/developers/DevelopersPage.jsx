@@ -285,7 +285,7 @@ export default function DevelopersPage() {
             aria-label="new api key"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="modal-eyebrow">api key · shown once</div>
+            <div className="modal-eyebrow">API key · shown once</div>
             <div className="modal-title">Simpan key ini sekarang</div>
             <div
               className="mono tnum"

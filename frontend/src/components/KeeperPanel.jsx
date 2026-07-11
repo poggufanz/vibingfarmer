@@ -33,7 +33,7 @@ const short = (h) => (h ? `${h.slice(0, 8)}…${h.slice(-6)}` : '')
 
 /* ---------- Last keeper action row ---------- */
 const LastAction = ({ last }) => {
-  if (!last) return <div className="keeper-empty mono">keeper has not acted yet</div>
+  if (!last) return <div className="keeper-empty mono">Keeper has not acted yet</div>
   if (last.kind === 'compound_executed') {
     return (
       <div className="keeper-action-row">
@@ -70,13 +70,13 @@ const LastAction = ({ last }) => {
 
 /* ---------- APR per strategy ---------- */
 const StrategyList = ({ strategies }) => {
-  if (!strategies.length) return <div className="keeper-empty mono">no strategies registered</div>
+  if (!strategies.length) return <div className="keeper-empty mono">No strategies registered</div>
   return (
     <div className="keeper-strategy-list">
       {strategies.map((s) => (
         <div key={s.address} className="keeper-strategy-row">
           <span className="keeper-strategy-name">{s.label}</span>
-          <span className="keeper-strategy-pool mono">{s.poolLabel || '—'}</span>
+          <span className="keeper-strategy-pool mono">{s.poolLabel || '--'}</span>
           <span className="keeper-strategy-apr tnum mono">
             {s.aprPct == null ? '--' : `${s.aprPct.toFixed(2)}%`} APR
           </span>
@@ -106,16 +106,16 @@ const KeeperPanel = ({ events = [], pricePerShare = null, strategies = [] }) => 
           {pricePerShare ?? '--'}
           <span className="unit"> price / share</span>
         </span>
-        <span className="label mono">exchange rate · rises as the keeper compounds</span>
+        <span className="label mono">Exchange rate · rises as the keeper compounds</span>
       </div>
 
       <div className="keeper-section">
-        <div className="keeper-section-label mono">last keeper action</div>
+        <div className="keeper-section-label mono">Last keeper action</div>
         <LastAction last={last} />
       </div>
 
       <div className="keeper-section">
-        <div className="keeper-section-label mono">strategies</div>
+        <div className="keeper-section-label mono">Strategies</div>
         <StrategyList strategies={strategies} />
       </div>
     </section>

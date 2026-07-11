@@ -35,7 +35,7 @@ const TABS = [
   { id: 'reasoning', label: 'AI Reasoning' },
 ]
 
-const Empty = ({ what }) => <div className="history-empty mono">no {what} yet</div>
+const Empty = ({ what }) => <div className="history-empty mono">No {what} yet</div>
 
 /* ---------- Transactions (Etherscan-like table) ---------- */
 const TxList = ({ rows }) => {
@@ -44,11 +44,11 @@ const TxList = ({ rows }) => {
   return (
     <div className="tx-table">
       <div className="tx-row tx-head mono">
-        <span>status</span>
-        <span>txn hash</span>
-        <span>vault</span>
-        <span>amount</span>
-        <span>age</span>
+        <span>Status</span>
+        <span>Txn hash</span>
+        <span>Vault</span>
+        <span>Amount</span>
+        <span>Age</span>
       </div>
       {rows.map((r) => {
         const isWithdraw = r.type === 'withdraw'

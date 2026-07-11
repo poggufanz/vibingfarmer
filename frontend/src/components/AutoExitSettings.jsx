@@ -225,7 +225,7 @@ export default function AutoExitSettings({ realAddress, addLog }) {
 
         <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10, marginTop: 15 }}>
           <div style={{ display: 'flex', gap: 10, fontSize: 11.5, color: 'rgba(255,215,0,0.85)' }}>
-            <span>⚠️</span>
+            <span aria-hidden="true">!</span>
             <span>
               <strong>Target, not guaranteed:</strong> If the Blend lending pool is 100% utilized (frozen), withdrawals will fail. 
               The triggers are configured to exit BEFORE the pool locks, but cannot promise success under massive market gaps.

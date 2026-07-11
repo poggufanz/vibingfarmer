@@ -156,7 +156,7 @@ function CtaBlock({ onStart }) {
 function OutroContent({ onStart }) {
   return (
     <>
-      <p className="vf-outro__eyebrow">protect and yield</p>
+      <p className="vf-outro__eyebrow">Protect and yield</p>
       <h2 className="vf-outro__title">
         The loops run.
         <br />

@@ -114,7 +114,7 @@ const PermissionPanel = ({ active, strategy, onRevoke, expiresAt }) => {
     <div className="panel" style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
       <div className="panel-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
         <div className="panel-title" style={{ fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 500, color: 'var(--text)' }}>Active permissions</div>
-        <span className="panel-meta" style={{ fontFamily: 'var(--font-mono)', fontSize: '10.5px', color: 'var(--text-faint)' }}>session scope · batch</span>
+        <span className="panel-meta" style={{ fontFamily: 'var(--font-mono)', fontSize: '10.5px', color: 'var(--text-faint)' }}>Session scope · Batch</span>
       </div>
       <div className={`perm-status ${active ? 'active' : ''}`} style={{
         display: 'flex', alignItems: 'center', gap: 6,

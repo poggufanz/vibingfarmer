@@ -150,7 +150,7 @@ export default function WithdrawModal({
         style={{ maxWidth: 420 }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="modal-eyebrow">withdraw · fee-bump relayer</div>
+        <div className="modal-eyebrow">Withdraw · Fee-bump relayer</div>
         <h3 className="modal-title" id="withdraw-title">
           {t(lang, 'withdraw')} from {vault.name}
         </h3>

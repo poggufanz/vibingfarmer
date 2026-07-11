@@ -50,7 +50,7 @@ export default function AgentActionPreview({ preview, onConfirm, onCancel }) {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="modal-eyebrow">
-          {isWithdraw ? 'risk watcher · emergency exit' : 'reward harvester'}
+          {isWithdraw ? 'Risk watcher · Emergency exit' : 'Reward harvester'}
         </div>
         <h3 className="modal-title" id="agent-preview-title">
           {isWithdraw ? 'Emergency Withdraw Preview' : 'Harvest Preview'}
@@ -78,7 +78,7 @@ export default function AgentActionPreview({ preview, onConfirm, onCancel }) {
 
         {isWithdraw && (
           <p className="lede" style={{ fontSize: 11, marginTop: 4 }}>
-            ⚠ Uses your active Soroban session-key scope.
+            Uses your active Soroban session-key scope.
           </p>
         )}
 

@@ -102,7 +102,7 @@ export default function NotificationCenter({
             style={{ maxWidth: 460, width: '100%' }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="modal-eyebrow">agent · alerts</div>
+            <div className="modal-eyebrow">Agent · Alerts</div>
             <div
               style={{
                 display: 'flex',
