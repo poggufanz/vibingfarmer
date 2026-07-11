@@ -640,19 +640,15 @@ input, select, textarea {
 }
 
 /* ---------- Buttons ----------
-   Animated fill gradient (industry pattern: oversized linear-gradient +
-   animate background-position — CodyHouse / Kevin Powell). Feels like liquid
-   color inside the button — no outer glow/halo.
-   Refs: codyhouse.co/nuggets/animated-button-gradients
+   Soft monochromatic lime wash (no clashing mint/ok). Idle = quiet static
+   gradient; gentle drift only on hover/focus (less dizzy than always-on).
+   Pattern: oversized linear-gradient + background-position (CodyHouse).
    ---------- */
 
-/* Drift a 300–400% multi-stop gradient across the button face */
+/* Small travel only — big 0%→100% sweeps feel nauseating */
 @keyframes btn-lava {
-  0%   { background-position: 0% 40%; }
-  25%  { background-position: 60% 0%; }
-  50%  { background-position: 100% 60%; }
-  75%  { background-position: 40% 100%; }
-  100% { background-position: 0% 40%; }
+  0%, 100% { background-position: 0% 50%; }
+  50%      { background-position: 100% 50%; }
 }
 
 .btn {
@@ -675,6 +671,7 @@ input, select, textarea {
   transition:
     color 0.15s ease,
     border-color 0.15s ease,
+    background-position 0.45s ease,
     transform 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
@@ -690,33 +687,30 @@ input, select, textarea {
   transform: scale(0.98) translateY(0.5px);
 }
 
-/* —— Primary: multi-stop accent liquid gradient, always drifting —— */
+/* —— Primary: one family only (accent ↔ cream), no second hue —— */
 .btn-primary,
 .btn-gradient {
   color: var(--accent-fg);
   border-color: transparent;
-  /* 5+ stops so motion reads as fluid color, not a hard stripe */
+  /* Mix only with white/black of accent — stays harmonious */
   background-image: linear-gradient(
-    125deg,
+    120deg,
     var(--accent) 0%,
-    color-mix(in oklch, var(--accent) 55%, white) 18%,
-    color-mix(in oklch, var(--accent) 50%, var(--ok)) 38%,
-    color-mix(in oklch, var(--ok) 65%, var(--accent)) 55%,
-    color-mix(in oklch, var(--accent) 70%, #f0ff8a) 72%,
-    color-mix(in oklch, var(--accent) 80%, white) 88%,
+    color-mix(in srgb, var(--accent) 88%, white) 35%,
+    color-mix(in srgb, var(--accent) 78%, white) 55%,
     var(--accent) 100%
   );
-  background-size: 320% 320%;
-  background-position: 0% 40%;
-  animation: btn-lava 7s ease infinite;
+  background-size: 180% 100%;
+  background-position: 0% 50%;
+  animation: none;
 }
 
 .btn-primary:hover:not(:disabled),
 .btn-primary:focus-visible:not(:disabled),
 .btn-gradient:hover:not(:disabled),
 .btn-gradient:focus-visible:not(:disabled) {
-  /* faster drift on interaction — still inside the fill */
-  animation-duration: 3.2s;
+  /* Slow ease drift — only while interacting */
+  animation: btn-lava 10s ease-in-out infinite;
 }
 
 .btn-primary:disabled,
@@ -728,37 +722,26 @@ input, select, textarea {
   background-color: var(--accent);
 }
 
-/* —— Ghost: border only; liquid wash on hover —— */
+/* —— Ghost: quiet; soft accent wash on hover, no motion —— */
 .btn-ghost {
   color: var(--text);
   border-color: var(--border-strong);
   background: transparent;
-  background-size: 320% 320%;
-  background-position: 0% 40%;
 }
 
 .btn-ghost:hover:not(:disabled),
 .btn-ghost:focus-visible:not(:disabled) {
   color: var(--text);
-  border-color: color-mix(in oklch, var(--accent) 32%, var(--border-strong));
-  background-image: linear-gradient(
-    125deg,
-    var(--bg-elev) 0%,
-    color-mix(in oklch, var(--accent) 18%, var(--bg-elev)) 22%,
-    color-mix(in oklch, var(--ok) 14%, var(--bg-elev)) 45%,
-    color-mix(in oklch, var(--accent) 12%, var(--bg-card)) 68%,
-    var(--bg-elev) 100%
-  );
-  animation: btn-lava 5.5s ease infinite;
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border-strong));
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-elev));
 }
 
 .btn-ghost:disabled {
   opacity: 0.4;
   cursor: not-allowed;
-  animation: none;
 }
 
-/* —— Text: no fill —— */
+/* —— Text —— */
 .btn-text {
   background: transparent;
   color: var(--text-muted);
@@ -778,12 +761,12 @@ input, select, textarea {
 .btn svg { stroke-width: 1.6; }
 
 @media (prefers-reduced-motion: reduce) {
-  .btn-primary,
-  .btn-gradient,
-  .btn-ghost:hover:not(:disabled),
-  .btn-ghost:focus-visible:not(:disabled) {
+  .btn-primary:hover:not(:disabled),
+  .btn-primary:focus-visible:not(:disabled),
+  .btn-gradient:hover:not(:disabled),
+  .btn-gradient:focus-visible:not(:disabled) {
     animation: none;
-    background-position: 40% 50%;
+    background-position: 50% 50%;
   }
 }
 
