@@ -640,18 +640,44 @@ input, select, textarea {
 }
 
 /* ---------- Buttons ----------
-   Base system: animated gradient sheen on hover/focus (interaction, not ambient).
-   Primary = full accent gradient flow · Ghost = soft elev gradient · Text = color only.
+   Lava-lamp fill: soft color blobs drift *inside* the button (no outer glow/lamp).
+   Primary = accent lava always-on (faster on hover) · Ghost = lava on hover · Text = color only.
    ---------- */
-@keyframes btn-grad-flow {
-  0% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
-}
 
-@keyframes btn-sheen-sweep {
-  0% { background-position: 140% 0; }
-  100% { background-position: -40% 0; }
+/* Drift multiple radial "blobs" via background-position (lava lamp feel) */
+@keyframes btn-lava {
+  0%, 100% {
+    background-position:
+      12% 40%,
+      88% 55%,
+      48% 18%,
+      60% 82%,
+      0 0;
+  }
+  25% {
+    background-position:
+      78% 22%,
+      18% 78%,
+      32% 68%,
+      70% 28%,
+      0 0;
+  }
+  50% {
+    background-position:
+      92% 68%,
+      8% 28%,
+      62% 42%,
+      28% 88%,
+      0 0;
+  }
+  75% {
+    background-position:
+      28% 88%,
+      72% 12%,
+      18% 48%,
+      85% 55%,
+      0 0;
+  }
 }
 
 .btn {
@@ -674,30 +700,7 @@ input, select, textarea {
   transition:
     color 0.15s ease,
     border-color 0.15s ease,
-    box-shadow 0.2s ease,
-    filter 0.2s ease,
     transform 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
-/* Sheen layer shared by primary + ghost */
-.btn-primary::after,
-.btn-ghost::after,
-.btn-gradient::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    105deg,
-    transparent 32%,
-    color-mix(in oklch, white 32%, transparent) 50%,
-    transparent 68%
-  );
-  background-size: 220% 100%;
-  background-position: 140% 0;
-  opacity: 0;
-  pointer-events: none;
-  z-index: 0;
-  transition: opacity 0.2s ease;
 }
 
 .btn > *,
@@ -712,45 +715,56 @@ input, select, textarea {
   transform: scale(0.98) translateY(0.5px);
 }
 
-/* —— Primary: accent gradient fill, flows on hover —— */
+/* Shared lava stack: 4 soft blobs + solid base layer (last) */
+.btn-primary,
+.btn-gradient,
+.btn-ghost:hover:not(:disabled),
+.btn-ghost:focus-visible:not(:disabled) {
+  background-repeat: no-repeat;
+  background-size:
+    85% 110%,
+    95% 95%,
+    75% 100%,
+    90% 80%,
+    100% 100%;
+}
+
+/* —— Primary: lime lava lamp fill (inside only) —— */
 .btn-primary,
 .btn-gradient {
   color: var(--accent-fg);
-  border-color: transparent;
-  background-image: linear-gradient(
-    120deg,
-    var(--accent) 0%,
-    color-mix(in oklch, var(--accent) 72%, var(--ok)) 32%,
-    color-mix(in oklch, var(--accent) 58%, white) 58%,
-    var(--accent) 100%
-  );
-  background-size: 220% 220%;
-  background-position: 0% 50%;
-  box-shadow: 0 0 0 1px color-mix(in oklch, var(--accent) 28%, transparent);
+  border-color: color-mix(in oklch, var(--accent-fg) 12%, transparent);
+  background-color: var(--accent);
+  background-image:
+    radial-gradient(
+      ellipse 55% 65% at center,
+      color-mix(in oklch, white 42%, var(--accent)) 0%,
+      transparent 62%
+    ),
+    radial-gradient(
+      ellipse 60% 55% at center,
+      color-mix(in oklch, var(--ok) 48%, var(--accent)) 0%,
+      transparent 64%
+    ),
+    radial-gradient(
+      ellipse 50% 60% at center,
+      color-mix(in oklch, var(--accent) 55%, #f5ff9a) 0%,
+      transparent 60%
+    ),
+    radial-gradient(
+      ellipse 45% 50% at center,
+      color-mix(in oklch, var(--accent) 70%, #9ae66e) 0%,
+      transparent 58%
+    ),
+    linear-gradient(var(--accent), var(--accent));
+  animation: btn-lava 9s ease-in-out infinite;
 }
 
 .btn-primary:hover:not(:disabled),
 .btn-primary:focus-visible:not(:disabled),
 .btn-gradient:hover:not(:disabled),
 .btn-gradient:focus-visible:not(:disabled) {
-  animation: btn-grad-flow 2.2s ease infinite;
-  filter: brightness(1.04);
-  box-shadow:
-    0 0 0 1px color-mix(in oklch, var(--accent) 50%, transparent),
-    0 8px 26px color-mix(in oklch, var(--accent) 16%, transparent);
-}
-
-.btn-primary:hover:not(:disabled)::after,
-.btn-primary:focus-visible:not(:disabled)::after,
-.btn-gradient:hover:not(:disabled)::after,
-.btn-gradient:focus-visible:not(:disabled)::after {
-  opacity: 1;
-  animation: btn-sheen-sweep 1.35s ease infinite;
-}
-
-.btn-primary:active:not(:disabled),
-.btn-gradient:active:not(:disabled) {
-  filter: brightness(0.97);
+  animation-duration: 4.5s;
 }
 
 .btn-primary:disabled,
@@ -758,47 +772,43 @@ input, select, textarea {
   opacity: 0.32;
   cursor: not-allowed;
   animation: none;
-  filter: none;
-  box-shadow: none;
 }
 
-/* —— Ghost: quiet until hover, then soft flowing elev/accent wash —— */
+/* —— Ghost: quiet border; lava wash only on hover —— */
 .btn-ghost {
   color: var(--text);
   border-color: var(--border-strong);
-  background-color: transparent;
-  background-image: linear-gradient(
-    120deg,
-    transparent 0%,
-    transparent 40%,
-    color-mix(in oklch, var(--accent) 8%, transparent) 50%,
-    transparent 60%,
-    transparent 100%
-  );
-  background-size: 220% 220%;
-  background-position: 0% 50%;
+  background: transparent;
 }
 
 .btn-ghost:hover:not(:disabled),
 .btn-ghost:focus-visible:not(:disabled) {
   color: var(--text);
-  border-color: color-mix(in oklch, var(--accent) 40%, var(--border-strong));
-  background-image: linear-gradient(
-    120deg,
-    var(--bg-elev) 0%,
-    color-mix(in oklch, var(--accent) 14%, var(--bg-elev)) 40%,
-    color-mix(in oklch, var(--ok) 10%, var(--bg-elev)) 65%,
-    var(--bg-elev) 100%
-  );
-  background-size: 220% 220%;
-  animation: btn-grad-flow 2.4s ease infinite;
-  box-shadow: 0 0 0 1px color-mix(in oklch, var(--accent) 18%, transparent);
-}
-
-.btn-ghost:hover:not(:disabled)::after,
-.btn-ghost:focus-visible:not(:disabled)::after {
-  opacity: 0.7;
-  animation: btn-sheen-sweep 1.5s ease infinite;
+  border-color: color-mix(in oklch, var(--accent) 28%, var(--border-strong));
+  background-color: var(--bg-elev);
+  background-image:
+    radial-gradient(
+      ellipse 55% 65% at center,
+      color-mix(in oklch, var(--accent) 22%, var(--bg-elev)) 0%,
+      transparent 62%
+    ),
+    radial-gradient(
+      ellipse 60% 55% at center,
+      color-mix(in oklch, var(--ok) 16%, var(--bg-elev)) 0%,
+      transparent 64%
+    ),
+    radial-gradient(
+      ellipse 50% 60% at center,
+      color-mix(in oklch, var(--accent) 12%, var(--bg-elev)) 0%,
+      transparent 60%
+    ),
+    radial-gradient(
+      ellipse 45% 50% at center,
+      color-mix(in oklch, var(--info) 10%, var(--bg-elev)) 0%,
+      transparent 58%
+    ),
+    linear-gradient(var(--bg-elev), var(--bg-elev));
+  animation: btn-lava 7s ease-in-out infinite;
 }
 
 .btn-ghost:disabled {
@@ -807,16 +817,12 @@ input, select, textarea {
   animation: none;
 }
 
-/* —— Text: no fill gradient; keep light —— */
+/* —— Text: no lava fill —— */
 .btn-text {
   background: transparent;
   color: var(--text-muted);
   padding: 8px 12px;
   overflow: visible;
-}
-
-.btn-text::after {
-  display: none;
 }
 
 .btn-text:hover:not(:disabled) {
@@ -831,25 +837,17 @@ input, select, textarea {
 .btn svg { stroke-width: 1.6; }
 
 @media (prefers-reduced-motion: reduce) {
-  .btn-primary:hover:not(:disabled),
-  .btn-primary:focus-visible:not(:disabled),
-  .btn-gradient:hover:not(:disabled),
-  .btn-gradient:focus-visible:not(:disabled),
+  .btn-primary,
+  .btn-gradient,
   .btn-ghost:hover:not(:disabled),
-  .btn-ghost:focus-visible:not(:disabled),
-  .btn-primary:hover:not(:disabled)::after,
-  .btn-primary:focus-visible:not(:disabled)::after,
-  .btn-gradient:hover:not(:disabled)::after,
-  .btn-gradient:focus-visible:not(:disabled)::after,
-  .btn-ghost:hover:not(:disabled)::after,
-  .btn-ghost:focus-visible:not(:disabled)::after {
+  .btn-ghost:focus-visible:not(:disabled) {
     animation: none;
-  }
-  .btn-primary:hover:not(:disabled)::after,
-  .btn-gradient:hover:not(:disabled)::after,
-  .btn-ghost:hover:not(:disabled)::after {
-    opacity: 0.3;
-    background-position: 50% 0;
+    background-position:
+      30% 40%,
+      70% 55%,
+      45% 30%,
+      55% 70%,
+      0 0;
   }
 }
 

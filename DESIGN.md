@@ -367,7 +367,7 @@ Numeric, subtle, underline-on-active. Bukan circle-with-line wizard.
 
 Sizes: default `padding: 11px 18px`, large `padding: 14px 22px`. Radius `--radius-md` (8px). Font weight 500.
 
-**Hover / focus (v3.2 base):** animated accent gradient flow + light sheen sweep — interaction feedback only (not ambient page decoration). Primary uses full accent gradient; ghost uses soft elev/accent wash; text stays color-only. Soft accent ring on hover is allowed; no infinite glow pulse. Honor `prefers-reduced-motion` (static highlight, no flow animation).
+**Fill (v3.2 base):** lava-lamp style **inside** the button — soft color blobs drift via layered radial gradients (no outer glow / lamp halo). Primary: accent lava always on (faster on hover). Ghost: quiet border, muted lava on hover only. Text: color only. Honor `prefers-reduced-motion` (static blob positions).
 
 ### Amount input (signature pattern)
 
