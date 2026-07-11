@@ -159,18 +159,62 @@ export async function generateStrategy({
   const useStaticVaults = settings.vaultDataSource === 'static'
   const marketContextEnabled = settings.marketContext !== false
 
-  // EvoAgentX-style DAG: skill + market + pools + gas + positions fetch concurrently
-  // (one layer), then on-chain signals derive from market+gas. Replaces the old
-  // 3-way Promise.all — same parallelism for skill/market/pools, plus two new real
-  // nodes (gas, positions) and a real combined-signals node, with zero added latency.
-  const dag = await runStrategyFetchDag({
-    riskLevel,
-    address,
-    useStaticVaults,
-    marketContextEnabled,
-    loadVaultSkill,
-    fetchMarketContext,
-  })
+  // EvoAgentX-style DAG: skill + market + pools + gas + positions fetch concurrently.
+  // Cap wall time so a hung RPC/network node cannot freeze the thinking spinner.
+  const DAG_TIMEOUT_MS = 15_000
+  const fallbackSkill = () =>
+    loadVaultSkill().catch(() => ({
+      content:
+        'You are a DeFi yield advisor. Recommend vaults from the provided catalog based on user risk level. Respond in JSON only.',
+      source: 'fallback',
+    }))
+
+  if (signal?.aborted) {
+    return {
+      ...buildFallbackForParams(amount, Math.min(numVaults, VAULT_CATALOG.length)),
+      skillSource: 'fallback',
+      marketContextUsed: false,
+      vaultDataSource: 'fallback',
+      vaultsUsed: VAULT_CATALOG,
+      dagTimings: { aborted: true },
+      dagWallMs: 0,
+    }
+  }
+
+  let dag
+  let dagTimer
+  try {
+    dag = await Promise.race([
+      runStrategyFetchDag({
+        riskLevel,
+        address,
+        useStaticVaults,
+        marketContextEnabled,
+        loadVaultSkill,
+        fetchMarketContext,
+      }),
+      new Promise((_, reject) => {
+        dagTimer = setTimeout(
+          () => reject(new Error(`strategy DAG exceeded ${DAG_TIMEOUT_MS}ms`)),
+          DAG_TIMEOUT_MS
+        )
+      }),
+    ])
+  } catch (err) {
+    console.warn('[ai] Strategy DAG failed/timed out — continuing with static catalog:', err?.message || err)
+    dag = {
+      skill: await fallbackSkill(),
+      marketContext: null,
+      pools: null,
+      gas: null,
+      positions: null,
+      signals: null,
+      timings: { timedOut: true },
+      wallMs: DAG_TIMEOUT_MS,
+    }
+  } finally {
+    if (dagTimer) clearTimeout(dagTimer)
+  }
   const skill = dag.skill
   const marketContext = dag.marketContext
   const liveVaults = dag.pools
@@ -224,10 +268,16 @@ export async function generateStrategy({
 
 Select optimal vault(s) from the catalog above. APY and TVL data are real-time from DeFiLlama. Consider live market context if present. Respond in JSON only.`
 
-  // Caller may pass a signal (app-managed 1-min timeout + confirm); else use an internal timeout
-  const controller = signal ? null : new AbortController()
-  const timeout = controller ? setTimeout(() => controller.abort(), VENICE_TIMEOUT_MS) : null
-  const sig = signal || controller.signal
+  // Always hard-timeout the AI call. Caller may also pass a signal (user "Use default");
+  // link both so neither path can hang the thinking UI forever.
+  const controller = new AbortController()
+  const onExternalAbort = () => controller.abort()
+  if (signal) {
+    if (signal.aborted) controller.abort()
+    else signal.addEventListener('abort', onExternalAbort, { once: true })
+  }
+  const timeout = setTimeout(() => controller.abort(), VENICE_TIMEOUT_MS)
+  const sig = controller.signal
 
   try {
     const content = await callChatCompletions(
@@ -356,7 +406,8 @@ Select optimal vault(s) from the catalog above. APY and TVL data are real-time f
       dagWallMs: Math.round(dag.wallMs),
     }
   } finally {
-    if (timeout) clearTimeout(timeout)
+    clearTimeout(timeout)
+    if (signal) signal.removeEventListener('abort', onExternalAbort)
   }
 }
 

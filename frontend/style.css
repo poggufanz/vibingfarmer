@@ -491,8 +491,12 @@ input, select, textarea {
 .step-rail-item.clickable:hover { color: var(--text); }
 .step-rail-item.clickable:hover .num { color: var(--accent); }
 
-/* thinking-step live spinner */
-@keyframes think-spin-rot { to { transform: rotate(360deg); } }
+/* thinking-step live spinner — essential progress feedback (keep running even
+   under prefers-reduced-motion; DESIGN v3.2 live-status / think-spinner exception) */
+@keyframes think-spin-rot {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
 .think-spin {
   display: inline-block;
   width: 9px;
@@ -502,7 +506,9 @@ input, select, textarea {
   border-top-color: var(--accent);
   border-radius: 50%;
   vertical-align: middle;
+  flex-shrink: 0;
   animation: think-spin-rot 0.7s linear infinite;
+  will-change: transform;
 }
 @keyframes think-msg-up {
   from { opacity: 0; transform: translateY(8px); }
@@ -1763,7 +1769,7 @@ input, select, textarea {
   .memory-row.running .memory-row-marker { animation: none; }
   .live-dot::after,
   .brand-net .dot::after { animation: none !important; display: none; }
-  .think-spin { animation: none !important; }
+  /* .think-spin intentionally kept — in-flight work indicator, not decoration */
   .sig-yield .sig-head-ring { animation: none !important; opacity: 0 !important; }
   .sig-yield .sig-path { filter: none; animation-duration: 0.01ms; }
   .skill-drawer { transition: none; }
