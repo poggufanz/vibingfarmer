@@ -27,11 +27,11 @@ export async function listKeys(jwt) {
   return (await jfetch(`${base}/keys`, { headers: authed(jwt) })).keys
 }
 
-export async function createKey(jwt, { scopes, env, rateLimit }) {
+export async function createKey(jwt, { scopes, env, rateLimit, expiresAt = null }) {
   return jfetch(`${base}/keys`, {
     method: 'POST',
     headers: authed(jwt),
-    body: JSON.stringify({ scopes, env, rateLimit }),
+    body: JSON.stringify({ scopes, env, rateLimit, expiresAt }),
   })
 }
 

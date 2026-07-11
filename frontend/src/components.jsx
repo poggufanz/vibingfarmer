@@ -181,6 +181,7 @@ const Sidebar = ({ extended, onToggle }) => {
     { key: 'vaults', icon: 'grid', path: '/strategy', label: 'Strategy' },
     { key: 'agent', icon: 'network', path: '/agent', label: 'Dashboard' },
     { key: 'history', icon: 'layers', path: '/history', label: 'History' },
+    { key: 'developers', icon: 'code', path: '/developers', label: 'Developers' },
     { key: 'settings', icon: 'settings', path: '/settings', label: 'Settings' },
   ]
 

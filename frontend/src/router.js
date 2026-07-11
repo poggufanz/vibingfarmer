@@ -8,6 +8,7 @@ export const ROUTES = {
   STRATEGY: '/strategy',
   AGENT: '/agent',
   HISTORY: '/history',
+  DEVELOPERS: '/developers',
   SETTINGS: '/settings',
   VAULT: '/vault/:protocol',
   TX: '/tx/:txHash',
