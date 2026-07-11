@@ -48,11 +48,18 @@ export default function NotificationCenter({
   // handler never throws.
   const requestHarvest = (a) =>
     setPreview({ kind: 'harvest', alert: a, vaultName: a.vaultName, rewardsUsdc: a.rewardsUsdc })
-  const requestWithdraw = (a) => {
-    onEmergencyWithdraw?.(a)
-  }
+  const requestWithdraw = (a) =>
+    setPreview({
+      kind: 'withdraw',
+      alert: a,
+      vaultName: a.vaultName || a.protocol || 'vault',
+      amountUsdc: a.amountUsdc ?? a.balanceUsdc ?? a.positionUsdc ?? '—',
+      pctLabel: a.pctLabel || '100%',
+      toShort: a.toShort || 'your wallet',
+    })
   const confirmPreview = () => {
     if (preview?.kind === 'harvest') onHarvest?.(preview.alert)
+    if (preview?.kind === 'withdraw') onEmergencyWithdraw?.(preview.alert)
     setPreview(null)
   }
 
@@ -130,22 +137,12 @@ export default function NotificationCenter({
                     display: 'flex',
                     alignItems: 'flex-start',
                     gap: 10,
-                    borderLeft: '2px solid var(--ok)',
-                    background: 'rgba(111,227,154,0.04)',
-                    borderRadius: `0 var(--radius-sm) var(--radius-sm) 0`,
+                    border: '1px solid var(--border)',
+                    borderRadius: 'var(--radius-sm)',
+                    background: 'var(--bg-elev)',
                     padding: '12px 14px',
                   }}
                 >
-                  <span
-                    style={{
-                      width: 5,
-                      height: 5,
-                      borderRadius: '50%',
-                      background: 'var(--ok)',
-                      marginTop: 5,
-                      flexShrink: 0,
-                    }}
-                  />
                   <div>
                     <div
                       style={{

@@ -4,10 +4,12 @@ import React, { useEffect } from 'react'
 import { translateSkill, formatProtocol } from '../skills.jsx'
 
 const STEP_LABELS = {
-  uniswap_v3_swap: (p) =>
-    `Swap USDC (max slippage ${((p?.maxSlippageBps || 5) / 100).toFixed(2)}%)`,
-  erc20_approve: () => 'Approve vault for transfer',
-  erc4626_deposit: () => 'Deposit to vault (auto shares)',
+  router_pull: () => 'Pull USDC via funding_router (scoped allowance)',
+  vault_deposit: () => 'Deposit to autofarm vault (fee-bump relay)',
+  // Legacy labels kept for old skill JSON in memory
+  uniswap_v3_swap: () => 'Legacy step (not used on Stellar path)',
+  erc20_approve: () => 'Legacy approve (not used on Stellar path)',
+  erc4626_deposit: () => 'Deposit to vault',
   erc20_transfer: () => 'Transfer USDC to vault',
 }
 
@@ -18,7 +20,7 @@ function labelStep(step) {
 
 function shortAddr(addr) {
   if (!addr || addr.length < 10) return addr || '-'
-  return `${addr.slice(0, 6)}…${addr.slice(-4)}`
+  return `${addr.slice(0, 4)}…${addr.slice(-4)}`
 }
 
 const Row = ({ k, v }) => (
@@ -64,7 +66,7 @@ export default function SkillDetailModal({ agent, skill, state, onClose, onAppro
         </div>
 
         <div className="skill-detail-section">
-          <div className="skill-detail-label">VAULT</div>
+          <div className="skill-detail-label">Vault</div>
           <div className="skill-detail-value">{formatProtocol(agent.vault?.protocol)}</div>
           <div className="skill-detail-sub mono">
             {shortAddr(vaultAddr)} · {network}
@@ -75,14 +77,14 @@ export default function SkillDetailModal({ agent, skill, state, onClose, onAppro
                 rel="noopener noreferrer"
                 className="skill-detail-link"
               >
-                View on Stellar Expert ↗
+                View on Stellar Expert
               </a>
             )}
           </div>
         </div>
 
         <div className="skill-detail-section">
-          <div className="skill-detail-label">EXECUTION STEPS</div>
+          <div className="skill-detail-label">Execution steps</div>
           {(skill.steps || []).map((step, i) => (
             <div key={step.id} className="skill-detail-step">
               <span className="skill-detail-step-num">{i + 1}.</span>
@@ -92,9 +94,9 @@ export default function SkillDetailModal({ agent, skill, state, onClose, onAppro
         </div>
 
         <div className="skill-detail-section">
-          <div className="skill-detail-label">SECURITY LIMITS</div>
+          <div className="skill-detail-label">Security limits</div>
           <Row k="Maximum" v={skill.guards?.maxAmount || info.amountVal} />
-          <Row k="Gas cap" v={skill.guards?.maxGas || '200,000'} />
+          <Row k="Fee" v="fee-bump sponsored" />
           <Row k="Valid for" v={`${hours} hour${hours !== 1 ? 's' : ''} from now`} />
           <Row k="Revocable" v={skill.guards?.revocable ? 'Yes · revoke anytime' : 'No'} />
           <Row k="Risk" v={info.risk} />
@@ -109,11 +111,11 @@ export default function SkillDetailModal({ agent, skill, state, onClose, onAppro
           </button>
           {isApproved ? (
             <button className="btn btn-ghost" disabled>
-              ✓ Approved
+              Approved
             </button>
           ) : (
             <button className="btn btn-primary" onClick={onApprove}>
-              ✓ Approve this worker
+              Approve this worker
             </button>
           )}
         </div>

@@ -53,20 +53,19 @@ export const buildSkillForAgent = (agent, riskProfile) => {
     },
     steps: [
       {
-        id: 'swap',
-        action: 'uniswap_v3_swap',
-        params: { tokenIn: 'USDC', tokenOut: 'USDC', maxSlippageBps: 5 },
+        id: 'pull',
+        action: 'router_pull',
+        params: { asset: 'USDC', amount: 'exact' },
       },
       {
-        id: 'approve',
-        action: 'erc20_approve',
-        params: { spender: agent.vault.addr, amount: 'exact' },
+        id: 'deposit',
+        action: 'vault_deposit',
+        params: { asset: 'USDC', vault: agent.vault.addr },
       },
-      { id: 'deposit', action: 'erc4626_deposit', params: { asset: 'USDC', shares: 'auto' } },
     ],
     guards: {
       maxAmount: max,
-      maxGas: '200000',
+      feeMode: 'fee-bump',
       expiresIn: '86400',
       revocable: true,
       riskProfile: riskProfile,
@@ -102,7 +101,7 @@ const SkillCard = ({ agent, skill, state, onApprove, onViewDetail }) => {
       </div>
 
       <div className={`skill-card2-status ${isApproved ? 'approved' : 'pending'}`}>
-        {isApproved ? '✓ approved' : '● needs review'}
+        {isApproved ? 'approved' : 'needs review'}
       </div>
 
       <div className="skill-card2-actions">
@@ -114,11 +113,11 @@ const SkillCard = ({ agent, skill, state, onApprove, onViewDetail }) => {
         </button>
         {isApproved ? (
           <button className="btn skill-card2-approve approved" disabled>
-            ✓ Approved
+            Approved
           </button>
         ) : (
           <button className="btn btn-ghost skill-card2-approve" onClick={() => onApprove(agent.id)}>
-            ✓ Approve
+            Approve
           </button>
         )}
       </div>
@@ -167,15 +166,15 @@ const DelegationChain = ({ agents }) => {
             padding: '2px 7px',
           }}
         >
-          A2A · ERC-7710
+          funding_router · SEP-41
         </span>
       </div>
       <div style={tree}>
         <div>
-          <span style={{ color: 'var(--accent, #cfff3d)' }}>●</span> User (Alice)
+          <span style={{ color: 'var(--text-faint)' }}>·</span> User
         </div>
         <div style={{ paddingLeft: 12 }}>
-          <span style={muted}>└─ root delegation →</span> <b>Orchestrator</b>
+          <span style={muted}>└─ funding_router.grant →</span> <b>workers</b>
         </div>
         {agents.map((a, i) => (
           <div key={a.id} style={{ paddingLeft: 36 }}>

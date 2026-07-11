@@ -7,13 +7,9 @@ export default function SkillEditModal({ agent, skill, onClose, onSave }) {
   const initHours   = Math.floor((parseInt(rawExpiry, 10) || 86400) / 3600);
   const initAmount  = parseInt(skill.guards?.maxAmount || '0', 10) || agent.allocation || 0;
   const initRisk    = skill.guards?.riskProfile || 'medium';
-  const initMaxGas  = skill.guards?.maxGas || '200000';
-
   const [maxAmount,    setMaxAmount]    = useState(String(initAmount));
   const [expiresHours, setExpiresHours] = useState(String(initHours));
   const [risk,         setRisk]         = useState(initRisk);
-  const [maxGas,       setMaxGas]       = useState(initMaxGas);
-  const [showAdvanced, setShowAdvanced] = useState(false);
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -29,7 +25,7 @@ export default function SkillEditModal({ agent, skill, onClose, onSave }) {
         maxAmount:   `${maxAmount} USDC`,
         expiresIn:   String(Math.max(1, parseInt(expiresHours, 10) || 24) * 3600),
         riskProfile: risk,
-        maxGas:      maxGas,
+        feeMode:     'fee-bump',
       },
     };
     onSave(updatedSkill);
@@ -102,25 +98,10 @@ export default function SkillEditModal({ agent, skill, onClose, onSave }) {
         </div>
 
         <div className="skill-edit-field">
-          <button
-            type="button"
-            className="skill-edit-advanced-toggle"
-            onClick={() => setShowAdvanced((v) => !v)}
-          >
-            Gas cap (advanced) {showAdvanced ? '▲' : '▼'}
-          </button>
-          {showAdvanced && (
-            <div className="skill-edit-input-row" style={{ marginTop: 8 }}>
-              <input
-                type="number"
-                min="21000"
-                value={maxGas}
-                onChange={(e) => setMaxGas(e.target.value)}
-                className="skill-edit-input"
-                aria-label="Gas cap"
-              />
-            </div>
-          )}
+          <span className="skill-edit-label">Fee</span>
+          <div className="skill-edit-input-row mono" style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+            0 XLM · fee-bump sponsored
+          </div>
         </div>
 
         <div className="modal-actions">

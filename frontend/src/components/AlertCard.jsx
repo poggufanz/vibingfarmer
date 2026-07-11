@@ -73,19 +73,13 @@ export function AlertCard({ alert, lang = 'en', onHarvest, onEmergencyWithdraw, 
     alert.kind === 'rebalance_executed' ? 'var(--info)'   :
     meta.color
 
-  const bgTint =
-    alert.kind === 'risk_alert'         ? 'rgba(255,116,121,0.04)' :
-    alert.kind === 'apy_drift'          ? 'rgba(240,181,74,0.04)'  :
-    alert.kind === 'blnd_held'          ? 'rgba(240,181,74,0.04)'  :
-    alert.kind === 'rebalance_proposal' ? 'rgba(122,159,255,0.04)' :
-    alert.kind === 'rebalance_executed' ? 'rgba(122,159,255,0.04)' :
-    'rgba(111,227,154,0.04)'
+  const bgTint = 'var(--bg-elev)'
 
   return (
     <div style={{
-      borderLeft: `2px solid ${borderColor}`,
+      border: `1px solid ${borderColor}`,
       background: bgTint,
-      borderRadius: `0 var(--radius-sm) var(--radius-sm) 0`,
+      borderRadius: 'var(--radius-sm)',
       padding: '10px 12px 10px 14px',
       marginBottom: 6,
     }}>

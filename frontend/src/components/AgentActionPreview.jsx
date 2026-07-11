@@ -53,7 +53,7 @@ export default function AgentActionPreview({ preview, onConfirm, onCancel }) {
           {isWithdraw ? 'Risk watcher · Emergency exit' : 'Reward harvester'}
         </div>
         <h3 className="modal-title" id="agent-preview-title">
-          {isWithdraw ? 'Emergency Withdraw Preview' : 'Harvest Preview'}
+          {isWithdraw ? 'Emergency withdraw preview' : 'Harvest preview'}
         </h3>
 
         <div style={{ margin: '12px 0' }}>

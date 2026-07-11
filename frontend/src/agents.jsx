@@ -487,7 +487,7 @@ const MemoryModal = ({ agentId, strategy, execMap, onClose }) => {
           </div>
           <div className="memory-metric">
             <span className="label mono">Gas paid · User</span>
-            <span className="val tnum mono">0 ETH</span>
+            <span className="val tnum mono">0 XLM · fee-bump</span>
           </div>
           <div className="memory-metric">
             <span className="label mono">Vault APY</span>

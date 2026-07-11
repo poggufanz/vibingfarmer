@@ -24,7 +24,7 @@
 
   --text: #ecebe1;
   --text-muted: #95958a;
-  --text-faint: #56564f;
+  --text-faint: #7a7a70;
 
   --accent: #cfff3d;
   --accent-soft: rgba(207, 255, 61, 0.08);
@@ -49,7 +49,7 @@
   --num-feat: "tnum" 1, "lnum" 1, "ss01" 1;
 }
 
-/* Palette: Mono Slate (most restrained) */
+/* Palette: Mono Slate (most restrained) — full token contract */
 [data-palette="mono-slate"] {
   --bg-base: #0c0d10;
   --bg-canvas: #101114;
@@ -57,14 +57,22 @@
   --bg-elev: #1e2029;
   --bg-elev-2: #262833;
   --bg-input: #101114;
+  --border: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.14);
   --border-accent: rgba(225, 232, 247, 0.4);
   --accent: #e6edff;
   --accent-soft: rgba(230, 237, 255, 0.07);
   --accent-fg: #0c0d10;
   --text: #e8ebf3;
+  --text-muted: #9aa0b0;
+  --text-faint: #7a8090;
+  --info: #8aa0ff;
+  --warn: #e0b060;
+  --danger: #f08088;
+  --ok: #7ad4a0;
 }
 
-/* Palette: Liquid Mint */
+/* Palette: Liquid Mint — full token contract */
 [data-palette="liquid-mint"] {
   --bg-base: #0a1310;
   --bg-canvas: #0d1814;
@@ -72,10 +80,19 @@
   --bg-elev: #18302a;
   --bg-elev-2: #1f3c34;
   --bg-input: #0d1814;
+  --border: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.14);
   --border-accent: rgba(94, 230, 197, 0.4);
   --accent: #5ee6c5;
   --accent-soft: rgba(94, 230, 197, 0.08);
   --accent-fg: #0a1310;
+  --text: #e4f0eb;
+  --text-muted: #8aa89c;
+  --text-faint: #6a8a7c;
+  --info: #7ab8ff;
+  --warn: #e0b060;
+  --danger: #f08088;
+  --ok: #6fe39a;
 }
 
 /* Palette: Bone Paper (light-ish, near-paper) */
@@ -91,10 +108,14 @@
   --border-accent: rgba(120, 60, 0, 0.3);
   --text: #1a180f;
   --text-muted: #6a675c;
-  --text-faint: #95928a;
+  --text-faint: #6a675c;
   --accent: #1a180f;
   --accent-soft: rgba(26, 24, 15, 0.06);
   --accent-fg: #f4f1e9;
+  --info: #3a5a9a;
+  --warn: #9a6a20;
+  --danger: #b04048;
+  --ok: #2a7a50;
 }
 
 /* Density: compact */
@@ -107,6 +128,12 @@
 /* ---------- Reset / base ---------- */
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; }
+
+/* Global focus ring — outline:none only when paired with :focus-visible */
+:focus-visible {
+  outline: 2px solid var(--border-accent);
+  outline-offset: 2px;
+}
 
 body {
   background: var(--bg-base);
@@ -1633,7 +1660,11 @@ input, select, textarea {
   0%, 100% { opacity: .35; }
   50% { opacity: .08; }
 }
-.skeleton-bar { background: rgba(255,255,255,.18); animation: skeleton-pulse 1.4s ease-in-out infinite; }
+.skeleton-bar {
+  background: var(--border-strong);
+  opacity: 0.55;
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
+}
 
 .modal {
   background: var(--bg-card);
@@ -1722,6 +1753,20 @@ input, select, textarea {
 @keyframes enter {
   from { transform: translateY(8px); opacity: 0; }
   to { transform: translateY(0); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .enter { animation: none; }
+  .skeleton-bar { animation: none; opacity: 0.4; }
+  .legend-item .dot.running,
+  .agent-tile-head .dot.running,
+  .memory-row.running .memory-row-marker { animation: none; }
+  .live-dot::after,
+  .brand-net .dot::after { animation: none !important; display: none; }
+  .think-spin { animation: none !important; }
+  .sig-yield .sig-head-ring { animation: none !important; opacity: 0 !important; }
+  .sig-yield .sig-path { filter: none; animation-duration: 0.01ms; }
+  .skill-drawer { transition: none; }
 }
 
 /* ============================================
@@ -1998,7 +2043,7 @@ input, select, textarea {
 }
 
 .skill-card2.approved {
-  border-left: 2px solid var(--ok);
+  border-color: var(--ok);
 }
 
 .skill-card2-head {
@@ -2010,7 +2055,7 @@ input, select, textarea {
 .skill-card2-idx {
   font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--accent);
+  color: var(--text-faint);
   min-width: 20px;
   padding-top: 2px;
 }
@@ -2293,8 +2338,8 @@ input, select, textarea {
 
 /* Skill-source badge on the strategy card */
 .skill-badge { margin-left: 8px; padding: 2px 8px; border-radius: 999px; font-size: 10px; font-weight: 600; letter-spacing: 0.02em; }
-.skill-badge.default { background: rgba(120,120,110,0.18); color: var(--text-faint); }
-.skill-badge.custom { background: rgba(207,255,61,0.18); color: #cfff3d; }
+.skill-badge.default { background: var(--bg-elev); color: var(--text-faint); }
+.skill-badge.custom { background: var(--accent-soft); color: var(--accent); }
 
 /* Skill panel (right rail) */
 .skill-customize { background: transparent; border: none; padding: 0; cursor: pointer; transition: color 0.12s ease; }
@@ -2304,7 +2349,7 @@ input, select, textarea {
 /* Skill drawer */
 .skill-drawer-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 99; }
 .skill-drawer {
-  position: fixed; top: 0; right: 0; height: 100vh; width: 420px;
+  position: fixed; top: 0; right: 0; height: 100vh; width: min(420px, 100vw);
   background: var(--bg-canvas); border-left: 1px solid var(--border);
   transform: translateX(100%); transition: transform 250ms ease;
   z-index: 100; overflow-y: auto; display: flex; flex-direction: column;
@@ -2363,10 +2408,10 @@ input, select, textarea {
   display: inline-block;
   border: 1px solid var(--border-strong);
 }
-.legend-item .dot.idle { background: #56564f; border-color: #56564f; }
-.legend-item .dot.running { background: #f0b54a; border-color: #f0b54a; animation: legend-pulse 1.1s ease-in-out infinite; }
-.legend-item .dot.confirmed { background: #6fe39a; border-color: #6fe39a; }
-.legend-item .dot.failed { background: #ff7479; border-color: #ff7479; }
+.legend-item .dot.idle { background: var(--text-faint); border-color: var(--text-faint); }
+.legend-item .dot.running { background: var(--warn); border-color: var(--warn); animation: legend-pulse 1.1s ease-in-out infinite; }
+.legend-item .dot.confirmed { background: var(--ok); border-color: var(--ok); }
+.legend-item .dot.failed { background: var(--danger); border-color: var(--danger); }
 
 @keyframes legend-pulse {
   0%, 100% { opacity: 1; }
@@ -2817,9 +2862,9 @@ input, select, textarea {
   display: grid; grid-template-columns: 34px minmax(130px,1.1fr) 1.7fr 1fr 0.8fr;
   align-items: center; gap: 12px; padding: 11px 8px; border-bottom: 1px solid var(--border); font-size: 13px;
 }
-.tx-head { color: var(--text-faint); font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
+.tx-head { color: var(--text-faint); font-size: 11px; letter-spacing: -0.01em; }
 .tx-status { color: var(--ok); display: inline-flex; }
-.tx-hash { color: var(--accent); text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
+.tx-hash { color: var(--text-muted); text-decoration: none; display: inline-flex; align-items: center; gap: 4px; font-family: var(--font-mono); }
 .tx-hash:hover { text-decoration: underline; }
 .tx-vault { display: flex; flex-direction: column; gap: 2px; color: var(--text); }
 .tx-sub { font-size: 10.5px; color: var(--text-muted); }
@@ -2847,8 +2892,9 @@ input, select, textarea {
 
 .keeper-section { padding-top: 14px; }
 .keeper-section-label {
-  font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-faint);
+  font-size: 11px; letter-spacing: -0.01em; color: var(--text-faint);
   margin-bottom: 8px;
+  font-family: var(--font-mono);
 }
 
 .keeper-empty { color: var(--text-faint); padding: 10px 2px; }
@@ -2866,7 +2912,7 @@ input, select, textarea {
 .keeper-strategy-row:last-child { border-bottom: none; padding-bottom: 0; }
 .keeper-strategy-name { flex: 1; }
 .keeper-strategy-pool { color: var(--text-faint); font-size: 10.5px; }
-.keeper-strategy-apr { color: var(--accent); font-size: 11px; flex-shrink: 0; }
+.keeper-strategy-apr { color: var(--text); font-size: 11px; flex-shrink: 0; font-variant-numeric: tabular-nums; }
 
 
 /* ============================================
@@ -3118,7 +3164,6 @@ details.yv-collapse[open] > summary .yv-caret {
   stroke-dasharray: 1;
   stroke-dashoffset: 1;
   animation: spark-draw 1.5s cubic-bezier(0.22, 1, 0.36, 1) 0.15s forwards;
-  filter: drop-shadow(0 0 6px rgba(207, 255, 61, 0.35));
 }
 .sig-yield .sig-area {
   fill: var(--accent);
@@ -3800,6 +3845,18 @@ details.yv-collapse[open] > summary .yv-caret {
   /* Tighten the top bar — drop the relayer/gas meta on narrow screens */
   .topbar { padding: 12px 16px; }
   .topbar-meta { display: none; }
+
+  .stage { padding: 16px 14px 72px; }
+  .card { padding: 20px 16px; }
+  .success-numbers { grid-template-columns: 1fr; }
+  .memory-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tx-row {
+    grid-template-columns: 1fr 1fr;
+    gap: 6px 12px;
+  }
+  .tx-head { display: none; }
+  .grant-controls { grid-template-columns: 1fr; gap: 16px; }
+  .skill-grid { grid-template-columns: 1fr; }
 }
 
 /* ---------- Money-app kickers + progressive disclosure ---------- */

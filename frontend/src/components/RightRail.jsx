@@ -28,7 +28,7 @@ const WalletPanel = ({ phase, address }) => {
     <div className="panel" style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
       <div className="panel-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
         <div className="panel-title" style={{ fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 500, color: 'var(--text)' }}>Wallet</div>
-        <span className="panel-meta" style={{ fontFamily: 'var(--font-mono)', fontSize: '10.5px', color: 'var(--text-faint)' }}>{isSmart ? 'Smart account' : 'EOA'}</span>
+        <span className="panel-meta" style={{ fontFamily: 'var(--font-mono)', fontSize: '10.5px', color: 'var(--text-faint)' }}>{isSmart ? 'Session keys bound' : 'Standard wallet'}</span>
       </div>
       <div className="wallet-row" style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',

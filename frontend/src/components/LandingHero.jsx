@@ -289,18 +289,26 @@ function ScrollHero({ onStart, scrollContainer }) {
 
 export default function LandingHero({ onStart }) {
   const [isMobile, setIsMobile] = useState(false)
+  const [reduceMotion, setReduceMotion] = useState(false)
 
   useEffect(() => {
-    const mq = window.matchMedia('(max-width: 760px)')
+    const mq = window.matchMedia('(max-width: 860px)')
     const sync = () => setIsMobile(mq.matches)
     sync()
     mq.addEventListener('change', sync)
     return () => mq.removeEventListener('change', sync)
   }, [])
 
-  // Static layout only on real small screens. Desktop always animates —
-  // the scroll-morph is the product's core demo, shown to every visitor.
-  const useStatic = isMobile
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const sync = () => setReduceMotion(mq.matches)
+    sync()
+    mq.addEventListener('change', sync)
+    return () => mq.removeEventListener('change', sync)
+  }, [])
+
+  // Static on small screens or when the user prefers reduced motion.
+  const useStatic = isMobile || reduceMotion
   const containerRef = useRef(null)
 
   return (

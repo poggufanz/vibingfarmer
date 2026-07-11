@@ -231,9 +231,9 @@ const TopBar = ({
     <header className="topbar">
       <div className="topbar-left">
         <div className="brand">
-          <span>vibing</span>
+          <span className="vibing">vibing</span>
           <span className="slash">/</span>
-          <span className="vibing">farmer</span>
+          <span>farmer</span>
         </div>
         <span className="brand-net mono">
           <span className="dot" />
