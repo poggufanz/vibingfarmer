@@ -6,10 +6,14 @@ import { OverviewSection, KeysSection, UsageSection, DocsSection } from './secti
 
 const shortAddr = (g) => (g ? `${g.slice(0, 6)}…${g.slice(-4)}` : '')
 
-// Scope contract — shown pre-auth on gated sections (moved from DevelopersPage).
+// Scope contract — shown pre-auth on gated sections.
 export const SCOPE_INFO = [
   { id: 'strategy', endpoints: 'POST /strategy', note: 'ai allocation · market context' },
-  { id: 'market', endpoints: '/vault-facts · /prices · /eligibility', note: 'read-only market data' },
+  {
+    id: 'market',
+    endpoints: '/vault-facts · /prices · /eligibility',
+    note: 'read-only market data',
+  },
   { id: 'tx', endpoints: '/build-tx · /simulate', note: 'unsigned xdr only' },
   { id: 'submit', endpoints: 'POST /submit', note: 'fee-bump relay · deposit-only' },
   { id: 'scan', endpoints: 'POST /scan', note: 'risk verdict' },
@@ -40,8 +44,15 @@ export function ConnectGate({ connecting, onConnect }) {
         ))}
       </div>
       <div className="action-row">
-        <span className="foot-note">Session lasts 1 hour · nothing leaves your wallet but a signature.</span>
-        <button className="btn btn-primary btn-lg" type="button" onClick={onConnect} disabled={connecting}>
+        <span className="foot-note">
+          Session lasts 1 hour · nothing leaves your wallet but a signature.
+        </span>
+        <button
+          className="btn btn-primary btn-lg"
+          type="button"
+          onClick={onConnect}
+          disabled={connecting}
+        >
           {connecting ? 'Connecting…' : 'Connect wallet'}
         </button>
       </div>
@@ -75,13 +86,19 @@ export default function DevelopersLayout() {
     }
   }
 
-  const gate = (el) => (session ? el : <ConnectGate connecting={connecting} onConnect={onConnect} />)
+  const gate = (el) =>
+    session ? el : <ConnectGate connecting={connecting} onConnect={onConnect} />
 
   return (
     <div className="portal stage enter">
       <nav className="portal-nav" aria-label="Developer portal">
         {NAV.map((n) => (
-          <NavLink key={n.label} to={n.to} end={n.end} className={({ isActive }) => (isActive ? 'active' : '')}>
+          <NavLink
+            key={n.label}
+            to={n.to}
+            end={n.end}
+            className={({ isActive }) => (isActive ? 'active' : '')}
+          >
             {n.label}
           </NavLink>
         ))}
@@ -91,7 +108,11 @@ export default function DevelopersLayout() {
       </nav>
       <div className="portal-main">
         {error && (
-          <p role="alert" className="mono" style={{ marginBottom: 14, fontSize: 12, color: 'var(--danger)' }}>
+          <p
+            role="alert"
+            className="mono"
+            style={{ marginBottom: 14, fontSize: 12, color: 'var(--danger)' }}
+          >
             {error}
           </p>
         )}
