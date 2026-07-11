@@ -1093,29 +1093,19 @@ const StrategyCard = ({
           {hasDebate ? (
             <DebatePanel debateResult={council} />
           ) : showRunCouncil ? (
-            <div
-              style={{
-                padding: '14px',
-                border: '1px solid var(--border)',
-                borderRadius: 'var(--radius-md)',
-                textAlign: 'center',
-                marginBottom: 12,
-              }}
-            >
+            <div className="risk-review-card">
               {debateRunning ? (
-                <div
-                  className="mono"
-                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10 }}
-                >
-                  <span className="think-spin" /> Review in progress…
+                <div className="risk-review-card__busy">
+                  <span className="think-spin" aria-hidden="true" />
+                  Review in progress…
                 </div>
               ) : (
                 <>
-                  <div className="mono" style={{ marginBottom: 10, color: 'var(--text-muted)', fontSize: 12 }}>
-                    Optional: run a risk review before you continue.
+                  <div className="risk-review-card__copy">
+                    Optional: run a multi-perspective risk review before you continue.
                   </div>
-                  <button type="button" className="btn btn-ghost" onClick={onRunCouncil}>
-                    Run risk review
+                  <button type="button" className="btn btn-gradient" onClick={onRunCouncil}>
+                    <span>Run risk review</span>
                   </button>
                 </>
               )}

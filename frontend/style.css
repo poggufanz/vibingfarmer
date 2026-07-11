@@ -685,6 +685,131 @@ input, select, textarea {
   border-color: var(--border-strong);
 }
 
+/* Animated gradient CTA — interaction feedback (hover/focus), not ambient decoration */
+@keyframes btn-grad-flow {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.btn-gradient {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  color: var(--accent-fg);
+  border-color: transparent;
+  background-image: linear-gradient(
+    120deg,
+    var(--accent) 0%,
+    color-mix(in oklch, var(--accent) 70%, var(--ok)) 35%,
+    color-mix(in oklch, var(--accent) 55%, white) 55%,
+    var(--accent) 100%
+  );
+  background-size: 220% 220%;
+  background-position: 0% 50%;
+  box-shadow: 0 0 0 1px color-mix(in oklch, var(--accent) 35%, transparent);
+  transition:
+    transform 0.16s cubic-bezier(0.2, 0.8, 0.2, 1),
+    box-shadow 0.2s ease,
+    filter 0.2s ease;
+}
+
+.btn-gradient::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    105deg,
+    transparent 35%,
+    color-mix(in oklch, white 35%, transparent) 50%,
+    transparent 65%
+  );
+  background-size: 220% 100%;
+  background-position: 120% 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+  z-index: 0;
+}
+
+.btn-gradient > * {
+  position: relative;
+  z-index: 1;
+}
+
+.btn-gradient:hover:not(:disabled),
+.btn-gradient:focus-visible:not(:disabled) {
+  animation: btn-grad-flow 2.2s ease infinite;
+  box-shadow:
+    0 0 0 1px color-mix(in oklch, var(--accent) 55%, transparent),
+    0 8px 28px color-mix(in oklch, var(--accent) 18%, transparent);
+  filter: brightness(1.04);
+}
+
+.btn-gradient:hover:not(:disabled)::after,
+.btn-gradient:focus-visible:not(:disabled)::after {
+  opacity: 1;
+  animation: btn-grad-flow 1.4s ease infinite;
+}
+
+.btn-gradient:active:not(:disabled) {
+  transform: scale(0.98) translateY(0.5px);
+  filter: brightness(0.98);
+}
+
+.btn-gradient:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  animation: none;
+  filter: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn-gradient:hover:not(:disabled),
+  .btn-gradient:focus-visible:not(:disabled),
+  .btn-gradient:hover:not(:disabled)::after,
+  .btn-gradient:focus-visible:not(:disabled)::after {
+    animation: none;
+  }
+  .btn-gradient:hover:not(:disabled)::after {
+    opacity: 0.35;
+    background-position: 50% 0;
+  }
+}
+
+/* Optional risk-review strip on strategy card */
+.risk-review-card {
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elev);
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+}
+
+.risk-review-card__copy {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
+  letter-spacing: -0.01em;
+  max-width: 36ch;
+  line-height: 1.45;
+}
+
+.risk-review-card__busy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
 .btn-text {
   background: transparent;
   color: var(--text-muted);
