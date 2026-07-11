@@ -1104,7 +1104,7 @@ const StrategyCard = ({
                   <div className="risk-review-card__copy">
                     Optional: run a multi-perspective risk review before you continue.
                   </div>
-                  <button type="button" className="btn btn-gradient" onClick={onRunCouncil}>
+                  <button type="button" className="btn btn-primary" onClick={onRunCouncil}>
                     <span>Run risk review</span>
                   </button>
                 </>

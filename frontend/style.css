@@ -639,8 +639,23 @@ input, select, textarea {
   letter-spacing: 0;
 }
 
-/* ---------- Buttons ---------- */
+/* ---------- Buttons ----------
+   Base system: animated gradient sheen on hover/focus (interaction, not ambient).
+   Primary = full accent gradient flow · Ghost = soft elev gradient · Text = color only.
+   ---------- */
+@keyframes btn-grad-flow {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+@keyframes btn-sheen-sweep {
+  0% { background-position: 140% 0; }
+  100% { background-position: -40% 0; }
+}
+
 .btn {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -651,128 +666,189 @@ input, select, textarea {
   font-size: 13.5px;
   font-weight: 500;
   letter-spacing: -0.01em;
-  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease, transform 0.12s cubic-bezier(0.2, 0.8, 0.2, 1);
   white-space: nowrap;
   border: 1px solid transparent;
-}
-
-.btn:active, .sb-item:active, .icon-btn:active {
-  transform: scale(0.98) translateY(0.5px);
-}
-
-.btn-primary {
-  background: var(--accent);
-  color: var(--accent-fg);
-}
-
-.btn-primary:hover:not(:disabled) {
-  background: color-mix(in oklch, var(--accent) 92%, white);
-}
-
-.btn-primary:disabled {
-  opacity: 0.32;
-  cursor: not-allowed;
-}
-
-.btn-ghost {
-  background: transparent;
-  color: var(--text);
-  border-color: var(--border-strong);
-}
-
-.btn-ghost:hover {
-  background: var(--bg-elev);
-  border-color: var(--border-strong);
-}
-
-/* Animated gradient CTA — interaction feedback (hover/focus), not ambient decoration */
-@keyframes btn-grad-flow {
-  0% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
-}
-
-.btn-gradient {
-  position: relative;
   overflow: hidden;
   isolation: isolate;
-  color: var(--accent-fg);
-  border-color: transparent;
-  background-image: linear-gradient(
-    120deg,
-    var(--accent) 0%,
-    color-mix(in oklch, var(--accent) 70%, var(--ok)) 35%,
-    color-mix(in oklch, var(--accent) 55%, white) 55%,
-    var(--accent) 100%
-  );
-  background-size: 220% 220%;
-  background-position: 0% 50%;
-  box-shadow: 0 0 0 1px color-mix(in oklch, var(--accent) 35%, transparent);
+  cursor: pointer;
   transition:
-    transform 0.16s cubic-bezier(0.2, 0.8, 0.2, 1),
+    color 0.15s ease,
+    border-color 0.15s ease,
     box-shadow 0.2s ease,
-    filter 0.2s ease;
+    filter 0.2s ease,
+    transform 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
+/* Sheen layer shared by primary + ghost */
+.btn-primary::after,
+.btn-ghost::after,
 .btn-gradient::after {
   content: '';
   position: absolute;
   inset: 0;
   background: linear-gradient(
     105deg,
-    transparent 35%,
-    color-mix(in oklch, white 35%, transparent) 50%,
-    transparent 65%
+    transparent 32%,
+    color-mix(in oklch, white 32%, transparent) 50%,
+    transparent 68%
   );
   background-size: 220% 100%;
-  background-position: 120% 0;
+  background-position: 140% 0;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.2s ease;
   z-index: 0;
+  transition: opacity 0.2s ease;
 }
 
-.btn-gradient > * {
+.btn > *,
+.btn svg {
   position: relative;
   z-index: 1;
 }
 
+.btn:active:not(:disabled),
+.sb-item:active,
+.icon-btn:active {
+  transform: scale(0.98) translateY(0.5px);
+}
+
+/* —— Primary: accent gradient fill, flows on hover —— */
+.btn-primary,
+.btn-gradient {
+  color: var(--accent-fg);
+  border-color: transparent;
+  background-image: linear-gradient(
+    120deg,
+    var(--accent) 0%,
+    color-mix(in oklch, var(--accent) 72%, var(--ok)) 32%,
+    color-mix(in oklch, var(--accent) 58%, white) 58%,
+    var(--accent) 100%
+  );
+  background-size: 220% 220%;
+  background-position: 0% 50%;
+  box-shadow: 0 0 0 1px color-mix(in oklch, var(--accent) 28%, transparent);
+}
+
+.btn-primary:hover:not(:disabled),
+.btn-primary:focus-visible:not(:disabled),
 .btn-gradient:hover:not(:disabled),
 .btn-gradient:focus-visible:not(:disabled) {
   animation: btn-grad-flow 2.2s ease infinite;
-  box-shadow:
-    0 0 0 1px color-mix(in oklch, var(--accent) 55%, transparent),
-    0 8px 28px color-mix(in oklch, var(--accent) 18%, transparent);
   filter: brightness(1.04);
+  box-shadow:
+    0 0 0 1px color-mix(in oklch, var(--accent) 50%, transparent),
+    0 8px 26px color-mix(in oklch, var(--accent) 16%, transparent);
 }
 
+.btn-primary:hover:not(:disabled)::after,
+.btn-primary:focus-visible:not(:disabled)::after,
 .btn-gradient:hover:not(:disabled)::after,
 .btn-gradient:focus-visible:not(:disabled)::after {
   opacity: 1;
-  animation: btn-grad-flow 1.4s ease infinite;
+  animation: btn-sheen-sweep 1.35s ease infinite;
 }
 
+.btn-primary:active:not(:disabled),
 .btn-gradient:active:not(:disabled) {
-  transform: scale(0.98) translateY(0.5px);
-  filter: brightness(0.98);
+  filter: brightness(0.97);
 }
 
+.btn-primary:disabled,
 .btn-gradient:disabled {
-  opacity: 0.4;
+  opacity: 0.32;
   cursor: not-allowed;
   animation: none;
   filter: none;
+  box-shadow: none;
 }
 
+/* —— Ghost: quiet until hover, then soft flowing elev/accent wash —— */
+.btn-ghost {
+  color: var(--text);
+  border-color: var(--border-strong);
+  background-color: transparent;
+  background-image: linear-gradient(
+    120deg,
+    transparent 0%,
+    transparent 40%,
+    color-mix(in oklch, var(--accent) 8%, transparent) 50%,
+    transparent 60%,
+    transparent 100%
+  );
+  background-size: 220% 220%;
+  background-position: 0% 50%;
+}
+
+.btn-ghost:hover:not(:disabled),
+.btn-ghost:focus-visible:not(:disabled) {
+  color: var(--text);
+  border-color: color-mix(in oklch, var(--accent) 40%, var(--border-strong));
+  background-image: linear-gradient(
+    120deg,
+    var(--bg-elev) 0%,
+    color-mix(in oklch, var(--accent) 14%, var(--bg-elev)) 40%,
+    color-mix(in oklch, var(--ok) 10%, var(--bg-elev)) 65%,
+    var(--bg-elev) 100%
+  );
+  background-size: 220% 220%;
+  animation: btn-grad-flow 2.4s ease infinite;
+  box-shadow: 0 0 0 1px color-mix(in oklch, var(--accent) 18%, transparent);
+}
+
+.btn-ghost:hover:not(:disabled)::after,
+.btn-ghost:focus-visible:not(:disabled)::after {
+  opacity: 0.7;
+  animation: btn-sheen-sweep 1.5s ease infinite;
+}
+
+.btn-ghost:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  animation: none;
+}
+
+/* —— Text: no fill gradient; keep light —— */
+.btn-text {
+  background: transparent;
+  color: var(--text-muted);
+  padding: 8px 12px;
+  overflow: visible;
+}
+
+.btn-text::after {
+  display: none;
+}
+
+.btn-text:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.btn-lg {
+  padding: 14px 22px;
+  font-size: 14px;
+}
+
+.btn svg { stroke-width: 1.6; }
+
 @media (prefers-reduced-motion: reduce) {
+  .btn-primary:hover:not(:disabled),
+  .btn-primary:focus-visible:not(:disabled),
   .btn-gradient:hover:not(:disabled),
   .btn-gradient:focus-visible:not(:disabled),
+  .btn-ghost:hover:not(:disabled),
+  .btn-ghost:focus-visible:not(:disabled),
+  .btn-primary:hover:not(:disabled)::after,
+  .btn-primary:focus-visible:not(:disabled)::after,
   .btn-gradient:hover:not(:disabled)::after,
-  .btn-gradient:focus-visible:not(:disabled)::after {
+  .btn-gradient:focus-visible:not(:disabled)::after,
+  .btn-ghost:hover:not(:disabled)::after,
+  .btn-ghost:focus-visible:not(:disabled)::after {
     animation: none;
   }
-  .btn-gradient:hover:not(:disabled)::after {
-    opacity: 0.35;
+  .btn-primary:hover:not(:disabled)::after,
+  .btn-gradient:hover:not(:disabled)::after,
+  .btn-ghost:hover:not(:disabled)::after {
+    opacity: 0.3;
     background-position: 50% 0;
   }
 }
@@ -809,23 +885,6 @@ input, select, textarea {
   font-size: 12.5px;
   color: var(--text-muted);
 }
-
-.btn-text {
-  background: transparent;
-  color: var(--text-muted);
-  padding: 8px 12px;
-}
-
-.btn-text:hover {
-  color: var(--text);
-}
-
-.btn-lg {
-  padding: 14px 22px;
-  font-size: 14px;
-}
-
-.btn svg { stroke-width: 1.6; }
 
 /* ---------- Input ---------- */
 .amount-block {
