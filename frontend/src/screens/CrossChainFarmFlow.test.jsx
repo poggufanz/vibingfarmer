@@ -13,7 +13,7 @@ afterEach(() => {
 vi.mock('../wallet/passkeyStellar.js', () => ({ createStellarPasskeyWallet: vi.fn() }))
 vi.mock('../wallet/passkeyBase.js', () => ({ createBaseSmartAccount: vi.fn() }))
 vi.mock('../wallet/mandate.js', () => ({ createMandate: vi.fn() }))
-vi.mock('../venice.js', () => ({ allocateBasePools: vi.fn() }))
+vi.mock('../strategist.js', () => ({ allocateBasePools: vi.fn() }))
 vi.mock('../base/relayerClient.js', () => ({
   postMandate: vi.fn(),
   postFarm: vi.fn(),
@@ -24,7 +24,7 @@ vi.mock('../base/relayerClient.js', () => ({
 import { createStellarPasskeyWallet } from '../wallet/passkeyStellar.js'
 import { createBaseSmartAccount } from '../wallet/passkeyBase.js'
 import { createMandate } from '../wallet/mandate.js'
-import { allocateBasePools } from '../venice.js'
+import { allocateBasePools } from '../strategist.js'
 import { postMandate } from '../base/relayerClient.js'
 
 const STELLAR_WALLET = { address: 'GWALLET', credentialId: 'cred-1', signBurn: vi.fn() }

@@ -39,7 +39,7 @@ describe('postFarm', () => {
     ).rejects.toThrow(/farm dispatch failed \(502\)/)
   })
 
-  // Locks the wire-boundary fix: `a.amount` is a DISPLAY float everywhere upstream (venice.js's
+  // Locks the wire-boundary fix: `a.amount` is a DISPLAY float everywhere upstream (strategist.js's
   // allocateBasePools, the mandate cap in CrossChainFarmFlow.jsx) — the relayer expects base
   // units (relayer/src/httpRouter.mjs parseAllocations does BigInt(a.amount)). A bare float would
   // become dust, and a fractional remainder like 100/3 would throw. serializeAllocations converts

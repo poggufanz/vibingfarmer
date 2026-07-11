@@ -275,7 +275,7 @@ describe('assertVaultDeposit', () => {
 
 const ROUTER = 'CROUTER'
 
-describe('assertVaultDeposit — funding_router grant/pull (one-popup grant flow)', () => {
+describe('assertVaultDeposit — funding_router grant/pull (single-signature grant flow)', () => {
   it('rejects router.grant when SOROBAN_ROUTER_ADDRESS is unset (fail closed, unchanged)', () => {
     const tx = depositTx(ROUTER, 'grant')
     expect(() => assertVaultDeposit(tx, VAULT, sdkAddr)).toThrow(RelayError) // default param

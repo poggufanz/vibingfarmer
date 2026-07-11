@@ -1,5 +1,5 @@
 // AI allocation strategy. LLM (DeepSeek, server key) with a deterministic equal-split
-// fallback — the strategist NEVER blocks the flow (mirrors src/venice.js philosophy).
+// fallback — the strategist NEVER blocks the flow (mirrors src/strategist.js philosophy).
 import { z } from 'zod'
 import { storeFrom } from './_db.js'
 import { requireVfKey } from './_vfauth.js'

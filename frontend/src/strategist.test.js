@@ -1,10 +1,13 @@
 import { describe, it, test, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
+  validateStrategyResponse,
   validateVeniceResponse,
+  askStrategistJson,
+  askVeniceJson,
   parseSpecialistVerdict,
   resolveProvider,
   generateAgentSkills,
-} from './venice.js'
+} from './strategist.js'
 import { AI_PROXY_URL } from './config.js'
 
 const VAULTS = [
@@ -21,35 +24,45 @@ const validVault = (over = {}) => ({
   ...over,
 })
 
-describe('validateVeniceResponse', () => {
+describe('validateStrategyResponse', () => {
   it('accepts a well-formed single-vault response', () => {
     const res = { selected_vaults: [validVault()] }
-    expect(() => validateVeniceResponse(res, VAULTS)).not.toThrow()
+    expect(() => validateStrategyResponse(res, VAULTS)).not.toThrow()
   })
 
   it('rejects expected_apy of 0', () => {
     const res = { selected_vaults: [validVault({ expected_apy: 0 })] }
-    expect(() => validateVeniceResponse(res, VAULTS)).toThrow(/expected_apy/)
+    expect(() => validateStrategyResponse(res, VAULTS)).toThrow(/expected_apy/)
   })
 
   it('rejects expected_apy as a string "N/A"', () => {
     const res = { selected_vaults: [validVault({ expected_apy: 'N/A' })] }
-    expect(() => validateVeniceResponse(res, VAULTS)).toThrow(/expected_apy/)
+    expect(() => validateStrategyResponse(res, VAULTS)).toThrow(/expected_apy/)
   })
 
   it('rejects allocation > 1', () => {
     const res = { selected_vaults: [validVault({ allocation: 1.5 })] }
-    expect(() => validateVeniceResponse(res, VAULTS)).toThrow(/allocation/)
+    expect(() => validateStrategyResponse(res, VAULTS)).toThrow(/allocation/)
   })
 
   it('rejects a missing/invalid risk_tier', () => {
     const res = { selected_vaults: [validVault({ risk_tier: undefined })] }
-    expect(() => validateVeniceResponse(res, VAULTS)).toThrow(/risk_tier/)
+    expect(() => validateStrategyResponse(res, VAULTS)).toThrow(/risk_tier/)
   })
 
   it('still rejects a hallucinated address', () => {
     const res = { selected_vaults: [validVault({ address: '0xdead' })] }
-    expect(() => validateVeniceResponse(res, VAULTS)).toThrow(/hallucinated/)
+    expect(() => validateStrategyResponse(res, VAULTS)).toThrow(/hallucinated/)
+  })
+
+  it('deprecated validateVeniceResponse alias matches validateStrategyResponse', () => {
+    expect(validateVeniceResponse).toBe(validateStrategyResponse)
+  })
+})
+
+describe('askStrategistJson aliases', () => {
+  it('deprecated askVeniceJson is the same function as askStrategistJson', () => {
+    expect(askVeniceJson).toBe(askStrategistJson)
   })
 })
 
@@ -211,7 +224,7 @@ describe('allocateBasePools', () => {
   })
 
   test('fallback (no provider configured) splits amount equally across only whitelisted pools, each within its own cap-eligible amount', async () => {
-    const { allocateBasePools } = await import('./venice.js')
+    const { allocateBasePools } = await import('./strategist.js')
     const result = await allocateBasePools({ amount: 300, riskLevel: 'medium', nPools: 3 })
 
     expect(result).toHaveLength(3)
@@ -232,14 +245,14 @@ describe('allocateBasePools', () => {
   })
 
   test('clamps nPools to the catalog size', async () => {
-    const { allocateBasePools } = await import('./venice.js')
+    const { allocateBasePools } = await import('./strategist.js')
     const result = await allocateBasePools({ amount: 100, riskLevel: 'low', nPools: 50 })
     const { BASE_POOL_CATALOG } = await import('./config.js')
     expect(result.length).toBeLessThanOrEqual(BASE_POOL_CATALOG.length)
   })
 
   test('every skill has a future expiresAt and a maxAmount matching the allocated amount at 6dp', async () => {
-    const { allocateBasePools } = await import('./venice.js')
+    const { allocateBasePools } = await import('./strategist.js')
     const nowSec = Math.floor(Date.now() / 1000)
     const result = await allocateBasePools({ amount: 60, riskLevel: 'high', nPools: 2 })
     for (const entry of result) {

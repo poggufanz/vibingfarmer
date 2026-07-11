@@ -21,7 +21,7 @@ const RPC_URL = () => process.env.SOROBAN_RPC_URL || 'https://soroban-testnet.st
 const RELAYER_SECRET = () => process.env.STELLAR_RELAYER_SECRET || ''
 const VAULT_ADDR = () => process.env.SOROBAN_VAULT_ADDRESS || ''
 const TOKEN_ADDR = () => process.env.SOROBAN_TOKEN_ADDRESS || ''
-// funding_router for the one-popup grant flow; unset = router relaying disabled (fail closed).
+// funding_router for the single-signature grant flow; unset = router relaying disabled (fail closed).
 const ROUTER_ADDR = () => process.env.SOROBAN_ROUTER_ADDRESS || ''
 const AGENT_ALLOWLIST = () => process.env.SOROBAN_AGENT_ALLOWLIST || ''
 // Content-addressed pin of the OZ smart-account wasm SAK deploys (see wallet/config.js
@@ -74,7 +74,7 @@ function parseAllowlist(raw) {
  * FAIL CLOSED: no pin (default '') → every deploy rejected; V1 createContract and non-wasm
  * executables (SAC) rejected unconditionally.
  *
- * When `routerAddr` is set (SOROBAN_ROUTER_ADDRESS — the funding_router of the one-popup
+ * When `routerAddr` is set (SOROBAN_ROUTER_ADDRESS — the funding_router of the single-signature
  * grant flow), ALSO sponsors `routerAddr`.grant / `routerAddr`.pull — nothing else on that
  * contract. FAIL CLOSED: routerAddr unset (default '') → every router call rejected,
  * byte-identical to the pre-router guard.

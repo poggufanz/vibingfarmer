@@ -50,10 +50,10 @@ describe('fundAgent', () => {
     )
   })
 
-  test('rejects after 120s when the wallet popup never resolves (no infinite hang)', async () => {
+  test('rejects after 120s when the wallet signature never resolves (no infinite hang)', async () => {
     vi.useFakeTimers()
     try {
-      signTxXdr.mockImplementation(() => new Promise(() => {})) // popup dismissed / wallet stuck
+      signTxXdr.mockImplementation(() => new Promise(() => {})) // signature dismissed / wallet stuck
       const p = fundAgent({ owner: 'GUSER', agentAddress: 'CAGENT', amount: 1n })
       const assertion = expect(p).rejects.toThrow(/timed out after 120s/)
       await vi.advanceTimersByTimeAsync(120_001)

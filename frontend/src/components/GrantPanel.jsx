@@ -1,8 +1,8 @@
 // frontend/src/components/GrantPanel.jsx
-// The one-popup grant step. Replaces the legacy per-agent "Grant N permissions" batch: the user
-// sets a spending budget + a validity window, then a SINGLE "Grant & run" popup authorizes the
+// The single-signature grant step. Replaces the legacy per-agent "Grant N permissions" batch: the user
+// sets a spending budget + a validity window, then a SINGLE "Grant & run" signature authorizes the
 // funding_router to deploy the run's agents and pull within that budget. A small revoke control
-// zeroes the on-chain allowance (kill switch) in one more popup. Presentational only — all chain
+// zeroes the on-chain allowance (kill switch) with one more signature. Presentational only — all chain
 // work is done by the caller's onGrant / onRevoke (stellar/grant.js).
 import { useState } from 'react'
 
@@ -41,7 +41,7 @@ export default function GrantPanel({
         <span className="num">04</span>
         <span>One signature · router grant</span>
         <span className="rule" />
-        <span>then fully autonomous · 0 further popups</span>
+        <span>then fully autonomous · 0 further signatures</span>
       </div>
 
       <h1 className="h-display">Grant a budget once. Every agent funds and deposits within it.</h1>
@@ -112,7 +112,7 @@ export default function GrantPanel({
           {phase === 'revoking' ? 'revoking…' : 'Revoke grant'}
         </button>
         <span className="annot">
-          sets the on-chain allowance to 0 · one popup · works even if the relayer is down
+          sets the on-chain allowance to 0 · a single signature · works even if the relayer is down
         </span>
       </div>
 

@@ -1,4 +1,4 @@
-import { riskComplianceVerdict, validatorVerdict } from '../venice.js'
+import { riskComplianceVerdict, validatorVerdict } from '../strategist.js'
 import { buildDebateInput, DEBATE_SYSTEM, summarizeToSentence, hardStopGate } from './councilReview.js'
 
 const STORAGE_KEY = 'yv_council_snapshot'

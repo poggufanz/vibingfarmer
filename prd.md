@@ -3,7 +3,7 @@
 **Type:** Indie Open-Source Project
 **Motivation:** Built out of frustration with sequential, click-heavy DeFi yield farming.
 **Tagline:** "Set once. Vibe forever."
-**Last updated:** 2026-07-11 (post one-popup grant + testnet hardening)
+**Last updated:** 2026-07-11 (post single-signature grant + testnet hardening)
 
 ---
 
@@ -11,15 +11,15 @@
 
 ### Yield Farming UX is Broken
 
-Yield farmers execute **8+ manual transactions** per rebalance cycle — remove liquidity, swap, approve, supply, borrow, deposit, stake. **Every step = wallet popup + gas fee + risk of mis-click.**
+Yield farmers execute **8+ manual transactions** per rebalance cycle — remove liquidity, swap, approve, supply, borrow, deposit, stake. **Every step = wallet signature + gas fee + risk of mis-click.**
 
 ### User Research (X/Twitter 2025–2026)
 
 > "Are you tired of the tedious, multi-step dance of adjusting liquidity in DeFi?" — @John_Peace1
 
-> "Normally it's: bridge → swap → find the right vault → deposit… and hope you didn't miss a step 😭" — @kokocodes
+> "Normally it's: bridge → swap → find the right vault → deposit… and hope you didn't miss a step ðŸ˜­" — @kokocodes
 
-> "agent finance UX is still broken. Today you choose between: full wallet access (risky) • human over-control (co-approving every step)." — @0xYann_
+> "agent finance UX is still broken. Today you choose between: full wallet access (risky) â€¢ human over-control (co-approving every step)." — @0xYann_
 
 > "only ~15–18% of wallet connects end in a real transaction." — @agnt_hub
 
@@ -29,34 +29,34 @@ Yield farmers execute **8+ manual transactions** per rebalance cycle — remove 
 
 ### Elevator Pitch
 
-> AI-coordinated agent swarm for automated real-yield farming on **Stellar/Soroban**. An AI strategist (DeepSeek by default, Venice AI via wallet-funded x402/SIWE, deterministic fallback) generates an allocation strategy that a **multi-perspective AI council** (proposer / risk-compliance / validator debate loop + continuous market monitor) reviews before anything executes. A **fail-closed eligibility gate** checks live protocol facts (DeFiLlama TVL, curated audit data) per target. The user signs **exactly ONE wallet popup** — a `grant` that sets a spending budget and an expiry they choose. From that single signature the on-chain **funding router** deploys one fresh, cryptographically-scoped agent account per vault, and the swarm runs gas-free: agents fund themselves within the granted allowance, deposit into a vault that supplies **real Blend lending yield**, and a keeper compounds on a cron while a ledger-speed **lifeboat radar** stands ready to de-risk the vault in an emergency. A real-time force-directed graph tracks every agent's status and memory. An optional cross-chain leg bridges USDC to Base via **Circle CCTP v2** for EVM pool exposure.
+> AI-coordinated agent swarm for automated real-yield farming on **Stellar/Soroban**. An AI strategist (DeepSeek by default, Venice AI via wallet-funded x402/SIWE, deterministic fallback) generates an allocation strategy that a **multi-perspective AI council** (proposer / risk-compliance / validator debate loop + continuous market monitor) reviews before anything executes. A **fail-closed eligibility gate** checks live protocol facts (DeFiLlama TVL, curated audit data) per target. The user signs **exactly ONE wallet signature** — a `grant` that sets a spending budget and an expiry they choose. From that single signature the on-chain **funding router** deploys one fresh, cryptographically-scoped agent account per vault, and the swarm runs gas-free: agents fund themselves within the granted allowance, deposit into a vault that supplies **real Blend lending yield**, and a keeper compounds on a cron while a ledger-speed **lifeboat radar** stands ready to de-risk the vault in an emergency. A real-time force-directed graph tracks every agent's status and memory. An optional cross-chain leg bridges USDC to Base via **Circle CCTP v2** for EVM pool exposure.
 
-### The One-Popup Flow (core UX)
+### The single-signature Flow (core UX)
 
 ```
-[user] budget + duration + risk  ──►  ONE wallet signature (router.grant)
-        └─ nested SEP-41 approve(budget, expiry)      ← allowance IS the leash
-        └─ router deploys N agent accounts             ← signer = fresh session key each
-[autonomous, 0 popups, 0 gas]  agent.pull(funding) → vault.deposit → Blend supply
+[user] budget + duration + risk  â”€â”€â–º  ONE wallet signature (router.grant)
+        â””â”€ nested SEP-41 approve(budget, expiry)      ← allowance IS the leash
+        â””â”€ router deploys N agent accounts             ← signer = fresh session key each
+[autonomous, 0 further signatures, 0 gas]  agent.pull(funding) → vault.deposit → Blend supply
 [keeper cron]  compound / rebalance          [radar]  emergency de-risk + resume
-[anytime]      revoke = approve(router, 0)   ← user kill switch, 1 popup
+[anytime]      revoke = approve(router, 0)   ← user kill switch, 1 signature
 ```
 
-First run: **1 popup** (was 6 before the funding router, 9 before that). Repeat runs within the grant: **0 popups**. Every boundary is enforced on-chain, not by the client.
+First run: **1 signature** (was 6 before the funding router, 9 before that). Repeat runs within the grant: **0 further signatures**. Every boundary is enforced on-chain, not by the client.
 
 ### What Makes This Different
 
 | Feature | Vibing Farmer | Manual DeFi | Auto-compound bots | Vault aggregators |
 |---------|--------------|-------------|--------------------|-------------------|
-| Popups per farming run | **1 first run / 0 repeat** | 8+ | deposit per vault | deposit per vault |
+| Wallet signatures per farming run | **1 first run / 0 repeat** | 8+ | deposit per vault | deposit per vault |
 | Agent execution | Parallel multi-agent swarm | N/A | N/A | single strategy |
 | Permission model | On-chain scoped agent accounts: per-agent cap + expiry + fn allowlist (`__check_auth`), budget bounded by SEP-41 allowance with native expiry, user-revocable | full manual | full custody to contract | full custody to contract |
-| AI decision layer | Strategist + council debate + continuous monitor + eligibility gate (fail-closed, live facts) | ❌ | ❌ | curated list |
+| AI decision layer | Strategist + council debate + continuous monitor + eligibility gate (fail-closed, live facts) | âŒ | âŒ | curated list |
 | Yield source | **Real Blend v2 lending interest** (not a mock drip) | real | real | real |
 | Gas | 0 for the user (own fee-bump relay, fail-closed allowlist) | user pays | varies | varies |
-| Emergency response | Ledger-speed lifeboat radar → vault-level de-risk under a user mandate | manual | ❌ | pause at best |
-| Agent memory + live graph | ✅ per-agent memory, force-graph UI | ❌ | ❌ | ❌ |
-| Cross-chain | Optional Stellar↔Base USDC leg via Circle CCTP v2 | manual bridging | ❌ | rare |
+| Emergency response | Ledger-speed lifeboat radar → vault-level de-risk under a user mandate | manual | âŒ | pause at best |
+| Agent memory + live graph | âœ… per-agent memory, force-graph UI | âŒ | âŒ | âŒ |
+| Cross-chain | Optional Stellarâ†”Base USDC leg via Circle CCTP v2 | manual bridging | âŒ | rare |
 
 ---
 
@@ -69,19 +69,19 @@ First run: **1 popup** (was 6 before the funding router, 9 before that). Repeat 
 - **Council review** (`councilReview`/`councilDebate`): proposer, risk-compliance (hard-veto power), and validator specialists debate the strategy; split decisions escalate to one bounded AI call. A **continuous monitor** re-evaluates market drift (APY drift, VaR breach) against localStorage snapshots and surfaces a status badge.
 - **Eligibility gate** (fail-closed): per-protocol facts — TVL live from DeFiLlama (6h cache, snapshot fallback with provenance labels), audit/qualitative facts curated — must pass ponzi-ratio/staleness/audit checks or the basket drops that target; all-fail aborts the run.
 
-### 2. One-Popup Grant (funding_router)
+### 2. single-signature grant (funding_router)
 
 - `funding_router` (Soroban, no admin, zero custody) is a **factory + funding gate**:
-  - `grant(owner, budget, expiry_ledger, agents[])` — the ONE popup. Owner's signature covers a nested `token.approve(owner→router, budget, expiry_ledger)` (SEP-41 native expiry) AND the deploy of each agent account (wasm hash pinned at router construction).
+  - `grant(owner, budget, expiry_ledger, agents[])` — the a single signature. Owner's signature covers a nested `token.approve(owner→router, budget, expiry_ledger)` (SEP-41 native expiry) AND the deploy of each agent account (wasm hash pinned at router construction).
   - `pull(agent, amount)` — session-key-signed, relayed; only agents the router itself deployed can pull, only from their recorded owner, only within the live allowance.
-  - Revoke = `approve(router, 0)` — one popup, instant kill switch.
+  - Revoke = `approve(router, 0)` — a single signature, instant kill switch.
 - Fake-agent attacks are structurally impossible (factory registry, tested), and the agent wasm only authorizes `pull` on its deployer router.
 
 ### 3. Agent Swarm (parallel, scoped, gas-free)
 
-- **Orchestrator** (frontend): session keys generated first → one grant popup → dispatches N Workers in parallel (`Promise.allSettled`).
+- **Orchestrator** (frontend): session keys generated first → a single grant signature → dispatches N Workers in parallel (`Promise.allSettled`).
 - **Worker agents**: each is a fresh on-chain `agent_account` custom account — `__check_auth` verifies the run's ed25519 session key against a constructor-pinned scope (vault, token, cap per period, expiry, revocable). Deposits are signed by the session key and **fee-bumped by the relay** (user pays 0 XLM).
-- **Agent reuse cache**: valid agents (scope headroom, unexpired) are reused across runs → 0-popup repeats.
+- **Agent reuse cache**: valid agents (scope headroom, unexpired) are reused across runs → signature-free repeats.
 - **Memory system**: every agent writes memory entries (step, status, shares, timing, lesson) shown in the graph node detail and fed back to the AI next session.
 
 ### 4. Real Yield + Autonomy
@@ -113,7 +113,7 @@ First run: **1 popup** (was 6 before the funding router, 9 before that). Repeat 
 
 - On-chain **strategy attestation** (Soroban contract): keccak hash of the approved strategy anchored per run, relayer fee-bumped.
 - Monte Carlo simulation (scenario sweep + VaR/CVaR), decision log, historical council snapshots.
-- Per-network config: testnet↔mainnet switch is **env-only** (unfilled mainnet values throw loudly); quarterly testnet-reset recovery runbook + script.
+- Per-network config: testnetâ†”mainnet switch is **env-only** (unfilled mainnet values throw loudly); quarterly testnet-reset recovery runbook + script.
 
 ---
 
@@ -121,24 +121,24 @@ First run: **1 popup** (was 6 before the funding router, 9 before that). Repeat 
 
 | ID | Feature | Priority | Status |
 |----|---------|---------|--------|
-| FR-01 | AI strategy + per-agent scope generation (DeepSeek/Venice/fallback) | Must | ✅ |
-| FR-02 | Council debate review + continuous market monitor | Must | ✅ |
-| FR-03 | Fail-closed eligibility gate with live protocol facts | Must | ✅ |
-| FR-04 | **One-popup grant** (budget + user-chosen expiry) → autonomous runs | Must | ✅ live-proven |
-| FR-05 | Orchestrator: parallel Worker dispatch, per-agent failure isolation | Must | ✅ |
-| FR-06 | Fresh scoped agent account per run (`__check_auth` session keys) | Must | ✅ |
-| FR-07 | Gas-free execution via own fee-bump relay (fail-closed allowlist) | Must | ✅ |
-| FR-08 | Real Blend v2 lending yield + keeper compound/rebalance | Must | ✅ |
-| FR-09 | Lifeboat: ledger-speed emergency de-risk under user mandate | Must | ✅ |
-| FR-10 | Real-time force-graph + per-agent memory | Must | ✅ |
-| FR-11 | Revocation: grant kill switch + agent revoke + relay kill-switch | Must | ✅ |
-| FR-12 | Withdraw / owner exit (full sweep back to owner) | Must | ✅ |
-| FR-13 | On-chain strategy attestation | Should | ✅ |
-| FR-14 | Cross-chain USDC leg (CCTP v2 Stellar↔Base) | Should | ✅ both legs live-proven |
-| FR-15 | Monte Carlo (VaR/CVaR) decision support | Could | ✅ |
-| FR-16 | VF Wallet extension (passkey smart wallet, wallet-kit module) | Could | ✅ (prod domain pending in manifest) |
-| FR-17 | Fiat on-ramp (Transak) | Could | ✅ (sandbox; prod = KYB) |
-| FR-18 | Session persistence across refresh | Should | ✅ |
+| FR-01 | AI strategy + per-agent scope generation (DeepSeek/Venice/fallback) | Must | âœ… |
+| FR-02 | Council debate review + continuous market monitor | Must | âœ… |
+| FR-03 | Fail-closed eligibility gate with live protocol facts | Must | âœ… |
+| FR-04 | **single-signature grant** (budget + user-chosen expiry) → autonomous runs | Must | âœ… live-proven |
+| FR-05 | Orchestrator: parallel Worker dispatch, per-agent failure isolation | Must | âœ… |
+| FR-06 | Fresh scoped agent account per run (`__check_auth` session keys) | Must | âœ… |
+| FR-07 | Gas-free execution via own fee-bump relay (fail-closed allowlist) | Must | âœ… |
+| FR-08 | Real Blend v2 lending yield + keeper compound/rebalance | Must | âœ… |
+| FR-09 | Lifeboat: ledger-speed emergency de-risk under user mandate | Must | âœ… |
+| FR-10 | Real-time force-graph + per-agent memory | Must | âœ… |
+| FR-11 | Revocation: grant kill switch + agent revoke + relay kill-switch | Must | âœ… |
+| FR-12 | Withdraw / owner exit (full sweep back to owner) | Must | âœ… |
+| FR-13 | On-chain strategy attestation | Should | âœ… |
+| FR-14 | Cross-chain USDC leg (CCTP v2 Stellarâ†”Base) | Should | âœ… both legs live-proven |
+| FR-15 | Monte Carlo (VaR/CVaR) decision support | Could | âœ… |
+| FR-16 | VF Wallet extension (passkey smart wallet, wallet-kit module) | Could | âœ… (prod domain pending in manifest) |
+| FR-17 | Fiat on-ramp (Transak) | Could | âœ… (sandbox; prod = KYB) |
+| FR-18 | Session persistence across refresh | Should | âœ… |
 
 ---
 
@@ -161,7 +161,7 @@ First run: **1 popup** (was 6 before the funding router, 9 before that). Repeat 
 | Contract | Address |
 |----------|---------|
 | Autofarm vault (LIVE deposit target) | `CB5VKYDUIYX3RZWGVLKKNBPG7V7Z5JIHF2QPNQKWKAHVA3IPSLFZJDYU` |
-| Funding router (one-popup grant) | `CBEI5VJKKWLXKQUUUETBAPZSQQLH7I57TSIDTMV4WJMBKIGVF7NSNOFY` |
+| Funding router (single-signature grant) | `CBEI5VJKKWLXKQUUUETBAPZSQQLH7I57TSIDTMV4WJMBKIGVF7NSNOFY` |
 | agent_account wasm v2 (per-run agents) | `7ced45e735e7e084d96d6a04df7cec6e07bc2b203eedb4d3422949a7e9cca717` |
 | Blend v2 pool (yield source) | `CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF` |
 | USDC (Blend testnet, 7dp) | `CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU` |
@@ -175,7 +175,7 @@ First run: **1 popup** (was 6 before the funding router, 9 before that). Repeat 
 |----------|---------|
 | YieldRouter | `0xF80aa8F571E6d24Ea72F051Fc6F9A9C516727B6d` |
 | Circle USDC | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` |
-| Test pools ×3 (honest; Aave adapter is mainnet-ready, fork-proven) | see deployments JSON |
+| Test pools Ã—3 (honest; Aave adapter is mainnet-ready, fork-proven) | see deployments JSON |
 
 ---
 
@@ -183,12 +183,12 @@ First run: **1 popup** (was 6 before the funding router, 9 before that). Repeat 
 
 | Phase | Dates | Deliverable | Status |
 |-------|-------|-------------|--------|
-| 1 — Foundation (EVM era) | 26 Mei – 2 Juni | EVM prototype: registry + depositor + 1Shot relay | ✅ superseded |
-| 2 — Stellar migration | 18–21 Juni | Full Soroban rebuild, EVM decommissioned | ✅ |
-| 3 — Real yield + autonomy | 22 Jun – 4 Jul | Blend integration, autofarm vault + keeper, lifeboat | ✅ |
-| 4 — Cross-chain + wallets | 4–8 Jul | CCTP v2 legs, passkey wallets, YieldRouter, on-ramp | ✅ |
-| 5 — Hardening + one-popup | 9–11 Jul | No-mock testnet hardening, per-network config, funding_router one-popup grant | ✅ |
-| 6 — Publish | 12–15 Jul | Production deploy, relayer VM, demo video, open-source publishing | 🔨 |
+| 1 — Foundation (EVM era) | 26 Mei – 2 Juni | EVM prototype: registry + depositor + **1Shot relay (superseded — replaced by own Stellar fee-bump + optional ZeroDev on Base)** | âœ… superseded |
+| 2 — Stellar migration | 18–21 Juni | Full Soroban rebuild, EVM decommissioned | âœ… |
+| 3 — Real yield + autonomy | 22 Jun – 4 Jul | Blend integration, autofarm vault + keeper, lifeboat | âœ… |
+| 4 — Cross-chain + wallets | 4–8 Jul | CCTP v2 legs, passkey wallets, YieldRouter, on-ramp | âœ… |
+| 5 — Hardening + single-signature grant | 9–11 Jul | No-mock testnet hardening, per-network config, funding_router single-signature grant | âœ… |
+| 6 — Publish | 12–15 Jul | Production deploy, relayer VM, demo video, open-source publishing | ðŸ”¨ |
 
 ---
 

@@ -133,7 +133,7 @@ describe('buildGrantTx', () => {
     expect(agentAddresses).toEqual([AGENT_1, AGENT_2])
   })
 
-  it('builds a single owner-sourced grant op with NO separate auth entries (one-popup: source-account credentials cover the whole tree)', async () => {
+  it('builds a single owner-sourced grant op with NO separate auth entries (single-signature: source-account credentials cover the whole tree)', async () => {
     const server = fakeServer({ latest: 100, retval: agentsRetval([AGENT_1]) })
     const { tx } = await buildGrantTx({
       owner: OWNER,
@@ -144,7 +144,7 @@ describe('buildGrantTx', () => {
     })
     expect(tx.source).toBe(OWNER) // tx source IS the owner → require_auth met by the envelope sig
     expect(tx.operations).toHaveLength(1)
-    // No SorobanAuthorizationEntry to sign separately — the single wallet popup signs the envelope.
+    // No SorobanAuthorizationEntry to sign separately — the single wallet signature signs the envelope.
     expect((tx.operations[0].auth || []).length).toBe(0)
   })
 
@@ -172,7 +172,7 @@ describe('buildGrantTx', () => {
   })
 })
 
-describe('submitGrant — one popup', () => {
+describe('submitGrant — a single signature', () => {
   it('signs exactly ONCE (the envelope) and returns the relayed result + parsed agents', async () => {
     const server = fakeServer({ latest: 1000, retval: agentsRetval([AGENT_1, AGENT_2]) })
     submitViaRelayMock.mockResolvedValue({ hash: 'HREL', status: 'SUCCESS', relayer: 'GR' })
@@ -187,7 +187,7 @@ describe('submitGrant — one popup', () => {
       sign,
     })
 
-    expect(sign).toHaveBeenCalledTimes(1) // ONE popup for N=2 agents
+    expect(sign).toHaveBeenCalledTimes(1) // a single signature for N=2 agents
     expect(submitViaRelayMock).toHaveBeenCalledTimes(1)
     expect(out).toMatchObject({
       hash: 'HREL',

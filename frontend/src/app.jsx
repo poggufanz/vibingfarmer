@@ -1,6 +1,6 @@
 /* ============================================
    VIBING FARMER — App (multi-agent + real Web3)
-   Design state machine wired to real wallet.js / venice.js / orchestrator.js
+   Design state machine wired to real wallet.js / strategist.js / orchestrator.js
    ============================================ */
 import React, { useState as useS, useEffect as useE, useRef as useR, useMemo as useM } from 'react'
 import { lazy, Suspense } from 'react'
@@ -36,7 +36,7 @@ import {
   revokeAgentOnChain,
   subscribeAgentRevoked,
 } from './stellar/index.js'
-import { generateStrategy } from './venice.js'
+import { generateStrategy } from './strategist.js'
 import { toDisplay, toBaseUnits } from './stellar/format.js'
 import { saveResume, loadResume, clearResume } from './strategy/sessionResume.js'
 import { attestStrategyOnChain, formatAttestation } from './attestation.js'
@@ -138,8 +138,8 @@ import {
   proposerVerdict,
   riskComplianceVerdict,
   validatorVerdict,
-  askVeniceJson,
-} from './venice.js'
+  askStrategistJson,
+} from './strategist.js'
 import {
   councilReview,
   buildCouncilInput,
@@ -434,7 +434,7 @@ const App = () => {
 
   const [permPhase, setPermPhase] = useS('idle')
   const [permError, setPermError] = useS(null)
-  // One-popup grant flow (router path). grantPhase drives the GrantPanel button label; the chosen
+  // Single-signature grant flow (router path). grantPhase drives the GrantPanel button label; the chosen
   // budget/duration are stashed in a ref so startExecution reads them synchronously when it builds
   // the orchestrator (state updates are async).
   const [grantPhase, setGrantPhase] = useS('idle')
@@ -1000,7 +1000,7 @@ const App = () => {
             const sys =
               'You are the Curator of a DeFi yield-farming AI Council playbook. Given a notable cycle outcome, propose ONE concise, generalizable rule for the named role that would have prevented the failure or resolved the disagreement. Output JSON ONLY: {"role":"yield|risk|market","text":"..."}.'
             const user = `Role: ${c.role}\nOutcome: ${c.outcome}\nResolved by: ${c.resolvedBy || 'n/a'}\nReason: ${c.reason || 'n/a'}\nRegime: ${c.turbulence || 'n/a'}\nCited rules: ${(c.citedRules || []).join(', ') || 'none'}\n\nPropose one new rule as JSON.`
-            const out = await askVeniceJson({ system: sys, user, devApiKey: devApiKey || null })
+            const out = await askStrategistJson({ system: sys, user, devApiKey: devApiKey || null })
             return out && out.role && out.text ? { role: out.role, text: String(out.text) } : null
           } catch {
             return null
@@ -1757,10 +1757,10 @@ const App = () => {
     setStage('permission')
   }
 
-  /* ----- GRANT (step 04, router one-popup path) ----- */
+  /* ----- GRANT (step 04, router single-signature path) ----- */
   // "Grant & run": stash the user's budget + window, then advance to execute. The SINGLE wallet
-  // popup (router.grant) fires inside orchestrator.dispatch → setupViaRouter; every later worker
-  // funding is a relayed router.pull (0 popups).
+  // wallet signature (router.grant) fires inside orchestrator.dispatch → setupViaRouter; every later worker
+  // funding is a relayed router.pull (0 further signatures).
   const handleGrantAndRun = ({ budget, durationSeconds }) => {
     grantCfgRef.current = { budgetUsdc: budget, durationSeconds }
     setGrantError(null)
@@ -1775,7 +1775,7 @@ const App = () => {
     startExecution()
   }
 
-  // Kill switch — zero the on-chain allowance in one popup (works even if the relayer is down).
+  // Kill switch — zero the on-chain allowance in one signature (works even if the relayer is down).
   const handleRevokeGrant = async () => {
     if (!realAddress) return
     setGrantError(null)
@@ -1884,7 +1884,7 @@ const App = () => {
     }
 
     // Router path: pass the user's chosen grant budget (USDC → base units) + window so the ONE
-    // grant popup sizes the allowance. null on the legacy path → orchestrator defaults (budget =
+    // grant signature sizes the allowance. null on the legacy path → orchestrator defaults (budget =
     // run total, window = SCOPE_TTL_SECONDS).
     const grantCfg = grantCfgRef.current
     const grantBudgetUnits =
@@ -2469,7 +2469,7 @@ const App = () => {
           />
         )
       case 'permission':
-        // Router path: ONE grant popup (budget + window) replaces the per-agent batch. Legacy path
+        // Router path: ONE grant signature (budget + window) replaces the per-agent batch. Legacy path
         // (router unset / VITE_LEGACY_AGENT_SETUP=1) keeps the original PermissionCard flow.
         return USE_FUNDING_ROUTER ? (
           <GrantPanel

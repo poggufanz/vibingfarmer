@@ -389,7 +389,7 @@ const PermissionCard = ({ strategy, eligibility, onGrant, phase, error, onConfir
         <span>then fully autonomous · ed25519 agent auth</span>
       </div>
 
-      <h1 className="h-display">Sign once. Every agent runs without another popup.</h1>
+      <h1 className="h-display">Sign once. Every agent runs without another signature.</h1>
       <p className="lede">
         This single signature grants a scoped, expiring permission. From here, the orchestrator and
         every worker execute their deposit within this scope — no further wallet prompts. Outside

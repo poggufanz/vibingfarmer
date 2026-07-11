@@ -1,5 +1,5 @@
 // frontend/src/stellar/agentCache.js
-// Agent reuse cache — cuts the wallet-popup count on repeat runs. A fresh agent_account deploy
+// Agent reuse cache — cuts the wallet-signature count on repeat runs. A fresh agent_account deploy
 // costs one user-signed tx per worker; but an agent whose constructor-pinned session key we still
 // hold is perfectly reusable while its on-chain scope allows it. We persist, per
 // (network, owner, vault), the deployed agent address AND its session secret, then on the next

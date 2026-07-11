@@ -1,3 +1,8 @@
+// strategist.js — multi-provider AI strategist (role module, not a vendor brand).
+// Providers are pluggable: Venice (optional BYOK/x402) → DeepSeek (BYOK/host proxy) →
+// deterministic equal-split fallback. Naming the file after one vendor implied sponsorship;
+// the product role is "strategist". Venice-specific URLs/constants remain under VENICE_* in config.
+
 import {
   VENICE_BASE_URL,
   VENICE_MODEL,
@@ -236,7 +241,7 @@ Select optimal vault(s) from the catalog above. APY and TVL data are real-time f
       provider.isVenice,
       sig
     )
-    const parsed = validateVeniceResponse(JSON.parse(content), vaultData)
+    const parsed = validateStrategyResponse(JSON.parse(content), vaultData)
     console.log(
       `[ai] Strategy via ${provider.name} · skill: ${skill.source} · vaults: ${vaultDataSource}`
     )
@@ -443,7 +448,8 @@ function buildFallbackForParams(amount, numVaults) {
 
 const VALID_RISK_TIERS = new Set(['low', 'medium', 'high'])
 
-export function validateVeniceResponse(response, vaultData = VAULT_CATALOG) {
+/** Validate AI strategy JSON (allowlist addresses, allocation, risk_tier, APY). */
+export function validateStrategyResponse(response, vaultData = VAULT_CATALOG) {
   const allowedAddresses = new Set(vaultData.map((v) => v.address.toLowerCase()))
 
   if (!response.selected_vaults || !Array.isArray(response.selected_vaults)) {
@@ -582,7 +588,7 @@ const VALID_SIGNALS = new Set(['DEPOSIT', 'HOLD', 'WITHDRAW'])
 /**
  * Pure parser/validator for a council specialist's JSON verdict. Drops cited
  * rules that aren't in the role's allowed set (anti-hallucination, mirrors
- * validateVeniceResponse's address check). Throws on structural problems so the
+ * validateStrategyResponse's address check). Throws on structural problems so the
  * caller can fall back to the deterministic specialist.
  * @param {object} raw parsed JSON from the model
  * @param {'yield'|'risk'|'market'} role
@@ -837,13 +843,14 @@ export async function validatorVerdict({
 }
 
 /**
- * Generic Venice JSON call — system + user prompt in, parsed JSON object out.
- * Used by the ACE Curator to propose new playbook rules. Throws on any
- * failure so callers can fall back / no-op (mirrors the contract `proposeRule` expects).
+ * Generic strategist JSON call — system + user prompt in, parsed JSON object out.
+ * Resolves multi-provider chain (Venice / DeepSeek / host proxy). Used by the ACE
+ * Curator to propose new playbook rules. Throws on any failure so callers can
+ * fall back / no-op (mirrors the contract `proposeRule` expects).
  * @param {{system:string, user:string, devApiKey?:string|null, signal?:AbortSignal}} args
  * @returns {Promise<object>}
  */
-export async function askVeniceJson({ system, user, devApiKey = null, signal }) {
+export async function askStrategistJson({ system, user, devApiKey = null, signal }) {
   const provider = resolveProviderFromSettings({ devApiKey })
   const controller = signal ? null : new AbortController()
   const timeout = controller ? setTimeout(() => controller.abort(), VENICE_TIMEOUT_MS) : null
@@ -865,6 +872,12 @@ export async function askVeniceJson({ system, user, devApiKey = null, signal }) 
     if (timeout) clearTimeout(timeout)
   }
 }
+
+/** @deprecated Use {@link askStrategistJson} — kept as alias so external/old imports do not break. */
+export const askVeniceJson = askStrategistJson
+
+/** @deprecated Use {@link validateStrategyResponse} — kept as alias so external/old imports do not break. */
+export const validateVeniceResponse = validateStrategyResponse
 
 const BASE_MANDATE_TTL_SECONDS = 3600
 // USDC-denominated ERC-4626 pools priced ~1:1 at deposit time; this is a STRATEGY-TIME estimate

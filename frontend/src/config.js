@@ -7,7 +7,7 @@ import { SOROBAN_ACTIVE_VAULT_ADDRESS } from './stellar/config.js'
 export const VENICE_BASE_URL = 'https://api.venice.ai/api/v1'
 // Venice model slug — must be a Venice-hosted ID, NOT a DeepSeek name. 'deepseek-v4-flash' is
 // DeepSeek's own slug and 400s on Venice (Venice's docs default to zai-org-glm-5-1 / GLM-5.1).
-// Used by the Settings Venice-API-key path. See resolveProvider in venice.js.
+// Used by the Settings Venice-API-key path. See resolveProvider in strategist.js.
 export const VENICE_MODEL = 'deepseek-v4-flash'
 export const VENICE_TIMEOUT_MS = 60000
 

@@ -4,12 +4,12 @@
 // with failed ED25519 verification, since __check_auth only accepts the constructor-pinned
 // signer), then fund the agent with the asset. Registry.authorize is OPTIONAL record-keeping
 // (see registryAuthorizeAgent) — the deposit path never reads the Registry, so it is off the
-// critical path by default to save one wallet popup per agent.
+// critical path by default to save one wallet signature per agent.
 //
 // Every function here builds its tx (fetching a FRESH source sequence) immediately before the
 // wallet-sign — never pre-built — and hard-checks the submit status: a PENDING/FAILED setup tx
 // that slid through silently would leave the next build with a stale sequence (txBadSeq) or a
-// later deposit failing opaquely. Wallet signs are timeout-capped so a dismissed/stuck popup
+// later deposit failing opaquely. Wallet signs are timeout-capped so a dismissed/stuck signature request
 // surfaces as an error instead of hanging the run forever.
 import { buildCreateContractTx, buildInvokeTx, submitUserTx } from './client.js'
 import { signTxXdr } from './walletKit.js'
@@ -23,11 +23,11 @@ import { addrScVal, boolScVal, i128ScVal, structScVal, u64ScVal, voidScVal } fro
 
 // Rolling cap window default — mirrors the orchestrator's PERIOD_DURATION.
 const DEFAULT_PERIOD_DURATION = 86400
-// A wallet popup left unanswered must not hang the run: reject after this long.
+// A wallet signature left unanswered must not hang the run: reject after this long.
 export const WALLET_SIGN_TIMEOUT_MS = 120_000
 
-/** Wallet-sign with a hard timeout — a dismissed/stuck popup rejects instead of hanging.
- *  Exported so the one-popup grant flow (stellar/grant.js) signs its single grant tx through the
+/** Wallet-sign with a hard timeout — a dismissed/stuck signature request rejects instead of hanging.
+ *  Exported so the single-signature grant flow (stellar/grant.js) signs its single grant tx through the
  *  exact same timeout-capped wallet path, not a second hand-rolled copy. */
 export async function signWithTimeout(xdr, label) {
   let timer
@@ -39,7 +39,7 @@ export async function signWithTimeout(xdr, label) {
           () =>
             reject(
               new Error(
-                `${label} signature timed out after ${WALLET_SIGN_TIMEOUT_MS / 1000}s — wallet popup dismissed or stuck`
+                `${label} signature timed out after ${WALLET_SIGN_TIMEOUT_MS / 1000}s — wallet signature dismissed or stuck`
               )
             ),
           WALLET_SIGN_TIMEOUT_MS
@@ -105,7 +105,7 @@ export async function deployAgentForSession({
  * reads the Registry (verified: soroban/contracts/agent_account has zero registry calls; the
  * relay doesn't gate on it either). The Registry record only feeds the on-chain event indexer
  * (stellar/events.js force-graph) and the Registry.revoke kill-switch story, so the
- * orchestrator keeps it behind a flag, off the popup-critical path by default.
+ * orchestrator keeps it behind a flag, off the signature-critical path by default.
  * @param {{owner:string, agentAddress:string, vault:string, capPerPeriod:bigint, periodDuration:number, expiry:number, server?:object}} p
  * @returns {Promise<{hash:string, status:string}>}
  */

@@ -1,5 +1,5 @@
 import { WorkerAgent, makeAgentId } from './worker.js'
-import { generateAgentSkills } from './venice.js'
+import { generateAgentSkills } from './strategist.js'
 import { saveSkill } from './skills.js'
 import { deployAgentForSession, fundAgent, registryAuthorizeAgent } from './stellar/agentSetup.js'
 import { submitGrant, runAgentPull, readAllowance } from './stellar/grant.js'
@@ -49,14 +49,14 @@ export class OrchestratorAgent {
     this.devApiKey = devApiKey || null
     this.onEvent = onEvent || (() => {})
     this.sessionId = sessionId || `session-${Date.now()}`
-    // One-popup grant knobs (router path only). Budget defaults to the run total; a larger budget
-    // buys headroom for 0-popup repeat runs. Duration defaults to SCOPE_TTL_SECONDS. The UI's grant
+    // Single-signature grant knobs (router path only). Budget defaults to the run total; a larger budget
+    // buys headroom for signature-free repeat runs. Duration defaults to SCOPE_TTL_SECONDS. The UI's grant
     // step supplies both; null = use defaults.
     this.grantBudgetUnits = grantBudgetUnits != null ? BigInt(grantBudgetUnits) : null
     this.grantDurationSeconds = grantDurationSeconds || null
     // Registry.authorize is record-keeping only (deposits are enforced by the agent account's
     // OWN constructor-pinned scope; nothing on the deposit path reads the Registry). Default
-    // off: it would cost one extra wallet popup per agent. Flip on to also write the on-chain
+    // off: it would cost one extra wallet signature per agent. Flip on to also write the on-chain
     // Registry record (feeds stellar/events.js indexer + the Registry.revoke kill-switch demo).
     this.registryAuthorize = registryAuthorize
   }
@@ -114,7 +114,7 @@ export class OrchestratorAgent {
 
     const totalUnits = vaultPlans.reduce((acc, p) => acc + p.amountUnits, 0n)
 
-    // Pre-flight: block BEFORE any wallet popup if the asset balance can't cover the total.
+    // Pre-flight: block BEFORE any wallet signature if the asset balance can't cover the total.
     const bal = await readTokenBalance(this.user)
     if (bal != null && bal < totalUnits) {
       const msg = `Insufficient VFUSD: have ${(Number(bal) / BASE_UNIT).toFixed(2)}, need ${(Number(totalUnits) / BASE_UNIT).toFixed(2)} for this deposit.`
@@ -142,10 +142,10 @@ export class OrchestratorAgent {
 
     // Agent setup — ONE of two paths, chosen by the config knob USE_FUNDING_ROUTER:
     //   • Router (DEFAULT once funding_router is deployed): ONE owner-signed grant deploys every
-    //     agent + sets the SEP-41 budget behind a single popup; worker funding is a relayed
-    //     router.pull (0 popups). Repeat runs can be 0-popup. — setupViaRouter
+    //     agent + sets the SEP-41 budget behind a single signature; worker funding is a relayed
+    //     router.pull (0 further signatures). Repeat runs can be signature-free. — setupViaRouter
     //   • Legacy (router unset, or VITE_LEGACY_AGENT_SETUP=1): per-agent deploy + fund, each a
-    //     user-signed popup. — setupLegacy
+    //     user signature. — setupLegacy
     // Both isolate a single agent's setup failure (that worker fails, the run continues) and abort
     // only when EVERY agent failed. The pending/error/done step events are emitted HERE so both
     // paths report identically.
@@ -205,12 +205,12 @@ export class OrchestratorAgent {
   }
 
   /**
-   * LEGACY setup: per-agent deploy + fund, each a user-signed popup, STRICTLY SEQUENTIAL across
+   * LEGACY setup: per-agent deploy + fund, each a user signature, STRICTLY SEQUENTIAL across
    * agents — load-bearing: every setup tx is sourced from the SAME user account, so each build must
    * fetch the sequence AFTER the previous tx confirmed (parallel setup = txBadSeq races + a stack of
-   * queued wallet popups). Each helper in agentSetup.js builds its tx immediately before signing
+   * queued wallet signatures). Each helper in agentSetup.js builds its tx immediately before signing
    * (never pre-built) and hard-checks the submit status; wallet signs are 120s-timeout-capped there.
-   * Popup budget per agent: reuse-cache hit = 0 (deploy skipped; fund skipped too when the agent
+   * Signature budget per agent: reuse-cache hit = 0 (deploy skipped; fund skipped too when the agent
    * still holds enough) · fresh agent = 2 (deploy + fund) · +1 when registryAuthorize is on.
    */
   async setupLegacy(workers, expiry) {
@@ -301,13 +301,13 @@ export class OrchestratorAgent {
   }
 
   /**
-   * ROUTER setup (one-popup grant flow). Fresh agents can ONLY be created BY a grant (grant deploys
-   * them), so the only 0-popup path is reusing STILL-VALID cached agents. Sequence:
+   * ROUTER setup (single-signature grant flow). Fresh agents can ONLY be created BY a grant (grant deploys
+   * them), so the only signature-free path is reusing STILL-VALID cached agents. Sequence:
    *   1. Try to fill EVERY worker from cache with the router's allowance still covering the run
-   *      total → 0 popups (tryReuseAllCached).
-   *   2. Otherwise ONE grant popup deploys a fresh agent per worker + (re)sets the budget
+   *      total → 0 further signatures (tryReuseAllCached).
+   *   2. Otherwise a single grant signature deploys a fresh agent per worker + (re)sets the budget
    *      (grantFreshAgents). A grant failure marks every worker failed (no agents deployed).
-   *   3. Fund each worker via a RELAYED router.pull (agent session-key signed; 0 popups), unless it
+   *   3. Fund each worker via a RELAYED router.pull (agent session-key signed; 0 further signatures), unless it
    *      already holds enough of the asset. One worker's pull failure isolates that worker.
    */
   async setupViaRouter(workers, expiry) {
@@ -320,7 +320,7 @@ export class OrchestratorAgent {
       try {
         await this.grantFreshAgents(workers, totalUnits, expiry, nowSec)
       } catch (err) {
-        // A grant covers ALL workers under one signature — its failure (dismissed popup, sim
+        // A grant covers ALL workers under one signature — its failure (dismissed signature request, sim
         // error) leaves NO agents deployed, so the whole run's setup failed. Mark every worker;
         // dispatch's all-failed check then emits the error step + throws, exactly like legacy.
         for (const w of workers) {
@@ -337,7 +337,7 @@ export class OrchestratorAgent {
       try {
         // Fund only the shortfall case (a reused/aborted agent may already hold the asset). The
         // pull is relayed: the agent's session key signs the pull auth entry, the relay fee-bumps
-        // (router.pull is now allowlisted) — 0 popups.
+        // (router.pull is now allowlisted) — 0 further signatures.
         const agentBal = await readTokenBalance(w.agentAddress)
         if (agentBal == null || agentBal < w.amount) {
           const res = await runAgentPull({
@@ -369,11 +369,11 @@ export class OrchestratorAgent {
   }
 
   /**
-   * 0-popup fast path: reuse a still-valid cached agent for EVERY worker. Two load-bearing gates:
+   * signature-free fast path: reuse a still-valid cached agent for EVERY worker. Two load-bearing gates:
    * (a) the owner→router SEP-41 allowance must still cover this run's total (budget left to pull),
    * and (b) each worker must find a cached agent whose ON-CHAIN cap still has headroom for its
    * deposit. The common case — an agent whose cap == its already-spent first deposit — fails (b)
-   * and rolls to a fresh grant popup. All-or-nothing: partial cache reuse still needs a grant (a
+   * and rolls to a fresh grant signature. All-or-nothing: partial cache reuse still needs a grant (a
    * grant is the only way to make the missing agents), so we commit the reuse only once EVERY
    * worker has one. Returns true iff all workers were assigned a cached agent.
    */
@@ -410,7 +410,7 @@ export class OrchestratorAgent {
 
   /**
    * THE ONE POPUP: a single owner-signed grant that deploys one fresh agent per worker and (re)sets
-   * the SEP-41 budget. Budget = run total (or a larger user-chosen budget for 0-popup repeat
+   * the SEP-41 budget. Budget = run total (or a larger user-chosen budget for signature-free repeat
    * headroom), clamped up so it can never be below the run total. Caps per agent bound each deposit.
    * The returned Vec<Address> maps by index to the workers; each is cached for reuse.
    */

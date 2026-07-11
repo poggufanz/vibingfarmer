@@ -1,12 +1,12 @@
 // frontend/src/orchestrator.router.test.js
-// Router (one-popup grant) path of the orchestrator. The LEGACY per-agent deploy/fund path is
+// Router (single-signature grant) path of the orchestrator. The LEGACY per-agent deploy/fund path is
 // covered by orchestrator.test.js (whose config mock omits USE_FUNDING_ROUTER → falsy → legacy);
 // here USE_FUNDING_ROUTER is mocked true so dispatch takes setupViaRouter.
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 const callOrder = []
 
-// grant.js — the one-popup primitives. submitGrant returns one fresh agent address per AgentInit.
+// grant.js — the single-signature primitives. submitGrant returns one fresh agent address per AgentInit.
 const submitGrantMock = vi.fn()
 const runAgentPullMock = vi.fn()
 const readAllowanceMock = vi.fn()
@@ -53,7 +53,7 @@ vi.mock('./stellar/config.js', () => ({
   SOROBAN_ACTIVE_VAULT_ADDRESS: 'CACTIVEVAULT',
   USE_FUNDING_ROUTER: true,
 }))
-vi.mock('./venice.js', () => ({ generateAgentSkills: vi.fn(async () => ({})) }))
+vi.mock('./strategist.js', () => ({ generateAgentSkills: vi.fn(async () => ({})) }))
 vi.mock('./skills.js', () => ({ saveSkill: vi.fn() }))
 
 const workerInstances = []
@@ -123,12 +123,12 @@ beforeEach(() => {
   readTokenBalanceMock.mockImplementation(async (addr) => (addr === 'GUSER' ? null : 0n))
 })
 
-describe('orchestrator router path — first run (one popup)', () => {
-  it('issues exactly ONE grant popup for N=3 agents, then a relayed pull per worker', async () => {
+describe('orchestrator router path — first run (a single signature)', () => {
+  it('issues exactly a single grant signature for N=3 agents, then a relayed pull per worker', async () => {
     const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 's1', onEvent: () => {} })
     const res = await orch.dispatch(strategy, 100)
 
-    // ONE grant for all three agents — the single wallet popup.
+    // ONE grant for all three agents — the single wallet signature.
     expect(submitGrantMock).toHaveBeenCalledTimes(1)
     expect(submitGrantMock.mock.calls[0][0].agentInits).toHaveLength(3)
     // Budget defaults to the run total; caps are the per-agent amounts.
@@ -136,7 +136,7 @@ describe('orchestrator router path — first run (one popup)', () => {
     const caps = submitGrantMock.mock.calls[0][0].agentInits.map((a) => a.cap)
     expect(caps).toEqual([40_0000000n, 40_0000000n, 20_0000000n])
 
-    // Funding is a relayed pull per worker — NOT a legacy deploy/fund popup.
+    // Funding is a relayed pull per worker — NOT a legacy deploy/fund signature.
     expect(runAgentPullMock).toHaveBeenCalledTimes(3)
     expect(deployAgentForSessionMock).not.toHaveBeenCalled()
     expect(fundAgentMock).not.toHaveBeenCalled()
@@ -166,7 +166,7 @@ describe('orchestrator router path — first run (one popup)', () => {
     })
   })
 
-  it('honors a user-chosen budget larger than the run total (0-popup repeat headroom)', async () => {
+  it('honors a user-chosen budget larger than the run total (signature-free repeat headroom)', async () => {
     const orch = new OrchestratorAgent({
       user: 'GUSER',
       sessionId: 's4',
@@ -178,7 +178,7 @@ describe('orchestrator router path — first run (one popup)', () => {
   })
 })
 
-describe('orchestrator router path — repeat run (zero popups)', () => {
+describe('orchestrator router path — repeat run (zero further signatures)', () => {
   it('skips the grant entirely when allowance covers the run AND every worker reuses a cached agent', async () => {
     readAllowanceMock.mockResolvedValue({ amount: 500_0000000n, liveUntilLedger: null })
     let n = 0
@@ -194,9 +194,9 @@ describe('orchestrator router path — repeat run (zero popups)', () => {
     })
     const res = await orch.dispatch(strategy, 100)
 
-    // ZERO popups: no grant.
+    // zero further signatures: no grant.
     expect(submitGrantMock).not.toHaveBeenCalled()
-    // Funding still flows via relayed pulls (agents drained after the prior run) — 0 popups.
+    // Funding still flows via relayed pulls (agents drained after the prior run) — 0 further signatures.
     expect(runAgentPullMock).toHaveBeenCalledTimes(3)
     expect(workerInstances.map((w) => w.agentAddress)).toEqual(['CCACHED1', 'CCACHED2', 'CCACHED3'])
     const deployed = events.filter((x) => x.e === 'AgentDeployed')
@@ -204,15 +204,15 @@ describe('orchestrator router path — repeat run (zero popups)', () => {
     expect(res.completed).toBe(3)
   })
 
-  it('falls back to the grant popup when allowance is insufficient even if agents are cached', async () => {
+  it('falls back to the grant signature when allowance is insufficient even if agents are cached', async () => {
     readAllowanceMock.mockResolvedValue({ amount: 1n, liveUntilLedger: null }) // below run total
     takeReusableAgentMock.mockResolvedValue({ agentAddress: 'CCACHED', secret: 'S' })
     const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 's6', onEvent: () => {} })
     await orch.dispatch(strategy, 100)
-    expect(submitGrantMock).toHaveBeenCalledTimes(1) // grant popup required
+    expect(submitGrantMock).toHaveBeenCalledTimes(1) // grant signature required
   })
 
-  it('falls back to the grant popup when even one worker has no reusable cached agent', async () => {
+  it('falls back to the grant signature when even one worker has no reusable cached agent', async () => {
     readAllowanceMock.mockResolvedValue({ amount: 500_0000000n, liveUntilLedger: null })
     // Two workers reuse, the third cannot → all-or-nothing: a grant is required (grant is the only
     // way to create the missing agent).
