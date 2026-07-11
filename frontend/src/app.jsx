@@ -396,7 +396,7 @@ const App = () => {
   const [devApiKey, setDevApiKey] = useS('')
 
   // strategy sub-state
-  const [strategyPhase, setStrategyPhase] = useS('input') // input | thinking | ready | council
+  const [strategyPhase, setStrategyPhase] = useS('input') // input | thinking | ready
   const [thinkingPhase, setThinkingPhase] = useS(0)
   const [thinkTimes, setThinkTimes] = useS([]) // real measured per-step durations (seconds)
   const [slowConfirm, setSlowConfirm] = useS(false) // AI exceeded timeout → ask keep waiting / fallback
@@ -1213,7 +1213,8 @@ const App = () => {
       setCouncil(undefined)
       return
     }
-    if (strategyPhase === 'council' || !!debateResult) return
+    // Debate UI runs in-place on the ready card — skip while debate is active/done.
+    if (debateRunning || !!debateResult) return
     let cancelled = false
     setCouncil(null)
     const ctrl = new AbortController()
@@ -1253,7 +1254,7 @@ const App = () => {
       cancelled = true
       ctrl.abort()
     }
-  }, [strategy, strategyPhase, amount, risk, councilRetry])
+  }, [strategy, strategyPhase, amount, risk, councilRetry, debateRunning, debateResult])
 
   const handleEmergencyWithdraw = async (alert) => {
     const pos = agentData.positions[alert.vaultAddress]
@@ -1516,47 +1517,57 @@ const App = () => {
 
   const handleRunCouncil = async () => {
     if (!strategy?.agents?.length || debateRunning) return
+    // Stay on strategyPhase 'ready' so the stage key does not remount StrategyCard
+    // (key used to flip ready→council and felt like a full page refresh).
     setDebateRunning(true)
     setDebateResult(null)
-    setStrategyPhase('council')
     const ctrl = new AbortController()
-    const state = buildStrategyState({
-      amountUsdc: Number(amount) || 0,
-      riskLevel: risk,
-      numVaults: strategy.agents.length,
-      vaultData: VAULT_CATALOG,
-      marketContext: marketLive,
-      positions: agentData.positions,
-      gas: latestGasRef.current,
-    })
-    const sim = runSimulation(allocationsFromStrategy(strategy), state, {
-      runs: 200,
-      horizonDays: 30,
-      seed: 1,
-      context: {
-        turbulence: strategy.mdpState?.turbulence || state.market.turbulence,
-        apyTrendPct: 0,
-        gasGwei: latestGasRef.current?.gwei || null,
-      },
-    })
-    const settings = await loadSettings()
-    const input = buildDebateInput(strategy, sim, state)
-    const result = await councilDebate(input, {
-      proposer: proposerVerdict,
-      riskCompliance: riskComplianceVerdict,
-      validator: validatorVerdict,
-      devApiKey: devApiKey || null,
-      signal: ctrl.signal,
-      maxIterations: settings.maxIterations || 5,
-      convergenceThreshold: 0.15,
-    })
-    setDebateResult(result)
-    setDebateRunning(false)
-    setCouncil(result)
-    addLog({
-      event: 'OrchestratorPlanned',
-      meta: `Debate Council · ${result.verdict} · ${result.iterations} iters · converged: ${result.converged}`,
-    })
+    try {
+      const state = buildStrategyState({
+        amountUsdc: Number(amount) || 0,
+        riskLevel: risk,
+        numVaults: strategy.agents.length,
+        vaultData: VAULT_CATALOG,
+        marketContext: marketLive,
+        positions: agentData.positions,
+        gas: latestGasRef.current,
+      })
+      const sim = runSimulation(allocationsFromStrategy(strategy), state, {
+        runs: 200,
+        horizonDays: 30,
+        seed: 1,
+        context: {
+          turbulence: strategy.mdpState?.turbulence || state.market.turbulence,
+          apyTrendPct: 0,
+          gasGwei: latestGasRef.current?.gwei || null,
+        },
+      })
+      const settings = await loadSettings()
+      const input = buildDebateInput(strategy, sim, state)
+      const result = await councilDebate(input, {
+        proposer: proposerVerdict,
+        riskCompliance: riskComplianceVerdict,
+        validator: validatorVerdict,
+        devApiKey: devApiKey || null,
+        signal: ctrl.signal,
+        maxIterations: settings.maxIterations || 5,
+        convergenceThreshold: 0.15,
+      })
+      setDebateResult(result)
+      setCouncil(result)
+      addLog({
+        event: 'OrchestratorPlanned',
+        meta: `Debate Council · ${result.verdict} · ${result.iterations} iters · converged: ${result.converged}`,
+      })
+    } catch (e) {
+      console.warn('[app] Debate council failed:', e)
+      addLog({
+        event: 'OrchestratorPlanned',
+        meta: `Debate Council failed · ${e?.message || 'unknown error'}`,
+      })
+    } finally {
+      setDebateRunning(false)
+    }
   }
 
   const runCouncilMonitorCheck = async (settings, apyByVault = {}) => {
@@ -2423,8 +2434,6 @@ const App = () => {
           )
         if (strategyPhase === 'thinking')
           return <ThinkingCard phase={thinkingPhase} times={thinkTimes} />
-        const hasDebateResult = !!debateResult
-        const showDebate = strategyPhase === 'council' || hasDebateResult
         return (
           <StrategyCard
             strategy={strategy}
@@ -2435,10 +2444,10 @@ const App = () => {
             attestation={strategyAttestation}
             attesting={attesting}
             simulation={simulation}
-            council={showDebate && debateResult ? debateResult : council}
+            council={debateResult || council}
             onCouncilRetry={handleRunCouncil}
             onRunCouncil={handleRunCouncil}
-            debateRunning={showDebate && debateRunning}
+            debateRunning={debateRunning}
             showRunCouncil={!debateResult}
           />
         )
@@ -2651,7 +2660,12 @@ const App = () => {
             element={
               <>
                 <StepRail stage={stage} furthest={furthest} onStepClick={goBack} lang={language} />
-                <div className="stage" key={`${stage}-${strategyPhase}`}>
+                {/* Key only major strategy sub-views so "Run risk review" (stays on ready)
+                    does not remount the whole card like a page refresh. */}
+                <div
+                  className="stage"
+                  key={`${stage}-${strategyPhase === 'thinking' || strategyPhase === 'input' ? strategyPhase : 'plan'}`}
+                >
                   {renderStage()}
                 </div>
               </>
