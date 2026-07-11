@@ -113,8 +113,7 @@ export default function KeysSection({ session }) {
       setError('')
       setCreating(true)
       const exp = EXPIRY_OPTIONS.find((o) => o.id === expiry)
-      const expiresAt =
-        exp?.seconds != null ? Math.floor(Date.now() / 1000) + exp.seconds : null
+      const expiresAt = exp?.seconds != null ? Math.floor(Date.now() / 1000) + exp.seconds : null
       const out = await createKey(session.jwt, {
         scopes,
         env,
@@ -185,8 +184,8 @@ export default function KeysSection({ session }) {
 
       <h1 className="h-display">API keys</h1>
       <p className="lede">
-        Authenticate with a Stellar wallet, create scoped secret keys, and call strategy, risk
-        scan, and gasless deposit relay. Server-side secrets stay on VF — you hold one{' '}
+        Authenticate with a Stellar wallet, create scoped secret keys, and call strategy, risk scan,
+        and gasless deposit relay. Server-side secrets stay on VF — you hold one{' '}
         <span className="mono">vf_</span> key. Secret values are shown <b>once</b> at creation.
       </p>
 
@@ -500,7 +499,12 @@ export default function KeysSection({ session }) {
               >
                 {creating ? 'Creating…' : 'Create key'}
               </button>
-              <button className="btn btn-ghost" type="button" onClick={closeCreate} disabled={creating}>
+              <button
+                className="btn btn-ghost"
+                type="button"
+                onClick={closeCreate}
+                disabled={creating}
+              >
                 Cancel
               </button>
             </div>

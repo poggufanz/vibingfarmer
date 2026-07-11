@@ -41,11 +41,15 @@ export default function OverviewSection({ session }) {
         <div className="flex" style={{ gap: 48, marginTop: 28 }}>
           <div>
             <span className="figure-md mono tnum">{stats.activeKeys}</span>
-            <p className="annot faint" style={{ marginTop: 4 }}>active keys</p>
+            <p className="annot faint" style={{ marginTop: 4 }}>
+              active keys
+            </p>
           </div>
           <div>
             <span className="figure-md mono tnum">{stats.today}</span>
-            <p className="annot faint" style={{ marginTop: 4 }}>requests today</p>
+            <p className="annot faint" style={{ marginTop: 4 }}>
+              requests today
+            </p>
           </div>
         </div>
       )}

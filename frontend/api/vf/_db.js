@@ -56,7 +56,9 @@ export function memoryStore() {
           if (!own.has(keyId) || day < sinceDay) continue
           out.push({ key_id: keyId, day, endpoint: ep.join('|'), count })
         }
-        return out.sort((a, b) => (a.day === b.day ? (a.endpoint < b.endpoint ? -1 : 1) : a.day < b.day ? 1 : -1))
+        return out.sort((a, b) =>
+          a.day === b.day ? (a.endpoint < b.endpoint ? -1 : 1) : a.day < b.day ? 1 : -1
+        )
       },
     },
   }

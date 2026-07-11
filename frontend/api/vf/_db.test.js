@@ -64,8 +64,30 @@ describe('storeFrom', () => {
 describe('usage.listForOwner', () => {
   it('returns only own keys usage since day, sorted day desc', async () => {
     const s = memoryStore()
-    await s.keys.insert({ id: 'k1', key_hash: 'h1', key_hint: 'a…', owner: 'GA', scopes: '["market"]', rate_limit: 60, expires_at: null, enabled: 1, created_at: 1, last_used_at: null })
-    await s.keys.insert({ id: 'k2', key_hash: 'h2', key_hint: 'b…', owner: 'GB', scopes: '["market"]', rate_limit: 60, expires_at: null, enabled: 1, created_at: 1, last_used_at: null })
+    await s.keys.insert({
+      id: 'k1',
+      key_hash: 'h1',
+      key_hint: 'a…',
+      owner: 'GA',
+      scopes: '["market"]',
+      rate_limit: 60,
+      expires_at: null,
+      enabled: 1,
+      created_at: 1,
+      last_used_at: null,
+    })
+    await s.keys.insert({
+      id: 'k2',
+      key_hash: 'h2',
+      key_hint: 'b…',
+      owner: 'GB',
+      scopes: '["market"]',
+      rate_limit: 60,
+      expires_at: null,
+      enabled: 1,
+      created_at: 1,
+      last_used_at: null,
+    })
     await s.usage.log('k1', '2026-07-10', 'GET /prices')
     await s.usage.log('k1', '2026-07-10', 'GET /prices')
     await s.usage.log('k1', '2026-07-11', 'POST /scan')

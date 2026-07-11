@@ -33,7 +33,9 @@ curl -s https://api.vibing.farmer/api/vf/prices \\
   -H "Authorization: Bearer vf_test_…"`}
       </pre>
 
-      <h2 className="h-sub" style={{ marginTop: 32 }}>Errors</h2>
+      <h2 className="h-sub" style={{ marginTop: 32 }}>
+        Errors
+      </h2>
       <div className="perm-doc" style={{ marginTop: 10 }}>
         {ERRORS.map((e) => (
           <div className="perm-doc-row" key={e.status}>
@@ -46,22 +48,33 @@ curl -s https://api.vibing.farmer/api/vf/prices \\
         ))}
       </div>
 
-      <h2 className="h-sub" style={{ marginTop: 32 }}>Endpoints</h2>
+      <h2 className="h-sub" style={{ marginTop: 32 }}>
+        Endpoints
+      </h2>
       {ENDPOINTS.map((e) => (
-        <div key={e.path} style={{ marginTop: 24, paddingTop: 18, borderTop: '1px solid var(--border)' }}>
+        <div
+          key={e.path}
+          style={{ marginTop: 24, paddingTop: 18, borderTop: '1px solid var(--border)' }}
+        >
           <p className="mono" style={{ fontSize: 13 }}>
             <span style={{ color: 'var(--accent)' }}>{e.method}</span> {e.path}
-            <span className="annot" style={{ marginLeft: 10 }}>scope: {e.scope}</span>
+            <span className="annot" style={{ marginLeft: 10 }}>
+              scope: {e.scope}
+            </span>
           </p>
           <p style={{ marginTop: 6, fontSize: 13, color: 'var(--text-muted)' }}>{e.desc}</p>
           {e.req && (
             <>
               <span className="annot faint">request</span>
-              <pre className="mono" style={codeBlock}>{e.req}</pre>
+              <pre className="mono" style={codeBlock}>
+                {e.req}
+              </pre>
             </>
           )}
           <span className="annot faint">response</span>
-          <pre className="mono" style={codeBlock}>{e.resp}</pre>
+          <pre className="mono" style={codeBlock}>
+            {e.resp}
+          </pre>
         </div>
       ))}
 

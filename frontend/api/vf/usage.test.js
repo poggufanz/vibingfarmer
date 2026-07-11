@@ -53,7 +53,10 @@ describe('GET /usage', () => {
     await store.usage.log('km', today, 'GET /prices')
     await store.usage.log('ko', today, 'GET /prices')
     const res = makeRes()
-    await usage({ method: 'GET', headers: { authorization: `Bearer ${jwt}` }, url: '/api/vf/usage' }, res)
+    await usage(
+      { method: 'GET', headers: { authorization: `Bearer ${jwt}` }, url: '/api/vf/usage' },
+      res
+    )
     expect(res.statusCode).toBe(200)
     const body = JSON.parse(res.body)
     expect(body.usage).toEqual([{ key_id: 'km', day: today, endpoint: 'GET /prices', count: 1 }])

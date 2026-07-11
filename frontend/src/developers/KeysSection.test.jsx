@@ -6,9 +6,21 @@ import { createKey, listKeys, revokeKey } from './portalClient.js'
 
 vi.mock('./portalClient.js', () => ({
   listKeys: vi.fn(async () => [
-    { id: 'vfk_1', key_hint: 'vf_test_ab12…', scopes: '["market"]', enabled: 1, created_at: 1_700_000_000, last_used_at: null, rate_limit: 60 },
+    {
+      id: 'vfk_1',
+      key_hint: 'vf_test_ab12…',
+      scopes: '["market"]',
+      enabled: 1,
+      created_at: 1_700_000_000,
+      last_used_at: null,
+      rate_limit: 60,
+    },
   ]),
-  createKey: vi.fn(async () => ({ id: 'vfk_2', key: 'vf_test_PLAINTEXT_ONCE', hint: 'vf_test_PL…' })),
+  createKey: vi.fn(async () => ({
+    id: 'vfk_2',
+    key: 'vf_test_PLAINTEXT_ONCE',
+    hint: 'vf_test_PL…',
+  })),
   revokeKey: vi.fn(async () => true),
 }))
 

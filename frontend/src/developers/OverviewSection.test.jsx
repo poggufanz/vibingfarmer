@@ -11,7 +11,12 @@ vi.mock('./portalClient.js', () => ({
   ]),
   getUsage: vi.fn(async () => ({
     usage: [
-      { key_id: 'a', day: new Date().toISOString().slice(0, 10), endpoint: 'GET /prices', count: 7 },
+      {
+        key_id: 'a',
+        day: new Date().toISOString().slice(0, 10),
+        endpoint: 'GET /prices',
+        count: 7,
+      },
       { key_id: 'a', day: '2020-01-01', endpoint: 'GET /prices', count: 99 },
     ],
     cap: 5000,
