@@ -44,3 +44,7 @@ export async function revokeKey(jwt, id) {
     })
   ).revoked
 }
+
+export async function getUsage(jwt) {
+  return jfetch(`${base}/usage`, { headers: authed(jwt) })
+}
