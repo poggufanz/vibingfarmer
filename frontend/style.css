@@ -1,5 +1,5 @@
-/* ============================================
-   VIBING FARMER — v2 stylesheet
+﻿/* ============================================
+   VIBING FARMER â€” v2 stylesheet
    Direction: editorial financial-document
    Principles:
    - No gradients used as decoration
@@ -9,7 +9,7 @@
    - Borders + spacing do the work, not effects
    ============================================ */
 
-/* ---------- Tokens (Acid Yield — default) ---------- */
+/* ---------- Tokens (Acid Yield â€” default) ---------- */
 :root {
   --bg-base: #0e0f0c;
   --bg-canvas: #131410;
@@ -40,7 +40,7 @@
   --radius-lg: 14px;
   --radius-xl: 18px;
 
-  --font-display: "Geist", "Söhne", system-ui, sans-serif;
+  --font-display: "Geist", "SÃ¶hne", system-ui, sans-serif;
   --font-body: "Geist", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", "Geist Mono", ui-monospace, monospace;
   --font-script: "Newsreader", "Times New Roman", serif;
@@ -49,7 +49,7 @@
   --num-feat: "tnum" 1, "lnum" 1, "ss01" 1;
 }
 
-/* Palette: Mono Slate (most restrained) — full token contract */
+/* Palette: Mono Slate (most restrained) â€” full token contract */
 [data-palette="mono-slate"] {
   --bg-base: #0c0d10;
   --bg-canvas: #101114;
@@ -72,7 +72,7 @@
   --ok: #7ad4a0;
 }
 
-/* Palette: Liquid Mint — full token contract */
+/* Palette: Liquid Mint â€” full token contract */
 [data-palette="liquid-mint"] {
   --bg-base: #0a1310;
   --bg-canvas: #0d1814;
@@ -129,7 +129,7 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; }
 
-/* Global focus ring — outline:none only when paired with :focus-visible */
+/* Global focus ring â€” outline:none only when paired with :focus-visible */
 :focus-visible {
   outline: 2px solid var(--border-accent);
   outline-offset: 2px;
@@ -163,7 +163,7 @@ input, select, textarea {
   color: inherit;
 }
 
-/* Tabular nums helper class — apply where data is shown */
+/* Tabular nums helper class â€” apply where data is shown */
 .tnum {
   font-variant-numeric: tabular-nums;
   font-feature-settings: var(--num-feat);
@@ -395,7 +395,7 @@ input, select, textarea {
   margin-right: 6px;
   vertical-align: 1px;
 }
-/* Live pulse halo — signals "connected / running now" */
+/* Live pulse halo â€” signals "connected / running now" */
 .brand-net .dot::after,
 .live-dot::after {
   content: "";
@@ -491,7 +491,7 @@ input, select, textarea {
 .step-rail-item.clickable:hover { color: var(--text); }
 .step-rail-item.clickable:hover .num { color: var(--accent); }
 
-/* thinking-step live spinner — essential progress feedback (keep running even
+/* thinking-step live spinner â€” essential progress feedback (keep running even
    under prefers-reduced-motion; DESIGN v3.2 live-status / think-spinner exception) */
 @keyframes think-spin-rot {
   from { transform: rotate(0deg); }
@@ -639,8 +639,24 @@ input, select, textarea {
   letter-spacing: 0;
 }
 
-/* ---------- Buttons ---------- */
+/* ---------- Buttons ----------
+   Animated fill gradient (industry pattern: oversized linear-gradient +
+   animate background-position - CodyHouse / Kevin Powell). Liquid color
+   inside the button - no outer glow/halo.
+   Refs: codyhouse.co/nuggets/animated-button-gradients
+   ---------- */
+
+/* Drift a 300-400% multi-stop gradient across the button face */
+@keyframes btn-lava {
+  0%   { background-position: 0% 40%; }
+  25%  { background-position: 60% 0%; }
+  50%  { background-position: 100% 60%; }
+  75%  { background-position: 40% 100%; }
+  100% { background-position: 0% 40%; }
+}
+
 .btn {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -651,48 +667,106 @@ input, select, textarea {
   font-size: 13.5px;
   font-weight: 500;
   letter-spacing: -0.01em;
-  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease, transform 0.12s cubic-bezier(0.2, 0.8, 0.2, 1);
   white-space: nowrap;
   border: 1px solid transparent;
+  overflow: hidden;
+  isolation: isolate;
   cursor: pointer;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-.btn:active, .sb-item:active, .icon-btn:active {
+.btn > *,
+.btn svg {
+  position: relative;
+  z-index: 1;
+}
+
+.btn:active:not(:disabled),
+.sb-item:active,
+.icon-btn:active {
   transform: scale(0.98) translateY(0.5px);
 }
 
-.btn-primary {
-  background: var(--accent);
+/* ΓÇöΓÇö Primary: multi-stop accent liquid gradient, always drifting ΓÇöΓÇö */
+.btn-primary,
+.btn-gradient {
   color: var(--accent-fg);
+  border-color: transparent;
+  /* 5+ stops so motion reads as fluid color, not a hard stripe */
+  background-image: linear-gradient(
+    125deg,
+    var(--accent) 0%,
+    color-mix(in oklch, var(--accent) 55%, white) 18%,
+    color-mix(in oklch, var(--accent) 50%, var(--ok)) 38%,
+    color-mix(in oklch, var(--ok) 65%, var(--accent)) 55%,
+    color-mix(in oklch, var(--accent) 70%, #f0ff8a) 72%,
+    color-mix(in oklch, var(--accent) 80%, white) 88%,
+    var(--accent) 100%
+  );
+  background-size: 320% 320%;
+  background-position: 0% 40%;
+  animation: btn-lava 7s ease infinite;
 }
 
-.btn-primary:hover:not(:disabled) {
-  background: color-mix(in oklch, var(--accent) 92%, white);
+.btn-primary:hover:not(:disabled),
+.btn-primary:focus-visible:not(:disabled),
+.btn-gradient:hover:not(:disabled),
+.btn-gradient:focus-visible:not(:disabled) {
+  /* faster drift on interaction ΓÇö still inside the fill */
+  animation-duration: 3.2s;
 }
 
-.btn-primary:disabled {
+.btn-primary:disabled,
+.btn-gradient:disabled {
   opacity: 0.32;
   cursor: not-allowed;
+  animation: none;
+  background-image: none;
+  background-color: var(--accent);
 }
 
+/* ΓÇöΓÇö Ghost: border only; liquid wash on hover ΓÇöΓÇö */
 .btn-ghost {
-  background: transparent;
   color: var(--text);
   border-color: var(--border-strong);
+  background: transparent;
+  background-size: 320% 320%;
+  background-position: 0% 40%;
 }
 
-.btn-ghost:hover {
-  background: var(--bg-elev);
-  border-color: var(--border-strong);
+.btn-ghost:hover:not(:disabled),
+.btn-ghost:focus-visible:not(:disabled) {
+  color: var(--text);
+  border-color: color-mix(in oklch, var(--accent) 32%, var(--border-strong));
+  background-image: linear-gradient(
+    125deg,
+    var(--bg-elev) 0%,
+    color-mix(in oklch, var(--accent) 18%, var(--bg-elev)) 22%,
+    color-mix(in oklch, var(--ok) 14%, var(--bg-elev)) 45%,
+    color-mix(in oklch, var(--accent) 12%, var(--bg-card)) 68%,
+    var(--bg-elev) 100%
+  );
+  animation: btn-lava 5.5s ease infinite;
 }
 
+.btn-ghost:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  animation: none;
+}
+
+/* ΓÇöΓÇö Text: no fill ΓÇöΓÇö */
 .btn-text {
   background: transparent;
   color: var(--text-muted);
   padding: 8px 12px;
+  overflow: visible;
 }
 
-.btn-text:hover {
+.btn-text:hover:not(:disabled) {
   color: var(--text);
 }
 
@@ -702,6 +776,17 @@ input, select, textarea {
 }
 
 .btn svg { stroke-width: 1.6; }
+
+@media (prefers-reduced-motion: reduce) {
+  .btn-primary,
+  .btn-gradient,
+  .btn-ghost:hover:not(:disabled),
+  .btn-ghost:focus-visible:not(:disabled) {
+    animation: none;
+    background-position: 40% 50%;
+  }
+}
+
 
 /* Optional risk-review strip on strategy card */
 .risk-review-card {
@@ -972,7 +1057,7 @@ input, select, textarea {
   letter-spacing: -0.01em;
 }
 
-/* ---------- AI Thinking — replace shimmer with progress dots ---------- */
+/* ---------- AI Thinking â€” replace shimmer with progress dots ---------- */
 .thinking {
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -1785,7 +1870,7 @@ input, select, textarea {
 .faint { color: var(--text-faint); }
 .mono { font-family: var(--font-mono); letter-spacing: -0.01em; }
 
-/* No decorative animation classes — entry only */
+/* No decorative animation classes â€” entry only */
 .enter {
   animation: enter 0.32s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
@@ -1803,14 +1888,14 @@ input, select, textarea {
   .memory-row.running .memory-row-marker { animation: none; }
   .live-dot::after,
   .brand-net .dot::after { animation: none !important; display: none; }
-  /* .think-spin intentionally kept — in-flight work indicator, not decoration */
+  /* .think-spin intentionally kept â€” in-flight work indicator, not decoration */
   .sig-yield .sig-head-ring { animation: none !important; opacity: 0 !important; }
   .sig-yield .sig-path { filter: none; animation-duration: 0.01ms; }
   .skill-drawer { transition: none; }
 }
 
 /* ============================================
-   Vibing Farmer — multi-agent additions
+   Vibing Farmer â€” multi-agent additions
    ============================================ */
 
 /* ---------- Strategy card (multi-agent) ---------- */
@@ -2825,7 +2910,7 @@ input, select, textarea {
   line-height: 1.3;
 }
 
-/* ---------- Success card — agent rows ---------- */
+/* ---------- Success card â€” agent rows ---------- */
 .success-agents {
   margin-top: 28px;
   border-top: 1px solid var(--border);
@@ -2876,7 +2961,7 @@ input, select, textarea {
 
 
 /* ============================================
-   History — Etherscan-style explorer
+   History â€” Etherscan-style explorer
    ============================================ */
 .history-page { flex: 1; overflow-y: auto; padding: 24px 28px; }
 [data-density="compact"] .history-page { padding: 16px 18px; }
@@ -2923,7 +3008,7 @@ input, select, textarea {
 
 
 /* ============================================
-   Keeper Panel (vf-autofarm) — autonomous compound/rebalance activity
+   Keeper Panel (vf-autofarm) â€” autonomous compound/rebalance activity
    ============================================ */
 .keeper-panel { display: flex; flex-direction: column; gap: 4px; }
 
@@ -2956,7 +3041,7 @@ input, select, textarea {
 
 
 /* ============================================
-   Global scrollbar hide — maintain scroll functionality
+   Global scrollbar hide â€” maintain scroll functionality
    ============================================ */
 * {
   scrollbar-width: none;
@@ -3002,7 +3087,7 @@ input[type="number"]::-webkit-inner-spin-button {
   font-size: 10px;
 }
 
-/* pp change — lime (up) / coral (down) / muted (flat) */
+/* pp change â€” lime (up) / coral (down) / muted (flat) */
 .apy-change {
   display: block;
   font-size: 10px;
@@ -3140,11 +3225,11 @@ details.yv-collapse[open] > summary .yv-caret {
 }
 
 /* ============================================
-   Life + Signature — motion layer
+   Life + Signature â€” motion layer
    Compositor-only (transform/opacity). Reduced-motion safe.
    ============================================ */
 
-/* Sparkline draws itself left→right, then the head dot pops */
+/* Sparkline draws itself leftâ†’right, then the head dot pops */
 .spark-line {
   stroke-dasharray: 1;
   stroke-dashoffset: 1;
@@ -3192,7 +3277,7 @@ details.yv-collapse[open] > summary .yv-caret {
 }
 
 /* Signature yield-line: a growth curve that draws on mount.
-   "Set once, vibe forever" — the line keeps climbing. */
+   "Set once, vibe forever" â€” the line keeps climbing. */
 .sig-yield { display: block; width: 100%; height: auto; overflow: visible; }
 .sig-yield .sig-grid line { stroke: var(--border); stroke-width: 1; }
 .sig-yield .sig-path {
@@ -3233,7 +3318,7 @@ details.yv-collapse[open] > summary .yv-caret {
   100% { opacity: 0;   transform: scale(2.4); }
 }
 
-/* Tactile CTA — physical push on press */
+/* Tactile CTA â€” physical push on press */
 .btn-lg:active { transform: translateY(1px) scale(0.99); }
 
 @media (prefers-reduced-motion: reduce) {
@@ -3249,7 +3334,7 @@ details.yv-collapse[open] > summary .yv-caret {
 }
 
 /* ============================================
-   Autonomous monitor loop — live status panel
+   Autonomous monitor loop â€” live status panel
    The loop sleeps minutes between cycles; these styles keep it visibly
    alive: sonar pulse, 1s countdown, heartbeat fill, phase rail sweep.
    ============================================ */
@@ -3298,7 +3383,7 @@ details.yv-collapse[open] > summary .yv-caret {
   flex-shrink: 0;
 }
 
-/* Sonar pulse — continuous ring while running, faster while a cycle executes */
+/* Sonar pulse â€” continuous ring while running, faster while a cycle executes */
 .loop-pulse {
   position: relative;
   width: 9px;
@@ -3327,7 +3412,7 @@ details.yv-collapse[open] > summary .yv-caret {
   100% { opacity: 0;   transform: scale(3.2); }
 }
 
-/* Vitals — the second-by-second countdown is the "it's alive" signal */
+/* Vitals â€” the second-by-second countdown is the "it's alive" signal */
 .loop-vitals {
   display: flex;
   justify-content: space-between;
@@ -3365,7 +3450,7 @@ details.yv-collapse[open] > summary .yv-caret {
   50%      { opacity: 0.4; }
 }
 
-/* Phase rail — observe → gate → simulate → council → execute → reflect */
+/* Phase rail â€” observe â†’ gate â†’ simulate â†’ council â†’ execute â†’ reflect */
 .loop-rail {
   display: flex;
   align-items: center;
@@ -3497,7 +3582,7 @@ details.yv-collapse[open] > summary .yv-caret {
   .loop-heartbeat-fill { transition: none; }
 }
 
-/* ── Simulation engine panel (/strategy review · alternate futures) ── */
+/* â”€â”€ Simulation engine panel (/strategy review Â· alternate futures) â”€â”€ */
 .sim-panel {
   margin-top: 16px;
   border: 1px solid var(--border);
@@ -3537,7 +3622,7 @@ details.yv-collapse[open] > summary .yv-caret {
 .sim-band-rule { flex: 1; height: 1px; background: var(--border); }
 .sim-scenario-foot { margin-top: 6px; font-size: 9px; color: var(--text-faint); }
 
-/* ── AI Council / debate — verdict-first progressive disclosure ─────────── */
+/* â”€â”€ AI Council / debate â€” verdict-first progressive disclosure â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .council-panel,
 .debate-panel {
   margin-top: 16px;
@@ -3672,7 +3757,7 @@ details.yv-collapse[open] > summary .yv-caret {
   padding-bottom: 0;
   border-bottom: none;
 }
-/* Soft section label — inset from panel edge, body face */
+/* Soft section label â€” inset from panel edge, body face */
 .debate-round-label {
   display: inline-flex;
   align-items: baseline;
@@ -3773,7 +3858,7 @@ details.yv-collapse[open] > summary .yv-caret {
   }
 }
 
-/* ── Decision log panel (ACC verdicts) ──────────────────────────── */
+/* â”€â”€ Decision log panel (ACC verdicts) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .decision-log { display: flex; flex-direction: column; gap: 0.75rem; }
 
 .decision-agents { display: flex; gap: 0.5rem; }
@@ -3819,7 +3904,7 @@ details.yv-collapse[open] > summary .yv-caret {
 .decision-empty { font-size: 0.8rem; opacity: 0.6; padding: 0.6rem; }
 
 /* ============================================
-   Mobile app shell — collapse 3-column grid
+   Mobile app shell â€” collapse 3-column grid
    Desktop is [sidebar | main | rail]. On narrow screens the fixed
    58px sidebar + 360px rail crush the main column and the rail
    overflows off-screen. Below 860px we drop to a single column,
@@ -3838,7 +3923,7 @@ details.yv-collapse[open] > summary .yv-caret {
     gap: 0;
   }
 
-  /* Explicit placement — grid auto-flow would otherwise put the
+  /* Explicit placement â€” grid auto-flow would otherwise put the
      source-order-first sidebar into row 1. */
   .main { grid-row: 1; grid-column: 1; min-height: 0; }
 
@@ -3848,7 +3933,7 @@ details.yv-collapse[open] > summary .yv-caret {
   .app.rail-collapsed .rail,
   .app.sb-extended .rail { display: none; }
 
-  /* Sidebar → bottom navigation bar */
+  /* Sidebar â†’ bottom navigation bar */
   .sidebar,
   .app.sb-extended .sidebar,
   [data-density="compact"] .sidebar,
@@ -3882,7 +3967,7 @@ details.yv-collapse[open] > summary .yv-caret {
   }
   .sidebar .sb-label { display: none; }
 
-  /* Tighten the top bar — drop the relayer/gas meta on narrow screens */
+  /* Tighten the top bar â€” drop the relayer/gas meta on narrow screens */
   .topbar { padding: 12px 16px; }
   .topbar-meta { display: none; }
 
@@ -3923,10 +4008,10 @@ details.yv-collapse[open] > summary .yv-caret {
 }
 .yv-advanced__sum::-webkit-details-marker { display: none; }
 .yv-advanced__sum::before {
-  content: '▸ ';
+  content: 'â–¸ ';
   color: var(--text-faint);
 }
-.yv-advanced[open] > .yv-advanced__sum::before { content: '▾ '; }
+.yv-advanced[open] > .yv-advanced__sum::before { content: 'â–¾ '; }
 .yv-advanced__sum:hover { color: var(--text); }
 .yv-advanced__body {
   padding: 0 14px 14px;
