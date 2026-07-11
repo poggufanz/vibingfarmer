@@ -62,6 +62,32 @@ describe('postFarm', () => {
     expect(body.allocations[0].amount).toBe('33333333')
   })
 
+  // Regression lock: independent per-pool rounding overshot the bridged total by up to ~1 unit
+  // per pool, and the relayer deposits each amount verbatim against a fixed balance — so the last
+  // pool's deposit was stranded. Largest-remainder rounding makes the base-unit amounts sum
+  // EXACTLY to round(total * 1e6).
+  test('multi-pool display floats sum to exactly the bridged base-unit total (largest-remainder)', async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ jobId: 'job-1' }) }))
+    const third = 100 / 3 // three-way split of 100 USDC — 33.333333333333336 each
+    await postFarm({
+      burnTxHash: 'abcd',
+      sourceDomain: 27,
+      serializedApproval: 'approval-blob',
+      allocations: [
+        { pool: '0xAAAA', amount: third, minShares: 1n },
+        { pool: '0xBBBB', amount: third, minShares: 1n },
+        { pool: '0xCCCC', amount: third, minShares: 1n },
+      ],
+      baseUrl: 'https://example.test/api/vf-cross',
+      deps: { fetchImpl: fetchMock },
+    })
+    const [, opts] = fetchMock.mock.calls[0]
+    const amounts = JSON.parse(opts.body).allocations.map((a) => BigInt(a.amount))
+    expect(amounts.reduce((s, x) => s + x, 0n)).toBe(100_000_000n) // exactly the bridged total
+    // one pool absorbs the leftover unit, the rest floor — never an overshoot
+    expect(amounts.map(String).sort()).toEqual(['33333333', '33333333', '33333334'])
+  })
+
   test('passes a bigint amount through as-is — it is already base units, never re-scaled', async () => {
     const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ jobId: 'job-1' }) }))
     await postFarm({

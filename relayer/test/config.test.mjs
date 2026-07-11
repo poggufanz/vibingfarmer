@@ -12,6 +12,7 @@ function buildValidEnv() {
     RELAYER_BASE_PRIVKEY: '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d',
     ZERODEV_PROJECT_ID: 'proj-123',
     YIELD_ROUTER_ADDRESS: '0x000000000000000000000000000000000000aa',
+    IRIS_URL: 'https://iris-api-sandbox.circle.com',
   };
 }
 
@@ -35,5 +36,11 @@ describe('loadConfig', () => {
     const env = buildValidEnv();
     env.ZERODEV_PROJECT_ID = 'FILL_ME';
     expect(() => loadConfig(env)).toThrow(/ZERODEV_PROJECT_ID/);
+  });
+
+  it('throws when IRIS_URL is unset (no silent sandbox default)', () => {
+    const env = buildValidEnv();
+    delete env.IRIS_URL;
+    expect(() => loadConfig(env)).toThrow(/IRIS_URL/);
   });
 });

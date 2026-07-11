@@ -61,3 +61,8 @@ TRANSAK_API_KEY=your_transak_api_key
 TRANSAK_ACCESS_TOKEN=your_transak_access_token
 TRANSAK_ENVIRONMENT=STAGING
 TRANSAK_REFERRER_DOMAIN=vibing-farmer.pages.dev
+
+# Cross-chain relayer proxy (production). Tunnel hostname of the relayer VM + the shared secret
+# the relayer requires on x-vf-relayer-key (must equal the VM's RELAYER_PROXY_KEY).
+RELAYER_ORIGIN=https://vf-relayer.example.com
+RELAYER_PROXY_KEY=change-me

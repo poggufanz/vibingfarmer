@@ -370,14 +370,10 @@ export async function generateAgentSkills({ agentId, vault, amount, veniceAuth, 
   const fallback = {
     agentId,
     vaultAddress: vault,
+    // Agents are deposit-only (no on-chain swap in the money path), so the fallback grants only a
+    // deposit skill — no vestigial mock swap. The AI-generated path may still emit a swap skill for
+    // the user to review, but nothing dereferences skills.swap at runtime.
     skills: {
-      swap: {
-        required: false,
-        maxSlippage: 0.5,
-        dexPreference: 'mock',
-        maxRetries: 2,
-        timeoutSeconds: 30,
-      },
       deposit: { maxAmount: toBaseUnits(amount).toString(), vaultAddress: vault, expiresAt },
     },
     generatedBy: 'fallback',

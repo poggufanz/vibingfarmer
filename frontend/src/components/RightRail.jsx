@@ -38,7 +38,17 @@ const WalletPanel = ({ phase, address }) => {
         boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
       }}>
         <div>
-          <div className="wallet-addr" style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 500, color: 'var(--text)' }}>{shortAddr(address)}</div>
+          <div className="wallet-addr" style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: 13,
+            fontWeight: 600,
+            background: 'linear-gradient(90deg, var(--accent) 0%, var(--ok) 100%)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            letterSpacing: '-0.01em',
+          }}>
+            {shortAddr(address)}
+          </div>
           <div className={`wallet-type ${isSmart ? 'active' : ''}`} style={{
             fontFamily: 'var(--font-mono)', fontSize: '10.5px', marginTop: 2,
             color: isSmart ? 'var(--accent)' : 'var(--text-faint)',

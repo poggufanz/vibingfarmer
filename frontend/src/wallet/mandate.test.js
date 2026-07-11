@@ -162,13 +162,15 @@ describe('createMandate', () => {
       }).allowed
     ).toBe(false)
 
-    // 4) over cap on pool B -> REJECTED (NEW)
+    // 4) over the aggregate cap (= max of the two pool caps, 100_000_000n) -> REJECTED (NEW).
+    // Per-pool caps are not expressible in @zerodev CallPolicy (see policyEngine module note); the
+    // session policy enforces one per-call cap = the largest allocation.
     expect(
       evaluateCall({
         permissions,
         to: YIELD_ROUTER_ADDRESS,
         functionName: 'deposit',
-        args: [POOL_B, 20_000_001n, 1n],
+        args: [POOL_B, 100_000_001n, 1n],
         expiry,
       }).allowed
     ).toBe(false)

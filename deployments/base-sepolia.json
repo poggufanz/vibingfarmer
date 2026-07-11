@@ -9,6 +9,15 @@
       "0xadD3c1A75c7Cef2516b51750959BD829a4AD4761"
     ],
     "deployedAt": "2026-07-05T16:03:04.376Z",
-    "poolsNote": "3 MockERC4626(USDC) pools, all whitelisted. Pool1 from SP1; pool2 (0x5E84…, deploy 0x0008401c, setPool 0x79fcc665) + pool3 (0xadD3…, deploy 0x73a54ba6, setPool 0x4d0889b9) added 2026-07-06 for SP3 3-pool catalog."
+    "poolsNote": "3 honest ERC-4626 vaults (MockERC4626) wrapping REAL Circle/CCTP USDC (0x036CbD…). They do 1:1 custody of the real bridged USDC — no fabricated yield. They are NOT external lending markets: the SP0 gate (2026-07-09, relayer/scripts/check-aave-usdc.mjs) proved no real yield protocol on Base Sepolia accepts CCTP USDC (Aave lists a faucet token; Morpho/Moonwell/Compound are Base-mainnet only). Real external yield is demonstrated on the Stellar leg via Blend. Pool1 from SP1; pool2 (0x5E84…) + pool3 (0xadD3…) added 2026-07-06 for the SP3 3-pool catalog."
+  },
+  "mainnetAdapter": {
+    "note": "AaveV3Adapter4626 is the MAINNET-READY replacement for the testnet demo vaults (unit-tested + proven against real Aave via Base-mainnet fork test — base-contracts/test/AaveV3Adapter.fork.t.sol). NOT deployed on testnet (Aave Base Sepolia lists faucet USDC, not Circle USDC). At the mainnet flip: deploy 3× AaveV3Adapter4626 against the targets below and swap YieldRouter.allowedPools to the adapter addresses (script pattern: base-contracts/script/DeployAdapters.s.sol).",
+    "chain": "base-mainnet",
+    "chainId": 8453,
+    "aavePool": "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5",
+    "usdc": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "aToken": "0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB",
+    "deployed": false
   }
 }

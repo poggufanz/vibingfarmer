@@ -122,6 +122,7 @@ import { buildStrategyState, enforceActionSpace, scoreReward } from './strategy/
 import { runSimulation, allocationsFromStrategy } from './strategy/simulation.js'
 import { evaluateGates } from './strategy/gates.js'
 import { createMonitorLoop } from './strategy/monitorLoop.js'
+import { primeVaultFacts } from './strategy/vaultFactsLive.js'
 import { councilVerdict } from './strategy/council.js'
 import { reflect } from './strategy/reflector.js'
 import { increment as playbookIncrement, weight as playbookWeight } from './strategy/playbook.js'
@@ -324,7 +325,7 @@ const mapVeniceToStrategy = (veniceResult, amount, risk) => {
       riskTier: v.risk_tier, // AI metadata → UI
       yieldSource: v.yield_source_type, // AI metadata → UI
       vault: {
-        name: v.name || live.name || cat.name || `MockVault ${i + 1}`,
+        name: v.name || live.name || cat.name || `Pool ${i + 1}`,
         protocol: v.protocol || live.protocol || cat.protocol || PROTOCOLS[i] || 'aave-v3',
         apy: String(v.expected_apy ?? live.apy ?? cat.apy ?? 4.8),
         drawdown: live.drawdown || cat.drawdown || '-1.8',
@@ -495,6 +496,12 @@ const App = () => {
   useE(() => {
     const id = setInterval(() => setClock((c) => c + 1), 30000)
     return () => clearInterval(id)
+  }, [])
+
+  // Prime live DeFiLlama numerics for the eligibility gate (fire-and-forget; the gate falls back
+  // to the curated snapshot until it lands). Cached 6h in localStorage — ≤1 fetch burst/session.
+  useE(() => {
+    primeVaultFacts()
   }, [])
 
   // execution: map agentId -> { status, steps, hashes, memory, metrics }
@@ -2736,24 +2743,19 @@ const App = () => {
                           <LoopStatusPanel
                             running={loopRef.current?.isRunning() || false}
                             summary={getJournalSummary()}
-                            rows={getCycles().slice(0, 8)}
+                            rows={getCycles().slice(0, 40)}
                             phase={loopPhase}
                             nextTickAt={loopRef.current?.getNextTickAt() || null}
                             heartbeatMs={
                               loopRef.current?.getHeartbeatMs() ||
                               (agentSettings.apyInterval || 10) * 60 * 1000
                             }
+                            decisionsRows={getDecisions().slice(0, 30)}
+                            decisionsSummary={getDecisionSummary()}
                           />
                         )
                       }
-                      decisionPanel={
-                        agentEnabled && (
-                          <DecisionLogPanel
-                            rows={getDecisions().slice(0, 8)}
-                            summary={getDecisionSummary()}
-                          />
-                        )
-                      }
+                      decisionPanel={null}
                       keeperPanel={
                         <>
                           <KeeperPanel

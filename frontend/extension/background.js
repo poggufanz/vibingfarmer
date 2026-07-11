@@ -23,16 +23,12 @@ export async function handleMessage(msg, env, reply) {
   }
 
   if (msg.type === 'CEREMONY_RESULT') {
-    const result = {
-      type: 'SIGN_RESULT',
-      action: msg.action,
-      ok: msg.ok,
-      hash: msg.hash,
-      status: msg.status,
-      sharesBefore: msg.sharesBefore,
-      sharesAfter: msg.sharesAfter,
-      error: msg.error,
-    }
+    // Spread every field the ceremony sent (deposit/approve's hash/status/shares..., plus the
+    // generic wallet-kit actions' address/signedTxXdr/signedAuthEntry — see ceremony.js) instead
+    // of a fixed allow-list, so new ceremony actions never need a background.js change just to
+    // have their result fields reach the caller.
+    const { type: _msgType, tabId: _msgTabId, ...rest } = msg
+    const result = { type: 'SIGN_RESULT', ...rest }
     if (storageSession?.set)
       await storageSession.set({ vf_last_result: { ...result, at: Date.now() } })
     // Forward to an open popup (best-effort; the popup may have been dismissed by Face-ID).
