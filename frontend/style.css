@@ -690,7 +690,7 @@ input, select, textarea {
   transform: scale(0.98) translateY(0.5px);
 }
 
-/* ΓÇöΓÇö Primary: multi-stop accent liquid gradient, always drifting ΓÇöΓÇö */
+/* -- Primary: multi-stop accent liquid gradient, always drifting -- */
 .btn-primary,
 .btn-gradient {
   color: var(--accent-fg);
@@ -4008,10 +4008,14 @@ details.yv-collapse[open] > summary .yv-caret {
 }
 .yv-advanced__sum::-webkit-details-marker { display: none; }
 .yv-advanced__sum::before {
-  content: 'â–¸ ';
+  /* U+25B8 BLACK RIGHT-POINTING SMALL TRIANGLE + space (escape-safe) */
+  content: '\25B8\00a0';
   color: var(--text-faint);
 }
-.yv-advanced[open] > .yv-advanced__sum::before { content: 'â–¾ '; }
+.yv-advanced[open] > .yv-advanced__sum::before {
+  /* U+25BE BLACK DOWN-POINTING SMALL TRIANGLE + space */
+  content: '\25BE\00a0';
+}
 .yv-advanced__sum:hover { color: var(--text); }
 .yv-advanced__body {
   padding: 0 14px 14px;
