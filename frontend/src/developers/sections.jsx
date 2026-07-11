@@ -1,7 +1,5 @@
 // sections.jsx — placeholders replaced task-by-task (deleted in Task 9)
-export function OverviewSection() {
-  return <p className="lede">overview</p>
-}
+export { default as OverviewSection } from './OverviewSection.jsx'
 export { default as KeysSection } from './KeysSection.jsx'
 export function UsageSection() {
   return null
