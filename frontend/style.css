@@ -639,20 +639,8 @@ input, select, textarea {
   letter-spacing: 0;
 }
 
-/* ---------- Buttons ----------
-   Soft monochromatic lime wash (no clashing mint/ok). Idle = quiet static
-   gradient; gentle drift only on hover/focus (less dizzy than always-on).
-   Pattern: oversized linear-gradient + background-position (CodyHouse).
-   ---------- */
-
-/* Small travel only — big 0%→100% sweeps feel nauseating */
-@keyframes btn-lava {
-  0%, 100% { background-position: 0% 50%; }
-  50%      { background-position: 100% 50%; }
-}
-
+/* ---------- Buttons ---------- */
 .btn {
-  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -663,93 +651,48 @@ input, select, textarea {
   font-size: 13.5px;
   font-weight: 500;
   letter-spacing: -0.01em;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease, transform 0.12s cubic-bezier(0.2, 0.8, 0.2, 1);
   white-space: nowrap;
   border: 1px solid transparent;
-  overflow: hidden;
-  isolation: isolate;
   cursor: pointer;
-  transition:
-    color 0.15s ease,
-    border-color 0.15s ease,
-    background-position 0.45s ease,
-    transform 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-.btn > *,
-.btn svg {
-  position: relative;
-  z-index: 1;
-}
-
-.btn:active:not(:disabled),
-.sb-item:active,
-.icon-btn:active {
+.btn:active, .sb-item:active, .icon-btn:active {
   transform: scale(0.98) translateY(0.5px);
 }
 
-/* —— Primary: one family only (accent ↔ cream), no second hue —— */
-.btn-primary,
-.btn-gradient {
+.btn-primary {
+  background: var(--accent);
   color: var(--accent-fg);
-  border-color: transparent;
-  /* Mix only with white/black of accent — stays harmonious */
-  background-image: linear-gradient(
-    120deg,
-    var(--accent) 0%,
-    color-mix(in srgb, var(--accent) 88%, white) 35%,
-    color-mix(in srgb, var(--accent) 78%, white) 55%,
-    var(--accent) 100%
-  );
-  background-size: 180% 100%;
-  background-position: 0% 50%;
-  animation: none;
 }
 
-.btn-primary:hover:not(:disabled),
-.btn-primary:focus-visible:not(:disabled),
-.btn-gradient:hover:not(:disabled),
-.btn-gradient:focus-visible:not(:disabled) {
-  /* Slow ease drift — only while interacting */
-  animation: btn-lava 10s ease-in-out infinite;
+.btn-primary:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--accent) 92%, white);
 }
 
-.btn-primary:disabled,
-.btn-gradient:disabled {
+.btn-primary:disabled {
   opacity: 0.32;
   cursor: not-allowed;
-  animation: none;
-  background-image: none;
-  background-color: var(--accent);
 }
 
-/* —— Ghost: quiet; soft accent wash on hover, no motion —— */
 .btn-ghost {
+  background: transparent;
   color: var(--text);
   border-color: var(--border-strong);
-  background: transparent;
 }
 
-.btn-ghost:hover:not(:disabled),
-.btn-ghost:focus-visible:not(:disabled) {
-  color: var(--text);
-  border-color: color-mix(in srgb, var(--accent) 28%, var(--border-strong));
-  background: color-mix(in srgb, var(--accent) 8%, var(--bg-elev));
+.btn-ghost:hover {
+  background: var(--bg-elev);
+  border-color: var(--border-strong);
 }
 
-.btn-ghost:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-/* —— Text —— */
 .btn-text {
   background: transparent;
   color: var(--text-muted);
   padding: 8px 12px;
-  overflow: visible;
 }
 
-.btn-text:hover:not(:disabled) {
+.btn-text:hover {
   color: var(--text);
 }
 
@@ -759,16 +702,6 @@ input, select, textarea {
 }
 
 .btn svg { stroke-width: 1.6; }
-
-@media (prefers-reduced-motion: reduce) {
-  .btn-primary:hover:not(:disabled),
-  .btn-primary:focus-visible:not(:disabled),
-  .btn-gradient:hover:not(:disabled),
-  .btn-gradient:focus-visible:not(:disabled) {
-    animation: none;
-    background-position: 50% 50%;
-  }
-}
 
 /* Optional risk-review strip on strategy card */
 .risk-review-card {

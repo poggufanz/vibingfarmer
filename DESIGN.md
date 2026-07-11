@@ -367,7 +367,7 @@ Numeric, subtle, underline-on-active. Bukan circle-with-line wizard.
 
 Sizes: default `padding: 11px 18px`, large `padding: 14px 22px`. Radius `--radius-md` (8px). Font weight 500.
 
-**Fill (v3.2 base):** soft monochromatic lime wash (accent ↔ cream only — no clashing second hue). Idle static; gentle `background-position` drift **on hover only** (~10s, small travel). Ghost: quiet tint on hover, no motion. Text: color only. Honor `prefers-reduced-motion`.
+Sizes: default `padding: 11px 18px`, large `padding: 14px 22px`. Radius `--radius-md` (8px). Font weight 500. **Tidak ada drop shadow.** Hover state cuma mengubah background brightness.
 
 ### Amount input (signature pattern)
 
