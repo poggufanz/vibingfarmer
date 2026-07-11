@@ -367,7 +367,7 @@ Numeric, subtle, underline-on-active. Bukan circle-with-line wizard.
 
 Sizes: default `padding: 11px 18px`, large `padding: 14px 22px`. Radius `--radius-md` (8px). Font weight 500.
 
-**Fill (v3.2 base):** lava-lamp style **inside** the button — soft color blobs drift via layered radial gradients (no outer glow / lamp halo). Primary: accent lava always on (faster on hover). Ghost: quiet border, muted lava on hover only. Text: color only. Honor `prefers-reduced-motion` (static blob positions).
+**Fill (v3.2 base):** liquid multi-stop gradient **inside** the button — oversized `linear-gradient` (`background-size: ~320%`) with animated `background-position` (CodyHouse / Kevin Powell pattern). No outer glow. Primary: always drifts (faster on hover). Ghost: liquid wash on hover only. Text: color only. Honor `prefers-reduced-motion` (static position).
 
 ### Amount input (signature pattern)
 
