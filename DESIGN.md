@@ -1,8 +1,9 @@
 # VIBING FARMER — Design System
 
-> **Versi:** 3.1 (Vibing Farmer · multi-agent · Stellar) · **Tanggal:** 2026-07-11  
+> **Versi:** 3.2 (Vibing Farmer · multi-agent · Stellar) · **Tanggal:** 2026-07-11  
 > **Tujuan:** Base design system buat VIBING FARMER + handoff ke implementasi React / Soroban.  
-> **Aesthetic:** *Editorial financial-document* — restrained, data-forward, trust-first.
+> **Aesthetic:** *Editorial financial-document* — restrained, data-forward, trust-first.  
+> **Changelog 3.2:** Surface tiers (A shell / B marketing / C extension); accent budget max 2; Newsreader wordmark truth; Stellar vocabulary (no EVM fossils); page-type catalog; live-status motion family; semantic left-border exception; default locale EN.
 
 ---
 
@@ -19,25 +20,43 @@ Setiap keputusan visual diuji terhadap lima prinsip ini. Kalau melanggar salah s
 | Prinsip | Penjelasan | Cek |
 |---|---|---|
 | **Restraint over decoration** | Border + spacing + typography melakukan kerja. Gradient, glow, blur, dan animasi dekoratif dihindari. | Setiap efek harus jawab "ini ngomong apa ke user?" Kalau gak bisa jawab, hapus. |
-| **One accent, one job** | Satu warna brand (acid lime), dipake hanya untuk current action / current state. Bukan untuk dekorasi. | Kalo accent dipake di lebih dari 1 elemen per screen, pertanyakan. |
+| **One accent, one job** | Satu warna brand (acid lime), dipake hanya untuk current action / current state. Bukan untuk dekorasi. | **Accent budget hard:** max **2** moments per Tier-A screen (primary CTA **or** active step + optional one data emphasis). Never gradient-fill text, dual-hue accent→ok, or glow box-shadow. |
 | **Data is the design** | Angka besar dengan tabular figures jadi visual anchor tiap screen. Bukan ilustrasi, bukan ikon raksasa. | Tiap screen harus punya 1 angka signature (amount, APY, progress, deposited). |
-| **Motion has meaning** | Animasi cuma untuk state transition + real-time feedback. Tidak ada shimmer/pulse dekoratif. | "Apa cause-and-effect dari animasi ini?" Kalo gak bisa jawab, drop. |
-| **Trust through transparency** | Permission scope, gas cost, tx hash, semua ditampilkan literal. Bukan disembunyiin atau di-abstrak. | Document-grade output — user bisa pause dan baca tiap field. |
+| **Motion has meaning** | Animasi cuma untuk state transition + real-time feedback. Tidak ada shimmer/pulse dekoratif. | Approved live-status family only (below). Always honor `prefers-reduced-motion`. |
+| **Trust through transparency** | Permission scope, fee-bump / gas, tx hash, semua ditampilkan literal (Stellar G…/C…, not EVM abstractions). | Document-grade output — user bisa pause dan baca tiap field. |
+
+### Surface tiers (v3.2)
+
+| Tier | Surfaces | Decoration allowed |
+|---|---|---|
+| **A — App shell** | Strategy flow, grant, dashboard, rail, modals, settings forms | Full restraint: no decorative gradient/blur/glow |
+| **B — Marketing / explorer** | Landing, Ecosystem, Explorer, Replay, public NavBar | 1 ambient grid **or** 1 radial vignette ≤3% opacity; nav glass `backdrop-blur ≤16px` with scrim ≥70% opaque; max 1 accent CTA glow on hover only |
+| **C — Extension** | VF Wallet popup | Same as A (trust UI) |
+
+### Live-status motion family (approved)
+
+| Name | Max concurrent | Allowed when |
+|---|---|---|
+| `status-blink` | 1 per component | Single active op |
+| `live-dot` | N static/status dots | Connected/running network (one **pulsing** dot per visual group max) |
+| `progress-shimmer` | 1 track | Known in-flight work only |
+| **Banned** | page-wide pulse glow, full-card skeleton sweep, accent box-shadow ring expand | — |
 
 ### Anti-patterns yang HARUS dihindari
 
 - ❌ Emoji sebagai icon (🦊, ⚡, 🔒, dll) — pakai SVG / text mark
-- ❌ Radial / linear gradient sebagai background atmosphere
+- ❌ Radial / linear gradient sebagai background atmosphere (**Tier A/C**; Tier B: 1 vignette max)
 - ❌ Italic colored `<em>` accent di dalam headline
-- ❌ Pulse / shimmer animation tanpa cause-effect
+- ❌ Pulse / shimmer animation di luar live-status family
 - ❌ Conic-gradient avatar / placeholder identicon
 - ❌ Stepper wizard chrome (numbered circles connected by lines)
-- ❌ Backdrop-blur "glass" effects
-- ❌ Letter-spaced uppercase monospace di semua label
-- ❌ Chip-with-dot status badge ditumpuk banyak (1 dot max)
-- ❌ Generic 2×2 stat grid sebagai info display
-- ❌ Card dengan left-border accent color
+- ❌ Backdrop-blur "glass" effects (**Tier A/C**; Tier B nav only)
+- ❌ Letter-spaced uppercase monospace di **semua** label (Tier A: never; Tier B kicker only, max 24 chars)
+- ❌ Chip-with-dot status badge: max **one pulsing** dot per visual group; static dots OK
+- ❌ Generic 2×2 vanity stat grid — prefer max 3-metric strip or document rows
+- ❌ Card left-border **brand accent** — semantic status edge (`ok`/`warn`/`danger`, 1–2px) allowed on list rows only
 - ❌ Font overused (Inter, Roboto, Fraunces, Arial)
+- ❌ EVM fossils in product UI: EOA, ERC-7710/7715, 0x-as-primary, maxGas ETH, Sourcify as Stellar verification
 
 ---
 
@@ -75,29 +94,36 @@ Color disimpan sebagai CSS custom properties di `:root`. Empat palette tersedia 
 --bg-elev:   #22231d;
 --text:      #ecebe1;   /* warm cream */
 --text-muted:#95958a;
---text-faint:#56564f;
+--text-faint:#7a7a70;   /* ≥3:1 on base for 11px+ annotations (was #56564f) */
 --accent:    #cfff3d;   /* acid lime — sparingly */
 --accent-fg: #0e0f0c;
 ```
 
 ### Palette: Mono Slate
 
-Most restrained — zero chroma di accent. Cocok kalau brand butuh feel lebih korporat.
+Most restrained — zero chroma di accent. Cocok kalau brand butuh feel lebih korporat. **Must define full token contract** (border, text-muted/faint, status colors).
 
 ```css
 --bg-base:   #0c0d10;
 --bg-card:   #161820;
 --text:      #e8ebf3;
+--text-muted:#9aa0b0;
+--text-faint:#7a8090;
 --accent:    #e6edff;   /* near-white, treats accent as "highlight" not "color" */
+--border: rgba(255,255,255,0.07);
+--border-strong: rgba(255,255,255,0.14);
 ```
 
 ### Palette: Liquid Mint
 
-Teal undertone. Cocok kalau ingin DeFi/crypto vibe tanpa lime.
+Teal undertone. Cocok kalau ingin DeFi/crypto vibe tanpa lime. **Full token contract required.**
 
 ```css
 --bg-base:   #0a1310;
 --bg-card:   #11201b;
+--text:      #e4f0eb;
+--text-muted:#8aa89c;
+--text-faint:#6a8a7c;
 --accent:    #5ee6c5;
 ```
 
@@ -109,6 +135,8 @@ Light editorial mode — paper-feel untuk presentation atau printing.
 --bg-base:   #f4f1e9;
 --bg-card:   #e3dfd2;
 --text:      #1a180f;
+--text-muted:#6a675c;
+--text-faint:#6a675c;   /* was #95928a — raise to ≥3:1 */
 --accent:    #1a180f;   /* accent = darkest text in light mode */
 ```
 
@@ -127,7 +155,7 @@ Light editorial mode — paper-feel untuk presentation atau printing.
    - Active state marker (exec-row marker, permission status dot, focus-within border)
    - Primary CTA button background
    - Critical inline emphasis (max amount value, signed authorization status)
-3. Kalau accent muncul di lebih dari 3 tempat dalam satu screen — pertimbangkan re-evaluasi
+3. **Accent budget (hard):** max **2** accent moments per Tier-A screen (v3.2). Marketing Tier-B: max 1 primary CTA.
 
 ---
 
@@ -141,7 +169,7 @@ Tiga font, masing-masing punya peran spesifik. **Tidak ada italic colored accent
 --font-display: "Geist", "Söhne", system-ui, sans-serif;
 --font-body:    "Geist", system-ui, sans-serif;
 --font-mono:    "JetBrains Mono", "Geist Mono", ui-monospace, monospace;
---font-script:  "Instrument Serif", "Times New Roman", serif;
+--font-script:  "Newsreader", "Times New Roman", serif; /* brand wordmark only */
 ```
 
 ### Pemakaian
@@ -150,7 +178,7 @@ Tiga font, masing-masing punya peran spesifik. **Tidak ada italic colored accent
 |---|---|---|
 | **Geist** | Headlines, body, button labels, vault names | Numbers (pakai mono), brand "vibing" wordmark |
 | **JetBrains Mono** | Numbers, addresses, tx hashes, code, technical labels (eyebrow), permission scope keys | Headlines, body prose |
-| **Instrument Serif (italic)** | **Satu** kegunaan: brand wordmark "vibing" di topbar dan tweaks panel | Headlines, accents, decoration |
+| **Newsreader (italic)** | **Satu** kegunaan: brand wordmark **"vibing"** (not "farmer") di topbar/nav | Headlines, accents, decoration |
 
 ### Scale
 
@@ -492,14 +520,25 @@ Tambah icon baru hanya kalau truly dibutuhkan — kebanyakan UI element bisa pak
 ### Brand marks
 
 - **Sidebar logo:** `v/` — mono 14px, di dalam 32×32 box dengan border. Bukan filled tile, bukan colored gradient.
-- **MetaMask mark:** `MM` — mono 9px, 22×22 box. Replacement untuk fox emoji.
-- **Brand wordmark:** `vibing/farmer` — mix Geist 500 untuk "vibing", `--text-faint` slash, Instrument Serif italic 19px untuk "farmer". *Satu-satunya pakai serif italic di seluruh app.*
+- **Wallet mark:** mono monogram (e.g. `FW` Freighter / `VF` VF Wallet) — 9px, 22×22 box. No fox emoji.
+- **Brand wordmark:** `vibing/farmer` — **Newsreader italic** on **"vibing"**, `--text-faint` slash (never accent), **mono** on **"farmer"**. *Serif italic only on `.vibe` / wordmark "vibing".*
 
 ---
 
 ## 9. Per-Screen Signatures
 
-Tiap screen di flow harus punya **satu angka besar** sebagai visual anchor. Ini brand signature VIBING FARMER.
+Tiap screen harus punya **satu angka besar** (atau document-grade skill set) sebagai visual anchor.
+
+### Page-type catalog (v3.2)
+
+| Type | Layout | Signature | Accent budget |
+|---|---|---|---|
+| Wizard stage | 3-col + single card | §9 table below | 2 |
+| App dashboard (Home) | main + optional rail | 1 hero balance/APY | 2 |
+| Document (Grant/perm) | perm-doc rows | max amount | 2 |
+| Marketing (Landing/Eco) | full-bleed, Tier B deco | optional figure | 1 CTA |
+| Data explorer | table + ≤3-metric strip | primary KPI mono | 1 |
+| Modal | existing | none required | 1 CTA |
 
 | Screen | Signature number | Source data |
 |---|---|---|
@@ -507,9 +546,11 @@ Tiap screen di flow harus punya **satu angka besar** sebagai visual anchor. Ini 
 | 01b Strategy | Blended APY (`figure-md`) | Weighted across agents |
 | 02 Connect | — (transitional; eyebrow + lede do the work) | — |
 | 03 Skills | — (the **skill cards** are the anchor — JSON itself is the data) | N skill JSONs |
-| 04 Permission | Total max amount in batch row (accent color, inline) | User's total |
-| 05 Execute | `done/total` step count + agent graph (the graph IS the signature) | Real-time |
-| 06 Success | 3 cells: deposited / yield / signatures (`clamp(28, 4vw, 48)`) | Final state |
+| 04 Permission / Grant | Total max amount (accent, one place) | User's total budget |
+| 05 Execute | `done/total` + agent graph | Real-time |
+| 06 Success | 1 hero figure + meta rows (not vanity 2×2) | Final state |
+| Home dashboard | Portfolio USDC or live APY | Positions |
+| Landing | Optional one figure or “1 signature” | Product claim |
 
 ---
 
@@ -517,7 +558,9 @@ Tiap screen di flow harus punya **satu angka besar** sebagai visual anchor. Ini 
 
 ### Bahasa
 
-- **Bahasa Indonesia casual** untuk body copy (matches "vibing" brand) — tapi technical labels (eyebrow, key/value labels, status text) tetap English-lowercase
+- **Default locale: English** (product UI). Optional `id` via settings when i18n keys exist.
+- Tone (both): sentence case, direct; technical terms literal (`funding_router`, fee-bump, session key).
+- Eyebrow/meta: English-lowercase (locale-invariant).
 - Sentence case untuk headlines — bukan title case
 - Mono labels = lowercase — *kecuali* tx hash, address, dan kode (case sensitive)
 - Annotation pattern: `keyword · context · constraint` (titik dot sebagai separator)
@@ -559,9 +602,10 @@ Activity feed gak nge-mix narrative + technical lagi — sekarang **event-name f
 
 - USD/USDC: tanpa currency symbol di front (pakai unit di belakang: `100 USDC`)
 - Percentages: 1 decimal max (`8.2%`)
-- Tx hash: short form `0x9f3…a124` (6 + … + 4)
-- Address: `0xABCD7e8F…aBcDe` (8 + … + 5) — full form OK di permission scope doc
-- Timestamp: locale-aware, `id-ID`, format `26 Mei 2026, 14:30`
+- Tx hash: short form `6…4` (Stellar or hex — no required `0x` prefix)
+- Address: Stellar `G…`/`C…` short **4…4** (lists); full form in permission/receipt docs
+- Fee display: `0 XLM · fee-bump sponsored` (not `0 ETH`)
+- Timestamp: locale-aware from settings (`en-US` default)
 - Duration: `86 400s` (with thin-space thousand separator dalam mono context)
 
 ---
@@ -583,32 +627,31 @@ Tweaks persisted via host protocol di `EDITMODE-BEGIN`/`EDITMODE-END` block — 
 
 ## 12. Implementation Notes
 
-### File structure
+### File structure (canonical — v3.2)
 
 ```
-Vibing Farmer Prototype.html   — entrypoint, fonts, react/babel/vis-network scripts
-styles.css                    — all tokens + components + multi-agent additions
-src/
-  tweaks-panel.jsx            — host protocol + Tweak* form controls (vendored starter)
-  components.jsx              — Icon, Sidebar, TopBar, StepRail (6 steps)
-  screens.jsx                 — Input, Thinking, Connect, Permission, Success
-  skills.jsx                  — SkillReviewCard, SkillCard, JsonView/Edit (step 03)
-  agents.jsx                  — AgentGraph (vis.js), AgentTiles, MemoryModal,
-                                StrategyCard, ExecuteCard, buildStrategy()
-  app.jsx                     — state machine, right rail panels, Palette picker
+frontend/index.html           — fonts (Geist, JetBrains Mono, Newsreader)
+frontend/style.css            — tokens + app components
+frontend/src/app.jsx          — shell + stage machine
+frontend/src/components/*     — Home, Landing, Explorer, Ecosystem, Replay, Settings, …
+frontend/src/agents.jsx       — AgentGraph (react-force-graph-2d), tiles, memory
+frontend/src/skills.jsx       — skill review cards (Stellar pull/deposit scope)
+frontend/src/screens.jsx      — deposit flow stages
+frontend/src/tweaks-panel.jsx — design tweaks (dev)
+frontend/extension/popup.jsx  — VF Wallet (Tier C)
+design/                       — historical prototype only (non-canonical)
 ```
 
 ### React patterns
 
-- React 18.3.1 + Babel inline (no build)
-- vis-network 9.1.9 loaded via UMD CDN (Agent Graph dependency)
-- Each `.jsx` file does `Object.assign(window, { ... })` at end to share scope between Babel script tags
+- Vite + React (build via `frontend/npm run build`)
+- Graph: `react-force-graph-2d` in `agents.jsx` (not vis-network)
 - State machine (in `app.jsx`):
   - `stage`: `strategy` | `connect` | `skills` | `permission` | `execute` | `done`
   - `strategyPhase`: `input` | `thinking` | `ready` (sub-state of stage=strategy)
   - `thinkingPhase`: 0-2 — progress in checklist
-  - `strategy`: `{ agents, total, blendedApy, risk }` — generated by `buildStrategy()`
-  - `connectPhase`: `idle` | `connecting` | `connected` | `upgrading` | `upgraded`
+  - `strategy`: `{ agents, total, blendedApy, risk }` — generated by strategist
+  - `connectPhase`: `idle` | `connecting` | `connected` | …
   - `skillStates`: `{ [agentId]: { state: 'pending'|'editing'|'approved', skill } }`
   - `editingTexts`: `{ [agentId]: { text, error } }`
   - `permPhase`: `idle` | `prompting`
@@ -890,7 +933,7 @@ Click an agent node in the Agent Graph (or an agent tile below) to open the Memo
 Switched from single-permission display to **multi-agent list**:
 
 ```
-Active permissions             erc-7715 · batch
+Active permissions             funding_router · SEP-41
 ● 3 permission · 23h 59m
 ─────────────────────────────────────────
 01  worker-1                   40 USDC
