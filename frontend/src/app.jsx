@@ -22,44 +22,55 @@ import {
   MemoryModal,
   LoopStatusPanel,
   DecisionLogPanel,
+  AgentGraph,
+  buildAutofarmGraphData,
+  rebalancePulseKey,
   buildStrategy,
   makeInitialExecState,
 } from './agents.jsx'
 import { useTweaks, TweaksPanel, TweakSection, TweakRadio } from './tweaks-panel.jsx'
 
-import { ethers } from 'ethers'
 import {
   connectWallet,
-  requestERC7715Permission,
-  signSiweForVenice,
-  switchToSepolia,
-  getProvider,
-  revokeAgentDirect,
-  readScope,
-  onContractEvent,
-  getAccountsSilent,
-  onAccountsChanged,
-} from './wallet.js'
-import { getX402Balance, canUseX402 } from './x402.js'
+  getUserAddress,
+  revokeAgentOnChain,
+  subscribeAgentRevoked,
+} from './stellar/index.js'
 import { generateStrategy } from './venice.js'
-import { saveGrant, clearGrant, hasValidGrant } from './strategy/grantStore.js'
-import { initSession, clearSession, hasSession, saveSessionGrant } from './strategy/session.js'
-import { rehydrateSession } from './strategy/rehydrate.js'
+import { toDisplay, toBaseUnits } from './stellar/format.js'
 import { saveResume, loadResume, clearResume } from './strategy/sessionResume.js'
 import { attestStrategyOnChain, formatAttestation } from './attestation.js'
-import { detectMetaMaskVersion } from './flaskDetect.js'
-import FlaskGate from './components/FlaskGate.jsx'
 import OnboardingFlow from './components/OnboardingFlow.jsx'
+import CrossChainFarmFlow from './screens/CrossChainFarmFlow.jsx'
 import { OrchestratorAgent } from './orchestrator.js'
 import { makeAgentId } from './worker.js'
+import { ownerWithdraw } from './stellar/exit.js'
+import { VAULT_CATALOG, VENICE_TIMEOUT_MS } from './config.js'
 import {
-  VAULT_CATALOG,
-  VENICE_TIMEOUT_MS,
-  AGENT_VAULT_DEPOSITOR_ADDRESS,
-  DEPOSITOR_ABI,
-  AGENT_REGISTRY_ADDRESS,
-  REGISTRY_ABI,
-} from './config.js'
+  SOROBAN_ACTIVE_VAULT_ADDRESS,
+  SOROBAN_DEMO_AGENT,
+  SOROBAN_RPC_URL,
+  SOROBAN_AUTOFARM_VAULT_ADDRESS,
+  SOROBAN_STRATEGY_1_ADDRESS,
+  SOROBAN_BLEND_POOL_ADDRESS,
+  SOROBAN_KEEPER_ADDRESS,
+  SOROBAN_DECIMALS,
+  USE_FUNDING_ROUTER,
+} from './stellar/config.js'
+import GrantPanel from './components/GrantPanel.jsx'
+import { revokeGrant } from './stellar/grant.js'
+import { fetchKeeperEvents } from './stellar/keeperEvents.js'
+import {
+  readPricePerShare,
+  readStrategies,
+  readSupplyAprBps,
+  readLifeboatState,
+} from './stellar/vaultReads.js'
+import { grantMandate } from './stellar/lifeboat.js'
+import KeeperPanel from './components/KeeperPanel.jsx'
+import LifeboatPanel from './components/LifeboatPanel.jsx'
+import { evaluateExit } from './strategy/autoExit/engine.js'
+import { runAutonomousExit } from './agents/exitExecutor.js'
 import {
   loadPersistedPositions,
   persistPositions,
@@ -67,7 +78,12 @@ import {
   mergePositions,
   applyChainPositions,
 } from './positionsStore.js'
-import { getReadProvider } from './readProvider.js'
+import {
+  diffMarket,
+  fastReeval,
+  loadLatestSnapshot,
+  saveSnapshot,
+} from './strategy/councilMonitor.js'
 import SkillDrawer from './components/SkillDrawer.jsx'
 import HistoryPanel from './components/HistoryPanel.jsx'
 import { saveTransaction } from './history.js'
@@ -85,6 +101,7 @@ const LandingHero = lazy(() => import('./components/LandingHero.jsx'))
 const ExplorerPage = lazy(() => import('./components/ExplorerPage.jsx'))
 const EcosystemPage = lazy(() => import('./components/EcosystemPage.jsx'))
 const ReplayPage = lazy(() => import('./components/ReplayPage.jsx'))
+const DevelopersPage = lazy(() => import('./developers/DevelopersPage.jsx'))
 import SettingsPage from './components/SettingsPage.jsx'
 import {
   WalletPanel,
@@ -105,16 +122,46 @@ import { buildStrategyState, enforceActionSpace, scoreReward } from './strategy/
 import { runSimulation, allocationsFromStrategy } from './strategy/simulation.js'
 import { evaluateGates } from './strategy/gates.js'
 import { createMonitorLoop } from './strategy/monitorLoop.js'
+import { primeVaultFacts } from './strategy/vaultFactsLive.js'
 import { councilVerdict } from './strategy/council.js'
 import { reflect } from './strategy/reflector.js'
 import { increment as playbookIncrement, weight as playbookWeight } from './strategy/playbook.js'
 import { saveCycle, getCycles, getJournalSummary } from './strategy/cycleJournal.js'
+import { computeBasket } from './strategy/basketFilter.js'
+import { mintToken } from './strategy/eligibilityGate.js'
+import { buildEligibilitySentence, vaultEligibilityLabel } from './strategy/eligibilitySentence.js'
+import { SNAPSHOT } from './strategy/vaultFacts.js'
 import { recordDecision, getDecisions, getDecisionSummary } from './strategy/decisionLog.js'
-import { resolveCouncilConflict, councilSpecialistVerdict, askVeniceJson } from './venice.js'
-import { councilReview, buildCouncilInput } from './strategy/councilReview.js'
+import {
+  resolveCouncilConflict,
+  councilSpecialistVerdict,
+  proposerVerdict,
+  riskComplianceVerdict,
+  validatorVerdict,
+  askVeniceJson,
+} from './venice.js'
+import {
+  councilReview,
+  buildCouncilInput,
+  councilDebate,
+  buildDebateInput,
+} from './strategy/councilReview.js'
 import { councilOutcome } from './strategy/outcome.js'
 import { proposeRule } from './strategy/curator.js'
 import { upsertSeeds, getRules, addRule, replaceAll } from './strategy/ruleStore.js'
+
+// vf-autofarm: strategy address → { label, poolAddress, poolLabel } for the KeeperPanel APR
+// display + the force-graph's strategy→pool edge. Static because the vault contract exposes no
+// strategy→pool lookup and only ONE strategy is live today (Task 1 spike found a self-deployed
+// second pool can't reach Active status on testnet — see
+// docs/superpowers/plans/2026-07-03-vf-autofarm-progress.md). Extend this map when strategy #2 ships.
+const AUTOFARM_STRATEGY_META = {
+  [SOROBAN_STRATEGY_1_ADDRESS]: {
+    label: 'Strategy 1',
+    poolAddress: SOROBAN_BLEND_POOL_ADDRESS,
+    poolLabel: 'TestnetV2 pool',
+  },
+}
 
 /* ---------- Background agent settings (localStorage: yv_agent_settings) ---------- */
 const AGENT_SETTINGS_DEFAULTS = {
@@ -129,6 +176,10 @@ const AGENT_SETTINGS_DEFAULTS = {
   apyInterval: 10,
   riskInterval: 15,
   rewardInterval: 5,
+  maxDrawdownPct: 10.0,
+  discordWebhookUrl: '',
+  telegramToken: '',
+  telegramChatId: '',
 }
 const loadAgentSettings = () => {
   try {
@@ -138,6 +189,87 @@ const loadAgentSettings = () => {
     }
   } catch {
     return { ...AGENT_SETTINGS_DEFAULTS }
+  }
+}
+
+const sendPushNotification = async (ev, passedSettings) => {
+  const isAlert = [
+    'risk_alert',
+    'apy_drift',
+    'rebalance_proposal',
+    'harvest_ready',
+    'compound_executed',
+    'rebalance_executed',
+  ].includes(ev.kind)
+  if (!isAlert) return
+
+  let settings = passedSettings
+  if (!settings) {
+    try {
+      settings = {
+        ...AGENT_SETTINGS_DEFAULTS,
+        ...JSON.parse(localStorage.getItem('yv_agent_settings') || '{}'),
+      }
+    } catch {
+      settings = { ...AGENT_SETTINGS_DEFAULTS }
+    }
+  }
+
+  let title = 'Vibing Farmer · Alert'
+  let detail = ''
+
+  if (ev.kind === 'rebalance_proposal') {
+    title = '🔄 Rebalance Opportunity Detected'
+    detail = `Venice AI flagged ${ev.toProtocol} at ${ev.toApy}% vs your current ${ev.fromVault} at ${ev.fromApy}% (potential gain: +${ev.apyGain}%).`
+  } else if (ev.kind === 'risk_alert') {
+    title = `🚨 Risk Alert [Severity: ${ev.severity.toUpperCase()}]`
+    detail = `Signal on ${ev.vaultName}: ${ev.searchAnswer || 'Security concern detected.'}`
+  } else if (ev.kind === 'apy_drift') {
+    title = '⚠ APY Drop Detected'
+    detail = `APY on ${ev.vaultName} dropped from ${ev.baselineApy}% to ${ev.currentApy}% (${ev.driftPct}%).`
+  } else if (ev.kind === 'harvest_ready') {
+    title = '🟢 Yield Harvest Ready'
+    detail = `${ev.rewardsUsdc} USDC accrued on ${ev.vaultName} is ready to claim.`
+  } else if (ev.kind === 'compound_executed') {
+    title = '✓ Keeper Compounded'
+    detail = `${ev.vaultName} · +${ev.totalGainUsdc} USDC reinvested · price/share ${ev.pricePerShare}. No action needed.`
+  } else if (ev.kind === 'rebalance_executed') {
+    title = '⇄ Keeper Rebalanced'
+    detail = `${ev.vaultName} · ${ev.fromLabel} → ${ev.toLabel} · ${ev.amountUsdc} USDC moved. No action needed.`
+  }
+
+  const messageText = `*${title}*\n\n${detail}\n\n_Time: ${new Date(ev.timestamp || Date.now()).toLocaleString()}_`
+
+  // Send Discord notification
+  if (settings.discordWebhookUrl) {
+    try {
+      await fetch(settings.discordWebhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content: `🚨 **${title}**\n${detail}`,
+        }),
+      })
+    } catch (e) {
+      console.warn('[Notification] Discord failed:', e.message)
+    }
+  }
+
+  // Send Telegram notification
+  if (settings.telegramToken && settings.telegramChatId) {
+    try {
+      await fetch(`https://api.telegram.org/bot${settings.telegramToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: settings.telegramChatId,
+          text: messageText,
+          parse_mode: 'Markdown',
+        }),
+      })
+    } catch (e) {
+      console.warn('[Notification] Telegram failed:', e.message)
+    }
   }
 }
 
@@ -193,7 +325,7 @@ const mapVeniceToStrategy = (veniceResult, amount, risk) => {
       riskTier: v.risk_tier, // AI metadata → UI
       yieldSource: v.yield_source_type, // AI metadata → UI
       vault: {
-        name: v.name || live.name || cat.name || `MockVault ${i + 1}`,
+        name: v.name || live.name || cat.name || `Pool ${i + 1}`,
         protocol: v.protocol || live.protocol || cat.protocol || PROTOCOLS[i] || 'aave-v3',
         apy: String(v.expected_apy ?? live.apy ?? cat.apy ?? 4.8),
         drawdown: live.drawdown || cat.drawdown || '-1.8',
@@ -264,7 +396,7 @@ const App = () => {
   const [devApiKey, setDevApiKey] = useS('')
 
   // strategy sub-state
-  const [strategyPhase, setStrategyPhase] = useS('input') // input | thinking | ready
+  const [strategyPhase, setStrategyPhase] = useS('input') // input | thinking | ready | council
   const [thinkingPhase, setThinkingPhase] = useS(0)
   const [thinkTimes, setThinkTimes] = useS([]) // real measured per-step durations (seconds)
   const [slowConfirm, setSlowConfirm] = useS(false) // AI exceeded timeout → ask keep waiting / fallback
@@ -274,6 +406,17 @@ const App = () => {
   const [council, setCouncil] = useS(undefined) // undefined = no strategy yet, null = deliberating
   const [councilRetry, setCouncilRetry] = useS(0) // bump to re-run deliberation
   const councilCitedRef = useR({ citedRules: [], verdict: null })
+  const [debateResult, setDebateResult] = useS(null) // debate council result
+  const [debateRunning, setDebateRunning] = useS(false) // debate in progress
+
+  // Continuous monitor state
+  const [monitorStatus, setMonitorStatus] = useS({
+    lastCheck: null,
+    level: 'idle',
+    score: 0,
+    reason: '',
+  })
+  const monitorTimerRef = useR(null)
   const [rawStrategy, setRawStrategy] = useS(null) // raw Venice result (carries strategyHash) for on-chain attestation
   const [strategyAttestation, setStrategyAttestation] = useS(null)
   const [attesting, setAttesting] = useS(false)
@@ -291,6 +434,12 @@ const App = () => {
 
   const [permPhase, setPermPhase] = useS('idle')
   const [permError, setPermError] = useS(null)
+  // One-popup grant flow (router path). grantPhase drives the GrantPanel button label; the chosen
+  // budget/duration are stashed in a ref so startExecution reads them synchronously when it builds
+  // the orchestrator (state updates are async).
+  const [grantPhase, setGrantPhase] = useS('idle')
+  const [grantError, setGrantError] = useS(null)
+  const grantCfgRef = useR(null)
   const [permActive, setPermActive] = useS(false)
   // Per-agent on-chain scopes (single-source summary + Revoke). Keyed by worker agent address.
   const [scopes, setScopes] = useS([])
@@ -299,32 +448,32 @@ const App = () => {
   // True when a refresh re-entered an active session (drives the Home banner).
   const [sessionResumed, setSessionResumed] = useS(false)
 
-  // Rehydrate the single grant on mount: if a valid ERC-7715 grant is persisted,
-  // re-boot the ERC-7710 session so the user is never re-prompted within 24h.
+  // Wallet reconnect + session resume on page load. Without this, a refresh drops
+  // realAddress/stage/strategy (all in-memory) so the app looks logged-out and the monitor loop
+  // never reboots even with an active vault. We ask the wallet kit for its current address; if a
+  // resume snapshot exists we restore stage='done' + strategy, which makes the loop effect (below)
+  // start the monitor loop again. If no wallet is selected yet (fresh reload) getUserAddress
+  // rejects and the catch leaves the app logged-out until the user reconnects. Mount-only.
   useE(() => {
-    const r = rehydrateSession()
-    if (r.active) {
-      setPermActive(true)
-      setPermExpiresAt(r.expiresAt)
-      setPermContext(r.permissionContext)
+    window.triggerTestAlert = () => {
+      handleAgentEvent({
+        kind: 'risk_alert',
+        severity: 'high',
+        reason: 'drawdown_exceeded',
+        vaultName: 'VFUSD Yield Vault',
+        vaultAddress: 'CBZNITAPHCLSPEXC3UKIERYRUJR56GISM2G2Z5XD6KZH3U4ZZ76XNQOU',
+        protocol: 'aave-v3',
+        searchAnswer: 'Drawdown of aave-v3 (15.0%) exceeds your configured limit of 10.0%!',
+        timestamp: Date.now(),
+      })
     }
-  }, [])
 
-  // Silent wallet reconnect + session resume on page load. Without this, a refresh
-  // drops realAddress/stage/strategy (all in-memory) so the app looks logged-out and
-  // the monitor loop never reboots even with an active vault. We re-read the already-
-  // authorized account via eth_accounts (NO MetaMask popup); if a resume snapshot
-  // exists we restore stage='done' + strategy, which makes the loop effect (below)
-  // start the monitor loop again. Mount-only so it can't yank an in-wizard connect.
-  useE(() => {
     let alive = true
-    getAccountsSilent()
+    getUserAddress()
       .then((addr) => {
         if (!alive || !addr) return
         setRealAddress(addr)
-        // A persisted grant means the user already upgraded → restore full auth phase,
-        // otherwise show a plain connected (eoa) state.
-        setConnectPhase(hasValidGrant() ? 'upgraded' : 'connected')
+        setConnectPhase('connected')
         const snap = loadResume(addr)
         if (snap?.strategy?.agents?.length) {
           setStrategy(snap.strategy)
@@ -338,22 +487,8 @@ const App = () => {
       .catch(() => {})
     return () => {
       alive = false
+      delete window.triggerTestAlert
     }
-  }, [])
-
-  // Track MetaMask account switch / disconnect / lock so the UI never shows a stale
-  // wallet. Empty list = locked/disconnected → drop the session view.
-  useE(() => {
-    const off = onAccountsChanged((accounts) => {
-      const next = accounts?.[0] || null
-      if (!next) {
-        setRealAddress(null)
-        setConnectPhase('idle')
-      } else {
-        setRealAddress(next)
-      }
-    })
-    return off
   }, [])
 
   // 30-second tick to refresh countdown displays
@@ -361,6 +496,12 @@ const App = () => {
   useE(() => {
     const id = setInterval(() => setClock((c) => c + 1), 30000)
     return () => clearInterval(id)
+  }, [])
+
+  // Prime live DeFiLlama numerics for the eligibility gate (fire-and-forget; the gate falls back
+  // to the curated snapshot until it lands). Cached 6h in localStorage — ≤1 fetch burst/session.
+  useE(() => {
+    primeVaultFacts()
   }, [])
 
   // execution: map agentId -> { status, steps, hashes, memory, metrics }
@@ -376,21 +517,31 @@ const App = () => {
   const loopRef = useR(null)
   const latestGasRef = useR(null) // last live gas snapshot { level, gwei } for the monitor loop
   const hydratedRef = useR(null) // address whose cached positions have finished restoring
+  // Ledger cursor for the vf-autofarm keeper event feed (Compound/Rebalance) — undefined until
+  // the first successful fetch, after which it advances past every event we've already alerted
+  // on so the same 15s poll never re-notifies for the same keeper action.
+  const keeperLedgerRef = useR(undefined)
   // Tracks which user addresses have had session key setup done (survives re-renders).
   const [loopTick, setLoopTick] = useS(0)
   const [loopPhase, setLoopPhase] = useS(null) // live pipeline phase from monitorLoop onPhase
-  const [permContext, setPermContext] = useS(null)
   const [veniceAuth, setVeniceAuth] = useS(null)
-  const [mmVersion, setMmVersion] = useS(null) // MetaMask flavor/version — Flask detection (once on mount)
   const [onboarded, setOnboarded] = useS(() => localStorage.getItem('yv_onboarded') === 'true')
   const [skipLanding, setSkipLanding] = useS(
     () => localStorage.getItem('yv_skip_landing') === 'true'
   )
 
-  // Detect MetaMask flavor/version once on mount — Flask gate for ERC-7715.
+  // Synchronize localStorage flags on router pathname change to prevent
+  // navigation locks from public pages back to strategy layout.
   useE(() => {
-    detectMetaMaskVersion().then(setMmVersion)
-  }, [])
+    const isSkip = localStorage.getItem('yv_skip_landing') === 'true'
+    if (isSkip !== skipLanding) {
+      setSkipLanding(isSkip)
+    }
+    const isOnboard = localStorage.getItem('yv_onboarded') === 'true'
+    if (isOnboard !== onboarded) {
+      setOnboarded(isOnboard)
+    }
+  }, [location.pathname])
 
   // Strategy Attestation — NON-BLOCKING, best-effort. Fires once a wallet provider
   // exists (post-connect) and the AI strategy carries a deterministic hash. Any
@@ -398,7 +549,7 @@ const App = () => {
   useE(() => {
     if (!rawStrategy?.strategyHash || strategyAttestation || attesting) return
     setAttesting(true)
-    attestStrategyOnChain(rawStrategy)
+    attestStrategyOnChain(rawStrategy, { attester: realAddress })
       .then((a) => setStrategyAttestation(formatAttestation(a)))
       .finally(() => setAttesting(false))
   }, [rawStrategy, realAddress])
@@ -409,6 +560,18 @@ const App = () => {
   )
   const [agentSettings, setAgentSettings] = useS(loadAgentSettings)
   const [agentData, setAgentData] = useS({ positions: {}, alerts: [], lastUpdated: null })
+  // vf-autofarm KeeperPanel state — populated by the SAME 15s poll that already fetches
+  // keeper events below (keeperLedgerRef), never a second interval.
+  const [keeperActivity, setKeeperActivity] = useS([]) // newest-first, capped — feeds KeeperPanel
+  // vf-lifeboat Task 8 — separate from keeperActivity: KeeperPanel's LastAction assumes every
+  // item is a compound/rebalance alert shape (it treats anything without kind==='compound_executed'
+  // as a rebalance row), so mixing derisk/resume/mandate items into that array would render a
+  // broken "Rebalanced" row whenever a lifeboat event became the newest entry.
+  const [lifeboatState, setLifeboatState] = useS(null) // {derisked, mandateExpiry, authority} | null
+  const [lifeboatActivity, setLifeboatActivity] = useS([]) // newest-first, capped — feeds LifeboatPanel
+  const [lifeboatBusy, setLifeboatBusy] = useS(false)
+  const [autofarmReads, setAutofarmReads] = useS({ pricePerShare: null, strategies: [] })
+  const [rebalancePulse, setRebalancePulse] = useS(null) // { key, ts } — force-graph edge pulse
 
   const [sbExtended, setSbExtended] = useS(() => localStorage.getItem('yv_sb_extended') === 'true')
   const [railCollapsed, setRailCollapsed] = useS(
@@ -522,58 +685,134 @@ const App = () => {
     persistPositions(realAddress, agentData.positions)
   }, [agentData.positions, realAddress])
 
-  // Event-driven sync: re-read chain the instant a real Deposit/Withdraw lands for this
-  // user — no waiting on the worker's poll. Debounced so a burst of parallel deposits
-  // collapses into ONE reconcile. Listens + reads via the dedicated read-only provider
-  // (getReadProvider) — never the wallet's BrowserProvider, which -32603s while a
-  // wallet_* RPC is pending. applyChainPositions is authoritative (can lower on
-  // withdraw), unlike the raise-only connect-time merge that protects unconfirmed seeds.
+  // Position reconcile against Stellar. The autonomous deposit lands via the relayer
+  // (no browser-visible depositor event to listen for, unlike the EVM log), so we poll
+  // the agent's vault-share balance and apply it authoritatively. applyChainPositions
+  // can lower a balance (after owner_withdraw) and prune a fully-swept vault. The worker
+  // also emits a 'position' event on deposit — this is the cold-reconcile cross-check.
   useE(() => {
     if (!realAddress) return
-    const provider = getReadProvider()
-    const contract = new ethers.Contract(AGENT_VAULT_DEPOSITOR_ADDRESS, DEPOSITOR_ABI, provider)
-    let timer = null
+    let alive = true
     const sync = async () => {
-      const chain = await reconcilePositionsFromChain(realAddress)
-      if (!chain) return
-      setAgentData((d) => ({
-        ...d,
-        positions: applyChainPositions(d.positions, chain),
-        lastUpdated: Date.now(),
-      }))
-    }
-    const onEvent = () => {
-      clearTimeout(timer)
-      timer = setTimeout(sync, 1500)
-    }
-    // v2 depositor: AgentDepositExecuted(agent, owner, vault, token, assetsIn, sharesOut, execId).
-    // owner is the 2nd indexed topic → filter on it. Withdraws are user-signed ERC-4626 txs
-    // (no depositor event); handleWithdrawSuccess updates positions directly, so we only
-    // need the deposit listener here.
-    const depFilter = contract.filters.AgentDepositExecuted(null, realAddress)
-
-    const onDepositEvent = (agent, owner, vault, token, assetsIn, sharesOut, execId, event) => {
-      const vaultMeta = VAULT_CATALOG.find((v) => v.address.toLowerCase() === vault.toLowerCase())
-      const amountUsdc = Number(assetsIn) / 1e6
-      if (amountUsdc > 0) {
-        saveTransaction({
-          txHash: event?.log?.transactionHash || event?.transactionHash,
-          vaultName: vaultMeta?.name || `Vault ${vault.slice(0, 6)}…`,
-          vaultAddress: vault,
-          protocol: vaultMeta?.protocol,
-          apy: vaultMeta?.apy,
-          amountUsdc,
-          workerLabel: vaultMeta?.name || `Vault ${vault.slice(0, 10)}…`,
-          network: 'sepolia',
-        })
+      const chain = await reconcilePositionsFromChain(realAddress).catch(() => null)
+      if (alive && chain) {
+        setAgentData((d) => ({
+          ...d,
+          positions: applyChainPositions(d.positions, chain),
+          lastUpdated: Date.now(),
+        }))
       }
-      onEvent() // Also trigger position sync after 1.5s debounce
+      // vf-autofarm keeper event feed (Compound/Rebalance) — piggybacks this SAME 15s poll
+      // rather than opening a second interval. keeperLedgerRef advances past every ledger
+      // already alerted on, so a re-poll never re-notifies for the same keeper action.
+      try {
+        const events = await fetchKeeperEvents(
+          SOROBAN_RPC_URL,
+          SOROBAN_AUTOFARM_VAULT_ADDRESS,
+          keeperLedgerRef.current
+        )
+        if (!alive) return
+        // KeeperPanel activity feed — separate from the deduped/capped-at-8 alerts list above
+        // (handleAgentEvent keeps only the LATEST of each kind for notifications; the panel
+        // wants its own short history of real keeper actions).
+        const newActivity = []
+        const newLifeboatActivity = []
+        for (const ev of events) {
+          keeperLedgerRef.current = Math.max(keeperLedgerRef.current || 0, ev.ledger + 1)
+          if (ev.type === 'compound') {
+            const item = {
+              id: `compound:${ev.ledger}`,
+              kind: 'compound_executed',
+              vaultName: 'Autofarm vault',
+              totalGainUsdc: toDisplay(ev.totalGain).toFixed(2),
+              pricePerShare: toDisplay(ev.pricePerShare).toFixed(4),
+              txHash: ev.txHash,
+              timestamp: Date.now(),
+            }
+            handleAgentEvent(item)
+            newActivity.push(item)
+          } else if (ev.type === 'rebalance') {
+            const item = {
+              id: `rebalance:${ev.ledger}`,
+              kind: 'rebalance_executed',
+              vaultName: 'Autofarm vault',
+              from: ev.from,
+              to: ev.to,
+              fromLabel: shortAddr(ev.from),
+              toLabel: shortAddr(ev.to),
+              amountUsdc: toDisplay(ev.amount).toFixed(2),
+              txHash: ev.txHash,
+              timestamp: Date.now(),
+            }
+            handleAgentEvent(item)
+            newActivity.push(item)
+            // Pulse the force-graph edge between the two strategies/vault this rebalance moved
+            // funds between (rebalancePulseKey is direction-independent — see agents.jsx).
+            setRebalancePulse({ key: rebalancePulseKey(ev.from, ev.to), ts: Date.now() })
+          } else if (ev.type === 'derisk' || ev.type === 'resume' || ev.type === 'mandate') {
+            // Lifeboat activity feed (vf-lifeboat) — kept in decodeKeeperEvent's own shape
+            // (type/reasonCode/drainedTotal/txHash) rather than remapped into keeperActivity's
+            // kind-based alert objects; see lifeboatActivity state comment above for why.
+            newLifeboatActivity.push({ ...ev, timestamp: Date.now() })
+          }
+        }
+        if (newActivity.length) {
+          setKeeperActivity((prev) => [...newActivity.reverse(), ...prev].slice(0, 20))
+        }
+        if (newLifeboatActivity.length) {
+          setLifeboatActivity((prev) => [...newLifeboatActivity.reverse(), ...prev].slice(0, 20))
+        }
+      } catch (e) {
+        // transient RPC failure — the next 15s tick retries
+        console.warn('[app] keeper event read failed:', e)
+      }
+      // Live autofarm vault reads for the KeeperPanel: price-per-share + registered strategies,
+      // each paired with a best-effort Blend supply-APR estimate. Best-effort end to end — a
+      // failed read leaves the panel showing "--", never a fake number.
+      try {
+        const [pps, strategyAddrs] = await Promise.all([
+          readPricePerShare(SOROBAN_AUTOFARM_VAULT_ADDRESS),
+          readStrategies(SOROBAN_AUTOFARM_VAULT_ADDRESS),
+        ])
+        if (!alive) return
+        const strategies = await Promise.all(
+          strategyAddrs.map(async (addr) => {
+            const meta = AUTOFARM_STRATEGY_META[addr] || {}
+            const aprBps = meta.poolAddress ? await readSupplyAprBps(meta.poolAddress) : null
+            return {
+              address: addr,
+              label: meta.label || shortAddr(addr),
+              poolAddress: meta.poolAddress || null,
+              poolLabel: meta.poolLabel || null,
+              aprPct: aprBps == null ? null : aprBps / 100,
+            }
+          })
+        )
+        if (alive) {
+          setAutofarmReads({
+            pricePerShare: pps == null ? null : toDisplay(pps).toFixed(4),
+            strategies,
+          })
+        }
+      } catch (e) {
+        // transient RPC failure — the next 15s tick retries; panel keeps its last-known reads
+        console.warn('[app] keeper vault read failed:', e)
+      }
+      // Lifeboat state (vf-lifeboat) — same 15s poll tick. readLifeboatState() never throws (it
+      // already returns null on RPC failure internally); this catch is defensive only.
+      try {
+        const s = await readLifeboatState(SOROBAN_AUTOFARM_VAULT_ADDRESS)
+        if (alive) setLifeboatState(s)
+      } catch {
+        if (alive) setLifeboatState(null)
+      }
     }
-
-    contract.on(depFilter, onDepositEvent)
+    sync() // once on connect
+    // ponytail: 15s poll. A Soroban event subscription would make it instant if needed.
+    const id = setInterval(sync, 15000)
     return () => {
-      clearTimeout(timer)
-      contract.off(depFilter, onDepositEvent)
+      alive = false
+      clearInterval(id)
     }
   }, [realAddress])
 
@@ -625,6 +864,15 @@ const App = () => {
       }))
       return
     }
+    if (ev.kind === 'market_signal') {
+      const settings = loadSettings()
+      if (!settings.monitorEnabled || !strategy?.agents?.length) {
+        setMonitorStatus((s) => ({ ...s, lastCheck: ev.timestamp, level: 'disabled' }))
+        return
+      }
+      runCouncilMonitorCheck(settings, ev.apyByVault)
+      return
+    }
     if (ev.kind === 'harvest_executed') {
       addLog({
         event: 'DepositExecuted',
@@ -643,6 +891,9 @@ const App = () => {
     // Alert kinds — dedupe by kind+vault, newest first, cap at 8
     const key = `${ev.kind}:${ev.vaultAddress || ev.vaultName || ''}`
     const id = `${key}:${ev.timestamp || Date.now()}`
+    const isNew = !agentData.alerts.some(
+      (a) => `${a.kind}:${a.vaultAddress || a.vaultName || ''}` === key
+    )
     setAgentData((d) => ({
       ...d,
       alerts: [
@@ -650,6 +901,9 @@ const App = () => {
         ...d.alerts.filter((a) => `${a.kind}:${a.vaultAddress || a.vaultName || ''}` !== key),
       ].slice(0, 8),
     }))
+    if (isNew) {
+      sendPushNotification(ev, agentSettings)
+    }
     const detail =
       ev.kind === 'rebalance_proposal'
         ? `Venice AI flagged ${ev.toProtocol} at ${ev.toApy}% vs your ${ev.fromVault} at ${ev.fromApy}% · capture +${ev.apyGain}% by rebalancing.`
@@ -659,10 +913,22 @@ const App = () => {
             ? `APY on ${ev.vaultName} dropped to ${ev.currentApy}% (from ${ev.baselineApy}%, ${ev.driftPct}%).`
             : ev.kind === 'harvest_ready'
               ? `${ev.rewardsUsdc} USDC accrued on ${ev.vaultName} · ready to claim.`
-              : ''
+              : ev.kind === 'compound_executed'
+                ? `Keeper compounded ${ev.vaultName} · +${ev.totalGainUsdc} USDC · price/share ${ev.pricePerShare}.`
+                : ev.kind === 'rebalance_executed'
+                  ? `Keeper rebalanced ${ev.vaultName} · ${ev.fromLabel} → ${ev.toLabel} · ${ev.amountUsdc} USDC moved.`
+                  : ''
     addLog({
-      event: ev.kind === 'risk_alert' ? 'AgentFailed' : 'OrchestratorPlanned',
-      meta: `${ev.kind.replace(/_/g, ' ')} · ${ev.vaultName || ev.fromVault || ''}`,
+      event:
+        ev.kind === 'risk_alert'
+          ? 'AgentFailed'
+          : ev.kind === 'compound_executed'
+            ? 'AgentCompleted'
+            : ev.kind === 'rebalance_executed'
+              ? 'RedelegationCreated'
+              : 'OrchestratorPlanned',
+      meta: `${ev.kind.replace(/_/g, ' ')} · ${ev.vaultName || ev.fromVault || ''}${ev.txHash ? ` · tx ${shortAddr(ev.txHash)}` : ''}`,
+      txHash: ev.txHash,
       detail,
     })
   }
@@ -688,7 +954,6 @@ const App = () => {
     startBackgroundAgent({
       userAddress: realAddress,
       activeVaults,
-      rpcUrl: import.meta.env.VITE_RPC_URL,
       // Tavily key no longer passed to client — risk scan routes through /api/search proxy.
       supportedProtocols: ['aave-v3', 'morpho-blue', 'spark', 'fluid'],
       thresholds: { ...agentSettings, autoHarvest: false },
@@ -707,6 +972,7 @@ const App = () => {
           marketContext: marketLive,
           positions: agentData.positions,
           gas: latestGasRef.current,
+          maxDrawdownPct: agentSettings.maxDrawdownPct,
         }),
       runGates: (proposed, state) => enforceActionSpace(proposed, state),
       gates: (state, idea) => evaluateGates(state, idea),
@@ -767,6 +1033,105 @@ const App = () => {
     }
   }, [stage, agentEnabled, realAddress, strategy])
 
+  // ── Autonomous Auto-Exit monitor loop ──
+  useE(() => {
+    if (!realAddress || stage !== 'done' || !agentEnabled) return
+    let active = true
+
+    const checkExit = async () => {
+      const storedRules = localStorage.getItem(`yv_exit_rules_${realAddress}`)
+      if (!storedRules) return
+      const rules = JSON.parse(storedRules)
+      if (!rules.authorized) return
+
+      const stateForExit = {
+        portfolio: { holdings: agentData.positions },
+        universe: Object.keys(agentData.positions).map((addr) => {
+          const cat = VAULT_CATALOG.find((v) => v.addr.toLowerCase() === addr.toLowerCase()) || {}
+          const pos = agentData.positions[addr] || {}
+          return {
+            address: addr,
+            protocol: cat.protocol || 'blend',
+            apy: Number(cat.apy || 6.5),
+            tvl: cat.tvl || 25_000_000,
+            drawdown: Number(pos.drawdown || 0),
+          }
+        }),
+        market: {
+          utilization: 0.96, // default utilization for simulation
+          signals: [],
+        },
+      }
+
+      const result = evaluateExit(rules, stateForExit, {
+        nowMs: Date.now(),
+        lastExitTripAt: Number(localStorage.getItem(`yv_last_exit_trip_${realAddress}`) || '0'),
+      })
+
+      if (result.tripped && active) {
+        localStorage.setItem(`yv_last_exit_trip_${realAddress}`, String(Date.now()))
+        addLog({
+          event: 'AgentFailed',
+          meta: `🚨 Auto-Exit Triggered: ${result.reason}`,
+          detail: `Trigger: ${result.trigger}. Launching autonomous exit...`,
+        })
+
+        // Surface a critical risk alert
+        setAgentData((d) => ({
+          ...d,
+          alerts: [
+            {
+              id: `exit-alert-${Date.now()}`,
+              kind: 'risk_alert',
+              severity: 'critical',
+              vaultName: 'VFUSD Yield Vault',
+              vaultAddress: SOROBAN_ACTIVE_VAULT_ADDRESS,
+              message: `Auto-Exit Triggered: ${result.reason}`,
+              timestamp: Date.now(),
+            },
+            ...d.alerts,
+          ],
+        }))
+
+        try {
+          const txRes = await runAutonomousExit({
+            agentAddress: SOROBAN_DEMO_AGENT,
+            ownerAddress: realAddress,
+          })
+          addLog({
+            event: 'AgentCompleted',
+            meta: `✓ Autonomous Exit Succeeded! Tx: ${txRes.hash.slice(0, 8)}...`,
+            detail: 'All vault shares redeemed and USDC principal returned to owner wallet.',
+          })
+
+          const chain = await reconcileWithRetry(realAddress)
+          if (chain) {
+            setAgentData((d) => ({
+              ...d,
+              positions: applyChainPositions(d.positions, chain),
+              lastUpdated: Date.now(),
+            }))
+          }
+        } catch (err) {
+          console.error('[AutoExit] Autonomous exit failed:', err)
+          addLog({
+            event: 'AgentFailed',
+            meta: `✗ Auto-Exit Failed: ${err.message}`,
+            detail: 'Please execute emergency withdraw manually.',
+          })
+        }
+      }
+    }
+
+    const intervalId = setInterval(checkExit, 15000)
+    checkExit()
+
+    return () => {
+      active = false
+      clearInterval(intervalId)
+    }
+  }, [realAddress, stage, agentEnabled, agentData.positions])
+
   // Persist a resume snapshot whenever the user is in an active ('done') session, so a
   // refresh can re-enter it (the mount effect reads this back). Only 'done' sessions —
   // an in-progress wizard isn't worth resuming and would jump the user past their steps.
@@ -806,18 +1171,51 @@ const App = () => {
     })
   }, [strategy, amount, risk])
 
-  // AI Council deliberation for the proposed allocation. Async (3 parallel AI
-  // calls + possible synthesis call) so it runs as an effect, not a useMemo. Uses
-  // the SAME live signals as the simulation panel. AI-only: each specialist retries
-  // once; if the provider still fails, the council reports 'unavailable' and the
-  // panel offers a retry — no fabricated verdict.
+  // F8 Enforcement-A view-model: per-protocol eligibility verdicts for the approval card. Pure +
+  // snapshot-backed (no live call). The fused sentence anchors on the first survivor.
+  const eligibility = useM(() => {
+    if (!strategy?.agents) return null
+    const { verdictBySlug, survivors } = computeBasket(strategy.agents)
+    const firstSurvivor = survivors[0]
+    const fusedSentence = firstSurvivor
+      ? buildEligibilitySentence(verdictBySlug[firstSurvivor.vault.protocol], {
+          targetMaxLossPct: 5,
+          protocolLabel:
+            SNAPSHOT[firstSurvivor.vault.protocol]?.meta?.label || firstSurvivor.vault.protocol,
+        })
+      : null
+    const rows = strategy.agents.map((a) => {
+      const v = verdictBySlug[a.vault.protocol]
+      const asOf = new Date(SNAPSHOT[a.vault.protocol]?.facts?.tvl?.asOf || 0)
+        .toISOString()
+        .slice(0, 10)
+      return {
+        id: a.id,
+        eligible: !!v?.eligible,
+        isFixture: !!v?.isFixture,
+        protocolLabel: SNAPSHOT[a.vault.protocol]?.meta?.label || a.vault.protocol,
+        label: vaultEligibilityLabel(v),
+        mainnetLine: `Protocol credibility: ${SNAPSHOT[a.vault.protocol]?.meta?.label || a.vault.protocol} — audited, TVL from snapshot`,
+        testnetLine: 'This deposit: testnet — APR illustrative, realized yield may be ~0',
+        asOf,
+      }
+    })
+    return { fusedSentence, rows }
+  }, [strategy])
+
+  // Auto-run legacy council when strategy becomes ready (backward compat) — async (3 parallel
+  // AI calls + possible synthesis call) so it runs as an effect, not a useMemo. Uses the SAME
+  // live signals as the simulation panel. AI-only: each specialist retries once; if the provider
+  // still fails, the council reports 'unavailable' and the panel offers a retry — no fabricated
+  // verdict. For the new debate council, see handleRunCouncil below.
   useE(() => {
     if (!strategy?.agents?.length) {
       setCouncil(undefined)
       return
     }
+    if (strategyPhase === 'council' || !!debateResult) return
     let cancelled = false
-    setCouncil(null) // → panel shows "deliberating"
+    setCouncil(null)
     const ctrl = new AbortController()
     const state = buildStrategyState({
       amountUsdc: Number(amount) || 0,
@@ -855,7 +1253,7 @@ const App = () => {
       cancelled = true
       ctrl.abort()
     }
-  }, [strategy, amount, risk, councilRetry])
+  }, [strategy, strategyPhase, amount, risk, councilRetry])
 
   const handleEmergencyWithdraw = async (alert) => {
     const pos = agentData.positions[alert.vaultAddress]
@@ -885,14 +1283,14 @@ const App = () => {
     addLog({
       event: 'OrchestratorPlanned',
       meta: `rebalance review · ${alert.fromVault} → ${alert.toProtocol} (+${alert.apyGain}%)`,
-      detail: `Venice AI flagged ${alert.toProtocol} at ${alert.toApy}% vs ${alert.fromVault} at ${alert.fromApy}% (+${alert.apyGain}%). Rebalancing requests a fresh ERC-7715 permission for the new vault.`,
+      detail: `Venice AI flagged ${alert.toProtocol} at ${alert.toApy}% vs ${alert.fromVault} at ${alert.fromApy}% (+${alert.apyGain}%). Rebalancing authorizes a fresh Soroban session-key scope for the new vault.`,
     })
 
-  // Kill switch — user-signed AgentRegistry.revokeAgent (works even if the relayer is down).
-  // Optimistically flip the row; the on-chain AgentRevoked subscription confirms it.
+  // Kill switch — user-signed Registry.revoke (works even if the relayer is down).
+  // Optimistically flip the row; the on-chain agent_revoked subscription confirms it.
   const handleRevokeAgent = async (agent) => {
     try {
-      const tx = await revokeAgentDirect(agent)
+      const { hash: tx } = await revokeAgentOnChain({ owner: realAddress, agent })
       setScopes((prev) =>
         prev.map((s) =>
           s.agent?.toLowerCase() === agent.toLowerCase() ? { ...s, revoked: true } : s
@@ -910,27 +1308,36 @@ const App = () => {
     }
   }
 
-  // Live AgentRevoked subscription — flips a scope row to "revoked" the instant the event lands,
-  // whether revoked from this UI or elsewhere. Filtered to the connected owner.
+  // Live agent_revoked subscription — flips a scope row to "revoked" the instant the event lands,
+  // whether revoked from this UI or elsewhere. subscribeAgentRevoked already filters to the owner.
   useE(() => {
     if (!realAddress) return
-    let off = null
-    onContractEvent('AgentRevoked', (owner, agent) => {
-      if (String(owner).toLowerCase() !== realAddress.toLowerCase()) return
+    const off = subscribeAgentRevoked(realAddress, (agent) => {
       setScopes((prev) =>
         prev.map((s) =>
           s.agent?.toLowerCase() === String(agent).toLowerCase() ? { ...s, revoked: true } : s
         )
       )
     })
-      .then((unsub) => {
-        off = unsub
-      })
-      .catch(() => {})
-    return () => {
-      if (off) off()
-    }
+    return off
   }, [realAddress])
+
+  // Lifeboat mandate grant (vf-lifeboat) — user-signed, time-boxed 24h authority. Re-reads
+  // lifeboat_state() right after the tx lands so the panel's countdown updates immediately
+  // instead of waiting for the next 15s poll tick.
+  const onGrantMandate = async () => {
+    if (!realAddress) return
+    setLifeboatBusy(true)
+    try {
+      await grantMandate({ owner: realAddress })
+      const s = await readLifeboatState()
+      setLifeboatState(s)
+    } catch (e) {
+      console.error('mandate grant failed', e)
+    } finally {
+      setLifeboatBusy(false)
+    }
+  }
 
   // After a withdraw: reduce/remove the position, sync the worker, stop the agent if empty
   const handleWithdrawSuccess = (vaultAddress, withdrawnUnits) => {
@@ -957,9 +1364,8 @@ const App = () => {
       meta: `withdrew ${shortAddr(vaultAddress)} · position updated`,
       detail: 'Position balance updated after withdraw; agent monitoring config synced.',
     })
-    // Optimistic subtract above can drift (partial fills, share-price). Chain = truth — but
-    // getReadProvider() is a DIFFERENT RPC than the wallet that just mined the withdraw, so a
-    // read fired immediately after tx.wait() often lags a block and returns the PRE-withdraw
+    // Optimistic subtract above can drift (partial fills, share-price). Chain = truth — but the
+    // Soroban RPC read can lag the ledger that just settled the withdraw, returning the PRE-withdraw
     // balance. Committing that stale read would bounce the UI right back up to the old number
     // (the bug: "balance doesn't update after withdraw") — and there's no withdraw event
     // listener to re-correct it. So we poll, and only commit the chain snapshot once it
@@ -1108,6 +1514,148 @@ const App = () => {
 
   const handleAcceptStrategy = () => setStage('connect')
 
+  const handleRunCouncil = async () => {
+    if (!strategy?.agents?.length || debateRunning) return
+    setDebateRunning(true)
+    setDebateResult(null)
+    setStrategyPhase('council')
+    const ctrl = new AbortController()
+    const state = buildStrategyState({
+      amountUsdc: Number(amount) || 0,
+      riskLevel: risk,
+      numVaults: strategy.agents.length,
+      vaultData: VAULT_CATALOG,
+      marketContext: marketLive,
+      positions: agentData.positions,
+      gas: latestGasRef.current,
+    })
+    const sim = runSimulation(allocationsFromStrategy(strategy), state, {
+      runs: 200,
+      horizonDays: 30,
+      seed: 1,
+      context: {
+        turbulence: strategy.mdpState?.turbulence || state.market.turbulence,
+        apyTrendPct: 0,
+        gasGwei: latestGasRef.current?.gwei || null,
+      },
+    })
+    const settings = await loadSettings()
+    const input = buildDebateInput(strategy, sim, state)
+    const result = await councilDebate(input, {
+      proposer: proposerVerdict,
+      riskCompliance: riskComplianceVerdict,
+      validator: validatorVerdict,
+      devApiKey: devApiKey || null,
+      signal: ctrl.signal,
+      maxIterations: settings.maxIterations || 5,
+      convergenceThreshold: 0.15,
+    })
+    setDebateResult(result)
+    setDebateRunning(false)
+    setCouncil(result)
+    addLog({
+      event: 'OrchestratorPlanned',
+      meta: `Debate Council · ${result.verdict} · ${result.iterations} iters · converged: ${result.converged}`,
+    })
+  }
+
+  const runCouncilMonitorCheck = async (settings, apyByVault = {}) => {
+    if (!strategy?.agents?.length) return
+    const snapshot = loadLatestSnapshot()
+    const currentData = {
+      apyByVault,
+      turbulence: strategy.mdpState?.turbulence || 'calm',
+      gasGwei: latestGasRef.current?.gwei ?? null,
+      estimatedVaR: snapshot?.result?.VaR ?? null,
+      estimatedCVaR: snapshot?.result?.CVaR ?? null,
+      blendedApy: snapshot?.marketData?.blendedApy ?? null,
+    }
+    const diff = diffMarket(currentData, snapshot, settings)
+    setMonitorStatus({
+      lastCheck: Date.now(),
+      level: diff.level,
+      score: diff.score,
+      reason: diff.reasons[0] || '',
+    })
+
+    if (diff.level === 'skip') return
+
+    if (diff.level === 'fast') {
+      const result = await fastReeval(strategy, snapshot?.result || null, currentData, {
+        devApiKey: devApiKey || null,
+      })
+      if (result.passed) {
+        saveSnapshot(result, currentData)
+        if (settings.autoApprove) return
+        setMonitorStatus((s) => ({
+          ...s,
+          result: 'approved',
+          permissionSentence: result.permissionSentence,
+        }))
+        addLog({
+          event: 'OrchestratorPlanned',
+          meta: `Monitor re-eval · fast pass · confidence ${(result.confidence * 100).toFixed(0)}%`,
+        })
+      } else {
+        setMonitorStatus((s) => ({ ...s, result: 'violation', error: result.error }))
+        addLog({
+          event: 'AgentFailed',
+          meta: `Monitor re-eval · ${result.error}`,
+          detail: (result.violations || []).join('; '),
+        })
+      }
+    }
+
+    if (diff.level === 'full') {
+      setDebateRunning(true)
+      const ctrl = new AbortController()
+      try {
+        const state = buildStrategyState({
+          amountUsdc: Number(amount) || 0,
+          riskLevel: risk,
+          numVaults: strategy.agents.length,
+          vaultData: VAULT_CATALOG,
+          marketContext: marketLive,
+          positions: agentData.positions,
+          gas: latestGasRef.current,
+        })
+        const sim = runSimulation(allocationsFromStrategy(strategy), state, {
+          runs: 200,
+          horizonDays: 30,
+          seed: 1,
+          context: {
+            turbulence: currentData.turbulence,
+            apyTrendPct: 0,
+            gasGwei: currentData.gasGwei,
+          },
+        })
+        const input = buildDebateInput(strategy, sim, state)
+        const result = await councilDebate(input, {
+          proposer: proposerVerdict,
+          riskCompliance: riskComplianceVerdict,
+          validator: validatorVerdict,
+          devApiKey: devApiKey || null,
+          signal: ctrl.signal,
+          maxIterations: settings.maxIterations || 5,
+          convergenceThreshold: 0.15,
+        })
+        saveSnapshot(result, currentData)
+        setMonitorStatus((s) => ({
+          ...s,
+          result: result.verdict === 'keep' ? 'approved' : 'rejected',
+          debateResultId: Date.now(),
+        }))
+        addLog({
+          event: result.verdict === 'keep' ? 'OrchestratorPlanned' : 'AgentFailed',
+          meta: `Monitor full debate · ${result.verdict} · ${result.iterations} iters · converged: ${result.converged}`,
+        })
+      } finally {
+        ctrl.abort()
+        setDebateRunning(false)
+      }
+    }
+  }
+
   const handleRegenerate = () => {
     setStrategy(null)
     setSkillStates({})
@@ -1143,32 +1691,13 @@ const App = () => {
   }
 
   const handleUpgrade = async () => {
+    // ponytail: Venice x402 wallet-funded inference removed (single-chain Stellar; no EVM SIWE).
+    // AI strategist runs via Settings keys / host proxy / deterministic fallback. veniceAuth stays
+    // null — resolveProvider degrades cleanly. Re-add a Stellar-native paid-inference path here later.
     setConnectPhase('upgrading')
-    // Try Venice x402 SIWE signing — wallet now connected, no API key needed
-    if (realAddress && !devApiKey) {
-      try {
-        const auth = await signSiweForVenice(realAddress)
-        // Gate on prepaid balance: only use the x402 path when the wallet can
-        // actually pay. Known-unfunded → skip (resolveProvider falls to API key /
-        // proxy) instead of silently 402-failing into the hardcoded fallback.
-        const bal = await getX402Balance(realAddress, auth)
-        if (canUseX402(bal)) {
-          setVeniceAuth(auth)
-          const note = bal ? ` · balance $${bal.balanceUsd.toFixed(2)}` : ''
-          addLog({ event: 'Authorized', meta: `venice x402 auth signed · SIWE${note}` })
-        } else {
-          addLog({
-            event: 'Authorized',
-            meta: `venice x402 wallet unfunded ($${bal.balanceUsd.toFixed(2)}) · using API key / fallback`,
-          })
-        }
-      } catch (e) {
-        console.warn('[app] SIWE signing skipped:', e.message)
-      }
-    }
     setTimeout(() => {
       setConnectPhase('upgraded')
-      addLog({ event: 'Authorized', meta: 'eip-7702 · handled by MetaMask SAK · gas 0' })
+      addLog({ event: 'Authorized', meta: 'session ready · gas sponsored by relayer' })
     }, speed * 0.8)
   }
 
@@ -1225,14 +1754,43 @@ const App = () => {
   }
 
   const handleSkillsContinue = () => {
-    // A valid persisted grant means the user already signed once — skip the
-    // permission card entirely and go straight to execution (true "ask once").
-    if (hasSession() && permActive && permContext) {
-      setStage('execute')
-      startExecution(permContext)
-      return
-    }
     setStage('permission')
+  }
+
+  /* ----- GRANT (step 04, router one-popup path) ----- */
+  // "Grant & run": stash the user's budget + window, then advance to execute. The SINGLE wallet
+  // popup (router.grant) fires inside orchestrator.dispatch → setupViaRouter; every later worker
+  // funding is a relayed router.pull (0 popups).
+  const handleGrantAndRun = ({ budget, durationSeconds }) => {
+    grantCfgRef.current = { budgetUsdc: budget, durationSeconds }
+    setGrantError(null)
+    setGrantPhase('granting')
+    setPermActive(true)
+    setPermExpiresAt(Date.now() + durationSeconds * 1000)
+    addLog({
+      event: 'PermissionGranted',
+      meta: `router grant · ${budget} USDC · ${durationSeconds}s`,
+    })
+    setStage('execute')
+    startExecution()
+  }
+
+  // Kill switch — zero the on-chain allowance in one popup (works even if the relayer is down).
+  const handleRevokeGrant = async () => {
+    if (!realAddress) return
+    setGrantError(null)
+    setGrantPhase('revoking')
+    try {
+      const { hash } = await revokeGrant({ owner: realAddress })
+      addLog({
+        event: 'PermissionRevoked',
+        meta: `router allowance set to 0 · ${hash?.slice(0, 10)}…`,
+      })
+    } catch (err) {
+      setGrantError(err?.message || 'revoke failed')
+    } finally {
+      setGrantPhase('idle')
+    }
   }
 
   /* ----- PERMISSION (step 04) ----- */
@@ -1246,57 +1804,17 @@ const App = () => {
   const handlePermConfirm = async () => {
     setPermPhase('idle')
     setPermError(null)
-    try {
-      // Cap the ONE Advanced Permission at the total planned deposit (USDC units). Each worker
-      // redeems a slice of this single grant, so the period cap must cover the sum of all vaults.
-      const capUnits = BigInt(Math.floor((Number(amount) || 0) * 1e6))
-      const permResult = await requestERC7715Permission(capUnits, 86400)
-      const expiresAtMs = Date.now() + 86400 * 1000
-
-      // If delegationManager is missing here, session redemption never boots and
-      // every later action falls back to the popup-per-call path — surface the
-      // grant context to the activity log so that's diagnosable without devtools.
-      const gp = permResult.grantedPermissions
-      addLog({
-        event: 'PermissionGranted',
-        meta: `erc-7715 granted · chain ${gp?.[0]?.chainId ?? '?'} · delegationManager ${permResult.delegationManager ? shortAddr(permResult.delegationManager) : 'missing'}`,
-        detail: `context: ${shortAddr(gp?.[0]?.context || permResult.permissionContext || '')}\nsignerMeta: ${JSON.stringify(gp?.[0]?.signerMeta)}\naccountMeta: ${JSON.stringify(gp?.[0]?.accountMeta)}`,
-      })
-
-      // Boot the ERC-7710 session + persist the single grant → all later actions
-      // redeem with zero popup, and reload/re-entry within 24h skips this step.
-      if (permResult.delegationManager) {
-        initSession({
-          permissionContext: permResult.permissionContext,
-          delegationManager: permResult.delegationManager,
-        })
-        saveSessionGrant({
-          permissionContext: permResult.permissionContext,
-          delegationManager: permResult.delegationManager,
-          expiresAt: expiresAtMs,
-        })
-      }
-
-      setPermContext(permResult.permissionContext)
-      setPermActive(true)
-      setPermExpiresAt(expiresAtMs)
-      const ag = strategy?.agents || []
-      ag.forEach((a) =>
-        addLog({
-          event: 'PermissionGranted',
-          agent: a.id,
-          meta: `vault ${shortAddr(a.vault.addr)} · ${a.allocation} usdc max`,
-        })
-      )
-      setTimeout(() => {
-        setStage('execute')
-        startExecution(permResult.permissionContext)
-      }, 600)
-    } catch (err) {
-      setPermPhase('idle')
-      setPermError(err.message)
-      addLog({ event: 'AgentFailed', meta: `permission denied: ${err.message}` })
-    }
+    // Stellar path: there is no EVM-style permission-grant step. The per-agent authorize + fund (one
+    // user-signed wallet-kit tx per agent) happens inside orchestrator.dispatch. Just advance
+    // to execute and let the orchestrator prompt the wallet.
+    const expiresAtMs = Date.now() + 86400 * 1000
+    setPermActive(true)
+    setPermExpiresAt(expiresAtMs)
+    addLog({ event: 'PermissionGranted', meta: 'stellar · authorize + fund per agent at execute' })
+    setTimeout(() => {
+      setStage('execute')
+      startExecution()
+    }, 600)
   }
 
   /* ----- EXECUTE (step 05) — real parallel agents ----- */
@@ -1317,9 +1835,15 @@ const App = () => {
     }))
   }
 
-  const startExecution = (ctx) => {
+  const startExecution = () => {
     if (!strategy) return
-    const resolvedCtx = ctx || permContext
+    setMonitorStatus({
+      level: 'skip',
+      score: 0,
+      reason: 'Starting execution...',
+      lastCheck: Date.now(),
+      result: 'approved',
+    })
 
     // Pre-compute sessionId and build hex→designId map BEFORE orchestrator starts.
     // Orchestrator uses makeAgentId(index, sessionId) — same function, same sessionId = same hex.
@@ -1334,39 +1858,48 @@ const App = () => {
     const init = makeInitialExecState(strategy.agents)
     setExecMap(init)
 
-    // Convert design strategy format → orchestrator's expected { vaults: [...] } format
+    // Enforcement A — eligibility gate. Drop ineligible protocols BEFORE dispatch; all-fail = hard stop.
+    const { verdictBySlug, survivors, dropped, allFailed } = computeBasket(strategy.agents)
+    dropped.forEach((d) =>
+      addLog({
+        event: 'VaultRejected',
+        agent: d.agent.id,
+        meta: (d.verdict.reasons || []).join('; '),
+      })
+    )
+    if (allFailed) {
+      addLog({ event: 'ExecutionBlocked', meta: 'No eligible vault — nothing will run.' })
+      setStage('permission') // stay on the approval card; do NOT dispatch
+      return
+    }
+    // dispatchSet ⊆ survivors: only survivors get a plan; allocations re-normalized to sum 1.
+    // Each survivor carries a freshly-minted eligibility token (Enforcement B asserts it worker-side).
     const yvStrategy = {
-      vaults: strategy.agents.map((a) => ({
+      vaults: survivors.map((a, i) => ({
         address: a.vault.addr,
-        allocation: a.allocation / strategy.total,
+        allocation: a.allocationFraction,
+        protocolSlug: a.vault.protocol,
+        eligibilityToken: mintToken(verdictBySlug[a.vault.protocol], i),
       })),
     }
 
+    // Router path: pass the user's chosen grant budget (USDC → base units) + window so the ONE
+    // grant popup sizes the allowance. null on the legacy path → orchestrator defaults (budget =
+    // run total, window = SCOPE_TTL_SECONDS).
+    const grantCfg = grantCfgRef.current
+    const grantBudgetUnits =
+      grantCfg?.budgetUsdc != null
+        ? BigInt(Math.floor(grantCfg.budgetUsdc * 10 ** SOROBAN_DECIMALS))
+        : null
+
     const orch = new OrchestratorAgent({
       user: realAddress,
-      permissionContext: resolvedCtx,
       veniceAuth: veniceAuth,
       devApiKey: devApiKey || null,
       sessionId,
+      grantBudgetUnits,
+      grantDurationSeconds: grantCfg?.durationSeconds || null,
       onEvent: (evName, data) => {
-        // A2A redelegation events → activity log (orchestrator → worker hand-off proof)
-        if (evName === 'RedelegationCreated') {
-          const vaultLetter = String.fromCharCode(64 + (data.workerId || 1))
-          addLog({
-            event: 'RedelegationCreated',
-            agent: `orchestrator → ${data.to}`,
-            meta: `${data.allocationUsdc} USDC · vault ${vaultLetter} · limitedCalls: 3 · ${shortAddr(data.delegationHash)}`,
-          })
-          return
-        }
-        if (evName === 'RedelegationRedeemed') {
-          addLog({
-            event: 'RedelegationRedeemed',
-            agent: data.to || `worker-${data.workerId}`,
-            meta: `deposit executed · tx ${shortAddr(data.txHash)}`,
-          })
-          return
-        }
         if (evName === 'skill-gen-failed') {
           const dId = agentMapRef.current?.[data.agentId] || data.agentId
           addLog({
@@ -1458,7 +1991,7 @@ const App = () => {
                     title: `${stepName} ${data.status === 'done' ? 'confirmed' : 'executing'}`,
                     meta: data.txHash
                       ? `tx ${shortAddr(data.txHash)}${data.gasMethod === 'user-signed' ? ' · ⚠ user-signed' : ''}`
-                      : 'via 1Shot relayer',
+                      : 'via fee-bump relayer',
                     hash: data.txHash || null,
                     t: nowT(),
                   },
@@ -1546,7 +2079,7 @@ const App = () => {
               apy: ag.vault.apy,
               workerLabel: ag.name,
               workerId: ag.id,
-              network: 'sepolia',
+              network: 'stellar-testnet',
             })
         }
 
@@ -1586,8 +2119,11 @@ const App = () => {
         })
       })
       .catch((err) => {
-        console.error('[app] orchestrator dispatch failed:', err)
-        addLog({ event: 'AgentFailed', meta: `orchestrator error: ${err?.message || err}` })
+        console.warn('[app] orchestrator dispatch failed (simulation mode):', err?.message || err)
+        addLog({
+          event: 'AgentFailed',
+          meta: `orchestrator error (simulation): ${err?.message || err}`,
+        })
         setExecMap((prev) => {
           const next = { ...prev }
           Object.keys(next).forEach((id) => {
@@ -1596,6 +2132,13 @@ const App = () => {
             }
           })
           return next
+        })
+        setMonitorStatus({
+          level: 'skip',
+          score: 0,
+          reason: 'Stellar relayer offline — simulation mode. Council Monitor badge visible.',
+          lastCheck: Date.now(),
+          result: 'approved',
         })
       })
   }
@@ -1634,14 +2177,14 @@ const App = () => {
     }
     // Allocation-based FALLBACK only — used when the chain read is unavailable (no RPC)
     // or a vault reads 0 (deposit tx not yet mined). Stored in raw token
-    // units (allocation USDC * 1e6); the display layer divides by 1e6.
+    // 7-dp base units (allocation USDC * 1e7); display divides by 1e7 (toDisplay).
     const seedPositions = {}
     ;(strategy?.agents || []).forEach((a) => {
       if (execMap[a.id]?.status === 'confirmed') {
         const addr = a.vault.addr
         const prev = seedPositions[addr]
         const prevBal = BigInt(prev?.balance || '0')
-        const newBal = BigInt(Math.round(a.allocation * 1e6))
+        const newBal = toBaseUnits(a.allocation)
         seedPositions[addr] = {
           vaultName: a.vault.name,
           balance: (prevBal + newBal).toString(), // sum if multiple agents target same vault
@@ -1687,12 +2230,10 @@ const App = () => {
     })
   }
 
-  const handleAgain = () => {
+  const handleAgain = (overrideAmount) => {
     setStage('strategy')
     navigate('/strategy')
     setFurthest(0)
-    setStrategyPhase('input')
-    setThinkingPhase(0)
     setStrategy(null)
     setRawStrategy(null)
     setStrategyAttestation(null)
@@ -1702,11 +2243,8 @@ const App = () => {
     setConnectPhase('idle')
     setConnectError(null)
     setPermActive(false)
-    setPermContext(null)
     setPermError(null)
     setPermExpiresAt(null)
-    clearSession()
-    clearGrant()
     clearResume(realAddress)
     setSessionResumed(false)
     setVeniceAuth(null)
@@ -1715,13 +2253,30 @@ const App = () => {
     setExecMap({})
     setLogs([])
     agentMapRef.current = {}
+
+    if (
+      overrideAmount !== undefined &&
+      overrideAmount !== null &&
+      (typeof overrideAmount === 'number' ||
+        typeof overrideAmount === 'string' ||
+        !isNaN(Number(overrideAmount)))
+    ) {
+      setAmount(String(overrideAmount))
+      setStrategyPhase('thinking')
+      setThinkingPhase(0)
+      addLog({
+        event: 'OrchestratorPlanned',
+        meta: `${overrideAmount} usdc · ${risk} risk · planning`,
+      })
+    } else {
+      setStrategyPhase('input')
+      setThinkingPhase(0)
+    }
   }
 
   const handleRevoke = () => {
     setPermActive(false)
     setPermExpiresAt(null)
-    clearSession()
-    clearGrant()
     clearResume(realAddress)
     setSessionResumed(false)
     ;(strategy?.agents || []).forEach((a) =>
@@ -1739,22 +2294,11 @@ const App = () => {
     setRealAddress(null)
     setConnectPhase('idle')
     setPermActive(false)
-    setPermContext(null)
     setPermExpiresAt(null)
     setVeniceAuth(null)
-    clearSession()
-    clearGrant()
     clearResume(realAddress)
     setSessionResumed(false)
     addLog({ event: 'PermissionRevoked', meta: 'wallet disconnected · session cleared' })
-  }
-  const handleSwitchNetwork = async () => {
-    try {
-      await switchToSepolia()
-      addLog({ event: 'Connected', meta: 'network · Base Sepolia' })
-    } catch (e) {
-      addLog({ event: 'AgentFailed', meta: `switch network failed: ${e.message}` })
-    }
   }
   const handleResetAgentSettings = () => {
     setAgentSettings({ ...AGENT_SETTINGS_DEFAULTS })
@@ -1879,6 +2423,8 @@ const App = () => {
           )
         if (strategyPhase === 'thinking')
           return <ThinkingCard phase={thinkingPhase} times={thinkTimes} />
+        const hasDebateResult = !!debateResult
+        const showDebate = strategyPhase === 'council' || hasDebateResult
         return (
           <StrategyCard
             strategy={strategy}
@@ -1889,8 +2435,11 @@ const App = () => {
             attestation={strategyAttestation}
             attesting={attesting}
             simulation={simulation}
-            council={council}
-            onCouncilRetry={() => setCouncilRetry((n) => n + 1)}
+            council={showDebate && debateResult ? debateResult : council}
+            onCouncilRetry={handleRunCouncil}
+            onRunCouncil={handleRunCouncil}
+            debateRunning={showDebate && debateRunning}
+            showRunCouncil={!debateResult}
           />
         )
       case 'connect':
@@ -1898,7 +2447,6 @@ const App = () => {
           <ConnectCard
             phase={connectPhase}
             error={connectError}
-            mmVersion={mmVersion}
             onConnect={handleConnect}
             onUpgrade={handleUpgrade}
             onDone={handleConnectDone}
@@ -1921,16 +2469,21 @@ const App = () => {
           />
         )
       case 'permission':
-        if (mmVersion && !mmVersion.supportsERC7715)
-          return (
-            <FlaskGate
-              detectedType={mmVersion.type}
-              onRetry={() => detectMetaMaskVersion().then(setMmVersion)}
-            />
-          )
-        return (
+        // Router path: ONE grant popup (budget + window) replaces the per-agent batch. Legacy path
+        // (router unset / VITE_LEGACY_AGENT_SETUP=1) keeps the original PermissionCard flow.
+        return USE_FUNDING_ROUTER ? (
+          <GrantPanel
+            defaultBudget={strategy?.total ?? 100}
+            agentCount={strategy?.agents?.length ?? 0}
+            phase={grantPhase}
+            error={grantError}
+            onGrant={handleGrantAndRun}
+            onRevoke={handleRevokeGrant}
+          />
+        ) : (
           <PermissionCard
             strategy={strategy}
+            eligibility={eligibility}
             phase={permPhase}
             error={permError}
             onGrant={handleGrant}
@@ -1970,6 +2523,23 @@ const App = () => {
       protocol: a.vault.protocol,
     }
   })
+
+  // vf-autofarm keeper/strategy/pool force-graph cluster (Task 15). Memoized on the strategy
+  // address list (not the whole `autofarmReads.strategies` array, which gets a new reference
+  // every 15s poll even when addresses are unchanged) so the canvas physics don't reheat/jitter
+  // on every tick — only when the registered strategy set actually changes.
+  const autofarmStrategyKey = autofarmReads.strategies
+    .map((s) => `${s.address}:${s.poolAddress || ''}`)
+    .join(',')
+  const autofarmGraphData = useM(
+    () =>
+      buildAutofarmGraphData({
+        vaultAddress: SOROBAN_AUTOFARM_VAULT_ADDRESS,
+        keeperAddress: SOROBAN_KEEPER_ADDRESS,
+        strategies: autofarmReads.strategies,
+      }),
+    [autofarmStrategyKey]
+  )
 
   // Public pages — standalone full-bleed, own NavBar, no wallet required.
   // Checked before every gate so judges and visitors can browse without connecting.
@@ -2122,8 +2692,8 @@ const App = () => {
                               {shortAddr(s.agent)}
                             </div>
                             <div style={{ fontSize: 10.5, opacity: 0.6 }}>
-                              cap {(Number(s.capPerPeriod) / 1e6).toFixed(2)} · max-at-risk{' '}
-                              {(Number(s.maxAtRisk) / 1e6).toFixed(2)} USDC
+                              cap {toDisplay(s.capPerPeriod).toFixed(2)} · max-at-risk{' '}
+                              {toDisplay(s.maxAtRisk).toFixed(2)} USDC
                             </div>
                           </div>
                           {s.revoked ? (
@@ -2156,6 +2726,7 @@ const App = () => {
                       onDismiss={dismissAlert}
                       onWithdrawSuccess={handleWithdrawSuccess}
                       onNewStrategy={handleAgain}
+                      monitorStatus={monitorStatus}
                       loopStatus={
                         agentEnabled
                           ? {
@@ -2172,23 +2743,44 @@ const App = () => {
                           <LoopStatusPanel
                             running={loopRef.current?.isRunning() || false}
                             summary={getJournalSummary()}
-                            rows={getCycles().slice(0, 8)}
+                            rows={getCycles().slice(0, 40)}
                             phase={loopPhase}
                             nextTickAt={loopRef.current?.getNextTickAt() || null}
                             heartbeatMs={
                               loopRef.current?.getHeartbeatMs() ||
                               (agentSettings.apyInterval || 10) * 60 * 1000
                             }
+                            decisionsRows={getDecisions().slice(0, 30)}
+                            decisionsSummary={getDecisionSummary()}
                           />
                         )
                       }
-                      decisionPanel={
-                        agentEnabled && (
-                          <DecisionLogPanel
-                            rows={getDecisions().slice(0, 8)}
-                            summary={getDecisionSummary()}
+                      decisionPanel={null}
+                      keeperPanel={
+                        <>
+                          <KeeperPanel
+                            events={keeperActivity}
+                            pricePerShare={autofarmReads.pricePerShare}
+                            strategies={autofarmReads.strategies}
                           />
-                        )
+                          <div style={{ marginTop: 14 }}>
+                            <LifeboatPanel
+                              state={lifeboatState}
+                              events={lifeboatActivity}
+                              owner={realAddress}
+                              onGrant={onGrantMandate}
+                              busy={lifeboatBusy}
+                            />
+                          </div>
+                          <div style={{ marginTop: 14 }}>
+                            <AgentGraph
+                              graphData={autofarmGraphData}
+                              execMap={{}}
+                              paletteIsLight={paletteIsLight}
+                              pulseEdge={rebalancePulse}
+                            />
+                          </div>
+                        </>
                       }
                     />
                   </Suspense>
@@ -2218,8 +2810,8 @@ const App = () => {
                 onResetAgentSettings={handleResetAgentSettings}
                 onConnect={handleConnect}
                 onDisconnect={handleDisconnect}
-                onSwitchNetwork={handleSwitchNetwork}
                 onRevoke={handleRevoke}
+                addLog={addLog}
               />
             }
           />
@@ -2228,6 +2820,15 @@ const App = () => {
             element={<VaultDetailPage positions={agentData.positions} />}
           />
           <Route path="/tx/:txHash" element={<TxDetailPage />} />
+          <Route
+            path="/developers"
+            element={
+              <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
+                <DevelopersPage />
+              </Suspense>
+            }
+          />
+          <Route path="/farm" element={<CrossChainFarmFlow />} />
           <Route path="*" element={<Navigate to="/home" replace />} />
         </Routes>
       </main>

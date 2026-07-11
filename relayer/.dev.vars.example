@@ -1,0 +1,36 @@
+# Stellar leg — relayer's OWN identity (gas/relay only, never user funds/keys)
+SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
+STELLAR_NETWORK_PASSPHRASE=Test SDF Network ; September 2015
+RELAYER_STELLAR_SECRET=SFILL_ME_RELAYER_OWN_KEYPAIR
+RELAYER_STELLAR_PUBLIC=GFILL_ME_RELAYER_OWN_KEYPAIR
+
+# Base leg — relayer's OWN identity (submits public attested mints, not user funds)
+BASE_SEPOLIA_RPC_URL=https://sepolia.base.org
+RELAYER_BASE_PRIVKEY=0xFILL_ME_RELAYER_OWN_EOA
+ZERODEV_PROJECT_ID=FILL_ME
+YIELD_ROUTER_ADDRESS=0xFILL_ME_FROM_deployments_base-sepolia_json_once_SP1_lands
+
+# CCTP
+IRIS_URL=https://iris-api-sandbox.circle.com
+
+# Idempotency store (dev = JSON file; prod swaps to D1, see Task 2.2)
+RELAYER_STORE_PATH=./.relayer-store.dev.json
+
+# Optional: sqlite persistence (jobs + mandates + idempotency survive restarts). Requires Node >= 22.5.
+# When set, it overrides RELAYER_STORE_PATH for the idempotency store and backs jobs/mandates too.
+# RELAYER_DB_PATH=./.relayer.dev.db
+
+# Optional: shared secret the Cloudflare Pages proxy (functions/api/vf-cross) must send on
+# x-vf-relayer-key. Empty = local dev (no gate). On the VM it MUST match Cloudflare Pages
+# RELAYER_PROXY_KEY. Generate: openssl rand -hex 32
+# RELAYER_PROXY_KEY=
+
+# Smoke-only: throwaway dev keypair SIMULATING the user's passkey signature until SP3 ships the
+# real wallet. Never read by relayMint/dispatchDeposits in the production path.
+SMOKE_STELLAR_SECRET=SFILL_ME
+SMOKE_STELLAR_PUBLIC=GFILL_ME
+SMOKE_SESSION_PRIVKEY=0xFILL_ME_EPHEMERAL_SESSION_KEY
+# Optional: owner (sudo) key for the mandate. Defaults to RELAYER_BASE_PRIVKEY if unset.
+# SMOKE_OWNER_PRIVKEY=0x...
+# Generate by running: node --env-file=.dev.vars smoke/mint-mandate.mjs  (paste its output line here)
+SMOKE_SESSION_APPROVAL=FILL_ME_RUN_smoke/mint-mandate.mjs_TO_GENERATE

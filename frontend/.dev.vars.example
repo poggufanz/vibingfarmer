@@ -23,21 +23,46 @@ DEEPSEEK_API_KEY=sk-your_deepseek_key
 # same BYOK model. Leave unset on a lockdown deploy; users can bring their own Tavily key.
 TAVILY_API_KEY=tvly-...
 
-# 1Shot Managed API — makes relays REAL + gas-abstracted on Base Sepolia (read by /api/relay).
-# From app.1shotapi.com: API Keys (key+secret), Organizations → business id.
-# Auto-provisions a Base Sepolia server wallet on first call — fund it with testnet ETH.
-ONESHOT_KEY=your_1shot_api_key
-ONESHOT_SECRET=your_1shot_api_secret
-ONESHOT_BIZ_ID=your_1shot_business_id
+# ─── Soroban gasless relay (read by /api/stellar-relay) ───
+# Relayer keypair SECRET (S...). Server-only — never expose to the client bundle.
+# Generate + fund on testnet:  stellar keys generate relayer --network testnet --fund
+# then read the secret with:    stellar keys show relayer
+STELLAR_RELAYER_SECRET=S...
+SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
+STELLAR_NETWORK_PASSPHRASE=Test SDF Network ; September 2015
+SOROBAN_VAULT_ADDRESS=CB5VKYDUIYX3RZWGVLKKNBPG7V7Z5JIHF2QPNQKWKAHVA3IPSLFZJDYU
 
-# Server-controlled deposit target (the proxy NEVER trusts a client-supplied address).
-# Base Sepolia AgentVaultDepositor — must match src/config.js AGENT_VAULT_DEPOSITOR_ADDRESS.
-AGENT_VAULT_DEPOSITOR_ADDRESS=0xbf2091Fe26183369ae9f0Ba4735190F5fec7686c
+# funding_router for the one-popup grant flow; unset = router relaying disabled
+# (relay then sponsors only router.grant / router.pull on this exact contract)
+SOROBAN_ROUTER_ADDRESS=CBEI5VJKKWLXKQUUUETBAPZSQQLH7I57TSIDTMV4WJMBKIGVF7NSNOFY
 
-# Optional: custom RPC for the relay's on-chain replay/code checks (defaults to https://sepolia.base.org).
-RPC_URL=https://sepolia.base.org
+# Agents the relay will sponsor F11 exit-leg-2 token.transfer calls for (comma-separated,
+# exact match, fail-closed if empty). Demo agent + your local smoke agent (SMOKE_AGENT_ADDRESS):
+SOROBAN_AGENT_ALLOWLIST=CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC,C...
+
+# Testnet token faucet (server-only; leave unset to disable /api/faucet with 503)
+VF_FAUCET_SECRET=S...                    # vf-deployer secret; treasury must hold testnet Blend USDC
+SOROBAN_TOKEN_ADDRESS=CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU
 
 # Optional: trusted proxy hops for rate-limit client-IP resolution.
 # Cloudflare sets CF-Connecting-IP (mapped to x-real-ip by the adapter), so the
 # default 1 is fine; only change if you front Pages with another proxy.
 TRUST_PROXY_HOPS=1
+
+# ─── VF API gate (SEP-10 portal + gateway) ───
+VF_AUTH_SIGNING_KEY=S...        # server SEP-10 signing keypair secret (testnet)
+VF_JWT_SECRET=change-me-32-chars-min
+VF_HOME_DOMAIN=localhost:5173   # SEP-10 home_domain / web_auth_domain
+VF_GLOBAL_DAILY_CAP=5000        # global upstream budget per scope per day
+
+# ─── On-ramp widget (SP4, read by /api/onramp-session) ───
+# Server-only. Get keys from the Transak Partner Dashboard: https://dashboard.transak.com
+TRANSAK_API_KEY=your_transak_api_key
+TRANSAK_ACCESS_TOKEN=your_transak_access_token
+TRANSAK_ENVIRONMENT=STAGING
+TRANSAK_REFERRER_DOMAIN=vibing-farmer.pages.dev
+
+# Cross-chain relayer proxy (production). Tunnel hostname of the relayer VM + the shared secret
+# the relayer requires on x-vf-relayer-key (must equal the VM's RELAYER_PROXY_KEY).
+RELAYER_ORIGIN=https://vf-relayer.example.com
+RELAYER_PROXY_KEY=change-me

@@ -50,3 +50,19 @@ Scope: worker `0x4882ceeF...c06300`, cap 10 dUSDC / 1 day, expiry +7 days.
 Drill 4 note: the intended replay target was `execId`-based `AlreadyExecuted` idempotency. Because drill 3 revoked the scope first, `ScopeInactive` short-circuits before the `execId` check — an even stronger result (a revoked agent's signed payloads are dead on arrival, full stop, not just deduped). `AlreadyExecuted` idempotency for an *active* scope remains covered by the local invariant suite (`test/invariant/DepositorInvariant.t.sol`, 256 runs × 50 depth, 0 failures) and by `executeAgentDeposit`'s `usedExecIds` mapping.
 
 All four live results match the threat-model claims in §2: funds always land with the scope owner, cap/expiry/revoke are enforced on-chain regardless of who holds or steals the signing key.
+
+## 7. Lifeboat (automated emergency de-risk)
+
+The vault's lifeboat (`emergency_derisk`/`resume`/`lifeboat_state`, gated by `set_mandate_authority`/`set_mandate`) is a keeper-submitted safeguard, not a contract-autonomous one — the decision logic lives off-chain in `keeper/src/radar.js` + `keeper/src/lifeboat.js`; the contract only enforces the mandate and flips `derisked`.
+
+**What it defends against:** a liquidity crunch (pool utilization / liquidity-drop signal) or an oracle-price divergence, at a reaction floor of ~1 ledger (~6 s) — the radar polls every ~2 s and reacts within the ledger the danger signal lands on-chain. Stellar has no pre-consensus mempool visibility; the first public signal is the ledger close itself, so ~1 ledger is the architectural floor, not a tuning knob to shrink further.
+
+**What it explicitly does NOT protect against:** an atomic single-ledger drain. An attack that both causes and completes the damage within one ledger close happens faster than any off-chain reaction loop can observe and respond, on any chain. The lifeboat is a second line of defense, not a substitute for the pre-entry screening below.
+
+**Mandate semantics — fail-closed both ways:** `emergency_derisk` and `resume` both require a live (unexpired) mandate granted by the vault owner (`set_mandate_authority` designates who may grant it; `set_mandate(expiry)` grants it, e.g. a 24 h window).
+
+- Danger detected + no live mandate → the radar raises an alarm instead of de-risking (it cannot act without authorization).
+- Already de-risked + the mandate expires before calm returns → the radar cannot resume either — funds stay idle in the vault until the mandate is renewed.
+- `deposit`/`redeem` are never gated by `derisked` or the mandate — users can always deposit or exit; only the strategy-level `compound`/`rebalance` calls are blocked while de-risked.
+
+**Pre-entry screening (F8) covers the exploit class the reaction floor cannot:** the eligibility gate (`frontend/src/strategy/eligibilityGate.js`) rejects the same exploit class that actually hit Blend in production — YieldBlox, 2026-02-22, an oracle misconfiguration on a community-managed pool drained the pool before any reaction loop could have helped. Four facts gate entry: `poolClass` (anything but `'curated'` → reason `'community-managed pool'`), `oracleType` (anything without a circuit breaker → reason `'oracle without circuit breaker'`), `collateralLiquidityDepthUsd` (below the floor → reason `'thin collateral liquidity'`), and `supplierConcentrationPct` (above the cap → reason `'supplier concentration too high'`). A pool failing any of these is never eligible for deposit — the lifeboat's reaction floor only has to cover pools that already cleared this bar.

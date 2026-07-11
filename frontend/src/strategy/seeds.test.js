@@ -6,8 +6,8 @@ describe('seeds', () => {
     for (const s of SEED_RULES) {
       expect(s).toMatchObject({
         id: expect.any(String),
-        role: expect.stringMatching(/^(yield|risk|market)$/),
-        category: expect.stringMatching(/^(strategy|risk|gas)$/),
+        role: expect.stringMatching(/^(yield|risk|market|proposer|risk-compliance|validator)$/),
+        category: expect.stringMatching(/^(strategy|risk|gas|opportunity|compliance|simulation)$/),
         text: expect.any(String),
         origin: 'seed',
       })
@@ -36,6 +36,9 @@ describe('seeds', () => {
     expect(roleToCategory('yield')).toBe('strategy')
     expect(roleToCategory('risk')).toBe('risk')
     expect(roleToCategory('market')).toBe('gas')
+    expect(roleToCategory('proposer')).toBe('opportunity')
+    expect(roleToCategory('risk-compliance')).toBe('compliance')
+    expect(roleToCategory('validator')).toBe('simulation')
     expect(roleToCategory('unknown')).toBe('strategy')
   })
 

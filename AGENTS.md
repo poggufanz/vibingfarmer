@@ -8,7 +8,7 @@ This file provides guidance to Agent when working with code in this repository.
 **Motivation:** Built out of frustration with complex, click-heavy sequential yield farming workflows.
 **Goal:** Empower users with autonomous, parallel multi-vault deposits governed by secure cryptographic boundaries.
 
-**Core product:** AI-coordinated agent swarm for automated multi-vault yield farming. Venice AI generates strategy + per-agent skill sets. User approves skills once. Orchestrator Agent dispatches Worker Agents in parallel — each executing Swap → Approve → Deposit for one vault. All transactions via ERC-7715 scoped permission + 1Shot Permissionless Relayer. Real-time vis.js graph monitors agent network and memory.
+**Core product:** AI-coordinated agent swarm for automated multi-vault yield farming on Base Sepolia. AI strategist (DeepSeek default / Venice AI via wallet x402+SIWE / hardcoded fallback) generates strategy + per-agent skill sets. User approves once, batching one EIP-712 `authorizeSessionKey` grant per agent on `AgentRegistry`. Orchestrator dispatches Worker agents in parallel — each signs an EIP-712 deposit and relays it via 1Shot Managed API to the deposit-only `AgentVaultDepositor` (no on-chain swap). Real-time react-force-graph-2d graph monitors agent network and memory.
 
 **Vision:** Web3 → Web4 transition primitive. Users express intent, agents execute autonomously, blockchain enforces boundaries cryptographically.
 
@@ -21,9 +21,9 @@ This file provides guidance to Agent when working with code in this repository.
 | Component | Technical Choice | Purpose |
 |-----------|------------------|---------|
 | Smart Swarm | Multi-agent skill system | Granular agent delegation + local memory |
-| Privacy-First AI | Venice AI (Llama-3.3-70b) | Strategy and per-agent skill auto-generation |
+| AI Strategist | DeepSeek default, Venice AI x402/SIWE, hardcoded fallback | Strategy and per-agent skill auto-generation |
 | Agent-to-Agent | Orchestrator & parallel Workers | Parallel execution for optimal DeFi UX |
-| Gas Abstraction | 1Shot Relayer & EIP-7702 | Zero-gas transactions under ERC-7715 scoped boundaries |
+| Gas Abstraction | 1Shot Managed API relay + EIP-712 agent scope | Zero-gas transactions under capped/expiring boundaries |
 
 ---
 
@@ -31,15 +31,23 @@ This file provides guidance to Agent when working with code in this repository.
 
 Timeline: 20 days total (26 Mei – 15 Juni 2026)
 
-| Phase | Days | Focus |
-|-------|------|-------|
-| 1 — Foundation | 1–3 | Solidity review + EIP-7702/ERC-7715 study |
-| 2 — Smart Contract | 4–8 | AgentVaultDepositor.sol + tests |
-| 3 — Integration | 9–13 | 1Shot + Orchestrator/Worker agents + vis.js graph + Sepolia test |
-| 4 — Polish | 14–17 | Bug fix, Venice AI skill gen, memory UI, demo video |
-| 5 — Publish | 18–20 | Open source publishing |
+| Phase | Days | Status | Focus |
+|-------|------|--------|-------|
+| 1 — Foundation | 1–3 | ✅ Done | Solidity review + setup + spike review |
+| 2 — Smart Contract | 4–8 | ✅ Done | AgentRegistry.sol + AgentVaultDepositor.sol + tests |
+| 3 — Integration | 9–13 | ✅ Done | 1Shot Managed API + Orchestrator/Worker agents + force-graph + Base Sepolia test |
+| 4 — Polish | 14–17 | ✅ Done | Bug fix, AI skill gen, memory UI, Monte Carlo/replay/attestation, demo video |
+| 5 — Publish | 18–20 | ⬜ | Open source publishing |
 
-**All 4 spikes resolved. ✅ See `docs/spikes/` for full findings. Key decisions below.**
+> **EVM decommissioned 2026-06-21 (sub-project 6).** The Solidity stack, the EVM frontend chain-layer, and the ethers/viem/1Shot dependencies were removed. Vibing Farmer is now **single-chain on Stellar/Soroban** — chain code lives in `soroban/` (contracts) and `frontend/src/stellar/` (client). The architecture, ADR, contract, and user-flow sections below describe the original EVM design and are retained as **migration history** — for the live system read `soroban/` + `frontend/src/stellar/` and `deployments/stellar-testnet.json`.
+
+**All 4 original spikes resolved — see `docs/spikes/` (historical; some superseded by ADRs below, e.g. ERC-7715 → AgentRegistry, Venice-only → DeepSeek/Venice/fallback chain).**
+
+## Planning Rules
+
+- Planning files (`planning/`, `docs/superpowers/`) are **never committed** — both folders are in `.gitignore`
+- Per-phase plans live locally only (not in repo)
+- Only phase status table above is updated in this file as phases complete
 
 ---
 
@@ -49,34 +57,36 @@ Timeline: 20 days total (26 Mei – 15 Juni 2026)
 User Input (amount, risk level, # of vaults)
         │
         ▼
-Venice AI Coordinator
+AI Strategist (DeepSeek default → Venice x402/SIWE → hardcoded fallback)
   ├── Generate multi-vault allocation strategy
-  └── Auto-generate skill set JSON per agent per step
+  └── Auto-generate skill set per agent (deposit cap, expiry)
         │
         ▼
 User Reviews + Edits Generated Skills (UI)
         │
         ▼
-Orchestrator Agent (JavaScript, frontend)
-  ├── Receives plan from Venice AI
-  ├── Dispatches Worker Agents in PARALLEL
+Orchestrator (JavaScript, frontend)
+  ├── Receives plan from AI strategist
+  ├── Batches user-signed authorizeSessionKey per agent (AgentRegistry)
+  ├── Dispatches Worker agents in PARALLEL
   └── Aggregates results + memory
         │
    ┌────┼────┐
    ▼    ▼    ▼
 Worker  Worker  Worker   (one per vault, parallel)
 Agent1  Agent2  AgentN
-  │ Skill: swap-skill.json, deposit-skill.json
-  │ Each: Swap → Approve → Deposit
-  │ Via: ERC-7715 permission + 1Shot relay
-  └──► AgentVaultDepositor.sol (Sepolia)
+  │ Holds ephemeral session key (= on-chain "agent")
+  │ Signs EIP-712 AgentDeposit within granted scope
+  │ Via: 1Shot Managed API relay
+  └──► AgentVaultDepositor.sol (Base Sepolia, deposit-only)
+              ├──► validates scope via AgentRegistry
               └──► MockVault.sol (ERC-4626)
         │
         ▼
 Agent Memory Files (JSON, per agent per session)
         │
         ▼
-vis.js Network Graph (real-time, browser)
+react-force-graph-2d (real-time, browser)
   ├── Nodes: Orchestrator + Workers + Vaults
   ├── Edges: dependencies + communication
   └── Click node → agent detail + memory entries
@@ -91,26 +101,20 @@ Each agent has a **skill set** — a JSON file defining allowed actions:
 ```json
 {
   "agentId": "worker-agent-1",
-  "vaultAddress": "0xABCD...",
+  "vaultAddress": "0xDff362A0Dc9E0190b2F77E52CF8Da38721b8b7AC",
   "skills": {
-    "swap": {
-      "maxSlippage": 0.5,
-      "dexPreference": "uniswap-v3",
-      "maxRetries": 2,
-      "timeoutSeconds": 30
-    },
     "deposit": {
       "maxAmount": "100000000",
-      "vaultAddress": "0xABCD...",
+      "vaultAddress": "0xDff362A0Dc9E0190b2F77E52CF8Da38721b8b7AC",
       "expiresAt": 1749686400
     }
   },
-  "generatedBy": "venice-ai",
+  "generatedBy": "ai-strategist",
   "approvedByUser": true
 }
 ```
 
-Venice AI auto-generates skills based on step type. User reviews/edits before execution. Stored as `agents/session-{id}/agent-{n}-skills.json`.
+AI strategist (DeepSeek/Venice/fallback) auto-generates skills per agent. User reviews/edits before execution. No swap skill — agents are deposit-only.
 
 ---
 
@@ -121,73 +125,71 @@ Each agent writes a memory file after execution:
 ```json
 {
   "agentId": "worker-agent-1",
-  "sessionId": "session-20260527-001",
-  "vault": "0xABCD...",
+  "sessionId": "session-20260614-001",
+  "vault": "0xDff362A0Dc9E0190b2F77E52CF8Da38721b8b7AC",
   "entries": [
     {
       "timestamp": 1748387200,
-      "step": "swap",
+      "step": "deposit",
       "status": "success",
       "gasUsed": 45000,
-      "slippageActual": 0.12,
+      "sharesReceived": "100023456",
       "executionTimeMs": 4200,
-      "lesson": "Vault A accepts 0.5% slippage reliably"
+      "lesson": "Vault accepted full deposit within cap"
     }
   ]
 }
 ```
 
-Memory stored as `agents/memory/agent-{n}-memory.json`. Displayed in vis.js node detail. Read on next execution for context.
+Memory stored as `agents/memory/agent-{n}-memory.json`. Displayed in react-force-graph-2d node detail. Read on next execution for context.
 
 ---
 
 ## Directory Structure
 
 ```
-design/                              # UI prototype — reference implementation
-  Vibing Farmer Prototype.html       # v2 current — React 18 + Babel CDN
-  styles.css                         # v2 design tokens + all components
-  src/
-    app.jsx                          # State machine, right rail, palette picker
-    components.jsx                   # Icon, Sidebar, TopBar, StepRail
-    screens.jsx                      # Screen components
-    tweaks-panel.jsx                 # Tweak form controls
-
 contracts/
-  AgentVaultDepositor.sol            # Core — multi-agent permission + execution
-  MockVault.sol                      # ERC-4626 mock vault for Sepolia demo
+  AgentRegistry.sol                  # EIP-712 per-agent scope: authorizeSessionKey/revokeAgent/scopeOf
+  AgentVaultDepositor.sol            # Deposit-only — recovers EIP-712 signer, validates scope, holds no funds
+  MockVault.sol                      # ERC-4626 mock vault for Base Sepolia demo
 
 test/
-  AgentVaultDepositor.t.sol          # Forge tests — success, violations, fuzz
-  MockVault.t.sol                    # ERC-4626 compliance checks
+  AgentRegistry.t.sol
+  AgentVaultDepositor.t.sol
+  MockVault.t.sol
+  PauseInvariant.t.sol
+  ZeroCustody.t.sol
+  integration/ invariant/ mocks/ security/ simulation/
 
 script/
-  Deploy.s.sol                       # Deploys AgentVaultDepositor + MockVault
+  Deploy.s.sol                       # Deploys AgentRegistry + AgentVaultDepositor + MockVault
 
-frontend/
-  index.html                         # App shell — vis.js + ethers.js v6
-  app.js                             # State machine + event wiring
-  orchestrator.js                    # Orchestrator Agent: plan dispatch
-  worker.js                          # Worker Agent: single vault flow
-  skills.js                          # Skill file generator + editor UI
-  memory.js                          # Memory file reader/writer + UI
-  graph.js                           # vis.js Network graph controller
-  wallet.js                          # EIP-7702 + ERC-7715 + MetaMask SAK
-  relay.js                           # 1Shot API relay builder + execution
-  venice.js                          # Venice AI: strategy + skill generation
-  ui.js                              # DOM helpers, step tracker
-  style.css                          # Port from design/styles.css
+frontend/                            # React 18 + Vite 5 + React Router 6
+  functions/                         # Cloudflare Pages Functions (/api/*)
+  src/
+    app.jsx, router.js               # App shell + routes
+    orchestrator.js                  # Orchestrator: plan dispatch, session-key batching
+    worker.js                        # Worker: ephemeral key, EIP-712 deposit, keyVault/keyStore
+    skills.js, skills.jsx            # Skill generation + editor UI
+    memory.js                        # Memory reader/writer + UI
+    venice.js                        # AI strategist: DeepSeek/Venice/fallback chain
+    x402.js                          # Venice wallet-funded inference (x402 + SIWE)
+    wallet.js                        # Wallet connect, SIWE signing
+    relay.js                         # 1Shot Managed API relay
+    redelegation.js, attestation.js  # Scope re-delegation, on-chain strategy attestation
+    config.js                        # Model slugs, addresses
+    components/, screens.jsx         # UI screens + components
+    strategy/                        # Monte Carlo, MDP/FinRL, council, curator, historical replay (58 files)
+    agents/, skills/                 # Runtime-generated skill + memory files
 
-agents/                              # Runtime-generated skill + memory files
-  session-{id}/
-    agent-{n}-skills.json            # Per-agent skill set
-  memory/
-    agent-{n}-memory.json            # Per-agent execution memory
+deployments/
+  base-sepolia.json                  # Deployed contract addresses
 
 docs/                                # All in English
   technical-architecture.md
   technical-blockchain-usage.md
   technical-security-privacy.md
+  technical-threat-model.md
   technical-api-events.md
   technical-database.md
   product-demo-scenario.md            # Demo script — read before recording
@@ -195,106 +197,128 @@ docs/                                # All in English
   product-user-stories.md
   business-impact-model.md
   business-roadmap-backlog.md
-  spikes/                            # All 4 spikes ✅ resolved
+  PLAN-REVIEW-FINDINGS.md
 ```
 
 ---
 
 ## Commands
 
-### Smart Contracts (Foundry — WSL only)
+### Smart Contracts (Soroban — Rust, WSL only)
 
 ```bash
-# Build
-wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge build"
+# Build all contracts to wasm
+wsl -e bash -lc "cd /mnt/c/SharredData/project/competition/vibing-farmer/soroban && stellar contract build"
 
 # Test all
-wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge test"
+wsl -e bash -lc "cd /mnt/c/SharredData/project/competition/vibing-farmer/soroban && cargo test"
 
 # Single test verbose
-wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge test --match-test testFunctionName -vvv"
+wsl -e bash -lc "cd /mnt/c/SharredData/project/competition/vibing-farmer/soroban && cargo test test_name -- --nocapture"
 
-# Fuzz test
-wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge test --match-test testFuzz -vvv --fuzz-runs 1000"
+# Clippy (lint — treat warnings as errors)
+wsl -e bash -lc "cd /mnt/c/SharredData/project/competition/vibing-farmer/soroban && cargo clippy --all-targets -- -D warnings"
 
-# Coverage (target ≥ 80%)
-wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge coverage"
-
-# Deploy to Sepolia
-wsl -e bash -c "cd /mnt/c/SharredData/project/competition/vibing-farmer && forge script script/Deploy.s.sol --rpc-url \$SEPOLIA_RPC --broadcast --verify"
+# Deploy to testnet — see soroban/deploy-seed.sh (deploys registry + vault + token, seeds the demo agent)
 ```
 
-> ⚠️ **Foundry runs in WSL only.** Never run `forge`/`cast`/`anvil` directly in PowerShell — it will fail.
+> ⚠️ **Soroban tooling runs in WSL only.** Run `cargo`/`stellar` under `wsl -e bash -lc`, never directly in PowerShell. Deployed addresses live in `deployments/stellar-testnet.json`.
+
+**Lifeboat radar** (long-running ledger-speed reaction process — plain Node, run directly, NOT WSL):
+
+```bash
+cd keeper && node --env-file=.dev.vars src/radar-runner.mjs
+```
+
+The vault's keeper-facing entrypoints also include the lifeboat set: `set_mandate_authority`/`set_mandate` (owner grants/authorizes the de-risk mandate), `emergency_derisk`/`resume` (keeper-submitted, radar-triggered), and `lifeboat_state` (read-only status consumed by the frontend panel and `frontend/scripts/smoke-lifeboat.mjs`).
 
 ### Frontend
 
 ```bash
-# Serve locally
-npx serve frontend/
+# Dev server (Vite)
+cd frontend && npm run dev
 
-# Serve design prototype (reference)
-npx serve design/
+# Run tests
+cd frontend && npm test
+
+# Build
+cd frontend && npm run build
 ```
 
 ### Environment Variables
 
-Copy `.env.example` → `.env` before deployment or API testing:
+Copy `frontend/.env.example` → `.env.local` (Vite dev) and `frontend/.dev.vars.example` → `.dev.vars` (Cloudflare Pages dev) before API testing or deployment:
 
 ```bash
-SEPOLIA_RPC=https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
-PRIVATE_KEY=0x...                      # deployer key (never commit)
-VENICE_API_KEY=...                     # Venice AI API key
-AGENT_VAULT_DEPOSITOR_ADDRESS=0x...    # filled after deploy
-MOCK_VAULT_ADDRESS=0x...               # filled after deploy (can be multiple)
+# Server-side (Cloudflare Pages env vars / .dev.vars, NOT VITE_ prefixed)
+DEEPSEEK_API_KEY=...                    # optional host AI key (BYOK-first; leave unset for lockdown)
+TAVILY_API_KEY=...                      # optional, live market context
+ALLOWED_ORIGIN=https://your-app.pages.dev
+
+# Soroban gasless relay (read by /api/stellar-relay)
+STELLAR_RELAYER_SECRET=S...             # relayer keypair secret, server-only — fund on testnet
+SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
+STELLAR_NETWORK_PASSPHRASE=Test SDF Network ; September 2015
+SOROBAN_VAULT_ADDRESS=CCDXZ6BU...       # deposit target (see deployments/stellar-testnet.json)
 ```
 
-1Shot Permissionless Relayer requires no API key — pure JSON-RPC.
+The Soroban relay fee-bumps agent transactions from a funded `STELLAR_RELAYER_SECRET` keypair — the user pays 0 gas. AI keys are BYOK-first (users paste their own in Settings); leave host keys unset for a lockdown deploy.
 
 ---
 
-## Smart Contract: AgentVaultDepositor.sol
+## Smart Contracts: AgentRegistry.sol + AgentVaultDepositor.sol
 
 ```solidity
-// Permission per agent (not per user)
-struct AgentPermission {
-    address allowedVault;
-    uint256 maxAmount;
-    uint256 usedAmount;
-    uint256 expiresAt;
-    bool isActive;
-    bytes32 agentId;
+// AgentRegistry — one agent key = one scope, forever (re-scope = new key)
+struct AgentScope {
+    address owner;
+    address vault;
+    address token;
+    uint96  capPerPeriod;
+    uint32  periodDuration;
+    uint96  spentInPeriod;
+    uint40  periodStart;
+    uint40  expiry;
+    bool    revoked;
 }
+mapping(address agent => AgentScope) public scopes;
 
-mapping(address user => mapping(bytes32 agentId => AgentPermission)) public agentPermissions;
+event AgentAuthorized(address indexed owner, address indexed agent, address vault, address token, uint96 capPerPeriod, uint32 periodDuration, uint40 expiry);
+event AgentRevoked(address indexed owner, address indexed agent);
 
-// Events — frontend + graph must listen
-event AgentStarted(bytes32 indexed agentId, address user, address vault);
-event SwapExecuted(bytes32 indexed agentId, address user, uint256 amountIn, uint256 amountOut);
-event ApproveExecuted(bytes32 indexed agentId, address user, address vault, uint256 amount);
-event DepositExecuted(bytes32 indexed agentId, address user, address vault, uint256 amount, uint256 shares);
-event AgentCompleted(bytes32 indexed agentId, address user, address vault, uint256 shares);
-event AgentFailed(bytes32 indexed agentId, address user, string reason);
+function authorizeSessionKey(...) external;   // owner signs, grants scope to ephemeral agent key
+function revokeAgent(address agent) external;
+function scopeOf(address agent) external view returns (AgentScope memory);
 
-// Core functions
-function grantAgentPermission(bytes32 agentId, address vault, uint256 maxAmount, uint256 expiresAt) external;
-function executeAgentDeposit(bytes32 agentId, address user, address vault, uint256 amount) external;
-function revokeAgentPermission(bytes32 agentId) external;
+// AgentVaultDepositor — deposit-only, holds no funds, recovers signer = agent
+bytes32 public constant DEPOSIT_TYPEHASH =
+    keccak256("AgentDeposit(uint256 amount,uint256 minAmount,uint256 minShares,bytes32 execId)");
+
+event AgentDepositExecuted(
+    address indexed agent, address indexed owner, address indexed vault,
+    address token, uint256 assetsIn, uint256 sharesOut, bytes32 execId
+);
+
+function hashDeposit(uint256 amount, uint256 minAmount, uint256 minShares, bytes32 execId) public view returns (bytes32);
+function executeAgentDeposit(uint256 amount, uint256 minAmount, uint256 minShares, bytes32 execId, bytes calldata sig)
+    external returns (uint256 shares);
 ```
 
 ---
 
 ## User Flow
 
-1. Connect MetaMask Flask → EIP-7702 upgrades EOA to smart account
+1. Connect wallet (standard EOA)
 2. User inputs: amount, risk level, number of vaults
-3. Venice AI generates: multi-vault strategy + skill JSON per agent
+3. AI strategist (DeepSeek default / Venice x402+SIWE / hardcoded fallback) generates multi-vault strategy + skill set per agent
 4. User reviews skills in UI → edits if needed → approves
-5. Orchestrator Agent dispatches N Worker Agents in parallel
-6. Each Worker Agent: ERC-7715 permission grant → 1Shot relay → AgentVaultDepositor
-7. AgentVaultDepositor: validates scope → Swap → Approve → Deposit to MockVault
-8. Events emitted → vis.js graph updates in real-time
-9. Agents write memory files → displayed in graph node detail
-10. Summary: N vaults deposited, total shares, total APY earned
+5. Orchestrator batches one user-signed `authorizeSessionKey` per agent on `AgentRegistry` (capped + expiring scope)
+6. Orchestrator dispatches N Worker agents in parallel
+7. Each Worker: signs EIP-712 `AgentDeposit` with its ephemeral key → relays via 1Shot Managed API → `AgentVaultDepositor.executeAgentDeposit`
+8. Depositor recovers signer, validates scope via `AgentRegistry.scopeOf`, deposits to `MockVault` (ERC-4626), emits `AgentDepositExecuted`
+9. Events update react-force-graph-2d in real-time
+10. Agents write memory files → displayed in graph node detail
+11. Summary: N vaults deposited, total shares, projected yield (Monte Carlo)
 
 ---
 
@@ -303,56 +327,35 @@ function revokeAgentPermission(bytes32 agentId) external;
 | Decision | Chosen | Rejected | Reason |
 |----------|--------|----------|--------|
 | Contract framework | Foundry | Hardhat | Native Solidity tests, fast, DeFi standard |
-| Frontend vis library | vis.js Network | D3.js, Neo4j | Simpler force-directed graph, no backend needed |
-| Agent execution | Parallel (Promise.all) | Sequential | Demo value: showcase A2A coordination |
-| AI layer | Venice AI | OpenAI/Anthropic | Privacy-first, open-source model, OpenAI-compatible |
+| Frontend force-graph library | react-force-graph-2d | vis.js, D3.js, Neo4j | React-native, simpler force-directed graph, no backend needed |
+| Agent execution | Parallel (`Promise.allSettled`) | Sequential | Demo value: showcase A2A coordination |
+| AI layer | DeepSeek default, Venice AI via x402/SIWE | ERC-7715 + Venice-only | Avoids MetaMask Flask hard dependency; wallet-funded inference, hardcoded fallback for reliability |
+| Permission model | `AgentRegistry` EIP-712 scope (own storage) | ERC-7715 delegation toolkit | 7710 redeem can't do arbitrary contract calls; rolled own capped/expiring scope |
+| Agent transactions | EIP-712 signed deposit + 1Shot Managed API | EIP-7702 smart account + permissionless relayer | Managed API supports Base Sepolia testnet; no EOA upgrade needed |
 | Vault | MockVault.sol (ERC-4626) | Real protocol | Full demo control, no external deps |
+| Network | Base Sepolia (84532) | Ethereum Sepolia | Lower fees, Base ecosystem alignment |
 
 ---
 
 ## Key Implementation Notes
 
-**⚠️ MetaMask Flask required** — NOT regular MetaMask Extension. Flask 13.9.0+ required for ERC-7715. Download: https://metamask.io/flask/
+**No MetaMask Flask required** — standard EOA wallet is sufficient. Agents use ephemeral session keys, not EIP-7702/ERC-7715.
 
-**EIP-7702 on Sepolia** — Live since March 5, 2025 (Pectra upgrade). No blockers.
+**AI provider chain (`venice.js` / `resolveProvider`):** Venice AI (wallet-funded x402 + SIWE, `veniceAuth`) → DeepSeek (server proxy `/api/ai`, default; or user dev key) → hardcoded equal-split fallback (`buildFallbackForParams`). Both Venice and DeepSeek use model slug `deepseek-v4-flash` (`config.js`). Timeout-guarded, never blocks the flow.
 
-**Frontend stack:**
-```html
-<script type="module">
-  import { createWalletClient, custom } from 'https://esm.sh/viem'
-  import { erc7715ProviderActions } from 'https://esm.sh/@metamask/smart-accounts-kit/actions'
-</script>
-<script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
-```
+**x402.js** — Venice wallet-funded inference on Base mainnet USDC. `signSiweForVenice` in `wallet.js` for SIWE auth. Balance read-only; top-up is server-side only (browser never holds a raw key).
 
-**Venice AI:** `https://api.venice.ai/api/v1` (OpenAI-compatible). Model: `llama-3.3-70b`. Use `response_format: { type: 'json_object' }` + `venice_parameters: { include_venice_system_prompt: false }`. Timeout 10s, hardcoded fallback.
-
-**1Shot API** — Permissionless Relayer. No API key. POST to `https://relayer.1shotapi.com/relayers` (JSON-RPC). Pass `permissionContext` + `delegationManager`.
-
-**ethers.js v6** — `provider.getSigner()` is async. `BigInt` not `BigNumber`.
+**1Shot Managed API** — `@uxly/1shot-client`, server-side via `/api/relay` (Cloudflare Pages Function → `frontend/api/relay.js`). Requires `ONESHOT_KEY` / `ONESHOT_SECRET` / `ONESHOT_BIZ_ID`. Server wallet acts as relayer — user pays 0 gas.
 
 **Parallel agents** — Use `Promise.allSettled()` not `Promise.all()` so one agent failure doesn't abort others.
 
-**Security — enforce in AgentVaultDepositor:**
-- Amount ≤ agentPermissions[user][agentId].maxAmount (revert, never silent fail)
-- Vault == agentPermissions[user][agentId].allowedVault (revert)
-- `block.timestamp < expiresAt` (revert if expired)
-- CEI pattern: all checks before all interactions
-- No privileged admin roles post-deploy
-- ReentrancyGuard on `executeAgentDeposit`
-
----
-
-## Technical Spikes
-
-All resolved ✅. See `docs/spikes/` for full research.
-
-| Spike | Status | Key Finding |
-|-------|--------|-------------|
-| EIP-7702 + MetaMask SAK | ✅ | Sepolia live since Mar 5 2025. Use Viem ESM CDN. Flask 13.9+ required. |
-| ERC-7715 scoped permissions | ✅ | AgentVaultDepositor uses own storage. ERC-7715 for UI demo. |
-| 1Shot API relayer | ✅ | Permissionless Relayer (`relayer.1shotapi.com/relayers`). No API key. Pure JSON-RPC. |
-| Venice AI capabilities | ✅ | OpenAI-compatible. Model: `llama-3.3-70b`. Use OpenAI SDK via ESM CDN. |
+**Security — enforced on-chain:**
+- `AgentVaultDepositor` recovers the EIP-712 signer; `msg.sender` is irrelevant
+- `AgentRegistry.scopeOf(agent)` checked: vault match, `capPerPeriod`/`spentInPeriod`, `expiry`, `revoked`
+- `executed[execId]` replay guard
+- `minAmount`/`minShares` floors guard against fee-on-transfer/slippage and adversarial vaults
+- ReentrancyGuard + Pausable (guardian-only pause/unpause)
+- Contract holds no user funds (`ZeroCustody.t.sol` invariant)
 
 ---
 
@@ -361,11 +364,20 @@ All resolved ✅. See `docs/spikes/` for full research.
 - [Design system + component spec](DESIGN.md) — read before touching frontend/UI
 - [Architecture + ADRs + NFRs](docs/technical-architecture.md)
 - [On-chain scope + audit trail](docs/technical-blockchain-usage.md)
-- [Security constraints](docs/technical-security-privacy.md)
+- [Security constraints + threat model](docs/technical-security-privacy.md), [technical-threat-model.md](docs/technical-threat-model.md)
 - [Demo script](docs/product-demo-scenario.md) — read before recording
-- MetaMask Smart Accounts Kit: https://docs.metamask.io/wallet/smart-accounts/
-- EIP-7702: https://eips.ethereum.org/EIPS/eip-7702
-- ERC-7715: https://eips.ethereum.org/EIPS/eip-7715
-- 1Shot API: https://1shotapi.com/docs
+- 1Shot API (Managed): https://1shotapi.com/docs
 - Venice AI: https://venice.ai/
-- vis.js Network: https://visjs.github.io/vis-network/docs/network/
+- DeepSeek: https://platform.deepseek.com/
+- react-force-graph: https://github.com/vasturiano/react-force-graph
+- Base Sepolia: https://docs.base.org/network-information
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).

@@ -1643,6 +1643,15 @@ input, select, textarea {
   max-width: 480px;
   padding: 28px;
   animation: slideup 0.18s cubic-bezier(0.2, 0.8, 0.2, 1);
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+}
+.modal-scroll-content {
+  flex: 1;
+  overflow-y: auto;
+  margin-right: -12px;
+  padding-right: 12px;
 }
 
 @keyframes slideup {
@@ -1674,6 +1683,23 @@ input, select, textarea {
 }
 
 .modal-actions .btn { flex: 1; }
+
+/* ---------- F8 eligibility panel ---------- */
+.elig-panel { margin-top: 16px; border-top: 1px solid var(--line, #2a2a2a); padding-top: 12px; }
+.elig-sentence { font-size: 12px; line-height: 1.5; margin: 0 0 10px; color: var(--text, #e8e8e8); }
+.elig-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.elig-rows li { display: flex; flex-direction: column; gap: 2px; font-size: 11px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line, #2a2a2a); }
+.elig-pass { border-left: 2px solid var(--accent, #4ade80); }
+.elig-reject { border-left: 2px solid var(--danger, #f87171); opacity: 0.85; }
+.elig-status { font-family: var(--mono, monospace); font-weight: 600; letter-spacing: 0.04em; }
+.elig-reject .elig-status { color: var(--danger, #f87171); }
+.elig-pass .elig-status { color: var(--accent, #4ade80); }
+.struck { text-decoration: line-through; opacity: 0.7; }
+.elig-label { color: var(--text-dim, #9a9a9a); }
+.elig-mainnet, .elig-testnet { color: var(--text-dim, #9a9a9a); }
+.elig-testnet { font-style: italic; }
+.elig-chip { font-family: var(--mono, monospace); font-size: 10px; color: var(--text-dim, #9a9a9a); }
+.elig-fixture { font-size: 10px; color: var(--danger, #f87171); font-style: italic; }
 
 /* ---------- Helpers ---------- */
 .flex { display: flex; }
@@ -2812,6 +2838,38 @@ input, select, textarea {
 
 
 /* ============================================
+   Keeper Panel (vf-autofarm) — autonomous compound/rebalance activity
+   ============================================ */
+.keeper-panel { display: flex; flex-direction: column; gap: 4px; }
+
+.keeper-pps { padding-bottom: 16px; margin-bottom: 4px; border-bottom: 1px solid var(--border); }
+.keeper-pps .label { display: block; margin-top: 4px; color: var(--text-faint); font-size: 10.5px; }
+
+.keeper-section { padding-top: 14px; }
+.keeper-section-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-faint);
+  margin-bottom: 8px;
+}
+
+.keeper-empty { color: var(--text-faint); padding: 10px 2px; }
+
+.keeper-action-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text); }
+.keeper-action-dot { font-size: 12px; flex-shrink: 0; }
+.keeper-action-text { flex: 1; }
+.keeper-action-meta { color: var(--text-faint); font-size: 10.5px; flex-shrink: 0; }
+
+.keeper-strategy-list { display: flex; flex-direction: column; gap: 8px; }
+.keeper-strategy-row {
+  display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--text);
+  padding: 8px 0; border-bottom: 1px solid var(--border);
+}
+.keeper-strategy-row:last-child { border-bottom: none; padding-bottom: 0; }
+.keeper-strategy-name { flex: 1; }
+.keeper-strategy-pool { color: var(--text-faint); font-size: 10.5px; }
+.keeper-strategy-apr { color: var(--accent); font-size: 11px; flex-shrink: 0; }
+
+
+/* ============================================
    Global scrollbar hide — maintain scroll functionality
    ============================================ */
 * {
@@ -3544,4 +3602,71 @@ details.yv-collapse[open] > summary .yv-caret {
   /* Tighten the top bar — drop the relayer/gas meta on narrow screens */
   .topbar { padding: 12px 16px; }
   .topbar-meta { display: none; }
+}
+
+/* ---------- Grant panel (one-popup router grant) ---------- */
+.grant-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 220px) minmax(0, 1fr);
+  gap: 28px;
+  margin: 28px 0 8px;
+  align-items: start;
+}
+
+.grant-field { display: flex; flex-direction: column; gap: 10px; }
+
+.grant-field-k {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  letter-spacing: -0.01em;
+}
+
+.grant-budget-input {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border-strong);
+  padding: 6px 2px 8px;
+  font-size: 28px;
+  font-weight: 500;
+  color: var(--text);
+  letter-spacing: -0.02em;
+  width: 100%;
+  transition: border-color 0.12s ease;
+}
+.grant-budget-input:focus { outline: none; border-bottom-color: var(--accent); }
+.grant-budget-input:disabled { opacity: 0.5; }
+
+.grant-field-hint { font-family: var(--font-mono); font-size: 10.5px; }
+
+.grant-presets { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.btn-chip {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border-strong);
+  padding: 8px 14px;
+  font-size: 12.5px;
+}
+.btn-chip:hover:not(:disabled) { background: var(--bg-elev); color: var(--text); }
+.btn-chip.is-active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.btn-sm { padding: 7px 12px; font-size: 12px; }
+
+.grant-revoke-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+@media (max-width: 640px) {
+  .grant-controls { grid-template-columns: minmax(0, 1fr); gap: 20px; }
 }

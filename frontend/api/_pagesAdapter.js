@@ -57,7 +57,8 @@ export function toPagesFunction(handler) {
       }
     }
 
-    const req = { method: request.method, headers, body, url: request.url }
+    // env carries Pages bindings (e.g. VF_DB, a D1 object) that cannot ride process.env.
+    const req = { method: request.method, headers, body, url: request.url, env }
 
     // ── buffering res → Web Response ──
     let statusCode = 200

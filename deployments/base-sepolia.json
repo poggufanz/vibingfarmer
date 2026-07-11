@@ -1,7 +1,23 @@
 {
-  "agentRegistry": "0xC0c4663F248b9DA20eF51F35cfC29C46a1fC8ac0",
-  "agentVaultDepositor": "0x2AF8d77430785A0F97C75575BBFB3661790DD3B4",
-  "chainId": 84532,
-  "mockVault": "0x4518894253CB4E3f3ecf30004559F1395C1f97e3",
-  "usdc": "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+  "yieldRouter": {
+    "address": "0xF80aa8F571E6d24Ea72F051Fc6F9A9C516727B6d",
+    "deployTx": "0x9252cf9d4b3b131801fcf78e54cd70ab08152cfea39361a6878271791c5cef9c",
+    "initialOwner": "0x9f07F7f9F2C6e7103f3C6eE3955f19c3751a559a",
+    "allowedPools": [
+      "0x389250872044368759D3db5C09b2706A6628d4e0",
+      "0x5E843A639F0555E2A6669601621befC887Bdb479",
+      "0xadD3c1A75c7Cef2516b51750959BD829a4AD4761"
+    ],
+    "deployedAt": "2026-07-05T16:03:04.376Z",
+    "poolsNote": "3 honest ERC-4626 vaults (MockERC4626) wrapping REAL Circle/CCTP USDC (0x036CbD…). They do 1:1 custody of the real bridged USDC — no fabricated yield. They are NOT external lending markets: the SP0 gate (2026-07-09, relayer/scripts/check-aave-usdc.mjs) proved no real yield protocol on Base Sepolia accepts CCTP USDC (Aave lists a faucet token; Morpho/Moonwell/Compound are Base-mainnet only). Real external yield is demonstrated on the Stellar leg via Blend. Pool1 from SP1; pool2 (0x5E84…) + pool3 (0xadD3…) added 2026-07-06 for the SP3 3-pool catalog."
+  },
+  "mainnetAdapter": {
+    "note": "AaveV3Adapter4626 is the MAINNET-READY replacement for the testnet demo vaults (unit-tested + proven against real Aave via Base-mainnet fork test — base-contracts/test/AaveV3Adapter.fork.t.sol). NOT deployed on testnet (Aave Base Sepolia lists faucet USDC, not Circle USDC). At the mainnet flip: deploy 3× AaveV3Adapter4626 against the targets below and swap YieldRouter.allowedPools to the adapter addresses (script pattern: base-contracts/script/DeployAdapters.s.sol).",
+    "chain": "base-mainnet",
+    "chainId": 8453,
+    "aavePool": "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5",
+    "usdc": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "aToken": "0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB",
+    "deployed": false
+  }
 }

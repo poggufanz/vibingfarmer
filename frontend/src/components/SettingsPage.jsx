@@ -2,17 +2,14 @@
 // Full settings panel. Agent config lives in app state (yv_agent_settings); the rest
 // persists via settingsStore (individual yv_* keys). Renders when view === 'settings'.
 import React, { useState } from 'react'
+import { VENICE_BASE_URL, DEEPSEEK_BASE_URL } from '../config.js'
 import {
-  AGENT_VAULT_DEPOSITOR_ADDRESS,
-  MOCK_VAULT_A_ADDRESS,
-  MOCK_VAULT_B_ADDRESS,
-  MOCK_VAULT_C_ADDRESS,
-  MOCK_VAULT_D_ADDRESS,
-  SEPOLIA_CHAIN_ID,
-  VENICE_BASE_URL,
-  DEEPSEEK_BASE_URL,
-} from '../config.js'
-import { loadSettings, saveSetting, SETTINGS_DEFAULTS } from '../settingsStore.js'
+  SOROBAN_REGISTRY_ADDRESS,
+  SOROBAN_VAULT_ADDRESS,
+  SOROBAN_ACTIVE_VAULT_ADDRESS,
+  SOROBAN_TOKEN_ADDRESS,
+} from '../stellar/config.js'
+import { loadSettings, saveSetting, SETTINGS_DEFAULTS, t } from '../settingsStore.js'
 import {
   getHistorySummary,
   clearTransactions,
@@ -21,10 +18,7 @@ import {
   clearAllHistory,
 } from '../history.js'
 import { fmtRemaining } from '../ui.js'
-import { signSiweForVenice } from '../wallet.js'
-import { getX402Balance } from '../x402.js'
-
-const X402_DOCS_URL = 'https://docs.venice.ai/guides/integrations/x402-venice-api'
+import AutoExitSettings from './AutoExitSettings.jsx'
 
 const short = (a) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '-')
 const eyebrow = {
@@ -67,6 +61,7 @@ const TABS = [
   { id: 'agent', label: 'Agent' },
   { id: 'strategy', label: 'Strategy' },
   { id: 'alerts', label: 'Alerts' },
+  { id: 'auto-exit', label: 'Auto-Exit' },
   { id: 'wallet', label: 'Wallet' },
   { id: 'data', label: 'Data & Privacy' },
   { id: 'about', label: 'About' },
@@ -280,12 +275,12 @@ const ContractRow = ({ name, addr }) => (
     <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
       <span className="mono">{short(addr)}</span>
       <a
-        href={`https://sourcify.dev/#/lookup/${addr}`}
+        href={`https://stellar.expert/explorer/testnet/contract/${addr}`}
         target="_blank"
         rel="noopener noreferrer"
         style={{ ...miniBtn, textDecoration: 'none' }}
       >
-        ↗ Sourcify
+        ↗ Explorer
       </a>
     </span>
   </div>
@@ -315,8 +310,8 @@ export default function SettingsPage({
   onResetAgentSettings,
   onConnect,
   onDisconnect,
-  onSwitchNetwork,
   onRevoke,
+  addLog,
 }) {
   const [s, setS] = useState(loadSettings)
   const [tab, setTab] = useState('agent')
@@ -324,7 +319,6 @@ export default function SettingsPage({
   const [confirmClear, setConfirmClear] = useState(false)
   const [copied, setCopied] = useState(false)
   const [, setTick] = useState(0)
-  const [x402, setX402] = useState({ state: 'idle', bal: null }) // idle | checking | done | error
   const refresh = () => setTick((x) => x + 1)
 
   const set = (key, val) => {
@@ -386,20 +380,6 @@ export default function SettingsPage({
       setTest((t) => ({ ...t, deepseek: 'unreachable' }))
     } finally {
       to.done()
-    }
-  }
-  // x402 balance: sign a fresh SIWE header (MetaMask) then read the prepaid balance.
-  // Read-only — no funds move. Needs a connected wallet.
-  const checkX402 = async () => {
-    if (!userAddress) return
-    setX402({ state: 'checking', bal: null })
-    try {
-      const auth = await signSiweForVenice(userAddress)
-      const bal = await getX402Balance(userAddress, auth)
-      setX402({ state: bal ? 'done' : 'error', bal })
-    } catch (e) {
-      console.warn('[settings] x402 balance check failed:', e.message)
-      setX402({ state: 'error', bal: null })
     }
   }
   const testTavily = async () => {
@@ -513,10 +493,7 @@ export default function SettingsPage({
               </Row>
               <Divider />
               <SubLabel>Harvest Settings</SubLabel>
-              <Row
-                label="Auto-harvest"
-                desc="Automatically claim and compound rewards when threshold is reached. If OFF, agent notifies you and you harvest manually."
-              >
+              <Row label={t(language, 'automationLabel')} desc={t(language, 'automationDesc')}>
                 <Toggle
                   on={!!agentSettings.autoHarvest}
                   onChange={(v) => setAgent('autoHarvest', v)}
@@ -586,6 +563,17 @@ export default function SettingsPage({
                   onChange={(v) => setAgent('rebalanceThresholdPct', Number(v))}
                 />
               </Row>
+              <Row
+                label="Max drawdown alert"
+                desc="Alert and trigger high-severity risk when absolute vault drawdown exceeds this threshold."
+              >
+                <Num
+                  value={agentSettings.maxDrawdownPct ?? 10.0}
+                  step="0.5"
+                  suffix="%"
+                  onChange={(v) => setAgent('maxDrawdownPct', Number(v))}
+                />
+              </Row>
               <Divider />
               <SubLabel>Emergency Withdraw</SubLabel>
               <div style={{ marginBottom: 6 }}>
@@ -636,6 +624,64 @@ export default function SettingsPage({
                 When RiskWatcher detects a high severity threat, emergency withdraw will use this
                 setting.
               </div>
+            </Section>
+          )}
+
+          {/* ── SECTION 1B: Council Continuous Monitor ── */}
+          {tab === 'agent' && (
+            <Section title="Council Monitor">
+              <Row
+                label="Continuous re-evaluation"
+                desc="When enabled, Council re-evaluates your plan periodically against live market data. Pre-check and APY drift comparison cost $0; fast Risk/Compliance re-eval costs ~$0.0005 per check; full debate costs ~$0.001-0.003."
+              >
+                <Toggle
+                  on={s.monitorEnabled}
+                  onChange={(v) => set('monitorEnabled', v)}
+                  onLabel="Enabled"
+                  offLabel="Disabled"
+                />
+              </Row>
+              {s.monitorEnabled && (
+                <>
+                  <Divider />
+                  <SubLabel>Re-evaluation Thresholds</SubLabel>
+                  <Row
+                    label="APY drift"
+                    desc="Min % APY drift from last council snapshot to trigger a re-evaluation."
+                  >
+                    <Num
+                      value={s.apyDriftThreshold ?? 5}
+                      step="1"
+                      suffix="%"
+                      onChange={(v) => set('apyDriftThreshold', Number(v))}
+                    />
+                  </Row>
+                  <Row
+                    label="VaR breach"
+                    desc="Min % relative VaR change from last council snapshot to trigger a full debate."
+                  >
+                    <Num
+                      value={s.varBreachThreshold ?? 10}
+                      step="1"
+                      suffix="%"
+                      onChange={(v) => set('varBreachThreshold', Number(v))}
+                    />
+                  </Row>
+                  <Divider />
+                  <SubLabel>Autonomy</SubLabel>
+                  <Row
+                    label="Auto-approve"
+                    desc="If fast re-eval passes, update snapshot silently without notification. Only use when you trust the council model after observing its decisions."
+                  >
+                    <Toggle
+                      on={s.autoApprove}
+                      onChange={(v) => set('autoApprove', v)}
+                      onLabel="On (auto-update)"
+                      offLabel="Off (notify)"
+                    />
+                  </Row>
+                </>
+              )}
             </Section>
           )}
 
@@ -711,59 +757,6 @@ export default function SettingsPage({
                 onTest={testDeepSeek}
                 testState={test.deepseek}
               />
-              <Row
-                label="x402 wallet balance"
-                desc="Prepaid USDC on Base mainnet for wallet-paid inference. Top-up runs from a funded wallet/agent, not this UI — see the Venice x402 docs."
-              >
-                <button
-                  type="button"
-                  style={miniBtn}
-                  disabled={!userAddress || x402.state === 'checking'}
-                  onClick={checkX402}
-                >
-                  {x402.state === 'checking' ? 'Checking…' : 'Check balance'}
-                </button>
-              </Row>
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 10,
-                  flexWrap: 'wrap',
-                  marginTop: 2,
-                }}
-              >
-                {!userAddress && (
-                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                    Connect a wallet to check x402 balance.
-                  </span>
-                )}
-                {x402.state === 'done' &&
-                  x402.bal &&
-                  (x402.bal.canConsume ? (
-                    <span style={{ fontSize: 11, color: 'var(--ok)' }}>
-                      ✓ ${x402.bal.balanceUsd.toFixed(2)} spendable · ready for x402
-                    </span>
-                  ) : (
-                    <span style={{ fontSize: 11, color: 'var(--warn)' }}>
-                      ⚠ ${x402.bal.balanceUsd.toFixed(2)} · not enough to consume — top up
-                      {x402.bal.suggestedTopUpUsd ? ` ~$${x402.bal.suggestedTopUpUsd}` : ''}
-                    </span>
-                  ))}
-                {x402.state === 'error' && (
-                  <span style={{ fontSize: 11, color: 'var(--warn)' }}>
-                    ⚠ couldn’t read balance (unfunded wallet or CORS)
-                  </span>
-                )}
-                <a
-                  href={X402_DOCS_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{ ...miniBtn, textDecoration: 'none' }}
-                >
-                  How to top up ↗
-                </a>
-              </div>
               <Divider />
               <SubLabel>Vault Data Source</SubLabel>
               <Radio
@@ -837,6 +830,50 @@ export default function SettingsPage({
                 <Toggle on={!!s.alertBanner} onChange={(v) => set('alertBanner', v)} />
               </Row>
               <Divider />
+              <SubLabel>Push Notifications (Telegram / Discord)</SubLabel>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 8 }}>
+                <div>
+                  <div style={{ fontSize: 13, marginBottom: 4 }}>Discord Webhook URL</div>
+                  <input
+                    type="text"
+                    value={agentSettings.discordWebhookUrl || ''}
+                    placeholder="https://discord.com/api/webhooks/..."
+                    onChange={(e) => setAgent('discordWebhookUrl', e.target.value)}
+                    style={{ ...inputStyle, width: '100%', boxSizing: 'border-box' }}
+                  />
+                </div>
+                <div>
+                  <div style={{ fontSize: 13, marginBottom: 4 }}>Telegram Bot Token</div>
+                  <input
+                    type="password"
+                    value={agentSettings.telegramToken || ''}
+                    placeholder="123456789:ABCdef..."
+                    onChange={(e) => setAgent('telegramToken', e.target.value)}
+                    style={{
+                      ...inputStyle,
+                      width: '100%',
+                      boxSizing: 'border-box',
+                      fontFamily: 'var(--font-mono)',
+                    }}
+                  />
+                </div>
+                <div>
+                  <div style={{ fontSize: 13, marginBottom: 4 }}>Telegram Chat ID</div>
+                  <input
+                    type="text"
+                    value={agentSettings.telegramChatId || ''}
+                    placeholder="e.g. 987654321"
+                    onChange={(e) => setAgent('telegramChatId', e.target.value)}
+                    style={{
+                      ...inputStyle,
+                      width: '100%',
+                      boxSizing: 'border-box',
+                      fontFamily: 'var(--font-mono)',
+                    }}
+                  />
+                </div>
+              </div>
+              <Divider />
               <SubLabel>Display · Timestamp format</SubLabel>
               <Radio
                 sel={s.timestampFormat === 'relative'}
@@ -863,6 +900,8 @@ export default function SettingsPage({
             </Section>
           )}
 
+          {tab === 'auto-exit' && <AutoExitSettings realAddress={userAddress} addLog={addLog} />}
+
           {/* ── SECTION 4: Wallet & Network ── */}
           {tab === 'wallet' && (
             <Section title="Wallet & Network">
@@ -870,9 +909,7 @@ export default function SettingsPage({
                 <>
                   <Row
                     label="Connected Wallet"
-                    desc={
-                      walletPhase === 'upgraded' ? 'eip-7702 active · smart account' : 'regular eoa'
-                    }
+                    desc={walletPhase === 'upgraded' ? 'Session keys active' : 'Standard wallet'}
                   >
                     <span className="mono" style={{ fontSize: 12 }}>
                       {short(userAddress)}
@@ -886,31 +923,10 @@ export default function SettingsPage({
                   </Row>
                   <Divider />
                   <Row
-                    label={
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
-                        <span
-                          style={{
-                            width: 8,
-                            height: 8,
-                            borderRadius: '50%',
-                            background: 'var(--ok)',
-                          }}
-                        />
-                        Base Sepolia testnet
-                      </span>
-                    }
-                    desc={`Chain ID: ${SEPOLIA_CHAIN_ID}`}
-                  >
-                    <button type="button" style={miniBtn} onClick={onSwitchNetwork}>
-                      Switch network
-                    </button>
-                  </Row>
-                  <Divider />
-                  <Row
                     label="Active Permissions"
                     desc={
                       permActive
-                        ? `${permissionCount} permission · ${fmtRemaining(permExpiresAt) || '-'} remaining · erc-7715 · batch`
+                        ? `${permissionCount} permission · ${fmtRemaining(permExpiresAt) || '-'} remaining · session scope · batch`
                         : 'no active permission'
                     }
                   >
@@ -921,7 +937,7 @@ export default function SettingsPage({
                     )}
                   </Row>
                   <Divider />
-                  <Row label="Relayer" desc="1Shot permissionless relay · gas cost to user: 0 USDC">
+                  <Row label="Relayer" desc="fee-bump relayer · gas cost to user: 0 USDC">
                     <span />
                   </Row>
                 </>
@@ -1057,7 +1073,7 @@ export default function SettingsPage({
                 'Host demo key · used only if you set no key AND the deploy configured one; otherwise the app uses a deterministic fallback.',
                 'Tavily · search queries sent to Tavily API.',
                 'DeFiLlama · public API, no wallet data sent.',
-                '1Shot relay · transaction data visible on-chain.',
+                'fee-bump relayer · transaction data visible on-chain.',
                 'All other data stored locally in your browser only.',
               ].map((n) => (
                 <div
@@ -1091,7 +1107,7 @@ export default function SettingsPage({
               <div style={{ marginTop: 12 }}>
                 {[
                   ['Version', '1.0.0-beta'],
-                  ['Network', 'Base Sepolia'],
+                  ['Network', 'Stellar testnet'],
                   ['Contracts', 'verified on Sourcify'],
                 ].map(([k, v]) => (
                   <div
@@ -1109,22 +1125,21 @@ export default function SettingsPage({
                 ))}
               </div>
               <Divider />
-              <ContractRow name="AgentVaultDepositor" addr={AGENT_VAULT_DEPOSITOR_ADDRESS} />
-              <ContractRow name="MockVault A" addr={MOCK_VAULT_A_ADDRESS} />
-              <ContractRow name="MockVault B" addr={MOCK_VAULT_B_ADDRESS} />
-              <ContractRow name="MockVault C" addr={MOCK_VAULT_C_ADDRESS} />
-              <ContractRow name="MockVault D" addr={MOCK_VAULT_D_ADDRESS} />
+              <ContractRow name="AgentRegistry" addr={SOROBAN_REGISTRY_ADDRESS} />
+              <ContractRow name="Autofarm Vault (vfVLT)" addr={SOROBAN_ACTIVE_VAULT_ADDRESS} />
+              <ContractRow name="Legacy vault (1:1)" addr={SOROBAN_VAULT_ADDRESS} />
+              <ContractRow name="VFUSD token" addr={SOROBAN_TOKEN_ADDRESS} />
               <Divider />
               <div style={{ fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 1.6 }}>
-                Powered by: MetaMask Smart Accounts Kit × 1Shot API × Venice AI
+                Powered by: Soroban session keys × fee-bump relayer × Venice AI
               </div>
               <div style={{ fontSize: 11.5, marginTop: 8, lineHeight: 1.8 }}>
                 {[
-                  '1Shot Gasless Gas Abstraction',
+                  'Fee-bump Relayer Gas Abstraction',
                   'Venice AI Strategy Generator',
                   'Multi-Agent Smart Swarm',
                   'Parallel Swarm Coordination',
-                  'ERC-7715 Scoped Cryptographic Boundaries',
+                  'Soroban Session-Key Scope',
                 ].map((p) => (
                   <div key={p}>
                     <span style={{ color: 'var(--ok)' }}>✓</span> {p}

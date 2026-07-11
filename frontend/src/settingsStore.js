@@ -14,6 +14,12 @@ export const SETTINGS_KEYS = {
   alertBanner: 'yv_alert_banner', // boolean
   timestampFormat: 'yv_timestamp_format', // 'relative' | 'absolute'
   language: 'yv_language', // 'en' | 'id'
+  maxIterations: 'yv_max_iterations', // 1-10, default 5
+  varAlpha: 'yv_var_alpha', // 0.01-0.10, default 0.05
+  monitorEnabled: 'yv_monitor_enabled', // boolean — council auto re-eval on/off
+  autoApprove: 'yv_auto_approve', // boolean — silent auto-approve if fast eval passes
+  apyDriftThreshold: 'yv_apy_drift_threshold', // 1-20, min % APY drift to trigger re-eval
+  varBreachThreshold: 'yv_var_breach_threshold', // 5-50, min % VaR relative change to trigger re-eval
 }
 
 export const SETTINGS_DEFAULTS = {
@@ -28,6 +34,12 @@ export const SETTINGS_DEFAULTS = {
   alertBanner: true,
   timestampFormat: 'relative',
   language: 'en',
+  maxIterations: 5,
+  varAlpha: 0.05,
+  monitorEnabled: false,
+  autoApprove: false,
+  apyDriftThreshold: 5,
+  varBreachThreshold: 10,
 }
 
 // Secret API keys live in sessionStorage, not localStorage: they clear on tab
@@ -83,6 +95,11 @@ export const I18N = {
     harvest: 'Harvest',
     dismiss: 'Dismiss',
     newStrategy: 'New Strategy',
+    // vf-autofarm: compounding/rebalancing is now the keeper's job, vault-wide — this toggle
+    // no longer triggers any execution. Copy must say so plainly (see settings-honesty task).
+    automationLabel: 'Compound & rebalance alerts',
+    automationDesc:
+      'Automation runs vault-wide via the keeper. This toggle controls your notifications.',
   },
   id: {
     depositAmount: 'Jumlah deposit',
@@ -105,6 +122,9 @@ export const I18N = {
     harvest: 'Panen',
     dismiss: 'Abaikan',
     newStrategy: 'Strategi Baru',
+    automationLabel: 'Notifikasi compound & rebalance',
+    automationDesc:
+      'Otomatisasi berjalan di seluruh vault melalui keeper. Toggle ini hanya mengatur notifikasi Anda.',
   },
 }
 

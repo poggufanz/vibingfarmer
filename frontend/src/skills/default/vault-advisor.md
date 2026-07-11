@@ -195,5 +195,5 @@ When vault data is live:
 - If multiple vaults have similar APY, prefer higher TVL for low-risk users
 - Note in reasoning if a vault's APY seems unusually high vs its risk tier
 
-Execution note for judges: vault addresses map to Sepolia MockVaults
+Execution note for judges: vault addresses map to the Stellar testnet vault
 for testnet demo purposes. In production, these would be mainnet addresses.

@@ -1,0 +1,71 @@
+{
+  "network": "testnet",
+  "passphrase": "Test SDF Network ; September 2015",
+  "rpc": "https://soroban-testnet.stellar.org",
+  "registry": "CAEHOZGUGVNRCAFVJCSR3B2EFJ55LEA34S76HTRQGH7XSPBO7YIMNZOQ",
+  "relayer": "GBVJ34MT4GDKZJGILI6DRYGD75ZNUBJGGZIDUV7IPFNVVDWGE5GBLV3X",
+  "agentAccountWasmHash": "8c607112ba93ff289d30f2c894ca586c745328e5cb2ae6139917c6df540dda62",
+  "agentAccountWasmHashNote": "v1 (8c607112ba…dda62) pins the pre-seeded demoAgentAccount below and is kept for history. v2 (7ced45e735…ca717, see fundingRouter.agentWasmHashV2) adds the 4th constructor arg (router Option<Address>) + the pull@router context; it is what the one-popup grant factory and the per-run auto-execute deploys now use (frontend SOROBAN_AGENT_WASM_HASH).",
+  "demoAgentAccount": "CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC",
+  "demoAgentVersion": 3,
+  "demoAgentOwner": "GCIOUP4UJAAFDBJNP5DY5CFJHBLEKGLHZ5E2AYRIIQ5VOZFVSTPRYHNS",
+  "demoAgentSigner": "dd4139236bc836df336b1d6a360ad90d234613950cff078ebc03d28876c1698b",
+  "demoAgentNote": "v3 (cutover, handoff §1): fresh agent_account deploy (tx e1d37ff8c38bd9067d6e54d7098063a15adbd66e8a6158c1d08479c075354dad) because the account's __check_auth scope is constructor-only — the v2 agent (CD3MQJ4YZQ5MDSKDETEFZMDV5J5URVXM46NY5Y3RICUOVJJOFIZTKJ7K) stays hard-pinned to the OLD 1:1 vault and cannot be re-scoped. v3 pins scope.vault = autofarmVault, reuses the SAME session signer pubkey (DEMO_AGENT_SECRET unchanged), constructor self-approved the autofarm vault for the 100k cap, and was registry-authorized in tx f6eb998268dbce07e3c5b0611eb767e1f671e7f950fd2ae8a3713eff8b35aa78.",
+  "attestation": "CDDOW2FZ7ALBWBXF22TPMPDHPXSKTMLQGGQWUYX7YOJZAHICD7DUO2K6",
+  "fundingRouter": {
+    "address": "CBEI5VJKKWLXKQUUUETBAPZSQQLH7I57TSIDTMV4WJMBKIGVF7NSNOFY",
+    "routerWasmHash": "83c4874a500a579bef561e06459458316df885e4f62cf7e0f6953807fa779983",
+    "agentWasmHashV2": "7ced45e735e7e084d96d6a04df7cec6e07bc2b203eedb4d3422949a7e9cca717",
+    "token": "CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU",
+    "deployedAt": "2026-07-10",
+    "deployTx": "10da369f4e5deb0178e4274a8e7da075e12a7ae085c55096a33976f7dc59b656",
+    "agentWasmUploadTx": "c84f563290f7d2ef459e91ce6b179f53f19a068871e3ba8071df09c7c56a44db",
+    "note": "One-popup grant factory + funding gate (zero custody). Constructor pins (agent wasm v2 hash 7ced45e7…ca717, token). owner.grant() is the single wallet popup (covers the nested SEP-41 token.approve + deploys the run's agents via the pinned wasm); relayed router.pull() funds each agent within the token allowance — the router never holds funds. The server relay guard's SOROBAN_ROUTER_ADDRESS env must equal address or grant/pull fee-bumps are refused. Deployer: vf-deployer (GCIOUP4U…RYHNS)."
+  },
+  "vault": {
+    "address": "CBZNITAPHCLSPEXC3UKIERYRUJR56GISM2G2Z5XD6KZH3U4ZZ76XNQOU",
+    "token": "CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU",
+    "decimals": 7,
+    "shareSymbol": "vfVLT",
+    "blendPool": "CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF",
+    "note": "PRE-autofarm vault (dividend-model wasm, predates add_strategy/set_keeper/compound/rebalance). Kept for history/rollback — superseded by `autofarmVault` below (Task 11, sub-project vf-autofarm)."
+  },
+  "autofarmVault": {
+    "address": "CB5VKYDUIYX3RZWGVLKKNBPG7V7Z5JIHF2QPNQKWKAHVA3IPSLFZJDYU",
+    "token": "CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU",
+    "decimals": 7,
+    "shareSymbol": "vfVLT",
+    "name": "Vibing Farmer Autofarm",
+    "strategies": ["CCH424TVLTP2P3URNRGGF26X24XRPBVBXCRZ6QBCWLSX6KH4QZSLNBC2"],
+    "keeper": "GA2CMBS3LRY5MH64KKMHOYVA6WTLPMKRMIWEJDOIGHYPB7WMC3QHRCBU",
+    "keeperNote": "Dedicated keeper identity (review fix: split from the relayer). set_keeper tx 5690e99bfe84740106c7ae015e82f2fb4b54fb99a4bb2ab988db4e05f9e73be9. Secret lives ONLY in frontend/.env.local STELLAR_KEEPER_SECRET (local) / wrangler secret (deployed keeper).",
+    "wasmUpgradeNote": "Live vault wasm upgraded (review fixes: compound try_-call fault isolation + compound cooldown 600s + zero-move rebalance guard), wasm hash 1b54f98906fc8dcb3f44d240ebccd4d5ba3f5f15ef0c47a14a3711e6b04ce186, upgrade tx ae31d87aa35c3c2d2232aea096dad9bd29089372cb9e1917e97782bd55018e48. Storage verified intact post-upgrade (keeper/pps/strategies reads).",
+    "note": "Task 11 (sub-project vf-autofarm) deploy. Single-strategy: Task 1 spike found OWN_POOL_VIABLE=false (a self-deployed second Blend pool can't reach Active status without seeding real backstop capital), so this vault runs strategy1 only and relies on the de-risk-to-idle rebalance fallback (rebalance(to=vault)) instead of a second strategy/pool. Deploy tx 492d55911c49eecffe3aba01f5d49f70de56e66ce3f960fab85d950c208e2055; round-trip (1 USDC deposit+redeem) verified live via deployer key, tx f788a432c823d0b6e7ab4d8923bb1dedd44fb7e38c37378aed79143eba3f5334 + 4a650b9ceb3268bfcfbb7cbc3090107998c60df9c2a695b72f8e595e1476dd70."
+  },
+  "strategy1": {
+    "address": "CCH424TVLTP2P3URNRGGF26X24XRPBVBXCRZ6QBCWLSX6KH4QZSLNBC2",
+    "vault": "CB5VKYDUIYX3RZWGVLKKNBPG7V7Z5JIHF2QPNQKWKAHVA3IPSLFZJDYU",
+    "pool": "CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF",
+    "token": "CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU",
+    "blnd": "CB22KRA3YZVCNCQI64JQ5WE7UY2VAV7WFLK6A2JN3HEX56T2EDAFO7QF",
+    "router": "CCJUD55AG6W5HAI5LRVNKAE5WDP5XGZBUDS5WNTIVDU7O264UZZE7BRD",
+    "reserveTokenId": 7,
+    "deployTx": "a347c9b1c3f0bf3ca40007741cf0f851347f81d1aa77e6a9433d8ad0bfc7110a"
+  },
+  "keeper": "GA2CMBS3LRY5MH64KKMHOYVA6WTLPMKRMIWEJDOIGHYPB7WMC3QHRCBU",
+  "smartAccount": {
+    "accountWasmHash": "a12e8fa9621efd20315753bd4007d974390e31fbcb4a7ddc4dd0a0dec728bf2e",
+    "webauthnVerifierAddress": "CBSHV66WG7UV6FQVUTB67P3DZUEJ2KJ5X6JKQH5MFRAAFNFJUAJVXJYV",
+    "ed25519VerifierAddress": "CDGMOL3BP6Y6LYOXXTRNXBNJ2SLNTQ47BGG3LOS2OBBE657E3NYCN54B",
+    "nativeTokenContract": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    "indexerUrl": "https://smart-account-indexer.sdf-ecosystem.workers.dev",
+    "sakVersion": "0.2.10",
+    "bindingsVersion": "0.1.2",
+    "ozContractsVersion": "pre-v0.7 (SAK bindings 0.1.2 @ ff0eb9d8, rs-sdk 23.2.1)",
+    "source": "reused live bindings-0.1.2 demo-env testnet artifacts (not self-deployed); v0.7.2 tag drifted to get_context_rules_count and does NOT match bindings 0.1.2",
+    "wasmSha256": {
+      "smart_account": "a12e8fa9621efd20315753bd4007d974390e31fbcb4a7ddc4dd0a0dec728bf2e",
+      "webauthn_verifier": "7ff7bc8306cb5ea306249905c751beb8b4017e2d66accef571d554485787854a"
+    }
+  }
+}

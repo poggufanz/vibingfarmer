@@ -6,8 +6,10 @@ import {
   DEEPSEEK_MODEL,
   AI_PROXY_URL,
   VAULT_CATALOG,
+  BASE_POOL_CATALOG,
 } from './config.js'
 import { loadVaultSkill } from './skillLoader.js'
+import { toBaseUnits } from './stellar/format.js'
 import { fetchMarketContext } from './marketSearch.js'
 import { fetchDeFiLlamaVaults } from './defiLlama.js'
 import { runStrategyFetchDag } from './strategy/fetchDag.js'
@@ -33,13 +35,15 @@ import { buildStrategyState, enforceActionSpace, scoreReward, riskCeiling } from
  * @param {Array} messages
  * @param {boolean} isVenice - include venice_parameters when true
  * @param {AbortSignal} signal
+ * @param {number} [temperature] - optional temperature override
  */
-async function callChatCompletions(url, model, headers, messages, isVenice, signal) {
+async function callChatCompletions(url, model, headers, messages, isVenice, signal, temperature) {
   const body = {
     model,
     response_format: { type: 'json_object' },
     messages,
   }
+  if (temperature != null) body.temperature = temperature
   if (isVenice) body.venice_parameters = { include_venice_system_prompt: false }
 
   const response = await fetch(url, {
@@ -366,15 +370,11 @@ export async function generateAgentSkills({ agentId, vault, amount, veniceAuth, 
   const fallback = {
     agentId,
     vaultAddress: vault,
+    // Agents are deposit-only (no on-chain swap in the money path), so the fallback grants only a
+    // deposit skill — no vestigial mock swap. The AI-generated path may still emit a swap skill for
+    // the user to review, but nothing dereferences skills.swap at runtime.
     skills: {
-      swap: {
-        required: false,
-        maxSlippage: 0.5,
-        dexPreference: 'mock',
-        maxRetries: 2,
-        timeoutSeconds: 30,
-      },
-      deposit: { maxAmount: String(Math.floor(amount * 1e6)), vaultAddress: vault, expiresAt },
+      deposit: { maxAmount: toBaseUnits(amount).toString(), vaultAddress: vault, expiresAt },
     },
     generatedBy: 'fallback',
     approvedByUser: false,
@@ -405,7 +405,7 @@ Respond with JSON schema:
   "vaultAddress": "${vault}",
   "skills": {
     "swap": { "required": false, "maxSlippage": 0.5, "dexPreference": "uniswap-v3", "maxRetries": 2, "timeoutSeconds": 30 },
-    "deposit": { "maxAmount": "${Math.floor(amount * 1e6)}", "vaultAddress": "${vault}", "expiresAt": ${expiresAt} }
+    "deposit": { "maxAmount": "${toBaseUnits(amount)}", "vaultAddress": "${vault}", "expiresAt": ${expiresAt} }
   },
   "generatedBy": "${provider.name}",
   "approvedByUser": false
@@ -651,6 +651,192 @@ export async function councilSpecialistVerdict({
 }
 
 /**
+ * Parse a proposer verdict: { proposal: {action, reasoning, confidence}, arguments, citedRules }.
+ * @param {object} raw parsed JSON
+ * @param {string[]} allowedRuleIds
+ */
+export function parseProposerVerdict(raw, allowedRuleIds = []) {
+  const action = String(raw?.proposal?.action || '').toUpperCase()
+  if (!VALID_SIGNALS.has(action)) throw new Error(`invalid proposer action: ${raw?.proposal?.action}`)
+  if (!raw?.proposal?.reasoning) throw new Error('proposer reasoning missing')
+  const conf = Math.max(0, Math.min(1, +Number(raw.proposal.confidence).toFixed(3)))
+  const allowed = new Set(allowedRuleIds)
+  const citedRules = Array.isArray(raw.citedRules) ? raw.citedRules.filter((id) => allowed.has(id)) : []
+  const arguments_ = Array.isArray(raw.arguments) ? raw.arguments.map(String).slice(0, 5) : []
+  return {
+    role: 'proposer',
+    action,
+    confidence: Number.isFinite(conf) ? conf : 0,
+    reasoning: String(raw.proposal.reasoning),
+    arguments: arguments_,
+    citedRules,
+    source: 'ai',
+    temperature: 0.9,
+  }
+}
+
+/**
+ * Parse a risk-compliance assessment: { assessment: {action, confidence}, violationsFound, regulationsCited, concerns, compliancePass }.
+ * @param {object} raw parsed JSON
+ * @param {string[]} allowedRuleIds
+ */
+export function parseRiskComplianceVerdict(raw, allowedRuleIds = []) {
+  const action = String(raw?.assessment?.action || '').toUpperCase()
+  if (!VALID_SIGNALS.has(action)) throw new Error(`invalid risk-compliance action: ${raw?.assessment?.action}`)
+  const conf = Math.max(0, Math.min(1, +Number(raw.assessment.confidence).toFixed(3)))
+  const allowed = new Set(allowedRuleIds)
+  const citedRules = Array.isArray(raw.regulationsCited) ? raw.regulationsCited.filter((id) => allowed.has(id)) : []
+  const violations = Array.isArray(raw.violationsFound) ? raw.violationsFound.map(String).slice(0, 5) : []
+  const concerns = Array.isArray(raw.concerns) ? raw.concerns.map(String).slice(0, 4) : []
+  return {
+    role: 'risk-compliance',
+    action,
+    confidence: Number.isFinite(conf) ? conf : 0,
+    violationsFound: violations,
+    regulationsCited: citedRules,
+    concerns,
+    compliancePass: raw.compliancePass === true,
+    source: 'ai',
+    temperature: 0.0,
+  }
+}
+
+/**
+ * Parse a validator verdict: { consistent, VaRAcceptable, CVaRAcceptable, simMatches, concerns, confidence }.
+ * @param {object} raw parsed JSON
+ */
+export function parseValidatorVerdict(raw) {
+  const conf = Math.max(0, Math.min(1, +Number(raw.confidence).toFixed(3)))
+  const concerns = Array.isArray(raw.concerns) ? raw.concerns.map(String).slice(0, 4) : []
+  return {
+    role: 'validator',
+    consistent: raw.consistent === true,
+    VaRAcceptable: raw.VaRAcceptable === true,
+    CVaRAcceptable: raw.CVaRAcceptable === true,
+    simMatches: raw.simMatches === true,
+    concerns,
+    confidence: Number.isFinite(conf) ? conf : 0,
+    source: 'ai',
+    temperature: 0.0,
+  }
+}
+
+/**
+ * Run the Proposer specialist — high temperature, creative yield-seeking.
+ * Responds to risk-compliance feedback when retrying.
+ * @param {{systemPrompt:string, userPrompt:string, allowedRuleIds:string[], devApiKey?:string|null, signal?:AbortSignal}} args
+ * @returns {Promise<ProposerVerdict|null>}
+ */
+export async function proposerVerdict({
+  systemPrompt,
+  userPrompt,
+  allowedRuleIds,
+  devApiKey = null,
+  signal,
+}) {
+  const provider = resolveProviderFromSettings({ devApiKey })
+  const controller = signal ? null : new AbortController()
+  const timeout = controller ? setTimeout(() => controller.abort(), VENICE_TIMEOUT_MS) : null
+  const sig = signal || controller.signal
+  try {
+    const content = await callChatCompletions(
+      provider.url,
+      provider.model,
+      provider.headers,
+      [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      provider.isVenice,
+      sig,
+      0.9
+    )
+    return parseProposerVerdict(JSON.parse(content), allowedRuleIds)
+  } catch (err) {
+    console.warn(`[council] proposer failed (${provider.name}):`, err.message)
+    return null
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
+}
+
+/**
+ * Run the Risk/Compliance specialist — temperature 0.0, strict regulator.
+ * Receives proposer's output and RAG compliance rules.
+ * @param {{systemPrompt:string, userPrompt:string, allowedRuleIds:string[], devApiKey?:string|null, signal?:AbortSignal}} args
+ * @returns {Promise<RiskComplianceVerdict|null>}
+ */
+export async function riskComplianceVerdict({
+  systemPrompt,
+  userPrompt,
+  allowedRuleIds,
+  devApiKey = null,
+  signal,
+}) {
+  const provider = resolveProviderFromSettings({ devApiKey })
+  const controller = signal ? null : new AbortController()
+  const timeout = controller ? setTimeout(() => controller.abort(), VENICE_TIMEOUT_MS) : null
+  const sig = signal || controller.signal
+  try {
+    const content = await callChatCompletions(
+      provider.url,
+      provider.model,
+      provider.headers,
+      [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      provider.isVenice,
+      sig,
+      0.0
+    )
+    return parseRiskComplianceVerdict(JSON.parse(content), allowedRuleIds)
+  } catch (err) {
+    console.warn(`[council] risk-compliance failed (${provider.name}):`, err.message)
+    return null
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
+}
+
+/**
+ * Run the Validator specialist — temperature 0.0, checks proposal vs simulation.
+ * @param {{systemPrompt:string, userPrompt:string, devApiKey?:string|null, signal?:AbortSignal}} args
+ * @returns {Promise<ValidatorVerdict|null>}
+ */
+export async function validatorVerdict({
+  systemPrompt,
+  userPrompt,
+  devApiKey = null,
+  signal,
+}) {
+  const provider = resolveProviderFromSettings({ devApiKey })
+  const controller = signal ? null : new AbortController()
+  const timeout = controller ? setTimeout(() => controller.abort(), VENICE_TIMEOUT_MS) : null
+  const sig = signal || controller.signal
+  try {
+    const content = await callChatCompletions(
+      provider.url,
+      provider.model,
+      provider.headers,
+      [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      provider.isVenice,
+      sig,
+      0.0
+    )
+    return parseValidatorVerdict(JSON.parse(content))
+  } catch (err) {
+    console.warn(`[council] validator failed (${provider.name}):`, err.message)
+    return null
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
+}
+
+/**
  * Generic Venice JSON call — system + user prompt in, parsed JSON object out.
  * Used by the ACE Curator to propose new playbook rules. Throws on any
  * failure so callers can fall back / no-op (mirrors the contract `proposeRule` expects).
@@ -675,6 +861,116 @@ export async function askVeniceJson({ system, user, devApiKey = null, signal }) 
       sig
     )
     return JSON.parse(content)
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
+}
+
+const BASE_MANDATE_TTL_SECONDS = 3600
+// USDC-denominated ERC-4626 pools priced ~1:1 at deposit time; this is a STRATEGY-TIME estimate
+// only. The authoritative minShares used in the real deposit call is recomputed live from the
+// pool's convertToShares() right before dispatch (see base/quotes.js, Task 3.4) — pool share
+// price can drift between allocation and execution, and this fallback does not track that.
+const STRATEGY_TIME_SLIPPAGE_BPS = 50 // 0.5%
+
+function estimateMinSharesAtStrategyTime(amount) {
+  const units = BigInt(Math.round(amount * 1_000_000)) // 6dp, Base-side
+  return (units * BigInt(10_000 - STRATEGY_TIME_SLIPPAGE_BPS)) / 10_000n
+}
+
+function buildBasePoolSkill(pool, amount) {
+  const units = BigInt(Math.round(amount * 1_000_000))
+  return {
+    vaultAddress: pool,
+    maxAmount: units.toString(),
+    expiresAt: Math.floor(Date.now() / 1000) + BASE_MANDATE_TTL_SECONDS,
+  }
+}
+
+/**
+ * AI strategist allocation across the whitelisted Base pools (Approach C, SP3). Mirrors
+ * generateStrategy's provider-resolution + fallback discipline, scoped to a much narrower job:
+ * decide WHICH Base pools and HOW MUCH — not the full MDP/DAG/council machinery generateStrategy
+ * runs for the Stellar advisor (that would be over-engineering for a 3-pool whitelist YAGNI
+ * doesn't ask for here).
+ * @param {{ amount: number, riskLevel: 'low'|'medium'|'high', nPools: number, veniceAuth?: string|null, devApiKey?: string|null, signal?: AbortSignal }} params
+ * @returns {Promise<Array<{ pool: string, protocol: string, amount: number, minShares: bigint, expectedApy: number, riskTier: string, skill: object }>>}
+ */
+export async function allocateBasePools({
+  amount,
+  riskLevel,
+  nPools,
+  veniceAuth,
+  devApiKey,
+  signal,
+}) {
+  const safeNPools = Math.min(nPools, BASE_POOL_CATALOG.length)
+  const provider = resolveProviderFromSettings({ veniceAuth, devApiKey })
+
+  const buildFallback = () => {
+    const pools = BASE_POOL_CATALOG.slice(0, safeNPools)
+    const perPool = amount / pools.length
+    return pools.map((p) => ({
+      pool: p.address,
+      protocol: p.protocol,
+      amount: perPool,
+      minShares: estimateMinSharesAtStrategyTime(perPool),
+      expectedApy: p.apy,
+      riskTier: p.risk,
+      skill: buildBasePoolSkill(p.address, perPool),
+    }))
+  }
+
+  if (!provider) return buildFallback()
+
+  const controller = signal ? null : new AbortController()
+  const timeout = controller ? setTimeout(() => controller.abort(), VENICE_TIMEOUT_MS) : null
+  const sig = signal || controller.signal
+
+  try {
+    const systemPrompt = `You allocate USDC across a whitelisted set of Base-chain yield pools. Respond ONLY with JSON: {"allocations":[{"address":"0x...","allocation":0.0-1.0,"reasoning":"..."}]}. Only use addresses from the catalog provided.`
+    const userPrompt = `Catalog:\n${JSON.stringify(BASE_POOL_CATALOG, null, 2)}\n\nAllocate ${amount} USDC across up to ${safeNPools} pool(s) for a "${riskLevel}" risk investor. Allocations must sum to 1.0 across the pools you select.`
+    const content = await callChatCompletions(
+      provider.url,
+      provider.model,
+      provider.headers,
+      [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      provider.isVenice,
+      sig
+    )
+    const parsed = JSON.parse(content)
+    const allowedAddresses = new Set(BASE_POOL_CATALOG.map((p) => p.address.toLowerCase()))
+    if (!Array.isArray(parsed.allocations) || parsed.allocations.length === 0) {
+      throw new Error('empty allocations')
+    }
+    const filtered = parsed.allocations.filter((a) =>
+      allowedAddresses.has(String(a.address).toLowerCase())
+    )
+    if (filtered.length === 0) throw new Error('no valid (whitelisted) allocations returned')
+    const total = filtered.reduce((s, a) => s + a.allocation, 0)
+    if (total <= 0) throw new Error('allocation sum is not positive')
+
+    return filtered.map((a) => {
+      const catalogEntry = BASE_POOL_CATALOG.find(
+        (p) => p.address.toLowerCase() === String(a.address).toLowerCase()
+      )
+      const poolAmount = amount * (a.allocation / total) // renormalize to 1.0, mirrors enforceActionSpace's spirit
+      return {
+        pool: catalogEntry.address,
+        protocol: catalogEntry.protocol,
+        amount: poolAmount,
+        minShares: estimateMinSharesAtStrategyTime(poolAmount),
+        expectedApy: catalogEntry.apy,
+        riskTier: catalogEntry.risk,
+        skill: buildBasePoolSkill(catalogEntry.address, poolAmount),
+      }
+    })
+  } catch (err) {
+    console.warn('[ai] Base pool allocation failed, using fallback:', err.message)
+    return buildFallback()
   } finally {
     if (timeout) clearTimeout(timeout)
   }

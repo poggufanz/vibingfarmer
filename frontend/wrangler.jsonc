@@ -7,6 +7,12 @@
   "pages_build_output_dir": "./dist",
   "compatibility_date": "2026-06-13",
   // nodejs_compat: the /api/* Functions reuse Node-style handlers that read
-  // process.env and dynamically import @uxly/1shot-client + viem.
-  "compatibility_flags": ["nodejs_compat"]
+  // process.env and dynamically import @stellar/stellar-sdk (the gasless relay).
+  "compatibility_flags": ["nodejs_compat"],
+  // VF API gate key store (SEP-10 portal + gateway metering). Create the DB once with
+  // `npx wrangler d1 create vf-gate`, paste the id below, then
+  // `npx wrangler d1 migrations apply vf-gate --remote`.
+  "d1_databases": [
+    { "binding": "VF_DB", "database_name": "vf-gate", "database_id": "REPLACED-AFTER-wrangler-d1-create" }
+  ]
 }
