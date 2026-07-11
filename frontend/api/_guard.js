@@ -9,7 +9,7 @@
 //      attacker-enforced (curl forges it trivially), so the allowlist is NOT
 //      authentication. A per-IP fixed-window cap blunts forged-Origin abuse:
 //      cost drain on the DeepSeek/Tavily keys, gas-drain DoS on the funded
-//      1Shot relayer wallet. Best-effort: state is per warm process.
+//      Stellar relayer keypair. Best-effort: state is per warm process.
 
 const isProd =
   process.env.NODE_ENV === 'production' || process.env.VERCEL_ENV === 'production'
