@@ -269,7 +269,7 @@ export default function HomePage({
             <span className="vibing">farmer</span>
           </div>
           <p className="lede" style={{ margin: '18px auto 0', fontSize: 14 }}>
-            Autonomous yield farming. Set your permission once, and the agent farms for you.
+            Connect once. Set a budget. Your USDC earns while you stay in control.
           </p>
           <button className="btn btn-primary btn-lg" style={{ marginTop: 24 }} onClick={onConnect}>
             {t(lang, 'connectWallet')}
@@ -287,7 +287,7 @@ export default function HomePage({
             }}
           >
             <span className="live-dot" />
-            relayer fee-bump · gas 0 · Stellar testnet
+            Network fees covered · Stellar testnet
           </div>
         </div>
       </div>
@@ -497,11 +497,11 @@ export default function HomePage({
                     style={{ width: '100%', padding: '10px 16px', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 6 }}
                     onClick={() => onStartStrategy(estimateAmount)}
                   >
-                    Start Strategy <span style={{ fontSize: 14 }}>→</span>
+                    Start depositing <span style={{ fontSize: 14 }}>→</span>
                   </button>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 10, fontSize: 10, color: 'var(--text-faint)' }}>
                     <span style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--accent)' }} />
-                    Gasless deposits via fee-bump relayer
+                    One signature · network fees covered
                   </div>
                 </div>
               </div>
@@ -560,28 +560,25 @@ export default function HomePage({
               </div>
             </div>
 
-            {/* 3-Layer Protection Graphic */}
             <div style={{ ...cardPad }}>
-              <div style={{ ...eyebrow, marginBottom: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span>Built-in Security: The 3-Layer Yield Protection</span>
-              </div>
+              <div style={{ ...eyebrow, marginBottom: 14 }}>How it works</div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }} className="vf-empty-protection">
-                <div style={{ padding: '4px 8px', borderLeft: '2px solid var(--warn)' }}>
-                  <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text)' }}>1. Pre-Flight Verification</div>
+                <div style={{ padding: '4px 8px', borderLeft: '2px solid var(--border-strong)' }}>
+                  <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text)' }}>1. Set amount</div>
                   <p style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>
-                    Vets yield authenticity. Instantly filters out ponzi-yield architectures and un-audited smart contracts.
+                    Choose how much USDC and your risk level. We build a vault plan from live rates.
                   </p>
                 </div>
                 <div style={{ padding: '4px 8px', borderLeft: '2px solid var(--accent)' }}>
-                  <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text)' }}>2. Active Risk Guardian</div>
+                  <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text)' }}>2. Sign once</div>
                   <p style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>
-                    Continuous monitor loops monitor Blend pool utilization, volatility, and protocol TVL changes in real time.
+                    One budget + time window. Agents deposit only inside that limit. Fees covered.
                   </p>
                 </div>
                 <div style={{ padding: '4px 8px', borderLeft: '2px solid var(--ok)' }}>
-                  <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text)' }}>3. Scoped Keeper Auto-Exit</div>
+                  <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text)' }}>3. Stay in control</div>
                   <p style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>
-                    On-chain scoped session keys execute automatic emergency withdrawals directly back to your address if targets trip.
+                    Monitor, withdraw, or revoke anytime. Emergency exits can send funds back to you.
                   </p>
                 </div>
               </div>
@@ -601,32 +598,41 @@ export default function HomePage({
           </div>
         ) : (
           <>
-            {/* ── PORTFOLIO STRIP (compact — totals + agent merged into one row) ── */}
+            {/* ── PORTFOLIO STRIP (money-app command center) ── */}
             <div style={section}>
-              <SectionHead title="Portfolio" />
+              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10, gap: 12 }}>
+                <span style={eyebrow}>Your portfolio</span>
+                {onStartStrategy && (
+                  <button className="btn btn-primary btn-sm" onClick={() => onStartStrategy()}>
+                    Deposit more
+                  </button>
+                )}
+              </div>
               <div
                 style={{
                   ...cardPad,
-                  padding: '13px 16px',
+                  padding: '18px 20px',
                   display: 'flex',
                   alignItems: 'center',
-                  gap: 16,
+                  gap: 20,
                   flexWrap: 'wrap',
                 }}
               >
                 <div>
-                  <span className="tnum" style={{ fontSize: 20, fontWeight: 500 }}>
+                  <div style={{ fontSize: 11, color: 'var(--text-faint)', marginBottom: 4 }}>Total deposited</div>
+                  <span className="tnum" style={{ fontSize: 28, fontWeight: 600, letterSpacing: '-0.03em' }}>
                     {fmtAmt(u(totalUnits))}
                   </span>
-                  <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 5 }}>
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 6 }}>
                     USDC
                   </span>
                 </div>
-                <span style={{ width: 1, height: 22, background: 'var(--border)' }} />
+                <span style={{ width: 1, height: 36, background: 'var(--border)' }} />
                 <div>
+                  <div style={{ fontSize: 11, color: 'var(--text-faint)', marginBottom: 4 }}>Est. today</div>
                   <span
                     className="tnum"
-                    style={{ fontSize: 14, fontWeight: 500, color: 'var(--ok)' }}
+                    style={{ fontSize: 16, fontWeight: 500, color: 'var(--ok)' }}
                   >
                     +{earnedToday.toFixed(2)}
                   </span>
@@ -652,7 +658,7 @@ export default function HomePage({
                   }}
                 >
                   <span style={dot(agentActive ? 'var(--ok)' : 'var(--text-faint)')} />
-                  {agentActive ? 'monitoring' : 'stopped'} · {mode} →
+                  {agentActive ? 'Monitoring' : 'Stopped'} · {mode} →
                 </button>
               </div>
             </div>

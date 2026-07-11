@@ -241,23 +241,14 @@ const SkillReviewCard = ({
 
   return (
     <section className="card enter">
-      <div className="eyebrow">
-        <span className="num">03</span>
-        <span>
-          Review skills · {agents.length} agent{agents.length === 1 ? '' : 's'}
-        </span>
-        <span className="rule" />
-        <span>
-          {approvedCount}/{agents.length} approved
-        </span>
-      </div>
+      <p className="grant-kicker mono">
+        Optional guards · {approvedCount}/{agents.length} approved
+      </p>
 
-      <h1 className="h-display">
-        Review the skills each agent will run · before you grant permissions.
-      </h1>
+      <h1 className="h-display">Confirm what each vault deposit can do</h1>
       <p className="lede">
-        Each agent gets a skill defining exactly what it can do. Review the actions, adjust the
-        limits, then approve. Approved skills are used verbatim at runtime.
+        These limits apply when agents deposit. Approve the defaults, or tighten amounts before you
+        set the spending budget.
       </p>
 
       <DelegationChain agents={agents} />
@@ -276,9 +267,7 @@ const SkillReviewCard = ({
       </div>
 
       <div className="action-row">
-        <div className="foot-note">
-          Skills are signed by your smart account. Edit limits before approving if needed.
-        </div>
+        <div className="foot-note">Next step is your spending limit · one signature</div>
         <div className="flex gap-2">
           {!allApproved && (
             <button className="btn btn-ghost" onClick={onApproveAll}>
@@ -286,7 +275,7 @@ const SkillReviewCard = ({
             </button>
           )}
           <button className="btn btn-primary" disabled={!allApproved} onClick={onContinue}>
-            Next · grant permission →
+            Continue to budget →
           </button>
         </div>
       </div>

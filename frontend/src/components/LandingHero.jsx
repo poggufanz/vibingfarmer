@@ -89,18 +89,18 @@ function HeroSection({ onStart }) {
   return (
     <section className="vf-hero">
       <div className="vf-hero__copy">
-        <p className="vf-hero__eyebrow">VF &amp; VF Wallet · Stellar testnet</p>
+        <p className="vf-hero__eyebrow">Stellar testnet · self-custody</p>
         <h1 className="vf-hero__headline">
-          <span>Self-Custody Wallet.</span>
-          <span className="vf-hero__headline-soft">Autonomous Yield Loops.</span>
+          <span>Set a budget once.</span>
+          <span className="vf-hero__headline-soft">Your USDC keeps earning.</span>
         </h1>
         <p className="vf-hero__sub">
-          Vibing Farmer (VF) pairs a secure, scan-protected wallet with auto-compounding yield loops.
-          Protect your assets against Impermanent Loss and pool freezes autonomously.
+          One signature. Network fees covered. Agents deposit within your limit, compound yield, and
+          can exit to your wallet if risk trips.
         </p>
         <div className="vf-hero__cta">
           <button className="vf-cta__btn" onClick={onStart}>
-            Start farming <span aria-hidden="true">→</span>
+            Start depositing <span aria-hidden="true">→</span>
           </button>
         </div>
       </div>
@@ -145,9 +145,9 @@ function CtaBlock({ onStart }) {
   return (
     <div className="vf-cta">
       <button className="vf-cta__btn" onClick={onStart}>
-        Start farming <span aria-hidden="true">→</span>
+        Start depositing <span aria-hidden="true">→</span>
       </button>
-      <p className="vf-cta__sub">Stellar testnet · Freighter / xBull / Albedo</p>
+      <p className="vf-cta__sub">Stellar testnet · Freighter / xBull / Albedo · fees covered</p>
     </div>
   )
 }
@@ -156,14 +156,14 @@ function CtaBlock({ onStart }) {
 function OutroContent({ onStart }) {
   return (
     <>
-      <p className="vf-outro__eyebrow">Protect and yield</p>
+      <p className="vf-outro__eyebrow">Stay in control</p>
       <h2 className="vf-outro__title">
-        The loops run.
+        Yield runs in the background.
         <br />
-        <span className="vf-outro__title-soft">Your wallet is guarded.</span>
+        <span className="vf-outro__title-soft">You keep the keys.</span>
       </h2>
       <p className="vf-outro__sub">
-        Secure self-custody keys, F8 scan-before-send security, and automatic emergency exits. Set once. Vibe forever.
+        Scoped budget, revoke anytime, emergency exits back to your address. Set once. Vibe forever.
       </p>
       <CtaBlock onStart={onStart} />
     </>

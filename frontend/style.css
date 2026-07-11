@@ -3440,10 +3440,10 @@ details.yv-collapse[open] > summary .yv-caret {
   border-bottom: 1px solid var(--border);
 }
 .sim-ev-fig { display: flex; flex-direction: column; gap: 2px; }
-.sim-ev-fig .label { color: var(--text-faint); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; }
+.sim-ev-fig .label { color: var(--text-faint); font-size: 10px; letter-spacing: 0.02em; }
 .sim-ev-prob { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; font-size: 11px; }
 .sim-ev-prob .tnum { font-size: 18px; }
-.sim-ev-prob .label { color: var(--text-faint); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; }
+.sim-ev-prob .label { color: var(--text-faint); font-size: 10px; letter-spacing: 0.02em; }
 .sim-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; }
 .sim-scenario { padding: 12px 14px; border-right: 1px solid var(--border); }
 .sim-scenario:last-child { border-right: none; }
@@ -3452,22 +3452,116 @@ details.yv-collapse[open] > summary .yv-caret {
 .sim-band-rule { flex: 1; height: 1px; background: var(--border); }
 .sim-scenario-foot { margin-top: 6px; font-size: 9px; color: var(--text-faint); }
 
-/* ── AI Council deliberation panel (strategy review) ───────────────────── */
-.council-panel {
+/* ── AI Council / debate — verdict-first progressive disclosure ─────────── */
+.council-panel,
+.debate-panel {
   margin-top: 16px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   overflow: hidden;
+  background: var(--bg-card);
 }
-.council-head {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 11px;
+.council-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 16px 18px;
+  flex-wrap: wrap;
 }
-.council-title { color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; }
-.council-verdict { font-size: 10px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); }
-.council-verdict.keep { color: var(--ok); border-color: color-mix(in oklab, var(--ok) 50%, transparent); }
-.council-verdict.discard { color: var(--warn, #c87); border-color: color-mix(in oklab, var(--warn, #c87) 50%, transparent); }
-.council-loading { padding: 16px 14px; font-size: 11px; color: var(--text-muted); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.council-hero-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+  flex: 1 1 12rem;
+}
+.council-hero-mark {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.2;
+  flex: none;
+  width: 1.25em;
+  text-align: center;
+}
+.council-hero-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.015em;
+  line-height: 1.25;
+}
+.council-hero-sub {
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+.council-vote {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  flex: 0 1 auto;
+  max-width: 100%;
+  /* keep chips off the panel's right edge when wrapping */
+  padding-right: 2px;
+}
+.council-vote-chip {
+  font-size: 10.5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elev);
+  white-space: nowrap;
+}
+.council-why {
+  margin: 0;
+  padding: 0 16px 12px 36px;
+  list-style: disc;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+.council-why li { margin-bottom: 4px; }
+.council-why li:last-child { margin-bottom: 0; }
+.council-permission {
+  margin: 0;
+  padding: 0 16px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  line-height: 1.4;
+}
+.council-details {
+  margin: 0 !important;
+  border: none !important;
+  border-top: 1px solid var(--border) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+}
+.council-details .yv-advanced__sum { padding: 12px 18px; }
+/* Keep horizontal inset so Pass / Plan / Risk never hug the panel edge */
+.council-details .yv-advanced__body {
+  padding: 0;
+  border-top: 1px solid var(--border);
+}
+.council-details .yv-advanced__body.debate-log,
+.council-details .debate-log {
+  padding: 16px 18px 18px;
+}
+.council-details .council-grid {
+  padding: 12px 14px 14px;
+}
+.council-loading {
+  padding: 16px 14px;
+  font-size: 12px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 .council-retry { margin-left: auto; font-size: 11px; padding: 3px 10px; }
 .council-grid { display: grid; grid-template-columns: repeat(3, 1fr); }
 .council-spec { padding: 12px 14px; border-right: 1px solid var(--border); }
@@ -3478,16 +3572,120 @@ details.yv-collapse[open] > summary .yv-caret {
 .council-spec-conf { display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--text-muted); margin-bottom: 8px; }
 .council-conf-track { flex: 1; height: 4px; border-radius: 999px; background: var(--border); overflow: hidden; }
 .council-conf-fill { height: 100%; border-radius: 999px; }
-.council-spec-src { font-size: 9px; padding: 1px 5px; border-radius: 4px; border: 1px solid var(--border); }
-.council-spec-src.ai { color: var(--accent, #cfff3d); }
 .council-rules { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
 .council-rule-chip { font-size: 9px; padding: 1px 6px; border-radius: 4px; background: rgba(127,127,127,0.12); color: var(--text-muted); }
 .council-concerns { font-size: 10px; color: var(--warn, #c87); }
-.council-foot { padding: 9px 14px; border-top: 1px solid var(--border); font-size: 10px; color: var(--text-muted); }
+
+.debate-log { padding: 16px 18px 18px; box-sizing: border-box; }
+.debate-round {
+  margin-bottom: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.debate-round:last-child {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+/* Soft section label — inset from panel edge, body face */
+.debate-round-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0 0 10px 2px; /* slight left inset so "Pass" is not flush */
+  padding: 0 2px;
+  font-family: var(--font-body, system-ui, sans-serif);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  letter-spacing: -0.01em;
+  line-height: 1.35;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+.debate-round-word {
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.debate-round-num {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+  letter-spacing: 0;
+  opacity: 0.9;
+}
+.debate-round-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  min-width: 0; /* prevent grid children from overflowing flush */
+}
+.debate-side {
+  min-width: 0;
+  padding: 12px 14px;
+  border-radius: var(--radius-md, 8px);
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  box-sizing: border-box;
+}
+.debate-side--plan { border-color: color-mix(in oklab, var(--warn, #c87) 28%, var(--border)); }
+.debate-side--risk { border-color: color-mix(in oklab, var(--ok) 28%, var(--border)); }
+.debate-side-h {
+  font-family: var(--font-body, system-ui, sans-serif);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin: 0 0 6px;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+}
+.debate-side-v {
+  font-size: 12px;
+  color: var(--text);
+  margin: 0 0 8px;
+  letter-spacing: -0.01em;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.debate-side-body {
+  font-family: var(--font-body, system-ui, sans-serif);
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.55;
+  letter-spacing: -0.005em;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.debate-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin-top: 4px;
+  padding: 12px 2px 0;
+  border-top: 1px solid var(--border);
+  font-family: var(--font-body, system-ui, sans-serif);
+  font-size: 11.5px;
+  color: var(--text-faint);
+  letter-spacing: -0.01em;
+  line-height: 1.4;
+}
+
+.sim-panel .sim-ev { border-bottom: none; padding-bottom: 8px; }
+.sim-panel .council-details { border-top: 1px solid var(--border); }
+
 @media (max-width: 640px) {
   .council-grid { grid-template-columns: 1fr; }
   .council-spec { border-right: none; border-bottom: 1px solid var(--border); }
   .council-spec:last-child { border-bottom: none; }
+  .debate-round-grid { grid-template-columns: 1fr; }
+  .debate-log,
+  .council-details .yv-advanced__body.debate-log,
+  .council-details .debate-log {
+    padding: 14px 14px 16px;
+  }
 }
 
 /* ── Decision log panel (ACC verdicts) ──────────────────────────── */
@@ -3604,7 +3802,70 @@ details.yv-collapse[open] > summary .yv-caret {
   .topbar-meta { display: none; }
 }
 
+/* ---------- Money-app kickers + progressive disclosure ---------- */
+.grant-kicker {
+  margin: 0 0 10px;
+  font-size: 11px;
+  color: var(--text-faint);
+  letter-spacing: 0.02em;
+}
+
+.yv-advanced {
+  margin-top: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elev);
+}
+.yv-advanced__sum {
+  cursor: pointer;
+  list-style: none;
+  padding: 12px 14px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  user-select: none;
+}
+.yv-advanced__sum::-webkit-details-marker { display: none; }
+.yv-advanced__sum::before {
+  content: '▸ ';
+  color: var(--text-faint);
+}
+.yv-advanced[open] > .yv-advanced__sum::before { content: '▾ '; }
+.yv-advanced__sum:hover { color: var(--text); }
+.yv-advanced__body {
+  padding: 0 14px 14px;
+  border-top: 1px solid var(--border);
+}
+
 /* ---------- Grant panel (one-popup router grant) ---------- */
+.grant-receipt {
+  margin: 20px 0 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-elev);
+  overflow: hidden;
+}
+.grant-receipt-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+  padding: 11px 16px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+.grant-receipt-row:first-child { border-top: none; }
+.grant-receipt-k {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.grant-receipt-v {
+  color: var(--text);
+  text-align: right;
+  font-weight: 500;
+}
+.grant-receipt-v--ok { color: var(--ok); }
+
 .grant-controls {
   display: grid;
   grid-template-columns: minmax(0, 220px) minmax(0, 1fr);
