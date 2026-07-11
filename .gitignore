@@ -77,3 +77,4 @@ graphify-out/
 frontend/graphify-out/
 graphify/
 .graphifyignore
+mcps

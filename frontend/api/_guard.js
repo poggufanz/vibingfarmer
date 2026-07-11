@@ -11,8 +11,7 @@
 //      cost drain on the DeepSeek/Tavily keys, gas-drain DoS on the funded
 //      Stellar relayer keypair. Best-effort: state is per warm process.
 
-const isProd =
-  process.env.NODE_ENV === 'production' || process.env.VERCEL_ENV === 'production'
+const isProd = process.env.NODE_ENV === 'production' || process.env.VERCEL_ENV === 'production'
 
 const DEV_ORIGINS = [
   'http://localhost:5173',
@@ -69,7 +68,10 @@ function clientIp(req) {
   //    is ignored. With one edge this is simply the last entry.
   const xff = req.headers['x-forwarded-for']
   if (TRUST_PROXY_HOPS > 0 && typeof xff === 'string' && xff.trim()) {
-    const parts = xff.split(',').map((p) => p.trim()).filter(Boolean)
+    const parts = xff
+      .split(',')
+      .map((p) => p.trim())
+      .filter(Boolean)
     if (parts.length) {
       const idx = parts.length - TRUST_PROXY_HOPS
       return parts[idx >= 0 ? idx : 0]
