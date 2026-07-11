@@ -715,7 +715,7 @@ input, select, textarea {
 .btn-primary:focus-visible:not(:disabled),
 .btn-gradient:hover:not(:disabled),
 .btn-gradient:focus-visible:not(:disabled) {
-  /* faster drift on interaction ΓÇö still inside the fill */
+  /* faster drift on interaction - still inside the fill */
   animation-duration: 3.2s;
 }
 
@@ -728,7 +728,7 @@ input, select, textarea {
   background-color: var(--accent);
 }
 
-/* ΓÇöΓÇö Ghost: border only; liquid wash on hover ΓÇöΓÇö */
+/* -- Ghost: border only; liquid wash on hover -- */
 .btn-ghost {
   color: var(--text);
   border-color: var(--border-strong);
@@ -758,7 +758,7 @@ input, select, textarea {
   animation: none;
 }
 
-/* ΓÇöΓÇö Text: no fill ΓÇöΓÇö */
+/* -- Text: no fill -- */
 .btn-text {
   background: transparent;
   color: var(--text-muted);
@@ -3582,7 +3582,7 @@ details.yv-collapse[open] > summary .yv-caret {
   .loop-heartbeat-fill { transition: none; }
 }
 
-/* â”€â”€ Simulation engine panel (/strategy review Â· alternate futures) â”€â”€ */
+/* -- Simulation engine panel (/strategy review - alternate futures) -- */
 .sim-panel {
   margin-top: 16px;
   border: 1px solid var(--border);
