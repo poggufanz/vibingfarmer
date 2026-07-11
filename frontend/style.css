@@ -4116,3 +4116,46 @@ details.yv-collapse[open] > summary .yv-caret {
 @media (max-width: 640px) {
   .grant-controls { grid-template-columns: minmax(0, 1fr); gap: 20px; }
 }
+
+/* Developer portal (second-level nav inside main column) */
+.portal {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: 28px;
+  max-width: 1060px;
+  margin: 0 auto;
+  padding: 28px;
+}
+.portal-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  position: sticky;
+  top: 24px;
+  align-self: start;
+}
+.portal-nav a {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: -0.01em;
+  color: var(--text-muted);
+  text-decoration: none;
+  padding: 8px 12px;
+  border-left: 2px solid transparent;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  transition: background 120ms ease, color 120ms ease;
+}
+.portal-nav a:hover { color: var(--text); background: var(--bg-elev); }
+.portal-nav a.active {
+  color: var(--text);
+  background: var(--bg-elev-2);
+  border-left-color: var(--accent);
+}
+.portal-nav-foot { margin-top: 18px; padding: 0 12px; font-size: 11px; }
+@media (max-width: 860px) {
+  .portal { grid-template-columns: 1fr; padding: 16px; }
+  .portal-nav { flex-direction: row; position: static; overflow-x: auto; }
+  .portal-nav a { border-left: none; border-bottom: 2px solid transparent; border-radius: 0; white-space: nowrap; }
+  .portal-nav a.active { border-bottom-color: var(--accent); }
+  .portal-nav-foot { display: none; }
+}

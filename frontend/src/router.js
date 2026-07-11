@@ -50,5 +50,6 @@ export function getSidebarPath(pathname) {
   if (pathname.startsWith('/vault')) return '/home'
   if (pathname.startsWith('/tx')) return '/history'
   if (pathname === '/') return '/home'
+  if (pathname.startsWith('/developers')) return '/developers'
   return pathname
 }

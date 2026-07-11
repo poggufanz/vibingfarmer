@@ -101,7 +101,7 @@ const LandingHero = lazy(() => import('./components/LandingHero.jsx'))
 const ExplorerPage = lazy(() => import('./components/ExplorerPage.jsx'))
 const EcosystemPage = lazy(() => import('./components/EcosystemPage.jsx'))
 const ReplayPage = lazy(() => import('./components/ReplayPage.jsx'))
-const DevelopersPage = lazy(() => import('./developers/DevelopersPage.jsx'))
+const DevelopersLayout = lazy(() => import('./developers/DevelopersLayout.jsx'))
 import SettingsPage from './components/SettingsPage.jsx'
 import {
   WalletPanel,
@@ -2835,10 +2835,10 @@ const App = () => {
           />
           <Route path="/tx/:txHash" element={<TxDetailPage />} />
           <Route
-            path="/developers"
+            path="/developers/*"
             element={
               <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
-                <DevelopersPage />
+                <DevelopersLayout />
               </Suspense>
             }
           />
