@@ -1,6 +1,5 @@
-import { useMemo, useState } from 'react'
-import { signIn, listKeys, createKey, revokeKey } from './portalClient.js'
-import { connectWallet } from './walletSign.js'
+import { useEffect, useMemo, useState } from 'react'
+import { listKeys, createKey, revokeKey } from './portalClient.js'
 
 // Scope contract — same rows for docs (pre-auth) and permission picker (create form).
 const SCOPE_INFO = [
@@ -56,8 +55,7 @@ function curlSnippet(key) {
   -H "Authorization: Bearer ${key || 'vf_test_…'}"`
 }
 
-export default function DevelopersPage() {
-  const [session, setSession] = useState(null) // { jwt, address }
+export default function KeysSection({ session }) {
   const [keys, setKeys] = useState([])
   const [listFilter, setListFilter] = useState('all') // all | test | live
 
@@ -79,7 +77,16 @@ export default function DevelopersPage() {
   const [revoking, setRevoking] = useState(false)
 
   const [error, setError] = useState('')
-  const [connecting, setConnecting] = useState(false)
+
+  useEffect(() => {
+    let on = true
+    listKeys(session.jwt)
+      .then((k) => on && setKeys(k))
+      .catch((e) => on && setError(e.message))
+    return () => {
+      on = false
+    }
+  }, [session.jwt])
 
   const filteredKeys = useMemo(() => {
     if (listFilter === 'all') return keys
@@ -87,21 +94,6 @@ export default function DevelopersPage() {
   }, [keys, listFilter])
 
   const activeCount = keys.filter((k) => k.enabled).length
-
-  async function onConnect() {
-    try {
-      setError('')
-      setConnecting(true)
-      const { address, signChallenge } = await connectWallet()
-      const jwt = await signIn({ account: address, signChallenge })
-      setSession({ jwt, address })
-      setKeys(await listKeys(jwt))
-    } catch (e) {
-      setError(e.message)
-    } finally {
-      setConnecting(false)
-    }
-  }
 
   function openCreate() {
     setError('')
@@ -182,210 +174,202 @@ export default function DevelopersPage() {
   }
 
   return (
-    <div className="stage enter" style={{ maxWidth: 880, margin: '0 auto', padding: 28 }}>
-      <div className="card">
-        <div className="eyebrow">
-          <span>developers</span>
-          <span>·</span>
-          <span>api keys</span>
-          <span className="rule"></span>
-          <span>{session ? `sep-10 · ${shortAddr(session.address)}` : 'sep-10 wallet auth'}</span>
-        </div>
+    <div className="card">
+      <div className="eyebrow">
+        <span>developers</span>
+        <span>·</span>
+        <span>api keys</span>
+        <span className="rule"></span>
+        <span>{`sep-10 · ${shortAddr(session.address)}`}</span>
+      </div>
 
-        <h1 className="h-display">API keys</h1>
-        <p className="lede">
-          Authenticate with a Stellar wallet, create scoped secret keys, and call strategy, risk
-          scan, and gasless deposit relay. Server-side secrets stay on VF — you hold one{' '}
-          <span className="mono">vf_</span> key. Secret values are shown <b>once</b> at creation.
+      <h1 className="h-display">API keys</h1>
+      <p className="lede">
+        Authenticate with a Stellar wallet, create scoped secret keys, and call strategy, risk
+        scan, and gasless deposit relay. Server-side secrets stay on VF — you hold one{' '}
+        <span className="mono">vf_</span> key. Secret values are shown <b>once</b> at creation.
+      </p>
+
+      {error && (
+        <p
+          role="alert"
+          className="mono"
+          style={{ marginTop: 18, fontSize: 12, color: 'var(--danger)' }}
+        >
+          {error}
         </p>
+      )}
 
-        {error && (
-          <p
-            role="alert"
-            className="mono"
-            style={{ marginTop: 18, fontSize: 12, color: 'var(--danger)' }}
-          >
-            {error}
+      {/* Header: count + create (Stripe-style primary CTA) */}
+      <div
+        className="flex items-baseline justify-between"
+        style={{ marginTop: 32, gap: 16, flexWrap: 'wrap' }}
+      >
+        <div>
+          <span style={sectionTitle}>your keys</span>
+          <p className="mono faint" style={{ marginTop: 6, fontSize: 11.5 }}>
+            {activeCount} active · {keys.length} total
           </p>
-        )}
+        </div>
+        <button className="btn btn-primary" type="button" onClick={openCreate}>
+          Create secret key
+        </button>
+      </div>
 
-        {!session ? (
-          <UnauthedGate connecting={connecting} onConnect={onConnect} />
-        ) : (
-          <>
-            {/* Header: count + create (Stripe-style primary CTA) */}
-            <div
-              className="flex items-baseline justify-between"
-              style={{ marginTop: 32, gap: 16, flexWrap: 'wrap' }}
+      {/* Env filter */}
+      <div
+        role="tablist"
+        aria-label="Filter by environment"
+        className="flex gap-2"
+        style={{ marginTop: 18 }}
+      >
+        {[
+          { id: 'all', label: 'All' },
+          { id: 'test', label: 'Test' },
+          { id: 'live', label: 'Live' },
+        ].map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            aria-selected={listFilter === t.id}
+            className={`btn btn-ghost${listFilter === t.id ? ' selected' : ''}`}
+            style={{
+              fontSize: 12,
+              padding: '6px 12px',
+              background: listFilter === t.id ? 'var(--bg-elev-2)' : undefined,
+              borderColor: listFilter === t.id ? 'var(--border-strong)' : undefined,
+            }}
+            onClick={() => setListFilter(t.id)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Key table */}
+      {filteredKeys.length === 0 ? (
+        <div
+          style={{
+            marginTop: 16,
+            border: '1px solid var(--border)',
+            borderRadius: 'var(--radius-md)',
+            background: 'var(--bg-elev)',
+            padding: '28px 22px',
+            textAlign: 'center',
+          }}
+        >
+          <p className="mono" style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+            {keys.length === 0
+              ? 'No keys yet. Create a restricted secret key to call the API.'
+              : `No ${listFilter} keys.`}
+          </p>
+          {keys.length === 0 && (
+            <button
+              className="btn btn-primary"
+              type="button"
+              style={{ marginTop: 16 }}
+              onClick={openCreate}
             >
-              <div>
-                <span style={sectionTitle}>your keys</span>
-                <p className="mono faint" style={{ marginTop: 6, fontSize: 11.5 }}>
-                  {activeCount} active · {keys.length} total
-                </p>
-              </div>
-              <button className="btn btn-primary" type="button" onClick={openCreate}>
-                Create secret key
-              </button>
-            </div>
-
-            {/* Env filter */}
-            <div
-              role="tablist"
-              aria-label="Filter by environment"
-              className="flex gap-2"
-              style={{ marginTop: 18 }}
-            >
-              {[
-                { id: 'all', label: 'All' },
-                { id: 'test', label: 'Test' },
-                { id: 'live', label: 'Live' },
-              ].map((t) => (
-                <button
-                  key={t.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={listFilter === t.id}
-                  className={`btn btn-ghost${listFilter === t.id ? ' selected' : ''}`}
-                  style={{
-                    fontSize: 12,
-                    padding: '6px 12px',
-                    background: listFilter === t.id ? 'var(--bg-elev-2)' : undefined,
-                    borderColor: listFilter === t.id ? 'var(--border-strong)' : undefined,
-                  }}
-                  onClick={() => setListFilter(t.id)}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Key table */}
-            {filteredKeys.length === 0 ? (
+              Create secret key
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="perm-doc" style={{ marginTop: 16 }}>
+          <div
+            className="perm-doc-row"
+            style={{
+              gridTemplateColumns: '1.2fr 1fr 0.7fr 0.7fr auto',
+              opacity: 0.75,
+              paddingTop: 12,
+              paddingBottom: 12,
+            }}
+          >
+            <span className="perm-doc-k">Token</span>
+            <span className="perm-doc-k">Permissions</span>
+            <span className="perm-doc-k">Created</span>
+            <span className="perm-doc-k">Last used</span>
+            <span className="perm-doc-k"> </span>
+          </div>
+          {filteredKeys.map((k) => {
+            const sc = parseScopes(k.scopes)
+            const envLabel = envFromHint(k.key_hint)
+            return (
               <div
+                className="perm-doc-row"
+                key={k.id}
                 style={{
-                  marginTop: 16,
-                  border: '1px solid var(--border)',
-                  borderRadius: 'var(--radius-md)',
-                  background: 'var(--bg-elev)',
-                  padding: '28px 22px',
-                  textAlign: 'center',
+                  gridTemplateColumns: '1.2fr 1fr 0.7fr 0.7fr auto',
+                  alignItems: 'center',
+                  opacity: k.enabled ? 1 : 0.55,
                 }}
               >
-                <p className="mono" style={{ fontSize: 13, color: 'var(--text-muted)' }}>
-                  {keys.length === 0
-                    ? 'No keys yet. Create a restricted secret key to call the API.'
-                    : `No ${listFilter} keys.`}
-                </p>
-                {keys.length === 0 && (
-                  <button
-                    className="btn btn-primary"
-                    type="button"
-                    style={{ marginTop: 16 }}
-                    onClick={openCreate}
-                  >
-                    Create secret key
-                  </button>
-                )}
-              </div>
-            ) : (
-              <div className="perm-doc" style={{ marginTop: 16 }}>
-                <div
-                  className="perm-doc-row"
-                  style={{
-                    gridTemplateColumns: '1.2fr 1fr 0.7fr 0.7fr auto',
-                    opacity: 0.75,
-                    paddingTop: 12,
-                    paddingBottom: 12,
-                  }}
-                >
-                  <span className="perm-doc-k">Token</span>
-                  <span className="perm-doc-k">Permissions</span>
-                  <span className="perm-doc-k">Created</span>
-                  <span className="perm-doc-k">Last used</span>
-                  <span className="perm-doc-k"> </span>
-                </div>
-                {filteredKeys.map((k) => {
-                  const sc = parseScopes(k.scopes)
-                  const envLabel = envFromHint(k.key_hint)
-                  return (
-                    <div
-                      className="perm-doc-row"
-                      key={k.id}
-                      style={{
-                        gridTemplateColumns: '1.2fr 1fr 0.7fr 0.7fr auto',
-                        alignItems: 'center',
-                        opacity: k.enabled ? 1 : 0.55,
-                      }}
+                <span className="perm-doc-v" style={{ flexDirection: 'column', gap: 4 }}>
+                  <span className={k.enabled ? '' : 'struck'}>{k.key_hint}</span>
+                  <span className="annot">
+                    {envLabel} · {k.rate_limit ?? 60}/min
+                    {!k.enabled ? ' · revoked' : ''}
+                  </span>
+                </span>
+                <span className="perm-doc-v" style={{ fontSize: 11.5 }}>
+                  {sc.length ? sc.join(' · ') : '—'}
+                </span>
+                <span className="perm-doc-v annot" style={{ fontSize: 11.5 }}>
+                  {fmtDate(k.created_at)}
+                </span>
+                <span className="perm-doc-v annot" style={{ fontSize: 11.5 }}>
+                  {fmtDate(k.last_used_at)}
+                </span>
+                <span>
+                  {k.enabled ? (
+                    <button
+                      type="button"
+                      className="btn btn-text"
+                      style={{ color: 'var(--danger)', fontSize: 12, padding: '4px 8px' }}
+                      onClick={() => setRevokeTarget(k)}
                     >
-                      <span className="perm-doc-v" style={{ flexDirection: 'column', gap: 4 }}>
-                        <span className={k.enabled ? '' : 'struck'}>{k.key_hint}</span>
-                        <span className="annot">
-                          {envLabel} · {k.rate_limit ?? 60}/min
-                          {!k.enabled ? ' · revoked' : ''}
-                        </span>
-                      </span>
-                      <span className="perm-doc-v" style={{ fontSize: 11.5 }}>
-                        {sc.length ? sc.join(' · ') : '—'}
-                      </span>
-                      <span className="perm-doc-v annot" style={{ fontSize: 11.5 }}>
-                        {fmtDate(k.created_at)}
-                      </span>
-                      <span className="perm-doc-v annot" style={{ fontSize: 11.5 }}>
-                        {fmtDate(k.last_used_at)}
-                      </span>
-                      <span>
-                        {k.enabled ? (
-                          <button
-                            type="button"
-                            className="btn btn-text"
-                            style={{ color: 'var(--danger)', fontSize: 12, padding: '4px 8px' }}
-                            onClick={() => setRevokeTarget(k)}
-                          >
-                            Revoke
-                          </button>
-                        ) : (
-                          <span className="mono faint" style={{ fontSize: 11 }}>
-                            revoked
-                          </span>
-                        )}
-                      </span>
-                    </div>
-                  )
-                })}
+                      Revoke
+                    </button>
+                  ) : (
+                    <span className="mono faint" style={{ fontSize: 11 }}>
+                      revoked
+                    </span>
+                  )}
+                </span>
               </div>
-            )}
+            )
+          })}
+        </div>
+      )}
 
-            {/* Auth usage (always visible when signed in) */}
-            <div style={{ marginTop: 36 }}>
-              <span style={sectionTitle}>authenticate requests</span>
-              <p className="lede" style={{ marginTop: 10, fontSize: 13.5, maxWidth: 560 }}>
-                Send the secret key as a Bearer token. Keep it server-side only — never ship a{' '}
-                <span className="mono">vf_</span> key in client bundles or public repos.
-              </p>
-              <pre
-                className="mono"
-                style={{
-                  marginTop: 14,
-                  background: 'var(--bg-elev)',
-                  border: '1px solid var(--border)',
-                  borderRadius: 'var(--radius-md)',
-                  padding: '14px 16px',
-                  fontSize: 12,
-                  lineHeight: 1.55,
-                  overflowX: 'auto',
-                  color: 'var(--text-muted)',
-                }}
-              >
-                {`Authorization: Bearer vf_test_…\n\n${curlSnippet()}`}
-              </pre>
-              <p className="foot-note" style={{ marginTop: 12 }}>
-                Prefer least privilege: create separate keys per service, revoke the old key after
-                rotation.
-              </p>
-            </div>
-          </>
-        )}
+      {/* Auth usage (always visible when signed in) */}
+      <div style={{ marginTop: 36 }}>
+        <span style={sectionTitle}>authenticate requests</span>
+        <p className="lede" style={{ marginTop: 10, fontSize: 13.5, maxWidth: 560 }}>
+          Send the secret key as a Bearer token. Keep it server-side only — never ship a{' '}
+          <span className="mono">vf_</span> key in client bundles or public repos.
+        </p>
+        <pre
+          className="mono"
+          style={{
+            marginTop: 14,
+            background: 'var(--bg-elev)',
+            border: '1px solid var(--border)',
+            borderRadius: 'var(--radius-md)',
+            padding: '14px 16px',
+            fontSize: 12,
+            lineHeight: 1.55,
+            overflowX: 'auto',
+            color: 'var(--text-muted)',
+          }}
+        >
+          {`Authorization: Bearer vf_test_…\n\n${curlSnippet()}`}
+        </pre>
+        <p className="foot-note" style={{ marginTop: 12 }}>
+          Prefer least privilege: create separate keys per service, revoke the old key after
+          rotation.
+        </p>
       </div>
 
       {/* Create key dialog */}
@@ -671,34 +655,5 @@ export default function DevelopersPage() {
         </div>
       )}
     </div>
-  )
-}
-
-function UnauthedGate({ connecting, onConnect }) {
-  return (
-    <>
-      <div style={{ marginTop: 32 }}>
-        <span style={sectionTitle}>scope contract</span>
-        <div className="perm-doc" style={{ marginTop: 12 }}>
-          {SCOPE_INFO.map((s) => (
-            <div className="perm-doc-row" key={s.id}>
-              <span className="perm-doc-k">{s.id}</span>
-              <span className="perm-doc-v">
-                {s.endpoints}
-                <span className="annot">{s.note}</span>
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
-      <div className="action-row">
-        <span className="foot-note">
-          Keys are hashed at rest. <b>Plaintext appears once</b> — at issuance only.
-        </span>
-        <button className="btn btn-primary btn-lg" type="button" onClick={onConnect} disabled={connecting}>
-          {connecting ? 'Connecting…' : 'Connect wallet'}
-        </button>
-      </div>
-    </>
   )
 }

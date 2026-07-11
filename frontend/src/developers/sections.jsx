@@ -2,9 +2,7 @@
 export function OverviewSection() {
   return <p className="lede">overview</p>
 }
-export function KeysSection() {
-  return null
-}
+export { default as KeysSection } from './KeysSection.jsx'
 export function UsageSection() {
   return null
 }
