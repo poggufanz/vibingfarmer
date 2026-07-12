@@ -68,6 +68,7 @@ describe('createStellarPasskeyWallet', () => {
     expect(fakeKit.createWallet).toHaveBeenCalledWith('Vibing Farmer', 'second@example.com', {
       autoSubmit: true,
       autoFund: true,
+      nativeTokenContract: expect.any(String),
     })
   })
 })

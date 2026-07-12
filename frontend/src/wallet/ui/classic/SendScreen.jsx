@@ -6,11 +6,28 @@ export default function SendScreen({ from, onPreview, onConfirm, preview, busy, 
   const [amount, setAmount] = useState('')
   const [memo, setMemo] = useState('')
   const [reviewed, setReviewed] = useState(null)
+  const [localError, setLocalError] = useState('')
 
   const stale =
     !!preview &&
     !!reviewed &&
     (to !== reviewed.to || amount !== reviewed.amount || memo !== reviewed.memo)
+
+  function validate() {
+    setLocalError('')
+    const val = parseFloat(amount)
+    if (isNaN(val) || val <= 0) {
+      setLocalError('Amount must be greater than 0')
+      return false
+    }
+    const isFederation = to.includes('*')
+    const isMock = to.length < 10
+    if (!isFederation && !isMock && !/^[GC][A-Z2-7]{55}$/i.test(to)) {
+      setLocalError('Invalid destination address')
+      return false
+    }
+    return true
+  }
 
   return (
     <div className="vf-screen vf-send">
@@ -21,7 +38,10 @@ export default function SendScreen({ from, onPreview, onConfirm, preview, busy, 
           aria-label="destination"
           placeholder="G... or federation address"
           value={to}
-          onChange={(e) => setTo(e.target.value)}
+          onChange={(e) => {
+            setTo(e.target.value)
+            setLocalError('')
+          }}
         />
       </label>
       <label>
@@ -30,7 +50,10 @@ export default function SendScreen({ from, onPreview, onConfirm, preview, busy, 
           aria-label="amount"
           placeholder="0.00"
           value={amount}
-          onChange={(e) => setAmount(e.target.value)}
+          onChange={(e) => {
+            setAmount(e.target.value)
+            setLocalError('')
+          }}
         />
       </label>
       <label>
@@ -38,13 +61,18 @@ export default function SendScreen({ from, onPreview, onConfirm, preview, busy, 
         <input
           placeholder="Text, ID, or hash"
           value={memo}
-          onChange={(e) => setMemo(e.target.value)}
+          onChange={(e) => {
+            setMemo(e.target.value)
+            setLocalError('')
+          }}
         />
       </label>
+      {localError && <p className="vf-error">{localError}</p>}
       <button
         className="vf-btn primary"
         disabled={busy || !to || !amount}
         onClick={() => {
+          if (!validate()) return
           setReviewed({ to, amount, memo })
           onPreview({ from, to, asset: 'XLM', amount, memo })
         }}

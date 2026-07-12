@@ -42,11 +42,22 @@ export const SETTINGS_DEFAULTS = {
   varBreachThreshold: 10,
 }
 
-// Secret API keys live in sessionStorage, not localStorage: they clear on tab
-// close and are not shared across tabs, narrowing the exfiltration window if any
-// XSS lands. Non-secret prefs stay in localStorage for persistence.
 const SECRET_KEYS = new Set(['veniceApiKey', 'deepseekApiKey', 'tavilyApiKey'])
-const storeFor = (key) => (SECRET_KEYS.has(key) ? sessionStorage : localStorage)
+
+const dummyStorage = {
+  _data: new Map(),
+  getItem(k) { return this._data.get(k) ?? null },
+  setItem(k, v) { this._data.set(k, String(v)) },
+  removeItem(k) { this._data.delete(k) }
+}
+
+const storeFor = (key) => {
+  if (SECRET_KEYS.has(key)) {
+    return typeof sessionStorage !== 'undefined' ? sessionStorage : dummyStorage
+  }
+  return typeof localStorage !== 'undefined' ? localStorage : dummyStorage
+}
+
 
 const parse = (raw, def) => {
   if (raw == null) return def

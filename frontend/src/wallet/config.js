@@ -6,7 +6,8 @@ import { NETWORK_PASSPHRASE, SOROBAN_RPC_URL, RELAY_PROXY_URL } from '../stellar
 // → rpId is omitted and Chrome defaults the relying party to the extension's own origin (the only
 // rpId a chrome-extension page can use). Applies to BOTH the register and sign WebAuthn calls,
 // since SAK reads rpId from this config (account.js makeKit → new SmartAccountKit(WALLET_CONFIG)).
-const rawRpId = import.meta.env?.VITE_VF_RP_ID ?? 'localhost'
+const isExtension = typeof window !== 'undefined' && window.location.protocol === 'chrome-extension:'
+const rawRpId = isExtension ? 'origin' : (import.meta.env?.VITE_VF_RP_ID ?? 'localhost')
 export const RP_ID = rawRpId && rawRpId !== 'origin' ? rawRpId : undefined
 export const RP_NAME = 'Vibing Farmer'
 
