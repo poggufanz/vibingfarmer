@@ -19,6 +19,7 @@ import {
 } from '../history.js'
 import { fmtRemaining } from '../ui.js'
 import AutoExitSettings from './AutoExitSettings.jsx'
+import { getTokenUsageHistory, clearTokenUsageHistory } from '../venice.js'
 
 const short = (a) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '-')
 const eyebrow = {
@@ -424,6 +425,7 @@ export default function SettingsPage({
   }
   const clearAll = () => {
     clearAllHistory()
+    clearTokenUsageHistory()
     yvKeys().forEach((k) => localStorage.removeItem(k))
     onResetAgentSettings?.()
     setS({ ...SETTINGS_DEFAULTS })
@@ -440,11 +442,24 @@ export default function SettingsPage({
     }
   }
 
+  const telemetryHistory = getTokenUsageHistory()
+  const telemetryStats = {
+    prompt: telemetryHistory.reduce((acc, h) => acc + (h.promptTokens || 0), 0),
+    completion: telemetryHistory.reduce((acc, h) => acc + (h.completionTokens || 0), 0),
+    total: telemetryHistory.reduce((acc, h) => acc + (h.totalTokens || 0), 0),
+    history: telemetryHistory,
+  }
+
   const sum = getHistorySummary()
   const skillSet = !!localStorage.getItem('yv_user_skill')
   const agentSet = !!localStorage.getItem('yv_agent_settings')
   const total =
-    sum.transactions + sum.strategies + sum.reasoning + (agentSet ? 1 : 0) + (skillSet ? 1 : 0)
+    sum.transactions +
+    sum.strategies +
+    sum.reasoning +
+    (agentSet ? 1 : 0) +
+    (skillSet ? 1 : 0) +
+    telemetryHistory.length
   const ghUrl = import.meta.env.VITE_GITHUB_URL || '#'
 
   return (
@@ -961,6 +976,7 @@ export default function SettingsPage({
                 ['AI reasoning logs', `${sum.reasoning} entries`],
                 ['Agent settings', agentSet ? '1 entry' : 'not set'],
                 ['User skill', skillSet ? 'set' : 'not set'],
+                ['AI telemetry log', `${telemetryHistory.length} entries`],
               ].map(([k, v]) => (
                 <div
                   key={k}
@@ -1064,6 +1080,49 @@ export default function SettingsPage({
                   Reset to defaults
                 </button>
               </Row>
+              <Divider />
+              <SubLabel>AI Token Telemetry</SubLabel>
+              <div style={{ marginTop: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '4px 0', color: 'var(--text-muted)' }}>
+                  <span>Total Prompt Tokens</span>
+                  <span className="mono">{telemetryStats.prompt}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '4px 0', color: 'var(--text-muted)' }}>
+                  <span>Total Completion Tokens</span>
+                  <span className="mono">{telemetryStats.completion}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '4px 0', color: 'var(--text-muted)' }}>
+                  <span>Total Tokens Used</span>
+                  <span className="mono" style={{ color: 'var(--accent)', fontWeight: 600 }}>{telemetryStats.total}</span>
+                </div>
+                {telemetryStats.history.length > 0 && (
+                  <div style={{ marginTop: 12 }}>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>Recent API Requests (last 5):</div>
+                    <div style={{ maxHeight: 120, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 4, padding: '6px 8px', background: 'rgba(0,0,0,0.1)' }}>
+                      {telemetryStats.history.slice(-5).reverse().map((h, i) => (
+                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10.5, padding: '3px 0', borderBottom: i < 4 ? '1px solid rgba(255,255,255,0.05)' : 'none' }}>
+                          <span style={{ color: 'var(--text-muted)' }}>
+                            {new Date(h.timestamp).toLocaleTimeString()} ({h.model})
+                          </span>
+                          <span className="mono">
+                            P: {h.promptTokens} | C: {h.completionTokens} | T: {h.totalTokens}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  style={{ ...miniBtn, marginTop: 10 }}
+                  onClick={() => {
+                    clearTokenUsageHistory()
+                    refresh()
+                  }}
+                >
+                  Clear Telemetry History
+                </button>
+              </div>
               <Divider />
               <SubLabel>Privacy Notes</SubLabel>
               {[

@@ -13,3 +13,5 @@ dev-server.log
 .idea/
 .vscode/
 *.svelte
+.dev.vars
+vite.config.js.timestamp-*.mjs
