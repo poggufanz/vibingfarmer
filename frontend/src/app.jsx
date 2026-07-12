@@ -1092,7 +1092,7 @@ const App = () => {
         recordDecision(ctx)
         setLoopTick((t) => t + 1)
       },
-      heartbeatMs: (agentSettings.apyInterval || 10) * 60 * 1000,
+      heartbeatMs: 120000, // 2 min — testing; TODO: agentSettings.apyInterval * 60 * 1000
       onPhase: (p) => setLoopPhase(p === 'sleep' ? null : p),
     })
     loopRef.current = loop
@@ -2844,8 +2844,7 @@ const App = () => {
                             phase={loopPhase}
                             nextTickAt={loopRef.current?.getNextTickAt() || null}
                             heartbeatMs={
-                              loopRef.current?.getHeartbeatMs() ||
-                              (agentSettings.apyInterval || 10) * 60 * 1000
+                              loopRef.current?.getHeartbeatMs() || 120000
                             }
                             decisionsRows={getDecisions().slice(0, 30)}
                             decisionsSummary={getDecisionSummary()}
