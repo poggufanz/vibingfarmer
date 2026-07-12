@@ -100,6 +100,22 @@ export async function reconcilePositionsFromChain(
   }
 }
 
+/**
+ * Choose which agents' vault shares represent the user's positions. View-as (dev) reads the
+ * impersonated address's OWN shares; a real run reads the per-run agents the router deployed
+ * (scopes[].agent, non-revoked) — where deposit mints the shares. Returns undefined when there
+ * is nothing better yet (e.g. before scopes have rehydrated) so reconcile keeps its default.
+ *
+ * @param {Array<{agent?: string, revoked?: boolean}>} scopes
+ * @param {string} [viewAsAddress]
+ * @returns {string[]|undefined}
+ */
+export function pickPositionsAgents(scopes, viewAsAddress) {
+  if (viewAsAddress) return [viewAsAddress]
+  const deployed = (scopes || []).filter((s) => s && !s.revoked && s.agent).map((s) => s.agent)
+  return deployed.length ? deployed : undefined
+}
+
 // Merge position maps keyed by vault address (case-insensitive). Balances only ever
 // INCREASE via merge — withdraw handlers are the only path that lowers them. Idempotent:
 // re-running with the same seed (e.g. re-visiting "done") can't double or drop a balance,

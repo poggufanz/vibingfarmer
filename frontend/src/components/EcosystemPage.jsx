@@ -481,9 +481,7 @@ function EcoStyle() {
               border-color 220ms ease, box-shadow 220ms ease;
 }
 .eco-card:hover {
-  transform: translateY(-2px);
   border-color: var(--border-accent, rgba(207,255,61,0.4));
-  box-shadow: 0 8px 32px -8px rgba(0,0,0,0.55);
 }
 .eco-card__head {
   display: flex;
@@ -568,7 +566,6 @@ function EcoStyle() {
   margin-top: auto;
 }
 .eco-extlink span { transition: transform 200ms cubic-bezier(0.16,1,0.3,1); }
-.eco-extlink:hover span { transform: translate(2px, -2px); }
 .eco-extlink:focus-visible { outline: 2px solid var(--eco-accent); outline-offset: 2px; }
 
 /* ---------- standards row ---------- */
@@ -590,7 +587,6 @@ function EcoStyle() {
 }
 .eco-std:hover {
   border-color: var(--border-accent, rgba(207,255,61,0.4));
-  transform: translateY(-2px);
 }
 .eco-std:focus-visible { outline: 2px solid var(--eco-accent); outline-offset: 2px; }
 .eco-std__id {
@@ -653,11 +649,6 @@ function EcoStyle() {
   stroke: rgba(207,255,61,0.15);
   stroke-width: 2;
   filter: url(#arch-glow-f);
-  animation: arch-pulse 3s ease-in-out infinite;
-}
-@keyframes arch-pulse {
-  0%, 100% { stroke: rgba(207,255,61,0.1); }
-  50%      { stroke: rgba(207,255,61,0.3); }
 }
 .arch-icon-bg {
   stroke-width: 1;
@@ -774,9 +765,7 @@ function EcoStyle() {
               box-shadow 220ms ease;
 }
 .eco-btn-primary span { transition: transform 220ms cubic-bezier(0.16,1,0.3,1); }
-.eco-btn-primary:hover { transform: translateY(-2px); box-shadow: 0 0 40px 2px rgba(207,255,61,0.38); }
-.eco-btn-primary:hover span { transform: translateX(4px); }
-.eco-btn-primary:active { transform: translateY(0); }
+.eco-btn-primary:active { transform: scale(0.97); }
 .eco-btn-primary:focus-visible { outline: 2px solid var(--eco-accent); outline-offset: 3px; }
 
 .eco-btn-ghost {
@@ -801,10 +790,42 @@ function EcoStyle() {
 .eco-btn-ghost:hover {
   border-color: var(--border-accent, rgba(207,255,61,0.4));
   color: var(--text, #ecebe1);
-  transform: translateY(-1px);
 }
-.eco-btn-ghost:hover span { transform: translate(2px, -2px); }
+.eco-btn-ghost:active { transform: scale(0.97); }
 .eco-btn-ghost:focus-visible { outline: 2px solid var(--eco-accent); outline-offset: 2px; }
+
+@media (hover: hover) and (pointer: fine) {
+  .eco-card:hover { transform: translateY(-2px); box-shadow: 0 8px 32px -8px rgba(0,0,0,0.55); }
+  .eco-extlink:hover span { transform: translate(2px, -2px); }
+  .eco-std:hover { transform: translateY(-2px); }
+  .eco-btn-primary:hover { transform: translateY(-2px); box-shadow: 0 0 40px 2px rgba(207,255,61,0.38); }
+  .eco-btn-primary:hover span { transform: translateX(4px); }
+  .eco-btn-primary:active { transform: scale(0.97); }
+  .eco-btn-ghost:hover { transform: translateY(-1px); }
+  .eco-btn-ghost:hover span { transform: translate(2px, -2px); }
+  .eco-btn-ghost:active { transform: scale(0.97); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .arch-glow,
+  .arch-line { animation: none !important; }
+  .eco-card,
+  .eco-extlink span,
+  .eco-std,
+  .eco-btn-primary,
+  .eco-btn-primary span,
+  .eco-btn-ghost,
+  .eco-btn-ghost span { transition: color 160ms ease, border-color 160ms ease; }
+  .eco-card:hover,
+  .eco-std:hover,
+  .eco-btn-primary:hover,
+  .eco-btn-primary:active,
+  .eco-btn-ghost:hover,
+  .eco-btn-ghost:active { transform: none; }
+  .eco-extlink:hover span,
+  .eco-btn-primary:hover span,
+  .eco-btn-ghost:hover span { transform: none; }
+}
 
 /* ---------- footer ---------- */
 .eco-foot {

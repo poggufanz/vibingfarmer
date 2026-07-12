@@ -78,3 +78,4 @@ frontend/graphify-out/
 graphify/
 .graphifyignore
 mcps
+.codex/

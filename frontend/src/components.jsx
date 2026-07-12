@@ -212,7 +212,6 @@ const Sidebar = ({ extended, onToggle }) => {
       >
         <Icon
           name={extended ? 'panelLeftClose' : 'panelLeftOpen'}
-          style={{ transition: 'all 0.15s ease' }}
         />
         <span className="sb-label">Collapse</span>
       </button>
@@ -236,8 +235,11 @@ const TopBar = ({
           <span className="slash">/</span>
           <span>farmer</span>
         </div>
-        <span className="brand-net mono">
-          <span className="dot" />
+        <span
+          className="brand-net mono"
+          aria-label={`Stellar testnet, wallet ${walletConnected ? 'connected' : 'not connected'}`}
+        >
+          <span className={`dot${walletConnected ? ' live' : ''}`} aria-hidden="true" />
           Stellar testnet
         </span>
       </div>
@@ -265,7 +267,6 @@ const TopBar = ({
         >
           <Icon
             name={railCollapsed ? 'panelRightOpen' : 'panelRightClose'}
-            style={{ transition: 'all 0.15s ease' }}
           />
         </button>
       </div>

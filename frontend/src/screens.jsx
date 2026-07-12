@@ -546,10 +546,10 @@ const SuccessCard = ({ strategy, onAgain, address }) => {
   const agents = strategy?.agents || []
   return (
     <section className="success-card enter">
-      <p className="grant-kicker mono">Done · portfolio active</p>
+      <p className="grant-kicker mono">Done · Portfolio Active</p>
 
       <h1 className="success-title">
-        Your USDC is deposited. Est. {apy}% blended APY · ~{monthly} USDC / month.
+        Your USDC is deposited. Est. {apy}% blended APY ~{monthly} USDC / month.
       </h1>
       <p className="lede" style={{ marginTop: 8, maxWidth: 480 }}>
         Agents will compound and rebalance within your grant. You can withdraw or revoke anytime
@@ -583,7 +583,7 @@ const SuccessCard = ({ strategy, onAgain, address }) => {
               marginTop: -4,
             }}
           >
-            Grant only · gas covered
+            Grant only, gas covered
           </span>
         </div>
       </div>
@@ -607,7 +607,7 @@ const SuccessCard = ({ strategy, onAgain, address }) => {
 
       <div className="action-row" style={{ marginTop: 36 }}>
         <div className="foot-note">
-          On-chain · gas paid by relayer · revoke from Home anytime
+          On-chain, gas paid by relayer, revoke from Home anytime.
         </div>
         <div className="flex gap-2">
           <a

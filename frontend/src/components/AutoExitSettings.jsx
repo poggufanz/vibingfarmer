@@ -60,22 +60,23 @@ const toggleStyle = (active) => ({
   borderRadius: 12,
   width: 40,
   height: 20,
-  background: active ? 'var(--accent)' : 'rgba(255,255,255,.06)',
+  backgroundColor: active ? 'var(--accent)' : 'rgba(255,255,255,.06)',
   position: 'relative',
   cursor: 'pointer',
   outline: 'none',
-  transition: 'background 0.2s',
+  transition: 'background-color 160ms ease',
 });
 
 const toggleThumb = (active) => ({
   position: 'absolute',
   top: 2,
-  left: active ? 22 : 2,
+  left: 2,
   width: 14,
   height: 14,
   borderRadius: '50%',
   background: '#fff',
-  transition: 'left 0.2s',
+  transform: `translateX(${active ? 20 : 0}px)`,
+  transition: 'transform 160ms var(--ease-out)',
 });
 
 const rowStyle = {
@@ -265,10 +266,14 @@ export default function AutoExitSettings({ realAddress, addLog }) {
             />
             <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>%</span>
             <button
+              className="auto-exit-toggle"
+              type="button"
+              aria-label="Toggle utilization exit rule"
+              aria-pressed={rules.utilization.enabled}
               onClick={() => updateRuleField('utilization', 'enabled', !rules.utilization.enabled)}
               style={toggleStyle(rules.utilization.enabled)}
             >
-              <div style={toggleThumb(rules.utilization.enabled)} />
+              <div className="auto-exit-toggle-thumb" style={toggleThumb(rules.utilization.enabled)} />
             </button>
           </div>
         </div>
@@ -294,10 +299,14 @@ export default function AutoExitSettings({ realAddress, addLog }) {
             />
             <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>%</span>
             <button
+              className="auto-exit-toggle"
+              type="button"
+              aria-label="Toggle APY collapse exit rule"
+              aria-pressed={rules.apyCollapse.enabled}
               onClick={() => updateRuleField('apyCollapse', 'enabled', !rules.apyCollapse.enabled)}
               style={toggleStyle(rules.apyCollapse.enabled)}
             >
-              <div style={toggleThumb(rules.apyCollapse.enabled)} />
+              <div className="auto-exit-toggle-thumb" style={toggleThumb(rules.apyCollapse.enabled)} />
             </button>
           </div>
         </div>
@@ -322,10 +331,14 @@ export default function AutoExitSettings({ realAddress, addLog }) {
             />
             <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>%</span>
             <button
+              className="auto-exit-toggle"
+              type="button"
+              aria-label="Toggle protocol risk exit rule"
+              aria-pressed={rules.protocolRisk.enabled}
               onClick={() => updateRuleField('protocolRisk', 'enabled', !rules.protocolRisk.enabled)}
               style={toggleStyle(rules.protocolRisk.enabled)}
             >
-              <div style={toggleThumb(rules.protocolRisk.enabled)} />
+              <div className="auto-exit-toggle-thumb" style={toggleThumb(rules.protocolRisk.enabled)} />
             </button>
           </div>
         </div>
@@ -353,10 +366,14 @@ export default function AutoExitSettings({ realAddress, addLog }) {
             />
             <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>%</span>
             <button
+              className="auto-exit-toggle"
+              type="button"
+              aria-label="Slippage anomaly exit rule unavailable"
+              aria-pressed={false}
               disabled={true}
               style={{ ...toggleStyle(false), opacity: 0.3, cursor: 'not-allowed' }}
             >
-              <div style={toggleThumb(false)} />
+              <div className="auto-exit-toggle-thumb" style={toggleThumb(false)} />
             </button>
           </div>
         </div>

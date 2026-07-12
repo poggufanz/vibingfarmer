@@ -52,10 +52,8 @@ const eyebrow = {
 const linkBtn = {
   appearance: 'none',
   border: 0,
-  background: 'transparent',
   font: 'inherit',
   fontSize: 11,
-  color: 'var(--text-muted)',
   cursor: 'pointer',
   textDecoration: 'underline',
 }
@@ -69,9 +67,7 @@ const section = { marginBottom: 28 }
 const sub = { fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }
 const pillBtn = {
   appearance: 'none',
-  border: '.5px solid rgba(255,255,255,.18)',
   borderRadius: 5,
-  background: 'rgba(255,255,255,.06)',
   color: 'inherit',
   font: 'inherit',
   fontSize: 10.5,
@@ -116,7 +112,7 @@ const SectionHead = ({ title, action, onAction }) => (
   >
     <span style={eyebrow}>{title}</span>
     {action && (
-      <button style={linkBtn} onClick={onAction}>
+      <button className="link-btn" style={linkBtn} onClick={onAction}>
         {action}
       </button>
     )}
@@ -412,12 +408,13 @@ export default function HomePage({
               </div>
             </div>
             {onOpenAgent && (
-              <button style={pillBtn} onClick={onOpenAgent}>
+              <button className="pill-btn" style={pillBtn} onClick={onOpenAgent}>
                 View agent →
               </button>
             )}
             <button
               aria-label="Dismiss"
+              className="link-btn"
               style={{ ...linkBtn, textDecoration: 'none', fontSize: 15, lineHeight: 1 }}
               onClick={onDismissResumed}
             >
@@ -430,95 +427,265 @@ export default function HomePage({
           /* ── STATE 2: connected, no positions ── */
           <div style={section}>
             <SectionHead title="Portfolio" />
-            
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr', gap: 20, marginBottom: 20 }} className="vf-empty-grid">
-              
+
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '1fr 1.2fr',
+                gap: 20,
+                marginBottom: 20,
+              }}
+              className="vf-empty-grid"
+            >
               {/* Left card: Start Farming & Yield Estimator */}
-              <div style={{ ...cardPad, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: 290 }}>
+              <div
+                style={{
+                  ...cardPad,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'space-between',
+                  minHeight: 290,
+                }}
+              >
                 <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'baseline',
+                      marginBottom: 12,
+                    }}
+                  >
                     <span style={eyebrow}>Total Balance</span>
-                    <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>Stellar Testnet</span>
+                    <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>
+                      Stellar Testnet
+                    </span>
                   </div>
-                  <div className="tnum" style={{ fontSize: '2.2rem', fontWeight: 600, lineHeight: 1, letterSpacing: '-0.03em', color: 'var(--text)' }}>
-                    0.00 <span style={{ fontSize: 13, color: 'var(--text-faint)', fontWeight: 400 }}>USDC</span>
+                  <div
+                    className="tnum"
+                    style={{
+                      fontSize: '2.2rem',
+                      fontWeight: 600,
+                      lineHeight: 1,
+                      letterSpacing: '-0.03em',
+                      color: 'var(--text)',
+                    }}
+                  >
+                    0.00{' '}
+                    <span style={{ fontSize: 13, color: 'var(--text-faint)', fontWeight: 400 }}>
+                      USDC
+                    </span>
                   </div>
-                  
+
                   {/* Estimator Tool */}
-                  <div style={{ marginTop: 24, padding: '12px 14px', background: 'rgba(255,255,255,0.02)', borderRadius: 8, border: '1px solid rgba(255,255,255,0.04)' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-                      <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)' }}>Projected Yearly Yield</span>
-                      <span className="mono tnum" style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 'bold' }}>{estimateAmount.toLocaleString()} USDC</span>
+                  <div
+                    style={{
+                      marginTop: 24,
+                      padding: '12px 14px',
+                      background: 'rgba(255,255,255,0.02)',
+                      borderRadius: 8,
+                      border: '1px solid rgba(255,255,255,0.04)',
+                    }}
+                  >
+                    <div
+                      style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}
+                    >
+                      <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)' }}>
+                        Projected Yearly Yield
+                      </span>
+                      <span
+                        className="mono tnum"
+                        style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 'bold' }}
+                      >
+                        {estimateAmount.toLocaleString()} USDC
+                      </span>
                     </div>
-                    
-                    <label style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>
+
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: 11,
+                        color: 'var(--text-muted)',
+                        marginBottom: 6,
+                      }}
+                    >
                       Deposit amount
                     </label>
-                    <input 
-                      type="range" 
-                      min="100" 
-                      max="10000" 
+                    <input
+                      type="range"
+                      min="100"
+                      max="10000"
                       step="100"
-                      value={estimateAmount} 
+                      value={estimateAmount}
                       onChange={(e) => setEstimateAmount(Number(e.target.value))}
                       aria-label="Deposit amount in USDC"
                       aria-valuetext={`${estimateAmount} USDC`}
-                      style={{ 
-                        width: '100%', 
-                        accentColor: 'var(--accent)', 
-                        height: 4, 
-                        background: 'var(--border-strong)', 
+                      style={{
+                        width: '100%',
+                        accentColor: 'var(--accent)',
+                        height: 4,
+                        background: 'var(--border-strong)',
                         borderRadius: 2,
                         cursor: 'pointer',
-                        marginBottom: 14
+                        marginBottom: 14,
                       }}
                     />
-                    
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, textAlign: 'center' }}>
-                      <div style={{ padding: '6px 4px', background: 'var(--bg-elev)', borderRadius: 6 }}>
+
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: '1fr 1fr 1fr',
+                        gap: 8,
+                        textAlign: 'center',
+                      }}
+                    >
+                      <div
+                        style={{
+                          padding: '6px 4px',
+                          background: 'var(--bg-elev)',
+                          borderRadius: 6,
+                        }}
+                      >
                         <div style={{ fontSize: 10, opacity: 0.7 }}>Low risk</div>
-                        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>4.8% APY</div>
-                        <div className="tnum" style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text)', marginTop: 2 }}>+{(estimateAmount * 0.048).toFixed(2)}</div>
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
+                          4.8% APY
+                        </div>
+                        <div
+                          className="tnum"
+                          style={{
+                            fontSize: 11.5,
+                            fontWeight: 600,
+                            color: 'var(--text)',
+                            marginTop: 2,
+                          }}
+                        >
+                          +{(estimateAmount * 0.048).toFixed(2)}
+                        </div>
                       </div>
-                      <div style={{ padding: '6px 4px', background: 'rgba(255,255,255,0.03)', borderRadius: 6 }}>
-                        <div style={{ fontSize: 9, textTransform: 'uppercase', opacity: 0.5, letterSpacing: '0.05em' }}>Medium Risk</div>
-                        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>6.1% APY</div>
-                        <div className="tnum" style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text)', marginTop: 2 }}>+{(estimateAmount * 0.061).toFixed(2)}</div>
+                      <div
+                        style={{
+                          padding: '6px 4px',
+                          background: 'rgba(255,255,255,0.03)',
+                          borderRadius: 6,
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontSize: 9,
+                            textTransform: 'uppercase',
+                            opacity: 0.5,
+                            letterSpacing: '0.05em',
+                          }}
+                        >
+                          Medium Risk
+                        </div>
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
+                          6.1% APY
+                        </div>
+                        <div
+                          className="tnum"
+                          style={{
+                            fontSize: 11.5,
+                            fontWeight: 600,
+                            color: 'var(--text)',
+                            marginTop: 2,
+                          }}
+                        >
+                          +{(estimateAmount * 0.061).toFixed(2)}
+                        </div>
                       </div>
-                      <div style={{ padding: '6px 4px', background: 'rgba(255,255,255,0.03)', borderRadius: 6 }}>
-                        <div style={{ fontSize: 9, textTransform: 'uppercase', opacity: 0.5, letterSpacing: '0.05em' }}>High Risk</div>
-                        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>9.4% APY</div>
-                        <div className="tnum" style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--accent)', marginTop: 2 }}>+{(estimateAmount * 0.094).toFixed(2)}</div>
+                      <div
+                        style={{
+                          padding: '6px 4px',
+                          background: 'rgba(255,255,255,0.03)',
+                          borderRadius: 6,
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontSize: 9,
+                            textTransform: 'uppercase',
+                            opacity: 0.5,
+                            letterSpacing: '0.05em',
+                          }}
+                        >
+                          High Risk
+                        </div>
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
+                          9.4% APY
+                        </div>
+                        <div
+                          className="tnum"
+                          style={{
+                            fontSize: 11.5,
+                            fontWeight: 600,
+                            color: 'var(--accent)',
+                            marginTop: 2,
+                          }}
+                        >
+                          +{(estimateAmount * 0.094).toFixed(2)}
+                        </div>
                       </div>
                     </div>
                   </div>
                 </div>
-                
+
                 <div style={{ marginTop: 20 }}>
                   <button
                     className="btn btn-primary"
-                    style={{ width: '100%', padding: '10px 16px', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 6 }}
+                    style={{
+                      width: '100%',
+                      padding: '10px 16px',
+                      display: 'flex',
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                      gap: 6,
+                    }}
                     onClick={() => onStartStrategy(estimateAmount)}
                   >
                     Start depositing <span style={{ fontSize: 14 }}>→</span>
                   </button>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 10, fontSize: 10, color: 'var(--text-faint)' }}>
-                    <span style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--accent)' }} />
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 6,
+                      marginTop: 10,
+                      fontSize: 10,
+                      color: 'var(--text-faint)',
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 5,
+                        height: 5,
+                        borderRadius: '50%',
+                        background: 'var(--accent)',
+                      }}
+                    />
                     One signature · network fees covered
                   </div>
                 </div>
               </div>
-              
+
               {/* Right card: Featured Opportunities (clickable vaults) */}
               <div style={cardPad}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'baseline',
+                    marginBottom: 12,
+                  }}
+                >
                   <span style={eyebrow}>Featured Strategies</span>
                   <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Click to farm</span>
                 </div>
-                
+
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {VAULT_CATALOG.slice(0, 3).map((v) => (
-                    <button 
+                    <button
                       type="button"
                       key={v.protocol}
                       onClick={() => handleFarm(v)}
@@ -540,21 +707,37 @@ export default function HomePage({
                       }}
                     >
                       <div>
-                        <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)' }}>{v.name}</div>
-                        <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>{v.yield_source} · min {v.min_capital} USDC</div>
+                        <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)' }}>
+                          {v.name}
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>
+                          {v.yield_source} · min {v.min_capital} USDC
+                        </div>
                       </div>
                       <div style={{ textAlign: 'right' }}>
-                        <div className="tnum" style={{ fontSize: 14, fontWeight: 600, color: 'var(--ok)' }}>{v.apy.toFixed(1)}% APY</div>
-                        <span style={{ 
-                          fontSize: 10, 
-                          padding: '1px 6px', 
-                          borderRadius: 4, 
-                          border: `1px solid ${v.risk === 'low' ? 'var(--ok)' : v.risk === 'medium' ? 'var(--warn)' : 'var(--danger)'}`,
-                          color: v.risk === 'low' ? 'var(--ok)' : v.risk === 'medium' ? 'var(--warn)' : 'var(--danger)',
-                          fontWeight: 600,
-                          display: 'inline-block',
-                          marginTop: 3
-                        }}>
+                        <div
+                          className="tnum"
+                          style={{ fontSize: 14, fontWeight: 600, color: 'var(--ok)' }}
+                        >
+                          {v.apy.toFixed(1)}% APY
+                        </div>
+                        <span
+                          style={{
+                            fontSize: 10,
+                            padding: '1px 6px',
+                            borderRadius: 4,
+                            border: `1px solid ${v.risk === 'low' ? 'var(--ok)' : v.risk === 'medium' ? 'var(--warn)' : 'var(--danger)'}`,
+                            color:
+                              v.risk === 'low'
+                                ? 'var(--ok)'
+                                : v.risk === 'medium'
+                                  ? 'var(--warn)'
+                                  : 'var(--danger)',
+                            fontWeight: 600,
+                            display: 'inline-block',
+                            marginTop: 3,
+                          }}
+                        >
                           {v.risk}
                         </span>
                       </div>
@@ -566,23 +749,72 @@ export default function HomePage({
 
             <div style={{ ...cardPad }}>
               <div style={{ ...eyebrow, marginBottom: 14 }}>How it works</div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }} className="vf-empty-protection">
-                <div style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
-                  <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text)' }}>1. Set amount</div>
-                  <p style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>
+              <div
+                style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}
+                className="vf-empty-protection"
+              >
+                <div
+                  style={{
+                    padding: '4px 8px',
+                    border: '1px solid var(--border)',
+                    borderRadius: 'var(--radius-sm)',
+                  }}
+                >
+                  <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text)' }}>
+                    1. Set amount
+                  </div>
+                  <p
+                    style={{
+                      fontSize: 10.5,
+                      color: 'var(--text-muted)',
+                      marginTop: 4,
+                      lineHeight: 1.4,
+                    }}
+                  >
                     Choose how much USDC and your risk level. We build a vault plan from live rates.
                   </p>
                 </div>
-                <div style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
-                  <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text)' }}>2. Sign once</div>
-                  <p style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>
+                <div
+                  style={{
+                    padding: '4px 8px',
+                    border: '1px solid var(--border)',
+                    borderRadius: 'var(--radius-sm)',
+                  }}
+                >
+                  <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text)' }}>
+                    2. Sign once
+                  </div>
+                  <p
+                    style={{
+                      fontSize: 10.5,
+                      color: 'var(--text-muted)',
+                      marginTop: 4,
+                      lineHeight: 1.4,
+                    }}
+                  >
                     One budget + time window. Agents deposit only inside that limit. Fees covered.
                   </p>
                 </div>
-                <div style={{ padding: '4px 8px', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
-                  <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text)' }}>3. Stay in control</div>
-                  <p style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>
-                    Monitor, withdraw, or revoke anytime. Emergency exits can send funds back to you.
+                <div
+                  style={{
+                    padding: '4px 8px',
+                    border: '1px solid var(--border)',
+                    borderRadius: 'var(--radius-sm)',
+                  }}
+                >
+                  <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text)' }}>
+                    3. Stay in control
+                  </div>
+                  <p
+                    style={{
+                      fontSize: 10.5,
+                      color: 'var(--text-muted)',
+                      marginTop: 4,
+                      lineHeight: 1.4,
+                    }}
+                  >
+                    Monitor, withdraw, or revoke anytime. Emergency exits can send funds back to
+                    you.
                   </p>
                 </div>
               </div>
@@ -604,7 +836,15 @@ export default function HomePage({
           <>
             {/* ── PORTFOLIO STRIP (money-app command center) ── */}
             <div style={section}>
-              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10, gap: 12 }}>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'baseline',
+                  justifyContent: 'space-between',
+                  marginBottom: 10,
+                  gap: 12,
+                }}
+              >
                 <span style={eyebrow}>Your portfolio</span>
                 {onStartStrategy && (
                   <button className="btn btn-primary btn-sm" onClick={() => onStartStrategy()}>
@@ -623,8 +863,13 @@ export default function HomePage({
                 }}
               >
                 <div>
-                  <div style={{ fontSize: 11, color: 'var(--text-faint)', marginBottom: 4 }}>Total deposited</div>
-                  <span className="tnum" style={{ fontSize: 28, fontWeight: 600, letterSpacing: '-0.03em' }}>
+                  <div style={{ fontSize: 11, color: 'var(--text-faint)', marginBottom: 4 }}>
+                    Total deposited
+                  </div>
+                  <span
+                    className="tnum"
+                    style={{ fontSize: 28, fontWeight: 600, letterSpacing: '-0.03em' }}
+                  >
                     {fmtAmt(u(totalUnits))}
                   </span>
                   <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 6 }}>
@@ -633,7 +878,9 @@ export default function HomePage({
                 </div>
                 <span style={{ width: 1, height: 36, background: 'var(--border)' }} />
                 <div>
-                  <div style={{ fontSize: 11, color: 'var(--text-faint)', marginBottom: 4 }}>Est. today</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-faint)', marginBottom: 4 }}>
+                    Est. today
+                  </div>
                   <span
                     className="tnum"
                     style={{ fontSize: 16, fontWeight: 500, color: 'var(--ok)' }}
@@ -649,6 +896,7 @@ export default function HomePage({
                   {posList.length} vault{posList.length === 1 ? '' : 's'}
                 </span>
                 <button
+                  className="link-btn"
                   onClick={onOpenAgent}
                   title="Open Agent Dashboard"
                   style={{
@@ -733,6 +981,7 @@ export default function HomePage({
                           {pct.toFixed(0)}%
                         </span>
                         <button
+                          className="pill-btn"
                           style={pillBtn}
                           onClick={() =>
                             setWithdrawVault({
@@ -781,6 +1030,7 @@ export default function HomePage({
                           <span style={{ color: 'var(--text-faint)', fontSize: 11 }}>·</span>
                         )}
                         <button
+                          className="link-btn"
                           onClick={() => handleOpenVault(v)}
                           style={{
                             ...linkBtn,
@@ -897,6 +1147,7 @@ export default function HomePage({
                 ].map(([key, label]) => (
                   <button
                     key={key}
+                    className="pill-btn"
                     onClick={() => handleSort(key)}
                     style={{
                       ...pillBtn,
@@ -927,6 +1178,7 @@ export default function HomePage({
                 ].map(([k, lbl]) => (
                   <button
                     key={k}
+                    className="pill-btn"
                     onClick={() => setFilterRisk(k)}
                     style={{
                       ...pillBtn,
@@ -1010,7 +1262,11 @@ export default function HomePage({
                     const prevDelta = prevP ? +(v.apy - prevP.apy).toFixed(2) : null
                     const pp1d = ppMeta(stats?.change1d ?? prevDelta)
                     const riskColor =
-                      v.risk === 'low' ? 'var(--ok)' : v.risk === 'medium' ? 'var(--warn)' : 'var(--danger)'
+                      v.risk === 'low'
+                        ? 'var(--ok)'
+                        : v.risk === 'medium'
+                          ? 'var(--warn)'
+                          : 'var(--danger)'
                     return (
                       <div
                         key={v.poolId || `${v.name}-${i}`}
@@ -1084,7 +1340,11 @@ export default function HomePage({
                               {bal.toFixed(2)} USDC
                             </span>
                           ) : (
-                            <button style={linkBtn} onClick={() => handleFarm(v)}>
+                            <button
+                              className="link-btn"
+                              style={linkBtn}
+                              onClick={() => handleFarm(v)}
+                            >
                               Farm
                             </button>
                           )}
@@ -1110,6 +1370,7 @@ export default function HomePage({
               count={activity.length}
               meta={
                 <button
+                  className="link-btn"
                   style={linkBtn}
                   onClick={(e) => {
                     e.preventDefault()

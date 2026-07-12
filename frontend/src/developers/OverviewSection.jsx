@@ -26,9 +26,9 @@ export default function OverviewSection({ session }) {
   return (
     <div className="card">
       <div className="eyebrow">
-        <span>developers</span>
+        <span>Developers</span>
         <span>·</span>
-        <span>overview</span>
+        <span>Overview</span>
       </div>
       <h1 className="h-display">Welcome to the Vibing Farmer API</h1>
       <p className="lede">

@@ -72,6 +72,7 @@ import {
   loadPersistedPositions,
   persistPositions,
   reconcilePositionsFromChain,
+  pickPositionsAgents,
   mergePositions,
   applyChainPositions,
 } from './positionsStore.js'
@@ -509,6 +510,9 @@ const App = () => {
   const [logs, setLogs] = useS([])
   const logIdRef = useR(0)
   const agentMapRef = useR({})
+  // Latest agent list for reconcile (see positionsAgents below) — read by poll closures that
+  // were captured before scopes finished rehydrating.
+  const positionsAgentsRef = useR(undefined)
 
   // Real Web3 state
   // Dev-only read-as override: /agent?as=G... opens the console with that address's chain
@@ -516,11 +520,24 @@ const App = () => {
   // branch is dead-code-eliminated in prod and scripts/assert-no-dev-dispatch.mjs asserts the
   // __vfDevViewAs marker never ships in dist/.
   const viewAsAddress = getViewAsAddress()
-  // In view-as mode, positions read the impersonated address's OWN vault shares instead of
-  // the fixed demo agent — "view AS this address" means see that address's holdings.
-  const positionsAgents = viewAsAddress ? [viewAsAddress] : undefined
-  const reconcilePositions = (addr) =>
-    reconcilePositionsFromChain(addr, positionsAgents ? { agents: positionsAgents } : undefined)
+  // Which agents' vault shares a "position" reads. Priority:
+  //   view-as (dev) → the impersonated address's OWN shares;
+  //   real run      → the per-run agents the router deployed (scopes[].agent, non-revoked),
+  //                   which is where deposit mints the shares.
+  // Falling back to reconcile's default (the fixed demo agent) is the bug that emptied the
+  // positions card ~15s after a real run: the poll read demo-agent = 0 shares and pruned the
+  // vault. Shares sum across agents; withdrawn/other-run agents read 0 and drop out harmlessly.
+  // ponytail: N non-revoked agents = N readVaultShares per 15s poll; fine for a handful of
+  // runs, revisit if an owner accumulates dozens of live grants.
+  const positionsAgents = pickPositionsAgents(scopes, viewAsAddress)
+  // Reconcile effects capture this closure keyed on realAddress, but scopes rehydrate async
+  // AFTER connect. A latest-value ref lets the already-subscribed poll (and the cold-reconcile
+  // that must not prune restored cache) read the current agent list without re-mounting.
+  positionsAgentsRef.current = positionsAgents
+  const reconcilePositions = (addr) => {
+    const agents = positionsAgentsRef.current
+    return reconcilePositionsFromChain(addr, agents ? { agents } : undefined)
+  }
   const [realAddress, setRealAddress] = useS(() => {
     if (import.meta.env.DEV && viewAsAddress)
       console.info('[dev] view-as read override active:', viewAsAddress)
@@ -2191,7 +2208,7 @@ const App = () => {
     for (let i = 0; i < maxAttempts; i++) {
       let result = null
       try {
-        result = await reconcilePositionsFromChain(address)
+        result = await reconcilePositions(address)
       } catch {
         result = null
       }

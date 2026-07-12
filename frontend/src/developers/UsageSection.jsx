@@ -39,9 +39,9 @@ export default function UsageSection({ session }) {
   return (
     <div className="card">
       <div className="eyebrow">
-        <span>developers</span>
+        <span>Developers</span>
         <span>·</span>
-        <span>usage</span>
+        <span>Usage</span>
       </div>
       <h1 className="h-display">Usage</h1>
       <p className="lede">

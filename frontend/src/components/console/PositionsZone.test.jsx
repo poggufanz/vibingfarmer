@@ -24,11 +24,12 @@ const props = {
 }
 
 describe('PositionsZone', () => {
-  it('renders one asset card per vault with balance and apy', () => {
-    render(<PositionsZone {...props} />)
+  it('renders one asset card per vault with balance, apy, and compositor allocation', () => {
+    const { container } = render(<PositionsZone {...props} />)
     expect(screen.getByText('Autofarm USDC')).toBeTruthy()
     expect(screen.getByText('50.00')).toBeTruthy()
     expect(screen.getByText(/8.2% apy/)).toBeTruthy()
+    expect(container.querySelector('.pos-alloc-fill')?.style.transform).toBe('scaleX(1)')
   })
   it('withdraw opens the modal', () => {
     render(<PositionsZone {...props} />)

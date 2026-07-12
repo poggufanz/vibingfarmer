@@ -50,7 +50,7 @@ export default function LifeboatZone({
           </span>
           <div className="lifeboat-mandate">
             <div className="lifeboat-mandate-bar">
-              <div className="lifeboat-mandate-fill" style={{ width: `${frac * 100}%` }} />
+              <div className="lifeboat-mandate-fill" style={{ transform: `scaleX(${frac})` }} />
             </div>
             <span className="mono lifeboat-mandate-text tnum">
               mandate {leftS > 0 ? `${remainText(leftS * 1000)} left` : 'not granted'}

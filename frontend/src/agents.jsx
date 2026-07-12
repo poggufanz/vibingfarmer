@@ -13,7 +13,6 @@ import React, {
 } from 'react'
 import ForceGraph2D from 'react-force-graph-2d'
 import { Icon } from './components.jsx'
-import Pager from './components/console/Pager.jsx'
 import { shortAddr } from './screens.jsx'
 import { VAULT_CATALOG } from './config.js'
 import { buildStrategyState, scoreReward, riskCeiling } from './strategy/mdp.js'
@@ -615,7 +614,9 @@ const CouncilPanel = ({ council, onRetry }) => {
     .slice(0, 3)
     .map(specialistBullet)
   const fallbackBullets =
-    bullets.length > 0 ? bullets : specialists.slice(0, 3).map(specialistBullet)
+    bullets.length > 0
+      ? bullets
+      : specialists.slice(0, 3).map(specialistBullet)
 
   return (
     <div className="council-panel">
@@ -631,9 +632,7 @@ const CouncilPanel = ({ council, onRetry }) => {
             </span>
             <div>
               <div className="council-hero-title">Risk check unavailable</div>
-              <div className="council-hero-sub">
-                Provider did not respond. You can still continue.
-              </div>
+              <div className="council-hero-sub">Provider did not respond. You can still continue.</div>
             </div>
           </div>
           {onRetry && (
@@ -879,8 +878,7 @@ const DebatePanel = ({ debateResult }) => {
             <span
               className="council-vote-chip"
               style={{
-                color:
-                  riskCompliance.compliancePass === false ? 'var(--bad, #ff7479)' : 'var(--ok)',
+                color: riskCompliance.compliancePass === false ? 'var(--bad, #ff7479)' : 'var(--ok)',
               }}
             >
               Risk {riskCompliance.compliancePass === false ? 'fail' : 'pass'}
@@ -953,7 +951,9 @@ const DebatePanel = ({ debateResult }) => {
                 </span>
               )}
               {gate && (
-                <span>{gate.passed ? 'Gate passed' : `Gate: ${gate.reason || 'blocked'}`}</span>
+                <span>
+                  {gate.passed ? 'Gate passed' : `Gate: ${gate.reason || 'blocked'}`}
+                </span>
               )}
             </div>
           )}
@@ -1259,7 +1259,9 @@ const ExecuteCard = ({ strategy, execMap, paletteIsLight, onOpenMemory, onDone }
             <div className="exec-live-status mono">
               <span className="think-spin" />
               <span>
-                {runningCount > 0 ? `${runningCount} confirming on-chain` : 'Waiting for network'}
+                {runningCount > 0
+                  ? `${runningCount} confirming on-chain`
+                  : 'Waiting for network'}
                 {' · '}
                 {fmtCountdown(elapsedMs)} elapsed
               </span>
@@ -1306,6 +1308,14 @@ const ExecuteCard = ({ strategy, execMap, paletteIsLight, onOpenMemory, onDone }
   )
 }
 
+// ── Autonomous monitor-loop status — NEVER-STOP loop + AI Council made visible ──
+// Live panel: a 1s internal ticker drives the heartbeat countdown so the loop
+// reads as alive between cycles (default heartbeat is minutes apart). The
+// pipeline rail lights the phase reported by monitorLoop's onPhase hook.
+// Props: { running, cycle, summary, rows, phase, nextTickAt, heartbeatMs }
+// where rows are newest-first records from cycleJournal.getCycles().
+const LOOP_PHASES = ['observe', 'gate', 'simulate', 'council', 'execute', 'reflect']
+
 const fmtCountdown = (ms) => {
   const s = Math.max(0, Math.ceil(ms / 1000))
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
@@ -1320,27 +1330,619 @@ const agoLabel = (ts, now) => {
   return `${Math.floor(s / 3600)}h ago`
 }
 
-const SIGNAL_CLASS = { DEPOSIT: 'keep', HOLD: 'gated', WITHDRAW: 'discard' }
+const loopRowDetail = (r) => {
+  const rules = (r.citedRules || []).join(', ')
+  if (r.verdict === 'crash') return r.error || 'crashed · loop recovered'
+  if (r.verdict === 'gated')
+    return `${r.gate || 'gate'} gate · ${r.reason || 'blocked before council'} · no AI credit spent`
+  if (r.verdict === 'discard')
+    return `${r.reason || 'council declined'}${rules ? ` · ${rules}` : ''}`
+  if (r.verdict === 'keep')
+    return `Score ${r.score ?? '--'} · ${rules || '--'} · tx ${(r.txHash || '').slice(0, 10)}…`
+  return `Observed market · ${r.turbulence || 'calm'} · no action needed`
+}
 
-const DECISION_PAGE_SIZE = 5
+const LoopStatusPanel = ({
+  running,
+  summary,
+  rows,
+  phase,
+  nextTickAt,
+  heartbeatMs,
+  decisionsRows,
+  decisionsSummary,
+}) => {
+  // Internal 1s clock — the countdown and relative timestamps tick even when
+  // the loop itself sleeps, which is what makes the panel feel alive.
+  const [now, setNow] = useSAg(() => Date.now())
+  const [showLogsModal, setShowLogsModal] = useSAg(() => false)
+
+  useEAg(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [])
+
+  useEAg(() => {
+    if (!showLogsModal) return
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setShowLogsModal(false)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [showLogsModal])
+
+  const cycling = Boolean(phase && phase !== 'sleep')
+  const remaining = running && nextTickAt ? Math.max(0, nextTickAt - now) : null
+  const pctElapsed =
+    running && heartbeatMs && remaining != null
+      ? Math.min(100, Math.max(0, 100 - (remaining / heartbeatMs) * 100))
+      : 0
+  const lastTs = rows && rows.length ? rows[0].ts : null
+  const activeIdx = LOOP_PHASES.indexOf(phase)
+  const latestVerdict = rows && rows.length ? rows[0].verdict : null
+  const latestReason = rows && rows.length ? rows[0].reason : ''
+
+  return (
+    <div className={`loop-status embedded ${running ? 'is-running' : 'is-stopped'}`}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+        {running ? (
+          <div className="loop-vitals" style={{ margin: 0 }}>
+            <span className={`loop-countdown ${cycling ? 'busy' : ''}`}>
+              {cycling
+                ? 'cycle running now'
+                : remaining != null
+                  ? `next cycle in ${fmtCountdown(remaining)}`
+                  : 'awaiting first heartbeat'}
+            </span>
+            <span className="loop-last">last activity {agoLabel(lastTs, now)}</span>
+          </div>
+        ) : (
+          <div style={{ fontSize: '11px', color: 'var(--text-faint)', fontFamily: 'var(--font-mono)' }}>
+            Loop is stopped
+          </div>
+        )}
+
+        <button
+          className="btn btn-ghost"
+          onClick={() => setShowLogsModal(true)}
+          style={{
+            padding: '6px 12px',
+            fontSize: '11px',
+            fontFamily: 'var(--font-mono)',
+            borderColor: 'var(--border-strong)',
+            color: 'var(--accent)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            height: '28px',
+            background: 'var(--bg-elev)',
+          }}
+        >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+            <line x1="16" y1="13" x2="8" y2="13" />
+            <line x1="16" y1="17" x2="8" y2="17" />
+          </svg>
+          Decision Log
+        </button>
+      </div>
+
+      {running && (
+        <div className={`loop-heartbeat-track ${cycling ? 'cycling' : ''}`} style={{ marginBottom: 12 }}>
+          <div
+            className="loop-heartbeat-fill"
+            style={{ width: `${cycling ? 100 : pctElapsed}%` }}
+          />
+        </div>
+      )}
+      <style>{`
+        .vf-flowchart-grid {
+          display: grid;
+          grid-template-columns: 1fr auto 1fr auto 1fr auto 1fr auto 1fr auto 1fr;
+          gap: 10px 4px;
+          align-items: center;
+          margin: 18px 0;
+          padding: 14px 10px;
+          background: rgba(255, 255, 255, 0.015);
+          border: 1.5px solid var(--border);
+          border-radius: var(--radius-md);
+          position: relative;
+        }
+        .vf-flowchart-node {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          padding: 8px 4px;
+          border-radius: 6px;
+          border: 1px solid var(--border);
+          background: var(--bg-card);
+          text-align: center;
+          min-height: 48px;
+          transition: all 0.3s ease;
+          position: relative;
+        }
+        .vf-flowchart-node.active {
+          border-color: var(--accent);
+          background: rgba(207, 255, 61, 0.03);
+          box-shadow: 0 0 10px rgba(207, 255, 61, 0.1);
+        }
+        .vf-flowchart-node.active-done {
+          border-color: var(--accent);
+          background: rgba(207, 255, 61, 0.01);
+          opacity: 0.8;
+        }
+        .vf-flowchart-node.highlighted-ok {
+          border-color: var(--ok);
+          background: rgba(0, 230, 115, 0.03);
+        }
+        .vf-flowchart-node.highlighted-warn {
+          border-color: var(--warn);
+          background: rgba(214, 163, 56, 0.03);
+        }
+        .vf-flowchart-node.highlighted-danger {
+          border-color: var(--danger);
+          background: rgba(230, 50, 50, 0.03);
+        }
+        .vf-node-icon {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 16px;
+          height: 16px;
+          margin-bottom: 2px;
+          color: var(--text-faint);
+        }
+        .active .vf-node-icon { color: var(--accent); }
+        .highlighted-ok .vf-node-icon { color: var(--ok); }
+        .highlighted-warn .vf-node-icon { color: var(--warn); }
+        .highlighted-danger .vf-node-icon { color: var(--danger); }
+        .vf-node-label {
+          font-size: 9px;
+          font-weight: 600;
+          letter-spacing: 0.01em;
+          color: var(--text-muted);
+        }
+        .active .vf-node-label { color: var(--text); }
+        .vf-flowchart-arrow {
+          font-size: 11px;
+          color: var(--text-faint);
+          text-align: center;
+          user-select: none;
+        }
+        .vf-flowchart-arrow.active {
+          color: var(--accent);
+          text-shadow: 0 0 4px var(--accent);
+          animation: pulse-arrow 1.5s ease-in-out infinite;
+        }
+        @keyframes pulse-arrow {
+          0%, 100% { opacity: 0.4; }
+          50% { opacity: 1; }
+        }
+        .vf-flowchart-branch-line {
+          display: flex;
+          justify-content: center;
+          color: var(--text-faint);
+          height: 14px;
+        }
+        .vf-flowchart-branch-line.active {
+          color: var(--accent);
+        }
+        .vf-flowchart-exit-node {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 6px 10px;
+          border-radius: 6px;
+          border: 1px dashed var(--border);
+          background: rgba(0, 0, 0, 0.15);
+          min-height: 40px;
+          transition: all 0.3s ease;
+        }
+        .vf-flowchart-exit-node.active {
+          border-style: solid;
+        }
+        .vf-flowchart-exit-node.gated.active {
+          border-color: var(--warn);
+          background: rgba(214, 163, 56, 0.05);
+          box-shadow: 0 0 10px rgba(214, 163, 56, 0.1);
+        }
+        .vf-flowchart-exit-node.discarded.active {
+          border-color: var(--danger);
+          background: rgba(230, 50, 50, 0.05);
+          box-shadow: 0 0 10px rgba(230, 50, 50, 0.1);
+        }
+        .vf-exit-title {
+          font-size: 9px;
+          font-weight: 700;
+          color: var(--text-faint);
+          text-align: left;
+        }
+        .active .vf-exit-title { color: var(--text); }
+        .vf-exit-desc {
+          font-size: 8px;
+          color: var(--text-faint);
+          white-space: nowrap;
+          text-overflow: ellipsis;
+          overflow: hidden;
+          max-width: 90px;
+          text-align: left;
+          margin-top: 1px;
+        }
+        @media (max-width: 768px) {
+          .vf-flowchart-grid {
+            grid-template-columns: 1fr !important;
+            grid-template-rows: auto !important;
+            gap: 10px !important;
+          }
+          .vf-flowchart-arrow {
+            transform: rotate(90deg);
+            margin: 2px 0;
+          }
+          .vf-flowchart-branch-line {
+            display: none !important;
+          }
+          .vf-flowchart-exit-node {
+            grid-column: span 1 !important;
+            grid-row: auto !important;
+            max-width: 100% !important;
+            margin: -4px 0 6px 14px;
+            border-style: solid;
+          }
+          .vf-gate-down-line, .vf-council-down-line, .vf-gated-exit-node, .vf-discarded-exit-node {
+            grid-row: auto !important;
+            grid-column: auto !important;
+          }
+        }
+        .decision-modal-grid {
+          display: grid;
+          grid-template-columns: 1fr 1.2fr;
+          gap: 24px;
+          align-items: start;
+        }
+        @media (max-width: 768px) {
+          .decision-modal-grid {
+            grid-template-columns: 1fr;
+            gap: 20px;
+          }
+        }
+        .decision-log-trigger:hover {
+          border-color: var(--accent) !important;
+          box-shadow: 0 0 10px rgba(207, 255, 61, 0.15) !important;
+        }
+      `}</style>
+
+      {running && (
+        <div className="loop-vitals">
+          <span className={`loop-countdown ${cycling ? 'busy' : ''}`}>
+            {cycling
+              ? 'cycle running now'
+              : remaining != null
+                ? `next cycle in ${fmtCountdown(remaining)}`
+                : 'awaiting first heartbeat'}
+          </span>
+          <span className="loop-last">last activity {agoLabel(lastTs, now)}</span>
+        </div>
+      )}
+      {running && (
+        <div className={`loop-heartbeat-track ${cycling ? 'cycling' : ''}`}>
+          <div
+            className="loop-heartbeat-fill"
+            style={{ width: `${cycling ? 100 : pctElapsed}%` }}
+          />
+        </div>
+      )}
+
+      {/* Visual Pipeline Flowchart */}
+      <div
+        className={`vf-flowchart-grid ${!running ? 'off' : cycling ? 'cycling' : 'sleeping'}`}
+        style={{ opacity: running ? 1 : 0.5 }}
+      >
+        {/* Stage 1: Observe */}
+        <div
+          className={`vf-flowchart-node observe ${phase === 'observe' ? 'active' : cycling && activeIdx > 0 ? 'active-done' : ''} ${!cycling && latestVerdict === 'idle' ? 'highlighted-ok' : ''}`}
+          style={{ gridRow: 1, gridColumn: 1 }}
+          title="Monitors pool APY, TVL, and utilization triggers"
+        >
+          <span className="vf-node-icon">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <circle cx="11" cy="11" r="8" />
+              <path d="m21 21-4.3-4.3" />
+            </svg>
+          </span>
+          <span className="vf-node-label">Observe</span>
+        </div>
+
+        {/* Arrow 1 */}
+        <div
+          className={`vf-flowchart-arrow ${running && (phase === 'gate' || activeIdx > 1) ? 'active' : ''}`}
+          style={{ gridRow: 1, gridColumn: 2 }}
+        >
+          →
+        </div>
+
+        {/* Stage 2: Gate Check */}
+        <div
+          className={`vf-flowchart-node gate ${phase === 'gate' ? 'active' : cycling && activeIdx > 1 ? 'active-done' : ''} ${!cycling && latestVerdict === 'gated' ? 'highlighted-warn' : ''}`}
+          style={{ gridRow: 1, gridColumn: 3 }}
+          title="Evaluates risk guardrails (e.g. utilization limits)"
+        >
+          <span className="vf-node-icon">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+          </span>
+          <span className="vf-node-label">Gate Check</span>
+        </div>
+
+
+
+        {/* Arrow 2 */}
+        <div
+          className={`vf-flowchart-arrow ${running && activeIdx > 1 && latestVerdict !== 'gated' && (phase === 'simulate' || activeIdx > 2) ? 'active' : ''}`}
+          style={{ gridRow: 1, gridColumn: 4 }}
+        >
+          →
+        </div>
+
+        {/* Stage 3: Simulate */}
+        <div
+          className={`vf-flowchart-node simulate ${phase === 'simulate' ? 'active' : cycling && activeIdx > 2 ? 'active-done' : ''} ${!cycling && latestVerdict === 'keep' ? 'highlighted-ok' : ''}`}
+          style={{ gridRow: 1, gridColumn: 5 }}
+          title="Runs allocation model and Monte Carlo simulations"
+        >
+          <span className="vf-node-icon">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M3 3v18h18" />
+              <path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3" />
+            </svg>
+          </span>
+          <span className="vf-node-label">Simulate</span>
+        </div>
+
+        {/* Arrow 3 */}
+        <div
+          className={`vf-flowchart-arrow ${running && activeIdx > 2 && latestVerdict !== 'gated' && (phase === 'council' || activeIdx > 3) ? 'active' : ''}`}
+          style={{ gridRow: 1, gridColumn: 6 }}
+        >
+          →
+        </div>
+
+        {/* Stage 4: AI Council */}
+        <div
+          className={`vf-flowchart-node council ${phase === 'council' ? 'active' : cycling && activeIdx > 3 ? 'active-done' : ''} ${!cycling && latestVerdict === 'discard' ? 'highlighted-danger' : ''}`}
+          style={{ gridRow: 1, gridColumn: 7 }}
+          title="Yield, Risk, and Market agents deliberate on-chain allocation"
+        >
+          <span className="vf-node-icon">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+              <circle cx="9" cy="7" r="4" />
+              <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+              <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+            </svg>
+          </span>
+          <span className="vf-node-label">AI Council</span>
+        </div>
+
+
+
+        {/* Arrow 4 */}
+        <div
+          className={`vf-flowchart-arrow ${running && activeIdx > 3 && !['gated', 'discard'].includes(latestVerdict) && (phase === 'execute' || activeIdx > 4) ? 'active' : ''}`}
+          style={{ gridRow: 1, gridColumn: 8 }}
+        >
+          →
+        </div>
+
+        {/* Stage 5: Execute */}
+        <div
+          className={`vf-flowchart-node execute ${phase === 'execute' ? 'active' : cycling && activeIdx > 4 ? 'active-done' : ''} ${!cycling && latestVerdict === 'keep' ? 'highlighted-ok' : ''}`}
+          style={{ gridRow: 1, gridColumn: 9 }}
+          title="Executes on-chain rebalances and deposit swaps"
+        >
+          <span className="vf-node-icon">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+            </svg>
+          </span>
+          <span className="vf-node-label">Execute</span>
+        </div>
+
+        {/* Arrow 5 */}
+        <div
+          className={`vf-flowchart-arrow ${running && activeIdx > 4 && latestVerdict === 'keep' && (phase === 'reflect' || activeIdx > 5) ? 'active' : ''}`}
+          style={{ gridRow: 1, gridColumn: 10 }}
+        >
+          →
+        </div>
+
+        {/* Stage 6: Reflect */}
+        <div
+          className={`vf-flowchart-node reflect ${phase === 'reflect' ? 'active' : ''} ${!cycling && latestVerdict === 'keep' ? 'highlighted-ok' : ''}`}
+          style={{ gridRow: 1, gridColumn: 11 }}
+          title="Saves memory logs and refines future strategy runs"
+        >
+          <span className="vf-node-icon">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M12 20h9" />
+              <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+            </svg>
+          </span>
+          <span className="vf-node-label">Reflect</span>
+        </div>
+      </div>
+
+      {showLogsModal && (
+        <div className="modal-backdrop" onClick={() => setShowLogsModal(false)}>
+          <div
+            className="modal decision-modal"
+            role="dialog"
+            aria-modal="true"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: 880, width: '92%', padding: '24px', position: 'relative' }}
+          >
+            <button
+              onClick={() => setShowLogsModal(false)}
+              style={{
+                position: 'absolute',
+                top: '20px',
+                right: '20px',
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--text-faint)',
+                cursor: 'pointer',
+                fontSize: '12px',
+                fontFamily: 'var(--font-mono)',
+              }}
+            >
+              ✕ CLOSE
+            </button>
+            <div className="modal-eyebrow">Autonomous monitoring logs</div>
+            <h3 className="modal-title" style={{ marginBottom: 20 }}>
+              Decision Log & Heartbeat Console
+            </h3>
+
+            <div className="modal-scroll-content" style={{ maxHeight: '68vh', overflowY: 'auto' }}>
+              <div className="decision-modal-grid">
+                
+                {/* Left Column: Heartbeat Ticker */}
+                <div className="decision-modal-left">
+                  <div style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', color: 'var(--text-faint)', letterSpacing: '0.05em', marginBottom: 12 }}>
+                    heartbeat ticker journal
+                  </div>
+                  
+                  <div className="loop-chips" style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 16 }}>
+                    <span className="loop-chip keep">keep {summary.keep}</span>
+                    <span className="loop-chip discard">discard {summary.discard}</span>
+                    <span className="loop-chip gated">gated {summary.gated || 0}</span>
+                    <span className="loop-chip crash">crash {summary.crash}</span>
+                    <span className="loop-chip idle">observe {summary.idle}</span>
+                  </div>
+
+                  <div className="loop-rows" style={{ maxHeight: 380, overflowY: 'auto' }}>
+                    {(rows || []).map((r, i) => (
+                      <div className="loop-row" key={r.ts || i}>
+                        <span className="loop-row-num">#{String(r.cycle).padStart(2, '0')}</span>
+                        <span className={`loop-badge ${r.verdict}`}>
+                          {r.verdict === 'idle' ? 'Observe' : r.verdict}
+                        </span>
+                        <span className="loop-row-detail" title={loopRowDetail(r)}>
+                          {loopRowDetail(r)}
+                        </span>
+                        <span className="loop-row-time">{agoLabel(r.ts, now)}</span>
+                      </div>
+                    ))}
+                    {(!rows || rows.length === 0) && (
+                      <div className="loop-empty">
+                        {running
+                          ? `No cycles journaled yet. First heartbeat ${remaining != null ? `in ${fmtCountdown(remaining)}` : 'arriving shortly'}. The loop observes, gates, simulates, asks the council, then acts only on a keep verdict.`
+                          : 'Loop is stopped. It starts automatically while the agent is enabled and positions are held.'}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Right Column: AI Council Decision Log */}
+                <div className="decision-modal-right">
+                  <div style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', color: 'var(--text-faint)', letterSpacing: '0.05em', marginBottom: 12 }}>
+                    AI Council decisions
+                  </div>
+                  <DecisionLogPanel rows={decisionsRows} summary={decisionsSummary} />
+                </div>
+
+              </div>
+            </div>
+
+            <div className="modal-actions" style={{ marginTop: 20 }}>
+              <button className="btn btn-ghost" onClick={() => setShowLogsModal(false)} style={{ marginLeft: 'auto' }}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+const SIGNAL_CLASS = { DEPOSIT: 'keep', HOLD: 'gated', WITHDRAW: 'discard' }
 
 const DecisionLogPanel = ({ rows, summary }) => {
   const [now, setNow] = useSAg(() => Date.now())
   const [open, setOpen] = useSAg(() => null)
-  const [page, setPage] = useSAg(0)
   useEAg(() => {
     const t = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(t)
   }, [])
 
   const byAgent = summary?.byAgent || {}
-  const allRows = rows || []
-  const pages = Math.max(1, Math.ceil(allRows.length / DECISION_PAGE_SIZE))
-  const curPage = Math.min(page, pages - 1)
-  const pageRows = allRows.slice(
-    curPage * DECISION_PAGE_SIZE,
-    curPage * DECISION_PAGE_SIZE + DECISION_PAGE_SIZE
-  )
   return (
     <div className="decision-log">
       <div className="decision-agents">
@@ -1359,7 +1961,7 @@ const DecisionLogPanel = ({ rows, summary }) => {
       </div>
 
       <div className="decision-rows">
-        {pageRows.map((r) => (
+        {(rows || []).map((r) => (
           <div className={`decision-row ${open === r.id ? 'open' : ''}`} key={r.id}>
             <button
               className="decision-row-head"
@@ -1393,19 +1995,19 @@ const DecisionLogPanel = ({ rows, summary }) => {
             )}
           </div>
         ))}
-        {allRows.length === 0 && (
+        {(!rows || rows.length === 0) && (
           <div className="decision-empty">
             No council decisions yet. Each keep or discard verdict from the autonomous loop is
             logged here with all three specialist opinions.
           </div>
         )}
       </div>
-      <Pager page={curPage} pages={pages} onPage={setPage} />
     </div>
   )
 }
 
 export {
+  LoopStatusPanel,
   DecisionLogPanel,
   AgentGraph,
   AgentTiles,

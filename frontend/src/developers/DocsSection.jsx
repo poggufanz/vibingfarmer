@@ -1,24 +1,39 @@
-import { ENDPOINTS, ERRORS } from './docsData.js'
+import { useRef } from 'react'
+import { ENDPOINTS, ERRORS, SCOPES } from './docsData.js'
+import CodeBlock from './CodeBlock.jsx'
 
+// pre look only — right padding leaves room for the copy button; spacing lives on the wrapper.
 const codeBlock = {
   background: 'var(--bg-elev)',
   border: '1px solid var(--border)',
   borderRadius: 'var(--radius-md)',
-  padding: '12px 14px',
+  padding: '12px 44px 12px 14px',
   fontSize: 11.5,
   lineHeight: 1.55,
   overflowX: 'auto',
   color: 'var(--text-muted)',
-  marginTop: 8,
+  margin: 0,
 }
 
+const endpointsOf = (scopeId) => ENDPOINTS.filter((e) => e.scope === scopeId)
+
 export default function DocsSection() {
+  const listRef = useRef(null)
+
+  // Native <details> stay uncontrolled so per-row toggling keeps working; the toolbar
+  // just flips every disclosure at once via the DOM. No controlled-component friction.
+  const setAll = (open) => {
+    listRef.current?.querySelectorAll('details').forEach((d) => {
+      d.open = open
+    })
+  }
+
   return (
     <div className="card">
       <div className="eyebrow">
-        <span>developers</span>
+        <span>Developers</span>
         <span>·</span>
-        <span>api reference</span>
+        <span>API reference</span>
       </div>
       <h1 className="h-display">API documentation</h1>
       <p className="lede">
@@ -26,12 +41,14 @@ export default function DocsSection() {
         authenticate with a secret key as a Bearer token. Responses are JSON.
       </p>
 
-      <pre className="mono" style={codeBlock}>
-        {`Authorization: Bearer vf_test_…
+      <CodeBlock
+        style={{ marginTop: 8 }}
+        preStyle={codeBlock}
+        code={`Authorization: Bearer vf_test_…
 
 curl -s https://api.vibing.farmer/api/vf/prices \\
   -H "Authorization: Bearer vf_test_…"`}
-      </pre>
+      />
 
       <h2 className="h-sub" style={{ marginTop: 32 }}>
         Errors
@@ -48,35 +65,62 @@ curl -s https://api.vibing.farmer/api/vf/prices \\
         ))}
       </div>
 
-      <h2 className="h-sub" style={{ marginTop: 32 }}>
-        Endpoints
-      </h2>
-      {ENDPOINTS.map((e) => (
-        <div
-          key={e.path}
-          style={{ marginTop: 24, paddingTop: 18, borderTop: '1px solid var(--border)' }}
-        >
-          <p className="mono" style={{ fontSize: 13 }}>
-            <span style={{ color: 'var(--accent)' }}>{e.method}</span> {e.path}
-            <span className="annot" style={{ marginLeft: 10 }}>
-              scope: {e.scope}
-            </span>
-          </p>
-          <p style={{ marginTop: 6, fontSize: 13, color: 'var(--text-muted)' }}>{e.desc}</p>
-          {e.req && (
-            <>
-              <span className="annot faint">request</span>
-              <pre className="mono" style={codeBlock}>
-                {e.req}
-              </pre>
-            </>
-          )}
-          <span className="annot faint">response</span>
-          <pre className="mono" style={codeBlock}>
-            {e.resp}
-          </pre>
+      <div className="docs-endpoints-head">
+        <h2 className="h-sub">Endpoints</h2>
+        <div className="docs-toolbar">
+          <button type="button" className="btn btn-text" onClick={() => setAll(true)}>
+            Expand all
+          </button>
+          <span className="faint">·</span>
+          <button type="button" className="btn btn-text" onClick={() => setAll(false)}>
+            Collapse all
+          </button>
         </div>
-      ))}
+      </div>
+      <p className="foot-note" style={{ marginTop: 4 }}>
+        Grouped by scope. Open a row for its request and response shape.
+      </p>
+
+      <div className="docs-endpoints" ref={listRef}>
+        {SCOPES.map((s) => {
+          const eps = endpointsOf(s.id)
+          if (eps.length === 0) return null
+          return (
+            <section className="docs-scope" key={s.id}>
+              <div className="docs-scope-head">
+                <span className="docs-scope-name mono">{s.id}</span>
+                <span className="docs-scope-grant">{s.grant}</span>
+              </div>
+              {eps.map((e) => (
+                <details className="docs-endpoint" key={e.path}>
+                  <summary className="docs-endpoint-sum">
+                    <span
+                      className={`docs-method mono ${e.method === 'GET' ? 'is-get' : 'is-post'}`}
+                    >
+                      {e.method}
+                    </span>
+                    <span className="docs-path mono">{e.path}</span>
+                    <span className="docs-chevron mono" aria-hidden="true">
+                      ›
+                    </span>
+                    <span className="docs-desc">{e.desc}</span>
+                  </summary>
+                  <div className="docs-endpoint-body">
+                    {e.req && (
+                      <>
+                        <span className="annot faint">Request</span>
+                        <CodeBlock style={{ marginTop: 8 }} preStyle={codeBlock} code={e.req} />
+                      </>
+                    )}
+                    <span className="annot faint">Response</span>
+                    <CodeBlock style={{ marginTop: 8 }} preStyle={codeBlock} code={e.resp} />
+                  </div>
+                </details>
+              ))}
+            </section>
+          )
+        })}
+      </div>
 
       <p className="foot-note" style={{ marginTop: 24 }}>
         Rate limit: per-key req/min (set at issuance, default 60) · global daily budget shared

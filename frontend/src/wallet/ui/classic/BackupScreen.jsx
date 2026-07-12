@@ -54,7 +54,10 @@ export default function BackupScreen({ mnemonic, indices, onConfirm, onSkip, err
           </div>
         ))}
         <div className="bk-prog-track">
-          <div className="bk-prog-fill" style={{ width: `${((step - 1) / 2) * 100}%` }} />
+          <div
+            className="bk-prog-fill"
+            style={{ transform: `scaleX(${(step - 1) / 2})` }}
+          />
         </div>
       </div>
 
@@ -239,10 +242,12 @@ function BackupStyle() {
   z-index: 0;
 }
 .bk-prog-fill {
+  width: 100%;
   height: 100%;
   background: var(--accent, #cfff3d);
   border-radius: 2px;
-  transition: width 400ms cubic-bezier(.16,1,.3,1);
+  transform-origin: left;
+  transition: transform 220ms cubic-bezier(.23,1,.32,1);
 }
 .bk-prog-step {
   display: flex;
@@ -263,7 +268,7 @@ function BackupStyle() {
   background: var(--bg-canvas, #0e100c);
   border: 1.5px solid var(--border);
   color: var(--text-faint);
-  transition: all 300ms ease;
+  transition: border-color 220ms cubic-bezier(.23,1,.32,1), color 160ms ease, background-color 220ms cubic-bezier(.23,1,.32,1), box-shadow 220ms cubic-bezier(.23,1,.32,1);
 }
 .bk-prog-step.active .bk-prog-num {
   border-color: var(--accent, #cfff3d);
@@ -279,7 +284,7 @@ function BackupStyle() {
   letter-spacing: .06em;
   text-transform: uppercase;
   color: var(--text-faint);
-  transition: color 300ms ease;
+  transition: color 160ms ease;
 }
 .bk-prog-step.active .bk-prog-label { color: var(--text-muted); }
 .bk-prog-step.current .bk-prog-label { color: var(--text); }
@@ -289,7 +294,7 @@ function BackupStyle() {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  animation: bk-fade-in 350ms ease both;
+  animation: bk-fade-in 220ms cubic-bezier(.23,1,.32,1) both;
 }
 @keyframes bk-fade-in {
   from { opacity: 0; transform: translateY(8px); }
@@ -329,7 +334,7 @@ function BackupStyle() {
   border: 1px solid var(--border-strong);
   border-radius: var(--r-md, 8px);
   cursor: pointer;
-  transition: all 200ms ease;
+  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms cubic-bezier(.23,1,.32,1);
 }
 .bk-copy-btn:hover {
   background: var(--bg-elev);
@@ -341,6 +346,7 @@ function BackupStyle() {
   color: var(--accent, #cfff3d);
   background: rgba(207,255,61,.06);
 }
+.bk-copy-btn:active { transform: scale(.97); }
 
 /* ── checkbox ── */
 .bk-saved-check {
@@ -352,7 +358,7 @@ function BackupStyle() {
   border: 1px solid rgba(207,255,61,.12);
   border-radius: var(--r-md, 8px);
   cursor: pointer;
-  transition: border-color 200ms ease;
+  transition: border-color 160ms ease;
 }
 .bk-saved-check:hover { border-color: rgba(207,255,61,.3); }
 .bk-saved-check input { display: none; }
@@ -363,7 +369,7 @@ function BackupStyle() {
   background: var(--bg-card);
   display: flex; align-items: center; justify-content: center;
   flex-shrink: 0;
-  transition: all 200ms ease;
+  transition: border-color 160ms ease, background-color 160ms ease;
 }
 .bk-saved-check input:checked + .bk-check-box {
   border-color: var(--accent, #cfff3d);
@@ -418,6 +424,14 @@ function BackupStyle() {
   box-shadow: 0 0 0 2px rgba(207,255,61,.12);
 }
 .bk-word-input::placeholder { color: var(--text-faint); opacity: .6; }
+
+@media (prefers-reduced-motion: reduce) {
+  .bk-step { animation: none; }
+  .bk-prog-fill,
+  .bk-prog-num,
+  .bk-copy-btn,
+  .bk-check-box { transition: none; }
+}
 `}</style>
   )
 }

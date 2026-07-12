@@ -12,7 +12,14 @@
 // things inline can't express (hover, media queries, reduced-motion, texture).
 
 import { useRef, useState, useEffect } from 'react'
-import { motion, useScroll, useTransform, useSpring, useMotionValueEvent } from 'framer-motion'
+import {
+  motion,
+  useMotionTemplate,
+  useMotionValueEvent,
+  useScroll,
+  useSpring,
+  useTransform,
+} from 'framer-motion'
 import NavBar from './NavBar.jsx'
 
 /* ----------------------------- content ----------------------------- */
@@ -46,10 +53,10 @@ const groupV = {
 }
 
 const lineV = {
-  hidden: { opacity: 0, x: 30, filter: 'blur(8px)' },
+  hidden: { opacity: 0, transform: 'translateX(30px)', filter: 'blur(8px)' },
   show: {
     opacity: 1,
-    x: 0,
+    transform: 'translateX(0px)',
     filter: 'blur(0px)',
     transition: { type: 'spring', stiffness: 120, damping: 22 },
   },
@@ -58,7 +65,7 @@ const lineV = {
 /* ------------------------------ pieces ----------------------------- */
 
 // The player itself — pure presentation. Animation lives on the wrapper.
-function Player({ src = '/demo.mp4' }) {
+export function Player({ src = '/demo.mp4', reduceMotion = false }) {
   return (
     <div className="vf-player">
       <div className="vf-player__chrome">
@@ -72,8 +79,9 @@ function Player({ src = '/demo.mp4' }) {
         <video
           key={src}
           src={src}
-          autoPlay
-          loop
+          autoPlay={!reduceMotion}
+          loop={!reduceMotion}
+          controls={reduceMotion}
           muted
           playsInline
           style={{ width: '100%', height: '100%', objectFit: 'cover' }}
@@ -85,7 +93,7 @@ function Player({ src = '/demo.mp4' }) {
 
 // Above-the-fold hero — value prop + CTA visible without scroll.
 // Editorial split: copy left, the demo player right. Stacks on mobile.
-function HeroSection({ onStart }) {
+function HeroSection({ onStart, reduceMotion = false }) {
   return (
     <section className="vf-hero">
       <div className="vf-hero__copy">
@@ -105,19 +113,19 @@ function HeroSection({ onStart }) {
         </div>
       </div>
       <div className="vf-hero__visual">
-        <Player src="/demo.mp4" />
+        <Player src="/demo.mp4" reduceMotion={reduceMotion} />
       </div>
     </section>
   )
 }
 
-function SceneText({ data, side, active }) {
+function SceneText({ data, side, active, reduceMotion = false }) {
   return (
     <motion.div
       className={`vf-scene-text vf-scene-text--${side}`}
       variants={groupV}
-      initial="hidden"
-      animate={active ? 'show' : 'hidden'}
+      initial={reduceMotion ? false : 'hidden'}
+      animate={reduceMotion ? undefined : active ? 'show' : 'hidden'}
       aria-hidden={active ? undefined : 'true'}
       // Hidden scenes are opacity:0 but still in the layer stack — kill
       // pointer capture so they don't block the player / CTA beneath them.
@@ -173,19 +181,19 @@ function OutroContent({ onStart }) {
 /* ----------------------- static fallback layout -------------------- */
 // Mobile + reduced-motion. Stacks vertically; CSS handles a soft fade-in.
 
-function StaticHero({ onStart }) {
+function StaticHero({ onStart, reduceMotion }) {
   return (
     <div className="vf-static">
-      <HeroSection onStart={onStart} />
+      <HeroSection onStart={onStart} reduceMotion={reduceMotion} />
 
       <section className="vf-static__scene vf-static__scene--split">
-        <Player src="/strategy.mp4" />
-        <SceneText data={SCENE_2} side="right" active />
+        <Player src="/strategy.mp4" reduceMotion={reduceMotion} />
+        <SceneText data={SCENE_2} side="right" active reduceMotion={reduceMotion} />
       </section>
 
       <section className="vf-static__scene vf-static__scene--split reverse">
-        <SceneText data={SCENE_3} side="left" active />
-        <Player src="/agent.mp4" />
+        <SceneText data={SCENE_3} side="left" active reduceMotion={reduceMotion} />
+        <Player src="/agent.mp4" reduceMotion={reduceMotion} />
       </section>
 
       <section className="vf-static__scene vf-outro">
@@ -221,6 +229,7 @@ function ScrollHero({ onStart, scrollContainer }) {
   const scale = useSpring(scaleRaw, springCfg)
   const x = useSpring(xRaw, springCfg)
   const rotateY = useSpring(rotRaw, springCfg)
+  const playerTransform = useMotionTemplate`translateX(${x}) scale(${scale}) rotateY(${rotateY}deg)`
 
   // Faint lime trail trails the player as it moves laterally.
   const trailOpacity = useTransform(
@@ -252,7 +261,7 @@ function ScrollHero({ onStart, scrollContainer }) {
           <SceneText data={SCENE_3} side="left" active={scene === 3} />
 
           {/* the moving player — video crossfades per scene */}
-          <motion.div className="vf-stage__player" style={{ x, scale, rotateY }}>
+          <motion.div className="vf-stage__player" style={{ transform: playerTransform }}>
             <motion.div
               className="vf-stage__trail"
               style={{ opacity: trailOpacity }}
@@ -273,8 +282,8 @@ function ScrollHero({ onStart, scrollContainer }) {
       <section className="vf-outro">
         <motion.div
           className="vf-outro__inner"
-          initial={{ opacity: 0, y: 30 }}
-          whileInView={{ opacity: 1, y: 0 }}
+          initial={{ opacity: 0, transform: 'translateY(30px)' }}
+          whileInView={{ opacity: 1, transform: 'translateY(0px)' }}
           viewport={{ root: scrollContainer, once: true, amount: 0.35 }}
           transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
         >
@@ -316,7 +325,7 @@ export default function LandingHero({ onStart }) {
       <StyleTag />
       <NavBar />
       {useStatic ? (
-        <StaticHero onStart={onStart} />
+        <StaticHero onStart={onStart} reduceMotion={reduceMotion} />
       ) : (
         <ScrollHero onStart={onStart} scrollContainer={containerRef} />
       )}
@@ -543,9 +552,12 @@ function StyleTag() {
               box-shadow 220ms ease;
 }
 .vf-cta__btn span { transition: transform 220ms cubic-bezier(0.16,1,0.3,1); }
-.vf-cta__btn:hover { transform: translateY(-2px); box-shadow: 0 0 40px 2px rgba(207,255,61,0.4); }
-.vf-cta__btn:hover span { transform: translateX(4px); }
-.vf-cta__btn:active { transform: translateY(0); }
+.vf-cta__btn:active { transform: scale(0.97); }
+@media (hover: hover) and (pointer: fine) {
+  .vf-cta__btn:hover { transform: translateY(-2px); box-shadow: 0 0 40px 2px rgba(207,255,61,0.4); }
+  .vf-cta__btn:hover span { transform: translateX(4px); }
+  .vf-cta__btn:active { transform: scale(0.97); }
+}
 .vf-cta__sub {
   font-family: var(--font-mono, monospace);
   font-size: 0.74rem;
@@ -581,7 +593,7 @@ function StyleTag() {
   inset: -3% -2%;
   border-radius: 24px;
   background: radial-gradient(55% 55% at 50% 50%, rgba(207,255,61,0.2), transparent 70%);
-  filter: blur(22px);
+  filter: blur(16px);
   z-index: -1;
   pointer-events: none;
 }
@@ -685,6 +697,11 @@ function StyleTag() {
   .vf-static__scene > * {
     animation: vf-rise 600ms cubic-bezier(0.16,1,0.3,1) both;
   }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vf-cta__btn,
+  .vf-cta__btn span { transition: opacity 160ms ease; }
+  .vf-cta__btn:active { opacity: 0.82; transform: none; }
 }
 @keyframes vf-rise {
   from { opacity: 0; transform: translateY(16px); }

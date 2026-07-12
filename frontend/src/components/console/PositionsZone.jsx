@@ -56,7 +56,7 @@ export default function PositionsZone({
                   : `${apy.toFixed(1)}% apy · +${((bal * (apy / 100)) / 365).toFixed(4)}/day`}
               </div>
               <div className="pos-alloc">
-                <div className="pos-alloc-fill" style={{ width: `${pct}%` }} />
+                <div className="pos-alloc-fill" style={{ transform: `scaleX(${pct / 100})` }} />
               </div>
               <div className="pos-foot">
                 <span className="mono pos-pct tnum">{pct.toFixed(0)}% of portfolio</span>

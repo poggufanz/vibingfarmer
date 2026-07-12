@@ -1,17 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
 import { listKeys, createKey, revokeKey } from './portalClient.js'
+import CodeBlock from './CodeBlock.jsx'
 
 // Scope contract — same rows for docs (pre-auth) and permission picker (create form).
 const SCOPE_INFO = [
-  { id: 'strategy', endpoints: 'POST /strategy', note: 'ai allocation · market context' },
+  { id: 'strategy', endpoints: 'POST /strategy', note: 'AI allocation · market context' },
   {
     id: 'market',
     endpoints: '/vault-facts · /prices · /eligibility',
-    note: 'read-only market data',
+    note: 'Read-only market data',
   },
-  { id: 'tx', endpoints: '/build-tx · /simulate', note: 'unsigned xdr only' },
-  { id: 'submit', endpoints: 'POST /submit', note: 'fee-bump relay · deposit-only' },
-  { id: 'scan', endpoints: 'POST /scan', note: 'risk verdict' },
+  { id: 'tx', endpoints: '/build-tx · /simulate', note: 'Unsigned XDR only' },
+  { id: 'submit', endpoints: 'POST /submit', note: 'Fee-bump relay · deposit-only' },
+  { id: 'scan', endpoints: 'POST /scan', note: 'Risk verdict' },
 ]
 
 const EXPIRY_OPTIONS = [
@@ -175,11 +176,11 @@ export default function KeysSection({ session }) {
   return (
     <div className="card">
       <div className="eyebrow">
-        <span>developers</span>
+        <span>Developers</span>
         <span>·</span>
-        <span>api keys</span>
+        <span>API keys</span>
         <span className="rule"></span>
-        <span>{`sep-10 · ${shortAddr(session.address)}`}</span>
+        <span>{`SEP-10 · ${shortAddr(session.address)}`}</span>
       </div>
 
       <h1 className="h-display">API keys</h1>
@@ -205,7 +206,7 @@ export default function KeysSection({ session }) {
         style={{ marginTop: 32, gap: 16, flexWrap: 'wrap' }}
       >
         <div>
-          <span style={sectionTitle}>your keys</span>
+          <span style={sectionTitle}>Your keys</span>
           <p className="mono faint" style={{ marginTop: 6, fontSize: 11.5 }}>
             {activeCount} active · {keys.length} total
           </p>
@@ -344,27 +345,26 @@ export default function KeysSection({ session }) {
 
       {/* Auth usage (always visible when signed in) */}
       <div style={{ marginTop: 36 }}>
-        <span style={sectionTitle}>authenticate requests</span>
+        <span style={sectionTitle}>Authenticate requests</span>
         <p className="lede" style={{ marginTop: 10, fontSize: 13.5, maxWidth: 560 }}>
           Send the secret key as a Bearer token. Keep it server-side only — never ship a{' '}
           <span className="mono">vf_</span> key in client bundles or public repos.
         </p>
-        <pre
-          className="mono"
-          style={{
-            marginTop: 14,
+        <CodeBlock
+          style={{ marginTop: 14 }}
+          preStyle={{
             background: 'var(--bg-elev)',
             border: '1px solid var(--border)',
             borderRadius: 'var(--radius-md)',
-            padding: '14px 16px',
+            padding: '14px 44px 14px 16px',
             fontSize: 12,
             lineHeight: 1.55,
             overflowX: 'auto',
             color: 'var(--text-muted)',
+            margin: 0,
           }}
-        >
-          {`Authorization: Bearer vf_test_…\n\n${curlSnippet()}`}
-        </pre>
+          code={`Authorization: Bearer vf_test_…\n\n${curlSnippet()}`}
+        />
         <p className="foot-note" style={{ marginTop: 12 }}>
           Prefer least privilege: create separate keys per service, revoke the old key after
           rotation.
@@ -382,10 +382,10 @@ export default function KeysSection({ session }) {
             style={{ maxWidth: 520 }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="modal-eyebrow">API keys · new secret</div>
+            <div className="modal-eyebrow">API keys · New secret</div>
             <div className="modal-title">Create secret key</div>
             <div className="modal-scroll-content">
-              <span style={sectionTitle}>environment</span>
+              <span style={sectionTitle}>Environment</span>
               <div
                 role="radiogroup"
                 aria-label="environment"
@@ -410,7 +410,7 @@ export default function KeysSection({ session }) {
               </div>
 
               <div style={{ marginTop: 22 }}>
-                <span style={sectionTitle}>permissions</span>
+                <span style={sectionTitle}>Permissions</span>
                 <p className="foot-note" style={{ marginTop: 6, marginBottom: 10 }}>
                   Restrict scopes so a leaked key cannot call more than it needs.
                 </p>
@@ -457,7 +457,7 @@ export default function KeysSection({ session }) {
               </div>
 
               <div style={{ marginTop: 22 }}>
-                <span style={sectionTitle}>expiration</span>
+                <span style={sectionTitle}>Expiration</span>
                 <div
                   role="radiogroup"
                   aria-label="expiration"
@@ -523,7 +523,7 @@ export default function KeysSection({ session }) {
             style={{ maxWidth: 520 }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="modal-eyebrow">API key · shown once</div>
+            <div className="modal-eyebrow">API key · Shown once</div>
             <div className="modal-title">Save this secret key</div>
 
             <div
@@ -627,7 +627,7 @@ export default function KeysSection({ session }) {
             style={{ maxWidth: 420 }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="modal-eyebrow">revoke · irreversible</div>
+            <div className="modal-eyebrow">Revoke · Irreversible</div>
             <div className="modal-title">Revoke this key?</div>
             <p style={{ fontSize: 13.5, color: 'var(--text-muted)', lineHeight: 1.5 }}>
               Requests using{' '}

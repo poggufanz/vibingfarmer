@@ -1,4 +1,15 @@
 // Static API reference. Source of truth: frontend/api/vf handlers (verified 2026-07-11).
+
+// Scope groups — the product's permission model, reused as the docs' organizing spine.
+// `grant` mirrors the human-readable note shown in the key permission picker.
+export const SCOPES = [
+  { id: 'strategy', grant: 'AI allocation · market context' },
+  { id: 'market', grant: 'Read-only market data' },
+  { id: 'tx', grant: 'Unsigned XDR only' },
+  { id: 'submit', grant: 'Fee-bump relay · deposit-only' },
+  { id: 'scan', grant: 'Risk verdict' },
+]
+
 export const ERRORS = [
   {
     status: 401,

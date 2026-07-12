@@ -362,14 +362,7 @@ function ReplayStyle() {
 }
 .rp-net__dot {
   width: 7px; height: 7px; border-radius: 50%;
-  background: var(--accent, #cfff3d);
-  box-shadow: 0 0 0 0 rgba(207,255,61,0.6);
-  animation: rp-pulse 2.4s ease-out infinite;
-}
-@keyframes rp-pulse {
-  0% { box-shadow: 0 0 0 0 rgba(207,255,61,0.5); }
-  70% { box-shadow: 0 0 0 7px rgba(207,255,61,0); }
-  100% { box-shadow: 0 0 0 0 rgba(207,255,61,0); }
+  background: var(--text-faint, #7a7a70);
 }
 .rp-lede {
   margin-top: 1.1rem;
@@ -617,6 +610,10 @@ function ReplayStyle() {
   background: linear-gradient(90deg, rgba(207,255,61,0.25) 0%, var(--accent, #cfff3d) 100%);
   border: 1px solid rgba(207,255,61,0.5);
   box-shadow: 0 0 20px rgba(207,255,61,0.15);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rp-bar { transition: none; }
 }
 .rp-bar--manual {
   background: linear-gradient(90deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.12) 100%);

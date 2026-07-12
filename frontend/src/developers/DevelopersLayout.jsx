@@ -8,24 +8,24 @@ const shortAddr = (g) => (g ? `${g.slice(0, 6)}…${g.slice(-4)}` : '')
 
 // Scope contract — shown pre-auth on gated sections.
 export const SCOPE_INFO = [
-  { id: 'strategy', endpoints: 'POST /strategy', note: 'ai allocation · market context' },
+  { id: 'strategy', endpoints: 'POST /strategy', note: 'AI allocation · market context' },
   {
     id: 'market',
     endpoints: '/vault-facts · /prices · /eligibility',
-    note: 'read-only market data',
+    note: 'Read-only market data',
   },
-  { id: 'tx', endpoints: '/build-tx · /simulate', note: 'unsigned xdr only' },
-  { id: 'submit', endpoints: 'POST /submit', note: 'fee-bump relay · deposit-only' },
-  { id: 'scan', endpoints: 'POST /scan', note: 'risk verdict' },
+  { id: 'tx', endpoints: '/build-tx · /simulate', note: 'Unsigned XDR only' },
+  { id: 'submit', endpoints: 'POST /submit', note: 'Fee-bump relay · deposit-only' },
+  { id: 'scan', endpoints: 'POST /scan', note: 'Risk verdict' },
 ]
 
 export function ConnectGate({ connecting, onConnect }) {
   return (
     <div className="card">
       <div className="eyebrow">
-        <span>developers</span>
+        <span>Developers</span>
         <span>·</span>
-        <span>sep-10 wallet auth</span>
+        <span>SEP-10 wallet auth</span>
       </div>
       <h1 className="h-display">Connect to continue</h1>
       <p className="lede">
@@ -120,7 +120,7 @@ export default function DevelopersLayout() {
           </NavLink>
         ))}
         <div className="portal-nav-foot mono faint">
-          {session ? `sep-10 · ${shortAddr(session.address)}` : 'not connected'}
+          {session ? `SEP-10 · ${shortAddr(session.address)}` : 'Not connected'}
         </div>
       </nav>
       <div className="portal-main">

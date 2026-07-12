@@ -29,6 +29,9 @@ describe('LifeboatZone', () => {
     )
     expect(screen.getByText('ARMED')).toBeTruthy()
     expect(container.querySelector('.radar-sweep-line')).toBeTruthy()
+    expect(container.querySelector('.lifeboat-mandate-fill')?.style.transform).toBe(
+      'scaleX(0.5)'
+    )
     expect(screen.getByText(/threats · 0/)).toBeTruthy()
     expect(screen.getByText(/12h 0m/)).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: /renew 24h mandate/i }))
