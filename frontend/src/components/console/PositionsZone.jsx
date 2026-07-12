@@ -19,7 +19,7 @@ export default function PositionsZone({
     ([, a], [, b]) => Number(b.balance) - Number(a.balance)
   )
   const total = list.reduce((s, [, p]) => s + Number(p.balance || 0), 0)
-  const apyOf = (addr) => vaultMeta[addr.toLowerCase()]?.apy || 0
+  const apyOf = (addr) => vaultMeta[addr.toLowerCase()]?.apy ?? null
 
   return (
     <ZoneFrame
@@ -51,7 +51,9 @@ export default function PositionsZone({
               </div>
               <div className="pos-sub mono">
                 {meta.protocol ? `${meta.protocol} · ` : ''}
-                {apy.toFixed(1)}% apy · +{((bal * (apy / 100)) / 365).toFixed(4)}/day
+                {apy == null
+                  ? '--% apy'
+                  : `${apy.toFixed(1)}% apy · +${((bal * (apy / 100)) / 365).toFixed(4)}/day`}
               </div>
               <div className="pos-alloc">
                 <div className="pos-alloc-fill" style={{ width: `${pct}%` }} />
@@ -67,7 +69,7 @@ export default function PositionsZone({
                         name: p.vaultName,
                         address: addr,
                         protocol: meta.protocol || '',
-                        apy,
+                        apy: apy ?? 0,
                       },
                       balance: p.balance,
                       unclaimedRewards: p.unclaimedRewards,

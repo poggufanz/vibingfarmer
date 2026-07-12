@@ -239,18 +239,6 @@
   color: var(--text-faint);
   flex-shrink: 0;
 }
-@keyframes con-row-flash {
-  from {
-    background: color-mix(in srgb, var(--zone-hue) 10%, transparent);
-  }
-  to {
-    background: transparent;
-  }
-}
-.con-feed-row.flash {
-  animation: con-row-flash 0.8s ease-out 1;
-}
-
 /* ── instruments ────────────────────────────────────────── */
 .instrument {
   display: block;
@@ -276,8 +264,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .zone-led.pulse,
-  .radar-sweep-line,
-  .con-feed-row.flash {
+  .radar-sweep-line {
     animation: none !important;
   }
   .dial-needle {

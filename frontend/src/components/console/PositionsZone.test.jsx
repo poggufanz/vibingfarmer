@@ -40,4 +40,9 @@ describe('PositionsZone', () => {
     fireEvent.click(screen.getByRole('button', { name: /deploy from strategy flow/i }))
     expect(props.onNewStrategy).toHaveBeenCalled()
   })
+  it('renders -- apy and omits /day projection when vault meta is missing', () => {
+    render(<PositionsZone {...props} vaultMeta={{}} />)
+    expect(screen.getByText(/--% apy/)).toBeTruthy()
+    expect(screen.queryByText(/\/day/)).toBeNull()
+  })
 })

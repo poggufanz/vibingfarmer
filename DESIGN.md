@@ -32,7 +32,7 @@ Setiap keputusan visual diuji terhadap lima prinsip ini. Kalau melanggar salah s
 | **A — App shell** | Strategy flow, grant, dashboard, rail, modals, settings forms | Full restraint: no decorative gradient/blur/glow |
 | **B — Marketing / explorer** | Landing, Ecosystem, Explorer, Replay, public NavBar | 1 ambient grid **or** 1 radial vignette ≤3% opacity; nav glass `backdrop-blur ≤16px` with scrim ≥70% opaque; max 1 accent CTA glow on hover only |
 | **C — Extension** | VF Wallet popup | Same as A (trust UI) |
-| **D — Operations Console** | `/agent` route only | Semantic status color unrestricted (status IS the content); accent budget still 2 (strip LED + portfolio figure); ZoneFrame HUD chrome (header tint ≤4%, corner ticks); data-driven instrument motion only — radar sweep 5–6s (armed), EKG beat on new cycle, needle 600ms, row-flash once — max 1 live instrument per zone, all `prefers-reduced-motion`-safe |
+| **D — Operations Console** | `/agent` route only | Semantic status color unrestricted (status IS the content); accent budget still 2 (strip LED + portfolio figure); ZoneFrame HUD chrome (header tint ≤4%, corner ticks); data-driven instrument motion only — radar sweep 5–6s (armed), EKG beat on new cycle, needle 600ms — max 1 live instrument per zone, all `prefers-reduced-motion`-safe |
 
 ### Live-status motion family (approved)
 

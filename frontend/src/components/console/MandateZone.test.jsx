@@ -24,7 +24,7 @@ const scopes = [
 describe('MandateZone', () => {
   it('summarizes active scopes and total cap', () => {
     render(<MandateZone scopes={scopes} onRevoke={() => {}} />)
-    expect(screen.getByText(/1 scopes active · 100.00 USDC total cap/)).toBeTruthy()
+    expect(screen.getByText(/1 scopes active · 40.00 USDC total cap/)).toBeTruthy()
   })
   it('revoke fires per row; revoked rows show label instead', () => {
     const onRevoke = vi.fn()

@@ -7,7 +7,7 @@ import { toDisplay } from '../../stellar/format.js'
 
 export default function MandateZone({ scopes = [], onRevoke }) {
   const active = scopes.filter((s) => !s.revoked)
-  const totalCap = scopes.reduce((sum, s) => sum + Number(s.capPerPeriod || 0), 0)
+  const totalCap = active.reduce((sum, s) => sum + Number(s.capPerPeriod || 0), 0)
 
   return (
     <ZoneFrame
