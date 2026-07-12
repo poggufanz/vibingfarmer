@@ -510,7 +510,19 @@ const App = () => {
   const agentMapRef = useR({})
 
   // Real Web3 state
-  const [realAddress, setRealAddress] = useS(null)
+  // Dev-only read-as override: /agent?as=G... opens the console with that address's chain
+  // state (read paths only — signing still needs a real wallet). DEV builds only; the whole
+  // branch is dead-code-eliminated in prod and scripts/assert-no-dev-dispatch.mjs asserts the
+  // __vfDevViewAs marker never ships in dist/.
+  const [realAddress, setRealAddress] = useS(() => {
+    if (!import.meta.env.DEV) return null
+    const as = new URLSearchParams(window.location.search).get('as')
+    if (as && /^G[A-Z2-7]{55}$/.test(as)) {
+      console.info('__vfDevViewAs — dev read-as override active:', as)
+      return as
+    }
+    return null
+  })
   const loopRef = useR(null)
   const latestGasRef = useR(null) // last live gas snapshot { level, gwei } for the monitor loop
   const hydratedRef = useR(null) // address whose cached positions have finished restoring

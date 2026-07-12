@@ -142,6 +142,10 @@ function seedSnippet(n) {
 async function main() {
   switch (cmd) {
     case "status": {
+      // read-only: any funded account works as the simulation source, so fall back to the
+      // relayer key when the keeper secret is not available locally
+      if (!env.STELLAR_KEEPER_SECRET && env.STELLAR_RELAYER_SECRET)
+        env.STELLAR_KEEPER_SECRET = env.STELLAR_RELAYER_SECRET;
       requireChainEnv();
       const s = await readLifeboatChainState(env);
       console.log(jsonSafe(s));
