@@ -74,6 +74,8 @@ import { runAutonomousExit } from './agents/exitExecutor.js'
 import {
   loadPersistedPositions,
   persistPositions,
+  loadDeployedAgents,
+  saveDeployedAgents,
   reconcilePositionsFromChain,
   mergePositions,
   applyChainPositions,
@@ -654,7 +656,9 @@ const App = () => {
       hydratedRef.current = realAddress
     }, 0)
     let alive = true
-    reconcilePositionsFromChain(realAddress)
+    const persistedAgents = loadDeployedAgents(realAddress)
+    reconcilePositionsFromChain(realAddress, persistedAgents.length ? { agents: persistedAgents } : undefined)
+
       .then((chain) => {
         if (!alive || !chain) return // null = no RPC / all reads failed → keep cache
         // Cold reconnect: cached positions are from a PRIOR session, so they're mined and
@@ -696,7 +700,9 @@ const App = () => {
     if (!realAddress) return
     let alive = true
     const sync = async () => {
-      const chain = await reconcilePositionsFromChain(realAddress).catch(() => null)
+      const storedAgents = loadDeployedAgents(realAddress)
+      const pollAgents = storedAgents.length ? storedAgents : (deployedAgentsRef.current || [])
+      const chain = await reconcilePositionsFromChain(realAddress, pollAgents.length ? { agents: pollAgents } : undefined).catch(() => null)
       if (alive && chain) {
         setAgentData((d) => ({
           ...d,
@@ -2122,7 +2128,9 @@ const App = () => {
           event: 'OrchestratorPlanned',
           meta: `done · ${summary.completed} deposited, ${summary.failed} failed`,
         })
-        deployedAgentsRef.current = summary.agentAddresses || []
+        const addrs = summary.agentAddresses || []
+        deployedAgentsRef.current = addrs
+        if (addrs.length) saveDeployedAgents(realAddress, addrs)
       })
       .catch((err) => {
         console.warn('[app] orchestrator dispatch failed (simulation mode):', err?.message || err)
@@ -2231,9 +2239,12 @@ const App = () => {
         return { ...d, positions, lastUpdated: Date.now() }
       })
     }
+    const agentAddrs = deployedAgentsRef.current
+    if (agentAddrs?.length) saveDeployedAgents(realAddress, agentAddrs)
+
     addLog({
       event: 'OrchestratorPlanned',
-      meta: `multi-agent deployment finalized · ${strategy?.agents?.length} positions opened`,
+      meta: `${agentAddrs?.length || 0} agents saved · ${strategy?.agents?.length} positions opened`,
     })
   }
 
