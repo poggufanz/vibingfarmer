@@ -10,7 +10,7 @@ import { rpc, Keypair } from '@stellar/stellar-sdk';
 import { createPublicClient, createWalletClient, http } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { baseSepolia } from 'viem/chains';
-import { CCTP_DOMAIN, STELLAR_TESTNET, BASE_SEPOLIA, IRIS_SANDBOX_URL } from './cctp/constants.mjs';
+import { CCTP_DOMAIN, STELLAR_TESTNET, BASE_SEPOLIA } from './cctp/constants.mjs';
 import { createFileStore } from './store.mjs';
 
 function need(env, key) {
@@ -29,8 +29,9 @@ export function loadConfig(env = process.env) {
   const relayerBasePrivkey = need(env, 'RELAYER_BASE_PRIVKEY');
   const zerodevProjectId = need(env, 'ZERODEV_PROJECT_ID');
   const yieldRouterAddress = need(env, 'YIELD_ROUTER_ADDRESS');
-  const irisUrl = env.IRIS_URL || IRIS_SANDBOX_URL;
+  const irisUrl = need(env, 'IRIS_URL'); // REQUIRED: testnet=sandbox, mainnet=https://iris-api.circle.com (no silent default)
   const storePath = env.RELAYER_STORE_PATH || './.relayer-store.dev.json';
+  const dbPath = env.RELAYER_DB_PATH || ''; // when set, sqlite replaces file store + in-memory jobs/mandates
 
   const server = new rpc.Server(sorobanRpcUrl);
   const kp = Keypair.fromSecret(relayerStellarSecret);
@@ -45,6 +46,7 @@ export function loadConfig(env = process.env) {
     // CCTP_DOMAIN uses uppercase STELLAR/BASE, so map here rather than leak two key casings.
     domains: { stellar: CCTP_DOMAIN.STELLAR, base: CCTP_DOMAIN.BASE },
     irisUrl,
+    dbPath,
     store: createFileStore(storePath),
     base: {
       chain: baseSepolia,

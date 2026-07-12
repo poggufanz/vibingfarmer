@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
-import { nativeToScVal } from '@stellar/stellar-sdk'
-import { i128ScVal } from './scval.js'
-import { encodeArgs, readContract, submitUserTx } from './client.js'
+import { Account, nativeToScVal, scValToNative } from '@stellar/stellar-sdk'
+import { addrScVal, i128ScVal } from './scval.js'
+import { buildCreateContractTx, encodeArgs, readContract, submitUserTx } from './client.js'
 
 describe('soroban client', () => {
   it('encodeArgs passes a pre-built raw ScVal through unchanged', () => {
@@ -52,5 +52,58 @@ describe('soroban client', () => {
     })
     expect(fakeServer.sendTransaction).toHaveBeenCalledOnce()
     expect(out).toEqual({ hash: 'abc123', status: 'SUCCESS' })
+  })
+})
+
+describe('buildCreateContractTx', () => {
+  const OWNER = 'GCIOUP4UJAAFDBJNP5DY5CFJHBLEKGLHZ5E2AYRIIQ5VOZFVSTPRYHNS'
+  const CREATED = 'CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC'
+  const WASM_HASH = '8c607112ba93ff289d30f2c894ca586c745328e5cb2ae6139917c6df540dda62'
+
+  function fakeDeployServer() {
+    return {
+      getAccount: vi.fn(async () => new Account(OWNER, '1')),
+      // The create host fn's simulated retval IS the to-be-created contract address.
+      simulateTransaction: vi.fn(async () => ({ result: { retval: addrScVal(CREATED) } })),
+      prepareTransaction: vi.fn(async (raw) => raw),
+    }
+  }
+
+  it('builds a createContractV2 op from the wasm hash with the encoded constructor args', async () => {
+    const fakeServer = fakeDeployServer()
+    const out = await buildCreateContractTx({
+      source: OWNER,
+      wasmHash: WASM_HASH,
+      constructorArgs: [{ addr: OWNER }, { bytes32: '0x' + '07'.repeat(32) }],
+      server: fakeServer,
+    })
+    expect(out.contractAddress).toBe(CREATED)
+    expect(out.xdr).toEqual(expect.any(String))
+    // Inspect the REAL op that was simulated: createContractV2 from the hash, args encoded.
+    const raw = fakeServer.prepareTransaction.mock.calls[0][0]
+    const op = raw.operations[0]
+    expect(op.func.switch().name).toBe('hostFunctionTypeCreateContractV2')
+    const create = op.func.createContractV2()
+    expect(create.executable().wasmHash().toString('hex')).toBe(WASM_HASH)
+    const args = create.constructorArgs()
+    expect(scValToNative(args[0])).toBe(OWNER)
+    expect(Buffer.from(scValToNative(args[1])).toString('hex')).toBe('07'.repeat(32))
+    // Deployer address preimage = the source account (the user wallet signs + pays).
+    expect(fakeServer.simulateTransaction).toHaveBeenCalledOnce()
+    expect(fakeServer.prepareTransaction).toHaveBeenCalledOnce()
+  })
+
+  it('throws on a malformed wasm hash before touching the network', async () => {
+    await expect(
+      buildCreateContractTx({ source: OWNER, wasmHash: 'nothex', server: fakeDeployServer() })
+    ).rejects.toThrow(/64-char hex/)
+  })
+
+  it('throws when the deploy simulation errors', async () => {
+    const fakeServer = fakeDeployServer()
+    fakeServer.simulateTransaction = vi.fn(async () => ({ error: 'no wasm for hash' }))
+    await expect(
+      buildCreateContractTx({ source: OWNER, wasmHash: WASM_HASH, server: fakeServer })
+    ).rejects.toThrow(/deploy simulation failed/)
   })
 })

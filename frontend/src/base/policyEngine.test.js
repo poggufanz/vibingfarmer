@@ -10,7 +10,10 @@ const POOL_B = '0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB'
 const WRONG_TARGET = '0xC0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0'
 
 describe('buildDepositPermissions', () => {
-  test('builds one permission entry per pool, targeting YieldRouter.deposit', () => {
+  test('builds ONE permission targeting YieldRouter.deposit with an aggregate cap = max(caps)', () => {
+    // @zerodev CallPolicy keys a permission by (target, selector) only, so N deposit entries
+    // collide as `duplicate permissionHash` (AA23). One entry: pool unconstrained (YieldRouter
+    // enforces the allowlist on-chain), amount capped at the largest allocation.
     const permissions = buildDepositPermissions({
       pools: [
         { pool: POOL_A, cap: 100_000_000n },
@@ -18,14 +21,13 @@ describe('buildDepositPermissions', () => {
       ],
       yieldRouterAbi: YIELD_ROUTER_ABI,
     })
-    expect(permissions).toHaveLength(2)
+    expect(permissions).toHaveLength(1)
     expect(permissions[0].target).toBe(YIELD_ROUTER_ADDRESS)
     expect(permissions[0].functionName).toBe('deposit')
     expect(permissions[0].valueLimit).toBe(0n)
-    expect(permissions[0].args[0]).toMatchObject({ value: POOL_A })
-    expect(permissions[0].args[1]).toMatchObject({ value: 100_000_000n })
+    expect(permissions[0].args[0]).toBeNull() // pool — unconstrained by the session policy
+    expect(permissions[0].args[1]).toMatchObject({ value: 100_000_000n }) // max of the two caps
     expect(permissions[0].args[2]).toBeNull() // minShares unconstrained by the session policy
-    expect(permissions[1].args[0]).toMatchObject({ value: POOL_B })
   })
 
   test('rejects an empty pool list', () => {
@@ -86,7 +88,7 @@ describe('evaluateCall — mirrors the SP0 session-test.mjs scenarios plus the n
     expect(result.reason).toMatch(/no permission/)
   })
 
-  test('a pool not in the policy is rejected even on the right target+selector', () => {
+  test('a pool not in the intended allocation still passes the session policy — the pool allowlist is enforced by YieldRouter on-chain, not the session key', () => {
     const result = evaluateCall({
       permissions,
       to: YIELD_ROUTER_ADDRESS,
@@ -94,8 +96,10 @@ describe('evaluateCall — mirrors the SP0 session-test.mjs scenarios plus the n
       args: [POOL_B, 1n, 1n],
       expiry,
     })
-    expect(result.allowed).toBe(false)
-    expect(result.reason).toMatch(/EQUAL/)
+    // The session policy no longer constrains the pool arg (see policyEngine module note): a
+    // deposit into any pool within the aggregate cap is in-policy here; YieldRouter.deposit's own
+    // `allowedPool` check is the boundary that rejects a non-whitelisted pool.
+    expect(result).toEqual({ allowed: true, reason: null })
   })
 
   test('over-cap amount is rejected (NEW — not covered by the delivered SP0 spike)', () => {

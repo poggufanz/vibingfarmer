@@ -273,6 +273,43 @@ describe('assertVaultDeposit', () => {
   })
 })
 
+const ROUTER = 'CROUTER'
+
+describe('assertVaultDeposit — funding_router grant/pull (one-popup grant flow)', () => {
+  it('rejects router.grant when SOROBAN_ROUTER_ADDRESS is unset (fail closed, unchanged)', () => {
+    const tx = depositTx(ROUTER, 'grant')
+    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr)).toThrow(RelayError) // default param
+    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '', '')).toThrow(RelayError)
+  })
+  it('rejects router.pull when SOROBAN_ROUTER_ADDRESS is unset (fail closed, unchanged)', () => {
+    expect(() => assertVaultDeposit(depositTx(ROUTER, 'pull'), VAULT, sdkAddr)).toThrow(RelayError)
+  })
+  it('passes router.grant when the router address is configured', () => {
+    const tx = depositTx(ROUTER, 'grant')
+    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '', ROUTER)).not.toThrow()
+  })
+  it('passes router.pull when the router address is configured', () => {
+    const tx = depositTx(ROUTER, 'pull')
+    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '', ROUTER)).not.toThrow()
+  })
+  it('rejects any other function on the configured router (no wider loosening)', () => {
+    const tx = depositTx(ROUTER, 'sweep')
+    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '', ROUTER)).toThrow(RelayError)
+  })
+  it('rejects grant/pull on a different contract even with the router configured', () => {
+    expect(() =>
+      assertVaultDeposit(depositTx('COTHER', 'pull'), VAULT, sdkAddr, '', '', '', ROUTER)
+    ).toThrow(RelayError)
+    expect(() =>
+      assertVaultDeposit(depositTx('COTHER', 'grant'), VAULT, sdkAddr, '', '', '', ROUTER)
+    ).toThrow(RelayError)
+  })
+  it('leaves the vault-deposit branch untouched when the router is configured', () => {
+    const tx = depositTx(VAULT, 'deposit')
+    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '', ROUTER)).not.toThrow()
+  })
+})
+
 const SAK_WASM = 'a12e8fa9621efd20315753bd4007d974390e31fbcb4a7ddc4dd0a0dec728bf2e'
 
 // A fake inner tx whose single op decodes to createContractV2 with the given wasm executable.

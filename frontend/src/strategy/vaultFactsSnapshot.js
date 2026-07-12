@@ -1,6 +1,8 @@
-// Dated, sourced eligibility facts. PLACEHOLDER mainnet values — replace with captured DeFiLlama
-// numbers + update CAPTURED_AT before the demo (see plan §14 / refreshVaultFacts.mjs). Provenance
-// honesty: asOf is the CAPTURE date, never Date.now().
+// Curated eligibility facts. NUMERIC facts (tvl) are live-refreshed at runtime by vaultFactsLive.js
+// (DeFiLlama), which overlays them at resolve() time; this module is the QUALITATIVE source of
+// record (audit, adminKey, oracleType, poolClass — no public API states these reliably) AND the
+// offline fallback when the live fetch fails. refreshVaultFacts.mjs remains the offline snapshot
+// updater. Provenance honesty: asOf is the CAPTURE date, never Date.now().
 export const CAPTURED_AT = Date.parse('2026-06-28T00:00:00Z')
 
 const f = (value) => ({ value, source: 'snapshot', asOf: CAPTURED_AT })

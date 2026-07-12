@@ -8,6 +8,7 @@ use crate::types::{AccountError, AgentScope, DataKey};
 use crate::{AgentAccount, AgentAccountArgs, AgentAccountClient};
 
 const DEPOSIT_FN: Symbol = symbol_short!("deposit");
+const PULL_FN: Symbol = symbol_short!("pull");
 const TTL_THRESHOLD: u32 = 17_280; // ~1 day at 5s ledgers
 const TTL_EXTEND: u32 = 518_400; // ~30 days
 
@@ -35,12 +36,27 @@ fn enforce(env: &Env, contexts: &Vec<Context>) -> Result<(), AccountError> {
         scope.spent_in_period = 0;
     }
 
-    // Validate every context; reject anything not a scoped deposit.
+    // funding_router that deployed this agent — absent for legacy direct deploys.
+    let router: Option<Address> = env.storage().instance().get(&DataKey::Router);
+
+    // Validate every context; reject anything not a scoped deposit or a funding
+    // `pull` on the deploying router.
     for ctx in contexts.iter() {
         let cc = match ctx {
             Context::Contract(cc) => cc,
             _ => return Err(AccountError::UnexpectedContexts),
         };
+        // Funding pull on the router that deployed this agent: allowed, and NOT
+        // counted toward spent_in_period — cap accounting stays deposit-only;
+        // funding is bounded by the owner's SEP-41 allowance at the token level.
+        if let Some(ref r) = router {
+            if cc.contract == *r {
+                if cc.fn_name != PULL_FN {
+                    return Err(AccountError::FnNotAllowed);
+                }
+                continue;
+            }
+        }
         if cc.contract != scope.vault {
             return Err(AccountError::VaultMismatch);
         }

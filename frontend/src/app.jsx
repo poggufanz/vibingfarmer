@@ -54,7 +54,11 @@ import {
   SOROBAN_STRATEGY_1_ADDRESS,
   SOROBAN_BLEND_POOL_ADDRESS,
   SOROBAN_KEEPER_ADDRESS,
+  SOROBAN_DECIMALS,
+  USE_FUNDING_ROUTER,
 } from './stellar/config.js'
+import GrantPanel from './components/GrantPanel.jsx'
+import { revokeGrant } from './stellar/grant.js'
 import { fetchKeeperEvents } from './stellar/keeperEvents.js'
 import {
   readPricePerShare,
@@ -74,8 +78,12 @@ import {
   mergePositions,
   applyChainPositions,
 } from './positionsStore.js'
-
-import { diffMarket, fastReeval, loadLatestSnapshot, saveSnapshot } from './strategy/councilMonitor.js'
+import {
+  diffMarket,
+  fastReeval,
+  loadLatestSnapshot,
+  saveSnapshot,
+} from './strategy/councilMonitor.js'
 import SkillDrawer from './components/SkillDrawer.jsx'
 import HistoryPanel from './components/HistoryPanel.jsx'
 import { saveTransaction } from './history.js'
@@ -114,6 +122,7 @@ import { buildStrategyState, enforceActionSpace, scoreReward } from './strategy/
 import { runSimulation, allocationsFromStrategy } from './strategy/simulation.js'
 import { evaluateGates } from './strategy/gates.js'
 import { createMonitorLoop } from './strategy/monitorLoop.js'
+import { primeVaultFacts } from './strategy/vaultFactsLive.js'
 import { councilVerdict } from './strategy/council.js'
 import { reflect } from './strategy/reflector.js'
 import { increment as playbookIncrement, weight as playbookWeight } from './strategy/playbook.js'
@@ -123,8 +132,20 @@ import { mintToken } from './strategy/eligibilityGate.js'
 import { buildEligibilitySentence, vaultEligibilityLabel } from './strategy/eligibilitySentence.js'
 import { SNAPSHOT } from './strategy/vaultFacts.js'
 import { recordDecision, getDecisions, getDecisionSummary } from './strategy/decisionLog.js'
-import { resolveCouncilConflict, councilSpecialistVerdict, proposerVerdict, riskComplianceVerdict, validatorVerdict, askVeniceJson } from './venice.js'
-import { councilReview, buildCouncilInput, councilDebate, buildDebateInput } from './strategy/councilReview.js'
+import {
+  resolveCouncilConflict,
+  councilSpecialistVerdict,
+  proposerVerdict,
+  riskComplianceVerdict,
+  validatorVerdict,
+  askVeniceJson,
+} from './venice.js'
+import {
+  councilReview,
+  buildCouncilInput,
+  councilDebate,
+  buildDebateInput,
+} from './strategy/councilReview.js'
 import { councilOutcome } from './strategy/outcome.js'
 import { proposeRule } from './strategy/curator.js'
 import { upsertSeeds, getRules, addRule, replaceAll } from './strategy/ruleStore.js'
@@ -304,7 +325,7 @@ const mapVeniceToStrategy = (veniceResult, amount, risk) => {
       riskTier: v.risk_tier, // AI metadata → UI
       yieldSource: v.yield_source_type, // AI metadata → UI
       vault: {
-        name: v.name || live.name || cat.name || `MockVault ${i + 1}`,
+        name: v.name || live.name || cat.name || `Pool ${i + 1}`,
         protocol: v.protocol || live.protocol || cat.protocol || PROTOCOLS[i] || 'aave-v3',
         apy: String(v.expected_apy ?? live.apy ?? cat.apy ?? 4.8),
         drawdown: live.drawdown || cat.drawdown || '-1.8',
@@ -390,7 +411,12 @@ const App = () => {
   const [debateRunning, setDebateRunning] = useS(false) // debate in progress
 
   // Continuous monitor state
-  const [monitorStatus, setMonitorStatus] = useS({ lastCheck: null, level: 'idle', score: 0, reason: '' })
+  const [monitorStatus, setMonitorStatus] = useS({
+    lastCheck: null,
+    level: 'idle',
+    score: 0,
+    reason: '',
+  })
   const monitorTimerRef = useR(null)
   const [rawStrategy, setRawStrategy] = useS(null) // raw Venice result (carries strategyHash) for on-chain attestation
   const [strategyAttestation, setStrategyAttestation] = useS(null)
@@ -409,6 +435,12 @@ const App = () => {
 
   const [permPhase, setPermPhase] = useS('idle')
   const [permError, setPermError] = useS(null)
+  // One-popup grant flow (router path). grantPhase drives the GrantPanel button label; the chosen
+  // budget/duration are stashed in a ref so startExecution reads them synchronously when it builds
+  // the orchestrator (state updates are async).
+  const [grantPhase, setGrantPhase] = useS('idle')
+  const [grantError, setGrantError] = useS(null)
+  const grantCfgRef = useR(null)
   const [permActive, setPermActive] = useS(false)
   // Per-agent on-chain scopes (single-source summary + Revoke). Keyed by worker agent address.
   const [scopes, setScopes] = useS([])
@@ -467,6 +499,12 @@ const App = () => {
     return () => clearInterval(id)
   }, [])
 
+  // Prime live DeFiLlama numerics for the eligibility gate (fire-and-forget; the gate falls back
+  // to the curated snapshot until it lands). Cached 6h in localStorage — ≤1 fetch burst/session.
+  useE(() => {
+    primeVaultFacts()
+  }, [])
+
   // execution: map agentId -> { status, steps, hashes, memory, metrics }
   const [execMap, setExecMap] = useS({})
   const [openAgentId, setOpenAgentId] = useS(null)
@@ -492,6 +530,19 @@ const App = () => {
   const [skipLanding, setSkipLanding] = useS(
     () => localStorage.getItem('yv_skip_landing') === 'true'
   )
+
+  // Synchronize localStorage flags on router pathname change to prevent
+  // navigation locks from public pages back to strategy layout.
+  useE(() => {
+    const isSkip = localStorage.getItem('yv_skip_landing') === 'true'
+    if (isSkip !== skipLanding) {
+      setSkipLanding(isSkip)
+    }
+    const isOnboard = localStorage.getItem('yv_onboarded') === 'true'
+    if (isOnboard !== onboarded) {
+      setOnboarded(isOnboard)
+    }
+  }, [location.pathname])
 
   // Strategy Attestation — NON-BLOCKING, best-effort. Fires once a wallet provider
   // exists (post-connect) and the AI strategy carries a deterministic hash. Any
@@ -1153,11 +1204,11 @@ const App = () => {
     return { fusedSentence, rows }
   }, [strategy])
 
-  // AI Council deliberation for the proposed allocation. Async (3 parallel AI
-  // calls + possible synthesis call) so it runs as an effect, not a useMemo. Uses
-  // the SAME live signals as the simulation panel. AI-only: each specialist retries
-  // once; if the provider still fails, the council reports 'unavailable' and the
-  // panel offers a retry — no fabricated verdict.
+  // Auto-run legacy council when strategy becomes ready (backward compat) — async (3 parallel
+  // AI calls + possible synthesis call) so it runs as an effect, not a useMemo. Uses the SAME
+  // live signals as the simulation panel. AI-only: each specialist retries once; if the provider
+  // still fails, the council reports 'unavailable' and the panel offers a retry — no fabricated
+  // verdict. For the new debate council, see handleRunCouncil below.
   useE(() => {
     if (!strategy?.agents?.length) {
       setCouncil(undefined)
@@ -1521,7 +1572,12 @@ const App = () => {
       blendedApy: snapshot?.marketData?.blendedApy ?? null,
     }
     const diff = diffMarket(currentData, snapshot, settings)
-    setMonitorStatus({ lastCheck: Date.now(), level: diff.level, score: diff.score, reason: diff.reasons[0] || '' })
+    setMonitorStatus({
+      lastCheck: Date.now(),
+      level: diff.level,
+      score: diff.score,
+      reason: diff.reasons[0] || '',
+    })
 
     if (diff.level === 'skip') return
 
@@ -1532,7 +1588,11 @@ const App = () => {
       if (result.passed) {
         saveSnapshot(result, currentData)
         if (settings.autoApprove) return
-        setMonitorStatus((s) => ({ ...s, result: 'approved', permissionSentence: result.permissionSentence }))
+        setMonitorStatus((s) => ({
+          ...s,
+          result: 'approved',
+          permissionSentence: result.permissionSentence,
+        }))
         addLog({
           event: 'OrchestratorPlanned',
           meta: `Monitor re-eval · fast pass · confidence ${(result.confidence * 100).toFixed(0)}%`,
@@ -1562,8 +1622,14 @@ const App = () => {
       maxDrawdownPct: agentSettings.maxDrawdownPct,
     })
         const sim = runSimulation(allocationsFromStrategy(strategy), state, {
-          runs: 200, horizonDays: 30, seed: 1,
-          context: { turbulence: currentData.turbulence, apyTrendPct: 0, gasGwei: currentData.gasGwei },
+          runs: 200,
+          horizonDays: 30,
+          seed: 1,
+          context: {
+            turbulence: currentData.turbulence,
+            apyTrendPct: 0,
+            gasGwei: currentData.gasGwei,
+          },
         })
         const input = buildDebateInput(strategy, sim, state)
         const result = await councilDebate(input, {
@@ -1576,7 +1642,11 @@ const App = () => {
           convergenceThreshold: 0.15,
         })
         saveSnapshot(result, currentData)
-        setMonitorStatus((s) => ({ ...s, result: result.verdict === 'keep' ? 'approved' : 'rejected', debateResultId: Date.now() }))
+        setMonitorStatus((s) => ({
+          ...s,
+          result: result.verdict === 'keep' ? 'approved' : 'rejected',
+          debateResultId: Date.now(),
+        }))
         addLog({
           event: result.verdict === 'keep' ? 'OrchestratorPlanned' : 'AgentFailed',
           meta: `Monitor full debate · ${result.verdict} · ${result.iterations} iters · converged: ${result.converged}`,
@@ -1691,6 +1761,42 @@ const App = () => {
     setStage('permission')
   }
 
+  /* ----- GRANT (step 04, router one-popup path) ----- */
+  // "Grant & run": stash the user's budget + window, then advance to execute. The SINGLE wallet
+  // popup (router.grant) fires inside orchestrator.dispatch → setupViaRouter; every later worker
+  // funding is a relayed router.pull (0 popups).
+  const handleGrantAndRun = ({ budget, durationSeconds }) => {
+    grantCfgRef.current = { budgetUsdc: budget, durationSeconds }
+    setGrantError(null)
+    setGrantPhase('granting')
+    setPermActive(true)
+    setPermExpiresAt(Date.now() + durationSeconds * 1000)
+    addLog({
+      event: 'PermissionGranted',
+      meta: `router grant · ${budget} USDC · ${durationSeconds}s`,
+    })
+    setStage('execute')
+    startExecution()
+  }
+
+  // Kill switch — zero the on-chain allowance in one popup (works even if the relayer is down).
+  const handleRevokeGrant = async () => {
+    if (!realAddress) return
+    setGrantError(null)
+    setGrantPhase('revoking')
+    try {
+      const { hash } = await revokeGrant({ owner: realAddress })
+      addLog({
+        event: 'PermissionRevoked',
+        meta: `router allowance set to 0 · ${hash?.slice(0, 10)}…`,
+      })
+    } catch (err) {
+      setGrantError(err?.message || 'revoke failed')
+    } finally {
+      setGrantPhase('idle')
+    }
+  }
+
   /* ----- PERMISSION (step 04) ----- */
   const handleGrant = () => setPermPhase('prompting')
 
@@ -1734,8 +1840,14 @@ const App = () => {
   }
 
   const startExecution = () => {
-    if (!strategy || !realAddress) return
-    setMonitorStatus({ level: 'skip', score: 0, reason: 'Starting execution...', lastCheck: Date.now(), result: 'approved' })
+    if (!strategy) return
+    setMonitorStatus({
+      level: 'skip',
+      score: 0,
+      reason: 'Starting execution...',
+      lastCheck: Date.now(),
+      result: 'approved',
+    })
 
     // Pre-compute sessionId and build hex→designId map BEFORE orchestrator starts.
     // Orchestrator uses makeAgentId(index, sessionId) — same function, same sessionId = same hex.
@@ -1775,11 +1887,22 @@ const App = () => {
       })),
     }
 
+    // Router path: pass the user's chosen grant budget (USDC → base units) + window so the ONE
+    // grant popup sizes the allowance. null on the legacy path → orchestrator defaults (budget =
+    // run total, window = SCOPE_TTL_SECONDS).
+    const grantCfg = grantCfgRef.current
+    const grantBudgetUnits =
+      grantCfg?.budgetUsdc != null
+        ? BigInt(Math.floor(grantCfg.budgetUsdc * 10 ** SOROBAN_DECIMALS))
+        : null
+
     const orch = new OrchestratorAgent({
       user: realAddress,
       veniceAuth: veniceAuth,
       devApiKey: devApiKey || null,
       sessionId,
+      grantBudgetUnits,
+      grantDurationSeconds: grantCfg?.durationSeconds || null,
       onEvent: (evName, data) => {
         if (evName === 'skill-gen-failed') {
           const dId = agentMapRef.current?.[data.agentId] || data.agentId
@@ -2001,7 +2124,10 @@ const App = () => {
       })
       .catch((err) => {
         console.warn('[app] orchestrator dispatch failed (simulation mode):', err?.message || err)
-        addLog({ event: 'AgentFailed', meta: `orchestrator error (simulation): ${err?.message || err}` })
+        addLog({
+          event: 'AgentFailed',
+          meta: `orchestrator error (simulation): ${err?.message || err}`,
+        })
         setExecMap((prev) => {
           const next = { ...prev }
           Object.keys(next).forEach((id) => {
@@ -2132,11 +2258,20 @@ const App = () => {
     setLogs([])
     agentMapRef.current = {}
 
-    if (overrideAmount !== undefined && overrideAmount !== null && (typeof overrideAmount === 'number' || typeof overrideAmount === 'string' || !isNaN(Number(overrideAmount)))) {
+    if (
+      overrideAmount !== undefined &&
+      overrideAmount !== null &&
+      (typeof overrideAmount === 'number' ||
+        typeof overrideAmount === 'string' ||
+        !isNaN(Number(overrideAmount)))
+    ) {
       setAmount(String(overrideAmount))
       setStrategyPhase('thinking')
       setThinkingPhase(0)
-      addLog({ event: 'OrchestratorPlanned', meta: `${overrideAmount} usdc · ${risk} risk · planning` })
+      addLog({
+        event: 'OrchestratorPlanned',
+        meta: `${overrideAmount} usdc · ${risk} risk · planning`,
+      })
     } else {
       setStrategyPhase('input')
       setThinkingPhase(0)
@@ -2338,7 +2473,18 @@ const App = () => {
           />
         )
       case 'permission':
-        return (
+        // Router path: ONE grant popup (budget + window) replaces the per-agent batch. Legacy path
+        // (router unset / VITE_LEGACY_AGENT_SETUP=1) keeps the original PermissionCard flow.
+        return USE_FUNDING_ROUTER ? (
+          <GrantPanel
+            defaultBudget={strategy?.total ?? 100}
+            agentCount={strategy?.agents?.length ?? 0}
+            phase={grantPhase}
+            error={grantError}
+            onGrant={handleGrantAndRun}
+            onRevoke={handleRevokeGrant}
+          />
+        ) : (
           <PermissionCard
             strategy={strategy}
             eligibility={eligibility}
@@ -2601,24 +2747,19 @@ const App = () => {
                           <LoopStatusPanel
                             running={loopRef.current?.isRunning() || false}
                             summary={getJournalSummary()}
-                            rows={getCycles().slice(0, 8)}
+                            rows={getCycles().slice(0, 40)}
                             phase={loopPhase}
                             nextTickAt={loopRef.current?.getNextTickAt() || null}
                             heartbeatMs={
                               loopRef.current?.getHeartbeatMs() ||
                               (agentSettings.apyInterval || 10) * 60 * 1000
                             }
+                            decisionsRows={getDecisions().slice(0, 30)}
+                            decisionsSummary={getDecisionSummary()}
                           />
                         )
                       }
-                      decisionPanel={
-                        agentEnabled && (
-                          <DecisionLogPanel
-                            rows={getDecisions().slice(0, 8)}
-                            summary={getDecisionSummary()}
-                          />
-                        )
-                      }
+                      decisionPanel={null}
                       keeperPanel={
                         <>
                           <KeeperPanel

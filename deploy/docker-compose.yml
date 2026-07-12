@@ -1,0 +1,32 @@
+# deploy/docker-compose.yml — Oracle VM stack: relayer + lifeboat radar + cloudflared tunnel.
+# No public ports: the relayer is reachable ONLY through the tunnel (the Cloudflare Pages proxy
+# adds origin allowlist + rate limit + the shared key the relayer enforces on x-vf-relayer-key).
+# Build contexts point straight at each service dir — both images are self-contained (relayer
+# reads addresses from env; radar reads its own env), so neither needs a repo-root build context.
+services:
+  relayer:
+    build:
+      context: ../relayer
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      RELAYER_DB_PATH: /data/relayer.db
+    volumes:
+      - relayer-data:/data
+    # NOTE: no `ports:` — tunnel-only by design.
+
+  radar:
+    build:
+      context: ../keeper
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARED_TUNNEL_TOKEN}
+
+volumes:
+  relayer-data:

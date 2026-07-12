@@ -32,6 +32,10 @@ SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
 STELLAR_NETWORK_PASSPHRASE=Test SDF Network ; September 2015
 SOROBAN_VAULT_ADDRESS=CB5VKYDUIYX3RZWGVLKKNBPG7V7Z5JIHF2QPNQKWKAHVA3IPSLFZJDYU
 
+# funding_router for the one-popup grant flow; unset = router relaying disabled
+# (relay then sponsors only router.grant / router.pull on this exact contract)
+SOROBAN_ROUTER_ADDRESS=CBEI5VJKKWLXKQUUUETBAPZSQQLH7I57TSIDTMV4WJMBKIGVF7NSNOFY
+
 # Agents the relay will sponsor F11 exit-leg-2 token.transfer calls for (comma-separated,
 # exact match, fail-closed if empty). Demo agent + your local smoke agent (SMOKE_AGENT_ADDRESS):
 SOROBAN_AGENT_ALLOWLIST=CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC,C...
@@ -57,3 +61,8 @@ TRANSAK_API_KEY=your_transak_api_key
 TRANSAK_ACCESS_TOKEN=your_transak_access_token
 TRANSAK_ENVIRONMENT=STAGING
 TRANSAK_REFERRER_DOMAIN=vibing-farmer.pages.dev
+
+# Cross-chain relayer proxy (production). Tunnel hostname of the relayer VM + the shared secret
+# the relayer requires on x-vf-relayer-key (must equal the VM's RELAYER_PROXY_KEY).
+RELAYER_ORIGIN=https://vf-relayer.example.com
+RELAYER_PROXY_KEY=change-me

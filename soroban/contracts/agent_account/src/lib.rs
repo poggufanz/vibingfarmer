@@ -21,13 +21,26 @@ pub struct AgentAccount;
 impl AgentAccount {
     /// Deployed once per worker agent. `owner` = the human EOA that granted the
     /// scope; `signer` = the ephemeral ed25519 session pubkey the worker signs with.
+    /// `router` = the funding_router factory that deployed this agent (`None` for
+    /// legacy direct deploys). When set, the session key may additionally authorize
+    /// `pull` on that router — funding is bounded by the owner's SEP-41 allowance to
+    /// the router at the token level, never by (nor counted against) the deposit cap.
     /// The constructor also self-approves the vault to pull up to `cap_per_period` of
     /// the asset, so the deployed vault's `transfer_from(spender=vault, from=agent)`
     /// works without the (deposit-only) session key ever signing an `approve`.
-    pub fn __constructor(env: Env, owner: Address, signer: BytesN<32>, scope: AgentScope) {
+    pub fn __constructor(
+        env: Env,
+        owner: Address,
+        signer: BytesN<32>,
+        scope: AgentScope,
+        router: Option<Address>,
+    ) {
         env.storage().instance().set(&DataKey::Owner, &owner);
         env.storage().instance().set(&DataKey::Signer, &signer);
         env.storage().instance().set(&DataKey::Scope, &scope);
+        if let Some(ref r) = router {
+            env.storage().instance().set(&DataKey::Router, r);
+        }
 
         // Invoker-contract auth: authorize THIS contract's own sub-invocation of token.approve.
         // Bypasses __check_auth (that path is reserved for the session key + deposit only).
@@ -146,6 +159,11 @@ impl AgentAccount {
 
     pub fn signer(env: Env) -> BytesN<32> {
         env.storage().instance().get(&DataKey::Signer).unwrap()
+    }
+
+    /// The funding_router that deployed this agent, `None` for legacy direct deploys.
+    pub fn router(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::Router)
     }
 
     pub fn version(_env: Env) -> u32 {

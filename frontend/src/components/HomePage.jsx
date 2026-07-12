@@ -520,9 +520,10 @@ export default function HomePage({
                       onClick={() => handleFarm(v)}
                       style={{
                         padding: '12px 14px',
-                        background: 'var(--bg-base)',
-                        border: '1px solid var(--border)',
-                        borderRadius: 8,
+                        background: 'linear-gradient(135deg, var(--bg-elev) 0%, var(--bg-card) 100%)',
+                        border: '1px solid var(--border-strong)',
+                        borderRadius: 'var(--radius-md, 8px)',
+                        boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
                         cursor: 'pointer',
                         display: 'flex',
                         alignItems: 'center',

@@ -58,6 +58,35 @@ describe('WorkerAgent (Stellar)', () => {
     )
   })
 
+  test("emits the swap step as SKIPPED so the UI's 3-step progress can reach 3/3 (6/9 freeze regression)", async () => {
+    // The exec screen counts swap/approve/deposit per agent; 'completed' confirms approve +
+    // deposit, but swap is only ever set by a worker step event. Without this emission every
+    // agent tops out at 2/3 → a 3-agent run freezes at 6/9 "waiting for relayer" forever.
+    runAgentDeposit.mockResolvedValue({ hash: 'abc123', status: 'SUCCESS' })
+    readVaultShares.mockResolvedValueOnce(0n).mockResolvedValue(50_000_000n)
+    const events = []
+    const w = new WorkerAgent({
+      agentId: 'worker-1',
+      user: 'GUSER',
+      vault: 'CCDX...',
+      amount: 50_000_000n,
+      sessionId: 's1b',
+      onEvent: (n, d) => events.push({ n, d }),
+      agentAddress: 'CCRG...AGENT',
+      sessionKey: sessionKey(),
+      eligibilityToken: goodToken(),
+    })
+    await w.execute()
+    const swapIdx = events.findIndex(
+      (e) => e.n === 'step' && e.d.step === 'swap' && e.d.status === 'skipped'
+    )
+    const depositIdx = events.findIndex((e) => e.n === 'step' && e.d.step === 'deposit')
+    const completedIdx = events.findIndex((e) => e.n === 'completed')
+    expect(swapIdx).toBeGreaterThan(-1) // emitted at all…
+    expect(swapIdx).toBeLessThan(depositIdx) // …before the deposit step…
+    expect(completedIdx).toBeGreaterThan(swapIdx) // …and the run still completes.
+  })
+
   test('fails honestly when shares did not increase', async () => {
     runAgentDeposit.mockResolvedValue({ hash: 'abc', status: 'SUCCESS' })
     readVaultShares.mockResolvedValue(0n) // baseline 0, stays 0 → no mint
