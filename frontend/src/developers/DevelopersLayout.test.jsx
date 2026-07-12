@@ -42,4 +42,24 @@ describe('DevelopersLayout', () => {
     renderAt('/developers/keys')
     expect(screen.getByRole('button', { name: /connect wallet/i })).toBeTruthy()
   })
+
+  it('restores an unexpired session from sessionStorage (remount ≠ logout)', () => {
+    sessionStorage.setItem(
+      'vf_portal_session',
+      JSON.stringify({ jwt: 'JWT', address: 'GAAA', expiresAt: Date.now() + 60000 })
+    )
+    renderAt('/developers/keys')
+    expect(screen.queryByRole('button', { name: /connect wallet/i })).toBeNull()
+    sessionStorage.clear()
+  })
+
+  it('drops an expired session', () => {
+    sessionStorage.setItem(
+      'vf_portal_session',
+      JSON.stringify({ jwt: 'JWT', address: 'GAAA', expiresAt: Date.now() - 1 })
+    )
+    renderAt('/developers/keys')
+    expect(screen.getByRole('button', { name: /connect wallet/i })).toBeTruthy()
+    sessionStorage.clear()
+  })
 })

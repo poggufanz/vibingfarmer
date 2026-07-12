@@ -61,14 +61,29 @@ export function ConnectGate({ connecting, onConnect }) {
 }
 
 const NAV = [
-  { to: '', end: true, label: 'Overview' },
-  { to: 'keys', label: 'API keys' },
-  { to: 'usage', label: 'Usage' },
-  { to: 'docs', label: 'Docs' },
+  { to: '/developers', end: true, label: 'Overview' },
+  { to: '/developers/keys', label: 'API keys' },
+  { to: '/developers/usage', label: 'Usage' },
+  { to: '/developers/docs', label: 'Docs' },
 ]
 
+// Portal JWT survives route changes / remounts for its 1-hour lifetime. Without this the
+// session lived in component state only, so leaving /developers showed "not connected" again.
+const SESSION_KEY = 'vf_portal_session'
+const SESSION_TTL_MS = 60 * 60 * 1000
+
+function loadSession() {
+  try {
+    const s = JSON.parse(sessionStorage.getItem(SESSION_KEY))
+    if (s?.jwt && s.expiresAt > Date.now()) return s
+  } catch {
+    /* corrupt/absent — fall through */
+  }
+  return null
+}
+
 export default function DevelopersLayout() {
-  const [session, setSession] = useState(null) // { jwt, address }
+  const [session, setSession] = useState(loadSession) // { jwt, address, expiresAt }
   const [connecting, setConnecting] = useState(false)
   const [error, setError] = useState('')
 
@@ -78,7 +93,9 @@ export default function DevelopersLayout() {
       setConnecting(true)
       const { address, signChallenge } = await connectWallet()
       const jwt = await signIn({ account: address, signChallenge })
-      setSession({ jwt, address })
+      const s = { jwt, address, expiresAt: Date.now() + SESSION_TTL_MS }
+      sessionStorage.setItem(SESSION_KEY, JSON.stringify(s))
+      setSession(s)
     } catch (e) {
       setError(e.message)
     } finally {

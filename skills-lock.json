@@ -170,6 +170,12 @@
       "skillPath": "skills/.curated/pdf/SKILL.md",
       "computedHash": "af1e0791f5356b6de053e6b97d7703fe0d7ea1997371b9023afd4720bebcf93f"
     },
+    "pitch-deck": {
+      "source": "ailabs-393/ai-labs-claude-skills",
+      "sourceType": "github",
+      "skillPath": "packages/skills/pitch-deck/SKILL.md",
+      "computedHash": "c77bf05c3cfb5b51ce7c406be1c52da2e35c64f3c0aa5f6cdb94fe7fac656dcf"
+    },
     "privacy-policy": {
       "source": "phuryn/pm-skills",
       "sourceType": "github",

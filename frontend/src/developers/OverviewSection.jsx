@@ -55,10 +55,10 @@ export default function OverviewSection({ session }) {
       )}
 
       <div className="action-row" style={{ marginTop: 32 }}>
-        <Link className="btn btn-primary btn-lg" to="../keys" relative="path">
+        <Link className="btn btn-primary btn-lg" to="/developers/keys">
           Create API key
         </Link>
-        <Link className="btn btn-ghost btn-lg" to="../docs" relative="path">
+        <Link className="btn btn-ghost btn-lg" to="/developers/docs">
           View documentation
         </Link>
       </div>
