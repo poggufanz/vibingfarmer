@@ -38,6 +38,7 @@ import {
 } from './stellar/index.js'
 import { generateStrategy } from './venice.js'
 import { toDisplay, toBaseUnits } from './stellar/format.js'
+import { queryAgentsByOwner, discoverAgentsFromHorizon, discoverAgentsFromVault } from './stellar/events.js'
 import { saveResume, loadResume, clearResume } from './strategy/sessionResume.js'
 import { attestStrategyOnChain, formatAttestation } from './attestation.js'
 import OnboardingFlow from './components/OnboardingFlow.jsx'
@@ -74,6 +75,8 @@ import { runAutonomousExit } from './agents/exitExecutor.js'
 import {
   loadPersistedPositions,
   persistPositions,
+  loadDeployedAgents,
+  saveDeployedAgents,
   reconcilePositionsFromChain,
   mergePositions,
   applyChainPositions,
@@ -173,7 +176,7 @@ const AGENT_SETTINGS_DEFAULTS = {
   emergencyPct: 50,
   riskMonitoring: true,
   positionInterval: 5,
-  apyInterval: 10,
+  apyInterval: 2,
   riskInterval: 15,
   rewardInterval: 5,
   maxDrawdownPct: 10.0,
@@ -329,6 +332,7 @@ const mapVeniceToStrategy = (veniceResult, amount, risk) => {
         protocol: v.protocol || live.protocol || cat.protocol || PROTOCOLS[i] || 'aave-v3',
         apy: String(v.expected_apy ?? live.apy ?? cat.apy ?? 4.8),
         drawdown: live.drawdown || cat.drawdown || '-1.8',
+        risk: v.risk_tier || cat.risk || 'medium',
         addr:
           cat.address ||
           VAULT_CATALOG.find((c) => c.protocol === (v.protocol || ''))?.address ||
@@ -511,6 +515,7 @@ const App = () => {
   const [logs, setLogs] = useS([])
   const logIdRef = useR(0)
   const agentMapRef = useR({})
+  const deployedAgentsRef = useR([])
 
   // Real Web3 state
   const [realAddress, setRealAddress] = useS(null)
@@ -523,6 +528,7 @@ const App = () => {
   const keeperLedgerRef = useR(undefined)
   // Tracks which user addresses have had session key setup done (survives re-renders).
   const [loopTick, setLoopTick] = useS(0)
+  const [loopRestartTick, setLoopRestartTick] = useS(0) // incremented to force loop restart after discovery
   const [loopPhase, setLoopPhase] = useS(null) // live pipeline phase from monitorLoop onPhase
   const [veniceAuth, setVeniceAuth] = useS(null)
   const [onboarded, setOnboarded] = useS(() => localStorage.getItem('yv_onboarded') === 'true')
@@ -652,21 +658,44 @@ const App = () => {
       hydratedRef.current = realAddress
     }, 0)
     let alive = true
-    reconcilePositionsFromChain(realAddress)
-      .then((chain) => {
-        if (!alive || !chain) return // null = no RPC / all reads failed → keep cache
-        // Cold reconnect: cached positions are from a PRIOR session, so they're mined and
-        // the chain is authoritative. applyChainPositions replaces balances and PRUNES any
-        // vault the chain reports as '0' (withdrawn) — this is what heals a stale cached
-        // balance that lingered after a withdraw. Failed reads stay absent (not '0'), so a
-        // transient RPC error can't wipe a real position. The persist effect writes the result.
-        setAgentData((d) => ({
-          ...d,
-          positions: applyChainPositions(d.positions, chain),
-          lastUpdated: Date.now(),
-        }))
-      })
-      .catch(() => {})
+    const persistedAgents = loadDeployedAgents(realAddress);
+    (async () => {
+      let agents = persistedAgents
+      // No cached agents → discover from on-chain events.
+      // Strategy: Registry first (fast, single call), then vault deposit event scan
+      // (fallback for agents deployed with registryAuthorize=false, the default).
+      if (!agents.length) {
+        console.log('[app] no cached agents, discovering...')
+        agents = await queryAgentsByOwner(realAddress).catch((e) => { console.warn('[app] registry discovery error:', e); return [] })
+        console.log('[app] registry result:', agents.length)
+        if (!agents.length) {
+          agents = await discoverAgentsFromHorizon(realAddress).catch((e) => { console.warn('[app] horizon discovery error:', e); return [] })
+          console.log('[app] horizon result:', agents.length)
+        }
+        if (!agents.length) {
+          agents = await discoverAgentsFromVault(realAddress).catch((e) => { console.warn('[app] vault discovery error:', e); return [] })
+          console.log('[app] vault discovery result:', agents.length)
+        }
+        if (agents.length) {
+          saveDeployedAgents(realAddress, agents)
+          deployedAgentsRef.current = agents
+        }
+      }
+      if (!alive) return
+      console.log('[app] reconciling with agents:', agents)
+      const chain = await reconcilePositionsFromChain(realAddress, { agents }).catch((e) => { console.warn('[app] reconcile error:', e); return null })
+      if (!alive || !chain) return // null = no RPC / all reads failed → keep cache
+      // Cold reconnect: cached positions are from a PRIOR session, so they're mined and
+      // the chain is authoritative. applyChainPositions replaces balances and PRUNES any
+      // vault the chain reports as '0' (withdrawn) — this is what heals a stale cached
+      // balance that lingered after a withdraw. Failed reads stay absent (not '0'), so a
+      // transient RPC error can't wipe a real position. The persist effect writes the result.
+      setAgentData((d) => ({
+        ...d,
+        positions: applyChainPositions(d.positions, chain),
+        lastUpdated: Date.now(),
+      }))
+    })()
     return () => {
       alive = false
       clearTimeout(hydrateTimer)
@@ -694,7 +723,31 @@ const App = () => {
     if (!realAddress) return
     let alive = true
     const sync = async () => {
-      const chain = await reconcilePositionsFromChain(realAddress).catch(() => null)
+      let storedAgents = loadDeployedAgents(realAddress)
+      let pollAgents = storedAgents.length ? storedAgents : (deployedAgentsRef.current || [])
+      // Discover from on-chain events when no cached agent addresses.
+      // Strategy: Registry first (fast, single call), then vault deposit event scan
+      // (fallback for agents deployed with registryAuthorize=false, the default).
+      if (!pollAgents.length) {
+        console.log('[poll] no cached agents, discovering...')
+        storedAgents = await queryAgentsByOwner(realAddress).catch((e) => { console.warn('[poll] registry error:', e); return [] })
+        console.log('[poll] registry result:', storedAgents.length)
+        if (!storedAgents.length) {
+          storedAgents = await discoverAgentsFromHorizon(realAddress).catch((e) => { console.warn('[poll] horizon error:', e); return [] })
+          console.log('[poll] horizon result:', storedAgents.length)
+        }
+        if (!storedAgents.length) {
+          storedAgents = await discoverAgentsFromVault(realAddress).catch((e) => { console.warn('[poll] vault error:', e); return [] })
+          console.log('[poll] vault discovery result:', storedAgents.length)
+        }
+        if (storedAgents.length) {
+          saveDeployedAgents(realAddress, storedAgents)
+          deployedAgentsRef.current = storedAgents
+          pollAgents = storedAgents
+        }
+      }
+      console.log('[poll] reconciling with agents:', pollAgents)
+      const chain = await reconcilePositionsFromChain(realAddress, { agents: pollAgents }).catch((e) => { console.warn('[poll] reconcile error:', e); return null })
       if (alive && chain) {
         setAgentData((d) => ({
           ...d,
@@ -806,6 +859,19 @@ const App = () => {
       } catch {
         if (alive) setLifeboatState(null)
       }
+      // Council monitor — check market drift setiap 15s tick.
+      if (alive && agentSettings.riskMonitoring && Object.keys(agentData.positions).length) {
+        try {
+          const apyByVault = {}
+          for (const addr of Object.keys(agentData.positions)) {
+            const meta = VAULT_CATALOG.find((v) => v.addr.toLowerCase() === addr.toLowerCase())
+            if (meta?.apy) apyByVault[addr] = meta.apy
+          }
+          await runCouncilMonitorCheck(agentSettings, apyByVault)
+        } catch (e) {
+          console.warn('[council] monitor check failed:', e)
+        }
+      }
     }
     sync() // once on connect
     // ponytail: 15s poll. A Soroban event subscription would make it instant if needed.
@@ -866,11 +932,15 @@ const App = () => {
     }
     if (ev.kind === 'market_signal') {
       const settings = loadSettings()
-      if (!settings.monitorEnabled || !strategy?.agents?.length) {
+      if (!settings.monitorEnabled) {
         setMonitorStatus((s) => ({ ...s, lastCheck: ev.timestamp, level: 'disabled' }))
         return
       }
-      runCouncilMonitorCheck(settings, ev.apyByVault)
+      // 15s poll handles council monitor even without strategy (page refresh).
+      // Only run the check here when a strategy exists (normal session flow).
+      if (strategy?.agents?.length) {
+        runCouncilMonitorCheck(settings, ev.apyByVault)
+      }
       return
     }
     if (ev.kind === 'harvest_executed') {
@@ -933,9 +1003,13 @@ const App = () => {
     })
   }
 
-  // Start after deposit (positions exist), stop on disable / disconnect / leaving 'done'
+  // Start when positions exist (cached from a previous deposit) OR stage is 'done' (just finished
+  // a strategy). Stops on disable / disconnect. Page refresh resets stage → 'strategy' but the
+  // positions cache (loadPersistedPositions) restores the active vault list, so we check that.
   useE(() => {
-    if (stage !== 'done' || !agentEnabled || !realAddress || !strategy?.agents?.length) return
+    if (!agentEnabled || !realAddress) return
+    const hasPositions = Object.keys(agentData.positions).length > 0
+    if (!hasPositions && stage !== 'done') return
     upsertSeeds() // ACE: install seed rules + fold any legacy counters once
     // Monitor EVERY held position (accumulated across deposits), not just the latest
     // strategy — otherwise a new deposit would stop the agent watching earlier vaults.
@@ -967,7 +1041,7 @@ const App = () => {
         buildStrategyState({
           amountUsdc: Number(amount) || 0,
           riskLevel: risk,
-          numVaults: strategy.agents.length,
+          numVaults: strategy?.agents?.length || Object.keys(agentData.positions).length || 1,
           vaultData: VAULT_CATALOG,
           marketContext: marketLive,
           positions: agentData.positions,
@@ -1018,11 +1092,12 @@ const App = () => {
         recordDecision(ctx)
         setLoopTick((t) => t + 1)
       },
-      heartbeatMs: (agentSettings.apyInterval || 10) * 60 * 1000,
+      heartbeatMs: 120000, // 2 min — testing; TODO: agentSettings.apyInterval * 60 * 1000
       onPhase: (p) => setLoopPhase(p === 'sleep' ? null : p),
     })
     loopRef.current = loop
     loop.start()
+    console.log('[app] monitor loop started — heartbeat', loop.getHeartbeatMs(), 'ms')
 
     return () => {
       unsub()
@@ -1031,7 +1106,17 @@ const App = () => {
       loopRef.current = null
       setLoopPhase(null)
     }
-  }, [stage, agentEnabled, realAddress, strategy])
+  }, [stage, agentEnabled, realAddress, strategy, loopRestartTick])
+
+  // Restart loop when positions appear after on-chain discovery (page refresh scenario).
+  // The main loop effect skips when positions are empty; this catches the transition.
+  useE(() => {
+    if (!agentEnabled || !realAddress) return
+    const hasPositions = Object.keys(agentData.positions).length > 0
+    if (!hasPositions) return
+    if (loopRef.current?.isRunning()) return
+    setLoopRestartTick((t) => t + 1)
+  }, [agentData.positions, agentEnabled, realAddress])
 
   // ── Autonomous Auto-Exit monitor loop ──
   useE(() => {
@@ -1560,27 +1645,29 @@ const App = () => {
   }
 
   const runCouncilMonitorCheck = async (settings, apyByVault = {}) => {
-    if (!strategy?.agents?.length) return
+    if (!strategy?.agents?.length && Object.keys(agentData.positions).length === 0) return
     const snapshot = loadLatestSnapshot()
     const currentData = {
       apyByVault,
-      turbulence: strategy.mdpState?.turbulence || 'calm',
+      turbulence: strategy?.mdpState?.turbulence || marketLive?.turbulence || 'calm',
       gasGwei: latestGasRef.current?.gwei ?? null,
       estimatedVaR: snapshot?.result?.VaR ?? null,
       estimatedCVaR: snapshot?.result?.CVaR ?? null,
       blendedApy: snapshot?.marketData?.blendedApy ?? null,
     }
     const diff = diffMarket(currentData, snapshot, settings)
+    // Full debate requires strategy object — cap to fast re-eval on page refresh (strategy null)
+    const safeLevel = !strategy?.agents?.length && diff.level === 'full' ? 'fast' : diff.level
     setMonitorStatus({
       lastCheck: Date.now(),
-      level: diff.level,
+      level: safeLevel,
       score: diff.score,
       reason: diff.reasons[0] || '',
     })
 
-    if (diff.level === 'skip') return
+    if (safeLevel === 'skip') return
 
-    if (diff.level === 'fast') {
+    if (safeLevel === 'fast') {
       const result = await fastReeval(strategy, snapshot?.result || null, currentData, {
         devApiKey: devApiKey || null,
       })
@@ -1606,19 +1693,20 @@ const App = () => {
       }
     }
 
-    if (diff.level === 'full') {
+    if (safeLevel === 'full') {
       setDebateRunning(true)
       const ctrl = new AbortController()
       try {
         const state = buildStrategyState({
           amountUsdc: Number(amount) || 0,
           riskLevel: risk,
-          numVaults: strategy.agents.length,
-          vaultData: VAULT_CATALOG,
-          marketContext: marketLive,
-          positions: agentData.positions,
-          gas: latestGasRef.current,
-        })
+          numVaults: strategy?.agents?.length || Object.keys(agentData.positions).length || 1,
+      vaultData: VAULT_CATALOG,
+      marketContext: marketLive,
+      positions: agentData.positions,
+      gas: latestGasRef.current,
+      maxDrawdownPct: agentSettings.maxDrawdownPct,
+    })
         const sim = runSimulation(allocationsFromStrategy(strategy), state, {
           runs: 200,
           horizonDays: 30,
@@ -1661,6 +1749,8 @@ const App = () => {
     setSkillStates({})
     setStrategyPhase('thinking')
     setThinkingPhase(0)
+    setDebateResult(null)
+    setCouncil(undefined)
     addLog({ event: 'OrchestratorPlanned', meta: `re-planning · ${amount} usdc · ${risk} risk` })
   }
 
@@ -2117,6 +2207,9 @@ const App = () => {
           event: 'OrchestratorPlanned',
           meta: `done · ${summary.completed} deposited, ${summary.failed} failed`,
         })
+        const addrs = summary.agentAddresses || []
+        deployedAgentsRef.current = addrs
+        if (addrs.length) saveDeployedAgents(realAddress, addrs)
       })
       .catch((err) => {
         console.warn('[app] orchestrator dispatch failed (simulation mode):', err?.message || err)
@@ -2145,11 +2238,12 @@ const App = () => {
 
   // Chain balances can lag 1-2 blocks after a deposit. Retry until at least one
   // vault reports a non-zero balance, then trust the on-chain numbers.
-  async function reconcileWithRetry(address, maxAttempts = 3, delayMs = 3000) {
+  async function reconcileWithRetry(address, maxAttempts = 3, delayMs = 3000, agents) {
+    const agentList = agents?.length ? agents : undefined
     for (let i = 0; i < maxAttempts; i++) {
       let result = null
       try {
-        result = await reconcilePositionsFromChain(address)
+        result = await reconcilePositionsFromChain(address, agentList ? { agents: agentList } : undefined)
       } catch {
         result = null
       }
@@ -2196,7 +2290,7 @@ const App = () => {
     // If chain is available, use authoritative balances (can move up or down).
     // If chain unavailable (RPC down / tx not yet mined), ADD seed into existing
     // positions — these are confirmed new deposits, so we sum, not take max.
-    const chain = await reconcileWithRetry(realAddress)
+    const chain = await reconcileWithRetry(realAddress, 3, 3000, deployedAgentsRef.current)
     if (chain) {
       const finalPositions = mergePositions(seedPositions, chain)
       if (Object.keys(finalPositions).length > 0) {
@@ -2224,9 +2318,12 @@ const App = () => {
         return { ...d, positions, lastUpdated: Date.now() }
       })
     }
+    const agentAddrs = deployedAgentsRef.current
+    if (agentAddrs?.length) saveDeployedAgents(realAddress, agentAddrs)
+
     addLog({
       event: 'OrchestratorPlanned',
-      meta: `multi-agent deployment finalized · ${strategy?.agents?.length} positions opened`,
+      meta: `${agentAddrs?.length || 0} agents saved · ${strategy?.agents?.length} positions opened`,
     })
   }
 
@@ -2747,8 +2844,7 @@ const App = () => {
                             phase={loopPhase}
                             nextTickAt={loopRef.current?.getNextTickAt() || null}
                             heartbeatMs={
-                              loopRef.current?.getHeartbeatMs() ||
-                              (agentSettings.apyInterval || 10) * 60 * 1000
+                              loopRef.current?.getHeartbeatMs() || 120000
                             }
                             decisionsRows={getDecisions().slice(0, 30)}
                             decisionsSummary={getDecisionSummary()}

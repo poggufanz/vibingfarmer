@@ -31,6 +31,15 @@ export async function rpcServer() {
   return _server
 }
 
+/** Singleton Horizon server. */
+let _horizon = null
+export async function horizonServer() {
+  if (_horizon) return _horizon
+  const { Horizon } = await sdk()
+  _horizon = new Horizon.Server(HORIZON_URL)
+  return _horizon
+}
+
 // Encode a heterogeneous JS arg list to ScVal. { addr } → Address, { i128 } → i128, raw ScVal
 // passthrough. Keeps call sites declarative: encodeArgs([{ addr: from }, { i128: amount }]).
 export function encodeArgs(args = []) {
@@ -175,8 +184,7 @@ export async function submitUserTx({ signedXdr, server, pollTries = 10, pollInte
  * @returns {Promise<number>}
  */
 export async function horizonNativeBalance(pubkey) {
-  const { Horizon } = await sdk()
-  const horizon = new Horizon.Server(HORIZON_URL)
+  const horizon = await horizonServer()
   const acct = await horizon.loadAccount(pubkey)
   return Number(acct.balances.find((b) => b.asset_type === 'native')?.balance ?? 0)
 }
