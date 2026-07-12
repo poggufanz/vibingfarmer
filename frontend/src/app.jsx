@@ -512,6 +512,7 @@ const App = () => {
   const [logs, setLogs] = useS([])
   const logIdRef = useR(0)
   const agentMapRef = useR({})
+  const deployedAgentsRef = useR([])
 
   // Real Web3 state
   const [realAddress, setRealAddress] = useS(null)
@@ -2121,6 +2122,7 @@ const App = () => {
           event: 'OrchestratorPlanned',
           meta: `done · ${summary.completed} deposited, ${summary.failed} failed`,
         })
+        deployedAgentsRef.current = summary.agentAddresses || []
       })
       .catch((err) => {
         console.warn('[app] orchestrator dispatch failed (simulation mode):', err?.message || err)
@@ -2149,11 +2151,12 @@ const App = () => {
 
   // Chain balances can lag 1-2 blocks after a deposit. Retry until at least one
   // vault reports a non-zero balance, then trust the on-chain numbers.
-  async function reconcileWithRetry(address, maxAttempts = 3, delayMs = 3000) {
+  async function reconcileWithRetry(address, maxAttempts = 3, delayMs = 3000, agents) {
+    const agentList = agents?.length ? agents : undefined
     for (let i = 0; i < maxAttempts; i++) {
       let result = null
       try {
-        result = await reconcilePositionsFromChain(address)
+        result = await reconcilePositionsFromChain(address, agentList ? { agents: agentList } : undefined)
       } catch {
         result = null
       }
@@ -2200,7 +2203,7 @@ const App = () => {
     // If chain is available, use authoritative balances (can move up or down).
     // If chain unavailable (RPC down / tx not yet mined), ADD seed into existing
     // positions — these are confirmed new deposits, so we sum, not take max.
-    const chain = await reconcileWithRetry(realAddress)
+    const chain = await reconcileWithRetry(realAddress, 3, 3000, deployedAgentsRef.current)
     if (chain) {
       const finalPositions = mergePositions(seedPositions, chain)
       if (Object.keys(finalPositions).length > 0) {
