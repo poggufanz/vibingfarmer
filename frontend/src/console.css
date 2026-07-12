@@ -198,3 +198,9 @@
 .mon-vital { display: grid; gap: 3px; text-align: center; }
 .mon-num { font-size: 18px; font-weight: 500; font-family: var(--font-mono); }
 .mon-label { font-size: 9.5px; color: var(--text-faint); }
+
+/* ── keeper ─────────────────────────────────────────────── */
+.keeper-pps-row { display: flex; align-items: baseline; gap: 8px; border-top: 1px solid var(--border); padding-top: 10px; margin-top: 10px; }
+.keeper-pps-val { font-size: 18px; font-weight: 500; font-family: var(--font-mono); }
+.keeper-pps-label { font-size: 10.5px; color: var(--text-faint); }
+.keeper-strat-list { margin-top: 6px; }
