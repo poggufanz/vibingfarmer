@@ -75,6 +75,7 @@ import {
   mergePositions,
   applyChainPositions,
 } from './positionsStore.js'
+import { getViewAsAddress } from './dev/viewAs.js'
 import {
   diffMarket,
   fastReeval,
@@ -514,14 +515,16 @@ const App = () => {
   // state (read paths only — signing still needs a real wallet). DEV builds only; the whole
   // branch is dead-code-eliminated in prod and scripts/assert-no-dev-dispatch.mjs asserts the
   // __vfDevViewAs marker never ships in dist/.
+  const viewAsAddress = getViewAsAddress()
+  // In view-as mode, positions read the impersonated address's OWN vault shares instead of
+  // the fixed demo agent — "view AS this address" means see that address's holdings.
+  const positionsAgents = viewAsAddress ? [viewAsAddress] : undefined
+  const reconcilePositions = (addr) =>
+    reconcilePositionsFromChain(addr, positionsAgents ? { agents: positionsAgents } : undefined)
   const [realAddress, setRealAddress] = useS(() => {
-    if (!import.meta.env.DEV) return null
-    const as = new URLSearchParams(window.location.search).get('as')
-    if (as && /^G[A-Z2-7]{55}$/.test(as)) {
-      console.info('__vfDevViewAs — dev read-as override active:', as)
-      return as
-    }
-    return null
+    if (import.meta.env.DEV && viewAsAddress)
+      console.info('[dev] view-as read override active:', viewAsAddress)
+    return viewAsAddress
   })
   const loopRef = useR(null)
   const latestGasRef = useR(null) // last live gas snapshot { level, gwei } for the monitor loop
@@ -661,7 +664,7 @@ const App = () => {
       hydratedRef.current = realAddress
     }, 0)
     let alive = true
-    reconcilePositionsFromChain(realAddress)
+    reconcilePositions(realAddress)
       .then((chain) => {
         if (!alive || !chain) return // null = no RPC / all reads failed → keep cache
         // Cold reconnect: cached positions are from a PRIOR session, so they're mined and
@@ -703,7 +706,7 @@ const App = () => {
     if (!realAddress) return
     let alive = true
     const sync = async () => {
-      const chain = await reconcilePositionsFromChain(realAddress).catch(() => null)
+      const chain = await reconcilePositions(realAddress).catch(() => null)
       if (alive && chain) {
         setAgentData((d) => ({
           ...d,
@@ -1407,7 +1410,7 @@ const App = () => {
       let attempts = 0
       const reconcile = async () => {
         attempts++
-        const chain = await reconcilePositionsFromChain(realAddress).catch(() => null)
+        const chain = await reconcilePositions(realAddress).catch(() => null)
         if (chain) {
           const entry = Object.entries(chain).find(
             ([k]) => k.toLowerCase() === vaultAddress.toLowerCase()

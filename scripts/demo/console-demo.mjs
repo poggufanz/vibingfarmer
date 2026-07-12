@@ -224,6 +224,29 @@ async function main() {
       }
       break;
     }
+    case "rebalance": {
+      requireChainEnv();
+      say("keeper rebalance — move idle/strategy funds (pulses the swarm graph edge)");
+      try {
+        const state = await readState(env);
+        const strat = state.strategies.find((s) => s.balance > 0n);
+        // move a small slice strategy -> vault idle (de-risk-to-idle fallback path); the swarm
+        // graph pulses the edge between the two nodes the funds crossed
+        const from = strat ? strat.address : env.STRATEGY_1;
+        const to = env.VAULT_ADDRESS; // idle
+        const amount = strat ? strat.balance / 10n || 1n : 1n;
+        const hash = await submit(env, { type: "rebalance", from, to, amount });
+        say(`rebalance confirmed · tx ${hash} (moved ${amount} base units to idle)`);
+        say("watch /agent: swarm edge pulse + keeper 'rebalanced' row + trace tick.");
+      } catch (e) {
+        console.error("[demo] rebalance failed:", e.message);
+        console.error(
+          "[demo] common cause: cooldown active (set_limits) or strategy balance 0.",
+        );
+        process.exit(1);
+      }
+      break;
+    }
     case "seed-council": {
       const n = Math.max(1, Math.min(60, Number(arg) || 12));
       console.log(seedSnippet(n));
