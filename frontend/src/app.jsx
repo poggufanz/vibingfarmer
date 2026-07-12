@@ -941,9 +941,13 @@ const App = () => {
     })
   }
 
-  // Start after deposit (positions exist), stop on disable / disconnect / leaving 'done'
+  // Start when positions exist (cached from a previous deposit) OR stage is 'done' (just finished
+  // a strategy). Stops on disable / disconnect. Page refresh resets stage → 'strategy' but the
+  // positions cache (loadPersistedPositions) restores the active vault list, so we check that.
   useE(() => {
-    if (stage !== 'done' || !agentEnabled || !realAddress || !strategy?.agents?.length) return
+    if (!agentEnabled || !realAddress) return
+    const hasPositions = Object.keys(agentData.positions).length > 0
+    if (!hasPositions && stage !== 'done') return
     upsertSeeds() // ACE: install seed rules + fold any legacy counters once
     // Monitor EVERY held position (accumulated across deposits), not just the latest
     // strategy — otherwise a new deposit would stop the agent watching earlier vaults.
@@ -975,7 +979,7 @@ const App = () => {
         buildStrategyState({
           amountUsdc: Number(amount) || 0,
           riskLevel: risk,
-          numVaults: strategy.agents.length,
+          numVaults: strategy?.agents?.length || Object.keys(agentData.positions).length || 1,
           vaultData: VAULT_CATALOG,
           marketContext: marketLive,
           positions: agentData.positions,
@@ -1568,27 +1572,29 @@ const App = () => {
   }
 
   const runCouncilMonitorCheck = async (settings, apyByVault = {}) => {
-    if (!strategy?.agents?.length) return
+    if (!strategy?.agents?.length && Object.keys(agentData.positions).length === 0) return
     const snapshot = loadLatestSnapshot()
     const currentData = {
       apyByVault,
-      turbulence: strategy.mdpState?.turbulence || 'calm',
+      turbulence: strategy?.mdpState?.turbulence || marketLive?.turbulence || 'calm',
       gasGwei: latestGasRef.current?.gwei ?? null,
       estimatedVaR: snapshot?.result?.VaR ?? null,
       estimatedCVaR: snapshot?.result?.CVaR ?? null,
       blendedApy: snapshot?.marketData?.blendedApy ?? null,
     }
     const diff = diffMarket(currentData, snapshot, settings)
+    // Full debate requires strategy object — cap to fast re-eval on page refresh (strategy null)
+    const safeLevel = !strategy?.agents?.length && diff.level === 'full' ? 'fast' : diff.level
     setMonitorStatus({
       lastCheck: Date.now(),
-      level: diff.level,
+      level: safeLevel,
       score: diff.score,
       reason: diff.reasons[0] || '',
     })
 
-    if (diff.level === 'skip') return
+    if (safeLevel === 'skip') return
 
-    if (diff.level === 'fast') {
+    if (safeLevel === 'fast') {
       const result = await fastReeval(strategy, snapshot?.result || null, currentData, {
         devApiKey: devApiKey || null,
       })
@@ -1614,14 +1620,14 @@ const App = () => {
       }
     }
 
-    if (diff.level === 'full') {
+    if (safeLevel === 'full') {
       setDebateRunning(true)
       const ctrl = new AbortController()
       try {
-    const state = buildStrategyState({
-      amountUsdc: Number(amount) || 0,
-      riskLevel: risk,
-      numVaults: strategy.agents.length,
+        const state = buildStrategyState({
+          amountUsdc: Number(amount) || 0,
+          riskLevel: risk,
+          numVaults: strategy?.agents?.length || Object.keys(agentData.positions).length || 1,
       vaultData: VAULT_CATALOG,
       marketContext: marketLive,
       positions: agentData.positions,
