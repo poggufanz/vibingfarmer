@@ -9,7 +9,7 @@ describe('ZoneFrame', () => {
     render(
       <ZoneFrame title="lifeboat" hue="danger" led="ok" meta={<span>armed</span>}>
         <div>body</div>
-      </ZoneFrame>,
+      </ZoneFrame>
     )
     const region = screen.getByRole('region', { name: 'lifeboat' })
     expect(region.dataset.hue).toBe('danger')

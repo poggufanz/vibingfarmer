@@ -22,9 +22,18 @@ export default function ZoneFrame({
   children,
 }) {
   return (
-    <section className={`zone ${className}`} data-hue={hue} role="region" aria-label={ariaLabel || title}>
+    <section
+      className={`zone ${className}`}
+      data-hue={hue}
+      role="region"
+      aria-label={ariaLabel || title}
+    >
       <div className="zone-head">
-        <span className={`zone-led${ledPulse ? ' pulse' : ''}`} data-state={led} aria-hidden="true" />
+        <span
+          className={`zone-led${ledPulse ? ' pulse' : ''}`}
+          data-state={led}
+          aria-hidden="true"
+        />
         <span className="zone-title mono">{title}</span>
         {meta != null && <span className="zone-meta mono">{meta}</span>}
       </div>
