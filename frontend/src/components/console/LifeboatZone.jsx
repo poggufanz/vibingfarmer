@@ -14,7 +14,14 @@ const MODE_COPY = {
 }
 const shortHash = (h) => (h ? `${h.slice(0, 8)}…${h.slice(-6)}` : '')
 
-export default function LifeboatZone({ state = null, events = [], owner = null, onGrant, busy = false, nowMs }) {
+export default function LifeboatZone({
+  state = null,
+  events = [],
+  owner = null,
+  onGrant,
+  busy = false,
+  nowMs,
+}) {
   const nowS = Math.floor(nowMs / 1000)
   const mode = state ? panelState({ ...state, nowS }) : null
   const { leftS, frac } = mandateRemaining(state, nowS)
@@ -35,8 +42,12 @@ export default function LifeboatZone({ state = null, events = [], owner = null, 
           <div className="instrument-caption">threats · {recentDerisks.length} in 24h</div>
         </div>
         <div className="lifeboat-board">
-          <span className="lifeboat-mode tnum" data-mode={mode || ''}>{mode ?? '--'}</span>
-          <span className="mono lifeboat-copy">{mode ? MODE_COPY[mode] : 'lifeboat state unavailable'}</span>
+          <span className="lifeboat-mode tnum" data-mode={mode || ''}>
+            {mode ?? '--'}
+          </span>
+          <span className="mono lifeboat-copy">
+            {mode ? MODE_COPY[mode] : 'lifeboat state unavailable'}
+          </span>
           <div className="lifeboat-mandate">
             <div className="lifeboat-mandate-bar">
               <div className="lifeboat-mandate-fill" style={{ width: `${frac * 100}%` }} />
@@ -45,7 +56,12 @@ export default function LifeboatZone({ state = null, events = [], owner = null, 
               mandate {leftS > 0 ? `${remainText(leftS * 1000)} left` : 'not granted'}
             </span>
           </div>
-          <button className="btn btn-ghost pos-cta" onClick={onGrant} disabled={busy || !owner} aria-label="renew 24h mandate">
+          <button
+            className="btn btn-ghost pos-cta"
+            onClick={onGrant}
+            disabled={busy || !owner}
+            aria-label="renew 24h mandate"
+          >
             {busy ? 'signing…' : 'renew 24h mandate'}
           </button>
         </div>

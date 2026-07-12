@@ -5,7 +5,14 @@ import ZoneFrame from './ZoneFrame.jsx'
 import Ekg from './instruments/Ekg.jsx'
 import { remainText } from './consoleUtils.js'
 
-export default function MonitorZone({ running, rows = [], summary = null, phase, nextTickAt, heartbeatMs }) {
+export default function MonitorZone({
+  running,
+  rows = [],
+  summary = null,
+  phase,
+  nextTickAt,
+  heartbeatMs,
+}) {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000)
@@ -48,7 +55,9 @@ export default function MonitorZone({ running, rows = [], summary = null, phase,
           <span className="mon-label mono">consecutive ok</span>
         </div>
         <div className="mon-vital">
-          <span className="mon-num tnum">{heartbeatMs ? Math.round(heartbeatMs / 60_000) : '--'}</span>
+          <span className="mon-num tnum">
+            {heartbeatMs ? Math.round(heartbeatMs / 60_000) : '--'}
+          </span>
           <span className="mon-label mono">interval · min</span>
         </div>
       </div>

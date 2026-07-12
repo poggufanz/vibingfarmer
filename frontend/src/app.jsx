@@ -20,9 +20,7 @@ import {
   StrategyCard,
   ExecuteCard,
   MemoryModal,
-  LoopStatusPanel,
   DecisionLogPanel,
-  AgentGraph,
   buildAutofarmGraphData,
   rebalancePulseKey,
   buildStrategy,
@@ -68,8 +66,6 @@ import {
   readLifeboatState,
 } from './stellar/vaultReads.js'
 import { grantMandate } from './stellar/lifeboat.js'
-import KeeperPanel from './components/KeeperPanel.jsx'
-import LifeboatPanel from './components/LifeboatPanel.jsx'
 import { evaluateExit } from './strategy/autoExit/engine.js'
 import { runAutonomousExit } from './agents/exitExecutor.js'
 import {
@@ -95,7 +91,7 @@ import {
   onAgentEvent,
   emergencyWithdraw,
 } from './agents/agentController.js'
-const AgentDashboard = lazy(() => import('./components/AgentDashboard.jsx'))
+const OpsConsole = lazy(() => import('./components/console/OpsConsole.jsx'))
 import NotificationCenter from './components/NotificationCenter.jsx'
 import HomePage from './components/HomePage.jsx'
 const LandingHero = lazy(() => import('./components/LandingHero.jsx'))
@@ -2696,130 +2692,53 @@ const App = () => {
             path="/agent"
             element={
               <div className="stage">
-                <div style={{ maxWidth: 820, margin: '0 auto', width: '100%' }}>
-                  {scopes.length > 0 && (
-                    <div className="surface-card" style={{ padding: 14, marginBottom: 14 }}>
-                      <div
-                        style={{
-                          fontSize: 11,
-                          letterSpacing: '.04em',
-                          textTransform: 'uppercase',
-                          opacity: 0.6,
-                          marginBottom: 8,
-                        }}
-                      >
-                        Agent permissions · scoped on-chain
-                      </div>
-                      {scopes.map((s) => (
-                        <div
-                          key={s.agent}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            gap: 12,
-                            padding: '6px 0',
-                            borderTop: '.5px solid rgba(255,255,255,.06)',
-                          }}
-                        >
-                          <div style={{ minWidth: 0 }}>
-                            <div className="mono" style={{ fontSize: 12 }}>
-                              {shortAddr(s.agent)}
-                            </div>
-                            <div style={{ fontSize: 10.5, opacity: 0.6 }}>
-                              cap {toDisplay(s.capPerPeriod).toFixed(2)} · max-at-risk{' '}
-                              {toDisplay(s.maxAtRisk).toFixed(2)} USDC
-                            </div>
-                          </div>
-                          {s.revoked ? (
-                            <span style={{ fontSize: 11, color: 'var(--danger)' }}>revoked</span>
-                          ) : (
-                            <button
-                              className="btn btn-ghost"
-                              style={{ fontSize: 11, padding: '4px 10px' }}
-                              onClick={() => handleRevokeAgent(s.agent)}
-                            >
-                              Revoke
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
-                    <AgentDashboard
-                      active={agentEnabled && stage === 'done'}
-                      positions={agentData.positions}
-                      alerts={agentData.alerts}
-                      vaultMeta={agentVaultMeta}
-                      lastUpdated={agentData.lastUpdated}
-                      userAddress={realAddress}
-                      settings={agentSettings}
-                      withdrawEnabled={stage !== 'execute' && stage !== 'permission'}
-                      onEmergencyWithdraw={handleEmergencyWithdraw}
-                      onReview={handleReviewRebalance}
-                      onDismiss={dismissAlert}
-                      onWithdrawSuccess={handleWithdrawSuccess}
-                      onNewStrategy={handleAgain}
-                      monitorStatus={monitorStatus}
-                      loopStatus={
-                        agentEnabled
-                          ? {
-                              running: loopRef.current?.isRunning() || false,
-                              phase: loopPhase,
-                              cycle: loopRef.current?.getCycle() || 0,
-                            }
-                          : null
-                      }
-                      // loopTick re-renders the parent on each journal write; no key remount
-                      // so the panel's internal 1s countdown clock and CSS animations persist.
-                      loopPanel={
-                        agentEnabled && (
-                          <LoopStatusPanel
-                            running={loopRef.current?.isRunning() || false}
-                            summary={getJournalSummary()}
-                            rows={getCycles().slice(0, 40)}
-                            phase={loopPhase}
-                            nextTickAt={loopRef.current?.getNextTickAt() || null}
-                            heartbeatMs={
+                <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
+                  <OpsConsole
+                    positions={agentData.positions}
+                    vaultMeta={agentVaultMeta}
+                    lastUpdated={agentData.lastUpdated}
+                    userAddress={realAddress}
+                    withdrawEnabled={stage !== 'execute' && stage !== 'permission'}
+                    onWithdrawSuccess={handleWithdrawSuccess}
+                    onNewStrategy={handleAgain}
+                    monitorStatus={monitorStatus}
+                    loop={
+                      agentEnabled
+                        ? {
+                            running: loopRef.current?.isRunning() || false,
+                            phase: loopPhase,
+                            cycle: loopRef.current?.getCycle() || 0,
+                            nextTickAt: loopRef.current?.getNextTickAt() || null,
+                            heartbeatMs:
                               loopRef.current?.getHeartbeatMs() ||
-                              (agentSettings.apyInterval || 10) * 60 * 1000
-                            }
-                            decisionsRows={getDecisions().slice(0, 30)}
-                            decisionsSummary={getDecisionSummary()}
-                          />
-                        )
-                      }
-                      decisionPanel={null}
-                      keeperPanel={
-                        <>
-                          <KeeperPanel
-                            events={keeperActivity}
-                            pricePerShare={autofarmReads.pricePerShare}
-                            strategies={autofarmReads.strategies}
-                          />
-                          <div style={{ marginTop: 14 }}>
-                            <LifeboatPanel
-                              state={lifeboatState}
-                              events={lifeboatActivity}
-                              owner={realAddress}
-                              onGrant={onGrantMandate}
-                              busy={lifeboatBusy}
-                            />
-                          </div>
-                          <div style={{ marginTop: 14 }}>
-                            <AgentGraph
-                              graphData={autofarmGraphData}
-                              execMap={{}}
-                              paletteIsLight={paletteIsLight}
-                              pulseEdge={rebalancePulse}
-                            />
-                          </div>
-                        </>
-                      }
-                    />
-                  </Suspense>
-                </div>
+                              (agentSettings.apyInterval || 10) * 60 * 1000,
+                            rows: getCycles().slice(0, 40),
+                            summary: getJournalSummary(),
+                            decisionsRows: getDecisions().slice(0, 30),
+                            decisionsSummary: getDecisionSummary(),
+                          }
+                        : null
+                    }
+                    keeper={{
+                      events: keeperActivity,
+                      pricePerShare: autofarmReads.pricePerShare,
+                      strategies: autofarmReads.strategies,
+                    }}
+                    lifeboat={{
+                      state: lifeboatState,
+                      events: lifeboatActivity,
+                      busy: lifeboatBusy,
+                      onGrant: onGrantMandate,
+                    }}
+                    scopes={scopes}
+                    onRevoke={handleRevokeAgent}
+                    graph={{
+                      data: autofarmGraphData,
+                      paletteIsLight,
+                      pulseEdge: rebalancePulse,
+                    }}
+                  />
+                </Suspense>
               </div>
             }
           />

@@ -35,7 +35,7 @@ describe('Radar', () => {
   })
   it('draws one blip per recent derisk event', () => {
     const { container } = render(
-      <Radar events={[{ type: 'derisk', txHash: 'ab', timestamp: now - 5000 }]} armed nowMs={now} />,
+      <Radar events={[{ type: 'derisk', txHash: 'ab', timestamp: now - 5000 }]} armed nowMs={now} />
     )
     expect(container.querySelectorAll('circle.radar-blip')).toHaveLength(1)
   })

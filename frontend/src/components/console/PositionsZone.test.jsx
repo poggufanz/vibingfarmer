@@ -11,7 +11,9 @@ afterEach(cleanup)
 
 const VAULT = 'CB5VKYDUABCDEFGHIJKLMNOPQRSTUVWXYZ234567ABCDJDYU'
 const props = {
-  positions: { [VAULT]: { balance: 500_000_000, unclaimedRewards: 1_000_000, vaultName: 'Autofarm USDC' } },
+  positions: {
+    [VAULT]: { balance: 500_000_000, unclaimedRewards: 1_000_000, vaultName: 'Autofarm USDC' },
+  },
   vaultMeta: { [VAULT.toLowerCase()]: { apy: 8.2, protocol: 'blend-autofarm' } },
   lastUpdated: 1_000_000_000_000,
   nowMs: 1_000_000_000_000,

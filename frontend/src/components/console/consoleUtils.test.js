@@ -21,7 +21,10 @@ describe('consoleUtils', () => {
   })
   it('mandateRemaining frac of 24h', () => {
     const nowS = 1_000_000
-    expect(mandateRemaining({ mandateExpiry: nowS + 43_200 }, nowS)).toEqual({ leftS: 43_200, frac: 0.5 })
+    expect(mandateRemaining({ mandateExpiry: nowS + 43_200 }, nowS)).toEqual({
+      leftS: 43_200,
+      frac: 0.5,
+    })
     expect(mandateRemaining({ mandateExpiry: nowS - 1 }, nowS)).toEqual({ leftS: 0, frac: 0 })
     expect(mandateRemaining(null, nowS)).toEqual({ leftS: 0, frac: 0 })
   })

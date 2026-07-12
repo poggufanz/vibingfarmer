@@ -11,7 +11,9 @@ export default function KeeperZone({ events = [], pricePerShare = null, strategi
   const apr = aprs.length ? Math.max(...aprs) : null
   const compounds = events.filter((e) => e.kind === 'compound_executed' && e.pricePerShare != null)
   const delta =
-    compounds.length >= 2 ? Number(compounds[0].pricePerShare) - Number(compounds[1].pricePerShare) : null
+    compounds.length >= 2
+      ? Number(compounds[0].pricePerShare) - Number(compounds[1].pricePerShare)
+      : null
   const last = events[0] || null
 
   return (

@@ -18,7 +18,12 @@ export default function CommandStrip({
   const { leftS } = mandateRemaining(mandateState, nowS)
   const earnedPos = Number(earnedDisplay) > 0
   return (
-    <section className="zone console-strip" data-hue="accent" role="region" aria-label="operations console status">
+    <section
+      className="zone console-strip"
+      data-hue="accent"
+      role="region"
+      aria-label="operations console status"
+    >
       <div className="strip-inner">
         <div className="strip-state">
           <span
@@ -44,7 +49,12 @@ export default function CommandStrip({
             mandate {leftS > 0 ? remainText(leftS * 1000) : 'none'}
           </span>
           {lifeboatMode && (
-            <span className="con-chip" data-tone={lifeboatMode === 'ENGAGED' ? 'danger' : lifeboatMode === 'ARMED' ? 'ok' : undefined}>
+            <span
+              className="con-chip"
+              data-tone={
+                lifeboatMode === 'ENGAGED' ? 'danger' : lifeboatMode === 'ARMED' ? 'ok' : undefined
+              }
+            >
               lifeboat {lifeboatMode}
             </span>
           )}

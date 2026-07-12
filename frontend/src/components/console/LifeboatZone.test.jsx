@@ -8,13 +8,24 @@ afterEach(cleanup)
 
 const NOW = 1_000_000_000_000
 const nowS = Math.floor(NOW / 1000)
-const armed = { derisked: false, mandateExpiry: nowS + 43_200, authority: 'GKEEPXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX4F2A' }
+const armed = {
+  derisked: false,
+  mandateExpiry: nowS + 43_200,
+  authority: 'GKEEPXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX4F2A',
+}
 
 describe('LifeboatZone', () => {
   it('armed: radar sweeps, threats 0, mandate countdown, renew enabled', () => {
     const onGrant = vi.fn()
     const { container } = render(
-      <LifeboatZone state={armed} events={[]} owner="GUSER" onGrant={onGrant} busy={false} nowMs={NOW} />,
+      <LifeboatZone
+        state={armed}
+        events={[]}
+        owner="GUSER"
+        onGrant={onGrant}
+        busy={false}
+        nowMs={NOW}
+      />
     )
     expect(screen.getByText('ARMED')).toBeTruthy()
     expect(container.querySelector('.radar-sweep-line')).toBeTruthy()
@@ -27,19 +38,30 @@ describe('LifeboatZone', () => {
     const { container } = render(
       <LifeboatZone
         state={{ ...armed, derisked: true }}
-        events={[{ type: 'derisk', reasonCode: 1, txHash: 'ff00ff00ff00ff', timestamp: NOW - 5000 }]}
+        events={[
+          { type: 'derisk', reasonCode: 1, txHash: 'ff00ff00ff00ff', timestamp: NOW - 5000 },
+        ]}
         owner="GUSER"
         onGrant={() => {}}
         busy={false}
         nowMs={NOW}
-      />,
+      />
     )
     expect(screen.getByText('ENGAGED')).toBeTruthy()
     expect(container.querySelector('[data-escalated="1"]')).toBeTruthy()
     expect(screen.getByText(/Lifeboat engaged/)).toBeTruthy()
   })
   it('null state renders -- and no fake mode', () => {
-    render(<LifeboatZone state={null} events={[]} owner={null} onGrant={() => {}} busy={false} nowMs={NOW} />)
+    render(
+      <LifeboatZone
+        state={null}
+        events={[]}
+        owner={null}
+        onGrant={() => {}}
+        busy={false}
+        nowMs={NOW}
+      />
+    )
     expect(screen.getByText('--')).toBeTruthy()
   })
 })

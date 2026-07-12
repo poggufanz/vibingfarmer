@@ -26,21 +26,27 @@ export default function MandateZone({ scopes = [], onRevoke }) {
             <div className="mandate-main">
               <span className="mono mandate-addr">{shortAddr(s.agent)}</span>
               <span className="mono mandate-caps tnum">
-                max-at-risk {toDisplay(s.maxAtRisk).toFixed(2)} / cap {toDisplay(s.capPerPeriod).toFixed(2)} USDC
+                max-at-risk {toDisplay(s.maxAtRisk).toFixed(2)} / cap{' '}
+                {toDisplay(s.capPerPeriod).toFixed(2)} USDC
               </span>
               <Gauge value={Number(s.maxAtRisk)} max={Number(s.capPerPeriod)} />
             </div>
             {s.revoked ? (
               <span className="mono mandate-revoked">revoked</span>
             ) : (
-              <button className="btn btn-ghost pos-cta mandate-revoke" onClick={() => onRevoke(s.agent)}>
+              <button
+                className="btn btn-ghost pos-cta mandate-revoke"
+                onClick={() => onRevoke(s.agent)}
+              >
                 revoke
               </button>
             )}
           </div>
         ))
       )}
-      <div className="mandate-guards mono">revocable · yes — anytime, on-chain · expiry · via SEP-41 allowance</div>
+      <div className="mandate-guards mono">
+        revocable · yes — anytime, on-chain · expiry · via SEP-41 allowance
+      </div>
     </ZoneFrame>
   )
 }

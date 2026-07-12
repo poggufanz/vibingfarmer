@@ -15,7 +15,9 @@ export default function PositionsZone({
   onNewStrategy,
 }) {
   const [withdrawing, setWithdrawing] = useState(null)
-  const list = Object.entries(positions).sort(([, a], [, b]) => Number(b.balance) - Number(a.balance))
+  const list = Object.entries(positions).sort(
+    ([, a], [, b]) => Number(b.balance) - Number(a.balance)
+  )
   const total = list.reduce((s, [, p]) => s + Number(p.balance || 0), 0)
   const apyOf = (addr) => vaultMeta[addr.toLowerCase()]?.apy || 0
 
@@ -61,7 +63,12 @@ export default function PositionsZone({
                   disabled={!withdrawEnabled}
                   onClick={() =>
                     setWithdrawing({
-                      vault: { name: p.vaultName, address: addr, protocol: meta.protocol || '', apy },
+                      vault: {
+                        name: p.vaultName,
+                        address: addr,
+                        protocol: meta.protocol || '',
+                        apy,
+                      },
                       balance: p.balance,
                       unclaimedRewards: p.unclaimedRewards,
                     })

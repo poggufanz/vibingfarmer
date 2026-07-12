@@ -11,7 +11,10 @@ vi.mock('../../agents.jsx', () => ({
 afterEach(cleanup)
 
 const props = {
-  graphData: { nodes: [{ id: 'keeper' }, { id: 'strategy' }], links: [{ source: 'keeper', target: 'strategy' }] },
+  graphData: {
+    nodes: [{ id: 'keeper' }, { id: 'strategy' }],
+    links: [{ source: 'keeper', target: 'strategy' }],
+  },
   paletteIsLight: false,
   pulseEdge: null,
   nowMs: 1_000_000_000_000,

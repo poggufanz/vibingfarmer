@@ -15,12 +15,20 @@ import { toDisplay } from '../../stellar/format.js'
 import { panelState } from '../../stellar/lifeboat.js'
 
 const keeperTrace = (e) => ({
-  label: e.kind === 'compound_executed' ? `compounded · +${e.totalGainUsdc} USDC` : `rebalanced · ${e.amountUsdc} USDC`,
+  label:
+    e.kind === 'compound_executed'
+      ? `compounded · +${e.totalGainUsdc} USDC`
+      : `rebalanced · ${e.amountUsdc} USDC`,
   tone: e.kind === 'compound_executed' ? 'ok' : 'info',
   timestamp: e.timestamp || 0,
 })
 const lifeboatTrace = (e) => ({
-  label: e.type === 'derisk' ? 'lifeboat engaged' : e.type === 'resume' ? 'lifeboat resumed' : 'mandate updated',
+  label:
+    e.type === 'derisk'
+      ? 'lifeboat engaged'
+      : e.type === 'resume'
+        ? 'lifeboat resumed'
+        : 'mandate updated',
   tone: e.type === 'derisk' ? 'warn' : e.type === 'resume' ? 'ok' : 'info',
   timestamp: e.timestamp || 0,
 })
@@ -59,10 +67,11 @@ export default function OpsConsole({
 
   const traceEvents = useMemo(
     () =>
-      [...(keeper.events || []).map(keeperTrace), ...(lifeboat.events || []).map(lifeboatTrace)].sort(
-        (a, b) => b.timestamp - a.timestamp,
-      ),
-    [keeper.events, lifeboat.events],
+      [
+        ...(keeper.events || []).map(keeperTrace),
+        ...(lifeboat.events || []).map(lifeboatTrace),
+      ].sort((a, b) => b.timestamp - a.timestamp),
+    [keeper.events, lifeboat.events]
   )
   const lifeboatMode = lifeboat.state ? panelState({ ...lifeboat.state, nowS }) : null
   const running = Boolean(loop?.running)

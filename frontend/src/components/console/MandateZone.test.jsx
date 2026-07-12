@@ -7,8 +7,18 @@ import MandateZone from './MandateZone.jsx'
 afterEach(cleanup)
 
 const scopes = [
-  { agent: 'CAGENT1XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXAB12', capPerPeriod: 400_000_000, maxAtRisk: 200_000_000, revoked: false },
-  { agent: 'CAGENT2XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXCD34', capPerPeriod: 600_000_000, maxAtRisk: 600_000_000, revoked: true },
+  {
+    agent: 'CAGENT1XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXAB12',
+    capPerPeriod: 400_000_000,
+    maxAtRisk: 200_000_000,
+    revoked: false,
+  },
+  {
+    agent: 'CAGENT2XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXCD34',
+    capPerPeriod: 600_000_000,
+    maxAtRisk: 600_000_000,
+    revoked: true,
+  },
 ]
 
 describe('MandateZone', () => {

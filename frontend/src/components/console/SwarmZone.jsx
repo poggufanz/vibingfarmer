@@ -6,7 +6,13 @@ import { agoText } from './consoleUtils.js'
 
 const TONE_VAR = { ok: 'var(--ok)', info: 'var(--info)', warn: 'var(--warn)' }
 
-export default function SwarmZone({ graphData, paletteIsLight, pulseEdge, traceEvents = [], nowMs }) {
+export default function SwarmZone({
+  graphData,
+  paletteIsLight,
+  pulseEdge,
+  traceEvents = [],
+  nowMs,
+}) {
   const nodes = graphData?.nodes?.length || 0
   const links = graphData?.links?.length || 0
   const last = traceEvents[0] || null
@@ -22,21 +28,36 @@ export default function SwarmZone({ graphData, paletteIsLight, pulseEdge, traceE
         <div className="zone-empty">no active agents — grant deploys the swarm</div>
       ) : (
         <div className="swarm-canvas">
-          <AgentGraph graphData={graphData} execMap={{}} paletteIsLight={paletteIsLight} pulseEdge={pulseEdge} />
+          <AgentGraph
+            graphData={graphData}
+            execMap={{}}
+            paletteIsLight={paletteIsLight}
+            pulseEdge={pulseEdge}
+          />
         </div>
       )}
-      <div className="trace-strip" role="img" aria-label={`trace · ${traceEvents.length} recent events`}>
+      <div
+        className="trace-strip"
+        role="img"
+        aria-label={`trace · ${traceEvents.length} recent events`}
+      >
         {traceEvents
           .slice(0, 20)
           .reverse()
           .map((e, i) => (
-            <span key={i} className="trace-tick" style={{ background: TONE_VAR[e.tone] || 'var(--text-faint)' }}>
+            <span
+              key={i}
+              className="trace-tick"
+              style={{ background: TONE_VAR[e.tone] || 'var(--text-faint)' }}
+            >
               <span className="trace-tip mono">{e.label}</span>
             </span>
           ))}
       </div>
       <div className="instrument-caption">
-        {last ? `last · ${last.label} · ${agoText(last.timestamp, nowMs)}` : 'no automation events yet'}
+        {last
+          ? `last · ${last.label} · ${agoText(last.timestamp, nowMs)}`
+          : 'no automation events yet'}
       </div>
     </ZoneFrame>
   )

@@ -6,10 +6,19 @@ import ZoneFrame from './ZoneFrame.jsx'
 import { agoText } from './consoleUtils.js'
 import { DecisionLogPanel } from '../../agents.jsx'
 
-const STANCE = { DEPOSIT: { glyph: '↑', word: 'deposit', tone: 'ok' }, HOLD: { glyph: '—', word: 'hold', tone: 'warn' }, WITHDRAW: { glyph: '↓', word: 'withdraw', tone: 'danger' } }
+const STANCE = {
+  DEPOSIT: { glyph: '↑', word: 'deposit', tone: 'ok' },
+  HOLD: { glyph: '—', word: 'hold', tone: 'warn' },
+  WITHDRAW: { glyph: '↓', word: 'withdraw', tone: 'danger' },
+}
 const ROLES = ['yield', 'risk', 'market']
 
-export default function CouncilZone({ monitorStatus = null, decisionsRows = [], decisionsSummary = null, nowMs }) {
+export default function CouncilZone({
+  monitorStatus = null,
+  decisionsRows = [],
+  decisionsSummary = null,
+  nowMs,
+}) {
   const [logOpen, setLogOpen] = useState(false)
   useEffect(() => {
     if (!logOpen) return
@@ -48,23 +57,35 @@ export default function CouncilZone({ monitorStatus = null, decisionsRows = [], 
               return (
                 <div className="council-seat" key={role} data-tone={s?.tone || ''}>
                   <span className="council-role mono">{role}</span>
-                  <span className="council-glyph" aria-hidden="true">{s?.glyph || '·'}</span>
+                  <span className="council-glyph" aria-hidden="true">
+                    {s?.glyph || '·'}
+                  </span>
                   <span className="council-word mono">{s?.word || '--'}</span>
-                  <span className="council-conf tnum mono">{v ? `${Math.round(v.confidence * 100)}%` : '--'}</span>
+                  <span className="council-conf tnum mono">
+                    {v ? `${Math.round(v.confidence * 100)}%` : '--'}
+                  </span>
                 </div>
               )
             })}
           </div>
           <div className="council-verdict">
-            <span className="council-stamp mono" data-tone={latest.finalDecision === 'keep' ? 'ok' : 'danger'}>
+            <span
+              className="council-stamp mono"
+              data-tone={latest.finalDecision === 'keep' ? 'ok' : 'danger'}
+            >
               {latest.finalDecision.toUpperCase()}
             </span>
             <div className="council-verdict-meta mono">
               <span className="tnum">
-                {latest.majoritySignal} ×{latest.majorityCount} · {Math.round((latest.avgConfidence || 0) * 100)}% avg
+                {latest.majoritySignal} ×{latest.majorityCount} ·{' '}
+                {Math.round((latest.avgConfidence || 0) * 100)}% avg
               </span>
-              <span>resolved by {latest.resolvedBy} · cycle {String(latest.cycle).padStart(2, '0')}</span>
-              {monitorStatus?.reason && <span className="council-reason">{monitorStatus.reason}</span>}
+              <span>
+                resolved by {latest.resolvedBy} · cycle {String(latest.cycle).padStart(2, '0')}
+              </span>
+              {monitorStatus?.reason && (
+                <span className="council-reason">{monitorStatus.reason}</span>
+              )}
             </div>
           </div>
         </>
@@ -75,10 +96,18 @@ export default function CouncilZone({ monitorStatus = null, decisionsRows = [], 
         </button>
       </div>
       {logOpen && (
-        <div className="modal-backdrop" onClick={() => setLogOpen(false)} role="dialog" aria-modal="true" aria-label="decision log">
+        <div
+          className="modal-backdrop"
+          onClick={() => setLogOpen(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="decision log"
+        >
           <div className="council-modal" onClick={(e) => e.stopPropagation()}>
             <DecisionLogPanel rows={decisionsRows} summary={decisionsSummary} />
-            <button className="btn btn-ghost pos-cta" onClick={() => setLogOpen(false)}>close</button>
+            <button className="btn btn-ghost pos-cta" onClick={() => setLogOpen(false)}>
+              close
+            </button>
           </div>
         </div>
       )}

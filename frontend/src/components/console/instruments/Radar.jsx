@@ -18,7 +18,15 @@ export default function Radar({ events = [], armed = false, nowMs, size = 180 })
       height={size}
     >
       {[1, 0.66, 0.33].map((f) => (
-        <circle key={f} cx={c} cy={c} r={(c - 6) * f} fill="none" stroke="var(--border)" strokeWidth="1" />
+        <circle
+          key={f}
+          cx={c}
+          cy={c}
+          r={(c - 6) * f}
+          fill="none"
+          stroke="var(--border)"
+          strokeWidth="1"
+        />
       ))}
       <line x1={6} y1={c} x2={size - 6} y2={c} stroke="var(--border)" strokeWidth="1" />
       <line x1={c} y1={6} x2={c} y2={size - 6} stroke="var(--border)" strokeWidth="1" />

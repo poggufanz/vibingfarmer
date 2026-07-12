@@ -14,8 +14,20 @@ const props = {
     { address: 'C2', label: 'Reserve', poolLabel: null, aprPct: null },
   ],
   events: [
-    { kind: 'compound_executed', totalGainUsdc: '0.42', pricePerShare: '1.0234', txHash: 'abcdef1234567890', timestamp: 999_999_990_000 },
-    { kind: 'compound_executed', totalGainUsdc: '0.40', pricePerShare: '1.0200', txHash: 'abcdef1234567891', timestamp: 999_999_980_000 },
+    {
+      kind: 'compound_executed',
+      totalGainUsdc: '0.42',
+      pricePerShare: '1.0234',
+      txHash: 'abcdef1234567890',
+      timestamp: 999_999_990_000,
+    },
+    {
+      kind: 'compound_executed',
+      totalGainUsdc: '0.40',
+      pricePerShare: '1.0200',
+      txHash: 'abcdef1234567891',
+      timestamp: 999_999_980_000,
+    },
   ],
 }
 
