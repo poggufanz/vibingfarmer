@@ -3,14 +3,52 @@
 // with the asset. (The agent custom account is deployed at agent-create time — its constructor
 // self-approves the vault, Phase 1. The demo reuses the pre-deployed SOROBAN_DEMO_AGENT.)
 // Two user-signed txs via the wallet kit: registry.authorize, then token.transfer(owner→agent).
-import { buildInvokeTx, submitUserTx, readContract, rpcServer } from './client.js'
+import { buildInvokeTx, buildCreateContractTx, submitUserTx, readContract, rpcServer } from './client.js'
 import { signTxXdr } from './walletKit.js'
 import {
   SOROBAN_REGISTRY_ADDRESS,
   SOROBAN_TOKEN_ADDRESS,
+  SOROBAN_ACTIVE_VAULT_ADDRESS,
+  SOROBAN_AGENT_WASM_HASH,
   HORIZON_URL,
   NETWORK_PASSPHRASE,
 } from './config.js'
+import {
+  addrScVal,
+  i128ScVal,
+  u64ScVal,
+  bytes32ScVal,
+  boolScVal,
+  voidScVal,
+  structScVal,
+} from './scval.js'
+
+const DEFAULT_PERIOD_DURATION = 86400
+
+/**
+ * Wrapper around signTxXdr with a timeout and label for human-readable error context.
+ * @param {string} xdr unsigned base64 transaction envelope
+ * @param {string} label short description for error messages
+ * @param {number} [timeoutMs=120000] max ms to wait for the wallet popup
+ * @returns {Promise<string>} signed base64 XDR
+ */
+export async function signWithTimeout(xdr, label, timeoutMs = 120_000) {
+  const ac = new AbortController()
+  const timer = setTimeout(() => ac.abort(new Error(`${label} timed out after ${timeoutMs / 1000}s`)), timeoutMs)
+  try {
+    const result = await Promise.race([
+      signTxXdr(xdr),
+      new Promise((_, reject) => {
+        ac.signal.addEventListener('abort', () => reject(ac.signal.reason), { once: true })
+      }),
+    ])
+    return result
+  } catch (err) {
+    throw new Error(`${label}: ${err?.message || err}`)
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
 /**
  * Ensure the owner's classic Stellar account has a trustline for the token's
