@@ -436,6 +436,7 @@
 }
 .council-verdict {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
   justify-items: start;
   border-top: 1px solid var(--border);

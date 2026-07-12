@@ -21,7 +21,8 @@
 //                  command-strip lifeboat chip goes danger. Picked up by the app's 15s poll.
 //   all-clear    → lifeboat back to ARMED, "Resumed" runbook row.
 //   compound     → keeper zone last-action row + price/share; swarm trace strip tick.
-//   seed-council → monitor EKG beats + vitals, council verdict stamp, decision log pages.
+//   seed-council → monitor vitals + council verdict stamp + decision log pages right away;
+//                  the EKG trace additionally needs the agent loop running (grant flow).
 //   positions / mandate / scopes are real chain state — use the normal grant flow (they
 //   paginate at 3 scopes; grant 4+ agents to see the pager).
 //
@@ -66,9 +67,10 @@ function requireChainEnv() {
   }
 }
 
-/** Deterministic verdict pattern — mostly keep, with visible discard/gated/crash beats. */
+/** Deterministic verdict pattern — mostly keep, with visible discard/gated/idle/crash beats. */
 function cycleVerdict(i) {
   if (i % 11 === 10) return "crash";
+  if (i % 9 === 8) return "idle";
   if (i % 7 === 3) return "discard";
   if (i % 5 === 4) return "gated";
   return "keep";
@@ -88,7 +90,11 @@ function seedSnippet(n) {
       reason: verdict === "keep" ? "" : `demo ${verdict} beat`,
       ts,
     });
-    const discard = verdict === "discard" || verdict === "crash";
+    // Mirror the real pipeline: recordDecision fires only when the council actually
+    // voted — keep/discard cycles, plus crash (a crash happens during execute() AFTER
+    // a keep verdict, so its record says keep). gated/idle cycles never reach council.
+    if (verdict === "gated" || verdict === "idle") continue;
+    const discard = verdict === "discard";
     const majoritySignal = discard
       ? "WITHDRAW"
       : i % 3 === 2
@@ -125,6 +131,8 @@ function seedSnippet(n) {
   }
   return [
     "// paste into the browser devtools console on the /agent route, then Enter:",
+    "// (decision log + monitor vitals fill immediately; the EKG trace itself only",
+    "//  draws while the agent loop is running — complete the grant flow to start it)",
     `localStorage.setItem('yv_cycle_journal', ${JSON.stringify(JSON.stringify(journal))})`,
     `localStorage.setItem('yv_decision_log', ${JSON.stringify(JSON.stringify(decisions))})`,
     "location.reload()",
