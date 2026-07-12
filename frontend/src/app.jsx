@@ -38,6 +38,7 @@ import {
 } from './stellar/index.js'
 import { generateStrategy } from './venice.js'
 import { toDisplay, toBaseUnits } from './stellar/format.js'
+import { queryAgentsByOwner, discoverAgentsFromHorizon, discoverAgentsFromVault } from './stellar/events.js'
 import { saveResume, loadResume, clearResume } from './strategy/sessionResume.js'
 import { attestStrategyOnChain, formatAttestation } from './attestation.js'
 import OnboardingFlow from './components/OnboardingFlow.jsx'
@@ -175,7 +176,7 @@ const AGENT_SETTINGS_DEFAULTS = {
   emergencyPct: 50,
   riskMonitoring: true,
   positionInterval: 5,
-  apyInterval: 10,
+  apyInterval: 2,
   riskInterval: 15,
   rewardInterval: 5,
   maxDrawdownPct: 10.0,
@@ -527,6 +528,7 @@ const App = () => {
   const keeperLedgerRef = useR(undefined)
   // Tracks which user addresses have had session key setup done (survives re-renders).
   const [loopTick, setLoopTick] = useS(0)
+  const [loopRestartTick, setLoopRestartTick] = useS(0) // incremented to force loop restart after discovery
   const [loopPhase, setLoopPhase] = useS(null) // live pipeline phase from monitorLoop onPhase
   const [veniceAuth, setVeniceAuth] = useS(null)
   const [onboarded, setOnboarded] = useS(() => localStorage.getItem('yv_onboarded') === 'true')
@@ -656,23 +658,44 @@ const App = () => {
       hydratedRef.current = realAddress
     }, 0)
     let alive = true
-    const persistedAgents = loadDeployedAgents(realAddress)
-    reconcilePositionsFromChain(realAddress, persistedAgents.length ? { agents: persistedAgents } : undefined)
-
-      .then((chain) => {
-        if (!alive || !chain) return // null = no RPC / all reads failed → keep cache
-        // Cold reconnect: cached positions are from a PRIOR session, so they're mined and
-        // the chain is authoritative. applyChainPositions replaces balances and PRUNES any
-        // vault the chain reports as '0' (withdrawn) — this is what heals a stale cached
-        // balance that lingered after a withdraw. Failed reads stay absent (not '0'), so a
-        // transient RPC error can't wipe a real position. The persist effect writes the result.
-        setAgentData((d) => ({
-          ...d,
-          positions: applyChainPositions(d.positions, chain),
-          lastUpdated: Date.now(),
-        }))
-      })
-      .catch(() => {})
+    const persistedAgents = loadDeployedAgents(realAddress);
+    (async () => {
+      let agents = persistedAgents
+      // No cached agents → discover from on-chain events.
+      // Strategy: Registry first (fast, single call), then vault deposit event scan
+      // (fallback for agents deployed with registryAuthorize=false, the default).
+      if (!agents.length) {
+        console.log('[app] no cached agents, discovering...')
+        agents = await queryAgentsByOwner(realAddress).catch((e) => { console.warn('[app] registry discovery error:', e); return [] })
+        console.log('[app] registry result:', agents.length)
+        if (!agents.length) {
+          agents = await discoverAgentsFromHorizon(realAddress).catch((e) => { console.warn('[app] horizon discovery error:', e); return [] })
+          console.log('[app] horizon result:', agents.length)
+        }
+        if (!agents.length) {
+          agents = await discoverAgentsFromVault(realAddress).catch((e) => { console.warn('[app] vault discovery error:', e); return [] })
+          console.log('[app] vault discovery result:', agents.length)
+        }
+        if (agents.length) {
+          saveDeployedAgents(realAddress, agents)
+          deployedAgentsRef.current = agents
+        }
+      }
+      if (!alive) return
+      console.log('[app] reconciling with agents:', agents)
+      const chain = await reconcilePositionsFromChain(realAddress, { agents }).catch((e) => { console.warn('[app] reconcile error:', e); return null })
+      if (!alive || !chain) return // null = no RPC / all reads failed → keep cache
+      // Cold reconnect: cached positions are from a PRIOR session, so they're mined and
+      // the chain is authoritative. applyChainPositions replaces balances and PRUNES any
+      // vault the chain reports as '0' (withdrawn) — this is what heals a stale cached
+      // balance that lingered after a withdraw. Failed reads stay absent (not '0'), so a
+      // transient RPC error can't wipe a real position. The persist effect writes the result.
+      setAgentData((d) => ({
+        ...d,
+        positions: applyChainPositions(d.positions, chain),
+        lastUpdated: Date.now(),
+      }))
+    })()
     return () => {
       alive = false
       clearTimeout(hydrateTimer)
@@ -700,9 +723,31 @@ const App = () => {
     if (!realAddress) return
     let alive = true
     const sync = async () => {
-      const storedAgents = loadDeployedAgents(realAddress)
-      const pollAgents = storedAgents.length ? storedAgents : (deployedAgentsRef.current || [])
-      const chain = await reconcilePositionsFromChain(realAddress, pollAgents.length ? { agents: pollAgents } : undefined).catch(() => null)
+      let storedAgents = loadDeployedAgents(realAddress)
+      let pollAgents = storedAgents.length ? storedAgents : (deployedAgentsRef.current || [])
+      // Discover from on-chain events when no cached agent addresses.
+      // Strategy: Registry first (fast, single call), then vault deposit event scan
+      // (fallback for agents deployed with registryAuthorize=false, the default).
+      if (!pollAgents.length) {
+        console.log('[poll] no cached agents, discovering...')
+        storedAgents = await queryAgentsByOwner(realAddress).catch((e) => { console.warn('[poll] registry error:', e); return [] })
+        console.log('[poll] registry result:', storedAgents.length)
+        if (!storedAgents.length) {
+          storedAgents = await discoverAgentsFromHorizon(realAddress).catch((e) => { console.warn('[poll] horizon error:', e); return [] })
+          console.log('[poll] horizon result:', storedAgents.length)
+        }
+        if (!storedAgents.length) {
+          storedAgents = await discoverAgentsFromVault(realAddress).catch((e) => { console.warn('[poll] vault error:', e); return [] })
+          console.log('[poll] vault discovery result:', storedAgents.length)
+        }
+        if (storedAgents.length) {
+          saveDeployedAgents(realAddress, storedAgents)
+          deployedAgentsRef.current = storedAgents
+          pollAgents = storedAgents
+        }
+      }
+      console.log('[poll] reconciling with agents:', pollAgents)
+      const chain = await reconcilePositionsFromChain(realAddress, { agents: pollAgents }).catch((e) => { console.warn('[poll] reconcile error:', e); return null })
       if (alive && chain) {
         setAgentData((d) => ({
           ...d,
@@ -814,6 +859,19 @@ const App = () => {
       } catch {
         if (alive) setLifeboatState(null)
       }
+      // Council monitor — check market drift setiap 15s tick.
+      if (alive && agentSettings.riskMonitoring && Object.keys(agentData.positions).length) {
+        try {
+          const apyByVault = {}
+          for (const addr of Object.keys(agentData.positions)) {
+            const meta = VAULT_CATALOG.find((v) => v.addr.toLowerCase() === addr.toLowerCase())
+            if (meta?.apy) apyByVault[addr] = meta.apy
+          }
+          await runCouncilMonitorCheck(agentSettings, apyByVault)
+        } catch (e) {
+          console.warn('[council] monitor check failed:', e)
+        }
+      }
     }
     sync() // once on connect
     // ponytail: 15s poll. A Soroban event subscription would make it instant if needed.
@@ -874,11 +932,15 @@ const App = () => {
     }
     if (ev.kind === 'market_signal') {
       const settings = loadSettings()
-      if (!settings.monitorEnabled || !strategy?.agents?.length) {
+      if (!settings.monitorEnabled) {
         setMonitorStatus((s) => ({ ...s, lastCheck: ev.timestamp, level: 'disabled' }))
         return
       }
-      runCouncilMonitorCheck(settings, ev.apyByVault)
+      // 15s poll handles council monitor even without strategy (page refresh).
+      // Only run the check here when a strategy exists (normal session flow).
+      if (strategy?.agents?.length) {
+        runCouncilMonitorCheck(settings, ev.apyByVault)
+      }
       return
     }
     if (ev.kind === 'harvest_executed') {
@@ -1035,6 +1097,7 @@ const App = () => {
     })
     loopRef.current = loop
     loop.start()
+    console.log('[app] monitor loop started — heartbeat', loop.getHeartbeatMs(), 'ms')
 
     return () => {
       unsub()
@@ -1043,7 +1106,17 @@ const App = () => {
       loopRef.current = null
       setLoopPhase(null)
     }
-  }, [stage, agentEnabled, realAddress, strategy])
+  }, [stage, agentEnabled, realAddress, strategy, loopRestartTick])
+
+  // Restart loop when positions appear after on-chain discovery (page refresh scenario).
+  // The main loop effect skips when positions are empty; this catches the transition.
+  useE(() => {
+    if (!agentEnabled || !realAddress) return
+    const hasPositions = Object.keys(agentData.positions).length > 0
+    if (!hasPositions) return
+    if (loopRef.current?.isRunning()) return
+    setLoopRestartTick((t) => t + 1)
+  }, [agentData.positions, agentEnabled, realAddress])
 
   // ── Autonomous Auto-Exit monitor loop ──
   useE(() => {
