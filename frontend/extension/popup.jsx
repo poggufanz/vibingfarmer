@@ -28,6 +28,10 @@ import SettingsScreen from '../src/wallet/ui/classic/SettingsScreen.jsx'
 import { pickConfirmIndices } from '../src/wallet/ui/classic/backupConfirm.js'
 import * as C from '../src/wallet/ui/classic/controller.js'
 
+// Protocol slug of the live deposit vault (autofarm → Blend USDC). The F8 gate resolves facts
+// by slug — SOROBAN_VAULT_ADDRESS alone carries none and would fail closed.
+const ACTIVE_VAULT_PROTOCOL = 'blend-usdc'
+
 // Ceremony runs in the extension TAB — Face ID closes the popup.
 // Post SIGN_REQUEST to the background SW; it opens ceremony.html in a new tab.
 function postSignRequest(action, params) {
@@ -335,10 +339,26 @@ const NAV_TABS_CLASSIC = ['home', 'send', 'receive', 'activity', 'settings']
 // SVG icon paths for the classic nav tabs (Feather-icon style, 20×20 viewBox)
 const TAB_ICONS = {
   home: <path d="M3 10.5L10 4l7 6.5V17a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-6.5z" />,
-  send: <><path d="M17 3L3 10l5 2 2 5 7-14z" /><line x1="17" y1="3" x2="8" y2="12" /></>,
-  receive: <><path d="M4 16v1a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-1" /><polyline points="7 10 10 13 13 10" /><line x1="10" y1="3" x2="10" y2="13" /></>,
+  send: (
+    <>
+      <path d="M17 3L3 10l5 2 2 5 7-14z" />
+      <line x1="17" y1="3" x2="8" y2="12" />
+    </>
+  ),
+  receive: (
+    <>
+      <path d="M4 16v1a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-1" />
+      <polyline points="7 10 10 13 13 10" />
+      <line x1="10" y1="3" x2="10" y2="13" />
+    </>
+  ),
   activity: <polyline points="3 14 7 10 11 13 17 6" />,
-  settings: <><circle cx="10" cy="10" r="3" /><path d="M17.4 11.4a1.2 1.2 0 0 0 .24 1.32l.04.04a1.44 1.44 0 1 1-2.04 2.04l-.04-.04a1.2 1.2 0 0 0-1.32-.24 1.2 1.2 0 0 0-.72 1.08v.12a1.44 1.44 0 0 1-2.88 0v-.06a1.2 1.2 0 0 0-.78-1.08 1.2 1.2 0 0 0-1.32.24l-.04.04a1.44 1.44 0 1 1-2.04-2.04l.04-.04a1.2 1.2 0 0 0 .24-1.32 1.2 1.2 0 0 0-1.08-.72H5.28a1.44 1.44 0 0 1 0-2.88h.06a1.2 1.2 0 0 0 1.08-.78 1.2 1.2 0 0 0-.24-1.32L6.14 5.66a1.44 1.44 0 1 1 2.04-2.04l.04.04a1.2 1.2 0 0 0 1.32.24h.06A1.2 1.2 0 0 0 10.32 2.82V2.7a1.44 1.44 0 0 1 2.88 0v.06a1.2 1.2 0 0 0 .72 1.08 1.2 1.2 0 0 0 1.32-.24l.04-.04a1.44 1.44 0 1 1 2.04 2.04l-.04.04a1.2 1.2 0 0 0-.24 1.32v.06a1.2 1.2 0 0 0 1.08.72h.12a1.44 1.44 0 0 1 0 2.88h-.06a1.2 1.2 0 0 0-1.08.72z" /></>,
+  settings: (
+    <>
+      <circle cx="10" cy="10" r="3" />
+      <path d="M17.4 11.4a1.2 1.2 0 0 0 .24 1.32l.04.04a1.44 1.44 0 1 1-2.04 2.04l-.04-.04a1.2 1.2 0 0 0-1.32-.24 1.2 1.2 0 0 0-.72 1.08v.12a1.44 1.44 0 0 1-2.88 0v-.06a1.2 1.2 0 0 0-.78-1.08 1.2 1.2 0 0 0-1.32.24l-.04.04a1.44 1.44 0 1 1-2.04-2.04l.04-.04a1.2 1.2 0 0 0 .24-1.32 1.2 1.2 0 0 0-1.08-.72H5.28a1.44 1.44 0 0 1 0-2.88h.06a1.2 1.2 0 0 0 1.08-.78 1.2 1.2 0 0 0-.24-1.32L6.14 5.66a1.44 1.44 0 1 1 2.04-2.04l.04.04a1.2 1.2 0 0 0 1.32.24h.06A1.2 1.2 0 0 0 10.32 2.82V2.7a1.44 1.44 0 0 1 2.88 0v.06a1.2 1.2 0 0 0 .72 1.08 1.2 1.2 0 0 0 1.32-.24l.04-.04a1.44 1.44 0 1 1 2.04 2.04l-.04.04a1.2 1.2 0 0 0-.24 1.32v.06a1.2 1.2 0 0 0 1.08.72h.12a1.44 1.44 0 0 1 0 2.88h-.06a1.2 1.2 0 0 0-1.08.72z" />
+    </>
+  ),
 }
 
 function Eyebrow({ sec, meta }) {
@@ -363,8 +383,16 @@ function NavBar({ tabs = NAV_TABS, onNav, active }) {
           onClick={() => onNav(t)}
         >
           <span className="vf-tab-icon">
-            <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor"
-              strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 20 20"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
               {TAB_ICONS[t] || <circle cx="10" cy="10" r="6" />}
             </svg>
           </span>
@@ -610,6 +638,7 @@ function Popup() {
     try {
       const v = await eligibility({
         vault: SOROBAN_VAULT_ADDRESS,
+        protocol: ACTIVE_VAULT_PROTOCOL,
         amount: BigInt(Math.round(parseFloat(depositAmount) * 1e7)),
       })
       setDepositVerdict(v)
@@ -629,12 +658,18 @@ function Popup() {
     clear()
     try {
       // Re-run the F8 gate in-popup for an early verdict; the ceremony re-asserts fail-closed.
+      // depositToVault calls eligibility({ vault, amount }) — inject the live vault's protocol
+      // slug so the gate resolves real facts (a bare C-address has none → would fail closed).
       await depositToVault({
         contractId: wallet.contractId,
         amount: BigInt(Math.round(parseFloat(depositAmount) * 1e7)),
-        eligibility,
+        eligibility: (q) => eligibility({ ...q, protocol: ACTIVE_VAULT_PROTOCOL }),
       })
-      postSignRequest('deposit', { contractId: wallet.contractId, amount: depositAmount })
+      postSignRequest('deposit', {
+        contractId: wallet.contractId,
+        amount: depositAmount,
+        protocol: ACTIVE_VAULT_PROTOCOL,
+      })
       setStatus('Opening deposit ceremony. Approve with Face ID in the new tab…')
       setDepositVerdict(null)
       setScreen('signing-pending')
