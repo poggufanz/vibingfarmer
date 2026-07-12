@@ -41,7 +41,8 @@ async function loadParams() {
     let out
     if (action === 'deposit') {
       setStatus('Awaiting Face ID…')
-      const { facts } = vaultFacts(p.protocol || 'aave-v3')
+      // Default = the live deposit vault's protocol (autofarm → Blend USDC), not aave-v3.
+      const { facts } = vaultFacts(p.protocol || 'blend-usdc')
       const eligibility = (q) => vfEligibility({ ...q, facts })
       const amount = BigInt(Math.round(parseFloat(p.amount) * 1e7))
       out = await submitDeposit({ contractId: p.contractId, amount, eligibility, kit })

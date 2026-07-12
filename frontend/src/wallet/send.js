@@ -4,9 +4,11 @@
 // (withSecret) and submit via Horizon. Classic pays its OWN gas — the VF relayer is NOT used here
 // and never receives a classic secret.
 import { TransactionBuilder, Operation, Asset, Memo, BASE_FEE } from '@stellar/stellar-sdk'
-import { NETWORK_PASSPHRASE } from '../stellar/config.js'
+import { NETWORK_PASSPHRASE, SOROBAN_DECIMALS } from '../stellar/config.js'
 import { VAULT_CATALOG } from '../config.js'
 import { eligibility } from '../vfapi/client.js'
+import { makeVfClient } from '../vfapi/httpClient.js'
+import { getVfApiKey } from './vfKey.js'
 import { decodeForConfirm } from './clearSign.js'
 import { horizonServer, withSecret } from './classicAccount.js'
 
@@ -17,11 +19,30 @@ export function isKnownVault(address) {
 
 // Vault eligibility verdict for a destination. Non-vault addresses are not gated — shared by
 // previewSend (UI hint) and sendPayment (fail-closed enforcement before signing).
+// With a stored VF API key (Settings → VF API key, generated at /developers) the verdict comes
+// from the server gateway (Bearer vf_ key, rate-limited, usage-logged) and any transport/auth
+// failure is fail-closed. Without a key it falls back to the local F8 gate.
 async function vaultVerdict(to, amount) {
   const known = isKnownVault(to)
   if (!known.hit) return { hit: false }
+  const base = { hit: true, name: known.vault.name }
+  const apiKey = getVfApiKey()
+  if (apiKey) {
+    try {
+      // Server expects integer base units (BigInt-able); NaN amounts throw into the catch.
+      const units = BigInt(Math.round(Number(amount) * 10 ** SOROBAN_DECIMALS))
+      const e = await makeVfClient({ apiKey }).eligibility({
+        vault: to,
+        protocol: known.vault.protocol,
+        amount: units.toString(),
+      })
+      return { ...base, allow: e.allow === true, reasons: e.reasons ?? [], source: 'api' }
+    } catch (err) {
+      return { ...base, allow: false, reasons: [`eligibility API: ${err.message}`], source: 'api' }
+    }
+  }
   const e = await eligibility({ vault: known.vault.protocol, amount })
-  return { hit: true, name: known.vault.name, allow: e.allow, reasons: e.reasons }
+  return { ...base, allow: e.allow, reasons: e.reasons, source: 'local' }
 }
 
 function toAsset(asset) {

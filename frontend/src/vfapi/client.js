@@ -10,12 +10,26 @@ import { submitViaRelay } from '../stellar/relay.js'
 /**
  * App-layer, fail-closed F8 gate.
  * HONESTY: app-layer check only — not on-chain-verifiable.
+ * When `facts` is omitted, facts are resolved from the protocol slug (`protocol`, falling back
+ * to `vault` for callers that pass the slug there). Unknown slug/address = no facts = reject —
+ * fail-closed, never a silent default.
  *
- * @param {{ vault: string, amount: bigint, facts?: object, nowMs?: number }} params
- * @returns {Promise<{ allow: boolean, verdict: object, reasons: string[] }>}
+ * @param {{ vault: string, protocol?: string, amount: bigint, facts?: object, nowMs?: number }} params
+ * @returns {Promise<{ allow: boolean, verdict: object|null, reasons: string[] }>}
  */
-export async function eligibility({ vault, amount, facts, nowMs }) {
-  const verdict = evaluate({ vault, amount, facts }, nowMs)
+export async function eligibility({ vault, protocol, amount, facts, nowMs }) {
+  const slug = protocol || vault
+  let resolved
+  if (facts) {
+    resolved = { protocol: slug, isFixture: false, facts }
+  } else {
+    try {
+      resolved = resolveVaultFacts(slug)
+    } catch (err) {
+      return { allow: false, verdict: null, reasons: [`facts unavailable: ${err.message}`] }
+    }
+  }
+  const verdict = evaluate({ ...resolved, vault, amount }, nowMs)
   return {
     allow: verdict.eligible ?? false,
     verdict,
