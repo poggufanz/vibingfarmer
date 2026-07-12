@@ -60,6 +60,7 @@ import {
 import GrantPanel from './components/GrantPanel.jsx'
 import { revokeGrant } from './stellar/grant.js'
 import { fetchKeeperEvents } from './stellar/keeperEvents.js'
+import { rehydrateScopes } from './stellar/scopeRehydrate.js'
 import {
   readPricePerShare,
   readStrategies,
@@ -1323,6 +1324,25 @@ const App = () => {
     return off
   }, [realAddress])
 
+  // Rehydrate the on-chain agent scopes on connect / auto-reconnect / wallet switch. `scopes` is
+  // in-memory (filled live from AgentScopeAuthorized), so a refresh empties the "Agent permissions"
+  // panel while the grants stay live on-chain. This re-enumerates the owner's router-deployed
+  // agents (getEvents ∪ agent cache) and re-reads each scope, then REPLACES the whole list —
+  // idempotent under StrictMode's double-fire, and safe against a racing live grant (that handler
+  // dedupes by agent). Keyed on realAddress, not mount, so it also runs on manual reconnect.
+  useE(() => {
+    if (!realAddress) return
+    let alive = true
+    rehydrateScopes({ owner: realAddress })
+      .then((rows) => {
+        if (alive) setScopes(rows)
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [realAddress])
+
   // Lifeboat mandate grant (vf-lifeboat) — user-signed, time-boxed 24h authority. Re-reads
   // lifeboat_state() right after the tx lands so the panel's countdown updates immediately
   // instead of waiting for the next 15s poll tick.
@@ -2306,6 +2326,7 @@ const App = () => {
     setConnectPhase('idle')
     setPermActive(false)
     setPermExpiresAt(null)
+    setScopes([]) // else wallet A's rehydrated rows linger when wallet B connects
     setVeniceAuth(null)
     clearResume(realAddress)
     setSessionResumed(false)
