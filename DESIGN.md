@@ -32,6 +32,7 @@ Setiap keputusan visual diuji terhadap lima prinsip ini. Kalau melanggar salah s
 | **A — App shell** | Strategy flow, grant, dashboard, rail, modals, settings forms | Full restraint: no decorative gradient/blur/glow |
 | **B — Marketing / explorer** | Landing, Ecosystem, Explorer, Replay, public NavBar | 1 ambient grid **or** 1 radial vignette ≤3% opacity; nav glass `backdrop-blur ≤16px` with scrim ≥70% opaque; max 1 accent CTA glow on hover only |
 | **C — Extension** | VF Wallet popup | Same as A (trust UI) |
+| **D — Operations Console** | `/agent` route only | Semantic status color unrestricted (status IS the content); accent budget still 2 (strip LED + portfolio figure); ZoneFrame HUD chrome (header tint ≤4%, corner ticks); data-driven instrument motion only — radar sweep 5–6s (armed), EKG beat on new cycle, needle 600ms, row-flash once — max 1 live instrument per zone, all `prefers-reduced-motion`-safe |
 
 ### Live-status motion family (approved)
 
@@ -972,3 +973,24 @@ Hal-hal yang belum di-resolve dan bisa di-iterate:
 - **Loading skeleton** — banned shimmer, tapi butuh pattern lain untuk genuine loading >300ms. Saat ini cuma pakai `blink` pada marker — mungkin perlu eksplor "step list dengan progressive reveal" sebagai genuine alternative.
 
 Semua ini buat iterasi berikutnya. Base sudah cukup buat handoff implementasi.
+
+---
+
+## 21. Tier D — Operations Console (/agent)
+
+Route `/agent` = mission-control console: tiap feature dapat instrumen sesuai cerita bisnisnya, di atas token/typography yang sama.
+
+| Zona | Hue | Instrumen | Dual-coding text |
+|---|---|---|---|
+| command strip | accent | LED + chips | `Monitoring · cycle 07`, `mandate 23h 12m` |
+| swarm (hero) | accent | AgentGraph + trace strip | `N nodes · M links`, `last · <event> · <ago>` |
+| council | `--console-council` (#b7a6ff) | jury bench + verdict stamp | `DEPOSIT ×2 · 81% avg` |
+| positions | neutral | asset cards + allocation bar | `X% of portfolio` |
+| keeper | ok | autopilot dial | `supply apr · scale 0–15%` |
+| monitor loop | info | EKG heartbeat | `next check 23s`, `consecutive ok` |
+| lifeboat | ok / danger (state) | de-risk radar + status board | `threats · 0 in 24h`, `mandate 23h 12m left` |
+| mandate | warn | segmented cap gauge | `max-at-risk 20.00 / cap 40.00 USDC` |
+
+Aturan UX wajib (hasil riset): **calm-idle** (steady state nyaris diam), **dual coding** (instrumen selalu didampingi angka mono), **single escalation** (darurat mengubah tepat 2 tempat: chip strip + zona lifeboat), **reduced-motion** (instrumen jadi statis, nol informasi hilang).
+
+File: `frontend/src/console.css` + `frontend/src/components/console/`. Grid full-width max 1600px; breakpoints 1100/760.
