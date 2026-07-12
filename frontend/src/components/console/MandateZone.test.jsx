@@ -37,4 +37,23 @@ describe('MandateZone', () => {
     render(<MandateZone scopes={[]} onRevoke={() => {}} />)
     expect(screen.getByText(/no scoped agents — grant creates scopes/)).toBeTruthy()
   })
+  it('paginates at 3 scopes per page', () => {
+    const many = Array.from({ length: 4 }, (_, i) => ({
+      agent: `CAGENT${i}XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXAB1${i}`,
+      capPerPeriod: 100_000_000,
+      maxAtRisk: 50_000_000,
+      revoked: false,
+    }))
+    render(<MandateZone scopes={many} onRevoke={() => {}} />)
+    expect(screen.getAllByText(/max-at-risk/)).toHaveLength(3)
+    expect(screen.getByText('1 / 2')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /next page/i }))
+    expect(screen.getAllByText(/max-at-risk/)).toHaveLength(1)
+    expect(screen.getByText('04')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /next page/i }).disabled).toBe(true)
+  })
+  it('no pager when scopes fit on one page', () => {
+    render(<MandateZone scopes={scopes} onRevoke={() => {}} />)
+    expect(screen.queryByRole('button', { name: /next page/i })).toBeNull()
+  })
 })

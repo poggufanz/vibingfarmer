@@ -1,13 +1,21 @@
 // frontend/src/components/console/MandateZone.jsx
 // Scoped permissions ("the leash"): per-agent cap gauge + revoke. perm-doc heritage rows.
+import { useState } from 'react'
 import ZoneFrame from './ZoneFrame.jsx'
 import Gauge from './instruments/Gauge.jsx'
+import Pager from './Pager.jsx'
 import { shortAddr } from './consoleUtils.js'
 import { toDisplay } from '../../stellar/format.js'
 
+const PAGE_SIZE = 3
+
 export default function MandateZone({ scopes = [], onRevoke }) {
+  const [page, setPage] = useState(0)
   const active = scopes.filter((s) => !s.revoked)
   const totalCap = active.reduce((sum, s) => sum + Number(s.capPerPeriod || 0), 0)
+  const pages = Math.max(1, Math.ceil(scopes.length / PAGE_SIZE))
+  const cur = Math.min(page, pages - 1)
+  const pageScopes = scopes.slice(cur * PAGE_SIZE, cur * PAGE_SIZE + PAGE_SIZE)
 
   return (
     <ZoneFrame
@@ -20,9 +28,11 @@ export default function MandateZone({ scopes = [], onRevoke }) {
       {scopes.length === 0 ? (
         <div className="zone-empty">no scoped agents — grant creates scopes</div>
       ) : (
-        scopes.map((s, i) => (
+        pageScopes.map((s, i) => (
           <div className="mandate-row" key={s.agent}>
-            <span className="mono mandate-idx">{String(i + 1).padStart(2, '0')}</span>
+            <span className="mono mandate-idx">
+              {String(cur * PAGE_SIZE + i + 1).padStart(2, '0')}
+            </span>
             <div className="mandate-main">
               <span className="mono mandate-addr">{shortAddr(s.agent)}</span>
               <span className="mono mandate-caps tnum">
@@ -44,6 +54,7 @@ export default function MandateZone({ scopes = [], onRevoke }) {
           </div>
         ))
       )}
+      <Pager page={cur} pages={pages} onPage={setPage} />
       <div className="mandate-guards mono">
         revocable · yes — anytime, on-chain · expiry · via SEP-41 allowance
       </div>

@@ -13,6 +13,7 @@ import React, {
 } from 'react'
 import ForceGraph2D from 'react-force-graph-2d'
 import { Icon } from './components.jsx'
+import Pager from './components/console/Pager.jsx'
 import { shortAddr } from './screens.jsx'
 import { VAULT_CATALOG } from './config.js'
 import { buildStrategyState, scoreReward, riskCeiling } from './strategy/mdp.js'
@@ -1321,15 +1322,25 @@ const agoLabel = (ts, now) => {
 
 const SIGNAL_CLASS = { DEPOSIT: 'keep', HOLD: 'gated', WITHDRAW: 'discard' }
 
+const DECISION_PAGE_SIZE = 5
+
 const DecisionLogPanel = ({ rows, summary }) => {
   const [now, setNow] = useSAg(() => Date.now())
   const [open, setOpen] = useSAg(() => null)
+  const [page, setPage] = useSAg(0)
   useEAg(() => {
     const t = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(t)
   }, [])
 
   const byAgent = summary?.byAgent || {}
+  const allRows = rows || []
+  const pages = Math.max(1, Math.ceil(allRows.length / DECISION_PAGE_SIZE))
+  const curPage = Math.min(page, pages - 1)
+  const pageRows = allRows.slice(
+    curPage * DECISION_PAGE_SIZE,
+    curPage * DECISION_PAGE_SIZE + DECISION_PAGE_SIZE
+  )
   return (
     <div className="decision-log">
       <div className="decision-agents">
@@ -1348,7 +1359,7 @@ const DecisionLogPanel = ({ rows, summary }) => {
       </div>
 
       <div className="decision-rows">
-        {(rows || []).map((r) => (
+        {pageRows.map((r) => (
           <div className={`decision-row ${open === r.id ? 'open' : ''}`} key={r.id}>
             <button
               className="decision-row-head"
@@ -1382,13 +1393,14 @@ const DecisionLogPanel = ({ rows, summary }) => {
             )}
           </div>
         ))}
-        {(!rows || rows.length === 0) && (
+        {allRows.length === 0 && (
           <div className="decision-empty">
             No council decisions yet. Each keep or discard verdict from the autonomous loop is
             logged here with all three specialist opinions.
           </div>
         )}
       </div>
+      <Pager page={curPage} pages={pages} onPage={setPage} />
     </div>
   )
 }

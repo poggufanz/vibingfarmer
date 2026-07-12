@@ -435,9 +435,9 @@
   color: var(--text);
 }
 .council-verdict {
-  display: flex;
-  gap: 14px;
-  align-items: flex-start;
+  display: grid;
+  gap: 10px;
+  justify-items: start;
   border-top: 1px solid var(--border);
   padding-top: 12px;
 }
@@ -719,4 +719,19 @@
 }
 .trace-tick:hover .trace-tip {
   display: block;
+}
+
+/* ── pager ──────────────────────────────────────────────── */
+.con-pager {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.con-pager-info {
+  font-size: 10px;
+  color: var(--text-faint);
 }
