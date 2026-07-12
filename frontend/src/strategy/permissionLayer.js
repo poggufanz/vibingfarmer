@@ -13,18 +13,18 @@ import { asLoss } from './riskMetrics.js'
 function templateSentence(result, metrics, riskTier) {
   const loss = asLoss(Number(metrics?.cvar95) || 0) // positive = expected worst-5% loss
   if (result.outcome === 'fatal') {
-    return 'The numbers did not reconcile against the simulation — stopping for safety. Nothing will run.'
+    return 'The numbers did not reconcile with the simulation. Execution stopped for safety. Nothing will run.'
   }
   // Fail-closed gate: only a converged 'proceed' is executable, so only the proceed
   // sentence poses a Yes/No. Every hold path ends "Nothing will run." — no
   // "Proceed anyway?" affordance the gate would refuse anyway.
   if (result.outcome === 'no-consensus') {
-    return `The council could not agree within ${result.iterations ?? 'the'} rounds — no clear edge, recommend holding. Nothing will run.`
+    return `The council could not agree within ${result.iterations ?? 'the'} rounds. There is no clear advantage, so holding is recommended. Nothing will run.`
   }
   if (result.proposal?.recommend === 'proceed') {
-    return `Projected worst-case (5%) loss is about ${loss}% — within your ${riskTier} limit. Proceed with the rebalance?`
+    return `Projected worst-case (5%) loss is about ${loss}%, within your ${riskTier} limit. Proceed with the rebalance?`
   }
-  return `Projected worst-case (5%) loss of about ${loss}% reaches your ${riskTier} risk floor — recommend holding. Nothing will run.`
+  return `Projected worst-case (5%) loss of about ${loss}% reaches your ${riskTier} risk floor. Holding is recommended. Nothing will run.`
 }
 
 /**

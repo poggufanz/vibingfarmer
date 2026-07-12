@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
 import vfRouter from './_router.js'
-import { equalSplit, parseLlmPlan } from './strategy.js'
+import { equalSplit, normalizeReasoning, parseLlmPlan } from './strategy.js'
 import { storeFrom } from './_db.js'
 import { issueKey } from './_keystore.js'
 
@@ -67,6 +67,14 @@ describe('parseLlmPlan', () => {
   })
 })
 
+describe('normalizeReasoning', () => {
+  it('keeps generated display prose plain and sentence-cased', () => {
+    expect(
+      normalizeReasoning('\u{1f680} robust returns \u2014 leverage liquidity \u00b7 now')
+    ).toBe('Reliable returns. Use liquidity, now')
+  })
+})
+
 describe('POST /strategy', () => {
   it('falls back to equal split without DEEPSEEK_API_KEY', async () => {
     const res = mockRes()
@@ -101,7 +109,7 @@ describe('POST /strategy', () => {
     await vfRouter(mk({ amountUsd: 100, riskLevel: 'medium', vaultCount: 1 }, key), res)
     const out = JSON.parse(res.body)
     expect(out.source).toBe('llm')
-    expect(out.reasoning).toBe('solid')
+    expect(out.reasoning).toBe('Solid')
   })
   it('falls back when the LLM returns garbage', async () => {
     process.env.DEEPSEEK_API_KEY = 'k'

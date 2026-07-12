@@ -24,9 +24,7 @@ export const VF_WALLET_ID = 'vf-wallet'
 
 function provider() {
   if (typeof window === 'undefined' || !window.vfWallet) {
-    throw new Error(
-      'VF Wallet extension not detected (window.vfWallet is missing — install/load the extension, see frontend/extension)'
-    )
+    throw new Error('VF Wallet was not detected. Install or load the extension, then try again.')
   }
   return window.vfWallet
 }

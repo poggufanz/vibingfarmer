@@ -35,14 +35,14 @@ const props = {
 describe('CouncilZone', () => {
   it('renders three jury seats with stance and confidence', () => {
     render(<CouncilZone {...props} />)
-    expect(screen.getByText('yield')).toBeTruthy()
+    expect(screen.getByText('Yield')).toBeTruthy()
     expect(screen.getByText('90%')).toBeTruthy()
-    expect(screen.getAllByText(/deposit|hold/)).toBeTruthy()
+    expect(screen.getAllByText(/Deposit|Hold/)).toBeTruthy()
   })
   it('stamps the latest verdict', () => {
     render(<CouncilZone {...props} />)
     expect(screen.getByText('KEEP')).toBeTruthy()
-    expect(screen.getByText(/DEPOSIT ×2/)).toBeTruthy()
+    expect(screen.getByText(/DEPOSIT, 2 votes/)).toBeTruthy()
   })
   it('opens the full decision log modal', () => {
     render(<CouncilZone {...props} />)
@@ -51,6 +51,6 @@ describe('CouncilZone', () => {
   })
   it('empty state when no verdicts yet', () => {
     render(<CouncilZone {...props} decisionsRows={[]} />)
-    expect(screen.getByText(/council idle/)).toBeTruthy()
+    expect(screen.getByText(/Council is idle/)).toBeTruthy()
   })
 })

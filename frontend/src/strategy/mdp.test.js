@@ -164,7 +164,7 @@ describe('enforceActionSpace', () => {
     const { allocations, violations } = enforceActionSpace(proposed, state)
     expect(allocations).toHaveLength(1)
     expect(allocations[0].address).toBe('0xAAA') // lowest-risk in universe
-    expect(violations.some((v) => v.includes('fell back'))).toBe(true)
+    expect(violations.some((v) => v.includes('safest eligible vault was selected'))).toBe(true)
   })
   it('exposes a static ACTION_SPACE description for the UI', () => {
     expect(ACTION_SPACE.allocate.constraint).toMatch(/sum to 1\.0/)

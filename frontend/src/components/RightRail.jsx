@@ -237,7 +237,7 @@ const PermissionPanel = ({ active, strategy, onRevoke, expiresAt }) => {
           className="panel-meta"
           style={{ fontFamily: 'var(--font-mono)', fontSize: '10.5px', color: 'var(--text-faint)' }}
         >
-          Session scope · Batch
+          Session scope, Batch
         </span>
       </div>
       <div
@@ -262,7 +262,7 @@ const PermissionPanel = ({ active, strategy, onRevoke, expiresAt }) => {
           }}
         />
         {active
-          ? `${agents.length} permission${agents.length > 1 ? 's' : ''} · ${fmtRemaining(expiresAt) || '-'}`
+          ? `${agents.length} permission${agents.length > 1 ? 's' : ''}, ${fmtRemaining(expiresAt) || '-'}`
           : 'No active permission'}
       </div>
       {active && agents.length > 0 && (
@@ -358,21 +358,26 @@ const PermissionPanel = ({ active, strategy, onRevoke, expiresAt }) => {
 }
 
 const EVENT_STYLES = {
-  AgentStarted: { icon: '●', color: 'var(--warn)' },
-  SwapExecuted: { icon: '↻', color: 'var(--info)' },
-  ApproveExecuted: { icon: '✓', color: 'var(--info)' },
-  DepositExecuted: { icon: '↓', color: 'var(--info)' },
-  AgentCompleted: { icon: '✓', color: 'var(--ok)' },
-  AgentFailed: { icon: '✕', color: 'var(--danger)' },
-  RedelegationCreated: { icon: '⇄', color: 'var(--info)' },
-  RedelegationRedeemed: { icon: '✓', color: 'var(--ok)' },
-  OrchestratorPlanned: { icon: '·', color: 'var(--text-muted)' },
-  PermissionGranted: { icon: '·', color: 'var(--text-muted)' },
-  Connected: { icon: '·', color: 'var(--text-muted)' },
-  Authorized: { icon: '·', color: 'var(--text-muted)' },
-  PermissionRevoked: { icon: '·', color: 'var(--danger)' },
-  SkillApproved: { icon: '·', color: 'var(--text-muted)' },
+  AgentStarted: { color: 'var(--warn)' },
+  SwapExecuted: { color: 'var(--info)' },
+  ApproveExecuted: { color: 'var(--info)' },
+  DepositExecuted: { color: 'var(--info)' },
+  AgentCompleted: { color: 'var(--ok)' },
+  AgentFailed: { color: 'var(--danger)' },
+  RedelegationCreated: { color: 'var(--info)' },
+  RedelegationRedeemed: { color: 'var(--ok)' },
+  OrchestratorPlanned: { color: 'var(--text-muted)' },
+  PermissionGranted: { color: 'var(--text-muted)' },
+  Connected: { color: 'var(--text-muted)' },
+  Authorized: { color: 'var(--text-muted)' },
+  PermissionRevoked: { color: 'var(--danger)' },
+  SkillApproved: { color: 'var(--text-muted)' },
 }
+
+const eventLabel = (value) =>
+  String(value || 'Event')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/^./, (c) => c.toUpperCase())
 
 const ActivityPanel = ({ logs }) => {
   const [openId, setOpenId] = useS(null)
@@ -421,7 +426,7 @@ const ActivityPanel = ({ logs }) => {
           className="panel-meta"
           style={{ fontFamily: 'var(--font-mono)', fontSize: '10.5px', color: 'var(--text-faint)' }}
         >
-          {logs.length ? `${logs.length} events · realtime` : 'Agent events · realtime'}
+          {logs.length ? `${logs.length} events, real time` : 'Agent events, real time'}
         </span>
       </div>
       {logs.length === 0 ? (
@@ -438,7 +443,7 @@ const ActivityPanel = ({ logs }) => {
             textAlign: 'center',
           }}
         >
-          No events yet
+          No events yet.
         </div>
       ) : (
         <>
@@ -484,21 +489,20 @@ const ActivityPanel = ({ logs }) => {
                       className="act-marker mono"
                       aria-hidden="true"
                       style={{
-                        color: sty.color,
-                        fontFamily: 'var(--font-mono)',
-                        fontSize: 13,
-                        fontWeight: 'bold',
+                        width: 6,
+                        height: 6,
+                        margin: '5px 6px',
+                        borderRadius: '50%',
+                        background: sty.color,
                       }}
-                    >
-                      {sty.icon}
-                    </span>
+                    />
                     <div>
                       <div
                         className="act-title"
                         style={{ fontSize: '12.5px', fontWeight: 500, color: 'var(--text)' }}
                       >
                         <span className="act-event mono" style={{ fontFamily: 'var(--font-mono)' }}>
-                          {l.event}
+                          {eventLabel(l.event)}
                         </span>
                         {l.agent && (
                           <span
@@ -538,7 +542,12 @@ const ActivityPanel = ({ logs }) => {
                         whiteSpace: 'nowrap',
                       }}
                     >
-                      {l.time} <span style={{ marginLeft: 3 }}>{open ? '▲' : '▼'}</span>
+                      {l.time}{' '}
+                      <Icon
+                        name="chevDown"
+                        size={11}
+                        className={open ? 'activity-chevron is-open' : 'activity-chevron'}
+                      />
                     </span>
                   </div>
                   {open && (
@@ -562,7 +571,7 @@ const ActivityPanel = ({ logs }) => {
                             rel="noopener noreferrer"
                             style={{ color: 'var(--accent)', textDecoration: 'underline' }}
                           >
-                            {shortAddr(l.txHash)} ↗
+                            {shortAddr(l.txHash)}
                           </a>
                         </div>
                       )}
@@ -595,7 +604,7 @@ const ActivityPanel = ({ logs }) => {
                 disabled={currentPage === 1}
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
               >
-                ← Prev
+                Previous
               </button>
               <span
                 className="mono"
@@ -614,7 +623,7 @@ const ActivityPanel = ({ logs }) => {
                 disabled={currentPage >= totalPages}
                 onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
               >
-                Next →
+                Next
               </button>
             </div>
           )}
@@ -663,7 +672,7 @@ const SkillPanel = ({ skillSource, marketLive, vaultLive, onCustomize }) => {
             fontSize: '10.5px',
           }}
         >
-          Customize →
+          Customize
         </button>
       </div>
       <div
@@ -699,9 +708,9 @@ const SkillPanel = ({ skillSource, marketLive, vaultLive, onCustomize }) => {
           {custom ? 'Custom strategy' : 'Default strategy'}
         </div>
         <div className="skill-sub" style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-          {custom ? 'Active · user-defined' : '4 vaults · expert framework'}
-          {marketLive != null && ` · ${marketLive ? 'Live market' : 'Static context'}`}
-          {vaultLive != null && ` · ${vaultLive ? 'Live vaults' : 'Cached'}`}
+          {custom ? 'Active, user-defined' : 'Default eligibility and allocation rules'}
+          {marketLive != null && `, ${marketLive ? 'Live market' : 'Static context'}`}
+          {vaultLive != null && `, ${vaultLive ? 'Live vaults' : 'Cached'}`}
         </div>
       </div>
     </div>
@@ -713,25 +722,25 @@ const PALETTES = [
     id: 'acid-yield',
     name: 'Acid Yield',
     swatch: ['#cfff3d', '#1a1b16', '#ecebe1'],
-    desc: 'Default · warm dark + acid lime',
+    desc: 'Default, warm dark + acid lime',
   },
   {
     id: 'mono-slate',
     name: 'Mono Slate',
     swatch: ['#e6edff', '#16182e', '#e8ebf3'],
-    desc: 'Refined · cool slate, no chroma',
+    desc: 'Refined, cool slate, no chroma',
   },
   {
     id: 'liquid-mint',
     name: 'Liquid Mint',
     swatch: ['#5ee6c5', '#11201b', '#ecebe1'],
-    desc: 'Teal undertone · mint accent',
+    desc: 'Teal undertone, mint accent',
   },
   {
     id: 'bone-paper',
     name: 'Bone Paper',
     swatch: ['#1a180f', '#e3dfd2', '#f4f1e9'],
-    desc: 'Light · editorial paper feel',
+    desc: 'Light, editorial paper feel',
   },
 ]
 
@@ -792,14 +801,8 @@ const PalettePicker = ({ value, onChange }) => (
               {p.desc}
             </div>
           </div>
-          <span
-            style={{
-              fontSize: 12,
-              fontWeight: 'bold',
-              color: on ? 'var(--accent)' : 'transparent',
-            }}
-          >
-            ✓
+          <span style={{ color: on ? 'var(--accent)' : 'transparent' }}>
+            <Icon name="check" size={14} />
           </span>
         </button>
       )

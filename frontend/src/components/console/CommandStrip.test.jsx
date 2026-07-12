@@ -20,10 +20,10 @@ const base = {
 describe('CommandStrip', () => {
   it('shows state, portfolio figure and chips', () => {
     render(<CommandStrip {...base} />)
-    expect(screen.getByText(/Monitoring · cycle 07/)).toBeTruthy()
+    expect(screen.getByText('Monitoring, cycle 07')).toBeTruthy()
     expect(screen.getByText('120.00')).toBeTruthy()
-    expect(screen.getByText(/mandate 12h 0m/)).toBeTruthy()
-    expect(screen.getByText('lifeboat ARMED')).toBeTruthy()
+    expect(screen.getByText('Mandate: 12h 0m')).toBeTruthy()
+    expect(screen.getByText('Lifeboat: ARMED')).toBeTruthy()
     expect(screen.getByText('3 scopes')).toBeTruthy()
   })
   it('stopped state mutes the led and label', () => {
@@ -32,6 +32,6 @@ describe('CommandStrip', () => {
   })
   it('emergency flips the lifeboat chip to danger', () => {
     render(<CommandStrip {...base} lifeboatMode="ENGAGED" />)
-    expect(screen.getByText('lifeboat ENGAGED').dataset.tone).toBe('danger')
+    expect(screen.getByText('Lifeboat: ENGAGED').dataset.tone).toBe('danger')
   })
 })

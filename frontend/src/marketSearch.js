@@ -79,7 +79,7 @@ export async function fetchMarketContext(riskLevel) {
   } catch (err) {
     clearTimeout(timeoutId)
     if (err.name === 'AbortError') {
-      console.warn('[MarketSearch] Tavily timeout after 8s — using static context')
+      console.warn('[MarketSearch] Tavily timeout after 8s - using static context')
     } else {
       console.warn('[MarketSearch] Tavily fetch failed:', err.message)
     }

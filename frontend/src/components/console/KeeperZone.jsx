@@ -18,28 +18,28 @@ export default function KeeperZone({ events = [], pricePerShare = null, strategi
 
   return (
     <ZoneFrame
-      title="keeper"
+      title="Keeper"
       hue="ok"
       led={engaged ? 'ok' : 'idle'}
       className="console-keeper"
-      meta={engaged ? 'autopilot engaged' : 'idle — keeper off'}
+      meta={engaged ? 'Autopilot engaged' : 'Idle. Keeper is off.'}
     >
       <Dial aprPct={apr} size={170} />
       <div className="keeper-pps-row">
         <span className="tnum keeper-pps-val">{pricePerShare ?? '--'}</span>
         <span className="mono keeper-pps-label">
-          price / share{delta != null ? ` · +${delta.toFixed(4)} last harvest` : ''}
+          Price per share{delta != null ? `, +${delta.toFixed(4)} since last harvest` : ''}
         </span>
       </div>
       {strategies.length === 0 ? (
-        <div className="zone-empty">no strategies registered</div>
+        <div className="zone-empty">No strategies registered.</div>
       ) : (
         <div className="keeper-strat-list">
           {strategies.map((s) => (
             <div key={s.address} className="con-feed-row">
               <span className="txt">{s.label}</span>
               <span className="meta tnum">
-                {s.poolLabel || '--'} · {s.aprPct == null ? '--' : `${s.aprPct.toFixed(2)}%`}
+                {s.poolLabel || '--'}, {s.aprPct == null ? '--' : `${s.aprPct.toFixed(2)}%`}
               </span>
             </div>
           ))}
@@ -49,11 +49,11 @@ export default function KeeperZone({ events = [], pricePerShare = null, strategi
         <div className="con-feed-row">
           <span className="txt">
             {last.kind === 'compound_executed'
-              ? `compounded · +${last.totalGainUsdc} USDC`
-              : `rebalanced · ${last.fromLabel} → ${last.toLabel} · ${last.amountUsdc} USDC`}
+              ? `Compounded, +${last.totalGainUsdc} USDC`
+              : `Rebalanced, ${last.fromLabel} → ${last.toLabel}, ${last.amountUsdc} USDC`}
           </span>
           <span className="meta">
-            {shortHash(last.txHash)} · {agoText(last.timestamp, nowMs)}
+            {shortHash(last.txHash)}, {agoText(last.timestamp, nowMs)}
           </span>
         </div>
       )}

@@ -129,7 +129,6 @@
 .zone-title {
   font-size: 11px;
   letter-spacing: -0.01em;
-  text-transform: lowercase;
   color: var(--text-muted);
 }
 .zone-meta {
@@ -411,7 +410,6 @@
 .council-role {
   font-size: 10px;
   color: var(--text-faint);
-  text-transform: lowercase;
 }
 .council-glyph {
   font-size: 18px;

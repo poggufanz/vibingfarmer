@@ -25,22 +25,22 @@ import NavBar from './NavBar.jsx'
 /* ----------------------------- content ----------------------------- */
 
 const SCENE_2 = {
-  heading: ['VF Loop Engine.', 'Autonomous Yield.', 'Anti-IL Shield.'],
+  heading: ['Automated yield.', 'Risk checks.', 'Scoped exits.'],
   features: [
-    'Continuous Loops: Automatic yield rebalancing and compounding on Stellar',
-    'AI Council (Yield, Risk, Market) evaluates pool health and anomalies',
-    'Active Impermanent Loss (IL) protection shields your liquidity positions',
-    'Autonomous Exit: Scoped keeper pulls funds to safety within 60 seconds',
+    'The keeper compounds and rebalances the Autofarm vault on Stellar.',
+    'The AI council reviews yield, risk, and market conditions before execution.',
+    'The eligibility gate blocks execution when required market data is unavailable.',
+    'The risk radar can trigger an emergency exit within its granted mandate.',
   ],
 }
 
 const SCENE_3 = {
-  heading: ['VF Wallet.', 'Secured and', 'Gas-Abstracted.'],
+  heading: ['VF Wallet.', 'Scoped signing.', 'Fees covered.'],
   features: [
-    'Smart Account: Secure passkey authentication (Face ID) or Classic mode',
-    'Scan-Before-Send: Built-in safety scanner flags recipient address risks',
-    'Zero Gas fees: Relayer-sponsored transactions protect your capital',
-    'Ephemeral Agent Keys: Permission-bounded execution fully controlled by you',
+    'Choose passkey or classic wallet mode.',
+    'The safety scanner checks recipient addresses before sending.',
+    'The fee-bump relay covers Stellar network fees.',
+    'Ephemeral agent keys can sign only approved operations.',
   ],
 }
 
@@ -97,7 +97,7 @@ function HeroSection({ onStart, reduceMotion = false }) {
   return (
     <section className="vf-hero">
       <div className="vf-hero__copy">
-        <p className="vf-hero__eyebrow">Stellar testnet · self-custody</p>
+        <p className="vf-hero__eyebrow">Stellar testnet, self-custody</p>
         <h1 className="vf-hero__headline">
           <span>Set a budget once.</span>
           <span className="vf-hero__headline-soft">Your USDC keeps earning.</span>
@@ -108,7 +108,7 @@ function HeroSection({ onStart, reduceMotion = false }) {
         </p>
         <div className="vf-hero__cta">
           <button className="vf-cta__btn" onClick={onStart}>
-            Start depositing <span aria-hidden="true">→</span>
+            Start depositing
           </button>
         </div>
       </div>
@@ -153,9 +153,9 @@ function CtaBlock({ onStart }) {
   return (
     <div className="vf-cta">
       <button className="vf-cta__btn" onClick={onStart}>
-        Start depositing <span aria-hidden="true">→</span>
+        Start depositing
       </button>
-      <p className="vf-cta__sub">Stellar testnet · Freighter / xBull / Albedo · fees covered</p>
+      <p className="vf-cta__sub">Stellar testnet. Freighter, xBull, and Albedo. Fees covered.</p>
     </div>
   )
 }
@@ -171,7 +171,8 @@ function OutroContent({ onStart }) {
         <span className="vf-outro__title-soft">You keep the keys.</span>
       </h2>
       <p className="vf-outro__sub">
-        Scoped budget, revoke anytime, emergency exits back to your address. Set once. Vibe forever.
+        Set a scoped budget, revoke access anytime, and return funds to your address in an
+        emergency. Set once. Vibe forever.
       </p>
       <CtaBlock onStart={onStart} />
     </>

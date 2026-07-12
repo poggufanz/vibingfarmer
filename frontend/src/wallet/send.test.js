@@ -55,7 +55,7 @@ beforeEach(() => {
   vi.clearAllMocks()
 })
 
-describe('send — vault detection', () => {
+describe('send - vault detection', () => {
   it('flags a known vault address and ignores a random one', () => {
     const vaultAddr = VAULT_CATALOG[0].address
     expect(isKnownVault(vaultAddr).hit).toBe(true)
@@ -213,7 +213,7 @@ describe('sendPayment', () => {
     expect(eligibility).not.toHaveBeenCalled()
   })
 
-  it('fails closed on an ineligible vault destination — never builds or submits', async () => {
+  it('fails closed on an ineligible vault destination - never builds or submits', async () => {
     eligibility.mockResolvedValueOnce({ allow: false, reasons: ['blocked'] })
     const horizon = stubHorizon()
 

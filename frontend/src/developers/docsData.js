@@ -3,24 +3,24 @@
 // Scope groups — the product's permission model, reused as the docs' organizing spine.
 // `grant` mirrors the human-readable note shown in the key permission picker.
 export const SCOPES = [
-  { id: 'strategy', grant: 'AI allocation · market context' },
+  { id: 'strategy', grant: 'AI allocation using market context' },
   { id: 'market', grant: 'Read-only market data' },
   { id: 'tx', grant: 'Unsigned XDR only' },
-  { id: 'submit', grant: 'Fee-bump relay · deposit-only' },
+  { id: 'submit', grant: 'Deposit-only fee-bump relay' },
   { id: 'scan', grant: 'Risk verdict' },
 ]
 
 export const ERRORS = [
   {
     status: 401,
-    error: 'Missing API key / Invalid API key',
-    when: 'No or bad Authorization: Bearer header',
+    error: 'Missing or invalid API key',
+    when: 'Authorization: Bearer header is missing or invalid',
   },
   { status: 403, error: 'Out of scope', when: 'Key lacks the required scope' },
   {
     status: 429,
     error: 'Too many requests',
-    when: 'Per-key per-minute limit hit · Retry-After header set',
+    when: 'Per-key rate limit exceeded; Retry-After header is set',
   },
   { status: 503, error: 'Daily budget exhausted', when: 'Global daily cap for the scope reached' },
 ]
@@ -56,7 +56,7 @@ export const ENDPOINTS = [
     scope: 'tx',
     desc: 'Simulate a transaction on Soroban without submitting.',
     req: `{ "xdr": "AAAA…" }`,
-    resp: `{ "ok": true, "latestLedger": 123456 } — "error" key is present only when ok=false`,
+    resp: `{ "ok": true, "latestLedger": 123456 }\n\nThe "error" key is present only when ok=false.`,
   },
   {
     method: 'POST',

@@ -104,6 +104,6 @@ describe('buildCreateContractTx', () => {
     fakeServer.simulateTransaction = vi.fn(async () => ({ error: 'no wasm for hash' }))
     await expect(
       buildCreateContractTx({ source: OWNER, wasmHash: WASM_HASH, server: fakeServer })
-    ).rejects.toThrow(/deploy simulation failed/)
+    ).rejects.toThrow(/Contract deployment simulation failed/)
   })
 })

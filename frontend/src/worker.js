@@ -74,18 +74,20 @@ export class WorkerAgent {
       this.emit('step', {
         step: 'swap',
         status: 'skipped',
-        reason: 'deposit-only agent — no swap on Stellar',
+        reason: 'Deposit-only agent. No swap is required on Stellar.',
       })
       // Enforcement B (hardening) — internal fail-closed assertion. NOT a security boundary; the
       // on-chain scope already bounds a malicious client. Blocks accidental code-path skips of the gate.
       const t = this.eligibilityToken
       if (!t || t.eligible !== true || Date.now() - t.asOf > MAX_TOKEN_AGE_MS) {
-        throw new Error('eligibility assertion failed — no valid pass token for this deposit')
+        throw new Error(
+          'Eligibility check failed. This deposit does not have a valid approval token.'
+        )
       }
       await this.setupKey()
       if (!this.agentAddress)
         throw new Error(
-          'agentAddress missing — orchestrator must deploy + authorize the agent first'
+          'Agent address is missing. The orchestrator must deploy and authorize the agent first.'
         )
 
       // Pre-submit circuit breaker. The relayer pays the fee, so gas is always "fresh" on this
@@ -93,15 +95,21 @@ export class WorkerAgent {
       // (don't spam the relay for one owner) remains meaningful.
       const gate = this.submitGate.check({ owner: this.user, gasSnapshotAt: Date.now() })
       if (!gate.ok) {
-        this.memoryEntries.push(createEntry('deposit', 'skipped', { reason: gate.reason }))
+        const reason =
+          {
+            stale_gas: 'Gas data is outdated.',
+            uneconomic: 'Estimated fees exceed the expected return.',
+            rate_anomaly: 'Too many deposit attempts. Try again in one minute.',
+          }[gate.reason] || 'The deposit was paused by a safety check.'
+        this.memoryEntries.push(createEntry('deposit', 'skipped', { reason }))
         writeMemory(this.agentId, this.sessionId, this.vault, this.memoryEntries)
         this.emit('failed', {
           agentId: this.agentId,
           vault: this.vault,
-          error: `submit-gate blocked: ${gate.reason}`,
+          error: reason,
           skipped: true,
         })
-        return { success: false, status: 'skipped', reason: gate.reason }
+        return { success: false, status: 'skipped', reason }
       }
 
       // Snapshot shares BEFORE — the only honest success signal.
@@ -113,15 +121,16 @@ export class WorkerAgent {
         amount: this.amount,
         sessionKey: this.sessionKey,
       })
-      if (!res) throw new Error('relay unconfigured — cannot submit gasless deposit')
-      if (res.status !== 'SUCCESS') throw new Error(`relay reported ${res.status}`)
+      if (!res)
+        throw new Error(
+          'The Stellar relay is unavailable. The gasless deposit could not be submitted.'
+        )
+      if (res.status !== 'SUCCESS') throw new Error(`The Stellar relay returned ${res.status}.`)
 
       // A relayer accepting a job is not a deposit. Confirm shares actually minted.
       const { minted, shares: sharesMinted } = await this.verifyMinted(baseline)
       if (!minted)
-        throw new Error(
-          'deposit not confirmed on-chain: vault shares did not increase (likely __check_auth/cap reject)'
-        )
+        throw new Error('The deposit was not confirmed because vault shares did not increase.')
 
       // Real minted-shares delta (cur - baseline), not the deposited amount. LOAD-BEARING since
       // the cutover: the deposit target is the exchange-rate autofarm vault

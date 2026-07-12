@@ -18,14 +18,14 @@ export default function SwarmZone({
   const last = traceEvents[0] || null
   return (
     <ZoneFrame
-      title="swarm"
+      title="Swarm"
       hue="accent"
       led={nodes ? 'ok' : 'idle'}
       className="console-swarm"
-      meta={<span className="tnum">{`${nodes} nodes · ${links} links`}</span>}
+      meta={<span className="tnum">{`${nodes} nodes, ${links} links`}</span>}
     >
       {nodes === 0 ? (
-        <div className="zone-empty">no active agents — grant deploys the swarm</div>
+        <div className="zone-empty">No active agents. Create a grant to deploy the swarm.</div>
       ) : (
         <div className="swarm-canvas">
           <AgentGraph
@@ -39,7 +39,7 @@ export default function SwarmZone({
       <div
         className="trace-strip"
         role="img"
-        aria-label={`trace · ${traceEvents.length} recent events`}
+        aria-label={`Trace with ${traceEvents.length} recent events`}
       >
         {traceEvents
           .slice(0, 20)
@@ -56,8 +56,8 @@ export default function SwarmZone({
       </div>
       <div className="instrument-caption">
         {last
-          ? `last · ${last.label} · ${agoText(last.timestamp, nowMs)}`
-          : 'no automation events yet'}
+          ? `Last: ${last.label}, ${agoText(last.timestamp, nowMs)}`
+          : 'No automation events yet.'}
       </div>
     </ZoneFrame>
   )

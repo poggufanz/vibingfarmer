@@ -8,9 +8,9 @@ export default function Pager({ page, pages, onPage }) {
         className="btn btn-ghost pos-cta"
         disabled={page === 0}
         onClick={() => onPage(page - 1)}
-        aria-label="previous page"
+        aria-label="Previous page"
       >
-        ‹ prev
+        Previous
       </button>
       <span className="con-pager-info mono tnum">
         {page + 1} / {pages}
@@ -19,9 +19,9 @@ export default function Pager({ page, pages, onPage }) {
         className="btn btn-ghost pos-cta"
         disabled={page >= pages - 1}
         onClick={() => onPage(page + 1)}
-        aria-label="next page"
+        aria-label="Next page"
       >
-        next ›
+        Next
       </button>
     </div>
   )

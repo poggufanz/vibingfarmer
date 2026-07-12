@@ -156,7 +156,7 @@ export class OrchestratorAgent {
       await this.setupLegacy(workers, expiry)
     }
     if (workers.every((w) => w.setupFailed)) {
-      const msg = `agent setup failed for all ${workers.length} agents — ${workers[0].setupError}`
+      const msg = `Agent setup failed for all ${workers.length} agents: ${workers[0].setupError}`
       this.onEvent('orchestrator-step', { step: 'authorizing-scope', status: 'error', error: msg })
       throw new Error(msg)
     }
@@ -294,7 +294,7 @@ export class OrchestratorAgent {
         // Surface + isolate: THIS worker is out (drives the tile/log 'failed' state), the rest
         // of the run continues. No infinite "started" limbo, no all-or-nothing abort.
         w.setupFailed = true
-        w.setupError = `setup failed: ${err.message}`
+        w.setupError = `Setup failed: ${err.message}`
         this.onEvent('failed', { agentId: w.agentId, vault: w.vault, error: w.setupError })
       }
     }
@@ -325,7 +325,7 @@ export class OrchestratorAgent {
         // dispatch's all-failed check then emits the error step + throws, exactly like legacy.
         for (const w of workers) {
           w.setupFailed = true
-          w.setupError = `setup failed: ${err.message}`
+          w.setupError = `Setup failed: ${err.message}`
           this.onEvent('failed', { agentId: w.agentId, vault: w.vault, error: w.setupError })
         }
         return
@@ -345,8 +345,12 @@ export class OrchestratorAgent {
             amount: w.amount,
             sessionKey: w.sessionKey,
           })
-          if (!res) throw new Error('relay unconfigured — cannot pull funds to the agent')
-          if (res.status !== 'SUCCESS') throw new Error(`router pull reported ${res.status}`)
+          if (!res)
+            throw new Error(
+              'The Stellar relay is unavailable. Funds could not be sent to the agent.'
+            )
+          if (res.status !== 'SUCCESS')
+            throw new Error(`The funding router returned ${res.status}.`)
         }
         w.scopeAuthorized = true
         this.onEvent('AgentScopeAuthorized', {
@@ -362,7 +366,7 @@ export class OrchestratorAgent {
         })
       } catch (err) {
         w.setupFailed = true
-        w.setupError = `setup failed: ${err.message}`
+        w.setupError = `Setup failed: ${err.message}`
         this.onEvent('failed', { agentId: w.agentId, vault: w.vault, error: w.setupError })
       }
     }

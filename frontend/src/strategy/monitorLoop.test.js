@@ -8,12 +8,20 @@ function makeDeps(overrides = {}) {
   const saved = []
   const reflect = vi.fn()
   return {
-    saved, reflect,
+    saved,
+    reflect,
     deps: {
       getState: vi.fn(async () => calmState),
       runGates: vi.fn(() => ({ allocations: [{ address: '0xB', allocation: 1 }], violations: [] })),
       simulate: vi.fn(() => ({ riskAdjustedScore: 6, projectedAnnualUsdc: 140 })),
-      council: vi.fn(async () => ({ verdict: 'keep', reason: null, confidence: 0.8, citedRules: ['yield-uplift'], specialists: [], resolvedBy: 'unanimous' })),
+      council: vi.fn(async () => ({
+        verdict: 'keep',
+        reason: null,
+        confidence: 0.8,
+        citedRules: ['yield-uplift'],
+        specialists: [],
+        resolvedBy: 'unanimous',
+      })),
       execute: vi.fn(async () => '0xtxhash'),
       reflect,
       journal: { saveCycle: (r) => saved.push(r) },
@@ -29,7 +37,12 @@ describe('createMonitorLoop', () => {
     const loop = createMonitorLoop(deps)
     await loop.submitIdea(null)
     expect(deps.execute).not.toHaveBeenCalled()
-    expect(saved[0]).toMatchObject({ cycle: 1, phase: 'observe', verdict: 'idle', turbulence: 'calm' })
+    expect(saved[0]).toMatchObject({
+      cycle: 1,
+      phase: 'observe',
+      verdict: 'idle',
+      turbulence: 'calm',
+    })
   })
 
   it('keep verdict executes, reflects success, journals txHash + citedRules', async () => {
@@ -37,13 +50,28 @@ describe('createMonitorLoop', () => {
     const loop = createMonitorLoop(deps)
     await loop.submitIdea({ kind: 'rebalance', proposed: [], currentAllocations: [] })
     expect(deps.execute).toHaveBeenCalledOnce()
-    expect(reflect).toHaveBeenCalledWith(expect.objectContaining({ verdict: 'keep', outcome: 'success', citedRules: ['yield-uplift'] }))
-    expect(saved[0]).toMatchObject({ cycle: 1, phase: 'execute', verdict: 'keep', txHash: '0xtxhash', citedRules: ['yield-uplift'] })
+    expect(reflect).toHaveBeenCalledWith(
+      expect.objectContaining({ verdict: 'keep', outcome: 'success', citedRules: ['yield-uplift'] })
+    )
+    expect(saved[0]).toMatchObject({
+      cycle: 1,
+      phase: 'execute',
+      verdict: 'keep',
+      txHash: '0xtxhash',
+      citedRules: ['yield-uplift'],
+    })
   })
 
   it('discard verdict journals reason, no execute/reflect', async () => {
     const { saved, reflect, deps } = makeDeps({
-      council: vi.fn(async () => ({ verdict: 'discard', reason: 'Risk Analyst', confidence: 0.9, citedRules: [], specialists: [], resolvedBy: 'veto' })),
+      council: vi.fn(async () => ({
+        verdict: 'discard',
+        reason: 'Risk Analyst',
+        confidence: 0.9,
+        citedRules: [],
+        specialists: [],
+        resolvedBy: 'veto',
+      })),
     })
     const loop = createMonitorLoop(deps)
     await loop.submitIdea({ kind: 'rebalance', proposed: [], currentAllocations: [] })
@@ -53,7 +81,11 @@ describe('createMonitorLoop', () => {
   })
 
   it('NEVER STOPS: throwing execute → crash row, reflects failure, loop survives', async () => {
-    const { saved, reflect, deps } = makeDeps({ execute: vi.fn(async () => { throw new Error('rpc timeout') }) })
+    const { saved, reflect, deps } = makeDeps({
+      execute: vi.fn(async () => {
+        throw new Error('rpc timeout')
+      }),
+    })
     const loop = createMonitorLoop(deps)
     await loop.submitIdea({ kind: 'rebalance', proposed: [], currentAllocations: [] })
     expect(saved[0]).toMatchObject({ phase: 'crash', verdict: 'crash', error: 'rpc timeout' })
@@ -63,7 +95,11 @@ describe('createMonitorLoop', () => {
   })
 
   it('throwing getState is caught as crash and never rejects', async () => {
-    const { saved, deps } = makeDeps({ getState: vi.fn(async () => { throw new Error('no rpc') }) })
+    const { saved, deps } = makeDeps({
+      getState: vi.fn(async () => {
+        throw new Error('no rpc')
+      }),
+    })
     const loop = createMonitorLoop(deps)
     await expect(loop.submitIdea(null)).resolves.toBeUndefined()
     expect(saved[0]).toMatchObject({ verdict: 'crash', error: 'no rpc' })
@@ -90,7 +126,8 @@ describe('createMonitorLoop', () => {
     vi.useFakeTimers()
     const { saved, deps } = makeDeps()
     const loop = createMonitorLoop(deps)
-    loop.start(); loop.start()
+    loop.start()
+    loop.start()
     await vi.advanceTimersByTimeAsync(0)
     expect(saved.length).toBe(1)
     loop.stop()
@@ -99,7 +136,12 @@ describe('createMonitorLoop', () => {
 
   it('gated idea sleeps without simulate/council/execute (saves AI credit)', async () => {
     const { saved, deps } = makeDeps({
-      gates: vi.fn(() => ({ passed: false, blockedBy: 'turbulence', reason: 'turbulent market — deposit blocked', results: [] })),
+      gates: vi.fn(() => ({
+        passed: false,
+        blockedBy: 'turbulence',
+        reason: 'turbulent market - deposit blocked',
+        results: [],
+      })),
     })
     const loop = createMonitorLoop(deps)
     await loop.submitIdea({ kind: 'deposit', proposed: [], currentAllocations: [] })
@@ -107,7 +149,12 @@ describe('createMonitorLoop', () => {
     expect(deps.simulate).not.toHaveBeenCalled()
     expect(deps.council).not.toHaveBeenCalled()
     expect(deps.execute).not.toHaveBeenCalled()
-    expect(saved[0]).toMatchObject({ cycle: 1, phase: 'gate', verdict: 'gated', gate: 'turbulence' })
+    expect(saved[0]).toMatchObject({
+      cycle: 1,
+      phase: 'gate',
+      verdict: 'gated',
+      gate: 'turbulence',
+    })
   })
 
   it('passing gates proceed to council as before', async () => {
@@ -137,7 +184,7 @@ describe('createMonitorLoop recordDecision', () => {
     await loop.submitIdea({ kind: 'rebalance', proposed: [], currentAllocations: [] })
     expect(recordDecision).toHaveBeenCalledOnce()
     expect(recordDecision).toHaveBeenCalledWith(
-      expect.objectContaining({ cycle: 1, verdict: expect.objectContaining({ verdict: 'keep' }) }),
+      expect.objectContaining({ cycle: 1, verdict: expect.objectContaining({ verdict: 'keep' }) })
     )
   })
 
@@ -145,13 +192,20 @@ describe('createMonitorLoop recordDecision', () => {
     const recordDecision = vi.fn()
     const { deps } = makeDeps({
       recordDecision,
-      council: vi.fn(async () => ({ verdict: 'discard', reason: 'Risk Analyst', confidence: 0.9, citedRules: [], specialists: [], resolvedBy: 'veto' })),
+      council: vi.fn(async () => ({
+        verdict: 'discard',
+        reason: 'Risk Analyst',
+        confidence: 0.9,
+        citedRules: [],
+        specialists: [],
+        resolvedBy: 'veto',
+      })),
     })
     const loop = createMonitorLoop(deps)
     await loop.submitIdea({ kind: 'rebalance', proposed: [], currentAllocations: [] })
     expect(recordDecision).toHaveBeenCalledOnce()
     expect(recordDecision).toHaveBeenCalledWith(
-      expect.objectContaining({ verdict: expect.objectContaining({ verdict: 'discard' }) }),
+      expect.objectContaining({ verdict: expect.objectContaining({ verdict: 'discard' }) })
     )
   })
 
@@ -165,14 +219,19 @@ describe('createMonitorLoop recordDecision', () => {
 
   it('does NOT record on a gated cycle', async () => {
     const recordDecision = vi.fn()
-    const { deps } = makeDeps({ recordDecision, gates: () => ({ passed: false, blockedBy: 'gas', reason: 'gas too high' }) })
+    const { deps } = makeDeps({
+      recordDecision,
+      gates: () => ({ passed: false, blockedBy: 'gas', reason: 'gas too high' }),
+    })
     const loop = createMonitorLoop(deps)
     await loop.submitIdea({ kind: 'rebalance', proposed: [], currentAllocations: [] })
     expect(recordDecision).not.toHaveBeenCalled()
   })
 
   it('a throwing recordDecision never breaks the cycle', async () => {
-    const recordDecision = vi.fn(() => { throw new Error('storage full') })
+    const recordDecision = vi.fn(() => {
+      throw new Error('storage full')
+    })
     const { saved, deps } = makeDeps({ recordDecision })
     const loop = createMonitorLoop(deps)
     await loop.submitIdea({ kind: 'rebalance', proposed: [], currentAllocations: [] })
@@ -183,17 +242,31 @@ describe('createMonitorLoop recordDecision', () => {
 describe('createMonitorLoop curate (ACE grow)', () => {
   it('curates on a failed execution (harmful outcome)', async () => {
     const curate = vi.fn()
-    const { deps } = makeDeps({ curate, execute: vi.fn(async () => { throw new Error('reverted') }) })
+    const { deps } = makeDeps({
+      curate,
+      execute: vi.fn(async () => {
+        throw new Error('reverted')
+      }),
+    })
     const loop = createMonitorLoop(deps)
     await loop.submitIdea({ kind: 'rebalance', proposed: [], currentAllocations: [] })
-    expect(curate).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'failure', reason: 'reverted' }))
+    expect(curate).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: 'failure', reason: 'reverted' })
+    )
   })
 
   it('curates when the council resolved by ai-conflict', async () => {
     const curate = vi.fn()
     const { deps } = makeDeps({
       curate,
-      council: vi.fn(async () => ({ verdict: 'keep', reason: null, confidence: 0.6, citedRules: ['yield-uplift'], specialists: [], resolvedBy: 'ai-conflict' })),
+      council: vi.fn(async () => ({
+        verdict: 'keep',
+        reason: null,
+        confidence: 0.6,
+        citedRules: ['yield-uplift'],
+        specialists: [],
+        resolvedBy: 'ai-conflict',
+      })),
     })
     const loop = createMonitorLoop(deps)
     await loop.submitIdea({ kind: 'rebalance', proposed: [], currentAllocations: [] })
@@ -209,8 +282,19 @@ describe('createMonitorLoop curate (ACE grow)', () => {
   })
 
   it('a throwing curate never stops the loop', async () => {
-    const curate = vi.fn(() => { throw new Error('venice down') })
-    const { saved, deps } = makeDeps({ curate, council: vi.fn(async () => ({ verdict: 'keep', confidence: 0.6, citedRules: ['yield-uplift'], specialists: [], resolvedBy: 'ai-conflict' })) })
+    const curate = vi.fn(() => {
+      throw new Error('venice down')
+    })
+    const { saved, deps } = makeDeps({
+      curate,
+      council: vi.fn(async () => ({
+        verdict: 'keep',
+        confidence: 0.6,
+        citedRules: ['yield-uplift'],
+        specialists: [],
+        resolvedBy: 'ai-conflict',
+      })),
+    })
     const loop = createMonitorLoop(deps)
     await loop.submitIdea({ kind: 'rebalance', proposed: [], currentAllocations: [] })
     expect(saved[0]).toMatchObject({ verdict: 'keep' }) // journal still wrote → loop survived

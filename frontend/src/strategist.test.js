@@ -5,6 +5,7 @@ import {
   askStrategistJson,
   askVeniceJson,
   parseSpecialistVerdict,
+  normalizeDisplayProse,
   resolveProvider,
   generateAgentSkills,
 } from './strategist.js'
@@ -26,8 +27,12 @@ const validVault = (over = {}) => ({
 
 describe('validateStrategyResponse', () => {
   it('accepts a well-formed single-vault response', () => {
-    const res = { selected_vaults: [validVault()] }
+    const res = {
+      strategy_summary: '\u{1f680} robust allocation \u2014 leverage liquidity',
+      selected_vaults: [validVault()],
+    }
     expect(() => validateStrategyResponse(res, VAULTS)).not.toThrow()
+    expect(res.strategy_summary).toBe('Reliable allocation. Use liquidity')
   })
 
   it('rejects expected_apy of 0', () => {
@@ -57,6 +62,14 @@ describe('validateStrategyResponse', () => {
 
   it('deprecated validateVeniceResponse alias matches validateStrategyResponse', () => {
     expect(validateVeniceResponse).toBe(validateStrategyResponse)
+  })
+})
+
+describe('normalizeDisplayProse', () => {
+  it('removes decorative punctuation, emoji, lowercase starts, and common hype', () => {
+    expect(
+      normalizeDisplayProse('\u{1f680} seamless growth \u2014 leverage yield \u00b7 fast')
+    ).toBe('Straightforward growth. Use yield, fast')
   })
 })
 
@@ -94,7 +107,7 @@ describe('resolveProvider (BYOK routing)', () => {
     expect(p.isVenice).toBe(true)
   })
 
-  it('venice preference uses the Venice key but never falls to DeepSeek — only host proxy', () => {
+  it('venice preference uses the Venice key but never falls to DeepSeek - only host proxy', () => {
     expect(resolveProvider({ veniceApiKey: 'vk', modelPreference: 'venice' }).name).toBe(
       'venice-key'
     )
@@ -109,7 +122,7 @@ describe('resolveProvider (BYOK routing)', () => {
     expect(isProxy(resolveProvider({ modelPreference: 'deepseek' }))).toBe(true)
   })
 
-  it('never returns null — empty args degrade to the host proxy', () => {
+  it('never returns null - empty args degrade to the host proxy', () => {
     expect(isProxy(resolveProvider())).toBe(true)
   })
 })

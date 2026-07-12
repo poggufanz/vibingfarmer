@@ -66,7 +66,7 @@ describe('classic controller', () => {
     expect(b.publicKey).toMatch(/^G/)
   })
 
-  it('create without confirming persists the pending-backup gate — a FRESH bootstrap call (modeling the popup having closed and reopened) still reports it, not just in-memory state', async () => {
+  it('create without confirming persists the pending-backup gate - a FRESH bootstrap call (modeling the popup having closed and reopened) still reports it, not just in-memory state', async () => {
     const { publicKey } = await doCreate('Main', 'pw12pw12pw12')
     const b = await bootstrap()
     expect(b.hasWallet).toBe(true)
@@ -81,7 +81,7 @@ describe('classic controller', () => {
     expect(revealed).toBe(mnemonic)
   })
 
-  it('confirmBackup clears the gate and deletes the mnemonic blob — bootstrap reports needsBackup false and revealBackup now throws', async () => {
+  it('confirmBackup clears the gate and deletes the mnemonic blob - bootstrap reports needsBackup false and revealBackup now throws', async () => {
     const { publicKey } = await doCreate('Main', 'pw12pw12pw12')
     await confirmBackup(publicKey)
 
@@ -105,7 +105,7 @@ describe('classic controller', () => {
     await expect(doImport('not a key or phrase', 'pw12pw12pw12', 'x')).rejects.toThrow()
   })
 
-  it('doImport never sets the pending-backup gate — bootstrap reports needsBackup false for an imported wallet', async () => {
+  it('doImport never sets the pending-backup gate - bootstrap reports needsBackup false for an imported wallet', async () => {
     const r = await doImport(
       'SBGWSG6BTNCKCOB3DIFBGCVMUPQFYPA2G4O34RMTB343OYPXU5DJDVMN',
       'pw12pw12pw12',

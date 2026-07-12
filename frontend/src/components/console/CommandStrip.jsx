@@ -14,7 +14,8 @@ export default function CommandStrip({
   scopesCount,
   nowS,
 }) {
-  const stateText = !running ? 'Stopped' : cycling ? `Evaluating · ${phase}` : 'Monitoring'
+  const phaseLabel = phase ? phase.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase()) : ''
+  const stateText = !running ? 'Stopped' : cycling ? `Evaluating: ${phaseLabel}` : 'Monitoring'
   const { leftS } = mandateRemaining(mandateState, nowS)
   const earnedPos = Number(earnedDisplay) > 0
   return (
@@ -22,7 +23,7 @@ export default function CommandStrip({
       className="zone console-strip"
       data-hue="accent"
       role="region"
-      aria-label="operations console status"
+      aria-label="Operations console status"
     >
       <div className="strip-inner">
         <div className="strip-state">
@@ -31,22 +32,22 @@ export default function CommandStrip({
             data-state={running ? 'accent' : 'idle'}
             aria-hidden="true"
           />
-          <span className="zone-title mono">operations console</span>
+          <span className="zone-title mono">Operations Console</span>
           <span className="strip-statetext mono" data-on={running ? '1' : '0'}>
             {stateText}
-            {running ? ` · cycle ${String(cycle || 0).padStart(2, '0')}` : ''}
+            {running ? `, cycle ${String(cycle || 0).padStart(2, '0')}` : ''}
           </span>
         </div>
         <div className="strip-portfolio">
           <span className="strip-figure tnum">{totalDisplay}</span>
           <span className="mono strip-unit">USDC</span>
           <span className="strip-earned tnum mono" data-tone={earnedPos ? 'ok' : 'idle'}>
-            +{earnedDisplay} · {blendedApy.toFixed(1)}% apy
+            +{earnedDisplay}, {blendedApy.toFixed(1)}% APY
           </span>
         </div>
         <div className="strip-chips">
           <span className="con-chip" data-tone={leftS > 0 ? undefined : 'warn'}>
-            mandate {leftS > 0 ? remainText(leftS * 1000) : 'none'}
+            Mandate: {leftS > 0 ? remainText(leftS * 1000) : 'None'}
           </span>
           {lifeboatMode && (
             <span
@@ -55,7 +56,7 @@ export default function CommandStrip({
                 lifeboatMode === 'ENGAGED' ? 'danger' : lifeboatMode === 'ARMED' ? 'ok' : undefined
               }
             >
-              lifeboat {lifeboatMode}
+              Lifeboat: {lifeboatMode}
             </span>
           )}
           <span className="con-chip">{scopesCount} scopes</span>

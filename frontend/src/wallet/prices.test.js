@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { fetchXlmUsd, portfolioValue } from './prices.js'
 
 describe('prices', () => {
-  it('returns null (degrades) when CoinGecko fails — no throw', async () => {
+  it('returns null (degrades) when CoinGecko fails - no throw', async () => {
     const fetchImpl = vi.fn(async () => ({ ok: false }))
     expect(await fetchXlmUsd({ fetchImpl })).toBeNull()
   })

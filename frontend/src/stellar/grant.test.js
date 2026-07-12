@@ -59,7 +59,7 @@ beforeEach(() => {
   getRelayerAddressMock.mockReset()
 })
 
-describe('agentInitScVal — encoding matches funding_router types.rs', () => {
+describe('agentInitScVal - encoding matches funding_router types.rs', () => {
   it('emits the ScMap keys in lexicographic field order: cap, expiry, period_duration, salt, signer, vault', () => {
     const sv = agentInitScVal({
       signer: new Uint8Array(32).fill(7),
@@ -168,11 +168,11 @@ describe('buildGrantTx', () => {
         router: '',
         server,
       })
-    ).rejects.toThrow(/router address not configured/)
+    ).rejects.toThrow(/funding router is not configured/)
   })
 })
 
-describe('submitGrant — a single signature', () => {
+describe('submitGrant - a single signature', () => {
   it('signs exactly ONCE (the envelope) and returns the relayed result + parsed agents', async () => {
     const server = fakeServer({ latest: 1000, retval: agentsRetval([AGENT_1, AGENT_2]) })
     submitViaRelayMock.mockResolvedValue({ hash: 'HREL', status: 'SUCCESS', relayer: 'GR' })
@@ -226,7 +226,7 @@ describe('submitGrant — a single signature', () => {
         server,
         sign: async (x) => x,
       })
-    ).rejects.toThrow(/relay reported FAILED/)
+    ).rejects.toThrow(/grant relay returned FAILED/)
   })
 })
 
@@ -241,7 +241,7 @@ describe('readAllowance', () => {
     expect(out).toEqual({ amount: 70_000_000n, liveUntilLedger: null })
   })
 
-  it('returns 0 on a read failure (safe side — orchestrator then does a fresh grant)', async () => {
+  it('returns 0 on a read failure (safe side - orchestrator then does a fresh grant)', async () => {
     const server = {
       simulateTransaction: async () => {
         throw new Error('rpc down')

@@ -19,7 +19,7 @@ const props = {
   pulseEdge: null,
   nowMs: 1_000_000_000_000,
   traceEvents: [
-    { label: 'compounded · +0.42 USDC', tone: 'ok', timestamp: 999_999_990_000 },
+    { label: 'compounded, +0.42 USDC', tone: 'ok', timestamp: 999_999_990_000 },
     { label: 'mandate updated', tone: 'info', timestamp: 999_999_980_000 },
   ],
 }
@@ -28,15 +28,15 @@ describe('SwarmZone', () => {
   it('renders the graph hero with honest counters', () => {
     render(<SwarmZone {...props} />)
     expect(screen.getByTestId('agent-graph')).toBeTruthy()
-    expect(screen.getByText(/2 nodes · 1 links/)).toBeTruthy()
+    expect(screen.getByText('2 nodes, 1 links')).toBeTruthy()
   })
   it('trace strip: one tick per event + dual-coded last event', () => {
     const { container } = render(<SwarmZone {...props} />)
     expect(container.querySelectorAll('.trace-tick')).toHaveLength(2)
-    expect(screen.getByText(/last · compounded · \+0.42 USDC/)).toBeTruthy()
+    expect(screen.getByText('Last: compounded, +0.42 USDC, 10s ago')).toBeTruthy()
   })
   it('empty graph shows deploy hint', () => {
     render(<SwarmZone {...props} graphData={{ nodes: [], links: [] }} traceEvents={[]} />)
-    expect(screen.getByText(/no active agents — grant deploys the swarm/)).toBeTruthy()
+    expect(screen.getByText('No active agents. Create a grant to deploy the swarm.')).toBeTruthy()
   })
 })

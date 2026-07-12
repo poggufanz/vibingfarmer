@@ -12,7 +12,7 @@ export default function Radar({ events = [], armed = false, nowMs, size = 180 })
     <svg
       className="instrument"
       role="img"
-      aria-label={`derisk radar · ${blips.length} recent events`}
+      aria-label={`De-risk radar, ${blips.length} recent events`}
       viewBox={`0 0 ${size} ${size}`}
       width={size}
       height={size}
@@ -37,7 +37,7 @@ export default function Radar({ events = [], armed = false, nowMs, size = 180 })
       )}
       {blips.map((b, i) => (
         <circle key={i} className="radar-blip" cx={b.x} cy={b.y} r="3" fill="var(--warn)">
-          <title>{`derisk · ${b.label}`}</title>
+          <title>{`De-risk: ${b.label}`}</title>
         </circle>
       ))}
       <circle cx={c} cy={c} r="2" fill="var(--text-faint)" />

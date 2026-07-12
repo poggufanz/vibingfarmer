@@ -150,7 +150,7 @@ export default function WithdrawModal({
         style={{ maxWidth: 420 }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="modal-eyebrow">Withdraw · Fee-bump relayer</div>
+        <div className="modal-eyebrow">Withdraw with fee-bump relayer</div>
         <h3 className="modal-title" id="withdraw-title">
           {t(lang, 'withdraw')} from {vault.name}
         </h3>
@@ -217,15 +217,15 @@ export default function WithdrawModal({
         <Row k="Time deposited" v={fmtDur(depositedAgoSec)} />
         <Row k="Total earned" v={`+${rewardsUsdc.toFixed(2)} USDC`} color="var(--ok)" />
         <div style={{ fontSize: 9.5, opacity: 0.5, textAlign: 'right', marginTop: -2 }}>
-          earned · preserved on withdraw (claimable)
+          Earnings remain claimable after withdrawal.
         </div>
 
         <div style={{ borderTop: '.5px solid rgba(255,255,255,.08)', margin: '10px 0' }} />
         <Row k="You receive" v={`~${(valid ? parsed : 0).toFixed(2)} USDC`} />
-        <Row k="+ Rewards" v={`+${rewardsUsdc.toFixed(2)} USDC (preserved)`} color="var(--ok)" />
-        <Row k="Gas" v="~0 · fee-bump relayer" />
-        <Row k="Permission" v="active" />
-        <Row k="Est. time" v="~30 seconds" />
+        <Row k="Rewards" v={`+${rewardsUsdc.toFixed(2)} USDC (preserved)`} color="var(--ok)" />
+        <Row k="Network fee" v="0 XLM, paid by relayer" />
+        <Row k="Permission" v="Active" />
+        <Row k="Estimated time" v="~30 seconds" />
 
         {error && (
           <div
@@ -245,9 +245,6 @@ export default function WithdrawModal({
               overflowWrap: 'anywhere',
             }}
           >
-            <span aria-hidden="true" style={{ flexShrink: 0 }}>
-              ⚠
-            </span>
             <span>{error}</span>
           </div>
         )}
@@ -266,7 +263,7 @@ export default function WithdrawModal({
               ? t(lang, 'withdraw')
               : status === 'loading'
                 ? 'Withdrawing…'
-                : 'Done ✓'}
+                : 'Done'}
           </button>
         </div>
       </div>

@@ -82,8 +82,9 @@ export async function buildGrantTx({
   router = SOROBAN_FUNDING_ROUTER_ADDRESS,
   server,
 }) {
-  if (!router) throw new Error('funding router address not configured')
-  if (!agentInits || agentInits.length === 0) throw new Error('grant needs at least one agent')
+  if (!router) throw new Error('The funding router is not configured.')
+  if (!agentInits || agentInits.length === 0)
+    throw new Error('The grant requires at least one agent.')
   const s = server || (await rpcServer())
   const { Contract, TransactionBuilder, BASE_FEE } = await sdk()
 
@@ -122,7 +123,7 @@ export async function buildGrantTx({
   // Simulate FIRST to capture the retval (Vec<Address> of the to-be-deployed agents).
   const sim = await s.simulateTransaction(raw)
   if (sim.error || !sim.result)
-    throw new Error(`grant simulation failed: ${sim.error || 'no result'}`)
+    throw new Error(`Grant simulation failed: ${sim.error || 'no result'}`)
   const agentAddresses = fromScVal(sim.result.retval)
 
   // …then prepare (simulate + assemble, sets the resource fee). We do NOT re-prepare after signing:
@@ -161,7 +162,7 @@ export async function submitGrant({
   const signed = await sign(built.xdr, 'grant')
   const relayed = await submitViaRelay({ xdr: signed })
   if (relayed) {
-    if (relayed.status !== 'SUCCESS') throw new Error(`grant relay reported ${relayed.status}`)
+    if (relayed.status !== 'SUCCESS') throw new Error(`The grant relay returned ${relayed.status}.`)
     return {
       hash: relayed.hash,
       status: relayed.status,
@@ -172,7 +173,7 @@ export async function submitGrant({
   }
   // Relay off → direct user-paid submit.
   const res = await submitUserTx({ signedXdr: signed, server })
-  if (res.status !== 'SUCCESS') throw new Error(`grant not confirmed: ${res.status}`)
+  if (res.status !== 'SUCCESS') throw new Error(`The grant was not confirmed: ${res.status}.`)
   return {
     hash: res.hash,
     status: res.status,
@@ -296,6 +297,6 @@ export async function revokeGrant({
   })
   const signed = await sign(unsigned, 'revoke grant')
   const res = await submitUserTx({ signedXdr: signed, server })
-  if (res.status !== 'SUCCESS') throw new Error(`revoke not confirmed: ${res.status}`)
+  if (res.status !== 'SUCCESS') throw new Error(`Revocation was not confirmed: ${res.status}.`)
   return res
 }

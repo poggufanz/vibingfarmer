@@ -61,7 +61,7 @@ export async function dispatchRawCall({
     return {
       executed: false,
       error:
-        'missing session material — pass publicClient/serializedApproval/sessionPrivateKey or set window.__vfDevMandateFixture',
+        'Session material is missing. Pass publicClient, serializedApproval, and sessionPrivateKey, or set window.__vfDevMandateFixture.',
     }
   }
 

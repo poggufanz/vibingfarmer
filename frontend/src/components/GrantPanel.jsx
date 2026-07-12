@@ -34,7 +34,7 @@ export default function GrantPanel({
 
   return (
     <section className="card grant-panel enter">
-      <p className="grant-kicker mono">One signature · then agents run</p>
+      <p className="grant-kicker mono">One signature, then agents run</p>
 
       <h1 className="h-display">Review your spending limit</h1>
       <p className="lede">
@@ -56,7 +56,7 @@ export default function GrantPanel({
         <div className="grant-receipt-row">
           <span className="grant-receipt-k">Workers</span>
           <span className="grant-receipt-v">
-            {n} agent{n === 1 ? '' : 's'} · deposits only
+            {n} agent{n === 1 ? '' : 's'}, deposits only
           </span>
         </div>
         <div className="grant-receipt-row">
@@ -65,34 +65,34 @@ export default function GrantPanel({
         </div>
         <div className="grant-receipt-row">
           <span className="grant-receipt-k">Your control</span>
-          <span className="grant-receipt-v">Revoke anytime · funds stay yours</span>
+          <span className="grant-receipt-v">Revoke anytime, funds stay yours</span>
         </div>
       </div>
 
       <div className="grant-controls">
         <label className="grant-field">
-          <span className="grant-field-k">Budget · USDC</span>
+          <span className="grant-field-k">Budget, USDC</span>
           <input
             className="grant-budget-input mono"
             type="number"
             min="0"
             step="1"
             inputMode="decimal"
-            aria-label="grant budget in USDC"
+            aria-label="Grant budget in USDC"
             value={budget}
             disabled={busy}
             onChange={(e) => setBudget(e.target.value)}
           />
           {!budgetValid && (
             <span className="grant-field-hint" style={{ color: 'var(--danger)' }}>
-              Enter a positive amount
+              Enter a positive amount.
             </span>
           )}
         </label>
 
         <div className="grant-field">
           <span className="grant-field-k">Valid for</span>
-          <div className="grant-presets" role="group" aria-label="grant duration">
+          <div className="grant-presets" role="group" aria-label="Grant duration">
             {DURATION_PRESETS.map((d) => (
               <button
                 key={d.id}
@@ -127,7 +127,9 @@ export default function GrantPanel({
         >
           {phase === 'revoking' ? 'Revoking…' : 'Revoke grant'}
         </button>
-        <span className="annot">Sets allowance to 0 · one signature · works if relayer is down</span>
+        <span className="annot">
+          Sets the allowance to 0 with one signature, even if the relayer is down.
+        </span>
       </div>
 
       {error && (

@@ -82,35 +82,39 @@ export function evaluate(input, nowMs = Date.now()) {
   const { protocol, facts, isFixture = false } = input
   const reasons = []
   const present = allRequiredFactsPresent(facts, nowMs)
-  if (!present) reasons.push('missing or stale required data')
+  if (!present) reasons.push('Required data is missing or outdated.')
   const yr = yieldReality(facts)
   if (yr.verdict === 'ponzi')
-    reasons.push(`yield/revenue ratio ${yr.ratio.toFixed(2)} (ponzi >= ${PONZI_RATIO_MAX})`)
-  if (yr.verdict === 'unknown') reasons.push('yield/revenue unverifiable')
+    reasons.push(
+      `Yield-to-revenue ratio ${yr.ratio.toFixed(2)} exceeds the ${PONZI_RATIO_MAX} limit.`
+    )
+  if (yr.verdict === 'unknown') reasons.push('Yield and revenue could not be verified.')
   const sec = securityScore(facts)
-  if (sec.auditGate === 'fail') reasons.push('unaudited (audit gate)')
+  if (sec.auditGate === 'fail') reasons.push('A current security audit was not verified.')
   if (sec.score < SECURITY_MIN)
-    reasons.push(`security ${sec.score}/100 (our weighting) below ${SECURITY_MIN}`)
+    reasons.push(
+      `Security score ${sec.score}/100 using our weighting is below the minimum of ${SECURITY_MIN}.`
+    )
   // Lifeboat F8 screening — the passive half of the lifeboat: the exploit class that actually
   // hit Blend (YieldBlox, 2026-02-22) is preventable here, not by any reaction radar.
   if (facts?.poolClass?.value != null && facts.poolClass.value !== 'curated')
-    reasons.push('community-managed pool')
+    reasons.push('The pool is community managed.')
   if (facts?.oracleType?.value != null && !ORACLE_TYPES_OK.includes(facts.oracleType.value))
-    reasons.push('oracle without circuit breaker')
+    reasons.push('The oracle has no circuit breaker.')
   if (
     facts?.collateralLiquidityDepthUsd?.value != null &&
     facts.collateralLiquidityDepthUsd.value < MIN_COLLATERAL_LIQUIDITY_USD
   )
-    reasons.push('thin collateral liquidity')
+    reasons.push('Collateral liquidity is below the minimum.')
   if (
     facts?.supplierConcentrationPct?.value != null &&
     facts.supplierConcentrationPct.value > MAX_SUPPLIER_CONCENTRATION_PCT
   )
-    reasons.push('supplier concentration too high')
+    reasons.push('Supplier concentration exceeds the limit.')
   // Fail-closed: an adminKey value outside ADMIN_LEVELS is unverifiable governance — reject it
   // rather than silently scoring it 0 (which would conflate "unknown" with the known-worst "eoa").
   const adminKnown = ADMIN_LEVELS[facts?.adminKey?.value] != null
-  if (present && !adminKnown) reasons.push('unrecognized governance key (unverifiable)')
+  if (present && !adminKnown) reasons.push('The governance key could not be verified.')
   const lifeboatScreenOk =
     facts?.poolClass?.value === 'curated' &&
     ORACLE_TYPES_OK.includes(facts?.oracleType?.value) &&

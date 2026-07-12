@@ -12,10 +12,17 @@ import { loadSettings, t } from '../settingsStore.js'
 import { useNavigateTo } from '../router.js'
 import { YieldLine } from './SignatureMark.jsx'
 import { toDisplay } from '../stellar/format.js'
+import { Icon } from '../components.jsx'
 
 const POLL_MS = 10 * 60 * 1000
 const u = toDisplay
 const fmtAmt = (n) => (+Number(n || 0).toFixed(2)).toString()
+const sentenceCase = (value, fallback = '-') => {
+  const text = String(value || fallback)
+    .replace(/[_-]+/g, ' ')
+    .trim()
+  return text ? text[0].toUpperCase() + text.slice(1) : fallback
+}
 const formatTime = (ts, now = Date.now()) => {
   if (!ts) return '-'
   const { timestampFormat } = loadSettings()
@@ -79,25 +86,27 @@ const dot = (c) => ({ width: 8, height: 8, borderRadius: '50%', background: c, f
 const alertText = (a) => {
   switch (a.kind) {
     case 'risk_alert':
-      return `Risk detected · ${a.vaultName}`
+      return `Risk detected, ${a.vaultName}`
     case 'apy_drift':
-      return `APY drop detected · ${a.vaultName}`
+      return `APY drop detected, ${a.vaultName}`
     case 'rebalance_proposal':
-      return `Rebalance proposed · +${a.apyGain}% opportunity`
+      return `Rebalance proposed, +${a.apyGain}% opportunity`
     case 'harvest_ready':
-      return `Harvest ready · ${a.vaultName}`
+      return `Harvest ready, ${a.vaultName}`
     case 'harvest_executed':
-      return `Harvested · ${a.vaultName}`
+      return `Harvested, ${a.vaultName}`
     case 'harvest_failed':
-      return `Harvest failed · ${a.vaultName}`
+      return `Harvest failed, ${a.vaultName}`
     default:
-      return `${String(a.kind || 'event').replace(/_/g, ' ')} · ${a.vaultName || ''}`
+      return `${String(a.kind || 'Event')
+        .replace(/_/g, ' ')
+        .replace(/^./, (c) => c.toUpperCase())}, ${a.vaultName || ''}`
   }
 }
-const alertIcon = (a) => {
-  if (a.kind === 'risk_alert' || a.kind === 'apy_drift') return { icon: '!', color: 'var(--warn)' }
-  if (a.kind === 'harvest_failed') return { icon: '✗', color: 'var(--danger)' }
-  return { icon: '●', color: 'var(--text-muted)' }
+const alertTone = (a) => {
+  if (a.kind === 'risk_alert' || a.kind === 'apy_drift') return { color: 'var(--warn)' }
+  if (a.kind === 'harvest_failed') return { color: 'var(--danger)' }
+  return { color: 'var(--text-muted)' }
 }
 
 const SectionHead = ({ title, action, onAction }) => (
@@ -162,7 +171,9 @@ const Collapsible = ({ title, count, meta, defaultOpen = false, children }) => (
   <details className="yv-collapse" style={section} {...(defaultOpen ? { open: true } : {})}>
     <summary style={summaryRow}>
       <span style={eyebrow}>
-        <span className="yv-caret">▸ </span>
+        <span className="yv-caret" aria-hidden="true">
+          <Icon name="arrow" size={12} />
+        </span>
         {title}
         {count != null ? ` (${count})` : ''}
       </span>
@@ -283,7 +294,7 @@ export default function HomePage({
             }}
           >
             <span className="live-dot" />
-            Network fees covered · Stellar testnet
+            Network fees covered, Stellar testnet
           </div>
         </div>
       </div>
@@ -294,20 +305,19 @@ export default function HomePage({
   const apyOf = (addr) => vaultMeta[addr.toLowerCase()]?.apy || 0
   const totalUnits = posList.reduce((s, [, p]) => s + Number(p.balance || 0), 0)
   const earnedToday = posList.reduce((s, [a, p]) => s + (u(p.balance) * (apyOf(a) / 100)) / 365, 0)
-  const mode = autoHarvest ? 'autopilot' : 'co-pilot'
+  const mode = autoHarvest ? 'Autopilot' : 'Co-pilot'
 
   // Risk/agent alerts now surface only through the top-bar bell (NotificationCenter);
   // the inline home banner was removed so alerts live in one place.
 
   // Recent activity: transactions + agent events, merged, newest 5.
   const txItems = getTransactions().map((t) => ({
-    icon: t.status === 'failed' ? '✗' : '✓',
     color: t.status === 'failed' ? 'var(--danger)' : 'var(--ok)',
     text: `${t.type === 'withdraw' ? 'Withdrew' : 'Deposited'} ${fmtAmt(t.amountUsdc)} USDC → ${t.vaultName}`,
     ts: t.timestamp,
   }))
   const alertItems = alerts.map((a) => ({
-    ...alertIcon(a),
+    ...alertTone(a),
     text: alertText(a),
     ts: a.timestamp || lastUpdated,
   }))
@@ -409,7 +419,7 @@ export default function HomePage({
             </div>
             {onOpenAgent && (
               <button className="pill-btn" style={pillBtn} onClick={onOpenAgent}>
-                View agent →
+                View agent
               </button>
             )}
             <button
@@ -418,7 +428,7 @@ export default function HomePage({
               style={{ ...linkBtn, textDecoration: 'none', fontSize: 15, lineHeight: 1 }}
               onClick={onDismissResumed}
             >
-              ×
+              <Icon name="x" size={14} />
             </button>
           </div>
         )}
@@ -643,7 +653,7 @@ export default function HomePage({
                     }}
                     onClick={() => onStartStrategy(estimateAmount)}
                   >
-                    Start depositing <span style={{ fontSize: 14 }}>→</span>
+                    Start depositing
                   </button>
                   <div
                     style={{
@@ -664,7 +674,7 @@ export default function HomePage({
                         background: 'var(--accent)',
                       }}
                     />
-                    One signature · network fees covered
+                    One signature, network fees covered
                   </div>
                 </div>
               </div>
@@ -711,7 +721,7 @@ export default function HomePage({
                           {v.name}
                         </div>
                         <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>
-                          {v.yield_source} · min {v.min_capital} USDC
+                          {v.yield_source}, min {v.min_capital} USDC
                         </div>
                       </div>
                       <div style={{ textAlign: 'right' }}>
@@ -738,7 +748,7 @@ export default function HomePage({
                             marginTop: 3,
                           }}
                         >
-                          {v.risk}
+                          {sentenceCase(v.risk)}
                         </span>
                       </div>
                     </button>
@@ -910,7 +920,7 @@ export default function HomePage({
                   }}
                 >
                   <span style={dot(agentActive ? 'var(--ok)' : 'var(--text-faint)')} />
-                  {agentActive ? 'Monitoring' : 'Stopped'} · {mode} →
+                  {agentActive ? 'Monitoring' : 'Stopped'}, {mode}
                 </button>
               </div>
             </div>
@@ -947,7 +957,7 @@ export default function HomePage({
                       >
                         <span style={{ fontSize: 13, fontWeight: 500 }}>{p.vaultName}</span>
                         <span className="mono tnum" style={{ fontSize: 12 }}>
-                          {bal.toFixed(2)} USDC · {apy.toFixed(1)}% APY ·{' '}
+                          {bal.toFixed(2)} USDC, {apy.toFixed(1)}% APY,{' '}
                           <span style={{ color: 'var(--ok)' }}>+{daily.toFixed(3)}/day</span>
                         </span>
                       </div>
@@ -1019,7 +1029,7 @@ export default function HomePage({
                 <span style={eyebrow}>Top Movers</span>
                 {!hasHistories ? (
                   <span className="mono" style={{ fontSize: 11, color: 'var(--text-faint)' }}>
-                    fetching APY momentum…
+                    Fetching APY momentum...
                   </span>
                 ) : trending.length > 0 ? (
                   trending.map((v, i) => {
@@ -1027,7 +1037,7 @@ export default function HomePage({
                     return (
                       <React.Fragment key={v.poolId || `${v.name}-${i}`}>
                         {i > 0 && (
-                          <span style={{ color: 'var(--text-faint)', fontSize: 11 }}>·</span>
+                          <span style={{ color: 'var(--text-faint)', fontSize: 11 }}>, </span>
                         )}
                         <button
                           className="link-btn"
@@ -1068,10 +1078,10 @@ export default function HomePage({
                   }}
                 >
                   {loading
-                    ? 'fetching live data…'
+                    ? 'Fetching live data...'
                     : live
-                      ? `live · updated ${formatTime(pulse.fetchedAt, now)}`
-                      : 'cached'}
+                      ? `Live, updated ${formatTime(pulse.fetchedAt, now)}`
+                      : 'Cached'}
                 </span>
               }
             >
@@ -1157,7 +1167,9 @@ export default function HomePage({
                     }}
                   >
                     {label}
-                    {sortBy === key ? (sortDir === 'desc' ? ' ▼' : ' ▲') : ''}
+                    {sortBy === key && (
+                      <Icon name="arrow" size={11} className={`sort-arrow ${sortDir}`} />
+                    )}
                   </button>
                 ))}
                 <span
@@ -1251,7 +1263,7 @@ export default function HomePage({
                       color: 'var(--text-faint)',
                     }}
                   >
-                    no vaults match this filter
+                    No vaults match this filter.
                   </div>
                 ) : (
                   sortedVaults.map((v, i) => {
@@ -1291,9 +1303,11 @@ export default function HomePage({
                           onClick={() => v.protocol && navigateTo('vault', v.protocol)}
                         >
                           {active && (
-                            <span style={{ color: 'var(--ok)', marginRight: 5, fontSize: 9 }}>
-                              ●
-                            </span>
+                            <span
+                              className="ui-dot"
+                              style={{ color: 'var(--ok)', marginRight: 5 }}
+                              aria-hidden="true"
+                            />
                           )}
                           {v.name}
                         </span>
@@ -1320,7 +1334,11 @@ export default function HomePage({
                               }}
                             />
                           ) : v.poolId ? (
-                            <span className="sparkline-loading">····</span>
+                            <span
+                              className="sparkline-loading"
+                              role="status"
+                              aria-label="Loading"
+                            />
                           ) : (
                             <span style={{ color: 'var(--text-faint)', fontSize: 11 }}>-</span>
                           )}
@@ -1329,7 +1347,7 @@ export default function HomePage({
                           {v.tvlFormatted || '-'}
                         </span>
                         <span className="mono" style={{ fontSize: 11, color: riskColor }}>
-                          {v.risk === 'medium' ? 'med' : v.risk || '-'}
+                          {sentenceCase(v.risk)}
                         </span>
                         <span>
                           {active && bal !== null ? (
@@ -1377,7 +1395,7 @@ export default function HomePage({
                     onViewHistory()
                   }}
                 >
-                  View all →
+                  View all
                 </button>
               }
             >
@@ -1399,11 +1417,9 @@ export default function HomePage({
                       }}
                     >
                       <span
-                        className="mono"
-                        style={{ color: e.color, width: 14, textAlign: 'center' }}
-                      >
-                        {e.icon}
-                      </span>
+                        aria-hidden="true"
+                        style={{ ...dot(e.color), width: 6, height: 6, marginInline: 4 }}
+                      />
                       <span style={{ flex: 1, fontSize: 12.5 }}>{e.text}</span>
                       <span
                         className="mono"

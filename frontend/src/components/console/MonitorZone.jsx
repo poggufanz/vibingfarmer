@@ -20,6 +20,7 @@ export default function MonitorZone({
   }, [])
 
   const cycling = Boolean(phase && phase !== 'sleep')
+  const phaseLabel = phase ? phase.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase()) : ''
   const remaining = running && nextTickAt ? Math.max(0, nextTickAt - now) : null
   let consecutiveOk = 0
   for (const r of rows) {
@@ -29,36 +30,36 @@ export default function MonitorZone({
 
   return (
     <ZoneFrame
-      title="monitor loop"
+      title="Monitor Loop"
       hue="info"
       led={!running ? 'idle' : cycling ? 'warn' : 'ok'}
       className="console-monitor"
-      meta={<span className="con-chip">observe-only</span>}
+      meta={<span className="con-chip">Observe only</span>}
     >
       <Ekg rows={rows} running={running} />
       <div className="instrument-caption">
         {running
           ? cycling
-            ? `cycle running · ${phase}`
+            ? `Cycle running: ${phaseLabel}`
             : remaining != null
-              ? `next check ${remainText(remaining)}`
-              : 'awaiting first heartbeat'
-          : 'loop stopped'}
+              ? `Next check in ${remainText(remaining)}`
+              : 'Awaiting first heartbeat'
+          : 'Loop stopped'}
       </div>
       <div className="mon-vitals">
         <div className="mon-vital">
           <span className="mon-num tnum">{summary?.total ?? 0}</span>
-          <span className="mon-label mono">cycles</span>
+          <span className="mon-label mono">Cycles</span>
         </div>
         <div className="mon-vital">
           <span className="mon-num tnum">{consecutiveOk}</span>
-          <span className="mon-label mono">consecutive ok</span>
+          <span className="mon-label mono">Consecutive OK</span>
         </div>
         <div className="mon-vital">
           <span className="mon-num tnum">
             {heartbeatMs ? Math.round(heartbeatMs / 60_000) : '--'}
           </span>
-          <span className="mon-label mono">interval · min</span>
+          <span className="mon-label mono">Interval (min)</span>
         </div>
       </div>
     </ZoneFrame>

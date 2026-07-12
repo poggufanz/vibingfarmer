@@ -80,7 +80,7 @@ const BASE_POOL_ADDR_RE = /^0x[a-fA-F0-9]{40}$/
 function requireBasePoolAddress(name, value) {
   if (!value || !BASE_POOL_ADDR_RE.test(value)) {
     throw new Error(
-      `${name} missing or not a 0x address — set VITE_${name} (see docs/deploy-checklist.md)`
+      `${name} is missing or is not a 0x address. Set VITE_${name} (see docs/deploy-checklist.md).`
     )
   }
   return value

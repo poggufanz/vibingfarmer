@@ -16,61 +16,61 @@ import NavBar from './NavBar.jsx'
 const PARTNERS = [
   {
     name: 'Stellar / Soroban',
-    subtitle: 'Single-Chain Smart Contracts',
+    subtitle: 'Stellar smart contracts',
     category: 'CHAIN',
     description:
-      'Soroban contracts on Stellar. The registry enforces per-agent ed25519 session-key scopes; the vault holds funds. Every authorize, deposit, and attestation is verifiable on Stellar testnet.',
-    tags: ['Soroban', 'ed25519 auth', 'Testnet'],
+      'The Funding Router grants a capped budget and deploys agent accounts. Each account signs only scoped operations, and the Autofarm vault supplies USDC to Blend.',
+    tags: ['Soroban', 'ed25519 Auth', 'Testnet'],
     link: 'https://stellar.org/soroban',
     mark: 'ST',
   },
   {
     name: 'Freighter',
-    subtitle: 'Stellar Wallet',
+    subtitle: 'Stellar wallet',
     category: 'WALLET',
     description:
-      'A standard Stellar wallet (Freighter / xBull / Albedo). One signature authorizes and funds each agent. No smart-account upgrade, no browser permission prompt.',
+      "Freighter, xBull, and Albedo can sign the Funding Router grant. One signature sets the run's budget and expiry, then deploys its agents.",
     tags: ['Freighter', 'xBull', 'Albedo'],
     link: 'https://www.freighter.app',
     mark: 'FR',
   },
   {
     name: 'Fee-bump Relayer',
-    subtitle: 'Gas Abstraction',
+    subtitle: 'Fee sponsorship',
     category: 'RELAYER',
     description:
-      'A funded relayer fee-bumps every agent transaction. Vibing Farmer users pay $0 in gas: the agent signs with its ed25519 key, the relayer pays.',
-    tags: ['Fee-bump', 'Gas 0', 'ed25519'],
+      'The allowlisted relay fee-bumps agent transactions. Agents sign with ephemeral ed25519 keys, while the relay account pays Stellar network fees.',
+    tags: ['Fee-bump', 'Fees covered', 'ed25519'],
     link: 'https://developers.stellar.org/docs/learn/fundamentals/transactions/fee-bump-transactions',
     mark: 'FB',
   },
   {
     name: 'Venice AI',
-    subtitle: 'Privacy-First AI Brain',
+    subtitle: 'Optional strategy provider',
     category: 'AI',
     description:
-      'Zero-retention inference via TEE + E2EE, wallet-funded through x402 + SIWE. DeepSeek V4 is the default strategist. Both generate yield strategies and per-agent skill sets.',
-    tags: ['x402', 'TEE', 'DeepSeek V4'],
+      'Venice is an optional strategy provider paid through x402 and authenticated with SIWE. DeepSeek is the default provider, with a deterministic fallback when AI is unavailable.',
+    tags: ['x402', 'SIWE', 'DeepSeek'],
     link: 'https://venice.ai',
     mark: 'VA',
   },
   {
     name: 'DeFiLlama',
-    subtitle: 'Live Yield Data',
+    subtitle: 'Yield data',
     category: 'DATA',
     description:
-      'Real-time APY and TVL data from 1000+ DeFi protocols. The AI strategist receives live market data before generating any strategy recommendation.',
-    tags: ['APY', 'TVL', 'Real-time'],
+      'APY and TVL data provide market inputs for strategy generation and deposit eligibility checks.',
+    tags: ['APY', 'TVL', 'Market data'],
     link: 'https://defillama.com',
     mark: 'DL',
   },
   {
     name: 'Tavily',
-    subtitle: 'Market Intelligence',
+    subtitle: 'Market search',
     category: 'SEARCH',
     description:
-      'AI-powered web search for real-time market context and security signals. The risk watcher uses Tavily to detect protocol exploits before they affect positions.',
-    tags: ['Risk signals', 'Market intel', 'AI search'],
+      'Current market and security search results provide context for council review and risk checks.',
+    tags: ['Risk signals', 'Market context', 'Search'],
     link: 'https://tavily.com',
     mark: 'TV',
   },
@@ -98,7 +98,7 @@ const STANDARDS = [
     link: 'https://developers.stellar.org/docs/build/guides/events',
   },
   { id: 'x402', desc: 'HTTP-native payments', link: 'https://x402.org' },
-  { id: 'Blend', desc: 'Real-yield lending (WIP)', link: 'https://www.blend.capital' },
+  { id: 'Blend', desc: 'Blend v2 lending yield', link: 'https://www.blend.capital' },
 ]
 
 const GITHUB_URL = 'https://github.com/poggufanz/vibingfarmer'
@@ -107,53 +107,134 @@ const GITHUB_URL = 'https://github.com/poggufanz/vibingfarmer'
 
 // Node layout coordinates (designed for 800×520 viewBox)
 const ARCH_NODES = [
-  { id: 'wallet',   x: 400, y: 40,  label: 'User Wallet',      sub: 'Freighter / xBull / Albedo', icon: 'W', color: '#ecebe1' },
-  { id: 'ai',       x: 400, y: 140, label: 'AI Strategy',       sub: 'Venice AI / DeepSeek',        icon: 'AI', color: '#b8a9ff' },
-  { id: 'registry', x: 400, y: 260, label: 'Registry',          sub: 'Soroban smart contract',      icon: 'RG', color: '#cfff3d', hero: true },
-  { id: 'worker1',  x: 240, y: 370, label: 'Worker-1',          sub: 'Parallel agent',              icon: 'W1', color: '#ffb86c' },
-  { id: 'worker2',  x: 560, y: 370, label: 'Worker-2',          sub: 'Parallel agent',              icon: 'W2', color: '#ffb86c' },
-  { id: 'vault1',   x: 240, y: 460, label: 'Vault (USDC)',      sub: 'Soroban',                     icon: 'V1', color: '#7dd3c0' },
-  { id: 'vault2',   x: 560, y: 460, label: 'Vault (USDC)',      sub: 'Soroban',                     icon: 'V2', color: '#7dd3c0' },
+  {
+    id: 'wallet',
+    x: 400,
+    y: 40,
+    label: 'User Wallet',
+    sub: 'Freighter / xBull / Albedo',
+    icon: 'W',
+    color: '#ecebe1',
+  },
+  {
+    id: 'ai',
+    x: 400,
+    y: 140,
+    label: 'AI Strategy',
+    sub: 'Venice AI / DeepSeek',
+    icon: 'AI',
+    color: '#b8a9ff',
+  },
+  {
+    id: 'registry',
+    x: 400,
+    y: 260,
+    label: 'Funding Router',
+    sub: 'Budget + expiry',
+    icon: 'FR',
+    color: '#cfff3d',
+    hero: true,
+  },
+  {
+    id: 'worker1',
+    x: 240,
+    y: 370,
+    label: 'Agent Account 1',
+    sub: 'Scoped signer',
+    icon: 'A1',
+    color: '#ffb86c',
+  },
+  {
+    id: 'worker2',
+    x: 560,
+    y: 370,
+    label: 'Agent Account 2',
+    sub: 'Scoped signer',
+    icon: 'A2',
+    color: '#ffb86c',
+  },
+  {
+    id: 'vault1',
+    x: 240,
+    y: 460,
+    label: 'Autofarm Vault',
+    sub: 'Blend v2 strategy',
+    icon: 'V1',
+    color: '#7dd3c0',
+  },
+  {
+    id: 'vault2',
+    x: 560,
+    y: 460,
+    label: 'Autofarm Vault',
+    sub: 'Blend v2 strategy',
+    icon: 'V2',
+    color: '#7dd3c0',
+  },
 ]
 
 const ARCH_EDGES = [
-  { from: 'wallet',   to: 'ai',       label: 'one signature' },
-  { from: 'ai',       to: 'registry', label: 'strategy + skills' },
-  { from: 'registry', to: 'worker1',  label: 'ed25519 scope' },
-  { from: 'registry', to: 'worker2',  label: 'ed25519 scope' },
-  { from: 'worker1',  to: 'vault1',   label: 'deposit' },
-  { from: 'worker2',  to: 'vault2',   label: 'deposit' },
+  { from: 'wallet', to: 'ai', label: 'Amount + limits' },
+  { from: 'ai', to: 'registry', label: 'Reviewed plan' },
+  { from: 'registry', to: 'worker1', label: 'Scoped account' },
+  { from: 'registry', to: 'worker2', label: 'Scoped account' },
+  { from: 'worker1', to: 'vault1', label: 'Deposit' },
+  { from: 'worker2', to: 'vault2', label: 'Deposit' },
 ]
 
 function ArchNode({ node }) {
-  const w = 200, h = 56, rx = 10
+  const w = 200,
+    h = 56,
+    rx = 10
   return (
     <g className={'arch-node' + (node.hero ? ' arch-node--hero' : '')}>
       {node.hero && (
         <rect
-          x={node.x - w/2 - 4} y={node.y - h/2 - 4}
-          width={w + 8} height={h + 8}
+          x={node.x - w / 2 - 4}
+          y={node.y - h / 2 - 4}
+          width={w + 8}
+          height={h + 8}
           rx={rx + 2}
           className="arch-glow"
         />
       )}
       <rect
-        x={node.x - w/2} y={node.y - h/2}
-        width={w} height={h}
+        x={node.x - w / 2}
+        y={node.y - h / 2}
+        width={w}
+        height={h}
         rx={rx}
         className="arch-card"
         style={{ stroke: node.hero ? 'rgba(207,255,61,0.4)' : undefined }}
       />
       {/* icon circle */}
-      <circle cx={node.x - w/2 + 24} cy={node.y} r={14} className="arch-icon-bg" style={{ fill: node.color + '18' , stroke: node.color + '40' }} />
-      <text x={node.x - w/2 + 24} y={node.y + 1} className="arch-icon-text" style={{ fill: node.color }} dominantBaseline="central" textAnchor="middle">
+      <circle
+        cx={node.x - w / 2 + 24}
+        cy={node.y}
+        r={14}
+        className="arch-icon-bg"
+        style={{ fill: node.color + '18', stroke: node.color + '40' }}
+      />
+      <text
+        x={node.x - w / 2 + 24}
+        y={node.y + 1}
+        className="arch-icon-text"
+        style={{ fill: node.color }}
+        dominantBaseline="central"
+        textAnchor="middle"
+      >
         {node.icon}
       </text>
       {/* labels */}
-      <text x={node.x - w/2 + 48} y={node.y - 6} className="arch-label" style={{ fill: node.hero ? node.color : undefined }}>
+      <text
+        x={node.x - w / 2 + 48}
+        y={node.y - 6}
+        className="arch-label"
+        style={{ fill: node.hero ? node.color : undefined }}
+      >
         {node.label}
       </text>
-      <text x={node.x - w/2 + 48} y={node.y + 10} className="arch-sublabel">
+      <text x={node.x - w / 2 + 48} y={node.y + 10} className="arch-sublabel">
         {node.sub}
       </text>
     </g>
@@ -161,26 +242,44 @@ function ArchNode({ node }) {
 }
 
 function ArchEdge({ from, to, label, index }) {
-  const x1 = from.x, y1 = from.y + 28
-  const x2 = to.x,   y2 = to.y - 28
-  const mx = (x1 + x2) / 2, my = (y1 + y2) / 2
+  const x1 = from.x,
+    y1 = from.y + 28
+  const x2 = to.x,
+    y2 = to.y - 28
+  const mx = (x1 + x2) / 2,
+    my = (y1 + y2) / 2
 
   return (
     <g className="arch-edge">
-      <line x1={x1} y1={y1} x2={x2} y2={y2} className="arch-line" style={{ animationDelay: `${index * 0.3}s` }} />
+      <line
+        x1={x1}
+        y1={y1}
+        x2={x2}
+        y2={y2}
+        className="arch-line"
+        style={{ animationDelay: `${index * 0.3}s` }}
+      />
       {/* arrowhead */}
       <polygon
-        points={`${x2},${y2} ${x2-4},${y2-8} ${x2+4},${y2-8}`}
+        points={`${x2},${y2} ${x2 - 4},${y2 - 8} ${x2 + 4},${y2 - 8}`}
         className="arch-arrow"
       />
       {/* label */}
       <rect
-        x={mx - label.length * 3.2} y={my - 8}
-        width={label.length * 6.4} height={16}
+        x={mx - label.length * 3.2}
+        y={my - 8}
+        width={label.length * 6.4}
+        height={16}
         rx={4}
         className="arch-edge-bg"
       />
-      <text x={mx} y={my + 1} className="arch-edge-label" textAnchor="middle" dominantBaseline="central">
+      <text
+        x={mx}
+        y={my + 1}
+        className="arch-edge-label"
+        textAnchor="middle"
+        dominantBaseline="central"
+      >
         {label}
       </text>
     </g>
@@ -188,27 +287,43 @@ function ArchEdge({ from, to, label, index }) {
 }
 
 function ArchDiagram() {
-  const nodeMap = Object.fromEntries(ARCH_NODES.map(n => [n.id, n]))
+  const nodeMap = Object.fromEntries(ARCH_NODES.map((n) => [n.id, n]))
 
   return (
-    <svg className="arch-svg" viewBox="0 0 800 520" role="img" aria-label="Architecture: user wallet signs once, AI strategy generates plan, Registry enforces ed25519 scopes, parallel workers deposit to vaults">
+    <svg
+      className="arch-svg"
+      viewBox="0 0 800 520"
+      role="img"
+      aria-label="Architecture: User limits inform the AI strategy, the Funding Router deploys scoped agent accounts, and agents deposit into the Autofarm vault"
+    >
       <defs>
         <filter id="arch-glow-f">
-          <feGaussianBlur stdDeviation="8" result="blur"/>
-          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+          <feGaussianBlur stdDeviation="8" result="blur" />
+          <feMerge>
+            <feMergeNode in="blur" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
         </filter>
       </defs>
       {/* gas badge */}
       <rect x={325} y={494} width={150} height={22} rx={6} className="arch-gas-bg" />
-      <text x={400} y={505} className="arch-gas-text" textAnchor="middle" dominantBaseline="central">
-        Gas: $0 (fee-bump relayer)
+      <text
+        x={400}
+        y={505}
+        className="arch-gas-text"
+        textAnchor="middle"
+        dominantBaseline="central"
+      >
+        Network fees: Covered
       </text>
       {/* edges first (behind nodes) */}
       {ARCH_EDGES.map((e, i) => (
         <ArchEdge key={i} from={nodeMap[e.from]} to={nodeMap[e.to]} label={e.label} index={i} />
       ))}
       {/* nodes */}
-      {ARCH_NODES.map(n => <ArchNode key={n.id} node={n} />)}
+      {ARCH_NODES.map((n) => (
+        <ArchNode key={n.id} node={n} />
+      ))}
     </svg>
   )
 }
@@ -243,7 +358,7 @@ function PartnerCard({ partner }) {
         rel="noreferrer noopener"
         aria-label={`Learn more about ${partner.name}`}
       >
-        Learn more <span aria-hidden="true">↗</span>
+        Learn more
       </a>
     </article>
   )
@@ -260,9 +375,7 @@ function StandardBadge({ standard }) {
     >
       <span className="eco-std__id">{standard.id}</span>
       <span className="eco-std__desc">{standard.desc}</span>
-      <span className="eco-std__view">
-        View doc <span aria-hidden="true">↗</span>
-      </span>
+      <span className="eco-std__view">View documentation</span>
     </a>
   )
 }
@@ -307,15 +420,15 @@ export default function EcosystemPage() {
         <header className="eco-header">
           <h1 className="eco-title">Ecosystem</h1>
           <p className="eco-lede">
-            The infrastructure powering Vibing Farmer. Built on Soroban smart contracts,
-            privacy-first AI, and gas-abstracted fee-bump relaying.
+            Vibing Farmer runs on Soroban contracts, scoped agent accounts, current market data, and
+            an allowlisted fee-bump relay.
           </p>
         </header>
 
         {/* partners */}
         <section className="eco-section" aria-labelledby="eco-sec-partners">
           <h2 id="eco-sec-partners" className="eco-section__title">
-            Powered by
+            Core services
           </h2>
           <div className="eco-grid">
             {PARTNERS.map((p) => (
@@ -341,10 +454,7 @@ export default function EcosystemPage() {
           <h2 id="eco-sec-arch" className="eco-section__title">
             How they connect
           </h2>
-          <div
-            ref={diagramRef}
-            className="eco-diagram"
-          >
+          <div ref={diagramRef} className="eco-diagram">
             <ArchDiagram />
           </div>
         </section>
@@ -353,14 +463,12 @@ export default function EcosystemPage() {
         <section className="eco-section eco-section--cta" aria-labelledby="eco-sec-cta">
           <div className="eco-cta__inner">
             <h2 id="eco-sec-cta" className="eco-cta__heading">
-              Ready to vibe?
+              Run a strategy
             </h2>
-            <p className="eco-cta__tagline">
-              Set once. <em>Vibe forever.</em>
-            </p>
+            <p className="eco-cta__tagline">Review the code or open the app.</p>
             <div className="eco-cta__row">
               <button className="eco-btn-primary" onClick={launchApp}>
-                Launch App <span aria-hidden="true">→</span>
+                Launch app
               </button>
               <a
                 className="eco-btn-ghost"
@@ -368,7 +476,7 @@ export default function EcosystemPage() {
                 target="_blank"
                 rel="noreferrer noopener"
               >
-                View on GitHub <span aria-hidden="true">↗</span>
+                View on GitHub
               </a>
             </div>
           </div>
@@ -390,7 +498,7 @@ export default function EcosystemPage() {
 function EcoStyle() {
   return (
     <style>{`
-/* Fixed + own scroll — same pattern as ExplorerPage. */
+/* Fixed + own scroll - same pattern as ExplorerPage. */
 .eco-page {
   position: fixed;
   inset: 0;
@@ -403,7 +511,7 @@ function EcoStyle() {
   font-family: var(--font-body, "Geist", system-ui, sans-serif);
   --eco-accent: var(--accent, #cfff3d);
 }
-/* Faint grid texture — same atmosphere as hero / explorer. */
+/* Faint grid texture - same atmosphere as hero / explorer. */
 .eco-page::before {
   content: "";
   position: fixed;

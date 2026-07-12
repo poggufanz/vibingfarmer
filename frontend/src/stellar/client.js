@@ -67,7 +67,7 @@ export async function readContract({ contract, method, args = [], server }) {
     .build()
   const sim = await s.simulateTransaction(tx)
   if (sim.error || !sim.result)
-    throw new Error(`read simulation failed: ${sim.error || 'no result'}`)
+    throw new Error(`Contract read simulation failed: ${sim.error || 'no result'}`)
   return fromScVal(sim.result.retval)
 }
 
@@ -134,7 +134,7 @@ export async function buildCreateContractTx({
   // Simulate FIRST to learn the to-be-created contract address (the host fn's retval)…
   const sim = await s.simulateTransaction(raw)
   if (sim.error || !sim.result)
-    throw new Error(`deploy simulation failed: ${sim.error || 'no result'}`)
+    throw new Error(`Contract deployment simulation failed: ${sim.error || 'no result'}`)
   const contractAddress = fromScVal(sim.result.retval)
   // …then prepare (simulate + assemble, sets the resource fee) exactly like buildInvokeTx.
   const tx = await s.prepareTransaction(raw)

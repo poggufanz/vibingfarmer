@@ -40,8 +40,8 @@ export default function NavBar() {
   }
 
   const isEcosystem = pathname === '/ecosystem'
-  const isExplorer  = pathname === '/explorer'
-  const isReplay    = pathname === '/replay'
+  const isExplorer = pathname === '/explorer'
+  const isReplay = pathname === '/replay'
 
   return (
     <nav className={`nv-bar${menuOpen ? ' is-open' : ''}`} aria-label="Main navigation">
@@ -61,7 +61,9 @@ export default function NavBar() {
       </button>
 
       <div className="nv-links" id="nv-main-links">
-        <button className="nv-link" onClick={launchApp}>Products</button>
+        <button className="nv-link" onClick={launchApp}>
+          App
+        </button>
         <button
           className={`nv-link${isEcosystem ? ' is-active' : ''}`}
           onClick={() => go('/ecosystem')}
@@ -83,12 +85,16 @@ export default function NavBar() {
         >
           Replay
         </button>
-        <a className="nv-link" href={GITHUB_URL} target="_blank" rel="noreferrer noopener">Resources</a>
-        <a className="nv-link" href={WHITEPAPER_URL} target="_blank" rel="noreferrer noopener">Whitepaper</a>
+        <a className="nv-link" href={GITHUB_URL} target="_blank" rel="noreferrer noopener">
+          GitHub
+        </a>
+        <a className="nv-link" href={WHITEPAPER_URL} target="_blank" rel="noreferrer noopener">
+          Whitepaper
+        </a>
       </div>
 
       <button className="nv-cta" onClick={launchApp}>
-        Launch <span aria-hidden="true">→</span>
+        Launch app
       </button>
     </nav>
   )

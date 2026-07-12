@@ -29,11 +29,11 @@ describe('MonitorZone', () => {
     render(<MonitorZone {...props} />)
     expect(screen.getByText('3')).toBeTruthy() // cycles total
     expect(screen.getByText('2')).toBeTruthy() // consecutive ok
-    expect(screen.getByText(/next check 23s/)).toBeTruthy()
-    expect(screen.getByText(/observe-only/)).toBeTruthy()
+    expect(screen.getByText('Next check in 23s')).toBeTruthy()
+    expect(screen.getByText('Observe only')).toBeTruthy()
   })
   it('stopped renders flat state', () => {
     render(<MonitorZone {...props} running={false} />)
-    expect(screen.getByText(/loop stopped/)).toBeTruthy()
+    expect(screen.getByText('Loop stopped')).toBeTruthy()
   })
 })

@@ -34,7 +34,7 @@ describe('vfapi thin client', () => {
     // Confirm the fixture is genuinely rejected (fail-closed)
     expect(out.allow).toBe(false)
     expect(out.reasons.length).toBeGreaterThan(0)
-    expect(out.reasons[0]).toMatch(/ponzi/i)
+    expect(out.reasons[0]).toMatch(/exceeds the 1\.5 limit/i)
   })
 
   it('resolves snapshot facts from the protocol slug when facts are omitted', async () => {

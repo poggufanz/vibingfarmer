@@ -89,7 +89,7 @@ describe('applyChainPositions (authoritative)', () => {
     expect(next['0xB'].balance).toBe('50000000')
   })
 
-  it('PRUNES a vault the chain reports as 0 (fully withdrawn — heals stale cache)', () => {
+  it('PRUNES a vault the chain reports as 0 (fully withdrawn - heals stale cache)', () => {
     const next = applyChainPositions(
       { '0xA': { balance: '1000000' }, '0xB': { balance: '50000000' } },
       { '0xa': { balance: '0' } }

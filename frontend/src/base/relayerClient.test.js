@@ -88,7 +88,7 @@ describe('postFarm', () => {
     expect(amounts.map(String).sort()).toEqual(['33333333', '33333333', '33333334'])
   })
 
-  test('passes a bigint amount through as-is — it is already base units, never re-scaled', async () => {
+  test('passes a bigint amount through as-is - it is already base units, never re-scaled', async () => {
     const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ jobId: 'job-1' }) }))
     await postFarm({
       burnTxHash: 'abcd',

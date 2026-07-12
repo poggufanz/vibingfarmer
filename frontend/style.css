@@ -203,26 +203,27 @@ textarea {
 
 /* ---------- Sidebar ---------- */
 .sidebar {
+  --sb-gutter: 12px;
   background: var(--bg-canvas);
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  align-items: center;
-  padding: 18px 0;
+  align-items: stretch;
+  padding: 18px var(--sb-gutter);
   gap: 4px;
   width: 58px;
   box-sizing: border-box;
   overflow: hidden;
   white-space: nowrap;
+  transition: width var(--duration-ui) var(--ease-in-out);
 }
 
 .app.sb-extended .sidebar {
   width: 180px;
-  align-items: stretch;
-  padding: 18px 12px;
 }
 
 [data-density='compact'] .sidebar {
+  --sb-gutter: 9px;
   width: 52px;
 }
 [data-density='compact'] .app.sb-extended .sidebar {
@@ -230,11 +231,11 @@ textarea {
 }
 
 .sb-logo {
-  width: 34px;
-  height: 34px;
+  width: 100%;
+  height: 38px;
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   font-family: var(--font-mono);
   font-weight: 600;
   font-size: 14px;
@@ -242,19 +243,14 @@ textarea {
   color: var(--text);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
-  margin: 0 auto 18px auto;
+  margin: 0 0 24px;
   transition: border-color var(--duration-fast) ease;
   box-sizing: border-box;
-  padding: 0;
+  padding: 0 8px;
 }
 
 .app.sb-extended .sb-logo {
   border-color: transparent;
-  width: 100%;
-  height: 38px;
-  justify-content: flex-start;
-  margin: 0 0 24px 0;
-  padding: 0 12px;
 }
 
 .sb-logo img {
@@ -265,11 +261,13 @@ textarea {
 
 .sb-logo-text {
   opacity: 0;
-  max-width: 0;
-  overflow: hidden;
+  max-width: 120px;
   white-space: nowrap;
-  transition: opacity var(--duration-fast) var(--ease-out);
-  margin-left: 0;
+  transform: translateX(-4px);
+  transition:
+    opacity 140ms var(--ease-out),
+    transform 140ms var(--ease-out);
+  margin-left: 10px;
   font-size: 13px;
   font-weight: 700;
   font-family: var(--font-sans);
@@ -279,17 +277,17 @@ textarea {
 
 .app.sb-extended .sb-logo-text {
   opacity: 1;
-  max-width: 120px;
-  margin-left: 10px;
+  transform: none;
+  transition-delay: 60ms;
 }
 
 .sb-item {
-  width: 34px;
-  height: 34px;
+  width: 100%;
+  height: 38px;
   border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   color: var(--text-faint);
   transition:
     color 120ms ease,
@@ -300,16 +298,7 @@ textarea {
   cursor: pointer;
   box-sizing: border-box;
   overflow: hidden;
-  padding: 0;
-}
-
-.app.sb-extended .sb-item {
-  width: 100%;
-  height: 38px;
-  padding: 0 12px;
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
+  padding: 0 8px;
 }
 
 .sb-item:hover {
@@ -323,11 +312,13 @@ textarea {
 
 .sb-label {
   opacity: 0;
-  max-width: 0;
-  overflow: hidden;
+  max-width: 120px;
   white-space: nowrap;
-  transition: opacity var(--duration-fast) var(--ease-out);
-  margin-left: 0;
+  transform: translateX(-4px);
+  transition:
+    opacity 140ms var(--ease-out),
+    transform 140ms var(--ease-out);
+  margin-left: 10px;
   font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 0.02em;
@@ -335,8 +326,8 @@ textarea {
 
 .app.sb-extended .sb-label {
   opacity: 1;
-  max-width: 120px;
-  margin-left: 10px;
+  transform: none;
+  transition-delay: 60ms;
 }
 .sb-item:disabled,
 .sb-item[aria-disabled='true'] {
@@ -3517,9 +3508,19 @@ textarea {
 }
 
 .act-marker {
-  font-size: 12px;
-  line-height: 1.4;
-  padding-top: 1px;
+  width: 6px;
+  height: 6px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.memory-status {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
 }
 
 .act-event {
@@ -3899,10 +3900,50 @@ input[type='number']::-webkit-inner-spin-button {
 }
 
 .sparkline-loading {
-  color: rgba(255, 255, 255, 0.2);
-  font-family: var(--font-mono);
-  letter-spacing: 4px;
-  font-size: 10px;
+  display: block;
+  width: 48px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--border-strong);
+}
+
+.ui-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.activity-chevron {
+  display: inline-block;
+  vertical-align: -2px;
+  transition: transform 160ms var(--ease-out);
+}
+
+.activity-chevron.is-open {
+  transform: rotate(180deg);
+}
+
+.sort-arrow {
+  margin-left: 4px;
+  vertical-align: -2px;
+}
+
+.sort-arrow.desc {
+  transform: rotate(90deg);
+}
+
+.sort-arrow.asc {
+  transform: rotate(-90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .activity-chevron,
+  .sort-arrow {
+    transition: none;
+  }
 }
 
 /* pp change â€” lime (up) / coral (down) / muted (flat) */
@@ -5165,6 +5206,7 @@ details.yv-collapse[open] > summary .yv-caret {
     border-right: none;
     border-top: 1px solid var(--border);
     overflow: visible;
+    transition: none;
   }
 
   /* Drop the desktop chrome that doesn't belong in a bottom bar */
@@ -5651,7 +5693,6 @@ details.yv-collapse[open] > summary .yv-caret {
    the quiet .btn-text, .link-btn) are intentionally EXCLUDED — a wash
    on something that doesn't read as a button looks wrong. */
 .icon-btn,
-.sb-item,
 .wallet-action,
 .btn-chip,
 .risk-opt,
@@ -5663,8 +5704,6 @@ details.yv-collapse[open] > summary .yv-caret {
 
 .icon-btn:hover:not(:disabled),
 .icon-btn:focus-visible:not(:disabled),
-.sb-item:hover:not(:disabled),
-.sb-item:focus-visible:not(:disabled),
 .wallet-action:hover:not(:disabled),
 .wallet-action:focus-visible:not(:disabled),
 .btn-chip:hover:not(:disabled),
@@ -5701,8 +5740,6 @@ details.yv-collapse[open] > summary .yv-caret {
 @media (prefers-reduced-motion: reduce) {
   .icon-btn:hover:not(:disabled),
   .icon-btn:focus-visible:not(:disabled),
-  .sb-item:hover:not(:disabled),
-  .sb-item:focus-visible:not(:disabled),
   .wallet-action:hover:not(:disabled),
   .wallet-action:focus-visible:not(:disabled),
   .btn-chip:hover:not(:disabled),

@@ -9,7 +9,7 @@
 
 import { useEffect, useState } from 'react'
 import {
-  SOROBAN_REGISTRY_ADDRESS,
+  SOROBAN_FUNDING_ROUTER_ADDRESS,
   SOROBAN_ACTIVE_VAULT_ADDRESS,
   SOROBAN_TOKEN_ADDRESS,
   SOROBAN_DEMO_AGENT,
@@ -26,24 +26,24 @@ const DECIMALS_DIV = 10 ** SOROBAN_DECIMALS // 1 VFUSD = 10_000_000 base units (
 
 const CONTRACTS = [
   {
-    name: 'AgentRegistry',
+    name: 'Funding Router',
     type: 'CORE',
-    address: SOROBAN_REGISTRY_ADDRESS,
-    description: 'Per-agent scope · authorize · revoke (kill switch)',
+    address: SOROBAN_FUNDING_ROUTER_ADDRESS,
+    description: 'One signed grant sets the run budget, expiry, and scoped agent accounts',
   },
   {
-    name: 'Autofarm Vault · vfVLT',
+    name: 'Autofarm Vault (vfVLT)',
     type: 'VAULT',
-    protocol: 'soroban',
+    protocol: 'Blend v2',
     address: SOROBAN_ACTIVE_VAULT_ADDRESS,
-    description: 'SEP-41 shares · exchange-rate yield (keeper compound raises price-per-share)',
+    description: 'SEP-41 shares track yield from the vault strategy and keeper compounding',
   },
   {
-    name: 'VFUSD',
+    name: 'USDC Token',
     type: 'TOKEN',
     protocol: 'SAC',
     address: SOROBAN_TOKEN_ADDRESS,
-    description: 'Stellar Asset Contract · 7 decimals · farming asset',
+    description: 'Stellar Asset Contract with 7 decimal places',
   },
 ]
 
@@ -52,12 +52,12 @@ const CONTRACT_COUNT = String(CONTRACTS.length)
 const CONTRACT_TESTS = '27'
 
 const SECURITY = [
-  'Per-agent scope on AgentRegistry: vault + token + cap + expiry',
-  'Owner can revoke any agent instantly (user-signed; works even if the relayer is down)',
-  'Agent custom account __check_auth signs only within the granted scope',
-  'Gasless relay fee-bumps deposit invokes only (defense-in-depth + per-IP rate limit)',
-  'Soroban auth nonce + signature-expiration ledger guard against replay',
-  'Strategy hash (sha256): AI reasoning is off-chain verifiable (tamper-evident)',
+  'Funding Router grants limit the total budget and expiry',
+  'Owners can revoke the router allowance and agent access',
+  'Agent account __check_auth accepts only its scoped signer and approved operations',
+  'The fee-bump relay accepts allowlisted Soroban operations and rate-limits callers',
+  'Soroban auth nonces and signature-expiration ledgers prevent replay',
+  'SHA-256 strategy hashes make saved strategies tamper-evident',
 ]
 
 /* ----------------------------- helpers ----------------------------- */
@@ -75,8 +75,8 @@ function timeAgo(ts) {
 
 const shortHash = (h) => (h ? `${String(h).slice(0, 10)}…` : '0x…')
 
-// Live: the demo agent's vault-share balance (i128 base units, 7-dp) → VFUSD. readVaultShares
-// catches its own RPC errors and returns null; we surface that as "--" (never a fake 0).
+// Live: the demo agent's vault-share balance (i128 base units, 7-dp) converts to vfVLT.
+// readVaultShares catches its own RPC errors and returns null; we show that as unavailable.
 async function fetchTotalDeposits() {
   const shares = await readVaultShares(SOROBAN_DEMO_AGENT)
   if (shares == null) return null
@@ -97,7 +97,7 @@ function ContractCard({ contract, copied, onCopy }) {
       <div className="ex-card__head">
         <h3 className="ex-card__name">
           {contract.name}
-          {contract.protocol && <span className="ex-card__proto"> · {contract.protocol}</span>}
+          {contract.protocol && <span className="ex-card__proto">, {contract.protocol}</span>}
         </h3>
         <TypeBadge type={contract.type} />
       </div>
@@ -110,7 +110,7 @@ function ContractCard({ contract, copied, onCopy }) {
       >
         <span className="ex-addr__text">{contract.address}</span>
         <span className={`ex-addr__copy${isCopied ? ' is-copied' : ''}`}>
-          {isCopied ? 'copied!' : 'copy'}
+          {isCopied ? 'Copied' : 'Copy'}
         </span>
       </button>
 
@@ -123,7 +123,7 @@ function ContractCard({ contract, copied, onCopy }) {
           target="_blank"
           rel="noreferrer noopener"
         >
-          View on Stellar Expert <span aria-hidden="true">↗</span>
+          View on Stellar Expert
         </a>
       </div>
     </article>
@@ -198,20 +198,22 @@ function AttestationsTable({ strategies }) {
         <tbody>
           {onchain.map((e) => (
             <tr key={e.cursor || e.txHash}>
-              <td className="ex-table__time">ledger {e.ledger}</td>
+              <td className="ex-table__time">Ledger {e.ledger}</td>
               <td className="ex-table__hash">
                 <a href={`${TX_BASE}${e.txHash}`} target="_blank" rel="noreferrer">
-                  {shortHash(hashHex(e.data?.strategy_hash))} ↗
+                  {shortHash(hashHex(e.data?.strategy_hash))}
                 </a>
               </td>
-              <td className="ex-table__proto">{String(e.data?.label || 'on-chain')}</td>
+              <td className="ex-table__proto">{String(e.data?.label || 'On-chain')}</td>
             </tr>
           ))}
           {strategies.map((s) => (
             <tr key={s.id || s.strategyHash || s.timestamp}>
               <td className="ex-table__time">{timeAgo(s.timestamp || s.savedAt || Date.now())}</td>
               <td className="ex-table__hash">{shortHash(s.strategyHash)}</td>
-              <td className="ex-table__proto">{s.vaultsSelected?.[0]?.protocol || '--'}</td>
+              <td className="ex-table__proto">
+                {s.vaultsSelected?.[0]?.protocol || 'Not available'}
+              </td>
             </tr>
           ))}
         </tbody>
@@ -258,8 +260,8 @@ export default function ExplorerPage() {
   // loading branch never reaches .toLocaleString, so render can't throw.
   const depositsLabel =
     totalDeposits == null
-      ? '--'
-      : `${totalDeposits.toLocaleString(undefined, { maximumFractionDigits: 0 })} VFUSD`
+      ? 'Not available'
+      : `${totalDeposits.toLocaleString(undefined, { maximumFractionDigits: 0 })} vfVLT`
 
   return (
     <div className="ex-page">
@@ -272,7 +274,7 @@ export default function ExplorerPage() {
           <div className="ex-header__top">
             <h1 className="ex-title">Explorer</h1>
             <span className="ex-net">
-              <span className="ex-net__dot" /> Stellar testnet · live
+              <span className="ex-net__dot" /> Stellar testnet. Live.
             </span>
           </div>
           <p className="ex-lede">
@@ -299,10 +301,10 @@ export default function ExplorerPage() {
             <h2 id="ex-stats" className="ex-section__title">
               Live Stats
             </h2>
-            <span className="ex-section__note">fetched from Soroban RPC · updated live</span>
+            <span className="ex-section__note">Fetched from Soroban RPC and updated live</span>
           </div>
           <div className="ex-stats">
-            <StatBlock label="Total Deposits" value={depositsLabel} loading={loadingDeposits} />
+            <StatBlock label="Demo Agent Shares" value={depositsLabel} loading={loadingDeposits} />
             <StatBlock
               label="Strategy Attestations"
               value={attestationCount > 0 ? `${attestationCount}` : '0'}
@@ -318,7 +320,7 @@ export default function ExplorerPage() {
             Strategy Attestations
           </h2>
           <p className="ex-section__sub">
-            Recent strategy hashes (sha256, off-chain verifiable; re-derivable from the strategy
+            Recent strategy hashes (SHA-256, off-chain verifiable; re-derivable from the strategy
             JSON):
           </p>
           <AttestationsTable strategies={strategies} />
@@ -328,7 +330,7 @@ export default function ExplorerPage() {
             target="_blank"
             rel="noreferrer noopener"
           >
-            View the vault on Stellar Expert <span aria-hidden="true">↗</span>
+            View the vault on Stellar Expert
           </a>
         </section>
 
@@ -363,7 +365,7 @@ export default function ExplorerPage() {
                 target="_blank"
                 rel="noreferrer noopener"
               >
-                github.com/poggufanz/vibingfarmer <span aria-hidden="true">↗</span>
+                github.com/poggufanz/vibingfarmer
               </a>
             </div>
             <div className="ex-osrow">
@@ -387,7 +389,7 @@ export default function ExplorerPage() {
 function ExplorerStyle() {
   return (
     <style>{`
-/* Own scroll container — the app locks body/#root (overflow:hidden, height:100vh),
+/* Own scroll container - the app locks body/#root (overflow:hidden, height:100vh),
    so normal document flow can't scroll. Fixed + overflow-y:auto, same as the hero. */
 .ex-page {
   position: fixed;
@@ -400,7 +402,7 @@ function ExplorerStyle() {
   color: var(--text, #ecebe1);
   font-family: var(--font-body, "Geist", system-ui, sans-serif);
 }
-/* faint grid texture — same atmosphere as the hero */
+/* faint grid texture - same atmosphere as the hero */
 .ex-page::before {
   content: "";
   position: fixed;

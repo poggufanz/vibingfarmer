@@ -19,14 +19,14 @@ export default function MandateZone({ scopes = [], onRevoke }) {
 
   return (
     <ZoneFrame
-      title="mandate"
+      title="Mandate"
       hue="warn"
       led={active.length ? 'ok' : 'idle'}
       className="console-mandate"
-      meta={`${active.length} scopes active · ${toDisplay(totalCap).toFixed(2)} USDC total cap`}
+      meta={`${active.length} active scopes, ${toDisplay(totalCap).toFixed(2)} USDC total cap`}
     >
       {scopes.length === 0 ? (
-        <div className="zone-empty">no scoped agents — grant creates scopes</div>
+        <div className="zone-empty">No scoped agents. Create a grant to add scopes.</div>
       ) : (
         pageScopes.map((s, i) => (
           <div className="mandate-row" key={s.agent}>
@@ -36,19 +36,19 @@ export default function MandateZone({ scopes = [], onRevoke }) {
             <div className="mandate-main">
               <span className="mono mandate-addr">{shortAddr(s.agent)}</span>
               <span className="mono mandate-caps tnum">
-                max-at-risk {toDisplay(s.maxAtRisk).toFixed(2)} / cap{' '}
+                Max at risk {toDisplay(s.maxAtRisk).toFixed(2)} / Cap{' '}
                 {toDisplay(s.capPerPeriod).toFixed(2)} USDC
               </span>
               <Gauge value={Number(s.maxAtRisk)} max={Number(s.capPerPeriod)} />
             </div>
             {s.revoked ? (
-              <span className="mono mandate-revoked">revoked</span>
+              <span className="mono mandate-revoked">Revoked</span>
             ) : (
               <button
                 className="btn btn-ghost pos-cta mandate-revoke"
                 onClick={() => onRevoke(s.agent)}
               >
-                revoke
+                Revoke
               </button>
             )}
           </div>
@@ -56,7 +56,7 @@ export default function MandateZone({ scopes = [], onRevoke }) {
       )}
       <Pager page={cur} pages={pages} onPage={setPage} />
       <div className="mandate-guards mono">
-        revocable · yes — anytime, on-chain · expiry · via SEP-41 allowance
+        Revocable: Yes, anytime on-chain. Expiry uses the SEP-41 allowance.
       </div>
     </ZoneFrame>
   )

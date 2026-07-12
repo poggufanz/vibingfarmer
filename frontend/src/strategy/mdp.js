@@ -161,13 +161,13 @@ export function enforceActionSpace(proposed, state) {
   const kept = (proposed || []).filter((p) => {
     const obs = byAddr.get(String(p.address).toLowerCase())
     if (!obs) {
-      violations.push(`unknown vault ${p.address}`)
+      violations.push(`Unknown vault: ${p.address}.`)
       return false
     }
     const tier = RISK_RANK[normalizeRisk(p.risk_tier || obs.riskTier)]
     if (tier > ceiling) {
       violations.push(
-        `${obs.protocol} (${normalizeRisk(p.risk_tier || obs.riskTier)}) exceeds ${RANK_TO_TIER[ceiling]} ceiling under ${state.market.turbulence} market`
+        `${obs.protocol} (${normalizeRisk(p.risk_tier || obs.riskTier)}) exceeds the ${RANK_TO_TIER[ceiling]} risk limit in a ${state.market.turbulence} market.`
       )
       return false
     }
@@ -181,7 +181,7 @@ export function enforceActionSpace(proposed, state) {
     )[0]
     if (safest) {
       pool = [{ address: safest.address, allocation: 1, risk_tier: safest.riskTier }]
-      violations.push('all proposals gated — fell back to safest vault')
+      violations.push('All proposed vaults were blocked. The safest eligible vault was selected.')
     }
   }
 

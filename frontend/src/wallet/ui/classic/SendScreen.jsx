@@ -18,7 +18,7 @@ export default function SendScreen({ from, onPreview, onConfirm, preview, busy, 
       <label>
         Destination
         <input
-          aria-label="destination"
+          aria-label="Destination"
           placeholder="G... or federation address"
           value={to}
           onChange={(e) => setTo(e.target.value)}
@@ -27,7 +27,7 @@ export default function SendScreen({ from, onPreview, onConfirm, preview, busy, 
       <label>
         Amount (XLM)
         <input
-          aria-label="amount"
+          aria-label="Amount"
           placeholder="0.00"
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
@@ -55,7 +55,16 @@ export default function SendScreen({ from, onPreview, onConfirm, preview, busy, 
       {preview && (
         <div className="vf-confirm-card">
           <h3>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
               <path d="M9 11l3 3L22 4"></path>
               <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
             </svg>
@@ -69,7 +78,7 @@ export default function SendScreen({ from, onPreview, onConfirm, preview, busy, 
             <dt>Amount</dt>
             <dd>{preview.confirm.ops[0]?.amount}</dd>
             <dt>Memo</dt>
-            <dd>{preview.confirm.memo || '—'}</dd>
+            <dd>{preview.confirm.memo || 'None'}</dd>
             <dt>Fee</dt>
             <dd>{preview.confirm.fee} stroops</dd>
           </dl>
@@ -83,19 +92,19 @@ export default function SendScreen({ from, onPreview, onConfirm, preview, busy, 
                 onReject={() => {}}
               />
               <p className="vf-warn">
-                This is vault "{preview.vault.name}". A plain payment will NOT deposit — use
-                Deposit.
+                This is the vault "{preview.vault.name}". A plain payment does not deposit funds.
+                Use Deposit instead.
               </p>
             </>
           )}
           {error && <p className="vf-error">{error}</p>}
-          {stale && <p className="vf-hint">Inputs changed — click Review again.</p>}
+          {stale && <p className="vf-hint">Inputs changed. Select Review transaction again.</p>}
           <button
             className="vf-btn primary"
             disabled={busy || stale}
             onClick={() => onConfirm({ from, to, asset: 'XLM', amount, memo })}
           >
-            {busy ? 'Sending…' : 'Confirm & send'}
+            {busy ? 'Sending…' : 'Confirm and send'}
           </button>
         </div>
       )}

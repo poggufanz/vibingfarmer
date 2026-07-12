@@ -7,9 +7,9 @@ import { agoText } from './consoleUtils.js'
 import { DecisionLogPanel } from '../../agents.jsx'
 
 const STANCE = {
-  DEPOSIT: { glyph: '↑', word: 'deposit', tone: 'ok' },
-  HOLD: { glyph: '—', word: 'hold', tone: 'warn' },
-  WITHDRAW: { glyph: '↓', word: 'withdraw', tone: 'danger' },
+  DEPOSIT: { word: 'Deposit', tone: 'ok' },
+  HOLD: { word: 'Hold', tone: 'warn' },
+  WITHDRAW: { word: 'Withdraw', tone: 'danger' },
 }
 const ROLES = ['yield', 'risk', 'market']
 
@@ -28,6 +28,7 @@ export default function CouncilZone({
   }, [logOpen])
 
   const latest = decisionsRows[0] || null
+  const resolvedBy = latest?.resolvedBy?.replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase())
   const verdictOf = (role) => latest?.verdicts?.find((v) => v.role === role) || null
   const led =
     monitorStatus?.result === 'violation' || monitorStatus?.result === 'rejected'
@@ -40,14 +41,14 @@ export default function CouncilZone({
 
   return (
     <ZoneFrame
-      title="council"
+      title="Council"
       hue="council"
       led={led}
       className="console-council"
       meta={monitorStatus?.lastCheck ? agoText(monitorStatus.lastCheck, nowMs) : null}
     >
       {!latest ? (
-        <div className="zone-empty">council idle — verdicts appear after first cycle</div>
+        <div className="zone-empty">Council is idle. Verdicts appear after the first cycle.</div>
       ) : (
         <>
           <div className="council-bench">
@@ -56,9 +57,11 @@ export default function CouncilZone({
               const s = v ? STANCE[v.signal] : null
               return (
                 <div className="council-seat" key={role} data-tone={s?.tone || ''}>
-                  <span className="council-role mono">{role}</span>
+                  <span className="council-role mono">
+                    {role.replace(/^./, (c) => c.toUpperCase())}
+                  </span>
                   <span className="council-glyph" aria-hidden="true">
-                    {s?.glyph || '·'}
+                    <span className="ui-dot" />
                   </span>
                   <span className="council-word mono">{s?.word || '--'}</span>
                   <span className="council-conf tnum mono">
@@ -77,11 +80,11 @@ export default function CouncilZone({
             </span>
             <div className="council-verdict-meta mono">
               <span className="tnum">
-                {latest.majoritySignal} ×{latest.majorityCount} ·{' '}
+                {latest.majoritySignal}, {latest.majorityCount} votes,{' '}
                 {Math.round((latest.avgConfidence || 0) * 100)}% avg
               </span>
               <span>
-                resolved by {latest.resolvedBy} · cycle {String(latest.cycle).padStart(2, '0')}
+                Resolved by {resolvedBy}, Cycle {String(latest.cycle).padStart(2, '0')}
               </span>
               {monitorStatus?.reason && (
                 <span className="council-reason">{monitorStatus.reason}</span>
@@ -92,7 +95,7 @@ export default function CouncilZone({
       )}
       <div className="council-foot">
         <button className="btn btn-ghost pos-cta" onClick={() => setLogOpen(true)}>
-          full decision log
+          Full decision log
         </button>
       </div>
       {logOpen && (
@@ -101,12 +104,12 @@ export default function CouncilZone({
           onClick={() => setLogOpen(false)}
           role="dialog"
           aria-modal="true"
-          aria-label="decision log"
+          aria-label="Decision log"
         >
           <div className="council-modal" onClick={(e) => e.stopPropagation()}>
             <DecisionLogPanel rows={decisionsRows} summary={decisionsSummary} />
             <button className="btn btn-ghost pos-cta" onClick={() => setLogOpen(false)}>
-              close
+              Close
             </button>
           </div>
         </div>

@@ -50,7 +50,7 @@ export async function createBaseSmartAccount({
 
   if (!passkeyServerUrl) {
     throw new Error(
-      'VITE_ZERODEV_PASSKEY_SERVER_URL missing — see docs/deploy-checklist.md (ZeroDev dashboard passkey server)'
+      'VITE_ZERODEV_PASSKEY_SERVER_URL is missing. See docs/deploy-checklist.md for the ZeroDev dashboard passkey server.'
     )
   }
 

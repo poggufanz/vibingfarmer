@@ -17,12 +17,17 @@ import { shortAddr } from './screens.jsx'
 import { VAULT_CATALOG } from './config.js'
 import { buildStrategyState, scoreReward, riskCeiling } from './strategy/mdp.js'
 
+const displayLabel = (value, fallback = '') =>
+  String(value || fallback)
+    .replace(/[_-]+/g, ' ')
+    .replace(/^./, (c) => c.toUpperCase())
+
 /* ---------- Strategy data — generated per-flow ---------- */
 // Derived from VAULT_CATALOG so addresses stay in sync with config automatically.
 const ROLES = [
-  'Conservative · lending',
-  'Balanced · liquidity provision',
-  'Aggressive · leveraged yield',
+  'Conservative, lending',
+  'Balanced, liquidity provision',
+  'Aggressive, leveraged yield',
 ]
 const AGENT_PROTOCOLS = VAULT_CATALOG.slice(0, 3).map((v, i) => ({
   name: v.name,
@@ -55,7 +60,7 @@ const buildStrategy = (amount, risk) => {
     return {
       id: `worker-${i + 1}`,
       idx: String(i + 1).padStart(2, '0'),
-      name: `Worker ${i + 1} · ${proto.role.split(' · ')[0]}`,
+      name: `Worker ${i + 1}, ${proto.role.split(', ')[0]}`,
       role: proto.role,
       allocation,
       skillName: 'yield_vault_deposit',
@@ -102,7 +107,7 @@ const buildStrategy = (amount, risk) => {
 /* ---------- Agent execution state model ---------- */
 const STEP_IDS = ['swap', 'approve', 'deposit']
 const STEP_LABELS = { swap: 'Swap', approve: 'Approve', deposit: 'Deposit' }
-const STEP_NOTE = { swap: 'skipped · USDC→USDC needs no swap' }
+const STEP_NOTE = { swap: 'Skipped. No swap is needed between USDC assets.' }
 
 const makeInitialExecState = (agents) => {
   const map = {}
@@ -182,7 +187,7 @@ const buildGraphData = (strategy) => {
   const nodes = [{ id: 'orchestrator', name: 'Orchestrator', kind: 'orchestrator' }]
   const links = []
   strategy.agents.forEach((a) => {
-    nodes.push({ id: a.id, name: `W${a.idx} · ${a.vault.protocol}`, kind: 'worker', agentId: a.id })
+    nodes.push({ id: a.id, name: `W${a.idx}, ${a.vault.protocol}`, kind: 'worker', agentId: a.id })
     links.push({ source: 'orchestrator', target: a.id })
     let prev = a.id
     STEP_IDS.forEach((sid) => {
@@ -192,7 +197,7 @@ const buildGraphData = (strategy) => {
       prev = id
     })
     const vId = `${a.id}-vault`
-    nodes.push({ id: vId, name: `Vault · ${a.vault.apy}%`, kind: 'vault', agentId: a.id })
+    nodes.push({ id: vId, name: `Vault, ${a.vault.apy}%`, kind: 'vault', agentId: a.id })
     links.push({ source: prev, target: vId })
   })
   return { nodes, links }
@@ -414,7 +419,7 @@ const AgentTiles = ({ strategy, execMap, onOpenMemory }) => {
               <span className={`dot ${ex.status}`} />
             </div>
             <div className="agent-tile-meta mono">
-              {a.allocation} USDC · {a.vault.protocol} · {a.vault.apy}%
+              {a.allocation} USDC, {a.vault.protocol}, {a.vault.apy}%
             </div>
             <div className="agent-tile-steps">
               {STEP_IDS.map((sid) => (
@@ -449,10 +454,10 @@ const MemoryModal = ({ agentId, strategy, execMap, onClose }) => {
   if (!agent) return null
   const ex = execMap[agentId] || { memory: [], metrics: {}, status: 'idle' }
   const stateLabel = {
-    idle: 'queued · no runs yet',
-    running: 'running · live execution',
-    confirmed: 'completed · all steps confirmed',
-    failed: 'halted · last run failed',
+    idle: 'Queued. No runs yet.',
+    running: 'Running. Execution is live.',
+    confirmed: 'Completed. All steps confirmed.',
+    failed: 'Halted. The last run failed.',
   }[ex.status]
 
   return (
@@ -465,11 +470,11 @@ const MemoryModal = ({ agentId, strategy, execMap, onClose }) => {
       >
         <div className="memory-modal-head">
           <div>
-            <div className="modal-eyebrow">Agent memory · {agent.id}</div>
+            <div className="modal-eyebrow">Agent memory, {agent.id}</div>
             <h3 className="modal-title">{agent.name}</h3>
             <div className="mono memory-modal-sub">{stateLabel}</div>
           </div>
-          <button className="icon-btn" aria-label="close" onClick={onClose}>
+          <button className="icon-btn" aria-label="Close" onClick={onClose}>
             <Icon name="x" />
           </button>
         </div>
@@ -486,8 +491,8 @@ const MemoryModal = ({ agentId, strategy, execMap, onClose }) => {
             </span>
           </div>
           <div className="memory-metric">
-            <span className="label mono">Gas paid · User</span>
-            <span className="val tnum mono">0 XLM · fee-bump</span>
+            <span className="label mono">Gas paid by user</span>
+            <span className="val tnum mono">0 XLM, fee-bump relay</span>
           </div>
           <div className="memory-metric">
             <span className="label mono">Vault APY</span>
@@ -495,10 +500,10 @@ const MemoryModal = ({ agentId, strategy, execMap, onClose }) => {
           </div>
         </div>
 
-        <div className="memory-section-title mono">execution log</div>
+        <div className="memory-section-title mono">Execution log</div>
         <div className="memory-log">
           {ex.memory.length === 0 ? (
-            <div className="empty">no events yet · agent queued</div>
+            <div className="empty">No events yet. Agent queued.</div>
           ) : (
             ex.memory.map((m, i) => (
               <div key={i} className={`memory-row ${m.status}`}>
@@ -506,20 +511,20 @@ const MemoryModal = ({ agentId, strategy, execMap, onClose }) => {
                 <div className="memory-row-body">
                   <div className="memory-row-title">
                     {m.title}
-                    <span className="memory-row-tag mono">{m.status}</span>
+                    <span className="memory-row-tag mono">{displayLabel(m.status)}</span>
                   </div>
                   <div className="memory-row-meta mono">
                     {m.meta}
                     {m.hash && (
                       <>
-                        <span className="dot-sep">·</span>
+                        <span className="dot-sep">, </span>
                         <span className="memory-row-hash">tx {shortAddr(m.hash)}</span>
                       </>
                     )}
                   </div>
                   {m.lesson && (
                     <div className="memory-row-lesson mono">
-                      <span className="memory-row-lesson-key">lesson</span> {m.lesson}
+                      <span className="memory-row-lesson-key">Lesson</span> {m.lesson}
                     </div>
                   )}
                 </div>
@@ -531,7 +536,7 @@ const MemoryModal = ({ agentId, strategy, execMap, onClose }) => {
 
         <div className="memory-modal-foot">
           <div className="foot-note">
-            Memory stored onchain via worker logs · auditable per skill version.
+            Memory is stored on-chain in worker logs and is auditable by skill version.
           </div>
           <button className="btn btn-ghost" onClick={onClose}>
             Close
@@ -580,7 +585,7 @@ const COUNCIL_RESOLVED_LABEL = {
   veto: 'Risk veto',
   unanimous: 'Unanimous',
   weighted: 'Majority',
-  'ai-conflict': 'Split · synthesized',
+  'ai-conflict': 'Split, synthesized',
 }
 
 /** One short line from a specialist for L2 bullets (max 2–3 total). */
@@ -590,7 +595,7 @@ const specialistBullet = (s) => {
   const concern = (s.concerns && s.concerns[0]) || null
   if (concern) {
     const short = concern.length > 72 ? `${concern.slice(0, 70)}…` : concern
-    return `${meta.label}: ${plain} · ${short}`
+    return `${meta.label}: ${plain}, ${short}`
   }
   return `${meta.label}: ${plain} (${Math.round((s.confidence || 0) * 100)}%)`
 }
@@ -614,9 +619,7 @@ const CouncilPanel = ({ council, onRetry }) => {
     .slice(0, 3)
     .map(specialistBullet)
   const fallbackBullets =
-    bullets.length > 0
-      ? bullets
-      : specialists.slice(0, 3).map(specialistBullet)
+    bullets.length > 0 ? bullets : specialists.slice(0, 3).map(specialistBullet)
 
   return (
     <div className="council-panel">
@@ -627,12 +630,18 @@ const CouncilPanel = ({ council, onRetry }) => {
       ) : unavailable ? (
         <div className="council-hero">
           <div className="council-hero-main">
-            <span className="council-hero-mark" style={{ color: 'var(--text-faint)' }}>
-              ?
+            <span
+              className="council-hero-mark"
+              style={{ color: 'var(--text-faint)' }}
+              aria-hidden="true"
+            >
+              <span className="ui-dot" />
             </span>
             <div>
               <div className="council-hero-title">Risk check unavailable</div>
-              <div className="council-hero-sub">Provider did not respond. You can still continue.</div>
+              <div className="council-hero-sub">
+                Provider did not respond. You can still continue.
+              </div>
             </div>
           </div>
           {onRetry && (
@@ -651,25 +660,27 @@ const CouncilPanel = ({ council, onRetry }) => {
                 style={{ color: keep ? 'var(--ok)' : 'var(--warn, #c87)' }}
                 aria-hidden="true"
               >
-                {keep ? '✓' : '!'}
+                {keep ? <Icon name="check" size={15} /> : <span className="ui-dot" />}
               </span>
               <div>
                 <div className="council-hero-title">
-                  {keep ? 'Looks fine to proceed' : 'Proceed with caution'}
+                  {keep ? 'Risk review passed' : 'Proceed with caution'}
                 </div>
                 <div className="council-hero-sub">
-                  {confPct != null ? `${confPct}% confidence` : ''}
+                  {confPct != null ? `${confPct}% confidence.` : ''}
                   {council.resolvedBy
-                    ? `${confPct != null ? ' · ' : ''}${COUNCIL_RESOLVED_LABEL[council.resolvedBy] || council.resolvedBy}`
+                    ? ` Resolved by ${(COUNCIL_RESOLVED_LABEL[council.resolvedBy] || displayLabel(council.resolvedBy)).toLowerCase()}.`
                     : ''}
-                  {!keep && council.reason ? ` · ${council.reason}` : ''}
-                  {!keep ? ' · You decide' : ''}
+                  {!keep && council.reason
+                    ? ` ${displayLabel(council.reason).replace(/[.!?]+$/, '')}.`
+                    : ''}
+                  {!keep ? ' Your approval is required.' : ''}
                 </div>
               </div>
             </div>
             <div className="council-vote mono" aria-label="Specialist votes">
               {specialists.map((s) => {
-                const meta = COUNCIL_ROLE_META[s.role] || { label: s.role, glyph: '•' }
+                const meta = COUNCIL_ROLE_META[s.role] || { label: s.role, glyph: '' }
                 return (
                   <span
                     key={s.role}
@@ -677,7 +688,8 @@ const CouncilPanel = ({ council, onRetry }) => {
                     style={{ color: COUNCIL_SIGNAL_TONE[s.signal] || 'var(--text)' }}
                     title={`${meta.label}: ${s.signal}`}
                   >
-                    {meta.glyph} {COUNCIL_SIGNAL_PLAIN[s.signal] || s.signal}
+                    {meta.glyph ? `${meta.glyph} ` : ''}
+                    {COUNCIL_SIGNAL_PLAIN[s.signal] || s.signal}
                   </span>
                 )
               })}
@@ -699,12 +711,13 @@ const CouncilPanel = ({ council, onRetry }) => {
             <div className="yv-advanced__body">
               <div className="council-grid">
                 {specialists.map((s) => {
-                  const meta = COUNCIL_ROLE_META[s.role] || { label: s.role, glyph: '•' }
+                  const meta = COUNCIL_ROLE_META[s.role] || { label: s.role, glyph: '' }
                   return (
                     <div key={s.role} className="council-spec">
                       <div className="council-spec-head mono">
                         <span className="council-spec-role">
-                          {meta.glyph} {meta.label}
+                          {meta.glyph ? `${meta.glyph} ` : ''}
+                          {meta.label}
                         </span>
                         <span
                           className="council-spec-signal"
@@ -735,7 +748,7 @@ const CouncilPanel = ({ council, onRetry }) => {
                         </div>
                       )}
                       {s.concerns?.length > 0 && (
-                        <div className="council-concerns mono">{s.concerns.join(' · ')}</div>
+                        <div className="council-concerns mono">{s.concerns.join(', ')}</div>
                       )}
                     </div>
                   )
@@ -776,7 +789,7 @@ const SimulationPanel = ({ simulation }) => {
       {/* L2 — scenarios behind disclosure */}
       <details className="yv-advanced council-details">
         <summary className="yv-advanced__sum mono">
-          Scenario range · {runs} runs · {horizonDays}d · {context.turbulence}
+          Scenario range, {runs} runs, {horizonDays}d, {context.turbulence}
         </summary>
         <div className="yv-advanced__body">
           <div className="sim-grid">
@@ -785,7 +798,7 @@ const SimulationPanel = ({ simulation }) => {
               return (
                 <div key={s.name} className="sim-scenario">
                   <div className="sim-scenario-head mono">
-                    <span style={{ color: meta.tone }}>● {meta.label}</span>
+                    <span style={{ color: meta.tone }}>{meta.label}</span>
                     <span
                       className="tnum"
                       style={{ color: s.mean >= 0 ? 'var(--ok)' : 'var(--warn, #c87)' }}
@@ -799,7 +812,7 @@ const SimulationPanel = ({ simulation }) => {
                     <span className="tnum">{fmt(s.p95)}</span>
                   </div>
                   <div className="sim-scenario-foot mono">
-                    Low–high range · {Math.round(s.probProfit * 100)}% profit
+                    Low-high range, {Math.round(s.probProfit * 100)}% profit
                   </div>
                 </div>
               )
@@ -854,17 +867,17 @@ const DebatePanel = ({ debateResult }) => {
             style={{ color: keep ? 'var(--ok)' : 'var(--warn, #c87)' }}
             aria-hidden="true"
           >
-            {keep ? '✓' : '!'}
+            {keep ? <Icon name="check" size={15} /> : <span className="ui-dot" />}
           </span>
           <div>
             <div className="council-hero-title">
               {keep ? 'Risk review: proceed' : 'Risk review: caution'}
             </div>
             <div className="council-hero-sub">
-              {confPct}% confidence
-              {gate ? (gate.passed ? ' · Checks passed' : ' · Gate flagged') : ''}
-              {converged ? '' : ' · Did not fully converge'}
-              {!keep ? ' · You decide' : ''}
+              {confPct}% confidence.
+              {gate ? (gate.passed ? ' Checks passed.' : ' Gate flagged.') : ''}
+              {converged ? '' : ' The council did not fully converge.'}
+              {!keep ? ' Your approval is required.' : ''}
             </div>
           </div>
         </div>
@@ -878,7 +891,8 @@ const DebatePanel = ({ debateResult }) => {
             <span
               className="council-vote-chip"
               style={{
-                color: riskCompliance.compliancePass === false ? 'var(--bad, #ff7479)' : 'var(--ok)',
+                color:
+                  riskCompliance.compliancePass === false ? 'var(--bad, #ff7479)' : 'var(--ok)',
               }}
             >
               Risk {riskCompliance.compliancePass === false ? 'fail' : 'pass'}
@@ -902,8 +916,8 @@ const DebatePanel = ({ debateResult }) => {
       <details className="yv-advanced council-details">
         <summary className="yv-advanced__sum">
           Debate details
-          {iterations > 1 ? ` · ${iterations} passes` : ''}
-          {converged ? ' · settled' : ''}
+          {iterations > 1 ? `, ${iterations} passes` : ''}
+          {converged ? ', settled' : ''}
         </summary>
         <div className="yv-advanced__body debate-log">
           {debateLog.map((entry, i) => (
@@ -917,7 +931,7 @@ const DebatePanel = ({ debateResult }) => {
                   <div className="debate-side-h">Plan</div>
                   <div className="debate-side-v">
                     <span className="tnum">
-                      {entry.proposer?.action || '?'} ·{' '}
+                      {entry.proposer?.action || 'Unknown'},{' '}
                       {Math.round((entry.proposer?.confidence ?? 0) * 100)}%
                     </span>
                   </div>
@@ -929,9 +943,9 @@ const DebatePanel = ({ debateResult }) => {
                   <div className="debate-side-h">Risk</div>
                   <div className="debate-side-v">
                     <span className="tnum">
-                      {entry.riskCompliance?.action || '?'} ·{' '}
+                      {entry.riskCompliance?.action || 'Unknown'},{' '}
                       {Math.round((entry.riskCompliance?.confidence ?? 0) * 100)}%
-                      {entry.riskCompliance?.compliancePass === false ? ' · fail' : ''}
+                      {entry.riskCompliance?.compliancePass === false ? ', fail' : ''}
                     </span>
                   </div>
                   {entry.riskCompliance?.concerns?.[0] && (
@@ -946,14 +960,12 @@ const DebatePanel = ({ debateResult }) => {
               {validator && (
                 <span>
                   Validator: {validator.consistent ? 'consistent' : 'inconsistent'}
-                  {validator.VaRAcceptable === false ? ' · VaR breach' : ''}
-                  {validator.CVaRAcceptable === false ? ' · CVaR breach' : ''}
+                  {validator.VaRAcceptable === false ? ', VaR breach' : ''}
+                  {validator.CVaRAcceptable === false ? ', CVaR breach' : ''}
                 </span>
               )}
               {gate && (
-                <span>
-                  {gate.passed ? 'Gate passed' : `Gate: ${gate.reason || 'blocked'}`}
-                </span>
+                <span>{gate.passed ? 'Gate passed' : `Gate: ${gate.reason || 'blocked'}`}</span>
               )}
             </div>
           )}
@@ -987,9 +999,9 @@ const StrategyCard = ({
   return (
     <section className="rec-card enter">
       <p className="grant-kicker mono">
-        Plan ready · {strategy.risk} risk · {strategy.agents.length} vault
+        Plan ready, {strategy.risk} risk, {strategy.agents.length} vault
         {strategy.agents.length === 1 ? '' : 's'}
-        {customSkill ? ' · custom' : ''}
+        {customSkill ? ', custom' : ''}
       </p>
 
       <div className="rec-hgroup">
@@ -997,7 +1009,7 @@ const StrategyCard = ({
           <div className="rec-vault-name">
             Your deposit plan
             <div className="strategy-sub mono">
-              {strategy.total} USDC total · one signature next · fees covered
+              {strategy.total} USDC total, one signature next, fees covered
             </div>
           </div>
           <div className="rec-vault-addr">
@@ -1010,7 +1022,7 @@ const StrategyCard = ({
             {strategy.blendedApy}
             <span className="unit">% blended APY</span>
           </span>
-          <span className="label">≈ {yearly} USDC / yr projected</span>
+          <span className="label">About {yearly} USDC/year projected</span>
         </div>
       </div>
 
@@ -1023,8 +1035,8 @@ const StrategyCard = ({
                 <div className="strategy-agent-name">{a.vault.name}</div>
                 <div className="mono strategy-agent-meta">
                   {a.vault.protocol}
-                  {a.vault.tvl && a.vault.tvl !== 'N/A' ? ` · TVL ${a.vault.tvl}` : ''}
-                  {a.vault.isLiveData ? ' · Live' : ''}
+                  {a.vault.tvl && a.vault.tvl !== 'N/A' ? `, TVL ${a.vault.tvl}` : ''}
+                  {a.vault.isLiveData ? ', live' : ''}
                 </div>
               </div>
             </div>
@@ -1065,7 +1077,9 @@ const StrategyCard = ({
               >
                 <div style={{ padding: '12px 14px', borderRight: '1px solid var(--border)' }}>
                   <div style={{ color: 'var(--text-faint)', marginBottom: 6 }}>Market</div>
-                  <div style={{ color: 'var(--text)' }}>{strategy.mdpState.turbulence}</div>
+                  <div style={{ color: 'var(--text)' }}>
+                    {displayLabel(strategy.mdpState.turbulence)}
+                  </div>
                   <div style={{ color: 'var(--text-muted)' }}>
                     {strategy.mdpState.universeSize} vaults screened
                   </div>
@@ -1073,17 +1087,17 @@ const StrategyCard = ({
                 <div style={{ padding: '12px 14px', borderRight: '1px solid var(--border)' }}>
                   <div style={{ color: 'var(--text-faint)', marginBottom: 6 }}>Bounds</div>
                   <div style={{ color: 'var(--text)' }}>
-                    Ceiling · {strategy.mdpState.riskCeiling}
+                    Ceiling, {displayLabel(strategy.mdpState.riskCeiling)}
                   </div>
                   <div style={{ color: 'var(--text-muted)' }}>Weights sum to 1.0</div>
                 </div>
                 <div style={{ padding: '12px 14px' }}>
                   <div style={{ color: 'var(--text-faint)', marginBottom: 6 }}>Projection</div>
                   <div style={{ color: 'var(--text)' }}>
-                    Score · {strategy.reward.riskAdjustedScore}
+                    Score, {strategy.reward.riskAdjustedScore}
                   </div>
                   <div style={{ color: 'var(--text-muted)' }}>
-                    ≈ {strategy.reward.projectedAnnualUsdc} USDC / yr
+                    About {strategy.reward.projectedAnnualUsdc} USDC/year
                   </div>
                 </div>
               </div>
@@ -1134,9 +1148,9 @@ const StrategyCard = ({
             >
               {attestation ? (
                 <>
-                  <span style={{ color: 'var(--ok)', fontSize: 8 }}>●</span>
+                  <span className="ui-dot" style={{ color: 'var(--ok)' }} aria-hidden="true" />
                   <span>{attestation.label}</span>
-                  <span style={{ color: 'var(--text-faint)' }}>·</span>
+                  <span style={{ color: 'var(--text-faint)' }}>, </span>
                   <span>Hash: {attestation.hash}</span>
                   {attestation.explorerUrl ? (
                     <a
@@ -1145,7 +1159,7 @@ const StrategyCard = ({
                       rel="noreferrer"
                       style={{ marginLeft: 'auto', color: 'var(--accent)' }}
                     >
-                      View on-chain ↗
+                      View on-chain
                     </a>
                   ) : (
                     <span style={{ color: 'var(--text-faint)', marginLeft: 'auto' }}>
@@ -1155,12 +1169,20 @@ const StrategyCard = ({
                 </>
               ) : attesting ? (
                 <>
-                  <span style={{ color: 'var(--text-faint)', fontSize: 8 }}>○</span>
+                  <span
+                    className="ui-dot"
+                    style={{ color: 'var(--text-faint)' }}
+                    aria-hidden="true"
+                  />
                   <span>Hashing strategy…</span>
                 </>
               ) : (
                 <>
-                  <span style={{ color: 'var(--text-faint)', fontSize: 8 }}>○</span>
+                  <span
+                    className="ui-dot"
+                    style={{ color: 'var(--text-faint)' }}
+                    aria-hidden="true"
+                  />
                   <span>Strategy hash: {shortHash(strategyHash)} (local only)</span>
                 </>
               )}
@@ -1170,7 +1192,7 @@ const StrategyCard = ({
       </details>
 
       <div className="action-row">
-        <div className="foot-note">Next: connect wallet · then grant once</div>
+        <div className="foot-note">Next: connect wallet, then grant once</div>
         <div className="flex gap-2">
           <button className="btn btn-ghost" onClick={onRegenerate}>
             See alternatives
@@ -1232,7 +1254,7 @@ const ExecuteCard = ({ strategy, execMap, paletteIsLight, onOpenMemory, onDone }
 
   return (
     <section className="card enter exec-card-wrap">
-      <p className="grant-kicker mono">Depositing · fees covered</p>
+      <p className="grant-kicker mono">Depositing, fees covered</p>
 
       <div className="exec-header">
         <div>
@@ -1241,7 +1263,7 @@ const ExecuteCard = ({ strategy, execMap, paletteIsLight, onOpenMemory, onDone }
               ? 'Deposits confirmed'
               : stalled
                 ? 'Some deposits need attention'
-                : 'Depositing your USDC…'}
+                : 'Depositing your USDC'}
           </h1>
           <p className="lede" style={{ marginTop: 10, maxWidth: 520 }}>
             {allDone
@@ -1251,7 +1273,7 @@ const ExecuteCard = ({ strategy, execMap, paletteIsLight, onOpenMemory, onDone }
           {!allDone && stalled && (
             <div className="exec-live-status mono" style={{ color: 'var(--danger, #e5484d)' }}>
               <span>
-                {failedCount} failed · {fmtCountdown(elapsedMs)} elapsed · open a card for details
+                {failedCount} failed, {fmtCountdown(elapsedMs)} elapsed, open a card for details
               </span>
             </div>
           )}
@@ -1259,10 +1281,8 @@ const ExecuteCard = ({ strategy, execMap, paletteIsLight, onOpenMemory, onDone }
             <div className="exec-live-status mono">
               <span className="think-spin" />
               <span>
-                {runningCount > 0
-                  ? `${runningCount} confirming on-chain`
-                  : 'Waiting for network'}
-                {' · '}
+                {runningCount > 0 ? `${runningCount} confirming on-chain` : 'Waiting for network'}
+                {', '}
                 {fmtCountdown(elapsedMs)} elapsed
               </span>
             </div>
@@ -1322,9 +1342,9 @@ const fmtCountdown = (ms) => {
 }
 
 const agoLabel = (ts, now) => {
-  if (!ts) return 'just now'
+  if (!ts) return 'Just now'
   const s = Math.max(0, Math.floor((now - ts) / 1000))
-  if (s < 5) return 'just now'
+  if (s < 5) return 'Just now'
   if (s < 60) return `${s}s ago`
   if (s < 3600) return `${Math.floor(s / 60)}m ago`
   return `${Math.floor(s / 3600)}h ago`
@@ -1332,14 +1352,14 @@ const agoLabel = (ts, now) => {
 
 const loopRowDetail = (r) => {
   const rules = (r.citedRules || []).join(', ')
-  if (r.verdict === 'crash') return r.error || 'crashed · loop recovered'
+  if (r.verdict === 'crash') return r.error || 'Crashed. The loop recovered.'
   if (r.verdict === 'gated')
-    return `${r.gate || 'gate'} gate · ${r.reason || 'blocked before council'} · no AI credit spent`
+    return `${displayLabel(r.gate, 'Gate')}: ${r.reason || 'Blocked before council'}. AI was not called.`
   if (r.verdict === 'discard')
-    return `${r.reason || 'council declined'}${rules ? ` · ${rules}` : ''}`
+    return `${r.reason || 'Council declined'}${rules ? `, ${rules}` : ''}`
   if (r.verdict === 'keep')
-    return `Score ${r.score ?? '--'} · ${rules || '--'} · tx ${(r.txHash || '').slice(0, 10)}…`
-  return `Observed market · ${r.turbulence || 'calm'} · no action needed`
+    return `Score ${r.score ?? '--'}, ${rules || '--'}, tx ${(r.txHash || '').slice(0, 10)}…`
+  return `Observed market: ${displayLabel(r.turbulence, 'Calm')}. No action needed.`
 }
 
 const LoopStatusPanel = ({
@@ -1386,20 +1406,29 @@ const LoopStatusPanel = ({
 
   return (
     <div className={`loop-status embedded ${running ? 'is-running' : 'is-stopped'}`}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: 12,
+        }}
+      >
         {running ? (
           <div className="loop-vitals" style={{ margin: 0 }}>
             <span className={`loop-countdown ${cycling ? 'busy' : ''}`}>
               {cycling
-                ? 'cycle running now'
+                ? 'Cycle running now'
                 : remaining != null
-                  ? `next cycle in ${fmtCountdown(remaining)}`
-                  : 'awaiting first heartbeat'}
+                  ? `Next cycle in ${fmtCountdown(remaining)}`
+                  : 'Awaiting first heartbeat'}
             </span>
-            <span className="loop-last">last activity {agoLabel(lastTs, now)}</span>
+            <span className="loop-last">Last activity: {agoLabel(lastTs, now)}</span>
           </div>
         ) : (
-          <div style={{ fontSize: '11px', color: 'var(--text-faint)', fontFamily: 'var(--font-mono)' }}>
+          <div
+            style={{ fontSize: '11px', color: 'var(--text-faint)', fontFamily: 'var(--font-mono)' }}
+          >
             Loop is stopped
           </div>
         )}
@@ -1435,12 +1464,15 @@ const LoopStatusPanel = ({
             <line x1="16" y1="13" x2="8" y2="13" />
             <line x1="16" y1="17" x2="8" y2="17" />
           </svg>
-          Decision Log
+          Decision log
         </button>
       </div>
 
       {running && (
-        <div className={`loop-heartbeat-track ${cycling ? 'cycling' : ''}`} style={{ marginBottom: 12 }}>
+        <div
+          className={`loop-heartbeat-track ${cycling ? 'cycling' : ''}`}
+          style={{ marginBottom: 12 }}
+        >
           <div
             className="loop-heartbeat-fill"
             style={{ width: `${cycling ? 100 : pctElapsed}%` }}
@@ -1628,12 +1660,12 @@ const LoopStatusPanel = ({
         <div className="loop-vitals">
           <span className={`loop-countdown ${cycling ? 'busy' : ''}`}>
             {cycling
-              ? 'cycle running now'
+              ? 'Cycle running now'
               : remaining != null
-                ? `next cycle in ${fmtCountdown(remaining)}`
-                : 'awaiting first heartbeat'}
+                ? `Next cycle in ${fmtCountdown(remaining)}`
+                : 'Awaiting first heartbeat'}
           </span>
-          <span className="loop-last">last activity {agoLabel(lastTs, now)}</span>
+          <span className="loop-last">Last activity: {agoLabel(lastTs, now)}</span>
         </div>
       )}
       {running && (
@@ -1705,8 +1737,6 @@ const LoopStatusPanel = ({
           <span className="vf-node-label">Gate Check</span>
         </div>
 
-
-
         {/* Arrow 2 */}
         <div
           className={`vf-flowchart-arrow ${running && activeIdx > 1 && latestVerdict !== 'gated' && (phase === 'simulate' || activeIdx > 2) ? 'active' : ''}`}
@@ -1772,8 +1802,6 @@ const LoopStatusPanel = ({
           </span>
           <span className="vf-node-label">AI Council</span>
         </div>
-
-
 
         {/* Arrow 4 */}
         <div
@@ -1850,6 +1878,7 @@ const LoopStatusPanel = ({
           >
             <button
               onClick={() => setShowLogsModal(false)}
+              aria-label="Close"
               style={{
                 position: 'absolute',
                 top: '20px',
@@ -1862,28 +1891,39 @@ const LoopStatusPanel = ({
                 fontFamily: 'var(--font-mono)',
               }}
             >
-              ✕ CLOSE
+              <Icon name="x" size={14} />
             </button>
             <div className="modal-eyebrow">Autonomous monitoring logs</div>
             <h3 className="modal-title" style={{ marginBottom: 20 }}>
-              Decision Log & Heartbeat Console
+              Decision log and heartbeat console
             </h3>
 
             <div className="modal-scroll-content" style={{ maxHeight: '68vh', overflowY: 'auto' }}>
               <div className="decision-modal-grid">
-                
                 {/* Left Column: Heartbeat Ticker */}
                 <div className="decision-modal-left">
-                  <div style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', color: 'var(--text-faint)', letterSpacing: '0.05em', marginBottom: 12 }}>
-                    heartbeat ticker journal
+                  <div
+                    style={{
+                      fontSize: '11px',
+                      fontWeight: '700',
+                      textTransform: 'uppercase',
+                      color: 'var(--text-faint)',
+                      letterSpacing: '0.05em',
+                      marginBottom: 12,
+                    }}
+                  >
+                    Heartbeat ticker
                   </div>
-                  
-                  <div className="loop-chips" style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 16 }}>
-                    <span className="loop-chip keep">keep {summary.keep}</span>
-                    <span className="loop-chip discard">discard {summary.discard}</span>
-                    <span className="loop-chip gated">gated {summary.gated || 0}</span>
-                    <span className="loop-chip crash">crash {summary.crash}</span>
-                    <span className="loop-chip idle">observe {summary.idle}</span>
+
+                  <div
+                    className="loop-chips"
+                    style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 16 }}
+                  >
+                    <span className="loop-chip keep">Keep {summary.keep}</span>
+                    <span className="loop-chip discard">Discard {summary.discard}</span>
+                    <span className="loop-chip gated">Gated {summary.gated || 0}</span>
+                    <span className="loop-chip crash">Crash {summary.crash}</span>
+                    <span className="loop-chip idle">Observe {summary.idle}</span>
                   </div>
 
                   <div className="loop-rows" style={{ maxHeight: 380, overflowY: 'auto' }}>
@@ -1891,7 +1931,7 @@ const LoopStatusPanel = ({
                       <div className="loop-row" key={r.ts || i}>
                         <span className="loop-row-num">#{String(r.cycle).padStart(2, '0')}</span>
                         <span className={`loop-badge ${r.verdict}`}>
-                          {r.verdict === 'idle' ? 'Observe' : r.verdict}
+                          {r.verdict === 'idle' ? 'Observe' : displayLabel(r.verdict)}
                         </span>
                         <span className="loop-row-detail" title={loopRowDetail(r)}>
                           {loopRowDetail(r)}
@@ -1911,17 +1951,29 @@ const LoopStatusPanel = ({
 
                 {/* Right Column: AI Council Decision Log */}
                 <div className="decision-modal-right">
-                  <div style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', color: 'var(--text-faint)', letterSpacing: '0.05em', marginBottom: 12 }}>
+                  <div
+                    style={{
+                      fontSize: '11px',
+                      fontWeight: '700',
+                      textTransform: 'uppercase',
+                      color: 'var(--text-faint)',
+                      letterSpacing: '0.05em',
+                      marginBottom: 12,
+                    }}
+                  >
                     AI Council decisions
                   </div>
                   <DecisionLogPanel rows={decisionsRows} summary={decisionsSummary} />
                 </div>
-
               </div>
             </div>
 
             <div className="modal-actions" style={{ marginTop: 20 }}>
-              <button className="btn btn-ghost" onClick={() => setShowLogsModal(false)} style={{ marginLeft: 'auto' }}>
+              <button
+                className="btn btn-ghost"
+                onClick={() => setShowLogsModal(false)}
+                style={{ marginLeft: 'auto' }}
+              >
                 Close
               </button>
             </div>
@@ -1950,9 +2002,9 @@ const DecisionLogPanel = ({ rows, summary }) => {
           const t = byAgent[role] || { DEPOSIT: 0, HOLD: 0, WITHDRAW: 0 }
           return (
             <div className="decision-agent" key={role}>
-              <span className="decision-agent-role mono">{role}</span>
+              <span className="decision-agent-role mono">{displayLabel(role)}</span>
               <span className="decision-agent-tally mono">
-                <span className="keep">{t.DEPOSIT}</span>·<span className="gated">{t.HOLD}</span>·
+                <span className="keep">{t.DEPOSIT}</span>, <span className="gated">{t.HOLD}</span>,{' '}
                 <span className="discard">{t.WITHDRAW}</span>
               </span>
             </div>
@@ -1969,22 +2021,22 @@ const DecisionLogPanel = ({ rows, summary }) => {
             >
               <span className="decision-row-num mono">#{String(r.cycle).padStart(2, '0')}</span>
               <span className={`decision-badge ${r.finalDecision === 'keep' ? 'keep' : 'discard'}`}>
-                {r.finalDecision}
+                {displayLabel(r.finalDecision)}
               </span>
               <span className="decision-row-maj mono">
-                {r.majoritySignal} ×{r.majorityCount}
+                {r.majoritySignal}, {r.majorityCount} votes
               </span>
               <span className="decision-row-conf tnum mono">
                 {Math.round((r.avgConfidence || 0) * 100)}%
               </span>
-              <span className="decision-row-by mono">{r.resolvedBy}</span>
+              <span className="decision-row-by mono">{displayLabel(r.resolvedBy)}</span>
               <span className="decision-row-time">{agoLabel(r.ts, now)}</span>
             </button>
             {open === r.id && (
               <div className="decision-verdicts">
                 {(r.verdicts || []).map((v) => (
                   <div className={`decision-verdict ${SIGNAL_CLASS[v.signal] || ''}`} key={v.role}>
-                    <span className="decision-verdict-role mono">{v.role}</span>
+                    <span className="decision-verdict-role mono">{displayLabel(v.role)}</span>
                     <span className="decision-verdict-conf tnum mono">
                       {Math.round((v.confidence || 0) * 100)}%
                     </span>

@@ -46,6 +46,6 @@ describe('KeeperZone', () => {
   })
   it('idle when nothing registered', () => {
     render(<KeeperZone {...props} strategies={[]} pricePerShare={null} events={[]} />)
-    expect(screen.getByText(/no strategies registered/)).toBeTruthy()
+    expect(screen.getByText('No strategies registered.')).toBeTruthy()
   })
 })

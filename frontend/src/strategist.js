@@ -23,6 +23,36 @@ import { loadSettings } from './settingsStore.js'
 import { hashStrategy } from './attestation.js'
 import { buildStrategyState, enforceActionSpace, scoreReward, riskCeiling } from './strategy/mdp.js'
 
+const DISPLAY_PROSE_RULE =
+  'Write user-facing prose as one plain sentence in sentence case. Do not use em dashes, en dashes, middle dots, emoji, headings, hype, or filler.'
+const HYPE_REPLACEMENTS = [
+  [/\b(?:cutting-edge|game-changing|groundbreaking|revolutionary|transformative)\b/gi, 'useful'],
+  [/\bseamless\b/gi, 'straightforward'],
+  [/\brobust\b/gi, 'reliable'],
+  [/\bpivotal\b/gi, 'important'],
+  [/\b(?:leverage|utilize|harness)\b/gi, 'use'],
+  [/\bunlock\b/gi, 'allow'],
+]
+
+export function normalizeDisplayProse(value) {
+  let text = String(value ?? '')
+    .replace(/\s*[\u2014\u2013]\s*/g, '. ')
+    .replace(/\s*\u00b7\s*/g, ', ')
+    .replace(/[\p{Extended_Pictographic}\p{Emoji_Modifier}\uFE0F\u200D]/gu, '')
+  for (const [pattern, replacement] of HYPE_REPLACEMENTS) {
+    text = text.replace(pattern, replacement)
+  }
+  text = text
+    .replace(/\s+/g, ' ')
+    .replace(/\s+([,.;:!?])/g, '$1')
+    .trim()
+  return text
+    .replace(/[A-Za-z]/, (c) => c.toUpperCase())
+    .replace(/([.!?]\s+)([a-z])/g, (_, prefix, c) => prefix + c.toUpperCase())
+}
+
+const withDisplayProseRule = (prompt) => `${prompt}\n\n${DISPLAY_PROSE_RULE}`
+
 // AI provider priority (BYOK-first): Venice x402 → Venice key → DeepSeek key → host proxy → hardcoded
 // Venice x402:    wallet SIWE auth, pays USDC on Base — no API key needed
 // Venice key:     Settings-supplied Bearer token → real Venice endpoint (BYOK)
@@ -201,7 +231,10 @@ export async function generateStrategy({
       }),
     ])
   } catch (err) {
-    console.warn('[ai] Strategy DAG failed/timed out — continuing with static catalog:', err?.message || err)
+    console.warn(
+      '[ai] Strategy DAG failed/timed out - continuing with static catalog:',
+      err?.message || err
+    )
     dag = {
       skill: await fallbackSkill(),
       marketContext: null,
@@ -219,7 +252,7 @@ export async function generateStrategy({
   const marketContext = dag.marketContext
   const liveVaults = dag.pools
   console.log(
-    `[Venice] strategy DAG · wall ${Math.round(dag.wallMs)}ms · nodes ${JSON.stringify(dag.timings)}`
+    `[Venice] strategy DAG, wall ${Math.round(dag.wallMs)}ms, nodes ${JSON.stringify(dag.timings)}`
   )
 
   // Real DeFiLlama vaults when available, else the static VAULT_CATALOG
@@ -239,15 +272,16 @@ export async function generateStrategy({
     systemPrompt = systemPrompt + '\n\n' + marketContext
     console.log('[Venice] Market context injected from Tavily')
   } else {
-    console.log('[Venice] No market context — using static knowledge only')
+    console.log('[Venice] No market context - using static knowledge only')
   }
+  systemPrompt = withDisplayProseRule(systemPrompt)
 
   const safeNumVaults = Math.min(numVaults, vaultData.length) // fixes high-risk fallback bug
 
   // BYOK-first: wallet x402 / Settings Venice key / Settings DeepSeek key / host proxy.
   const provider = resolveProviderFromSettings({ veniceAuth, devApiKey })
   if (!provider) {
-    console.warn('[ai] No provider — using fallback strategy')
+    console.warn('[ai] No provider - using fallback strategy')
     return {
       ...buildFallbackForParams(amount, safeNumVaults),
       skillSource: skill.source,
@@ -293,7 +327,7 @@ Select optimal vault(s) from the catalog above. APY and TVL data are real-time f
     )
     const parsed = validateStrategyResponse(JSON.parse(content), vaultData)
     console.log(
-      `[ai] Strategy via ${provider.name} · skill: ${skill.source} · vaults: ${vaultDataSource}`
+      `[ai] Strategy via ${provider.name}, skill: ${skill.source}, vaults: ${vaultDataSource}`
     )
 
     // --- Formal MDP: State -> Action -> Reward (FinRL framing) ---
@@ -476,7 +510,7 @@ Respond with JSON schema:
     return result
   } catch (err) {
     console.warn(`[ai] Skill gen failed (${provider.name}), using fallback:`, err.message)
-    return { ...fallback, error: err.message }
+    return { ...fallback, error: 'AI skill generation failed. The fallback skill will be used.' }
   } finally {
     clearTimeout(timeout)
   }
@@ -492,7 +526,8 @@ function buildFallbackForParams(amount, numVaults) {
       allocation,
       expectedApy: v.apy,
     })),
-    rationale: 'Fallback: equal split across available vaults',
+    rationale:
+      'No model response was available, so funds are split evenly across available vaults.',
     generatedBy: 'fallback',
   }
 }
@@ -506,12 +541,16 @@ export function validateStrategyResponse(response, vaultData = VAULT_CATALOG) {
   if (!response.selected_vaults || !Array.isArray(response.selected_vaults)) {
     throw new Error('Missing selected_vaults array')
   }
+  for (const key of ['strategy_summary', 'rationale']) {
+    if (typeof response[key] === 'string') response[key] = normalizeDisplayProse(response[key])
+  }
 
   response.selected_vaults.forEach((v, i) => {
     if (!allowedAddresses.has(v.address?.toLowerCase())) {
       throw new Error(`Vault ${i}: hallucinated address ${v.address}`)
     }
-    if (!v.reasoning || v.reasoning.length < 20) {
+    v.reasoning = normalizeDisplayProse(v.reasoning)
+    if (v.reasoning.length < 20) {
       throw new Error(`Vault ${i}: reasoning missing or too short`)
     }
     if (typeof v.expected_apy !== 'number' || v.expected_apy <= 0 || v.expected_apy > 100) {
@@ -649,18 +688,21 @@ const VALID_SIGNALS = new Set(['DEPOSIT', 'HOLD', 'WITHDRAW'])
 export function parseSpecialistVerdict(raw, role, allowedRuleIds = []) {
   const signal = String(raw?.signal || '').toUpperCase()
   if (!VALID_SIGNALS.has(signal)) throw new Error(`invalid signal: ${raw?.signal}`)
-  if (!raw?.reasoning || String(raw.reasoning).length < 1) throw new Error('reasoning missing')
+  const reasoning = normalizeDisplayProse(raw?.reasoning)
+  if (!reasoning) throw new Error('reasoning missing')
   const conf = Math.max(0, Math.min(1, +Number(raw.confidence).toFixed(3)))
   const allowed = new Set(allowedRuleIds)
   const citedRules = Array.isArray(raw.citedRules)
     ? raw.citedRules.filter((id) => allowed.has(id))
     : []
-  const concerns = Array.isArray(raw.concerns) ? raw.concerns.map(String).slice(0, 4) : []
+  const concerns = Array.isArray(raw.concerns)
+    ? raw.concerns.map(normalizeDisplayProse).filter(Boolean).slice(0, 4)
+    : []
   return {
     role,
     signal,
     confidence: Number.isFinite(conf) ? conf : 0,
-    reasoning: String(raw.reasoning),
+    reasoning,
     citedRules,
     concerns,
     source: 'ai',
@@ -692,7 +734,7 @@ export async function councilSpecialistVerdict({
       provider.model,
       provider.headers,
       [
-        { role: 'system', content: systemPrompt },
+        { role: 'system', content: withDisplayProseRule(systemPrompt) },
         { role: 'user', content: userPrompt },
       ],
       provider.isVenice,
@@ -714,17 +756,23 @@ export async function councilSpecialistVerdict({
  */
 export function parseProposerVerdict(raw, allowedRuleIds = []) {
   const action = String(raw?.proposal?.action || '').toUpperCase()
-  if (!VALID_SIGNALS.has(action)) throw new Error(`invalid proposer action: ${raw?.proposal?.action}`)
-  if (!raw?.proposal?.reasoning) throw new Error('proposer reasoning missing')
+  if (!VALID_SIGNALS.has(action))
+    throw new Error(`invalid proposer action: ${raw?.proposal?.action}`)
+  const reasoning = normalizeDisplayProse(raw?.proposal?.reasoning)
+  if (!reasoning) throw new Error('proposer reasoning missing')
   const conf = Math.max(0, Math.min(1, +Number(raw.proposal.confidence).toFixed(3)))
   const allowed = new Set(allowedRuleIds)
-  const citedRules = Array.isArray(raw.citedRules) ? raw.citedRules.filter((id) => allowed.has(id)) : []
-  const arguments_ = Array.isArray(raw.arguments) ? raw.arguments.map(String).slice(0, 5) : []
+  const citedRules = Array.isArray(raw.citedRules)
+    ? raw.citedRules.filter((id) => allowed.has(id))
+    : []
+  const arguments_ = Array.isArray(raw.arguments)
+    ? raw.arguments.map(normalizeDisplayProse).filter(Boolean).slice(0, 5)
+    : []
   return {
     role: 'proposer',
     action,
     confidence: Number.isFinite(conf) ? conf : 0,
-    reasoning: String(raw.proposal.reasoning),
+    reasoning,
     arguments: arguments_,
     citedRules,
     source: 'ai',
@@ -739,12 +787,19 @@ export function parseProposerVerdict(raw, allowedRuleIds = []) {
  */
 export function parseRiskComplianceVerdict(raw, allowedRuleIds = []) {
   const action = String(raw?.assessment?.action || '').toUpperCase()
-  if (!VALID_SIGNALS.has(action)) throw new Error(`invalid risk-compliance action: ${raw?.assessment?.action}`)
+  if (!VALID_SIGNALS.has(action))
+    throw new Error(`invalid risk-compliance action: ${raw?.assessment?.action}`)
   const conf = Math.max(0, Math.min(1, +Number(raw.assessment.confidence).toFixed(3)))
   const allowed = new Set(allowedRuleIds)
-  const citedRules = Array.isArray(raw.regulationsCited) ? raw.regulationsCited.filter((id) => allowed.has(id)) : []
-  const violations = Array.isArray(raw.violationsFound) ? raw.violationsFound.map(String).slice(0, 5) : []
-  const concerns = Array.isArray(raw.concerns) ? raw.concerns.map(String).slice(0, 4) : []
+  const citedRules = Array.isArray(raw.regulationsCited)
+    ? raw.regulationsCited.filter((id) => allowed.has(id))
+    : []
+  const violations = Array.isArray(raw.violationsFound)
+    ? raw.violationsFound.map(normalizeDisplayProse).filter(Boolean).slice(0, 5)
+    : []
+  const concerns = Array.isArray(raw.concerns)
+    ? raw.concerns.map(normalizeDisplayProse).filter(Boolean).slice(0, 4)
+    : []
   return {
     role: 'risk-compliance',
     action,
@@ -764,7 +819,9 @@ export function parseRiskComplianceVerdict(raw, allowedRuleIds = []) {
  */
 export function parseValidatorVerdict(raw) {
   const conf = Math.max(0, Math.min(1, +Number(raw.confidence).toFixed(3)))
-  const concerns = Array.isArray(raw.concerns) ? raw.concerns.map(String).slice(0, 4) : []
+  const concerns = Array.isArray(raw.concerns)
+    ? raw.concerns.map(normalizeDisplayProse).filter(Boolean).slice(0, 4)
+    : []
   return {
     role: 'validator',
     consistent: raw.consistent === true,
@@ -801,7 +858,7 @@ export async function proposerVerdict({
       provider.model,
       provider.headers,
       [
-        { role: 'system', content: systemPrompt },
+        { role: 'system', content: withDisplayProseRule(systemPrompt) },
         { role: 'user', content: userPrompt },
       ],
       provider.isVenice,
@@ -840,7 +897,7 @@ export async function riskComplianceVerdict({
       provider.model,
       provider.headers,
       [
-        { role: 'system', content: systemPrompt },
+        { role: 'system', content: withDisplayProseRule(systemPrompt) },
         { role: 'user', content: userPrompt },
       ],
       provider.isVenice,
@@ -861,12 +918,7 @@ export async function riskComplianceVerdict({
  * @param {{systemPrompt:string, userPrompt:string, devApiKey?:string|null, signal?:AbortSignal}} args
  * @returns {Promise<ValidatorVerdict|null>}
  */
-export async function validatorVerdict({
-  systemPrompt,
-  userPrompt,
-  devApiKey = null,
-  signal,
-}) {
+export async function validatorVerdict({ systemPrompt, userPrompt, devApiKey = null, signal }) {
   const provider = resolveProviderFromSettings({ devApiKey })
   const controller = signal ? null : new AbortController()
   const timeout = controller ? setTimeout(() => controller.abort(), VENICE_TIMEOUT_MS) : null
@@ -877,7 +929,7 @@ export async function validatorVerdict({
       provider.model,
       provider.headers,
       [
-        { role: 'system', content: systemPrompt },
+        { role: 'system', content: withDisplayProseRule(systemPrompt) },
         { role: 'user', content: userPrompt },
       ],
       provider.isVenice,
@@ -912,13 +964,15 @@ export async function askStrategistJson({ system, user, devApiKey = null, signal
       provider.model,
       provider.headers,
       [
-        { role: 'system', content: system },
+        { role: 'system', content: withDisplayProseRule(system) },
         { role: 'user', content: user },
       ],
       provider.isVenice,
       sig
     )
-    return JSON.parse(content)
+    const parsed = JSON.parse(content)
+    if (typeof parsed?.text === 'string') parsed.text = normalizeDisplayProse(parsed.text)
+    return parsed
   } finally {
     if (timeout) clearTimeout(timeout)
   }
@@ -992,7 +1046,9 @@ export async function allocateBasePools({
   const sig = signal || controller.signal
 
   try {
-    const systemPrompt = `You allocate USDC across a whitelisted set of Base-chain yield pools. Respond ONLY with JSON: {"allocations":[{"address":"0x...","allocation":0.0-1.0,"reasoning":"..."}]}. Only use addresses from the catalog provided.`
+    const systemPrompt = withDisplayProseRule(
+      `You allocate USDC across a whitelisted set of Base-chain yield pools. Respond ONLY with JSON: {"allocations":[{"address":"0x...","allocation":0.0-1.0,"reasoning":"..."}]}. Only use addresses from the catalog provided.`
+    )
     const userPrompt = `Catalog:\n${JSON.stringify(BASE_POOL_CATALOG, null, 2)}\n\nAllocate ${amount} USDC across up to ${safeNPools} pool(s) for a "${riskLevel}" risk investor. Allocations must sum to 1.0 across the pools you select.`
     const content = await callChatCompletions(
       provider.url,

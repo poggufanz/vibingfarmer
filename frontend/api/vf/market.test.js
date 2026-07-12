@@ -77,7 +77,7 @@ describe('market endpoints', () => {
     await vfRouter(mk('POST', '/eligibility', { vault: 'CVAULT', amount: 'xx' }, key), res)
     expect(res.statusCode).toBe(400)
   })
-  it('eligibility fails closed on an unknown protocol — no silent blend-usdc default', async () => {
+  it('eligibility fails closed on an unknown protocol - no silent blend-usdc default', async () => {
     const res = mockRes()
     await vfRouter(mk('POST', '/eligibility', { vault: 'CVAULT', amount: '10000000' }, key), res)
     expect(res.statusCode).toBe(200)

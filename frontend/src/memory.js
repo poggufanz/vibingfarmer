@@ -16,7 +16,7 @@ export function createEntry(step, status, data = {}, lesson = '') {
     step,
     status,
     ...data,
-    ...(lesson ? { lesson } : {})
+    ...(lesson ? { lesson } : {}),
   }
 }
 
@@ -67,7 +67,7 @@ export function loadAllMemory() {
  */
 export function buildLesson(vault, result) {
   if (result.error) return `Vault ${vault.slice(0, 8)} failed: ${result.error}`
-  return `Vault ${vault.slice(0, 8)} accepted deposit — ${result.shares} shares received`
+  return `Vault ${vault.slice(0, 8)} accepted the deposit. ${result.shares} shares received.`
 }
 
 /** Clear all memory from localStorage. */

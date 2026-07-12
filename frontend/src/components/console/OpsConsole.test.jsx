@@ -87,6 +87,6 @@ describe('OpsConsole', () => {
   })
   it('loop null renders monitor as stopped without crashing', () => {
     render(<OpsConsole {...props} loop={null} />)
-    expect(screen.getByText(/loop stopped/)).toBeTruthy()
+    expect(screen.getByText('Loop stopped')).toBeTruthy()
   })
 })

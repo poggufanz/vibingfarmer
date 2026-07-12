@@ -32,7 +32,6 @@ export default function DocsSection() {
     <div className="card">
       <div className="eyebrow">
         <span>Developers</span>
-        <span>·</span>
         <span>API reference</span>
       </div>
       <h1 className="h-display">API documentation</h1>
@@ -71,7 +70,6 @@ curl -s https://api.vibing.farmer/api/vf/prices \\
           <button type="button" className="btn btn-text" onClick={() => setAll(true)}>
             Expand all
           </button>
-          <span className="faint">·</span>
           <button type="button" className="btn btn-text" onClick={() => setAll(false)}>
             Collapse all
           </button>
@@ -100,9 +98,6 @@ curl -s https://api.vibing.farmer/api/vf/prices \\
                       {e.method}
                     </span>
                     <span className="docs-path mono">{e.path}</span>
-                    <span className="docs-chevron mono" aria-hidden="true">
-                      ›
-                    </span>
                     <span className="docs-desc">{e.desc}</span>
                   </summary>
                   <div className="docs-endpoint-body">
@@ -123,8 +118,7 @@ curl -s https://api.vibing.farmer/api/vf/prices \\
       </div>
 
       <p className="foot-note" style={{ marginTop: 24 }}>
-        Rate limit: per-key req/min (set at issuance, default 60) · global daily budget shared
-        across keys · testnet.
+        Each key defaults to 60 requests per minute. All keys share the testnet daily budget.
       </p>
     </div>
   )

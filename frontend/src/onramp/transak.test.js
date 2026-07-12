@@ -60,7 +60,7 @@ describe('transakOnRamp.open', () => {
   })
 })
 
-describe('launchWidget (SDK event wiring in isolation — no network, no DOM)', () => {
+describe('launchWidget (SDK event wiring in isolation - no network, no DOM)', () => {
   it('resolves completed:true on TRANSAK_ORDER_SUCCESSFUL', async () => {
     const resultPromise = launchWidget('https://widget.example', { Transak: MockTransak })
     MockTransak._listeners.ORDER_SUCCESSFUL({ id: 'order-123' })

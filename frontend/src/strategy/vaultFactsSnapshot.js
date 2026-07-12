@@ -55,6 +55,6 @@ export const SNAPSHOT = {
       poolClass: f('community'),
       supplierConcentrationPct: f(80),
     },
-    meta: { isFixture: true, label: 'demo fixture — illustrates rejection' },
+    meta: { isFixture: true, label: 'Demo fixture rejected by eligibility checks' },
   },
 }

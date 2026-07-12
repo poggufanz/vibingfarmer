@@ -17,18 +17,18 @@ import { panelState } from '../../stellar/lifeboat.js'
 const keeperTrace = (e) => ({
   label:
     e.kind === 'compound_executed'
-      ? `compounded · +${e.totalGainUsdc} USDC`
-      : `rebalanced · ${e.amountUsdc} USDC`,
+      ? `Compounded, +${e.totalGainUsdc} USDC`
+      : `Rebalanced, ${e.amountUsdc} USDC`,
   tone: e.kind === 'compound_executed' ? 'ok' : 'info',
   timestamp: e.timestamp || 0,
 })
 const lifeboatTrace = (e) => ({
   label:
     e.type === 'derisk'
-      ? 'lifeboat engaged'
+      ? 'Lifeboat engaged'
       : e.type === 'resume'
-        ? 'lifeboat resumed'
-        : 'mandate updated',
+        ? 'Lifeboat resumed'
+        : 'Mandate updated',
   tone: e.type === 'derisk' ? 'warn' : e.type === 'resume' ? 'ok' : 'info',
   timestamp: e.timestamp || 0,
 })

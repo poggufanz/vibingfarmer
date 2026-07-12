@@ -19,7 +19,7 @@ export async function connectWallet() {
   // an opaque server error.
   if (address?.startsWith('C')) {
     throw new Error(
-      'Portal sign-in needs a classic wallet (G… address). Passkey smart accounts cannot sign the SEP-10 challenge — connect Freighter, xBull, Albedo, or a VF standard wallet.'
+      'Portal sign-in needs a classic wallet (G... address). Passkey smart accounts cannot sign the SEP-10 challenge. Connect Freighter, xBull, Albedo, or a standard VF wallet.'
     )
   }
   return { address, signChallenge: signTxXdr }

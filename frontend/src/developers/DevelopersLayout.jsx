@@ -8,14 +8,14 @@ const shortAddr = (g) => (g ? `${g.slice(0, 6)}…${g.slice(-4)}` : '')
 
 // Scope contract — shown pre-auth on gated sections.
 export const SCOPE_INFO = [
-  { id: 'strategy', endpoints: 'POST /strategy', note: 'AI allocation · market context' },
+  { id: 'strategy', endpoints: 'POST /strategy', note: 'AI allocation using market context' },
   {
     id: 'market',
-    endpoints: '/vault-facts · /prices · /eligibility',
+    endpoints: '/vault-facts, /prices, /eligibility',
     note: 'Read-only market data',
   },
-  { id: 'tx', endpoints: '/build-tx · /simulate', note: 'Unsigned XDR only' },
-  { id: 'submit', endpoints: 'POST /submit', note: 'Fee-bump relay · deposit-only' },
+  { id: 'tx', endpoints: '/build-tx, /simulate', note: 'Unsigned XDR only' },
+  { id: 'submit', endpoints: 'POST /submit', note: 'Deposit-only fee-bump relay' },
   { id: 'scan', endpoints: 'POST /scan', note: 'Risk verdict' },
 ]
 
@@ -24,13 +24,12 @@ export function ConnectGate({ connecting, onConnect }) {
     <div className="card">
       <div className="eyebrow">
         <span>Developers</span>
-        <span>·</span>
         <span>SEP-10 wallet auth</span>
       </div>
       <h1 className="h-display">Connect to continue</h1>
       <p className="lede">
-        Authenticate with a Stellar wallet to manage keys and view usage. Keys are hashed at rest —{' '}
-        <b>plaintext appears once</b>, at issuance only.
+        Authenticate with a Stellar wallet to manage keys and view usage. Keys are hashed at rest.
+        Plaintext appears <b>once</b>, only when the key is issued.
       </p>
       <div className="perm-doc" style={{ marginTop: 24 }}>
         {SCOPE_INFO.map((s) => (
@@ -45,7 +44,7 @@ export function ConnectGate({ connecting, onConnect }) {
       </div>
       <div className="action-row">
         <span className="foot-note">
-          Session lasts 1 hour · nothing leaves your wallet but a signature.
+          The session lasts one hour. Only a signature leaves your wallet.
         </span>
         <button
           className="btn btn-primary btn-lg"
@@ -120,7 +119,7 @@ export default function DevelopersLayout() {
           </NavLink>
         ))}
         <div className="portal-nav-foot mono faint">
-          {session ? `SEP-10 · ${shortAddr(session.address)}` : 'Not connected'}
+          {session ? `SEP-10, ${shortAddr(session.address)}` : 'Not connected'}
         </div>
       </nav>
       <div className="portal-main">

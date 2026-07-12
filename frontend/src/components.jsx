@@ -186,9 +186,9 @@ const Sidebar = ({ extended, onToggle }) => {
   ]
 
   return (
-    <nav className="sidebar" aria-label="Primary">
+    <nav className="sidebar" aria-label="Primary navigation">
       <div className="sb-logo" title="vibing/farmer">
-        <img src="/vibing_farmer.logo.svg" alt="logo" style={{ width: 18, height: 18 }} />
+        <img src="/vibing_farmer.logo.svg" alt="" style={{ width: 18, height: 18 }} />
         <span className="sb-logo-text">vibing/farmer</span>
       </div>
       {items.map((it) => (
@@ -197,6 +197,7 @@ const Sidebar = ({ extended, onToggle }) => {
           className={`sb-item ${activePath === it.path ? 'active' : ''}`}
           title={it.label}
           aria-label={it.label}
+          aria-current={activePath === it.path ? 'page' : undefined}
           onClick={() => navigate(it.path)}
         >
           <Icon name={it.icon} />
@@ -208,12 +209,12 @@ const Sidebar = ({ extended, onToggle }) => {
       <button
         className="sb-item sb-toggle"
         onClick={onToggle}
-        title={extended ? 'Collapse Sidebar' : 'Expand Sidebar'}
+        title={extended ? 'Collapse sidebar' : 'Expand sidebar'}
+        aria-label={extended ? 'Collapse sidebar' : 'Expand sidebar'}
+        aria-expanded={extended}
       >
-        <Icon
-          name={extended ? 'panelLeftClose' : 'panelLeftOpen'}
-        />
-        <span className="sb-label">Collapse</span>
+        <Icon name={extended ? 'panelLeftClose' : 'panelLeftOpen'} />
+        <span className="sb-label">{extended ? 'Collapse' : 'Expand'}</span>
       </button>
     </nav>
   )
@@ -245,29 +246,27 @@ const TopBar = ({
       </div>
       <div className="topbar-right">
         <span className="topbar-meta">
-          relayer&nbsp;<b>fee-bump</b>&nbsp;·&nbsp;gas&nbsp;<b>0</b>
+          Relayer&nbsp;<b>fee-bump</b>, user gas&nbsp;<b>0</b>
         </span>
         <button
           className="icon-btn"
-          title="restart flow"
-          aria-label="restart flow"
+          title="Restart flow"
+          aria-label="Restart flow"
           onClick={onReset}
         >
           <Icon name="refresh" />
         </button>
         {notifications}
-        <button className="icon-btn" title="new deposit" aria-label="new deposit" onClick={onReset}>
+        <button className="icon-btn" title="New deposit" aria-label="New deposit" onClick={onReset}>
           <Icon name="plus" />
         </button>
         <button
           className="icon-btn"
           title={railCollapsed ? 'Show Info Panel' : 'Hide Info Panel'}
-          aria-label="toggle info panel"
+          aria-label="Toggle info panel"
           onClick={onToggleRail}
         >
-          <Icon
-            name={railCollapsed ? 'panelRightOpen' : 'panelRightClose'}
-          />
+          <Icon name={railCollapsed ? 'panelRightOpen' : 'panelRightClose'} />
         </button>
       </div>
     </header>

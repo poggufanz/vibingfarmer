@@ -23,7 +23,7 @@ export default function PositionsZone({
 
   return (
     <ZoneFrame
-      title="positions"
+      title="Positions"
       hue="neutral"
       led={list.length ? 'ok' : 'idle'}
       className="console-positions"
@@ -31,10 +31,10 @@ export default function PositionsZone({
     >
       {list.length === 0 ? (
         <div className="zone-empty">
-          no active positions
+          No active positions.
           <br />
           <button className="btn btn-ghost pos-cta" onClick={onNewStrategy}>
-            deploy from strategy flow →
+            Create a strategy
           </button>
         </div>
       ) : (
@@ -50,10 +50,10 @@ export default function PositionsZone({
                 <span className="pos-bal tnum">{bal.toFixed(2)}</span>
               </div>
               <div className="pos-sub mono">
-                {meta.protocol ? `${meta.protocol} · ` : ''}
+                {meta.protocol ? `${meta.protocol}, ` : ''}
                 {apy == null
-                  ? '--% apy'
-                  : `${apy.toFixed(1)}% apy · +${((bal * (apy / 100)) / 365).toFixed(4)}/day`}
+                  ? '--% APY'
+                  : `${apy.toFixed(1)}% APY, +${((bal * (apy / 100)) / 365).toFixed(4)}/day`}
               </div>
               <div className="pos-alloc">
                 <div className="pos-alloc-fill" style={{ transform: `scaleX(${pct / 100})` }} />
@@ -76,7 +76,7 @@ export default function PositionsZone({
                     })
                   }
                 >
-                  withdraw →
+                  Withdraw
                 </button>
               </div>
             </div>

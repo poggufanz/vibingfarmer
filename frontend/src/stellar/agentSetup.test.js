@@ -46,7 +46,7 @@ describe('fundAgent', () => {
   test('throws when the funding tx does not confirm (silent PENDING would doom the deposit)', async () => {
     submitUserTx.mockResolvedValueOnce({ hash: 'h2', status: 'PENDING' })
     await expect(fundAgent({ owner: 'GUSER', agentAddress: 'CAGENT', amount: 1n })).rejects.toThrow(
-      /funding not confirmed: PENDING/
+      /funding was not confirmed: PENDING/
     )
   })
 
@@ -55,7 +55,7 @@ describe('fundAgent', () => {
     try {
       signTxXdr.mockImplementation(() => new Promise(() => {})) // signature dismissed / wallet stuck
       const p = fundAgent({ owner: 'GUSER', agentAddress: 'CAGENT', amount: 1n })
-      const assertion = expect(p).rejects.toThrow(/timed out after 120s/)
+      const assertion = expect(p).rejects.toThrow(/timed out after 120 seconds/)
       await vi.advanceTimersByTimeAsync(120_001)
       await assertion
       expect(submitUserTx).not.toHaveBeenCalled()
@@ -65,7 +65,7 @@ describe('fundAgent', () => {
   })
 })
 
-describe('registryAuthorizeAgent (optional record-keeping — off the critical path)', () => {
+describe('registryAuthorizeAgent (optional record-keeping - off the critical path)', () => {
   test('signs Registry.authorize with the user wallet and status-checks the submit', async () => {
     const r = await registryAuthorizeAgent({
       owner: 'GUSER',
@@ -95,7 +95,7 @@ describe('registryAuthorizeAgent (optional record-keeping — off the critical p
         periodDuration: 3600,
         expiry: 4000000000,
       })
-    ).rejects.toThrow(/authorize not confirmed: FAILED/)
+    ).rejects.toThrow(/authorization was not confirmed: FAILED/)
   })
 })
 
@@ -155,6 +155,6 @@ describe('deployAgentForSession (Option B: fresh agent per run)', () => {
     submitUserTx.mockResolvedValueOnce({ hash: 'h2', status: 'PENDING' })
     await expect(
       deployAgentForSession({ owner: OWNER, sessionKey, cap: 1n, expiry: 4000000000 })
-    ).rejects.toThrow(/deploy not confirmed: PENDING/)
+    ).rejects.toThrow(/deployment was not confirmed: PENDING/)
   })
 })

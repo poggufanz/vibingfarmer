@@ -39,7 +39,7 @@ export async function signWithTimeout(xdr, label) {
           () =>
             reject(
               new Error(
-                `${label} signature timed out after ${WALLET_SIGN_TIMEOUT_MS / 1000}s — wallet signature dismissed or stuck`
+                `Wallet signature for ${label} timed out after ${WALLET_SIGN_TIMEOUT_MS / 1000} seconds. The request may have been dismissed or stalled.`
               )
             ),
           WALLET_SIGN_TIMEOUT_MS
@@ -94,7 +94,8 @@ export async function deployAgentForSession({
   const signed = await signWithTimeout(xdr, 'agent deploy')
   const res = await submitUserTx({ signedXdr: signed, server })
   // Fail fast: depositing through a contract that never landed would only fail later, opaquely.
-  if (res.status !== 'SUCCESS') throw new Error(`agent deploy not confirmed: ${res.status}`)
+  if (res.status !== 'SUCCESS')
+    throw new Error(`Agent deployment was not confirmed: ${res.status}.`)
   return contractAddress
 }
 
@@ -135,7 +136,8 @@ export async function registryAuthorizeAgent({
   })
   const signed = await signWithTimeout(xdr, 'registry authorize')
   const res = await submitUserTx({ signedXdr: signed, server })
-  if (res.status !== 'SUCCESS') throw new Error(`registry authorize not confirmed: ${res.status}`)
+  if (res.status !== 'SUCCESS')
+    throw new Error(`Registry authorization was not confirmed: ${res.status}.`)
   return res
 }
 
@@ -156,6 +158,6 @@ export async function fundAgent({ owner, agentAddress, amount, server }) {
   })
   const signed = await signWithTimeout(xdr, 'agent funding')
   const res = await submitUserTx({ signedXdr: signed, server })
-  if (res.status !== 'SUCCESS') throw new Error(`agent funding not confirmed: ${res.status}`)
+  if (res.status !== 'SUCCESS') throw new Error(`Agent funding was not confirmed: ${res.status}.`)
   return res
 }

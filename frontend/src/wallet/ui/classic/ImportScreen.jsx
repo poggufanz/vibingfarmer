@@ -11,14 +11,39 @@ export default function ImportScreen({ onImport, busy, error }) {
 
   return (
     <div className="vf-screen vf-import">
-      <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
-        <div style={{
-          width: 48, height: 48, borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center',
-          background: 'linear-gradient(135deg, var(--bg-elev) 0%, var(--bg-card) 100%)',
-          border: '1px solid var(--border-strong)', marginBottom: 4,
-          boxShadow: '0 4px 16px rgba(0,0,0,.25)'
-        }}>
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <div
+        style={{
+          textAlign: 'center',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: '6px',
+        }}
+      >
+        <div
+          style={{
+            width: 48,
+            height: 48,
+            borderRadius: 14,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'linear-gradient(135deg, var(--bg-elev) 0%, var(--bg-card) 100%)',
+            border: '1px solid var(--border-strong)',
+            marginBottom: 4,
+            boxShadow: '0 4px 16px rgba(0,0,0,.25)',
+          }}
+        >
+          <svg
+            width="22"
+            height="22"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="var(--accent)"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
             <polyline points="21 15 16 10 11 15"></polyline>
             <line x1="16" y1="10" x2="16" y2="22"></line>
             <path d="M18 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h4"></path>
@@ -45,14 +70,27 @@ export default function ImportScreen({ onImport, busy, error }) {
       </label>
       {input.trim() && cls.kind === 'invalid' && <p className="vf-error">{cls.error}</p>}
       {cls.kind !== 'invalid' && (
-        <p className="vf-hint" style={{ color: 'var(--ok)', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: '500' }}>
-          ✓ Detected format: {cls.kind}
+        <p
+          className="vf-hint"
+          style={{
+            color: 'var(--ok)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '4px',
+            fontWeight: '500',
+          }}
+        >
+          Detected format: {cls.kind}
         </p>
       )}
 
       <label>
-        Wallet Label
-        <input placeholder="e.g. Imported" value={label} onChange={(e) => setLabel(e.target.value)} />
+        Wallet label
+        <input
+          placeholder="Example: Imported"
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+        />
       </label>
 
       <label>

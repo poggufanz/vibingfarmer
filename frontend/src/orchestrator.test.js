@@ -251,7 +251,7 @@ describe('orchestrator (Stellar deploy + fund + dispatch)', () => {
     expect(fundAgentMock).not.toHaveBeenCalled()
   })
 
-  it("one agent's setup failure marks THAT worker failed — the rest of the run continues", async () => {
+  it("one agent's setup failure marks THAT worker failed - the rest of the run continues", async () => {
     deployAgentForSessionMock
       .mockRejectedValueOnce(new Error('agent deploy signature timed out after 120s'))
       .mockImplementation(async () => {
@@ -268,7 +268,7 @@ describe('orchestrator (Stellar deploy + fund + dispatch)', () => {
     expect(res.completed).toBe(1)
     expect(res.failed).toBe(1)
     expect(res.results[0].success).toBe(false)
-    expect(res.results[0].error).toMatch(/setup failed: .*timed out/)
+    expect(res.results[0].error).toMatch(/Setup failed: .*timed out/)
     expect(res.results[1].success).toBe(true)
     // The failed worker was surfaced (drives the tile 'failed' state) and never dispatched.
     const failedEv = events.find((e) => e.n === 'failed')
@@ -290,7 +290,9 @@ describe('orchestrator (Stellar deploy + fund + dispatch)', () => {
       sessionId: 's5',
       onEvent: (n, d) => events.push({ n, d }),
     })
-    await expect(orch.dispatch(strategy, 100)).rejects.toThrow(/setup failed for all 2 agents/)
+    await expect(orch.dispatch(strategy, 100)).rejects.toThrow(
+      /Agent setup failed for all 2 agents/
+    )
     expect(fundAgentMock).not.toHaveBeenCalled()
     const err = events.find((e) => e.n === 'orchestrator-step' && e.d.status === 'error')
     expect(err.d.step).toBe('authorizing-scope')

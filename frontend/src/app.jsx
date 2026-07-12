@@ -214,27 +214,27 @@ const sendPushNotification = async (ev, passedSettings) => {
     }
   }
 
-  let title = 'Vibing Farmer · Alert'
+  let title = 'Vibing Farmer alert'
   let detail = ''
 
   if (ev.kind === 'rebalance_proposal') {
-    title = 'Rebalance Opportunity Detected'
+    title = 'Rebalance opportunity detected'
     detail = `Venice AI flagged ${ev.toProtocol} at ${ev.toApy}% vs your current ${ev.fromVault} at ${ev.fromApy}% (potential gain: +${ev.apyGain}%).`
   } else if (ev.kind === 'risk_alert') {
-    title = `Risk Alert [Severity: ${ev.severity.toUpperCase()}]`
+    title = `Risk alert: ${ev.severity}`
     detail = `Signal on ${ev.vaultName}: ${ev.searchAnswer || 'Security concern detected.'}`
   } else if (ev.kind === 'apy_drift') {
-    title = 'APY Drop Detected'
+    title = 'APY drop detected'
     detail = `APY on ${ev.vaultName} dropped from ${ev.baselineApy}% to ${ev.currentApy}% (${ev.driftPct}%).`
   } else if (ev.kind === 'harvest_ready') {
-    title = 'Yield Harvest Ready'
+    title = 'Yield ready to claim'
     detail = `${ev.rewardsUsdc} USDC accrued on ${ev.vaultName} is ready to claim.`
   } else if (ev.kind === 'compound_executed') {
-    title = 'Keeper Compounded'
-    detail = `${ev.vaultName} · +${ev.totalGainUsdc} USDC reinvested · price/share ${ev.pricePerShare}. No action needed.`
+    title = 'Keeper compounded'
+    detail = `${ev.vaultName}, +${ev.totalGainUsdc} USDC reinvested, price/share ${ev.pricePerShare}. No action needed.`
   } else if (ev.kind === 'rebalance_executed') {
-    title = 'Keeper Rebalanced'
-    detail = `${ev.vaultName} · ${ev.fromLabel} → ${ev.toLabel} · ${ev.amountUsdc} USDC moved. No action needed.`
+    title = 'Keeper rebalanced'
+    detail = `${ev.vaultName}, ${ev.fromLabel} → ${ev.toLabel}, ${ev.amountUsdc} USDC moved. No action needed.`
   }
 
   const messageText = `*${title}*\n\n${detail}\n\n_Time: ${new Date(ev.timestamp || Date.now()).toLocaleString()}_`
@@ -298,9 +298,9 @@ const mapVeniceToStrategy = (veniceResult, amount, risk) => {
   const total = Number(amount)
   const PROTOCOLS = ['aave-v3', 'morpho-blue', 'pendle-v2']
   const ROLES = [
-    'Conservative · lending',
-    'Balanced · liquidity provision',
-    'Aggressive · leveraged yield',
+    'Conservative, lending',
+    'Balanced, liquidity provision',
+    'Aggressive, leveraged yield',
   ]
   const byAddr = (addr) =>
     VAULT_CATALOG.find((c) => c.address.toLowerCase() === String(addr).toLowerCase()) || {}
@@ -316,8 +316,8 @@ const mapVeniceToStrategy = (veniceResult, amount, risk) => {
     return {
       id: `worker-${i + 1}`,
       idx: String(i + 1).padStart(2, '0'),
-      name: `Worker ${i + 1} · ${ROLES[i]?.split(' · ')[0] || 'Conservative'}`,
-      role: ROLES[i] || 'Conservative · lending',
+      name: `Worker ${i + 1}, ${ROLES[i]?.split(', ')[0] || 'Conservative'}`,
+      role: ROLES[i] || 'Conservative, lending',
       allocation: +(total * v.allocation).toFixed(2),
       skillName: 'yield_vault_deposit',
       reasoning: v.reasoning, // AI metadata → UI
@@ -638,12 +638,12 @@ const App = () => {
   useE(() => {
     const titles = {
       '/home': 'vibing / farmer',
-      '/strategy': 'New Strategy · vibing / farmer',
-      '/agent': 'Autonomous Agent · vibing / farmer',
-      '/history': 'History · vibing / farmer',
-      '/settings': 'Settings · vibing / farmer',
+      '/strategy': 'New strategy | Vibing Farmer',
+      '/agent': 'Autonomous agent | Vibing Farmer',
+      '/history': 'History | Vibing Farmer',
+      '/settings': 'Settings | Vibing Farmer',
     }
-    document.title = titles[location.pathname] || 'vibing / farmer'
+    document.title = titles[location.pathname] || 'Vibing Farmer'
   }, [location.pathname])
 
   // Record the furthest step reached so the rail can navigate to visited steps (and only those)
@@ -905,7 +905,7 @@ const App = () => {
     if (ev.kind === 'harvest_executed') {
       addLog({
         event: 'DepositExecuted',
-        meta: `auto-harvest ${ev.vaultName} · tx ${shortAddr(ev.txHash)}`,
+        meta: `Auto-harvested ${ev.vaultName}. Transaction ${shortAddr(ev.txHash)}.`,
         txHash: ev.txHash,
         detail: `Auto-harvest claimed rewards from ${ev.vaultName}.`,
       })
@@ -935,17 +935,17 @@ const App = () => {
     }
     const detail =
       ev.kind === 'rebalance_proposal'
-        ? `Venice AI flagged ${ev.toProtocol} at ${ev.toApy}% vs your ${ev.fromVault} at ${ev.fromApy}% · capture +${ev.apyGain}% by rebalancing.`
+        ? `Venice AI flagged ${ev.toProtocol} at ${ev.toApy}% vs your ${ev.fromVault} at ${ev.fromApy}%, capture +${ev.apyGain}% by rebalancing.`
         : ev.kind === 'risk_alert'
-          ? `Severity ${ev.severity} · classified by Venice AI. Signal on ${ev.vaultName}. Action: alert surfaced, awaiting your decision.`
+          ? `Severity ${ev.severity}, classified by Venice AI. Signal on ${ev.vaultName}. Action: alert surfaced, awaiting your decision.`
           : ev.kind === 'apy_drift'
             ? `APY on ${ev.vaultName} dropped to ${ev.currentApy}% (from ${ev.baselineApy}%, ${ev.driftPct}%).`
             : ev.kind === 'harvest_ready'
-              ? `${ev.rewardsUsdc} USDC accrued on ${ev.vaultName} · ready to claim.`
+              ? `${ev.rewardsUsdc} USDC accrued on ${ev.vaultName}, ready to claim.`
               : ev.kind === 'compound_executed'
-                ? `Keeper compounded ${ev.vaultName} · +${ev.totalGainUsdc} USDC · price/share ${ev.pricePerShare}.`
+                ? `Keeper compounded ${ev.vaultName}, +${ev.totalGainUsdc} USDC, price/share ${ev.pricePerShare}.`
                 : ev.kind === 'rebalance_executed'
-                  ? `Keeper rebalanced ${ev.vaultName} · ${ev.fromLabel} → ${ev.toLabel} · ${ev.amountUsdc} USDC moved.`
+                  ? `Keeper rebalanced ${ev.vaultName}, ${ev.fromLabel} → ${ev.toLabel}, ${ev.amountUsdc} USDC moved.`
                   : ''
     addLog({
       event:
@@ -956,7 +956,7 @@ const App = () => {
             : ev.kind === 'rebalance_executed'
               ? 'RedelegationCreated'
               : 'OrchestratorPlanned',
-      meta: `${ev.kind.replace(/_/g, ' ')} · ${ev.vaultName || ev.fromVault || ''}${ev.txHash ? ` · tx ${shortAddr(ev.txHash)}` : ''}`,
+      meta: `${ev.kind.replace(/_/g, ' ')}, ${ev.vaultName || ev.fromVault || ''}${ev.txHash ? `, tx ${shortAddr(ev.txHash)}` : ''}`,
       txHash: ev.txHash,
       detail,
     })
@@ -988,7 +988,7 @@ const App = () => {
       thresholds: { ...agentSettings, autoHarvest: false },
     })
     const unsub = onAgentEvent(handleAgentEvent)
-    addLog({ event: 'OrchestratorPlanned', meta: 'background agent · monitoring started' })
+    addLog({ event: 'OrchestratorPlanned', meta: 'Background monitoring started.' })
 
     // ── Autonomous monitor loop — NEVER-STOP spine + TradingAgents council ──
     const loop = createMonitorLoop({
@@ -1017,7 +1017,7 @@ const App = () => {
         // Surface the proposal; the user acts via the UI (user-signed withdraw / revoke).
         addLog({
           event: 'OrchestratorPlanned',
-          meta: `proposal · ${idea.kind} ${idea.vaultName || idea.fromVault || ''}`.trim(),
+          meta: `Proposal: ${idea.kind} ${idea.vaultName || idea.fromVault || ''}`.trim(),
         })
         return null
       },
@@ -1129,7 +1129,7 @@ const App = () => {
           })
           addLog({
             event: 'AgentCompleted',
-            meta: `✓ Autonomous Exit Succeeded! Tx: ${txRes.hash.slice(0, 8)}...`,
+            meta: `Autonomous exit succeeded. Transaction: ${txRes.hash.slice(0, 8)}...`,
             detail: 'All vault shares redeemed and USDC principal returned to owner wallet.',
           })
 
@@ -1145,7 +1145,7 @@ const App = () => {
           console.error('[AutoExit] Autonomous exit failed:', err)
           addLog({
             event: 'AgentFailed',
-            meta: `✗ Auto-Exit Failed: ${err.message}`,
+            meta: `Automatic exit failed: ${err.message}`,
             detail: 'Please execute emergency withdraw manually.',
           })
         }
@@ -1270,7 +1270,7 @@ const App = () => {
         councilCitedRef.current = { citedRules: result.citedRules || [], verdict: result.verdict }
         addLog({
           event: 'OrchestratorPlanned',
-          meta: `AI Council · ${result.verdict} · ${result.resolvedBy}${result.citedRules?.length ? ` · ${result.citedRules.join(', ')}` : ''}`,
+          meta: `AI Council, ${result.verdict}, ${result.resolvedBy}${result.citedRules?.length ? `, ${result.citedRules.join(', ')}` : ''}`,
         })
       })
       .catch((e) => {
@@ -1292,27 +1292,27 @@ const App = () => {
       ? bal
       : (bal * BigInt(Math.round(agentSettings.emergencyPct))) / 100n
     if (amt <= 0n) {
-      addLog({ event: 'AgentFailed', meta: 'emergency withdraw · no balance tracked yet' })
+      addLog({ event: 'AgentFailed', meta: 'Emergency withdrawal stopped. No balance is tracked.' })
       return
     }
     try {
       const tx = await emergencyWithdraw(alert.vaultAddress, amt.toString(), realAddress)
       addLog({
         event: 'PermissionRevoked',
-        meta: `emergency withdraw ${alert.vaultName} · tx ${shortAddr(tx)}`,
+        meta: `Emergency withdrawal from ${alert.vaultName}. Transaction ${shortAddr(tx)}.`,
         txHash: tx,
         detail: `Emergency withdrew from ${alert.vaultName} to your wallet.`,
       })
       dismissAlert(alert.id)
     } catch (e) {
-      addLog({ event: 'AgentFailed', meta: `withdraw failed: ${e.message}` })
+      addLog({ event: 'AgentFailed', meta: `Withdrawal failed: ${e.message}` })
     }
   }
 
   const handleReviewRebalance = (alert) =>
     addLog({
       event: 'OrchestratorPlanned',
-      meta: `rebalance review · ${alert.fromVault} → ${alert.toProtocol} (+${alert.apyGain}%)`,
+      meta: `Rebalance review: ${alert.fromVault} → ${alert.toProtocol} (+${alert.apyGain}%).`,
       detail: `Venice AI flagged ${alert.toProtocol} at ${alert.toApy}% vs ${alert.fromVault} at ${alert.fromApy}% (+${alert.apyGain}%). Rebalancing authorizes a fresh Soroban session-key scope for the new vault.`,
     })
 
@@ -1328,13 +1328,13 @@ const App = () => {
       )
       addLog({
         event: 'PermissionRevoked',
-        meta: `revoked agent ${shortAddr(agent)} · tx ${shortAddr(tx)}`,
+        meta: `Revoked agent ${shortAddr(agent)}. Transaction ${shortAddr(tx)}.`,
         txHash: tx,
         detail:
           'Agent scope revoked on-chain. Further deposits by this key now revert (ScopeInactive).',
       })
     } catch (e) {
-      addLog({ event: 'AgentFailed', meta: `revoke failed: ${e.message}` })
+      addLog({ event: 'AgentFailed', meta: `Revocation failed: ${e.message}` })
     }
   }
 
@@ -1410,7 +1410,7 @@ const App = () => {
     else updateAgentConfig({ activeVaults: remaining })
     addLog({
       event: 'PermissionRevoked',
-      meta: `withdrew ${shortAddr(vaultAddress)} · position updated`,
+      meta: `Withdrew from ${shortAddr(vaultAddress)}. Position updated.`,
       detail: 'Position balance updated after withdraw; agent monitoring config synced.',
     })
     // Optimistic subtract above can drift (partial fills, share-price). Chain = truth — but the
@@ -1454,7 +1454,10 @@ const App = () => {
   const handleSubmitPreference = () => {
     setStrategyPhase('thinking')
     setThinkingPhase(0)
-    addLog({ event: 'OrchestratorPlanned', meta: `${amount} usdc · ${risk} risk · planning` })
+    addLog({
+      event: 'OrchestratorPlanned',
+      meta: `${amount} USDC, ${risk} risk. Planning started.`,
+    })
   }
 
   useE(() => {
@@ -1515,16 +1518,16 @@ const App = () => {
           }
           addLog({
             event: 'OrchestratorPlanned',
-            meta: `parallel fetch · gas ${veniceResult.mdpState.gasGwei} gwei (${veniceResult.mdpState.gasLevel})`,
+            meta: `Market data fetched in parallel. Gas: ${veniceResult.mdpState.gasGwei} gwei (${veniceResult.mdpState.gasLevel}).`,
           })
         }
         if (veniceResult.dagTimings) {
           const breakdown = Object.entries(veniceResult.dagTimings)
             .map(([id, ms]) => `${id} ${Math.round(ms)}ms`)
-            .join(' · ')
+            .join(', ')
           addLog({
             event: 'OrchestratorPlanned',
-            meta: `dag · wall ${veniceResult.dagWallMs}ms`,
+            meta: `Strategy graph completed in ${veniceResult.dagWallMs}ms.`,
             detail: breakdown,
           })
         }
@@ -1533,7 +1536,7 @@ const App = () => {
           s = mapVeniceToStrategy(veniceResult, amount, risk)
           addLog({
             event: 'OrchestratorPlanned',
-            meta: `strategy via ${veniceResult.generatedBy} · ${(veniceResult.strategy_summary || veniceResult.rationale)?.slice(0, 60)}`,
+            meta: `Strategy generated by ${veniceResult.generatedBy}. ${(veniceResult.strategy_summary || veniceResult.rationale)?.slice(0, 60)}`,
           })
         }
       } catch (e) {
@@ -1552,7 +1555,7 @@ const App = () => {
       setSkillStates(sk)
       addLog({
         event: 'OrchestratorPlanned',
-        meta: `${s.agents.length} worker spawned · ${s.blendedApy}% blended apy`,
+        meta: `${s.agents.length} worker spawned, ${s.blendedApy}% blended apy`,
       })
     })()
 
@@ -1605,13 +1608,13 @@ const App = () => {
       setCouncil(result)
       addLog({
         event: 'OrchestratorPlanned',
-        meta: `Debate Council · ${result.verdict} · ${result.iterations} iters · converged: ${result.converged}`,
+        meta: `Debate Council, ${result.verdict}, ${result.iterations} iters, converged: ${result.converged}`,
       })
     } catch (e) {
       console.warn('[app] Debate council failed:', e)
       addLog({
         event: 'OrchestratorPlanned',
-        meta: `Debate Council failed · ${e?.message || 'unknown error'}`,
+        meta: `Debate Council failed, ${e?.message || 'unknown error'}`,
       })
     } finally {
       setDebateRunning(false)
@@ -1653,13 +1656,13 @@ const App = () => {
         }))
         addLog({
           event: 'OrchestratorPlanned',
-          meta: `Monitor re-eval · fast pass · confidence ${(result.confidence * 100).toFixed(0)}%`,
+          meta: `Monitor re-eval, fast pass, confidence ${(result.confidence * 100).toFixed(0)}%`,
         })
       } else {
         setMonitorStatus((s) => ({ ...s, result: 'violation', error: result.error }))
         addLog({
           event: 'AgentFailed',
-          meta: `Monitor re-eval · ${result.error}`,
+          meta: `Monitor re-eval, ${result.error}`,
           detail: (result.violations || []).join('; '),
         })
       }
@@ -1706,7 +1709,7 @@ const App = () => {
         }))
         addLog({
           event: result.verdict === 'keep' ? 'OrchestratorPlanned' : 'AgentFailed',
-          meta: `Monitor full debate · ${result.verdict} · ${result.iterations} iters · converged: ${result.converged}`,
+          meta: `Monitor full debate, ${result.verdict}, ${result.iterations} iters, converged: ${result.converged}`,
         })
       } finally {
         ctrl.abort()
@@ -1720,7 +1723,7 @@ const App = () => {
     setSkillStates({})
     setStrategyPhase('thinking')
     setThinkingPhase(0)
-    addLog({ event: 'OrchestratorPlanned', meta: `re-planning · ${amount} usdc · ${risk} risk` })
+    addLog({ event: 'OrchestratorPlanned', meta: `Replanning: ${amount} USDC, ${risk} risk.` })
   }
 
   const handleKeepWaiting = () => {
@@ -1745,7 +1748,7 @@ const App = () => {
     } catch (err) {
       setConnectPhase('idle')
       setConnectError(err.message)
-      addLog({ event: 'AgentFailed', meta: `connect failed: ${err.message}` })
+      addLog({ event: 'AgentFailed', meta: `Connection failed: ${err.message}` })
     }
   }
 
@@ -1756,7 +1759,7 @@ const App = () => {
     setConnectPhase('upgrading')
     setTimeout(() => {
       setConnectPhase('upgraded')
-      addLog({ event: 'Authorized', meta: 'session ready · gas sponsored by relayer' })
+      addLog({ event: 'Authorized', meta: 'Session ready. The relayer sponsors network fees.' })
     }, speed * 0.8)
   }
 
@@ -1769,7 +1772,7 @@ const App = () => {
 
   const handleSkillApprove = (id) => {
     updateSkillState(id, { state: 'approved' })
-    addLog({ event: 'SkillApproved', agent: id, meta: 'skill JSON approved · ready to bind' })
+    addLog({ event: 'SkillApproved', agent: id, meta: 'Skill JSON approved and ready to bind.' })
   }
 
   const handleApproveAll = () => {
@@ -1778,7 +1781,10 @@ const App = () => {
       next[id] = { ...s, state: 'approved' }
     })
     setSkillStates(next)
-    addLog({ event: 'SkillApproved', meta: `${Object.keys(next).length} skills approved · batch` })
+    addLog({
+      event: 'SkillApproved',
+      meta: `${Object.keys(next).length} skills approved in this batch.`,
+    })
   }
 
   const handleSkillEdit = (id, text, start = false) => {
@@ -1828,7 +1834,7 @@ const App = () => {
     setPermExpiresAt(Date.now() + durationSeconds * 1000)
     addLog({
       event: 'PermissionGranted',
-      meta: `router grant · ${budget} USDC · ${durationSeconds}s`,
+      meta: `Router grant: ${budget} USDC for ${durationSeconds}s.`,
     })
     setStage('execute')
     startExecution()
@@ -1843,7 +1849,7 @@ const App = () => {
       const { hash } = await revokeGrant({ owner: realAddress })
       addLog({
         event: 'PermissionRevoked',
-        meta: `router allowance set to 0 · ${hash?.slice(0, 10)}…`,
+        meta: `Router allowance set to 0. Transaction ${hash?.slice(0, 10)}...`,
       })
     } catch (err) {
       setGrantError(err?.message || 'revoke failed')
@@ -1857,7 +1863,7 @@ const App = () => {
 
   const handlePermReject = () => {
     setPermPhase('idle')
-    addLog({ event: 'PermissionRevoked', meta: 'permission request rejected by user' })
+    addLog({ event: 'PermissionRevoked', meta: 'Permission request rejected by the user.' })
   }
 
   const handlePermConfirm = async () => {
@@ -1869,7 +1875,10 @@ const App = () => {
     const expiresAtMs = Date.now() + 86400 * 1000
     setPermActive(true)
     setPermExpiresAt(expiresAtMs)
-    addLog({ event: 'PermissionGranted', meta: 'stellar · authorize + fund per agent at execute' })
+    addLog({
+      event: 'PermissionGranted',
+      meta: 'Stellar authorization will fund each agent during execution.',
+    })
     setTimeout(() => {
       setStage('execute')
       startExecution()
@@ -1964,7 +1973,7 @@ const App = () => {
           addLog({
             event: 'AgentFailed',
             agent: dId,
-            meta: `skill gen failed · ${data.error} · using fallback skill`,
+            meta: `Skill generation failed: ${data.error}. Using the fallback skill.`,
           })
           return
         }
@@ -2023,7 +2032,7 @@ const App = () => {
               },
             }
           })
-          addLog({ event: 'AgentStarted', agent: dId, meta: `vault ${shortAddr(data.vault)}` })
+          addLog({ event: 'AgentStarted', agent: dId, meta: `Vault: ${shortAddr(data.vault)}` })
         }
 
         if (evName === 'step') {
@@ -2047,9 +2056,9 @@ const App = () => {
                   ...(cur.memory || []),
                   {
                     status: stepStatus,
-                    title: `${stepName} ${data.status === 'done' ? 'confirmed' : 'executing'}`,
+                    title: `${stepName.replace(/^./, (c) => c.toUpperCase())} ${data.status === 'done' ? 'confirmed' : 'executing'}`,
                     meta: data.txHash
-                      ? `Tx ${shortAddr(data.txHash)}${data.gasMethod === 'user-signed' ? ' · user-signed' : ''}`
+                      ? `Tx ${shortAddr(data.txHash)}${data.gasMethod === 'user-signed' ? ', user-signed' : ''}`
                       : 'Via fee-bump relayer',
                     hash: data.txHash || null,
                     t: nowT(),
@@ -2062,7 +2071,7 @@ const App = () => {
             addLog({
               event: 'SwapExecuted',
               agent: dId,
-              meta: data.reason || 'skipped · no swap required',
+              meta: data.reason || 'Skipped. No swap is required.',
             })
           }
           if (data.status === 'done') {
@@ -2074,20 +2083,20 @@ const App = () => {
             if (stepName === 'deposit') {
               const gasLabel =
                 data.gasMethod === 'relayer'
-                  ? 'gas paid by relayer'
+                  ? 'Gas paid by relayer'
                   : data.gasMethod === 'user-signed'
-                    ? 'Gas paid by user · relay not configured'
+                    ? 'Gas paid by user, relay not configured'
                     : ''
               addLog({
                 event: 'DepositExecuted',
                 agent: dId,
-                meta: `${data.txHash ? `tx ${shortAddr(data.txHash)}` : 'no tx hash'}${gasLabel ? ' · ' + gasLabel : ''}`,
+                meta: `${data.txHash ? `Transaction ${shortAddr(data.txHash)}` : 'No transaction hash'}${gasLabel ? `. ${gasLabel}.` : '.'}`,
               })
             } else if (evMap[stepName]) {
               addLog({
                 event: evMap[stepName],
                 agent: dId,
-                meta: data.txHash ? `tx ${shortAddr(data.txHash)}` : 'no tx hash',
+                meta: data.txHash ? `Transaction ${shortAddr(data.txHash)}` : 'No transaction hash',
               })
             }
           }
@@ -2114,7 +2123,7 @@ const App = () => {
                     title: 'Agent completed',
                     meta: `Tx ${shortAddr(data.txHash)}`,
                     hash: data.txHash,
-                    lesson: `Vault deposit complete · strategy executed`,
+                    lesson: 'Vault deposit completed. The strategy executed.',
                     t: nowT(),
                   },
                 ],
@@ -2125,7 +2134,9 @@ const App = () => {
           addLog({
             event: 'AgentCompleted',
             agent: dId,
-            meta: data.txHash ? `Tx ${shortAddr(data.txHash)}` : 'Completed · no tx hash',
+            meta: data.txHash
+              ? `Transaction ${shortAddr(data.txHash)}`
+              : 'Completed. No transaction hash.',
           })
           const ag = strategy?.agents?.find((a) => a.id === dId)
           if (ag && data.txHash)
@@ -2174,14 +2185,14 @@ const App = () => {
       .then((summary) => {
         addLog({
           event: 'OrchestratorPlanned',
-          meta: `done · ${summary.completed} deposited, ${summary.failed} failed`,
+          meta: `Completed: ${summary.completed} deposited, ${summary.failed} failed.`,
         })
       })
       .catch((err) => {
         console.warn('[app] orchestrator dispatch failed (simulation mode):', err?.message || err)
         addLog({
           event: 'AgentFailed',
-          meta: `orchestrator error (simulation): ${err?.message || err}`,
+          meta: `Orchestrator simulation failed: ${err?.message || err}`,
         })
         setExecMap((prev) => {
           const next = { ...prev }
@@ -2231,7 +2242,7 @@ const App = () => {
       reflect({ verdict, citedRules, outcome }, { increment: playbookIncrement })
       addLog({
         event: 'OrchestratorPlanned',
-        meta: `Council reflect · ${outcome} · ${citedRules.join(', ')}`,
+        meta: `Council reflect, ${outcome}, ${citedRules.join(', ')}`,
       })
     }
     // Allocation-based FALLBACK only — used when the chain read is unavailable (no RPC)
@@ -2285,7 +2296,7 @@ const App = () => {
     }
     addLog({
       event: 'OrchestratorPlanned',
-      meta: `multi-agent deployment finalized · ${strategy?.agents?.length} positions opened`,
+      meta: `Multi-agent deployment completed. ${strategy?.agents?.length} positions opened.`,
     })
   }
 
@@ -2325,7 +2336,7 @@ const App = () => {
       setThinkingPhase(0)
       addLog({
         event: 'OrchestratorPlanned',
-        meta: `${overrideAmount} usdc · ${risk} risk · planning`,
+        meta: `${overrideAmount} usdc, ${risk} risk, planning`,
       })
     } else {
       setStrategyPhase('input')
@@ -2339,7 +2350,7 @@ const App = () => {
     clearResume(realAddress)
     setSessionResumed(false)
     ;(strategy?.agents || []).forEach((a) =>
-      addLog({ event: 'PermissionRevoked', agent: a.id, meta: 'agent halted · scope cleared' })
+      addLog({ event: 'PermissionRevoked', agent: a.id, meta: 'Agent halted. Scope cleared.' })
     )
   }
 
@@ -2358,7 +2369,7 @@ const App = () => {
     setVeniceAuth(null)
     clearResume(realAddress)
     setSessionResumed(false)
-    addLog({ event: 'PermissionRevoked', meta: 'wallet disconnected · session cleared' })
+    addLog({ event: 'PermissionRevoked', meta: 'Wallet disconnected. Session cleared.' })
   }
   const handleResetAgentSettings = () => {
     setAgentSettings({ ...AGENT_SETTINGS_DEFAULTS })
@@ -2854,8 +2865,8 @@ const App = () => {
       {slowConfirm && (
         <div className="modal-backdrop">
           <div className="modal" role="dialog" aria-modal="true">
-            <div className="modal-eyebrow">AI · Timeout</div>
-            <h3 className="modal-title">AI is still processing · continue waiting?</h3>
+            <div className="modal-eyebrow">AI timeout</div>
+            <h3 className="modal-title">AI is still processing. Keep waiting?</h3>
             <p className="lede" style={{ marginTop: 8 }}>
               Generation has exceeded {Math.round(VENICE_TIMEOUT_MS / 1000)} seconds. Do you want to
               keep waiting or use the default strategy instead?
@@ -3004,7 +3015,7 @@ const App = () => {
             </label>
           </div>
 
-          <TweakSection label="Jump to step · dev only" />
+          <TweakSection label="Jump to step, dev only" />
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
             {STEPS.map((s, i) => (
               <button

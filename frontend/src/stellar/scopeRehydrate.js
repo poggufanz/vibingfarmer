@@ -34,7 +34,7 @@ async function warnIfRetentionShort(server) {
     const retentionSec = Number(health?.ledgerRetentionWindow ?? 0) * SECONDS_PER_LEDGER
     if (retentionSec > 0 && retentionSec < MAX_GRANT_SECONDS) {
       console.warn(
-        `[scopeRehydrate] RPC retention ~${Math.round(retentionSec / 86400)}d < max grant 7d — ` +
+        `[scopeRehydrate] RPC retention ~${Math.round(retentionSec / 86400)}d < max grant 7d - ` +
           'cross-device rehydrate may miss old grants; same-browser cache is the only backstop.'
       )
     }

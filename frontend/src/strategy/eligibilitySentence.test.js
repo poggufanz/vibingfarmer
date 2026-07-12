@@ -12,8 +12,10 @@ const verdict = {
 const ctx = { targetMaxLossPct: 5, protocolLabel: 'Aave v3 (mainnet)' }
 
 describe('eligibility sentence honesty', () => {
-  it('includes the mainnet revenue-covered phrasing with ratio', () => {
-    expect(buildEligibilitySentence(verdict, ctx)).toMatch(/revenue-covered \(ratio 1\.0/)
+  it('includes the mainnet revenue-coverage phrasing with ratio', () => {
+    expect(buildEligibilitySentence(verdict, ctx)).toMatch(
+      /covered by protocol revenue \(ratio: 1\.0/
+    )
   })
   it('co-emits the testnet caveat', () => {
     expect(buildEligibilitySentence(verdict, ctx)).toMatch(/testnet/i)
@@ -26,11 +28,11 @@ describe('eligibility sentence honesty', () => {
   it('tags the score as our weighting and uses target not guaranteed', () => {
     const s = buildEligibilitySentence(verdict, ctx)
     expect(s).toMatch(/our weighting/i)
-    expect(s).toMatch(/target max loss/i)
+    expect(s).toMatch(/target maximum loss/i)
     expect(s).not.toMatch(/guaranteed/i)
   })
   it('label for a real verdict is ratio+context anchored', () => {
-    expect(vaultEligibilityLabel(verdict)).toMatch(/revenue-covered \(ratio 1\.0\)/)
+    expect(vaultEligibilityLabel(verdict)).toMatch(/covered by protocol revenue \(ratio: 1\.0\)/)
   })
   it('surfaces no raw mainnet TVL/revenue figure (only the ratio is shown)', () => {
     // honesty: a 4+ digit run or a $-figure or "TVL" would leak an absolute mainnet number

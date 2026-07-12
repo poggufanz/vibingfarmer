@@ -38,7 +38,7 @@ export function assertHookData(hookData) {
   const version = view.getUint32(24, false)
   if (version !== 0) {
     throw new Error(
-      `hookData version must be 0, got ${version} — this reverts Error(Contract,#7313) InvalidHookVersion and STRANDS the burned USDC`
+      `hookData version must be 0, but received ${version}. This reverts with Error(Contract,#7313) InvalidHookVersion and strands the burned USDC.`
     )
   }
   const declaredLen = view.getUint32(28, false)

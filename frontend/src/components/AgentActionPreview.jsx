@@ -50,7 +50,7 @@ export default function AgentActionPreview({ preview, onConfirm, onCancel }) {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="modal-eyebrow">
-          {isWithdraw ? 'Risk watcher · Emergency exit' : 'Reward harvester'}
+          {isWithdraw ? 'Risk watcher: emergency exit' : 'Reward harvester'}
         </div>
         <h3 className="modal-title" id="agent-preview-title">
           {isWithdraw ? 'Emergency withdraw preview' : 'Harvest preview'}
@@ -62,7 +62,7 @@ export default function AgentActionPreview({ preview, onConfirm, onCancel }) {
               <Row k="From" v={preview.vaultName} />
               <Row k="Amount" v={`${preview.amountUsdc} USDC (${preview.pctLabel})`} />
               <Row k="To" v={`${preview.toShort} (your wallet)`} />
-              <Row k="Gas" v="~0 · fee-bump relayer" />
+              <Row k="Gas" v="~0, fee-bump relayer" />
               <Row k="Est. receive" v={`~${preview.amountUsdc} USDC`} />
               <Row k="Time" v="~30 seconds" />
             </>
@@ -71,7 +71,7 @@ export default function AgentActionPreview({ preview, onConfirm, onCancel }) {
               <Row k="Vault" v={preview.vaultName} />
               <Row k="Rewards" v={`${preview.rewardsUsdc} USDC unclaimed`} />
               <Row k="Action" v="Claim accrued yield" />
-              <Row k="Gas" v="~0 · fee-bump relayer" />
+              <Row k="Gas" v="~0, fee-bump relayer" />
             </>
           )}
         </div>

@@ -71,7 +71,7 @@ describe('rehydrateScopes', () => {
     expect(rows.map((r) => r.agent).sort()).toEqual([AGENT_A, AGENT_B].sort())
   })
 
-  it('skips an agent whose scope read fails (null) — never fabricates a row', async () => {
+  it('skips an agent whose scope read fails (null) - never fabricates a row', async () => {
     const rows = await rehydrateScopes({
       owner: OWNER,
       nowSec: NOW,

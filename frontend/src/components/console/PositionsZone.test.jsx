@@ -28,7 +28,7 @@ describe('PositionsZone', () => {
     const { container } = render(<PositionsZone {...props} />)
     expect(screen.getByText('Autofarm USDC')).toBeTruthy()
     expect(screen.getByText('50.00')).toBeTruthy()
-    expect(screen.getByText(/8.2% apy/)).toBeTruthy()
+    expect(screen.getByText(/8.2% APY/)).toBeTruthy()
     expect(container.querySelector('.pos-alloc-fill')?.style.transform).toBe('scaleX(1)')
   })
   it('withdraw opens the modal', () => {
@@ -38,12 +38,12 @@ describe('PositionsZone', () => {
   })
   it('empty state offers a strategy CTA', () => {
     render(<PositionsZone {...props} positions={{}} />)
-    fireEvent.click(screen.getByRole('button', { name: /deploy from strategy flow/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Create a strategy' }))
     expect(props.onNewStrategy).toHaveBeenCalled()
   })
   it('renders -- apy and omits /day projection when vault meta is missing', () => {
     render(<PositionsZone {...props} vaultMeta={{}} />)
-    expect(screen.getByText(/--% apy/)).toBeTruthy()
+    expect(screen.getByText('--% APY')).toBeTruthy()
     expect(screen.queryByText(/\/day/)).toBeNull()
   })
 })

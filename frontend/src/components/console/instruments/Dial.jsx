@@ -10,7 +10,7 @@ export default function Dial({ aprPct = null, size = 180 }) {
       <svg
         className="instrument"
         role="img"
-        aria-label={`supply apr ${aprPct == null ? 'unknown' : `${aprPct.toFixed(2)} percent`}`}
+        aria-label={`Supply APR ${aprPct == null ? 'unknown' : `${aprPct.toFixed(2)} percent`}`}
         viewBox={`0 0 ${size} ${h}`}
         width={size}
         height={h}
@@ -38,7 +38,7 @@ export default function Dial({ aprPct = null, size = 180 }) {
           {aprPct == null ? '--' : `${aprPct.toFixed(2)}%`}
         </text>
       </svg>
-      <div className="instrument-caption">supply apr · scale 0–{g.max}%</div>
+      <div className="instrument-caption">Supply APR, scale 0-{g.max}%</div>
     </div>
   )
 }

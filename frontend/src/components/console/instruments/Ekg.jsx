@@ -8,7 +8,7 @@ export default function Ekg({ rows = [], running = false, width = 260, height = 
     <svg
       className="instrument"
       role="img"
-      aria-label={`monitor heartbeat · ${running ? rows.length : 0} cycles`}
+      aria-label={`Monitor heartbeat, ${running ? rows.length : 0} cycles`}
       viewBox={`0 0 ${width} ${height}`}
       width="100%"
       height={height}

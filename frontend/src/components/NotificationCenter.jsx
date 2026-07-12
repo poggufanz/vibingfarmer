@@ -53,7 +53,7 @@ export default function NotificationCenter({
       kind: 'withdraw',
       alert: a,
       vaultName: a.vaultName || a.protocol || 'vault',
-      amountUsdc: a.amountUsdc ?? a.balanceUsdc ?? a.positionUsdc ?? '—',
+      amountUsdc: a.amountUsdc ?? a.balanceUsdc ?? a.positionUsdc ?? '-',
       pctLabel: a.pctLabel || '100%',
       toShort: a.toShort || 'your wallet',
     })
@@ -67,8 +67,8 @@ export default function NotificationCenter({
     <>
       <button
         className="icon-btn"
-        title="notifications"
-        aria-label={count > 0 ? `notifications · ${count} active` : 'notifications · none'}
+        title="Notifications"
+        aria-label={count > 0 ? `Notifications, ${count} active` : 'Notifications, none'}
         onClick={() => setOpen(true)}
         style={{ position: 'relative' }}
       >
@@ -109,7 +109,7 @@ export default function NotificationCenter({
             style={{ maxWidth: 460, width: '100%' }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="modal-eyebrow">Agent · Alerts</div>
+            <div className="modal-eyebrow">Agent alerts</div>
             <div
               style={{
                 display: 'flex',
@@ -119,11 +119,11 @@ export default function NotificationCenter({
               }}
             >
               <h3 className="modal-title" id="notif-title">
-                Notifications{count > 0 ? ` · ${count}` : ''}
+                Notifications{count > 0 ? ` (${count})` : ''}
               </h3>
               <button
                 className="icon-btn"
-                aria-label="close notifications"
+                aria-label="Close notifications"
                 onClick={() => setOpen(false)}
               >
                 <Icon name="x" />

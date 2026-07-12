@@ -123,7 +123,7 @@ beforeEach(() => {
   readTokenBalanceMock.mockImplementation(async (addr) => (addr === 'GUSER' ? null : 0n))
 })
 
-describe('orchestrator router path — first run (a single signature)', () => {
+describe('orchestrator router path - first run (a single signature)', () => {
   it('issues exactly a single grant signature for N=3 agents, then a relayed pull per worker', async () => {
     const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 's1', onEvent: () => {} })
     const res = await orch.dispatch(strategy, 100)
@@ -178,7 +178,7 @@ describe('orchestrator router path — first run (a single signature)', () => {
   })
 })
 
-describe('orchestrator router path — repeat run (zero further signatures)', () => {
+describe('orchestrator router path - repeat run (zero further signatures)', () => {
   it('skips the grant entirely when allowance covers the run AND every worker reuses a cached agent', async () => {
     readAllowanceMock.mockResolvedValue({ amount: 500_0000000n, liveUntilLedger: null })
     let n = 0
@@ -228,7 +228,7 @@ describe('orchestrator router path — repeat run (zero further signatures)', ()
   })
 })
 
-describe('orchestrator router path — failure isolation', () => {
+describe('orchestrator router path - failure isolation', () => {
   it('aborts the whole run when the single grant fails (no agents get deployed)', async () => {
     submitGrantMock.mockRejectedValue(new Error('grant signature timed out after 120s'))
     const events = []
@@ -237,7 +237,9 @@ describe('orchestrator router path — failure isolation', () => {
       sessionId: 's8',
       onEvent: (e, d) => events.push({ e, d }),
     })
-    await expect(orch.dispatch(strategy, 100)).rejects.toThrow(/setup failed for all 3 agents/)
+    await expect(orch.dispatch(strategy, 100)).rejects.toThrow(
+      /Agent setup failed for all 3 agents/
+    )
     expect(runAgentPullMock).not.toHaveBeenCalled()
     const err = events.find((x) => x.e === 'orchestrator-step' && x.d.status === 'error')
     expect(err.d.step).toBe('authorizing-scope')
@@ -254,6 +256,6 @@ describe('orchestrator router path — failure isolation', () => {
     expect(res.completed).toBe(2)
     expect(res.failed).toBe(1)
     const failed = res.results.find((r) => !r.success)
-    expect(failed.error).toMatch(/setup failed: .*router pull reported FAILED/)
+    expect(failed.error).toMatch(/Setup failed: .*router pull reported FAILED/)
   })
 })

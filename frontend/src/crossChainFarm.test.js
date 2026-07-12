@@ -39,7 +39,7 @@ describe('runFarmFlow', () => {
     )
   })
 
-  test('a burn failure surfaces a clear error and never calls the relayer — funds stay on Stellar, recoverable', async () => {
+  test('a burn failure surfaces a clear error and never calls the relayer - funds stay on Stellar, recoverable', async () => {
     const onEvent = vi.fn()
     const deps = {
       burn: vi.fn(async () => {

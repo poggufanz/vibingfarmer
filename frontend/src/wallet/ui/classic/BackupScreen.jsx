@@ -5,8 +5,8 @@ import { HonestyLabels } from '../HonestyLabels.jsx'
 /* ── 3-step wizard: Reveal → Read/Copy → Confirm ── */
 
 export default function BackupScreen({ mnemonic, indices, onConfirm, onSkip, error }) {
-  const [step, setStep] = useState(1)       // 1 = reveal, 2 = read/copy, 3 = confirm
-  const [saved, setSaved] = useState(false)  // checkbox gate on step 2
+  const [step, setStep] = useState(1) // 1 = reveal, 2 = read/copy, 3 = confirm
+  const [saved, setSaved] = useState(false) // checkbox gate on step 2
   const [answers, setAnswers] = useState({})
   const [copied, setCopied] = useState(false)
   const words = mnemonic.trim().split(/\s+/)
@@ -16,7 +16,9 @@ export default function BackupScreen({ mnemonic, indices, onConfirm, onSkip, err
       await navigator.clipboard.writeText(mnemonic.trim())
       setCopied(true)
       setTimeout(() => setCopied(false), 2200)
-    } catch { /* clipboard may fail in some contexts */ }
+    } catch {
+      /* clipboard may fail in some contexts */
+    }
   }, [mnemonic])
 
   function submit() {
@@ -31,7 +33,16 @@ export default function BackupScreen({ mnemonic, indices, onConfirm, onSkip, err
       {/* ── header icon + title ── */}
       <div className="bk-header">
         <div className="bk-icon-wrap">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg
+            width="22"
+            height="22"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="var(--warn)"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
             <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
             <line x1="12" y1="9" x2="12" y2="13"></line>
             <line x1="12" y1="17" x2="12.01" y2="17"></line>
@@ -46,7 +57,12 @@ export default function BackupScreen({ mnemonic, indices, onConfirm, onSkip, err
       {/* ── progress bar ── */}
       <div className="bk-progress">
         {[1, 2, 3].map((s) => (
-          <div key={s} className={'bk-prog-step' + (s <= step ? ' active' : '') + (s === step ? ' current' : '')}>
+          <div
+            key={s}
+            className={
+              'bk-prog-step' + (s <= step ? ' active' : '') + (s === step ? ' current' : '')
+            }
+          >
             <span className="bk-prog-num">{s}</span>
             <span className="bk-prog-label">
               {s === 1 ? 'Reveal' : s === 2 ? 'Save' : 'Verify'}
@@ -54,10 +70,7 @@ export default function BackupScreen({ mnemonic, indices, onConfirm, onSkip, err
           </div>
         ))}
         <div className="bk-prog-track">
-          <div
-            className="bk-prog-fill"
-            style={{ transform: `scaleX(${(step - 1) / 2})` }}
-          />
+          <div className="bk-prog-fill" style={{ transform: `scaleX(${(step - 1) / 2})` }} />
         </div>
       </div>
 
@@ -67,16 +80,35 @@ export default function BackupScreen({ mnemonic, indices, onConfirm, onSkip, err
       {step === 1 && (
         <div className="bk-step" key="s1">
           <p className="vf-warn">
-            Write these 24 words on paper in order. Keep them offline. If you lose them, your funds cannot be recovered.
+            Write these 24 words on paper in order. Keep them offline. If you lose them, your funds
+            cannot be recovered.
           </p>
           <div className="bk-reveal-zone">
-            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--text-faint)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.5 }}>
+            <svg
+              width="40"
+              height="40"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="var(--text-faint)"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              style={{ opacity: 0.5 }}
+            >
               <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
               <circle cx="12" cy="12" r="3"></circle>
             </svg>
             <p className="bk-reveal-hint">Your recovery phrase is hidden</p>
             <button className="vf-btn primary" onClick={() => setStep(2)}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginRight: 6 }}>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                style={{ marginRight: 6 }}
+              >
                 <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
                 <circle cx="12" cy="12" r="3"></circle>
               </svg>
@@ -102,14 +134,32 @@ export default function BackupScreen({ mnemonic, indices, onConfirm, onSkip, err
           <button className={'bk-copy-btn' + (copied ? ' copied' : '')} onClick={copyAll}>
             {copied ? (
               <>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="var(--accent)"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
                   <polyline points="20 6 9 17 4 12"></polyline>
                 </svg>
                 Copied!
               </>
             ) : (
               <>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
                   <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                   <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                 </svg>
@@ -120,14 +170,19 @@ export default function BackupScreen({ mnemonic, indices, onConfirm, onSkip, err
 
           {/* Saved checkbox */}
           <label className="bk-saved-check">
-            <input
-              type="checkbox"
-              checked={saved}
-              onChange={(e) => setSaved(e.target.checked)}
-            />
+            <input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} />
             <span className="bk-check-box">
               {saved && (
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="var(--accent)"
+                  strokeWidth="3"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
                   <polyline points="20 6 9 17 4 12"></polyline>
                 </svg>
               )}
@@ -135,13 +190,17 @@ export default function BackupScreen({ mnemonic, indices, onConfirm, onSkip, err
             <span className="bk-check-text">I've saved my recovery phrase securely</span>
           </label>
 
-          <button
-            className="vf-btn primary"
-            onClick={() => setStep(3)}
-            disabled={!saved}
-          >
+          <button className="vf-btn primary" onClick={() => setStep(3)} disabled={!saved}>
             Continue to verification
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginLeft: 6 }}>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              style={{ marginLeft: 6 }}
+            >
               <path d="M5 12h14M12 5l7 7-7 7"></path>
             </svg>
           </button>
@@ -156,7 +215,16 @@ export default function BackupScreen({ mnemonic, indices, onConfirm, onSkip, err
       {step === 3 && (
         <div className="bk-step" key="s3">
           <div className="bk-confirm-info">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="var(--accent)"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
               <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
               <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
             </svg>
@@ -183,25 +251,48 @@ export default function BackupScreen({ mnemonic, indices, onConfirm, onSkip, err
           {error && <p className="vf-error">{error}</p>}
 
           <button className="vf-btn primary" onClick={submit}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 6 }}>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              style={{ marginRight: 6 }}
+            >
               <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
               <polyline points="22 4 12 14.01 9 11.01"></polyline>
             </svg>
             Confirm &amp; finish
           </button>
 
-          <button className="vf-btn ghost" onClick={() => { setStep(2); setSaved(false) }}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginRight: 4 }}>
+          <button
+            className="vf-btn ghost"
+            onClick={() => {
+              setStep(2)
+              setSaved(false)
+            }}
+          >
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              style={{ marginRight: 4 }}
+            >
               <path d="M19 12H5M12 19l-7-7 7-7"></path>
             </svg>
-            Back — view phrase again
+            View recovery phrase again
           </button>
         </div>
       )}
     </div>
   )
 }
-
 
 /* ─────────── scoped styles ─────────── */
 function BackupStyle() {

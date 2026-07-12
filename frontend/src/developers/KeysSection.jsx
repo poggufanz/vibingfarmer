@@ -4,14 +4,14 @@ import CodeBlock from './CodeBlock.jsx'
 
 // Scope contract — same rows for docs (pre-auth) and permission picker (create form).
 const SCOPE_INFO = [
-  { id: 'strategy', endpoints: 'POST /strategy', note: 'AI allocation · market context' },
+  { id: 'strategy', endpoints: 'POST /strategy', note: 'AI allocation using market context' },
   {
     id: 'market',
-    endpoints: '/vault-facts · /prices · /eligibility',
+    endpoints: '/vault-facts, /prices, /eligibility',
     note: 'Read-only market data',
   },
-  { id: 'tx', endpoints: '/build-tx · /simulate', note: 'Unsigned XDR only' },
-  { id: 'submit', endpoints: 'POST /submit', note: 'Fee-bump relay · deposit-only' },
+  { id: 'tx', endpoints: '/build-tx, /simulate', note: 'Unsigned XDR only' },
+  { id: 'submit', endpoints: 'POST /submit', note: 'Deposit-only fee-bump relay' },
   { id: 'scan', endpoints: 'POST /scan', note: 'Risk verdict' },
 ]
 
@@ -25,7 +25,7 @@ const EXPIRY_OPTIONS = [
 const shortAddr = (g) => (g ? `${g.slice(0, 6)}…${g.slice(-4)}` : '')
 
 const fmtDate = (sec) => {
-  if (!sec) return '—'
+  if (!sec) return 'Not available'
   return new Date(sec * 1000).toLocaleDateString('en-US', {
     day: '2-digit',
     month: 'short',
@@ -177,17 +177,16 @@ export default function KeysSection({ session }) {
     <div className="card">
       <div className="eyebrow">
         <span>Developers</span>
-        <span>·</span>
         <span>API keys</span>
         <span className="rule"></span>
-        <span>{`SEP-10 · ${shortAddr(session.address)}`}</span>
+        <span>{`SEP-10 ${shortAddr(session.address)}`}</span>
       </div>
 
       <h1 className="h-display">API keys</h1>
       <p className="lede">
         Authenticate with a Stellar wallet, create scoped secret keys, and call strategy, risk scan,
-        and gasless deposit relay. Server-side secrets stay on VF — you hold one{' '}
-        <span className="mono">vf_</span> key. Secret values are shown <b>once</b> at creation.
+        and gasless deposit relay endpoints. Server-side provider credentials stay on VF. You
+        receive one <span className="mono">vf_</span> key, shown <b>once</b> when created.
       </p>
 
       {error && (
@@ -208,7 +207,7 @@ export default function KeysSection({ session }) {
         <div>
           <span style={sectionTitle}>Your keys</span>
           <p className="mono faint" style={{ marginTop: 6, fontSize: 11.5 }}>
-            {activeCount} active · {keys.length} total
+            Active: {activeCount}. Total: {keys.length}.
           </p>
         </div>
         <button className="btn btn-primary" type="button" onClick={openCreate}>
@@ -308,12 +307,12 @@ export default function KeysSection({ session }) {
                 <span className="perm-doc-v" style={{ flexDirection: 'column', gap: 4 }}>
                   <span className={k.enabled ? '' : 'struck'}>{k.key_hint}</span>
                   <span className="annot">
-                    {envLabel} · {k.rate_limit ?? 60}/min
-                    {!k.enabled ? ' · revoked' : ''}
+                    {envLabel === 'live' ? 'Live' : 'Test'}, {k.rate_limit ?? 60}/min
+                    {!k.enabled ? ', revoked' : ''}
                   </span>
                 </span>
                 <span className="perm-doc-v" style={{ fontSize: 11.5 }}>
-                  {sc.length ? sc.join(' · ') : '—'}
+                  {sc.length ? sc.join(', ') : 'None'}
                 </span>
                 <span className="perm-doc-v annot" style={{ fontSize: 11.5 }}>
                   {fmtDate(k.created_at)}
@@ -333,7 +332,7 @@ export default function KeysSection({ session }) {
                     </button>
                   ) : (
                     <span className="mono faint" style={{ fontSize: 11 }}>
-                      revoked
+                      Revoked
                     </span>
                   )}
                 </span>
@@ -347,8 +346,8 @@ export default function KeysSection({ session }) {
       <div style={{ marginTop: 36 }}>
         <span style={sectionTitle}>Authenticate requests</span>
         <p className="lede" style={{ marginTop: 10, fontSize: 13.5, maxWidth: 560 }}>
-          Send the secret key as a Bearer token. Keep it server-side only — never ship a{' '}
-          <span className="mono">vf_</span> key in client bundles or public repos.
+          Send the secret key as a Bearer token and keep it server-side. Never ship a{' '}
+          <span className="mono">vf_</span> key in a client bundle or public repository.
         </p>
         <CodeBlock
           style={{ marginTop: 14 }}
@@ -382,13 +381,13 @@ export default function KeysSection({ session }) {
             style={{ maxWidth: 520 }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="modal-eyebrow">API keys · New secret</div>
+            <div className="modal-eyebrow">API keys: New secret</div>
             <div className="modal-title">Create secret key</div>
             <div className="modal-scroll-content">
               <span style={sectionTitle}>Environment</span>
               <div
                 role="radiogroup"
-                aria-label="environment"
+                aria-label="Environment"
                 className="risk-row"
                 style={{ marginTop: 10, gridTemplateColumns: 'repeat(2, 1fr)' }}
               >
@@ -403,7 +402,7 @@ export default function KeysSection({ session }) {
                   >
                     <span className="risk-opt-label">{e === 'test' ? 'Test' : 'Live'}</span>
                     <span className="risk-opt-sub">
-                      {e === 'test' ? 'vf_test_ · sandbox' : 'vf_live_ · production'}
+                      {e === 'test' ? 'vf_test_ (sandbox)' : 'vf_live_ (production)'}
                     </span>
                   </button>
                 ))}
@@ -440,7 +439,6 @@ export default function KeysSection({ session }) {
                           className="perm-doc-k"
                           style={{ color: on ? 'var(--text)' : undefined }}
                         >
-                          {on ? '✓ ' : ''}
                           {s.id}
                         </span>
                         <span
@@ -460,7 +458,7 @@ export default function KeysSection({ session }) {
                 <span style={sectionTitle}>Expiration</span>
                 <div
                   role="radiogroup"
-                  aria-label="expiration"
+                  aria-label="Expiration"
                   className="flex gap-2"
                   style={{ marginTop: 10, flexWrap: 'wrap' }}
                 >
@@ -486,7 +484,8 @@ export default function KeysSection({ session }) {
               </div>
 
               <p className="foot-note" style={{ marginTop: 18 }}>
-                Rate limit <b>60 req/min</b> · secret shown once · revocable anytime
+                Rate limit: <b>60 requests per minute</b>. The secret is shown once and can be
+                revoked anytime.
               </p>
             </div>
 
@@ -523,7 +522,7 @@ export default function KeysSection({ session }) {
             style={{ maxWidth: 520 }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="modal-eyebrow">API key · Shown once</div>
+            <div className="modal-eyebrow">API key: Shown once</div>
             <div className="modal-title">Save this secret key</div>
 
             <div
@@ -537,8 +536,8 @@ export default function KeysSection({ session }) {
                 lineHeight: 1.45,
               }}
             >
-              This is the only time the full key is available. We store a hash only — if you lose
-              it, create a new key and revoke the old one.
+              This is the only time the full key is available. We store only its hash. If you lose
+              the key, create a new one and revoke the old one.
             </div>
 
             <div
@@ -627,7 +626,7 @@ export default function KeysSection({ session }) {
             style={{ maxWidth: 420 }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="modal-eyebrow">Revoke · Irreversible</div>
+            <div className="modal-eyebrow">Revoke: Irreversible</div>
             <div className="modal-title">Revoke this key?</div>
             <p style={{ fontSize: 13.5, color: 'var(--text-muted)', lineHeight: 1.5 }}>
               Requests using{' '}

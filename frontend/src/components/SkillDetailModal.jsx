@@ -1,6 +1,7 @@
 // SkillDetailModal.jsx
 // Read-only human-readable skill detail. Opens from "View details" on a skill card.
 import React, { useEffect } from 'react'
+import { Icon } from '../components.jsx'
 import { translateSkill, formatProtocol } from '../skills.jsx'
 
 const STEP_LABELS = {
@@ -19,7 +20,7 @@ function labelStep(step) {
 }
 
 function shortAddr(addr) {
-  if (!addr || addr.length < 10) return addr || '-'
+  if (!addr || addr.length < 10) return addr || 'Not available'
   return `${addr.slice(0, 4)}…${addr.slice(-4)}`
 }
 
@@ -58,10 +59,10 @@ export default function SkillDetailModal({ agent, skill, state, onClose, onAppro
       >
         <div className="modal-eyebrow skill-detail-eyebrow">
           <span id="skill-detail-title">
-            {agent.name} · {info.risk}
+            {agent.name}, {info.risk}
           </span>
           <button className="modal-close-btn" onClick={onClose} aria-label="Close">
-            ✕
+            <Icon name="x" size={12} />
           </button>
         </div>
 
@@ -69,7 +70,7 @@ export default function SkillDetailModal({ agent, skill, state, onClose, onAppro
           <div className="skill-detail-label">Vault</div>
           <div className="skill-detail-value">{formatProtocol(agent.vault?.protocol)}</div>
           <div className="skill-detail-sub mono">
-            {shortAddr(vaultAddr)} · {network}
+            {shortAddr(vaultAddr)}, {network}
             {vaultAddr && (
               <a
                 href={`https://stellar.expert/explorer/testnet/contract/${vaultAddr}`}
@@ -96,9 +97,9 @@ export default function SkillDetailModal({ agent, skill, state, onClose, onAppro
         <div className="skill-detail-section">
           <div className="skill-detail-label">Security limits</div>
           <Row k="Maximum" v={skill.guards?.maxAmount || info.amountVal} />
-          <Row k="Fee" v="fee-bump sponsored" />
+          <Row k="Fee" v="Fee-bump sponsored" />
           <Row k="Valid for" v={`${hours} hour${hours !== 1 ? 's' : ''} from now`} />
-          <Row k="Revocable" v={skill.guards?.revocable ? 'Yes · revoke anytime' : 'No'} />
+          <Row k="Revocable" v={skill.guards?.revocable ? 'Yes, revoke anytime' : 'No'} />
           <Row k="Risk" v={info.risk} />
         </div>
 

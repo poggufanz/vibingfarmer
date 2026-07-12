@@ -27,12 +27,11 @@ export default function OverviewSection({ session }) {
     <div className="card">
       <div className="eyebrow">
         <span>Developers</span>
-        <span>·</span>
         <span>Overview</span>
       </div>
       <h1 className="h-display">Welcome to the Vibing Farmer API</h1>
       <p className="lede">
-        One <span className="mono">vf_</span> key gives your bot the full pipeline — AI strategy,
+        One <span className="mono">vf_</span> key gives your bot the full pipeline: AI strategy,
         risk scan, unsigned transaction build, and gasless submit via the fee-bump relay. Server
         secrets stay on VF; signing stays on your side.
       </p>
@@ -42,13 +41,13 @@ export default function OverviewSection({ session }) {
           <div>
             <span className="figure-md mono tnum">{stats.activeKeys}</span>
             <p className="annot faint" style={{ marginTop: 4 }}>
-              active keys
+              Active keys
             </p>
           </div>
           <div>
             <span className="figure-md mono tnum">{stats.today}</span>
             <p className="annot faint" style={{ marginTop: 4 }}>
-              requests today
+              Requests today
             </p>
           </div>
         </div>
@@ -64,8 +63,8 @@ export default function OverviewSection({ session }) {
       </div>
 
       <p className="foot-note" style={{ marginTop: 24 }}>
-        Pipeline: <span className="mono">strategy → scan → build-tx → simulate → submit</span> ·
-        non-custodial · testnet
+        Pipeline: <span className="mono">strategy → scan → build-tx → simulate → submit</span>.
+        Signing stays client-side on testnet.
       </p>
     </div>
   )

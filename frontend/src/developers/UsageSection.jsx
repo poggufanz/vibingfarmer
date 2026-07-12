@@ -40,7 +40,6 @@ export default function UsageSection({ session }) {
     <div className="card">
       <div className="eyebrow">
         <span>Developers</span>
-        <span>·</span>
         <span>Usage</span>
       </div>
       <h1 className="h-display">Usage</h1>
@@ -65,7 +64,7 @@ export default function UsageSection({ session }) {
             <div>
               <span className="figure-md mono tnum">{todayTotal}</span>
               <p className="annot faint" style={{ marginTop: 4 }}>
-                requests today · budget {data.cap.toLocaleString('en-US')}
+                Requests today. Budget: {data.cap.toLocaleString('en-US')}.
               </p>
             </div>
             <div>
@@ -75,7 +74,7 @@ export default function UsageSection({ session }) {
                   : (keys.find((k) => k.id === keyFilter)?.rate_limit ?? 60)}
               </span>
               <p className="annot faint" style={{ marginTop: 4 }}>
-                {keyFilter === 'all' ? 'active keys' : 'req/min limit'}
+                {keyFilter === 'all' ? 'Active keys' : 'Requests/minute limit'}
               </p>
             </div>
           </div>
@@ -141,7 +140,8 @@ export default function UsageSection({ session }) {
           )}
 
           <p className="foot-note" style={{ marginTop: 16 }}>
-            Aggregates only — per-request telemetry is not stored. Window: last 30 days.
+            Only aggregates are stored; per-request telemetry is not. The window covers the last 30
+            days.
           </p>
         </>
       )}
