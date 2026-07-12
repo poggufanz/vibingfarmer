@@ -233,3 +233,21 @@
 .mandate-revoked { font-size: 11px; color: var(--danger); }
 .mandate-revoke { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, transparent); }
 .mandate-guards { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 10px; font-size: 10px; color: var(--text-faint); }
+
+/* ── swarm ──────────────────────────────────────────────── */
+.console-swarm .zone-body { position: relative; }
+.swarm-canvas { min-height: 380px; }
+.console-swarm .zone-body::before {
+  content: '';
+  position: absolute;
+  inset: 14px;
+  background:
+    linear-gradient(color-mix(in srgb, var(--text-faint) 3%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--text-faint) 3%, transparent) 1px, transparent 1px);
+  background-size: 28px 28px;
+  pointer-events: none;
+}
+.trace-strip { display: flex; gap: 3px; align-items: center; border-top: 1px solid var(--border); margin-top: 12px; padding-top: 10px; min-height: 18px; }
+.trace-tick { position: relative; width: 4px; height: 12px; border-radius: 1px; display: inline-block; }
+.trace-tick .trace-tip { display: none; position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 3px 7px; font-size: 10px; white-space: nowrap; z-index: 5; color: var(--text-muted); }
+.trace-tick:hover .trace-tip { display: block; }
