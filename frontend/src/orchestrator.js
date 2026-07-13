@@ -201,7 +201,13 @@ export class OrchestratorAgent {
       results,
     })
 
-    return { completed, failed, results, sessionId: this.sessionId, agentAddresses: workers.map((w) => w.agentAddress).filter(Boolean) }
+    return {
+      completed,
+      failed,
+      results,
+      sessionId: this.sessionId,
+      agentAddresses: workers.map((w) => w.agentAddress).filter(Boolean),
+    }
   }
 
   /**
