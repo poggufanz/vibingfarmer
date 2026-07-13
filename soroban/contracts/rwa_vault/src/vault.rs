@@ -14,7 +14,7 @@ use crate::storage::{
 use crate::strategy_client::StrategyClient;
 use crate::types::{
     Compound, Deposit, LifeboatEngaged, LifeboatResumed, LifeboatState, MandateSet, Rebalance,
-    Redeem, VaultError,
+    Redeem, StrategyQuarantined, VaultError,
 };
 
 /// Shares minted to the vault itself on the first deposit and locked forever. Guards against
@@ -40,7 +40,11 @@ pub fn total_assets(e: &Env) -> i128 {
     let me = e.current_contract_address();
     let mut total = TokenClient::new(e, &token).balance(&me);
     for s in get_strategies(e).iter() {
-        total += StrategyClient::new(e, &s).balance();
+        // Untrusted report: a negative balance must not shrink NAV (clamp to 0), and an
+        // inflated one must not trap the sum (saturate — downstream share math then fails
+        // closed with clean InvalidAmount/MathOverflow errors instead of an i128 trap).
+        let b = StrategyClient::new(e, &s).balance().max(0);
+        total = total.saturating_add(b);
     }
     total
 }
@@ -77,11 +81,45 @@ pub fn remove_strategy(e: &Env, strategy: Address) -> Result<(), VaultError> {
     let idx = list
         .first_index_of(&strategy)
         .ok_or(VaultError::StrategyNotFound)?;
-    if StrategyClient::new(e, &strategy).balance() != 0 {
+    // A SUCCESSFUL zero-balance read is required — a trapping/misdecoding balance()
+    // fails removal cleanly (use `quarantine_strategy` for a bricked strategy).
+    if !matches!(
+        StrategyClient::new(e, &strategy).try_balance(),
+        Ok(Ok(0))
+    ) {
         return Err(VaultError::StrategyNotEmpty);
     }
     list.remove(idx);
     set_strategies(e, &list);
+    extend_instance(e);
+    Ok(())
+}
+
+/// Admin-only incident hatch. Removes `strategy` from the registry WITHOUT ever calling it —
+/// the tool for a strategy whose `balance()`/`withdraw` traps and would otherwise brick every
+/// NAV read (deposit, redeem, price_per_share). `acknowledged_loss` is the admin-acknowledged
+/// NAV write-off, must be nonnegative, and is emitted for incident accounting. User exits stay
+/// functional immediately after.
+pub fn quarantine_strategy(
+    e: &Env,
+    strategy: Address,
+    acknowledged_loss: i128,
+) -> Result<(), VaultError> {
+    require_admin(e);
+    if acknowledged_loss < 0 {
+        return Err(VaultError::InvalidParam);
+    }
+    let mut list = get_strategies(e);
+    let idx = list
+        .first_index_of(&strategy)
+        .ok_or(VaultError::StrategyNotFound)?;
+    list.remove(idx);
+    set_strategies(e, &list);
+    StrategyQuarantined {
+        strategy,
+        acknowledged_loss,
+    }
+    .publish(e);
     extend_instance(e);
     Ok(())
 }
@@ -113,11 +151,15 @@ fn require_keeper(e: &Env) -> Result<(), VaultError> {
 
 /// Admin-only. Sets the rebalance cooldown (seconds) and per-move cap (bps of
 /// `total_assets`), both enforced starting Task 9.
-pub fn set_limits(e: &Env, cooldown_s: u64, max_move_bps: u32) {
+pub fn set_limits(e: &Env, cooldown_s: u64, max_move_bps: u32) -> Result<(), VaultError> {
     require_admin(e);
+    if max_move_bps > 10_000 {
+        return Err(VaultError::InvalidParam);
+    }
     set_cooldown_s(e, cooldown_s);
     set_max_move_bps(e, max_move_bps);
     extend_instance(e);
+    Ok(())
 }
 
 /// Admin-only. Sets the min seconds between `compound` calls (Task R1), enforced by
@@ -289,8 +331,10 @@ pub fn compound(e: &Env, min_outs: Vec<i128>) -> Result<i128, VaultError> {
     // upgrade). Falling back to "gate passes" on `None` means an already-deployed vault's
     // very first post-upgrade compound is never wrongly blocked by an absent timestamp.
     if let Some(last) = get_last_compound(e) {
-        if now < last + get_compound_cooldown_s(e) {
-            return Err(VaultError::CooldownActive);
+        // Overflowing gate timestamp = "never passes" (fail closed), not a trap.
+        match last.checked_add(get_compound_cooldown_s(e)) {
+            Some(gate) if now >= gate => {}
+            _ => return Err(VaultError::CooldownActive),
         }
     }
     let strategies = get_strategies(e);
@@ -315,46 +359,59 @@ pub fn compound(e: &Env, min_outs: Vec<i128>) -> Result<i128, VaultError> {
     for (i, s) in strategies.iter().enumerate() {
         let min_out = min_outs.get(i as u32).unwrap();
         if let Ok(Ok(gain)) = StrategyClient::new(e, &s).try_harvest(&min_out) {
-            total_gain += gain;
+            // Untrusted report: ignore negative "gains"; saturate the (event-only) sum.
+            if gain > 0 {
+                total_gain = total_gain.saturating_add(gain);
+            }
         }
     }
 
     // Sweep idle into strategies pro-rata by pre-harvest balances (all zero → strategies[0]
-    // takes everything — there's no ratio to split by yet).
+    // takes everything — there's no ratio to split by yet). Slices are PRECOMPUTED from the
+    // intended split: a slice whose deposit fails (trap, wrong-type return, dishonest pull)
+    // simply stays idle — it is never rolled into another strategy's cut, and success is
+    // judged by observed token movement, never the strategy's return value.
     let token = get_token(e);
     let me = e.current_contract_address();
-    let idle = TokenClient::new(e, &token).balance(&me);
+    let tk = TokenClient::new(e, &token);
+    let idle = tk.balance(&me);
     if idle > 0 && !strategies.is_empty() {
-        let total_bal: i128 = balances.iter().sum();
-        let exp = e.ledger().sequence() + 100;
+        let mut total_bal = 0i128;
+        for b in balances.iter() {
+            total_bal = total_bal.saturating_add(b.max(0));
+        }
+        let n = strategies.len();
+        let mut cuts: Vec<i128> = Vec::new(e);
         if total_bal == 0 {
-            let s0 = strategies.get(0).unwrap();
-            TokenClient::new(e, &token).approve(&me, &s0, &idle, &exp);
-            // `try_deposit`: a BRICKED strategies[0] just leaves `idle` parked in the vault
-            // instead of reverting the whole compound — the next call retries the sweep.
-            let _ = StrategyClient::new(e, &s0).try_deposit(&idle);
-        } else {
-            // LAST strategy gets the remainder rather than its own `idle * bal / total`
-            // share, so integer-division dust is swept in rather than left idle.
-            let mut left = idle;
-            for (i, s) in strategies.iter().enumerate() {
-                let cut = if i as u32 == strategies.len() - 1 {
-                    left
-                } else {
-                    idle * balances.get(i as u32).unwrap() / total_bal
-                };
-                if cut > 0 {
-                    TokenClient::new(e, &token).approve(&me, &s, &cut, &exp);
-                    // `try_deposit`: only subtract `cut` from `left` on success — a failed
-                    // deposit (bricked strategy) leaves that slice idle instead of the vault
-                    // losing track of it. If the LAST strategy is the one that fails, `left`
-                    // (the remainder it would have absorbed) simply stays idle too — the
-                    // dust-sweep invariant degrades to "leave it idle," never to a lost cut.
-                    if StrategyClient::new(e, &s).try_deposit(&cut).is_ok() {
-                        left -= cut;
-                    }
-                }
+            for i in 0..n {
+                cuts.push_back(if i == 0 { idle } else { 0 });
             }
+        } else {
+            // LAST slice takes the remainder so integer-division dust is swept in.
+            let mut assigned = 0i128;
+            for (i, b) in balances.iter().enumerate() {
+                let cut = if i as u32 == n - 1 {
+                    idle - assigned
+                } else {
+                    idle.checked_mul(b.max(0))
+                        .ok_or(VaultError::MathOverflow)?
+                        / total_bal
+                };
+                assigned += cut;
+                cuts.push_back(cut);
+            }
+        }
+        let exp = e.ledger().sequence() + 100;
+        for (i, s) in strategies.iter().enumerate() {
+            let cut = cuts.get(i as u32).unwrap();
+            if cut <= 0 {
+                continue;
+            }
+            tk.approve(&me, &s, &cut, &exp);
+            let _ = StrategyClient::new(e, &s).try_deposit(&cut);
+            // Clear the transient allowance after EVERY attempt — a failed, dishonest,
+            // or partial pull must never leave a standing allowance behind.
+            tk.approve(&me, &s, &0, &exp);
         }
     }
 
@@ -390,28 +447,45 @@ pub fn rebalance(e: &Env, from: Address, to: Address, amount: i128) -> Result<()
         return Err(VaultError::StrategyNotFound);
     }
     let now = e.ledger().timestamp();
-    if now < get_last_rebalance(e) + get_cooldown_s(e) {
-        return Err(VaultError::CooldownActive);
+    // Overflowing gate timestamp = "never passes" (fail closed), not a trap.
+    match get_last_rebalance(e).checked_add(get_cooldown_s(e)) {
+        Some(gate) if now >= gate => {}
+        _ => return Err(VaultError::CooldownActive),
     }
     let from_bal = StrategyClient::new(e, &from).balance();
-    if amount <= 0 || amount > from_bal * i128::from(get_max_move_bps(e)) / 10_000 {
+    let cap = from_bal
+        .max(0)
+        .checked_mul(i128::from(get_max_move_bps(e)))
+        .ok_or(VaultError::MoveTooLarge)?
+        / 10_000;
+    if amount <= 0 || amount > cap {
         return Err(VaultError::MoveTooLarge);
     }
+    let token = get_token(e);
+    let tk = TokenClient::new(e, &token);
+    let before = tk.balance(&me);
     let got = StrategyClient::new(e, &from).withdraw(&amount);
-    // `got` can legitimately be 0 (strategy had nothing recoverable despite its book
-    // balance); the real strategy's `deposit` rejects non-positive amounts, so a zero
-    // move must skip the deposit leg instead of trapping the whole rebalance.
-    if to != me && got > 0 {
-        let token = get_token(e);
+    // Observed truth: the vault must have RECEIVED delta ∈ [0, amount]; the strategy's
+    // reported value is only a consistency check — disagreement fails closed. `delta`
+    // can legitimately be 0 (nothing recoverable despite the book balance); a zero move
+    // skips the deposit leg instead of trapping the whole rebalance.
+    let delta = tk.balance(&me) - before;
+    if delta < 0 || delta > amount || got != delta {
+        return Err(VaultError::StrategyMisbehaved);
+    }
+    if to != me && delta > 0 {
         let exp = e.ledger().sequence() + 100;
-        TokenClient::new(e, &token).approve(&me, &to, &got, &exp);
-        StrategyClient::new(e, &to).deposit(&got);
+        tk.approve(&me, &to, &delta, &exp);
+        StrategyClient::new(e, &to).deposit(&delta);
+        // Deposit is a hard call (registered strategy), but never leave a standing
+        // allowance behind a dishonest partial pull.
+        tk.approve(&me, &to, &0, &exp);
     }
     set_last_rebalance(e, now);
     Rebalance {
         from,
         to,
-        amount: got,
+        amount: delta,
     }
     .publish(e);
     extend_instance(e);
@@ -486,13 +560,18 @@ pub fn emergency_derisk(e: &Env, reason_code: u32) -> Result<i128, VaultError> {
         return Ok(0);
     }
     require_mandate(e)?;
-    let mut drained_total: i128 = 0;
-    for strategy in get_strategies(e).iter() {
-        if let Ok(Ok(got)) = StrategyClient::new(e, &strategy).try_withdraw(&i128::MAX) {
-            drained_total += got;
-        }
-    }
+    // Engage the flag BEFORE any strategy interaction (defense in depth — rollback keeps
+    // atomicity, but no callback may ever observe "rescuing yet not derisked").
     set_derisked(e, true);
+    let tk = TokenClient::new(e, &get_token(e));
+    let me = e.current_contract_address();
+    let before = tk.balance(&me);
+    for strategy in get_strategies(e).iter() {
+        let _ = StrategyClient::new(e, &strategy).try_withdraw(&i128::MAX);
+    }
+    // Observed token delta — never the strategies' untrusted reports (whose sum a
+    // hostile strategy could overflow to brick the rescue).
+    let drained_total = (tk.balance(&me) - before).max(0);
     LifeboatEngaged {
         reason_code,
         drained_total,
