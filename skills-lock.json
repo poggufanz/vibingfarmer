@@ -264,6 +264,12 @@
       "skillPath": "skills/setup-stellar-contracts/SKILL.md",
       "computedHash": "481f206fb4cc8b294ca66b8bdd72c74c93a8c6bc97994c7afa2c15af21cf5a60"
     },
+    "smart-contract-security": {
+      "source": "pluginagentmarketplace/custom-plugin-blockchain",
+      "sourceType": "github",
+      "skillPath": "skills/smart-contract-security/SKILL.md",
+      "computedHash": "c410c6406056bea05a1a51bbfaf4569d8a66ededc3feb03a7f6792482b7863b3"
+    },
     "soroban": {
       "source": "stellar/stellar-dev-skill",
       "sourceType": "github",
