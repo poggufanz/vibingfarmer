@@ -160,13 +160,13 @@ First run: **1 signature** (was 6 before the funding router, 9 before that). Rep
 
 | Contract | Address |
 |----------|---------|
-| Autofarm vault (LIVE deposit target) | `CB5VKYDUIYX3RZWGVLKKNBPG7V7Z5JIHF2QPNQKWKAHVA3IPSLFZJDYU` |
-| Funding router (single-signature grant) | `CBEI5VJKKWLXKQUUUETBAPZSQQLH7I57TSIDTMV4WJMBKIGVF7NSNOFY` |
-| agent_account wasm v2 (per-run agents) | `7ced45e735e7e084d96d6a04df7cec6e07bc2b203eedb4d3422949a7e9cca717` |
+| Autofarm vault (LIVE deposit target) | `CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77` |
+| Funding router (single-signature grant) | `CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5` |
+| agent_account wasm v3 (per-run agents) | `d61ceaaaf5a3fd9fd25987eba0f843ccb79880f3eaa137e066b5f63ab9eaa2ba` |
 | Blend v2 pool (yield source) | `CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF` |
 | USDC (Blend testnet, 7dp) | `CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU` |
-| Strategy #1 (vault→Blend) | `CCH424TVLTP2P3URNRGGF26X24XRPBVBXCRZ6QBCWLSX6KH4QZSLNBC2` |
-| Registry | `CAEHOZGUGVNRCAFVJCSR3B2EFJ55LEA34S76HTRQGH7XSPBO7YIMNZOQ` |
+| Strategy #1 (vault→Blend) | `CAR7XFFRKMUYSERYBSLQ4LXRY2E2W7G7WG4VQI55FWLSJWQVLNTAFVBE` |
+| Registry | `CAP5E2FPDAGEQ7SR55YRY4Z56GPBSTRRZJCYN2PQ6PZQHQJKYEDVM5FB` |
 | Attestation | `CDDOW2FZ7ALBWBXF22TPMPDHPXSKTMLQGGQWUYX7YOJZAHICD7DUO2K6` |
 
 ### Deployed Addresses — Base Sepolia (`deployments/base-sepolia.json`)

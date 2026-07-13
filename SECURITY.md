@@ -159,19 +159,26 @@ Aave's canonical `UNDERLYING_ASSET_ADDRESS` casing).
 
 ## Deployment status
 
-The currently published addresses (`deployments/*.json`, README, PRD) **predate this
-hardening pass and are legacy**. Redeployment order once deploy credentials
-(`vf-deployer` Stellar identity, funded Base deployer) are available:
+**Stellar stack redeployed from this hardening pass on 2026-07-14** (deployer:
+`vf-deployer`). The published addresses in `deployments/stellar-testnet.json`, README, and
+PRD now point at the hardened contracts; per-contract wasm hashes and deploy/smoke tx
+receipts live in the deployments JSON (`hardenedRedeploy` key and per-contract notes).
 
-1. upload `agent_account` wasm → deploy `funding_router` (pinning that hash)
-2. deploy `blend_strategy`, deploy/upgrade `rwa_vault`, register strategy
-3. deploy `registry` (new `authorize(agent)` ABI)
-4. deploy Base `YieldRouter` + adapter/pools; regenerate the ZeroDev policy against the
-   new router address
-5. live smoke: grant → pull → deposit → per-agent revoke → global revoke → owner exit →
-   compound → derisk/resume → Base approve+deposit → Base withdraw
-6. only then update `deployments/*.json` from confirmed receipts and remove the legacy
-   notices
+Rollout gate executed in order:
+
+1. ✅ uploaded `agent_account` wasm v3 → deployed `funding_router` pinning that hash
+2. ✅ deployed `blend_strategy` + fresh `rwa_vault` (pre-hardening vault retired, not
+   upgraded in place), strategy registered, keeper + mandate authority wired
+3. ✅ deployed `registry` (new `authorize(agent)` derived-record ABI)
+4. ⏳ Base leg (optional cross-chain): `YieldRouter` + adapter/pools redeploy and ZeroDev
+   policy regeneration remain pending — the Base Sepolia addresses in
+   `deployments/base-sepolia.json` still predate the hardening pass
+5. ✅ live smoke on the new stack: grant → pull → deposit → per-agent revoke → global
+   revoke (allowance→0) → owner exit (`owner_withdraw`) → compound (idle sweep into
+   Blend) → derisk/resume under mandate. Base approve+deposit/withdraw smoke deferred
+   with the Base leg
+6. ✅ `deployments/stellar-testnet.json` updated from confirmed receipts; legacy notices
+   removed from README/PRD
 
 ## Reporting a vulnerability
 

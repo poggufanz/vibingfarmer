@@ -13,7 +13,7 @@ describe('stellar config per-network', () => {
     expect(cfg.NETWORK_PASSPHRASE).toBe('Test SDF Network ; September 2015')
     expect(cfg.SOROBAN_RPC_URL).toBe('https://soroban-testnet.stellar.org')
     expect(cfg.SOROBAN_ACTIVE_VAULT_ADDRESS).toBe(
-      'CB5VKYDUIYX3RZWGVLKKNBPG7V7Z5JIHF2QPNQKWKAHVA3IPSLFZJDYU'
+      'CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77'
     )
   })
 
