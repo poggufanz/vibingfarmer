@@ -30,7 +30,7 @@ Vibing Farmer is **single-chain on Stellar/Soroban**. Contracts live in `soroban
 
 8. **Autonomous monitor loop** — A background Web Worker polls positions, detects APY drift, surfaces risk alerts, and proposes rebalances. A TradingAgents-style council reviews each cycle. An ACE Curator grows, merges, and prunes playbook rules from notable outcomes. Cycle journals and decision logs are stored in localStorage and surfaced in the Agent Dashboard.
 
-9. **Kill switch** — A user-signed `registry.revoke` works even when the relayer is down. Revocation is instant and on-chain.
+9. **Kill switch** — Two independent, user-signed controls that work even when the relayer is down: a **global funding revoke** (`token.approve(router, 0)` — the SEP-41 allowance IS the budget, so zeroing it stops all future funding) and a **per-agent revoke** (`agent_account.revoke()` — flips the exact `revoked` flag the agent's on-chain `__check_auth` fails closed on and zeroes its vault allowance). The Registry only mirrors revocations as metadata for indexers; it is not the enforcement point.
 
 ---
 
@@ -84,6 +84,12 @@ User input (amount, risk level, vault count)
 
 Verify on Stellar Expert: `https://stellar.expert/explorer/testnet/contract/<address>`. Canonical live map: [`deployments/stellar-testnet.json`](deployments/stellar-testnet.json).
 
+> **Legacy notice (2026-07-13):** the addresses above predate the security-hardening pass
+> (agent revoke, derived registry records, vault strategy isolation, Blend live NAV — see
+> [`SECURITY.md`](SECURITY.md)). They remain the live demo deployment until the hardened
+> artifacts are redeployed and smoke-tested; treat them as **legacy** until this notice is
+> removed alongside a manifest update.
+
 ---
 
 ## Tech stack
@@ -113,7 +119,7 @@ Verify on Stellar Expert: `https://stellar.expert/explorer/testnet/contract/<add
 
 Three Rust crates:
 
-- **`registry`** — single source of truth for per-agent deposit scope. `authorize` sets vault, token, cap-per-period, period duration, expiry. Each deposit charges against the cap, rolling the fixed window if elapsed. `revoke` is an instant user-signed kill switch. `scope_of` reads the live scope.
+- **`registry`** — metadata mirror for indexers/UI, NOT an authorization boundary. `authorize(agent)` derives every record field from the agent contract's own `scope_of()` (the caller supplies only the address; the derived owner must sign), records can never switch owner, and `is_active` is fail-closed for unknown/revoked/expired agents. `revoke` mirrors a revocation as metadata — the enforcing kill switch is `agent_account.revoke()`.
 
 - **`rwa_vault` / autofarm vault** — deposit vault (shares `vfVLT`, 7 decimals) with strategies that supply into **Blend Capital v2** on testnet. Live deposit target is `autofarmVault` in `deployments/stellar-testnet.json`.
 

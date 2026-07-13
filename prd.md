@@ -74,7 +74,7 @@ First run: **1 signature** (was 6 before the funding router, 9 before that). Rep
 - `funding_router` (Soroban, no admin, zero custody) is a **factory + funding gate**:
   - `grant(owner, budget, expiry_ledger, agents[])` — the a single signature. Owner's signature covers a nested `token.approve(owner→router, budget, expiry_ledger)` (SEP-41 native expiry) AND the deploy of each agent account (wasm hash pinned at router construction).
   - `pull(agent, amount)` — session-key-signed, relayed; only agents the router itself deployed can pull, only from their recorded owner, only within the live allowance.
-  - Revoke = `approve(router, 0)` — a single signature, instant kill switch.
+  - Revoke = `approve(router, 0)` — a single signature, instant GLOBAL funding kill switch. Per-agent: `agent_account.revoke()` (owner-signed) flips the on-chain `revoked` flag `__check_auth` enforces and zeroes the agent's vault allowance; the Registry only mirrors it as metadata.
 - Fake-agent attacks are structurally impossible (factory registry, tested), and the agent wasm only authorizes `pull` on its deployer router.
 
 ### 3. Agent Swarm (parallel, scoped, gas-free)
@@ -175,7 +175,12 @@ First run: **1 signature** (was 6 before the funding router, 9 before that). Rep
 |----------|---------|
 | YieldRouter | `0xF80aa8F571E6d24Ea72F051Fc6F9A9C516727B6d` |
 | Circle USDC | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` |
-| Test pools Ã—3 (honest; Aave adapter is mainnet-ready, fork-proven) | see deployments JSON |
+| Test pools Ã—3 (honest; Aave adapter is fork-proven against Aave v3) | see deployments JSON |
+
+> **Legacy notice (2026-07-13):** all addresses in both tables predate the security-hardening
+> pass (see `SECURITY.md`). They stay live for the demo but are **legacy** until the hardened
+> artifacts are redeployed, smoke-tested, and these manifests are updated from confirmed
+> transaction receipts.
 
 ---
 
