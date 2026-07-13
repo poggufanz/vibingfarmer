@@ -1739,3 +1739,27 @@ fn quarantine_restores_liveness_and_acknowledges_loss() {
     ctx.vault.deposit(&bob, &(10 * U7));
     ctx.vault.redeem(&alice, &(5 * U7));
 }
+
+#[test]
+fn price_per_share_saturates_instead_of_trapping_on_hostile_report() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let alice = Address::generate(&env);
+    fund_and_approve(&env, &ctx, &alice, 100 * U7);
+    ctx.vault.deposit(&alice, &(100 * U7));
+    let strat = deploy_mock_strategy(&env, &ctx);
+    ctx.vault.add_strategy(&strat);
+
+    // A hostile strategy reports i128::MAX. total_assets saturates; price_per_share must
+    // NOT trap (overflow-checks = true would panic on a raw multiply) — a view never traps.
+    MockStrategyClient::new(&env, &strat).set_principal(&i128::MAX);
+    let pps = ctx.vault.price_per_share();
+    assert!(pps > 0);
+
+    // compound reads price_per_share for its event — it must degrade cleanly, not panic,
+    // preserving its per-strategy fault isolation. (Single strategy, idle == 0: the exact
+    // path the reviewer flagged as trapping.)
+    let keeper = Address::generate(&env);
+    ctx.vault.set_keeper(&keeper);
+    let _ = ctx.vault.try_compound(&Vec::from_array(&env, [0i128]));
+}

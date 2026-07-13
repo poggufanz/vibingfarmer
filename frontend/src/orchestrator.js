@@ -263,14 +263,9 @@ export class OrchestratorAgent {
           reused: Boolean(cached),
         })
         if (this.registryAuthorize) {
-          await registryAuthorizeAgent({
-            owner: this.user,
-            agentAddress: w.agentAddress,
-            vault: w.vault,
-            capPerPeriod: w.amount,
-            periodDuration: PERIOD_DURATION,
-            expiry,
-          })
+          // The hardened registry derives every record field from the agent contract's own
+          // scope_of() — pass ONLY the agent address; scope/cap/expiry come from the chain.
+          await registryAuthorizeAgent({ owner: this.user, agentAddress: w.agentAddress })
         }
         // Fund only the shortfall case: a reused agent may still hold the asset from a run
         // that failed before its deposit. null (read failed) funds anyway — the safe side.

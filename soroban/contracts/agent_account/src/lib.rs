@@ -26,6 +26,22 @@ pub struct AgentRevoked {
 #[contract]
 pub struct AgentAccount;
 
+/// Ledgers the constructor's vault allowance must live so it always outlasts the scope.
+/// Covers `scope_expiry - now` at ~5s/ledger plus a ~1-day buffer, floored at the 30-day
+/// default. Prevents the "allowance dies but __check_auth still authorizes → deposits brick"
+/// trap for long scopes. Capped at the network's max entry TTL — a scope longer than that
+/// cannot be covered by any allowance (hard ledger-storage limit; see SECURITY.md).
+fn allowance_ttl_ledgers(env: &Env, scope_expiry: u64) -> u32 {
+    const LEDGER_SECS: u64 = 5;
+    const BUFFER_LEDGERS: u64 = 17_280; // ~1 day
+    let now = env.ledger().timestamp();
+    let remaining = scope_expiry.saturating_sub(now);
+    let needed = u32::try_from(remaining / LEDGER_SECS + BUFFER_LEDGERS).unwrap_or(u32::MAX);
+    needed
+        .max(APPROVE_TTL_LEDGERS)
+        .min(env.storage().max_ttl())
+}
+
 /// Zero out the constructor's standing token allowance to the vault, using the
 /// same invoker-contract auth path the constructor used to create it.
 fn clear_vault_allowance(env: &Env, scope: &AgentScope) {
@@ -80,7 +96,11 @@ impl AgentAccount {
         // Invoker-contract auth: authorize THIS contract's own sub-invocation of token.approve.
         // Bypasses __check_auth (that path is reserved for the session key + deposit only).
         let current = env.current_contract_address();
-        let expiration_ledger = env.ledger().sequence() + APPROVE_TTL_LEDGERS;
+        // The vault allowance must OUTLAST the scope, or deposits would brick after ~30 days
+        // while __check_auth still authorizes them. Cover the scope's lifetime (≈5s/ledger)
+        // plus a 1-day buffer, floored at the default 30-day TTL for legacy/short scopes.
+        let expiration_ledger =
+            env.ledger().sequence() + allowance_ttl_ledgers(&env, scope.expiry);
         env.authorize_as_current_contract(vec![
             &env,
             InvokerContractAuthEntry::Contract(SubContractInvocation {
@@ -122,11 +142,19 @@ impl AgentAccount {
             .ok_or(AccountError::NotInit)?;
         owner.require_auth();
 
-        let scope: AgentScope = env
+        let mut scope: AgentScope = env
             .storage()
             .instance()
             .get(&DataKey::Scope)
             .ok_or(AccountError::NotInit)?;
+        // Exit is terminal: flip `revoked` so the session key can no longer authorize a
+        // funding `pull` into the swept-empty agent (enforce() gates on this flag). Without
+        // it, a later relayed pull would strand fresh owner funds in a dead agent whose vault
+        // allowance we clear below — a half-alive state.
+        if !scope.revoked {
+            scope.revoked = true;
+            env.storage().instance().set(&DataKey::Scope, &scope);
+        }
         let current = env.current_contract_address();
         let vault = scope.vault.clone();
         let token = scope.token.clone();

@@ -274,11 +274,18 @@ export async function discoverAgentsFromHorizon(ownerAddr, { horizon, rpc } = {}
   return found
 }
 
-export async function pollEvents({ server, startLedger, seen = new Set(), limit = 100 }) {
+// `topics` (e.g. [[symbolScVal('agent_revoked').toXDR('base64')]]) selects a topic-only
+// filter across ALL contracts — needed for per-run AgentAccount events, whose fresh
+// addresses are never in the WATCHED list. Default (no topics) keeps the WATCHED-contract
+// filter the graph indexer uses.
+export async function pollEvents({ server, startLedger, seen = new Set(), limit = 100, topics }) {
   const s = server || (await rpcServer())
+  const filter = topics
+    ? { type: 'contract', topics }
+    : { type: 'contract', contractIds: WATCHED }
   const res = await s.getEvents({
     startLedger,
-    filters: [{ type: 'contract', contractIds: WATCHED }],
+    filters: [filter],
     limit,
   })
   const fresh = []

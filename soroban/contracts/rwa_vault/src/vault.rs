@@ -180,7 +180,12 @@ pub fn price_per_share(e: &Env) -> i128 {
     if supply == 0 {
         PPS_SCALE
     } else {
-        total_assets(e) * PPS_SCALE / supply
+        // `total_assets` saturates a hostile/inflated strategy report to i128::MAX; a raw
+        // `* PPS_SCALE` would then trap under overflow-checks, and since `compound` reads
+        // this for its event, a single lying strategy would panic every compound (defeating
+        // its per-strategy fault isolation) and brick this view. Saturate instead — a view
+        // must never trap; deposit/redeem stay fail-closed via their own checked_mul.
+        total_assets(e).saturating_mul(PPS_SCALE) / supply
     }
 }
 

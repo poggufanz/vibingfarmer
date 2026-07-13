@@ -113,10 +113,12 @@ impl BlendStrategy {
     /// testnet pools may have emissions off), swaps the full BLND balance to the underlying
     /// token via Soroswap when `min_out > 0` (`0` = hold BLND on the strategy instead),
     /// re-supplies the book principal, and forwards whatever remains (Blend interest + swap
-    /// proceeds) to the vault. When `principal == 0` (rebalance-to-idle or emergency_withdraw
-    /// drained the position), the withdraw-all and claim legs are skipped — but the swap+forward
-    /// leg still runs if BLND was left on the strategy by an earlier `min_out == 0` harvest, so
-    /// that held BLND doesn't get stranded forever.
+    /// proceeds) to the vault. When the LIVE Blend position is empty (`b_tokens == 0` — e.g.
+    /// after rebalance-to-idle or emergency_withdraw drained it), the withdraw-all and claim
+    /// legs are skipped — but the swap+forward leg still runs if BLND was left on the strategy
+    /// by an earlier `min_out == 0` harvest, so that held BLND doesn't get stranded forever.
+    /// Position existence is read from the live pool map, never book principal, so residual
+    /// yield left after a principal-sized withdrawal is still harvested rather than stranded.
     pub fn harvest(e: Env, min_out: i128) -> Result<i128, StrategyError> {
         let vault = storage::get_vault(&e);
         vault.require_auth();

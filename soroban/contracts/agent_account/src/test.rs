@@ -747,10 +747,19 @@ fn owner_withdraw_clears_vault_allowance() {
     // Deposit consumed 50m of the 100m constructor allowance — 50m still standing.
     assert_eq!(token_client.allowance(&agent, &vault), cap - 50_000_000);
 
-    AgentAccountClient::new(&env, &agent).owner_withdraw(&owner);
+    let client = AgentAccountClient::new(&env, &agent);
+    client.owner_withdraw(&owner);
 
     // Exit also kills the standing vault allowance — nothing left to pull from a dead agent.
     assert_eq!(token_client.allowance(&agent, &vault), 0);
+    // Exit is terminal: scope is revoked, so the session key can no longer authorize a
+    // funding pull into the swept-empty agent (enforce gates on this flag).
+    assert!(client.scope_of().revoked);
+    let ctx = deposit_ctx(&env, &vault, &agent, 10);
+    let res = env.as_contract(&agent, || {
+        AgentAccount::enforce_scope_for_test(env.clone(), ctx)
+    });
+    assert_eq!(res, Err(AccountError::Revoked));
 }
 
 // --- one-popup grant: the session key may fund itself via the DEPLOYING router only ---

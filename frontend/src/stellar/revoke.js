@@ -5,6 +5,12 @@
 import { buildInvokeTx, submitUserTx, rpcServer } from './client.js'
 import { signTxXdr } from './walletKit.js'
 import { pollEvents } from './events.js'
+import { symbolScVal } from './scval.js'
+
+// agent_revoked now fires from each per-run AgentAccount contract (not the Registry), so we
+// poll by TOPIC across all contracts — the agents' fresh addresses are never in the indexer's
+// WATCHED contract list.
+const AGENT_REVOKED_TOPIC = symbolScVal('agent_revoked').toXDR('base64')
 
 /**
  * Revoke an agent — user-signed AgentAccount.revoke() on the agent contract itself. One user tx,
@@ -61,7 +67,12 @@ export function subscribeAgentRevoked(
     let from = startLedger || (await s.getLatestLedger()).sequence
     while (!stopped) {
       try {
-        const out = await poll({ server: s, startLedger: from, seen })
+        const out = await poll({
+          server: s,
+          startLedger: from,
+          seen,
+          topics: [[AGENT_REVOKED_TOPIC]],
+        })
         seen = out.seen || seen
         if (out.latestLedger) from = out.latestLedger + 1 // next window starts after this one
         if (stopped) break

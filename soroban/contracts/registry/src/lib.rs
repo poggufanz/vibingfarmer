@@ -54,7 +54,11 @@ impl Registry {
             .unwrap_or(true) // unknown agent = treated as revoked (fail-closed)
     }
 
-    /// Fail-closed liveness view: false for unknown, revoked, or expired records.
+    /// Metadata liveness view: false for unknown records, for records whose stored `revoked`
+    /// snapshot is set, and for records past their expiry (checked live against the ledger
+    /// clock). NOTE: `revoked` is an authorize-time SNAPSHOT — this mirror is not re-synced
+    /// when an owner later calls `agent_account.revoke()`, so a consumer needing authoritative
+    /// liveness must read the agent's own `scope_of().revoked`. Fail-closed for unknown/expired.
     pub fn is_active(env: Env, agent: Address) -> bool {
         match env
             .storage()
