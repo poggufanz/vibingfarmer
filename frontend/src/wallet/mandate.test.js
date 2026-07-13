@@ -2,10 +2,11 @@
 import { describe, test, expect, vi } from 'vitest'
 import { createMandate } from './mandate.js'
 import { evaluateCall } from '../base/policyEngine.js'
-import { YIELD_ROUTER_ADDRESS } from '../base/config.js'
+import { ERC20_ABI, YIELD_ROUTER_ADDRESS } from '../base/config.js'
 
 const POOL_A = '0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
 const POOL_B = '0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB'
+const USDC_ADDRESS = '0x036CbD53842c5426634e7929541eC2318f3dCF7e'
 const ATTACKER = '0xDEADDEADDEADDEADDEADDEADDEADDEADDEADDEAD'
 
 function makeDeps({ sessionKeyAddress = '0xSESSIONKEY000000000000000000000000000001' } = {}) {
@@ -80,7 +81,18 @@ describe('createMandate', () => {
     expect(result.serializedApproval).toBe('serialized-approval-blob')
     expect(result.sessionKeyAddress).toBe('0xSESSIONKEY000000000000000000000000000099')
     expect(result.expiry).toBe(expiry)
-    expect(result.permissions).toHaveLength(1)
+    expect(result.permissions).toHaveLength(2)
+    expect(result.permissions[0]).toMatchObject({
+      target: USDC_ADDRESS,
+      valueLimit: 0n,
+      abi: ERC20_ABI,
+      functionName: 'approve',
+    })
+    expect(result.permissions[1]).toMatchObject({
+      target: YIELD_ROUTER_ADDRESS,
+      valueLimit: 0n,
+      functionName: 'deposit',
+    })
   })
 
   test('rejects a past-or-now expiry', async () => {
@@ -129,7 +141,29 @@ describe('createMandate', () => {
 
     expect(getCapturedPermissions()).toBe(permissions)
 
-    // 1) in-policy deposit on pool A within cap -> ALLOWED (mirrors session-test.mjs Test 1)
+    // 1) exact relayer approval -> ALLOWED.
+    expect(
+      evaluateCall({
+        permissions,
+        to: USDC_ADDRESS,
+        functionName: 'approve',
+        args: [YIELD_ROUTER_ADDRESS, 10n],
+        expiry,
+      }).allowed
+    ).toBe(true)
+
+    // 2) approval to any other spender -> REJECTED.
+    const wrongSpender = evaluateCall({
+      permissions,
+      to: USDC_ADDRESS,
+      functionName: 'approve',
+      args: [ATTACKER, 10n],
+      expiry,
+    })
+    expect(wrongSpender.allowed).toBe(false)
+    expect(wrongSpender.reason).toMatch(/EQUAL/)
+
+    // 3) in-policy deposit on pool A within cap -> ALLOWED (mirrors session-test.mjs Test 1)
     expect(
       evaluateCall({
         permissions,
@@ -140,7 +174,7 @@ describe('createMandate', () => {
       }).allowed
     ).toBe(true)
 
-    // 2) wrong selector: sweep -> REJECTED (mirrors session-test.mjs Test 2)
+    // 4) wrong selector: sweep -> REJECTED (mirrors session-test.mjs Test 2)
     expect(
       evaluateCall({
         permissions,
@@ -151,7 +185,7 @@ describe('createMandate', () => {
       }).allowed
     ).toBe(false)
 
-    // 3) wrong target -> REJECTED (mirrors session-test.mjs Test 3)
+    // 5) wrong target -> REJECTED (mirrors session-test.mjs Test 3)
     expect(
       evaluateCall({
         permissions,
@@ -162,7 +196,7 @@ describe('createMandate', () => {
       }).allowed
     ).toBe(false)
 
-    // 4) over the aggregate cap (= max of the two pool caps, 100_000_000n) -> REJECTED (NEW).
+    // 6) over the aggregate cap (= max of the two pool caps, 100_000_000n) -> REJECTED (NEW).
     // Per-pool caps are not expressible in @zerodev CallPolicy (see policyEngine module note); the
     // session policy enforces one per-call cap = the largest allocation.
     expect(
@@ -175,7 +209,7 @@ describe('createMandate', () => {
       }).allowed
     ).toBe(false)
 
-    // 5) after expiry -> REJECTED (NEW)
+    // 7) after expiry -> REJECTED (NEW)
     expect(
       evaluateCall({
         permissions,
