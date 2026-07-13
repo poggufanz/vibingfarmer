@@ -19,6 +19,9 @@ pub enum StrategyError {
     // deposit: amount <= 0. withdraw: amount <= 0 — the i128::MAX drain sentinel is exempt
     // since it's a large positive value, not <= 0.
     InvalidAmount = 1,
+    // Live pool data is unusable: negative bToken position or b_rate, or a fixed-point
+    // conversion whose result cannot fit i128. Fail-closed — never a trap, never a guess.
+    InvalidReserveData = 2,
 }
 
 /// Emitted by `harvest`. `blnd_claimed`/`blnd_swapped`/`blnd_held` are 0 and

@@ -5,17 +5,25 @@ use soroban_sdk::testutils::{Address as _, Events as _};
 use soroban_sdk::token::{StellarAssetClient, TokenClient};
 use soroban_sdk::{contract, contractimpl, Address, Env, Event, Map, Vec};
 
-use crate::blend::{Positions, Request, SUPPLY, WITHDRAW};
+use crate::blend::{
+    Positions, Request, Reserve, ReserveConfig, ReserveData, SCALAR_12, SUPPLY, WITHDRAW,
+};
 
-// Minimal in-test stand-in for a Blend v2 pool. Tracks each supplier's underlying balance
-// and moves the real SAC token 1:1 (mirrors rwa_vault/src/test.rs's MockBlendPool).
+// Faithful in-test stand-in for a Blend v2 pool: positions are tracked in bTOKENS and the
+// reserve carries a settable `b_rate` (SCALAR_12 fixed point), exactly like the real pool.
+// `credit_yield`/`haircut_position` move the rate (how yield/bad debt actually manifest);
+// the WITHDRAW leg converts an underlying request to bTokens with ceil rounding — which
+// OVERFLOWS on an i128::MAX request just like the real pool's to_b_token math (the bug the
+// hardened strategy must never trigger).
 #[contract]
 pub struct MockBlendPool;
 
 #[contractimpl]
 impl MockBlendPool {
-    pub fn __constructor(e: &Env, token: Address) {
+    pub fn __constructor(e: &Env, token: Address, reserve_index: u32) {
         e.storage().instance().set(&MOCK_TOKEN, &token);
+        e.storage().instance().set(&MOCK_INDEX, &reserve_index);
+        e.storage().instance().set(&MOCK_BRATE, &SCALAR_12);
     }
 
     pub fn submit_with_allowance(
@@ -27,23 +35,39 @@ impl MockBlendPool {
     ) -> Positions {
         let token: Address = e.storage().instance().get(&MOCK_TOKEN).unwrap();
         let pool = e.current_contract_address();
+        let rate: i128 = e.storage().instance().get(&MOCK_BRATE).unwrap();
         for req in requests.iter() {
             if req.request_type == SUPPLY {
                 TokenClient::new(e, &token).transfer_from(&pool, &from, &pool, &req.amount);
-                let bal = mock_supplied(e, &from) + req.amount;
+                // ceil so the round-trip value math in tests stays exact.
+                let minted = (req.amount * SCALAR_12 + rate - 1) / rate;
+                let b = mock_btokens(e, &from) + minted;
                 e.storage()
                     .persistent()
-                    .set(&MockKey::Supplied(from.clone()), &bal);
-                // Task 4: `credit_yield` has no `who` — remember the (sole) supplier so it
-                // knows whose position to credit.
+                    .set(&MockKey::BTokens(from.clone()), &b);
                 e.storage().instance().set(&MOCK_SUPPLIER, &from);
             } else if req.request_type == WITHDRAW {
-                let held = mock_supplied(e, &from);
-                let amt = if req.amount > held { held } else { req.amount };
-                TokenClient::new(e, &token).transfer(&pool, &to, &amt);
+                if rate <= 0 {
+                    panic!("mock pool: zero b_rate");
+                }
+                // Real Blend converts the underlying request to bTokens — an i128::MAX
+                // request overflows here exactly like the real pool's fixed-point math.
+                let want_b = (req
+                    .amount
+                    .checked_mul(SCALAR_12)
+                    .expect("mock pool: b_token math overflow")
+                    + rate
+                    - 1)
+                    / rate;
+                let held = mock_btokens(e, &from);
+                let burn = if want_b > held { held } else { want_b };
+                let out = burn * rate / SCALAR_12;
+                if out > 0 {
+                    TokenClient::new(e, &token).transfer(&pool, &to, &out);
+                }
                 e.storage()
                     .persistent()
-                    .set(&MockKey::Supplied(from.clone()), &(held - amt));
+                    .set(&MockKey::BTokens(from.clone()), &(held - burn));
             }
         }
         Positions {
@@ -53,30 +77,87 @@ impl MockBlendPool {
         }
     }
 
-    /// Test-only: simulate Blend interest accruing to the sole supplier's position. Mints
-    /// `amount` extra tokens into the pool's own balance (so a subsequent withdraw-all can
-    /// actually pay it out) and credits the last-seen supplier's tracked position.
+    pub fn get_positions(e: &Env, address: Address) -> Positions {
+        let index: u32 = e.storage().instance().get(&MOCK_INDEX).unwrap();
+        let mut supply = Map::new(e);
+        let b = mock_btokens(e, &address);
+        if b != 0 {
+            supply.set(index, b);
+        }
+        Positions {
+            liabilities: Map::new(e),
+            collateral: Map::new(e),
+            supply,
+        }
+    }
+
+    pub fn get_reserve(e: &Env, asset: Address) -> Reserve {
+        let index: u32 = e.storage().instance().get(&MOCK_INDEX).unwrap();
+        let rate: i128 = e.storage().instance().get(&MOCK_BRATE).unwrap();
+        Reserve {
+            asset,
+            config: ReserveConfig {
+                index,
+                decimals: 7,
+                c_factor: 0,
+                l_factor: 0,
+                util: 0,
+                max_util: 0,
+                r_base: 0,
+                r_one: 0,
+                r_two: 0,
+                r_three: 0,
+                reactivity: 0,
+                supply_cap: 0,
+                enabled: true,
+            },
+            data: ReserveData {
+                d_rate: SCALAR_12,
+                b_rate: rate,
+                ir_mod: 0,
+                b_supply: 0,
+                d_supply: 0,
+                backstop_credit: 0,
+                last_time: 0,
+            },
+            scalar: 10_000_000,
+        }
+    }
+
+    /// Test-only: force the reserve's b_rate (hostile/edge reserve data).
+    pub fn set_b_rate(e: &Env, v: i128) {
+        e.storage().instance().set(&MOCK_BRATE, &v);
+    }
+
+    /// Test-only: force a raw bToken position (hostile/edge position data).
+    pub fn set_position(e: &Env, who: Address, b_tokens: i128) {
+        e.storage().persistent().set(&MockKey::BTokens(who), &b_tokens);
+    }
+
+    /// Test-only: simulate Blend interest accruing — mints `amount` into the pool and
+    /// RAISES b_rate so the sole supplier's live position value grows by `amount`.
     pub fn credit_yield(e: &Env, amount: i128) {
         let token: Address = e.storage().instance().get(&MOCK_TOKEN).unwrap();
         let pool = e.current_contract_address();
         StellarAssetClient::new(e, &token).mint(&pool, &amount);
 
         let supplier: Address = e.storage().instance().get(&MOCK_SUPPLIER).unwrap();
-        let bal = mock_supplied(e, &supplier) + amount;
-        e.storage()
-            .persistent()
-            .set(&MockKey::Supplied(supplier), &bal);
+        let b = mock_btokens(e, &supplier);
+        let rate: i128 = e.storage().instance().get(&MOCK_BRATE).unwrap();
+        let value = b * rate / SCALAR_12;
+        let new_rate = (value + amount) * SCALAR_12 / b;
+        e.storage().instance().set(&MOCK_BRATE, &new_rate);
     }
 
-    /// Test-only: simulate a Blend pool shortfall (socialized bad debt) — the inverse of
-    /// `credit_yield`. Reduces the sole supplier's tracked position by `amount` without
-    /// moving any tokens, so a subsequent withdraw-all pays out less than was supplied.
+    /// Test-only: simulate socialized bad debt — LOWERS b_rate so the sole supplier's live
+    /// position value shrinks by `amount` (no tokens move; `b_rate` drops below par).
     pub fn haircut_position(e: &Env, amount: i128) {
         let supplier: Address = e.storage().instance().get(&MOCK_SUPPLIER).unwrap();
-        let bal = mock_supplied(e, &supplier) - amount;
-        e.storage()
-            .persistent()
-            .set(&MockKey::Supplied(supplier), &bal);
+        let b = mock_btokens(e, &supplier);
+        let rate: i128 = e.storage().instance().get(&MOCK_BRATE).unwrap();
+        let value = b * rate / SCALAR_12;
+        let new_rate = (value - amount) * SCALAR_12 / b;
+        e.storage().instance().set(&MOCK_BRATE, &new_rate);
     }
 
     /// Test-only: turn on BLND emissions. Subsequent `claim` calls mint `amount` mock-BLND to
@@ -105,19 +186,21 @@ impl MockBlendPool {
 
 const MOCK_TOKEN: soroban_sdk::Symbol = soroban_sdk::symbol_short!("MTOKEN");
 const MOCK_SUPPLIER: soroban_sdk::Symbol = soroban_sdk::symbol_short!("MSUPPL");
+const MOCK_INDEX: soroban_sdk::Symbol = soroban_sdk::symbol_short!("MINDEX");
+const MOCK_BRATE: soroban_sdk::Symbol = soroban_sdk::symbol_short!("MBRATE");
 const MOCK_EMIT_ON: soroban_sdk::Symbol = soroban_sdk::symbol_short!("EMITON");
 const MOCK_EMIT_BLND: soroban_sdk::Symbol = soroban_sdk::symbol_short!("EMITBL");
 const MOCK_EMIT_AMOUNT: soroban_sdk::Symbol = soroban_sdk::symbol_short!("EMITAMT");
 
 #[soroban_sdk::contracttype]
 enum MockKey {
-    Supplied(Address),
+    BTokens(Address),
 }
 
-fn mock_supplied(e: &Env, who: &Address) -> i128 {
+fn mock_btokens(e: &Env, who: &Address) -> i128 {
     e.storage()
         .persistent()
-        .get(&MockKey::Supplied(who.clone()))
+        .get(&MockKey::BTokens(who.clone()))
         .unwrap_or(0)
 }
 
@@ -208,7 +291,8 @@ fn setup(e: &Env) -> Ctx {
     let sac = e.register_stellar_asset_contract_v2(admin.clone());
     let token = sac.address();
 
-    let pool = e.register(MockBlendPool, (token.clone(),));
+    // Reserve index 7 — must match the strategy's constructor `reserve_token_id` below.
+    let pool = e.register(MockBlendPool, (token.clone(), 7u32));
 
     let vault = Address::generate(e);
 
@@ -653,4 +737,107 @@ fn harvest_sweeps_held_blnd_after_principal_drained_to_zero() {
     }
     .to_xdr(&e, &ctx.strategy.address);
     assert_eq!(event2.events().last().unwrap(), &expected2);
+}
+
+// ===== security hardening Task 5: live NAV + finite drain =====
+
+#[test]
+fn balance_reflects_live_yield() {
+    let e = Env::default();
+    let ctx = setup(&e);
+    ctx.strategy.deposit(&(100 * U7));
+    assert_eq!(ctx.strategy.balance(), 100 * U7);
+
+    // Yield accrues in the pool (b_rate rises) — live NAV must see it WITHOUT a harvest.
+    MockBlendPoolClient::new(&e, &ctx.pool).credit_yield(&(7 * U7));
+    assert_eq!(ctx.strategy.balance(), 107 * U7);
+}
+
+#[test]
+fn balance_reflects_bad_debt() {
+    let e = Env::default();
+    let ctx = setup(&e);
+    ctx.strategy.deposit(&(100 * U7));
+
+    // Socialized bad debt (b_rate below par) must lower NAV — book principal would lie.
+    MockBlendPoolClient::new(&e, &ctx.pool).haircut_position(&(10 * U7));
+    assert_eq!(ctx.strategy.balance(), 90 * U7);
+}
+
+#[test]
+fn full_withdraw_succeeds_when_b_rate_below_par() {
+    let e = Env::default();
+    let ctx = setup(&e);
+    ctx.strategy.deposit(&(100 * U7));
+    MockBlendPoolClient::new(&e, &ctx.pool).haircut_position(&(10 * U7)); // b_rate = 0.9e12
+
+    // The confirmed overflow: an i128::MAX underlying request trips the pool's
+    // to-bToken fixed-point math when b_rate < 1e12. The hardened strategy sizes a
+    // FINITE request from the live position instead.
+    let got = ctx.strategy.withdraw(&i128::MAX);
+
+    assert_eq!(got, 90 * U7);
+    assert_eq!(ctx.strategy.balance(), 0);
+    // vault: 1000 - 100 (deposit) + 90 (recovered) = 990
+    assert_eq!(
+        TokenClient::new(&e, &ctx.token).balance(&ctx.vault),
+        990 * U7
+    );
+}
+
+#[test]
+fn zero_b_rate_reads_zero_and_drain_is_a_noop() {
+    let e = Env::default();
+    let ctx = setup(&e);
+    ctx.strategy.deposit(&(100 * U7));
+
+    // A zeroed rate values the position at 0 — read must be clean, and a drain must
+    // NOT call the pool (whose withdraw math would divide by zero).
+    MockBlendPoolClient::new(&e, &ctx.pool).set_b_rate(&0);
+    assert_eq!(ctx.strategy.balance(), 0);
+    assert_eq!(ctx.strategy.withdraw(&i128::MAX), 0);
+}
+
+#[test]
+fn finite_withdraw_cannot_hide_residual_yield() {
+    let e = Env::default();
+    let ctx = setup(&e);
+    ctx.strategy.deposit(&(100 * U7));
+    MockBlendPoolClient::new(&e, &ctx.pool).credit_yield(&(7 * U7)); // b_rate = 1.07e12
+
+    // Withdraw exactly the book principal: got == 100, principal -> 0, but ~7 of live
+    // yield remains in the pool. Book-based balance() would report 0 — invisible dust.
+    let got = ctx.strategy.withdraw(&(100 * U7));
+    assert_eq!(got, 100 * U7);
+    let residual = 7 * U7 - 1; // floor rounding of the leftover bTokens at 1.07e12
+    assert_eq!(ctx.strategy.balance(), residual);
+
+    // Harvest is position-aware (live map, not principal): the dust is realized and
+    // forwarded to the vault, never stranded.
+    let harvested = ctx.strategy.harvest(&0);
+    assert_eq!(harvested, residual);
+    assert_eq!(ctx.strategy.balance(), 0);
+}
+
+#[test]
+fn malformed_reserve_data_fails_closed() {
+    let e = Env::default();
+    let ctx = setup(&e);
+    let pool = MockBlendPoolClient::new(&e, &ctx.pool);
+
+    // Negative position: clean InvalidReserveData, not garbage NAV.
+    pool.set_position(&ctx.strategy.address, &-5);
+    assert_eq!(
+        ctx.strategy.try_balance(),
+        Err(Ok(StrategyError::InvalidReserveData))
+    );
+
+    // Astronomical values whose product exceeds i128: overflow-safe math reports
+    // InvalidReserveData instead of trapping.
+    pool.set_position(&ctx.strategy.address, &i128::MAX);
+    pool.set_b_rate(&i128::MAX);
+    assert_eq!(
+        ctx.strategy.try_balance(),
+        Err(Ok(StrategyError::InvalidReserveData))
+    );
 }

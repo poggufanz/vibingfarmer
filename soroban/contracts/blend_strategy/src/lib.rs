@@ -56,9 +56,11 @@ impl BlendStrategy {
         Ok(())
     }
 
-    /// Withdraws up to `amount` from Blend back to the vault. `i128::MAX` drains the full
-    /// position (exempt from the `amount <= 0` guard below — it's a large positive sentinel).
-    /// Returns the amount actually pulled (Blend caps at the live position).
+    /// Withdraws up to `amount` from Blend back to the vault. A caller `amount` of
+    /// `i128::MAX` still means "drain everything" — but the request actually sent to Blend
+    /// is always FINITE, capped at the live position value, because with `b_rate < 1e12`
+    /// (socialized bad debt) the pool's to-bToken fixed-point math overflows on a MAX
+    /// request. Returns the amount actually received (observed token delta).
     pub fn withdraw(e: Env, amount: i128) -> Result<i128, StrategyError> {
         if amount <= 0 {
             return Err(StrategyError::InvalidAmount);
@@ -66,14 +68,30 @@ impl BlendStrategy {
         let vault = storage::get_vault(&e);
         vault.require_auth();
 
+        let pool = storage::get_pool(&e);
         let token = storage::get_token(&e);
         let me = e.current_contract_address();
         let token_client = TokenClient::new(&e, &token);
 
+        // Live position from the pool's own books — nothing recoverable means a clean 0,
+        // and the pool is never called (a zeroed b_rate must not trap the exit path).
+        let (b_tokens, b_rate) = blend::live_position(&e, &pool, &token)?;
+        let live = blend::to_underlying_floor(&e, b_tokens, b_rate)?;
+        if live <= 0 {
+            storage::extend_instance(&e);
+            return Ok(0);
+        }
+        let request = amount.min(live);
+
         let before = token_client.balance(&me);
-        blend::withdraw(&e, &storage::get_pool(&e), &token, amount);
+        blend::withdraw(&e, &pool, &token, request);
         let got = token_client.balance(&me) - before;
-        token_client.transfer(&me, &vault, &got);
+        if got < 0 {
+            return Err(StrategyError::InvalidReserveData);
+        }
+        if got > 0 {
+            token_client.transfer(&me, &vault, &got);
+        }
 
         let principal = storage::get_principal(&e);
         storage::set_principal(&e, if got >= principal { 0 } else { principal - got });
@@ -81,9 +99,14 @@ impl BlendStrategy {
         Ok(got)
     }
 
-    /// Book principal (not live bToken NAV) — interest realizes at harvest (Task 4/5).
-    pub fn balance(e: Env) -> i128 {
-        storage::get_principal(&e)
+    /// LIVE underlying NAV from the pool's own books: floor(b_tokens * b_rate / 1e12).
+    /// Yield raises it before any harvest; socialized bad debt lowers it. Fail-closed on
+    /// malformed reserve data (negative values / fixed-point overflow).
+    pub fn balance(e: Env) -> Result<i128, StrategyError> {
+        let pool = storage::get_pool(&e);
+        let token = storage::get_token(&e);
+        let (b_tokens, b_rate) = blend::live_position(&e, &pool, &token)?;
+        blend::to_underlying_floor(&e, b_tokens, b_rate)
     }
 
     /// Withdraws the entire Blend position, claims any pending BLND emissions (best-effort —
@@ -94,27 +117,40 @@ impl BlendStrategy {
     /// drained the position), the withdraw-all and claim legs are skipped — but the swap+forward
     /// leg still runs if BLND was left on the strategy by an earlier `min_out == 0` harvest, so
     /// that held BLND doesn't get stranded forever.
-    pub fn harvest(e: Env, min_out: i128) -> i128 {
+    pub fn harvest(e: Env, min_out: i128) -> Result<i128, StrategyError> {
         let vault = storage::get_vault(&e);
         vault.require_auth();
 
+        let pool = storage::get_pool(&e);
         let token = storage::get_token(&e);
         let me = e.current_contract_address();
         let principal = storage::get_principal(&e);
 
         let blnd = storage::get_blnd(&e);
         let blnd_client = TokenClient::new(&e, &blnd);
-        if principal == 0 && blnd_client.balance(&me) == 0 {
-            // Truly nothing to do: no Blend position and no held BLND from a prior harvest.
-            return 0;
+        // Position existence comes from the LIVE Blend position map, never book principal —
+        // residual yield left after a principal-sized withdrawal must still be harvested.
+        let (b_tokens, b_rate) = blend::live_position(&e, &pool, &token)?;
+        let has_position = b_tokens > 0;
+        if !has_position && blnd_client.balance(&me) == 0 {
+            // Truly nothing to do: no live Blend position and no held BLND.
+            return Ok(0);
         }
 
         let tk = TokenClient::new(&e, &token);
         let before = tk.balance(&me);
 
-        let (pulled, blnd_claimed) = if principal > 0 {
-            blend::withdraw(&e, &storage::get_pool(&e), &token, i128::MAX);
+        let (pulled, blnd_claimed) = if has_position {
+            // FINITE full drain: ceil of the live position value covers the whole position
+            // (Blend caps at the position) — no i128::MAX sentinel ever reaches the pool.
+            let drain = blend::to_underlying_ceil(&e, b_tokens, b_rate)?;
+            if drain > 0 {
+                blend::withdraw(&e, &pool, &token, drain);
+            }
             let pulled = tk.balance(&me) - before;
+            if pulled < 0 {
+                return Err(StrategyError::InvalidReserveData);
+            }
 
             // Claim BLND emissions — best-effort. Testnet pools may have emissions disabled, in
             // which case the pool traps and `try_claim` swallows it so interest-only harvest
@@ -122,15 +158,15 @@ impl BlendStrategy {
             // balance so the event can report THIS round's claim delta, not the full (possibly
             // carried-over from a prior `min_out == 0` harvest) balance.
             let blnd_before = blnd_client.balance(&me);
-            let pool_client = blend::BlendPoolClient::new(&e, &storage::get_pool(&e));
+            let pool_client = blend::BlendPoolClient::new(&e, &pool);
             let ids = vec![&e, storage::get_reserve_token_id(&e)];
             let _ = pool_client.try_claim(&me, &ids, &me);
             let claimed = blnd_client.balance(&me) - blnd_before; // this round's claim delta
 
             (pulled, claimed)
         } else {
-            // principal == 0: no live Blend position to drain or claim against — only the swap
-            // leg below (against whatever BLND is already held) applies this round.
+            // No live Blend position to drain or claim against — only the swap leg below
+            // (against whatever BLND is already held) applies this round.
             (0, 0)
         };
         let blnd_bal = blnd_client.balance(&me);
@@ -152,14 +188,17 @@ impl BlendStrategy {
             swapped = amounts.get(amounts.len().saturating_sub(1)).unwrap_or(0);
         }
 
-        if principal > 0 {
+        if has_position && pulled > 0 {
+            // Re-supply only the intended BOOK amount — anything above it is realized
+            // yield headed for the vault; anything below marks the book down.
             let resupply = principal.min(pulled);
-            blend::supply(&e, &storage::get_pool(&e), &token, resupply);
+            if resupply > 0 {
+                blend::supply(&e, &pool, &token, resupply);
+            }
             if pulled < principal {
                 // Pool shortfall (socialized bad debt): Blend returned less than book principal.
-                // Mark the book down to what was actually recovered and re-supplied so
-                // `balance()` stops overstating the position — otherwise Task 6-8 share pricing
-                // would inflate `price_per_share` off a phantom balance.
+                // Mark the book down to what was actually recovered and re-supplied so the
+                // book never overstates the position.
                 storage::set_principal(&e, pulled);
             }
         }
@@ -180,6 +219,6 @@ impl BlendStrategy {
         }
         .publish(&e);
         storage::extend_instance(&e);
-        usdc_out
+        Ok(usdc_out)
     }
 }
