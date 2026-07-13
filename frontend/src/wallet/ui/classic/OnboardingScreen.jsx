@@ -2,6 +2,7 @@ import { useState } from 'react'
 
 export default function OnboardingScreen({ onGetStarted }) {
   const [slide, setSlide] = useState(1)
+  const [direction, setDirection] = useState('forward')
 
   const slides = [
     {
@@ -9,7 +10,7 @@ export default function OnboardingScreen({ onGetStarted }) {
       title: 'Coordination Swarm',
       desc: 'Venice AI coordinator maps strategy, while parallel worker agents execute swap and deposit actions autonomously.',
       icon: (
-        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ filter: 'drop-shadow(0 0 12px var(--accent-glow-strong))' }}>
+        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="12" cy="12" r="4"></circle>
           <path d="M12 2v6M12 16v6M4.93 4.93l4.24 4.24M14.83 14.83l4.24 4.24M2 12h6M16 12h6M4.93 19.07l4.24-4.24M14.83 9.17l4.24-4.24"></path>
         </svg>
@@ -20,7 +21,7 @@ export default function OnboardingScreen({ onGetStarted }) {
       title: 'Secure Boundaries',
       desc: 'Enforce ed25519 session-key limits on-chain. Smart contracts prevent agents from exceeding approved amount limits.',
       icon: (
-        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ filter: 'drop-shadow(0 0 12px var(--accent-glow-strong))' }}>
+        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
           <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
           <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
           <path d="M12 15v3"></path>
@@ -32,7 +33,7 @@ export default function OnboardingScreen({ onGetStarted }) {
       title: 'Gasless Relaying',
       desc: 'Pay zero transaction fees. Every agent operation is fee-bump relayer sponsored on Stellar testnet.',
       icon: (
-        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ filter: 'drop-shadow(0 0 12px var(--accent-glow-strong))' }}>
+        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
           <line x1="12" y1="1" x2="12" y2="23"></line>
           <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
         </svg>
@@ -43,12 +44,24 @@ export default function OnboardingScreen({ onGetStarted }) {
   const current = slides[slide - 1]
 
   const handleNext = () => {
-    if (slide < 3) setSlide(slide + 1)
+    if (slide < 3) {
+      setDirection('forward')
+      setSlide(slide + 1)
+    }
     else onGetStarted()
   }
 
   const handleBack = () => {
-    if (slide > 1) setSlide(slide - 1)
+    if (slide > 1) {
+      setDirection('back')
+      setSlide(slide - 1)
+    }
+  }
+
+  const goToSlide = (id) => {
+    if (id === slide) return
+    setDirection(id > slide ? 'forward' : 'back')
+    setSlide(id)
   }
 
   return (
@@ -63,7 +76,7 @@ export default function OnboardingScreen({ onGetStarted }) {
       )}
 
       {/* ── Slide Content Card ── */}
-      <div className="ob-content" key={slide}>
+      <div className="ob-content" data-direction={direction} key={slide}>
         <div className="ob-icon-wrapper">
           {current.icon}
         </div>
@@ -74,10 +87,13 @@ export default function OnboardingScreen({ onGetStarted }) {
       {/* ── Indicator Dots ── */}
       <div className="ob-dots">
         {slides.map((s) => (
-          <div
+          <button
+            type="button"
             key={s.id}
             className={'ob-dot' + (s.id === slide ? ' active' : '')}
-            onClick={() => setSlide(s.id)}
+            aria-label={`Go to onboarding step ${s.id}`}
+            aria-current={s.id === slide ? 'step' : undefined}
+            onClick={() => goToSlide(s.id)}
           />
         ))}
       </div>
@@ -153,6 +169,7 @@ function OnboardingStyle() {
 }
 
 .ob-content {
+  --ob-enter-x: 12px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -160,21 +177,21 @@ function OnboardingStyle() {
   padding: 32px 12px 16px;
   flex: 1;
   justify-content: center;
-  animation: ob-fade-in 350ms ease both;
+  animation: ob-fade-in 220ms cubic-bezier(.23,1,.32,1) both;
 }
+.ob-content[data-direction="back"] { --ob-enter-x: -12px; }
 @keyframes ob-fade-in {
-  from { opacity: 0; transform: translateY(12px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; transform: translateX(var(--ob-enter-x)); }
+  to   { opacity: 1; transform: translateX(0); }
 }
 
 .ob-icon-wrapper {
   width: 96px; height: 96px;
   border-radius: 24px;
-  background: linear-gradient(135deg, var(--bg-elev) 0%, var(--bg-card) 100%);
+  background: var(--bg-elev);
   border: 1px solid var(--border-strong);
   display: flex; align-items: center; justify-content: center;
   margin-bottom: 24px;
-  box-shadow: 0 12px 32px rgba(0,0,0,.4);
 }
 
 .ob-title {
@@ -200,16 +217,25 @@ function OnboardingStyle() {
   margin-bottom: 24px;
 }
 .ob-dot {
+  appearance: none;
+  width: 32px; height: 32px;
+  padding: 0;
+  border: 0;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  cursor: pointer;
+}
+.ob-dot::before {
+  content: "";
   width: 6px; height: 6px;
   border-radius: 50%;
   background: var(--border-strong);
-  cursor: pointer;
-  transition: all 250ms ease;
+  transition: background-color 160ms ease, transform 160ms cubic-bezier(.23,1,.32,1);
 }
-.ob-dot.active {
+.ob-dot.active::before {
   background: var(--accent, #cfff3d);
   transform: scale(1.25);
-  box-shadow: 0 0 8px var(--accent);
 }
 
 .ob-actions {
@@ -236,6 +262,11 @@ function OnboardingStyle() {
   font-style: italic;
   font-size: 11px;
   color: var(--text-faint);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ob-content { animation: none; }
+  .ob-dot::before { transition: background-color 160ms ease; }
 }
 `}</style>
   )

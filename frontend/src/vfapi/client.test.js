@@ -34,7 +34,28 @@ describe('vfapi thin client', () => {
     // Confirm the fixture is genuinely rejected (fail-closed)
     expect(out.allow).toBe(false)
     expect(out.reasons.length).toBeGreaterThan(0)
-    expect(out.reasons[0]).toMatch(/ponzi/i)
+    expect(out.reasons[0]).toMatch(/exceeds the 1\.5 limit/i)
+  })
+
+  it('resolves snapshot facts from the protocol slug when facts are omitted', async () => {
+    // Fixed nowMs (3 days after the snapshot CAPTURED_AT) keeps freshness deterministic.
+    const out = await eligibility({
+      vault: 'blend-usdc',
+      amount: 100n,
+      nowMs: Date.parse('2026-07-01T00:00:00Z'),
+    })
+    expect(out.allow).toBe(true)
+    expect(out.verdict.protocol).toBe('blend-usdc')
+  })
+
+  it('fails closed for an unknown protocol/address (no facts = no eligibility)', async () => {
+    const out = await eligibility({
+      vault: 'CUNKNOWNVAULTADDRESS',
+      amount: 100n,
+      nowMs: Date.parse('2026-07-01T00:00:00Z'),
+    })
+    expect(out.allow).toBe(false)
+    expect(out.reasons[0]).toMatch(/facts unavailable/)
   })
 
   it('buildUnsignedTx returns { xdr } and never a signature/secret', async () => {

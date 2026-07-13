@@ -1,694 +1,504 @@
-// LandingHero.jsx
-// Scroll-driven hero for Vibing Farmer.
-// Direction: editorial-finance terminal — dark canvas, single acid accent,
-// the demo player as the one moving signature element.
-//
-// Desktop  → 300vh scroll stage; sticky player morphs center → left → right,
-//            scene text staggers in on the opposite side (framer-motion).
-// Mobile / reduced-motion → static 3-section stacked layout, no scroll math.
-//
-// Stack note: project ships no Tailwind. Styling uses the existing CSS-var
-// design tokens (style.css) via inline objects + a scoped <style> for the
-// things inline can't express (hover, media queries, reduced-motion, texture).
-
-import { useRef, useState, useEffect } from 'react'
-import { motion, useScroll, useTransform, useSpring, useMotionValueEvent } from 'framer-motion'
+import { motion, useReducedMotion } from 'framer-motion'
 import NavBar from './NavBar.jsx'
+import './LandingHero.css'
 
-/* ----------------------------- content ----------------------------- */
-
-const SCENE_2 = {
-  heading: ['VF Loop Engine.', 'Autonomous Yield.', 'Anti-IL Shield.'],
-  features: [
-    'Continuous Loops: Automatic yield rebalancing and compounding on Stellar',
-    'AI Council (Yield, Risk, Market) evaluates pool health and anomalies',
-    'Active Impermanent Loss (IL) protection shields your liquidity positions',
-    'Autonomous Exit: Scoped keeper pulls funds to safety within 60 seconds',
-  ],
-}
-
-const SCENE_3 = {
-  heading: ['VF Wallet.', 'Secured and', 'Gas-Abstracted.'],
-  features: [
-    'Smart Account: Secure passkey authentication (Face ID) or Classic mode',
-    'Scan-Before-Send: Built-in safety scanner flags recipient address risks',
-    'Zero Gas fees: Relayer-sponsored transactions protect your capital',
-    'Ephemeral Agent Keys: Permission-bounded execution fully controlled by you',
-  ],
-}
-
-/* --------------------------- motion variants ----------------------- */
-// Each line: x(30) + opacity 0 + blur(8px) → settled. 80ms between lines.
-
-const groupV = {
-  hidden: {},
-  show: { transition: { staggerChildren: 0.08 } },
-}
-
-const lineV = {
-  hidden: { opacity: 0, x: 30, filter: 'blur(8px)' },
-  show: {
-    opacity: 1,
-    x: 0,
-    filter: 'blur(0px)',
-    transition: { type: 'spring', stiffness: 120, damping: 22 },
+const BOUNDS = [
+  {
+    title: 'Budget',
+    copy: 'SEP-41 caps the router total. Each worker also enforces a per-period amount cap and only approved contract functions.',
+    className: 'vf-bound--budget',
   },
+  {
+    title: 'One vault',
+    copy: 'Each worker is deployed for one approved vault. Its session key cannot redirect deposits elsewhere.',
+    className: 'vf-bound--vault',
+  },
+  {
+    title: 'Expiry',
+    copy: 'Agent scope and token allowance stop working after their on-chain expiry.',
+    className: 'vf-bound--expiry',
+  },
+  {
+    title: 'Revoke',
+    copy: 'Set the router allowance to zero with your wallet. The global spending leash closes immediately.',
+    className: 'vf-bound--revoke',
+  },
+]
+
+const RUN_FLOW = [
+  {
+    title: 'Set your intent',
+    copy: 'Choose a USDC amount, risk level, and number of worker agents.',
+  },
+  {
+    title: 'Review the plan',
+    copy: 'The strategist proposes an allocation. Review and edit every worker skill before approval.',
+  },
+  {
+    title: 'Grant once',
+    copy: 'One wallet signature creates the budget, expiry, and fresh scoped agent accounts.',
+  },
+  {
+    title: 'Let workers execute',
+    copy: 'Failure-isolated workers pull only their share and deposit through the sponsored relay.',
+  },
+  {
+    title: 'Keep earning',
+    copy: 'The vault supplies Blend. The keeper compounds, while Lifeboat watches for mandate-authorized de-risking.',
+  },
+]
+
+const PROOF = [
+  { value: '1', label: 'wallet signature for the initial grant' },
+  { value: '0 XLM', label: 'paid by you on sponsored calls' },
+  { value: '1 vault', label: 'maximum target per worker' },
+  { value: '~6 sec', label: 'Lifeboat market scan cadence' },
+]
+
+const CAPITAL_PATH = [
+  { label: 'User intent', value: 'USDC budget' },
+  { label: 'Scoped execution', value: 'Agent accounts' },
+  { label: 'Share ledger', value: 'vfVLT vault' },
+  { label: 'Yield source', value: 'Blend v2' },
+]
+
+const landingEaseOut = [0.23, 1, 0.32, 1]
+const heroTransition = { duration: 0.5, ease: landingEaseOut }
+const revealTransition = { duration: 0.4, ease: landingEaseOut }
+const reducedRevealTransition = { duration: 0.2, ease: landingEaseOut }
+
+const capitalPathVariants = {
+  hidden: {},
+  visible: { transition: { staggerChildren: 0.06 } },
 }
 
-/* ------------------------------ pieces ----------------------------- */
+function Reveal({ children, className = '', delay = 0, rise = false }) {
+  const reduceMotion = useReducedMotion()
+  const transform = !reduceMotion && rise ? 'translateY(16px)' : 'translateY(0px)'
 
-// The player itself — pure presentation. Animation lives on the wrapper.
-function Player({ src = '/demo.mp4' }) {
   return (
-    <div className="vf-player">
-      <div className="vf-player__chrome">
-        <span className="vf-dot" />
-        <span className="vf-dot" />
-        <span className="vf-dot" />
-      </div>
-      <div className="vf-player__stage">
-        <div className="vf-player__glow" aria-hidden="true" />
-        {/* key={src} → swapping the per-scene video remounts cleanly. */}
-        <video
-          key={src}
-          src={src}
-          autoPlay
-          loop
-          muted
-          playsInline
-          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-        />
-      </div>
-    </div>
+    <motion.div
+      className={className}
+      initial={{ opacity: 0, transform }}
+      whileInView={{ opacity: 1, transform: 'translateY(0px)' }}
+      viewport={{ once: true, amount: 0.18 }}
+      transition={{
+        ...(reduceMotion ? reducedRevealTransition : revealTransition),
+        delay: reduceMotion ? 0 : delay,
+      }}
+    >
+      {children}
+    </motion.div>
   )
 }
 
-// Above-the-fold hero — value prop + CTA visible without scroll.
-// Editorial split: copy left, the demo player right. Stacks on mobile.
-function HeroSection({ onStart }) {
+function CapitalPath() {
+  const reduceMotion = useReducedMotion()
+  const stepVariants = {
+    hidden: {
+      opacity: 0,
+      transform: reduceMotion ? 'translateX(0px)' : 'translateX(8px)',
+    },
+    visible: {
+      opacity: 1,
+      transform: 'translateX(0px)',
+      transition: reduceMotion ? reducedRevealTransition : revealTransition,
+    },
+  }
+
   return (
-    <section className="vf-hero">
-      <div className="vf-hero__copy">
-        <p className="vf-hero__eyebrow">VF &amp; VF Wallet · Stellar testnet</p>
-        <h1 className="vf-hero__headline">
-          <span>Self-Custody Wallet.</span>
-          <span className="vf-hero__headline-soft">Autonomous Yield Loops.</span>
-        </h1>
-        <p className="vf-hero__sub">
-          Vibing Farmer (VF) pairs a secure, scan-protected wallet with auto-compounding yield loops.
-          Protect your assets against Impermanent Loss and pool freezes autonomously.
-        </p>
-        <div className="vf-hero__cta">
-          <button className="vf-cta__btn" onClick={onStart}>
-            Start farming <span aria-hidden="true">→</span>
+    <motion.div
+      className="vf-capital-path"
+      variants={capitalPathVariants}
+      initial="hidden"
+      whileInView="visible"
+      viewport={{ once: true, amount: 0.3 }}
+    >
+      {CAPITAL_PATH.map((step) => (
+        <motion.div key={step.label} variants={stepVariants}>
+          <span>{step.label}</span>
+          <strong>{step.value}</strong>
+        </motion.div>
+      ))}
+    </motion.div>
+  )
+}
+
+export function Player({ src, reduceMotion = false, label = 'Video', priority = false }) {
+  return (
+    <figure className="vf-media">
+      <video
+        src={src}
+        aria-label={label}
+        autoPlay={!reduceMotion}
+        loop={!reduceMotion}
+        controls={reduceMotion}
+        muted
+        playsInline
+        preload={priority ? 'auto' : 'metadata'}
+      />
+      <figcaption>{label}</figcaption>
+    </figure>
+  )
+}
+
+function ProductImage({ src, alt, caption, priority = false }) {
+  return (
+    <figure className="vf-media">
+      <img src={src} alt={alt} width="1448" height="1086" loading={priority ? 'eager' : 'lazy'} />
+      <figcaption>{caption}</figcaption>
+    </figure>
+  )
+}
+
+function Hero({ onStart, reduceMotion }) {
+  const itemVariants = {
+    hidden: {
+      opacity: 0,
+      transform: reduceMotion ? 'translateY(0px)' : 'translateY(20px)',
+    },
+    visible: {
+      opacity: 1,
+      transform: 'translateY(0px)',
+      transition: reduceMotion ? reducedRevealTransition : heroTransition,
+    },
+  }
+
+  return (
+    <header className="vf-hero">
+      <motion.div
+        className="vf-hero__copy"
+        initial="hidden"
+        animate="visible"
+        variants={{
+          hidden: {},
+          visible: reduceMotion ? {} : { transition: { staggerChildren: 0.06 } },
+        }}
+      >
+        <motion.p className="vf-kicker" variants={itemVariants}>
+          Autonomous yield on Stellar
+        </motion.p>
+        <motion.h1 variants={itemVariants}>
+          One signature.
+          <span>Bounded workers.</span>
+        </motion.h1>
+        <motion.p className="vf-hero__lede" variants={itemVariants}>
+          Set risk and a USDC budget. Scoped agents enter real Blend lending without repeated
+          approvals or XLM on sponsored calls.
+        </motion.p>
+        <motion.div className="vf-hero__actions" variants={itemVariants}>
+          <button className="vf-button vf-button--primary" onClick={onStart}>
+            Launch app
           </button>
+          <a className="vf-text-link" href="#how-it-works">
+            See how it works
+          </a>
+        </motion.div>
+      </motion.div>
+
+      <motion.div
+        className="vf-hero__media"
+        initial={reduceMotion ? { opacity: 0 } : { opacity: 0, transform: 'translateX(32px)' }}
+        animate={{ opacity: 1, transform: 'translateX(0px)' }}
+        transition={reduceMotion ? reducedRevealTransition : { ...heroTransition, delay: 0.16 }}
+      >
+        <ProductImage
+          src="/vf-bounded-swarm.png"
+          alt="Four bounded execution paths carry capital through individual limiter gates into one vault"
+          caption="Concept view: one grant routes capital through four independently scoped workers."
+          priority
+        />
+      </motion.div>
+    </header>
+  )
+}
+
+function ProofStrip() {
+  return (
+    <section className="vf-proof" aria-label="Product facts">
+      {PROOF.map((item) => (
+        <div className="vf-proof__item" key={item.label}>
+          <strong>{item.value}</strong>
+          <span>{item.label}</span>
         </div>
-      </div>
-      <div className="vf-hero__visual">
-        <Player src="/demo.mp4" />
+      ))}
+    </section>
+  )
+}
+
+function ProblemSection() {
+  return (
+    <section className="vf-section vf-problem" aria-labelledby="problem-title">
+      <Reveal className="vf-problem__statement" rise>
+        <p className="vf-kicker">Why it exists</p>
+        <h2 id="problem-title">Yield farming should not feel like clerical work.</h2>
+        <p>
+          Traditional flows make you research, approve, deposit, harvest, and repeat. Full-wallet
+          bots remove the clicks by removing the boundary.
+        </p>
+      </Reveal>
+
+      <div className="vf-contrast">
+        <div className="vf-contrast__column">
+          <span className="vf-contrast__label">Typical flow</span>
+          <p>Find a vault, check risk, approve, deposit, harvest, sign again, repeat.</p>
+        </div>
+        <div className="vf-contrast__column vf-contrast__column--vf">
+          <span className="vf-contrast__label">Vibing Farmer</span>
+          <p>Set intent, review the boundaries, sign once, watch scoped workers execute.</p>
+        </div>
       </div>
     </section>
   )
 }
 
-function SceneText({ data, side, active }) {
+function FlowSection() {
   return (
-    <motion.div
-      className={`vf-scene-text vf-scene-text--${side}`}
-      variants={groupV}
-      initial="hidden"
-      animate={active ? 'show' : 'hidden'}
-      aria-hidden={active ? undefined : 'true'}
-      // Hidden scenes are opacity:0 but still in the layer stack — kill
-      // pointer capture so they don't block the player / CTA beneath them.
-      style={{ pointerEvents: active ? 'auto' : 'none' }}
-    >
-      <h2 className="vf-headline">
-        {data.heading.map((l) => (
-          <motion.span key={l} className="vf-headline__line" variants={lineV}>
-            {l}
-          </motion.span>
+    <section className="vf-section vf-flow" id="how-it-works" aria-labelledby="flow-title">
+      <Reveal className="vf-flow__intro" rise>
+        <h2 id="flow-title">From intent to working capital.</h2>
+        <p>
+          The first grant turns one reviewed decision into a bounded workforce. Valid repeat runs
+          can continue without another signature while scope and allowance remain active.
+        </p>
+      </Reveal>
+
+      <div className="vf-flow__list">
+        {RUN_FLOW.map((item) => (
+          <div className="vf-flow__row" key={item.title}>
+            <h3>{item.title}</h3>
+            <p>{item.copy}</p>
+          </div>
         ))}
-      </h2>
-      <ul className="vf-features">
-        {data.features.map((f) => (
-          <motion.li key={f} className="vf-feature" variants={lineV}>
-            {f}
-          </motion.li>
+      </div>
+    </section>
+  )
+}
+
+function BoundsSection() {
+  return (
+    <section className="vf-section vf-bounds" aria-labelledby="bounds-title">
+      <Reveal className="vf-bounds__header" rise>
+        <h2 id="bounds-title">Autonomy, with a leash.</h2>
+        <p>
+          The AI proposes a plan. Soroban decides what each agent is allowed to do. The security
+          boundary lives on-chain, not inside a prompt.
+        </p>
+      </Reveal>
+
+      <div className="vf-bounds__grid">
+        {BOUNDS.map((item) => (
+          <div className={`vf-bound ${item.className}`} key={item.title}>
+            <h3>{item.title}</h3>
+            <p>{item.copy}</p>
+          </div>
         ))}
-      </ul>
-    </motion.div>
+      </div>
+    </section>
   )
 }
 
-function CtaBlock({ onStart }) {
+function IntelligenceSection() {
   return (
-    <div className="vf-cta">
-      <button className="vf-cta__btn" onClick={onStart}>
-        Start farming <span aria-hidden="true">→</span>
-      </button>
-      <p className="vf-cta__sub">Stellar testnet · Freighter / xBull / Albedo</p>
-    </div>
-  )
-}
-
-// Closing panel — shared by scroll + static layouts.
-function OutroContent({ onStart }) {
-  return (
-    <>
-      <p className="vf-outro__eyebrow">protect and yield</p>
-      <h2 className="vf-outro__title">
-        The loops run.
-        <br />
-        <span className="vf-outro__title-soft">Your wallet is guarded.</span>
-      </h2>
-      <p className="vf-outro__sub">
-        Secure self-custody keys, F8 scan-before-send security, and automatic emergency exits. Set once. Vibe forever.
-      </p>
-      <CtaBlock onStart={onStart} />
-    </>
-  )
-}
-
-/* ----------------------- static fallback layout -------------------- */
-// Mobile + reduced-motion. Stacks vertically; CSS handles a soft fade-in.
-
-function StaticHero({ onStart }) {
-  return (
-    <div className="vf-static">
-      <HeroSection onStart={onStart} />
-
-      <section className="vf-static__scene vf-static__scene--split">
-        <Player src="/strategy.mp4" />
-        <SceneText data={SCENE_2} side="right" active />
-      </section>
-
-      <section className="vf-static__scene vf-static__scene--split reverse">
-        <SceneText data={SCENE_3} side="left" active />
-        <Player src="/agent.mp4" />
-      </section>
-
-      <section className="vf-static__scene vf-outro">
-        <div className="vf-outro__inner">
-          <OutroContent onStart={onStart} />
+    <section className="vf-section vf-intelligence" aria-labelledby="intelligence-title">
+      <Reveal className="vf-intelligence__copy" rise>
+        <h2 id="intelligence-title">AI plans. Rules can say no.</h2>
+        <p>
+          Models propose allocations, but they never become the spending boundary. Deterministic
+          checks and the user stay in the approval path.
+        </p>
+        <div className="vf-decision-stack">
+          <div>
+            <strong>Strategist</strong>
+            <span>Uses live context, then falls back safely if an AI provider is unavailable.</span>
+          </div>
+          <div>
+            <strong>Council</strong>
+            <span>Yield, Risk, and Market specialists debate. Risk has hard veto power.</span>
+          </div>
+          <div>
+            <strong>Eligibility gate</strong>
+            <span>Missing or stale protocol facts cause rejection, not optimistic execution.</span>
+          </div>
+          <div>
+            <strong>Simulation</strong>
+            <span>A seeded 200-scenario check tests the allocation across a 30-day horizon.</span>
+          </div>
         </div>
-      </section>
-    </div>
+      </Reveal>
+
+      <Reveal className="vf-intelligence__media" delay={0.08} rise>
+        <ProductImage
+          src="/vf-risk-gates.png"
+          alt="A signal path passes through three physical inspection gates while a rejected branch remains closed"
+          caption="Concept view: a proposal passes the strategist, council, and eligibility gate before execution."
+        />
+      </Reveal>
+    </section>
   )
 }
 
-/* -------------------------- scroll-driven -------------------------- */
-
-// Per-scene video mapped to user's recorded demo components.
-const SCENE_VIDEO = { 1: '/demo.mp4', 2: '/strategy.mp4', 3: '/agent.mp4' }
-
-function ScrollHero({ onStart, scrollContainer }) {
-  const ref = useRef(null)
-  // Track scroll inside our own fixed container — the app locks body/#root
-  // (overflow:hidden, height:100vh), so window scroll never progresses.
-  const { scrollYProgress } = useScroll({
-    container: scrollContainer,
-    target: ref,
-    offset: ['start start', 'end end'],
-  })
-
-  // Player morph. Spring on the signature transit (stiffness 100 / damping 20).
-  const scaleRaw = useTransform(scrollYProgress, [0, 0.33], [1, 0.58])
-  const xRaw = useTransform(scrollYProgress, [0, 0.33, 0.66], ['0%', '-32%', '32%'])
-  const rotRaw = useTransform(scrollYProgress, [0, 0.33, 0.66], [0, 5, -5])
-
-  const springCfg = { stiffness: 100, damping: 20, mass: 0.6 }
-  const scale = useSpring(scaleRaw, springCfg)
-  const x = useSpring(xRaw, springCfg)
-  const rotateY = useSpring(rotRaw, springCfg)
-
-  // Faint lime trail trails the player as it moves laterally.
-  const trailOpacity = useTransform(
-    scrollYProgress,
-    [0, 0.18, 0.33, 0.5, 0.66, 0.82],
-    [0, 0.5, 0, 0.5, 0, 0]
-  )
-
-  // Scene activation from scroll position (drives stagger + which video plays).
-  const [scene, setScene] = useState(1)
-  useMotionValueEvent(scrollYProgress, 'change', (p) => {
-    const next = p < 0.2 ? 1 : p < 0.6 ? 2 : 3
-    setScene((cur) => (cur === next ? cur : next))
-  })
-
-  // Tagline + scroll hint live in scene 1 only.
-  const introOpacity = useTransform(scrollYProgress, [0, 0.12, 0.2], [1, 1, 0])
-
+function YieldSection() {
   return (
-    <>
-      <HeroSection onStart={onStart} />
-      <section className="vf-stage" ref={ref}>
-        <div className="vf-stage__sticky">
-          {/* persistent top nav carries the wordmark now (see <NavBar/> at root) */}
+    <section className="vf-section vf-yield" aria-labelledby="yield-title">
+      <Reveal className="vf-yield__lead" rise>
+        <p className="vf-kicker">Stellar testnet</p>
+        <h2 id="yield-title">Real lending underneath.</h2>
+        <p>
+          Deposited USDC becomes vault shares, then the strategy supplies Blend Capital v2. Interest
+          and BLND rewards are harvested rather than simulated in the interface.
+        </p>
+      </Reveal>
 
-          {/* scene 2 text — right side, in 0.2–0.6 */}
-          <SceneText data={SCENE_2} side="right" active={scene === 2} />
-          {/* scene 3 text — left side, in 0.6+ */}
-          <SceneText data={SCENE_3} side="left" active={scene === 3} />
+      <CapitalPath />
 
-          {/* the moving player — video crossfades per scene */}
-          <motion.div className="vf-stage__player" style={{ x, scale, rotateY }}>
-            <motion.div
-              className="vf-stage__trail"
-              style={{ opacity: trailOpacity }}
-              aria-hidden="true"
-            />
-            <Player src={SCENE_VIDEO[scene]} />
-          </motion.div>
-
-          {/* scene 1 tagline */}
-          <motion.div className="vf-stage__intro" style={{ opacity: introOpacity }}>
-            <p className="vf-tagline">Set once. Vibe forever.</p>
-          </motion.div>
+      <div className="vf-operations">
+        <div className="vf-operation">
+          <span className="vf-operation__meta">Routine</span>
+          <h3>The keeper compounds.</h3>
+          <p>
+            A separate keeper identity harvests and re-supplies gains on a schedule, within contract
+            cooldowns and movement caps.
+          </p>
         </div>
-      </section>
-
-      {/* outro — closing panel after the last scene, scrolls up as the
-        sticky stage releases. The primary conversion moment. */}
-      <section className="vf-outro">
-        <motion.div
-          className="vf-outro__inner"
-          initial={{ opacity: 0, y: 30 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ root: scrollContainer, once: true, amount: 0.35 }}
-          transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-        >
-          <OutroContent onStart={onStart} />
-        </motion.div>
-      </section>
-    </>
+        <div className="vf-operation vf-operation--lifeboat">
+          <span className="vf-operation__meta">Emergency</span>
+          <h3>Lifeboat needs a mandate.</h3>
+          <p>
+            The radar scans each ledger. It can pull capital to vault-idle only while your
+            time-boxed mandate is active. Otherwise it alarms and does nothing.
+          </p>
+        </div>
+      </div>
+    </section>
   )
 }
 
-/* ------------------------------ root ------------------------------ */
+function RelaySection() {
+  return (
+    <section className="vf-section vf-relay" aria-labelledby="relay-title">
+      <div className="vf-relay__number">
+        <strong>0 XLM</strong>
+        <span>required from your wallet for sponsored calls</span>
+      </div>
+      <Reveal className="vf-relay__copy" delay={0.08} rise>
+        <h2 id="relay-title">The relay pays. It does not control principal.</h2>
+        <p>
+          Vibing Farmer wraps approved Stellar transactions in a fee-bump. The server pays the
+          network fee and rejects calls outside a short allowlist.
+        </p>
+        <p className="vf-note">
+          For the initial grant, relay failure can fall back to direct user-paid submission instead
+          of hiding the network fee. Worker failures remain isolated and visible.
+        </p>
+      </Reveal>
+    </section>
+  )
+}
+
+function ObservabilitySection() {
+  return (
+    <section className="vf-section vf-observe" aria-labelledby="observe-title">
+      <Reveal className="vf-observe__copy" rise>
+        <h2 id="observe-title">Watch the swarm work.</h2>
+        <p>
+          The operations console shows workers, council decisions, positions, keeper activity, and
+          Lifeboat state. Strategy hashes can also be attested on-chain.
+        </p>
+      </Reveal>
+      <div className="vf-observe__panel">
+        <dl className="vf-observe__facts">
+          <div>
+            <dt>Execution</dt>
+            <dd>Failure-isolated, with worker submissions paced for relay limits</dd>
+          </div>
+          <div>
+            <dt>Memory</dt>
+            <dd>Per-agent results and lessons stored for inspection and later runs</dd>
+          </div>
+          <div>
+            <dt>Exit</dt>
+            <dd>User redemption remains available independently of keeper automation</dd>
+          </div>
+        </dl>
+      </div>
+    </section>
+  )
+}
+
+function HonestySection() {
+  return (
+    <section className="vf-section vf-honesty" aria-labelledby="honesty-title">
+      <Reveal className="vf-honesty__intro" rise>
+        <h2 id="honesty-title">Real where it counts. Clear where it is not.</h2>
+        <p>
+          The core route stays on Stellar testnet. An optional farm route bridges USDC through CCTP
+          to Base Sepolia under a ZeroDev session-key policy, then reverses the corridor to unwind.
+          Proven mechanisms and stand-ins stay clearly separated below.
+        </p>
+      </Reveal>
+
+      <div className="vf-honesty__groups">
+        <div className="vf-honesty__group">
+          <h3>Live-proven on testnet</h3>
+          <p>
+            One-signature grant, Blend lending position, fee-bump relay, Lifeboat drill, and CCTP
+            corridor.
+          </p>
+        </div>
+        <div className="vf-honesty__group">
+          <h3>Explicit stand-in</h3>
+          <p>
+            Base Sepolia pools custody bridged USDC one-to-one. They do not fabricate yield. The
+            Aave adapter is built but not deployed there.
+          </p>
+        </div>
+        <div className="vf-honesty__group">
+          <h3>Precision note</h3>
+          <p>
+            Workers are independent but paced two seconds apart. One failure does not abort the
+            others, which is the swarm property that matters.
+          </p>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function FinalSection({ onStart }) {
+  return (
+    <section className="vf-final" aria-labelledby="final-title">
+      <Reveal className="vf-final__inner" rise>
+        <p className="vf-final__tagline">Set once. Vibe forever.</p>
+        <h2 id="final-title">Set your bounds. Let the system do the work.</h2>
+        <p>Choose the budget, risk, and workers. Review the plan. Sign once.</p>
+        <button className="vf-button vf-button--secondary" onClick={onStart}>
+          Launch app
+        </button>
+      </Reveal>
+    </section>
+  )
+}
 
 export default function LandingHero({ onStart }) {
-  const [isMobile, setIsMobile] = useState(false)
-
-  useEffect(() => {
-    const mq = window.matchMedia('(max-width: 760px)')
-    const sync = () => setIsMobile(mq.matches)
-    sync()
-    mq.addEventListener('change', sync)
-    return () => mq.removeEventListener('change', sync)
-  }, [])
-
-  // Static layout only on real small screens. Desktop always animates —
-  // the scroll-morph is the product's core demo, shown to every visitor.
-  const useStatic = isMobile
-  const containerRef = useRef(null)
+  const reduceMotion = useReducedMotion()
 
   return (
-    <div className="vf-landing" ref={containerRef} data-static={useStatic ? 'true' : 'false'}>
-      <StyleTag />
-      <NavBar />
-      {useStatic ? (
-        <StaticHero onStart={onStart} />
-      ) : (
-        <ScrollHero onStart={onStart} scrollContainer={containerRef} />
-      )}
+    <div className="vf-landing">
+      <NavBar onLaunch={onStart} />
+      <main>
+        <Hero onStart={onStart} reduceMotion={reduceMotion} />
+        <ProofStrip />
+        <ProblemSection />
+        <FlowSection />
+        <BoundsSection />
+        <IntelligenceSection />
+        <YieldSection />
+        <RelaySection />
+        <ObservabilitySection />
+        <HonestySection />
+        <FinalSection onStart={onStart} />
+      </main>
     </div>
-  )
-}
-
-/* ---------------------------- styles ------------------------------ */
-// Scoped to .vf-landing. Inherits palette tokens from style.css so the
-// hero re-themes with the rest of the app (Acid Yield, Mono Slate, …).
-
-function StyleTag() {
-  return (
-    <style>{`
-.vf-landing {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
-  background: var(--bg-base, #0e0f0c);
-  color: var(--text, #ecebe1);
-  font-family: var(--font-body, "Geist", system-ui, sans-serif);
-  --vf-accent: var(--accent, #cfff3d);
-  --vf-player-w: clamp(280px, 66vw, 820px);
-}
-
-/* faint grid texture for atmosphere */
-.vf-landing::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  background-image:
-    linear-gradient(rgba(255,255,255,0.018) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,255,255,0.018) 1px, transparent 1px);
-  background-size: 48px 48px;
-  mask-image: radial-gradient(ellipse 80% 70% at 50% 40%, #000 30%, transparent 100%);
-}
-
-/* ---------- wordmark ---------- */
-.vf-wordmark {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 0.4ch;
-  font-size: clamp(1.1rem, 2.4vw, 1.6rem);
-  letter-spacing: -0.01em;
-  user-select: none;
-}
-.vf-wordmark.is-small { font-size: clamp(0.95rem, 1.6vw, 1.2rem); }
-.vf-wordmark__vibe {
-  font-family: var(--font-script, "Newsreader", serif);
-  font-style: italic;
-  font-weight: 500;
-  color: var(--text, #ecebe1);
-}
-.vf-wordmark__slash {
-  color: var(--vf-accent);
-  font-weight: 400;
-  transform: translateY(-0.02em);
-}
-.vf-wordmark__farm {
-  font-family: var(--font-mono, "JetBrains Mono", monospace);
-  font-weight: 500;
-  text-transform: lowercase;
-  letter-spacing: 0.02em;
-  color: var(--text, #ecebe1);
-}
-
-/* ---------- player ---------- */
-.vf-player {
-  width: 100%;
-  border: 1px solid var(--border-strong, rgba(255,255,255,0.13));
-  border-radius: var(--radius-xl, 18px);
-  overflow: hidden;
-  background: var(--bg-card, #1a1b16);
-  box-shadow:
-    0 1px 0 rgba(255,255,255,0.04) inset,
-    0 40px 90px -40px rgba(0,0,0,0.85);
-}
-.vf-player__chrome {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 11px 14px;
-  border-bottom: 1px solid var(--border, rgba(255,255,255,0.06));
-  background: var(--bg-elev, #22231d);
-}
-.vf-dot {
-  width: 9px; height: 9px; border-radius: 50%;
-  background: var(--text-faint, #56564f);
-  opacity: 0.6;
-}
-.vf-player__stage {
-  position: relative;
-  aspect-ratio: 16 / 9;
-  display: grid;
-  place-items: center;
-  background:
-    radial-gradient(120% 120% at 50% 0%, rgba(255,255,255,0.03), transparent 60%),
-    var(--bg-base, #0e0f0c);
-}
-.vf-player__glow {
-  position: absolute;
-  width: 42%;
-  aspect-ratio: 1;
-  border-radius: 50%;
-  background: var(--vf-accent);
-  filter: blur(90px);
-  opacity: 0.12;
-  pointer-events: none;
-}
-
-/* ---------- above-the-fold hero (editorial split) ---------- */
-.vf-hero {
-  position: relative;
-  z-index: 1;
-  min-height: 100vh;
-  max-width: 1400px;
-  margin: 0 auto;
-  display: grid;
-  grid-template-columns: 1.1fr 1fr;
-  align-items: center;
-  gap: clamp(2rem, 5vw, 4.5rem);
-  padding: clamp(5.5rem, 12vh, 8rem) clamp(1.5rem, 6vw, 5rem) clamp(3rem, 8vh, 6rem);
-}
-.vf-hero__copy {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: clamp(1rem, 2.4vh, 1.6rem);
-}
-.vf-hero__eyebrow {
-  font-family: var(--font-mono, monospace);
-  font-size: 0.74rem;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--text-faint, #56564f);
-}
-.vf-hero__headline {
-  display: flex;
-  flex-direction: column;
-  font-family: var(--font-display, "Geist", sans-serif);
-  font-weight: 700;
-  letter-spacing: -0.035em;
-  line-height: 1.02;
-  font-size: clamp(2.1rem, 4.4vw, 3.4rem);
-  color: var(--text, #ecebe1);
-  text-wrap: balance;
-}
-.vf-hero__headline-soft { color: var(--text-muted, #95958a); }
-.vf-hero__sub {
-  font-family: var(--font-mono, monospace);
-  font-size: clamp(0.84rem, 1.1vw, 0.98rem);
-  line-height: 1.65;
-  max-width: 46ch;
-  color: var(--text-muted, #95958a);
-}
-.vf-hero__cta { margin-top: 0.3rem; }
-.vf-hero__visual { width: 100%; }
-.vf-hero__visual .vf-player { width: 100%; }
-
-@media (max-width: 900px) {
-  .vf-hero {
-    grid-template-columns: 1fr;
-    gap: 2.2rem;
-    min-height: auto;
-    padding-top: 6rem;
-    padding-bottom: 3rem;
-  }
-  .vf-hero__visual { order: -1; }
-}
-
-/* ---------- tagline / hint ---------- */
-.vf-tagline {
-  font-family: var(--font-script, "Newsreader", serif);
-  font-style: italic;
-  font-size: clamp(1.05rem, 2.2vw, 1.5rem);
-  color: var(--text-muted, #95958a);
-}
-/* ---------- scene text ---------- */
-.vf-headline {
-  display: flex;
-  flex-direction: column;
-  font-family: var(--font-display, "Geist", sans-serif);
-  font-weight: 700;
-  letter-spacing: -0.035em;
-  line-height: 0.98;
-  font-size: clamp(2rem, 5vw, 4rem);
-  color: var(--text, #ecebe1);
-  margin-bottom: 1.6rem;
-}
-.vf-features { list-style: none; display: flex; flex-direction: column; gap: 0.75rem; }
-.vf-feature {
-  font-family: var(--font-mono, monospace);
-  font-size: clamp(0.8rem, 1.1vw, 0.95rem);
-  line-height: 1.4;
-  color: var(--text-muted, #95958a);
-  padding-left: 0.9rem;
-  border-left: 1px solid var(--border-strong, rgba(255,255,255,0.13));
-}
-
-/* ---------- CTA ---------- */
-.vf-cta { display: flex; flex-direction: column; align-items: center; gap: 1rem; }
-.vf-cta__btn {
-  font-family: var(--font-mono, monospace);
-  font-weight: 600;
-  font-size: 1rem;
-  letter-spacing: 0.01em;
-  padding: 0.95rem 2.1rem;
-  border-radius: var(--radius-lg, 14px);
-  color: var(--accent-fg, #0e0f0c);
-  background: var(--vf-accent);
-  border: none;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.6ch;
-  box-shadow: 0 0 0 0 rgba(207,255,61,0);
-  transition: transform 220ms cubic-bezier(0.16,1,0.3,1),
-              box-shadow 220ms ease;
-}
-.vf-cta__btn span { transition: transform 220ms cubic-bezier(0.16,1,0.3,1); }
-.vf-cta__btn:hover { transform: translateY(-2px); box-shadow: 0 0 40px 2px rgba(207,255,61,0.4); }
-.vf-cta__btn:hover span { transform: translateX(4px); }
-.vf-cta__btn:active { transform: translateY(0); }
-.vf-cta__sub {
-  font-family: var(--font-mono, monospace);
-  font-size: 0.74rem;
-  letter-spacing: 0.06em;
-  color: var(--text-faint, #56564f);
-}
-
-/* =========================================================
-   SCROLL STAGE (desktop)
-   ========================================================= */
-.vf-stage { position: relative; height: 320vh; z-index: 1; }
-.vf-stage__sticky {
-  position: sticky;
-  top: 0;
-  height: 100vh;
-  overflow: hidden;
-  display: grid;
-  place-items: center;
-}
-
-.vf-stage__mark { position: absolute; top: clamp(24px, 5vh, 56px); left: 50%; transform: translateX(-50%); z-index: 5; }
-
-.vf-stage__player {
-  position: relative;
-  width: var(--vf-player-w);
-  z-index: 4;
-  transform-style: preserve-3d;
-  perspective: 1200px;
-  will-change: transform;
-}
-.vf-stage__trail {
-  position: absolute;
-  inset: -3% -2%;
-  border-radius: 24px;
-  background: radial-gradient(55% 55% at 50% 50%, rgba(207,255,61,0.2), transparent 70%);
-  filter: blur(22px);
-  z-index: -1;
-  pointer-events: none;
-}
-
-.vf-stage__intro {
-  position: absolute;
-  bottom: clamp(28px, 7vh, 70px);
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.9rem;
-  text-align: center;
-  z-index: 5;
-}
-
-/* scene text absolutely placed on opposite half of the player */
-.vf-scene-text {
-  position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  width: min(40vw, 520px);
-  z-index: 6;
-}
-.vf-scene-text--right { right: clamp(40px, 7vw, 120px); }
-.vf-scene-text--left  { left: clamp(40px, 7vw, 120px); }
-
-/* ---------- outro / closing panel ---------- */
-.vf-outro {
-  position: relative;
-  z-index: 1;
-  min-height: 100vh;
-  display: grid;
-  place-items: center;
-  padding: clamp(3rem, 8vw, 7rem) clamp(1.2rem, 6vw, 4rem);
-  border-top: 1px solid var(--border, rgba(255,255,255,0.06));
-  background:
-    radial-gradient(120% 80% at 50% 100%, var(--accent-soft, rgba(207,255,61,0.08)), transparent 62%),
-    var(--bg-base, #0e0f0c);
-}
-.vf-outro__inner {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1.4rem;
-  text-align: center;
-  max-width: 760px;
-}
-.vf-outro__eyebrow {
-  font-family: var(--font-mono, monospace);
-  font-size: 0.72rem;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  color: var(--vf-accent);
-}
-.vf-outro__title {
-  font-family: var(--font-display, "Geist", sans-serif);
-  font-weight: 700;
-  letter-spacing: -0.03em;
-  line-height: 1;
-  font-size: clamp(2.4rem, 6vw, 5rem);
-  color: var(--text, #ecebe1);
-}
-.vf-outro__title-soft {
-  color: var(--text-muted, #95958a);
-  font-weight: 600;
-}
-.vf-outro__sub {
-  font-family: var(--font-mono, monospace);
-  font-size: clamp(0.82rem, 1.2vw, 0.98rem);
-  line-height: 1.7;
-  max-width: 46ch;
-  color: var(--text-muted, #95958a);
-}
-.vf-outro .vf-cta { margin-top: 0.6rem; }
-
-/* =========================================================
-   STATIC LAYOUT (mobile / reduced-motion)
-   ========================================================= */
-.vf-static { position: relative; z-index: 1; }
-.vf-static__scene {
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 1.6rem;
-  padding: clamp(2rem, 8vw, 5rem) clamp(1.2rem, 6vw, 4rem);
-  text-align: center;
-}
-.vf-static__scene .vf-player { max-width: var(--vf-player-w); }
-.vf-static__scene--split { gap: 2.4rem; }
-.vf-static .vf-scene-text { position: static; transform: none; width: 100%; max-width: 520px; }
-.vf-static .vf-headline,
-.vf-static .vf-features { align-items: center; }
-.vf-static .vf-feature { text-align: center; border-left: none; padding-left: 0; }
-
-/* gentle entrance for static scenes */
-@media (prefers-reduced-motion: no-preference) {
-  .vf-static__scene > * {
-    animation: vf-rise 600ms cubic-bezier(0.16,1,0.3,1) both;
-  }
-}
-@keyframes vf-rise {
-  from { opacity: 0; transform: translateY(16px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-
-/* desktop scene text reads left-aligned; static stays centered */
-@media (min-width: 761px) {
-  .vf-scene-text .vf-headline,
-  .vf-scene-text .vf-features { align-items: flex-start; text-align: left; }
-}
-
-`}</style>
   )
 }

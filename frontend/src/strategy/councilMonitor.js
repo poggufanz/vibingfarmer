@@ -1,5 +1,10 @@
-import { riskComplianceVerdict, validatorVerdict } from '../venice.js'
-import { buildDebateInput, DEBATE_SYSTEM, summarizeToSentence, hardStopGate } from './councilReview.js'
+import { riskComplianceVerdict, validatorVerdict } from '../strategist.js'
+import {
+  buildDebateInput,
+  DEBATE_SYSTEM,
+  summarizeToSentence,
+  hardStopGate,
+} from './councilReview.js'
 
 const STORAGE_KEY = 'yv_council_snapshot'
 const MAX_HISTORY = 20
@@ -23,7 +28,9 @@ export function saveSnapshot(result, marketData) {
     history.unshift(entry)
     if (history.length > MAX_HISTORY) history.length = MAX_HISTORY
     localStorage.setItem(STORAGE_KEY, JSON.stringify(history))
-  } catch { /* localStorage full or unavailable */ }
+  } catch {
+    /* localStorage full or unavailable */
+  }
 }
 
 export function loadSnapshot() {
@@ -31,7 +38,9 @@ export function loadSnapshot() {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return null
     return JSON.parse(raw)
-  } catch { return null }
+  } catch {
+    return null
+  }
 }
 
 export function loadLatestSnapshot() {
@@ -63,8 +72,8 @@ export function diffMarket(currentData, snapshot, thresholds = {}) {
       if (lastApy && lastApy > 0) {
         const drift = Math.abs((currentApy - lastApy) / lastApy) * 100
         if (drift > apyDrift) {
-          score += Math.min(drift / apyDrift * 20, 40)
-          reasons.push(`APY drift on ${vault}: ${drift.toFixed(1)}% (threshold ${apyDrift}%)`)
+          score += Math.min((drift / apyDrift) * 20, 40)
+          reasons.push(`APY for ${vault} changed by ${drift.toFixed(1)}%. Threshold: ${apyDrift}%.`)
         }
       }
     }
@@ -75,21 +84,27 @@ export function diffMarket(currentData, snapshot, thresholds = {}) {
   if (lastVaR != null && currentVaR != null && lastVaR !== 0) {
     const varChange = Math.abs((currentVaR - lastVaR) / lastVaR) * 100
     if (varChange > varBreach) {
-      score += Math.min(varChange / varBreach * 30, 50)
-      reasons.push(`VaR changed ${varChange.toFixed(1)}% (threshold ${varBreach}%)`)
+      score += Math.min((varChange / varBreach) * 30, 50)
+      reasons.push(`VaR changed by ${varChange.toFixed(1)}%. Threshold: ${varBreach}%.`)
     }
   }
 
-  if (currentData.turbulence && lastMarket.turbulence && currentData.turbulence !== lastMarket.turbulence) {
+  if (
+    currentData.turbulence &&
+    lastMarket.turbulence &&
+    currentData.turbulence !== lastMarket.turbulence
+  ) {
     score += 20
-    reasons.push(`Market regime: ${lastMarket.turbulence} → ${currentData.turbulence}`)
+    reasons.push(
+      `Market regime changed from ${lastMarket.turbulence} to ${currentData.turbulence}.`
+    )
   }
 
   if (currentData.gasGwei != null && lastMarket.gasGwei != null) {
     const gasRatio = currentData.gasGwei / lastMarket.gasGwei
     if (gasRatio > 2 || gasRatio < 0.5) {
       score += 15
-      reasons.push(`Gas spike: ${lastMarket.gasGwei} → ${currentData.gasGwei} gwei`)
+      reasons.push(`Gas changed from ${lastMarket.gasGwei} to ${currentData.gasGwei} gwei.`)
     }
   }
 
@@ -108,7 +123,12 @@ export function diffMarket(currentData, snapshot, thresholds = {}) {
 export async function fastReeval(strategy, input, currentData, deps = {}) {
   const { ROLE_RULES } = await import('./playbookRules.js')
 
-  const debateInput = buildDebateInput(strategy, { VaR: currentData.estimatedVaR, CVaR: currentData.estimatedCVaR, expectedValue: currentData.expectedValue, probProfit: currentData.probProfit })
+  const debateInput = buildDebateInput(strategy, {
+    VaR: currentData.estimatedVaR,
+    CVaR: currentData.estimatedCVaR,
+    expectedValue: currentData.expectedValue,
+    probProfit: currentData.probProfit,
+  })
 
   const riskCompRules = ROLE_RULES['risk-compliance'] || []
   const riskCompAllowedIds = riskCompRules.map((r) => r.id)
@@ -138,7 +158,12 @@ Has anything changed materially? Is the previous permission still safe?`,
   }
 
   if (riskCompResult.compliancePass === false) {
-    return { passed: false, error: 'Compliance violation detected', violations: riskCompResult.violationsFound, level: 'full' }
+    return {
+      passed: false,
+      error: 'Compliance violation detected',
+      violations: riskCompResult.violationsFound,
+      level: 'full',
+    }
   }
 
   const validatorResult = await validatorVerdict({
@@ -157,7 +182,11 @@ Are these numbers still consistent? Does the VaR/CVaR stay within acceptable ran
   })
 
   if (!validatorResult || validatorResult.consistent === false) {
-    return { passed: false, error: 'Validator rejected — VaR/CVaR mismatch', level: 'full' }
+    return {
+      passed: false,
+      error: 'The validator rejected the update because VaR and CVaR do not match.',
+      level: 'full',
+    }
   }
 
   return {
@@ -171,6 +200,7 @@ Are these numbers still consistent? Does the VaR/CVaR stay within acceptable ran
       validatorResult,
       debateInput
     ),
-    confidence: ((riskCompResult.assessment?.confidence || 0) + (validatorResult.confidence || 0)) / 2,
+    confidence:
+      ((riskCompResult.assessment?.confidence || 0) + (validatorResult.confidence || 0)) / 2,
   }
 }

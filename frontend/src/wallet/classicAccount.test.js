@@ -63,7 +63,7 @@ describe('classicAccount', () => {
     await expect(withSecret(async () => 1)).rejects.toThrow('locked')
   })
 
-  it('createClassicWallet({ pendingBackup: true }) persists needsBackup + a decryptable mnemonicBlob in ONE atomic save — no second save layered on top', async () => {
+  it('createClassicWallet({ pendingBackup: true }) persists needsBackup + a decryptable mnemonicBlob in ONE atomic save - no second save layered on top', async () => {
     const setSpy = vi.spyOn(globalThis.chrome.storage.local, 'set')
     const { publicKey, mnemonic } = await createClassicWallet({
       label: 'Main',

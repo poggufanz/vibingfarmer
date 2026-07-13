@@ -16,7 +16,7 @@ describe('buildForwarderHookData', () => {
   })
 })
 
-describe('assertHookData — the #7313 guard', () => {
+describe('assertHookData - the #7313 guard', () => {
   test('accepts a well-formed hookData buffer', () => {
     const hookData = buildForwarderHookData(
       'GCXMZOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO'
@@ -24,7 +24,7 @@ describe('assertHookData — the #7313 guard', () => {
     expect(() => assertHookData(hookData)).not.toThrow()
   })
 
-  test('rejects a raw 32-byte buffer (the exact SP0 #7313 mistake — a decoded key with no hook envelope)', () => {
+  test('rejects a raw 32-byte buffer (the exact SP0 #7313 mistake - a decoded key with no hook envelope)', () => {
     const raw32 = new Uint8Array(32)
     // A raw 32-byte decoded key has version 0 and a zero declared length, so it fails at the
     // strkey/envelope check rather than the version check — either way it must be rejected.

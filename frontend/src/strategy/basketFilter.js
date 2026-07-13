@@ -10,7 +10,10 @@ export function filterBasket(agents, verdictBySlug) {
     const verdict = verdictBySlug[a.vault.protocol]
     if (verdict && verdict.eligible) survivorsRaw.push(a)
     else
-      dropped.push({ agent: a, verdict: verdict || { eligible: false, reasons: ['no verdict'] } })
+      dropped.push({
+        agent: a,
+        verdict: verdict || { eligible: false, reasons: ['No eligibility decision is available.'] },
+      })
   }
   const total = survivorsRaw.reduce((acc, a) => acc + a.allocation, 0)
   const survivors = survivorsRaw.map((a) => ({
@@ -31,7 +34,7 @@ export function computeBasket(agents, nowMs = Date.now()) {
       verdictBySlug[slug] = {
         protocol: slug,
         eligible: false,
-        reasons: [`facts unavailable: ${err.message}`],
+        reasons: [`Eligibility data is unavailable: ${err.message}`],
         isFixture: false,
       }
     }

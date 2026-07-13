@@ -31,6 +31,7 @@ export function useCountUp(target, opts = {}) {
 
   useEffect(() => {
     if (prefersReducedMotion()) {
+      fromRef.current = safeTarget
       setValue(safeTarget)
       return
     }
@@ -40,9 +41,10 @@ export function useCountUp(target, opts = {}) {
       if (!start) start = now
       const p = Math.min(1, (now - start) / duration)
       const eased = easeOutExpo(p)
-      setValue(from + (safeTarget - from) * eased)
+      const next = from + (safeTarget - from) * eased
+      fromRef.current = next
+      setValue(next)
       if (p < 1) rafRef.current = requestAnimationFrame(tick)
-      else fromRef.current = safeTarget
     }
     timerRef.current = window.setTimeout(() => {
       rafRef.current = requestAnimationFrame(tick)

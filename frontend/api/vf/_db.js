@@ -48,6 +48,18 @@ export function memoryStore() {
         const k = `${keyId}|${day}|${endpoint}`
         usage.set(k, (usage.get(k) || 0) + 1)
       },
+      async listForOwner(owner, sinceDay) {
+        const own = new Set([...rows.values()].filter((r) => r.owner === owner).map((r) => r.id))
+        const out = []
+        for (const [k, count] of usage) {
+          const [keyId, day, ...ep] = k.split('|')
+          if (!own.has(keyId) || day < sinceDay) continue
+          out.push({ key_id: keyId, day, endpoint: ep.join('|'), count })
+        }
+        return out.sort((a, b) =>
+          a.day === b.day ? (a.endpoint < b.endpoint ? -1 : 1) : a.day < b.day ? 1 : -1
+        )
+      },
     },
   }
 }
@@ -126,6 +138,18 @@ export function d1Store(db) {
           )
           .bind(keyId, day, endpoint)
           .run()
+      },
+      async listForOwner(owner, sinceDay) {
+        const { results } = await db
+          .prepare(
+            `SELECT u.key_id, u.day, u.endpoint, u.count
+             FROM usage_log u JOIN api_keys k ON k.id = u.key_id
+             WHERE k.owner = ? AND u.day >= ?
+             ORDER BY u.day DESC, u.endpoint ASC`
+          )
+          .bind(owner, sinceDay)
+          .all()
+        return results ?? []
       },
     },
   }

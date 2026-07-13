@@ -4,9 +4,9 @@ description: >-
   Expert DeFi yield vault selection system prompt for Venice AI integration.
   Encodes institutional-grade vault evaluation framework based on 2025-2026
   research from Tesseract, Steakhouse Financial, Credora, DeFiLlama, and
-  Eco.com. Use this as the SYSTEM_PROMPT in venice.js to make Venice AI
+  Eco.com. Use this as the SYSTEM_PROMPT in strategist.js to make Venice AI
   reason like a professional DeFi analyst — not an APY-chaser.
-  TRIGGER when: building or updating the Venice AI system prompt in venice.js,
+  TRIGGER when: building or updating the Venice AI system prompt in strategist.js,
   or when the vault recommendation output feels too generic / cosmetic.
 origin: custom
 metadata:
@@ -20,7 +20,7 @@ metadata:
 
 # DeFi Vault Advisor — Venice AI System Prompt Skill
 
-Expert vault selection system prompt. Drop this into `venice.js` as
+Expert vault selection system prompt. Drop this into `strategist.js` as
 `SYSTEM_PROMPT`. Makes Venice AI reason from protocol fundamentals,
 not just pick from a JSON list.
 
@@ -28,7 +28,7 @@ not just pick from a JSON list.
 
 ## When to Use
 
-- Building or updating `SYSTEM_PROMPT` in `venice.js`
+- Building or updating `SYSTEM_PROMPT` in `strategist.js`
 - Venice AI recommendation feels like a glorified if-else
 - Adding a new vault to `VAULT_CATALOG` and need AI to reason about it correctly
 - Demo judging requires AI to justify vault choice with expert-level reasoning
@@ -37,7 +37,7 @@ not just pick from a JSON list.
 
 ## The System Prompt
 
-Paste this as `SYSTEM_PROMPT` in `venice.js`. Replace `[VAULT_CATALOG_JSON]`
+Paste this as `SYSTEM_PROMPT` in `strategist.js`. Replace `[VAULT_CATALOG_JSON]`
 with `JSON.stringify(VAULT_CATALOG)` at runtime.
 
 ```
@@ -198,7 +198,7 @@ HARD RULES:
 
 ---
 
-## Runtime Integration — venice.js
+## Runtime Integration — strategist.js
 
 ```javascript
 import { VAULT_CATALOG } from './config.js'
@@ -218,10 +218,10 @@ Select the optimal vault(s) from the catalog. Apply your expert framework.`
 
 ---
 
-## Validation Guard (add to validateStrategy in venice.js)
+## Validation Guard (add to validateStrategy in strategist.js)
 
 ```javascript
-function validateVeniceResponse(response) {
+function validateStrategyResponse(response) {
   const allowedAddresses = new Set(
     VAULT_CATALOG.map(v => v.address.toLowerCase())
   )
@@ -265,50 +265,53 @@ function validateVeniceResponse(response) {
 Tiap entry harus punya semua field ini supaya AI bisa reason dengan benar:
 
 ```javascript
+// Catalog labels may describe multi-protocol *risk profiles*; on Stellar testnet
+// deposits currently target the same autofarm vault address (Blend-backed).
+// See frontend/src/config.js + deployments/stellar-testnet.json (autofarmVault).
 export const VAULT_CATALOG = [
   {
     name: 'Aave v3 USDC',
     protocol: 'aave-v3',
-    address: MOCK_VAULT_A_ADDRESS,  // deployed MockVault A
+    address: SOROBAN_ACTIVE_VAULT_ADDRESS,  // autofarm vault (Blend testnet)
     apy: 4.8,
     risk: 'low',
     yield_source: 'lending',
     drawdown: '-1.2',
     min_capital: 100,
-    description: 'Overcollateralized pooled lending. Battle-tested, highest TVL in DeFi.'
+    description: 'Overcollateralized pooled lending profile. Battle-tested archetype, highest TVL class in DeFi.'
   },
   {
     name: 'Morpho Blue USDC',
     protocol: 'morpho-blue',
-    address: MOCK_VAULT_B_ADDRESS,  // deployed MockVault B
+    address: SOROBAN_ACTIVE_VAULT_ADDRESS,
     apy: 6.1,
     risk: 'medium',
     yield_source: 'curated',
     drawdown: '-2.8',
     min_capital: 500,
-    description: 'Curator-managed isolated lending. Better yield than Aave, requires trusting curator.'
+    description: 'Curator-managed isolated lending profile. Better yield class than plain Aave-style, curator trust.'
   },
   {
     name: 'Pendle PT-USDC',
     protocol: 'pendle-v2',
-    address: MOCK_VAULT_B_ADDRESS,  // same MockVault B, different framing
+    address: SOROBAN_ACTIVE_VAULT_ADDRESS,
     apy: 9.4,
     risk: 'high',
     yield_source: 'structured',
     drawdown: '-6.5',
     min_capital: 1000,
-    description: 'Fixed-rate yield via zero-coupon bond mechanics. Hold to maturity or risk AMM exit loss.'
+    description: 'Fixed-rate / structured yield profile. Hold-to-maturity style risk framing.'
   },
   {
     name: 'Fluid USDC',
     protocol: 'fluid',
-    address: MOCK_VAULT_A_ADDRESS,  // same MockVault A, different framing
+    address: SOROBAN_ACTIVE_VAULT_ADDRESS,
     apy: 5.2,
     risk: 'high',
     yield_source: 'hybrid',
     drawdown: '-4.1',
     min_capital: 2000,
-    description: 'Unified lending + DEX architecture. Highest capital efficiency, highest architectural risk.'
+    description: 'Hybrid lending + DEX efficiency profile. Higher capital efficiency, higher architectural risk.'
   }
 ]
 ```

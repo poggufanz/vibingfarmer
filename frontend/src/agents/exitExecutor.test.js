@@ -217,7 +217,7 @@ describe('runAutonomousExit', () => {
     readTokenBalanceMock.mockResolvedValue(0n)
     await expect(
       runAutonomousExit({ agentAddress: AGENT, ownerAddress: OWNER, server: fakeServer })
-    ).rejects.toThrow('No vault shares to exit')
+    ).rejects.toThrow('There are no vault shares to exit.')
     expect(submitViaRelayMock).not.toHaveBeenCalled()
   })
 
@@ -226,7 +226,7 @@ describe('runAutonomousExit', () => {
     submitViaRelayMock.mockResolvedValueOnce({ hash: 'H', status: 'FAILED' })
     await expect(
       runAutonomousExit({ agentAddress: AGENT, ownerAddress: OWNER, server: fakeServer })
-    ).rejects.toThrow(/redeem.*FAILED/)
+    ).rejects.toThrow('Redeem returned FAILED. Exit stopped.')
     expect(submitViaRelayMock).toHaveBeenCalledTimes(1)
     expect(readTokenBalanceMock).not.toHaveBeenCalled()
   })
@@ -236,7 +236,7 @@ describe('runAutonomousExit', () => {
     submitViaRelayMock.mockResolvedValueOnce(null)
     await expect(
       runAutonomousExit({ agentAddress: AGENT, ownerAddress: OWNER, server: fakeServer })
-    ).rejects.toThrow(/redeem/)
+    ).rejects.toThrow('Redeem returned relay unreachable. Exit stopped.')
   })
 
   test('throws when the transfer leg fails, exposing the confirmed redeem hash', async () => {
@@ -247,14 +247,16 @@ describe('runAutonomousExit', () => {
       .mockResolvedValueOnce({ hash: 'T', status: 'FAILED' })
     await expect(
       runAutonomousExit({ agentAddress: AGENT, ownerAddress: OWNER, server: fakeServer })
-    ).rejects.toThrow(/transfer.*FAILED.*REDEEMHASH/)
+    ).rejects.toThrow(
+      'Transfer returned FAILED after redemption REDEEMHASH. Funds remain with the agent; retry the sweep.'
+    )
   })
 
   test('throws on share-read RPC failure (null) without submitting anything', async () => {
     readVaultSharesMock.mockResolvedValue(null)
     await expect(
       runAutonomousExit({ agentAddress: AGENT, ownerAddress: OWNER, server: fakeServer })
-    ).rejects.toThrow(/share balance read failed/)
+    ).rejects.toThrow('The share balance could not be read. Exit stopped.')
     expect(submitViaRelayMock).not.toHaveBeenCalled()
   })
 
@@ -264,7 +266,9 @@ describe('runAutonomousExit', () => {
     submitViaRelayMock.mockResolvedValueOnce({ hash: 'REDEEMHASH', status: 'SUCCESS' })
     await expect(
       runAutonomousExit({ agentAddress: AGENT, ownerAddress: OWNER, server: fakeServer })
-    ).rejects.toThrow(/balance read failed/)
+    ).rejects.toThrow(
+      'The token balance could not be read after redemption (transaction REDEEMHASH). Retry the sweep.'
+    )
     expect(submitViaRelayMock).toHaveBeenCalledTimes(1) // redeem only — never a guessed transfer
   })
 
@@ -272,7 +276,7 @@ describe('runAutonomousExit', () => {
     loadExitKeyMock.mockReturnValue(null)
     await expect(
       runAutonomousExit({ agentAddress: AGENT, ownerAddress: OWNER, server: fakeServer })
-    ).rejects.toThrow('No exit key authorized')
+    ).rejects.toThrow('No exit key is authorized for this agent.')
   })
 
   test('throws when no relayer is configured', async () => {
@@ -280,7 +284,7 @@ describe('runAutonomousExit', () => {
     getRelayerAddressMock.mockResolvedValue(null)
     await expect(
       runAutonomousExit({ agentAddress: AGENT, ownerAddress: OWNER, server: fakeServer })
-    ).rejects.toThrow('No relayer configured')
+    ).rejects.toThrow('The relayer is not configured.')
   })
 
   test('rejects a concurrent second run for the same agent (in-flight lock)', async () => {
@@ -308,7 +312,7 @@ describe('runAutonomousExit', () => {
     readTokenBalanceMock.mockResolvedValue(0n)
     await expect(
       runAutonomousExit({ agentAddress: AGENT, ownerAddress: OWNER, server: fakeServer })
-    ).rejects.toThrow('No vault shares to exit') // lock released — normal path error, not "in flight"
+    ).rejects.toThrow('There are no vault shares to exit.') // lock released — normal path error, not "in flight"
   })
 
   test('re-prepares each signed tx before submit (footprint refresh for __check_auth)', async () => {
@@ -345,7 +349,7 @@ function stubLocalStorage() {
 
 const LOCK_KEY = `vf_exit_inflight_${AGENT}`
 
-describe('runAutonomousExit — cross-tab lock (localStorage)', () => {
+describe('runAutonomousExit - cross-tab lock (localStorage)', () => {
   beforeEach(() => {
     stubLocalStorage()
   })
@@ -369,7 +373,7 @@ describe('runAutonomousExit — cross-tab lock (localStorage)', () => {
     // Act + Assert: reaches the normal no-op error, not the lock rejection
     await expect(
       runAutonomousExit({ agentAddress: AGENT, ownerAddress: OWNER, server: fakeServer })
-    ).rejects.toThrow('No vault shares to exit')
+    ).rejects.toThrow('There are no vault shares to exit.')
   })
 
   test('clears the lock after a successful exit', async () => {
@@ -383,7 +387,7 @@ describe('runAutonomousExit — cross-tab lock (localStorage)', () => {
     loadExitKeyMock.mockReturnValue(null)
     await expect(
       runAutonomousExit({ agentAddress: AGENT, ownerAddress: OWNER, server: fakeServer })
-    ).rejects.toThrow('No exit key authorized')
+    ).rejects.toThrow('No exit key is authorized for this agent.')
     expect(localStorage.getItem(LOCK_KEY)).toBeNull()
   })
 

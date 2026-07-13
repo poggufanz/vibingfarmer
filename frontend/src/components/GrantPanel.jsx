@@ -1,13 +1,9 @@
 // frontend/src/components/GrantPanel.jsx
-// The one-popup grant step. Replaces the legacy per-agent "Grant N permissions" batch: the user
-// sets a spending budget + a validity window, then a SINGLE "Grant & run" popup authorizes the
-// funding_router to deploy the run's agents and pull within that budget. A small revoke control
-// zeroes the on-chain allowance (kill switch) in one more popup. Presentational only — all chain
-// work is done by the caller's onGrant / onRevoke (stellar/grant.js).
+// Single-signature grant step: budget + validity window, then "Grant & run".
+// UX: plain permission receipt (money-app trust), not wizard jargon.
 import { useState } from 'react'
 
-// ~5s per ledger on Soroban testnet; the labels are what the user reasons about, the seconds are
-// what the grant converts to an allowance expiry_ledger.
+// ~5s per ledger on Soroban testnet; labels are what the user reasons about.
 export const DURATION_PRESETS = [
   { id: '1h', label: '1 hour', seconds: 3600 },
   { id: '24h', label: '24 hours', seconds: 86400 },
@@ -29,6 +25,7 @@ export default function GrantPanel({
   const budgetNum = Number(budget)
   const budgetValid = Number.isFinite(budgetNum) && budgetNum > 0
   const busy = phase === 'granting' || phase === 'revoking'
+  const n = agentCount || 0
 
   const submit = () => {
     if (!budgetValid || busy) return
@@ -37,45 +34,65 @@ export default function GrantPanel({
 
   return (
     <section className="card grant-panel enter">
-      <div className="eyebrow">
-        <span className="num">04</span>
-        <span>One signature · router grant</span>
-        <span className="rule" />
-        <span>then fully autonomous · 0 further popups</span>
-      </div>
+      <p className="grant-kicker mono">One signature, then agents run</p>
 
-      <h1 className="h-display">Grant a budget once. Every agent funds and deposits within it.</h1>
+      <h1 className="h-display">Review your spending limit</h1>
       <p className="lede">
-        A single signature approves the <span className="mono">funding router</span> to deploy this
-        run’s {agentCount || ''} agent{agentCount === 1 ? '' : 's'} and move up to your budget — for
-        the window you choose. Outside the budget or after it expires, the router can move{' '}
-        <b>nothing</b>. Revoke any time.
+        You authorize a budget and time window. Agents deposit only within that limit. Outside the
+        budget or after it expires, nothing moves. Revoke any time.
       </p>
+
+      <div className="grant-receipt" role="region" aria-label="Permission summary">
+        <div className="grant-receipt-row">
+          <span className="grant-receipt-k">Spending limit</span>
+          <span className="grant-receipt-v tnum mono">
+            {budgetValid ? `${budgetNum} USDC` : '--'}
+          </span>
+        </div>
+        <div className="grant-receipt-row">
+          <span className="grant-receipt-k">Valid for</span>
+          <span className="grant-receipt-v">{preset.label}</span>
+        </div>
+        <div className="grant-receipt-row">
+          <span className="grant-receipt-k">Workers</span>
+          <span className="grant-receipt-v">
+            {n} agent{n === 1 ? '' : 's'}, deposits only
+          </span>
+        </div>
+        <div className="grant-receipt-row">
+          <span className="grant-receipt-k">Network fees</span>
+          <span className="grant-receipt-v grant-receipt-v--ok">Covered by relayer</span>
+        </div>
+        <div className="grant-receipt-row">
+          <span className="grant-receipt-k">Your control</span>
+          <span className="grant-receipt-v">Revoke anytime, funds stay yours</span>
+        </div>
+      </div>
 
       <div className="grant-controls">
         <label className="grant-field">
-          <span className="grant-field-k">budget · USDC</span>
+          <span className="grant-field-k">Budget, USDC</span>
           <input
             className="grant-budget-input mono"
             type="number"
             min="0"
             step="1"
             inputMode="decimal"
-            aria-label="grant budget in USDC"
+            aria-label="Grant budget in USDC"
             value={budget}
             disabled={busy}
             onChange={(e) => setBudget(e.target.value)}
           />
           {!budgetValid && (
             <span className="grant-field-hint" style={{ color: 'var(--danger)' }}>
-              enter a positive amount
+              Enter a positive amount.
             </span>
           )}
         </label>
 
         <div className="grant-field">
-          <span className="grant-field-k">valid for</span>
-          <div className="grant-presets" role="group" aria-label="grant duration">
+          <span className="grant-field-k">Valid for</span>
+          <div className="grant-presets" role="group" aria-label="Grant duration">
             {DURATION_PRESETS.map((d) => (
               <button
                 key={d.id}
@@ -94,11 +111,10 @@ export default function GrantPanel({
 
       <div className="action-row">
         <div className="foot-note">
-          Budget caps total spend · each agent still has its own per-vault cap · router holds no
-          funds.
+          Limit is total spend. Each vault also has its own cap. Router never holds your funds.
         </div>
         <button className="btn btn-primary btn-lg" onClick={submit} disabled={!budgetValid || busy}>
-          {phase === 'granting' ? 'awaiting wallet…' : 'Grant & run'}
+          {phase === 'granting' ? 'Awaiting wallet…' : 'Grant & run'}
         </button>
       </div>
 
@@ -109,10 +125,10 @@ export default function GrantPanel({
           onClick={() => onRevoke?.()}
           disabled={busy}
         >
-          {phase === 'revoking' ? 'revoking…' : 'Revoke grant'}
+          {phase === 'revoking' ? 'Revoking…' : 'Revoke grant'}
         </button>
         <span className="annot">
-          sets the on-chain allowance to 0 · one popup · works even if the relayer is down
+          Sets the allowance to 0 with one signature, even if the relayer is down.
         </span>
       </div>
 

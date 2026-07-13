@@ -1,1 +1,0 @@
-{"nodes": [], "edges": [{"source": "fetcher_fetchcurrentstate", "target": "state_createstate", "relation": "calls", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "docs/superpowers/plans/2026-06-04-step3-parallel-fetch.md", "source_location": null, "weight": 1.0}], "hyperedges": []}

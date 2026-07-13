@@ -10,7 +10,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
 const DIST_DIR = join(process.cwd(), 'dist')
-const FORBIDDEN = ['__vfDevDispatchRawCall', '__vfDevMandateFixture']
+const FORBIDDEN = ['__vfDevDispatchRawCall', '__vfDevMandateFixture', '__vfDevViewAs']
 
 function collectFiles(dir) {
   return readdirSync(dir).flatMap((name) => {

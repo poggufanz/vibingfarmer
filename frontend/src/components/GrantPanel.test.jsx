@@ -9,7 +9,9 @@ describe('GrantPanel', () => {
   it('renders the budget default and the three duration presets, 24h active by default', () => {
     render(<GrantPanel defaultBudget={100} agentCount={3} onGrant={() => {}} onRevoke={() => {}} />)
     expect(screen.getByLabelText(/grant budget/i).value).toBe('100')
-    DURATION_PRESETS.forEach((d) => expect(screen.getByText(d.label)).toBeTruthy())
+    DURATION_PRESETS.forEach((d) =>
+      expect(screen.getByRole('button', { name: d.label })).toBeTruthy()
+    )
     expect(screen.getByRole('button', { name: '24 hours' }).getAttribute('aria-pressed')).toBe(
       'true'
     )

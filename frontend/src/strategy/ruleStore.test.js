@@ -1,19 +1,31 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import {
-  getRules, addRule, upsertSeeds, retireRule, deleteRule, replaceAll, clearPlaybook,
-  increment, weight, getCounters,
+  getRules,
+  addRule,
+  upsertSeeds,
+  retireRule,
+  deleteRule,
+  replaceAll,
+  clearPlaybook,
+  increment,
+  weight,
+  getCounters,
 } from './ruleStore.js'
 
 function stubStorage() {
   const store = {}
   vi.stubGlobal('localStorage', {
     getItem: (k) => (k in store ? store[k] : null),
-    setItem: (k, v) => { store[k] = String(v) },
-    removeItem: (k) => { delete store[k] },
+    setItem: (k, v) => {
+      store[k] = String(v)
+    },
+    removeItem: (k) => {
+      delete store[k]
+    },
   })
 }
 
-describe('ruleStore — records & CRUD', () => {
+describe('ruleStore - records & CRUD', () => {
   beforeEach(stubStorage)
 
   it('upsertSeeds is idempotent and stamps createdAt', () => {
@@ -34,9 +46,22 @@ describe('ruleStore — records & CRUD', () => {
   })
 
   it('addRule appends a grown rule with zeroed counters', () => {
-    addRule({ id: 'grown-1', role: 'market', category: 'gas', text: 'Avoid deposits during gas spikes above 80 gwei.', origin: 'grown' })
+    addRule({
+      id: 'grown-1',
+      role: 'market',
+      category: 'gas',
+      text: 'Avoid deposits during gas spikes above 80 gwei.',
+      origin: 'grown',
+    })
     const r = getRules().find((x) => x.id === 'grown-1')
-    expect(r).toMatchObject({ id: 'grown-1', origin: 'grown', status: 'active', helpful: 0, harmful: 0, evals: 0 })
+    expect(r).toMatchObject({
+      id: 'grown-1',
+      origin: 'grown',
+      status: 'active',
+      helpful: 0,
+      harmful: 0,
+      evals: 0,
+    })
     expect(r.createdAt).toEqual(expect.any(Number))
   })
 
@@ -56,7 +81,20 @@ describe('ruleStore — records & CRUD', () => {
 
   it('replaceAll overwrites the collection atomically', () => {
     upsertSeeds()
-    replaceAll([{ id: 'only', role: 'yield', category: 'strategy', text: 't', helpful: 0, harmful: 0, evals: 0, status: 'active', origin: 'grown', createdAt: 1 }])
+    replaceAll([
+      {
+        id: 'only',
+        role: 'yield',
+        category: 'strategy',
+        text: 't',
+        helpful: 0,
+        harmful: 0,
+        evals: 0,
+        status: 'active',
+        origin: 'grown',
+        createdAt: 1,
+      },
+    ])
     expect(getRules().length).toBe(1)
     expect(getRules()[0].id).toBe('only')
   })
@@ -74,7 +112,7 @@ describe('ruleStore — records & CRUD', () => {
   })
 })
 
-describe('ruleStore — counters & weight', () => {
+describe('ruleStore - counters & weight', () => {
   beforeEach(stubStorage)
 
   it('unknown rule is neutral weight 1.0', () => {

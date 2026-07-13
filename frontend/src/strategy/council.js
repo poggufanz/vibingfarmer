@@ -17,38 +17,93 @@ function yieldSpecialist({ action, currentReward, projectedReward }, weight) {
   const isHarvest = action.kind === 'harvest'
   const uplift = projectedReward.riskAdjustedScore - currentReward.riskAdjustedScore
   if (isHarvest) {
-    return { role: 'yield', signal: 'DEPOSIT', confidence: clampConf(0.8 * weight('yield-harvest-free')), citedRules: ['yield-harvest-free'], concerns: [] }
+    return {
+      role: 'yield',
+      signal: 'DEPOSIT',
+      confidence: clampConf(0.8 * weight('yield-harvest-free')),
+      citedRules: ['yield-harvest-free'],
+      concerns: [],
+    }
   }
   if (uplift > 0) {
     const base = Math.min(0.95, 0.6 + Math.abs(uplift) * 0.2)
-    return { role: 'yield', signal: 'DEPOSIT', confidence: clampConf(base * weight('yield-uplift')), citedRules: ['yield-uplift'], concerns: [] }
+    return {
+      role: 'yield',
+      signal: 'DEPOSIT',
+      confidence: clampConf(base * weight('yield-uplift')),
+      citedRules: ['yield-uplift'],
+      concerns: [],
+    }
   }
-  return { role: 'yield', signal: 'HOLD', confidence: clampConf(0.6 * weight('yield-no-uplift')), citedRules: ['yield-no-uplift'], concerns: ['no risk-adjusted uplift'] }
+  return {
+    role: 'yield',
+    signal: 'HOLD',
+    confidence: clampConf(0.6 * weight('yield-no-uplift')),
+    citedRules: ['yield-no-uplift'],
+    concerns: ['No risk-adjusted improvement.'],
+  }
 }
 
 /** Risk Analyst — turbulent regime or gate violation ⇒ WITHDRAW (hard veto). */
 function riskSpecialist({ action, state }, weight) {
   const violations = action.violations || []
   if (state.market.turbulence === 'turbulent') {
-    return { role: 'risk', signal: 'WITHDRAW', confidence: clampConf(0.9 * weight('risk-turbulent-veto')), citedRules: ['risk-turbulent-veto'], concerns: ['turbulent market'] }
+    return {
+      role: 'risk',
+      signal: 'WITHDRAW',
+      confidence: clampConf(0.9 * weight('risk-turbulent-veto')),
+      citedRules: ['risk-turbulent-veto'],
+      concerns: ['The market is turbulent.'],
+    }
   }
   if (violations.length > 0) {
-    return { role: 'risk', signal: 'WITHDRAW', confidence: clampConf(0.88 * weight('risk-gate-violation')), citedRules: ['risk-gate-violation'], concerns: violations.slice(0, 2) }
+    return {
+      role: 'risk',
+      signal: 'WITHDRAW',
+      confidence: clampConf(0.88 * weight('risk-gate-violation')),
+      citedRules: ['risk-gate-violation'],
+      concerns: violations.slice(0, 2),
+    }
   }
-  return { role: 'risk', signal: 'DEPOSIT', confidence: clampConf(0.6 * weight('risk-calm-clear')), citedRules: ['risk-calm-clear'], concerns: [] }
+  return {
+    role: 'risk',
+    signal: 'DEPOSIT',
+    confidence: clampConf(0.6 * weight('risk-calm-clear')),
+    citedRules: ['risk-calm-clear'],
+    concerns: [],
+  }
 }
 
 /** Market Analyst — gas/timing. Harvest timing is always fine (free claim). */
 function marketSpecialist({ action, currentReward, projectedReward, estGasUsdc = 0.5 }, weight) {
   const isHarvest = action.kind === 'harvest'
   if (isHarvest) {
-    return { role: 'market', signal: 'DEPOSIT', confidence: clampConf(0.75 * weight('market-harvest-timing')), citedRules: ['market-harvest-timing'], concerns: [] }
+    return {
+      role: 'market',
+      signal: 'DEPOSIT',
+      confidence: clampConf(0.75 * weight('market-harvest-timing')),
+      citedRules: ['market-harvest-timing'],
+      concerns: [],
+    }
   }
-  const netUsdc = (projectedReward.projectedAnnualUsdc - currentReward.projectedAnnualUsdc) - estGasUsdc
+  const netUsdc =
+    projectedReward.projectedAnnualUsdc - currentReward.projectedAnnualUsdc - estGasUsdc
   if (netUsdc > 0) {
-    return { role: 'market', signal: 'DEPOSIT', confidence: clampConf(0.8 * weight('market-gas-positive')), citedRules: ['market-gas-positive'], concerns: [] }
+    return {
+      role: 'market',
+      signal: 'DEPOSIT',
+      confidence: clampConf(0.8 * weight('market-gas-positive')),
+      citedRules: ['market-gas-positive'],
+      concerns: [],
+    }
   }
-  return { role: 'market', signal: 'HOLD', confidence: clampConf(0.7 * weight('market-gas-negative')), citedRules: ['market-gas-negative'], concerns: ['gas exceeds expected gain'] }
+  return {
+    role: 'market',
+    signal: 'HOLD',
+    confidence: clampConf(0.7 * weight('market-gas-negative')),
+    citedRules: ['market-gas-negative'],
+    concerns: ['Estimated fees exceed the expected return.'],
+  }
 }
 
 const ROLE_LABEL = { yield: 'Yield Optimizer', risk: 'Risk Analyst', market: 'Gas Strategist' }
@@ -66,7 +121,8 @@ export async function councilVerdict(input, { weight = () => 1.0, resolveConflic
     marketSpecialist(input, w),
   ]
   const risk = specialists.find((s) => s.role === 'risk')
-  const cited = (signal) => specialists.filter((s) => s.signal === signal).flatMap((s) => s.citedRules)
+  const cited = (signal) =>
+    specialists.filter((s) => s.signal === signal).flatMap((s) => s.citedRules)
 
   // 1. Hard veto — TradingAgents safety mechanism.
   if (risk.signal === 'WITHDRAW' && risk.confidence > VETO_CONF) {
@@ -83,7 +139,14 @@ export async function councilVerdict(input, { weight = () => 1.0, resolveConflic
     return result('keep', null, avgConf(specialists), cited('DEPOSIT'), specialists, 'unanimous')
   }
   if ((counts.HOLD || 0) + (counts.WITHDRAW || 0) === 3) {
-    return result('discard', firstNonDeposit(specialists), avgConf(specialists), [], specialists, 'unanimous')
+    return result(
+      'discard',
+      firstNonDeposit(specialists),
+      avgConf(specialists),
+      [],
+      specialists,
+      'unanimous'
+    )
   }
 
   // 2b. Weighted majority — a side leads by a clear confidence margin.
@@ -100,16 +163,36 @@ export async function councilVerdict(input, { weight = () => 1.0, resolveConflic
   // 3. Genuine split → escalate to ONE AI call (only awaiting path).
   let signal = 'HOLD'
   if (typeof resolveConflict === 'function') {
-    try { signal = await resolveConflict(specialists, input.state.market) } catch { signal = 'HOLD' }
+    try {
+      signal = await resolveConflict(specialists, input.state.market)
+    } catch {
+      signal = 'HOLD'
+    }
   }
   const keep = signal === 'DEPOSIT'
-  return result(keep ? 'keep' : 'discard', keep ? null : 'AI synthesis', avgConf(specialists), keep ? cited('DEPOSIT') : [], specialists, 'ai-conflict')
+  return result(
+    keep ? 'keep' : 'discard',
+    keep ? null : 'AI synthesis',
+    avgConf(specialists),
+    keep ? cited('DEPOSIT') : [],
+    specialists,
+    'ai-conflict'
+  )
 }
 
 function result(verdict, reason, confidence, citedRules, specialists, resolvedBy) {
-  return { verdict, reason, confidence: +Number(confidence).toFixed(3), citedRules: [...new Set(citedRules)], specialists, resolvedBy }
+  return {
+    verdict,
+    reason,
+    confidence: +Number(confidence).toFixed(3),
+    citedRules: [...new Set(citedRules)],
+    specialists,
+    resolvedBy,
+  }
 }
-function avgConf(s) { return s.reduce((a, x) => a + x.confidence, 0) / s.length }
+function avgConf(s) {
+  return s.reduce((a, x) => a + x.confidence, 0) / s.length
+}
 function firstNonDeposit(s) {
   const x = s.find((v) => v.signal !== 'DEPOSIT')
   return x ? ROLE_LABEL[x.role] : null

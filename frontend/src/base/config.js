@@ -16,7 +16,7 @@ const ADDR_RE = /^0x[a-fA-F0-9]{40}$/
 function requireAddress(name, value) {
   if (!value || !ADDR_RE.test(value)) {
     throw new Error(
-      `${name} missing or not a 0x address — set VITE_${name} (see docs/deploy-checklist.md)`
+      `${name} is missing or is not a 0x address. Set VITE_${name} (see docs/deploy-checklist.md).`
     )
   }
   return value
@@ -29,7 +29,9 @@ export const BASE_SEPOLIA_RPC_URL =
 
 // ZeroDev's unified v3 RPC serves as BOTH bundler and paymaster transport (proven in SP0).
 export function zerodevRpcUrl(chainId = BASE_CHAIN.id, projectId = ZERODEV_PROJECT_ID) {
-  if (!projectId) throw new Error('VITE_ZERODEV_PROJECT_ID missing — see docs/deploy-checklist.md')
+  if (!projectId) {
+    throw new Error('VITE_ZERODEV_PROJECT_ID is missing. See docs/deploy-checklist.md.')
+  }
   return `https://rpc.zerodev.app/api/v3/${projectId}/chain/${chainId}`
 }
 

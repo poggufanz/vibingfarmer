@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest'
 import { makeRng, gaussian } from './rng.js'
 
 describe('makeRng', () => {
-  it('is deterministic — same seed yields the same sequence', () => {
+  it('is deterministic - same seed yields the same sequence', () => {
     const a = makeRng(42)
     const b = makeRng(42)
     expect([a(), a(), a()]).toEqual([b(), b(), b()])

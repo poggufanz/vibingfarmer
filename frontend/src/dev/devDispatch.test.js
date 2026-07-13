@@ -56,7 +56,7 @@ describe('dispatchRawCall', () => {
   test('returns {executed:false} with a clear error when session material is missing', async () => {
     const result = await dispatchRawCall({ scenario: 'sweep' })
     expect(result.executed).toBe(false)
-    expect(result.error).toMatch(/missing session material/)
+    expect(result.error).toMatch(/session material is missing/i)
   })
 
   test('reads session material from window.__vfDevMandateFixture when not passed directly', async () => {

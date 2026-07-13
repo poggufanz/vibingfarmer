@@ -6,9 +6,13 @@ import { NETWORK_PASSPHRASE, SOROBAN_RPC_URL, RELAY_PROXY_URL } from '../stellar
 // → rpId is omitted and Chrome defaults the relying party to the extension's own origin (the only
 // rpId a chrome-extension page can use). Applies to BOTH the register and sign WebAuthn calls,
 // since SAK reads rpId from this config (account.js makeKit → new SmartAccountKit(WALLET_CONFIG)).
-const isExtension = typeof window !== 'undefined' && window.location.protocol === 'chrome-extension:'
-const rawRpId = isExtension ? 'origin' : (import.meta.env?.VITE_VF_RP_ID ?? 'localhost')
-export const RP_ID = rawRpId && rawRpId !== 'origin' ? rawRpId : undefined
+// Runtime guard, not just build-time: an unset VITE_VF_RP_ID defaults to 'localhost', and a
+// packed extension built that way shipped an explicit rpId — Chrome then failed every ceremony
+// with "<extension-id> is an invalid domain". Extension origin ⇒ force undefined regardless of env.
+const isExtensionOrigin =
+  typeof location !== 'undefined' && location.protocol === 'chrome-extension:'
+const rawRpId = import.meta.env?.VITE_VF_RP_ID ?? 'localhost'
+export const RP_ID = !isExtensionOrigin && rawRpId && rawRpId !== 'origin' ? rawRpId : undefined
 export const RP_NAME = 'Vibing Farmer'
 
 // Version-matched OZ smart-account artifacts for smart-account-kit-bindings 0.1.2.

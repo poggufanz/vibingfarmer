@@ -5,6 +5,8 @@ import { isKnownVault, buildPaymentXdr, previewSend, sendPayment } from './send.
 import { decodeForConfirm } from './clearSign.js'
 import { VAULT_CATALOG } from '../config.js'
 import { eligibility } from '../vfapi/client.js'
+import { getVfApiKey } from './vfKey.js'
+import { makeVfClient } from '../vfapi/httpClient.js'
 
 // The real catalog's demo entries all point at the single deployed Soroban vault (a C-address),
 // which is not a valid classic-payment destination (Operation.payment only accepts G/M ed25519
@@ -28,6 +30,10 @@ vi.mock('../config.js', async (importOriginal) => {
 
 vi.mock('../vfapi/client.js', () => ({ eligibility: vi.fn() }))
 
+// Default: no stored key → the local-gate path. Gateway tests flip these per-test.
+vi.mock('./vfKey.js', () => ({ getVfApiKey: vi.fn(() => '') }))
+vi.mock('../vfapi/httpClient.js', () => ({ makeVfClient: vi.fn() }))
+
 vi.mock('./classicAccount.js', async () => {
   const { Keypair: RealKeypair } = await import('@stellar/stellar-sdk')
   return {
@@ -49,7 +55,7 @@ beforeEach(() => {
   vi.clearAllMocks()
 })
 
-describe('send — vault detection', () => {
+describe('send - vault detection', () => {
   it('flags a known vault address and ignores a random one', () => {
     const vaultAddr = VAULT_CATALOG[0].address
     expect(isKnownVault(vaultAddr).hit).toBe(true)
@@ -143,6 +149,7 @@ describe('previewSend', () => {
       name: VAULT_CATALOG[0].name,
       allow: false,
       reasons: ['x'],
+      source: 'local',
     })
     expect(eligibility).toHaveBeenCalledWith({
       vault: VAULT_CATALOG[0].protocol,
@@ -206,7 +213,7 @@ describe('sendPayment', () => {
     expect(eligibility).not.toHaveBeenCalled()
   })
 
-  it('fails closed on an ineligible vault destination — never builds or submits', async () => {
+  it('fails closed on an ineligible vault destination - never builds or submits', async () => {
     eligibility.mockResolvedValueOnce({ allow: false, reasons: ['blocked'] })
     const horizon = stubHorizon()
 
@@ -238,5 +245,55 @@ describe('sendPayment', () => {
 
     expect(result).toEqual({ hash: 'deadbeef', status: 'SUCCESS' })
     expect(horizon.submitTransaction).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('vault verdict via VF gateway (stored API key)', () => {
+  it('routes F8 through the gateway with the stored vf_ key and blocks on a reject', async () => {
+    getVfApiKey.mockReturnValueOnce('vf_test')
+    const remote = vi.fn(async () => ({ allow: false, reasons: ['unaudited'] }))
+    makeVfClient.mockReturnValueOnce({ eligibility: remote })
+    const horizon = stubHorizon()
+
+    await expect(
+      sendPayment({
+        from: FROM,
+        to: VAULT_CATALOG[0].address,
+        asset: 'XLM',
+        amount: '1.0000000',
+        horizon,
+      })
+    ).rejects.toThrow(/ineligible: unaudited/)
+
+    expect(makeVfClient).toHaveBeenCalledWith({ apiKey: 'vf_test' })
+    // Address + protocol slug + integer base units (7 dp) — the server contract.
+    expect(remote).toHaveBeenCalledWith({
+      vault: VAULT_CATALOG[0].address,
+      protocol: VAULT_CATALOG[0].protocol,
+      amount: '10000000',
+    })
+    expect(eligibility).not.toHaveBeenCalled() // local gate skipped when a key is stored
+    expect(horizon.submitTransaction).not.toHaveBeenCalled()
+  })
+
+  it('fails closed when the gateway errors (bad key / network)', async () => {
+    getVfApiKey.mockReturnValueOnce('vf_bad')
+    makeVfClient.mockReturnValueOnce({
+      eligibility: vi.fn(async () => {
+        throw new Error('Invalid API key')
+      }),
+    })
+
+    const result = await previewSend({
+      from: FROM,
+      to: VAULT_CATALOG[0].address,
+      asset: 'XLM',
+      amount: '1.0000000',
+      horizon: stubHorizon(),
+    })
+
+    expect(result.vault.allow).toBe(false)
+    expect(result.vault.source).toBe('api')
+    expect(result.vault.reasons[0]).toMatch(/Invalid API key/)
   })
 })

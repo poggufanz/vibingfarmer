@@ -1,6 +1,6 @@
 /* ============================================
    VIBING FARMER — App (multi-agent + real Web3)
-   Design state machine wired to real wallet.js / venice.js / orchestrator.js
+   Design state machine wired to real wallet.js / strategist.js / orchestrator.js
    ============================================ */
 import React, { useState as useS, useEffect as useE, useRef as useR, useMemo as useM } from 'react'
 import { lazy, Suspense } from 'react'
@@ -20,9 +20,7 @@ import {
   StrategyCard,
   ExecuteCard,
   MemoryModal,
-  LoopStatusPanel,
   DecisionLogPanel,
-  AgentGraph,
   buildAutofarmGraphData,
   rebalancePulseKey,
   buildStrategy,
@@ -36,9 +34,13 @@ import {
   revokeAgentOnChain,
   subscribeAgentRevoked,
 } from './stellar/index.js'
-import { generateStrategy } from './venice.js'
+import { generateStrategy } from './strategist.js'
 import { toDisplay, toBaseUnits } from './stellar/format.js'
-import { queryAgentsByOwner, discoverAgentsFromHorizon, discoverAgentsFromVault } from './stellar/events.js'
+import {
+  queryAgentsByOwner,
+  discoverAgentsFromHorizon,
+  discoverAgentsFromVault,
+} from './stellar/events.js'
 import { saveResume, loadResume, clearResume } from './strategy/sessionResume.js'
 import { attestStrategyOnChain, formatAttestation } from './attestation.js'
 import OnboardingFlow from './components/OnboardingFlow.jsx'
@@ -61,6 +63,7 @@ import {
 import GrantPanel from './components/GrantPanel.jsx'
 import { revokeGrant } from './stellar/grant.js'
 import { fetchKeeperEvents } from './stellar/keeperEvents.js'
+import { rehydrateScopes } from './stellar/scopeRehydrate.js'
 import {
   readPricePerShare,
   readStrategies,
@@ -68,8 +71,6 @@ import {
   readLifeboatState,
 } from './stellar/vaultReads.js'
 import { grantMandate } from './stellar/lifeboat.js'
-import KeeperPanel from './components/KeeperPanel.jsx'
-import LifeboatPanel from './components/LifeboatPanel.jsx'
 import { evaluateExit } from './strategy/autoExit/engine.js'
 import { runAutonomousExit } from './agents/exitExecutor.js'
 import {
@@ -78,9 +79,11 @@ import {
   loadDeployedAgents,
   saveDeployedAgents,
   reconcilePositionsFromChain,
+  pickPositionsAgents,
   mergePositions,
   applyChainPositions,
 } from './positionsStore.js'
+import { getViewAsAddress } from './dev/viewAs.js'
 import {
   diffMarket,
   fastReeval,
@@ -97,14 +100,14 @@ import {
   onAgentEvent,
   emergencyWithdraw,
 } from './agents/agentController.js'
-const AgentDashboard = lazy(() => import('./components/AgentDashboard.jsx'))
+const OpsConsole = lazy(() => import('./components/console/OpsConsole.jsx'))
 import NotificationCenter from './components/NotificationCenter.jsx'
 import HomePage from './components/HomePage.jsx'
 const LandingHero = lazy(() => import('./components/LandingHero.jsx'))
 const ExplorerPage = lazy(() => import('./components/ExplorerPage.jsx'))
 const EcosystemPage = lazy(() => import('./components/EcosystemPage.jsx'))
 const ReplayPage = lazy(() => import('./components/ReplayPage.jsx'))
-const DevelopersPage = lazy(() => import('./developers/DevelopersPage.jsx'))
+const DevelopersLayout = lazy(() => import('./developers/DevelopersLayout.jsx'))
 import SettingsPage from './components/SettingsPage.jsx'
 import {
   WalletPanel,
@@ -141,8 +144,8 @@ import {
   proposerVerdict,
   riskComplianceVerdict,
   validatorVerdict,
-  askVeniceJson,
-} from './venice.js'
+  askStrategistJson,
+} from './strategist.js'
 import {
   councilReview,
   buildCouncilInput,
@@ -218,27 +221,27 @@ const sendPushNotification = async (ev, passedSettings) => {
     }
   }
 
-  let title = 'Vibing Farmer · Alert'
+  let title = 'Vibing Farmer alert'
   let detail = ''
 
   if (ev.kind === 'rebalance_proposal') {
-    title = '🔄 Rebalance Opportunity Detected'
+    title = 'Rebalance opportunity detected'
     detail = `Venice AI flagged ${ev.toProtocol} at ${ev.toApy}% vs your current ${ev.fromVault} at ${ev.fromApy}% (potential gain: +${ev.apyGain}%).`
   } else if (ev.kind === 'risk_alert') {
-    title = `🚨 Risk Alert [Severity: ${ev.severity.toUpperCase()}]`
+    title = `Risk alert: ${ev.severity}`
     detail = `Signal on ${ev.vaultName}: ${ev.searchAnswer || 'Security concern detected.'}`
   } else if (ev.kind === 'apy_drift') {
-    title = '⚠ APY Drop Detected'
+    title = 'APY drop detected'
     detail = `APY on ${ev.vaultName} dropped from ${ev.baselineApy}% to ${ev.currentApy}% (${ev.driftPct}%).`
   } else if (ev.kind === 'harvest_ready') {
-    title = '🟢 Yield Harvest Ready'
+    title = 'Yield ready to claim'
     detail = `${ev.rewardsUsdc} USDC accrued on ${ev.vaultName} is ready to claim.`
   } else if (ev.kind === 'compound_executed') {
-    title = '✓ Keeper Compounded'
-    detail = `${ev.vaultName} · +${ev.totalGainUsdc} USDC reinvested · price/share ${ev.pricePerShare}. No action needed.`
+    title = 'Keeper compounded'
+    detail = `${ev.vaultName}, +${ev.totalGainUsdc} USDC reinvested, price/share ${ev.pricePerShare}. No action needed.`
   } else if (ev.kind === 'rebalance_executed') {
-    title = '⇄ Keeper Rebalanced'
-    detail = `${ev.vaultName} · ${ev.fromLabel} → ${ev.toLabel} · ${ev.amountUsdc} USDC moved. No action needed.`
+    title = 'Keeper rebalanced'
+    detail = `${ev.vaultName}, ${ev.fromLabel} → ${ev.toLabel}, ${ev.amountUsdc} USDC moved. No action needed.`
   }
 
   const messageText = `*${title}*\n\n${detail}\n\n_Time: ${new Date(ev.timestamp || Date.now()).toLocaleString()}_`
@@ -250,7 +253,7 @@ const sendPushNotification = async (ev, passedSettings) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          content: `🚨 **${title}**\n${detail}`,
+          content: `**${title}**\n${detail}`,
         }),
       })
     } catch (e) {
@@ -302,9 +305,9 @@ const mapVeniceToStrategy = (veniceResult, amount, risk) => {
   const total = Number(amount)
   const PROTOCOLS = ['aave-v3', 'morpho-blue', 'pendle-v2']
   const ROLES = [
-    'Conservative · lending',
-    'Balanced · liquidity provision',
-    'Aggressive · leveraged yield',
+    'Conservative, lending',
+    'Balanced, liquidity provision',
+    'Aggressive, leveraged yield',
   ]
   const byAddr = (addr) =>
     VAULT_CATALOG.find((c) => c.address.toLowerCase() === String(addr).toLowerCase()) || {}
@@ -320,8 +323,8 @@ const mapVeniceToStrategy = (veniceResult, amount, risk) => {
     return {
       id: `worker-${i + 1}`,
       idx: String(i + 1).padStart(2, '0'),
-      name: `Worker ${i + 1} · ${ROLES[i]?.split(' · ')[0] || 'Conservative'}`,
-      role: ROLES[i] || 'Conservative · lending',
+      name: `Worker ${i + 1}, ${ROLES[i]?.split(', ')[0] || 'Conservative'}`,
+      role: ROLES[i] || 'Conservative, lending',
       allocation: +(total * v.allocation).toFixed(2),
       skillName: 'yield_vault_deposit',
       reasoning: v.reasoning, // AI metadata → UI
@@ -400,7 +403,7 @@ const App = () => {
   const [devApiKey, setDevApiKey] = useS('')
 
   // strategy sub-state
-  const [strategyPhase, setStrategyPhase] = useS('input') // input | thinking | ready | council
+  const [strategyPhase, setStrategyPhase] = useS('input') // input | thinking | ready
   const [thinkingPhase, setThinkingPhase] = useS(0)
   const [thinkTimes, setThinkTimes] = useS([]) // real measured per-step durations (seconds)
   const [slowConfirm, setSlowConfirm] = useS(false) // AI exceeded timeout → ask keep waiting / fallback
@@ -438,7 +441,7 @@ const App = () => {
 
   const [permPhase, setPermPhase] = useS('idle')
   const [permError, setPermError] = useS(null)
-  // One-popup grant flow (router path). grantPhase drives the GrantPanel button label; the chosen
+  // Single-signature grant flow (router path). grantPhase drives the GrantPanel button label; the chosen
   // budget/duration are stashed in a ref so startExecution reads them synchronously when it builds
   // the orchestrator (state updates are async).
   const [grantPhase, setGrantPhase] = useS('idle')
@@ -515,10 +518,42 @@ const App = () => {
   const [logs, setLogs] = useS([])
   const logIdRef = useR(0)
   const agentMapRef = useR({})
+  // Latest agent list for reconcile (see positionsAgents below) — read by poll closures that
+  // were captured before scopes finished rehydrating.
+  const positionsAgentsRef = useR(undefined)
+  // Agent addresses saved from the last orchestrator run (dev-branch discovery path) —
+  // fallback source when scopes haven't rehydrated and localStorage cache is empty.
   const deployedAgentsRef = useR([])
 
   // Real Web3 state
-  const [realAddress, setRealAddress] = useS(null)
+  // Dev-only read-as override: /agent?as=G... opens the console with that address's chain
+  // state (read paths only — signing still needs a real wallet). DEV builds only; the whole
+  // branch is dead-code-eliminated in prod and scripts/assert-no-dev-dispatch.mjs asserts the
+  // __vfDevViewAs marker never ships in dist/.
+  const viewAsAddress = getViewAsAddress()
+  // Which agents' vault shares a "position" reads. Priority:
+  //   view-as (dev) → the impersonated address's OWN shares;
+  //   real run      → the per-run agents the router deployed (scopes[].agent, non-revoked),
+  //                   which is where deposit mints the shares.
+  // Falling back to reconcile's default (the fixed demo agent) is the bug that emptied the
+  // positions card ~15s after a real run: the poll read demo-agent = 0 shares and pruned the
+  // vault. Shares sum across agents; withdrawn/other-run agents read 0 and drop out harmlessly.
+  // ponytail: N non-revoked agents = N readVaultShares per 15s poll; fine for a handful of
+  // runs, revisit if an owner accumulates dozens of live grants.
+  const positionsAgents = pickPositionsAgents(scopes, viewAsAddress)
+  // Reconcile effects capture this closure keyed on realAddress, but scopes rehydrate async
+  // AFTER connect. A latest-value ref lets the already-subscribed poll (and the cold-reconcile
+  // that must not prune restored cache) read the current agent list without re-mounting.
+  positionsAgentsRef.current = positionsAgents
+  const reconcilePositions = (addr) => {
+    const agents = positionsAgentsRef.current
+    return reconcilePositionsFromChain(addr, agents ? { agents } : undefined)
+  }
+  const [realAddress, setRealAddress] = useS(() => {
+    if (import.meta.env.DEV && viewAsAddress)
+      console.info('[dev] view-as read override active:', viewAsAddress)
+    return viewAsAddress
+  })
   const loopRef = useR(null)
   const latestGasRef = useR(null) // last live gas snapshot { level, gwei } for the monitor loop
   const hydratedRef = useR(null) // address whose cached positions have finished restoring
@@ -615,12 +650,12 @@ const App = () => {
   useE(() => {
     const titles = {
       '/home': 'vibing / farmer',
-      '/strategy': 'New Strategy · vibing / farmer',
-      '/agent': 'Autonomous Agent · vibing / farmer',
-      '/history': 'History · vibing / farmer',
-      '/settings': 'Settings · vibing / farmer',
+      '/strategy': 'New strategy | Vibing Farmer',
+      '/agent': 'Autonomous agent | Vibing Farmer',
+      '/history': 'History | Vibing Farmer',
+      '/settings': 'Settings | Vibing Farmer',
     }
-    document.title = titles[location.pathname] || 'vibing / farmer'
+    document.title = titles[location.pathname] || 'Vibing Farmer'
   }, [location.pathname])
 
   // Record the furthest step reached so the rail can navigate to visited steps (and only those)
@@ -658,23 +693,19 @@ const App = () => {
       hydratedRef.current = realAddress
     }, 0)
     let alive = true
-    const persistedAgents = loadDeployedAgents(realAddress);
-    (async () => {
+    const persistedAgents = loadDeployedAgents(realAddress)
+    ;(async () => {
       let agents = persistedAgents
       // No cached agents → discover from on-chain events.
       // Strategy: Registry first (fast, single call), then vault deposit event scan
       // (fallback for agents deployed with registryAuthorize=false, the default).
       if (!agents.length) {
-        console.log('[app] no cached agents, discovering...')
-        agents = await queryAgentsByOwner(realAddress).catch((e) => { console.warn('[app] registry discovery error:', e); return [] })
-        console.log('[app] registry result:', agents.length)
+        agents = await queryAgentsByOwner(realAddress).catch(() => [])
         if (!agents.length) {
-          agents = await discoverAgentsFromHorizon(realAddress).catch((e) => { console.warn('[app] horizon discovery error:', e); return [] })
-          console.log('[app] horizon result:', agents.length)
+          agents = await discoverAgentsFromHorizon(realAddress).catch(() => [])
         }
         if (!agents.length) {
-          agents = await discoverAgentsFromVault(realAddress).catch((e) => { console.warn('[app] vault discovery error:', e); return [] })
-          console.log('[app] vault discovery result:', agents.length)
+          agents = await discoverAgentsFromVault(realAddress).catch(() => [])
         }
         if (agents.length) {
           saveDeployedAgents(realAddress, agents)
@@ -682,8 +713,14 @@ const App = () => {
         }
       }
       if (!alive) return
-      console.log('[app] reconciling with agents:', agents)
-      const chain = await reconcilePositionsFromChain(realAddress, { agents }).catch((e) => { console.warn('[app] reconcile error:', e); return null })
+      // Prefer the scope-derived agent list (per-run grant agents — the authoritative
+      // source once scopes rehydrate); discovered agents cover the fresh-browser case.
+      const scopeAgents = positionsAgentsRef.current
+      const useAgents = scopeAgents?.length ? scopeAgents : agents
+      const chain = await reconcilePositionsFromChain(
+        realAddress,
+        useAgents.length ? { agents: useAgents } : undefined
+      ).catch(() => null)
       if (!alive || !chain) return // null = no RPC / all reads failed → keep cache
       // Cold reconnect: cached positions are from a PRIOR session, so they're mined and
       // the chain is authoritative. applyChainPositions replaces balances and PRUNES any
@@ -723,31 +760,37 @@ const App = () => {
     if (!realAddress) return
     let alive = true
     const sync = async () => {
-      let storedAgents = loadDeployedAgents(realAddress)
-      let pollAgents = storedAgents.length ? storedAgents : (deployedAgentsRef.current || [])
+      // Prefer the scope-derived agent list (per-run grant agents — kept fresh via
+      // positionsAgentsRef); fall back to saved/discovered agents (fresh-browser case),
+      // then to reconcilePositions' default (demo agent) when nothing is known.
+      const scopeAgents = positionsAgentsRef.current
+      let pollAgents = scopeAgents?.length
+        ? scopeAgents
+        : (() => {
+            const stored = loadDeployedAgents(realAddress)
+            return stored.length ? stored : deployedAgentsRef.current || []
+          })()
       // Discover from on-chain events when no cached agent addresses.
       // Strategy: Registry first (fast, single call), then vault deposit event scan
       // (fallback for agents deployed with registryAuthorize=false, the default).
       if (!pollAgents.length) {
-        console.log('[poll] no cached agents, discovering...')
-        storedAgents = await queryAgentsByOwner(realAddress).catch((e) => { console.warn('[poll] registry error:', e); return [] })
-        console.log('[poll] registry result:', storedAgents.length)
-        if (!storedAgents.length) {
-          storedAgents = await discoverAgentsFromHorizon(realAddress).catch((e) => { console.warn('[poll] horizon error:', e); return [] })
-          console.log('[poll] horizon result:', storedAgents.length)
+        let discovered = await queryAgentsByOwner(realAddress).catch(() => [])
+        if (!discovered.length) {
+          discovered = await discoverAgentsFromHorizon(realAddress).catch(() => [])
         }
-        if (!storedAgents.length) {
-          storedAgents = await discoverAgentsFromVault(realAddress).catch((e) => { console.warn('[poll] vault error:', e); return [] })
-          console.log('[poll] vault discovery result:', storedAgents.length)
+        if (!discovered.length) {
+          discovered = await discoverAgentsFromVault(realAddress).catch(() => [])
         }
-        if (storedAgents.length) {
-          saveDeployedAgents(realAddress, storedAgents)
-          deployedAgentsRef.current = storedAgents
-          pollAgents = storedAgents
+        if (discovered.length) {
+          saveDeployedAgents(realAddress, discovered)
+          deployedAgentsRef.current = discovered
+          pollAgents = discovered
         }
       }
-      console.log('[poll] reconciling with agents:', pollAgents)
-      const chain = await reconcilePositionsFromChain(realAddress, { agents: pollAgents }).catch((e) => { console.warn('[poll] reconcile error:', e); return null })
+      const chain = await reconcilePositionsFromChain(
+        realAddress,
+        pollAgents.length ? { agents: pollAgents } : undefined
+      ).catch(() => null)
       if (alive && chain) {
         setAgentData((d) => ({
           ...d,
@@ -946,7 +989,7 @@ const App = () => {
     if (ev.kind === 'harvest_executed') {
       addLog({
         event: 'DepositExecuted',
-        meta: `auto-harvest ${ev.vaultName} · tx ${shortAddr(ev.txHash)}`,
+        meta: `Auto-harvested ${ev.vaultName}. Transaction ${shortAddr(ev.txHash)}.`,
         txHash: ev.txHash,
         detail: `Auto-harvest claimed rewards from ${ev.vaultName}.`,
       })
@@ -976,17 +1019,17 @@ const App = () => {
     }
     const detail =
       ev.kind === 'rebalance_proposal'
-        ? `Venice AI flagged ${ev.toProtocol} at ${ev.toApy}% vs your ${ev.fromVault} at ${ev.fromApy}% · capture +${ev.apyGain}% by rebalancing.`
+        ? `Venice AI flagged ${ev.toProtocol} at ${ev.toApy}% vs your ${ev.fromVault} at ${ev.fromApy}%, capture +${ev.apyGain}% by rebalancing.`
         : ev.kind === 'risk_alert'
-          ? `Severity ${ev.severity} · classified by Venice AI. Signal on ${ev.vaultName}. Action: alert surfaced, awaiting your decision.`
+          ? `Severity ${ev.severity}, classified by Venice AI. Signal on ${ev.vaultName}. Action: alert surfaced, awaiting your decision.`
           : ev.kind === 'apy_drift'
             ? `APY on ${ev.vaultName} dropped to ${ev.currentApy}% (from ${ev.baselineApy}%, ${ev.driftPct}%).`
             : ev.kind === 'harvest_ready'
-              ? `${ev.rewardsUsdc} USDC accrued on ${ev.vaultName} · ready to claim.`
+              ? `${ev.rewardsUsdc} USDC accrued on ${ev.vaultName}, ready to claim.`
               : ev.kind === 'compound_executed'
-                ? `Keeper compounded ${ev.vaultName} · +${ev.totalGainUsdc} USDC · price/share ${ev.pricePerShare}.`
+                ? `Keeper compounded ${ev.vaultName}, +${ev.totalGainUsdc} USDC, price/share ${ev.pricePerShare}.`
                 : ev.kind === 'rebalance_executed'
-                  ? `Keeper rebalanced ${ev.vaultName} · ${ev.fromLabel} → ${ev.toLabel} · ${ev.amountUsdc} USDC moved.`
+                  ? `Keeper rebalanced ${ev.vaultName}, ${ev.fromLabel} → ${ev.toLabel}, ${ev.amountUsdc} USDC moved.`
                   : ''
     addLog({
       event:
@@ -997,7 +1040,7 @@ const App = () => {
             : ev.kind === 'rebalance_executed'
               ? 'RedelegationCreated'
               : 'OrchestratorPlanned',
-      meta: `${ev.kind.replace(/_/g, ' ')} · ${ev.vaultName || ev.fromVault || ''}${ev.txHash ? ` · tx ${shortAddr(ev.txHash)}` : ''}`,
+      meta: `${ev.kind.replace(/_/g, ' ')}, ${ev.vaultName || ev.fromVault || ''}${ev.txHash ? `, tx ${shortAddr(ev.txHash)}` : ''}`,
       txHash: ev.txHash,
       detail,
     })
@@ -1033,7 +1076,7 @@ const App = () => {
       thresholds: { ...agentSettings, autoHarvest: false },
     })
     const unsub = onAgentEvent(handleAgentEvent)
-    addLog({ event: 'OrchestratorPlanned', meta: 'background agent · monitoring started' })
+    addLog({ event: 'OrchestratorPlanned', meta: 'Background monitoring started.' })
 
     // ── Autonomous monitor loop — NEVER-STOP spine + TradingAgents council ──
     const loop = createMonitorLoop({
@@ -1062,7 +1105,7 @@ const App = () => {
         // Surface the proposal; the user acts via the UI (user-signed withdraw / revoke).
         addLog({
           event: 'OrchestratorPlanned',
-          meta: `proposal · ${idea.kind} ${idea.vaultName || idea.fromVault || ''}`.trim(),
+          meta: `Proposal: ${idea.kind} ${idea.vaultName || idea.fromVault || ''}`.trim(),
         })
         return null
       },
@@ -1074,7 +1117,7 @@ const App = () => {
             const sys =
               'You are the Curator of a DeFi yield-farming AI Council playbook. Given a notable cycle outcome, propose ONE concise, generalizable rule for the named role that would have prevented the failure or resolved the disagreement. Output JSON ONLY: {"role":"yield|risk|market","text":"..."}.'
             const user = `Role: ${c.role}\nOutcome: ${c.outcome}\nResolved by: ${c.resolvedBy || 'n/a'}\nReason: ${c.reason || 'n/a'}\nRegime: ${c.turbulence || 'n/a'}\nCited rules: ${(c.citedRules || []).join(', ') || 'none'}\n\nPropose one new rule as JSON.`
-            const out = await askVeniceJson({ system: sys, user, devApiKey: devApiKey || null })
+            const out = await askStrategistJson({ system: sys, user, devApiKey: devApiKey || null })
             return out && out.role && out.text ? { role: out.role, text: String(out.text) } : null
           } catch {
             return null
@@ -1157,7 +1200,7 @@ const App = () => {
         localStorage.setItem(`yv_last_exit_trip_${realAddress}`, String(Date.now()))
         addLog({
           event: 'AgentFailed',
-          meta: `🚨 Auto-Exit Triggered: ${result.reason}`,
+          meta: `Auto-Exit Triggered: ${result.reason}`,
           detail: `Trigger: ${result.trigger}. Launching autonomous exit...`,
         })
 
@@ -1185,7 +1228,7 @@ const App = () => {
           })
           addLog({
             event: 'AgentCompleted',
-            meta: `✓ Autonomous Exit Succeeded! Tx: ${txRes.hash.slice(0, 8)}...`,
+            meta: `Autonomous exit succeeded. Transaction: ${txRes.hash.slice(0, 8)}...`,
             detail: 'All vault shares redeemed and USDC principal returned to owner wallet.',
           })
 
@@ -1201,7 +1244,7 @@ const App = () => {
           console.error('[AutoExit] Autonomous exit failed:', err)
           addLog({
             event: 'AgentFailed',
-            meta: `✗ Auto-Exit Failed: ${err.message}`,
+            meta: `Automatic exit failed: ${err.message}`,
             detail: 'Please execute emergency withdraw manually.',
           })
         }
@@ -1280,8 +1323,8 @@ const App = () => {
         isFixture: !!v?.isFixture,
         protocolLabel: SNAPSHOT[a.vault.protocol]?.meta?.label || a.vault.protocol,
         label: vaultEligibilityLabel(v),
-        mainnetLine: `Protocol credibility: ${SNAPSHOT[a.vault.protocol]?.meta?.label || a.vault.protocol} — audited, TVL from snapshot`,
-        testnetLine: 'This deposit: testnet — APR illustrative, realized yield may be ~0',
+        mainnetLine: `Protocol credibility: ${SNAPSHOT[a.vault.protocol]?.meta?.label || a.vault.protocol}. Audited, TVL from snapshot`,
+        testnetLine: 'This deposit: testnet. APR illustrative; realized yield may be ~0',
         asOf,
       }
     })
@@ -1298,7 +1341,8 @@ const App = () => {
       setCouncil(undefined)
       return
     }
-    if (strategyPhase === 'council' || !!debateResult) return
+    // Debate UI runs in-place on the ready card — skip while debate is active/done.
+    if (debateRunning || !!debateResult) return
     let cancelled = false
     setCouncil(null)
     const ctrl = new AbortController()
@@ -1325,7 +1369,7 @@ const App = () => {
         councilCitedRef.current = { citedRules: result.citedRules || [], verdict: result.verdict }
         addLog({
           event: 'OrchestratorPlanned',
-          meta: `AI Council · ${result.verdict} · ${result.resolvedBy}${result.citedRules?.length ? ` · ${result.citedRules.join(', ')}` : ''}`,
+          meta: `AI Council, ${result.verdict}, ${result.resolvedBy}${result.citedRules?.length ? `, ${result.citedRules.join(', ')}` : ''}`,
         })
       })
       .catch((e) => {
@@ -1338,7 +1382,7 @@ const App = () => {
       cancelled = true
       ctrl.abort()
     }
-  }, [strategy, strategyPhase, amount, risk, councilRetry])
+  }, [strategy, strategyPhase, amount, risk, councilRetry, debateRunning, debateResult])
 
   const handleEmergencyWithdraw = async (alert) => {
     const pos = agentData.positions[alert.vaultAddress]
@@ -1347,27 +1391,27 @@ const App = () => {
       ? bal
       : (bal * BigInt(Math.round(agentSettings.emergencyPct))) / 100n
     if (amt <= 0n) {
-      addLog({ event: 'AgentFailed', meta: 'emergency withdraw · no balance tracked yet' })
+      addLog({ event: 'AgentFailed', meta: 'Emergency withdrawal stopped. No balance is tracked.' })
       return
     }
     try {
       const tx = await emergencyWithdraw(alert.vaultAddress, amt.toString(), realAddress)
       addLog({
         event: 'PermissionRevoked',
-        meta: `emergency withdraw ${alert.vaultName} · tx ${shortAddr(tx)}`,
+        meta: `Emergency withdrawal from ${alert.vaultName}. Transaction ${shortAddr(tx)}.`,
         txHash: tx,
         detail: `Emergency withdrew from ${alert.vaultName} to your wallet.`,
       })
       dismissAlert(alert.id)
     } catch (e) {
-      addLog({ event: 'AgentFailed', meta: `withdraw failed: ${e.message}` })
+      addLog({ event: 'AgentFailed', meta: `Withdrawal failed: ${e.message}` })
     }
   }
 
   const handleReviewRebalance = (alert) =>
     addLog({
       event: 'OrchestratorPlanned',
-      meta: `rebalance review · ${alert.fromVault} → ${alert.toProtocol} (+${alert.apyGain}%)`,
+      meta: `Rebalance review: ${alert.fromVault} → ${alert.toProtocol} (+${alert.apyGain}%).`,
       detail: `Venice AI flagged ${alert.toProtocol} at ${alert.toApy}% vs ${alert.fromVault} at ${alert.fromApy}% (+${alert.apyGain}%). Rebalancing authorizes a fresh Soroban session-key scope for the new vault.`,
     })
 
@@ -1383,13 +1427,13 @@ const App = () => {
       )
       addLog({
         event: 'PermissionRevoked',
-        meta: `revoked agent ${shortAddr(agent)} · tx ${shortAddr(tx)}`,
+        meta: `Revoked agent ${shortAddr(agent)}. Transaction ${shortAddr(tx)}.`,
         txHash: tx,
         detail:
           'Agent scope revoked on-chain. Further deposits by this key now revert (ScopeInactive).',
       })
     } catch (e) {
-      addLog({ event: 'AgentFailed', meta: `revoke failed: ${e.message}` })
+      addLog({ event: 'AgentFailed', meta: `Revocation failed: ${e.message}` })
     }
   }
 
@@ -1405,6 +1449,25 @@ const App = () => {
       )
     })
     return off
+  }, [realAddress])
+
+  // Rehydrate the on-chain agent scopes on connect / auto-reconnect / wallet switch. `scopes` is
+  // in-memory (filled live from AgentScopeAuthorized), so a refresh empties the "Agent permissions"
+  // panel while the grants stay live on-chain. This re-enumerates the owner's router-deployed
+  // agents (getEvents ∪ agent cache) and re-reads each scope, then REPLACES the whole list —
+  // idempotent under StrictMode's double-fire, and safe against a racing live grant (that handler
+  // dedupes by agent). Keyed on realAddress, not mount, so it also runs on manual reconnect.
+  useE(() => {
+    if (!realAddress) return
+    let alive = true
+    rehydrateScopes({ owner: realAddress })
+      .then((rows) => {
+        if (alive) setScopes(rows)
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
   }, [realAddress])
 
   // Lifeboat mandate grant (vf-lifeboat) — user-signed, time-boxed 24h authority. Re-reads
@@ -1446,7 +1509,7 @@ const App = () => {
     else updateAgentConfig({ activeVaults: remaining })
     addLog({
       event: 'PermissionRevoked',
-      meta: `withdrew ${shortAddr(vaultAddress)} · position updated`,
+      meta: `Withdrew from ${shortAddr(vaultAddress)}. Position updated.`,
       detail: 'Position balance updated after withdraw; agent monitoring config synced.',
     })
     // Optimistic subtract above can drift (partial fills, share-price). Chain = truth — but the
@@ -1463,7 +1526,7 @@ const App = () => {
       let attempts = 0
       const reconcile = async () => {
         attempts++
-        const chain = await reconcilePositionsFromChain(realAddress).catch(() => null)
+        const chain = await reconcilePositions(realAddress).catch(() => null)
         if (chain) {
           const entry = Object.entries(chain).find(
             ([k]) => k.toLowerCase() === vaultAddress.toLowerCase()
@@ -1490,7 +1553,10 @@ const App = () => {
   const handleSubmitPreference = () => {
     setStrategyPhase('thinking')
     setThinkingPhase(0)
-    addLog({ event: 'OrchestratorPlanned', meta: `${amount} usdc · ${risk} risk · planning` })
+    addLog({
+      event: 'OrchestratorPlanned',
+      meta: `${amount} USDC, ${risk} risk. Planning started.`,
+    })
   }
 
   useE(() => {
@@ -1551,16 +1617,16 @@ const App = () => {
           }
           addLog({
             event: 'OrchestratorPlanned',
-            meta: `parallel fetch · gas ${veniceResult.mdpState.gasGwei} gwei (${veniceResult.mdpState.gasLevel})`,
+            meta: `Market data fetched in parallel. Gas: ${veniceResult.mdpState.gasGwei} gwei (${veniceResult.mdpState.gasLevel}).`,
           })
         }
         if (veniceResult.dagTimings) {
           const breakdown = Object.entries(veniceResult.dagTimings)
             .map(([id, ms]) => `${id} ${Math.round(ms)}ms`)
-            .join(' · ')
+            .join(', ')
           addLog({
             event: 'OrchestratorPlanned',
-            meta: `dag · wall ${veniceResult.dagWallMs}ms`,
+            meta: `Strategy graph completed in ${veniceResult.dagWallMs}ms.`,
             detail: breakdown,
           })
         }
@@ -1569,7 +1635,7 @@ const App = () => {
           s = mapVeniceToStrategy(veniceResult, amount, risk)
           addLog({
             event: 'OrchestratorPlanned',
-            meta: `strategy via ${veniceResult.generatedBy} · ${(veniceResult.strategy_summary || veniceResult.rationale)?.slice(0, 60)}`,
+            meta: `Strategy generated by ${veniceResult.generatedBy}. ${(veniceResult.strategy_summary || veniceResult.rationale)?.slice(0, 60)}`,
           })
         }
       } catch (e) {
@@ -1588,7 +1654,7 @@ const App = () => {
       setSkillStates(sk)
       addLog({
         event: 'OrchestratorPlanned',
-        meta: `${s.agents.length} worker spawned · ${s.blendedApy}% blended apy`,
+        meta: `${s.agents.length} worker spawned, ${s.blendedApy}% blended apy`,
       })
     })()
 
@@ -1601,47 +1667,57 @@ const App = () => {
 
   const handleRunCouncil = async () => {
     if (!strategy?.agents?.length || debateRunning) return
+    // Stay on strategyPhase 'ready' so the stage key does not remount StrategyCard
+    // (key used to flip ready→council and felt like a full page refresh).
     setDebateRunning(true)
     setDebateResult(null)
-    setStrategyPhase('council')
     const ctrl = new AbortController()
-    const state = buildStrategyState({
-      amountUsdc: Number(amount) || 0,
-      riskLevel: risk,
-      numVaults: strategy.agents.length,
-      vaultData: VAULT_CATALOG,
-      marketContext: marketLive,
-      positions: agentData.positions,
-      gas: latestGasRef.current,
-    })
-    const sim = runSimulation(allocationsFromStrategy(strategy), state, {
-      runs: 200,
-      horizonDays: 30,
-      seed: 1,
-      context: {
-        turbulence: strategy.mdpState?.turbulence || state.market.turbulence,
-        apyTrendPct: 0,
-        gasGwei: latestGasRef.current?.gwei || null,
-      },
-    })
-    const settings = await loadSettings()
-    const input = buildDebateInput(strategy, sim, state)
-    const result = await councilDebate(input, {
-      proposer: proposerVerdict,
-      riskCompliance: riskComplianceVerdict,
-      validator: validatorVerdict,
-      devApiKey: devApiKey || null,
-      signal: ctrl.signal,
-      maxIterations: settings.maxIterations || 5,
-      convergenceThreshold: 0.15,
-    })
-    setDebateResult(result)
-    setDebateRunning(false)
-    setCouncil(result)
-    addLog({
-      event: 'OrchestratorPlanned',
-      meta: `Debate Council · ${result.verdict} · ${result.iterations} iters · converged: ${result.converged}`,
-    })
+    try {
+      const state = buildStrategyState({
+        amountUsdc: Number(amount) || 0,
+        riskLevel: risk,
+        numVaults: strategy.agents.length,
+        vaultData: VAULT_CATALOG,
+        marketContext: marketLive,
+        positions: agentData.positions,
+        gas: latestGasRef.current,
+      })
+      const sim = runSimulation(allocationsFromStrategy(strategy), state, {
+        runs: 200,
+        horizonDays: 30,
+        seed: 1,
+        context: {
+          turbulence: strategy.mdpState?.turbulence || state.market.turbulence,
+          apyTrendPct: 0,
+          gasGwei: latestGasRef.current?.gwei || null,
+        },
+      })
+      const settings = await loadSettings()
+      const input = buildDebateInput(strategy, sim, state)
+      const result = await councilDebate(input, {
+        proposer: proposerVerdict,
+        riskCompliance: riskComplianceVerdict,
+        validator: validatorVerdict,
+        devApiKey: devApiKey || null,
+        signal: ctrl.signal,
+        maxIterations: settings.maxIterations || 5,
+        convergenceThreshold: 0.15,
+      })
+      setDebateResult(result)
+      setCouncil(result)
+      addLog({
+        event: 'OrchestratorPlanned',
+        meta: `Debate Council, ${result.verdict}, ${result.iterations} iters, converged: ${result.converged}`,
+      })
+    } catch (e) {
+      console.warn('[app] Debate council failed:', e)
+      addLog({
+        event: 'OrchestratorPlanned',
+        meta: `Debate Council failed, ${e?.message || 'unknown error'}`,
+      })
+    } finally {
+      setDebateRunning(false)
+    }
   }
 
   const runCouncilMonitorCheck = async (settings, apyByVault = {}) => {
@@ -1681,13 +1757,13 @@ const App = () => {
         }))
         addLog({
           event: 'OrchestratorPlanned',
-          meta: `Monitor re-eval · fast pass · confidence ${(result.confidence * 100).toFixed(0)}%`,
+          meta: `Monitor re-eval, fast pass, confidence ${(result.confidence * 100).toFixed(0)}%`,
         })
       } else {
         setMonitorStatus((s) => ({ ...s, result: 'violation', error: result.error }))
         addLog({
           event: 'AgentFailed',
-          meta: `Monitor re-eval · ${result.error}`,
+          meta: `Monitor re-eval, ${result.error}`,
           detail: (result.violations || []).join('; '),
         })
       }
@@ -1701,12 +1777,12 @@ const App = () => {
           amountUsdc: Number(amount) || 0,
           riskLevel: risk,
           numVaults: strategy?.agents?.length || Object.keys(agentData.positions).length || 1,
-      vaultData: VAULT_CATALOG,
-      marketContext: marketLive,
-      positions: agentData.positions,
-      gas: latestGasRef.current,
-      maxDrawdownPct: agentSettings.maxDrawdownPct,
-    })
+          vaultData: VAULT_CATALOG,
+          marketContext: marketLive,
+          positions: agentData.positions,
+          gas: latestGasRef.current,
+          maxDrawdownPct: agentSettings.maxDrawdownPct,
+        })
         const sim = runSimulation(allocationsFromStrategy(strategy), state, {
           runs: 200,
           horizonDays: 30,
@@ -1735,7 +1811,7 @@ const App = () => {
         }))
         addLog({
           event: result.verdict === 'keep' ? 'OrchestratorPlanned' : 'AgentFailed',
-          meta: `Monitor full debate · ${result.verdict} · ${result.iterations} iters · converged: ${result.converged}`,
+          meta: `Monitor full debate, ${result.verdict}, ${result.iterations} iters, converged: ${result.converged}`,
         })
       } finally {
         ctrl.abort()
@@ -1751,7 +1827,7 @@ const App = () => {
     setThinkingPhase(0)
     setDebateResult(null)
     setCouncil(undefined)
-    addLog({ event: 'OrchestratorPlanned', meta: `re-planning · ${amount} usdc · ${risk} risk` })
+    addLog({ event: 'OrchestratorPlanned', meta: `Replanning: ${amount} USDC, ${risk} risk.` })
   }
 
   const handleKeepWaiting = () => {
@@ -1776,7 +1852,7 @@ const App = () => {
     } catch (err) {
       setConnectPhase('idle')
       setConnectError(err.message)
-      addLog({ event: 'AgentFailed', meta: `connect failed: ${err.message}` })
+      addLog({ event: 'AgentFailed', meta: `Connection failed: ${err.message}` })
     }
   }
 
@@ -1787,7 +1863,7 @@ const App = () => {
     setConnectPhase('upgrading')
     setTimeout(() => {
       setConnectPhase('upgraded')
-      addLog({ event: 'Authorized', meta: 'session ready · gas sponsored by relayer' })
+      addLog({ event: 'Authorized', meta: 'Session ready. The relayer sponsors network fees.' })
     }, speed * 0.8)
   }
 
@@ -1800,7 +1876,7 @@ const App = () => {
 
   const handleSkillApprove = (id) => {
     updateSkillState(id, { state: 'approved' })
-    addLog({ event: 'SkillApproved', agent: id, meta: 'skill JSON approved · ready to bind' })
+    addLog({ event: 'SkillApproved', agent: id, meta: 'Skill JSON approved and ready to bind.' })
   }
 
   const handleApproveAll = () => {
@@ -1809,7 +1885,10 @@ const App = () => {
       next[id] = { ...s, state: 'approved' }
     })
     setSkillStates(next)
-    addLog({ event: 'SkillApproved', meta: `${Object.keys(next).length} skills approved · batch` })
+    addLog({
+      event: 'SkillApproved',
+      meta: `${Object.keys(next).length} skills approved in this batch.`,
+    })
   }
 
   const handleSkillEdit = (id, text, start = false) => {
@@ -1847,10 +1926,10 @@ const App = () => {
     setStage('permission')
   }
 
-  /* ----- GRANT (step 04, router one-popup path) ----- */
+  /* ----- GRANT (step 04, router single-signature path) ----- */
   // "Grant & run": stash the user's budget + window, then advance to execute. The SINGLE wallet
-  // popup (router.grant) fires inside orchestrator.dispatch → setupViaRouter; every later worker
-  // funding is a relayed router.pull (0 popups).
+  // wallet signature (router.grant) fires inside orchestrator.dispatch → setupViaRouter; every later worker
+  // funding is a relayed router.pull (0 further signatures).
   const handleGrantAndRun = ({ budget, durationSeconds }) => {
     grantCfgRef.current = { budgetUsdc: budget, durationSeconds }
     setGrantError(null)
@@ -1859,13 +1938,13 @@ const App = () => {
     setPermExpiresAt(Date.now() + durationSeconds * 1000)
     addLog({
       event: 'PermissionGranted',
-      meta: `router grant · ${budget} USDC · ${durationSeconds}s`,
+      meta: `Router grant: ${budget} USDC for ${durationSeconds}s.`,
     })
     setStage('execute')
     startExecution()
   }
 
-  // Kill switch — zero the on-chain allowance in one popup (works even if the relayer is down).
+  // Kill switch — zero the on-chain allowance in one signature (works even if the relayer is down).
   const handleRevokeGrant = async () => {
     if (!realAddress) return
     setGrantError(null)
@@ -1874,7 +1953,7 @@ const App = () => {
       const { hash } = await revokeGrant({ owner: realAddress })
       addLog({
         event: 'PermissionRevoked',
-        meta: `router allowance set to 0 · ${hash?.slice(0, 10)}…`,
+        meta: `Router allowance set to 0. Transaction ${hash?.slice(0, 10)}...`,
       })
     } catch (err) {
       setGrantError(err?.message || 'revoke failed')
@@ -1888,7 +1967,7 @@ const App = () => {
 
   const handlePermReject = () => {
     setPermPhase('idle')
-    addLog({ event: 'PermissionRevoked', meta: 'permission request rejected by user' })
+    addLog({ event: 'PermissionRevoked', meta: 'Permission request rejected by the user.' })
   }
 
   const handlePermConfirm = async () => {
@@ -1900,7 +1979,10 @@ const App = () => {
     const expiresAtMs = Date.now() + 86400 * 1000
     setPermActive(true)
     setPermExpiresAt(expiresAtMs)
-    addLog({ event: 'PermissionGranted', meta: 'stellar · authorize + fund per agent at execute' })
+    addLog({
+      event: 'PermissionGranted',
+      meta: 'Stellar authorization will fund each agent during execution.',
+    })
     setTimeout(() => {
       setStage('execute')
       startExecution()
@@ -1958,7 +2040,7 @@ const App = () => {
       })
     )
     if (allFailed) {
-      addLog({ event: 'ExecutionBlocked', meta: 'No eligible vault — nothing will run.' })
+      addLog({ event: 'ExecutionBlocked', meta: 'No eligible vault. Nothing will run.' })
       setStage('permission') // stay on the approval card; do NOT dispatch
       return
     }
@@ -1974,7 +2056,7 @@ const App = () => {
     }
 
     // Router path: pass the user's chosen grant budget (USDC → base units) + window so the ONE
-    // grant popup sizes the allowance. null on the legacy path → orchestrator defaults (budget =
+    // grant signature sizes the allowance. null on the legacy path → orchestrator defaults (budget =
     // run total, window = SCOPE_TTL_SECONDS).
     const grantCfg = grantCfgRef.current
     const grantBudgetUnits =
@@ -1995,7 +2077,7 @@ const App = () => {
           addLog({
             event: 'AgentFailed',
             agent: dId,
-            meta: `skill gen failed · ${data.error} · using fallback skill`,
+            meta: `Skill generation failed: ${data.error}. Using the fallback skill.`,
           })
           return
         }
@@ -2041,8 +2123,8 @@ const App = () => {
                   ...(cur.memory || []),
                   {
                     status: 'running',
-                    title: 'agent started',
-                    meta: `vault ${shortAddr(data.vault)}`,
+                    title: 'Agent started',
+                    meta: `Vault ${shortAddr(data.vault)}`,
                     t: nowT(),
                   },
                 ],
@@ -2054,7 +2136,7 @@ const App = () => {
               },
             }
           })
-          addLog({ event: 'AgentStarted', agent: dId, meta: `vault ${shortAddr(data.vault)}` })
+          addLog({ event: 'AgentStarted', agent: dId, meta: `Vault: ${shortAddr(data.vault)}` })
         }
 
         if (evName === 'step') {
@@ -2078,10 +2160,10 @@ const App = () => {
                   ...(cur.memory || []),
                   {
                     status: stepStatus,
-                    title: `${stepName} ${data.status === 'done' ? 'confirmed' : 'executing'}`,
+                    title: `${stepName.replace(/^./, (c) => c.toUpperCase())} ${data.status === 'done' ? 'confirmed' : 'executing'}`,
                     meta: data.txHash
-                      ? `tx ${shortAddr(data.txHash)}${data.gasMethod === 'user-signed' ? ' · ⚠ user-signed' : ''}`
-                      : 'via fee-bump relayer',
+                      ? `Tx ${shortAddr(data.txHash)}${data.gasMethod === 'user-signed' ? ', user-signed' : ''}`
+                      : 'Via fee-bump relayer',
                     hash: data.txHash || null,
                     t: nowT(),
                   },
@@ -2093,7 +2175,7 @@ const App = () => {
             addLog({
               event: 'SwapExecuted',
               agent: dId,
-              meta: data.reason || 'skipped · no swap required',
+              meta: data.reason || 'Skipped. No swap is required.',
             })
           }
           if (data.status === 'done') {
@@ -2105,20 +2187,20 @@ const App = () => {
             if (stepName === 'deposit') {
               const gasLabel =
                 data.gasMethod === 'relayer'
-                  ? 'gas paid by relayer'
+                  ? 'Gas paid by relayer'
                   : data.gasMethod === 'user-signed'
-                    ? '⚠ gas paid by user · relay not configured'
+                    ? 'Gas paid by user, relay not configured'
                     : ''
               addLog({
                 event: 'DepositExecuted',
                 agent: dId,
-                meta: `${data.txHash ? `tx ${shortAddr(data.txHash)}` : 'no tx hash'}${gasLabel ? ' · ' + gasLabel : ''}`,
+                meta: `${data.txHash ? `Transaction ${shortAddr(data.txHash)}` : 'No transaction hash'}${gasLabel ? `. ${gasLabel}.` : '.'}`,
               })
             } else if (evMap[stepName]) {
               addLog({
                 event: evMap[stepName],
                 agent: dId,
-                meta: data.txHash ? `tx ${shortAddr(data.txHash)}` : 'no tx hash',
+                meta: data.txHash ? `Transaction ${shortAddr(data.txHash)}` : 'No transaction hash',
               })
             }
           }
@@ -2142,10 +2224,10 @@ const App = () => {
                   ...(cur.memory || []),
                   {
                     status: 'confirmed',
-                    title: 'agent completed',
-                    meta: `tx ${shortAddr(data.txHash)}`,
+                    title: 'Agent completed',
+                    meta: `Tx ${shortAddr(data.txHash)}`,
                     hash: data.txHash,
-                    lesson: `vault deposit complete · strategy executed`,
+                    lesson: 'Vault deposit completed. The strategy executed.',
                     t: nowT(),
                   },
                 ],
@@ -2156,7 +2238,9 @@ const App = () => {
           addLog({
             event: 'AgentCompleted',
             agent: dId,
-            meta: data.txHash ? `tx ${shortAddr(data.txHash)}` : 'completed · no tx hash',
+            meta: data.txHash
+              ? `Transaction ${shortAddr(data.txHash)}`
+              : 'Completed. No transaction hash.',
           })
           const ag = strategy?.agents?.find((a) => a.id === dId)
           if (ag && data.txHash)
@@ -2186,8 +2270,8 @@ const App = () => {
                   ...(cur.memory || []),
                   {
                     status: 'failed',
-                    title: 'agent failed',
-                    meta: data.error || 'unknown error',
+                    title: 'Agent failed',
+                    meta: data.error || 'Unknown error',
                     t: nowT(),
                   },
                 ],
@@ -2205,7 +2289,7 @@ const App = () => {
       .then((summary) => {
         addLog({
           event: 'OrchestratorPlanned',
-          meta: `done · ${summary.completed} deposited, ${summary.failed} failed`,
+          meta: `Completed: ${summary.completed} deposited, ${summary.failed} failed.`,
         })
         const addrs = summary.agentAddresses || []
         deployedAgentsRef.current = addrs
@@ -2215,7 +2299,7 @@ const App = () => {
         console.warn('[app] orchestrator dispatch failed (simulation mode):', err?.message || err)
         addLog({
           event: 'AgentFailed',
-          meta: `orchestrator error (simulation): ${err?.message || err}`,
+          meta: `Orchestrator simulation failed: ${err?.message || err}`,
         })
         setExecMap((prev) => {
           const next = { ...prev }
@@ -2229,7 +2313,7 @@ const App = () => {
         setMonitorStatus({
           level: 'skip',
           score: 0,
-          reason: 'Stellar relayer offline — simulation mode. Council Monitor badge visible.',
+          reason: 'Stellar relayer offline. Simulation mode. Council Monitor badge visible.',
           lastCheck: Date.now(),
           result: 'approved',
         })
@@ -2243,7 +2327,9 @@ const App = () => {
     for (let i = 0; i < maxAttempts; i++) {
       let result = null
       try {
-        result = await reconcilePositionsFromChain(address, agentList ? { agents: agentList } : undefined)
+        result = agentList
+          ? await reconcilePositionsFromChain(address, { agents: agentList })
+          : await reconcilePositions(address)
       } catch {
         result = null
       }
@@ -2266,7 +2352,7 @@ const App = () => {
       reflect({ verdict, citedRules, outcome }, { increment: playbookIncrement })
       addLog({
         event: 'OrchestratorPlanned',
-        meta: `Council reflect · ${outcome} · ${citedRules.join(', ')}`,
+        meta: `Council reflect, ${outcome}, ${citedRules.join(', ')}`,
       })
     }
     // Allocation-based FALLBACK only — used when the chain read is unavailable (no RPC)
@@ -2323,7 +2409,7 @@ const App = () => {
 
     addLog({
       event: 'OrchestratorPlanned',
-      meta: `${agentAddrs?.length || 0} agents saved · ${strategy?.agents?.length} positions opened`,
+      meta: `Multi-agent deployment completed. ${agentAddrs?.length || 0} agents saved, ${strategy?.agents?.length} positions opened.`,
     })
   }
 
@@ -2363,7 +2449,7 @@ const App = () => {
       setThinkingPhase(0)
       addLog({
         event: 'OrchestratorPlanned',
-        meta: `${overrideAmount} usdc · ${risk} risk · planning`,
+        meta: `${overrideAmount} usdc, ${risk} risk, planning`,
       })
     } else {
       setStrategyPhase('input')
@@ -2377,7 +2463,7 @@ const App = () => {
     clearResume(realAddress)
     setSessionResumed(false)
     ;(strategy?.agents || []).forEach((a) =>
-      addLog({ event: 'PermissionRevoked', agent: a.id, meta: 'agent halted · scope cleared' })
+      addLog({ event: 'PermissionRevoked', agent: a.id, meta: 'Agent halted. Scope cleared.' })
     )
   }
 
@@ -2392,10 +2478,11 @@ const App = () => {
     setConnectPhase('idle')
     setPermActive(false)
     setPermExpiresAt(null)
+    setScopes([]) // else wallet A's rehydrated rows linger when wallet B connects
     setVeniceAuth(null)
     clearResume(realAddress)
     setSessionResumed(false)
-    addLog({ event: 'PermissionRevoked', meta: 'wallet disconnected · session cleared' })
+    addLog({ event: 'PermissionRevoked', meta: 'Wallet disconnected. Session cleared.' })
   }
   const handleResetAgentSettings = () => {
     setAgentSettings({ ...AGENT_SETTINGS_DEFAULTS })
@@ -2486,10 +2573,10 @@ const App = () => {
               : [
                   {
                     status: 'confirmed',
-                    title: 'agent completed',
-                    meta: 'position confirmed on-chain',
+                    title: 'Agent completed',
+                    meta: 'Position confirmed on-chain',
                     t: nowT(),
-                    lesson: 'vault deposit complete',
+                    lesson: 'Vault deposit complete',
                   },
                 ],
             metrics: cur?.metrics || {
@@ -2520,8 +2607,6 @@ const App = () => {
           )
         if (strategyPhase === 'thinking')
           return <ThinkingCard phase={thinkingPhase} times={thinkTimes} />
-        const hasDebateResult = !!debateResult
-        const showDebate = strategyPhase === 'council' || hasDebateResult
         return (
           <StrategyCard
             strategy={strategy}
@@ -2532,10 +2617,10 @@ const App = () => {
             attestation={strategyAttestation}
             attesting={attesting}
             simulation={simulation}
-            council={showDebate && debateResult ? debateResult : council}
+            council={debateResult || council}
             onCouncilRetry={handleRunCouncil}
             onRunCouncil={handleRunCouncil}
-            debateRunning={showDebate && debateRunning}
+            debateRunning={debateRunning}
             showRunCouncil={!debateResult}
           />
         )
@@ -2566,7 +2651,7 @@ const App = () => {
           />
         )
       case 'permission':
-        // Router path: ONE grant popup (budget + window) replaces the per-agent batch. Legacy path
+        // Router path: ONE grant signature (budget + window) replaces the per-agent batch. Legacy path
         // (router unset / VITE_LEGACY_AGENT_SETUP=1) keeps the original PermissionCard flow.
         return USE_FUNDING_ROUTER ? (
           <GrantPanel
@@ -2748,7 +2833,12 @@ const App = () => {
             element={
               <>
                 <StepRail stage={stage} furthest={furthest} onStepClick={goBack} lang={language} />
-                <div className="stage" key={`${stage}-${strategyPhase}`}>
+                {/* Key only major strategy sub-views so "Run risk review" (stays on ready)
+                    does not remount the whole card like a page refresh. */}
+                <div
+                  className="stage"
+                  key={`${stage}-${strategyPhase === 'thinking' || strategyPhase === 'input' ? strategyPhase : 'plan'}`}
+                >
                   {renderStage()}
                 </div>
               </>
@@ -2758,129 +2848,53 @@ const App = () => {
             path="/agent"
             element={
               <div className="stage">
-                <div style={{ maxWidth: 820, margin: '0 auto', width: '100%' }}>
-                  {scopes.length > 0 && (
-                    <div className="surface-card" style={{ padding: 14, marginBottom: 14 }}>
-                      <div
-                        style={{
-                          fontSize: 11,
-                          letterSpacing: '.04em',
-                          textTransform: 'uppercase',
-                          opacity: 0.6,
-                          marginBottom: 8,
-                        }}
-                      >
-                        Agent permissions · scoped on-chain
-                      </div>
-                      {scopes.map((s) => (
-                        <div
-                          key={s.agent}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            gap: 12,
-                            padding: '6px 0',
-                            borderTop: '.5px solid rgba(255,255,255,.06)',
-                          }}
-                        >
-                          <div style={{ minWidth: 0 }}>
-                            <div className="mono" style={{ fontSize: 12 }}>
-                              {shortAddr(s.agent)}
-                            </div>
-                            <div style={{ fontSize: 10.5, opacity: 0.6 }}>
-                              cap {toDisplay(s.capPerPeriod).toFixed(2)} · max-at-risk{' '}
-                              {toDisplay(s.maxAtRisk).toFixed(2)} USDC
-                            </div>
-                          </div>
-                          {s.revoked ? (
-                            <span style={{ fontSize: 11, color: 'var(--danger)' }}>revoked</span>
-                          ) : (
-                            <button
-                              className="btn btn-ghost"
-                              style={{ fontSize: 11, padding: '4px 10px' }}
-                              onClick={() => handleRevokeAgent(s.agent)}
-                            >
-                              Revoke
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
-                    <AgentDashboard
-                      active={agentEnabled && stage === 'done'}
-                      positions={agentData.positions}
-                      alerts={agentData.alerts}
-                      vaultMeta={agentVaultMeta}
-                      lastUpdated={agentData.lastUpdated}
-                      userAddress={realAddress}
-                      settings={agentSettings}
-                      withdrawEnabled={stage !== 'execute' && stage !== 'permission'}
-                      onEmergencyWithdraw={handleEmergencyWithdraw}
-                      onReview={handleReviewRebalance}
-                      onDismiss={dismissAlert}
-                      onWithdrawSuccess={handleWithdrawSuccess}
-                      onNewStrategy={handleAgain}
-                      monitorStatus={monitorStatus}
-                      loopStatus={
-                        agentEnabled
-                          ? {
-                              running: loopRef.current?.isRunning() || false,
-                              phase: loopPhase,
-                              cycle: loopRef.current?.getCycle() || 0,
-                            }
-                          : null
-                      }
-                      // loopTick re-renders the parent on each journal write; no key remount
-                      // so the panel's internal 1s countdown clock and CSS animations persist.
-                      loopPanel={
-                        agentEnabled && (
-                          <LoopStatusPanel
-                            running={loopRef.current?.isRunning() || false}
-                            summary={getJournalSummary()}
-                            rows={getCycles().slice(0, 40)}
-                            phase={loopPhase}
-                            nextTickAt={loopRef.current?.getNextTickAt() || null}
-                            heartbeatMs={
-                              loopRef.current?.getHeartbeatMs() || 120000
-                            }
-                            decisionsRows={getDecisions().slice(0, 30)}
-                            decisionsSummary={getDecisionSummary()}
-                          />
-                        )
-                      }
-                      decisionPanel={null}
-                      keeperPanel={
-                        <>
-                          <KeeperPanel
-                            events={keeperActivity}
-                            pricePerShare={autofarmReads.pricePerShare}
-                            strategies={autofarmReads.strategies}
-                          />
-                          <div style={{ marginTop: 14 }}>
-                            <LifeboatPanel
-                              state={lifeboatState}
-                              events={lifeboatActivity}
-                              owner={realAddress}
-                              onGrant={onGrantMandate}
-                              busy={lifeboatBusy}
-                            />
-                          </div>
-                          <div style={{ marginTop: 14 }}>
-                            <AgentGraph
-                              graphData={autofarmGraphData}
-                              execMap={{}}
-                              paletteIsLight={paletteIsLight}
-                              pulseEdge={rebalancePulse}
-                            />
-                          </div>
-                        </>
-                      }
-                    />
-                  </Suspense>
-                </div>
+                <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
+                  <OpsConsole
+                    positions={agentData.positions}
+                    vaultMeta={agentVaultMeta}
+                    lastUpdated={agentData.lastUpdated}
+                    userAddress={realAddress}
+                    withdrawEnabled={stage !== 'execute' && stage !== 'permission'}
+                    onWithdrawSuccess={handleWithdrawSuccess}
+                    onNewStrategy={handleAgain}
+                    monitorStatus={monitorStatus}
+                    loop={
+                      agentEnabled
+                        ? {
+                            running: loopRef.current?.isRunning() || false,
+                            phase: loopPhase,
+                            cycle: loopRef.current?.getCycle() || 0,
+                            nextTickAt: loopRef.current?.getNextTickAt() || null,
+                            heartbeatMs:
+                              loopRef.current?.getHeartbeatMs() ||
+                              (agentSettings.apyInterval || 10) * 60 * 1000,
+                            rows: getCycles().slice(0, 40),
+                            summary: getJournalSummary(),
+                            decisionsRows: getDecisions().slice(0, 30),
+                            decisionsSummary: getDecisionSummary(),
+                          }
+                        : null
+                    }
+                    keeper={{
+                      events: keeperActivity,
+                      pricePerShare: autofarmReads.pricePerShare,
+                      strategies: autofarmReads.strategies,
+                    }}
+                    lifeboat={{
+                      state: lifeboatState,
+                      events: lifeboatActivity,
+                      busy: lifeboatBusy,
+                      onGrant: onGrantMandate,
+                    }}
+                    scopes={scopes}
+                    onRevoke={handleRevokeAgent}
+                    graph={{
+                      data: autofarmGraphData,
+                      paletteIsLight,
+                      pulseEdge: rebalancePulse,
+                    }}
+                  />
+                </Suspense>
               </div>
             }
           />
@@ -2917,10 +2931,10 @@ const App = () => {
           />
           <Route path="/tx/:txHash" element={<TxDetailPage />} />
           <Route
-            path="/developers"
+            path="/developers/*"
             element={
               <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
-                <DevelopersPage />
+                <DevelopersLayout />
               </Suspense>
             }
           />
@@ -2964,8 +2978,8 @@ const App = () => {
       {slowConfirm && (
         <div className="modal-backdrop">
           <div className="modal" role="dialog" aria-modal="true">
-            <div className="modal-eyebrow">AI · timeout</div>
-            <h3 className="modal-title">AI is still processing · continue waiting?</h3>
+            <div className="modal-eyebrow">AI timeout</div>
+            <h3 className="modal-title">AI is still processing. Keep waiting?</h3>
             <p className="lede" style={{ marginTop: 8 }}>
               Generation has exceeded {Math.round(VENICE_TIMEOUT_MS / 1000)} seconds. Do you want to
               keep waiting or use the default strategy instead?
@@ -3114,7 +3128,7 @@ const App = () => {
             </label>
           </div>
 
-          <TweakSection label="Jump to step · dev only" />
+          <TweakSection label="Jump to step, dev only" />
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
             {STEPS.map((s, i) => (
               <button

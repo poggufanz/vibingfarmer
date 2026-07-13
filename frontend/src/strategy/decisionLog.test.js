@@ -4,34 +4,60 @@ import { accSummary } from './decisionLog.js'
 
 describe('accSummary', () => {
   it('uses the first concern when present, with cited rules', () => {
-    expect(accSummary({ signal: 'WITHDRAW', citedRules: ['risk-turbulent-veto'], concerns: ['turbulent market'] }))
-      .toBe('WITHDRAW — turbulent market (risk-turbulent-veto)')
+    expect(
+      accSummary({
+        signal: 'WITHDRAW',
+        citedRules: ['risk-turbulent-veto'],
+        concerns: ['turbulent market'],
+      })
+    ).toBe('WITHDRAW: Turbulent market (risk-turbulent-veto)')
   })
 
   it('falls back to a positive phrase when no concerns', () => {
-    expect(accSummary({ signal: 'DEPOSIT', citedRules: ['yield-uplift'], concerns: [] }))
-      .toBe('DEPOSIT — clear to proceed (yield-uplift)')
+    expect(accSummary({ signal: 'DEPOSIT', citedRules: ['yield-uplift'], concerns: [] })).toBe(
+      'DEPOSIT: Clear to proceed (yield-uplift)'
+    )
   })
 
   it('omits the rules suffix when no cited rules', () => {
-    expect(accSummary({ signal: 'HOLD', citedRules: [], concerns: [] }))
-      .toBe('HOLD — hold')
+    expect(accSummary({ signal: 'HOLD', citedRules: [], concerns: [] })).toBe('HOLD: Hold')
   })
 
   it('tolerates missing arrays', () => {
-    expect(accSummary({ signal: 'DEPOSIT' })).toBe('DEPOSIT — clear to proceed')
+    expect(accSummary({ signal: 'DEPOSIT' })).toBe('DEPOSIT: Clear to proceed')
   })
 })
 
 import { buildDecisionRecord } from './decisionLog.js'
 
 const verdict = (over = {}) => ({
-  verdict: 'keep', reason: null, confidence: 0.69, resolvedBy: 'weighted',
+  verdict: 'keep',
+  reason: null,
+  confidence: 0.69,
+  resolvedBy: 'weighted',
   citedRules: ['yield-uplift', 'risk-calm-clear'],
   specialists: [
-    { role: 'yield',  signal: 'DEPOSIT', confidence: 0.78, citedRules: ['yield-uplift'], concerns: [] },
-    { role: 'risk',   signal: 'DEPOSIT', confidence: 0.6,  citedRules: ['risk-calm-clear'], concerns: [] },
-    { role: 'market', signal: 'HOLD',    confidence: 0.7,  citedRules: ['market-gas-negative'], concerns: ['gas exceeds expected gain'] },
+    {
+      role: 'yield',
+      signal: 'DEPOSIT',
+      confidence: 0.78,
+      citedRules: ['yield-uplift'],
+      concerns: [],
+    },
+    {
+      role: 'risk',
+      signal: 'DEPOSIT',
+      confidence: 0.6,
+      citedRules: ['risk-calm-clear'],
+      concerns: [],
+    },
+    {
+      role: 'market',
+      signal: 'HOLD',
+      confidence: 0.7,
+      citedRules: ['market-gas-negative'],
+      concerns: ['gas exceeds expected gain'],
+    },
   ],
   ...over,
 })
@@ -69,8 +95,10 @@ describe('buildDecisionRecord', () => {
     const r = buildDecisionRecord(ctx())
     expect(r.verdicts).toHaveLength(3)
     expect(r.verdicts[2]).toEqual({
-      role: 'market', signal: 'HOLD', confidence: 0.7,
-      summary: 'HOLD — gas exceeds expected gain (market-gas-negative)',
+      role: 'market',
+      signal: 'HOLD',
+      confidence: 0.7,
+      summary: 'HOLD: Gas exceeds expected gain (market-gas-negative)',
     })
   })
 
@@ -81,14 +109,40 @@ describe('buildDecisionRecord', () => {
 
   it('records when the council vetoes against the majority (finalDecision != majoritySignal)', () => {
     const v = verdict({
-      verdict: 'discard', reason: 'Risk Analyst', resolvedBy: 'veto', citedRules: ['risk-turbulent-veto'],
+      verdict: 'discard',
+      reason: 'Risk Analyst',
+      resolvedBy: 'veto',
+      citedRules: ['risk-turbulent-veto'],
       specialists: [
-        { role: 'yield',  signal: 'DEPOSIT',  confidence: 0.8, citedRules: ['yield-uplift'], concerns: [] },
-        { role: 'risk',   signal: 'WITHDRAW', confidence: 0.9, citedRules: ['risk-turbulent-veto'], concerns: ['turbulent market'] },
-        { role: 'market', signal: 'DEPOSIT',  confidence: 0.8, citedRules: ['market-gas-positive'], concerns: [] },
+        {
+          role: 'yield',
+          signal: 'DEPOSIT',
+          confidence: 0.8,
+          citedRules: ['yield-uplift'],
+          concerns: [],
+        },
+        {
+          role: 'risk',
+          signal: 'WITHDRAW',
+          confidence: 0.9,
+          citedRules: ['risk-turbulent-veto'],
+          concerns: ['turbulent market'],
+        },
+        {
+          role: 'market',
+          signal: 'DEPOSIT',
+          confidence: 0.8,
+          citedRules: ['market-gas-positive'],
+          concerns: [],
+        },
       ],
     })
-    const r = buildDecisionRecord({ cycle: 7, idea: { kind: 'harvest' }, state: { market: { turbulence: 'turbulent' } }, verdict: v })
+    const r = buildDecisionRecord({
+      cycle: 7,
+      idea: { kind: 'harvest' },
+      state: { market: { turbulence: 'turbulent' } },
+      verdict: v,
+    })
     expect(r.majoritySignal).toBe('DEPOSIT')
     expect(r.majorityCount).toBe(2)
     expect(r.finalDecision).toBe('discard')
@@ -109,18 +163,27 @@ describe('decisionLog store', () => {
     const store = {}
     vi.stubGlobal('localStorage', {
       getItem: (k) => (k in store ? store[k] : null),
-      setItem: (k, v) => { store[k] = String(v) },
-      removeItem: (k) => { delete store[k] },
+      setItem: (k, v) => {
+        store[k] = String(v)
+      },
+      removeItem: (k) => {
+        delete store[k]
+      },
     })
   })
 
   const ctxFor = (cycle, signal) => ({
-    cycle, idea: { kind: 'rebalance', vaultName: 'V' }, state: { market: { turbulence: 'calm' } },
+    cycle,
+    idea: { kind: 'rebalance', vaultName: 'V' },
+    state: { market: { turbulence: 'calm' } },
     verdict: {
-      verdict: signal === 'DEPOSIT' ? 'keep' : 'discard', resolvedBy: 'unanimous', reason: null, citedRules: [],
+      verdict: signal === 'DEPOSIT' ? 'keep' : 'discard',
+      resolvedBy: 'unanimous',
+      reason: null,
+      citedRules: [],
       specialists: [
-        { role: 'yield',  signal, confidence: 0.7, citedRules: [], concerns: [] },
-        { role: 'risk',   signal, confidence: 0.7, citedRules: [], concerns: [] },
+        { role: 'yield', signal, confidence: 0.7, citedRules: [], concerns: [] },
+        { role: 'risk', signal, confidence: 0.7, citedRules: [], concerns: [] },
         { role: 'market', signal, confidence: 0.7, citedRules: [], concerns: [] },
       ],
     },

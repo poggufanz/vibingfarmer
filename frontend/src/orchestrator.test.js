@@ -37,14 +37,14 @@ vi.mock('./stellar/agentDeposit.js', () => ({
   readTokenBalance: (...a) => readTokenBalanceMock(...a),
 }))
 // USE_FUNDING_ROUTER false → dispatch takes the LEGACY per-agent deploy/fund path exercised by
-// this whole file. The router (one-popup) path is covered by orchestrator.router.test.js.
+// this whole file. The router (single-signature) path is covered by orchestrator.router.test.js.
 vi.mock('./stellar/config.js', () => ({
   SOROBAN_TOKEN_ADDRESS: 'CTOKEN',
   SOROBAN_DECIMALS: 7,
   SOROBAN_ACTIVE_VAULT_ADDRESS: 'CACTIVEVAULT',
   USE_FUNDING_ROUTER: false,
 }))
-vi.mock('./venice.js', () => ({ generateAgentSkills: vi.fn(async () => ({})) }))
+vi.mock('./strategist.js', () => ({ generateAgentSkills: vi.fn(async () => ({})) }))
 vi.mock('./skills.js', () => ({ saveSkill: vi.fn() }))
 
 const workerInstances = []
@@ -119,7 +119,7 @@ describe('orchestrator (Stellar deploy + fund + dispatch)', () => {
       amount: 50_0000000n,
     })
     expect(fundAgentMock.mock.calls[1][0]).toMatchObject({ agentAddress: 'CFRESH2' })
-    // Registry.authorize is record-keeping only — OFF the popup path by default.
+    // Registry.authorize is record-keeping only — OFF the signature path by default.
     expect(registryAuthorizeAgentMock).not.toHaveBeenCalled()
     expect(res.completed).toBe(2)
   })
@@ -127,7 +127,7 @@ describe('orchestrator (Stellar deploy + fund + dispatch)', () => {
   it('runs the user-signed setup chain STRICTLY sequentially: agent 1 fully set up before agent 2 starts', async () => {
     const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 'sq', onEvent: () => {} })
     await orch.dispatch(strategy, 100)
-    // Same-source-account txs must never interleave (sequence-number race + popup pileup).
+    // Same-source-account txs must never interleave (sequence-number race + signature pileup).
     expect(callOrder).toEqual([
       'deploy:CFRESH1',
       'fund:CFRESH1',
@@ -180,7 +180,7 @@ describe('orchestrator (Stellar deploy + fund + dispatch)', () => {
     })
   })
 
-  it('reuses a cached agent: skips the deploy popup and restores its pinned session key', async () => {
+  it('reuses a cached agent: skips the deploy signature and restores its pinned session key', async () => {
     takeReusableAgentMock
       .mockResolvedValueOnce({ agentAddress: 'CCACHED', secret: 'SCACHEDSECRET' })
       .mockResolvedValue(null)
@@ -207,7 +207,7 @@ describe('orchestrator (Stellar deploy + fund + dispatch)', () => {
     expect(res.completed).toBe(2)
   })
 
-  it('skips the funding popup when the reused agent still holds enough of the asset', async () => {
+  it('skips the funding signature when the reused agent still holds enough of the asset', async () => {
     takeReusableAgentMock
       .mockResolvedValueOnce({ agentAddress: 'CCACHED', secret: 'SCACHEDSECRET' })
       .mockResolvedValue(null)
@@ -218,7 +218,7 @@ describe('orchestrator (Stellar deploy + fund + dispatch)', () => {
     })
     const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 's8', onEvent: () => {} })
     await orch.dispatch(strategy, 100)
-    // Only the fresh agent needed funding — repeat run popups: 0 for the cached agent.
+    // Only the fresh agent needed funding — repeat-run signatures: 0 for the cached agent.
     expect(fundAgentMock).toHaveBeenCalledTimes(1)
     expect(fundAgentMock.mock.calls[0][0].agentAddress).toBe('CFRESH1')
   })
@@ -243,7 +243,7 @@ describe('orchestrator (Stellar deploy + fund + dispatch)', () => {
     ])
   })
 
-  it('fails fast when the asset balance cannot cover the total (before any popup)', async () => {
+  it('fails fast when the asset balance cannot cover the total (before any signature)', async () => {
     readTokenBalanceMock.mockResolvedValue(1n) // far below 100 VFUSD in base units
     const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 's4', onEvent: () => {} })
     await expect(orch.dispatch(strategy, 100)).rejects.toThrow(/Insufficient VFUSD/)
@@ -251,7 +251,7 @@ describe('orchestrator (Stellar deploy + fund + dispatch)', () => {
     expect(fundAgentMock).not.toHaveBeenCalled()
   })
 
-  it("one agent's setup failure marks THAT worker failed — the rest of the run continues", async () => {
+  it("one agent's setup failure marks THAT worker failed - the rest of the run continues", async () => {
     deployAgentForSessionMock
       .mockRejectedValueOnce(new Error('agent deploy signature timed out after 120s'))
       .mockImplementation(async () => {
@@ -268,7 +268,7 @@ describe('orchestrator (Stellar deploy + fund + dispatch)', () => {
     expect(res.completed).toBe(1)
     expect(res.failed).toBe(1)
     expect(res.results[0].success).toBe(false)
-    expect(res.results[0].error).toMatch(/setup failed: .*timed out/)
+    expect(res.results[0].error).toMatch(/Setup failed: .*timed out/)
     expect(res.results[1].success).toBe(true)
     // The failed worker was surfaced (drives the tile 'failed' state) and never dispatched.
     const failedEv = events.find((e) => e.n === 'failed')
@@ -290,7 +290,9 @@ describe('orchestrator (Stellar deploy + fund + dispatch)', () => {
       sessionId: 's5',
       onEvent: (n, d) => events.push({ n, d }),
     })
-    await expect(orch.dispatch(strategy, 100)).rejects.toThrow(/setup failed for all 2 agents/)
+    await expect(orch.dispatch(strategy, 100)).rejects.toThrow(
+      /Agent setup failed for all 2 agents/
+    )
     expect(fundAgentMock).not.toHaveBeenCalled()
     const err = events.find((e) => e.n === 'orchestrator-step' && e.d.status === 'error')
     expect(err.d.step).toBe('authorizing-scope')

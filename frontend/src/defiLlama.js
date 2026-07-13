@@ -73,7 +73,7 @@ export async function fetchDeFiLlamaVaults() {
       .slice(0, 6) // take top 6 by TVL
 
     if (filtered.length === 0) {
-      console.warn('[DeFiLlama] No matching pools found — using fallback')
+      console.warn('[DeFiLlama] No matching pools found - using fallback')
       return getFallbackCatalog()
     }
 
@@ -108,7 +108,7 @@ export async function fetchDeFiLlamaVaults() {
   } catch (err) {
     clearTimeout(timeoutId)
     if (err.name === 'AbortError') {
-      console.warn('[DeFiLlama] Timeout after 10s — using fallback catalog')
+      console.warn('[DeFiLlama] Timeout after 10s - using fallback catalog')
     } else {
       console.warn('[DeFiLlama] Fetch failed:', err.message)
     }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { signIn, listKeys, createKey, revokeKey } from './portalClient.js'
+import { signIn, listKeys, createKey, revokeKey, getUsage } from './portalClient.js'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -45,5 +45,17 @@ describe('portalClient', () => {
       vi.fn(async () => new Response(JSON.stringify({ error: 'Invalid session' }), { status: 401 }))
     )
     await expect(listKeys('bad')).rejects.toThrow('Invalid session')
+  })
+  it('getUsage GETs /usage with bearer jwt', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => okJson({ usage: [], cap: 5000, sinceDay: '2026-06-11' }))
+    )
+    const out = await getUsage('JWT')
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/vf/usage',
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer JWT' }) })
+    )
+    expect(out.cap).toBe(5000)
   })
 })

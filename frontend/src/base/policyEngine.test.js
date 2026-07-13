@@ -46,7 +46,7 @@ describe('buildDepositPermissions', () => {
   })
 })
 
-describe('evaluateCall — mirrors the SP0 session-test.mjs scenarios plus the new cap/expiry cases', () => {
+describe('evaluateCall - mirrors the SP0 session-test.mjs scenarios plus the new cap/expiry cases', () => {
   const permissions = buildDepositPermissions({
     pools: [{ pool: POOL_A, cap: 100_000_000n }],
     yieldRouterAbi: YIELD_ROUTER_ABI,
@@ -88,7 +88,7 @@ describe('evaluateCall — mirrors the SP0 session-test.mjs scenarios plus the n
     expect(result.reason).toMatch(/no permission/)
   })
 
-  test('a pool not in the intended allocation still passes the session policy — the pool allowlist is enforced by YieldRouter on-chain, not the session key', () => {
+  test('a pool not in the intended allocation still passes the session policy - the pool allowlist is enforced by YieldRouter on-chain, not the session key', () => {
     const result = evaluateCall({
       permissions,
       to: YIELD_ROUTER_ADDRESS,
@@ -102,7 +102,7 @@ describe('evaluateCall — mirrors the SP0 session-test.mjs scenarios plus the n
     expect(result).toEqual({ allowed: true, reason: null })
   })
 
-  test('over-cap amount is rejected (NEW — not covered by the delivered SP0 spike)', () => {
+  test('over-cap amount is rejected (NEW - not covered by the delivered SP0 spike)', () => {
     const result = evaluateCall({
       permissions,
       to: YIELD_ROUTER_ADDRESS,
@@ -114,7 +114,7 @@ describe('evaluateCall — mirrors the SP0 session-test.mjs scenarios plus the n
     expect(result.reason).toMatch(/exceeds policy cap/)
   })
 
-  test('expired mandate is rejected (NEW — not covered by the delivered SP0 spike)', () => {
+  test('expired mandate is rejected (NEW - not covered by the delivered SP0 spike)', () => {
     const result = evaluateCall({
       permissions,
       to: YIELD_ROUTER_ADDRESS,

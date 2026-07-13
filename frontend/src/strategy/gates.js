@@ -24,7 +24,11 @@ const isOffensive = (idea) => OFFENSIVE_KINDS.includes(idea && idea.kind)
 export function turbulenceGate(state, idea) {
   const turbulent = state && state.market && state.market.turbulence === 'turbulent'
   if (turbulent && isOffensive(idea)) {
-    return { id: 'turbulence', passed: false, reason: `turbulent market — ${idea.kind} blocked, defensive actions only` }
+    return {
+      id: 'turbulence',
+      passed: false,
+      reason: `The market is turbulent. ${idea.kind} is paused; only defensive actions are allowed.`,
+    }
   }
   return { id: 'turbulence', passed: true }
 }
@@ -33,7 +37,11 @@ export function turbulenceGate(state, idea) {
 export function gasGate(state, idea) {
   const signals = (state && state.market && state.market.signals) || []
   if (signals.includes('gas-spike') && isOffensive(idea)) {
-    return { id: 'gas', passed: false, reason: `gas spike — ${idea.kind} deferred until network calms` }
+    return {
+      id: 'gas',
+      passed: false,
+      reason: `Network fees are elevated. ${idea.kind} will resume when costs fall.`,
+    }
   }
   return { id: 'gas', passed: true }
 }
@@ -42,7 +50,7 @@ export function gasGate(state, idea) {
 export function capitalGate(state, idea) {
   const amount = Number((state && state.capital && state.capital.amountUsdc) || 0)
   if (isOffensive(idea) && amount < MIN_DEPLOY_USDC) {
-    return { id: 'capital', passed: false, reason: 'no deployable capital' }
+    return { id: 'capital', passed: false, reason: 'No capital is available to deploy.' }
   }
   return { id: 'capital', passed: true }
 }
@@ -55,7 +63,11 @@ export function universeGate(state, idea) {
   const universe = (state && state.universe) || []
   const hasLegal = universe.some((v) => RISK_RANK[normalizeRisk(v.riskTier)] <= ceiling)
   if (!hasLegal) {
-    return { id: 'universe', passed: false, reason: `no vault within ${riskCeiling(state)} ceiling` }
+    return {
+      id: 'universe',
+      passed: false,
+      reason: `No vault meets the ${riskCeiling(state)} risk limit.`,
+    }
   }
   return { id: 'universe', passed: true }
 }
@@ -67,15 +79,19 @@ export function drawdownGate(state, idea) {
   const drawdowns = {
     'aave-v3': 1.2,
     'morpho-blue': 2.8,
-    'pendle': 6.5,
-    'fluid': 4.1,
+    pendle: 6.5,
+    fluid: 4.1,
     'compound-v3': 1.5,
-    'spark': 1.3,
+    spark: 1.3,
   }
   for (const item of idea.proposed || []) {
     const vaultDrawdown = Math.abs(drawdowns[item.protocol] || 2.0)
     if (vaultDrawdown > maxDrawdown) {
-      return { id: 'drawdown', passed: false, reason: `vault drawdown (${vaultDrawdown}%) exceeds limit (${maxDrawdown}%)` }
+      return {
+        id: 'drawdown',
+        passed: false,
+        reason: `Vault drawdown is ${vaultDrawdown}%, above the ${maxDrawdown}% limit.`,
+      }
     }
   }
   return { id: 'drawdown', passed: true }

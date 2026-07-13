@@ -30,17 +30,28 @@ export function setStep(stepId, status) {
  * @param {string} message
  * @param {'info'|'success'|'error'|'warn'} type
  */
-const MARKER = { success: '✓', error: '✕', warn: '!', info: '·' }
 const MARKER_CLASS = { success: 'ok', error: 'danger', warn: 'warn', info: 'info' }
+
+function displayLabel(value) {
+  const text = String(value || '')
+    .replace(/[_-]+/g, ' ')
+    .trim()
+  return text ? text[0].toUpperCase() + text.slice(1) : 'Unknown'
+}
 
 export function logActivity(message, type = 'info') {
   const container = document.getElementById('log-entries')
   if (!container) return
   const row = document.createElement('div')
   row.className = 'act-row'
-  const time = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  const time = new Date().toLocaleTimeString('en-US', {
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
   row.innerHTML = `
-    <span class="act-marker ${MARKER_CLASS[type] || 'info'}">${MARKER[type] || '·'}</span>
+    <span class="act-marker ${MARKER_CLASS[type] || 'info'}" aria-hidden="true"></span>
     <span class="act-text">${esc(message)}</span>
     <span class="act-time">${esc(time)}</span>
   `
@@ -58,7 +69,7 @@ export function showAgentDetail(agent) {
   panel.innerHTML = `
     <div class="detail-header">
       <span class="detail-label">${esc(agent.label)}</span>
-      <span class="detail-status detail-status--${esc(agent.status)}">${esc(agent.status)}</span>
+      <span class="detail-status detail-status--${esc(agent.status)}">${esc(displayLabel(agent.status))}</span>
     </div>
     <div class="detail-section">
       <div class="detail-key">Agent ID</div>
@@ -70,27 +81,38 @@ export function showAgentDetail(agent) {
     </div>
     <div class="detail-section">
       <div class="detail-key">Skills</div>
-      ${agent.skills
-        ? `<pre class="detail-code">${esc(JSON.stringify(agent.skills, null, 2))}</pre>`
-        : `<div class="detail-empty">Generated when agent dispatches</div>`}
+      ${
+        agent.skills
+          ? `<pre class="detail-code">${esc(JSON.stringify(agent.skills, null, 2))}</pre>`
+          : `<div class="detail-empty">Generated when agent dispatches</div>`
+      }
     </div>
     <div class="detail-section">
       <div class="detail-key">Memory${agent.memory && agent.memory.length > 0 ? ` (${agent.memory.length})` : ''}</div>
-      ${agent.memory && agent.memory.length > 0
-        ? agent.memory.map(e => {
-            const t = new Date(e.timestamp * 1000).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
-            return `
+      ${
+        agent.memory && agent.memory.length > 0
+          ? agent.memory
+              .map((e) => {
+                const t = new Date(e.timestamp * 1000).toLocaleTimeString('en-US', {
+                  hour12: false,
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit',
+                })
+                return `
               <div class="memory-entry memory-entry--${esc(e.status)}">
                 <div class="memory-entry-row">
-                  <span class="memory-step">${esc(e.step)}</span>
-                  <span class="memory-status">${e.status === 'success' ? '✓' : '✕'}</span>
+                  <span class="memory-step">${esc(displayLabel(e.step))}</span>
+                  <span class="memory-status ${e.status === 'success' ? 'ok' : 'danger'}" aria-label="${e.status === 'success' ? 'Successful' : 'Failed'}"></span>
                   <span class="memory-time">${esc(t)}</span>
                 </div>
                 ${e.lesson ? `<div class="memory-lesson">${esc(e.lesson)}</div>` : ''}
               </div>
             `
-          }).join('')
-        : `<div class="detail-empty">No entries yet</div>`}
+              })
+              .join('')
+          : `<div class="detail-empty">No entries yet.</div>`
+      }
     </div>
   `
 }
@@ -107,7 +129,7 @@ export function showOrchestratorDetail(data) {
       <span class="detail-label">Orchestrator</span>
     </div>
     <div class="detail-section">
-      <div class="detail-key">Total Agents</div>
+      <div class="detail-key">Total agents</div>
       <div class="detail-val">${data.totalAgents}</div>
     </div>
     <div class="detail-section">
@@ -119,7 +141,7 @@ export function showOrchestratorDetail(data) {
       <div class="detail-val detail-val--error">${data.failed}</div>
     </div>
     <div class="detail-section">
-      <div class="detail-key">Total Shares</div>
+      <div class="detail-key">Total shares</div>
       <div class="detail-val">${data.totalShares}</div>
     </div>
   `
@@ -139,10 +161,10 @@ export function setButtonVisible(id, visible) {
 
 /** Format remaining time until expiresAtMs as "Xh Ym" */
 export const fmtRemaining = (expiresAtMs) => {
-  if (!expiresAtMs) return null;
-  const ms = expiresAtMs - Date.now();
-  if (ms <= 0) return 'expired';
-  const h = Math.floor(ms / 3600000);
-  const m = Math.floor((ms % 3600000) / 60000);
-  return `${h}h ${m}m`;
-};
+  if (!expiresAtMs) return null
+  const ms = expiresAtMs - Date.now()
+  if (ms <= 0) return 'Expired'
+  const h = Math.floor(ms / 3600000)
+  const m = Math.floor((ms % 3600000) / 60000)
+  return `${h}h ${m}m`
+}

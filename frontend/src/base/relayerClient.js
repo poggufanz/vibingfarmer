@@ -13,7 +13,7 @@ const DEFAULT_BASE_URL = import.meta.env?.VITE_CROSS_RELAYER_BASE || '/api/vf-cr
 const DEFAULT_POLL_INTERVAL_MS = 3000
 const DEFAULT_MAX_TRIES = 40 // ~2 minutes at the default interval
 
-// `a.amount` arrives as a DISPLAY float (e.g. 33.333...) from venice.js's allocateBasePools —
+// `a.amount` arrives as a DISPLAY float (e.g. 33.333...) from strategist.js's allocateBasePools —
 // the mandate cap path (CrossChainFarmFlow.jsx) already converts its own copy via
 // toBaseChainUnits for the on-chain cap, but the deposit path's `a.amount` stays a display value
 // all the way to this wire boundary. The relayer (httpRouter.mjs parseAllocations) expects base

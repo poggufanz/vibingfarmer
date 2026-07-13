@@ -19,7 +19,7 @@ import {
 } from '../history.js'
 import { fmtRemaining } from '../ui.js'
 import AutoExitSettings from './AutoExitSettings.jsx'
-import { getTokenUsageHistory, clearTokenUsageHistory } from '../venice.js'
+import { getTokenUsageHistory, clearTokenUsageHistory } from '../strategist.js'
 
 const short = (a) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '-')
 const eyebrow = {
@@ -214,9 +214,7 @@ const Check = ({ on, onChange, label }) => (
         fontSize: 11,
         flex: 'none',
       }}
-    >
-      {on ? '✓' : ''}
-    </span>
+    ></span>
     <span style={{ fontSize: 12.5 }}>{label}</span>
   </button>
 )
@@ -236,7 +234,7 @@ const ApiKeyField = ({ value, onChange, onClear, onTest, testState }) => {
           style={{ ...inputStyle, flex: 1, minWidth: 0 }}
         />
         <button type="button" style={miniBtn} onClick={() => setReveal((r) => !r)}>
-          {reveal ? 'hide' : 'show'}
+          {reveal ? 'Hide' : 'Show'}
         </button>
         <button type="button" style={miniBtn} onClick={onClear}>
           Clear
@@ -246,15 +244,13 @@ const ApiKeyField = ({ value, onChange, onClear, onTest, testState }) => {
         <button type="button" style={miniBtn} onClick={onTest} disabled={testState === 'testing'}>
           {testState === 'testing' ? 'Testing…' : 'Test connection'}
         </button>
-        {testState === 'ok' && (
-          <span style={{ fontSize: 11, color: 'var(--ok)' }}>✓ connected</span>
-        )}
+        {testState === 'ok' && <span style={{ fontSize: 11, color: 'var(--ok)' }}>Connected</span>}
         {testState === 'fail' && (
-          <span style={{ fontSize: 11, color: 'var(--danger)' }}>✗ rejected (check key)</span>
+          <span style={{ fontSize: 11, color: 'var(--danger)' }}>Rejected. Check the key.</span>
         )}
         {testState === 'unreachable' && (
           <span style={{ fontSize: 11, color: 'var(--warn)' }}>
-            ⚠ unreachable from browser (CORS/network)
+            Unreachable from browser (CORS/network)
           </span>
         )}
       </div>
@@ -281,7 +277,7 @@ const ContractRow = ({ name, addr }) => (
         rel="noopener noreferrer"
         style={{ ...miniBtn, textDecoration: 'none' }}
       >
-        ↗ Explorer
+        Explorer
       </a>
     </span>
   </div>
@@ -337,19 +333,19 @@ export default function SettingsPage({
     const hasV = !!s.veniceApiKey
     const hasD = !!s.deepseekApiKey
     const noKey = {
-      label: 'no key → host demo key, or deterministic fallback if the deploy has none',
+      label: 'No key. The app uses the host demo key or a deterministic fallback.',
       tone: 'warn',
     }
     if (pref === 'venice')
       return hasV
-        ? { label: 'Venice · your key', tone: 'ok' }
+        ? { label: 'Venice, your key', tone: 'ok' }
         : { label: `Venice selected, ${noKey.label}`, tone: 'warn' }
     if (pref === 'deepseek')
       return hasD
-        ? { label: 'DeepSeek · your key', tone: 'ok' }
+        ? { label: 'DeepSeek, your key', tone: 'ok' }
         : { label: `DeepSeek selected, ${noKey.label}`, tone: 'warn' }
-    if (hasV) return { label: 'Venice · your key', tone: 'ok' }
-    if (hasD) return { label: 'DeepSeek · your key', tone: 'ok' }
+    if (hasV) return { label: 'Venice, your key', tone: 'ok' }
+    if (hasD) return { label: 'DeepSeek, your key', tone: 'ok' }
     return noKey
   })()
 
@@ -707,21 +703,21 @@ export default function SettingsPage({
                 label="Active Skill"
                 desc={
                   customSkill
-                    ? 'Custom strategy · user-defined'
+                    ? 'Custom strategy, user-defined'
                     : 'Default Strategy by Vibing Farmer'
                 }
               >
                 <button type="button" style={miniBtn} onClick={onChangeSkill}>
-                  Change skill →
+                  Change skill
                 </button>
               </Row>
               <Divider />
-              <SubLabel>AI Model · Strategy model</SubLabel>
+              <SubLabel>AI Model, Strategy model</SubLabel>
               <Radio
                 sel={s.modelPreference === 'auto'}
                 onClick={() => set('modelPreference', 'auto')}
                 title="Auto (recommended)"
-                desc="Your Venice key → your DeepSeek key → host demo key → fallback"
+                desc="Uses your Venice key first, then DeepSeek, the host demo key, or the fallback."
               />
               <Radio
                 sel={s.modelPreference === 'venice'}
@@ -744,11 +740,11 @@ export default function SettingsPage({
                 }}
               >
                 Active: {activeProvider.label}
-                {userAddress ? ' · a funded x402 wallet overrides this.' : ''}
+                {userAddress ? ', a funded x402 wallet overrides this.' : ''}
               </div>
               <Row
                 label="Venice API Key"
-                desc="Routes strategy to api.venice.ai (Bearer auth). Alternative to the x402 wallet path — not required for it. Stored in this tab's sessionStorage, never sent to our servers."
+                desc="Routes strategy to api.venice.ai (Bearer auth). Alternative to the x402 wallet path; not required for it. Stored in this tab's sessionStorage, never sent to our servers."
               >
                 <span />
               </Row>
@@ -777,13 +773,13 @@ export default function SettingsPage({
               <Radio
                 sel={s.vaultDataSource === 'live'}
                 onClick={() => set('vaultDataSource', 'live')}
-                title="Live (DeFiLlama · updated every 10 min)"
+                title="Live (DeFiLlama, updated every 10 min)"
                 desc="Venice AI receives real APY and TVL from Ethereum mainnet protocols."
               />
               <Radio
                 sel={s.vaultDataSource === 'static'}
                 onClick={() => set('vaultDataSource', 'static')}
-                title="Static (hardcoded catalog · no network)"
+                title="Static (hardcoded catalog, no network)"
               />
               <Divider />
               <SubLabel>Market Context</SubLabel>
@@ -809,7 +805,7 @@ export default function SettingsPage({
           {/* ── SECTION 3: Alerts & Notifications ── */}
           {tab === 'alerts' && (
             <Section title="Alerts & Notifications">
-              <SubLabel>Alert Severity Filter · Show alerts for</SubLabel>
+              <SubLabel>Show alerts by severity</SubLabel>
               <Check
                 on={s.alertSeverity.high}
                 onChange={(v) => set('alertSeverity', { ...s.alertSeverity, high: v })}
@@ -877,7 +873,7 @@ export default function SettingsPage({
                   <input
                     type="text"
                     value={agentSettings.telegramChatId || ''}
-                    placeholder="e.g. 987654321"
+                    placeholder="Example: 987654321"
                     onChange={(e) => setAgent('telegramChatId', e.target.value)}
                     style={{
                       ...inputStyle,
@@ -889,7 +885,7 @@ export default function SettingsPage({
                 </div>
               </div>
               <Divider />
-              <SubLabel>Display · Timestamp format</SubLabel>
+              <SubLabel>Display, Timestamp format</SubLabel>
               <Radio
                 sel={s.timestampFormat === 'relative'}
                 onClick={() => set('timestampFormat', 'relative')}
@@ -941,7 +937,7 @@ export default function SettingsPage({
                     label="Active Permissions"
                     desc={
                       permActive
-                        ? `${permissionCount} permission · ${fmtRemaining(permExpiresAt) || '-'} remaining · session scope · batch`
+                        ? `${permissionCount} permission, ${fmtRemaining(permExpiresAt) || '-'} remaining, session scope, batch`
                         : 'no active permission'
                     }
                   >
@@ -952,7 +948,7 @@ export default function SettingsPage({
                     )}
                   </Row>
                   <Divider />
-                  <Row label="Relayer" desc="fee-bump relayer · gas cost to user: 0 USDC">
+                  <Row label="Relayer" desc="fee-bump relayer, gas cost to user: 0 USDC">
                     <span />
                   </Row>
                 </>
@@ -974,8 +970,8 @@ export default function SettingsPage({
                 ['Transactions', `${sum.transactions} entries`],
                 ['Strategy sessions', `${sum.strategies} entries`],
                 ['AI reasoning logs', `${sum.reasoning} entries`],
-                ['Agent settings', agentSet ? '1 entry' : 'not set'],
-                ['User skill', skillSet ? 'set' : 'not set'],
+                ['Agent settings', agentSet ? '1 entry' : 'Not set'],
+                ['User skill', skillSet ? 'Set' : 'Not set'],
                 ['AI telemetry log', `${telemetryHistory.length} entries`],
               ].map(([k, v]) => (
                 <div
@@ -1083,32 +1079,81 @@ export default function SettingsPage({
               <Divider />
               <SubLabel>AI Token Telemetry</SubLabel>
               <div style={{ marginTop: 8 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '4px 0', color: 'var(--text-muted)' }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    fontSize: 12,
+                    padding: '4px 0',
+                    color: 'var(--text-muted)',
+                  }}
+                >
                   <span>Total Prompt Tokens</span>
                   <span className="mono">{telemetryStats.prompt}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '4px 0', color: 'var(--text-muted)' }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    fontSize: 12,
+                    padding: '4px 0',
+                    color: 'var(--text-muted)',
+                  }}
+                >
                   <span>Total Completion Tokens</span>
                   <span className="mono">{telemetryStats.completion}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '4px 0', color: 'var(--text-muted)' }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    fontSize: 12,
+                    padding: '4px 0',
+                    color: 'var(--text-muted)',
+                  }}
+                >
                   <span>Total Tokens Used</span>
-                  <span className="mono" style={{ color: 'var(--accent)', fontWeight: 600 }}>{telemetryStats.total}</span>
+                  <span className="mono" style={{ color: 'var(--accent)', fontWeight: 600 }}>
+                    {telemetryStats.total}
+                  </span>
                 </div>
                 {telemetryStats.history.length > 0 && (
                   <div style={{ marginTop: 12 }}>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>Recent API Requests (last 5):</div>
-                    <div style={{ maxHeight: 120, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 4, padding: '6px 8px', background: 'rgba(0,0,0,0.1)' }}>
-                      {telemetryStats.history.slice(-5).reverse().map((h, i) => (
-                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10.5, padding: '3px 0', borderBottom: i < 4 ? '1px solid rgba(255,255,255,0.05)' : 'none' }}>
-                          <span style={{ color: 'var(--text-muted)' }}>
-                            {new Date(h.timestamp).toLocaleTimeString()} ({h.model})
-                          </span>
-                          <span className="mono">
-                            P: {h.promptTokens} | C: {h.completionTokens} | T: {h.totalTokens}
-                          </span>
-                        </div>
-                      ))}
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>
+                      Recent API Requests (last 5):
+                    </div>
+                    <div
+                      style={{
+                        maxHeight: 120,
+                        overflowY: 'auto',
+                        border: '1px solid var(--border)',
+                        borderRadius: 4,
+                        padding: '6px 8px',
+                        background: 'rgba(0,0,0,0.1)',
+                      }}
+                    >
+                      {telemetryStats.history
+                        .slice(-5)
+                        .reverse()
+                        .map((h, i) => (
+                          <div
+                            key={i}
+                            style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              fontSize: 10.5,
+                              padding: '3px 0',
+                              borderBottom: i < 4 ? '1px solid rgba(255,255,255,0.05)' : 'none',
+                            }}
+                          >
+                            <span style={{ color: 'var(--text-muted)' }}>
+                              {new Date(h.timestamp).toLocaleTimeString()} ({h.model})
+                            </span>
+                            <span className="mono">
+                              P: {h.promptTokens} | C: {h.completionTokens} | T: {h.totalTokens}
+                            </span>
+                          </div>
+                        ))}
                     </div>
                   </div>
                 )}
@@ -1126,14 +1171,14 @@ export default function SettingsPage({
               <Divider />
               <SubLabel>Privacy Notes</SubLabel>
               {[
-                'API keys (Venice / DeepSeek / Tavily) · stored in this tab’s sessionStorage, cleared on close, never sent to our servers.',
-                'Venice AI · no data retention. Queries not stored.',
-                'DeepSeek · with your key, prompts go straight to api.deepseek.com.',
-                'Host demo key · used only if you set no key AND the deploy configured one; otherwise the app uses a deterministic fallback.',
-                'Tavily · search queries sent to Tavily API.',
-                'DeFiLlama · public API, no wallet data sent.',
-                'fee-bump relayer · transaction data visible on-chain.',
-                'All other data stored locally in your browser only.',
+                'API keys for Venice, DeepSeek, and Tavily stay in this tab and are cleared when it closes.',
+                'Venice AI does not retain queries.',
+                'DeepSeek prompts go directly to api.deepseek.com when you provide a key.',
+                'The hosted demo key is used only when you provide no key and the deployment has one configured.',
+                'Tavily receives search queries.',
+                'DeFiLlama receives no wallet data.',
+                'The fee-bump relayer can see transaction data submitted on-chain.',
+                'All other data stays in your browser.',
               ].map((n) => (
                 <div
                   key={n}
@@ -1145,7 +1190,11 @@ export default function SettingsPage({
                     gap: 8,
                   }}
                 >
-                  <span style={{ color: 'var(--text-faint)' }}>●</span>
+                  <span
+                    className="ui-dot"
+                    style={{ color: 'var(--text-faint)' }}
+                    aria-hidden="true"
+                  />
                   {n}
                 </div>
               ))}
@@ -1167,7 +1216,7 @@ export default function SettingsPage({
                 {[
                   ['Version', '1.0.0-beta'],
                   ['Network', 'Stellar testnet'],
-                  ['Contracts', 'verified on Sourcify'],
+                  ['Contracts', 'Verified on Sourcify'],
                 ].map(([k, v]) => (
                   <div
                     key={k}
@@ -1190,19 +1239,16 @@ export default function SettingsPage({
               <ContractRow name="VFUSD token" addr={SOROBAN_TOKEN_ADDRESS} />
               <Divider />
               <div style={{ fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 1.6 }}>
-                Powered by: Soroban session keys × fee-bump relayer × Venice AI
+                Uses Soroban session keys, fee-bump relaying, and Venice AI.
               </div>
               <div style={{ fontSize: 11.5, marginTop: 8, lineHeight: 1.8 }}>
                 {[
-                  'Fee-bump Relayer Gas Abstraction',
-                  'Venice AI Strategy Generator',
-                  'Multi-Agent Smart Swarm',
-                  'Parallel Swarm Coordination',
-                  'Soroban Session-Key Scope',
+                  'The fee-bump relayer pays transaction fees.',
+                  'Venice AI can generate strategies.',
+                  'Agent workers execute in parallel.',
+                  'Soroban session keys limit each agent’s scope.',
                 ].map((p) => (
-                  <div key={p}>
-                    <span style={{ color: 'var(--ok)' }}>✓</span> {p}
-                  </div>
+                  <div key={p}>{p}</div>
                 ))}
               </div>
               <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>

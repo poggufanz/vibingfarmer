@@ -19,7 +19,7 @@ describe('SendScreen', () => {
     fireEvent.click(screen.getByRole('button', { name: /review/i }))
     expect(onPreview).toHaveBeenCalledWith(expect.objectContaining({ to: 'GYOU', amount: '1' }))
     // confirm not present until a preview is supplied
-    expect(screen.queryByRole('button', { name: /confirm & send/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /confirm and send/i })).toBeNull()
   })
 
   it('disables confirm when inputs change after preview (no stale sign)', () => {
@@ -48,12 +48,12 @@ describe('SendScreen', () => {
     rerender(
       <SendScreen from="GME" onPreview={onPreview} onConfirm={onConfirm} preview={preview} />
     )
-    const confirm = screen.getByRole('button', { name: /confirm & send/i })
+    const confirm = screen.getByRole('button', { name: /confirm and send/i })
     expect(confirm.disabled).toBe(false)
     // edit destination after preview → stale → confirm blocked
     fireEvent.change(screen.getByLabelText(/destination/i), { target: { value: 'GEVIL' } })
-    expect(screen.getByRole('button', { name: /confirm & send/i }).disabled).toBe(true)
-    fireEvent.click(screen.getByRole('button', { name: /confirm & send/i }))
+    expect(screen.getByRole('button', { name: /confirm and send/i }).disabled).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: /confirm and send/i }))
     expect(onConfirm).not.toHaveBeenCalled()
     expect(screen.getByText(/inputs changed/i)).toBeTruthy()
   })

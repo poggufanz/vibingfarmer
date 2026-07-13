@@ -12,10 +12,17 @@ import { loadSettings, t } from '../settingsStore.js'
 import { useNavigateTo } from '../router.js'
 import { YieldLine } from './SignatureMark.jsx'
 import { toDisplay } from '../stellar/format.js'
+import { Icon } from '../components.jsx'
 
 const POLL_MS = 10 * 60 * 1000
 const u = toDisplay
 const fmtAmt = (n) => (+Number(n || 0).toFixed(2)).toString()
+const sentenceCase = (value, fallback = '-') => {
+  const text = String(value || fallback)
+    .replace(/[_-]+/g, ' ')
+    .trim()
+  return text ? text[0].toUpperCase() + text.slice(1) : fallback
+}
 const formatTime = (ts, now = Date.now()) => {
   if (!ts) return '-'
   const { timestampFormat } = loadSettings()
@@ -52,10 +59,8 @@ const eyebrow = {
 const linkBtn = {
   appearance: 'none',
   border: 0,
-  background: 'transparent',
   font: 'inherit',
   fontSize: 11,
-  color: 'var(--text-muted)',
   cursor: 'pointer',
   textDecoration: 'underline',
 }
@@ -69,9 +74,7 @@ const section = { marginBottom: 28 }
 const sub = { fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }
 const pillBtn = {
   appearance: 'none',
-  border: '.5px solid rgba(255,255,255,.18)',
   borderRadius: 5,
-  background: 'rgba(255,255,255,.06)',
   color: 'inherit',
   font: 'inherit',
   fontSize: 10.5,
@@ -83,25 +86,27 @@ const dot = (c) => ({ width: 8, height: 8, borderRadius: '50%', background: c, f
 const alertText = (a) => {
   switch (a.kind) {
     case 'risk_alert':
-      return `Risk detected · ${a.vaultName}`
+      return `Risk detected, ${a.vaultName}`
     case 'apy_drift':
-      return `APY drop detected · ${a.vaultName}`
+      return `APY drop detected, ${a.vaultName}`
     case 'rebalance_proposal':
-      return `Rebalance proposed · +${a.apyGain}% opportunity`
+      return `Rebalance proposed, +${a.apyGain}% opportunity`
     case 'harvest_ready':
-      return `Harvest ready · ${a.vaultName}`
+      return `Harvest ready, ${a.vaultName}`
     case 'harvest_executed':
-      return `Harvested · ${a.vaultName}`
+      return `Harvested, ${a.vaultName}`
     case 'harvest_failed':
-      return `Harvest failed · ${a.vaultName}`
+      return `Harvest failed, ${a.vaultName}`
     default:
-      return `${String(a.kind || 'event').replace(/_/g, ' ')} · ${a.vaultName || ''}`
+      return `${String(a.kind || 'Event')
+        .replace(/_/g, ' ')
+        .replace(/^./, (c) => c.toUpperCase())}, ${a.vaultName || ''}`
   }
 }
-const alertIcon = (a) => {
-  if (a.kind === 'risk_alert' || a.kind === 'apy_drift') return { icon: '⚠', color: 'var(--warn)' }
-  if (a.kind === 'harvest_failed') return { icon: '✗', color: 'var(--danger)' }
-  return { icon: '●', color: 'var(--text-muted)' }
+const alertTone = (a) => {
+  if (a.kind === 'risk_alert' || a.kind === 'apy_drift') return { color: 'var(--warn)' }
+  if (a.kind === 'harvest_failed') return { color: 'var(--danger)' }
+  return { color: 'var(--text-muted)' }
 }
 
 const SectionHead = ({ title, action, onAction }) => (
@@ -116,7 +121,7 @@ const SectionHead = ({ title, action, onAction }) => (
   >
     <span style={eyebrow}>{title}</span>
     {action && (
-      <button style={linkBtn} onClick={onAction}>
+      <button className="link-btn" style={linkBtn} onClick={onAction}>
         {action}
       </button>
     )}
@@ -166,7 +171,9 @@ const Collapsible = ({ title, count, meta, defaultOpen = false, children }) => (
   <details className="yv-collapse" style={section} {...(defaultOpen ? { open: true } : {})}>
     <summary style={summaryRow}>
       <span style={eyebrow}>
-        <span className="yv-caret">▸ </span>
+        <span className="yv-caret" aria-hidden="true">
+          <Icon name="arrow" size={12} />
+        </span>
         {title}
         {count != null ? ` (${count})` : ''}
       </span>
@@ -269,7 +276,7 @@ export default function HomePage({
             <span className="vibing">farmer</span>
           </div>
           <p className="lede" style={{ margin: '18px auto 0', fontSize: 14 }}>
-            Autonomous yield farming. Set your permission once, and the agent farms for you.
+            Connect once. Set a budget. Your USDC earns while you stay in control.
           </p>
           <button className="btn btn-primary btn-lg" style={{ marginTop: 24 }} onClick={onConnect}>
             {t(lang, 'connectWallet')}
@@ -287,7 +294,7 @@ export default function HomePage({
             }}
           >
             <span className="live-dot" />
-            relayer fee-bump · gas 0 · Stellar testnet
+            Network fees covered, Stellar testnet
           </div>
         </div>
       </div>
@@ -298,20 +305,19 @@ export default function HomePage({
   const apyOf = (addr) => vaultMeta[addr.toLowerCase()]?.apy || 0
   const totalUnits = posList.reduce((s, [, p]) => s + Number(p.balance || 0), 0)
   const earnedToday = posList.reduce((s, [a, p]) => s + (u(p.balance) * (apyOf(a) / 100)) / 365, 0)
-  const mode = autoHarvest ? 'autopilot' : 'co-pilot'
+  const mode = autoHarvest ? 'Autopilot' : 'Co-pilot'
 
   // Risk/agent alerts now surface only through the top-bar bell (NotificationCenter);
   // the inline home banner was removed so alerts live in one place.
 
   // Recent activity: transactions + agent events, merged, newest 5.
   const txItems = getTransactions().map((t) => ({
-    icon: t.status === 'failed' ? '✗' : '✓',
     color: t.status === 'failed' ? 'var(--danger)' : 'var(--ok)',
     text: `${t.type === 'withdraw' ? 'Withdrew' : 'Deposited'} ${fmtAmt(t.amountUsdc)} USDC → ${t.vaultName}`,
     ts: t.timestamp,
   }))
   const alertItems = alerts.map((a) => ({
-    ...alertIcon(a),
+    ...alertTone(a),
     text: alertText(a),
     ts: a.timestamp || lastUpdated,
   }))
@@ -401,12 +407,10 @@ export default function HomePage({
               marginBottom: 20,
               padding: '10px 14px',
               borderRadius: 'var(--radius-md)',
-              border: '1px solid var(--border)',
-              borderLeft: '2px solid var(--accent)',
+              border: '1px solid var(--border-strong)',
               background: 'var(--bg-card)',
             }}
           >
-            <span style={dot('var(--accent)')} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 12.5, fontWeight: 500 }}>Session resumed</div>
               <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
@@ -414,16 +418,17 @@ export default function HomePage({
               </div>
             </div>
             {onOpenAgent && (
-              <button style={pillBtn} onClick={onOpenAgent}>
-                View agent →
+              <button className="pill-btn" style={pillBtn} onClick={onOpenAgent}>
+                View agent
               </button>
             )}
             <button
               aria-label="Dismiss"
+              className="link-btn"
               style={{ ...linkBtn, textDecoration: 'none', fontSize: 15, lineHeight: 1 }}
               onClick={onDismissResumed}
             >
-              ×
+              <Icon name="x" size={14} />
             </button>
           </div>
         )}
@@ -432,156 +437,394 @@ export default function HomePage({
           /* ── STATE 2: connected, no positions ── */
           <div style={section}>
             <SectionHead title="Portfolio" />
-            
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr', gap: 20, marginBottom: 20 }} className="vf-empty-grid">
-              
+
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '1fr 1.2fr',
+                gap: 20,
+                marginBottom: 20,
+              }}
+              className="vf-empty-grid"
+            >
               {/* Left card: Start Farming & Yield Estimator */}
-              <div style={{ ...cardPad, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: 290 }}>
+              <div
+                style={{
+                  ...cardPad,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'space-between',
+                  minHeight: 290,
+                }}
+              >
                 <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'baseline',
+                      marginBottom: 12,
+                    }}
+                  >
                     <span style={eyebrow}>Total Balance</span>
-                    <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>Stellar Testnet</span>
+                    <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>
+                      Stellar Testnet
+                    </span>
                   </div>
-                  <div className="tnum" style={{ fontSize: '2.2rem', fontWeight: 600, lineHeight: 1, letterSpacing: '-0.03em', color: 'var(--text)' }}>
-                    0.00 <span style={{ fontSize: 13, color: 'var(--text-faint)', fontWeight: 400 }}>USDC</span>
+                  <div
+                    className="tnum"
+                    style={{
+                      fontSize: '2.2rem',
+                      fontWeight: 600,
+                      lineHeight: 1,
+                      letterSpacing: '-0.03em',
+                      color: 'var(--text)',
+                    }}
+                  >
+                    0.00{' '}
+                    <span style={{ fontSize: 13, color: 'var(--text-faint)', fontWeight: 400 }}>
+                      USDC
+                    </span>
                   </div>
-                  
+
                   {/* Estimator Tool */}
-                  <div style={{ marginTop: 24, padding: '12px 14px', background: 'rgba(255,255,255,0.02)', borderRadius: 8, border: '1px solid rgba(255,255,255,0.04)' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-                      <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)' }}>Projected Yearly Yield</span>
-                      <span className="mono tnum" style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 'bold' }}>{estimateAmount.toLocaleString()} USDC</span>
+                  <div
+                    style={{
+                      marginTop: 24,
+                      padding: '12px 14px',
+                      background: 'rgba(255,255,255,0.02)',
+                      borderRadius: 8,
+                      border: '1px solid rgba(255,255,255,0.04)',
+                    }}
+                  >
+                    <div
+                      style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}
+                    >
+                      <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)' }}>
+                        Projected Yearly Yield
+                      </span>
+                      <span
+                        className="mono tnum"
+                        style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 'bold' }}
+                      >
+                        {estimateAmount.toLocaleString()} USDC
+                      </span>
                     </div>
-                    
-                    <input 
-                      type="range" 
-                      min="100" 
-                      max="10000" 
+
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: 11,
+                        color: 'var(--text-muted)',
+                        marginBottom: 6,
+                      }}
+                    >
+                      Deposit amount
+                    </label>
+                    <input
+                      type="range"
+                      min="100"
+                      max="10000"
                       step="100"
-                      value={estimateAmount} 
+                      value={estimateAmount}
                       onChange={(e) => setEstimateAmount(Number(e.target.value))}
-                      style={{ 
-                        width: '100%', 
-                        accentColor: 'var(--accent)', 
-                        height: 4, 
-                        background: 'rgba(255,255,255,0.1)', 
+                      aria-label="Deposit amount in USDC"
+                      aria-valuetext={`${estimateAmount} USDC`}
+                      style={{
+                        width: '100%',
+                        accentColor: 'var(--accent)',
+                        height: 4,
+                        background: 'var(--border-strong)',
                         borderRadius: 2,
                         cursor: 'pointer',
-                        marginBottom: 14
+                        marginBottom: 14,
                       }}
                     />
-                    
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, textAlign: 'center' }}>
-                      <div style={{ padding: '6px 4px', background: 'rgba(255,255,255,0.03)', borderRadius: 6 }}>
-                        <div style={{ fontSize: 9, textTransform: 'uppercase', opacity: 0.5, letterSpacing: '0.05em' }}>Low Risk</div>
-                        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>4.8% APY</div>
-                        <div className="tnum" style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text)', marginTop: 2 }}>+{(estimateAmount * 0.048).toFixed(2)}</div>
+
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: '1fr 1fr 1fr',
+                        gap: 8,
+                        textAlign: 'center',
+                      }}
+                    >
+                      <div
+                        style={{
+                          padding: '6px 4px',
+                          background: 'var(--bg-elev)',
+                          borderRadius: 6,
+                        }}
+                      >
+                        <div style={{ fontSize: 10, opacity: 0.7 }}>Low risk</div>
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
+                          4.8% APY
+                        </div>
+                        <div
+                          className="tnum"
+                          style={{
+                            fontSize: 11.5,
+                            fontWeight: 600,
+                            color: 'var(--text)',
+                            marginTop: 2,
+                          }}
+                        >
+                          +{(estimateAmount * 0.048).toFixed(2)}
+                        </div>
                       </div>
-                      <div style={{ padding: '6px 4px', background: 'rgba(255,255,255,0.03)', borderRadius: 6 }}>
-                        <div style={{ fontSize: 9, textTransform: 'uppercase', opacity: 0.5, letterSpacing: '0.05em' }}>Medium Risk</div>
-                        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>6.1% APY</div>
-                        <div className="tnum" style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text)', marginTop: 2 }}>+{(estimateAmount * 0.061).toFixed(2)}</div>
+                      <div
+                        style={{
+                          padding: '6px 4px',
+                          background: 'rgba(255,255,255,0.03)',
+                          borderRadius: 6,
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontSize: 9,
+                            textTransform: 'uppercase',
+                            opacity: 0.5,
+                            letterSpacing: '0.05em',
+                          }}
+                        >
+                          Medium Risk
+                        </div>
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
+                          6.1% APY
+                        </div>
+                        <div
+                          className="tnum"
+                          style={{
+                            fontSize: 11.5,
+                            fontWeight: 600,
+                            color: 'var(--text)',
+                            marginTop: 2,
+                          }}
+                        >
+                          +{(estimateAmount * 0.061).toFixed(2)}
+                        </div>
                       </div>
-                      <div style={{ padding: '6px 4px', background: 'rgba(255,255,255,0.03)', borderRadius: 6 }}>
-                        <div style={{ fontSize: 9, textTransform: 'uppercase', opacity: 0.5, letterSpacing: '0.05em' }}>High Risk</div>
-                        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>9.4% APY</div>
-                        <div className="tnum" style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--accent)', marginTop: 2 }}>+{(estimateAmount * 0.094).toFixed(2)}</div>
+                      <div
+                        style={{
+                          padding: '6px 4px',
+                          background: 'rgba(255,255,255,0.03)',
+                          borderRadius: 6,
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontSize: 9,
+                            textTransform: 'uppercase',
+                            opacity: 0.5,
+                            letterSpacing: '0.05em',
+                          }}
+                        >
+                          High Risk
+                        </div>
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
+                          9.4% APY
+                        </div>
+                        <div
+                          className="tnum"
+                          style={{
+                            fontSize: 11.5,
+                            fontWeight: 600,
+                            color: 'var(--accent)',
+                            marginTop: 2,
+                          }}
+                        >
+                          +{(estimateAmount * 0.094).toFixed(2)}
+                        </div>
                       </div>
                     </div>
                   </div>
                 </div>
-                
+
                 <div style={{ marginTop: 20 }}>
                   <button
                     className="btn btn-primary"
-                    style={{ width: '100%', padding: '10px 16px', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 6 }}
+                    style={{
+                      width: '100%',
+                      padding: '10px 16px',
+                      display: 'flex',
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                      gap: 6,
+                    }}
                     onClick={() => onStartStrategy(estimateAmount)}
                   >
-                    Start Strategy <span style={{ fontSize: 14 }}>→</span>
+                    Start depositing
                   </button>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 10, fontSize: 10, color: 'var(--text-faint)' }}>
-                    <span style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--accent)' }} />
-                    Gasless deposits via fee-bump relayer
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 6,
+                      marginTop: 10,
+                      fontSize: 10,
+                      color: 'var(--text-faint)',
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 5,
+                        height: 5,
+                        borderRadius: '50%',
+                        background: 'var(--accent)',
+                      }}
+                    />
+                    One signature, network fees covered
                   </div>
                 </div>
               </div>
-              
+
               {/* Right card: Featured Opportunities (clickable vaults) */}
               <div style={cardPad}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'baseline',
+                    marginBottom: 12,
+                  }}
+                >
                   <span style={eyebrow}>Featured Strategies</span>
                   <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Click to farm</span>
                 </div>
-                
+
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {VAULT_CATALOG.slice(0, 3).map((v) => (
-                    <div 
+                    <button
+                      type="button"
                       key={v.protocol}
                       onClick={() => handleFarm(v)}
                       style={{
                         padding: '12px 14px',
-                        background: 'linear-gradient(135deg, var(--bg-elev) 0%, var(--bg-card) 100%)',
+                        background: 'var(--bg-elev)',
                         border: '1px solid var(--border-strong)',
                         borderRadius: 'var(--radius-md, 8px)',
-                        boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
                         cursor: 'pointer',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
                         gap: 12,
-                        transition: 'all 0.2s ease',
+                        transition: 'border-color 0.15s ease',
+                        width: '100%',
+                        textAlign: 'left',
+                        color: 'inherit',
+                        font: 'inherit',
                       }}
-                      className="hover-scale-subtle"
                     >
                       <div>
-                        <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)' }}>{v.name}</div>
-                        <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>{v.yield_source} · min {v.min_capital} USDC</div>
+                        <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)' }}>
+                          {v.name}
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>
+                          {v.yield_source}, min {v.min_capital} USDC
+                        </div>
                       </div>
                       <div style={{ textAlign: 'right' }}>
-                        <div className="tnum" style={{ fontSize: 14, fontWeight: 600, color: 'var(--ok)' }}>{v.apy.toFixed(1)}% APY</div>
-                        <span style={{ 
-                          fontSize: 9, 
-                          textTransform: 'uppercase', 
-                          padding: '1px 6px', 
-                          borderRadius: 4, 
-                          border: `1.5px solid ${v.risk === 'low' ? 'var(--ok)' : v.risk === 'medium' ? 'var(--warn)' : 'var(--accent)'}`,
-                          color: v.risk === 'low' ? 'var(--ok)' : v.risk === 'medium' ? 'var(--warn)' : 'var(--accent)',
-                          fontWeight: 600,
-                          letterSpacing: '0.02em',
-                          display: 'inline-block',
-                          marginTop: 3
-                        }}>
-                          {v.risk}
+                        <div
+                          className="tnum"
+                          style={{ fontSize: 14, fontWeight: 600, color: 'var(--ok)' }}
+                        >
+                          {v.apy.toFixed(1)}% APY
+                        </div>
+                        <span
+                          style={{
+                            fontSize: 10,
+                            padding: '1px 6px',
+                            borderRadius: 4,
+                            border: `1px solid ${v.risk === 'low' ? 'var(--ok)' : v.risk === 'medium' ? 'var(--warn)' : 'var(--danger)'}`,
+                            color:
+                              v.risk === 'low'
+                                ? 'var(--ok)'
+                                : v.risk === 'medium'
+                                  ? 'var(--warn)'
+                                  : 'var(--danger)',
+                            fontWeight: 600,
+                            display: 'inline-block',
+                            marginTop: 3,
+                          }}
+                        >
+                          {sentenceCase(v.risk)}
                         </span>
                       </div>
-                    </div>
+                    </button>
                   ))}
                 </div>
               </div>
             </div>
 
-            {/* 3-Layer Protection Graphic */}
             <div style={{ ...cardPad }}>
-              <div style={{ ...eyebrow, marginBottom: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span>Built-in Security: The 3-Layer Yield Protection</span>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }} className="vf-empty-protection">
-                <div style={{ padding: '4px 8px', borderLeft: '2px solid var(--warn)' }}>
-                  <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text)' }}>1. Pre-Flight Verification</div>
-                  <p style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>
-                    Vets yield authenticity. Instantly filters out ponzi-yield architectures and un-audited smart contracts.
+              <div style={{ ...eyebrow, marginBottom: 14 }}>How it works</div>
+              <div
+                style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}
+                className="vf-empty-protection"
+              >
+                <div
+                  style={{
+                    padding: '4px 8px',
+                    border: '1px solid var(--border)',
+                    borderRadius: 'var(--radius-sm)',
+                  }}
+                >
+                  <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text)' }}>
+                    1. Set amount
+                  </div>
+                  <p
+                    style={{
+                      fontSize: 10.5,
+                      color: 'var(--text-muted)',
+                      marginTop: 4,
+                      lineHeight: 1.4,
+                    }}
+                  >
+                    Choose how much USDC and your risk level. We build a vault plan from live rates.
                   </p>
                 </div>
-                <div style={{ padding: '4px 8px', borderLeft: '2px solid var(--accent)' }}>
-                  <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text)' }}>2. Active Risk Guardian</div>
-                  <p style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>
-                    Continuous monitor loops monitor Blend pool utilization, volatility, and protocol TVL changes in real time.
+                <div
+                  style={{
+                    padding: '4px 8px',
+                    border: '1px solid var(--border)',
+                    borderRadius: 'var(--radius-sm)',
+                  }}
+                >
+                  <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text)' }}>
+                    2. Sign once
+                  </div>
+                  <p
+                    style={{
+                      fontSize: 10.5,
+                      color: 'var(--text-muted)',
+                      marginTop: 4,
+                      lineHeight: 1.4,
+                    }}
+                  >
+                    One budget + time window. Agents deposit only inside that limit. Fees covered.
                   </p>
                 </div>
-                <div style={{ padding: '4px 8px', borderLeft: '2px solid var(--ok)' }}>
-                  <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text)' }}>3. Scoped Keeper Auto-Exit</div>
-                  <p style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>
-                    On-chain scoped session keys execute automatic emergency withdrawals directly back to your address if targets trip.
+                <div
+                  style={{
+                    padding: '4px 8px',
+                    border: '1px solid var(--border)',
+                    borderRadius: 'var(--radius-sm)',
+                  }}
+                >
+                  <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text)' }}>
+                    3. Stay in control
+                  </div>
+                  <p
+                    style={{
+                      fontSize: 10.5,
+                      color: 'var(--text-muted)',
+                      marginTop: 4,
+                      lineHeight: 1.4,
+                    }}
+                  >
+                    Monitor, withdraw, or revoke anytime. Emergency exits can send funds back to
+                    you.
                   </p>
                 </div>
               </div>
@@ -601,32 +844,56 @@ export default function HomePage({
           </div>
         ) : (
           <>
-            {/* ── PORTFOLIO STRIP (compact — totals + agent merged into one row) ── */}
+            {/* ── PORTFOLIO STRIP (money-app command center) ── */}
             <div style={section}>
-              <SectionHead title="Portfolio" />
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'baseline',
+                  justifyContent: 'space-between',
+                  marginBottom: 10,
+                  gap: 12,
+                }}
+              >
+                <span style={eyebrow}>Your portfolio</span>
+                {onStartStrategy && (
+                  <button className="btn btn-primary btn-sm" onClick={() => onStartStrategy()}>
+                    Deposit more
+                  </button>
+                )}
+              </div>
               <div
                 style={{
                   ...cardPad,
-                  padding: '13px 16px',
+                  padding: '18px 20px',
                   display: 'flex',
                   alignItems: 'center',
-                  gap: 16,
+                  gap: 20,
                   flexWrap: 'wrap',
                 }}
               >
                 <div>
-                  <span className="tnum" style={{ fontSize: 20, fontWeight: 500 }}>
+                  <div style={{ fontSize: 11, color: 'var(--text-faint)', marginBottom: 4 }}>
+                    Total deposited
+                  </div>
+                  <span
+                    className="tnum"
+                    style={{ fontSize: 28, fontWeight: 600, letterSpacing: '-0.03em' }}
+                  >
                     {fmtAmt(u(totalUnits))}
                   </span>
-                  <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 5 }}>
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 6 }}>
                     USDC
                   </span>
                 </div>
-                <span style={{ width: 1, height: 22, background: 'var(--border)' }} />
+                <span style={{ width: 1, height: 36, background: 'var(--border)' }} />
                 <div>
+                  <div style={{ fontSize: 11, color: 'var(--text-faint)', marginBottom: 4 }}>
+                    Est. today
+                  </div>
                   <span
                     className="tnum"
-                    style={{ fontSize: 14, fontWeight: 500, color: 'var(--ok)' }}
+                    style={{ fontSize: 16, fontWeight: 500, color: 'var(--ok)' }}
                   >
                     +{earnedToday.toFixed(2)}
                   </span>
@@ -639,6 +906,7 @@ export default function HomePage({
                   {posList.length} vault{posList.length === 1 ? '' : 's'}
                 </span>
                 <button
+                  className="link-btn"
                   onClick={onOpenAgent}
                   title="Open Agent Dashboard"
                   style={{
@@ -652,7 +920,7 @@ export default function HomePage({
                   }}
                 >
                   <span style={dot(agentActive ? 'var(--ok)' : 'var(--text-faint)')} />
-                  {agentActive ? 'monitoring' : 'stopped'} · {mode} →
+                  {agentActive ? 'Monitoring' : 'Stopped'}, {mode}
                 </button>
               </div>
             </div>
@@ -689,7 +957,7 @@ export default function HomePage({
                       >
                         <span style={{ fontSize: 13, fontWeight: 500 }}>{p.vaultName}</span>
                         <span className="mono tnum" style={{ fontSize: 12 }}>
-                          {bal.toFixed(2)} USDC · {apy.toFixed(1)}% APY ·{' '}
+                          {bal.toFixed(2)} USDC, {apy.toFixed(1)}% APY,{' '}
                           <span style={{ color: 'var(--ok)' }}>+{daily.toFixed(3)}/day</span>
                         </span>
                       </div>
@@ -723,6 +991,7 @@ export default function HomePage({
                           {pct.toFixed(0)}%
                         </span>
                         <button
+                          className="pill-btn"
                           style={pillBtn}
                           onClick={() =>
                             setWithdrawVault({
@@ -760,7 +1029,7 @@ export default function HomePage({
                 <span style={eyebrow}>Top Movers</span>
                 {!hasHistories ? (
                   <span className="mono" style={{ fontSize: 11, color: 'var(--text-faint)' }}>
-                    fetching APY momentum…
+                    Fetching APY momentum...
                   </span>
                 ) : trending.length > 0 ? (
                   trending.map((v, i) => {
@@ -768,9 +1037,10 @@ export default function HomePage({
                     return (
                       <React.Fragment key={v.poolId || `${v.name}-${i}`}>
                         {i > 0 && (
-                          <span style={{ color: 'var(--text-faint)', fontSize: 11 }}>·</span>
+                          <span style={{ color: 'var(--text-faint)', fontSize: 11 }}>, </span>
                         )}
                         <button
+                          className="link-btn"
                           onClick={() => handleOpenVault(v)}
                           style={{
                             ...linkBtn,
@@ -808,10 +1078,10 @@ export default function HomePage({
                   }}
                 >
                   {loading
-                    ? 'fetching live data…'
+                    ? 'Fetching live data...'
                     : live
-                      ? `live · updated ${formatTime(pulse.fetchedAt, now)}`
-                      : 'cached'}
+                      ? `Live, updated ${formatTime(pulse.fetchedAt, now)}`
+                      : 'Cached'}
                 </span>
               }
             >
@@ -887,6 +1157,7 @@ export default function HomePage({
                 ].map(([key, label]) => (
                   <button
                     key={key}
+                    className="pill-btn"
                     onClick={() => handleSort(key)}
                     style={{
                       ...pillBtn,
@@ -896,7 +1167,9 @@ export default function HomePage({
                     }}
                   >
                     {label}
-                    {sortBy === key ? (sortDir === 'desc' ? ' ▼' : ' ▲') : ''}
+                    {sortBy === key && (
+                      <Icon name="arrow" size={11} className={`sort-arrow ${sortDir}`} />
+                    )}
                   </button>
                 ))}
                 <span
@@ -917,6 +1190,7 @@ export default function HomePage({
                 ].map(([k, lbl]) => (
                   <button
                     key={k}
+                    className="pill-btn"
                     onClick={() => setFilterRisk(k)}
                     style={{
                       ...pillBtn,
@@ -950,7 +1224,6 @@ export default function HomePage({
                       style={{
                         fontSize: 9.5,
                         color: 'var(--text-faint)',
-                        textTransform: 'lowercase',
                         letterSpacing: '-0.01em',
                       }}
                     >
@@ -990,7 +1263,7 @@ export default function HomePage({
                       color: 'var(--text-faint)',
                     }}
                   >
-                    no vaults match this filter
+                    No vaults match this filter.
                   </div>
                 ) : (
                   sortedVaults.map((v, i) => {
@@ -1001,7 +1274,11 @@ export default function HomePage({
                     const prevDelta = prevP ? +(v.apy - prevP.apy).toFixed(2) : null
                     const pp1d = ppMeta(stats?.change1d ?? prevDelta)
                     const riskColor =
-                      v.risk === 'low' ? 'var(--ok)' : v.risk === 'medium' ? '#f59e0b' : '#f97316'
+                      v.risk === 'low'
+                        ? 'var(--ok)'
+                        : v.risk === 'medium'
+                          ? 'var(--warn)'
+                          : 'var(--danger)'
                     return (
                       <div
                         key={v.poolId || `${v.name}-${i}`}
@@ -1011,10 +1288,9 @@ export default function HomePage({
                           alignItems: 'center',
                           gap: 8,
                           padding: '11px 18px',
-                          paddingLeft: active ? 16 : 18,
                           borderTop: i ? '1px solid var(--border)' : 'none',
-                          borderLeft: `2px solid ${active ? 'var(--ok)' : 'transparent'}`,
-                          background: active ? 'rgba(255,255,255,.02)' : undefined,
+                          background: active ? 'var(--bg-elev)' : undefined,
+                          outline: active ? '1px solid var(--border-strong)' : undefined,
                         }}
                       >
                         <span
@@ -1027,9 +1303,11 @@ export default function HomePage({
                           onClick={() => v.protocol && navigateTo('vault', v.protocol)}
                         >
                           {active && (
-                            <span style={{ color: 'var(--ok)', marginRight: 5, fontSize: 9 }}>
-                              ●
-                            </span>
+                            <span
+                              className="ui-dot"
+                              style={{ color: 'var(--ok)', marginRight: 5 }}
+                              aria-hidden="true"
+                            />
                           )}
                           {v.name}
                         </span>
@@ -1056,7 +1334,11 @@ export default function HomePage({
                               }}
                             />
                           ) : v.poolId ? (
-                            <span className="sparkline-loading">····</span>
+                            <span
+                              className="sparkline-loading"
+                              role="status"
+                              aria-label="Loading"
+                            />
                           ) : (
                             <span style={{ color: 'var(--text-faint)', fontSize: 11 }}>-</span>
                           )}
@@ -1065,7 +1347,7 @@ export default function HomePage({
                           {v.tvlFormatted || '-'}
                         </span>
                         <span className="mono" style={{ fontSize: 11, color: riskColor }}>
-                          {v.risk === 'medium' ? 'med' : v.risk || '-'}
+                          {sentenceCase(v.risk)}
                         </span>
                         <span>
                           {active && bal !== null ? (
@@ -1076,7 +1358,11 @@ export default function HomePage({
                               {bal.toFixed(2)} USDC
                             </span>
                           ) : (
-                            <button style={linkBtn} onClick={() => handleFarm(v)}>
+                            <button
+                              className="link-btn"
+                              style={linkBtn}
+                              onClick={() => handleFarm(v)}
+                            >
                               Farm
                             </button>
                           )}
@@ -1092,7 +1378,7 @@ export default function HomePage({
                 style={{ marginTop: 14 }}
                 onClick={onStartStrategy}
               >
-                Start New Strategy →
+                Start new strategy
               </button>
             </Collapsible>
 
@@ -1102,13 +1388,14 @@ export default function HomePage({
               count={activity.length}
               meta={
                 <button
+                  className="link-btn"
                   style={linkBtn}
                   onClick={(e) => {
                     e.preventDefault()
                     onViewHistory()
                   }}
                 >
-                  View all →
+                  View all
                 </button>
               }
             >
@@ -1130,11 +1417,9 @@ export default function HomePage({
                       }}
                     >
                       <span
-                        className="mono"
-                        style={{ color: e.color, width: 14, textAlign: 'center' }}
-                      >
-                        {e.icon}
-                      </span>
+                        aria-hidden="true"
+                        style={{ ...dot(e.color), width: 6, height: 6, marginInline: 4 }}
+                      />
                       <span style={{ flex: 1, fontSize: 12.5 }}>{e.text}</span>
                       <span
                         className="mono"

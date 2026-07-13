@@ -4,15 +4,17 @@
 
 function ratioPhrase(verdict) {
   const r = verdict.yieldReality?.ratio
-  return `Mainnet distributions revenue-covered (ratio ${r != null ? r.toFixed(1) : '—'})`
+  return r == null
+    ? 'Mainnet revenue coverage is unavailable'
+    : `Mainnet reward distributions are covered by protocol revenue (ratio: ${r.toFixed(1)})`
 }
 
 /** The fused one-sentence approval line — the headline artifact. */
 export function buildEligibilitySentence(verdict, ctx) {
   const yield_ = ratioPhrase(verdict)
-  const sec = `Security ${verdict.security?.score}/100 (our weighting)`
-  const loss = `Target max loss −${ctx.targetMaxLossPct}%`
-  return `${yield_}, source DeFiLlama. This deposit is on testnet — APR illustrative. ${sec}. ${loss}. Proceed?`
+  const sec = `Security score: ${verdict.security?.score}/100 using our weighting`
+  const loss = `Target maximum loss: ${ctx.targetMaxLossPct}%`
+  return `${yield_}, according to DeFiLlama. This deposit runs on testnet, so the APR is illustrative. ${sec}. ${loss}. Proceed?`
 }
 
 /** Per-row label in the eligibility panel. */

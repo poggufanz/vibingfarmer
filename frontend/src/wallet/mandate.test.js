@@ -43,7 +43,7 @@ function makeDeps({ sessionKeyAddress = '0xSESSIONKEY000000000000000000000000000
 }
 
 describe('createMandate', () => {
-  test('approves the session key by address only — never touches the session private key on the owner side', async () => {
+  test('approves the session key by address only - never touches the session private key on the owner side', async () => {
     const { deps } = makeDeps()
     const expiry = Math.floor(Date.now() / 1000) + 3600
     const fakeKernelAccount = { address: '0xowner' }

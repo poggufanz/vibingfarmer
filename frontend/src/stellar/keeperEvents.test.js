@@ -67,7 +67,7 @@ describe('decodeKeeperEvent', () => {
   })
 })
 
-describe('decodeKeeperEvent — lifeboat topics', () => {
+describe('decodeKeeperEvent - lifeboat topics', () => {
   it('decodes vault_derisk', () => {
     const rec = fakeRecord({
       type: 'vault_derisk',

@@ -2,8 +2,12 @@ import { describe, it, expect } from 'vitest'
 import { toAuthorizeArgs, toSummary, maxAtRisk } from './permissionScope.js'
 
 const scope = {
-  agent: '0xBEEF', vault: '0xVault', token: '0xToken',
-  capPerPeriod: 100_000000n, periodDuration: 86400, expiry: 1_900_000_000,
+  agent: '0xBEEF',
+  vault: '0xVault',
+  token: '0xToken',
+  capPerPeriod: 100_000000n,
+  periodDuration: 86400,
+  expiry: 1_900_000_000,
   nowSec: 1_899_827_200, // ~2 days before expiry
 }
 
@@ -11,12 +15,12 @@ describe('permissionScope single source', () => {
   it('serializes the SAME numbers the UI shows', () => {
     const args = toAuthorizeArgs(scope)
     const summary = toSummary(scope)
-    expect(args[3]).toBe(scope.capPerPeriod)          // capPerPeriod arg
+    expect(args[3]).toBe(scope.capPerPeriod) // capPerPeriod arg
     expect(summary.capPerPeriod).toBe(scope.capPerPeriod)
-    expect(args[2]).toBe(scope.token)                 // token arg
+    expect(args[2]).toBe(scope.token) // token arg
   })
 
-  it('max-at-risk = cap × ceil((expiry-now)/period) — boundary (exact 2 periods)', () => {
+  it('max-at-risk = cap × ceil((expiry-now)/period) - boundary (exact 2 periods)', () => {
     // (1_900_000_000 - 1_899_827_200) = 172800s = exactly 2 days → ceil(2) = 2 periods
     expect(maxAtRisk(scope)).toBe(200_000000n)
   })

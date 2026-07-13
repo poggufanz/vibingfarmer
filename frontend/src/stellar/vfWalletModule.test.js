@@ -57,7 +57,7 @@ describe('VfWalletModule', () => {
     expect(out).toEqual({ signedAuthEntry: 'SENTRY', signerAddress: 'CWALLET' })
   })
 
-  it('signMessage rejects — VF Wallet only signs Soroban auth entries', async () => {
+  it('signMessage rejects - VF Wallet only signs Soroban auth entries', async () => {
     const mod = new VfWalletModule()
     await expect(mod.signMessage('hi')).rejects.toMatchObject({ code: -3 })
   })
@@ -65,7 +65,10 @@ describe('VfWalletModule', () => {
   it('getNetwork reports the pinned testnet passphrase without touching the extension', async () => {
     const mod = new VfWalletModule()
     const out = await mod.getNetwork()
-    expect(out).toEqual({ network: 'TESTNET', networkPassphrase: 'Test SDF Network ; September 2015' })
+    expect(out).toEqual({
+      network: 'TESTNET',
+      networkPassphrase: 'Test SDF Network ; September 2015',
+    })
   })
 
   it('disconnect clears the cached address so the next getAddress re-resolves', async () => {

@@ -85,7 +85,7 @@ export async function runFetchDag(nodes, base = {}, onEvent) {
  * Layer 0 (independent, concurrent): skill, pools, gas, positions, market.
  * Layer 1 (derived): signals = deriveSignals(market, gas).
  *
- * loadVaultSkill and fetchMarketContext are injected (they live in venice.js) to
+ * loadVaultSkill and fetchMarketContext are injected (they live in strategist.js) to
  * keep this module free of a circular import back into the strategy axis.
  *
  * @param {Object} p

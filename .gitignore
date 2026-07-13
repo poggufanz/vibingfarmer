@@ -64,3 +64,18 @@ frontend/getUsdc.mjs
 spikes
 
 # Internal docs / AI instructions (local only)
+docs/
+planning/
+design/
+plans/
+.agents/
+.antigravitycli/
+.claude/
+.serena/
+.superpowers/
+graphify-out/
+frontend/graphify-out/
+graphify/
+.graphifyignore
+mcps
+.codex/

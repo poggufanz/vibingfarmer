@@ -23,7 +23,9 @@ export function formatProtocol(protocol) {
 
 /* ---------- Translate skill JSON → human readable fields ---------- */
 export function translateSkill(agent, skill) {
-  const amountVal = agent.allocation ? `${agent.allocation} USDC` : skill.guards?.maxAmount || '-'
+  const amountVal = agent.allocation
+    ? `${agent.allocation} USDC`
+    : skill.guards?.maxAmount || 'Not available'
 
   const action = `Deposit ${amountVal} to ${formatProtocol(agent.vault?.protocol)}`
   const steps = `${skill.steps?.length || 3} automated steps`
@@ -32,8 +34,9 @@ export function translateSkill(agent, skill) {
   const expiresInSec = parseInt(rawExpiry, 10) || 86400
   const hours = Math.floor(expiresInSec / 3600)
   const expiry = `${hours} hour${hours !== 1 ? 's' : ''}`
-  const revocable = skill.guards?.revocable ? '· revocable' : ''
-  const risk = skill.guards?.riskProfile || agent.vault?.risk || 'medium'
+  const revocable = skill.guards?.revocable ? ', revocable' : ''
+  const riskValue = skill.guards?.riskProfile || agent.vault?.risk || 'medium'
+  const risk = riskValue.charAt(0).toUpperCase() + riskValue.slice(1)
 
   return { action, steps, expiry, revocable, risk, amountVal }
 }
@@ -45,7 +48,7 @@ export const buildSkillForAgent = (agent, riskProfile) => {
     name: agent.skillName,
     version: '1.2.0',
     agent: agent.id,
-    description: `${agent.role} · single-vault deposit via Soroban session-key scope`,
+    description: `${agent.role}, single-vault deposit via Soroban session-key scope`,
     target: {
       vault: agent.vault.addr,
       protocol: agent.vault.protocol,
@@ -53,20 +56,19 @@ export const buildSkillForAgent = (agent, riskProfile) => {
     },
     steps: [
       {
-        id: 'swap',
-        action: 'uniswap_v3_swap',
-        params: { tokenIn: 'USDC', tokenOut: 'USDC', maxSlippageBps: 5 },
+        id: 'pull',
+        action: 'router_pull',
+        params: { asset: 'USDC', amount: 'exact' },
       },
       {
-        id: 'approve',
-        action: 'erc20_approve',
-        params: { spender: agent.vault.addr, amount: 'exact' },
+        id: 'deposit',
+        action: 'vault_deposit',
+        params: { asset: 'USDC', vault: agent.vault.addr },
       },
-      { id: 'deposit', action: 'erc4626_deposit', params: { asset: 'USDC', shares: 'auto' } },
     ],
     guards: {
       maxAmount: max,
-      maxGas: '200000',
+      feeMode: 'fee-bump',
       expiresIn: '86400',
       revocable: true,
       riskProfile: riskProfile,
@@ -89,7 +91,7 @@ const SkillCard = ({ agent, skill, state, onApprove, onViewDetail }) => {
         </div>
         <span
           className={`skill-card2-dot ${isApproved ? 'approved' : 'pending'}`}
-          aria-label={isApproved ? 'approved' : 'needs review'}
+          aria-label={isApproved ? 'Approved' : 'Needs review'}
         />
       </div>
 
@@ -102,7 +104,7 @@ const SkillCard = ({ agent, skill, state, onApprove, onViewDetail }) => {
       </div>
 
       <div className={`skill-card2-status ${isApproved ? 'approved' : 'pending'}`}>
-        {isApproved ? '✓ approved' : '● needs review'}
+        {isApproved ? 'Approved' : 'Needs review'}
       </div>
 
       <div className="skill-card2-actions">
@@ -114,11 +116,11 @@ const SkillCard = ({ agent, skill, state, onApprove, onViewDetail }) => {
         </button>
         {isApproved ? (
           <button className="btn skill-card2-approve approved" disabled>
-            ✓ Approved
+            Approved
           </button>
         ) : (
           <button className="btn btn-ghost skill-card2-approve" onClick={() => onApprove(agent.id)}>
-            ✓ Approve
+            Approve
           </button>
         )}
       </div>
@@ -155,7 +157,7 @@ const DelegationChain = ({ agents }) => {
         }}
       >
         <span style={{ fontWeight: 600, fontSize: 12.5, letterSpacing: '-0.01em' }}>
-          Delegation Chain
+          Delegation chain
         </span>
         <span
           className="mono"
@@ -167,30 +169,27 @@ const DelegationChain = ({ agents }) => {
             padding: '2px 7px',
           }}
         >
-          A2A · ERC-7710
+          funding_router, SEP-41
         </span>
       </div>
       <div style={tree}>
-        <div>
-          <span style={{ color: 'var(--accent, #cfff3d)' }}>●</span> User (Alice)
-        </div>
+        <div>User</div>
         <div style={{ paddingLeft: 12 }}>
-          <span style={muted}>└─ root delegation →</span> <b>Orchestrator</b>
+          <span style={muted}>funding_router.grant to</span> <b>workers</b>
         </div>
         {agents.map((a, i) => (
           <div key={a.id} style={{ paddingLeft: 36 }}>
-            <span style={muted}>{i === agents.length - 1 ? '└─' : '├─'} redelegation →</span>{' '}
-            <b>Worker-{i + 1}</b>
+            <span style={muted}>Redelegation to</span> <b>Worker-{i + 1}</b>
             <span style={muted}>
               {' '}
-              · {a.allocation} USDC · vault {VAULT_LETTERS[i] || i + 1}
+              , {a.allocation} USDC, vault {VAULT_LETTERS[i] || i + 1}
             </span>
           </div>
         ))}
       </div>
       <div style={{ marginTop: 9, fontSize: 11, lineHeight: 1.5, ...muted }}>
-        Each worker acts only within their delegated scope. Enforced on-chain by{' '}
-        <b>DelegationManager</b>.
+        Each worker acts only within its delegated scope. Enforced on-chain by <b>funding_router</b>{' '}
+        and the agent account.
       </div>
     </div>
   )
@@ -241,23 +240,14 @@ const SkillReviewCard = ({
 
   return (
     <section className="card enter">
-      <div className="eyebrow">
-        <span className="num">03</span>
-        <span>
-          Review skills · {agents.length} agent{agents.length === 1 ? '' : 's'}
-        </span>
-        <span className="rule" />
-        <span>
-          {approvedCount}/{agents.length} approved
-        </span>
-      </div>
+      <p className="grant-kicker mono">
+        Optional guards: {approvedCount} of {agents.length} approved
+      </p>
 
-      <h1 className="h-display">
-        Review the skills each agent will run · before you grant permissions.
-      </h1>
+      <h1 className="h-display">Confirm what each vault deposit can do</h1>
       <p className="lede">
-        Each agent gets a skill defining exactly what it can do. Review the actions, adjust the
-        limits, then approve. Approved skills are used verbatim at runtime.
+        These limits apply when agents deposit. Approve the defaults, or tighten amounts before you
+        set the spending budget.
       </p>
 
       <DelegationChain agents={agents} />
@@ -276,9 +266,7 @@ const SkillReviewCard = ({
       </div>
 
       <div className="action-row">
-        <div className="foot-note">
-          Skills are signed by your smart account. Edit limits before approving if needed.
-        </div>
+        <div className="foot-note">Next: Set your spending limit with one signature.</div>
         <div className="flex gap-2">
           {!allApproved && (
             <button className="btn btn-ghost" onClick={onApproveAll}>
@@ -286,7 +274,7 @@ const SkillReviewCard = ({
             </button>
           )}
           <button className="btn btn-primary" disabled={!allApproved} onClick={onContinue}>
-            Next · grant permission →
+            Continue to budget
           </button>
         </div>
       </div>

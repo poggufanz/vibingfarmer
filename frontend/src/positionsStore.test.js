@@ -3,6 +3,7 @@ import {
   mergePositions,
   applyChainPositions,
   reconcilePositionsFromChain,
+  pickPositionsAgents,
 } from './positionsStore.js'
 import { SOROBAN_ACTIVE_VAULT_ADDRESS } from './stellar/config.js'
 
@@ -32,6 +33,26 @@ describe('reconcilePositionsFromChain (autofarm pps conversion)', () => {
     readPricePerShare.mockResolvedValue(null) // would fail — must not be consulted
     const out = await reconcilePositionsFromChain('GOWNER')
     expect(out[SOROBAN_ACTIVE_VAULT_ADDRESS].balance).toBe('0')
+  })
+})
+
+describe('pickPositionsAgents (read the fresh per-run agents, not the demo agent)', () => {
+  it('reads the deployed non-revoked agents on a real run', () => {
+    const scopes = [
+      { agent: 'GA_ONE', revoked: false },
+      { agent: 'GA_TWO', revoked: false },
+      { agent: 'GA_GONE', revoked: true },
+    ]
+    expect(pickPositionsAgents(scopes, undefined)).toEqual(['GA_ONE', 'GA_TWO'])
+  })
+
+  it('returns undefined (keep reconcile default) before scopes rehydrate', () => {
+    expect(pickPositionsAgents([], undefined)).toBeUndefined()
+    expect(pickPositionsAgents([{ agent: 'GA_X', revoked: true }], undefined)).toBeUndefined()
+  })
+
+  it('view-as override wins over deployed agents', () => {
+    expect(pickPositionsAgents([{ agent: 'GA_ONE' }], 'GVIEWAS')).toEqual(['GVIEWAS'])
   })
 })
 
@@ -68,7 +89,7 @@ describe('applyChainPositions (authoritative)', () => {
     expect(next['0xB'].balance).toBe('50000000')
   })
 
-  it('PRUNES a vault the chain reports as 0 (fully withdrawn — heals stale cache)', () => {
+  it('PRUNES a vault the chain reports as 0 (fully withdrawn - heals stale cache)', () => {
     const next = applyChainPositions(
       { '0xA': { balance: '1000000' }, '0xB': { balance: '50000000' } },
       { '0xa': { balance: '0' } }

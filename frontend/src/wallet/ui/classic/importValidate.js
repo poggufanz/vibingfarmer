@@ -9,7 +9,7 @@ export function classifyImport(input) {
     if (validMnemonic(s)) return { kind: 'mnemonic', normalized: s }
     return {
       kind: 'invalid',
-      error: 'Recovery phrase checksum failed — check for a mistyped word.',
+      error: 'Recovery phrase checksum failed. Check for a mistyped word.',
     }
   }
   return { kind: 'invalid', error: 'Enter a 12/24-word recovery phrase or an S… secret key.' }

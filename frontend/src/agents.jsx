@@ -17,12 +17,17 @@ import { shortAddr } from './screens.jsx'
 import { VAULT_CATALOG } from './config.js'
 import { buildStrategyState, scoreReward, riskCeiling } from './strategy/mdp.js'
 
+const displayLabel = (value, fallback = '') =>
+  String(value || fallback)
+    .replace(/[_-]+/g, ' ')
+    .replace(/^./, (c) => c.toUpperCase())
+
 /* ---------- Strategy data — generated per-flow ---------- */
 // Derived from VAULT_CATALOG so addresses stay in sync with config automatically.
 const ROLES = [
-  'Conservative · lending',
-  'Balanced · liquidity provision',
-  'Aggressive · leveraged yield',
+  'Conservative, lending',
+  'Balanced, liquidity provision',
+  'Aggressive, leveraged yield',
 ]
 const AGENT_PROTOCOLS = VAULT_CATALOG.slice(0, 3).map((v, i) => ({
   name: v.name,
@@ -56,7 +61,7 @@ const buildStrategy = (amount, risk) => {
     return {
       id: `worker-${i + 1}`,
       idx: String(i + 1).padStart(2, '0'),
-      name: `Worker ${i + 1} · ${proto.role.split(' · ')[0]}`,
+      name: `Worker ${i + 1}, ${proto.role.split(', ')[0]}`,
       role: proto.role,
       allocation,
       skillName: 'yield_vault_deposit',
@@ -103,7 +108,7 @@ const buildStrategy = (amount, risk) => {
 /* ---------- Agent execution state model ---------- */
 const STEP_IDS = ['swap', 'approve', 'deposit']
 const STEP_LABELS = { swap: 'Swap', approve: 'Approve', deposit: 'Deposit' }
-const STEP_NOTE = { swap: 'skipped · USDC→USDC needs no swap' }
+const STEP_NOTE = { swap: 'Skipped. No swap is needed between USDC assets.' }
 
 const makeInitialExecState = (agents) => {
   const map = {}
@@ -183,7 +188,7 @@ const buildGraphData = (strategy) => {
   const nodes = [{ id: 'orchestrator', name: 'Orchestrator', kind: 'orchestrator' }]
   const links = []
   strategy.agents.forEach((a) => {
-    nodes.push({ id: a.id, name: `W${a.idx} · ${a.vault.protocol}`, kind: 'worker', agentId: a.id })
+    nodes.push({ id: a.id, name: `W${a.idx}, ${a.vault.protocol}`, kind: 'worker', agentId: a.id })
     links.push({ source: 'orchestrator', target: a.id })
     let prev = a.id
     STEP_IDS.forEach((sid) => {
@@ -193,7 +198,7 @@ const buildGraphData = (strategy) => {
       prev = id
     })
     const vId = `${a.id}-vault`
-    nodes.push({ id: vId, name: `Vault · ${a.vault.apy}%`, kind: 'vault', agentId: a.id })
+    nodes.push({ id: vId, name: `Vault, ${a.vault.apy}%`, kind: 'vault', agentId: a.id })
     links.push({ source: prev, target: vId })
   })
   return { nodes, links }
@@ -415,7 +420,7 @@ const AgentTiles = ({ strategy, execMap, onOpenMemory }) => {
               <span className={`dot ${ex.status}`} />
             </div>
             <div className="agent-tile-meta mono">
-              {a.allocation} USDC · {a.vault.protocol} · {a.vault.apy}%
+              {a.allocation} USDC, {a.vault.protocol}, {a.vault.apy}%
             </div>
             <div className="agent-tile-steps">
               {STEP_IDS.map((sid) => (
@@ -428,7 +433,7 @@ const AgentTiles = ({ strategy, execMap, onOpenMemory }) => {
                       : STEP_LABELS[sid]
                   }
                 >
-                  {STEP_LABELS[sid].slice(0, 1).toLowerCase()}
+                  {STEP_LABELS[sid].slice(0, 1).toUpperCase()}
                 </span>
               ))}
               <span className="agent-tile-progress mono">
@@ -450,10 +455,10 @@ const MemoryModal = ({ agentId, strategy, execMap, onClose }) => {
   if (!agent) return null
   const ex = execMap[agentId] || { memory: [], metrics: {}, status: 'idle' }
   const stateLabel = {
-    idle: 'queued · no runs yet',
-    running: 'running · live execution',
-    confirmed: 'completed · all steps confirmed',
-    failed: 'halted · last run failed',
+    idle: 'Queued. No runs yet.',
+    running: 'Running. Execution is live.',
+    confirmed: 'Completed. All steps confirmed.',
+    failed: 'Halted. The last run failed.',
   }[ex.status]
 
   return (
@@ -466,40 +471,40 @@ const MemoryModal = ({ agentId, strategy, execMap, onClose }) => {
       >
         <div className="memory-modal-head">
           <div>
-            <div className="modal-eyebrow">agent.memory · {agent.id}</div>
+            <div className="modal-eyebrow">Agent memory, {agent.id}</div>
             <h3 className="modal-title">{agent.name}</h3>
             <div className="mono memory-modal-sub">{stateLabel}</div>
           </div>
-          <button className="icon-btn" aria-label="close" onClick={onClose}>
+          <button className="icon-btn" aria-label="Close" onClick={onClose}>
             <Icon name="x" />
           </button>
         </div>
 
         <div className="memory-metrics">
           <div className="memory-metric">
-            <span className="label mono">runs</span>
+            <span className="label mono">Runs</span>
             <span className="val tnum mono">{ex.metrics?.totalRuns ?? 0}</span>
           </div>
           <div className="memory-metric">
-            <span className="label mono">success rate</span>
+            <span className="label mono">Success rate</span>
             <span className="val tnum mono">
               {ex.metrics?.successRate == null ? '-' : `${ex.metrics.successRate}%`}
             </span>
           </div>
           <div className="memory-metric">
-            <span className="label mono">gas paid · user</span>
-            <span className="val tnum mono">0 ETH</span>
+            <span className="label mono">Gas paid by user</span>
+            <span className="val tnum mono">0 XLM, fee-bump relay</span>
           </div>
           <div className="memory-metric">
-            <span className="label mono">vault apy</span>
+            <span className="label mono">Vault APY</span>
             <span className="val tnum mono">{agent.vault.apy}%</span>
           </div>
         </div>
 
-        <div className="memory-section-title mono">execution log</div>
+        <div className="memory-section-title mono">Execution log</div>
         <div className="memory-log">
           {ex.memory.length === 0 ? (
-            <div className="empty">no events yet · agent queued</div>
+            <div className="empty">No events yet. Agent queued.</div>
           ) : (
             ex.memory.map((m, i) => (
               <div key={i} className={`memory-row ${m.status}`}>
@@ -507,20 +512,20 @@ const MemoryModal = ({ agentId, strategy, execMap, onClose }) => {
                 <div className="memory-row-body">
                   <div className="memory-row-title">
                     {m.title}
-                    <span className="memory-row-tag mono">{m.status}</span>
+                    <span className="memory-row-tag mono">{displayLabel(m.status)}</span>
                   </div>
                   <div className="memory-row-meta mono">
                     {m.meta}
                     {m.hash && (
                       <>
-                        <span className="dot-sep">·</span>
+                        <span className="dot-sep">, </span>
                         <span className="memory-row-hash">tx {shortAddr(m.hash)}</span>
                       </>
                     )}
                   </div>
                   {m.lesson && (
                     <div className="memory-row-lesson mono">
-                      <span className="memory-row-lesson-key">lesson</span> {m.lesson}
+                      <span className="memory-row-lesson-key">Lesson</span> {m.lesson}
                     </div>
                   )}
                 </div>
@@ -532,7 +537,7 @@ const MemoryModal = ({ agentId, strategy, execMap, onClose }) => {
 
         <div className="memory-modal-foot">
           <div className="foot-note">
-            Memory stored onchain via worker logs · auditable per skill version.
+            Memory is stored on-chain in worker logs and is auditable by skill version.
           </div>
           <button className="btn btn-ghost" onClick={onClose}>
             Close
@@ -563,20 +568,37 @@ const SCENARIO_META = {
    planning/inspiration/TradingAgents.md)
    ============================================ */
 const COUNCIL_ROLE_META = {
-  yield: { label: 'Yield Analyst', glyph: '📈' },
-  risk: { label: 'Risk Analyst', glyph: '⚠️' },
-  market: { label: 'Market Analyst', glyph: '🌊' },
+  yield: { label: 'Yield', glyph: 'Y' },
+  risk: { label: 'Risk', glyph: 'R' },
+  market: { label: 'Market', glyph: 'M' },
 }
 const COUNCIL_SIGNAL_TONE = {
   DEPOSIT: 'var(--ok)',
   HOLD: 'var(--warn, #c87)',
   WITHDRAW: 'var(--bad, #ff7479)',
 }
+const COUNCIL_SIGNAL_PLAIN = {
+  DEPOSIT: 'Go',
+  HOLD: 'Hold',
+  WITHDRAW: 'Exit',
+}
 const COUNCIL_RESOLVED_LABEL = {
-  veto: 'risk veto',
-  unanimous: 'unanimous',
-  weighted: 'weighted majority',
-  'ai-conflict': 'AI synthesis (split)',
+  veto: 'Risk veto',
+  unanimous: 'Unanimous',
+  weighted: 'Majority',
+  'ai-conflict': 'Split, synthesized',
+}
+
+/** One short line from a specialist for L2 bullets (max 2–3 total). */
+const specialistBullet = (s) => {
+  const meta = COUNCIL_ROLE_META[s.role] || { label: s.role }
+  const plain = COUNCIL_SIGNAL_PLAIN[s.signal] || s.signal
+  const concern = (s.concerns && s.concerns[0]) || null
+  if (concern) {
+    const short = concern.length > 72 ? `${concern.slice(0, 70)}…` : concern
+    return `${meta.label}: ${plain}, ${short}`
+  }
+  return `${meta.label}: ${plain} (${Math.round((s.confidence || 0) * 100)}%)`
 }
 
 const CouncilPanel = ({ council, onRetry }) => {
@@ -591,83 +613,150 @@ const CouncilPanel = ({ council, onRetry }) => {
           (a, b) => order.indexOf(a.role) - order.indexOf(b.role)
         )
   const keep = !loading && council.verdict === 'keep'
+  const confPct = !loading && !unavailable ? Math.round((council.confidence || 0) * 100) : null
+  // L2: up to 3 short bullets · prefer concerns, else signal lines
+  const bullets = specialists
+    .filter((s) => (s.concerns && s.concerns[0]) || s.signal !== 'DEPOSIT' || !keep)
+    .slice(0, 3)
+    .map(specialistBullet)
+  const fallbackBullets =
+    bullets.length > 0 ? bullets : specialists.slice(0, 3).map(specialistBullet)
+
   return (
     <div className="council-panel">
-      <div className="council-head mono">
-        <span className="council-title">AI Council · three specialists deliberating</span>
-        {!loading && !unavailable && (
-          <span className={`council-verdict ${keep ? 'keep' : 'discard'}`}>
-            {keep ? 'proceed' : 'caution'} ·{' '}
-            {COUNCIL_RESOLVED_LABEL[council.resolvedBy] || council.resolvedBy}
-          </span>
-        )}
-      </div>
-
       {loading ? (
         <div className="council-loading mono">
-          <span className="think-spin" /> specialists analyzing yield · risk · market in parallel…
+          <span className="think-spin" /> Checking yield, risk, and market…
         </div>
       ) : unavailable ? (
-        <div className="council-loading mono">
-          Council unavailable — the AI provider didn’t respond.
+        <div className="council-hero">
+          <div className="council-hero-main">
+            <span
+              className="council-hero-mark"
+              style={{ color: 'var(--text-faint)' }}
+              aria-hidden="true"
+            >
+              <span className="ui-dot" />
+            </span>
+            <div>
+              <div className="council-hero-title">Risk check unavailable</div>
+              <div className="council-hero-sub">
+                Provider did not respond. You can still continue.
+              </div>
+            </div>
+          </div>
           {onRetry && (
             <button type="button" className="btn btn-ghost council-retry" onClick={onRetry}>
-              Retry deliberation
+              Retry
             </button>
           )}
         </div>
       ) : (
         <>
-          <div className="council-grid">
-            {specialists.map((s) => {
-              const meta = COUNCIL_ROLE_META[s.role] || { label: s.role, glyph: '•' }
-              return (
-                <div key={s.role} className="council-spec">
-                  <div className="council-spec-head mono">
-                    <span className="council-spec-role">
-                      {meta.glyph} {meta.label}
-                    </span>
-                    <span
-                      className="council-spec-signal"
-                      style={{ color: COUNCIL_SIGNAL_TONE[s.signal] || 'var(--text)' }}
-                    >
-                      {s.signal}
-                    </span>
-                  </div>
-                  <div className="council-spec-conf mono">
-                    <div className="council-conf-track">
-                      <div
-                        className="council-conf-fill"
-                        style={{
-                          width: `${Math.round(s.confidence * 100)}%`,
-                          background: COUNCIL_SIGNAL_TONE[s.signal] || 'var(--text)',
-                        }}
-                      />
-                    </div>
-                    <span className="tnum">{Math.round(s.confidence * 100)}%</span>
-                    <span className="council-spec-src ai">AI</span>
-                  </div>
-                  {s.citedRules?.length > 0 && (
-                    <div className="council-rules">
-                      {s.citedRules.map((id) => (
-                        <span key={id} className="council-rule-chip mono">
-                          {id}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                  {s.concerns?.length > 0 && (
-                    <div className="council-concerns mono">⚠ {s.concerns.join(' · ')}</div>
-                  )}
+          {/* L1 — verdict only */}
+          <div className="council-hero">
+            <div className="council-hero-main">
+              <span
+                className="council-hero-mark"
+                style={{ color: keep ? 'var(--ok)' : 'var(--warn, #c87)' }}
+                aria-hidden="true"
+              >
+                {keep ? <Icon name="check" size={15} /> : <span className="ui-dot" />}
+              </span>
+              <div>
+                <div className="council-hero-title">
+                  {keep ? 'Risk review passed' : 'Proceed with caution'}
                 </div>
-              )
-            })}
+                <div className="council-hero-sub">
+                  {confPct != null ? `${confPct}% confidence.` : ''}
+                  {council.resolvedBy
+                    ? ` Resolved by ${(COUNCIL_RESOLVED_LABEL[council.resolvedBy] || displayLabel(council.resolvedBy)).toLowerCase()}.`
+                    : ''}
+                  {!keep && council.reason
+                    ? ` ${displayLabel(council.reason).replace(/[.!?]+$/, '')}.`
+                    : ''}
+                  {!keep ? ' Your approval is required.' : ''}
+                </div>
+              </div>
+            </div>
+            <div className="council-vote mono" aria-label="Specialist votes">
+              {specialists.map((s) => {
+                const meta = COUNCIL_ROLE_META[s.role] || { label: s.role, glyph: '' }
+                return (
+                  <span
+                    key={s.role}
+                    className="council-vote-chip"
+                    style={{ color: COUNCIL_SIGNAL_TONE[s.signal] || 'var(--text)' }}
+                    title={`${meta.label}: ${s.signal}`}
+                  >
+                    {meta.glyph ? `${meta.glyph} ` : ''}
+                    {COUNCIL_SIGNAL_PLAIN[s.signal] || s.signal}
+                  </span>
+                )
+              })}
+            </div>
           </div>
-          <div className="council-foot mono">
-            {keep
-              ? `Council recommends proceeding (${Math.round(council.confidence * 100)}% confidence). Cited rules earn outcome feedback after deposit.`
-              : `Council advises caution${council.reason ? ` · ${council.reason}` : ''}. You can still proceed — the decision is yours.`}
-          </div>
+
+          {/* L2 — short reasons (default visible, still compact) */}
+          {fallbackBullets.length > 0 && (
+            <ul className="council-why">
+              {fallbackBullets.map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+          )}
+
+          {/* L3 — full specialist cards */}
+          <details className="yv-advanced council-details">
+            <summary className="yv-advanced__sum mono">Full specialist breakdown</summary>
+            <div className="yv-advanced__body">
+              <div className="council-grid">
+                {specialists.map((s) => {
+                  const meta = COUNCIL_ROLE_META[s.role] || { label: s.role, glyph: '' }
+                  return (
+                    <div key={s.role} className="council-spec">
+                      <div className="council-spec-head mono">
+                        <span className="council-spec-role">
+                          {meta.glyph ? `${meta.glyph} ` : ''}
+                          {meta.label}
+                        </span>
+                        <span
+                          className="council-spec-signal"
+                          style={{ color: COUNCIL_SIGNAL_TONE[s.signal] || 'var(--text)' }}
+                        >
+                          {COUNCIL_SIGNAL_PLAIN[s.signal] || s.signal}
+                        </span>
+                      </div>
+                      <div className="council-spec-conf mono">
+                        <div className="council-conf-track">
+                          <div
+                            className="council-conf-fill"
+                            style={{
+                              width: `${Math.round(s.confidence * 100)}%`,
+                              background: COUNCIL_SIGNAL_TONE[s.signal] || 'var(--text)',
+                            }}
+                          />
+                        </div>
+                        <span className="tnum">{Math.round(s.confidence * 100)}%</span>
+                      </div>
+                      {s.citedRules?.length > 0 && (
+                        <div className="council-rules">
+                          {s.citedRules.map((id) => (
+                            <span key={id} className="council-rule-chip mono">
+                              {id}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {s.concerns?.length > 0 && (
+                        <div className="council-concerns mono">{s.concerns.join(', ')}</div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          </details>
         </>
       )}
     </div>
@@ -681,54 +770,57 @@ const SimulationPanel = ({ simulation }) => {
   const fmt = (n) => `${n >= 0 ? '+' : ''}${n.toFixed(2)}`
   return (
     <div className="sim-panel">
-      <div className="sim-head mono">
-        <span className="sim-title">Simulation engine · alternate futures</span>
-        <span className="sim-meta">
-          {runs} runs × {scenarios.length} scenarios · {horizonDays}d horizon · {context.turbulence}{' '}
-          regime
-        </span>
-      </div>
+      {/* L1 — headline numbers only */}
       <div className="sim-ev">
         <div className="sim-ev-fig">
           <span className="figure figure-md tnum" style={{ color: evTone }}>
             {fmt(expectedValue)}
             <span className="unit"> USDC</span>
           </span>
-          <span className="label mono">expected value · probability-weighted net yield</span>
+          <span className="label mono">Expected net yield</span>
         </div>
         <div className="sim-ev-prob mono">
           <span className="tnum" style={{ color: 'var(--text)' }}>
             {Math.round(probProfit * 100)}%
           </span>
-          <span className="label">chance of profit</span>
+          <span className="label">Chance of profit</span>
         </div>
       </div>
-      <div className="sim-grid">
-        {scenarios.map((s) => {
-          const meta = SCENARIO_META[s.name] || { label: s.name, tone: 'var(--text)' }
-          return (
-            <div key={s.name} className="sim-scenario">
-              <div className="sim-scenario-head mono">
-                <span style={{ color: meta.tone }}>● {meta.label}</span>
-                <span
-                  className="tnum"
-                  style={{ color: s.mean >= 0 ? 'var(--ok)' : 'var(--warn, #c87)' }}
-                >
-                  {fmt(s.mean)}
-                </span>
-              </div>
-              <div className="sim-band mono">
-                <span className="tnum">{fmt(s.p5)}</span>
-                <span className="sim-band-rule" />
-                <span className="tnum">{fmt(s.p95)}</span>
-              </div>
-              <div className="sim-scenario-foot mono">
-                p5–p95 · {Math.round(s.probProfit * 100)}% profit
-              </div>
-            </div>
-          )
-        })}
-      </div>
+
+      {/* L2 — scenarios behind disclosure */}
+      <details className="yv-advanced council-details">
+        <summary className="yv-advanced__sum mono">
+          Scenario range, {runs} runs, {horizonDays}d, {context.turbulence}
+        </summary>
+        <div className="yv-advanced__body">
+          <div className="sim-grid">
+            {scenarios.map((s) => {
+              const meta = SCENARIO_META[s.name] || { label: s.name, tone: 'var(--text)' }
+              return (
+                <div key={s.name} className="sim-scenario">
+                  <div className="sim-scenario-head mono">
+                    <span style={{ color: meta.tone }}>{meta.label}</span>
+                    <span
+                      className="tnum"
+                      style={{ color: s.mean >= 0 ? 'var(--ok)' : 'var(--warn, #c87)' }}
+                    >
+                      {fmt(s.mean)}
+                    </span>
+                  </div>
+                  <div className="sim-band mono">
+                    <span className="tnum">{fmt(s.p5)}</span>
+                    <span className="sim-band-rule" />
+                    <span className="tnum">{fmt(s.p95)}</span>
+                  </div>
+                  <div className="sim-scenario-foot mono">
+                    Low-high range, {Math.round(s.probProfit * 100)}% profit
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      </details>
     </div>
   )
 }
@@ -747,180 +839,139 @@ const DebatePanel = ({ debateResult }) => {
     verdict,
     confidence,
   } = debateResult
-  const lastIter = debateLog[debateLog.length - 1]
-  console.log('[DebatePanel] proposer:', proposer, 'verdict:', verdict, 'gate:', gate)
+
+  const keep = verdict === 'keep'
+  const confPct = Math.round((confidence || 0) * 100)
+  const why = []
+  if (proposer?.reasoning) {
+    const r = proposer.reasoning
+    why.push(r.length > 90 ? `${r.slice(0, 88)}…` : r)
+  }
+  if (riskCompliance?.concerns?.[0]) {
+    const c = riskCompliance.concerns[0]
+    why.push(c.length > 90 ? `${c.slice(0, 88)}…` : c)
+  }
+  if (gate && !gate.passed && gate.reason) {
+    why.push(gate.detail ? `${gate.reason}: ${gate.detail}` : gate.reason)
+  }
+  if (validator && !validator.consistent) why.push('Validator found inconsistency')
+  if (validator && validator.VaRAcceptable === false) why.push('VaR outside limit')
+  const topWhy = why.slice(0, 3)
+
   return (
-    <div
-      className="debate-panel"
-      style={{
-        marginTop: 16,
-        border: '1px solid var(--border)',
-        borderRadius: 'var(--radius-md)',
-        overflow: 'hidden',
-      }}
-    >
-      <div
-        className="mono"
-        style={{
-          padding: '10px 14px',
-          borderBottom: '1px solid var(--border)',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-        }}
-      >
-        <span style={{ color: 'var(--text)' }}>
-          AI Council Debate · {iterations} iteration{iterations > 1 ? 's' : ''}
-        </span>
-        <span style={{ color: converged ? 'var(--ok)' : 'var(--warn, #c87)', fontSize: 11 }}>
-          {converged ? '✓ converged' : '✗ max iterations reached'}
-        </span>
-      </div>
-      {debateLog.map((entry, i) => (
-        <div
-          key={i}
-          style={{
-            padding: '8px 14px',
-            borderBottom: i < debateLog.length - 1 ? '1px solid var(--border)' : 'none',
-            fontSize: 12,
-          }}
-        >
-          <div style={{ color: 'var(--text-faint)', marginBottom: 4 }}>
-            Iteration {entry.iteration}
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-            <div
-              style={{
-                padding: '6px 8px',
-                background: 'rgba(255,165,0,0.08)',
-                borderRadius: 'var(--radius-sm)',
-              }}
-            >
-              <span style={{ color: '#c90', fontWeight: 600 }}>Proposer</span>
-              <div style={{ color: 'var(--text)' }}>
-                {entry.proposer?.action || '?'} ·{' '}
-                {Math.round((entry.proposer?.confidence ?? 0) * 100)}%
-              </div>
-              {entry.proposer?.reasoning && (
-                <div style={{ color: 'var(--text-muted)', fontSize: 10, marginTop: 2 }}>
-                  {entry.proposer.reasoning}
-                </div>
-              )}
-              {entry.proposer?.arguments?.length > 0 && (
-                <div style={{ color: 'var(--text-faint)', fontSize: 10 }}>
-                  {entry.proposer.arguments.join('; ')}
-                </div>
-              )}
+    <div className="debate-panel council-panel">
+      {/* L1 — verdict */}
+      <div className="council-hero">
+        <div className="council-hero-main">
+          <span
+            className="council-hero-mark"
+            style={{ color: keep ? 'var(--ok)' : 'var(--warn, #c87)' }}
+            aria-hidden="true"
+          >
+            {keep ? <Icon name="check" size={15} /> : <span className="ui-dot" />}
+          </span>
+          <div>
+            <div className="council-hero-title">
+              {keep ? 'Risk review: proceed' : 'Risk review: caution'}
             </div>
-            <div
-              style={{
-                padding: '6px 8px',
-                background: 'rgba(0,180,80,0.08)',
-                borderRadius: 'var(--radius-sm)',
-              }}
-            >
-              <span style={{ color: '#0a4', fontWeight: 600 }}>Risk/Compliance</span>
-              <div style={{ color: 'var(--text)' }}>
-                {entry.riskCompliance?.action || '?'} ·{' '}
-                {Math.round((entry.riskCompliance?.confidence ?? 0) * 100)}%
-                {entry.riskCompliance?.compliancePass === false ? ' · ⚠ FAIL' : ''}
-              </div>
-              {entry.riskCompliance?.concerns?.length > 0 && (
-                <div style={{ color: 'var(--text-muted)', fontSize: 10, marginTop: 2 }}>
-                  {entry.riskCompliance.concerns[0]}
-                </div>
-              )}
-              {entry.riskCompliance?.violations?.length > 0 && (
-                <div style={{ color: 'var(--warn, #c87)', fontSize: 10 }}>
-                  Violations: {entry.riskCompliance.violations.join(', ')}
-                </div>
-              )}
+            <div className="council-hero-sub">
+              {confPct}% confidence.
+              {gate ? (gate.passed ? ' Checks passed.' : ' Gate flagged.') : ''}
+              {converged ? '' : ' The council did not fully converge.'}
+              {!keep ? ' Your approval is required.' : ''}
             </div>
           </div>
         </div>
-      ))}
-      {proposer && (
-        <div style={{ padding: '10px 14px', borderTop: '1px solid var(--border)' }}>
-          <div style={{ fontWeight: 600, marginBottom: 6, fontSize: 13 }}>
-            {verdict === 'keep' ? '✅' : '✗'} Conclusion — {verdict === 'keep' ? 'KEEP' : 'DISCARD'}
-          </div>
-          <div style={{ fontSize: 12, lineHeight: 1.6 }}>
-            <div>
-              <span style={{ color: '#c90', fontWeight: 600 }}>Proposer:</span> {proposer.action} (
-              {Math.round((proposer.confidence || 0) * 100)}%) · "{proposer.reasoning || ''}"
-            </div>
-            {proposer.arguments?.length > 0 && (
-              <div style={{ color: 'var(--text-faint)', fontSize: 11 }}>
-                Arguments: {proposer.arguments.join('; ')}
-              </div>
-            )}
-          </div>
+        <div className="council-vote mono">
+          {proposer && (
+            <span className="council-vote-chip" style={{ color: 'var(--warn, #c90)' }}>
+              Plan {Math.round((proposer.confidence || 0) * 100)}%
+            </span>
+          )}
           {riskCompliance && (
-            <div style={{ fontSize: 12, lineHeight: 1.6, marginTop: 4 }}>
-              <div>
-                <span style={{ color: '#0a4', fontWeight: 600 }}>Risk/Compliance:</span>{' '}
-                {riskCompliance.action} ({Math.round((riskCompliance.confidence || 0) * 100)}% ·{' '}
-                {riskCompliance.compliancePass ? 'PASS' : 'FAIL'})
+            <span
+              className="council-vote-chip"
+              style={{
+                color:
+                  riskCompliance.compliancePass === false ? 'var(--bad, #ff7479)' : 'var(--ok)',
+              }}
+            >
+              Risk {riskCompliance.compliancePass === false ? 'fail' : 'pass'}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {permissionSentence && <p className="council-permission">{permissionSentence}</p>}
+
+      {/* L2 — max 3 reasons */}
+      {topWhy.length > 0 && (
+        <ul className="council-why">
+          {topWhy.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+      )}
+
+      {/* L3 — raw debate log */}
+      <details className="yv-advanced council-details">
+        <summary className="yv-advanced__sum">
+          Debate details
+          {iterations > 1 ? `, ${iterations} passes` : ''}
+          {converged ? ', settled' : ''}
+        </summary>
+        <div className="yv-advanced__body debate-log">
+          {debateLog.map((entry, i) => (
+            <div key={i} className="debate-round">
+              <div className="debate-round-label">
+                <span className="debate-round-word">Pass</span>
+                <span className="debate-round-num tnum">{entry.iteration}</span>
               </div>
-              <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>
-                "{riskCompliance.concerns?.[0] || 'No concerns'}"
-              </div>
-              {riskCompliance.violationsFound?.length > 0 && (
-                <div style={{ color: 'var(--warn, #c87)', fontSize: 11 }}>
-                  Violations: {riskCompliance.violationsFound.join('; ')}
+              <div className="debate-round-grid">
+                <div className="debate-side debate-side--plan">
+                  <div className="debate-side-h">Plan</div>
+                  <div className="debate-side-v">
+                    <span className="tnum">
+                      {entry.proposer?.action || 'Unknown'},{' '}
+                      {Math.round((entry.proposer?.confidence ?? 0) * 100)}%
+                    </span>
+                  </div>
+                  {entry.proposer?.reasoning && (
+                    <div className="debate-side-body">{entry.proposer.reasoning}</div>
+                  )}
                 </div>
+                <div className="debate-side debate-side--risk">
+                  <div className="debate-side-h">Risk</div>
+                  <div className="debate-side-v">
+                    <span className="tnum">
+                      {entry.riskCompliance?.action || 'Unknown'},{' '}
+                      {Math.round((entry.riskCompliance?.confidence ?? 0) * 100)}%
+                      {entry.riskCompliance?.compliancePass === false ? ', fail' : ''}
+                    </span>
+                  </div>
+                  {entry.riskCompliance?.concerns?.[0] && (
+                    <div className="debate-side-body">{entry.riskCompliance.concerns[0]}</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+          {(validator || gate) && (
+            <div className="debate-meta mono">
+              {validator && (
+                <span>
+                  Validator: {validator.consistent ? 'consistent' : 'inconsistent'}
+                  {validator.VaRAcceptable === false ? ', VaR breach' : ''}
+                  {validator.CVaRAcceptable === false ? ', CVaR breach' : ''}
+                </span>
+              )}
+              {gate && (
+                <span>{gate.passed ? 'Gate passed' : `Gate: ${gate.reason || 'blocked'}`}</span>
               )}
             </div>
           )}
-          {validator && (
-            <div style={{ fontSize: 12, marginTop: 4 }}>
-              <div>
-                <span style={{ fontWeight: 600 }}>Validator:</span>{' '}
-                {validator.consistent ? '✅ consistent' : '✗ inconsistent'} · VaR{' '}
-                {validator.VaRAcceptable ? 'OK' : 'BREACH'} · CVaR{' '}
-                {validator.CVaRAcceptable ? 'OK' : 'BREACH'}
-              </div>
-              {validator.concerns?.length > 0 && (
-                <div style={{ color: 'var(--warn, #c87)', fontSize: 11 }}>
-                  {validator.concerns.join('; ')}
-                </div>
-              )}
-            </div>
-          )}
-          <div style={{ color: 'var(--text-faint)', fontSize: 11, marginTop: 4 }}>
-            Confidence (avg): {Math.round((confidence || 0) * 100)}% · Iterations: {iterations} ·{' '}
-            {converged ? 'Converged' : 'Not converged'}
-          </div>
         </div>
-      )}
-      {gate && (
-        <div
-          style={{
-            padding: '8px 14px',
-            borderTop: '1px solid var(--border)',
-            fontSize: 11,
-            color: gate.passed ? 'var(--ok)' : 'var(--warn, #c87)',
-          }}
-        >
-          {gate.passed
-            ? '✓ Gate: passed'
-            : `✗ Gate: ${gate.reason}${gate.detail ? ` — ${gate.detail}` : ''}`}
-        </div>
-      )}
-      {permissionSentence && (
-        <div
-          style={{
-            padding: '10px 14px',
-            background: 'var(--bg-muted, rgba(0,0,0,0.03))',
-            borderTop: '1px solid var(--border)',
-            fontSize: 13,
-            fontWeight: 500,
-            color: 'var(--text)',
-          }}
-        >
-          {permissionSentence}
-        </div>
-      )}
+      </details>
     </div>
   )
 }
@@ -943,35 +994,28 @@ const StrategyCard = ({
   const customSkill = skillSource === 'user-local' || skillSource === 'user-file'
   const shortHash = (h) => (h ? `${h.slice(0, 10)}...` : '')
   const hasDebate = council?.debateLog?.length > 0
+  const yearly =
+    strategy.reward?.projectedAnnualUsdc ??
+    ((Number(strategy.total) * Number(strategy.blendedApy || 0)) / 100).toFixed(2)
   return (
     <section className="rec-card enter">
-      <div className="eyebrow">
-        <span className="num">01</span>
-        <span>
-          Strategy · {strategy.agents.length} worker{strategy.agents.length === 1 ? '' : 's'} ·{' '}
-          {strategy.risk} risk
-        </span>
-        <span className="rule" />
-        <span>{strategy.agents.reduce((n) => n + 1, 0) * 3} on-chain steps</span>
-        <span
-          className={`skill-badge ${customSkill ? 'custom' : 'default'}`}
-          title={`advisor skill: ${skillSource || 'default'}`}
-        >
-          {customSkill ? 'Custom Strategy' : 'Default Strategy'}
-        </span>
-      </div>
+      <p className="grant-kicker mono">
+        Plan ready, {strategy.risk} risk, {strategy.agents.length} vault
+        {strategy.agents.length === 1 ? '' : 's'}
+        {customSkill ? ', custom' : ''}
+      </p>
 
       <div className="rec-hgroup">
         <div>
           <div className="rec-vault-name">
-            Vibing Farmer · multi-agent
+            Your deposit plan
             <div className="strategy-sub mono">
-              orchestrator · {strategy.agents.length} parallel workers · single signature
+              {strategy.total} USDC total, one signature next, fees covered
             </div>
           </div>
           <div className="rec-vault-addr">
-            total deposit · {strategy.total} USDC · split across {strategy.agents.length} vault
-            {strategy.agents.length === 1 ? '' : 's'}
+            Split across {strategy.agents.length} vault
+            {strategy.agents.length === 1 ? '' : 's'}. Agents only deposit within your budget.
           </div>
         </div>
         <div className="rec-hgroup-apy">
@@ -979,7 +1023,7 @@ const StrategyCard = ({
             {strategy.blendedApy}
             <span className="unit">% blended APY</span>
           </span>
-          <span className="label">weighted by allocation</span>
+          <span className="label">About {yearly} USDC/year projected</span>
         </div>
       </div>
 
@@ -989,25 +1033,25 @@ const StrategyCard = ({
             <div className="strategy-agent-id">
               <span className="idx mono">{a.idx}</span>
               <div>
-                <div className="strategy-agent-name">{a.name}</div>
+                <div className="strategy-agent-name">{a.vault.name}</div>
                 <div className="mono strategy-agent-meta">
-                  {a.vault.name} · {a.vault.protocol}
-                  {a.vault.tvl && a.vault.tvl !== 'N/A' ? ` · TVL ${a.vault.tvl}` : ''}
-                  {a.vault.isLiveData ? ' · 🟢 live' : ''}
+                  {a.vault.protocol}
+                  {a.vault.tvl && a.vault.tvl !== 'N/A' ? `, TVL ${a.vault.tvl}` : ''}
+                  {a.vault.isLiveData ? ', live' : ''}
                 </div>
               </div>
             </div>
             <div className="strategy-agent-cells">
               <div className="strategy-cell">
-                <span className="k mono">allocation</span>
+                <span className="k mono">Amount</span>
                 <span className="v mono tnum">{a.allocation} USDC</span>
               </div>
               <div className="strategy-cell">
-                <span className="k mono">apy</span>
+                <span className="k mono">APY</span>
                 <span className="v mono tnum">{a.vault.apy}%</span>
               </div>
               <div className="strategy-cell">
-                <span className="k mono">drawdown 30d</span>
+                <span className="k mono">Risk</span>
                 <span className="v mono tnum">{a.vault.drawdown}%</span>
               </div>
             </div>
@@ -1015,205 +1059,147 @@ const StrategyCard = ({
         ))}
       </div>
 
-      {strategy.reward && strategy.mdpState && (
-        <div
-          className="mdp-panel"
-          style={{
-            marginTop: 16,
-            border: '1px solid var(--border)',
-            borderRadius: 'var(--radius-md)',
-            overflow: 'hidden',
-          }}
-        >
-          <div
-            className="mono"
-            style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', fontSize: 11 }}
-          >
-            <div style={{ padding: '12px 14px', borderRight: '1px solid var(--border)' }}>
+      <details className="yv-advanced">
+        <summary className="yv-advanced__sum mono">How this plan was built</summary>
+        <div className="yv-advanced__body">
+          {strategy.reward && strategy.mdpState && (
+            <div
+              className="mdp-panel"
+              style={{
+                marginBottom: 12,
+                border: '1px solid var(--border)',
+                borderRadius: 'var(--radius-md)',
+                overflow: 'hidden',
+              }}
+            >
               <div
-                style={{
-                  color: 'var(--text-faint)',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.08em',
-                  marginBottom: 6,
-                }}
+                className="mono"
+                style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', fontSize: 11 }}
               >
-                State · observed
-              </div>
-              <div style={{ color: 'var(--text)' }}>market · {strategy.mdpState.turbulence}</div>
-              <div style={{ color: 'var(--text-muted)' }}>
-                universe · {strategy.mdpState.universeSize} vaults
-              </div>
-              <div style={{ color: 'var(--text-muted)' }}>
-                capital · {strategy.mdpState.capitalUsdc} USDC
+                <div style={{ padding: '12px 14px', borderRight: '1px solid var(--border)' }}>
+                  <div style={{ color: 'var(--text-faint)', marginBottom: 6 }}>Market</div>
+                  <div style={{ color: 'var(--text)' }}>
+                    {displayLabel(strategy.mdpState.turbulence)}
+                  </div>
+                  <div style={{ color: 'var(--text-muted)' }}>
+                    {strategy.mdpState.universeSize} vaults screened
+                  </div>
+                </div>
+                <div style={{ padding: '12px 14px', borderRight: '1px solid var(--border)' }}>
+                  <div style={{ color: 'var(--text-faint)', marginBottom: 6 }}>Bounds</div>
+                  <div style={{ color: 'var(--text)' }}>
+                    Ceiling, {displayLabel(strategy.mdpState.riskCeiling)}
+                  </div>
+                  <div style={{ color: 'var(--text-muted)' }}>Weights sum to 1.0</div>
+                </div>
+                <div style={{ padding: '12px 14px' }}>
+                  <div style={{ color: 'var(--text-faint)', marginBottom: 6 }}>Projection</div>
+                  <div style={{ color: 'var(--text)' }}>
+                    Score, {strategy.reward.riskAdjustedScore}
+                  </div>
+                  <div style={{ color: 'var(--text-muted)' }}>
+                    About {strategy.reward.projectedAnnualUsdc} USDC/year
+                  </div>
+                </div>
               </div>
             </div>
-            <div style={{ padding: '12px 14px', borderRight: '1px solid var(--border)' }}>
-              <div
-                style={{
-                  color: 'var(--text-faint)',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.08em',
-                  marginBottom: 6,
-                }}
-              >
-                Action · bounded
-              </div>
-              <div style={{ color: 'var(--text)' }}>
-                risk ceiling · {strategy.mdpState.riskCeiling}
-              </div>
-              <div style={{ color: 'var(--text-muted)' }}>weights · sum to 1.0</div>
-              <div
-                style={{
-                  color:
-                    strategy.mdpState.actionViolations && strategy.mdpState.actionViolations.length
-                      ? 'var(--warn, #c87)'
-                      : 'var(--text-muted)',
-                }}
-              >
-                gated ·{' '}
-                {strategy.mdpState.actionViolations ? strategy.mdpState.actionViolations.length : 0}
-              </div>
+          )}
+
+          {hasDebate ? (
+            <DebatePanel debateResult={council} />
+          ) : showRunCouncil ? (
+            <div className="risk-review-card">
+              {debateRunning ? (
+                <div className="risk-review-card__busy">
+                  <span className="think-spin" aria-hidden="true" />
+                  Review in progress…
+                </div>
+              ) : (
+                <>
+                  <div className="risk-review-card__copy">
+                    Optional: run a multi-perspective risk review before you continue.
+                  </div>
+                  <button type="button" className="btn btn-primary" onClick={onRunCouncil}>
+                    <span>Run risk review</span>
+                  </button>
+                </>
+              )}
             </div>
-            <div style={{ padding: '12px 14px' }}>
-              <div
-                style={{
-                  color: 'var(--text-faint)',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.08em',
-                  marginBottom: 6,
-                }}
-              >
-                Reward · projected
-              </div>
-              <div style={{ color: 'var(--text)' }}>
-                risk-adj · {strategy.reward.riskAdjustedScore}
-              </div>
-              <div style={{ color: 'var(--text-muted)' }}>
-                ≈ {strategy.reward.projectedAnnualUsdc} USDC / yr
-              </div>
-              <div style={{ color: 'var(--text-muted)' }}>
-                risk penalty · {strategy.reward.riskPenalty}
-              </div>
-            </div>
-          </div>
-          {strategy.mdpState.actionViolations && strategy.mdpState.actionViolations.length > 0 && (
+          ) : (
+            <CouncilPanel council={council} onRetry={onCouncilRetry} />
+          )}
+
+          <SimulationPanel simulation={simulation} VaR={simulation?.VaR} CVaR={simulation?.CVaR} />
+
+          {(attestation || attesting || strategyHash) && (
             <div
               className="mono"
               style={{
-                padding: '8px 14px',
-                borderTop: '1px solid var(--border)',
-                fontSize: 10,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                flexWrap: 'wrap',
+                marginTop: 12,
+                padding: '9px 12px',
+                border: '1px solid var(--border)',
+                borderRadius: 'var(--radius-md)',
+                fontSize: 11,
                 color: 'var(--text-muted)',
               }}
             >
-              {strategy.mdpState.actionViolations[0]}
-            </div>
-          )}
-        </div>
-      )}
-
-      {hasDebate ? (
-        <DebatePanel debateResult={council} />
-      ) : showRunCouncil ? (
-        <div
-          style={{
-            marginTop: 16,
-            padding: '16px 14px',
-            border: '1px solid var(--border)',
-            borderRadius: 'var(--radius-md)',
-            textAlign: 'center',
-          }}
-        >
-          {debateRunning ? (
-            <div
-              className="mono"
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10 }}
-            >
-              <span className="think-spin" /> Council debate in progress…
-            </div>
-          ) : (
-            <>
-              <div
-                className="mono"
-                style={{ marginBottom: 10, color: 'var(--text-muted)', fontSize: 12 }}
-              >
-                Run an adversarial AI debate between Proposer ↔ Risk/Compliance, then validate
-                against simulation.
-              </div>
-              <button type="button" className="btn btn-primary" onClick={onRunCouncil}>
-                Run Council Review <Icon name="arrow" size={14} />
-              </button>
-            </>
-          )}
-        </div>
-      ) : (
-        <CouncilPanel council={council} onRetry={onCouncilRetry} />
-      )}
-
-      <SimulationPanel simulation={simulation} VaR={simulation?.VaR} CVaR={simulation?.CVaR} />
-
-      {(attestation || attesting || strategyHash) && (
-        <div
-          className="mono"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            flexWrap: 'wrap',
-            marginTop: 16,
-            padding: '9px 12px',
-            border: '1px solid var(--border)',
-            borderRadius: 'var(--radius-md)',
-            fontSize: 11,
-            color: 'var(--text-muted)',
-          }}
-        >
-          {attestation ? (
-            <>
-              <span style={{ color: 'var(--ok)', fontSize: 8 }}>●</span>
-              <span>{attestation.label}</span>
-              <span style={{ color: 'var(--text-faint)' }}>·</span>
-              <span>Hash: {attestation.hash}</span>
-              {attestation.explorerUrl ? (
-                <a
-                  href={attestation.explorerUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={{ marginLeft: 'auto', color: 'var(--accent)' }}
-                >
-                  View on-chain ↗
-                </a>
+              {attestation ? (
+                <>
+                  <span className="ui-dot" style={{ color: 'var(--ok)' }} aria-hidden="true" />
+                  <span>{attestation.label}</span>
+                  <span style={{ color: 'var(--text-faint)' }}>, </span>
+                  <span>Hash: {attestation.hash}</span>
+                  {attestation.explorerUrl ? (
+                    <a
+                      href={attestation.explorerUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ marginLeft: 'auto', color: 'var(--accent)' }}
+                    >
+                      View on-chain
+                    </a>
+                  ) : (
+                    <span style={{ color: 'var(--text-faint)', marginLeft: 'auto' }}>
+                      Reproducible from strategy JSON
+                    </span>
+                  )}
+                </>
+              ) : attesting ? (
+                <>
+                  <span
+                    className="ui-dot"
+                    style={{ color: 'var(--text-faint)' }}
+                    aria-hidden="true"
+                  />
+                  <span>Hashing strategy…</span>
+                </>
               ) : (
-                <span style={{ color: 'var(--text-faint)', marginLeft: 'auto' }}>
-                  Deterministic · reproducible from strategy JSON
-                </span>
+                <>
+                  <span
+                    className="ui-dot"
+                    style={{ color: 'var(--text-faint)' }}
+                    aria-hidden="true"
+                  />
+                  <span>Strategy hash: {shortHash(strategyHash)} (local only)</span>
+                </>
               )}
-            </>
-          ) : attesting ? (
-            <>
-              <span style={{ color: 'var(--text-faint)', fontSize: 8 }}>○</span>
-              <span>Hashing strategy…</span>
-            </>
-          ) : (
-            <>
-              <span style={{ color: 'var(--text-faint)', fontSize: 8 }}>○</span>
-              <span>Strategy hash: {shortHash(strategyHash)} (local only)</span>
-            </>
+            </div>
           )}
         </div>
-      )}
+      </details>
 
       <div className="action-row">
-        <div className="foot-note">
-          <span className="ai-attribution">● AI · live data</span>
-        </div>
+        <div className="foot-note">Next: connect wallet, then grant once</div>
         <div className="flex gap-2">
           <button className="btn btn-ghost" onClick={onRegenerate}>
             See alternatives
           </button>
           <button className="btn btn-primary" onClick={onProceed}>
-            Proceed · connect wallet <Icon name="arrow" size={14} />
+            Continue <Icon name="arrow" size={14} />
           </button>
         </div>
       </div>
@@ -1269,30 +1255,26 @@ const ExecuteCard = ({ strategy, execMap, paletteIsLight, onOpenMemory, onDone }
 
   return (
     <section className="card enter exec-card-wrap">
-      <div className="eyebrow">
-        <span className="num">05</span>
-        <span>Agents executing · fee-bump relayer · parallel</span>
-        <span className="rule" />
-        <span>gas paid by relayer</span>
-      </div>
+      <p className="grant-kicker mono">Depositing, fees covered</p>
 
       <div className="exec-header">
         <div>
-          <h1 className="h-display" style={{ fontSize: 30, marginTop: 6 }}>
-            {strategy.agents.length} agents executing in parallel.
+          <h1 className="h-display" style={{ fontSize: 28, marginTop: 4 }}>
+            {allDone
+              ? 'Deposits confirmed'
+              : stalled
+                ? 'Some deposits need attention'
+                : 'Depositing your USDC'}
           </h1>
-          <p className="lede" style={{ marginTop: 10, maxWidth: 540 }}>
-            Each worker executes the skills you approved:{' '}
-            <span className="mono">swap → approve → deposit</span>. Click an agent node on the graph
-            or a card below to open its memory panel.
+          <p className="lede" style={{ marginTop: 10, maxWidth: 520 }}>
+            {allDone
+              ? 'Funds are in the vaults. Monitoring continues under your grant.'
+              : 'Workers deposit in parallel. You already signed the budget once; no more popups.'}
           </p>
           {!allDone && stalled && (
             <div className="exec-live-status mono" style={{ color: 'var(--danger, #e5484d)' }}>
               <span>
-                {failedCount} agent{failedCount > 1 ? 's' : ''} failed — see agent card / console
-                for reason
-                {' · '}
-                {fmtCountdown(elapsedMs)} elapsed
+                {failedCount} failed, {fmtCountdown(elapsedMs)} elapsed, open a card for details
               </span>
             </div>
           )}
@@ -1300,17 +1282,15 @@ const ExecuteCard = ({ strategy, execMap, paletteIsLight, onOpenMemory, onDone }
             <div className="exec-live-status mono">
               <span className="think-spin" />
               <span>
-                {runningCount > 0
-                  ? `${runningCount} agent${runningCount > 1 ? 's' : ''} confirming on-chain`
-                  : 'waiting for relayer'}
-                {' · '}
+                {runningCount > 0 ? `${runningCount} confirming on-chain` : 'Waiting for network'}
+                {', '}
                 {fmtCountdown(elapsedMs)} elapsed
               </span>
             </div>
           )}
         </div>
         <div className="exec-progress">
-          <span className="label">progress</span>
+          <span className="label">Progress</span>
           <span className={`value ${allDone ? 'done' : ''}`}>
             {doneSteps}/{totalSteps}
           </span>
@@ -1329,19 +1309,19 @@ const ExecuteCard = ({ strategy, execMap, paletteIsLight, onOpenMemory, onDone }
 
       <div className="agent-legend mono">
         <span className="legend-item">
-          <span className="dot idle" /> idle
+          <span className="dot idle" /> Idle
         </span>
         <span className="legend-item">
-          <span className="dot running" /> running
+          <span className="dot running" /> Running
         </span>
         <span className="legend-item">
-          <span className="dot confirmed" /> confirmed
+          <span className="dot confirmed" /> Confirmed
         </span>
         <span className="legend-item">
-          <span className="dot failed" /> failed
+          <span className="dot failed" /> Failed
         </span>
         <span className="legend-spacer" />
-        <span className="legend-hint">click any agent node → open memory</span>
+        <span className="legend-hint">Click a node for details</span>
       </div>
 
       <AgentTiles strategy={strategy} execMap={execMap} onOpenMemory={onOpenMemory} />
@@ -1363,9 +1343,9 @@ const fmtCountdown = (ms) => {
 }
 
 const agoLabel = (ts, now) => {
-  if (!ts) return 'just now'
+  if (!ts) return 'Just now'
   const s = Math.max(0, Math.floor((now - ts) / 1000))
-  if (s < 5) return 'just now'
+  if (s < 5) return 'Just now'
   if (s < 60) return `${s}s ago`
   if (s < 3600) return `${Math.floor(s / 60)}m ago`
   return `${Math.floor(s / 3600)}h ago`
@@ -1373,14 +1353,14 @@ const agoLabel = (ts, now) => {
 
 const loopRowDetail = (r) => {
   const rules = (r.citedRules || []).join(', ')
-  if (r.verdict === 'crash') return r.error || 'crashed · loop recovered'
+  if (r.verdict === 'crash') return r.error || 'Crashed. The loop recovered.'
   if (r.verdict === 'gated')
-    return `${r.gate || 'gate'} gate · ${r.reason || 'blocked before council'} · no AI credit spent`
+    return `${displayLabel(r.gate, 'Gate')}: ${r.reason || 'Blocked before council'}. AI was not called.`
   if (r.verdict === 'discard')
-    return `${r.reason || 'council declined'}${rules ? ` · ${rules}` : ''}`
+    return `${r.reason || 'Council declined'}${rules ? `, ${rules}` : ''}`
   if (r.verdict === 'keep')
-    return `score ${r.score ?? '—'} · ${rules || '—'} · tx ${(r.txHash || '').slice(0, 10)}…`
-  return `observed market · ${r.turbulence || 'calm'} · no action needed`
+    return `Score ${r.score ?? '--'}, ${rules || '--'}, tx ${(r.txHash || '').slice(0, 10)}…`
+  return `Observed market: ${displayLabel(r.turbulence, 'Calm')}. No action needed.`
 }
 
 const LoopStatusPanel = ({
@@ -1427,20 +1407,29 @@ const LoopStatusPanel = ({
 
   return (
     <div className={`loop-status embedded ${running ? 'is-running' : 'is-stopped'}`}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: 12,
+        }}
+      >
         {running ? (
           <div className="loop-vitals" style={{ margin: 0 }}>
             <span className={`loop-countdown ${cycling ? 'busy' : ''}`}>
               {cycling
-                ? 'cycle running now'
+                ? 'Cycle running now'
                 : remaining != null
-                  ? `next cycle in ${fmtCountdown(remaining)}`
-                  : 'awaiting first heartbeat'}
+                  ? `Next cycle in ${fmtCountdown(remaining)}`
+                  : 'Awaiting first heartbeat'}
             </span>
-            <span className="loop-last">last activity {agoLabel(lastTs, now)}</span>
+            <span className="loop-last">Last activity: {agoLabel(lastTs, now)}</span>
           </div>
         ) : (
-          <div style={{ fontSize: '11px', color: 'var(--text-faint)', fontFamily: 'var(--font-mono)' }}>
+          <div
+            style={{ fontSize: '11px', color: 'var(--text-faint)', fontFamily: 'var(--font-mono)' }}
+          >
             Loop is stopped
           </div>
         )}
@@ -1476,12 +1465,15 @@ const LoopStatusPanel = ({
             <line x1="16" y1="13" x2="8" y2="13" />
             <line x1="16" y1="17" x2="8" y2="17" />
           </svg>
-          Decision Log
+          Decision log
         </button>
       </div>
 
       {running && (
-        <div className={`loop-heartbeat-track ${cycling ? 'cycling' : ''}`} style={{ marginBottom: 12 }}>
+        <div
+          className={`loop-heartbeat-track ${cycling ? 'cycling' : ''}`}
+          style={{ marginBottom: 12 }}
+        >
           <div
             className="loop-heartbeat-fill"
             style={{ width: `${cycling ? 100 : pctElapsed}%` }}
@@ -1669,12 +1661,12 @@ const LoopStatusPanel = ({
         <div className="loop-vitals">
           <span className={`loop-countdown ${cycling ? 'busy' : ''}`}>
             {cycling
-              ? 'cycle running now'
+              ? 'Cycle running now'
               : remaining != null
-                ? `next cycle in ${fmtCountdown(remaining)}`
-                : 'awaiting first heartbeat'}
+                ? `Next cycle in ${fmtCountdown(remaining)}`
+                : 'Awaiting first heartbeat'}
           </span>
-          <span className="loop-last">last activity {agoLabel(lastTs, now)}</span>
+          <span className="loop-last">Last activity: {agoLabel(lastTs, now)}</span>
         </div>
       )}
       {running && (
@@ -1746,8 +1738,6 @@ const LoopStatusPanel = ({
           <span className="vf-node-label">Gate Check</span>
         </div>
 
-
-
         {/* Arrow 2 */}
         <div
           className={`vf-flowchart-arrow ${running && activeIdx > 1 && latestVerdict !== 'gated' && (phase === 'simulate' || activeIdx > 2) ? 'active' : ''}`}
@@ -1813,8 +1803,6 @@ const LoopStatusPanel = ({
           </span>
           <span className="vf-node-label">AI Council</span>
         </div>
-
-
 
         {/* Arrow 4 */}
         <div
@@ -1891,6 +1879,7 @@ const LoopStatusPanel = ({
           >
             <button
               onClick={() => setShowLogsModal(false)}
+              aria-label="Close"
               style={{
                 position: 'absolute',
                 top: '20px',
@@ -1903,28 +1892,39 @@ const LoopStatusPanel = ({
                 fontFamily: 'var(--font-mono)',
               }}
             >
-              ✕ CLOSE
+              <Icon name="x" size={14} />
             </button>
-            <div className="modal-eyebrow">autonomous monitoring logs</div>
+            <div className="modal-eyebrow">Autonomous monitoring logs</div>
             <h3 className="modal-title" style={{ marginBottom: 20 }}>
-              Decision Log & Heartbeat Console
+              Decision log and heartbeat console
             </h3>
 
             <div className="modal-scroll-content" style={{ maxHeight: '68vh', overflowY: 'auto' }}>
               <div className="decision-modal-grid">
-                
                 {/* Left Column: Heartbeat Ticker */}
                 <div className="decision-modal-left">
-                  <div style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', color: 'var(--text-faint)', letterSpacing: '0.05em', marginBottom: 12 }}>
-                    heartbeat ticker journal
+                  <div
+                    style={{
+                      fontSize: '11px',
+                      fontWeight: '700',
+                      textTransform: 'uppercase',
+                      color: 'var(--text-faint)',
+                      letterSpacing: '0.05em',
+                      marginBottom: 12,
+                    }}
+                  >
+                    Heartbeat ticker
                   </div>
-                  
-                  <div className="loop-chips" style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 16 }}>
-                    <span className="loop-chip keep">keep {summary.keep}</span>
-                    <span className="loop-chip discard">discard {summary.discard}</span>
-                    <span className="loop-chip gated">gated {summary.gated || 0}</span>
-                    <span className="loop-chip crash">crash {summary.crash}</span>
-                    <span className="loop-chip idle">observe {summary.idle}</span>
+
+                  <div
+                    className="loop-chips"
+                    style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 16 }}
+                  >
+                    <span className="loop-chip keep">Keep {summary.keep}</span>
+                    <span className="loop-chip discard">Discard {summary.discard}</span>
+                    <span className="loop-chip gated">Gated {summary.gated || 0}</span>
+                    <span className="loop-chip crash">Crash {summary.crash}</span>
+                    <span className="loop-chip idle">Observe {summary.idle}</span>
                   </div>
 
                   <div className="loop-rows" style={{ maxHeight: 380, overflowY: 'auto' }}>
@@ -1932,7 +1932,7 @@ const LoopStatusPanel = ({
                       <div className="loop-row" key={r.ts || i}>
                         <span className="loop-row-num">#{String(r.cycle).padStart(2, '0')}</span>
                         <span className={`loop-badge ${r.verdict}`}>
-                          {r.verdict === 'idle' ? 'observe' : r.verdict}
+                          {r.verdict === 'idle' ? 'Observe' : displayLabel(r.verdict)}
                         </span>
                         <span className="loop-row-detail" title={loopRowDetail(r)}>
                           {loopRowDetail(r)}
@@ -1943,7 +1943,7 @@ const LoopStatusPanel = ({
                     {(!rows || rows.length === 0) && (
                       <div className="loop-empty">
                         {running
-                          ? `No cycles journaled yet. First heartbeat ${remaining != null ? `in ${fmtCountdown(remaining)}` : 'arriving shortly'} — the loop observes, gates, simulates, asks the council, then acts only on a keep verdict.`
+                          ? `No cycles journaled yet. First heartbeat ${remaining != null ? `in ${fmtCountdown(remaining)}` : 'arriving shortly'}. The loop observes, gates, simulates, asks the council, then acts only on a keep verdict.`
                           : 'Loop is stopped. It starts automatically while the agent is enabled and positions are held.'}
                       </div>
                     )}
@@ -1952,17 +1952,29 @@ const LoopStatusPanel = ({
 
                 {/* Right Column: AI Council Decision Log */}
                 <div className="decision-modal-right">
-                  <div style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', color: 'var(--text-faint)', letterSpacing: '0.05em', marginBottom: 12 }}>
+                  <div
+                    style={{
+                      fontSize: '11px',
+                      fontWeight: '700',
+                      textTransform: 'uppercase',
+                      color: 'var(--text-faint)',
+                      letterSpacing: '0.05em',
+                      marginBottom: 12,
+                    }}
+                  >
                     AI Council decisions
                   </div>
                   <DecisionLogPanel rows={decisionsRows} summary={decisionsSummary} />
                 </div>
-
               </div>
             </div>
 
             <div className="modal-actions" style={{ marginTop: 20 }}>
-              <button className="btn btn-ghost" onClick={() => setShowLogsModal(false)} style={{ marginLeft: 'auto' }}>
+              <button
+                className="btn btn-ghost"
+                onClick={() => setShowLogsModal(false)}
+                style={{ marginLeft: 'auto' }}
+              >
                 Close
               </button>
             </div>
@@ -1991,9 +2003,9 @@ const DecisionLogPanel = ({ rows, summary }) => {
           const t = byAgent[role] || { DEPOSIT: 0, HOLD: 0, WITHDRAW: 0 }
           return (
             <div className="decision-agent" key={role}>
-              <span className="decision-agent-role mono">{role}</span>
+              <span className="decision-agent-role mono">{displayLabel(role)}</span>
               <span className="decision-agent-tally mono">
-                <span className="keep">{t.DEPOSIT}</span>·<span className="gated">{t.HOLD}</span>·
+                <span className="keep">{t.DEPOSIT}</span>, <span className="gated">{t.HOLD}</span>,{' '}
                 <span className="discard">{t.WITHDRAW}</span>
               </span>
             </div>
@@ -2010,22 +2022,22 @@ const DecisionLogPanel = ({ rows, summary }) => {
             >
               <span className="decision-row-num mono">#{String(r.cycle).padStart(2, '0')}</span>
               <span className={`decision-badge ${r.finalDecision === 'keep' ? 'keep' : 'discard'}`}>
-                {r.finalDecision}
+                {displayLabel(r.finalDecision)}
               </span>
               <span className="decision-row-maj mono">
-                {r.majoritySignal} ×{r.majorityCount}
+                {r.majoritySignal}, {r.majorityCount} votes
               </span>
               <span className="decision-row-conf tnum mono">
                 {Math.round((r.avgConfidence || 0) * 100)}%
               </span>
-              <span className="decision-row-by mono">{r.resolvedBy}</span>
+              <span className="decision-row-by mono">{displayLabel(r.resolvedBy)}</span>
               <span className="decision-row-time">{agoLabel(r.ts, now)}</span>
             </button>
             {open === r.id && (
               <div className="decision-verdicts">
                 {(r.verdicts || []).map((v) => (
                   <div className={`decision-verdict ${SIGNAL_CLASS[v.signal] || ''}`} key={v.role}>
-                    <span className="decision-verdict-role mono">{v.role}</span>
+                    <span className="decision-verdict-role mono">{displayLabel(v.role)}</span>
                     <span className="decision-verdict-conf tnum mono">
                       {Math.round((v.confidence || 0) * 100)}%
                     </span>
