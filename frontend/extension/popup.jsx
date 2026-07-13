@@ -760,7 +760,6 @@ function Popup() {
     }
   }
 
-
   // ── CLASSIC (seed-phrase / ed25519) SCREENS ───────────────────────────────
   // Classic is the default wallet type; the passkey screens below are unmodified and remain
   // reachable via the "switch to passkey wallet" links on classic-create/classic-settings.
@@ -799,10 +798,13 @@ function Popup() {
         />
         <p className="vf-hint">
           Prefer Face ID?{' '}
-          <button className="link" onClick={() => {
-            localStorage.setItem('vf_wallet_type', 'passkey')
-            setScreen('welcome')
-          }}>
+          <button
+            className="link"
+            onClick={() => {
+              localStorage.setItem('vf_wallet_type', 'passkey')
+              setScreen('welcome')
+            }}
+          >
             Use a passkey wallet instead
           </button>
         </p>
@@ -1165,15 +1167,18 @@ function Popup() {
         </div>
         <p className="vf-hint" style={{ textAlign: 'center', marginTop: 12 }}>
           Prefer seed phrase?{' '}
-          <button className="link" onClick={() => {
-            localStorage.setItem('vf_wallet_type', 'classic')
-            setScreen('classic-onboarding')
-            C.bootstrap().then((b) => {
-              if (b.hasWallet) {
-                setScreen(b.needsBackup || !b.unlocked ? 'classic-unlock' : 'classic-home')
-              }
-            })
-          }}>
+          <button
+            className="link"
+            onClick={() => {
+              localStorage.setItem('vf_wallet_type', 'classic')
+              setScreen('classic-onboarding')
+              C.bootstrap().then((b) => {
+                if (b.hasWallet) {
+                  setScreen(b.needsBackup || !b.unlocked ? 'classic-unlock' : 'classic-home')
+                }
+              })
+            }}
+          >
             Use a classic wallet instead
           </button>
         </p>
@@ -1277,21 +1282,24 @@ function Popup() {
         {error && <p className="err">{error}</p>}
         {status && <p className="info">{status}</p>}
         <p className="vf-hint" style={{ textAlign: 'center', marginTop: 12 }}>
-          <button className="link" onClick={async () => {
-            localStorage.removeItem('vf_wallet_contract')
-            localStorage.removeItem('vf_wallet_credential')
-            localStorage.setItem('vf_wallet_type', 'classic')
-            if (typeof chrome !== 'undefined' && chrome.storage?.local) {
-              await chrome.storage.local.remove(['vf_wallet_contract', 'vf_wallet_credential'])
-            }
-            setWallet(null)
-            setScreen('classic-onboarding')
-            C.bootstrap().then((b) => {
-              if (b.hasWallet) {
-                setScreen(b.needsBackup || !b.unlocked ? 'classic-unlock' : 'classic-home')
+          <button
+            className="link"
+            onClick={async () => {
+              localStorage.removeItem('vf_wallet_contract')
+              localStorage.removeItem('vf_wallet_credential')
+              localStorage.setItem('vf_wallet_type', 'classic')
+              if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+                await chrome.storage.local.remove(['vf_wallet_contract', 'vf_wallet_credential'])
               }
-            })
-          }}>
+              setWallet(null)
+              setScreen('classic-onboarding')
+              C.bootstrap().then((b) => {
+                if (b.hasWallet) {
+                  setScreen(b.needsBackup || !b.unlocked ? 'classic-unlock' : 'classic-home')
+                }
+              })
+            }}
+          >
             Switch to classic wallet / Reset
           </button>
         </p>

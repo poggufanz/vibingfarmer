@@ -11,7 +11,13 @@
 // that slid through silently would leave the next build with a stale sequence (txBadSeq) or a
 // later deposit failing opaquely. Wallet signs are timeout-capped so a dismissed/stuck signature request
 // surfaces as an error instead of hanging the run forever.
-import { buildCreateContractTx, buildInvokeTx, submitUserTx, readContract, rpcServer } from './client.js'
+import {
+  buildCreateContractTx,
+  buildInvokeTx,
+  submitUserTx,
+  readContract,
+  rpcServer,
+} from './client.js'
 import { signTxXdr } from './walletKit.js'
 import {
   SOROBAN_REGISTRY_ADDRESS,
@@ -83,9 +89,8 @@ async function ensureUserTrustline(owner) {
   }
   if (!underlying) return
 
-  const { Horizon, Asset, TransactionBuilder, Operation, BASE_FEE } = await import(
-    '@stellar/stellar-sdk'
-  )
+  const { Horizon, Asset, TransactionBuilder, Operation, BASE_FEE } =
+    await import('@stellar/stellar-sdk')
   const horizon = new Horizon.Server(HORIZON_URL)
   let acct
   try {
@@ -97,7 +102,7 @@ async function ensureUserTrustline(owner) {
     (b) =>
       b.asset_type !== 'native' &&
       String(b.asset_code) === String(underlying.code) &&
-      String(b.asset_issuer) === String(underlying.issuer),
+      String(b.asset_issuer) === String(underlying.issuer)
   )
   if (hasTrust) return
 

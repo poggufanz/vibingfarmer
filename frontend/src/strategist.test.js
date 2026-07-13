@@ -352,4 +352,3 @@ describe('AI token usage telemetry', () => {
     expect(getTokenUsageHistory()).toEqual([])
   })
 })
-

@@ -1079,32 +1079,81 @@ export default function SettingsPage({
               <Divider />
               <SubLabel>AI Token Telemetry</SubLabel>
               <div style={{ marginTop: 8 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '4px 0', color: 'var(--text-muted)' }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    fontSize: 12,
+                    padding: '4px 0',
+                    color: 'var(--text-muted)',
+                  }}
+                >
                   <span>Total Prompt Tokens</span>
                   <span className="mono">{telemetryStats.prompt}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '4px 0', color: 'var(--text-muted)' }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    fontSize: 12,
+                    padding: '4px 0',
+                    color: 'var(--text-muted)',
+                  }}
+                >
                   <span>Total Completion Tokens</span>
                   <span className="mono">{telemetryStats.completion}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '4px 0', color: 'var(--text-muted)' }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    fontSize: 12,
+                    padding: '4px 0',
+                    color: 'var(--text-muted)',
+                  }}
+                >
                   <span>Total Tokens Used</span>
-                  <span className="mono" style={{ color: 'var(--accent)', fontWeight: 600 }}>{telemetryStats.total}</span>
+                  <span className="mono" style={{ color: 'var(--accent)', fontWeight: 600 }}>
+                    {telemetryStats.total}
+                  </span>
                 </div>
                 {telemetryStats.history.length > 0 && (
                   <div style={{ marginTop: 12 }}>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>Recent API Requests (last 5):</div>
-                    <div style={{ maxHeight: 120, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 4, padding: '6px 8px', background: 'rgba(0,0,0,0.1)' }}>
-                      {telemetryStats.history.slice(-5).reverse().map((h, i) => (
-                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10.5, padding: '3px 0', borderBottom: i < 4 ? '1px solid rgba(255,255,255,0.05)' : 'none' }}>
-                          <span style={{ color: 'var(--text-muted)' }}>
-                            {new Date(h.timestamp).toLocaleTimeString()} ({h.model})
-                          </span>
-                          <span className="mono">
-                            P: {h.promptTokens} | C: {h.completionTokens} | T: {h.totalTokens}
-                          </span>
-                        </div>
-                      ))}
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>
+                      Recent API Requests (last 5):
+                    </div>
+                    <div
+                      style={{
+                        maxHeight: 120,
+                        overflowY: 'auto',
+                        border: '1px solid var(--border)',
+                        borderRadius: 4,
+                        padding: '6px 8px',
+                        background: 'rgba(0,0,0,0.1)',
+                      }}
+                    >
+                      {telemetryStats.history
+                        .slice(-5)
+                        .reverse()
+                        .map((h, i) => (
+                          <div
+                            key={i}
+                            style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              fontSize: 10.5,
+                              padding: '3px 0',
+                              borderBottom: i < 4 ? '1px solid rgba(255,255,255,0.05)' : 'none',
+                            }}
+                          >
+                            <span style={{ color: 'var(--text-muted)' }}>
+                              {new Date(h.timestamp).toLocaleTimeString()} ({h.model})
+                            </span>
+                            <span className="mono">
+                              P: {h.promptTokens} | C: {h.completionTokens} | T: {h.totalTokens}
+                            </span>
+                          </div>
+                        ))}
                     </div>
                   </div>
                 )}

@@ -36,7 +36,11 @@ import {
 } from './stellar/index.js'
 import { generateStrategy } from './strategist.js'
 import { toDisplay, toBaseUnits } from './stellar/format.js'
-import { queryAgentsByOwner, discoverAgentsFromHorizon, discoverAgentsFromVault } from './stellar/events.js'
+import {
+  queryAgentsByOwner,
+  discoverAgentsFromHorizon,
+  discoverAgentsFromVault,
+} from './stellar/events.js'
 import { saveResume, loadResume, clearResume } from './strategy/sessionResume.js'
 import { attestStrategyOnChain, formatAttestation } from './attestation.js'
 import OnboardingFlow from './components/OnboardingFlow.jsx'
@@ -689,8 +693,8 @@ const App = () => {
       hydratedRef.current = realAddress
     }, 0)
     let alive = true
-    const persistedAgents = loadDeployedAgents(realAddress);
-    (async () => {
+    const persistedAgents = loadDeployedAgents(realAddress)
+    ;(async () => {
       let agents = persistedAgents
       // No cached agents → discover from on-chain events.
       // Strategy: Registry first (fast, single call), then vault deposit event scan
@@ -1773,12 +1777,12 @@ const App = () => {
           amountUsdc: Number(amount) || 0,
           riskLevel: risk,
           numVaults: strategy?.agents?.length || Object.keys(agentData.positions).length || 1,
-      vaultData: VAULT_CATALOG,
-      marketContext: marketLive,
-      positions: agentData.positions,
-      gas: latestGasRef.current,
-      maxDrawdownPct: agentSettings.maxDrawdownPct,
-    })
+          vaultData: VAULT_CATALOG,
+          marketContext: marketLive,
+          positions: agentData.positions,
+          gas: latestGasRef.current,
+          maxDrawdownPct: agentSettings.maxDrawdownPct,
+        })
         const sim = runSimulation(allocationsFromStrategy(strategy), state, {
           runs: 200,
           horizonDays: 30,
