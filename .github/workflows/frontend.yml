@@ -1,7 +1,7 @@
 name: frontend
 
 on:
-  push: { branches: [main, iq] }
+  push: { branches: [main, dev] }
   pull_request:
 
 jobs:
@@ -22,3 +22,34 @@ jobs:
         continue-on-error: true
       - run: npm test
       - run: npm run build
+
+  # Cloudflare Pages deploy — gate: only pushes (never PRs from forks), only after tests pass.
+  # main → Production; any other pushed branch → Preview (aliased by branch name).
+  # Needs repo secrets: CLOUDFLARE_API_TOKEN (Pages:Edit), CLOUDFLARE_ACCOUNT_ID.
+  # Runtime env vars/secrets are NOT set here — they live in the Pages project
+  # (Settings → Variables and Secrets, per Production/Preview environment).
+  deploy:
+    needs: test-build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: frontend
+          command: pages deploy ./dist --project-name=vibing-farmer --branch=${{ github.ref_name }}
