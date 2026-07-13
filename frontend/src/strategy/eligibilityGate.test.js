@@ -126,7 +126,7 @@ describe('evaluate (combine)', () => {
     )
     expect(v.eligible).toBe(false)
     expect(v.isFixture).toBe(true)
-    expect(v.reasons.join(' ')).toMatch(/unaudited/i)
+    expect(v.reasons.join(' ')).toMatch(/security audit was not verified/i)
     expect(v.reasons.join(' ')).toMatch(/ratio 3\.3/)
   })
   it('missing fact => fail-closed reject', () => {
@@ -189,7 +189,7 @@ describe('evaluate boundary + fail-closed extras', () => {
       NOW2
     )
     expect(v.eligible).toBe(false)
-    expect(v.reasons.join(' ')).toMatch(/unrecognized governance/i)
+    expect(v.reasons.join(' ')).toMatch(/governance key could not be verified/i)
   })
   it('each required fact stale ALONE => fail-closed reject with the staleness reason', () => {
     for (const k of REQUIRED_FACTS) {
@@ -198,7 +198,7 @@ describe('evaluate boundary + fail-closed extras', () => {
       })
       const v = evaluate({ protocol: 'b', facts }, NOW2)
       expect(v.eligible).toBe(false)
-      expect(v.reasons.join(' ')).toMatch(/missing or stale required data/)
+      expect(v.reasons.join(' ')).toMatch(/Required data is missing or outdated/)
     }
   })
   it('audit value "none" yields the distinct audit-gate reason', () => {
@@ -207,7 +207,7 @@ describe('evaluate boundary + fail-closed extras', () => {
       NOW2
     )
     expect(v.eligible).toBe(false)
-    expect(v.reasons.join(' ')).toMatch(/unaudited \(audit gate\)/)
+    expect(v.reasons.join(' ')).toMatch(/security audit was not verified/i)
   })
   it('a below-threshold score reason carries the "our weighting" honesty qualifier', () => {
     // audited but young + tiny TVL + eoa => score ~1, audit passes => the score reason renders
@@ -223,7 +223,7 @@ describe('evaluate boundary + fail-closed extras', () => {
       NOW2
     )
     expect(v.eligible).toBe(false)
-    expect(v.reasons.join(' ')).toMatch(/security \d+\/100 \(our weighting\) below/)
+    expect(v.reasons.join(' ')).toMatch(/Security score \d+\/100 using our weighting is below/)
   })
 })
 
@@ -255,7 +255,7 @@ describe('F8 lifeboat screening facts', () => {
       F8_NOW
     )
     expect(v.eligible).toBe(false)
-    expect(v.reasons).toContain('community-managed pool')
+    expect(v.reasons).toContain('The pool is community managed.')
   })
   it('VWAP oracle without circuit breaker is rejected', () => {
     const v = evaluate(
@@ -263,7 +263,7 @@ describe('F8 lifeboat screening facts', () => {
       F8_NOW
     )
     expect(v.eligible).toBe(false)
-    expect(v.reasons).toContain('oracle without circuit breaker')
+    expect(v.reasons).toContain('The oracle has no circuit breaker.')
   })
   it('unknown oracle type is rejected (fail-closed)', () => {
     const v = evaluate(
@@ -278,7 +278,7 @@ describe('F8 lifeboat screening facts', () => {
       F8_NOW
     )
     expect(v.eligible).toBe(false)
-    expect(v.reasons).toContain('thin collateral liquidity')
+    expect(v.reasons).toContain('Collateral liquidity is below the minimum.')
   })
   it('supplier concentration above 40% is rejected', () => {
     const v = evaluate(
@@ -286,13 +286,13 @@ describe('F8 lifeboat screening facts', () => {
       F8_NOW
     )
     expect(v.eligible).toBe(false)
-    expect(v.reasons).toContain('supplier concentration too high')
+    expect(v.reasons).toContain('Supplier concentration exceeds the limit.')
   })
   it('a missing new fact fails closed via the required-facts gate', () => {
     const facts = healthyFacts()
     delete facts.poolClass
     const v = evaluate({ protocol: 'x', facts }, F8_NOW)
     expect(v.eligible).toBe(false)
-    expect(v.reasons).toContain('missing or stale required data')
+    expect(v.reasons).toContain('Required data is missing or outdated.')
   })
 })

@@ -9,16 +9,16 @@
 //      attacker-enforced (curl forges it trivially), so the allowlist is NOT
 //      authentication. A per-IP fixed-window cap blunts forged-Origin abuse:
 //      cost drain on the DeepSeek/Tavily keys, gas-drain DoS on the funded
-//      1Shot relayer wallet. Best-effort: state is per warm process.
+//      Stellar relayer keypair. Best-effort: state is per warm process.
 
-const isProd =
-  process.env.NODE_ENV === 'production' || process.env.VERCEL_ENV === 'production'
+const isProd = process.env.NODE_ENV === 'production' || process.env.VERCEL_ENV === 'production'
 
 const DEV_ORIGINS = [
   'http://localhost:5173',
   'http://localhost:5174',
   'http://localhost:5175',
   'http://localhost:4173',
+  'http://localhost:8788',
 ]
 
 export function allowedOrigins() {
@@ -34,7 +34,8 @@ export function allowedOrigins() {
  */
 export function applyCors(req, res) {
   const origin = req.headers.origin || ''
-  if (!allowedOrigins().includes(origin)) {
+  const isAllowed = allowedOrigins().includes(origin) || origin.startsWith('chrome-extension://')
+  if (!isAllowed) {
     res.statusCode = 403
     res.setHeader('Content-Type', 'application/json')
     res.end(JSON.stringify({ error: 'Forbidden' }))
@@ -69,7 +70,10 @@ function clientIp(req) {
   //    is ignored. With one edge this is simply the last entry.
   const xff = req.headers['x-forwarded-for']
   if (TRUST_PROXY_HOPS > 0 && typeof xff === 'string' && xff.trim()) {
-    const parts = xff.split(',').map((p) => p.trim()).filter(Boolean)
+    const parts = xff
+      .split(',')
+      .map((p) => p.trim())
+      .filter(Boolean)
     if (parts.length) {
       const idx = parts.length - TRUST_PROXY_HOPS
       return parts[idx >= 0 ? idx : 0]

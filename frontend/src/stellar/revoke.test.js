@@ -12,7 +12,7 @@ import { signTxXdr } from './walletKit.js'
 import { SOROBAN_REGISTRY_ADDRESS } from './config.js'
 
 describe('revokeAgentOnChain', () => {
-  test('builds Registry.revoke(owner, agent), user-signs, and submits — one tx', async () => {
+  test('builds Registry.revoke(owner, agent), user-signs, and submits - one tx', async () => {
     const r = await revokeAgentOnChain({ owner: 'GOWNER', agent: 'CAGENT' })
     // Single user-signed invoke against the registry — relayer-independent (kill switch must work
     // even if the gasless relay is down).

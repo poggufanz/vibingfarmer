@@ -22,9 +22,9 @@ Vibing Farmer is **single-chain on Stellar/Soroban**. Contracts live in `soroban
 
 4. **Connect** — Connect a standard Stellar wallet (Freighter / xBull / Albedo) via the Stellar Wallets Kit. There is no account upgrade and no browser permission prompt.
 
-5. **Authorize agents** — You sign once per worker: the `registry` records a per-agent scope (vault, token, per-period cap, period duration, expiry) and funds the agent's account. Deposits are authorized by the worker's ed25519 session key signing a Soroban authorization entry — authorization lives in the signature, so any submitter (the fee-bump relayer or your own RPC) can broadcast it.
+5. **single-signature grant** — You sign once on `funding_router.grant` (budget + expiry). Nested SEP-41 allowance is the leash; the router deploys fresh scoped `agent_account`s. Deposits are authorized by each worker's ed25519 session key signing a Soroban authorization entry — the fee-bump relayer (or your own RPC) can broadcast it. **1Shot is not used** (EVM-era; superseded by own Stellar fee-bump + optional ZeroDev on Base).
 
-6. **Parallel execution** — `OrchestratorAgent` dispatches N `WorkerAgent` instances via `Promise.allSettled`. Each builds a deposit invocation, signs the Soroban auth entry with its session key, and submits through the fee-bump relayer. Zero gas for the user.
+6. **Parallel execution** — `OrchestratorAgent` dispatches N `WorkerAgent` instances via `Promise.allSettled`. Each pulls funding within the grant, builds a deposit invocation, signs the Soroban auth entry with its session key, and submits through the fee-bump relayer. Zero gas for the user.
 
 7. **Strategy attestation** — The AI strategy output gets hashed and written on-chain. Anyone can reproduce the hash from the original JSON.
 
@@ -50,18 +50,17 @@ User input (amount, risk level, vault count)
         AI Council (yield + risk + market specialists)
                 |
                 v
-        User connects wallet + authorizes agents (one signature each)
+        User connects wallet + single-signature grant (funding_router)
                 |
                 v
         OrchestratorAgent --- attest strategy hash on-chain
           |
     +-----+-----+
     v     v     v
- Worker Worker Worker   (one per vault, parallel)
+ Worker Worker Worker   (parallel agents)
    ed25519 session key signs a Soroban auth entry
-   fee-bump relayer broadcasts (zero gas)
-   registry (Soroban) validates scope
-   yield vault (Soroban) — shares vfVLT, 7-dp
+   own fee-bump relay broadcasts (zero gas; not 1Shot)
+   autofarm vault → Blend strategy — shares vfVLT, 7-dp
                 |
                 v
         Autonomous Monitor Loop (Web Worker)
@@ -76,12 +75,14 @@ User input (amount, risk level, vault count)
 
 | Contract | Address |
 |----------|---------|
+| Autofarm vault (LIVE deposit, `vfVLT` 7-dp) | `CB5VKYDUIYX3RZWGVLKKNBPG7V7Z5JIHF2QPNQKWKAHVA3IPSLFZJDYU` |
+| Funding router (single-signature grant) | `CBEI5VJKKWLXKQUUUETBAPZSQQLH7I57TSIDTMV4WJMBKIGVF7NSNOFY` |
 | Registry | `CAEHOZGUGVNRCAFVJCSR3B2EFJ55LEA34S76HTRQGH7XSPBO7YIMNZOQ` |
-| Yield vault (shares `vfVLT`, 7-dp) | `CCDXZ6BUA7TPR3EXQWJWUD7EYR6OUMJRYIKYXPE53HRJOJFY5CXEHTN5` |
-| USDC token (testnet) | `CAJSGONIIU4QPLNIVVOO7QCYC2LWGYMGXTD7BXSSNIQWWDHWFQTSAEB4` |
-| Demo agent account | `CD3MQJ4YZQ5MDSKDETEFZMDV5J5URVXM46NY5Y3RICUOVJJOFIZTKJ7K` |
+| Blend USDC token (7-dp) | `CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU` |
+| Blend v2 pool | `CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF` |
+| Demo agent (seeded smoke) | `CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC` |
 
-Verify on Stellar Expert: `https://stellar.expert/explorer/testnet/contract/<address>`. Live addresses: [`deployments/stellar-testnet.json`](deployments/stellar-testnet.json).
+Verify on Stellar Expert: `https://stellar.expert/explorer/testnet/contract/<address>`. Canonical live map: [`deployments/stellar-testnet.json`](deployments/stellar-testnet.json).
 
 ---
 
@@ -95,7 +96,8 @@ Verify on Stellar Expert: `https://stellar.expert/explorer/testnet/contract/<add
 | AI | **Venice AI** (`zai-org-glm-5-1`) — recommended, via API key or x402 wallet payment (SIWE, prepaid USDC); DeepSeek (`deepseek-v4-flash`) server-side proxy as zero-config fallback |
 | Live yield data | DeFiLlama API — APY, TVL, 7-day history |
 | Web search | Tavily API (server proxy) — live DeFi context for strategy prompts |
-| Gas abstraction | Fee-bump relayer (`/api/stellar-relay`) — fee-bumps agent transactions; user pays 0 |
+| Gas abstraction | Own fee-bump relayer (`/api/stellar-relay`) — replaces EVM-era 1Shot; user pays 0 |
+| Cross-chain (optional) | Circle CCTP v2 + Node `relayer/` + ZeroDev on Base Sepolia |
 | Wallet | Standard Stellar wallet (Freighter / xBull / Albedo) — no smart-account upgrade |
 | Crypto | ed25519 session keys; libsodium — KDF-sealed per-worker key vault |
 | Validation | Zod schemas at boundaries |
@@ -113,9 +115,11 @@ Three Rust crates:
 
 - **`registry`** — single source of truth for per-agent deposit scope. `authorize` sets vault, token, cap-per-period, period duration, expiry. Each deposit charges against the cap, rolling the fixed window if elapsed. `revoke` is an instant user-signed kill switch. `scope_of` reads the live scope.
 
-- **`rwa_vault`** — the deposit-only yield vault (ERC-4626-style shares `vfVLT`, 7 decimals). Validates the agent's scope against the registry, pulls tokens, and credits shares to the user. No custody — the contract holds only deposited assets, never agent keys. (The crate retains the `rwa_vault` name; the real-yield Blend integration is in progress — see `docs/superpowers`.)
+- **`rwa_vault` / autofarm vault** — deposit vault (shares `vfVLT`, 7 decimals) with strategies that supply into **Blend Capital v2** on testnet. Live deposit target is `autofarmVault` in `deployments/stellar-testnet.json`.
 
-- **`agent_account`** — a Soroban custom account holding the ephemeral ed25519 session key. Its `__check_auth` enforces that the agent only signs within its granted scope.
+- **`agent_account`** — Soroban custom account; `__check_auth` enforces constructor-pinned scope (vault, token, cap, expiry). Per-run agents are deployed via `funding_router`.
+
+- **`funding_router`** — single-signature factory + funding gate (SEP-41 allowance leash; zero custody).
 
 ### Contract security
 
@@ -186,9 +190,9 @@ The AI strategist generates a typed skill file per agent (deposit-only; amounts 
 ```json
 {
   "agentId": "worker-agent-1",
-  "vaultAddress": "CCDXZ6BUA7TPR3EXQWJWUD7EYR6OUMJRYIKYXPE53HRJOJFY5CXEHTN5",
+  "vaultAddress": "CB5VKYDUIYX3RZWGVLKKNBPG7V7Z5JIHF2QPNQKWKAHVA3IPSLFZJDYU",
   "skills": {
-    "deposit": { "maxAmount": "1000000000", "vaultAddress": "CCDXZ6BU…HTN5", "expiresAt": 1749686400 }
+    "deposit": { "maxAmount": "1000000000", "vaultAddress": "CB5VKYDU…JDYU", "expiresAt": 1749686400 }
   },
   "generatedBy": "venice-ai",
   "approvedByUser": true
@@ -238,10 +242,11 @@ ALLOWED_ORIGIN=https://your-project.pages.dev    # /api/* origin allowlist (prod
 STELLAR_RELAYER_SECRET=S...                       # relayer keypair secret — fund on testnet
 SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
 STELLAR_NETWORK_PASSPHRASE=Test SDF Network ; September 2015
-SOROBAN_VAULT_ADDRESS=CCDXZ6BU…HTN5               # deposit target
+SOROBAN_VAULT_ADDRESS=CB5VKYDU…JDYU               # autofarm vault (see deployments JSON)
+SOROBAN_ROUTER_ADDRESS=CBEI5VJK…NOFY              # funding_router (single-signature grant)
 ```
 
-AI keys are BYOK-first — leave host keys unset for a lockdown deploy. The relay fee-bumps agent transactions from the funded `STELLAR_RELAYER_SECRET` keypair, so the user pays 0 gas.
+AI keys are BYOK-first — leave host keys unset for a lockdown deploy. The relay fee-bumps agent transactions from the funded `STELLAR_RELAYER_SECRET` keypair, so the user pays 0 gas. There is no 1Shot / `ONESHOT_*` config.
 
 ---
 
@@ -314,13 +319,16 @@ Set the server-side secrets (`STELLAR_RELAYER_SECRET`, `SOROBAN_*`, `DEEPSEEK_AP
 soroban/
   Cargo.toml                     # workspace
   contracts/
-    registry/                    # per-agent ed25519 session-key scope
-    rwa_vault/                   # deposit-only yield vault (shares vfVLT, 7-dp)
+    registry/                    # per-agent scope registry
+    rwa_vault/                   # yield vault + autofarm (shares vfVLT, 7-dp)
     agent_account/               # Soroban custom account (__check_auth)
-  deploy-seed.sh                 # deploy registry + vault + token, seed demo agent
+    funding_router/              # single-signature grant factory
+    blend_strategy/              # vault → Blend pool
+  # deploy scripts under scripts/soroban/
 
 deployments/
-  stellar-testnet.json           # live testnet addresses
+  stellar-testnet.json           # live Stellar testnet addresses
+  base-sepolia.json              # optional Base cross-chain leg
 
 frontend/
   wrangler.jsonc                 # Cloudflare Pages runtime config (nodejs_compat)
@@ -368,7 +376,7 @@ frontend/src/
   agents/
     agentController.js           # Agent lifecycle
     backgroundAgent.worker.js    # Web Worker — monitor, alerts
-  venice.js                      # Venice AI + DeepSeek: strategy + skills
+  strategist.js                      # AI strategist (Venice / DeepSeek / fallback)
   attestation.js                 # Strategy hash + on-chain attestation
   skills.js / skills.jsx         # Skill file generator + review UI
   defiLlama.js                   # Live yield data
@@ -386,21 +394,17 @@ docs/                            # All in English
 
 ---
 
-## Documentation
+## Documentation (tracked)
 
 | Document | Focus |
 |----------|-------|
-| [technical-architecture.md](docs/technical-architecture.md) | System design, ADRs, NFRs, failure modes |
-| [technical-blockchain-usage.md](docs/technical-blockchain-usage.md) | On-chain scope, audit trail, delegation boundaries |
-| [technical-security-privacy.md](docs/technical-security-privacy.md) | Threat model, security controls |
-| [technical-threat-model.md](docs/technical-threat-model.md) | Max-loss numbers, key lifecycle, destructive drill results |
-| [technical-api-events.md](docs/technical-api-events.md) | Event schemas, payloads, error handling |
-| [technical-database.md](docs/technical-database.md) | Agent memory, local storage, retention |
-| [product-demo-scenario.md](docs/product-demo-scenario.md) | Demo walkthrough and script |
-| [product-features-complete.md](docs/product-features-complete.md) | Functional requirements, MoSCoW priority |
-| [product-user-stories.md](docs/product-user-stories.md) | Personas, journeys, acceptance criteria |
-| [business-impact-model.md](docs/business-impact-model.md) | Market problem, value model, KPIs |
-| [business-roadmap-backlog.md](docs/business-roadmap-backlog.md) | Roadmap, milestones, risk |
+| [prd.md](prd.md) | Product requirements — canonical feature/status table |
+| [GETTING_STARTED.md](GETTING_STARTED.md) | Local setup + demo checklist |
+| [DESIGN.md](DESIGN.md) | Design system + UI patterns |
+| [AGENTS.md](AGENTS.md) / [CLAUDE.md](CLAUDE.md) | Agent coding instructions |
+| [soroban/README.md](soroban/README.md) | Contract build/test |
+
+> Folder `docs/` is **gitignored** (local planning / deep technical notes). Do not link to it as public repo docs.
 
 ---
 
@@ -410,7 +414,9 @@ docs/                            # All in English
 - [Soroban smart contracts](https://developers.stellar.org/docs/build/smart-contracts)
 - [Stellar Wallets Kit](https://stellarwalletskit.dev)
 - [Freighter wallet](https://www.freighter.app)
-- [Blend Capital](https://www.blend.capital) — real-yield lending (in progress)
+- [Blend Capital](https://docs.blend.capital) — real-yield lending (autofarm vault supplies testnet pool)
+- [Circle CCTP](https://developers.circle.com/cctp) — optional Stellar↔Base USDC
+- [ZeroDev](https://docs.zerodev.app) — optional Base session keys (cross-chain leg)
 - [Venice AI](https://venice.ai)
 - [DeepSeek API](https://api-docs.deepseek.com)
 - [Tavily API](https://docs.tavily.com)

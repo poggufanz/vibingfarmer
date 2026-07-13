@@ -1,1 +1,0 @@
-{"nodes": [], "edges": [{"source": "skill_vercel_react_view_transitions", "target": "skill_next_best_practices", "relation": "references", "confidence": "INFERRED", "confidence_score": 0.8, "source_file": ".claude/skills/vercel-react-view-transitions/references/nextjs.md", "source_location": null, "weight": 0.8}], "hyperedges": []}

@@ -7,21 +7,28 @@
 // capped, never throws. Distinct from cycleJournal (operational trail) — this
 // store only records cycles where the council actually deliberated.
 
-const POSITIVE = { DEPOSIT: 'clear to proceed', HOLD: 'hold', WITHDRAW: 'exit' }
+const POSITIVE = { DEPOSIT: 'Clear to proceed', HOLD: 'Hold', WITHDRAW: 'Exit' }
 
 /** Compress one specialist verdict to a single human-readable line. Pure. */
 export function accSummary({ signal, citedRules = [], concerns = [] } = {}) {
-  const reason = concerns[0] ?? POSITIVE[signal] ?? ''
+  const reason = String(concerns[0] ?? POSITIVE[signal] ?? '').replace(/[A-Za-z]/, (c) =>
+    c.toUpperCase()
+  )
   const rules = citedRules.length ? ` (${citedRules.join(', ')})` : ''
-  return `${signal} — ${reason}${rules}`
+  return `${signal}: ${reason}${rules}`
 }
 
 /** Most frequent signal among the specialists + how many voted it. */
 function majority(specialists) {
   const counts = {}
   for (const s of specialists) counts[s.signal] = (counts[s.signal] || 0) + 1
-  let signal = null, count = 0
-  for (const [sig, n] of Object.entries(counts)) if (n > count) { signal = sig; count = n }
+  let signal = null,
+    count = 0
+  for (const [sig, n] of Object.entries(counts))
+    if (n > count) {
+      signal = sig
+      count = n
+    }
   return { signal, count }
 }
 
@@ -98,7 +105,11 @@ export function getDecisions() {
 }
 
 export function clearDecisions() {
-  try { localStorage.removeItem(KEY) } catch { /* ignore */ }
+  try {
+    localStorage.removeItem(KEY)
+  } catch {
+    /* ignore */
+  }
 }
 
 /** Per-agent signal tallies + total — seed for future calibration. */

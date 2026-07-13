@@ -5,7 +5,14 @@
 // weight()/increment() always hit a record. Seeds are origin:'seed' — protected
 // from hard-delete (retire-only), because the deterministic council still cites them.
 
-const CAT = { yield: 'strategy', risk: 'risk', market: 'gas', 'proposer': 'opportunity', 'risk-compliance': 'compliance', 'validator': 'simulation' }
+const CAT = {
+  yield: 'strategy',
+  risk: 'risk',
+  market: 'gas',
+  proposer: 'opportunity',
+  'risk-compliance': 'compliance',
+  validator: 'simulation',
+}
 
 export function roleToCategory(role) {
   return CAT[role] || 'strategy'
@@ -17,38 +24,110 @@ function seed(id, role, text) {
 
 export const SEED_RULES = [
   // ── playbookRules.js catalog (shown to the AI wizard council) ──
-  seed('yld-apy-attractive', 'yield', 'Blended APY clears the profile target; the headline yield justifies entry.'),
-  seed('yld-projection-positive', 'yield', 'Risk-adjusted projected annual yield (USDC) is positive after the risk penalty.'),
-  seed('yld-tvl-adequate', 'yield', 'Selected vaults have adequate TVL/track record so the quoted APY is credible.'),
-  seed('rsk-turbulent-veto', 'risk', 'Market regime is turbulent — defer entry; capital preservation outranks yield.'),
-  seed('rsk-gates-clear', 'risk', 'No action-space gate violations: allocations respect the risk ceiling and sum to 1.0.'),
-  seed('rsk-drawdown-bounded', 'risk', '30-day max drawdown of the basket stays within the profile risk tolerance.'),
-  seed('rsk-regime-calm', 'risk', 'Regime is calm/elevated with no violations — risk posture supports deploying.'),
-  seed('mkt-gas-affordable', 'market', 'Entry gas cost is small relative to expected yield; timing is economically sound.'),
-  seed('mkt-timing-favorable', 'market', 'Calm regime and clear signals make now a favorable entry window.'),
-  seed('mkt-signals-clear', 'market', 'No adverse live market signals (exploits, depegs, governance alarms) flagged.'),
+  seed('yld-apy-attractive', 'yield', 'Blended APY meets the profile target.'),
+  seed(
+    'yld-projection-positive',
+    'yield',
+    'Risk-adjusted projected annual yield (USDC) is positive after the risk penalty.'
+  ),
+  seed(
+    'yld-tvl-adequate',
+    'yield',
+    'Selected vaults meet the TVL and operating-history requirements.'
+  ),
+  seed('rsk-turbulent-veto', 'risk', 'The market is turbulent. Wait before depositing.'),
+  seed(
+    'rsk-gates-clear',
+    'risk',
+    'No action-space gate violations: allocations respect the risk ceiling and sum to 1.0.'
+  ),
+  seed(
+    'rsk-drawdown-bounded',
+    'risk',
+    '30-day max drawdown of the basket stays within the profile risk tolerance.'
+  ),
+  seed('rsk-regime-calm', 'risk', "Market conditions meet the profile's risk limits."),
+  seed('mkt-gas-affordable', 'market', 'Expected returns exceed entry costs.'),
+  seed('mkt-timing-favorable', 'market', 'Market conditions support entry.'),
+  seed('mkt-signals-clear', 'market', 'No exploit, depeg, or governance warning was found.'),
   // ── council.js inline cited ids (deterministic monitor-loop council) ──
-  seed('yield-uplift', 'yield', 'Projected risk-adjusted reward exceeds the current position — deposit on uplift.'),
-  seed('yield-harvest-free', 'yield', 'Harvest is a free reward claim — always worth depositing.'),
-  seed('yield-no-uplift', 'yield', 'No risk-adjusted uplift over the current position — hold.'),
-  seed('risk-turbulent-veto', 'risk', 'Turbulent market regime — withdraw/hold; capital preservation first.'),
-  seed('risk-gate-violation', 'risk', 'Action-space gate violation present — withdraw/hold until allocations are valid.'),
-  seed('risk-calm-clear', 'risk', 'Calm regime with no violations — risk posture supports depositing.'),
-  seed('market-harvest-timing', 'market', 'Harvest timing is always fine — a free claim has no gas-timing risk.'),
-  seed('market-gas-positive', 'market', 'Net expected gain after gas is positive — timing is economically sound.'),
-  seed('market-gas-negative', 'market', 'Gas exceeds the expected gain — hold until execution is cheaper.'),
+  seed(
+    'yield-uplift',
+    'yield',
+    'Projected risk-adjusted return is higher than the current position.'
+  ),
+  seed(
+    'yield-harvest-free',
+    'yield',
+    'Harvesting claims available rewards without adding exposure.'
+  ),
+  seed(
+    'yield-no-uplift',
+    'yield',
+    'Projected risk-adjusted return does not improve the current position.'
+  ),
+  seed('risk-turbulent-veto', 'risk', 'The market is turbulent. Reduce exposure or wait.'),
+  seed(
+    'risk-gate-violation',
+    'risk',
+    'Allocation violates an action limit. Wait until it is valid.'
+  ),
+  seed('risk-calm-clear', 'risk', 'Market conditions pass the risk checks.'),
+  seed(
+    'market-harvest-timing',
+    'market',
+    'Harvesting has no additional market-timing requirement.'
+  ),
+  seed('market-gas-positive', 'market', 'Expected returns exceed fees.'),
+  seed('market-gas-negative', 'market', 'Fees exceed expected returns. Wait for lower costs.'),
   // ── council-review debate council (proposer / risk-compliance / validator) ──
-  seed('prop-yield-opportunity', 'proposer', 'High yield temp identified in the current market window — entry is justified.'),
-  seed('prop-risk-adjusted-pos', 'proposer', 'Risk-adjusted return projection is positive after accounting for volatility.'),
-  seed('prop-timing-favorable', 'proposer', 'Market entry timing supports deployment — calm regime with clear signals.'),
-  seed('prop-valuation-attractive', 'proposer', 'Valuation metrics across selected vaults are attractive relative to historical ranges.'),
-  seed('comp-risk-limit-check', 'risk-compliance', 'Proposed allocation stays within the effective risk ceiling for the profile.'),
-  seed('comp-drawdown-bounded', 'risk-compliance', 'Portfolio drawdown at VaR remains within the maximum loss tolerance.'),
-  seed('comp-investor-protection', 'risk-compliance', 'Investor protection thresholds are satisfied — no single vault exceeds concentration limit.'),
-  seed('comp-disclosure-clear', 'risk-compliance', 'Fee structure, lock-up terms, and exit conditions are transparent.'),
-  seed('comp-capital-preserve', 'risk-compliance', 'Capital preservation rule: if VaR exceeds profile max loss, proposal must be rejected.'),
-  seed('val-var-threshold', 'validator', 'VaR at the specified confidence level is within the risk profile tolerance.'),
-  seed('val-cvar-tail-safe', 'validator', 'CVaR tail risk does not exceed the profile maximum acceptable loss.'),
-  seed('val-sim-consistent', 'validator', 'Proposal blended APY is consistent with the Monte Carlo simulation expected value.'),
-  seed('val-outcome-reliable', 'validator', 'Probability of profit is above the minimum threshold for the risk profile.'),
+  seed('prop-yield-opportunity', 'proposer', 'Current yield and market conditions support entry.'),
+  seed(
+    'prop-risk-adjusted-pos',
+    'proposer',
+    'Risk-adjusted return projection is positive after accounting for volatility.'
+  ),
+  seed('prop-timing-favorable', 'proposer', 'Market conditions support deployment.'),
+  seed('prop-valuation-attractive', 'proposer', 'Current vault metrics meet the entry thresholds.'),
+  seed(
+    'comp-risk-limit-check',
+    'risk-compliance',
+    'Proposed allocation stays within the effective risk ceiling for the profile.'
+  ),
+  seed(
+    'comp-drawdown-bounded',
+    'risk-compliance',
+    'Portfolio drawdown at VaR remains within the maximum loss tolerance.'
+  ),
+  seed('comp-investor-protection', 'risk-compliance', 'No vault exceeds the concentration limit.'),
+  seed(
+    'comp-disclosure-clear',
+    'risk-compliance',
+    'Fee structure, lock-up terms, and exit conditions are transparent.'
+  ),
+  seed(
+    'comp-capital-preserve',
+    'risk-compliance',
+    'Capital preservation rule: if VaR exceeds profile max loss, proposal must be rejected.'
+  ),
+  seed(
+    'val-var-threshold',
+    'validator',
+    'VaR at the specified confidence level is within the risk profile tolerance.'
+  ),
+  seed(
+    'val-cvar-tail-safe',
+    'validator',
+    'CVaR tail risk does not exceed the profile maximum acceptable loss.'
+  ),
+  seed(
+    'val-sim-consistent',
+    'validator',
+    'Proposal blended APY is consistent with the Monte Carlo simulation expected value.'
+  ),
+  seed(
+    'val-outcome-reliable',
+    'validator',
+    'Probability of profit is above the minimum threshold for the risk profile.'
+  ),
 ]

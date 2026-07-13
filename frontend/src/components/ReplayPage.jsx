@@ -30,7 +30,7 @@ function useReplayData() {
     let alive = true
     Promise.all([fetch(GROUND_URL), fetch(MC_URL)])
       .then(([g, m]) => {
-        if (!g.ok || !m.ok) throw new Error('replay data not found')
+        if (!g.ok || !m.ok) throw new Error('Replay data not found')
         return Promise.all([g.json(), m.json()])
       })
       .then(([ground, mc]) => {
@@ -85,7 +85,7 @@ function OutcomeBarChart({ manual, agentic }) {
         <div className="rp-chart-label-col">
           <span className="rp-row-badge rp-row-badge--agentic">AGENTIC</span>
           <span className="rp-row-title">Swarm Execution</span>
-          <span className="rp-row-desc">Instant deterministic execution</span>
+          <span className="rp-row-desc">First-block deterministic execution</span>
         </div>
         <div className="rp-chart-bar-col">
           <div className="rp-bar-wrapper">
@@ -111,11 +111,11 @@ function OutcomeBarChart({ manual, agentic }) {
             </div>
           </div>
           {/* Whisker line showing P5 to P95 range */}
-          <div 
-            className="rp-bar-whisker" 
-            style={{ 
-              left: `${manP5Pct}%`, 
-              width: `${manP95Pct - manP5Pct}%` 
+          <div
+            className="rp-bar-whisker"
+            style={{
+              left: `${manP5Pct}%`,
+              width: `${manP95Pct - manP5Pct}%`,
             }}
           >
             <div className="rp-whisker-cap rp-whisker-cap--left" />
@@ -160,10 +160,15 @@ function ComparisonHero({ manual, agentic }) {
 
       {/* Delta badge */}
       <div className={'rp-delta' + (isPositive ? ' positive' : ' negative')}>
-        <span className="rp-delta-arrow">{isPositive ? '▲' : '▼'}</span>
-        <span className="rp-delta-val">{isPositive ? '+' : ''}{delta.toFixed(4)} WETH</span>
-        <span className="rp-delta-pct">{isPositive ? '+' : ''}{pctDelta}%</span>
-        <span className="rp-delta-label">Agentic advantage</span>
+        <span className="rp-delta-val">
+          {isPositive ? '+' : ''}
+          {delta.toFixed(4)} WETH
+        </span>
+        <span className="rp-delta-pct">
+          {isPositive ? '+' : ''}
+          {pctDelta}%
+        </span>
+        <span className="rp-delta-label">Difference from manual P50</span>
       </div>
 
       {/* Agentic card */}
@@ -213,11 +218,11 @@ export default function ReplayPage() {
           <div className="rp-header__top">
             <h1 className="rp-title">Historical Replay</h1>
             <span className="rp-net">
-              <span className="rp-net__dot" /> static JSON · no wallet · no RPC
+              <span className="rp-net__dot" /> Static JSON. No wallet or RPC.
             </span>
           </div>
           <p className="rp-lede">
-            USDC depeg, March 11 2023 — replayed on a pinned mainnet fork. Real on-chain swaps at
+            USDC depeg, March 11 2023, replayed on a pinned mainnet fork. Real on-chain swaps at
             five reaction delays; never a prediction.
           </p>
         </header>
@@ -251,9 +256,21 @@ export default function ReplayPage() {
 
               {/* stat grid */}
               <div className="rp-stats">
-                <StatBlock label="Manual P5 (worst)" value={fmtWeth(mc.manual.p5)} variant="rp-stat--manual" />
-                <StatBlock label="Manual P50 (median)" value={fmtWeth(mc.manual.p50)} variant="rp-stat--manual" />
-                <StatBlock label="Manual P95 (best)" value={fmtWeth(mc.manual.p95)} variant="rp-stat--manual" />
+                <StatBlock
+                  label="Manual P5 (worst)"
+                  value={fmtWeth(mc.manual.p5)}
+                  variant="rp-stat--manual"
+                />
+                <StatBlock
+                  label="Manual P50 (median)"
+                  value={fmtWeth(mc.manual.p50)}
+                  variant="rp-stat--manual"
+                />
+                <StatBlock
+                  label="Manual P95 (best)"
+                  value={fmtWeth(mc.manual.p95)}
+                  variant="rp-stat--manual"
+                />
                 <StatBlock
                   label="Agentic (deterministic)"
                   value={fmtWeth(mc.agentic.deterministic)}
@@ -287,8 +304,7 @@ export default function ReplayPage() {
                 <AssumptionRow label="Depeg date" value={mc.provenance.depegDate} />
               </div>
               <p className="rp-disclaimer">
-                {mc.label}. Forward-looking scenarios are scoped to this replay — not a predictive
-                model.
+                {mc.label}. This replay does not predict future outcomes.
               </p>
             </section>
           </>
@@ -362,14 +378,7 @@ function ReplayStyle() {
 }
 .rp-net__dot {
   width: 7px; height: 7px; border-radius: 50%;
-  background: var(--accent, #cfff3d);
-  box-shadow: 0 0 0 0 rgba(207,255,61,0.6);
-  animation: rp-pulse 2.4s ease-out infinite;
-}
-@keyframes rp-pulse {
-  0% { box-shadow: 0 0 0 0 rgba(207,255,61,0.5); }
-  70% { box-shadow: 0 0 0 7px rgba(207,255,61,0); }
-  100% { box-shadow: 0 0 0 0 rgba(207,255,61,0); }
+  background: var(--text-faint, #7a7a70);
 }
 .rp-lede {
   margin-top: 1.1rem;
@@ -617,6 +626,10 @@ function ReplayStyle() {
   background: linear-gradient(90deg, rgba(207,255,61,0.25) 0%, var(--accent, #cfff3d) 100%);
   border: 1px solid rgba(207,255,61,0.5);
   box-shadow: 0 0 20px rgba(207,255,61,0.15);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rp-bar { transition: none; }
 }
 .rp-bar--manual {
   background: linear-gradient(90deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.12) 100%);

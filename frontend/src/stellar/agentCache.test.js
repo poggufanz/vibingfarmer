@@ -95,7 +95,7 @@ describe('scopeHeadroom (rolling window)', () => {
     const s = scope({ period_start: BigInt(NOW - 100), spent_in_period: 400000000n })
     expect(scopeHeadroom(s, NOW)).toBe(100000000n)
   })
-  test('spent resets once the window elapsed — cap headroom restored', () => {
+  test('spent resets once the window elapsed - cap headroom restored', () => {
     const s = scope({
       period_start: BigInt(NOW - 86401),
       spent_in_period: 500000000n, // fully drained…
@@ -176,7 +176,7 @@ describe('takeReusableAgent', () => {
     expect(loadCachedAgents({ owner: OWNER, vault: VAULT, network: NET, storage })).toEqual([])
   })
 
-  test('keeps (but never reuses) an entry whose scope read failed — no blind cache hits', async () => {
+  test('keeps (but never reuses) an entry whose scope read failed - no blind cache hits', async () => {
     saveCachedAgent({ owner: OWNER, vault: VAULT, network: NET, entry: entry(), storage })
     const taken = await takeReusableAgent(takeArgs({ readScope: async () => null }))
     expect(taken).toBeNull()

@@ -5,10 +5,9 @@ export function ApproveOverlay({ verdict, simulate, onApprove, onReject }) {
   return (
     <div className="approve" role="dialog" aria-label="Approve transaction">
       <div className="eyebrow">
-        <span className="dot">·</span>
-        <span className="sec">approve</span>
+        <span className="sec">Approve</span>
         <span className="rule" />
-        <span>f8 gate</span>
+        <span>F8 gate</span>
       </div>
       <p
         className={'approve-verdict ' + (eligible ? 'ok' : 'bad')}
@@ -18,7 +17,7 @@ export function ApproveOverlay({ verdict, simulate, onApprove, onReject }) {
         {eligible ? 'Eligible' : 'Not eligible'}: {(verdict?.reasons ?? []).join('; ')}
       </p>
       <div className="row">
-        <span className="row-k">shares out</span>
+        <span className="row-k">Shares out</span>
         <span className="row-v mono tnum" data-testid="amount">
           {simulate?.sharesOut ?? '-'}
         </span>

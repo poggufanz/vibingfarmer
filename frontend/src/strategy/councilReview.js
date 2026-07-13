@@ -14,16 +14,23 @@ const MARGIN = 0.25
 export const ROLE_LABEL = { yield: 'Yield Analyst', risk: 'Risk Analyst', market: 'Market Analyst' }
 
 const ROLE_SYSTEM = {
-  yield: 'You are the Yield Analyst on a DeFi AI Council. You judge ONLY yield quality: blended APY vs the risk profile, the risk-adjusted projected annual return, and whether TVL makes the quoted APY credible. Output JSON only: {"signal":"DEPOSIT|HOLD|WITHDRAW","confidence":0..1,"reasoning":"...","citedRules":["..."],"concerns":["..."]}. Cite ONLY rule ids from the provided list.',
-  risk: 'You are the Risk Analyst on a DeFi AI Council. You judge ONLY downside risk: market regime (turbulent ⇒ WITHDRAW), action-space gate violations, basket drawdown vs the profile tolerance. Safety outranks yield. Output JSON only: {"signal":"DEPOSIT|HOLD|WITHDRAW","confidence":0..1,"reasoning":"...","citedRules":["..."],"concerns":["..."]}. Cite ONLY rule ids from the provided list.',
-  market: 'You are the Market Analyst on a DeFi AI Council. You judge ONLY timing and execution cost: gas level vs expected yield, regime, and any adverse live market signals. Output JSON only: {"signal":"DEPOSIT|HOLD|WITHDRAW","confidence":0..1,"reasoning":"...","citedRules":["..."],"concerns":["..."]}. Cite ONLY rule ids from the provided list.',
+  yield:
+    'You are the Yield Analyst on a DeFi AI Council. You judge ONLY yield quality: blended APY vs the risk profile, the risk-adjusted projected annual return, and whether TVL makes the quoted APY credible. Output JSON only: {"signal":"DEPOSIT|HOLD|WITHDRAW","confidence":0..1,"reasoning":"...","citedRules":["..."],"concerns":["..."]}. Cite ONLY rule ids from the provided list.',
+  risk: 'You are the Risk Analyst on a DeFi AI Council. You judge ONLY downside risk: a turbulent market means WITHDRAW, plus action-space gate violations and basket drawdown against the profile tolerance. Safety outranks yield. Output JSON only: {"signal":"DEPOSIT|HOLD|WITHDRAW","confidence":0..1,"reasoning":"...","citedRules":["..."],"concerns":["..."]}. Cite ONLY rule ids from the provided list.',
+  market:
+    'You are the Market Analyst on a DeFi AI Council. You judge ONLY timing and execution cost: gas level vs expected yield, regime, and any adverse live market signals. Output JSON only: {"signal":"DEPOSIT|HOLD|WITHDRAW","confidence":0..1,"reasoning":"...","citedRules":["..."],"concerns":["..."]}. Cite ONLY rule ids from the provided list.',
 }
 
 // ── Legacy: buildSpecialistPrompt, buildCouncilInput, synthesize, councilReview ──
 
 export function buildSpecialistPrompt(role, input, rules) {
   const ruleList = rules.map((r) => `  - ${r.id}: ${r.description}`).join('\n')
-  const vaults = input.vaults.map((v) => `${v.name} (${v.protocol}) ${v.apy}% APY · ${v.allocationPct}% alloc · ${v.drawdown}% dd · ${v.riskTier}`).join('; ')
+  const vaults = input.vaults
+    .map(
+      (v) =>
+        `${v.name} (${v.protocol}) ${v.apy}% APY, ${v.allocationPct}% alloc, ${v.drawdown}% dd, ${v.riskTier}`
+    )
+    .join('; ')
   let slice = ''
   if (role === 'yield') {
     slice = `Blended APY: ${input.blendedApy}%\nProjected annual (risk-adjusted): ${input.projectedAnnualUsdc} USDC\nRisk-adjusted score: ${input.riskAdjustedScore} (penalty ${input.riskPenalty})\nProfile risk: ${input.riskTier}`
@@ -43,7 +50,9 @@ export function buildCouncilInput(strategy, state = {}) {
     protocol: a.vault?.protocol || '',
     apy: Number(a.vault?.apy) || 0,
     drawdown: Number(a.vault?.drawdown) || 0,
-    allocationPct: strategy?.total ? +(((Number(a.allocation) || 0) / strategy.total) * 100).toFixed(1) : 0,
+    allocationPct: strategy?.total
+      ? +(((Number(a.allocation) || 0) / strategy.total) * 100).toFixed(1)
+      : 0,
     riskTier: a.vault?.risk || a.vault?.risk_tier || 'medium',
   }))
   return {
@@ -66,32 +75,55 @@ export function buildCouncilInput(strategy, state = {}) {
 
 export async function synthesize(verdicts, { resolveConflict, market }) {
   const risk = verdicts.find((v) => v.role === 'risk') || { signal: 'HOLD', confidence: 0 }
-  const cited = (signal) => [...new Set(verdicts.filter((v) => v.signal === signal).flatMap((v) => v.citedRules))]
+  const cited = (signal) => [
+    ...new Set(verdicts.filter((v) => v.signal === signal).flatMap((v) => v.citedRules)),
+  ]
   const avg = verdicts.reduce((a, v) => a + v.confidence, 0) / (verdicts.length || 1)
   const labelFirstNonDeposit = () => {
     const x = verdicts.find((v) => v.signal !== 'DEPOSIT')
     return x ? ROLE_LABEL[x.role] : null
   }
-  const res = (verdict, reason, confidence, citedRules, resolvedBy) =>
-    ({ verdict, reason, confidence: +Number(confidence).toFixed(3), citedRules, specialists: verdicts, resolvedBy })
+  const res = (verdict, reason, confidence, citedRules, resolvedBy) => ({
+    verdict,
+    reason,
+    confidence: +Number(confidence).toFixed(3),
+    citedRules,
+    specialists: verdicts,
+    resolvedBy,
+  })
 
   if (risk.signal === 'WITHDRAW' && risk.confidence > VETO_CONF) {
     return res('discard', 'Risk Analyst', risk.confidence, risk.citedRules, 'veto')
   }
   const counts = verdicts.reduce((m, v) => ((m[v.signal] = (m[v.signal] || 0) + 1), m), {})
-  const tally = verdicts.reduce((m, v) => ((m[v.signal] = (m[v.signal] || 0) + v.confidence), m), {})
+  const tally = verdicts.reduce(
+    (m, v) => ((m[v.signal] = (m[v.signal] || 0) + v.confidence), m),
+    {}
+  )
   if (counts.DEPOSIT === 3) return res('keep', null, avg, cited('DEPOSIT'), 'unanimous')
-  if ((counts.HOLD || 0) + (counts.WITHDRAW || 0) === 3) return res('discard', labelFirstNonDeposit(), avg, [], 'unanimous')
+  if ((counts.HOLD || 0) + (counts.WITHDRAW || 0) === 3)
+    return res('discard', labelFirstNonDeposit(), avg, [], 'unanimous')
   const proceed = (tally.DEPOSIT || 0) / 3
   const against = ((tally.HOLD || 0) + (tally.WITHDRAW || 0)) / 3
   if (proceed - against > MARGIN) return res('keep', null, proceed, cited('DEPOSIT'), 'weighted')
-  if (against - proceed > MARGIN) return res('discard', labelFirstNonDeposit(), against, [], 'weighted')
+  if (against - proceed > MARGIN)
+    return res('discard', labelFirstNonDeposit(), against, [], 'weighted')
   let signal = 'HOLD'
   if (typeof resolveConflict === 'function') {
-    try { signal = await resolveConflict(verdicts, market) } catch { signal = 'HOLD' }
+    try {
+      signal = await resolveConflict(verdicts, market)
+    } catch {
+      signal = 'HOLD'
+    }
   }
   const keep = signal === 'DEPOSIT'
-  return res(keep ? 'keep' : 'discard', keep ? null : 'AI synthesis', avg, keep ? cited('DEPOSIT') : [], 'ai-conflict')
+  return res(
+    keep ? 'keep' : 'discard',
+    keep ? null : 'AI synthesis',
+    avg,
+    keep ? cited('DEPOSIT') : [],
+    'ai-conflict'
+  )
 }
 
 async function runSpecialist(role, input, deps, attempts) {
@@ -102,9 +134,18 @@ async function runSpecialist(role, input, deps, attempts) {
   const allowedRuleIds = rules.map((r) => r.id)
   for (let i = 0; i < attempts; i++) {
     try {
-      const v = await specialist({ role, systemPrompt: ROLE_SYSTEM[role], userPrompt, allowedRuleIds, devApiKey, signal })
+      const v = await specialist({
+        role,
+        systemPrompt: ROLE_SYSTEM[role],
+        userPrompt,
+        allowedRuleIds,
+        devApiKey,
+        signal,
+      })
       if (v) return v
-    } catch { /* retry */ }
+    } catch {
+      /* retry */
+    }
   }
   return null
 }
@@ -114,10 +155,19 @@ export async function councilReview(input, deps = {}) {
   const { ROLE_RULES } = await import('./playbookRules.js')
   const roles = ['yield', 'risk', 'market']
   const sharedDeps = { specialist, ROLE_RULES, devApiKey, signal }
-  const settled = await Promise.all(roles.map((role) => runSpecialist(role, input, sharedDeps, attempts)))
+  const settled = await Promise.all(
+    roles.map((role) => runSpecialist(role, input, sharedDeps, attempts))
+  )
   const verdicts = settled.filter(Boolean)
   if (verdicts.length < roles.length) {
-    return { verdict: 'unavailable', reason: 'council unavailable', confidence: 0, citedRules: [], specialists: verdicts, resolvedBy: 'unavailable' }
+    return {
+      verdict: 'unavailable',
+      reason: 'Council review is unavailable.',
+      confidence: 0,
+      citedRules: [],
+      specialists: verdicts,
+      resolvedBy: 'unavailable',
+    }
   }
   return synthesize(verdicts, { resolveConflict, market: { turbulence: input.turbulence } })
 }
@@ -134,15 +184,15 @@ export const DEBATE_ROLE_LABEL = {
 }
 
 export const DEBATE_SYSTEM = {
-  proposer: `You are the Yield Proposer — an opportunistic strategist seeking profitable deposit opportunities.
+  proposer: `You are the Yield Proposer - an opportunistic strategist seeking profitable deposit opportunities.
 You propose vault allocations and argue WHY they should proceed.
 You respond to compliance concerns by adjusting your proposal.
 Output JSON only: {"proposal":{"action":"DEPOSIT|HOLD|WITHDRAW","reasoning":"...","confidence":0..1},"arguments":["..."],"citedRules":["..."]}`,
-  'risk-compliance': `You are the Risk & Compliance Officer — a strict regulator enforcing investment rules.
+  'risk-compliance': `You are the Risk & Compliance Officer - a strict regulator enforcing investment rules.
 You evaluate the Proposer's argument against compliance rules.
 You NEVER compromise on risk limits. Safety outranks yield.
 Output JSON only: {"assessment":{"action":"DEPOSIT|HOLD|WITHDRAW","confidence":0..1},"violationsFound":["..."],"regulationsCited":["..."],"concerns":["..."],"compliancePass":true|false}`,
-  validator: `You are the Simulation Validator — a numerical consistency checker.
+  validator: `You are the Simulation Validator - a numerical consistency checker.
 Your ONLY job: verify the debate outcome is consistent with Monte Carlo simulation results.
 You receive VaR (Value at Risk) and CVaR (Conditional VaR) from the simulation.
 Output JSON only: {"consistent":true|false,"VaRAcceptable":true|false,"CVaRAcceptable":true|false,"simMatches":true|false,"concerns":["..."],"confidence":0..1}`,
@@ -156,7 +206,9 @@ export function buildDebateInput(strategy, simulation, state = {}) {
     protocol: a.vault?.protocol || '',
     apy: Number(a.vault?.apy) || 0,
     drawdown: Number(a.vault?.drawdown) || 0,
-    allocationPct: strategy?.total ? +(((Number(a.allocation) || 0) / strategy.total) * 100).toFixed(1) : 0,
+    allocationPct: strategy?.total
+      ? +(((Number(a.allocation) || 0) / strategy.total) * 100).toFixed(1)
+      : 0,
     riskTier: a.vault?.risk || a.vault?.risk_tier || 'medium',
   }))
   return {
@@ -178,14 +230,18 @@ export function buildDebateInput(strategy, simulation, state = {}) {
     CVaR: simulation?.CVaR ?? null,
     expectedValue: simulation?.expectedValue ?? null,
     probProfit: simulation?.probProfit ?? null,
+    maxDrawdownPct: state?.profile?.maxDrawdownPct ?? 10.0,
   }
 }
 
 function buildProposerPrompt(input, riskFeedback) {
-  const vaults = input.vaults.map((v) => `${v.name} (${v.protocol}) ${v.apy}% APY · ${v.allocationPct}% alloc · ${v.riskTier}`).join('; ')
+  const vaults = input.vaults
+    .map((v) => `${v.name} (${v.protocol}) ${v.apy}% APY, ${v.allocationPct}% alloc, ${v.riskTier}`)
+    .join('; ')
   let prompt = `Proposed deposit: ${input.amountUsdc} USDC across ${input.numVaults} vault(s): ${vaults}
 Market regime: ${input.turbulence}
 Profile risk: ${input.riskTier}
+Max drawdown limit: ${input.maxDrawdownPct}%
 Blended APY: ${input.blendedApy}%
 Risk-adjusted projected annual: ${input.projectedAnnualUsdc} USDC`
   if (riskFeedback && riskFeedback.length) {
@@ -195,10 +251,13 @@ Risk-adjusted projected annual: ${input.projectedAnnualUsdc} USDC`
 }
 
 function buildRiskCompliancePrompt(input, proposer) {
-  const vaults = input.vaults.map((v) => `${v.name} (${v.protocol}) ${v.apy}% APY · ${v.allocationPct}% alloc · ${v.riskTier}`).join('; ')
+  const vaults = input.vaults
+    .map((v) => `${v.name} (${v.protocol}) ${v.apy}% APY, ${v.allocationPct}% alloc, ${v.riskTier}`)
+    .join('; ')
   let prompt = `Proposed deposit: ${input.amountUsdc} USDC across ${input.numVaults} vault(s): ${vaults}
 Market regime: ${input.turbulence}
 Max drawdown: ${input.maxDrawdown}%
+Max drawdown limit: ${input.maxDrawdownPct}%
 Profile risk: ${input.riskTier}
 
 Proposer argument:
@@ -230,7 +289,13 @@ async function runProposer(input, riskFeedback, deps) {
   const userPrompt = buildProposerPrompt(input, riskFeedback)
   const allowedRuleIds = rules.map((r) => r.id)
   try {
-    return await proposer({ systemPrompt: DEBATE_SYSTEM.proposer, userPrompt, allowedRuleIds, devApiKey, signal })
+    return await proposer({
+      systemPrompt: DEBATE_SYSTEM.proposer,
+      userPrompt,
+      allowedRuleIds,
+      devApiKey,
+      signal,
+    })
   } catch {
     return null
   }
@@ -243,7 +308,13 @@ async function runRiskCompliance(input, proposer, deps) {
   const userPrompt = buildRiskCompliancePrompt(input, proposer)
   const allowedRuleIds = rules.map((r) => r.id)
   try {
-    return await riskCompliance({ systemPrompt: DEBATE_SYSTEM['risk-compliance'], userPrompt, allowedRuleIds, devApiKey, signal })
+    return await riskCompliance({
+      systemPrompt: DEBATE_SYSTEM['risk-compliance'],
+      userPrompt,
+      allowedRuleIds,
+      devApiKey,
+      signal,
+    })
   } catch {
     return null
   }
@@ -266,30 +337,50 @@ export function isConverged(proposer, riskComp, threshold = CONVERGE_DEFAULT) {
   const rAction = riskComp.assessment?.action
   if (!pAction || !rAction) return false
   const sameSignal = pAction === rAction
-  const confGap = Math.abs((proposer.proposal?.confidence ?? 0) - (riskComp.assessment?.confidence ?? 0))
+  const confGap = Math.abs(
+    (proposer.proposal?.confidence ?? 0) - (riskComp.assessment?.confidence ?? 0)
+  )
   return sameSignal && confGap < threshold
 }
 
 export function hardStopGate(validator, proposer, riskComp) {
   if (!validator || !validator.consistent) {
-    return { passed: false, reason: 'SIMULATION MISMATCH — proposal inconsistent with VaR/CVaR model', detail: validator?.concerns?.join('; ') || '' }
+    return {
+      passed: false,
+      reason: 'Simulation mismatch. The proposal does not match the VaR/CVaR model.',
+      detail: validator?.concerns?.join('; ') || '',
+    }
   }
   if (riskComp && riskComp.compliancePass === false) {
-    return { passed: false, reason: 'COMPLIANCE VIOLATION', detail: (riskComp.violationsFound || []).join('; ') }
+    return {
+      passed: false,
+      reason: 'Compliance check failed.',
+      detail: (riskComp.violationsFound || []).join('; '),
+    }
   }
   if (proposer?.proposal?.action === 'WITHDRAW' || riskComp?.assessment?.action === 'WITHDRAW') {
-    return { passed: false, reason: 'COUNCIL RECOMMENDS WITHDRAW', detail: 'Both proposer and risk agree to defer' }
+    return {
+      passed: false,
+      reason: 'The council recommends withdrawal.',
+      detail: 'The yield and risk reviewers both recommend waiting.',
+    }
   }
   return { passed: true, reason: null, detail: null }
 }
 
 export function summarizeToSentence(proposer, riskComp, validator, input) {
-  const action = proposer?.proposal?.action || 'unknown'
+  const action =
+    { DEPOSIT: 'Deposit', HOLD: 'Hold', WITHDRAW: 'Withdraw' }[proposer?.proposal?.action] ||
+    'Unknown'
   const pConf = ((proposer?.proposal?.confidence ?? 0) * 100).toFixed(0)
-  const compPass = riskComp?.compliancePass === true ? 'PASS' : 'FAIL'
-  const vaRatio = input.VaR != null && input.amountUsdc ? `VaR ${(Math.abs(input.VaR) / input.amountUsdc * 100).toFixed(1)}%` : 'VaR n/a'
-  const profitOdds = input.probProfit != null ? `${(input.probProfit * 100).toFixed(0)}% profit odds` : ''
-  return `Deposit $${input.amountUsdc} across ${input.numVaults} vault(s): ${action} (${pConf}% confidence), compliance ${compPass}, ${vaRatio}${profitOdds ? ', ' + profitOdds : ''}.`
+  const compPass = riskComp?.compliancePass === true ? 'Passed' : 'Failed'
+  const vaRatio =
+    input.VaR != null && input.amountUsdc
+      ? `${((Math.abs(input.VaR) / input.amountUsdc) * 100).toFixed(1)}%`
+      : 'Unavailable'
+  const profitOdds =
+    input.probProfit != null ? ` Profit likelihood: ${(input.probProfit * 100).toFixed(0)}%.` : ''
+  return `${input.amountUsdc} USDC across ${input.numVaults} vault(s). Recommendation: ${action}. Confidence: ${pConf}%. Compliance: ${compPass}. VaR: ${vaRatio}.${profitOdds}`
 }
 
 export async function councilDebate(input, deps = {}) {
@@ -315,25 +406,65 @@ export async function councilDebate(input, deps = {}) {
     const riskFeedback = riskCompResult?.concerns || null
     proposerResult = await runProposer(input, riskFeedback, sharedDeps)
     if (!proposerResult) {
-      return { verdict: 'unavailable', reason: 'Proposer unavailable — AI call failed', debateLog, iterations: i + 1, converged: false, proposer: lastProposer, riskCompliance: lastRiskComp, validator: null, gate: null, permissionSentence: null, confidence: lastProposer?.confidence ?? 0 }
+      return {
+        verdict: 'unavailable',
+        reason: 'The yield proposal is unavailable because the AI request failed.',
+        debateLog,
+        iterations: i + 1,
+        converged: false,
+        proposer: lastProposer,
+        riskCompliance: lastRiskComp,
+        validator: null,
+        gate: null,
+        permissionSentence: null,
+        confidence: lastProposer?.confidence ?? 0,
+      }
     }
     lastProposer = proposerResult
     riskCompResult = await runRiskCompliance(input, proposerResult, sharedDeps)
     if (!riskCompResult) {
-      return { verdict: 'unavailable', reason: 'Risk/Compliance unavailable — AI call failed', debateLog, iterations: i + 1, converged: false, proposer: lastProposer, riskCompliance: lastRiskComp, validator: null, gate: null, permissionSentence: null, confidence: lastProposer?.confidence ?? 0 }
+      return {
+        verdict: 'unavailable',
+        reason: 'The risk and compliance review is unavailable because the AI request failed.',
+        debateLog,
+        iterations: i + 1,
+        converged: false,
+        proposer: lastProposer,
+        riskCompliance: lastRiskComp,
+        validator: null,
+        gate: null,
+        permissionSentence: null,
+        confidence: lastProposer?.confidence ?? 0,
+      }
     }
     lastRiskComp = riskCompResult
     debateLog.push({
       iteration: i + 1,
-      proposer: { action: proposerResult.action, confidence: proposerResult.confidence, reasoning: proposerResult.reasoning, arguments: proposerResult.arguments, citedRules: proposerResult.citedRules },
-      riskCompliance: { action: riskCompResult.action, confidence: riskCompResult.confidence, violations: riskCompResult.violationsFound, concerns: riskCompResult.concerns, compliancePass: riskCompResult.compliancePass },
+      proposer: {
+        action: proposerResult.action,
+        confidence: proposerResult.confidence,
+        reasoning: proposerResult.reasoning,
+        arguments: proposerResult.arguments,
+        citedRules: proposerResult.citedRules,
+      },
+      riskCompliance: {
+        action: riskCompResult.action,
+        confidence: riskCompResult.confidence,
+        violations: riskCompResult.violationsFound,
+        concerns: riskCompResult.concerns,
+        compliancePass: riskCompResult.compliancePass,
+      },
     })
     if (isConverged(proposerResult, riskCompResult, convergenceThreshold)) {
       break
     }
   }
 
-  const validatorResult = await runValidator(input, proposerResult, riskCompResult, { validator, devApiKey, signal })
+  const validatorResult = await runValidator(input, proposerResult, riskCompResult, {
+    validator,
+    devApiKey,
+    signal,
+  })
 
   const gate = hardStopGate(validatorResult, proposerResult, riskCompResult)
   const converged = isConverged(proposerResult, riskCompResult, convergenceThreshold)
@@ -341,7 +472,7 @@ export async function councilDebate(input, deps = {}) {
   if (!gate.passed || validatorResult?.consistent === false) {
     return {
       verdict: 'discard',
-      reason: gate.reason || 'Validator rejected',
+      reason: gate.reason || 'The validator rejected the proposal.',
       detail: gate.detail || (validatorResult?.concerns || []).join('; '),
       debateLog,
       iterations: debateLog.length,
@@ -351,10 +482,7 @@ export async function councilDebate(input, deps = {}) {
       validator: validatorResult,
       gate,
       permissionSentence: null,
-      confidence: Math.min(
-        proposerResult?.confidence ?? 0,
-        riskCompResult?.confidence ?? 0
-      ),
+      confidence: Math.min(proposerResult?.confidence ?? 0, riskCompResult?.confidence ?? 0),
     }
   }
 
@@ -372,10 +500,10 @@ export async function councilDebate(input, deps = {}) {
     validator: validatorResult,
     gate,
     permissionSentence: sentence,
-    confidence: (
-      (proposerResult?.confidence ?? 0) +
-      (riskCompResult?.confidence ?? 0) +
-      (validatorResult?.confidence ?? 0)
-    ) / 3,
+    confidence:
+      ((proposerResult?.confidence ?? 0) +
+        (riskCompResult?.confidence ?? 0) +
+        (validatorResult?.confidence ?? 0)) /
+      3,
   }
 }

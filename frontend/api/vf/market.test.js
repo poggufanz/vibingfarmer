@@ -77,6 +77,14 @@ describe('market endpoints', () => {
     await vfRouter(mk('POST', '/eligibility', { vault: 'CVAULT', amount: 'xx' }, key), res)
     expect(res.statusCode).toBe(400)
   })
+  it('eligibility fails closed on an unknown protocol - no silent blend-usdc default', async () => {
+    const res = mockRes()
+    await vfRouter(mk('POST', '/eligibility', { vault: 'CVAULT', amount: '10000000' }, key), res)
+    expect(res.statusCode).toBe(200)
+    const out = JSON.parse(res.body)
+    expect(out.allow).toBe(false)
+    expect(out.reasons[0]).toMatch(/facts unavailable/)
+  })
   it('prices proxies DeFiLlama and never echoes upstream errors', async () => {
     vi.stubGlobal(
       'fetch',

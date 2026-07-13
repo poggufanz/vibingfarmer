@@ -24,8 +24,19 @@ export default async function handler(req, res) {
     return json(res, 400, { error: 'Invalid amount' })
   }
   if (typeof vault !== 'string' || !vault) return json(res, 400, { error: 'Missing vault' })
-  const { facts } = resolveVaultFacts(protocol || 'blend-usdc')
-  const verdict = evaluate({ vault, amount: amt, facts })
+  // Fail-closed: resolve by explicit protocol, else treat vault as the slug. No silent default —
+  // an unknown protocol must reject, never inherit another protocol's facts.
+  let resolved
+  try {
+    resolved = resolveVaultFacts(typeof protocol === 'string' && protocol ? protocol : vault)
+  } catch (err) {
+    return json(res, 200, {
+      allow: false,
+      verdict: null,
+      reasons: [`facts unavailable: ${err.message}`],
+    })
+  }
+  const verdict = evaluate({ ...resolved, vault, amount: amt })
   json(res, 200, {
     allow: verdict.eligible ?? false,
     verdict,

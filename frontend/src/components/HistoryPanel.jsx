@@ -22,7 +22,7 @@ function formatTime(ts) {
   const m = Math.floor(diff / 60_000),
     h = Math.floor(diff / 3_600_000),
     d = Math.floor(diff / 86_400_000)
-  if (m < 1) return 'just now'
+  if (m < 1) return 'Just now'
   if (m < 60) return `${m} min ago`
   if (h < 24) return `${h} hr ago`
   return `${d}d ago`
@@ -35,7 +35,7 @@ const TABS = [
   { id: 'reasoning', label: 'AI Reasoning' },
 ]
 
-const Empty = ({ what }) => <div className="history-empty mono">no {what} yet</div>
+const Empty = ({ what }) => <div className="history-empty mono">No {what} yet.</div>
 
 /* ---------- Transactions (Etherscan-like table) ---------- */
 const TxList = ({ rows }) => {
@@ -44,11 +44,11 @@ const TxList = ({ rows }) => {
   return (
     <div className="tx-table">
       <div className="tx-row tx-head mono">
-        <span>status</span>
-        <span>txn hash</span>
-        <span>vault</span>
-        <span>amount</span>
-        <span>age</span>
+        <span>Status</span>
+        <span>Txn hash</span>
+        <span>Vault</span>
+        <span>Amount</span>
+        <span>Age</span>
       </div>
       {rows.map((r) => {
         const isWithdraw = r.type === 'withdraw'
@@ -59,7 +59,7 @@ const TxList = ({ rows }) => {
             style={{ cursor: r.txHash ? 'pointer' : 'default' }}
             onClick={() => r.txHash && navigateTo('tx', r.txHash)}
           >
-            <span className="tx-status" title="confirmed">
+            <span className="tx-status" title="Confirmed">
               <Icon name="check" size={13} />
             </span>
             <span
@@ -81,14 +81,14 @@ const TxList = ({ rows }) => {
                   r.workerId || (isWithdraw ? 'manual withdraw' : null),
                 ]
                   .filter(Boolean)
-                  .join(' · ')}
+                  .join(', ')}
               </span>
             </span>
             <span
               className="tx-amount mono tnum"
               style={{ color: isWithdraw ? 'var(--warn)' : 'var(--ok)' }}
             >
-              {isWithdraw ? '↑' : '↓'} {r.amountUsdc} USDC
+              {r.amountUsdc} USDC
             </span>
             <span className="tx-age mono">{formatTime(r.timestamp)}</span>
           </div>
@@ -108,24 +108,24 @@ const StratList = ({ rows }) => {
           <div className="hist-card-head">
             <span className="hist-dot" />
             <b>
-              {r.riskLevel} risk · {r.amountUsdc} USDC
+              {r.riskLevel} risk, {r.amountUsdc} USDC
             </b>
             <span className="hist-age mono">{formatTime(r.timestamp)}</span>
           </div>
           <div className="hist-card-meta mono">
-            {r.numVaults} vault{r.numVaults === 1 ? '' : 's'} · {r.blendedApy}% blended APY
+            {r.numVaults} vault{r.numVaults === 1 ? '' : 's'}, {r.blendedApy}% blended APY
           </div>
           <div className="hist-card-tags mono">
-            {r.strategySource} ·{' '}
-            {r.vaultDataSource === 'defiLlama' ? 'DeFiLlama data' : 'static data'}
-            {r.marketContextUsed ? ' · live market' : ''}
+            {r.strategySource},{' '}
+            {r.vaultDataSource === 'defiLlama' ? 'DeFiLlama data' : 'Static data'}
+            {r.marketContextUsed ? ', live market' : ''}
           </div>
           {r.dagTimings && (
             <div className="hist-card-meta mono">
-              dag {r.dagWallMs}ms ·{' '}
+              DAG {r.dagWallMs}ms,{' '}
               {Object.entries(r.dagTimings)
                 .map(([id, ms]) => `${id} ${Math.round(ms)}ms`)
-                .join(' · ')}
+                .join(', ')}
             </div>
           )}
         </div>
@@ -147,7 +147,7 @@ const ReasonList = ({ rows }) => {
           </div>
           <div className="hist-reason">“{r.reasoning}”</div>
           <div className="hist-card-meta mono">
-            {r.riskTier} risk · {r.yieldSource} · {r.expectedApy}% APY · {r.modelUsed}
+            {r.riskTier} risk, {r.yieldSource}, {r.expectedApy}% APY, {r.modelUsed}
           </div>
         </div>
       ))}
@@ -195,10 +195,10 @@ const HistoryPanel = () => {
     <section className="history-page enter">
       <div className="history-head">
         <div className="eyebrow">
-          <span>History · on-chain explorer</span>
+          <span>History, on-chain explorer</span>
         </div>
         <button className="perm-revoke" onClick={onClear}>
-          clear all
+          Clear all
         </button>
       </div>
 
@@ -244,7 +244,7 @@ const HistoryPanel = () => {
             disabled={page === 1}
             onClick={() => setPage((p) => Math.max(1, p - 1))}
           >
-            ← Prev
+            Previous
           </button>
           <span className="mono" style={{ fontSize: 11, color: 'var(--text-faint)' }}>
             Page {page} of {totalPages}
@@ -260,7 +260,7 @@ const HistoryPanel = () => {
             disabled={page >= totalPages}
             onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
           >
-            Next →
+            Next
           </button>
         </div>
       )}

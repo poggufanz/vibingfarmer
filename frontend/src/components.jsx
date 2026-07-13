@@ -181,13 +181,14 @@ const Sidebar = ({ extended, onToggle }) => {
     { key: 'vaults', icon: 'grid', path: '/strategy', label: 'Strategy' },
     { key: 'agent', icon: 'network', path: '/agent', label: 'Dashboard' },
     { key: 'history', icon: 'layers', path: '/history', label: 'History' },
+    { key: 'developers', icon: 'code', path: '/developers', label: 'Developers' },
     { key: 'settings', icon: 'settings', path: '/settings', label: 'Settings' },
   ]
 
   return (
-    <nav className="sidebar" aria-label="Primary">
+    <nav className="sidebar" aria-label="Primary navigation">
       <div className="sb-logo" title="vibing/farmer">
-        <img src="/vibing_farmer.logo.svg" alt="logo" style={{ width: 18, height: 18 }} />
+        <img src="/vibing_farmer.logo.svg" alt="" style={{ width: 18, height: 18 }} />
         <span className="sb-logo-text">vibing/farmer</span>
       </div>
       {items.map((it) => (
@@ -196,6 +197,7 @@ const Sidebar = ({ extended, onToggle }) => {
           className={`sb-item ${activePath === it.path ? 'active' : ''}`}
           title={it.label}
           aria-label={it.label}
+          aria-current={activePath === it.path ? 'page' : undefined}
           onClick={() => navigate(it.path)}
         >
           <Icon name={it.icon} />
@@ -207,13 +209,12 @@ const Sidebar = ({ extended, onToggle }) => {
       <button
         className="sb-item sb-toggle"
         onClick={onToggle}
-        title={extended ? 'Collapse Sidebar' : 'Expand Sidebar'}
+        title={extended ? 'Collapse sidebar' : 'Expand sidebar'}
+        aria-label={extended ? 'Collapse sidebar' : 'Expand sidebar'}
+        aria-expanded={extended}
       >
-        <Icon
-          name={extended ? 'panelLeftClose' : 'panelLeftOpen'}
-          style={{ transition: 'all 0.15s ease' }}
-        />
-        <span className="sb-label">Collapse</span>
+        <Icon name={extended ? 'panelLeftClose' : 'panelLeftOpen'} />
+        <span className="sb-label">{extended ? 'Collapse' : 'Expand'}</span>
       </button>
     </nav>
   )
@@ -231,41 +232,41 @@ const TopBar = ({
     <header className="topbar">
       <div className="topbar-left">
         <div className="brand">
-          <span>vibing</span>
+          <span className="vibing">vibing</span>
           <span className="slash">/</span>
-          <span className="vibing">farmer</span>
+          <span>farmer</span>
         </div>
-        <span className="brand-net mono">
-          <span className="dot" />
+        <span
+          className="brand-net mono"
+          aria-label={`Stellar testnet, wallet ${walletConnected ? 'connected' : 'not connected'}`}
+        >
+          <span className={`dot${walletConnected ? ' live' : ''}`} aria-hidden="true" />
           Stellar testnet
         </span>
       </div>
       <div className="topbar-right">
         <span className="topbar-meta">
-          relayer&nbsp;<b>fee-bump</b>&nbsp;·&nbsp;gas&nbsp;<b>0</b>
+          Relayer&nbsp;<b>fee-bump</b>, user gas&nbsp;<b>0</b>
         </span>
         <button
           className="icon-btn"
-          title="restart flow"
-          aria-label="restart flow"
+          title="Restart flow"
+          aria-label="Restart flow"
           onClick={onReset}
         >
           <Icon name="refresh" />
         </button>
         {notifications}
-        <button className="icon-btn" title="new deposit" aria-label="new deposit" onClick={onReset}>
+        <button className="icon-btn" title="New deposit" aria-label="New deposit" onClick={onReset}>
           <Icon name="plus" />
         </button>
         <button
           className="icon-btn"
           title={railCollapsed ? 'Show Info Panel' : 'Hide Info Panel'}
-          aria-label="toggle info panel"
+          aria-label="Toggle info panel"
           onClick={onToggleRail}
         >
-          <Icon
-            name={railCollapsed ? 'panelRightOpen' : 'panelRightClose'}
-            style={{ transition: 'all 0.15s ease' }}
-          />
+          <Icon name={railCollapsed ? 'panelRightOpen' : 'panelRightClose'} />
         </button>
       </div>
     </header>

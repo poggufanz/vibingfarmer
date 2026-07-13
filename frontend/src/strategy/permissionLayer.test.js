@@ -24,7 +24,7 @@ describe('buildPermission', () => {
 
   test('uses the LLM sentence when present, but template if it throws', async () => {
     // Arrange
-    const good = vi.fn().mockResolvedValue('Risk is up, but mostly from gas — proceed?')
+    const good = vi.fn().mockResolvedValue('Risk is up, but mostly from gas - proceed?')
     const bad = vi.fn().mockRejectedValue(new Error('LLM down'))
     // Act
     const a = await buildPermission(converged('proceed'), {
@@ -38,7 +38,7 @@ describe('buildPermission', () => {
       summarize: bad,
     })
     // Assert
-    expect(a.sentence).toBe('Risk is up, but mostly from gas — proceed?')
+    expect(a.sentence).toBe('Risk is up, but mostly from gas - proceed?')
     expect(b.sentence).toContain('2.4%') // template fallback, never throws
   })
 

@@ -89,7 +89,7 @@ describe('AlertCard', () => {
         {...baseHandlers}
       />
     )
-    screen.getByLabelText('dismiss').click()
+    screen.getByLabelText('Dismiss alert').click()
     expect(baseHandlers.onDismiss).toHaveBeenCalledWith('5')
   })
 })

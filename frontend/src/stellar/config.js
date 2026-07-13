@@ -36,8 +36,8 @@ const NETWORKS = {
     // Option<Address>) + the pull@router context. The demo agent above stays on the OLD v1 wasm
     // (8c607112ba…dda62) for paths that need the pre-seeded account (exit settings, smokes).
     agentWasmHash: '7ced45e735e7e084d96d6a04df7cec6e07bc2b203eedb4d3422949a7e9cca717',
-    // One-popup grant factory + funding gate (funding_router). Owner signs ONE grant tx (nested
-    // SEP-41 approve + agent deploys); worker funding = relayed router.pull (0 popups). The
+    // Single-signature grant factory + funding gate (funding_router). Owner signs ONE grant tx (nested
+    // SEP-41 approve + agent deploys); worker funding = relayed router.pull (0 further signatures). The
     // server relay guard's SOROBAN_ROUTER_ADDRESS env MUST match this exact address.
     fundingRouter: 'CBEI5VJKKWLXKQUUUETBAPZSQQLH7I57TSIDTMV4WJMBKIGVF7NSNOFY',
     // Real-yield source (#2): Blend Capital v2 lending pool the vault supplies into (re-verified
@@ -98,13 +98,13 @@ export const SOROBAN_ATTESTATION_ADDRESS = pick('VITE_SOROBAN_ATTESTATION_ADDRES
 export const SOROBAN_TOKEN_ADDRESS = pick('VITE_SOROBAN_TOKEN_ADDRESS', 'token')
 export const SOROBAN_DEMO_AGENT = pick('VITE_SOROBAN_DEMO_AGENT', 'demoAgent')
 export const SOROBAN_AGENT_WASM_HASH = pick('VITE_SOROBAN_AGENT_WASM_HASH', 'agentWasmHash')
-// Optional on purpose (no pick/throw): empty = one-popup flow disabled, legacy path runs.
+// Optional on purpose (no pick/throw): empty = single-signature flow disabled, legacy path runs.
 export const SOROBAN_FUNDING_ROUTER_ADDRESS =
   env('VITE_SOROBAN_FUNDING_ROUTER_ADDRESS') || NET.fundingRouter || ''
-// Escape hatch: force the legacy per-agent deploy/fund popup path even when the router is
+// Escape hatch: force the legacy per-agent deploy/fund signature path even when the router is
 // deployed (VITE_LEGACY_AGENT_SETUP=1). env() helper keeps this vitest/node-safe.
 export const LEGACY_AGENT_SETUP = env('VITE_LEGACY_AGENT_SETUP') === '1'
-// The one-popup grant flow is the DEFAULT whenever the router is deployed and the legacy escape
+// The single-signature grant flow is the DEFAULT whenever the router is deployed and the legacy escape
 // hatch is off. Orchestrator + UI branch on this single knob.
 export const USE_FUNDING_ROUTER = Boolean(SOROBAN_FUNDING_ROUTER_ADDRESS) && !LEGACY_AGENT_SETUP
 // Token + vault-share decimals (both 7). Amounts are i128 in base units (1 VFUSD = 10_000_000).
@@ -132,7 +132,8 @@ export const STELLAR_NETWORK_LABEL = NET.label
 // chrome-extension:// pages can reach /api/* — a same-origin relative path resolves to the
 // extension origin (chrome-extension://<id>/api/...) and 404s. Web app + headless smokes leave
 // VF_API_BASE unset → relative path / the VF_RELAY_URL knob, exactly as before (tests see defaults).
-const API_BASE = (typeof process !== 'undefined' && process.env && process.env.VF_API_BASE) || ''
+const isExt = typeof window !== 'undefined' && window.location.protocol === 'chrome-extension:'
+const API_BASE = (typeof process !== 'undefined' && process.env && process.env.VF_API_BASE) || (isExt ? 'http://localhost:8788' : '')
 const VF_RELAY = (typeof process !== 'undefined' && process.env && process.env.VF_RELAY_URL) || ''
 export const RELAY_PROXY_URL = API_BASE
   ? `${API_BASE}/api/stellar-relay`

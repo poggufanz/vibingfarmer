@@ -6,7 +6,7 @@ import { YIELD_ROUTER_ADDRESS } from './config.js'
 const STELLAR_RECIPIENT = 'GRECIPIENTOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO'
 
 describe('buildUnwindCalls', () => {
-  test('one withdraw call per pool, then one approve, then one depositForBurnWithHook — in that order', () => {
+  test('one withdraw call per pool, then one approve, then one depositForBurnWithHook - in that order', () => {
     const calls = buildUnwindCalls({
       withdrawals: [
         { pool: '0x2222222222222222222222222222222222222222', shares: 100n, minAssets: 99n },
@@ -79,7 +79,7 @@ describe('signAndSubmitUnwind', () => {
     expect(sentCallData[0].encoded).toHaveLength(3) // 1 withdraw + approve + burn
   })
 
-  test('throws if the userOp mines but does not succeed — never reports a fake success', async () => {
+  test('throws if the userOp mines but does not succeed - never reports a fake success', async () => {
     const deps = {
       makeGaslessClient: vi.fn(() => ({
         account: { encodeCalls: vi.fn(async (calls) => ({ encoded: calls })) },

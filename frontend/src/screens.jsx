@@ -8,13 +8,13 @@ import { loadSettings, t } from './settingsStore.js'
 const shortAddr = (a) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '')
 
 const RISK_OPTIONS = [
-  { id: 'low', label: 'Low', sub: '1 agent · single vault' },
-  { id: 'med', label: 'Medium', sub: '2 agents · balanced' },
-  { id: 'high', label: 'High', sub: '3 agents · diversified' },
+  { id: 'low', label: 'Low', sub: '1 vault, conservative' },
+  { id: 'med', label: 'Medium', sub: '2 vaults, balanced' },
+  { id: 'high', label: 'High', sub: '3 vaults, diversified' },
 ]
 
 /* ============================================
-   01a — INPUT
+   INPUT — money-app: amount + risk only
    ============================================ */
 const InputScreen = ({ amount, setAmount, risk, setRisk, onSubmit }) => {
   const { language: lang } = loadSettings()
@@ -48,29 +48,22 @@ const InputScreen = ({ amount, setAmount, risk, setRisk, onSubmit }) => {
             fontSize: 11.5,
           }}
         >
-          <span style={{ color: 'var(--ok)', fontSize: 9 }}>●</span>
+          <span className="ui-dot" style={{ color: 'var(--ok)' }} aria-hidden="true" />
           <span style={{ color: 'var(--text-muted)' }}>
-            Farming{' '}
+            Selected{' '}
             <strong style={{ color: 'inherit', fontWeight: 600, fontFamily: 'inherit' }}>
               {prefill.name}
-            </strong>{' '}
-            · {Number(prefill.apy).toFixed(1)}% APY
+            </strong>
+            , {Number(prefill.apy).toFixed(1)}% APY
           </span>
         </div>
       )}
-      <div className="eyebrow">
-        <span className="num">01</span>
-        <span>AI Strategy · live RAG · multi-agent</span>
-        <span className="rule" />
-        <span>06 steps</span>
-      </div>
+      <p className="grant-kicker mono">Deposit on Stellar testnet</p>
 
-      <h1 className="h-display">Set your deposit · let the orchestrator spawn the agents.</h1>
+      <h1 className="h-display">How much do you want to put to work?</h1>
       <p className="lede">
-        AI generates the strategy: how many worker agents are needed, which vault each agent
-        handles, and which skills they run. All transactions are fee-bumped by the relayer, so you
-        pay zero gas. The permissions you grant are scoped per agent · no agent can act outside its
-        designated vault boundaries.
+        Pick an amount and risk level. We build a plan, you review it, then sign once. Network fees
+        are covered. You can revoke anytime.
       </p>
 
       <div className="amount-block">
@@ -110,11 +103,9 @@ const InputScreen = ({ amount, setAmount, risk, setRisk, onSubmit }) => {
       </div>
 
       <div className="action-row">
-        <div className="foot-note">
-          <span className="ai-attribution">● AI · live data</span>
-        </div>
+        <div className="foot-note">Live market data. One signature comes next.</div>
         <button className="btn btn-primary btn-lg" disabled={!valid} onClick={onSubmit}>
-          {t(lang, 'getReco')} <Icon name="arrow" size={14} />
+          Continue
         </button>
       </div>
     </section>
@@ -131,10 +122,10 @@ const THINK_STEPS = [
 ]
 
 const THINK_MSGS = [
-  'AI is analyzing vault strategy…',
-  'Determining the optimal vault strategy…',
-  'Calculating optimal allocation per risk profile…',
-  'Validating vault addresses & expected APY…',
+  'Reviewing vault strategy…',
+  'Comparing vault options…',
+  'Calculating the allocation for your risk level…',
+  'Validating vault addresses and expected APY…',
 ]
 
 const ThinkingCard = ({ phase, times = [] }) => {
@@ -157,11 +148,8 @@ const ThinkingCard = ({ phase, times = [] }) => {
 
   return (
     <section className="thinking enter">
-      <div className="eyebrow">
-        <span className="num">01</span>
-        <span>AI Swarm · deepseek-v4-flash · orchestrator planning</span>
-      </div>
-      <h2 className="thinking-title">Formulating multi-agent strategy…</h2>
+      <p className="grant-kicker mono">Building your plan with live market data</p>
+      <h2 className="thinking-title">Finding vaults that fit your amount and risk…</h2>
 
       <div className="thinking-list">
         {THINK_STEPS.map((s, i) => {
@@ -172,7 +160,7 @@ const ThinkingCard = ({ phase, times = [] }) => {
               <span className="marker" />
               <span>{s.label}</span>
               <span className="time">
-                {state === 'idle' ? '-' : `${(t ?? 0).toFixed(1)}s`}
+                {state === 'idle' ? 'Pending' : `${(t ?? 0).toFixed(1)}s`}
                 {state === 'active' && <span className="think-spin" aria-hidden="true" />}
               </span>
             </div>
@@ -195,19 +183,12 @@ const ThinkingCard = ({ phase, times = [] }) => {
 const ConnectCard = ({ phase, error, onConnect, onUpgrade, onDone, onCancel }) => {
   return (
     <section className="card enter">
-      <div className="eyebrow">
-        <span className="num">02</span>
-        <span>Connect · authorize agents</span>
-        <span className="rule" />
-        <span>Stellar session keys</span>
-      </div>
+      <p className="grant-kicker mono">Stellar testnet wallet</p>
 
-      <h1 className="h-display">Connect your wallet · one signature authorizes every agent.</h1>
+      <h1 className="h-display">Connect your wallet</h1>
       <p className="lede">
-        Connect a standard Stellar wallet (Freighter / xBull / Albedo). One signature per agent
-        grants a capped, expiring ed25519 session-key scope on the registry — no account upgrade, no
-        browser permission prompt. The orchestrator then spawns worker agents, each bounded by its
-        own scope.
+        Use Freighter, xBull, or Albedo. Next you will set a spending budget with one signature.
+        Network fees stay covered.
       </p>
 
       {phase === 'idle' && (
@@ -216,7 +197,7 @@ const ConnectCard = ({ phase, error, onConnect, onUpgrade, onDone, onCancel }) =
             Connect Freighter, xBull, or Albedo on <b>Stellar testnet</b>.
           </div>
           <button className="btn btn-primary btn-lg" onClick={onConnect}>
-            Connect wallet <Icon name="arrow" size={14} />
+            Connect wallet
           </button>
         </div>
       )}
@@ -226,9 +207,9 @@ const ConnectCard = ({ phase, error, onConnect, onUpgrade, onDone, onCancel }) =
           domain="vibing-farmer.app"
           title="Connection request"
           rows={[
-            { k: 'request', v: 'getPublicKey' },
-            { k: 'network', v: 'Stellar testnet' },
-            { k: 'status', v: 'awaiting user…' },
+            { k: 'Request', v: 'getPublicKey' },
+            { k: 'Network', v: 'Stellar testnet' },
+            { k: 'Status', v: 'Awaiting user…' },
           ]}
           pending
         />
@@ -240,22 +221,22 @@ const ConnectCard = ({ phase, error, onConnect, onUpgrade, onDone, onCancel }) =
             domain="vibing-farmer.app"
             title="Authorize agent session"
             rows={[
-              { k: 'grant', v: 'ed25519 session-key scope', accent: true },
-              { k: 'network', v: 'Stellar testnet' },
-              { k: 'cap', v: 'per-agent · capped' },
-              { k: 'expiry', v: 'bounded · expiring' },
+              { k: 'Grant', v: 'Ed25519 session-key scope', accent: true },
+              { k: 'Network', v: 'Stellar testnet' },
+              { k: 'Cap', v: 'Capped per agent' },
+              { k: 'Expiry', v: 'Time-limited' },
             ]}
           />
           <div className="action-row">
             <div className="foot-note">
-              Authorization transaction is fee-bumped by the relayer · gas <b>0</b>.
+              The relayer fee-bumps the authorization transaction. You pay <b>0 XLM</b>.
             </div>
             <div className="flex gap-2">
               <button className="btn btn-ghost" onClick={onCancel}>
                 Cancel
               </button>
               <button className="btn btn-primary" onClick={onUpgrade}>
-                Sign authorization <Icon name="arrow" size={14} />
+                Sign authorization
               </button>
             </div>
           </div>
@@ -267,10 +248,10 @@ const ConnectCard = ({ phase, error, onConnect, onUpgrade, onDone, onCancel }) =
           domain="Stellar Wallet"
           title="Agent session active"
           rows={[
-            { k: 'type', v: 'ed25519 session key', accent: true },
-            { k: 'relayer', v: 'fee-bump relayer' },
-            { k: 'gas paid', v: 'by relayer · user 0 XLM', accent: true },
-            { k: 'status', v: 'confirming…' },
+            { k: 'Type', v: 'Ed25519 session key', accent: true },
+            { k: 'Relayer', v: 'Fee-bump relayer' },
+            { k: 'Network fee', v: '0 XLM, paid by relayer', accent: true },
+            { k: 'Status', v: 'Confirming…' },
           ]}
           pending
         />
@@ -292,8 +273,8 @@ const MmDialog = ({ domain, title, rows, pending }) => (
     <div className="mm-pop-head">
       <div className="mm-brand">
         <div className="mm-mark">
-          <span aria-hidden="true" style={{ fontSize: 10, lineHeight: '14px' }}>
-            ✦
+          <span aria-hidden="true" style={{ fontSize: 9, lineHeight: '14px' }}>
+            VF
           </span>
         </div>
         <span className="mm-name">Stellar Wallet</span>
@@ -341,10 +322,10 @@ const UpgradedCallout = ({ onDone }) => (
             marginBottom: 8,
           }}
         >
-          ✓ agent session active
+          Agent session active
         </div>
         <div className="h-sub">
-          Wallet connected. ed25519 session keys are authorized on the registry.
+          Wallet connected. Ed25519 session keys are authorized on the registry.
         </div>
         <div
           className="mono"
@@ -355,11 +336,11 @@ const UpgradedCallout = ({ onDone }) => (
             letterSpacing: '-0.01em',
           }}
         >
-          session keys · gas 0 · fee-bump relayer
+          Ed25519 session keys. You pay 0 XLM; the fee-bump relayer covers the network fee.
         </div>
       </div>
       <button className="btn btn-primary" onClick={onDone}>
-        Next · review skills <Icon name="arrow" size={14} />
+        Review skills
       </button>
     </div>
   </div>
@@ -382,27 +363,21 @@ const PermissionCard = ({ strategy, eligibility, onGrant, phase, error, onConfir
 
   return (
     <section className="card enter">
-      <div className="eyebrow">
-        <span className="num">04</span>
-        <span>Scoped session key · sign once</span>
-        <span className="rule" />
-        <span>then fully autonomous · ed25519 agent auth</span>
-      </div>
+      <p className="grant-kicker mono">Permission: Sign once</p>
 
-      <h1 className="h-display">Sign once. Every agent runs without another popup.</h1>
+      <h1 className="h-display">Review scoped permissions</h1>
       <p className="lede">
-        This single signature grants a scoped, expiring permission. From here, the orchestrator and
-        every worker execute their deposit within this scope — no further wallet prompts. Outside
-        the granted scope, the <span className="mono">Soroban vault</span> still <b>reverts</b>.
+        One signature grants a capped, expiring limit. After that, deposits run without more wallet
+        prompts. Outside this scope, the vault reverts.
       </p>
 
       <div className="perm-doc">
         <div className="perm-doc-row perm-doc-summary">
           <div className="perm-doc-k">batch.summary</div>
           <div className="perm-doc-v">
-            {agents.length} permission · total max{' '}
+            {agents.length} permission{agents.length === 1 ? '' : 's'}, total maximum{' '}
             <span className="accent">{totalMax.toFixed(2)} USDC</span>
-            <span className="annot">expires {expiresFmt}</span>
+            <span className="annot">Expires {expiresFmt}</span>
           </div>
         </div>
         {agents.map((a) => (
@@ -419,7 +394,7 @@ const PermissionCard = ({ strategy, eligibility, onGrant, phase, error, onConfir
               </div>
               <div className="perm-doc-agent-line">
                 <span className="accent">{a.allocation} USDC max</span>
-                <span className="annot">hard cap · exceed = revert</span>
+                <span className="annot">Hard cap. Transactions above it revert.</span>
               </div>
             </div>
           </div>
@@ -432,10 +407,10 @@ const PermissionCard = ({ strategy, eligibility, onGrant, phase, error, onConfir
           </div>
         </div>
         <div className="perm-doc-row">
-          <div className="perm-doc-k">revocable</div>
+          <div className="perm-doc-k">Revocable</div>
           <div className="perm-doc-v">
-            yes · per-agent or batched
-            <span className="annot">anytime · single click · on-chain</span>
+            Yes, per agent or as a batch
+            <span className="annot">Anytime, in one on-chain action</span>
           </div>
         </div>
       </div>
@@ -447,11 +422,10 @@ const PermissionCard = ({ strategy, eligibility, onGrant, phase, error, onConfir
         </div>
         {phase === 'idle' && (
           <button className="btn btn-primary btn-lg" onClick={onGrant}>
-            Grant {agents.length} permission{agents.length === 1 ? '' : 's'}{' '}
-            <Icon name="arrow" size={14} />
+            Grant {agents.length} permission{agents.length === 1 ? '' : 's'}
           </button>
         )}
-        {phase === 'prompting' && <span className="foot-note mono">awaiting wallet…</span>}
+        {phase === 'prompting' && <span className="foot-note mono">Awaiting wallet…</span>}
       </div>
 
       {phase === 'prompting' && (
@@ -478,18 +452,27 @@ const MmPermissionModal = ({ strategy, eligibility, onConfirm, onReject }) => {
   return (
     <div className="modal-backdrop" onClick={onReject}>
       <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-eyebrow">authorize agent session · batch</div>
+        <div className="modal-eyebrow">Authorize agent sessions</div>
         <h3 className="modal-title">
           Approve {agents.length} execution permission{agents.length === 1 ? '' : 's'}?
         </h3>
 
-        <div className="modal-scroll-content" style={{ flex: 1, overflowY: 'auto', marginRight: '-12px', paddingRight: '12px', maxHeight: '55vh' }}>
+        <div
+          className="modal-scroll-content"
+          style={{
+            flex: 1,
+            overflowY: 'auto',
+            marginRight: '-12px',
+            paddingRight: '12px',
+            maxHeight: '55vh',
+          }}
+        >
           <div className="mm-pop" style={{ marginTop: 0 }}>
             <div className="mm-pop-head">
               <div className="mm-brand">
                 <div className="mm-mark">
-                  <span aria-hidden="true" style={{ fontSize: 10, lineHeight: '14px' }}>
-                    ✦
+                  <span aria-hidden="true" style={{ fontSize: 9, lineHeight: '14px' }}>
+                    VF
                   </span>
                 </div>
                 <span className="mm-name">Stellar Wallet</span>
@@ -498,24 +481,24 @@ const MmPermissionModal = ({ strategy, eligibility, onConfirm, onReject }) => {
             </div>
             <div className="mm-body">
               <div className="row">
-                <span className="k">batch type</span>
-                <span className="v accent">vault-deposit · {agents.length}x</span>
+                <span className="k">Batch type</span>
+                <span className="v accent">vault-deposit, {agents.length}x</span>
               </div>
               <div className="row">
-                <span className="k">total max</span>
+                <span className="k">Total maximum</span>
                 <span className="v accent">{total.toFixed(2)} USDC</span>
               </div>
               {agents.map((a) => (
                 <div className="row" key={a.id}>
                   <span className="k">{a.id}</span>
                   <span className="v">
-                    {a.allocation} USDC · {a.vault.addr.slice(0, 10)}…
+                    {a.allocation} USDC, {a.vault.addr.slice(0, 10)}…
                   </span>
                 </div>
               ))}
               <div className="row">
-                <span className="k">expires</span>
-                <span className="v">86 400s</span>
+                <span className="k">Expires</span>
+                <span className="v">24 hours</span>
               </div>
             </div>
           </div>
@@ -528,17 +511,17 @@ const MmPermissionModal = ({ strategy, eligibility, onConfirm, onReject }) => {
               <ul className="elig-rows">
                 {eligibility.rows.map((row) => (
                   <li key={row.id} className={row.eligible ? 'elig-pass' : 'elig-reject'}>
-                    <span className="elig-status">{row.eligible ? 'PASS' : 'REJECT'}</span>
+                    <span className="elig-status">{row.eligible ? 'Pass' : 'Reject'}</span>
                     <span className={row.eligible ? '' : 'struck'}>{row.protocolLabel}</span>
                     <span className="elig-label">{row.label}</span>
                     {row.isFixture && (
-                      <span className="elig-fixture">demo fixture — illustrates rejection</span>
+                      <span className="elig-fixture">Demo fixture: Rejected by design.</span>
                     )}
                     {row.eligible && (
                       <>
                         <span className="elig-mainnet">{row.mainnetLine}</span>
                         <span className="elig-testnet">{row.testnetLine}</span>
-                        <span className="elig-chip">DeFiLlama · asOf {row.asOf}</span>
+                        <span className="elig-chip">DeFiLlama, as of {row.asOf}</span>
                       </>
                     )}
                   </li>
@@ -571,38 +554,34 @@ const SuccessCard = ({ strategy, onAgain, address }) => {
   const agents = strategy?.agents || []
   return (
     <section className="success-card enter">
-      <div className="eyebrow">
-        <span className="num">06</span>
-        <span>
-          {agents.length} agent · {agents.length * 3} tx confirmed
-        </span>
-        <span className="rule" />
-        <span>≈ 42 detik total</span>
-      </div>
+      <p className="grant-kicker mono">Done. Portfolio active.</p>
 
       <h1 className="success-title">
-        Multi-agent deployment confirmed. {agents.length} workers are now earning {apy}% blended
-        APY.
+        Your USDC is deposited. Estimated blended APY is {apy}%, about {monthly} USDC per month.
       </h1>
+      <p className="lede" style={{ marginTop: 8, maxWidth: 480 }}>
+        Agents will compound and rebalance within your grant. You can withdraw or revoke anytime
+        from the home page.
+      </p>
 
       <div className="success-numbers">
         <div className="success-num-cell">
-          <span className="label">total deposited</span>
+          <span className="label">Total deposited</span>
           <span className="figure tnum">
             {total}
             <span className="unit">USDC</span>
           </span>
         </div>
         <div className="success-num-cell">
-          <span className="label">est. yield /month</span>
+          <span className="label">Estimated monthly yield</span>
           <span className="figure tnum" style={{ color: 'var(--accent)' }}>
             +{monthly}
             <span className="unit">USDC</span>
           </span>
         </div>
         <div className="success-num-cell">
-          <span className="label">user signatures</span>
-          <span className="figure tnum">2</span>
+          <span className="label">Your signatures</span>
+          <span className="figure tnum">1</span>
           <span
             style={{
               fontFamily: 'var(--font-mono)',
@@ -612,7 +591,7 @@ const SuccessCard = ({ strategy, onAgain, address }) => {
               marginTop: -4,
             }}
           >
-            vs {agents.length * 3 + 2} traditional
+            Grant only. Network fee covered.
           </span>
         </div>
       </div>
@@ -622,13 +601,13 @@ const SuccessCard = ({ strategy, onAgain, address }) => {
           <div key={a.id} className="success-agent-row">
             <span className="mono idx">{a.idx}</span>
             <div>
-              <div className="name">{a.name}</div>
+              <div className="name">{a.vault.name}</div>
               <div className="meta mono">
-                {a.vault.name} · {a.vault.protocol}
+                {a.vault.protocol}, {a.allocation} USDC
               </div>
             </div>
             <div className="value mono tnum">
-              {a.allocation} USDC <span className="muted">→ {a.vault.apy}%</span>
+              {a.vault.apy}% <span className="muted">APY</span>
             </div>
           </div>
         ))}
@@ -636,9 +615,7 @@ const SuccessCard = ({ strategy, onAgain, address }) => {
 
       <div className="action-row" style={{ marginTop: 36 }}>
         <div className="foot-note">
-          Stellar Expert ·{' '}
-          <span style={{ color: 'var(--text)' }}>{agents.length * 3} tx confirmed</span> · gas paid
-          by <b>fee-bump relayer</b>
+          On-chain. The relayer pays network fees. Revoke from the home page anytime.
         </div>
         <div className="flex gap-2">
           <a
@@ -651,10 +628,10 @@ const SuccessCard = ({ strategy, onAgain, address }) => {
             target="_blank"
             rel="noopener noreferrer"
           >
-            View on Stellar Expert <Icon name="external" size={13} />
+            View on Stellar Expert
           </a>
           <button className="btn btn-primary" onClick={onAgain}>
-            Deposit again <Icon name="plus" size={14} />
+            Deposit more <Icon name="plus" size={14} />
           </button>
         </div>
       </div>

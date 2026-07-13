@@ -4,7 +4,6 @@
 // Screen 2: how it works (shown after connect, before Step 01).
 // Self-fetches DeFiLlama data so APY is visible with zero wallet interaction.
 import React, { useState, useEffect } from 'react'
-import { Icon } from '../components.jsx'
 import { YieldLine } from './SignatureMark.jsx'
 import { useCountUp, riseDelay } from '../motion.js'
 import { fetchDeFiLlamaVaults } from '../defiLlama.js'
@@ -36,8 +35,8 @@ const SEED = VAULT_CATALOG.slice(0, 3).map((v) => ({
 const HOW_STEPS = [
   {
     n: '01',
-    title: 'Venice AI picks the best vault for your risk.',
-    sub: 'Live market data, not guesswork.',
+    title: 'The AI strategist proposes a vault for your risk limits.',
+    sub: 'The proposal uses current market data and a fail-closed eligibility check.',
   },
   {
     n: '02',
@@ -46,13 +45,13 @@ const HOW_STEPS = [
   },
   {
     n: '03',
-    title: 'Agents execute automatically. You pay zero gas.',
-    sub: 'Fee-bump relayer covers the gas.',
+    title: 'Agents execute within the approved scope.',
+    sub: 'The fee-bump relay covers Stellar network fees.',
   },
   {
     n: '04',
-    title: 'Background agent monitors 24/7.',
-    sub: 'APY drops or risk spikes, you get alerted.',
+    title: 'The keeper and risk radar monitor active positions.',
+    sub: 'You receive an alert if APY drops or risk rises.',
   },
 ]
 
@@ -75,13 +74,13 @@ function ValueScreen({ vaults, histories, onConnect }) {
             <span className="vibing">farmer</span>
           </div>
 
-          <h1 className="h-display onb-h1">Your USDC should be earning.</h1>
+          <h1 className="h-display onb-h1">Your USDC can earn yield.</h1>
           <p className="lede onb-sub">
-            Set your limits once. Agents farm the best vaults for you, gas-free.
+            Set your limits once. Agents deposit into approved vaults, and network fees are covered.
           </p>
 
           <button className="btn btn-primary btn-lg onb-cta" onClick={onConnect}>
-            Connect wallet &amp; start farming <Icon name="arrow" size={14} />
+            Connect wallet
           </button>
 
           <div className="foot-note onb-foot">
@@ -89,7 +88,7 @@ function ValueScreen({ vaults, histories, onConnect }) {
             <br />
             Need a wallet?{' '}
             <a href={WALLET_URL} target="_blank" rel="noopener noreferrer" className="onb-link">
-              Get Freighter in 2 minutes
+              Install Freighter
             </a>
           </div>
         </div>
@@ -125,7 +124,7 @@ function ValueScreen({ vaults, histories, onConnect }) {
               style={riseDelay(vaults.length, 90, 250)}
             >
               <span style={{ flex: 1, fontSize: 13, color: 'var(--text-muted)' }}>
-                vs leaving in wallet
+                Wallet balance
               </span>
               <span className="mono tnum" style={{ fontSize: 13, color: 'var(--text-faint)' }}>
                 0.0% APY
@@ -170,7 +169,7 @@ function HowItWorksScreen({ onDone, onSkip }) {
             Skip intro
           </button>
           <button className="btn btn-primary btn-lg" onClick={onDone}>
-            Start farming <Icon name="arrow" size={14} />
+            Continue
           </button>
         </div>
       </div>

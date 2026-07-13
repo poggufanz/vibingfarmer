@@ -59,7 +59,7 @@ beforeEach(() => {
   getRelayerAddressMock.mockReset()
 })
 
-describe('agentInitScVal — encoding matches funding_router types.rs', () => {
+describe('agentInitScVal - encoding matches funding_router types.rs', () => {
   it('emits the ScMap keys in lexicographic field order: cap, expiry, period_duration, salt, signer, vault', () => {
     const sv = agentInitScVal({
       signer: new Uint8Array(32).fill(7),
@@ -133,7 +133,7 @@ describe('buildGrantTx', () => {
     expect(agentAddresses).toEqual([AGENT_1, AGENT_2])
   })
 
-  it('builds a single owner-sourced grant op with NO separate auth entries (one-popup: source-account credentials cover the whole tree)', async () => {
+  it('builds a single owner-sourced grant op with NO separate auth entries (single-signature: source-account credentials cover the whole tree)', async () => {
     const server = fakeServer({ latest: 100, retval: agentsRetval([AGENT_1]) })
     const { tx } = await buildGrantTx({
       owner: OWNER,
@@ -144,7 +144,7 @@ describe('buildGrantTx', () => {
     })
     expect(tx.source).toBe(OWNER) // tx source IS the owner → require_auth met by the envelope sig
     expect(tx.operations).toHaveLength(1)
-    // No SorobanAuthorizationEntry to sign separately — the single wallet popup signs the envelope.
+    // No SorobanAuthorizationEntry to sign separately — the single wallet signature signs the envelope.
     expect((tx.operations[0].auth || []).length).toBe(0)
   })
 
@@ -168,11 +168,11 @@ describe('buildGrantTx', () => {
         router: '',
         server,
       })
-    ).rejects.toThrow(/router address not configured/)
+    ).rejects.toThrow(/funding router is not configured/)
   })
 })
 
-describe('submitGrant — one popup', () => {
+describe('submitGrant - a single signature', () => {
   it('signs exactly ONCE (the envelope) and returns the relayed result + parsed agents', async () => {
     const server = fakeServer({ latest: 1000, retval: agentsRetval([AGENT_1, AGENT_2]) })
     submitViaRelayMock.mockResolvedValue({ hash: 'HREL', status: 'SUCCESS', relayer: 'GR' })
@@ -187,7 +187,7 @@ describe('submitGrant — one popup', () => {
       sign,
     })
 
-    expect(sign).toHaveBeenCalledTimes(1) // ONE popup for N=2 agents
+    expect(sign).toHaveBeenCalledTimes(1) // a single signature for N=2 agents
     expect(submitViaRelayMock).toHaveBeenCalledTimes(1)
     expect(out).toMatchObject({
       hash: 'HREL',
@@ -226,7 +226,7 @@ describe('submitGrant — one popup', () => {
         server,
         sign: async (x) => x,
       })
-    ).rejects.toThrow(/relay reported FAILED/)
+    ).rejects.toThrow(/grant relay returned FAILED/)
   })
 })
 
@@ -241,7 +241,7 @@ describe('readAllowance', () => {
     expect(out).toEqual({ amount: 70_000_000n, liveUntilLedger: null })
   })
 
-  it('returns 0 on a read failure (safe side — orchestrator then does a fresh grant)', async () => {
+  it('returns 0 on a read failure (safe side - orchestrator then does a fresh grant)', async () => {
     const server = {
       simulateTransaction: async () => {
         throw new Error('rpc down')

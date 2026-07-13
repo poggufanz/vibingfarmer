@@ -3,7 +3,7 @@
 // runFarmFlow (the actual burn -> relay -> poll pipeline). Container/presentational split per
 // this project's web patterns — all side effects live in the two imported functions, not here.
 import { useState, useEffect, useCallback } from 'react'
-import { allocateBasePools } from '../venice.js'
+import { allocateBasePools } from '../strategist.js'
 import { runFarmFlow } from '../crossChainFarm.js'
 import { toBaseUnits } from '../stellar/format.js'
 

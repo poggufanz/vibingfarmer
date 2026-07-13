@@ -8,6 +8,7 @@ export const ROUTES = {
   STRATEGY: '/strategy',
   AGENT: '/agent',
   HISTORY: '/history',
+  DEVELOPERS: '/developers',
   SETTINGS: '/settings',
   VAULT: '/vault/:protocol',
   TX: '/tx/:txHash',
@@ -49,5 +50,6 @@ export function getSidebarPath(pathname) {
   if (pathname.startsWith('/vault')) return '/home'
   if (pathname.startsWith('/tx')) return '/history'
   if (pathname === '/') return '/home'
+  if (pathname.startsWith('/developers')) return '/developers'
   return pathname
 }

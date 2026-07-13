@@ -34,6 +34,18 @@
       "skillPath": "skills/agentic-payments/SKILL.md",
       "computedHash": "0a2495bd73f67bc9dfb704d108af52a2449710fa9ace68b5fd1326ab09a4ef8b"
     },
+    "animation-vocabulary": {
+      "source": "emilkowalski/skills",
+      "sourceType": "github",
+      "skillPath": "skills/animation-vocabulary/SKILL.md",
+      "computedHash": "280c6688ef2568ad92f40c4dc638f0cc5cde0f49bdd6debd097410aa9945f44f"
+    },
+    "apple-design": {
+      "source": "emilkowalski/skills",
+      "sourceType": "github",
+      "skillPath": "skills/apple-design/SKILL.md",
+      "computedHash": "0d19303902efa64eace10e6b183eb29ef3220d424c1a7fd1eafc52adde216932"
+    },
     "architecture-designer": {
       "source": "jeffallan/claude-skills",
       "sourceType": "github",
@@ -49,6 +61,12 @@
       "source": "sickn33/antigravity-awesome-skills",
       "sourceType": "github",
       "computedHash": "b55857d2e6f51a8d8ad5ebce735b1a82f7728d0a03a5d731bff39cbde573ec1d"
+    },
+    "awwwards-animations": {
+      "source": "devmartinese/awwwards-animations-skill",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "4c5214c730faea7eb05f18e9738c753f5f26e3354ae4ab64c3bb7c26f692b4fa"
     },
     "better-auth-security-best-practices": {
       "source": "better-auth/skills",
@@ -122,6 +140,12 @@
       "skillPath": "skills/docs-generator/SKILL.md",
       "computedHash": "d1cbbf0a9e5b8c3e7a1e5b2c3a4f5d6e7f8g9h0i1j2k3l4m5n6o7p8q9r0s1t2u3v4"
     },
+    "emil-design-eng": {
+      "source": "emilkowalski/skills",
+      "sourceType": "github",
+      "skillPath": "skills/emil-design-eng/SKILL.md",
+      "computedHash": "ac3fc5b4e206488ffc408a2806f829bb2e5eaf518fded09be34790685c2b3a0d"
+    },
     "finance-expert": {
       "source": "personamanagmentlayer/pcl",
       "sourceType": "github",
@@ -137,6 +161,12 @@
       "sourceType": "github",
       "skillPath": "skills/improve/SKILL.md",
       "computedHash": "553713a1b9af40ec50c4018f75b8974bf728fe5abc8e125b748e2d718d5c31ea"
+    },
+    "improve-animations": {
+      "source": "emilkowalski/skills",
+      "sourceType": "github",
+      "skillPath": "skills/improve-animations/SKILL.md",
+      "computedHash": "ff9991a8d6dabb24411daaf6de570e3b6826323459d514d90d7f6371bbdbdbe1"
     },
     "machine-learning-engineer": {
       "source": "404kidwiz/claude-supercode-skills",
@@ -169,6 +199,12 @@
       "sourceType": "github",
       "skillPath": "skills/.curated/pdf/SKILL.md",
       "computedHash": "af1e0791f5356b6de053e6b97d7703fe0d7ea1997371b9023afd4720bebcf93f"
+    },
+    "pitch-deck": {
+      "source": "ailabs-393/ai-labs-claude-skills",
+      "sourceType": "github",
+      "skillPath": "packages/skills/pitch-deck/SKILL.md",
+      "computedHash": "c77bf05c3cfb5b51ce7c406be1c52da2e35c64f3c0aa5f6cdb94fe7fac656dcf"
     },
     "privacy-policy": {
       "source": "phuryn/pm-skills",
@@ -205,6 +241,12 @@
       "source": "wshobson/agents",
       "sourceType": "github",
       "computedHash": "0a68c672384c5c6aa7acb286c18f8eb9dce53a058062a8951ac0adca4d01d4ea"
+    },
+    "review-animations": {
+      "source": "emilkowalski/skills",
+      "sourceType": "github",
+      "skillPath": "skills/review-animations/SKILL.md",
+      "computedHash": "26bec85a9bfe7cfbfd500ff1ffebc7819ac0cef75cf068c4a97b5af865ccccf7"
     },
     "security-review": {
       "source": "affaan-m/everything-claude-code",

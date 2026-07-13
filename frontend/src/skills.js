@@ -9,10 +9,11 @@ const SKILLS_STORAGE_KEY = 'yv_skills'
 // placeholder), with an optional Vite env override. A non-address would be a runtime
 // footgun, so resolve it loudly at module load.
 const ADDR_RE = /^C[A-Z2-7]{55}$/ // Stellar contract strkey (C + 55 base32 chars)
-export const DEPOSITOR_TARGET = import.meta.env?.VITE_DEPOSITOR_ADDRESS || SOROBAN_ACTIVE_VAULT_ADDRESS
+export const DEPOSITOR_TARGET =
+  import.meta.env?.VITE_DEPOSITOR_ADDRESS || SOROBAN_ACTIVE_VAULT_ADDRESS
 if (!DEPOSITOR_TARGET || !ADDR_RE.test(DEPOSITOR_TARGET)) {
   throw new Error(
-    'DEPOSITOR_TARGET missing or not a Stellar contract address (C...) — check stellar/config.js / VITE_DEPOSITOR_ADDRESS'
+    'DEPOSITOR_TARGET is missing or is not a Stellar contract address (C...). Check stellar/config.js or VITE_DEPOSITOR_ADDRESS.'
   )
 }
 
@@ -41,7 +42,7 @@ export function buildSkill({ vault, token, amount, worker }) {
   // A caller must never be able to slip a worker EOA in as a fund target.
   if (worker !== undefined) {
     throw new Error(
-      'buildSkill does not accept a worker target — funds route through the depositor only'
+      'buildSkill does not accept a worker target. Funds route through the depositor only.'
     )
   }
   const steps = [
@@ -49,7 +50,7 @@ export function buildSkill({ vault, token, amount, worker }) {
   ]
   for (const s of steps) {
     if (s.target !== DEPOSITOR_TARGET) {
-      throw new Error(`illegal skill target ${s.target} — only the depositor is allowed`)
+      throw new Error(`Illegal skill target ${s.target}. Only the depositor is allowed.`)
     }
   }
   return { steps, vault, token, generatedBy: 'venice-ai', approvedByUser: false }

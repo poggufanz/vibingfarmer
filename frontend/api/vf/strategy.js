@@ -1,11 +1,19 @@
 // AI allocation strategy. LLM (DeepSeek, server key) with a deterministic equal-split
-// fallback — the strategist NEVER blocks the flow (mirrors src/venice.js philosophy).
+// fallback — the strategist NEVER blocks the flow (mirrors src/strategist.js philosophy).
 import { z } from 'zod'
 import { storeFrom } from './_db.js'
 import { requireVfKey } from './_vfauth.js'
 
 const DEEPSEEK_URL = 'https://api.deepseek.com/v1/chat/completions'
 const MODEL = 'deepseek-v4-flash'
+const PROSE_RULE =
+  'Write reasoning as one plain sentence in sentence case. Do not use em dashes, en dashes, middle dots, emoji, headings, hype, or filler.'
+const HYPE_REPLACEMENTS = [
+  [/\b(?:cutting-edge|game-changing|groundbreaking|revolutionary|transformative)\b/gi, 'useful'],
+  [/\bseamless\b/gi, 'straightforward'],
+  [/\brobust\b/gi, 'reliable'],
+  [/\b(?:leverage|utilize|harness)\b/gi, 'use'],
+]
 
 const json = (res, status, obj) => {
   res.statusCode = status
@@ -28,6 +36,23 @@ export function equalSplit(protocols, vaultCount) {
   }))
 }
 
+export function normalizeReasoning(value) {
+  let text = String(value ?? '')
+    .replace(/\s*[\u2014\u2013]\s*/g, '. ')
+    .replace(/\s*\u00b7\s*/g, ', ')
+    .replace(/[\p{Extended_Pictographic}\p{Emoji_Modifier}\uFE0F\u200D]/gu, '')
+  for (const [pattern, replacement] of HYPE_REPLACEMENTS) {
+    text = text.replace(pattern, replacement)
+  }
+  text = text
+    .replace(/\s+/g, ' ')
+    .replace(/\s+([,.;:!?])/g, '$1')
+    .trim()
+  return text
+    .replace(/[A-Za-z]/, (c) => c.toUpperCase())
+    .replace(/([.!?]\s+)([a-z])/g, (_, prefix, c) => prefix + c.toUpperCase())
+}
+
 export function parseLlmPlan(text, protocols) {
   try {
     const obj = JSON.parse(text)
@@ -40,7 +65,10 @@ export function parseLlmPlan(text, protocols) {
       sum += a.pct
     }
     if (Math.abs(sum - 100) > 1) return null
-    return { allocations, reasoning: typeof obj.reasoning === 'string' ? obj.reasoning : '' }
+    return {
+      allocations,
+      reasoning: typeof obj.reasoning === 'string' ? normalizeReasoning(obj.reasoning) : '',
+    }
   } catch {
     return null
   }
@@ -72,8 +100,8 @@ export default async function handler(req, res) {
               role: 'system',
               content:
                 'You are a conservative DeFi allocation strategist. Reply ONLY with JSON: ' +
-                '{"allocations":[{"protocol":<string>,"pct":<number>}],"reasoning":<string>} — pcts sum to 100, ' +
-                'protocols strictly from the given catalog.',
+                '{"allocations":[{"protocol":<string>,"pct":<number>}],"reasoning":<string>}. Percentages must sum to 100, and ' +
+                `protocols strictly from the given catalog. ${PROSE_RULE}`,
             },
             {
               role: 'user',
@@ -93,7 +121,7 @@ export default async function handler(req, res) {
   }
   json(res, 200, {
     allocations: equalSplit(protocols, vaultCount),
-    reasoning: 'Equal split across the vetted catalog (deterministic fallback).',
+    reasoning: 'No model response was available, so funds are split evenly across vetted vaults.',
     source: 'fallback',
   })
 }

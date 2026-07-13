@@ -68,7 +68,7 @@ export async function runFarmFlow({
     onEvent('farm-failed', {
       stage: 'relay',
       error: err.message,
-      recoveryHint: `USDC already burned on Stellar (tx ${burnResult.burnHash}) — funds are in transit via CCTP, not lost. Retry the relay dispatch with this burn hash once it is reachable.`,
+      recoveryHint: `USDC was already burned on Stellar (transaction ${burnResult.burnHash}). Funds are in transit through CCTP. Retry the relay dispatch with this burn hash when the relayer is reachable.`,
     })
     throw err
   }

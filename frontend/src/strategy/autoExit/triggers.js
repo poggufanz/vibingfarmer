@@ -7,15 +7,15 @@
  * @param {number} threshold e.g. 0.95 for 95%
  */
 export function checkUtilization(vaultFacts, threshold) {
-  const util = vaultFacts.utilization?.value ?? 0.80; // default to 80% if not set
+  const util = vaultFacts.utilization?.value ?? 0.8 // default to 80% if not set
   if (util >= threshold) {
     return {
       tripped: true,
-      reason: `Pool utilization is ${(util * 100).toFixed(1)}% (threshold: ${(threshold * 100).toFixed(1)}%)`,
-      facts: { utilization: util }
-    };
+      reason: `Pool utilization is ${(util * 100).toFixed(1)}%. Exit threshold: ${(threshold * 100).toFixed(1)}%.`,
+      facts: { utilization: util },
+    }
   }
-  return { tripped: false, facts: { utilization: util } };
+  return { tripped: false, facts: { utilization: util } }
 }
 
 /**
@@ -24,15 +24,15 @@ export function checkUtilization(vaultFacts, threshold) {
  * @param {number} threshold e.g. 0.01 for 1%
  */
 export function checkApy(vaultFacts, threshold) {
-  const apy = vaultFacts.apy?.value ?? 0.05; // default to 5% if not set
+  const apy = vaultFacts.apy?.value ?? 0.05 // default to 5% if not set
   if (apy < threshold) {
     return {
       tripped: true,
-      reason: `APY collapsed to ${(apy * 100).toFixed(2)}% (threshold: ${(threshold * 100).toFixed(2)}%)`,
-      facts: { apy }
-    };
+      reason: `APY fell to ${(apy * 100).toFixed(2)}%. Exit threshold: ${(threshold * 100).toFixed(2)}%.`,
+      facts: { apy },
+    }
   }
-  return { tripped: false, facts: { apy } };
+  return { tripped: false, facts: { apy } }
 }
 
 /**
@@ -42,39 +42,39 @@ export function checkApy(vaultFacts, threshold) {
  * @param {string|null} marketContext live market context
  */
 export function checkProtocolRisk(vaultFacts, tvlDropThreshold, marketContext) {
-  const tvl = vaultFacts.tvl?.value ?? 25_000_000;
-  const baselineTvl = 25_000_000; // standard baseline for the demo
-  const tvlDrop = (baselineTvl - tvl) / baselineTvl;
+  const tvl = vaultFacts.tvl?.value ?? 25_000_000
+  const baselineTvl = 25_000_000 // standard baseline for the demo
+  const tvlDrop = (baselineTvl - tvl) / baselineTvl
 
   if (tvlDrop >= tvlDropThreshold) {
     return {
       tripped: true,
-      reason: `Protocol TVL dropped by ${(tvlDrop * 100).toFixed(1)}% (threshold: ${(tvlDropThreshold * 100).toFixed(1)}%)`,
-      facts: { tvl, tvlDrop }
-    };
+      reason: `Protocol TVL fell by ${(tvlDrop * 100).toFixed(1)}%. Exit threshold: ${(tvlDropThreshold * 100).toFixed(1)}%.`,
+      facts: { tvl, tvlDrop },
+    }
   }
 
-  const audit = vaultFacts.audit?.value || 'timelock_multisig';
+  const audit = vaultFacts.audit?.value || 'timelock_multisig'
   if (audit === 'none') {
     return {
       tripped: true,
-      reason: `Protocol audit status is 'none' (exploit indicator)`,
-      facts: { audit }
-    };
+      reason: 'No current protocol audit was found.',
+      facts: { audit },
+    }
   }
 
-  const text = String(marketContext || '').toLowerCase();
-  const exploitKeywords = ['exploit', 'hack', 'compromise', 'drain'];
-  const foundKeyword = exploitKeywords.find(kw => text.includes(kw));
+  const text = String(marketContext || '').toLowerCase()
+  const exploitKeywords = ['exploit', 'hack', 'compromise', 'drain']
+  const foundKeyword = exploitKeywords.find((kw) => text.includes(kw))
   if (foundKeyword) {
     return {
       tripped: true,
-      reason: `Exploit keyword '${foundKeyword}' found in market context`,
-      facts: { foundKeyword, marketContext }
-    };
+      reason: `Market context contains a possible exploit indicator: ${foundKeyword}.`,
+      facts: { foundKeyword, marketContext },
+    }
   }
 
-  return { tripped: false, facts: { tvl, audit } };
+  return { tripped: false, facts: { tvl, audit } }
 }
 
 /**
@@ -83,13 +83,13 @@ export function checkProtocolRisk(vaultFacts, tvlDropThreshold, marketContext) {
  * @param {number} threshold e.g. 0.05 for 5%
  */
 export function checkDrawdown(vaultFacts, threshold) {
-  const drawdown = vaultFacts.drawdown?.value ?? 0.0;
+  const drawdown = vaultFacts.drawdown?.value ?? 0.0
   if (drawdown >= threshold) {
     return {
       tripped: true,
-      reason: `Drawdown is ${(drawdown * 100).toFixed(1)}% (threshold: ${(threshold * 100).toFixed(1)}%)`,
-      facts: { drawdown }
-    };
+      reason: `Drawdown is ${(drawdown * 100).toFixed(1)}%. Exit threshold: ${(threshold * 100).toFixed(1)}%.`,
+      facts: { drawdown },
+    }
   }
-  return { tripped: false, facts: { drawdown } };
+  return { tripped: false, facts: { drawdown } }
 }

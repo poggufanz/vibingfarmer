@@ -7,7 +7,7 @@
 import { saveTransaction } from '../history.js'
 import { ownerWithdraw } from '../stellar/exit.js'
 import { SOROBAN_DEMO_AGENT } from '../stellar/config.js'
-import { classifyRisk } from '../venice.js'
+import { classifyRisk } from '../strategist.js'
 
 let worker = null
 let currentConfig = null
@@ -89,7 +89,7 @@ async function handleWorkerMessage(e) {
 // pin: the demo sweeps the single pre-deployed agent; a multi-agent run should pass the tracked
 // per-agent address (exec state) as `agentAddress`.
 
-/** Emergency exit — called from a risk alert. User-signed owner_withdraw (one popup). */
+/** Emergency exit — called from a risk alert. User-signed owner_withdraw (a single signature). */
 export async function emergencyWithdraw(
   vaultAddress,
   amount,

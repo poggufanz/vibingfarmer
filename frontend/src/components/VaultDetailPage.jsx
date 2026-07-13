@@ -87,13 +87,13 @@ export default function VaultDetailPage({ positions = {} }) {
           }}
           style={backBtn}
         >
-          ← Back
+          Back
         </button>
         <div className="mono" style={{ marginTop: 28, color: 'var(--text-muted)', fontSize: 14 }}>
-          vault not found
+          Vault not found
         </div>
         <div className="mono" style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 6 }}>
-          No vault data for protocol: {protocol}
+          No vault data is available for protocol: {protocol}
         </div>
         <button
           onClick={() => {
@@ -102,7 +102,7 @@ export default function VaultDetailPage({ positions = {} }) {
           }}
           style={{ ...backBtn, marginTop: 18 }}
         >
-          ← Back
+          Back
         </button>
       </div>
     )
@@ -135,7 +135,7 @@ export default function VaultDetailPage({ positions = {} }) {
         }}
         style={backBtn}
       >
-        ← Back to Vaults
+        Back to vaults
       </button>
 
       <div style={{ marginTop: 22 }}>
@@ -145,7 +145,6 @@ export default function VaultDetailPage({ positions = {} }) {
             fontSize: 10,
             color: 'var(--text-faint)',
             letterSpacing: '-0.01em',
-            textTransform: 'lowercase',
           }}
         >
           {protocol}
@@ -172,7 +171,6 @@ export default function VaultDetailPage({ positions = {} }) {
               style={{
                 fontSize: 9,
                 color: 'var(--text-faint)',
-                textTransform: 'lowercase',
                 letterSpacing: '-0.01em',
                 marginBottom: 6,
               }}
@@ -189,7 +187,7 @@ export default function VaultDetailPage({ positions = {} }) {
         <div className="apy-chart">
           <div className="apy-chart-header">
             <span>APY 7d</span>
-            <span className="apy-avg">7d avg: {apyStats.avg7d}%</span>
+            <span className="apy-avg">7-day average: {apyStats.avg7d}%</span>
           </div>
           <span
             dangerouslySetInnerHTML={{
@@ -204,7 +202,7 @@ export default function VaultDetailPage({ positions = {} }) {
             <span>{apyStats.values[0]?.toFixed(1)}%</span>
             <span className={parseFloat(apyStats.change7d) >= 0 ? 'up' : 'down'}>
               {parseFloat(apyStats.change7d) >= 0 ? '+' : ''}
-              {apyStats.change7d}pp 7d
+              {apyStats.change7d} pp over 7 days
             </span>
             <span>{apyStats.current}%</span>
           </div>
@@ -218,10 +216,10 @@ export default function VaultDetailPage({ positions = {} }) {
         <div style={sectionLabel}>RISK PROFILE</div>
         <div style={{ fontSize: 13, marginTop: 8, lineHeight: 1.55, color: 'var(--text-muted)' }}>
           <span style={{ color: riskColor, fontWeight: 500 }}>{catalog.risk}</span>
-          {' · '}
+          {', '}
           {catalog.description}
           {catalog.drawdown && (
-            <span style={{ color: 'var(--text-faint)' }}> · max drawdown {catalog.drawdown}%</span>
+            <span style={{ color: 'var(--text-faint)' }}>, max drawdown {catalog.drawdown}%</span>
           )}
         </div>
       </div>
@@ -246,7 +244,7 @@ export default function VaultDetailPage({ positions = {} }) {
                   {posBalance.toFixed(2)}
                 </span>
                 <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 6 }}>
-                  USDC · {Number(apy).toFixed(1)}% APY
+                  USDC, {Number(apy).toFixed(1)}% APY
                 </span>
                 <div
                   className="mono tnum"
@@ -256,7 +254,7 @@ export default function VaultDetailPage({ positions = {} }) {
                 </div>
               </div>
               <button style={pillBtn} onClick={() => navigateTo('agent')}>
-                Withdraw →
+                Withdraw
               </button>
             </div>
           </div>
@@ -287,14 +285,14 @@ export default function VaultDetailPage({ positions = {} }) {
             rel="noopener noreferrer"
             style={extLink}
           >
-            View on Stellar Expert ↗
+            View on Stellar Expert
           </a>
         </div>
       </div>
 
       <div style={{ marginTop: 28, display: 'flex', justifyContent: 'flex-end' }}>
         <button className="btn btn-primary" onClick={handleFarm}>
-          Farm this vault →
+          Farm this vault
         </button>
       </div>
     </div>

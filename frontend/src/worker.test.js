@@ -124,7 +124,27 @@ describe('WorkerAgent (Stellar)', () => {
     })
     const res = await w.execute()
     expect(res.success).toBe(false)
-    expect(res.error).toMatch(/relay unconfigured/)
+    expect(res.error).toMatch(/Stellar relay is unavailable/)
+  })
+
+  test('maps submit-gate codes to user-facing copy', async () => {
+    const events = []
+    const w = new WorkerAgent({
+      agentId: 'worker-gated',
+      user: 'GUSER',
+      vault: 'CCDX...',
+      amount: 10_000_000n,
+      sessionId: 's1',
+      onEvent: (name, data) => events.push({ name, data }),
+      agentAddress: 'CCRG...AGENT',
+      sessionKey: sessionKey(),
+      eligibilityToken: goodToken(),
+      submitGate: { check: () => ({ ok: false, reason: 'rate_anomaly' }) },
+    })
+    const res = await w.execute()
+    expect(res.reason).toBe('Too many deposit attempts. Try again in one minute.')
+    expect(events.find((e) => e.name === 'failed').data.error).toBe(res.reason)
+    expect(runAgentDeposit).not.toHaveBeenCalled()
   })
 
   test('fails when no agentAddress was provided', async () => {
@@ -140,7 +160,7 @@ describe('WorkerAgent (Stellar)', () => {
     })
     const res = await w.execute()
     expect(res.success).toBe(false)
-    expect(res.error).toMatch(/agentAddress missing/)
+    expect(res.error).toMatch(/Agent address is missing/)
     expect(runAgentDeposit).not.toHaveBeenCalled()
   })
 })

@@ -21,6 +21,7 @@ const PPS_SCALE = 10_000_000n // price_per_share is 7-dp fixed point (1_0000000 
 const VAULT_NAME = 'VFUSD Yield Vault'
 
 const keyFor = (addr) => `yv_positions_${String(addr).toLowerCase()}`
+const agentsKeyFor = (addr) => `yv_agents_${String(addr).toLowerCase()}`
 
 /** Restore last-known positions for an address from localStorage (sync, instant). */
 export function loadPersistedPositions(address) {
@@ -39,6 +40,26 @@ export function persistPositions(address, positions) {
     localStorage.setItem(keyFor(address), JSON.stringify(positions || {}))
   } catch {
     // localStorage unavailable/full — non-fatal, positions still live in memory.
+  }
+}
+
+/** Restore last-known deployed agent addresses for an address from localStorage. */
+export function loadDeployedAgents(address) {
+  if (!address) return []
+  try {
+    return JSON.parse(localStorage.getItem(agentsKeyFor(address)) || '[]') || []
+  } catch {
+    return []
+  }
+}
+
+/** Persist deployed agent addresses for an address. */
+export function saveDeployedAgents(address, agents) {
+  if (!address) return
+  try {
+    localStorage.setItem(agentsKeyFor(address), JSON.stringify(agents || []))
+  } catch {
+    // non-fatal
   }
 }
 
@@ -98,6 +119,22 @@ export async function reconcilePositionsFromChain(
       unclaimedRewards: '0',
     },
   }
+}
+
+/**
+ * Choose which agents' vault shares represent the user's positions. View-as (dev) reads the
+ * impersonated address's OWN shares; a real run reads the per-run agents the router deployed
+ * (scopes[].agent, non-revoked) — where deposit mints the shares. Returns undefined when there
+ * is nothing better yet (e.g. before scopes have rehydrated) so reconcile keeps its default.
+ *
+ * @param {Array<{agent?: string, revoked?: boolean}>} scopes
+ * @param {string} [viewAsAddress]
+ * @returns {string[]|undefined}
+ */
+export function pickPositionsAgents(scopes, viewAsAddress) {
+  if (viewAsAddress) return [viewAsAddress]
+  const deployed = (scopes || []).filter((s) => s && !s.revoked && s.agent).map((s) => s.agent)
+  return deployed.length ? deployed : undefined
 }
 
 // Merge position maps keyed by vault address (case-insensitive). Balances only ever

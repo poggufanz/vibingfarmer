@@ -4,6 +4,7 @@
 import authChallenge from './auth-challenge.js'
 import authToken from './auth-token.js'
 import { listKeys, createKey, deleteKey } from './keys.js'
+import usage from './usage.js'
 import vaultFacts from './vault-facts.js'
 import eligibility from './eligibility.js'
 import prices from './prices.js'
@@ -19,6 +20,7 @@ export const routes = {
   'GET /keys': listKeys,
   'POST /keys': createKey,
   'DELETE /keys': deleteKey,
+  'GET /usage': usage,
   'GET /vault-facts': vaultFacts,
   'POST /eligibility': eligibility,
   'GET /prices': prices,

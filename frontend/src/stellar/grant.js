@@ -1,12 +1,12 @@
 // frontend/src/stellar/grant.js
-// One-popup grant flow — the funding_router side of agent setup. A SINGLE owner-signed grant tx
+// Single-signature grant flow — the funding_router side of agent setup. A SINGLE owner-signed grant tx
 // (source == owner) covers the WHOLE auth tree: router.grant → nested SEP-41 token.approve →
 // deploy_v2 of one fresh agent_account per worker. Because the tx source IS the owner, both
 // owner.require_auth() calls (grant + the nested approve) are satisfied by SOURCE-ACCOUNT
-// credentials, so signing the envelope is the only wallet interaction — ONE popup, no separate
+// credentials, so signing the envelope is the only wallet interaction — a single signature, no separate
 // SorobanAuthorizationEntry to sign (same insight as client.js buildCreateContractTx). Later
 // worker funding is a RELAYED router.pull (agent session-key signs the pull auth entry; the relay
-// fee-bumps) — zero further popups. Revoke is the owner setting the SEP-41 allowance back to 0.
+// fee-bumps) — zero further signatures. Revoke is the owner setting the SEP-41 allowance back to 0.
 import { xdr } from '@stellar/stellar-sdk'
 import { rpcServer, buildInvokeTx, submitUserTx, readContract } from './client.js'
 import { signAgentDepositEntries } from './agentDeposit.js'
@@ -82,8 +82,9 @@ export async function buildGrantTx({
   router = SOROBAN_FUNDING_ROUTER_ADDRESS,
   server,
 }) {
-  if (!router) throw new Error('funding router address not configured')
-  if (!agentInits || agentInits.length === 0) throw new Error('grant needs at least one agent')
+  if (!router) throw new Error('The funding router is not configured.')
+  if (!agentInits || agentInits.length === 0)
+    throw new Error('The grant requires at least one agent.')
   const s = server || (await rpcServer())
   const { Contract, TransactionBuilder, BASE_FEE } = await sdk()
 
@@ -122,7 +123,7 @@ export async function buildGrantTx({
   // Simulate FIRST to capture the retval (Vec<Address> of the to-be-deployed agents).
   const sim = await s.simulateTransaction(raw)
   if (sim.error || !sim.result)
-    throw new Error(`grant simulation failed: ${sim.error || 'no result'}`)
+    throw new Error(`Grant simulation failed: ${sim.error || 'no result'}`)
   const agentAddresses = fromScVal(sim.result.retval)
 
   // …then prepare (simulate + assemble, sets the resource fee). We do NOT re-prepare after signing:
@@ -134,7 +135,7 @@ export async function buildGrantTx({
 }
 
 /**
- * Full one-popup grant: build → wallet-sign (timeout-capped) → submit. Prefers the relay fee-bump
+ * Full single-signature grant: build → wallet-sign (timeout-capped) → submit. Prefers the relay fee-bump
  * (the relay now allowlists router.grant, so the user pays 0 XLM); falls back to a direct user-paid
  * submit only when the relay is unconfigured (returns null).
  * @param {{owner:string, budgetBaseUnits:bigint|number, durationSeconds:number, agentInits:Array,
@@ -161,7 +162,7 @@ export async function submitGrant({
   const signed = await sign(built.xdr, 'grant')
   const relayed = await submitViaRelay({ xdr: signed })
   if (relayed) {
-    if (relayed.status !== 'SUCCESS') throw new Error(`grant relay reported ${relayed.status}`)
+    if (relayed.status !== 'SUCCESS') throw new Error(`The grant relay returned ${relayed.status}.`)
     return {
       hash: relayed.hash,
       status: relayed.status,
@@ -172,7 +173,7 @@ export async function submitGrant({
   }
   // Relay off → direct user-paid submit.
   const res = await submitUserTx({ signedXdr: signed, server })
-  if (res.status !== 'SUCCESS') throw new Error(`grant not confirmed: ${res.status}`)
+  if (res.status !== 'SUCCESS') throw new Error(`The grant was not confirmed: ${res.status}.`)
   return {
     hash: res.hash,
     status: res.status,
@@ -271,7 +272,7 @@ export async function readAllowance({
 }
 
 /**
- * Kill switch — the owner sets the SEP-41 allowance back to 0. One user-signed wallet popup,
+ * Kill switch — the owner sets the SEP-41 allowance back to 0. One user-signed wallet signature,
  * submitted DIRECTLY (not via the relay) so revocation still works when the relayer is down; that
  * independence is what backs the "user can revoke any time" guarantee (mirrors stellar/revoke.js).
  * expiration_ledger is a harmless current+1 (the SAC ignores it for a zero allowance).
@@ -296,6 +297,6 @@ export async function revokeGrant({
   })
   const signed = await sign(unsigned, 'revoke grant')
   const res = await submitUserTx({ signedXdr: signed, server })
-  if (res.status !== 'SUCCESS') throw new Error(`revoke not confirmed: ${res.status}`)
+  if (res.status !== 'SUCCESS') throw new Error(`Revocation was not confirmed: ${res.status}.`)
   return res
 }

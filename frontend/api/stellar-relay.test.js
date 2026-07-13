@@ -275,7 +275,7 @@ describe('assertVaultDeposit', () => {
 
 const ROUTER = 'CROUTER'
 
-describe('assertVaultDeposit — funding_router grant/pull (one-popup grant flow)', () => {
+describe('assertVaultDeposit - funding_router grant/pull (single-signature grant flow)', () => {
   it('rejects router.grant when SOROBAN_ROUTER_ADDRESS is unset (fail closed, unchanged)', () => {
     const tx = depositTx(ROUTER, 'grant')
     expect(() => assertVaultDeposit(tx, VAULT, sdkAddr)).toThrow(RelayError) // default param
@@ -332,7 +332,7 @@ function deployTx(hashHex, execKind = 'contractExecutableWasm') {
   }
 }
 
-describe('assertVaultDeposit — smart-account deploy sponsorship (SAK createWallet)', () => {
+describe('assertVaultDeposit - smart-account deploy sponsorship (SAK createWallet)', () => {
   it('passes a createContractV2 deploy of the pinned smart-account wasm', () => {
     const tx = deployTx(SAK_WASM)
     expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, '', '', SAK_WASM)).not.toThrow()
@@ -350,7 +350,7 @@ describe('assertVaultDeposit — smart-account deploy sponsorship (SAK createWal
     const tx = deployTx(SAK_WASM, 'contractExecutableStellarAsset')
     expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, '', '', SAK_WASM)).toThrow(RelayError)
   })
-  it('still rejects V1 createContract (SAK posts V2 only — anything else stays closed)', () => {
+  it('still rejects V1 createContract (SAK posts V2 only - anything else stays closed)', () => {
     const tx = deployTx(SAK_WASM)
     tx.operations[0].func.switch = () => ({ name: 'hostFunctionTypeCreateContract' })
     expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, '', '', SAK_WASM)).toThrow(RelayError)

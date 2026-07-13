@@ -178,7 +178,7 @@ export async function runAutonomousExit({ agentAddress, ownerAddress, server }) 
 async function _runAutonomousExit({ agentAddress, ownerAddress, server }) {
   const exitKeyData = loadExitKey(agentAddress)
   if (!exitKeyData) {
-    throw new Error('No exit key authorized for this agent')
+    throw new Error('No exit key is authorized for this agent.')
   }
 
   const s = server || (await rpcServer())
@@ -187,12 +187,12 @@ async function _runAutonomousExit({ agentAddress, ownerAddress, server }) {
 
   const shares = await readVaultShares(agentAddress, { server: s })
   if (shares == null) {
-    throw new Error('share balance read failed — cannot exit')
+    throw new Error('The share balance could not be read. Exit stopped.')
   }
 
   const relayer = await getRelayerAddress()
   if (!relayer) {
-    throw new Error('No relayer configured')
+    throw new Error('The relayer is not configured.')
   }
 
   // Leg 1: redeem all shares. Must confirm on-chain before the balance read below —
@@ -210,7 +210,7 @@ async function _runAutonomousExit({ agentAddress, ownerAddress, server }) {
     })
     const res = await submitViaRelay({ xdr })
     if (!res || res.status !== 'SUCCESS') {
-      throw new Error(`redeem ${res ? res.status : 'relay unreachable'} — exit aborted`)
+      throw new Error(`Redeem returned ${res ? res.status : 'relay unreachable'}. Exit stopped.`)
     }
     redeemHash = res.hash
   }
@@ -220,15 +220,15 @@ async function _runAutonomousExit({ agentAddress, ownerAddress, server }) {
   const balance = await readTokenBalance(agentAddress, { server: s })
   if (balance == null) {
     throw new Error(
-      `token balance read failed after redeem${redeemHash ? ` (redeem tx ${redeemHash})` : ''} — retry to sweep`
+      `The token balance could not be read after redemption${redeemHash ? ` (transaction ${redeemHash})` : ''}. Retry the sweep.`
     )
   }
   if (balance <= 0n) {
     if (redeemHash) {
       // vault.redeem guards assets>0, so a confirmed redeem always leaves a balance
-      throw new Error(`redeem tx ${redeemHash} confirmed but agent balance is 0`)
+      throw new Error(`Redeem transaction ${redeemHash} was confirmed, but the agent balance is 0.`)
     }
-    throw new Error('No vault shares to exit')
+    throw new Error('There are no vault shares to exit.')
   }
 
   // Leg 2: sweep to the owner.
@@ -244,7 +244,7 @@ async function _runAutonomousExit({ agentAddress, ownerAddress, server }) {
   const res = await submitViaRelay({ xdr })
   if (!res || res.status !== 'SUCCESS') {
     throw new Error(
-      `transfer ${res ? res.status : 'relay unreachable'} after redeem ${redeemHash ?? '(skipped)'} — funds sit on the agent; re-run to sweep`
+      `Transfer returned ${res ? res.status : 'relay unreachable'} after redemption ${redeemHash ?? '(skipped)'}. Funds remain with the agent; retry the sweep.`
     )
   }
   return { hash: res.hash, status: res.status, redeemHash }

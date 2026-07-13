@@ -41,7 +41,7 @@ describe('createStellarPasskeyWallet', () => {
     expect(signed.signed).toBe(true)
   })
 
-  test('exposes signAuthEntry itself — crossChainFarm hands this wallet to cctpBurn as its kit', async () => {
+  test('exposes signAuthEntry itself - crossChainFarm hands this wallet to cctpBurn as its kit', async () => {
     const fakeKit = {
       createWallet: vi.fn(async () => ({ contractId: 'GCCCC', credentialId: 'cred-3' })),
       signAuthEntry: vi.fn(async (entry) => ({ ...entry, signed: true })),
@@ -68,6 +68,7 @@ describe('createStellarPasskeyWallet', () => {
     expect(fakeKit.createWallet).toHaveBeenCalledWith('Vibing Farmer', 'second@example.com', {
       autoSubmit: true,
       autoFund: true,
+      nativeTokenContract: expect.any(String),
     })
   })
 })

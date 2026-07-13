@@ -33,7 +33,7 @@ describe('submitDeposit (orchestration)', () => {
     expect(out).toEqual({ hash: 'HASH', status: 'SUCCESS', sharesBefore: 0n, sharesAfter: 5n })
   })
 
-  it('fails closed when F8 rejects — never builds or relays', async () => {
+  it('fails closed when F8 rejects - never builds or relays', async () => {
     const relay = { getRelayerAddress: vi.fn(), submitViaRelay: vi.fn() }
     const buildInner = vi.fn()
     await expect(

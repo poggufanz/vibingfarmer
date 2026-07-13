@@ -6,7 +6,7 @@ import BackupScreen from './BackupScreen.jsx'
 describe('BackupScreen', () => {
   it('reveals the phrase and only confirms with correct words', () => {
     const onConfirm = vi.fn()
-    render(
+    const { container } = render(
       <BackupScreen
         mnemonic="alpha bravo charlie delta"
         indices={[1]}
@@ -16,10 +16,12 @@ describe('BackupScreen', () => {
     )
     // hidden until reveal (step 1)
     expect(screen.queryByText('bravo')).toBeNull()
+    expect(container.querySelector('.bk-prog-fill')?.style.transform).toBe('scaleX(0)')
     fireEvent.click(screen.getByRole('button', { name: /reveal/i }))
     // Deviation from brief: use .toBeTruthy() instead of .toBeInTheDocument() (no jest-dom setup
     // in this project — see ApproveOverlay.test.jsx for the same precedent).
     expect(screen.getByText('bravo')).toBeTruthy()
+    expect(container.querySelector('.bk-prog-fill')?.style.transform).toBe('scaleX(0.5)')
     // step 2 → 3: "Continue to verification" is gated on the saved checkbox
     const continueBtn = screen.getByRole('button', { name: /continue to verification/i })
     expect(continueBtn.disabled).toBe(true)
