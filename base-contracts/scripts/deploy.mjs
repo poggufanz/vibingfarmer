@@ -16,13 +16,14 @@ if (!pk || /FILL_ME/.test(pk)) throw new Error('BASE_DEPLOYER_PRIVKEY missing');
 
 const initialPool = process.env.INITIAL_POOL_ADDRESS;
 if (!initialPool || /FILL_ME/.test(initialPool)) throw new Error('INITIAL_POOL_ADDRESS missing — run deploy-mock-pool.mjs first, or set a confirmed vault address');
+const canonicalAsset = process.env.CANONICAL_ASSET_ADDRESS || '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
 
 const rpc = process.env.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org';
 const account = privateKeyToAccount(pk);
 const pub = createPublicClient({ chain: baseSepolia, transport: http(rpc) });
 const wallet = createWalletClient({ account, chain: baseSepolia, transport: http(rpc) });
 
-const deployHash = await wallet.deployContract({ abi, bytecode, args: [account.address] });
+const deployHash = await wallet.deployContract({ abi, bytecode, args: [account.address, getAddress(canonicalAsset)] });
 console.log('deploy tx:', deployHash);
 const deployRcpt = await pub.waitForTransactionReceipt({ hash: deployHash });
 console.log('status:', deployRcpt.status);

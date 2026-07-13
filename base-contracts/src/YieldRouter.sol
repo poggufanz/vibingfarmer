@@ -4,6 +4,7 @@ pragma solidity ^0.8.23;
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IERC4626} from "./interfaces/IERC4626.sol";
 
 /// @title YieldRouter
@@ -15,107 +16,94 @@ import {IERC4626} from "./interfaces/IERC4626.sol";
 /// docs/superpowers/specs/2026-07-04-approach-c-hybrid-cross-chain-design.md
 /// §4): a compromised session key can call deposit/withdraw against a
 /// whitelisted pool and nothing else, and never receives funds itself.
-///
-/// Amendment A1 (2026-07-05): an additive, default-inert performance-fee
-/// switch. `feeBps` ships at 0 (exact passthrough). When the owner turns it
-/// on, a fee is skimmed ONLY from the yield portion of a withdrawal (assets
-/// above the caller's tracked principal), never from principal, and forwarded
-/// to `feeRecipient` in the same transaction — zero-custody is preserved. The
-/// canonical deposit/withdraw/setPool interface is unchanged.
-contract YieldRouter is Ownable {
+contract YieldRouter is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
-    /// @notice Hard ceiling on the performance fee — 20% (matches the highest
-    /// market rate, Yearn v3's cap). setFee can never exceed this.
-    uint16 public constant FEE_MAX_BPS = 2000;
+    address public immutable canonicalAsset;
 
     mapping(address => bool) public allowedPool;
-
-    /// @notice Performance fee in basis points, charged on yield only. 0 = off.
-    uint16 public feeBps;
-    /// @notice Where performance fees are sent. Must be non-zero whenever feeBps > 0.
-    address public feeRecipient;
-
-    /// @notice Cumulative deposited baseline per caller per pool. Fees are only
-    /// taken on withdrawn assets above this baseline. Tracks router flows only
-    /// (a v1 limitation: shares moved into a pool position outside the router
-    /// are invisible here).
-    mapping(address caller => mapping(address pool => uint256)) public principalOf;
+    mapping(address => bool) public knownPool;
 
     event Deposited(address indexed caller, address indexed pool, uint256 assets, uint256 shares);
     event Withdrawn(address indexed caller, address indexed pool, uint256 shares, uint256 assets);
     event PoolAllowedSet(address indexed pool, bool allowed);
-    event FeeSet(uint16 feeBps, address recipient);
-    event FeeTaken(address indexed caller, address indexed pool, uint256 feeAssets);
 
-    constructor(address initialOwner) Ownable(initialOwner) {}
+    constructor(address initialOwner, address canonicalAsset_) Ownable(initialOwner) {
+        require(canonicalAsset_ != address(0), "YieldRouter: asset is zero");
+        canonicalAsset = canonicalAsset_;
+    }
 
     /// @notice Deposit `amount` of `pool`'s underlying asset, minting shares
     /// directly to `msg.sender`. `pool` must be whitelisted; `minShares` is
     /// the slippage floor. No fee is charged on deposit.
-    function deposit(address pool, uint256 amount, uint256 minShares) external returns (uint256 shares) {
+    function deposit(address pool, uint256 amount, uint256 minShares) external nonReentrant returns (uint256 shares) {
         require(allowedPool[pool], "YieldRouter: pool not allowed");
+        require(amount > 0, "YieldRouter: amount is zero");
+        _validatePool(pool);
 
-        IERC20 asset = IERC20(IERC4626(pool).asset());
+        IERC20 asset = IERC20(canonicalAsset);
+        uint256 assetBalanceBefore = asset.balanceOf(address(this));
+        uint256 shareBalanceBefore = IERC4626(pool).balanceOf(msg.sender);
         asset.safeTransferFrom(msg.sender, address(this), amount);
+        require(asset.balanceOf(address(this)) == assetBalanceBefore + amount, "YieldRouter: asset transfer mismatch");
         asset.forceApprove(pool, amount);
 
         shares = IERC4626(pool).deposit(amount, msg.sender);
+        asset.forceApprove(pool, 0);
+        require(asset.balanceOf(address(this)) == assetBalanceBefore, "YieldRouter: pool did not consume assets");
+        uint256 shareBalanceAfter = IERC4626(pool).balanceOf(msg.sender);
+        require(
+            shareBalanceAfter >= shareBalanceBefore && shareBalanceAfter - shareBalanceBefore == shares,
+            "YieldRouter: share receipt mismatch"
+        );
         require(shares >= minShares, "YieldRouter: slippage, shares < minShares");
-
-        principalOf[msg.sender][pool] += amount;
 
         emit Deposited(msg.sender, pool, amount, shares);
     }
 
     /// @notice Redeem `shares` of `pool` on behalf of `msg.sender`. Assets are
-    /// redeemed to this router, an optional yield-only performance fee is
-    /// skimmed (see Amendment A1), and the remainder is forwarded straight to
-    /// `msg.sender` in the same transaction. Requires `msg.sender` to have
-    /// approved this router for `shares` on `pool` beforehand (standard
-    /// ERC-4626/ERC-20 allowance). `pool` must be whitelisted; `minAssets` is
-    /// the slippage floor on what the caller RECEIVES (post-fee), so the
-    /// guarantee stays honest.
-    function withdraw(address pool, uint256 shares, uint256 minAssets) external returns (uint256 assets) {
-        require(allowedPool[pool], "YieldRouter: pool not allowed");
+    /// redeemed to this router and forwarded in full to `msg.sender` in the
+    /// same transaction. Requires `msg.sender` to have approved this router
+    /// for `shares` on `pool` beforehand (standard ERC-4626/ERC-20 allowance).
+    /// Pools remain available for exits after deposits are disabled.
+    function withdraw(address pool, uint256 shares, uint256 minAssets) external nonReentrant returns (uint256 assets) {
+        require(knownPool[pool], "YieldRouter: pool not known");
+        require(shares > 0, "YieldRouter: shares are zero");
+        _validatePool(pool);
 
-        IERC20 asset = IERC20(IERC4626(pool).asset());
+        IERC20 asset = IERC20(canonicalAsset);
+        uint256 assetBalanceBefore = asset.balanceOf(address(this));
+        uint256 shareBalanceBefore = IERC4626(pool).balanceOf(msg.sender);
         assets = IERC4626(pool).redeem(shares, address(this), msg.sender);
+        require(asset.balanceOf(address(this)) == assetBalanceBefore + assets, "YieldRouter: asset receipt mismatch");
+        uint256 shareBalanceAfter = IERC4626(pool).balanceOf(msg.sender);
+        require(
+            shareBalanceBefore >= shareBalanceAfter && shareBalanceBefore - shareBalanceAfter == shares,
+            "YieldRouter: share consumption mismatch"
+        );
 
-        uint256 remaining = principalOf[msg.sender][pool];
-        uint256 yieldPortion = assets > remaining ? assets - remaining : 0;
-        // Principal consumed by this withdrawal = assets - yieldPortion, which
-        // is <= remaining by construction, so this never underflows.
-        principalOf[msg.sender][pool] = remaining - (assets - yieldPortion);
-
-        uint256 fee = (yieldPortion * feeBps) / 10_000;
-        if (fee > 0) {
-            asset.safeTransfer(feeRecipient, fee);
-            emit FeeTaken(msg.sender, pool, fee);
-        }
-
-        uint256 toCaller = assets - fee;
-        asset.safeTransfer(msg.sender, toCaller);
-        require(toCaller >= minAssets, "YieldRouter: slippage, assets < minAssets");
+        require(assets >= minAssets, "YieldRouter: slippage, assets < minAssets");
+        asset.safeTransfer(msg.sender, assets);
+        require(asset.balanceOf(address(this)) == assetBalanceBefore, "YieldRouter: asset forwarding mismatch");
 
         emit Withdrawn(msg.sender, pool, shares, assets);
     }
 
-    /// @notice Add or remove `pool` from the deposit/withdraw whitelist.
+    /// @notice Enable or disable new deposits into `pool`.
     /// Owner-only — this is the entire admin surface of the router, and the
-    /// only way a new pool ever becomes reachable by a session key.
+    /// only way a new pool ever becomes reachable by a session key. Once
+    /// enabled, a pool remains known so disabling deposits cannot block exits.
     function setPool(address pool, bool allowed) external onlyOwner {
+        if (allowed) {
+            _validatePool(pool);
+            knownPool[pool] = true;
+        }
         allowedPool[pool] = allowed;
         emit PoolAllowedSet(pool, allowed);
     }
 
-    /// @notice Set the performance fee (bps, on yield only) and its recipient.
-    /// Reverts above FEE_MAX_BPS, or if a non-zero fee has no recipient.
-    function setFee(uint16 newFeeBps, address newRecipient) external onlyOwner {
-        require(newFeeBps <= FEE_MAX_BPS, "YieldRouter: fee exceeds FEE_MAX_BPS");
-        require(newFeeBps == 0 || newRecipient != address(0), "YieldRouter: fee needs a recipient");
-        feeBps = newFeeBps;
-        feeRecipient = newRecipient;
-        emit FeeSet(newFeeBps, newRecipient);
+    function _validatePool(address pool) private view {
+        require(pool.code.length > 0, "YieldRouter: pool has no code");
+        require(IERC4626(pool).asset() == canonicalAsset, "YieldRouter: wrong pool asset");
     }
 }
