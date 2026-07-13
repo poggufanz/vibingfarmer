@@ -1,6 +1,8 @@
 // Live testnet smoke for the reverse leg: withdraws from the pool, burns-with-hook back to the
 // smoke Stellar recipient, relays the reverse mint. This MUST use a separately reviewed
-// reverse-only mandate; the farm-only SMOKE_SESSION_* credentials cannot authorize unwind.
+// reverse-only mandate. The separate env namespace prevents accidental farm-credential reuse;
+// this script does NOT inspect serialized policy semantics. The installed on-chain policy remains
+// the authorization boundary.
 // Run: node --env-file=.dev.vars smoke/smoke-unwind.mjs
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -20,9 +22,10 @@ function needUnwindSession(env) {
   const signerPrivateKey = env.SMOKE_UNWIND_SESSION_PRIVKEY;
   if (!approval || /FILL_ME/.test(approval) || !signerPrivateKey || /FILL_ME/.test(signerPrivateKey)) {
     throw new Error(
-      'Farm-only SMOKE_SESSION_* credentials cannot authorize unwind. Set '
-      + 'SMOKE_UNWIND_SESSION_APPROVAL and SMOKE_UNWIND_SESSION_PRIVKEY from a separately '
-      + 'reviewed reverse-only mandate.',
+      'The unwind credential namespace prevents accidental reuse of farm-only SMOKE_SESSION_* '
+      + 'values; it does not validate serialized approval semantics. The on-chain policy is the '
+      + 'authorization boundary. Set SMOKE_UNWIND_SESSION_APPROVAL and '
+      + 'SMOKE_UNWIND_SESSION_PRIVKEY from a separately reviewed reverse-only mandate.',
     );
   }
   return { approval, signerPrivateKey };

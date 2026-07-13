@@ -20,6 +20,53 @@ describe('quantizeAllocations', () => {
     expect(quantized.map((a) => a.amountBaseUnits)).toEqual([33_333_334n, 33_333_333n, 33_333_333n])
     expect(quantized.reduce((sum, a) => sum + a.amountBaseUnits, 0n)).toBe(100_000_000n)
   })
+
+  test('uses the explicit CCTP mint target for one and multiple 0.1234567 allocations', async () => {
+    const scenarios = [
+      {
+        allocations: [{ pool: '0xAAAA', amount: 0.1234567, minShares: 1n }],
+        expected: [123_456n],
+      },
+      {
+        allocations: [
+          { pool: '0xAAAA', amount: 0.1234567 * 0.5, minShares: 1n },
+          { pool: '0xBBBB', amount: 0.1234567 * 0.3, minShares: 1n },
+          { pool: '0xCCCC', amount: 0.1234567 * 0.2, minShares: 1n },
+        ],
+        expected: [61_728n, 37_037n, 24_691n],
+      },
+    ]
+
+    for (const scenario of scenarios) {
+      const quantized = relayerClient.quantizeAllocations(scenario.allocations, {
+        targetUnits: 123_456n,
+      })
+      expect(quantized.map((a) => a.amountBaseUnits)).toEqual(scenario.expected)
+      expect(quantized.reduce((sum, a) => sum + a.amountBaseUnits, 0n)).toBe(123_456n)
+
+      const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ jobId: 'job-1' }) }))
+      await postFarm({
+        burnTxHash: 'burn-precision',
+        sourceDomain: 27,
+        serializedApproval: 'approval-blob',
+        allocations: quantized,
+        baseUrl: 'https://example.test/api/vf-cross',
+        deps: { fetchImpl: fetchMock },
+      })
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+      expect(body.allocations.map((a) => BigInt(a.amount))).toEqual(scenario.expected)
+    }
+  })
+
+  test('strictly rejects an invalid or unusable explicit target', () => {
+    const allocations = [{ pool: '0xAAAA', amount: 1, minShares: 1n }]
+
+    for (const targetUnits of [0n, -1n, 1]) {
+      expect(() => relayerClient.quantizeAllocations(allocations, { targetUnits })).toThrow(
+        /targetUnits.*positive bigint/i
+      )
+    }
+  })
 })
 
 describe('postFarm', () => {

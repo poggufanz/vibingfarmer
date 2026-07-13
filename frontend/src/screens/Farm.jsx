@@ -2,10 +2,11 @@
 // Deposit -> Farm screen: presentational shell around allocateBasePools (AI preview) and
 // runFarmFlow (the actual burn -> relay -> poll pipeline). Container/presentational split per
 // this project's web patterns — all side effects live in the two imported functions, not here.
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { allocateBasePools } from '../strategist.js'
 import { runFarmFlow } from '../crossChainFarm.js'
-import { toBaseUnits } from '../stellar/format.js'
+import { deriveCctpTransferUnits } from '../stellar/format.js'
+import { quantizeAllocations } from '../base/relayerClient.js'
 
 export default function Farm({
   amount,
@@ -16,6 +17,7 @@ export default function Farm({
   sessionKeyAddress,
   serializedApproval,
   allocations: providedAllocations = null,
+  burnUnits7: providedBurnUnits7 = null,
 }) {
   // When the caller already computed an allocation (CrossChainFarmFlow does, at mandate time,
   // and derived the session-key caps from it), it MUST be reused verbatim here: allocateBasePools
@@ -26,6 +28,12 @@ export default function Farm({
   const [events, setEvents] = useState([])
   const [status, setStatus] = useState('idle') // idle | allocating | running | done | error
   const [errorMessage, setErrorMessage] = useState(null)
+  // CrossChainFarmFlow supplies the authoritative mandate-time bigint. Only the standalone screen
+  // falls back to converting its display amount, memoized at the same allocation boundary.
+  const burnUnits7 = useMemo(
+    () => providedBurnUnits7 ?? deriveCctpTransferUnits(amount).burnUnits7,
+    [providedBurnUnits7, amount]
+  )
 
   useEffect(() => {
     if (providedAllocations) {
@@ -36,14 +44,18 @@ export default function Farm({
     setStatus('allocating')
     allocateBasePools({ amount, riskLevel, nPools }).then((result) => {
       if (!cancelled) {
-        setAllocations(result)
+        setAllocations(
+          quantizeAllocations(result, {
+            targetUnits: burnUnits7 / 10n,
+          })
+        )
         setStatus('idle')
       }
     })
     return () => {
       cancelled = true
     }
-  }, [amount, riskLevel, nPools, providedAllocations])
+  }, [amount, riskLevel, nPools, providedAllocations, burnUnits7])
 
   const onEvent = useCallback((name, data) => {
     setEvents((prev) => [...prev, { name, data, at: Date.now() }])
@@ -54,13 +66,18 @@ export default function Farm({
     setStatus('running')
     setErrorMessage(null)
     try {
+      // Always call the quantizer: pre-quantized production input takes its validation path, so a
+      // stale/mismatched cap total cannot bypass the burn-to-mint invariant.
+      const exactAllocations = quantizeAllocations(allocations, {
+        targetUnits: burnUnits7 / 10n,
+      })
       const result = await runFarmFlow({
         stellarWallet,
         baseRecipientAddress,
         sessionKeyAddress,
         serializedApproval,
-        allocations,
-        amountUnits: toBaseUnits(amount),
+        allocations: exactAllocations,
+        burnUnits7,
         onEvent,
       })
       setStatus(result.finalStatus)
@@ -73,7 +90,7 @@ export default function Farm({
     sessionKeyAddress,
     serializedApproval,
     allocations,
-    amount,
+    burnUnits7,
     onEvent,
   ])
 

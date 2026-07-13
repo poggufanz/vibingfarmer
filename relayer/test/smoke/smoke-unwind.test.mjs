@@ -15,7 +15,7 @@ const CONFIG = {
 };
 
 describe('smoke unwind credential isolation', () => {
-  it('fails before loading live config when only the farm-only smoke credentials are present', async () => {
+  it('uses namespace isolation to reject accidental farm-credential reuse before loading config', async () => {
     const loadConfig = vi.fn(() => {
       throw new Error('config must not load before credential isolation');
     });
@@ -29,11 +29,13 @@ describe('smoke unwind credential isolation', () => {
         },
         deps: { loadConfig },
       }),
-    ).rejects.toThrow(/farm-only.*SMOKE_UNWIND_SESSION_APPROVAL.*reverse-only/i);
+    ).rejects.toThrow(
+      /namespace.*accidental reuse.*does not validate.*on-chain policy.*SMOKE_UNWIND_SESSION_APPROVAL/is,
+    );
     expect(loadConfig).not.toHaveBeenCalled();
   });
 
-  it('passes only separately named unwind credentials into the reverse flow', async () => {
+  it('forwards separately named credentials without claiming their serialized policy was inspected', async () => {
     const unwind = vi.fn(async () => ({
       withdrawResults: [],
       burnResult: { txHash: '0xburn' },

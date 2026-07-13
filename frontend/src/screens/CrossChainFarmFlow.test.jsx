@@ -201,9 +201,91 @@ describe('CrossChainFarmFlow', () => {
     await waitFor(() => expect(runFarmFlow).toHaveBeenCalledTimes(1))
 
     const dispatched = runFarmFlow.mock.calls[0][0].allocations
+    expect(runFarmFlow.mock.calls[0][0].burnUnits7).toBe(1_000_000_000n)
     expect(dispatched.map((a) => a.amount)).toEqual([third, third, third])
     expect(dispatched.map((a) => a.amountBaseUnits)).toEqual(caps)
     expect(dispatched.reduce((sum, a) => sum + a.amountBaseUnits, 0n)).toBe(100_000_000n)
+  })
+
+  test('one-pool 0.1234567 flow burns divisible 1,234,560 and caps/dispatch at the exact 123,456 mint', async () => {
+    const allocation = {
+      pool: '0xAAAA',
+      protocol: 'one-pool',
+      amount: 0.1234567,
+      minShares: 1n,
+      expectedApy: 5,
+      riskTier: 'medium',
+      skill: {},
+    }
+    createStellarPasskeyWallet.mockResolvedValue(STELLAR_WALLET)
+    createBaseSmartAccount.mockResolvedValue(BASE_ACCOUNT)
+    allocateBasePools.mockResolvedValue([allocation])
+    createMandate.mockResolvedValue(MANDATE_RESULT)
+    postMandate.mockResolvedValue({ ok: true })
+    runFarmFlow.mockResolvedValue({ finalStatus: 'done' })
+
+    render(<CrossChainFarmFlow />)
+    await completeOnboarding()
+    expect(screen.getByText(/seventh decimal remains in your Stellar wallet/i)).toBeTruthy()
+    expect(screen.getByLabelText(/amount \(usdc\)/i)).toHaveProperty('step', '0.0000001')
+    expect(screen.getByLabelText(/amount \(usdc\)/i)).toHaveProperty('min', '0.000001')
+    fireEvent.change(screen.getByLabelText(/amount \(usdc\)/i), {
+      target: { value: '0.1234567' },
+    })
+    fireEvent.change(screen.getByLabelText(/number of pools/i), { target: { value: '1' } })
+    fireEvent.click(screen.getByRole('button', { name: /create mandate/i }))
+
+    await waitFor(() => expect(createMandate).toHaveBeenCalledTimes(1))
+    expect(createMandate.mock.calls[0][0].pools).toEqual([{ pool: '0xAAAA', cap: 123_456n }])
+
+    await waitFor(() => screen.getByRole('button', { name: /start farming/i }))
+    fireEvent.click(screen.getByRole('button', { name: /start farming/i }))
+    await waitFor(() => expect(runFarmFlow).toHaveBeenCalledTimes(1))
+    const farmCall = runFarmFlow.mock.calls[0][0]
+    expect(farmCall.burnUnits7).toBe(1_234_560n)
+    expect(farmCall.allocations.map((a) => a.amountBaseUnits)).toEqual([123_456n])
+  })
+
+  test('multi-pool 0.1234567 flow places the remainder once and each dispatch slice equals its mandate cap', async () => {
+    const weights = [0.5, 0.3, 0.2]
+    const allocations = ['0xAAAA', '0xBBBB', '0xCCCC'].map((pool, index) => ({
+      pool,
+      protocol: `weighted-${index + 1}`,
+      amount: 0.1234567 * weights[index],
+      minShares: 1n,
+      expectedApy: 5,
+      riskTier: 'medium',
+      skill: {},
+    }))
+    createStellarPasskeyWallet.mockResolvedValue(STELLAR_WALLET)
+    createBaseSmartAccount.mockResolvedValue(BASE_ACCOUNT)
+    allocateBasePools.mockResolvedValue(allocations)
+    createMandate.mockResolvedValue(MANDATE_RESULT)
+    postMandate.mockResolvedValue({ ok: true })
+    runFarmFlow.mockResolvedValue({ finalStatus: 'done' })
+
+    render(<CrossChainFarmFlow />)
+    await completeOnboarding()
+    fireEvent.change(screen.getByLabelText(/amount \(usdc\)/i), {
+      target: { value: '0.1234567' },
+    })
+    fireEvent.change(screen.getByLabelText(/number of pools/i), { target: { value: '3' } })
+    fireEvent.click(screen.getByRole('button', { name: /create mandate/i }))
+
+    await waitFor(() => expect(createMandate).toHaveBeenCalledTimes(1))
+    const caps = createMandate.mock.calls[0][0].pools.map((pool) => pool.cap)
+    expect(caps).toEqual([61_728n, 37_037n, 24_691n])
+    expect(caps.reduce((sum, cap) => sum + cap, 0n)).toBe(123_456n)
+
+    await waitFor(() => screen.getByRole('button', { name: /start farming/i }))
+    fireEvent.click(screen.getByRole('button', { name: /start farming/i }))
+    await waitFor(() => expect(runFarmFlow).toHaveBeenCalledTimes(1))
+    const farmCall = runFarmFlow.mock.calls[0][0]
+    expect(farmCall.burnUnits7).toBe(1_234_560n)
+    expect(farmCall.allocations.map((a) => a.amountBaseUnits)).toEqual(caps)
+    expect(
+      farmCall.allocations.every((allocation, index) => allocation.amountBaseUnits <= caps[index])
+    ).toBe(true)
   })
 
   test('surfaces a mandate error and never calls postMandate when createMandate rejects', async () => {

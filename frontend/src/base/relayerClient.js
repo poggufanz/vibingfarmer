@@ -7,7 +7,7 @@
 // catch-all pattern (frontend/functions/api/vf/[[path]].js -> frontend/api/vf/_router.js). If
 // SP2 lands a different path or response shape, only this file's URL-building and response
 // parsing need to change — crossChainFarm.js and the screens never construct URLs themselves.
-import { toBaseChainUnits, BASE_USDC_UNIT } from './config.js'
+import { toBaseChainUnits } from './config.js'
 
 const DEFAULT_BASE_URL = import.meta.env?.VITE_CROSS_RELAYER_BASE || '/api/vf-cross'
 const DEFAULT_POLL_INTERVAL_MS = 3000
@@ -21,40 +21,79 @@ const DEFAULT_MAX_TRIES = 40 // ~2 minutes at the default interval
  *
  * Calling this with already-quantized allocations is idempotent (fresh object copies, same units).
  * @param {Array<object>} allocations
+ * @param {{ targetUnits?: bigint }} options - authoritative Base 6dp total when supplied
  * @returns {Array<object & { amountBaseUnits: bigint }>}
  */
-export function quantizeAllocations(allocations) {
+export function quantizeAllocations(allocations, { targetUnits } = {}) {
   if (!Array.isArray(allocations)) throw new Error('allocations must be an array')
+  const hasExplicitTarget = targetUnits !== undefined
+  if (hasExplicitTarget && (typeof targetUnits !== 'bigint' || targetUnits <= 0n)) {
+    throw new Error('targetUnits must be a positive bigint')
+  }
+  if (hasExplicitTarget && allocations.length === 0) {
+    throw new Error('cannot apportion positive targetUnits across an empty allocation list')
+  }
   if (allocations.length === 0) return []
 
   const hasExactUnits = allocations.map((a) => typeof a.amountBaseUnits === 'bigint')
-  if (hasExactUnits.every(Boolean)) return allocations.map((a) => ({ ...a }))
+  if (hasExactUnits.every(Boolean)) {
+    if (allocations.some((a) => a.amountBaseUnits <= 0n)) {
+      throw new Error('every amountBaseUnits value must be positive')
+    }
+    const exactTotal = allocations.reduce((sum, a) => sum + a.amountBaseUnits, 0n)
+    if (hasExplicitTarget && exactTotal !== targetUnits) {
+      throw new Error(`pre-quantized allocations sum to ${exactTotal}, expected ${targetUnits}`)
+    }
+    return allocations.map((a) => ({ ...a }))
+  }
   if (hasExactUnits.some(Boolean)) {
     throw new Error('allocations must either all include amountBaseUnits or none include it')
   }
-  if (!allocations.every((a) => typeof a.amount === 'number' && Number.isFinite(a.amount))) {
-    throw new Error('quantizeAllocations requires finite display-number amounts')
+  if (
+    !allocations.every(
+      (a) => typeof a.amount === 'number' && Number.isFinite(a.amount) && a.amount > 0
+    )
+  ) {
+    throw new Error('quantizeAllocations requires positive finite display-number amounts')
   }
 
-  const targetUnits = toBaseChainUnits(allocations.reduce((s, a) => s + a.amount, 0))
-  const scaled = allocations.map((a) => a.amount * BASE_USDC_UNIT)
-  const floors = scaled.map((r) => BigInt(Math.floor(r)))
-  const distributed = floors.reduce((s, f) => s + f, 0n)
-  // How many whole units the flooring left on the table (normally 0..nPools); clamp defensively.
-  let deficit = Number(targetUnits - distributed)
-  if (deficit < 0) deficit = 0
+  const displayTotal = allocations.reduce((sum, a) => sum + a.amount, 0)
+  const exactTarget = hasExplicitTarget ? targetUnits : toBaseChainUnits(displayTotal)
+  if (exactTarget <= 0n) throw new Error('allocation target must be positive')
+
+  // Turn display amounts into fixed-precision proportional weights, then do Hamilton/largest-
+  // remainder apportionment entirely with bigint. The target stays exact even for totals above
+  // Number.MAX_SAFE_INTEGER, while display floats are used only to choose relative weights.
+  const WEIGHT_SCALE = 1_000_000_000_000
+  const weights = allocations.map((a) =>
+    BigInt(Math.max(1, Math.round((a.amount / displayTotal) * WEIGHT_SCALE)))
+  )
+  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0n)
+  const floors = weights.map((weight) => (exactTarget * weight) / totalWeight)
+  const remainders = weights.map((weight) => (exactTarget * weight) % totalWeight)
+  const distributed = floors.reduce((sum, floor) => sum + floor, 0n)
+  const deficit = exactTarget - distributed
+  if (deficit < 0n || deficit > BigInt(allocations.length)) {
+    throw new Error('largest-remainder apportionment produced an invalid deficit')
+  }
   const bumped = new Set(
-    scaled
-      .map((r, i) => ({ i, frac: r - Math.floor(r) }))
-      .sort((a, b) => b.frac - a.frac)
-      .slice(0, deficit)
+    remainders
+      .map((remainder, i) => ({ i, remainder }))
+      .sort((a, b) =>
+        a.remainder === b.remainder ? a.i - b.i : a.remainder > b.remainder ? -1 : 1
+      )
+      .slice(0, Number(deficit))
       .map((x) => x.i)
   )
 
-  return allocations.map((a, i) => ({
+  const quantized = allocations.map((a, i) => ({
     ...a,
     amountBaseUnits: floors[i] + (bumped.has(i) ? 1n : 0n),
   }))
+  if (quantized.some((a) => a.amountBaseUnits <= 0n)) {
+    throw new Error('targetUnits is too small to give every allocation a positive cap')
+  }
+  return quantized
 }
 
 // The production flow arrives pre-quantized. Numeric and bigint `amount` branches remain as a
