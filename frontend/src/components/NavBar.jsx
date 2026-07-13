@@ -3,8 +3,8 @@
 // Self-contained: carries its own wordmark + scoped <style> so it renders
 // identically wherever it's mounted, inheriting only the palette CSS-var tokens.
 //
-// "Products" launches the app (persists yv_skip_landing → /strategy), mirroring
-// LandingHero's onStart. External links (Resources, Whitepaper) open in a new tab.
+// The CTA launches the app (persists yv_skip_landing, then opens /strategy).
+// LandingHero can provide the same in-memory callback used by its primary CTA.
 
 import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
@@ -22,15 +22,19 @@ function Wordmark() {
   )
 }
 
-export default function NavBar() {
+export default function NavBar({ onLaunch }) {
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const [menuOpen, setMenuOpen] = useState(false)
 
   const launchApp = () => {
+    setMenuOpen(false)
+    if (onLaunch) {
+      onLaunch()
+      return
+    }
     localStorage.setItem('yv_skip_landing', 'true')
     localStorage.setItem('yv_onboarded', 'true')
-    setMenuOpen(false)
     navigate('/strategy')
   }
 
@@ -61,9 +65,6 @@ export default function NavBar() {
       </button>
 
       <div className="nv-links" id="nv-main-links">
-        <button className="nv-link" onClick={launchApp}>
-          App
-        </button>
         <button
           className={`nv-link${isEcosystem ? ' is-active' : ''}`}
           onClick={() => go('/ecosystem')}
@@ -204,32 +205,20 @@ function NavStyle() {
   font-family: var(--font-mono, monospace);
   font-weight: 600;
   font-size: 0.82rem;
-  color: var(--accent-fg, #0e0f0c);
-  background: var(--accent, #cfff3d);
-  border: none;
+  color: var(--text, #ecebe1);
+  background: var(--bg-elev, #22231d);
+  border: 1px solid var(--border-strong, rgba(255,255,255,0.13));
   padding: 0.55rem 1.05rem;
   border-radius: var(--radius-md, 8px);
   display: inline-flex;
   align-items: center;
   gap: 0.5ch;
-  transition: transform 200ms cubic-bezier(0.16,1,0.3,1), box-shadow 200ms ease;
 }
-.nv-cta span { transition: transform 200ms cubic-bezier(0.16,1,0.3,1); }
-.nv-cta:active { transform: scale(0.97); }
 .nv-cta:focus-visible { outline: 2px solid var(--accent, #cfff3d); outline-offset: 2px; }
 
 @media (hover: hover) and (pointer: fine) {
   .nv-link:hover::after { transform: scaleX(1); }
   .nv-cta:hover { transform: translateY(-1px); }
-  .nv-cta:hover span { transform: translateX(3px); }
-  .nv-cta:active { transform: scale(0.97); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .nv-link::after { transition: none; }
-  .nv-cta,
-  .nv-cta span { transition: opacity 160ms ease, color 160ms ease; }
-  .nv-cta:active { opacity: 0.82; transform: none; }
 }
 
 @media (prefers-reduced-transparency: reduce) {
@@ -264,11 +253,23 @@ function NavStyle() {
 }
 .nv-menu-btn:focus-visible { outline: 2px solid var(--accent, #cfff3d); outline-offset: 2px; }
 
+.nv-brand,
+.nv-menu-btn,
+.nv-cta {
+  transition: transform var(--duration-press, 160ms) var(--ease-out, cubic-bezier(0.23,1,0.32,1));
+}
+.nv-brand:active,
+.nv-menu-btn:active,
+.nv-cta:active { transform: scale(0.97); }
+
 /* ---------- responsive ---------- */
 @media (max-width: 860px) {
   .nv-menu-btn { display: inline-flex; align-items: center; justify-content: center; }
   .nv-links {
-    display: none;
+    display: flex;
+    visibility: hidden;
+    opacity: 0;
+    pointer-events: none;
     position: absolute;
     top: 64px; left: 0; right: 0;
     flex-direction: column;
@@ -278,11 +279,53 @@ function NavStyle() {
     padding: 0.5rem;
     background: var(--bg-canvas, #131410);
     border-bottom: 1px solid var(--border, rgba(255,255,255,0.06));
+    transform: translateY(-8px) scale(0.98);
+    transform-origin: top right;
+    transition:
+      opacity var(--duration-ui, 220ms) var(--ease-out, cubic-bezier(0.23,1,0.32,1)),
+      transform var(--duration-ui, 220ms) var(--ease-out, cubic-bezier(0.23,1,0.32,1)),
+      visibility 0s linear var(--duration-ui, 220ms);
   }
-  .nv-bar.is-open .nv-links { display: flex; }
+  .nv-bar.is-open .nv-links {
+    visibility: visible;
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0) scale(1);
+    transition-delay: 0s;
+  }
   .nv-link { min-height: 44px; width: 100%; justify-content: flex-start; }
   .nv-bar { gap: 0; position: fixed; }
   .nv-cta { margin-left: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nv-link::after { transition: none; }
+  .nv-links {
+    transform: none;
+    transition:
+      opacity var(--duration-press, 160ms) ease,
+      visibility 0s linear var(--duration-press, 160ms);
+  }
+  .nv-bar.is-open .nv-links {
+    transform: none;
+    transition-delay: 0s;
+  }
+  .nv-brand,
+  .nv-menu-btn,
+  .nv-cta {
+    transition:
+      opacity var(--duration-press, 160ms) ease,
+      color var(--duration-press, 160ms) ease;
+  }
+  .nv-brand:active,
+  .nv-menu-btn:active,
+  .nv-cta:active {
+    opacity: 0.82;
+    transform: none;
+  }
+  .nv-cta:hover {
+    transform: none;
+  }
 }
 `}</style>
   )

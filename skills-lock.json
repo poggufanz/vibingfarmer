@@ -62,6 +62,12 @@
       "sourceType": "github",
       "computedHash": "b55857d2e6f51a8d8ad5ebce735b1a82f7728d0a03a5d731bff39cbde573ec1d"
     },
+    "awwwards-animations": {
+      "source": "devmartinese/awwwards-animations-skill",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "4c5214c730faea7eb05f18e9738c753f5f26e3354ae4ab64c3bb7c26f692b4fa"
+    },
     "better-auth-security-best-practices": {
       "source": "better-auth/skills",
       "sourceType": "github",
