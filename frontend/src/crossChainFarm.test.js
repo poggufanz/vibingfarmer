@@ -6,6 +6,9 @@ describe('runFarmFlow', () => {
   test('burns on Stellar, dispatches to the relayer, polls to done, emits progress events in order', async () => {
     const events = []
     const onEvent = (name, data) => events.push({ name, data })
+    const allocations = [
+      { pool: '0xAAAA', amount: 100, amountBaseUnits: 100_000_000n, minShares: 99n },
+    ]
     const deps = {
       burn: vi.fn(async () => ({ approveHash: 'a', burnHash: 'burn-1' })),
       postFarm: vi.fn(async () => ({ jobId: 'job-1' })),
@@ -17,7 +20,7 @@ describe('runFarmFlow', () => {
       baseRecipientAddress: '0xBASEACCT',
       sessionKeyAddress: '0xSESSION',
       serializedApproval: 'approval-blob',
-      allocations: [{ pool: '0xAAAA', amount: 100, minShares: 99n }],
+      allocations,
       amountUnits: 1_000_000_000n,
       onEvent,
       deps,
@@ -35,6 +38,7 @@ describe('runFarmFlow', () => {
         burnTxHash: 'burn-1',
         sourceDomain: 27,
         serializedApproval: 'approval-blob',
+        allocations,
       })
     )
   })

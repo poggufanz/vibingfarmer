@@ -13,33 +13,27 @@ const DEFAULT_BASE_URL = import.meta.env?.VITE_CROSS_RELAYER_BASE || '/api/vf-cr
 const DEFAULT_POLL_INTERVAL_MS = 3000
 const DEFAULT_MAX_TRIES = 40 // ~2 minutes at the default interval
 
-// `a.amount` arrives as a DISPLAY float (e.g. 33.333...) from strategist.js's allocateBasePools —
-// the mandate cap path (CrossChainFarmFlow.jsx) already converts its own copy via
-// toBaseChainUnits for the on-chain cap, but the deposit path's `a.amount` stays a display value
-// all the way to this wire boundary. The relayer (httpRouter.mjs parseAllocations) expects base
-// units and does BigInt(a.amount) — a bare display float becomes dust (or throws on a fractional
-// string). Convert here, at the seam, so `a.amount` stays a display value everywhere else (UI,
-// the mandate cap computation). A bigint here is ALREADY base units (defensive — no known caller
-// passes one today) — stringify as-is rather than re-scaling it.
-//
-// Rounding: the per-pool display floats are converted with a largest-remainder rule so the
-// base-unit amounts sum EXACTLY to the base-unit total (round(sum of display amounts)). Rounding
-// each pool independently could overshoot the bridged total by up to ~1 unit per pool; since the
-// relayer deposits each amount verbatim against a fixed bridged balance (no per-op balance
-// capping — see relayer/src/base/orchestrator.mjs), an overshoot strands the last pool's deposit
-// when the account runs dry. Whole-unit remainders go to the pools with the largest fractional
-// parts. Only applies when every amount is a display number; a bigint short-circuits to verbatim.
-function serializeAllocations(allocations) {
-  const serializeMinShares = (a) =>
-    typeof a.minShares === 'bigint' ? a.minShares.toString() : a.minShares
+/**
+ * Convert strategist display allocations to exact Base USDC units once, using largest remainder.
+ * Display `amount` is retained for the UI; every security/execution boundary consumes the added
+ * bigint `amountBaseUnits`. This prevents independently rounded mandate caps and deposits from
+ * drifting by one base unit. Ties are stable, so the earliest pool receives the first remainder.
+ *
+ * Calling this with already-quantized allocations is idempotent (fresh object copies, same units).
+ * @param {Array<object>} allocations
+ * @returns {Array<object & { amountBaseUnits: bigint }>}
+ */
+export function quantizeAllocations(allocations) {
+  if (!Array.isArray(allocations)) throw new Error('allocations must be an array')
+  if (allocations.length === 0) return []
 
-  if (!allocations.every((a) => typeof a.amount === 'number')) {
-    return allocations.map((a) => ({
-      ...a,
-      amount:
-        typeof a.amount === 'bigint' ? a.amount.toString() : toBaseChainUnits(a.amount).toString(),
-      minShares: serializeMinShares(a),
-    }))
+  const hasExactUnits = allocations.map((a) => typeof a.amountBaseUnits === 'bigint')
+  if (hasExactUnits.every(Boolean)) return allocations.map((a) => ({ ...a }))
+  if (hasExactUnits.some(Boolean)) {
+    throw new Error('allocations must either all include amountBaseUnits or none include it')
+  }
+  if (!allocations.every((a) => typeof a.amount === 'number' && Number.isFinite(a.amount))) {
+    throw new Error('quantizeAllocations requires finite display-number amounts')
   }
 
   const targetUnits = toBaseChainUnits(allocations.reduce((s, a) => s + a.amount, 0))
@@ -59,7 +53,41 @@ function serializeAllocations(allocations) {
 
   return allocations.map((a, i) => ({
     ...a,
-    amount: (floors[i] + (bumped.has(i) ? 1n : 0n)).toString(),
+    amountBaseUnits: floors[i] + (bumped.has(i) ? 1n : 0n),
+  }))
+}
+
+// The production flow arrives pre-quantized. Numeric and bigint `amount` branches remain as a
+// compatibility seam for older/standalone callers; they are deliberately not used by
+// CrossChainFarmFlow. The exact-unit field is removed from JSON because bigint is not serializable.
+function serializeAllocations(allocations) {
+  const serializeMinShares = (a) =>
+    typeof a.minShares === 'bigint' ? a.minShares.toString() : a.minShares
+
+  const hasExactUnits = allocations.map((a) => typeof a.amountBaseUnits === 'bigint')
+  if (hasExactUnits.some(Boolean) && !hasExactUnits.every(Boolean)) {
+    throw new Error('allocations must either all include amountBaseUnits or none include it')
+  }
+  if (hasExactUnits.every(Boolean) && allocations.length > 0) {
+    return allocations.map(({ amountBaseUnits, ...a }) => ({
+      ...a,
+      amount: amountBaseUnits.toString(),
+      minShares: serializeMinShares(a),
+    }))
+  }
+
+  if (allocations.every((a) => typeof a.amount === 'number')) {
+    return quantizeAllocations(allocations).map(({ amountBaseUnits, ...a }) => ({
+      ...a,
+      amount: amountBaseUnits.toString(),
+      minShares: serializeMinShares(a),
+    }))
+  }
+
+  return allocations.map((a) => ({
+    ...a,
+    amount:
+      typeof a.amount === 'bigint' ? a.amount.toString() : toBaseChainUnits(a.amount).toString(),
     minShares: serializeMinShares(a),
   }))
 }

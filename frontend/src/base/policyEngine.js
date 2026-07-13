@@ -97,14 +97,15 @@ export function buildDepositPermissions(params) {
 }
 
 /**
- * Local, network-free model of whether `{to, functionName, args}` would pass the policy built by
+ * Local, network-free model of whether `{to, value, functionName, args}` would pass the policy built by
  * buildFarmPermissions. NOT the security boundary (see module docstring).
- * @param {{permissions: Array<object>, to: string, functionName: string, args: Array<any>, now?: number, expiry: number}} p
+ * @param {{permissions: Array<object>, to: string, value?: bigint, functionName: string, args: Array<any>, now?: number, expiry: number}} p
  * @returns {{allowed: boolean, reason: string|null}}
  */
 export function evaluateCall({
   permissions,
   to,
+  value = 0n,
   functionName,
   args,
   now = Math.floor(Date.now() / 1000),
@@ -116,6 +117,10 @@ export function evaluateCall({
     (p) => p.target.toLowerCase() === String(to).toLowerCase() && p.functionName === functionName
   )
   if (!match) return { allowed: false, reason: 'no permission for this target+selector' }
+
+  if (BigInt(value) > BigInt(match.valueLimit ?? 0n)) {
+    return { allowed: false, reason: 'call value exceeds permission limit' }
+  }
 
   for (let i = 0; i < match.args.length; i++) {
     const cond = match.args[i]

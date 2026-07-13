@@ -14,7 +14,9 @@ vi.mock('../wallet/passkeyStellar.js', () => ({ createStellarPasskeyWallet: vi.f
 vi.mock('../wallet/passkeyBase.js', () => ({ createBaseSmartAccount: vi.fn() }))
 vi.mock('../wallet/mandate.js', () => ({ createMandate: vi.fn() }))
 vi.mock('../strategist.js', () => ({ allocateBasePools: vi.fn() }))
-vi.mock('../base/relayerClient.js', () => ({
+vi.mock('../crossChainFarm.js', () => ({ runFarmFlow: vi.fn() }))
+vi.mock('../base/relayerClient.js', async (importOriginal) => ({
+  ...(await importOriginal()),
   postMandate: vi.fn(),
   postFarm: vi.fn(),
   pollFarmStatus: vi.fn(),
@@ -26,6 +28,7 @@ import { createBaseSmartAccount } from '../wallet/passkeyBase.js'
 import { createMandate } from '../wallet/mandate.js'
 import { allocateBasePools } from '../strategist.js'
 import { postMandate } from '../base/relayerClient.js'
+import { runFarmFlow } from '../crossChainFarm.js'
 
 const STELLAR_WALLET = { address: 'GWALLET', credentialId: 'cred-1', signBurn: vi.fn() }
 const BASE_ACCOUNT = {
@@ -163,6 +166,44 @@ describe('CrossChainFarmFlow', () => {
     await waitFor(() => expect(screen.getByText(/webauthn ceremony cancelled/i)).toBeTruthy())
     expect(createBaseSmartAccount).not.toHaveBeenCalled()
     expect(screen.queryByRole('button', { name: /create mandate/i })).toBeNull()
+  })
+
+  test('quantizes 100 / 3 once and reuses the exact units for mandate caps and farm dispatch', async () => {
+    const third = 100 / 3
+    const thirds = ['0xAAAA', '0xBBBB', '0xCCCC'].map((pool, index) => ({
+      pool,
+      protocol: `pool-${index + 1}`,
+      amount: third,
+      minShares: 1n,
+      expectedApy: 5,
+      riskTier: 'medium',
+      skill: {},
+    }))
+    createStellarPasskeyWallet.mockResolvedValue(STELLAR_WALLET)
+    createBaseSmartAccount.mockResolvedValue(BASE_ACCOUNT)
+    allocateBasePools.mockResolvedValue(thirds)
+    createMandate.mockResolvedValue(MANDATE_RESULT)
+    postMandate.mockResolvedValue({ ok: true })
+    runFarmFlow.mockResolvedValue({ finalStatus: 'done' })
+
+    render(<CrossChainFarmFlow />)
+    await completeOnboarding()
+    fireEvent.change(screen.getByLabelText(/number of pools/i), { target: { value: '3' } })
+    fireEvent.click(screen.getByRole('button', { name: /create mandate/i }))
+
+    await waitFor(() => expect(createMandate).toHaveBeenCalledTimes(1))
+    const caps = createMandate.mock.calls[0][0].pools.map((pool) => pool.cap)
+    expect(caps).toEqual([33_333_334n, 33_333_333n, 33_333_333n])
+    expect(caps.reduce((sum, cap) => sum + cap, 0n)).toBe(100_000_000n)
+
+    await waitFor(() => screen.getByRole('button', { name: /start farming/i }))
+    fireEvent.click(screen.getByRole('button', { name: /start farming/i }))
+    await waitFor(() => expect(runFarmFlow).toHaveBeenCalledTimes(1))
+
+    const dispatched = runFarmFlow.mock.calls[0][0].allocations
+    expect(dispatched.map((a) => a.amount)).toEqual([third, third, third])
+    expect(dispatched.map((a) => a.amountBaseUnits)).toEqual(caps)
+    expect(dispatched.reduce((sum, a) => sum + a.amountBaseUnits, 0n)).toBe(100_000_000n)
   })
 
   test('surfaces a mandate error and never calls postMandate when createMandate rejects', async () => {

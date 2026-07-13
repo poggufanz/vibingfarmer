@@ -17,7 +17,7 @@ const CCTP_STELLAR_DOMAIN = 27
  *   baseRecipientAddress: string,
  *   sessionKeyAddress: string,
  *   serializedApproval: string,
- *   allocations: Array<{ pool: string, amount: number, minShares: bigint }>,
+ *   allocations: Array<{ pool: string, amount: number, amountBaseUnits: bigint, minShares: bigint }>,
  *   amountUnits: bigint,          // total burn amount, 7dp Stellar units
  *   onEvent?: (name: string, data: object) => void,
  *   deps?: { burn?: Function, postFarm?: Function, pollFarmStatus?: Function },

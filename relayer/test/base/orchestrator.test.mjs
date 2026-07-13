@@ -167,8 +167,38 @@ describe('dispatchDeposits', () => {
         to: calls[index].to,
         functionName: decoded.functionName,
         args: decoded.args,
+        value: calls[index].value,
         expiry,
       })).toEqual({ allowed: true, reason: null });
+    }
+  });
+
+  it('uses exact pre-quantized thirds for both approve and deposit in every dispatched batch', async () => {
+    const kernelClient = buildMockKernelClient();
+    const orchestrator = createOrchestrator({
+      chain: { id: 84532 }, rpcUrl: 'https://sepolia.base.org', bundlerRpcUrl: 'https://rpc.zerodev.app/x',
+      yieldRouterAddress: YIELD_ROUTER_ADDRESS,
+      usdcAddress: USDC_ADDRESS,
+      sessionPrivateKey: '0xsession',
+      reconstructSessionClientFn: vi.fn().mockResolvedValue(kernelClient),
+    });
+    const units = [33_333_334n, 33_333_333n, 33_333_333n];
+    const allocations = units.map((amount, index) => ({
+      pool: `0x00000000000000000000000000000000000000${index + 1}1`,
+      amount,
+      minShares: 1n,
+    }));
+
+    await orchestrator.dispatchDeposits('serialized-approval', allocations);
+
+    expect(units.reduce((sum, amount) => sum + amount, 0n)).toBe(100_000_000n);
+    const batches = kernelClient.account.encodeCalls.mock.calls.map(([calls]) => calls);
+    expect(batches).toHaveLength(3);
+    for (const [index, calls] of batches.entries()) {
+      const approval = decodeFunctionData({ abi: APPROVE_ABI, data: calls[0].data });
+      const deposit = decodeFunctionData({ abi: YIELD_ROUTER_ABI, data: calls[1].data });
+      expect(approval.args[1]).toBe(units[index]);
+      expect(deposit.args[1]).toBe(units[index]);
     }
   });
 });

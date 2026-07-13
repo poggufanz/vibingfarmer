@@ -1,6 +1,26 @@
 // frontend/src/base/relayerClient.test.js
 import { describe, test, expect, vi } from 'vitest'
-import { postFarm, pollFarmStatus, postUnwind, postMandate } from './relayerClient.js'
+import * as relayerClient from './relayerClient.js'
+
+const { postFarm, pollFarmStatus, postUnwind, postMandate } = relayerClient
+
+describe('quantizeAllocations', () => {
+  test('quantizes a 100 / 3 split once while preserving display amounts', () => {
+    const third = 100 / 3
+    const allocations = [
+      { pool: '0xAAAA', amount: third, minShares: 1n },
+      { pool: '0xBBBB', amount: third, minShares: 1n },
+      { pool: '0xCCCC', amount: third, minShares: 1n },
+    ]
+
+    const quantized = relayerClient.quantizeAllocations(allocations)
+
+    expect(quantized).not.toBe(allocations)
+    expect(quantized.map((a) => a.amount)).toEqual([third, third, third])
+    expect(quantized.map((a) => a.amountBaseUnits)).toEqual([33_333_334n, 33_333_333n, 33_333_333n])
+    expect(quantized.reduce((sum, a) => sum + a.amountBaseUnits, 0n)).toBe(100_000_000n)
+  })
+})
 
 describe('postFarm', () => {
   test('POSTs the burn hash + approval + allocations, returns the jobId', async () => {
@@ -86,6 +106,34 @@ describe('postFarm', () => {
     expect(amounts.reduce((s, x) => s + x, 0n)).toBe(100_000_000n) // exactly the bridged total
     // one pool absorbs the leftover unit, the rest floor — never an overshoot
     expect(amounts.map(String).sort()).toEqual(['33333333', '33333333', '33333334'])
+  })
+
+  test('serializes pre-quantized exact units verbatim instead of quantizing display values again', async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ jobId: 'job-1' }) }))
+    const third = 100 / 3
+    const quantized = relayerClient.quantizeAllocations([
+      { pool: '0xAAAA', amount: third, minShares: 1n },
+      { pool: '0xBBBB', amount: third, minShares: 1n },
+      { pool: '0xCCCC', amount: third, minShares: 1n },
+    ])
+    // Deliberately move the remainder to pool 2. If the wire seam quantizes the display values a
+    // second time it will move the unit back to pool 1 and this assertion will fail.
+    quantized[0].amountBaseUnits -= 1n
+    quantized[1].amountBaseUnits += 1n
+
+    await postFarm({
+      burnTxHash: 'abcd',
+      sourceDomain: 27,
+      serializedApproval: 'approval-blob',
+      allocations: quantized,
+      baseUrl: 'https://example.test/api/vf-cross',
+      deps: { fetchImpl: fetchMock },
+    })
+
+    const [, opts] = fetchMock.mock.calls[0]
+    const body = JSON.parse(opts.body)
+    expect(body.allocations.map((a) => a.amount)).toEqual(['33333333', '33333334', '33333333'])
+    expect(body.allocations.every((a) => !('amountBaseUnits' in a))).toBe(true)
   })
 
   test('passes a bigint amount through as-is - it is already base units, never re-scaled', async () => {

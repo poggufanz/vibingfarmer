@@ -2,7 +2,9 @@
 import { describe, test, expect, vi } from 'vitest'
 import { createMandate } from './mandate.js'
 import { evaluateCall } from '../base/policyEngine.js'
-import { ERC20_ABI, YIELD_ROUTER_ADDRESS } from '../base/config.js'
+import { ERC20_ABI, YIELD_ROUTER_ABI, YIELD_ROUTER_ADDRESS } from '../base/config.js'
+import { ParamCondition } from '@zerodev/permissions/policies'
+import { decodeAbiParameters, pad, toFunctionSelector, toHex } from 'viem'
 
 const POOL_A = '0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
 const POOL_B = '0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB'
@@ -14,6 +16,7 @@ function makeDeps({ sessionKeyAddress = '0xSESSIONKEY000000000000000000000000000
   const fakeOwnerSideAccount = { address: '0xOWNERSIDEACCOUNT00000000000000000000001' }
   let capturedPermissions = null
   let capturedTimestampPolicy = null
+  let capturedPolicies = null
   return {
     deps: {
       genSessionKey: vi.fn(() => '0xSESSIONPRIVKEY'),
@@ -29,6 +32,7 @@ function makeDeps({ sessionKeyAddress = '0xSESSIONKEY000000000000000000000000000
       }),
       makePermissionValidator: vi.fn(async (_client, args) => {
         expect(args.policies).toHaveLength(2) // callPolicy + timestampPolicy
+        capturedPolicies = args.policies
         return fakePermissionValidator
       }),
       makeKernelAccount: vi.fn(async (_client, args) => {
@@ -40,8 +44,30 @@ function makeDeps({ sessionKeyAddress = '0xSESSIONKEY000000000000000000000000000
     },
     getCapturedPermissions: () => capturedPermissions,
     getCapturedTimestampPolicy: () => capturedTimestampPolicy,
+    getCapturedPolicies: () => capturedPolicies,
   }
 }
+
+const CALL_PERMISSION_ABI = [
+  {
+    type: 'tuple[]',
+    components: [
+      { name: 'callType', type: 'bytes1' },
+      { name: 'target', type: 'address' },
+      { name: 'selector', type: 'bytes4' },
+      { name: 'valueLimit', type: 'uint256' },
+      {
+        name: 'rules',
+        type: 'tuple[]',
+        components: [
+          { name: 'condition', type: 'uint8' },
+          { name: 'offset', type: 'uint64' },
+          { name: 'params', type: 'bytes32[]' },
+        ],
+      },
+    ],
+  },
+]
 
 describe('createMandate', () => {
   test('approves the session key by address only - never touches the session private key on the owner side', async () => {
@@ -95,6 +121,72 @@ describe('createMandate', () => {
     })
   })
 
+  test('installs SDK-encoded call and timestamp policies with exact targets, selectors, rules, value limits, and expiry', async () => {
+    const harness = makeDeps()
+    // Exercise the real ZeroDev policy builders while keeping all wallet/network operations mocked.
+    delete harness.deps.makeCallPolicy
+    delete harness.deps.makeTimestampPolicy
+    const expiry = Math.floor(Date.now() / 1000) + 3600
+    const cap = 100_000_000n
+
+    await createMandate({
+      kernelAccount: { address: '0xowner' },
+      publicClient: {},
+      passkeyValidator: { address: '0xpasskeyvalidator' },
+      pools: [{ pool: POOL_A, cap }],
+      expiry,
+      deps: harness.deps,
+    })
+
+    const [callPolicy, timestampPolicy] = harness.getCapturedPolicies()
+    expect(callPolicy.policyParams.type).toBe('call')
+    expect(timestampPolicy.policyParams.type).toBe('timestamp')
+
+    const [encodedPermissions] = decodeAbiParameters(
+      CALL_PERMISSION_ABI,
+      callPolicy.getPolicyData()
+    )
+    expect(encodedPermissions).toHaveLength(2)
+    expect(encodedPermissions.map((permission) => permission.target.toLowerCase())).toEqual([
+      USDC_ADDRESS.toLowerCase(),
+      YIELD_ROUTER_ADDRESS.toLowerCase(),
+    ])
+    expect(encodedPermissions.map((permission) => permission.selector)).toEqual([
+      toFunctionSelector(ERC20_ABI.find((item) => item.name === 'approve')),
+      toFunctionSelector(YIELD_ROUTER_ABI.find((item) => item.name === 'deposit')),
+    ])
+    expect(encodedPermissions.map((permission) => permission.valueLimit)).toEqual([0n, 0n])
+    expect(encodedPermissions[0].rules).toEqual([
+      {
+        condition: ParamCondition.EQUAL,
+        offset: 0n,
+        params: [pad(YIELD_ROUTER_ADDRESS, { size: 32 }).toLowerCase()],
+      },
+      {
+        condition: ParamCondition.LESS_THAN_OR_EQUAL,
+        offset: 32n,
+        params: [toHex(cap, { size: 32 })],
+      },
+    ])
+    expect(encodedPermissions[1].rules).toEqual([
+      {
+        condition: ParamCondition.LESS_THAN_OR_EQUAL,
+        offset: 32n,
+        params: [toHex(cap, { size: 32 })],
+      },
+    ])
+
+    expect(
+      decodeAbiParameters(
+        [
+          { type: 'uint48', name: 'validAfter' },
+          { type: 'uint48', name: 'validUntil' },
+        ],
+        timestampPolicy.getPolicyData()
+      )
+    ).toEqual([0, expiry])
+  })
+
   test('rejects a past-or-now expiry', async () => {
     const { deps } = makeDeps()
     await expect(
@@ -123,7 +215,7 @@ describe('createMandate', () => {
     ).rejects.toThrow(/at least one pool/)
   })
 
-  test('the resulting permissions + expiry, fed through evaluateCall, reproduce every session-test.mjs scenario plus the new cap/expiry ones', async () => {
+  test('the defensive local preflight mirrors every session-test.mjs scenario plus the new cap/expiry ones', async () => {
     const { deps, getCapturedPermissions } = makeDeps()
     const expiry = Math.floor(Date.now() / 1000) + 3600
 

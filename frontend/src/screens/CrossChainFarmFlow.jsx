@@ -22,8 +22,7 @@ import { createStellarPasskeyWallet } from '../wallet/passkeyStellar.js'
 import { createBaseSmartAccount } from '../wallet/passkeyBase.js'
 import { createMandate } from '../wallet/mandate.js'
 import { allocateBasePools } from '../strategist.js'
-import { postMandate } from '../base/relayerClient.js'
-import { toBaseChainUnits } from '../base/config.js'
+import { postMandate, quantizeAllocations } from '../base/relayerClient.js'
 import { readPositions } from '../base/readPositions.js'
 import Farm from './Farm.jsx'
 import Withdraw from './Withdraw.jsx'
@@ -78,8 +77,8 @@ export default function CrossChainFarmFlow() {
     setMandateStatus('running')
     setMandateError(null)
     try {
-      const allocs = await allocateBasePools({ amount, riskLevel, nPools })
-      const pools = allocs.map((a) => ({ pool: a.pool, cap: toBaseChainUnits(a.amount) }))
+      const allocs = quantizeAllocations(await allocateBasePools({ amount, riskLevel, nPools }))
+      const pools = allocs.map((a) => ({ pool: a.pool, cap: a.amountBaseUnits }))
       const expiry = Math.floor(Date.now() / 1000) + MANDATE_TTL_SECONDS
 
       const mandate = await createMandate({

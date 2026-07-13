@@ -122,6 +122,39 @@ describe('evaluateCall - canonical relayer batch plus cap/expiry cases', () => {
     expect(result).toEqual({ allowed: true, reason: null })
   })
 
+  test('nonzero native call value is rejected by the zero value limit', () => {
+    const result = evaluateCall({
+      permissions,
+      to: YIELD_ROUTER_ADDRESS,
+      functionName: 'deposit',
+      args: [POOL_A, 50_000_000n, 1n],
+      value: 1n,
+      expiry,
+    })
+    expect(result.allowed).toBe(false)
+    expect(result.reason).toMatch(/value.*limit/i)
+  })
+
+  test('allows native call value at a custom limit and rejects value above it', () => {
+    const customPermissions = permissions.map((permission) => ({
+      ...permission,
+      valueLimit: 2n,
+    }))
+    const call = {
+      permissions: customPermissions,
+      to: YIELD_ROUTER_ADDRESS,
+      functionName: 'deposit',
+      args: [POOL_A, 50_000_000n, 1n],
+      expiry,
+    }
+
+    expect(evaluateCall({ ...call, value: 2n })).toEqual({ allowed: true, reason: null })
+    expect(evaluateCall({ ...call, value: 3n })).toEqual({
+      allowed: false,
+      reason: 'call value exceeds permission limit',
+    })
+  })
+
   test('wrong selector is rejected', () => {
     const result = evaluateCall({
       permissions,
