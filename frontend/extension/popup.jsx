@@ -511,15 +511,15 @@ function Popup() {
         unlocked: b.unlocked,
         needsBackup: b.needsBackup,
       })
-      // A pending backup always routes through unlock first — even if the session is already
-      // unlocked — because the password is what re-derives the mnemonic from its encrypted
-      // blob (revealBackup). This is the popup-reopen path: create → close popup before
-      // confirming → reopen → still gated, never silently dropped into home.
-      if (b.hasWallet && (b.needsBackup || !b.unlocked)) setScreen('classic-unlock')
-      else if (b.hasWallet) {
-        setScreen('classic-home')
-        refresh(b.publicKey)
-      } else setScreen('classic-onboarding')
+      // ONLY route to classic screens if passkey wallet mode is not the active preference
+      const activeType = localStorage.getItem('vf_wallet_type')
+      if (activeType !== 'passkey') {
+        if (b.hasWallet && (b.needsBackup || !b.unlocked)) setScreen('classic-unlock')
+        else if (b.hasWallet) {
+          setScreen('classic-home')
+          refresh(b.publicKey)
+        } else setScreen('classic-onboarding')
+      }
     })
   }, [])
 
@@ -542,16 +542,30 @@ function Popup() {
   }
 
   // Restore cached wallet on mount (no-arg = reads vf_wallet_contract from localStorage)
+  // Reconnects read-only (displays home/balance) without prompting for Face ID on startup.
   useEffect(() => {
-    connectPasskeyWallet()
-      .then((w) => {
-        setWallet(w)
+    const activeType = localStorage.getItem('vf_wallet_type')
+    if (activeType === 'passkey') {
+      const cached = localStorage.getItem('vf_wallet_contract')
+      if (cached) {
+        setWallet({ contractId: cached })
         setScreen('home')
-        refreshBalance(w.contractId)
-      })
-      .catch(() => {
-        // No cached wallet — remain on whatever the classic bootstrap above decided
-      })
+        refreshBalance(cached)
+      } else if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+        chrome.storage.local.get('vf_wallet_contract').then((store) => {
+          const val = store['vf_wallet_contract']
+          if (val) {
+            setWallet({ contractId: val })
+            setScreen('home')
+            refreshBalance(val)
+          } else {
+            setScreen('welcome')
+          }
+        })
+      } else {
+        setScreen('welcome')
+      }
+    }
   }, [])
 
   // Recover last ceremony result on reopen (popup may have been dismissed during Face-ID)
@@ -588,6 +602,7 @@ function Popup() {
     setScreen('creating')
     try {
       const w = await createPasskeyWallet({ appName: 'VF Wallet', userName: 'VF User' })
+      localStorage.setItem('vf_wallet_type', 'passkey')
       setWallet(w)
       setScreen('home')
       refreshBalance(w.contractId)
@@ -601,6 +616,7 @@ function Popup() {
     clear()
     try {
       const w = await connectPasskeyWallet()
+      localStorage.setItem('vf_wallet_type', 'passkey')
       setWallet(w)
       setScreen('home')
       refreshBalance(w.contractId)
@@ -618,6 +634,16 @@ function Popup() {
 
   async function handleSend() {
     clear()
+    const amt = parseFloat(sendAmount)
+    if (isNaN(amt) || amt <= 0) {
+      setError('Amount must be greater than 0')
+      return
+    }
+    const isFederation = sendTo.includes('*')
+    if (!isFederation && !/^[GC][A-Z2-7]{55}$/i.test(sendTo)) {
+      setError('Invalid Stellar destination address')
+      return
+    }
     try {
       await sendToken({
         contractId: wallet.contractId,
@@ -635,11 +661,16 @@ function Popup() {
   async function handleDepositCheck() {
     clear()
     setDepositVerdict(null)
+    const amt = parseFloat(depositAmount)
+    if (isNaN(amt) || amt <= 0) {
+      setError('Amount must be greater than 0')
+      return
+    }
     try {
       const v = await eligibility({
         vault: SOROBAN_VAULT_ADDRESS,
         protocol: ACTIVE_VAULT_PROTOCOL,
-        amount: BigInt(Math.round(parseFloat(depositAmount) * 1e7)),
+        amount: BigInt(Math.round(amt * 1e7)),
       })
       setDepositVerdict(v)
     } catch (e) {
@@ -656,13 +687,18 @@ function Popup() {
 
   async function handleDepositApprove() {
     clear()
+    const amt = parseFloat(depositAmount)
+    if (isNaN(amt) || amt <= 0) {
+      setError('Amount must be greater than 0')
+      return
+    }
     try {
       // Re-run the F8 gate in-popup for an early verdict; the ceremony re-asserts fail-closed.
       // depositToVault calls eligibility({ vault, amount }) — inject the live vault's protocol
       // slug so the gate resolves real facts (a bare C-address has none → would fail closed).
       await depositToVault({
         contractId: wallet.contractId,
-        amount: BigInt(Math.round(parseFloat(depositAmount) * 1e7)),
+        amount: BigInt(Math.round(amt * 1e7)),
         eligibility: (q) => eligibility({ ...q, protocol: ACTIVE_VAULT_PROTOCOL }),
       })
       postSignRequest('deposit', {
@@ -685,6 +721,10 @@ function Popup() {
 
   async function handleAddRecovery() {
     clear()
+    if (!/^[G][A-Z2-7]{55}$/i.test(recoveryG)) {
+      setError('Invalid recovery G-address')
+      return
+    }
     try {
       await addRecoverySigner({ accountId: wallet.contractId, recoveryG })
       setStatus('Recovery signer added (VF-custodied; testnet-grade).')
@@ -696,6 +736,15 @@ function Popup() {
 
   async function handleAddAgent() {
     clear()
+    if (!/^[G][A-Z2-7]{55}$/i.test(agentAddress)) {
+      setError('Invalid agent G-address')
+      return
+    }
+    const capVal = parseFloat(agentCap)
+    if (isNaN(capVal) || capVal <= 0) {
+      setError('Spending cap must be greater than 0')
+      return
+    }
     try {
       await addAgentSigner({
         agentAddress,
@@ -710,6 +759,7 @@ function Popup() {
       setError(e.message)
     }
   }
+
 
   // ── CLASSIC (seed-phrase / ed25519) SCREENS ───────────────────────────────
   // Classic is the default wallet type; the passkey screens below are unmodified and remain
@@ -749,7 +799,10 @@ function Popup() {
         />
         <p className="vf-hint">
           Prefer Face ID?{' '}
-          <button className="link" onClick={() => setScreen('welcome')}>
+          <button className="link" onClick={() => {
+            localStorage.setItem('vf_wallet_type', 'passkey')
+            setScreen('welcome')
+          }}>
             Use a passkey wallet instead
           </button>
         </p>
@@ -1080,6 +1133,7 @@ function Popup() {
             className="link"
             onClick={() => {
               setExportForm({ open: false, pw: '', secret: null, error: '' })
+              localStorage.setItem('vf_wallet_type', 'passkey')
               setScreen('welcome')
             }}
           >
@@ -1109,6 +1163,20 @@ function Popup() {
             Connect / restore
           </button>
         </div>
+        <p className="vf-hint" style={{ textAlign: 'center', marginTop: 12 }}>
+          Prefer seed phrase?{' '}
+          <button className="link" onClick={() => {
+            localStorage.setItem('vf_wallet_type', 'classic')
+            setScreen('classic-onboarding')
+            C.bootstrap().then((b) => {
+              if (b.hasWallet) {
+                setScreen(b.needsBackup || !b.unlocked ? 'classic-unlock' : 'classic-home')
+              }
+            })
+          }}>
+            Use a classic wallet instead
+          </button>
+        </p>
         <HonestyLabels scope="global" />
       </Shell>
     )
@@ -1208,6 +1276,25 @@ function Popup() {
         </div>
         {error && <p className="err">{error}</p>}
         {status && <p className="info">{status}</p>}
+        <p className="vf-hint" style={{ textAlign: 'center', marginTop: 12 }}>
+          <button className="link" onClick={async () => {
+            localStorage.removeItem('vf_wallet_contract')
+            localStorage.removeItem('vf_wallet_credential')
+            localStorage.setItem('vf_wallet_type', 'classic')
+            if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+              await chrome.storage.local.remove(['vf_wallet_contract', 'vf_wallet_credential'])
+            }
+            setWallet(null)
+            setScreen('classic-onboarding')
+            C.bootstrap().then((b) => {
+              if (b.hasWallet) {
+                setScreen(b.needsBackup || !b.unlocked ? 'classic-unlock' : 'classic-home')
+              }
+            })
+          }}>
+            Switch to classic wallet / Reset
+          </button>
+        </p>
         <HonestyLabels scope="global" />
       </Shell>
     )

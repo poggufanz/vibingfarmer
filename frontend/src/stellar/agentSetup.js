@@ -11,17 +11,26 @@
 // that slid through silently would leave the next build with a stale sequence (txBadSeq) or a
 // later deposit failing opaquely. Wallet signs are timeout-capped so a dismissed/stuck signature request
 // surfaces as an error instead of hanging the run forever.
-import { buildCreateContractTx, buildInvokeTx, submitUserTx } from './client.js'
+import { buildCreateContractTx, buildInvokeTx, submitUserTx, readContract, rpcServer } from './client.js'
 import { signTxXdr } from './walletKit.js'
 import {
-  SOROBAN_AGENT_WASM_HASH,
-  SOROBAN_ACTIVE_VAULT_ADDRESS,
   SOROBAN_REGISTRY_ADDRESS,
   SOROBAN_TOKEN_ADDRESS,
+  SOROBAN_ACTIVE_VAULT_ADDRESS,
+  SOROBAN_AGENT_WASM_HASH,
+  HORIZON_URL,
+  NETWORK_PASSPHRASE,
 } from './config.js'
-import { addrScVal, boolScVal, i128ScVal, structScVal, u64ScVal, voidScVal } from './scval.js'
+import {
+  addrScVal,
+  i128ScVal,
+  u64ScVal,
+  bytes32ScVal,
+  boolScVal,
+  voidScVal,
+  structScVal,
+} from './scval.js'
 
-// Rolling cap window default — mirrors the orchestrator's PERIOD_DURATION.
 const DEFAULT_PERIOD_DURATION = 86400
 // A wallet signature left unanswered must not hang the run: reject after this long.
 export const WALLET_SIGN_TIMEOUT_MS = 120_000
@@ -32,7 +41,7 @@ export const WALLET_SIGN_TIMEOUT_MS = 120_000
 export async function signWithTimeout(xdr, label) {
   let timer
   try {
-    return await Promise.race([
+    const result = await Promise.race([
       signTxXdr(xdr),
       new Promise((_, reject) => {
         timer = setTimeout(
@@ -46,9 +55,66 @@ export async function signWithTimeout(xdr, label) {
         )
       }),
     ])
+    return result
+  } catch (err) {
+    throw new Error(`${label}: ${err?.message || err}`)
   } finally {
     clearTimeout(timer)
   }
+}
+
+/**
+ * Ensure the owner's classic Stellar account has a trustline for the token's
+ * underlying asset (SAC-wrapped classic assets require a trustline before
+ * transfer).  If the token is Soroban-native (no underlying_asset method) or
+ * the trustline already exists, this is a no-op.
+ */
+async function ensureUserTrustline(owner) {
+  let underlying
+  try {
+    underlying = await readContract({
+      contract: SOROBAN_TOKEN_ADDRESS,
+      method: 'underlying_asset',
+      args: [],
+    })
+  } catch {
+    // Token is Soroban-native — no trustline needed.
+    return
+  }
+  if (!underlying) return
+
+  const { Horizon, Asset, TransactionBuilder, Operation, BASE_FEE } = await import(
+    '@stellar/stellar-sdk'
+  )
+  const horizon = new Horizon.Server(HORIZON_URL)
+  let acct
+  try {
+    acct = await horizon.loadAccount(owner)
+  } catch {
+    return
+  }
+  const hasTrust = acct.balances.some(
+    (b) =>
+      b.asset_type !== 'native' &&
+      String(b.asset_code) === String(underlying.code) &&
+      String(b.asset_issuer) === String(underlying.issuer),
+  )
+  if (hasTrust) return
+
+  const asset = new Asset(String(underlying.code), String(underlying.issuer))
+  const server = await rpcServer()
+  const source = await server.getAccount(owner)
+  const tx = new TransactionBuilder(source, {
+    fee: BASE_FEE,
+    networkPassphrase: NETWORK_PASSPHRASE,
+  })
+    .addOperation(Operation.changeTrust({ asset }))
+    .setTimeout(30)
+    .build()
+  const xdr = tx.toEnvelope().toXDR('base64')
+  const signed = await signTxXdr(xdr)
+  const built = TransactionBuilder.fromXDR(signed, NETWORK_PASSPHRASE)
+  await horizon.submitTransaction(built)
 }
 
 /**
@@ -119,6 +185,9 @@ export async function registryAuthorizeAgent({
   expiry,
   server,
 }) {
+  // Step 0: establish trustline (SAC-wrapped assets need one before transfer).
+  await ensureUserTrustline(owner)
+
   const { xdr } = await buildInvokeTx({
     source: owner,
     contract: SOROBAN_REGISTRY_ADDRESS,

@@ -18,6 +18,7 @@ const DEV_ORIGINS = [
   'http://localhost:5174',
   'http://localhost:5175',
   'http://localhost:4173',
+  'http://localhost:8788',
 ]
 
 export function allowedOrigins() {
@@ -33,7 +34,8 @@ export function allowedOrigins() {
  */
 export function applyCors(req, res) {
   const origin = req.headers.origin || ''
-  if (!allowedOrigins().includes(origin)) {
+  const isAllowed = allowedOrigins().includes(origin) || origin.startsWith('chrome-extension://')
+  if (!isAllowed) {
     res.statusCode = 403
     res.setHeader('Content-Type', 'application/json')
     res.end(JSON.stringify({ error: 'Forbidden' }))

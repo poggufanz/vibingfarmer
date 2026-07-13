@@ -291,8 +291,9 @@ export default async function handler(req, res) {
 
     return bad(res, 'Unknown action')
   } catch (err) {
-    console.error('[api/stellar-relay] error:', err?.message || err)
+    const errMsg = err?.message || String(err)
+    console.error('[api/stellar-relay] error:', errMsg)
     res.statusCode = 502
-    return res.end(JSON.stringify({ error: 'Stellar relay failed' }))
+    return res.end(JSON.stringify({ error: `Stellar relay failed: ${errMsg}` }))
   }
 }

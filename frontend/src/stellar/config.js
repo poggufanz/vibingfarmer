@@ -132,7 +132,8 @@ export const STELLAR_NETWORK_LABEL = NET.label
 // chrome-extension:// pages can reach /api/* — a same-origin relative path resolves to the
 // extension origin (chrome-extension://<id>/api/...) and 404s. Web app + headless smokes leave
 // VF_API_BASE unset → relative path / the VF_RELAY_URL knob, exactly as before (tests see defaults).
-const API_BASE = (typeof process !== 'undefined' && process.env && process.env.VF_API_BASE) || ''
+const isExt = typeof window !== 'undefined' && window.location.protocol === 'chrome-extension:'
+const API_BASE = (typeof process !== 'undefined' && process.env && process.env.VF_API_BASE) || (isExt ? 'http://localhost:8788' : '')
 const VF_RELAY = (typeof process !== 'undefined' && process.env && process.env.VF_RELAY_URL) || ''
 export const RELAY_PROXY_URL = API_BASE
   ? `${API_BASE}/api/stellar-relay`

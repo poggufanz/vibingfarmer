@@ -8,6 +8,8 @@ import {
   normalizeDisplayProse,
   resolveProvider,
   generateAgentSkills,
+  getTokenUsageHistory,
+  clearTokenUsageHistory,
 } from './strategist.js'
 import { AI_PROXY_URL } from './config.js'
 
@@ -274,3 +276,80 @@ describe('allocateBasePools', () => {
     }
   })
 })
+
+describe('AI token usage telemetry', () => {
+  const memStore = () => {
+    const m = new Map()
+    return {
+      getItem: (k) => (m.has(k) ? m.get(k) : null),
+      setItem: (k, v) => m.set(k, String(v)),
+      removeItem: (k) => m.delete(k),
+    }
+  }
+
+  beforeEach(() => {
+    vi.stubGlobal('localStorage', memStore())
+    vi.stubGlobal('sessionStorage', memStore())
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  test('getTokenUsageHistory defaults to empty array and saves usage correctly', async () => {
+    expect(getTokenUsageHistory()).toEqual([])
+
+    // Simulate calling generateAgentSkills with mock fetch returning usage data
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              choices: [
+                {
+                  message: {
+                    content: JSON.stringify({
+                      agentId: 'w1',
+                      vaultAddress: '0x123',
+                      skills: { deposit: {} },
+                      generatedBy: 'test-model',
+                      approvedByUser: false,
+                    }),
+                  },
+                },
+              ],
+              usage: {
+                prompt_tokens: 150,
+                completion_tokens: 50,
+                total_tokens: 200,
+              },
+            }),
+        })
+      )
+    )
+
+    const skill = await generateAgentSkills({
+      agentId: 'w1',
+      vault: '0x123',
+      amount: 100,
+      devApiKey: 'test-key',
+    })
+    expect(skill.generatedBy).toBe('test-model')
+
+    const history = getTokenUsageHistory()
+    expect(history).toHaveLength(1)
+    expect(history[0]).toMatchObject({
+      model: 'deepseek-v4-flash',
+      promptTokens: 150,
+      completionTokens: 50,
+      totalTokens: 200,
+    })
+    expect(history[0].timestamp).toBeGreaterThan(0)
+
+    clearTokenUsageHistory()
+    expect(getTokenUsageHistory()).toEqual([])
+  })
+})
+

@@ -34,6 +34,7 @@ const AGENT_PROTOCOLS = VAULT_CATALOG.slice(0, 3).map((v, i) => ({
   protocol: v.protocol,
   apy: String(v.apy),
   drawdown: v.drawdown,
+  risk: v.risk,
   addr: v.address,
   role: ROLES[i],
 }))

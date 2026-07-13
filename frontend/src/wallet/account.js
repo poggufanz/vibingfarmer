@@ -4,6 +4,7 @@ import { SOROBAN_TOKEN_ADDRESS, SOROBAN_ACTIVE_VAULT_ADDRESS } from '../stellar/
 import { toBaseUnits } from '../stellar/format.js'
 
 const CACHE_KEY = 'vf_wallet_contract'
+const CREDENTIAL_KEY = 'vf_wallet_credential'
 
 // SmartAccountKit is a NAMED export, new-constructed (confirmed against the
 // installed dist .d.ts: `const kit = new SmartAccountKit({ rpcUrl, ... })`).
@@ -22,24 +23,61 @@ export async function makeKit(overrides = {}) {
 
 export async function createPasskeyWallet({ appName, userName, kit }) {
   kit = kit ?? (await makeKit())
-  const { contractId, credentialId } = await kit.createWallet(appName, userName, {
+  const out = await kit.createWallet(appName, userName, {
     autoSubmit: true, // deploy the account
     autoFund: true, // Friendbot (testnet)
+    nativeTokenContract: SOROBAN_TOKEN_ADDRESS,
   })
+
+  if (out.submitResult && !out.submitResult.success) {
+    throw new Error(`Failed to deploy smart account contract: ${out.submitResult.error || 'Unknown deployment error'}`)
+  }
+
+  const { contractId, credentialId } = out
   localStorage.setItem(CACHE_KEY, contractId)
+  localStorage.setItem(CREDENTIAL_KEY, credentialId)
+  if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+    await chrome.storage.local.set({
+      [CACHE_KEY]: contractId,
+      [CREDENTIAL_KEY]: credentialId,
+    })
+  }
   return { contractId, credentialId }
 }
 
-// Reconnect priority: explicit contractId > local cache > credentialId (indexer) > prompt.
+// Reconnect priority: explicit contractId + credentialId > local cache > prompt.
 export async function connectPasskeyWallet({ contractId, credentialId, kit } = {}) {
   kit = kit ?? (await makeKit())
-  const cached = contractId ?? localStorage.getItem(CACHE_KEY)
+  let cachedContract = contractId ?? localStorage.getItem(CACHE_KEY)
+  let cachedCredential = credentialId ?? localStorage.getItem(CREDENTIAL_KEY)
+  
+  if ((!cachedContract || !cachedCredential) && typeof chrome !== 'undefined' && chrome.storage?.local) {
+    const resStore = await chrome.storage.local.get([CACHE_KEY, CREDENTIAL_KEY])
+    if (!cachedContract) cachedContract = resStore[CACHE_KEY]
+    if (!cachedCredential) cachedCredential = resStore[CREDENTIAL_KEY]
+  }
+
   let res
-  if (cached) res = await kit.connectWallet({ contractId: cached })
-  else if (credentialId)
-    res = await kit.connectWallet({ credentialId }) // needs indexer
-  else res = await kit.connectWallet({ prompt: true })
-  if (res?.contractId) localStorage.setItem(CACHE_KEY, res.contractId)
+  if (cachedContract && cachedCredential) {
+    res = await kit.connectWallet({ contractId: cachedContract, credentialId: cachedCredential })
+  } else if (cachedContract) {
+    res = await kit.connectWallet({ contractId: cachedContract })
+  } else if (cachedCredential) {
+    res = await kit.connectWallet({ credentialId: cachedCredential })
+  } else {
+    res = await kit.connectWallet({ prompt: true })
+  }
+  
+  if (res?.contractId) {
+    localStorage.setItem(CACHE_KEY, res.contractId)
+    if (res.credentialId) localStorage.setItem(CREDENTIAL_KEY, res.credentialId)
+    if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+      await chrome.storage.local.set({
+        [CACHE_KEY]: res.contractId,
+        [CREDENTIAL_KEY]: res.credentialId || '',
+      })
+    }
+  }
   return { contractId: res.contractId }
 }
 

@@ -63,6 +63,47 @@ const withDisplayProseRule = (prompt) => `${prompt}\n\n${DISPLAY_PROSE_RULE}`
 // modelPreference (Settings) selects the order; see resolveProvider below.
 
 /**
+ * Track and save token usage to localStorage.
+ */
+function trackTokenUsage(model, usage) {
+  if (!usage) return
+  try {
+    const raw = localStorage.getItem('yv_token_telemetry')
+    const history = raw ? JSON.parse(raw) : []
+    history.push({
+      timestamp: Date.now(),
+      model,
+      promptTokens: usage.prompt_tokens || 0,
+      completionTokens: usage.completion_tokens || 0,
+      totalTokens: usage.total_tokens || 0,
+    })
+    // Keep only the last 200 items to prevent storage bloat
+    if (history.length > 200) history.shift()
+    localStorage.setItem('yv_token_telemetry', JSON.stringify(history))
+  } catch (e) {
+    console.warn('[Telemetry] Failed to save token usage:', e)
+  }
+  console.log(
+    `[AI TELEMETRY] Model: ${model} | Prompt: ${usage.prompt_tokens} | Completion: ${usage.completion_tokens} | Total: ${usage.total_tokens}`
+  )
+}
+
+export function getTokenUsageHistory() {
+  try {
+    const raw = localStorage.getItem('yv_token_telemetry')
+    return raw ? JSON.parse(raw) : []
+  } catch {
+    return []
+  }
+}
+
+export function clearTokenUsageHistory() {
+  try {
+    localStorage.removeItem('yv_token_telemetry')
+  } catch {}
+}
+
+/**
  * Call an OpenAI-compatible chat completions endpoint.
  * @param {string} baseUrl
  * @param {string} model
@@ -89,10 +130,16 @@ async function callChatCompletions(url, model, headers, messages, isVenice, sign
   })
   if (!response.ok) throw new Error(`API ${response.status}`)
   const data = await response.json()
+  
+  if (data.usage) {
+    trackTokenUsage(model, data.usage)
+  }
+
   const content = data.choices?.[0]?.message?.content
   if (!content) throw new Error('Empty response')
   return content
 }
+
 
 const veniceProvider = (headers, name) => ({
   url: `${VENICE_BASE_URL}/chat/completions`,

@@ -48,6 +48,7 @@ export default defineConfig({
   // VF_API_BASE=http://localhost:5173 (dev) or the deployed Pages origin.
   define: {
     'process.env.VF_API_BASE': JSON.stringify(process.env.VF_API_BASE || ''),
+    'import.meta.env.VITE_VF_RP_ID': JSON.stringify('origin'),
   },
   resolve: {
     alias: {

@@ -1,4 +1,4 @@
-import { makeKit, connectPasskeyWallet, readBalance } from '../src/wallet/account.js'
+import { makeKit, createPasskeyWallet, connectPasskeyWallet, readBalance } from '../src/wallet/account.js'
 import { submitDeposit, submitApprove } from '../src/wallet/submit.js'
 import { signTransactionForContract, signAuthEntryString } from '../src/wallet/signGeneric.js'
 import { eligibility as vfEligibility, vaultFacts } from '../src/vfapi/client.js'
@@ -31,6 +31,7 @@ async function loadParams() {
     tabId = loaded.tabId
     p = loaded.p
     const kit = await makeKit()
+    
     // connect/signTransaction/signAuthEntry (the generic wallet-kit actions dispatched by
     // providerBridge.js) carry the contractId under opts.address instead of the top-level
     // p.contractId deposit/approve use — accept either so one connect covers every action.
@@ -44,9 +45,15 @@ async function loadParams() {
       // Default = the live deposit vault's protocol (autofarm → Blend USDC), not aave-v3.
       const { facts } = vaultFacts(p.protocol || 'blend-usdc')
       const eligibility = (q) => vfEligibility({ ...q, facts })
-      const amount = BigInt(Math.round(parseFloat(p.amount) * 1e7))
-      out = await submitDeposit({ contractId: p.contractId, amount, eligibility, kit })
-      setStatus(`Minted ${BigInt(out.sharesAfter) - BigInt(out.sharesBefore)} shares.`)
+      out = await executeAgentDeposit({
+        amount: p.amount,
+        minAmount: p.minAmount || '0',
+        minShares: p.minShares || '0',
+        execId: p.execId,
+        eligibility,
+        kit,
+      })
+      setStatus('Deposit executed.')
       chrome.runtime.sendMessage({
         type: 'CEREMONY_RESULT',
         tabId,
@@ -54,28 +61,15 @@ async function loadParams() {
         ok: true,
         hash: out.hash,
         status: out.status,
-        sharesBefore: String(out.sharesBefore),
-        sharesAfter: String(out.sharesAfter),
       })
     } else if (action === 'approve') {
-      setStatus('Enabling deposits — funding + Face ID…')
-      // Idempotent: mint only if the balance is low, then (re)issue the approve.
-      const bal = await readBalance(p.contractId)
-      let dispensed = true
-      if (!bal || bal < 10n ** 7n) {
-        const faucetRes = await fetch(FAUCET_PROXY_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'dispense', to: p.contractId }),
-        })
-        dispensed = faucetRes.ok
-      }
-      out = await submitApprove({ contractId: p.contractId, amount: 100n * 10n ** 7n, kit })
-      setStatus(
-        dispensed
-          ? 'Deposits enabled.'
-          : 'Approval set — but test tokens were not dispensed (faucet unavailable). Your balance may be 0; deposit may fail until funded.'
-      )
+      setStatus('Awaiting Face ID…')
+      out = await executeAgentApprove({
+        amount: p.amount,
+        execId: p.execId,
+        kit,
+      })
+      setStatus(out.action === 'mint' ? 'Deposit completed.' : 'Approval completed.')
       chrome.runtime.sendMessage({
         type: 'CEREMONY_RESULT',
         tabId,
@@ -130,7 +124,22 @@ async function loadParams() {
     }
     setTimeout(() => window.close(), 1200)
   } catch (e) {
-    setStatus(`Failed: ${e.message}`)
+    let debugInfo = ''
+    try {
+      const lsVal = localStorage.getItem('vf_wallet_contract')
+      debugInfo = ` (LS: ${lsVal ? lsVal.slice(0, 6) + '...' : 'empty'}`
+      if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+        const store = await chrome.storage.local.get('vf_wallet_contract')
+        const csVal = store['vf_wallet_contract']
+        debugInfo += `, CS: ${csVal ? csVal.slice(0, 6) + '...' : 'empty'}`
+      } else {
+        debugInfo += `, CS: no-chrome`
+      }
+      debugInfo += `)`
+    } catch (err) {
+      debugInfo = ` (debug err: ${err.message})`
+    }
+    setStatus(`Failed: ${e.message}${debugInfo}`)
     chrome.runtime.sendMessage({
       type: 'CEREMONY_RESULT',
       tabId,
