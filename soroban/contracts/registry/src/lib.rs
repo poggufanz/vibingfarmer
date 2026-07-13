@@ -1,11 +1,19 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, Address, Env};
+use soroban_sdk::{contract, contractclient, contractimpl, Address, Env};
 
 mod registry;
 mod test;
 pub mod types;
 
-use types::{AgentRecord, DataKey, RegistryError};
+use types::{AgentRecord, AgentScope, DataKey, RegistryError};
+
+/// Minimal client for a deployed agent_account — the ONLY authoritative source
+/// of scope data. The mirrored `AgentScope` encodes identically on the wire
+/// (contracttype maps are keyed by field name).
+#[contractclient(name = "AgentClient")]
+pub trait AgentScopeSource {
+    fn scope_of(env: Env) -> AgentScope;
+}
 
 #[contract]
 pub struct Registry;
@@ -16,29 +24,17 @@ impl Registry {
         env.storage().instance().set(&DataKey::Admin, &admin);
     }
 
-    #[allow(clippy::too_many_arguments)] // EIP-712 scope grant legitimately needs every field
-    pub fn authorize(
-        env: Env,
-        owner: Address,
-        agent: Address,
-        vault: Address,
-        token: Address,
-        cap_per_period: i128,
-        period_duration: u64,
-        expiry: u64,
-    ) {
-        Self::authorize_impl(
-            &env,
-            owner,
-            agent,
-            vault,
-            token,
-            cap_per_period,
-            period_duration,
-            expiry,
-        );
+    /// Metadata record derived from the agent contract itself. The caller
+    /// supplies ONLY the agent address; every stored field is read from
+    /// `agent.scope_of()` and the DERIVED owner must authorize. An existing
+    /// record can never switch owner. Registry data is metadata for indexers —
+    /// AgentAccount state remains the authorization boundary.
+    pub fn authorize(env: Env, agent: Address) -> Result<(), RegistryError> {
+        Self::authorize_impl(&env, agent)
     }
 
+    /// Metadata mirror of a revocation. Does NOT disable the agent —
+    /// `AgentAccount.revoke()` is the enforcing kill switch.
     pub fn revoke(env: Env, owner: Address, agent: Address) -> Result<(), RegistryError> {
         Self::revoke_impl(&env, owner, agent)
     }
@@ -56,5 +52,17 @@ impl Registry {
             .get(&DataKey::Record(agent))
             .map(|r: AgentRecord| r.revoked)
             .unwrap_or(true) // unknown agent = treated as revoked (fail-closed)
+    }
+
+    /// Fail-closed liveness view: false for unknown, revoked, or expired records.
+    pub fn is_active(env: Env, agent: Address) -> bool {
+        match env
+            .storage()
+            .persistent()
+            .get::<_, AgentRecord>(&DataKey::Record(agent))
+        {
+            Some(r) => !r.revoked && env.ledger().timestamp() < r.expiry,
+            None => false,
+        }
     }
 }

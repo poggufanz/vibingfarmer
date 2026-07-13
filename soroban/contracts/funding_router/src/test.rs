@@ -469,6 +469,128 @@ fn grant_wires_router_into_agent_and_agent_authed_pull_funds_it() {
     assert_eq!(t.balance(&s.router), 0); // still zero custody
 }
 
+// --- grant validation: garbage inits are rejected BEFORE approval/deployment ---
+
+#[test]
+fn grant_rejects_empty_agent_list() {
+    let s = setup();
+    s.env.mock_all_auths();
+    let owner = Address::generate(&s.env);
+    let client = FundingRouterClient::new(&s.env, &s.router);
+    let empty: soroban_sdk::Vec<AgentInit> = vec![&s.env];
+
+    assert!(client.try_grant(&owner, &1_000, &1_000, &empty).is_err());
+    // Rejected before the nested approve — no allowance side effect survives.
+    assert_eq!(
+        TokenClient::new(&s.env, &s.token).allowance(&owner, &s.router),
+        0
+    );
+}
+
+#[test]
+fn grant_rejects_expired_allowance_ledger() {
+    let s = setup();
+    s.env.mock_all_auths();
+    s.env.ledger().with_mut(|li| li.sequence_number = 500);
+    let owner = Address::generate(&s.env);
+    let client = FundingRouterClient::new(&s.env, &s.router);
+    let inits = vec![&s.env, agent_init(&s.env, &s.vault, 1, 1_000)];
+
+    // An allowance that dies at/before the current ledger could never be pulled.
+    assert!(client.try_grant(&owner, &1_000, &500, &inits).is_err());
+    assert!(client.try_grant(&owner, &1_000, &100, &inits).is_err());
+}
+
+#[test]
+fn grant_rejects_zero_period_duration() {
+    let s = setup();
+    s.env.mock_all_auths();
+    let owner = Address::generate(&s.env);
+    let client = FundingRouterClient::new(&s.env, &s.router);
+    let mut bad = agent_init(&s.env, &s.vault, 1, 1_000);
+    bad.period_duration = 0;
+
+    assert!(client
+        .try_grant(&owner, &1_000, &1_000, &vec![&s.env, bad])
+        .is_err());
+}
+
+#[test]
+fn grant_rejects_past_agent_expiry() {
+    let s = setup();
+    s.env.mock_all_auths();
+    s.env.ledger().set_timestamp(1_000_000);
+    let owner = Address::generate(&s.env);
+    let client = FundingRouterClient::new(&s.env, &s.router);
+
+    let mut at_now = agent_init(&s.env, &s.vault, 1, 1_000);
+    at_now.expiry = 1_000_000; // == now: already dead
+    assert!(client
+        .try_grant(&owner, &1_000, &2_000_000, &vec![&s.env, at_now])
+        .is_err());
+
+    let mut past = agent_init(&s.env, &s.vault, 2, 1_000);
+    past.expiry = 999_999; // < now
+    assert!(client
+        .try_grant(&owner, &1_000, &2_000_000, &vec![&s.env, past])
+        .is_err());
+}
+
+// --- owner-bound deployment salt: no cross-owner salt squatting ---
+
+#[test]
+fn same_raw_salt_from_two_owners_yields_distinct_agents() {
+    let s = setup();
+    s.env.mock_all_auths();
+    let alice = Address::generate(&s.env);
+    let bob = Address::generate(&s.env);
+    let client = FundingRouterClient::new(&s.env, &s.router);
+
+    // Identical raw salt (seed 1) from two different owners. Pre-hardening the
+    // second deploy would collide on the same derived address and trap.
+    let a = client.grant(
+        &alice,
+        &1_000,
+        &1_000,
+        &vec![&s.env, agent_init(&s.env, &s.vault, 1, 1_000)],
+    );
+    let b = client.grant(
+        &bob,
+        &1_000,
+        &1_000,
+        &vec![&s.env, agent_init(&s.env, &s.vault, 1, 1_000)],
+    );
+
+    assert_ne!(a.get(0).unwrap(), b.get(0).unwrap());
+    assert_eq!(client.owner_of(&a.get(0).unwrap()), Some(alice));
+    assert_eq!(client.owner_of(&b.get(0).unwrap()), Some(bob));
+}
+
+#[test]
+fn same_owner_same_raw_salt_stays_deterministic() {
+    let s = setup();
+    s.env.mock_all_auths();
+    let owner = Address::generate(&s.env);
+    let client = FundingRouterClient::new(&s.env, &s.router);
+
+    client.grant(
+        &owner,
+        &1_000,
+        &1_000,
+        &vec![&s.env, agent_init(&s.env, &s.vault, 1, 1_000)],
+    );
+    // Same owner + same raw salt derives the SAME address — the second deploy
+    // collides and fails, proving the derivation is deterministic per owner.
+    assert!(client
+        .try_grant(
+            &owner,
+            &1_000,
+            &1_000,
+            &vec![&s.env, agent_init(&s.env, &s.vault, 1, 1_000)],
+        )
+        .is_err());
+}
+
 // --- input validation: non-positive amounts are rejected everywhere ---
 #[test]
 fn rejects_non_positive_amounts() {

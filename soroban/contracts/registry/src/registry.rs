@@ -1,50 +1,48 @@
 use soroban_sdk::{Address, Env};
 
 use crate::types::{AgentAuthorized, AgentRecord, AgentRevoked, DataKey, RegistryError};
-use crate::Registry;
+use crate::{AgentClient, Registry};
 
 const TTL_THRESHOLD: u32 = 17_280;
 const TTL_EXTEND: u32 = 518_400;
 
 impl Registry {
-    #[allow(clippy::too_many_arguments)] // EIP-712 scope grant legitimately needs every field
-    pub(crate) fn authorize_impl(
-        env: &Env,
-        owner: Address,
-        agent: Address,
-        vault: Address,
-        token: Address,
-        cap_per_period: i128,
-        period_duration: u64,
-        expiry: u64,
-    ) {
-        owner.require_auth();
+    pub(crate) fn authorize_impl(env: &Env, agent: Address) -> Result<(), RegistryError> {
+        // Authoritative fields come from the agent contract itself; the caller
+        // supplies nothing but the address.
+        let scope = AgentClient::new(env, &agent).scope_of();
+        scope.owner.require_auth();
+
+        let key = DataKey::Record(agent.clone());
+        if let Some(existing) = env.storage().persistent().get::<_, AgentRecord>(&key) {
+            if existing.owner != scope.owner {
+                return Err(RegistryError::OwnerMismatch);
+            }
+        }
+
         let rec = AgentRecord {
-            owner: owner.clone(),
-            vault: vault.clone(),
-            token: token.clone(),
-            cap_per_period,
-            period_duration,
-            expiry,
-            revoked: false,
+            owner: scope.owner.clone(),
+            vault: scope.vault.clone(),
+            token: scope.token.clone(),
+            cap_per_period: scope.cap_per_period,
+            period_duration: scope.period_duration,
+            expiry: scope.expiry,
+            revoked: scope.revoked,
         };
+        env.storage().persistent().set(&key, &rec);
         env.storage()
             .persistent()
-            .set(&DataKey::Record(agent.clone()), &rec);
-        env.storage().persistent().extend_ttl(
-            &DataKey::Record(agent.clone()),
-            TTL_THRESHOLD,
-            TTL_EXTEND,
-        );
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND);
         AgentAuthorized {
-            owner,
+            owner: rec.owner.clone(),
             agent,
-            vault,
-            token,
-            cap_per_period,
-            expiry,
+            vault: rec.vault.clone(),
+            token: rec.token.clone(),
+            cap_per_period: rec.cap_per_period,
+            expiry: rec.expiry,
         }
         .publish(env);
+        Ok(())
     }
 
     pub(crate) fn revoke_impl(

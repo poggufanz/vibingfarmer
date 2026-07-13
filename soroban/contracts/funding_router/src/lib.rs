@@ -9,8 +9,10 @@
 //! simply `token.approve(owner, router, 0, ...)` — no router fn needed.
 //! No admin. No upgrade.
 #![no_std]
+use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
-    contract, contractevent, contractimpl, panic_with_error, token, Address, BytesN, Env, Vec,
+    contract, contractevent, contractimpl, panic_with_error, token, Address, Bytes, BytesN, Env,
+    Vec,
 };
 
 mod test;
@@ -84,6 +86,26 @@ impl FundingRouter {
         if budget <= 0 {
             panic_with_error!(&env, RouterError::InvalidAmount);
         }
+        if agents.is_empty() {
+            panic_with_error!(&env, RouterError::EmptyAgents);
+        }
+        if expiry_ledger <= env.ledger().sequence() {
+            panic_with_error!(&env, RouterError::InvalidExpiry);
+        }
+        let now = env.ledger().timestamp();
+        // Validate EVERY init before the token approval or any deploy — a bad
+        // entry must leave zero side effects behind.
+        for init in agents.iter() {
+            if init.cap <= 0 {
+                panic_with_error!(&env, RouterError::InvalidAmount);
+            }
+            if init.period_duration == 0 {
+                panic_with_error!(&env, RouterError::InvalidPeriod);
+            }
+            if init.expiry <= now {
+                panic_with_error!(&env, RouterError::InvalidExpiry);
+            }
+        }
         let token = read_token(&env);
         let wasm_hash = read_wasm_hash(&env);
         let router = env.current_contract_address();
@@ -92,12 +114,8 @@ impl FundingRouter {
         // must cover this sub-invocation (router.grant -> token.approve).
         token::Client::new(&env, &token).approve(&owner, &router, &budget, &expiry_ledger);
 
-        let now = env.ledger().timestamp();
         let mut deployed: Vec<Address> = Vec::new(&env);
         for init in agents.iter() {
-            if init.cap <= 0 {
-                panic_with_error!(&env, RouterError::InvalidAmount);
-            }
             let scope = AgentScope {
                 owner: owner.clone(),
                 vault: init.vault,
@@ -113,7 +131,10 @@ impl FundingRouter {
             // auth is required. The agent's own constructor self-approves
             // token -> vault via invoker auth, and pins THIS router (4th ctor
             // arg) so its session key may later authorize `pull` on it.
-            let agent = env.deployer().with_current_contract(init.salt).deploy_v2(
+            // Salt is owner-bound (domain tag + router + owner + raw salt) so
+            // another owner can never squat a predictable salt namespace.
+            let salt = derive_salt(&env, &router, &owner, &init.salt);
+            let agent = env.deployer().with_current_contract(salt).deploy_v2(
                 wasm_hash.clone(),
                 (owner.clone(), init.signer, scope, Some(router.clone())),
             );
@@ -190,6 +211,16 @@ impl FundingRouter {
     pub fn config(env: Env) -> (BytesN<32>, Address) {
         (read_wasm_hash(&env), read_token(&env))
     }
+}
+
+/// Owner-bound deployment salt: sha256(domain tag ‖ router XDR ‖ owner XDR ‖ raw salt).
+/// Deterministic per (router, owner, raw salt); different owners can never collide.
+fn derive_salt(env: &Env, router: &Address, owner: &Address, raw: &BytesN<32>) -> BytesN<32> {
+    let mut pre = Bytes::from_slice(env, b"vibing-farmer/agent-salt/v1");
+    pre.append(&router.clone().to_xdr(env));
+    pre.append(&owner.clone().to_xdr(env));
+    pre.append(&Bytes::from_array(env, &raw.to_array()));
+    env.crypto().sha256(&pre).into()
 }
 
 fn read_token(env: &Env) -> Address {

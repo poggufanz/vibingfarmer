@@ -58,4 +58,11 @@ pub enum RouterError {
     InvalidAmount = 2,
     /// Instance config missing — unreachable after the constructor ran.
     NotInit = 3,
+    /// `grant` with no agents: an allowance nothing can ever pull.
+    EmptyAgents = 4,
+    /// Allowance `expiry_ledger` at/before the current ledger, or an agent
+    /// scope `expiry` at/before the current timestamp — dead on arrival.
+    InvalidExpiry = 5,
+    /// Zero `period_duration` — the rolling cap window must be positive.
+    InvalidPeriod = 6,
 }

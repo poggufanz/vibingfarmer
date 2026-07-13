@@ -1,24 +1,24 @@
-// Agent kill switch on Stellar. The owner revokes a granted agent scope on the Registry, and the
-// UI subscribes to live agent_revoked events to confirm. Mirrors the EVM revokeAgentDirect +
-// AgentRevoked-subscription pair that this replaces (Registry.revoke is the twin of authorize).
+// Agent kill switch on Stellar. The owner calls revoke() ON THE AGENT ACCOUNT — the contract
+// whose __check_auth actually enforces the scope — flipping scope.revoked and clearing the
+// vault allowance on-chain. The UI subscribes to live agent_revoked events to confirm
+// (AgentAccount emits the same topic/shape the Registry's metadata mirror uses).
 import { buildInvokeTx, submitUserTx, rpcServer } from './client.js'
 import { signTxXdr } from './walletKit.js'
 import { pollEvents } from './events.js'
-import { SOROBAN_REGISTRY_ADDRESS } from './config.js'
 
 /**
- * Revoke an agent's scope — user-signed Registry.revoke(owner, agent). One user tx, submitted
- * directly (NOT via the gasless relay) so the kill switch still works when the relayer is down —
- * that independence is what backs the "user can revoke any time" guarantee.
+ * Revoke an agent — user-signed AgentAccount.revoke() on the agent contract itself. One user tx,
+ * submitted directly (NOT via the gasless relay) so the kill switch still works when the relayer
+ * is down — that independence is what backs the "user can revoke any time" guarantee.
  * @param {{ owner: string, agent: string }} p
  * @returns {Promise<{ hash: string, status: string }>}
  */
 export async function revokeAgentOnChain({ owner, agent }) {
   const { xdr } = await buildInvokeTx({
     source: owner,
-    contract: SOROBAN_REGISTRY_ADDRESS,
+    contract: agent,
     method: 'revoke',
-    args: [{ addr: owner }, { addr: agent }],
+    args: [],
   })
   const signed = await signTxXdr(xdr)
   return submitUserTx({ signedXdr: signed })

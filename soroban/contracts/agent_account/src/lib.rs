@@ -1,7 +1,7 @@
 #![no_std]
 use soroban_sdk::auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation};
 use soroban_sdk::token::TokenClient;
-use soroban_sdk::{contract, contractimpl, vec, Address, BytesN, Env, IntoVal, Symbol};
+use soroban_sdk::{contract, contractevent, contractimpl, vec, Address, BytesN, Env, IntoVal, Symbol};
 
 mod account;
 mod test;
@@ -14,8 +14,43 @@ use vault_client::VaultClient;
 // Allowance lives this many ledgers (~30 days at 5s) — long enough to outlast any session scope.
 const APPROVE_TTL_LEDGERS: u32 = 518_400;
 
+/// The owner disabled this agent: session authorization is dead and the vault
+/// allowance is cleared. Same topic/shape as the Registry's metadata event so
+/// existing indexers/subscriptions decode both sources identically.
+#[contractevent(topics = ["agent_revoked"])]
+pub struct AgentRevoked {
+    pub owner: Address,
+    pub agent: Address,
+}
+
 #[contract]
 pub struct AgentAccount;
+
+/// Zero out the constructor's standing token allowance to the vault, using the
+/// same invoker-contract auth path the constructor used to create it.
+fn clear_vault_allowance(env: &Env, scope: &AgentScope) {
+    let current = env.current_contract_address();
+    // Amount 0 = delete the allowance entry; SEP-41 ignores the ledger bound for 0.
+    let expiration_ledger = env.ledger().sequence();
+    env.authorize_as_current_contract(vec![
+        env,
+        InvokerContractAuthEntry::Contract(SubContractInvocation {
+            context: ContractContext {
+                contract: scope.token.clone(),
+                fn_name: Symbol::new(env, "approve"),
+                args: (
+                    current.clone(),
+                    scope.vault.clone(),
+                    0i128,
+                    expiration_ledger,
+                )
+                    .into_val(env),
+            },
+            sub_invocations: vec![env],
+        }),
+    ]);
+    TokenClient::new(env, &scope.token).approve(&current, &scope.vault, &0, &expiration_ledger);
+}
 
 #[contractimpl]
 impl AgentAccount {
@@ -133,8 +168,44 @@ impl AgentAccount {
         ]);
         token_client.transfer(&current, &to, &bal);
 
+        // 3. Exit also kills the standing vault allowance — a swept agent must
+        // leave nothing the vault could still pull.
+        clear_vault_allowance(&env, &scope);
+
         env.storage().instance().extend_ttl(17_280, 518_400);
         Ok(bal)
+    }
+
+    /// Owner kill switch. Idempotent: sets `scope.revoked` (the exact flag
+    /// `__check_auth` fails closed on), clears the vault token allowance the
+    /// constructor granted, and emits `agent_revoked`. After this no session or
+    /// exit signature can authorize anything and the vault can pull nothing.
+    pub fn revoke(env: Env) -> Result<(), AccountError> {
+        let owner: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Owner)
+            .ok_or(AccountError::NotInit)?;
+        owner.require_auth();
+
+        let mut scope: AgentScope = env
+            .storage()
+            .instance()
+            .get(&DataKey::Scope)
+            .ok_or(AccountError::NotInit)?;
+        if !scope.revoked {
+            scope.revoked = true;
+            env.storage().instance().set(&DataKey::Scope, &scope);
+        }
+        clear_vault_allowance(&env, &scope);
+
+        AgentRevoked {
+            owner,
+            agent: env.current_contract_address(),
+        }
+        .publish(&env);
+        env.storage().instance().extend_ttl(17_280, 518_400);
+        Ok(())
     }
 
     pub fn set_exit_signer(env: Env, exit_signer: BytesN<32>) -> Result<(), AccountError> {
