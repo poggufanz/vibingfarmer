@@ -63,4 +63,46 @@ contract YieldRouterReentrancyTest is Test {
 
         assertFalse(vault.callbackSucceeded(), "pool callback reentered withdraw");
     }
+
+    function test_deposit_blocksCrossFunctionWithdrawReentry() public {
+        uint256 amount = 10e6;
+        usdc.mint(user, amount);
+
+        usdc.mint(address(vault), 1);
+        vault.seedShares(address(vault), 1);
+        vault.approveSelfShares(address(router), 1);
+        vault.configureCallback(
+            address(router), abi.encodeCall(YieldRouter.withdraw, (address(vault), 1, 0)), true, false
+        );
+
+        vm.startPrank(user);
+        usdc.approve(address(router), amount);
+        router.deposit(address(vault), amount, 1);
+        vm.stopPrank();
+
+        assertFalse(vault.callbackSucceeded(), "deposit callback crossed into withdraw");
+    }
+
+    function test_withdraw_blocksCrossFunctionDepositReentry() public {
+        uint256 amount = 10e6;
+        usdc.mint(user, amount);
+
+        vm.startPrank(user);
+        usdc.approve(address(router), amount);
+        uint256 shares = router.deposit(address(vault), amount, 1);
+        vm.stopPrank();
+
+        usdc.mint(address(vault), 1);
+        vault.approveAsset(address(router), 1);
+        vault.configureCallback(
+            address(router), abi.encodeCall(YieldRouter.deposit, (address(vault), 1, 0)), false, true
+        );
+
+        vm.startPrank(user);
+        vault.approve(address(router), shares);
+        router.withdraw(address(vault), shares, 1);
+        vm.stopPrank();
+
+        assertFalse(vault.callbackSucceeded(), "withdraw callback crossed into deposit");
+    }
 }

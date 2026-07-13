@@ -30,6 +30,7 @@ contract YieldRouter is Ownable, ReentrancyGuard {
 
     constructor(address initialOwner, address canonicalAsset_) Ownable(initialOwner) {
         require(canonicalAsset_ != address(0), "YieldRouter: asset is zero");
+        require(canonicalAsset_.code.length > 0, "YieldRouter: asset has no code");
         canonicalAsset = canonicalAsset_;
     }
 
@@ -52,6 +53,7 @@ contract YieldRouter is Ownable, ReentrancyGuard {
         asset.forceApprove(pool, 0);
         require(asset.balanceOf(address(this)) == assetBalanceBefore, "YieldRouter: pool did not consume assets");
         uint256 shareBalanceAfter = IERC4626(pool).balanceOf(msg.sender);
+        require(shares > 0, "YieldRouter: zero shares");
         require(
             shareBalanceAfter >= shareBalanceBefore && shareBalanceAfter - shareBalanceBefore == shares,
             "YieldRouter: share receipt mismatch"

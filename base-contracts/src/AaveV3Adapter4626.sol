@@ -74,6 +74,8 @@ contract AaveV3Adapter4626 is ERC4626, ReentrancyGuard {
     }
 
     function _deposit(address caller, address receiver, uint256 assets, uint256 shares) internal override {
+        require(assets > 0, "AaveV3Adapter: assets are zero");
+        require(shares > 0, "AaveV3Adapter: shares are zero");
         super._deposit(caller, receiver, assets, shares); // pulls USDC in, mints shares
         aavePool.supply(asset(), assets, address(this), 0);
     }

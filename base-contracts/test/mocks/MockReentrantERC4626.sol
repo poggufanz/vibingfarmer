@@ -19,6 +19,7 @@ contract MockReentrantERC4626 is ERC20 {
     bool private _insideCallback;
 
     uint256 public depositPullShortfall;
+    uint256 public depositMintShortfall;
     uint256 public depositReturnBonus;
     uint256 public redeemTransferShortfall;
     uint256 public redeemReturnShortfall;
@@ -50,6 +51,10 @@ contract MockReentrantERC4626 is ERC20 {
         depositReturnBonus = returnBonus;
     }
 
+    function configureDepositMintShortfall(uint256 mintShortfall) external {
+        depositMintShortfall = mintShortfall;
+    }
+
     function configureRedeem(uint256 transferShortfall, uint256 returnShortfall) external {
         redeemTransferShortfall = transferShortfall;
         redeemReturnShortfall = returnShortfall;
@@ -74,9 +79,9 @@ contract MockReentrantERC4626 is ERC20 {
     function deposit(uint256 assets, address receiver) external returns (uint256 shares) {
         uint256 pulled = assets - depositPullShortfall;
         underlying.safeTransferFrom(msg.sender, address(this), pulled);
-        _mint(receiver, assets);
+        _mint(receiver, assets - depositMintShortfall);
         if (callbackOnDeposit) _callback();
-        return assets + depositReturnBonus;
+        return assets - depositMintShortfall + depositReturnBonus;
     }
 
     function redeem(uint256 shares, address receiver, address owner) external returns (uint256 assets) {

@@ -3,10 +3,14 @@ pragma solidity ^0.8.23;
 
 import {Test} from "forge-std/Test.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {YieldRouter} from "../src/YieldRouter.sol";
+import {AaveV3Adapter4626} from "../src/AaveV3Adapter4626.sol";
 import {MockUSDC} from "./mocks/MockUSDC.sol";
 import {MockERC4626} from "./mocks/MockERC4626.sol";
 import {MockReentrantERC4626} from "./mocks/MockReentrantERC4626.sol";
+import {MockAToken} from "./mocks/MockAToken.sol";
+import {MockMaliciousAavePool} from "./mocks/MockMaliciousAavePool.sol";
 
 contract YieldRouterTest is Test {
     YieldRouter router;
@@ -35,6 +39,11 @@ contract YieldRouterTest is Test {
         }
 
         assertEq(deployed, address(0), "zero canonical asset must reject construction");
+    }
+
+    function test_constructor_revertsForNonContractCanonicalAsset() public {
+        vm.expectRevert(bytes("YieldRouter: asset has no code"));
+        new YieldRouter(owner, address(0xCAFE));
     }
 
     function test_deposit_intoWhitelistedPool_mintsSharesToCaller() public {
@@ -210,6 +219,50 @@ contract YieldRouterTest is Test {
         vm.prank(user);
         vm.expectRevert(bytes("YieldRouter: amount is zero"));
         router.deposit(address(vault), 0, 0);
+    }
+
+    function test_deposit_revertsWhenPositiveAssetsMintZeroShares() public {
+        MockAToken aToken = new MockAToken(IERC20(address(usdc)));
+        MockMaliciousAavePool aavePool = new MockMaliciousAavePool(IERC20(address(usdc)), aToken);
+        AaveV3Adapter4626 donatedAdapter =
+            new AaveV3Adapter4626(IERC20(address(usdc)), address(aavePool), address(aToken), "Donated Adapter", "dADP");
+
+        vm.prank(owner);
+        router.setPool(address(donatedAdapter), true);
+
+        uint256 donation = 1_000_000;
+        usdc.mint(address(donatedAdapter), donation);
+        uint256 userBalanceBefore = usdc.balanceOf(user);
+
+        vm.startPrank(user);
+        usdc.approve(address(router), 1);
+        vm.expectRevert(bytes("AaveV3Adapter: shares are zero"));
+        router.deposit(address(donatedAdapter), 1, 0);
+        vm.stopPrank();
+
+        assertEq(usdc.balanceOf(user), userBalanceBefore, "zero-share deposit must roll back the user transfer");
+        assertEq(usdc.balanceOf(address(router)), 0, "zero-share deposit leaves no router balance");
+        assertEq(donatedAdapter.totalSupply(), 0, "zero-share deposit creates no position");
+        assertEq(donatedAdapter.totalAssets(), donation, "preexisting donation remains unchanged");
+        assertEq(aToken.balanceOf(address(donatedAdapter)), 0, "failed deposit supplies nothing to Aave");
+    }
+
+    function test_deposit_independentlyRejectsZeroSharesReturnedByPool() public {
+        MockReentrantERC4626 zeroShareVault = new MockReentrantERC4626(usdc);
+        zeroShareVault.configureDepositMintShortfall(1);
+
+        vm.prank(owner);
+        router.setPool(address(zeroShareVault), true);
+
+        uint256 userBalanceBefore = usdc.balanceOf(user);
+        vm.startPrank(user);
+        usdc.approve(address(router), 1);
+        vm.expectRevert(bytes("YieldRouter: zero shares"));
+        router.deposit(address(zeroShareVault), 1, 0);
+        vm.stopPrank();
+
+        assertEq(usdc.balanceOf(user), userBalanceBefore, "zero-share deposit is atomic");
+        assertEq(zeroShareVault.balanceOf(user), 0, "zero-share pool creates no position");
     }
 
     function test_deposit_revertsBelowMinShares() public {

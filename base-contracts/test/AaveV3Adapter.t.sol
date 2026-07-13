@@ -118,6 +118,30 @@ contract AaveV3AdapterTest is Test {
         assertEq(adapter.totalAssets(), 7e6, "idle underlying remains part of vault NAV");
     }
 
+    function test_deposit_revertsWhenPositiveAssetsMintZeroShares() public {
+        uint256 donation = 1_000_000;
+        usdc.mint(address(adapter), donation);
+        uint256 userBalanceBefore = usdc.balanceOf(user);
+
+        vm.prank(user);
+        vm.expectRevert(bytes("AaveV3Adapter: shares are zero"));
+        adapter.deposit(1, user);
+
+        assertEq(usdc.balanceOf(user), userBalanceBefore, "zero-share deposit must roll back the user transfer");
+        assertEq(adapter.totalSupply(), 0, "zero-share deposit creates no position");
+        assertEq(adapter.totalAssets(), donation, "preexisting donation remains unchanged");
+        assertEq(pool.balanceOf(address(adapter)), 0, "failed deposit mints no aTokens");
+    }
+
+    function test_deposit_revertsForZeroAssets() public {
+        vm.prank(user);
+        vm.expectRevert(bytes("AaveV3Adapter: assets are zero"));
+        adapter.deposit(0, user);
+
+        assertEq(adapter.totalSupply(), 0, "zero-asset deposit creates no shares");
+        assertEq(adapter.totalAssets(), 0, "zero-asset deposit supplies nothing");
+    }
+
     function test_redeem_usesIdleUnderlyingBeforeWithdrawingFromAave() public {
         vm.prank(user);
         uint256 shares = adapter.deposit(100e6, user);
@@ -170,6 +194,44 @@ contract AaveV3AdapterTest is Test {
         assertFalse(maliciousPool.callbackSucceeded(), "Aave callback reentered mint");
     }
 
+    function test_deposit_blocksCrossFunctionWithdrawReentry() public {
+        (AaveV3Adapter4626 guardedAdapter, MockMaliciousAavePool maliciousPool,) = _deployMaliciousAdapter();
+
+        _seedPoolOwnedPosition(guardedAdapter, maliciousPool, 10e6);
+        maliciousPool.configureCallback(
+            address(guardedAdapter),
+            abi.encodeWithSignature(
+                "withdraw(uint256,address,address)", 1, address(maliciousPool), address(maliciousPool)
+            ),
+            true,
+            false
+        );
+
+        vm.prank(user);
+        guardedAdapter.deposit(100e6, user);
+
+        assertFalse(maliciousPool.callbackSucceeded(), "deposit callback crossed into withdraw");
+    }
+
+    function test_mint_blocksCrossFunctionRedeemReentry() public {
+        (AaveV3Adapter4626 guardedAdapter, MockMaliciousAavePool maliciousPool,) = _deployMaliciousAdapter();
+
+        _seedPoolOwnedPosition(guardedAdapter, maliciousPool, 10e6);
+        maliciousPool.configureCallback(
+            address(guardedAdapter),
+            abi.encodeWithSignature(
+                "redeem(uint256,address,address)", 1, address(maliciousPool), address(maliciousPool)
+            ),
+            true,
+            false
+        );
+
+        vm.prank(user);
+        guardedAdapter.mint(100e6, user);
+
+        assertFalse(maliciousPool.callbackSucceeded(), "mint callback crossed into redeem");
+    }
+
     function test_withdraw_blocksAaveWithdrawCallbackReentry() public {
         (AaveV3Adapter4626 guardedAdapter, MockMaliciousAavePool maliciousPool,) = _deployMaliciousAdapter();
 
@@ -212,6 +274,48 @@ contract AaveV3AdapterTest is Test {
         guardedAdapter.redeem(shares / 2, user, user);
 
         assertFalse(maliciousPool.callbackSucceeded(), "Aave callback reentered redeem");
+    }
+
+    function test_withdraw_blocksCrossFunctionDepositReentry() public {
+        (AaveV3Adapter4626 guardedAdapter, MockMaliciousAavePool maliciousPool,) = _deployMaliciousAdapter();
+
+        vm.prank(user);
+        guardedAdapter.deposit(100e6, user);
+        usdc.mint(address(maliciousPool), 1);
+        vm.prank(address(maliciousPool));
+        usdc.approve(address(guardedAdapter), 1);
+        maliciousPool.configureCallback(
+            address(guardedAdapter),
+            abi.encodeWithSignature("deposit(uint256,address)", 1, address(maliciousPool)),
+            false,
+            true
+        );
+
+        vm.prank(user);
+        guardedAdapter.withdraw(50e6, user, user);
+
+        assertFalse(maliciousPool.callbackSucceeded(), "withdraw callback crossed into deposit");
+    }
+
+    function test_redeem_blocksCrossFunctionMintReentry() public {
+        (AaveV3Adapter4626 guardedAdapter, MockMaliciousAavePool maliciousPool,) = _deployMaliciousAdapter();
+
+        vm.prank(user);
+        uint256 shares = guardedAdapter.deposit(100e6, user);
+        usdc.mint(address(maliciousPool), 1);
+        vm.prank(address(maliciousPool));
+        usdc.approve(address(guardedAdapter), 1);
+        maliciousPool.configureCallback(
+            address(guardedAdapter),
+            abi.encodeWithSignature("mint(uint256,address)", 1, address(maliciousPool)),
+            false,
+            true
+        );
+
+        vm.prank(user);
+        guardedAdapter.redeem(shares / 2, user, user);
+
+        assertFalse(maliciousPool.callbackSucceeded(), "redeem callback crossed into mint");
     }
 
     function test_withdraw_revertsForDishonestAaveReturn() public {
