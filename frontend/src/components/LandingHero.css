@@ -1602,6 +1602,37 @@
   padding-right: 0.5em;
 }
 
+/* Ecosystem logo variant: same GSAP loop, icons + uppercase wordmarks. */
+.vf-marquee--logos .vf-marquee__track {
+  align-items: center;
+  font-size: clamp(1.05rem, 2.2vw, 1.6rem);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.vf-marquee--logos .vf-marquee__track span {
+  padding-right: 0;
+}
+
+.vf-marquee__seq {
+  display: inline-flex;
+  align-items: center;
+  gap: clamp(28px, 5vw, 64px);
+  padding-right: clamp(28px, 5vw, 64px);
+}
+
+.vf-marquee__logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.vf-marquee__logo img {
+  height: 1.5em;
+  width: auto;
+  opacity: 0.75;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .vf-intro,
   .vf-cursor,
