@@ -30,8 +30,13 @@ export function createVfWalletProvider({ post, listen } = {}) {
     const p = pending.get(msg.id)
     if (!p) return
     pending.delete(msg.id)
-    if (msg.error) p.reject(new Error(msg.error))
-    else p.resolve(msg.result)
+    if (msg.error) {
+      // error is either a legacy string or a SEP-43 {code, message} object (providerBridge.js).
+      const isObj = typeof msg.error === 'object' && msg.error !== null
+      const err = new Error(isObj ? (msg.error.message ?? 'VF Wallet request failed') : msg.error)
+      if (isObj && msg.error.code !== undefined) err.code = msg.error.code
+      p.reject(err)
+    } else p.resolve(msg.result)
   })
 
   function call(method, params) {
