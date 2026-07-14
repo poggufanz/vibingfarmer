@@ -53,7 +53,10 @@ export async function readPricePerShare(
  * @param {{ server?: object }} [opts]
  * @returns {Promise<bigint|null>}
  */
-export async function readTotalAssets(vaultAddress = SOROBAN_AUTOFARM_VAULT_ADDRESS, { server } = {}) {
+export async function readTotalAssets(
+  vaultAddress = SOROBAN_AUTOFARM_VAULT_ADDRESS,
+  { server } = {}
+) {
   try {
     const v = await readContract({
       contract: vaultAddress,

@@ -109,6 +109,7 @@ export default defineConfig(({ mode }) => {
     // per-test vi.stubEnv still overrides these (config.test.js relies on that). Never used by
     // `vite dev`/`vite build` — this key is read only under vitest.
     test: {
+      setupFiles: ['./vitest.setup.js'],
       env: {
         VITE_YIELD_ROUTER_ADDRESS: '0x1111111111111111111111111111111111111111',
         VITE_BASE_POOL_1_ADDRESS: '0x1111111111111111111111111111111111111112',
