@@ -1614,6 +1614,12 @@
   padding-right: 0;
 }
 
+/* The sequence wrapper is itself a span — restore its trailing gap so the
+   last item (ZeroDev) doesn't butt against the next loop's first (Stellar). */
+.vf-marquee--logos span.vf-marquee__seq {
+  padding-right: clamp(28px, 5vw, 64px);
+}
+
 .vf-marquee__seq {
   display: inline-flex;
   align-items: center;
