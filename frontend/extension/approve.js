@@ -66,7 +66,10 @@ export function screenModel(req, { address, summary } = {}) {
     note: 'Approving opens the passkey (Face ID) prompt.',
     approveLabel: 'Approve',
     rows,
-    raw: req.method === 'signTransaction' ? (req.params?.xdr ?? null) : (req.params?.authEntry ?? null),
+    raw:
+      req.method === 'signTransaction'
+        ? (req.params?.xdr ?? null)
+        : (req.params?.authEntry ?? null),
   }
 }
 
