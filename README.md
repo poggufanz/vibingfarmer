@@ -4,34 +4,56 @@
 
 # Vibing Farmer
 
-Yield farming is mostly the same clicks: find a vault, approve, deposit, repeat for the next protocol. Vibing Farmer runs those deposits in parallel. An AI picks the vaults and writes per-agent instructions; you approve once; disposable worker keys do the rest. You pay zero gas.
+> **Set once. Vibe forever.** An AI agent swarm that farms yield for you on Stellar — under limits you sign once, enforced on-chain.
 
-I built this because sequential DeFi UIs waste time. You say how much and how much risk you'll take. Agents run the deposits. Scope is enforced on-chain (allowance, expiry, vault pin), not by trusting the AI.
+**▶ Live app: [vibing-farmer.pages.dev](https://vibing-farmer.pages.dev)** · [VF Wallet extension](https://github.com/poggufanz/vibingfarmer/releases/latest/download/vibingfarmer-extension.zip) · Stellar testnet
 
-Single chain: **Stellar / Soroban**. Contracts are under `soroban/`. The chain client is `frontend/src/stellar/`.
+Yield farming is the same clicks repeated: find a vault, approve, deposit, repeat for the next protocol. Vibing Farmer collapses all of it into **one signature**. An AI strategist picks the vaults and writes per-agent instructions; a swarm of worker agents executes the deposits in parallel; you pay **zero gas**.
+
+The AI is never trusted with your money. Every agent runs inside a disposable on-chain account whose powers are pinned by contract — how much it can deposit, into which vault, until when. Limits live on-chain (allowance, expiry, vault pin), not in a prompt.
+
+---
+
+## Try it in two minutes
+
+1. Open **[vibing-farmer.pages.dev](https://vibing-farmer.pages.dev)**.
+2. Create a **VF Wallet** — passkey-based, no seed phrase, no extension needed. (Prefer your own? Freighter, xBull, and Albedo work too, on testnet.)
+3. Get test USDC from VF Wallet's **built-in faucet**.
+4. Go to **Strategy** → set amount, risk, number of agents → review the AI's plan → sign **once**.
+5. Watch your agents deposit in parallel, gas-free, and track every decision on the **Agent** dashboard.
+
+Everything runs on Stellar **testnet** — no real funds involved.
 
 ## How it works
 
-1. **Strategy.** You set deposit amount, risk, and how many vaults. The strategist returns an allocation plan and a skill JSON per worker. Prefer **Venice AI** (paste an API key in Settings, or pay with x402 / SIWE and prepaid USDC). If neither is set, the app uses a DeepSeek server proxy so local demos still work. Before you commit, Monte Carlo runs 200 scenarios over 30 days on that allocation.
+1. **Strategy.** You set deposit amount, risk, and how many vaults. The AI strategist returns an allocation plan plus a skill file per agent, backed by live DeFiLlama market data. Before anything runs, a Monte Carlo simulation stress-tests the allocation over 200 scenarios.
 
-2. **AI council.** Three specialists (yield, risk, market) score the proposal separately. On disagreement, a synthesis call settles it. Verdict, cited playbook rules, and how the conflict was resolved all get logged.
+2. **AI council.** Three specialists (yield, risk, market) score the proposal independently. Disagreements go to a synthesis round. The verdict, cited playbook rules, and conflict resolution are all logged for you to inspect.
 
-3. **Review.** Open the skill JSON in the drawer, edit anything, approve only when you're happy. Nothing runs until then.
+3. **Review.** Every skill file is open in the Skills Drawer — edit caps, expiries, or targets. Nothing runs until you approve.
 
-4. **Connect.** Freighter, xBull, or Albedo through Stellar Wallets Kit. No account upgrade, no extra browser permission ceremony.
+4. **One signature.** You sign `funding_router.grant` (budget + expiry). A SEP-41 token allowance *is* the leash: the router deploys a fresh, scoped `agent_account` per worker and can only pull within what you approved.
 
-5. **One signature.** Sign `funding_router.grant` (budget + expiry). Nested SEP-41 allowance is the leash. The router deploys fresh scoped `agent_account`s. Each worker signs deposits with an ed25519 session key on a Soroban auth entry; the fee-bump relayer (or your RPC) broadcasts. **1Shot is gone** (old EVM path). Gas is our Stellar fee-bump, plus optional ZeroDev on Base if you use the cross-chain leg.
+5. **Parallel deposit.** Workers sign deposits with ephemeral ed25519 session keys; a fee-bump relayer sponsors every transaction. One worker failing never aborts the others. You pay 0 gas.
 
-6. **Parallel deposit.** `OrchestratorAgent` starts N `WorkerAgent`s with `Promise.allSettled`. Each pulls within the grant, builds a deposit, signs the auth entry with its session key, submits via fee-bump. Zero gas for the user.
+6. **Attestation.** The strategy JSON is hashed and written on-chain, so anyone holding the original file can verify what was approved.
 
-7. **Attestation.** Strategy JSON is hashed and written on-chain. Anyone with the original JSON can recompute the hash.
+7. **Autonomy.** A monitor loop polls positions, flags APY drift, and can propose rebalances — each cycle re-reviewed by the council. A keeper compounds yield on a cron; a lifeboat radar can de-risk the vault at ledger speed under a user-signed mandate.
 
-8. **Monitor loop.** A Web Worker polls positions, flags APY drift and risk, and can propose rebalances. Council reviews each cycle. ACE Curator grows, merges, and prunes playbook rules from outcomes worth keeping. Journals and decision logs sit in localStorage and show up on the Agent Dashboard.
+8. **Kill switch.** Two user-signed exits that work even if every server is down:
+   - **Global:** `token.approve(router, 0)` — the allowance is the budget; zero it and funding stops.
+   - **Per agent:** `agent_account.revoke()` — flips an on-chain flag every authorization check fails closed on.
 
-9. **Kill switch.** Two user-signed paths that still work if the relayer is down:
-   - Global: `token.approve(router, 0)` (SEP-41 allowance *is* the budget; zero it and funding stops).
-   - Per agent: `agent_account.revoke()` flips the `revoked` flag that `__check_auth` fails closed on, and zeroes that agent's vault allowance.
-   Registry only mirrors revoke state for indexers/UI. It does not enforce.
+## Security
+
+Scope is enforced by contracts, not promises:
+
+- Agent accounts are **deposit-only**: pinned vault, amount cap per period, hard expiry. Approve/transfer/anything-else fails closed.
+- The router holds no funds and has **no admin or upgrade path**.
+- Vault hardening: share-inflation guard, untrusted-strategy NAV clamps, balance-delta verification, emergency de-risk and quarantine hatches.
+- The fee-bump relayer only sponsors an **allowlisted** set of operations — and both kill switches work without it.
+
+The full internal hardening review — threat model, verified controls, test evidence, and honest residual risks — is in [SECURITY.md](SECURITY.md). Testnet software; not an independent audit.
 
 ---
 
@@ -44,7 +66,6 @@ User input (amount, risk level, vault count)
         AI strategist (Venice AI — key or x402; DeepSeek proxy fallback)
           |-- Multi-vault allocation + live DeFiLlama data
           |-- Skill JSON per agent (deposit cap + expiry)
-          |-- MDP state: turbulence regime
                 |
                 v
         Monte Carlo sim (200 runs, 30d)
@@ -60,15 +81,14 @@ User input (amount, risk level, vault count)
     v     v     v
  Worker Worker Worker   (parallel agents)
    ed25519 session key signs a Soroban auth entry
-   own fee-bump relay broadcasts (zero gas; not 1Shot)
-   autofarm vault → Blend strategy — shares vfVLT, 7-dp
+   fee-bump relay broadcasts — user pays zero gas
+   autofarm vault → Blend Capital v2 (real testnet lending yield)
                 |
                 v
-        Autonomous Monitor Loop (Web Worker)
-          Council review each cycle
-          ACE Curator (playbook evolution)
-          Cycle journal + decision log
+        Autonomous monitor loop + keeper compound + lifeboat radar
 ```
+
+Single chain: **Stellar / Soroban**. Optional cross-chain leg to Base via Circle CCTP v2 + ZeroDev session keys.
 
 ---
 
@@ -81,11 +101,8 @@ User input (amount, risk level, vault count)
 | Registry | `CAP5E2FPDAGEQ7SR55YRY4Z56GPBSTRRZJCYN2PQ6PZQHQJKYEDVM5FB` |
 | Blend USDC token (7-dp) | `CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU` |
 | Blend v2 pool | `CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF` |
-| Demo agent (seeded smoke) | `CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC` |
 
-Stellar Expert: `https://stellar.expert/explorer/testnet/contract/<address>`. Live map: [`deployments/stellar-testnet.json`](deployments/stellar-testnet.json).
-
-> **Legacy (2026-07-13):** addresses above predate the hardening pass (agent revoke, derived registry records, vault strategy isolation, Blend live NAV). Details in [`SECURITY.md`](SECURITY.md). They are still the public demo until hardened wasm is redeployed and smoke-tested. Treat them as legacy until this note is removed with a new manifest.
+Verify any of them on [Stellar Expert](https://stellar.expert/explorer/testnet): `https://stellar.expert/explorer/testnet/contract/<address>`. Full manifest with wasm hashes and deploy receipts: [`deployments/stellar-testnet.json`](deployments/stellar-testnet.json).
 
 ---
 
@@ -96,54 +113,14 @@ Stellar Expert: `https://stellar.expert/explorer/testnet/contract/<address>`. Li
 | Smart contracts | Rust, Soroban SDK, OpenZeppelin Stellar contracts |
 | Frontend | React 18, Vite 5, React Router v6, Framer Motion, react-force-graph-2d |
 | Chain client | `@stellar/stellar-sdk`, Stellar Wallets Kit (Freighter / xBull / Albedo) |
-| AI | Venice AI (`zai-org-glm-5-1`) via API key or x402 (SIWE, prepaid USDC); DeepSeek (`deepseek-v4-flash`) server proxy as zero-config fallback |
-| Live yield data | DeFiLlama API (APY, TVL, 7-day history) |
-| Web search | Tavily API (server proxy) for strategy context |
-| Gas | Own fee-bump relayer (`/api/stellar-relay`); replaces old 1Shot path; user pays 0 |
-| Cross-chain (optional) | Circle CCTP v2 + Node `relayer/` + ZeroDev on Base Sepolia |
-| Wallet | Standard Stellar wallet; no smart-account upgrade |
+| Wallet | VF Wallet (passkey smart account + extension) or any standard Stellar wallet |
+| AI | Venice AI via API key or x402 (SIWE, prepaid USDC); DeepSeek server proxy as zero-config fallback |
+| Yield | Autofarm vault → Blend Capital v2 (real testnet lending interest) |
+| Live market data | DeFiLlama API (APY, TVL, 7-day history); Tavily search for strategy context |
+| Gas | Own fee-bump relayer (`/api/stellar-relay`, allowlisted ops) — user pays 0 |
+| Cross-chain (optional) | Circle CCTP v2 + relayer + ZeroDev on Base Sepolia |
 | Crypto | ed25519 session keys; libsodium KDF-sealed per-worker key vault |
-| Validation | Zod at boundaries |
-| Network | Stellar testnet (Soroban), 7-dp token base units |
 | Hosting | Cloudflare Pages: static SPA + `/api/*` Pages Functions |
-| CI | GitHub Actions: frontend lint, Vitest, build |
-| Lint / format | ESLint 9 flat + Prettier; clippy on contracts |
-| Tests | cargo (contracts), Vitest (frontend) |
-
----
-
-## Contracts (`soroban/contracts/`)
-
-- **`registry`** — metadata for indexers and UI. Not an auth boundary. `authorize(agent)` fills record fields from the agent’s own `scope_of()` (caller only passes the address; derived owner must sign). Owner cannot switch. `is_active` is fail-closed for unknown, revoked, or expired agents. `revoke` only mirrors state; enforcement is `agent_account.revoke()`.
-
-- **`rwa_vault` / autofarm vault** — deposit vault (shares `vfVLT`, 7 decimals). Strategies supply into **Blend Capital v2** on testnet. Live target: `autofarmVault` in `deployments/stellar-testnet.json`.
-
-- **`agent_account`** — Soroban custom account. `__check_auth` enforces constructor-pinned scope (vault, token, cap, expiry). Per-run agents come from `funding_router`.
-
-- **`funding_router`** — single-signature factory and funding gate. SEP-41 allowance is the leash; the router does not custody funds long-term.
-
-### What the vault rejects
-
-- Amount over period cap → revert  
-- Wrong vault or token → revert  
-- Expired or revoked scope → revert  
-- CEI ordering throughout  
-- No custody of agent keys in the vault (session key lives on the agent account)
-
----
-
-## Test suite
-
-**Contracts** (cargo in `soroban/`): unit tests per crate, plus integration, invariant, fork, and security drills.
-
-```bash
-cargo test
-cargo clippy --all-targets -- -D warnings
-```
-
-(Use WSL for those; see below.)
-
-**Frontend** (Vitest): orchestrator, worker, Stellar client under `frontend/src/stellar/*.test.js` (client, agentSetup, agentDeposit, revoke, events, sessionKey, walletKit, scval, relay, config, format), skills, positions store, wallet, Venice AI, council, simulation, MDP, gates, monitor loop, decision log, playbook, curator, and related modules.
 
 ---
 
@@ -151,39 +128,14 @@ cargo clippy --all-targets -- -D warnings
 
 | Route | Description |
 |-------|-------------|
-| `/` | Scroll landing hero; no wallet required |
+| `/` | Landing; no wallet required |
 | `/home` | Portfolio, positions, alerts, market pulse |
 | `/strategy` | Wizard: input → connect → skills → permission → execute → done |
 | `/agent` | Dashboard: scopes, revoke, monitor status, journal, decision log |
 | `/history` | Tx and strategy history |
 | `/settings` | Wallet, permissions, agent config, language, skill source |
-| `/vault/:protocol` | Per-vault detail |
-| `/tx/:txHash` | Transaction detail |
 | `/explorer` | On-chain verification (contracts, TVL, test stats); no wallet |
-| `/ecosystem` | Stack notes: Stellar/Soroban, Venice AI, fee-bump, DeFiLlama |
 | `/replay` | Timeline replay from static JSON (no RPC) |
-
----
-
-## Strategy engine (`frontend/src/strategy/`)
-
-| Module | Purpose |
-|--------|---------|
-| `mdp.js` | MDP state, action space, reward scoring |
-| `simulation.js` | Seeded Monte Carlo (200 runs, 30-day horizon) |
-| `council.js` | Council verdict (yield, risk, market) |
-| `councilReview.js` | Pre-deposit deliberation + conflict resolution |
-| `gates.js` | Pre-submit circuit breaker (economic, rate limits) |
-| `monitorLoop.js` | Loop: observe → gate → simulate → council → execute → reflect |
-| `decisionLog.js` | Decision audit trail |
-| `cycleJournal.js` | Per-cycle journal (pass/fail, action, reward) |
-| `curator.js` | ACE Curator: grow playbook rules from outcomes |
-| `ruleStore.js` | Playbook persistence (seed, grow, merge, prune) |
-| `keyVault.js` | KDF-sealed per-worker keys |
-| `submitGate.js` | Economic + rate-limit gate |
-| `permissionScope.js` | Scope builder (single source) |
-| `session.js` | Grant persistence and rehydrate |
-| `fetchDag.js` | Parallel fetch DAG with timing |
 
 ---
 
@@ -203,198 +155,100 @@ One typed skill file per agent (deposit-only; amounts in 7-dp base units):
 }
 ```
 
-`maxAmount` is 7-dp base units (`1000000000` = 100 USDC). Every field is editable in the Skills Drawer before approval. Allocation reasoning is steered by `frontend/src/skills/default/vault-advisor.md`. You can swap custom skill files in Settings.
+`maxAmount` is 7-dp base units (`1000000000` = 100 USDC). Every field is editable in the Skills Drawer before approval. You can swap custom skill files in Settings.
 
 ---
 
-## Prerequisites
+## Development
 
-- Stellar wallet on **testnet**: [Freighter](https://www.freighter.app), xBull, or Albedo — **or [VF Wallet](https://github.com/poggufanz/vibingfarmer/releases/latest/download/vibingfarmer-extension.zip)**, our passkey wallet extension with a built-in testnet USDC faucet ([all releases](https://github.com/poggufanz/vibingfarmer/releases)). Install: unzip → `chrome://extensions` → Developer mode → Load unpacked.  
-- Funded testnet account ([Friendbot](https://friendbot.stellar.org)). Relayer pays agent fees, so you pay 0 gas for agent txs.  
-- Testnet USDC for deposits — VF Wallet dispenses it from its faucet; other wallets need it from the deployed token contract.  
-
----
-
-## Quick start
+### Run locally
 
 ```bash
 cd frontend
 cp .env.example .env.local       # Vite client vars
 cp .dev.vars.example .dev.vars   # server proxy + relayer secrets (Pages Functions)
-# Venice: paste key in Settings (https://venice.ai/settings/api) or use x402.
-# DeepSeek fallback: optional DEEPSEEK_API_KEY on the server.
-
 npm install
-npm run dev
+npm run dev                      # http://localhost:5173
 ```
 
-Open `http://localhost:5173`, connect Freighter / xBull / Albedo on testnet.
+AI keys are optional: paste a Venice key in Settings, set a server-side `DEEPSEEK_API_KEY`, or use neither — a deterministic fallback keeps the demo working.
 
----
+### Environment variables
 
-## Environment variables
-
-**Server-side only** (Cloudflare Pages env / `.dev.vars` — never `VITE_` for secrets):
+Server-side only (Cloudflare Pages env / `.dev.vars` — never `VITE_` for secrets):
 
 ```env
-DEEPSEEK_API_KEY=sk-...                          # /api/ai — optional fallback proxy (BYOK-first)
-TAVILY_API_KEY=tvly-...                          # /api/search — optional market context
-ALLOWED_ORIGIN=https://your-project.pages.dev    # /api/* origin allowlist (prod)
-
-# Soroban fee-bump (/api/stellar-relay)
-STELLAR_RELAYER_SECRET=S...                       # fund this keypair on testnet
+STELLAR_RELAYER_SECRET=S...                       # fee-bump sponsor (fund on testnet)
 SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
 STELLAR_NETWORK_PASSPHRASE=Test SDF Network ; September 2015
-SOROBAN_VAULT_ADDRESS=CDWHNHIH…KM77               # autofarm vault (see deployments JSON)
+SOROBAN_VAULT_ADDRESS=CDWHNHIH…KM77               # autofarm vault
 SOROBAN_ROUTER_ADDRESS=CCEWWRQV…CYE5              # funding_router
+ALLOWED_ORIGIN=https://your-project.pages.dev     # /api/* origin allowlist
+DEEPSEEK_API_KEY=sk-...                           # optional AI fallback (BYOK-first)
+TAVILY_API_KEY=tvly-...                           # optional market search
 ```
 
-Leave host AI keys unset for a lockdown deploy (BYOK). Relayer fee-bumps from `STELLAR_RELAYER_SECRET`; user pays 0 gas. No `ONESHOT_*` vars.
+Leave host AI keys unset for a lockdown deploy (users bring their own keys).
 
----
-
-## Smart contract commands (WSL only)
-
-Do not run `cargo` / `stellar` in PowerShell. Use WSL:
+### Contracts
 
 ```bash
-# Build all contracts to wasm
-wsl -e bash -lc "cd /mnt/c/SharredData/project/competition/vibing-farmer/soroban && stellar contract build"
-
-# Test
-wsl -e bash -lc "cd /mnt/c/SharredData/project/competition/vibing-farmer/soroban && cargo test"
-
-# Lint (warnings as errors)
-wsl -e bash -lc "cd /mnt/c/SharredData/project/competition/vibing-farmer/soroban && cargo clippy --all-targets -- -D warnings"
-
-# Deploy testnet + seed demo agent
-wsl -e bash -lc "cd /mnt/c/SharredData/project/competition/vibing-farmer/soroban && ./deploy-seed.sh"
+cd soroban
+stellar contract build                       # 6 wasms
+cargo test                                   # unit + integration + security drills
+cargo clippy --all-targets -- -D warnings
 ```
 
----
+Deploy + seed scripts live in `scripts/soroban/`. Addresses land in `deployments/stellar-testnet.json`.
 
-## Frontend scripts
+### Frontend scripts
 
 ```bash
 cd frontend
-npm test              # Vitest — *.test.js in src/ and src/strategy/
+npm test              # Vitest suite
 npm run lint          # ESLint flat config
-npm run format        # Prettier write
 npm run build         # production → dist/
+npm run build:ext     # VF Wallet extension → extension-dist/
 npm run pages:dev     # build + wrangler pages dev (Functions locally)
 ```
 
----
+### CI/CD
 
-## CI
+`.github/workflows/frontend.yml` runs on every push/PR to `main` and `dev`: lint (soft-fail), full Vitest suite, production build. Pushes then auto-deploy to Cloudflare Pages — `dev` → preview, `main` → production.
 
-**`.github/workflows/frontend.yml`** (push/PR on `main`, `iq`):
-
-- lint: `npm run lint` (soft-fail)
-- test: `npm test`
-- build: `npm run build`
-
-Contracts: build and test locally with cargo in WSL.
-
----
-
-## Deploy (Cloudflare Pages)
-
-Vite SPA in `dist/` on the edge; `/api/{ai,search,stellar-relay}` as Pages Functions. Local Vite reuses the same `api/*.js` handlers as middleware.
-
-```bash
-cd frontend
-npm run pages:dev      # vite build + wrangler pages dev
-npm run pages:deploy   # after `wrangler login`
-```
-
-Set `STELLAR_RELAYER_SECRET`, `SOROBAN_*`, `DEEPSEEK_API_KEY`, `ALLOWED_ORIGIN`, etc. in the Pages dashboard. Longer guide: [frontend/DEPLOY-CLOUDFLARE.md](frontend/DEPLOY-CLOUDFLARE.md).
-
----
-
-## Directory structure
+### Directory structure
 
 ```
-soroban/
-  Cargo.toml                     # workspace
-  contracts/
-    registry/                    # per-agent scope metadata
-    rwa_vault/                   # yield vault + autofarm (vfVLT, 7-dp)
-    agent_account/               # custom account (__check_auth)
-    funding_router/              # single-signature grant factory
-    blend_strategy/              # vault → Blend pool
-  # deploy scripts under scripts/soroban/
-
-deployments/
-  stellar-testnet.json           # live Stellar testnet addresses
-  base-sepolia.json              # optional Base cross-chain leg
-
-frontend/
-  wrangler.jsonc                 # Cloudflare Pages (nodejs_compat)
-  DEPLOY-CLOUDFLARE.md
-  .env.example                   # client (VITE_) template
-  .dev.vars.example              # server secrets (local Functions)
-  api/                           # proxies (also Vite dev middleware)
-    ai.js                        # DeepSeek proxy
-    search.js                    # Tavily proxy
-    stellar-relay.js             # fee-bump
-    _guard.js                    # CORS + rate limit
-    _pagesAdapter.js             # api/*.js → Pages Functions
-  functions/api/                 # edge wrappers
-  public/
-    _routes.json                 # Functions only on /api/*
-    _headers                     # security headers
-
-frontend/src/
-  stellar/                       # Soroban client
-    client.js, config.js, walletKit.js, sessionKey.js,
-    agentSetup.js, agentDeposit.js, revoke.js, events.js,
-    relay.js, scval.js, format.js, index.js
-  components/                    # pages and UI
-  strategy/                      # decision engine (+ *.test.js)
-  orchestrator.js                # dispatches workers
-  worker.js                      # single vault flow
-  agents/                        # lifecycle + background worker
-  strategist.js                  # Venice / DeepSeek / fallback
-  attestation.js, skills.js, defiLlama.js, positionsStore.js,
-  history.js, settingsStore.js, config.js
-
-agents/                          # runtime-generated, gitignored
-docs/                            # gitignored local notes (not public docs)
+soroban/contracts/     # funding_router, agent_account, rwa_vault (autofarm),
+                       # blend_strategy, registry, attestation
+frontend/src/stellar/  # Soroban client, session keys, relay client, wallet kit
+frontend/src/strategy/ # decision engine: MDP, Monte Carlo, council, gates,
+                       # monitor loop, decision log, playbook curator
+frontend/api/          # Pages Functions: ai, search, stellar-relay, faucet, guard
+frontend/extension/    # VF Wallet browser extension source
+relayer/               # optional Node CCTP + Base/ZeroDev cross-chain relayer
+keeper/                # compound cron Worker + lifeboat radar
+deployments/           # live contract manifests (Stellar testnet, Base Sepolia)
 ```
 
----
-
-## Documentation (tracked)
+### Documentation
 
 | Document | Focus |
 |----------|-------|
 | [prd.md](prd.md) | Product requirements and feature status |
+| [SECURITY.md](SECURITY.md) | Threat model, verified controls, residual risks |
 | [GETTING_STARTED.md](GETTING_STARTED.md) | Local setup and demo checklist |
 | [DESIGN.md](DESIGN.md) | Design system / UI |
-| [AGENTS.md](AGENTS.md) / [CLAUDE.md](CLAUDE.md) | Agent coding instructions |
 | [soroban/README.md](soroban/README.md) | Contract build and test |
-
-Folder `docs/` is gitignored (local planning notes). Do not link it as public repo docs.
 
 ---
 
 ## Resources
 
-- [Stellar Developers](https://developers.stellar.org)
-- [Soroban smart contracts](https://developers.stellar.org/docs/build/smart-contracts)
-- [Stellar Wallets Kit](https://stellarwalletskit.dev)
-- [Freighter wallet](https://www.freighter.app)
-- [Blend Capital](https://docs.blend.capital) (Autofarm vault supplies the testnet pool)
-- [Circle CCTP](https://developers.circle.com/cctp) (Stellar↔Base USDC)
-- [ZeroDev](https://docs.zerodev.app) (Base session keys)
-- [Venice AI](https://venice.ai)
-- [DeepSeek API](https://api-docs.deepseek.com)
-- [Tavily API](https://docs.tavily.com)
-- [Cloudflare Pages](https://developers.cloudflare.com/pages/)
-- [DeFiLlama API](https://defillama.com/docs/api)
-
----
+- [Stellar Developers](https://developers.stellar.org) · [Soroban smart contracts](https://developers.stellar.org/docs/build/smart-contracts)
+- [Blend Capital](https://docs.blend.capital) · [Stellar Wallets Kit](https://stellarwalletskit.dev)
+- [Circle CCTP](https://developers.circle.com/cctp) · [ZeroDev](https://docs.zerodev.app)
+- [Venice AI](https://venice.ai) · [DeFiLlama API](https://defillama.com/docs/api) · [Cloudflare Pages](https://developers.cloudflare.com/pages/)
 
 ## License
 
