@@ -57,6 +57,33 @@ describe('approve — screen model', () => {
     expect(m.rows).toContainEqual(['Network', 'TESTNET'])
   })
 
+  it('classic wallet, locked, sign request → needsPassword: true', () => {
+    const m = screenModel(
+      { method: 'signTransaction', params: { xdr: 'RAWXDR' }, origin: ORIGIN },
+      { address: 'GCLASSIC', kind: 'classic', unlocked: false }
+    )
+    expect(m.variant).toBe('sign')
+    expect(m.needsPassword).toBe(true)
+  })
+
+  it('classic wallet, already unlocked, sign request → no needsPassword', () => {
+    const m = screenModel(
+      { method: 'signTransaction', params: { xdr: 'RAWXDR' }, origin: ORIGIN },
+      { address: 'GCLASSIC', kind: 'classic', unlocked: true }
+    )
+    expect(m.variant).toBe('sign')
+    expect(m.needsPassword).toBeFalsy()
+  })
+
+  it('classic wallet address (no passkey) on getAddress → connect variant, not no-wallet', () => {
+    const m = screenModel(
+      { method: 'getAddress', params: {}, origin: ORIGIN },
+      { address: 'GCLASSIC', kind: 'classic' }
+    )
+    expect(m.variant).toBe('connect')
+    expect(m.rows.find(([k]) => k === 'Account')[1]).toBe('GCLASSIC')
+  })
+
   it('rejectionResult is the exact SEP-43 -4 CEREMONY_RESULT', () => {
     expect(rejectionResult('rid-9')).toEqual({
       type: 'CEREMONY_RESULT',

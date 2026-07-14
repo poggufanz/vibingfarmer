@@ -23,6 +23,15 @@ async function readLocal(storageLocal, key) {
   return got[key]
 }
 
+/** Passkey smart account wins; else the oldest classic wallet's G-address. */
+export async function resolveWalletAddress(storageLocal) {
+  const passkey = (await readLocal(storageLocal, 'vf_wallet_contract')) || null
+  if (passkey) return passkey
+  const classic = (await readLocal(storageLocal, 'vf_classic_wallets')) ?? {}
+  const first = Object.values(classic).sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0))[0]
+  return first?.publicKey ?? null
+}
+
 function settleDappRequest(pending, rid, payload) {
   const entry = pending.get(rid)
   if (!entry) return
@@ -57,7 +66,7 @@ export async function handleProviderMessage(msg, sender, env, reply) {
   }
 
   const allowlist = (await readLocal(storageLocal, 'vf_allowlist')) ?? {}
-  const address = (await readLocal(storageLocal, 'vf_wallet_contract')) || null
+  const address = await resolveWalletAddress(storageLocal)
   const connected = Boolean(allowlist[origin] && address)
 
   if (method === 'isConnected') {

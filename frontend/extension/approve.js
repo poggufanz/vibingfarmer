@@ -8,8 +8,24 @@
 // WebAuthn credentials are origin-bound — same constraint as ceremony.js.
 import { makeKit, connectPasskeyWallet } from '../src/wallet/account.js'
 import { signTransactionForContract, signAuthEntryString } from '../src/wallet/signGeneric.js'
+import { unlockWallet, withSecret } from '../src/wallet/classicAccount.js'
+import { isUnlocked } from '../src/wallet/session.js'
+import { rpcServer } from '../src/stellar/client.js'
 import { NETWORK_PASSPHRASE, STELLAR_NETWORK_LABEL } from '../src/stellar/config.js'
 import { summarizeTransaction, summarizeAuthEntry, shortAddr } from './txSummary.js'
+
+// How many ledgers a dapp-requested auth-entry signature stays valid — mirrors
+// stellar/agentDeposit.js's AUTH_TTL_LEDGERS (same "session-length" signing idiom).
+const AUTH_TTL_LEDGERS = 360
+
+/** Passkey smart account wins; else the oldest classic wallet's G-address. */
+async function resolveWallet() {
+  const store = await chrome.storage.local.get(['vf_wallet_contract', 'vf_classic_wallets'])
+  if (store.vf_wallet_contract) return { address: store.vf_wallet_contract, kind: 'passkey' }
+  const classic = store.vf_classic_wallets ?? {}
+  const first = Object.values(classic).sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0))[0]
+  return first ? { address: first.publicKey, kind: 'classic' } : { address: null, kind: null }
+}
 
 /** Exact CEREMONY_RESULT for a user rejection (SEP-43 -4). */
 export function rejectionResult(rid) {
@@ -19,9 +35,9 @@ export function rejectionResult(rid) {
 /**
  * Pure view-model: decides which screen to show and what rows it lists.
  * @param {{method:string, params:object, origin:string}} req  the stashed vf_req_<rid>
- * @param {{address:string|null, summary?:object|null}} ctx
+ * @param {{address:string|null, summary?:object|null, kind?:'passkey'|'classic', unlocked?:boolean}} ctx
  */
-export function screenModel(req, { address, summary } = {}) {
+export function screenModel(req, { address, summary, kind, unlocked } = {}) {
   if (!address) {
     return {
       variant: 'no-wallet',
@@ -70,6 +86,7 @@ export function screenModel(req, { address, summary } = {}) {
       req.method === 'signTransaction'
         ? (req.params?.xdr ?? null)
         : (req.params?.authEntry ?? null),
+    ...(kind === 'classic' && !unlocked ? { needsPassword: true } : {}),
   }
 }
 
@@ -103,6 +120,8 @@ function render(model) {
   } else {
     rawWrap.style.display = 'none'
   }
+  const pwWrap = document.getElementById('pw-wrap')
+  if (pwWrap) pwWrap.style.display = model.needsPassword ? '' : 'none'
 }
 
 async function approveSign(req, rid, address) {
@@ -120,6 +139,36 @@ async function approveSign(req, rid, address) {
   return { type: 'CEREMONY_RESULT', rid, ok: true, signedAuthEntry, address: contractId }
 }
 
+/** Classic (password/mnemonic) wallet counterpart of approveSign — assumes the session is
+ *  already unlocked (caller handles the password prompt / wrong-password retry). */
+async function approveSignClassic(req, rid, address) {
+  setStatus('Signing…')
+  return withSecret(async (kp) => {
+    const sdkMod = await import('@stellar/stellar-sdk')
+    if (req.method === 'signTransaction') {
+      const tx = sdkMod.TransactionBuilder.fromXDR(req.params.xdr, NETWORK_PASSPHRASE)
+      tx.sign(kp)
+      return { type: 'CEREMONY_RESULT', rid, ok: true, signedTxXdr: tx.toXDR(), address }
+    }
+    const entry = sdkMod.xdr.SorobanAuthorizationEntry.fromXDR(req.params.authEntry, 'base64')
+    const server = await rpcServer()
+    const latest = await server.getLatestLedger()
+    const signed = await sdkMod.authorizeEntry(
+      entry,
+      kp,
+      latest.sequence + AUTH_TTL_LEDGERS,
+      NETWORK_PASSPHRASE
+    )
+    return {
+      type: 'CEREMONY_RESULT',
+      rid,
+      ok: true,
+      signedAuthEntry: signed.toXDR('base64'),
+      address,
+    }
+  })
+}
+
 if (typeof window !== 'undefined' && globalThis.chrome?.storage?.session) {
   ;(async () => {
     try {
@@ -130,15 +179,15 @@ if (typeof window !== 'undefined' && globalThis.chrome?.storage?.session) {
         setStatus('Request expired — close this window and retry from the site.')
         return
       }
-      const store = await chrome.storage.local.get('vf_wallet_contract')
-      const address = store.vf_wallet_contract || null
+      const { address, kind } = await resolveWallet()
+      const unlocked = kind === 'classic' ? await isUnlocked() : false
       const summary =
         req.method === 'signTransaction'
           ? summarizeTransaction(req.params?.xdr)
           : req.method === 'signAuthEntry'
             ? summarizeAuthEntry(req.params?.authEntry)
             : null
-      const model = screenModel(req, { address, summary })
+      const model = screenModel(req, { address, summary, kind, unlocked })
       render(model)
 
       document.getElementById('reject').onclick = () => {
@@ -165,7 +214,18 @@ if (typeof window !== 'undefined' && globalThis.chrome?.storage?.session) {
             setTimeout(() => window.close(), 400)
             return
           }
-          const result = await approveSign(req, rid, address)
+          if (kind === 'classic' && !(await isUnlocked())) {
+            try {
+              await unlockWallet(address, document.getElementById('pw')?.value ?? '')
+            } catch {
+              setStatus('Wrong password.')
+              return // no CEREMONY_RESULT — window stays open so the user can retry
+            }
+          }
+          const result =
+            kind === 'classic'
+              ? await approveSignClassic(req, rid, address)
+              : await approveSign(req, rid, address)
           chrome.runtime.sendMessage(result)
           setStatus('Signed.')
           setTimeout(() => window.close(), 800)

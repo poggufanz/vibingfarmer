@@ -4,6 +4,7 @@ import {
   handleProviderMessage,
   handleWindowRemoved,
   isInternalSender,
+  resolveWalletAddress,
 } from './background.js'
 
 describe('background router — action ceremony', () => {
@@ -104,8 +105,12 @@ describe('background router — action ceremony', () => {
   })
 })
 
-function fakeEnv({ allowlist = {}, address = null } = {}) {
-  const local = { vf_allowlist: allowlist, vf_wallet_contract: address }
+function fakeEnv({ allowlist = {}, address = null, classic = {} } = {}) {
+  const local = {
+    vf_allowlist: allowlist,
+    vf_wallet_contract: address,
+    vf_classic_wallets: classic,
+  }
   const session = {}
   return {
     env: {
@@ -158,6 +163,36 @@ describe('background router — PROVIDER_REQUEST (dapp path)', () => {
     )
     expect(reply).toHaveBeenCalledWith({ ok: true, address: 'CACCT' })
     expect(env.windows.create).not.toHaveBeenCalled()
+  })
+
+  it('isConnected for an allowlisted origin with ONLY a classic wallet reports connected via the classic address', async () => {
+    const { env } = fakeEnv({
+      allowlist: { 'https://vibing-farmer.pages.dev': { addedAt: 1 } },
+      classic: { G1: { publicKey: 'G1', createdAt: 1 } },
+    })
+    const reply = vi.fn()
+    await handleProviderMessage(
+      { type: 'PROVIDER_REQUEST', method: 'isConnected' },
+      SENDER,
+      env,
+      reply
+    )
+    expect(reply).toHaveBeenCalledWith({ ok: true, connected: true, address: 'G1' })
+  })
+
+  it('answers getAddress silently for an allowlisted origin with ONLY a classic wallet', async () => {
+    const { env } = fakeEnv({
+      allowlist: { 'https://vibing-farmer.pages.dev': { addedAt: 1 } },
+      classic: { G1: { publicKey: 'G1', createdAt: 1 } },
+    })
+    const reply = vi.fn()
+    await handleProviderMessage(
+      { type: 'PROVIDER_REQUEST', method: 'getAddress' },
+      SENDER,
+      env,
+      reply
+    )
+    expect(reply).toHaveBeenCalledWith({ ok: true, address: 'G1' })
   })
 
   it('rejects a request without a verifiable http(s) sender origin', async () => {
@@ -280,6 +315,31 @@ describe('background router — PROVIDER_REQUEST (dapp path)', () => {
     )
     await flush()
     expect(env.windows.create).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('resolveWalletAddress', () => {
+  it('prefers the passkey address when both a passkey and a classic wallet exist', async () => {
+    const { env } = fakeEnv({
+      address: 'CPASSKEY',
+      classic: { G1: { publicKey: 'G1', createdAt: 1 } },
+    })
+    await expect(resolveWalletAddress(env.storageLocal)).resolves.toBe('CPASSKEY')
+  })
+
+  it('falls back to the oldest classic wallet by createdAt when there is no passkey', async () => {
+    const { env } = fakeEnv({
+      classic: {
+        G2: { publicKey: 'G2', createdAt: 200 },
+        G1: { publicKey: 'G1', createdAt: 100 },
+      },
+    })
+    await expect(resolveWalletAddress(env.storageLocal)).resolves.toBe('G1')
+  })
+
+  it('returns null when neither a passkey nor a classic wallet exists', async () => {
+    const { env } = fakeEnv({})
+    await expect(resolveWalletAddress(env.storageLocal)).resolves.toBeNull()
   })
 })
 
