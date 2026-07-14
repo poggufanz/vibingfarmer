@@ -209,4 +209,21 @@ describe('background router — PROVIDER_REQUEST (dapp path)', () => {
     await flush()
     expect(env.windows.create).toHaveBeenCalledTimes(2)
   })
+
+  it('a failed windows.create settles the request with -1 and does not wedge the queue', async () => {
+    const { env } = fakeEnv({ address: 'CACCT' })
+    env.uuid = vi.fn().mockReturnValueOnce('rid-1').mockReturnValueOnce('rid-2')
+    env.windows.create = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('popup blocked'))
+      .mockResolvedValueOnce({ id: 901 })
+    const reply1 = vi.fn()
+    await handleProviderMessage({ type: 'PROVIDER_REQUEST', method: 'getAddress' }, SENDER, env, reply1)
+    await flush()
+    expect(reply1).toHaveBeenCalledWith(expect.objectContaining({ ok: false, code: -1 }))
+    const reply2 = vi.fn()
+    await handleProviderMessage({ type: 'PROVIDER_REQUEST', method: 'getAddress' }, SENDER, env, reply2)
+    await flush()
+    expect(env.windows.create).toHaveBeenCalledTimes(2)
+  })
 })

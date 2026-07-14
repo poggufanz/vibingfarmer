@@ -28,8 +28,13 @@ function settleDappRequest(pending, rid, payload) {
   if (!entry) return
   pending.delete(rid)
   entry.settled = true
-  entry.reply(payload)
-  entry.release?.() // let the approval queue move on
+  try {
+    entry.reply(payload) // may throw if the message channel already closed — nothing to do then
+  } catch {
+    // reply channel gone; the queue must still advance
+  } finally {
+    entry.release?.() // let the approval queue move on
+  }
 }
 
 export async function handleProviderMessage(msg, sender, env, reply) {
@@ -71,18 +76,25 @@ export async function handleProviderMessage(msg, sender, env, reply) {
   pending.set(rid, entry)
   queue.p = queue.p.then(async () => {
     if (entry.settled) return // settled while queued (e.g. teardown)
-    const base =
-      typeof chrome !== 'undefined' && chrome?.runtime?.getURL
-        ? chrome.runtime.getURL('approve.html')
-        : 'approve.html'
-    const win = await windows.create({
-      url: `${base}?rid=${encodeURIComponent(rid)}`,
-      type: 'popup',
-      width: 400,
-      height: 640,
-      focused: true,
-    })
-    entry.windowId = win?.id ?? null
+    try {
+      const base =
+        typeof chrome !== 'undefined' && chrome?.runtime?.getURL
+          ? chrome.runtime.getURL('approve.html')
+          : 'approve.html'
+      const win = await windows.create({
+        url: `${base}?rid=${encodeURIComponent(rid)}`,
+        type: 'popup',
+        width: 400,
+        height: 640,
+        focused: true,
+      })
+      entry.windowId = win?.id ?? null
+    } catch (e) {
+      // A failed windows.create must not poison queue.p: settle this request as an internal
+      // error and keep the chain resolved so later consents still get their window.
+      settleDappRequest(pending, rid, { ok: false, code: -1, error: String(e?.message || e) })
+      return
+    }
     await new Promise((resolve) => {
       if (entry.settled) return resolve()
       entry.release = resolve
