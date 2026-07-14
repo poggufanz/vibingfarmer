@@ -49,6 +49,10 @@ jobs:
       - run: npm run build
       - uses: cloudflare/wrangler-action@v3
         with:
+          # Pin to the version in frontend/package.json devDependencies — the
+          # action defaults to latest, and 4.110 breaks preview-env Functions
+          # publish ("process is not defined") that 4.100 deploys fine.
+          wranglerVersion: "4.100.0"
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: frontend
