@@ -5,7 +5,8 @@ export default function AddAssetScreen({ onAddAsset, busy, error }) {
   const [code, setCode] = useState('')
   const [issuer, setIssuer] = useState('')
   const cls = code.trim() || issuer.trim() ? classifyTrustAsset(code, issuer) : { ok: false }
-  const showInvalid = (code.trim() || issuer.trim()) && !cls.ok && cls.error
+  // Scold only once both fields are filled — typing a code shouldn't flag the untouched issuer.
+  const showInvalid = code.trim() && issuer.trim() && !cls.ok && cls.error
   const ok = cls.ok
 
   return (

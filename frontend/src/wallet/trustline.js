@@ -56,6 +56,9 @@ export async function addTrustline({ code, issuer, limit, horizon = horizonServe
   const classified = classifyTrustAsset(code, issuer)
   if (!classified.ok) throw new Error(classified.error)
 
+  // Deliberate divergence from send.js (caller-supplied `from`): the trustline source is
+  // always the session's own account, so it's read here; withSecret re-reads the session at
+  // sign time — a lock/switch between the two reads fails closed (Horizon signature mismatch).
   const u = await getUnlocked()
   if (!u) throw new Error('locked')
 
