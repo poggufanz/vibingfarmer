@@ -66,6 +66,14 @@ describe('approve — screen model', () => {
     expect(m.needsPassword).toBe(true)
   })
 
+  it('classic wallet sign request → note asks for wallet password, not Face ID', () => {
+    const m = screenModel(
+      { method: 'signTransaction', params: { xdr: 'RAWXDR' }, origin: ORIGIN },
+      { address: 'GCLASSIC', kind: 'classic', unlocked: false }
+    )
+    expect(m.note).toBe('Approving asks for your wallet password.')
+  })
+
   it('classic wallet, already unlocked, sign request → no needsPassword', () => {
     const m = screenModel(
       { method: 'signTransaction', params: { xdr: 'RAWXDR' }, origin: ORIGIN },

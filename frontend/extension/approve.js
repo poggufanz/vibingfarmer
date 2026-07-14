@@ -18,7 +18,8 @@ import { summarizeTransaction, summarizeAuthEntry, shortAddr } from './txSummary
 // stellar/agentDeposit.js's AUTH_TTL_LEDGERS (same "session-length" signing idiom).
 const AUTH_TTL_LEDGERS = 360
 
-/** Passkey smart account wins; else the oldest classic wallet's G-address. */
+/** Passkey smart account wins; else the oldest classic wallet's G-address.
+ *  keep in sync with background.js resolveWalletAddress; assumes single classic wallet (see session.js) */
 async function resolveWallet() {
   const store = await chrome.storage.local.get(['vf_wallet_contract', 'vf_classic_wallets'])
   if (store.vf_wallet_contract) return { address: store.vf_wallet_contract, kind: 'passkey' }
@@ -79,7 +80,10 @@ export function screenModel(req, { address, summary, kind, unlocked } = {}) {
     variant: 'sign',
     origin: req.origin,
     title: 'Signature request',
-    note: 'Approving opens the passkey (Face ID) prompt.',
+    note:
+      kind === 'classic'
+        ? 'Approving asks for your wallet password.'
+        : 'Approving opens the passkey (Face ID) prompt.',
     approveLabel: 'Approve',
     rows,
     raw:
@@ -218,6 +222,8 @@ if (typeof window !== 'undefined' && globalThis.chrome?.storage?.session) {
             try {
               await unlockWallet(address, document.getElementById('pw')?.value ?? '')
             } catch {
+              const pw = document.getElementById('pw')
+              if (pw) pw.value = ''
               setStatus('Wrong password.')
               return // no CEREMONY_RESULT — window stays open so the user can retry
             }
@@ -226,6 +232,10 @@ if (typeof window !== 'undefined' && globalThis.chrome?.storage?.session) {
             kind === 'classic'
               ? await approveSignClassic(req, rid, address)
               : await approveSign(req, rid, address)
+          if (kind === 'classic') {
+            const pw = document.getElementById('pw')
+            if (pw) pw.value = ''
+          }
           chrome.runtime.sendMessage(result)
           setStatus('Signed.')
           setTimeout(() => window.close(), 800)

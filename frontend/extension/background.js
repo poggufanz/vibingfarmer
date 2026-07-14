@@ -23,7 +23,8 @@ async function readLocal(storageLocal, key) {
   return got[key]
 }
 
-/** Passkey smart account wins; else the oldest classic wallet's G-address. */
+/** Passkey smart account wins; else the oldest classic wallet's G-address.
+ *  keep in sync with approve.js resolveWallet */
 export async function resolveWalletAddress(storageLocal) {
   const passkey = (await readLocal(storageLocal, 'vf_wallet_contract')) || null
   if (passkey) return passkey
