@@ -1,5 +1,7 @@
+import { useRef } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import NavBar from './NavBar.jsx'
+import LandingFx from './LandingFx.jsx'
 import './LandingHero.css'
 
 const BOUNDS = [
@@ -165,7 +167,7 @@ function Hero({ onStart, reduceMotion }) {
   }
 
   return (
-    <header className="vf-hero">
+    <header className="vf-hero" data-xray>
       <motion.div
         className="vf-hero__copy"
         initial="hidden"
@@ -209,6 +211,30 @@ function Hero({ onStart, reduceMotion }) {
           priority
         />
       </motion.div>
+
+      {/* Hidden schematic revealed by the x-ray cursor lens (see LandingFx). */}
+      <div className="vf-hero__xray" aria-hidden="true">
+        <div className="vf-xray-box vf-xray-box--grant">
+          <span>funding_router.grant(budget, expiry)</span>
+          <em>1 wallet signature — the only leash you hold</em>
+        </div>
+        <div className="vf-xray-box vf-xray-box--agents">
+          <span>agent_account × N</span>
+          <em>ephemeral ed25519 session keys · __check_auth enforced on-chain</em>
+        </div>
+        <div className="vf-xray-box vf-xray-box--relay">
+          <span>/api/stellar-relay</span>
+          <em>fee-bump sponsor · allowlisted ops only</em>
+        </div>
+        <div className="vf-xray-box vf-xray-box--vault">
+          <span>vault.deposit → Blend v2</span>
+          <em>real testnet lending, not a mock drip</em>
+        </div>
+        <div className="vf-xray-tag">X-RAY // the machine under the marketing</div>
+      </div>
+      <span className="vf-hero__xray-hint" aria-hidden="true">
+        ( move your cursor — x-ray the machine )
+      </span>
     </header>
   )
 }
@@ -264,8 +290,12 @@ function FlowSection() {
       </Reveal>
 
       <div className="vf-flow__list">
-        {RUN_FLOW.map((item) => (
+        <span className="vf-flow__line" aria-hidden="true" />
+        {RUN_FLOW.map((item, i) => (
           <div className="vf-flow__row" key={item.title}>
+            <span className="vf-flow__num" aria-hidden="true">
+              {String(i + 1).padStart(2, '0')}
+            </span>
             <h3>{item.title}</h3>
             <p>{item.copy}</p>
           </div>
@@ -286,13 +316,19 @@ function BoundsSection() {
         </p>
       </Reveal>
 
-      <div className="vf-bounds__grid">
-        {BOUNDS.map((item) => (
-          <div className={`vf-bound ${item.className}`} key={item.title}>
-            <h3>{item.title}</h3>
-            <p>{item.copy}</p>
-          </div>
-        ))}
+      <div className="vf-bounds__wrap">
+        {/* The leash, literally: a line draws itself around the bounds. */}
+        <svg className="vf-bounds__leash" aria-hidden="true" preserveAspectRatio="none">
+          <rect pathLength="100" />
+        </svg>
+        <div className="vf-bounds__grid">
+          {BOUNDS.map((item) => (
+            <div className={`vf-bound ${item.className}`} key={item.title}>
+              <h3>{item.title}</h3>
+              <p>{item.copy}</p>
+            </div>
+          ))}
+        </div>
       </div>
     </section>
   )
@@ -350,7 +386,14 @@ function YieldSection() {
         </p>
       </Reveal>
 
-      <CapitalPath />
+      <div className="vf-capital-wrap">
+        <CapitalPath />
+        <div className="vf-capital-flow" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </div>
+      </div>
 
       <div className="vf-operations">
         <div className="vf-operation">
@@ -465,6 +508,18 @@ function HonestySection() {
   )
 }
 
+function MarqueeBand() {
+  const text = 'SET ONCE — VIBE FOREVER — ONE SIGNATURE — ZERO XLM GAS — '
+  return (
+    <div className="vf-marquee" aria-hidden="true">
+      <div className="vf-marquee__track">
+        <span>{text}</span>
+        <span>{text}</span>
+      </div>
+    </div>
+  )
+}
+
 function FinalSection({ onStart }) {
   return (
     <section className="vf-final" aria-labelledby="final-title">
@@ -482,9 +537,11 @@ function FinalSection({ onStart }) {
 
 export default function LandingHero({ onStart }) {
   const reduceMotion = useReducedMotion()
+  const rootRef = useRef(null)
 
   return (
-    <div className="vf-landing">
+    <div className="vf-landing" ref={rootRef}>
+      <LandingFx rootRef={rootRef} />
       <NavBar onLaunch={onStart} />
       <main>
         <Hero onStart={onStart} reduceMotion={reduceMotion} />
@@ -497,6 +554,7 @@ export default function LandingHero({ onStart }) {
         <RelaySection />
         <ObservabilitySection />
         <HonestySection />
+        <MarqueeBand />
         <FinalSection onStart={onStart} />
       </main>
     </div>

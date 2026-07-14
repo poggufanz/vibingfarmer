@@ -46,6 +46,31 @@ export async function readPricePerShare(
 }
 
 /**
+ * Vault's `total_assets()` — idle USDC held by the vault plus every strategy's reported balance
+ * (i128, token base units, 7-dp). This is the vault's real TVL, independent of any single
+ * depositor. null on RPC failure.
+ * @param {string} [vaultAddress]
+ * @param {{ server?: object }} [opts]
+ * @returns {Promise<bigint|null>}
+ */
+export async function readTotalAssets(
+  vaultAddress = SOROBAN_AUTOFARM_VAULT_ADDRESS,
+  { server } = {}
+) {
+  try {
+    const v = await readContract({
+      contract: vaultAddress,
+      method: 'total_assets',
+      args: [],
+      server,
+    })
+    return BigInt(v)
+  } catch {
+    return null
+  }
+}
+
+/**
  * Vault's registered strategy addresses. [] on RPC failure — never throws (best-effort read).
  * @param {string} [vaultAddress]
  * @param {{ server?: object }} [opts]
