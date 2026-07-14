@@ -508,13 +508,36 @@ function HonestySection() {
   )
 }
 
-function MarqueeBand() {
-  const text = 'SET ONCE — VIBE FOREVER — ONE SIGNATURE — ZERO XLM GAS — '
+// Ecosystem strip: icons where the brand ships one (simple-icons, tinted to the
+// accent), styled wordmarks for the rest so the row still reads as one system.
+const ECOSYSTEM = [
+  { name: 'Stellar', icon: '/logos/stellar.svg' },
+  { name: 'Soroban' },
+  { name: 'Blend Capital' },
+  { name: 'USDC' },
+  { name: 'Circle CCTP', icon: '/logos/circle.svg' },
+  { name: 'OpenZeppelin', icon: '/logos/openzeppelin.svg' },
+  { name: 'DeFiLlama' },
+  { name: 'ZeroDev' },
+]
+
+function EcosystemBand() {
+  const sequence = (key) => (
+    <span className="vf-marquee__seq" key={key}>
+      {ECOSYSTEM.map((item) => (
+        <span className="vf-marquee__logo" key={item.name}>
+          {item.icon ? <img src={item.icon} alt="" loading="lazy" /> : null}
+          {item.name}
+        </span>
+      ))}
+    </span>
+  )
+
   return (
-    <div className="vf-marquee" aria-hidden="true">
+    <div className="vf-marquee vf-marquee--logos" aria-hidden="true">
       <div className="vf-marquee__track">
-        <span>{text}</span>
-        <span>{text}</span>
+        {sequence('a')}
+        {sequence('b')}
       </div>
     </div>
   )
@@ -554,7 +577,7 @@ export default function LandingHero({ onStart }) {
         <RelaySection />
         <ObservabilitySection />
         <HonestySection />
-        <MarqueeBand />
+        <EcosystemBand />
         <FinalSection onStart={onStart} />
       </main>
     </div>
