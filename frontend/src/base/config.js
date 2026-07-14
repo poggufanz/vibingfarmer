@@ -36,9 +36,12 @@ export function zerodevRpcUrl(chainId = BASE_CHAIN.id, projectId = ZERODEV_PROJE
 }
 
 // SP1 deliverable — deposit-only router, holds no funds (base-contracts/src/YieldRouter.sol).
+// Baked Base Sepolia default (deployments/base-sepolia.json) so builds without a
+// local .env don't crash at module scope; VITE_ env still overrides (mainnet flip).
 export const YIELD_ROUTER_ADDRESS = requireAddress(
   'YIELD_ROUTER_ADDRESS',
-  import.meta.env?.VITE_YIELD_ROUTER_ADDRESS
+  import.meta.env?.VITE_YIELD_ROUTER_ADDRESS ||
+    '0xF80aa8F571E6d24Ea72F051Fc6F9A9C516727B6d'
 )
 
 export const YIELD_ROUTER_ABI = [
