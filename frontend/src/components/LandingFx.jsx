@@ -30,7 +30,7 @@ function finePointer() {
 // Full-screen black gate shown before the landing page. "READY OR NOT?"
 // flickers like a broken neon sign; any scroll, click, or key collapses the
 // overlay like a CRT powering off, revealing the page beneath.
-function IntroGate({ rootRef }) {
+function IntroGate({ rootRef, onDone }) {
   const [active, setActive] = useState(() => !reducedMotion())
   const overlayRef = useRef(null)
   const readyRef = useRef(null)
@@ -128,7 +128,12 @@ function IntroGate({ rootRef }) {
     const navBar = root?.querySelector('.nv-bar')
 
     const tl = gsap
-      .timeline({ onComplete: () => setActive(false) })
+      .timeline({
+        onComplete: () => {
+          setActive(false)
+          onDone?.()
+        },
+      })
       .to('.vf-intro__flash', { autoAlpha: 1, duration: 0.12 })
       .to(overlay, { yPercent: -100, duration: 0.75, ease: 'power4.inOut' }, '<')
       .to('.vf-intro__center', { y: 140, duration: 0.75, ease: 'power4.inOut' }, '<')
@@ -302,12 +307,18 @@ function Cursor({ rootRef }) {
 
 export default function LandingFx({ rootRef }) {
   const barRef = useRef(null)
+  // Scroll fx are created only AFTER the intro gate lifts: by then fonts,
+  // images, and layout have settled, so ScrollTrigger positions are correct.
+  // Creating them at mount (behind the gate, mid-load) computed stale
+  // positions in production — triggers never fired and from()-hidden content
+  // stayed invisible. (Dev StrictMode's double mount masked this.)
+  const [gateDone, setGateDone] = useState(() => reducedMotion())
 
   // Scroll-driven accents. `.vf-landing` is the scroll container (fixed +
   // overflow-y auto), so every ScrollTrigger must name it as scroller.
   useGSAP(
     () => {
-      if (reducedMotion()) return
+      if (reducedMotion() || !gateDone) return
       const root = rootRef.current
       if (!root) return
       const scroller = root
@@ -669,14 +680,26 @@ export default function LandingFx({ rootRef }) {
         })
       }
 
-      return () => ctaCleanups.forEach((fn) => fn())
+      // Late-loading assets (fonts, images) shift layout after creation —
+      // recompute trigger positions when they land.
+      const refresh = () => ScrollTrigger.refresh()
+      window.addEventListener('load', refresh, { once: true })
+      document.fonts?.ready?.then(refresh)
+      const pendingImgs = gsap.utils.toArray('img', root).filter((img) => !img.complete)
+      pendingImgs.forEach((img) => img.addEventListener('load', refresh, { once: true }))
+
+      return () => {
+        window.removeEventListener('load', refresh)
+        pendingImgs.forEach((img) => img.removeEventListener('load', refresh))
+        ctaCleanups.forEach((fn) => fn())
+      }
     },
-    { scope: rootRef }
+    { scope: rootRef, dependencies: [gateDone] }
   )
 
   return (
     <>
-      <IntroGate rootRef={rootRef} />
+      <IntroGate rootRef={rootRef} onDone={() => setGateDone(true)} />
       <Cursor rootRef={rootRef} />
       <div className="vf-progressbar" ref={barRef} aria-hidden="true" />
     </>
