@@ -1,5 +1,10 @@
 import { describe, it, expect, vi } from 'vitest'
-import { handleMessage, handleProviderMessage, handleWindowRemoved } from './background.js'
+import {
+  handleMessage,
+  handleProviderMessage,
+  handleWindowRemoved,
+  isInternalSender,
+} from './background.js'
 
 describe('background router — action ceremony', () => {
   it('opens ceremony.html with the action and stashes params in session storage', async () => {
@@ -275,5 +280,16 @@ describe('background router — PROVIDER_REQUEST (dapp path)', () => {
     )
     await flush()
     expect(env.windows.create).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('isInternalSender', () => {
+  it('accepts extension pages and rejects web pages / missing urls', () => {
+    const base = 'chrome-extension://abcdefg/'
+    expect(isInternalSender({ url: `${base}approve.html?rid=x` }, base)).toBe(true)
+    expect(isInternalSender({ url: 'https://vibing-farmer.pages.dev/' }, base)).toBe(false)
+    expect(isInternalSender({}, base)).toBe(false)
+    expect(isInternalSender(undefined, base)).toBe(false)
+    expect(isInternalSender({ url: `${base}popup.html` }, '')).toBe(false) // no base → fail closed
   })
 })

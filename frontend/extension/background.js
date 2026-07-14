@@ -177,12 +177,18 @@ export async function handleMessage(msg, env, reply) {
   }
 }
 
+/** Internal messages (SIGN_REQUEST / CEREMONY_RESULT) may only come from our own extension
+ *  pages — a content script's sender.url is the web page, so it fails the prefix check. */
+export function isInternalSender(sender, base = globalThis.chrome?.runtime?.getURL?.('') ?? '') {
+  return Boolean(base && sender?.url?.startsWith(base))
+}
+
 // Attach to the real chrome runtime only when running as a service worker.
 if (globalThis.chrome?.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg?.type === 'PROVIDER_REQUEST') {
       handleProviderMessage(msg, sender, {}, sendResponse)
-    } else {
+    } else if (isInternalSender(sender)) {
       handleMessage(msg, {}, sendResponse)
     }
     return true // keep channel open for async reply
