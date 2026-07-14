@@ -291,8 +291,11 @@ function FlowSection() {
 
       <div className="vf-flow__list">
         <span className="vf-flow__line" aria-hidden="true" />
-        {RUN_FLOW.map((item) => (
+        {RUN_FLOW.map((item, i) => (
           <div className="vf-flow__row" key={item.title}>
+            <span className="vf-flow__num" aria-hidden="true">
+              {String(i + 1).padStart(2, '0')}
+            </span>
             <h3>{item.title}</h3>
             <p>{item.copy}</p>
           </div>

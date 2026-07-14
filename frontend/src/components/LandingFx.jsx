@@ -110,17 +110,46 @@ function IntroGate({ rootRef }) {
   )
 
   // Curtain exit: the user's scroll intent slides the gate up, bottom edge
-  // glowing, while the headline lags behind for a parallax peel.
+  // glowing, while the headline lags behind for a parallax peel. The hero and
+  // navbar re-enter underneath — their framer entrance already played while
+  // hidden behind the gate, so without this the page would appear static.
   const dismiss = contextSafe(() => {
     if (doneRef.current || !overlayRef.current) return
     doneRef.current = true
     const overlay = overlayRef.current
-    gsap
+    const root = rootRef.current
+    const heroBits = root
+      ? gsap.utils.toArray(
+          '.vf-hero .vf-kicker, .vf-hero h1, .vf-hero__lede, .vf-hero__actions',
+          root
+        )
+      : []
+    const heroMedia = root?.querySelector('.vf-hero__media .vf-media')
+    const navBar = root?.querySelector('.nv-bar')
+
+    const tl = gsap
       .timeline({ onComplete: () => setActive(false) })
       .to('.vf-intro__flash', { autoAlpha: 1, duration: 0.12 })
       .to(overlay, { yPercent: -100, duration: 0.75, ease: 'power4.inOut' }, '<')
       .to('.vf-intro__center', { y: 140, duration: 0.75, ease: 'power4.inOut' }, '<')
       .to('.vf-intro__hint', { autoAlpha: 0, duration: 0.2 }, '<')
+    if (heroBits.length) {
+      tl.from(
+        heroBits,
+        { autoAlpha: 0, y: 34, duration: 0.6, ease: 'power3.out', stagger: 0.07 },
+        '-=0.35'
+      )
+    }
+    if (heroMedia) {
+      tl.from(
+        heroMedia,
+        { autoAlpha: 0, y: 40, rotation: 1.5, duration: 0.7, ease: 'power3.out' },
+        '<0.1'
+      )
+    }
+    if (navBar) {
+      tl.from(navBar, { autoAlpha: 0, yPercent: -100, duration: 0.5, ease: 'power3.out' }, '<')
+    }
   })
 
   useEffect(() => {
@@ -593,6 +622,54 @@ export default function LandingFx({ rootRef }) {
           scrollTrigger: { scroller, trigger: tagline, start: 'top 88%', once: true },
         })
       }
+
+      // Magnetic CTAs: buttons lean toward the cursor and snap back, the
+      // label scrambles on hover, press squishes. Pointer-fine only.
+      const ctaCleanups = []
+      if (finePointer()) {
+        gsap.utils.toArray('.vf-button, .nv-cta', root).forEach((btn) => {
+          btn.classList.add('vf-magnetic')
+          const text = btn.textContent.trim()
+          // Freeze the accessible name so the scramble never garbles it.
+          if (text && !btn.getAttribute('aria-label')) btn.setAttribute('aria-label', text)
+          const xTo = gsap.quickTo(btn, 'x', { duration: 0.35, ease: 'power3.out' })
+          const yTo = gsap.quickTo(btn, 'y', { duration: 0.35, ease: 'power3.out' })
+          const move = (e) => {
+            const r = btn.getBoundingClientRect()
+            xTo((e.clientX - r.left - r.width / 2) * 0.35)
+            yTo((e.clientY - r.top - r.height / 2) * 0.35)
+          }
+          const enter = () => {
+            if (text) {
+              gsap.to(btn, {
+                duration: 0.45,
+                scrambleText: { text, chars: 'upperAndLowerCase', speed: 0.9 },
+              })
+            }
+          }
+          const leave = () => {
+            xTo(0)
+            yTo(0)
+          }
+          const down = () => gsap.to(btn, { scale: 0.96, duration: 0.12, ease: 'power2.out' })
+          const up = () => gsap.to(btn, { scale: 1, duration: 0.25, ease: 'back.out(2.5)' })
+          btn.addEventListener('pointermove', move, { passive: true })
+          btn.addEventListener('pointerenter', enter)
+          btn.addEventListener('pointerleave', leave)
+          btn.addEventListener('pointerdown', down)
+          btn.addEventListener('pointerup', up)
+          ctaCleanups.push(() => {
+            btn.removeEventListener('pointermove', move)
+            btn.removeEventListener('pointerenter', enter)
+            btn.removeEventListener('pointerleave', leave)
+            btn.removeEventListener('pointerdown', down)
+            btn.removeEventListener('pointerup', up)
+            btn.classList.remove('vf-magnetic')
+          })
+        })
+      }
+
+      return () => ctaCleanups.forEach((fn) => fn())
     },
     { scope: rootRef }
   )

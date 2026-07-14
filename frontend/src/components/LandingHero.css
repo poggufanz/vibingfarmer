@@ -361,14 +361,72 @@
   border-top: 1px solid var(--border-strong);
 }
 
+.vf-flow__list {
+  display: grid;
+  gap: 16px;
+}
+
 .vf-flow__row {
+  position: relative;
   min-height: 168px;
-  padding: 30px 0;
-  border-bottom: 1px solid var(--border-strong);
+  padding: clamp(24px, 3vw, 34px);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
   display: grid;
   grid-template-columns: minmax(150px, 0.65fr) minmax(220px, 1fr);
   align-items: start;
   gap: 26px;
+}
+
+.vf-flow__num {
+  position: absolute;
+  top: 14px;
+  right: 18px;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+}
+
+/* Blueprint corner brackets — echo the hero x-ray aesthetic. */
+.vf-flow__row::before,
+.vf-flow__row::after {
+  content: '';
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border: 0 solid rgba(207, 255, 61, 0.35);
+  transition: border-color 0.3s ease;
+  pointer-events: none;
+}
+
+.vf-flow__row::before {
+  top: 10px;
+  left: 10px;
+  border-top-width: 1.5px;
+  border-left-width: 1.5px;
+}
+
+.vf-flow__row::after {
+  right: 10px;
+  bottom: 10px;
+  border-bottom-width: 1.5px;
+  border-right-width: 1.5px;
+}
+
+.vf-flow__row.is-active {
+  border-color: color-mix(in srgb, var(--border-strong) 40%, var(--accent) 60%);
+  background: color-mix(in srgb, var(--bg-card) 94%, var(--accent) 6%);
+}
+
+.vf-flow__row.is-active::before,
+.vf-flow__row.is-active::after {
+  border-color: var(--accent);
+}
+
+.vf-flow__row.is-active .vf-flow__num {
+  color: var(--accent);
 }
 
 .vf-flow__row p {
@@ -460,11 +518,18 @@
 }
 
 .vf-decision-stack > div {
-  padding: 20px 0;
-  border-bottom: 1px solid var(--border);
+  padding: 18px 22px;
+  border: 1px solid var(--border);
+  border-left: 2px solid rgba(207, 255, 61, 0.45);
+  border-radius: var(--radius-md);
+  background: var(--bg-elev);
   display: grid;
   grid-template-columns: 130px 1fr;
   gap: 24px;
+}
+
+.vf-decision-stack > div + div {
+  margin-top: 12px;
 }
 
 .vf-decision-stack strong {
@@ -633,12 +698,15 @@
 
 .vf-observe__facts {
   margin-top: 0 !important;
-  border-top: 1px solid var(--border-strong);
+  display: grid;
+  gap: 12px;
 }
 
 .vf-observe__facts > div {
-  padding: 18px 0;
-  border-bottom: 1px solid var(--border);
+  padding: 18px 22px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elev);
   display: grid;
   grid-template-columns: 100px 1fr;
   gap: 18px;
@@ -679,8 +747,23 @@
 }
 
 .vf-honesty__group {
-  padding-top: 24px;
-  border-top: 1px solid var(--border-strong);
+  position: relative;
+  padding: clamp(24px, 3vw, 34px);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+}
+
+.vf-honesty__group::before {
+  content: '';
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  width: 10px;
+  height: 10px;
+  border-top: 1.5px solid rgba(207, 255, 61, 0.35);
+  border-left: 1.5px solid rgba(207, 255, 61, 0.35);
+  pointer-events: none;
 }
 
 .vf-honesty__group p {
@@ -1534,5 +1617,57 @@
 
   .vf-operation--lifeboat.is-live::after {
     animation: none;
+  }
+}
+
+/* --- Magnetic CTAs + shine sweep --------------------------------- */
+/* GSAP owns transform while magnetic; keep other transitions only. */
+.vf-magnetic {
+  transition-property: background-color, border-color, opacity !important;
+  will-change: transform;
+}
+
+.vf-button {
+  position: relative;
+  overflow: hidden;
+}
+
+.vf-button::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -60%;
+  width: 40%;
+  background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.35), transparent);
+  transform: skewX(-18deg);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.vf-button--secondary::after {
+  background: linear-gradient(100deg, transparent, rgba(207, 255, 61, 0.22), transparent);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .vf-button:hover::after {
+    animation: vf-shine 0.7s ease forwards;
+  }
+}
+
+@keyframes vf-shine {
+  from {
+    left: -60%;
+    opacity: 1;
+  }
+  to {
+    left: 120%;
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vf-button::after {
+    display: none;
   }
 }
