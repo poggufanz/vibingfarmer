@@ -6,6 +6,7 @@
 // Reading the wallet address needs no passkey (contractId is public, already in storage.local);
 // only Approve on a sign request triggers Face ID. Runs at the extension origin because
 // WebAuthn credentials are origin-bound — same constraint as ceremony.js.
+import './shims.js' // must stay first: installs process/Buffer before the classic-wallet chunk evaluates (see shims.js)
 import { makeKit, connectPasskeyWallet } from '../src/wallet/account.js'
 import { signTransactionForContract, signAuthEntryString } from '../src/wallet/signGeneric.js'
 import { unlockWallet, withSecret } from '../src/wallet/classicAccount.js'
