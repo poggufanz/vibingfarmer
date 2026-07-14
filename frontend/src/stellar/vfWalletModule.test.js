@@ -11,11 +11,31 @@ describe('VfWalletModule', () => {
     delete window.vfWallet
   })
 
-  it('isAvailable is false until the extension injects window.vfWallet', async () => {
-    const mod = new VfWalletModule()
-    expect(await mod.isAvailable()).toBe(false)
-    setProvider({})
-    expect(await mod.isAvailable()).toBe(true)
+  it('isAvailable resolves false after the 300ms grace window when nothing injects', async () => {
+    vi.useFakeTimers()
+    try {
+      const mod = new VfWalletModule()
+      const p = mod.isAvailable()
+      await vi.advanceTimersByTimeAsync(300)
+      expect(await p).toBe(false)
+      setProvider({})
+      expect(await mod.isAvailable()).toBe(true) // provider present → immediate true, no timer
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('isAvailable resolves true when the announce event fires within the grace window', async () => {
+    vi.useFakeTimers()
+    try {
+      const mod = new VfWalletModule()
+      const p = mod.isAvailable()
+      setProvider({})
+      window.dispatchEvent(new Event('vfWallet#initialized'))
+      expect(await p).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('getAddress throws a clear error when the extension is not detected', async () => {
