@@ -27,7 +27,10 @@ export default defineConfig({
         // scripts (neither service worker nor content scripts are loaded as ES modules here).
         for (const file of ['background.js', 'providerInject.js', 'providerBridge.js']) {
           const content = readFileSync(resolve(__dirname, file), 'utf-8')
-          const clean = content.replace(/^export (?=(?:async function|function|const|class)\b)/gm, '')
+          const clean = content.replace(
+            /^export (?=(?:async function|function|const|class)\b)/gm,
+            ''
+          )
           writeFileSync(resolve(OUT, file), clean)
         }
 
@@ -60,6 +63,7 @@ export default defineConfig({
       input: {
         popup: resolve(__dirname, 'popup.html'),
         ceremony: resolve(__dirname, 'ceremony.html'),
+        approve: resolve(__dirname, 'approve.html'),
       },
       output: { entryFileNames: '[name].js', format: 'es' },
     },
