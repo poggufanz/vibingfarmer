@@ -40,7 +40,7 @@ node --env-file=keeper/.dev.vars scripts/demo/console-demo.mjs status
 If `mandate_expiry` is in the past (lifeboat shows DISARMED), renew — either click
 **"renew 24h mandate"** in the lifeboat zone (signs with your wallet), or via CLI:
 ```bash
-wsl -e bash -lc 'V=CB5VKYDUIYX3RZWGVLKKNBPG7V7Z5JIHF2QPNQKWKAHVA3IPSLFZJDYU; \
+wsl -e bash -lc 'V=CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77; \
   EXP=$(($(date +%s)+86400)); \
   stellar contract invoke --network testnet --source-account vf-deployer --id $V -- set_mandate --expiry $EXP'
 ```
@@ -52,7 +52,7 @@ Positions read the view-as address's own vault shares. Deposit as `vf-deployer` 
 address). 50 USDC = `500000000` base units (7dp). Approve then deposit:
 ```bash
 wsl -e bash -lc 'U=CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU; \
-  V=CB5VKYDUIYX3RZWGVLKKNBPG7V7Z5JIHF2QPNQKWKAHVA3IPSLFZJDYU; \
+  V=CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77; \
   G=GCIOUP4UJAAFDBJNP5DY5CFJHBLEKGLHZ5E2AYRIIQ5VOZFVSTPRYHNS; \
   L=$(curl -s -X POST https://soroban-testnet.stellar.org -H "content-type: application/json" \
      -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getLatestLedger\"}" | grep -o "\"sequence\":[0-9]*" | grep -o "[0-9]*"); \

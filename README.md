@@ -4,8 +4,6 @@
 
 # Vibing Farmer
 
-> Set once. Vibe forever.
-
 Yield farming is mostly the same clicks: find a vault, approve, deposit, repeat for the next protocol. Vibing Farmer runs those deposits in parallel. An AI picks the vaults and writes per-agent instructions; you approve once; disposable worker keys do the rest. You pay zero gas.
 
 I built this because sequential DeFi UIs waste time. You say how much and how much risk you'll take. Agents run the deposits. Scope is enforced on-chain (allowance, expiry, vault pin), not by trusting the AI.
@@ -78,9 +76,9 @@ User input (amount, risk level, vault count)
 
 | Contract | Address |
 |----------|---------|
-| Autofarm vault (live deposit, `vfVLT` 7-dp) | `CB5VKYDUIYX3RZWGVLKKNBPG7V7Z5JIHF2QPNQKWKAHVA3IPSLFZJDYU` |
-| Funding router (single-signature grant) | `CBEI5VJKKWLXKQUUUETBAPZSQQLH7I57TSIDTMV4WJMBKIGVF7NSNOFY` |
-| Registry | `CAEHOZGUGVNRCAFVJCSR3B2EFJ55LEA34S76HTRQGH7XSPBO7YIMNZOQ` |
+| Autofarm vault (live deposit, `vfVLT` 7-dp) | `CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77` |
+| Funding router (single-signature grant) | `CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5` |
+| Registry | `CAP5E2FPDAGEQ7SR55YRY4Z56GPBSTRRZJCYN2PQ6PZQHQJKYEDVM5FB` |
 | Blend USDC token (7-dp) | `CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU` |
 | Blend v2 pool | `CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF` |
 | Demo agent (seeded smoke) | `CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC` |
@@ -196,9 +194,9 @@ One typed skill file per agent (deposit-only; amounts in 7-dp base units):
 ```json
 {
   "agentId": "worker-agent-1",
-  "vaultAddress": "CB5VKYDUIYX3RZWGVLKKNBPG7V7Z5JIHF2QPNQKWKAHVA3IPSLFZJDYU",
+  "vaultAddress": "CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77",
   "skills": {
-    "deposit": { "maxAmount": "1000000000", "vaultAddress": "CB5VKYDU…JDYU", "expiresAt": 1749686400 }
+    "deposit": { "maxAmount": "1000000000", "vaultAddress": "CDWHNHIH…KM77", "expiresAt": 1749686400 }
   },
   "generatedBy": "venice-ai",
   "approvedByUser": true
@@ -247,8 +245,8 @@ ALLOWED_ORIGIN=https://your-project.pages.dev    # /api/* origin allowlist (prod
 STELLAR_RELAYER_SECRET=S...                       # fund this keypair on testnet
 SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
 STELLAR_NETWORK_PASSPHRASE=Test SDF Network ; September 2015
-SOROBAN_VAULT_ADDRESS=CB5VKYDU…JDYU               # autofarm vault (see deployments JSON)
-SOROBAN_ROUTER_ADDRESS=CBEI5VJK…NOFY              # funding_router
+SOROBAN_VAULT_ADDRESS=CDWHNHIH…KM77               # autofarm vault (see deployments JSON)
+SOROBAN_ROUTER_ADDRESS=CCEWWRQV…CYE5              # funding_router
 ```
 
 Leave host AI keys unset for a lockdown deploy (BYOK). Relayer fee-bumps from `STELLAR_RELAYER_SECRET`; user pays 0 gas. No `ONESHOT_*` vars.

@@ -27,6 +27,8 @@ mod mock_strategy {
         Bricked,     // Task 10: once true, `withdraw` unconditionally traps
         HarvestBricked, // Task R1: once true, `harvest` unconditionally traps
         DepositBricked, // Task R1: once true, `deposit` unconditionally traps
+        BalanceBricked, // hardening: once true, `balance` unconditionally traps
+        ReportExtra, // hardening: `withdraw` over-reports its return by this much
     }
 
     #[contract]
@@ -93,10 +95,24 @@ mod mock_strategy {
             e.storage()
                 .instance()
                 .set(&DataKey::Principal, &new_principal);
-            out
+            // Hardening hook: over-report by ReportExtra (honest transfer, lying return).
+            let extra: i128 = e
+                .storage()
+                .instance()
+                .get(&DataKey::ReportExtra)
+                .unwrap_or(0);
+            out + extra
         }
 
         pub fn balance(e: Env) -> i128 {
+            let bricked: bool = e
+                .storage()
+                .instance()
+                .get(&DataKey::BalanceBricked)
+                .unwrap_or(false);
+            if bricked {
+                panic!("mock strategy: balance bricked");
+            }
             e.storage().instance().get(&DataKey::Principal).unwrap_or(0)
         }
 
@@ -162,6 +178,55 @@ mod mock_strategy {
         /// sweep must isolate this fault, leaving the cut idle rather than losing it).
         pub fn set_deposit_bricked(e: Env, v: bool) {
             e.storage().instance().set(&DataKey::DepositBricked, &v);
+        }
+
+        /// Test-only hook: once set to `true`, every subsequent `balance` call traps —
+        /// simulating a strategy whose read path is broken (quarantine must remove it
+        /// without ever calling it).
+        pub fn set_balance_bricked(e: Env, v: bool) {
+            e.storage().instance().set(&DataKey::BalanceBricked, &v);
+        }
+
+        /// Test-only hook: every subsequent `withdraw` OVER-REPORTS by `v` — it transfers
+        /// the honest amount but returns amount + v, simulating a strategy lying about
+        /// what it returned (delta accounting must catch this).
+        pub fn set_withdraw_report_extra(e: Env, v: i128) {
+            e.storage().instance().set(&DataKey::ReportExtra, &v);
+        }
+    }
+}
+
+// A hostile strategy whose `deposit` "succeeds" but returns a WRONG TYPE (i128 instead of
+// void) and pulls nothing. Through the vault's typed client this decodes as outer-Ok /
+// inner-Err — the exact shape a naive `.is_ok()` check wrongly counts as success.
+mod wrong_ret_strategy {
+    use soroban_sdk::{contract, contractimpl, contracttype, Env};
+
+    #[contracttype]
+    #[derive(Clone)]
+    enum DataKey {
+        Principal,
+    }
+
+    #[contract]
+    pub struct WrongRetStrategy;
+
+    #[contractimpl]
+    impl WrongRetStrategy {
+        pub fn deposit(_e: Env, _amount: i128) -> i128 {
+            7 // wrong type for StrategyIface::deposit (void) — and pulls nothing
+        }
+        pub fn withdraw(_e: Env, _amount: i128) -> i128 {
+            0
+        }
+        pub fn balance(e: Env) -> i128 {
+            e.storage().instance().get(&DataKey::Principal).unwrap_or(0)
+        }
+        pub fn harvest(_e: Env, _min_out: i128) -> i128 {
+            0
+        }
+        pub fn set_principal(e: Env, v: i128) {
+            e.storage().instance().set(&DataKey::Principal, &v);
         }
     }
 }
@@ -1445,4 +1510,256 @@ fn test_derisk_survives_bricked_strategy() {
     let drained = ctx.vault.emergency_derisk(&2u32);
     assert_eq!(drained, 100 * U7); // best-effort: good drained, bad no-oped
     assert!(ctx.vault.lifeboat_state().derisked); // rescue engages even with a stuck strategy
+}
+
+// ===== security hardening Task 4: strategy isolation + balance-delta accounting =====
+
+#[test]
+fn total_assets_clamps_negative_strategy_balance() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let alice = Address::generate(&env);
+    fund_and_approve(&env, &ctx, &alice, 100 * U7);
+    ctx.vault.deposit(&alice, &(100 * U7));
+    let strat = deploy_mock_strategy(&env, &ctx);
+    ctx.vault.add_strategy(&strat);
+
+    // A hostile/broken strategy reporting a NEGATIVE balance must not shrink NAV.
+    MockStrategyClient::new(&env, &strat).set_principal(&(-30 * U7));
+    assert_eq!(ctx.vault.total_assets(), 100 * U7);
+}
+
+#[test]
+fn compound_failed_slice_stays_idle_not_rolled_into_survivor() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let alice = Address::generate(&env);
+    fund_and_approve(&env, &ctx, &alice, 100 * U7);
+    ctx.vault.deposit(&alice, &(100 * U7)); // idle = 100
+
+    let strat1 = deploy_mock_strategy(&env, &ctx);
+    let strat2 = deploy_mock_strategy(&env, &ctx);
+    fund_strategy(&env, &ctx, &strat1, 50 * U7);
+    fund_strategy(&env, &ctx, &strat2, 50 * U7);
+    ctx.vault.add_strategy(&strat1);
+    ctx.vault.add_strategy(&strat2);
+    let keeper = Address::generate(&env);
+    ctx.vault.set_keeper(&keeper);
+
+    MockStrategyClient::new(&env, &strat1).set_deposit_bricked(&true);
+    ctx.vault.compound(&Vec::from_array(&env, [0i128, 0i128]));
+
+    // Slices are precomputed 50/50: strat1's failed slice STAYS IDLE — it is
+    // never rolled into strat2's remainder cut.
+    let vault_addr = ctx.vault.address.clone();
+    let tk = TokenClient::new(&env, &ctx.token);
+    assert_eq!(tk.balance(&vault_addr), 50 * U7);
+    assert_eq!(MockStrategyClient::new(&env, &strat2).balance(), 100 * U7);
+    // And the failed attempt's allowance is cleared — nothing left to pull later.
+    assert_eq!(tk.allowance(&vault_addr, &strat1), 0);
+}
+
+#[test]
+fn compound_wrong_type_deposit_counts_as_failure_and_clears_allowance() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let alice = Address::generate(&env);
+    fund_and_approve(&env, &ctx, &alice, 100 * U7);
+    ctx.vault.deposit(&alice, &(100 * U7)); // idle = 100
+
+    // Hostile strategy whose deposit "succeeds" with a wrong-type return (outer Ok /
+    // inner Err through the typed client) and pulls nothing.
+    let wr = env.register(wrong_ret_strategy::WrongRetStrategy, ());
+    wrong_ret_strategy::WrongRetStrategyClient::new(&env, &wr).set_principal(&(50 * U7));
+    let healthy = deploy_mock_strategy(&env, &ctx);
+    fund_strategy(&env, &ctx, &healthy, 50 * U7);
+    ctx.vault.add_strategy(&wr);
+    ctx.vault.add_strategy(&healthy);
+    let keeper = Address::generate(&env);
+    ctx.vault.set_keeper(&keeper);
+
+    ctx.vault.compound(&Vec::from_array(&env, [0i128, 0i128]));
+
+    let vault_addr = ctx.vault.address.clone();
+    let tk = TokenClient::new(&env, &ctx.token);
+    // The hostile slice stayed idle and — critically — no standing allowance
+    // survives for the hostile contract to pull later.
+    assert_eq!(tk.balance(&vault_addr), 50 * U7);
+    assert_eq!(tk.allowance(&vault_addr, &wr), 0);
+    assert_eq!(MockStrategyClient::new(&env, &healthy).balance(), 100 * U7);
+}
+
+#[test]
+fn compound_ignores_negative_harvest_report() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let strat = deploy_mock_strategy(&env, &ctx);
+    ctx.vault.add_strategy(&strat);
+    let keeper = Address::generate(&env);
+    ctx.vault.set_keeper(&keeper);
+
+    // Hostile harvest reports a NEGATIVE gain (no transfer happens).
+    MockStrategyClient::new(&env, &strat).set_harvest_gain(&(-5 * U7));
+    let total_gain = ctx.vault.compound(&Vec::from_array(&env, [0i128]));
+    assert_eq!(total_gain, 0);
+}
+
+#[test]
+fn rebalance_rejects_overreported_withdraw() {
+    let env = Env::default();
+    env.ledger().set_timestamp(100_000);
+    let ctx = setup(&env);
+    let alice = Address::generate(&env);
+    fund_and_approve(&env, &ctx, &alice, 100 * U7);
+    ctx.vault.deposit(&alice, &(100 * U7)); // 50 stays idle after funding strat1
+
+    let strat1 = deploy_mock_strategy(&env, &ctx);
+    let strat2 = deploy_mock_strategy(&env, &ctx);
+    fund_strategy(&env, &ctx, &strat1, 50 * U7);
+    ctx.vault.add_strategy(&strat1);
+    ctx.vault.add_strategy(&strat2);
+    let keeper = Address::generate(&env);
+    ctx.vault.set_keeper(&keeper);
+
+    // strat1 transfers honestly but LIES about the amount returned (+10).
+    MockStrategyClient::new(&env, &strat1).set_withdraw_report_extra(&(10 * U7));
+
+    // Delta accounting: observed vault delta (5) != reported (15) → fail closed,
+    // instead of the deposit leg forwarding 15 (stealing 10 from idle).
+    assert_eq!(
+        ctx.vault.try_rebalance(&strat1, &strat2, &(5 * U7)),
+        Err(Ok(VaultError::StrategyMisbehaved))
+    );
+    // Rolled back: nothing moved anywhere.
+    assert_eq!(MockStrategyClient::new(&env, &strat2).balance(), 0);
+}
+
+#[test]
+fn set_limits_rejects_bps_over_10000() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    assert_eq!(
+        ctx.vault.try_set_limits(&3_600u64, &10_001u32),
+        Err(Ok(VaultError::InvalidParam))
+    );
+    ctx.vault.set_limits(&3_600u64, &10_000u32); // boundary value is legal
+}
+
+#[test]
+fn rebalance_cooldown_overflow_fails_closed() {
+    let env = Env::default();
+    env.ledger().set_timestamp(100_000);
+    let ctx = setup(&env);
+    let strat = deploy_mock_strategy(&env, &ctx);
+    fund_strategy(&env, &ctx, &strat, 50 * U7);
+    ctx.vault.add_strategy(&strat);
+    let keeper = Address::generate(&env);
+    ctx.vault.set_keeper(&keeper);
+
+    ctx.vault.set_limits(&0u64, &5_000u32);
+    ctx.vault
+        .rebalance(&strat, &ctx.vault.address.clone(), &(10 * U7)); // last_rebalance = 100_000
+
+    // A cooldown whose gate timestamp overflows u64 must be a CLEAN CooldownActive
+    // (fail closed), never an arithmetic trap.
+    ctx.vault.set_limits(&u64::MAX, &5_000u32);
+    env.ledger().set_timestamp(200_000);
+    assert_eq!(
+        ctx.vault
+            .try_rebalance(&strat, &ctx.vault.address.clone(), &(10 * U7)),
+        Err(Ok(VaultError::CooldownActive))
+    );
+}
+
+#[test]
+fn emergency_derisk_survives_overreporting_strategies_and_reports_observed_delta() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let strat1 = deploy_mock_strategy(&env, &ctx);
+    let strat2 = deploy_mock_strategy(&env, &ctx);
+    fund_strategy(&env, &ctx, &strat1, 50 * U7);
+    fund_strategy(&env, &ctx, &strat2, 50 * U7);
+    ctx.vault.add_strategy(&strat1);
+    ctx.vault.add_strategy(&strat2);
+    let keeper = Address::generate(&env);
+    ctx.vault.set_keeper(&keeper);
+    let authority = Address::generate(&env);
+    ctx.vault.set_mandate_authority(&authority);
+    ctx.vault.set_mandate(&1_000u64);
+
+    // Both strategies drain honestly but report near-MAX values — summing the
+    // reported values would overflow i128 and brick the rescue.
+    let extra = i128::MAX - 100 * U7;
+    MockStrategyClient::new(&env, &strat1).set_withdraw_report_extra(&extra);
+    MockStrategyClient::new(&env, &strat2).set_withdraw_report_extra(&extra);
+
+    let drained = ctx.vault.emergency_derisk(&1u32);
+    // Observed token delta, not the strategies' lies.
+    assert_eq!(drained, 100 * U7);
+    assert!(ctx.vault.lifeboat_state().derisked);
+}
+
+#[test]
+fn quarantine_restores_liveness_and_acknowledges_loss() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let alice = Address::generate(&env);
+    fund_and_approve(&env, &ctx, &alice, 100 * U7);
+    ctx.vault.deposit(&alice, &(100 * U7));
+    let strat = deploy_mock_strategy(&env, &ctx);
+    fund_strategy(&env, &ctx, &strat, 50 * U7);
+    ctx.vault.add_strategy(&strat);
+
+    // The strategy's read path bricks: every NAV read (deposit/redeem/pps) now traps.
+    MockStrategyClient::new(&env, &strat).set_balance_bricked(&true);
+    assert!(ctx.vault.try_total_assets().is_err());
+    // Normal removal is impossible — it requires a SUCCESSFUL zero-balance read.
+    assert!(ctx.vault.try_remove_strategy(&strat).is_err());
+
+    // Quarantine: rejects negative loss, then removes WITHOUT calling the strategy.
+    assert_eq!(
+        ctx.vault.try_quarantine_strategy(&strat, &(-1i128)),
+        Err(Ok(VaultError::InvalidParam))
+    );
+    ctx.vault.quarantine_strategy(&strat, &(50 * U7));
+    assert_eq!(
+        env.events()
+            .all()
+            .filter_by_contract(&ctx.vault.address)
+            .events()
+            .len(),
+        1
+    );
+    assert_eq!(ctx.vault.strategies().len(), 0);
+
+    // Liveness restored: NAV reads, deposits, and redeems all flow again.
+    assert_eq!(ctx.vault.total_assets(), 100 * U7);
+    let bob = Address::generate(&env);
+    fund_and_approve(&env, &ctx, &bob, 10 * U7);
+    ctx.vault.deposit(&bob, &(10 * U7));
+    ctx.vault.redeem(&alice, &(5 * U7));
+}
+
+#[test]
+fn price_per_share_saturates_instead_of_trapping_on_hostile_report() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let alice = Address::generate(&env);
+    fund_and_approve(&env, &ctx, &alice, 100 * U7);
+    ctx.vault.deposit(&alice, &(100 * U7));
+    let strat = deploy_mock_strategy(&env, &ctx);
+    ctx.vault.add_strategy(&strat);
+
+    // A hostile strategy reports i128::MAX. total_assets saturates; price_per_share must
+    // NOT trap (overflow-checks = true would panic on a raw multiply) — a view never traps.
+    MockStrategyClient::new(&env, &strat).set_principal(&i128::MAX);
+    let pps = ctx.vault.price_per_share();
+    assert!(pps > 0);
+
+    // compound reads price_per_share for its event — it must degrade cleanly, not panic,
+    // preserving its per-strategy fault isolation. (Single strategy, idle == 0: the exact
+    // path the reviewer flagged as trapping.)
+    let keeper = Address::generate(&env);
+    ctx.vault.set_keeper(&keeper);
+    let _ = ctx.vault.try_compound(&Vec::from_array(&env, [0i128]));
 }

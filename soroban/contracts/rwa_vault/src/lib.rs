@@ -93,9 +93,19 @@ impl RwaVault {
     pub fn add_strategy(e: &Env, strategy: Address) -> Result<(), types::VaultError> {
         vault::add_strategy(e, strategy)
     }
-    /// Admin-only. Deregisters a strategy once its `balance()` is 0.
+    /// Admin-only. Deregisters a strategy once a SUCCESSFUL balance read returns 0.
     pub fn remove_strategy(e: &Env, strategy: Address) -> Result<(), types::VaultError> {
         vault::remove_strategy(e, strategy)
+    }
+    /// Admin-only incident hatch. Removes a strategy WITHOUT calling it (for bricked
+    /// `balance()`/`withdraw`), acknowledging `acknowledged_loss` (nonnegative) as the NAV
+    /// write-off. Restores deposit/redeem/price liveness immediately.
+    pub fn quarantine_strategy(
+        e: &Env,
+        strategy: Address,
+        acknowledged_loss: i128,
+    ) -> Result<(), types::VaultError> {
+        vault::quarantine_strategy(e, strategy, acknowledged_loss)
     }
     /// Admin-only. Sets the keeper permitted to call `compound`/`rebalance` (Task 8/9).
     pub fn set_keeper(e: &Env, keeper: Address) {
@@ -105,9 +115,13 @@ impl RwaVault {
     pub fn keeper(e: &Env) -> Address {
         vault::keeper(e)
     }
-    /// Admin-only. Sets the rebalance cooldown (seconds) and per-move cap (bps), both
-    /// enforced starting Task 9.
-    pub fn set_limits(e: &Env, cooldown_s: u64, max_move_bps: u32) {
+    /// Admin-only. Sets the rebalance cooldown (seconds) and per-move cap (bps ≤ 10_000),
+    /// both enforced starting Task 9.
+    pub fn set_limits(
+        e: &Env,
+        cooldown_s: u64,
+        max_move_bps: u32,
+    ) -> Result<(), types::VaultError> {
         vault::set_limits(e, cooldown_s, max_move_bps)
     }
     /// Admin-only. Sets the min seconds between `compound` calls (Task R1). Kept separate

@@ -39,7 +39,7 @@ contract YieldRouterForkTest is Test {
         vm.createSelectFork(rpc);
 
         usdc = IERC20(BASE_SEPOLIA_USDC);
-        router = new YieldRouter(owner);
+        router = new YieldRouter(owner, BASE_SEPOLIA_USDC);
 
         address poolFromEnv = vm.envOr("FORK_POOL_ADDRESS", address(0));
         if (poolFromEnv != address(0)) {

@@ -20,8 +20,9 @@ const NETWORKS = {
     // Deposit target (old 1:1 vault, kept for history/rollback). The server relay refuses to
     // fee-bump anything that does not invoke this contract's `deposit`.
     vault: 'CBZNITAPHCLSPEXC3UKIERYRUJR56GISM2G2Z5XD6KZH3U4ZZ76XNQOU',
-    // Registry (sub-project 1a) — record_of / is_revoked reads + agent_authorized/agent_revoked events.
-    registry: 'CAEHOZGUGVNRCAFVJCSR3B2EFJ55LEA34S76HTRQGH7XSPBO7YIMNZOQ',
+    // Registry — hardened redeploy 2026-07-14: authorize(agent) derives the record from the
+    // agent's on-chain scope; record_of / is_revoked reads + agent_authorized/agent_revoked events.
+    registry: 'CAP5E2FPDAGEQ7SR55YRY4Z56GPBSTRRZJCYN2PQ6PZQHQJKYEDVM5FB',
     // On-chain strategy attestation (F5). attest(attester, strategy_hash, label) anchors the AI
     // strategy hash on-chain; user-signed inner tx, relayer fee-bumps so the user pays 0 XLM.
     attestation: 'CDDOW2FZ7ALBWBXF22TPMPDHPXSKTMLQGGQWUYX7YOJZAHICD7DUO2K6',
@@ -31,15 +32,15 @@ const NETWORKS = {
     // Pre-seeded demo agent custom account (1a, v3 — scope pins the AUTOFARM vault; constructor
     // self-approves it for the cap). Owner = vf-deployer; signer in deployments JSON.
     demoAgent: 'CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC',
-    // agent_account wasm v2 (already uploaded on-chain) — deployAgentForSession + the funding
-    // router deploy per-run agents from this hash. v2 adds the 4th ctor arg (router:
-    // Option<Address>) + the pull@router context. The demo agent above stays on the OLD v1 wasm
-    // (8c607112ba…dda62) for paths that need the pre-seeded account (exit settings, smokes).
-    agentWasmHash: '7ced45e735e7e084d96d6a04df7cec6e07bc2b203eedb4d3422949a7e9cca717',
+    // agent_account wasm v3 (hardened redeploy 2026-07-14, already uploaded on-chain) —
+    // deployAgentForSession + the funding router deploy per-run agents from this hash. v3 adds
+    // on-chain enforced revoke, owner_withdraw terminal exit, and scope_of() for the registry's
+    // derived records. The demo agent above stays on the OLD v1 wasm (8c607112ba…dda62).
+    agentWasmHash: 'd61ceaaaf5a3fd9fd25987eba0f843ccb79880f3eaa137e066b5f63ab9eaa2ba',
     // Single-signature grant factory + funding gate (funding_router). Owner signs ONE grant tx (nested
     // SEP-41 approve + agent deploys); worker funding = relayed router.pull (0 further signatures). The
     // server relay guard's SOROBAN_ROUTER_ADDRESS env MUST match this exact address.
-    fundingRouter: 'CBEI5VJKKWLXKQUUUETBAPZSQQLH7I57TSIDTMV4WJMBKIGVF7NSNOFY',
+    fundingRouter: 'CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5',
     // Real-yield source (#2): Blend Capital v2 lending pool the vault supplies into (re-verified
     // live at cutover — spec §7). blendUsdc = the pool's USDC reserve (same SAC as `token`).
     blendPool: 'CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF',
@@ -48,8 +49,8 @@ const NETWORKS = {
     // LIVE deposit target (see SOROBAN_ACTIVE_VAULT_ADDRESS): shares are exchange-rate priced
     // (price_per_share ≠ 1:1) — convert shares via pps for every USDC display. The relay's
     // server-side allowlist (SOROBAN_VAULT_ADDRESS env) must equal this or deposits are refused.
-    autofarmVault: 'CB5VKYDUIYX3RZWGVLKKNBPG7V7Z5JIHF2QPNQKWKAHVA3IPSLFZJDYU',
-    strategy1: 'CCH424TVLTP2P3URNRGGF26X24XRPBVBXCRZ6QBCWLSX6KH4QZSLNBC2',
+    autofarmVault: 'CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77',
+    strategy1: 'CAR7XFFRKMUYSERYBSLQ4LXRY2E2W7G7WG4VQI55FWLSJWQVLNTAFVBE',
     // Keeper (compound/rebalance caller) — DEDICATED identity, deliberately NOT the relayer
     // G-address: a leaked relay secret must not grant keeper powers (and vice versa).
     keeper: 'GA2CMBS3LRY5MH64KKMHOYVA6WTLPMKRMIWEJDOIGHYPB7WMC3QHRCBU',
@@ -133,7 +134,9 @@ export const STELLAR_NETWORK_LABEL = NET.label
 // extension origin (chrome-extension://<id>/api/...) and 404s. Web app + headless smokes leave
 // VF_API_BASE unset → relative path / the VF_RELAY_URL knob, exactly as before (tests see defaults).
 const isExt = typeof window !== 'undefined' && window.location.protocol === 'chrome-extension:'
-const API_BASE = (typeof process !== 'undefined' && process.env && process.env.VF_API_BASE) || (isExt ? 'http://localhost:8788' : '')
+const API_BASE =
+  (typeof process !== 'undefined' && process.env && process.env.VF_API_BASE) ||
+  (isExt ? 'http://localhost:8788' : '')
 const VF_RELAY = (typeof process !== 'undefined' && process.env && process.env.VF_RELAY_URL) || ''
 export const RELAY_PROXY_URL = API_BASE
   ? `${API_BASE}/api/stellar-relay`

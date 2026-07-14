@@ -52,6 +52,9 @@ pub enum VaultError {
     AuthorityNotSet = 19, // set_mandate: no mandate authority configured yet
     MandateExpired = 20, // emergency_derisk/resume: mandate absent (0) or now >= expiry
     LifeboatEngaged = 21, // compound/rebalance: blocked while the vault is derisked
+    // Security hardening — appended (append-only rule, see DataKey NOTE above).
+    StrategyMisbehaved = 22, // observed token delta disagrees with the strategy's report
+    InvalidParam = 23,       // set_limits bps > 10_000, or negative acknowledged_loss
 }
 
 #[contractevent(topics = ["vault_deposit"])]
@@ -104,4 +107,10 @@ pub struct LifeboatEngaged {
 #[contractevent(topics = ["vault_resume"])]
 pub struct LifeboatResumed {
     pub idle: i128, // vault token balance right after resume
+}
+
+#[contractevent(topics = ["vault_quarantine"])]
+pub struct StrategyQuarantined {
+    pub strategy: Address,
+    pub acknowledged_loss: i128, // admin-acknowledged NAV loss (incident accounting)
 }

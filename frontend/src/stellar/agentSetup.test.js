@@ -70,16 +70,15 @@ describe('registryAuthorizeAgent (optional record-keeping - off the critical pat
     const r = await registryAuthorizeAgent({
       owner: 'GUSER',
       agentAddress: 'CAGENT',
-      vault: 'CCDX...',
-      capPerPeriod: 50_000_000n,
-      periodDuration: 3600,
-      expiry: 4000000000,
     })
     expect(buildInvokeTx).toHaveBeenCalledTimes(1)
     expect(buildInvokeTx.mock.calls[0][0]).toMatchObject({
       source: 'GUSER',
       contract: SOROBAN_REGISTRY_ADDRESS,
       method: 'authorize',
+      // Hardened registry derives every record field from agent.scope_of() —
+      // the caller supplies ONLY the agent address, nothing forgeable.
+      args: [{ addr: 'CAGENT' }],
     })
     expect(r.status).toBe('SUCCESS')
   })
@@ -90,10 +89,6 @@ describe('registryAuthorizeAgent (optional record-keeping - off the critical pat
       registryAuthorizeAgent({
         owner: 'GUSER',
         agentAddress: 'CAGENT',
-        vault: 'CCDX...',
-        capPerPeriod: 1n,
-        periodDuration: 3600,
-        expiry: 4000000000,
       })
     ).rejects.toThrow(/authorization was not confirmed: FAILED/)
   })

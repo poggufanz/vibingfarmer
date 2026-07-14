@@ -140,7 +140,15 @@ export async function discoverAgentsFromVault(ownerAddr, { server, startLedger }
     startLedger = Math.max(1, Number(meta.sequence) - 100000)
   }
   const topic = symbolScVal('vault_deposit').toXDR('base64')
-  console.log('[discover] querying vault_deposit from', SOROBAN_ACTIVE_VAULT_ADDRESS, 'owner', ownerAddr, 'ledgerRange', startLedger, '- latest')
+  console.log(
+    '[discover] querying vault_deposit from',
+    SOROBAN_ACTIVE_VAULT_ADDRESS,
+    'owner',
+    ownerAddr,
+    'ledgerRange',
+    startLedger,
+    '- latest'
+  )
   const res = await s.getEvents({
     startLedger,
     filters: [
@@ -154,7 +162,10 @@ export async function discoverAgentsFromVault(ownerAddr, { server, startLedger }
   })
   console.log('[discover] vault_deposit events count:', res.events?.length)
   if (res.events?.length) {
-    console.log('[discover] first event raw:', JSON.stringify(res.events[0], (k, v) => typeof v === 'bigint' ? v.toString() : v, 2))
+    console.log(
+      '[discover] first event raw:',
+      JSON.stringify(res.events[0], (k, v) => (typeof v === 'bigint' ? v.toString() : v), 2)
+    )
   }
   const seenPt = new Set()
   const agentSet = new Set()
@@ -169,7 +180,10 @@ export async function discoverAgentsFromVault(ownerAddr, { server, startLedger }
     if (holder) {
       agentSet.add(holder)
     } else {
-      console.log('[discover] NO holder field, data:', JSON.stringify(e.data, (k, v) => typeof v === 'bigint' ? v.toString() : v, 2))
+      console.log(
+        '[discover] NO holder field, data:',
+        JSON.stringify(e.data, (k, v) => (typeof v === 'bigint' ? v.toString() : v), 2)
+      )
     }
   }
   console.log('[discover] unique agents collected:', [...agentSet])
@@ -274,11 +288,16 @@ export async function discoverAgentsFromHorizon(ownerAddr, { horizon, rpc } = {}
   return found
 }
 
-export async function pollEvents({ server, startLedger, seen = new Set(), limit = 100 }) {
+// `topics` (e.g. [[symbolScVal('agent_revoked').toXDR('base64')]]) selects a topic-only
+// filter across ALL contracts — needed for per-run AgentAccount events, whose fresh
+// addresses are never in the WATCHED list. Default (no topics) keeps the WATCHED-contract
+// filter the graph indexer uses.
+export async function pollEvents({ server, startLedger, seen = new Set(), limit = 100, topics }) {
   const s = server || (await rpcServer())
+  const filter = topics ? { type: 'contract', topics } : { type: 'contract', contractIds: WATCHED }
   const res = await s.getEvents({
     startLedger,
-    filters: [{ type: 'contract', contractIds: WATCHED }],
+    filters: [filter],
     limit,
   })
   const fresh = []

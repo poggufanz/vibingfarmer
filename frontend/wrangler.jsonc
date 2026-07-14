@@ -13,6 +13,37 @@
   // `npx wrangler d1 create vf-gate`, paste the id below, then
   // `npx wrangler d1 migrations apply vf-gate --remote`.
   "d1_databases": [
-    { "binding": "VF_DB", "database_name": "vf-gate", "database_id": "REPLACED-AFTER-wrangler-d1-create" }
-  ]
+    { "binding": "VF_DB", "database_name": "vf-gate", "database_id": "ec1a48cf-bd50-49a3-88b0-c07a12329fd8" }
+  ],
+  // Non-secret runtime env for the /api/* Pages Functions. Secrets
+  // (STELLAR_RELAYER_SECRET, VF_*) are set per-environment via
+  // `wrangler pages secret put` / dashboard, never here.
+  "vars": {
+    "NODE_ENV": "production",
+    "ALLOWED_ORIGIN": "https://vibing-farmer.pages.dev",
+    "SOROBAN_RPC_URL": "https://soroban-testnet.stellar.org",
+    "STELLAR_NETWORK_PASSPHRASE": "Test SDF Network ; September 2015",
+    "SOROBAN_VAULT_ADDRESS": "CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77",
+    "SOROBAN_ROUTER_ADDRESS": "CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5",
+    "SOROBAN_TOKEN_ADDRESS": "CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU",
+    "SOROBAN_AGENT_ALLOWLIST": "CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC,CBEDIFOTUJAZQJ7F643EKDRLG7MT5AWOR23VZ6C3K6V5IBG447T6MNDP",
+    "VF_HOME_DOMAIN": "vibing-farmer.pages.dev"
+  },
+  "env": {
+    // Preview (branch) deployments — CORS is exact-match, no wildcard, so only
+    // the branch alias URL works (per-commit <hash>.… URLs will NOT pass).
+    "preview": {
+      "vars": {
+        "NODE_ENV": "production",
+        "ALLOWED_ORIGIN": "https://dev.vibing-farmer.pages.dev",
+        "SOROBAN_RPC_URL": "https://soroban-testnet.stellar.org",
+        "STELLAR_NETWORK_PASSPHRASE": "Test SDF Network ; September 2015",
+        "SOROBAN_VAULT_ADDRESS": "CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77",
+        "SOROBAN_ROUTER_ADDRESS": "CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5",
+        "SOROBAN_TOKEN_ADDRESS": "CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU",
+        "SOROBAN_AGENT_ALLOWLIST": "CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC,CBEDIFOTUJAZQJ7F643EKDRLG7MT5AWOR23VZ6C3K6V5IBG447T6MNDP",
+        "VF_HOME_DOMAIN": "dev.vibing-farmer.pages.dev"
+      }
+    }
+  }
 }

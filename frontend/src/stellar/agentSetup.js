@@ -171,25 +171,17 @@ export async function deployAgentForSession({
 }
 
 /**
- * OPTIONAL Registry record: authorize(owner, agent, vault, token, cap, period, expiry) —
- * user-signed. NOT required for deposits: the vault's require_auth routes to the agent
- * account's own __check_auth, which enforces the constructor-pinned LOCAL scope and never
- * reads the Registry (verified: soroban/contracts/agent_account has zero registry calls; the
- * relay doesn't gate on it either). The Registry record only feeds the on-chain event indexer
- * (stellar/events.js force-graph) and the Registry.revoke kill-switch story, so the
- * orchestrator keeps it behind a flag, off the signature-critical path by default.
- * @param {{owner:string, agentAddress:string, vault:string, capPerPeriod:bigint, periodDuration:number, expiry:number, server?:object}} p
+ * OPTIONAL Registry record: authorize(agent) — user-signed. The hardened Registry derives
+ * every record field from the agent contract's own scope_of() (caller supplies ONLY the
+ * agent address — nothing forgeable) and requires the DERIVED owner's signature. NOT
+ * required for deposits: the vault's require_auth routes to the agent account's own
+ * __check_auth, which enforces the constructor-pinned LOCAL scope and never reads the
+ * Registry. The record only feeds the on-chain event indexer (stellar/events.js
+ * force-graph); the enforcing kill switch is AgentAccount.revoke() (see revoke.js).
+ * @param {{owner:string, agentAddress:string, server?:object}} p
  * @returns {Promise<{hash:string, status:string}>}
  */
-export async function registryAuthorizeAgent({
-  owner,
-  agentAddress,
-  vault,
-  capPerPeriod,
-  periodDuration,
-  expiry,
-  server,
-}) {
+export async function registryAuthorizeAgent({ owner, agentAddress, server }) {
   // Step 0: establish trustline (SAC-wrapped assets need one before transfer).
   await ensureUserTrustline(owner)
 
@@ -197,15 +189,7 @@ export async function registryAuthorizeAgent({
     source: owner,
     contract: SOROBAN_REGISTRY_ADDRESS,
     method: 'authorize',
-    args: [
-      { addr: owner },
-      { addr: agentAddress },
-      { addr: vault },
-      { addr: SOROBAN_TOKEN_ADDRESS },
-      { i128: BigInt(capPerPeriod) },
-      { u64: periodDuration },
-      { u64: expiry },
-    ],
+    args: [{ addr: agentAddress }],
     server,
   })
   const signed = await signWithTimeout(xdr, 'registry authorize')

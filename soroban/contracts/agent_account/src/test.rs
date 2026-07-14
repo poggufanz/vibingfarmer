@@ -1,7 +1,7 @@
 #![cfg(test)]
 use crate::types::AgentScope;
 use crate::{AgentAccount, AgentAccountClient};
-use soroban_sdk::testutils::{Address as _, Ledger as _};
+use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _};
 use soroban_sdk::{Address, BytesN, Env};
 
 fn scope(_env: &Env, owner: &Address, vault: &Address, token: &Address) -> AgentScope {
@@ -625,6 +625,141 @@ fn test_exit_scope_enforcement() {
         AgentAccount::enforce_exit_scope_for_test(env.clone(), ctx6)
     });
     assert_eq!(res6, Err(AccountError::FnNotAllowed));
+}
+
+// --- owner revoke kill switch (security hardening Task 3) ---
+
+#[test]
+fn owner_revoke_flips_scope_clears_allowance_blocks_sessions_and_is_idempotent() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let owner = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(admin);
+    let token = sac.address();
+    let vault = Address::generate(&env);
+    let signer = BytesN::from_array(&env, &[7u8; 32]);
+    let cap: i128 = 100_000_000;
+    let s = AgentScope {
+        owner: owner.clone(),
+        vault: vault.clone(),
+        token: token.clone(),
+        cap_per_period: cap,
+        period_duration: 3600,
+        spent_in_period: 0,
+        period_start: 0,
+        expiry: env.ledger().timestamp() + 3600,
+        revoked: false,
+    };
+    let agent = env.register(AgentAccount, (owner.clone(), signer, s, None::<Address>));
+    let client = AgentAccountClient::new(&env, &agent);
+    let token_client = soroban_sdk::token::TokenClient::new(&env, &token);
+    // Constructor self-approved the vault for the cap.
+    assert_eq!(token_client.allowance(&agent, &vault), cap);
+
+    client.revoke();
+
+    // Exactly one agent_revoked event from the agent itself (asserted first —
+    // SDK 26 events().all() only holds the LAST invocation's events; the SAC's
+    // own approve event lives on the token contract, filtered out here).
+    assert_eq!(
+        env.events().all().filter_by_contract(&agent).events().len(),
+        1
+    );
+    // Scope flipped, allowance dead.
+    assert!(client.scope_of().revoked);
+    assert_eq!(token_client.allowance(&agent, &vault), 0);
+
+    // The session-key deposit path fails closed from now on.
+    let ctx = deposit_ctx(&env, &vault, &agent, 10);
+    let res = env.as_contract(&agent, || {
+        AgentAccount::enforce_scope_for_test(env.clone(), ctx)
+    });
+    assert_eq!(res, Err(AccountError::Revoked));
+
+    // Idempotent: a second revoke succeeds and changes nothing.
+    client.revoke();
+    assert!(client.scope_of().revoked);
+    assert_eq!(token_client.allowance(&agent, &vault), 0);
+}
+
+#[test]
+fn stranger_cannot_revoke() {
+    let env = Env::default();
+    let owner = Address::generate(&env);
+    let vault = Address::generate(&env);
+    let token = sac_token(&env);
+    let pubkey = BytesN::from_array(&env, &[7u8; 32]);
+    let s = scope(&env, &owner, &vault, &token);
+    let agent = env.register(AgentAccount, (owner.clone(), pubkey, s, None::<Address>));
+    let client = AgentAccountClient::new(&env, &agent);
+
+    // Only the stranger authorizes — owner.require_auth() must fail and the scope stays live.
+    let stranger = Address::generate(&env);
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &stranger,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &agent,
+            fn_name: "revoke",
+            args: soroban_sdk::vec![&env],
+            sub_invokes: &[],
+        },
+    }]);
+    assert!(client.try_revoke().is_err());
+    assert!(!client.scope_of().revoked);
+}
+
+#[test]
+fn owner_withdraw_clears_vault_allowance() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let owner = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(admin.clone());
+    let token = sac.address();
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    let token_client = soroban_sdk::token::TokenClient::new(&env, &token);
+    let vault = env.register(
+        rwa_vault::RwaVault,
+        (
+            admin.clone(),
+            token.clone(),
+            soroban_sdk::String::from_str(&env, "Vault"),
+            soroban_sdk::String::from_str(&env, "vfVLT"),
+        ),
+    );
+    let signer = BytesN::from_array(&env, &[7u8; 32]);
+    let cap: i128 = 100_000_000;
+    let s = AgentScope {
+        owner: owner.clone(),
+        vault: vault.clone(),
+        token: token.clone(),
+        cap_per_period: cap,
+        period_duration: 3600,
+        spent_in_period: 0,
+        period_start: 0,
+        expiry: env.ledger().timestamp() + 3600,
+        revoked: false,
+    };
+    let agent = env.register(AgentAccount, (owner.clone(), signer, s, None::<Address>));
+    token_admin.mint(&agent, &60_000_000);
+    crate::vault_client::VaultClient::new(&env, &vault).deposit(&agent, &50_000_000);
+    // Deposit consumed 50m of the 100m constructor allowance — 50m still standing.
+    assert_eq!(token_client.allowance(&agent, &vault), cap - 50_000_000);
+
+    let client = AgentAccountClient::new(&env, &agent);
+    client.owner_withdraw(&owner);
+
+    // Exit also kills the standing vault allowance — nothing left to pull from a dead agent.
+    assert_eq!(token_client.allowance(&agent, &vault), 0);
+    // Exit is terminal: scope is revoked, so the session key can no longer authorize a
+    // funding pull into the swept-empty agent (enforce gates on this flag).
+    assert!(client.scope_of().revoked);
+    let ctx = deposit_ctx(&env, &vault, &agent, 10);
+    let res = env.as_contract(&agent, || {
+        AgentAccount::enforce_scope_for_test(env.clone(), ctx)
+    });
+    assert_eq!(res, Err(AccountError::Revoked));
 }
 
 // --- one-popup grant: the session key may fund itself via the DEPLOYING router only ---

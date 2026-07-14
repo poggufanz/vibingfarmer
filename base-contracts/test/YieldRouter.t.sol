@@ -3,10 +3,14 @@ pragma solidity ^0.8.23;
 
 import {Test} from "forge-std/Test.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {YieldRouter} from "../src/YieldRouter.sol";
+import {AaveV3Adapter4626} from "../src/AaveV3Adapter4626.sol";
 import {MockUSDC} from "./mocks/MockUSDC.sol";
 import {MockERC4626} from "./mocks/MockERC4626.sol";
-import {MockAdversarialERC4626} from "./mocks/MockAdversarialERC4626.sol";
+import {MockReentrantERC4626} from "./mocks/MockReentrantERC4626.sol";
+import {MockAToken} from "./mocks/MockAToken.sol";
+import {MockMaliciousAavePool} from "./mocks/MockMaliciousAavePool.sol";
 
 contract YieldRouterTest is Test {
     YieldRouter router;
@@ -15,17 +19,31 @@ contract YieldRouterTest is Test {
 
     address owner = address(0xA11CE);
     address user = address(0xB0B);
-    address feeRecipient = address(0xFEE);
 
     function setUp() public {
-        router = new YieldRouter(owner);
         usdc = new MockUSDC();
+        router = new YieldRouter(owner, address(usdc));
         vault = new MockERC4626(usdc);
 
         usdc.mint(user, 1_000_000_000); // 1,000 USDC at 6dp
 
         vm.prank(owner);
         router.setPool(address(vault), true);
+    }
+
+    function test_constructor_revertsForZeroCanonicalAsset() public {
+        bytes memory initCode = abi.encodePacked(type(YieldRouter).creationCode, abi.encode(owner, address(0)));
+        address deployed;
+        assembly {
+            deployed := create(0, add(initCode, 0x20), mload(initCode))
+        }
+
+        assertEq(deployed, address(0), "zero canonical asset must reject construction");
+    }
+
+    function test_constructor_revertsForNonContractCanonicalAsset() public {
+        vm.expectRevert(bytes("YieldRouter: asset has no code"));
+        new YieldRouter(owner, address(0xCAFE));
     }
 
     function test_deposit_intoWhitelistedPool_mintsSharesToCaller() public {
@@ -40,6 +58,7 @@ contract YieldRouterTest is Test {
         assertEq(vault.balanceOf(user), shares, "caller holds all minted shares");
         assertEq(vault.balanceOf(address(router)), 0, "router holds no shares (zero-custody)");
         assertEq(usdc.balanceOf(address(router)), 0, "router holds no USDC (zero-custody)");
+        assertEq(usdc.allowance(address(router), address(vault)), 0, "pool allowance is cleared");
         assertEq(usdc.balanceOf(user), 1_000_000_000 - amount, "USDC left the caller");
     }
 
@@ -61,9 +80,60 @@ contract YieldRouterTest is Test {
         assertEq(usdc.balanceOf(address(router)), 0, "router holds no USDC (zero-custody)");
     }
 
+    function test_withdraw_revertsForZeroShares() public {
+        vm.prank(user);
+        vm.expectRevert(bytes("YieldRouter: shares are zero"));
+        router.withdraw(address(vault), 0, 0);
+    }
+
+    function test_withdraw_revertsForDishonestRedeemReturn() public {
+        MockReentrantERC4626 dishonestVault = new MockReentrantERC4626(usdc);
+
+        vm.prank(owner);
+        router.setPool(address(dishonestVault), true);
+
+        uint256 amount = 1_000_000;
+        vm.startPrank(user);
+        usdc.approve(address(router), amount);
+        uint256 shares = router.deposit(address(dishonestVault), amount, 1);
+        dishonestVault.approve(address(router), shares);
+        vm.stopPrank();
+
+        dishonestVault.configureRedeem(0, 1);
+
+        vm.prank(user);
+        vm.expectRevert(bytes("YieldRouter: asset receipt mismatch"));
+        router.withdraw(address(dishonestVault), shares, 1);
+
+        assertEq(dishonestVault.balanceOf(user), shares, "failed redeem restores shares");
+        assertEq(usdc.balanceOf(user), 1_000_000_000 - amount, "failed redeem is atomic");
+    }
+
+    function test_withdraw_revertsWhenPoolConsumesOnlyPartOfShares() public {
+        MockReentrantERC4626 partialBurnVault = new MockReentrantERC4626(usdc);
+
+        vm.prank(owner);
+        router.setPool(address(partialBurnVault), true);
+
+        uint256 amount = 1_000_000;
+        vm.startPrank(user);
+        usdc.approve(address(router), amount);
+        uint256 shares = router.deposit(address(partialBurnVault), amount, 1);
+        partialBurnVault.approve(address(router), shares);
+        vm.stopPrank();
+
+        partialBurnVault.configureRedeemBurn(1);
+
+        vm.prank(user);
+        vm.expectRevert(bytes("YieldRouter: share consumption mismatch"));
+        router.withdraw(address(partialBurnVault), shares, 1);
+
+        assertEq(partialBurnVault.balanceOf(user), shares, "partial share burn is atomic");
+    }
+
     function test_setPool_onlyOwner() public {
         address attacker = address(0xBAD);
-        address newPool = address(0xCAFE);
+        address newPool = address(new MockERC4626(usdc));
 
         vm.prank(attacker);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, attacker));
@@ -74,6 +144,25 @@ contract YieldRouterTest is Test {
         vm.prank(owner);
         router.setPool(newPool, true);
         assertTrue(router.allowedPool(newPool), "owner can whitelist a pool");
+    }
+
+    function test_setPool_revertsForMismatchedAsset() public {
+        MockUSDC otherAsset = new MockUSDC();
+        MockERC4626 mismatchedVault = new MockERC4626(otherAsset);
+
+        vm.prank(owner);
+        vm.expectRevert(bytes("YieldRouter: wrong pool asset"));
+        router.setPool(address(mismatchedVault), true);
+
+        assertFalse(router.allowedPool(address(mismatchedVault)), "mismatched pool must stay disabled");
+    }
+
+    function test_setPool_revertsForNonContractPool() public {
+        address eoaPool = address(0xCAFE);
+
+        vm.prank(owner);
+        vm.expectRevert(bytes("YieldRouter: pool has no code"));
+        router.setPool(eoaPool, true);
     }
 
     function test_deposit_revertsForUnlistedPool() public {
@@ -87,8 +176,97 @@ contract YieldRouterTest is Test {
         vm.stopPrank();
     }
 
+    function test_deposit_revalidatesCanonicalAssetAfterAllowlisting() public {
+        MockReentrantERC4626 mutableVault = new MockReentrantERC4626(usdc);
+
+        vm.prank(owner);
+        router.setPool(address(mutableVault), true);
+
+        mutableVault.setReportedAsset(address(new MockUSDC()));
+
+        uint256 amount = 1_000_000;
+        vm.startPrank(user);
+        usdc.approve(address(router), amount);
+        vm.expectRevert(bytes("YieldRouter: wrong pool asset"));
+        router.deposit(address(mutableVault), amount, 1);
+        vm.stopPrank();
+    }
+
+    function test_disablingPool_blocksDepositsButKeepsWithdrawals() public {
+        uint256 amount = 1_000_000;
+
+        vm.startPrank(user);
+        usdc.approve(address(router), amount * 2);
+        uint256 shares = router.deposit(address(vault), amount, 1);
+        vm.stopPrank();
+
+        vm.prank(owner);
+        router.setPool(address(vault), false);
+
+        vm.startPrank(user);
+        vm.expectRevert(bytes("YieldRouter: pool not allowed"));
+        router.deposit(address(vault), amount, 1);
+
+        vault.approve(address(router), shares);
+        uint256 assets = router.withdraw(address(vault), shares, 1);
+        vm.stopPrank();
+
+        assertEq(assets, amount, "disabled pool remains available for exits");
+        assertEq(usdc.balanceOf(user), 1_000_000_000, "exit returns the user's assets");
+    }
+
+    function test_deposit_revertsForZeroAmount() public {
+        vm.prank(user);
+        vm.expectRevert(bytes("YieldRouter: amount is zero"));
+        router.deposit(address(vault), 0, 0);
+    }
+
+    function test_deposit_revertsWhenPositiveAssetsMintZeroShares() public {
+        MockAToken aToken = new MockAToken(IERC20(address(usdc)));
+        MockMaliciousAavePool aavePool = new MockMaliciousAavePool(IERC20(address(usdc)), aToken);
+        AaveV3Adapter4626 donatedAdapter =
+            new AaveV3Adapter4626(IERC20(address(usdc)), address(aavePool), address(aToken), "Donated Adapter", "dADP");
+
+        vm.prank(owner);
+        router.setPool(address(donatedAdapter), true);
+
+        uint256 donation = 1_000_000;
+        usdc.mint(address(donatedAdapter), donation);
+        uint256 userBalanceBefore = usdc.balanceOf(user);
+
+        vm.startPrank(user);
+        usdc.approve(address(router), 1);
+        vm.expectRevert(bytes("AaveV3Adapter: shares are zero"));
+        router.deposit(address(donatedAdapter), 1, 0);
+        vm.stopPrank();
+
+        assertEq(usdc.balanceOf(user), userBalanceBefore, "zero-share deposit must roll back the user transfer");
+        assertEq(usdc.balanceOf(address(router)), 0, "zero-share deposit leaves no router balance");
+        assertEq(donatedAdapter.totalSupply(), 0, "zero-share deposit creates no position");
+        assertEq(donatedAdapter.totalAssets(), donation, "preexisting donation remains unchanged");
+        assertEq(aToken.balanceOf(address(donatedAdapter)), 0, "failed deposit supplies nothing to Aave");
+    }
+
+    function test_deposit_independentlyRejectsZeroSharesReturnedByPool() public {
+        MockReentrantERC4626 zeroShareVault = new MockReentrantERC4626(usdc);
+        zeroShareVault.configureDepositMintShortfall(1);
+
+        vm.prank(owner);
+        router.setPool(address(zeroShareVault), true);
+
+        uint256 userBalanceBefore = usdc.balanceOf(user);
+        vm.startPrank(user);
+        usdc.approve(address(router), 1);
+        vm.expectRevert(bytes("YieldRouter: zero shares"));
+        router.deposit(address(zeroShareVault), 1, 0);
+        vm.stopPrank();
+
+        assertEq(usdc.balanceOf(user), userBalanceBefore, "zero-share deposit is atomic");
+        assertEq(zeroShareVault.balanceOf(user), 0, "zero-share pool creates no position");
+    }
+
     function test_deposit_revertsBelowMinShares() public {
-        MockAdversarialERC4626 badVault = new MockAdversarialERC4626(usdc);
+        MockReentrantERC4626 badVault = new MockReentrantERC4626(usdc);
         uint256 amount = 1_000_000; // 1 USDC at 6dp
 
         vm.prank(owner);
@@ -97,56 +275,73 @@ contract YieldRouterTest is Test {
         vm.startPrank(user);
         usdc.approve(address(router), amount);
         vm.expectRevert(bytes("YieldRouter: slippage, shares < minShares"));
-        router.deposit(address(badVault), amount, 2); // badVault always mints 1 wei — below the floor of 2
+        router.deposit(address(badVault), amount, amount + 1);
         vm.stopPrank();
     }
 
+    function test_deposit_revertsWhenPoolPullsOnlyPartOfAssets() public {
+        MockReentrantERC4626 partialPullVault = new MockReentrantERC4626(usdc);
+        partialPullVault.configureDeposit(1, 0);
+
+        vm.prank(owner);
+        router.setPool(address(partialPullVault), true);
+
+        uint256 amount = 1_000_000;
+        vm.startPrank(user);
+        usdc.approve(address(router), amount);
+        vm.expectRevert(bytes("YieldRouter: pool did not consume assets"));
+        router.deposit(address(partialPullVault), amount, 1);
+        vm.stopPrank();
+
+        assertEq(usdc.balanceOf(user), 1_000_000_000, "failed deposit is atomic");
+        assertEq(usdc.balanceOf(address(router)), 0, "failed deposit leaves no router dust");
+    }
+
+    function test_deposit_revertsForDishonestShareReturn() public {
+        MockReentrantERC4626 dishonestVault = new MockReentrantERC4626(usdc);
+        dishonestVault.configureDeposit(0, 1);
+
+        vm.prank(owner);
+        router.setPool(address(dishonestVault), true);
+
+        uint256 amount = 1_000_000;
+        vm.startPrank(user);
+        usdc.approve(address(router), amount);
+        vm.expectRevert(bytes("YieldRouter: share receipt mismatch"));
+        router.deposit(address(dishonestVault), amount, 1);
+        vm.stopPrank();
+
+        assertEq(dishonestVault.balanceOf(user), 0, "dishonest deposit is atomic");
+    }
+
     function test_noArbitraryCall_unknownSelectorReverts() public {
-        (bool ok, ) = address(router).call(abi.encodeWithSignature("sweep(address)", user));
+        (bool ok,) = address(router).call(abi.encodeWithSignature("sweep(address)", user));
         assertFalse(ok, "router must not expose a sweep/arbitrary-call surface");
     }
 
     function test_noArbitraryCall_rejectsPlainEther() public {
         vm.deal(user, 1 ether);
         vm.prank(user);
-        (bool ok, ) = address(router).call{value: 1 ether}("");
+        (bool ok,) = address(router).call{value: 1 ether}("");
         assertFalse(ok, "router must not accept plain ETH (no receive/fallback)");
     }
 
-    // --- Amendment A1: performance-fee switch (default-inert) ---
+    function test_noUnenforceablePerformanceFeeSurface() public {
+        vm.startPrank(owner);
+        (bool setFeeOk,) = address(router).call(abi.encodeWithSignature("setFee(uint16,address)", 1000, address(0xFEE)));
+        (bool feeBpsOk,) = address(router).call(abi.encodeWithSignature("feeBps()"));
+        (bool feeRecipientOk,) = address(router).call(abi.encodeWithSignature("feeRecipient()"));
+        (bool principalOk,) =
+            address(router).call(abi.encodeWithSignature("principalOf(address,address)", user, address(vault)));
+        vm.stopPrank();
 
-    function test_setFee_onlyOwnerAndBounds() public {
-        // non-owner cannot set
-        vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, user));
-        router.setFee(1000, feeRecipient);
-
-        // above the hard cap reverts
-        vm.prank(owner);
-        vm.expectRevert(bytes("YieldRouter: fee exceeds FEE_MAX_BPS"));
-        router.setFee(2001, feeRecipient); // FEE_MAX_BPS is 2000
-
-        // non-zero fee with no recipient reverts
-        vm.prank(owner);
-        vm.expectRevert(bytes("YieldRouter: fee needs a recipient"));
-        router.setFee(1000, address(0));
-
-        // owner sets a valid fee
-        vm.prank(owner);
-        router.setFee(1000, feeRecipient);
-        assertEq(router.feeBps(), 1000, "feeBps set");
-        assertEq(router.feeRecipient(), feeRecipient, "recipient set");
-
-        // fee can be turned back off with a zero recipient
-        vm.prank(owner);
-        router.setFee(0, address(0));
-        assertEq(router.feeBps(), 0, "fee turned off");
+        assertFalse(setFeeOk, "router must not expose setFee");
+        assertFalse(feeBpsOk, "router must not expose feeBps");
+        assertFalse(feeRecipientOk, "router must not expose feeRecipient");
+        assertFalse(principalOk, "router must not expose principal bookkeeping");
     }
 
-    function test_withdraw_takesFeeOnYieldOnly() public {
-        vm.prank(owner);
-        router.setFee(1000, feeRecipient); // 10% on yield
-
+    function test_withdraw_forwardsAllYieldWithoutPrincipalOrFeeBookkeeping() public {
         uint256 amount = 1_000_000; // 1 USDC principal at 6dp
         vm.startPrank(user);
         usdc.approve(address(router), amount);
@@ -161,37 +356,9 @@ contract YieldRouterTest is Test {
         uint256 assets = router.withdraw(address(vault), shares, 1);
         vm.stopPrank();
 
-        uint256 expectedYield = assets - amount; // gross redeemed minus principal
-        uint256 expectedFee = (expectedYield * 1000) / 10_000;
-
-        assertGt(expectedFee, 0, "a fee was taken on the yield");
-        assertEq(usdc.balanceOf(feeRecipient), expectedFee, "feeRecipient got exactly the yield fee");
-        assertEq(
-            usdc.balanceOf(user),
-            1_000_000_000 - amount + (assets - expectedFee),
-            "caller got principal + post-fee yield"
-        );
-        assertEq(router.principalOf(user, address(vault)), 0, "principal baseline reset, never skimmed");
-        assertEq(usdc.balanceOf(address(router)), 0, "router holds no USDC after fee split (zero-custody)");
+        assertEq(usdc.balanceOf(user), 1_000_000_000 - amount + assets, "caller receives every redeemed asset");
+        assertGt(assets, amount, "donated yield increases redeemed assets");
+        assertEq(usdc.balanceOf(address(router)), 0, "router holds no USDC after withdrawal");
         assertEq(vault.balanceOf(address(router)), 0, "router holds no shares (zero-custody)");
-    }
-
-    function test_withdraw_noFeeWhenNoYield() public {
-        vm.prank(owner);
-        router.setFee(1000, feeRecipient); // fee on, but there will be no yield
-
-        uint256 amount = 1_000_000;
-        vm.startPrank(user);
-        usdc.approve(address(router), amount);
-        uint256 shares = router.deposit(address(vault), amount, 1);
-
-        vault.approve(address(router), shares);
-        uint256 assets = router.withdraw(address(vault), shares, 1);
-        vm.stopPrank();
-
-        assertEq(usdc.balanceOf(feeRecipient), 0, "no fee when there is no yield");
-        assertEq(usdc.balanceOf(user), 1_000_000_000, "caller got full principal back, unskimmed");
-        assertLe(assets, amount, "no yield: redeemed <= principal");
-        assertEq(router.principalOf(user, address(vault)), 0, "principal fully withdrawn");
     }
 }

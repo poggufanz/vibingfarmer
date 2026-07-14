@@ -66,6 +66,7 @@ describe('Farm screen', () => {
         pool: '0xCCCC',
         protocol: 'seamless',
         amount: 100,
+        amountBaseUnits: 100_000_000n,
         minShares: 99n,
         expectedApy: 4.2,
         riskTier: 'low',
@@ -83,6 +84,7 @@ describe('Farm screen', () => {
         sessionKeyAddress="0xSESSION"
         serializedApproval="approval-blob"
         allocations={givenAllocations}
+        burnUnits7={1_000_000_000n}
       />
     )
 
@@ -93,10 +95,84 @@ describe('Farm screen', () => {
     fireEvent.click(screen.getByRole('button', { name: /start farming/i }))
     await waitFor(() =>
       expect(runFarmFlow).toHaveBeenCalledWith(
-        expect.objectContaining({ allocations: givenAllocations })
+        expect.objectContaining({
+          allocations: givenAllocations,
+          burnUnits7: 1_000_000_000n,
+        })
       )
     )
     expect(allocateBasePools).not.toHaveBeenCalled()
+  })
+
+  test('standalone fallback derives one 7dp burn and quantizes dispatch to Circle six-decimal truncation', async () => {
+    allocateBasePools.mockClear()
+    runFarmFlow.mockClear()
+    allocateBasePools.mockResolvedValue([
+      {
+        pool: '0xAAAA',
+        protocol: 'standalone',
+        amount: 0.1234567,
+        minShares: 1n,
+        expectedApy: 5,
+        riskTier: 'medium',
+        skill: {},
+      },
+    ])
+    runFarmFlow.mockResolvedValue({ finalStatus: 'done' })
+
+    render(
+      <Farm
+        amount={0.1234567}
+        riskLevel="medium"
+        nPools={1}
+        stellarWallet={{ address: 'GWALLET', signBurn: vi.fn() }}
+        baseRecipientAddress="0xBASEACCT"
+        sessionKeyAddress="0xSESSION"
+        serializedApproval="approval-blob"
+      />
+    )
+
+    await waitFor(() => screen.getByRole('button', { name: /start farming/i }))
+    fireEvent.click(screen.getByRole('button', { name: /start farming/i }))
+    await waitFor(() => expect(runFarmFlow).toHaveBeenCalledTimes(1))
+    const farmCall = runFarmFlow.mock.calls[0][0]
+    expect(farmCall.burnUnits7).toBe(1_234_560n)
+    expect(farmCall.allocations.map((a) => a.amountBaseUnits)).toEqual([123_456n])
+  })
+
+  test('validates pre-quantized allocation totals against the burn before dispatch', async () => {
+    allocateBasePools.mockClear()
+    runFarmFlow.mockClear()
+    const mismatchedAllocations = [
+      {
+        pool: '0xAAAA',
+        protocol: 'mismatch',
+        amount: 1,
+        amountBaseUnits: 1_000_001n,
+        minShares: 1n,
+        expectedApy: 5,
+        riskTier: 'medium',
+        skill: {},
+      },
+    ]
+
+    render(
+      <Farm
+        amount={1}
+        riskLevel="medium"
+        nPools={1}
+        stellarWallet={{ address: 'GWALLET', signBurn: vi.fn() }}
+        baseRecipientAddress="0xBASEACCT"
+        sessionKeyAddress="0xSESSION"
+        serializedApproval="approval-blob"
+        allocations={mismatchedAllocations}
+        burnUnits7={10_000_000n}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /start farming/i }))
+    await waitFor(() => expect(screen.getByText(/^error$/i)).toBeTruthy())
+    expect(runFarmFlow).not.toHaveBeenCalled()
   })
 
   test('a staged failure event renders the stage-specific error, not a generic message', async () => {
