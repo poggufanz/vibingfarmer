@@ -4,8 +4,6 @@
 
 # Vibing Farmer
 
-> Set once. Vibe forever.
-
 Yield farming is mostly the same clicks: find a vault, approve, deposit, repeat for the next protocol. Vibing Farmer runs those deposits in parallel. An AI picks the vaults and writes per-agent instructions; you approve once; disposable worker keys do the rest. You pay zero gas.
 
 I built this because sequential DeFi UIs waste time. You say how much and how much risk you'll take. Agents run the deposits. Scope is enforced on-chain (allowance, expiry, vault pin), not by trusting the AI.
@@ -387,9 +385,9 @@ Folder `docs/` is gitignored (local planning notes). Do not link it as public re
 - [Soroban smart contracts](https://developers.stellar.org/docs/build/smart-contracts)
 - [Stellar Wallets Kit](https://stellarwalletskit.dev)
 - [Freighter wallet](https://www.freighter.app)
-- [Blend Capital](https://docs.blend.capital) (autofarm vault supplies the testnet pool)
-- [Circle CCTP](https://developers.circle.com/cctp) (optional Stellar↔Base USDC)
-- [ZeroDev](https://docs.zerodev.app) (optional Base session keys)
+- [Blend Capital](https://docs.blend.capital) (Autofarm vault supplies the testnet pool)
+- [Circle CCTP](https://developers.circle.com/cctp) (Stellar↔Base USDC)
+- [ZeroDev](https://docs.zerodev.app) (Base session keys)
 - [Venice AI](https://venice.ai)
 - [DeepSeek API](https://api-docs.deepseek.com)
 - [Tavily API](https://docs.tavily.com)
