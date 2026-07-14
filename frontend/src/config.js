@@ -92,8 +92,7 @@ export const BASE_POOL_CATALOG = [
     protocol: 'aave-v3',
     address: requireBasePoolAddress(
       'BASE_POOL_1_ADDRESS',
-      import.meta.env?.VITE_BASE_POOL_1_ADDRESS ||
-        '0x389250872044368759D3db5C09b2706A6628d4e0'
+      import.meta.env?.VITE_BASE_POOL_1_ADDRESS || '0x389250872044368759D3db5C09b2706A6628d4e0'
     ),
     apy: 5.1,
     risk: 'low',
@@ -108,8 +107,7 @@ export const BASE_POOL_CATALOG = [
     protocol: 'morpho-blue',
     address: requireBasePoolAddress(
       'BASE_POOL_2_ADDRESS',
-      import.meta.env?.VITE_BASE_POOL_2_ADDRESS ||
-        '0x5E843A639F0555E2A6669601621befC887Bdb479'
+      import.meta.env?.VITE_BASE_POOL_2_ADDRESS || '0x5E843A639F0555E2A6669601621befC887Bdb479'
     ),
     apy: 6.8,
     risk: 'medium',
@@ -124,8 +122,7 @@ export const BASE_POOL_CATALOG = [
     protocol: 'moonwell',
     address: requireBasePoolAddress(
       'BASE_POOL_3_ADDRESS',
-      import.meta.env?.VITE_BASE_POOL_3_ADDRESS ||
-        '0xadD3c1A75c7Cef2516b51750959BD829a4AD4761'
+      import.meta.env?.VITE_BASE_POOL_3_ADDRESS || '0xadD3c1A75c7Cef2516b51750959BD829a4AD4761'
     ),
     apy: 7.4,
     risk: 'medium',
