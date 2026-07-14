@@ -130,8 +130,8 @@ ALLOWED_ORIGIN=https://your-app.pages.dev
 STELLAR_RELAYER_SECRET=S...       # fee-bump sponsor
 SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
 STELLAR_NETWORK_PASSPHRASE=Test SDF Network ; September 2015
-SOROBAN_VAULT_ADDRESS=CB5VKYDU... # autofarm vault — see deployments/stellar-testnet.json
-SOROBAN_ROUTER_ADDRESS=CBEI5VJK... # funding_router
+SOROBAN_VAULT_ADDRESS=CDWHNHIH... # autofarm vault — see deployments/stellar-testnet.json
+SOROBAN_ROUTER_ADDRESS=CCEWWRQV... # funding_router
 ```
 
 No `ONESHOT_KEY` / `ONESHOT_SECRET` — those are dead EVM-era vars.

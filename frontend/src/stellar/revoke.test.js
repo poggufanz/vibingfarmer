@@ -9,20 +9,20 @@ vi.mock('./walletKit.js', () => ({ signTxXdr: vi.fn().mockResolvedValue('SIGNED'
 import { revokeAgentOnChain, revokedAgentsForOwner, subscribeAgentRevoked } from './revoke.js'
 import { buildInvokeTx, submitUserTx } from './client.js'
 import { signTxXdr } from './walletKit.js'
-import { SOROBAN_REGISTRY_ADDRESS } from './config.js'
 
 describe('revokeAgentOnChain', () => {
-  test('builds Registry.revoke(owner, agent), user-signs, and submits - one tx', async () => {
+  test('builds AgentAccount.revoke() on the agent itself, user-signs, and submits - one tx', async () => {
     const r = await revokeAgentOnChain({ owner: 'GOWNER', agent: 'CAGENT' })
-    // Single user-signed invoke against the registry — relayer-independent (kill switch must work
-    // even if the gasless relay is down).
+    // Single user-signed invoke against the AGENT CONTRACT — the contract whose __check_auth
+    // actually enforces the scope. Registry is metadata only and must not be the kill switch.
+    // Relayer-independent (must work even if the gasless relay is down).
     expect(buildInvokeTx).toHaveBeenCalledTimes(1)
     expect(buildInvokeTx).toHaveBeenCalledWith(
       expect.objectContaining({
         source: 'GOWNER',
-        contract: SOROBAN_REGISTRY_ADDRESS,
+        contract: 'CAGENT',
         method: 'revoke',
-        args: [{ addr: 'GOWNER' }, { addr: 'CAGENT' }],
+        args: [],
       })
     )
     expect(signTxXdr).toHaveBeenCalledWith('UNSIGNED')

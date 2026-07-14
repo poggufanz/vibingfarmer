@@ -12,10 +12,12 @@ import { toCallPolicy, toTimestampPolicy, CallPolicyVersion } from '@zerodev/per
 import { createKernelAccount, addressToEmptyAccount } from '@zerodev/sdk'
 import { getEntryPoint, KERNEL_V3_1 } from '@zerodev/sdk/constants'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
-import { buildDepositPermissions } from '../base/policyEngine.js'
+import { buildFarmPermissions } from '../base/policyEngine.js'
 
 const ENTRY_POINT = getEntryPoint('0.7')
 const KERNEL_VERSION = KERNEL_V3_1
+// Canonical Circle/CCTP USDC minted on Base Sepolia; the relayer uses the same deployed address.
+const BASE_SEPOLIA_USDC_ADDRESS = '0x036CbD53842c5426634e7929541eC2318f3dCF7e'
 
 /**
  * @typedef {import('../base/policyEngine.js').PoolCap} PoolCap
@@ -23,9 +25,10 @@ const KERNEL_VERSION = KERNEL_V3_1
 
 /**
  * Create the mandate: a fresh ephemeral session key + a call-policy scoped to
- * `YieldRouter.deposit`, capped at one aggregate per-call amount = max(pool caps) and expiring at
- * `expiry`. (Per-pool caps are not expressible in @zerodev CallPolicy — see policyEngine module
- * note; the pool allowlist is enforced on-chain by YieldRouter.deposit's `allowedPool`.)
+ * canonical `USDC.approve(YieldRouter, amount)` plus `YieldRouter.deposit`, each capped at one
+ * aggregate per-call amount = max(pool caps) and expiring at `expiry`. (Per-pool caps are not
+ * expressible in @zerodev CallPolicy — see policyEngine module note; the pool allowlist is
+ * enforced on-chain by YieldRouter.deposit's `allowedPool`.)
  * The OWNER (passkey) approves the session key by ADDRESS ONLY (`addressToEmptyAccount`) — the
  * owner-side build here never touches the session private key, mirroring session-test.mjs.
  * @param {{
@@ -72,9 +75,13 @@ export async function createMandate({
 
   const emptySessionSigner = await makeECDSASigner({ signer: emptyAccount(sessionKeyAddress) })
 
-  const permissions = buildDepositPermissions({
+  const { ERC20_ABI, YIELD_ROUTER_ABI, YIELD_ROUTER_ADDRESS } = await import('../base/config.js')
+  const permissions = buildFarmPermissions({
     pools,
-    yieldRouterAbi: (await import('../base/config.js')).YIELD_ROUTER_ABI,
+    yieldRouterAbi: YIELD_ROUTER_ABI,
+    usdcAbi: ERC20_ABI,
+    yieldRouterAddress: YIELD_ROUTER_ADDRESS,
+    usdcAddress: BASE_SEPOLIA_USDC_ADDRESS,
   })
   const callPolicy = makeCallPolicy({ policyVersion: CallPolicyVersion.V0_0_4, permissions })
   const timestampPolicy = makeTimestampPolicy({ validAfter: 0, validUntil: expiry })

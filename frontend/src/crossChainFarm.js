@@ -17,8 +17,8 @@ const CCTP_STELLAR_DOMAIN = 27
  *   baseRecipientAddress: string,
  *   sessionKeyAddress: string,
  *   serializedApproval: string,
- *   allocations: Array<{ pool: string, amount: number, minShares: bigint }>,
- *   amountUnits: bigint,          // total burn amount, 7dp Stellar units
+ *   allocations: Array<{ pool: string, amount: number, amountBaseUnits: bigint, minShares: bigint }>,
+ *   burnUnits7: bigint,           // authoritative total burn input, 7dp Stellar units
  *   onEvent?: (name: string, data: object) => void,
  *   deps?: { burn?: Function, postFarm?: Function, pollFarmStatus?: Function },
  * }} p
@@ -30,10 +30,39 @@ export async function runFarmFlow({
   sessionKeyAddress,
   serializedApproval,
   allocations,
-  amountUnits,
+  burnUnits7,
   onEvent = () => {},
   deps = {},
 }) {
+  if (typeof burnUnits7 !== 'bigint' || burnUnits7 <= 0n) {
+    throw new Error('burnUnits7 must be a positive bigint')
+  }
+  if (burnUnits7 % 10n !== 0n) {
+    throw new Error('burnUnits7 must be divisible by 10 for a six-decimal CCTP message')
+  }
+  if (!Array.isArray(allocations) || allocations.length === 0) {
+    throw new Error('allocations must be a non-empty array')
+  }
+  if (
+    !allocations.every(
+      (allocation) =>
+        allocation &&
+        typeof allocation.amountBaseUnits === 'bigint' &&
+        allocation.amountBaseUnits > 0n
+    )
+  ) {
+    throw new Error('every allocation amountBaseUnits must be a positive bigint')
+  }
+  const allocationTotal = allocations.reduce(
+    (total, allocation) => total + allocation.amountBaseUnits,
+    0n
+  )
+  const expectedBaseUnits = burnUnits7 / 10n
+  if (allocationTotal !== expectedBaseUnits) {
+    throw new Error(
+      `allocation amountBaseUnits sum is ${allocationTotal}; expected ${expectedBaseUnits}`
+    )
+  }
   const {
     burn = ({ contractId, amountUnits: amt, baseRecipientAddress: dest, kit }) =>
       signAndSubmitStellarBurn({ contractId, amountUnits: amt, baseRecipientAddress: dest, kit }),
@@ -41,12 +70,12 @@ export async function runFarmFlow({
     pollFarmStatus: pollFn = pollFarmStatus,
   } = deps
 
-  onEvent('farm-burn-started', { address: stellarWallet.address, amountUnits })
+  onEvent('farm-burn-started', { address: stellarWallet.address, amountUnits: burnUnits7 })
   let burnResult
   try {
     burnResult = await burn({
       contractId: stellarWallet.address,
-      amountUnits,
+      amountUnits: burnUnits7,
       baseRecipientAddress,
       kit: stellarWallet,
     })

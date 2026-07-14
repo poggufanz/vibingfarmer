@@ -22,9 +22,9 @@ import { createStellarPasskeyWallet } from '../wallet/passkeyStellar.js'
 import { createBaseSmartAccount } from '../wallet/passkeyBase.js'
 import { createMandate } from '../wallet/mandate.js'
 import { allocateBasePools } from '../strategist.js'
-import { postMandate } from '../base/relayerClient.js'
-import { toBaseChainUnits } from '../base/config.js'
+import { postMandate, quantizeAllocations } from '../base/relayerClient.js'
 import { readPositions } from '../base/readPositions.js'
+import { deriveCctpTransferUnits } from '../stellar/format.js'
 import Farm from './Farm.jsx'
 import Withdraw from './Withdraw.jsx'
 
@@ -49,6 +49,7 @@ export default function CrossChainFarmFlow() {
   const [mandateStatus, setMandateStatus] = useState('idle') // idle | running | error
   const [mandateError, setMandateError] = useState(null)
   const [allocations, setAllocations] = useState(null)
+  const [burnUnits7, setBurnUnits7] = useState(null)
   const [serializedApproval, setSerializedApproval] = useState(null)
   const [sessionKeyAddress, setSessionKeyAddress] = useState(null)
 
@@ -78,8 +79,11 @@ export default function CrossChainFarmFlow() {
     setMandateStatus('running')
     setMandateError(null)
     try {
-      const allocs = await allocateBasePools({ amount, riskLevel, nPools })
-      const pools = allocs.map((a) => ({ pool: a.pool, cap: toBaseChainUnits(a.amount) }))
+      const transferUnits = deriveCctpTransferUnits(amount)
+      const allocs = quantizeAllocations(await allocateBasePools({ amount, riskLevel, nPools }), {
+        targetUnits: transferUnits.baseTargetUnits6,
+      })
+      const pools = allocs.map((a) => ({ pool: a.pool, cap: a.amountBaseUnits }))
       const expiry = Math.floor(Date.now() / 1000) + MANDATE_TTL_SECONDS
 
       const mandate = await createMandate({
@@ -112,6 +116,7 @@ export default function CrossChainFarmFlow() {
       }
 
       setAllocations(allocs)
+      setBurnUnits7(transferUnits.burnUnits7)
       setSerializedApproval(mandate.serializedApproval)
       setSessionKeyAddress(mandate.sessionKeyAddress)
       setMandateStatus('idle')
@@ -181,9 +186,19 @@ export default function CrossChainFarmFlow() {
         <p>
           Base account: <code data-testid="base-account-address">{baseAccount.address}</code>
         </p>
+        <p>
+          Stellar CCTP transfers six decimal places. Any seventh decimal remains in your Stellar
+          wallet.
+        </p>
         <label>
           Amount (USDC)
-          <input type="number" value={amount} onChange={(e) => setAmount(Number(e.target.value))} />
+          <input
+            type="number"
+            min="0.000001"
+            step="0.0000001"
+            value={amount}
+            onChange={(e) => setAmount(Number(e.target.value))}
+          />
         </label>
         <label>
           Risk level
@@ -228,6 +243,7 @@ export default function CrossChainFarmFlow() {
             sessionKeyAddress={sessionKeyAddress}
             serializedApproval={serializedApproval}
             allocations={allocations}
+            burnUnits7={burnUnits7}
           />
           <button
             type="button"

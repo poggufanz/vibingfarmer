@@ -16,8 +16,8 @@ contract YieldRouterInvariantTest is Test {
     address owner = address(0xA11CE);
 
     function setUp() public {
-        router = new YieldRouter(owner);
         usdc = new MockUSDC();
+        router = new YieldRouter(owner, address(usdc));
         vault = new MockERC4626(usdc);
 
         vm.prank(owner);

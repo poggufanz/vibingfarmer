@@ -9,7 +9,7 @@
 import { encodeFunctionData } from 'viem';
 import { reconstructSessionClient } from './session.mjs';
 
-const YIELD_ROUTER_ABI = [{
+export const YIELD_ROUTER_ABI = [{
   type: 'function', name: 'deposit', stateMutability: 'nonpayable',
   inputs: [
     { name: 'pool', type: 'address' }, { name: 'amount', type: 'uint256' }, { name: 'minShares', type: 'uint256' },
@@ -18,7 +18,7 @@ const YIELD_ROUTER_ABI = [{
 
 // YieldRouter.deposit pulls USDC via safeTransferFrom(msg.sender, ...), so the smart account must
 // approve the router for `amount` first. Each allocation is one batched userOp: [approve, deposit].
-const APPROVE_ABI = [{
+export const APPROVE_ABI = [{
   type: 'function', name: 'approve', stateMutability: 'nonpayable',
   inputs: [{ name: 'spender', type: 'address' }, { name: 'amount', type: 'uint256' }], outputs: [{ type: 'bool' }],
 }];
@@ -31,6 +31,7 @@ const USEROP_TIMEOUT_MS = 120_000;
  * @param {string} config.rpcUrl
  * @param {string} config.bundlerRpcUrl
  * @param {`0x${string}`} config.yieldRouterAddress
+ * @param {`0x${string}`} config.usdcAddress
  * @param {`0x${string}`} config.sessionPrivateKey
  * @param {Function} [config.reconstructSessionClientFn] - injection seam for tests
  */
