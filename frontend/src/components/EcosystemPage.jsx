@@ -41,7 +41,7 @@ const PARTNERS = [
     description:
       'The allowlisted relay fee-bumps agent transactions. Agents sign with ephemeral ed25519 keys, while the relay account pays Stellar network fees.',
     tags: ['Fee-bump', 'Fees covered', 'ed25519'],
-    link: 'https://developers.stellar.org/docs/learn/fundamentals/transactions/fee-bump-transactions',
+    link: 'https://developers.stellar.org/docs/build/guides/transactions/fee-bump-transactions',
     mark: 'FB',
   },
   {
@@ -90,7 +90,7 @@ const STANDARDS = [
   {
     id: 'Fee-bump',
     desc: 'Gas-abstracted transactions',
-    link: 'https://developers.stellar.org/docs/learn/fundamentals/transactions/fee-bump-transactions',
+    link: 'https://developers.stellar.org/docs/build/guides/transactions/fee-bump-transactions',
   },
   {
     id: 'Soroban Events',

@@ -12,10 +12,9 @@ import {
   SOROBAN_FUNDING_ROUTER_ADDRESS,
   SOROBAN_ACTIVE_VAULT_ADDRESS,
   SOROBAN_TOKEN_ADDRESS,
-  SOROBAN_DEMO_AGENT,
   SOROBAN_DECIMALS,
 } from '../stellar/config.js'
-import { readVaultShares } from '../stellar/agentDeposit.js'
+import { readTotalAssets } from '../stellar/vaultReads.js'
 import { getStrategies } from '../history.js'
 import NavBar from './NavBar.jsx'
 
@@ -47,9 +46,9 @@ const CONTRACTS = [
   },
 ]
 
-// Deployed-contract count + the soroban/ unit-test count (grep-verifiable: 27 #[test]s).
+// Deployed-contract count + the soroban/ unit-test count (grep-verifiable: 103 #[test]s).
 const CONTRACT_COUNT = String(CONTRACTS.length)
-const CONTRACT_TESTS = '27'
+const CONTRACT_TESTS = '103'
 
 const SECURITY = [
   'Funding Router grants limit the total budget and expiry',
@@ -75,12 +74,14 @@ function timeAgo(ts) {
 
 const shortHash = (h) => (h ? `${String(h).slice(0, 10)}…` : '0x…')
 
-// Live: the demo agent's vault-share balance (i128 base units, 7-dp) converts to vfVLT.
-// readVaultShares catches its own RPC errors and returns null; we show that as unavailable.
+// Live: the vault's total_assets() (idle USDC + every strategy's reported balance, i128 base
+// units, 7-dp) — real TVL, not tied to any single depositor (the pre-seeded demo agent's scope
+// pins a retired vault, so its own balance would always read 0 here). readTotalAssets catches its
+// own RPC errors and returns null; we show that as unavailable.
 async function fetchTotalDeposits() {
-  const shares = await readVaultShares(SOROBAN_DEMO_AGENT)
-  if (shares == null) return null
-  return Number(shares) / DECIMALS_DIV
+  const assets = await readTotalAssets()
+  if (assets == null) return null
+  return Number(assets) / DECIMALS_DIV
 }
 
 /* ----------------------------- pieces ----------------------------- */
@@ -261,7 +262,7 @@ export default function ExplorerPage() {
   const depositsLabel =
     totalDeposits == null
       ? 'Not available'
-      : `${totalDeposits.toLocaleString(undefined, { maximumFractionDigits: 0 })} vfVLT`
+      : `${totalDeposits.toLocaleString(undefined, { maximumFractionDigits: 0 })} USDC`
 
   return (
     <div className="ex-page">
@@ -304,7 +305,7 @@ export default function ExplorerPage() {
             <span className="ex-section__note">Fetched from Soroban RPC and updated live</span>
           </div>
           <div className="ex-stats">
-            <StatBlock label="Demo Agent Shares" value={depositsLabel} loading={loadingDeposits} />
+            <StatBlock label="Vault TVL" value={depositsLabel} loading={loadingDeposits} />
             <StatBlock
               label="Strategy Attestations"
               value={attestationCount > 0 ? `${attestationCount}` : '0'}
