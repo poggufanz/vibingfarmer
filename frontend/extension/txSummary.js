@@ -63,7 +63,10 @@ export function summarizeTransaction(xdrB64, passphrase = NETWORK_PASSPHRASE) {
     const parsed = TransactionBuilder.fromXDR(xdrB64, passphrase)
     const tx = parsed.innerTransaction ?? parsed // fee-bump envelopes wrap the real tx
     const op = tx.operations?.[0]
-    if (op?.type === 'invokeHostFunction' && op.func.switch().name === 'hostFunctionTypeInvokeContract') {
+    if (
+      op?.type === 'invokeHostFunction' &&
+      op.func.switch().name === 'hostFunctionTypeInvokeContract'
+    ) {
       return { ...summarizeInvokeArgs(op.func.invokeContract()), signer: null }
     }
     // Non-Soroban fallback: still give the user the op types rather than nothing.

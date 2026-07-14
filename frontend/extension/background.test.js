@@ -75,7 +75,14 @@ describe('background router — action ceremony', () => {
     const pending = new Map()
     pending.set(7, replyFn)
     await handleMessage(
-      { type: 'CEREMONY_RESULT', tabId: 7, action: 'signTransaction', ok: true, signedTxXdr: 'SXDR', address: 'CACCT' },
+      {
+        type: 'CEREMONY_RESULT',
+        tabId: 7,
+        action: 'signTransaction',
+        ok: true,
+        signedTxXdr: 'SXDR',
+        address: 'CACCT',
+      },
       { storageSession: session, pending },
       vi.fn()
     )
@@ -122,7 +129,12 @@ describe('background router — PROVIDER_REQUEST (dapp path)', () => {
   it('answers isConnected silently: false for an unknown origin, no window', async () => {
     const { env } = fakeEnv({ address: 'CACCT' })
     const reply = vi.fn()
-    await handleProviderMessage({ type: 'PROVIDER_REQUEST', method: 'isConnected' }, SENDER, env, reply)
+    await handleProviderMessage(
+      { type: 'PROVIDER_REQUEST', method: 'isConnected' },
+      SENDER,
+      env,
+      reply
+    )
     expect(reply).toHaveBeenCalledWith({ ok: true, connected: false, address: null })
     expect(env.windows.create).not.toHaveBeenCalled()
   })
@@ -133,7 +145,12 @@ describe('background router — PROVIDER_REQUEST (dapp path)', () => {
       address: 'CACCT',
     })
     const reply = vi.fn()
-    await handleProviderMessage({ type: 'PROVIDER_REQUEST', method: 'getAddress' }, SENDER, env, reply)
+    await handleProviderMessage(
+      { type: 'PROVIDER_REQUEST', method: 'getAddress' },
+      SENDER,
+      env,
+      reply
+    )
     expect(reply).toHaveBeenCalledWith({ ok: true, address: 'CACCT' })
     expect(env.windows.create).not.toHaveBeenCalled()
   })
@@ -141,7 +158,12 @@ describe('background router — PROVIDER_REQUEST (dapp path)', () => {
   it('rejects a request without a verifiable http(s) sender origin', async () => {
     const { env } = fakeEnv({ address: 'CACCT' })
     const reply = vi.fn()
-    await handleProviderMessage({ type: 'PROVIDER_REQUEST', method: 'getAddress' }, { origin: null }, env, reply)
+    await handleProviderMessage(
+      { type: 'PROVIDER_REQUEST', method: 'getAddress' },
+      { origin: null },
+      env,
+      reply
+    )
     expect(reply).toHaveBeenCalledWith(expect.objectContaining({ ok: false, code: -3 }))
   })
 
@@ -169,9 +191,18 @@ describe('background router — PROVIDER_REQUEST (dapp path)', () => {
   it('CEREMONY_RESULT with rid resolves the pending dapp request and persists the allowlist', async () => {
     const { env, local } = fakeEnv({ address: 'CACCT' })
     const reply = vi.fn()
-    await handleProviderMessage({ type: 'PROVIDER_REQUEST', method: 'getAddress' }, SENDER, env, reply)
+    await handleProviderMessage(
+      { type: 'PROVIDER_REQUEST', method: 'getAddress' },
+      SENDER,
+      env,
+      reply
+    )
     await flush()
-    await handleMessage({ type: 'CEREMONY_RESULT', rid: 'rid-1', ok: true, address: 'CACCT' }, env, vi.fn())
+    await handleMessage(
+      { type: 'CEREMONY_RESULT', rid: 'rid-1', ok: true, address: 'CACCT' },
+      env,
+      vi.fn()
+    )
     expect(reply).toHaveBeenCalledWith(expect.objectContaining({ ok: true, address: 'CACCT' }))
     expect(local.vf_allowlist['https://vibing-farmer.pages.dev']).toBeTruthy()
     expect(env.dappPending.size).toBe(0)
@@ -196,7 +227,12 @@ describe('background router — PROVIDER_REQUEST (dapp path)', () => {
   it('serializes approval windows: the second opens only after the first settles', async () => {
     const { env } = fakeEnv({ address: 'CACCT' })
     env.uuid = vi.fn().mockReturnValueOnce('rid-1').mockReturnValueOnce('rid-2')
-    await handleProviderMessage({ type: 'PROVIDER_REQUEST', method: 'getAddress' }, SENDER, env, vi.fn())
+    await handleProviderMessage(
+      { type: 'PROVIDER_REQUEST', method: 'getAddress' },
+      SENDER,
+      env,
+      vi.fn()
+    )
     await handleProviderMessage(
       { type: 'PROVIDER_REQUEST', method: 'signAuthEntry', params: { authEntry: 'E' } },
       SENDER,
@@ -205,7 +241,11 @@ describe('background router — PROVIDER_REQUEST (dapp path)', () => {
     )
     await flush()
     expect(env.windows.create).toHaveBeenCalledTimes(1)
-    await handleMessage({ type: 'CEREMONY_RESULT', rid: 'rid-1', ok: true, address: 'CACCT' }, env, vi.fn())
+    await handleMessage(
+      { type: 'CEREMONY_RESULT', rid: 'rid-1', ok: true, address: 'CACCT' },
+      env,
+      vi.fn()
+    )
     await flush()
     expect(env.windows.create).toHaveBeenCalledTimes(2)
   })
@@ -218,11 +258,21 @@ describe('background router — PROVIDER_REQUEST (dapp path)', () => {
       .mockRejectedValueOnce(new Error('popup blocked'))
       .mockResolvedValueOnce({ id: 901 })
     const reply1 = vi.fn()
-    await handleProviderMessage({ type: 'PROVIDER_REQUEST', method: 'getAddress' }, SENDER, env, reply1)
+    await handleProviderMessage(
+      { type: 'PROVIDER_REQUEST', method: 'getAddress' },
+      SENDER,
+      env,
+      reply1
+    )
     await flush()
     expect(reply1).toHaveBeenCalledWith(expect.objectContaining({ ok: false, code: -1 }))
     const reply2 = vi.fn()
-    await handleProviderMessage({ type: 'PROVIDER_REQUEST', method: 'getAddress' }, SENDER, env, reply2)
+    await handleProviderMessage(
+      { type: 'PROVIDER_REQUEST', method: 'getAddress' },
+      SENDER,
+      env,
+      reply2
+    )
     await flush()
     expect(env.windows.create).toHaveBeenCalledTimes(2)
   })
