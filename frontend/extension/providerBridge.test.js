@@ -1,47 +1,49 @@
 import { describe, it, expect, vi } from 'vitest'
-import { handleProviderRequest, toSignRequest, toProviderResult } from './providerBridge.js'
+import { handleProviderRequest, toProviderRequest, toProviderResult } from './providerBridge.js'
 
-describe('providerBridge — page RPC to SIGN_REQUEST mapping', () => {
-  it('maps getAddress/isConnected to a connect SIGN_REQUEST', () => {
-    expect(toSignRequest('getAddress', {})).toEqual({
-      type: 'SIGN_REQUEST',
-      action: 'connect',
+describe('providerBridge — page RPC to PROVIDER_REQUEST mapping', () => {
+  it('wraps supported methods verbatim in a PROVIDER_REQUEST', () => {
+    expect(toProviderRequest('getAddress', {})).toEqual({
+      type: 'PROVIDER_REQUEST',
+      method: 'getAddress',
       params: {},
     })
-    expect(toSignRequest('isConnected')).toEqual({
-      type: 'SIGN_REQUEST',
-      action: 'connect',
+    expect(toProviderRequest('isConnected')).toEqual({
+      type: 'PROVIDER_REQUEST',
+      method: 'isConnected',
       params: {},
     })
-  })
-
-  it('maps signTransaction/signAuthEntry to their own SIGN_REQUEST action, passing params through', () => {
-    expect(toSignRequest('signTransaction', { xdr: 'X', opts: { address: 'C1' } })).toEqual({
-      type: 'SIGN_REQUEST',
-      action: 'signTransaction',
+    expect(toProviderRequest('signTransaction', { xdr: 'X', opts: { address: 'C1' } })).toEqual({
+      type: 'PROVIDER_REQUEST',
+      method: 'signTransaction',
       params: { xdr: 'X', opts: { address: 'C1' } },
     })
-    expect(toSignRequest('signAuthEntry', { authEntry: 'E' })).toEqual({
-      type: 'SIGN_REQUEST',
-      action: 'signAuthEntry',
+    expect(toProviderRequest('signAuthEntry', { authEntry: 'E' })).toEqual({
+      type: 'PROVIDER_REQUEST',
+      method: 'signAuthEntry',
       params: { authEntry: 'E' },
     })
   })
 
   it('returns null for an unsupported method (e.g. signMessage)', () => {
-    expect(toSignRequest('signMessage', {})).toBeNull()
+    expect(toProviderRequest('signMessage', {})).toBeNull()
   })
 
-  it('toProviderResult shapes a successful connect result as {address}', () => {
+  it('shapes isConnected from the silent background answer', () => {
+    expect(toProviderResult('isConnected', { ok: true, connected: true, address: 'CACCT' })).toEqual(
+      { result: true }
+    )
+    expect(toProviderResult('isConnected', { ok: true, connected: false, address: null })).toEqual({
+      result: false,
+    })
+    // approval-path connect result carries address but no `connected` flag
+    expect(toProviderResult('isConnected', { ok: true, address: 'CACCT' })).toEqual({ result: true })
+  })
+
+  it('shapes getAddress / sign results', () => {
     expect(toProviderResult('getAddress', { ok: true, address: 'CACCT' })).toEqual({
       result: { address: 'CACCT' },
     })
-    expect(toProviderResult('isConnected', { ok: true, address: 'CACCT' })).toEqual({
-      result: true,
-    })
-  })
-
-  it('toProviderResult shapes a successful signTransaction/signAuthEntry result', () => {
     expect(
       toProviderResult('signTransaction', { ok: true, signedTxXdr: 'SXDR', address: 'CACCT' })
     ).toEqual({ result: { signedTxXdr: 'SXDR', signerAddress: 'CACCT' } })
@@ -50,18 +52,30 @@ describe('providerBridge — page RPC to SIGN_REQUEST mapping', () => {
     ).toEqual({ result: { signedAuthEntry: 'SENTRY', signerAddress: 'CACCT' } })
   })
 
-  it('toProviderResult surfaces the ceremony error on failure', () => {
-    expect(toProviderResult('getAddress', { ok: false, error: 'nope' })).toEqual({ error: 'nope' })
+  it('surfaces failures as structured {code, message} errors, defaulting code to -1', () => {
+    expect(toProviderResult('getAddress', { ok: false, code: -4, error: 'User rejected the request' })).toEqual({
+      error: { code: -4, message: 'User rejected the request' },
+    })
+    expect(toProviderResult('getAddress', { ok: false, error: 'nope' })).toEqual({
+      error: { code: -1, message: 'nope' },
+    })
+    expect(toProviderResult('getAddress', undefined)).toEqual({
+      error: { code: -1, message: 'VF Wallet request failed' },
+    })
   })
 
-  it('handleProviderRequest relays SIGN_REQUEST via sendMessage and posts the mapped result back', async () => {
+  it('handleProviderRequest relays PROVIDER_REQUEST via sendMessage and posts the mapped result', async () => {
     const sendMessage = vi.fn(async () => ({ ok: true, address: 'CACCT' }))
     const post = vi.fn()
     await handleProviderRequest(
       { channel: 'vf-wallet-rpc', dir: 'req', id: 'id1', method: 'getAddress', params: {} },
       { sendMessage, post }
     )
-    expect(sendMessage).toHaveBeenCalledWith({ type: 'SIGN_REQUEST', action: 'connect', params: {} })
+    expect(sendMessage).toHaveBeenCalledWith({
+      type: 'PROVIDER_REQUEST',
+      method: 'getAddress',
+      params: {},
+    })
     expect(post).toHaveBeenCalledWith({
       channel: 'vf-wallet-rpc',
       dir: 'res',
@@ -71,31 +85,39 @@ describe('providerBridge — page RPC to SIGN_REQUEST mapping', () => {
     })
   })
 
-  it('handleProviderRequest posts an error result when the ceremony fails', async () => {
-    const sendMessage = vi.fn(async () => ({ ok: false, error: 'user cancelled' }))
+  it('handleProviderRequest posts the structured error when the background reports failure', async () => {
+    const sendMessage = vi.fn(async () => ({ ok: false, code: -4, error: 'User rejected the request' }))
     const post = vi.fn()
     await handleProviderRequest({ id: 'id2', method: 'signTransaction', params: {} }, { sendMessage, post })
     expect(post).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'id2', error: 'user cancelled' })
+      expect.objectContaining({
+        id: 'id2',
+        error: { code: -4, message: 'User rejected the request' },
+      })
     )
   })
 
-  it('handleProviderRequest posts an error when sendMessage itself rejects', async () => {
+  it('handleProviderRequest posts a -1 error when sendMessage itself rejects', async () => {
     const sendMessage = vi.fn(async () => {
       throw new Error('boom')
     })
     const post = vi.fn()
     await handleProviderRequest({ id: 'id3', method: 'getAddress', params: {} }, { sendMessage, post })
-    expect(post).toHaveBeenCalledWith(expect.objectContaining({ id: 'id3', error: 'boom' }))
+    expect(post).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'id3', error: { code: -1, message: 'boom' } })
+    )
   })
 
-  it('handleProviderRequest posts an unsupported-method error without calling sendMessage', async () => {
+  it('handleProviderRequest posts a -3 unsupported-method error without calling sendMessage', async () => {
     const sendMessage = vi.fn()
     const post = vi.fn()
     await handleProviderRequest({ id: 'id4', method: 'signMessage', params: {} }, { sendMessage, post })
     expect(sendMessage).not.toHaveBeenCalled()
     expect(post).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'id4', error: expect.stringContaining('signMessage') })
+      expect.objectContaining({
+        id: 'id4',
+        error: { code: -3, message: expect.stringContaining('signMessage') },
+      })
     )
   })
 })
