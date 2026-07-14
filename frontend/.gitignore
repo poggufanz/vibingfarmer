@@ -15,3 +15,4 @@ dev-server.log
 *.svelte
 .dev.vars
 vite.config.js.timestamp-*.mjs
+vibingfarmer-extension.zip
