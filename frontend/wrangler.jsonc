@@ -33,6 +33,13 @@
     // Preview (branch) deployments — CORS is exact-match, no wildcard, so only
     // the branch alias URL works (per-commit <hash>.… URLs will NOT pass).
     "preview": {
+      // compatibility_flags + d1_databases are non-inheritable per environment:
+      // without repeating them here the preview Functions worker deploys with
+      // no nodejs_compat ("process is not defined") and no VF_DB binding.
+      "compatibility_flags": ["nodejs_compat"],
+      "d1_databases": [
+        { "binding": "VF_DB", "database_name": "vf-gate", "database_id": "ec1a48cf-bd50-49a3-88b0-c07a12329fd8" }
+      ],
       "vars": {
         "NODE_ENV": "production",
         "ALLOWED_ORIGIN": "https://dev.vibing-farmer.pages.dev",
