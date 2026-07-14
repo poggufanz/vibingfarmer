@@ -22,17 +22,10 @@ export default defineConfig({
           resolve(__dirname, 'vibing_farmer.logo.svg'),
           resolve(OUT, 'vibing_farmer.logo.svg')
         )
-        // Copy background.js directly and remove the "export" keyword so it runs as a classic script
-        const bgContent = readFileSync(resolve(__dirname, 'background.js'), 'utf-8')
-        const cleanBg = bgContent.replace('export async function handleMessage', 'async function handleMessage')
-        writeFileSync(resolve(OUT, 'background.js'), cleanBg)
-
-        // providerInject.js (MAIN world) + providerBridge.js (ISOLATED world) are the two
-        // content scripts that make VF Wallet detectable/connectable from a page (see
-        // manifest.json's content_scripts) — authored with `export` for unit-testability, same
-        // reason + same fix as background.js above: strip every top-level `export ` so they run
-        // as plain classic scripts (content scripts aren't loaded as ES modules here).
-        for (const file of ['providerInject.js', 'providerBridge.js']) {
+        // background.js + the two content scripts are authored with `export` for
+        // unit-testability: strip every top-level `export ` so they run as plain classic
+        // scripts (neither service worker nor content scripts are loaded as ES modules here).
+        for (const file of ['background.js', 'providerInject.js', 'providerBridge.js']) {
           const content = readFileSync(resolve(__dirname, file), 'utf-8')
           const clean = content.replace(/^export (?=(?:async function|function|const|class)\b)/gm, '')
           writeFileSync(resolve(OUT, file), clean)
