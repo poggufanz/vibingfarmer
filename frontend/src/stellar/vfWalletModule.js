@@ -50,6 +50,8 @@ export class VfWalletModule {
     return new Promise((resolve) => {
       const done = () => {
         clearTimeout(timer)
+        // { once: true } only self-removes when the event fires; the timeout path must detach.
+        window.removeEventListener('vfWallet#initialized', done)
         resolve(Boolean(window.vfWallet))
       }
       const timer = setTimeout(done, 300)
