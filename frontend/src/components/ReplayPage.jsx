@@ -218,12 +218,15 @@ export default function ReplayPage() {
           <div className="rp-header__top">
             <h1 className="rp-title">Historical Replay</h1>
             <span className="rp-net">
-              <span className="rp-net__dot" /> Static JSON. No wallet or RPC.
+              <span className="rp-net__dot" /> Ethereum mainnet fork snapshot. Static JSON, no
+              wallet or RPC.
             </span>
           </div>
           <p className="rp-lede">
-            USDC depeg, March 11 2023, replayed on a pinned mainnet fork. Real on-chain swaps at
-            five reaction delays; never a prediction.
+            Ethereum mainnet case study, predating the product's Stellar/Soroban migration: USDC
+            depeg, March 11 2023, replayed on a pinned mainnet fork. Real on-chain swaps at five
+            reaction delays; illustrates manual-vs-agentic execution speed, not a Stellar demo or a
+            prediction.
           </p>
         </header>
 
