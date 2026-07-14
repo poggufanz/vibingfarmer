@@ -23,6 +23,10 @@ vi.mock('../../send.js', async (importOriginal) => {
   const actual = await importOriginal()
   return { ...actual, previewSend: vi.fn(), sendPayment: vi.fn() }
 })
+vi.mock('../../trustline.js', async (importOriginal) => {
+  const actual = await importOriginal()
+  return { ...actual, addTrustline: vi.fn() }
+})
 
 import {
   bootstrap,
@@ -37,12 +41,14 @@ import {
   doFund,
   doPreview,
   doSend,
+  doAddAsset,
   loadActivity,
 } from './controller.js'
 import { readBalances, fundTestnet } from '../../classicAccount.js'
 import { fetchXlmUsd } from '../../prices.js'
 import { fetchHistory } from '../../history.js'
 import { previewSend, sendPayment } from '../../send.js'
+import { addTrustline } from '../../trustline.js'
 
 beforeEach(() => {
   installChromeMock()
@@ -160,6 +166,17 @@ describe('classic controller', () => {
     expect(await doSend(params)).toEqual({ hash: 'x', status: 'SUCCESS' })
     expect(previewSend).toHaveBeenCalledWith(params)
     expect(sendPayment).toHaveBeenCalledWith(params)
+  })
+
+  it('doAddAsset proxies to addTrustline with code + issuer', async () => {
+    addTrustline.mockResolvedValueOnce({ hash: 'x', status: 'SUCCESS', code: 'USDC', issuer: 'GI' })
+    expect(await doAddAsset('USDC', 'GI')).toEqual({
+      hash: 'x',
+      status: 'SUCCESS',
+      code: 'USDC',
+      issuer: 'GI',
+    })
+    expect(addTrustline).toHaveBeenCalledWith({ code: 'USDC', issuer: 'GI' })
   })
 
   it('loadActivity proxies to fetchHistory', async () => {

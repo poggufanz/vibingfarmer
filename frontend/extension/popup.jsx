@@ -22,6 +22,7 @@ import OnboardingScreen from '../src/wallet/ui/classic/OnboardingScreen.jsx'
 import HomeScreen from '../src/wallet/ui/classic/HomeScreen.jsx'
 import SendScreen from '../src/wallet/ui/classic/SendScreen.jsx'
 import ReceiveScreen from '../src/wallet/ui/classic/ReceiveScreen.jsx'
+import AddAssetScreen from '../src/wallet/ui/classic/AddAssetScreen.jsx'
 import HistoryScreen from '../src/wallet/ui/classic/HistoryScreen.jsx'
 import UnlockScreen from '../src/wallet/ui/classic/UnlockScreen.jsx'
 import SettingsScreen from '../src/wallet/ui/classic/SettingsScreen.jsx'
@@ -960,6 +961,10 @@ function Popup() {
             setScreen('classic-send')
           }}
           onReceive={() => setScreen('classic-receive')}
+          onAddAsset={() => {
+            setErr('')
+            setScreen('classic-add-asset')
+          }}
         />
         {err && <p className="vf-error">{err}</p>}
         <HonestyLabels scope="global" />
@@ -1027,6 +1032,41 @@ function Popup() {
         sub="classic · ed25519"
       >
         <ReceiveScreen publicKey={cw.publicKey} />
+      </Shell>
+    )
+  }
+
+  if (screen === 'classic-add-asset') {
+    return (
+      <Shell sub="classic · ed25519">
+        <button
+          type="button"
+          className="vf-btn ghost"
+          style={{ alignSelf: 'flex-start', padding: '6px 4px' }}
+          onClick={() => {
+            setErr('')
+            setScreen('classic-home')
+          }}
+        >
+          ← Back
+        </button>
+        <AddAssetScreen
+          busy={busy}
+          error={err}
+          onAddAsset={async (code, issuer) => {
+            setBusy(true)
+            setErr('')
+            try {
+              await C.doAddAsset(code, issuer)
+              await refresh(cw.publicKey)
+              setScreen('classic-home')
+            } catch (e) {
+              setErr(String(e?.message || e))
+            } finally {
+              setBusy(false)
+            }
+          }}
+        />
       </Shell>
     )
   }
