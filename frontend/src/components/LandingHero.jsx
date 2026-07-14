@@ -514,7 +514,7 @@ const ECOSYSTEM = [
   { name: 'Stellar', icon: '/logos/stellar.svg' },
   { name: 'Soroban' },
   { name: 'Blend Capital' },
-  { name: 'USDC' },
+  { name: 'Base', icon: '/logos/base.svg' },
   { name: 'Circle CCTP', icon: '/logos/circle.svg' },
   { name: 'OpenZeppelin', icon: '/logos/openzeppelin.svg' },
   { name: 'DeFiLlama' },
