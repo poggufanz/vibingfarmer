@@ -122,6 +122,23 @@ describe('providerBridge — page RPC to PROVIDER_REQUEST mapping', () => {
     )
   })
 
+  it('rewrites the orphaned-content-script error into reload-this-page guidance', async () => {
+    const sendMessage = vi.fn(async () => {
+      throw new Error('Extension context invalidated.')
+    })
+    const post = vi.fn()
+    await handleProviderRequest(
+      { id: 'id5', method: 'getAddress', params: {} },
+      { sendMessage, post }
+    )
+    expect(post).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'id5',
+        error: { code: -1, message: 'VF Wallet was updated — reload this page and try again.' },
+      })
+    )
+  })
+
   it('handleProviderRequest posts a -3 unsupported-method error without calling sendMessage', async () => {
     const sendMessage = vi.fn()
     const post = vi.fn()

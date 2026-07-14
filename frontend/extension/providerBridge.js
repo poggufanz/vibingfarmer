@@ -63,11 +63,17 @@ export async function handleProviderRequest(msg, env = {}) {
     const { result, error } = toProviderResult(msg.method, res)
     post({ channel: CHANNEL, dir: 'res', id: msg.id, result, error })
   } catch (e) {
+    const raw = String(e?.message || e)
+    // Orphaned content script: the extension was reloaded/updated while this page kept the
+    // old injected script — chrome.runtime is gone until the page itself reloads.
+    const message = /extension context invalidated/i.test(raw)
+      ? 'VF Wallet was updated — reload this page and try again.'
+      : raw
     post({
       channel: CHANNEL,
       dir: 'res',
       id: msg.id,
-      error: { code: -1, message: String(e?.message || e) },
+      error: { code: -1, message },
     })
   }
 }
