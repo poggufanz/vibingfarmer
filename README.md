@@ -209,9 +209,9 @@ One typed skill file per agent (deposit-only; amounts in 7-dp base units):
 
 ## Prerequisites
 
-- Stellar wallet on **testnet**: [Freighter](https://www.freighter.app), xBull, or Albedo  
+- Stellar wallet on **testnet**: [Freighter](https://www.freighter.app), xBull, or Albedo — **or [VF Wallet](https://github.com/poggufanz/vibingfarmer/releases/latest/download/vibingfarmer-extension.zip)**, our passkey wallet extension with a built-in testnet USDC faucet ([all releases](https://github.com/poggufanz/vibingfarmer/releases)). Install: unzip → `chrome://extensions` → Developer mode → Load unpacked.  
 - Funded testnet account ([Friendbot](https://friendbot.stellar.org)). Relayer pays agent fees, so you pay 0 gas for agent txs.  
-- Testnet USDC from the deployed token contract for deposits  
+- Testnet USDC for deposits — VF Wallet dispenses it from its faucet; other wallets need it from the deployed token contract.  
 
 ---
 
