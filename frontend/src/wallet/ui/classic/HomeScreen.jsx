@@ -9,6 +9,7 @@ export default function HomeScreen({
   onSend,
   onReceive,
   onAddAsset,
+  onGetUsdc,
   busy,
 }) {
   const [copied, setCopied] = useState(false)
@@ -117,6 +118,12 @@ export default function HomeScreen({
           Add asset
         </button>
       </div>
+
+      {onGetUsdc && (
+        <button className="vf-btn" disabled={busy} onClick={onGetUsdc}>
+          {busy ? 'Working…' : 'Get test USDC'}
+        </button>
+      )}
 
       <ul className="vf-tokens">
         {(portfolio?.rows ?? []).map((r) => (

@@ -57,12 +57,30 @@ describe('/api/faucet handler', () => {
     expect(res.statusCode).toBe(405)
   })
 
-  it('400 on a recipient that is not a valid contract StrKey', async () => {
+  it('400 on a recipient that is neither a valid C nor G StrKey', async () => {
     process.env.VF_FAUCET_SECRET = 'SSECRET'
     const res = mockRes()
-    await handler(mockReq({ action: 'dispense', to: 'not-a-contract' }), res)
+    await handler(mockReq({ action: 'dispense', to: 'not-an-address' }), res)
     expect(res.statusCode).toBe(400)
     expect(JSON.parse(res.body)).toMatchObject({ error: 'Invalid recipient' })
+  })
+})
+
+// Recipient validation now accepts BOTH a Soroban contract (C, passkey wallet) and a classic
+// ed25519 account (G, seed-phrase wallet). Asserted at the StrKey layer the handler uses, so it
+// stays a pure check with no live RPC dispense (the handler's happy path needs a real network).
+describe('recipient StrKey validation (G + C)', () => {
+  it('accepts a classic G-address and a contract C-address; rejects junk', async () => {
+    const { StrKey } = await import('@stellar/stellar-sdk')
+    const G = 'GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56'
+    const C = 'CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU'
+    const okG = StrKey.isValidEd25519PublicKey(G) || StrKey.isValidContract(G)
+    const okC = StrKey.isValidEd25519PublicKey(C) || StrKey.isValidContract(C)
+    const okJunk =
+      StrKey.isValidEd25519PublicKey('not-an-address') || StrKey.isValidContract('not-an-address')
+    expect(okG).toBe(true)
+    expect(okC).toBe(true)
+    expect(okJunk).toBe(false)
   })
 })
 
