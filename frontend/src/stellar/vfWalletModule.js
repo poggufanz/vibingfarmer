@@ -40,8 +40,23 @@ export class VfWalletModule {
     this._cachedAddress = null
   }
 
-  async isAvailable() {
-    return typeof window !== 'undefined' && !!window.vfWallet
+  // The content script injects at document_start, but the kit can build its picker before the
+  // MAIN-world script ran on slow loads — a one-shot check then hides an installed wallet.
+  // providerInject.js dispatches vfWallet#initialized after wiring window.vfWallet; give that
+  // announce a short grace window before declaring the extension absent.
+  isAvailable() {
+    if (typeof window === 'undefined') return Promise.resolve(false)
+    if (window.vfWallet) return Promise.resolve(true)
+    return new Promise((resolve) => {
+      const done = () => {
+        clearTimeout(timer)
+        // { once: true } only self-removes when the event fires; the timeout path must detach.
+        window.removeEventListener('vfWallet#initialized', done)
+        resolve(Boolean(window.vfWallet))
+      }
+      const timer = setTimeout(done, 300)
+      window.addEventListener('vfWallet#initialized', done, { once: true })
+    })
   }
 
   // Ceremony runs in the extension's own tab (WebAuthn credentials are origin-bound, so it MUST

@@ -28,7 +28,10 @@ describe('createVfWalletProvider', () => {
     const sent = io.post.mock.calls[0][0]
     expect(sent).toMatchObject({ channel: CHANNEL, dir: 'req', method: 'getAddress' })
 
-    io._handler({ source: window, data: { channel: CHANNEL, dir: 'res', id: sent.id, result: { address: 'CACCT' } } })
+    io._handler({
+      source: window,
+      data: { channel: CHANNEL, dir: 'res', id: sent.id, result: { address: 'CACCT' } },
+    })
     expect(await pending).toEqual({ address: 'CACCT' })
   })
 
@@ -43,7 +46,10 @@ describe('createVfWalletProvider', () => {
     const sent = io.post.mock.calls[0][0]
     expect(sent.params).toEqual({ xdr: 'XDR', opts: { address: 'CACCT' } })
 
-    io._handler({ source: window, data: { channel: CHANNEL, dir: 'res', id: sent.id, error: 'user cancelled' } })
+    io._handler({
+      source: window,
+      data: { channel: CHANNEL, dir: 'res', id: sent.id, error: 'user cancelled' },
+    })
     await expect(pending).rejects.toThrow('user cancelled')
   })
 
@@ -56,10 +62,53 @@ describe('createVfWalletProvider', () => {
     const pending = provider.getAddress()
     const sent = io.post.mock.calls[0][0]
 
-    io._handler({ source: window, data: { channel: 'other-channel', dir: 'res', id: sent.id, result: 'nope' } })
+    io._handler({
+      source: window,
+      data: { channel: 'other-channel', dir: 'res', id: sent.id, result: 'nope' },
+    })
     io._handler({ source: {}, data: { channel: CHANNEL, dir: 'res', id: sent.id, result: 'nope' } })
-    io._handler({ source: window, data: { channel: CHANNEL, dir: 'res', id: sent.id, result: { address: 'REAL' } } })
+    io._handler({
+      source: window,
+      data: { channel: CHANNEL, dir: 'res', id: sent.id, result: { address: 'REAL' } },
+    })
 
     expect(await pending).toEqual({ address: 'REAL' })
+  })
+
+  it('rejects with an Error carrying the SEP-43 code when the bridge sends a structured error', async () => {
+    const io = loopback()
+    io.listen = (fn) => {
+      io._handler = fn
+    }
+    const provider = createVfWalletProvider({ post: io.post, listen: io.listen })
+    const pending = provider.signTransaction('XDR', {})
+    const sent = io.post.mock.calls[0][0]
+
+    io._handler({
+      source: window,
+      data: {
+        channel: CHANNEL,
+        dir: 'res',
+        id: sent.id,
+        error: { code: -4, message: 'User rejected the request' },
+      },
+    })
+    await expect(pending).rejects.toMatchObject({ code: -4, message: 'User rejected the request' })
+  })
+
+  it('still rejects plain-string errors (legacy shape) without a code', async () => {
+    const io = loopback()
+    io.listen = (fn) => {
+      io._handler = fn
+    }
+    const provider = createVfWalletProvider({ post: io.post, listen: io.listen })
+    const pending = provider.getAddress()
+    const sent = io.post.mock.calls[0][0]
+
+    io._handler({
+      source: window,
+      data: { channel: CHANNEL, dir: 'res', id: sent.id, error: 'boom' },
+    })
+    await expect(pending).rejects.toThrow('boom')
   })
 })
