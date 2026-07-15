@@ -9,7 +9,12 @@ vi.mock('./client.js', () => ({
   submitUserTx: vi.fn().mockResolvedValue({ hash: 'h1', status: 'SUCCESS' }),
 }))
 vi.mock('./walletKit.js', () => ({ signTxXdr: vi.fn().mockResolvedValue('SIGNED') }))
-import { fundAgent, registryAuthorizeAgent, deployAgentForSession } from './agentSetup.js'
+import {
+  fundAgent,
+  registryAuthorizeAgent,
+  deployAgentForSession,
+  WALLET_SIGN_TIMEOUT_MS,
+} from './agentSetup.js'
 import { buildInvokeTx, buildCreateContractTx, submitUserTx } from './client.js'
 import { signTxXdr } from './walletKit.js'
 import {
@@ -17,7 +22,21 @@ import {
   SOROBAN_ACTIVE_VAULT_ADDRESS,
   SOROBAN_REGISTRY_ADDRESS,
   SOROBAN_TOKEN_ADDRESS,
+  TX_TIMEBOUND_SECONDS,
 } from './config.js'
+
+describe('tx timebound vs wallet sign window', () => {
+  // The bug this pins: the timebound was 60s while the wallet path granted 120s to sign. The
+  // clock starts at BUILD time, so a user who read the popup submitted a txTooLate — which the
+  // relay fallback then reported as a balance error. Any future edit that lets the timebound
+  // drop back under the sign window resurrects it, so fail here instead of in a demo.
+  test('timebound outlives the sign window plus build round-trips', () => {
+    const signWindowSec = WALLET_SIGN_TIMEOUT_MS / 1000
+    expect(TX_TIMEBOUND_SECONDS).toBeGreaterThan(signWindowSec)
+    // Build spends getAccount + getLatestLedger + simulate + prepare before the popup opens.
+    expect(TX_TIMEBOUND_SECONDS - signWindowSec).toBeGreaterThanOrEqual(60)
+  })
+})
 
 beforeEach(() => {
   vi.clearAllMocks()
