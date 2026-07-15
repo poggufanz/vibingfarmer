@@ -2,12 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { Keypair, Account, TransactionBuilder } from '@stellar/stellar-sdk'
 import { NETWORK_PASSPHRASE } from '../stellar/config.js'
-import {
-  KNOWN_ASSETS,
-  classifyTrustAsset,
-  buildChangeTrustXdr,
-  addTrustline,
-} from './trustline.js'
+import { KNOWN_ASSETS, classifyTrustAsset, buildChangeTrustXdr, addTrustline } from './trustline.js'
 
 vi.mock('./classicAccount.js', async () => {
   const { Keypair: RealKeypair } = await import('@stellar/stellar-sdk')
@@ -137,9 +132,7 @@ describe('addTrustline', () => {
     getUnlocked.mockResolvedValueOnce(null)
     const horizon = stubHorizon()
 
-    await expect(addTrustline({ code: 'USDC', issuer: ISSUER, horizon })).rejects.toThrow(
-      'locked'
-    )
+    await expect(addTrustline({ code: 'USDC', issuer: ISSUER, horizon })).rejects.toThrow('locked')
   })
 
   it('maps op_low_reserve to a friendly "not enough XLM" message', async () => {

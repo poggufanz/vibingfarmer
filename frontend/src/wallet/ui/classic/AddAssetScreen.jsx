@@ -12,9 +12,7 @@ export default function AddAssetScreen({ onAddAsset, busy, error }) {
   return (
     <div className="vf-screen vf-add-asset">
       <h2>Add asset</h2>
-      <p className="vf-hint">
-        Add a trustline for any Stellar asset by code + issuer (testnet).
-      </p>
+      <p className="vf-hint">Add a trustline for any Stellar asset by code + issuer (testnet).</p>
 
       {KNOWN_ASSETS.length > 0 && (
         <div className="vf-actions" style={{ flexWrap: 'wrap' }}>

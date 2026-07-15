@@ -24,7 +24,9 @@ describe('AddAssetScreen', () => {
     const onAddAsset = vi.fn()
     render(<AddAssetScreen onAddAsset={onAddAsset} />)
     fireEvent.change(screen.getByLabelText(/asset code/i), { target: { value: 'BAD CODE' } })
-    fireEvent.change(screen.getByLabelText(/issuer/i), { target: { value: KNOWN_ASSETS[0].issuer } })
+    fireEvent.change(screen.getByLabelText(/issuer/i), {
+      target: { value: KNOWN_ASSETS[0].issuer },
+    })
     expect(screen.getByText(/alphanumeric/i)).toBeTruthy()
     expect(screen.getByRole('button', { name: /^add asset$/i }).disabled).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: /^add asset$/i }))
@@ -32,15 +34,11 @@ describe('AddAssetScreen', () => {
   })
 
   it('disables the button while busy even with a valid entry', () => {
-    render(
-      <AddAssetScreen
-        onAddAsset={vi.fn()}
-        busy
-        error=""
-      />
-    )
+    render(<AddAssetScreen onAddAsset={vi.fn()} busy error="" />)
     fireEvent.change(screen.getByLabelText(/asset code/i), { target: { value: 'USDC' } })
-    fireEvent.change(screen.getByLabelText(/issuer/i), { target: { value: KNOWN_ASSETS[0].issuer } })
+    fireEvent.change(screen.getByLabelText(/issuer/i), {
+      target: { value: KNOWN_ASSETS[0].issuer },
+    })
     expect(screen.getByRole('button', { name: /adding/i }).disabled).toBe(true)
   })
 })
