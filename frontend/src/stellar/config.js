@@ -110,6 +110,14 @@ export const LEGACY_AGENT_SETUP = env('VITE_LEGACY_AGENT_SETUP') === '1'
 export const USE_FUNDING_ROUTER = Boolean(SOROBAN_FUNDING_ROUTER_ADDRESS) && !LEGACY_AGENT_SETUP
 // Token + vault-share decimals (both 7). Amounts are i128 in base units (1 VFUSD = 10_000_000).
 export const SOROBAN_DECIMALS = 7
+// Timebound for every tx a HUMAN signs. Load-bearing: it must outlive WALLET_SIGN_TIMEOUT_MS
+// (agentSetup.js, 120s) plus the build's RPC round-trips (getAccount + getLatestLedger +
+// simulate + prepare), because the clock starts at BUILD time, not at popup time. This was 60s
+// — i.e. HALF the sign window the same code grants the user — so anyone who actually read the
+// wallet popup blew the timebound and submitted a txTooLate. The failure then surfaced as an
+// unrelated balance error via the relay fallback (see relay.js), which is why it went unnoticed.
+// agentSetup.test.js pins the invariant.
+export const TX_TIMEBOUND_SECONDS = 300
 export const SOROBAN_BLEND_POOL_ADDRESS = pick('VITE_SOROBAN_BLEND_POOL_ADDRESS', 'blendPool')
 export const SOROBAN_BLEND_USDC_ADDRESS = pick('VITE_SOROBAN_BLEND_USDC_ADDRESS', 'blendUsdc')
 export const SOROBAN_AUTOFARM_VAULT_ADDRESS = pick(
