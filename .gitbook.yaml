@@ -1,0 +1,14 @@
+# GitBook (Git Sync) configuration — https://docs.gitbook.com/getting-started/git-sync
+# The repo root is the docs root so the sidebar can reuse existing top-level docs
+# (prd.md, SECURITY.md, GETTING_STARTED.md, DESIGN.md, FEATURES.md).
+# Note: docs/ is gitignored (local-only) — never reference it from SUMMARY.md.
+
+root: ./
+
+structure:
+  readme: README.md
+  summary: SUMMARY.md
+
+redirects:
+  getting-started: docs-site/quick-start.md
+  security: SECURITY.md
