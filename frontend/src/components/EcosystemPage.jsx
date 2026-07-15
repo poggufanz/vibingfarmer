@@ -41,40 +41,42 @@ const GITHUB_URL = 'https://github.com/poggufanz/vibingfarmer'
 
 /* ── Visual architecture diagram (SVG) ── */
 
-// Node layout coordinates (designed for 800×520 viewBox)
+// Node layout coordinates (designed for 800×560 viewBox). Mirrors the real pipeline in
+// CLAUDE.md: wallet → AI + council/gate → one grant → scoped agents (parallel) → ONE autofarm
+// vault (deposits fee-bumped by the relay) → Blend v2. Single vault, not one-per-agent.
 const ARCH_NODES = [
   {
     id: 'wallet',
     x: 400,
-    y: 40,
+    y: 42,
     label: 'User Wallet',
-    sub: 'Freighter / xBull / Albedo',
+    sub: 'VF Wallet / Freighter',
     icon: 'W',
     color: '#ecebe1',
   },
   {
     id: 'ai',
     x: 400,
-    y: 140,
-    label: 'AI Strategy',
-    sub: 'Venice AI / DeepSeek',
+    y: 134,
+    label: 'AI Strategy + Council',
+    sub: 'AI API',
     icon: 'AI',
     color: '#b8a9ff',
   },
   {
-    id: 'registry',
+    id: 'router',
     x: 400,
-    y: 260,
+    y: 232,
     label: 'Funding Router',
-    sub: 'Budget + expiry',
+    sub: 'One sign: budget + expiry',
     icon: 'FR',
     color: '#cfff3d',
     hero: true,
   },
   {
     id: 'worker1',
-    x: 240,
-    y: 370,
+    x: 244,
+    y: 332,
     label: 'Agent Account 1',
     sub: 'Scoped signer',
     icon: 'A1',
@@ -82,40 +84,41 @@ const ARCH_NODES = [
   },
   {
     id: 'worker2',
-    x: 560,
-    y: 370,
+    x: 556,
+    y: 332,
     label: 'Agent Account 2',
     sub: 'Scoped signer',
     icon: 'A2',
     color: '#ffb86c',
   },
   {
-    id: 'vault1',
-    x: 240,
-    y: 460,
+    id: 'vault',
+    x: 400,
+    y: 430,
     label: 'Autofarm Vault',
-    sub: 'Blend v2 strategy',
-    icon: 'V1',
+    sub: 'Pooled shares (vfVLT)',
+    icon: 'V',
     color: '#7dd3c0',
   },
   {
-    id: 'vault2',
-    x: 560,
-    y: 460,
-    label: 'Autofarm Vault',
-    sub: 'Blend v2 strategy',
-    icon: 'V2',
+    id: 'blend',
+    x: 400,
+    y: 512,
+    label: 'Blend v2 Pool',
+    sub: 'Real testnet lending yield',
+    icon: 'BL',
     color: '#7dd3c0',
   },
 ]
 
 const ARCH_EDGES = [
   { from: 'wallet', to: 'ai', label: 'Amount + limits' },
-  { from: 'ai', to: 'registry', label: 'Reviewed plan' },
-  { from: 'registry', to: 'worker1', label: 'Scoped account' },
-  { from: 'registry', to: 'worker2', label: 'Scoped account' },
-  { from: 'worker1', to: 'vault1', label: 'Deposit' },
-  { from: 'worker2', to: 'vault2', label: 'Deposit' },
+  { from: 'ai', to: 'router', label: 'Reviewed + gated' },
+  { from: 'router', to: 'worker1', label: 'Scoped account' },
+  { from: 'router', to: 'worker2', label: 'Scoped account' },
+  { from: 'worker1', to: 'vault', label: 'Deposit · relayed' },
+  { from: 'worker2', to: 'vault', label: 'Deposit · relayed' },
+  { from: 'vault', to: 'blend', label: 'Supply' },
 ]
 
 function ArchNode({ node }) {
@@ -228,9 +231,9 @@ function ArchDiagram() {
   return (
     <svg
       className="arch-svg"
-      viewBox="0 0 800 520"
+      viewBox="0 0 800 560"
       role="img"
-      aria-label="Architecture: User limits inform the AI strategy, the Funding Router deploys scoped agent accounts, and agents deposit into the Autofarm vault"
+      aria-label="Architecture: the user's limits inform the AI strategy and council gate; one Funding Router signature deploys scoped agent accounts; the agents deposit — fees covered by the relay — into a single Autofarm vault, which supplies the Blend v2 pool for yield"
     >
       <defs>
         <filter id="arch-glow-f">
@@ -241,16 +244,16 @@ function ArchDiagram() {
           </feMerge>
         </filter>
       </defs>
-      {/* gas badge */}
-      <rect x={325} y={494} width={150} height={22} rx={6} className="arch-gas-bg" />
+      {/* gas badge — annotates the relayed deposit hop (fee-bump relay covers agent fees) */}
+      <rect x={585} y={392} width={180} height={22} rx={6} className="arch-gas-bg" />
       <text
-        x={400}
-        y={505}
+        x={675}
+        y={403}
         className="arch-gas-text"
         textAnchor="middle"
         dominantBaseline="central"
       >
-        Network fees: Covered
+        Fee-bump relay: fees covered
       </text>
       {/* edges first (behind nodes) */}
       {ARCH_EDGES.map((e, i) => (

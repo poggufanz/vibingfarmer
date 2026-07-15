@@ -512,13 +512,14 @@ function HonestySection() {
 // official color), styled wordmarks for the rest so the row still reads as one system.
 // Exported so EcosystemPage renders the SAME set — one source of truth for the stack.
 export const ECOSYSTEM = [
-  { name: 'Stellar', icon: '/logos/stellar.svg' },
-  { name: 'Soroban' },
-  { name: 'Blend Capital' },
+  // Soroban is Stellar's own smart-contract platform (same ecosystem, not a separate one) —
+  // named together on one card, as the retired PARTNERS list already did.
+  { name: 'Stellar / Soroban', icon: '/logos/stellar.svg' },
+  { name: 'Blend Capital', icon: '/logos/blend.svg' },
   { name: 'Base', icon: '/logos/base.svg' },
   { name: 'Circle CCTP', icon: '/logos/circle.svg' },
   { name: 'OpenZeppelin', icon: '/logos/openzeppelin.svg' },
-  { name: 'DeFiLlama' },
+  { name: 'DeFiLlama', icon: '/logos/defillama.svg' },
   { name: 'ZeroDev', icon: '/logos/zerodev.svg' },
 ]
 
