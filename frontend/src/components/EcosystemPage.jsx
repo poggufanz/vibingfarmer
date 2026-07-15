@@ -6,75 +6,11 @@
 import { useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import NavBar from './NavBar.jsx'
+import { ECOSYSTEM } from './LandingHero.jsx'
 
 /* ------------------------------------------------------------------ */
 /* data                                                                  */
 /* ------------------------------------------------------------------ */
-
-// Marks are 2-char monospace lockups (no emoji, per design system §8) —
-// rendered uniform in currentColor so no per-partner accent competes with brand.
-const PARTNERS = [
-  {
-    name: 'Stellar / Soroban',
-    subtitle: 'Stellar smart contracts',
-    category: 'CHAIN',
-    description:
-      'The Funding Router grants a capped budget and deploys agent accounts. Each account signs only scoped operations, and the Autofarm vault supplies USDC to Blend.',
-    tags: ['Soroban', 'ed25519 Auth', 'Testnet'],
-    link: 'https://stellar.org/soroban',
-    mark: 'ST',
-  },
-  {
-    name: 'Freighter',
-    subtitle: 'Stellar wallet',
-    category: 'WALLET',
-    description:
-      "Freighter, xBull, and Albedo can sign the Funding Router grant. One signature sets the run's budget and expiry, then deploys its agents.",
-    tags: ['Freighter', 'xBull', 'Albedo'],
-    link: 'https://www.freighter.app',
-    mark: 'FR',
-  },
-  {
-    name: 'Fee-bump Relayer',
-    subtitle: 'Fee sponsorship',
-    category: 'RELAYER',
-    description:
-      'The allowlisted relay fee-bumps agent transactions. Agents sign with ephemeral ed25519 keys, while the relay account pays Stellar network fees.',
-    tags: ['Fee-bump', 'Fees covered', 'ed25519'],
-    link: 'https://developers.stellar.org/docs/build/guides/transactions/fee-bump-transactions',
-    mark: 'FB',
-  },
-  {
-    name: 'Venice AI',
-    subtitle: 'Optional strategy provider',
-    category: 'AI',
-    description:
-      'Venice is an optional strategy provider paid through x402 and authenticated with SIWE. DeepSeek is the default provider, with a deterministic fallback when AI is unavailable.',
-    tags: ['x402', 'SIWE', 'DeepSeek'],
-    link: 'https://venice.ai',
-    mark: 'VA',
-  },
-  {
-    name: 'DeFiLlama',
-    subtitle: 'Yield data',
-    category: 'DATA',
-    description:
-      'APY and TVL data provide market inputs for strategy generation and deposit eligibility checks.',
-    tags: ['APY', 'TVL', 'Market data'],
-    link: 'https://defillama.com',
-    mark: 'DL',
-  },
-  {
-    name: 'Tavily',
-    subtitle: 'Market search',
-    category: 'SEARCH',
-    description:
-      'Current market and security search results provide context for council review and risk checks.',
-    tags: ['Risk signals', 'Market context', 'Search'],
-    link: 'https://tavily.com',
-    mark: 'TV',
-  },
-]
 
 const STANDARDS = [
   {
@@ -105,40 +41,42 @@ const GITHUB_URL = 'https://github.com/poggufanz/vibingfarmer'
 
 /* ── Visual architecture diagram (SVG) ── */
 
-// Node layout coordinates (designed for 800×520 viewBox)
+// Node layout coordinates (designed for 800×560 viewBox). Mirrors the real pipeline in
+// CLAUDE.md: wallet → AI + council/gate → one grant → scoped agents (parallel) → ONE autofarm
+// vault (deposits fee-bumped by the relay) → Blend v2. Single vault, not one-per-agent.
 const ARCH_NODES = [
   {
     id: 'wallet',
     x: 400,
-    y: 40,
+    y: 42,
     label: 'User Wallet',
-    sub: 'Freighter / xBull / Albedo',
+    sub: 'VF Wallet / Freighter',
     icon: 'W',
     color: '#ecebe1',
   },
   {
     id: 'ai',
     x: 400,
-    y: 140,
-    label: 'AI Strategy',
-    sub: 'Venice AI / DeepSeek',
+    y: 134,
+    label: 'AI Strategy + Council',
+    sub: 'AI API',
     icon: 'AI',
     color: '#b8a9ff',
   },
   {
-    id: 'registry',
+    id: 'router',
     x: 400,
-    y: 260,
+    y: 232,
     label: 'Funding Router',
-    sub: 'Budget + expiry',
+    sub: 'One sign: budget + expiry',
     icon: 'FR',
     color: '#cfff3d',
     hero: true,
   },
   {
     id: 'worker1',
-    x: 240,
-    y: 370,
+    x: 244,
+    y: 332,
     label: 'Agent Account 1',
     sub: 'Scoped signer',
     icon: 'A1',
@@ -146,40 +84,41 @@ const ARCH_NODES = [
   },
   {
     id: 'worker2',
-    x: 560,
-    y: 370,
+    x: 556,
+    y: 332,
     label: 'Agent Account 2',
     sub: 'Scoped signer',
     icon: 'A2',
     color: '#ffb86c',
   },
   {
-    id: 'vault1',
-    x: 240,
-    y: 460,
+    id: 'vault',
+    x: 400,
+    y: 430,
     label: 'Autofarm Vault',
-    sub: 'Blend v2 strategy',
-    icon: 'V1',
+    sub: 'Pooled shares (vfVLT)',
+    icon: 'V',
     color: '#7dd3c0',
   },
   {
-    id: 'vault2',
-    x: 560,
-    y: 460,
-    label: 'Autofarm Vault',
-    sub: 'Blend v2 strategy',
-    icon: 'V2',
+    id: 'blend',
+    x: 400,
+    y: 512,
+    label: 'Blend v2 Pool',
+    sub: 'Real testnet lending yield',
+    icon: 'BL',
     color: '#7dd3c0',
   },
 ]
 
 const ARCH_EDGES = [
   { from: 'wallet', to: 'ai', label: 'Amount + limits' },
-  { from: 'ai', to: 'registry', label: 'Reviewed plan' },
-  { from: 'registry', to: 'worker1', label: 'Scoped account' },
-  { from: 'registry', to: 'worker2', label: 'Scoped account' },
-  { from: 'worker1', to: 'vault1', label: 'Deposit' },
-  { from: 'worker2', to: 'vault2', label: 'Deposit' },
+  { from: 'ai', to: 'router', label: 'Reviewed + gated' },
+  { from: 'router', to: 'worker1', label: 'Scoped account' },
+  { from: 'router', to: 'worker2', label: 'Scoped account' },
+  { from: 'worker1', to: 'vault', label: 'Deposit · relayed' },
+  { from: 'worker2', to: 'vault', label: 'Deposit · relayed' },
+  { from: 'vault', to: 'blend', label: 'Supply' },
 ]
 
 function ArchNode({ node }) {
@@ -292,9 +231,9 @@ function ArchDiagram() {
   return (
     <svg
       className="arch-svg"
-      viewBox="0 0 800 520"
+      viewBox="0 0 800 560"
       role="img"
-      aria-label="Architecture: User limits inform the AI strategy, the Funding Router deploys scoped agent accounts, and agents deposit into the Autofarm vault"
+      aria-label="Architecture: the user's limits inform the AI strategy and council gate; one Funding Router signature deploys scoped agent accounts; the agents deposit — fees covered by the relay — into a single Autofarm vault, which supplies the Blend v2 pool for yield"
     >
       <defs>
         <filter id="arch-glow-f">
@@ -305,16 +244,16 @@ function ArchDiagram() {
           </feMerge>
         </filter>
       </defs>
-      {/* gas badge */}
-      <rect x={325} y={494} width={150} height={22} rx={6} className="arch-gas-bg" />
+      {/* gas badge — annotates the relayed deposit hop (fee-bump relay covers agent fees) */}
+      <rect x={585} y={392} width={180} height={22} rx={6} className="arch-gas-bg" />
       <text
-        x={400}
-        y={505}
+        x={675}
+        y={403}
         className="arch-gas-text"
         textAnchor="middle"
         dominantBaseline="central"
       >
-        Network fees: Covered
+        Fee-bump relay: fees covered
       </text>
       {/* edges first (behind nodes) */}
       {ARCH_EDGES.map((e, i) => (
@@ -332,34 +271,26 @@ function ArchDiagram() {
 /* components                                                            */
 /* ------------------------------------------------------------------ */
 
-function PartnerCard({ partner }) {
+// Wordmark fallback for entries without a shipped logo: initials of the first two words
+// (e.g. "Blend Capital" -> "BC", "Soroban" -> "SO"), the same 2-char lockup style as the
+// old partner marks and the design-system wallet monogram.
+function initials(name) {
+  const words = name.split(/\s+/).filter(Boolean)
+  if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase()
+  return name.slice(0, 2).toUpperCase()
+}
+
+function EcoCard({ item }) {
   return (
-    <article className="eco-card">
-      <div className="eco-card__head">
-        <span className="eco-card__mark" aria-hidden="true">
-          {partner.mark}
-        </span>
-        <span className="eco-card__cat">{partner.category}</span>
-      </div>
-      <h3 className="eco-card__name">{partner.name}</h3>
-      <p className="eco-card__sub">{partner.subtitle}</p>
-      <p className="eco-card__desc">{partner.description}</p>
-      <div className="eco-card__tags">
-        {partner.tags.map((t) => (
-          <span key={t} className="eco-tag">
-            {t}
-          </span>
-        ))}
-      </div>
-      <a
-        className="eco-extlink"
-        href={partner.link}
-        target="_blank"
-        rel="noreferrer noopener"
-        aria-label={`Learn more about ${partner.name}`}
-      >
-        Learn more
-      </a>
+    <article className="eco-card eco-card--brand">
+      <span className="eco-card__logo" aria-hidden="true">
+        {item.icon ? (
+          <img src={item.icon} alt="" loading="lazy" />
+        ) : (
+          <span className="eco-card__mark">{initials(item.name)}</span>
+        )}
+      </span>
+      <h3 className="eco-card__name">{item.name}</h3>
     </article>
   )
 }
@@ -431,8 +362,8 @@ export default function EcosystemPage() {
             Core services
           </h2>
           <div className="eco-grid">
-            {PARTNERS.map((p) => (
-              <PartnerCard key={p.name} partner={p} />
+            {ECOSYSTEM.map((item) => (
+              <EcoCard key={item.name} item={item} />
             ))}
           </div>
         </section>
@@ -571,110 +502,63 @@ function EcoStyle() {
   margin-bottom: 1.5rem;
 }
 
-/* ---------- partner cards ---------- */
+/* ---------- ecosystem cards (logo + name, one source with the landing marquee) ---------- */
 .eco-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 0.7rem;
 }
 .eco-card {
   border: 1px solid var(--border-strong, rgba(255,255,255,0.13));
   border-radius: var(--radius-lg, 14px);
   background: var(--bg-card, #1a1b16);
-  padding: clamp(1.1rem, 2.2vw, 1.4rem);
-  display: flex;
-  flex-direction: column;
-  gap: 0.65rem;
   transition: transform 220ms cubic-bezier(0.16,1,0.3,1),
               border-color 220ms ease, box-shadow 220ms ease;
+}
+.eco-card--brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.85rem;
+  padding: clamp(1.4rem, 3vw, 1.9rem) 1rem;
+  text-align: center;
 }
 .eco-card:hover {
   border-color: var(--border-accent, rgba(207,255,61,0.4));
 }
-.eco-card__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-}
-.eco-card__mark {
-  flex-shrink: 0;
+.eco-card__logo {
   display: inline-grid;
   place-items: center;
-  width: 30px;
-  height: 30px;
+  height: 40px;
+}
+.eco-card__logo img {
+  height: 32px;
+  width: auto;
+  /* each logo carries its own official brand color — shown at full strength, not tinted. */
+}
+.eco-card__mark {
+  display: inline-grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
   border: 1px solid var(--border-strong, rgba(255,255,255,0.13));
   border-radius: var(--radius-sm, 4px);
   background: var(--bg-elev, #22231d);
   font-family: var(--font-mono, "JetBrains Mono", monospace);
-  font-size: 0.72rem;
+  font-size: 0.82rem;
   font-weight: 600;
   letter-spacing: 0.02em;
   color: var(--text, #ecebe1);
-}
-.eco-card__cat {
-  font-family: var(--font-mono, monospace);
-  font-size: 0.6rem;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--text-faint, #56564f);
-  background: var(--bg-elev, #22231d);
-  border: 1px solid var(--border, rgba(255,255,255,0.06));
-  border-radius: var(--radius-sm, 4px);
-  padding: 0.28rem 0.55rem;
-  white-space: nowrap;
 }
 .eco-card__name {
   font-family: var(--font-display, "Geist", sans-serif);
   font-weight: 600;
-  font-size: clamp(1rem, 1.5vw, 1.15rem);
+  font-size: clamp(0.9rem, 1.4vw, 1.05rem);
   letter-spacing: -0.015em;
   color: var(--text, #ecebe1);
   margin: 0;
 }
-.eco-card__sub {
-  font-family: var(--font-mono, monospace);
-  font-size: 0.75rem;
-  color: var(--text-muted, #95958a);
-  margin: 0;
-}
-.eco-card__desc {
-  font-family: var(--font-mono, monospace);
-  font-size: 0.78rem;
-  line-height: 1.55;
-  color: var(--text-muted, #95958a);
-  margin: 0;
-  flex-grow: 1;
-}
-.eco-card__tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-}
-.eco-tag {
-  font-family: var(--font-mono, monospace);
-  font-size: 0.62rem;
-  letter-spacing: 0.02em;
-  padding: 0.25rem 0.55rem;
-  border-radius: var(--radius-sm, 4px);
-  background: var(--bg-elev, #22231d);
-  border: 1px solid var(--border, rgba(255,255,255,0.06));
-  color: var(--text-muted, #95958a);
-}
-.eco-extlink {
-  font-family: var(--font-mono, monospace);
-  font-size: 0.74rem;
-  letter-spacing: 0.01em;
-  color: var(--eco-accent);
-  text-decoration: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4ch;
-  margin-top: auto;
-}
-.eco-extlink span { transition: transform 200ms cubic-bezier(0.16,1,0.3,1); }
-.eco-extlink:focus-visible { outline: 2px solid var(--eco-accent); outline-offset: 2px; }
 
 /* ---------- standards row ---------- */
 .eco-stds-wrap {
@@ -960,7 +844,7 @@ function EcoStyle() {
 
 /* ---------- responsive ---------- */
 @media (max-width: 900px) {
-  .eco-grid { grid-template-columns: repeat(2, 1fr); }
+  .eco-grid { grid-template-columns: repeat(3, 1fr); }
   .eco-stds-wrap {
     display: flex;
     overflow-x: auto;
@@ -976,7 +860,7 @@ function EcoStyle() {
   }
 }
 @media (max-width: 580px) {
-  .eco-grid { grid-template-columns: 1fr; }
+  .eco-grid { grid-template-columns: repeat(2, 1fr); }
 }
 `}</style>
   )
