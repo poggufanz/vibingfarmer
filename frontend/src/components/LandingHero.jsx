@@ -508,9 +508,10 @@ function HonestySection() {
   )
 }
 
-// Ecosystem strip: icons where the brand ships one (simple-icons, tinted to the
-// accent), styled wordmarks for the rest so the row still reads as one system.
-const ECOSYSTEM = [
+// Ecosystem strip: icons where the brand ships one (simple-icons, in each brand's own
+// official color), styled wordmarks for the rest so the row still reads as one system.
+// Exported so EcosystemPage renders the SAME set — one source of truth for the stack.
+export const ECOSYSTEM = [
   { name: 'Stellar', icon: '/logos/stellar.svg' },
   { name: 'Soroban' },
   { name: 'Blend Capital' },
@@ -518,7 +519,7 @@ const ECOSYSTEM = [
   { name: 'Circle CCTP', icon: '/logos/circle.svg' },
   { name: 'OpenZeppelin', icon: '/logos/openzeppelin.svg' },
   { name: 'DeFiLlama' },
-  { name: 'ZeroDev' },
+  { name: 'ZeroDev', icon: '/logos/zerodev.svg' },
 ]
 
 function EcosystemBand() {
