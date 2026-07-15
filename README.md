@@ -1,56 +1,63 @@
+<p align="center">
+  <img src="frontend/public/vibing_farmer.logo.png" alt="Vibing Farmer Logo" width="100%" />
+</p>
+
 # Vibing Farmer
 
-<div align="center"><img src=".gitbook/assets/vibing_farmer.logo.png" alt="Vibing Farmer Logo" width="100%"></div>
+> **Set once. Vibe forever.** An AI agent swarm that farms yield for you on Stellar, under limits you sign once and the chain enforces.
 
-## Vibing Farmer
+**Live app:** [vibing-farmer.pages.dev](https://vibing-farmer.pages.dev) · [VF Wallet extension](https://github.com/poggufanz/vibingfarmer/releases/latest/download/vibingfarmer-extension.zip) · Stellar testnet
 
-> **Set once. Vibe forever.** An AI agent swarm that farms yield for you on Stellar — under limits you sign once, enforced on-chain.
+Yield farming is the same loop: find a vault, approve, deposit, do it again for the next protocol. Vibing Farmer turns that into one wallet signature. An AI strategist picks vaults and writes per-agent instructions; workers deposit in parallel; you pay zero gas.
 
-**▶ Live app:** [**vibing-farmer.pages.dev**](https://vibing-farmer.pages.dev) · [VF Wallet extension](https://github.com/poggufanz/vibingfarmer/releases/latest/download/vibingfarmer-extension.zip) · Stellar testnet
+The AI does not get custody of your funds. Each agent runs in a disposable on-chain account with hard limits: how much it can deposit, which vault, until when. Those limits live in contracts (allowance, expiry, vault pin), not in a prompt.
 
-Yield farming is the same clicks repeated: find a vault, approve, deposit, repeat for the next protocol. Vibing Farmer collapses all of it into **one signature**. An AI strategist picks the vaults and writes per-agent instructions; a swarm of worker agents executes the deposits in parallel; you pay **zero gas**.
+---
 
-The AI is never trusted with your money. Every agent runs inside a disposable on-chain account whose powers are pinned by contract — how much it can deposit, into which vault, until when. Limits live on-chain (allowance, expiry, vault pin), not in a prompt.
+## Try it in two minutes
 
-***
+1. Open [vibing-farmer.pages.dev](https://vibing-farmer.pages.dev).
+2. Create a VF Wallet (passkey-based, no seed phrase, no extension required). Freighter, xBull, and Albedo work on testnet if you prefer those.
+3. Get test USDC from VF Wallet's built-in faucet.
+4. Go to Strategy, set amount, risk, and number of agents, review the plan, then sign once.
+5. Watch agents deposit in parallel (gas-free) and follow decisions on the Agent dashboard.
 
-### Try it in two minutes
+Everything runs on Stellar testnet. No real funds.
 
-1. Open [**vibing-farmer.pages.dev**](https://vibing-farmer.pages.dev).
-2. Create a **VF Wallet** — passkey-based, no seed phrase, no extension needed. (Prefer your own? Freighter, xBull, and Albedo work too, on testnet.)
-3. Get test USDC from VF Wallet's **built-in faucet**.
-4. Go to **Strategy** → set amount, risk, number of agents → review the AI's plan → sign **once**.
-5. Watch your agents deposit in parallel, gas-free, and track every decision on the **Agent** dashboard.
+## How it works
 
-Everything runs on Stellar **testnet** — no real funds involved.
+1. **Strategy.** You set deposit amount, risk, and vault count. The AI returns an allocation plan and a skill file per agent, using live DeFiLlama data. A Monte Carlo pass stress-tests the allocation over 200 scenarios before anything runs.
 
-### How it works
+2. **AI council.** Three specialists (yield, risk, market) score the proposal on their own. Disagreements go to a synthesis round. Verdict, cited playbook rules, and conflict resolution are logged for review.
 
-1. **Strategy.** You set deposit amount, risk, and how many vaults. The AI strategist returns an allocation plan plus a skill file per agent, backed by live DeFiLlama market data. Before anything runs, a Monte Carlo simulation stress-tests the allocation over 200 scenarios.
-2. **AI council.** Three specialists (yield, risk, market) score the proposal independently. Disagreements go to a synthesis round. The verdict, cited playbook rules, and conflict resolution are all logged for you to inspect.
-3. **Review.** Every skill file is open in the Skills Drawer — edit caps, expiries, or targets. Nothing runs until you approve.
-4. **One signature.** You sign `funding_router.grant` (budget + expiry). A SEP-41 token allowance _is_ the leash: the router deploys a fresh, scoped `agent_account` per worker and can only pull within what you approved.
-5. **Parallel deposit.** Workers sign deposits with ephemeral ed25519 session keys; a fee-bump relayer sponsors every transaction. One worker failing never aborts the others. You pay 0 gas.
-6. **Attestation.** The strategy JSON is hashed and written on-chain, so anyone holding the original file can verify what was approved.
-7. **Autonomy.** A monitor loop polls positions, flags APY drift, and can propose rebalances — each cycle re-reviewed by the council. A keeper compounds yield on a cron; a lifeboat radar can de-risk the vault at ledger speed under a user-signed mandate.
-8. **Kill switch.** Two user-signed exits that work even if every server is down:
-   * **Global:** `token.approve(router, 0)` — the allowance is the budget; zero it and funding stops.
-   * **Per agent:** `agent_account.revoke()` — flips an on-chain flag every authorization check fails closed on.
+3. **Review.** Skill files open in the Skills Drawer. Edit caps, expiries, or targets. Nothing runs until you approve.
 
-### Security
+4. **One signature.** You sign `funding_router.grant` (budget + expiry). A SEP-41 token allowance is the leash: the router deploys a fresh, scoped `agent_account` per worker and can only pull what you approved.
+
+5. **Parallel deposit.** Workers sign with ephemeral ed25519 session keys. A fee-bump relayer sponsors each transaction. One worker failing does not abort the others. You pay 0 gas.
+
+6. **Attestation.** The strategy JSON is hashed and written on-chain so anyone with the original file can check what was approved.
+
+7. **Autonomy.** A monitor loop polls positions, flags APY drift, and can propose rebalances. Each cycle goes back through the council. A keeper compounds on a cron; lifeboat radar can de-risk the vault at ledger speed under a user-signed mandate.
+
+8. **Kill switch.** Two exits you can sign yourself, even if every server is down:
+   - **Global:** `token.approve(router, 0)` — zero the allowance and funding stops.
+   - **Per agent:** `agent_account.revoke()` — flips an on-chain flag that authorization checks fail closed on.
+
+## Security
 
 Scope is enforced by contracts, not promises:
 
-* Agent accounts are **deposit-only**: pinned vault, amount cap per period, hard expiry. Approve/transfer/anything-else fails closed.
-* The router holds no funds and has **no admin or upgrade path**.
-* Vault hardening: share-inflation guard, untrusted-strategy NAV clamps, balance-delta verification, emergency de-risk and quarantine hatches.
-* The fee-bump relayer only sponsors an **allowlisted** set of operations — and both kill switches work without it.
+- Agent accounts are deposit-only: pinned vault, amount cap per period, hard expiry. Approve, transfer, and anything else fails closed.
+- The router holds no funds and has no admin or upgrade path.
+- Vault hardening includes a share-inflation guard, untrusted-strategy NAV clamps, balance-delta verification, and emergency de-risk / quarantine hatches.
+- The fee-bump relayer only sponsors an allowlisted set of operations. Both kill switches work without it.
 
-The full internal hardening review — threat model, verified controls, test evidence, and honest residual risks — is in [SECURITY.md](SECURITY.md). Testnet software; not an independent audit.
+Threat model, verified controls, test evidence, and residual risks: [SECURITY.md](SECURITY.md). Testnet software; not an independent audit.
 
-***
+---
 
-### Architecture
+## Architecture
 
 ```
 User input (amount, risk level, vault count)
@@ -81,58 +88,58 @@ User input (amount, risk level, vault count)
         Autonomous monitor loop + keeper compound + lifeboat radar
 ```
 
-Single chain: **Stellar / Soroban**. Optional cross-chain leg to Base via Circle CCTP v2 + ZeroDev session keys.
+Primary chain: Stellar / Soroban. Optional cross-chain leg to Base via Circle CCTP v2 + ZeroDev session keys.
 
-***
+---
 
-### Deployed contracts (Stellar testnet)
+## Deployed contracts (Stellar testnet)
 
-| Contract                                    | Address                                                    |
-| ------------------------------------------- | ---------------------------------------------------------- |
+| Contract | Address |
+|----------|---------|
 | Autofarm vault (live deposit, `vfVLT` 7-dp) | `CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77` |
-| Funding router (single-signature grant)     | `CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5` |
-| Registry                                    | `CAP5E2FPDAGEQ7SR55YRY4Z56GPBSTRRZJCYN2PQ6PZQHQJKYEDVM5FB` |
-| Blend USDC token (7-dp)                     | `CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU` |
-| Blend v2 pool                               | `CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF` |
+| Funding router (single-signature grant) | `CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5` |
+| Registry | `CAP5E2FPDAGEQ7SR55YRY4Z56GPBSTRRZJCYN2PQ6PZQHQJKYEDVM5FB` |
+| Blend USDC token (7-dp) | `CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU` |
+| Blend v2 pool | `CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF` |
 
-Verify any of them on [Stellar Expert](https://stellar.expert/explorer/testnet): `https://stellar.expert/explorer/testnet/contract/<address>`. Full manifest with wasm hashes and deploy receipts: [`deployments/stellar-testnet.json`](deployments/stellar-testnet.json).
+Look up any address on [Stellar Expert](https://stellar.expert/explorer/testnet): `https://stellar.expert/explorer/testnet/contract/<address>`. Full manifest (wasm hashes, deploy receipts): [`deployments/stellar-testnet.json`](deployments/stellar-testnet.json).
 
-***
+---
 
-### Tech stack
+## Tech stack
 
-| Layer                  | Technology                                                                                        |
-| ---------------------- | ------------------------------------------------------------------------------------------------- |
-| Smart contracts        | Rust, Soroban SDK, OpenZeppelin Stellar contracts                                                 |
-| Frontend               | React 18, Vite 5, React Router v6, Framer Motion, react-force-graph-2d                            |
-| Chain client           | `@stellar/stellar-sdk`, Stellar Wallets Kit (Freighter / xBull / Albedo)                          |
-| Wallet                 | VF Wallet (passkey smart account + extension) or any standard Stellar wallet                      |
-| AI                     | Venice AI via API key or x402 (SIWE, prepaid USDC); DeepSeek server proxy as zero-config fallback |
-| Yield                  | Autofarm vault → Blend Capital v2 (real testnet lending interest)                                 |
-| Live market data       | DeFiLlama API (APY, TVL, 7-day history); Tavily search for strategy context                       |
-| Gas                    | Own fee-bump relayer (`/api/stellar-relay`, allowlisted ops) — user pays 0                        |
-| Cross-chain (optional) | Circle CCTP v2 + relayer + ZeroDev on Base Sepolia                                                |
-| Crypto                 | ed25519 session keys; libsodium KDF-sealed per-worker key vault                                   |
-| Hosting                | Cloudflare Pages: static SPA + `/api/*` Pages Functions                                           |
+| Layer | Technology |
+|-------|------------|
+| Smart contracts | Rust, Soroban SDK, OpenZeppelin Stellar contracts |
+| Frontend | React 18, Vite 5, React Router v6, Framer Motion, react-force-graph-2d |
+| Chain client | `@stellar/stellar-sdk`, Stellar Wallets Kit (Freighter / xBull / Albedo) |
+| Wallet | VF Wallet (passkey smart account + extension) or any standard Stellar wallet |
+| AI | Venice AI via API key or x402 (SIWE, prepaid USDC); DeepSeek server proxy as zero-config fallback |
+| Yield | Autofarm vault → Blend Capital v2 (testnet lending interest) |
+| Live market data | DeFiLlama API (APY, TVL, 7-day history); Tavily search for strategy context |
+| Gas | Own fee-bump relayer (`/api/stellar-relay`, allowlisted ops) — user pays 0 |
+| Cross-chain (optional) | Circle CCTP v2 + relayer + ZeroDev on Base Sepolia |
+| Crypto | ed25519 session keys; libsodium KDF-sealed per-worker key vault |
+| Hosting | Cloudflare Pages: static SPA + `/api/*` Pages Functions |
 
-***
+---
 
-### Pages
+## Pages
 
-| Route       | Description                                                      |
-| ----------- | ---------------------------------------------------------------- |
-| `/`         | Landing; no wallet required                                      |
-| `/home`     | Portfolio, positions, alerts, market pulse                       |
-| `/strategy` | Wizard: input → connect → skills → permission → execute → done   |
-| `/agent`    | Dashboard: scopes, revoke, monitor status, journal, decision log |
-| `/history`  | Tx and strategy history                                          |
-| `/settings` | Wallet, permissions, agent config, language, skill source        |
-| `/explorer` | On-chain verification (contracts, TVL, test stats); no wallet    |
-| `/replay`   | Timeline replay from static JSON (no RPC)                        |
+| Route | Description |
+|-------|-------------|
+| `/` | Landing; no wallet required |
+| `/home` | Portfolio, positions, alerts, market pulse |
+| `/strategy` | Wizard: input → connect → skills → permission → execute → done |
+| `/agent` | Dashboard: scopes, revoke, monitor status, journal, decision log |
+| `/history` | Tx and strategy history |
+| `/settings` | Wallet, permissions, agent config, language, skill source |
+| `/explorer` | On-chain verification (contracts, TVL, test stats); no wallet |
+| `/replay` | Timeline replay from static JSON (no RPC) |
 
-***
+---
 
-### Skill system
+## Skill system
 
 One typed skill file per agent (deposit-only; amounts in 7-dp base units):
 
@@ -148,13 +155,13 @@ One typed skill file per agent (deposit-only; amounts in 7-dp base units):
 }
 ```
 
-`maxAmount` is 7-dp base units (`1000000000` = 100 USDC). Every field is editable in the Skills Drawer before approval. You can swap custom skill files in Settings.
+`maxAmount` is 7-dp base units (`1000000000` = 100 USDC). Every field is editable in the Skills Drawer before approval. You can load custom skill files in Settings.
 
-***
+---
 
-### Development
+## Development
 
-#### Run locally
+### Run locally
 
 ```bash
 cd frontend
@@ -164,9 +171,9 @@ npm install
 npm run dev                      # http://localhost:5173
 ```
 
-AI keys are optional: paste a Venice key in Settings, set a server-side `DEEPSEEK_API_KEY`, or use neither — a deterministic fallback keeps the demo working.
+AI keys are optional. Paste a Venice key in Settings, set a server-side `DEEPSEEK_API_KEY`, or use neither: a deterministic fallback keeps the demo working.
 
-#### Environment variables
+### Environment variables
 
 Server-side only (Cloudflare Pages env / `.dev.vars` — never `VITE_` for secrets):
 
@@ -183,7 +190,7 @@ TAVILY_API_KEY=tvly-...                           # optional market search
 
 Leave host AI keys unset for a lockdown deploy (users bring their own keys).
 
-#### Contracts
+### Contracts
 
 ```bash
 cd soroban
@@ -192,9 +199,9 @@ cargo test                                   # unit + integration + security dri
 cargo clippy --all-targets -- -D warnings
 ```
 
-Deploy + seed scripts live in `scripts/soroban/`. Addresses land in `deployments/stellar-testnet.json`.
+Deploy and seed scripts live in `scripts/soroban/`. Addresses land in `deployments/stellar-testnet.json`.
 
-#### Frontend scripts
+### Frontend scripts
 
 ```bash
 cd frontend
@@ -205,11 +212,11 @@ npm run build:ext     # VF Wallet extension → extension-dist/
 npm run pages:dev     # build + wrangler pages dev (Functions locally)
 ```
 
-#### CI/CD
+### CI/CD
 
 `.github/workflows/frontend.yml` runs on every push/PR to `main` and `dev`: lint (soft-fail), full Vitest suite, production build. Pushes then auto-deploy to Cloudflare Pages — `dev` → preview, `main` → production.
 
-#### Directory structure
+### Directory structure
 
 ```
 soroban/contracts/     # funding_router, agent_account, rwa_vault (autofarm),
@@ -224,25 +231,25 @@ keeper/                # compound cron Worker + lifeboat radar
 deployments/           # live contract manifests (Stellar testnet, Base Sepolia)
 ```
 
-#### Documentation
+### Documentation
 
-| Document                                  | Focus                                           |
-| ----------------------------------------- | ----------------------------------------------- |
-| [prd.md](prd.md)                          | Product requirements and feature status         |
-| [SECURITY.md](SECURITY.md)                | Threat model, verified controls, residual risks |
-| [GETTING\_STARTED.md](GETTING_STARTED.md) | Local setup and demo checklist                  |
-| [DESIGN.md](DESIGN.md)                    | Design system / UI                              |
-| [soroban/README.md](soroban/)             | Contract build and test                         |
+| Document | Focus |
+|----------|-------|
+| [prd.md](prd.md) | Product requirements and feature status |
+| [SECURITY.md](SECURITY.md) | Threat model, verified controls, residual risks |
+| [GETTING_STARTED.md](GETTING_STARTED.md) | Local setup and demo checklist |
+| [DESIGN.md](DESIGN.md) | Design system / UI |
+| [soroban/README.md](soroban/README.md) | Contract build and test |
 
-***
+---
 
-### Resources
+## Resources
 
-* [Stellar Developers](https://developers.stellar.org) · [Soroban smart contracts](https://developers.stellar.org/docs/build/smart-contracts)
-* [Blend Capital](https://docs.blend.capital) · [Stellar Wallets Kit](https://stellarwalletskit.dev)
-* [Circle CCTP](https://developers.circle.com/cctp) · [ZeroDev](https://docs.zerodev.app)
-* [Venice AI](https://venice.ai) · [DeFiLlama API](https://defillama.com/docs/api) · [Cloudflare Pages](https://developers.cloudflare.com/pages/)
+- [Stellar Developers](https://developers.stellar.org) · [Soroban smart contracts](https://developers.stellar.org/docs/build/smart-contracts)
+- [Blend Capital](https://docs.blend.capital) · [Stellar Wallets Kit](https://stellarwalletskit.dev)
+- [Circle CCTP](https://developers.circle.com/cctp) · [ZeroDev](https://docs.zerodev.app)
+- [Venice AI](https://venice.ai) · [DeFiLlama API](https://defillama.com/docs/api) · [Cloudflare Pages](https://developers.cloudflare.com/pages/)
 
-### License
+## License
 
 MIT
