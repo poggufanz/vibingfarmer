@@ -11,6 +11,8 @@ import {
 } from '../src/wallet/account.js'
 import { addRecoverySigner } from '../src/wallet/recovery.js'
 import { eligibility } from '../src/vfapi/client.js'
+import { getTestUsdc } from '../src/wallet/faucet.js'
+import { VF_TESTNET_ISSUER } from '../src/wallet/trustline.js'
 import { ApproveOverlay } from '../src/wallet/ui/ApproveOverlay.jsx'
 import { HonestyLabels } from '../src/wallet/ui/HonestyLabels.jsx'
 import { toDisplay } from '../src/stellar/format.js'
@@ -761,6 +763,54 @@ function Popup() {
     }
   }
 
+  // Default top-up = 300 USDC (the per-recipient daily faucet cap), in 7-decimal base units.
+  // getTestUsdc loops the 100-cap endpoint to reach it.
+  const USDC_TOPUP_BASE_UNITS = 300n * 10n ** 7n
+
+  // Passkey (C-address): faucet dispenses the SAC straight to the contract — no trustline needed.
+  async function handlePasskeyGetUsdc() {
+    clear()
+    setStatus('Requesting test USDC…')
+    try {
+      const r = await getTestUsdc({ to: wallet.contractId, amount: USDC_TOPUP_BASE_UNITS })
+      const whole = Number(r.dispensed) / 1e7
+      setStatus(
+        r.capped
+          ? `Daily faucet cap reached — added ${whole} USDC.`
+          : `Added ${whole} USDC. Balance updating…`
+      )
+      refreshBalance(wallet.contractId)
+    } catch (e) {
+      setError(String(e?.message || e))
+    }
+  }
+
+  // Classic (G-address): a classic account must trust the USDC issuer before the SAC transfer can
+  // land, so add the trustline first if missing (reserves 0.5 XLM — fund via Friendbot first).
+  async function handleClassicGetUsdc() {
+    setErr('')
+    setBusy(true)
+    try {
+      const balances = await C.refreshHome(cw.publicKey)
+      if (balances.unfunded) {
+        setErr(
+          'Fund the account with XLM first (Fund via Friendbot) — a USDC trustline needs 0.5 XLM.'
+        )
+        return
+      }
+      const hasUsdc = (balances.portfolio?.rows ?? []).some(
+        (row) => row.code === 'USDC' && row.asset === `USDC:${VF_TESTNET_ISSUER}`
+      )
+      if (!hasUsdc) await C.doAddAsset('USDC', VF_TESTNET_ISSUER)
+      await getTestUsdc({ to: cw.publicKey, amount: USDC_TOPUP_BASE_UNITS })
+      await refresh(cw.publicKey)
+    } catch (e) {
+      setErr(String(e?.message || e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   // ── CLASSIC (seed-phrase / ed25519) SCREENS ───────────────────────────────
   // Classic is the default wallet type; the passkey screens below are unmodified and remain
   // reachable via the "switch to passkey wallet" links on classic-create/classic-settings.
@@ -961,6 +1011,7 @@ function Popup() {
             setScreen('classic-send')
           }}
           onReceive={() => setScreen('classic-receive')}
+          onGetUsdc={handleClassicGetUsdc}
           onAddAsset={() => {
             setErr('')
             setScreen('classic-add-asset')
@@ -1319,6 +1370,9 @@ function Popup() {
             </button>
           </div>
         </div>
+        <button className="btn btn-ghost" onClick={handlePasskeyGetUsdc}>
+          Get test USDC
+        </button>
         {error && <p className="err">{error}</p>}
         {status && <p className="info">{status}</p>}
         <p className="vf-hint" style={{ textAlign: 'center', marginTop: 12 }}>

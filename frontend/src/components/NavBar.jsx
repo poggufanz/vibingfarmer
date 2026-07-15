@@ -10,7 +10,7 @@ import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 
 const GITHUB_URL = 'https://github.com/poggufanz/vibingfarmer'
-const WHITEPAPER_URL = '/vibing-farmer-whitepaper.pdf'
+const DOCS_URL = 'https://vibingfarmer.gitbook.io/vibingfarmer/'
 
 function Wordmark() {
   return (
@@ -89,8 +89,8 @@ export default function NavBar({ onLaunch }) {
         <a className="nv-link" href={GITHUB_URL} target="_blank" rel="noreferrer noopener">
           GitHub
         </a>
-        <a className="nv-link" href={WHITEPAPER_URL} target="_blank" rel="noreferrer noopener">
-          Whitepaper
+        <a className="nv-link" href={DOCS_URL} target="_blank" rel="noreferrer noopener">
+          Docs
         </a>
       </div>
 
