@@ -126,7 +126,9 @@ export default async function handler(req, res) {
     return res.end(JSON.stringify({ error: 'Method not allowed' }))
   }
   if (!applyCors(req, res)) return
-  if (!rateLimit(req, res, { max: 3, windowMs: 60_000, bucket: 'faucet' })) return
+  // max 10/min: an in-wallet "get 300 USDC" top-up is 3 back-to-back 100-cap dispenses; the
+  // real abuse bound stays the per-recipient (300) + global (5000) DAILY caps in reserveDaily.
+  if (!rateLimit(req, res, { max: 10, windowMs: 60_000, bucket: 'faucet' })) return
   res.setHeader('Content-Type', 'application/json')
 
   const secret = FAUCET_SECRET()
@@ -144,7 +146,13 @@ export default async function handler(req, res) {
       return res.end(JSON.stringify({ error: 'Faucet token unset', configured: false }))
     }
     const mod = await import('@stellar/stellar-sdk')
-    if (!mod.StrKey.isValidContract(body.to)) return bad(res, 'Invalid recipient')
+    // Accept a Soroban smart account (C, passkey wallet) OR a classic ed25519 account (G,
+    // seed-phrase wallet). The SAC `transfer` in dispenseToken is address-agnostic
+    // (Address.fromString handles both); a G recipient must hold a trustline to this token's
+    // issuer first (the client adds it), else the transfer fails at simulate — fail-closed.
+    const isC = mod.StrKey.isValidContract(body.to)
+    const isG = mod.StrKey.isValidEd25519PublicKey(body.to)
+    if (!isC && !isG) return bad(res, 'Invalid recipient')
     if (!reserveDaily(body.to, effectiveAmount(body.amount)))
       return tooMany(res, 'Daily faucet cap reached')
     const sdk = {
