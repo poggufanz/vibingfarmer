@@ -3,51 +3,40 @@
 // MAIN-world providerInject.js) AND chrome.runtime (isolated-world content scripts keep limited
 // chrome.* access; MAIN-world scripts do not).
 //
-// Relays RPC calls from the page's injected provider (providerInject.js's window.vfWallet) to
-// the EXISTING background router (background.js) as plain SIGN_REQUEST messages — reusing the
-// exact tab-opening ceremony flow the popup already uses for deposit/approve (see ceremony.js),
-// so there is only one ceremony-opening code path in the whole extension.
+// Relays page RPC calls to background.js as PROVIDER_REQUEST messages carrying the ORIGINAL
+// method name — background needs it to answer isConnected/getAddress silently for allowlisted
+// origins (no ceremony) and to open the approve.html consent window otherwise. The page origin
+// is deliberately NOT in the payload: background reads Chrome-verified sender.origin, which the
+// page cannot spoof.
 //
 // Authored with `export` for unit-testability; stripped to a classic script at build time
 // (vite.config.extension.js), same as background.js and providerInject.js.
 export const CHANNEL = 'vf-wallet-rpc'
 
-// window.vfWallet method -> ceremony action name (ceremony.js branches on `action`).
-const ACTION_BY_METHOD = {
-  isConnected: 'connect',
-  getAddress: 'connect',
-  signTransaction: 'signTransaction',
-  signAuthEntry: 'signAuthEntry',
+const SUPPORTED_METHODS = ['isConnected', 'getAddress', 'signTransaction', 'signAuthEntry']
+
+/** Wraps a page RPC call for background.js; null for methods VF Wallet does not support. */
+export function toProviderRequest(method, params) {
+  if (!SUPPORTED_METHODS.includes(method)) return null
+  return { type: 'PROVIDER_REQUEST', method, params: params ?? {} }
 }
 
-/** Maps a page RPC call to the SIGN_REQUEST background.js already knows how to handle. */
-export function toSignRequest(method, params) {
-  const action = ACTION_BY_METHOD[method]
-  if (!action) return null
-  return { type: 'SIGN_REQUEST', action, params: params ?? {} }
-}
-
-/** Maps a ceremony's CEREMONY_RESULT (relayed back as background.js's SIGN_RESULT) to the shape window.vfWallet's caller expects. */
-export function toProviderResult(method, ceremonyResult) {
-  if (!ceremonyResult?.ok) return { error: ceremonyResult?.error || 'VF Wallet request failed' }
+/** Maps background's reply to the shape window.vfWallet's caller expects. */
+export function toProviderResult(method, res) {
+  if (!res?.ok) {
+    return { error: { code: res?.code ?? -1, message: res?.error || 'VF Wallet request failed' } }
+  }
   switch (method) {
     case 'isConnected':
-      return { result: !!ceremonyResult.address }
+      return { result: Boolean(res.connected ?? res.address) }
     case 'getAddress':
-      return { result: { address: ceremonyResult.address } }
+      return { result: { address: res.address } }
     case 'signTransaction':
-      return {
-        result: { signedTxXdr: ceremonyResult.signedTxXdr, signerAddress: ceremonyResult.address },
-      }
+      return { result: { signedTxXdr: res.signedTxXdr, signerAddress: res.address } }
     case 'signAuthEntry':
-      return {
-        result: {
-          signedAuthEntry: ceremonyResult.signedAuthEntry,
-          signerAddress: ceremonyResult.address,
-        },
-      }
+      return { result: { signedAuthEntry: res.signedAuthEntry, signerAddress: res.address } }
     default:
-      return { error: `unsupported vfWallet method: ${method}` }
+      return { error: { code: -3, message: `unsupported vfWallet method: ${method}` } }
   }
 }
 
@@ -59,22 +48,33 @@ export function toProviderResult(method, ceremonyResult) {
 export async function handleProviderRequest(msg, env = {}) {
   const sendMessage = env.sendMessage ?? ((m) => chrome.runtime.sendMessage(m))
   const post = env.post ?? ((m) => window.postMessage(m, '*'))
-  const request = toSignRequest(msg.method, msg.params)
+  const request = toProviderRequest(msg.method, msg.params)
   if (!request) {
     post({
       channel: CHANNEL,
       dir: 'res',
       id: msg.id,
-      error: `unsupported vfWallet method: ${msg.method}`,
+      error: { code: -3, message: `unsupported vfWallet method: ${msg.method}` },
     })
     return
   }
   try {
-    const ceremonyResult = await sendMessage(request)
-    const { result, error } = toProviderResult(msg.method, ceremonyResult)
+    const res = await sendMessage(request)
+    const { result, error } = toProviderResult(msg.method, res)
     post({ channel: CHANNEL, dir: 'res', id: msg.id, result, error })
   } catch (e) {
-    post({ channel: CHANNEL, dir: 'res', id: msg.id, error: String(e?.message || e) })
+    const raw = String(e?.message || e)
+    // Orphaned content script: the extension was reloaded/updated while this page kept the
+    // old injected script — chrome.runtime is gone until the page itself reloads.
+    const message = /extension context invalidated/i.test(raw)
+      ? 'VF Wallet was updated — reload this page and try again.'
+      : raw
+    post({
+      channel: CHANNEL,
+      dir: 'res',
+      id: msg.id,
+      error: { code: -1, message },
+    })
   }
 }
 

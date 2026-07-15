@@ -15,6 +15,7 @@ import {
 import { classifyImport } from './importValidate.js'
 import { pickConfirmIndices } from './backupConfirm.js'
 import { previewSend, sendPayment } from '../../send.js'
+import { addTrustline } from '../../trustline.js'
 import { fetchXlmUsd, portfolioValue } from '../../prices.js'
 import { fetchHistory } from '../../history.js'
 
@@ -105,6 +106,9 @@ export async function doPreview(params) {
 }
 export async function doSend(params) {
   return sendPayment(params)
+}
+export async function doAddAsset(code, issuer) {
+  return addTrustline({ code, issuer })
 }
 export async function loadActivity(publicKey) {
   return fetchHistory(publicKey)
