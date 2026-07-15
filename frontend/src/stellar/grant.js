@@ -16,6 +16,7 @@ import {
   NETWORK_PASSPHRASE,
   SOROBAN_FUNDING_ROUTER_ADDRESS,
   SOROBAN_TOKEN_ADDRESS,
+  TX_TIMEBOUND_SECONDS,
 } from './config.js'
 import {
   addrScVal,
@@ -117,7 +118,9 @@ export async function buildGrantTx({
         agentsVec
       )
     )
-    .setTimeout(60)
+    // The grant is the ONE tx a human reads before signing — its timebound must outlive the
+    // 120s the wallet path allows for that read. See TX_TIMEBOUND_SECONDS.
+    .setTimeout(TX_TIMEBOUND_SECONDS)
     .build()
 
   // Simulate FIRST to capture the retval (Vec<Address> of the to-be-deployed agents).

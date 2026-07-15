@@ -5,7 +5,7 @@
 // Every networked fn takes an injected `server` so unit tests run without a network. Defaults
 // lazily construct the real SDK so a missing package never breaks the vite config load.
 import { xdr } from '@stellar/stellar-sdk'
-import { SOROBAN_RPC_URL, HORIZON_URL, NETWORK_PASSPHRASE } from './config.js'
+import { SOROBAN_RPC_URL, HORIZON_URL, NETWORK_PASSPHRASE, TX_TIMEBOUND_SECONDS } from './config.js'
 import {
   addrScVal,
   i128ScVal,
@@ -96,7 +96,7 @@ export async function buildInvokeTx({ source, contract, method, args = [], serve
     networkPassphrase: NETWORK_PASSPHRASE,
   })
     .addOperation(new Contract(contract).call(method, ...encodeArgs(args)))
-    .setTimeout(60)
+    .setTimeout(TX_TIMEBOUND_SECONDS)
     .build()
   const tx = await s.prepareTransaction(raw) // simulate + assemble (sets the resource fee)
   return { tx, xdr: tx.toEnvelope().toXDR('base64') }
@@ -138,7 +138,7 @@ export async function buildCreateContractTx({
         constructorArgs: encodeArgs(constructorArgs),
       })
     )
-    .setTimeout(60)
+    .setTimeout(TX_TIMEBOUND_SECONDS)
     .build()
   // Simulate FIRST to learn the to-be-created contract address (the host fn's retval)…
   const sim = await s.simulateTransaction(raw)
@@ -148,6 +148,28 @@ export async function buildCreateContractTx({
   // …then prepare (simulate + assemble, sets the resource fee) exactly like buildInvokeTx.
   const tx = await s.prepareTransaction(raw)
   return { tx, xdr: tx.toEnvelope().toXDR('base64'), contractAddress }
+}
+
+/**
+ * Name the tx-level result code behind a sendTransaction ERROR (txTooLate, txInsufficientBalance,
+ * txBadSeq, …). The SDK's parser strips `errorResultXdr` but leaves the decoded `errorResult`, and
+ * without reading it an ERROR is indistinguishable from every other ERROR — which is exactly how a
+ * txTooLate spent a debugging session masquerading as a balance problem.
+ * @param {object} sent sendTransaction response
+ * @returns {string|null} e.g. 'txTooLate', or 'txFeeBumpInnerFailed (txTooLate)'
+ */
+export function sendErrorReason(sent) {
+  try {
+    const result = sent?.errorResult?.result?.()
+    const name = result?.switch?.()?.name
+    if (!name) return null
+    if (name !== 'txFeeBumpInnerFailed') return name
+    // A fee-bump's own code says nothing — the inner tx holds the real reason.
+    const inner = result.innerResultPair?.()?.result?.()?.result?.()?.switch?.()?.name
+    return inner ? `${name} (${inner})` : name
+  } catch {
+    return null // never let diagnostics throw over the error they describe
+  }
 }
 
 /** Poll getTransaction until it leaves NOT_FOUND or the budget is spent. */
@@ -173,7 +195,12 @@ export async function submitUserTx({ signedXdr, server, pollTries = 10, pollInte
   // ponytail: when a fake server is injected (tests) it accepts the raw xdr; the real path
   // rebuilds the Transaction object the SDK's sendTransaction expects.
   const sent = await s.sendTransaction(server ? { xdr: signedXdr } : tx)
-  if (sent.status === 'ERROR') throw new Error('RPC rejected the transaction')
+  if (sent.status === 'ERROR') {
+    const reason = sendErrorReason(sent)
+    throw new Error(
+      reason ? `RPC rejected the transaction: ${reason}` : 'RPC rejected the transaction'
+    )
+  }
   const status = await poll(s, sent.hash, pollTries, pollIntervalMs)
   return { hash: sent.hash, status }
 }
