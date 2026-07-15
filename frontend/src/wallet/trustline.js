@@ -7,13 +7,13 @@ import { NETWORK_PASSPHRASE } from '../stellar/config.js'
 import { horizonServer, withSecret } from './classicAccount.js'
 import { getUnlocked } from './session.js'
 
-// The app's own USDC issuer (VF faucet/testnet) — quick-add chip in AddAssetScreen.
+// The app's own USDC issuer (VF faucet/testnet). Also gates the brand marks in tokenIcons.jsx —
+// a look-alike code from another issuer must not inherit a known asset's logo.
+export const VF_TESTNET_ISSUER = 'GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56'
+
+// Quick-add chips in AddAssetScreen.
 export const KNOWN_ASSETS = [
-  {
-    code: 'USDC',
-    issuer: 'GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56',
-    label: 'USDC (Vibing Farmer testnet)',
-  },
+  { code: 'USDC', issuer: VF_TESTNET_ISSUER, label: 'USDC (Vibing Farmer testnet)' },
 ]
 
 // Pure validation, no network/session access — safe to call on every keystroke.

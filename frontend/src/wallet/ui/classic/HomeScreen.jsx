@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { TokenIcon, tokenName } from './tokenIcons.jsx'
 
 export default function HomeScreen({
   publicKey,
@@ -118,31 +119,21 @@ export default function HomeScreen({
       </div>
 
       <ul className="vf-tokens">
-        {(portfolio?.rows ?? []).map((r) => {
-          const codeLower = r.code.toLowerCase()
-          const isXlm = codeLower === 'xlm'
-          const isUsdc = codeLower === 'usdc'
-          const iconClass = isXlm ? 'xlm' : isUsdc ? 'usdc' : 'unknown'
-          const tokenName = isXlm ? 'Stellar Lumens' : isUsdc ? 'USD Coin' : 'Token'
-
-          return (
-            <li key={r.asset} className="vf-token-row">
-              <div className="vf-token-left">
-                <div className={`vf-token-icon ${iconClass}`}>{r.code.slice(0, 2)}</div>
-                <div className="vf-token-meta">
-                  <span className="vf-token-code">{r.code}</span>
-                  <span className="vf-token-name">{tokenName}</span>
-                </div>
+        {(portfolio?.rows ?? []).map((r) => (
+          <li key={r.asset} className="vf-token-row">
+            <div className="vf-token-left">
+              <TokenIcon asset={r.asset} code={r.code} />
+              <div className="vf-token-meta">
+                <span className="vf-token-code">{r.code}</span>
+                <span className="vf-token-name">{tokenName(r.asset)}</span>
               </div>
-              <div className="vf-token-right">
-                <span className="vf-token-balance">{r.balance}</span>
-                <span className="vf-token-usd">
-                  {r.usd == null ? 'N/A' : `$${r.usd.toFixed(2)}`}
-                </span>
-              </div>
-            </li>
-          )
-        })}
+            </div>
+            <div className="vf-token-right">
+              <span className="vf-token-balance">{r.balance}</span>
+              <span className="vf-token-usd">{r.usd == null ? 'N/A' : `$${r.usd.toFixed(2)}`}</span>
+            </div>
+          </li>
+        ))}
       </ul>
     </div>
   )
