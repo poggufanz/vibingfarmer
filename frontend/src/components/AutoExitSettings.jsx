@@ -53,13 +53,6 @@ const btnStyle = {
   fontWeight: 500,
 }
 
-const primaryBtnStyle = {
-  ...btnStyle,
-  background: 'var(--accent)',
-  borderColor: 'var(--accent)',
-  color: '#fff',
-}
-
 const toggleStyle = (active) => ({
   appearance: 'none',
   border: '1px solid var(--border-strong)',
@@ -264,13 +257,9 @@ export default function AutoExitSettings({ realAddress, addLog }) {
             </span>
             <div style={{ marginTop: 12 }}>
               <button
+                className="btn btn-primary"
                 onClick={handleAuthorizeKey}
                 disabled={loading || !realAddress}
-                style={
-                  realAddress
-                    ? primaryBtnStyle
-                    : { ...primaryBtnStyle, opacity: 0.5, cursor: 'not-allowed' }
-                }
               >
                 {loading ? 'Authorizing…' : 'Authorize scoped exit key'}
               </button>
