@@ -544,6 +544,10 @@ const App = () => {
   // AFTER connect. A latest-value ref lets the already-subscribed poll (and the cold-reconcile
   // that must not prune restored cache) read the current agent list without re-mounting.
   positionsAgentsRef.current = positionsAgents
+  // Wall-clock of the last withdraw per vault (lowercased address). The worker 'position'
+  // handler drops snapshots read at or before this — see the guard there for why.
+  const lastWithdrawAtRef = useR({})
+
   const reconcilePositions = (addr) => {
     const agents = positionsAgentsRef.current
     return reconcilePositionsFromChain(addr, agents ? { agents } : undefined)
@@ -959,6 +963,12 @@ const App = () => {
     }
 
     if (ev.kind === 'position') {
+      // A monitor read STARTED before a withdraw can be DELIVERED after it. mergePositions only
+      // ever raises balances, so committing that snapshot resurrects the swept position as a
+      // ghost balance — and the chain's later 0 can never lower it back down. Drop anything read
+      // at or before the vault's last withdraw; the authoritative chain poll owns the truth.
+      const sweptAt = lastWithdrawAtRef.current[(ev.vaultAddress || '').toLowerCase()]
+      if (sweptAt && (ev.timestamp || 0) <= sweptAt) return
       setAgentData((d) => ({
         ...d,
         lastUpdated: ev.timestamp,
@@ -1534,6 +1544,7 @@ const App = () => {
 
   // After a withdraw: reduce/remove the position, sync the worker, stop the agent if empty
   const handleWithdrawSuccess = (vaultAddress, withdrawnUnits) => {
+    lastWithdrawAtRef.current[(vaultAddress || '').toLowerCase()] = Date.now()
     const pos = agentData.positions[vaultAddress]
     const positions = { ...agentData.positions }
     if (pos) {
@@ -1557,6 +1568,14 @@ const App = () => {
       meta: `Withdrew from ${shortAddr(vaultAddress)}. Position updated.`,
       detail: 'Position balance updated after withdraw; agent monitoring config synced.',
     })
+    // owner_withdraw is terminal: every swept agent is now revoked ON-CHAIN, but `scopes` is
+    // in-memory and nothing re-reads it until the next reconnect — so the permissions panel
+    // kept showing dead agents as active after the funds had already left.
+    if (realAddress) {
+      rehydrateScopes({ owner: realAddress })
+        .then(setScopes)
+        .catch(() => {})
+    }
     // Optimistic subtract above can drift (partial fills, share-price). Chain = truth — but the
     // Soroban RPC read can lag the ledger that just settled the withdraw, returning the PRE-withdraw
     // balance. Committing that stale read would bounce the UI right back up to the old number

@@ -67,7 +67,12 @@ describe('sweepAgents', () => {
       status: 'SUCCESS',
       returnValue: sweptScVal([50_000_000n, 20_000_000n]),
     })
-    const out = await sweepAgents({ owner: OWNER, agentAddresses: AGENTS, to: OWNER, router: ROUTER })
+    const out = await sweepAgents({
+      owner: OWNER,
+      agentAddresses: AGENTS,
+      to: OWNER,
+      router: ROUTER,
+    })
 
     expect(submitUserTx).toHaveBeenCalledTimes(1)
     const call = buildInvokeTx.mock.calls[0][0]
@@ -105,16 +110,16 @@ describe('sweepAgents', () => {
   })
 
   it('splits a position too big for one transaction instead of failing it', async () => {
-    // Live testnet: 5 agents fit the tx budget, 6 do not. 12 agents must cost 3 signatures,
-    // not one impossible transaction — and certainly not 12.
+    // Live calibration: 3 Blend-compounded agents fit the tx budget, 4 do not. 12 agents must
+    // cost 4 signatures, not one impossible transaction — and certainly not 12.
     submitUserTx.mockImplementation(async () => ({
       hash: 'sweepN',
       status: 'SUCCESS',
-      returnValue: sweptScVal(Array(5).fill(1_000n)),
+      returnValue: sweptScVal(Array(3).fill(1_000n)),
     }))
     await sweepAgents({ owner: OWNER, agentAddresses: manyAgents(12), router: ROUTER })
-    expect(submitUserTx).toHaveBeenCalledTimes(3)
-    expect(buildInvokeTx.mock.calls.map((c) => c[0].args[1].vec().length)).toEqual([5, 5, 2])
+    expect(submitUserTx).toHaveBeenCalledTimes(4)
+    expect(buildInvokeTx.mock.calls.map((c) => c[0].args[1].vec().length)).toEqual([3, 3, 3, 3])
   })
 
   it('halves the batch when the chain says the budget is blown, rather than giving up', async () => {
@@ -183,9 +188,9 @@ describe('sweepAgents', () => {
   })
 
   it('refuses to run without a configured router', async () => {
-    await expect(
-      sweepAgents({ owner: OWNER, agentAddresses: AGENTS, router: '' })
-    ).rejects.toThrow(/not configured/i)
+    await expect(sweepAgents({ owner: OWNER, agentAddresses: AGENTS, router: '' })).rejects.toThrow(
+      /not configured/i
+    )
     expect(submitUserTx).not.toHaveBeenCalled()
   })
 })

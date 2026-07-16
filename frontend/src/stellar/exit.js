@@ -16,11 +16,14 @@ import { signTxXdr } from './walletKit.js'
 import { SOROBAN_EXIT_ROUTER_ADDRESS } from './config.js'
 import { addrScVal, fromScVal } from './scval.js'
 
-// How many agents to attempt per sweep transaction. Measured live on testnet: 5 agents fit the
-// transaction budget, 6 raise Error(Budget, ExceededLimit). It is a starting guess, not a law —
-// each owner_withdraw redeems through Blend, whose cost moves with pool state, so the real
-// ceiling drifts. `sweepChunk` halves on the budget error rather than trusting this number.
-export const MAX_AGENTS_PER_SWEEP = 5
+// How many agents to attempt per sweep transaction. Calibrated live TWICE, and the numbers
+// disagree: freshly deposited agents (funds still idle in the vault) fit 5 per tx, but the case
+// that actually matters — funds the keeper long since compounded into Blend — pays for a full
+// strategy unwind per agent, and the 2026-07-16 production session measured 5 AND 4 both blowing
+// Error(Budget, ExceededLimit) while 3 landed. Calibrate for the expensive case: the cheap case
+// merely costs one more (cheap) transaction, the expensive case costs failed simulations and
+// extra popups. Still a guess, not a law — sweepChunk halves on the budget error regardless.
+export const MAX_AGENTS_PER_SWEEP = 3
 
 // A blown resource budget is NOT a recoverable contract error: the host refuses the whole
 // invocation, so an over-large sweep moves nothing at all rather than partially succeeding.
@@ -45,7 +48,10 @@ async function sweepChunk({ owner, agents, to, router, server, sign, out }) {
       server,
     })
     const signed = await sign(unsigned)
-    const res = await submitUserTx({ signedXdr: signed, server })
+    // 60s confirmation budget. Live sweeps have taken ~25s ledger-to-ledger, and the default
+    // 20s poll declared a tx failed that went on to land — the UI then reported agents as
+    // stranded whose funds were already in the owner's wallet.
+    const res = await submitUserTx({ signedXdr: signed, server, pollTries: 30 })
     // Callers zero the position on resolve, so an unconfirmed exit must not resolve.
     if (res.status !== 'SUCCESS') throw new Error(`The exit was not confirmed: ${res.status}.`)
     // No retval on a SUCCESS is not "0 swept" — it means we cannot tell what moved, and leaving
@@ -76,7 +82,7 @@ async function sweepChunk({ owner, agents, to, router, server, sign, out }) {
  * Sweep EVERY agent back to `to`, in as few user-signed transactions as the chain allows — ONE
  * for a normal run, which is the whole point: the deposit costs one signature, so the exit does
  * too. Only a position spread over more agents than fit a single transaction's budget needs more,
- * and then it is ceil(N / ~5) signatures rather than N.
+ * and then it is ceil(N / ~3) signatures rather than N.
  *
  * Returns, positionally per `agentAddresses`: the amount that agent gave up (0 = it had nothing,
  * or refused — revoked, expired, not ours), the transaction that swept it, and the chain's own
