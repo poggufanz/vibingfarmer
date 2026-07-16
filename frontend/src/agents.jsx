@@ -1,17 +1,14 @@
 /* ============================================
-   VIBING FARMER — Agent Graph + Memory (step 05)
-   Hierarchical vis.js Network:
-     Orchestrator → Worker Agents → Step nodes (Swap/Approve/Deposit) → Vault nodes
-   Node colors driven by state: idle / running / confirmed / failed
+   VIBING FARMER — Agent Graph + Memory
+   Graph rendering lives in src/graph/ (PixiJS "Living Current" scene);
+   this file keeps strategy/exec-state UI: tiles, memory modal, cards.
    ============================================ */
 import React, {
   useEffect as useEAg,
-  useMemo as useMAg,
-  useCallback as useCAg,
   useRef as useRAg,
   useState as useSAg,
 } from 'react'
-import ForceGraph2D from 'react-force-graph-2d'
+import { PixiSwarmGraph } from './graph/PixiSwarmGraph.jsx'
 import { Icon } from './components.jsx'
 import { shortAddr } from './screens.jsx'
 import { VAULT_CATALOG } from './config.js'
@@ -19,7 +16,6 @@ import { buildStrategyState, scoreReward, riskCeiling } from './strategy/mdp.js'
 import {
   STEP_IDS,
   STEP_LABELS,
-  buildGraphData,
   rebalancePulseKey,
   buildAutofarmGraphData,
 } from './graph/topology.js'
@@ -136,212 +132,7 @@ const makeInitialExecState = (agents) => {
   return map
 }
 
-/* ============================================
-   Agent Graph — state palette + helpers
-   ============================================ */
-const GRAPH_COLOR = {
-  idle: '#3a3b33',
-  running: '#f0b54a',
-  confirmed: '#6fe39a',
-  skipped: '#6b7280',
-  failed: '#ff7479',
-}
-const GRAPH_COLOR_LIGHT = {
-  idle: '#b8b5aa',
-  running: '#b07a1a',
-  confirmed: '#2d7a4a',
-  skipped: '#6b7280',
-  failed: '#a83a3a',
-}
-const GROUP_BASE = {
-  orchestrator: '#cfff3d',
-  vault: '#6366f1',
-  // vf-autofarm keeper/strategy/pool cluster (static — these nodes have no per-run execMap
-  // entry, so they never transition idle/running/confirmed like a worker's steps do).
-  keeper: '#f0b54a',
-  strategy: '#6fe39a',
-  pool: '#7a9fff',
-}
-// Canvas strokeStyle can't resolve CSS custom properties — literal hex mirroring --accent.
-const PULSE_COLOR = '#cfff3d'
-
-const computeOrchestratorState = (execMap) => {
-  const vals = Object.values(execMap)
-  if (vals.some((a) => a.status === 'failed')) return 'failed'
-  if (vals.every((a) => a.status === 'confirmed')) return 'confirmed'
-  if (vals.some((a) => a.status === 'running')) return 'running'
-  return 'idle'
-}
-
-/* ============================================
-   Agent Graph — force-directed network (Obsidian-style)
-   Topology: Orchestrator → Workers → Steps (Swap/Approve/Deposit) → Vault
-   ============================================ */
-const NODE_R = {
-  orchestrator: 9,
-  worker: 6.5,
-  step: 4,
-  vault: 6.5,
-  keeper: 6.5,
-  strategy: 6,
-  pool: 5.5,
-}
-
-const stepState = (ex) => {
-  const d = ex.steps?.deposit
-  return d === 'confirmed'
-    ? 'confirmed'
-    : d === 'running'
-      ? 'running'
-      : d === 'failed'
-        ? 'failed'
-        : 'idle'
-}
-
-const nodeColor = (node, execMap, palette) => {
-  if (node.kind === 'orchestrator') {
-    const s = computeOrchestratorState(execMap)
-    return s === 'idle' ? GROUP_BASE.orchestrator : palette[s] || palette.idle
-  }
-  // Keeper/strategy/pool nodes are static (no per-run exec state) — always their group color.
-  if (node.kind === 'keeper' || node.kind === 'strategy' || node.kind === 'pool') {
-    return GROUP_BASE[node.kind]
-  }
-  const ex = execMap[node.agentId] || { status: 'idle', steps: {} }
-  if (node.kind === 'worker') return palette[ex.status] || palette.idle
-  if (node.kind === 'step') return palette[ex.steps?.[node.stepId] || 'idle'] || palette.idle
-  const s = stepState(ex)
-  return s === 'idle' ? GROUP_BASE.vault : palette[s] || palette.idle
-}
-
-const nodeRunning = (node, execMap) => {
-  if (node.kind === 'orchestrator') return computeOrchestratorState(execMap) === 'running'
-  if (node.kind === 'keeper' || node.kind === 'strategy' || node.kind === 'pool') return false
-  const ex = execMap[node.agentId] || { status: 'idle', steps: {} }
-  if (node.kind === 'worker') return ex.status === 'running'
-  if (node.kind === 'step') return ex.steps?.[node.stepId] === 'running'
-  return stepState(ex) === 'running'
-}
-
-const AgentGraph = ({
-  strategy,
-  execMap,
-  onAgentClick,
-  paletteIsLight,
-  graphData: graphDataProp,
-  pulseEdge,
-}) => {
-  const fgRef = useRAg(null)
-  const wrapRef = useRAg(null)
-  const execRef = useRAg(execMap)
-  const fittedRef = useRAg(false)
-  const [size, setSize] = useSAg({ w: 0, h: 0 })
-  const [activePulseKey, setActivePulseKey] = useSAg(null)
-  execRef.current = execMap
-  const palette = paletteIsLight ? GRAPH_COLOR_LIGHT : GRAPH_COLOR
-  // `graphData` lets a caller drive the canvas from a pre-built {nodes,links} shape (the
-  // vf-autofarm keeper/strategy/pool cluster — buildAutofarmGraphData) instead of deriving it
-  // from a per-session `strategy` — the same component either way, per-run vs. static topology.
-  const data = useMAg(() => graphDataProp || buildGraphData(strategy), [strategy, graphDataProp])
-
-  // `pulseEdge` = { key, ts } — a rebalance_executed keeper event highlights the matching edge
-  // for ~2.5s, mirroring the running-node glow's transient-state pattern above (shadowBlur on
-  // nodeRunning) but applied to a link instead of a node.
-  useEAg(() => {
-    if (!pulseEdge?.key) return undefined
-    setActivePulseKey(pulseEdge.key)
-    const t = setTimeout(() => setActivePulseKey(null), 2600)
-    return () => clearTimeout(t)
-  }, [pulseEdge?.key, pulseEdge?.ts])
-
-  // Measure container so the canvas fills it
-  useEAg(() => {
-    if (!wrapRef.current) return
-    const ro = new ResizeObserver(([e]) => {
-      const { width, height } = e.contentRect
-      setSize({ w: width, h: height })
-    })
-    ro.observe(wrapRef.current)
-    return () => ro.disconnect()
-  }, [])
-
-  // Spread the layout a bit wider than the default
-  useEAg(() => {
-    const fg = fgRef.current
-    if (!fg || !size.w) return
-    fg.d3Force('charge')?.strength(-90)
-    fg.d3Force('link')?.distance(30)
-  }, [data, size.w])
-
-  // Repaint when execution state changes (also gives an Obsidian-like nudge)
-  useEAg(() => {
-    fgRef.current?.d3ReheatSimulation()
-  }, [execMap])
-
-  const drawNode = useCAg(
-    (node, ctx) => {
-      const color = nodeColor(node, execRef.current, palette)
-      const r = NODE_R[node.kind] || 5
-      if (nodeRunning(node, execRef.current)) {
-        ctx.shadowColor = color
-        ctx.shadowBlur = 16
-      }
-      ctx.beginPath()
-      ctx.arc(node.x, node.y, r, 0, 2 * Math.PI)
-      ctx.fillStyle = color
-      ctx.fill()
-      ctx.shadowBlur = 0
-      ctx.lineWidth = 0.6
-      ctx.strokeStyle = paletteIsLight ? 'rgba(0,0,0,0.15)' : 'rgba(255,255,255,0.18)'
-      ctx.stroke()
-      ctx.font = '600 4px Geist, sans-serif'
-      ctx.textAlign = 'center'
-      ctx.textBaseline = 'top'
-      ctx.fillStyle = paletteIsLight ? '#4a4840' : '#cfcdc4'
-      ctx.fillText(node.name, node.x, node.y + r + 1.5)
-    },
-    [palette, paletteIsLight]
-  )
-
-  return (
-    <div className="agent-graph" ref={wrapRef}>
-      {size.w > 0 && (
-        <ForceGraph2D
-          ref={fgRef}
-          width={size.w}
-          height={size.h}
-          graphData={data}
-          backgroundColor="rgba(0,0,0,0)"
-          nodeCanvasObject={drawNode}
-          nodePointerAreaPaint={(node, color, ctx) => {
-            ctx.fillStyle = color
-            ctx.beginPath()
-            ctx.arc(node.x, node.y, (NODE_R[node.kind] || 5) + 2, 0, 2 * Math.PI)
-            ctx.fill()
-          }}
-          linkColor={(link) =>
-            link.pulseKey && link.pulseKey === activePulseKey
-              ? PULSE_COLOR
-              : paletteIsLight
-                ? '#c4c1b8'
-                : '#3a3a32'
-          }
-          linkWidth={(link) => (link.pulseKey && link.pulseKey === activePulseKey ? 2.5 : 1)}
-          cooldownTicks={120}
-          onEngineStop={() => {
-            if (!fittedRef.current && fgRef.current) {
-              fgRef.current.zoomToFit(400, 24)
-              fittedRef.current = true
-            }
-          }}
-          onNodeClick={(node) => {
-            if (node.kind === 'worker') onAgentClick?.(node.id)
-          }}
-        />
-      )}
-    </div>
-  )
-}
+const AgentGraph = PixiSwarmGraph
 
 /* ============================================
    Agent execution legend + summary tiles
