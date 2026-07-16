@@ -35,7 +35,11 @@ const layoutStrategy = (nodes, w, h) => {
 const layoutCluster = (nodes, links, w, h) => {
   const cx = w / 2
   const cy = h * 0.52
-  const R = Math.min(w, h) * 0.3
+  // Pools sit at 1.65R past the ring — on wide-short canvases (e.g. the /agent Swarm panel)
+  // the naive R = min(w,h)*0.3 pushes bottom-bearing pools below the canvas. Clamp R so the
+  // outermost pool ring (1.65R) plus label clearance stays within [0, h] both above and below cy.
+  const PAD = 28 // pool orb + label clearance
+  const R = Math.min(Math.min(w, h) * 0.3, (cy - PAD) / 1.65, (h - cy - PAD) / 1.65)
   const pos = new Map()
   const vault = nodes.find((n) => n.kind === 'vault')
   if (vault) pos.set(vault.id, { x: cx, y: cy })

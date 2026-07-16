@@ -75,6 +75,28 @@ describe('cluster layout', () => {
   })
 })
 
+describe('cluster layout on a wide-short canvas', () => {
+  it('keeps every node (including pools) inside the [0,w] x [0,h] bounds', () => {
+    const panelW = 650
+    const panelH = 330
+    const data = buildAutofarmGraphData({
+      vaultAddress: 'V',
+      keeperAddress: 'K',
+      strategies: [
+        { address: 'S1', poolAddress: 'P1' },
+        { address: 'S2', poolAddress: 'P2' },
+      ],
+    })
+    const { positions } = layoutGraph(data, panelW, panelH)
+    positions.forEach((p, id) => {
+      expect(p.x, `${id}.x within [0, ${panelW}]`).toBeGreaterThanOrEqual(0)
+      expect(p.x, `${id}.x within [0, ${panelW}]`).toBeLessThanOrEqual(panelW)
+      expect(p.y, `${id}.y within [0, ${panelH}]`).toBeGreaterThanOrEqual(0)
+      expect(p.y, `${id}.y within [0, ${panelH}]`).toBeLessThanOrEqual(panelH)
+    })
+  })
+})
+
 describe('generic layout', () => {
   it('rings by BFS depth from the highest-degree node', () => {
     const data = {
