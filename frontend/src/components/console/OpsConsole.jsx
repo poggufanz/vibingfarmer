@@ -111,6 +111,7 @@ export default function OpsConsole({
         lastUpdated={lastUpdated}
         nowMs={now}
         userAddress={userAddress}
+        scopes={scopes}
         withdrawEnabled={withdrawEnabled}
         onWithdrawSuccess={onWithdrawSuccess}
         onNewStrategy={onNewStrategy}

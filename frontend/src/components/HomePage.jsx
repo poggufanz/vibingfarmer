@@ -12,6 +12,7 @@ import { loadSettings, t } from '../settingsStore.js'
 import { useNavigateTo } from '../router.js'
 import { YieldLine } from './SignatureMark.jsx'
 import { toDisplay } from '../stellar/format.js'
+import { pickVaultAgents } from '../positionsStore.js'
 import { Icon } from '../components.jsx'
 
 const POLL_MS = 10 * 60 * 1000
@@ -198,6 +199,7 @@ export default function HomePage({
   onOpenAgent,
   onViewHistory,
   onWithdrawSuccess,
+  scopes = [],
 }) {
   const navigateTo = useNavigateTo()
   const [withdrawVault, setWithdrawVault] = useState(null)
@@ -1003,6 +1005,8 @@ export default function HomePage({
                               },
                               balance: p.balance,
                               unclaimedRewards: p.unclaimedRewards,
+                              // The exit is per-agent while this row is the sum over all of them.
+                              agentAddresses: pickVaultAgents(scopes, addr),
                             })
                           }
                         >
@@ -1442,6 +1446,7 @@ export default function HomePage({
           balance={withdrawVault.balance}
           unclaimedRewards={withdrawVault.unclaimedRewards}
           userAddress={userAddress}
+          agentAddresses={withdrawVault.agentAddresses}
           onClose={() => setWithdrawVault(null)}
           onSuccess={onWithdrawSuccess || (() => {})}
         />

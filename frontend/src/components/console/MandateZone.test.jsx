@@ -26,12 +26,20 @@ describe('MandateZone', () => {
     render(<MandateZone scopes={scopes} onRevoke={() => {}} />)
     expect(screen.getByText('1 active scopes, 40.00 USDC total cap')).toBeTruthy()
   })
-  it('revoke fires per row; revoked rows show label instead', () => {
+  it('revoke fires per row; revoked rows are hidden, not rendered as money at risk', () => {
+    // A revoked scope is terminal (owner_withdraw sweeps then revokes) — rendering its cap as a
+    // "Max at risk" card reads as money still allocated after the funds already went home.
     const onRevoke = vi.fn()
     render(<MandateZone scopes={scopes} onRevoke={onRevoke} />)
     fireEvent.click(screen.getByRole('button', { name: /revoke/i }))
     expect(onRevoke).toHaveBeenCalledWith(scopes[0].agent)
-    expect(screen.getByText('Revoked')).toBeTruthy()
+    expect(screen.queryByText(/Max at risk 60.00/)).toBeNull()
+    expect(screen.getByText(/1 exited agent hidden/)).toBeTruthy()
+  })
+  it('all scopes revoked reads as a completed exit, not an empty account', () => {
+    render(<MandateZone scopes={scopes.map((s) => ({ ...s, revoked: true }))} onRevoke={() => {}} />)
+    expect(screen.getByText(/All 2 agents exited — funds swept back to your wallet/)).toBeTruthy()
+    expect(screen.queryByText(/Max at risk/)).toBeNull()
   })
   it('empty state', () => {
     render(<MandateZone scopes={[]} onRevoke={() => {}} />)

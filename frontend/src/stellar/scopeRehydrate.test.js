@@ -26,11 +26,12 @@ function scope({ expiry = NOW + 3600, revoked = false } = {}) {
 
 const HEALTHY = { getHealth: async () => ({ oldestLedger: 1, ledgerRetentionWindow: 120960 }) }
 
-function seams({ events = [], cache = [], scopes = {} } = {}) {
+function seams({ events = [], cache = [], registry = [], scopes = {} } = {}) {
   return {
     server: HEALTHY,
     fetchEvents: async () => events.map((agent) => ({ agent, owner: OWNER, cap: 1n })),
     loadCache: () => cache.map((agentAddress) => ({ agentAddress })),
+    queryAgents: async () => registry,
     readScope: async (agent) => (agent in scopes ? scopes[agent] : null),
   }
 }
@@ -80,20 +81,42 @@ describe('rehydrateScopes', () => {
     expect(rows.map((r) => r.agent)).toEqual([AGENT_A])
   })
 
-  it('hides expired grants (includeExpired=false) but keeps revoked (includeRevoked=true)', async () => {
+  it('keeps expired grants by default — an expired agent can still hold funds', async () => {
+    // Hiding expired scopes removed their agents from every withdraw list: 100 USDC sat
+    // invisible in two expired-but-funded agents. owner_withdraw has no expiry gate, so the
+    // exit must keep offering them. Explicit includeExpired:false still hides for callers
+    // that only want live grants.
+    const sources = seams({
+      events: [AGENT_A, AGENT_B],
+      scopes: {
+        [AGENT_A]: scope({ expiry: NOW - 10 }), // expired, possibly still funded → kept
+        [AGENT_B]: scope({ revoked: true }),
+      },
+    })
+    const rows = await rehydrateScopes({ owner: OWNER, nowSec: NOW, ...sources })
+    expect(rows.map((r) => r.agent).sort()).toEqual([AGENT_A, AGENT_B].sort())
+    const hidden = await rehydrateScopes({
+      owner: OWNER,
+      nowSec: NOW,
+      includeExpired: false,
+      ...sources,
+    })
+    expect(hidden.map((r) => r.agent)).toEqual([AGENT_B])
+  })
+
+  it('unions registry-only agents — the legacy direct-deploy path never touched the router', async () => {
+    // Two real agents deployed pre-grant-flow were registry-authorized but not router-deployed:
+    // invisible to Deployed events on a fresh device, so no withdraw list ever offered them.
     const rows = await rehydrateScopes({
       owner: OWNER,
       nowSec: NOW,
       ...seams({
-        events: [AGENT_A, AGENT_B],
-        scopes: {
-          [AGENT_A]: scope({ expiry: NOW - 10 }), // expired → hidden
-          [AGENT_B]: scope({ revoked: true }), // revoked but live → shown
-        },
+        events: [AGENT_A],
+        registry: [AGENT_B],
+        scopes: { [AGENT_A]: scope(), [AGENT_B]: scope() },
       }),
     })
-    expect(rows.map((r) => r.agent)).toEqual([AGENT_B])
-    expect(rows[0].revoked).toBe(true)
+    expect(rows.map((r) => r.agent).sort()).toEqual([AGENT_A, AGENT_B].sort())
   })
 
   it('can include expired and exclude revoked when flags flip', async () => {

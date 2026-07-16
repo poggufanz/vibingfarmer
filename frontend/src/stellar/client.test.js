@@ -53,6 +53,32 @@ describe('soroban client', () => {
     expect(fakeServer.sendTransaction).toHaveBeenCalledOnce()
     expect(out).toEqual({ hash: 'abc123', status: 'SUCCESS' })
   })
+
+  it('submitUserTx throws when the tx lands FAILED on-chain', async () => {
+    // A FAILED tx used to resolve like a successful one, so callers that forgot to check `status`
+    // (4 of 7 did) reported a withdraw that moved no funds as a success. Fail closed here instead.
+    const fakeServer = {
+      sendTransaction: vi.fn(async () => ({ status: 'PENDING', hash: 'dead01' })),
+      getTransaction: vi.fn(async () => ({ status: 'FAILED' })),
+    }
+    await expect(
+      submitUserTx({ signedXdr: 'AAAA==', server: fakeServer, pollIntervalMs: 0 })
+    ).rejects.toThrow(/failed on-chain/i)
+  })
+
+  it('submitUserTx still returns PENDING so callers can decide (it is not a confirmed failure)', async () => {
+    const fakeServer = {
+      sendTransaction: vi.fn(async () => ({ status: 'PENDING', hash: 'pend01' })),
+      getTransaction: vi.fn(async () => ({ status: 'NOT_FOUND' })),
+    }
+    const out = await submitUserTx({
+      signedXdr: 'AAAA==',
+      server: fakeServer,
+      pollTries: 2,
+      pollIntervalMs: 0,
+    })
+    expect(out).toEqual({ hash: 'pend01', status: 'PENDING' })
+  })
 })
 
 describe('buildCreateContractTx', () => {

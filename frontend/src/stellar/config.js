@@ -41,6 +41,10 @@ const NETWORKS = {
     // SEP-41 approve + agent deploys); worker funding = relayed router.pull (0 further signatures). The
     // server relay guard's SOROBAN_ROUTER_ADDRESS env MUST match this exact address.
     fundingRouter: 'CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5',
+    // The exit-side mirror of the grant (exit_router). `sweep(owner, agents, to)` batches one
+    // owner_withdraw per agent into the ONE host-function invocation a tx allows, so leaving N
+    // agents costs ONE signature instead of N. Stateless, no admin, zero custody.
+    exitRouter: 'CDGDIPHBN3MSNURDX33IZBXXQTJPT7THAXSMVBAIOIXLOA6OF32IRS2J',
     // Real-yield source (#2): Blend Capital v2 lending pool the vault supplies into (re-verified
     // live at cutover — spec §7). blendUsdc = the pool's USDC reserve (same SAC as `token`).
     blendPool: 'CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF',
@@ -67,6 +71,7 @@ const NETWORKS = {
     demoAgent: null,
     agentWasmHash: null,
     fundingRouter: null,
+    exitRouter: null,
     blendPool: null,
     blendUsdc: null,
     autofarmVault: null,
@@ -102,6 +107,11 @@ export const SOROBAN_AGENT_WASM_HASH = pick('VITE_SOROBAN_AGENT_WASM_HASH', 'age
 // Optional on purpose (no pick/throw): empty = single-signature flow disabled, legacy path runs.
 export const SOROBAN_FUNDING_ROUTER_ADDRESS =
   env('VITE_SOROBAN_FUNDING_ROUTER_ADDRESS') || NET.fundingRouter || ''
+// Optional on purpose (no pick/throw), same as the funding router above: empty = the one-signature
+// exit is off and withdraw falls back to the per-agent, one-signature-each sweep loop. That is the
+// rollback lever for a freshly deployed exit_router — unset it and nothing else has to change.
+export const SOROBAN_EXIT_ROUTER_ADDRESS =
+  env('VITE_SOROBAN_EXIT_ROUTER_ADDRESS') || NET.exitRouter || ''
 // Escape hatch: force the legacy per-agent deploy/fund signature path even when the router is
 // deployed (VITE_LEGACY_AGENT_SETUP=1). env() helper keeps this vitest/node-safe.
 export const LEGACY_AGENT_SETUP = env('VITE_LEGACY_AGENT_SETUP') === '1'
