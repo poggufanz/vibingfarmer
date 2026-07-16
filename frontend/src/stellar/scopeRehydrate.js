@@ -19,6 +19,7 @@ import {
 import { rpcServer } from './client.js'
 import { loadCachedAgents, readAgentScope } from './agentCache.js'
 import { fetchRouterDeployedEvents } from './routerEvents.js'
+import { queryAgentsByOwner } from './events.js'
 import { toSummary } from '../strategy/permissionScope.js'
 
 // Longest grant preset (GrantPanel DURATION_PRESETS 7d). RPC retention below this means a
@@ -51,11 +52,16 @@ async function warnIfRetentionShort(server) {
  *   vault?: string,
  *   network?: string,
  *   nowSec?: number,
- *   includeRevoked?: boolean,   // default true  (revoked rows shown, greyed by the UI)
- *   includeExpired?: boolean,   // default false (expired grants hidden)
+ *   includeRevoked?: boolean,   // default true (revoked rows shown; the UI decides their fate)
+ *   includeExpired?: boolean,   // default true — an EXPIRED grant can still HOLD FUNDS, and an
+ *                               // expired-with-funds agent is precisely when the user most needs
+ *                               // the exit path. Hiding it here removed such agents from every
+ *                               // withdraw list; 100 USDC sat invisible in two of them. Chain
+ *                               // truth belongs in `scopes`; display filtering is the UI's job.
  *   fetchEvents?: Function,     // test seam
  *   loadCache?: Function,       // test seam
  *   readScope?: Function,       // test seam
+ *   queryAgents?: Function,     // test seam (registry enumeration)
  * }} p
  * @returns {Promise<Array>} rows shaped exactly like the live AgentScopeAuthorized handler's
  */
@@ -66,10 +72,11 @@ export async function rehydrateScopes({
   network = NETWORK_PASSPHRASE,
   nowSec = Math.floor(Date.now() / 1000),
   includeRevoked = true,
-  includeExpired = false,
+  includeExpired = true,
   fetchEvents = fetchRouterDeployedEvents,
   loadCache = loadCachedAgents,
   readScope = readAgentScope,
+  queryAgents = queryAgentsByOwner,
 } = {}) {
   if (!owner) return []
   // No router deployed → the single-signature grant flow is off; nothing to rehydrate.
@@ -78,16 +85,28 @@ export async function rehydrateScopes({
   const s = server || (await rpcServer())
   await warnIfRetentionShort(s)
 
-  // Union: cross-device events ∪ same-browser cache, deduped by agent address.
-  const events = await fetchEvents({
-    server: s,
-    routerAddress: SOROBAN_FUNDING_ROUTER_ADDRESS,
-    owner,
-  }).catch(() => [])
+  // Union of THREE sources, deduped by agent address:
+  //   1. funding_router Deployed events (cross-device, grant-path agents)
+  //   2. same-browser agent cache (retention backstop)
+  //   3. registry records (agents from the LEGACY direct-deploy path — never router-deployed,
+  //      so invisible to source 1 on a fresh device. Two such agents held 100 USDC that every
+  //      withdraw list missed because this union stopped at two sources.)
+  // Every address is then verified against its own on-chain scope below, so a bogus entry from
+  // any source can add nothing.
+  const [events, registry] = await Promise.all([
+    fetchEvents({
+      server: s,
+      routerAddress: SOROBAN_FUNDING_ROUTER_ADDRESS,
+      owner,
+    }).catch(() => []),
+    queryAgents(owner, { server: s }).catch(() => []),
+  ])
   const cached = loadCache({ owner, vault, network })
   const addresses = [
     ...new Set(
-      [...events.map((e) => e.agent), ...cached.map((c) => c.agentAddress)].filter(Boolean)
+      [...events.map((e) => e.agent), ...cached.map((c) => c.agentAddress), ...registry].filter(
+        Boolean
+      )
     ),
   ]
   if (addresses.length === 0) return []
