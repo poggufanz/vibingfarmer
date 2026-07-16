@@ -34,12 +34,12 @@ const layoutStrategy = (nodes, w, h) => {
 
 const layoutCluster = (nodes, links, w, h) => {
   const cx = w / 2
-  const cy = h * 0.52
-  // Pools sit at 1.65R past the ring — on wide-short canvases (e.g. the /agent Swarm panel)
-  // the naive R = min(w,h)*0.3 pushes bottom-bearing pools below the canvas. Clamp R so the
-  // outermost pool ring (1.65R) plus label clearance stays within [0, h] both above and below cy.
+  const cy = h / 2 // provisional — the cluster is re-centered vertically below
+  // Pools sit at 1.65R past the ring, keeper sits at -R above the hub — the occupied vertical
+  // span is at most 2.65R. Clamp R so that span (plus label clearance) fits within h, and so the
+  // widest ring (3.3R across, for sideways-bearing pools) fits within w.
   const PAD = 28 // pool orb + label clearance
-  const R = Math.min(Math.min(w, h) * 0.3, (cy - PAD) / 1.65, (h - cy - PAD) / 1.65)
+  const R = Math.min(Math.min(w, h) * 0.3, (h - 2 * PAD) / 2.65, (w - 2 * PAD) / 3.3)
   const pos = new Map()
   const vault = nodes.find((n) => n.kind === 'vault')
   if (vault) pos.set(vault.id, { x: cx, y: cy })
@@ -71,6 +71,17 @@ const layoutCluster = (nodes, links, w, h) => {
   nodes.forEach((n) => {
     if (!pos.has(n.id)) pos.set(n.id, { x: cx, y: cy })
   })
+  // Re-center vertically: the occupied extent is bottom-heavy (keeper at -R, pools at +1.65R),
+  // so shift every position by the same dy until the top gap equals the bottom gap. A uniform
+  // translation preserves all relative invariants (hub-relative distances, bearings).
+  let minY = Infinity
+  let maxY = -Infinity
+  pos.forEach((p) => {
+    if (p.y < minY) minY = p.y
+    if (p.y > maxY) maxY = p.y
+  })
+  const dy = (h - minY - maxY) / 2
+  pos.forEach((p, id) => pos.set(id, { x: p.x, y: p.y + dy }))
   return pos
 }
 

@@ -95,6 +95,31 @@ describe('cluster layout on a wide-short canvas', () => {
       expect(p.y, `${id}.y within [0, ${panelH}]`).toBeLessThanOrEqual(panelH)
     })
   })
+
+  it('centers the cluster vertically — equal top and bottom gaps', () => {
+    const panelW = 650
+    const panelH = 330
+    const data = buildAutofarmGraphData({
+      vaultAddress: 'V',
+      keeperAddress: 'K',
+      strategies: [
+        { address: 'S1', poolAddress: 'P1' },
+        { address: 'S2', poolAddress: 'P2' },
+      ],
+    })
+    const { positions } = layoutGraph(data, panelW, panelH)
+    let minY = Infinity
+    let maxY = -Infinity
+    positions.forEach((p) => {
+      if (p.y < minY) minY = p.y
+      if (p.y > maxY) maxY = p.y
+    })
+    const topGap = minY
+    const bottomGap = panelH - maxY
+    expect(Math.abs(topGap - bottomGap)).toBeLessThan(1)
+    expect(topGap).toBeGreaterThanOrEqual(20)
+    expect(bottomGap).toBeGreaterThanOrEqual(20)
+  })
 })
 
 describe('generic layout', () => {
