@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
-// DecisionLogPanel pagination — rendered against the real agents.jsx export
-// (only the canvas-bound force graph dependency is stubbed).
-import { describe, it, expect, vi, afterEach } from 'vitest'
+// DecisionLogPanel pagination — rendered against the real agents.jsx export.
+// agents.jsx imports PixiSwarmGraph, but pixi.js is lazy-imported only inside its
+// mount effect (see graph/PixiSwarmGraph.jsx) and DecisionLogPanel never renders that
+// component, so no pixi.js mock is needed here.
+import { describe, it, expect, afterEach } from 'vitest'
 import { render, screen, fireEvent, cleanup } from '@testing-library/react'
-
-vi.mock('react-force-graph-2d', () => ({ default: () => null }))
 
 import { DecisionLogPanel } from './agents.jsx'
 
