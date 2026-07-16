@@ -176,17 +176,20 @@ export function sendErrorReason(sent) {
 async function poll(server, hash, tries, intervalMs) {
   for (let i = 0; i < tries; i++) {
     const r = await server.getTransaction(hash)
-    if (r.status && r.status !== 'NOT_FOUND') return r.status
+    if (r.status && r.status !== 'NOT_FOUND') return r
     if (intervalMs) await new Promise((res) => setTimeout(res, intervalMs))
   }
-  return 'PENDING'
+  return { status: 'PENDING' } // submitted but not yet observed — not (yet) a failure
 }
 
 /**
  * Submit a user-signed transaction (base64 XDR) the user pays for — redeem / claim /
  * registry-authorize. (Agent gasless deposits go through submitViaRelay in relay.js instead.)
+ * `returnValue` is the invoked function's raw ScVal result (present on SUCCESS only) — decode it
+ * with fromScVal. Without it a caller can only see THAT a call succeeded, never what it reported,
+ * which is how a batch that half-worked reads as a clean success.
  * @param {{ signedXdr: string, server?: object, pollTries?: number, pollIntervalMs?: number }} p
- * @returns {Promise<{ hash: string, status: string }>}
+ * @returns {Promise<{ hash: string, status: string, returnValue?: object }>}
  */
 export async function submitUserTx({ signedXdr, server, pollTries = 10, pollIntervalMs = 2000 }) {
   const s = server || (await rpcServer())
@@ -201,12 +204,12 @@ export async function submitUserTx({ signedXdr, server, pollTries = 10, pollInte
       reason ? `RPC rejected the transaction: ${reason}` : 'RPC rejected the transaction'
     )
   }
-  const status = await poll(s, sent.hash, pollTries, pollIntervalMs)
+  const res = await poll(s, sent.hash, pollTries, pollIntervalMs)
   // Fail closed on a confirmed on-chain failure. Returning FAILED like any other value made
   // forgetting to check `status` silent — and 4 of 7 callers forgot, which is how a withdraw that
   // moved nothing reported "Position updated". PENDING still returns: it is not yet a failure.
-  if (status === 'FAILED') throw new Error(`Transaction ${sent.hash} failed on-chain.`)
-  return { hash: sent.hash, status }
+  if (res.status === 'FAILED') throw new Error(`Transaction ${sent.hash} failed on-chain.`)
+  return { hash: sent.hash, status: res.status, returnValue: res.returnValue }
 }
 
 /**

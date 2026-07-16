@@ -5,6 +5,16 @@ import { withdrawAllFromVault } from '../agents/agentController.js'
 import { saveTransaction } from '../history.js'
 import { loadSettings, t } from '../settingsStore.js'
 import { toDisplay } from '../stellar/format.js'
+import { SOROBAN_EXIT_ROUTER_ADDRESS } from '../stellar/config.js'
+import { MAX_AGENTS_PER_SWEEP } from '../stellar/exit.js'
+
+// With the exit router deployed the whole position is swept in batches, so the exit costs the same
+// single signature the deposit does — until a position is spread over more agents than fit one
+// transaction's budget, when it costs one per batch. Unset, it is one per agent. Promising "1
+// signature" and then opening three popups is a worse lie than quoting the real number, so quote it.
+const ONE_SIGNATURE_EXIT = Boolean(SOROBAN_EXIT_ROUTER_ADDRESS)
+const signaturesFor = (agentCount) =>
+  ONE_SIGNATURE_EXIT ? Math.ceil(agentCount / MAX_AGENTS_PER_SWEEP) : agentCount
 
 // The v2 vault exposes no per-deposit timestamp, so "time deposited" is unknown (renders "-").
 // Kept as a 0-stub so the modal effect below is unchanged. ponytail: no chain read to wire here.
@@ -180,9 +190,16 @@ export default function WithdrawModal({
         ) : (
           <div style={{ fontSize: 10.5, opacity: 0.6, marginTop: 5, lineHeight: 1.45 }}>
             This position is held by {agentAddresses.length}{' '}
-            {agentAddresses.length === 1 ? 'agent' : 'agents'}. Each is swept by its own
-            transaction, so your wallet asks you to sign{' '}
-            {agentAddresses.length === 1 ? 'once' : `${agentAddresses.length} times`}.
+            {agentAddresses.length === 1 ? 'agent' : 'agents'}.{' '}
+            {ONE_SIGNATURE_EXIT
+              ? `${
+                  signaturesFor(agentAddresses.length) === 1
+                    ? 'They are all swept by one transaction, so your wallet asks you to sign once'
+                    : `They are swept in ${signaturesFor(agentAddresses.length)} batches, so your wallet asks you to sign ${signaturesFor(agentAddresses.length)} times`
+                } — a busy pool can split a batch and ask once more.`
+              : `Each is swept by its own transaction, so your wallet asks you to sign ${
+                  agentAddresses.length === 1 ? 'once' : `${agentAddresses.length} times`
+                }.`}
           </div>
         )}
 
@@ -205,9 +222,22 @@ export default function WithdrawModal({
         <div style={{ borderTop: '.5px solid rgba(255,255,255,.08)', margin: '10px 0' }} />
         <Row k="You receive" v={`~${balUsdc.toFixed(2)} USDC`} />
         <Row k="Rewards" v={`+${rewardsUsdc.toFixed(2)} USDC (preserved)`} color="var(--ok)" />
-        <Row k="Signatures" v={`${agentAddresses.length} (one per agent)`} />
+        <Row
+          k="Signatures"
+          v={
+            ONE_SIGNATURE_EXIT
+              ? // A floor, not a promise: the batch size is calibrated against a cost that moves
+                // with the pool, so a batch that overruns splits and asks once more. Quote it as
+                // the estimate it is rather than a number the wallet can overshoot.
+                `~${signaturesFor(agentAddresses.length)} (all agents)`
+              : `${agentAddresses.length} (one per agent)`
+          }
+        />
         <Row k="Network fee" v="Paid by you, in XLM" />
-        <Row k="Estimated time" v={`~${Math.max(30, agentAddresses.length * 20)} seconds`} />
+        <Row
+          k="Estimated time"
+          v={`~${Math.max(30, signaturesFor(agentAddresses.length) * 20)} seconds`}
+        />
 
         {error && (
           <div

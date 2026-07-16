@@ -47,7 +47,6 @@ import OnboardingFlow from './components/OnboardingFlow.jsx'
 import CrossChainFarmFlow from './screens/CrossChainFarmFlow.jsx'
 import { OrchestratorAgent } from './orchestrator.js'
 import { makeAgentId } from './worker.js'
-import { ownerWithdraw } from './stellar/exit.js'
 import { VAULT_CATALOG, VENICE_TIMEOUT_MS } from './config.js'
 import {
   SOROBAN_ACTIVE_VAULT_ADDRESS,

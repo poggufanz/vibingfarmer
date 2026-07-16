@@ -4,7 +4,8 @@
 // on-chain harvest, and withdraw is a direct user-signed tx (the user owns the shares) —
 // there is no relayer harvest/withdraw path anymore.
 
-import { ownerWithdraw } from '../stellar/exit.js'
+import { ownerWithdraw, sweepAgents } from '../stellar/exit.js'
+import { SOROBAN_EXIT_ROUTER_ADDRESS } from '../stellar/config.js'
 import { classifyRisk } from '../strategist.js'
 
 let worker = null
@@ -100,12 +101,14 @@ export async function withdrawFromVault(vaultAddress, amount, userAddress, agent
 }
 
 /**
- * Sweep a whole displayed position back to the user.
+ * Sweep a whole displayed position back to the user — ONE wallet signature, like the deposit side.
  *
- * A position is the SUM of every agent's shares, but `owner_withdraw` sweeps ONE agent at a time,
- * and Soroban allows a single host-function invocation per transaction — so N agents is N
- * user-signed transactions. They run sequentially: each needs its own wallet popup, and parallel
- * submissions from one source account race on the sequence number.
+ * A position is the SUM of every agent's shares while `owner_withdraw` sweeps ONE agent whole, and
+ * Soroban allows a single host-function invocation per transaction. That used to make a withdraw N
+ * user-signed transactions and N popups — the entry side takes one signature, the exit side charged
+ * one per agent. `exit_router.sweep` is the missing single invocation: it calls owner_withdraw per
+ * agent under the owner's ONE authorization (see stellar/exit.js for why one signature covers the
+ * whole tree). Without the router configured this falls back to the old per-agent loop.
  *
  * One agent failing does not abort the rest — a revoked or empty agent must not strand the others'
  * funds. The per-agent outcome is returned so the caller can report partial success honestly
@@ -115,11 +118,36 @@ export async function withdrawFromVault(vaultAddress, amount, userAddress, agent
  * @param {string} userAddress
  * @param {string[]} agentAddresses
  * @param {(p: {index: number, total: number, agentAddress: string}) => void} [onProgress]
+ *        Only fires on the per-agent fallback — the sweep is a single step with nothing to count.
  * @returns {Promise<Array<{agentAddress: string, ok: boolean, txHash?: string, error?: string}>>}
  */
 export async function withdrawAllFromVault(vaultAddress, userAddress, agentAddresses, onProgress) {
   if (!agentAddresses?.length)
     throw new Error('withdrawAllFromVault requires at least one agentAddress.')
+
+  if (SOROBAN_EXIT_ROUTER_ADDRESS) {
+    const { swept, txHashes, errors } = await sweepAgents({
+      owner: userAddress,
+      agentAddresses,
+      to: userAddress,
+    })
+    // `swept[i]` is what agent i actually gave up: 0 means it refused or held nothing. A sweep tx
+    // succeeding says only that SOME agent in it paid out, so mapping every agent to ok here would
+    // resurrect the exact bug this reports around — a partial sweep shown as done.
+    return agentAddresses.map((agentAddress, i) => {
+      const amount = swept[i] ?? 0n
+      return amount > 0n
+        ? { agentAddress, ok: true, txHash: txHashes[i] }
+        : {
+            agentAddress,
+            ok: false,
+            // The chain's own words when its batch failed — "the RPC dropped the tx" is worth a
+            // retry and "the agent is empty" is not, and a 0 alone cannot tell them apart.
+            error: errors[i] || 'The agent had nothing to sweep, or refused the exit.',
+          }
+    })
+  }
+
   const results = []
   for (let index = 0; index < agentAddresses.length; index++) {
     const agentAddress = agentAddresses[index]
