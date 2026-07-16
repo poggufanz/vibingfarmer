@@ -47,6 +47,7 @@ import OnboardingFlow from './components/OnboardingFlow.jsx'
 import CrossChainFarmFlow from './screens/CrossChainFarmFlow.jsx'
 import { OrchestratorAgent } from './orchestrator.js'
 import { makeAgentId } from './worker.js'
+import { readContract } from './stellar/client.js'
 import { VAULT_CATALOG, VENICE_TIMEOUT_MS } from './config.js'
 import {
   SOROBAN_ACTIVE_VAULT_ADDRESS,
@@ -547,6 +548,10 @@ const App = () => {
   // Wall-clock of the last withdraw per vault (lowercased address). The worker 'position'
   // handler drops snapshots read at or before this — see the guard there for why.
   const lastWithdrawAtRef = useR({})
+  // Monotonic token for scope rehydrates. Two call sites (connect effect, post-withdraw retry
+  // loop) resolve in any order, and setScopes REPLACES — without this, a slow pre-withdraw
+  // snapshot landing last would revive a just-swept agent as active. Newest request wins.
+  const scopeGenRef = useR(0)
 
   const reconcilePositions = (addr) => {
     const agents = positionsAgentsRef.current
@@ -763,6 +768,7 @@ const App = () => {
     if (!realAddress) return
     let alive = true
     const sync = async () => {
+      const startedAt = Date.now()
       // Prefer the scope-derived agent list (per-run grant agents — kept fresh via
       // positionsAgentsRef); fall back to saved/discovered agents (fresh-browser case),
       // then to reconcilePositions' default (demo agent) when nothing is known.
@@ -795,6 +801,13 @@ const App = () => {
         pollAgents.length ? { agents: pollAgents } : undefined
       ).catch(() => null)
       if (alive && chain) {
+        // A tick's reads can straddle a withdraw: dispatched before the sweep, resolved after
+        // the withdraw's own reconcile corrected the vault — and applyChainPositions REPLACES,
+        // so the stale snapshot would repaint the swept balance for a tick. While a vault's
+        // withdraw is newer than this tick's start, that reconcile owns the key; skip it here.
+        for (const k of Object.keys(chain)) {
+          if ((lastWithdrawAtRef.current[k.toLowerCase()] || 0) >= startedAt) delete chain[k]
+        }
         setAgentData((d) => ({
           ...d,
           positions: applyChainPositions(d.positions, chain),
@@ -1474,6 +1487,27 @@ const App = () => {
   // Optimistically flip the row; the on-chain agent_revoked subscription confirms it.
   const handleRevokeAgent = async (agent) => {
     try {
+      // Revoke is a kill switch, not an exit: on-chain it only flips the flag and clears the
+      // allowance — it never redeems shares. Every withdraw list filters revoked agents out, so
+      // revoking a still-funded agent strands its deposit with no in-app way back. Refuse and
+      // point at the exit that actually moves the money. Fails OPEN on a read failure: an RPC
+      // hiccup must not disable the kill switch — a stranded deposit has a second chance
+      // (withdraw first), a live rogue key does not.
+      const scope = scopes.find((r) => r.agent?.toLowerCase() === agent.toLowerCase())
+      const shares = await readContract({
+        contract: scope?.vault || SOROBAN_ACTIVE_VAULT_ADDRESS,
+        method: 'balance',
+        args: [{ addr: agent }],
+      }).catch(() => 0n)
+      if (BigInt(shares ?? 0) > 0n) {
+        addLog({
+          event: 'AgentFailed',
+          meta: `Revocation blocked: agent ${shortAddr(agent)} still holds ${toDisplay(shares).toFixed(2)} vault shares.`,
+          detail:
+            'Withdraw first — a revoked agent disappears from every withdraw list, which would strand these funds.',
+        })
+        return
+      }
       const { hash: tx } = await revokeAgentOnChain({ owner: realAddress, agent })
       setScopes((prev) =>
         prev.map((s) =>
@@ -1515,9 +1549,10 @@ const App = () => {
   useE(() => {
     if (!realAddress) return
     let alive = true
+    const gen = ++scopeGenRef.current
     rehydrateScopes({ owner: realAddress })
       .then((rows) => {
-        if (alive) setScopes(rows)
+        if (alive && gen === scopeGenRef.current) setScopes(rows)
       })
       .catch(() => {})
     return () => {
@@ -1579,8 +1614,9 @@ const App = () => {
       let scopeTries = 0
       const refreshScopes = async () => {
         scopeTries++
+        const gen = ++scopeGenRef.current
         const rows = await rehydrateScopes({ owner: realAddress }).catch(() => null)
-        if (rows) setScopes(rows)
+        if (rows && gen === scopeGenRef.current) setScopes(rows)
         if (scopeTries >= 6) return
         if (rows && pickVaultAgents(rows, vaultAddress).length === 0) return
         setTimeout(refreshScopes, 2000)
