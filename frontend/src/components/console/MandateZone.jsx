@@ -12,10 +12,15 @@ const PAGE_SIZE = 3
 export default function MandateZone({ scopes = [], onRevoke }) {
   const [page, setPage] = useState(0)
   const active = scopes.filter((s) => !s.revoked)
+  const exited = scopes.length - active.length
   const totalCap = active.reduce((sum, s) => sum + Number(s.capPerPeriod || 0), 0)
-  const pages = Math.max(1, Math.ceil(scopes.length / PAGE_SIZE))
+  // Paginate ACTIVE scopes only — the header already counts only active, and a revoked scope is
+  // terminal (owner_withdraw sweeps then revokes). Rendering dead agents as "Max at risk 40.00
+  // USDC" cards read as money still allocated: a user who swept 100 USDC home saw three of these
+  // summing to exactly 100 and reported the withdraw as never having happened.
+  const pages = Math.max(1, Math.ceil(active.length / PAGE_SIZE))
   const cur = Math.min(page, pages - 1)
-  const pageScopes = scopes.slice(cur * PAGE_SIZE, cur * PAGE_SIZE + PAGE_SIZE)
+  const pageScopes = active.slice(cur * PAGE_SIZE, cur * PAGE_SIZE + PAGE_SIZE)
 
   return (
     <ZoneFrame
@@ -27,6 +32,11 @@ export default function MandateZone({ scopes = [], onRevoke }) {
     >
       {scopes.length === 0 ? (
         <div className="zone-empty">No scoped agents. Create a grant to add scopes.</div>
+      ) : active.length === 0 ? (
+        <div className="zone-empty">
+          All {exited} agents exited — funds swept back to your wallet. Create a grant to farm
+          again.
+        </div>
       ) : (
         pageScopes.map((s, i) => (
           <div className="mandate-row" key={s.agent}>
@@ -41,20 +51,22 @@ export default function MandateZone({ scopes = [], onRevoke }) {
               </span>
               <Gauge value={Number(s.maxAtRisk)} max={Number(s.capPerPeriod)} />
             </div>
-            {s.revoked ? (
-              <span className="mono mandate-revoked">Revoked</span>
-            ) : (
-              <button
-                className="btn btn-ghost pos-cta mandate-revoke"
-                onClick={() => onRevoke(s.agent)}
-              >
-                Revoke
-              </button>
-            )}
+            <button
+              className="btn btn-ghost pos-cta mandate-revoke"
+              onClick={() => onRevoke(s.agent)}
+            >
+              Revoke
+            </button>
           </div>
         ))
       )}
       <Pager page={cur} pages={pages} onPage={setPage} />
+      {exited > 0 && active.length > 0 && (
+        <div className="mono mandate-exited" style={{ opacity: 0.5, fontSize: 10 }}>
+          {exited} exited agent{exited === 1 ? '' : 's'} hidden (revoked on-chain, nothing at
+          risk).
+        </div>
+      )}
       <div className="mandate-guards mono">
         Revocable: Yes, anytime on-chain. Expiry uses the SEP-41 allowance.
       </div>

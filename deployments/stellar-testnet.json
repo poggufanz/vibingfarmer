@@ -30,6 +30,14 @@
     "note": "One-popup grant factory + funding gate (zero custody), hardened: no admin/upgrade path, only factory-deployed agents can pull (and only from their recorded owner), owner-bound deployment salts. Constructor pins (agent wasm v3 hash d61ceaaa…a2ba, token). owner.grant() is the single wallet popup (covers the nested SEP-41 token.approve + deploys the run's agents via the pinned wasm); relayed router.pull() funds each agent within the token allowance — the router never holds funds. The server relay guard's SOROBAN_ROUTER_ADDRESS env must equal address or grant/pull fee-bumps are refused. Deployer: vf-deployer (GCIOUP4U…RYHNS). Legacy router (pre-hardening): CBEI5VJKKWLXKQUUUETBAPZSQQLH7I57TSIDTMV4WJMBKIGVF7NSNOFY.",
     "legacyAddress": "CBEI5VJKKWLXKQUUUETBAPZSQQLH7I57TSIDTMV4WJMBKIGVF7NSNOFY"
   },
+  "exitRouter": {
+    "address": "CDGDIPHBN3MSNURDX33IZBXXQTJPT7THAXSMVBAIOIXLOA6OF32IRS2J",
+    "wasmHash": "44ff27cf93b538f9b3657abd41cdea5b9bfea98935a41a6ce911a35ef44c427a",
+    "uploadTx": "7c8d0a9169ff8be51399ae6443de5140657d8258564889d7a09da0d756bb4c59",
+    "deployTx": "8848c8eb16f47c18091a46ad1f2760c406b46ec3bdaa70223f8689f896ab78c3",
+    "deployedAt": "2026-07-16",
+    "note": "The exit-side mirror of fundingRouter.grant: `sweep(owner, agents, to)` batches one `agent_account.owner_withdraw` per agent into the ONE host-function invocation a Soroban tx allows, so exiting N agents costs ONE wallet signature instead of N. The owner's require_auth here and inside every agent are all the tx source, so source-account credentials cover the whole tree on one envelope signature (same mechanism as grant covering its nested token.approve). Stateless, no admin, no upgrade, zero custody — it grants NO authority: each agent still checks its own stored owner, so naming an agent you do not own sweeps nothing. Per-agent try_ calls: a revoked/empty agent reports 0 and its neighbours still sweep; a sweep that moves nothing errors (NothingSwept) rather than returning an empty success. Deployer: relayer GBVJ34MT…LV3X (irrelevant — the contract has no privileged role). Unset VITE_SOROBAN_EXIT_ROUTER_ADDRESS to roll back to the per-agent N-signature loop."
+  },
   "vault": {
     "address": "CBZNITAPHCLSPEXC3UKIERYRUJR56GISM2G2Z5XD6KZH3U4ZZ76XNQOU",
     "token": "CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU",

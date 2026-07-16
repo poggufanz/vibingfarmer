@@ -47,11 +47,10 @@ import OnboardingFlow from './components/OnboardingFlow.jsx'
 import CrossChainFarmFlow from './screens/CrossChainFarmFlow.jsx'
 import { OrchestratorAgent } from './orchestrator.js'
 import { makeAgentId } from './worker.js'
-import { ownerWithdraw } from './stellar/exit.js'
+import { readContract } from './stellar/client.js'
 import { VAULT_CATALOG, VENICE_TIMEOUT_MS } from './config.js'
 import {
   SOROBAN_ACTIVE_VAULT_ADDRESS,
-  SOROBAN_DEMO_AGENT,
   SOROBAN_RPC_URL,
   SOROBAN_AUTOFARM_VAULT_ADDRESS,
   SOROBAN_STRATEGY_1_ADDRESS,
@@ -80,6 +79,7 @@ import {
   saveDeployedAgents,
   reconcilePositionsFromChain,
   pickPositionsAgents,
+  pickVaultAgents,
   mergePositions,
   applyChainPositions,
 } from './positionsStore.js'
@@ -98,7 +98,7 @@ import {
   stopBackgroundAgent,
   updateAgentConfig,
   onAgentEvent,
-  emergencyWithdraw,
+  withdrawAllFromVault,
 } from './agents/agentController.js'
 const OpsConsole = lazy(() => import('./components/console/OpsConsole.jsx'))
 import NotificationCenter from './components/NotificationCenter.jsx'
@@ -545,6 +545,14 @@ const App = () => {
   // AFTER connect. A latest-value ref lets the already-subscribed poll (and the cold-reconcile
   // that must not prune restored cache) read the current agent list without re-mounting.
   positionsAgentsRef.current = positionsAgents
+  // Wall-clock of the last withdraw per vault (lowercased address). The worker 'position'
+  // handler drops snapshots read at or before this — see the guard there for why.
+  const lastWithdrawAtRef = useR({})
+  // Monotonic token for scope rehydrates. Two call sites (connect effect, post-withdraw retry
+  // loop) resolve in any order, and setScopes REPLACES — without this, a slow pre-withdraw
+  // snapshot landing last would revive a just-swept agent as active. Newest request wins.
+  const scopeGenRef = useR(0)
+
   const reconcilePositions = (addr) => {
     const agents = positionsAgentsRef.current
     return reconcilePositionsFromChain(addr, agents ? { agents } : undefined)
@@ -760,6 +768,7 @@ const App = () => {
     if (!realAddress) return
     let alive = true
     const sync = async () => {
+      const startedAt = Date.now()
       // Prefer the scope-derived agent list (per-run grant agents — kept fresh via
       // positionsAgentsRef); fall back to saved/discovered agents (fresh-browser case),
       // then to reconcilePositions' default (demo agent) when nothing is known.
@@ -792,6 +801,13 @@ const App = () => {
         pollAgents.length ? { agents: pollAgents } : undefined
       ).catch(() => null)
       if (alive && chain) {
+        // A tick's reads can straddle a withdraw: dispatched before the sweep, resolved after
+        // the withdraw's own reconcile corrected the vault — and applyChainPositions REPLACES,
+        // so the stale snapshot would repaint the swept balance for a tick. While a vault's
+        // withdraw is newer than this tick's start, that reconcile owns the key; skip it here.
+        for (const k of Object.keys(chain)) {
+          if ((lastWithdrawAtRef.current[k.toLowerCase()] || 0) >= startedAt) delete chain[k]
+        }
         setAgentData((d) => ({
           ...d,
           positions: applyChainPositions(d.positions, chain),
@@ -960,6 +976,12 @@ const App = () => {
     }
 
     if (ev.kind === 'position') {
+      // A monitor read STARTED before a withdraw can be DELIVERED after it. mergePositions only
+      // ever raises balances, so committing that snapshot resurrects the swept position as a
+      // ghost balance — and the chain's later 0 can never lower it back down. Drop anything read
+      // at or before the vault's last withdraw; the authoritative chain poll owns the truth.
+      const sweptAt = lastWithdrawAtRef.current[(ev.vaultAddress || '').toLowerCase()]
+      if (sweptAt && (ev.timestamp || 0) <= sweptAt) return
       setAgentData((d) => ({
         ...d,
         lastUpdated: ev.timestamp,
@@ -1221,17 +1243,34 @@ const App = () => {
           ],
         }))
 
-        try {
-          const txRes = await runAutonomousExit({
-            agentAddress: SOROBAN_DEMO_AGENT,
-            ownerAddress: realAddress,
+        // Every per-run agent holds its own slice of the position and its own exit key, so the
+        // autonomous exit is one run per agent. Agents whose exit signer was never registered throw
+        // "No exit key is authorized" — surfaced, not swallowed, because the funds stay at risk.
+        const exitAgents = pickVaultAgents(scopes, SOROBAN_ACTIVE_VAULT_ADDRESS)
+        const exited = []
+        const exitFailed = []
+        for (const agentAddress of exitAgents) {
+          try {
+            exited.push(await runAutonomousExit({ agentAddress, ownerAddress: realAddress }))
+          } catch (err) {
+            console.error('[AutoExit] Autonomous exit failed for', agentAddress, err)
+            exitFailed.push({ agentAddress, error: err.message })
+          }
+        }
+
+        if (!exitAgents.length) {
+          addLog({
+            event: 'AgentFailed',
+            meta: 'Automatic exit stopped. No active agent holds this position.',
+            detail: 'Please execute emergency withdraw manually.',
           })
+        }
+        if (exited.length) {
           addLog({
             event: 'AgentCompleted',
-            meta: `Autonomous exit succeeded. Transaction: ${txRes.hash.slice(0, 8)}...`,
-            detail: 'All vault shares redeemed and USDC principal returned to owner wallet.',
+            meta: `Autonomous exit swept ${exited.length} of ${exitAgents.length} agents. Transaction: ${exited[0].hash.slice(0, 8)}...`,
+            detail: 'Vault shares redeemed and USDC principal returned to owner wallet.',
           })
-
           const chain = await reconcileWithRetry(realAddress)
           if (chain) {
             setAgentData((d) => ({
@@ -1240,12 +1279,12 @@ const App = () => {
               lastUpdated: Date.now(),
             }))
           }
-        } catch (err) {
-          console.error('[AutoExit] Autonomous exit failed:', err)
+        }
+        if (exitFailed.length) {
           addLog({
             event: 'AgentFailed',
-            meta: `Automatic exit failed: ${err.message}`,
-            detail: 'Please execute emergency withdraw manually.',
+            meta: `Automatic exit failed for ${exitFailed.length} of ${exitAgents.length} agents: ${exitFailed[0].error}`,
+            detail: 'Please execute emergency withdraw manually for the agents that did not exit.',
           })
         }
       }
@@ -1387,21 +1426,50 @@ const App = () => {
   const handleEmergencyWithdraw = async (alert) => {
     const pos = agentData.positions[alert.vaultAddress]
     const bal = BigInt(pos?.balance || '0')
-    const amt = agentSettings.emergencyFull
-      ? bal
-      : (bal * BigInt(Math.round(agentSettings.emergencyPct))) / 100n
-    if (amt <= 0n) {
+    if (bal <= 0n) {
       addLog({ event: 'AgentFailed', meta: 'Emergency withdrawal stopped. No balance is tracked.' })
       return
     }
-    try {
-      const tx = await emergencyWithdraw(alert.vaultAddress, amt.toString(), realAddress)
+    // NOTE: agentSettings.emergencyPct cannot be honoured — owner_withdraw takes no amount and
+    // always sweeps the agent whole. A partial emergency exit needs a vault-level partial redeem;
+    // until then this is full-exit only, and the settings copy overpromises.
+    const agents = pickVaultAgents(scopes, alert.vaultAddress)
+    if (!agents.length) {
       addLog({
-        event: 'PermissionRevoked',
-        meta: `Emergency withdrawal from ${alert.vaultName}. Transaction ${shortAddr(tx)}.`,
-        txHash: tx,
-        detail: `Emergency withdrew from ${alert.vaultName} to your wallet.`,
+        event: 'AgentFailed',
+        meta: 'Emergency withdrawal stopped. No active agent holds this position.',
+        detail: 'Agent permissions may still be loading, or every scope for this vault is revoked.',
       })
+      return
+    }
+    try {
+      const results = await withdrawAllFromVault(alert.vaultAddress, realAddress, agents)
+      const ok = results.filter((r) => r.ok)
+      const failed = results.filter((r) => !r.ok)
+      if (ok.length) {
+        saveTransaction({
+          txHash: ok[0].txHash,
+          vaultName: 'Emergency Exit',
+          vaultAddress: alert.vaultAddress,
+          workerLabel: 'RiskWatcher',
+          network: 'stellar-testnet',
+        })
+        addLog({
+          event: 'PermissionRevoked',
+          meta: `Emergency withdrawal from ${alert.vaultName}. Transaction ${shortAddr(ok[0].txHash)}.`,
+          txHash: ok[0].txHash,
+          detail: `Swept ${ok.length} of ${results.length} agents to your wallet.`,
+        })
+      }
+      if (failed.length) {
+        // The risk that raised this alert is still live for the un-swept agents — leave it standing.
+        addLog({
+          event: 'AgentFailed',
+          meta: `Emergency withdrawal incomplete: ${failed.length} of ${results.length} agents failed.`,
+          detail: failed[0].error,
+        })
+        return
+      }
       dismissAlert(alert.id)
     } catch (e) {
       addLog({ event: 'AgentFailed', meta: `Withdrawal failed: ${e.message}` })
@@ -1419,6 +1487,27 @@ const App = () => {
   // Optimistically flip the row; the on-chain agent_revoked subscription confirms it.
   const handleRevokeAgent = async (agent) => {
     try {
+      // Revoke is a kill switch, not an exit: on-chain it only flips the flag and clears the
+      // allowance — it never redeems shares. Every withdraw list filters revoked agents out, so
+      // revoking a still-funded agent strands its deposit with no in-app way back. Refuse and
+      // point at the exit that actually moves the money. Fails OPEN on a read failure: an RPC
+      // hiccup must not disable the kill switch — a stranded deposit has a second chance
+      // (withdraw first), a live rogue key does not.
+      const scope = scopes.find((r) => r.agent?.toLowerCase() === agent.toLowerCase())
+      const shares = await readContract({
+        contract: scope?.vault || SOROBAN_ACTIVE_VAULT_ADDRESS,
+        method: 'balance',
+        args: [{ addr: agent }],
+      }).catch(() => 0n)
+      if (BigInt(shares ?? 0) > 0n) {
+        addLog({
+          event: 'AgentFailed',
+          meta: `Revocation blocked: agent ${shortAddr(agent)} still holds ${toDisplay(shares).toFixed(2)} vault shares.`,
+          detail:
+            'Withdraw first — a revoked agent disappears from every withdraw list, which would strand these funds.',
+        })
+        return
+      }
       const { hash: tx } = await revokeAgentOnChain({ owner: realAddress, agent })
       setScopes((prev) =>
         prev.map((s) =>
@@ -1460,9 +1549,10 @@ const App = () => {
   useE(() => {
     if (!realAddress) return
     let alive = true
+    const gen = ++scopeGenRef.current
     rehydrateScopes({ owner: realAddress })
       .then((rows) => {
-        if (alive) setScopes(rows)
+        if (alive && gen === scopeGenRef.current) setScopes(rows)
       })
       .catch(() => {})
     return () => {
@@ -1489,6 +1579,7 @@ const App = () => {
 
   // After a withdraw: reduce/remove the position, sync the worker, stop the agent if empty
   const handleWithdrawSuccess = (vaultAddress, withdrawnUnits) => {
+    lastWithdrawAtRef.current[(vaultAddress || '').toLowerCase()] = Date.now()
     const pos = agentData.positions[vaultAddress]
     const positions = { ...agentData.positions }
     if (pos) {
@@ -1512,6 +1603,26 @@ const App = () => {
       meta: `Withdrew from ${shortAddr(vaultAddress)}. Position updated.`,
       detail: 'Position balance updated after withdraw; agent monitoring config synced.',
     })
+    // owner_withdraw is terminal: every swept agent is now revoked ON-CHAIN, but `scopes` is
+    // in-memory and nothing re-reads it until the next reconnect — so the permissions panel
+    // kept showing dead agents as active after the funds had already left. And ONE immediate
+    // re-read is not enough: RPC can serve the PRE-sweep scope state for a few ledgers (the
+    // same lag the position reconcile below polls through), which re-showed the swept agents
+    // as alive until a full reload. Same cadence as that reconcile: bounded retries, commit
+    // every pass, stop once no live agent remains for this vault.
+    if (realAddress) {
+      let scopeTries = 0
+      const refreshScopes = async () => {
+        scopeTries++
+        const gen = ++scopeGenRef.current
+        const rows = await rehydrateScopes({ owner: realAddress }).catch(() => null)
+        if (rows && gen === scopeGenRef.current) setScopes(rows)
+        if (scopeTries >= 6) return
+        if (rows && pickVaultAgents(rows, vaultAddress).length === 0) return
+        setTimeout(refreshScopes, 2000)
+      }
+      refreshScopes()
+    }
     // Optimistic subtract above can drift (partial fills, share-price). Chain = truth — but the
     // Soroban RPC read can lag the ledger that just settled the withdraw, returning the PRE-withdraw
     // balance. Committing that stale read would bounce the UI right back up to the old number
@@ -2825,6 +2936,7 @@ const App = () => {
                 onOpenAgent={() => navigate('/agent')}
                 onViewHistory={() => navigate('/history')}
                 onWithdrawSuccess={handleWithdrawSuccess}
+                scopes={scopes}
               />
             }
           />

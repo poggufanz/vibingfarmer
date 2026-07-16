@@ -137,6 +137,35 @@ export function pickPositionsAgents(scopes, viewAsAddress) {
   return deployed.length ? deployed : undefined
 }
 
+/**
+ * The agents whose shares back the position shown for `vaultAddress` — i.e. the set `owner_withdraw`
+ * must sweep, one user-signed tx each, because a position is the SUM over every agent (see the
+ * `total +=` above) while the exit is per-agent.
+ *
+ * Deliberately NOT pickPositionsAgents: that one is for DISPLAY, so it may fall back to a default
+ * and may return a view-as address. An exit must never guess an agent — the user cannot sign for an
+ * agent they do not own, and a wrong guess is what made every withdraw invoke the demo agent.
+ * Empty means empty: the caller must disable the button, not substitute something.
+ *
+ * @param {Array<{agent?: string, vault?: string, revoked?: boolean}>} scopes
+ * @param {string} vaultAddress
+ * @returns {string[]} non-revoked agents pinned to that vault, deduped, in scope order
+ */
+export function pickVaultAgents(scopes, vaultAddress) {
+  const want = (vaultAddress || '').toLowerCase()
+  if (!want) return []
+  const seen = new Set()
+  const out = []
+  for (const s of scopes || []) {
+    if (!s || s.revoked || !s.agent) continue
+    if ((s.vault || '').toLowerCase() !== want) continue
+    if (seen.has(s.agent)) continue
+    seen.add(s.agent)
+    out.push(s.agent)
+  }
+  return out
+}
+
 // Merge position maps keyed by vault address (case-insensitive). Balances only ever
 // INCREASE via merge — withdraw handlers are the only path that lowers them. Idempotent:
 // re-running with the same seed (e.g. re-visiting "done") can't double or drop a balance,

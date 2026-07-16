@@ -3,6 +3,7 @@ import ZoneFrame from './ZoneFrame.jsx'
 import WithdrawModal from '../WithdrawModal.jsx'
 import { agoText } from './consoleUtils.js'
 import { toDisplay } from '../../stellar/format.js'
+import { pickVaultAgents } from '../../positionsStore.js'
 
 export default function PositionsZone({
   positions = {},
@@ -10,6 +11,7 @@ export default function PositionsZone({
   lastUpdated = null,
   nowMs,
   userAddress,
+  scopes = [],
   withdrawEnabled = true,
   onWithdrawSuccess,
   onNewStrategy,
@@ -73,6 +75,9 @@ export default function PositionsZone({
                       },
                       balance: p.balance,
                       unclaimedRewards: p.unclaimedRewards,
+                      // A position is the sum over every agent; the exit is per-agent. Resolve the
+                      // set at click time so a scope revoked mid-session is not swept.
+                      agentAddresses: pickVaultAgents(scopes, addr),
                     })
                   }
                 >
@@ -89,6 +94,7 @@ export default function PositionsZone({
           balance={withdrawing.balance}
           unclaimedRewards={withdrawing.unclaimedRewards}
           userAddress={userAddress}
+          agentAddresses={withdrawing.agentAddresses}
           onClose={() => setWithdrawing(null)}
           onSuccess={onWithdrawSuccess || (() => {})}
         />
