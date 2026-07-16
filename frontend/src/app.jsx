@@ -51,7 +51,6 @@ import { ownerWithdraw } from './stellar/exit.js'
 import { VAULT_CATALOG, VENICE_TIMEOUT_MS } from './config.js'
 import {
   SOROBAN_ACTIVE_VAULT_ADDRESS,
-  SOROBAN_DEMO_AGENT,
   SOROBAN_RPC_URL,
   SOROBAN_AUTOFARM_VAULT_ADDRESS,
   SOROBAN_STRATEGY_1_ADDRESS,
@@ -80,6 +79,7 @@ import {
   saveDeployedAgents,
   reconcilePositionsFromChain,
   pickPositionsAgents,
+  pickVaultAgents,
   mergePositions,
   applyChainPositions,
 } from './positionsStore.js'
@@ -98,7 +98,7 @@ import {
   stopBackgroundAgent,
   updateAgentConfig,
   onAgentEvent,
-  emergencyWithdraw,
+  withdrawAllFromVault,
 } from './agents/agentController.js'
 const OpsConsole = lazy(() => import('./components/console/OpsConsole.jsx'))
 import NotificationCenter from './components/NotificationCenter.jsx'
@@ -1221,17 +1221,34 @@ const App = () => {
           ],
         }))
 
-        try {
-          const txRes = await runAutonomousExit({
-            agentAddress: SOROBAN_DEMO_AGENT,
-            ownerAddress: realAddress,
+        // Every per-run agent holds its own slice of the position and its own exit key, so the
+        // autonomous exit is one run per agent. Agents whose exit signer was never registered throw
+        // "No exit key is authorized" — surfaced, not swallowed, because the funds stay at risk.
+        const exitAgents = pickVaultAgents(scopes, SOROBAN_ACTIVE_VAULT_ADDRESS)
+        const exited = []
+        const exitFailed = []
+        for (const agentAddress of exitAgents) {
+          try {
+            exited.push(await runAutonomousExit({ agentAddress, ownerAddress: realAddress }))
+          } catch (err) {
+            console.error('[AutoExit] Autonomous exit failed for', agentAddress, err)
+            exitFailed.push({ agentAddress, error: err.message })
+          }
+        }
+
+        if (!exitAgents.length) {
+          addLog({
+            event: 'AgentFailed',
+            meta: 'Automatic exit stopped. No active agent holds this position.',
+            detail: 'Please execute emergency withdraw manually.',
           })
+        }
+        if (exited.length) {
           addLog({
             event: 'AgentCompleted',
-            meta: `Autonomous exit succeeded. Transaction: ${txRes.hash.slice(0, 8)}...`,
-            detail: 'All vault shares redeemed and USDC principal returned to owner wallet.',
+            meta: `Autonomous exit swept ${exited.length} of ${exitAgents.length} agents. Transaction: ${exited[0].hash.slice(0, 8)}...`,
+            detail: 'Vault shares redeemed and USDC principal returned to owner wallet.',
           })
-
           const chain = await reconcileWithRetry(realAddress)
           if (chain) {
             setAgentData((d) => ({
@@ -1240,12 +1257,12 @@ const App = () => {
               lastUpdated: Date.now(),
             }))
           }
-        } catch (err) {
-          console.error('[AutoExit] Autonomous exit failed:', err)
+        }
+        if (exitFailed.length) {
           addLog({
             event: 'AgentFailed',
-            meta: `Automatic exit failed: ${err.message}`,
-            detail: 'Please execute emergency withdraw manually.',
+            meta: `Automatic exit failed for ${exitFailed.length} of ${exitAgents.length} agents: ${exitFailed[0].error}`,
+            detail: 'Please execute emergency withdraw manually for the agents that did not exit.',
           })
         }
       }
@@ -1387,21 +1404,50 @@ const App = () => {
   const handleEmergencyWithdraw = async (alert) => {
     const pos = agentData.positions[alert.vaultAddress]
     const bal = BigInt(pos?.balance || '0')
-    const amt = agentSettings.emergencyFull
-      ? bal
-      : (bal * BigInt(Math.round(agentSettings.emergencyPct))) / 100n
-    if (amt <= 0n) {
+    if (bal <= 0n) {
       addLog({ event: 'AgentFailed', meta: 'Emergency withdrawal stopped. No balance is tracked.' })
       return
     }
-    try {
-      const tx = await emergencyWithdraw(alert.vaultAddress, amt.toString(), realAddress)
+    // NOTE: agentSettings.emergencyPct cannot be honoured — owner_withdraw takes no amount and
+    // always sweeps the agent whole. A partial emergency exit needs a vault-level partial redeem;
+    // until then this is full-exit only, and the settings copy overpromises.
+    const agents = pickVaultAgents(scopes, alert.vaultAddress)
+    if (!agents.length) {
       addLog({
-        event: 'PermissionRevoked',
-        meta: `Emergency withdrawal from ${alert.vaultName}. Transaction ${shortAddr(tx)}.`,
-        txHash: tx,
-        detail: `Emergency withdrew from ${alert.vaultName} to your wallet.`,
+        event: 'AgentFailed',
+        meta: 'Emergency withdrawal stopped. No active agent holds this position.',
+        detail: 'Agent permissions may still be loading, or every scope for this vault is revoked.',
       })
+      return
+    }
+    try {
+      const results = await withdrawAllFromVault(alert.vaultAddress, realAddress, agents)
+      const ok = results.filter((r) => r.ok)
+      const failed = results.filter((r) => !r.ok)
+      if (ok.length) {
+        saveTransaction({
+          txHash: ok[0].txHash,
+          vaultName: 'Emergency Exit',
+          vaultAddress: alert.vaultAddress,
+          workerLabel: 'RiskWatcher',
+          network: 'stellar-testnet',
+        })
+        addLog({
+          event: 'PermissionRevoked',
+          meta: `Emergency withdrawal from ${alert.vaultName}. Transaction ${shortAddr(ok[0].txHash)}.`,
+          txHash: ok[0].txHash,
+          detail: `Swept ${ok.length} of ${results.length} agents to your wallet.`,
+        })
+      }
+      if (failed.length) {
+        // The risk that raised this alert is still live for the un-swept agents — leave it standing.
+        addLog({
+          event: 'AgentFailed',
+          meta: `Emergency withdrawal incomplete: ${failed.length} of ${results.length} agents failed.`,
+          detail: failed[0].error,
+        })
+        return
+      }
       dismissAlert(alert.id)
     } catch (e) {
       addLog({ event: 'AgentFailed', meta: `Withdrawal failed: ${e.message}` })
@@ -2825,6 +2871,7 @@ const App = () => {
                 onOpenAgent={() => navigate('/agent')}
                 onViewHistory={() => navigate('/history')}
                 onWithdrawSuccess={handleWithdrawSuccess}
+                scopes={scopes}
               />
             }
           />

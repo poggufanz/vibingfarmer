@@ -202,6 +202,10 @@ export async function submitUserTx({ signedXdr, server, pollTries = 10, pollInte
     )
   }
   const status = await poll(s, sent.hash, pollTries, pollIntervalMs)
+  // Fail closed on a confirmed on-chain failure. Returning FAILED like any other value made
+  // forgetting to check `status` silent — and 4 of 7 callers forgot, which is how a withdraw that
+  // moved nothing reported "Position updated". PENDING still returns: it is not yet a failure.
+  if (status === 'FAILED') throw new Error(`Transaction ${sent.hash} failed on-chain.`)
   return { hash: sent.hash, status }
 }
 

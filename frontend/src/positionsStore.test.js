@@ -4,6 +4,7 @@ import {
   applyChainPositions,
   reconcilePositionsFromChain,
   pickPositionsAgents,
+  pickVaultAgents,
 } from './positionsStore.js'
 import { SOROBAN_ACTIVE_VAULT_ADDRESS } from './stellar/config.js'
 
@@ -53,6 +54,52 @@ describe('pickPositionsAgents (read the fresh per-run agents, not the demo agent
 
   it('view-as override wins over deployed agents', () => {
     expect(pickPositionsAgents([{ agent: 'GA_ONE' }], 'GVIEWAS')).toEqual(['GVIEWAS'])
+  })
+})
+
+describe('pickVaultAgents (which agents an exit must sweep)', () => {
+  const V = 'CVAULT1'
+
+  it('returns every non-revoked agent pinned to that vault', () => {
+    const scopes = [
+      { agent: 'CA_ONE', vault: V, revoked: false },
+      { agent: 'CA_TWO', vault: V, revoked: false },
+    ]
+    expect(pickVaultAgents(scopes, V)).toEqual(['CA_ONE', 'CA_TWO'])
+  })
+
+  it('skips revoked agents — their allowance is already cleared', () => {
+    const scopes = [
+      { agent: 'CA_ONE', vault: V, revoked: true },
+      { agent: 'CA_TWO', vault: V, revoked: false },
+    ]
+    expect(pickVaultAgents(scopes, V)).toEqual(['CA_TWO'])
+  })
+
+  it('skips agents scoped to a different vault', () => {
+    const scopes = [
+      { agent: 'CA_ONE', vault: 'COTHER', revoked: false },
+      { agent: 'CA_TWO', vault: V, revoked: false },
+    ]
+    expect(pickVaultAgents(scopes, V)).toEqual(['CA_TWO'])
+  })
+
+  it('matches vault addresses case-insensitively', () => {
+    expect(pickVaultAgents([{ agent: 'CA_ONE', vault: 'cvault1' }], 'CVAULT1')).toEqual(['CA_ONE'])
+  })
+
+  it('dedupes a repeated agent so it is never swept twice', () => {
+    const scopes = [
+      { agent: 'CA_ONE', vault: V },
+      { agent: 'CA_ONE', vault: V },
+    ]
+    expect(pickVaultAgents(scopes, V)).toEqual(['CA_ONE'])
+  })
+
+  it('returns [] rather than guessing — never a demo-agent fallback', () => {
+    expect(pickVaultAgents([], V)).toEqual([])
+    expect(pickVaultAgents(null, V)).toEqual([])
+    expect(pickVaultAgents([{ agent: 'CA_ONE', vault: V }], '')).toEqual([])
   })
 })
 

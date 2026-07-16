@@ -4,9 +4,7 @@
 // on-chain harvest, and withdraw is a direct user-signed tx (the user owns the shares) —
 // there is no relayer harvest/withdraw path anymore.
 
-import { saveTransaction } from '../history.js'
 import { ownerWithdraw } from '../stellar/exit.js'
-import { SOROBAN_DEMO_AGENT } from '../stellar/config.js'
 import { classifyRisk } from '../strategist.js'
 
 let worker = null
@@ -86,38 +84,52 @@ async function handleWorkerMessage(e) {
 // Stellar exit: owner_withdraw(to) on the agent custom account redeems the agent's full vault
 // position + sweeps the asset back to the owner (Phase 1). It is by-agent, not by-vault+amount —
 // the `vaultAddress`/`amount` args are kept for caller compatibility but unused on this path.
-// pin: the demo sweeps the single pre-deployed agent; a multi-agent run should pass the tracked
-// per-agent address (exec state) as `agentAddress`.
-
-/** Emergency exit — called from a risk alert. User-signed owner_withdraw (a single signature). */
-export async function emergencyWithdraw(
-  vaultAddress,
-  amount,
-  userAddress,
-  agentAddress = SOROBAN_DEMO_AGENT
-) {
-  const { hash } = await ownerWithdraw({ owner: userAddress, agentAddress, to: userAddress })
-  saveTransaction({
-    txHash: hash,
-    vaultName: 'Emergency Exit',
-    vaultAddress: agentAddress,
-    workerLabel: 'RiskWatcher',
-    network: 'stellar-testnet',
-  })
-  return hash
-}
+// `agentAddress` is REQUIRED and must be the run's own agent (scopes[].agent). It used to default
+// to SOROBAN_DEMO_AGENT, which is owned by vf-deployer and holds none of the user's funds: every
+// withdraw invoked a stranger's account, failed on-chain, and still reported success.
 
 /** Manual exit from the dashboard. Returns { txHash, status }. */
-export async function withdrawFromVault(
-  vaultAddress,
-  amount,
-  userAddress,
-  agentAddress = SOROBAN_DEMO_AGENT
-) {
+export async function withdrawFromVault(vaultAddress, amount, userAddress, agentAddress) {
+  if (!agentAddress) throw new Error('withdrawFromVault requires the run’s agentAddress.')
   const { hash, status } = await ownerWithdraw({
     owner: userAddress,
     agentAddress,
     to: userAddress,
   })
   return { txHash: hash, status }
+}
+
+/**
+ * Sweep a whole displayed position back to the user.
+ *
+ * A position is the SUM of every agent's shares, but `owner_withdraw` sweeps ONE agent at a time,
+ * and Soroban allows a single host-function invocation per transaction — so N agents is N
+ * user-signed transactions. They run sequentially: each needs its own wallet popup, and parallel
+ * submissions from one source account race on the sequence number.
+ *
+ * One agent failing does not abort the rest — a revoked or empty agent must not strand the others'
+ * funds. The per-agent outcome is returned so the caller can report partial success honestly
+ * instead of showing a withdraw that half-happened as done.
+ *
+ * @param {string} vaultAddress
+ * @param {string} userAddress
+ * @param {string[]} agentAddresses
+ * @param {(p: {index: number, total: number, agentAddress: string}) => void} [onProgress]
+ * @returns {Promise<Array<{agentAddress: string, ok: boolean, txHash?: string, error?: string}>>}
+ */
+export async function withdrawAllFromVault(vaultAddress, userAddress, agentAddresses, onProgress) {
+  if (!agentAddresses?.length)
+    throw new Error('withdrawAllFromVault requires at least one agentAddress.')
+  const results = []
+  for (let index = 0; index < agentAddresses.length; index++) {
+    const agentAddress = agentAddresses[index]
+    onProgress?.({ index, total: agentAddresses.length, agentAddress })
+    try {
+      const { txHash } = await withdrawFromVault(vaultAddress, null, userAddress, agentAddress)
+      results.push({ agentAddress, ok: true, txHash })
+    } catch (err) {
+      results.push({ agentAddress, ok: false, error: err?.message || String(err) })
+    }
+  }
+  return results
 }

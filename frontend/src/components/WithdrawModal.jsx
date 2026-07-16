@@ -1,10 +1,10 @@
 // WithdrawModal.jsx
 // Manual withdraw from a single active position. Reuses the app's modal tokens.
 import React, { useState, useEffect, useRef } from 'react'
-import { withdrawFromVault } from '../agents/agentController.js'
+import { withdrawAllFromVault } from '../agents/agentController.js'
 import { saveTransaction } from '../history.js'
 import { loadSettings, t } from '../settingsStore.js'
-import { toDisplay, toBaseUnits } from '../stellar/format.js'
+import { toDisplay } from '../stellar/format.js'
 
 // The v2 vault exposes no per-deposit timestamp, so "time deposited" is unknown (renders "-").
 // Kept as a 0-stub so the modal effect below is unchanged. ponytail: no chain read to wire here.
@@ -35,19 +35,6 @@ const Row = ({ k, v, color }) => (
     </span>
   </div>
 )
-
-const pctBtn = {
-  appearance: 'none',
-  flex: 1,
-  border: '.5px solid rgba(255,255,255,.18)',
-  borderRadius: 5,
-  background: 'rgba(255,255,255,.06)',
-  color: 'inherit',
-  font: 'inherit',
-  fontSize: 11,
-  padding: '5px 0',
-  cursor: 'pointer',
-}
 
 // Map raw ethers/relayer errors to a short, human-readable line.
 // Avoids dumping the full ACTION_REJECTED / sendTransaction payload into the UI.
@@ -82,15 +69,16 @@ export default function WithdrawModal({
   balance,
   unclaimedRewards = 0,
   userAddress,
+  agentAddresses = [],
   onClose,
   onSuccess,
 }) {
   const { language: lang } = loadSettings()
   const balUsdc = toDisplay(balance)
   const rewardsUsdc = toDisplay(unclaimedRewards)
-  const [amount, setAmount] = useState(balUsdc.toFixed(2))
   const [status, setStatus] = useState('idle') // idle | loading | done
   const [error, setError] = useState(null)
+  const [progress, setProgress] = useState(null)
   const [depositedAgoSec, setDepositedAgoSec] = useState(0)
   const confirmRef = useRef(null)
 
@@ -110,33 +98,58 @@ export default function WithdrawModal({
     }
   }, [])
 
-  const parsed = parseFloat(amount)
-  const valid = parsed > 0 && parsed <= balUsdc + 1e-9
-  const setPct = (p) => setAmount((balUsdc * p).toFixed(2))
+  // owner_withdraw sweeps an agent's ENTIRE position — there is no partial-amount form of it — and
+  // a position is the sum over every agent, so a withdraw is N sweeps of 100%. The old amount input
+  // and 25/50/75% buttons never reached the chain: the typed value was passed to a parameter the
+  // controller ignores. Showing the real, unsplittable amount beats offering a choice we can't honour.
+  const canWithdraw = balUsdc > 0 && agentAddresses.length > 0
 
   const handleConfirm = async () => {
-    if (!valid || status !== 'idle') return
+    if (!canWithdraw || status !== 'idle') return
     setStatus('loading')
     setError(null)
-    const units = toBaseUnits(parsed).toString()
+    setProgress(null)
     try {
-      const result = await withdrawFromVault(vault.address, units, userAddress)
+      const results = await withdrawAllFromVault(
+        vault.address,
+        userAddress,
+        agentAddresses,
+        setProgress
+      )
+      const failed = results.filter((r) => !r.ok)
+
+      if (failed.length) {
+        // Partial sweep: some USDC moved, some did not, and the per-agent split is not readable
+        // from here — so claim no amount rather than a wrong one. Reconcile shows what is left.
+        // ponytail: the successful legs get no history row on this branch; add per-agent amounts
+        // if the vault ever exposes a per-sweep event to size them from.
+        setError(
+          `Swept ${results.length - failed.length} of ${results.length} agents. ` +
+            `${failed.length} failed: ${failed[0].error}`
+        )
+        setStatus('idle')
+        setProgress(null)
+        onSuccess(vault.address, '0') // reconcile from chain, but never a false zero
+        return
+      }
+
       saveTransaction({
-        txHash: result.txHash,
+        txHash: results[0].txHash,
         vaultName: vault.name,
         vaultAddress: vault.address,
         protocol: vault.protocol,
-        amountUsdc: parsed,
+        amountUsdc: balUsdc,
         apy: vault.apy,
         type: 'withdraw',
         network: 'stellar-testnet',
       })
       setStatus('done')
-      onSuccess(vault.address, units)
+      onSuccess(vault.address, balance)
       setTimeout(onClose, 700)
     } catch (err) {
       setError(friendlyError(err))
       setStatus('idle')
+      setProgress(null)
     }
   }
 
@@ -150,66 +163,35 @@ export default function WithdrawModal({
         style={{ maxWidth: 420 }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="modal-eyebrow">Withdraw with fee-bump relayer</div>
+        <div className="modal-eyebrow">Full exit, signed in your wallet</div>
         <h3 className="modal-title" id="withdraw-title">
           {t(lang, 'withdraw')} from {vault.name}
         </h3>
 
         <div className="act-meta" style={{ fontSize: 11, margin: '8px 0 6px' }}>
-          Available: <span className="mono">{balUsdc.toFixed(2)} USDC</span>
+          Withdrawing <span className="mono">{balUsdc.toFixed(2)} USDC</span> — your whole position.
         </div>
 
-        <label htmlFor="wd-amount" style={{ fontSize: 10, opacity: 0.6 }}>
-          Amount
-        </label>
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            border: '.5px solid rgba(255,255,255,.18)',
-            borderRadius: 6,
-            padding: '0 10px',
-            marginTop: 3,
-          }}
-        >
-          <input
-            id="wd-amount"
-            className="mono"
-            type="number"
-            min="0.01"
-            max={balUsdc}
-            step="0.01"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            disabled={status !== 'idle'}
-            style={{
-              flex: 1,
-              background: 'transparent',
-              border: 0,
-              color: 'inherit',
-              font: 'inherit',
-              fontSize: 14,
-              padding: '8px 0',
-              outline: 'none',
-            }}
-          />
-          <span style={{ opacity: 0.6, fontSize: 12 }}>USDC</span>
-        </div>
-        <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-          {[
-            ['25%', 0.25],
-            ['50%', 0.5],
-            ['75%', 0.75],
-            ['Max', 1],
-          ].map(([l, p]) => (
-            <button key={l} style={pctBtn} onClick={() => setPct(p)} disabled={status !== 'idle'}>
-              {l}
-            </button>
-          ))}
-        </div>
-        {!valid && (
+        {agentAddresses.length === 0 ? (
           <div style={{ color: 'var(--danger)', fontSize: 10.5, marginTop: 5 }}>
-            Enter an amount between 0.01 and {balUsdc.toFixed(2)} USDC.
+            No active agent holds this position, so there is nothing to sweep. If you just made a
+            deposit, wait for agent permissions to load and reopen this.
+          </div>
+        ) : (
+          <div style={{ fontSize: 10.5, opacity: 0.6, marginTop: 5, lineHeight: 1.45 }}>
+            This position is held by {agentAddresses.length}{' '}
+            {agentAddresses.length === 1 ? 'agent' : 'agents'}. Each is swept by its own
+            transaction, so your wallet asks you to sign{' '}
+            {agentAddresses.length === 1 ? 'once' : `${agentAddresses.length} times`}.
+          </div>
+        )}
+
+        {progress && (
+          <div
+            className="mono"
+            style={{ fontSize: 10.5, marginTop: 6, color: 'var(--text-muted)' }}
+          >
+            Sweeping agent {progress.index + 1} of {progress.total} — confirm in your wallet…
           </div>
         )}
 
@@ -221,11 +203,11 @@ export default function WithdrawModal({
         </div>
 
         <div style={{ borderTop: '.5px solid rgba(255,255,255,.08)', margin: '10px 0' }} />
-        <Row k="You receive" v={`~${(valid ? parsed : 0).toFixed(2)} USDC`} />
+        <Row k="You receive" v={`~${balUsdc.toFixed(2)} USDC`} />
         <Row k="Rewards" v={`+${rewardsUsdc.toFixed(2)} USDC (preserved)`} color="var(--ok)" />
-        <Row k="Network fee" v="0 XLM, paid by relayer" />
-        <Row k="Permission" v="Active" />
-        <Row k="Estimated time" v="~30 seconds" />
+        <Row k="Signatures" v={`${agentAddresses.length} (one per agent)`} />
+        <Row k="Network fee" v="Paid by you, in XLM" />
+        <Row k="Estimated time" v={`~${Math.max(30, agentAddresses.length * 20)} seconds`} />
 
         {error && (
           <div
@@ -257,12 +239,14 @@ export default function WithdrawModal({
             ref={confirmRef}
             className="btn btn-primary"
             onClick={handleConfirm}
-            disabled={!valid || status !== 'idle'}
+            disabled={!canWithdraw || status !== 'idle'}
           >
             {status === 'idle'
               ? t(lang, 'withdraw')
               : status === 'loading'
-                ? 'Withdrawing…'
+                ? progress
+                  ? `Sweeping ${progress.index + 1}/${progress.total}…`
+                  : 'Withdrawing…'
                 : 'Done'}
           </button>
         </div>
