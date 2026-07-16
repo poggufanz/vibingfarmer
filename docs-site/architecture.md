@@ -33,19 +33,19 @@ User input (amount, risk level, vault count)
 
 ## Layers
 
-| Layer | Technology |
-|-------|------------|
-| Smart contracts | Rust, Soroban SDK, OpenZeppelin Stellar contracts |
-| Frontend | React 18, Vite 5, React Router v6, Framer Motion, react-force-graph-2d |
-| Chain client | `@stellar/stellar-sdk`, Stellar Wallets Kit (Freighter / xBull / Albedo) |
-| Wallet | VF Wallet (passkey smart account + extension) or any standard Stellar wallet |
-| AI | Venice AI via API key or x402 (SIWE, prepaid USDC); DeepSeek server proxy as zero-config fallback |
-| Yield | Autofarm vault → Blend Capital v2 (real testnet lending interest) |
-| Live market data | DeFiLlama API (APY, TVL, 7-day history); Tavily search for strategy context |
-| Gas | Own fee-bump relayer (`/api/stellar-relay`, allowlisted ops) — user pays 0 |
-| Cross-chain (optional) | Circle CCTP v2 + relayer + ZeroDev on Base Sepolia |
-| Crypto | ed25519 session keys; libsodium KDF-sealed per-worker key vault |
-| Hosting | Cloudflare Pages: static SPA + `/api/*` Pages Functions |
+| Layer                  | Technology                                                                                        |
+| ---------------------- | ------------------------------------------------------------------------------------------------- |
+| Smart contracts        | Rust, Soroban SDK, OpenZeppelin Stellar contracts                                                 |
+| Frontend               | React 18, Vite 5, React Router v6, Framer Motion, react-force-graph-2d                            |
+| Chain client           | `@stellar/stellar-sdk`, Stellar Wallets Kit (Freighter / xBull / Albedo)                          |
+| Wallet                 | VF Wallet (passkey smart account + extension) or any standard Stellar wallet                      |
+| AI                     | Venice AI via API key or x402 (SIWE, prepaid USDC); DeepSeek server proxy as zero-config fallback |
+| Yield                  | Autofarm vault → Blend Capital v2 (real testnet lending interest)                                 |
+| Live market data       | DeFiLlama API (APY, TVL, 7-day history); Tavily search for strategy context                       |
+| Gas                    | Own fee-bump relayer (`/api/stellar-relay`, allowlisted ops) — user pays 0                        |
+| Cross-chain (optional) | Circle CCTP v2 + relayer + ZeroDev on Base Sepolia                                                |
+| Crypto                 | ed25519 session keys; libsodium KDF-sealed per-worker key vault                                   |
+| Hosting                | Cloudflare Pages: static SPA + `/api/*` Pages Functions                                           |
 
 ## Repository map
 
@@ -66,4 +66,4 @@ deployments/           # live contract manifests (Stellar testnet, Base Sepolia)
 
 The `/farm` flow burns Stellar USDC via Circle CCTP v2, a Node relayer forwards to the Base `YieldRouter`, and a ZeroDev session key supplies into ERC-4626 pools. The unwind reverses the path. This leg is optional and independent of the core Stellar product.
 
-For the full requirements and functional-requirement table, see the [PRD](../prd.md). For the design system, see [DESIGN.md](../DESIGN.md).
+For the full requirements and functional-requirement table, see the [PRD](../prd.md). For the design system, see [DESIGN.md](/broken/pages/6Jx8uHi61JqMhzEpSKM5).
