@@ -1570,11 +1570,22 @@ const App = () => {
     })
     // owner_withdraw is terminal: every swept agent is now revoked ON-CHAIN, but `scopes` is
     // in-memory and nothing re-reads it until the next reconnect — so the permissions panel
-    // kept showing dead agents as active after the funds had already left.
+    // kept showing dead agents as active after the funds had already left. And ONE immediate
+    // re-read is not enough: RPC can serve the PRE-sweep scope state for a few ledgers (the
+    // same lag the position reconcile below polls through), which re-showed the swept agents
+    // as alive until a full reload. Same cadence as that reconcile: bounded retries, commit
+    // every pass, stop once no live agent remains for this vault.
     if (realAddress) {
-      rehydrateScopes({ owner: realAddress })
-        .then(setScopes)
-        .catch(() => {})
+      let scopeTries = 0
+      const refreshScopes = async () => {
+        scopeTries++
+        const rows = await rehydrateScopes({ owner: realAddress }).catch(() => null)
+        if (rows) setScopes(rows)
+        if (scopeTries >= 6) return
+        if (rows && pickVaultAgents(rows, vaultAddress).length === 0) return
+        setTimeout(refreshScopes, 2000)
+      }
+      refreshScopes()
     }
     // Optimistic subtract above can drift (partial fills, share-price). Chain = truth — but the
     // Soroban RPC read can lag the ledger that just settled the withdraw, returning the PRE-withdraw
