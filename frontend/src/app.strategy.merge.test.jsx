@@ -6,13 +6,17 @@ import { describe, it, expect, vi } from 'vitest'
 import { resolveBaseAvailability, buildBaseLegContext } from './mergeFlowHelpers.js'
 
 describe('merge flow helpers', () => {
-  it('baseAvailable mirrors relayer health', async () => {
-    expect(await resolveBaseAvailability({ checkHealth: async () => true })).toEqual({
-      baseAvailable: true,
+  it('returns the health-check PROMISE synchronously (overlaps with the caller\'s own work instead of serializing before it)', () => {
+    const { baseAvailable } = resolveBaseAvailability({ checkHealth: async () => true })
+    expect(baseAvailable).toBeInstanceOf(Promise)
+  })
+  it('baseAvailable mirrors relayer health, once awaited', async () => {
+    const { baseAvailable } = resolveBaseAvailability({ checkHealth: async () => true })
+    expect(await baseAvailable).toBe(true)
+    const { baseAvailable: baseAvailable2 } = resolveBaseAvailability({
+      checkHealth: async () => false,
     })
-    expect(await resolveBaseAvailability({ checkHealth: async () => false })).toEqual({
-      baseAvailable: false,
-    })
+    expect(await baseAvailable2).toBe(false)
   })
   it('no wallet -> no base leg context', () => {
     expect(buildBaseLegContext({ connectedAddress: null, kitSignTransaction: vi.fn() })).toBeNull()

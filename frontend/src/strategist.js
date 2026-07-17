@@ -302,10 +302,17 @@ export async function generateStrategy({
     `[Venice] strategy DAG, wall ${Math.round(dag.wallMs)}ms, nodes ${JSON.stringify(dag.timings)}`
   )
 
+  // Awaited HERE (after the DAG fetch above), not by the caller: the caller (app.jsx, via
+  // mergeFlowHelpers.resolveBaseAvailability) hands us the relayer health-check PROMISE, started
+  // before the DAG fetch, so its ~3s wait overlaps the DAG's own network wait instead of adding to
+  // it. `await` on a plain boolean (the default `baseAvailable = false`, and every existing caller
+  // that still passes a boolean) is a no-op, so this stays backward compatible.
+  const baseAvailableResolved = await baseAvailable
+
   // Real DeFiLlama vaults when available, else the static VAULT_CATALOG; merged with the
-  // chain-tagged Base pool catalog when the cross-chain relayer is up (baseAvailable).
+  // chain-tagged Base pool catalog when the cross-chain relayer is up (baseAvailableResolved).
   const { buildMergedCatalog } = await import('./strategy/mergedCatalog.js')
-  const vaultData = buildMergedCatalog({ baseAvailable, liveVaults })
+  const vaultData = buildMergedCatalog({ baseAvailable: baseAvailableResolved, liveVaults })
   const vaultDataSource = liveVaults && liveVaults.length > 0 ? 'defiLlama' : 'fallback'
   const dataSource =
     vaultDataSource === 'defiLlama'
@@ -317,7 +324,7 @@ export async function generateStrategy({
     '[VAULT_CATALOG_JSON]',
     JSON.stringify(vaultData, null, 2)
   )
-  if (baseAvailable) {
+  if (baseAvailableResolved) {
     systemPrompt +=
       '\nEntries with "chain":"base" live on Base (bridged via CCTP, higher latency, one extra user signature). Prefer stellar unless the base APY advantage is material.'
   }

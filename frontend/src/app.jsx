@@ -1768,7 +1768,10 @@ const App = () => {
         // Fresh per run (not cached): a relayer that came up/down between strategy generations
         // must be reflected immediately, not stick to whatever the last run observed.
         const { checkRelayerHealth } = await import('./strategy/mergedCatalog.js')
-        const { baseAvailable } = await resolveBaseAvailability({
+        // Not awaited here — the promise is handed to generateStrategy, which awaits it AFTER its
+        // own DAG fetch so the ~3s relayer probe overlaps that network wait instead of serializing
+        // before it (perf: overlap relayer health probe with strategy generation).
+        const { baseAvailable } = resolveBaseAvailability({
           checkHealth: () => checkRelayerHealth({ signal: ctrl.signal }),
         })
         const veniceResult = await generateStrategy({
