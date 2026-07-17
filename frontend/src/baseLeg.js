@@ -23,12 +23,14 @@ export async function executeBaseLeg({
   onEvent = () => {},
   deps = {},
 }) {
+  // ponytail: `deps = {}` default only covers undefined; an explicit `deps: null` would throw
+  // synchronously on the destructure below, outside the try — guard normalizes both.
   const {
     ensureBaseOwner = defaultEnsureBaseOwner,
     createMandate = defaultCreateMandate,
     postMandate = defaultPostMandate,
     runFarmFlow = defaultRunFarmFlow,
-  } = deps
+  } = deps || {}
 
   const safeEmit = (name, data) => {
     try {
@@ -42,7 +44,11 @@ export async function executeBaseLeg({
   try {
     safeEmit('baseleg-owner', { status: 'pending' })
     const owner = await ensureBaseOwner({ connectedAddress })
-    safeEmit('baseleg-owner', { status: 'done', ownerMode: owner.ownerMode, address: owner.address })
+    safeEmit('baseleg-owner', {
+      status: 'done',
+      ownerMode: owner.ownerMode,
+      address: owner.address,
+    })
 
     stage = 'mandate'
     const legAmount = baseVaults.reduce((sum, v) => sum + totalAmount * v.allocation, 0)
@@ -53,8 +59,15 @@ export async function executeBaseLeg({
     const { burnUnits7, baseTargetUnits6 } = deriveCctpTransferUnits(legAmount)
     const allocations = quantizeAllocations(
       baseVaults.map((v) => {
-        const cat = BASE_POOL_CATALOG.find((p) => p.address.toLowerCase() === v.address.toLowerCase())
-        return { pool: v.address, protocol: cat?.protocol, amount: totalAmount * v.allocation, minShares: 1n }
+        const cat = BASE_POOL_CATALOG.find(
+          (p) => p.address.toLowerCase() === v.address.toLowerCase()
+        )
+        return {
+          pool: v.address,
+          protocol: cat?.protocol,
+          amount: totalAmount * v.allocation,
+          minShares: 1n,
+        }
       }),
       { targetUnits: baseTargetUnits6 }
     )
@@ -95,7 +108,10 @@ export async function executeBaseLeg({
       baseAccount: owner.address,
     }
   } catch (err) {
-    safeEmit('baseleg-failed', { stage, error: err.message })
-    return { success: false, stage, error: err.message }
+    // A dependency can reject with anything (bare string, null, plain object) — never assume
+    // Error shape, or reading .message here would itself throw and break the never-throws contract.
+    const message = err instanceof Error ? err.message : String(err)
+    safeEmit('baseleg-failed', { stage, error: message })
+    return { success: false, stage, error: message }
   }
 }
