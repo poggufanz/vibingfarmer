@@ -1768,7 +1768,9 @@ const App = () => {
         // Fresh per run (not cached): a relayer that came up/down between strategy generations
         // must be reflected immediately, not stick to whatever the last run observed.
         const { checkRelayerHealth } = await import('./strategy/mergedCatalog.js')
-        const { baseAvailable } = await resolveBaseAvailability({ checkHealth: checkRelayerHealth })
+        const { baseAvailable } = await resolveBaseAvailability({
+          checkHealth: () => checkRelayerHealth({ signal: ctrl.signal }),
+        })
         const veniceResult = await generateStrategy({
           amount: Number(amount),
           riskLevel,

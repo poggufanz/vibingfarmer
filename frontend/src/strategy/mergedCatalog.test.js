@@ -42,4 +42,19 @@ describe('checkRelayerHealth', () => {
     const fetchImpl = vi.fn().mockRejectedValue(new Error('boom'))
     expect(await checkRelayerHealth({ fetchImpl })).toBe(false)
   })
+  it('probes with an abort signal so the caller can bound/cancel it', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue({ status: 404, ok: false, json: async () => ({ error: 'unknown jobId' }) })
+    await checkRelayerHealth({ fetchImpl })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    const [, opts] = fetchImpl.mock.calls[0]
+    expect(opts.signal).toBeInstanceOf(AbortSignal)
+  })
+  it('unhealthy (fail-closed) when aborted/timed out', async () => {
+    const abortError = new Error('The operation was aborted')
+    abortError.name = 'AbortError'
+    const fetchImpl = vi.fn().mockRejectedValue(abortError)
+    expect(await checkRelayerHealth({ fetchImpl, timeoutMs: 1 })).toBe(false)
+  })
 })
