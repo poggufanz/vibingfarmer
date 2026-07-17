@@ -9,7 +9,7 @@ describe('base pool facts', () => {
       expect(input).toBeTruthy()
       expect(input.protocol).toBe(slug)
       const verdict = evaluate(input, Date.now())
-      expect(typeof verdict.eligible).toBe('boolean') // gate runs, no missing-fact throw
+      expect(verdict.eligible).toBe(true)
       expect(verdict.reasons).toBeDefined()
     })
   }
