@@ -5,7 +5,6 @@
 import React, { useState, useMemo } from 'react'
 import SkillDetailModal from './components/SkillDetailModal.jsx'
 import SkillEditModal from './components/SkillEditModal.jsx'
-import { isVfWallet } from './wallet/passkeyBridge.js'
 
 /* ---------- Protocol display names ---------- */
 const PROTOCOL_NAMES = {
@@ -84,10 +83,11 @@ const SkillCard = ({ agent, skill, state, onApprove, onViewDetail, connectedAddr
   const isBase = agent.vault?.chain === 'base'
   // Honest signature accounting (plan-level constraint) — never understate: the Base leg is a
   // real CCTP burn + Base-side approve on TOP of the router grant signature already disclosed
-  // elsewhere, plus a one-time ZeroDev passkey ceremony the first time this wallet touches Base
-  // (see wallet/passkeyBridge.js — VF passkeys can never be reused as the Base owner key).
-  const needsPasskeySetup =
-    isBase && !isVfWallet(connectedAddress) && !localStorage.getItem('vf_base_owner')
+  // elsewhere, plus a one-time ZeroDev passkey ceremony the first time ANY wallet touches Base —
+  // VF wallets are NOT exempt (see wallet/passkeyBridge.js: the SDK never durably persists the
+  // P-256 pubkey behind a VF passkey credential, so VF reuse as the Base owner key is impossible;
+  // ensureBaseOwner runs the same register/login ceremony regardless of wallet type).
+  const needsPasskeySetup = isBase && !localStorage.getItem('vf_base_owner')
 
   return (
     <div className={`skill-card2 ${isApproved ? 'approved' : 'pending'}`}>
