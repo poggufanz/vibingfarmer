@@ -33,6 +33,8 @@ export class OrchestratorAgent {
    * @param {string|null} config.devApiKey - DeepSeek API key for dev mode
    * @param {string} config.sessionId
    * @param {function} config.onEvent - (eventName, data) => void
+   * @param {object|null} config.baseLegContext - { connectedAddress, signTx } — required only when
+   *   strategy.vaults contains a chain:'base' entry (drives the Base leg via executeBaseLeg).
    */
   constructor({
     user,
@@ -43,12 +45,14 @@ export class OrchestratorAgent {
     registryAuthorize = false,
     grantBudgetUnits = null,
     grantDurationSeconds = null,
+    baseLegContext = null,
   }) {
     this.user = user
     this.veniceAuth = veniceAuth || null
     this.devApiKey = devApiKey || null
     this.onEvent = onEvent || (() => {})
     this.sessionId = sessionId || `session-${Date.now()}`
+    this.baseLegContext = baseLegContext
     // Single-signature grant knobs (router path only). Budget defaults to the run total; a larger budget
     // buys headroom for signature-free repeat runs. Duration defaults to SCOPE_TTL_SECONDS. The UI's grant
     // step supplies both; null = use defaults.
@@ -63,151 +67,209 @@ export class OrchestratorAgent {
 
   /**
    * Execute full orchestration: generate skills → authorize+fund each agent → dispatch → aggregate.
-   * @param {object} strategy - { vaults: [{ address, allocation }], ... }
+   * Splits strategy.vaults by chain FIRST: chain:'base' vaults run through executeBaseLeg (Task 7)
+   * as a settled sibling of the Stellar worker pipeline — one leg failing never aborts the other.
+   * @param {object} strategy - { vaults: [{ address, allocation, chain? }], ... } — chain defaults
+   *   to the Stellar path when absent (regression-safe for every pre-Task-3 strategy).
    * @param {number} totalAmount - total asset amount (human-readable VFUSD)
-   * @returns {Promise<{completed:number, failed:number, results:Array, sessionId:string}>}
+   * @returns {Promise<{completed:number, failed:number, results:Array, sessionId:string, baseLeg:object|null}>}
    */
   async dispatch(strategy, totalAmount) {
-    const scopeTtl = this.grantDurationSeconds || SCOPE_TTL_SECONDS
-    const expiry = Math.floor(Date.now() / 1000) + scopeTtl
-    const vaultPlans = strategy.vaults.map((v, i) => ({
-      index: i,
-      agentId: makeAgentId(i, this.sessionId),
-      vault: v.address,
-      protocolSlug: v.protocolSlug || null,
-      eligibilityToken: v.eligibilityToken || null,
-      amountVfusd: totalAmount * v.allocation,
-      amountUnits: BigInt(Math.floor(totalAmount * v.allocation * BASE_UNIT)),
-    }))
+    const allVaults = strategy.vaults || []
+    const baseVaults = allVaults.filter((v) => v.chain === 'base')
+    const stellarVaults = allVaults.filter((v) => v.chain !== 'base')
+    if (baseVaults.length > 0 && !this.baseLegContext) {
+      throw new Error('strategy contains base vaults but no base leg context was provided')
+    }
+    const stellarStrategy = { ...strategy, vaults: stellarVaults }
 
-    this.onEvent('orchestrator-started', {
-      sessionId: this.sessionId,
-      totalAgents: vaultPlans.length,
-      vaults: vaultPlans.map((p) => p.vault),
-    })
+    // Stellar leg — MOVED verbatim from the pre-Task-8 dispatch body (only `strategy` →
+    // `stellarStrategy` at the vaultPlans line changed) into a local closure so it can run as one
+    // settled branch of Promise.allSettled alongside the Base leg below.
+    const runStellarLegs = async () => {
+      const scopeTtl = this.grantDurationSeconds || SCOPE_TTL_SECONDS
+      const expiry = Math.floor(Date.now() / 1000) + scopeTtl
+      const vaultPlans = stellarStrategy.vaults.map((v, i) => ({
+        index: i,
+        agentId: makeAgentId(i, this.sessionId),
+        vault: v.address,
+        protocolSlug: v.protocolSlug || null,
+        eligibilityToken: v.eligibilityToken || null,
+        amountVfusd: totalAmount * v.allocation,
+        amountUnits: BigInt(Math.floor(totalAmount * v.allocation * BASE_UNIT)),
+      }))
 
-    // Generate skills for all agents (parallel).
-    this.onEvent('orchestrator-step', { step: 'generating-skills', status: 'pending' })
-    const skillsResults = await Promise.allSettled(
-      vaultPlans.map((plan) =>
-        generateAgentSkills({
-          agentId: plan.agentId,
-          vault: plan.vault,
-          amount: plan.amountVfusd,
-          veniceAuth: this.veniceAuth,
-          devApiKey: this.devApiKey,
-        }).then((skill) => {
-          saveSkill(plan.agentId, skill)
-          return { agentId: plan.agentId, skill }
-        })
+      this.onEvent('orchestrator-started', {
+        sessionId: this.sessionId,
+        totalAgents: vaultPlans.length,
+        vaults: vaultPlans.map((p) => p.vault),
+      })
+
+      // Generate skills for all agents (parallel).
+      this.onEvent('orchestrator-step', { step: 'generating-skills', status: 'pending' })
+      const skillsResults = await Promise.allSettled(
+        vaultPlans.map((plan) =>
+          generateAgentSkills({
+            agentId: plan.agentId,
+            vault: plan.vault,
+            amount: plan.amountVfusd,
+            veniceAuth: this.veniceAuth,
+            devApiKey: this.devApiKey,
+          }).then((skill) => {
+            saveSkill(plan.agentId, skill)
+            return { agentId: plan.agentId, skill }
+          })
+        )
       )
-    )
-    this.onEvent('orchestrator-step', { step: 'generating-skills', status: 'done' })
+      this.onEvent('orchestrator-step', { step: 'generating-skills', status: 'done' })
 
-    // Surface skill-gen failures (e.g. Venice 401/402) — fallback still lets the agent run.
-    skillsResults.forEach((r, i) => {
-      const skill = r.value?.skill
-      if (skill?.error) {
-        this.onEvent('skill-gen-failed', { agentId: vaultPlans[i].agentId, error: skill.error })
-      }
-    })
+      // Surface skill-gen failures (e.g. Venice 401/402) — fallback still lets the agent run.
+      skillsResults.forEach((r, i) => {
+        const skill = r.value?.skill
+        if (skill?.error) {
+          this.onEvent('skill-gen-failed', { agentId: vaultPlans[i].agentId, error: skill.error })
+        }
+      })
 
-    const totalUnits = vaultPlans.reduce((acc, p) => acc + p.amountUnits, 0n)
+      const totalUnits = vaultPlans.reduce((acc, p) => acc + p.amountUnits, 0n)
 
-    // Pre-flight: block BEFORE any wallet signature if the asset balance can't cover the total.
-    const bal = await readTokenBalance(this.user)
-    if (bal != null && bal < totalUnits) {
-      const msg = `Insufficient VFUSD: have ${(Number(bal) / BASE_UNIT).toFixed(2)}, need ${(Number(totalUnits) / BASE_UNIT).toFixed(2)} for this deposit.`
-      this.onEvent('orchestrator-step', { step: 'authorizing-scope', status: 'error', error: msg })
-      throw new Error(msg)
-    }
-
-    // Option B (fresh agent per run): each worker gets its OWN agent_account instance, deployed
-    // below with that worker's fresh session-key pubkey as the constructor-pinned signer. The
-    // shared pre-deployed demo agent only accepts ITS constructor-pinned key — depositing with
-    // any fresh key failed __check_auth ed25519 verification (Error(Auth, InvalidAction)).
-    const workers = vaultPlans.map(
-      (p) =>
-        new WorkerAgent({
-          agentId: p.agentId,
-          user: this.user,
-          vault: p.vault,
-          amount: p.amountUnits,
-          sessionId: this.sessionId,
-          onEvent: this.onEvent,
-          agentAddress: null, // set right after the per-worker deploy below
-          eligibilityToken: p.eligibilityToken,
+      // Pre-flight: block BEFORE any wallet signature if the asset balance can't cover the total.
+      const bal = await readTokenBalance(this.user)
+      if (bal != null && bal < totalUnits) {
+        const msg = `Insufficient VFUSD: have ${(Number(bal) / BASE_UNIT).toFixed(2)}, need ${(Number(totalUnits) / BASE_UNIT).toFixed(2)} for this deposit.`
+        this.onEvent('orchestrator-step', {
+          step: 'authorizing-scope',
+          status: 'error',
+          error: msg,
         })
-    )
-
-    // Agent setup — ONE of two paths, chosen by the config knob USE_FUNDING_ROUTER:
-    //   • Router (DEFAULT once funding_router is deployed): ONE owner-signed grant deploys every
-    //     agent + sets the SEP-41 budget behind a single signature; worker funding is a relayed
-    //     router.pull (0 further signatures). Repeat runs can be signature-free. — setupViaRouter
-    //   • Legacy (router unset, or VITE_LEGACY_AGENT_SETUP=1): per-agent deploy + fund, each a
-    //     user signature. — setupLegacy
-    // Both isolate a single agent's setup failure (that worker fails, the run continues) and abort
-    // only when EVERY agent failed. The pending/error/done step events are emitted HERE so both
-    // paths report identically.
-    this.onEvent('orchestrator-step', { step: 'authorizing-scope', status: 'pending' })
-    if (USE_FUNDING_ROUTER) {
-      await this.setupViaRouter(workers, expiry)
-    } else {
-      await this.setupLegacy(workers, expiry)
-    }
-    if (workers.every((w) => w.setupFailed)) {
-      const msg = `Agent setup failed for all ${workers.length} agents: ${workers[0].setupError}`
-      this.onEvent('orchestrator-step', { step: 'authorizing-scope', status: 'error', error: msg })
-      throw new Error(msg)
-    }
-    this.onEvent('orchestrator-step', { step: 'authorizing-scope', status: 'done' })
-
-    // Dispatch workers SERIALLY — one completes before the next starts; the gap keeps the relay
-    // off its per-IP rate limit. Promise.allSettled-equivalent: a thrown worker is captured, not
-    // propagated, so one agent's failure never aborts the others.
-    this.onEvent('orchestrator-step', { step: 'dispatching-agents', status: 'pending' })
-    const workerResults = []
-    for (let i = 0; i < workers.length; i++) {
-      // A worker whose setup failed was already surfaced ('failed' event) — record and move on.
-      if (workers[i].setupFailed) {
-        workerResults.push({ status: 'rejected', reason: new Error(workers[i].setupError) })
-        continue
+        throw new Error(msg)
       }
-      try {
-        const res = await workers[i].execute()
-        workerResults.push({ status: 'fulfilled', value: res })
-      } catch (e) {
-        workerResults.push({ status: 'rejected', reason: e })
+
+      // Option B (fresh agent per run): each worker gets its OWN agent_account instance, deployed
+      // below with that worker's fresh session-key pubkey as the constructor-pinned signer. The
+      // shared pre-deployed demo agent only accepts ITS constructor-pinned key — depositing with
+      // any fresh key failed __check_auth ed25519 verification (Error(Auth, InvalidAction)).
+      const workers = vaultPlans.map(
+        (p) =>
+          new WorkerAgent({
+            agentId: p.agentId,
+            user: this.user,
+            vault: p.vault,
+            amount: p.amountUnits,
+            sessionId: this.sessionId,
+            onEvent: this.onEvent,
+            agentAddress: null, // set right after the per-worker deploy below
+            eligibilityToken: p.eligibilityToken,
+          })
+      )
+
+      // Agent setup — ONE of two paths, chosen by the config knob USE_FUNDING_ROUTER:
+      //   • Router (DEFAULT once funding_router is deployed): ONE owner-signed grant deploys every
+      //     agent + sets the SEP-41 budget behind a single signature; worker funding is a relayed
+      //     router.pull (0 further signatures). Repeat runs can be signature-free. — setupViaRouter
+      //   • Legacy (router unset, or VITE_LEGACY_AGENT_SETUP=1): per-agent deploy + fund, each a
+      //     user signature. — setupLegacy
+      // Both isolate a single agent's setup failure (that worker fails, the run continues) and abort
+      // only when EVERY agent failed. The pending/error/done step events are emitted HERE so both
+      // paths report identically.
+      this.onEvent('orchestrator-step', { step: 'authorizing-scope', status: 'pending' })
+      if (USE_FUNDING_ROUTER) {
+        await this.setupViaRouter(workers, expiry)
+      } else {
+        await this.setupLegacy(workers, expiry)
       }
-      if (i < workers.length - 1) await new Promise((r) => setTimeout(r, DISPATCH_INTERVAL_MS))
+      if (workers.length > 0 && workers.every((w) => w.setupFailed)) {
+        const msg = `Agent setup failed for all ${workers.length} agents: ${workers[0].setupError}`
+        this.onEvent('orchestrator-step', {
+          step: 'authorizing-scope',
+          status: 'error',
+          error: msg,
+        })
+        throw new Error(msg)
+      }
+      this.onEvent('orchestrator-step', { step: 'authorizing-scope', status: 'done' })
+
+      // Dispatch workers SERIALLY — one completes before the next starts; the gap keeps the relay
+      // off its per-IP rate limit. Promise.allSettled-equivalent: a thrown worker is captured, not
+      // propagated, so one agent's failure never aborts the others.
+      this.onEvent('orchestrator-step', { step: 'dispatching-agents', status: 'pending' })
+      const workerResults = []
+      for (let i = 0; i < workers.length; i++) {
+        // A worker whose setup failed was already surfaced ('failed' event) — record and move on.
+        if (workers[i].setupFailed) {
+          workerResults.push({ status: 'rejected', reason: new Error(workers[i].setupError) })
+          continue
+        }
+        try {
+          const res = await workers[i].execute()
+          workerResults.push({ status: 'fulfilled', value: res })
+        } catch (e) {
+          workerResults.push({ status: 'rejected', reason: e })
+        }
+        if (i < workers.length - 1) await new Promise((r) => setTimeout(r, DISPATCH_INTERVAL_MS))
+      }
+      this.onEvent('orchestrator-step', { step: 'dispatching-agents', status: 'done' })
+
+      const results = workerResults.map((r, i) => ({
+        agentId: vaultPlans[i].agentId,
+        vault: vaultPlans[i].vault,
+        success: r.status === 'fulfilled' && r.value?.success,
+        txHash: r.value?.txHash,
+        error: r.reason?.message || r.value?.error,
+      }))
+
+      const completed = results.filter((r) => r.success).length
+      const failed = results.length - completed
+
+      this.onEvent('orchestrator-completed', {
+        sessionId: this.sessionId,
+        completed,
+        failed,
+        results,
+      })
+
+      return {
+        completed,
+        failed,
+        results,
+        sessionId: this.sessionId,
+        agentAddresses: workers.map((w) => w.agentAddress).filter(Boolean),
+      }
     }
-    this.onEvent('orchestrator-step', { step: 'dispatching-agents', status: 'done' })
 
-    const results = workerResults.map((r, i) => ({
-      agentId: vaultPlans[i].agentId,
-      vault: vaultPlans[i].vault,
-      success: r.status === 'fulfilled' && r.value?.success,
-      txHash: r.value?.txHash,
-      error: r.reason?.message || r.value?.error,
-    }))
+    // Base leg (Task 7's executeBaseLeg) never throws — it resolves { success:false, stage, error }
+    // on failure. Dynamic import keeps the Base-only dependency chain (passkey bridge, mandate,
+    // relayer client, ZeroDev farm flow) out of the Stellar-only path's load. Run as a settled
+    // sibling: one leg's failure can never abort the other.
+    const { executeBaseLeg } = await import('./baseLeg.js')
+    const [stellarSettled, baseSettled] = await Promise.allSettled([
+      runStellarLegs(),
+      baseVaults.length > 0
+        ? executeBaseLeg({
+            connectedAddress: this.baseLegContext.connectedAddress,
+            signTx: this.baseLegContext.signTx,
+            baseVaults,
+            totalAmount,
+            onEvent: (name, data) => this.onEvent(name, data),
+          })
+        : Promise.resolve(null),
+    ])
 
-    const completed = results.filter((r) => r.success).length
-    const failed = results.length - completed
-
-    this.onEvent('orchestrator-completed', {
-      sessionId: this.sessionId,
-      completed,
-      failed,
-      results,
-    })
-
-    return {
-      completed,
-      failed,
-      results,
-      sessionId: this.sessionId,
-      agentAddresses: workers.map((w) => w.agentAddress).filter(Boolean),
+    // Stellar-only strategies must behave byte-identically to pre-Task-8 dispatch — including
+    // rejecting with the SAME error (insufficient balance / all-agents-setup-failed). Re-throw
+    // rather than let allSettled swallow it.
+    if (stellarSettled.status === 'rejected') {
+      throw stellarSettled.reason
     }
+
+    // Base leg contract says it never rejects — this is belt-and-braces in case a future change
+    // (or a bug) breaks that contract; map to the same shape executeBaseLeg would have returned.
+    const baseLeg =
+      baseSettled.status === 'fulfilled'
+        ? baseSettled.value
+        : { success: false, stage: 'dispatch', error: baseSettled.reason?.message }
+
+    return { ...stellarSettled.value, baseLeg }
   }
 
   /**
