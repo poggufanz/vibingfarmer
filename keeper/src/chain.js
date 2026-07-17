@@ -6,7 +6,7 @@
 //
 // All contract-call encodings verified live against testnet (2026-07-03) before being wired in
 // here (see task-13-report.md): vault has NO public `last_rebalance` getter (checked
-// soroban/contracts/rwa_vault/src/lib.rs), so it's read as a raw instance-storage entry instead
+// soroban/contracts/autofarm_vault/src/lib.rs), so it's read as a raw instance-storage entry instead
 // (`readInstanceStorageEntry`) — Rust's `#[contracttype] enum DataKey { LastRebalance, .. }`
 // (all-unit variants) encodes each variant as `ScVal::Vec([ScVal::Symbol(name)])`, confirmed by
 // fetching the live vault's instance storage and observing exactly that shape.

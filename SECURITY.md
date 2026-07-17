@@ -6,7 +6,7 @@
 
 First-party contracts and the client/relayer code that enforces their auth model:
 
-- **Soroban (Rust, SDK 26.1.0):** `funding_router`, `agent_account`, `rwa_vault` (autofarm vault), `blend_strategy`, `registry`, `attestation`
+- **Soroban (Rust, SDK 26.1.0):** `funding_router`, `agent_account`, `autofarm_vault`, `blend_strategy`, `registry`, `attestation`
 - **Solidity (0.8.23, OpenZeppelin 5.x):** `YieldRouter`, `AaveV3Adapter4626`
 - **Off-chain:** ZeroDev session-key policy (`frontend/src/base/policyEngine.js`, `frontend/src/wallet/mandate.js`), CCTP relayer (`relayer/`), fee-bump allowlist (`frontend/api/stellar-relay`)
 
@@ -36,7 +36,7 @@ Each control below has regression tests that fail if it breaks.
 - **Per-agent revoke on-chain.** `agent_account.revoke()` (owner-signed, idempotent) sets the `revoked` flag that `__check_auth` checks, zeroes the agent's vault allowance, and emits `agent_revoked`. `owner_withdraw` also clears the allowance on exit. The frontend kill switch talks to the agent contract directly; it does not need the relayer.
 - **Registry is metadata only.** `registry.authorize(agent)` fills stored fields from the agent's own `scope_of()` under the derived owner's auth. Records cannot change owner. `is_active` / `is_revoked` fail closed for unknown agents. Nothing uses the Registry for authorization decisions.
 
-### Vault (autofarm / rwa_vault)
+### Vault (autofarm_vault)
 
 - **Inflation guard:** dead shares + minimum first deposit; pro-rata share pricing with zero/negative-NAV guards on deposit and redeem.
 - **Strategies are untrusted.** NAV clamps negative reports and saturates inflated sums. Compound slices are precomputed; a failed slice (trap, wrong-type return, dishonest pull) stays idle instead of being rerouted. Transient allowances clear after every attempt. Rebalance and emergency de-risk trust only the **observed token balance delta**, and fail closed (`StrategyMisbehaved`) when a strategy report disagrees.
@@ -89,7 +89,7 @@ relayer:        npm test (vitest)
 Rollout gate, in order:
 
 1. ✅ Uploaded `agent_account` wasm v3 → deployed `funding_router` pinning that hash
-2. ✅ Deployed `blend_strategy` + fresh `rwa_vault` (pre-hardening vault retired; not upgraded in place); strategy registered; keeper + mandate authority wired
+2. ✅ Deployed `blend_strategy` + fresh `autofarm_vault` (pre-hardening vault retired; not upgraded in place); strategy registered; keeper + mandate authority wired
 3. ✅ Deployed `registry` (new `authorize(agent)` derived-record ABI)
 4. ⏳ Base leg (optional cross-chain): `YieldRouter` + adapter/pools redeploy and ZeroDev policy regeneration still pending. Base Sepolia addresses in `deployments/base-sepolia.json` still predate the hardening pass
 5. ✅ Live smoke on the new stack: grant → pull → deposit → per-agent revoke → global revoke (allowance→0) → owner exit (`owner_withdraw`) → compound (idle sweep into Blend) → derisk/resume under mandate. Base approve + deposit/withdraw smoke deferred with the Base leg

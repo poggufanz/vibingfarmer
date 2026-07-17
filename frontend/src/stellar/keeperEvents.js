@@ -2,7 +2,7 @@
 // autofarm vault's keeper-gated `compound`/`rebalance`/`derisk`/`resume` on a cron schedule, and
 // the vault itself emits `mandate` on a user-signed `set_mandate` — this module polls the Soroban
 // RPC for those contract events (topics `vault_compound` / `vault_rebalance` / `vault_derisk` /
-// `vault_resume` / `vault_mandate`, see soroban/contracts/rwa_vault/src/types.rs) and decodes them
+// `vault_resume` / `vault_mandate`, see soroban/contracts/autofarm_vault/src/types.rs) and decodes them
 // into the alert-ready shape app.jsx feeds into the existing agent-alert pipeline. Mirrors the
 // getEvents/decode pattern in ./events.js (that module watches the OLD vault + registry +
 // attestation contracts; this one watches the NEW autofarm vault).
