@@ -7,8 +7,12 @@ import { resolveBaseAvailability, buildBaseLegContext } from './mergeFlowHelpers
 
 describe('merge flow helpers', () => {
   it('baseAvailable mirrors relayer health', async () => {
-    expect(await resolveBaseAvailability({ checkHealth: async () => true })).toEqual({ baseAvailable: true })
-    expect(await resolveBaseAvailability({ checkHealth: async () => false })).toEqual({ baseAvailable: false })
+    expect(await resolveBaseAvailability({ checkHealth: async () => true })).toEqual({
+      baseAvailable: true,
+    })
+    expect(await resolveBaseAvailability({ checkHealth: async () => false })).toEqual({
+      baseAvailable: false,
+    })
   })
   it('no wallet -> no base leg context', () => {
     expect(buildBaseLegContext({ connectedAddress: null, kitSignTransaction: vi.fn() })).toBeNull()
