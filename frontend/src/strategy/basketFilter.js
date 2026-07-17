@@ -5,7 +5,9 @@ import { evaluate } from './eligibilityGate.js'
 
 // Base catalog entries set factSlug because `protocol` alone collides with the Stellar
 // mainnet-analog entries (e.g. both carry 'aave-v3'); factSlug disambiguates the fact lookup.
-const slugFor = (a) => a.vault.factSlug || a.vault.protocol
+// Exported: app.jsx must key every verdictBySlug/SNAPSHOT lookup through this SAME function —
+// indexing by bare a.vault.protocol elsewhere would re-collide/miss for base vaults.
+export const slugFor = (a) => a.vault.factSlug || a.vault.protocol
 
 export function filterBasket(agents, verdictBySlug) {
   const survivorsRaw = []

@@ -5,6 +5,7 @@
 import React, { useState, useMemo } from 'react'
 import SkillDetailModal from './components/SkillDetailModal.jsx'
 import SkillEditModal from './components/SkillEditModal.jsx'
+import { isVfWallet } from './wallet/passkeyBridge.js'
 
 /* ---------- Protocol display names ---------- */
 const PROTOCOL_NAMES = {
@@ -77,9 +78,16 @@ export const buildSkillForAgent = (agent, riskProfile) => {
 }
 
 /* ---------- Single skill card ---------- */
-const SkillCard = ({ agent, skill, state, onApprove, onViewDetail }) => {
+const SkillCard = ({ agent, skill, state, onApprove, onViewDetail, connectedAddress }) => {
   const info = translateSkill(agent, skill)
   const isApproved = state === 'approved'
+  const isBase = agent.vault?.chain === 'base'
+  // Honest signature accounting (plan-level constraint) — never understate: the Base leg is a
+  // real CCTP burn + Base-side approve on TOP of the router grant signature already disclosed
+  // elsewhere, plus a one-time ZeroDev passkey ceremony the first time this wallet touches Base
+  // (see wallet/passkeyBridge.js — VF passkeys can never be reused as the Base owner key).
+  const needsPasskeySetup =
+    isBase && !isVfWallet(connectedAddress) && !localStorage.getItem('vf_base_owner')
 
   return (
     <div className={`skill-card2 ${isApproved ? 'approved' : 'pending'}`}>
@@ -89,6 +97,7 @@ const SkillCard = ({ agent, skill, state, onApprove, onViewDetail }) => {
           <div className="skill-card2-name">{agent.name}</div>
           <div className="skill-card2-risk">{info.risk}</div>
         </div>
+        {isBase && <span className="skill-card2-chain-badge">Cross-chain (Base)</span>}
         <span
           className={`skill-card2-dot ${isApproved ? 'approved' : 'pending'}`}
           aria-label={isApproved ? 'Approved' : 'Needs review'}
@@ -102,6 +111,13 @@ const SkillCard = ({ agent, skill, state, onApprove, onViewDetail }) => {
       <div className="skill-card2-meta">
         {info.expiry} {info.revocable}
       </div>
+
+      {isBase && (
+        <div className="skill-card2-chain-note">
+          Cross-chain via CCTP — needs 2 extra signatures (approve + burn)
+          {needsPasskeySetup ? ', and a one-time passkey setup.' : '.'}
+        </div>
+      )}
 
       <div className={`skill-card2-status ${isApproved ? 'approved' : 'pending'}`}>
         {isApproved ? 'Approved' : 'Needs review'}
@@ -204,6 +220,7 @@ const SkillReviewCard = ({
   onSkillUpdate,
   onApproveAll,
   onContinue,
+  connectedAddress,
 }) => {
   const [detailAgentId, setDetailAgentId] = useState(null)
   const [editAgentId, setEditAgentId] = useState(null)
@@ -261,6 +278,7 @@ const SkillReviewCard = ({
             state={skillStates[a.id]?.state || 'pending'}
             onApprove={onApprove}
             onViewDetail={setDetailAgentId}
+            connectedAddress={connectedAddress}
           />
         ))}
       </div>
