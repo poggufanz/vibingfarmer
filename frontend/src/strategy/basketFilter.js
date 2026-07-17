@@ -3,11 +3,15 @@
 import { resolve } from './vaultFacts.js'
 import { evaluate } from './eligibilityGate.js'
 
+// Base catalog entries set factSlug because `protocol` alone collides with the Stellar
+// mainnet-analog entries (e.g. both carry 'aave-v3'); factSlug disambiguates the fact lookup.
+const slugFor = (a) => a.vault.factSlug || a.vault.protocol
+
 export function filterBasket(agents, verdictBySlug) {
   const survivorsRaw = []
   const dropped = []
   for (const a of agents) {
-    const verdict = verdictBySlug[a.vault.protocol]
+    const verdict = verdictBySlug[slugFor(a)]
     if (verdict && verdict.eligible) survivorsRaw.push(a)
     else
       dropped.push({
@@ -27,7 +31,7 @@ export function filterBasket(agents, verdictBySlug) {
 export function computeBasket(agents, nowMs = Date.now()) {
   const verdictBySlug = {}
   for (const a of agents) {
-    const slug = a.vault.protocol
+    const slug = slugFor(a)
     try {
       verdictBySlug[slug] = evaluate(resolve(slug), nowMs)
     } catch (err) {

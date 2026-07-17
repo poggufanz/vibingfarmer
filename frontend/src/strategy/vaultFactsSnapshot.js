@@ -41,6 +41,56 @@ export const SNAPSHOT = {
     facts: audited({ tvl: f(5_000_000), adminKey: f('multisig') }),
     meta: { label: 'Fluid (mainnet)' },
   },
+  // Base pools (cross-chain leg, see BASE_POOL_CATALOG factSlug in config.js). Same
+  // reputational-fact philosophy as the mainnet entries above: the on-chain wrapper is a
+  // MockERC4626 over real CCTP USDC, but the curated facts describe the real mainnet protocol
+  // (Aave v3 / Morpho Blue / Moonwell on Base) whose reputation the pool trades on. poolClass
+  // mirrors each catalog entry's yield_source ('lending' vs 'curated') — honest, not force-fit.
+  'aave-v3-base': {
+    facts: {
+      annualizedDistributed: f(120_000_000),
+      protocolRevenue: f(60_000_000),
+      audit: f('audited'),
+      ageDays: f(900),
+      tvl: f(300_000_000),
+      adminKey: f('timelock'),
+      oracleType: f('chainlink'),
+      collateralLiquidityDepthUsd: f(50_000_000),
+      poolClass: f('lending'),
+      supplierConcentrationPct: f(18),
+    },
+    meta: { label: 'Aave v3 (Base)' },
+  },
+  'morpho-blue-base': {
+    facts: {
+      annualizedDistributed: f(300_000_000),
+      protocolRevenue: f(230_000_000),
+      audit: f('audited'),
+      ageDays: f(700),
+      tvl: f(1_800_000_000),
+      adminKey: f('multisig'), // DAO/guardian governance — nearest ADMIN_LEVELS match to "immutable core + guardian"
+      oracleType: f('chainlink'), // oracle-agnostic per market; chainlink is the common default
+      collateralLiquidityDepthUsd: f(80_000_000),
+      poolClass: f('curated'),
+      supplierConcentrationPct: f(22),
+    },
+    meta: { label: 'Morpho Blue (Base)' },
+  },
+  'moonwell-base': {
+    facts: {
+      annualizedDistributed: f(25_000_000),
+      protocolRevenue: f(20_000_000),
+      audit: f('audited'),
+      ageDays: f(800),
+      tvl: f(45_000_000),
+      adminKey: f('timelock'),
+      oracleType: f('chainlink'),
+      collateralLiquidityDepthUsd: f(20_000_000),
+      poolClass: f('lending'),
+      supplierConcentrationPct: f(30),
+    },
+    meta: { label: 'Moonwell (Base)' },
+  },
   // Controlled demo fixture — illustrates rejection. NOT a real vault.
   hyperfarm: {
     facts: {
