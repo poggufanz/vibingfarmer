@@ -6,6 +6,8 @@ import { submitGrant, runAgentPull, readAllowance } from './stellar/grant.js'
 import { saveCachedAgent, takeReusableAgent } from './stellar/agentCache.js'
 import { newSessionKey } from './stellar/sessionKey.js'
 import { readTokenBalance } from './stellar/agentDeposit.js'
+import { STELLAR_USDC_SAC } from './stellar/cctpBurn.js'
+import { deriveCctpTransferUnits } from './stellar/format.js'
 import {
   SOROBAN_TOKEN_ADDRESS,
   SOROBAN_DECIMALS,
@@ -80,6 +82,22 @@ export class OrchestratorAgent {
     const stellarVaults = allVaults.filter((v) => v.chain !== 'base')
     if (baseVaults.length > 0 && !this.baseLegContext) {
       throw new Error('strategy contains base vaults but no base leg context was provided')
+    }
+
+    // Base-leg balance preflight — the burn spends STELLAR_USDC_SAC, a DIFFERENT asset from
+    // SOROBAN_TOKEN_ADDRESS (VFUSD, checked below for the Stellar leg), so it can't be folded into
+    // that total; it needs its own read. Mirrors the Stellar preflight's behavior: throw here and
+    // dispatch aborts entirely, before either leg does any work (same fail-fast contract as the
+    // pre-existing VFUSD check inside runStellarLegs).
+    if (baseVaults.length > 0) {
+      const legAmount = baseVaults.reduce((sum, v) => sum + totalAmount * v.allocation, 0)
+      const { burnUnits7 } = deriveCctpTransferUnits(legAmount)
+      const burnBal = await readTokenBalance(this.user, { token: STELLAR_USDC_SAC })
+      if (burnBal != null && burnBal < burnUnits7) {
+        throw new Error(
+          `Insufficient USDC for the cross-chain leg: have ${(Number(burnBal) / BASE_UNIT).toFixed(2)}, need ${(Number(burnUnits7) / BASE_UNIT).toFixed(2)} to burn via CCTP.`
+        )
+      }
     }
     const stellarStrategy = { ...strategy, vaults: stellarVaults }
 

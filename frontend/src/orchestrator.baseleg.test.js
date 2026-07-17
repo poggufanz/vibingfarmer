@@ -72,6 +72,7 @@ vi.mock('./baseLeg.js', () => ({
 }))
 
 import { OrchestratorAgent } from './orchestrator.js'
+import { STELLAR_USDC_SAC } from './stellar/cctpBurn.js'
 
 describe('orchestrator base leg (Task 8)', () => {
   beforeEach(() => {
@@ -163,6 +164,60 @@ describe('orchestrator base leg (Task 8)', () => {
       stage: 'dispatch',
       error: 'unexpected throw',
     })
+  })
+
+  it('mixed strategy: insufficient USDC (burn-token) balance aborts dispatch before any work', async () => {
+    // VFUSD (readTokenBalance's default token) is a DIFFERENT asset from the CCTP burn token
+    // (STELLAR_USDC_SAC) — a user flush with VFUSD can still be short the USDC the burn spends,
+    // so this preflight must check the burn token specifically, not the vault-deposit total.
+    readTokenBalanceMock.mockImplementation(async (addr, opts) => {
+      if (opts?.token === STELLAR_USDC_SAC) return 1n // far short of the ~400_000_000n needed
+      return addr === 'GUSER' ? null : 0n
+    })
+    const orch = new OrchestratorAgent({
+      user: 'GUSER',
+      sessionId: 's4',
+      onEvent: vi.fn(),
+      baseLegContext: { connectedAddress: 'GUSER', signTx: vi.fn() },
+    })
+    await expect(
+      orch.dispatch(
+        {
+          vaults: [
+            { address: 'CSTELLAR', allocation: 0.6, chain: 'stellar' },
+            { address: '0xBASE', allocation: 0.4, chain: 'base' },
+          ],
+        },
+        100
+      )
+    ).rejects.toThrow(/USDC/i)
+    // Abort-upfront: neither leg starts once the burn-token preflight fails.
+    expect(executeBaseLegMock).not.toHaveBeenCalled()
+    expect(workerInstances).toHaveLength(0)
+  })
+
+  it('mixed strategy: sufficient USDC (burn-token) balance proceeds as before', async () => {
+    readTokenBalanceMock.mockImplementation(async (addr, opts) => {
+      if (opts?.token === STELLAR_USDC_SAC) return 10_000_000_000n // plenty
+      return addr === 'GUSER' ? null : 0n
+    })
+    const orch = new OrchestratorAgent({
+      user: 'GUSER',
+      sessionId: 's5',
+      onEvent: vi.fn(),
+      baseLegContext: { connectedAddress: 'GUSER', signTx: vi.fn() },
+    })
+    const summary = await orch.dispatch(
+      {
+        vaults: [
+          { address: 'CSTELLAR', allocation: 0.6, chain: 'stellar' },
+          { address: '0xBASE', allocation: 0.4, chain: 'base' },
+        ],
+      },
+      100
+    )
+    expect(summary.baseLeg).toMatchObject({ success: true })
+    expect(workerInstances).toHaveLength(1)
   })
 
   it('no baseLegContext -> base vaults are refused loudly, not silently dropped', async () => {
