@@ -100,9 +100,6 @@ export default defineConfig(({ mode }) => {
     preview: {
       historyApiFallback: true,
     },
-    optimizeDeps: {
-      include: ['react-force-graph-2d'],
-    },
     // Vitest-only env. base/config.js and src/config.js's BASE_POOL_CATALOG fail loudly at module
     // load on a missing 0x address (deliberate — see their docstrings). Tests import those modules
     // statically without real deployments, so provide throwaway placeholder addresses here; a

@@ -1080,12 +1080,15 @@ const App = () => {
     // strategy — otherwise a new deposit would stop the agent watching earlier vaults.
     let activeVaults = buildActiveVaults(agentData.positions, strategy)
     if (!activeVaults.length)
-      activeVaults = strategy.agents.map((a) => ({
+      activeVaults = (strategy?.agents || []).map((a) => ({
         address: a.vault.addr,
         name: a.vault.name,
         protocol: a.vault.protocol,
         depositApy: Number(a.vault.apy),
       }))
+    // Orphan positions (vault matches neither the current strategy nor VAULT_CATALOG) on cold
+    // boot with strategy still null — nothing resolvable to monitor, so bail before starting.
+    if (!activeVaults.length) return
     // v2: the depositor is deposit-only and the MockVault is plain ERC-4626 — there is no
     // on-chain harvest, so no server-wallet session-key setup. The monitor loop observes +
     // proposes; any execution (withdraw/revoke) is a user-signed tx initiated from the UI.
