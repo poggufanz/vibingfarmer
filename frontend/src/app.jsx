@@ -105,7 +105,6 @@ const OpsConsole = lazy(() => import('./components/console/OpsConsole.jsx'))
 const Withdraw = lazy(() => import('./screens/Withdraw.jsx'))
 import NotificationCenter from './components/NotificationCenter.jsx'
 import { loadBasePositions } from './base/dashboardPositions.js'
-import { ensureBaseOwner } from './wallet/passkeyBridge.js'
 import HomePage from './components/HomePage.jsx'
 const LandingHero = lazy(() => import('./components/LandingHero.jsx'))
 const ExplorerPage = lazy(() => import('./components/ExplorerPage.jsx'))
@@ -1391,9 +1390,7 @@ const App = () => {
     const rows = strategy.agents.map((a) => {
       const slug = slugFor(a)
       const v = verdictBySlug[slug]
-      const asOf = new Date(SNAPSHOT[slug]?.facts?.tvl?.asOf || 0)
-        .toISOString()
-        .slice(0, 10)
+      const asOf = new Date(SNAPSHOT[slug]?.facts?.tvl?.asOf || 0).toISOString().slice(0, 10)
       return {
         id: a.id,
         eligible: !!v?.eligible,
@@ -1701,10 +1698,13 @@ const App = () => {
   // vf-base-dashboard Task 10 — Withdraw button on a Base position row. ensureBaseOwner is
   // login-mode after the first-ever ceremony (see passkeyBridge.js), so this is one WebAuthn
   // tap, not a fresh registration. Mounts the existing Withdraw screen (screens/Withdraw.jsx)
-  // once the owner kernel account resolves.
+  // once the owner kernel account resolves. Dynamic import: keeps passkeyBridge.js (and the
+  // ZeroDev/viem chain behind it) out of the eager bundle — mirrors orchestrator.js's
+  // baseLeg.js gating (Task 8).
   const handleBaseWithdrawClick = async (position) => {
     setBaseWithdrawError(null)
     try {
+      const { ensureBaseOwner } = await import('./wallet/passkeyBridge.js')
       const owner = await ensureBaseOwner({ connectedAddress: realAddress })
       setBaseWithdraw({
         position,

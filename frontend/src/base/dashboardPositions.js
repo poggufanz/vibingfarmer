@@ -5,20 +5,24 @@
 // Fail-soft end to end: no owner yet, or any RPC error, -> [] and the dashboard renders without
 // the panel. Never throws — this runs on every 15s poll tick alongside the Stellar reads.
 import { readPositions as defaultReadPositions } from './readPositions.js'
-import { defaultMakePublicClient } from '../wallet/passkeyBase.js'
 import { BASE_POOL_CATALOG } from '../config.js'
 
 export async function loadBasePositions({ deps = {} } = {}) {
-  const { readPositions = defaultReadPositions, makePublicClient = defaultMakePublicClient } = deps
+  const { readPositions = defaultReadPositions, makePublicClient } = deps
 
   // No Base owner ever created (or address not yet persisted) -> nothing to read. Bail BEFORE
-  // touching the network so a Stellar-only user's poll never fires a Base RPC call.
+  // touching the network (and BEFORE the dynamic import below) so a Stellar-only user's poll
+  // never fires a Base RPC call OR loads the ZeroDev/viem chain.
   const owner = localStorage.getItem('vf_base_owner')
   const account = localStorage.getItem('vf_base_owner_address')
   if (!owner || !account) return []
 
   try {
-    const publicClient = makePublicClient()
+    // Dynamic: no top-level import of passkeyBase.js here (that pulled the whole ZeroDev/viem
+    // chain into the eager main bundle for every user — proven via dist chunk grep). Reached
+    // only once we already know a Base owner exists.
+    const { defaultMakePublicClient } = await import('../wallet/passkeyBase.js')
+    const publicClient = (makePublicClient || defaultMakePublicClient)()
     const positions = await readPositions({
       pools: BASE_POOL_CATALOG.map((p) => p.address),
       account,

@@ -12,6 +12,7 @@ import { loadSettings, t } from '../settingsStore.js'
 import { useNavigateTo } from '../router.js'
 import { YieldLine } from './SignatureMark.jsx'
 import { toDisplay } from '../stellar/format.js'
+import { fromBaseChainUnits } from '../base/config.js'
 import { pickVaultAgents } from '../positionsStore.js'
 import { Icon } from '../components.jsx'
 
@@ -1046,7 +1047,7 @@ export default function HomePage({
                         className="mono tnum"
                         style={{ fontSize: 12, color: 'var(--text-muted)' }}
                       >
-                        {p.shares.toString()} shares
+                        {fromBaseChainUnits(p.shares).toFixed(2)} shares
                       </span>
                       <button
                         className="pill-btn"
