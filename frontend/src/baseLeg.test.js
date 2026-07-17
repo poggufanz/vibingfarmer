@@ -17,6 +17,7 @@ const okDeps = () => ({
   }),
   postMandate: vi.fn().mockResolvedValue({ ok: true }),
   runFarmFlow: vi.fn().mockResolvedValue({ burnHash: 'BURN', jobId: 'job-1', finalStatus: 'done' }),
+  estimateMinShares: vi.fn(async () => 98505000n),
 })
 
 describe('executeBaseLeg', () => {
@@ -79,5 +80,43 @@ describe('executeBaseLeg', () => {
         deps,
       })
     ).resolves.toMatchObject({ success: false, stage: 'owner', error: 'user declined' })
+  })
+  it('minShares comes from the live quote, not a hardcoded 1n', async () => {
+    const deps = okDeps()
+    await executeBaseLeg({
+      connectedAddress: 'GUSER',
+      signTx: vi.fn(),
+      baseVaults,
+      totalAmount: 100,
+      onEvent: vi.fn(),
+      deps,
+    })
+    expect(deps.estimateMinShares).toHaveBeenCalledTimes(1)
+    expect(deps.estimateMinShares).toHaveBeenCalledWith({
+      pool: baseVaults[0].address,
+      amountBaseUnits: expect.any(BigInt),
+      publicClient: expect.objectContaining({}),
+    })
+    const call = deps.runFarmFlow.mock.calls[0][0]
+    expect(call.allocations.length).toBeGreaterThan(0)
+    for (const a of call.allocations) {
+      expect(a.minShares).toBe(98505000n)
+    }
+  })
+  it('a rejecting quote settles { success:false, stage:"mandate" }, never throws, and aborts before mandate submission', async () => {
+    const deps = okDeps()
+    deps.estimateMinShares.mockRejectedValue(new Error('rpc down'))
+    const out = await executeBaseLeg({
+      connectedAddress: 'GUSER',
+      signTx: vi.fn(),
+      baseVaults,
+      totalAmount: 100,
+      onEvent: vi.fn(),
+      deps,
+    })
+    expect(out).toMatchObject({ success: false, stage: 'mandate' })
+    expect(deps.createMandate).not.toHaveBeenCalled()
+    expect(deps.postMandate).not.toHaveBeenCalled()
+    expect(deps.runFarmFlow).not.toHaveBeenCalled()
   })
 })

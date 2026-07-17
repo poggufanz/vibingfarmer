@@ -12,6 +12,7 @@ import { runFarmFlow as defaultRunFarmFlow } from './crossChainFarm.js'
 import { burnViaWallet } from './stellar/burnViaWallet.js'
 import { deriveCctpTransferUnits } from './stellar/format.js'
 import { BASE_POOL_CATALOG } from './config.js'
+import { estimateMinShares as defaultEstimateMinShares } from './base/quotes.js'
 
 const MANDATE_TTL_SECONDS = 3600
 
@@ -30,6 +31,7 @@ export async function executeBaseLeg({
     createMandate = defaultCreateMandate,
     postMandate = defaultPostMandate,
     runFarmFlow = defaultRunFarmFlow,
+    estimateMinShares = defaultEstimateMinShares,
   } = deps || {}
 
   const safeEmit = (name, data) => {
@@ -66,17 +68,28 @@ export async function executeBaseLeg({
           pool: v.address,
           protocol: cat?.protocol,
           amount: totalAmount * v.allocation,
-          minShares: 1n,
         }
       }),
       { targetUnits: baseTargetUnits6 }
+    )
+    // Execution-time slippage guard: quote live convertToShares per pool right before mandate
+    // creation, replacing the old hardcoded minShares: 1n no-op (see base/quotes.js).
+    const quotedAllocations = await Promise.all(
+      allocations.map(async (a) => ({
+        ...a,
+        minShares: await estimateMinShares({
+          pool: a.pool,
+          amountBaseUnits: a.amountBaseUnits,
+          publicClient: owner.publicClient,
+        }),
+      }))
     )
 
     const mandate = await createMandate({
       kernelAccount: owner.kernelAccount,
       publicClient: owner.publicClient,
       passkeyValidator: owner.passkeyValidator,
-      pools: allocations.map((a) => ({ pool: a.pool, cap: a.amountBaseUnits })),
+      pools: quotedAllocations.map((a) => ({ pool: a.pool, cap: a.amountBaseUnits })),
       expiry: Math.floor(Date.now() / 1000) + MANDATE_TTL_SECONDS,
     })
     await postMandate({
@@ -95,7 +108,7 @@ export async function executeBaseLeg({
       baseRecipientAddress: owner.address,
       sessionKeyAddress: mandate.sessionKeyAddress,
       serializedApproval: mandate.serializedApproval,
-      allocations,
+      allocations: quotedAllocations,
       burnUnits7,
       onEvent,
       deps: { burn: (p) => burnViaWallet({ ...p, signTx }) },
