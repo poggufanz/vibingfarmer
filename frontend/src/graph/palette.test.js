@@ -12,8 +12,14 @@ import {
 } from './palette.js'
 
 const exec = {
-  'worker-1': { status: 'running', steps: { swap: 'skipped', approve: 'confirmed', deposit: 'running' } },
-  'worker-2': { status: 'confirmed', steps: { swap: 'skipped', approve: 'confirmed', deposit: 'confirmed' } },
+  'worker-1': {
+    status: 'running',
+    steps: { swap: 'skipped', approve: 'confirmed', deposit: 'running' },
+  },
+  'worker-2': {
+    status: 'confirmed',
+    steps: { swap: 'skipped', approve: 'confirmed', deposit: 'confirmed' },
+  },
 }
 
 describe('hexToNum', () => {
@@ -34,7 +40,9 @@ describe('computeOrchestratorState', () => {
   it('running wins over confirmed, failed wins over all, empty = idle', () => {
     expect(computeOrchestratorState(exec)).toBe('running')
     expect(computeOrchestratorState({ a: { status: 'confirmed' } })).toBe('confirmed')
-    expect(computeOrchestratorState({ a: { status: 'failed' }, b: { status: 'running' } })).toBe('failed')
+    expect(computeOrchestratorState({ a: { status: 'failed' }, b: { status: 'running' } })).toBe(
+      'failed'
+    )
     expect(computeOrchestratorState({})).toBe('idle')
   })
 })
@@ -47,11 +55,15 @@ describe('nodeStateOf / nodeColor / nodeRunning', () => {
   })
   it('step takes its per-step state (skipped supported)', () => {
     expect(nodeStateOf({ kind: 'step', agentId: 'worker-1', stepId: 'swap' }, exec)).toBe('skipped')
-    expect(nodeColor({ kind: 'step', agentId: 'worker-1', stepId: 'swap' }, exec, palette)).toBe(GRAPH_COLOR.skipped)
+    expect(nodeColor({ kind: 'step', agentId: 'worker-1', stepId: 'swap' }, exec, palette)).toBe(
+      GRAPH_COLOR.skipped
+    )
   })
   it('strategy-vault follows the deposit step', () => {
     expect(nodeStateOf({ kind: 'vault', agentId: 'worker-2' }, exec)).toBe('confirmed')
-    expect(nodeColor({ kind: 'vault', agentId: 'worker-2' }, exec, palette)).toBe(GRAPH_COLOR.confirmed)
+    expect(nodeColor({ kind: 'vault', agentId: 'worker-2' }, exec, palette)).toBe(
+      GRAPH_COLOR.confirmed
+    )
   })
   it('idle orchestrator/vault use group base colors, idle worker uses state idle', () => {
     expect(nodeColor({ kind: 'orchestrator' }, {}, palette)).toBe(GROUP_BASE.orchestrator)

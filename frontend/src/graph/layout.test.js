@@ -14,7 +14,9 @@ const H = 400
 describe('detectMode', () => {
   it('classifies strategy, cluster, and generic shapes', () => {
     expect(detectMode(buildGraphData(strategy).nodes)).toBe('strategy')
-    expect(detectMode(buildAutofarmGraphData({ vaultAddress: 'V', keeperAddress: 'K' }).nodes)).toBe('cluster')
+    expect(
+      detectMode(buildAutofarmGraphData({ vaultAddress: 'V', keeperAddress: 'K' }).nodes)
+    ).toBe('cluster')
     expect(detectMode([{ id: 'a' }, { id: 'b' }])).toBe('generic')
   })
 })
@@ -48,10 +50,7 @@ describe('cluster layout', () => {
   const data = buildAutofarmGraphData({
     vaultAddress: 'V',
     keeperAddress: 'K',
-    strategies: [
-      { address: 'S1', poolAddress: 'P1' },
-      { address: 'S2' },
-    ],
+    strategies: [{ address: 'S1', poolAddress: 'P1' }, { address: 'S2' }],
   })
   const { positions } = layoutGraph(data, W, H)
   const dist = (id) => {

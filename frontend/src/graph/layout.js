@@ -9,7 +9,14 @@ export const detectMode = (nodes = []) => {
   return 'generic'
 }
 
-const STRATEGY_COLS = { orchestrator: 0.07, worker: 0.28, swap: 0.45, approve: 0.6, deposit: 0.75, vault: 0.93 }
+const STRATEGY_COLS = {
+  orchestrator: 0.07,
+  worker: 0.28,
+  swap: 0.45,
+  approve: 0.6,
+  deposit: 0.75,
+  vault: 0.93,
+}
 
 const layoutStrategy = (nodes, w, h) => {
   const workers = nodes.filter((n) => n.kind === 'worker')

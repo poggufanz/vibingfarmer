@@ -3,11 +3,7 @@
    Graph rendering lives in src/graph/ (PixiJS "Living Current" scene);
    this file keeps strategy/exec-state UI: tiles, memory modal, cards.
    ============================================ */
-import React, {
-  useEffect as useEAg,
-  useRef as useRAg,
-  useState as useSAg,
-} from 'react'
+import React, { useEffect as useEAg, useRef as useRAg, useState as useSAg } from 'react'
 import { PixiSwarmGraph } from './graph/PixiSwarmGraph.jsx'
 import { Icon } from './components.jsx'
 import { shortAddr } from './screens.jsx'

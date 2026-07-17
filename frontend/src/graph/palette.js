@@ -54,7 +54,13 @@ export const computeOrchestratorState = (execMap) => {
 
 const stepState = (ex) => {
   const d = ex.steps?.deposit
-  return d === 'confirmed' ? 'confirmed' : d === 'running' ? 'running' : d === 'failed' ? 'failed' : 'idle'
+  return d === 'confirmed'
+    ? 'confirmed'
+    : d === 'running'
+      ? 'running'
+      : d === 'failed'
+        ? 'failed'
+        : 'idle'
 }
 
 export const nodeStateOf = (node, execMap) => {

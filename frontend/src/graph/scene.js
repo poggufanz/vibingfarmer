@@ -3,7 +3,13 @@
 // The React wrapper owns the Application; this builds/updates the stage.
 import { layoutGraph, conduitControl, pointOnQuadratic } from './layout.js'
 import { NODE_R, hexToNum, paletteFor, nodeColor, nodeStateOf } from './palette.js'
-import { edgeFlow, advanceParticles, spawnFor, MAX_PARTICLES, EDGE_PARTICLE_CAP } from './current.js'
+import {
+  edgeFlow,
+  advanceParticles,
+  spawnFor,
+  MAX_PARTICLES,
+  EDGE_PARTICLE_CAP,
+} from './current.js'
 import {
   corePulseScale,
   coronaAlpha,
@@ -33,7 +39,11 @@ const makeGlowTexture = (PIXI) => {
   return PIXI.Texture.from(canvas)
 }
 
-export function createScene(PIXI, app, { data, execMap, paletteIsLight, reducedMotion, onWorkerClick }) {
+export function createScene(
+  PIXI,
+  app,
+  { data, execMap, paletteIsLight, reducedMotion, onWorkerClick }
+) {
   let isLight = !!paletteIsLight
   let palette = paletteFor(isLight)
   let exec = execMap || {}
@@ -108,7 +118,12 @@ export function createScene(PIXI, app, { data, execMap, paletteIsLight, reducedM
     ring.alpha = 0
     const label = new PIXI.Text({
       text: node.name,
-      style: { fontFamily: 'Geist, sans-serif', fontSize: 11, fontWeight: '600', fill: palette.label },
+      style: {
+        fontFamily: 'Geist, sans-serif',
+        fontSize: 11,
+        fontWeight: '600',
+        fill: palette.label,
+      },
       resolution: 2,
     })
     label.anchor.set(0.5, 0)
@@ -188,10 +203,12 @@ export function createScene(PIXI, app, { data, execMap, paletteIsLight, reducedM
     edges.forEach((e) => {
       const f = edgeFlow(stateOf(e.source), stateOf(e.target))
       e.particles =
-        f === 'off' ? [] : [
-          { t: 0.3, speed: 0, size: 1, hot: f === 'hot' },
-          { t: 0.7, speed: 0, size: 1, hot: f === 'hot' },
-        ]
+        f === 'off'
+          ? []
+          : [
+              { t: 0.3, speed: 0, size: 1, hot: f === 'hot' },
+              { t: 0.7, speed: 0, size: 1, hot: f === 'hot' },
+            ]
     })
   }
 

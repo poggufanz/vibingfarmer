@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { edgeFlow, advanceParticles, spawnFor, MAX_PARTICLES, EDGE_PARTICLE_CAP } from './current.js'
+import {
+  edgeFlow,
+  advanceParticles,
+  spawnFor,
+  MAX_PARTICLES,
+  EDGE_PARTICLE_CAP,
+} from './current.js'
 
 describe('edgeFlow', () => {
   it('failed endpoint kills the edge', () => {

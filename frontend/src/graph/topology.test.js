@@ -1,10 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import {
-  buildGraphData,
-  buildAutofarmGraphData,
-  rebalancePulseKey,
-  STEP_IDS,
-} from './topology.js'
+import { buildGraphData, buildAutofarmGraphData, rebalancePulseKey, STEP_IDS } from './topology.js'
 
 const strategy = {
   agents: [
