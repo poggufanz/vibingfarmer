@@ -29,14 +29,40 @@ describe('isVfWallet', () => {
 
 describe('ensureBaseOwner', () => {
   const fakeAccount = {
-    address: '0xOWNER', kernelAccount: {}, publicClient: {}, passkeyValidator: {},
+    address: '0xOWNER',
+    kernelAccount: {},
+    publicClient: {},
+    passkeyValidator: {},
   }
   it('runs register ceremony on first call, login on the next', async () => {
     const createBase = vi.fn().mockResolvedValue(fakeAccount)
-    const first = await ensureBaseOwner({ connectedAddress: 'GFREIGHTER', deps: { createBaseSmartAccount: createBase } })
+    const first = await ensureBaseOwner({
+      connectedAddress: 'GFREIGHTER',
+      deps: { createBaseSmartAccount: createBase },
+    })
     expect(createBase).toHaveBeenCalledWith(expect.objectContaining({ mode: 'register' }))
     expect(first.ownerMode).toBe('ceremony')
-    await ensureBaseOwner({ connectedAddress: 'GFREIGHTER', deps: { createBaseSmartAccount: createBase } })
+    await ensureBaseOwner({
+      connectedAddress: 'GFREIGHTER',
+      deps: { createBaseSmartAccount: createBase },
+    })
     expect(createBase).toHaveBeenLastCalledWith(expect.objectContaining({ mode: 'login' }))
+  })
+
+  it('self-heals a corrupt stored record into a fresh register ceremony', async () => {
+    localStorage.setItem('vf_base_owner', '{not valid json')
+    const createBase = vi.fn().mockResolvedValue(fakeAccount)
+    const out = await ensureBaseOwner({
+      connectedAddress: 'GFREIGHTER',
+      deps: { createBaseSmartAccount: createBase },
+    })
+    expect(createBase).toHaveBeenCalledWith(expect.objectContaining({ mode: 'register' }))
+    expect(out.ownerMode).toBe('ceremony')
+  })
+
+  it('rejects with a clear message when connectedAddress is missing', async () => {
+    await expect(ensureBaseOwner({ deps: { createBaseSmartAccount: vi.fn() } })).rejects.toThrow(
+      'ensureBaseOwner: connectedAddress is required'
+    )
   })
 })

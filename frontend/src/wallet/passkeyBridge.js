@@ -17,9 +17,16 @@ export function isVfWallet(connectedAddress) {
 }
 
 export async function ensureBaseOwner({ connectedAddress, deps = {} }) {
+  if (!connectedAddress) throw new Error('ensureBaseOwner: connectedAddress is required')
   const { createBaseSmartAccount = defaultCreateBaseSmartAccount } = deps
 
-  const stored = JSON.parse(localStorage.getItem(OWNER_KEY) || 'null')
+  // A corrupt/tampered record must self-heal into a fresh register ceremony, not crash resolution.
+  let stored = null
+  try {
+    stored = JSON.parse(localStorage.getItem(OWNER_KEY) || 'null')
+  } catch {
+    stored = null
+  }
   const mode = stored ? 'login' : 'register'
   const passkeyName = stored?.passkeyName || `vibing-farmer-base-${connectedAddress.slice(0, 8)}`
 
