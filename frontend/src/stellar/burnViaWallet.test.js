@@ -24,7 +24,13 @@ describe('burnViaWallet', () => {
   it('throws before ANY submit on a malformed base recipient', async () => {
     const deps = { buildAndSubmit: vi.fn() }
     await expect(
-      burnViaWallet({ contractId: 'GUSER', amountUnits: 1n, baseRecipientAddress: 'not-hex', signTx: vi.fn(), deps })
+      burnViaWallet({
+        contractId: 'GUSER',
+        amountUnits: 1n,
+        baseRecipientAddress: 'not-hex',
+        signTx: vi.fn(),
+        deps,
+      })
     ).rejects.toThrow()
     expect(deps.buildAndSubmit).not.toHaveBeenCalled()
   })

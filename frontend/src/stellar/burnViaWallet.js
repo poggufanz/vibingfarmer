@@ -38,7 +38,13 @@ async function defaultBuildAndSubmit({ server, source, contract, method, args, s
     const expLedger = latest.sequence + Math.ceil(APPROVE_DURATION_SECONDS / SECONDS_PER_LEDGER)
     finalArgs = [...args, { u32: expLedger }]
   }
-  const { xdr: unsignedXdr } = await buildInvokeTx({ source, contract, method, args: finalArgs, server })
+  const { xdr: unsignedXdr } = await buildInvokeTx({
+    source,
+    contract,
+    method,
+    args: finalArgs,
+    server,
+  })
   const signedXdr = await signTx(unsignedXdr)
   try {
     const res = await submitUserTx({ signedXdr, server })
