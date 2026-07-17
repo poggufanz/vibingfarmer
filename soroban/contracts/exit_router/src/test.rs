@@ -5,8 +5,8 @@ use agent_account::AgentAccount;
 use soroban_sdk::testutils::{Address as _, MockAuth, MockAuthInvoke};
 use soroban_sdk::{vec, Address, BytesN, Env, IntoVal, String, Vec};
 
-// rwa_vault carves this out of the first-ever deposit as an inflation-attack guard
-// (rwa_vault::vault::DEAD_SHARES — `pub(crate)`, so it is mirrored here like agent_account's
+// autofarm_vault carves this out of the first-ever deposit as an inflation-attack guard
+// (autofarm_vault::vault::DEAD_SHARES — `pub(crate)`, so it is mirrored here like agent_account's
 // tests do). Only the vault's FIRST deposit pays it.
 const VAULT_DEAD_SHARES: i128 = 1000;
 
@@ -23,7 +23,7 @@ fn setup() -> Fixture {
     let admin = Address::generate(&env);
     let token = env.register_stellar_asset_contract_v2(admin.clone()).address();
     let vault = env.register(
-        rwa_vault::RwaVault,
+        autofarm_vault::AutofarmVault,
         (
             admin,
             token.clone(),

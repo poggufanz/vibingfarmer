@@ -1,6 +1,6 @@
-// Local typed client for the deployed rwa_vault. Hand-written so we do NOT import the
+// Local typed client for the deployed autofarm_vault. Hand-written so we do NOT import the
 // vault wasm at build time (a sibling-wasm import collided on __constructor in sub-project
-// 1d). Signatures are copied verbatim from rwa_vault's public contract API — keep them in sync.
+// 1d). Signatures are copied verbatim from autofarm_vault's public contract API — keep them in sync.
 use soroban_sdk::{contractclient, Address, Env};
 
 #[contractclient(name = "VaultClient")]
