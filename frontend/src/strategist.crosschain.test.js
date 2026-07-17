@@ -17,12 +17,16 @@ const mixedResponse = () => ({
   selected_vaults: [
     {
       address: STELLAR_ADDRESS,
-      allocation: 0.6, expected_apy: 4.8, risk_tier: 'low',
+      allocation: 0.6,
+      expected_apy: 4.8,
+      risk_tier: 'low',
       reasoning: 'battle-tested stellar lending vault with deep liquidity',
     },
     {
       address: BASE_ADDRESS,
-      allocation: 0.4, expected_apy: 5.1, risk_tier: 'low',
+      allocation: 0.4,
+      expected_apy: 5.1,
+      risk_tier: 'low',
       reasoning: 'base-side aave pool balances the stellar concentration',
     },
   ],

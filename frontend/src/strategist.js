@@ -130,7 +130,7 @@ async function callChatCompletions(url, model, headers, messages, isVenice, sign
   })
   if (!response.ok) throw new Error(`API ${response.status}`)
   const data = await response.json()
-  
+
   if (data.usage) {
     trackTokenUsage(model, data.usage)
   }
@@ -139,7 +139,6 @@ async function callChatCompletions(url, model, headers, messages, isVenice, sign
   if (!content) throw new Error('Empty response')
   return content
 }
-
 
 const veniceProvider = (headers, name) => ({
   url: `${VENICE_BASE_URL}/chat/completions`,

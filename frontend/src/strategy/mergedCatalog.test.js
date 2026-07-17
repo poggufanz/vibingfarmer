@@ -23,11 +23,19 @@ describe('buildMergedCatalog', () => {
 
 describe('checkRelayerHealth', () => {
   it('healthy on 404 unknown-jobId', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue({ status: 404, ok: false, json: async () => ({ error: 'unknown jobId' }) })
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue({ status: 404, ok: false, json: async () => ({ error: 'unknown jobId' }) })
     expect(await checkRelayerHealth({ fetchImpl })).toBe(true)
   })
   it('unhealthy on 503 relayer-not-configured', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue({ status: 503, ok: false, json: async () => ({ error: 'relayer not configured' }) })
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue({
+        status: 503,
+        ok: false,
+        json: async () => ({ error: 'relayer not configured' }),
+      })
     expect(await checkRelayerHealth({ fetchImpl })).toBe(false)
   })
   it('unhealthy on network error', async () => {
