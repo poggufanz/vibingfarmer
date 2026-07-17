@@ -241,8 +241,8 @@ fn test_scope_accumulates_and_resets_period() {
         .is_ok());
 }
 
-// rwa_vault mints this many shares to ITSELF (locked forever) on a vault's first-ever
-// deposit — an inflation-attack guard (rwa_vault::vault::DEAD_SHARES, `pub(crate)` so not
+// autofarm_vault mints this many shares to ITSELF (locked forever) on a vault's first-ever
+// deposit — an inflation-attack guard (autofarm_vault::vault::DEAD_SHARES, `pub(crate)` so not
 // importable from here). Every fresh-vault first deposit in this file's tests must dock its
 // expected share count by this amount.
 const VAULT_DEAD_SHARES: i128 = 1000;
@@ -250,7 +250,7 @@ const VAULT_DEAD_SHARES: i128 = 1000;
 // --- Task 1: local vault client interface (no wasm import) ---
 #[test]
 fn vault_client_iface_compiles_and_calls() {
-    // Arrange: register the real vault (via its struct type — rwa_vault exposes no WASM
+    // Arrange: register the real vault (via its struct type — autofarm_vault exposes no WASM
     // const, and a dev-dep struct registration keeps cross-contract calls working in the
     // test env while avoiding the 1d build-time wasm link collision) and a SAC token.
     let env = Env::default();
@@ -259,7 +259,7 @@ fn vault_client_iface_compiles_and_calls() {
     let sac = env.register_stellar_asset_contract_v2(admin.clone());
     let token = sac.address();
     let vault = env.register(
-        rwa_vault::RwaVault,
+        autofarm_vault::AutofarmVault,
         (
             admin.clone(),
             token.clone(),
@@ -371,7 +371,7 @@ fn owner_withdraw_sweeps_principal_back_to_owner() {
     let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token);
     let token_client = soroban_sdk::token::TokenClient::new(&env, &token);
     let vault = env.register(
-        rwa_vault::RwaVault,
+        autofarm_vault::AutofarmVault,
         (
             admin.clone(),
             token.clone(),
@@ -720,7 +720,7 @@ fn owner_withdraw_clears_vault_allowance() {
     let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token);
     let token_client = soroban_sdk::token::TokenClient::new(&env, &token);
     let vault = env.register(
-        rwa_vault::RwaVault,
+        autofarm_vault::AutofarmVault,
         (
             admin.clone(),
             token.clone(),

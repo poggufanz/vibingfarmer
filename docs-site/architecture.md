@@ -50,7 +50,7 @@ User input (amount, risk level, vault count)
 ## Repository map
 
 ```
-soroban/contracts/     # funding_router, agent_account, rwa_vault (autofarm),
+soroban/contracts/     # funding_router, agent_account, autofarm_vault,
                        # blend_strategy, registry, attestation
 frontend/src/stellar/  # Soroban client, session keys, relay client, wallet kit
 frontend/src/strategy/ # decision engine: MDP, Monte Carlo, council, gates,

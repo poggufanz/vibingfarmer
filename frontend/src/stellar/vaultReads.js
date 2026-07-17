@@ -1,7 +1,7 @@
 // frontend/src/stellar/vaultReads.js
 // Read-only Autofarm vault state for the KeeperPanel (vf-autofarm Task 15): the vault's
 // exchange-rate `price_per_share()` (7-dp i128 — post-Task-6 this is NOT 1:1 with shares any
-// more, see soroban/contracts/rwa_vault/src/vault.rs) and its registered `strategies()` list,
+// more, see soroban/contracts/autofarm_vault/src/vault.rs) and its registered `strategies()` list,
 // each paired with a best-effort Blend supply-APR estimate for cross-strategy comparison.
 //
 // `estimateSupplyAprBps` is re-exported from `keeper/src/apr.js` (T2 Fix 3 dedup) via a relative

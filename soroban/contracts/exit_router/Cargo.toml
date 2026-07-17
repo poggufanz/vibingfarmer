@@ -12,4 +12,4 @@ soroban-sdk = { workspace = true }
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
 agent_account = { path = "../agent_account" }
-rwa_vault = { path = "../rwa_vault" }
+autofarm_vault = { path = "../autofarm_vault" }

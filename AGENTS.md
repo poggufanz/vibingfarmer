@@ -79,7 +79,7 @@ Memory (localStorage) + react-force-graph-2d
 ## Directory Structure (high signal)
 
 ```
-soroban/contracts/     # funding_router, agent_account, autofarm/rwa_vault, blend_strategy, registry, attestation
+soroban/contracts/     # funding_router, agent_account, autofarm_vault, blend_strategy, registry, attestation
 frontend/src/stellar/  # Soroban client, session keys, relay client, wallet kit
 frontend/api/          # stellar-relay, ai, search, faucet, vf-cross, vf/*
 frontend/src/          # orchestrator, worker, strategist.js (AI multi-provider), strategy/*, components
