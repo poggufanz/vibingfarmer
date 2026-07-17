@@ -34,5 +34,8 @@ export async function ensureBaseOwner({ connectedAddress, deps = {} }) {
 
   const ownerMode = 'ceremony'
   localStorage.setItem(OWNER_KEY, JSON.stringify({ mode: ownerMode, passkeyName }))
+  // Persisted separately from OWNER_KEY so the dashboard can read positions (dashboardPositions.js)
+  // without ever touching the passkey — only an actual withdraw calls back into this ceremony.
+  localStorage.setItem('vf_base_owner_address', account.address)
   return { ...account, ownerMode }
 }

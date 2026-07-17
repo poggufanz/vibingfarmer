@@ -42,11 +42,16 @@ describe('ensureBaseOwner', () => {
     })
     expect(createBase).toHaveBeenCalledWith(expect.objectContaining({ mode: 'register' }))
     expect(first.ownerMode).toBe('ceremony')
+    // Register path persists the owner address so the dashboard can read positions later
+    // without touching the passkey (see dashboardPositions.js).
+    expect(localStorage.getItem('vf_base_owner_address')).toBe('0xOWNER')
     await ensureBaseOwner({
       connectedAddress: 'GFREIGHTER',
       deps: { createBaseSmartAccount: createBase },
     })
     expect(createBase).toHaveBeenLastCalledWith(expect.objectContaining({ mode: 'login' }))
+    // Login path persists it too.
+    expect(localStorage.getItem('vf_base_owner_address')).toBe('0xOWNER')
   })
 
   it('self-heals a corrupt stored record into a fresh register ceremony', async () => {

@@ -200,6 +200,9 @@ export default function HomePage({
   onViewHistory,
   onWithdrawSuccess,
   scopes = [],
+  basePositions = [],
+  onBaseWithdraw,
+  baseWithdrawError = null,
 }) {
   const navigateTo = useNavigateTo()
   const [withdrawVault, setWithdrawVault] = useState(null)
@@ -435,7 +438,7 @@ export default function HomePage({
           </div>
         )}
 
-        {posList.length === 0 ? (
+        {posList.length === 0 && basePositions.length === 0 ? (
           /* ── STATE 2: connected, no positions ── */
           <div style={section}>
             <SectionHead title="Portfolio" />
@@ -1018,6 +1021,50 @@ export default function HomePage({
                 })}
               </div>
             </div>
+
+            {/* ── SECTION: Base positions (vf-base-dashboard Task 10) — absent entirely for
+                Stellar-only users; loadBasePositions returns [] until a Base owner exists. ── */}
+            {basePositions.length > 0 && (
+              <div style={section}>
+                <SectionHead title="Base positions" />
+                <div style={{ ...card }}>
+                  {basePositions.map((p, i) => (
+                    <div
+                      key={p.pool}
+                      style={{
+                        padding: '14px 18px',
+                        borderTop: i ? '1px solid var(--border)' : 'none',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 10,
+                        flexWrap: 'wrap',
+                      }}
+                    >
+                      <span style={{ fontSize: 13, fontWeight: 500 }}>{p.poolName}</span>
+                      <span
+                        className="mono tnum"
+                        style={{ fontSize: 12, color: 'var(--text-muted)' }}
+                      >
+                        {p.shares.toString()} shares
+                      </span>
+                      <button
+                        className="pill-btn"
+                        style={pillBtn}
+                        onClick={() => onBaseWithdraw?.(p)}
+                      >
+                        {t(lang, 'withdraw')}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                {baseWithdrawError && (
+                  <p role="alert" style={{ color: 'var(--danger)', fontSize: 11, marginTop: 8 }}>
+                    {baseWithdrawError}
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* ── TOP MOVERS (inline — 7d APY momentum, replaces Trending cards) ── */}
             {(pulse.vaults || []).some((v) => v.poolId) && (

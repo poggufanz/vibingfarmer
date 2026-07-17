@@ -102,7 +102,10 @@ import {
   withdrawAllFromVault,
 } from './agents/agentController.js'
 const OpsConsole = lazy(() => import('./components/console/OpsConsole.jsx'))
+const Withdraw = lazy(() => import('./screens/Withdraw.jsx'))
 import NotificationCenter from './components/NotificationCenter.jsx'
+import { loadBasePositions } from './base/dashboardPositions.js'
+import { ensureBaseOwner } from './wallet/passkeyBridge.js'
 import HomePage from './components/HomePage.jsx'
 const LandingHero = lazy(() => import('./components/LandingHero.jsx'))
 const ExplorerPage = lazy(() => import('./components/ExplorerPage.jsx'))
@@ -636,6 +639,13 @@ const App = () => {
   const [lifeboatBusy, setLifeboatBusy] = useS(false)
   const [autofarmReads, setAutofarmReads] = useS({ pricePerShare: null, strategies: [] })
   const [rebalancePulse, setRebalancePulse] = useS(null) // { key, ts } — force-graph edge pulse
+  // vf-base-dashboard Task 10 — read-only Base positions (own poll piggyback, see the 15s
+  // sync() below). Stays [] for Stellar-only users; loadBasePositions never throws.
+  const [basePositions, setBasePositions] = useS([])
+  // Set only once the user actually clicks Withdraw on a Base position: { position,
+  // ownerKernelAccount, publicClient } after the one-tap ensureBaseOwner login ceremony.
+  const [baseWithdraw, setBaseWithdraw] = useS(null)
+  const [baseWithdrawError, setBaseWithdrawError] = useS(null)
 
   const [sbExtended, setSbExtended] = useS(() => localStorage.getItem('yv_sb_extended') === 'true')
   const [railCollapsed, setRailCollapsed] = useS(
@@ -784,6 +794,11 @@ const App = () => {
     let alive = true
     const sync = async () => {
       const startedAt = Date.now()
+      // vf-base-dashboard Task 10 — piggybacks this SAME 15s poll (never a second interval).
+      // loadBasePositions never throws (see its own guard/catch); [] for Stellar-only users.
+      loadBasePositions().then((bp) => {
+        if (alive) setBasePositions(bp)
+      })
       // Prefer the scope-derived agent list (per-run grant agents — kept fresh via
       // positionsAgentsRef); fall back to saved/discovered agents (fresh-browser case),
       // then to reconcilePositions' default (demo agent) when nothing is known.
@@ -1680,6 +1695,24 @@ const App = () => {
         if (attempts < 6) setTimeout(reconcile, 2000)
       }
       reconcile()
+    }
+  }
+
+  // vf-base-dashboard Task 10 — Withdraw button on a Base position row. ensureBaseOwner is
+  // login-mode after the first-ever ceremony (see passkeyBridge.js), so this is one WebAuthn
+  // tap, not a fresh registration. Mounts the existing Withdraw screen (screens/Withdraw.jsx)
+  // once the owner kernel account resolves.
+  const handleBaseWithdrawClick = async (position) => {
+    setBaseWithdrawError(null)
+    try {
+      const owner = await ensureBaseOwner({ connectedAddress: realAddress })
+      setBaseWithdraw({
+        position,
+        ownerKernelAccount: owner.kernelAccount,
+        publicClient: owner.publicClient,
+      })
+    } catch (err) {
+      setBaseWithdrawError(err.message)
     }
   }
 
@@ -2986,6 +3019,9 @@ const App = () => {
                 onViewHistory={() => navigate('/history')}
                 onWithdrawSuccess={handleWithdrawSuccess}
                 scopes={scopes}
+                basePositions={basePositions}
+                onBaseWithdraw={handleBaseWithdrawClick}
+                baseWithdrawError={baseWithdrawError}
               />
             }
           />
@@ -3151,6 +3187,29 @@ const App = () => {
               </button>
               <button className="btn btn-primary" onClick={handleKeepWaiting}>
                 Keep waiting
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {baseWithdraw && (
+        <div className="modal-backdrop">
+          <div className="modal" role="dialog" aria-modal="true">
+            <div className="modal-eyebrow">Base withdraw</div>
+            <h3 className="modal-title">{baseWithdraw.position.poolName}</h3>
+            <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
+              <Withdraw
+                ownerKernelAccount={baseWithdraw.ownerKernelAccount}
+                publicClient={baseWithdraw.publicClient}
+                withdrawals={[baseWithdraw.position]}
+                stellarRecipient={realAddress}
+                totalAssetsForBurn={baseWithdraw.position.minAssets}
+              />
+            </Suspense>
+            <div className="modal-actions">
+              <button className="btn btn-ghost" onClick={() => setBaseWithdraw(null)}>
+                Close
               </button>
             </div>
           </div>
