@@ -238,20 +238,24 @@ export class OrchestratorAgent {
     }
 
     // Base leg (Task 7's executeBaseLeg) never throws — it resolves { success:false, stage, error }
-    // on failure. Dynamic import keeps the Base-only dependency chain (passkey bridge, mandate,
-    // relayer client, ZeroDev farm flow) out of the Stellar-only path's load. Run as a settled
-    // sibling: one leg's failure can never abort the other.
-    const { executeBaseLeg } = await import('./baseLeg.js')
+    // on failure. Dynamic import KEPT INSIDE the baseVaults.length>0 branch — gating it here (not
+    // just the call) keeps the Base-only dependency chain (passkey bridge, mandate, relayer
+    // client, ZeroDev farm flow) out of the Stellar-only path's load AND out of its failure mode:
+    // a Base dep-chain resolution error now settles into the baseLeg-rejection mapping below
+    // instead of ever reaching a pure-Stellar dispatch. Run as a settled sibling: one leg's
+    // failure can never abort the other.
     const [stellarSettled, baseSettled] = await Promise.allSettled([
       runStellarLegs(),
       baseVaults.length > 0
-        ? executeBaseLeg({
-            connectedAddress: this.baseLegContext.connectedAddress,
-            signTx: this.baseLegContext.signTx,
-            baseVaults,
-            totalAmount,
-            onEvent: (name, data) => this.onEvent(name, data),
-          })
+        ? import('./baseLeg.js').then(({ executeBaseLeg }) =>
+            executeBaseLeg({
+              connectedAddress: this.baseLegContext.connectedAddress,
+              signTx: this.baseLegContext.signTx,
+              baseVaults,
+              totalAmount,
+              onEvent: (name, data) => this.onEvent(name, data),
+            })
+          )
         : Promise.resolve(null),
     ])
 
