@@ -72,7 +72,7 @@ Keeper cron (compound/rebalance) · Lifeboat radar (derisk)
 Memory (localStorage) + react-force-graph-2d
 ```
 
-**Optional `/farm` cross-chain:** Stellar USDC burn (CCTP) → Node relayer → Base `YieldRouter` → ERC-4626 pools via ZeroDev session key. Unwind reverses the path.
+**Merged cross-chain leg:** the strategist may fold Base pool allocations into the same run when the relayer answers healthy (fail-closed — Base pools are simply absent from the catalog otherwise, no separate page to opt into). A Base allocation settles as a sibling leg beside the Stellar workers: mandate + CCTP burn signed by the connected wallet → relay → ZeroDev session-key deposits. Unwind is a dashboard withdraw, not a separate flow.
 
 ---
 
