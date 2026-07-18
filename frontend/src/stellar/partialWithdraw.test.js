@@ -125,7 +125,8 @@ describe('partialWithdraw', () => {
     deps.readVaultShares = async (addr, opts) => (sharesOpts.push(opts), 100_000_000n)
     deps.readTokenBalance = async (addr, opts) => (balanceOpts.push(opts), 20_000_000n)
     deps.buildAgentAuthedInvoke = async ({ contract, method }) => (
-      invokedContracts.push(contract), { xdr: `XDR:${method}` }
+      invokedContracts.push(contract),
+      { xdr: `XDR:${method}` }
     )
     await partialWithdraw({
       owner: 'GOWNER',

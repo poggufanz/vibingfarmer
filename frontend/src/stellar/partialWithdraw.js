@@ -5,12 +5,13 @@
 // token balance to the owner (retval-equivalent → zero dust, and any prior stranded balance
 // rides along). Relay-only: the user holds no XLM, a relay refusal is a hard stop, never a
 // user-paid fallback. The agent stays alive — no revoke, remaining shares keep compounding.
-import { rpcServer, readContract } from './client.js'
+import { rpcServer } from './client.js'
 import {
   buildAgentAuthedInvoke as _buildAgentAuthedInvoke,
   readVaultShares as _readVaultShares,
   readTokenBalance as _readTokenBalance,
 } from './agentDeposit.js'
+import { readAgentScope as _readAgentScopeRaw } from './agentCache.js'
 import { readPricePerShare as _readPricePerShare } from './vaultReads.js'
 import {
   getRelayerAddress as _getRelayerAddress,
@@ -42,19 +43,13 @@ export function sharesForAmount(amountUnits, pps, agentShares) {
 }
 
 /** scope_of(agent) → { expiry, revoked } for the Partial-mode gate, null on read failure
- *  (gate open on null: the chain still enforces, this read is UX only). */
+ *  (gate open on null: the chain still enforces, this read is UX only). Delegates to
+ *  agentCache's readAgentScope (raw scope_of() result) and narrows to the two fields this
+ *  module's callers need. */
 export async function readAgentScope(agentAddress, { server } = {}) {
-  try {
-    const scope = await readContract({
-      contract: agentAddress,
-      method: 'scope_of',
-      args: [],
-      server,
-    })
-    return { expiry: BigInt(scope.expiry), revoked: Boolean(scope.revoked) }
-  } catch {
-    return null
-  }
+  const scope = await _readAgentScopeRaw(agentAddress, { server })
+  if (scope == null) return null
+  return { expiry: BigInt(scope.expiry), revoked: Boolean(scope.revoked) }
 }
 
 /**

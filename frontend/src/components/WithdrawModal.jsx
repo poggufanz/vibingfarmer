@@ -129,7 +129,7 @@ export default function WithdrawModal({
       const rows = await Promise.all(
         agentAddresses.map(async (address) => {
           const [shares, scope] = await Promise.all([
-            readVaultShares(address),
+            readVaultShares(address, { vault: vault.address }),
             readAgentScope(address),
           ])
           const maxUnits = shares == null ? 0n : (shares * pps) / PPS_SCALE
@@ -216,6 +216,7 @@ export default function WithdrawModal({
         owner: userAddress,
         agentAddress: chosen,
         amountUnits,
+        vault: vault.address,
       })
       saveTransaction({
         txHash: out.transferHash,

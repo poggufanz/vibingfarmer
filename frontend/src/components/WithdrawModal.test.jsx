@@ -17,8 +17,9 @@ vi.mock('../stellar/partialWithdraw.js', () => ({
     revoked: false,
   }),
 }))
+const readVaultShares = vi.fn(async () => 100_000_000n) // 10 USDC per agent
 vi.mock('../stellar/agentDeposit.js', () => ({
-  readVaultShares: async () => 100_000_000n, // 10 USDC per agent
+  readVaultShares: (...a) => readVaultShares(...a),
 }))
 vi.mock('../stellar/vaultReads.js', () => ({ readPricePerShare: async () => 10_000_000n }))
 
@@ -52,9 +53,11 @@ describe('WithdrawModal partial mode', () => {
     const call = partialWithdraw.mock.calls[0][0]
     expect(call.agentAddress).toBe('CAGENT1')
     expect(call.amountUnits).toBe(20_000_000n)
+    expect(call.vault).toBe('CVAULT')
     expect(ensureExitSigner).toHaveBeenCalledWith(
       expect.objectContaining({ owner: 'GOWNER', agentAddress: 'CAGENT1' })
     )
+    expect(readVaultShares.mock.calls[0][1]).toEqual({ vault: 'CVAULT' })
     await waitFor(() => expect(props.onSuccess).toHaveBeenCalledWith('CVAULT', '20000000'))
   })
 
