@@ -22,7 +22,9 @@ const APPROVE_ALLOWANCE_HEADROOM = 10n // approve 10x the burn amount, mirrors r
 const APPROVE_EXPIRY_LEDGER_HEADROOM = 100_000 // ~6 days at 5s/ledger
 
 const FRIENDBOT = 'https://friendbot.stellar.org'
-const ZERO32 = new Uint8Array(32)
+// Exported: burnViaWallet.js (Task 6) reuses this zero destination_caller for its own
+// deposit_for_burn call instead of re-declaring the same 32-byte zero buffer.
+export const ZERO32 = new Uint8Array(32)
 
 /**
  * Left-pad a 20-byte EVM address into a 32-byte buffer (BytesN<32> mint_recipient). Ported from

@@ -27,10 +27,16 @@ const AUTH_TTL_LEDGERS = 360
 
 /**
  * Sign every auth entry credentialed to `agentAddress` with the session key, in place on `tx`.
- * @param {{tx:object, sessionKey:{rawPublicKey:Uint8Array, sign:(p:Uint8Array)=>Uint8Array}, validUntilLedger:number, agentAddress:string, server?:object}} p
+ * @param {{tx:object, sessionKey:{rawPublicKey:Uint8Array, sign:(p:Uint8Array)=>Uint8Array}, validUntilLedger:number, agentAddress:string, sigTag?:number, server?:object}} p
  * @returns {Promise<{xdr:string}>}
  */
-export async function signAgentDepositEntries({ tx, sessionKey, validUntilLedger, agentAddress }) {
+export async function signAgentDepositEntries({
+  tx,
+  sessionKey,
+  validUntilLedger,
+  agentAddress,
+  sigTag,
+}) {
   const { xdr, hash, Address } = await sdk()
   const networkId = hash(Buffer.from(NETWORK_PASSPHRASE))
   const wantScAddress = Address.fromString(agentAddress).toScAddress().toXDR('base64')
@@ -53,10 +59,54 @@ export async function signAgentDepositEntries({ tx, sessionKey, validUntilLedger
       )
       const payload = hash(preimage.toXDR())
       const sig = Buffer.from(sessionKey.sign(new Uint8Array(payload))) // 64-byte ed25519
-      creds.signature(xdr.ScVal.scvBytes(sig)) // bare BytesN<64> — what __check_auth expects
+      // sigTag selects the signer role in __check_auth: 65-byte [tag]+sig → tag 0 session,
+      // tag 1 exit signer (account.rs). Bare 64-byte stays the session-key default.
+      const sigBytes = sigTag == null ? sig : Buffer.concat([Buffer.from([sigTag]), sig])
+      creds.signature(xdr.ScVal.scvBytes(sigBytes))
     }
   }
   return { xdr: tx.toEnvelope().toXDR('base64') }
+}
+
+/**
+ * Build an invoke (source = relayer), sign THIS agent's auth entries with `signer`
+ * (optionally tag-prefixed), then re-simulate in enforcing mode (see footprint note above).
+ * @param {{contract:string, method:string, args:Array, agentAddress:string,
+ *          signer:{sign:(p:Uint8Array)=>Uint8Array}, sigTag?:number, relayer:string, server?:object}} p
+ * @returns {Promise<{xdr:string}>}
+ */
+export async function buildAgentAuthedInvoke({
+  contract,
+  method,
+  args,
+  agentAddress,
+  signer,
+  sigTag,
+  relayer,
+  server,
+}) {
+  const s = server || (await rpcServer())
+  const { tx } = await buildInvokeTx({ source: relayer, contract, method, args, server: s })
+  const latest = await s.getLatestLedger()
+  const validUntilLedger = latest.sequence + AUTH_TTL_LEDGERS
+  const { xdr: signedXdr } = await signAgentDepositEntries({
+    tx,
+    sessionKey: signer,
+    validUntilLedger,
+    agentAddress,
+    sigTag,
+  })
+
+  // Re-simulate WITH the signed entry (enforcing mode). The first prepare ran in recording
+  // mode, which SKIPS the custom account's __check_auth — its assembled footprint can miss
+  // the agent contract's instance/wasm/nonce entries and the submit then traps with
+  // scecExceededLimit "contract instance outside of the footprint". The ed25519 signature
+  // covers (network id, nonce, expiration ledger, invocation) only — NOT footprint or
+  // resources — so re-assembling around the same signed entry is safe.
+  const { TransactionBuilder } = await sdk()
+  const signedTx = TransactionBuilder.fromXDR(signedXdr, NETWORK_PASSPHRASE)
+  const prepared = await s.prepareTransaction(signedTx)
+  return { xdr: prepared.toEnvelope().toXDR('base64') }
 }
 
 /**
@@ -72,34 +122,15 @@ export async function buildAgentDeposit({
   vault = SOROBAN_ACTIVE_VAULT_ADDRESS,
   server,
 }) {
-  const s = server || (await rpcServer())
-  const { tx } = await buildInvokeTx({
-    source: relayer,
+  return buildAgentAuthedInvoke({
     contract: vault,
     method: 'deposit',
     args: [{ addr: agentAddress }, { i128: BigInt(amount) }],
-    server: s,
-  })
-  const latest = await s.getLatestLedger()
-  const validUntilLedger = latest.sequence + AUTH_TTL_LEDGERS
-  const { xdr: signedXdr } = await signAgentDepositEntries({
-    tx,
-    sessionKey,
-    validUntilLedger,
     agentAddress,
-    server: s,
+    signer: sessionKey,
+    relayer,
+    server,
   })
-
-  // Re-simulate WITH the signed entry (enforcing mode). The first prepare ran in recording
-  // mode, which SKIPS the custom account's __check_auth — its assembled footprint can miss
-  // the agent contract's instance/wasm/nonce entries and the submit then traps with
-  // scecExceededLimit "contract instance outside of the footprint". The ed25519 signature
-  // covers (network id, nonce, expiration ledger, invocation) only — NOT footprint or
-  // resources — so re-assembling around the same signed entry is safe.
-  const { TransactionBuilder } = await sdk()
-  const signedTx = TransactionBuilder.fromXDR(signedXdr, NETWORK_PASSPHRASE)
-  const prepared = await s.prepareTransaction(signedTx)
-  return { xdr: prepared.toEnvelope().toXDR('base64') }
 }
 
 /**

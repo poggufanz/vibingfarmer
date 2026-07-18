@@ -51,6 +51,7 @@
     "wasmHash": "24dc5ec86a8833331d285581215b715e3c2ecf6c714714af9d91ece4ecc32d84",
     "deployTx": "804495db9965084af3b2b76ae4ae8dad28050a64b886d13c9d3df394de142a4b",
     "deployedAt": "2026-07-14",
+    "renameNote": "2026-07-17: source crate renamed rwa_vault -> autofarm_vault (legacy name from the cancelled RWA-Fi pivot). This deployed instance is unchanged — the wasmHash above was built while the crate was still named rwa_vault. No redeploy.",
     "token": "CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU",
     "decimals": 7,
     "shareSymbol": "vfVLT",

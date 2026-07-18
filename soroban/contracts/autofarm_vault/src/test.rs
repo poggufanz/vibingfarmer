@@ -1,7 +1,7 @@
 #![cfg(test)]
 use crate::types::{Compound, LifeboatEngaged, LifeboatResumed, Rebalance, VaultError};
 use crate::vault::DEAD_SHARES;
-use crate::{RwaVault, RwaVaultClient};
+use crate::{AutofarmVault, AutofarmVaultClient};
 use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _};
 use soroban_sdk::token::{StellarAssetClient, TokenClient};
 use soroban_sdk::{Address, BytesN, Env, Event, String, Vec};
@@ -233,7 +233,7 @@ mod wrong_ret_strategy {
 use mock_strategy::MockStrategyClient;
 
 pub(crate) struct Ctx {
-    pub vault: RwaVaultClient<'static>,
+    pub vault: AutofarmVaultClient<'static>,
     pub admin: Address,
     pub token: Address,
 }
@@ -248,7 +248,7 @@ pub(crate) fn setup(env: &Env) -> Ctx {
     let token = sac.address();
 
     let vault_id = env.register(
-        RwaVault,
+        AutofarmVault,
         (
             admin.clone(),
             token.clone(),
@@ -257,7 +257,7 @@ pub(crate) fn setup(env: &Env) -> Ctx {
         ),
     );
     Ctx {
-        vault: RwaVaultClient::new(env, &vault_id),
+        vault: AutofarmVaultClient::new(env, &vault_id),
         admin,
         token,
     }

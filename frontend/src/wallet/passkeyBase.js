@@ -93,6 +93,8 @@ export async function createBaseSmartAccount({
   return { address: kernelAccount.address, kernelAccount, publicClient, passkeyValidator }
 }
 
-function defaultMakePublicClient() {
+// Exported so read-only callers (e.g. base/dashboardPositions.js) can build the same viem
+// client without duplicating chain/transport wiring or touching the passkey ceremony.
+export function defaultMakePublicClient() {
   return createPublicClient({ chain: BASE_CHAIN, transport: http(BASE_SEPOLIA_RPC_URL) })
 }

@@ -6,7 +6,7 @@ set -euo pipefail
 # Deploys the autofarm vault + strategy stack on Soroban testnet (sub-project vf-autofarm,
 # Task 11). Follows deploy-seed.sh's reuse discipline:
 #   - reuses the live registry + demo agent account (does NOT redeploy them)
-#   - deploys a NEW rwa_vault instance — the OLD deployed vault (deployments/stellar-testnet.json
+#   - deploys a NEW autofarm_vault instance — the OLD deployed vault (deployments/stellar-testnet.json
 #     `vault`) predates add_strategy/set_keeper/compound/rebalance (dividend-model wasm) and
 #     cannot host a strategy; this new instance is the strategy-registry-capable wasm from
 #     Tasks 2-10
@@ -31,7 +31,7 @@ ADMIN=$(stellar keys address vf-deployer)
 
 ( cd "$SOROBAN" && stellar contract build )
 WASM_DIR="$SOROBAN/target/wasm32-unknown-unknown/release"
-[ -f "$WASM_DIR/rwa_vault.wasm" ] || WASM_DIR="$SOROBAN/target/wasm32v1-none/release"
+[ -f "$WASM_DIR/autofarm_vault.wasm" ] || WASM_DIR="$SOROBAN/target/wasm32v1-none/release"
 
 # ---- reuse: registry + demo agent (do NOT redeploy — see deploy-seed.sh header) ----
 REGISTRY=$(python3 -c "import json;print(json.load(open('$OUT'))['registry'])")
@@ -61,7 +61,7 @@ echo "ADMIN=$ADMIN"
 echo "REGISTRY=$REGISTRY DEMO_AGENT=$DEMO_AGENT KEEPER=$KEEPER"
 
 # ---- deploy the autofarm vault (strategy-registry-capable wasm) ----
-VAULT=$(stellar contract deploy --wasm "$WASM_DIR/rwa_vault.wasm" \
+VAULT=$(stellar contract deploy --wasm "$WASM_DIR/autofarm_vault.wasm" \
   --source vf-deployer --network "$NET" \
   -- --admin "$ADMIN" --token "$TOKEN" --name "Vibing Farmer Autofarm" --symbol "vfVLT")
 echo "AUTOFARM_VAULT=$VAULT"

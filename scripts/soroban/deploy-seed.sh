@@ -45,7 +45,7 @@ else
 fi
 
 # ---- yield vault (stable-NAV, daily-dividend yield) ----
-VAULT=$(stellar contract deploy --wasm "$WASM_DIR/rwa_vault.wasm" \
+VAULT=$(stellar contract deploy --wasm "$WASM_DIR/autofarm_vault.wasm" \
   --source vf-deployer --network "$NET" \
   -- --admin "$ADMIN" --token "$TOKEN" --name "Vibing Vault" --symbol "vfVLT")
 

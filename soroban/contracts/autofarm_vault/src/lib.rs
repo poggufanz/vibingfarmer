@@ -26,10 +26,10 @@ const DEFAULT_COOLDOWN_S: u64 = 86_400;
 const DEFAULT_MAX_MOVE_BPS: u32 = 5_000;
 
 #[contract]
-pub struct RwaVault;
+pub struct AutofarmVault;
 
 #[contractimpl]
-impl RwaVault {
+impl AutofarmVault {
     /// Deployed once. `token` = the yield-farming asset (SEP-41 token / SAC) this vault
     /// accepts for deposits and pays out on redeem. The vault is a share-ledger priced by
     /// exchange rate: `price_per_share = total_assets / total_supply`.
@@ -185,7 +185,7 @@ impl RwaVault {
 }
 
 #[contractimpl(contracttrait)]
-impl Pausable for RwaVault {
+impl Pausable for AutofarmVault {
     #[only_admin]
     fn pause(e: &Env, _caller: Address) {
         pausable::pause(e);
@@ -197,4 +197,4 @@ impl Pausable for RwaVault {
 }
 
 #[contractimpl(contracttrait)]
-impl AccessControl for RwaVault {}
+impl AccessControl for AutofarmVault {}

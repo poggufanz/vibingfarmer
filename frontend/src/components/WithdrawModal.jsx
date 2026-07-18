@@ -4,9 +4,15 @@ import React, { useState, useEffect, useRef } from 'react'
 import { withdrawAllFromVault } from '../agents/agentController.js'
 import { saveTransaction } from '../history.js'
 import { loadSettings, t } from '../settingsStore.js'
-import { toDisplay } from '../stellar/format.js'
+import { toDisplay, toBaseUnits } from '../stellar/format.js'
 import { SOROBAN_EXIT_ROUTER_ADDRESS } from '../stellar/config.js'
 import { MAX_AGENTS_PER_SWEEP } from '../stellar/exit.js'
+import { partialWithdraw, ensureExitSigner, readAgentScope } from '../stellar/partialWithdraw.js'
+import { readVaultShares } from '../stellar/agentDeposit.js'
+import { readPricePerShare } from '../stellar/vaultReads.js'
+import { clearExitKey } from '../wallet/exitKey.js'
+
+const PPS_SCALE = 10_000_000n
 
 // With the exit router deployed the whole position is swept in batches, so the exit costs the same
 // single signature the deposit does — until a position is spread over more agents than fit one
@@ -29,22 +35,10 @@ const fmtDur = (secAgo) => {
   return h > 0 ? `${h} hour${h === 1 ? '' : 's'} ${m} min` : `${m} min`
 }
 
-const Row = ({ k, v, color }) => (
-  <div
-    style={{
-      display: 'flex',
-      justifyContent: 'space-between',
-      gap: 12,
-      fontSize: 12,
-      padding: '3px 0',
-    }}
-  >
-    <span style={{ color: 'var(--text-muted)' }}>{k}</span>
-    <span className="mono" style={{ textAlign: 'right', color: color || 'inherit' }}>
-      {v}
-    </span>
-  </div>
-)
+const shortAddr = (addr) => {
+  if (!addr || addr.length < 10) return addr || '-'
+  return `${addr.slice(0, 4)}…${addr.slice(-4)}`
+}
 
 // Map raw ethers/relayer errors to a short, human-readable line.
 // Avoids dumping the full ACTION_REJECTED / sendTransaction payload into the UI.
@@ -74,6 +68,13 @@ const friendlyError = (err) => {
   return 'Withdraw failed. Please try again.'
 }
 
+const PCT_CHIPS = [
+  { id: '25', label: '25%', frac: 0.25 },
+  { id: '50', label: '50%', frac: 0.5 },
+  { id: '75', label: '75%', frac: 0.75 },
+  { id: 'max', label: 'Max', frac: 1 },
+]
+
 export default function WithdrawModal({
   vault,
   balance,
@@ -90,6 +91,10 @@ export default function WithdrawModal({
   const [error, setError] = useState(null)
   const [progress, setProgress] = useState(null)
   const [depositedAgoSec, setDepositedAgoSec] = useState(0)
+  const [mode, setMode] = useState('full') // 'full' | 'partial'
+  const [agentInfo, setAgentInfo] = useState(null) // [{address, maxUnits, blocked}] | null=loading
+  const [chosen, setChosen] = useState(null)
+  const [amount, setAmount] = useState('')
   const confirmRef = useRef(null)
 
   useEffect(() => {
@@ -107,6 +112,34 @@ export default function WithdrawModal({
       prev?.focus?.()
     }
   }, [])
+
+  // Partial mode: load each agent's withdrawable max (shares * price-per-share) and whether its
+  // scope has expired/been revoked (chain still enforces either way — this read only drives the UI
+  // gate, so a failed scope read leaves the row selectable rather than falsely blocking it).
+  useEffect(() => {
+    if (mode !== 'partial' || agentInfo) return
+    let dead = false
+    ;(async () => {
+      const pps = (await readPricePerShare(vault.address)) ?? PPS_SCALE
+      const rows = await Promise.all(
+        agentAddresses.map(async (address) => {
+          const [shares, scope] = await Promise.all([
+            readVaultShares(address, { vault: vault.address }),
+            readAgentScope(address),
+          ])
+          const maxUnits = shares == null ? 0n : (shares * pps) / PPS_SCALE
+          const blocked =
+            scope != null &&
+            (scope.revoked || scope.expiry <= BigInt(Math.floor(Date.now() / 1000)))
+          return { address, maxUnits, blocked }
+        })
+      )
+      if (!dead) setAgentInfo(rows)
+    })()
+    return () => {
+      dead = true
+    }
+  }, [mode])
 
   // owner_withdraw sweeps an agent's ENTIRE position — there is no partial-amount form of it — and
   // a position is the sum over every agent, so a withdraw is N sweeps of 100%. The old amount input
@@ -163,122 +196,381 @@ export default function WithdrawModal({
     }
   }
 
+  const chosenRow = agentInfo?.find((a) => a.address === chosen)
+  const amountUnits = amount ? BigInt(toBaseUnits(amount)) : 0n
+  const canPartial =
+    chosenRow && !chosenRow.blocked && amountUnits > 0n && amountUnits <= chosenRow.maxUnits
+  const maxDisplay = chosenRow ? toDisplay(chosenRow.maxUnits) : 0
+  const overMax = chosenRow && amountUnits > 0n && amountUnits > chosenRow.maxUnits
+
+  const setPct = (frac) => {
+    if (!chosenRow || chosenRow.blocked) return
+    const max = toDisplay(chosenRow.maxUnits)
+    const v = frac >= 1 ? max : Math.floor(max * frac * 100) / 100
+    setAmount(String(v))
+  }
+
+  const handlePartial = async () => {
+    if (!canPartial || status !== 'idle') return
+    setStatus('loading')
+    setError(null)
+    try {
+      await ensureExitSigner({ owner: userAddress, agentAddress: chosen })
+      const out = await partialWithdraw({
+        owner: userAddress,
+        agentAddress: chosen,
+        amountUnits,
+        vault: vault.address,
+      })
+      saveTransaction({
+        txHash: out.transferHash,
+        vaultName: vault.name,
+        vaultAddress: vault.address,
+        protocol: vault.protocol,
+        amountUsdc: toDisplay(out.redeemed),
+        apy: vault.apy,
+        type: 'withdraw',
+        network: 'stellar-testnet',
+      })
+      setStatus('done')
+      onSuccess(vault.address, out.redeemed.toString())
+      setTimeout(onClose, 700)
+    } catch (err) {
+      // A stale exit key (localStorage from a lost registration, or re-registered elsewhere)
+      // fails auth on-chain; drop it so the retry re-registers fresh.
+      if (/signature|auth/i.test(err?.message || '')) clearExitKey(chosen)
+      setError(friendlyError(err))
+      setStatus('idle')
+    }
+  }
+
   return (
     <div className="modal-backdrop" onClick={() => status !== 'loading' && onClose()}>
       <div
-        className="modal"
+        className="modal withdraw-modal"
         role="dialog"
         aria-modal="true"
         aria-labelledby="withdraw-title"
-        style={{ maxWidth: 420 }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="modal-eyebrow">Full exit, signed in your wallet</div>
-        <h3 className="modal-title" id="withdraw-title">
-          {t(lang, 'withdraw')} from {vault.name}
-        </h3>
+        <div className="wd-head">
+          <div className="modal-eyebrow">
+            {mode === 'full' ? 'Full exit, signed in your wallet' : 'Partial exit, one agent'}
+          </div>
+          <h3 className="modal-title" id="withdraw-title">
+            {t(lang, 'withdraw')} from {vault.name}
+          </h3>
 
-        <div className="act-meta" style={{ fontSize: 11, margin: '8px 0 6px' }}>
-          Withdrawing <span className="mono">{balUsdc.toFixed(2)} USDC</span> — your whole position.
+          <div role="tablist" aria-label="Withdraw mode" className="wd-mode-tabs">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === 'full'}
+              className={`wd-mode-tab${mode === 'full' ? ' is-active' : ''}`}
+              onClick={() => setMode('full')}
+            >
+              Full exit
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === 'partial'}
+              className={`wd-mode-tab${mode === 'partial' ? ' is-active' : ''}`}
+              onClick={() => setMode('partial')}
+            >
+              Partial
+            </button>
+          </div>
         </div>
 
-        {agentAddresses.length === 0 ? (
-          <div style={{ color: 'var(--danger)', fontSize: 10.5, marginTop: 5 }}>
-            No active agent holds this position, so there is nothing to sweep. If you just made a
-            deposit, wait for agent permissions to load and reopen this.
-          </div>
-        ) : (
-          <div style={{ fontSize: 10.5, opacity: 0.6, marginTop: 5, lineHeight: 1.45 }}>
-            This position is held by {agentAddresses.length}{' '}
-            {agentAddresses.length === 1 ? 'agent' : 'agents'}.{' '}
-            {ONE_SIGNATURE_EXIT
-              ? `${
-                  signaturesFor(agentAddresses.length) === 1
-                    ? 'They are all swept by one transaction, so your wallet asks you to sign once'
-                    : `They are swept in ${signaturesFor(agentAddresses.length)} batches, so your wallet asks you to sign ${signaturesFor(agentAddresses.length)} times`
-                } — a busy pool can split a batch and ask once more.`
-              : `Each is swept by its own transaction, so your wallet asks you to sign ${
-                  agentAddresses.length === 1 ? 'once' : `${agentAddresses.length} times`
-                }.`}
-          </div>
-        )}
+        <div className="modal-scroll-content">
+          {mode === 'full' && (
+            <div className="wd-body">
+              <div className="wd-hero">
+                <span className="wd-hero-k">Position</span>
+                <span className="wd-hero-v mono tnum">{balUsdc.toFixed(2)}</span>
+                <span className="wd-hero-unit">USDC</span>
+              </div>
+              <p className="wd-lede">Your whole position across every agent holding this vault.</p>
 
-        {progress && (
-          <div
-            className="mono"
-            style={{ fontSize: 10.5, marginTop: 6, color: 'var(--text-muted)' }}
-          >
-            Sweeping agent {progress.index + 1} of {progress.total} — confirm in your wallet…
-          </div>
-        )}
+              {agentAddresses.length === 0 ? (
+                <div className="wd-callout wd-callout--danger" role="status">
+                  No active agent holds this position, so there is nothing to sweep. If you just made
+                  a deposit, wait for agent permissions to load and reopen this.
+                </div>
+              ) : (
+                <div className="wd-callout">
+                  Held by {agentAddresses.length}{' '}
+                  {agentAddresses.length === 1 ? 'agent' : 'agents'}.{' '}
+                  {ONE_SIGNATURE_EXIT
+                    ? `${
+                        signaturesFor(agentAddresses.length) === 1
+                          ? 'Swept in one transaction; your wallet asks once'
+                          : `Swept in ${signaturesFor(agentAddresses.length)} batches; your wallet asks ${signaturesFor(agentAddresses.length)} times`
+                      }. A busy pool can split a batch and ask once more.`
+                    : `Each agent is its own transaction, so your wallet asks ${
+                        agentAddresses.length === 1 ? 'once' : `${agentAddresses.length} times`
+                      }.`}
+                </div>
+              )}
 
-        <div style={{ borderTop: '.5px solid rgba(255,255,255,.08)', margin: '10px 0' }} />
-        <Row k="Time deposited" v={fmtDur(depositedAgoSec)} />
-        <Row k="Total earned" v={`+${rewardsUsdc.toFixed(2)} USDC`} color="var(--ok)" />
-        <div style={{ fontSize: 9.5, opacity: 0.5, textAlign: 'right', marginTop: -2 }}>
-          Earnings remain claimable after withdrawal.
+              {progress && (
+                <div className="wd-progress mono" role="status">
+                  Sweeping agent {progress.index + 1} of {progress.total}. Confirm in your wallet…
+                </div>
+              )}
+
+              <div className="grant-receipt wd-receipt" role="region" aria-label="Exit summary">
+                <div className="grant-receipt-row">
+                  <span className="grant-receipt-k">Time deposited</span>
+                  <span className="grant-receipt-v mono">{fmtDur(depositedAgoSec)}</span>
+                </div>
+                <div className="grant-receipt-row">
+                  <span className="grant-receipt-k">Total earned</span>
+                  <span className="grant-receipt-v grant-receipt-v--ok mono tnum">
+                    +{rewardsUsdc.toFixed(2)} USDC
+                  </span>
+                </div>
+                <div className="grant-receipt-row">
+                  <span className="grant-receipt-k">You receive</span>
+                  <span className="grant-receipt-v mono tnum">~{balUsdc.toFixed(2)} USDC</span>
+                </div>
+                <div className="grant-receipt-row">
+                  <span className="grant-receipt-k">Rewards</span>
+                  <span className="grant-receipt-v grant-receipt-v--ok mono tnum">
+                    +{rewardsUsdc.toFixed(2)} USDC (preserved)
+                  </span>
+                </div>
+                <div className="grant-receipt-row">
+                  <span className="grant-receipt-k">Signatures</span>
+                  <span className="grant-receipt-v mono">
+                    {ONE_SIGNATURE_EXIT
+                      ? `~${signaturesFor(agentAddresses.length)} (all agents)`
+                      : `${agentAddresses.length} (one per agent)`}
+                  </span>
+                </div>
+                <div className="grant-receipt-row">
+                  <span className="grant-receipt-k">Network fee</span>
+                  <span className="grant-receipt-v">Paid by you, in XLM</span>
+                </div>
+                <div className="grant-receipt-row">
+                  <span className="grant-receipt-k">Estimated time</span>
+                  <span className="grant-receipt-v mono">
+                    ~{Math.max(30, signaturesFor(agentAddresses.length) * 20)} seconds
+                  </span>
+                </div>
+              </div>
+              <p className="wd-footnote">Earnings remain claimable after withdrawal.</p>
+            </div>
+          )}
+
+          {mode === 'partial' && (
+            <div className="wd-body">
+              <p className="wd-lede">
+                Withdraw an exact amount from one agent. The rest keeps farming.
+              </p>
+
+              <div className="wd-section">
+                <div className="wd-section-label" id="pw-agent-label">
+                  Choose agent
+                </div>
+                {!agentInfo ? (
+                  <div className="wd-agent-list" aria-busy="true" aria-labelledby="pw-agent-label">
+                    {[0, 1].map((i) => (
+                      <div key={i} className="wd-agent-row wd-agent-row--skeleton">
+                        <span className="skeleton-bar" style={{ width: 72, height: 10 }} />
+                        <span
+                          className="skeleton-bar"
+                          style={{ width: 88, height: 10, marginLeft: 'auto' }}
+                        />
+                      </div>
+                    ))}
+                    <span className="wd-hint">Reading agent balances…</span>
+                  </div>
+                ) : agentInfo.length === 0 ? (
+                  <div className="wd-callout wd-callout--danger" role="status">
+                    No agents available for partial withdraw.
+                  </div>
+                ) : (
+                  <div
+                    className="wd-agent-list"
+                    role="radiogroup"
+                    aria-labelledby="pw-agent-label"
+                  >
+                    {agentInfo.map((a, i) => {
+                      const selected = chosen === a.address
+                      const maxUsdc = toDisplay(a.maxUnits).toFixed(2)
+                      return (
+                        // A plain div + onClick keeps click-anywhere-in-row selection without
+                        // testing-library label-text false matches on "max 10.00 USDC".
+                        <div
+                          key={a.address}
+                          className={[
+                            'wd-agent-row',
+                            selected ? 'is-selected' : '',
+                            a.blocked ? 'is-blocked' : '',
+                          ]
+                            .filter(Boolean)
+                            .join(' ')}
+                          onClick={() => {
+                            if (a.blocked) return
+                            setChosen(a.address)
+                            setAmount('')
+                          }}
+                        >
+                          <input
+                            type="radio"
+                            name="pw-agent"
+                            aria-label={`${a.address.slice(0, 4)}…${a.address.slice(-4)} agent ${i + 1}`}
+                            disabled={a.blocked}
+                            checked={selected}
+                            onChange={() => {
+                              setChosen(a.address)
+                              setAmount('')
+                            }}
+                          />
+                          <div className="wd-agent-meta">
+                            <span className="wd-agent-addr mono">{shortAddr(a.address)}</span>
+                            <span className="wd-agent-idx">Agent {i + 1}</span>
+                          </div>
+                          <div className="wd-agent-max">
+                            {a.blocked ? (
+                              <span className="wd-agent-blocked">Expired. Use Full exit</span>
+                            ) : (
+                              <>
+                                <span className="wd-agent-max-val mono tnum">{maxUsdc}</span>
+                                <span className="wd-agent-max-unit">USDC max</span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {chosenRow && !chosenRow.blocked && (
+                <div className="wd-section">
+                  <label className="wd-section-label" htmlFor="pw-amount">
+                    Amount
+                  </label>
+                  <div className="wd-amount-row">
+                    <input
+                      id="pw-amount"
+                      type="number"
+                      role="spinbutton"
+                      min="0"
+                      step="0.01"
+                      inputMode="decimal"
+                      value={amount}
+                      onChange={(e) => setAmount(e.target.value)}
+                      placeholder="0.00"
+                      className="wd-amount-input mono tnum"
+                      aria-describedby="pw-amount-hint"
+                    />
+                    <span className="wd-amount-unit">USDC</span>
+                  </div>
+                  <div className="wd-pct-row" role="group" aria-label="Quick amounts">
+                    {PCT_CHIPS.map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        className="btn btn-chip wd-pct-chip"
+                        onClick={() => setPct(c.frac)}
+                      >
+                        {c.label}
+                      </button>
+                    ))}
+                  </div>
+                  <span
+                    id="pw-amount-hint"
+                    className={`wd-hint${overMax ? ' wd-hint--err' : ''}`}
+                  >
+                    {overMax
+                      ? `Exceeds this agent's max (${maxDisplay.toFixed(2)} USDC).`
+                      : `Available on this agent: ${maxDisplay.toFixed(2)} USDC. Remainder stays in the vault.`}
+                  </span>
+                </div>
+              )}
+
+              {chosenRow && !chosenRow.blocked && amountUnits > 0n && !overMax && (
+                <div
+                  className="grant-receipt wd-receipt"
+                  role="region"
+                  aria-label="Partial summary"
+                >
+                  <div className="grant-receipt-row">
+                    <span className="grant-receipt-k">You receive</span>
+                    <span className="grant-receipt-v mono tnum">
+                      ~{Number(amount).toFixed(2)} USDC
+                    </span>
+                  </div>
+                  <div className="grant-receipt-row">
+                    <span className="grant-receipt-k">From agent</span>
+                    <span className="grant-receipt-v mono">{shortAddr(chosen)}</span>
+                  </div>
+                  <div className="grant-receipt-row">
+                    <span className="grant-receipt-k">Left farming</span>
+                    <span className="grant-receipt-v mono tnum">
+                      ~{Math.max(0, maxDisplay - Number(amount)).toFixed(2)} USDC
+                    </span>
+                  </div>
+                  <div className="grant-receipt-row">
+                    <span className="grant-receipt-k">Network fee</span>
+                    <span className="grant-receipt-v grant-receipt-v--ok">0 XLM, fee-bump</span>
+                  </div>
+                </div>
+              )}
+
+              <div className="wd-callout">
+                First partial withdraw from an agent asks for one signature to register its exit
+                key. After that: zero signatures, zero gas, two relayed transactions.
+              </div>
+            </div>
+          )}
+
+          {error && (
+            <div className="wd-error" role="alert">
+              <span>{error}</span>
+            </div>
+          )}
         </div>
-
-        <div style={{ borderTop: '.5px solid rgba(255,255,255,.08)', margin: '10px 0' }} />
-        <Row k="You receive" v={`~${balUsdc.toFixed(2)} USDC`} />
-        <Row k="Rewards" v={`+${rewardsUsdc.toFixed(2)} USDC (preserved)`} color="var(--ok)" />
-        <Row
-          k="Signatures"
-          v={
-            ONE_SIGNATURE_EXIT
-              ? // A floor, not a promise: the batch size is calibrated against a cost that moves
-                // with the pool, so a batch that overruns splits and asks once more. Quote it as
-                // the estimate it is rather than a number the wallet can overshoot.
-                `~${signaturesFor(agentAddresses.length)} (all agents)`
-              : `${agentAddresses.length} (one per agent)`
-          }
-        />
-        <Row k="Network fee" v="Paid by you, in XLM" />
-        <Row
-          k="Estimated time"
-          v={`~${Math.max(30, signaturesFor(agentAddresses.length) * 20)} seconds`}
-        />
-
-        {error && (
-          <div
-            role="alert"
-            style={{
-              display: 'flex',
-              gap: 7,
-              alignItems: 'flex-start',
-              color: 'var(--danger)',
-              fontSize: 11,
-              lineHeight: 1.4,
-              marginTop: 8,
-              padding: '7px 9px',
-              background: 'rgba(255,80,80,.08)',
-              border: '.5px solid rgba(255,80,80,.25)',
-              borderRadius: 6,
-              overflowWrap: 'anywhere',
-            }}
-          >
-            <span>{error}</span>
-          </div>
-        )}
 
         <div className="modal-actions">
           <button className="btn btn-ghost" onClick={onClose} disabled={status === 'loading'}>
             Cancel
           </button>
-          <button
-            ref={confirmRef}
-            className="btn btn-primary"
-            onClick={handleConfirm}
-            disabled={!canWithdraw || status !== 'idle'}
-          >
-            {status === 'idle'
-              ? t(lang, 'withdraw')
-              : status === 'loading'
-                ? progress
-                  ? `Sweeping ${progress.index + 1}/${progress.total}…`
-                  : 'Withdrawing…'
-                : 'Done'}
-          </button>
+          {mode === 'full' ? (
+            <button
+              ref={confirmRef}
+              className="btn btn-primary"
+              onClick={handleConfirm}
+              disabled={!canWithdraw || status !== 'idle'}
+            >
+              {status === 'idle'
+                ? t(lang, 'withdraw')
+                : status === 'loading'
+                  ? progress
+                    ? `Sweeping ${progress.index + 1}/${progress.total}…`
+                    : 'Withdrawing…'
+                  : 'Done'}
+            </button>
+          ) : (
+            <button
+              className="btn btn-primary"
+              onClick={handlePartial}
+              disabled={!canPartial || status !== 'idle'}
+            >
+              {status === 'loading'
+                ? 'Withdrawing…'
+                : status === 'done'
+                  ? 'Done'
+                  : amount
+                    ? `Withdraw ${amount} USDC`
+                    : 'Withdraw'}
+            </button>
+          )}
         </div>
       </div>
     </div>

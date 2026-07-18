@@ -30,7 +30,9 @@ Everything runs on Stellar testnet. No real funds.
 2. **AI council.** Three specialists (yield, risk, market) score the proposal on their own. Disagreements go to a synthesis round. Verdict, cited playbook rules, and conflict resolution are logged for review.
 3. **Review.** Skill files open in the Skills Drawer. Edit caps, expiries, or targets. Nothing runs until you approve.
 4. **One signature.** You sign `funding_router.grant` (budget + expiry). A SEP-41 token allowance is the leash: the router deploys a fresh, scoped `agent_account` per worker and can only pull what you approved.
-5. **Parallel deposit.** Workers sign with ephemeral ed25519 session keys. A fee-bump relayer sponsors each transaction. One worker failing does not abort the others. You pay 0 gas.
+
+5. **Parallel deposit.** Workers sign with ephemeral ed25519 session keys. A fee-bump relayer sponsors each transaction. One worker failing does not abort the others. You pay 0 gas. If the plan includes a Base pool — offered only when the cross-chain relayer answers healthy — that leg settles alongside the Stellar workers: your first Base run sets up a passkey (once, ever) plus a wallet-signed CCTP approve and burn, worst case 4 prompts (grant + passkey setup + approve + burn); every run after still asks for a passkey login confirmation on top of the 3 wallet signatures (grant + approve + burn) — the login itself never goes away. Withdraw that position anytime from the dashboard.
+
 6. **Attestation.** The strategy JSON is hashed and written on-chain so anyone with the original file can check what was approved.
 7. **Autonomy.** A monitor loop polls positions, flags APY drift, and can propose rebalances. Each cycle goes back through the council. A keeper compounds on a cron; lifeboat radar can de-risk the vault at ledger speed under a user-signed mandate.
 8. **Kill switch.** Two exits you can sign yourself, even if every server is down:
@@ -212,7 +214,7 @@ npm run pages:dev     # build + wrangler pages dev (Functions locally)
 #### Directory structure
 
 ```
-soroban/contracts/     # funding_router, agent_account, rwa_vault (autofarm),
+soroban/contracts/     # funding_router, agent_account, autofarm_vault,
                        # blend_strategy, registry, attestation
 frontend/src/stellar/  # Soroban client, session keys, relay client, wallet kit
 frontend/src/strategy/ # decision engine: MDP, Monte Carlo, council, gates,

@@ -1,0 +1,9 @@
+{
+  "name": "vf-iris-proxy",
+  "main": "src/index.js",
+  "compatibility_date": "2026-07-01",
+  // Mainnet flip: set IRIS_UPSTREAM=https://iris-api.circle.com (no code change).
+  "vars": {
+    "IRIS_UPSTREAM": "https://iris-api-sandbox.circle.com"
+  }
+}

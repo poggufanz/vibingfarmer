@@ -130,7 +130,7 @@ async function callChatCompletions(url, model, headers, messages, isVenice, sign
   })
   if (!response.ok) throw new Error(`API ${response.status}`)
   const data = await response.json()
-  
+
   if (data.usage) {
     trackTokenUsage(model, data.usage)
   }
@@ -139,7 +139,6 @@ async function callChatCompletions(url, model, headers, messages, isVenice, sign
   if (!content) throw new Error('Empty response')
   return content
 }
-
 
 const veniceProvider = (headers, name) => ({
   url: `${VENICE_BASE_URL}/chat/completions`,
@@ -231,6 +230,7 @@ export async function generateStrategy({
   devApiKey,
   signal,
   address = null,
+  baseAvailable = false,
 }) {
   const settings = loadSettings()
   const useStaticVaults = settings.vaultDataSource === 'static'
@@ -302,8 +302,17 @@ export async function generateStrategy({
     `[Venice] strategy DAG, wall ${Math.round(dag.wallMs)}ms, nodes ${JSON.stringify(dag.timings)}`
   )
 
-  // Real DeFiLlama vaults when available, else the static VAULT_CATALOG
-  const vaultData = liveVaults && liveVaults.length > 0 ? liveVaults : VAULT_CATALOG
+  // Awaited HERE (after the DAG fetch above), not by the caller: the caller (app.jsx, via
+  // mergeFlowHelpers.resolveBaseAvailability) hands us the relayer health-check PROMISE, started
+  // before the DAG fetch, so its ~3s wait overlaps the DAG's own network wait instead of adding to
+  // it. `await` on a plain boolean (the default `baseAvailable = false`, and every existing caller
+  // that still passes a boolean) is a no-op, so this stays backward compatible.
+  const baseAvailableResolved = await baseAvailable
+
+  // Real DeFiLlama vaults when available, else the static VAULT_CATALOG; merged with the
+  // chain-tagged Base pool catalog when the cross-chain relayer is up (baseAvailableResolved).
+  const { buildMergedCatalog } = await import('./strategy/mergedCatalog.js')
+  const vaultData = buildMergedCatalog({ baseAvailable: baseAvailableResolved, liveVaults })
   const vaultDataSource = liveVaults && liveVaults.length > 0 ? 'defiLlama' : 'fallback'
   const dataSource =
     vaultDataSource === 'defiLlama'
@@ -315,6 +324,10 @@ export async function generateStrategy({
     '[VAULT_CATALOG_JSON]',
     JSON.stringify(vaultData, null, 2)
   )
+  if (baseAvailableResolved) {
+    systemPrompt +=
+      '\nEntries with "chain":"base" live on Base (bridged via CCTP, higher latency, one extra user signature). Prefer stellar unless the base APY advantage is material.'
+  }
   if (marketContext) {
     systemPrompt = systemPrompt + '\n\n' + marketContext
     console.log('[Venice] Market context injected from Tavily')
@@ -620,6 +633,13 @@ export function validateStrategyResponse(response, vaultData = VAULT_CATALOG) {
   if (response.selected_vaults.length > vaultData.length) {
     response.selected_vaults = response.selected_vaults.slice(0, vaultData.length)
   }
+
+  // Chain-aware: stamp each selected vault with its chain from the matching catalog entry
+  // (case-insensitive address match). Defaults to 'stellar' for the non-merged-catalog callers.
+  response.selected_vaults.forEach((v) => {
+    const entry = vaultData.find((c) => c.address.toLowerCase() === v.address.toLowerCase())
+    v.chain = entry?.chain || 'stellar'
+  })
 
   return response
 }
@@ -1053,92 +1073,23 @@ function buildBasePoolSkill(pool, amount) {
 }
 
 /**
- * AI strategist allocation across the whitelisted Base pools (Approach C, SP3). Mirrors
- * generateStrategy's provider-resolution + fallback discipline, scoped to a much narrower job:
- * decide WHICH Base pools and HOW MUCH — not the full MDP/DAG/council machinery generateStrategy
- * runs for the Stellar advisor (that would be over-engineering for a 3-pool whitelist YAGNI
- * doesn't ask for here).
- * @param {{ amount: number, riskLevel: 'low'|'medium'|'high', nPools: number, veniceAuth?: string|null, devApiKey?: string|null, signal?: AbortSignal }} params
+ * @deprecated (2026-07-17) Cross-chain allocation now happens inside generateStrategy via the
+ * chain-tagged merged catalog (see buildMergedCatalog). This is an equal-split shim kept only
+ * because screens/tests still import it (migrates off in Task 9/10) — no AI provider call.
+ * @param {{ amount: number, riskLevel: 'low'|'medium'|'high', nPools: number }} params
  * @returns {Promise<Array<{ pool: string, protocol: string, amount: number, minShares: bigint, expectedApy: number, riskTier: string, skill: object }>>}
  */
-export async function allocateBasePools({
-  amount,
-  riskLevel,
-  nPools,
-  veniceAuth,
-  devApiKey,
-  signal,
-}) {
+export async function allocateBasePools({ amount, riskLevel, nPools }) {
   const safeNPools = Math.min(nPools, BASE_POOL_CATALOG.length)
-  const provider = resolveProviderFromSettings({ veniceAuth, devApiKey })
-
-  const buildFallback = () => {
-    const pools = BASE_POOL_CATALOG.slice(0, safeNPools)
-    const perPool = amount / pools.length
-    return pools.map((p) => ({
-      pool: p.address,
-      protocol: p.protocol,
-      amount: perPool,
-      minShares: estimateMinSharesAtStrategyTime(perPool),
-      expectedApy: p.apy,
-      riskTier: p.risk,
-      skill: buildBasePoolSkill(p.address, perPool),
-    }))
-  }
-
-  if (!provider) return buildFallback()
-
-  const controller = signal ? null : new AbortController()
-  const timeout = controller ? setTimeout(() => controller.abort(), VENICE_TIMEOUT_MS) : null
-  const sig = signal || controller.signal
-
-  try {
-    const systemPrompt = withDisplayProseRule(
-      `You allocate USDC across a whitelisted set of Base-chain yield pools. Respond ONLY with JSON: {"allocations":[{"address":"0x...","allocation":0.0-1.0,"reasoning":"..."}]}. Only use addresses from the catalog provided.`
-    )
-    const userPrompt = `Catalog:\n${JSON.stringify(BASE_POOL_CATALOG, null, 2)}\n\nAllocate ${amount} USDC across up to ${safeNPools} pool(s) for a "${riskLevel}" risk investor. Allocations must sum to 1.0 across the pools you select.`
-    const content = await callChatCompletions(
-      provider.url,
-      provider.model,
-      provider.headers,
-      [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-      provider.isVenice,
-      sig
-    )
-    const parsed = JSON.parse(content)
-    const allowedAddresses = new Set(BASE_POOL_CATALOG.map((p) => p.address.toLowerCase()))
-    if (!Array.isArray(parsed.allocations) || parsed.allocations.length === 0) {
-      throw new Error('empty allocations')
-    }
-    const filtered = parsed.allocations.filter((a) =>
-      allowedAddresses.has(String(a.address).toLowerCase())
-    )
-    if (filtered.length === 0) throw new Error('no valid (whitelisted) allocations returned')
-    const total = filtered.reduce((s, a) => s + a.allocation, 0)
-    if (total <= 0) throw new Error('allocation sum is not positive')
-
-    return filtered.map((a) => {
-      const catalogEntry = BASE_POOL_CATALOG.find(
-        (p) => p.address.toLowerCase() === String(a.address).toLowerCase()
-      )
-      const poolAmount = amount * (a.allocation / total) // renormalize to 1.0, mirrors enforceActionSpace's spirit
-      return {
-        pool: catalogEntry.address,
-        protocol: catalogEntry.protocol,
-        amount: poolAmount,
-        minShares: estimateMinSharesAtStrategyTime(poolAmount),
-        expectedApy: catalogEntry.apy,
-        riskTier: catalogEntry.risk,
-        skill: buildBasePoolSkill(catalogEntry.address, poolAmount),
-      }
-    })
-  } catch (err) {
-    console.warn('[ai] Base pool allocation failed, using fallback:', err.message)
-    return buildFallback()
-  } finally {
-    if (timeout) clearTimeout(timeout)
-  }
+  const pools = BASE_POOL_CATALOG.slice(0, safeNPools)
+  const perPool = amount / pools.length
+  return pools.map((p) => ({
+    pool: p.address,
+    protocol: p.protocol,
+    amount: perPool,
+    minShares: estimateMinSharesAtStrategyTime(perPool),
+    expectedApy: p.apy,
+    riskTier: p.risk,
+    skill: buildBasePoolSkill(p.address, perPool),
+  }))
 }

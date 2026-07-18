@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **Motivation:** Built out of frustration with complex, click-heavy sequential yield farming workflows.  
 **Goal:** Autonomous, parallel multi-agent deposits under cryptographic scope bounds — user signs once, agents execute gas-free.
 
-**Core product (live):** AI-coordinated agent swarm for automated yield farming on **Stellar/Soroban (testnet primary)**. AI strategist (DeepSeek default / Venice AI via x402+SIWE / deterministic fallback) + multi-perspective AI council generates strategy and per-agent skills. User signs **one** wallet signature (`funding_router.grant` — budget + expiry). Router deploys fresh scoped `agent_account`s; workers sign deposits with ephemeral ed25519 session keys; **own fee-bump relay** (`/api/stellar-relay`) sponsors gas. Autofarm vault supplies into **Blend Capital v2** (real testnet lending yield). Optional cross-chain leg: Stellar USDC → Circle CCTP v2 → Base Sepolia via **own Node relayer + ZeroDev session keys** (not 1Shot). Force-graph UI monitors agents and memory.
+**Core product (live):** AI-coordinated agent swarm for automated yield farming on **Stellar/Soroban (testnet primary)**. AI strategist (DeepSeek default / Venice AI via x402+SIWE / deterministic fallback) + multi-perspective AI council generates strategy and per-agent skills. User signs **one** wallet signature (`funding_router.grant` — budget + expiry). Router deploys fresh scoped `agent_account`s; workers sign deposits with ephemeral ed25519 session keys; **own fee-bump relay** (`/api/stellar-relay`) sponsors gas. Autofarm vault supplies into **Blend Capital v2** (real testnet lending yield). Optional cross-chain leg: Stellar USDC → Circle CCTP v2 → Base Sepolia via **own Node relayer + ZeroDev session keys** (not 1Shot) — offered in-strategy only while the relayer health probe passes (fail-closed). Force-graph UI monitors agents and memory.
 
 > **1Shot is superseded.** The EVM-era 1Shot Managed/Permissionless relayer was removed with the EVM stack (2026-06-21). Gas abstraction is **own Stellar fee-bump** + (optional Base) **ZeroDev**. Do not reintroduce `@uxly/1shot-client` or `ONESHOT_*` env vars.
 
@@ -72,14 +72,14 @@ Keeper cron (compound/rebalance) · Lifeboat radar (derisk)
 Memory (localStorage) + react-force-graph-2d
 ```
 
-**Optional `/farm` cross-chain:** Stellar USDC burn (CCTP) → Node relayer → Base `YieldRouter` → ERC-4626 pools via ZeroDev session key. Unwind reverses the path.
+**Merged cross-chain leg:** the strategist may fold Base pool allocations into the same run when the relayer answers healthy (fail-closed — Base pools are simply absent from the catalog otherwise, no separate page to opt into). A Base allocation settles as a sibling leg beside the Stellar workers: mandate + CCTP burn signed by the connected wallet → relay → ZeroDev session-key deposits. Unwind is a dashboard withdraw, not a separate flow.
 
 ---
 
 ## Directory Structure (high signal)
 
 ```
-soroban/contracts/     # funding_router, agent_account, autofarm/rwa_vault, blend_strategy, registry, attestation
+soroban/contracts/     # funding_router, agent_account, autofarm_vault, blend_strategy, registry, attestation
 frontend/src/stellar/  # Soroban client, session keys, relay client, wallet kit
 frontend/api/          # stellar-relay, ai, search, faucet, vf-cross, vf/*
 frontend/src/          # orchestrator, worker, strategist.js (AI multi-provider), strategy/*, components

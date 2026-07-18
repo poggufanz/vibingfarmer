@@ -389,7 +389,7 @@ Anything else — including admin functions like `add_strategy`, `set_keeper`, o
 
 **What & why.** The whole point of "yield farming" is earning interest — and Vibing Farmer's vault genuinely lends the deposited USDC into a real lending market (Blend Capital) on Stellar testnet, rather than crediting a fabricated interest number. On testnet this yield is smaller and less liquid than a mainnet market, but the mechanism — supply, accrue interest, harvest, compound — is the real DeFi lending primitive, not a simulation.
 
-**The vault** ("autofarm vault", contract `rwa_vault`, live at `CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77`, share symbol `vfVLT`, name "Vibing Farmer Autofarm", 7-decimal USDC): an ERC-4626-style share ledger. Depositing mints shares at the current price-per-share; redeeming burns shares for the equivalent underlying assets. `price_per_share() = total_assets / total_shares`, scaled by 1e7 — as interest compounds in, this number rises, meaning every existing share is worth more USDC over time.
+**The vault** ("autofarm vault", contract `autofarm_vault`, live at `CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77`, share symbol `vfVLT`, name "Vibing Farmer Autofarm", 7-decimal USDC): an ERC-4626-style share ledger. Depositing mints shares at the current price-per-share; redeeming burns shares for the equivalent underlying assets. `price_per_share() = total_assets / total_shares`, scaled by 1e7 — as interest compounds in, this number rises, meaning every existing share is worth more USDC over time.
 
 **The strategy** (`blend_strategy`, live at `CAR7XFFRKMUYSERYBSLQ4LXRY2E2W7G7WG4VQI55FWLSJWQVLNTAFVBE`): holds deposits on the vault's behalf and supplies them into the **Blend Capital v2** pool (`CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF`).
 
@@ -411,7 +411,7 @@ StrategyHarvest {
 
 **Single-strategy limitation (disclosed honestly):** a spike investigation found that self-deploying a second Blend pool can't reach "Active" status without seeding real backstop capital (`OWN_POOL_VIABLE=false`), so the vault currently runs one strategy and falls back to `rebalance(to=vault)` (moving capital to idle) rather than a second pool. Rebalancing between strategies (when there is more than one) is capped per move (`max_move_bps`) and cooldown-gated to prevent a single bad call from moving everything at once.
 
-**Key files:** `soroban/contracts/rwa_vault/src/lib.rs` + `vault.rs`, `soroban/contracts/blend_strategy/src/lib.rs` + `blend.rs` + `soroswap.rs`.
+**Key files:** `soroban/contracts/autofarm_vault/src/lib.rs` + `vault.rs`, `soroban/contracts/blend_strategy/src/lib.rs` + `blend.rs` + `soroswap.rs`.
 
 **For judges:** the yield here is a real Blend Capital lending position, verifiable on Stellar Expert by address — not a number the frontend makes up. The "single strategy" limitation is disclosed in the repo's own deployment notes, not glossed over.
 
@@ -461,7 +461,7 @@ This is the crux of the "fail-closed" design: **danger without a live mandate pr
 
 **Hysteresis, deliberately:** the resume threshold is stricter than the engage threshold, and a 100-ledger "all clear" streak is required before resuming — this prevents the radar from flapping in and out of the emergency state on a noisy signal.
 
-**Key files:** `keeper/src/radar-runner.mjs`, `keeper/src/radar.js`, `keeper/src/lifeboat.js`, `keeper/src/chain.js`, `soroban/contracts/rwa_vault/src/vault.rs` (lines ~442–519), `keeper/src/decide.js` (Worker keeper), `frontend/src/components/console/LifeboatZone.jsx`, `frontend/src/stellar/keeperEvents.js`.
+**Key files:** `keeper/src/radar-runner.mjs`, `keeper/src/radar.js`, `keeper/src/lifeboat.js`, `keeper/src/chain.js`, `soroban/contracts/autofarm_vault/src/vault.rs` (lines ~442–519), `keeper/src/decide.js` (Worker keeper), `frontend/src/components/console/LifeboatZone.jsx`, `frontend/src/stellar/keeperEvents.js`.
 
 **For judges:** this is one of the most carefully reasoned pieces of the system — "autonomous" is only true within a scope the user explicitly and repeatedly re-authorizes; an emergency without permission produces a log line, not an action.
 
@@ -733,7 +733,7 @@ The three public pages (`/explorer`, `/ecosystem`, `/replay`) are deliberately r
 |---|---|---|
 | **funding_router** | `CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5` | One-signature grant factory + funding gate (zero custody) |
 | **agent_account** (wasm v3, per-run deploy) | wasm hash `d61ceaaaf5a3fd9fd25987eba0f843ccb79880f3eaa137e066b5f63ab9eaa2ba` | Scoped, disposable worker account, deployed fresh per grant |
-| **rwa_vault** ("autofarmVault") | `CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77` | Share-ledger yield vault (`vfVLT`, 7-dp), current live deposit target |
+| **autofarm_vault** ("autofarmVault") | `CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77` | Share-ledger yield vault (`vfVLT`, 7-dp), current live deposit target |
 | **blend_strategy** ("strategy1") | `CAR7XFFRKMUYSERYBSLQ4LXRY2E2W7G7WG4VQI55FWLSJWQVLNTAFVBE` | Supplies vault deposits into Blend, harvests interest + BLND |
 | **Blend v2 pool** | `CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF` | The actual lending market (real yield source) |
 | **Blend USDC token** | `CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU` | 7-decimal funding asset |

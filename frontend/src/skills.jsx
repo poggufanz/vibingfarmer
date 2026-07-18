@@ -77,9 +77,17 @@ export const buildSkillForAgent = (agent, riskProfile) => {
 }
 
 /* ---------- Single skill card ---------- */
-const SkillCard = ({ agent, skill, state, onApprove, onViewDetail }) => {
+const SkillCard = ({ agent, skill, state, onApprove, onViewDetail, connectedAddress }) => {
   const info = translateSkill(agent, skill)
   const isApproved = state === 'approved'
+  const isBase = agent.vault?.chain === 'base'
+  // Honest signature accounting (plan-level constraint) — never understate: the Base leg is a
+  // real CCTP burn + Base-side approve on TOP of the router grant signature already disclosed
+  // elsewhere, plus a one-time ZeroDev passkey ceremony the first time ANY wallet touches Base —
+  // VF wallets are NOT exempt (see wallet/passkeyBridge.js: the SDK never durably persists the
+  // P-256 pubkey behind a VF passkey credential, so VF reuse as the Base owner key is impossible;
+  // ensureBaseOwner runs the same register/login ceremony regardless of wallet type).
+  const needsPasskeySetup = isBase && !localStorage.getItem('vf_base_owner')
 
   return (
     <div className={`skill-card2 ${isApproved ? 'approved' : 'pending'}`}>
@@ -89,6 +97,7 @@ const SkillCard = ({ agent, skill, state, onApprove, onViewDetail }) => {
           <div className="skill-card2-name">{agent.name}</div>
           <div className="skill-card2-risk">{info.risk}</div>
         </div>
+        {isBase && <span className="skill-card2-chain-badge">Cross-chain (Base)</span>}
         <span
           className={`skill-card2-dot ${isApproved ? 'approved' : 'pending'}`}
           aria-label={isApproved ? 'Approved' : 'Needs review'}
@@ -102,6 +111,13 @@ const SkillCard = ({ agent, skill, state, onApprove, onViewDetail }) => {
       <div className="skill-card2-meta">
         {info.expiry} {info.revocable}
       </div>
+
+      {isBase && (
+        <div className="skill-card2-chain-note">
+          Cross-chain via CCTP — needs 2 extra signatures (approve + burn)
+          {needsPasskeySetup ? ', and a one-time passkey setup.' : '.'}
+        </div>
+      )}
 
       <div className={`skill-card2-status ${isApproved ? 'approved' : 'pending'}`}>
         {isApproved ? 'Approved' : 'Needs review'}
@@ -204,6 +220,7 @@ const SkillReviewCard = ({
   onSkillUpdate,
   onApproveAll,
   onContinue,
+  connectedAddress,
 }) => {
   const [detailAgentId, setDetailAgentId] = useState(null)
   const [editAgentId, setEditAgentId] = useState(null)
@@ -261,6 +278,7 @@ const SkillReviewCard = ({
             state={skillStates[a.id]?.state || 'pending'}
             onApprove={onApprove}
             onViewDetail={setDetailAgentId}
+            connectedAddress={connectedAddress}
           />
         ))}
       </div>
