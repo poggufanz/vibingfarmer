@@ -7,14 +7,15 @@ use stellar_tokens::fungible::Base;
 use crate::storage::{
     extend_instance, get_compound_cooldown_s, get_cooldown_s, get_derisked, get_keeper,
     get_last_compound, get_last_rebalance, get_mandate_authority, get_mandate_expiry,
-    get_max_move_bps, get_pending_upgrade, get_strategies, get_token, set_compound_cooldown_s,
-    set_cooldown_s, set_derisked, set_keeper, set_last_compound, set_last_rebalance,
-    set_mandate_expiry, set_max_move_bps, set_pending_upgrade, set_strategies,
+    get_max_move_bps, get_pending_upgrade, get_strategies, get_token, remove_pending_upgrade,
+    set_compound_cooldown_s, set_cooldown_s, set_derisked, set_keeper, set_last_compound,
+    set_last_rebalance, set_mandate_expiry, set_max_move_bps, set_pending_upgrade, set_strategies,
 };
 use crate::strategy_client::StrategyClient;
 use crate::types::{
     Compound, Deposit, LifeboatEngaged, LifeboatResumed, LifeboatState, MandateSet,
-    PendingUpgrade, Rebalance, Redeem, StrategyQuarantined, UpgradeScheduled, VaultError,
+    PendingUpgrade, Rebalance, Redeem, StrategyQuarantined, UpgradeExecuted, UpgradeScheduled,
+    VaultError,
 };
 
 /// Shares minted to the vault itself on the first deposit and locked forever. Guards against
@@ -537,12 +538,23 @@ pub fn schedule_upgrade(e: &Env, new_wasm_hash: BytesN<32>) -> Result<(), VaultE
     Ok(())
 }
 
-/// Admin-only. Swaps the contract's wasm to `new_wasm_hash` — the upgrade escape hatch.
-/// Only the auth gate is unit-tested here; a real wasm swap needs a second uploaded wasm and
-/// is covered by the live testnet smoke instead (Task 16).
-pub fn upgrade(e: &Env, new_wasm_hash: BytesN<32>) {
+/// Admin-only. Executes a previously scheduled upgrade once its timelock has elapsed.
+pub fn execute_upgrade(e: &Env) -> Result<(), VaultError> {
     require_admin(e);
-    e.deployer().update_current_contract_wasm(new_wasm_hash);
+    let p = get_pending_upgrade(e).ok_or(VaultError::NoPendingUpgrade)?;
+    if e.ledger().timestamp() < p.eta {
+        return Err(VaultError::TimelockNotElapsed);
+    }
+    // Clear BEFORE the swap: on success pending is gone (no re-fire); if the swap traps
+    // (unknown/never-uploaded hash) the whole tx reverts, so pending survives — atomic either way.
+    remove_pending_upgrade(e);
+    // NOTE: update_current_contract_wasm does NOT re-run __constructor and preserves all
+    // instance storage. A future wasm that changes an existing #[contracttype]'s shape traps
+    // on first read of the old value and needs a migrate() + schema_version bump (spec §3d).
+    // This change adds only append-only keys, so no migration is required.
+    e.deployer().update_current_contract_wasm(p.wasm_hash.clone());
+    UpgradeExecuted { wasm_hash: p.wasm_hash }.publish(e);
+    Ok(())
 }
 
 /// Admin-only. Sets the address allowed to grant/renew the lifeboat mandate. Exists so the

@@ -186,9 +186,9 @@ impl AutofarmVault {
     pub fn schedule_upgrade(e: &Env, new_wasm_hash: BytesN<32>) -> Result<(), types::VaultError> {
         vault::schedule_upgrade(e, new_wasm_hash)
     }
-    /// Admin-only. Swaps the contract's wasm.
-    pub fn upgrade(e: &Env, new_wasm_hash: BytesN<32>) {
-        vault::upgrade(e, new_wasm_hash)
+    /// Admin-only. Executes a scheduled upgrade once its timelock has elapsed.
+    pub fn execute_upgrade(e: &Env) -> Result<(), types::VaultError> {
+        vault::execute_upgrade(e)
     }
 }
 

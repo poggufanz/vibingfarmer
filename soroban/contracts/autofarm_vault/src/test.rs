@@ -1318,19 +1318,6 @@ fn redeem_exceeding_recoverable_errors_insufficient_liquidity() {
     assert_eq!(MockStrategyClient::new(&env, &healthy).balance(), 50 * U7);
 }
 
-#[test]
-fn upgrade_admin_only() {
-    let env = Env::default();
-    let ctx = setup(&env);
-    let fake_hash = BytesN::from_array(&env, &[9u8; 32]);
-
-    // No admin signature present at all → auth error, not a logic error. (The wasm swap
-    // itself needs a real second uploaded wasm — covered by the live testnet smoke, not this
-    // unit suite; here we only prove the auth gate.)
-    env.set_auths(&[]);
-    assert!(ctx.vault.try_upgrade(&fake_hash).is_err());
-}
-
 // ===== Lifeboat: mandate plumbing =====
 
 #[test]
@@ -1803,4 +1790,62 @@ fn schedule_eta_overflow_fails_closed() {
         ctx.vault.try_schedule_upgrade(&hash),
         Err(Ok(VaultError::MathOverflow))
     );
+}
+
+// ===== Upgrade timelock: execute =====
+
+#[test]
+fn execute_without_schedule_rejects() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    assert_eq!(
+        ctx.vault.try_execute_upgrade(),
+        Err(Ok(VaultError::NoPendingUpgrade))
+    );
+}
+
+#[test]
+fn execute_before_eta_rejects() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let hash = BytesN::from_array(&env, &[7u8; 32]);
+    ctx.vault.schedule_upgrade(&hash);
+
+    // Still inside the 3-day window → blocked.
+    assert_eq!(
+        ctx.vault.try_execute_upgrade(),
+        Err(Ok(VaultError::TimelockNotElapsed))
+    );
+}
+
+#[test]
+fn execute_after_eta_passes_timelock_gate() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let hash = BytesN::from_array(&env, &[7u8; 32]);
+    let now = env.ledger().timestamp();
+    ctx.vault.schedule_upgrade(&hash);
+
+    // Jump past eta. The timelock gate now opens. The REAL wasm swap needs a second uploaded
+    // wasm (covered by the testnet smoke, Task 6), so with a dummy hash the call now fails at
+    // the swap — NOT at the timelock. Proving it is no longer TimelockNotElapsed / NoPending
+    // proves the gate opened.
+    env.ledger().set_timestamp(now + 259_200);
+    let res = ctx.vault.try_execute_upgrade();
+    assert_ne!(res, Err(Ok(VaultError::TimelockNotElapsed)));
+    assert_ne!(res, Err(Ok(VaultError::NoPendingUpgrade)));
+}
+
+#[test]
+fn execute_admin_only() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let hash = BytesN::from_array(&env, &[7u8; 32]);
+    let now = env.ledger().timestamp();
+    ctx.vault.schedule_upgrade(&hash);
+    env.ledger().set_timestamp(now + 259_200);
+
+    // Past eta, but no admin signature → auth error (require_admin runs before any state read).
+    env.set_auths(&[]);
+    assert!(ctx.vault.try_execute_upgrade().is_err());
 }
