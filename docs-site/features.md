@@ -36,13 +36,13 @@ The approved strategy is hashed and attested on-chain, and every contract is ver
 
 ## Optional cross-chain leg
 
-An optional `/farm` flow bridges Stellar USDC to Base via Circle CCTP v2 and a ZeroDev session key, with the unwind reversing the path.
+An optional cross-chain leg bridges Stellar USDC to Base via Circle CCTP v2 and a ZeroDev session key — offered inside the strategy flow while the relayer health probe passes (fail-closed), with the unwind reversing the path from a dashboard withdraw.
 
 ## App pages
 
 | Route | Description |
 |-------|-------------|
-| `/` | Landing; no wallet required |
+| `/` | Redirects to `/home`; landing hero shows in-app until a wallet connects |
 | `/home` | Portfolio, positions, alerts, market pulse |
 | `/strategy` | Wizard: input → connect → skills → permission → execute → done |
 | `/agent` | Dashboard: scopes, revoke, monitor status, journal, decision log |
@@ -50,3 +50,5 @@ An optional `/farm` flow bridges Stellar USDC to Base via Circle CCTP v2 and a Z
 | `/settings` | Wallet, permissions, agent config, language, skill source |
 | `/explorer` | On-chain verification (contracts, TVL, test stats); no wallet |
 | `/replay` | Timeline replay from static JSON (no RPC) |
+| `/ecosystem` | Ecosystem overview; no wallet |
+| `/developers` | Developer portal (docs, contracts, integration) |
