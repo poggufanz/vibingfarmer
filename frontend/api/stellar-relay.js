@@ -5,9 +5,11 @@
 // already carries the agent custom account's __check_auth ed25519 auth entry, signed client-side
 // by the agent session key. The relay only pays the XLM fee. Abuse is bounded by: origin
 // allowlist + per-IP rate limit (_guard.js) AND the vault-target allowlist (assertVaultDeposit,
-// Task 4) — including the SOROBAN_AGENT_ALLOWLIST exact-match check on F11 exit-leg-2 token
-// transfers — so the relayer never sponsors an unrelated transaction. The relayer SECRET is
-// server-held (STELLAR_RELAYER_SECRET) — never in the client bundle.
+// Task 4) — including the SOROBAN_AGENT_ALLOWLIST exact-match check AND, for dynamic per-run
+// agents that can't live in a static allowlist, a fail-closed pinned-wasm-hash fallback
+// (SOROBAN_AGENT_WASM_HASH, Task 3) — on F11 exit-leg-2 token transfers — so the relayer never
+// sponsors an unrelated transaction. The relayer SECRET is server-held (STELLAR_RELAYER_SECRET)
+// — never in the client bundle.
 //
 // Actions:
 //   { action: 'wallet' }            → { address }           (relayer pubkey — fund it)
@@ -29,6 +31,11 @@ const AGENT_ALLOWLIST = () => process.env.SOROBAN_AGENT_ALLOWLIST || ''
 const ACCOUNT_WASM_HASH = () =>
   process.env.SOROBAN_ACCOUNT_WASM_HASH ||
   'a12e8fa9621efd20315753bd4007d974390e31fbcb4a7ddc4dd0a0dec728bf2e'
+// Content-addressed pin of the agent_account wasm the funding_router deploys
+// (deployments/stellar-testnet.json agentAccountWasmHash, v3). Never secret.
+const AGENT_WASM_HASH = () =>
+  process.env.SOROBAN_AGENT_WASM_HASH ||
+  'd61ceaaaf5a3fd9fd25987eba0f843ccb79880f3eaa137e066b5f63ab9eaa2ba'
 
 // Fee-bump base fee = inner fee + this margin (stroops). 0.1 XLM is generous on testnet and
 // safely clears the SDK's "fee-bump fee >= inner fee" floor for our single-op deposit txs.
@@ -67,6 +74,12 @@ function parseAllowlist(raw) {
  * agentAllowlist empty/unset rejects every transfer (deposit/redeem branches unaffected).
  * No-op when vaultAddr is falsy. Throws RelayError on mismatch.
  *
+ * When a transfer's `from` misses the static `agentAllowlist` (dynamic per-run agents, e.g.
+ * partial withdraw, can't live in an env var), `agentWasmHash` + `getWasmHash` give a second,
+ * narrower path: sponsor iff the from-contract RUNS the pinned agent_account wasm (Task 3). FAIL
+ * CLOSED: no pin, no lookup fn, a lookup error, or a hash mismatch all reject — this only ever
+ * ADDS an allow, never widens any other branch.
+ *
  * When `accountWasmHash` is set, ALSO sponsors a single createContractV2 deploy whose wasm
  * executable is EXACTLY that hash — SAK's `kit.createWallet(autoSubmit)` posts the passkey
  * smart-account deploy tx here (bare `{xdr}`, no action). The content-address pin means the
@@ -79,14 +92,16 @@ function parseAllowlist(raw) {
  * contract. FAIL CLOSED: routerAddr unset (default '') → every router call rejected,
  * byte-identical to the pre-router guard.
  */
-export function assertVaultDeposit(
+export async function assertVaultDeposit(
   inner,
   vaultAddr,
   sdk,
   tokenAddr = '',
   agentAllowlist = '',
   accountWasmHash = '',
-  routerAddr = ''
+  routerAddr = '',
+  agentWasmHash = '',
+  getWasmHash = null
 ) {
   if (!vaultAddr) return
   const ops = inner.operations || []
@@ -126,10 +141,22 @@ export function assertVaultDeposit(
   }
   if (tokenAddr && contract === tokenAddr && fnName === 'transfer') {
     const from = sdk.Address.fromScVal(ic.args()[0]).toString()
-    if (!parseAllowlist(agentAllowlist).includes(from)) {
-      throw new RelayError('relay sponsors allowlisted agent-account transfers only')
+    if (parseAllowlist(agentAllowlist).includes(from)) return
+    // Dynamic per-run agents can't live in a static env allowlist. Fallback: sponsor iff the
+    // from-contract RUNS the pinned agent_account wasm — its own __check_auth then pins the
+    // destination to scope.owner on-chain, so the worst case is an attacker deploying our wasm
+    // to get free gas moving THEIR funds to THEIR owner (griefing, bounded by the rate limit).
+    // FAIL CLOSED: no pin, no lookup fn, lookup error, or hash mismatch → reject.
+    if (agentWasmHash && getWasmHash) {
+      let hash = null
+      try {
+        hash = await getWasmHash(from)
+      } catch {
+        throw new RelayError('agent wasm lookup failed')
+      }
+      if (hash === agentWasmHash) return
     }
-    return
+    throw new RelayError('relay sponsors allowlisted agent-account transfers only')
   }
   throw new RelayError('inner tx does not target the vault')
 }
@@ -153,6 +180,10 @@ async function pollResult(rpcServer, hash, tries, intervalMs) {
  * @param {string} p.vaultAddr      allowlisted deposit target ('' = skip the guard)
  * @param {string} p.agentAllowlist comma-separated agent accounts allowed as transfer 'from'
  * @param {string} p.routerAddr     funding_router allowed for grant/pull ('' = router disabled)
+ * @param {string} p.agentWasmHash  pinned agent_account wasm hash (hex) — dynamic-agent transfer
+ *                                  fallback when 'from' misses agentAllowlist ('' = disabled)
+ * @param {Function} p.getWasmHash  async (contractId) => wasmHashHex|null — required alongside
+ *                                  agentWasmHash to use the fallback (null = disabled)
  * @param {object} p.sdk            { TransactionBuilder, FeeBumpTransaction, Keypair, Address }
  * @param {object} p.rpcServer      { sendTransaction, getTransaction }
  * @returns {Promise<{ hash, status, relayer }>}
@@ -166,6 +197,8 @@ export async function feeBumpAndSubmit({
   agentAllowlist = '',
   accountWasmHash = '',
   routerAddr = '',
+  agentWasmHash = '',
+  getWasmHash = null,
   sdk,
   rpcServer,
   pollTries = 10,
@@ -177,7 +210,17 @@ export async function feeBumpAndSubmit({
   if (inner instanceof FeeBumpTransaction) {
     throw new RelayError('inner tx is already fee-bumped')
   }
-  assertVaultDeposit(inner, vaultAddr, sdk, tokenAddr, agentAllowlist, accountWasmHash, routerAddr)
+  await assertVaultDeposit(
+    inner,
+    vaultAddr,
+    sdk,
+    tokenAddr,
+    agentAllowlist,
+    accountWasmHash,
+    routerAddr,
+    agentWasmHash,
+    getWasmHash
+  )
 
   // Replay short-circuit (don't pay to re-broadcast a spent inner tx).
   const innerHash = inner.hash().toString('hex')
@@ -266,6 +309,17 @@ export default async function handler(req, res) {
     if (body.action === 'submit' || (!body.action && typeof body.xdr === 'string')) {
       if (typeof body.xdr !== 'string' || !body.xdr) return bad(res, 'Invalid xdr')
       const rpcServer = new mod.rpc.Server(RPC_URL())
+      // Contract-instance ledger read: instance → executable → wasm hash (hex), null for SACs.
+      const getWasmHash = async (contractId) => {
+        const entry = await rpcServer.getContractData(
+          contractId,
+          mod.xdr.ScVal.scvLedgerKeyContractInstance(),
+          mod.rpc.Durability.Persistent
+        )
+        const exec = entry.val.contractData().val().instance().executable()
+        if (exec.switch().name !== 'contractExecutableWasm') return null
+        return exec.wasmHash().toString('hex')
+      }
       try {
         const out = await feeBumpAndSubmit({
           xdr: body.xdr,
@@ -276,6 +330,8 @@ export default async function handler(req, res) {
           agentAllowlist: AGENT_ALLOWLIST(),
           accountWasmHash: ACCOUNT_WASM_HASH(),
           routerAddr: ROUTER_ADDR(),
+          agentWasmHash: AGENT_WASM_HASH(),
+          getWasmHash,
           sdk,
           rpcServer,
         })

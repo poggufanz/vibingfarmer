@@ -63,6 +63,25 @@ describe('signAgentDepositEntries', () => {
   })
 })
 
+describe('signAgentDepositEntries with sigTag', () => {
+  test('prefixes the tag byte: 65-byte scvBytes starting with 0x01', async () => {
+    const sessionKey = newSessionKey()
+    const agentAddress = Address.contract(sessionKey.rawPublicKey).toString()
+    const tx = fakeTxWithAgentEntry({ agentAddress, nonce: 777 })
+    await signAgentDepositEntries({
+      tx,
+      sessionKey,
+      validUntilLedger: 12345,
+      agentAddress,
+      sigTag: 1,
+    })
+    const sig = tx.operations[0].auth[0].credentials().address().signature()
+    expect(sig.switch().name).toBe('scvBytes')
+    expect(sig.bytes().length).toBe(65)
+    expect(sig.bytes()[0]).toBe(1)
+  })
+})
+
 describe('balance reads', () => {
   test('readVaultShares returns the decoded i128 via an injected server', async () => {
     // Arrange: a fake server whose simulate returns an i128 ScVal of 50_000_000.
