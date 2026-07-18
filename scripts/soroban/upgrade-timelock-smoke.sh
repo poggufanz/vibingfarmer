@@ -124,6 +124,11 @@ if [ "$MULTISIG" = "1" ]; then
   ONE_SIG_OUT="$(stellar tx send "$ONE_SIG" --rpc-url "$RPC" 2>&1)"
   ONE_SIG_RC=$?
   set -e
+  # Flag BEFORE judging the outcome: if this 1-sig submit landed (rc=0), a schedule_upgrade may
+  # now be live on-chain regardless of whether that's the expected result — the EXIT trap must
+  # know to try cancel_upgrade even when the very next line calls fail() for a misconfigured
+  # (accepts 1-of-2) multisig.
+  [ "$ONE_SIG_RC" -eq 0 ] && SCHEDULED=1
   [ "$ONE_SIG_RC" -ne 0 ] || fail "phase (a): schedule_upgrade with 1 signature was ACCEPTED — expected rejection (insufficient signing weight). Output: $ONE_SIG_OUT"
   pass "phase (a).1: 1-of-2 signature rejected as expected"
 
