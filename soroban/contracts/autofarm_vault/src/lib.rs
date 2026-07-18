@@ -190,6 +190,10 @@ impl AutofarmVault {
     pub fn execute_upgrade(e: &Env) -> Result<(), types::VaultError> {
         vault::execute_upgrade(e)
     }
+    /// Admin-only. Cancels a scheduled upgrade.
+    pub fn cancel_upgrade(e: &Env) -> Result<(), types::VaultError> {
+        vault::cancel_upgrade(e)
+    }
 }
 
 #[contractimpl(contracttrait)]

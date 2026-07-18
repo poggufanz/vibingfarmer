@@ -14,8 +14,8 @@ use crate::storage::{
 use crate::strategy_client::StrategyClient;
 use crate::types::{
     Compound, Deposit, LifeboatEngaged, LifeboatResumed, LifeboatState, MandateSet,
-    PendingUpgrade, Rebalance, Redeem, StrategyQuarantined, UpgradeExecuted, UpgradeScheduled,
-    VaultError,
+    PendingUpgrade, Rebalance, Redeem, StrategyQuarantined, UpgradeCancelled, UpgradeExecuted,
+    UpgradeScheduled, VaultError,
 };
 
 /// Shares minted to the vault itself on the first deposit and locked forever. Guards against
@@ -554,6 +554,17 @@ pub fn execute_upgrade(e: &Env) -> Result<(), VaultError> {
     // This change adds only append-only keys, so no migration is required.
     e.deployer().update_current_contract_wasm(p.wasm_hash.clone());
     UpgradeExecuted { wasm_hash: p.wasm_hash }.publish(e);
+    Ok(())
+}
+
+/// Admin-only. Cancels a scheduled upgrade (abort a bad/hijacked schedule, or clear the slot to
+/// re-schedule). Errors if nothing is pending.
+pub fn cancel_upgrade(e: &Env) -> Result<(), VaultError> {
+    require_admin(e);
+    let p = get_pending_upgrade(e).ok_or(VaultError::NoPendingUpgrade)?;
+    remove_pending_upgrade(e);
+    UpgradeCancelled { wasm_hash: p.wasm_hash }.publish(e);
+    extend_instance(e);
     Ok(())
 }
 

@@ -1849,3 +1849,43 @@ fn execute_admin_only() {
     env.set_auths(&[]);
     assert!(ctx.vault.try_execute_upgrade().is_err());
 }
+
+// ===== Upgrade timelock: cancel =====
+
+#[test]
+fn cancel_clears_pending() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let hash = BytesN::from_array(&env, &[7u8; 32]);
+    ctx.vault.schedule_upgrade(&hash);
+    assert!(ctx.vault.pending_upgrade().is_some());
+
+    ctx.vault.cancel_upgrade();
+    assert!(ctx.vault.pending_upgrade().is_none());
+    // Nothing to execute afterwards.
+    assert_eq!(
+        ctx.vault.try_execute_upgrade(),
+        Err(Ok(VaultError::NoPendingUpgrade))
+    );
+}
+
+#[test]
+fn cancel_without_schedule_rejects() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    assert_eq!(
+        ctx.vault.try_cancel_upgrade(),
+        Err(Ok(VaultError::NoPendingUpgrade))
+    );
+}
+
+#[test]
+fn cancel_admin_only() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let hash = BytesN::from_array(&env, &[7u8; 32]);
+    ctx.vault.schedule_upgrade(&hash);
+
+    env.set_auths(&[]);
+    assert!(ctx.vault.try_cancel_upgrade().is_err());
+}
