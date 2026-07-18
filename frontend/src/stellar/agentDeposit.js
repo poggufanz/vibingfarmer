@@ -30,7 +30,13 @@ const AUTH_TTL_LEDGERS = 360
  * @param {{tx:object, sessionKey:{rawPublicKey:Uint8Array, sign:(p:Uint8Array)=>Uint8Array}, validUntilLedger:number, agentAddress:string, sigTag?:number, server?:object}} p
  * @returns {Promise<{xdr:string}>}
  */
-export async function signAgentDepositEntries({ tx, sessionKey, validUntilLedger, agentAddress, sigTag }) {
+export async function signAgentDepositEntries({
+  tx,
+  sessionKey,
+  validUntilLedger,
+  agentAddress,
+  sigTag,
+}) {
   const { xdr, hash, Address } = await sdk()
   const networkId = hash(Buffer.from(NETWORK_PASSPHRASE))
   const wantScAddress = Address.fromString(agentAddress).toScAddress().toXDR('base64')
@@ -108,7 +114,14 @@ export async function buildAgentAuthedInvoke({
  * @param {{agentAddress:string, amount:bigint, relayer:string, sessionKey:object, vault?:string, server?:object}} p
  * @returns {Promise<{xdr:string}>}
  */
-export async function buildAgentDeposit({ agentAddress, amount, relayer, sessionKey, vault = SOROBAN_ACTIVE_VAULT_ADDRESS, server }) {
+export async function buildAgentDeposit({
+  agentAddress,
+  amount,
+  relayer,
+  sessionKey,
+  vault = SOROBAN_ACTIVE_VAULT_ADDRESS,
+  server,
+}) {
   return buildAgentAuthedInvoke({
     contract: vault,
     method: 'deposit',

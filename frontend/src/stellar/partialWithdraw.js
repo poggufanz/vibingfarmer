@@ -12,7 +12,10 @@ import {
   readTokenBalance as _readTokenBalance,
 } from './agentDeposit.js'
 import { readPricePerShare as _readPricePerShare } from './vaultReads.js'
-import { getRelayerAddress as _getRelayerAddress, submitViaRelay as _submitViaRelay } from './relay.js'
+import {
+  getRelayerAddress as _getRelayerAddress,
+  submitViaRelay as _submitViaRelay,
+} from './relay.js'
 import {
   generateExitKey as _generateExitKey,
   loadExitKey as _loadExitKey,
@@ -42,7 +45,12 @@ export function sharesForAmount(amountUnits, pps, agentShares) {
  *  (gate open on null: the chain still enforces, this read is UX only). */
 export async function readAgentScope(agentAddress, { server } = {}) {
   try {
-    const scope = await readContract({ contract: agentAddress, method: 'scope_of', args: [], server })
+    const scope = await readContract({
+      contract: agentAddress,
+      method: 'scope_of',
+      args: [],
+      server,
+    })
     return { expiry: BigInt(scope.expiry), revoked: Boolean(scope.revoked) }
   } catch {
     return null

@@ -25,10 +25,7 @@ describe('applyCors origin resolution', () => {
 
   it('falls back to the Referer origin on same-origin GETs (no Origin header)', () => {
     const res = mockRes()
-    const ok = applyCors(
-      { headers: { referer: 'https://dev.vibing-farmer.pages.dev/home' } },
-      res
-    )
+    const ok = applyCors({ headers: { referer: 'https://dev.vibing-farmer.pages.dev/home' } }, res)
     expect(ok).toBe(true)
     expect(res.headers['Access-Control-Allow-Origin']).toBe('https://dev.vibing-farmer.pages.dev')
   })
