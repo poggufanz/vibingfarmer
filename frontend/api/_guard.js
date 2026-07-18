@@ -33,7 +33,18 @@ export function allowedOrigins() {
  * @returns {boolean} true if allowed (headers set), false if rejected (403 already sent)
  */
 export function applyCors(req, res) {
-  const origin = req.headers.origin || ''
+  // Browsers omit the Origin header on same-origin GETs (it is only sent cross-origin or on
+  // non-GET methods), so in-app reads like the relayer health probe would 403 here — fall back
+  // to the Referer's origin. Still browser-enforced, same trust level as Origin (see note above:
+  // this allowlist is not authentication; the rate limit below is the real defense).
+  let origin = req.headers.origin || ''
+  if (!origin && req.headers.referer) {
+    try {
+      origin = new URL(req.headers.referer).origin
+    } catch {
+      // malformed Referer: keep '' and fail closed below
+    }
+  }
   const isAllowed = allowedOrigins().includes(origin) || origin.startsWith('chrome-extension://')
   if (!isAllowed) {
     res.statusCode = 403
