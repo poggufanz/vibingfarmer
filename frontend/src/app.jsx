@@ -44,7 +44,6 @@ import {
 import { saveResume, loadResume, clearResume } from './strategy/sessionResume.js'
 import { attestStrategyOnChain, formatAttestation } from './attestation.js'
 import OnboardingFlow from './components/OnboardingFlow.jsx'
-import CrossChainFarmFlow from './screens/CrossChainFarmFlow.jsx'
 import { OrchestratorAgent } from './orchestrator.js'
 import { makeAgentId } from './worker.js'
 import { readContract } from './stellar/client.js'
@@ -70,6 +69,8 @@ import {
   readLifeboatState,
 } from './stellar/vaultReads.js'
 import { grantMandate } from './stellar/lifeboat.js'
+import { signWithTimeout } from './stellar/agentSetup.js'
+import { resolveBaseAvailability, buildBaseLegContext } from './mergeFlowHelpers.js'
 import { evaluateExit } from './strategy/autoExit/engine.js'
 import { runAutonomousExit } from './agents/exitExecutor.js'
 import {
@@ -101,7 +102,9 @@ import {
   withdrawAllFromVault,
 } from './agents/agentController.js'
 const OpsConsole = lazy(() => import('./components/console/OpsConsole.jsx'))
+const Withdraw = lazy(() => import('./screens/Withdraw.jsx'))
 import NotificationCenter from './components/NotificationCenter.jsx'
+import { loadBasePositions } from './base/dashboardPositions.js'
 import HomePage from './components/HomePage.jsx'
 const LandingHero = lazy(() => import('./components/LandingHero.jsx'))
 const ExplorerPage = lazy(() => import('./components/ExplorerPage.jsx'))
@@ -133,7 +136,7 @@ import { councilVerdict } from './strategy/council.js'
 import { reflect } from './strategy/reflector.js'
 import { increment as playbookIncrement, weight as playbookWeight } from './strategy/playbook.js'
 import { saveCycle, getCycles, getJournalSummary } from './strategy/cycleJournal.js'
-import { computeBasket } from './strategy/basketFilter.js'
+import { computeBasket, slugFor } from './strategy/basketFilter.js'
 import { mintToken } from './strategy/eligibilityGate.js'
 import { buildEligibilitySentence, vaultEligibilityLabel } from './strategy/eligibilitySentence.js'
 import { SNAPSHOT } from './strategy/vaultFacts.js'
@@ -312,7 +315,12 @@ const mapVeniceToStrategy = (veniceResult, amount, risk) => {
   const byAddr = (addr) =>
     VAULT_CATALOG.find((c) => c.address.toLowerCase() === String(addr).toLowerCase()) || {}
   const usedVaults = veniceResult.vaultsUsed || []
+  // Chain-aware first: 'aave-v3'/'morpho-blue' exist on BOTH chains in usedVaults (the merged
+  // catalog), so a bare protocol match alone would silently resolve to the Stellar entry even
+  // when v.chain (stamped by strategist.js's validateStrategyResponse) says 'base' — dropping
+  // factSlug/chain off the built vault below and re-colliding with the wrong eligibility facts.
   const byLive = (v) =>
+    usedVaults.find((x) => x.protocol === v.protocol && x.chain === v.chain) ||
     usedVaults.find((x) => x.protocol === v.protocol) ||
     usedVaults.find((x) => x.address?.toLowerCase() === String(v.address).toLowerCase()) ||
     {}
@@ -336,13 +344,22 @@ const mapVeniceToStrategy = (veniceResult, amount, risk) => {
         apy: String(v.expected_apy ?? live.apy ?? cat.apy ?? 4.8),
         drawdown: live.drawdown || cat.drawdown || '-1.8',
         risk: v.risk_tier || cat.risk || 'medium',
+        // v.address first: it is the AI's actual selected address, already allowlist-validated
+        // against the merged catalog (validateStrategyResponse) — always present/correct. The
+        // VAULT_CATALOG protocol fallback below is Stellar-only lookup; for a base vault whose
+        // protocol string also exists on Stellar (aave-v3/morpho-blue) it would otherwise
+        // silently substitute the STELLAR contract address for the real Base 0x pool address.
         addr:
+          v.address ||
           cat.address ||
-          VAULT_CATALOG.find((c) => c.protocol === (v.protocol || ''))?.address ||
-          v.address,
+          VAULT_CATALOG.find((c) => c.protocol === (v.protocol || ''))?.address,
         tvl: v.tvlFormatted || live.tvlFormatted || 'N/A',
         isLiveData: live.source === 'defiLlama',
         defillamaPool: live.defillamaPool || null,
+        // Base pools disambiguate their eligibility-fact lookup via factSlug (basketFilter.js's
+        // slugFor); chain drives the orchestrator's Stellar/Base dispatch split.
+        factSlug: v.factSlug || live.factSlug || cat.factSlug || null,
+        chain: v.chain || live.chain || cat.chain || 'stellar',
       },
     }
   })
@@ -621,6 +638,13 @@ const App = () => {
   const [lifeboatBusy, setLifeboatBusy] = useS(false)
   const [autofarmReads, setAutofarmReads] = useS({ pricePerShare: null, strategies: [] })
   const [rebalancePulse, setRebalancePulse] = useS(null) // { key, ts } — force-graph edge pulse
+  // vf-base-dashboard Task 10 — read-only Base positions (own poll piggyback, see the 15s
+  // sync() below). Stays [] for Stellar-only users; loadBasePositions never throws.
+  const [basePositions, setBasePositions] = useS([])
+  // Set only once the user actually clicks Withdraw on a Base position: { position,
+  // ownerKernelAccount, publicClient } after the one-tap ensureBaseOwner login ceremony.
+  const [baseWithdraw, setBaseWithdraw] = useS(null)
+  const [baseWithdrawError, setBaseWithdrawError] = useS(null)
 
   const [sbExtended, setSbExtended] = useS(() => localStorage.getItem('yv_sb_extended') === 'true')
   const [railCollapsed, setRailCollapsed] = useS(
@@ -769,6 +793,11 @@ const App = () => {
     let alive = true
     const sync = async () => {
       const startedAt = Date.now()
+      // vf-base-dashboard Task 10 — piggybacks this SAME 15s poll (never a second interval).
+      // loadBasePositions never throws (see its own guard/catch); [] for Stellar-only users.
+      loadBasePositions().then((bp) => {
+        if (alive) setBasePositions(bp)
+      })
       // Prefer the scope-derived agent list (per-run grant agents — kept fresh via
       // positionsAgentsRef); fall back to saved/discovered agents (fresh-browser case),
       // then to reconcilePositions' default (demo agent) when nothing is known.
@@ -1347,25 +1376,28 @@ const App = () => {
     if (!strategy?.agents) return null
     const { verdictBySlug, survivors } = computeBasket(strategy.agents)
     const firstSurvivor = survivors[0]
+    // Keyed by slugFor (factSlug || protocol) — SAME function computeBasket used to populate
+    // verdictBySlug. Indexing by bare a.vault.protocol here would look up the wrong verdict (or
+    // none) for any base vault once factSlug disambiguates aave-v3/morpho-blue from their Base
+    // counterparts, crashing buildEligibilitySentence/vaultEligibilityLabel on an undefined verdict.
     const fusedSentence = firstSurvivor
-      ? buildEligibilitySentence(verdictBySlug[firstSurvivor.vault.protocol], {
+      ? buildEligibilitySentence(verdictBySlug[slugFor(firstSurvivor)], {
           targetMaxLossPct: 5,
           protocolLabel:
-            SNAPSHOT[firstSurvivor.vault.protocol]?.meta?.label || firstSurvivor.vault.protocol,
+            SNAPSHOT[slugFor(firstSurvivor)]?.meta?.label || firstSurvivor.vault.protocol,
         })
       : null
     const rows = strategy.agents.map((a) => {
-      const v = verdictBySlug[a.vault.protocol]
-      const asOf = new Date(SNAPSHOT[a.vault.protocol]?.facts?.tvl?.asOf || 0)
-        .toISOString()
-        .slice(0, 10)
+      const slug = slugFor(a)
+      const v = verdictBySlug[slug]
+      const asOf = new Date(SNAPSHOT[slug]?.facts?.tvl?.asOf || 0).toISOString().slice(0, 10)
       return {
         id: a.id,
         eligible: !!v?.eligible,
         isFixture: !!v?.isFixture,
-        protocolLabel: SNAPSHOT[a.vault.protocol]?.meta?.label || a.vault.protocol,
+        protocolLabel: SNAPSHOT[slug]?.meta?.label || a.vault.protocol,
         label: vaultEligibilityLabel(v),
-        mainnetLine: `Protocol credibility: ${SNAPSHOT[a.vault.protocol]?.meta?.label || a.vault.protocol}. Audited, TVL from snapshot`,
+        mainnetLine: `Protocol credibility: ${SNAPSHOT[slug]?.meta?.label || a.vault.protocol}. Audited, TVL from snapshot`,
         testnetLine: 'This deposit: testnet. APR illustrative; realized yield may be ~0',
         asOf,
       }
@@ -1663,6 +1695,27 @@ const App = () => {
     }
   }
 
+  // vf-base-dashboard Task 10 — Withdraw button on a Base position row. ensureBaseOwner is
+  // login-mode after the first-ever ceremony (see passkeyBridge.js), so this is one WebAuthn
+  // tap, not a fresh registration. Mounts the existing Withdraw screen (screens/Withdraw.jsx)
+  // once the owner kernel account resolves. Dynamic import: keeps passkeyBridge.js (and the
+  // ZeroDev/viem chain behind it) out of the eager bundle — mirrors orchestrator.js's
+  // baseLeg.js gating (Task 8).
+  const handleBaseWithdrawClick = async (position) => {
+    setBaseWithdrawError(null)
+    try {
+      const { ensureBaseOwner } = await import('./wallet/passkeyBridge.js')
+      const owner = await ensureBaseOwner({ connectedAddress: realAddress })
+      setBaseWithdraw({
+        position,
+        ownerKernelAccount: owner.kernelAccount,
+        publicClient: owner.publicClient,
+      })
+    } catch (err) {
+      setBaseWithdrawError(err.message)
+    }
+  }
+
   /* ----- STRATEGY (step 01) ----- */
   const handleSubmitPreference = () => {
     setStrategyPhase('thinking')
@@ -1712,6 +1765,15 @@ const App = () => {
       try {
         const numVaults = { low: 1, med: 2, high: 3 }[risk] || 2
         const riskLevel = risk === 'med' ? 'medium' : risk
+        // Fresh per run (not cached): a relayer that came up/down between strategy generations
+        // must be reflected immediately, not stick to whatever the last run observed.
+        const { checkRelayerHealth } = await import('./strategy/mergedCatalog.js')
+        // Not awaited here — the promise is handed to generateStrategy, which awaits it AFTER its
+        // own DAG fetch so the ~3s relayer probe overlaps that network wait instead of serializing
+        // before it (perf: overlap relayer health probe with strategy generation).
+        const { baseAvailable } = resolveBaseAvailability({
+          checkHealth: () => checkRelayerHealth({ signal: ctrl.signal }),
+        })
         const veniceResult = await generateStrategy({
           amount: Number(amount),
           riskLevel,
@@ -1720,6 +1782,7 @@ const App = () => {
           devApiKey: devApiKey || null,
           signal: ctrl.signal,
           address: realAddress || null, // positions node runs only when connected
+          baseAvailable,
         })
         setSkillSource(veniceResult.skillSource || 'default')
         setMarketLive(!!veniceResult.marketContextUsed)
@@ -2160,12 +2223,17 @@ const App = () => {
     }
     // dispatchSet ⊆ survivors: only survivors get a plan; allocations re-normalized to sum 1.
     // Each survivor carries a freshly-minted eligibility token (Enforcement B asserts it worker-side).
+    // protocolSlug/verdictBySlug lookup keyed via slugFor — the SAME key computeBasket used to
+    // build verdictBySlug. Keying by bare a.vault.protocol would mint the token off the wrong
+    // (or no) verdict for a base vault, or crash (mintToken throws reading .eligible of undefined).
+    // chain drives OrchestratorAgent.dispatch's Stellar/Base split (defaults 'stellar' upstream).
     const yvStrategy = {
       vaults: survivors.map((a, i) => ({
         address: a.vault.addr,
         allocation: a.allocationFraction,
-        protocolSlug: a.vault.protocol,
-        eligibilityToken: mintToken(verdictBySlug[a.vault.protocol], i),
+        protocolSlug: slugFor(a),
+        chain: a.vault.chain,
+        eligibilityToken: mintToken(verdictBySlug[slugFor(a)], i),
       })),
     }
 
@@ -2185,6 +2253,13 @@ const App = () => {
       sessionId,
       grantBudgetUnits,
       grantDurationSeconds: grantCfg?.durationSeconds || null,
+      // Only required when yvStrategy.vaults contains a chain:'base' entry (dispatch throws
+      // otherwise) — reuses the SAME wallet-kit singleton/signing path the grant flow signs
+      // through (signWithTimeout → signTxXdr → the one loadKit() instance), never a second kit.
+      baseLegContext: buildBaseLegContext({
+        connectedAddress: realAddress,
+        kitSignTransaction: (xdr) => signWithTimeout(xdr, 'cross-chain leg'),
+      }),
       onEvent: (evName, data) => {
         if (evName === 'skill-gen-failed') {
           const dId = agentMapRef.current?.[data.agentId] || data.agentId
@@ -2408,6 +2483,14 @@ const App = () => {
         const addrs = summary.agentAddresses || []
         deployedAgentsRef.current = addrs
         if (addrs.length) saveDeployedAgents(realAddress, addrs)
+        if (summary.baseLeg) {
+          addLog({
+            event: summary.baseLeg.success ? 'OrchestratorPlanned' : 'AgentFailed',
+            meta: summary.baseLeg.success
+              ? `Cross-chain leg deposited on Base (job ${summary.baseLeg.jobId}).`
+              : `Cross-chain leg failed at ${summary.baseLeg.stage}: ${summary.baseLeg.error}`,
+          })
+        }
       })
       .catch((err) => {
         console.warn('[app] orchestrator dispatch failed (simulation mode):', err?.message || err)
@@ -2762,6 +2845,7 @@ const App = () => {
             onApproveAll={handleApproveAll}
             onSkillUpdate={handleSkillUpdate}
             onContinue={handleSkillsContinue}
+            connectedAddress={realAddress}
           />
         )
       case 'permission':
@@ -2940,6 +3024,9 @@ const App = () => {
                 onViewHistory={() => navigate('/history')}
                 onWithdrawSuccess={handleWithdrawSuccess}
                 scopes={scopes}
+                basePositions={basePositions}
+                onBaseWithdraw={handleBaseWithdrawClick}
+                baseWithdrawError={baseWithdrawError}
               />
             }
           />
@@ -3053,7 +3140,7 @@ const App = () => {
               </Suspense>
             }
           />
-          <Route path="/farm" element={<CrossChainFarmFlow />} />
+          <Route path="/farm" element={<Navigate to="/home" replace />} />
           <Route path="*" element={<Navigate to="/home" replace />} />
         </Routes>
       </main>
@@ -3105,6 +3192,29 @@ const App = () => {
               </button>
               <button className="btn btn-primary" onClick={handleKeepWaiting}>
                 Keep waiting
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {baseWithdraw && (
+        <div className="modal-backdrop">
+          <div className="modal" role="dialog" aria-modal="true">
+            <div className="modal-eyebrow">Base withdraw</div>
+            <h3 className="modal-title">{baseWithdraw.position.poolName}</h3>
+            <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
+              <Withdraw
+                ownerKernelAccount={baseWithdraw.ownerKernelAccount}
+                publicClient={baseWithdraw.publicClient}
+                withdrawals={[baseWithdraw.position]}
+                stellarRecipient={realAddress}
+                totalAssetsForBurn={baseWithdraw.position.minAssets}
+              />
+            </Suspense>
+            <div className="modal-actions">
+              <button className="btn btn-ghost" onClick={() => setBaseWithdraw(null)}>
+                Close
               </button>
             </div>
           </div>

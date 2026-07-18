@@ -34,7 +34,7 @@ Everything runs on Stellar testnet. No real funds.
 
 4. **One signature.** You sign `funding_router.grant` (budget + expiry). A SEP-41 token allowance is the leash: the router deploys a fresh, scoped `agent_account` per worker and can only pull what you approved.
 
-5. **Parallel deposit.** Workers sign with ephemeral ed25519 session keys. A fee-bump relayer sponsors each transaction. One worker failing does not abort the others. You pay 0 gas.
+5. **Parallel deposit.** Workers sign with ephemeral ed25519 session keys. A fee-bump relayer sponsors each transaction. One worker failing does not abort the others. You pay 0 gas. If the plan includes a Base pool — offered only when the cross-chain relayer answers healthy — that leg settles alongside the Stellar workers: your first Base run sets up a passkey (once, ever) plus a wallet-signed CCTP approve and burn, worst case 4 prompts (grant + passkey setup + approve + burn); every run after still asks for a passkey login confirmation on top of the 3 wallet signatures (grant + approve + burn) — the login itself never goes away. Withdraw that position anytime from the dashboard.
 
 6. **Attestation.** The strategy JSON is hashed and written on-chain so anyone with the original file can check what was approved.
 

@@ -41,6 +41,57 @@ export const SNAPSHOT = {
     facts: audited({ tvl: f(5_000_000), adminKey: f('multisig') }),
     meta: { label: 'Fluid (mainnet)' },
   },
+  // Base pools (cross-chain leg, see BASE_POOL_CATALOG factSlug in config.js). Curation
+  // provenance: reputational facts (audit, adminKey, oracleType, poolClass) are copied from
+  // the counterpart mainnet entries above ('aave-v3', 'morpho-blue' — which already pass the
+  // gate today); moonwell-base has no counterpart so its facts are curated analogously. The
+  // pools themselves are MockERC4626 testnet wrappers over real CCTP USDC — the fact entries
+  // describe the real mainnet protocol's reputation, deliberately, so the gate can pass them.
+  'aave-v3-base': {
+    facts: {
+      annualizedDistributed: f(120_000_000),
+      protocolRevenue: f(100_000_000),
+      audit: f('audited'), // copied from 'aave-v3'
+      ageDays: f(900),
+      tvl: f(300_000_000),
+      adminKey: f('timelock_multisig'), // copied from 'aave-v3'
+      oracleType: f('circuit_breaker'), // copied from 'aave-v3'
+      collateralLiquidityDepthUsd: f(50_000_000),
+      poolClass: f('curated'), // copied from 'aave-v3'
+      supplierConcentrationPct: f(18),
+    },
+    meta: { label: 'Aave v3 (Base)' },
+  },
+  'morpho-blue-base': {
+    facts: {
+      annualizedDistributed: f(300_000_000),
+      protocolRevenue: f(230_000_000),
+      audit: f('audited'), // copied from 'morpho-blue'
+      ageDays: f(700),
+      tvl: f(1_800_000_000),
+      adminKey: f('multisig'), // copied from 'morpho-blue'
+      oracleType: f('circuit_breaker'), // copied from 'morpho-blue'
+      collateralLiquidityDepthUsd: f(80_000_000),
+      poolClass: f('curated'), // copied from 'morpho-blue'
+      supplierConcentrationPct: f(22),
+    },
+    meta: { label: 'Morpho Blue (Base)' },
+  },
+  'moonwell-base': {
+    facts: {
+      annualizedDistributed: f(25_000_000),
+      protocolRevenue: f(20_000_000),
+      audit: f('audited'), // no mainnet counterpart in SNAPSHOT — curated analogously
+      ageDays: f(800),
+      tvl: f(45_000_000),
+      adminKey: f('timelock'),
+      oracleType: f('circuit_breaker'),
+      collateralLiquidityDepthUsd: f(20_000_000),
+      poolClass: f('curated'),
+      supplierConcentrationPct: f(30),
+    },
+    meta: { label: 'Moonwell (Base)' },
+  },
   // Controlled demo fixture — illustrates rejection. NOT a real vault.
   hyperfarm: {
     facts: {
