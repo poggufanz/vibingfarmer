@@ -1889,3 +1889,45 @@ fn cancel_admin_only() {
     env.set_auths(&[]);
     assert!(ctx.vault.try_cancel_upgrade().is_err());
 }
+
+// ===== Upgrade timelock: invariants =====
+
+#[test]
+fn reschedule_resets_eta() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let now = env.ledger().timestamp();
+    let hash_a = BytesN::from_array(&env, &[1u8; 32]);
+    let hash_b = BytesN::from_array(&env, &[2u8; 32]);
+
+    ctx.vault.schedule_upgrade(&hash_a);
+    let eta_a = ctx.vault.pending_upgrade().unwrap().eta;
+
+    // Re-schedule 100s later with a different hash → full delay from the NEW time.
+    env.ledger().set_timestamp(now + 100);
+    ctx.vault.schedule_upgrade(&hash_b);
+    let p = ctx.vault.pending_upgrade().unwrap();
+
+    assert_eq!(p.wasm_hash, hash_b);
+    assert_eq!(p.eta, now + 100 + 259_200);
+    assert!(p.eta > eta_a);
+}
+
+#[test]
+fn redeem_works_while_upgrade_pending() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let alice = Address::generate(&env);
+    fund_and_approve(&env, &ctx, &alice, 100 * U7);
+    let shares = ctx.vault.deposit(&alice, &(100 * U7));
+
+    // Announce an upgrade — this must NOT block exits.
+    let hash = BytesN::from_array(&env, &[7u8; 32]);
+    ctx.vault.schedule_upgrade(&hash);
+    assert!(ctx.vault.pending_upgrade().is_some());
+
+    // Holder still redeems fully with their own signature during the window.
+    let assets = ctx.vault.redeem(&alice, &shares);
+    assert!(assets > 0);
+    assert_eq!(ctx.vault.balance(&alice), 0);
+}
