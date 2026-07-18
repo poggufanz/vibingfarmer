@@ -9,7 +9,7 @@
   "agentAccountWasmHash": "d61ceaaaf5a3fd9fd25987eba0f843ccb79880f3eaa137e066b5f63ab9eaa2ba",
   "agentAccountWasmHashNote": "v3 (hardened, upload tx d52f0ba0f5598b1ccf6d0036c152072f4b4cb23449f6af0e9d733850ff59b63f) — on-chain enforced revoke, owner_withdraw terminal exit, scope_of() for the registry's derived records. Pinned by fundingRouter below; frontend SOROBAN_AGENT_WASM_HASH must equal this. Legacy hashes: v1 8c607112ba93ff289d30f2c894ca586c745328e5cb2ae6139917c6df540dda62 (pre-seeded demo agent), v2 7ced45e735e7e084d96d6a04df7cec6e07bc2b203eedb4d3422949a7e9cca717 (first one-popup factory).",
   "demoAgentAccount": "CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC",
-  "demoAgentVersion": 3,
+  "demoAgentVersion": 1,
   "demoAgentOwner": "GCIOUP4UJAAFDBJNP5DY5CFJHBLEKGLHZ5E2AYRIIQ5VOZFVSTPRYHNS",
   "demoAgentSigner": "dd4139236bc836df336b1d6a360ad90d234613950cff078ebc03d28876c1698b",
   "demoAgentNote": "LEGACY as of 2026-07-14: this pre-seeded agent runs the v1 wasm and its constructor-only scope pins the RETIRED autofarm vault (CB5VKYDU…JDYU) — deposits from it do NOT reach the live vault. Kept for explorer/history only; product flows use per-run agents deployed by the funding router (grant path).",

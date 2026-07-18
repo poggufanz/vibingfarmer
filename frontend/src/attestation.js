@@ -1,8 +1,7 @@
 // attestation.js
-// Hashes Venice AI strategy output into a deterministic, off-chain-verifiable record.
-// (Single-chain Stellar: there is no on-chain attestation tx today — the depositor is
-// deposit-only. We compute a reproducible strategyHash; anyone can re-derive it from the
-// strategy JSON. An on-chain Soroban attestation can be added later as an additive feature.)
+// Hashes Venice AI strategy output into a deterministic, verifiable record. Anyone can
+// re-derive the strategyHash from the strategy JSON; attestStrategyOnChain() below also
+// records it on-chain via the Soroban attestation contract (SOROBAN_ATTESTATION_ADDRESS).
 
 import { hash } from '@stellar/stellar-sdk' // sync sha256 (already a dep — no ethers)
 import { attestOnChain } from './stellar/attestation.js'
