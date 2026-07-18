@@ -1,5 +1,5 @@
 #![cfg(test)]
-use crate::types::{Compound, LifeboatEngaged, LifeboatResumed, Rebalance, VaultError};
+use crate::types::{Compound, LifeboatEngaged, LifeboatResumed, PendingUpgrade, Rebalance, VaultError};
 use crate::vault::DEAD_SHARES;
 use crate::{AutofarmVault, AutofarmVaultClient};
 use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _};
@@ -1762,4 +1762,45 @@ fn price_per_share_saturates_instead_of_trapping_on_hostile_report() {
     let keeper = Address::generate(&env);
     ctx.vault.set_keeper(&keeper);
     let _ = ctx.vault.try_compound(&Vec::from_array(&env, [0i128]));
+}
+
+// ===== Upgrade timelock: schedule =====
+
+#[test]
+fn schedule_upgrade_stores_pending() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let hash = BytesN::from_array(&env, &[7u8; 32]);
+
+    let now = env.ledger().timestamp();
+    ctx.vault.schedule_upgrade(&hash);
+
+    let p: PendingUpgrade = ctx.vault.pending_upgrade().unwrap();
+    assert_eq!(p.wasm_hash, hash);
+    assert_eq!(p.eta, now + 259_200); // now + 3 days
+}
+
+#[test]
+fn schedule_upgrade_admin_only() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let hash = BytesN::from_array(&env, &[7u8; 32]);
+
+    // No admin signature present → auth error (mirrors the removed upgrade_admin_only).
+    env.set_auths(&[]);
+    assert!(ctx.vault.try_schedule_upgrade(&hash).is_err());
+}
+
+#[test]
+fn schedule_eta_overflow_fails_closed() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let hash = BytesN::from_array(&env, &[7u8; 32]);
+
+    // now + 3 days overflows u64 → clean MathOverflow, not a host trap.
+    env.ledger().set_timestamp(u64::MAX - 100);
+    assert_eq!(
+        ctx.vault.try_schedule_upgrade(&hash),
+        Err(Ok(VaultError::MathOverflow))
+    );
 }

@@ -182,6 +182,10 @@ impl AutofarmVault {
     pub fn emergency_withdraw(e: &Env, strategy: Address) {
         vault::emergency_withdraw(e, strategy)
     }
+    /// Admin-only. Announces an upgrade; executable after the timelock delay.
+    pub fn schedule_upgrade(e: &Env, new_wasm_hash: BytesN<32>) -> Result<(), types::VaultError> {
+        vault::schedule_upgrade(e, new_wasm_hash)
+    }
     /// Admin-only. Swaps the contract's wasm.
     pub fn upgrade(e: &Env, new_wasm_hash: BytesN<32>) {
         vault::upgrade(e, new_wasm_hash)

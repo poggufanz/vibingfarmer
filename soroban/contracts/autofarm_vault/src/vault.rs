@@ -9,12 +9,12 @@ use crate::storage::{
     get_last_compound, get_last_rebalance, get_mandate_authority, get_mandate_expiry,
     get_max_move_bps, get_pending_upgrade, get_strategies, get_token, set_compound_cooldown_s,
     set_cooldown_s, set_derisked, set_keeper, set_last_compound, set_last_rebalance,
-    set_mandate_expiry, set_max_move_bps, set_strategies,
+    set_mandate_expiry, set_max_move_bps, set_pending_upgrade, set_strategies,
 };
 use crate::strategy_client::StrategyClient;
 use crate::types::{
     Compound, Deposit, LifeboatEngaged, LifeboatResumed, LifeboatState, MandateSet,
-    PendingUpgrade, Rebalance, Redeem, StrategyQuarantined, VaultError,
+    PendingUpgrade, Rebalance, Redeem, StrategyQuarantined, UpgradeScheduled, VaultError,
 };
 
 /// Shares minted to the vault itself on the first deposit and locked forever. Guards against
@@ -514,6 +514,27 @@ pub fn emergency_withdraw(e: &Env, strategy: Address) {
     require_admin(e);
     let _ = StrategyClient::new(e, &strategy).try_withdraw(&i128::MAX);
     extend_instance(e);
+}
+
+/// Minimum delay between announcing an upgrade and executing it. Compile-time constant, never
+/// a setter: a settable delay is a bypass (set 0, then upgrade). Changing it is itself a
+/// timelocked upgrade. 3 days — see design §3c.
+pub(crate) const TIMELOCK_DELAY_S: u64 = 259_200;
+
+/// Admin-only. Announces an upgrade to `new_wasm_hash`, to become executable after
+/// `TIMELOCK_DELAY_S`. Overwriting an existing schedule resets the full delay. Emits
+/// `UpgradeScheduled` so holders can redeem out before `execute_upgrade`.
+pub fn schedule_upgrade(e: &Env, new_wasm_hash: BytesN<32>) -> Result<(), VaultError> {
+    require_admin(e);
+    let eta = e
+        .ledger()
+        .timestamp()
+        .checked_add(TIMELOCK_DELAY_S)
+        .ok_or(VaultError::MathOverflow)?;
+    set_pending_upgrade(e, &PendingUpgrade { wasm_hash: new_wasm_hash.clone(), eta });
+    UpgradeScheduled { wasm_hash: new_wasm_hash, eta }.publish(e);
+    extend_instance(e);
+    Ok(())
 }
 
 /// Admin-only. Swaps the contract's wasm to `new_wasm_hash` — the upgrade escape hatch.
