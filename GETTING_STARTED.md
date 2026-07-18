@@ -1,34 +1,34 @@
-# GETTING_STARTED.md — Vibing Farmer
+# Getting started (developers)
 
-**"Set once. Vibe forever."**  
+**"Set once. Vibe forever."**\
 Indie open-source · AI agent swarm for automated yield farming on **Stellar/Soroban**.
 
-Canonical product claims: [`prd.md`](prd.md). Architecture overview: [`README.md`](README.md).
+Canonical product claims: [`prd.md`](prd.md). Architecture overview: [`README.md`](./).
 
----
+***
 
 ## 0. What this is (current stack)
 
-| Layer | Status | Notes |
-|-------|--------|--------|
-| Primary chain | âœ… Stellar **testnet** / Soroban | Live deposit → autofarm vault → **Blend v2** pool |
-| Gas abstraction | âœ… Own fee-bump relay | `/api/stellar-relay` — **not 1Shot** |
-| single-signature grant | âœ… `funding_router` | Budget + expiry; deploys per-run agents |
-| AI | âœ… Venice / DeepSeek / fallback | BYOK-first; host keys optional |
-| Cross-chain (optional) | âœ… CCTP v2 + ZeroDev | Base Sepolia leg via `relayer/` — **not 1Shot** |
-| EVM single-chain path | âŒ Superseded | Old AgentVaultDepositor + 1Shot removed 2026-06-21 |
+| Layer                  | Status                            | Notes                                              |
+| ---------------------- | --------------------------------- | -------------------------------------------------- |
+| Primary chain          | âœ… Stellar **testnet** / Soroban | Live deposit → autofarm vault → **Blend v2** pool  |
+| Gas abstraction        | âœ… Own fee-bump relay            | `/api/stellar-relay` — **not 1Shot**               |
+| single-signature grant | âœ… `funding_router`              | Budget + expiry; deploys per-run agents            |
+| AI                     | âœ… Venice / DeepSeek / fallback  | BYOK-first; host keys optional                     |
+| Cross-chain (optional) | âœ… CCTP v2 + ZeroDev             | Base Sepolia leg via `relayer/` — **not 1Shot**    |
+| EVM single-chain path  | âŒ Superseded                    | Old AgentVaultDepositor + 1Shot removed 2026-06-21 |
 
----
+***
 
 ## 1. Prerequisites
 
-- **Node.js** 20+ and npm
-- **Stellar wallet** on testnet: [Freighter](https://www.freighter.app), xBull, or Albedo
-- **Friendbot** for test XLM: https://friendbot.stellar.org  
-- Optional: WSL + Rust + Stellar CLI (only if you build/deploy contracts)
-- Optional: funded `STELLAR_RELAYER_SECRET` for gasless agent txs in local Functions
+* **Node.js** 20+ and npm
+* **Stellar wallet** on testnet: [Freighter](https://www.freighter.app), xBull, or Albedo
+* **Friendbot** for test XLM: https://friendbot.stellar.org
+* Optional: WSL + Rust + Stellar CLI (only if you build/deploy contracts)
+* Optional: funded `STELLAR_RELAYER_SECRET` for gasless agent txs in local Functions
 
----
+***
 
 ## 2. Quick start (frontend)
 
@@ -65,7 +65,7 @@ There are **no** `ONESHOT_*` variables. Do not add them.
 
 Addresses and notes: [`deployments/stellar-testnet.json`](deployments/stellar-testnet.json).
 
----
+***
 
 ## 3. Demo path (happy path)
 
@@ -79,7 +79,7 @@ Addresses and notes: [`deployments/stellar-testnet.json`](deployments/stellar-te
 
 Optional: **`/farm`** cross-chain flow needs `relayer/` running + ZeroDev/CCTP env (see `relayer/` and `frontend/.env.example` Base section).
 
----
+***
 
 ## 4. Contracts (WSL only)
 
@@ -90,7 +90,7 @@ wsl -e bash -lc "cd /mnt/c/SharredData/project/competition/vibing-farmer/soroban
 
 Deploy/seed scripts live under `scripts/soroban/` (e.g. `deploy-seed.sh`). Never run `cargo`/`stellar` from bare PowerShell.
 
----
+***
 
 ## 5. Repo map (what you will edit)
 
@@ -108,19 +108,19 @@ deployments/                # stellar-testnet.json, base-sepolia.json
 prd.md                      # product requirements
 ```
 
----
+***
 
 ## 6. Gas abstraction — who replaced 1Shot?
 
-| Era | Mechanism |
-|-----|-----------|
-| EVM prototype (superseded) | 1Shot Managed / Permissionless relayer |
-| **Live Stellar path** | Own **fee-bump** relayer: `POST /api/stellar-relay` with allowlisted ops |
-| **Live Base cross-chain** | Own Node relayer + **ZeroDev** session keys / UserOps |
+| Era                        | Mechanism                                                                |
+| -------------------------- | ------------------------------------------------------------------------ |
+| EVM prototype (superseded) | 1Shot Managed / Permissionless relayer                                   |
+| **Live Stellar path**      | Own **fee-bump** relayer: `POST /api/stellar-relay` with allowlisted ops |
+| **Live Base cross-chain**  | Own Node relayer + **ZeroDev** session keys / UserOps                    |
 
 If a doc still says “1Shot”, treat it as historical unless it is this file or `prd.md` timeline “superseded”.
 
----
+***
 
 ## 7. Tests & lint
 
@@ -130,34 +130,34 @@ cd frontend && npm test && npm run lint && npm run build
 wsl -e bash -lc "cd /mnt/c/SharredData/project/competition/vibing-farmer/soroban && cargo test"
 ```
 
----
+***
 
 ## 8. Checklist — local demo ready
 
-- [ ] `frontend` deps installed; `npm run dev` serves the app
-- [ ] Wallet on **Stellar testnet** with Friendbot XLM
-- [ ] `.dev.vars` has relayer secret + vault/router addresses from deployments JSON
-- [ ] Strategy run: a single grant signature, workers deposit, shares increase on explorer/positions
-- [ ] No `ONESHOT_*` in env; relay logs show fee-bump submit (not 1shotapi.com)
-- [ ] (Optional) Cross-chain: `relayer` up + ZeroDev project id for `/farm`
+* [ ] `frontend` deps installed; `npm run dev` serves the app
+* [ ] Wallet on **Stellar testnet** with Friendbot XLM
+* [ ] `.dev.vars` has relayer secret + vault/router addresses from deployments JSON
+* [ ] Strategy run: a single grant signature, workers deposit, shares increase on explorer/positions
+* [ ] No `ONESHOT_*` in env; relay logs show fee-bump submit (not 1shotapi.com)
+* [ ] (Optional) Cross-chain: `relayer` up + ZeroDev project id for `/farm`
 
----
+***
 
 ## 9. Further reading
 
-| Doc | Use |
-|-----|-----|
-| [prd.md](prd.md) | Full product requirements, FR table, timeline |
-| [README.md](README.md) | Architecture, routes, env templates |
-| [DESIGN.md](DESIGN.md) | UI / design system |
-| [AGENTS.md](AGENTS.md) / [CLAUDE.md](CLAUDE.md) | Agent coding instructions |
-| [soroban/README.md](soroban/README.md) | Contract build/test one-liners |
-| Stellar docs | https://developers.stellar.org |
-| Blend | https://docs.blend.capital |
-| Circle CCTP | https://developers.circle.com/cctp |
-| ZeroDev | https://docs.zerodev.app |
+| Doc                                             | Use                                           |
+| ----------------------------------------------- | --------------------------------------------- |
+| [prd.md](prd.md)                                | Full product requirements, FR table, timeline |
+| [README.md](./)                                 | Architecture, routes, env templates           |
+| [DESIGN.md](/broken/pages/6Jx8uHi61JqMhzEpSKM5) | UI / design system                            |
+| [AGENTS.md](AGENTS.md) / [CLAUDE.md](CLAUDE.md) | Agent coding instructions                     |
+| [soroban/README.md](soroban/)                   | Contract build/test one-liners                |
+| Stellar docs                                    | https://developers.stellar.org                |
+| Blend                                           | https://docs.blend.capital                    |
+| Circle CCTP                                     | https://developers.circle.com/cctp            |
+| ZeroDev                                         | https://docs.zerodev.app                      |
 
----
+***
 
 ## Historical note
 
