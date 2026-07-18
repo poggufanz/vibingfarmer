@@ -1956,10 +1956,13 @@ textarea {
   background: rgba(0, 0, 0, 0.6);
   display: grid;
   place-items: center;
-  padding: 24px;
+  padding: 16px;
   z-index: 100;
   opacity: 1;
   transition: opacity 140ms var(--ease-out);
+  /* Keep dialog inside the visual viewport (mobile toolbars / laptop short heights). */
+  max-height: 100dvh;
+  overflow: hidden;
 }
 .skeleton-bar {
   background: var(--border-strong);
@@ -1972,21 +1975,30 @@ textarea {
   border-radius: var(--radius-lg);
   width: 100%;
   max-width: 480px;
-  padding: 28px;
+  padding: 22px 22px 18px;
   opacity: 1;
   transform: translateY(0);
   transition:
     opacity 140ms var(--ease-out),
     transform 180ms var(--ease-out);
-  max-height: 85vh;
+  /* 100dvh - backdrop padding; min-height:0 so flex children can shrink+scroll. */
+  max-height: min(85vh, calc(100dvh - 32px));
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  /* Fallback scroll for dialogs without .modal-scroll-content. */
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 .modal-scroll-content {
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
-  margin-right: -12px;
-  padding-right: 12px;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  margin-right: -6px;
+  padding-right: 6px;
 }
 
 .modal-eyebrow {
@@ -1995,6 +2007,7 @@ textarea {
   color: var(--text-faint);
   letter-spacing: -0.01em;
   margin-bottom: 6px;
+  flex-shrink: 0;
 }
 
 .modal-title {
@@ -2002,18 +2015,23 @@ textarea {
   font-size: 20px;
   font-weight: 500;
   letter-spacing: -0.015em;
-  margin-bottom: 18px;
+  margin-bottom: 12px;
   line-height: 1.2;
+  flex-shrink: 0;
 }
 
 .modal-actions {
   display: flex;
   gap: 8px;
-  margin-top: 22px;
+  flex-shrink: 0;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
 }
 
 .modal-actions .btn {
   flex: 1;
+  min-width: 0;
 }
 
 /* ---------- F8 eligibility panel ---------- */
@@ -2689,25 +2707,106 @@ textarea {
 }
 
 /* ---------- Skill edit modal ---------- */
+.skill-edit-modal {
+  max-width: 460px;
+}
+
+.skill-edit-head {
+  flex-shrink: 0;
+}
+
+.skill-edit-head .modal-title {
+  margin-bottom: 8px;
+}
+
+.skill-edit-lede {
+  margin: 0 0 12px;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  max-width: 42ch;
+}
+
+.skill-edit-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
 .skill-edit-field {
-  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .skill-edit-label {
   display: block;
+  font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--text-muted);
-  margin-bottom: 6px;
+  color: var(--text-faint);
   letter-spacing: -0.01em;
+}
+
+.skill-edit-amount-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  border-bottom: 1px solid var(--border-strong);
+  padding-bottom: 6px;
+  transition: border-color 0.12s ease;
+}
+
+.skill-edit-amount-row:focus-within {
+  border-bottom-color: var(--accent);
+}
+
+.skill-edit-amount-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-feature-settings: var(--num-feat);
+  font-variant-numeric: tabular-nums;
+  font-size: 24px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  padding: 0;
+  -moz-appearance: textfield;
+}
+
+.skill-edit-amount-input::-webkit-inner-spin-button,
+.skill-edit-amount-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+}
+
+.skill-edit-amount-input::placeholder {
+  color: var(--text-faint);
+}
+
+.skill-edit-amount-unit {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-muted);
+  letter-spacing: -0.01em;
+  flex-shrink: 0;
 }
 
 .skill-edit-input-row {
   display: flex;
   align-items: center;
-  border: 0.5px solid var(--border-strong);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   padding: 0 12px;
-  background: var(--bg-input);
+  background: var(--bg-elev);
+  transition: border-color 0.12s ease;
+}
+
+.skill-edit-input-row:focus-within {
+  border-color: var(--accent);
 }
 
 .skill-edit-input {
@@ -2717,7 +2816,7 @@ textarea {
   color: var(--text);
   font-family: var(--font-mono);
   font-size: 13px;
-  padding: 8px 0;
+  padding: 9px 0;
   outline: none;
   -moz-appearance: textfield;
 }
@@ -2730,6 +2829,43 @@ textarea {
   font-size: 11px;
   color: var(--text-faint);
   font-family: var(--font-mono);
+}
+
+.skill-edit-presets {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.skill-edit-hint {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-faint);
+  letter-spacing: -0.01em;
+  line-height: 1.4;
+}
+
+.skill-edit-hint--err {
+  color: var(--danger);
+}
+
+.skill-edit-risk .risk-opt {
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.skill-edit-risk .risk-opt-label {
+  font-size: 13px;
+}
+
+.skill-edit-receipt {
+  margin: 14px 0 0;
+}
+
+.skill-edit-receipt .grant-receipt-row,
+.wd-receipt .grant-receipt-row {
+  padding: 8px 12px;
+  font-size: 12px;
 }
 
 .skill-edit-radio-group {
@@ -2763,6 +2899,387 @@ textarea {
 }
 .skill-edit-advanced-toggle:hover {
   color: var(--text-muted);
+}
+
+/* ---------- Withdraw modal (full + partial) ---------- */
+.withdraw-modal,
+.skill-edit-modal {
+  /* Sticky footer actions: body scrolls, chrome stays put. */
+  overflow: hidden;
+}
+
+.withdraw-modal {
+  max-width: 440px;
+}
+
+.wd-head {
+  flex-shrink: 0;
+}
+
+.wd-head .modal-title {
+  margin-bottom: 10px;
+}
+
+.wd-mode-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  margin: 0 0 10px;
+}
+
+.wd-mode-tab {
+  appearance: none;
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--border);
+  padding: 8px 12px;
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  letter-spacing: -0.01em;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.wd-mode-tab:last-child {
+  border-right: none;
+}
+
+.wd-mode-tab:hover:not(.is-active) {
+  background: var(--bg-elev);
+  color: var(--text);
+}
+
+.wd-mode-tab.is-active {
+  background: var(--bg-elev-2);
+  color: var(--text);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.wd-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-bottom: 2px;
+}
+
+.wd-hero {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  padding: 0;
+}
+
+.wd-hero-k {
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  letter-spacing: -0.01em;
+}
+
+.wd-hero-v {
+  font-size: clamp(24px, 5vw, 30px);
+  font-weight: 500;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  color: var(--text);
+  font-feature-settings: var(--num-feat);
+}
+
+.wd-hero-unit {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
+  letter-spacing: -0.01em;
+}
+
+.wd-lede {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  max-width: 42ch;
+}
+
+.wd-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.wd-section-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  letter-spacing: -0.01em;
+}
+
+.wd-agent-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow-x: hidden;
+  overflow-y: auto;
+  max-height: min(168px, 28vh);
+  background: var(--bg-elev);
+}
+
+.wd-agent-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-top: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.12s ease;
+  flex-shrink: 0;
+}
+
+.wd-agent-row:first-child {
+  border-top: none;
+}
+
+.wd-agent-row:hover:not(.is-blocked) {
+  background: var(--bg-elev-2);
+}
+
+.wd-agent-row.is-selected {
+  background: color-mix(in oklch, var(--accent) 8%, var(--bg-elev-2));
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.wd-agent-row.is-blocked {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.wd-agent-row--skeleton {
+  cursor: default;
+  min-height: 44px;
+}
+
+.wd-agent-row input[type='radio'] {
+  accent-color: var(--accent);
+  flex-shrink: 0;
+  margin: 0;
+}
+
+.wd-agent-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.wd-agent-addr {
+  font-size: 12.5px;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.wd-agent-idx {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-faint);
+  letter-spacing: -0.01em;
+}
+
+.wd-agent-max {
+  margin-left: auto;
+  text-align: right;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex-shrink: 0;
+}
+
+.wd-agent-max-val {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.wd-agent-max-unit {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+.wd-agent-blocked {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--danger);
+  max-width: 12ch;
+  line-height: 1.3;
+}
+
+.wd-amount-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  border-bottom: 1px solid var(--border-strong);
+  padding-bottom: 6px;
+  transition: border-color 0.12s ease;
+}
+
+.wd-amount-row:focus-within {
+  border-bottom-color: var(--accent);
+}
+
+.wd-amount-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-feature-settings: var(--num-feat);
+  font-variant-numeric: tabular-nums;
+  font-size: 24px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  padding: 0;
+  -moz-appearance: textfield;
+  width: 100%;
+}
+
+.wd-amount-input::-webkit-inner-spin-button,
+.wd-amount-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+}
+
+.wd-amount-input::placeholder {
+  color: var(--text-faint);
+}
+
+.wd-amount-unit {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.wd-pct-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.wd-pct-chip {
+  padding: 5px 10px;
+  font-size: 11px;
+}
+
+.wd-hint {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-faint);
+  letter-spacing: -0.01em;
+  line-height: 1.4;
+}
+
+.wd-hint--err {
+  color: var(--danger);
+}
+
+.wd-callout {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev);
+  letter-spacing: -0.01em;
+}
+
+.wd-callout--danger {
+  color: var(--danger);
+  border-color: color-mix(in oklch, var(--danger) 30%, var(--border));
+  background: color-mix(in oklch, var(--danger) 8%, transparent);
+}
+
+.wd-progress {
+  font-size: 11px;
+  color: var(--text-muted);
+  letter-spacing: -0.01em;
+}
+
+.wd-receipt {
+  margin: 0;
+}
+
+.wd-footnote {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-faint);
+  text-align: right;
+  letter-spacing: -0.01em;
+}
+
+.wd-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  padding: 3px 0;
+}
+
+.wd-row-k {
+  color: var(--text-muted);
+}
+
+.wd-row-v {
+  text-align: right;
+}
+
+.wd-error {
+  display: flex;
+  gap: 7px;
+  align-items: flex-start;
+  color: var(--danger);
+  font-size: 11px;
+  line-height: 1.4;
+  margin-top: 10px;
+  padding: 8px 10px;
+  background: color-mix(in oklch, var(--danger) 8%, transparent);
+  border: 1px solid color-mix(in oklch, var(--danger) 25%, var(--border));
+  border-radius: var(--radius-sm);
+  overflow-wrap: anywhere;
+}
+
+@media (max-height: 700px) {
+  .modal {
+    padding: 16px 16px 14px;
+    max-height: calc(100dvh - 24px);
+  }
+  .modal-title {
+    font-size: 18px;
+    margin-bottom: 8px;
+  }
+  .wd-hero-v,
+  .wd-amount-input,
+  .skill-edit-amount-input {
+    font-size: 22px;
+  }
+  .skill-edit-fields {
+    gap: 12px;
+  }
+  .wd-body {
+    gap: 10px;
+  }
 }
 
 /* ---------- Permission batch (multi-agent) ---------- */
