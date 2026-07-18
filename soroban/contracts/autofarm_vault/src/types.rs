@@ -1,4 +1,4 @@
-use soroban_sdk::{contracterror, contractevent, contracttype, Address};
+use soroban_sdk::{contracterror, contractevent, contracttype, Address, BytesN};
 
 #[contracttype]
 #[derive(Clone)]
@@ -28,6 +28,17 @@ pub enum DataKey {
     MandateAuthority, // Option<Address> — may grant/renew the lifeboat mandate (admin sets once)
     MandateExpiry,    // u64 unix ts — keeper may derisk/resume only while now < expiry; absent = 0
     Derisked,         // bool — lifeboat engaged; compound/rebalance blocked while true
+    // Upgrade timelock — appended (append-only rule: unit variants encode by their own name,
+    // so adding here cannot shift or collide with any live storage entry on the upgraded vault).
+    PendingUpgrade, // Option<PendingUpgrade> — scheduled upgrade; absent = none pending
+}
+
+/// A scheduled, not-yet-executed contract upgrade. Absent = nothing pending.
+#[contracttype]
+#[derive(Clone)]
+pub struct PendingUpgrade {
+    pub wasm_hash: BytesN<32>,
+    pub eta: u64, // ledger timestamp at/after which execute_upgrade may run
 }
 
 #[contracterror]
@@ -55,6 +66,9 @@ pub enum VaultError {
     // Security hardening — appended (append-only rule, see DataKey NOTE above).
     StrategyMisbehaved = 22, // observed token delta disagrees with the strategy's report
     InvalidParam = 23,       // set_limits bps > 10_000, or negative acknowledged_loss
+    // Upgrade timelock (append-only — next free codes).
+    NoPendingUpgrade = 24,   // execute/cancel called with nothing scheduled
+    TimelockNotElapsed = 25, // execute called before eta
 }
 
 #[contractevent(topics = ["vault_deposit"])]
@@ -113,4 +127,20 @@ pub struct LifeboatResumed {
 pub struct StrategyQuarantined {
     pub strategy: Address,
     pub acknowledged_loss: i128, // admin-acknowledged NAV loss (incident accounting)
+}
+
+#[contractevent(topics = ["vault_upgrade_scheduled"])]
+pub struct UpgradeScheduled {
+    pub wasm_hash: BytesN<32>,
+    pub eta: u64,
+}
+
+#[contractevent(topics = ["vault_upgrade_executed"])]
+pub struct UpgradeExecuted {
+    pub wasm_hash: BytesN<32>,
+}
+
+#[contractevent(topics = ["vault_upgrade_cancelled"])]
+pub struct UpgradeCancelled {
+    pub wasm_hash: BytesN<32>,
 }

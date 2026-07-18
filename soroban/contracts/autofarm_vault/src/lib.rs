@@ -141,6 +141,10 @@ impl AutofarmVault {
     pub fn lifeboat_state(e: &Env) -> types::LifeboatState {
         vault::lifeboat_state(e)
     }
+    /// The currently scheduled upgrade (wasm hash + eta), or None. Read-only.
+    pub fn pending_upgrade(e: &Env) -> Option<types::PendingUpgrade> {
+        vault::pending_upgrade(e)
+    }
     /// Keeper-only, mandate-gated. Drains every strategy best-effort and engages the
     /// Derisked flag, blocking compound/rebalance until `resume`. Idempotent.
     pub fn emergency_derisk(e: &Env, reason_code: u32) -> Result<i128, types::VaultError> {

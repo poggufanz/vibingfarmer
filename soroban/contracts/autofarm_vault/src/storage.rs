@@ -1,6 +1,6 @@
 use soroban_sdk::{Address, Env, Vec};
 
-use crate::types::DataKey;
+use crate::types::{DataKey, PendingUpgrade};
 
 const TTL_THRESHOLD: u32 = 17_280; // ~1 day @ 5s ledgers
 const TTL_EXTEND: u32 = 518_400; // ~30 days
@@ -130,4 +130,14 @@ pub fn get_derisked(e: &Env) -> bool {
 }
 pub fn set_derisked(e: &Env, v: bool) {
     e.storage().instance().set(&DataKey::Derisked, &v);
+}
+
+pub fn get_pending_upgrade(e: &Env) -> Option<PendingUpgrade> {
+    e.storage().instance().get(&DataKey::PendingUpgrade)
+}
+pub fn set_pending_upgrade(e: &Env, p: &PendingUpgrade) {
+    e.storage().instance().set(&DataKey::PendingUpgrade, p);
+}
+pub fn remove_pending_upgrade(e: &Env) {
+    e.storage().instance().remove(&DataKey::PendingUpgrade);
 }

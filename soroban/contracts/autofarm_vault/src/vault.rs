@@ -7,14 +7,14 @@ use stellar_tokens::fungible::Base;
 use crate::storage::{
     extend_instance, get_compound_cooldown_s, get_cooldown_s, get_derisked, get_keeper,
     get_last_compound, get_last_rebalance, get_mandate_authority, get_mandate_expiry,
-    get_max_move_bps, get_strategies, get_token, set_compound_cooldown_s, set_cooldown_s,
-    set_derisked, set_keeper, set_last_compound, set_last_rebalance, set_mandate_expiry,
-    set_max_move_bps, set_strategies,
+    get_max_move_bps, get_pending_upgrade, get_strategies, get_token, set_compound_cooldown_s,
+    set_cooldown_s, set_derisked, set_keeper, set_last_compound, set_last_rebalance,
+    set_mandate_expiry, set_max_move_bps, set_strategies,
 };
 use crate::strategy_client::StrategyClient;
 use crate::types::{
-    Compound, Deposit, LifeboatEngaged, LifeboatResumed, LifeboatState, MandateSet, Rebalance,
-    Redeem, StrategyQuarantined, VaultError,
+    Compound, Deposit, LifeboatEngaged, LifeboatResumed, LifeboatState, MandateSet,
+    PendingUpgrade, Rebalance, Redeem, StrategyQuarantined, VaultError,
 };
 
 /// Shares minted to the vault itself on the first deposit and locked forever. Guards against
@@ -187,6 +187,12 @@ pub fn price_per_share(e: &Env) -> i128 {
         // must never trap; deposit/redeem stay fail-closed via their own checked_mul.
         total_assets(e).saturating_mul(PPS_SCALE) / supply
     }
+}
+
+/// The currently scheduled upgrade, if any — lets the radar/UI surface a pending bytecode
+/// swap and its eta so holders can redeem out before it executes.
+pub fn pending_upgrade(e: &Env) -> Option<PendingUpgrade> {
+    get_pending_upgrade(e)
 }
 
 /// deposit(from, amount) -> shares minted at the current exchange rate. Pinned by 1a:
