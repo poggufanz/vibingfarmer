@@ -126,7 +126,7 @@ export async function partialWithdraw({
   const signer = { sign: (payload) => kp.sign(Buffer.from(payload)) }
 
   const [shares, pps] = await Promise.all([
-    readVaultShares(agentAddress, { server }),
+    readVaultShares(agentAddress, { vault, server }),
     readPricePerShare(vault, { server }),
   ])
   if (shares == null || pps == null) throw new Error('Could not read the agent position.')
@@ -160,7 +160,7 @@ export async function partialWithdraw({
   // Leg 2: sweep the agent's ACTUAL token balance to the owner (dust-free; enforce_exit
   // pins `to == owner` on-chain). A failure here strands USDC in the agent — recoverable
   // (retry, or the full sweep) — so the error must say exactly that.
-  const bal = await readTokenBalance(agentAddress, { server })
+  const bal = await readTokenBalance(agentAddress, { token, server })
   if (bal == null || bal <= 0n) {
     throw new Error('Redeemed, but the agent shows no balance to transfer yet — retry in a moment.')
   }

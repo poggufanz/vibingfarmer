@@ -117,4 +117,26 @@ describe('partialWithdraw', () => {
       partialWithdraw({ owner: 'G', agentAddress: 'C', amountUnits: 20_000_000n, deps })
     ).rejects.toThrow(/agent/i)
   })
+  test('vault/token overrides propagate to the balance reads and both invokes', async () => {
+    const deps = baseDeps()
+    const sharesOpts = []
+    const balanceOpts = []
+    const invokedContracts = []
+    deps.readVaultShares = async (addr, opts) => (sharesOpts.push(opts), 100_000_000n)
+    deps.readTokenBalance = async (addr, opts) => (balanceOpts.push(opts), 20_000_000n)
+    deps.buildAgentAuthedInvoke = async ({ contract, method }) => (
+      invokedContracts.push(contract), { xdr: `XDR:${method}` }
+    )
+    await partialWithdraw({
+      owner: 'GOWNER',
+      agentAddress: 'CAGENT',
+      amountUnits: 20_000_000n,
+      vault: 'CVAULT2',
+      token: 'CTOKEN2',
+      deps,
+    })
+    expect(sharesOpts[0]).toMatchObject({ vault: 'CVAULT2' })
+    expect(balanceOpts[0]).toMatchObject({ token: 'CTOKEN2' })
+    expect(invokedContracts).toEqual(['CVAULT2', 'CTOKEN2'])
+  })
 })
