@@ -63,7 +63,8 @@ SIGNER_1="${SIGNER_1:-vf-deployer}"
 SIGNER_2="${SIGNER_2:-vf-admin-2}"
 
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+SCHEDULED=0   # set to 1 once schedule_upgrade actually commits (phase a); cleared once phase (c)'s
+              # cancel_upgrade succeeds — read by the EXIT trap below.
 
 pass(){ echo "PASS: $1"; }
 fail(){ echo "FAIL: $1"; exit 1; }
@@ -88,6 +89,26 @@ admin_invoke(){
   fi
 }
 
+# Best-effort on-chain cleanup, folded into the SAME EXIT trap as the temp-dir removal (a second
+# trap would just overwrite the first, not stack). Without this, any failure after phase (a)'s
+# schedule_upgrade commits (e.g. a transient RPC error in phase b/c) would exit the script with a
+# real scheduled upgrade left sitting on the vault — executable for real 259200s later. Preserves
+# the script's original exit code; the cleanup's own failure only gets logged, never re-raised.
+cleanup(){
+  local rc=$?
+  if [ "$SCHEDULED" = "1" ]; then
+    echo "cleanup: probe schedule_upgrade still pending on exit (rc=$rc) — attempting best-effort cancel_upgrade" >&2
+    if admin_invoke cancel_upgrade >/dev/null 2>&1; then
+      echo "cleanup: cancel_upgrade succeeded — probe cleared" >&2
+    else
+      echo "cleanup: best-effort cancel_upgrade FAILED — a probe upgrade may still be scheduled on $VAULT_ID, cancel it manually" >&2
+    fi
+  fi
+  rm -rf "$TMP"
+  exit "$rc"
+}
+trap cleanup EXIT
+
 echo "vault=$VAULT_ID new_wasm_hash=$NEW_WASM_HASH multisig=$MULTISIG"
 
 # ---- (a) schedule_upgrade — multisig proof when MULTISIG=1, single-key otherwise ----
@@ -110,11 +131,13 @@ if [ "$MULTISIG" = "1" ]; then
   stellar tx sign "$ONE_SIG" --sign-with-key "$SIGNER_2" --rpc-url "$RPC" > "$TWO_SIG"
   stellar tx send "$TWO_SIG" --rpc-url "$RPC" \
     || fail "phase (a): schedule_upgrade with 2 signatures was rejected — expected success"
+  SCHEDULED=1
   pass "phase (a).2: 2-of-2 signature accepted — schedule_upgrade committed"
 else
   echo "--- phase (a): multisig proof SKIPPED (MULTISIG=0 — only meaningful once the runbook's Step 5/6 have cut the vault admin over to 2-of-3; re-run with MULTISIG=1 after that) ---"
   admin_invoke schedule_upgrade --new_wasm_hash "$NEW_WASM_HASH" >/dev/null \
     || fail "schedule_upgrade (single admin: $ADMIN_SOURCE) failed"
+  SCHEDULED=1
   pass "phase (a): schedule_upgrade committed with single admin ($ADMIN_SOURCE)"
 fi
 
@@ -139,6 +162,7 @@ echo "$PENDING_OUT" | grep -qi "$NEW_WASM_HASH" \
 pass "phase (c).1: pending_upgrade shows the scheduled record"
 
 admin_invoke cancel_upgrade >/dev/null || fail "cancel_upgrade failed"
+SCHEDULED=0   # cancel committed — the EXIT trap's best-effort cleanup no longer needs to run
 CLEARED_OUT="$(view pending_upgrade)"
 echo "pending_upgrade (after cancel) -> $CLEARED_OUT"
 if echo "$CLEARED_OUT" | grep -qi "$NEW_WASM_HASH"; then
