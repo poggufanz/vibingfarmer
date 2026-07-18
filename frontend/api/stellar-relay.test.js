@@ -206,107 +206,172 @@ const sdkAddr = {
 }
 
 describe('assertVaultDeposit', () => {
-  it('passes a single deposit op to the configured vault', () => {
-    expect(() => assertVaultDeposit(depositTx(VAULT, 'deposit'), VAULT, sdkAddr)).not.toThrow()
+  it('passes a single deposit op to the configured vault', async () => {
+    await expect(
+      assertVaultDeposit(depositTx(VAULT, 'deposit'), VAULT, sdkAddr)
+    ).resolves.toBeUndefined()
   })
-  it('passes a vault redeem (F11 exit leg 1)', () => {
-    expect(() => assertVaultDeposit(depositTx(VAULT, 'redeem'), VAULT, sdkAddr)).not.toThrow()
+  it('passes a vault redeem (F11 exit leg 1)', async () => {
+    await expect(
+      assertVaultDeposit(depositTx(VAULT, 'redeem'), VAULT, sdkAddr)
+    ).resolves.toBeUndefined()
   })
-  it('rejects a call to a different contract', () => {
-    expect(() => assertVaultDeposit(depositTx('CWRONG', 'deposit'), VAULT, sdkAddr)).toThrow(
+  it('rejects a call to a different contract', async () => {
+    await expect(
+      assertVaultDeposit(depositTx('CWRONG', 'deposit'), VAULT, sdkAddr)
+    ).rejects.toThrow(RelayError)
+  })
+  it('rejects a non-deposit/redeem vault function', async () => {
+    await expect(assertVaultDeposit(depositTx(VAULT, 'withdraw'), VAULT, sdkAddr)).rejects.toThrow(
       RelayError
     )
   })
-  it('rejects a non-deposit/redeem vault function', () => {
-    expect(() => assertVaultDeposit(depositTx(VAULT, 'withdraw'), VAULT, sdkAddr)).toThrow(
-      RelayError
-    )
-  })
-  it('passes a token transfer from an allowlisted agent address when tokenAddr is set', () => {
+  it('passes a token transfer from an allowlisted agent address when tokenAddr is set', async () => {
     const tx = depositTx(TOKEN, 'transfer', [{ __addr: 'CAGENT' }, { __addr: 'GOWNER' }])
-    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN, 'CAGENT')).not.toThrow()
+    await expect(assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN, 'CAGENT')).resolves.toBeUndefined()
   })
-  it('rejects a token transfer from a G account (relayer is not a public gas faucet)', () => {
+  it('rejects a token transfer from a G account (relayer is not a public gas faucet)', async () => {
     const tx = depositTx(TOKEN, 'transfer', [{ __addr: 'GSOMEONE' }, { __addr: 'GOWNER' }])
-    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN, 'CAGENT')).toThrow(RelayError)
+    await expect(assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN, 'CAGENT')).rejects.toThrow(
+      RelayError
+    )
   })
-  it('rejects a token transfer when tokenAddr is not configured (fail closed)', () => {
+  it('rejects a token transfer when tokenAddr is not configured (fail closed)', async () => {
     const tx = depositTx(TOKEN, 'transfer', [{ __addr: 'CAGENT' }, { __addr: 'GOWNER' }])
-    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, '', 'CAGENT')).toThrow(RelayError)
+    await expect(assertVaultDeposit(tx, VAULT, sdkAddr, '', 'CAGENT')).rejects.toThrow(RelayError)
   })
-  it('rejects a non-allowlisted contract address (attacker custom account, was the free-sponsorship hole)', () => {
+  it('rejects a non-allowlisted contract address (attacker custom account, was the free-sponsorship hole)', async () => {
     const tx = depositTx(TOKEN, 'transfer', [{ __addr: 'CATTACKER' }, { __addr: 'GOWNER' }])
-    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN, 'CAGENT')).toThrow(RelayError)
+    await expect(assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN, 'CAGENT')).rejects.toThrow(
+      RelayError
+    )
   })
-  it('rejects every transfer when the allowlist is empty but tokenAddr is set (fail closed)', () => {
+  it('rejects every transfer when the allowlist is empty but tokenAddr is set (fail closed)', async () => {
     const tx = depositTx(TOKEN, 'transfer', [{ __addr: 'CAGENT' }, { __addr: 'GOWNER' }])
-    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN, '')).toThrow(RelayError)
-    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN)).toThrow(RelayError) // default param
+    await expect(assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN, '')).rejects.toThrow(RelayError)
+    await expect(assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN)).rejects.toThrow(RelayError) // default param
   })
-  it('accepts a multi-entry allowlist, matching any listed agent (trims whitespace, ignores empty segments)', () => {
+  it('accepts a multi-entry allowlist, matching any listed agent (trims whitespace, ignores empty segments)', async () => {
     const tx = depositTx(TOKEN, 'transfer', [{ __addr: 'CAGENT2' }, { __addr: 'GOWNER' }])
     const list = ' CAGENT1 , CAGENT2 ,,CAGENT3 '
-    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN, list)).not.toThrow()
+    await expect(assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN, list)).resolves.toBeUndefined()
   })
-  it('rejects a G-address even when the allowlist string coincidentally contains it as a substring', () => {
+  it('rejects a G-address even when the allowlist string coincidentally contains it as a substring', async () => {
     const tx = depositTx(TOKEN, 'transfer', [{ __addr: 'GOWNER' }, { __addr: 'GOTHER' }])
-    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN, 'CAGENT,GOWNERX')).toThrow(
+    await expect(assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN, 'CAGENT,GOWNERX')).rejects.toThrow(
       RelayError
     )
   })
-  it('rejects non-transfer token functions', () => {
+  it('rejects non-transfer token functions', async () => {
     const tx = depositTx(TOKEN, 'approve', [{ __addr: 'CAGENT' }])
-    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN)).toThrow(RelayError)
+    await expect(assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN)).rejects.toThrow(RelayError)
   })
-  it('rejects a multi-operation tx', () => {
+  it('rejects a multi-operation tx', async () => {
     const tx = depositTx(VAULT, 'deposit')
     tx.operations.push(tx.operations[0])
-    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr)).toThrow(RelayError)
+    await expect(assertVaultDeposit(tx, VAULT, sdkAddr)).rejects.toThrow(RelayError)
   })
-  it('rejects a non-invoke op', () => {
-    expect(() => assertVaultDeposit({ operations: [{ type: 'payment' }] }, VAULT, sdkAddr)).toThrow(
-      RelayError
-    )
+  it('rejects a non-invoke op', async () => {
+    await expect(
+      assertVaultDeposit({ operations: [{ type: 'payment' }] }, VAULT, sdkAddr)
+    ).rejects.toThrow(RelayError)
   })
-  it('is a no-op when vaultAddr is empty (pre-wiring / smoke bypass)', () => {
-    expect(() => assertVaultDeposit(depositTx('CANY', 'anything'), '', sdkAddr)).not.toThrow()
+  it('is a no-op when vaultAddr is empty (pre-wiring / smoke bypass)', async () => {
+    await expect(
+      assertVaultDeposit(depositTx('CANY', 'anything'), '', sdkAddr)
+    ).resolves.toBeUndefined()
+  })
+
+  const AGENT_HASH = 'd61ceaaaf5a3fd9fd25987eba0f843ccb79880f3eaa137e066b5f63ab9eaa2ba'
+
+  it('sponsors a transfer from a NON-allowlisted agent whose wasm hash matches the pin', async () => {
+    const tx = depositTx(TOKEN, 'transfer', [{ __addr: 'CDYNAMIC' }, { __addr: 'GOWNER' }])
+    const getWasmHash = vi.fn(async () => AGENT_HASH)
+    await expect(
+      assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN, '', '', '', AGENT_HASH, getWasmHash)
+    ).resolves.toBeUndefined()
+    expect(getWasmHash).toHaveBeenCalledWith('CDYNAMIC')
+  })
+
+  it('rejects when the wasm hash does not match', async () => {
+    const tx = depositTx(TOKEN, 'transfer', [{ __addr: 'CEVIL' }, { __addr: 'GOWNER' }])
+    const getWasmHash = async () => 'deadbeef'.repeat(8)
+    await expect(
+      assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN, '', '', '', AGENT_HASH, getWasmHash)
+    ).rejects.toThrow(RelayError)
+  })
+
+  it('rejects (fail closed) when the wasm lookup itself fails', async () => {
+    const tx = depositTx(TOKEN, 'transfer', [{ __addr: 'CDYNAMIC' }, { __addr: 'GOWNER' }])
+    const getWasmHash = async () => {
+      throw new Error('rpc down')
+    }
+    await expect(
+      assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN, '', '', '', AGENT_HASH, getWasmHash)
+    ).rejects.toThrow(RelayError)
+  })
+
+  it('rejects when no pin and no allowlist (unchanged fail-closed default)', async () => {
+    const tx = depositTx(TOKEN, 'transfer', [{ __addr: 'CDYNAMIC' }, { __addr: 'GOWNER' }])
+    await expect(
+      assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN, '', '', '', '', null)
+    ).rejects.toThrow(RelayError)
+  })
+
+  it('env-allowlisted agent still passes WITHOUT a wasm lookup', async () => {
+    const tx = depositTx(TOKEN, 'transfer', [{ __addr: 'CDEMO' }, { __addr: 'GOWNER' }])
+    const getWasmHash = vi.fn()
+    await expect(
+      assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN, 'CDEMO', '', '', AGENT_HASH, getWasmHash)
+    ).resolves.toBeUndefined()
+    expect(getWasmHash).not.toHaveBeenCalled()
   })
 })
 
 const ROUTER = 'CROUTER'
 
 describe('assertVaultDeposit - funding_router grant/pull (single-signature grant flow)', () => {
-  it('rejects router.grant when SOROBAN_ROUTER_ADDRESS is unset (fail closed, unchanged)', () => {
+  it('rejects router.grant when SOROBAN_ROUTER_ADDRESS is unset (fail closed, unchanged)', async () => {
     const tx = depositTx(ROUTER, 'grant')
-    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr)).toThrow(RelayError) // default param
-    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '', '')).toThrow(RelayError)
+    await expect(assertVaultDeposit(tx, VAULT, sdkAddr)).rejects.toThrow(RelayError) // default param
+    await expect(assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '', '')).rejects.toThrow(RelayError)
   })
-  it('rejects router.pull when SOROBAN_ROUTER_ADDRESS is unset (fail closed, unchanged)', () => {
-    expect(() => assertVaultDeposit(depositTx(ROUTER, 'pull'), VAULT, sdkAddr)).toThrow(RelayError)
+  it('rejects router.pull when SOROBAN_ROUTER_ADDRESS is unset (fail closed, unchanged)', async () => {
+    await expect(assertVaultDeposit(depositTx(ROUTER, 'pull'), VAULT, sdkAddr)).rejects.toThrow(
+      RelayError
+    )
   })
-  it('passes router.grant when the router address is configured', () => {
+  it('passes router.grant when the router address is configured', async () => {
     const tx = depositTx(ROUTER, 'grant')
-    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '', ROUTER)).not.toThrow()
+    await expect(
+      assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '', ROUTER)
+    ).resolves.toBeUndefined()
   })
-  it('passes router.pull when the router address is configured', () => {
+  it('passes router.pull when the router address is configured', async () => {
     const tx = depositTx(ROUTER, 'pull')
-    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '', ROUTER)).not.toThrow()
+    await expect(
+      assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '', ROUTER)
+    ).resolves.toBeUndefined()
   })
-  it('rejects any other function on the configured router (no wider loosening)', () => {
+  it('rejects any other function on the configured router (no wider loosening)', async () => {
     const tx = depositTx(ROUTER, 'sweep')
-    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '', ROUTER)).toThrow(RelayError)
+    await expect(assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '', ROUTER)).rejects.toThrow(
+      RelayError
+    )
   })
-  it('rejects grant/pull on a different contract even with the router configured', () => {
-    expect(() =>
+  it('rejects grant/pull on a different contract even with the router configured', async () => {
+    await expect(
       assertVaultDeposit(depositTx('COTHER', 'pull'), VAULT, sdkAddr, '', '', '', ROUTER)
-    ).toThrow(RelayError)
-    expect(() =>
+    ).rejects.toThrow(RelayError)
+    await expect(
       assertVaultDeposit(depositTx('COTHER', 'grant'), VAULT, sdkAddr, '', '', '', ROUTER)
-    ).toThrow(RelayError)
+    ).rejects.toThrow(RelayError)
   })
-  it('leaves the vault-deposit branch untouched when the router is configured', () => {
+  it('leaves the vault-deposit branch untouched when the router is configured', async () => {
     const tx = depositTx(VAULT, 'deposit')
-    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '', ROUTER)).not.toThrow()
+    await expect(
+      assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '', ROUTER)
+    ).resolves.toBeUndefined()
   })
 })
 
@@ -333,26 +398,32 @@ function deployTx(hashHex, execKind = 'contractExecutableWasm') {
 }
 
 describe('assertVaultDeposit - smart-account deploy sponsorship (SAK createWallet)', () => {
-  it('passes a createContractV2 deploy of the pinned smart-account wasm', () => {
+  it('passes a createContractV2 deploy of the pinned smart-account wasm', async () => {
     const tx = deployTx(SAK_WASM)
-    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, '', '', SAK_WASM)).not.toThrow()
+    await expect(assertVaultDeposit(tx, VAULT, sdkAddr, '', '', SAK_WASM)).resolves.toBeUndefined()
   })
-  it('rejects a deploy of any other wasm (attacker contract gets no free deploy)', () => {
+  it('rejects a deploy of any other wasm (attacker contract gets no free deploy)', async () => {
     const tx = deployTx('deadbeef'.repeat(8))
-    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, '', '', SAK_WASM)).toThrow(RelayError)
+    await expect(assertVaultDeposit(tx, VAULT, sdkAddr, '', '', SAK_WASM)).rejects.toThrow(
+      RelayError
+    )
   })
-  it('rejects every deploy when no wasm hash is pinned (fail closed, default param)', () => {
+  it('rejects every deploy when no wasm hash is pinned (fail closed, default param)', async () => {
     const tx = deployTx(SAK_WASM)
-    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr)).toThrow(RelayError)
-    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '')).toThrow(RelayError)
+    await expect(assertVaultDeposit(tx, VAULT, sdkAddr)).rejects.toThrow(RelayError)
+    await expect(assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '')).rejects.toThrow(RelayError)
   })
-  it('rejects a non-wasm executable (stellar-asset SAC deploy is not a smart account)', () => {
+  it('rejects a non-wasm executable (stellar-asset SAC deploy is not a smart account)', async () => {
     const tx = deployTx(SAK_WASM, 'contractExecutableStellarAsset')
-    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, '', '', SAK_WASM)).toThrow(RelayError)
+    await expect(assertVaultDeposit(tx, VAULT, sdkAddr, '', '', SAK_WASM)).rejects.toThrow(
+      RelayError
+    )
   })
-  it('still rejects V1 createContract (SAK posts V2 only - anything else stays closed)', () => {
+  it('still rejects V1 createContract (SAK posts V2 only - anything else stays closed)', async () => {
     const tx = deployTx(SAK_WASM)
     tx.operations[0].func.switch = () => ({ name: 'hostFunctionTypeCreateContract' })
-    expect(() => assertVaultDeposit(tx, VAULT, sdkAddr, '', '', SAK_WASM)).toThrow(RelayError)
+    await expect(assertVaultDeposit(tx, VAULT, sdkAddr, '', '', SAK_WASM)).rejects.toThrow(
+      RelayError
+    )
   })
 })
