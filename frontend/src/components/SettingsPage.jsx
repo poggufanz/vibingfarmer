@@ -1214,7 +1214,7 @@ export default function SettingsPage({
               </div>
               <div style={{ marginTop: 12 }}>
                 {[
-                  ['Version', '1.0.0-beta'],
+                  ['Version', '1.13.2'],
                   ['Network', 'Stellar testnet'],
                   ['Contracts', 'Verified on Sourcify'],
                 ].map(([k, v]) => (
