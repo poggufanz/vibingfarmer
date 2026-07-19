@@ -42,6 +42,7 @@ Each control below has regression tests that fail if it breaks.
 - **Strategies are untrusted.** NAV clamps negative reports and saturates inflated sums. Compound slices are precomputed; a failed slice (trap, wrong-type return, dishonest pull) stays idle instead of being rerouted. Transient allowances clear after every attempt. Rebalance and emergency de-risk trust only the **observed token balance delta**, and fail closed (`StrategyMisbehaved`) when a strategy report disagrees.
 - **Fail-closed parameters.** `max_move_bps` capped at 10_000. Cooldown math uses checked arithmetic (overflow means still cooling down, never a trap).
 - **Incident hatches.** `quarantine_strategy(strategy, acknowledged_loss)` removes a bricked strategy **without calling it**, restores deposit/redeem/price liveness, and emits the acknowledged write-off. `emergency_derisk` sets its flag before any external call, drains best-effort, and is idempotent. Redeem drains strategies best-effort and never traps on a single bricked strategy.
+- **Upgrade timelock (2026-07-19).** The instant admin `upgrade` is **removed**. Upgrades are two-phase: `schedule_upgrade(wasm_hash)` announces on-chain (event + public `pending_upgrade()` view; the keeper radar and the UI banner surface it), `execute_upgrade()` only succeeds after a compile-time 3-day delay (`TIMELOCK_DELAY_S = 259_200`, a `const` — no setter, so no set-zero-then-upgrade bypass), and `cancel_upgrade()` aborts a bad or hijacked schedule. Same-transaction schedule+execute is impossible (eta is strictly in the future); re-scheduling always resets the full delay; the pending record is cleared **before** the wasm swap, so an unknown-hash trap reverts the whole call atomically. `redeem` is not pause-gated and keeps working during the window (regression-tested), so holders can always exit before a swap lands. New storage keys and error codes are append-only, keeping the in-place upgrade of the live vault storage-compatible.
 
 ### Blend strategy
 
@@ -67,6 +68,8 @@ frontend:       npm test (vitest) and npm run build
 relayer:        npm test (vitest)
 ```
 
+**2026-07-19 (upgrade-timelock pass):** `cargo +1.91.0 test --workspace --all-targets` → **151 tests pass** (adds schedule/execute/cancel gates, eta-overflow fail-closed, reschedule-resets-delay, redeem-during-pending); clippy `-D warnings` clean; `stellar contract build` → new `autofarm_vault` wasm `a073c7af75db169ec115b4af8af63bc7b7b88c58b90be348ac343a0432bb78a0`.
+
 **Slither triage.** All 17 remaining findings are accepted:
 
 - `reentrancy-*` and `incorrect-equality` hit the deliberate pre/post balance-delta `require`s inside functions already behind `nonReentrant`. Adversarial callback tests in `YieldRouterReentrancy.t.sol` and `AaveV3Adapter.t.sol` show reentry reverts. Strict equality is the fail-closed exactness check; incompatible tokens should revert.
@@ -74,7 +77,7 @@ relayer:        npm test (vitest)
 
 ## Trust assumptions and residual risks
 
-- **Admin keys.** Vault admin can register strategies, set the keeper, pause, and upgrade vault wasm. A compromised admin key is a compromised vault. Funding router has no admin. Deployed agent accounts are immutable.
+- **Admin keys.** Vault admin can register strategies, set the keeper, pause deposits, and schedule/execute/cancel wasm upgrades — but can **no longer swap bytecode instantly**: every upgrade is announced on-chain three days ahead, `redeem` cannot be paused, and a hijacked schedule can be cancelled. The admin role is being moved to a dedicated 2-of-3 native Stellar multisig account (`vf-vault-admin`, configured and proven on-chain — see Deployment status), so a single compromised admin key is not sufficient, and even full admin compromise cannot silently drain the vault. Until the transfer executes, the live vault admin is still the single-key deployer. Funding router has no admin. Deployed agent accounts are immutable.
 - **Dependency protocols.** Blend insolvency, a bad Soroswap quote, a Circle CCTP outage, or an Aave freeze can degrade or trap that leg. Controls limit blast radius (finite requests, slippage floors, balance-delta checks). They cannot make a broken dependency solvent.
 - **Session-key compromise.** Blast radius is that agent's scope: deposits into the pinned vault within cap/expiry, plus pulls within the owner's remaining allowance. Funds only move owner → agent → vault and back toward the owner. Response: per-agent `revoke()` and/or global `approve(router, 0)`. Both need one user signature. Neither needs the relayer.
 - **Keeper / relayer failure.** Fail-safe, not fail-deadly. Deposits, redeems, and both kill switches work without them. Only compounding, rebalancing, and the lifeboat need the keeper (and a live user mandate).
@@ -94,6 +97,7 @@ Rollout gate, in order:
 4. ⏳ Base leg (optional cross-chain): `YieldRouter` + adapter/pools redeploy and ZeroDev policy regeneration still pending. Base Sepolia addresses in `deployments/base-sepolia.json` still predate the hardening pass
 5. ✅ Live smoke on the new stack: grant → pull → deposit → per-agent revoke → global revoke (allowance→0) → owner exit (`owner_withdraw`) → compound (idle sweep into Blend) → derisk/resume under mandate. Base approve + deposit/withdraw smoke deferred with the Base leg
 6. ✅ `deployments/stellar-testnet.json` updated from confirmed receipts; legacy notices removed from README/PRD
+7. ⏳ **Upgrade-timelock cutover** (code complete + reviewed, 2026-07-19): timelock vault wasm uploaded to testnet (`a073c7af…bb78a0`) ✅; dedicated 2-of-3 multisig admin account configured and proven on-chain (1-sig rejected `TxBadAuth`, 2-sig accepted) ✅; in-place bootstrap `upgrade` to the timelock wasm ⏳; `transfer_admin_role` to the multisig ⏳; two-phase upgrade smoke (`scripts/soroban/upgrade-timelock-smoke.sh`, incl. `MULTISIG=1` proof) ⏳
 
 ## Reporting a vulnerability
 
