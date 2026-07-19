@@ -79,10 +79,12 @@ view(){ stellar contract invoke --id "$VAULT_ID" --rpc-url "$RPC" --source "$ADM
 admin_invoke(){
   if [ "$MULTISIG" = "1" ]; then
     local tag="$TMP/admin-$$-$RANDOM"
+    # Short-circuit each step: a failed --build-only (e.g. the contract call errors at
+    # simulation) must surface ITS error, not cascade into signing an empty/partial file.
     stellar contract invoke --id "$VAULT_ID" --rpc-url "$RPC" --source "$MULTISIG_ADMIN" \
-      --build-only -- "$@" > "$tag.unsigned"
-    stellar tx sign "$tag.unsigned" --sign-with-key "$SIGNER_1" --rpc-url "$RPC" > "$tag.sig1"
-    stellar tx sign "$tag.sig1" --sign-with-key "$SIGNER_2" --rpc-url "$RPC" > "$tag.sig2"
+      --build-only -- "$@" > "$tag.unsigned" || return $?
+    stellar tx sign "$tag.unsigned" --sign-with-key "$SIGNER_1" --rpc-url "$RPC" > "$tag.sig1" || return $?
+    stellar tx sign "$tag.sig1" --sign-with-key "$SIGNER_2" --rpc-url "$RPC" > "$tag.sig2" || return $?
     stellar tx send "$tag.sig2" --rpc-url "$RPC"
   else
     stellar contract invoke --id "$VAULT_ID" --rpc-url "$RPC" --source "$ADMIN_SOURCE" -- "$@"

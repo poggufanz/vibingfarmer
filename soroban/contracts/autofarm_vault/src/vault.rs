@@ -554,6 +554,7 @@ pub fn execute_upgrade(e: &Env) -> Result<(), VaultError> {
     // This change adds only append-only keys, so no migration is required.
     e.deployer().update_current_contract_wasm(p.wasm_hash.clone());
     UpgradeExecuted { wasm_hash: p.wasm_hash }.publish(e);
+    extend_instance(e);
     Ok(())
 }
 
