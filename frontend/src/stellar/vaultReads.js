@@ -145,3 +145,34 @@ export async function readLifeboatState(
     return null
   }
 }
+
+/**
+ * Vault's pending timelocked upgrade (surface-only — see UpgradeNoticeBanner-equivalent in
+ * HomePage.jsx; nothing here ever writes on-chain). `pending_upgrade()` returns
+ * `Option<PendingUpgrade>` — decodes to null/undefined when nothing is scheduled (`== null`
+ * catches both), same Option convention as readLifeboatState's `authority`. null is also
+ * returned on RPC failure — never a guessed state.
+ * @param {string} [vaultAddress]
+ * @param {{ server?: object }} [opts]
+ * @returns {Promise<{wasmHashHex: string, eta: number}|null>}
+ */
+export async function readPendingUpgrade(
+  vaultAddress = SOROBAN_AUTOFARM_VAULT_ADDRESS,
+  { server } = {}
+) {
+  try {
+    const v = await readContract({
+      contract: vaultAddress,
+      method: 'pending_upgrade',
+      args: [],
+      server,
+    })
+    if (v == null) return null
+    return {
+      wasmHashHex: Buffer.from(v.wasm_hash).toString('hex'),
+      eta: Number(v.eta),
+    }
+  } catch {
+    return null
+  }
+}

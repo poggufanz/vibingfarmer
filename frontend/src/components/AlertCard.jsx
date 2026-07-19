@@ -18,7 +18,16 @@ const ALERT_META = {
   compound_executed: { color: 'var(--ok)', title: 'Compounded' },
   rebalance_executed: { color: 'var(--info)', title: 'Rebalanced' },
   blnd_held: { color: 'var(--warn)', title: 'BLND held' },
+  // Upgrade timelock visibility (surface-only) — schedule_upgrade/execute_upgrade/
+  // cancel_upgrade (soroban/contracts/autofarm_vault). No auto-derisk, no on-chain action;
+  // these three kinds only ever inform the holder.
+  vault_upgrade_scheduled: { color: 'var(--warn)', title: 'Vault upgrade scheduled' },
+  vault_upgrade_executed: { color: 'var(--info)', title: 'Vault upgrade executed' },
+  vault_upgrade_cancelled: { color: 'var(--ok)', title: 'Vault upgrade cancelled' },
 }
+
+const shortHash = (h) => (h ? `${h.slice(0, 6)}…${h.slice(-4)}` : '')
+const etaDate = (eta) => (eta ? new Date(eta * 1000).toLocaleString() : '')
 
 const displayLabel = (value) =>
   String(value || 'Alert')
@@ -45,6 +54,12 @@ const alertLine = (a) => {
       return `${a.vaultName}, ${a.fromLabel} → ${a.toLabel}, ${a.amountUsdc} USDC moved`
     case 'blnd_held':
       return `${a.vaultName}, ${a.blndHeld} BLND held, not swapped`
+    case 'vault_upgrade_scheduled':
+      return `${a.vaultName}, executable ${etaDate(a.eta)}`
+    case 'vault_upgrade_executed':
+      return `${a.vaultName}, wasm ${shortHash(a.wasmHashHex)} now live`
+    case 'vault_upgrade_cancelled':
+      return `${a.vaultName}, upgrade cancelled`
     default:
       return a.vaultName || ''
   }
@@ -66,6 +81,12 @@ const whyText = (a) => {
       return `The keeper moved funds from ${a.fromLabel} to ${a.toLabel} to chase a better rate, within its on-chain cooldown and size-cap limits. No action needed.`
     case 'blnd_held':
       return `BLND rewards were claimed but held rather than swapped this round (no swap route or a zero min-out). No USDC value has been realized from them yet.`
+    case 'vault_upgrade_scheduled':
+      return `Vault upgrade scheduled — executable ${etaDate(a.eta)}. You can withdraw before then. Wasm hash ${shortHash(a.wasmHashHex)}.`
+    case 'vault_upgrade_executed':
+      return `Vault upgrade executed. New bytecode (wasm ${shortHash(a.wasmHashHex)}) is now live.`
+    case 'vault_upgrade_cancelled':
+      return `Vault upgrade cancelled. Wasm ${shortHash(a.wasmHashHex)} will not be deployed.`
     default:
       return a.error || ''
   }

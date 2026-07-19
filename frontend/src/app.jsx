@@ -895,6 +895,24 @@ const App = () => {
             // (type/reasonCode/drainedTotal/txHash) rather than remapped into keeperActivity's
             // kind-based alert objects; see lifeboatActivity state comment above for why.
             newLifeboatActivity.push({ ...ev, timestamp: Date.now() })
+          } else if (
+            ev.type === 'upgrade_scheduled' ||
+            ev.type === 'upgrade_executed' ||
+            ev.type === 'upgrade_cancelled'
+          ) {
+            // Upgrade timelock visibility (surface-only — no auto-derisk, no on-chain action).
+            // Straight into the alert bell via handleAgentEvent, same as compound/rebalance
+            // above, so a holder actually sees a pending bytecode swap before the 3-day exit
+            // window closes.
+            handleAgentEvent({
+              id: `${ev.type}:${ev.ledger}`,
+              kind: `vault_${ev.type}`,
+              vaultName: 'Autofarm vault',
+              wasmHashHex: ev.wasmHashHex,
+              eta: ev.eta,
+              txHash: ev.txHash,
+              timestamp: Date.now(),
+            })
           }
         }
         if (newActivity.length) {
