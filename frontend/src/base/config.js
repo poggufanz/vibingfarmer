@@ -24,6 +24,11 @@ function requireAddress(name, value) {
 
 export const ZERODEV_PROJECT_ID = import.meta.env?.VITE_ZERODEV_PROJECT_ID || ''
 export const ZERODEV_PASSKEY_SERVER_URL = import.meta.env?.VITE_ZERODEV_PASSKEY_SERVER_URL || ''
+// The rp.id the ZeroDev dashboard registered for this project's passkey server. The hosted
+// server ignores client-sent rpID, so this is the scope EVERY ceremony must use — see
+// wallet/passkeyBase.js signWithRpId for why sign-side needs it spelled out.
+export const ZERODEV_PASSKEY_RP_ID =
+  import.meta.env?.VITE_ZERODEV_PASSKEY_RP_ID || 'vibing-farmer.pages.dev'
 export const BASE_SEPOLIA_RPC_URL =
   import.meta.env?.VITE_BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org'
 

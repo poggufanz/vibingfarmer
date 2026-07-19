@@ -17,12 +17,80 @@ import {
   WebAuthnMode,
   PasskeyValidatorContractVersion,
 } from '@zerodev/passkey-validator'
-import { BASE_CHAIN, BASE_SEPOLIA_RPC_URL, ZERODEV_PASSKEY_SERVER_URL } from '../base/config.js'
+import {
+  b64ToBytes,
+  base64FromUint8Array,
+  findQuoteIndices,
+  hexStringToUint8Array,
+  isRIP7212SupportedNetwork,
+  parseAndNormalizeSig,
+  uint8ArrayToHexString,
+} from '@zerodev/webauthn-key'
+import { encodeAbiParameters } from 'viem'
+import {
+  BASE_CHAIN,
+  BASE_SEPOLIA_RPC_URL,
+  ZERODEV_PASSKEY_SERVER_URL,
+  ZERODEV_PASSKEY_RP_ID,
+} from '../base/config.js'
 import { createGaslessKernelClient } from '../base/paymaster.js'
 
 const ENTRY_POINT = getEntryPoint('0.7')
 const KERNEL_VERSION = KERNEL_V3_1
 const DEPLOY_TIMEOUT_MS = 120_000
+
+// Clone of the SDK's private signMessageUsingWebAuthn with ONE addition: rpId in the
+// assertion options. toPasskeyValidator prefers webAuthnKey.signMessageCallback(message,
+// webAuthnKey.rpID, chainId, allowCredentials) over that internal signer, which is the
+// supported seam for this. The signature encoding below must stay byte-identical to the
+// SDK's (same abi tuple, same helpers — all public exports of @zerodev/webauthn-key).
+// ponytail: drop this whole function when ZeroDev threads rpId upstream.
+export async function signWithRpId(message, rpID, chainId, allowCredentials, deps = {}) {
+  let messageContent
+  if (typeof message === 'string') messageContent = message
+  else if ('raw' in message && typeof message.raw === 'string') messageContent = message.raw
+  else if ('raw' in message && message.raw instanceof Uint8Array)
+    messageContent = message.raw.toString()
+  else throw new Error('Unsupported message format')
+  const formattedMessage = messageContent.startsWith('0x')
+    ? messageContent.slice(2)
+    : messageContent
+  const challenge = base64FromUint8Array(hexStringToUint8Array(formattedMessage), true)
+  const assertionOptions = {
+    challenge,
+    allowCredentials,
+    userVerification: 'required',
+    rpId: rpID,
+  }
+  const startAuthentication =
+    deps.startAuthenticationImpl ?? (await import('@simplewebauthn/browser')).startAuthentication
+  const cred = await startAuthentication(assertionOptions)
+  const { authenticatorData } = cred.response
+  const authenticatorDataHex = uint8ArrayToHexString(b64ToBytes(authenticatorData))
+  const clientDataJSON = atob(cred.response.clientDataJSON)
+  const { beforeType } = findQuoteIndices(clientDataJSON)
+  const { signature } = cred.response
+  const signatureHex = uint8ArrayToHexString(b64ToBytes(signature))
+  const { r, s } = parseAndNormalizeSig(signatureHex)
+  return encodeAbiParameters(
+    [
+      { name: 'authenticatorData', type: 'bytes' },
+      { name: 'clientDataJSON', type: 'string' },
+      { name: 'responseTypeLocation', type: 'uint256' },
+      { name: 'r', type: 'uint256' },
+      { name: 's', type: 'uint256' },
+      { name: 'usePrecompiled', type: 'bool' },
+    ],
+    [
+      authenticatorDataHex,
+      clientDataJSON,
+      beforeType,
+      BigInt(r),
+      BigInt(s),
+      isRIP7212SupportedNetwork(chainId),
+    ]
+  )
+}
 
 /**
  * Provision (register) or reconnect to (login) the passkey-owned Base smart account.
@@ -38,14 +106,14 @@ export async function createBaseSmartAccount({
   passkeyName,
   mode,
   passkeyServerUrl = ZERODEV_PASSKEY_SERVER_URL,
-  // rp.id MUST equal the page's hostname: the SDK's sign-time assertionOptions carry no rpId,
-  // so the browser defaults it to the current origin — a credential registered under the
-  // ZeroDev dashboard's fixed domain (vibing-farmer.pages.dev) is then invisible to the sign
-  // ceremony on any other origin (dev./preview subdomains fail with NotAllowedError after a
-  // SUCCESSFUL register; proven live on dev.vibing-farmer.pages.dev 2026-07-19). Production
-  // hostname equals the dashboard domain, so this is a no-op there; dev/preview/localhost get
-  // per-origin credentials that both ceremonies agree on.
-  rpID = typeof location !== 'undefined' ? location.hostname : undefined,
+  // The rp scope every ceremony must share. The hosted ZeroDev server IGNORES client-sent
+  // rpID and always registers under the dashboard domain — and per WebAuthn that domain (the
+  // registrable eTLD+1, pages.dev being on the Public Suffix List) is valid on every subdomain.
+  // So pin register AND sign to it: the SDK's own sign path omits rpId, the browser then
+  // defaults the assertion to the current origin, and a preview subdomain can't see the
+  // credential (register OK, sign NotAllowedError — proven live on dev.vibing-farmer.pages.dev
+  // 2026-07-19). Sign-side enforcement = signWithRpId attached below.
+  rpID = ZERODEV_PASSKEY_RP_ID,
   deps = {},
 }) {
   const {
@@ -70,6 +138,10 @@ export async function createBaseSmartAccount({
     mode: mode === 'login' ? WebAuthnMode.Login : WebAuthnMode.Register,
     passkeyServerHeaders: {},
   })
+  // Pin the sign-time rp scope (see rpID param comment). ??= lets injected test keys carry
+  // their own callback.
+  webAuthnKey.rpID = rpID
+  webAuthnKey.signMessageCallback ??= signWithRpId
   const passkeyValidator = await makePasskeyValidator(publicClient, {
     webAuthnKey,
     entryPoint: ENTRY_POINT,
