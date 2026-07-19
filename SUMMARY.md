@@ -27,3 +27,4 @@
 * [Full feature guide](FEATURES.md)
 * [Security review](SECURITY.md)
 * [Getting started (developers)](GETTING_STARTED.md)
+* [Design system](DESIGN.md)
