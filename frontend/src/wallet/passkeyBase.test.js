@@ -1,6 +1,6 @@
 // frontend/src/wallet/passkeyBase.test.js
 import { describe, test, expect, vi } from 'vitest'
-import { createBaseSmartAccount } from './passkeyBase.js'
+import { createBaseSmartAccount, signWithRpId } from './passkeyBase.js'
 
 describe('createBaseSmartAccount', () => {
   test('registers a webauthn key, builds a passkey validator (sudo-only, no session plugin), returns the owner address', async () => {
@@ -115,6 +115,45 @@ describe('createBaseSmartAccount', () => {
       deps,
     })
     expect(deps.makeWebAuthnKey).toHaveBeenCalledTimes(1)
+  })
+
+  test('attaches rpID + a sign callback to the webauthn key (sign ceremony must carry the rp scope)', async () => {
+    const fakeKey = {}
+    const deps = {
+      makePublicClient: vi.fn(() => ({ getCode: vi.fn(async () => '0x6001') })),
+      makeWebAuthnKey: vi.fn(async () => fakeKey),
+      makePasskeyValidator: vi.fn(async (_client, args) => {
+        expect(args.webAuthnKey.rpID).toBe('vibing-farmer.pages.dev')
+        expect(typeof args.webAuthnKey.signMessageCallback).toBe('function')
+        return {}
+      }),
+      makeKernelAccount: vi.fn(async () => ({ address: '0xabc' })),
+    }
+    await createBaseSmartAccount({
+      passkeyName: 'user@example.com',
+      mode: 'login',
+      passkeyServerUrl: 'https://passkeys.zerodev.app/test-project',
+      rpID: 'vibing-farmer.pages.dev',
+      deps,
+    })
+    expect(deps.makePasskeyValidator).toHaveBeenCalledTimes(1)
+  })
+
+  test('signWithRpId puts rpId into the assertion options (the SDK signer omits it)', async () => {
+    let captured = null
+    const startAuthenticationImpl = vi.fn(async (options) => {
+      captured = options
+      throw new Error('sentinel: stop before signature encoding')
+    })
+    await expect(
+      signWithRpId('0xdeadbeef', 'vibing-farmer.pages.dev', 84532, [{ id: 'cred-1', type: 'public-key' }], {
+        startAuthenticationImpl,
+      })
+    ).rejects.toThrow('sentinel')
+    expect(captured.rpId).toBe('vibing-farmer.pages.dev')
+    expect(captured.userVerification).toBe('required')
+    expect(captured.allowCredentials).toEqual([{ id: 'cred-1', type: 'public-key' }])
+    expect(typeof captured.challenge).toBe('string')
   })
 
   test('throws a clear error when no passkey server URL is provided or configured', async () => {
