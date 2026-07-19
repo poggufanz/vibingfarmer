@@ -738,6 +738,7 @@ The three public pages (`/explorer`, `/ecosystem`, `/replay`) are deliberately r
 | **Blend v2 pool** | `CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF` | The actual lending market (real yield source) |
 | **Blend USDC token** | `CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU` | 7-decimal funding asset |
 | **attestation** | `CDDOW2FZ7ALBWBXF22TPMPDHPXSKTMLQGGQWUYX7YOJZAHICD7DUO2K6` | On-chain strategy-hash attestation counter |
+| **exit_router** | `CDGDIPHBN3MSNURDX33IZBXXQTJPT7THAXSMVBAIOIXLOA6OF32IRS2J` | Exit-side mirror of the grant: `sweep(owner, agents, to)` batches every agent's `owner_withdraw` into one signed transaction. Stateless — no admin, no upgrade path, zero custody; grants no authority (each agent still checks its stored owner) |
 | **registry** | `CAP5E2FPDAGEQ7SR55YRY4Z56GPBSTRRZJCYN2PQ6PZQHQJKYEDVM5FB` | Per-agent scope registry. `authorize(agent)` derives the record from the agent's own `scope_of()` (caller supplies nothing but the address); `revoke(owner, agent)` is a metadata mirror — `AgentAccount.revoke()` is the enforcing kill switch. Not required by the deposit path |
 | **Demo agent** (legacy) | `CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC` | Pre-seeded smoke agent on **v1** wasm; its constructor-only scope pins the retired vault, so deposits from it do **not** reach the live vault. Explorer/history only — product flows use per-run agents from the grant path |
 
@@ -786,7 +787,7 @@ All addresses are drawn from `deployments/stellar-testnet.json` and `deployments
 
 **Revocation paths, layered:**
 1. **Instant, global:** `token.approve(router, 0)` — one signature, zeroes the entire grant, works even if the relayer is down (submitted directly, user-paid).
-2. **Per-agent:** an agent's own `revoked` flag can be set, or its owner can call `owner_withdraw()` to sweep that specific agent's assets out immediately.
+2. **Per-agent:** an agent's own `revoked` flag can be set, or its owner can call `owner_withdraw()` to sweep that specific agent's assets out immediately. The exit router (`sweep(owner, agents, to)`) batches every agent's `owner_withdraw` into one signed transaction for a whole-run exit.
 3. **Vault-level pause:** the vault admin can pause new deposits — but `redeem` is deliberately *not* pause-gated, so a pause can never trap a user's funds; exits always work.
 4. **Emergency de-risk:** under an active mandate, the lifeboat can pull *all* strategy capital back to vault-idle in response to a detected market threat.
 
