@@ -434,12 +434,10 @@ export default function HomePage({
             }}
           >
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 12.5, fontWeight: 500 }}>
-                {'⚠️'} Vault upgrade scheduled
-              </div>
+              <div style={{ fontSize: 12.5, fontWeight: 500 }}>{'⚠️'} Vault upgrade scheduled</div>
               <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                Executes after {new Date(pendingUpgrade.eta * 1000).toLocaleString()}. Funds can
-                be withdrawn before then.
+                Executes after {new Date(pendingUpgrade.eta * 1000).toLocaleString()}. Funds can be
+                withdrawn before then.
               </div>
             </div>
           </div>
