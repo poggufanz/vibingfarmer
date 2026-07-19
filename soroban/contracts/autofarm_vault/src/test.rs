@@ -1,5 +1,5 @@
 #![cfg(test)]
-use crate::types::{Compound, LifeboatEngaged, LifeboatResumed, Rebalance, VaultError};
+use crate::types::{Compound, LifeboatEngaged, LifeboatResumed, PendingUpgrade, Rebalance, VaultError};
 use crate::vault::DEAD_SHARES;
 use crate::{AutofarmVault, AutofarmVaultClient};
 use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _};
@@ -1318,19 +1318,6 @@ fn redeem_exceeding_recoverable_errors_insufficient_liquidity() {
     assert_eq!(MockStrategyClient::new(&env, &healthy).balance(), 50 * U7);
 }
 
-#[test]
-fn upgrade_admin_only() {
-    let env = Env::default();
-    let ctx = setup(&env);
-    let fake_hash = BytesN::from_array(&env, &[9u8; 32]);
-
-    // No admin signature present at all → auth error, not a logic error. (The wasm swap
-    // itself needs a real second uploaded wasm — covered by the live testnet smoke, not this
-    // unit suite; here we only prove the auth gate.)
-    env.set_auths(&[]);
-    assert!(ctx.vault.try_upgrade(&fake_hash).is_err());
-}
-
 // ===== Lifeboat: mandate plumbing =====
 
 #[test]
@@ -1762,4 +1749,185 @@ fn price_per_share_saturates_instead_of_trapping_on_hostile_report() {
     let keeper = Address::generate(&env);
     ctx.vault.set_keeper(&keeper);
     let _ = ctx.vault.try_compound(&Vec::from_array(&env, [0i128]));
+}
+
+// ===== Upgrade timelock: schedule =====
+
+#[test]
+fn schedule_upgrade_stores_pending() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let hash = BytesN::from_array(&env, &[7u8; 32]);
+
+    let now = env.ledger().timestamp();
+    ctx.vault.schedule_upgrade(&hash);
+
+    let p: PendingUpgrade = ctx.vault.pending_upgrade().unwrap();
+    assert_eq!(p.wasm_hash, hash);
+    assert_eq!(p.eta, now + 259_200); // now + 3 days
+}
+
+#[test]
+fn schedule_upgrade_admin_only() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let hash = BytesN::from_array(&env, &[7u8; 32]);
+
+    // No admin signature present → auth error (mirrors the removed upgrade_admin_only).
+    env.set_auths(&[]);
+    assert!(ctx.vault.try_schedule_upgrade(&hash).is_err());
+}
+
+#[test]
+fn schedule_eta_overflow_fails_closed() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let hash = BytesN::from_array(&env, &[7u8; 32]);
+
+    // now + 3 days overflows u64 → clean MathOverflow, not a host trap.
+    env.ledger().set_timestamp(u64::MAX - 100);
+    assert_eq!(
+        ctx.vault.try_schedule_upgrade(&hash),
+        Err(Ok(VaultError::MathOverflow))
+    );
+}
+
+// ===== Upgrade timelock: execute =====
+
+#[test]
+fn execute_without_schedule_rejects() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    assert_eq!(
+        ctx.vault.try_execute_upgrade(),
+        Err(Ok(VaultError::NoPendingUpgrade))
+    );
+}
+
+#[test]
+fn execute_before_eta_rejects() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let hash = BytesN::from_array(&env, &[7u8; 32]);
+    ctx.vault.schedule_upgrade(&hash);
+
+    // Still inside the 3-day window → blocked.
+    assert_eq!(
+        ctx.vault.try_execute_upgrade(),
+        Err(Ok(VaultError::TimelockNotElapsed))
+    );
+}
+
+#[test]
+fn execute_after_eta_passes_timelock_gate() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let hash = BytesN::from_array(&env, &[7u8; 32]);
+    let now = env.ledger().timestamp();
+    ctx.vault.schedule_upgrade(&hash);
+
+    // Jump past eta. The timelock gate now opens. The REAL wasm swap needs a second uploaded
+    // wasm (covered by the testnet smoke, Task 6), so with a dummy hash the call now fails at
+    // the swap — NOT at the timelock. Proving it is no longer TimelockNotElapsed / NoPending
+    // proves the gate opened.
+    env.ledger().set_timestamp(now + 259_200);
+    let res = ctx.vault.try_execute_upgrade();
+    assert_ne!(res, Err(Ok(VaultError::TimelockNotElapsed)));
+    assert_ne!(res, Err(Ok(VaultError::NoPendingUpgrade)));
+}
+
+#[test]
+fn execute_admin_only() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let hash = BytesN::from_array(&env, &[7u8; 32]);
+    let now = env.ledger().timestamp();
+    ctx.vault.schedule_upgrade(&hash);
+    env.ledger().set_timestamp(now + 259_200);
+
+    // Past eta, but no admin signature → auth error (require_admin runs before any state read).
+    env.set_auths(&[]);
+    assert!(ctx.vault.try_execute_upgrade().is_err());
+}
+
+// ===== Upgrade timelock: cancel =====
+
+#[test]
+fn cancel_clears_pending() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let hash = BytesN::from_array(&env, &[7u8; 32]);
+    ctx.vault.schedule_upgrade(&hash);
+    assert!(ctx.vault.pending_upgrade().is_some());
+
+    ctx.vault.cancel_upgrade();
+    assert!(ctx.vault.pending_upgrade().is_none());
+    // Nothing to execute afterwards.
+    assert_eq!(
+        ctx.vault.try_execute_upgrade(),
+        Err(Ok(VaultError::NoPendingUpgrade))
+    );
+}
+
+#[test]
+fn cancel_without_schedule_rejects() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    assert_eq!(
+        ctx.vault.try_cancel_upgrade(),
+        Err(Ok(VaultError::NoPendingUpgrade))
+    );
+}
+
+#[test]
+fn cancel_admin_only() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let hash = BytesN::from_array(&env, &[7u8; 32]);
+    ctx.vault.schedule_upgrade(&hash);
+
+    env.set_auths(&[]);
+    assert!(ctx.vault.try_cancel_upgrade().is_err());
+}
+
+// ===== Upgrade timelock: invariants =====
+
+#[test]
+fn reschedule_resets_eta() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let now = env.ledger().timestamp();
+    let hash_a = BytesN::from_array(&env, &[1u8; 32]);
+    let hash_b = BytesN::from_array(&env, &[2u8; 32]);
+
+    ctx.vault.schedule_upgrade(&hash_a);
+    let eta_a = ctx.vault.pending_upgrade().unwrap().eta;
+
+    // Re-schedule 100s later with a different hash → full delay from the NEW time.
+    env.ledger().set_timestamp(now + 100);
+    ctx.vault.schedule_upgrade(&hash_b);
+    let p = ctx.vault.pending_upgrade().unwrap();
+
+    assert_eq!(p.wasm_hash, hash_b);
+    assert_eq!(p.eta, now + 100 + 259_200);
+    assert!(p.eta > eta_a);
+}
+
+#[test]
+fn redeem_works_while_upgrade_pending() {
+    let env = Env::default();
+    let ctx = setup(&env);
+    let alice = Address::generate(&env);
+    fund_and_approve(&env, &ctx, &alice, 100 * U7);
+    let shares = ctx.vault.deposit(&alice, &(100 * U7));
+
+    // Announce an upgrade — this must NOT block exits.
+    let hash = BytesN::from_array(&env, &[7u8; 32]);
+    ctx.vault.schedule_upgrade(&hash);
+    assert!(ctx.vault.pending_upgrade().is_some());
+
+    // Holder still redeems fully with their own signature during the window.
+    let assets = ctx.vault.redeem(&alice, &shares);
+    assert!(assets > 0);
+    assert_eq!(ctx.vault.balance(&alice), 0);
 }

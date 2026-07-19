@@ -76,6 +76,23 @@ describe('AlertCard', () => {
     expect(screen.getByText(/Autofarm vault.*12\.0000000 BLND held, not swapped/)).toBeTruthy()
   })
 
+  it('renders vault_upgrade_scheduled with the scheduled title and eta copy', () => {
+    render(
+      <AlertCard
+        alert={{
+          id: '6',
+          kind: 'vault_upgrade_scheduled',
+          vaultName: 'Autofarm vault',
+          wasmHashHex: 'ab'.repeat(32),
+          eta: 1735689600, // fixed ts — assertion only checks the label, not the locale-formatted date
+        }}
+        {...baseHandlers}
+      />
+    )
+    expect(screen.getByText('Vault upgrade scheduled')).toBeTruthy()
+    expect(screen.getByText(/Autofarm vault, executable/)).toBeTruthy()
+  })
+
   it('dismisses a compound_executed alert like any other alert kind', () => {
     render(
       <AlertCard

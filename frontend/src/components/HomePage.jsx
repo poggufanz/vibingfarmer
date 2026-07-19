@@ -15,6 +15,7 @@ import { toDisplay } from '../stellar/format.js'
 import { fromBaseChainUnits } from '../base/config.js'
 import { pickVaultAgents } from '../positionsStore.js'
 import { Icon } from '../components.jsx'
+import { readPendingUpgrade } from '../stellar/vaultReads.js'
 
 const POLL_MS = 10 * 60 * 1000
 const u = toDisplay
@@ -215,6 +216,7 @@ export default function HomePage({
   const [sortDir, setSortDir] = useState('desc')
   const [filterRisk, setFilterRisk] = useState('all')
   const [apyHistories, setApyHistories] = useState({})
+  const [pendingUpgrade, setPendingUpgrade] = useState(null)
 
   // Read settings once, before any early return (was declared after the no-wallet return → TDZ crash)
   const settings = loadSettings()
@@ -241,6 +243,20 @@ export default function HomePage({
       })
     }
     if (!pulseCache || !pulseCache.fetchedAt || Date.now() - pulseCache.fetchedAt > POLL_MS) load()
+    const id = setInterval(load, POLL_MS)
+    return () => {
+      alive = false
+      clearInterval(id)
+    }
+  }, [userAddress])
+
+  // Pending vault upgrade (surface-only — see UpgradeNoticeBanner below): fetch on mount, poll
+  // on the same cadence as Market Pulse above rather than opening a third interval loop.
+  useEffect(() => {
+    if (!userAddress) return
+    let alive = true
+    const load = () => readPendingUpgrade().then((v) => alive && setPendingUpgrade(v))
+    load()
     const id = setInterval(load, POLL_MS)
     return () => {
       alive = false
@@ -403,6 +419,30 @@ export default function HomePage({
   return (
     <div className="enter" style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 28 }}>
       <div style={{ maxWidth: 820, margin: '0 auto', width: '100%' }}>
+        {pendingUpgrade && (
+          <div
+            role="status"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 12,
+              marginBottom: 20,
+              padding: '10px 14px',
+              borderRadius: 'var(--radius-md)',
+              border: '1px solid var(--warn)',
+              background: 'var(--bg-card)',
+            }}
+          >
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 500 }}>{'⚠️'} Vault upgrade scheduled</div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                Executes after {new Date(pendingUpgrade.eta * 1000).toLocaleString()}. Funds can be
+                withdrawn before then.
+              </div>
+            </div>
+          </div>
+        )}
+
         {sessionResumed && (
           <div
             role="status"
@@ -1117,9 +1157,10 @@ export default function HomePage({
               </div>
             )}
 
-            {/* ── MARKET PULSE (collapsed by default) ── */}
+            {/* ── MARKET PULSE (open by default) ── */}
             <Collapsible
               title={t(lang, 'marketPulse')}
+              defaultOpen
               count={(pulse.vaults || []).length}
               meta={
                 <span

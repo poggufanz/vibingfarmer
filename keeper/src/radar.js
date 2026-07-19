@@ -22,6 +22,27 @@ function liqDropBpsFrom(prevLiq, currentLiq) {
   return drop > 0n ? Number(drop) : 0;
 }
 
+// Surface-only visibility for the vault's timelocked upgrade (schedule_upgrade/execute_upgrade/
+// cancel_upgrade — see soroban/contracts/autofarm_vault/src/vault.rs). Module-level, not
+// ctx.memo: one keeper process watches one vault, so a single last-seen key is fine here — would
+// need to move into ctx.memo if the keeper ever watched multiple vaults from one process.
+// Dedupe key so a WARN is logged once on schedule/change and once on clear, never every ~5s tick.
+let lastSeenUpgradeKey = null; // `${wasmHashHex}:${eta}` | null
+
+function logPendingUpgrade(deps, pendingUpgrade) {
+  const key = pendingUpgrade ? `${pendingUpgrade.wasmHashHex}:${pendingUpgrade.eta}` : null;
+  if (key === lastSeenUpgradeKey) return;
+  lastSeenUpgradeKey = key;
+  if (pendingUpgrade) {
+    const etaDate = new Date(pendingUpgrade.eta * 1000).toISOString();
+    deps.log.warn(
+      `[radar] PENDING VAULT UPGRADE scheduled: wasm_hash=${pendingUpgrade.wasmHashHex} eta=${pendingUpgrade.eta} (${etaDate}) — vault bytecode will change at/after this time unless cancelled. No automatic action taken; withdraw before then if you want to exit first.`,
+    );
+  } else {
+    deps.log.info('[radar] pending vault upgrade cleared (executed or cancelled)');
+  }
+}
+
 export async function radarTick(ctx) {
   const { deps, config, memo, env } = ctx;
   let chain;
@@ -31,6 +52,8 @@ export async function radarTick(ctx) {
     deps.log.warn(`[radar] read failed, skipping tick: ${String(err?.message || err)}`);
     return { action: null, signals: null };
   }
+
+  logPendingUpgrade(deps, chain.pendingUpgrade ?? null);
 
   const signals = {
     utilizationBps: chain.utilizationBps,

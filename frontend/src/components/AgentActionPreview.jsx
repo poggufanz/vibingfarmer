@@ -1,24 +1,7 @@
 // AgentActionPreview.jsx
 // Action preview modal shown before harvest / emergency-withdraw executes.
-// Reuses the app's existing modal tokens — no new CSS.
+// Document-grade receipt layout, same tokens as grant / withdraw modals.
 import React, { useEffect, useRef } from 'react'
-
-const Row = ({ k, v }) => (
-  <div
-    style={{
-      display: 'flex',
-      justifyContent: 'space-between',
-      gap: 12,
-      fontSize: 12,
-      padding: '3px 0',
-    }}
-  >
-    <span style={{ color: 'var(--text-muted)' }}>{k}</span>
-    <span className="mono" style={{ textAlign: 'right' }}>
-      {v}
-    </span>
-  </div>
-)
 
 export default function AgentActionPreview({ preview, onConfirm, onCancel }) {
   const confirmRef = useRef(null)
@@ -42,11 +25,10 @@ export default function AgentActionPreview({ preview, onConfirm, onCancel }) {
   return (
     <div className="modal-backdrop" onClick={onCancel}>
       <div
-        className="modal"
+        className="modal agent-preview-modal"
         role="dialog"
         aria-modal="true"
         aria-labelledby="agent-preview-title"
-        style={{ maxWidth: 400 }}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="modal-eyebrow">
@@ -56,37 +38,74 @@ export default function AgentActionPreview({ preview, onConfirm, onCancel }) {
           {isWithdraw ? 'Emergency withdraw preview' : 'Harvest preview'}
         </h3>
 
-        <div style={{ margin: '12px 0' }}>
+        <div className="grant-receipt agent-preview-receipt" role="region" aria-label="Action summary">
           {isWithdraw ? (
             <>
-              <Row k="From" v={preview.vaultName} />
-              <Row k="Amount" v={`${preview.amountUsdc} USDC (${preview.pctLabel})`} />
-              <Row k="To" v={`${preview.toShort} (your wallet)`} />
-              <Row k="Gas" v="~0, fee-bump relayer" />
-              <Row k="Est. receive" v={`~${preview.amountUsdc} USDC`} />
-              <Row k="Time" v="~30 seconds" />
+              <div className="grant-receipt-row">
+                <span className="grant-receipt-k">From</span>
+                <span className="grant-receipt-v">{preview.vaultName}</span>
+              </div>
+              <div className="grant-receipt-row">
+                <span className="grant-receipt-k">Amount</span>
+                <span className="grant-receipt-v mono tnum">
+                  {preview.amountUsdc} USDC ({preview.pctLabel})
+                </span>
+              </div>
+              <div className="grant-receipt-row">
+                <span className="grant-receipt-k">To</span>
+                <span className="grant-receipt-v mono">{preview.toShort} (your wallet)</span>
+              </div>
+              <div className="grant-receipt-row">
+                <span className="grant-receipt-k">Network fee</span>
+                <span className="grant-receipt-v grant-receipt-v--ok">~0, fee-bump relayer</span>
+              </div>
+              <div className="grant-receipt-row">
+                <span className="grant-receipt-k">Est. receive</span>
+                <span className="grant-receipt-v mono tnum">~{preview.amountUsdc} USDC</span>
+              </div>
+              <div className="grant-receipt-row">
+                <span className="grant-receipt-k">Time</span>
+                <span className="grant-receipt-v mono">~30 seconds</span>
+              </div>
             </>
           ) : (
             <>
-              <Row k="Vault" v={preview.vaultName} />
-              <Row k="Rewards" v={`${preview.rewardsUsdc} USDC unclaimed`} />
-              <Row k="Action" v="Claim accrued yield" />
-              <Row k="Gas" v="~0, fee-bump relayer" />
+              <div className="grant-receipt-row">
+                <span className="grant-receipt-k">Vault</span>
+                <span className="grant-receipt-v">{preview.vaultName}</span>
+              </div>
+              <div className="grant-receipt-row">
+                <span className="grant-receipt-k">Rewards</span>
+                <span className="grant-receipt-v mono tnum">
+                  {preview.rewardsUsdc} USDC unclaimed
+                </span>
+              </div>
+              <div className="grant-receipt-row">
+                <span className="grant-receipt-k">Action</span>
+                <span className="grant-receipt-v">Claim accrued yield</span>
+              </div>
+              <div className="grant-receipt-row">
+                <span className="grant-receipt-k">Network fee</span>
+                <span className="grant-receipt-v grant-receipt-v--ok">~0, fee-bump relayer</span>
+              </div>
             </>
           )}
         </div>
 
         {isWithdraw && (
-          <p className="lede" style={{ fontSize: 11, marginTop: 4 }}>
-            Uses your active Soroban session-key scope.
-          </p>
+          <p className="agent-preview-note mono">Uses your active Soroban session-key scope.</p>
         )}
 
         <div className="modal-actions">
-          <button className="btn btn-ghost" onClick={onCancel}>
+          <button type="button" className="btn btn-ghost" onClick={onCancel}>
             Cancel
           </button>
-          <button ref={confirmRef} className="btn btn-primary" onClick={onConfirm}>
+          <button
+            ref={confirmRef}
+            type="button"
+            className="btn btn-primary"
+            onClick={onConfirm}
+          >
             {isWithdraw ? 'Confirm withdraw' : 'Claim rewards'}
           </button>
         </div>

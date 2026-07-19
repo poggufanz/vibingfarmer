@@ -7,18 +7,27 @@ import { t } from '../settingsStore.js'
 import { Icon } from '../components.jsx'
 
 const ALERT_META = {
-  harvest_ready: { color: 'var(--ok)', title: 'Harvest ready' },
-  harvest_executed: { color: 'var(--ok)', title: 'Harvested' },
-  harvest_failed: { color: 'var(--danger)', title: 'Harvest failed' },
-  rebalance_proposal: { color: 'var(--info)', title: 'Rebalance opportunity' },
-  apy_drift: { color: 'var(--warn)', title: 'APY drop' },
-  risk_alert: { color: 'var(--danger)', title: 'Risk detected' },
+  harvest_ready: { tone: 'ok', title: 'Harvest ready' },
+  harvest_executed: { tone: 'ok', title: 'Harvested' },
+  harvest_failed: { tone: 'danger', title: 'Harvest failed' },
+  rebalance_proposal: { tone: 'info', title: 'Rebalance opportunity' },
+  apy_drift: { tone: 'warn', title: 'APY drop' },
+  risk_alert: { tone: 'danger', title: 'Risk detected' },
   // vf-autofarm keeper feed: keeper Worker compound/rebalance calls, surfaced
   // read-only. These are facts the keeper already acted on, not proposals awaiting a decision.
-  compound_executed: { color: 'var(--ok)', title: 'Compounded' },
-  rebalance_executed: { color: 'var(--info)', title: 'Rebalanced' },
-  blnd_held: { color: 'var(--warn)', title: 'BLND held' },
+  compound_executed: { tone: 'ok', title: 'Compounded' },
+  rebalance_executed: { tone: 'info', title: 'Rebalanced' },
+  blnd_held: { tone: 'warn', title: 'BLND held' },
+  // Upgrade timelock visibility (surface-only) — schedule_upgrade/execute_upgrade/
+  // cancel_upgrade (soroban/contracts/autofarm_vault). No auto-derisk, no on-chain action;
+  // these three kinds only ever inform the holder.
+  vault_upgrade_scheduled: { tone: 'warn', title: 'Vault upgrade scheduled' },
+  vault_upgrade_executed: { tone: 'info', title: 'Vault upgrade executed' },
+  vault_upgrade_cancelled: { tone: 'ok', title: 'Vault upgrade cancelled' },
 }
+
+const shortHash = (h) => (h ? `${h.slice(0, 6)}…${h.slice(-4)}` : '')
+const etaDate = (eta) => (eta ? new Date(eta * 1000).toLocaleString() : '')
 
 const displayLabel = (value) =>
   String(value || 'Alert')
@@ -45,6 +54,12 @@ const alertLine = (a) => {
       return `${a.vaultName}, ${a.fromLabel} → ${a.toLabel}, ${a.amountUsdc} USDC moved`
     case 'blnd_held':
       return `${a.vaultName}, ${a.blndHeld} BLND held, not swapped`
+    case 'vault_upgrade_scheduled':
+      return `${a.vaultName}, executable ${etaDate(a.eta)}`
+    case 'vault_upgrade_executed':
+      return `${a.vaultName}, wasm ${shortHash(a.wasmHashHex)} now live`
+    case 'vault_upgrade_cancelled':
+      return `${a.vaultName}, upgrade cancelled`
     default:
       return a.vaultName || ''
   }
@@ -66,24 +81,23 @@ const whyText = (a) => {
       return `The keeper moved funds from ${a.fromLabel} to ${a.toLabel} to chase a better rate, within its on-chain cooldown and size-cap limits. No action needed.`
     case 'blnd_held':
       return `BLND rewards were claimed but held rather than swapped this round (no swap route or a zero min-out). No USDC value has been realized from them yet.`
+    case 'vault_upgrade_scheduled':
+      return `Vault upgrade scheduled, executable ${etaDate(a.eta)}. You can withdraw before then. Wasm hash ${shortHash(a.wasmHashHex)}.`
+    case 'vault_upgrade_executed':
+      return `Vault upgrade executed. New bytecode (wasm ${shortHash(a.wasmHashHex)}) is now live.`
+    case 'vault_upgrade_cancelled':
+      return `Vault upgrade cancelled. Wasm ${shortHash(a.wasmHashHex)} will not be deployed.`
     default:
       return a.error || ''
   }
 }
 
-// ─── Shared style primitives ────────────────────────────────────────────────
-const mono = { fontFamily: 'var(--font-mono)', fontSize: 10.5 }
-const textBtn = (color = 'var(--text-muted)') => ({
-  appearance: 'none',
-  border: 0,
-  background: 'transparent',
-  fontSize: 11,
-  color,
-  cursor: 'pointer',
-  padding: 0,
-  fontFamily: 'var(--font-mono)',
-  lineHeight: 1,
-})
+/** Semantic tone for left edge + mark. High severity always wins over kind defaults. */
+function resolveTone(alert, meta) {
+  if (alert.kind === 'risk_alert' || alert.severity === 'high') return 'danger'
+  if (alert.severity === 'medium') return 'warn'
+  return meta.tone || 'neutral'
+}
 
 // ─── AlertCard ───────────────────────────────────────────────────────────────
 // Used by NotificationCenter (the global bell modal). Alerts live in one place
@@ -98,137 +112,96 @@ export function AlertCard({
 }) {
   const [why, setWhy] = useState(false)
   const meta = ALERT_META[alert.kind] || {
-    color: 'var(--text-muted)',
+    tone: 'neutral',
     title: displayLabel(alert.kind),
   }
+  const tone = resolveTone(alert, meta)
   const src = alert.sources && alert.sources[0]
-
-  const borderColor =
+  const needsAction =
+    alert.kind === 'harvest_ready' ||
+    alert.kind === 'rebalance_proposal' ||
     alert.kind === 'risk_alert'
-      ? 'var(--danger)'
-      : alert.severity === 'high'
-        ? 'var(--danger)'
-        : alert.kind === 'apy_drift'
-          ? 'var(--warn)'
-          : alert.kind === 'blnd_held'
-            ? 'var(--warn)'
-            : alert.severity === 'medium'
-              ? 'var(--warn)'
-              : alert.kind === 'rebalance_proposal'
-                ? 'var(--info)'
-                : alert.kind === 'rebalance_executed'
-                  ? 'var(--info)'
-                  : meta.color
-
-  const bgTint = 'var(--bg-elev)'
 
   return (
-    <div
-      style={{
-        border: `1px solid ${borderColor}`,
-        background: bgTint,
-        borderRadius: 'var(--radius-sm)',
-        padding: '10px 12px 10px 14px',
-        marginBottom: 6,
-      }}
-    >
-      {/* Title + dismiss */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'flex-start',
-          justifyContent: 'space-between',
-          gap: 8,
-        }}
-      >
-        <div style={{ flex: 1 }}>
-          <div
-            style={{ fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 5 }}
-          >
-            <span
-              aria-hidden="true"
-              style={{ width: 6, height: 6, borderRadius: '50%', background: meta.color }}
-            />
-            <span style={{ color: 'var(--text)' }}>{meta.title}</span>
+    <article className={`alert-card alert-card--${tone}`} data-kind={alert.kind}>
+      <div className="alert-card-head">
+        <span className={`alert-card-mark alert-card-mark--${tone}`} aria-hidden="true" />
+        <div className="alert-card-titles">
+          <div className="alert-card-title-row">
+            <h4 className="alert-card-title">{meta.title}</h4>
             {alert.severity && (
-              <span style={{ fontWeight: 400, color: 'var(--text-faint)', fontSize: 10.5 }}>
-                , {alert.severity}
+              <span className={`alert-card-sev alert-card-sev--${alert.severity}`}>
+                {alert.severity}
               </span>
             )}
           </div>
-          <div style={{ ...mono, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>
-            {alertLine(alert)}
-          </div>
+          <p className="alert-card-line mono">{alertLine(alert)}</p>
         </div>
         <button
-          style={{ ...textBtn('var(--text-faint)'), fontSize: 15, paddingLeft: 8, lineHeight: 1 }}
+          type="button"
+          className="alert-card-dismiss"
           onClick={() => onDismiss(alert.id)}
           aria-label="Dismiss alert"
         >
-          <Icon name="x" size={14} />
+          <Icon name="x" size={12} />
         </button>
       </div>
 
-      {/* Actions row */}
-      <div style={{ display: 'flex', alignItems: 'center', marginTop: 8, gap: 12 }}>
+      <div className="alert-card-actions">
         <button
-          style={{
-            ...textBtn('var(--text-faint)'),
-            textDecoration: 'underline',
-            textDecorationColor: 'var(--border-strong)',
-          }}
+          type="button"
+          className={`alert-card-why-btn${why ? ' is-open' : ''}`}
           aria-expanded={why}
           onClick={() => setWhy((v) => !v)}
         >
-          Why?
+          {why ? 'Hide detail' : 'Why?'}
         </button>
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 14 }}>
-          {alert.kind === 'harvest_ready' && (
-            <button style={textBtn('var(--ok)')} onClick={() => onHarvest(alert)}>
-              {t(lang, 'harvest')}
-            </button>
-          )}
-          {alert.kind === 'rebalance_proposal' && (
-            <button style={textBtn('var(--text)')} onClick={() => onReview(alert)}>
-              Review
-            </button>
-          )}
-          {alert.kind === 'risk_alert' && (
-            <button style={textBtn('var(--danger)')} onClick={() => onEmergencyWithdraw(alert)}>
-              Emergency withdraw
-            </button>
-          )}
-        </div>
+        {needsAction && (
+          <div className="alert-card-cta">
+            {alert.kind === 'harvest_ready' && (
+              <button
+                type="button"
+                className="btn btn-chip alert-card-cta-btn alert-card-cta-btn--ok"
+                onClick={() => onHarvest(alert)}
+              >
+                {t(lang, 'harvest')}
+              </button>
+            )}
+            {alert.kind === 'rebalance_proposal' && (
+              <button
+                type="button"
+                className="btn btn-chip alert-card-cta-btn"
+                onClick={() => onReview(alert)}
+              >
+                Review
+              </button>
+            )}
+            {alert.kind === 'risk_alert' && (
+              <button
+                type="button"
+                className="btn btn-chip alert-card-cta-btn alert-card-cta-btn--danger"
+                onClick={() => onEmergencyWithdraw(alert)}
+              >
+                Emergency withdraw
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
-      {/* Why expanded */}
       {why && (
-        <div
-          style={{
-            ...mono,
-            color: 'var(--text-muted)',
-            lineHeight: 1.55,
-            marginTop: 8,
-            paddingTop: 8,
-            borderTop: '1px solid var(--border)',
-          }}
-        >
-          {whyText(alert)}
+        <div className="alert-card-detail">
+          <p className="alert-card-detail-body mono">{whyText(alert)}</p>
           {src && (
-            <div style={{ marginTop: 4 }}>
+            <div className="alert-card-source mono">
               Source:{' '}
-              <a
-                href={src.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{ color: 'var(--info)', textDecoration: 'none' }}
-              >
+              <a href={src.url} target="_blank" rel="noopener noreferrer">
                 {(src.title || src.url).slice(0, 48)}
               </a>
             </div>
           )}
         </div>
       )}
-    </div>
+    </article>
   )
 }
