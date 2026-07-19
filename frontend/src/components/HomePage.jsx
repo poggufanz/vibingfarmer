@@ -1117,9 +1117,10 @@ export default function HomePage({
               </div>
             )}
 
-            {/* ── MARKET PULSE (collapsed by default) ── */}
+            {/* ── MARKET PULSE (open by default) ── */}
             <Collapsible
               title={t(lang, 'marketPulse')}
+              defaultOpen
               count={(pulse.vaults || []).length}
               meta={
                 <span
