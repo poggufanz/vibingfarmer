@@ -38,6 +38,14 @@ export async function createBaseSmartAccount({
   passkeyName,
   mode,
   passkeyServerUrl = ZERODEV_PASSKEY_SERVER_URL,
+  // rp.id MUST equal the page's hostname: the SDK's sign-time assertionOptions carry no rpId,
+  // so the browser defaults it to the current origin — a credential registered under the
+  // ZeroDev dashboard's fixed domain (vibing-farmer.pages.dev) is then invisible to the sign
+  // ceremony on any other origin (dev./preview subdomains fail with NotAllowedError after a
+  // SUCCESSFUL register; proven live on dev.vibing-farmer.pages.dev 2026-07-19). Production
+  // hostname equals the dashboard domain, so this is a no-op there; dev/preview/localhost get
+  // per-origin credentials that both ceremonies agree on.
+  rpID = typeof location !== 'undefined' ? location.hostname : undefined,
   deps = {},
 }) {
   const {
@@ -58,6 +66,7 @@ export async function createBaseSmartAccount({
   const webAuthnKey = await makeWebAuthnKey({
     passkeyName,
     passkeyServerUrl,
+    rpID,
     mode: mode === 'login' ? WebAuthnMode.Login : WebAuthnMode.Register,
     passkeyServerHeaders: {},
   })

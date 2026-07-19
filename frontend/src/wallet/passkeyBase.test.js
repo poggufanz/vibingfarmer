@@ -97,6 +97,26 @@ describe('createBaseSmartAccount', () => {
     expect(deps.makeWebAuthnKey).toHaveBeenCalled()
   })
 
+  test('threads rpID through to the webauthn key (register+sign must share one rp scope)', async () => {
+    const deps = {
+      makePublicClient: vi.fn(() => ({ getCode: vi.fn(async () => '0x6001') })),
+      makeWebAuthnKey: vi.fn(async (args) => {
+        expect(args.rpID).toBe('dev.vibing-farmer.pages.dev')
+        return {}
+      }),
+      makePasskeyValidator: vi.fn(async () => ({})),
+      makeKernelAccount: vi.fn(async () => ({ address: '0xabc' })),
+    }
+    await createBaseSmartAccount({
+      passkeyName: 'user@example.com',
+      mode: 'register',
+      passkeyServerUrl: 'https://passkeys.zerodev.app/test-project',
+      rpID: 'dev.vibing-farmer.pages.dev',
+      deps,
+    })
+    expect(deps.makeWebAuthnKey).toHaveBeenCalledTimes(1)
+  })
+
   test('throws a clear error when no passkey server URL is provided or configured', async () => {
     await expect(
       createBaseSmartAccount({ passkeyName: 'x', mode: 'register', passkeyServerUrl: '', deps: {} })
