@@ -41,9 +41,15 @@ export default defineConfig({
   publicDir: false,
   // Inline the backend origin so the packed chrome-extension:// pages call absolute /api/* URLs
   // instead of relative ones (which resolve to the extension origin and 404). Build with
-  // VF_API_BASE=http://localhost:5173 (dev) or the deployed Pages origin.
+  // VF_API_BASE=http://localhost:5173 (dev); unset defaults to the deployed Pages origin —
+  // an empty define let stellar/config.js fall back to localhost:8788, which broke passkey
+  // registration ("Failed to fetch") for every packed-build user.
+  // import.meta.env key (not process.env): stellar/config.js reads it un-gated by any runtime
+  // `process` global, so the override holds even before/without the process polyfill chunk.
   define: {
-    'process.env.VF_API_BASE': JSON.stringify(process.env.VF_API_BASE || ''),
+    'import.meta.env.VITE_VF_API_BASE': JSON.stringify(
+      process.env.VF_API_BASE || 'https://vibing-farmer.pages.dev'
+    ),
     'import.meta.env.VITE_VF_RP_ID': JSON.stringify('origin'),
   },
   resolve: {

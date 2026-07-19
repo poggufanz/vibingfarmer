@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import {
   NETWORK_PASSPHRASE,
   SOROBAN_RPC_URL,
@@ -40,5 +40,17 @@ describe('stellar config', () => {
   })
   it('routes to the stellar relay proxy (NOT the EVM /api/relay)', () => {
     expect(RELAY_PROXY_URL).toBe('/api/stellar-relay')
+  })
+  it('chrome-extension origin falls back to the deployed backend, never localhost (packed-build passkey bug)', async () => {
+    vi.resetModules()
+    vi.stubGlobal('window', { location: { protocol: 'chrome-extension:' } })
+    try {
+      const fresh = await import('./config.js')
+      expect(fresh.RELAY_PROXY_URL).toBe('https://vibing-farmer.pages.dev/api/stellar-relay')
+      expect(fresh.FAUCET_PROXY_URL).toBe('https://vibing-farmer.pages.dev/api/faucet')
+    } finally {
+      vi.unstubAllGlobals()
+      vi.resetModules()
+    }
   })
 })

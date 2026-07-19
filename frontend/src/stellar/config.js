@@ -152,9 +152,20 @@ export const STELLAR_NETWORK_LABEL = NET.label
 // extension origin (chrome-extension://<id>/api/...) and 404s. Web app + headless smokes leave
 // VF_API_BASE unset → relative path / the VF_RELAY_URL knob, exactly as before (tests see defaults).
 const isExt = typeof window !== 'undefined' && window.location.protocol === 'chrome-extension:'
+// Extension fallback = the DEPLOYED backend, never localhost: a packed build that missed
+// VF_API_BASE used to bake http://localhost:8788 in, so passkey registration (SAK relayerUrl)
+// fetched a dead port on every user machine — "Failed to deploy smart account contract:
+// Failed to fetch". Dev extension builds override via VF_API_BASE=http://localhost:5173.
+const EXT_DEFAULT_API_BASE = 'https://vibing-farmer.pages.dev'
+// The import.meta.env literal is what the extension build's `define` replaces (see
+// vite.config.extension.js) — unlike the process.env clause it is NOT gated on a runtime
+// `process` global (extension pages only get one if a polyfill chunk loads first), so a
+// build-time VF_API_BASE override (e.g. the dev/preview origin) always wins. Web builds
+// must NOT set VITE_VF_API_BASE in .env — the deployed app needs the relative path.
 const API_BASE =
+  (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_VF_API_BASE) ||
   (typeof process !== 'undefined' && process.env && process.env.VF_API_BASE) ||
-  (isExt ? 'http://localhost:8788' : '')
+  (isExt ? EXT_DEFAULT_API_BASE : '')
 const VF_RELAY = (typeof process !== 'undefined' && process.env && process.env.VF_RELAY_URL) || ''
 export const RELAY_PROXY_URL = API_BASE
   ? `${API_BASE}/api/stellar-relay`
