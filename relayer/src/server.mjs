@@ -65,7 +65,8 @@ export function createRelayerServer(config) {
 
   // Reverse leg: relay ONLY the mint. `stellarRecipient` is already encoded in the burn's
   // hookData (see cctp/reverse.mjs) — accepted here for logging/idempotency, not for routing.
-  // unwind.mjs (the withdraw+burn flow) stays relayer-internal and is never wired to this route.
+  // The withdraw+burn happens client-side via BaseExitSweeper.exitAllAndBurn; the relayer never
+  // constructs or dispatches a burn.
   function relayUnwindMint({ unwindTxHash }) {
     return watcher.relayMint({ sourceDomain: config.domains.base, burnTxHash: unwindTxHash, execId: unwindTxHash });
   }

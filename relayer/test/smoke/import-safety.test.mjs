@@ -14,7 +14,7 @@ function importInFreshProcess(moduleUrl) {
 }
 
 describe('smoke CLI module import safety', () => {
-  for (const filename of ['mint-mandate.mjs', 'smoke-unwind.mjs']) {
+  for (const filename of ['mint-mandate.mjs']) {
     it(`imports smoke/${filename} without running its live main function`, () => {
       const result = importInFreshProcess(new URL(`../../smoke/${filename}`, import.meta.url));
 
