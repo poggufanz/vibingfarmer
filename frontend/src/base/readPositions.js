@@ -39,8 +39,12 @@ export async function readPositions({
         functionName: 'convertToAssets',
         args: [shares],
       })
-      const minAssets = (BigInt(rawAssets) * BigInt(10_000 - slippageBps)) / 10_000n
-      return { pool, shares, minAssets }
+      const assets = BigInt(rawAssets)
+      const minAssets = (assets * BigInt(10_000 - slippageBps)) / 10_000n
+      // `assets` = the pool's own valuation of these shares (what the position is WORTH);
+      // `minAssets` is that minus slippage tolerance and is a withdraw floor, not a balance.
+      // The dashboard totals must use `assets` or every Base position reads 0.5% light.
+      return { pool, shares, assets, minAssets }
     })
   )
 

@@ -28,12 +28,12 @@ export async function loadBasePositions({ deps = {} } = {}) {
       account,
       publicClient,
     })
-    return positions.map((pos) => ({
-      ...pos,
-      poolName:
-        BASE_POOL_CATALOG.find((p) => p.address.toLowerCase() === pos.pool.toLowerCase())?.name ||
-        pos.pool,
-    }))
+    return positions.map((pos) => {
+      const cat = BASE_POOL_CATALOG.find((p) => p.address.toLowerCase() === pos.pool.toLowerCase())
+      // apy rides along so the dashboard's daily-earnings estimate can include Base pools
+      // instead of silently treating cross-chain capital as idle.
+      return { ...pos, poolName: cat?.name || pos.pool, apy: cat?.apy || 0 }
+    })
   } catch {
     return []
   }
