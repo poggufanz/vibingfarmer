@@ -50,10 +50,9 @@ const friendlyError = (err) => {
 export default function Withdraw({
   ownerKernelAccount,
   publicClient,
-  withdrawals,
+  positions = [],
+  idleUsdc = 0n,
   stellarRecipient,
-  totalAssetsForBurn,
-  poolName,
   onDone,
   onClose,
 }) {
@@ -61,10 +60,16 @@ export default function Withdraw({
   const [errorMessage, setErrorMessage] = useState(null)
   const [failedAt, setFailedAt] = useState(null)
   const [jobId, setJobId] = useState(null)
+  const [outcome, setOutcome] = useState(null) // { burned, exited, skipped } once settled
   const confirmRef = useRef(null)
 
-  const usdc = Number(totalAssetsForBurn ?? 0n) / 1e6
-  const title = poolName || withdrawals?.[0]?.poolName || 'Base position'
+  // Sum of what the positions are WORTH plus idle. Never minAssets: that is a
+  // slippage floor, and using it as the amount is what stranded 0.5% of every
+  // withdraw on Base.
+  const totalUnits = positions.reduce((a, p) => a + (p.assets ?? 0n), 0n) + idleUsdc
+  const usdc = Number(totalUnits) / 1e6
+  const settledUsdc = outcome?.burned != null ? Number(outcome.burned) / 1e6 : null
+  const nothingToDo = totalUnits === 0n
   const busy = status === 'signing' || status === 'relaying' || status === 'polling'
   const finished = status === 'done' || status === 'pending'
 
@@ -90,9 +95,9 @@ export default function Withdraw({
       const { unwindTxHash } = await signAndSubmitUnwind({
         ownerKernelAccount,
         publicClient,
-        withdrawals,
+        positions,
         stellarRecipient,
-        totalAssetsForBurn,
+        idleUsdc,
       })
       stage = 'relay'
       setStatus('relaying')
@@ -102,6 +107,7 @@ export default function Withdraw({
       setStatus('polling')
       const final = await pollFarmStatus({ jobId })
       if (final.status === 'done') {
+        setOutcome({ burned: final.burned, exited: final.exited, skipped: final.skipped })
         setStatus('done')
         onDone?.()
       } else if (final.status === 'error') {
@@ -120,7 +126,7 @@ export default function Withdraw({
       setStatus('error')
       setErrorMessage(friendlyError(err))
     }
-  }, [ownerKernelAccount, publicClient, withdrawals, stellarRecipient, totalAssetsForBurn, onDone])
+  }, [ownerKernelAccount, publicClient, positions, stellarRecipient, idleUsdc, onDone])
 
   // 'pending' only means pollFarmStatus's ~2-minute window closed before the bridge finished —
   // a standard-finality CCTP leg takes ~15-25 min. Keep re-polling slowly while the modal is
@@ -178,13 +184,15 @@ export default function Withdraw({
               : 0
 
   const primaryLabel = () => {
-    if (status === 'signing') return 'Signing…'
-    if (status === 'relaying') return 'Relaying…'
-    if (status === 'polling') return 'Bridging…'
+    if (status === 'signing') return 'Signing...'
+    if (status === 'relaying') return 'Relaying...'
+    if (status === 'polling') return 'Bridging...'
     if (status === 'error') return 'Retry withdraw'
     if (status === 'done') return 'Done'
     if (status === 'pending') return 'Close'
-    return usdc > 0 ? `Withdraw ${usdc.toFixed(2)} USDC` : 'Withdraw'
+    // Deliberately short: a multi-pool total is wide enough to wrap the button
+    // to a second line at desktop, which is a hard fail. The number lives in the hero.
+    return nothingToDo ? 'Nothing to withdraw' : 'Withdraw all'
   }
 
   const onPrimary = () => {
@@ -207,19 +215,22 @@ export default function Withdraw({
         <div className="wd-head">
           <div className="modal-eyebrow">Base to Stellar, one passkey</div>
           <h3 className="modal-title" id="base-withdraw-title">
-            Withdraw from {title}
+            Withdraw everything from Base
           </h3>
         </div>
 
         <div className="modal-scroll-content">
           <div className="wd-body">
             <div className="wd-hero">
-              <span className="wd-hero-k">Position</span>
-              <span className="wd-hero-v mono tnum">{usdc > 0 ? usdc.toFixed(2) : '-'}</span>
+              <span className="wd-hero-k">Total</span>
+              <span className="wd-hero-v mono tnum" data-testid="base-withdraw-total">
+                {usdc > 0 ? usdc.toFixed(2) : '-'}
+              </span>
               <span className="wd-hero-unit">USDC</span>
             </div>
             <p className="wd-lede">
-              Exit this Base pool and bridge USDC home to your Stellar wallet via CCTP.
+              Exit every Base position in one signature and bridge the USDC home to your Stellar
+              wallet via CCTP.
             </p>
 
             <div className="wd-callout">
@@ -228,21 +239,27 @@ export default function Withdraw({
             </div>
 
             <div className="grant-receipt wd-receipt" role="region" aria-label="Unwind summary">
-              <div className="grant-receipt-row">
-                <span className="grant-receipt-k">You receive</span>
-                <span className="grant-receipt-v mono tnum">
-                  ~{usdc > 0 ? usdc.toFixed(2) : '0.00'} USDC
-                </span>
-              </div>
+              {positions.map((p) => (
+                <div className="grant-receipt-row" key={p.pool}>
+                  <span className="grant-receipt-k">{p.poolName || p.pool}</span>
+                  <span className="grant-receipt-v mono tnum">
+                    {(Number(p.assets ?? 0n) / 1e6).toFixed(2)}
+                  </span>
+                </div>
+              ))}
+              {idleUsdc > 0n && (
+                <div className="grant-receipt-row">
+                  <span className="grant-receipt-k">Idle USDC</span>
+                  <span className="grant-receipt-v mono tnum">
+                    {(Number(idleUsdc) / 1e6).toFixed(2)}
+                  </span>
+                </div>
+              )}
               <div className="grant-receipt-row">
                 <span className="grant-receipt-k">Destination</span>
                 <span className="grant-receipt-v mono" title={stellarRecipient || undefined}>
                   {shortAddr(stellarRecipient)}
                 </span>
-              </div>
-              <div className="grant-receipt-row">
-                <span className="grant-receipt-k">Route</span>
-                <span className="grant-receipt-v">Base → Stellar (CCTP)</span>
               </div>
               <div className="grant-receipt-row">
                 <span className="grant-receipt-k">Signatures</span>
@@ -251,10 +268,6 @@ export default function Withdraw({
               <div className="grant-receipt-row">
                 <span className="grant-receipt-k">Network fee</span>
                 <span className="grant-receipt-v grant-receipt-v--ok">0, sponsored</span>
-              </div>
-              <div className="grant-receipt-row">
-                <span className="grant-receipt-k">Estimated time</span>
-                <span className="grant-receipt-v mono">~1 minute</span>
               </div>
             </div>
 
@@ -304,10 +317,19 @@ export default function Withdraw({
               </ol>
             )}
 
-            {status === 'done' && (
+            {status === 'done' && outcome?.skipped > 0 && (
+              <div className="wd-callout" role="status" data-testid="base-withdraw-partial">
+                Exited {outcome.exited} of {outcome.exited + outcome.skipped} pools.{' '}
+                {outcome.skipped} pool{outcome.skipped === 1 ? '' : 's'} could not be exited right
+                now and {outcome.skipped === 1 ? 'its' : 'their'} funds are still on Base, untouched.
+                Try again later.
+              </div>
+            )}
+            {status === 'done' && !outcome?.skipped && (
               <div className="wd-callout wd-callout--ok" role="status">
-                Unwind complete. Circle USDC lands in your Stellar wallet within about a minute.
-                Check balances if it is not there yet.
+                Unwind complete.{' '}
+                {settledUsdc != null ? `${settledUsdc.toFixed(2)} USDC` : 'Your USDC'} lands in your
+                Stellar wallet within about a minute. Check balances if it is not there yet.
               </div>
             )}
             {status === 'pending' && (
@@ -349,7 +371,7 @@ export default function Withdraw({
             type="button"
             className={`btn btn-primary${busy ? ' is-loading' : ''}`}
             onClick={onPrimary}
-            disabled={busy || (status === 'idle' && usdc <= 0 && !totalAssetsForBurn)}
+            disabled={busy || (status === 'idle' && nothingToDo)}
             aria-busy={busy || undefined}
           >
             {busy && <span className="think-spin wd-btn-spin" aria-hidden="true" />}

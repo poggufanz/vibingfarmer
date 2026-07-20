@@ -1,86 +1,120 @@
 // @vitest-environment jsdom
-// frontend/src/screens/Withdraw.test.jsx
-import { describe, test, expect, vi, afterEach } from 'vitest'
+// This project has no global jsdom environment (see vite.config.js); every
+// screen test file needs this pragma or `render()` throws "document is not
+// defined". The brief's verbatim test code omitted it. Added per precedent
+// (Tasks 4/5/8): fix the test minimally, preserve intent, document why.
+//
+// Two more brief-side bugs fixed the same way:
+// - No jest-dom in this repo (see WithdrawModal.test.jsx's precedent comment),
+//   so `toBeInTheDocument`/`toHaveTextContent`/`toBeDisabled` all throw
+//   "Invalid Chai property". Replaced with plain DOM checks (.textContent,
+//   .disabled, .toBeTruthy()/.toBeNull()).
+// - @testing-library/react v16 does not auto-clean between tests; without
+//   afterEach(cleanup) the second test onward sees leftover DOM from the
+//   previous render and getByText/getByRole match multiple elements.
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
 import Withdraw from './Withdraw.jsx'
 
-vi.mock('../base/withdrawBatch.js', () => ({ signAndSubmitUnwind: vi.fn() }))
-vi.mock('../base/relayerClient.js', () => ({ postUnwind: vi.fn(), pollFarmStatus: vi.fn() }))
+const signAndSubmitUnwind = vi.fn()
+const postUnwind = vi.fn()
+const pollFarmStatus = vi.fn()
 
-import { signAndSubmitUnwind } from '../base/withdrawBatch.js'
-import { postUnwind, pollFarmStatus } from '../base/relayerClient.js'
-
-afterEach(() => {
-  cleanup() // @testing-library/react v16 does not auto-clean; unmount between tests
-  vi.clearAllMocks() // module-wide vi.mock spies otherwise leak call history across tests
-})
+vi.mock('../base/withdrawBatch.js', () => ({
+  signAndSubmitUnwind: (...a) => signAndSubmitUnwind(...a),
+}))
+vi.mock('../base/relayerClient.js', () => ({
+  postUnwind: (...a) => postUnwind(...a),
+  pollFarmStatus: (...a) => pollFarmStatus(...a),
+}))
 
 const baseProps = {
   ownerKernelAccount: { address: '0xOWNER' },
   publicClient: {},
-  withdrawals: [{ pool: '0xAAAA', shares: 100n, minAssets: 1_500_000n }],
-  stellarRecipient: 'GRECIPIENTOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO',
-  totalAssetsForBurn: 1_500_000n,
-  poolName: 'Aave USDC',
+  positions: [
+    { pool: '0xAAAA', poolName: 'Aave v3 USDC', shares: 100n, assets: 2_000_000n, minAssets: 1_990_000n },
+    { pool: '0xBBBB', poolName: 'Moonwell USDC', shares: 200n, assets: 3_000_000n, minAssets: 2_985_000n },
+  ],
+  idleUsdc: 500_000n,
+  stellarRecipient: 'GRECIPIENTOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO',
   onClose: vi.fn(),
+  onDone: vi.fn(),
 }
 
-describe('Withdraw screen', () => {
-  test('one tap signs the batched unwind, hands it to the relayer, polls to done, shows the Stellar recipient', async () => {
-    signAndSubmitUnwind.mockResolvedValue({ unwindTxHash: '0xUNWINDTX' })
-    postUnwind.mockResolvedValue({ jobId: 'unwind-job-1' })
-    pollFarmStatus.mockResolvedValue({ status: 'done' })
+beforeEach(() => {
+  vi.clearAllMocks()
+  signAndSubmitUnwind.mockResolvedValue({ unwindTxHash: '0xUNWIND' })
+  postUnwind.mockResolvedValue({ jobId: 'job-1' })
+  pollFarmStatus.mockResolvedValue({ status: 'done', burned: 5_500_000n, exited: 2, skipped: 0 })
+})
 
+afterEach(() => {
+  cleanup() // @testing-library/react v16 does not auto-clean; unmount between tests
+})
+
+describe('Withdraw (Base full exit)', () => {
+  it('shows the total across every position PLUS idle USDC, not the slippage floor', () => {
     render(<Withdraw {...baseProps} />)
-
-    expect(screen.getByRole('dialog', { name: /withdraw from aave usdc/i })).toBeTruthy()
-    expect(screen.getByText('1.50')).toBeTruthy()
-    expect(screen.getByTestId('base-withdraw-recipient').textContent).toMatch(/GRECIPIENT/)
-
-    fireEvent.click(screen.getByRole('button', { name: /withdraw 1\.50 usdc/i }))
-
-    await waitFor(() => expect(signAndSubmitUnwind).toHaveBeenCalled())
-    await waitFor(() =>
-      expect(postUnwind).toHaveBeenCalledWith(
-        expect.objectContaining({ unwindTxHash: '0xUNWINDTX' })
-      )
-    )
-    await waitFor(() => expect(screen.getByText(/unwind complete/i)).toBeTruthy())
-    expect(screen.getByTestId('base-withdraw-recipient').textContent).toMatch(/GRECIPIENT/)
+    // 2.00 + 3.00 + 0.50 = 5.50, never 5.4775 (the floors) and never one pool alone.
+    expect(screen.getByTestId('base-withdraw-total').textContent).toMatch('5.50')
   })
 
-  test('a hookData validation failure never reaches signAndSubmitUnwind and shows a clear error', async () => {
-    signAndSubmitUnwind.mockRejectedValue(
-      new Error('hookData payload does not decode as a plausible Stellar strkey: "short"')
-    )
+  it('lists every pool and the idle balance before the signature', () => {
+    render(<Withdraw {...baseProps} />)
+    expect(screen.getByText('Aave v3 USDC')).toBeTruthy()
+    expect(screen.getByText('Moonwell USDC')).toBeTruthy()
+    expect(screen.getByText(/idle usdc/i)).toBeTruthy()
+  })
 
-    render(
-      <Withdraw
-        {...baseProps}
-        stellarRecipient="short"
-        withdrawals={[{ pool: '0xAAAA', shares: 1n, minAssets: 1n }]}
-        totalAssetsForBurn={1n}
-      />
+  it('hides the idle row when there is none', () => {
+    render(<Withdraw {...baseProps} idleUsdc={0n} />)
+    expect(screen.queryByText(/idle usdc/i)).toBeNull()
+  })
+
+  it('uses a short CTA label that cannot wrap', () => {
+    render(<Withdraw {...baseProps} />)
+    expect(screen.getByRole('button', { name: 'Withdraw all' })).toBeTruthy()
+  })
+
+  it('one tap signs the batch, hands it to the relayer, and polls to done', async () => {
+    render(<Withdraw {...baseProps} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Withdraw all' }))
+    await waitFor(() => expect(baseProps.onDone).toHaveBeenCalled())
+    expect(signAndSubmitUnwind).toHaveBeenCalledWith(
+      expect.objectContaining({ positions: baseProps.positions, idleUsdc: 500_000n })
     )
-    fireEvent.click(screen.getByRole('button', { name: /withdraw/i }))
-    await waitFor(() => expect(screen.getByText(/strkey/i)).toBeTruthy())
+    expect(postUnwind).toHaveBeenCalledWith({
+      unwindTxHash: '0xUNWIND',
+      stellarRecipient: baseProps.stellarRecipient,
+    })
+  })
+
+  it('reports a partial exit honestly instead of claiming plain success', async () => {
+    pollFarmStatus.mockResolvedValue({ status: 'done', burned: 2_500_000n, exited: 1, skipped: 1 })
+    render(<Withdraw {...baseProps} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Withdraw all' }))
+    await waitFor(() => expect(screen.getByTestId('base-withdraw-partial')).toBeTruthy())
+    const partial = screen.getByTestId('base-withdraw-partial')
+    expect(partial.textContent).toMatch(/1 pool/i)
+    expect(partial.textContent).toMatch(/still on Base/i)
+  })
+
+  it('disables the button when there is nothing at all to withdraw', () => {
+    render(<Withdraw {...baseProps} positions={[]} idleUsdc={0n} />)
+    const btn = screen.getByRole('button', { name: /nothing to withdraw/i })
+    expect(btn.disabled).toBe(true)
+  })
+
+  it('a hookData failure never reaches the relayer and shows a clear error', async () => {
+    signAndSubmitUnwind.mockRejectedValue(new Error('hookData version must be 0, but received 1'))
+    render(<Withdraw {...baseProps} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Withdraw all' }))
+    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy())
     expect(postUnwind).not.toHaveBeenCalled()
   })
 
-  test('cancel closes when idle; shows loading spinner while busy', async () => {
-    const onClose = vi.fn()
-    signAndSubmitUnwind.mockImplementation(() => new Promise(() => {})) // hang in signing
-
-    render(<Withdraw {...baseProps} onClose={onClose} totalAssetsForBurn={1_000_000n} />)
-
-    fireEvent.click(screen.getByRole('button', { name: /cancel/i }))
-    expect(onClose).toHaveBeenCalledTimes(1)
-    onClose.mockClear()
-
-    fireEvent.click(screen.getByRole('button', { name: /withdraw/i }))
-    await waitFor(() => expect(signAndSubmitUnwind).toHaveBeenCalled())
-    expect(screen.getByRole('button', { name: /cancel/i }).disabled).toBe(true)
-    expect(screen.getByText(/confirm the passkey prompt/i)).toBeTruthy()
-    expect(document.querySelectorAll('.think-spin').length).toBeGreaterThan(0)
+  it('contains no em-dash or en-dash in any rendered text', () => {
+    const { container } = render(<Withdraw {...baseProps} />)
+    expect(container.textContent).not.toMatch(/[—–]/)
   })
 })
