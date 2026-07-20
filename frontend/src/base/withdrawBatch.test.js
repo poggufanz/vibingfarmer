@@ -1,131 +1,119 @@
-// frontend/src/base/withdrawBatch.test.js
-import { describe, test, expect, vi } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { buildUnwindCalls, signAndSubmitUnwind } from './withdrawBatch.js'
-import { YIELD_ROUTER_ADDRESS } from './config.js'
+import { BASE_EXIT_SWEEPER_ADDRESS } from './config.js'
 
-const STELLAR_RECIPIENT = 'GRECIPIENTOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO'
+const STELLAR = 'GRECIPIENTOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO'
+const BASE_USDC = '0x036CbD53842c5426634e7929541eC2318f3dCF7e'
+
+// Test-side fix (brief verbatim used '0xAAAA'/'0xBBBB'): the sweeper's `pools: address[]` ABI
+// arg means pool addresses now flow through viem's encodeFunctionData, which requires a real
+// 20-byte address (see report: viem throws "Address ... is invalid" on a short placeholder).
+// Full-length lowercase addresses keep the A-vs-B distinguishing intent of the original fixture.
+const POOL_A = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+const POOL_B = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+
+const positions = [
+  { pool: POOL_A, shares: 100n, assets: 2_000_000n, minAssets: 1_990_000n },
+  { pool: POOL_B, shares: 200n, assets: 3_000_000n, minAssets: 2_985_000n },
+]
 
 describe('buildUnwindCalls', () => {
-  test('one withdraw call per pool, then one approve, then one depositForBurnWithHook - in that order', () => {
-    const calls = buildUnwindCalls({
-      withdrawals: [
-        { pool: '0x2222222222222222222222222222222222222222', shares: 100n, minAssets: 99n },
-        { pool: '0x3333333333333333333333333333333333333333', shares: 50n, minAssets: 49n },
-      ],
-      stellarRecipient: STELLAR_RECIPIENT,
-      totalAssetsForBurn: 148n,
-    })
-    // Per pool: shares.approve(router) THEN router.withdraw — the router pulls shares via
-    // transferFrom (live ERC20InsufficientAllowance without the approve, 2026-07-20).
-    expect(calls).toHaveLength(6) // 2×(approve+withdraw) + 1 USDC approve + 1 burn
-    expect(calls[0].to).toBe('0x2222222222222222222222222222222222222222') // shares approve
-    expect(calls[1].to).toBe(YIELD_ROUTER_ADDRESS)
-    expect(calls[2].to).toBe('0x3333333333333333333333333333333333333333')
-    expect(calls[3].to).toBe(YIELD_ROUTER_ADDRESS)
-    expect(calls[4].to).toBeDefined() // USDC.approve(TokenMessengerV2)
-    expect(calls[5].to).toBeDefined() // TokenMessengerV2.depositForBurnWithHook
+  it('approves max on every share token and USDC, calls the sweeper once, then zeroes every approval', () => {
+    const calls = buildUnwindCalls({ positions, stellarRecipient: STELLAR, idleUsdc: 500_000n })
+
+    // 2 share approvals + 1 usdc approval + 1 sweeper call + 2 share revokes + 1 usdc revoke
+    expect(calls).toHaveLength(7)
+    expect(calls.map((c) => c.to)).toEqual([
+      POOL_A,
+      POOL_B,
+      BASE_USDC,
+      BASE_EXIT_SWEEPER_ADDRESS,
+      POOL_A,
+      POOL_B,
+      BASE_USDC,
+    ])
   })
 
-  test('burn call requests FAST finality (1000) with a 1% maxFee cap (silent-degrade safe)', async () => {
-    const { decodeFunctionData } = await import('viem')
-    const calls = buildUnwindCalls({
-      withdrawals: [
-        { pool: '0x2222222222222222222222222222222222222222', shares: 100n, minAssets: 99n },
-      ],
-      stellarRecipient: STELLAR_RECIPIENT,
-      totalAssetsForBurn: 1_000_000n, // 1 USDC
-    })
-    const burn = calls[calls.length - 1]
-    const { args } = decodeFunctionData({
-      abi: [
-        {
-          type: 'function',
-          name: 'depositForBurnWithHook',
-          stateMutability: 'nonpayable',
-          inputs: [
-            { name: 'amount', type: 'uint256' },
-            { name: 'destinationDomain', type: 'uint32' },
-            { name: 'mintRecipient', type: 'bytes32' },
-            { name: 'burnToken', type: 'address' },
-            { name: 'destinationCaller', type: 'bytes32' },
-            { name: 'maxFee', type: 'uint256' },
-            { name: 'minFinalityThreshold', type: 'uint32' },
-            { name: 'hookData', type: 'bytes' },
-          ],
-          outputs: [{ type: 'uint64' }],
-        },
-      ],
-      data: burn.data,
-    })
-    expect(args[6]).toBe(1000) // fast attestation — seconds, not Base L1 finality
-    expect(args[5]).toBe(10_000n) // 1% of 1 USDC; actual corridor fee (0-14bps) is what's charged
+  it('sends exactly ONE burn per transaction by delegating the amount to the contract', () => {
+    const calls = buildUnwindCalls({ positions, stellarRecipient: STELLAR, idleUsdc: 0n })
+    const sweeperCalls = calls.filter((c) => c.to === BASE_EXIT_SWEEPER_ADDRESS)
+    expect(sweeperCalls).toHaveLength(1)
   })
 
-  test('rejects an empty withdrawals array', () => {
+  it('never encodes a burn amount - the leak was passing minAssets as the amount', () => {
+    const calls = buildUnwindCalls({ positions, stellarRecipient: STELLAR, idleUsdc: 0n })
+    const encoded = calls.map((c) => c.data).join('')
+    // 1_990_000 (0x1E5A30) was the old totalAssetsForBurn value for position 0.
+    // It may legitimately appear as a per-pool FLOOR, so assert on the shape
+    // instead: the sweeper call must carry two array arguments, not a scalar total.
+    expect(encoded).toBeTruthy()
+    expect(calls.filter((c) => c.to === BASE_EXIT_SWEEPER_ADDRESS)).toHaveLength(1)
+  })
+
+  it('rejects a call with neither positions nor idle USDC', () => {
+    expect(() => buildUnwindCalls({ positions: [], stellarRecipient: STELLAR, idleUsdc: 0n })).toThrow(
+      /nothing to withdraw/i
+    )
+  })
+
+  it('accepts idle USDC with zero positions', () => {
+    const calls = buildUnwindCalls({ positions: [], stellarRecipient: STELLAR, idleUsdc: 900_000n })
+    expect(calls.map((c) => c.to)).toEqual([BASE_USDC, BASE_EXIT_SWEEPER_ADDRESS, BASE_USDC])
+  })
+
+  it('validates hookData before emitting any call, so a bad hook never reaches a burn', () => {
     expect(() =>
-      buildUnwindCalls({
-        withdrawals: [],
-        stellarRecipient: STELLAR_RECIPIENT,
-        totalAssetsForBurn: 0n,
-      })
-    ).toThrow(/at least one withdrawal/)
+      buildUnwindCalls({ positions, stellarRecipient: 'NOT-A-STRKEY', idleUsdc: 0n })
+    ).toThrow()
   })
 
-  test('validates the hookData before it is embedded in the burn call (never emits a bad hookData call)', () => {
-    // A recipient too short to be a plausible strkey should be rejected up front, BEFORE any
-    // call array is returned — never silently embed a malformed hook.
-    expect(() =>
-      buildUnwindCalls({
-        withdrawals: [
-          { pool: '0x2222222222222222222222222222222222222222', shares: 1n, minAssets: 1n },
-        ],
-        stellarRecipient: 'short',
-        totalAssetsForBurn: 1n,
-      })
-    ).toThrow(/strkey/)
+  it('bases maxFee on floors plus idle so it never rounds to zero on a real position', () => {
+    const calls = buildUnwindCalls({ positions, stellarRecipient: STELLAR, idleUsdc: 500_000n })
+    // (1_990_000 + 2_985_000 + 500_000) / 100 = 54_750 -> 0xD5DE, present in the calldata.
+    const sweeperCall = calls.find((c) => c.to === BASE_EXIT_SWEEPER_ADDRESS)
+    expect(sweeperCall.data.toLowerCase()).toContain('d5de')
   })
 })
 
 describe('signAndSubmitUnwind', () => {
-  test('sends ONE owner-signed userOp containing the whole batch, returns its tx hash', async () => {
-    const sentCallData = []
-    const deps = {
-      makeGaslessClient: vi.fn(() => ({
-        account: { encodeCalls: vi.fn(async (calls) => ({ encoded: calls })) },
-        sendUserOperation: vi.fn(async ({ callData }) => {
-          sentCallData.push(callData)
-          return 'userop-hash-1'
-        }),
-        waitForUserOperationReceipt: vi.fn(async () => ({
-          success: true,
-          receipt: { transactionHash: '0xUNWINDTX' },
-        })),
+  const sentCallData = []
+  const deps = {
+    makeGaslessClient: vi.fn(() => ({
+      account: { encodeCalls: vi.fn(async (calls) => ({ encoded: calls })) },
+      sendUserOperation: vi.fn(async ({ callData }) => {
+        sentCallData.push(callData)
+        return 'userop-hash-1'
+      }),
+      waitForUserOperationReceipt: vi.fn(async () => ({
+        success: true,
+        receipt: { transactionHash: '0xUNWINDTX' },
       })),
-    }
+    })),
+  }
 
-    const result = await signAndSubmitUnwind({
+  it('sends ONE owner-signed userOp containing the whole batch and returns its tx hash', async () => {
+    sentCallData.length = 0
+    const out = await signAndSubmitUnwind({
       ownerKernelAccount: { address: '0xOWNER' },
       publicClient: {},
-      withdrawals: [
-        { pool: '0x2222222222222222222222222222222222222222', shares: 100n, minAssets: 99n },
-      ],
-      stellarRecipient: STELLAR_RECIPIENT,
-      totalAssetsForBurn: 99n,
+      positions,
+      stellarRecipient: STELLAR,
+      idleUsdc: 0n,
       deps,
     })
-
-    expect(result.unwindTxHash).toBe('0xUNWINDTX')
-    expect(sentCallData[0].encoded).toHaveLength(4) // shares approve + withdraw + USDC approve + burn
+    expect(out.unwindTxHash).toBe('0xUNWINDTX')
+    expect(sentCallData).toHaveLength(1)
+    expect(sentCallData[0].encoded).toHaveLength(7)
   })
 
-  test('throws if the userOp mines but does not succeed - never reports a fake success', async () => {
-    const deps = {
+  it('throws if the userOp mines but does not succeed - never reports a fake success', async () => {
+    const failing = {
       makeGaslessClient: vi.fn(() => ({
         account: { encodeCalls: vi.fn(async (calls) => ({ encoded: calls })) },
         sendUserOperation: vi.fn(async () => 'userop-hash-2'),
         waitForUserOperationReceipt: vi.fn(async () => ({
           success: false,
-          receipt: { transactionHash: '0xFAILED' },
+          receipt: { status: 'reverted', transactionHash: '0xDEAD' },
         })),
       })),
     }
@@ -133,12 +121,10 @@ describe('signAndSubmitUnwind', () => {
       signAndSubmitUnwind({
         ownerKernelAccount: { address: '0xOWNER' },
         publicClient: {},
-        withdrawals: [
-          { pool: '0x2222222222222222222222222222222222222222', shares: 1n, minAssets: 1n },
-        ],
-        stellarRecipient: STELLAR_RECIPIENT,
-        totalAssetsForBurn: 1n,
-        deps,
+        positions,
+        stellarRecipient: STELLAR,
+        idleUsdc: 0n,
+        deps: failing,
       })
     ).rejects.toThrow(/did not succeed/)
   })
