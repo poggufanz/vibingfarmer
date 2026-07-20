@@ -1726,15 +1726,29 @@ const App = () => {
   // baseLeg.js gating (Task 8).
   const handleBaseWithdrawClick = async (position) => {
     setBaseWithdrawError(null)
+    // The positions on screen belong to THIS account; the ceremony below is discoverable, and
+    // a user with several look-alike passkeys can pick one that derives a different (empty)
+    // kernel — the withdraw userOp then reverts in simulation with an unreadable AA error, and
+    // ensureBaseOwner's persist clobbers the good marker with the wrong address (seen live
+    // 2026-07-20). Guard: mismatch → restore the marker + a retry-with-another-passkey message.
+    const expected = localStorage.getItem('vf_base_owner_address')
     try {
       const { ensureBaseOwner } = await import('./wallet/passkeyBridge.js')
       const owner = await ensureBaseOwner({ connectedAddress: realAddress })
+      if (expected && owner.address?.toLowerCase() !== expected.toLowerCase()) {
+        localStorage.setItem('vf_base_owner_address', expected)
+        setBaseWithdrawError(
+          `That passkey opens a different Base account (${owner.address.slice(0, 6)}…) than the one holding these positions (${expected.slice(0, 6)}…). Retry and pick another passkey.`
+        )
+        return
+      }
       setBaseWithdraw({
         position,
         ownerKernelAccount: owner.kernelAccount,
         publicClient: owner.publicClient,
       })
     } catch (err) {
+      if (expected) localStorage.setItem('vf_base_owner_address', expected)
       setBaseWithdrawError(err.message)
     }
   }
@@ -2357,9 +2371,7 @@ const App = () => {
                   upd.status === 'completed' || upd.status === 'failed'
                     ? null
                     : upd.step || cur.activeStep,
-                steps: upd.step
-                  ? { ...(cur.steps || {}), [upd.step]: upd.stepStatus }
-                  : cur.steps,
+                steps: upd.step ? { ...(cur.steps || {}), [upd.step]: upd.stepStatus } : cur.steps,
                 hashes: upd.hash
                   ? { ...(cur.hashes || {}), [upd.step || 'swap']: upd.hash }
                   : cur.hashes,
