@@ -1749,7 +1749,7 @@ const App = () => {
     setBaseWithdrawError(null)
     try {
       const { ensureBaseOwner } = await import('./wallet/passkeyBridge.js')
-      await ensureBaseOwner({ connectedAddress: realAddress })
+      await ensureBaseOwner({ connectedAddress: realAddress, preferLogin: true })
       const bp = await loadBasePositions()
       setBasePositions(bp)
       if (!bp.length) setBaseWithdrawError('Base account connected — no open positions found.')

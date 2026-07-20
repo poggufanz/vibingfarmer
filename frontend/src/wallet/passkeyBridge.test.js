@@ -102,6 +102,19 @@ describe('ensureBaseOwner', () => {
     expect(out.address).toBe('0xOWNER')
   })
 
+  it('preferLogin (recover path): starts with a discoverable login even with NO stored record', async () => {
+    const createBase = vi.fn().mockResolvedValue(fakeAccount)
+    await ensureBaseOwner({
+      connectedAddress: 'GFREIGHTER',
+      preferLogin: true,
+      deps: { createBaseSmartAccount: createBase },
+    })
+    // Register-first here minted a brand-new empty kernel account on authenticators that
+    // don't refuse duplicate creation — recovery must never create.
+    expect(createBase).toHaveBeenNthCalledWith(1, expect.objectContaining({ mode: 'login' }))
+    expect(localStorage.getItem('vf_base_owner_address')).toBe('0xOWNER')
+  })
+
   it('double failure rethrows the ORIGINAL error (a cancel reads as a cancel)', async () => {
     const createBase = vi
       .fn()
