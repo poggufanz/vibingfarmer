@@ -120,14 +120,7 @@ export default function Withdraw({
       setStatus('error')
       setErrorMessage(friendlyError(err))
     }
-  }, [
-    ownerKernelAccount,
-    publicClient,
-    withdrawals,
-    stellarRecipient,
-    totalAssetsForBurn,
-    onDone,
-  ])
+  }, [ownerKernelAccount, publicClient, withdrawals, stellarRecipient, totalAssetsForBurn, onDone])
 
   // 'pending' only means pollFarmStatus's ~2-minute window closed before the bridge finished —
   // a standard-finality CCTP leg takes ~15-25 min. Keep re-polling slowly while the modal is
@@ -172,7 +165,17 @@ export default function Withdraw({
 
   // 0 / 1 / 2 of 3 stages complete while in flight (for the progress fill).
   const stageProgress =
-    status === 'signing' ? 0.12 : status === 'relaying' ? 0.45 : status === 'polling' ? 0.78 : status === 'pending' ? 0.9 : status === 'done' ? 1 : 0
+    status === 'signing'
+      ? 0.12
+      : status === 'relaying'
+        ? 0.45
+        : status === 'polling'
+          ? 0.78
+          : status === 'pending'
+            ? 0.9
+            : status === 'done'
+              ? 1
+              : 0
 
   const primaryLabel = () => {
     if (status === 'signing') return 'Signing…'
@@ -193,10 +196,7 @@ export default function Withdraw({
   }
 
   return (
-    <div
-      className="modal-backdrop"
-      onClick={() => !busy && onClose?.()}
-    >
+    <div className="modal-backdrop" onClick={() => !busy && onClose?.()}>
       <div
         className="modal withdraw-modal"
         role="dialog"
@@ -215,9 +215,7 @@ export default function Withdraw({
           <div className="wd-body">
             <div className="wd-hero">
               <span className="wd-hero-k">Position</span>
-              <span className="wd-hero-v mono tnum">
-                {usdc > 0 ? usdc.toFixed(2) : '-'}
-              </span>
+              <span className="wd-hero-v mono tnum">{usdc > 0 ? usdc.toFixed(2) : '-'}</span>
               <span className="wd-hero-unit">USDC</span>
             </div>
             <p className="wd-lede">
@@ -225,8 +223,8 @@ export default function Withdraw({
             </p>
 
             <div className="wd-callout">
-              One passkey signature starts the unwind. The relayer sponsors Base gas and
-              completes the bridge; no second wallet popup.
+              One passkey signature starts the unwind. The relayer sponsors Base gas and completes
+              the bridge; no second wallet popup.
             </div>
 
             <div className="grant-receipt wd-receipt" role="region" aria-label="Unwind summary">
@@ -238,10 +236,7 @@ export default function Withdraw({
               </div>
               <div className="grant-receipt-row">
                 <span className="grant-receipt-k">Destination</span>
-                <span
-                  className="grant-receipt-v mono"
-                  title={stellarRecipient || undefined}
-                >
+                <span className="grant-receipt-v mono" title={stellarRecipient || undefined}>
                   {shortAddr(stellarRecipient)}
                 </span>
               </div>
@@ -271,10 +266,7 @@ export default function Withdraw({
                     {busyLabel || 'Still settling with the relayer…'}
                   </span>
                 </div>
-                <div
-                  className="wd-loading-track"
-                  aria-hidden="true"
-                >
+                <div className="wd-loading-track" aria-hidden="true">
                   <div
                     className={`wd-loading-fill${busy ? ' is-active' : ''}`}
                     style={{ width: `${Math.round(stageProgress * 100)}%` }}
@@ -299,9 +291,7 @@ export default function Withdraw({
                         <span className="wd-stage-dot" aria-hidden="true" />
                       )}
                       <span className="wd-stage-label">{s.label}</span>
-                      {st === 'running' && (
-                        <span className="wd-stage-hint">working…</span>
-                      )}
+                      {st === 'running' && <span className="wd-stage-hint">working…</span>}
                       {st === 'done' && (
                         <span className="wd-stage-hint wd-stage-hint--ok">done</span>
                       )}
@@ -322,8 +312,8 @@ export default function Withdraw({
             )}
             {status === 'pending' && (
               <div className="wd-callout" role="status">
-                Still settling. The relayer is finishing the bridge. Funds are in flight, not
-                lost; check your Stellar balance in a few minutes.
+                Still settling. The relayer is finishing the bridge. Funds are in flight, not lost;
+                check your Stellar balance in a few minutes.
               </div>
             )}
 

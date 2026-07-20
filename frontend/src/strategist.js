@@ -638,6 +638,11 @@ export function validateStrategyResponse(response, vaultData = VAULT_CATALOG) {
   // (case-insensitive address match). Defaults to 'stellar' for the non-merged-catalog callers.
   response.selected_vaults.forEach((v) => {
     const entry = vaultData.find((c) => c.address.toLowerCase() === v.address.toLowerCase())
+    // Snap to the CATALOG's canonical address string: LLMs mangle hex casing, and a mixed-case
+    // 0x address that fails EIP-55 is rejected by viem at the first contract read (live
+    // 2026-07-20, mandate stage: "Address must match its checksum counterpart"). The allowlist
+    // above already proved membership — never keep the model's spelling of it.
+    if (entry) v.address = entry.address
     v.chain = entry?.chain || 'stellar'
   })
 
