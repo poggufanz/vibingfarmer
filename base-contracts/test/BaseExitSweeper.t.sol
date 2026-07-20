@@ -399,4 +399,58 @@ contract BaseExitSweeperTest is Test {
         // "skipped" ones, which the UI would then report as a pool failure.
         assertLt(used, sweeper.REDEEM_GAS_CAP(), "recalibrate REDEEM_GAS_CAP");
     }
+
+    function test_maliciousPoolCannotReenterAndDrainOtherPools() public {
+        MockReentrantERC4626 hostile = new MockReentrantERC4626(usdc);
+        router.setKnown(address(hostile), true);
+        usdc.mint(address(hostile), 100_000_000);
+        hostile.seedShares(owner, 100_000_000);
+        vm.prank(owner);
+        IERC20(address(hostile)).approve(address(sweeper), type(uint256).max);
+
+        _fund(poolA, 500_000_000);
+
+        // From inside its own redeem, the hostile pool calls back into the sweeper
+        // trying to drain poolA to an attacker-chosen destination.
+        bytes memory reentry = abi.encodeCall(
+            BaseExitSweeper.exitAllAndBurn,
+            (
+                _one(address(poolA)),
+                _one(uint256(0)),
+                bytes32(uint256(0xBAD)),
+                bytes32(uint256(0xBAD)),
+                STELLAR_DOMAIN,
+                1_000_000,
+                FAST,
+                _hook()
+            )
+        );
+        hostile.configureCallback(address(sweeper), reentry, false, true);
+
+        uint256 poolASharesBefore = IERC20(address(poolA)).balanceOf(owner);
+
+        // Deviates from the brief here: MockReentrantERC4626.redeem() transfers
+        // assets to the sweeper BEFORE invoking the callback, and the callback
+        // fires through a raw `.call` whose failure is only recorded
+        // (callbackSucceeded = false), never bubbled up. So the nested
+        // exitAllAndBurn call genuinely reverts (nonReentrant), but that revert
+        // dies inside the low-level call and never propagates out of
+        // hostile.redeem(), which returns normally. The outer sweeper's
+        // try/catch around IERC4626(pool).redeem(...) therefore sees a
+        // *successful* call, not a caught revert — hostile's own redemption
+        // still counts as exited, not skipped. The security property under
+        // test is narrower and still holds: the attacker-controlled reentrant
+        // call is neutralized, so poolA is never touched and the burn
+        // destination is never corrupted to 0xBAD.
+        (, uint256 exited, uint256 skipped) =
+            _call(_one(address(hostile)), _one(uint256(0)));
+
+        assertEq(exited, 1, "the hostile pool's own redemption still succeeds");
+        assertEq(skipped, 0, "only the injected reentrant call fails, not the outer redeem");
+        assertEq(
+            IERC20(address(poolA)).balanceOf(owner), poolASharesBefore,
+            "poolA shares must be untouched"
+        );
+        assertEq(messenger.lastMintRecipient(), FORWARDER, "burn must never go to 0xBAD");
+    }
 }
