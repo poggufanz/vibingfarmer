@@ -21,7 +21,12 @@ export function isVfWallet(connectedAddress) {
   return !!connectedAddress && localStorage.getItem('vf_wallet_contract') === connectedAddress
 }
 
-export async function ensureBaseOwner({ connectedAddress, deps = {} }) {
+// preferLogin: recovery semantics — an existing account is PRESUMED (the user clicked
+// "recover"), so start with a discoverable login even when no local record exists. Without it,
+// the no-record path registers first, and an authenticator that doesn't refuse duplicates
+// happily mints a brand-new credential → a brand-new EMPTY kernel account (seen live
+// 2026-07-20: "recover" on the same phone found no positions).
+export async function ensureBaseOwner({ connectedAddress, preferLogin = false, deps = {} }) {
   if (!connectedAddress) throw new Error('ensureBaseOwner: connectedAddress is required')
   let { createBaseSmartAccount } = deps
   if (!createBaseSmartAccount) {
@@ -35,7 +40,7 @@ export async function ensureBaseOwner({ connectedAddress, deps = {} }) {
   } catch {
     stored = null
   }
-  const mode = stored ? 'login' : 'register'
+  const mode = stored || preferLogin ? 'login' : 'register'
   const passkeyName = stored?.passkeyName || `vibing-farmer-base-${connectedAddress.slice(0, 8)}`
 
   // Two-way fallback — the OWNER_KEY record is a per-browser hint, not the truth. The truth is
