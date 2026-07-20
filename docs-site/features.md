@@ -95,7 +95,7 @@ A pending change to the vault's own contract code has to clear a public delay be
 
 The frontend and the lifeboat radar both surface a pending upgrade without acting on it. The homepage polls for one on a periodic interval and shows a banner naming the eta and reminding you that funds can be withdrawn before it lands; the same schedule, execution, and cancellation events populate the alert feed with plain-language explanations. The radar logs a one-time warning the first time a schedule appears or changes, and an info line once it clears, but never derisks or otherwise reacts to an upgrade on its own — an upgrade is surfaced as information, and withdrawing ahead of one you don't like remains your decision.
 
-This feature is implemented and covered by a dedicated smoke test that proves the schedule, the timelock block, and the cancel path against a real testnet vault, but it is not yet live: the deployed autofarm vault predates it, so the schedule, execute, cancel, and pending-view functions exist only on the development branch today. Activating it on testnet requires rebuilding and redeploying the vault contract.
+This feature is live on the deployed testnet vault as of the 2026-07-20 in-place upgrade: `schedule_upgrade`, `execute_upgrade`, `cancel_upgrade`, and `pending_upgrade` are all callable today, the old instant upgrade is gone, and the dedicated smoke test proved the schedule, the timelock block, the cancel path, and the 2-of-3 multisig admin proof against the real vault.
 
 ## Wallets and on-ramp
 

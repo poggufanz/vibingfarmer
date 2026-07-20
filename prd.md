@@ -179,10 +179,11 @@ First run: **1 signature** (was 6 before the funding router, 9 before that). Rep
 | Circle USDC | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` |
 | Test pools Ã—3 (honest; Aave adapter is fork-proven against Aave v3) | see deployments JSON |
 
-> **Legacy notice (2026-07-13):** all addresses in both tables predate the security-hardening
-> pass (see `SECURITY.md`). They stay live for the demo but are **legacy** until the hardened
-> artifacts are redeployed, smoke-tested, and these manifests are updated from confirmed
-> transaction receipts.
+> **Status (2026-07-20):** the Stellar table reflects the hardened redeploy of 2026-07-14
+> (see `SECURITY.md`), updated from confirmed transaction receipts. The autofarm vault was
+> subsequently upgraded **in place** on 2026-07-20: upgrades are now timelocked (3-day
+> schedule → execute, cancellable) and the vault admin is a 2-of-3 multisig. Base Sepolia
+> addresses still predate the hardening pass (Base leg redeploy pending).
 
 ---
 
