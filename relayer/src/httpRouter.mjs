@@ -6,9 +6,10 @@
 // under test.
 //
 // Non-custodial invariant: the `/unwind` handler ONLY relays the reverse CCTP mint via the
-// injected `relayUnwindMint` — it never dispatches a withdraw. The withdraw + burn must already
-// be owner/session-signed client-side (see src/flows/unwind.mjs), so `unwind.mjs` is never
-// imported or called from here.
+// injected `relayUnwindMint` — it never dispatches a withdraw. The withdraw + burn are
+// owner-signed client-side via BaseExitSweeper.exitAllAndBurn (see
+// frontend/src/base/withdrawBatch.js), so no relayer-side burn construction is imported or
+// called from here.
 
 async function ensureBody(req) {
   if (req.method === 'GET' || req.method === 'HEAD') return;

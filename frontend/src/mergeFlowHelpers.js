@@ -26,6 +26,32 @@ export function buildBaseLegContext({ connectedAddress, kitSignTransaction }) {
 
 const short = (v) => (v && v.length > 12 ? `${v.slice(0, 6)}…${v.slice(-4)}` : v || '')
 
+// The farm dispatch's own pollFarmStatus gives up after ~2 minutes, but a CCTP leg can take
+// far longer (standard finality ~15-25 min on testnet). Without a follow-up the run's Base
+// nodes and log line freeze on "still settling" forever, even once the deposits have landed —
+// the deposit-side twin of the withdraw modal's re-poll (55578ca). Keeps asking slowly until
+// the job reports a terminal status or the budget runs out; never throws.
+export async function pollBaseLegUntilSettled({
+  jobId,
+  pollOnce,
+  sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+  intervalMs = 15_000,
+  maxTries = 120, // ~30 min at the default interval
+}) {
+  if (!jobId || typeof pollOnce !== 'function') return null
+  for (let i = 0; i < maxTries; i++) {
+    await sleep(intervalMs)
+    let last
+    try {
+      last = await pollOnce(jobId)
+    } catch {
+      continue // transient failure: keep waiting, next tick retries
+    }
+    if (last?.status === 'done' || last?.status === 'error') return last.status
+  }
+  return null
+}
+
 // Leg-level Base events (no per-agent hex id) → ONE display recipe the graph applies to every
 // Base vault node. Step chips reuse the worker vocabulary: approve = mandate, swap = the CCTP
 // burn/bridge, deposit = the relayer's pool deposits. Returns null for events that need no

@@ -79,11 +79,15 @@ view(){ stellar contract invoke --id "$VAULT_ID" --rpc-url "$RPC" --source "$ADM
 admin_invoke(){
   if [ "$MULTISIG" = "1" ]; then
     local tag="$TMP/admin-$$-$RANDOM"
-    # Short-circuit each step: a failed --build-only (e.g. the contract call errors at
-    # simulation) must surface ITS error, not cascade into signing an empty/partial file.
+    # Short-circuit each step: a failed step must surface ITS error, not cascade into
+    # signing an empty/partial file. `tx simulate` between build and sign is REQUIRED:
+    # --build-only skips simulation, so the envelope lacks sorobanTransactionData
+    # (footprint/resources) and core rejects it TxMalformed — hit live 2026-07-20 on the
+    # admin-transfer accept. Simulate BEFORE signing (assembly changes the tx hash).
     stellar contract invoke --id "$VAULT_ID" --rpc-url "$RPC" --source "$MULTISIG_ADMIN" \
       --build-only -- "$@" > "$tag.unsigned" || return $?
-    stellar tx sign "$tag.unsigned" --sign-with-key "$SIGNER_1" --rpc-url "$RPC" > "$tag.sig1" || return $?
+    stellar tx simulate "$tag.unsigned" --source-account "$MULTISIG_ADMIN" --rpc-url "$RPC" > "$tag.sim" || return $?
+    stellar tx sign "$tag.sim" --sign-with-key "$SIGNER_1" --rpc-url "$RPC" > "$tag.sig1" || return $?
     stellar tx sign "$tag.sig1" --sign-with-key "$SIGNER_2" --rpc-url "$RPC" > "$tag.sig2" || return $?
     stellar tx send "$tag.sig2" --rpc-url "$RPC"
   else
@@ -119,9 +123,12 @@ if [ "$MULTISIG" = "1" ]; then
   UNSIGNED="$TMP/schedule.unsigned.xdr"
   stellar contract invoke --id "$VAULT_ID" --rpc-url "$RPC" --source "$MULTISIG_ADMIN" \
     --build-only -- schedule_upgrade --new_wasm_hash "$NEW_WASM_HASH" > "$UNSIGNED"
+  # Assemble sorobanTransactionData before signing — see the admin_invoke NOTE (TxMalformed otherwise).
+  SIMULATED="$TMP/schedule.sim.xdr"
+  stellar tx simulate "$UNSIGNED" --source-account "$MULTISIG_ADMIN" --rpc-url "$RPC" > "$SIMULATED"
 
   ONE_SIG="$TMP/schedule.1sig.xdr"
-  stellar tx sign "$UNSIGNED" --sign-with-key "$SIGNER_1" --rpc-url "$RPC" > "$ONE_SIG"
+  stellar tx sign "$SIMULATED" --sign-with-key "$SIGNER_1" --rpc-url "$RPC" > "$ONE_SIG"
   set +e
   ONE_SIG_OUT="$(stellar tx send "$ONE_SIG" --rpc-url "$RPC" 2>&1)"
   ONE_SIG_RC=$?

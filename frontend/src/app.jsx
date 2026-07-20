@@ -75,6 +75,7 @@ import {
   buildBaseLegContext,
   applyBaseLegOutcome,
   mapBaseLegEvent,
+  pollBaseLegUntilSettled,
 } from './mergeFlowHelpers.js'
 import { evaluateExit } from './strategy/autoExit/engine.js'
 import { runAutonomousExit } from './agents/exitExecutor.js'
@@ -110,6 +111,7 @@ const OpsConsole = lazy(() => import('./components/console/OpsConsole.jsx'))
 const Withdraw = lazy(() => import('./screens/Withdraw.jsx'))
 import NotificationCenter from './components/NotificationCenter.jsx'
 import { loadBasePositions } from './base/dashboardPositions.js'
+import { readIdleUsdc } from './base/readPositions.js'
 import HomePage from './components/HomePage.jsx'
 const LandingHero = lazy(() => import('./components/LandingHero.jsx'))
 const ExplorerPage = lazy(() => import('./components/ExplorerPage.jsx'))
@@ -1724,7 +1726,7 @@ const App = () => {
   // once the owner kernel account resolves. Dynamic import: keeps passkeyBridge.js (and the
   // ZeroDev/viem chain behind it) out of the eager bundle — mirrors orchestrator.js's
   // baseLeg.js gating (Task 8).
-  const handleBaseWithdrawClick = async (position) => {
+  const handleBaseWithdrawClick = async () => {
     setBaseWithdrawError(null)
     // The positions on screen belong to THIS account; the ceremony below is discoverable, and
     // a user with several look-alike passkeys can pick one that derives a different (empty)
@@ -1742,8 +1744,16 @@ const App = () => {
         )
         return
       }
+      // Full exit: every open Base position, not the row that was clicked. The
+      // sweeper reads live balances, so this list is only used for the pool
+      // addresses, the per-pool slippage floors, and the pre-signature summary.
+      const idleUsdc = await readIdleUsdc({
+        account: owner.address,
+        publicClient: owner.publicClient,
+      })
       setBaseWithdraw({
-        position,
+        positions: basePositions,
+        idleUsdc,
         ownerKernelAccount: owner.kernelAccount,
         publicClient: owner.publicClient,
       })
@@ -2284,6 +2294,42 @@ const App = () => {
     // Base vault design nodes: leg-level baseleg-*/farm-* events paint ALL of them (below).
     const baseWorkerIds = survivors.filter((a) => a.vault.chain === 'base').map((a) => a.id)
 
+    // Applies one mapBaseLegEvent recipe to every Base vault node. Hoisted out of onEvent so the
+    // post-dispatch settlement re-poll below can reuse it verbatim.
+    const paintBaseNodes = (upd) => {
+      if (!upd || baseWorkerIds.length === 0) return
+      const terminal = upd.status === 'completed' || upd.status === 'failed'
+      setExecMap((prev) => {
+        const next = { ...prev }
+        baseWorkerIds.forEach((bId) => {
+          const cur = next[bId] || makeInitialExecState([{ id: bId }])[bId]
+          next[bId] = {
+            ...cur,
+            status: upd.status || cur.status || 'running',
+            activeStep: terminal ? null : upd.step || cur.activeStep,
+            steps: upd.step ? { ...(cur.steps || {}), [upd.step]: upd.stepStatus } : cur.steps,
+            hashes: upd.hash ? { ...(cur.hashes || {}), [upd.step || 'swap']: upd.hash } : cur.hashes,
+            memory: [...(cur.memory || []), { ...upd.memory, t: nowT() }],
+            metrics: terminal
+              ? {
+                  ...(cur.metrics || {}),
+                  completedAt: Date.now(),
+                  successRate: upd.status === 'completed' ? 1 : 0,
+                }
+              : cur.metrics || {},
+          }
+        })
+        return next
+      })
+      if (upd.log) {
+        addLog({
+          event: upd.log,
+          agent: baseWorkerIds[0],
+          meta: `${upd.memory.title} — ${upd.memory.meta}`,
+        })
+      }
+    }
+
     // dispatchSet ⊆ survivors: only survivors get a plan; allocations re-normalized to sum 1.
     // Each survivor carries a freshly-minted eligibility token (Enforcement B asserts it worker-side).
     // protocolSlug/verdictBySlug lookup keyed via slugFor — the SAME key computeBasket used to
@@ -2359,43 +2405,7 @@ const App = () => {
         // Base leg events are leg-level (no per-agent hex id) — paint them onto every Base
         // vault design node so the graph shows the cross-chain lifecycle instead of dropping it.
         if (evName.startsWith('baseleg-') || evName.startsWith('farm-')) {
-          const upd = mapBaseLegEvent(evName, data)
-          if (!upd || baseWorkerIds.length === 0) return
-          setExecMap((prev) => {
-            const next = { ...prev }
-            baseWorkerIds.forEach((bId) => {
-              const cur = next[bId] || makeInitialExecState([{ id: bId }])[bId]
-              next[bId] = {
-                ...cur,
-                status: upd.status || cur.status || 'running',
-                activeStep:
-                  upd.status === 'completed' || upd.status === 'failed'
-                    ? null
-                    : upd.step || cur.activeStep,
-                steps: upd.step ? { ...(cur.steps || {}), [upd.step]: upd.stepStatus } : cur.steps,
-                hashes: upd.hash
-                  ? { ...(cur.hashes || {}), [upd.step || 'swap']: upd.hash }
-                  : cur.hashes,
-                memory: [...(cur.memory || []), { ...upd.memory, t: nowT() }],
-                metrics:
-                  upd.status === 'completed' || upd.status === 'failed'
-                    ? {
-                        ...(cur.metrics || {}),
-                        completedAt: Date.now(),
-                        successRate: upd.status === 'completed' ? 1 : 0,
-                      }
-                    : cur.metrics || {},
-              }
-            })
-            return next
-          })
-          if (upd.log) {
-            addLog({
-              event: upd.log,
-              agent: baseWorkerIds[0],
-              meta: `${upd.memory.title} — ${upd.memory.meta}`,
-            })
-          }
+          paintBaseNodes(mapBaseLegEvent(evName, data))
           return
         }
 
@@ -2598,6 +2608,23 @@ const App = () => {
             // Don't wait for the 15s poll tick: surface the fresh Base positions now.
             // Base token activity is on History → Base (fetched when that tab opens).
             loadBasePositions().then((bp) => setBasePositions(bp))
+            // Dispatch's own poll window is ~2 min; a CCTP leg can take far longer. Keep asking
+            // slowly so the graph + log settle on the truth instead of freezing on "still
+            // settling" after the deposits have already landed (live 2026-07-20: 60 USDC farmed
+            // into 3 pools on-chain while the UI still showed the deposit phase).
+            const jobId = summary.baseLeg.jobId
+            if (jobId && summary.baseLeg.finalStatus !== 'done') {
+              import('./base/relayerClient.js').then(({ pollFarmStatus }) =>
+                pollBaseLegUntilSettled({
+                  jobId,
+                  pollOnce: (id) => pollFarmStatus({ jobId: id, maxTries: 1 }),
+                }).then((settled) => {
+                  if (!settled) return
+                  paintBaseNodes(mapBaseLegEvent('farm-completed', { jobId, finalStatus: settled }))
+                  if (settled === 'done') loadBasePositions().then((bp) => setBasePositions(bp))
+                })
+              )
+            }
           }
         }
       })
@@ -3311,12 +3338,11 @@ const App = () => {
       {baseWithdraw && (
         <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
           <Withdraw
-            poolName={baseWithdraw.position.poolName}
+            positions={baseWithdraw.positions}
+            idleUsdc={baseWithdraw.idleUsdc}
             ownerKernelAccount={baseWithdraw.ownerKernelAccount}
             publicClient={baseWithdraw.publicClient}
-            withdrawals={[baseWithdraw.position]}
             stellarRecipient={realAddress}
-            totalAssetsForBurn={baseWithdraw.position.minAssets}
             onClose={() => setBaseWithdraw(null)}
             onDone={() => {
               loadBasePositions().then((bp) => setBasePositions(bp))

@@ -39,10 +39,39 @@ export async function readPositions({
         functionName: 'convertToAssets',
         args: [shares],
       })
-      const minAssets = (BigInt(rawAssets) * BigInt(10_000 - slippageBps)) / 10_000n
-      return { pool, shares, minAssets }
+      const assets = BigInt(rawAssets)
+      const minAssets = (assets * BigInt(10_000 - slippageBps)) / 10_000n
+      // `assets` = the pool's own valuation of these shares (what the position is WORTH);
+      // `minAssets` is that minus slippage tolerance and is a withdraw floor, not a balance.
+      // The dashboard totals must use `assets` or every Base position reads 0.5% light.
+      return { pool, shares, assets, minAssets }
     })
   )
 
   return positions.filter((p) => p !== null)
+}
+
+// Base Sepolia Circle USDC, same constant withdrawBatch.js burns.
+const BASE_USDC = '0x036CbD53842c5426634e7929541eC2318f3dCF7e'
+
+/**
+ * Idle USDC sitting in the kernel account. BaseExitSweeper takes this alongside
+ * the pool positions, so the modal must show it BEFORE the signature, and the
+ * CCTP maxFee basis must include it. Fails soft to 0n: a balance read must never
+ * be the reason a withdraw cannot start.
+ * @param {{ account: string, publicClient: object }} p
+ * @returns {Promise<bigint>}
+ */
+export async function readIdleUsdc({ account, publicClient }) {
+  try {
+    const raw = await publicClient.readContract({
+      address: BASE_USDC,
+      abi: ERC20_ABI,
+      functionName: 'balanceOf',
+      args: [account],
+    })
+    return BigInt(raw)
+  } catch {
+    return 0n
+  }
 }

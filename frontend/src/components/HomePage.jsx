@@ -327,7 +327,19 @@ export default function HomePage({
   const now = Date.now()
   const apyOf = (addr) => vaultMeta[addr.toLowerCase()]?.apy || 0
   const totalUnits = posList.reduce((s, [, p]) => s + Number(p.balance || 0), 0)
-  const earnedToday = posList.reduce((s, [a, p]) => s + (u(p.balance) * (apyOf(a) / 100)) / 365, 0)
+  // Portfolio totals span BOTH chains: a mixed strategy parks real capital in Base pools, and
+  // counting only Stellar vaults under-reported "Total deposited" by the whole Base leg (live
+  // 2026-07-20: 60 USDC farmed to Base showed as 0). `assets` is the pool's own valuation of the
+  // shares — never `minAssets`, which is a withdraw floor 0.5% below the true balance.
+  const baseUsdc = basePositions.reduce((s, p) => s + fromBaseChainUnits(p.assets ?? 0n), 0)
+  const totalDeposited = u(totalUnits) + baseUsdc
+  const earnedToday =
+    posList.reduce((s, [a, p]) => s + (u(p.balance) * (apyOf(a) / 100)) / 365, 0) +
+    basePositions.reduce(
+      (s, p) => s + (fromBaseChainUnits(p.assets ?? 0n) * (Number(p.apy) || 0)) / 100 / 365,
+      0
+    )
+  const vaultCount = posList.length + basePositions.length
   const mode = autoHarvest ? 'Autopilot' : 'Co-pilot'
 
   // Risk/agent alerts now surface only through the top-bar bell (NotificationCenter);
@@ -927,11 +939,16 @@ export default function HomePage({
                     className="tnum"
                     style={{ fontSize: 28, fontWeight: 600, letterSpacing: '-0.03em' }}
                   >
-                    {fmtAmt(u(totalUnits))}
+                    {fmtAmt(totalDeposited)}
                   </span>
                   <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 6 }}>
                     USDC
                   </span>
+                  {baseUsdc > 0 && (
+                    <div style={{ fontSize: 10.5, color: 'var(--text-faint)', marginTop: 3 }}>
+                      {fmtAmt(u(totalUnits))} Stellar, {fmtAmt(baseUsdc)} Base
+                    </div>
+                  )}
                 </div>
                 <span style={{ width: 1, height: 36, background: 'var(--border)' }} />
                 <div>
@@ -950,7 +967,7 @@ export default function HomePage({
                 </div>
                 <span style={{ width: 1, height: 22, background: 'var(--border)' }} />
                 <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                  {posList.length} vault{posList.length === 1 ? '' : 's'}
+                  {vaultCount} vault{vaultCount === 1 ? '' : 's'}
                 </span>
                 <button
                   className="link-btn"
@@ -1084,11 +1101,12 @@ export default function HomePage({
                       }}
                     >
                       <span style={{ fontSize: 13, fontWeight: 500 }}>{p.poolName}</span>
-                      <span
-                        className="mono tnum"
-                        style={{ fontSize: 12, color: 'var(--text-muted)' }}
-                      >
-                        {fromBaseChainUnits(p.shares).toFixed(2)} shares
+                      <span className="mono tnum" style={{ fontSize: 12 }}>
+                        {fromBaseChainUnits(p.assets ?? 0n).toFixed(2)} USDC
+                        {p.apy ? `, ${Number(p.apy).toFixed(1)}% APY` : ''}
+                        <span style={{ color: 'var(--text-faint)', marginLeft: 6 }}>
+                          {fromBaseChainUnits(p.shares).toFixed(2)} shares
+                        </span>
                       </span>
                       <button
                         className="pill-btn"

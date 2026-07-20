@@ -93,6 +93,44 @@ export const YIELD_ROUTER_ABI = [
   },
 ]
 
+export const BASE_EXIT_SWEEPER_ADDRESS = requireAddress(
+  'BASE_EXIT_SWEEPER_ADDRESS',
+  import.meta.env?.VITE_BASE_EXIT_SWEEPER_ADDRESS || '0xf0D7FB54FA54146114cb2cEff73D971F94c5024c'
+)
+
+export const BASE_EXIT_SWEEPER_ABI = [
+  {
+    type: 'function',
+    name: 'exitAllAndBurn',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'pools', type: 'address[]' },
+      { name: 'minAssetsPerPool', type: 'uint256[]' },
+      { name: 'mintRecipient', type: 'bytes32' },
+      { name: 'destinationCaller', type: 'bytes32' },
+      { name: 'destinationDomain', type: 'uint32' },
+      { name: 'maxFee', type: 'uint256' },
+      { name: 'minFinalityThreshold', type: 'uint32' },
+      { name: 'hookData', type: 'bytes' },
+    ],
+    outputs: [
+      { name: 'burned', type: 'uint256' },
+      { name: 'exited', type: 'uint256' },
+      { name: 'skipped', type: 'uint256' },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'Swept',
+    inputs: [
+      { name: 'owner', type: 'address', indexed: true },
+      { name: 'burned', type: 'uint256', indexed: false },
+      { name: 'exited', type: 'uint256', indexed: false },
+      { name: 'skipped', type: 'uint256', indexed: false },
+    ],
+  },
+]
+
 export const ERC4626_ABI = [
   {
     type: 'function',

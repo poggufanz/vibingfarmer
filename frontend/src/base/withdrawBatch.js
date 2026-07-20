@@ -1,161 +1,130 @@
 // frontend/src/base/withdrawBatch.js
-// Withdraw -> Unwind (Approach C §6 step 8, §4 "withdraw requires the user's passkey"): ONE
-// owner-signed batched userOp = N YieldRouter.withdraw calls + USDC.approve(TokenMessengerV2) +
-// depositForBurnWithHook back to the user's own Stellar G-address via CctpForwarder. Uses the
-// OWNER's kernel account directly (sudo = passkeyValidator, no session/regular plugin) — the
-// session key created in wallet/mandate.js is never involved in withdrawal, because its policy
-// never granted `withdraw` (drain-proof by omission, not by a runtime check).
-import { encodeFunctionData } from 'viem'
-import { YIELD_ROUTER_ADDRESS, YIELD_ROUTER_ABI, ERC20_ABI } from './config.js'
+// Withdraw -> full exit: ONE owner-signed batched userOp = max approvals + a single
+// BaseExitSweeper.exitAllAndBurn + approval revocations. The burn AMOUNT is deliberately
+// absent from this file. It used to be `totalAssetsForBurn`, and passing the slippage FLOOR
+// there stranded 0.5% of every withdraw on Base permanently. The contract reads its own
+// balance at execution time instead, which is also the only way to capture interest accrued
+// between this read and the userOp landing.
+//
+// Uses the OWNER's kernel account directly (sudo = passkeyValidator, no session plugin) —
+// the session key from wallet/mandate.js is never involved, because its policy never granted
+// withdraw (drain-proof by omission, not by a runtime check).
+import { encodeFunctionData, parseEventLogs } from 'viem'
+import {
+  ERC20_ABI,
+  BASE_EXIT_SWEEPER_ADDRESS,
+  BASE_EXIT_SWEEPER_ABI,
+} from './config.js'
 import { buildForwarderHookData, assertHookData } from './hookData.js'
 import { createGaslessKernelClient } from './paymaster.js'
 
-// Base Sepolia CCTP V2 constants (spikes/cctp-corridor/addresses.md, SP0-proven reverse leg).
 const BASE_USDC = '0x036CbD53842c5426634e7929541eC2318f3dCF7e'
-const BASE_TOKEN_MESSENGER_V2 = '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA'
 const STELLAR_CCTP_FORWARDER = 'CA66Q2WFBND6V4UEB7RD4SAXSVIWMD6RA4X3U32ELVFGXV5PJK4T4VSZ'
 const STELLAR_DOMAIN = 27
-// CCTP v2 FAST transfer (docs: cctp-finality-and-fees): threshold ≤1000 = attestation at
-// soft-confirmed level (seconds), ≥2000 = Base L1 finality (~15-20 min — what users sat
-// through on the first live unwind, 2026-07-20). Fast requires maxFee ≥ the corridor's fast
-// fee (0-14 bps); the ACTUAL fee is what gets deducted at mint, maxFee only caps it, and a
-// too-low maxFee silently degrades to standard — i.e. worst case equals the old behavior.
-// 1% cap ≫ any published fast fee, so no fees API round-trip needed at burn time.
+// CCTP v2 FAST transfer: threshold <=1000 = attestation at soft-confirmed level (seconds),
+// >=2000 = Base L1 finality (~15-20 min, what users sat through on the first live unwind,
+// 2026-07-20). A too-low maxFee silently degrades to standard, i.e. worst case equals the
+// old behaviour.
 const MIN_FINALITY_FAST = 1000
-const MAX_FEE_BPS = 100n // 1% cap; actual charged fee is the corridor rate, not this
-const ZERO_BYTES32 = `0x${'00'.repeat(32)}` // valid empty bytes32 default (real calls pass the forwarder)
+const MAX_FEE_BPS = 100n // 1% cap; the actual charged fee is the corridor rate
+const MAX_UINT256 = (1n << 256n) - 1n
+const ZERO_BYTES32 = `0x${'00'.repeat(32)}`
 
-const DEPOSIT_FOR_BURN_WITH_HOOK_ABI = [
-  {
-    type: 'function',
-    name: 'depositForBurnWithHook',
-    stateMutability: 'nonpayable',
-    inputs: [
-      { name: 'amount', type: 'uint256' },
-      { name: 'destinationDomain', type: 'uint32' },
-      { name: 'mintRecipient', type: 'bytes32' },
-      { name: 'burnToken', type: 'address' },
-      { name: 'destinationCaller', type: 'bytes32' },
-      { name: 'maxFee', type: 'uint256' },
-      { name: 'minFinalityThreshold', type: 'uint32' },
-      { name: 'hookData', type: 'bytes' },
-    ],
-    outputs: [{ type: 'uint64' }],
-  },
-]
-
-// contractId -> bytes32, viem hex form. StrKey.decodeContract yields the raw 32-byte contract id,
-// same as spikes/cctp-corridor/reverse.mjs's `forwarder32`.
 async function forwarderAddressBytes32() {
   const { StrKey } = await import('@stellar/stellar-sdk')
   const raw = StrKey.decodeContract(STELLAR_CCTP_FORWARDER)
   return `0x${Buffer.from(raw).toString('hex')}`
 }
 
+const approveCall = (token, spender, amount) => ({
+  to: token,
+  data: encodeFunctionData({ abi: ERC20_ABI, functionName: 'approve', args: [spender, amount] }),
+})
+
 /**
- * Build the full unwind call array: withdraw from every pool, then approve + burn-with-hook the
- * total back to `stellarRecipient`. Validates hookData BEFORE returning anything — a malformed
- * hook must never reach a real burn call (Global Constraints: the #7313 gotcha).
- * @param {{ withdrawals: Array<{pool:string, shares:bigint, minAssets:bigint}>, stellarRecipient: string, totalAssetsForBurn: bigint, forwarderBytes32?: string }} p
+ * Build the full-exit batch. Validates hookData BEFORE returning anything — a malformed hook
+ * must never reach a real burn call (the #7313 gotcha; the contract re-checks it too, because
+ * a deployed contract can be called without this file).
+ * @param {{
+ *   positions: Array<{pool:string, minAssets:bigint}>,
+ *   stellarRecipient: string,
+ *   idleUsdc?: bigint,
+ *   forwarderBytes32?: string,
+ * }} p
  * @returns {Array<{to:string, data:string}>}
  */
 export function buildUnwindCalls({
-  withdrawals,
+  positions,
   stellarRecipient,
-  totalAssetsForBurn,
+  idleUsdc = 0n,
   forwarderBytes32,
 }) {
-  if (!Array.isArray(withdrawals) || withdrawals.length === 0) {
-    throw new Error('buildUnwindCalls requires at least one withdrawal')
+  const pos = Array.isArray(positions) ? positions : []
+  if (pos.length === 0 && idleUsdc === 0n) {
+    throw new Error('buildUnwindCalls: nothing to withdraw (no positions and no idle USDC)')
   }
+
   const hookData = buildForwarderHookData(stellarRecipient)
   assertHookData(hookData) // throws loudly on anything malformed — never silently proceeds
 
-  // The pool IS its ERC4626 share token, and YieldRouter.withdraw pulls the shares via
-  // transferFrom — so each withdraw must be preceded by shares.approve(router, shares).
-  // Proven live 2026-07-20: without it the sponsorship simulation reverts
-  // ERC20InsufficientAllowance(router, 0, shares). The deposit leg never hit this because its
-  // allowances are granted by the session-key mandate; this owner batch grants its own.
-  const withdrawCalls = withdrawals.flatMap(({ pool, shares, minAssets }) => [
-    {
-      to: pool,
-      data: encodeFunctionData({
-        abi: ERC20_ABI,
-        functionName: 'approve',
-        args: [YIELD_ROUTER_ADDRESS, shares],
-      }),
-    },
-    {
-      to: YIELD_ROUTER_ADDRESS,
-      data: encodeFunctionData({
-        abi: YIELD_ROUTER_ABI,
-        functionName: 'withdraw',
-        args: [pool, shares, minAssets],
-      }),
-    },
-  ])
+  const forwarder32 = forwarderBytes32 ?? ZERO_BYTES32
+  const floors = pos.map((p) => p.minAssets)
+  // maxFee is a CAP, not the charged amount, and the basis includes idle USDC so a
+  // sweep-everything burn is not capped against a much smaller position total.
+  const feeBasis = floors.reduce((a, f) => a + f, 0n) + idleUsdc
+  const maxFee = (feeBasis * MAX_FEE_BPS) / 10000n
 
-  const approveCall = {
-    to: BASE_USDC,
+  const sweeperCall = {
+    to: BASE_EXIT_SWEEPER_ADDRESS,
     data: encodeFunctionData({
-      abi: ERC20_ABI,
-      functionName: 'approve',
-      args: [BASE_TOKEN_MESSENGER_V2, totalAssetsForBurn],
-    }),
-  }
-
-  const forwarder32 = forwarderBytes32 ?? ZERO_BYTES32 // real calls precompute it; this default keeps encoding valid
-  const burnCall = {
-    to: BASE_TOKEN_MESSENGER_V2,
-    data: encodeFunctionData({
-      abi: DEPOSIT_FOR_BURN_WITH_HOOK_ABI,
-      functionName: 'depositForBurnWithHook',
+      abi: BASE_EXIT_SWEEPER_ABI,
+      functionName: 'exitAllAndBurn',
       args: [
-        totalAssetsForBurn,
+        pos.map((p) => p.pool),
+        floors,
+        forwarder32,
+        forwarder32,
         STELLAR_DOMAIN,
-        forwarder32,
-        BASE_USDC,
-        forwarder32,
-        (totalAssetsForBurn * MAX_FEE_BPS) / 10000n,
+        maxFee,
         MIN_FINALITY_FAST,
         `0x${Buffer.from(hookData).toString('hex')}`,
       ],
     }),
   }
 
-  return [...withdrawCalls, approveCall, burnCall]
+  return [
+    ...pos.map((p) => approveCall(p.pool, BASE_EXIT_SWEEPER_ADDRESS, MAX_UINT256)),
+    approveCall(BASE_USDC, BASE_EXIT_SWEEPER_ADDRESS, MAX_UINT256),
+    sweeperCall,
+    ...pos.map((p) => approveCall(p.pool, BASE_EXIT_SWEEPER_ADDRESS, 0n)),
+    approveCall(BASE_USDC, BASE_EXIT_SWEEPER_ADDRESS, 0n),
+  ]
 }
 
 /**
- * Owner-signed (passkey), single userOp: build the unwind calls (resolving the forwarder's
- * bytes32 address first), encode, sign, submit, wait for a REAL success — never reports success
- * on a merely-mined-but-reverted userOp.
+ * Owner-signed (passkey), single userOp: build, encode, sign, submit, wait for a REAL success —
+ * never reports success on a merely-mined-but-reverted userOp.
  * @param {{
- *   ownerKernelAccount: object,   // the account object from createBaseSmartAccount (sudo-only)
+ *   ownerKernelAccount: object,
  *   publicClient: object,
- *   withdrawals: Array<object>,
+ *   positions: Array<object>,
  *   stellarRecipient: string,
- *   totalAssetsForBurn: bigint,
+ *   idleUsdc?: bigint,
  *   deps?: { makeGaslessClient?: Function },
  * }} p
- * @returns {Promise<{ unwindTxHash: string }>}
+ * @returns {Promise<{ unwindTxHash: string, burned: bigint|null, exited: bigint|null, skipped: bigint|null }>}
  */
 export async function signAndSubmitUnwind({
   ownerKernelAccount,
   publicClient,
-  withdrawals,
+  positions,
   stellarRecipient,
-  totalAssetsForBurn,
+  idleUsdc = 0n,
   deps = {},
 }) {
   const { makeGaslessClient = createGaslessKernelClient } = deps
   const forwarderBytes32 = await forwarderAddressBytes32()
-  const calls = buildUnwindCalls({
-    withdrawals,
-    stellarRecipient,
-    totalAssetsForBurn,
-    forwarderBytes32,
-  })
+  const calls = buildUnwindCalls({ positions, stellarRecipient, idleUsdc, forwarderBytes32 })
 
   const kernelClient = makeGaslessClient({ account: ownerKernelAccount, publicClient })
   const callData = await kernelClient.account.encodeCalls(
@@ -166,5 +135,28 @@ export async function signAndSubmitUnwind({
   const succeeded = receipt?.success === true || receipt?.receipt?.status === 'success'
   if (!succeeded) throw new Error(`unwind userOp did not succeed (userOpHash ${userOpHash})`)
 
-  return { unwindTxHash: receipt.receipt.transactionHash }
+  const unwindTxHash = receipt.receipt.transactionHash
+  // The final amount is not knowable before execution (interest accrues right up to the burn,
+  // see the file header), so it must come from the `Swept` event, never the pre-sign estimate.
+  // A decode miss must NOT turn a landed burn into a reported failure: the money already moved.
+  let burned = null
+  let exited = null
+  let skipped = null
+  try {
+    const sweptLogs = parseEventLogs({
+      abi: BASE_EXIT_SWEEPER_ABI,
+      logs: receipt.receipt.logs || [],
+      eventName: 'Swept',
+    })
+    const sweptLog =
+      sweptLogs.find((l) => l.address?.toLowerCase() === BASE_EXIT_SWEEPER_ADDRESS.toLowerCase()) ??
+      sweptLogs[0]
+    if (sweptLog) {
+      ;({ burned, exited, skipped } = sweptLog.args)
+    }
+  } catch {
+    // fall through with nulls - reporting failure, not execution failure
+  }
+
+  return { unwindTxHash, burned, exited, skipped }
 }
