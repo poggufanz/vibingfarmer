@@ -6,8 +6,7 @@
 // retry — cost 1 test USDC in SP0, tx 0x7df2af34...). assertHookData MUST run before every burn.
 
 import { Contract, TransactionBuilder, xdr, BASE_FEE, StrKey } from '@stellar/stellar-sdk';
-
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+import { confirmStellarTx } from './stellarTx.mjs';
 
 const HOOK_VERSION_OFFSET = 24;
 const HOOK_LEN_OFFSET = 28;
@@ -125,12 +124,5 @@ export async function mintAndForwardStellar({ server, kp, sourcePub, passphrase,
   prepared.sign(kp);
   const sent = await server.sendTransaction(prepared);
   if (sent.status === 'ERROR') throw new Error(`mint_and_forward send ERROR: ${JSON.stringify(sent.errorResult ?? sent)}`);
-  for (let i = 0; i < 30; i += 1) {
-    await sleep(2000);
-    const got = await server.getTransaction(sent.hash);
-    if (got.status === 'NOT_FOUND') continue;
-    if (got.status === 'SUCCESS') return sent.hash;
-    throw new Error(`mint_and_forward FAILED: ${got.status} ${JSON.stringify(got.resultXdr ?? '')}`);
-  }
-  throw new Error(`mint_and_forward not confirmed: ${sent.hash}`);
+  return confirmStellarTx({ server, hash: sent.hash, label: 'mint_and_forward' });
 }

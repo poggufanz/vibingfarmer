@@ -1,6 +1,8 @@
-import { describe, it, expect } from 'vitest';
-import { Keypair, StrKey } from '@stellar/stellar-sdk';
-import { buildForwarderHookData, assertHookData, contractStrkeyToBytes32 } from '../../src/cctp/reverse.mjs';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { Keypair, StrKey, Account } from '@stellar/stellar-sdk';
+import {
+  buildForwarderHookData, assertHookData, contractStrkeyToBytes32, mintAndForwardStellar,
+} from '../../src/cctp/reverse.mjs';
 
 const SAMPLE_STRKEY = Keypair.random().publicKey(); // real, valid-checksum G-address; always 56 chars
 
@@ -57,6 +59,36 @@ describe('assertHookData', () => {
     buf.writeUInt32BE(bogus.length, 28);
     Buffer.from(bogus, 'utf8').copy(buf, 32);
     expect(() => assertHookData(`0x${buf.toString('hex')}`)).toThrow(/not a valid Stellar StrKey/);
+  });
+});
+
+// Regression guard for the live incident (burn 0x69e0856a..., mint 2a93e14f...): a transient
+// getTransaction error after a successful broadcast must NOT propagate out of the production
+// mint path — the caller must be wired to confirmStellarTx, not a reinlined bare poll loop.
+describe('mintAndForwardStellar', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('survives a transient getTransaction error after broadcast and still returns the hash', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const kp = Keypair.random();
+    const server = {
+      getAccount: vi.fn().mockResolvedValue(new Account(kp.publicKey(), '1')),
+      prepareTransaction: vi.fn(async (tx) => tx),
+      sendTransaction: vi.fn().mockResolvedValue({ status: 'PENDING', hash: 'MINT_HASH' }),
+      getTransaction: vi.fn()
+        .mockRejectedValueOnce(new Error('fetch failed'))
+        .mockResolvedValue({ status: 'SUCCESS' }),
+    };
+    const pending = mintAndForwardStellar({
+      server, kp, sourcePub: kp.publicKey(), passphrase: 'Test SDF Network ; September 2015',
+      forwarderAddress: StrKey.encodeContract(Buffer.alloc(32, 1)),
+      message: '0x1234', attestation: '0x5678',
+    });
+    pending.catch(() => {}); // avoid unhandled-rejection noise if the assertion below fails first
+    await vi.advanceTimersByTimeAsync(4000); // two confirm polls at the default 2s interval
+    await expect(pending).resolves.toBe('MINT_HASH');
+    expect(server.getTransaction).toHaveBeenCalledTimes(2);
   });
 });
 
