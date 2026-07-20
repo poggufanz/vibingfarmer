@@ -4900,6 +4900,42 @@ textarea {
   text-align: center;
 }
 
+.history-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.history-page-btn {
+  padding: 6px 14px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+}
+
+.history-page-label {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* Base activity rows: full-row link to Blockscout, keep tx-table grid */
+a.tx-row-link {
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+a.tx-row-link:hover {
+  background: var(--bg-elev);
+}
+a.tx-row-link:hover .tx-hash {
+  text-decoration: underline;
+  color: var(--text);
+}
+
 /* tx table (Etherscan-like) */
 .tx-row {
   display: grid;

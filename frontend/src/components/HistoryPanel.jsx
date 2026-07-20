@@ -1,14 +1,19 @@
 /* ============================================
    VIBING FARMER — History (Etherscan-style explorer)
-   Reads localStorage directly (history.js). No prop drilling.
+   Stellar rows: localStorage via history.js.
+   Base rows: Blockscout tokentx for vf_base_owner_address (on-chain, not clearable).
    ============================================ */
 import React, { useState, useEffect } from 'react'
 import { Icon } from '../components.jsx'
 import { getTransactions, getStrategies, getReasoningLog, clearAllHistory } from '../history.js'
 import { loadSettings } from '../settingsStore.js'
 import { useNavigateTo } from '../router.js'
+import { fetchBaseHistory } from '../base/baseHistory.js'
+
+const BASE_EXPLORER_TX = 'https://base-sepolia.blockscout.com/tx/'
 
 function formatTime(ts) {
+  if (!ts) return '-'
   const { timestampFormat } = loadSettings()
   if (timestampFormat === 'absolute') {
     return new Date(ts).toLocaleTimeString('en-US', {
@@ -31,6 +36,7 @@ const short = (h) => (h ? `${h.slice(0, 8)}…${h.slice(-6)}` : '')
 
 const TABS = [
   { id: 'transactions', label: 'Transactions' },
+  { id: 'base', label: 'Base' },
   { id: 'strategies', label: 'Strategies' },
   { id: 'reasoning', label: 'AI Reasoning' },
 ]
@@ -98,6 +104,69 @@ const TxList = ({ rows }) => {
   )
 }
 
+/* ---------- Base activity (Blockscout tokentx) ---------- */
+const BaseList = ({ rows, loading, account }) => {
+  if (loading) {
+    return (
+      <div className="history-empty mono" role="status" aria-busy="true">
+        <span className="think-spin" aria-hidden="true" style={{ marginRight: 8 }} />
+        Loading Base activity…
+      </div>
+    )
+  }
+  if (!account) {
+    return (
+      <Empty what="Base activity (connect a Base passkey by farming or recovering positions)" />
+    )
+  }
+  if (!rows.length) return <Empty what="Base activity" />
+
+  return (
+    <div className="tx-table">
+      <div className="tx-row tx-head mono">
+        <span>Dir</span>
+        <span>Txn hash</span>
+        <span>Transfer</span>
+        <span>Amount</span>
+        <span>Age</span>
+      </div>
+      {rows.map((h) => {
+        const isIn = h.direction === 'in'
+        return (
+          <a
+            key={h.id}
+            className="tx-row tx-row-link"
+            href={`${BASE_EXPLORER_TX}${h.hash}`}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <span
+              className="tx-status"
+              title={isIn ? 'Inbound' : 'Outbound'}
+              style={{ color: isIn ? 'var(--ok)' : 'var(--warn)' }}
+            >
+              {isIn ? '↓' : '↑'}
+            </span>
+            <span className="tx-hash mono">{short(h.hash)}</span>
+            <span className="tx-vault">
+              {isIn ? 'Received on Base' : 'Sent from Base'}
+              <span className="tx-sub mono">Base Sepolia, Blockscout</span>
+            </span>
+            <span
+              className="tx-amount mono tnum"
+              style={{ color: isIn ? 'var(--ok)' : 'var(--warn)' }}
+            >
+              {isIn ? '+' : '−'}
+              {Number(h.amount || 0).toFixed(2)} {h.symbol}
+            </span>
+            <span className="tx-age mono">{formatTime(h.time)}</span>
+          </a>
+        )
+      })}
+    </div>
+  )
+}
+
 /* ---------- Strategy sessions ---------- */
 const StratList = ({ rows }) => {
   if (!rows.length) return <Empty what="strategies" />
@@ -157,8 +226,11 @@ const ReasonList = ({ rows }) => {
 
 const HistoryPanel = () => {
   const [tab, setTab] = useState('transactions')
-  const [nonce, setNonce] = useState(0) // bump to re-read after clear
+  const [nonce, setNonce] = useState(0) // bump to re-read local history after clear
   const [data, setData] = useState({ transactions: [], strategies: [], reasoning: [] })
+  const [baseRows, setBaseRows] = useState([])
+  const [baseLoading, setBaseLoading] = useState(false)
+  const [baseAccount, setBaseAccount] = useState(null)
   const [page, setPage] = useState(1)
 
   const ITEMS_PER_PAGE = 10
@@ -171,6 +243,30 @@ const HistoryPanel = () => {
     })
   }, [nonce])
 
+  // On-chain Base activity lives on History now (was a Home strip). Fetch when the tab is
+  // shown or after Clear (nonce) so post-farm visits still get a fresh read without app-level state.
+  useEffect(() => {
+    if (tab !== 'base') return
+    const account = localStorage.getItem('vf_base_owner_address')
+    setBaseAccount(account)
+    if (!account) {
+      setBaseRows([])
+      setBaseLoading(false)
+      return
+    }
+    let dead = false
+    setBaseLoading(true)
+    fetchBaseHistory({ account, limit: 40 }).then((rows) => {
+      if (!dead) {
+        setBaseRows(rows)
+        setBaseLoading(false)
+      }
+    })
+    return () => {
+      dead = true
+    }
+  }, [tab, nonce])
+
   const handleTabChange = (newTab) => {
     setTab(newTab)
     setPage(1)
@@ -178,18 +274,28 @@ const HistoryPanel = () => {
 
   const counts = {
     transactions: data.transactions.length,
+    base: baseRows.length,
     strategies: data.strategies.length,
     reasoning: data.reasoning.length,
   }
 
-  const totalPages = Math.ceil(counts[tab] / ITEMS_PER_PAGE)
+  const tabRows =
+    tab === 'base'
+      ? baseRows
+      : tab === 'transactions'
+        ? data.transactions
+        : tab === 'strategies'
+          ? data.strategies
+          : data.reasoning
+
+  const totalPages = Math.max(1, Math.ceil((counts[tab] || 0) / ITEMS_PER_PAGE))
   const onClear = () => {
     clearAllHistory()
     setNonce((n) => n + 1)
     setPage(1)
   }
 
-  const currentRows = data[tab].slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE)
+  const currentRows = tabRows.slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE)
 
   return (
     <section className="history-page enter">
@@ -197,7 +303,7 @@ const HistoryPanel = () => {
         <div className="eyebrow">
           <span>History, on-chain explorer</span>
         </div>
-        <button className="perm-revoke" onClick={onClear}>
+        <button className="perm-revoke" onClick={onClear} title="Clears Stellar local history only">
           Clear all
         </button>
       </div>
@@ -210,53 +316,40 @@ const HistoryPanel = () => {
             onClick={() => handleTabChange(t.id)}
           >
             {t.label}
-            <span className="history-tab-count">{counts[t.id]}</span>
+            {t.id === 'base' && baseLoading ? (
+              <span className="history-tab-count" aria-label="loading">
+                …
+              </span>
+            ) : (
+              <span className="history-tab-count">{counts[t.id]}</span>
+            )}
           </button>
         ))}
       </div>
 
       <div className="history-body">
         {tab === 'transactions' && <TxList rows={currentRows} />}
+        {tab === 'base' && (
+          <BaseList rows={currentRows} loading={baseLoading} account={baseAccount} />
+        )}
         {tab === 'strategies' && <StratList rows={currentRows} />}
         {tab === 'reasoning' && <ReasonList rows={currentRows} />}
       </div>
 
-      {counts[tab] > ITEMS_PER_PAGE && (
-        <div
-          className="history-pagination"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            marginTop: 20,
-            paddingTop: 16,
-            borderTop: '1px solid var(--border)',
-          }}
-        >
+      {!baseLoading && counts[tab] > ITEMS_PER_PAGE && (
+        <div className="history-pagination">
           <button
-            className="btn btn-ghost"
-            style={{
-              padding: '6px 14px',
-              fontSize: 11,
-              fontFamily: 'var(--font-mono)',
-              letterSpacing: '0.04em',
-            }}
+            className="btn btn-ghost history-page-btn"
             disabled={page === 1}
             onClick={() => setPage((p) => Math.max(1, p - 1))}
           >
             Previous
           </button>
-          <span className="mono" style={{ fontSize: 11, color: 'var(--text-faint)' }}>
+          <span className="mono history-page-label">
             Page {page} of {totalPages}
           </span>
           <button
-            className="btn btn-ghost"
-            style={{
-              padding: '6px 14px',
-              fontSize: 11,
-              fontFamily: 'var(--font-mono)',
-              letterSpacing: '0.04em',
-            }}
+            className="btn btn-ghost history-page-btn"
             disabled={page >= totalPages}
             onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
           >

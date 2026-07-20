@@ -650,7 +650,6 @@ const App = () => {
   // ownerKernelAccount, publicClient } after the one-tap ensureBaseOwner login ceremony.
   const [baseWithdraw, setBaseWithdraw] = useS(null)
   const [baseWithdrawError, setBaseWithdrawError] = useS(null)
-  const [baseActivity, setBaseActivity] = useS([])
 
   const [sbExtended, setSbExtended] = useS(() => localStorage.getItem('yv_sb_extended') === 'true')
   const [railCollapsed, setRailCollapsed] = useS(
@@ -1754,25 +1753,12 @@ const App = () => {
     }
   }
 
-  // On-chain Base activity (Blockscout). Refreshed on page load + after leg/recover/withdraw —
-  // deliberately NOT on the 15s poll tick (public indexer, rate limits). Fail-soft [].
-  const refreshBaseActivity = () => {
-    const account = localStorage.getItem('vf_base_owner_address')
-    if (!account) return
-    import('./base/baseHistory.js').then(({ fetchBaseHistory }) =>
-      fetchBaseHistory({ account }).then(setBaseActivity)
-    )
-  }
-  useE(() => {
-    refreshBaseActivity()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
   // Cross-device recovery: the Base owner markers live in localStorage, but the passkey itself
   // is synced (phone / password manager) and login is discoverable — one tap on a NEW device
   // re-derives the SAME kernel account (passkeyBridge's two-way fallback), re-persists the
   // markers, and the positions panel comes back. Without this, positions farmed on another
   // laptop were invisible here with no code path to ever show them.
+  // Base token activity is loaded on History → Base (not home), so recover only refreshes positions.
   const handleBaseRecover = async () => {
     if (!realAddress) return
     setBaseWithdrawError(null)
@@ -1781,7 +1767,6 @@ const App = () => {
       await ensureBaseOwner({ connectedAddress: realAddress, preferLogin: true })
       const bp = await loadBasePositions()
       setBasePositions(bp)
-      refreshBaseActivity()
       if (!bp.length) setBaseWithdrawError('Base account connected — no open positions found.')
     } catch (err) {
       setBaseWithdrawError(err.message)
@@ -2611,8 +2596,8 @@ const App = () => {
           if (outcome) addLog(outcome)
           if (summary.baseLeg.success) {
             // Don't wait for the 15s poll tick: surface the fresh Base positions now.
+            // Base token activity is on History → Base (fetched when that tab opens).
             loadBasePositions().then((bp) => setBasePositions(bp))
-            refreshBaseActivity()
           }
         }
       })
@@ -3151,7 +3136,6 @@ const App = () => {
                 basePositions={basePositions}
                 onBaseWithdraw={handleBaseWithdrawClick}
                 onBaseRecover={handleBaseRecover}
-                baseActivity={baseActivity}
                 baseWithdrawError={baseWithdrawError}
               />
             }
@@ -3336,7 +3320,6 @@ const App = () => {
             onClose={() => setBaseWithdraw(null)}
             onDone={() => {
               loadBasePositions().then((bp) => setBasePositions(bp))
-              refreshBaseActivity()
             }}
           />
         </Suspense>
