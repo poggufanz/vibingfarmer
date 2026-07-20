@@ -26,6 +26,41 @@ describe('buildUnwindCalls', () => {
     expect(calls[5].to).toBeDefined() // TokenMessengerV2.depositForBurnWithHook
   })
 
+  test('burn call requests FAST finality (1000) with a 1% maxFee cap (silent-degrade safe)', async () => {
+    const { decodeFunctionData } = await import('viem')
+    const calls = buildUnwindCalls({
+      withdrawals: [
+        { pool: '0x2222222222222222222222222222222222222222', shares: 100n, minAssets: 99n },
+      ],
+      stellarRecipient: STELLAR_RECIPIENT,
+      totalAssetsForBurn: 1_000_000n, // 1 USDC
+    })
+    const burn = calls[calls.length - 1]
+    const { args } = decodeFunctionData({
+      abi: [
+        {
+          type: 'function',
+          name: 'depositForBurnWithHook',
+          stateMutability: 'nonpayable',
+          inputs: [
+            { name: 'amount', type: 'uint256' },
+            { name: 'destinationDomain', type: 'uint32' },
+            { name: 'mintRecipient', type: 'bytes32' },
+            { name: 'burnToken', type: 'address' },
+            { name: 'destinationCaller', type: 'bytes32' },
+            { name: 'maxFee', type: 'uint256' },
+            { name: 'minFinalityThreshold', type: 'uint32' },
+            { name: 'hookData', type: 'bytes' },
+          ],
+          outputs: [{ type: 'uint64' }],
+        },
+      ],
+      data: burn.data,
+    })
+    expect(args[6]).toBe(1000) // fast attestation — seconds, not Base L1 finality
+    expect(args[5]).toBe(10_000n) // 1% of 1 USDC; actual corridor fee (0-14bps) is what's charged
+  })
+
   test('rejects an empty withdrawals array', () => {
     expect(() =>
       buildUnwindCalls({
