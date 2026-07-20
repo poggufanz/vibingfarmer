@@ -15,11 +15,15 @@ describe('buildUnwindCalls', () => {
       stellarRecipient: STELLAR_RECIPIENT,
       totalAssetsForBurn: 148n,
     })
-    expect(calls).toHaveLength(4) // 2 withdraws + 1 approve + 1 burn
-    expect(calls[0].to).toBe(YIELD_ROUTER_ADDRESS)
+    // Per pool: shares.approve(router) THEN router.withdraw — the router pulls shares via
+    // transferFrom (live ERC20InsufficientAllowance without the approve, 2026-07-20).
+    expect(calls).toHaveLength(6) // 2×(approve+withdraw) + 1 USDC approve + 1 burn
+    expect(calls[0].to).toBe('0x2222222222222222222222222222222222222222') // shares approve
     expect(calls[1].to).toBe(YIELD_ROUTER_ADDRESS)
-    expect(calls[2].to).toBeDefined() // USDC.approve(TokenMessengerV2)
-    expect(calls[3].to).toBeDefined() // TokenMessengerV2.depositForBurnWithHook
+    expect(calls[2].to).toBe('0x3333333333333333333333333333333333333333')
+    expect(calls[3].to).toBe(YIELD_ROUTER_ADDRESS)
+    expect(calls[4].to).toBeDefined() // USDC.approve(TokenMessengerV2)
+    expect(calls[5].to).toBeDefined() // TokenMessengerV2.depositForBurnWithHook
   })
 
   test('rejects an empty withdrawals array', () => {
@@ -76,7 +80,7 @@ describe('signAndSubmitUnwind', () => {
     })
 
     expect(result.unwindTxHash).toBe('0xUNWINDTX')
-    expect(sentCallData[0].encoded).toHaveLength(3) // 1 withdraw + approve + burn
+    expect(sentCallData[0].encoded).toHaveLength(4) // shares approve + withdraw + USDC approve + burn
   })
 
   test('throws if the userOp mines but does not succeed - never reports a fake success', async () => {
