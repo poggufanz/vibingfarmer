@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
+import { encodeEventTopics, encodeAbiParameters } from 'viem'
 import { buildUnwindCalls, signAndSubmitUnwind } from './withdrawBatch.js'
-import { BASE_EXIT_SWEEPER_ADDRESS } from './config.js'
+import { BASE_EXIT_SWEEPER_ADDRESS, BASE_EXIT_SWEEPER_ABI } from './config.js'
 
 const STELLAR = 'GRECIPIENTOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO'
 const BASE_USDC = '0x036CbD53842c5426634e7929541eC2318f3dCF7e'
@@ -75,6 +76,23 @@ describe('buildUnwindCalls', () => {
   })
 })
 
+// Builds a real encoded `Swept(owner indexed, burned, exited, skipped)` log the same way the
+// deployed sweeper would emit it, so the decode path in signAndSubmitUnwind is exercised for
+// real rather than against a hand-shaped object.
+const OWNER_ADDR = `0x${'c'.repeat(40)}`
+function sweptLog({ burned, exited, skipped, address = BASE_EXIT_SWEEPER_ADDRESS }) {
+  const topics = encodeEventTopics({
+    abi: BASE_EXIT_SWEEPER_ABI,
+    eventName: 'Swept',
+    args: { owner: OWNER_ADDR },
+  })
+  const data = encodeAbiParameters(
+    [{ type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }],
+    [burned, exited, skipped]
+  )
+  return { address, topics, data }
+}
+
 describe('signAndSubmitUnwind', () => {
   const sentCallData = []
   const deps = {
@@ -86,12 +104,15 @@ describe('signAndSubmitUnwind', () => {
       }),
       waitForUserOperationReceipt: vi.fn(async () => ({
         success: true,
-        receipt: { transactionHash: '0xUNWINDTX' },
+        receipt: {
+          transactionHash: '0xUNWINDTX',
+          logs: [sweptLog({ burned: 5_500_000n, exited: 2n, skipped: 1n })],
+        },
       })),
     })),
   }
 
-  it('sends ONE owner-signed userOp containing the whole batch and returns its tx hash', async () => {
+  it('sends ONE owner-signed userOp containing the whole batch and returns its tx hash plus the decoded Swept outcome', async () => {
     sentCallData.length = 0
     const out = await signAndSubmitUnwind({
       ownerKernelAccount: { address: '0xOWNER' },
@@ -102,8 +123,37 @@ describe('signAndSubmitUnwind', () => {
       deps,
     })
     expect(out.unwindTxHash).toBe('0xUNWINDTX')
+    expect(out.burned).toBe(5_500_000n)
+    expect(out.exited).toBe(2n)
+    expect(out.skipped).toBe(1n)
     expect(sentCallData).toHaveLength(1)
     expect(sentCallData[0].encoded).toHaveLength(7)
+  })
+
+  it('falls back to null outcome fields (never throws) when the receipt has no decodable Swept log', async () => {
+    const noLogsDeps = {
+      makeGaslessClient: vi.fn(() => ({
+        account: { encodeCalls: vi.fn(async (calls) => ({ encoded: calls })) },
+        sendUserOperation: vi.fn(async () => 'userop-hash-3'),
+        waitForUserOperationReceipt: vi.fn(async () => ({
+          success: true,
+          receipt: { transactionHash: '0xUNWINDTX2', logs: [] },
+        })),
+      })),
+    }
+    const out = await signAndSubmitUnwind({
+      ownerKernelAccount: { address: '0xOWNER' },
+      publicClient: {},
+      positions,
+      stellarRecipient: STELLAR,
+      idleUsdc: 0n,
+      deps: noLogsDeps,
+    })
+    // A reporting miss must never turn a landed burn into a reported failure.
+    expect(out.unwindTxHash).toBe('0xUNWINDTX2')
+    expect(out.burned).toBeNull()
+    expect(out.exited).toBeNull()
+    expect(out.skipped).toBeNull()
   })
 
   it('throws if the userOp mines but does not succeed - never reports a fake success', async () => {

@@ -92,12 +92,21 @@ export default function Withdraw({
     setFailedAt(null)
     let stage = 'sign'
     try {
-      const { unwindTxHash } = await signAndSubmitUnwind({
+      const { unwindTxHash, burned, exited, skipped } = await signAndSubmitUnwind({
         ownerKernelAccount,
         publicClient,
         positions,
         stellarRecipient,
         idleUsdc,
+      })
+      // Outcome comes from the sweeper's own `Swept` event (decoded in signAndSubmitUnwind),
+      // NOT from the relayer job record: runUnwindJob (relayer/src/httpRouter.mjs) only ever
+      // stores { status, steps }, it has no burned/exited/skipped fields. exited/skipped are
+      // small pool counts, safe as Number; burned stays bigint for the USDC math below.
+      setOutcome({
+        burned,
+        exited: exited != null ? Number(exited) : null,
+        skipped: skipped != null ? Number(skipped) : null,
       })
       stage = 'relay'
       setStatus('relaying')
@@ -107,7 +116,6 @@ export default function Withdraw({
       setStatus('polling')
       const final = await pollFarmStatus({ jobId })
       if (final.status === 'done') {
-        setOutcome({ burned: final.burned, exited: final.exited, skipped: final.skipped })
         setStatus('done')
         onDone?.()
       } else if (final.status === 'error') {

@@ -9,7 +9,7 @@
 // Uses the OWNER's kernel account directly (sudo = passkeyValidator, no session plugin) —
 // the session key from wallet/mandate.js is never involved, because its policy never granted
 // withdraw (drain-proof by omission, not by a runtime check).
-import { encodeFunctionData } from 'viem'
+import { encodeFunctionData, parseEventLogs } from 'viem'
 import {
   ERC20_ABI,
   BASE_EXIT_SWEEPER_ADDRESS,
@@ -112,7 +112,7 @@ export function buildUnwindCalls({
  *   idleUsdc?: bigint,
  *   deps?: { makeGaslessClient?: Function },
  * }} p
- * @returns {Promise<{ unwindTxHash: string }>}
+ * @returns {Promise<{ unwindTxHash: string, burned: bigint|null, exited: bigint|null, skipped: bigint|null }>}
  */
 export async function signAndSubmitUnwind({
   ownerKernelAccount,
@@ -135,5 +135,28 @@ export async function signAndSubmitUnwind({
   const succeeded = receipt?.success === true || receipt?.receipt?.status === 'success'
   if (!succeeded) throw new Error(`unwind userOp did not succeed (userOpHash ${userOpHash})`)
 
-  return { unwindTxHash: receipt.receipt.transactionHash }
+  const unwindTxHash = receipt.receipt.transactionHash
+  // The final amount is not knowable before execution (interest accrues right up to the burn,
+  // see the file header), so it must come from the `Swept` event, never the pre-sign estimate.
+  // A decode miss must NOT turn a landed burn into a reported failure: the money already moved.
+  let burned = null
+  let exited = null
+  let skipped = null
+  try {
+    const sweptLogs = parseEventLogs({
+      abi: BASE_EXIT_SWEEPER_ABI,
+      logs: receipt.receipt.logs || [],
+      eventName: 'Swept',
+    })
+    const sweptLog =
+      sweptLogs.find((l) => l.address?.toLowerCase() === BASE_EXIT_SWEEPER_ADDRESS.toLowerCase()) ??
+      sweptLogs[0]
+    if (sweptLog) {
+      ;({ burned, exited, skipped } = sweptLog.args)
+    }
+  } catch {
+    // fall through with nulls - reporting failure, not execution failure
+  }
+
+  return { unwindTxHash, burned, exited, skipped }
 }

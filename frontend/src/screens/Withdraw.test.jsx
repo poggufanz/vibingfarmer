@@ -43,9 +43,18 @@ const baseProps = {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  signAndSubmitUnwind.mockResolvedValue({ unwindTxHash: '0xUNWIND' })
+  // burned/exited/skipped come from signAndSubmitUnwind (it decodes the sweeper's `Swept`
+  // event) - NOT from pollFarmStatus. The relayer's real job record (runUnwindJob in
+  // relayer/src/httpRouter.mjs) is only ever { status, steps }; it has no such fields, so the
+  // pollFarmStatus mock below is intentionally bare to match production shape.
+  signAndSubmitUnwind.mockResolvedValue({
+    unwindTxHash: '0xUNWIND',
+    burned: 5_500_000n,
+    exited: 2,
+    skipped: 0,
+  })
   postUnwind.mockResolvedValue({ jobId: 'job-1' })
-  pollFarmStatus.mockResolvedValue({ status: 'done', burned: 5_500_000n, exited: 2, skipped: 0 })
+  pollFarmStatus.mockResolvedValue({ status: 'done' })
 })
 
 afterEach(() => {
@@ -90,7 +99,15 @@ describe('Withdraw (Base full exit)', () => {
   })
 
   it('reports a partial exit honestly instead of claiming plain success', async () => {
-    pollFarmStatus.mockResolvedValue({ status: 'done', burned: 2_500_000n, exited: 1, skipped: 1 })
+    // Shape guard: skipped is driven ONLY through signAndSubmitUnwind's return. pollFarmStatus
+    // stays the bare relayer shape (see beforeEach) - if the partial banner ever starts reading
+    // from pollFarmStatus again, this test stops proving anything and the total is a lie again.
+    signAndSubmitUnwind.mockResolvedValue({
+      unwindTxHash: '0xUNWIND',
+      burned: 2_500_000n,
+      exited: 1,
+      skipped: 1,
+    })
     render(<Withdraw {...baseProps} />)
     fireEvent.click(screen.getByRole('button', { name: 'Withdraw all' }))
     await waitFor(() => expect(screen.getByTestId('base-withdraw-partial')).toBeTruthy())
