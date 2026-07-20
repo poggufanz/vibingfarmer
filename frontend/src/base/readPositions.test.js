@@ -1,6 +1,6 @@
 // frontend/src/base/readPositions.test.js
-import { describe, test, expect, vi } from 'vitest'
-import { readPositions } from './readPositions.js'
+import { describe, test, it, expect, vi } from 'vitest'
+import { readPositions, readIdleUsdc } from './readPositions.js'
 
 describe('readPositions', () => {
   test('reads balanceOf then convertToAssets per pool, applying the slippage tolerance', async () => {
@@ -69,5 +69,25 @@ describe('readPositions', () => {
     await expect(
       readPositions({ pools: [], account: '0xACCOUNT', publicClient: { readContract: vi.fn() } })
     ).rejects.toThrow(/at least one pool/)
+  })
+})
+
+describe('readIdleUsdc', () => {
+  it('returns the account USDC balance as a bigint', async () => {
+    const publicClient = { readContract: vi.fn(async () => 1_234_567n) }
+    const got = await readIdleUsdc({ account: '0xOWNER', publicClient })
+    expect(got).toBe(1_234_567n)
+    expect(publicClient.readContract).toHaveBeenCalledWith(
+      expect.objectContaining({ functionName: 'balanceOf', args: ['0xOWNER'] })
+    )
+  })
+
+  it('fails soft to 0n so a balance read can never block a withdraw', async () => {
+    const publicClient = {
+      readContract: vi.fn(async () => {
+        throw new Error('rpc down')
+      }),
+    }
+    expect(await readIdleUsdc({ account: '0xOWNER', publicClient })).toBe(0n)
   })
 })
