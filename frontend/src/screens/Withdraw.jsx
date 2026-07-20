@@ -60,6 +60,7 @@ export default function Withdraw({
   const [status, setStatus] = useState('idle') // idle | signing | relaying | polling | pending | done | error
   const [errorMessage, setErrorMessage] = useState(null)
   const [failedAt, setFailedAt] = useState(null)
+  const [jobId, setJobId] = useState(null)
   const confirmRef = useRef(null)
 
   const usdc = Number(totalAssetsForBurn ?? 0n) / 1e6
@@ -96,6 +97,7 @@ export default function Withdraw({
       stage = 'relay'
       setStatus('relaying')
       const { jobId } = await postUnwind({ unwindTxHash, stellarRecipient })
+      setJobId(jobId)
       stage = 'bridge'
       setStatus('polling')
       const final = await pollFarmStatus({ jobId })
@@ -126,6 +128,37 @@ export default function Withdraw({
     totalAssetsForBurn,
     onDone,
   ])
+
+  // 'pending' only means pollFarmStatus's ~2-minute window closed before the bridge finished —
+  // a standard-finality CCTP leg takes ~15-25 min. Keep re-polling slowly while the modal is
+  // open so the UI actually flips to done when the mint lands (live 2026-07-20: funds arrived,
+  // modal spun forever because nothing ever asked again).
+  useEffect(() => {
+    if (status !== 'pending' || !jobId) return
+    let cancelled = false
+    const t = setInterval(async () => {
+      try {
+        const last = await pollFarmStatus({ jobId, maxTries: 1 })
+        if (cancelled) return
+        if (last.status === 'done') {
+          setStatus('done')
+          onDone?.()
+        } else if (last.status === 'error') {
+          setFailedAt('bridge')
+          setStatus('error')
+          setErrorMessage(
+            `Relayer reported an error (job ${jobId}). The unwind is on Base; funds are recoverable.`
+          )
+        }
+      } catch {
+        // transient poll failure: keep waiting, next tick retries
+      }
+    }, 10_000)
+    return () => {
+      cancelled = true
+      clearInterval(t)
+    }
+  }, [status, jobId, onDone])
 
   const stageStates = STAGE_STATE[status] || {}
   const showStages = status !== 'idle'
