@@ -15,8 +15,14 @@ const BASE_USDC = '0x036CbD53842c5426634e7929541eC2318f3dCF7e'
 const BASE_TOKEN_MESSENGER_V2 = '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA'
 const STELLAR_CCTP_FORWARDER = 'CA66Q2WFBND6V4UEB7RD4SAXSVIWMD6RA4X3U32ELVFGXV5PJK4T4VSZ'
 const STELLAR_DOMAIN = 27
-const MIN_FINALITY_STANDARD = 2000
-const MAX_FEE = 0n
+// CCTP v2 FAST transfer (docs: cctp-finality-and-fees): threshold ≤1000 = attestation at
+// soft-confirmed level (seconds), ≥2000 = Base L1 finality (~15-20 min — what users sat
+// through on the first live unwind, 2026-07-20). Fast requires maxFee ≥ the corridor's fast
+// fee (0-14 bps); the ACTUAL fee is what gets deducted at mint, maxFee only caps it, and a
+// too-low maxFee silently degrades to standard — i.e. worst case equals the old behavior.
+// 1% cap ≫ any published fast fee, so no fees API round-trip needed at burn time.
+const MIN_FINALITY_FAST = 1000
+const MAX_FEE_BPS = 100n // 1% cap; actual charged fee is the corridor rate, not this
 const ZERO_BYTES32 = `0x${'00'.repeat(32)}` // valid empty bytes32 default (real calls pass the forwarder)
 
 const DEPOSIT_FOR_BURN_WITH_HOOK_ABI = [
@@ -110,8 +116,8 @@ export function buildUnwindCalls({
         forwarder32,
         BASE_USDC,
         forwarder32,
-        MAX_FEE,
-        MIN_FINALITY_STANDARD,
+        (totalAssetsForBurn * MAX_FEE_BPS) / 10000n,
+        MIN_FINALITY_FAST,
         `0x${Buffer.from(hookData).toString('hex')}`,
       ],
     }),
