@@ -111,6 +111,7 @@ const OpsConsole = lazy(() => import('./components/console/OpsConsole.jsx'))
 const Withdraw = lazy(() => import('./screens/Withdraw.jsx'))
 import NotificationCenter from './components/NotificationCenter.jsx'
 import { loadBasePositions } from './base/dashboardPositions.js'
+import { readIdleUsdc } from './base/readPositions.js'
 import HomePage from './components/HomePage.jsx'
 const LandingHero = lazy(() => import('./components/LandingHero.jsx'))
 const ExplorerPage = lazy(() => import('./components/ExplorerPage.jsx'))
@@ -1725,7 +1726,7 @@ const App = () => {
   // once the owner kernel account resolves. Dynamic import: keeps passkeyBridge.js (and the
   // ZeroDev/viem chain behind it) out of the eager bundle — mirrors orchestrator.js's
   // baseLeg.js gating (Task 8).
-  const handleBaseWithdrawClick = async (position) => {
+  const handleBaseWithdrawClick = async () => {
     setBaseWithdrawError(null)
     // The positions on screen belong to THIS account; the ceremony below is discoverable, and
     // a user with several look-alike passkeys can pick one that derives a different (empty)
@@ -1743,8 +1744,16 @@ const App = () => {
         )
         return
       }
+      // Full exit: every open Base position, not the row that was clicked. The
+      // sweeper reads live balances, so this list is only used for the pool
+      // addresses, the per-pool slippage floors, and the pre-signature summary.
+      const idleUsdc = await readIdleUsdc({
+        account: owner.address,
+        publicClient: owner.publicClient,
+      })
       setBaseWithdraw({
-        position,
+        positions: basePositions,
+        idleUsdc,
         ownerKernelAccount: owner.kernelAccount,
         publicClient: owner.publicClient,
       })
@@ -3329,12 +3338,11 @@ const App = () => {
       {baseWithdraw && (
         <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
           <Withdraw
-            poolName={baseWithdraw.position.poolName}
+            positions={baseWithdraw.positions}
+            idleUsdc={baseWithdraw.idleUsdc}
             ownerKernelAccount={baseWithdraw.ownerKernelAccount}
             publicClient={baseWithdraw.publicClient}
-            withdrawals={[baseWithdraw.position]}
             stellarRecipient={realAddress}
-            totalAssetsForBurn={baseWithdraw.position.minAssets}
             onClose={() => setBaseWithdraw(null)}
             onDone={() => {
               loadBasePositions().then((bp) => setBasePositions(bp))
