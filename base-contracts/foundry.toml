@@ -5,6 +5,7 @@ test = "test"
 script = "script"
 libs = ["lib"]
 solc = "0.8.23"
+via_ir = true
 
 [invariant]
 runs = 256
