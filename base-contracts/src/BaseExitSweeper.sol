@@ -39,7 +39,7 @@ contract BaseExitSweeper is ReentrancyGuard {
     /// iterations AND the closing checks — reverting the whole atomic exit,
     /// exactly what try/catch exists to prevent. The cap also bounds
     /// returndatacopy against an oversized return blob.
-    uint256 public constant REDEEM_GAS_CAP = 400_000;
+    uint256 public constant REDEEM_GAS_CAP = 1_200_000;
 
     event Swept(address indexed owner, uint256 burned, uint256 exited, uint256 skipped);
 
