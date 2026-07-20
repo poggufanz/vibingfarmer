@@ -203,6 +203,7 @@ export default function HomePage({
   onWithdrawSuccess,
   scopes = [],
   basePositions = [],
+  baseActivity = [],
   onBaseRecover,
   onBaseWithdraw,
   baseWithdrawError = null,
@@ -1123,6 +1124,41 @@ export default function HomePage({
                     {baseWithdrawError}
                   </p>
                 )}
+              </div>
+            )}
+
+            {/* On-chain Base activity (Blockscout) — the Stellar history reader can't see Base;
+                without this, bridge/deposit/withdraw events were invisible everywhere. */}
+            {baseActivity.length > 0 && (
+              <div style={section}>
+                <SectionHead title="Base activity" />
+                <div style={{ ...card }}>
+                  {baseActivity.map((h, i) => (
+                    <div
+                      key={h.id}
+                      style={{
+                        padding: '10px 18px',
+                        borderTop: i ? '1px solid var(--border)' : 'none',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 10,
+                        flexWrap: 'wrap',
+                        fontSize: 12,
+                      }}
+                    >
+                      <span style={{ color: 'var(--text-muted)' }}>
+                        {h.time ? new Date(h.time).toLocaleString() : ''}
+                      </span>
+                      <span className="tnum">
+                        {h.direction === 'in' ? '↓ in' : '↑ out'} {h.amount.toFixed(2)} {h.symbol}
+                      </span>
+                      <span className="mono" style={{ color: 'var(--text-muted)' }}>
+                        {h.hash.slice(0, 10)}…
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 
