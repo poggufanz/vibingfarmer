@@ -3325,30 +3325,21 @@ const App = () => {
       )}
 
       {baseWithdraw && (
-        <div className="modal-backdrop">
-          <div className="modal" role="dialog" aria-modal="true">
-            <div className="modal-eyebrow">Base withdraw</div>
-            <h3 className="modal-title">{baseWithdraw.position.poolName}</h3>
-            <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
-              <Withdraw
-                ownerKernelAccount={baseWithdraw.ownerKernelAccount}
-                publicClient={baseWithdraw.publicClient}
-                withdrawals={[baseWithdraw.position]}
-                stellarRecipient={realAddress}
-                totalAssetsForBurn={baseWithdraw.position.minAssets}
-                onDone={() => {
-                  loadBasePositions().then((bp) => setBasePositions(bp))
-                  refreshBaseActivity()
-                }}
-              />
-            </Suspense>
-            <div className="modal-actions">
-              <button className="btn btn-ghost" onClick={() => setBaseWithdraw(null)}>
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
+        <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
+          <Withdraw
+            poolName={baseWithdraw.position.poolName}
+            ownerKernelAccount={baseWithdraw.ownerKernelAccount}
+            publicClient={baseWithdraw.publicClient}
+            withdrawals={[baseWithdraw.position]}
+            stellarRecipient={realAddress}
+            totalAssetsForBurn={baseWithdraw.position.minAssets}
+            onClose={() => setBaseWithdraw(null)}
+            onDone={() => {
+              loadBasePositions().then((bp) => setBasePositions(bp))
+              refreshBaseActivity()
+            }}
+          />
+        </Suspense>
       )}
 
       {devMode && (
