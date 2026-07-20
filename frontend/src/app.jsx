@@ -650,6 +650,7 @@ const App = () => {
   // ownerKernelAccount, publicClient } after the one-tap ensureBaseOwner login ceremony.
   const [baseWithdraw, setBaseWithdraw] = useS(null)
   const [baseWithdrawError, setBaseWithdrawError] = useS(null)
+  const [baseActivity, setBaseActivity] = useS([])
 
   const [sbExtended, setSbExtended] = useS(() => localStorage.getItem('yv_sb_extended') === 'true')
   const [railCollapsed, setRailCollapsed] = useS(
@@ -1726,18 +1727,46 @@ const App = () => {
   // baseLeg.js gating (Task 8).
   const handleBaseWithdrawClick = async (position) => {
     setBaseWithdrawError(null)
+    // The positions on screen belong to THIS account; the ceremony below is discoverable, and
+    // a user with several look-alike passkeys can pick one that derives a different (empty)
+    // kernel — the withdraw userOp then reverts in simulation with an unreadable AA error, and
+    // ensureBaseOwner's persist clobbers the good marker with the wrong address (seen live
+    // 2026-07-20). Guard: mismatch → restore the marker + a retry-with-another-passkey message.
+    const expected = localStorage.getItem('vf_base_owner_address')
     try {
       const { ensureBaseOwner } = await import('./wallet/passkeyBridge.js')
       const owner = await ensureBaseOwner({ connectedAddress: realAddress })
+      if (expected && owner.address?.toLowerCase() !== expected.toLowerCase()) {
+        localStorage.setItem('vf_base_owner_address', expected)
+        setBaseWithdrawError(
+          `That passkey opens a different Base account (${owner.address.slice(0, 6)}…) than the one holding these positions (${expected.slice(0, 6)}…). Retry and pick another passkey.`
+        )
+        return
+      }
       setBaseWithdraw({
         position,
         ownerKernelAccount: owner.kernelAccount,
         publicClient: owner.publicClient,
       })
     } catch (err) {
+      if (expected) localStorage.setItem('vf_base_owner_address', expected)
       setBaseWithdrawError(err.message)
     }
   }
+
+  // On-chain Base activity (Blockscout). Refreshed on page load + after leg/recover/withdraw —
+  // deliberately NOT on the 15s poll tick (public indexer, rate limits). Fail-soft [].
+  const refreshBaseActivity = () => {
+    const account = localStorage.getItem('vf_base_owner_address')
+    if (!account) return
+    import('./base/baseHistory.js').then(({ fetchBaseHistory }) =>
+      fetchBaseHistory({ account }).then(setBaseActivity)
+    )
+  }
+  useE(() => {
+    refreshBaseActivity()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Cross-device recovery: the Base owner markers live in localStorage, but the passkey itself
   // is synced (phone / password manager) and login is discoverable — one tap on a NEW device
@@ -1752,6 +1781,7 @@ const App = () => {
       await ensureBaseOwner({ connectedAddress: realAddress, preferLogin: true })
       const bp = await loadBasePositions()
       setBasePositions(bp)
+      refreshBaseActivity()
       if (!bp.length) setBaseWithdrawError('Base account connected — no open positions found.')
     } catch (err) {
       setBaseWithdrawError(err.message)
@@ -2357,9 +2387,7 @@ const App = () => {
                   upd.status === 'completed' || upd.status === 'failed'
                     ? null
                     : upd.step || cur.activeStep,
-                steps: upd.step
-                  ? { ...(cur.steps || {}), [upd.step]: upd.stepStatus }
-                  : cur.steps,
+                steps: upd.step ? { ...(cur.steps || {}), [upd.step]: upd.stepStatus } : cur.steps,
                 hashes: upd.hash
                   ? { ...(cur.hashes || {}), [upd.step || 'swap']: upd.hash }
                   : cur.hashes,
@@ -2584,6 +2612,7 @@ const App = () => {
           if (summary.baseLeg.success) {
             // Don't wait for the 15s poll tick: surface the fresh Base positions now.
             loadBasePositions().then((bp) => setBasePositions(bp))
+            refreshBaseActivity()
           }
         }
       })
@@ -3122,6 +3151,7 @@ const App = () => {
                 basePositions={basePositions}
                 onBaseWithdraw={handleBaseWithdrawClick}
                 onBaseRecover={handleBaseRecover}
+                baseActivity={baseActivity}
                 baseWithdrawError={baseWithdrawError}
               />
             }
@@ -3306,6 +3336,10 @@ const App = () => {
                 withdrawals={[baseWithdraw.position]}
                 stellarRecipient={realAddress}
                 totalAssetsForBurn={baseWithdraw.position.minAssets}
+                onDone={() => {
+                  loadBasePositions().then((bp) => setBasePositions(bp))
+                  refreshBaseActivity()
+                }}
               />
             </Suspense>
             <div className="modal-actions">
