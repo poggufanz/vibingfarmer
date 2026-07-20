@@ -70,7 +70,12 @@ import {
 } from './stellar/vaultReads.js'
 import { grantMandate } from './stellar/lifeboat.js'
 import { signWithTimeout } from './stellar/agentSetup.js'
-import { resolveBaseAvailability, buildBaseLegContext } from './mergeFlowHelpers.js'
+import {
+  resolveBaseAvailability,
+  buildBaseLegContext,
+  applyBaseLegOutcome,
+  mapBaseLegEvent,
+} from './mergeFlowHelpers.js'
 import { evaluateExit } from './strategy/autoExit/engine.js'
 import { runAutonomousExit } from './agents/exitExecutor.js'
 import {
@@ -1734,6 +1739,25 @@ const App = () => {
     }
   }
 
+  // Cross-device recovery: the Base owner markers live in localStorage, but the passkey itself
+  // is synced (phone / password manager) and login is discoverable — one tap on a NEW device
+  // re-derives the SAME kernel account (passkeyBridge's two-way fallback), re-persists the
+  // markers, and the positions panel comes back. Without this, positions farmed on another
+  // laptop were invisible here with no code path to ever show them.
+  const handleBaseRecover = async () => {
+    if (!realAddress) return
+    setBaseWithdrawError(null)
+    try {
+      const { ensureBaseOwner } = await import('./wallet/passkeyBridge.js')
+      await ensureBaseOwner({ connectedAddress: realAddress })
+      const bp = await loadBasePositions()
+      setBasePositions(bp)
+      if (!bp.length) setBaseWithdrawError('Base account connected — no open positions found.')
+    } catch (err) {
+      setBaseWithdrawError(err.message)
+    }
+  }
+
   /* ----- STRATEGY (step 01) ----- */
   const handleSubmitPreference = () => {
     setStrategyPhase('thinking')
@@ -2212,16 +2236,7 @@ const App = () => {
       result: 'approved',
     })
 
-    // Pre-compute sessionId and build hex→designId map BEFORE orchestrator starts.
-    // Orchestrator uses makeAgentId(index, sessionId) — same function, same sessionId = same hex.
     const sessionId = `session-${Date.now()}`
-    const agentMap = {}
-    strategy.agents.forEach((a, i) => {
-      const hexId = makeAgentId(i, sessionId)
-      agentMap[hexId] = a.id // 'worker-1', 'worker-2', etc.
-    })
-    agentMapRef.current = agentMap
-
     const init = makeInitialExecState(strategy.agents)
     setExecMap(init)
 
@@ -2239,6 +2254,21 @@ const App = () => {
       setStage('permission') // stay on the approval card; do NOT dispatch
       return
     }
+    // Build hex→designId map to mirror the orchestrator's numbering EXACTLY: it calls
+    // makeAgentId(i, sessionId) over the STELLAR vaults of the DISPATCHED strategy only (base
+    // vaults settle as one leg, no per-agent hex id). The old map indexed every designed agent
+    // pre-eligibility, so one dropped or base vault ordered ahead of a stellar one shifted
+    // every hex id — painting worker events onto the wrong (even a Base) graph node.
+    const agentMap = {}
+    survivors
+      .filter((a) => a.vault.chain !== 'base')
+      .forEach((a, i) => {
+        agentMap[makeAgentId(i, sessionId)] = a.id // 'worker-1', 'worker-2', etc.
+      })
+    agentMapRef.current = agentMap
+    // Base vault design nodes: leg-level baseleg-*/farm-* events paint ALL of them (below).
+    const baseWorkerIds = survivors.filter((a) => a.vault.chain === 'base').map((a) => a.id)
+
     // dispatchSet ⊆ survivors: only survivors get a plan; allocations re-normalized to sum 1.
     // Each survivor carries a freshly-minted eligibility token (Enforcement B asserts it worker-side).
     // protocolSlug/verdictBySlug lookup keyed via slugFor — the SAME key computeBasket used to
@@ -2308,6 +2338,51 @@ const App = () => {
               { ...summary, agentId: data.agentId, revoked: false, authorized: data.authorized },
             ]
           })
+          return
+        }
+
+        // Base leg events are leg-level (no per-agent hex id) — paint them onto every Base
+        // vault design node so the graph shows the cross-chain lifecycle instead of dropping it.
+        if (evName.startsWith('baseleg-') || evName.startsWith('farm-')) {
+          const upd = mapBaseLegEvent(evName, data)
+          if (!upd || baseWorkerIds.length === 0) return
+          setExecMap((prev) => {
+            const next = { ...prev }
+            baseWorkerIds.forEach((bId) => {
+              const cur = next[bId] || makeInitialExecState([{ id: bId }])[bId]
+              next[bId] = {
+                ...cur,
+                status: upd.status || cur.status || 'running',
+                activeStep:
+                  upd.status === 'completed' || upd.status === 'failed'
+                    ? null
+                    : upd.step || cur.activeStep,
+                steps: upd.step
+                  ? { ...(cur.steps || {}), [upd.step]: upd.stepStatus }
+                  : cur.steps,
+                hashes: upd.hash
+                  ? { ...(cur.hashes || {}), [upd.step || 'swap']: upd.hash }
+                  : cur.hashes,
+                memory: [...(cur.memory || []), { ...upd.memory, t: nowT() }],
+                metrics:
+                  upd.status === 'completed' || upd.status === 'failed'
+                    ? {
+                        ...(cur.metrics || {}),
+                        completedAt: Date.now(),
+                        successRate: upd.status === 'completed' ? 1 : 0,
+                      }
+                    : cur.metrics || {},
+              }
+            })
+            return next
+          })
+          if (upd.log) {
+            addLog({
+              event: upd.log,
+              agent: baseWorkerIds[0],
+              meta: `${upd.memory.title} — ${upd.memory.meta}`,
+            })
+          }
           return
         }
 
@@ -2502,12 +2577,14 @@ const App = () => {
         deployedAgentsRef.current = addrs
         if (addrs.length) saveDeployedAgents(realAddress, addrs)
         if (summary.baseLeg) {
-          addLog({
-            event: summary.baseLeg.success ? 'OrchestratorPlanned' : 'AgentFailed',
-            meta: summary.baseLeg.success
-              ? `Cross-chain leg deposited on Base (job ${summary.baseLeg.jobId}).`
-              : `Cross-chain leg failed at ${summary.baseLeg.stage}: ${summary.baseLeg.error}`,
-          })
+          // Writes the dashboard's owner-address markers (backup for a wiped localStorage) and
+          // returns a log line that matches the job's real final status — see mergeFlowHelpers.
+          const outcome = applyBaseLegOutcome(summary.baseLeg)
+          if (outcome) addLog(outcome)
+          if (summary.baseLeg.success) {
+            // Don't wait for the 15s poll tick: surface the fresh Base positions now.
+            loadBasePositions().then((bp) => setBasePositions(bp))
+          }
         }
       })
       .catch((err) => {
@@ -3044,6 +3121,7 @@ const App = () => {
                 scopes={scopes}
                 basePositions={basePositions}
                 onBaseWithdraw={handleBaseWithdrawClick}
+                onBaseRecover={handleBaseRecover}
                 baseWithdrawError={baseWithdrawError}
               />
             }
