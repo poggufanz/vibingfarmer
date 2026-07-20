@@ -65,14 +65,29 @@ export function buildUnwindCalls({
   const hookData = buildForwarderHookData(stellarRecipient)
   assertHookData(hookData) // throws loudly on anything malformed — never silently proceeds
 
-  const withdrawCalls = withdrawals.map(({ pool, shares, minAssets }) => ({
-    to: YIELD_ROUTER_ADDRESS,
-    data: encodeFunctionData({
-      abi: YIELD_ROUTER_ABI,
-      functionName: 'withdraw',
-      args: [pool, shares, minAssets],
-    }),
-  }))
+  // The pool IS its ERC4626 share token, and YieldRouter.withdraw pulls the shares via
+  // transferFrom — so each withdraw must be preceded by shares.approve(router, shares).
+  // Proven live 2026-07-20: without it the sponsorship simulation reverts
+  // ERC20InsufficientAllowance(router, 0, shares). The deposit leg never hit this because its
+  // allowances are granted by the session-key mandate; this owner batch grants its own.
+  const withdrawCalls = withdrawals.flatMap(({ pool, shares, minAssets }) => [
+    {
+      to: pool,
+      data: encodeFunctionData({
+        abi: ERC20_ABI,
+        functionName: 'approve',
+        args: [YIELD_ROUTER_ADDRESS, shares],
+      }),
+    },
+    {
+      to: YIELD_ROUTER_ADDRESS,
+      data: encodeFunctionData({
+        abi: YIELD_ROUTER_ABI,
+        functionName: 'withdraw',
+        args: [pool, shares, minAssets],
+      }),
+    },
+  ])
 
   const approveCall = {
     to: BASE_USDC,
