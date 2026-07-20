@@ -1,7 +1,11 @@
 // frontend/src/mergeFlowHelpers.test.js — applyBaseLegOutcome: honest status lines + the
 // dashboard-marker backup write (loadBasePositions gates on these exact localStorage keys).
-import { describe, it, expect } from 'vitest'
-import { applyBaseLegOutcome, mapBaseLegEvent } from './mergeFlowHelpers.js'
+import { describe, it, expect, vi } from 'vitest'
+import {
+  applyBaseLegOutcome,
+  mapBaseLegEvent,
+  pollBaseLegUntilSettled,
+} from './mergeFlowHelpers.js'
 
 function fakeStorage(initial = {}) {
   const m = new Map(Object.entries(initial))
@@ -111,5 +115,34 @@ describe('mapBaseLegEvent', () => {
     expect(pending.status).toBeUndefined()
     expect(pending.memory.title).toContain('settling')
     expect(mapBaseLegEvent('orchestrator-step', {})).toBeNull()
+  })
+})
+
+describe('pollBaseLegUntilSettled', () => {
+  const noSleep = async () => {}
+
+  it('keeps polling past the dispatch window and returns the terminal status', async () => {
+    const seq = [{ status: 'pending' }, { status: 'pending' }, { status: 'done' }]
+    const pollOnce = vi.fn(async () => seq.shift())
+    const out = await pollBaseLegUntilSettled({ jobId: 'j1', pollOnce, sleep: noSleep })
+    expect(out).toBe('done')
+    expect(pollOnce).toHaveBeenCalledTimes(3)
+  })
+
+  it('survives transient poll failures and still settles', async () => {
+    const pollOnce = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('network'))
+      .mockResolvedValueOnce({ status: 'error' })
+    expect(await pollBaseLegUntilSettled({ jobId: 'j2', pollOnce, sleep: noSleep })).toBe('error')
+  })
+
+  it('gives up quietly (null) when the budget runs out, and no-ops without a jobId', async () => {
+    const pollOnce = vi.fn(async () => ({ status: 'pending' }))
+    expect(
+      await pollBaseLegUntilSettled({ jobId: 'j3', pollOnce, sleep: noSleep, maxTries: 3 })
+    ).toBeNull()
+    expect(pollOnce).toHaveBeenCalledTimes(3)
+    expect(await pollBaseLegUntilSettled({ pollOnce, sleep: noSleep })).toBeNull()
   })
 })
