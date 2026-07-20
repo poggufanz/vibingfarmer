@@ -1739,6 +1739,25 @@ const App = () => {
     }
   }
 
+  // Cross-device recovery: the Base owner markers live in localStorage, but the passkey itself
+  // is synced (phone / password manager) and login is discoverable — one tap on a NEW device
+  // re-derives the SAME kernel account (passkeyBridge's two-way fallback), re-persists the
+  // markers, and the positions panel comes back. Without this, positions farmed on another
+  // laptop were invisible here with no code path to ever show them.
+  const handleBaseRecover = async () => {
+    if (!realAddress) return
+    setBaseWithdrawError(null)
+    try {
+      const { ensureBaseOwner } = await import('./wallet/passkeyBridge.js')
+      await ensureBaseOwner({ connectedAddress: realAddress })
+      const bp = await loadBasePositions()
+      setBasePositions(bp)
+      if (!bp.length) setBaseWithdrawError('Base account connected — no open positions found.')
+    } catch (err) {
+      setBaseWithdrawError(err.message)
+    }
+  }
+
   /* ----- STRATEGY (step 01) ----- */
   const handleSubmitPreference = () => {
     setStrategyPhase('thinking')
@@ -3102,6 +3121,7 @@ const App = () => {
                 scopes={scopes}
                 basePositions={basePositions}
                 onBaseWithdraw={handleBaseWithdrawClick}
+                onBaseRecover={handleBaseRecover}
                 baseWithdrawError={baseWithdrawError}
               />
             }

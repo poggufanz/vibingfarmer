@@ -203,6 +203,7 @@ export default function HomePage({
   onWithdrawSuccess,
   scopes = [],
   basePositions = [],
+  onBaseRecover,
   onBaseWithdraw,
   baseWithdrawError = null,
 }) {
@@ -1099,6 +1100,24 @@ export default function HomePage({
                     </div>
                   ))}
                 </div>
+                {baseWithdrawError && (
+                  <p role="alert" style={{ color: 'var(--danger)', fontSize: 11, marginTop: 8 }}>
+                    {baseWithdrawError}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Cross-device recovery: markers are per-browser, the passkey is not — one
+                discoverable-login tap re-derives the same Base account and restores the panel. */}
+            {basePositions.length === 0 && onBaseRecover && (
+              <div style={{ ...section, marginTop: 4 }}>
+                <button className="pill-btn" style={pillBtn} onClick={onBaseRecover}>
+                  Recover Base positions
+                </button>
+                <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 10 }}>
+                  Farmed on Base from another device? One passkey tap restores them here.
+                </span>
                 {baseWithdrawError && (
                   <p role="alert" style={{ color: 'var(--danger)', fontSize: 11, marginTop: 8 }}>
                     {baseWithdrawError}

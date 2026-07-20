@@ -38,7 +38,25 @@ export async function ensureBaseOwner({ connectedAddress, deps = {} }) {
   const mode = stored ? 'login' : 'register'
   const passkeyName = stored?.passkeyName || `vibing-farmer-base-${connectedAddress.slice(0, 8)}`
 
-  const account = await createBaseSmartAccount({ passkeyName, mode })
+  // Two-way fallback — the OWNER_KEY record is a per-browser hint, not the truth. The truth is
+  // the passkey itself (synced/phone-held), and login is DISCOVERABLE: the same credential
+  // always derives the same kernel account, so both directions recover without any server-side
+  // record:
+  //   no record + register refused (credential already exists — new laptop, same wallet) → login
+  //   record present + login failed (credential gone — wiped authenticator, stale record) → register
+  // Deliberately swallows the first error only to try the one other mode; a double failure
+  // rethrows the ORIGINAL error so a user cancel reads as a cancel, not a mystery.
+  let account
+  try {
+    account = await createBaseSmartAccount({ passkeyName, mode })
+  } catch (err) {
+    const fallbackMode = mode === 'login' ? 'register' : 'login'
+    try {
+      account = await createBaseSmartAccount({ passkeyName, mode: fallbackMode })
+    } catch {
+      throw err
+    }
+  }
 
   const ownerMode = 'ceremony'
   localStorage.setItem(OWNER_KEY, JSON.stringify({ mode: ownerMode, passkeyName }))
