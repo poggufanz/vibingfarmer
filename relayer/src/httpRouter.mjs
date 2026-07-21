@@ -46,8 +46,9 @@ function errorMessage(err) {
  *   flow factory (constructs orchestrator + createFarmFlow); never persists the key it's given.
  * @param {(params: { unwindTxHash: string, stellarRecipient: string }) => Promise<{status:string, mintTxHash?:string}>} deps.relayUnwindMint
  * @param {Map<string, {status:string, steps:Array<object>}>} deps.jobs - jobId -> job record
- * @param {{get:Function, set:Function}} deps.mandates - serializedApproval -> sessionPrivateKey
- *   (process memory only; a Map or a TTL-evicting store — see mandateStore.mjs)
+ * @param {{get:Function, set:Function, status:Function}} deps.mandates - serializedApproval ->
+ *   sessionPrivateKey (process memory only; a TTL-evicting store — see mandateStore.mjs).
+ *   `status(key)` backs GET /mandate/valid and must never return the stored key itself.
  * @param {() => string} deps.genId
  * @param {boolean} [deps.sanitizeErrors=false] - when true, error job records (returned verbatim by
  *   GET /status) carry a generic message and the real error is logged server-side only. Off by
@@ -66,15 +67,36 @@ export function createRelayerRouter({ buildFarm, relayUnwindMint, jobs, mandates
       jobs.set(jobId, { status: 'error', steps: [{ step, status: 'error', message: errorMessage(err) }] });
     }
   }
+  // Durable mandate window: the client (baseLeg.js) requests a 7-day expiry so a repeat run can
+  // reuse the mandate with zero wallet ceremony; this cap just bounds how far out a client may
+  // push it (a compromised/buggy client asking for a 10-year key would otherwise be honored).
+  const MAX_MANDATE_WINDOW_SECONDS = 30 * 24 * 3600;
+
   function handleMandate(req, res) {
-    const { serializedApproval, sessionPrivateKey } = req.body || {};
+    const { serializedApproval, sessionPrivateKey, expiry } = req.body || {};
     if (!serializedApproval || !sessionPrivateKey) {
       return sendJson(res, 400, { error: 'serializedApproval and sessionPrivateKey are required' });
     }
+    const nowSeconds = Date.now() / 1000;
+    if (typeof expiry !== 'number' || expiry <= nowSeconds || expiry > nowSeconds + MAX_MANDATE_WINDOW_SECONDS) {
+      return sendJson(res, 400, {
+        error: 'expiry must be a unix-seconds timestamp in the future, at most 30 days out',
+      });
+    }
     // The key is sent exactly once and lives only in this in-memory map for the process
-    // lifetime — NEVER logged, NEVER echoed back.
-    mandates.set(serializedApproval, sessionPrivateKey);
+    // lifetime — NEVER logged, NEVER echoed back. expiry arrives in unix SECONDS; the store
+    // wants ms.
+    mandates.set(serializedApproval, sessionPrivateKey, expiry * 1000);
     return sendJson(res, 200, { ok: true });
+  }
+
+  // Lets the client check whether a previously-registered mandate is still reusable WITHOUT ever
+  // getting the session key back — the response is {valid, expiresAt} only.
+  function handleMandateValid(req, res) {
+    const approval = new URL(req.url, 'http://local').searchParams.get('approval');
+    if (!approval) return sendJson(res, 400, { error: 'approval query param is required' });
+    const { valid, expiresAt } = mandates.status(approval);
+    return sendJson(res, 200, { valid, expiresAt });
   }
 
   function parseAllocations(allocations) {
@@ -176,6 +198,7 @@ export function createRelayerRouter({ buildFarm, relayUnwindMint, jobs, mandates
     if (req.method === 'GET') {
       const statusMatch = path.match(/^\/status\/([^/]+)$/);
       if (statusMatch) return handleStatus(res, decodeURIComponent(statusMatch[1]));
+      if (path === '/mandate/valid') return handleMandateValid(req, res);
     }
 
     return sendJson(res, 404, { error: 'Not found' });

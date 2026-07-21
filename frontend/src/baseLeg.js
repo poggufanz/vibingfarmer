@@ -1,20 +1,39 @@
 // frontend/src/baseLeg.js
 // The Base leg of a mixed strategy, packaged as ONE settled unit for the orchestrator:
-// ensure owner (VF reuse | ceremony) → mandate (1h TTL) → register with relayer → burn (wallet
-// signs) → relay → deposits. Never throws — every failure resolves { success:false, stage, error }
-// so a Base failure can never abort the Stellar workers running beside it.
+// ensure owner (VF reuse | ceremony) → mandate (durable 7-day window, reused when the relayer
+// still honors it) → register with relayer → burn (wallet signs) → relay → deposits. Never
+// throws — every failure resolves { success:false, stage, error } so a Base failure can never
+// abort the Stellar workers running beside it.
 // sessionPrivateKey stays inside this function: handed to postMandate, then dropped (same rule
-// as CrossChainFarmFlow had).
+// as CrossChainFarmFlow had). Only NON-secret mandate metadata (serializedApproval,
+// sessionKeyAddress, kernelAddress, expiry) is ever persisted, in vf_base_mandate — see
+// readStoredMandate below and its localStorage.setItem counterpart in the ceremony branch.
 import { ensureBaseOwner as defaultEnsureBaseOwner } from './wallet/passkeyBridge.js'
 import { createMandate as defaultCreateMandate } from './wallet/mandate.js'
-import { postMandate as defaultPostMandate, quantizeAllocations } from './base/relayerClient.js'
+import {
+  postMandate as defaultPostMandate,
+  getMandateStatus as defaultGetMandateStatus,
+  quantizeAllocations,
+} from './base/relayerClient.js'
 import { runFarmFlow as defaultRunFarmFlow } from './crossChainFarm.js'
 import { burnViaWallet } from './stellar/burnViaWallet.js'
 import { deriveCctpTransferUnits } from './stellar/format.js'
 import { BASE_POOL_CATALOG } from './config.js'
 import { estimateMinShares as defaultEstimateMinShares } from './base/quotes.js'
+import { defaultMakePublicClient } from './wallet/passkeyBase.js'
 
-const MANDATE_TTL_SECONDS = 3600
+const MANDATE_WINDOW_SECONDS = 7 * 24 * 3600
+const MANDATE_STORAGE_KEY = 'vf_base_mandate'
+
+// A corrupt/tampered record must self-heal into a fresh ceremony, not crash resolution — same
+// self-healing JSON.parse style as wallet/passkeyBridge.js's OWNER_KEY read.
+function readStoredMandate() {
+  try {
+    return JSON.parse(localStorage.getItem(MANDATE_STORAGE_KEY) || 'null')
+  } catch {
+    return null
+  }
+}
 
 export async function executeBaseLeg({
   connectedAddress,
@@ -30,8 +49,10 @@ export async function executeBaseLeg({
     ensureBaseOwner = defaultEnsureBaseOwner,
     createMandate = defaultCreateMandate,
     postMandate = defaultPostMandate,
+    getMandateStatus = defaultGetMandateStatus,
     runFarmFlow = defaultRunFarmFlow,
     estimateMinShares = defaultEstimateMinShares,
+    makePublicClient = defaultMakePublicClient,
   } = deps || {}
 
   const safeEmit = (name, data) => {
@@ -45,7 +66,22 @@ export async function executeBaseLeg({
   let stage = 'owner'
   try {
     safeEmit('baseleg-owner', { status: 'pending' })
-    const owner = await ensureBaseOwner({ connectedAddress })
+    const storedMandate = readStoredMandate()
+    // Reuse check: only ask the relayer when there's something local worth checking. `&&`
+    // short-circuits, so a first-ever run never makes this call.
+    const reuse = !!storedMandate && (await getMandateStatus(storedMandate.serializedApproval)).valid
+
+    let owner
+    if (reuse) {
+      // Zero-ceremony repeat run: the relayer confirmed the stored mandate is still inside its
+      // window, so skip the passkey ceremony AND minting a fresh session key entirely.
+      // publicClient is a bare read-only RPC client (same one base/dashboardPositions.js uses,
+      // via passkeyBase.js's exported defaultMakePublicClient) — live minShares quoting needs
+      // chain reads, not wallet auth.
+      owner = { address: storedMandate.kernelAddress, publicClient: makePublicClient(), ownerMode: 'reused' }
+    } else {
+      owner = await ensureBaseOwner({ connectedAddress })
+    }
     safeEmit('baseleg-owner', {
       status: 'done',
       ownerMode: owner.ownerMode,
@@ -85,29 +121,58 @@ export async function executeBaseLeg({
       }))
     )
 
-    const mandate = await createMandate({
-      kernelAccount: owner.kernelAccount,
-      publicClient: owner.publicClient,
-      passkeyValidator: owner.passkeyValidator,
-      pools: quotedAllocations.map((a) => ({ pool: a.pool, cap: a.amountBaseUnits })),
-      expiry: Math.floor(Date.now() / 1000) + MANDATE_TTL_SECONDS,
-    })
-    await postMandate({
-      serializedApproval: mandate.serializedApproval,
-      sessionPrivateKey: mandate.sessionPrivateKey, // crosses the wire exactly once, then dropped
-    })
-    safeEmit('baseleg-mandate', {
-      status: 'done',
-      sessionKeyAddress: mandate.sessionKeyAddress,
-      expiry: mandate.expiry,
-    })
+    let serializedApproval
+    let sessionKeyAddress
+    if (reuse) {
+      // Stored metadata already proven valid by getMandateStatus above — nothing to mint or
+      // register, the relayer still holds the matching session key from the prior run.
+      serializedApproval = storedMandate.serializedApproval
+      sessionKeyAddress = storedMandate.sessionKeyAddress
+      safeEmit('baseleg-mandate', {
+        status: 'done',
+        sessionKeyAddress,
+        expiry: storedMandate.expiry,
+        reused: true,
+      })
+    } else {
+      const mandate = await createMandate({
+        kernelAccount: owner.kernelAccount,
+        publicClient: owner.publicClient,
+        passkeyValidator: owner.passkeyValidator,
+        pools: quotedAllocations.map((a) => ({ pool: a.pool, cap: a.amountBaseUnits })),
+        expiry: Math.floor(Date.now() / 1000) + MANDATE_WINDOW_SECONDS,
+      })
+      await postMandate({
+        serializedApproval: mandate.serializedApproval,
+        sessionPrivateKey: mandate.sessionPrivateKey, // crosses the wire exactly once, then dropped
+        expiry: mandate.expiry,
+      })
+      // NON-secret metadata only (binding constraint: NEVER the private key) so a later run can
+      // reuse this mandate via the reuse check above instead of repeating the ceremony.
+      localStorage.setItem(
+        MANDATE_STORAGE_KEY,
+        JSON.stringify({
+          serializedApproval: mandate.serializedApproval,
+          sessionKeyAddress: mandate.sessionKeyAddress,
+          kernelAddress: owner.address,
+          expiry: mandate.expiry,
+        })
+      )
+      serializedApproval = mandate.serializedApproval
+      sessionKeyAddress = mandate.sessionKeyAddress
+      safeEmit('baseleg-mandate', {
+        status: 'done',
+        sessionKeyAddress,
+        expiry: mandate.expiry,
+      })
+    }
 
     stage = 'farm'
     const result = await runFarmFlow({
       stellarWallet: { address: connectedAddress, signBurn: signTx },
       baseRecipientAddress: owner.address,
-      sessionKeyAddress: mandate.sessionKeyAddress,
-      serializedApproval: mandate.serializedApproval,
+      sessionKeyAddress,
+      serializedApproval,
       allocations: quotedAllocations,
       burnUnits7,
       onEvent,

@@ -190,13 +190,17 @@ export async function pollFarmStatus({
  * subsequent farm requests reference the mandate by `serializedApproval` alone, so the session
  * private key crosses the wire exactly one time per mandate, not once per farm dispatch. The
  * relayer stores it in-memory keyed by `serializedApproval` (see relayer/src/httpRouter.mjs).
+ * `expiry` (unix seconds) sets how long the relayer will honor it — baseLeg.js requests a 7-day
+ * window (MANDATE_WINDOW_SECONDS) so a repeat run can reuse it via getMandateStatus below instead
+ * of repeating the wallet ceremony every time.
  * Never log `sessionPrivateKey` — this function only ever passes it through to the request body.
- * @param {{ serializedApproval: string, sessionPrivateKey: string, baseUrl?: string, deps?: { fetchImpl?: Function } }} p
+ * @param {{ serializedApproval: string, sessionPrivateKey: string, expiry: number, baseUrl?: string, deps?: { fetchImpl?: Function } }} p
  * @returns {Promise<{ ok: boolean }>}
  */
 export async function postMandate({
   serializedApproval,
   sessionPrivateKey,
+  expiry,
   baseUrl = DEFAULT_BASE_URL,
   deps = {},
 }) {
@@ -204,9 +208,24 @@ export async function postMandate({
   const res = await fetchImpl(`${baseUrl}/mandate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ serializedApproval, sessionPrivateKey }),
+    body: JSON.stringify({ serializedApproval, sessionPrivateKey, expiry }),
   })
   if (!res.ok) throw new Error(`mandate registration failed (${res.status})`)
+  return res.json()
+}
+
+/**
+ * Check whether a previously-registered mandate is still reusable, WITHOUT ever getting the
+ * session key back — the relayer's GET /mandate/valid only ever answers {valid, expiresAt}. Lets
+ * baseLeg.js skip the owner ceremony + a fresh mandate mint on a repeat run.
+ * @param {string} serializedApproval
+ * @param {{ baseUrl?: string, deps?: { fetchImpl?: Function } }} [p]
+ * @returns {Promise<{ valid: boolean, expiresAt?: number }>}
+ */
+export async function getMandateStatus(serializedApproval, { baseUrl = DEFAULT_BASE_URL, deps = {} } = {}) {
+  const { fetchImpl = fetch } = deps
+  const res = await fetchImpl(`${baseUrl}/mandate/valid?approval=${encodeURIComponent(serializedApproval)}`)
+  if (!res.ok) throw new Error(`mandate status check failed (${res.status})`)
   return res.json()
 }
 

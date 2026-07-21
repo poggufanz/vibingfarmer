@@ -1,5 +1,21 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { executeBaseLeg } from './baseLeg.js'
+
+// Repo pattern (mirrors wallet/passkeyBridge.test.js): vitest's default environment here is
+// 'node', which has no global localStorage. Stub it with a plain object-backed fake.
+const store = {}
+beforeEach(() => {
+  for (const k in store) delete store[k]
+  globalThis.localStorage = {
+    getItem: (k) => store[k] ?? null,
+    setItem: (k, v) => {
+      store[k] = v
+    },
+    removeItem: (k) => {
+      delete store[k]
+    },
+  }
+})
 
 const okDeps = () => ({
   ensureBaseOwner: vi.fn().mockResolvedValue({
@@ -16,6 +32,10 @@ const okDeps = () => ({
     expiry: 9999999999,
   }),
   postMandate: vi.fn().mockResolvedValue({ ok: true }),
+  // No stored mandate in most tests below -> readStoredMandate() short-circuits before this is
+  // ever called, but every dep is stubbed so nothing accidentally reaches a real fetch.
+  getMandateStatus: vi.fn().mockResolvedValue({ valid: false }),
+  makePublicClient: vi.fn(() => ({})),
   runFarmFlow: vi.fn().mockResolvedValue({ burnHash: 'BURN', jobId: 'job-1', finalStatus: 'done' }),
   estimateMinShares: vi.fn(async () => 98505000n),
 })
@@ -118,5 +138,98 @@ describe('executeBaseLeg', () => {
     expect(deps.createMandate).not.toHaveBeenCalled()
     expect(deps.postMandate).not.toHaveBeenCalled()
     expect(deps.runFarmFlow).not.toHaveBeenCalled()
+  })
+
+  it('ceremony run requests a 7-day mandate window, posts expiry through, and writes vf_base_mandate with NO private key', async () => {
+    const deps = okDeps()
+    const before = Math.floor(Date.now() / 1000)
+    await executeBaseLeg({
+      connectedAddress: 'GUSER',
+      signTx: vi.fn(),
+      baseVaults,
+      totalAmount: 100,
+      onEvent: vi.fn(),
+      deps,
+    })
+
+    // createMandate is asked for a 7-day window (MANDATE_WINDOW_SECONDS), not the old 1-hour TTL.
+    const createArgs = deps.createMandate.mock.calls[0][0]
+    expect(createArgs.expiry).toBeGreaterThanOrEqual(before + 7 * 24 * 3600)
+    expect(createArgs.expiry).toBeLessThanOrEqual(before + 7 * 24 * 3600 + 5) // runtime slack
+
+    // postMandate forwards the mandate's own (mocked) expiry through to the relayer.
+    expect(deps.postMandate).toHaveBeenCalledWith(expect.objectContaining({ expiry: 9999999999 }))
+
+    const stored = JSON.parse(localStorage.getItem('vf_base_mandate'))
+    expect(stored).toEqual({
+      serializedApproval: 'APPROVAL',
+      sessionKeyAddress: '0xSESSION',
+      kernelAddress: '0xOWNER',
+      expiry: 9999999999,
+    })
+    // Binding constraint: the persisted record must never contain the session private key.
+    expect(localStorage.getItem('vf_base_mandate')).not.toContain('0xPRIV')
+  })
+
+  it('reuse: a valid stored mandate skips ensureBaseOwner + createMandate + postMandate entirely (zero ceremony)', async () => {
+    const deps = okDeps()
+    deps.getMandateStatus = vi.fn().mockResolvedValue({ valid: true, expiresAt: 9999999999000 })
+    localStorage.setItem(
+      'vf_base_mandate',
+      JSON.stringify({
+        serializedApproval: 'STORED-APPROVAL',
+        sessionKeyAddress: '0xSTOREDSESSION',
+        kernelAddress: '0xSTOREDOWNER',
+        expiry: 9999999999,
+      })
+    )
+
+    const out = await executeBaseLeg({
+      connectedAddress: 'GUSER',
+      signTx: vi.fn(),
+      baseVaults,
+      totalAmount: 100,
+      onEvent: vi.fn(),
+      deps,
+    })
+
+    expect(deps.ensureBaseOwner).not.toHaveBeenCalled()
+    expect(deps.createMandate).not.toHaveBeenCalled()
+    expect(deps.postMandate).not.toHaveBeenCalled()
+    expect(deps.getMandateStatus).toHaveBeenCalledWith('STORED-APPROVAL')
+    expect(out).toMatchObject({ success: true, baseAccount: '0xSTOREDOWNER' })
+
+    const farmArgs = deps.runFarmFlow.mock.calls[0][0]
+    expect(farmArgs.serializedApproval).toBe('STORED-APPROVAL')
+    expect(farmArgs.sessionKeyAddress).toBe('0xSTOREDSESSION')
+    expect(farmArgs.baseRecipientAddress).toBe('0xSTOREDOWNER')
+  })
+
+  it('a stored mandate the relayer reports invalid falls back to the full ceremony', async () => {
+    const deps = okDeps()
+    deps.getMandateStatus = vi.fn().mockResolvedValue({ valid: false })
+    localStorage.setItem(
+      'vf_base_mandate',
+      JSON.stringify({
+        serializedApproval: 'STALE-APPROVAL',
+        sessionKeyAddress: '0xSTALESESSION',
+        kernelAddress: '0xSTALEOWNER',
+        expiry: 1,
+      })
+    )
+
+    const out = await executeBaseLeg({
+      connectedAddress: 'GUSER',
+      signTx: vi.fn(),
+      baseVaults,
+      totalAmount: 100,
+      onEvent: vi.fn(),
+      deps,
+    })
+
+    expect(deps.ensureBaseOwner).toHaveBeenCalledTimes(1)
+    expect(deps.createMandate).toHaveBeenCalledTimes(1)
+    expect(deps.postMandate).toHaveBeenCalledTimes(1)
+    expect(out).toMatchObject({ success: true, baseAccount: '0xOWNER' }) // fresh ceremony owner, not the stale one
   })
 })
