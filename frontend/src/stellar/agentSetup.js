@@ -126,7 +126,8 @@ async function ensureUserTrustline(owner) {
  * Deploy a fresh agent_account for THIS run's session key (Option B: fresh agent per run).
  * create-from-wasm-hash (the wasm is already uploaded on-chain — no upload step); the
  * constructor pins `sessionKey.rawPublicKey` as the account's signer and self-approves
- * scope.vault to pull up to `cap` of scope.token. User-signed AND user-paid: the relay only
+ * scope.target (agent_account v3; was scope.vault pre-bridge) to pull up to `cap` of
+ * scope.token. User-signed AND user-paid: the relay only
  * fee-bumps vault-deposit invokes (server allowlist, fail-closed), so a deploy could never go
  * through it. period_start 0 → enforce()'s rolling reset starts the window on first deposit.
  * @param {{ owner:string, sessionKey:{rawPublicKey:Uint8Array}, cap:bigint|number,

@@ -127,7 +127,10 @@ export async function rehydrateScopes({
     rows.push({
       ...toSummary({
         agent,
-        vault: scope.vault,
+        // agent_account v3 renamed AgentScope.vault -> target; both generations are live on
+        // testnet, so scope_of() may decode either shape - fall back to keep the row's `vault`
+        // field (what pickVaultAgents/withdraw filter by) populated for both.
+        vault: scope.target ?? scope.vault,
         token: scope.token,
         capPerPeriod: BigInt(scope.cap_per_period ?? 0),
         periodDuration: Number(scope.period_duration),

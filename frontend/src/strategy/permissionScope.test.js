@@ -39,4 +39,12 @@ describe('permissionScope single source', () => {
   it('refuses to derive args from an unapproved scope', () => {
     expect(() => toAuthorizeArgs({ ...scope, approvedByUser: false })).toThrow()
   })
+
+  it('resolves vault from a target-shaped scope (agent_account v3) via fallback', () => {
+    // AgentScope renamed vault -> target on-chain; both generations are live on testnet, so a
+    // caller may hand this module a scope carrying only `target`.
+    const v3Scope = { ...scope, vault: undefined, target: '0xTargetVault' }
+    expect(toAuthorizeArgs(v3Scope)[1]).toBe('0xTargetVault')
+    expect(toSummary(v3Scope).vault).toBe('0xTargetVault')
+  })
 })
