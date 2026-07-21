@@ -22,8 +22,8 @@ const APPROVE_ALLOWANCE_HEADROOM = 10n // approve 10x the burn amount, mirrors r
 const APPROVE_EXPIRY_LEDGER_HEADROOM = 100_000 // ~6 days at 5s/ledger
 
 const FRIENDBOT = 'https://friendbot.stellar.org'
-// Exported: burnViaWallet.js (Task 6) reuses this zero destination_caller for its own
-// deposit_for_burn call instead of re-declaring the same 32-byte zero buffer.
+// Exported: agentBurn.js and orchestrator.js reuse this zero destination_caller/mint_recipient
+// filler instead of re-declaring the same 32-byte zero buffer.
 export const ZERO32 = new Uint8Array(32)
 
 /**

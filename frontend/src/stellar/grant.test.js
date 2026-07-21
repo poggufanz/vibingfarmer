@@ -216,6 +216,37 @@ describe('buildGrantTx', () => {
     expect((tx.operations[0].auth || []).length).toBe(0)
   })
 
+  it('names bridgeAgentAddress when the LAST submitted agent is a Bridge-kind init', async () => {
+    const server = fakeServer({ latest: 1000, retval: agentsRetval([AGENT_1, AGENT_2]) })
+    const bridgeInit = {
+      ...sampleInits[0],
+      kind: AGENT_KIND_BRIDGE,
+      mintRecipient: new Uint8Array(32).fill(5),
+      destinationDomain: 6,
+    }
+    const { agentAddresses, bridgeAgentAddress } = await buildGrantTx({
+      owner: OWNER,
+      budgets: sampleBudgets,
+      durationSeconds: 60,
+      agentInits: [sampleInits[0], bridgeInit],
+      server,
+    })
+    expect(agentAddresses).toEqual([AGENT_1, AGENT_2])
+    expect(bridgeAgentAddress).toBe(AGENT_2) // last deployed agent
+  })
+
+  it('bridgeAgentAddress is null when no submitted agent is Bridge-kind (additive: existing callers unaffected)', async () => {
+    const server = fakeServer({ latest: 1000, retval: agentsRetval([AGENT_1, AGENT_2]) })
+    const { bridgeAgentAddress } = await buildGrantTx({
+      owner: OWNER,
+      budgets: sampleBudgets,
+      durationSeconds: 60,
+      agentInits: sampleInits, // both AGENT_KIND_DEPOSIT
+      server,
+    })
+    expect(bridgeAgentAddress).toBeNull()
+  })
+
   it('rejects an empty agent list and a missing router', async () => {
     const server = fakeServer({ latest: 1, retval: agentsRetval([]) })
     await expect(
@@ -280,6 +311,21 @@ describe('submitGrant - a single signature', () => {
 
     expect(sign).toHaveBeenCalledTimes(1)
     expect(out).toMatchObject({ hash: 'HDIRECT', status: 'SUCCESS', agentAddresses: [AGENT_1] })
+  })
+
+  it('propagates bridgeAgentAddress through the relayed result', async () => {
+    const server = fakeServer({ latest: 1000, retval: agentsRetval([AGENT_1, AGENT_2]) })
+    submitViaRelayMock.mockResolvedValue({ hash: 'HREL', status: 'SUCCESS', relayer: 'GR' })
+    const bridgeInit = { ...sampleInits[0], kind: AGENT_KIND_BRIDGE }
+    const out = await submitGrant({
+      owner: OWNER,
+      budgets: sampleBudgets,
+      durationSeconds: 3600,
+      agentInits: [sampleInits[0], bridgeInit],
+      server,
+      sign: async (x) => x,
+    })
+    expect(out.bridgeAgentAddress).toBe(AGENT_2)
   })
 
   it('throws when the relay reports a non-SUCCESS status', async () => {

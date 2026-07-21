@@ -14,6 +14,8 @@ vi.mock('./stellar/grant.js', () => ({
   submitGrant: (...a) => submitGrantMock(...a),
   runAgentPull: (...a) => runAgentPullMock(...a),
   readAllowance: (...a) => readAllowanceMock(...a),
+  AGENT_KIND_DEPOSIT: 0,
+  AGENT_KIND_BRIDGE: 1,
 }))
 
 // Legacy setup helpers must NEVER be called on the router path.
@@ -83,6 +85,7 @@ vi.mock('./worker.js', () => ({
 }))
 
 import { OrchestratorAgent } from './orchestrator.js'
+import { ZERO32 } from './stellar/cctpBurn.js'
 
 const strategy = {
   vaults: [
@@ -130,11 +133,25 @@ describe('orchestrator router path - first run (a single signature)', () => {
 
     // ONE grant for all three agents — the single wallet signature.
     expect(submitGrantMock).toHaveBeenCalledTimes(1)
-    expect(submitGrantMock.mock.calls[0][0].agentInits).toHaveLength(3)
-    // Budget defaults to the run total; caps are the per-agent amounts.
-    expect(submitGrantMock.mock.calls[0][0].budgetBaseUnits).toBe(TOTAL_UNITS)
-    const caps = submitGrantMock.mock.calls[0][0].agentInits.map((a) => a.cap)
-    expect(caps).toEqual([40_0000000n, 40_0000000n, 20_0000000n])
+    const grantArgs = submitGrantMock.mock.calls[0][0]
+    expect(grantArgs.agentInits).toHaveLength(3)
+    // v2 shape: budgets is an array of {budget, token} (single farm-token entry here); budget
+    // defaults to the run total, caps are the per-agent amounts. Every deposit-kind AgentInit
+    // field is asserted so a future grantFreshAgents drift (wrong kind/target/token) goes red here
+    // instead of silently building a tx the router would reject.
+    expect(grantArgs.budgets).toEqual([{ budget: TOTAL_UNITS, token: 'CTOKEN' }])
+    expect(grantArgs.agentInits).toEqual([
+      expect.objectContaining({
+        cap: 40_0000000n,
+        token: 'CTOKEN',
+        target: 'CACTIVEVAULT',
+        kind: 0,
+        mintRecipient: ZERO32,
+        destinationDomain: 0,
+      }),
+      expect.objectContaining({ cap: 40_0000000n, kind: 0, target: 'CACTIVEVAULT' }),
+      expect.objectContaining({ cap: 20_0000000n, kind: 0, target: 'CACTIVEVAULT' }),
+    ])
 
     // Funding is a relayed pull per worker — NOT a legacy deploy/fund signature.
     expect(runAgentPullMock).toHaveBeenCalledTimes(3)
@@ -174,7 +191,9 @@ describe('orchestrator router path - first run (a single signature)', () => {
       grantBudgetUnits: 500_0000000n, // 5x total
     })
     await orch.dispatch(strategy, 100)
-    expect(submitGrantMock.mock.calls[0][0].budgetBaseUnits).toBe(500_0000000n)
+    expect(submitGrantMock.mock.calls[0][0].budgets).toEqual([
+      { budget: 500_0000000n, token: 'CTOKEN' },
+    ])
   })
 })
 

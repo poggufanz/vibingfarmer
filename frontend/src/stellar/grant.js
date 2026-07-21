@@ -111,7 +111,8 @@ function randomSalt() {
  *          cap:bigint, token:string, target:string, kind:number,
  *          mintRecipient:Uint8Array|string, destinationDomain:number, periodDuration:number,
  *          expiry:number}>, router?:string, server?:object}} p
- * @returns {Promise<{tx:object, xdr:string, agentAddresses:string[], expiryLedger:number}>}
+ * @returns {Promise<{tx:object, xdr:string, agentAddresses:string[], expiryLedger:number,
+ *          bridgeAgentAddress:string|null}>}
  */
 export async function buildGrantTx({
   owner,
@@ -172,13 +173,26 @@ export async function buildGrantTx({
   if (sim.error || !sim.result)
     throw new Error(`Grant simulation failed: ${sim.error || 'no result'}`)
   const agentAddresses = fromScVal(sim.result.retval)
+  // Additive: when the LAST submitted agent is a Bridge-kind init, name its deployed address
+  // explicitly — callers that folded a bridge agent onto the end of their `agents` array (the
+  // funding_router deploy order mirrors input order) get it without re-deriving which index it was.
+  // null whenever the grant deployed deposit-only agents, so existing callers see no change.
+  const lastInit = agentInits[agentInits.length - 1]
+  const bridgeAgentAddress =
+    lastInit?.kind === AGENT_KIND_BRIDGE ? agentAddresses[agentAddresses.length - 1] : null
 
   // …then prepare (simulate + assemble, sets the resource fee). We do NOT re-prepare after signing:
   // the owner's tx-envelope signature covers footprint + resources, so a post-sign re-prepare would
   // invalidate it. (The re-prepare-after-sign trick is only for the agent ed25519 auth-entry path,
   // whose signature excludes the footprint — see buildAgentPull below.)
   const tx = await s.prepareTransaction(raw)
-  return { tx, xdr: tx.toEnvelope().toXDR('base64'), agentAddresses, expiryLedger }
+  return {
+    tx,
+    xdr: tx.toEnvelope().toXDR('base64'),
+    agentAddresses,
+    expiryLedger,
+    bridgeAgentAddress,
+  }
 }
 
 /**
@@ -188,7 +202,8 @@ export async function buildGrantTx({
  * @param {{owner:string, budgets:Array<{budget:bigint|number, token:string}>,
  *          durationSeconds:number, agentInits:Array, router?:string, server?:object,
  *          sign?:Function}} p
- * @returns {Promise<{hash:string, status:string, relayer?:string, agentAddresses:string[], expiryLedger:number}>}
+ * @returns {Promise<{hash:string, status:string, relayer?:string, agentAddresses:string[],
+ *          expiryLedger:number, bridgeAgentAddress:string|null}>}
  */
 export async function submitGrant({
   owner,
@@ -217,6 +232,7 @@ export async function submitGrant({
       relayer: relayed.relayer,
       agentAddresses: built.agentAddresses,
       expiryLedger: built.expiryLedger,
+      bridgeAgentAddress: built.bridgeAgentAddress,
     }
   }
   // Relay off → direct user-paid submit.
@@ -227,6 +243,7 @@ export async function submitGrant({
     status: res.status,
     agentAddresses: built.agentAddresses,
     expiryLedger: built.expiryLedger,
+    bridgeAgentAddress: built.bridgeAgentAddress,
   }
 }
 

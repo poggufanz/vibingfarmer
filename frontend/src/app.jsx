@@ -72,11 +72,18 @@ import { grantMandate } from './stellar/lifeboat.js'
 import { signWithTimeout } from './stellar/agentSetup.js'
 import {
   resolveBaseAvailability,
+  checkStoredBaseMandate,
+  checkCircleUsdcFunding,
+  needsBaseMandateSetup,
+  setupBaseMandate,
   buildBaseLegContext,
   applyBaseLegOutcome,
   mapBaseLegEvent,
   pollBaseLegUntilSettled,
 } from './mergeFlowHelpers.js'
+import { getMandateStatus } from './base/relayerClient.js'
+import { readTokenBalance } from './stellar/agentDeposit.js'
+import { STELLAR_USDC_SAC } from './stellar/cctpBurn.js'
 import { evaluateExit } from './strategy/autoExit/engine.js'
 import { runAutonomousExit } from './agents/exitExecutor.js'
 import {
@@ -452,6 +459,11 @@ const App = () => {
   const [strategyAttestation, setStrategyAttestation] = useS(null)
   const [attesting, setAttesting] = useS(false)
   const [skillSource, setSkillSource] = useS('default')
+  // Grant-covers-burn design §4/§5: mandate setup is its OWN 1-tap ceremony, outside a run. This
+  // affordance shows only when the relayer is healthy but no valid mandate is stored yet.
+  const [needsBaseMandate, setNeedsBaseMandate] = useS(false)
+  const [settingUpBaseMandate, setSettingUpBaseMandate] = useS(false)
+  const [baseMandateError, setBaseMandateError] = useS(null)
   const [marketLive, setMarketLive] = useS(null) // Tavily live market context used? null until first generation
   const [vaultLive, setVaultLive] = useS(null) // DeFiLlama live vault data used? null until first generation
   const [skillDrawerOpen, setSkillDrawerOpen] = useS(false)
@@ -1783,6 +1795,24 @@ const App = () => {
     }
   }
 
+  // 1-tap Base activation (grant-covers-burn design §4/§5) — a SETUP moment, never something a
+  // run performs. On success, re-runs the same gate the affordance itself is driven by, so a
+  // silently-failed relayer registration cannot leave a stale "activated" state.
+  const handleSetupBaseMandate = async () => {
+    if (!realAddress) return
+    setSettingUpBaseMandate(true)
+    setBaseMandateError(null)
+    try {
+      await setupBaseMandate({ connectedAddress: realAddress })
+      const mandateOk = await checkStoredBaseMandate({ getMandateStatus })()
+      setNeedsBaseMandate(needsBaseMandateSetup({ healthy: true, mandateOk }))
+    } catch (e) {
+      setBaseMandateError(e.message)
+    } finally {
+      setSettingUpBaseMandate(false)
+    }
+  }
+
   /* ----- STRATEGY (step 01) ----- */
   const handleSubmitPreference = () => {
     setStrategyPhase('thinking')
@@ -1838,8 +1868,30 @@ const App = () => {
         // Not awaited here — the promise is handed to generateStrategy, which awaits it AFTER its
         // own DAG fetch so the ~3s relayer probe overlaps that network wait instead of serializing
         // before it (perf: overlap relayer health probe with strategy generation).
+        // Independent, narrower probe (health + mandate only) driving the "Activate Base"
+        // affordance — a relayer outage or missing funding are not fixed by a mandate tap, so
+        // those states never show the button. Fire-and-forget: never blocks strategy generation.
+        Promise.all([
+          checkRelayerHealth({ signal: ctrl.signal }),
+          checkStoredBaseMandate({ getMandateStatus })(),
+        ])
+          .then(([healthy, mandateOk]) => {
+            if (!cancelled) setNeedsBaseMandate(needsBaseMandateSetup({ healthy, mandateOk }))
+          })
+          .catch(() => {
+            if (!cancelled) setNeedsBaseMandate(false)
+          })
+        // Fail-closed preflight beyond bare relayer reachability: a stored-but-invalid Base
+        // mandate, or a connected wallet with no Circle USDC to burn, both quietly drop Base from
+        // the catalog rather than surface an error the user can't act on mid strategy-generation.
         const { baseAvailable } = resolveBaseAvailability({
           checkHealth: () => checkRelayerHealth({ signal: ctrl.signal }),
+          checkMandate: checkStoredBaseMandate({ getMandateStatus }),
+          checkFunding: checkCircleUsdcFunding({
+            address: realAddress || null,
+            readTokenBalance,
+            token: STELLAR_USDC_SAC,
+          }),
         })
         const veniceResult = await generateStrategy({
           amount: Number(amount),
@@ -2308,7 +2360,9 @@ const App = () => {
             status: upd.status || cur.status || 'running',
             activeStep: terminal ? null : upd.step || cur.activeStep,
             steps: upd.step ? { ...(cur.steps || {}), [upd.step]: upd.stepStatus } : cur.steps,
-            hashes: upd.hash ? { ...(cur.hashes || {}), [upd.step || 'swap']: upd.hash } : cur.hashes,
+            hashes: upd.hash
+              ? { ...(cur.hashes || {}), [upd.step || 'swap']: upd.hash }
+              : cur.hashes,
             memory: [...(cur.memory || []), { ...upd.memory, t: nowT() }],
             metrics: terminal
               ? {
@@ -2941,21 +2995,40 @@ const App = () => {
         if (strategyPhase === 'thinking')
           return <ThinkingCard phase={thinkingPhase} times={thinkTimes} />
         return (
-          <StrategyCard
-            strategy={strategy}
-            skillSource={skillSource}
-            onProceed={handleAcceptStrategy}
-            onRegenerate={handleRegenerate}
-            strategyHash={rawStrategy?.strategyHash}
-            attestation={strategyAttestation}
-            attesting={attesting}
-            simulation={simulation}
-            council={debateResult || council}
-            onCouncilRetry={handleRunCouncil}
-            onRunCouncil={handleRunCouncil}
-            debateRunning={debateRunning}
-            showRunCouncil={!debateResult}
-          />
+          <>
+            {needsBaseMandate && (
+              <div className="lede" style={{ marginBottom: 12 }}>
+                <span>Base pools need one-time activation. </span>
+                <button
+                  className="btn btn-ghost"
+                  onClick={handleSetupBaseMandate}
+                  disabled={settingUpBaseMandate}
+                >
+                  {settingUpBaseMandate ? 'Activating…' : 'Activate Base (1 tap)'}
+                </button>
+                {baseMandateError && (
+                  <div role="alert" style={{ color: 'var(--danger)', fontSize: 11, marginTop: 6 }}>
+                    {baseMandateError}
+                  </div>
+                )}
+              </div>
+            )}
+            <StrategyCard
+              strategy={strategy}
+              skillSource={skillSource}
+              onProceed={handleAcceptStrategy}
+              onRegenerate={handleRegenerate}
+              strategyHash={rawStrategy?.strategyHash}
+              attestation={strategyAttestation}
+              attesting={attesting}
+              simulation={simulation}
+              council={debateResult || council}
+              onCouncilRetry={handleRunCouncil}
+              onRunCouncil={handleRunCouncil}
+              debateRunning={debateRunning}
+              showRunCouncil={!debateResult}
+            />
+          </>
         )
       case 'connect':
         return (
