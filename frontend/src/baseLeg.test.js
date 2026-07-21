@@ -232,4 +232,32 @@ describe('executeBaseLeg', () => {
     expect(deps.postMandate).toHaveBeenCalledTimes(1)
     expect(out).toMatchObject({ success: true, baseAccount: '0xOWNER' }) // fresh ceremony owner, not the stale one
   })
+
+  it('a getMandateStatus REJECTION (relayer blip/timeout) degrades to the full ceremony, same as an honest {valid:false} — it must never fail the leg', async () => {
+    const deps = okDeps()
+    deps.getMandateStatus = vi.fn().mockRejectedValue(new Error('relayer timeout'))
+    localStorage.setItem(
+      'vf_base_mandate',
+      JSON.stringify({
+        serializedApproval: 'STORED-APPROVAL',
+        sessionKeyAddress: '0xSTOREDSESSION',
+        kernelAddress: '0xSTOREDOWNER',
+        expiry: 9999999999,
+      })
+    )
+
+    const out = await executeBaseLeg({
+      connectedAddress: 'GUSER',
+      signTx: vi.fn(),
+      baseVaults,
+      totalAmount: 100,
+      onEvent: vi.fn(),
+      deps,
+    })
+
+    expect(deps.ensureBaseOwner).toHaveBeenCalledTimes(1)
+    expect(deps.createMandate).toHaveBeenCalledTimes(1)
+    expect(deps.postMandate).toHaveBeenCalledTimes(1)
+    expect(out).toMatchObject({ success: true, baseAccount: '0xOWNER' })
+  })
 })

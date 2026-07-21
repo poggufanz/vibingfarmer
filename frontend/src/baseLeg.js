@@ -67,10 +67,17 @@ export async function executeBaseLeg({
   try {
     safeEmit('baseleg-owner', { status: 'pending' })
     const storedMandate = readStoredMandate()
-    // Reuse check: only ask the relayer when there's something local worth checking. `&&`
-    // short-circuits, so a first-ever run never makes this call.
-    const reuse =
-      !!storedMandate && (await getMandateStatus(storedMandate.serializedApproval)).valid
+    // Reuse check: only ask the relayer when there's something local worth checking. A transient
+    // failure here (relayer blip/timeout) must degrade to a normal ceremony, same as an honest
+    // {valid:false} — it must never fail the whole leg, so the call is caught right here.
+    let reuse = false
+    if (storedMandate) {
+      try {
+        reuse = (await getMandateStatus(storedMandate.serializedApproval)).valid
+      } catch {
+        reuse = false
+      }
+    }
 
     let owner
     if (reuse) {
