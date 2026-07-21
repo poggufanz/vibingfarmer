@@ -288,7 +288,7 @@ describe('assertVaultDeposit', () => {
     const tx = depositTx(TOKEN, 'transfer', [{ __addr: 'CDYNAMIC' }, { __addr: 'GOWNER' }])
     const getWasmHash = vi.fn(async () => AGENT_HASH)
     await expect(
-      assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN, '', '', '', AGENT_HASH, getWasmHash)
+      assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN, '', '', [], [AGENT_HASH], getWasmHash)
     ).resolves.toBeUndefined()
     expect(getWasmHash).toHaveBeenCalledWith('CDYNAMIC')
   })
@@ -297,7 +297,7 @@ describe('assertVaultDeposit', () => {
     const tx = depositTx(TOKEN, 'transfer', [{ __addr: 'CEVIL' }, { __addr: 'GOWNER' }])
     const getWasmHash = async () => 'deadbeef'.repeat(8)
     await expect(
-      assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN, '', '', '', AGENT_HASH, getWasmHash)
+      assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN, '', '', [], [AGENT_HASH], getWasmHash)
     ).rejects.toThrow(RelayError)
   })
 
@@ -307,14 +307,14 @@ describe('assertVaultDeposit', () => {
       throw new Error('rpc down')
     }
     await expect(
-      assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN, '', '', '', AGENT_HASH, getWasmHash)
+      assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN, '', '', [], [AGENT_HASH], getWasmHash)
     ).rejects.toThrow(RelayError)
   })
 
   it('rejects when no pin and no allowlist (unchanged fail-closed default)', async () => {
     const tx = depositTx(TOKEN, 'transfer', [{ __addr: 'CDYNAMIC' }, { __addr: 'GOWNER' }])
     await expect(
-      assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN, '', '', '', '', null)
+      assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN, '', '', [], [], null)
     ).rejects.toThrow(RelayError)
   })
 
@@ -322,21 +322,44 @@ describe('assertVaultDeposit', () => {
     const tx = depositTx(TOKEN, 'transfer', [{ __addr: 'CDEMO' }, { __addr: 'GOWNER' }])
     const getWasmHash = vi.fn()
     await expect(
-      assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN, 'CDEMO', '', '', AGENT_HASH, getWasmHash)
+      assertVaultDeposit(tx, VAULT, sdkAddr, TOKEN, 'CDEMO', '', [], [AGENT_HASH], getWasmHash)
     ).resolves.toBeUndefined()
     expect(getWasmHash).not.toHaveBeenCalled()
+  })
+
+  it('accepts a transfer whose wasm hash is ANY entry of a multi-value agentWasmHashes list (dual v1/v3 support)', async () => {
+    const tx = depositTx(TOKEN, 'transfer', [{ __addr: 'CDYNAMIC2' }, { __addr: 'GOWNER' }])
+    const OTHER_HASH = 'deadbeef'.repeat(8)
+    const getWasmHash = vi.fn(async () => AGENT_HASH)
+    await expect(
+      assertVaultDeposit(
+        tx,
+        VAULT,
+        sdkAddr,
+        TOKEN,
+        '',
+        '',
+        [],
+        [OTHER_HASH, AGENT_HASH],
+        getWasmHash
+      )
+    ).resolves.toBeUndefined()
   })
 })
 
 const ROUTER = 'CROUTER'
+const ROUTER_V1 = 'CROUTERV1'
+const ROUTER_V2 = 'CROUTERV2'
 
 describe('assertVaultDeposit - funding_router grant/pull (single-signature grant flow)', () => {
-  it('rejects router.grant when SOROBAN_ROUTER_ADDRESS is unset (fail closed, unchanged)', async () => {
+  it('rejects router.grant when no router is configured (fail closed, unchanged)', async () => {
     const tx = depositTx(ROUTER, 'grant')
     await expect(assertVaultDeposit(tx, VAULT, sdkAddr)).rejects.toThrow(RelayError) // default param
-    await expect(assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '', '')).rejects.toThrow(RelayError)
+    await expect(assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '', [])).rejects.toThrow(
+      RelayError
+    )
   })
-  it('rejects router.pull when SOROBAN_ROUTER_ADDRESS is unset (fail closed, unchanged)', async () => {
+  it('rejects router.pull when no router is configured (fail closed, unchanged)', async () => {
     await expect(assertVaultDeposit(depositTx(ROUTER, 'pull'), VAULT, sdkAddr)).rejects.toThrow(
       RelayError
     )
@@ -344,33 +367,49 @@ describe('assertVaultDeposit - funding_router grant/pull (single-signature grant
   it('passes router.grant when the router address is configured', async () => {
     const tx = depositTx(ROUTER, 'grant')
     await expect(
-      assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '', ROUTER)
+      assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '', [ROUTER])
     ).resolves.toBeUndefined()
   })
   it('passes router.pull when the router address is configured', async () => {
     const tx = depositTx(ROUTER, 'pull')
     await expect(
-      assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '', ROUTER)
+      assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '', [ROUTER])
     ).resolves.toBeUndefined()
   })
   it('rejects any other function on the configured router (no wider loosening)', async () => {
     const tx = depositTx(ROUTER, 'sweep')
-    await expect(assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '', ROUTER)).rejects.toThrow(
+    await expect(assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '', [ROUTER])).rejects.toThrow(
       RelayError
     )
   })
   it('rejects grant/pull on a different contract even with the router configured', async () => {
     await expect(
-      assertVaultDeposit(depositTx('COTHER', 'pull'), VAULT, sdkAddr, '', '', '', ROUTER)
+      assertVaultDeposit(depositTx('COTHER', 'pull'), VAULT, sdkAddr, '', '', '', [ROUTER])
     ).rejects.toThrow(RelayError)
     await expect(
-      assertVaultDeposit(depositTx('COTHER', 'grant'), VAULT, sdkAddr, '', '', '', ROUTER)
+      assertVaultDeposit(depositTx('COTHER', 'grant'), VAULT, sdkAddr, '', '', '', [ROUTER])
     ).rejects.toThrow(RelayError)
   })
   it('leaves the vault-deposit branch untouched when the router is configured', async () => {
     const tx = depositTx(VAULT, 'deposit')
     await expect(
-      assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '', ROUTER)
+      assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '', [ROUTER])
+    ).resolves.toBeUndefined()
+  })
+
+  it('passes grant/pull on EITHER router when v1 and v2 are both listed (dual-support migration)', async () => {
+    const routers = [ROUTER_V1, ROUTER_V2]
+    await expect(
+      assertVaultDeposit(depositTx(ROUTER_V1, 'grant'), VAULT, sdkAddr, '', '', '', routers)
+    ).resolves.toBeUndefined()
+    await expect(
+      assertVaultDeposit(depositTx(ROUTER_V2, 'grant'), VAULT, sdkAddr, '', '', '', routers)
+    ).resolves.toBeUndefined()
+    await expect(
+      assertVaultDeposit(depositTx(ROUTER_V1, 'pull'), VAULT, sdkAddr, '', '', '', routers)
+    ).resolves.toBeUndefined()
+    await expect(
+      assertVaultDeposit(depositTx(ROUTER_V2, 'pull'), VAULT, sdkAddr, '', '', '', routers)
     ).resolves.toBeUndefined()
   })
 })
@@ -425,5 +464,83 @@ describe('assertVaultDeposit - smart-account deploy sponsorship (SAK createWalle
     await expect(assertVaultDeposit(tx, VAULT, sdkAddr, '', '', SAK_WASM)).rejects.toThrow(
       RelayError
     )
+  })
+})
+
+// Realistic fixture value only (per plan constraint) — the relay reads the messenger address
+// from SOROBAN_TOKEN_MESSENGER_ADDRESS at runtime; this is the live testnet TokenMessengerMinter.
+const MESSENGER = 'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP'
+const AGENT_HASH_V3 = 'd61ceaaaf5a3fd9fd25987eba0f843ccb79880f3eaa137e066b5f63ab9eaa2ba'
+
+describe('assertVaultDeposit - CCTP messenger deposit_for_burn (agent-initiated burn sponsorship)', () => {
+  it('sponsors deposit_for_burn when from (args[0]) is a pinned agent_account wasm', async () => {
+    const tx = depositTx(MESSENGER, 'deposit_for_burn', [{ __addr: 'CAGENTV3' }])
+    const getWasmHash = vi.fn(async () => AGENT_HASH_V3)
+    await expect(
+      assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '', [], [AGENT_HASH_V3], getWasmHash, MESSENGER)
+    ).resolves.toBeUndefined()
+    expect(getWasmHash).toHaveBeenCalledWith('CAGENTV3')
+  })
+
+  it('rejects deposit_for_burn when from runs a foreign (non-pinned) wasm', async () => {
+    const tx = depositTx(MESSENGER, 'deposit_for_burn', [{ __addr: 'CFOREIGN' }])
+    const getWasmHash = async () => 'deadbeef'.repeat(8)
+    await expect(
+      assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '', [], [AGENT_HASH_V3], getWasmHash, MESSENGER)
+    ).rejects.toThrow(RelayError)
+  })
+
+  it('rejects deposit_for_burn when the messenger env is unset (fail closed, default param)', async () => {
+    const tx = depositTx(MESSENGER, 'deposit_for_burn', [{ __addr: 'CAGENTV3' }])
+    const getWasmHash = vi.fn(async () => AGENT_HASH_V3)
+    await expect(
+      assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '', [], [AGENT_HASH_V3], getWasmHash)
+    ).rejects.toThrow(RelayError)
+    expect(getWasmHash).not.toHaveBeenCalled() // never even reaches the lookup — branch is dead
+  })
+
+  it('rejects any other function on the messenger contract (only deposit_for_burn is relayable)', async () => {
+    const tx = depositTx(MESSENGER, 'deposit', [{ __addr: 'CAGENTV3' }])
+    const getWasmHash = vi.fn(async () => AGENT_HASH_V3)
+    await expect(
+      assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '', [], [AGENT_HASH_V3], getWasmHash, MESSENGER)
+    ).rejects.toThrow(RelayError)
+    expect(getWasmHash).not.toHaveBeenCalled()
+  })
+
+  it('rejects (fail closed) when no wasm-lookup function is provided', async () => {
+    const tx = depositTx(MESSENGER, 'deposit_for_burn', [{ __addr: 'CAGENTV3' }])
+    await expect(
+      assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '', [], [AGENT_HASH_V3], null, MESSENGER)
+    ).rejects.toThrow(RelayError)
+  })
+
+  it('rejects (fail closed) when the wasm lookup itself throws', async () => {
+    const tx = depositTx(MESSENGER, 'deposit_for_burn', [{ __addr: 'CAGENTV3' }])
+    const getWasmHash = async () => {
+      throw new Error('rpc down')
+    }
+    await expect(
+      assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '', [], [AGENT_HASH_V3], getWasmHash, MESSENGER)
+    ).rejects.toThrow(RelayError)
+  })
+
+  it('rejects deposit_for_burn from a wasm hash outside the pinned list, even with the messenger configured', async () => {
+    const tx = depositTx(MESSENGER, 'deposit_for_burn', [{ __addr: 'CV1AGENT' }])
+    const getWasmHash = async () => 'cafebabe'.repeat(8)
+    await expect(
+      assertVaultDeposit(
+        tx,
+        VAULT,
+        sdkAddr,
+        '',
+        '',
+        '',
+        [],
+        ['cafed00d'.repeat(8)],
+        getWasmHash,
+        MESSENGER
+      )
+    ).rejects.toThrow(RelayError)
   })
 })
