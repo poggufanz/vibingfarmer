@@ -31,6 +31,14 @@ export default defineConfig(({ mode }) => {
   // funding_router (single-signature grant) — the relay guard allowlists grant/pull on this address only.
   // Fail-closed if absent: without the passthrough the dev-server relay refuses every router call.
   if (env.SOROBAN_ROUTER_ADDRESS) process.env.SOROBAN_ROUTER_ADDRESS = env.SOROBAN_ROUTER_ADDRESS
+  // Dual-support CSV lists (grant-covers-burn, Task 8) + the CCTP messenger gate — same
+  // fail-closed passthrough discipline as the single-value vars above. Cloudflare Pages
+  // (_pagesAdapter.js) already forwards ALL context.env keys unconditionally; only this
+  // hand-rolled `vite dev` allowlist needed the three new keys added.
+  if (env.SOROBAN_ROUTER_ADDRESSES) process.env.SOROBAN_ROUTER_ADDRESSES = env.SOROBAN_ROUTER_ADDRESSES
+  if (env.SOROBAN_AGENT_WASM_HASHES) process.env.SOROBAN_AGENT_WASM_HASHES = env.SOROBAN_AGENT_WASM_HASHES
+  if (env.SOROBAN_TOKEN_MESSENGER_ADDRESS)
+    process.env.SOROBAN_TOKEN_MESSENGER_ADDRESS = env.SOROBAN_TOKEN_MESSENGER_ADDRESS
 
   // VF API gate (SEP-10 portal + gateway) — server-side only, never in the client bundle.
   if (env.VF_AUTH_SIGNING_KEY) process.env.VF_AUTH_SIGNING_KEY = env.VF_AUTH_SIGNING_KEY
