@@ -69,7 +69,8 @@ export async function executeBaseLeg({
     const storedMandate = readStoredMandate()
     // Reuse check: only ask the relayer when there's something local worth checking. `&&`
     // short-circuits, so a first-ever run never makes this call.
-    const reuse = !!storedMandate && (await getMandateStatus(storedMandate.serializedApproval)).valid
+    const reuse =
+      !!storedMandate && (await getMandateStatus(storedMandate.serializedApproval)).valid
 
     let owner
     if (reuse) {
@@ -78,7 +79,11 @@ export async function executeBaseLeg({
       // publicClient is a bare read-only RPC client (same one base/dashboardPositions.js uses,
       // via passkeyBase.js's exported defaultMakePublicClient) — live minShares quoting needs
       // chain reads, not wallet auth.
-      owner = { address: storedMandate.kernelAddress, publicClient: makePublicClient(), ownerMode: 'reused' }
+      owner = {
+        address: storedMandate.kernelAddress,
+        publicClient: makePublicClient(),
+        ownerMode: 'reused',
+      }
     } else {
       owner = await ensureBaseOwner({ connectedAddress })
     }

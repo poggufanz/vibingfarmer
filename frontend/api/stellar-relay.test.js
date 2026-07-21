@@ -355,9 +355,7 @@ describe('assertVaultDeposit - funding_router grant/pull (single-signature grant
   it('rejects router.grant when no router is configured (fail closed, unchanged)', async () => {
     const tx = depositTx(ROUTER, 'grant')
     await expect(assertVaultDeposit(tx, VAULT, sdkAddr)).rejects.toThrow(RelayError) // default param
-    await expect(assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '', [])).rejects.toThrow(
-      RelayError
-    )
+    await expect(assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '', [])).rejects.toThrow(RelayError)
   })
   it('rejects router.pull when no router is configured (fail closed, unchanged)', async () => {
     await expect(assertVaultDeposit(depositTx(ROUTER, 'pull'), VAULT, sdkAddr)).rejects.toThrow(
@@ -477,7 +475,18 @@ describe('assertVaultDeposit - CCTP messenger deposit_for_burn (agent-initiated 
     const tx = depositTx(MESSENGER, 'deposit_for_burn', [{ __addr: 'CAGENTV3' }])
     const getWasmHash = vi.fn(async () => AGENT_HASH_V3)
     await expect(
-      assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '', [], [AGENT_HASH_V3], getWasmHash, MESSENGER)
+      assertVaultDeposit(
+        tx,
+        VAULT,
+        sdkAddr,
+        '',
+        '',
+        '',
+        [],
+        [AGENT_HASH_V3],
+        getWasmHash,
+        MESSENGER
+      )
     ).resolves.toBeUndefined()
     expect(getWasmHash).toHaveBeenCalledWith('CAGENTV3')
   })
@@ -486,7 +495,18 @@ describe('assertVaultDeposit - CCTP messenger deposit_for_burn (agent-initiated 
     const tx = depositTx(MESSENGER, 'deposit_for_burn', [{ __addr: 'CFOREIGN' }])
     const getWasmHash = async () => 'deadbeef'.repeat(8)
     await expect(
-      assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '', [], [AGENT_HASH_V3], getWasmHash, MESSENGER)
+      assertVaultDeposit(
+        tx,
+        VAULT,
+        sdkAddr,
+        '',
+        '',
+        '',
+        [],
+        [AGENT_HASH_V3],
+        getWasmHash,
+        MESSENGER
+      )
     ).rejects.toThrow(RelayError)
   })
 
@@ -503,7 +523,18 @@ describe('assertVaultDeposit - CCTP messenger deposit_for_burn (agent-initiated 
     const tx = depositTx(MESSENGER, 'deposit', [{ __addr: 'CAGENTV3' }])
     const getWasmHash = vi.fn(async () => AGENT_HASH_V3)
     await expect(
-      assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '', [], [AGENT_HASH_V3], getWasmHash, MESSENGER)
+      assertVaultDeposit(
+        tx,
+        VAULT,
+        sdkAddr,
+        '',
+        '',
+        '',
+        [],
+        [AGENT_HASH_V3],
+        getWasmHash,
+        MESSENGER
+      )
     ).rejects.toThrow(RelayError)
     expect(getWasmHash).not.toHaveBeenCalled()
   })
@@ -521,7 +552,18 @@ describe('assertVaultDeposit - CCTP messenger deposit_for_burn (agent-initiated 
       throw new Error('rpc down')
     }
     await expect(
-      assertVaultDeposit(tx, VAULT, sdkAddr, '', '', '', [], [AGENT_HASH_V3], getWasmHash, MESSENGER)
+      assertVaultDeposit(
+        tx,
+        VAULT,
+        sdkAddr,
+        '',
+        '',
+        '',
+        [],
+        [AGENT_HASH_V3],
+        getWasmHash,
+        MESSENGER
+      )
     ).rejects.toThrow(RelayError)
   })
 

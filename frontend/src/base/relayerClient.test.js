@@ -246,7 +246,11 @@ describe('postMandate', () => {
     expect(url).toBe('https://example.test/api/vf-cross/mandate')
     expect(opts.method).toBe('POST')
     const body = JSON.parse(opts.body)
-    expect(body).toEqual({ serializedApproval: 'approval-blob', sessionPrivateKey: '0xSECRETKEY', expiry })
+    expect(body).toEqual({
+      serializedApproval: 'approval-blob',
+      sessionPrivateKey: '0xSECRETKEY',
+      expiry,
+    })
   })
 
   test('throws a clear error on a non-ok response', async () => {

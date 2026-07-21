@@ -222,9 +222,14 @@ export async function postMandate({
  * @param {{ baseUrl?: string, deps?: { fetchImpl?: Function } }} [p]
  * @returns {Promise<{ valid: boolean, expiresAt?: number }>}
  */
-export async function getMandateStatus(serializedApproval, { baseUrl = DEFAULT_BASE_URL, deps = {} } = {}) {
+export async function getMandateStatus(
+  serializedApproval,
+  { baseUrl = DEFAULT_BASE_URL, deps = {} } = {}
+) {
   const { fetchImpl = fetch } = deps
-  const res = await fetchImpl(`${baseUrl}/mandate/valid?approval=${encodeURIComponent(serializedApproval)}`)
+  const res = await fetchImpl(
+    `${baseUrl}/mandate/valid?approval=${encodeURIComponent(serializedApproval)}`
+  )
   if (!res.ok) throw new Error(`mandate status check failed (${res.status})`)
   return res.json()
 }
