@@ -57,7 +57,7 @@ fn enforce(env: &Env, contexts: &Vec<Context>) -> Result<(), AccountError> {
                 continue;
             }
         }
-        if cc.contract != scope.vault {
+        if cc.contract != scope.target {
             return Err(AccountError::VaultMismatch);
         }
         if cc.fn_name != DEPOSIT_FN {
@@ -112,7 +112,7 @@ fn enforce_exit(env: &Env, contexts: &Vec<Context>) -> Result<(), AccountError> 
             Context::Contract(cc) => cc,
             _ => return Err(AccountError::UnexpectedContexts),
         };
-        if cc.contract == scope.vault {
+        if cc.contract == scope.target && scope.kind == 0 {
             if cc.fn_name != Symbol::new(env, "redeem") {
                 return Err(AccountError::FnNotAllowed);
             }

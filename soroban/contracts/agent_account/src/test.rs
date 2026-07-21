@@ -4,11 +4,14 @@ use crate::{AgentAccount, AgentAccountClient};
 use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _};
 use soroban_sdk::{Address, BytesN, Env};
 
-fn scope(_env: &Env, owner: &Address, vault: &Address, token: &Address) -> AgentScope {
+fn scope(env: &Env, owner: &Address, vault: &Address, token: &Address) -> AgentScope {
     AgentScope {
         owner: owner.clone(),
-        vault: vault.clone(),
+        target: vault.clone(),
         token: token.clone(),
+        kind: 0,
+        mint_recipient: BytesN::from_array(env, &[0u8; 32]),
+        destination_domain: 0,
         cap_per_period: 1_000_000_000, // 1,000 units @ 6dp
         period_duration: 86_400,       // 1 day
         spent_in_period: 0,
@@ -42,7 +45,7 @@ fn test_constructor_stores_scope_and_key() {
     let client = AgentAccountClient::new(&env, &id);
 
     let got = client.scope_of();
-    assert_eq!(got.vault, vault);
+    assert_eq!(got.target, vault);
     assert_eq!(got.cap_per_period, 1_000_000_000);
     assert!(!got.revoked);
     assert_eq!(client.signer(), pubkey);
@@ -342,8 +345,11 @@ fn constructor_self_approves_vault_for_cap() {
     let cap: i128 = 100_000_000;
     let s = AgentScope {
         owner: owner.clone(),
-        vault: vault.clone(),
+        target: vault.clone(),
         token: token.clone(),
+        kind: 0,
+        mint_recipient: BytesN::from_array(&env, &[0u8; 32]),
+        destination_domain: 0,
         cap_per_period: cap,
         period_duration: 3600,
         spent_in_period: 0,
@@ -383,8 +389,11 @@ fn owner_withdraw_sweeps_principal_back_to_owner() {
     let cap: i128 = 100_000_000;
     let s = AgentScope {
         owner: owner.clone(),
-        vault: vault.clone(),
+        target: vault.clone(),
         token: token.clone(),
+        kind: 0,
+        mint_recipient: BytesN::from_array(&env, &[0u8; 32]),
+        destination_domain: 0,
         cap_per_period: cap,
         period_duration: 3600,
         spent_in_period: 0,
@@ -431,8 +440,11 @@ fn owner_withdraw_rejects_non_owner() {
     let signer = BytesN::from_array(&env, &[7u8; 32]);
     let s = AgentScope {
         owner: owner.clone(),
-        vault,
+        target: vault,
         token,
+        kind: 0,
+        mint_recipient: BytesN::from_array(&env, &[0u8; 32]),
+        destination_domain: 0,
         cap_per_period: 1,
         period_duration: 3600,
         spent_in_period: 0,
@@ -464,8 +476,11 @@ fn session_key_path_still_rejects_non_deposit_contexts() {
     let signer = BytesN::from_array(&env, &[7u8; 32]);
     let s = AgentScope {
         owner: Address::generate(&env),
-        vault: vault.clone(),
+        target: vault.clone(),
         token: token.clone(),
+        kind: 0,
+        mint_recipient: BytesN::from_array(&env, &[0u8; 32]),
+        destination_domain: 0,
         cap_per_period: 1_000,
         period_duration: 3600,
         spent_in_period: 0,
@@ -642,8 +657,11 @@ fn owner_revoke_flips_scope_clears_allowance_blocks_sessions_and_is_idempotent()
     let cap: i128 = 100_000_000;
     let s = AgentScope {
         owner: owner.clone(),
-        vault: vault.clone(),
+        target: vault.clone(),
         token: token.clone(),
+        kind: 0,
+        mint_recipient: BytesN::from_array(&env, &[0u8; 32]),
+        destination_domain: 0,
         cap_per_period: cap,
         period_duration: 3600,
         spent_in_period: 0,
@@ -732,8 +750,11 @@ fn owner_withdraw_clears_vault_allowance() {
     let cap: i128 = 100_000_000;
     let s = AgentScope {
         owner: owner.clone(),
-        vault: vault.clone(),
+        target: vault.clone(),
         token: token.clone(),
+        kind: 0,
+        mint_recipient: BytesN::from_array(&env, &[0u8; 32]),
+        destination_domain: 0,
         cap_per_period: cap,
         period_duration: 3600,
         spent_in_period: 0,
@@ -948,4 +969,30 @@ fn session_key_pull_still_gated_by_revoked_and_expiry() {
         AgentAccount::enforce_scope_for_test(env2.clone(), ctx2)
     });
     assert_eq!(res2, Err(AccountError::Expired));
+}
+
+// --- Task 1 (v3): owner_withdraw on a Bridge-kind scope skips the vault redeem ---
+
+#[test]
+fn test_owner_withdraw_bridge_skips_redeem_and_sweeps() {
+    // scope kind=1, target = a dummy address that is NOT a vault (stand-in for
+    // TokenMessengerMinter), token = a real SAC. Mint token to the agent, call
+    // owner_withdraw(to=owner) → balance moves to owner. No redeem call happens
+    // (would panic if `target` were treated as a vault).
+    let env = Env::default();
+    env.mock_all_auths();
+    let owner = Address::generate(&env);
+    let token = sac_token(&env);
+    let messenger = Address::generate(&env);
+    let signer = BytesN::from_array(&env, &[7u8; 32]);
+    let mut s = scope(&env, &owner, &messenger, &token);
+    s.kind = 1;
+    let id = env.register(AgentAccount, (owner.clone(), signer, s, None::<Address>));
+    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&id, &500i128);
+    let client = AgentAccountClient::new(&env, &id);
+    assert_eq!(client.owner_withdraw(&owner), 500i128);
+    assert_eq!(
+        soroban_sdk::token::TokenClient::new(&env, &token).balance(&owner),
+        500i128
+    );
 }
