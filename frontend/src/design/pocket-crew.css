@@ -53,6 +53,16 @@
   --shadow-lg: 0 18px 44px rgb(7 15 11 / 28%);
   --line: #8c9b93;
   --eco-accent: #dff56c;
+
+  /* Fixed AgentMark identity palette (Foundation Task 5, §6.6) -- 6 swatches, seeded only by
+     an agent's identity string, never by list position. Distinct from --pc-harvest/--pc-danger
+     so a crew color is never mistaken for "current action" or "real error". */
+  --pc-crew-1: #8fbf8a;
+  --pc-crew-2: #6fa8dc;
+  --pc-crew-3: #e0b84b;
+  --pc-crew-4: #c9967b;
+  --pc-crew-5: #5fd3bc;
+  --pc-crew-6: #d98ba8;
 }
 
 :root[data-theme='day-field'] {
@@ -105,6 +115,14 @@
   --shadow-lg: 0 18px 44px rgb(23 37 31 / 18%);
   --line: #5f6c65;
   --eco-accent: #dff56c;
+
+  /* Deeper variants of the same 6 hues, calibrated for the light canvas. */
+  --pc-crew-1: #4f8f49;
+  --pc-crew-2: #3e72a8;
+  --pc-crew-3: #a87c1e;
+  --pc-crew-4: #8c5a3e;
+  --pc-crew-5: #1f8f7a;
+  --pc-crew-6: #a8446b;
 }
 
 :root {
@@ -286,5 +304,239 @@ body {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     transition-delay: 0ms !important;
+  }
+}
+
+/* ---------------------------------------------------------------------------------------------
+   Foundation Task 5 -- Pocket Crew interface primitives (BrandLockup, AgentMark, MoneyFigure,
+   StatusNotice, TechnicalDetails, VenueTruth, StageShell, Dialog). One dominant surface per
+   primitive; no equal-weight card grids, no glow/lava treatments.
+   ------------------------------------------------------------------------------------------- */
+
+.pc-brand-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.pc-brand-mark {
+  display: block;
+  flex: none;
+}
+
+.pc-brand-wordmark {
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
+.pc-agent-mark {
+  flex: none;
+  overflow: visible;
+}
+
+.pc-agent-mark-label {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  fill: var(--pc-owned-ink);
+}
+
+.pc-agent-mark-state {
+  font-family: var(--font-sans);
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.pc-money {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.pc-money--loading,
+.pc-money--empty,
+.pc-money--error,
+.pc-money--unknown {
+  font-family: var(--font-body);
+  color: var(--pc-muted);
+  font-variant-numeric: normal;
+}
+
+.pc-money--error {
+  color: var(--pc-danger);
+}
+
+.pc-money-stale-flag {
+  color: var(--pc-muted);
+  font-family: var(--font-body);
+  font-size: 0.85em;
+}
+
+.pc-money-freshness {
+  color: var(--pc-muted);
+  font-family: var(--font-body);
+  font-size: 0.85em;
+  margin-left: 0.35em;
+}
+
+.pc-status-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  border-radius: var(--pc-radius-md);
+  border: 1px solid var(--border);
+  padding: 0.75rem 1rem;
+}
+
+.pc-status-notice--danger {
+  border-color: var(--pc-danger);
+}
+
+.pc-status-notice--warning {
+  border-color: var(--warn);
+}
+
+.pc-status-notice-icon {
+  flex: none;
+  font-weight: 700;
+}
+
+.pc-status-notice-title {
+  font-weight: 600;
+  margin: 0 0 0.15rem;
+}
+
+.pc-technical-details {
+  border-radius: var(--pc-radius-sm);
+  border: 1px solid var(--border);
+  padding: 0.5rem 0.75rem;
+}
+
+.pc-technical-details-summary {
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+}
+
+.pc-technical-details-body {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  margin-top: 0.5rem;
+}
+
+.pc-venue-truth {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.pc-venue-truth-apy {
+  color: var(--pc-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* One dominant surface per stage: a single workspace-tinted panel, never a repeated card grid. */
+.pc-stage-shell-surface {
+  background: var(--pc-workspace);
+  color: var(--pc-ink);
+  border-radius: var(--pc-radius-lg);
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.pc-stage-eyebrow {
+  color: var(--pc-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.8rem;
+  margin: 0;
+}
+
+.pc-stage-title {
+  margin: 0;
+}
+
+.pc-stage-description {
+  color: var(--pc-muted);
+  margin: 0;
+}
+
+.pc-stage-actions {
+  display: flex;
+  gap: 0.75rem;
+}
+
+/* Dialog: a full-viewport overlay (position: fixed + inset: 0) sits above everything else and is
+   the only thing that can receive pointer events while open -- that alone is what stops
+   background interaction; mode only swaps the panel's own layout below. */
+.pc-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(7 15 11 / 55%);
+  border: none;
+  padding: 1rem;
+  max-width: none;
+  max-height: none;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+.pc-dialog-panel {
+  background: var(--pc-workspace);
+  color: var(--pc-ink);
+  border-radius: var(--pc-radius-lg);
+  padding: 1.5rem;
+  width: 100%;
+  max-width: 28rem;
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
+}
+
+.pc-dialog-title {
+  margin: 0 0 0.5rem;
+}
+
+.pc-dialog-description {
+  color: var(--pc-muted);
+  margin: 0 0 1rem;
+}
+
+.pc-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+}
+
+/* mode='sheet' forces the bottom-sheet presentation at any viewport width; mode='dialog' forces
+   the centered presentation at any width. mode='auto' (default) only changes at the mobile
+   breakpoint below -- in every mode, the semantics (role, aria-modal, focus trap) are identical. */
+.pc-dialog--sheet {
+  align-items: flex-end;
+  padding: 0;
+}
+
+.pc-dialog--sheet .pc-dialog-panel {
+  max-width: none;
+  border-radius: var(--pc-radius-lg) var(--pc-radius-lg) 0 0;
+  max-height: 85vh;
+}
+
+@media (max-width: 767px) {
+  .pc-dialog--auto {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .pc-dialog--auto .pc-dialog-panel {
+    max-width: none;
+    border-radius: var(--pc-radius-lg) var(--pc-radius-lg) 0 0;
+    max-height: 85vh;
   }
 }
