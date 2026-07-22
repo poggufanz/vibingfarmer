@@ -10,6 +10,7 @@ const projects = [
 
 export default defineConfig({
   testDir: './e2e',
+  forbidOnly: Boolean(process.env.CI),
   snapshotPathTemplate: '{testDir}/{testFilePath}-snapshots/{arg}-{projectName}{ext}',
   expect: {
     toHaveScreenshot: {
@@ -21,7 +22,7 @@ export default defineConfig({
     browserName: 'chromium',
   },
   webServer: {
-    command: 'vite dev --host 127.0.0.1 --port 4173',
+    command: 'vite dev --host 127.0.0.1 --port 4173 --strictPort',
     url: 'http://127.0.0.1:4173/visual/',
     reuseExistingServer: !process.env.CI,
   },
