@@ -240,6 +240,10 @@ export async function preflightPermission({
   proveAllowance = proveCurrentAllowance,
   inspectAgents = inspectReusableAgents,
 }) {
+  if (!agentInits || agentInits.length === 0) {
+    throw new Error('preflightPermission requires at least one reviewed agent.')
+  }
+
   const agentInitFingerprint = fingerprintAgentInits(agentInits)
   const base = baseDecision({
     runId,

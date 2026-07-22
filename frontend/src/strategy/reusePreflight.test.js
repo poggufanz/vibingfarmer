@@ -138,6 +138,12 @@ const baseDeps = (over = {}) => ({
   ...over,
 })
 
+describe('empty reviewed set is rejected (review Minor 5)', () => {
+  test('an empty agentInits list throws rather than vacuously "reusing" nothing', async () => {
+    await expect(preflightPermission(baseDeps({ agentInits: [] }))).rejects.toThrow(/at least one/i)
+  })
+})
+
 describe('base allocations ALWAYS force fresh', () => {
   test('a bridge-kind agentInit forces fresh with base-required, without even attempting a proof', async () => {
     const proveAllowance = vi.fn()

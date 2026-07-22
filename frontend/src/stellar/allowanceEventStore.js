@@ -8,14 +8,15 @@
 // that turns this into a proof (it additionally checks the returned boundary against its own
 // captured ledger numbers); this file only accelerates repeat scans.
 //
-// ASSUMPTION FLAGGED FOR LIVE VERIFICATION (this repo's convention — see routerEvents.js's
-// "PINNED via live probe" header — this one is NOT yet probe-verified against testnet): the
-// built-in Stellar Asset Contract's `approve` event follows the CAP-46-6 token-interface shape,
-// topics = (symbol_short!("approve"), from, spender), data = (amount: i128, expiration_ledger:
-// u32) as a bare 2-tuple — NOT an `#[contractevent]` named ScMap like the custom contract events
-// this repo already decodes elsewhere (keeperEvents.js, routerEvents.js). scValToNative turns
-// that tuple into a 2-element array: [amount, expirationLedger]. Re-verify against a real
-// approve() event before this proof gates a mainnet deploy.
+// PINNED via live probe 2026-07-23 (testnet, 236/236 real `approve` events on the grant-path SAC
+// CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU, no exceptions): the built-in Stellar
+// Asset Contract's `approve` event topic vector has ARITY 4, not 3 — (symbol_short!("approve"),
+// from, spender, asset: the SEP-0011 "CODE:ISSUER" string) — a 3-segment topic filter (approve,
+// owner, router) matches ZERO events (Soroban topic filters are arity-sensitive: they never
+// implicitly match a longer vector), which would make reuse permanently, silently dead. The data
+// payload IS the assumed bare 2-tuple, confirmed unchanged: data = (amount: i128,
+// expiration_ledger: u32) -> scValToNative gives [amount, expirationLedger]. See
+// scratchpad probe-approve-topics.mjs / pocket-crew-str-task-5-report.md "Live probe evidence".
 import { fromScVal, symbolScVal, addrScVal } from './scval.js'
 import { NETWORK_PASSPHRASE } from './config.js'
 
@@ -152,6 +153,7 @@ export async function fetchApprovalEventRange({
       symbolScVal(APPROVE_TOPIC).toXDR('base64'),
       addrScVal(owner).toXDR('base64'),
       addrScVal(router).toXDR('base64'),
+      '*', // 4th topic = the SEP-0011 asset string ("CODE:ISSUER") — live-probed, see module header
     ],
   ]
   const filters = [{ type: 'contract', contractIds: [token], topics }]
@@ -199,8 +201,16 @@ export async function fetchApprovalEventRange({
  * now needed) performs a full fresh scan from `fromLedgerFloor`. Never persists
  * `indexedThroughLedger` beyond what THIS scan actually proved contiguous — a gapped/short scan
  * caps the boundary at the last proven point instead of upgrading it.
+ *
+ * `targetLedger` (optional — the caller's own just-captured ledger number, e.g. allowanceProof.js's
+ * L1/L2) guards against asking the RPC for a `startLedger` past its own current tip: when the
+ * cache already reaches at least `targetLedger` (a prior sync's OWN real chain touch already
+ * cleared it — two preflights inside one ledger, or a scan that over-reached before the caller's
+ * L2 was even captured), the delta is empty by construction and is returned as a gap-free
+ * zero-width range with no network call, instead of erroring into a spurious gap. Omitted (the
+ * default): behaves exactly as before — always calls `fetchRange` for at least the delta.
  * @param {{owner:string, router:string, token:string, network:string, fromLedgerFloor:number,
- *          server?:object, storage?:object, fetchRange?:Function}} p
+ *          targetLedger?:number, server?:object, storage?:object, fetchRange?:Function}} p
  * @returns {Promise<{approvals:Array, indexedFromLedger:number, indexedThroughLedger:number, gapFree:boolean}>}
  */
 export async function syncApprovalEvents({
@@ -209,6 +219,7 @@ export async function syncApprovalEvents({
   token,
   network,
   fromLedgerFloor,
+  targetLedger,
   server,
   storage,
   fetchRange = fetchApprovalEventRange,
@@ -216,6 +227,15 @@ export async function syncApprovalEvents({
   const cached = loadEventCache({ owner, router, token, network, storage })
   const usable = Boolean(cached) && cached.indexedFromLedger <= fromLedgerFloor
   const resumeFrom = usable ? cached.indexedThroughLedger + 1 : fromLedgerFloor
+
+  if (usable && targetLedger != null && resumeFrom > targetLedger) {
+    return {
+      approvals: cached.approvals,
+      indexedFromLedger: cached.indexedFromLedger,
+      indexedThroughLedger: cached.indexedThroughLedger,
+      gapFree: true,
+    }
+  }
 
   const {
     approvals: fresh,

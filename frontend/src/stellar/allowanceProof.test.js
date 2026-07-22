@@ -52,6 +52,7 @@ const baseDeps = (over = {}) => ({
   server: {},
   getLatestLedger: vi.fn(async () => 1000),
   readAllowance: vi.fn(async () => ({ amount: 100_000_000n })),
+  readConfirmedLedger: vi.fn(async () => ({ confirmedLedger: 1000, confirmedAt: 1_700_000_000 })),
   syncEvents: makeSyncEvents(() => ({
     approvals: [ownApproval()],
     indexedFromLedger: 1000,
@@ -138,6 +139,104 @@ describe('proveCurrentAllowance - the bounded stability loop (L2 > L1)', () => {
     expect(out.proven).toBe(false)
     expect(out.reason).toBe('gapped')
     expect(out.proof).toBeNull()
+  })
+})
+
+describe('proveCurrentAllowance - the confirmed grant tx is re-read from chain (review Important 1)', () => {
+  test('reads receipt.txHash via readConfirmedLedger before accepting anything', async () => {
+    const readConfirmedLedger = vi.fn(async () => ({
+      confirmedLedger: 1000,
+      confirmedAt: 1_700_000_000,
+    }))
+    await proveCurrentAllowance(baseDeps({ readConfirmedLedger }))
+    expect(readConfirmedLedger).toHaveBeenCalledWith(expect.objectContaining({ hash: 'HGRANT' }))
+  })
+
+  test('a missing/failed confirmed-tx read forces unproven (adversarial: the grant tx does not exist on chain)', async () => {
+    const readConfirmedLedger = vi.fn(async () => {
+      throw new Error('Transaction HGRANT is not confirmed: NOT_FOUND.')
+    })
+    const out = await proveCurrentAllowance(baseDeps({ readConfirmedLedger }))
+    expect(out.proven).toBe(false)
+    expect(out.reason).toBe('gapped')
+    expect(out.proof).toBeNull()
+  })
+
+  test('a confirmed ledger disagreeing with the receipt forces unproven (forged/edited receipt)', async () => {
+    const readConfirmedLedger = vi.fn(async () => ({
+      confirmedLedger: 1001, // receipt claims 1000
+      confirmedAt: 1_700_000_000,
+    }))
+    const out = await proveCurrentAllowance(baseDeps({ readConfirmedLedger }))
+    expect(out.proven).toBe(false)
+    expect(out.reason).toBe('gapped')
+  })
+
+  test('a confirmedAt disagreeing with the receipt forces unproven', async () => {
+    const readConfirmedLedger = vi.fn(async () => ({
+      confirmedLedger: 1000,
+      confirmedAt: 1_700_000_001, // receipt claims 1_700_000_000
+    }))
+    const out = await proveCurrentAllowance(baseDeps({ readConfirmedLedger }))
+    expect(out.proven).toBe(false)
+    expect(out.reason).toBe('gapped')
+  })
+})
+
+describe('proveCurrentAllowance - getLatestLedger outage never rejects the promise (review Important 4)', () => {
+  test('an RPC outage on the L1 capture resolves to unproven, never throws', async () => {
+    const getLatestLedger = vi.fn(async () => {
+      throw new Error('rpc down')
+    })
+    await expect(proveCurrentAllowance(baseDeps({ getLatestLedger }))).resolves.toEqual({
+      proven: false,
+      reason: 'gapped',
+      proof: null,
+    })
+  })
+
+  test('an RPC outage on the L2 capture resolves to unproven, never throws', async () => {
+    let n = 0
+    const getLatestLedger = vi.fn(async () => {
+      n++
+      if (n === 1) return 1000
+      throw new Error('rpc down')
+    })
+    await expect(proveCurrentAllowance(baseDeps({ getLatestLedger }))).resolves.toEqual({
+      proven: false,
+      reason: 'gapped',
+      proof: null,
+    })
+  })
+})
+
+describe('proveCurrentAllowance - decoded event owner/spender defense-in-depth (review Minor 6)', () => {
+  test('a foreign owner/spender event mixed in alongside the legitimate one is ignored - proof still succeeds', async () => {
+    // Simulates a widened/wildcard topic filter picking up unrelated noise: the RPC filter
+    // already scopes to owner+router, but this is the client-side backstop in case it ever
+    // doesn't (a future decode change, a malicious RPC).
+    const foreign = ownApproval({ owner: 'GFOREIGN', spender: ROUTER, ledger: 1001, eventIndex: 9 })
+    const syncEvents = makeSyncEvents(() => ({
+      approvals: [ownApproval(), foreign],
+      indexedFromLedger: 1000,
+      indexedThroughLedger: 1001,
+      gapFree: true,
+    }))
+    const out = await proveCurrentAllowance(baseDeps({ syncEvents }))
+    expect(out.proven).toBe(true)
+  })
+
+  test('only a foreign owner/spender event present - cannot prove anything (never fabricate a match)', async () => {
+    const foreign = ownApproval({ owner: OWNER, spender: 'CFOREIGNROUTER' })
+    const syncEvents = makeSyncEvents(() => ({
+      approvals: [foreign],
+      indexedFromLedger: 1000,
+      indexedThroughLedger: 1000,
+      gapFree: true,
+    }))
+    const out = await proveCurrentAllowance(baseDeps({ syncEvents }))
+    expect(out.proven).toBe(false)
+    expect(out.reason).toBe('gapped')
   })
 })
 

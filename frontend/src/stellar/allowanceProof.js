@@ -10,7 +10,7 @@
 // read is dependency-injected so it degrades to a pure function under test.
 import { hash } from '@stellar/stellar-sdk'
 import { rpcServer } from './client.js'
-import { readAllowanceStrict } from './grant.js'
+import { readAllowanceStrict, readConfirmedLedger } from './grant.js'
 import { syncApprovalEvents } from './allowanceEventStore.js'
 import { canonicalizeStrategy } from '../strategy/canonicalStrategy.js'
 
@@ -64,6 +64,7 @@ async function scanAllTokens({ receipt, targetLedger, server, storage, syncEvent
       token: budget.token,
       network: NETWORK_ID,
       fromLedgerFloor: receipt.confirmedLedger,
+      targetLedger,
       server,
       storage,
     })
@@ -75,9 +76,11 @@ async function scanAllTokens({ receipt, targetLedger, server, storage, syncEvent
 
 /**
  * Prove (or fail to prove) that the receipt's own owner→router allowance still holds, unmutated,
- * for every budgeted token — via the bounded L1/L2 stability loop described above.
+ * for every budgeted token — via the bounded L1/L2 stability loop described above. Never rejects:
+ * any unexpected failure (RPC outage, missing confirmed tx, …) resolves to `{proven:false,
+ * reason:'gapped', proof:null}` rather than throwing.
  * @param {{receipt:object|null, server?:object, storage?:object, getLatestLedger?:Function,
- *          readAllowance?:Function, syncEvents?:Function}} p
+ *          readAllowance?:Function, readConfirmedLedger?:Function, syncEvents?:Function}} p
  * @returns {Promise<{proven:boolean, reason:null|'gapped'|'mutated', proof:object|null}>}
  */
 export async function proveCurrentAllowance({
@@ -86,12 +89,35 @@ export async function proveCurrentAllowance({
   storage,
   getLatestLedger = defaultGetLatestLedger,
   readAllowance = readAllowanceStrict,
+  readConfirmedLedger: readConfirmedLedgerFn = readConfirmedLedger,
   syncEvents = syncApprovalEvents,
 }) {
   if (!receipt || !Array.isArray(receipt.allowanceBudgets) || receipt.allowanceBudgets.length === 0)
     return { proven: false, reason: 'gapped', proof: null }
 
-  const L1 = await getLatestLedger({ server })
+  // The confirmed grant tx itself is re-read from chain — a stored receipt is an input pointer,
+  // never authoritative on its own (module header). A missing/failed tx, or one whose confirmed
+  // ledger/close-time disagrees with what the receipt claims (forged or corrupted locally), is
+  // unproven. This is independent of the L1/L2 stability loop below (it concerns the receipt's
+  // own immutable history, not "right now").
+  try {
+    const confirmed = await readConfirmedLedgerFn({ hash: receipt.txHash, server })
+    if (confirmed.confirmedLedger !== receipt.confirmedLedger) {
+      return { proven: false, reason: 'gapped', proof: null }
+    }
+    if (receipt.confirmedAt != null && confirmed.confirmedAt !== receipt.confirmedAt) {
+      return { proven: false, reason: 'gapped', proof: null }
+    }
+  } catch {
+    return { proven: false, reason: 'gapped', proof: null }
+  }
+
+  let L1
+  try {
+    L1 = await getLatestLedger({ server })
+  } catch {
+    return { proven: false, reason: 'gapped', proof: null }
+  }
   let scan = await scanAllTokens({ receipt, targetLedger: L1, server, storage, syncEvents })
 
   // The strict current-allowance read for every budgeted token, capturing RPC failure distinctly
@@ -117,7 +143,12 @@ export async function proveCurrentAllowance({
     return { proven: false, reason: 'gapped', proof: null }
   }
 
-  const L2 = await getLatestLedger({ server })
+  let L2
+  try {
+    L2 = await getLatestLedger({ server })
+  } catch {
+    return { proven: false, reason: 'gapped', proof: null }
+  }
   let boundary = L1
   if (L2 > L1) {
     boundary = L2
@@ -139,7 +170,13 @@ export async function proveCurrentAllowance({
         ? sync.indexedThroughLedger
         : Math.min(indexedThroughLedger, sync.indexedThroughLedger)
 
-    const latest = latestOf(sync.approvals)
+    // Defense-in-depth (review Minor 6): the RPC topic filter already scopes to owner+router,
+    // but a decoded event that somehow does not actually belong to this owner/router — a
+    // widened/wildcard filter, a future decode change, a malicious RPC — must never be silently
+    // accepted just because it sorted highest by ledger/eventIndex.
+    const latest = latestOf(
+      sync.approvals.filter((a) => a.owner === receipt.owner && a.spender === receipt.router)
+    )
     if (!latest) return { proven: false, reason: 'gapped', proof: null }
 
     // The receipt's own approval must still be the LATEST one — any amount/expiry drift, or any

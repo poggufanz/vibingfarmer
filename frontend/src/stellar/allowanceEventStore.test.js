@@ -155,6 +155,31 @@ function fakeServer(pages) {
   }
 }
 
+describe('fetchApprovalEventRange topic filter (review Important 2 — live-probed 2026-07-23)', () => {
+  test('filters on 4 topic segments (approve, owner, router, wildcard asset string), never 3', async () => {
+    let seenFilters
+    const server = {
+      getEvents: async ({ filters }) => {
+        seenFilters = filters
+        return { events: [], cursor: undefined, latestLedger: 100 }
+      },
+    }
+    await fetchApprovalEventRange({
+      server,
+      token: TOKEN,
+      owner: OWNER,
+      router: ROUTER,
+      fromLedger: 1,
+    })
+    const topics = seenFilters[0].topics[0]
+    // Live probe (testnet, 236/236 real `approve` events on the grant-path SAC) showed topic
+    // arity 4: (approve, from, spender, "USDC:G...") — a 3-segment filter matches ZERO events
+    // (Soroban topic filters are arity-sensitive), which would make reuse permanently dead.
+    expect(topics).toHaveLength(4)
+    expect(topics[3]).toBe('*')
+  })
+})
+
 describe('fetchApprovalEventRange', () => {
   test('single page reaching the tip is gap-free', async () => {
     const server = fakeServer([
@@ -419,5 +444,91 @@ describe('syncApprovalEvents (resumable cache/cursor)', () => {
     expect(fetchRange).toHaveBeenCalledWith(expect.objectContaining({ fromLedger: 100 }))
     expect(out.indexedFromLedger).toBe(100)
     expect(out.approvals).toEqual([]) // the old (now out-of-window) cached row is not blindly reused
+  })
+
+  // Review Important 3: resumeFrom (cache.indexedThroughLedger + 1) can land past the caller's
+  // own target ledger — e.g. two preflights inside one ledger, or round 1's own scan already
+  // over-reaching the tip before L2 was captured for round 2. Asking the RPC for a startLedger
+  // past its current tip errors; that used to surface as a spurious gap/fresh. When the caller
+  // tells us its target and the cache already clears it, treat it as an empty gap-free delta
+  // instead of touching the network for a range we already know is covered.
+  describe('resumeFrom past the passed targetLedger (review Important 3)', () => {
+    test('scenario A - two preflights within one ledger: cache already covers the unchanged target', async () => {
+      saveEventCache({
+        owner: OWNER,
+        router: ROUTER,
+        token: TOKEN,
+        network: NET,
+        cache: { indexedFromLedger: 100, indexedThroughLedger: 1000, approvals: [] },
+        storage,
+      })
+      const fetchRange = vi.fn()
+      const out = await syncApprovalEvents({
+        owner: OWNER,
+        router: ROUTER,
+        token: TOKEN,
+        network: NET,
+        fromLedgerFloor: 100,
+        targetLedger: 1000, // same ledger as the prior sync's own boundary
+        storage,
+        fetchRange,
+      })
+      expect(fetchRange).not.toHaveBeenCalled()
+      expect(out).toMatchObject({ indexedThroughLedger: 1000, gapFree: true })
+    })
+
+    test('scenario B - round 1 already over-scanned past L2: resuming for L2 needs no further fetch', async () => {
+      // Round 1 (through L1=1000) actually reached the real chain tip, which had already moved
+      // to 1005 by the time it scanned - a real, gap-free chain touch that already covers L2.
+      saveEventCache({
+        owner: OWNER,
+        router: ROUTER,
+        token: TOKEN,
+        network: NET,
+        cache: { indexedFromLedger: 100, indexedThroughLedger: 1005, approvals: [] },
+        storage,
+      })
+      const fetchRange = vi.fn()
+      const out = await syncApprovalEvents({
+        owner: OWNER,
+        router: ROUTER,
+        token: TOKEN,
+        network: NET,
+        fromLedgerFloor: 100,
+        targetLedger: 1002, // L2, captured after round 1's own scan already passed it
+        storage,
+        fetchRange,
+      })
+      expect(fetchRange).not.toHaveBeenCalled()
+      expect(out).toMatchObject({ indexedThroughLedger: 1005, gapFree: true })
+    })
+
+    test('a target the cache does NOT yet clear still fetches normally (the clamp only skips genuinely-covered ranges)', async () => {
+      saveEventCache({
+        owner: OWNER,
+        router: ROUTER,
+        token: TOKEN,
+        network: NET,
+        cache: { indexedFromLedger: 100, indexedThroughLedger: 400, approvals: [] },
+        storage,
+      })
+      const fetchRange = vi.fn(async () => ({
+        approvals: [],
+        reachedThroughLedger: 1000,
+        gapFree: true,
+      }))
+      const out = await syncApprovalEvents({
+        owner: OWNER,
+        router: ROUTER,
+        token: TOKEN,
+        network: NET,
+        fromLedgerFloor: 100,
+        targetLedger: 1000,
+        storage,
+        fetchRange,
+      })
+      expect(fetchRange).toHaveBeenCalledWith(expect.objectContaining({ fromLedger: 401 }))
+      expect(out.indexedThroughLedger).toBe(1000)
+    })
   })
 })
