@@ -33,8 +33,9 @@ test.describe('Pocket Crew foundation', () => {
 // Foundation Task 8 -- compact compatibility smoke over the six disconnected/shared routes, real
 // app (not the /visual/ fixture harness), desktop-1440 only. Named "disconnected compatibility"
 // (not "Pocket Crew foundation") so Step 5's `--grep "Pocket Crew foundation"` gate does not also
-// re-run these against live testnet data (Explorer's vault TVL) -- Step 4 is this group's only
-// capture/verify pass in this task.
+// re-run this group -- Step 4 is its only capture/verify pass in this task. Each route uses a
+// `position:fixed; inset:0; overflow-y:auto` inner scroller, so `fullPage:true` below only ever
+// captures the 1440x1000 viewport, never content past the fold (e.g. Explorer's Vault TVL).
 const disconnectedRoutes = Object.freeze([
   { id: 'landing', path: '/', skipLanding: false },
   { id: 'home', path: '/home', skipLanding: true },
@@ -87,15 +88,16 @@ test.describe('Pocket Crew disconnected compatibility', () => {
             failedImages.push(`${res.status()} ${res.url()}`)
           }
         })
+        page.on('requestfailed', (req) => {
+          if (req.resourceType() === 'image') {
+            failedImages.push(`${req.failure()?.errorText || 'failed'} ${req.url()}`)
+          }
+        })
 
         await page.goto(route.path)
         await page.evaluate((t) => document.documentElement.setAttribute('data-theme', t), theme)
         await page.emulateMedia({ reducedMotion: 'reduce' })
         await page.evaluate(() => document.fonts.ready)
-        // Explorer's Vault TVL is a real Soroban RPC read (readTotalAssets), not a fixture --
-        // give it a beat to settle (success or the caught-error "Not available") before the
-        // screenshot so the loading skeleton is never what gets captured.
-        await page.waitForTimeout(1000)
 
         expect(pageErrors, `pageerror on ${route.id}/${theme}`).toEqual([])
         expect(failedImages, `missing brand/network image on ${route.id}/${theme}`).toEqual([])

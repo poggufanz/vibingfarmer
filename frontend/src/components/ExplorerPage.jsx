@@ -621,7 +621,7 @@ function ExplorerStyle() {
   width: 60%;
   height: 1em;
   border-radius: 3px;
-  background: var(--bg-elev-2, #2a2b24);
+  background: var(--bg-elev-2);
   opacity: 0.72;
 }
 
