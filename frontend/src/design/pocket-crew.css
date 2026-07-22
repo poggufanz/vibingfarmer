@@ -207,8 +207,24 @@ body {
 
 :where(.pc-owned, [data-pc-surface='owned']) :where(button, input, select, textarea):disabled,
 :where(.pc-owned, [data-pc-surface='owned']) [aria-disabled='true'],
-:where(.pc-owned, [data-pc-surface='owned']):disabled,
-:where(.pc-owned, [data-pc-surface='owned'])[aria-disabled='true'] {
+/* Harvest/primary/gradient also sit on a light fill regardless of theme, so a disabled
+   `.btn-primary`/`.btn-gradient` must not fall through to the dark-calibrated --pc-disabled. */
+:where(
+    .pc-owned,
+    [data-pc-surface='owned'],
+    .pc-harvest,
+    [data-pc-surface='harvest'],
+    .btn-primary,
+    .btn-gradient
+  ):disabled,
+:where(
+    .pc-owned,
+    [data-pc-surface='owned'],
+    .pc-harvest,
+    [data-pc-surface='harvest'],
+    .btn-primary,
+    .btn-gradient
+  )[aria-disabled='true'] {
   color: var(--pc-disabled-on-light) !important;
 }
 

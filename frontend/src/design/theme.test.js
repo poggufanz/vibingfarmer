@@ -231,11 +231,24 @@ describe('Pocket Crew CSS theme parity', () => {
     const css = readFileSync(resolve(process.cwd(), 'src/design/pocket-crew.css'), 'utf8')
     expect(css).toMatch(/color:\s*var\(--pc-disabled\)\s*!important/)
     expect(css).toMatch(/opacity:\s*1\s*!important/)
-    expect(css).toMatch(/:where\(\.pc-owned,\s*\[data-pc-surface='owned'\]\):disabled/)
-    expect(css).toMatch(
-      /:where\(\.pc-owned,\s*\[data-pc-surface='owned'\]\)\[aria-disabled='true'\]/
-    )
+    expect(css).toMatch(/\.pc-owned,[\s\S]*?\):disabled/)
+    expect(css).toMatch(/\.pc-owned,[\s\S]*?\)\[aria-disabled='true'\]/)
     expect(css).toMatch(/color:\s*var\(--pc-disabled-on-light\)\s*!important/)
+  })
+
+  it('keeps disabled primary/gradient/Harvest buttons off the dark-calibrated disabled ink (self-review: harvest sits on a light surface too)', () => {
+    // --pc-disabled resolves to disabledOnDark in Forest (calibrated for the dark canvas). The
+    // generic disabled-color reset alone would apply that dark-safe ink to `.btn-primary` /
+    // `.btn-gradient`, which render on the light Harvest background regardless of theme —
+    // #8C9B93 on #DFF56C is ~2.4:1, well under the 4.5:1 floor. They need the on-light variant.
+    expect(
+      contrastRatio(THEMES.forest.disabledOnLight, THEMES.forest.harvest)
+    ).toBeGreaterThanOrEqual(4.5)
+
+    const css = readFileSync(resolve(process.cwd(), 'src/design/pocket-crew.css'), 'utf8')
+    expect(css).toMatch(
+      /:where\(\s*\.pc-owned,\s*\[data-pc-surface='owned'\],\s*\.pc-harvest,\s*\[data-pc-surface='harvest'\],\s*\.btn-primary,\s*\.btn-gradient\s*\):disabled/
+    )
   })
 
   it('applies the surface-aware focus ring to the focused owned/Harvest/primary-button/gradient-button element itself, not only descendants (finding 2)', () => {
