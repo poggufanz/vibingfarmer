@@ -47,9 +47,9 @@ contract MockTokenMessengerV2Test is Test {
         vm.stopPrank();
     }
 
-    function test_router_knownPoolDefaultsFalseAndIsSettable() public {
-        assertFalse(router.knownPool(address(0xDEAD)));
-        router.setKnown(address(0xDEAD), true);
-        assertTrue(router.knownPool(address(0xDEAD)));
+    function test_router_allowedPoolDefaultsFalseAndIsSettable() public {
+        assertFalse(router.allowedPool(address(0xDEAD)));
+        router.setAllowed(address(0xDEAD), true);
+        assertTrue(router.allowedPool(address(0xDEAD)));
     }
 }

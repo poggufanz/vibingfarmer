@@ -65,3 +65,28 @@ Deploy (dual-support — v1 untouched, kept live in `deployments/stellar-testnet
 - Base mint tx: 0x250262618e7d0eff108403646af9e1ea7a5efc0deaf61342f60d71e40f9c6bf3
 - Base pool deposit tx: 0x972225e731d67d8f13e63a973adacc2b96bd546cf3beca70714bae5802d4a5ff (pool 0x389250872044368759D3db5C09b2706A6628d4e0)
 - Wall clock: 61.2s
+## Farm smoke — 2026-07-17 (resumed: Iris ISP-blocked, attestation injected via VPN fetch)
+- Stellar burn: 3ee94ea608feb78c4991af25a203494385febca5b686c90346a1c9a16bf69d3c
+- Base mint: 0x01ba60a6147c438134a5b6fa8342f6b66756d934ad3c2ef78a10eca2c7396cd4 (minted, block 44254500)
+- Deposit: pool 0x389250872044368759D3db5C09b2706A6628d4e0 fulfilled, tx 0xfc97913ced715f7bd2b752045dff1c9e5e6771dffe554a294ba0c721b2ffad46 (block 44254503)
+## Unwind smoke — 2026-07-17 (two-phase: Iris ISP-blocked, attestation injected via VPN fetch; reverse-only mandate minted by smoke/mint-unwind-mandate.mjs)
+- Withdraw: pool 0x389250872044368759D3db5C09b2706A6628d4e0, 1000000 shares -> USDC (session key, CallPolicy-scoped)
+- Base burn: 0xdef019dad8236fefe482c0ce3510fdb9f8f36d0349a206d1b59465803c5c3fd4 (block 44255205)
+- Stellar mint_and_forward: ec1eded7e574c2c7b0327637d43e7315100c3bead7d9fe452e8c4c570b988aa1 (minted, ledger 3652624, successful)
+- Final recipient: GBDQP5E2KCLOBRSI7DHXG7SMD5IQ52DNXYMMQ42DERB3PGQVN6GOJVNZ (USDC balance now 11.0)
+## Farm smoke — 2026-07-18T00:40:09.012Z
+- Stellar burn: f3a78085b9192ca759118e31ae4da7aec9b1dc82559f2276a8e20f171786b072
+- Base mint: 0xbc1f775e50bb6a6fee02779f461622c5238bd6ccfcefd87fcfd169a2086ac742 (minted)
+- Deposits: [{"pool":"0x389250872044368759D3db5C09b2706A6628d4e0","status":"fulfilled","value":{"pool":"0x389250872044368759D3db5C09b2706A6628d4e0","userOpHash":"0xf1cc4bf6b7026c734aeb245dbbe19121f7c774805e84e87a47930bfcca107943","txHash":"0x680732072abd6aef8c47a4ee0c53647f82583a8eb49e1282eb3e199fa7de7d8b"}}]
+
+## BaseExitSweeper redeploy — 2026-07-22T08:40:32.921Z
+- Reason: the previous sweeper (0xf0D7FB54FA54146114cb2cEff73D971F94c5024c, 2026-07-20) called
+  `router.knownPool(pool)`, a getter the LIVE YieldRouter (0xF80aa8F571E6d24Ea72F051Fc6F9A9C516727B6d,
+  2026-07-05) never shipped — every `exitAllAndBurn` reverted empty, breaking every Base withdraw.
+  `_eligible` now calls `router.allowedPool(pool)`, the live router's actual ABI (selector
+  0xf50a9351, pinned in `BaseExitSweeper.t.sol`).
+- New sweeper: 0x5451a6dc234d07F3C80752E3c0E798913E53de6D
+- Deploy tx: 0x51f12be7ca9ae11042388e2500a516a0cd205746944197cd592520ad71a3ee1e
+- Post-deploy verification: `usdc()`/`router()`/`tokenMessenger()` all match constructor args
+  exactly; `cast code` non-zero (16464 hex chars); receipt status success.
+- Router itself untouched — live ZeroDev mandates pin its address.

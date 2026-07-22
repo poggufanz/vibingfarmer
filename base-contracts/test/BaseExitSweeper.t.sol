@@ -4,6 +4,7 @@ pragma solidity ^0.8.23;
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {BaseExitSweeper} from "../src/BaseExitSweeper.sol";
+import {IYieldRouter} from "../src/interfaces/IYieldRouter.sol";
 import {MockUSDC} from "./mocks/MockUSDC.sol";
 import {MockERC4626} from "./mocks/MockERC4626.sol";
 import {MockTokenMessengerV2} from "./mocks/MockTokenMessengerV2.sol";
@@ -35,8 +36,8 @@ contract BaseExitSweeperTest is Test {
 
         poolA = new MockERC4626(usdc);
         poolB = new MockERC4626(usdc);
-        router.setKnown(address(poolA), true);
-        router.setKnown(address(poolB), true);
+        router.setAllowed(address(poolA), true);
+        router.setAllowed(address(poolB), true);
 
         usdc.mint(owner, 1_000_000_000); // 1,000 USDC at 6dp
     }
@@ -176,7 +177,7 @@ contract BaseExitSweeperTest is Test {
         // underlying — its redeem() transfers unconditionally, so
         // SafeERC20 genuinely reverts for insufficient balance.
         MockReentrantERC4626 broken = new MockReentrantERC4626(usdc);
-        router.setKnown(address(broken), true);
+        router.setAllowed(address(broken), true);
         broken.seedShares(owner, 250_000_000);
         vm.prank(owner);
         IERC20(address(broken)).approve(address(sweeper), type(uint256).max);
@@ -197,7 +198,7 @@ contract BaseExitSweeperTest is Test {
 
     function test_poolThatUnderpaysBelowItsFloor_revertsTheWholeCall() public {
         MockReentrantERC4626 liar = new MockReentrantERC4626(usdc);
-        router.setKnown(address(liar), true);
+        router.setAllowed(address(liar), true);
         usdc.mint(address(liar), 100_000_000);
         liar.seedShares(owner, 100_000_000);
         vm.prank(owner);
@@ -226,7 +227,7 @@ contract BaseExitSweeperTest is Test {
         // than it transfers, which is exactly what a hostile pool would do to sail
         // through a floor checked against its own number.
         MockOverReportingERC4626 liar = new MockOverReportingERC4626(usdc);
-        router.setKnown(address(liar), true);
+        router.setAllowed(address(liar), true);
         usdc.mint(address(liar), 100_000_000);
         liar.seedShares(owner, 100_000_000);
         vm.prank(owner);
@@ -250,7 +251,7 @@ contract BaseExitSweeperTest is Test {
 
     function test_gasGriefingPoolIsSkippedAndLaterPoolsStillExit() public {
         MockOverReportingERC4626 griefer = new MockOverReportingERC4626(usdc);
-        router.setKnown(address(griefer), true);
+        router.setAllowed(address(griefer), true);
         usdc.mint(address(griefer), 100_000_000);
         griefer.seedShares(owner, 100_000_000);
         vm.prank(owner);
@@ -278,9 +279,9 @@ contract BaseExitSweeperTest is Test {
         assertGt(burned, 250_000_000, "poolB's assets plus idle actually came out");
     }
 
-    function test_poolNotKnownToTheRouter_isSkipped() public {
+    function test_poolNotAllowedByTheRouter_isSkipped() public {
         MockERC4626 stranger = new MockERC4626(usdc);
-        // deliberately NOT router.setKnown
+        // deliberately NOT router.setAllowed
         _fund(poolA, 100_000_000);
 
         address[] memory pools = new address[](2);
@@ -295,14 +296,51 @@ contract BaseExitSweeperTest is Test {
         assertEq(skipped, 1);
     }
 
-    function test_knownPoolWhoseAssetChangedIsRejectedPerCall() public {
+    /// Documents the live router's ceiling: allowedPool is an owner-revocable
+    /// *deposit* allowlist, not a permanent exit-eligibility one (that mapping,
+    /// knownPool, only exists in the hardened source that was never deployed).
+    /// A pool the owner disables after the user already deposited into it gets
+    /// SKIPPED here, not exited — funds stay recoverable via a direct
+    /// pool.redeem, but this sweep will not reach them. See
+    /// BaseExitSweeper._eligible.
+    function test_poolDisabledAfterDeposit_isSkippedByLiveRouterCeiling() public {
+        _fund(poolA, 100_000_000);
+        // Idle balance so the call still has something to burn — the point
+        // under test is that the poolA POSITION is skipped, not reached.
+        vm.prank(owner);
+        usdc.approve(address(sweeper), type(uint256).max);
+
+        // Owner (of the router) later disables the pool for new deposits —
+        // on the live router this is the ONLY toggle that exists, and it also
+        // revokes exit eligibility, unlike the hardened source's knownPool.
+        router.setAllowed(address(poolA), false);
+
+        (uint256 burned, uint256 exited, uint256 skipped) =
+            _call(_one(address(poolA)), _one(uint256(0)));
+        assertEq(exited, 0, "disabled pool is not exited by the sweep");
+        assertEq(skipped, 1, "disabled pool is reported skipped, not silently dropped");
+        assertEq(burned, 900_000_000, "idle balance still burns; the position stays behind");
+    }
+
+    /// Pins IYieldRouter's allowlist getter to the LIVE deployed router's ABI
+    /// (0xF80aa8F571E6d24Ea72F051Fc6F9A9C516727B6d, selector 0xf50a9351,
+    /// verified on-chain). This exact drift — the interface declaring a getter
+    /// the deployed router doesn't have — took exitAllAndBurn down in
+    /// production; a future silent rename must fail HERE, not as an empty
+    /// revert in a user's simulation.
+    function test_allowedPoolSelectorPinnedToLiveRouterABI() public pure {
+        assertEq(IYieldRouter.allowedPool.selector, bytes4(0xf50a9351));
+    }
+
+    function test_allowedPoolWhoseAssetChangedIsRejectedPerCall() public {
         MockReentrantERC4626 drifted = new MockReentrantERC4626(usdc);
-        router.setKnown(address(drifted), true);
+        router.setAllowed(address(drifted), true);
         drifted.seedShares(owner, 100_000_000);
         vm.prank(owner);
         IERC20(address(drifted)).approve(address(sweeper), type(uint256).max);
 
-        // knownPool can never be revoked, so per-call revalidation is the only gate.
+        // allowedPool staying true says nothing about the pool's current asset,
+        // so per-call revalidation is the only gate against a pool that drifted.
         drifted.setReportedAsset(address(0xBEEF));
 
         _fund(poolA, 100_000_000);
@@ -402,7 +440,7 @@ contract BaseExitSweeperTest is Test {
 
     function test_maliciousPoolCannotReenterAndDrainOtherPools() public {
         MockReentrantERC4626 hostile = new MockReentrantERC4626(usdc);
-        router.setKnown(address(hostile), true);
+        router.setAllowed(address(hostile), true);
         usdc.mint(address(hostile), 100_000_000);
         hostile.seedShares(owner, 100_000_000);
         vm.prank(owner);
