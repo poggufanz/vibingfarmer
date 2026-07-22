@@ -42,7 +42,9 @@
   --border-accent: #dff56c;
   --danger: #e26e67;
   --info: #a8b5ad;
-  --warn: #dff56c;
+  /* Amber, distinct from both Harvest (--accent, lime) and danger (coral red) — warn must
+     read as its own signal, not as the brand action color. */
+  --warn: #e8a33d;
   --ok: #f2f5ef;
   --focus-ring: #dff56c;
   --focus-ring-contrast: #17251f;
@@ -93,7 +95,8 @@
   --border-accent: #17251f;
   --danger: #a8403c;
   --info: #536159;
-  --warn: #a8403c;
+  /* Dark amber, distinct from danger (red) — legacy consumers relied on warn != danger. */
+  --warn: #8a5a00;
   --ok: #17251f;
   --focus-ring: #17251f;
   --focus-ring-contrast: #f2f5ef;

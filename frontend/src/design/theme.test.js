@@ -25,7 +25,11 @@ const CORE_VARIABLES = Object.freeze({
   '--pc-disabled-on-light': 'disabledOnLight',
 })
 
-const compatibilityValues = (tokens) => ({
+// Warn is not a frozen THEMES token — it's a compat-mapping-only tone, distinct per theme from
+// both --danger and --accent/--focus-ring (see the warn/danger identity collision fix).
+const WARN = Object.freeze({ forest: '#E8A33D', 'day-field': '#8A5A00' })
+
+const compatibilityValues = (tokens, themeId) => ({
   '--bg-base': tokens.canvas,
   '--bg-canvas': tokens.canvas,
   '--bg-card': tokens.canvas,
@@ -45,7 +49,7 @@ const compatibilityValues = (tokens) => ({
   '--border-accent': tokens.light ? tokens.focusOnLight : tokens.focusOnDark,
   '--danger': tokens.danger,
   '--info': tokens.textMuted,
-  '--warn': tokens.light ? tokens.danger : tokens.harvest,
+  '--warn': WARN[themeId],
   '--ok': tokens.text,
   '--focus-ring': tokens.light ? tokens.focusOnLight : tokens.focusOnDark,
   '--focus-ring-contrast': tokens.light ? tokens.owned : tokens.focusOnLight,
@@ -164,7 +168,7 @@ describe('Pocket Crew CSS theme parity', () => {
           tokens[token]
         )
       })
-      Object.entries(compatibilityValues(tokens)).forEach(([property, expected]) => {
+      Object.entries(compatibilityValues(tokens, themeId)).forEach(([property, expected]) => {
         expect(normalizedCssValue(computed.getPropertyValue(property)), property).toBe(
           normalizedCssValue(expected)
         )
@@ -270,6 +274,20 @@ describe('Pocket Crew CSS theme parity', () => {
     expect(touchBlock[1]).toMatch(/(?:^|[\s,])summary(?=[\s,)])/m)
     expect(touchBlock[1]).toMatch(/min-height:\s*44px/)
   })
+
+  it.each(Object.values(THEME_IDS))(
+    'keeps --warn visually distinct from --danger and --accent for %s (re-review: warn/danger identity collision)',
+    (themeId) => {
+      applyTheme(themeId)
+      const computed = getComputedStyle(document.documentElement)
+      const warn = computed.getPropertyValue('--warn').trim()
+      const danger = computed.getPropertyValue('--danger').trim()
+      const accent = computed.getPropertyValue('--accent').trim()
+
+      expect(warn, 'warn vs danger').not.toBe(danger)
+      expect(warn, 'warn vs accent').not.toBe(accent)
+    }
+  )
 })
 
 describe('local font policy', () => {

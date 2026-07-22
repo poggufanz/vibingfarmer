@@ -21,6 +21,8 @@ export const CONTRAST_REQUIREMENTS = Object.freeze(
     ['forest.focusOnDark/workspace', '#DFF56C', '#20342B', 3],
     ['forest.focusOnLight/owned', '#17251F', '#F2F5EF', 3],
     ['forest.focusOnLight/harvest', '#17251F', '#DFF56C', 3],
+    ['forest.warn/canvas', '#E8A33D', '#17251F', 4.5],
+    ['forest.warn/workspace', '#E8A33D', '#20342B', 4.5],
     ['day.text/canvas', '#17251F', '#E9EEE8', 4.5],
     ['day.text/workspace', '#17251F', '#F7F9F5', 4.5],
     ['day.text/owned', '#17251F', '#F2F5EF', 4.5],
@@ -40,6 +42,9 @@ export const CONTRAST_REQUIREMENTS = Object.freeze(
     ['day.focus/workspace', '#17251F', '#F7F9F5', 3],
     ['day.focus/owned', '#17251F', '#F2F5EF', 3],
     ['day.focus/harvest', '#17251F', '#DFF56C', 3],
+    ['day.warn/canvas', '#8A5A00', '#E9EEE8', 4.5],
+    ['day.warn/workspace', '#8A5A00', '#F7F9F5', 4.5],
+    ['day.warn/owned', '#8A5A00', '#F2F5EF', 4.5],
   ].map(freezeRequirement)
 )
 
