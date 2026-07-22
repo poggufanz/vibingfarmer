@@ -120,6 +120,27 @@ describe('Protect moment', () => {
     expect(s.retryable).toBe(true)
   })
 
+  it('WALLET_REJECTED/WALLET_FAILED are no-ops when no grant was ever requested (same-reference ignore)', () => {
+    let s = toProtect()
+    s = strategyFlowReducer(s, { type: 'PREFLIGHT_READY', decision: decision() })
+    const before = s
+    expect(strategyFlowReducer(s, { type: 'WALLET_REJECTED' })).toBe(before)
+    expect(strategyFlowReducer(s, { type: 'WALLET_FAILED' })).toBe(before)
+    expect(before.permissionStatus).toBe('preflight-ready') // untouched, never flipped to 'rejected'
+  })
+
+  it('WALLET_REJECTED/WALLET_FAILED are no-ops once a rejection was already retried into a fresh review', () => {
+    let s = toProtect()
+    s = strategyFlowReducer(s, { type: 'PREFLIGHT_READY', decision: decision() })
+    s = strategyFlowReducer(s, { type: 'GRANT_REQUESTED' })
+    s = strategyFlowReducer(s, { type: 'WALLET_REJECTED' })
+    // A brand-new PREFLIGHT_READY (re-review) resets permissionStatus away from 'grant-requested' —
+    // a STALE WALLET_REJECTED for the earlier attempt must not retroactively apply to the new one.
+    s = strategyFlowReducer(s, { type: 'PREFLIGHT_READY', decision: decision() })
+    const before = s
+    expect(strategyFlowReducer(s, { type: 'WALLET_REJECTED' })).toBe(before)
+  })
+
   it('a retryable Protect can be retried back into GRANT_REQUESTED', () => {
     let s = toProtect()
     s = strategyFlowReducer(s, { type: 'PREFLIGHT_READY', decision: decision() })
@@ -223,6 +244,32 @@ describe('Start moment gating', () => {
     expect(s.custody['run-1:deposit:0'].status).toBe('queued')
     s = strategyFlowReducer(s, { type: 'WORKER_STARTED', allocationId: 'run-1:deposit:0' })
     expect(s.custody['run-1:deposit:0'].status).toBe('started')
+  })
+
+  it('WORKER_QUEUED cannot regress an already-deposited lane (same-reference ignore)', () => {
+    let s = toStartViaFreshGrant()
+    s = strategyFlowReducer(s, { type: 'WORKER_QUEUED', allocationId: 'run-1:deposit:0' })
+    s = strategyFlowReducer(s, { type: 'WORKER_STARTED', allocationId: 'run-1:deposit:0' })
+    s = strategyFlowReducer(s, { type: 'DEPOSIT_CONFIRMED', allocationId: 'run-1:deposit:0' })
+    expect(s.custody['run-1:deposit:0'].status).toBe('deposited')
+    const before = s
+    const after = strategyFlowReducer(s, { type: 'WORKER_QUEUED', allocationId: 'run-1:deposit:0' })
+    expect(after).toBe(before)
+    expect(after.custody['run-1:deposit:0'].status).toBe('deposited')
+  })
+
+  it('WORKER_QUEUED cannot regress an already-bridged lane', () => {
+    let s = toStartViaFreshGrant()
+    s = strategyFlowReducer(s, {
+      type: 'BASE_JOB_UPDATED',
+      allocationId: 'run-1:deposit:0',
+      status: 'bridged',
+      jobId: 'j1',
+    })
+    expect(s.custody['run-1:deposit:0'].status).toBe('bridged')
+    const before = s
+    const after = strategyFlowReducer(s, { type: 'WORKER_QUEUED', allocationId: 'run-1:deposit:0' })
+    expect(after).toBe(before)
   })
 })
 

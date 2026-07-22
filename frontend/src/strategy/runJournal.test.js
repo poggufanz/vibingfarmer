@@ -139,6 +139,21 @@ describe('account isolation', () => {
     expect(mine.milestones).toEqual(['plan-ready'])
     expect(theirs.milestones).toEqual(['grant-confirmed'])
   })
+
+  it('treats owner case as non-semantic in the journal key — a mixed-case duplicate resolves to the same row', () => {
+    appendMilestone({ owner: OWNER, runId: RUN_ID, kind: RUN_MILESTONES.PLAN_READY })
+    const viaLower = loadRunJournal({ owner: OWNER.toLowerCase(), runId: RUN_ID })
+    expect(viaLower).not.toBeNull()
+    expect(viaLower.milestones).toEqual(['plan-ready'])
+    // Writing through the lower-case form lands in the SAME row, not a shadow duplicate.
+    appendMilestone({
+      owner: OWNER.toLowerCase(),
+      runId: RUN_ID,
+      kind: RUN_MILESTONES.GRANT_CONFIRMED,
+    })
+    const viaOriginal = loadRunJournal({ owner: OWNER, runId: RUN_ID })
+    expect(viaOriginal.milestones.sort()).toEqual(['grant-confirmed', 'plan-ready'])
+  })
 })
 
 describe('corrupt / fingerprint-mismatch cleanup', () => {

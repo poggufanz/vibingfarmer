@@ -132,7 +132,11 @@ export function strategyFlowReducer(state = initialStrategyFlowState, event) {
     case 'WALLET_FAILED':
       // Preserves `plan` and `permission` untouched -- nothing moved, so nothing about the
       // reviewed plan or the preflight decision needs to be redone, only the wallet step retried.
-      if (state.moment !== 'protect') return state
+      // Task 6 residual fix: also gated on a grant actually being in flight -- a wallet
+      // rejection/failure event is only applicable to a request THIS state actually made; without
+      // this a stray or late-arriving event could flip an idle/preflight-ready/already-rejected
+      // Protect state to 'rejected' for a request it never issued.
+      if (state.moment !== 'protect' || state.permissionStatus !== 'grant-requested') return state
       return {
         ...state,
         permissionStatus: 'rejected',
@@ -177,6 +181,13 @@ export function strategyFlowReducer(state = initialStrategyFlowState, event) {
     }
 
     case 'WORKER_QUEUED':
+      // Task 6 residual fix: a stray or duplicate re-queue must never regress a lane that already
+      // reached a terminal outcome (deposited/bridged) -- e.g. a late-arriving queue event from a
+      // retried dispatch racing behind the deposit/bridge confirmation it was queued for.
+      if (state.moment !== 'start') return state
+      if (CUSTODY_TERMINAL.has(state.custody[event.allocationId]?.status)) return state
+      return { ...state, custody: applyCustodyEvent(state.custody, event) }
+
     case 'PULL_CONFIRMED':
     case 'PULL_FAILED':
     case 'DEPOSIT_CONFIRMED':

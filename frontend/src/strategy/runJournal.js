@@ -75,10 +75,14 @@ function writeAll(all, storage) {
   }
 }
 
-// Owner is a Stellar G... strkey (case-sensitive, already canonical) -- exact match, no
-// normalization, matching grantReceiptStore.js/reusePreflight.js's convention (not the legacy
-// lowercase-0x-address convention in sessionResume.js).
-const bucketKey = (owner, runId) => `${owner}|${runId}`
+// Task 6 residual fix: `owner` is normalized to lower case for this key. A Stellar G... strkey's
+// case never varies in practice, so this is a no-op for that source -- but this journal is also
+// keyed by a Base 0x-address owner for a bridge-only run (Task 8's mixed-branch custody), and
+// hex addresses ARE case-varying (arbitrary/checksum casing), so an exact-match key would let the
+// SAME logical owner silently fork into two shadow rows. Normalizing here matches
+// sessionResume.js's own lowercase-0x-address convention; `journal.owner` itself still stores
+// whatever case the caller passed, only the STORAGE KEY is case-folded.
+const bucketKey = (owner, runId) => `${String(owner).toLowerCase()}|${runId}`
 
 function fingerprintRow(journal) {
   const payload = JSON.stringify(canonicalizeStrategy(journal))
