@@ -13,8 +13,15 @@
 // remaining headroom into the user's own vault position; it can never move funds elsewhere
 // (owner_withdraw requires the OWNER address auth, not the session key). Do not ship this
 // pattern to mainnet without moving the secret to non-extractable storage.
+import { hash } from '@stellar/stellar-sdk' // sync sha256 (same util attestation.js uses)
 import { readContract } from './client.js'
 import { NETWORK_PASSPHRASE } from './config.js'
+
+// Native hex-encode (no `Buffer` global — this file is not on the browser-polyfill allowlist in
+// eslint.config.js, and hash()/Uint8Array already give us everything we need without it).
+function bytesToHex(bytes) {
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
+}
 
 const CACHE_KEY = 'vf.agentCache.v1'
 // Don't reuse an agent that would expire mid-run: deposits ride a relay + confirmation polls.
@@ -125,6 +132,109 @@ export function isScopeReusable({ scope, owner, vault, amount, nowSec }) {
   if (String(scope.target ?? scope.vault) !== String(vault)) return false
   if (Number(scope.expiry ?? 0) <= nowSec + EXPIRY_MARGIN_SECONDS) return false
   return scopeHeadroom(scope, nowSec) >= BigInt(amount)
+}
+
+/** On-chain session-key signer read via the agent's own getter; null on any RPC/decode failure.
+ * Separate from `scope_of()` — AgentScope has no `signer` field (agent_account/src/types.rs),
+ * the session pubkey lives in a distinct storage slot with its own `signer()` getter. */
+export async function readAgentSigner(agentAddress, { server } = {}) {
+  try {
+    return await readContract({ contract: agentAddress, method: 'signer', args: [], server })
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Deterministic 0x-prefixed sha256 fingerprint of an on-chain agent scope, for cheap
+ * change-detection (Task 5's reuse preflight: "did anything about this scope move since I last
+ * looked"). Pure/sync — ingredients are already-decoded values, not raw ScVal.
+ * @param {{owner, target, token, signer:Uint8Array|null, kind, cap, spentInPeriod,
+ *          periodStart, periodDuration, expiry, revoked}} p
+ * @returns {string}
+ */
+export function computeScopeFingerprint({
+  owner,
+  target,
+  token,
+  signer,
+  kind,
+  cap,
+  spentInPeriod,
+  periodStart,
+  periodDuration,
+  expiry,
+  revoked,
+}) {
+  const payload = JSON.stringify({
+    owner: String(owner ?? ''),
+    target: String(target ?? ''),
+    token: String(token ?? ''),
+    signer: signer ? bytesToHex(signer) : '',
+    kind: Number(kind ?? 0),
+    cap: String(cap ?? 0n),
+    spentInPeriod: String(spentInPeriod ?? 0n),
+    periodStart: String(periodStart ?? 0n),
+    periodDuration: String(periodDuration ?? 0n),
+    expiry: String(expiry ?? 0n),
+    revoked: Boolean(revoked),
+  })
+  return '0x' + hash(payload).toString('hex')
+}
+
+/**
+ * Read-only cache inspection: every cached (owner, vault, network) agent, each paired with its
+ * AUTHORITATIVE on-chain scope + signer (never trusts the local cache's own signerPub/expiry —
+ * chain is truth). Unlike `takeReusableAgent`, this never prunes, never writes to storage, and
+ * never "claims" an entry for the caller (no `exclude` bookkeeping) — Task 5's fresh/reuse
+ * decision needs to see the WHOLE picture (every candidate for every reviewed allocation) before
+ * deciding anything, and an all-or-nothing decision must never have side-effected the cache while
+ * merely looking. Kept alongside `takeReusableAgent` for compatibility until orchestration
+ * migrates to the preflight (reusePreflight.js).
+ * @param {{owner, vault, network, nowSec?, server?, readScope?, readSigner?, storage?}} p
+ * @returns {Promise<Array<{agentAddress:string, entry:CachedAgent, scope:object|null,
+ *          signer:Uint8Array|null, scopeFingerprint:string|null}>>}
+ */
+export async function inspectReusableAgents({
+  owner,
+  vault,
+  network,
+  server,
+  readScope = readAgentScope,
+  readSigner = readAgentSigner,
+  storage,
+}) {
+  const entries = loadCachedAgents({ owner, vault, network, storage })
+  const rows = []
+  for (const entry of entries) {
+    const [scope, signer] = await Promise.all([
+      readScope(entry.agentAddress, { server }),
+      readSigner(entry.agentAddress, { server }),
+    ])
+    rows.push({
+      agentAddress: entry.agentAddress,
+      entry,
+      scope,
+      signer,
+      scopeFingerprint: scope
+        ? computeScopeFingerprint({
+            owner: scope.owner,
+            // agent_account v3 renamed AgentScope.vault -> target; dual-support (see isScopeReusable).
+            target: scope.target ?? scope.vault,
+            token: scope.token,
+            signer,
+            kind: scope.kind,
+            cap: scope.cap_per_period,
+            spentInPeriod: scope.spent_in_period,
+            periodStart: scope.period_start,
+            periodDuration: scope.period_duration,
+            expiry: scope.expiry,
+            revoked: scope.revoked,
+          })
+        : null,
+    })
+  }
+  return rows
 }
 
 /**

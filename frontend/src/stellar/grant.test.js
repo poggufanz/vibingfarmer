@@ -17,6 +17,9 @@ import {
   buildGrantTx,
   submitGrant,
   readAllowance,
+  readAllowanceStrict,
+  AllowanceReadError,
+  readConfirmedLedger,
   runAgentPull,
   AGENT_KIND_DEPOSIT,
   AGENT_KIND_BRIDGE,
@@ -363,6 +366,55 @@ describe('readAllowance', () => {
     }
     const out = await readAllowance({ owner: OWNER, server })
     expect(out).toEqual({ amount: 0n, liveUntilLedger: null })
+  })
+})
+
+describe('readAllowanceStrict - distinguishes RPC failure from a confirmed zero', () => {
+  it('decodes the SEP-41 allowance i128 into { amount }', async () => {
+    const server = {
+      simulateTransaction: async () => ({
+        result: { retval: nativeToScVal(70_000_000n, { type: 'i128' }) },
+      }),
+    }
+    expect(await readAllowanceStrict({ owner: OWNER, server })).toEqual({ amount: 70_000_000n })
+  })
+
+  it('a CONFIRMED zero allowance decodes to { amount: 0n } - not an error', async () => {
+    const server = {
+      simulateTransaction: async () => ({
+        result: { retval: nativeToScVal(0n, { type: 'i128' }) },
+      }),
+    }
+    expect(await readAllowanceStrict({ owner: OWNER, server })).toEqual({ amount: 0n })
+  })
+
+  it('an RPC failure THROWS AllowanceReadError - never masquerades as zero', async () => {
+    const server = {
+      simulateTransaction: async () => {
+        throw new Error('rpc down')
+      },
+    }
+    await expect(readAllowanceStrict({ owner: OWNER, server })).rejects.toThrow(AllowanceReadError)
+  })
+})
+
+describe('readConfirmedLedger - GrantReceiptV1.confirmedAt source (never Date.now())', () => {
+  it('reads confirmedLedger + confirmedAt from the confirmed getTransaction response', async () => {
+    const server = {
+      getTransaction: async () => ({ status: 'SUCCESS', ledger: 12345, createdAt: 1_700_000_000 }),
+    }
+    const out = await readConfirmedLedger({ hash: 'HDEADBEEF', server })
+    expect(out).toEqual({ confirmedLedger: 12345, confirmedAt: 1_700_000_000 })
+  })
+
+  it('throws when the transaction is not confirmed SUCCESS (never fabricates a receipt)', async () => {
+    const server = { getTransaction: async () => ({ status: 'PENDING' }) }
+    await expect(readConfirmedLedger({ hash: 'H', server })).rejects.toThrow(/not confirmed/i)
+  })
+
+  it('throws when the RPC omits ledger/createdAt even on SUCCESS (never falls back to Date.now())', async () => {
+    const server = { getTransaction: async () => ({ status: 'SUCCESS' }) }
+    await expect(readConfirmedLedger({ hash: 'H', server })).rejects.toThrow()
   })
 })
 

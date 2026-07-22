@@ -1,6 +1,12 @@
 // frontend/src/stellar/agentCache.test.js — agent reuse cache: persistence, on-chain scope
 // validation (expiry / revoked / cap headroom / rolling window), pruning, and run-local exclusion.
-import { describe, test, expect, beforeEach } from 'vitest'
+import { describe, test, expect, beforeEach, vi } from 'vitest'
+
+const readContractMock = vi.fn()
+vi.mock('./client.js', () => ({
+  readContract: (...a) => readContractMock(...a),
+}))
+
 import {
   cacheKeyFor,
   loadCachedAgents,
@@ -8,6 +14,9 @@ import {
   scopeHeadroom,
   isScopeReusable,
   takeReusableAgent,
+  readAgentSigner,
+  computeScopeFingerprint,
+  inspectReusableAgents,
   EXPIRY_MARGIN_SECONDS,
 } from './agentCache.js'
 
@@ -68,6 +77,7 @@ const scopeV3 = (over = {}) => ({
 let storage
 beforeEach(() => {
   storage = makeStorage()
+  readContractMock.mockReset()
 })
 
 describe('cache persistence', () => {
@@ -229,5 +239,139 @@ describe('takeReusableAgent', () => {
     const rolled = scope({ period_start: BigInt(NOW - 86401), spent_in_period: 500000000n })
     const taken = await takeReusableAgent(takeArgs({ readScope: async () => rolled }))
     expect(taken?.agentAddress).toBe('CAGENT1')
+  })
+})
+
+describe('readAgentSigner', () => {
+  test('reads the agent scope_of contract via the "signer" method', async () => {
+    readContractMock.mockResolvedValue(new Uint8Array(32).fill(9))
+    const out = await readAgentSigner('CAGENT1', { server: {} })
+    expect(readContractMock).toHaveBeenCalledWith({
+      contract: 'CAGENT1',
+      method: 'signer',
+      args: [],
+      server: {},
+    })
+    expect(out).toEqual(new Uint8Array(32).fill(9))
+  })
+
+  test('an RPC/decode failure returns null, never throws', async () => {
+    readContractMock.mockRejectedValue(new Error('rpc down'))
+    expect(await readAgentSigner('CAGENT1', { server: {} })).toBeNull()
+  })
+})
+
+describe('computeScopeFingerprint', () => {
+  const ingredients = {
+    owner: OWNER,
+    target: VAULT,
+    token: 'CTOKEN',
+    signer: new Uint8Array(32).fill(1),
+    kind: 0,
+    cap: 500000000n,
+    spentInPeriod: 0n,
+    periodStart: 0n,
+    periodDuration: 86400n,
+    expiry: BigInt(NOW + 3600),
+    revoked: false,
+  }
+
+  test('is deterministic for identical ingredients', () => {
+    expect(computeScopeFingerprint(ingredients)).toBe(computeScopeFingerprint({ ...ingredients }))
+  })
+
+  test.each([
+    ['owner', { owner: 'GOTHER' }],
+    ['target', { target: 'COTHER' }],
+    ['token', { token: 'COTHERTOKEN' }],
+    ['signer', { signer: new Uint8Array(32).fill(2) }],
+    ['kind', { kind: 1 }],
+    ['cap', { cap: 1n }],
+    ['spentInPeriod', { spentInPeriod: 1n }],
+    ['periodStart', { periodStart: 1n }],
+    ['periodDuration', { periodDuration: 1n }],
+    ['expiry', { expiry: 1n }],
+    ['revoked', { revoked: true }],
+  ])('changes when %s changes', (_label, over) => {
+    expect(computeScopeFingerprint({ ...ingredients, ...over })).not.toBe(
+      computeScopeFingerprint(ingredients)
+    )
+  })
+
+  test('is a 0x-prefixed sha256 hex string', () => {
+    expect(computeScopeFingerprint(ingredients)).toMatch(/^0x[0-9a-f]{64}$/)
+  })
+})
+
+describe('inspectReusableAgents (non-mutating)', () => {
+  const args = (over = {}) => ({
+    owner: OWNER,
+    vault: VAULT,
+    network: NET,
+    nowSec: NOW,
+    storage,
+    ...over,
+  })
+
+  test('returns [] when the cache is empty, no RPC calls made', async () => {
+    const rows = await inspectReusableAgents(args({ readScope: async () => scope() }))
+    expect(rows).toEqual([])
+  })
+
+  test('returns one row per cached entry with scope + signer + scopeFingerprint', async () => {
+    saveCachedAgent({ owner: OWNER, vault: VAULT, network: NET, entry: entry(), storage })
+    const readScope = vi.fn(async () => scope())
+    const readSigner = vi.fn(async () => new Uint8Array(32).fill(4))
+    const rows = await inspectReusableAgents(args({ readScope, readSigner }))
+    expect(rows).toHaveLength(1)
+    expect(rows[0].agentAddress).toBe('CAGENT1')
+    expect(rows[0].entry.secret).toBe('SSECRET1')
+    expect(rows[0].scope).toEqual(scope())
+    expect(rows[0].signer).toEqual(new Uint8Array(32).fill(4))
+    expect(rows[0].scopeFingerprint).toMatch(/^0x[0-9a-f]{64}$/)
+  })
+
+  test('scopeFingerprint is null when the scope read fails (never fabricate one)', async () => {
+    saveCachedAgent({ owner: OWNER, vault: VAULT, network: NET, entry: entry(), storage })
+    const rows = await inspectReusableAgents(
+      args({ readScope: async () => null, readSigner: async () => new Uint8Array(32) })
+    )
+    expect(rows[0].scope).toBeNull()
+    expect(rows[0].scopeFingerprint).toBeNull()
+  })
+
+  test('NEVER prunes or mutates the cache, even for a revoked/expired/null scope', async () => {
+    saveCachedAgent({ owner: OWNER, vault: VAULT, network: NET, entry: entry(), storage })
+    await inspectReusableAgents(
+      args({ readScope: async () => scope({ revoked: true }), readSigner: async () => null })
+    )
+    expect(loadCachedAgents({ owner: OWNER, vault: VAULT, network: NET, storage })).toHaveLength(1)
+    await inspectReusableAgents(args({ readScope: async () => null, readSigner: async () => null }))
+    expect(loadCachedAgents({ owner: OWNER, vault: VAULT, network: NET, storage })).toHaveLength(1)
+  })
+
+  test('NEVER assigns/excludes - two consecutive calls both see the same agent', async () => {
+    saveCachedAgent({ owner: OWNER, vault: VAULT, network: NET, entry: entry(), storage })
+    const readScope = async () => scope()
+    const readSigner = async () => new Uint8Array(32)
+    const first = await inspectReusableAgents(args({ readScope, readSigner }))
+    const second = await inspectReusableAgents(args({ readScope, readSigner }))
+    expect(first.map((r) => r.agentAddress)).toEqual(['CAGENT1'])
+    expect(second.map((r) => r.agentAddress)).toEqual(['CAGENT1'])
+  })
+
+  test('inspects every cached entry, not just the first reusable one', async () => {
+    saveCachedAgent({ owner: OWNER, vault: VAULT, network: NET, entry: entry(), storage })
+    saveCachedAgent({
+      owner: OWNER,
+      vault: VAULT,
+      network: NET,
+      entry: entry({ agentAddress: 'CAGENT2', secret: 'SSECRET2' }),
+      storage,
+    })
+    const rows = await inspectReusableAgents(
+      args({ readScope: async () => scope(), readSigner: async () => new Uint8Array(32) })
+    )
+    expect(rows.map((r) => r.agentAddress).sort()).toEqual(['CAGENT1', 'CAGENT2'])
   })
 })

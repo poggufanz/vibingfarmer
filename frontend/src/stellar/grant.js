@@ -336,6 +336,66 @@ export async function readAllowance({
   }
 }
 
+/** The relay was reachable and REFUSED this transaction — distinct from `readAllowance`'s
+ * deliberate swallow-to-zero. Task 5's proof-carrying preflight (allowanceProof.js) must never
+ * mistake "the RPC did not answer" for "the owner set the allowance to zero"; those demand
+ * opposite outcomes (retry/unproven vs. a legitimately drained budget). */
+export class AllowanceReadError extends Error {
+  constructor(message) {
+    super(message)
+    this.name = 'AllowanceReadError'
+  }
+}
+
+/**
+ * Strict current owner→router SEP-41 allowance read for the proof-carrying preflight
+ * (allowanceProof.proveCurrentAllowance). Unlike `readAllowance` (whose 0-on-failure is the
+ * right default for "should I bother the user with a grant popup"), a proof MUST distinguish a
+ * confirmed zero allowance from "the RPC did not answer" — so this throws `AllowanceReadError`
+ * on any read failure instead of coercing it to 0.
+ * @param {{owner:string, router?:string, token?:string, server?:object}} p
+ * @returns {Promise<{amount:bigint}>}
+ */
+export async function readAllowanceStrict({
+  owner,
+  router = SOROBAN_FUNDING_ROUTER_ADDRESS,
+  token = SOROBAN_TOKEN_ADDRESS,
+  server,
+}) {
+  try {
+    const amt = await readContract({
+      contract: token,
+      method: 'allowance',
+      args: [{ addr: owner }, { addr: router }],
+      server,
+    })
+    return { amount: BigInt(amt ?? 0) }
+  } catch (err) {
+    throw new AllowanceReadError(`Current allowance read failed: ${err?.message || err}`)
+  }
+}
+
+/**
+ * Read the confirmed ledger sequence + ledger close time of a submitted transaction — the ONLY
+ * legitimate source for `GrantReceiptV1.confirmedAt` (never `Date.now()`, a browser clock the
+ * chain never agreed to). Throws rather than returning a partial/fabricated receipt when the tx
+ * is not confirmed SUCCESS, or when the RPC response is missing the ledger/createdAt fields a
+ * confirmed transaction is expected to carry.
+ * @param {{hash:string, server?:object}} p
+ * @returns {Promise<{confirmedLedger:number, confirmedAt:number}>}
+ */
+export async function readConfirmedLedger({ hash, server }) {
+  const s = server || (await rpcServer())
+  const res = await s.getTransaction(hash)
+  if (res.status !== 'SUCCESS')
+    throw new Error(`Transaction ${hash} is not confirmed: ${res.status}.`)
+  const confirmedLedger = Number(res.ledger)
+  const confirmedAt = Number(res.createdAt)
+  if (!Number.isFinite(confirmedLedger) || !Number.isFinite(confirmedAt))
+    throw new Error(`Confirmed transaction ${hash} is missing ledger/createdAt from the RPC.`)
+  return { confirmedLedger, confirmedAt }
+}
+
 /**
  * Kill switch — the owner sets the SEP-41 allowance back to 0. One user-signed wallet signature,
  * submitted DIRECTLY (not via the relay) so revocation still works when the relayer is down; that
