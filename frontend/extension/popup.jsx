@@ -30,6 +30,11 @@ import UnlockScreen from '../src/wallet/ui/classic/UnlockScreen.jsx'
 import SettingsScreen from '../src/wallet/ui/classic/SettingsScreen.jsx'
 import { pickConfirmIndices } from '../src/wallet/ui/classic/backupConfirm.js'
 import * as C from '../src/wallet/ui/classic/controller.js'
+import {
+  ACTIVE_ACCOUNT_KEY,
+  resolveActiveAccount,
+  selectActiveAccount,
+} from '../src/wallet/activeAccount.js'
 
 // Protocol slug of the live deposit vault (autofarm → Blend USDC). The F8 gate resolves facts
 // by slug — SOROBAN_VAULT_ADDRESS alone carries none and would fail closed.
@@ -429,6 +434,27 @@ function Shell({ children, nav, active, tabs, onNav, sub = 'passkey · secp256r1
   )
 }
 
+// Pure decision: given resolveActiveAccount's status (activeAccount.js) and the classic wallet's
+// own bootstrap snapshot, decide which screen the popup opens on. Exported so the resolution
+// matrix is unit-testable without rendering React — mirrors approve.js's screenModel pattern.
+// legacyWalletType is ONLY consulted for the cosmetic empty-state default (no accounts exist yet
+// at all, so there is nothing for resolveActiveAccount itself to migrate) — never to override an
+// actual resolved account.
+export function resolveEntryScreen(resolved, cw, legacyWalletType = null) {
+  if (resolved.status === 'empty') {
+    return { screen: legacyWalletType === 'passkey' ? 'welcome' : 'classic-onboarding' }
+  }
+  if (resolved.status === 'selection-required') {
+    return { screen: 'select-account', accounts: resolved.accounts }
+  }
+  const { account } = resolved
+  if (account.kind === 'C') {
+    return { screen: 'home', contractId: account.address }
+  }
+  if (cw.needsBackup || !cw.unlocked) return { screen: 'classic-unlock' }
+  return { screen: 'classic-home' }
+}
+
 function Popup() {
   const [screen, setScreen] = useState('loading')
   const [wallet, setWallet] = useState(null)
@@ -445,6 +471,7 @@ function Popup() {
     needsBackup: false,
   })
   const [backup, setBackup] = useState(null) // { mnemonic, indices, publicKey }
+  const [selectableAccounts, setSelectableAccounts] = useState([]) // ambiguous-resolution choices
   const [preview, setPreview] = useState(null)
   const [portfolio, setPortfolio] = useState(null)
   const [unfunded, setUnfunded] = useState(false)
@@ -504,9 +531,26 @@ function Popup() {
     }
   }
 
+  // ONE authoritative resolution (Task 1 — activeAccount.js) replaces the old split logic (a
+  // classic-only bootstrap effect plus a separate passkey-only localStorage-cache effect that
+  // could each route independently). chrome.storage.local is the authority; window.localStorage
+  // is read here ONLY as a one-time migration hint for resolveActiveAccount — the popup is the
+  // one context that legitimately has a window, unlike the MV3 background service worker.
   useEffect(() => {
     C.armAutoLock()
-    C.bootstrap().then((b) => {
+    let legacyWalletType = null
+    try {
+      legacyWalletType = window.localStorage.getItem('vf_wallet_type')
+    } catch {
+      legacyWalletType = null
+    }
+    Promise.all([
+      C.bootstrap(),
+      resolveActiveAccount({
+        storageLocal: chrome.storage?.local,
+        legacyStorage: typeof window !== 'undefined' ? window.localStorage : undefined,
+      }),
+    ]).then(([b, resolved]) => {
       setCw({
         ready: true,
         hasWallet: b.hasWallet,
@@ -514,17 +558,50 @@ function Popup() {
         unlocked: b.unlocked,
         needsBackup: b.needsBackup,
       })
-      // ONLY route to classic screens if passkey wallet mode is not the active preference
-      const activeType = localStorage.getItem('vf_wallet_type')
-      if (activeType !== 'passkey') {
-        if (b.hasWallet && (b.needsBackup || !b.unlocked)) setScreen('classic-unlock')
-        else if (b.hasWallet) {
-          setScreen('classic-home')
-          refresh(b.publicKey)
-        } else setScreen('classic-onboarding')
+      const entry = resolveEntryScreen(resolved, b, legacyWalletType)
+      if (entry.screen === 'home') {
+        setWallet({ contractId: entry.contractId })
+        setScreen('home')
+        refreshBalance(entry.contractId)
+      } else if (entry.screen === 'classic-home') {
+        setScreen('classic-home')
+        refresh(b.publicKey)
+      } else if (entry.screen === 'select-account') {
+        setSelectableAccounts(entry.accounts)
+        setScreen('select-account')
+      } else {
+        setScreen(entry.screen)
       }
     })
   }, [])
+
+  // Deliberate account switch out of the rare "selection-required" ambiguity (both a classic and
+  // a passkey wallet present, no persisted or migratable preference): persists exactly the chosen
+  // account, then routes to it. Never touches the OTHER account's stored credentials.
+  async function handleSelectAccount(account) {
+    clear()
+    await selectActiveAccount({ accountId: account.id, storageLocal: chrome.storage.local })
+    if (account.kind === 'C') {
+      setWallet({ contractId: account.address })
+      setScreen('home')
+      refreshBalance(account.address)
+      return
+    }
+    const b = await C.bootstrap()
+    setCw({
+      ready: true,
+      hasWallet: b.hasWallet,
+      publicKey: b.publicKey,
+      unlocked: b.unlocked,
+      needsBackup: b.needsBackup,
+    })
+    if (b.needsBackup || !b.unlocked) {
+      setScreen('classic-unlock')
+    } else {
+      setScreen('classic-home')
+      refresh(b.publicKey)
+    }
+  }
 
   // Single nav handler for every classic tab. Clears the send preview on every navigation
   // (not just the home → send entry) so a stale clear-sign snapshot can never leak into a
@@ -543,33 +620,6 @@ function Popup() {
     }
     setScreen('classic-' + t)
   }
-
-  // Restore cached wallet on mount (no-arg = reads vf_wallet_contract from localStorage)
-  // Reconnects read-only (displays home/balance) without prompting for Face ID on startup.
-  useEffect(() => {
-    const activeType = localStorage.getItem('vf_wallet_type')
-    if (activeType === 'passkey') {
-      const cached = localStorage.getItem('vf_wallet_contract')
-      if (cached) {
-        setWallet({ contractId: cached })
-        setScreen('home')
-        refreshBalance(cached)
-      } else if (typeof chrome !== 'undefined' && chrome.storage?.local) {
-        chrome.storage.local.get('vf_wallet_contract').then((store) => {
-          const val = store['vf_wallet_contract']
-          if (val) {
-            setWallet({ contractId: val })
-            setScreen('home')
-            refreshBalance(val)
-          } else {
-            setScreen('welcome')
-          }
-        })
-      } else {
-        setScreen('welcome')
-      }
-    }
-  }, [])
 
   // Recover last ceremony result on reopen (popup may have been dismissed during Face-ID)
   useEffect(() => {
@@ -1237,6 +1287,34 @@ function Popup() {
     )
   }
 
+  // Ambiguous resolution: both a classic and a passkey wallet exist with no persisted or
+  // migratable preference (activeAccount.js status 'selection-required'). Never silently picks
+  // one — the user must choose, and switching never touches the OTHER account's credentials.
+  if (screen === 'select-account') {
+    return (
+      <Shell sub="choose account">
+        <Eyebrow sec="accounts" meta="choose one" />
+        <h1 className="vf-h">Choose an account</h1>
+        <p className="lede">
+          More than one wallet is set up on this device. Pick which one to use.
+        </p>
+        <div className="doc">
+          {selectableAccounts.map((a) => (
+            <div className="row" key={a.id}>
+              <span className="row-k">{a.kind === 'C' ? 'passkey' : 'classic'}</span>
+              <span className="row-v addr">
+                {a.address.slice(0, 6)}…{a.address.slice(-4)}
+              </span>
+              <button className="vf-btn" onClick={() => handleSelectAccount(a)}>
+                Use this
+              </button>
+            </div>
+          ))}
+        </div>
+      </Shell>
+    )
+  }
+
   // ── SCREENS (passkey) ──────────────────────────────────────────────────────
 
   if (screen === 'welcome') {
@@ -1383,7 +1461,14 @@ function Popup() {
               localStorage.removeItem('vf_wallet_credential')
               localStorage.setItem('vf_wallet_type', 'classic')
               if (typeof chrome !== 'undefined' && chrome.storage?.local) {
-                await chrome.storage.local.remove(['vf_wallet_contract', 'vf_wallet_credential'])
+                // Reset (not a benign switch — this button deletes the passkey account outright),
+                // so the stale active-account pointer must go with it rather than linger for the
+                // next resolveActiveAccount call to self-heal around.
+                await chrome.storage.local.remove([
+                  'vf_wallet_contract',
+                  'vf_wallet_credential',
+                  ACTIVE_ACCOUNT_KEY,
+                ])
               }
               setWallet(null)
               setScreen('classic-onboarding')
@@ -1602,4 +1687,8 @@ function Popup() {
   )
 }
 
-createRoot(document.getElementById('root')).render(<Popup />)
+// Guarded so importing this module (e.g. to unit-test resolveEntryScreen, mirroring approve.js's
+// screenModel pattern) never tries to mount into a #root that only exists in popup.html.
+if (typeof document !== 'undefined' && document.getElementById('root')) {
+  createRoot(document.getElementById('root')).render(<Popup />)
+}

@@ -8,6 +8,8 @@ import {
   buildApprove,
 } from './account.js'
 import { SOROBAN_TOKEN_ADDRESS, SOROBAN_ACTIVE_VAULT_ADDRESS } from '../stellar/config.js'
+import { installChromeMock } from './testUtils.js'
+import { ACTIVE_ACCOUNT_KEY, resolveActiveAccount } from './activeAccount.js'
 
 const store = {}
 beforeEach(() => {
@@ -88,6 +90,36 @@ it('addAgentSigner attaches the ed25519 agent under a scoped context rule', asyn
   })
   expect(kit.signers.addDelegated).toHaveBeenCalledWith(3, 'GAGENT')
   expect(out.ok).toBe(true)
+})
+
+describe('passkey wallet account — active-account binding (extension context)', () => {
+  beforeEach(() => {
+    installChromeMock()
+  })
+
+  it('createPasskeyWallet writes the exact new ActiveAccount (kind C) when chrome.storage is present', async () => {
+    const kit = fakeKit()
+    const out = await createPasskeyWallet({ appName: 'VF', userName: 'u', kit })
+    const active = (await globalThis.chrome.storage.local.get(ACTIVE_ACCOUNT_KEY))[
+      ACTIVE_ACCOUNT_KEY
+    ]
+    expect(active).toMatchObject({
+      kind: 'C',
+      address: out.contractId,
+      signer: 'passkey-secp256r1',
+    })
+    const resolved = await resolveActiveAccount({ storageLocal: globalThis.chrome.storage.local })
+    expect(resolved).toEqual({ status: 'ready', account: active })
+  })
+
+  it('connectPasskeyWallet (restore) writes the exact new ActiveAccount (kind C)', async () => {
+    const kit = fakeKit()
+    const out = await connectPasskeyWallet({ kit })
+    const active = (await globalThis.chrome.storage.local.get(ACTIVE_ACCOUNT_KEY))[
+      ACTIVE_ACCOUNT_KEY
+    ]
+    expect(active).toMatchObject({ kind: 'C', address: out.contractId })
+  })
 })
 
 describe('buildApprove', () => {

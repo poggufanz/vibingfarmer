@@ -25,7 +25,9 @@ export async function bootstrap() {
   return {
     hasWallet: Boolean(w),
     publicKey: w?.publicKey ?? null,
-    unlocked: await isUnlocked(),
+    // Bind to THIS wallet's address (Task 1 — activeAccount.js): a session left unlocked for a
+    // different G-address must read as locked here, not silently pass as "unlocked".
+    unlocked: await isUnlocked(w?.publicKey),
     needsBackup: Boolean(w?.needsBackup),
   }
 }

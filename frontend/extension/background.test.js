@@ -319,12 +319,45 @@ describe('background router — PROVIDER_REQUEST (dapp path)', () => {
 })
 
 describe('resolveWalletAddress', () => {
-  it('prefers the passkey address when both a passkey and a classic wallet exist', async () => {
+  it('fails closed (null) when both a passkey and a classic wallet exist with no active-account selection — never silently prefers the passkey', async () => {
     const { env } = fakeEnv({
       address: 'CPASSKEY',
       classic: { G1: { publicKey: 'G1', createdAt: 1 } },
     })
-    await expect(resolveWalletAddress(env.storageLocal)).resolves.toBe('CPASSKEY')
+    await expect(resolveWalletAddress(env.storageLocal)).resolves.toBeNull()
+  })
+
+  it('honors an explicit vf_active_account_v1 selection even when the other kind also exists', async () => {
+    const { env, local } = fakeEnv({
+      address: 'CPASSKEY',
+      classic: { G1: { publicKey: 'G1', createdAt: 1 } },
+    })
+    local.vf_active_account_v1 = {
+      version: 1,
+      id: 'stellar-testnet:G1',
+      network: 'stellar-testnet',
+      address: 'G1',
+      kind: 'G',
+      signer: 'classic-ed25519',
+      selectedAt: 1,
+    }
+    await expect(resolveWalletAddress(env.storageLocal)).resolves.toBe('G1')
+  })
+
+  it('ignores a stale vf_active_account_v1 selection pointing at a removed account (fails closed, falls back to the remaining wallet)', async () => {
+    const { env, local } = fakeEnv({
+      classic: { G1: { publicKey: 'G1', createdAt: 1 } },
+    })
+    local.vf_active_account_v1 = {
+      version: 1,
+      id: 'stellar-testnet:CGONE',
+      network: 'stellar-testnet',
+      address: 'CGONE',
+      kind: 'C',
+      signer: 'passkey-secp256r1',
+      selectedAt: 1,
+    }
+    await expect(resolveWalletAddress(env.storageLocal)).resolves.toBe('G1')
   })
 
   it('falls back to the oldest classic wallet by createdAt when there is no passkey', async () => {

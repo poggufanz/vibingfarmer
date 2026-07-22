@@ -2,6 +2,7 @@ import { WALLET_CONFIG } from './config.js'
 import { rpcServer, buildInvokeTx } from '../stellar/client.js'
 import { SOROBAN_TOKEN_ADDRESS, SOROBAN_ACTIVE_VAULT_ADDRESS } from '../stellar/config.js'
 import { toBaseUnits } from '../stellar/format.js'
+import { selectActiveAccount, NETWORK } from './activeAccount.js'
 
 const CACHE_KEY = 'vf_wallet_contract'
 const CREDENTIAL_KEY = 'vf_wallet_credential'
@@ -43,6 +44,14 @@ export async function createPasskeyWallet({ appName, userName, kit }) {
       [CACHE_KEY]: contractId,
       [CREDENTIAL_KEY]: credentialId,
     })
+    // Creation is exactly the "creation/import/restore selects only the account just
+    // created/restored" deliberate switch (activeAccount.js) — chrome.storage.local only, same
+    // guard as the cache mirror write above (MV3 background has no window; the web app has no
+    // chrome).
+    await selectActiveAccount({
+      accountId: `${NETWORK}:${contractId}`,
+      storageLocal: chrome.storage.local,
+    })
   }
   return { contractId, credentialId }
 }
@@ -81,6 +90,13 @@ export async function connectPasskeyWallet({ contractId, credentialId, kit } = {
       await chrome.storage.local.set({
         [CACHE_KEY]: res.contractId,
         [CREDENTIAL_KEY]: res.credentialId || '',
+      })
+      // Restore is the "creation/import/restore selects only the account just created/restored"
+      // switch too — a reconnect to a cached wallet still counts as the deliberate action that
+      // makes it active.
+      await selectActiveAccount({
+        accountId: `${NETWORK}:${res.contractId}`,
+        storageLocal: chrome.storage.local,
       })
     }
   }

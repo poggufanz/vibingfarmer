@@ -23,14 +23,46 @@ async function readLocal(storageLocal, key) {
   return got[key]
 }
 
-/** Passkey smart account wins; else the oldest classic wallet's G-address.
- *  keep in sync with approve.js resolveWallet */
+// Same "at most one G, at most one C" universe as src/wallet/activeAccount.js. Duplicated here
+// (not imported) on purpose: background.js is loaded as a classic (non-module) MV3 service
+// worker — vite.config.extension.js copies it byte-for-byte after stripping `export`, so a bare
+// `import` statement here would be invalid syntax at runtime. Keep in sync with
+// src/wallet/activeAccount.js's listWalletAccounts/resolveActiveAccount and with approve.js's
+// resolveWallet (same constraint, same duplication).
+const ACTIVE_ACCOUNT_KEY = 'vf_active_account_v1'
+
+async function listAccountsLocal(storageLocal) {
+  const [classicMap, contractId] = await Promise.all([
+    readLocal(storageLocal, 'vf_classic_wallets'),
+    readLocal(storageLocal, 'vf_wallet_contract'),
+  ])
+  const accounts = []
+  const oldestClassic = Object.values(classicMap ?? {})
+    .filter((rec) => rec?.publicKey)
+    .sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0))[0]
+  if (oldestClassic) accounts.push({ id: `stellar-testnet:${oldestClassic.publicKey}`, address: oldestClassic.publicKey, kind: 'G' })
+  if (contractId) accounts.push({ id: `stellar-testnet:${contractId}`, address: contractId, kind: 'C' })
+  return accounts
+}
+
+/** Resolves the single authoritative active account's address (chrome.storage.local only — an
+ *  MV3 service worker has no window/localStorage, so this never depends on one).
+ *  - An explicit, valid vf_active_account_v1 selection always wins.
+ *  - Exactly one wallet on the device auto-resolves to it.
+ *  - Both a classic and a passkey wallet with NO valid selection fails closed (null) — this
+ *    never silently prefers the passkey account just because it exists.
+ *  keep in sync with src/wallet/activeAccount.js and approve.js resolveWallet */
 export async function resolveWalletAddress(storageLocal) {
-  const passkey = (await readLocal(storageLocal, 'vf_wallet_contract')) || null
-  if (passkey) return passkey
-  const classic = (await readLocal(storageLocal, 'vf_classic_wallets')) ?? {}
-  const first = Object.values(classic).sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0))[0]
-  return first?.publicKey ?? null
+  const accounts = await listAccountsLocal(storageLocal)
+  const byId = new Map(accounts.map((a) => [a.id, a]))
+
+  const persisted = await readLocal(storageLocal, ACTIVE_ACCOUNT_KEY)
+  if (persisted?.id && byId.has(persisted.id) && byId.get(persisted.id).kind === persisted.kind) {
+    return byId.get(persisted.id).address
+  }
+
+  if (accounts.length === 1) return accounts[0].address
+  return null
 }
 
 function settleDappRequest(pending, rid, payload) {
