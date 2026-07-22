@@ -7,6 +7,7 @@ import {
   deriveScenarioParams,
   runSimulation,
   allocationsFromStrategy,
+  hasUnknownYield,
 } from './simulation.js'
 import { makeRng } from './rng.js'
 
@@ -169,6 +170,26 @@ describe('allocationsFromStrategy', () => {
   it('returns an empty array for a null strategy', () => {
     expect(allocationsFromStrategy(null)).toEqual([])
   })
+
+  it('preserves an explicit null apy (truthfully unavailable) rather than coercing to 0', () => {
+    const strategy = {
+      total: 100,
+      agents: [{ vault: { addr: '0xA', apy: null }, allocation: 100 }],
+    }
+    expect(allocationsFromStrategy(strategy)).toEqual([
+      { address: '0xA', allocation: 1, apy: null },
+    ])
+  })
+})
+
+describe('hasUnknownYield', () => {
+  const state = { universe: [{ address: '0xA', apy: 5 }] }
+  it('is false when every allocation resolves to a real number', () => {
+    expect(hasUnknownYield([{ address: '0xA', allocation: 1 }], state)).toBe(false)
+  })
+  it('is true when an allocation explicitly carries apy: null', () => {
+    expect(hasUnknownYield([{ address: '0xA', allocation: 1, apy: null }], state)).toBe(true)
+  })
 })
 
 describe('runSimulation', () => {
@@ -212,6 +233,17 @@ describe('runSimulation', () => {
     expect(runSimulation(allocations, makeState(), opts)).toEqual(
       runSimulation(allocations, makeState(), opts)
     )
+  })
+
+  it('reports projection as known when every allocation has a real yield', () => {
+    const sim = runSimulation(allocations, makeState(), { runs: 50, horizonDays: 30, seed: 1 })
+    expect(sim.projection).toEqual({ state: 'known', value: sim.expectedValue })
+  })
+
+  it('reports projection as unavailable when an allocation yield is explicitly null', () => {
+    const unknownAlloc = [{ address: '0xB', allocation: 1, apy: null }]
+    const sim = runSimulation(unknownAlloc, makeState(), { runs: 50, horizonDays: 30, seed: 1 })
+    expect(sim.projection).toEqual({ state: 'unavailable', value: null })
   })
 
   it('a turbulent context lowers the expected value vs calm', () => {

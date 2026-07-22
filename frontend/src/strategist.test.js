@@ -10,8 +10,11 @@ import {
   generateAgentSkills,
   getTokenUsageHistory,
   clearTokenUsageHistory,
+  buildFallbackForParams,
 } from './strategist.js'
-import { AI_PROXY_URL } from './config.js'
+import { AI_PROXY_URL, VAULT_CATALOG } from './config.js'
+import { buildMergedCatalog } from './strategy/mergedCatalog.js'
+import { RISK_PROFILES } from './strategy/planModel.js'
 
 const VAULTS = [
   { address: '0xAAAa000000000000000000000000000000000001', name: 'A' },
@@ -64,6 +67,37 @@ describe('validateStrategyResponse', () => {
 
   it('deprecated validateVeniceResponse alias matches validateStrategyResponse', () => {
     expect(validateVeniceResponse).toBe(validateStrategyResponse)
+  })
+
+  it('allows expected_apy: null for an unavailable/no-yield venue', () => {
+    const res = { selected_vaults: [validVault({ expected_apy: null })] }
+    expect(() => validateStrategyResponse(res, VAULTS)).not.toThrow()
+    expect(res.selected_vaults[0].expected_apy).toBeNull()
+  })
+
+  it('overwrites a model-hallucinated APY to null for a Base custody-proxy venue, from catalog truth', () => {
+    const catalog = buildMergedCatalog({ baseAvailable: true })
+    const proxyEntry = catalog.find((c) => c.venueKind === 'base-custody-proxy')
+    const res = {
+      selected_vaults: [
+        validVault({
+          address: proxyEntry.address,
+          expected_apy: 12.5, // the model invents a plausible-looking number
+        }),
+      ],
+    }
+    const out = validateStrategyResponse(res, catalog)
+    expect(out.selected_vaults[0].expected_apy).toBeNull()
+    expect(out.selected_vaults[0].venueKind).toBe('base-custody-proxy')
+    expect(out.selected_vaults[0].proxyTarget).toBe(proxyEntry.proxyTarget)
+  })
+
+  it('stamps venueKind from the allowlisted catalog for a live Stellar venue', () => {
+    const catalog = buildMergedCatalog({ baseAvailable: false })
+    const res = { selected_vaults: [validVault({ address: catalog[0].address })] }
+    const out = validateStrategyResponse(res, catalog)
+    expect(out.selected_vaults[0].venueKind).toBe('stellar-live')
+    expect(out.selected_vaults[0].proxyTarget).toBeUndefined()
   })
 })
 
@@ -273,6 +307,25 @@ describe('allocateBasePools', () => {
     for (const entry of result) {
       expect(entry.skill.expiresAt).toBeGreaterThan(nowSec)
       expect(BigInt(entry.skill.maxAmount)).toBe(BigInt(Math.round(entry.amount * 1_000_000)))
+    }
+  })
+})
+
+describe('buildFallbackForParams (one truthful destination allocation + crew expansion)', () => {
+  it('expands into RISK_PROFILES.targetSlots crew, not a silent 1-vault collapse', () => {
+    for (const [riskLevel, risk] of [
+      ['low', 'low'],
+      ['medium', 'med'],
+      ['high', 'high'],
+    ]) {
+      const result = buildFallbackForParams(300, riskLevel)
+      expect(result.generatedBy).toBe('fallback')
+      expect(result.vaults).toHaveLength(RISK_PROFILES[risk].targetSlots)
+      result.vaults.forEach((v) => {
+        expect(v.address).toBe(VAULT_CATALOG[0].address) // every slot is the one truthful venue
+      })
+      const total = result.vaults.reduce((s, v) => s + v.allocation, 0)
+      expect(total).toBeCloseTo(1.0, 6)
     }
   })
 })

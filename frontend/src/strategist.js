@@ -22,6 +22,7 @@ import { saveStrategy, saveReasoning } from './history.js'
 import { loadSettings } from './settingsStore.js'
 import { hashStrategy } from './attestation.js'
 import { buildStrategyState, enforceActionSpace, scoreReward, riskCeiling } from './strategy/mdp.js'
+import { expandAgentSlots } from './strategy/planModel.js'
 
 const DISPLAY_PROSE_RULE =
   'Write user-facing prose as one plain sentence in sentence case. Do not use em dashes, en dashes, middle dots, emoji, headings, hype, or filler.'
@@ -248,7 +249,7 @@ export async function generateStrategy({
 
   if (signal?.aborted) {
     return {
-      ...buildFallbackForParams(amount, Math.min(numVaults, VAULT_CATALOG.length)),
+      ...buildFallbackForParams(amount, riskLevel),
       skillSource: 'fallback',
       marketContextUsed: false,
       vaultDataSource: 'fallback',
@@ -319,14 +320,21 @@ export async function generateStrategy({
       ? `live DeFiLlama data (${new Date().toUTCString()})`
       : 'static fallback catalog'
 
-  // System prompt: skill + real vault catalog + injected live market context (if available)
+  // System prompt: skill + real vault catalog + injected live market context (if available).
+  // Legacy flat yield fields (apy, yield_source, drawdown) never reach the prompt: they read as
+  // "confirmed current yield" to a model, but only `yield.state`/`yield.apy` (venueTruth.js) is
+  // ever actually live -- everything else must come from that field, never a bare number.
+  const serializableVaultData = vaultData.map((v) => {
+    const { apy: _apy, yield_source: _yieldSource, drawdown: _drawdown, ...rest } = v
+    return rest
+  })
   let systemPrompt = skill.content.replace(
     '[VAULT_CATALOG_JSON]',
-    JSON.stringify(vaultData, null, 2)
+    JSON.stringify(serializableVaultData, null, 2)
   )
   if (baseAvailableResolved) {
     systemPrompt +=
-      '\nEntries with "chain":"base" live on Base (bridged via CCTP, higher latency, one extra user signature). Prefer stellar unless the base APY advantage is material.'
+      '\nEntries with "chain":"base" ("venueKind":"base-custody-proxy") live on Base (bridged via CCTP, higher latency, one extra user signature). They are custody-only: no protocol yield exists behind them yet, so their `proxyTarget` name (e.g. "aave-v3") is a planned mainnet integration only, never a live position or its APY -- report expected_apy: null for them.'
   }
   if (marketContext) {
     systemPrompt = systemPrompt + '\n\n' + marketContext
@@ -343,7 +351,7 @@ export async function generateStrategy({
   if (!provider) {
     console.warn('[ai] No provider - using fallback strategy')
     return {
-      ...buildFallbackForParams(amount, safeNumVaults),
+      ...buildFallbackForParams(amount, riskLevel),
       skillSource: skill.source,
       marketContextUsed: marketContext !== null,
       vaultDataSource,
@@ -360,7 +368,7 @@ export async function generateStrategy({
 - Current date: ${new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
 - Vault data source: ${dataSource}
 
-Select optimal vault(s) from the catalog above. APY and TVL data are real-time from DeFiLlama. Consider live market context if present. Respond in JSON only.`
+Select optimal vault(s) from the catalog above. Trust only each entry's \`yield\` field for its return: {state:'live', apy} is a real current figure; {state:'none'|'unavailable', apy:null} means no live yield exists, so report expected_apy as null for it rather than inventing a number. TVL reflects DeFiLlama where present. A "base-custody-proxy" entry's name/proxyTarget references a planned mainnet protocol only, never a live position or its yield. Consider live market context if present. Respond in JSON only.`
 
   // Always hard-timeout the AI call. Caller may also pass a signal (user "Use default");
   // link both so neither path can hang the thinking UI forever.
@@ -491,7 +499,7 @@ Select optimal vault(s) from the catalog above. APY and TVL data are real-time f
   } catch (err) {
     console.warn(`[ai] Strategy failed (${provider.name}), using fallback:`, err.message)
     return {
-      ...buildFallbackForParams(amount, safeNumVaults),
+      ...buildFallbackForParams(amount, riskLevel),
       skillSource: skill.source,
       marketContextUsed: marketContext !== null,
       vaultDataSource,
@@ -576,18 +584,36 @@ Respond with JSON schema:
   }
 }
 
-function buildFallbackForParams(amount, numVaults) {
-  const count = Math.min(numVaults, VAULT_CATALOG.length)
-  const allocation = 1 / count
+/** 'low'/'high' pass through; app.jsx always normalizes its short 'med' to 'medium' before it
+ * reaches generateStrategy's riskLevel — map back to planModel's RISK_PROFILES key. */
+function shortRisk(riskLevel) {
+  return riskLevel === 'medium' ? 'med' : riskLevel
+}
+
+/**
+ * One truthful destination allocation (100% to the sole live Stellar venue — the deterministic
+ * fallback never assumes Base is available) followed by real crew expansion. Replaces the old
+ * `VAULT_CATALOG.slice(0, count)` protocol-persona hack, which silently collapsed every request
+ * to exactly 1 vault once VAULT_CATALOG stopped pretending to hold several distinct venues
+ * (Task 1) — `expandAgentSlots` is the one place that decides agent cardinality (approved ruling).
+ */
+export function buildFallbackForParams(amount, riskLevel) {
+  const venue = VAULT_CATALOG[0]
+  const agents = expandAgentSlots({
+    risk: shortRisk(riskLevel),
+    stellarUnits: toBaseUnits(amount),
+    destination: venue?.destination || venue?.name,
+  })
+  const count = agents.length || 1
   return {
-    vaults: VAULT_CATALOG.slice(0, count).map((v) => ({
-      address: v.address,
-      name: v.name,
-      allocation,
-      expectedApy: v.apy,
+    vaults: agents.map(() => ({
+      address: venue?.address,
+      name: venue?.name,
+      allocation: 1 / count,
+      expectedApy: venue?.apy ?? null,
     })),
     rationale:
-      'No model response was available, so funds are split evenly across available vaults.',
+      'No model response was available, so funds are split evenly across the truthful venue.',
     generatedBy: 'fallback',
   }
 }
@@ -597,6 +623,8 @@ const VALID_RISK_TIERS = new Set(['low', 'medium', 'high'])
 /** Validate AI strategy JSON (allowlist addresses, allocation, risk_tier, APY). */
 export function validateStrategyResponse(response, vaultData = VAULT_CATALOG) {
   const allowedAddresses = new Set(vaultData.map((v) => v.address.toLowerCase()))
+  const entryFor = (addr) =>
+    vaultData.find((c) => c.address.toLowerCase() === String(addr).toLowerCase())
 
   if (!response.selected_vaults || !Array.isArray(response.selected_vaults)) {
     throw new Error('Missing selected_vaults array')
@@ -613,7 +641,16 @@ export function validateStrategyResponse(response, vaultData = VAULT_CATALOG) {
     if (v.reasoning.length < 20) {
       throw new Error(`Vault ${i}: reasoning missing or too short`)
     }
-    if (typeof v.expected_apy !== 'number' || v.expected_apy <= 0 || v.expected_apy > 100) {
+    // Truth from the allowlisted catalog always overwrites whatever the model echoed back: a
+    // custody-only Base proxy NEVER carries a real APY, no matter what number the model supplied
+    // (it has nothing to hallucinate from — the legacy flat apy field is stripped before the
+    // catalog is ever serialized to it, see generateStrategy's serializableVaultData).
+    const isProxy = entryFor(v.address)?.venueKind === 'base-custody-proxy'
+    if (isProxy) {
+      v.expected_apy = null
+    } else if (v.expected_apy === null) {
+      // Allowed: an unavailable/no-yield venue may legitimately have no live figure to report.
+    } else if (typeof v.expected_apy !== 'number' || v.expected_apy <= 0 || v.expected_apy > 100) {
       throw new Error(`Vault ${i}: invalid expected_apy: ${v.expected_apy}`)
     }
     if (typeof v.allocation !== 'number' || v.allocation <= 0 || v.allocation > 1) {
@@ -634,16 +671,19 @@ export function validateStrategyResponse(response, vaultData = VAULT_CATALOG) {
     response.selected_vaults = response.selected_vaults.slice(0, vaultData.length)
   }
 
-  // Chain-aware: stamp each selected vault with its chain from the matching catalog entry
-  // (case-insensitive address match). Defaults to 'stellar' for the non-merged-catalog callers.
+  // Chain-aware: stamp each selected vault with its chain/venue truth from the matching catalog
+  // entry (case-insensitive address match) — overwritten, never trusted from the model. Defaults
+  // to 'stellar'/'stellar-live' for the non-merged-catalog (legacy/generic) callers.
   response.selected_vaults.forEach((v) => {
-    const entry = vaultData.find((c) => c.address.toLowerCase() === v.address.toLowerCase())
+    const entry = entryFor(v.address)
     // Snap to the CATALOG's canonical address string: LLMs mangle hex casing, and a mixed-case
     // 0x address that fails EIP-55 is rejected by viem at the first contract read (live
     // 2026-07-20, mandate stage: "Address must match its checksum counterpart"). The allowlist
     // above already proved membership — never keep the model's spelling of it.
     if (entry) v.address = entry.address
     v.chain = entry?.chain || 'stellar'
+    v.venueKind = entry?.venueKind || 'stellar-live'
+    v.proxyTarget = entry?.venueKind === 'base-custody-proxy' ? entry.proxyTarget : undefined
   })
 
   return response

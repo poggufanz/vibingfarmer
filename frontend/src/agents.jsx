@@ -9,6 +9,8 @@ import { Icon } from './components.jsx'
 import { shortAddr } from './screens.jsx'
 import { VAULT_CATALOG } from './config.js'
 import { buildStrategyState, scoreReward, riskCeiling } from './strategy/mdp.js'
+import { normalizeStrategyPlan, buildStrategyViewModel } from './strategy/planModel.js'
+import { toBaseUnits } from './stellar/format.js'
 import {
   STEP_IDS,
   STEP_LABELS,
@@ -22,53 +24,54 @@ const displayLabel = (value, fallback = '') =>
     .replace(/^./, (c) => c.toUpperCase())
 
 /* ---------- Strategy data — generated per-flow ---------- */
-// Derived from VAULT_CATALOG so addresses stay in sync with config automatically.
-const ROLES = [
-  'Conservative, lending',
-  'Balanced, liquidity provision',
-  'Aggressive, leveraged yield',
-]
-const AGENT_PROTOCOLS = VAULT_CATALOG.slice(0, 3).map((v, i) => ({
-  name: v.name,
-  protocol: v.protocol,
-  apy: String(v.apy),
-  drawdown: v.drawdown,
-  risk: v.risk,
-  addr: v.address,
-  role: ROLES[i],
-}))
+// Derived from VAULT_CATALOG so addresses stay in sync with config automatically. Only ONE real
+// Stellar venue exists (Strategy Task 1's truthful catalog) — kept only for its display fields
+// (name/protocol/apy/risk), never treated as several distinct venues to fill crew slots with.
+const STELLAR_VENUE = VAULT_CATALOG[0]
+const AGENT_PROTOCOLS = STELLAR_VENUE
+  ? [
+      {
+        name: STELLAR_VENUE.name,
+        protocol: STELLAR_VENUE.protocol,
+        apy: String(STELLAR_VENUE.apy),
+        drawdown: STELLAR_VENUE.drawdown,
+        risk: STELLAR_VENUE.risk,
+        addr: STELLAR_VENUE.address,
+        role: 'Conservative, lending',
+      },
+    ]
+  : []
 
+// Offline/no-AI fallback strategy: one truthful destination allocation (100% to the sole live
+// Stellar venue — this deterministic path never assumes Base availability) followed by real crew
+// expansion via RISK_PROFILES (strategy/planModel.js). Replaces the old per-risk splitMap, which
+// hand-indexed into AGENT_PROTOCOLS[1]/[2] — vaults that stopped existing once the catalog stopped
+// pretending to hold several distinct venues (Task 1), and would throw on 'med'/'high' risk.
 const buildStrategy = (amount, risk) => {
   const total = Number(amount) || 100
-  // Allocation profile per risk
-  const splitMap = {
-    low: [{ pct: 1.0, agents: 1 }],
-    med: [
-      { pct: 0.6, agents: 1 },
-      { pct: 0.4, agents: 1 },
-    ],
-    high: [
-      { pct: 0.4, agents: 1 },
-      { pct: 0.35, agents: 1 },
-      { pct: 0.25, agents: 1 },
-    ],
-  }
-  const config = splitMap[risk] || splitMap.low
-  const agents = config.map((c, i) => {
-    const proto = AGENT_PROTOCOLS[i]
-    const allocation = +(total * c.pct).toFixed(2)
-    return {
-      id: `worker-${i + 1}`,
-      idx: String(i + 1).padStart(2, '0'),
-      name: `Worker ${i + 1}, ${proto.role.split(', ')[0]}`,
-      role: proto.role,
-      allocation,
-      skillName: 'yield_vault_deposit',
-      vault: proto,
-    }
+  const plan = normalizeStrategyPlan({
+    runId: `offline-${Date.now()}`,
+    source: 'fallback',
+    sourceState: 'deterministic',
+    risk,
+    stellarUnits: toBaseUnits(total),
+    destination: STELLAR_VENUE?.destination || STELLAR_VENUE?.name,
   })
+  const vm = buildStrategyViewModel({
+    plan,
+    stellarVenue: {
+      name: STELLAR_VENUE?.name,
+      protocol: STELLAR_VENUE?.protocol,
+      apy: STELLAR_VENUE?.apy,
+      drawdown: STELLAR_VENUE?.drawdown,
+      risk: STELLAR_VENUE?.risk,
+      address: STELLAR_VENUE?.address,
+      role: 'Conservative, lending',
+    },
+  })
+  const agents = vm.agents
   const blendedApy = agents.reduce(
-    (acc, a, i) => acc + Number(a.vault.apy) * (a.allocation / total),
+    (acc, a) => acc + Number(a.vault.apy || 0) * (a.allocation / total),
     0
   )
   // Formal MDP reward for the offline fallback strategy (no AI / no live market).
@@ -82,7 +85,7 @@ const buildStrategy = (amount, risk) => {
   const fallbackAllocations = agents.map((a) => ({
     address: a.vault.addr || a.vault.address,
     allocation: a.allocation / total,
-    apy: Number(a.vault.apy),
+    apy: a.vault.apy != null ? Number(a.vault.apy) : null,
     risk_tier: a.vault.risk,
   }))
   const reward = scoreReward(fallbackAllocations, mdpFullState)
