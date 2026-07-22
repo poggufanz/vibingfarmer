@@ -218,6 +218,7 @@ async function migrateLegacyAllowlist({ storageLocal, now }) {
   const accounts = await listAccountsLocal(storageLocal)
   let migrated = 0
   let skipped = 0
+  const write = {}
   if (activeResult.status === 'ready' && accounts.length === 1) {
     const consents = (await readLocal(storageLocal, CONSENT_KEY)) ?? {}
     for (const origin of origins) {
@@ -234,14 +235,13 @@ async function migrateLegacyAllowlist({ storageLocal, now }) {
       }
       migrated++
     }
-    await storageLocal?.set?.({ [CONSENT_KEY]: consents })
+    write[CONSENT_KEY] = consents
   } else {
     skipped = origins.length // ambiguous or empty — never grant; the user must reconnect
   }
-  await storageLocal?.set?.({
-    [LEGACY_ALLOWLIST_MIGRATION_KEY]: { at: now, migrated, skipped },
-  })
-  await storageLocal?.remove?.('vf_allowlist') // only after the writes above succeeded
+  write[LEGACY_ALLOWLIST_MIGRATION_KEY] = { at: now, migrated, skipped }
+  await storageLocal?.set?.(write) // one atomic write for consents + the migration record
+  await storageLocal?.remove?.('vf_allowlist') // only after the write above succeeded
 }
 
 function settleDappRequest(pending, rid, payload) {
@@ -366,10 +366,14 @@ export function handleWindowRemoved(windowId, env = {}) {
   }
 }
 
-/** Fires whenever vf_active_account_v1 changes (storage.onChanged, wired below): cancels every
- *  queued/open dapp request whose snapshot account no longer matches — SEP-43 -3, never left to
- *  be silently signed/answered against a stale account — and tells every dapp tab the address
- *  changed so window.vfWallet callers stop trusting a cached one. */
+/** Fires whenever the active-account resolution could have changed (storage.onChanged on
+ *  vf_active_account_v1 OR the underlying wallet set, wired below): cancels every queued/open
+ *  dapp request whose snapshot account no longer matches — SEP-43 -3, never left to be silently
+ *  signed/answered against a stale account — and tells every dapp tab an account change happened
+ *  so window.vfWallet callers stop trusting a cached one. The broadcast NEVER carries the actual
+ *  address: every tab gets it (not just consented origins), so leaking the real address here
+ *  would hand any site the user's address on every switch without consent — a page that wants it
+ *  re-fetches via getAddress(), which stays consent-gated. */
 export async function handleActiveAccountChanged(env = {}) {
   const storageLocal = env.storageLocal ?? globalThis.chrome?.storage?.local
   const tabs = env.tabs ?? globalThis.chrome?.tabs
@@ -399,9 +403,7 @@ export async function handleActiveAccountChanged(env = {}) {
 
   const openTabs = (await tabs?.query?.({})) ?? []
   for (const tab of openTabs) {
-    tabs
-      ?.sendMessage?.(tab.id, { type: 'VF_ACCOUNT_CHANGED', address: account?.address ?? null })
-      ?.catch?.(() => {})
+    tabs?.sendMessage?.(tab.id, { type: 'VF_ACCOUNT_CHANGED', address: null })?.catch?.(() => {})
   }
 }
 
@@ -478,6 +480,19 @@ export async function handleMessage(msg, env, reply) {
   }
 }
 
+/** Whether a chrome.storage.onChanged event could have changed active-account resolution: the
+ *  explicit selection key, or either wallet-set key it's derived from (a wallet appearing/
+ *  disappearing changes what resolveActiveAccountLocal resolves to just as much as an explicit
+ *  selection does). */
+export function shouldReactToStorageChange(changes, area) {
+  return Boolean(
+    area === 'local' &&
+    (changes?.[ACTIVE_ACCOUNT_KEY] ||
+      changes?.['vf_wallet_contract'] ||
+      changes?.['vf_classic_wallets'])
+  )
+}
+
 /** Internal messages (SIGN_REQUEST / CEREMONY_RESULT) may only come from our own extension
  *  pages — a content script's sender.url is the web page, so it fails the prefix check. */
 export function isInternalSender(sender, base = globalThis.chrome?.runtime?.getURL?.('') ?? '') {
@@ -496,6 +511,6 @@ if (globalThis.chrome?.runtime?.onMessage) {
   })
   chrome.windows?.onRemoved?.addListener?.((windowId) => handleWindowRemoved(windowId))
   chrome.storage?.onChanged?.addListener?.((changes, area) => {
-    if (area === 'local' && changes[ACTIVE_ACCOUNT_KEY]) handleActiveAccountChanged({})
+    if (shouldReactToStorageChange(changes, area)) handleActiveAccountChanged({})
   })
 }

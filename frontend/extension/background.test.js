@@ -4,6 +4,7 @@ import {
   handleProviderMessage,
   handleWindowRemoved,
   handleActiveAccountChanged,
+  shouldReactToStorageChange,
   isInternalSender,
   resolveWalletAddress,
 } from './background.js'
@@ -648,7 +649,45 @@ describe('SEP-43 account-switch cancellation (handleActiveAccountChanged)', () =
     expect(env.dappPending.size).toBe(1)
   })
 
-  it('broadcasts VF_ACCOUNT_CHANGED with the new address to every open tab', async () => {
+  it('cancels a still-queued request that never got a window (windowId still null) without calling windows.remove', async () => {
+    const { env } = fakeEnv({ address: 'CACCT' })
+    env.uuid = vi.fn().mockReturnValueOnce('rid-1').mockReturnValueOnce('rid-2')
+    const reply1 = vi.fn()
+    const reply2 = vi.fn()
+    await handleProviderMessage(
+      { type: 'PROVIDER_REQUEST', method: 'getAddress' },
+      SENDER,
+      env,
+      reply1
+    )
+    await handleProviderMessage(
+      { type: 'PROVIDER_REQUEST', method: 'signAuthEntry', params: { authEntry: 'E' } },
+      SENDER,
+      env,
+      reply2
+    )
+    await flush()
+    // rid-1's approval window opened; rid-2 is still queued behind it (queue.p), windowId null.
+    expect(env.dappPending.get('rid-2').windowId).toBeNull()
+    env.windows.remove = vi.fn(async () => {})
+    env.tabs = { query: vi.fn(async () => []), sendMessage: vi.fn() }
+    env.storageLocal.set({ vf_wallet_contract: 'CNEW' })
+
+    await handleActiveAccountChanged(env)
+
+    expect(reply2).toHaveBeenCalledWith(expect.objectContaining({ ok: false, code: -3 }))
+    // rid-1 (open, window 900) is also cancelled and does get its window closed; rid-2 (still
+    // queued, windowId null) must never trigger a windows.remove(null/undefined) call for itself.
+    expect(env.windows.remove).toHaveBeenCalledTimes(1)
+    expect(env.windows.remove).toHaveBeenCalledWith(900)
+  })
+
+  // The broadcast reaches EVERY open tab, not just consented origins — carrying the real address
+  // would let any site the user never connected to learn it on every account switch (cross-site
+  // identity linking), which is exactly what this task's origin+account consent binding exists to
+  // prevent. address is always null; a page that wants the real one calls getAddress(), which
+  // stays consent-gated (background.js's readConsentLocal).
+  it('broadcasts VF_ACCOUNT_CHANGED with address always null, even to a non-consented origin, so it never leaks the real address', async () => {
     const { env } = fakeEnv({ address: 'CACCT' })
     env.tabs = {
       query: vi.fn(async () => [{ id: 11 }, { id: 12 }]),
@@ -657,15 +696,15 @@ describe('SEP-43 account-switch cancellation (handleActiveAccountChanged)', () =
     await handleActiveAccountChanged(env)
     expect(env.tabs.sendMessage).toHaveBeenCalledWith(11, {
       type: 'VF_ACCOUNT_CHANGED',
-      address: 'CACCT',
+      address: null,
     })
     expect(env.tabs.sendMessage).toHaveBeenCalledWith(12, {
       type: 'VF_ACCOUNT_CHANGED',
-      address: 'CACCT',
+      address: null,
     })
   })
 
-  it('broadcasts a null address when the account becomes ambiguous/empty', async () => {
+  it('still broadcasts (address null) when the account becomes ambiguous/empty', async () => {
     const { env } = fakeEnv({
       address: 'CACCT',
       classic: { G1: { publicKey: 'G1', createdAt: 1 } },
@@ -679,6 +718,23 @@ describe('SEP-43 account-switch cancellation (handleActiveAccountChanged)', () =
       type: 'VF_ACCOUNT_CHANGED',
       address: null,
     })
+  })
+})
+
+describe('shouldReactToStorageChange', () => {
+  it('reacts to the explicit active-account selection key', () => {
+    expect(shouldReactToStorageChange({ vf_active_account_v1: {} }, 'local')).toBe(true)
+  })
+
+  it('reacts to either underlying wallet-set key changing, not just the explicit selection', () => {
+    expect(shouldReactToStorageChange({ vf_wallet_contract: {} }, 'local')).toBe(true)
+    expect(shouldReactToStorageChange({ vf_classic_wallets: {} }, 'local')).toBe(true)
+  })
+
+  it('ignores unrelated keys and non-local storage areas', () => {
+    expect(shouldReactToStorageChange({ vf_allowlist: {} }, 'local')).toBe(false)
+    expect(shouldReactToStorageChange({ vf_active_account_v1: {} }, 'sync')).toBe(false)
+    expect(shouldReactToStorageChange({ vf_active_account_v1: {} }, 'session')).toBe(false)
   })
 })
 
@@ -701,6 +757,14 @@ describe('legacy vf_allowlist migration (narrow, one-time)', () => {
     })
     expect(local.vf_allowlist).toBeUndefined()
     expect(local.vf_allowlist_migration_v1).toMatchObject({ migrated: 2, skipped: 0 })
+    // consents + the migration record land in one atomic storageLocal.set, not two writes.
+    expect(env.storageLocal.set).toHaveBeenCalledTimes(1)
+    expect(env.storageLocal.set).toHaveBeenCalledWith(
+      expect.objectContaining({
+        [CONSENT_KEY]: expect.any(Object),
+        vf_allowlist_migration_v1: expect.objectContaining({ migrated: 2, skipped: 0 }),
+      })
+    )
   })
 
   it('never migrates when both a classic and a passkey wallet exist — ambiguous, never grants every current account', async () => {

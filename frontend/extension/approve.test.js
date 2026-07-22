@@ -1,7 +1,16 @@
-import { describe, it, expect, beforeEach } from 'vitest'
-import { screenModel, rejectionResult, screenKind, verifyStillValid } from './approve.js'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import {
+  screenModel,
+  rejectionResult,
+  screenKind,
+  verifyStillValid,
+  approveSignClassic,
+} from './approve.js'
 import { installChromeMock } from '../src/wallet/testUtils.js'
 import { createRequestSnapshot } from '../src/wallet/consentStore.js'
+import { importFromSecret } from '../src/wallet/classicAccount.js'
+import { Account, TransactionBuilder, Operation } from '@stellar/stellar-sdk'
+import { NETWORK_PASSPHRASE } from '../src/stellar/config.js'
 
 const ORIGIN = 'https://vibing-farmer.pages.dev'
 
@@ -207,5 +216,59 @@ describe('verifyStillValid — pre-sign account re-check (resolveWallet demotion
       globalThis.chrome.storage.local
     )
     expect(check).toEqual({ ok: true })
+  })
+})
+
+// verifyStillValid checks the ACTIVE ACCOUNT, not the classic wallet's unlocked SESSION KEY —
+// a device can have multiple vf_classic_wallets entries, so a session left unlocked for a
+// different G-address must never be used to sign on behalf of the snapshot's account.
+// approveSignClassic pins withSecret's expectedPublicKey to that exact address.
+describe('approveSignClassic — session-key pinned to the snapshot address', () => {
+  beforeEach(() => {
+    installChromeMock()
+    // approveSignClassic's setStatus() touches document.getElementById — stub the minimum
+    // instead of switching this file to the jsdom environment (jsdom's crypto/Buffer shims break
+    // the real @stellar/stellar-sdk keypair generation importFromSecret needs below).
+    vi.stubGlobal('document', { getElementById: () => null })
+  })
+
+  function unsignedTxXdr(sourcePublicKey) {
+    return new TransactionBuilder(new Account(sourcePublicKey, '1'), {
+      fee: '100',
+      networkPassphrase: NETWORK_PASSPHRASE,
+    })
+      .addOperation(Operation.bumpSequence({ bumpTo: '2' }))
+      .setTimeout(30)
+      .build()
+      .toXDR()
+  }
+
+  it('fails closed when the unlocked session belongs to a different G-address than the snapshot', async () => {
+    await importFromSecret({
+      secret: 'SBGWSG6BTNCKCOB3DIFBGCVMUPQFYPA2G4O34RMTB343OYPXU5DJDVMN',
+      password: 'pw12pw12pw12',
+      label: 'unlocked one',
+    })
+    const req = { method: 'signTransaction', params: { xdr: 'unused — never parsed' } }
+    await expect(
+      approveSignClassic(req, 'rid-1', 'GSOMEOTHERACCOUNTENTIRELYDIFFERENTFROMUNLOCKED')
+    ).rejects.toThrow(/locked/i)
+  })
+
+  it('proceeds and signs when the unlocked session matches the snapshot address', async () => {
+    const { publicKey } = await importFromSecret({
+      secret: 'SBGWSG6BTNCKCOB3DIFBGCVMUPQFYPA2G4O34RMTB343OYPXU5DJDVMN',
+      password: 'pw12pw12pw12',
+      label: 'unlocked one',
+    })
+    const req = { method: 'signTransaction', params: { xdr: unsignedTxXdr(publicKey) } }
+    const result = await approveSignClassic(req, 'rid-1', publicKey)
+    expect(result).toMatchObject({
+      type: 'CEREMONY_RESULT',
+      rid: 'rid-1',
+      ok: true,
+      address: publicKey,
+    })
+    expect(result.signedTxXdr).toBeTruthy()
   })
 })

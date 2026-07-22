@@ -159,33 +159,41 @@ async function approveSign(req, rid, address) {
 }
 
 /** Classic (password/mnemonic) wallet counterpart of approveSign — assumes the session is
- *  already unlocked (caller handles the password prompt / wrong-password retry). */
-async function approveSignClassic(req, rid, address) {
+ *  already unlocked (caller handles the password prompt / wrong-password retry). Exported for
+ *  direct testing of the expectedPublicKey fail-closed wiring below. */
+export async function approveSignClassic(req, rid, address) {
   setStatus('Signing…')
-  return withSecret(async (kp) => {
-    const sdkMod = await import('@stellar/stellar-sdk')
-    if (req.method === 'signTransaction') {
-      const tx = sdkMod.TransactionBuilder.fromXDR(req.params.xdr, NETWORK_PASSPHRASE)
-      tx.sign(kp)
-      return { type: 'CEREMONY_RESULT', rid, ok: true, signedTxXdr: tx.toXDR(), address }
-    }
-    const entry = sdkMod.xdr.SorobanAuthorizationEntry.fromXDR(req.params.authEntry, 'base64')
-    const server = await rpcServer()
-    const latest = await server.getLatestLedger()
-    const signed = await sdkMod.authorizeEntry(
-      entry,
-      kp,
-      latest.sequence + AUTH_TTL_LEDGERS,
-      NETWORK_PASSPHRASE
-    )
-    return {
-      type: 'CEREMONY_RESULT',
-      rid,
-      ok: true,
-      signedAuthEntry: signed.toXDR('base64'),
-      address,
-    }
-  })
+  // expectedPublicKey: an unlocked session left over from a DIFFERENT G-address (multiple
+  // vf_classic_wallets entries) must never sign on behalf of the snapshot's account — fail closed
+  // (withSecret throws 'locked: unlocked session does not match the active account') rather than
+  // silently sign with whoever happens to be unlocked.
+  return withSecret(
+    async (kp) => {
+      const sdkMod = await import('@stellar/stellar-sdk')
+      if (req.method === 'signTransaction') {
+        const tx = sdkMod.TransactionBuilder.fromXDR(req.params.xdr, NETWORK_PASSPHRASE)
+        tx.sign(kp)
+        return { type: 'CEREMONY_RESULT', rid, ok: true, signedTxXdr: tx.toXDR(), address }
+      }
+      const entry = sdkMod.xdr.SorobanAuthorizationEntry.fromXDR(req.params.authEntry, 'base64')
+      const server = await rpcServer()
+      const latest = await server.getLatestLedger()
+      const signed = await sdkMod.authorizeEntry(
+        entry,
+        kp,
+        latest.sequence + AUTH_TTL_LEDGERS,
+        NETWORK_PASSPHRASE
+      )
+      return {
+        type: 'CEREMONY_RESULT',
+        rid,
+        ok: true,
+        signedAuthEntry: signed.toXDR('base64'),
+        address,
+      }
+    },
+    { expectedPublicKey: address }
+  )
 }
 
 if (typeof window !== 'undefined' && globalThis.chrome?.storage?.session) {
@@ -204,7 +212,9 @@ if (typeof window !== 'undefined' && globalThis.chrome?.storage?.session) {
       const account = req.account ?? null
       const address = account?.address ?? null
       const kind = screenKind(account?.kind)
-      const unlocked = kind === 'classic' ? await isUnlocked() : false
+      // Expected address pinned: a session unlocked for a DIFFERENT G-address must read as
+      // locked for THIS snapshot, not "unlocked" off a lingering foreign session.
+      const unlocked = kind === 'classic' ? await isUnlocked(address) : false
       const summary =
         req.method === 'signTransaction'
           ? summarizeTransaction(req.params?.xdr)
@@ -259,7 +269,7 @@ if (typeof window !== 'undefined' && globalThis.chrome?.storage?.session) {
             setTimeout(() => window.close(), 400)
             return
           }
-          if (kind === 'classic' && !(await isUnlocked())) {
+          if (kind === 'classic' && !(await isUnlocked(address))) {
             try {
               await unlockWallet(address, document.getElementById('pw')?.value ?? '')
             } catch {
