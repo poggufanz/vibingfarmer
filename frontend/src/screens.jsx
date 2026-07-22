@@ -49,7 +49,10 @@ const InputScreen = ({ amount, setAmount, risk, setRisk, onSubmit }) => {
       }
       onSubmit()
     } catch {
-      setCheckError('Could not verify the vault minimum. Try again.')
+      // readTotalShares never throws (it resolves null on RPC failure, handled above via
+      // VAULT_STATE_UNKNOWN); a throw here is an unexpected bug in the plan-shaping code, not a
+      // vault-state problem -- an honest generic message, not a false claim about the vault.
+      setCheckError('Something went wrong checking your plan. Try again.')
     } finally {
       setChecking(false)
     }

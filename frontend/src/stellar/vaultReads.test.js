@@ -17,6 +17,11 @@ const VAULT = 'CCDXZ6BUA7TPR3EXQWJWUD7EYR6OUMJRYIKYXPE53HRJOJFY5CXEHTN5'
 const STRAT_1 = 'CCDXZ6BUA7TPR3EXQWJWUD7EYR6OUMJRYIKYXPE53HRJOJFY5CXEHTN5'
 const STRAT_2 = 'CCRG37UTQ2BRCJSA3WYZIUTSGZVLYQ7C4EET2WYUWLU4NAWTETGB77JW'
 
+// Decode the invoked contract function's name straight off the built tx, so a test can pin
+// EXACTLY which on-chain method a read* function calls. A canned retval alone can't catch a
+// caller silently renamed to the wrong deployed method (e.g. total_shares vs total_supply).
+const invokedMethod = (tx) => tx.operations[0].func.invokeContract().functionName().toString()
+
 describe('readPricePerShare', () => {
   test('returns the decoded i128 via an injected server', async () => {
     const fakeServer = {
@@ -36,21 +41,23 @@ describe('readPricePerShare', () => {
 })
 
 describe('readTotalShares', () => {
-  test('returns 0n via an injected server (empty vault, first-deposit path)', async () => {
+  test('invokes the deployed total_shares getter (pinned) and returns 0n (empty vault, first-deposit path)', async () => {
     const fakeServer = {
-      simulateTransaction: async () => ({
-        result: { retval: nativeToScVal(0n, { type: 'i128' }) },
-      }),
+      simulateTransaction: async (tx) => {
+        expect(invokedMethod(tx)).toBe('total_shares')
+        return { result: { retval: nativeToScVal(0n, { type: 'i128' }) } }
+      },
     }
     const shares = await readTotalShares(VAULT, { server: fakeServer })
     expect(shares).toBe(0n)
   })
 
-  test('returns the decoded i128 for a vault with prior supply', async () => {
+  test('invokes total_shares (pinned) and returns the decoded i128 for a vault with prior supply', async () => {
     const fakeServer = {
-      simulateTransaction: async () => ({
-        result: { retval: nativeToScVal(500_0000000n, { type: 'i128' }) },
-      }),
+      simulateTransaction: async (tx) => {
+        expect(invokedMethod(tx)).toBe('total_shares')
+        return { result: { retval: nativeToScVal(500_0000000n, { type: 'i128' }) } }
+      },
     }
     const shares = await readTotalShares(VAULT, { server: fakeServer })
     expect(shares).toBe(500_0000000n)
