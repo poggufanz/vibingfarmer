@@ -320,18 +320,31 @@ describe('councilDebate — honest yield prompts end to end (no fabricated 0% AP
         confidence: 0.5,
       }
     })
-    await councilDebate(input, { proposer, riskCompliance, validator, maxIterations: 1 })
+    const result = await councilDebate(input, {
+      proposer,
+      riskCompliance,
+      validator,
+      maxIterations: 1,
+    })
     for (const p of prompts) {
       expect(p).not.toMatch(/Base bridge \(cctp\) 0%/)
       expect(p).not.toMatch(/Blended APY: 0%/)
     }
     expect(prompts.some((p) => p.includes('not available'))).toBe(true)
-    // Validator prompt: expectedValue:0/probProfit:0.5 come from the SAME sim call that
-    // reported projection unavailable — must not render as confirmed sim numbers either.
+    // Validator prompt: expectedValue:0/probProfit:0.5/VaR:-1/CVaR:-2 all come from the SAME
+    // sim call that reported projection unavailable — none may render as confirmed sim numbers.
     const validatorPrompt = prompts[2]
     expect(validatorPrompt).not.toMatch(/Expected value \(30d\): 0 USDC/)
     expect(validatorPrompt).not.toMatch(/Probability of profit: \d/)
+    expect(validatorPrompt).not.toMatch(/VaR \(.*\): -1 USDC/)
+    expect(validatorPrompt).not.toMatch(/CVaR: -2 USDC/)
     expect(validatorPrompt).toContain('Expected value (30d): not available')
     expect(validatorPrompt).toContain('Probability of profit: not available')
+    expect(validatorPrompt).toMatch(/VaR \(.*\): not available/)
+    expect(validatorPrompt).toContain('CVaR: not available')
+    // The 1-sentence permission summary (summarizeToSentence) must not present a VaR ratio
+    // computed from the same unavailable projection as a real number either.
+    expect(result.permissionSentence).not.toMatch(/VaR: -?\d/)
+    expect(result.permissionSentence).toContain('VaR: not available')
   })
 })

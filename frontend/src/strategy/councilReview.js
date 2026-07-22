@@ -299,13 +299,14 @@ Proposer argument:
 
 function buildValidatorPrompt(input, proposer, riskComp) {
   const yieldUnavailable = input.projection?.state === 'unavailable'
-  // expectedValue/probProfit are outputs of the SAME runSimulation call that reports
-  // projection — unavailable yield makes them fabricated too, not just blendedApy.
+  // expectedValue/probProfit/VaR/CVaR are all outputs of the SAME runSimulation Monte Carlo
+  // distribution (blended-APY basis) that reports projection — unavailable yield makes every
+  // one of them fabricated, not just blendedApy.
   return `Proposed deposit: ${input.amountUsdc} USDC across ${input.numVaults} vault(s)
 Blended APY: ${yieldUnavailable ? 'not available' : `${input.blendedApy}%`}
 Expected value (30d): ${yieldUnavailable ? 'not available' : `${input.expectedValue ?? 'n/a'} USDC`}
-VaR (${input.VaR != null ? '95%' : 'n/a'}): ${input.VaR ?? 'n/a'} USDC
-CVaR: ${input.CVaR ?? 'n/a'} USDC
+VaR (${input.VaR != null ? '95%' : 'n/a'}): ${yieldUnavailable ? 'not available' : `${input.VaR ?? 'n/a'} USDC`}
+CVaR: ${yieldUnavailable ? 'not available' : `${input.CVaR ?? 'n/a'} USDC`}
 Probability of profit: ${yieldUnavailable ? 'not available' : input.probProfit != null ? `${(input.probProfit * 100).toFixed(1)}%` : 'n/a'}
 
 Proposer: ${proposer?.action || 'unknown'} (conf ${proposer?.confidence ?? 'n/a'})
@@ -406,11 +407,14 @@ export function summarizeToSentence(proposer, riskComp, validator, input) {
     'Unknown'
   const pConf = ((proposer?.proposal?.confidence ?? 0) * 100).toFixed(0)
   const compPass = riskComp?.compliancePass === true ? 'Passed' : 'Failed'
-  const vaRatio =
-    input.VaR != null && input.amountUsdc
+  const yieldUnavailable = input.projection?.state === 'unavailable'
+  // VaR is the same Monte Carlo distribution (blended-APY basis) as expectedValue/probProfit —
+  // gate it identically instead of presenting a ratio computed from a fabricated VaR.
+  const vaRatio = yieldUnavailable
+    ? 'not available'
+    : input.VaR != null && input.amountUsdc
       ? `${((Math.abs(input.VaR) / input.amountUsdc) * 100).toFixed(1)}%`
       : 'Unavailable'
-  const yieldUnavailable = input.projection?.state === 'unavailable'
   const profitOdds = yieldUnavailable
     ? ' Profit likelihood: not available.'
     : input.probProfit != null
