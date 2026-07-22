@@ -27,6 +27,7 @@ import {
   makeInitialExecState,
 } from './agents.jsx'
 import { useTweaks, TweaksPanel, TweakSection, TweakRadio } from './tweaks-panel.jsx'
+import { applyTheme, isLightTheme, normalizeTheme } from './design/theme.js'
 
 import {
   connectWallet,
@@ -302,7 +303,7 @@ const sendPushNotification = async (ev, passedSettings) => {
 
 /* ---------- Helpers ---------- */
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/ {
-  palette: 'acid-yield',
+  palette: 'forest',
   density: 'comfortable',
   speed: 'medium',
 } /*EDITMODE-END*/
@@ -422,6 +423,7 @@ const buildActiveVaults = (positions, strategy) => {
 const App = () => {
   const devMode = isDevMode()
   const [tweaks, setTweak] = useTweaks(TWEAK_DEFAULTS)
+  const normalizedTheme = normalizeTheme(tweaks.palette)
 
   // stage: 'strategy' | 'connect' | 'skills' | 'permission' | 'execute' | 'done'
   const [stage, setStage] = useS('strategy')
@@ -685,9 +687,9 @@ const App = () => {
   }
 
   useE(() => {
-    document.documentElement.dataset.palette = tweaks.palette
+    applyTheme(normalizedTheme)
     document.documentElement.dataset.density = tweaks.density
-  }, [tweaks.palette, tweaks.density])
+  }, [normalizedTheme, tweaks.density])
 
   // Redirect old hash URLs (bookmarks like /#/home → /home)
   useE(() => {
@@ -719,7 +721,7 @@ const App = () => {
     )
   }, [stage])
 
-  const paletteIsLight = tweaks.palette === 'bone-paper'
+  const paletteIsLight = isLightTheme(normalizedTheme)
   const speed = SPEED_MS[tweaks.speed] || SPEED_MS.medium
 
   const addLog = (entry) => {
@@ -3427,7 +3429,7 @@ const App = () => {
       {devMode && (
         <TweaksPanel title="Tweaks">
           <TweakSection label="Brand palette" />
-          <PalettePicker value={tweaks.palette} onChange={(v) => setTweak('palette', v)} />
+          <PalettePicker value={normalizedTheme} onChange={(v) => setTweak('palette', v)} />
 
           <TweakSection label="Demo speed" />
           <TweakRadio

@@ -1,29 +1,38 @@
 // frontend/src/graph/palette.js
-// State palette + node state mappers for the swarm graph. Values mirror the product
-// palette (Acid Yield) — literal hex because canvas/webgl can't resolve CSS vars.
+// State palette + node state mappers for the swarm graph. Literal colors mirror
+// Pocket Crew semantics because canvas/WebGL cannot resolve CSS custom properties.
+
+import { isLightTheme } from '../design/theme.js'
 
 export const GRAPH_COLOR = {
-  idle: '#3a3b33',
-  running: '#f0b54a',
-  confirmed: '#6fe39a',
-  skipped: '#6b7280',
-  failed: '#ff7479',
+  idle: '#8C9B93',
+  running: '#DFF56C',
+  confirmed: '#F2F5EF',
+  skipped: '#536159',
+  failed: '#E26E67',
 }
 export const GRAPH_COLOR_LIGHT = {
-  idle: '#b8b5aa',
-  running: '#b07a1a',
-  confirmed: '#2d7a4a',
-  skipped: '#6b7280',
-  failed: '#a83a3a',
+  idle: '#5F6C65',
+  running: '#17251F',
+  confirmed: '#20342B',
+  skipped: '#5F6C65',
+  failed: '#A8403C',
 }
 export const GROUP_BASE = {
-  orchestrator: '#cfff3d',
-  vault: '#6366f1',
-  keeper: '#f0b54a',
-  strategy: '#6fe39a',
-  pool: '#7a9fff',
+  orchestrator: '#DFF56C',
+  vault: '#F2F5EF',
+  keeper: '#A8B5AD',
+  strategy: '#8C9B93',
+  pool: '#A8B5AD',
 }
-export const PULSE_COLOR = '#cfff3d'
+export const GROUP_BASE_LIGHT = {
+  orchestrator: '#17251F',
+  vault: '#20342B',
+  keeper: '#536159',
+  strategy: '#5F6C65',
+  pool: '#536159',
+}
+export const PULSE_COLOR = '#DFF56C'
 export const NODE_R = {
   orchestrator: 9,
   worker: 6.5,
@@ -36,13 +45,20 @@ export const NODE_R = {
 
 export const hexToNum = (hex) => parseInt(String(hex).replace('#', ''), 16)
 
-export const paletteFor = (isLight) => ({
-  state: isLight ? GRAPH_COLOR_LIGHT : GRAPH_COLOR,
-  line: isLight ? '#c4c1b8' : '#3a3a32',
-  label: isLight ? '#4a4840' : '#cfcdc4',
-  current: isLight ? '#7f9e1f' : PULSE_COLOR,
-  dust: isLight ? '#8a8778' : '#8f8d7f',
-})
+const lightPreference = (themeOrLight) =>
+  typeof themeOrLight === 'boolean' ? themeOrLight : isLightTheme(themeOrLight)
+
+export const paletteFor = (themeOrLight) => {
+  const isLight = lightPreference(themeOrLight)
+  return {
+    state: isLight ? GRAPH_COLOR_LIGHT : GRAPH_COLOR,
+    group: isLight ? GROUP_BASE_LIGHT : GROUP_BASE,
+    line: '#536159',
+    label: isLight ? '#17251F' : '#F2F5EF',
+    current: isLight ? '#17251F' : PULSE_COLOR,
+    dust: isLight ? '#5F6C65' : '#8C9B93',
+  }
+}
 
 export const computeOrchestratorState = (execMap) => {
   const vals = Object.values(execMap || {})
@@ -74,9 +90,10 @@ export const nodeStateOf = (node, execMap) => {
 
 export const nodeColor = (node, execMap, palette) => {
   const s = nodeStateOf(node, execMap)
-  if (s === 'static') return GROUP_BASE[node.kind]
-  if (s === 'idle' && node.kind === 'orchestrator') return GROUP_BASE.orchestrator
-  if (s === 'idle' && node.kind === 'vault') return GROUP_BASE.vault
+  const group = palette.group || GROUP_BASE
+  if (s === 'static') return group[node.kind]
+  if (s === 'idle' && node.kind === 'orchestrator') return group.orchestrator
+  if (s === 'idle' && node.kind === 'vault') return group.vault
   return palette.state[s] || palette.state.idle
 }
 

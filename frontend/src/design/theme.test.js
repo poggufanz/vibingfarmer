@@ -1,0 +1,227 @@
+// @vitest-environment jsdom
+
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { contrastRatio } from './contrast.js'
+import { THEME_IDS, THEMES, applyTheme, isLightTheme, normalizeTheme } from './theme.js'
+
+const CORE_VARIABLES = Object.freeze({
+  '--pc-canvas': 'canvas',
+  '--pc-workspace': 'workspace',
+  '--pc-owned': 'owned',
+  '--pc-ink': 'text',
+  '--pc-muted': 'textMuted',
+  '--pc-owned-ink': 'ownedInk',
+  '--pc-owned-muted': 'ownedMuted',
+  '--pc-harvest': 'harvest',
+  '--pc-harvest-ink': 'harvestInk',
+  '--pc-danger': 'danger',
+  '--pc-danger-on-light': 'dangerOnLight',
+  '--pc-danger-ink': 'dangerInk',
+  '--pc-focus-on-dark': 'focusOnDark',
+  '--pc-focus-on-light': 'focusOnLight',
+  '--pc-disabled-on-dark': 'disabledOnDark',
+  '--pc-disabled-on-light': 'disabledOnLight',
+})
+
+const compatibilityValues = (tokens) => ({
+  '--bg-base': tokens.canvas,
+  '--bg-canvas': tokens.canvas,
+  '--bg-card': tokens.canvas,
+  '--bg-elev': tokens.canvas,
+  '--bg-elev-2': tokens.canvas,
+  '--bg-input': tokens.canvas,
+  '--text': tokens.text,
+  '--text-primary': tokens.text,
+  '--text-muted': tokens.textMuted,
+  '--text-faint': tokens.textMuted,
+  '--text-dim': tokens.textMuted,
+  '--accent': tokens.harvest,
+  '--accent-fg': tokens.harvestInk,
+  '--accent-soft': tokens.workspace,
+  '--border': tokens.light ? tokens.disabledOnLight : tokens.disabledOnDark,
+  '--border-strong': tokens.light ? tokens.text : tokens.textMuted,
+  '--border-accent': tokens.light ? tokens.focusOnLight : tokens.focusOnDark,
+  '--danger': tokens.danger,
+  '--info': tokens.textMuted,
+  '--warn': tokens.light ? tokens.danger : tokens.harvest,
+  '--ok': tokens.text,
+  '--focus-ring': tokens.light ? tokens.focusOnLight : tokens.focusOnDark,
+  '--focus-ring-contrast': tokens.light ? tokens.owned : tokens.focusOnLight,
+  '--line': tokens.light ? tokens.disabledOnLight : tokens.disabledOnDark,
+  '--eco-accent': tokens.harvest,
+  '--pc-disabled': tokens.light ? tokens.disabledOnLight : tokens.disabledOnDark,
+})
+
+const SHADOWS = Object.freeze({
+  forest: Object.freeze({
+    '--shadow-sm': '0 1px 2px rgb(7 15 11 / 24%)',
+    '--shadow-md': '0 8px 20px rgb(7 15 11 / 22%)',
+    '--shadow-lg': '0 18px 44px rgb(7 15 11 / 28%)',
+  }),
+  'day-field': Object.freeze({
+    '--shadow-sm': '0 1px 2px rgb(23 37 31 / 12%)',
+    '--shadow-md': '0 8px 20px rgb(23 37 31 / 14%)',
+    '--shadow-lg': '0 18px 44px rgb(23 37 31 / 18%)',
+  }),
+})
+
+const assertDeepFrozen = (value) => {
+  expect(Object.isFrozen(value)).toBe(true)
+  Object.values(value).forEach((child) => {
+    if (child && typeof child === 'object') assertDeepFrozen(child)
+  })
+}
+
+const normalizedCssValue = (value) =>
+  value
+    .trim()
+    .replace(/\s+/g, ' ')
+    .replace(/\s*\/\s*/g, '/')
+    .toUpperCase()
+
+describe('Pocket Crew theme contract', () => {
+  it('exports the exact theme ids and deeply immutable theme records', () => {
+    expect(THEME_IDS).toEqual({ FOREST: 'forest', DAY_FIELD: 'day-field' })
+    expect(Object.keys(THEMES)).toEqual(['forest', 'day-field'])
+    assertDeepFrozen(THEME_IDS)
+    assertDeepFrozen(THEMES)
+  })
+
+  it.each([
+    ['forest', 'forest'],
+    ['day-field', 'day-field'],
+    ['acid-yield', 'forest'],
+    ['mono-slate', 'forest'],
+    ['liquid-mint', 'forest'],
+    ['bone-paper', 'day-field'],
+    ['unknown', 'forest'],
+    ['', 'forest'],
+    [null, 'forest'],
+    [undefined, 'forest'],
+  ])('normalizes %s to %s', (input, expected) => {
+    expect(normalizeTheme(input)).toBe(expected)
+  })
+
+  it('fails prototype keys and malformed non-string inputs safely to Forest', () => {
+    const nullPrototype = Object.create(null)
+    const hostileCoercion = {
+      toString() {
+        throw new Error('must not coerce')
+      },
+    }
+
+    ;['toString', 'constructor', '__proto__'].forEach((value) => {
+      expect(normalizeTheme(value)).toBe(THEME_IDS.FOREST)
+    })
+    ;[nullPrototype, hostileCoercion, {}, ['bone-paper'], Symbol('day-field')].forEach((value) => {
+      expect(() => normalizeTheme(value)).not.toThrow()
+      expect(normalizeTheme(value)).toBe(THEME_IDS.FOREST)
+    })
+  })
+
+  it('writes only normalized data-theme and returns the applied theme', () => {
+    const root = { setAttribute: vi.fn() }
+
+    expect(applyTheme('bone-paper', root)).toBe('day-field')
+    expect(root.setAttribute).toHaveBeenCalledTimes(1)
+    expect(root.setAttribute).toHaveBeenCalledWith('data-theme', 'day-field')
+  })
+
+  it('treats only Day Field, including its legacy value, as light', () => {
+    expect(isLightTheme('day-field')).toBe(true)
+    expect(isLightTheme('bone-paper')).toBe(true)
+    expect(isLightTheme('forest')).toBe(false)
+    expect(isLightTheme('acid-yield')).toBe(false)
+    expect(isLightTheme()).toBe(false)
+  })
+})
+
+describe('Pocket Crew CSS theme parity', () => {
+  let style
+
+  beforeEach(() => {
+    style = document.createElement('style')
+    style.textContent = readFileSync(resolve(process.cwd(), 'src/design/pocket-crew.css'), 'utf8')
+    document.head.append(style)
+  })
+
+  afterEach(() => {
+    style.remove()
+    document.documentElement.removeAttribute('data-theme')
+  })
+
+  it.each(Object.values(THEME_IDS))(
+    'emits computed Pocket Crew and legacy variables for %s',
+    (themeId) => {
+      applyTheme(themeId)
+      const computed = getComputedStyle(document.documentElement)
+      const tokens = THEMES[themeId]
+
+      Object.entries(CORE_VARIABLES).forEach(([property, token]) => {
+        expect(normalizedCssValue(computed.getPropertyValue(property)), property).toBe(
+          tokens[token]
+        )
+      })
+      Object.entries(compatibilityValues(tokens)).forEach(([property, expected]) => {
+        expect(normalizedCssValue(computed.getPropertyValue(property)), property).toBe(
+          normalizedCssValue(expected)
+        )
+      })
+      Object.entries(SHADOWS[themeId]).forEach(([property, expected]) => {
+        expect(normalizedCssValue(computed.getPropertyValue(property)), property).toBe(
+          normalizedCssValue(expected)
+        )
+      })
+
+      const disabled = computed.getPropertyValue('--pc-disabled').trim()
+      expect(contrastRatio(disabled, tokens.canvas)).toBeGreaterThanOrEqual(4.5)
+    }
+  )
+
+  it('keeps the exact radius tiers and scopes Newsreader to the wordmark utility', () => {
+    const computed = getComputedStyle(document.documentElement)
+    expect(computed.getPropertyValue('--pc-radius-sm').trim()).toBe('12px')
+    expect(computed.getPropertyValue('--pc-radius-md').trim()).toBe('16px')
+    expect(computed.getPropertyValue('--pc-radius-lg').trim()).toBe('24px')
+    expect(computed.getPropertyValue('--font-body')).toContain('Geist Variable')
+    expect(computed.getPropertyValue('--font-mono')).toContain('JetBrains Mono Variable')
+    expect(computed.getPropertyValue('--font-script')).not.toContain('Newsreader')
+
+    const wordmark = document.createElement('span')
+    wordmark.className = 'pc-wordmark'
+    document.body.append(wordmark)
+    expect(getComputedStyle(wordmark).fontFamily).toContain('Newsreader Variable')
+    wordmark.remove()
+  })
+
+  it('contains no decorative gradient and wins the legacy hover cascade', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/design/pocket-crew.css'), 'utf8')
+
+    expect(css).not.toMatch(/(?:linear|radial|conic)-gradient/i)
+    expect(css).toMatch(/background-image:\s*none\s*!important/i)
+    expect(css).toMatch(/animation:\s*none\s*!important/i)
+  })
+})
+
+describe('local font policy', () => {
+  it('keeps remote font stylesheets and preconnects out of index.html', () => {
+    const html = readFileSync(resolve(process.cwd(), 'index.html'), 'utf8')
+
+    expect(html).not.toMatch(/fonts\.googleapis\.com/i)
+    expect(html).not.toMatch(/fonts\.gstatic\.com/i)
+    expect(html).not.toMatch(/<link[^>]+rel=["'](?:stylesheet|preconnect)["'][^>]+https?:\/\//i)
+  })
+
+  it('loads local Fontsource packages and the semantic layer after legacy CSS', () => {
+    const main = readFileSync(resolve(process.cwd(), 'src/main.jsx'), 'utf8')
+
+    expect(main).toContain("import '@fontsource-variable/geist'")
+    expect(main).toContain("import '@fontsource-variable/jetbrains-mono'")
+    expect(main).toContain("import '@fontsource-variable/newsreader'")
+    expect(main.indexOf("import '../style.css'")).toBeLessThan(
+      main.indexOf("import './design/pocket-crew.css'")
+    )
+  })
+})

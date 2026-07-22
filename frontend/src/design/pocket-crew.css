@@ -1,0 +1,256 @@
+/* Pocket Crew semantic layer. Imported after the legacy stylesheet during migration. */
+
+:root,
+:root[data-theme='forest'] {
+  color-scheme: dark;
+
+  --pc-canvas: #17251f;
+  --pc-workspace: #20342b;
+  --pc-owned: #f2f5ef;
+  --pc-ink: #f2f5ef;
+  --pc-muted: #a8b5ad;
+  --pc-owned-ink: #17251f;
+  --pc-owned-muted: #536159;
+  --pc-harvest: #dff56c;
+  --pc-harvest-ink: #17251f;
+  --pc-danger: #e26e67;
+  --pc-danger-on-light: #a8403c;
+  --pc-danger-ink: #17251f;
+  --pc-focus-on-dark: #dff56c;
+  --pc-focus-on-light: #17251f;
+  --pc-disabled-on-dark: #8c9b93;
+  --pc-disabled-on-light: #5f6c65;
+  --pc-disabled: #8c9b93;
+
+  /* Existing routes stay on the accessible canvas until they adopt an explicit surface pair. */
+  --bg-base: #17251f;
+  --bg-canvas: #17251f;
+  --bg-card: #17251f;
+  --bg-elev: #17251f;
+  --bg-elev-2: #17251f;
+  --bg-input: #17251f;
+  --text: #f2f5ef;
+  --text-primary: #f2f5ef;
+  --text-muted: #a8b5ad;
+  --text-faint: #a8b5ad;
+  --text-dim: #a8b5ad;
+  --accent: #dff56c;
+  --accent-fg: #17251f;
+  --accent-soft: #20342b;
+  --border: #8c9b93;
+  --border-strong: #a8b5ad;
+  --border-accent: #dff56c;
+  --danger: #e26e67;
+  --info: #a8b5ad;
+  --warn: #dff56c;
+  --ok: #f2f5ef;
+  --focus-ring: #dff56c;
+  --focus-ring-contrast: #17251f;
+  --shadow-sm: 0 1px 2px rgb(7 15 11 / 24%);
+  --shadow-md: 0 8px 20px rgb(7 15 11 / 22%);
+  --shadow-lg: 0 18px 44px rgb(7 15 11 / 28%);
+  --line: #8c9b93;
+  --eco-accent: #dff56c;
+}
+
+:root[data-theme='day-field'] {
+  color-scheme: light;
+
+  --pc-canvas: #e9eee8;
+  --pc-workspace: #f7f9f5;
+  --pc-owned: #f2f5ef;
+  --pc-ink: #17251f;
+  --pc-muted: #536159;
+  --pc-owned-ink: #17251f;
+  --pc-owned-muted: #536159;
+  --pc-harvest: #dff56c;
+  --pc-harvest-ink: #17251f;
+  --pc-danger: #a8403c;
+  --pc-danger-on-light: #a8403c;
+  --pc-danger-ink: #f2f5ef;
+  --pc-focus-on-dark: #dff56c;
+  --pc-focus-on-light: #17251f;
+  --pc-disabled-on-dark: #8c9b93;
+  --pc-disabled-on-light: #5f6c65;
+  --pc-disabled: #5f6c65;
+
+  --bg-base: #e9eee8;
+  --bg-canvas: #e9eee8;
+  --bg-card: #e9eee8;
+  --bg-elev: #e9eee8;
+  --bg-elev-2: #e9eee8;
+  --bg-input: #e9eee8;
+  --text: #17251f;
+  --text-primary: #17251f;
+  --text-muted: #536159;
+  --text-faint: #536159;
+  --text-dim: #536159;
+  --accent: #dff56c;
+  --accent-fg: #17251f;
+  --accent-soft: #f7f9f5;
+  --border: #5f6c65;
+  --border-strong: #17251f;
+  --border-accent: #17251f;
+  --danger: #a8403c;
+  --info: #536159;
+  --warn: #a8403c;
+  --ok: #17251f;
+  --focus-ring: #17251f;
+  --focus-ring-contrast: #f2f5ef;
+  --shadow-sm: 0 1px 2px rgb(23 37 31 / 12%);
+  --shadow-md: 0 8px 20px rgb(23 37 31 / 14%);
+  --shadow-lg: 0 18px 44px rgb(23 37 31 / 18%);
+  --line: #5f6c65;
+  --eco-accent: #dff56c;
+}
+
+:root {
+  --pc-radius-sm: 12px;
+  --pc-radius-md: 16px;
+  --pc-radius-lg: 24px;
+  --radius-sm: 12px;
+  --radius-md: 16px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --font-display: 'Geist Variable', 'Geist', system-ui, sans-serif;
+  --font-body: 'Geist Variable', 'Geist', system-ui, sans-serif;
+  --font-sans: 'Geist Variable', 'Geist', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, monospace;
+  --mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, monospace;
+  /* Legacy script consumers become Geist. Newsreader is scoped to .pc-wordmark. */
+  --font-script: 'Geist Variable', 'Geist', system-ui, sans-serif;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+[data-density='compact'] {
+  --radius-sm: 12px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 16px;
+}
+
+html,
+body {
+  background: var(--pc-canvas);
+}
+
+body {
+  color: var(--pc-ink);
+  font-family: var(--font-body);
+}
+
+.pc-wordmark {
+  font-family: 'Newsreader Variable', 'Newsreader', Georgia, serif;
+}
+
+.pc-workspace {
+  background: var(--pc-workspace);
+  color: var(--pc-ink);
+}
+
+.pc-owned,
+[data-pc-surface='owned'] {
+  background: var(--pc-owned);
+  color: var(--pc-owned-ink);
+}
+
+.pc-owned :where(.pc-muted),
+[data-pc-surface='owned'] :where(.pc-muted) {
+  color: var(--pc-owned-muted);
+}
+
+.pc-harvest,
+[data-pc-surface='harvest'] {
+  background: var(--pc-harvest);
+  color: var(--pc-harvest-ink);
+}
+
+.pc-danger,
+[data-pc-surface='danger'] {
+  background: var(--pc-danger);
+  color: var(--pc-danger-ink);
+}
+
+.pc-danger-text-on-light {
+  color: var(--pc-danger-on-light);
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 5px var(--focus-ring-contrast);
+}
+
+:where(.pc-owned, [data-pc-surface='owned'], .pc-harvest, [data-pc-surface='harvest'])
+  :focus-visible {
+  outline-color: var(--pc-focus-on-light);
+  box-shadow: 0 0 0 5px var(--pc-owned);
+}
+
+:where(button, input, select, textarea):disabled,
+[aria-disabled='true'] {
+  color: var(--pc-disabled);
+  cursor: not-allowed;
+  opacity: 1;
+}
+
+:where(.pc-owned, [data-pc-surface='owned']) :where(button, input, select, textarea):disabled,
+:where(.pc-owned, [data-pc-surface='owned']) [aria-disabled='true'] {
+  color: var(--pc-disabled-on-light);
+}
+
+.btn-primary,
+.btn-gradient {
+  background-color: var(--pc-harvest);
+  background-image: none;
+  color: var(--pc-harvest-ink);
+  animation: none;
+}
+
+:where(
+    .btn-primary,
+    .btn-gradient,
+    .btn-ghost,
+    .icon-btn,
+    .wallet-action,
+    .btn-chip,
+    .risk-opt,
+    .codeblock-copy,
+    .perm-revoke,
+    .pill-btn
+  ):where(:hover, :focus-visible):not(:disabled) {
+  background-image: none !important;
+  animation: none !important;
+}
+
+.wd-loading-fill.is-active::after {
+  display: none;
+}
+
+@media (hover: none), (pointer: coarse), (max-width: 767px) {
+  :where(
+    button,
+    [role='button'],
+    input:not([type='checkbox']):not([type='radio']),
+    select,
+    textarea
+  ) {
+    min-height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html:focus-within {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+  }
+}

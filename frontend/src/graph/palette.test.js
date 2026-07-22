@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   GRAPH_COLOR,
+  GRAPH_COLOR_LIGHT,
   GROUP_BASE,
   NODE_R,
   hexToNum,
@@ -23,16 +24,19 @@ const exec = {
 }
 
 describe('hexToNum', () => {
-  it('converts #cfff3d to 0xcfff3d', () => {
-    expect(hexToNum('#cfff3d')).toBe(0xcfff3d)
+  it('converts #DFF56C to 0xdff56c', () => {
+    expect(hexToNum('#DFF56C')).toBe(0xdff56c)
   })
 })
 
 describe('paletteFor', () => {
   it('switches state palette by theme', () => {
     expect(paletteFor(false).state).toBe(GRAPH_COLOR)
-    expect(paletteFor(true).state.running).toBe('#b07a1a')
-    expect(paletteFor(false).line).toBe('#3a3a32')
+    expect(paletteFor(true).state).toBe(GRAPH_COLOR_LIGHT)
+    expect(paletteFor('bone-paper').state).toBe(GRAPH_COLOR_LIGHT)
+    expect(paletteFor('acid-yield').state).toBe(GRAPH_COLOR)
+    expect(paletteFor(false).line).toBe('#536159')
+    expect(paletteFor(true).current).toBe('#17251F')
   })
 })
 

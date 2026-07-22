@@ -142,7 +142,7 @@ const WalletPanel = ({ phase, address }) => {
                 borderRadius: '50%',
                 background: isSmart ? 'var(--accent)' : 'var(--text-faint)',
                 display: 'inline-block',
-                boxShadow: isSmart ? '0 0 6px var(--accent)' : 'none',
+                boxShadow: 'none',
               }}
             />
             {isSmart ? 'Session keys active' : 'Standard wallet'}
@@ -258,7 +258,7 @@ const PermissionPanel = ({ active, strategy, onRevoke, expiresAt }) => {
             height: 6,
             borderRadius: '50%',
             background: active ? 'var(--accent)' : 'var(--text-faint)',
-            boxShadow: active ? '0 0 6px var(--accent)' : 'none',
+            boxShadow: 'none',
           }}
         />
         {active
@@ -702,7 +702,7 @@ const SkillPanel = ({ skillSource, marketLive, vaultLive, onCustomize }) => {
               height: 6,
               borderRadius: '50%',
               background: 'var(--accent)',
-              boxShadow: '0 0 6px var(--accent)',
+              boxShadow: 'none',
             }}
           />
           {custom ? 'Custom strategy' : 'Default strategy'}
@@ -719,28 +719,16 @@ const SkillPanel = ({ skillSource, marketLive, vaultLive, onCustomize }) => {
 
 const PALETTES = [
   {
-    id: 'acid-yield',
-    name: 'Acid Yield',
-    swatch: ['#cfff3d', '#1a1b16', '#ecebe1'],
-    desc: 'Default, warm dark + acid lime',
+    id: 'forest',
+    name: 'Forest',
+    swatch: ['#DFF56C', '#17251F', '#F2F5EF'],
+    desc: 'Calm Field canvas with Harvest actions',
   },
   {
-    id: 'mono-slate',
-    name: 'Mono Slate',
-    swatch: ['#e6edff', '#16182e', '#e8ebf3'],
-    desc: 'Refined, cool slate, no chroma',
-  },
-  {
-    id: 'liquid-mint',
-    name: 'Liquid Mint',
-    swatch: ['#5ee6c5', '#11201b', '#ecebe1'],
-    desc: 'Teal undertone, mint accent',
-  },
-  {
-    id: 'bone-paper',
-    name: 'Bone Paper',
-    swatch: ['#1a180f', '#e3dfd2', '#f4f1e9'],
-    desc: 'Light, editorial paper feel',
+    id: 'day-field',
+    name: 'Day Field',
+    swatch: ['#DFF56C', '#E9EEE8', '#17251F'],
+    desc: 'Light field with the same money hierarchy',
   },
 ]
 
@@ -768,7 +756,7 @@ const PalettePicker = ({ value, onChange }) => (
             color: 'inherit',
             transition:
               'background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease, transform 160ms var(--ease-out)',
-            boxShadow: on ? '0 0 12px var(--accent-soft)' : 'none',
+            boxShadow: 'none',
           }}
         >
           <div style={{ display: 'flex', gap: 3 }}>
