@@ -27,6 +27,18 @@ import {
   SOROBAN_ACTIVE_VAULT_ADDRESS,
   USE_FUNDING_ROUTER,
 } from './stellar/config.js'
+import { PermissionPhaseError } from './strategy/permissionError.js'
+// NOTE (Strategy Task 7): every OTHER new dependency this file needed for the permission-locked
+// path (`./strategy/reusePreflight.js`, `./stellar/grantReceiptStore.js`, and `readConfirmedLedger`
+// from `./stellar/grant.js`, plus `loadCachedAgents`/`SOROBAN_FUNDING_ROUTER_ADDRESS`) is imported
+// DYNAMICALLY, inside the methods that actually use it — never at module top-level. Several
+// pre-existing test files (orchestrator.baseleg.test.js, kept byte-for-byte per the worktree
+// guard) mock `./stellar/agentCache.js` and `./stellar/config.js` with only the small export set
+// the LEGACY path needs; a static top-level import here would pull reusePreflight.js's own
+// transitive imports (agentCache's `EXPIRY_MARGIN_SECONDS`/`inspectReusableAgents`,
+// grantReceiptStore's `NETWORK_PASSPHRASE`, …) into every test's module graph and break those
+// mocks even though the legacy path never calls any of this code. Mirrors the file's existing
+// `import('./baseLeg.js').then(...)` isolation pattern below.
 
 // Scope window for a dispatch: agents may deposit up to their allocation, within the period.
 const PERIOD_DURATION = 86400
@@ -92,7 +104,483 @@ export class OrchestratorAgent {
    * @param {number} totalAmount - total asset amount (human-readable VFUSD)
    * @returns {Promise<{completed:number, failed:number, results:Array, sessionId:string, baseLeg:object|null}>}
    */
-  async dispatch(strategy, totalAmount) {
+  async dispatch(strategyOrPlan, totalAmountOrOptions) {
+    // Strategy Task 7 (Pocket Crew redesign, Wave 1) — dispatch is overloaded by the SHAPE of its
+    // second argument, never by an explicit flag, so every pre-Task-7 call site (a plain
+    // human-readable `totalAmount` number) is untouched byte-for-byte and keeps taking the legacy
+    // path below. A reviewed StrategyPlan + PermissionDecisionV1 always passes an OBJECT
+    // (`{ permissionDecision }`) as the second argument — that shape is the discriminator.
+    if (totalAmountOrOptions != null && typeof totalAmountOrOptions === 'object') {
+      return this.dispatchPermissioned(strategyOrPlan, totalAmountOrOptions)
+    }
+    return this.dispatchLegacy(strategyOrPlan, totalAmountOrOptions)
+  }
+
+  /**
+   * Strategy Task 7 (Pocket Crew redesign, Wave 1) — the permission-locked dispatch path. Consumes
+   * an already-reviewed StrategyPlan (planModel.js) plus the PermissionDecisionV1 that Task 5's
+   * `preflightPermission` produced for it. Every fact the plan was reviewed against — cap, expiry,
+   * period, budget — is taken verbatim from `permissionDecision`, never regenerated here: this
+   * method's whole job is refusing to move any fund on anything but that exact reviewed decision.
+   *
+   * Fresh mode: builds ONE grant strictly from `permissionDecision.reviewedBudgets` /
+   * `reviewedAgentInits`, saves + fingerprints the resulting GrantReceiptV1, THEN emits
+   * 'grant-confirmed' — before any worker movement. Never touches the agent-reuse cache.
+   * Reuse mode: never builds or submits a grant, never calls the wallet/provider. It re-runs
+   * Task 5's own `preflightPermission` one more time (a fresh latest-ledger capture, a fresh
+   * no-later-mutation proof, a fresh per-agent on-chain scope re-check) immediately before the
+   * first pull; any drift from what was reviewed is `PermissionPhaseError`
+   * (`phase:'reuse-revalidation', code:'VF_REUSE_EVIDENCE_CHANGED'`) — never a silent fallback to
+   * a wallet signature.
+   * Both modes reject a stale plan/AgentInit pairing before doing anything else
+   * (`phase:'preflight'`).
+   *
+   * Bridge (Base) allocations are out of scope here — Task 8 owns the mixed-branch custody
+   * receipt that will fold them into this path; a plan's `kind:'bridge'` agents are ignored by
+   * this method (Task 7 covers Stellar deposit workers only).
+   * @param {object} strategyPlan canonical StrategyPlan (planModel.js normalizeStrategyPlan/toDispatchStrategy)
+   * @param {{permissionDecision: object}} options
+   * @returns {Promise<{completed:number, failed:number, results:Array, sessionId:string, permission:object}>}
+   */
+  async dispatchPermissioned(strategyPlan, { permissionDecision }) {
+    const planAgents = (strategyPlan.agents || []).filter((a) => a.kind !== 'bridge')
+    this.assertPermissionMatchesPlan(strategyPlan, permissionDecision, planAgents)
+
+    let workers
+    let confirmed
+    if (permissionDecision.mode === 'reuse') {
+      const revalidated = await this.revalidateReuse(strategyPlan, permissionDecision, planAgents)
+      workers = await this.buildReuseWorkers(planAgents, revalidated)
+      const expiryLedger = revalidated.allowanceExpiryProof?.approvals?.[0]?.expiryLedger ?? null
+      confirmed = {
+        version: 1,
+        runId: strategyPlan.runId,
+        mode: 'reuse',
+        planFingerprint: strategyPlan.planFingerprint,
+        agentInitFingerprint: permissionDecision.agentInitFingerprint,
+        grantReceiptFingerprint: revalidated.grantReceiptFingerprint,
+        confirmationCount: (permissionDecision.confirmationCount ?? 0) + 1,
+        txHash: null,
+        expiryLedger,
+        agentAddresses: workers.map((w) => w.agentAddress),
+        confirmedAt: Math.floor(Date.now() / 1000),
+      }
+      this.onEvent('reuse-confirmed', {
+        runId: strategyPlan.runId,
+        confirmed,
+        agentAddresses: confirmed.agentAddresses,
+      })
+    } else if (permissionDecision.mode === 'fresh') {
+      workers = this.buildFreshWorkers(planAgents)
+      const granted = await this.grantFreshFromDecision(strategyPlan, workers, permissionDecision)
+      confirmed = {
+        version: 1,
+        runId: strategyPlan.runId,
+        mode: 'fresh',
+        planFingerprint: strategyPlan.planFingerprint,
+        agentInitFingerprint: permissionDecision.agentInitFingerprint,
+        grantReceiptFingerprint: granted.grantReceiptFingerprint,
+        confirmationCount: 1,
+        txHash: granted.txHash,
+        expiryLedger: granted.expiryLedger,
+        agentAddresses: granted.agentAddresses,
+        confirmedAt: granted.confirmedAt,
+      }
+      this.onEvent('grant-confirmed', {
+        runId: strategyPlan.runId,
+        confirmed,
+        budgets: permissionDecision.reviewedBudgets,
+        agentAddresses: granted.agentAddresses,
+      })
+    } else {
+      throw new PermissionPhaseError({
+        phase: 'preflight',
+        code: 'VF_UNKNOWN_PERMISSION_MODE',
+        message: `Unknown permission mode: ${permissionDecision?.mode}`,
+      })
+    }
+
+    // Queue events fire for EVERY eligible worker up front, real index, before any turn begins —
+    // then the SAME 2,000ms relay-safe serial dispatcher (unchanged from the legacy path) runs
+    // pull + deposit per worker, isolating one worker's pull/deposit failure from the rest.
+    workers.forEach((w, i) => {
+      this.onEvent('worker-queued', {
+        allocationId: w.allocationId,
+        agentId: w.agentId,
+        agent: w.agentAddress,
+        queueIndex: i,
+      })
+    })
+
+    const workerResults = []
+    for (let i = 0; i < workers.length; i++) {
+      const w = workers[i]
+      this.onEvent('worker-started', {
+        allocationId: w.allocationId,
+        agentId: w.agentId,
+        agent: w.agentAddress,
+        queueIndex: i,
+      })
+      try {
+        // Fund only the shortfall case (a reused/aborted agent may already hold the asset) — same
+        // rule as the legacy router path. The pull is relayed: the agent's own session key signs
+        // the pull auth entry, the relay fee-bumps — zero further wallet signatures either mode.
+        const agentBal = await readTokenBalance(w.agentAddress)
+        if (agentBal == null || agentBal < w.amount) {
+          const res = await runAgentPull({
+            agentAddress: w.agentAddress,
+            amount: w.amount,
+            sessionKey: w.sessionKey,
+          })
+          if (!res)
+            throw new Error(
+              'The Stellar relay is unavailable. Funds could not be sent to the agent.'
+            )
+          if (res.status !== 'SUCCESS')
+            throw new Error(`The funding router returned ${res.status}.`)
+        }
+        const res = await w.execute()
+        workerResults.push({ status: 'fulfilled', value: res })
+      } catch (e) {
+        workerResults.push({ status: 'rejected', reason: e })
+      }
+      if (i < workers.length - 1) await new Promise((r) => setTimeout(r, DISPATCH_INTERVAL_MS))
+    }
+
+    const results = workerResults.map((r, i) => ({
+      agentId: workers[i].agentId,
+      allocationId: workers[i].allocationId,
+      vault: workers[i].vault,
+      success: r.status === 'fulfilled' && r.value?.success,
+      txHash: r.value?.txHash,
+      error: r.reason?.message || r.value?.error,
+    }))
+    const completed = results.filter((r) => r.success).length
+    const failed = results.length - completed
+
+    return { completed, failed, results, sessionId: this.sessionId, permission: confirmed }
+  }
+
+  /** Both modes: reject before any wallet/provider/movement when the reviewed decision no longer
+   * describes THIS exact plan — a stale planFingerprint, or a reviewed agent whose cap/expiry/
+   * period/target drifted from what the plan now says. `PermissionPhaseError(phase:'preflight')`.
+   * Deliberately excludes signer/salt from the comparison: a fresh-mode signer is generated once,
+   * right here, for a first-time grant that has no prior signer to preserve; reuse mode's OWN
+   * signer continuity is instead re-proven on-chain by `revalidateReuse` below. */
+  assertPermissionMatchesPlan(strategyPlan, permissionDecision, planAgents) {
+    if (
+      !permissionDecision ||
+      strategyPlan.planFingerprint !== permissionDecision.planFingerprint
+    ) {
+      throw new PermissionPhaseError({
+        phase: 'preflight',
+        code: 'VF_PLAN_FINGERPRINT_MISMATCH',
+        message: 'The reviewed permission decision no longer matches this plan.',
+      })
+    }
+    const reviewed = permissionDecision.reviewedAgentInits || []
+    const matches =
+      planAgents.length === reviewed.length &&
+      planAgents.every((agent, i) => {
+        const r = reviewed[i]
+        return (
+          r &&
+          r.allocationId === agent.allocationId &&
+          r.kind === (agent.kind === 'bridge' ? AGENT_KIND_BRIDGE : AGENT_KIND_DEPOSIT) &&
+          r.target === SOROBAN_ACTIVE_VAULT_ADDRESS &&
+          r.token === agent.cap.token &&
+          r.cap?.token === agent.cap.token &&
+          String(r.cap?.units) === String(agent.cap.units) &&
+          Number(r.cap?.decimals) === Number(agent.cap.decimals) &&
+          Number(r.periodSeconds) === Number(agent.periodSeconds) &&
+          Number(r.expiry) === Number(agent.expiry)
+        )
+      })
+    if (!matches) {
+      throw new PermissionPhaseError({
+        phase: 'preflight',
+        code: 'VF_AGENT_INIT_FINGERPRINT_MISMATCH',
+        message: 'The reviewed agent set no longer matches this plan.',
+      })
+    }
+  }
+
+  /**
+   * Reuse mode's ONE revalidation gate, run immediately before the first pull. Never builds or
+   * submits a grant, never touches the wallet/provider — it re-runs Task 5's own
+   * `preflightPermission` (a fresh latest-ledger capture, a fresh no-later-mutation proof, a fresh
+   * per-agent on-chain scope re-check) against the SAME reviewed agent set, restoring each
+   * candidate's session key from the cache Task 5 already pointed at
+   * (`permissionDecision.agents[i].executionCredentialRef`, agentCache.js). Any drift — mode flips
+   * away from reuse, the receipt/agent-init fingerprint changes, a picked address or its scope
+   * fingerprint changes, or a session key is no longer cached — is evidence the world moved since
+   * review: `PermissionPhaseError(phase:'reuse-revalidation', code:'VF_REUSE_EVIDENCE_CHANGED')`,
+   * never a silent fallback to a fresh wallet signature.
+   */
+  async revalidateReuse(strategyPlan, permissionDecision, planAgents) {
+    const { loadCachedAgents } = await import('./stellar/agentCache.js')
+    const pickedByAllocation = new Map(
+      (permissionDecision.agents || []).map((a) => [a.allocationId, a])
+    )
+    const cachedByAddress = new Map(
+      loadCachedAgents({ owner: this.user, vault: SOROBAN_ACTIVE_VAULT_ADDRESS }).map((e) => [
+        e.agentAddress,
+        e,
+      ])
+    )
+
+    const agentInits = planAgents.map((agent) => {
+      const picked = pickedByAllocation.get(agent.allocationId)
+      const cached = picked ? cachedByAddress.get(picked.agentAddress) : null
+      if (!picked || !cached || !cached.secret) {
+        throw new PermissionPhaseError({
+          phase: 'reuse-revalidation',
+          code: 'VF_REUSE_EVIDENCE_CHANGED',
+          message: `The session key for allocation ${agent.allocationId} is no longer available.`,
+        })
+      }
+      const sessionKey = newSessionKey(cached.secret)
+      return {
+        allocationId: agent.allocationId,
+        signer: sessionKey.rawPublicKey,
+        salt: null,
+        cap: { token: agent.cap.token, units: agent.cap.units, decimals: agent.cap.decimals },
+        token: agent.cap.token,
+        target: SOROBAN_ACTIVE_VAULT_ADDRESS,
+        kind: AGENT_KIND_DEPOSIT,
+        mintRecipient: ZERO32,
+        destinationDomain: 0,
+        periodSeconds: agent.periodSeconds,
+        expiry: agent.expiry,
+      }
+    })
+
+    const { preflightPermission } = await import('./strategy/reusePreflight.js')
+    let revalidated
+    try {
+      revalidated = await preflightPermission({
+        runId: permissionDecision.runId,
+        owner: this.user,
+        planFingerprint: strategyPlan.planFingerprint,
+        agentInits,
+        reviewedBudgets: permissionDecision.reviewedBudgets,
+        durationSeconds: permissionDecision.durationSeconds,
+      })
+    } catch (err) {
+      throw new PermissionPhaseError({
+        phase: 'reuse-revalidation',
+        code: 'VF_REUSE_EVIDENCE_CHANGED',
+        message: `Reuse revalidation failed: ${err.message}`,
+        cause: err,
+      })
+    }
+
+    const pickedAddressesMatch =
+      revalidated.mode === 'reuse' &&
+      revalidated.agents.length === (permissionDecision.agents || []).length &&
+      revalidated.agents.every((a) => {
+        const before = pickedByAllocation.get(a.allocationId)
+        return (
+          before &&
+          before.agentAddress === a.agentAddress &&
+          before.scopeFingerprint === a.scopeFingerprint
+        )
+      })
+
+    if (
+      revalidated.mode !== 'reuse' ||
+      revalidated.agentInitFingerprint !== permissionDecision.agentInitFingerprint ||
+      revalidated.grantReceiptFingerprint !== permissionDecision.grantReceiptFingerprint ||
+      !pickedAddressesMatch
+    ) {
+      throw new PermissionPhaseError({
+        phase: 'reuse-revalidation',
+        code: 'VF_REUSE_EVIDENCE_CHANGED',
+        message: 'Reuse evidence changed since it was reviewed.',
+      })
+    }
+
+    return revalidated
+  }
+
+  /** Task 2's `toDispatchStrategy` already narrows a StrategyPlan to eligible-only allocations
+   * before it ever reaches dispatch — this worker-level check (worker.js "Enforcement B") is
+   * defense-in-depth against an accidental code-path skip, not a second gate. A synthetic, freshly
+   * timestamped pass token honestly reflects that upstream guarantee without re-plumbing Task 3's
+   * eligibilityGate.js verdict objects through the plan/permission-decision contract.
+   * // ponytail: synthetic pass token — revisit if a future task needs a real per-allocation
+   * // eligibility verdict at this exact seam. */
+  reviewedEligibilityToken() {
+    return {
+      protocolSlug: null,
+      planIndex: 0,
+      eligible: true,
+      verdictHash: 'plan-reviewed',
+      asOf: Date.now(),
+    }
+  }
+
+  /** Reuse-mode worker construction: EXACTLY the credentials `revalidateReuse` just re-proved —
+   * never a fresh deploy, never a different cache pick. */
+  async buildReuseWorkers(planAgents, revalidated) {
+    const { loadCachedAgents } = await import('./stellar/agentCache.js')
+    const pickedByAllocation = new Map(revalidated.agents.map((a) => [a.allocationId, a]))
+    const cachedByAddress = new Map(
+      loadCachedAgents({ owner: this.user, vault: SOROBAN_ACTIVE_VAULT_ADDRESS }).map((e) => [
+        e.agentAddress,
+        e,
+      ])
+    )
+    return planAgents.map((agent) => {
+      const picked = pickedByAllocation.get(agent.allocationId)
+      const cached = cachedByAddress.get(picked.agentAddress)
+      return new WorkerAgent({
+        agentId: agent.allocationId,
+        allocationId: agent.allocationId,
+        user: this.user,
+        vault: SOROBAN_ACTIVE_VAULT_ADDRESS,
+        // The plan's own bigint unit string, never a float re-multiplication of a decimal amount —
+        // the validated plan and the executed units must be the exact same number.
+        amount: BigInt(agent.cap.units),
+        sessionId: this.sessionId,
+        onEvent: this.onEvent,
+        agentAddress: picked.agentAddress,
+        sessionKey: newSessionKey(cached.secret),
+        eligibilityToken: this.reviewedEligibilityToken(),
+      })
+    })
+  }
+
+  /** Fresh-mode worker construction — no `agentAddress` yet (the grant deploys it). */
+  buildFreshWorkers(planAgents) {
+    return planAgents.map(
+      (agent) =>
+        new WorkerAgent({
+          agentId: agent.allocationId,
+          allocationId: agent.allocationId,
+          user: this.user,
+          vault: SOROBAN_ACTIVE_VAULT_ADDRESS,
+          // Same bigint-units rule as buildReuseWorkers above — see its comment.
+          amount: BigInt(agent.cap.units),
+          sessionId: this.sessionId,
+          onEvent: this.onEvent,
+          agentAddress: null,
+          eligibilityToken: this.reviewedEligibilityToken(),
+        })
+    )
+  }
+
+  /**
+   * Fresh mode's ONE grant. Builds AgentInits strictly from `permissionDecision.reviewedAgentInits`
+   * — cap/token/target/kind/period/expiry are never regenerated from the plan or a fresh
+   * `Date.now()` expiry, only the per-worker session key is generated here (a first-time grant has
+   * no prior signer to preserve). Any wallet rejection, build/simulation failure, submission
+   * failure, or unconfirmed on-chain deployment is `PermissionPhaseError(phase:'fresh-grant')` —
+   * no worker ever starts. Calls `submitGrant` exactly once; never touches the reuse cache reads.
+   */
+  async grantFreshFromDecision(strategyPlan, workers, permissionDecision) {
+    const reviewedByAllocation = new Map(
+      (permissionDecision.reviewedAgentInits || []).map((r) => [r.allocationId, r])
+    )
+    for (const w of workers) await w.setupKey() // fresh signer, generated exactly once
+
+    const agentInits = workers.map((w) => {
+      const r = reviewedByAllocation.get(w.allocationId)
+      return {
+        signer: w.sessionKey.rawPublicKey,
+        cap: BigInt(r.cap.units),
+        token: r.cap.token,
+        target: r.target,
+        kind: r.kind,
+        mintRecipient: ZERO32,
+        destinationDomain: r.destinationDomain ?? 0,
+        periodDuration: r.periodSeconds,
+        expiry: r.expiry,
+      }
+    })
+    const budgets = (permissionDecision.reviewedBudgets || []).map((b) => ({
+      budget: BigInt(b.units),
+      token: b.token,
+    }))
+
+    let submitted
+    try {
+      submitted = await submitGrant({
+        owner: this.user,
+        budgets,
+        durationSeconds: permissionDecision.durationSeconds,
+        agentInits,
+      })
+    } catch (err) {
+      throw new PermissionPhaseError({
+        phase: 'fresh-grant',
+        code: err instanceof PermissionPhaseError ? err.code : 'VF_GRANT_FAILED',
+        message: err.message,
+        cause: err,
+      })
+    }
+
+    const { readConfirmedLedger } = await import('./stellar/grant.js')
+    let confirmedLedger
+    let confirmedAt
+    try {
+      ;({ confirmedLedger, confirmedAt } = await readConfirmedLedger({ hash: submitted.hash }))
+    } catch (err) {
+      throw new PermissionPhaseError({
+        phase: 'fresh-grant',
+        code: 'VF_GRANT_UNCONFIRMED',
+        message: `The grant did not confirm on-chain: ${err.message}`,
+        cause: err,
+      })
+    }
+
+    workers.forEach((w, i) => {
+      w.agentAddress = submitted.agentAddresses[i]
+      saveCachedAgent({
+        owner: this.user,
+        vault: SOROBAN_ACTIVE_VAULT_ADDRESS,
+        entry: {
+          agentAddress: w.agentAddress,
+          secret: w.sessionKey.secret,
+          signerPub: w.sessionKey.publicKey,
+          cap: String(w.amount),
+          expiry: reviewedByAllocation.get(w.allocationId).expiry,
+          createdAt: Date.now(),
+        },
+      })
+    })
+
+    // Save + fingerprint the GrantReceiptV1 BEFORE dispatchPermissioned emits 'grant-confirmed' —
+    // that event IS the "permission is now active" signal a caller (app.jsx) waits on, so the
+    // receipt must already be durable when it fires.
+    const { buildGrantReceiptV1, saveGrantReceipt, fingerprintGrantReceipt } =
+      await import('./stellar/grantReceiptStore.js')
+    const { SOROBAN_FUNDING_ROUTER_ADDRESS } = await import('./stellar/config.js')
+    const receipt = buildGrantReceiptV1({
+      runId: strategyPlan.runId,
+      owner: this.user,
+      router: SOROBAN_FUNDING_ROUTER_ADDRESS,
+      txHash: submitted.hash,
+      confirmedLedger,
+      expiryLedger: submitted.expiryLedger,
+      allowanceBudgets: permissionDecision.reviewedBudgets,
+      agentInitFingerprint: permissionDecision.agentInitFingerprint,
+      agentAddresses: submitted.agentAddresses,
+      confirmedAt,
+    })
+    saveGrantReceipt({ receipt })
+
+    return {
+      agentAddresses: submitted.agentAddresses,
+      txHash: submitted.hash,
+      expiryLedger: submitted.expiryLedger,
+      confirmedLedger,
+      confirmedAt,
+      grantReceiptFingerprint: fingerprintGrantReceipt(receipt),
+    }
+  }
+
+  async dispatchLegacy(strategy, totalAmount) {
     const allVaults = strategy.vaults || []
     const baseVaults = allVaults.filter((v) => v.chain === 'base')
     const stellarVaults = allVaults.filter((v) => v.chain !== 'base')

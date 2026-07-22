@@ -147,6 +147,46 @@ describe('WorkerAgent (Stellar)', () => {
     expect(runAgentDeposit).not.toHaveBeenCalled()
   })
 
+  test('carries allocationId on every emitted event (Task 6 custody-keying contract)', async () => {
+    runAgentDeposit.mockResolvedValue({ hash: 'abc123', status: 'SUCCESS' })
+    readVaultShares.mockResolvedValueOnce(0n).mockResolvedValue(50_000_000n)
+    const events = []
+    const w = new WorkerAgent({
+      agentId: 'worker-1',
+      allocationId: 'run1:deposit:0',
+      user: 'GUSER',
+      vault: 'CCDX...',
+      amount: 50_000_000n,
+      sessionId: 's1',
+      onEvent: (n, d) => events.push({ n, d }),
+      agentAddress: 'CCRG...AGENT',
+      sessionKey: sessionKey(),
+      eligibilityToken: goodToken(),
+    })
+    await w.execute()
+    expect(events.length).toBeGreaterThan(0)
+    expect(events.every((e) => e.d.allocationId === 'run1:deposit:0')).toBe(true)
+  })
+
+  test('defaults allocationId to null when not provided (legacy callers unaffected)', async () => {
+    runAgentDeposit.mockResolvedValue(null)
+    readVaultShares.mockResolvedValue(0n)
+    const events = []
+    const w = new WorkerAgent({
+      agentId: 'worker-3',
+      user: 'GUSER',
+      vault: 'CCDX...',
+      amount: 10_000_000n,
+      sessionId: 's1',
+      onEvent: (n, d) => events.push({ n, d }),
+      agentAddress: 'CCRG...AGENT',
+      sessionKey: sessionKey(),
+      eligibilityToken: goodToken(),
+    })
+    await w.execute()
+    expect(events.find((e) => e.n === 'failed').d.allocationId).toBeNull()
+  })
+
   test('fails when no agentAddress was provided', async () => {
     const w = new WorkerAgent({
       agentId: 'worker-4',

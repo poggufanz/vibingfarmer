@@ -36,6 +36,7 @@ export class WorkerAgent {
     verifyAttempts,
     verifyIntervalMs,
     eligibilityToken,
+    allocationId,
   }) {
     this.agentId = agentId
     this.user = user
@@ -50,6 +51,12 @@ export class WorkerAgent {
     this.verifyAttempts = verifyAttempts ?? 8
     this.verifyIntervalMs = verifyIntervalMs ?? 3000
     this.memoryEntries = []
+    // Strategy Task 7 (Pocket Crew redesign) — the StrategyPlan's stable per-allocation id
+    // (planModel.js), carried on every emitted event alongside `agentId` so a consumer can key
+    // custody state by allocationId (flowState.js's contract) without translation. Optional and
+    // additive: legacy callers that never pass it get `null`, unchanged from before this field
+    // existed.
+    this.allocationId = allocationId || null
   }
 
   /** Generate the ephemeral ed25519 session key (the on-chain agent signer). Idempotent. */
@@ -182,7 +189,7 @@ export class WorkerAgent {
   }
 
   emit(eventName, data) {
-    this.onEvent(eventName, { ...data, agentId: this.agentId })
+    this.onEvent(eventName, { ...data, agentId: this.agentId, allocationId: this.allocationId })
   }
 }
 

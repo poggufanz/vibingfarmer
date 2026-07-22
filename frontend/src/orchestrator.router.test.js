@@ -1,44 +1,54 @@
 // frontend/src/orchestrator.router.test.js
-// Router (single-signature grant) path of the orchestrator. The LEGACY per-agent deploy/fund path is
-// covered by orchestrator.test.js (whose config mock omits USE_FUNDING_ROUTER → falsy → legacy);
-// here USE_FUNDING_ROUTER is mocked true so dispatch takes setupViaRouter.
+// Strategy Task 7 (Pocket Crew redesign, Wave 1). The permission-locked dispatch path:
+// `dispatch(strategyPlan, { permissionDecision })`. This file replaces its pre-Task-7 content,
+// which exercised the LEGACY `dispatch(strategy, totalAmount)` router path's opportunistic
+// tryReuseAllCached selection — that legacy behavior is UNCHANGED (dispatchLegacy is a
+// byte-for-byte rename) and stays covered by orchestrator.test.js + orchestrator.baseleg.test.js.
+// This file covers ONLY the new StrategyPlan/PermissionDecisionV1-driven path: fresh mode never
+// opportunistically takes cache entries, reuse mode never touches the wallet/grant, both modes
+// reject a stale plan/AgentInit pairing before any movement, reuse revalidates through a freshly
+// captured preflight immediately before the first pull, a confirmed fresh grant emits
+// grant-confirmed before worker movement, every fresh-grant failure mode throws
+// PermissionPhaseError(phase:'fresh-grant'), and the queue/dispatch events carry real order.
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
-const callOrder = []
-
-// grant.js — the single-signature primitives. submitGrant returns one fresh agent address per AgentInit.
 const submitGrantMock = vi.fn()
 const runAgentPullMock = vi.fn()
 const readAllowanceMock = vi.fn()
+const readConfirmedLedgerMock = vi.fn()
 vi.mock('./stellar/grant.js', () => ({
   submitGrant: (...a) => submitGrantMock(...a),
   runAgentPull: (...a) => runAgentPullMock(...a),
   readAllowance: (...a) => readAllowanceMock(...a),
+  readConfirmedLedger: (...a) => readConfirmedLedgerMock(...a),
   AGENT_KIND_DEPOSIT: 0,
   AGENT_KIND_BRIDGE: 1,
 }))
 
-// Legacy setup helpers must NEVER be called on the router path.
+// Legacy per-agent setup helpers must never be called on the permission-locked path.
 const deployAgentForSessionMock = vi.fn()
 const fundAgentMock = vi.fn()
+const registryAuthorizeAgentMock = vi.fn()
 vi.mock('./stellar/agentSetup.js', () => ({
   deployAgentForSession: (...a) => deployAgentForSessionMock(...a),
   fundAgent: (...a) => fundAgentMock(...a),
-  registryAuthorizeAgent: vi.fn(),
+  registryAuthorizeAgent: (...a) => registryAuthorizeAgentMock(...a),
 }))
 
 const takeReusableAgentMock = vi.fn(async () => null)
 const saveCachedAgentMock = vi.fn()
+const loadCachedAgentsMock = vi.fn(() => [])
 vi.mock('./stellar/agentCache.js', () => ({
   takeReusableAgent: (...a) => takeReusableAgentMock(...a),
   saveCachedAgent: (...a) => saveCachedAgentMock(...a),
+  loadCachedAgents: (...a) => loadCachedAgentsMock(...a),
 }))
 
 vi.mock('./stellar/sessionKey.js', () => ({
   newSessionKey: (secret) => ({
-    publicKey: 'GRESTORED',
-    secret,
-    rawPublicKey: new Uint8Array(32),
+    publicKey: secret ? `GRESTORED-${secret}` : 'GFRESH',
+    secret: secret || 'SFRESH',
+    rawPublicKey: new Uint8Array(32).fill(secret ? secret.length + 1 : 9),
     sign: () => new Uint8Array(64),
   }),
 }))
@@ -48,17 +58,32 @@ vi.mock('./stellar/agentDeposit.js', () => ({
   readTokenBalance: (...a) => readTokenBalanceMock(...a),
 }))
 
-// USE_FUNDING_ROUTER true → dispatch takes the router path.
 vi.mock('./stellar/config.js', () => ({
   SOROBAN_TOKEN_ADDRESS: 'CTOKEN',
   SOROBAN_DECIMALS: 7,
   SOROBAN_ACTIVE_VAULT_ADDRESS: 'CACTIVEVAULT',
+  SOROBAN_FUNDING_ROUTER_ADDRESS: 'CROUTER',
   USE_FUNDING_ROUTER: true,
 }))
 vi.mock('./strategist.js', () => ({ generateAgentSkills: vi.fn(async () => ({})) }))
 vi.mock('./skills.js', () => ({ saveSkill: vi.fn() }))
+vi.mock('./mergeFlowHelpers.js', () => ({ readStoredBaseMandate: vi.fn() }))
+
+const preflightPermissionMock = vi.fn()
+vi.mock('./strategy/reusePreflight.js', () => ({
+  preflightPermission: (...a) => preflightPermissionMock(...a),
+}))
+
+const saveGrantReceiptMock = vi.fn()
+const fingerprintGrantReceiptMock = vi.fn(() => '0xRECEIPTFRESH')
+vi.mock('./stellar/grantReceiptStore.js', () => ({
+  buildGrantReceiptV1: (p) => ({ version: 1, ...p }),
+  saveGrantReceipt: (...a) => saveGrantReceiptMock(...a),
+  fingerprintGrantReceipt: (...a) => fingerprintGrantReceiptMock(...a),
+}))
 
 const workerInstances = []
+const executeCalls = []
 vi.mock('./worker.js', () => ({
   WorkerAgent: class {
     constructor(c) {
@@ -70,211 +95,466 @@ vi.mock('./worker.js', () => ({
         const n = workerInstances.indexOf(this)
         this.sessionKey = {
           publicKey: `GPUB${n}`,
-          secret: `SSEC${n}`,
+          secret: `SFRESH${n}`,
           rawPublicKey: new Uint8Array(32).fill(n + 1),
         }
       }
       return this.sessionKey
     }
     async execute() {
-      callOrder.push(`execute:${this.agentId}`)
-      return { success: true, txHash: '0xW' }
+      executeCalls.push(this.allocationId)
+      return { success: true, txHash: `0xW${this.allocationId}` }
     }
   },
   makeAgentId: (i, s) => `0x${i}${s}`,
 }))
 
 import { OrchestratorAgent } from './orchestrator.js'
-import { ZERO32 } from './stellar/cctpBurn.js'
+import { PermissionPhaseError } from './strategy/permissionError.js'
 
-const strategy = {
-  vaults: [
-    { address: 'CV1', allocation: 0.4 },
-    { address: 'CV2', allocation: 0.4 },
-    { address: 'CV3', allocation: 0.2 },
-  ],
+function planAgent(i, units) {
+  return {
+    allocationId: `run1:deposit:${i}`,
+    kind: 'deposit',
+    hostNetworkId: 'stellar-testnet',
+    allocation: { token: 'CTOKEN', units: String(units), decimals: 7 },
+    cap: { token: 'CTOKEN', units: String(units), decimals: 7 },
+    periodSeconds: 3600,
+    expiry: 2000000000,
+    destination: 'Stellar deposit',
+    children: [],
+  }
 }
-// total 100 → 40 / 40 / 20 VFUSD = 40_0000000 / 40_0000000 / 20_0000000 base units; total 100_0000000.
-const TOTAL_UNITS = 100_0000000n
+
+const PLAN = Object.freeze({
+  runId: 'run1',
+  planFingerprint: '0xPLAN',
+  agents: [planAgent(0, '400000000'), planAgent(1, '600000000')],
+})
+
+function reviewedInitFor(agent) {
+  return {
+    allocationId: agent.allocationId,
+    kind: 0,
+    token: agent.cap.token,
+    target: 'CACTIVEVAULT',
+    cap: { token: agent.cap.token, units: agent.cap.units, decimals: agent.cap.decimals },
+    periodSeconds: agent.periodSeconds,
+    expiry: agent.expiry,
+    signerFingerprint: '0xsig',
+    saltFingerprint: null,
+    destinationDomain: 0,
+    mintRecipient: '00'.repeat(32),
+  }
+}
+
+function freshDecisionFor(plan) {
+  return {
+    version: 1,
+    runId: plan.runId,
+    owner: 'GUSER',
+    planFingerprint: plan.planFingerprint,
+    agentInitFingerprint: '0xAI',
+    checkedAt: 1000,
+    reviewedBudgets: [{ token: 'CTOKEN', units: '1000000000', decimals: 7 }],
+    durationSeconds: 3600,
+    reviewedAgentInits: plan.agents.map(reviewedInitFor),
+    mode: 'fresh',
+    confirmationCount: 1,
+    grantReceiptFingerprint: null,
+    allowanceExpiryProof: null,
+    agents: [],
+    freshReason: 'allowance-proof-missing',
+  }
+}
+
+function reuseDecisionFor(plan, addresses) {
+  return {
+    version: 1,
+    runId: plan.runId,
+    owner: 'GUSER',
+    planFingerprint: plan.planFingerprint,
+    agentInitFingerprint: '0xAI',
+    checkedAt: 1000,
+    reviewedBudgets: [{ token: 'CTOKEN', units: '1000000000', decimals: 7 }],
+    durationSeconds: 3600,
+    reviewedAgentInits: plan.agents.map(reviewedInitFor),
+    mode: 'reuse',
+    confirmationCount: 0,
+    grantReceiptFingerprint: '0xRECEIPT',
+    allowanceExpiryProof: {
+      version: 1,
+      latestLedger: 5000,
+      approvals: [{ token: 'CTOKEN', units: '1000000000', decimals: 7, expiryLedger: 9999 }],
+    },
+    agents: plan.agents.map((a, i) => ({
+      allocationId: a.allocationId,
+      workerId: a.allocationId,
+      agentAddress: addresses[i],
+      headroom: { token: 'CTOKEN', units: a.cap.units, decimals: 7 },
+      scopeExpiry: 9999,
+      scopeFingerprint: `0xSF${i}`,
+      executionCredentialRef: addresses[i],
+    })),
+    freshReason: null,
+  }
+}
 
 beforeEach(() => {
-  callOrder.length = 0
   workerInstances.length = 0
+  executeCalls.length = 0
   submitGrantMock.mockReset()
-  submitGrantMock.mockImplementation(async ({ agentInits }) => {
-    callOrder.push(`grant:${agentInits.length}`)
-    return {
-      hash: 'HG',
-      status: 'SUCCESS',
-      agentAddresses: agentInits.map((_, i) => `CFRESH${i + 1}`),
-      expiryLedger: 9999,
-    }
-  })
   runAgentPullMock.mockReset()
-  runAgentPullMock.mockImplementation(async ({ agentAddress }) => {
-    callOrder.push(`pull:${agentAddress}`)
-    return { hash: 'HP', status: 'SUCCESS' }
-  })
+  runAgentPullMock.mockResolvedValue({ hash: 'HP', status: 'SUCCESS' })
   readAllowanceMock.mockReset()
-  readAllowanceMock.mockResolvedValue({ amount: 0n, liveUntilLedger: null }) // 0 → forces a grant
+  readConfirmedLedgerMock.mockReset()
+  readConfirmedLedgerMock.mockResolvedValue({ confirmedLedger: 123, confirmedAt: 555 })
+  deployAgentForSessionMock.mockClear()
+  fundAgentMock.mockClear()
+  registryAuthorizeAgentMock.mockClear()
   takeReusableAgentMock.mockReset()
   takeReusableAgentMock.mockResolvedValue(null)
   saveCachedAgentMock.mockClear()
-  deployAgentForSessionMock.mockClear()
-  fundAgentMock.mockClear()
+  loadCachedAgentsMock.mockReset()
+  loadCachedAgentsMock.mockReturnValue([])
   readTokenBalanceMock.mockReset()
-  readTokenBalanceMock.mockImplementation(async (addr) => (addr === 'GUSER' ? null : 0n))
+  readTokenBalanceMock.mockResolvedValue(0n)
+  preflightPermissionMock.mockReset()
+  saveGrantReceiptMock.mockClear()
+  fingerprintGrantReceiptMock.mockClear()
+  fingerprintGrantReceiptMock.mockReturnValue('0xRECEIPTFRESH')
 })
 
-describe('orchestrator router path - first run (a single signature)', () => {
-  it('issues exactly a single grant signature for N=3 agents, then a relayed pull per worker', async () => {
-    const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 's1', onEvent: () => {} })
-    const res = await orch.dispatch(strategy, 100)
+function freshGrantHappyPath(addresses = ['CFRESH1', 'CFRESH2']) {
+  submitGrantMock.mockResolvedValue({
+    hash: 'HG',
+    status: 'SUCCESS',
+    agentAddresses: addresses,
+    expiryLedger: 9999,
+  })
+}
 
-    // ONE grant for all three agents — the single wallet signature.
+describe('dispatch(strategyPlan, { permissionDecision }) — fresh mode', () => {
+  it('never opportunistically takes cache entries', async () => {
+    freshGrantHappyPath()
+    const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 's1', onEvent: () => {} })
+    await orch.dispatch(PLAN, { permissionDecision: freshDecisionFor(PLAN) })
+    expect(takeReusableAgentMock).not.toHaveBeenCalled()
+    expect(loadCachedAgentsMock).not.toHaveBeenCalled()
+    expect(preflightPermissionMock).not.toHaveBeenCalled()
     expect(submitGrantMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('builds exactly reviewedBudgets/reviewedAgentInits, never regenerating cap/expiry/period', async () => {
+    freshGrantHappyPath()
+    const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 's1b', onEvent: () => {} })
+    const decision = freshDecisionFor(PLAN)
+    await orch.dispatch(PLAN, { permissionDecision: decision })
     const grantArgs = submitGrantMock.mock.calls[0][0]
-    expect(grantArgs.agentInits).toHaveLength(3)
-    // v2 shape: budgets is an array of {budget, token} (single farm-token entry here); budget
-    // defaults to the run total, caps are the per-agent amounts. Every deposit-kind AgentInit
-    // field is asserted so a future grantFreshAgents drift (wrong kind/target/token) goes red here
-    // instead of silently building a tx the router would reject.
-    expect(grantArgs.budgets).toEqual([{ budget: TOTAL_UNITS, token: 'CTOKEN' }])
+    expect(grantArgs.budgets).toEqual([{ budget: 1000000000n, token: 'CTOKEN' }])
+    expect(grantArgs.durationSeconds).toBe(3600)
     expect(grantArgs.agentInits).toEqual([
       expect.objectContaining({
-        cap: 40_0000000n,
-        token: 'CTOKEN',
+        cap: 400000000n,
         target: 'CACTIVEVAULT',
         kind: 0,
-        mintRecipient: ZERO32,
-        destinationDomain: 0,
+        periodDuration: 3600,
+        expiry: 2000000000,
       }),
-      expect.objectContaining({ cap: 40_0000000n, kind: 0, target: 'CACTIVEVAULT' }),
-      expect.objectContaining({ cap: 20_0000000n, kind: 0, target: 'CACTIVEVAULT' }),
+      expect.objectContaining({
+        cap: 600000000n,
+        target: 'CACTIVEVAULT',
+        kind: 0,
+        periodDuration: 3600,
+        expiry: 2000000000,
+      }),
     ])
-
-    // Funding is a relayed pull per worker — NOT a legacy deploy/fund signature.
-    expect(runAgentPullMock).toHaveBeenCalledTimes(3)
-    expect(deployAgentForSessionMock).not.toHaveBeenCalled()
-    expect(fundAgentMock).not.toHaveBeenCalled()
-
-    // Agents come from the grant retval, in order.
-    expect(workerInstances.map((w) => w.agentAddress)).toEqual(['CFRESH1', 'CFRESH2', 'CFRESH3'])
-    expect(res.completed).toBe(3)
   })
 
-  it('pulls funds to every agent BEFORE any worker deposit runs', async () => {
-    const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 's2', onEvent: () => {} })
-    await orch.dispatch(strategy, 100)
-    const firstExecute = callOrder.findIndex((c) => c.startsWith('execute:'))
-    const lastPull = callOrder.map((c) => c.startsWith('pull:')).lastIndexOf(true)
-    expect(lastPull).toBeGreaterThanOrEqual(0)
-    expect(firstExecute).toBeGreaterThan(lastPull) // every pull precedes the first deposit
+  it("executes exactly the plan's bigint units — never a float re-multiplication", async () => {
+    const oddPlan = {
+      runId: 'run1',
+      planFingerprint: '0xPLANODD',
+      agents: [
+        {
+          ...planAgent(0, '123456789'),
+        },
+      ],
+    }
+    freshGrantHappyPath(['CFRESH1'])
+    let capturedPullAmount
+    runAgentPullMock.mockImplementation(async ({ amount }) => {
+      capturedPullAmount = amount
+      return { hash: 'HP', status: 'SUCCESS' }
+    })
+    const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 's-units', onEvent: () => {} })
+    await orch.dispatch(oddPlan, { permissionDecision: freshDecisionFor(oddPlan) })
+    expect(workerInstances[0].amount).toBe(123456789n)
+    expect(capturedPullAmount).toBe(123456789n)
+    const grantArgs = submitGrantMock.mock.calls[0][0]
+    expect(grantArgs.agentInits[0].cap).toBe(123456789n)
   })
 
-  it('caches every freshly granted agent (address + session secret) for reuse', async () => {
+  it('rejects a stale plan fingerprint before any wallet/provider or movement', async () => {
+    const decision = { ...freshDecisionFor(PLAN), planFingerprint: '0xSTALE' }
     const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 's3', onEvent: () => {} })
-    await orch.dispatch(strategy, 100)
-    expect(saveCachedAgentMock).toHaveBeenCalledTimes(3)
-    expect(saveCachedAgentMock.mock.calls[0][0]).toMatchObject({
-      owner: 'GUSER',
-      vault: 'CACTIVEVAULT',
-      entry: expect.objectContaining({ agentAddress: 'CFRESH1', cap: '400000000' }),
-    })
+    let caught
+    try {
+      await orch.dispatch(PLAN, { permissionDecision: decision })
+    } catch (e) {
+      caught = e
+    }
+    expect(caught).toBeInstanceOf(PermissionPhaseError)
+    expect(caught.phase).toBe('preflight')
+    expect(caught.movement).toBe('none')
+    expect(submitGrantMock).not.toHaveBeenCalled()
+    expect(workerInstances).toHaveLength(0)
   })
 
-  it('honors a user-chosen budget larger than the run total (signature-free repeat headroom)', async () => {
-    const orch = new OrchestratorAgent({
-      user: 'GUSER',
-      sessionId: 's4',
-      onEvent: () => {},
-      grantBudgetUnits: 500_0000000n, // 5x total
-    })
-    await orch.dispatch(strategy, 100)
-    expect(submitGrantMock.mock.calls[0][0].budgets).toEqual([
-      { budget: 500_0000000n, token: 'CTOKEN' },
-    ])
+  it('rejects an edited reviewed AgentInit (cap drift) before any wallet/provider or movement', async () => {
+    const decision = freshDecisionFor(PLAN)
+    decision.reviewedAgentInits[0] = {
+      ...decision.reviewedAgentInits[0],
+      cap: { ...decision.reviewedAgentInits[0].cap, units: '999' },
+    }
+    const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 's3b', onEvent: () => {} })
+    let caught
+    try {
+      await orch.dispatch(PLAN, { permissionDecision: decision })
+    } catch (e) {
+      caught = e
+    }
+    expect(caught).toBeInstanceOf(PermissionPhaseError)
+    expect(caught.phase).toBe('preflight')
+    expect(caught.movement).toBe('none')
+    expect(submitGrantMock).not.toHaveBeenCalled()
   })
-})
 
-describe('orchestrator router path - repeat run (zero further signatures)', () => {
-  it('skips the grant entirely when allowance covers the run AND every worker reuses a cached agent', async () => {
-    readAllowanceMock.mockResolvedValue({ amount: 500_0000000n, liveUntilLedger: null })
-    let n = 0
-    takeReusableAgentMock.mockImplementation(async () => {
-      n += 1
-      return { agentAddress: `CCACHED${n}`, secret: `SCACHED${n}` }
-    })
+  it('emits grant-confirmed with PermissionConfirmedV1, budgets, and deployed addresses before worker movement', async () => {
+    freshGrantHappyPath()
+    const callOrder = []
+    saveGrantReceiptMock.mockImplementation(() => callOrder.push('receipt-saved'))
     const events = []
     const orch = new OrchestratorAgent({
       user: 'GUSER',
-      sessionId: 's5',
-      onEvent: (e, d) => events.push({ e, d }),
+      sessionId: 's6',
+      onEvent: (n, d) => {
+        if (n === 'grant-confirmed') callOrder.push('grant-confirmed')
+        if (n === 'worker-queued') callOrder.push('worker-queued')
+        events.push({ n, d })
+      },
     })
-    const res = await orch.dispatch(strategy, 100)
+    const decision = freshDecisionFor(PLAN)
+    await orch.dispatch(PLAN, { permissionDecision: decision })
 
-    // zero further signatures: no grant.
-    expect(submitGrantMock).not.toHaveBeenCalled()
-    // Funding still flows via relayed pulls (agents drained after the prior run) — 0 further signatures.
-    expect(runAgentPullMock).toHaveBeenCalledTimes(3)
-    expect(workerInstances.map((w) => w.agentAddress)).toEqual(['CCACHED1', 'CCACHED2', 'CCACHED3'])
-    const deployed = events.filter((x) => x.e === 'AgentDeployed')
-    expect(deployed.every((x) => x.d.reused === true)).toBe(true)
-    expect(res.completed).toBe(3)
+    expect(callOrder.indexOf('receipt-saved')).toBeGreaterThanOrEqual(0)
+    expect(callOrder.indexOf('receipt-saved')).toBeLessThan(callOrder.indexOf('grant-confirmed'))
+    expect(callOrder.indexOf('grant-confirmed')).toBeLessThan(callOrder.indexOf('worker-queued'))
+
+    const ev = events.find((e) => e.n === 'grant-confirmed').d
+    expect(ev.confirmed).toMatchObject({
+      version: 1,
+      runId: 'run1',
+      mode: 'fresh',
+      planFingerprint: '0xPLAN',
+      agentInitFingerprint: '0xAI',
+      grantReceiptFingerprint: '0xRECEIPTFRESH',
+      confirmationCount: 1,
+      txHash: 'HG',
+      expiryLedger: 9999,
+      agentAddresses: ['CFRESH1', 'CFRESH2'],
+    })
+    expect(ev.budgets).toEqual(decision.reviewedBudgets)
+    expect(ev.agentAddresses).toEqual(['CFRESH1', 'CFRESH2'])
   })
 
-  it('falls back to the grant signature when allowance is insufficient even if agents are cached', async () => {
-    readAllowanceMock.mockResolvedValue({ amount: 1n, liveUntilLedger: null }) // below run total
-    takeReusableAgentMock.mockResolvedValue({ agentAddress: 'CCACHED', secret: 'S' })
-    const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 's6', onEvent: () => {} })
-    await orch.dispatch(strategy, 100)
-    expect(submitGrantMock).toHaveBeenCalledTimes(1) // grant signature required
-  })
+  it.each([
+    [
+      'wallet rejection / build / simulation / submission failure (one submitGrant call site)',
+      () => submitGrantMock.mockRejectedValue(new Error('User declined the request')),
+    ],
+    [
+      'unconfirmed deployment',
+      () => {
+        freshGrantHappyPath()
+        readConfirmedLedgerMock.mockRejectedValue(
+          new Error('Transaction HG is not confirmed: FAILED.')
+        )
+      },
+    ],
+  ])(
+    '%s throws PermissionPhaseError(phase:fresh-grant) and starts no worker',
+    async (_label, arrange) => {
+      arrange()
+      const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 's7', onEvent: () => {} })
+      let caught
+      try {
+        await orch.dispatch(PLAN, { permissionDecision: freshDecisionFor(PLAN) })
+      } catch (e) {
+        caught = e
+      }
+      expect(caught).toBeInstanceOf(PermissionPhaseError)
+      expect(caught.phase).toBe('fresh-grant')
+      expect(caught.movement).toBe('none')
+      expect(runAgentPullMock).not.toHaveBeenCalled()
+      expect(executeCalls).toHaveLength(0)
+    }
+  )
 
-  it('falls back to the grant signature when even one worker has no reusable cached agent', async () => {
-    readAllowanceMock.mockResolvedValue({ amount: 500_0000000n, liveUntilLedger: null })
-    // Two workers reuse, the third cannot → all-or-nothing: a grant is required (grant is the only
-    // way to create the missing agent).
-    takeReusableAgentMock
-      .mockResolvedValueOnce({ agentAddress: 'CCACHED1', secret: 'S1' })
-      .mockResolvedValueOnce({ agentAddress: 'CCACHED2', secret: 'S2' })
-      .mockResolvedValue(null)
-    const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 's7', onEvent: () => {} })
-    await orch.dispatch(strategy, 100)
-    expect(submitGrantMock).toHaveBeenCalledTimes(1)
-    // Fresh grant deploys all three (the two cached picks are not committed on a partial reuse).
-    expect(workerInstances.map((w) => w.agentAddress)).toEqual(['CFRESH1', 'CFRESH2', 'CFRESH3'])
-  })
-})
-
-describe('orchestrator router path - failure isolation', () => {
-  it('aborts the whole run when the single grant fails (no agents get deployed)', async () => {
-    submitGrantMock.mockRejectedValue(new Error('grant signature timed out after 120s'))
+  it('emits worker-queued with real queue index for every worker before serial dispatch begins', async () => {
+    freshGrantHappyPath()
     const events = []
     const orch = new OrchestratorAgent({
       user: 'GUSER',
       sessionId: 's8',
-      onEvent: (e, d) => events.push({ e, d }),
+      onEvent: (n, d) => events.push({ n, d }),
     })
-    await expect(orch.dispatch(strategy, 100)).rejects.toThrow(
-      /Agent setup failed for all 3 agents/
-    )
-    expect(runAgentPullMock).not.toHaveBeenCalled()
-    const err = events.find((x) => x.e === 'orchestrator-step' && x.d.status === 'error')
-    expect(err.d.step).toBe('authorizing-scope')
+    await orch.dispatch(PLAN, { permissionDecision: freshDecisionFor(PLAN) })
+    const queued = events.filter((e) => e.n === 'worker-queued')
+    expect(queued.map((e) => e.d.queueIndex)).toEqual([0, 1])
+    expect(queued.map((e) => e.d.allocationId)).toEqual(['run1:deposit:0', 'run1:deposit:1'])
+    const lastQueuedIdx = events.map((e) => e.n).lastIndexOf('worker-queued')
+    const firstStartedIdx = events.findIndex((e) => e.n === 'worker-started')
+    expect(lastQueuedIdx).toBeLessThan(firstStartedIdx)
   })
 
-  it("one worker's pull failure isolates that worker; the rest of the run continues", async () => {
-    runAgentPullMock.mockReset()
-    runAgentPullMock.mockImplementation(async ({ agentAddress }) => {
-      if (agentAddress === 'CFRESH2') throw new Error('router pull reported FAILED')
+  it('dispatches worker-started in plan order through the real 2,000ms relay-safe gap', async () => {
+    vi.useFakeTimers()
+    try {
+      freshGrantHappyPath()
+      const events = []
+      const orch = new OrchestratorAgent({
+        user: 'GUSER',
+        sessionId: 's9',
+        onEvent: (n, d) => events.push({ n, d }),
+      })
+      const done = orch.dispatch(PLAN, { permissionDecision: freshDecisionFor(PLAN) })
+      await vi.runAllTimersAsync()
+      const res = await done
+      const started = events.filter((e) => e.n === 'worker-started')
+      expect(started.map((e) => e.d.allocationId)).toEqual(['run1:deposit:0', 'run1:deposit:1'])
+      expect(res.completed).toBe(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('dispatch(strategyPlan, { permissionDecision }) — reuse mode', () => {
+  function cacheEntries(addresses) {
+    return addresses.map((agentAddress, i) => ({
+      agentAddress,
+      secret: `S${i}`,
+      signerPub: `GPUB${i}`,
+      cap: PLAN.agents[i].cap.units,
+      expiry: 2000000000,
+    }))
+  }
+
+  it('never builds/submits funding_router.grant or invokes the wallet/provider', async () => {
+    const addresses = ['CCACHED1', 'CCACHED2']
+    loadCachedAgentsMock.mockReturnValue(cacheEntries(addresses))
+    const decision = reuseDecisionFor(PLAN, addresses)
+    preflightPermissionMock.mockResolvedValue(decision)
+    const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 's2', onEvent: () => {} })
+    const res = await orch.dispatch(PLAN, { permissionDecision: decision })
+    expect(submitGrantMock).not.toHaveBeenCalled()
+    expect(res.completed).toBe(2)
+    expect(workerInstances.map((w) => w.agentAddress)).toEqual(addresses)
+    expect(res.permission).toMatchObject({ mode: 'reuse', txHash: null })
+  })
+
+  it('revalidates through a freshly captured preflight immediately before the first pull', async () => {
+    const addresses = ['CCACHED1', 'CCACHED2']
+    loadCachedAgentsMock.mockReturnValue(cacheEntries(addresses))
+    const decision = reuseDecisionFor(PLAN, addresses)
+    const callOrder = []
+    preflightPermissionMock.mockImplementation(async () => {
+      callOrder.push('preflight')
+      return decision
+    })
+    runAgentPullMock.mockImplementation(async () => {
+      callOrder.push('pull')
       return { hash: 'HP', status: 'SUCCESS' }
     })
-    const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 's9', onEvent: () => {} })
-    const res = await orch.dispatch(strategy, 100)
-    expect(res.completed).toBe(2)
+    const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 's4', onEvent: () => {} })
+    await orch.dispatch(PLAN, { permissionDecision: decision })
+    expect(preflightPermissionMock).toHaveBeenCalledTimes(1)
+    expect(callOrder[0]).toBe('preflight')
+    expect(callOrder.slice(1)).toEqual(['pull', 'pull'])
+    const call = preflightPermissionMock.mock.calls[0][0]
+    expect(call.agentInits).toHaveLength(2)
+    expect(call.agentInits[0].signer).toBeInstanceOf(Uint8Array)
+    expect(call.reviewedBudgets).toEqual(decision.reviewedBudgets)
+    expect(call.durationSeconds).toBe(decision.durationSeconds)
+  })
+
+  it('changed reuse evidence (mode flips away from reuse) throws VF_REUSE_EVIDENCE_CHANGED, never a wallet fallback', async () => {
+    const addresses = ['CCACHED1', 'CCACHED2']
+    loadCachedAgentsMock.mockReturnValue(cacheEntries(addresses))
+    const decision = reuseDecisionFor(PLAN, addresses)
+    preflightPermissionMock.mockResolvedValue({
+      ...decision,
+      mode: 'fresh',
+      freshReason: 'allowance-mutated',
+      agents: [],
+    })
+    const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 's5', onEvent: () => {} })
+    let caught
+    try {
+      await orch.dispatch(PLAN, { permissionDecision: decision })
+    } catch (e) {
+      caught = e
+    }
+    expect(caught).toBeInstanceOf(PermissionPhaseError)
+    expect(caught.phase).toBe('reuse-revalidation')
+    expect(caught.code).toBe('VF_REUSE_EVIDENCE_CHANGED')
+    expect(caught.movement).toBe('none')
+    expect(submitGrantMock).not.toHaveBeenCalled()
+    expect(runAgentPullMock).not.toHaveBeenCalled()
+  })
+
+  it('a changed scope fingerprint on revalidation throws VF_REUSE_EVIDENCE_CHANGED', async () => {
+    const addresses = ['CCACHED1', 'CCACHED2']
+    loadCachedAgentsMock.mockReturnValue(cacheEntries(addresses))
+    const decision = reuseDecisionFor(PLAN, addresses)
+    const drifted = reuseDecisionFor(PLAN, addresses)
+    drifted.agents[0] = { ...drifted.agents[0], scopeFingerprint: '0xDRIFTED' }
+    preflightPermissionMock.mockResolvedValue(drifted)
+    const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 's5c', onEvent: () => {} })
+    await expect(orch.dispatch(PLAN, { permissionDecision: decision })).rejects.toMatchObject({
+      phase: 'reuse-revalidation',
+      code: 'VF_REUSE_EVIDENCE_CHANGED',
+      movement: 'none',
+    })
+  })
+
+  it('a missing cached session key for a reviewed reuse credential is evidence-changed, not a fresh fallback', async () => {
+    loadCachedAgentsMock.mockReturnValue([]) // the cache was cleared since preflight
+    const decision = reuseDecisionFor(PLAN, ['CCACHED1', 'CCACHED2'])
+    const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 's5b', onEvent: () => {} })
+    await expect(orch.dispatch(PLAN, { permissionDecision: decision })).rejects.toMatchObject({
+      phase: 'reuse-revalidation',
+      code: 'VF_REUSE_EVIDENCE_CHANGED',
+      movement: 'none',
+    })
+    expect(preflightPermissionMock).not.toHaveBeenCalled()
+    expect(submitGrantMock).not.toHaveBeenCalled()
+  })
+
+  it('isolates one worker pull failure from the rest', async () => {
+    const addresses = ['CCACHED1', 'CCACHED2']
+    loadCachedAgentsMock.mockReturnValue(cacheEntries(addresses))
+    const decision = reuseDecisionFor(PLAN, addresses)
+    preflightPermissionMock.mockResolvedValue(decision)
+    runAgentPullMock.mockImplementation(async ({ agentAddress }) => {
+      if (agentAddress === 'CCACHED2') throw new Error('router pull reported FAILED')
+      return { hash: 'HP', status: 'SUCCESS' }
+    })
+    const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 's-iso', onEvent: () => {} })
+    const res = await orch.dispatch(PLAN, { permissionDecision: decision })
+    expect(res.completed).toBe(1)
     expect(res.failed).toBe(1)
-    const failed = res.results.find((r) => !r.success)
-    expect(failed.error).toMatch(/Setup failed: .*router pull reported FAILED/)
+    expect(res.results.find((r) => !r.success).error).toMatch(/router pull reported FAILED/)
   })
 })
