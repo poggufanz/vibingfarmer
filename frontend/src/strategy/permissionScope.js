@@ -19,7 +19,9 @@ function assertScope(scope) {
 export function toAuthorizeArgs(scope) {
   assertScope(scope)
   return [
-    scope.agent, scope.vault, scope.token,
+    // agent_account v3 renamed AgentScope.vault -> target; both generations are live on
+    // testnet, so a caller may hand this a scope carrying either field.
+    scope.agent, scope.target ?? scope.vault, scope.token,
     scope.capPerPeriod,                  // already bigint (asserted) — no re-wrap, preserves identity
     Number(scope.periodDuration),
     Number(scope.expiry),                // uint40 — Number is correct (safe past year 2106); do NOT
@@ -37,7 +39,8 @@ export function toSummary(scope) {
   assertScope(scope)
   return {
     agent: scope.agent,
-    vault: scope.vault,
+    // agent_account v3 renamed AgentScope.vault -> target; both generations are live on testnet.
+    vault: scope.target ?? scope.vault,
     token: scope.token,
     capPerPeriod: scope.capPerPeriod,    // bigint — same value, same type as the on-chain arg
     periodDuration: Number(scope.periodDuration),

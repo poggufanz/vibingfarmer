@@ -11,6 +11,9 @@ const DEPOSIT_FN: Symbol = symbol_short!("deposit");
 const PULL_FN: Symbol = symbol_short!("pull");
 const TTL_THRESHOLD: u32 = 17_280; // ~1 day at 5s ledgers
 const TTL_EXTEND: u32 = 518_400; // ~30 days
+// Pinned CCTP v2 `deposit_for_burn` args (kind=1 / Bridge scopes) — proven live values.
+const MIN_FINALITY_STANDARD: u32 = 2000;
+const MAX_FEE_PINNED: i128 = 0;
 
 /// Enforce the scope for one authorization context set, mutating spent_in_period.
 /// Pure of signature concerns — called by __check_auth after the sig passes, and
@@ -57,30 +60,112 @@ fn enforce(env: &Env, contexts: &Vec<Context>) -> Result<(), AccountError> {
                 continue;
             }
         }
-        if cc.contract != scope.vault {
+        if cc.contract != scope.target {
             return Err(AccountError::VaultMismatch);
         }
-        if cc.fn_name != DEPOSIT_FN {
-            return Err(AccountError::FnNotAllowed);
+        if scope.kind == 0 {
+            if cc.fn_name != DEPOSIT_FN {
+                return Err(AccountError::FnNotAllowed);
+            }
+            // Pinned convention: deposit(from: Address, amount: i128); amount is args[1].
+            let amount: i128 = cc
+                .args
+                .get(1)
+                .ok_or(AccountError::UnexpectedContexts)?
+                .try_into_val(env)
+                .map_err(|_| AccountError::InvalidAmount)?;
+            if amount <= 0 {
+                return Err(AccountError::InvalidAmount);
+            }
+            let new_spent = scope
+                .spent_in_period
+                .checked_add(amount)
+                .ok_or(AccountError::CapExceeded)?;
+            if new_spent > scope.cap_per_period {
+                return Err(AccountError::CapExceeded);
+            }
+            scope.spent_in_period = new_spent;
+        } else if scope.kind == 1 {
+            if cc.fn_name != Symbol::new(env, "deposit_for_burn") {
+                return Err(AccountError::FnNotAllowed);
+            }
+            // Pinned CCTP v2 order: (from, amount, destination_domain, mint_recipient,
+            // burn_token, destination_caller, max_fee, min_finality_threshold).
+            let from: Address = cc
+                .args
+                .get(0)
+                .ok_or(AccountError::UnexpectedContexts)?
+                .try_into_val(env)
+                .map_err(|_| AccountError::BridgeArgMismatch)?;
+            if from != env.current_contract_address() {
+                return Err(AccountError::BridgeArgMismatch);
+            }
+            let amount: i128 = cc
+                .args
+                .get(1)
+                .ok_or(AccountError::UnexpectedContexts)?
+                .try_into_val(env)
+                .map_err(|_| AccountError::InvalidAmount)?;
+            if amount <= 0 {
+                return Err(AccountError::InvalidAmount);
+            }
+            let domain: u32 = cc
+                .args
+                .get(2)
+                .ok_or(AccountError::UnexpectedContexts)?
+                .try_into_val(env)
+                .map_err(|_| AccountError::BridgeArgMismatch)?;
+            let recipient: BytesN<32> = cc
+                .args
+                .get(3)
+                .ok_or(AccountError::UnexpectedContexts)?
+                .try_into_val(env)
+                .map_err(|_| AccountError::BridgeArgMismatch)?;
+            let burn_token: Address = cc
+                .args
+                .get(4)
+                .ok_or(AccountError::UnexpectedContexts)?
+                .try_into_val(env)
+                .map_err(|_| AccountError::BridgeArgMismatch)?;
+            let dest_caller: BytesN<32> = cc
+                .args
+                .get(5)
+                .ok_or(AccountError::UnexpectedContexts)?
+                .try_into_val(env)
+                .map_err(|_| AccountError::BridgeArgMismatch)?;
+            let max_fee: i128 = cc
+                .args
+                .get(6)
+                .ok_or(AccountError::UnexpectedContexts)?
+                .try_into_val(env)
+                .map_err(|_| AccountError::BridgeArgMismatch)?;
+            let min_finality: u32 = cc
+                .args
+                .get(7)
+                .ok_or(AccountError::UnexpectedContexts)?
+                .try_into_val(env)
+                .map_err(|_| AccountError::BridgeArgMismatch)?;
+            let zero = BytesN::from_array(env, &[0u8; 32]);
+            if domain != scope.destination_domain
+                || recipient != scope.mint_recipient
+                || burn_token != scope.token
+                || dest_caller != zero
+                || max_fee != MAX_FEE_PINNED
+                || min_finality != MIN_FINALITY_STANDARD
+            {
+                return Err(AccountError::BridgeArgMismatch);
+            }
+            let new_spent = scope
+                .spent_in_period
+                .checked_add(amount)
+                .ok_or(AccountError::CapExceeded)?;
+            if new_spent > scope.cap_per_period {
+                return Err(AccountError::CapExceeded);
+            }
+            scope.spent_in_period = new_spent;
+        } else {
+            return Err(AccountError::KindInvalid);
         }
-        // Pinned convention: deposit(from: Address, amount: i128); amount is args[1].
-        let amount: i128 = cc
-            .args
-            .get(1)
-            .ok_or(AccountError::UnexpectedContexts)?
-            .try_into_val(env)
-            .map_err(|_| AccountError::InvalidAmount)?;
-        if amount <= 0 {
-            return Err(AccountError::InvalidAmount);
-        }
-        let new_spent = scope
-            .spent_in_period
-            .checked_add(amount)
-            .ok_or(AccountError::CapExceeded)?;
-        if new_spent > scope.cap_per_period {
-            return Err(AccountError::CapExceeded);
-        }
-        scope.spent_in_period = new_spent;
     }
 
     env.storage().instance().set(&DataKey::Scope, &scope);
@@ -112,7 +197,7 @@ fn enforce_exit(env: &Env, contexts: &Vec<Context>) -> Result<(), AccountError> 
             Context::Contract(cc) => cc,
             _ => return Err(AccountError::UnexpectedContexts),
         };
-        if cc.contract == scope.vault {
+        if cc.contract == scope.target && scope.kind == 0 {
             if cc.fn_name != Symbol::new(env, "redeem") {
                 return Err(AccountError::FnNotAllowed);
             }

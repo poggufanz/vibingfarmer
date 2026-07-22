@@ -56,7 +56,7 @@ fn clear_vault_allowance(env: &Env, scope: &AgentScope) {
                 fn_name: Symbol::new(env, "approve"),
                 args: (
                     current.clone(),
-                    scope.vault.clone(),
+                    scope.target.clone(),
                     0i128,
                     expiration_ledger,
                 )
@@ -65,7 +65,7 @@ fn clear_vault_allowance(env: &Env, scope: &AgentScope) {
             sub_invocations: vec![env],
         }),
     ]);
-    TokenClient::new(env, &scope.token).approve(&current, &scope.vault, &0, &expiration_ledger);
+    TokenClient::new(env, &scope.token).approve(&current, &scope.target, &0, &expiration_ledger);
 }
 
 #[contractimpl]
@@ -109,7 +109,7 @@ impl AgentAccount {
                     fn_name: Symbol::new(&env, "approve"),
                     args: (
                         current.clone(),
-                        scope.vault.clone(),
+                        scope.target.clone(),
                         scope.cap_per_period,
                         expiration_ledger,
                     )
@@ -120,7 +120,7 @@ impl AgentAccount {
         ]);
         TokenClient::new(&env, &scope.token).approve(
             &current,
-            &scope.vault,
+            &scope.target,
             &scope.cap_per_period,
             &expiration_ledger,
         );
@@ -156,29 +156,30 @@ impl AgentAccount {
             env.storage().instance().set(&DataKey::Scope, &scope);
         }
         let current = env.current_contract_address();
-        let vault = scope.vault.clone();
         let token = scope.token.clone();
-        let vault_client = VaultClient::new(&env, &vault);
         let token_client = TokenClient::new(&env, &token);
 
-        // 1. Redeem all shares (vault.redeem calls from.require_auth() on the agent → invoker auth).
-        let shares = vault_client.balance(&current);
-        if shares > 0 {
-            env.authorize_as_current_contract(vec![
-                &env,
-                InvokerContractAuthEntry::Contract(SubContractInvocation {
-                    context: ContractContext {
-                        contract: vault.clone(),
-                        fn_name: Symbol::new(&env, "redeem"),
-                        args: (current.clone(), shares).into_val(&env),
-                    },
-                    sub_invocations: vec![&env],
-                }),
-            ]);
-            vault_client.redeem(&current, &shares);
+        // Bridge agent tidak punya vault — skip redeem (kind 1), sweep token tetap jalan.
+        if scope.kind == 0 {
+            let vault_client = VaultClient::new(&env, &scope.target);
+            let shares = vault_client.balance(&current);
+            if shares > 0 {
+                env.authorize_as_current_contract(vec![
+                    &env,
+                    InvokerContractAuthEntry::Contract(SubContractInvocation {
+                        context: ContractContext {
+                            contract: scope.target.clone(),
+                            fn_name: Symbol::new(&env, "redeem"),
+                            args: (current.clone(), shares).into_val(&env),
+                        },
+                        sub_invocations: vec![&env],
+                    }),
+                ]);
+                vault_client.redeem(&current, &shares);
+            }
         }
 
-        // 2. Sweep the agent's whole asset balance to `to` (token.transfer needs agent auth → invoker).
+        // Sweep the agent's whole asset balance to `to` (token.transfer needs agent auth → invoker).
         let bal = token_client.balance(&current);
         if bal <= 0 {
             return Err(AccountError::NothingToWithdraw);
@@ -196,7 +197,7 @@ impl AgentAccount {
         ]);
         token_client.transfer(&current, &to, &bal);
 
-        // 3. Exit also kills the standing vault allowance — a swept agent must
+        // Exit also kills the standing vault allowance — a swept agent must
         // leave nothing the vault could still pull.
         clear_vault_allowance(&env, &scope);
 

@@ -140,10 +140,16 @@ describe('deployAgentForSession (Option B: fresh agent per run)', () => {
     // Direct (non-router) deploy passes Option::None for the 4th ctor arg — a bare ScVal Void.
     expect(routerArg.switch().name).toBe('scvVoid')
     const scope = scValToNative(scopeArg)
+    // v3 AgentScope (soroban/contracts/agent_account/src/types.rs): vault -> target, plus
+    // kind/mint_recipient/destination_domain (Bridge-only fields, harmless zero/Deposit for this
+    // Deposit-kind legacy deploy — mirrors grantFreshAgents' AgentInit for the same kind).
     expect(scope).toEqual({
       owner: OWNER,
-      vault: SOROBAN_ACTIVE_VAULT_ADDRESS,
+      target: SOROBAN_ACTIVE_VAULT_ADDRESS,
       token: SOROBAN_TOKEN_ADDRESS,
+      kind: 0,
+      mint_recipient: Buffer.alloc(32),
+      destination_domain: 0,
       cap_per_period: 50_0000000n,
       period_duration: 86400n,
       spent_in_period: 0n,
@@ -151,6 +157,7 @@ describe('deployAgentForSession (Option B: fresh agent per run)', () => {
       expiry: 4000000000n,
       revoked: false,
     })
+    expect(scope.vault).toBeUndefined()
   })
 
   test('signs the deploy with the user wallet, submits it, and returns the fresh agent address', async () => {

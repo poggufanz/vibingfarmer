@@ -3,14 +3,17 @@
 // lingered until restart). Duck-types the Map get/set the httpRouter uses, so it drops in without
 // touching the router, and evicts lazily on access plus on an optional periodic sweep.
 //
-// ttlMs defaults to one hour — the same horizon as the mandate's own on-chain expiry
-// (CrossChainFarmFlow builds `expiry = now + 3600`), so a key is useless by the time it's evicted.
+// ttlMs (default one hour) is only the FALLBACK used when set() isn't given an explicit
+// expiresAt. httpRouter's handleMandate always passes one now — the client's own `expiry`
+// (unix seconds, converted to ms), durable up to 30 days — so in practice the real horizon is
+// whatever the client requested (baseLeg.js requests a 7-day window), not this constant.
 
 const HOUR_MS = 60 * 60 * 1000;
 
 /**
  * @param {{ ttlMs?: number, now?: () => number }} [opts]
- * @returns {{ set: (k:string,v:string)=>void, get: (k:string)=>(string|undefined),
+ * @returns {{ set: (k:string,v:string,expiresAt?:number)=>void, get: (k:string)=>(string|undefined),
+ *   status: (k:string)=>{valid:boolean, expiresAt?:number},
  *   delete: (k:string)=>boolean, sweep: ()=>number, get size: number }}
  */
 export function createMandateStore({ ttlMs = HOUR_MS, now = () => Date.now() } = {}) {
@@ -22,8 +25,10 @@ export function createMandateStore({ ttlMs = HOUR_MS, now = () => Date.now() } =
   }
 
   return {
-    set(key, value) {
-      entries.set(key, { value, expiresAt: now() + ttlMs });
+    // expiresAt (ms epoch), when given, overrides the now()+ttlMs default — this is how
+    // handleMandate stores the client's real (client-supplied, validated) expiry.
+    set(key, value, expiresAt) {
+      entries.set(key, { value, expiresAt: expiresAt ?? now() + ttlMs });
     },
     get(key) {
       const rec = entries.get(key);
@@ -33,6 +38,17 @@ export function createMandateStore({ ttlMs = HOUR_MS, now = () => Date.now() } =
         return undefined;
       }
       return rec.value;
+    },
+    // Reuse-check lookup for GET /mandate/valid: reports validity + expiry WITHOUT ever handing
+    // back the stored session key, so a client can poll for reuse without re-exposing key material.
+    status(key) {
+      const rec = entries.get(key);
+      if (!rec) return { valid: false };
+      if (isExpired(rec, now())) {
+        entries.delete(key); // same lazy eviction as get()
+        return { valid: false };
+      }
+      return { valid: true, expiresAt: rec.expiresAt };
     },
     delete(key) {
       return entries.delete(key);

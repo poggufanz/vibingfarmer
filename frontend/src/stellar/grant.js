@@ -40,24 +40,60 @@ const SECONDS_PER_LEDGER = 5
 // How long a relayed router.pull auth entry stays valid (~30 min at 5s ledgers) — mirrors agentDeposit.
 const AUTH_TTL_LEDGERS = 360
 
+/** `AgentInit.kind` — 0 = Deposit (`target` = vault). Mirrors funding_router/src/types.rs. */
+export const AGENT_KIND_DEPOSIT = 0
+/** `AgentInit.kind` — 1 = Bridge (`target` = TokenMessengerMinter; mint_recipient +
+ * destination_domain required). Mirrors funding_router/src/types.rs. */
+export const AGENT_KIND_BRIDGE = 1
+
 /**
- * Encode one `AgentInit` (soroban/contracts/funding_router/src/types.rs) as a Soroban struct
+ * Encode one `AgentInit` (soroban/contracts/funding_router/src/types.rs, v2) as a Soroban struct
  * ScVal. `#[contracttype]` structs are ScMaps keyed by field NAME in lexicographic order, so the
- * on-wire key order MUST be: cap, expiry, period_duration, salt, signer, vault. structScVal sorts
- * the keys itself, so the object below is written in that order purely for readability — the sort
- * is what actually guarantees the encoding matches the Rust struct.
- * @param {{signer:Uint8Array|string, salt:Uint8Array|string, cap:bigint|number, vault:string,
- *          periodDuration:bigint|number, expiry:bigint|number}} p
+ * on-wire key order MUST be: cap, destination_domain, expiry, kind, mint_recipient,
+ * period_duration, salt, signer, target, token. structScVal sorts the keys itself, so the object
+ * below is written in that order purely for readability — the sort is what actually guarantees
+ * the encoding matches the Rust struct.
+ * @param {{signer:Uint8Array|string, salt:Uint8Array|string, cap:bigint|number, token:string,
+ *          target:string, kind:number, mintRecipient:Uint8Array|string,
+ *          destinationDomain:number, periodDuration:bigint|number, expiry:bigint|number}} p
  * @returns {import('@stellar/stellar-sdk').xdr.ScVal}
  */
-export function agentInitScVal({ signer, salt, cap, vault, periodDuration, expiry }) {
+export function agentInitScVal({
+  signer,
+  salt,
+  cap,
+  token,
+  target,
+  kind,
+  mintRecipient,
+  destinationDomain,
+  periodDuration,
+  expiry,
+}) {
   return structScVal({
     cap: i128ScVal(cap),
+    destination_domain: u32ScVal(destinationDomain),
     expiry: u64ScVal(expiry),
+    kind: u32ScVal(kind),
+    mint_recipient: bytes32ScVal(mintRecipient),
     period_duration: u64ScVal(periodDuration),
     salt: bytes32ScVal(salt),
     signer: bytes32ScVal(signer),
-    vault: addrScVal(vault),
+    target: addrScVal(target),
+    token: addrScVal(token),
+  })
+}
+
+/**
+ * Encode one `TokenBudget` (soroban/contracts/funding_router/src/types.rs) as a Soroban struct
+ * ScVal. Lexicographic field order: budget, token.
+ * @param {{budget:bigint|number, token:string}} p
+ * @returns {import('@stellar/stellar-sdk').xdr.ScVal}
+ */
+export function tokenBudgetScVal({ budget, token }) {
+  return structScVal({
+    budget: i128ScVal(budget),
+    token: addrScVal(token),
   })
 }
 
@@ -70,14 +106,17 @@ function randomSalt() {
  * Build + simulate-assemble the ONE grant tx (source = owner). Returns the assembled unsigned XDR
  * plus the deployed agent addresses read from the pre-simulation retval. The `deploy_v2` addresses
  * are salt-derived and deterministic, so the simulated `Vec<Address>` matches what submit produces.
- * @param {{owner:string, budgetBaseUnits:bigint|number, durationSeconds:number,
- *          agentInits:Array<{signer:Uint8Array, salt?:Uint8Array, cap:bigint, vault:string,
- *          periodDuration:number, expiry:number}>, router?:string, server?:object}} p
- * @returns {Promise<{tx:object, xdr:string, agentAddresses:string[], expiryLedger:number}>}
+ * @param {{owner:string, budgets:Array<{budget:bigint|number, token:string}>,
+ *          durationSeconds:number, agentInits:Array<{signer:Uint8Array, salt?:Uint8Array,
+ *          cap:bigint, token:string, target:string, kind:number,
+ *          mintRecipient:Uint8Array|string, destinationDomain:number, periodDuration:number,
+ *          expiry:number}>, router?:string, server?:object}} p
+ * @returns {Promise<{tx:object, xdr:string, agentAddresses:string[], expiryLedger:number,
+ *          bridgeAgentAddress:string|null}>}
  */
 export async function buildGrantTx({
   owner,
-  budgetBaseUnits,
+  budgets,
   durationSeconds,
   agentInits,
   router = SOROBAN_FUNDING_ROUTER_ADDRESS,
@@ -92,12 +131,18 @@ export async function buildGrantTx({
   const latest = await s.getLatestLedger()
   const expiryLedger = latest.sequence + Math.ceil(durationSeconds / SECONDS_PER_LEDGER)
 
+  const budgetsVec = xdr.ScVal.scvVec(budgets.map(tokenBudgetScVal))
+
   const encoded = agentInits.map((a) =>
     agentInitScVal({
       signer: a.signer,
       salt: a.salt || randomSalt(),
       cap: a.cap,
-      vault: a.vault,
+      token: a.token,
+      target: a.target,
+      kind: a.kind,
+      mintRecipient: a.mintRecipient,
+      destinationDomain: a.destinationDomain,
       periodDuration: a.periodDuration,
       expiry: a.expiry,
     })
@@ -113,7 +158,7 @@ export async function buildGrantTx({
       new Contract(router).call(
         'grant',
         addrScVal(owner),
-        i128ScVal(BigInt(budgetBaseUnits)),
+        budgetsVec,
         u32ScVal(expiryLedger),
         agentsVec
       )
@@ -128,26 +173,41 @@ export async function buildGrantTx({
   if (sim.error || !sim.result)
     throw new Error(`Grant simulation failed: ${sim.error || 'no result'}`)
   const agentAddresses = fromScVal(sim.result.retval)
+  // Additive: when the LAST submitted agent is a Bridge-kind init, name its deployed address
+  // explicitly — callers that folded a bridge agent onto the end of their `agents` array (the
+  // funding_router deploy order mirrors input order) get it without re-deriving which index it was.
+  // null whenever the grant deployed deposit-only agents, so existing callers see no change.
+  const lastInit = agentInits[agentInits.length - 1]
+  const bridgeAgentAddress =
+    lastInit?.kind === AGENT_KIND_BRIDGE ? agentAddresses[agentAddresses.length - 1] : null
 
   // …then prepare (simulate + assemble, sets the resource fee). We do NOT re-prepare after signing:
   // the owner's tx-envelope signature covers footprint + resources, so a post-sign re-prepare would
   // invalidate it. (The re-prepare-after-sign trick is only for the agent ed25519 auth-entry path,
   // whose signature excludes the footprint — see buildAgentPull below.)
   const tx = await s.prepareTransaction(raw)
-  return { tx, xdr: tx.toEnvelope().toXDR('base64'), agentAddresses, expiryLedger }
+  return {
+    tx,
+    xdr: tx.toEnvelope().toXDR('base64'),
+    agentAddresses,
+    expiryLedger,
+    bridgeAgentAddress,
+  }
 }
 
 /**
  * Full single-signature grant: build → wallet-sign (timeout-capped) → submit. Prefers the relay fee-bump
  * (the relay now allowlists router.grant, so the user pays 0 XLM); falls back to a direct user-paid
  * submit only when the relay is unconfigured (returns null).
- * @param {{owner:string, budgetBaseUnits:bigint|number, durationSeconds:number, agentInits:Array,
- *          router?:string, server?:object, sign?:Function}} p
- * @returns {Promise<{hash:string, status:string, relayer?:string, agentAddresses:string[], expiryLedger:number}>}
+ * @param {{owner:string, budgets:Array<{budget:bigint|number, token:string}>,
+ *          durationSeconds:number, agentInits:Array, router?:string, server?:object,
+ *          sign?:Function}} p
+ * @returns {Promise<{hash:string, status:string, relayer?:string, agentAddresses:string[],
+ *          expiryLedger:number, bridgeAgentAddress:string|null}>}
  */
 export async function submitGrant({
   owner,
-  budgetBaseUnits,
+  budgets,
   durationSeconds,
   agentInits,
   router,
@@ -156,7 +216,7 @@ export async function submitGrant({
 }) {
   const built = await buildGrantTx({
     owner,
-    budgetBaseUnits,
+    budgets,
     durationSeconds,
     agentInits,
     router,
@@ -172,6 +232,7 @@ export async function submitGrant({
       relayer: relayed.relayer,
       agentAddresses: built.agentAddresses,
       expiryLedger: built.expiryLedger,
+      bridgeAgentAddress: built.bridgeAgentAddress,
     }
   }
   // Relay off → direct user-paid submit.
@@ -182,6 +243,7 @@ export async function submitGrant({
     status: res.status,
     agentAddresses: built.agentAddresses,
     expiryLedger: built.expiryLedger,
+    bridgeAgentAddress: built.bridgeAgentAddress,
   }
 }
 

@@ -50,6 +50,21 @@ const scope = (over = {}) => ({
   ...over,
 })
 
+// agent_account v3 renamed the AgentScope field vault -> target. Both generations are live on
+// testnet (dual-support), so scope_of() may come back shaped either way.
+const scopeV3 = (over = {}) => ({
+  owner: OWNER,
+  target: VAULT,
+  token: 'CTOKEN',
+  cap_per_period: 500000000n,
+  period_duration: 86400n,
+  spent_in_period: 0n,
+  period_start: 0n,
+  expiry: BigInt(NOW + 3600),
+  revoked: false,
+  ...over,
+})
+
 let storage
 beforeEach(() => {
   storage = makeStorage()
@@ -109,6 +124,12 @@ describe('isScopeReusable', () => {
   test('accepts a live, unspent, matching scope', () => {
     expect(isScopeReusable({ ...base, scope: scope() })).toBe(true)
   })
+  test('accepts a v3 scope (target field) matching vault via fallback', () => {
+    expect(isScopeReusable({ ...base, scope: scopeV3() })).toBe(true)
+  })
+  test('rejects a v3 scope whose target does not match the vault', () => {
+    expect(isScopeReusable({ ...base, scope: scopeV3({ target: 'COTHER' }) })).toBe(false)
+  })
   test.each([
     ['revoked', scope({ revoked: true })],
     ['expired', scope({ expiry: BigInt(NOW - 1) })],
@@ -143,6 +164,12 @@ describe('takeReusableAgent', () => {
     expect(taken?.secret).toBe('SSECRET1')
     // Stays cached — its own on-chain cap/expiry invalidates it later; exclude guards this run.
     expect(loadCachedAgents({ owner: OWNER, vault: VAULT, network: NET, storage })).toHaveLength(1)
+  })
+
+  test('returns a cached agent whose ON-CHAIN v3 scope (target field) validates via fallback', async () => {
+    saveCachedAgent({ owner: OWNER, vault: VAULT, network: NET, entry: entry(), storage })
+    const taken = await takeReusableAgent(takeArgs({ readScope: async () => scopeV3() }))
+    expect(taken?.agentAddress).toBe('CAGENT1')
   })
 
   test('prunes agents that are authoritatively invalid on-chain (revoked / drained)', async () => {

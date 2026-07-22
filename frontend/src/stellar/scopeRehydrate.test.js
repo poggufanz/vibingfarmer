@@ -24,6 +24,22 @@ function scope({ expiry = NOW + 3600, revoked = false } = {}) {
   }
 }
 
+// agent_account v3 renamed AgentScope.vault -> AgentScope.target. Both generations are live on
+// testnet (dual-support), so scope_of() may return either shape.
+function scopeV3({ expiry = NOW + 3600, revoked = false } = {}) {
+  return {
+    owner: OWNER,
+    target: VAULT,
+    token: TOKEN,
+    cap_per_period: '1000000',
+    period_duration: 3600,
+    period_start: 0,
+    spent_in_period: '0',
+    expiry,
+    revoked,
+  }
+}
+
 const HEALTHY = { getHealth: async () => ({ oldestLedger: 1, ledgerRetentionWindow: 120960 }) }
 
 function seams({ events = [], cache = [], registry = [], scopes = {} } = {}) {
@@ -56,6 +72,19 @@ describe('rehydrateScopes', () => {
       authorized: true,
     })
     expect(typeof rows[0].maxAtRisk).toBe('bigint')
+  })
+
+  it('resolves row.vault from a v3 scope (target field) - dual generation support', async () => {
+    // Task 1 of this branch renamed AgentScope.vault -> target on-chain. A rehydrated row must
+    // still carry the row's `vault` field (pickVaultAgents/withdraw filter by it) even when the
+    // live agent decodes as v3 (target-shaped).
+    const rows = await rehydrateScopes({
+      owner: OWNER,
+      nowSec: NOW,
+      ...seams({ events: [AGENT_A], scopes: { [AGENT_A]: scopeV3() } }),
+    })
+    expect(rows).toHaveLength(1)
+    expect(rows[0].vault).toBe(VAULT)
   })
 
   it('dedupes the union of events and cache by agent address', async () => {

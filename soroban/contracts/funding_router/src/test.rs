@@ -2,9 +2,9 @@
 
 use soroban_sdk::testutils::{Address as _, Ledger, MockAuth, MockAuthInvoke};
 use soroban_sdk::token::{StellarAssetClient, TokenClient};
-use soroban_sdk::{vec, Address, BytesN, Env, IntoVal};
+use soroban_sdk::{vec, Address, BytesN, Env, IntoVal, Vec};
 
-use crate::types::{AgentInit, AgentScope};
+use crate::types::{AgentInit, AgentScope, TokenBudget};
 use crate::{FundingRouter, FundingRouterClient};
 
 // The REAL agent_account wasm (built by `stellar contract build`), imported as
@@ -35,7 +35,7 @@ fn setup() -> Setup {
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
     let wasm_hash = env.deployer().upload_contract_wasm(agentwasm::WASM);
-    let router = env.register(FundingRouter, (wasm_hash.clone(), token.clone()));
+    let router = env.register(FundingRouter, (wasm_hash.clone(),));
     let vault = Address::generate(&env);
     Setup {
         env,
@@ -46,16 +46,34 @@ fn setup() -> Setup {
     }
 }
 
-/// One AgentInit with a deterministic signer/salt derived from `seed`.
-fn agent_init(env: &Env, vault: &Address, seed: u8, cap: i128) -> AgentInit {
+/// One deposit-kind (kind 0) `AgentInit` with a deterministic signer/salt
+/// derived from `seed`. `token` must be present in the grant's `budgets`.
+/// Bridge-kind (kind 1) tests start from this and overwrite `kind`,
+/// `mint_recipient`, `destination_domain`.
+fn agent_init(env: &Env, token: &Address, target: &Address, seed: u8, cap: i128) -> AgentInit {
     AgentInit {
         signer: BytesN::from_array(env, &[seed; 32]),
         salt: BytesN::from_array(env, &[seed.wrapping_add(100); 32]),
         cap,
-        vault: vault.clone(),
+        token: token.clone(),
+        target: target.clone(),
+        kind: 0,
+        mint_recipient: BytesN::from_array(env, &[0u8; 32]),
+        destination_domain: 0,
         period_duration: 3_600,
         expiry: env.ledger().timestamp() + 86_400,
     }
+}
+
+/// A single-entry `budgets` vec covering `token` for `amount`.
+fn budgets(env: &Env, token: &Address, amount: i128) -> Vec<TokenBudget> {
+    vec![
+        env,
+        TokenBudget {
+            budget: amount,
+            token: token.clone(),
+        },
+    ]
 }
 
 fn mint(s: &Setup, to: &Address, amount: i128) {
@@ -71,12 +89,17 @@ fn grant_deploys_agents_records_owner_and_approves_budget() {
     let client = FundingRouterClient::new(&s.env, &s.router);
     let inits = vec![
         &s.env,
-        agent_init(&s.env, &s.vault, 1, 40_000_000),
-        agent_init(&s.env, &s.vault, 2, 60_000_000),
-        agent_init(&s.env, &s.vault, 3, 25_000_000),
+        agent_init(&s.env, &s.token, &s.vault, 1, 40_000_000),
+        agent_init(&s.env, &s.token, &s.vault, 2, 60_000_000),
+        agent_init(&s.env, &s.token, &s.vault, 3, 25_000_000),
     ];
 
-    let agents = client.grant(&owner, &100_000_000, &1_000, &inits);
+    let agents = client.grant(
+        &owner,
+        &budgets(&s.env, &s.token, 100_000_000),
+        &1_000,
+        &inits,
+    );
 
     assert_eq!(agents.len(), 3);
     for (i, agent) in agents.iter().enumerate() {
@@ -91,7 +114,7 @@ fn grant_deploys_agents_records_owner_and_approves_budget() {
     let t = TokenClient::new(&s.env, &s.token);
     assert_eq!(t.allowance(&owner, &s.router), 100_000_000);
     assert_eq!(t.balance(&s.router), 0); // zero custody
-    assert_eq!(client.config(), (s.wasm_hash.clone(), s.token.clone()));
+    assert_eq!(client.config(), s.wasm_hash.clone());
     assert_eq!(client.owner_of(&Address::generate(&s.env)), None);
 }
 
@@ -105,9 +128,9 @@ fn pull_moves_funds_owner_to_agent_within_allowance() {
     let client = FundingRouterClient::new(&s.env, &s.router);
     let agents = client.grant(
         &owner,
-        &100_000_000,
+        &budgets(&s.env, &s.token, 100_000_000),
         &1_000,
-        &vec![&s.env, agent_init(&s.env, &s.vault, 1, 100_000_000)],
+        &vec![&s.env, agent_init(&s.env, &s.token, &s.vault, 1, 100_000_000)],
     );
     let agent = agents.get(0).unwrap();
 
@@ -131,9 +154,9 @@ fn pull_rejects_agent_not_deployed_by_factory() {
     // Victim has a real grant outstanding (allowance exists to steal from).
     client.grant(
         &victim,
-        &100_000_000,
+        &budgets(&s.env, &s.token, 100_000_000),
         &1_000,
-        &vec![&s.env, agent_init(&s.env, &s.vault, 1, 100_000_000)],
+        &vec![&s.env, agent_init(&s.env, &s.token, &s.vault, 1, 100_000_000)],
     );
 
     // Attacker deploys the SAME agent code OUTSIDE the factory, claiming the
@@ -142,8 +165,11 @@ fn pull_rejects_agent_not_deployed_by_factory() {
     // Deployed map, which only the factory writes.
     let scope = AgentScope {
         owner: victim.clone(),
-        vault: s.vault.clone(),
+        target: s.vault.clone(),
         token: s.token.clone(),
+        kind: 0,
+        mint_recipient: BytesN::from_array(&s.env, &[0u8; 32]),
+        destination_domain: 0,
         cap_per_period: 100_000_000,
         period_duration: 3_600,
         spent_in_period: 0,
@@ -178,9 +204,9 @@ fn pull_beyond_allowance_fails_at_token_level() {
     let client = FundingRouterClient::new(&s.env, &s.router);
     let agents = client.grant(
         &owner,
-        &50_000_000,
+        &budgets(&s.env, &s.token, 50_000_000),
         &1_000,
-        &vec![&s.env, agent_init(&s.env, &s.vault, 1, 100_000_000)],
+        &vec![&s.env, agent_init(&s.env, &s.token, &s.vault, 1, 100_000_000)],
     );
     let agent = agents.get(0).unwrap();
 
@@ -203,9 +229,9 @@ fn pull_after_expiry_ledger_fails() {
     let client = FundingRouterClient::new(&s.env, &s.router);
     let agents = client.grant(
         &owner,
-        &100_000_000,
+        &budgets(&s.env, &s.token, 100_000_000),
         &300, // allowance dies at ledger 300
-        &vec![&s.env, agent_init(&s.env, &s.vault, 1, 100_000_000)],
+        &vec![&s.env, agent_init(&s.env, &s.token, &s.vault, 1, 100_000_000)],
     );
     let agent = agents.get(0).unwrap();
     client.pull(&agent, &10_000_000); // live before expiry
@@ -227,16 +253,16 @@ fn regrant_replaces_allowance() {
     let client = FundingRouterClient::new(&s.env, &s.router);
     let first = client.grant(
         &owner,
-        &100_000_000,
+        &budgets(&s.env, &s.token, 100_000_000),
         &1_000,
-        &vec![&s.env, agent_init(&s.env, &s.vault, 1, 100_000_000)],
+        &vec![&s.env, agent_init(&s.env, &s.token, &s.vault, 1, 100_000_000)],
     );
 
     let second = client.grant(
         &owner,
-        &40_000_000,
+        &budgets(&s.env, &s.token, 40_000_000),
         &2_000,
-        &vec![&s.env, agent_init(&s.env, &s.vault, 2, 40_000_000)],
+        &vec![&s.env, agent_init(&s.env, &s.token, &s.vault, 2, 40_000_000)],
     );
 
     // Replaced, not summed.
@@ -260,12 +286,12 @@ fn router_never_holds_tokens() {
 
     let agents = client.grant(
         &owner,
-        &100_000_000,
+        &budgets(&s.env, &s.token, 100_000_000),
         &1_000,
         &vec![
             &s.env,
-            agent_init(&s.env, &s.vault, 1, 50_000_000),
-            agent_init(&s.env, &s.vault, 2, 50_000_000),
+            agent_init(&s.env, &s.token, &s.vault, 1, 50_000_000),
+            agent_init(&s.env, &s.token, &s.vault, 2, 50_000_000),
         ],
     );
     assert_eq!(t.balance(&s.router), 0);
@@ -285,9 +311,10 @@ fn grant_auth_tree_covers_nested_approve_single_entry() {
     let s = setup();
     let owner = Address::generate(&s.env);
     let client = FundingRouterClient::new(&s.env, &s.router);
-    let inits = vec![&s.env, agent_init(&s.env, &s.vault, 1, 100_000_000)];
+    let inits = vec![&s.env, agent_init(&s.env, &s.token, &s.vault, 1, 100_000_000)];
     let budget = 100_000_000i128;
     let expiry = 1_000u32;
+    let grant_budgets = budgets(&s.env, &s.token, budget);
 
     // Exactly ONE auth entry for the owner — router.grant with the nested
     // token.approve as a sub-invocation. This is the "one popup" auth tree.
@@ -296,7 +323,7 @@ fn grant_auth_tree_covers_nested_approve_single_entry() {
         invoke: &MockAuthInvoke {
             contract: &s.router,
             fn_name: "grant",
-            args: (owner.clone(), budget, expiry, inits.clone()).into_val(&s.env),
+            args: (owner.clone(), grant_budgets.clone(), expiry, inits.clone()).into_val(&s.env),
             sub_invokes: &[MockAuthInvoke {
                 contract: &s.token,
                 fn_name: "approve",
@@ -306,7 +333,7 @@ fn grant_auth_tree_covers_nested_approve_single_entry() {
         },
     }]);
 
-    let agents = client.grant(&owner, &budget, &expiry, &inits);
+    let agents = client.grant(&owner, &grant_budgets, &expiry, &inits);
 
     assert_eq!(agents.len(), 1);
     let t = TokenClient::new(&s.env, &s.token);
@@ -320,9 +347,10 @@ fn grant_without_owner_auth_fails() {
     let owner = Address::generate(&s.env);
     let stranger = Address::generate(&s.env);
     let client = FundingRouterClient::new(&s.env, &s.router);
-    let inits = vec![&s.env, agent_init(&s.env, &s.vault, 1, 100_000_000)];
+    let inits = vec![&s.env, agent_init(&s.env, &s.token, &s.vault, 1, 100_000_000)];
     let budget = 100_000_000i128;
     let expiry = 1_000u32;
+    let grant_budgets = budgets(&s.env, &s.token, budget);
 
     // Only the stranger authorizes — owner.require_auth() must fail.
     s.env.mock_auths(&[MockAuth {
@@ -330,7 +358,7 @@ fn grant_without_owner_auth_fails() {
         invoke: &MockAuthInvoke {
             contract: &s.router,
             fn_name: "grant",
-            args: (owner.clone(), budget, expiry, inits.clone()).into_val(&s.env),
+            args: (owner.clone(), grant_budgets.clone(), expiry, inits.clone()).into_val(&s.env),
             sub_invokes: &[MockAuthInvoke {
                 contract: &s.token,
                 fn_name: "approve",
@@ -340,7 +368,9 @@ fn grant_without_owner_auth_fails() {
         },
     }]);
 
-    assert!(client.try_grant(&owner, &budget, &expiry, &inits).is_err());
+    assert!(client
+        .try_grant(&owner, &grant_budgets, &expiry, &inits)
+        .is_err());
     assert_eq!(
         TokenClient::new(&s.env, &s.token).allowance(&owner, &s.router),
         0
@@ -353,9 +383,10 @@ fn grant_fails_if_entry_omits_nested_approve() {
     let s = setup();
     let owner = Address::generate(&s.env);
     let client = FundingRouterClient::new(&s.env, &s.router);
-    let inits = vec![&s.env, agent_init(&s.env, &s.vault, 1, 100_000_000)];
+    let inits = vec![&s.env, agent_init(&s.env, &s.token, &s.vault, 1, 100_000_000)];
     let budget = 100_000_000i128;
     let expiry = 1_000u32;
+    let grant_budgets = budgets(&s.env, &s.token, budget);
 
     // Owner signs grant but the entry does NOT cover token.approve — the
     // nested call must then fail its own require_auth. Proves the approve is
@@ -365,12 +396,14 @@ fn grant_fails_if_entry_omits_nested_approve() {
         invoke: &MockAuthInvoke {
             contract: &s.router,
             fn_name: "grant",
-            args: (owner.clone(), budget, expiry, inits.clone()).into_val(&s.env),
+            args: (owner.clone(), grant_budgets.clone(), expiry, inits.clone()).into_val(&s.env),
             sub_invokes: &[],
         },
     }]);
 
-    assert!(client.try_grant(&owner, &budget, &expiry, &inits).is_err());
+    assert!(client
+        .try_grant(&owner, &grant_budgets, &expiry, &inits)
+        .is_err());
     assert_eq!(
         TokenClient::new(&s.env, &s.token).allowance(&owner, &s.router),
         0
@@ -387,9 +420,9 @@ fn pull_requires_agent_auth() {
     let client = FundingRouterClient::new(&s.env, &s.router);
     let agents = client.grant(
         &owner,
-        &100_000_000,
+        &budgets(&s.env, &s.token, 100_000_000),
         &1_000,
-        &vec![&s.env, agent_init(&s.env, &s.vault, 1, 100_000_000)],
+        &vec![&s.env, agent_init(&s.env, &s.token, &s.vault, 1, 100_000_000)],
     );
     let agent = agents.get(0).unwrap();
     let t = TokenClient::new(&s.env, &s.token);
@@ -440,9 +473,9 @@ fn grant_wires_router_into_agent_and_agent_authed_pull_funds_it() {
 
     let agents = client.grant(
         &owner,
-        &100_000_000,
+        &budgets(&s.env, &s.token, 100_000_000),
         &1_000,
-        &vec![&s.env, agent_init(&s.env, &s.vault, 1, 100_000_000)],
+        &vec![&s.env, agent_init(&s.env, &s.token, &s.vault, 1, 100_000_000)],
     );
     let agent = agents.get(0).unwrap();
 
@@ -477,9 +510,11 @@ fn grant_rejects_empty_agent_list() {
     s.env.mock_all_auths();
     let owner = Address::generate(&s.env);
     let client = FundingRouterClient::new(&s.env, &s.router);
-    let empty: soroban_sdk::Vec<AgentInit> = vec![&s.env];
+    let empty: Vec<AgentInit> = vec![&s.env];
 
-    assert!(client.try_grant(&owner, &1_000, &1_000, &empty).is_err());
+    assert!(client
+        .try_grant(&owner, &budgets(&s.env, &s.token, 1_000), &1_000, &empty)
+        .is_err());
     // Rejected before the nested approve — no allowance side effect survives.
     assert_eq!(
         TokenClient::new(&s.env, &s.token).allowance(&owner, &s.router),
@@ -494,11 +529,16 @@ fn grant_rejects_expired_allowance_ledger() {
     s.env.ledger().with_mut(|li| li.sequence_number = 500);
     let owner = Address::generate(&s.env);
     let client = FundingRouterClient::new(&s.env, &s.router);
-    let inits = vec![&s.env, agent_init(&s.env, &s.vault, 1, 1_000)];
+    let inits = vec![&s.env, agent_init(&s.env, &s.token, &s.vault, 1, 1_000)];
+    let grant_budgets = budgets(&s.env, &s.token, 1_000);
 
     // An allowance that dies at/before the current ledger could never be pulled.
-    assert!(client.try_grant(&owner, &1_000, &500, &inits).is_err());
-    assert!(client.try_grant(&owner, &1_000, &100, &inits).is_err());
+    assert!(client
+        .try_grant(&owner, &grant_budgets, &500, &inits)
+        .is_err());
+    assert!(client
+        .try_grant(&owner, &grant_budgets, &100, &inits)
+        .is_err());
 }
 
 #[test]
@@ -507,11 +547,16 @@ fn grant_rejects_zero_period_duration() {
     s.env.mock_all_auths();
     let owner = Address::generate(&s.env);
     let client = FundingRouterClient::new(&s.env, &s.router);
-    let mut bad = agent_init(&s.env, &s.vault, 1, 1_000);
+    let mut bad = agent_init(&s.env, &s.token, &s.vault, 1, 1_000);
     bad.period_duration = 0;
 
     assert!(client
-        .try_grant(&owner, &1_000, &1_000, &vec![&s.env, bad])
+        .try_grant(
+            &owner,
+            &budgets(&s.env, &s.token, 1_000),
+            &1_000,
+            &vec![&s.env, bad]
+        )
         .is_err());
 }
 
@@ -522,17 +567,18 @@ fn grant_rejects_past_agent_expiry() {
     s.env.ledger().set_timestamp(1_000_000);
     let owner = Address::generate(&s.env);
     let client = FundingRouterClient::new(&s.env, &s.router);
+    let grant_budgets = budgets(&s.env, &s.token, 1_000);
 
-    let mut at_now = agent_init(&s.env, &s.vault, 1, 1_000);
+    let mut at_now = agent_init(&s.env, &s.token, &s.vault, 1, 1_000);
     at_now.expiry = 1_000_000; // == now: already dead
     assert!(client
-        .try_grant(&owner, &1_000, &2_000_000, &vec![&s.env, at_now])
+        .try_grant(&owner, &grant_budgets, &2_000_000, &vec![&s.env, at_now])
         .is_err());
 
-    let mut past = agent_init(&s.env, &s.vault, 2, 1_000);
+    let mut past = agent_init(&s.env, &s.token, &s.vault, 2, 1_000);
     past.expiry = 999_999; // < now
     assert!(client
-        .try_grant(&owner, &1_000, &2_000_000, &vec![&s.env, past])
+        .try_grant(&owner, &grant_budgets, &2_000_000, &vec![&s.env, past])
         .is_err());
 }
 
@@ -550,15 +596,15 @@ fn same_raw_salt_from_two_owners_yields_distinct_agents() {
     // second deploy would collide on the same derived address and trap.
     let a = client.grant(
         &alice,
+        &budgets(&s.env, &s.token, 1_000),
         &1_000,
-        &1_000,
-        &vec![&s.env, agent_init(&s.env, &s.vault, 1, 1_000)],
+        &vec![&s.env, agent_init(&s.env, &s.token, &s.vault, 1, 1_000)],
     );
     let b = client.grant(
         &bob,
+        &budgets(&s.env, &s.token, 1_000),
         &1_000,
-        &1_000,
-        &vec![&s.env, agent_init(&s.env, &s.vault, 1, 1_000)],
+        &vec![&s.env, agent_init(&s.env, &s.token, &s.vault, 1, 1_000)],
     );
 
     assert_ne!(a.get(0).unwrap(), b.get(0).unwrap());
@@ -575,18 +621,18 @@ fn same_owner_same_raw_salt_stays_deterministic() {
 
     client.grant(
         &owner,
+        &budgets(&s.env, &s.token, 1_000),
         &1_000,
-        &1_000,
-        &vec![&s.env, agent_init(&s.env, &s.vault, 1, 1_000)],
+        &vec![&s.env, agent_init(&s.env, &s.token, &s.vault, 1, 1_000)],
     );
     // Same owner + same raw salt derives the SAME address — the second deploy
     // collides and fails, proving the derivation is deterministic per owner.
     assert!(client
         .try_grant(
             &owner,
+            &budgets(&s.env, &s.token, 1_000),
             &1_000,
-            &1_000,
-            &vec![&s.env, agent_init(&s.env, &s.vault, 1, 1_000)],
+            &vec![&s.env, agent_init(&s.env, &s.token, &s.vault, 1, 1_000)],
         )
         .is_err());
 }
@@ -598,16 +644,208 @@ fn rejects_non_positive_amounts() {
     s.env.mock_all_auths();
     let owner = Address::generate(&s.env);
     let client = FundingRouterClient::new(&s.env, &s.router);
-    let inits = vec![&s.env, agent_init(&s.env, &s.vault, 1, 100_000_000)];
+    let inits = vec![&s.env, agent_init(&s.env, &s.token, &s.vault, 1, 100_000_000)];
 
-    assert!(client.try_grant(&owner, &0, &1_000, &inits).is_err());
-    assert!(client.try_grant(&owner, &-1, &1_000, &inits).is_err());
+    assert!(client
+        .try_grant(&owner, &budgets(&s.env, &s.token, 0), &1_000, &inits)
+        .is_err());
+    assert!(client
+        .try_grant(&owner, &budgets(&s.env, &s.token, -1), &1_000, &inits)
+        .is_err());
     // cap <= 0 in an AgentInit is rejected too.
-    let bad = vec![&s.env, agent_init(&s.env, &s.vault, 2, 0)];
-    assert!(client.try_grant(&owner, &1_000, &1_000, &bad).is_err());
+    let bad = vec![&s.env, agent_init(&s.env, &s.token, &s.vault, 2, 0)];
+    assert!(client
+        .try_grant(&owner, &budgets(&s.env, &s.token, 1_000), &1_000, &bad)
+        .is_err());
 
-    let agents = client.grant(&owner, &100_000_000, &1_000, &inits);
+    let agents = client.grant(
+        &owner,
+        &budgets(&s.env, &s.token, 100_000_000),
+        &1_000,
+        &inits,
+    );
     let agent = agents.get(0).unwrap();
     assert!(client.try_pull(&agent, &0).is_err());
     assert!(client.try_pull(&agent, &-5).is_err());
+}
+
+// --- v2: multi-token budgets + bridge-kind agents ---
+
+// --- new: one grant, two tokens, one deposit agent + one bridge agent ---
+#[test]
+fn grant_multi_token_approves_each_and_deploys_bridge_agent() {
+    let s = setup();
+    s.env.mock_all_auths();
+    let circle_admin = Address::generate(&s.env);
+    let circle_token = s
+        .env
+        .register_stellar_asset_contract_v2(circle_admin)
+        .address();
+    let messenger = Address::generate(&s.env); // dummy TokenMessengerMinter target
+    let owner = Address::generate(&s.env);
+    let client = FundingRouterClient::new(&s.env, &s.router);
+
+    let grant_budgets = vec![
+        &s.env,
+        TokenBudget {
+            budget: 1_000,
+            token: s.token.clone(),
+        },
+        TokenBudget {
+            budget: 300,
+            token: circle_token.clone(),
+        },
+    ];
+    let deposit_init = agent_init(&s.env, &s.token, &s.vault, 1, 1_000);
+    let mut bridge_init = agent_init(&s.env, &circle_token, &messenger, 2, 300);
+    bridge_init.kind = 1;
+    bridge_init.mint_recipient = BytesN::from_array(&s.env, &[7u8; 32]);
+    bridge_init.destination_domain = 6;
+    let inits = vec![&s.env, deposit_init, bridge_init];
+
+    let agents = client.grant(&owner, &grant_budgets, &1_000, &inits);
+
+    assert_eq!(agents.len(), 2);
+    assert_eq!(
+        TokenClient::new(&s.env, &s.token).allowance(&owner, &s.router),
+        1_000
+    );
+    assert_eq!(
+        TokenClient::new(&s.env, &circle_token).allowance(&owner, &s.router),
+        300
+    );
+
+    let bridge_agent = agents.get(1).unwrap();
+    let ac = agentwasm::Client::new(&s.env, &bridge_agent);
+    let scope = ac.scope_of();
+    assert_eq!(scope.kind, 1);
+    assert_eq!(scope.target, messenger);
+    assert_eq!(scope.mint_recipient, BytesN::from_array(&s.env, &[7u8; 32]));
+}
+
+// --- new: an agent's token must be covered by some budget entry ---
+#[test]
+fn grant_rejects_agent_token_missing_from_budgets() {
+    let s = setup();
+    s.env.mock_all_auths();
+    let other_admin = Address::generate(&s.env);
+    let other_token = s
+        .env
+        .register_stellar_asset_contract_v2(other_admin)
+        .address();
+    let owner = Address::generate(&s.env);
+    let client = FundingRouterClient::new(&s.env, &s.router);
+    // Budget only covers s.token; the agent wants other_token.
+    let inits = vec![&s.env, agent_init(&s.env, &other_token, &s.vault, 1, 1_000)];
+
+    assert!(client
+        .try_grant(&owner, &budgets(&s.env, &s.token, 1_000), &1_000, &inits)
+        .is_err());
+    assert_eq!(
+        TokenClient::new(&s.env, &s.token).allowance(&owner, &s.router),
+        0
+    );
+}
+
+// --- new: bridge-kind (kind 1) agents need a real mint_recipient AND destination_domain ---
+#[test]
+fn grant_rejects_bridge_without_recipient_or_domain() {
+    let s = setup();
+    s.env.mock_all_auths();
+    let messenger = Address::generate(&s.env);
+    let owner = Address::generate(&s.env);
+    let client = FundingRouterClient::new(&s.env, &s.router);
+    let grant_budgets = budgets(&s.env, &s.token, 1_000);
+
+    // Zero mint_recipient (destination_domain set).
+    let mut no_recipient = agent_init(&s.env, &s.token, &messenger, 1, 1_000);
+    no_recipient.kind = 1;
+    no_recipient.destination_domain = 6;
+    assert!(client
+        .try_grant(&owner, &grant_budgets, &1_000, &vec![&s.env, no_recipient])
+        .is_err());
+
+    // Zero destination_domain (mint_recipient set).
+    let mut no_domain = agent_init(&s.env, &s.token, &messenger, 2, 1_000);
+    no_domain.kind = 1;
+    no_domain.mint_recipient = BytesN::from_array(&s.env, &[7u8; 32]);
+    assert!(client
+        .try_grant(&owner, &grant_budgets, &1_000, &vec![&s.env, no_domain])
+        .is_err());
+}
+
+// --- new: two budget entries naming the same token are rejected ---
+#[test]
+fn grant_rejects_duplicate_budget_token() {
+    let s = setup();
+    s.env.mock_all_auths();
+    let owner = Address::generate(&s.env);
+    let client = FundingRouterClient::new(&s.env, &s.router);
+    let dup_budgets = vec![
+        &s.env,
+        TokenBudget {
+            budget: 1_000,
+            token: s.token.clone(),
+        },
+        TokenBudget {
+            budget: 500,
+            token: s.token.clone(),
+        },
+    ];
+    let inits = vec![&s.env, agent_init(&s.env, &s.token, &s.vault, 1, 1_000)];
+
+    assert!(client
+        .try_grant(&owner, &dup_budgets, &1_000, &inits)
+        .is_err());
+    assert_eq!(
+        TokenClient::new(&s.env, &s.token).allowance(&owner, &s.router),
+        0
+    );
+}
+
+// --- new: pull moves the SPECIFIC agent's own token, other agents' tokens untouched ---
+#[test]
+fn pull_uses_per_agent_token() {
+    let s = setup();
+    s.env.mock_all_auths();
+    let circle_admin = Address::generate(&s.env);
+    let circle_token = s
+        .env
+        .register_stellar_asset_contract_v2(circle_admin)
+        .address();
+    let messenger = Address::generate(&s.env);
+    let owner = Address::generate(&s.env);
+    mint(&s, &owner, 500_000_000);
+    StellarAssetClient::new(&s.env, &circle_token).mint(&owner, &500_000_000);
+    let client = FundingRouterClient::new(&s.env, &s.router);
+
+    let grant_budgets = vec![
+        &s.env,
+        TokenBudget {
+            budget: 100_000_000,
+            token: s.token.clone(),
+        },
+        TokenBudget {
+            budget: 100_000_000,
+            token: circle_token.clone(),
+        },
+    ];
+    let deposit_init = agent_init(&s.env, &s.token, &s.vault, 1, 100_000_000);
+    let mut bridge_init = agent_init(&s.env, &circle_token, &messenger, 2, 100_000_000);
+    bridge_init.kind = 1;
+    bridge_init.mint_recipient = BytesN::from_array(&s.env, &[7u8; 32]);
+    bridge_init.destination_domain = 6;
+    let inits = vec![&s.env, deposit_init, bridge_init];
+
+    let agents = client.grant(&owner, &grant_budgets, &1_000, &inits);
+    let bridge_agent = agents.get(1).unwrap();
+
+    client.pull(&bridge_agent, &30_000_000);
+
+    let t_farm = TokenClient::new(&s.env, &s.token);
+    let t_circle = TokenClient::new(&s.env, &circle_token);
+    assert_eq!(t_circle.balance(&bridge_agent), 30_000_000);
+    assert_eq!(t_circle.allowance(&owner, &s.router), 70_000_000);
+    assert_eq!(t_farm.balance(&bridge_agent), 0); // untouched — deposit agent's token
+    assert_eq!(t_farm.allowance(&owner, &s.router), 100_000_000); // untouched
 }

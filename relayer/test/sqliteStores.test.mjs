@@ -39,6 +39,26 @@ describe('sqliteStores', () => {
     expect(mandates.size).toBe(0);
   });
 
+  it('mandates: set() honors an explicit expiresAt, instead of the flat ttlMs default', () => {
+    let t = 1_000;
+    const { mandates } = createSqliteStores(freshPath(), { ttlMs: 100, now: () => t });
+    mandates.set('appr', '0xkey', t + 50_000); // caller-supplied expiry far past ttlMs
+    t = 1_101; // would have evicted under the default 100ms ttl
+    expect(mandates.get('appr')).toBe('0xkey'); // still alive — explicit expiresAt wins
+  });
+
+  it('mandates: status() reports {valid, expiresAt} without ever returning the session key', () => {
+    let t = 1_000;
+    const { mandates } = createSqliteStores(freshPath(), { now: () => t });
+    mandates.set('appr', '0xsecret-session-key', t + 1000);
+    const status = mandates.status('appr');
+    expect(status).toEqual({ valid: true, expiresAt: t + 1000 });
+    expect(JSON.stringify(status)).not.toContain('0xsecret-session-key'); // explicit key-leak guard
+    t += 1000; // expiresAt is inclusive
+    expect(mandates.status('appr')).toEqual({ valid: false });
+    expect(mandates.status('never-registered')).toEqual({ valid: false });
+  });
+
   it('SURVIVES REOPEN: jobs + mandates persist across a new createSqliteStores on the same file', () => {
     const path = freshPath();
     const first = createSqliteStores(path);

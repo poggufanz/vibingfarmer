@@ -11,13 +11,24 @@ vi.mock('./relay.js', () => ({
   getRelayerAddress: (...a) => getRelayerAddressMock(...a),
 }))
 
-import { agentInitScVal, buildGrantTx, submitGrant, readAllowance, runAgentPull } from './grant.js'
+import {
+  agentInitScVal,
+  tokenBudgetScVal,
+  buildGrantTx,
+  submitGrant,
+  readAllowance,
+  runAgentPull,
+  AGENT_KIND_DEPOSIT,
+  AGENT_KIND_BRIDGE,
+} from './grant.js'
 
 // Real testnet-shaped addresses (valid strkeys — the SDK validates them on encode).
 const OWNER = 'GCIOUP4UJAAFDBJNP5DY5CFJHBLEKGLHZ5E2AYRIIQ5VOZFVSTPRYHNS'
 const AGENT_1 = 'CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC'
 const AGENT_2 = 'CBEI5VJKKWLXKQUUUETBAPZSQQLH7I57TSIDTMV4WJMBKIGVF7NSNOFY'
 const VAULT = 'CB5VKYDUIYX3RZWGVLKKNBPG7V7Z5JIHF2QPNQKWKAHVA3IPSLFZJDYU'
+const TOKEN = 'CAEQSCIJBEEQSCIJBEEQSCIJBEEQSCIJBEEQSCIJBEEQSCIJBEEQTD2L'
+const ZERO32 = new Uint8Array(32)
 
 // Vec<Address> retval the router's grant returns — the deployed agent addresses in input order.
 function agentsRetval(addrs) {
@@ -41,31 +52,52 @@ const sampleInits = [
   {
     signer: new Uint8Array(32).fill(1),
     cap: 40_000_000n,
-    vault: VAULT,
+    token: TOKEN,
+    target: VAULT,
+    kind: AGENT_KIND_DEPOSIT,
+    mintRecipient: ZERO32,
+    destinationDomain: 0,
     periodDuration: 86400,
     expiry: 111,
   },
   {
     signer: new Uint8Array(32).fill(2),
     cap: 60_000_000n,
-    vault: VAULT,
+    token: TOKEN,
+    target: VAULT,
+    kind: AGENT_KIND_DEPOSIT,
+    mintRecipient: ZERO32,
+    destinationDomain: 0,
     periodDuration: 86400,
     expiry: 111,
   },
 ]
+
+const sampleBudgets = [{ budget: 100_000_000n, token: TOKEN }]
 
 beforeEach(() => {
   submitViaRelayMock.mockReset()
   getRelayerAddressMock.mockReset()
 })
 
-describe('agentInitScVal - encoding matches funding_router types.rs', () => {
-  it('emits the ScMap keys in lexicographic field order: cap, expiry, period_duration, salt, signer, vault', () => {
+describe('AGENT_KIND_* constants', () => {
+  it('exports the Deposit/Bridge discriminants matching AgentInit.kind on the Rust side', () => {
+    expect(AGENT_KIND_DEPOSIT).toBe(0)
+    expect(AGENT_KIND_BRIDGE).toBe(1)
+  })
+})
+
+describe('agentInitScVal - encoding matches funding_router types.rs (v2 AgentInit)', () => {
+  it('emits the ScMap keys in lexicographic field order: cap, destination_domain, expiry, kind, mint_recipient, period_duration, salt, signer, target, token', () => {
     const sv = agentInitScVal({
       signer: new Uint8Array(32).fill(7),
       salt: new Uint8Array(32).fill(8),
       cap: 5n,
-      vault: VAULT,
+      token: TOKEN,
+      target: VAULT,
+      kind: AGENT_KIND_DEPOSIT,
+      mintRecipient: ZERO32,
+      destinationDomain: 0,
       periodDuration: 3600,
       expiry: 222,
     })
@@ -73,26 +105,62 @@ describe('agentInitScVal - encoding matches funding_router types.rs', () => {
     const keys = sv.map().map((e) => e.key().sym().toString())
     // MUST match the Rust #[contracttype] AgentInit fields sorted lexicographically — the host
     // rejects any other key order.
-    expect(keys).toEqual(['cap', 'expiry', 'period_duration', 'salt', 'signer', 'vault'])
+    expect(keys).toEqual([
+      'cap',
+      'destination_domain',
+      'expiry',
+      'kind',
+      'mint_recipient',
+      'period_duration',
+      'salt',
+      'signer',
+      'target',
+      'token',
+    ])
   })
 
-  it('encodes each field with the right ScVal type (cap=i128, period/expiry=u64, salt/signer=bytes, vault=address)', () => {
+  it('encodes each field with the right ScVal type (cap=i128, kind/destination_domain=u32, mint_recipient=bytes32, period_duration/expiry=u64, salt/signer=bytes, target/token=address)', () => {
     const sv = agentInitScVal({
       signer: new Uint8Array(32).fill(3),
       salt: new Uint8Array(32).fill(4),
       cap: 9n,
-      vault: VAULT,
+      token: TOKEN,
+      target: VAULT,
+      kind: AGENT_KIND_BRIDGE,
+      mintRecipient: new Uint8Array(32).fill(6),
+      destinationDomain: 6,
       periodDuration: 3600,
       expiry: 222,
     })
     const byKey = Object.fromEntries(sv.map().map((e) => [e.key().sym().toString(), e.val()]))
     expect(byKey.cap.switch().name).toBe('scvI128')
+    expect(byKey.destination_domain.switch().name).toBe('scvU32')
     expect(byKey.expiry.switch().name).toBe('scvU64')
+    expect(byKey.kind.switch().name).toBe('scvU32')
+    expect(byKey.mint_recipient.switch().name).toBe('scvBytes')
+    expect(byKey.mint_recipient.bytes().length).toBe(32)
     expect(byKey.period_duration.switch().name).toBe('scvU64')
     expect(byKey.salt.switch().name).toBe('scvBytes')
     expect(byKey.salt.bytes().length).toBe(32)
     expect(byKey.signer.switch().name).toBe('scvBytes')
-    expect(byKey.vault.switch().name).toBe('scvAddress')
+    expect(byKey.target.switch().name).toBe('scvAddress')
+    expect(byKey.token.switch().name).toBe('scvAddress')
+  })
+})
+
+describe('tokenBudgetScVal - encoding matches funding_router types.rs (TokenBudget)', () => {
+  it('emits the ScMap keys in lexicographic field order: budget, token', () => {
+    const sv = tokenBudgetScVal({ budget: 100_000_000n, token: TOKEN })
+    expect(sv.switch().name).toBe('scvMap')
+    const keys = sv.map().map((e) => e.key().sym().toString())
+    expect(keys).toEqual(['budget', 'token'])
+  })
+
+  it('encodes each field with the right ScVal type (budget=i128, token=address)', () => {
+    const sv = tokenBudgetScVal({ budget: 5n, token: TOKEN })
+    const byKey = Object.fromEntries(sv.map().map((e) => [e.key().sym().toString(), e.val()]))
+    expect(byKey.budget.switch().name).toBe('scvI128')
+    expect(byKey.token.switch().name).toBe('scvAddress')
   })
 })
 
@@ -101,7 +169,7 @@ describe('buildGrantTx', () => {
     const server = fakeServer({ latest: 1000, retval: agentsRetval([AGENT_1, AGENT_2]) })
     const { expiryLedger } = await buildGrantTx({
       owner: OWNER,
-      budgetBaseUnits: 100_000_000n,
+      budgets: sampleBudgets,
       durationSeconds: 3600, // 3600/5 = 720
       agentInits: sampleInits,
       server,
@@ -113,7 +181,7 @@ describe('buildGrantTx', () => {
     const server = fakeServer({ latest: 0, retval: agentsRetval([AGENT_1]) })
     const { expiryLedger } = await buildGrantTx({
       owner: OWNER,
-      budgetBaseUnits: 1n,
+      budgets: sampleBudgets,
       durationSeconds: 11, // 11/5 = 2.2 → 3
       agentInits: [sampleInits[0]],
       server,
@@ -125,7 +193,7 @@ describe('buildGrantTx', () => {
     const server = fakeServer({ latest: 500, retval: agentsRetval([AGENT_1, AGENT_2]) })
     const { agentAddresses } = await buildGrantTx({
       owner: OWNER,
-      budgetBaseUnits: 100_000_000n,
+      budgets: sampleBudgets,
       durationSeconds: 60,
       agentInits: sampleInits,
       server,
@@ -137,7 +205,7 @@ describe('buildGrantTx', () => {
     const server = fakeServer({ latest: 100, retval: agentsRetval([AGENT_1]) })
     const { tx } = await buildGrantTx({
       owner: OWNER,
-      budgetBaseUnits: 40_000_000n,
+      budgets: sampleBudgets,
       durationSeconds: 60,
       agentInits: [sampleInits[0]],
       server,
@@ -148,12 +216,43 @@ describe('buildGrantTx', () => {
     expect((tx.operations[0].auth || []).length).toBe(0)
   })
 
+  it('names bridgeAgentAddress when the LAST submitted agent is a Bridge-kind init', async () => {
+    const server = fakeServer({ latest: 1000, retval: agentsRetval([AGENT_1, AGENT_2]) })
+    const bridgeInit = {
+      ...sampleInits[0],
+      kind: AGENT_KIND_BRIDGE,
+      mintRecipient: new Uint8Array(32).fill(5),
+      destinationDomain: 6,
+    }
+    const { agentAddresses, bridgeAgentAddress } = await buildGrantTx({
+      owner: OWNER,
+      budgets: sampleBudgets,
+      durationSeconds: 60,
+      agentInits: [sampleInits[0], bridgeInit],
+      server,
+    })
+    expect(agentAddresses).toEqual([AGENT_1, AGENT_2])
+    expect(bridgeAgentAddress).toBe(AGENT_2) // last deployed agent
+  })
+
+  it('bridgeAgentAddress is null when no submitted agent is Bridge-kind (additive: existing callers unaffected)', async () => {
+    const server = fakeServer({ latest: 1000, retval: agentsRetval([AGENT_1, AGENT_2]) })
+    const { bridgeAgentAddress } = await buildGrantTx({
+      owner: OWNER,
+      budgets: sampleBudgets,
+      durationSeconds: 60,
+      agentInits: sampleInits, // both AGENT_KIND_DEPOSIT
+      server,
+    })
+    expect(bridgeAgentAddress).toBeNull()
+  })
+
   it('rejects an empty agent list and a missing router', async () => {
     const server = fakeServer({ latest: 1, retval: agentsRetval([]) })
     await expect(
       buildGrantTx({
         owner: OWNER,
-        budgetBaseUnits: 1n,
+        budgets: sampleBudgets,
         durationSeconds: 60,
         agentInits: [],
         server,
@@ -162,7 +261,7 @@ describe('buildGrantTx', () => {
     await expect(
       buildGrantTx({
         owner: OWNER,
-        budgetBaseUnits: 1n,
+        budgets: sampleBudgets,
         durationSeconds: 60,
         agentInits: sampleInits,
         router: '',
@@ -180,7 +279,7 @@ describe('submitGrant - a single signature', () => {
 
     const out = await submitGrant({
       owner: OWNER,
-      budgetBaseUnits: 100_000_000n,
+      budgets: sampleBudgets,
       durationSeconds: 3600,
       agentInits: sampleInits,
       server,
@@ -203,7 +302,7 @@ describe('submitGrant - a single signature', () => {
 
     const out = await submitGrant({
       owner: OWNER,
-      budgetBaseUnits: 40_000_000n,
+      budgets: sampleBudgets,
       durationSeconds: 60,
       agentInits: [sampleInits[0]],
       server,
@@ -214,13 +313,28 @@ describe('submitGrant - a single signature', () => {
     expect(out).toMatchObject({ hash: 'HDIRECT', status: 'SUCCESS', agentAddresses: [AGENT_1] })
   })
 
+  it('propagates bridgeAgentAddress through the relayed result', async () => {
+    const server = fakeServer({ latest: 1000, retval: agentsRetval([AGENT_1, AGENT_2]) })
+    submitViaRelayMock.mockResolvedValue({ hash: 'HREL', status: 'SUCCESS', relayer: 'GR' })
+    const bridgeInit = { ...sampleInits[0], kind: AGENT_KIND_BRIDGE }
+    const out = await submitGrant({
+      owner: OWNER,
+      budgets: sampleBudgets,
+      durationSeconds: 3600,
+      agentInits: [sampleInits[0], bridgeInit],
+      server,
+      sign: async (x) => x,
+    })
+    expect(out.bridgeAgentAddress).toBe(AGENT_2)
+  })
+
   it('throws when the relay reports a non-SUCCESS status', async () => {
     const server = fakeServer({ latest: 1, retval: agentsRetval([AGENT_1]) })
     submitViaRelayMock.mockResolvedValue({ hash: 'H', status: 'FAILED' })
     await expect(
       submitGrant({
         owner: OWNER,
-        budgetBaseUnits: 1n,
+        budgets: sampleBudgets,
         durationSeconds: 60,
         agentInits: [sampleInits[0]],
         server,
