@@ -3,6 +3,7 @@ import { describe, test, expect } from 'vitest'
 import { xdr, Address, nativeToScVal } from '@stellar/stellar-sdk'
 import {
   readPricePerShare,
+  readTotalShares,
   readStrategies,
   estimateSupplyAprBps,
   readSupplyAprBps,
@@ -31,6 +32,33 @@ describe('readPricePerShare', () => {
     const fakeServer = { simulateTransaction: async () => ({ error: 'boom' }) }
     const pps = await readPricePerShare(VAULT, { server: fakeServer })
     expect(pps).toBeNull()
+  })
+})
+
+describe('readTotalShares', () => {
+  test('returns 0n via an injected server (empty vault, first-deposit path)', async () => {
+    const fakeServer = {
+      simulateTransaction: async () => ({
+        result: { retval: nativeToScVal(0n, { type: 'i128' }) },
+      }),
+    }
+    const shares = await readTotalShares(VAULT, { server: fakeServer })
+    expect(shares).toBe(0n)
+  })
+
+  test('returns the decoded i128 for a vault with prior supply', async () => {
+    const fakeServer = {
+      simulateTransaction: async () => ({
+        result: { retval: nativeToScVal(500_0000000n, { type: 'i128' }) },
+      }),
+    }
+    const shares = await readTotalShares(VAULT, { server: fakeServer })
+    expect(shares).toBe(500_0000000n)
+  })
+
+  test('returns null (not 0n) on simulation failure rather than throwing', async () => {
+    const fakeServer = { simulateTransaction: async () => ({ error: 'boom' }) }
+    expect(await readTotalShares(VAULT, { server: fakeServer })).toBeNull()
   })
 })
 

@@ -71,6 +71,35 @@ export async function readTotalAssets(
 }
 
 /**
+ * Vault's `total_shares()` — i128, the share ledger's total supply (`Base::total_supply`,
+ * see soroban/contracts/autofarm_vault/src/lib.rs). Authoritative source for whether the vault
+ * has ever taken a deposit: 0n means the NEXT deposit is the on-chain first-depositor path
+ * (MIN_FIRST_DEPOSIT applies, vault.rs), a positive value means it does not. null on RPC
+ * failure — callers (strategy/amountValidation.js) must treat null as genuinely unknown, never
+ * coerce it to 0n (that would wrongly re-impose the first-deposit minimum on a seeded vault) or
+ * to a positive assumption (that would wrongly skip it on an empty one).
+ * @param {string} [vaultAddress]
+ * @param {{ server?: object }} [opts]
+ * @returns {Promise<bigint|null>}
+ */
+export async function readTotalShares(
+  vaultAddress = SOROBAN_AUTOFARM_VAULT_ADDRESS,
+  { server } = {}
+) {
+  try {
+    const v = await readContract({
+      contract: vaultAddress,
+      method: 'total_shares',
+      args: [],
+      server,
+    })
+    return BigInt(v)
+  } catch {
+    return null
+  }
+}
+
+/**
  * Vault's registered strategy addresses. [] on RPC failure — never throws (best-effort read).
  * @param {string} [vaultAddress]
  * @param {{ server?: object }} [opts]

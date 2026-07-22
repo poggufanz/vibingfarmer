@@ -4,6 +4,9 @@
 import React, { useState, useEffect } from 'react'
 import { Icon } from './components.jsx'
 import { loadSettings, t } from './settingsStore.js'
+import { readTotalShares } from './stellar/vaultReads.js'
+import { validateAmountInput, validateExecutionAllocations } from './strategy/amountValidation.js'
+import { expandAgentSlots } from './strategy/planModel.js'
 
 const shortAddr = (a) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '')
 
@@ -20,6 +23,38 @@ const InputScreen = ({ amount, setAmount, risk, setRisk, onSubmit }) => {
   const { language: lang } = loadSettings()
   const valid = Number(amount) > 0 && risk
   const [prefill, setPrefill] = useState(null)
+  const [checking, setChecking] = useState(false)
+  const [checkError, setCheckError] = useState(null)
+
+  // Nothing moves until the amount + risk are actually executable: read the vault's real
+  // on-chain supply, validate the typed amount against it, then validate the 1/2/3-slot plan
+  // that risk level would produce -- ONLY then hand off to the caller's onSubmit (which starts
+  // strategy generation). An unknown vault-state read is retryable, never assumed either way.
+  const handleSubmit = async () => {
+    if (!valid || checking) return
+    setCheckError(null)
+    setChecking(true)
+    try {
+      const vaultTotalShares = await readTotalShares()
+      const amountResult = validateAmountInput({ value: amount, risk, vaultTotalShares })
+      if (!amountResult.ok) {
+        setCheckError(amountResult.message)
+        return
+      }
+      const plan = { agents: expandAgentSlots({ risk, stellarUnits: amountResult.units }) }
+      const planResult = validateExecutionAllocations({ plan, vaultTotalShares })
+      if (!planResult.ok) {
+        setCheckError(planResult.message)
+        return
+      }
+      onSubmit()
+    } catch {
+      setCheckError('Could not verify the vault minimum. Try again.')
+    } finally {
+      setChecking(false)
+    }
+  }
+
   useEffect(() => {
     const protocol = sessionStorage.getItem('yv_prefill_protocol')
     const name = sessionStorage.getItem('yv_prefill_name')
@@ -103,11 +138,22 @@ const InputScreen = ({ amount, setAmount, risk, setRisk, onSubmit }) => {
       </div>
 
       <div className="action-row">
-        <div className="foot-note">Live market data. One signature comes next.</div>
-        <button className="btn btn-primary btn-lg" disabled={!valid} onClick={onSubmit}>
-          Continue
+        <div className="foot-note">
+          Nothing moves until you review and confirm. Live market data. One signature comes next.
+        </div>
+        <button
+          className="btn btn-primary btn-lg"
+          disabled={!valid || checking}
+          onClick={handleSubmit}
+        >
+          {checking ? 'Checking…' : 'Continue'}
         </button>
       </div>
+      {checkError && (
+        <div role="alert" style={{ color: 'var(--danger)', fontSize: 11, marginTop: 10 }}>
+          {checkError}
+        </div>
+      )}
     </section>
   )
 }
