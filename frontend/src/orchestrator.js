@@ -27,6 +27,7 @@ import {
   SOROBAN_ACTIVE_VAULT_ADDRESS,
   USE_FUNDING_ROUTER,
 } from './stellar/config.js'
+import { isLegacyDirectSetupAllowed } from './stellar/agentCreatorManifest.js'
 import { PermissionPhaseError } from './strategy/permissionError.js'
 // NOTE (Strategy Task 7): every OTHER new dependency this file needed for the permission-locked
 // path (`./strategy/reusePreflight.js`, `./stellar/grantReceiptStore.js`, and `readConfirmedLedger`
@@ -814,20 +815,30 @@ export class OrchestratorAgent {
             })
         )
 
-        // Agent setup — ONE of two paths, chosen by the config knob USE_FUNDING_ROUTER:
-        //   • Router (DEFAULT once funding_router is deployed): ONE owner-signed grant deploys every
-        //     agent + sets the SEP-41 budget behind a single signature; worker funding is a relayed
-        //     router.pull (0 further signatures). Repeat runs can be signature-free. — setupViaRouter
-        //   • Legacy (router unset, or VITE_LEGACY_AGENT_SETUP=1): per-agent deploy + fund, each a
-        //     user signature. — setupLegacy
-        // Both isolate a single agent's setup failure (that worker fails, the run continues) and abort
-        // only when EVERY agent failed. The pending/error/done step events are emitted HERE so both
-        // paths report identically.
+        // Agent setup — the funding router is MANDATORY in production (My Money Task 1): the
+        // router path is the only one that ever creates a production agent, and a missing/
+        // unhealthy router fails HERE, before any wallet signature or fund movement, rather than
+        // silently sliding into a legacy deploy. `setupLegacy` survives ONLY as an explicit
+        // dev/test compatibility seam — never a production fallback — gated by
+        // `isLegacyDirectSetupAllowed`: production can never enable it through a client flag
+        // (Vite bakes VITE_ vars into the client bundle; trusting one for a production
+        // authorization decision would let anyone flip it via devtools), dev/test must opt in
+        // EXPLICITLY via VITE_ENABLE_LEGACY_AGENT_SETUP=true. Both paths isolate a single agent's
+        // setup failure (that worker fails, the run continues) and abort only when EVERY agent
+        // failed. The pending/error/done step events are emitted HERE so every reachable path
+        // reports identically.
         this.onEvent('orchestrator-step', { step: 'authorizing-scope', status: 'pending' })
         if (USE_FUNDING_ROUTER) {
           await this.setupViaRouter(workers, expiry, bridgeInit, resolveBridgeAgent)
-        } else {
+        } else if (
+          isLegacyDirectSetupAllowed({
+            mode: import.meta.env.MODE,
+            explicitFlag: import.meta.env.VITE_ENABLE_LEGACY_AGENT_SETUP,
+          })
+        ) {
           await this.setupLegacy(workers, expiry)
+        } else {
+          throw new Error('Pocket Crew requires the funding router; no transaction was submitted.')
         }
         if (workers.length > 0 && workers.every((w) => w.setupFailed)) {
           const msg = `Agent setup failed for all ${workers.length} agents: ${workers[0].setupError}`

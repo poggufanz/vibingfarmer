@@ -67,6 +67,14 @@ vi.mock('./stellar/config.js', () => ({
   SOROBAN_FUNDING_ROUTER_ADDRESS: 'CROUTER',
   USE_FUNDING_ROUTER: true,
 }))
+// My Money Task 1: USE_FUNDING_ROUTER stays true for this whole file, so dispatchLegacy's
+// production-cutoff gate (isLegacyDirectSetupAllowed) should never even be consulted here — the
+// router branch handles everything. Mocked (not left real) so the "never consulted" assertion
+// below is airtight regardless of the gate's own default.
+const isLegacyDirectSetupAllowedMock = vi.fn(() => false)
+vi.mock('./stellar/agentCreatorManifest.js', () => ({
+  isLegacyDirectSetupAllowed: (...a) => isLegacyDirectSetupAllowedMock(...a),
+}))
 vi.mock('./strategist.js', () => ({ generateAgentSkills: vi.fn(async () => ({})) }))
 vi.mock('./skills.js', () => ({ saveSkill: vi.fn() }))
 vi.mock('./mergeFlowHelpers.js', () => ({ readStoredBaseMandate: vi.fn() }))
@@ -207,6 +215,7 @@ function reuseDecisionFor(plan, addresses) {
 beforeEach(() => {
   workerInstances.length = 0
   executeCalls.length = 0
+  isLegacyDirectSetupAllowedMock.mockClear()
   submitGrantMock.mockReset()
   runAgentPullMock.mockReset()
   runAgentPullMock.mockResolvedValue({ hash: 'HP', status: 'SUCCESS' })
@@ -837,5 +846,19 @@ describe('dispatch(strategy, totalAmount) — LEGACY router path (setupViaRouter
       const failed = res.results.find((r) => !r.success)
       expect(failed.error).toMatch(/Setup failed: .*router pull reported FAILED/)
     })
+  })
+
+  // My Money Task 1: the production cutoff gate must never even be consulted while the router
+  // (USE_FUNDING_ROUTER, fixed true for this whole file) is available — it exists only to guard
+  // the OTHER branch (the router unset/unhealthy). This is the router-healthy counterpart to the
+  // "production-mode router outage" cutoff behavior covered in orchestrator.test.js.
+  it('never consults the legacy cutoff gate while the funding router is available', async () => {
+    const orch = new OrchestratorAgent({
+      user: 'GUSER',
+      sessionId: 'legacy-s10',
+      onEvent: () => {},
+    })
+    await orch.dispatch(legacyStrategy, 100)
+    expect(isLegacyDirectSetupAllowedMock).not.toHaveBeenCalled()
   })
 })

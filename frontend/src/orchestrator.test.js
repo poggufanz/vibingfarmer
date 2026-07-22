@@ -44,6 +44,14 @@ vi.mock('./stellar/config.js', () => ({
   SOROBAN_ACTIVE_VAULT_ADDRESS: 'CACTIVEVAULT',
   USE_FUNDING_ROUTER: false,
 }))
+// My Money Task 1: setupLegacy is now a dev/test-only seam gated by isLegacyDirectSetupAllowed.
+// Defaults to allowed (true) so the whole legacy-path suite below keeps exercising setupLegacy
+// exactly as before; the production-cutoff behavior itself gets its own describe block that
+// flips this to false per test.
+const isLegacyDirectSetupAllowedMock = vi.fn(() => true)
+vi.mock('./stellar/agentCreatorManifest.js', () => ({
+  isLegacyDirectSetupAllowed: (...a) => isLegacyDirectSetupAllowedMock(...a),
+}))
 vi.mock('./strategist.js', () => ({ generateAgentSkills: vi.fn(async () => ({})) }))
 vi.mock('./skills.js', () => ({ saveSkill: vi.fn() }))
 
@@ -72,6 +80,8 @@ import { OrchestratorAgent } from './orchestrator.js'
 describe('orchestrator (Stellar deploy + fund + dispatch)', () => {
   beforeEach(() => {
     callOrder.length = 0
+    isLegacyDirectSetupAllowedMock.mockReset()
+    isLegacyDirectSetupAllowedMock.mockReturnValue(true)
     fundAgentMock.mockClear()
     fundAgentMock.mockImplementation(async ({ agentAddress }) => {
       callOrder.push(`fund:${agentAddress}`)
@@ -317,5 +327,32 @@ describe('orchestrator (Stellar deploy + fund + dispatch)', () => {
     expect(err.d.step).toBe('authorizing-scope')
     // No worker was dispatched — the run never enters the infinite-"started" limbo.
     expect(callOrder.some((c) => c.startsWith('execute:'))).toBe(false)
+  })
+
+  // My Money Task 1: production cutoff. USE_FUNDING_ROUTER stays false for this whole file (see
+  // the module mock above) — standing in for "the router is unset/unhealthy" — so these prove
+  // dispatchLegacy's else-branch actually consults isLegacyDirectSetupAllowed and refuses to move
+  // anything (no signature, no fund movement, setupLegacy never reached) when that gate says no.
+  // Nested (not a sibling describe) so it inherits this file's shared beforeEach reset.
+  describe('production cutoff: the router is mandatory, setupLegacy is dev/test-only', () => {
+    it('rejects before any signature/movement when isLegacyDirectSetupAllowed says no', async () => {
+      isLegacyDirectSetupAllowedMock.mockReturnValue(false)
+      const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 'cutoff1', onEvent: () => {} })
+      await expect(orch.dispatch(strategy, 100)).rejects.toThrow(
+        'Pocket Crew requires the funding router; no transaction was submitted.'
+      )
+      expect(deployAgentForSessionMock).not.toHaveBeenCalled()
+      expect(fundAgentMock).not.toHaveBeenCalled()
+      expect(callOrder).toEqual([])
+    })
+
+    it('passes the live env-derived mode/flag through to the gate', async () => {
+      isLegacyDirectSetupAllowedMock.mockReturnValue(true) // still allowed — asserting the call args
+      const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 'cutoff2', onEvent: () => {} })
+      await orch.dispatch(strategy, 100)
+      expect(isLegacyDirectSetupAllowedMock).toHaveBeenCalledWith(
+        expect.objectContaining({ mode: expect.any(String) })
+      )
+    })
   })
 })
