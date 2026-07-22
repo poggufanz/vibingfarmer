@@ -514,7 +514,7 @@ function HonestySection() {
 export const ECOSYSTEM = [
   // Soroban is Stellar's own smart-contract platform (same ecosystem, not a separate one) —
   // named together on one card, as the retired PARTNERS list already did.
-  { name: 'Stellar / Soroban', icon: '/logos/stellar.svg' },
+  { name: 'Stellar / Soroban', icon: '/brand/networks/stellar.svg' },
   { name: 'Blend Capital', icon: '/logos/blend.svg' },
   { name: 'Base', icon: '/logos/base.svg' },
   { name: 'Circle CCTP', icon: '/logos/circle.svg' },

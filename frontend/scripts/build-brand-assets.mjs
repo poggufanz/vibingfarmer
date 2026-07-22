@@ -7,7 +7,7 @@
 //
 // Re-run after any brand SVG changes: `npm run brand:build` from frontend/.
 import { createHash } from 'node:crypto'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Resvg } from '@resvg/resvg-js'
@@ -81,6 +81,11 @@ writeFileSync(resolve(publicDir, 'vibing_farmer.logo.svg'), markSvg)
 writeFileSync(resolve(publicDir, 'vibing_farmer.logo.png'), readBrand('icon-512.png'))
 
 // --- Manifest ---------------------------------------------------------
+// This script only knows how to author/render the Vibing Farmer mark family
+// below — it must NOT clobber manifest entries for assets it doesn't own
+// (e.g. the hand-recorded third-party network marks under public/brand/networks/,
+// added by a later task). Regenerate the entries this script owns, then merge
+// in any existing entries whose path isn't one of them, preserved verbatim.
 const MANIFEST_ENTRIES = [
   { path: '/brand/vibing-farmer-mark.svg', kind: 'mark' },
   { path: '/brand/vibing-farmer-mark-forest.svg', kind: 'mark-forest' },
@@ -96,7 +101,7 @@ const MANIFEST_ENTRIES = [
   { path: '/brand/social-card.png', kind: 'social-card' },
 ]
 
-const manifest = MANIFEST_ENTRIES.map(({ path, kind }) => ({
+const generated = MANIFEST_ENTRIES.map(({ path, kind }) => ({
   path,
   kind,
   sha256: sha256(readFileSync(resolve(publicDir, path.replace(/^\//, '')))),
@@ -106,6 +111,15 @@ const manifest = MANIFEST_ENTRIES.map(({ path, kind }) => ({
   trademarkTreatment: TRADEMARK_TREATMENT,
 }))
 
-writeFileSync(resolve(brandDir, 'assets.manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
+const manifestPath = resolve(brandDir, 'assets.manifest.json')
+const existing = existsSync(manifestPath) ? JSON.parse(readFileSync(manifestPath, 'utf8')) : []
+const generatedPaths = new Set(generated.map((entry) => entry.path))
+const preserved = existing.filter((entry) => !generatedPaths.has(entry.path))
 
-console.log(`brand assets built: ${manifest.length} manifest entries -> ${brandDir}`)
+const manifest = [...generated, ...preserved]
+
+writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+
+console.log(
+  `brand assets built: ${generated.length} generated + ${preserved.length} preserved = ${manifest.length} manifest entries -> ${brandDir}`
+)

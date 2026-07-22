@@ -6,18 +6,29 @@
 // Visual correctness (silhouette legible, V/slash distinct) is checked by the
 // programmatic QA pass in the task report, not by this suite.
 
+import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-const PUBLIC_DIR = resolve(import.meta.dirname, '../../public')
+const FRONTEND_DIR = resolve(import.meta.dirname, '../..')
+const PUBLIC_DIR = resolve(FRONTEND_DIR, 'public')
 const MANIFEST_PATH = resolve(PUBLIC_DIR, 'brand/assets.manifest.json')
+const BUILD_SCRIPT = resolve(FRONTEND_DIR, 'scripts/build-brand-assets.mjs')
+const CHECK_SCRIPT = resolve(FRONTEND_DIR, 'scripts/check-brand-assets.mjs')
 
 // Fixed pocket body path — must appear byte-identical in every mark variant.
 // No chat tail, face, leaf, coin, gradient, blur, or network symbol allowed
 // alongside it.
 const POCKET_D = 'M8 11H21L25 17H39L43 11H56V50C56 55 52 59 47 59H17C12 59 8 55 8 50Z'
+
+// V stays byte-identical; the slash was moved off it (geometry revision —
+// the old slash overlapped the V's right leg by ~0.53 unit at the fixed
+// 5px stroke width, new gap is 5.36 units).
+const V_D = 'M18 24L31 48L43 24'
+const OLD_SLASH_D = 'M38 44L50 20'
+const SLASH_D = 'M40 44L52 20'
 
 // The compact mark family — every one of these is a 64x64 transparent canvas
 // carrying the same fixed pocket/V/slash geometry, recolored per theme.
@@ -126,5 +137,41 @@ describe('brand asset contract', () => {
     const legacy = readFileSync(resolve(PUBLIC_DIR, 'vibing_farmer.logo.svg'))
     const mark = readFileSync(resolve(PUBLIC_DIR, 'brand/vibing-farmer-mark.svg'))
     expect(sha256(legacy)).toBe(sha256(mark))
+  })
+
+  it('the pocket and V are unchanged and the Harvest slash uses the separated geometry', () => {
+    for (const rel of ALL_SVG_FILES) {
+      const content = readFileSync(resolve(PUBLIC_DIR, rel), 'utf8')
+      expect(content, rel).toContain(V_D)
+      expect(content, rel).toContain(SLASH_D)
+      expect(content, rel).not.toContain(OLD_SLASH_D)
+    }
+  })
+
+  it('brand:build preserves manifest entries it does not generate (no clobber)', () => {
+    const before = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'))
+    const networkEntryBefore = before.find((e) => e.path === '/brand/networks/stellar.svg')
+    expect(networkEntryBefore, 'fixture assumes a hand-recorded network entry exists').toBeTruthy()
+
+    execFileSync('node', [BUILD_SCRIPT], { cwd: FRONTEND_DIR })
+
+    const after = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'))
+    expect(after.length).toBe(14)
+    expect(after.map((e) => e.path).sort()).toEqual(before.map((e) => e.path).sort())
+    // Preserved verbatim — the build script doesn't own these files, so it must
+    // not recompute/rewrite their manifest entry even if the file is unchanged.
+    expect(after.find((e) => e.path === '/brand/networks/stellar.svg')).toEqual(networkEntryBefore)
+  })
+
+  it('brand:check fails when a public/brand file has no manifest entry', () => {
+    const strayPath = resolve(PUBLIC_DIR, 'brand/__test-stray-no-manifest-entry.svg')
+    writeFileSync(strayPath, '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"></svg>')
+    try {
+      expect(() =>
+        execFileSync('node', [CHECK_SCRIPT], { cwd: FRONTEND_DIR, stdio: 'pipe' })
+      ).toThrow()
+    } finally {
+      rmSync(strayPath, { force: true })
+    }
   })
 })

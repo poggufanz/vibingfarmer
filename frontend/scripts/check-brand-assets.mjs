@@ -5,13 +5,14 @@
 //
 // Run: `npm run brand:check` from frontend/.
 import { createHash } from 'node:crypto'
-import { existsSync, readFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { dirname, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const publicDir = resolve(here, '../public')
-const manifestPath = resolve(publicDir, 'brand/assets.manifest.json')
+const brandDir = resolve(publicDir, 'brand')
+const manifestPath = resolve(brandDir, 'assets.manifest.json')
 
 // Fixed expected pixel size per raster kind (icon-192.png etc. are named
 // after their own dimension, but apple-touch-icon and social-card are not).
@@ -86,6 +87,23 @@ for (const entry of manifest) {
         )
       }
     }
+  }
+}
+
+// Every file actually sitting under public/brand/ (recursive — covers
+// subdirectories like networks/) must have a manifest entry. This is what
+// catches a future build-script clobber before it ships silently: an asset
+// can exist on disk with nobody recording its provenance/hash.
+const manifestPaths = new Set(manifest.map((entry) => entry.path))
+const brandFiles = readdirSync(brandDir, { recursive: true, withFileTypes: true }).filter((d) =>
+  d.isFile()
+)
+for (const dirent of brandFiles) {
+  const filePath = resolve(dirent.parentPath ?? dirent.path, dirent.name)
+  if (filePath === manifestPath) continue // the manifest doesn't need a self-entry
+  const relPath = `/brand/${relative(brandDir, filePath).split(sep).join('/')}`
+  if (!manifestPaths.has(relPath)) {
+    errors.push(`${relPath}: file exists under public/brand/ but has no manifest entry`)
   }
 }
 
