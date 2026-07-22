@@ -285,10 +285,18 @@ function EcoCard({ item }) {
     <article className="eco-card eco-card--brand">
       <span className="eco-card__logo" aria-hidden="true">
         {item.icon ? (
-          <img src={item.icon} alt="" loading="lazy" />
+          <img
+            src={item.icon}
+            alt=""
+            loading="lazy"
+            className={item.iconDark ? 'eco-card__logo-icon--default' : undefined}
+          />
         ) : (
           <span className="eco-card__mark">{initials(item.name)}</span>
         )}
+        {item.iconDark ? (
+          <img src={item.iconDark} alt="" loading="lazy" className="eco-card__logo-icon--dark" />
+        ) : null}
       </span>
       <h3 className="eco-card__name">{item.name}</h3>
     </article>
@@ -536,6 +544,18 @@ function EcoStyle() {
   height: 32px;
   width: auto;
   /* each logo carries its own official brand color — shown at full strength, not tinted. */
+}
+/* Stellar ships official Black + White finals; swap by live [data-theme] instead of
+   filtering the artwork (no recoloring). Default (Day Field/no attribute) shows Black;
+   Forest (this page's default card background is dark) shows White. */
+.eco-card__logo img.eco-card__logo-icon--dark {
+  display: none;
+}
+:root[data-theme='forest'] .eco-card__logo img.eco-card__logo-icon--dark {
+  display: inline-block;
+}
+:root[data-theme='forest'] .eco-card__logo img.eco-card__logo-icon--default {
+  display: none;
 }
 .eco-card__mark {
   display: inline-grid;
