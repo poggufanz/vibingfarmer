@@ -16,17 +16,29 @@ export const CHANNEL = 'vf-wallet-rpc'
 /**
  * Builds the window.vfWallet object. `post`/`listen` are injectable so this is testable without
  * a real window (defaults to window.postMessage / window.addEventListener('message', ...)).
+ * `dispatchEvent` is likewise injectable (defaults to window.dispatchEvent(new CustomEvent(...)))
+ * for the account-change announce below.
  */
-export function createVfWalletProvider({ post, listen } = {}) {
+export function createVfWalletProvider({ post, listen, dispatchEvent } = {}) {
   post = post ?? ((msg) => window.postMessage(msg, '*'))
   listen = listen ?? ((fn) => window.addEventListener('message', fn))
+  dispatchEvent =
+    dispatchEvent ?? ((name, detail) => window.dispatchEvent(new CustomEvent(name, { detail })))
   let seq = 0
   const pending = new Map()
 
   listen((event) => {
     if (event.source !== window) return
     const msg = event.data
-    if (!msg || msg.channel !== CHANNEL || msg.dir !== 'res') return
+    if (!msg || msg.channel !== CHANNEL) return
+    // Unsolicited push from providerBridge.js (relayed from background.js) — not a reply to any
+    // pending call. dApp callers (preflight caches, Base association, displayed owner state)
+    // subscribe to this instead of trusting a getAddress() result forever.
+    if (msg.dir === 'event' && msg.event === 'accountChanged') {
+      dispatchEvent('vfWallet#accountChanged', { address: msg.address ?? null })
+      return
+    }
+    if (msg.dir !== 'res') return
     const p = pending.get(msg.id)
     if (!p) return
     pending.delete(msg.id)

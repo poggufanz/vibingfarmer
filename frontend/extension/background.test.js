@@ -3,10 +3,17 @@ import {
   handleMessage,
   handleProviderMessage,
   handleWindowRemoved,
+  handleActiveAccountChanged,
   isInternalSender,
   resolveWalletAddress,
 } from './background.js'
 import { resolveActiveAccount } from '../src/wallet/activeAccount.js'
+import {
+  CONSENT_KEY,
+  consentId,
+  createRequestSnapshot,
+  validateRequestSnapshot,
+} from '../src/wallet/consentStore.js'
 
 describe('background router — action ceremony', () => {
   it('opens ceremony.html with the action and stashes params in session storage', async () => {
@@ -106,7 +113,7 @@ describe('background router — action ceremony', () => {
   })
 })
 
-function fakeEnv({ allowlist = {}, address = null, classic = {} } = {}) {
+function fakeEnv({ allowlist = {}, address = null, classic = {}, now } = {}) {
   const local = {
     vf_allowlist: allowlist,
     vf_wallet_contract: address,
@@ -118,6 +125,7 @@ function fakeEnv({ allowlist = {}, address = null, classic = {} } = {}) {
       storageLocal: {
         get: vi.fn(async (k) => ({ [k]: local[k] })),
         set: vi.fn(async (obj) => Object.assign(local, obj)),
+        remove: vi.fn(async (k) => delete local[k]),
       },
       storageSession: {
         get: vi.fn(async (k) => ({ [k]: session[k] })),
@@ -128,6 +136,7 @@ function fakeEnv({ allowlist = {}, address = null, classic = {} } = {}) {
       uuid: vi.fn(() => 'rid-1'),
       dappPending: new Map(),
       queueHolder: { p: Promise.resolve() },
+      ...(now ? { now } : {}),
     },
     local,
     session,
@@ -221,16 +230,30 @@ describe('background router — PROVIDER_REQUEST (dapp path)', () => {
     expect(env.windows.create).toHaveBeenCalledWith(
       expect.objectContaining({ url: expect.stringContaining('rid=rid-1'), type: 'popup' })
     )
-    expect(session['vf_req_rid-1']).toEqual({
+    expect(session['vf_req_rid-1']).toMatchObject({
+      version: 1,
+      rid: 'rid-1',
       method: 'getAddress',
       params: {},
-      origin: 'https://vibing-farmer.pages.dev',
+      requester: {
+        origin: 'https://vibing-farmer.pages.dev',
+        tabId: 3,
+        frameId: null,
+        documentId: null,
+      },
+      account: {
+        id: 'stellar-testnet:CACCT',
+        address: 'CACCT',
+        kind: 'C',
+        signer: 'passkey-secp256r1',
+      },
     })
+    expect(session['vf_req_rid-1'].expiresAt).toBeGreaterThan(session['vf_req_rid-1'].createdAt)
     expect(reply).not.toHaveBeenCalled() // pending until the ceremony answers
   })
 
-  it('CEREMONY_RESULT with rid resolves the pending dapp request and persists the allowlist', async () => {
-    const { env, local } = fakeEnv({ address: 'CACCT' })
+  it('CEREMONY_RESULT with rid resolves the pending dapp request and grants origin+account consent', async () => {
+    const { env, local, session } = fakeEnv({ address: 'CACCT' })
     const reply = vi.fn()
     await handleProviderMessage(
       { type: 'PROVIDER_REQUEST', method: 'getAddress' },
@@ -245,8 +268,87 @@ describe('background router — PROVIDER_REQUEST (dapp path)', () => {
       vi.fn()
     )
     expect(reply).toHaveBeenCalledWith(expect.objectContaining({ ok: true, address: 'CACCT' }))
-    expect(local.vf_allowlist['https://vibing-farmer.pages.dev']).toBeTruthy()
+    const id = consentId('https://vibing-farmer.pages.dev', 'stellar-testnet:CACCT')
+    expect(local[CONSENT_KEY][id]).toMatchObject({
+      version: 2,
+      origin: 'https://vibing-farmer.pages.dev',
+      accountId: 'stellar-testnet:CACCT',
+      accountAddress: 'CACCT',
+      accountKind: 'C',
+    })
     expect(env.dappPending.size).toBe(0)
+    // consumed once — the stashed snapshot cannot be replayed to grant consent again
+    expect(session['vf_req_rid-1']).toBeUndefined()
+  })
+
+  it('a replayed CEREMONY_RESULT for an already-settled rid is a silent no-op (never double-grants)', async () => {
+    const { env, local } = fakeEnv({ address: 'CACCT' })
+    await handleProviderMessage(
+      { type: 'PROVIDER_REQUEST', method: 'getAddress' },
+      SENDER,
+      env,
+      vi.fn()
+    )
+    await flush()
+    await handleMessage(
+      { type: 'CEREMONY_RESULT', rid: 'rid-1', ok: true, address: 'CACCT' },
+      env,
+      vi.fn()
+    )
+    const id = consentId('https://vibing-farmer.pages.dev', 'stellar-testnet:CACCT')
+    const grantedAtFirst = local[CONSENT_KEY][id].grantedAt
+    const replayReply = vi.fn()
+    await handleMessage(
+      { type: 'CEREMONY_RESULT', rid: 'rid-1', ok: true, address: 'CACCT' },
+      env,
+      replayReply
+    )
+    expect(replayReply).not.toHaveBeenCalled() // settleDappRequest finds no pending entry
+    expect(local[CONSENT_KEY][id].grantedAt).toBe(grantedAtFirst)
+  })
+
+  it('a CEREMONY_RESULT for an account that changed since the snapshot was taken fails closed (-3), grants no consent', async () => {
+    const { env, local } = fakeEnv({ address: 'CACCT' })
+    const reply = vi.fn()
+    await handleProviderMessage(
+      { type: 'PROVIDER_REQUEST', method: 'getAddress' },
+      SENDER,
+      env,
+      reply
+    )
+    await flush()
+    // Active account switches to a different passkey contract between snapshot and result.
+    local.vf_wallet_contract = 'COTHER'
+    await handleMessage(
+      { type: 'CEREMONY_RESULT', rid: 'rid-1', ok: true, address: 'CACCT' },
+      env,
+      vi.fn()
+    )
+    expect(reply).toHaveBeenCalledWith(expect.objectContaining({ ok: false, code: -3 }))
+    expect(local[CONSENT_KEY]).toBeUndefined()
+  })
+
+  it('a CEREMONY_RESULT arriving after its snapshot expired fails closed (-3), grants no consent', async () => {
+    let clock = 1000
+    const { env, local } = fakeEnv({ address: 'CACCT', now: () => clock })
+    const reply = vi.fn()
+    await handleProviderMessage(
+      { type: 'PROVIDER_REQUEST', method: 'getAddress' },
+      SENDER,
+      env,
+      reply
+    )
+    await flush()
+    clock += 5 * 60 * 1000 + 1 // past the five-minute TTL
+    await handleMessage(
+      { type: 'CEREMONY_RESULT', rid: 'rid-1', ok: true, address: 'CACCT' },
+      env,
+      vi.fn()
+    )
+    expect(reply).toHaveBeenCalledWith(
+      expect.objectContaining({ ok: false, code: -3, error: expect.stringMatching(/expired/i) })
+    )
+    expect(local[CONSENT_KEY]).toBeUndefined()
   })
 
   it('closing the approval window rejects the pending request with SEP-43 -4', async () => {
@@ -421,6 +523,240 @@ describe('resolveWalletAddress stays in lockstep with resolveActiveAccount (drif
       expect(bgAddress).toBe(moduleAddress)
     })
   }
+})
+
+// Drift guard for the consent/snapshot mirror — same convention as resolveWalletAddress's own
+// drift-guard suite above. validateRequestSnapshot is pure/sync so it's cheap to run the exact
+// same fixtures through background's private copy (exercised indirectly via handleProviderMessage
+// + handleMessage, both exported) and the module of record.
+describe('background consent/snapshot logic stays in lockstep with src/wallet/consentStore.js (drift guard)', () => {
+  const ACCOUNT_C = {
+    id: 'stellar-testnet:CACCT',
+    address: 'CACCT',
+    kind: 'C',
+    signer: 'passkey-secp256r1',
+  }
+  const ACCOUNT_G = {
+    id: 'stellar-testnet:G1',
+    address: 'G1',
+    kind: 'G',
+    signer: 'classic-ed25519',
+  }
+  const SNAP_SENDER = { origin: 'https://vibing-farmer.pages.dev', tab: { id: 3 } }
+
+  function moduleSnapshot(overrides = {}) {
+    return createRequestSnapshot({
+      rid: 'rid-1',
+      method: 'getAddress',
+      params: {},
+      sender: SNAP_SENDER,
+      account: ACCOUNT_C,
+      now: 1000,
+      ...overrides,
+    })
+  }
+
+  // Only cases background.js's exported CEREMONY_RESULT{rid} path can actually exercise:
+  // that call site deliberately validates WITHOUT a `sender` (the incoming message's sender is
+  // approve.js's own internal page, not the dapp's — see background.js's docstring on that call),
+  // so origin/tab/frame/document mismatches aren't comparable here; they're covered directly by
+  // consentStore.test.js's own matrix.
+  const cases = {
+    'fresh, matching account': { activeAccount: ACCOUNT_C, now: 1001 },
+    'expired (past TTL)': { activeAccount: ACCOUNT_C, now: 10_000_000 },
+    'account switched': { activeAccount: ACCOUNT_G, now: 1001 },
+    'no active account': { activeAccount: null, now: 1001 },
+  }
+
+  for (const [label, ctx] of Object.entries(cases)) {
+    it(`${label}: background's validation and the module of record agree`, async () => {
+      const snapshot = moduleSnapshot()
+      // Drive background's private validateRequestSnapshotLocal indirectly through the exported
+      // CEREMONY_RESULT{rid} path: seed the exact snapshot, seed storage so resolveActiveAccountLocal
+      // resolves to ctx.activeAccount (or nothing), then compare the two ok/code outcomes.
+      const { env, session, local } = fakeEnv({ now: () => ctx.now })
+      session[`vf_req_rid-1`] = snapshot
+      if (ctx.activeAccount?.kind === 'C') local.vf_wallet_contract = ctx.activeAccount.address
+      if (ctx.activeAccount?.kind === 'G') {
+        local.vf_classic_wallets = {
+          [ctx.activeAccount.address]: { publicKey: ctx.activeAccount.address, createdAt: 1 },
+        }
+      }
+      local.vf_allowlist_migration_v1 = { at: 0, migrated: 0, skipped: 0 } // no legacy migration noise
+
+      const reply = vi.fn()
+      await handleMessage(
+        { type: 'CEREMONY_RESULT', rid: 'rid-1', ok: true, address: ACCOUNT_C.address },
+        env,
+        reply
+      )
+      const bgOk = Boolean(local[CONSENT_KEY]?.[consentId(snapshot.requester.origin, ACCOUNT_C.id)])
+
+      const moduleResult = validateRequestSnapshot(snapshot, ctx)
+
+      expect(bgOk).toBe(moduleResult.ok)
+    })
+  }
+})
+
+describe('SEP-43 account-switch cancellation (handleActiveAccountChanged)', () => {
+  it('cancels a queued/open dapp request whose snapshot account no longer matches, with code -3, and closes its window', async () => {
+    const { env } = fakeEnv({ address: 'CACCT' })
+    const reply = vi.fn()
+    await handleProviderMessage(
+      { type: 'PROVIDER_REQUEST', method: 'signTransaction', params: { xdr: 'X' } },
+      SENDER,
+      env,
+      reply
+    )
+    await flush()
+    env.windows.remove = vi.fn(async () => {})
+    env.tabs = { query: vi.fn(async () => []), sendMessage: vi.fn() }
+    // account switches away from CACCT
+    env.storageLocal.set({ vf_wallet_contract: 'CNEW' })
+
+    await handleActiveAccountChanged(env)
+
+    expect(reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ok: false,
+        code: -3,
+        error: expect.stringMatching(/account changed/i),
+      })
+    )
+    expect(env.windows.remove).toHaveBeenCalledWith(900)
+    expect(env.dappPending.size).toBe(0)
+  })
+
+  it('leaves a request matching the new active account untouched', async () => {
+    const { env } = fakeEnv({ address: 'CACCT' })
+    const reply = vi.fn()
+    await handleProviderMessage(
+      { type: 'PROVIDER_REQUEST', method: 'signTransaction', params: { xdr: 'X' } },
+      SENDER,
+      env,
+      reply
+    )
+    await flush()
+    env.windows.remove = vi.fn(async () => {})
+    env.tabs = { query: vi.fn(async () => []), sendMessage: vi.fn() }
+
+    await handleActiveAccountChanged(env) // no storage change — same account still active
+
+    expect(reply).not.toHaveBeenCalled()
+    expect(env.windows.remove).not.toHaveBeenCalled()
+    expect(env.dappPending.size).toBe(1)
+  })
+
+  it('broadcasts VF_ACCOUNT_CHANGED with the new address to every open tab', async () => {
+    const { env } = fakeEnv({ address: 'CACCT' })
+    env.tabs = {
+      query: vi.fn(async () => [{ id: 11 }, { id: 12 }]),
+      sendMessage: vi.fn(() => ({ catch: () => {} })),
+    }
+    await handleActiveAccountChanged(env)
+    expect(env.tabs.sendMessage).toHaveBeenCalledWith(11, {
+      type: 'VF_ACCOUNT_CHANGED',
+      address: 'CACCT',
+    })
+    expect(env.tabs.sendMessage).toHaveBeenCalledWith(12, {
+      type: 'VF_ACCOUNT_CHANGED',
+      address: 'CACCT',
+    })
+  })
+
+  it('broadcasts a null address when the account becomes ambiguous/empty', async () => {
+    const { env } = fakeEnv({
+      address: 'CACCT',
+      classic: { G1: { publicKey: 'G1', createdAt: 1 } },
+    })
+    env.tabs = {
+      query: vi.fn(async () => [{ id: 11 }]),
+      sendMessage: vi.fn(() => ({ catch: () => {} })),
+    }
+    await handleActiveAccountChanged(env)
+    expect(env.tabs.sendMessage).toHaveBeenCalledWith(11, {
+      type: 'VF_ACCOUNT_CHANGED',
+      address: null,
+    })
+  })
+})
+
+describe('legacy vf_allowlist migration (narrow, one-time)', () => {
+  it('migrates when exactly one wallet exists on the device — grants origin+account consent, deletes the old allowlist', async () => {
+    const { env, local } = fakeEnv({
+      allowlist: { 'https://a.example': { addedAt: 1 }, 'https://b.example': { addedAt: 2 } },
+      address: 'CACCT',
+    })
+    await handleProviderMessage(
+      { type: 'PROVIDER_REQUEST', method: 'isConnected' },
+      { origin: 'https://a.example', tab: { id: 1 } },
+      env,
+      vi.fn()
+    )
+    const id = consentId('https://a.example', 'stellar-testnet:CACCT')
+    expect(local[CONSENT_KEY][id]).toMatchObject({
+      origin: 'https://a.example',
+      accountId: 'stellar-testnet:CACCT',
+    })
+    expect(local.vf_allowlist).toBeUndefined()
+    expect(local.vf_allowlist_migration_v1).toMatchObject({ migrated: 2, skipped: 0 })
+  })
+
+  it('never migrates when both a classic and a passkey wallet exist — ambiguous, never grants every current account', async () => {
+    const { env, local } = fakeEnv({
+      allowlist: { 'https://a.example': { addedAt: 1 } },
+      address: 'CACCT',
+      classic: { G1: { publicKey: 'G1', createdAt: 1 } },
+    })
+    await handleProviderMessage(
+      { type: 'PROVIDER_REQUEST', method: 'isConnected' },
+      { origin: 'https://a.example', tab: { id: 1 } },
+      env,
+      vi.fn()
+    )
+    expect(local[CONSENT_KEY]).toBeUndefined()
+    expect(local.vf_allowlist_migration_v1).toMatchObject({ migrated: 0, skipped: 1 })
+  })
+
+  it('never migrates when there is no wallet at all', async () => {
+    const { env, local } = fakeEnv({
+      allowlist: { 'https://a.example': { addedAt: 1 } },
+    })
+    await handleProviderMessage(
+      { type: 'PROVIDER_REQUEST', method: 'isConnected' },
+      { origin: 'https://a.example', tab: { id: 1 } },
+      env,
+      vi.fn()
+    )
+    expect(local[CONSENT_KEY]).toBeUndefined()
+    expect(local.vf_allowlist_migration_v1).toMatchObject({ migrated: 0, skipped: 1 })
+  })
+
+  it('is idempotent — runs exactly once even across repeated requests', async () => {
+    const { env, local } = fakeEnv({
+      allowlist: { 'https://a.example': { addedAt: 1 } },
+      address: 'CACCT',
+    })
+    await handleProviderMessage(
+      { type: 'PROVIDER_REQUEST', method: 'isConnected' },
+      { origin: 'https://a.example', tab: { id: 1 } },
+      env,
+      vi.fn()
+    )
+    const firstMigration = local.vf_allowlist_migration_v1
+    local.vf_allowlist = { 'https://c.example': { addedAt: 9 } } // reintroduce — must be ignored
+    await handleProviderMessage(
+      { type: 'PROVIDER_REQUEST', method: 'isConnected' },
+      { origin: 'https://c.example', tab: { id: 1 } },
+      env,
+      vi.fn()
+    )
+    expect(local.vf_allowlist_migration_v1).toEqual(firstMigration)
+    expect(
+      local[CONSENT_KEY][consentId('https://c.example', 'stellar-testnet:CACCT')]
+    ).toBeUndefined()
+  })
 })
 
 describe('isInternalSender', () => {

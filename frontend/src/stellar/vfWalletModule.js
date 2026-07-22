@@ -37,7 +37,6 @@ export class VfWalletModule {
     // TODO: point at a real listing/repo once VF Wallet is published somewhere.
     this.productUrl = '/'
     this.productIcon = '/vibing_farmer.logo.svg'
-    this._cachedAddress = null
   }
 
   // The content script injects at document_start, but the kit can build its picker before the
@@ -59,25 +58,25 @@ export class VfWalletModule {
     })
   }
 
-  // Ceremony runs in the extension's own tab (WebAuthn credentials are origin-bound, so it MUST
-  // run at the extension's chrome-extension:// origin, not the dApp's). Cached after the first
-  // resolve so repeat calls (signTxXdr reads this before every sign — see stellar/walletKit.js)
-  // don't reopen a ceremony tab each time.
+  // No permanent cache: the active account can change underneath this module (popup account
+  // switcher, revoke) without its lifetime ending, and a cached value would then sign/read
+  // against a stale account. Every call asks window.vfWallet fresh — connected origins are
+  // answered by background.js silently from storage (no repeat ceremony/approval popup), so this
+  // costs a message round trip, not a UI reopen. providerBridge.js/providerInject.js emit
+  // vfWallet#accountChanged for OTHER callers (preflight caches, Base association, displayed
+  // owner state) that do keep their own address cache to invalidate.
   async getAddress() {
-    if (this._cachedAddress) return { address: this._cachedAddress }
-    const { address } = await provider().getAddress()
-    this._cachedAddress = address
-    return { address }
+    return provider().getAddress()
   }
 
   async signTransaction(xdr, opts) {
     const { signedTxXdr, signerAddress } = await provider().signTransaction(xdr, opts)
-    return { signedTxXdr, signerAddress: signerAddress ?? opts?.address ?? this._cachedAddress }
+    return { signedTxXdr, signerAddress: signerAddress ?? opts?.address ?? null }
   }
 
   async signAuthEntry(authEntry, opts) {
     const { signedAuthEntry, signerAddress } = await provider().signAuthEntry(authEntry, opts)
-    return { signedAuthEntry, signerAddress: signerAddress ?? opts?.address ?? this._cachedAddress }
+    return { signedAuthEntry, signerAddress: signerAddress ?? opts?.address ?? null }
   }
 
   // Smart-account-kit (the extension's signer) only exposes signAuthEntry in this codebase —
@@ -99,6 +98,7 @@ export class VfWalletModule {
   }
 
   async disconnect() {
-    this._cachedAddress = null
+    // Nothing cached locally to clear — see getAddress's docstring. Kept as a real async method
+    // (not deleted) because ModuleInterface's duck-typed contract expects it to exist.
   }
 }

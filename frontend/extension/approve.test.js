@@ -1,5 +1,7 @@
-import { describe, it, expect } from 'vitest'
-import { screenModel, rejectionResult } from './approve.js'
+import { describe, it, expect, beforeEach } from 'vitest'
+import { screenModel, rejectionResult, screenKind, verifyStillValid } from './approve.js'
+import { installChromeMock } from '../src/wallet/testUtils.js'
+import { createRequestSnapshot } from '../src/wallet/consentStore.js'
 
 const ORIGIN = 'https://vibing-farmer.pages.dev'
 
@@ -100,5 +102,110 @@ describe('approve — screen model', () => {
       code: -4,
       error: 'User rejected the request',
     })
+  })
+})
+
+describe('screenKind', () => {
+  it('maps ActiveAccountV1 kind to the screen vocabulary', () => {
+    expect(screenKind('G')).toBe('classic')
+    expect(screenKind('C')).toBe('passkey')
+    expect(screenKind(undefined)).toBeNull()
+  })
+})
+
+// The reviewer's gate item on VFW2: approve.js must never re-derive an account locally (that was
+// the "passkey wins" bug in the old resolveWallet()) — it must only trust resolveActiveAccount(),
+// same resolver as background.js/popup.jsx, and fail closed when it can't produce one unambiguous
+// answer. verifyStillValid is the function this task replaced resolveWallet with.
+describe('verifyStillValid — pre-sign account re-check (resolveWallet demotion)', () => {
+  beforeEach(() => {
+    installChromeMock()
+  })
+
+  const G1 = 'GAAA1111111111111111111111111111111111111111111111111'
+  const C1 = 'CCCC1111111111111111111111111111111111111111111111111'
+
+  function snapshotFor(account) {
+    return createRequestSnapshot({
+      rid: 'rid-1',
+      method: 'signTransaction',
+      params: { xdr: 'X' },
+      sender: { origin: ORIGIN, tab: { id: 1 } },
+      account,
+      now: Date.now(),
+    })
+  }
+
+  it('accepts when the sole wallet on the device matches the snapshot account', async () => {
+    await globalThis.chrome.storage.local.set({ vf_wallet_contract: C1 })
+    const account = {
+      id: `stellar-testnet:${C1}`,
+      address: C1,
+      kind: 'C',
+      signer: 'passkey-secp256r1',
+    }
+    const check = await verifyStillValid(snapshotFor(account), globalThis.chrome.storage.local)
+    expect(check).toEqual({ ok: true })
+  })
+
+  it('fails closed (never silently picks the passkey account) when both a classic and a passkey wallet exist and neither is the persisted active selection', async () => {
+    await globalThis.chrome.storage.local.set({
+      vf_wallet_contract: C1,
+      vf_classic_wallets: { [G1]: { publicKey: G1, createdAt: 1 } },
+    })
+    const passkeyAccount = {
+      id: `stellar-testnet:${C1}`,
+      address: C1,
+      kind: 'C',
+      signer: 'passkey-secp256r1',
+    }
+    const check = await verifyStillValid(
+      snapshotFor(passkeyAccount),
+      globalThis.chrome.storage.local
+    )
+    expect(check).toMatchObject({ ok: false, code: -3 })
+  })
+
+  it('fails closed when the active account switched away from the snapshot account', async () => {
+    await globalThis.chrome.storage.local.set({ vf_wallet_contract: 'COTHER' })
+    const staleAccount = {
+      id: `stellar-testnet:${C1}`,
+      address: C1,
+      kind: 'C',
+      signer: 'passkey-secp256r1',
+    }
+    const check = await verifyStillValid(snapshotFor(staleAccount), globalThis.chrome.storage.local)
+    expect(check).toMatchObject({
+      ok: false,
+      code: -3,
+      error: expect.stringMatching(/account changed/i),
+    })
+  })
+
+  it('honors an explicit persisted active-account selection over the other wallet', async () => {
+    await globalThis.chrome.storage.local.set({
+      vf_wallet_contract: C1,
+      vf_classic_wallets: { [G1]: { publicKey: G1, createdAt: 1 } },
+      vf_active_account_v1: {
+        version: 1,
+        id: `stellar-testnet:${G1}`,
+        network: 'stellar-testnet',
+        address: G1,
+        kind: 'G',
+        signer: 'classic-ed25519',
+        selectedAt: 1,
+      },
+    })
+    const classicAccount = {
+      id: `stellar-testnet:${G1}`,
+      address: G1,
+      kind: 'G',
+      signer: 'classic-ed25519',
+    }
+    const check = await verifyStillValid(
+      snapshotFor(classicAccount),
+      globalThis.chrome.storage.local
+    )
+    expect(check).toEqual({ ok: true })
   })
 })

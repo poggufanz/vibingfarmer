@@ -43,27 +43,38 @@ describe('VfWalletModule', () => {
     await expect(mod.getAddress()).rejects.toThrow(/not detected/i)
   })
 
-  it('getAddress reads from window.vfWallet and caches the result (no repeat ceremony tab)', async () => {
+  it('getAddress reads from window.vfWallet fresh every call — no permanent cache', async () => {
     const getAddress = vi.fn(async () => ({ address: 'CWALLET' }))
     setProvider({ getAddress })
     const mod = new VfWalletModule()
     expect(await mod.getAddress()).toEqual({ address: 'CWALLET' })
     expect(await mod.getAddress()).toEqual({ address: 'CWALLET' })
-    expect(getAddress).toHaveBeenCalledOnce()
+    expect(getAddress).toHaveBeenCalledTimes(2)
   })
 
-  it('signTransaction delegates to window.vfWallet and falls back to the cached address', async () => {
+  it('getAddress reflects an account switch on the very next call (no stale cached address)', async () => {
+    const getAddress = vi
+      .fn()
+      .mockResolvedValueOnce({ address: 'COLD' })
+      .mockResolvedValueOnce({ address: 'CNEW' })
+    setProvider({ getAddress })
+    const mod = new VfWalletModule()
+    expect(await mod.getAddress()).toEqual({ address: 'COLD' })
+    expect(await mod.getAddress()).toEqual({ address: 'CNEW' })
+  })
+
+  it('signTransaction delegates to window.vfWallet and falls back to opts.address', async () => {
     setProvider({
-      getAddress: vi.fn(async () => ({ address: 'CWALLET' })),
       signTransaction: vi.fn(async () => ({ signedTxXdr: 'SIGNED' })),
     })
     const mod = new VfWalletModule()
-    await mod.getAddress()
     const out = await mod.signTransaction('UNSIGNED', {
+      address: 'CWALLET',
       networkPassphrase: 'Test SDF Network ; September 2015',
     })
     expect(out).toEqual({ signedTxXdr: 'SIGNED', signerAddress: 'CWALLET' })
     expect(window.vfWallet.signTransaction).toHaveBeenCalledWith('UNSIGNED', {
+      address: 'CWALLET',
       networkPassphrase: 'Test SDF Network ; September 2015',
     })
   })
@@ -91,12 +102,8 @@ describe('VfWalletModule', () => {
     })
   })
 
-  it('disconnect clears the cached address so the next getAddress re-resolves', async () => {
-    setProvider({ getAddress: vi.fn(async () => ({ address: 'CWALLET' })) })
+  it('disconnect resolves without throwing (no local state to tear down)', async () => {
     const mod = new VfWalletModule()
-    await mod.getAddress()
-    await mod.disconnect()
-    await mod.getAddress()
-    expect(window.vfWallet.getAddress).toHaveBeenCalledTimes(2)
+    await expect(mod.disconnect()).resolves.toBeUndefined()
   })
 })

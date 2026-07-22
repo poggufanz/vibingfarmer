@@ -13,20 +13,30 @@ import { unlockWallet, withSecret } from '../src/wallet/classicAccount.js'
 import { isUnlocked } from '../src/wallet/session.js'
 import { rpcServer } from '../src/stellar/client.js'
 import { NETWORK_PASSPHRASE, STELLAR_NETWORK_LABEL } from '../src/stellar/config.js'
+import { resolveActiveAccount } from '../src/wallet/activeAccount.js'
+import { validateRequestSnapshot } from '../src/wallet/consentStore.js'
 import { summarizeTransaction, summarizeAuthEntry, shortAddr } from './txSummary.js'
 
 // How many ledgers a dapp-requested auth-entry signature stays valid — mirrors
 // stellar/agentDeposit.js's AUTH_TTL_LEDGERS (same "session-length" signing idiom).
 const AUTH_TTL_LEDGERS = 360
 
-/** Passkey smart account wins; else the oldest classic wallet's G-address.
- *  keep in sync with background.js resolveWalletAddress; assumes single classic wallet (see session.js) */
-async function resolveWallet() {
-  const store = await chrome.storage.local.get(['vf_wallet_contract', 'vf_classic_wallets'])
-  if (store.vf_wallet_contract) return { address: store.vf_wallet_contract, kind: 'passkey' }
-  const classic = store.vf_classic_wallets ?? {}
-  const first = Object.values(classic).sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0))[0]
-  return first ? { address: first.publicKey, kind: 'classic' } : { address: null, kind: null }
+/** ActiveAccountV1's 'G'|'C' kind -> this screen's 'classic'|'passkey' vocabulary (copy/behavior
+ *  below is keyed on the latter). */
+export function screenKind(accountKind) {
+  return accountKind === 'G' ? 'classic' : accountKind === 'C' ? 'passkey' : null
+}
+
+/** Re-resolves the CURRENT active account (never the snapshot's own, and never a locally
+ *  re-derived "passkey wins" guess — resolveActiveAccount is the one authoritative resolver,
+ *  same as background.js/popup.jsx) and checks it still matches the snapshot this approval
+ *  screen was opened for. Fails closed on any account switch/ambiguity/expiry/mismatch, BEFORE
+ *  Face ID or the wallet password prompt ever runs. `storageLocal` is injectable for testing —
+ *  defaults to the real chrome.storage.local. */
+export async function verifyStillValid(req, storageLocal = chrome.storage.local) {
+  const fresh = await resolveActiveAccount({ storageLocal, migrate: false })
+  const activeAccount = fresh.status === 'ready' ? fresh.account : null
+  return validateRequestSnapshot(req, { activeAccount, now: Date.now() })
 }
 
 /** Exact CEREMONY_RESULT for a user rejection (SEP-43 -4). */
@@ -140,7 +150,11 @@ async function approveSign(req, rid, address) {
     const signedTxXdr = await signTransactionForContract({ tx, contractId, kit })
     return { type: 'CEREMONY_RESULT', rid, ok: true, signedTxXdr, address: contractId }
   }
-  const signedAuthEntry = await signAuthEntryString({ authEntry: req.params.authEntry, kit })
+  const signedAuthEntry = await signAuthEntryString({
+    authEntry: req.params.authEntry,
+    contractId,
+    kit,
+  })
   return { type: 'CEREMONY_RESULT', rid, ok: true, signedAuthEntry, address: contractId }
 }
 
@@ -177,14 +191,19 @@ async function approveSignClassic(req, rid, address) {
 if (typeof window !== 'undefined' && globalThis.chrome?.storage?.session) {
   ;(async () => {
     try {
+      // URL only ever carries the rid — an identifier, never authority. Every fact this screen
+      // acts on (origin, method, params, account) comes from the snapshot background.js stashed
+      // against that rid from Chrome-verified sender + the resolved active account.
       const rid = new URLSearchParams(location.search).get('rid')
       const got = await chrome.storage.session.get(`vf_req_${rid}`)
       const req = got[`vf_req_${rid}`]
-      if (!req) {
+      if (!req || Date.now() > req.expiresAt) {
         setStatus('Request expired — close this window and retry from the site.')
         return
       }
-      const { address, kind } = await resolveWallet()
+      const account = req.account ?? null
+      const address = account?.address ?? null
+      const kind = screenKind(account?.kind)
       const unlocked = kind === 'classic' ? await isUnlocked() : false
       const summary =
         req.method === 'signTransaction'
@@ -192,7 +211,10 @@ if (typeof window !== 'undefined' && globalThis.chrome?.storage?.session) {
           : req.method === 'signAuthEntry'
             ? summarizeAuthEntry(req.params?.authEntry)
             : null
-      const model = screenModel(req, { address, summary, kind, unlocked })
+      const model = screenModel(
+        { method: req.method, params: req.params, origin: req.requester?.origin },
+        { address, summary, kind, unlocked }
+      )
       render(model)
 
       document.getElementById('reject').onclick = () => {
@@ -213,6 +235,24 @@ if (typeof window !== 'undefined' && globalThis.chrome?.storage?.session) {
             window.close()
             return
           }
+
+          // Fail closed BEFORE signing on any account switch/ambiguity/expiry/mismatch — never
+          // re-derived locally (that was the "passkey wins" bug); always the one authoritative
+          // resolver, re-checked fresh against this exact snapshot.
+          const check = await verifyStillValid(req)
+          if (!check.ok) {
+            chrome.runtime.sendMessage({
+              type: 'CEREMONY_RESULT',
+              rid,
+              ok: false,
+              code: check.code,
+              error: check.error,
+            })
+            setStatus(check.error)
+            setTimeout(() => window.close(), 800)
+            return
+          }
+
           if (model.variant === 'connect') {
             chrome.runtime.sendMessage({ type: 'CEREMONY_RESULT', rid, ok: true, address })
             setStatus('Connected.')
@@ -238,7 +278,7 @@ if (typeof window !== 'undefined' && globalThis.chrome?.storage?.session) {
             if (pw) pw.value = ''
           }
           chrome.runtime.sendMessage(result)
-          setStatus('Signed.')
+          setStatus(`Signed and returned to ${req.requester?.origin ?? 'the site'}.`)
           setTimeout(() => window.close(), 800)
         } catch (e) {
           setStatus(`Failed: ${e.message}`)

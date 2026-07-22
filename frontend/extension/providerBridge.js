@@ -40,6 +40,22 @@ export function toProviderResult(method, res) {
   }
 }
 
+/** Maps background.js's broadcast into the page-facing event shape; null for anything else so
+ *  callers can ignore every other runtime message without inspecting it further. */
+export function toAccountChangedEvent(msg) {
+  if (msg?.type !== 'VF_ACCOUNT_CHANGED') return null
+  return { channel: CHANNEL, dir: 'event', event: 'accountChanged', address: msg.address ?? null }
+}
+
+/** Relays background.js's active-account-changed broadcast to the page. `env.post` injectable
+ *  same as handleProviderRequest. Returns whether it actually relayed anything (unit-test hook). */
+export function handleAccountChangedMessage(msg, env = {}) {
+  const post = env.post ?? ((m) => window.postMessage(m, '*'))
+  const evt = toAccountChangedEvent(msg)
+  if (evt) post(evt)
+  return Boolean(evt)
+}
+
 /**
  * Pure request handler. `env.sendMessage` stands in for chrome.runtime.sendMessage and
  * `env.post` for window.postMessage back to the page — both injectable so this is testable
@@ -85,5 +101,8 @@ if (typeof window !== 'undefined' && globalThis.chrome?.runtime?.sendMessage) {
     const msg = event.data
     if (!msg || msg.channel !== CHANNEL || msg.dir !== 'req') return
     handleProviderRequest(msg)
+  })
+  chrome.runtime.onMessage?.addListener?.((msg) => {
+    handleAccountChangedMessage(msg)
   })
 }
