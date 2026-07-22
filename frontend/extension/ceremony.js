@@ -1,8 +1,8 @@
 import { makeKit, createPasskeyWallet, connectPasskeyWallet, readBalance } from '../src/wallet/account.js'
-import { submitDeposit, submitApprove } from '../src/wallet/submit.js'
 import { signTransactionForContract, signAuthEntryString } from '../src/wallet/signGeneric.js'
 import { eligibility as vfEligibility, vaultFacts } from '../src/vfapi/client.js'
 import { FAUCET_PROXY_URL, NETWORK_PASSPHRASE } from '../src/stellar/config.js'
+import { submitCeremonyApprove, submitCeremonyDeposit } from './ceremonyActions.js'
 
 const params = new URLSearchParams(location.search)
 const action = params.get('action')
@@ -45,11 +45,9 @@ async function loadParams() {
       // Default = the live deposit vault's protocol (autofarm → Blend USDC), not aave-v3.
       const { facts } = vaultFacts(p.protocol || 'blend-usdc')
       const eligibility = (q) => vfEligibility({ ...q, facts })
-      out = await executeAgentDeposit({
+      out = await submitCeremonyDeposit({
+        contractId: connectedContractId,
         amount: p.amount,
-        minAmount: p.minAmount || '0',
-        minShares: p.minShares || '0',
-        execId: p.execId,
         eligibility,
         kit,
       })
@@ -64,9 +62,9 @@ async function loadParams() {
       })
     } else if (action === 'approve') {
       setStatus('Awaiting Face ID…')
-      out = await executeAgentApprove({
+      out = await submitCeremonyApprove({
+        contractId: connectedContractId,
         amount: p.amount,
-        execId: p.execId,
         kit,
       })
       setStatus(out.action === 'mint' ? 'Deposit completed.' : 'Approval completed.')
