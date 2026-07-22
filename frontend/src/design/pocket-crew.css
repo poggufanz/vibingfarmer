@@ -201,6 +201,10 @@ body {
   color: var(--pc-danger-on-light);
 }
 
+/* Geometry (3px outline/offset, 5px box-shadow ring) is duplicated as a static demo-only copy in
+   frontend/visual/main.jsx's `[data-demo-focus-ring]` fixture rule (Foundation Task 7, since real
+   DOM focus is singular and that fixture needs two surfaces ring-visible in one static frame) --
+   update both if this geometry ever changes. */
 :focus-visible {
   outline: 3px solid var(--focus-ring);
   outline-offset: 3px;

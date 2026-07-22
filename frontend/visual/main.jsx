@@ -124,7 +124,12 @@ function FoundationFixture() {
           {TOKEN_SWATCHES.map((token) => (
             <li
               key={token.label}
-              style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.35rem' }}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: '0.35rem',
+              }}
             >
               <span
                 aria-hidden="true"
@@ -281,7 +286,10 @@ function FoundationFixture() {
       <section aria-labelledby="interactive-heading">
         <h2 id="interactive-heading">Interactive states</h2>
 
-        <div className="pc-harvest" style={{ padding: '1rem', borderRadius: 12, display: 'inline-flex' }}>
+        <div
+          className="pc-harvest"
+          style={{ padding: '1rem', borderRadius: 12, display: 'inline-flex' }}
+        >
           <button type="button" className="btn-primary" data-demo-focus-ring="true">
             Confirm deposit
           </button>
@@ -313,7 +321,9 @@ function FoundationFixture() {
         </div>
 
         <TechnicalDetails summary="Raw grant scope" open>
-          <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{GRANT_SCOPE_JSON}</pre>
+          <pre style={{ margin: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+            {GRANT_SCOPE_JSON}
+          </pre>
         </TechnicalDetails>
 
         <p style={{ fontFamily: 'var(--font-mono)', wordBreak: 'break-all', margin: 0 }}>
