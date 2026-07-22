@@ -111,6 +111,45 @@ describe('BASE_POOL_CATALOG — custody-only proxy truth', () => {
   })
 })
 
+describe('normalizeVenue — discriminates records with no venueKind (review fix)', () => {
+  // app.jsx builds each agent's `vault` record by hand-picking fields (name/protocol/apy/addr/
+  // factSlug/chain) — it never sets venueKind. Before this fix, any such record fell through to
+  // the Stellar-live default, so a real Base custody-proxy agent's disclosure lied and claimed
+  // "supplies to Blend Capital v2 on Stellar testnet."
+  it('an app.jsx-shaped Base vault record (chain/factSlug/addr, no venueKind) normalizes to base-custody-proxy', () => {
+    const appShapedBaseVault = {
+      name: 'Aave v3 USDC (Base)',
+      protocol: 'vf-erc4626-proxy',
+      apy: '4.8',
+      drawdown: '-1.8',
+      risk: 'low',
+      addr: '0x389250872044368759D3db5C09b2706A6628d4e0',
+      tvl: 'N/A',
+      factSlug: 'aave-v3-base',
+      chain: 'base',
+    }
+    const v = normalizeVenue(appShapedBaseVault)
+    expect(v.venueKind).toBe(VENUE_KINDS.BASE_CUSTODY_PROXY)
+    expect(v.address).toBe('0x389250872044368759D3db5C09b2706A6628d4e0')
+    expect(v.disclosure).toBe('Base Sepolia proxy. Custody only. No protocol yield.')
+    expect(venueDisclosure(appShapedBaseVault)).not.toContain('Stellar')
+  })
+
+  it('throws rather than guess when a record carries contradictory network signals', () => {
+    const contradictory = { chain: 'base', address: SOROBAN_ACTIVE_VAULT_ADDRESS }
+    expect(() => normalizeVenue(contradictory)).toThrow(/contradictory/)
+  })
+
+  it('a bare/incomplete record with no network signal at all still defaults to stellar-live (unchanged)', () => {
+    // No chain, no factSlug, no address -- there is nothing to discriminate on, so this is not
+    // the "contradictory signals" case above; existing fixture-style callers (e.g. enforcementA
+    // tests' `{ protocol, addr: 'C...' }`) rely on this staying the safe default.
+    expect(normalizeVenue({ protocol: 'aave-v3', addr: 'C...' }).venueKind).toBe(
+      VENUE_KINDS.STELLAR_LIVE
+    )
+  })
+})
+
 describe('assertExecutableVenue', () => {
   it('returns the normalized record for a venue with an address', () => {
     expect(assertExecutableVenue(VAULT_CATALOG[0]).venueKind).toBe('stellar-live')
@@ -133,7 +172,12 @@ describe('BASE_PROXY_DISCLOSURE stays equal to the Foundation VenueTruth primiti
       new URL('../components/pocket/Primitives.jsx', import.meta.url)
     )
     const source = readFileSync(primitivesPath, 'utf8')
-    expect(source).toContain("'Base Sepolia proxy. Custody only. No protocol yield.'")
+    // Anchored on the actual assignment, not a bare substring match -- a bare `toContain` would
+    // still false-pass if BASE_PROXY_COPY were renamed/removed while the string lived on elsewhere
+    // (e.g. in a comment); this only passes while the constant itself still holds this value.
+    expect(source).toContain(
+      "const BASE_PROXY_COPY = 'Base Sepolia proxy. Custody only. No protocol yield.'"
+    )
     expect(venueDisclosure({ venueKind: 'base-custody-proxy' })).toBe(
       'Base Sepolia proxy. Custody only. No protocol yield.'
     )

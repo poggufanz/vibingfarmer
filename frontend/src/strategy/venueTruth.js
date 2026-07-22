@@ -48,6 +48,45 @@ function isProxyKind(venueKind) {
   return venueKind === VENUE_KINDS.BASE_CUSTODY_PROXY
 }
 
+const ZERO_X_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/
+const STELLAR_ADDRESS_RE = /^[CG][A-Z2-7]{55}$/
+
+// `addr` is what app.jsx's hand-built agent.vault records actually call it (never `address`) --
+// read both so a real production record's address is recognized either way.
+function addressOf(r) {
+  if (typeof r.address === 'string') return r.address
+  if (typeof r.addr === 'string') return r.addr
+  return undefined
+}
+
+// callers that already know which bucket a record belongs in (buildMergedCatalog, this file's own
+// tests) stamp `venueKind` explicitly and that always wins. Everything else -- notably app.jsx's
+// hand-built agent.vault records, which never set venueKind -- is discriminated from the signals
+// it actually carries: `chain`, a `-base` factSlug suffix, or a 0x/Stellar-shaped address. Genuinely
+// contradictory signals (e.g. chain:'base' paired with a real Stellar address) throw rather than
+// silently guess -- a wrong guess here is an affirmative false execution/yield claim, not a cosmetic
+// bug. A record with NO signal at all (no chain, no factSlug, no address) falls back to the
+// pre-existing stellar-live default; there is nothing to discriminate on, so that is not ambiguity.
+function resolveVenueKind(r) {
+  if (r.venueKind === VENUE_KINDS.BASE_CUSTODY_PROXY || r.venueKind === VENUE_KINDS.STELLAR_LIVE) {
+    return r.venueKind
+  }
+  const address = addressOf(r)
+  const baseSignal =
+    r.chain === 'base' ||
+    (typeof r.factSlug === 'string' && r.factSlug.endsWith('-base')) ||
+    (address !== undefined && ZERO_X_ADDRESS_RE.test(address))
+  const stellarSignal =
+    r.chain === 'stellar' || (address !== undefined && STELLAR_ADDRESS_RE.test(address))
+  if (baseSignal && stellarSignal) {
+    throw new Error(
+      'normalizeVenue: record carries contradictory network signals (both Base and Stellar) -- ' +
+        `refusing to guess: ${JSON.stringify(r)}`
+    )
+  }
+  return baseSignal ? VENUE_KINDS.BASE_CUSTODY_PROXY : VENUE_KINDS.STELLAR_LIVE
+}
+
 // Only an explicit, well-shaped `{ state: 'live', apy: <finite number> }` (optionally with a
 // fresh `asOf`) is ever treated as live. A flat top-level `apy` number -- which is what every
 // current input (the static config.js catalog, the DeFiLlama fetch in defiLlama.js) actually
@@ -65,26 +104,25 @@ function normalizeYield(raw, venueKind, nowMs) {
 
 /**
  * Normalizes an arbitrary raw venue-shaped record into the canonical truth record. Idempotent
- * (normalizing an already-normalized record returns the same shape). `raw.venueKind` is the only
- * signal trusted to select Base-custody-proxy vs. Stellar-live; callers that stamp venueKind
- * explicitly (buildMergedCatalog) control which bucket a record lands in regardless of any other
- * field (protocol/name/apy) the record claims.
+ * (normalizing an already-normalized record returns the same shape). An explicit `raw.venueKind`
+ * always wins (callers like buildMergedCatalog stamp it to control which bucket a record lands in
+ * regardless of any other field the record claims); otherwise it is inferred from `chain`/
+ * `factSlug`/address shape (see resolveVenueKind) -- e.g. app.jsx's hand-built agent.vault records,
+ * which never set venueKind at all.
  *
  * @param {object} raw
  * @param {{now?: number}} [opts]
  */
 export function normalizeVenue(raw, { now = Date.now() } = {}) {
   const r = raw && typeof raw === 'object' ? raw : {}
-  const venueKind = isProxyKind(r.venueKind)
-    ? VENUE_KINDS.BASE_CUSTODY_PROXY
-    : VENUE_KINDS.STELLAR_LIVE
+  const venueKind = resolveVenueKind(r)
   const isProxy = isProxyKind(venueKind)
 
   return Object.freeze({
     name: r.name || (isProxy ? undefined : 'Vibing Farmer Autofarm'),
     protocol: isProxy ? 'vf-erc4626-proxy' : r.protocol || 'blend-usdc',
     factSlug: r.factSlug,
-    address: r.address,
+    address: addressOf(r),
     networkId: isProxy ? NETWORK_IDS.BASE_SEPOLIA : NETWORK_IDS.STELLAR_TESTNET,
     venueKind,
     // Legacy alias some existing (pre-truth) consumers still tag/filter on.
