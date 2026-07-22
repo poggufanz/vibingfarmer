@@ -106,5 +106,23 @@
     "sourceUrl": "",
     "retrievedAt": "2026-07-22",
     "trademarkTreatment": "Vibing Farmer™ Pocket Crew mark — geometry is frozen; recolor only within the approved theme variants (forest, day, mono). No distortion, rotation, or recombination with other symbols."
+  },
+  {
+    "path": "/brand/networks/stellar.svg",
+    "kind": "network-stellar",
+    "sha256": "4ff9528ee3328dc220ee0a7aad6e7ef91fbf4492491d6a7b76109b8d73dabd33",
+    "source": "Stellar Development Foundation, official Logo Press Kit 2026 (Stellar Logo Final Black CMYK, vector PDF). Icon isolated from the Stellar-plus-wordmark lockup; path geometry unmodified.",
+    "sourceUrl": "https://stellar.org/brand-resources",
+    "retrievedAt": "2026-07-22",
+    "trademarkTreatment": "Stellar and the Stellar logo are trademarks of the Stellar Development Foundation (SDF), used per the SDF brand policy (stellar.org/brand-policy) solely to indicate that Vibing Farmer builds on the Stellar network. Rendered solid black, the SDF-approved Black variant, with no recoloring, distortion, or recombination with other symbols. Vibing Farmer is not endorsed by or affiliated with the SDF."
+  },
+  {
+    "path": "/brand/networks/base.svg",
+    "kind": "network-base",
+    "sha256": "53fb665addc3cad47f349dc19d66fbccfb8bb542381087b18b97a05863fdd326",
+    "source": "Base (Coinbase) official brand guide, \"The Square\" identifier. SVG copied verbatim from the guide page's own markup at brand.base.org/core-identifiers.",
+    "sourceUrl": "https://brand.base.org/core-identifiers",
+    "retrievedAt": "2026-07-22",
+    "trademarkTreatment": "Base and the Base Square mark are trademarks of Coinbase, used per Base's public brand guidelines solely to identify the optional Base Sepolia leg. Base Blue fill (#0000FF) and geometry copied unmodified; no recoloring, distortion, or recombination with other symbols. Vibing Farmer is not endorsed by or affiliated with Coinbase or the Base team."
   }
 ]
