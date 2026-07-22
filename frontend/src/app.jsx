@@ -632,16 +632,18 @@ const App = () => {
     }
   }, [location.pathname])
 
-  // Strategy Attestation — NON-BLOCKING, best-effort. Fires once a wallet provider
-  // exists (post-connect) and the AI strategy carries a deterministic hash. Any
-  // failure/rejection is swallowed by attestStrategyOnChain → strategy still executes.
-  useE(() => {
+  // Strategy Attestation — off-chain hash (rawStrategy.strategyHash) is already computed
+  // synchronously and deterministically by strategist.js at plan-generation time, no wallet or
+  // network involved. Recording that hash on-chain is a SEPARATE, explicit, opt-in action —
+  // never automatic — so it costs the user one additional wallet confirmation only when they
+  // choose it. handleAttestOnChain is that explicit action; the receipt/log surface calls it.
+  const handleAttestOnChain = () => {
     if (!rawStrategy?.strategyHash || strategyAttestation || attesting) return
     setAttesting(true)
     attestStrategyOnChain(rawStrategy, { attester: realAddress })
       .then((a) => setStrategyAttestation(formatAttestation(a)))
       .finally(() => setAttesting(false))
-  }, [rawStrategy, realAddress])
+  }
 
   // Background agent
   const [agentEnabled, setAgentEnabled] = useS(
@@ -3024,6 +3026,8 @@ const App = () => {
               strategyHash={rawStrategy?.strategyHash}
               attestation={strategyAttestation}
               attesting={attesting}
+              onAttestOnChain={handleAttestOnChain}
+              walletConnected={!!realAddress}
               simulation={simulation}
               council={debateResult || council}
               onCouncilRetry={handleRunCouncil}
