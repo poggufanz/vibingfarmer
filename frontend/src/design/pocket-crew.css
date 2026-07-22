@@ -116,12 +116,17 @@
   --line: #5f6c65;
   --eco-accent: #dff56c;
 
-  /* Deeper variants of the same 6 hues, calibrated for the light canvas. */
-  --pc-crew-1: #4f8f49;
+  /* Deeper variants of the same 6 hues, calibrated for the light canvas. crew-1/3/5 are nudged a
+     touch lighter than a plain "deepen the forest hue" pass would give: at #4f8f49/#a87c1e/#1f8f7a
+     neither #17251f (Field) nor #f2f5ef (Rice) ink cleared 4.5:1 against them (dark ink landed at
+     3.99-4.21 -- close, but under the AgentMark label-text floor). Re-verified against
+     src/design/contrast.js's contrastRatio() -- see day.crewInk/crew1,3,5 in CONTRAST_REQUIREMENTS
+     (4.61-4.80 with #17251f). Recompute + re-register there if these ever move again. */
+  --pc-crew-1: #569d50;
   --pc-crew-2: #3e72a8;
-  --pc-crew-3: #a87c1e;
+  --pc-crew-3: #b18220;
   --pc-crew-4: #8c5a3e;
-  --pc-crew-5: #1f8f7a;
+  --pc-crew-5: #229c85;
   --pc-crew-6: #a8446b;
 }
 
@@ -338,7 +343,9 @@ body {
   font-family: var(--font-sans);
   font-size: 11px;
   font-weight: 600;
-  fill: var(--pc-owned-ink);
+  /* No `fill` here on purpose: AgentMark.jsx sets it inline, per-crew-fill, so the label always
+     clears 4.5:1 against whichever identity color it landed on (a stylesheet fill would win the
+     SVG cascade over that presentation attribute and silently undo the calibration). */
 }
 
 .pc-agent-mark-state {

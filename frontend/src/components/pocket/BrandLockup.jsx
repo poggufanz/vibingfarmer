@@ -5,7 +5,7 @@
 // pocket-crew.css already does -- document.documentElement's `data-theme` attribute -- so this
 // component needs no theme prop or context of its own; it just asks the DOM the same question
 // CSS already asks.
-import { THEME_IDS, normalizeTheme } from '../../design/theme.js'
+import { THEME_IDS, currentDomTheme, normalizeTheme } from '../../design/theme.js'
 
 const MARK_SRC = Object.freeze({
   [THEME_IDS.FOREST]: '/brand/vibing-farmer-mark-forest.svg',
@@ -13,14 +13,9 @@ const MARK_SRC = Object.freeze({
   mono: '/brand/vibing-farmer-mark-mono.svg',
 })
 
-function currentDomTheme() {
-  if (typeof document === 'undefined') return null
-  return document.documentElement.getAttribute('data-theme')
-}
-
 function resolveMarkSrc(tone) {
   if (tone === 'mono') return MARK_SRC.mono
-  const themeId = normalizeTheme(tone === 'auto' ? currentDomTheme() : tone)
+  const themeId = tone === 'auto' ? currentDomTheme() : normalizeTheme(tone)
   return MARK_SRC[themeId]
 }
 

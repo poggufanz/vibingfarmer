@@ -58,3 +58,12 @@ export function applyTheme(theme, root = document.documentElement) {
 export function isLightTheme(theme) {
   return THEMES[normalizeTheme(theme)].light
 }
+
+// Reads the theme the DOM is actually rendering right now (the same `data-theme` attribute
+// pocket-crew.css keys its selectors on), for components that pick per-theme values without a
+// theme prop/context of their own -- e.g. BrandLockup's tone='auto' and AgentMark's ink choice.
+export function currentDomTheme(
+  root = typeof document !== 'undefined' ? document.documentElement : null
+) {
+  return normalizeTheme(root?.getAttribute('data-theme'))
+}

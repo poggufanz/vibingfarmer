@@ -18,7 +18,9 @@ const MONEY_PLACEHOLDER = Object.freeze({
 })
 
 export function MoneyFigure({ state, value, currency = 'USDC', freshness }) {
-  if (state in MONEY_PLACEHOLDER) {
+  // Object.hasOwn (not `in`): `state="toString"`/`"constructor"` etc. must never resolve through
+  // the prototype chain to a built-in function and render it as if it were a real money state.
+  if (Object.hasOwn(MONEY_PLACEHOLDER, state)) {
     return (
       <span className={`pc-money pc-money--${state}`} role={state === 'error' ? 'alert' : 'status'}>
         {MONEY_PLACEHOLDER[state]}
@@ -163,8 +165,17 @@ const SUPPORTS_NATIVE_DIALOG =
 
 // One shared focus/restore implementation for both the native <dialog> path and the
 // role="dialog" fallback -- mode only ever changes CSS classes below, never this behavior.
+//
+// `onClose` comes in via a ref, and the effect depends only on `open` (+ initialFocusRef): a
+// typical caller passes a fresh inline `onClose` closure every render (`onClose={() =>
+// setOpen(false)}`), and depending on that value directly would tear down + re-run this effect
+// on every parent re-render while the dialog is open -- moving focus to the trigger and back to
+// initialFocus on every keystroke of a parent-controlled input inside the dialog. panelRef is a
+// stable ref object (identity never changes), so it doesn't need to be a dependency either.
 function useDialogFocusTrap({ open, onClose, initialFocusRef, panelRef }) {
   const triggerRef = useRef(null)
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
 
   useEffect(() => {
     if (!open) return undefined
@@ -179,7 +190,7 @@ function useDialogFocusTrap({ open, onClose, initialFocusRef, panelRef }) {
     function onKeydown(e) {
       if (e.key === 'Escape') {
         e.preventDefault()
-        onClose?.()
+        onCloseRef.current?.()
         return
       }
       if (e.key !== 'Tab') return
@@ -205,7 +216,12 @@ function useDialogFocusTrap({ open, onClose, initialFocusRef, panelRef }) {
       document.removeEventListener('keydown', onKeydown)
       triggerRef.current?.focus?.()
     }
-  }, [open, onClose, initialFocusRef, panelRef])
+    // `onCloseRef`/`onClose` intentionally excluded (read via the ref instead -- see the comment
+    // above the function). `panelRef` is a `useRef()` result whose identity never changes for the
+    // life of the Dialog instance it belongs to, so including it below is safe and adds no
+    // re-runs; it's listed only to satisfy the linter, which can't trace a ref through a custom
+    // hook's parameter the way it recognizes a literal local `useRef()` call.
+  }, [open, initialFocusRef, panelRef])
 }
 
 export function Dialog({
@@ -221,6 +237,8 @@ export function Dialog({
   const dialogRef = useRef(null)
   const titleId = useId()
   const descriptionId = useId()
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
 
   useDialogFocusTrap({ open, onClose, initialFocusRef, panelRef: dialogRef })
 
@@ -228,6 +246,8 @@ export function Dialog({
   // gives non-modal show() semantics (no top-layer stacking, no native ::backdrop). The 'cancel'
   // event is the browser's own Escape handling for a modal <dialog>; it is redirected through
   // onClose too, so there is exactly one way this ever closes, matching the fallback path.
+  // Depends only on `open` (onClose via ref) for the same reason as useDialogFocusTrap above --
+  // a fresh inline onClose every parent render must not re-run showModal()/close() churn.
   useEffect(() => {
     if (!SUPPORTS_NATIVE_DIALOG || !open) return undefined
     const node = dialogRef.current
@@ -235,19 +255,19 @@ export function Dialog({
     if (!node.open) node.showModal()
     const onCancel = (e) => {
       e.preventDefault()
-      onClose?.()
+      onCloseRef.current?.()
     }
     node.addEventListener('cancel', onCancel)
     return () => {
       node.removeEventListener('cancel', onCancel)
       if (node.open) node.close()
     }
-  }, [open, onClose])
+  }, [open])
 
   if (!open) return null
 
   const handleOverlayClick = (e) => {
-    if (e.target === e.currentTarget) onClose?.()
+    if (e.target === e.currentTarget) onCloseRef.current?.()
   }
 
   const Tag = SUPPORTS_NATIVE_DIALOG ? 'dialog' : 'div'
@@ -256,6 +276,11 @@ export function Dialog({
   return (
     <Tag
       ref={dialogRef}
+      // The focus-trap's last-resort focus target when there are zero focusable children
+      // (see useDialogFocusTrap's `getFocusable()[0] || panelRef.current`) -- without this, a
+      // plain <div>/<dialog> isn't focusable at all, `.focus()` is a silent no-op, and a
+      // keyboard user is left parked on whatever was focused before the dialog opened.
+      tabIndex={-1}
       className={`pc-dialog pc-dialog--${mode}`}
       aria-modal="true"
       aria-labelledby={titleId}

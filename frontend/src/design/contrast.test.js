@@ -45,6 +45,28 @@ const EXPECTED_REQUIREMENTS = [
   ['day.warn/canvas', '#8A5A00', '#E9EEE8', 4.5],
   ['day.warn/workspace', '#8A5A00', '#F7F9F5', 4.5],
   ['day.warn/owned', '#8A5A00', '#F2F5EF', 4.5],
+
+  ['forest.crewInk/crew1', '#17251F', '#8FBF8A', 4.5],
+  ['forest.crewInk/crew2', '#17251F', '#6FA8DC', 4.5],
+  ['forest.crewInk/crew3', '#17251F', '#E0B84B', 4.5],
+  ['forest.crewInk/crew4', '#17251F', '#C9967B', 4.5],
+  ['forest.crewInk/crew5', '#17251F', '#5FD3BC', 4.5],
+  ['forest.crewInk/crew6', '#17251F', '#D98BA8', 4.5],
+  ['day.crewInk/crew1', '#17251F', '#569D50', 4.5],
+  ['day.crewInk/crew2', '#F2F5EF', '#3E72A8', 4.5],
+  ['day.crewInk/crew3', '#17251F', '#B18220', 4.5],
+  ['day.crewInk/crew4', '#F2F5EF', '#8C5A3E', 4.5],
+  ['day.crewInk/crew5', '#17251F', '#229C85', 4.5],
+  ['day.crewInk/crew6', '#F2F5EF', '#A8446B', 4.5],
+
+  ['forest.stateInk/active', '#17251F', '#DFF56C', 4.5],
+  ['forest.stateInk/confirmed', '#17251F', '#F2F5EF', 4.5],
+  ['forest.stateInk/failed', '#17251F', '#E26E67', 4.5],
+  ['forest.stateInk/idle', '#17251F', '#A8B5AD', 4.5],
+  ['day.stateInk/active', '#17251F', '#DFF56C', 4.5],
+  ['day.stateInk/confirmed', '#F2F5EF', '#17251F', 4.5],
+  ['day.stateInk/failed', '#F2F5EF', '#A8403C', 4.5],
+  ['day.stateInk/idle', '#F2F5EF', '#536159', 4.5],
 ]
 
 describe('Pocket Crew contrast contract', () => {

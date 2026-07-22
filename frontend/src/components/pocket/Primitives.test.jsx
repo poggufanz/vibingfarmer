@@ -385,4 +385,54 @@ describe('Dialog', () => {
     fireEvent.click(screen.getByText('Open dialog'))
     expect(await axe(container)).toHaveNoViolations()
   })
+
+  // Regression (review fix, Important 3): a normal controlled-input pattern re-renders the
+  // parent -- and therefore passes Dialog a brand-new inline `onClose` -- on every keystroke.
+  // The focus trap must not treat that as "the dialog re-opened": it must not move focus off the
+  // input (to the trigger, then back to the first focusable element) on every render.
+  function ReRenderHarness() {
+    const [open, setOpen] = useState(false)
+    const [text, setText] = useState('')
+    return (
+      <div>
+        <button type="button" onClick={() => setOpen(true)}>
+          Open dialog
+        </button>
+        {/* A fresh arrow function every render, on purpose -- the normal, idiomatic pattern. */}
+        <Dialog
+          open={open}
+          title="Edit note"
+          onClose={() => setOpen(false)}
+          actions={
+            <button type="button" data-testid="confirm-btn">
+              Save
+            </button>
+          }
+        >
+          {/* A decoy focusable BEFORE the input: if the trap wrongly re-runs and re-applies its
+              "focus the first focusable element" logic on every keystroke, focus lands here
+              instead of staying on the input -- that's what this test catches. */}
+          <button type="button" data-testid="decoy-btn">
+            Decoy
+          </button>
+          <input data-testid="note-input" value={text} onChange={(e) => setText(e.target.value)} />
+        </Dialog>
+      </div>
+    )
+  }
+
+  it('keeps focus on a parent-controlled input inside the dialog across parent re-renders', () => {
+    render(<ReRenderHarness />)
+    fireEvent.click(screen.getByText('Open dialog'))
+    const input = screen.getByTestId('note-input')
+    input.focus()
+    expect(document.activeElement).toBe(input)
+
+    fireEvent.change(input, { target: { value: 'h' } })
+    expect(document.activeElement).toBe(input)
+
+    fireEvent.change(input, { target: { value: 'hi' } })
+    expect(document.activeElement).toBe(input)
+    expect(input.value).toBe('hi')
+  })
 })
