@@ -54,6 +54,12 @@ describe('canonicalizeStrategy', () => {
     expect(c.source).toBe('venice')
   })
 
+  it('excludes the legacy strategyHash field (self-referential under its old name)', () => {
+    const c = canonicalizeStrategy({ strategyHash: '0xdead', source: 'venice' })
+    expect(c.strategyHash).toBeUndefined()
+    expect(c.source).toBe('venice')
+  })
+
   it('excludes transient wallet and wall-clock fields if a caller merges them in', () => {
     const c = canonicalizeStrategy({
       source: 'venice',

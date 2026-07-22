@@ -14,6 +14,7 @@
 
 const EXCLUDED_KEYS = new Set([
   'planFingerprint', // self-referential: this is the value hashStrategy is computing
+  'strategyHash', // legacy field name for the same self-referential value (drift guard)
   // transient UI state / wallet state -- never part of the plan's semantic content
   'attestation',
   'attester',
