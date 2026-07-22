@@ -6,6 +6,7 @@ import {
   isInternalSender,
   resolveWalletAddress,
 } from './background.js'
+import { resolveActiveAccount } from '../src/wallet/activeAccount.js'
 
 describe('background router — action ceremony', () => {
   it('opens ceremony.html with the action and stashes params in session storage', async () => {
@@ -374,6 +375,52 @@ describe('resolveWalletAddress', () => {
     const { env } = fakeEnv({})
     await expect(resolveWalletAddress(env.storageLocal)).resolves.toBeNull()
   })
+})
+
+// Drift guard: background.js necessarily duplicates activeAccount.js's persisted-selection
+// validation (MV3 service workers can't `import` — see background.js's own docstring), so run the
+// SAME matrix fixtures through both resolvers and assert identical outcomes per case. A corrupt
+// record (wrong version/network/signer, but a matching id+kind) must fail closed in BOTH — never
+// accepted by one context and rejected by the other.
+describe('resolveWalletAddress stays in lockstep with resolveActiveAccount (drift guard)', () => {
+  const G1 = 'G1'
+  const validId = 'stellar-testnet:G1'
+  const validPersisted = {
+    version: 1,
+    id: validId,
+    network: 'stellar-testnet',
+    address: G1,
+    kind: 'G',
+    signer: 'classic-ed25519',
+    selectedAt: 1,
+  }
+
+  const cases = {
+    'no persisted record': null,
+    'valid persisted G': validPersisted,
+    'wrong version': { ...validPersisted, version: 2 },
+    'wrong network': { ...validPersisted, network: 'stellar-pubnet' },
+    'corrupt signer (id + kind still match)': { ...validPersisted, signer: 'passkey-secp256r1' },
+    'wrong kind for this id': { ...validPersisted, kind: 'C' },
+    'wrong address for this id': { ...validPersisted, address: 'GSOMETHINGELSE' },
+    'missing signer field': { ...validPersisted, signer: undefined },
+  }
+
+  for (const [label, persisted] of Object.entries(cases)) {
+    it(`${label}: background and the module of record agree`, async () => {
+      const { env, local } = fakeEnv({
+        address: 'CPASSKEY',
+        classic: { [G1]: { publicKey: G1, createdAt: 1 } },
+      })
+      if (persisted) local.vf_active_account_v1 = persisted
+
+      const bgAddress = await resolveWalletAddress(env.storageLocal)
+      const moduleResult = await resolveActiveAccount({ storageLocal: env.storageLocal })
+      const moduleAddress = moduleResult.status === 'ready' ? moduleResult.account.address : null
+
+      expect(bgAddress).toBe(moduleAddress)
+    })
+  }
 })
 
 describe('isInternalSender', () => {

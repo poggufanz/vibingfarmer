@@ -30,6 +30,7 @@ async function readLocal(storageLocal, key) {
 // src/wallet/activeAccount.js's listWalletAccounts/resolveActiveAccount and with approve.js's
 // resolveWallet (same constraint, same duplication).
 const ACTIVE_ACCOUNT_KEY = 'vf_active_account_v1'
+const NETWORK = 'stellar-testnet'
 
 async function listAccountsLocal(storageLocal) {
   const [classicMap, contractId] = await Promise.all([
@@ -40,9 +41,38 @@ async function listAccountsLocal(storageLocal) {
   const oldestClassic = Object.values(classicMap ?? {})
     .filter((rec) => rec?.publicKey)
     .sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0))[0]
-  if (oldestClassic) accounts.push({ id: `stellar-testnet:${oldestClassic.publicKey}`, address: oldestClassic.publicKey, kind: 'G' })
-  if (contractId) accounts.push({ id: `stellar-testnet:${contractId}`, address: contractId, kind: 'C' })
+  if (oldestClassic)
+    accounts.push({
+      id: `${NETWORK}:${oldestClassic.publicKey}`,
+      address: oldestClassic.publicKey,
+      kind: 'G',
+      signer: 'classic-ed25519',
+    })
+  if (contractId)
+    accounts.push({
+      id: `${NETWORK}:${contractId}`,
+      address: contractId,
+      kind: 'C',
+      signer: 'passkey-secp256r1',
+    })
   return accounts
+}
+
+// Mirrors src/wallet/activeAccount.js's isValidPersisted() field-for-field — a record must match
+// the canonical account on kind, signer, AND address (not just id+kind) or it's corrupt/stale and
+// must fail closed the same way in both contexts. See that file's isValidPersisted for the
+// module of record; extension/background.test.js's drift-guard suite runs identical fixtures
+// through both and asserts identical outcomes.
+function isValidPersisted(persisted, byId) {
+  if (!persisted || persisted.version !== 1 || persisted.network !== NETWORK) return false
+  if (!persisted.id || !persisted.address || !persisted.kind || !persisted.signer) return false
+  const canonical = byId.get(persisted.id)
+  if (!canonical) return false
+  return (
+    canonical.kind === persisted.kind &&
+    canonical.signer === persisted.signer &&
+    canonical.address === persisted.address
+  )
 }
 
 /** Resolves the single authoritative active account's address (chrome.storage.local only — an
@@ -57,9 +87,7 @@ export async function resolveWalletAddress(storageLocal) {
   const byId = new Map(accounts.map((a) => [a.id, a]))
 
   const persisted = await readLocal(storageLocal, ACTIVE_ACCOUNT_KEY)
-  if (persisted?.id && byId.has(persisted.id) && byId.get(persisted.id).kind === persisted.kind) {
-    return byId.get(persisted.id).address
-  }
+  if (isValidPersisted(persisted, byId)) return byId.get(persisted.id).address
 
   if (accounts.length === 1) return accounts[0].address
   return null
