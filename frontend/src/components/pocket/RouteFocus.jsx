@@ -46,6 +46,16 @@ function focusRouteTarget() {
   target.focus()
 }
 
+// Module-scoped (not a per-instance ref): App renders a fresh RouteFocus instance per branch
+// (public pages, landing, onboarding, the authenticated shell), so every branch switch is a
+// genuine unmount+remount of a *different* RouteFocus element, not a re-render of the same one.
+// A ref would reset on every one of those and re-skip focus on every first visit to a branch --
+// exactly the "first client-side nav to a lazy page does nothing" bug this exists to avoid. This
+// flag instead tracks "has this page load ever moved route focus", true for the entire session
+// after the very first real skip, so only the true cold load defers to the browser's own default
+// focus (leaving the skip link reachable first) -- every later mount, of any branch, still focuses.
+let hasFocusedRoute = false
+
 /**
  * First focusable element on the page, visually hidden until it receives keyboard focus. Works on
  * every route (public or authenticated) without any route owning its own copy, because it targets
@@ -76,6 +86,12 @@ export function RouteFocus({ pathname }) {
   const liveId = useId()
 
   useEffect(() => {
+    if (!hasFocusedRoute) {
+      // True cold load: let the browser's natural initial focus stand so the skip link stays the
+      // first stop, instead of this effect jumping straight past it.
+      hasFocusedRoute = true
+      return
+    }
     focusRouteTarget()
     // pathname is the only thing this effect should ever react to -- see the comment above.
     // eslint-disable-next-line react-hooks/exhaustive-deps

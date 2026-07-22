@@ -7,7 +7,8 @@ import { lazy, Suspense } from 'react'
 import { isDevMode } from './devFlag.js'
 
 import { Icon, Sidebar, TopBar, StepRail, STEPS } from './components.jsx'
-import { RouteFocus, SkipLink, routeTitle } from './components/pocket/RouteFocus.jsx'
+import { RouteFocus, SkipLink } from './components/pocket/RouteFocus.jsx'
+import { resolveDocumentTitle } from './appShellTitle.js'
 import {
   InputScreen,
   ThinkingCard,
@@ -700,18 +701,15 @@ const App = () => {
     }
   }, [])
 
-  // Document title per route — one consistent "<Page> · Vibing Farmer" form for every route
-  // (routeTitle), plus the two pre-route overlays that gate on state rather than pathname.
+  // Document title per route (resolveDocumentTitle mirrors this component's own render branch
+  // order -- see appShellTitle.js).
   useE(() => {
-    if (!skipLanding && !realAddress) {
-      document.title = 'Welcome · Vibing Farmer'
-      return
-    }
-    if (!onboarded) {
-      document.title = 'Get started · Vibing Farmer'
-      return
-    }
-    document.title = routeTitle(location.pathname)
+    document.title = resolveDocumentTitle({
+      pathname: location.pathname,
+      skipLanding,
+      realAddress,
+      onboarded,
+    })
   }, [location.pathname, skipLanding, realAddress, onboarded])
 
   // Record the furthest step reached so the rail can navigate to visited steps (and only those)
@@ -3141,9 +3139,13 @@ const App = () => {
     return (
       <>
         <SkipLink />
-        <RouteFocus pathname={location.pathname} />
+        {/* RouteFocus sits INSIDE the Suspense, after the lazy page -- both commit together only
+            once the chunk resolves, so its effect never fires while <main> doesn't exist yet
+            (the loading fallback has no landmark at all). Mounting it outside would run the
+            focus effect immediately against the fallback and silently find nothing. */}
         <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
           <ExplorerPage />
+          <RouteFocus pathname={location.pathname} />
         </Suspense>
       </>
     )
@@ -3152,9 +3154,9 @@ const App = () => {
     return (
       <>
         <SkipLink />
-        <RouteFocus pathname={location.pathname} />
         <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
           <EcosystemPage />
+          <RouteFocus pathname={location.pathname} />
         </Suspense>
       </>
     )
@@ -3163,9 +3165,9 @@ const App = () => {
     return (
       <>
         <SkipLink />
-        <RouteFocus pathname={location.pathname} />
         <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
           <ReplayPage />
+          <RouteFocus pathname={location.pathname} />
         </Suspense>
       </>
     )
@@ -3178,7 +3180,6 @@ const App = () => {
     return (
       <>
         <SkipLink />
-        <RouteFocus pathname={location.pathname} />
         <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
           <LandingHero
             onStart={() => {
@@ -3189,6 +3190,7 @@ const App = () => {
               navigate('/strategy')
             }}
           />
+          <RouteFocus pathname={location.pathname} />
         </Suspense>
       </>
     )
@@ -3220,10 +3222,9 @@ const App = () => {
     >
       <SkipLink />
       <Sidebar extended={sbExtended} onToggle={toggleSb} />
-      <main className="main" tabIndex={-1}>
+      <main id="main-content" className="main" tabIndex={-1}>
         <RouteFocus pathname={location.pathname} />
         <TopBar
-          walletConnected={walletPhase !== 'none'}
           onReset={handleAgain}
           railCollapsed={railCollapsed}
           onToggleRail={toggleRail}

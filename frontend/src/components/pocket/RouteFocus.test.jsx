@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from 'vitest'
+import { Suspense, lazy } from 'react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { axe } from 'vitest-axe'
 import * as axeMatchers from 'vitest-axe/matchers'
@@ -144,5 +145,93 @@ describe('RouteFocus', () => {
   it('has zero axe violations', async () => {
     const { container } = render(<Shell pathname="/home" />)
     expect(await axe(container)).toHaveNoViolations()
+  })
+
+  it('never moves focus on the very first mount of a page load, so the skip link stays reachable first', async () => {
+    // A fresh module instance (not the one imported statically above) to get a true, unpolluted
+    // "has this session ever focused a route" flag -- the shared top-of-file import may already
+    // have been mounted by an earlier test in this file.
+    vi.resetModules()
+    const fresh = await import('./RouteFocus.jsx')
+    const FreshShell = ({ pathname }) => (
+      <main>
+        <fresh.RouteFocus pathname={pathname} />
+      </main>
+    )
+
+    const { rerender } = render(<FreshShell pathname="/home" />)
+    expect(document.activeElement).not.toBe(screen.getByRole('main'))
+
+    // Same module instance, second mount/effect run (a real in-session navigation) -- now focuses.
+    rerender(<FreshShell pathname="/agent" />)
+    expect(document.activeElement).toBe(screen.getByRole('main'))
+  })
+})
+
+describe('RouteFocus inside a Suspense boundary (first client-side visit to a lazy route)', () => {
+  it('regression proof: mounted OUTSIDE the Suspense (the old app.jsx placement), it no-ops because <main> does not exist yet', async () => {
+    const warmup = render(<RouteFocus pathname="/warmup" />)
+    warmup.unmount()
+
+    const LazyPage = lazy(
+      () =>
+        new Promise(() => {
+          /* never resolves during this test -- still on the loading fallback */
+        })
+    )
+
+    render(
+      <>
+        <RouteFocus pathname="/explorer" />
+        <Suspense fallback={<div>Loading</div>}>
+          <LazyPage />
+        </Suspense>
+      </>
+    )
+
+    // RouteFocus already committed and ran its effect; the lazy page hasn't, so there is no
+    // <main> for it to have found -- this is the bug: focus silently does nothing.
+    expect(screen.queryByRole('main')).toBeNull()
+    expect(document.activeElement).toBe(document.body)
+  })
+
+  it('focuses the lazy page once it resolves and commits, not during the loading fallback', async () => {
+    // Warm the "has this session ever focused a route" flag first, so this test exercises a real
+    // in-session client-side navigation (NavBar → a not-yet-loaded lazy page), not the separate
+    // cold-load skip covered above.
+    const warmup = render(<RouteFocus pathname="/warmup" />)
+    warmup.unmount()
+
+    let resolveLazy
+    const LazyPage = lazy(
+      () =>
+        new Promise((resolve) => {
+          resolveLazy = () =>
+            resolve({
+              default: () => (
+                <main>
+                  <h1>Explorer</h1>
+                </main>
+              ),
+            })
+        })
+    )
+
+    render(
+      <>
+        <SkipLink />
+        <Suspense fallback={<div>Loading</div>}>
+          <LazyPage />
+          <RouteFocus pathname="/explorer" />
+        </Suspense>
+      </>
+    )
+
+    // Still suspended -- RouteFocus hasn't committed with the lazy page, so there is no <main> yet.
+    expect(screen.queryByRole('main')).toBeNull()
+
+    resolveLazy()
+    const main = await screen.findByRole('main')
+    expect(document.activeElement).toBe(main)
   })
 })
