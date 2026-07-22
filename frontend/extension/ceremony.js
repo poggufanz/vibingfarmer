@@ -1,8 +1,38 @@
-import { connectPasskeyWallet, makeKit } from '../src/wallet/account.js'
+import { connectPasskeyWallet, makeKit, readBalance } from '../src/wallet/account.js'
+import { getTestUsdc } from '../src/wallet/faucet.js'
 import { submitApprove, submitDeposit } from '../src/wallet/submit.js'
 import { signAuthEntryString, signTransactionForContract } from '../src/wallet/signGeneric.js'
 import { eligibility as vfEligibility, vaultFacts } from '../src/vfapi/client.js'
 import { NETWORK_PASSPHRASE } from '../src/stellar/config.js'
+import { BASE_UNIT, toBaseUnits } from '../src/stellar/format.js'
+
+const ONE_TOKEN = BigInt(BASE_UNIT)
+const APPROVE_CAP = 100n * ONE_TOKEN
+
+export function normalizeDepositAmount(amount) {
+  const raw = typeof amount === 'string' ? amount.trim() : amount
+  if (raw === undefined || raw === null || raw === '') {
+    throw new Error('Deposit amount is required.')
+  }
+
+  const numeric = Number(raw)
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    throw new Error('Deposit amount must be a finite positive number.')
+  }
+  if (numeric < 1 / BASE_UNIT) {
+    throw new Error('Deposit amount must be at least one 7-decimal base unit.')
+  }
+
+  const scaled = Math.round(numeric * BASE_UNIT)
+  if (!Number.isSafeInteger(scaled)) {
+    throw new Error('Deposit amount exceeds the safe 7-decimal range.')
+  }
+  const units = toBaseUnits(raw)
+  if (units <= 0n) {
+    throw new Error('Deposit amount must be at least one 7-decimal base unit.')
+  }
+  return units
+}
 
 const setStatus = (documentRef, text) => {
   const el = documentRef?.getElementById?.('status')
@@ -41,6 +71,7 @@ export async function runCeremony({
       p = loaded.params
     }
 
+    const depositAmount = action === 'deposit' ? normalizeDepositAmount(p.amount) : null
     const kit = await makeKit()
 
     // connect/signTransaction/signAuthEntry (the generic wallet-kit actions dispatched by
@@ -59,11 +90,14 @@ export async function runCeremony({
       const eligibility = (query) => vfEligibility({ ...query, facts })
       out = await submitDeposit({
         contractId: connectedContractId,
-        amount: p.amount,
+        amount: depositAmount,
         eligibility,
         kit,
       })
-      setStatus(documentRef, 'Deposit executed.')
+      const sharesBefore = BigInt(out.sharesBefore).toString()
+      const sharesAfter = BigInt(out.sharesAfter).toString()
+      const mintedShares = BigInt(sharesAfter) - BigInt(sharesBefore)
+      setStatus(documentRef, `Minted ${mintedShares} shares.`)
       chromeApi.runtime.sendMessage({
         type: 'CEREMONY_RESULT',
         tabId,
@@ -71,15 +105,32 @@ export async function runCeremony({
         ok: true,
         hash: out.hash,
         status: out.status,
+        sharesBefore,
+        sharesAfter,
       })
     } else if (action === 'approve') {
-      setStatus(documentRef, 'Awaiting Face ID…')
+      setStatus(documentRef, 'Enabling deposits: funding and Face ID…')
+      const balance = await readBalance(connectedContractId)
+      let faucetUnavailable = false
+      if (balance === null || balance === undefined || BigInt(balance) < ONE_TOKEN) {
+        try {
+          const funding = await getTestUsdc({ to: connectedContractId, amount: APPROVE_CAP })
+          faucetUnavailable = BigInt(funding?.dispensed ?? 0) <= 0n
+        } catch {
+          faucetUnavailable = true
+        }
+      }
       out = await submitApprove({
         contractId: connectedContractId,
-        amount: p.amount,
+        amount: APPROVE_CAP,
         kit,
       })
-      setStatus(documentRef, out.action === 'mint' ? 'Deposit completed.' : 'Approval completed.')
+      setStatus(
+        documentRef,
+        faucetUnavailable
+          ? 'Approval set, but test tokens were not dispensed because the faucet is unavailable. Your balance may be 0; deposit may fail until funded.'
+          : 'Deposits enabled.'
+      )
       chromeApi.runtime.sendMessage({
         type: 'CEREMONY_RESULT',
         tabId,
@@ -164,6 +215,21 @@ export async function runCeremony({
   }
 }
 
-if (typeof chrome !== 'undefined' && typeof document !== 'undefined') {
+export function shouldAutoRunCeremony({
+  chromeApi = globalThis.chrome,
+  documentRef = globalThis.document,
+  locationRef = globalThis.location,
+} = {}) {
+  return Boolean(
+    locationRef?.protocol === 'chrome-extension:' &&
+    chromeApi?.runtime?.id &&
+    typeof chromeApi.runtime.sendMessage === 'function' &&
+    typeof chromeApi.tabs?.getCurrent === 'function' &&
+    typeof chromeApi.storage?.session?.get === 'function' &&
+    typeof documentRef?.getElementById === 'function'
+  )
+}
+
+if (shouldAutoRunCeremony()) {
   void runCeremony()
 }
