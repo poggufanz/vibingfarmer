@@ -547,3 +547,100 @@ body {
     max-height: 85vh;
   }
 }
+
+/* ---------------------------------------------------------------------------------------------
+   Foundation Task 6 -- shared application shell: sidebar/topbar brand identity, the skip link,
+   and the route-change live region (RouteFocus.jsx).
+   ------------------------------------------------------------------------------------------- */
+
+/* The sidebar row keeps its original footprint (38px, icon-first, label reveals on expand) --
+   only the mark image swaps for a themed BrandLockup, sized to match the retired inline <img>. */
+.sb-logo .pc-brand-mark {
+  width: 18px;
+  height: 18px;
+}
+
+.pc-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* First focusable element on every route. Hidden the same way as .pc-visually-hidden until it
+   receives keyboard focus, then it needs to be genuinely visible above everything else. */
+.pc-skip-link {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.pc-skip-link:focus {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 2000;
+  width: auto;
+  height: auto;
+  margin: 0;
+  padding: 10px 16px;
+  overflow: visible;
+  clip: auto;
+  white-space: normal;
+  background: var(--pc-harvest);
+  color: var(--pc-harvest-ink);
+  border-radius: var(--pc-radius-sm);
+  font-weight: 600;
+}
+
+.pc-credits-about {
+  margin-top: 12px;
+}
+
+.pc-credits-about-title {
+  margin: 0 0 6px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.pc-credits-independence {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.6;
+  margin: 0 0 12px;
+}
+
+.pc-credits-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pc-credits-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pc-credits-trademark {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.6;
+  margin: 0;
+}

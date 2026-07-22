@@ -20,6 +20,8 @@ import {
 import { fmtRemaining } from '../ui.js'
 import AutoExitSettings from './AutoExitSettings.jsx'
 import { getTokenUsageHistory, clearTokenUsageHistory } from '../strategist.js'
+import { BrandLockup } from './pocket/BrandLockup.jsx'
+import { CreditsAbout } from './pocket/CreditsAbout.jsx'
 
 const short = (a) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '-')
 const eyebrow = {
@@ -1204,11 +1206,7 @@ export default function SettingsPage({
           {/* ── SECTION 6: About ── */}
           {tab === 'about' && (
             <Section title="About">
-              <div className="brand" style={{ fontSize: 18 }}>
-                <span>vibing</span>
-                <span className="slash">/</span>
-                <span className="vibing">farmer</span>
-              </div>
+              <BrandLockup variant="full" />
               <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
                 Autonomous DeFi yield farming agent
               </div>
@@ -1263,6 +1261,8 @@ export default function SettingsPage({
                   </a>
                 )}
               </div>
+              <Divider />
+              <CreditsAbout />
             </Section>
           )}
         </div>

@@ -5,6 +5,9 @@ import React from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { getSidebarPath } from './router.js'
 import { t } from './settingsStore.js'
+import { BrandLockup } from './components/pocket/BrandLockup.jsx'
+import { NetworkBadge } from './components/pocket/NetworkIdentity.jsx'
+import { NETWORK_IDS } from './design/networks.js'
 
 /* ---------- Icons (Lucide-style, stroke 1.5) ---------- */
 const Icon = ({ name, size = 16, className = '' }) => {
@@ -178,8 +181,8 @@ const Sidebar = ({ extended, onToggle }) => {
 
   const items = [
     { key: 'home', icon: 'home', path: '/home', label: 'Home' },
-    { key: 'vaults', icon: 'grid', path: '/strategy', label: 'Strategy' },
-    { key: 'agent', icon: 'network', path: '/agent', label: 'Dashboard' },
+    { key: 'vaults', icon: 'grid', path: '/strategy', label: 'New deposit' },
+    { key: 'agent', icon: 'network', path: '/agent', label: 'My money' },
     { key: 'history', icon: 'layers', path: '/history', label: 'History' },
     { key: 'developers', icon: 'code', path: '/developers', label: 'Developers' },
     { key: 'settings', icon: 'settings', path: '/settings', label: 'Settings' },
@@ -187,9 +190,9 @@ const Sidebar = ({ extended, onToggle }) => {
 
   return (
     <nav className="sidebar" aria-label="Primary navigation">
-      <div className="sb-logo" title="vibing/farmer">
-        <img src="/vibing_farmer.logo.svg" alt="" style={{ width: 18, height: 18 }} />
-        <span className="sb-logo-text">vibing/farmer</span>
+      <div className="sb-logo">
+        <BrandLockup variant="compact" className="sb-logo-mark" />
+        <span className="sb-logo-text">Vibing Farmer</span>
       </div>
       {items.map((it) => (
         <button
@@ -221,28 +224,12 @@ const Sidebar = ({ extended, onToggle }) => {
 }
 
 /* ---------- Top bar — minimal, no chip soup ---------- */
-const TopBar = ({
-  walletConnected,
-  onReset,
-  railCollapsed,
-  onToggleRail,
-  notifications = null,
-}) => {
+const TopBar = ({ onReset, railCollapsed, onToggleRail, notifications = null }) => {
   return (
     <header className="topbar">
       <div className="topbar-left">
-        <div className="brand">
-          <span className="vibing">vibing</span>
-          <span className="slash">/</span>
-          <span>farmer</span>
-        </div>
-        <span
-          className="brand-net mono"
-          aria-label={`Stellar testnet, wallet ${walletConnected ? 'connected' : 'not connected'}`}
-        >
-          <span className={`dot${walletConnected ? ' live' : ''}`} aria-hidden="true" />
-          Stellar testnet
-        </span>
+        <BrandLockup variant="full" />
+        <NetworkBadge networkId={NETWORK_IDS.STELLAR_TESTNET} />
       </div>
       <div className="topbar-right">
         <span className="topbar-meta">
@@ -257,7 +244,7 @@ const TopBar = ({
           <Icon name="refresh" />
         </button>
         {notifications}
-        <button className="icon-btn" title="New deposit" aria-label="New deposit" onClick={onReset}>
+        <button className="icon-btn" title="Start over" aria-label="Start over" onClick={onReset}>
           <Icon name="plus" />
         </button>
         <button

@@ -7,6 +7,7 @@ import { lazy, Suspense } from 'react'
 import { isDevMode } from './devFlag.js'
 
 import { Icon, Sidebar, TopBar, StepRail, STEPS } from './components.jsx'
+import { RouteFocus, SkipLink, routeTitle } from './components/pocket/RouteFocus.jsx'
 import {
   InputScreen,
   ThinkingCard,
@@ -699,17 +700,19 @@ const App = () => {
     }
   }, [])
 
-  // Document title per route
+  // Document title per route — one consistent "<Page> · Vibing Farmer" form for every route
+  // (routeTitle), plus the two pre-route overlays that gate on state rather than pathname.
   useE(() => {
-    const titles = {
-      '/home': 'vibing / farmer',
-      '/strategy': 'New strategy | Vibing Farmer',
-      '/agent': 'Autonomous agent | Vibing Farmer',
-      '/history': 'History | Vibing Farmer',
-      '/settings': 'Settings | Vibing Farmer',
+    if (!skipLanding && !realAddress) {
+      document.title = 'Welcome · Vibing Farmer'
+      return
     }
-    document.title = titles[location.pathname] || 'Vibing Farmer'
-  }, [location.pathname])
+    if (!onboarded) {
+      document.title = 'Get started · Vibing Farmer'
+      return
+    }
+    document.title = routeTitle(location.pathname)
+  }, [location.pathname, skipLanding, realAddress, onboarded])
 
   // Record the furthest step reached so the rail can navigate to visited steps (and only those)
   useE(() => {
@@ -3136,23 +3139,35 @@ const App = () => {
   // Checked before every gate so judges and visitors can browse without connecting.
   if (location.pathname === '/explorer') {
     return (
-      <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
-        <ExplorerPage />
-      </Suspense>
+      <>
+        <SkipLink />
+        <RouteFocus pathname={location.pathname} />
+        <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
+          <ExplorerPage />
+        </Suspense>
+      </>
     )
   }
   if (location.pathname === '/ecosystem') {
     return (
-      <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
-        <EcosystemPage />
-      </Suspense>
+      <>
+        <SkipLink />
+        <RouteFocus pathname={location.pathname} />
+        <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
+          <EcosystemPage />
+        </Suspense>
+      </>
     )
   }
   if (location.pathname === '/replay') {
     return (
-      <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
-        <ReplayPage />
-      </Suspense>
+      <>
+        <SkipLink />
+        <RouteFocus pathname={location.pathname} />
+        <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
+          <ReplayPage />
+        </Suspense>
+      </>
     )
   }
 
@@ -3161,17 +3176,21 @@ const App = () => {
   // sets the URL to /strategy, which surfaces once onboarding (connect) completes.
   if (!skipLanding && !realAddress) {
     return (
-      <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
-        <LandingHero
-          onStart={() => {
-            localStorage.setItem('yv_skip_landing', 'true')
-            localStorage.setItem('yv_onboarded', 'true')
-            setSkipLanding(true)
-            setOnboarded(true)
-            navigate('/strategy')
-          }}
-        />
-      </Suspense>
+      <>
+        <SkipLink />
+        <RouteFocus pathname={location.pathname} />
+        <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
+          <LandingHero
+            onStart={() => {
+              localStorage.setItem('yv_skip_landing', 'true')
+              localStorage.setItem('yv_onboarded', 'true')
+              setSkipLanding(true)
+              setOnboarded(true)
+              navigate('/strategy')
+            }}
+          />
+        </Suspense>
+      </>
     )
   }
 
@@ -3180,14 +3199,18 @@ const App = () => {
   // "Skip intro" or "Got it" persists yv_onboarded=true so it never shows again.
   if (!onboarded) {
     return (
-      <OnboardingFlow
-        connected={!!realAddress}
-        onConnect={handleConnect}
-        onComplete={() => {
-          localStorage.setItem('yv_onboarded', 'true')
-          setOnboarded(true)
-        }}
-      />
+      <>
+        <SkipLink />
+        <RouteFocus pathname={location.pathname} />
+        <OnboardingFlow
+          connected={!!realAddress}
+          onConnect={handleConnect}
+          onComplete={() => {
+            localStorage.setItem('yv_onboarded', 'true')
+            setOnboarded(true)
+          }}
+        />
+      </>
     )
   }
 
@@ -3195,8 +3218,10 @@ const App = () => {
     <div
       className={`app ${sbExtended ? 'sb-extended' : 'sb-minimized'} ${railCollapsed ? 'rail-collapsed' : ''}`}
     >
+      <SkipLink />
       <Sidebar extended={sbExtended} onToggle={toggleSb} />
-      <main className="main">
+      <main className="main" tabIndex={-1}>
+        <RouteFocus pathname={location.pathname} />
         <TopBar
           walletConnected={walletPhase !== 'none'}
           onReset={handleAgain}
