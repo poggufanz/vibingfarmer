@@ -1,20 +1,18 @@
-import { makeKit, createPasskeyWallet, connectPasskeyWallet, readBalance } from '../src/wallet/account.js'
-import { signTransactionForContract, signAuthEntryString } from '../src/wallet/signGeneric.js'
+import { connectPasskeyWallet, makeKit } from '../src/wallet/account.js'
+import { submitApprove, submitDeposit } from '../src/wallet/submit.js'
+import { signAuthEntryString, signTransactionForContract } from '../src/wallet/signGeneric.js'
 import { eligibility as vfEligibility, vaultFacts } from '../src/vfapi/client.js'
-import { FAUCET_PROXY_URL, NETWORK_PASSPHRASE } from '../src/stellar/config.js'
-import { submitCeremonyApprove, submitCeremonyDeposit } from './ceremonyActions.js'
+import { NETWORK_PASSPHRASE } from '../src/stellar/config.js'
 
-const params = new URLSearchParams(location.search)
-const action = params.get('action')
-const setStatus = (t) => {
-  const el = document.getElementById('status')
-  if (el) el.textContent = t
+const setStatus = (documentRef, text) => {
+  const el = documentRef?.getElementById?.('status')
+  if (el) el.textContent = text
 }
 
-async function loadParams() {
-  const tabId = (await chrome.tabs.getCurrent())?.id
-  const got = await chrome.storage.session.get(`vf_params_${tabId}`)
-  return { tabId, p: got[`vf_params_${tabId}`] ?? {} }
+async function loadParams(chromeApi) {
+  const tabId = (await chromeApi.tabs.getCurrent())?.id
+  const got = await chromeApi.storage.session.get(`vf_params_${tabId}`)
+  return { tabId, params: got[`vf_params_${tabId}`] ?? {} }
 }
 
 // NOTE (Task 4 Step 4 deferred check): connectPasskeyWallet returns only
@@ -23,15 +21,28 @@ async function loadParams() {
 // manual Chrome E2E (Task 7) MUST confirm Face-ID signing succeeds on this
 // default path; if SAK needs an explicit credentialId, thread one through
 // account.js connectPasskeyWallet → submitDeposit/submitApprove.
-;(async () => {
-  let tabId
-  let p = {}
+export async function runCeremony({
+  action = new URLSearchParams(globalThis.location?.search ?? '').get('action'),
+  params: suppliedParams,
+  tabId: suppliedTabId,
+  chromeApi = globalThis.chrome,
+  documentRef = globalThis.document,
+  localStorageRef = globalThis.localStorage,
+  windowRef = globalThis.window,
+  scheduleClose = globalThis.setTimeout,
+} = {}) {
+  let tabId = suppliedTabId
+  let p = suppliedParams ?? {}
+
   try {
-    const loaded = await loadParams()
-    tabId = loaded.tabId
-    p = loaded.p
+    if (suppliedParams === undefined) {
+      const loaded = await loadParams(chromeApi)
+      tabId = loaded.tabId
+      p = loaded.params
+    }
+
     const kit = await makeKit()
-    
+
     // connect/signTransaction/signAuthEntry (the generic wallet-kit actions dispatched by
     // providerBridge.js) carry the contractId under opts.address instead of the top-level
     // p.contractId deposit/approve use — accept either so one connect covers every action.
@@ -39,20 +50,21 @@ async function loadParams() {
       contractId: p.contractId ?? p.opts?.address,
       kit,
     })
+
     let out
     if (action === 'deposit') {
-      setStatus('Awaiting Face ID…')
+      setStatus(documentRef, 'Awaiting Face ID…')
       // Default = the live deposit vault's protocol (autofarm → Blend USDC), not aave-v3.
       const { facts } = vaultFacts(p.protocol || 'blend-usdc')
-      const eligibility = (q) => vfEligibility({ ...q, facts })
-      out = await submitCeremonyDeposit({
+      const eligibility = (query) => vfEligibility({ ...query, facts })
+      out = await submitDeposit({
         contractId: connectedContractId,
         amount: p.amount,
         eligibility,
         kit,
       })
-      setStatus('Deposit executed.')
-      chrome.runtime.sendMessage({
+      setStatus(documentRef, 'Deposit executed.')
+      chromeApi.runtime.sendMessage({
         type: 'CEREMONY_RESULT',
         tabId,
         action,
@@ -61,14 +73,14 @@ async function loadParams() {
         status: out.status,
       })
     } else if (action === 'approve') {
-      setStatus('Awaiting Face ID…')
-      out = await submitCeremonyApprove({
+      setStatus(documentRef, 'Awaiting Face ID…')
+      out = await submitApprove({
         contractId: connectedContractId,
         amount: p.amount,
         kit,
       })
-      setStatus(out.action === 'mint' ? 'Deposit completed.' : 'Approval completed.')
-      chrome.runtime.sendMessage({
+      setStatus(documentRef, out.action === 'mint' ? 'Deposit completed.' : 'Approval completed.')
+      chromeApi.runtime.sendMessage({
         type: 'CEREMONY_RESULT',
         tabId,
         action,
@@ -79,8 +91,8 @@ async function loadParams() {
     } else if (action === 'connect') {
       // The kit's getAddress()/isConnected() — connectPasskeyWallet (above) already did the
       // work; this action just reports the resolved contractId back through the ceremony result.
-      setStatus('Connected.')
-      chrome.runtime.sendMessage({
+      setStatus(documentRef, 'Connected.')
+      chromeApi.runtime.sendMessage({
         type: 'CEREMONY_RESULT',
         tabId,
         action,
@@ -88,7 +100,7 @@ async function loadParams() {
         address: connectedContractId,
       })
     } else if (action === 'signTransaction') {
-      setStatus('Awaiting Face ID…')
+      setStatus(documentRef, 'Awaiting Face ID…')
       const { TransactionBuilder } = await import('@stellar/stellar-sdk')
       const tx = TransactionBuilder.fromXDR(p.xdr, NETWORK_PASSPHRASE)
       const signedTxXdr = await signTransactionForContract({
@@ -96,8 +108,8 @@ async function loadParams() {
         contractId: p.opts?.address || connectedContractId,
         kit,
       })
-      setStatus('Transaction signed.')
-      chrome.runtime.sendMessage({
+      setStatus(documentRef, 'Transaction signed.')
+      chromeApi.runtime.sendMessage({
         type: 'CEREMONY_RESULT',
         tabId,
         action,
@@ -106,10 +118,10 @@ async function loadParams() {
         address: connectedContractId,
       })
     } else if (action === 'signAuthEntry') {
-      setStatus('Awaiting Face ID…')
+      setStatus(documentRef, 'Awaiting Face ID…')
       const signedAuthEntry = await signAuthEntryString({ authEntry: p.authEntry, kit })
-      setStatus('Authorization signed.')
-      chrome.runtime.sendMessage({
+      setStatus(documentRef, 'Authorization signed.')
+      chromeApi.runtime.sendMessage({
         type: 'CEREMONY_RESULT',
         tabId,
         action,
@@ -120,30 +132,38 @@ async function loadParams() {
     } else {
       throw new Error(`unknown ceremony action: ${action}`)
     }
-    setTimeout(() => window.close(), 1200)
-  } catch (e) {
+
+    scheduleClose(() => windowRef?.close?.(), 1200)
+    return out
+  } catch (error) {
     let debugInfo = ''
     try {
-      const lsVal = localStorage.getItem('vf_wallet_contract')
-      debugInfo = ` (LS: ${lsVal ? lsVal.slice(0, 6) + '...' : 'empty'}`
-      if (typeof chrome !== 'undefined' && chrome.storage?.local) {
-        const store = await chrome.storage.local.get('vf_wallet_contract')
-        const csVal = store['vf_wallet_contract']
-        debugInfo += `, CS: ${csVal ? csVal.slice(0, 6) + '...' : 'empty'}`
+      const lsVal = localStorageRef?.getItem?.('vf_wallet_contract')
+      debugInfo = ` (LS: ${lsVal ? `${lsVal.slice(0, 6)}...` : 'empty'}`
+      if (chromeApi?.storage?.local) {
+        const store = await chromeApi.storage.local.get('vf_wallet_contract')
+        const csVal = store.vf_wallet_contract
+        debugInfo += `, CS: ${csVal ? `${csVal.slice(0, 6)}...` : 'empty'}`
       } else {
-        debugInfo += `, CS: no-chrome`
+        debugInfo += ', CS: no-chrome'
       }
-      debugInfo += `)`
-    } catch (err) {
-      debugInfo = ` (debug err: ${err.message})`
+      debugInfo += ')'
+    } catch (debugError) {
+      debugInfo = ` (debug err: ${debugError.message})`
     }
-    setStatus(`Failed: ${e.message}${debugInfo}`)
-    chrome.runtime.sendMessage({
+
+    setStatus(documentRef, `Failed: ${error.message}${debugInfo}`)
+    chromeApi.runtime.sendMessage({
       type: 'CEREMONY_RESULT',
       tabId,
       action,
       ok: false,
-      error: String(e.message || e),
+      error: String(error.message || error),
     })
+    return null
   }
-})()
+}
+
+if (typeof chrome !== 'undefined' && typeof document !== 'undefined') {
+  void runCeremony()
+}
