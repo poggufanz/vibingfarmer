@@ -160,6 +160,10 @@ export const AGENT_WASM_GENERATIONS = [
  * change to an address, schema, wasm hash, or coverage ledger changes this hash, which is exactly
  * the point: bumping it requires a deliberate AGENT_CREATOR_MANIFEST_VERSION update alongside it. */
 function computeManifestHash() {
+  // ponytail: canonicalizeStrategy's EXCLUDED_KEYS denylist (timestamp/createdAt/updatedAt/…)
+  // silently drops any manifest field that happens to share one of those names — harmless today
+  // (no such field exists here), but a future field literally named e.g. `createdAt` would go
+  // unhashed without a loud failure. Revisit if this manifest ever grows a field on that list.
   const payload = JSON.stringify(
     canonicalizeStrategy({
       version: AGENT_CREATOR_MANIFEST_VERSION,
@@ -276,16 +280,19 @@ export function assertCompleteCreatorManifest({
 
 /**
  * Gate for `orchestrator.js`'s dev/test-only legacy direct-deploy seam (`setupLegacy`), pinning
- * the production cutoff this Task closes: production can NEVER enable it through a client flag
- * (Vite bakes VITE_ vars into the client bundle — trusting one for a production authorization
- * decision would let anyone flip it via devtools), and dev/test must opt in EXPLICITLY — the seam
- * defaults OFF everywhere, never a silent fallback.
+ * the production cutoff this Task closes: an ALLOWLIST of exactly `development`/`test`
+ * (never a `mode !== 'production'` blocklist — that would silently also open the seam for
+ * staging/preview/any other deploy mode this app never anticipated), and even inside that
+ * allowlist the seam stays off unless the caller opts in EXPLICITLY. Vite bakes VITE_ vars into
+ * the client bundle, so a flag alone could never gate production even if mode-checking were
+ * skipped — trusting one for a production authorization decision would let anyone flip it via
+ * devtools.
  * @param {{mode: string, explicitFlag: string|boolean}} p `mode` is import.meta.env.MODE;
  *   `explicitFlag` is import.meta.env.VITE_ENABLE_LEGACY_AGENT_SETUP (a Vite env var is always a
  *   string at runtime — 'true'/'false' — so both the string and boolean forms are accepted).
  * @returns {boolean}
  */
 export function isLegacyDirectSetupAllowed({ mode, explicitFlag } = {}) {
-  if (mode === 'production') return false
+  if (mode !== 'development' && mode !== 'test') return false
   return explicitFlag === true || explicitFlag === 'true'
 }

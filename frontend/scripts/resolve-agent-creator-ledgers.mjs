@@ -10,9 +10,11 @@ import { rpcServer, horizonServer } from '../src/stellar/client.js'
 import { readConfirmedLedger } from '../src/stellar/grant.js'
 
 // label, tx hash (verbatim from deployments/stellar-testnet.json / its git history), and the
-// ledger number agentCreatorManifest.js pins for it today (null where the manifest deliberately
-// stays unpinned — the conservative ledger-1 legacy creators; this script still resolves their tx
-// for the report's provenance trail, it just never overrides the deliberate `null`).
+// ledger number agentCreatorManifest.js pins for it today. `pinned: null` means ONE of two things
+// (see each entry's comment): either the manifest deliberately stays unpinned (the conservative
+// ledger-1 legacy router's OWN deploy tx — coverageStartLedger stays 1 regardless of what this
+// resolves to) or this script had not yet been run to produce a number to pin (not the case for
+// any TARGET below anymore — every upload tx now carries its resolved+pinned ledger too).
 const TARGETS = [
   {
     label: 'funding_router v2 deploy (CB675TTS…RSE)',
@@ -22,7 +24,7 @@ const TARGETS = [
   {
     label: 'agent wasm v3-bridge upload (creator: funding_router v2)',
     hash: 'c8a9bc3b434f4d65e35926dcbe28207ef909d15230c204f94f390f2fb5144451',
-    pinned: null,
+    pinned: 3727511,
   },
   {
     label: 'funding_router hardened v1 deploy (CCEWWRQV…CYE5)',
@@ -32,7 +34,7 @@ const TARGETS = [
   {
     label: 'agent wasm v3 upload (creator: funding_router hardened v1)',
     hash: 'd52f0ba0f5598b1ccf6d0036c152072f4b4cb23449f6af0e9d733850ff59b63f',
-    pinned: null,
+    pinned: 3593271,
   },
   {
     label: 'registry (current, derived-record ABI) deploy',
@@ -40,6 +42,9 @@ const TARGETS = [
     pinned: 3593289,
   },
   {
+    // The only deliberately-unpinned target: agentCreatorManifest.js keeps this creator's
+    // deployedLedger null / coverageStartLedger at the conservative floor (1) even though this
+    // resolves fine — see the manifest's module header for why.
     label: 'funding_router legacy deploy (CBEI5VJK…NOFY) — manifest keeps deployedLedger null',
     hash: '10da369f4e5deb0178e4274a8e7da075e12a7ae085c55096a33976f7dc59b656',
     pinned: null,
@@ -47,7 +52,7 @@ const TARGETS = [
   {
     label: 'agent wasm v2 upload (creator: funding_router legacy)',
     hash: 'c84f563290f7d2ef459e91ce6b179f53f19a068871e3ba8071df09c7c56a44db',
-    pinned: null,
+    pinned: 3534437,
   },
 ]
 

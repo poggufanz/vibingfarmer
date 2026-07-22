@@ -55,11 +55,13 @@ describe('AGENT_CREATORS', () => {
     expect(c).toMatchObject({
       networkId: 'stellar-testnet',
       kind: 'funding-router',
+      schemaVersion: AGENT_INDEX_SCHEMA_VERSION,
       deployedLedger: 3727514,
       coverageStartLedger: 3727514,
       retiredLedger: null,
       deployTx: 'e8e145660c9923ec9433dc5e7906502ee9981977653a5b1907b34f14ead68e18',
       supportedAgentWasmHashes: [WASM_V3_BRIDGE],
+      discoverySources: ['router-event'],
     })
   })
 
@@ -67,11 +69,13 @@ describe('AGENT_CREATORS', () => {
     const c = creatorForAddress(ROUTER_HARDENED_V1)
     expect(c).toMatchObject({
       kind: 'funding-router',
+      schemaVersion: AGENT_INDEX_SCHEMA_VERSION,
       deployedLedger: 3593274,
       coverageStartLedger: 3593274,
       retiredLedger: null,
       deployTx: '826354384040f87a87c49ce714600e80c8a315ac8a9ebacecac72a75f13279e3',
       supportedAgentWasmHashes: [WASM_V3],
+      discoverySources: ['router-event'],
     })
   })
 
@@ -79,10 +83,12 @@ describe('AGENT_CREATORS', () => {
     const c = creatorForAddress(ROUTER_LEGACY)
     expect(c).toMatchObject({
       kind: 'funding-router',
+      schemaVersion: AGENT_INDEX_SCHEMA_VERSION,
       deployedLedger: null,
       coverageStartLedger: 1,
       deployTx: '10da369f4e5deb0178e4274a8e7da075e12a7ae085c55096a33976f7dc59b656',
       supportedAgentWasmHashes: [WASM_V2],
+      discoverySources: ['router-event'],
     })
   })
 
@@ -90,11 +96,13 @@ describe('AGENT_CREATORS', () => {
     const c = creatorForAddress(REGISTRY_CURRENT)
     expect(c).toMatchObject({
       kind: 'registry',
+      schemaVersion: AGENT_INDEX_SCHEMA_VERSION,
       deployedLedger: 3593289,
       coverageStartLedger: 3593289,
       retiredLedger: null,
       deployTx: '3fdfc5e7dcc30b0145a84d6106a5956e46f3441c1f1deac8b8782015f34245b0',
       supportedAgentWasmHashes: [],
+      discoverySources: ['registry-event'],
     })
   })
 
@@ -102,10 +110,12 @@ describe('AGENT_CREATORS', () => {
     const c = creatorForAddress(REGISTRY_LEGACY)
     expect(c).toMatchObject({
       kind: 'registry',
+      schemaVersion: AGENT_INDEX_SCHEMA_VERSION,
       deployedLedger: null,
       coverageStartLedger: 1,
       deployTx: null,
       supportedAgentWasmHashes: [],
+      discoverySources: ['registry-event'],
     })
   })
 
@@ -137,8 +147,8 @@ describe('AGENT_WASM_GENERATIONS', () => {
     expect(g).toMatchObject({
       generation: 'agent-v2',
       uploadTx: 'c84f563290f7d2ef459e91ce6b179f53f19a068871e3ba8071df09c7c56a44db',
+      uploadedLedger: 3534437, // resolve-agent-creator-ledgers.mjs (Horizon) — see Task 1 report
     })
-    expect(g.uploadedLedger).toBeGreaterThan(0)
     expect(g.creatorAddresses).toEqual([ROUTER_LEGACY])
   })
 
@@ -147,8 +157,8 @@ describe('AGENT_WASM_GENERATIONS', () => {
     expect(g).toMatchObject({
       generation: 'agent-v3',
       uploadTx: 'd52f0ba0f5598b1ccf6d0036c152072f4b4cb23449f6af0e9d733850ff59b63f',
+      uploadedLedger: 3593271, // resolve-agent-creator-ledgers.mjs (Horizon) — see Task 1 report
     })
-    expect(g.uploadedLedger).toBeGreaterThan(0)
     expect(g.creatorAddresses).toEqual([ROUTER_HARDENED_V1])
   })
 
@@ -157,8 +167,8 @@ describe('AGENT_WASM_GENERATIONS', () => {
     expect(g).toMatchObject({
       generation: 'agent-v3-bridge',
       uploadTx: 'c8a9bc3b434f4d65e35926dcbe28207ef909d15230c204f94f390f2fb5144451',
+      uploadedLedger: 3727511, // resolve-agent-creator-ledgers.mjs (RPC) — see Task 1 report
     })
-    expect(g.uploadedLedger).toBeGreaterThan(0)
     expect(g.creatorAddresses).toEqual([ROUTER_V2])
   })
 
@@ -302,5 +312,11 @@ describe('isLegacyDirectSetupAllowed', () => {
     expect(isLegacyDirectSetupAllowed({ mode: 'test', explicitFlag: 'false' })).toBe(false)
     expect(isLegacyDirectSetupAllowed({ mode: 'test', explicitFlag: false })).toBe(false)
     expect(isLegacyDirectSetupAllowed({})).toBe(false)
+  })
+
+  it('is an ALLOWLIST of dev/test, not a blocklist of production — any other mode is false even with the flag set', () => {
+    expect(isLegacyDirectSetupAllowed({ mode: 'staging', explicitFlag: 'true' })).toBe(false)
+    expect(isLegacyDirectSetupAllowed({ mode: 'preview', explicitFlag: true })).toBe(false)
+    expect(isLegacyDirectSetupAllowed({ mode: undefined, explicitFlag: 'true' })).toBe(false)
   })
 })
