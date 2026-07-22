@@ -1639,6 +1639,19 @@
   opacity: 0.75;
 }
 
+/* Stellar mark ships official Black + White finals; swap by live [data-theme]
+   instead of filtering the artwork (the manifest requires no recoloring).
+   Default (Day Field/no attribute) shows Black; Forest shows White. */
+.vf-marquee__logo img.vf-marquee__logo-icon--dark {
+  display: none;
+}
+:root[data-theme='forest'] .vf-marquee__logo img.vf-marquee__logo-icon--dark {
+  display: inline-block;
+}
+:root[data-theme='forest'] .vf-marquee__logo img.vf-marquee__logo-icon--default {
+  display: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .vf-intro,
   .vf-cursor,

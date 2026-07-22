@@ -23,12 +23,19 @@ const CHECK_SCRIPT = resolve(FRONTEND_DIR, 'scripts/check-brand-assets.mjs')
 // alongside it.
 const POCKET_D = 'M8 11H21L25 17H39L43 11H56V50C56 55 52 59 47 59H17C12 59 8 55 8 50Z'
 
-// V stays byte-identical; the slash was moved off it (geometry revision —
-// the old slash overlapped the V's right leg by ~0.53 unit at the fixed
-// 5px stroke width, new gap is 5.36 units).
+// V stays byte-identical; the slash was moved off it (geometry revision — the
+// old slash's center-line was 10/sqrt(5) ~= 4.47 units from the V's right
+// leg, overlapping by ~0.53 at the fixed 5px stroke width (2.5px half-width
+// each side); the new slash's center-line is 14/sqrt(5) ~= 6.26 units away,
+// clearing by ~1.26).
 const V_D = 'M18 24L31 48L43 24'
 const OLD_SLASH_D = 'M38 44L50 20'
 const SLASH_D = 'M40 44L52 20'
+
+// Stellar ships two SDF-approved fills (Black + White) of the SAME icon —
+// geometry must never drift between them, only the fill.
+const STELLAR_BLACK_PATH = 'brand/networks/stellar.svg'
+const STELLAR_WHITE_PATH = 'brand/networks/stellar-white.svg'
 
 // The compact mark family — every one of these is a 64x64 transparent canvas
 // carrying the same fixed pocket/V/slash geometry, recolored per theme.
@@ -148,6 +155,20 @@ describe('brand asset contract', () => {
     }
   })
 
+  it('the Stellar Black and White marks share identical geometry — only the fill differs', () => {
+    const black = readFileSync(resolve(PUBLIC_DIR, STELLAR_BLACK_PATH), 'utf8')
+    const white = readFileSync(resolve(PUBLIC_DIR, STELLAR_WHITE_PATH), 'utf8')
+    const viewBoxOf = (s) => s.match(/viewBox="([^"]+)"/)[1]
+    const pathsOf = (s) => [...s.matchAll(/<path\b[^>]*\sd="([^"]+)"[^>]*>/g)].map((m) => m[1])
+    const fillsOf = (s) => [...s.matchAll(/<path\b[^>]*\sfill="([^"]+)"/g)].map((m) => m[1])
+
+    expect(viewBoxOf(white)).toBe(viewBoxOf(black))
+    expect(pathsOf(white)).toEqual(pathsOf(black))
+    expect(pathsOf(black).length).toBeGreaterThan(0)
+    expect(fillsOf(black)).toEqual(['#000000', '#000000'])
+    expect(fillsOf(white)).toEqual(['#FFFFFF', '#FFFFFF'])
+  })
+
   it('brand:build preserves manifest entries it does not generate (no clobber)', () => {
     const before = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'))
     const networkEntryBefore = before.find((e) => e.path === '/brand/networks/stellar.svg')
@@ -156,7 +177,7 @@ describe('brand asset contract', () => {
     execFileSync('node', [BUILD_SCRIPT], { cwd: FRONTEND_DIR })
 
     const after = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'))
-    expect(after.length).toBe(14)
+    expect(after.length).toBe(before.length)
     expect(after.map((e) => e.path).sort()).toEqual(before.map((e) => e.path).sort())
     // Preserved verbatim — the build script doesn't own these files, so it must
     // not recompute/rewrite their manifest entry even if the file is unchanged.

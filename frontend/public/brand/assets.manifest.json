@@ -117,6 +117,15 @@
     "trademarkTreatment": "Stellar and the Stellar logo are trademarks of the Stellar Development Foundation (SDF), used per the SDF brand policy (stellar.org/brand-policy) solely to indicate that Vibing Farmer builds on the Stellar network. Rendered solid black, the SDF-approved Black variant, with no recoloring, distortion, or recombination with other symbols. Vibing Farmer is not endorsed by or affiliated with the SDF."
   },
   {
+    "path": "/brand/networks/stellar-white.svg",
+    "kind": "network-stellar-white",
+    "sha256": "3c265bcf47d5ca4d212ed15ab3e36d24b39dd8f3205b5eaae14b7a5ce4dc5b0c",
+    "source": "Stellar Development Foundation, official Logo Press Kit 2026 (Stellar Logo Final White CMYK, vector PDF). Same icon geometry as network-stellar, isolated from the Stellar-plus-wordmark lockup; path geometry unmodified.",
+    "sourceUrl": "https://stellar.org/brand-resources",
+    "retrievedAt": "2026-07-22",
+    "trademarkTreatment": "Stellar and the Stellar logo are trademarks of the Stellar Development Foundation (SDF), used per the SDF brand policy (stellar.org/brand-policy) solely to indicate that Vibing Farmer builds on the Stellar network. Rendered solid white, the SDF-approved White variant (for dark surfaces), with no recoloring, distortion, or recombination with other symbols. Vibing Farmer is not endorsed by or affiliated with the SDF."
+  },
+  {
     "path": "/brand/networks/base.svg",
     "kind": "network-base",
     "sha256": "53fb665addc3cad47f349dc19d66fbccfb8bb542381087b18b97a05863fdd326",
