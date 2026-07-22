@@ -26,7 +26,7 @@ const ROLE_SYSTEM = {
 /** "Unknown, stale, or unavailable financial data is never rendered as zero" (INDEX). A null
  * apy renders as plain-language "not available" rather than a fabricated "0%". */
 function fmtApy(apy) {
-  return apy == null ? 'not available' : `${apy}%`
+  return apy == null ? 'APY not available' : `${apy}% APY`
 }
 
 /** projection is additive (Strategy Task 2's mdp.scoreReward / simulation.runSimulation); a
@@ -45,14 +45,16 @@ export function buildSpecialistPrompt(role, input, rules) {
   const vaults = input.vaults
     .map(
       (v) =>
-        `${v.name} (${v.protocol}) ${fmtApy(v.apy)} APY, ${v.allocationPct}% alloc, ${v.drawdown}% dd, ${v.riskTier}`
+        `${v.name} (${v.protocol}) ${fmtApy(v.apy)}, ${v.allocationPct}% alloc, ${v.drawdown}% dd, ${v.riskTier}`
     )
     .join('; ')
   const yieldUnavailable = input.projection?.state === 'unavailable'
   let slice = ''
   if (role === 'yield') {
+    // riskAdjustedScore = blended / riskWeighted — it is itself yield-derived, so an unavailable
+    // projection makes it fabricated too (riskPenalty is drawdown-derived and stays numeric).
     slice = yieldUnavailable
-      ? `Blended APY: not available\nProjected annual (risk-adjusted): not available\nRisk-adjusted score: ${input.riskAdjustedScore} (penalty ${input.riskPenalty})\nProfile risk: ${input.riskTier}`
+      ? `Blended APY: not available\nProjected annual (risk-adjusted): not available\nRisk-adjusted score: not available (penalty ${input.riskPenalty})\nProfile risk: ${input.riskTier}`
       : `Blended APY: ${input.blendedApy}%\nProjected annual (risk-adjusted): ${input.projectedAnnualUsdc} USDC\nRisk-adjusted score: ${input.riskAdjustedScore} (penalty ${input.riskPenalty})\nProfile risk: ${input.riskTier}`
   } else if (role === 'risk') {
     slice = `Market regime: ${input.turbulence}\nGate violations: ${input.violations.length ? input.violations.join('; ') : 'none'}\nBasket max drawdown (30d): ${input.maxDrawdown}%\nProfile risk tolerance: ${input.riskTier}`
@@ -259,8 +261,7 @@ export function buildDebateInput(strategy, simulation, state = {}) {
 function buildProposerPrompt(input, riskFeedback) {
   const vaults = input.vaults
     .map(
-      (v) =>
-        `${v.name} (${v.protocol}) ${fmtApy(v.apy)} APY, ${v.allocationPct}% alloc, ${v.riskTier}`
+      (v) => `${v.name} (${v.protocol}) ${fmtApy(v.apy)}, ${v.allocationPct}% alloc, ${v.riskTier}`
     )
     .join('; ')
   const yieldUnavailable = input.projection?.state === 'unavailable'
@@ -279,8 +280,7 @@ Risk-adjusted projected annual: ${yieldUnavailable ? 'not available' : `${input.
 function buildRiskCompliancePrompt(input, proposer) {
   const vaults = input.vaults
     .map(
-      (v) =>
-        `${v.name} (${v.protocol}) ${fmtApy(v.apy)} APY, ${v.allocationPct}% alloc, ${v.riskTier}`
+      (v) => `${v.name} (${v.protocol}) ${fmtApy(v.apy)}, ${v.allocationPct}% alloc, ${v.riskTier}`
     )
     .join('; ')
   let prompt = `Proposed deposit: ${input.amountUsdc} USDC across ${input.numVaults} vault(s): ${vaults}
@@ -299,12 +299,14 @@ Proposer argument:
 
 function buildValidatorPrompt(input, proposer, riskComp) {
   const yieldUnavailable = input.projection?.state === 'unavailable'
+  // expectedValue/probProfit are outputs of the SAME runSimulation call that reports
+  // projection — unavailable yield makes them fabricated too, not just blendedApy.
   return `Proposed deposit: ${input.amountUsdc} USDC across ${input.numVaults} vault(s)
 Blended APY: ${yieldUnavailable ? 'not available' : `${input.blendedApy}%`}
-Expected value (30d): ${input.expectedValue ?? 'n/a'} USDC
+Expected value (30d): ${yieldUnavailable ? 'not available' : `${input.expectedValue ?? 'n/a'} USDC`}
 VaR (${input.VaR != null ? '95%' : 'n/a'}): ${input.VaR ?? 'n/a'} USDC
 CVaR: ${input.CVaR ?? 'n/a'} USDC
-Probability of profit: ${input.probProfit != null ? (input.probProfit * 100).toFixed(1) : 'n/a'}%
+Probability of profit: ${yieldUnavailable ? 'not available' : input.probProfit != null ? `${(input.probProfit * 100).toFixed(1)}%` : 'n/a'}
 
 Proposer: ${proposer?.action || 'unknown'} (conf ${proposer?.confidence ?? 'n/a'})
 Risk/Compliance: ${riskComp?.action || 'unknown'} (conf ${riskComp?.confidence ?? 'n/a'}, pass: ${riskComp?.compliancePass ?? 'n/a'})
@@ -408,8 +410,12 @@ export function summarizeToSentence(proposer, riskComp, validator, input) {
     input.VaR != null && input.amountUsdc
       ? `${((Math.abs(input.VaR) / input.amountUsdc) * 100).toFixed(1)}%`
       : 'Unavailable'
-  const profitOdds =
-    input.probProfit != null ? ` Profit likelihood: ${(input.probProfit * 100).toFixed(0)}%.` : ''
+  const yieldUnavailable = input.projection?.state === 'unavailable'
+  const profitOdds = yieldUnavailable
+    ? ' Profit likelihood: not available.'
+    : input.probProfit != null
+      ? ` Profit likelihood: ${(input.probProfit * 100).toFixed(0)}%.`
+      : ''
   return `${input.amountUsdc} USDC across ${input.numVaults} vault(s). Recommendation: ${action}. Confidence: ${pConf}%. Compliance: ${compPass}. VaR: ${vaRatio}.${profitOdds}`
 }
 

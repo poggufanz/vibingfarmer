@@ -131,7 +131,7 @@ describe('buildSpecialistPrompt — honest yield text (no fabricated 0% APY)', (
   it('never renders "0% APY" for a vault whose yield is null', () => {
     const prompt = buildSpecialistPrompt('yield', inputWithNullApy, [])
     expect(prompt).not.toMatch(/Base bridge \(cctp\) 0%/)
-    expect(prompt).toContain('Base bridge (cctp) not available APY')
+    expect(prompt).toContain('Base bridge (cctp) APY not available')
     expect(prompt).toContain('A (aave-v3) 5% APY') // a real APY still renders as a number
   })
 
@@ -139,6 +139,12 @@ describe('buildSpecialistPrompt — honest yield text (no fabricated 0% APY)', (
     const prompt = buildSpecialistPrompt('yield', inputWithNullApy, [])
     expect(prompt).toContain('Blended APY: not available')
     expect(prompt).toContain('Projected annual (risk-adjusted): not available')
+  })
+
+  it('reports the risk-adjusted score as unavailable too — it is yield-derived (blended/riskWeighted)', () => {
+    const prompt = buildSpecialistPrompt('yield', inputWithNullApy, [])
+    expect(prompt).not.toMatch(/Risk-adjusted score: 5\.4/) // baseInput's real riskAdjustedScore, must not leak through
+    expect(prompt).toContain('Risk-adjusted score: not available (penalty 0.3)') // riskPenalty stays numeric
   })
 
   it('a known projection still renders the real numbers (no regression)', () => {
@@ -320,5 +326,12 @@ describe('councilDebate — honest yield prompts end to end (no fabricated 0% AP
       expect(p).not.toMatch(/Blended APY: 0%/)
     }
     expect(prompts.some((p) => p.includes('not available'))).toBe(true)
+    // Validator prompt: expectedValue:0/probProfit:0.5 come from the SAME sim call that
+    // reported projection unavailable — must not render as confirmed sim numbers either.
+    const validatorPrompt = prompts[2]
+    expect(validatorPrompt).not.toMatch(/Expected value \(30d\): 0 USDC/)
+    expect(validatorPrompt).not.toMatch(/Probability of profit: \d/)
+    expect(validatorPrompt).toContain('Expected value (30d): not available')
+    expect(validatorPrompt).toContain('Probability of profit: not available')
   })
 })
