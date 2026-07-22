@@ -20,6 +20,7 @@ import {
   scopeHeadroom,
   EXPIRY_MARGIN_SECONDS,
 } from '../stellar/agentCache.js'
+import { newSessionKey } from '../stellar/sessionKey.js'
 import { SOROBAN_FUNDING_ROUTER_ADDRESS, NETWORK_PASSPHRASE } from '../stellar/config.js'
 
 // Mirrors grant.js's SECONDS_PER_LEDGER (not exported there — testnet's ~5s/ledger convention).
@@ -42,6 +43,152 @@ function sha256Hex(obj) {
 
 function capView(cap) {
   return { token: cap.token, units: String(cap.units), decimals: cap.decimals }
+}
+
+function hexToBytes(hex) {
+  if (!hex) return null
+  const bytes = new Uint8Array(hex.length / 2)
+  for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.substr(i * 2, 2), 16)
+  return bytes
+}
+
+// --- PreparedExecutionV1 (critical fix, review round 2) -------------------------------------
+// A reviewed FRESH decision must bind the EXACT signer/salt a later grant deploys with — the
+// review's `agentInitFingerprint`/`reviewedAgentInits[].signerFingerprint`/`.saltFingerprint`
+// are meaningless promises otherwise. `preflightPermission` generates this material ONCE, the
+// very first time an allocation is reviewed without caller-supplied secrets, and persists it here
+// so every later call for the SAME (owner, planFingerprint, allocationId) — another preflight
+// deciding fresh-vs-reuse, or dispatch actually building the grant — resolves the IDENTICAL
+// material instead of silently minting a new, unreviewed one. Mirrors grantReceiptStore.js's own
+// localStorage-with-in-memory-fallback pattern; kept local to this file (no new shared module)
+// since only this file ever needs to generate or resolve it — dispatch only ever *fetches* and
+// *verifies* it via `fetchPreparedExecutionMaterial` below, never generates its own.
+const PREPARED_STORE_KEY = 'vf.preparedExecution.v1'
+
+let _preparedMemStore = null
+function resolvePreparedStorage(injected) {
+  if (injected) return injected
+  try {
+    if (globalThis.localStorage) return globalThis.localStorage
+  } catch {
+    /* SecurityError in some embeds — fall through */
+  }
+  if (!_preparedMemStore) {
+    const m = new Map()
+    _preparedMemStore = {
+      getItem: (k) => (m.has(k) ? m.get(k) : null),
+      setItem: (k, v) => m.set(k, v),
+      removeItem: (k) => m.delete(k),
+    }
+  }
+  return _preparedMemStore
+}
+
+function readAllPrepared(storage) {
+  try {
+    return JSON.parse(resolvePreparedStorage(storage).getItem(PREPARED_STORE_KEY) || '{}') || {}
+  } catch {
+    return {}
+  }
+}
+
+function writeAllPrepared(all, storage) {
+  try {
+    resolvePreparedStorage(storage).setItem(PREPARED_STORE_KEY, JSON.stringify(all))
+  } catch {
+    /* quota/serialization failure — best-effort, never fatal */
+  }
+}
+
+function preparedKey({ owner, planFingerprint, allocationId }) {
+  return `${owner}|${planFingerprint}|${allocationId}`
+}
+
+/**
+ * Load previously-prepared execution material for one (owner, planFingerprint, allocationId), or
+ * null if nothing has been generated yet. `signer`/`salt` are raw bytes ready to hand straight to
+ * `agentInitScVal`/`fingerprintAgentInits`; `signerSecret` is the S... secret dispatch needs to
+ * actually sign with (never returned in any PermissionDecisionV1 — see `fetchPreparedExecutionMaterial`).
+ * @returns {{signer:Uint8Array, salt:Uint8Array, signerSecret:string}|null}
+ */
+export function loadPreparedExecutionMaterial({ owner, planFingerprint, allocationId, storage }) {
+  const row = readAllPrepared(storage)[preparedKey({ owner, planFingerprint, allocationId })]
+  if (!row) return null
+  return {
+    signer: hexToBytes(row.signerRawHex),
+    salt: hexToBytes(row.saltHex),
+    signerSecret: row.signerSecret,
+  }
+}
+
+function savePreparedExecutionMaterial({ owner, planFingerprint, allocationId, storage }) {
+  const sessionKey = newSessionKey()
+  const salt = globalThis.crypto.getRandomValues(new Uint8Array(32))
+  const all = readAllPrepared(storage)
+  all[preparedKey({ owner, planFingerprint, allocationId })] = {
+    signerRawHex: bytesToHex(sessionKey.rawPublicKey),
+    saltHex: bytesToHex(salt),
+    signerSecret: sessionKey.secret,
+  }
+  writeAllPrepared(all, storage)
+  return { signer: sessionKey.rawPublicKey, salt, signerSecret: sessionKey.secret }
+}
+
+/**
+ * For every agentInit the caller did NOT already supply real signer+salt for (reuse-revalidation
+ * always supplies both, restored from agentCache.js — that always wins here, untouched), resolve
+ * previously-prepared material for its (owner, planFingerprint, allocationId), or generate +
+ * persist NEW material now. Generation happens AT MOST ONCE per allocation, ever — a second call
+ * for the same (owner, planFingerprint, allocationId) always finds the row this wrote.
+ */
+function resolvePreparedMaterial(agentInits, { owner, planFingerprint, storage }) {
+  return agentInits.map((a) => {
+    if (a.signer && a.salt) return a
+    const existing = loadPreparedExecutionMaterial({
+      owner,
+      planFingerprint,
+      allocationId: a.allocationId,
+      storage,
+    })
+    const material =
+      existing ||
+      savePreparedExecutionMaterial({
+        owner,
+        planFingerprint,
+        allocationId: a.allocationId,
+        storage,
+      })
+    return { ...a, signer: material.signer, salt: material.salt }
+  })
+}
+
+/**
+ * Fetch + verify previously-prepared execution material against an already-reviewed
+ * `reviewedAgentInit` (a `PermissionDecisionV1.reviewedAgentInits[i]` entry). Returns null — never
+ * throws — when nothing is stored OR when the stored material's own fingerprints no longer equal
+ * `reviewedAgentInit.signerFingerprint`/`.saltFingerprint`: dispatch's ONLY correct response to a
+ * null here is to invalidate the reviewed run (`PermissionPhaseError`), never to generate new
+ * material and proceed — that would be exactly the poisoning bug this store exists to prevent.
+ * @returns {{signer:Uint8Array, salt:Uint8Array, signerSecret:string}|null}
+ */
+export function fetchPreparedExecutionMaterial({
+  owner,
+  planFingerprint,
+  allocationId,
+  reviewedAgentInit,
+  storage,
+}) {
+  const material = loadPreparedExecutionMaterial({ owner, planFingerprint, allocationId, storage })
+  if (!material) return null
+  const signerFingerprint = sha256Hex(bytesToHex(material.signer))
+  const saltFingerprint = sha256Hex(bytesToHex(material.salt))
+  if (
+    signerFingerprint !== reviewedAgentInit?.signerFingerprint ||
+    saltFingerprint !== reviewedAgentInit?.saltFingerprint
+  ) {
+    return null
+  }
+  return material
 }
 
 /** Plain hashable record for one raw AgentInit — raw signer/salt/mintRecipient bytes hex-encoded
@@ -88,6 +235,11 @@ function toReviewedAgentInit(a) {
     mintRecipient: bytesToHex(a.mintRecipient),
   }
 }
+// Note: `reviewedAgentInits[i].allocationId` (above) already IS the prepared-execution store's
+// lookup key (`fetchPreparedExecutionMaterial({owner, planFingerprint, allocationId, ...})`) — no
+// separate `executionCredentialRef` field is needed here, unlike the reuse-selection `agents[]`
+// array below, whose ref (a deployed agentAddress) genuinely isn't derivable from anything else
+// already on that row.
 
 function budgetsView(budgets) {
   return (budgets || []).map((b) => ({
@@ -244,7 +396,20 @@ export async function preflightPermission({
     throw new Error('preflightPermission requires at least one reviewed agent.')
   }
 
-  const agentInitFingerprint = fingerprintAgentInits(agentInits)
+  // Critical fix (review round 2): resolve real signer/salt material BEFORE fingerprinting or
+  // deciding anything. A caller that already supplied real signer+salt (reuse-revalidation,
+  // restored from agentCache.js) is used exactly as given; anything else gets previously-prepared
+  // material back, or fresh material generated + persisted right now — either way, every fact
+  // this function returns (the fingerprint, `reviewedAgentInits[].signerFingerprint/saltFingerprint`)
+  // describes the SAME material a later `fetchPreparedExecutionMaterial` call will resolve, never
+  // a placeholder that a subsequent grant then silently replaces.
+  const resolvedAgentInits = resolvePreparedMaterial(agentInits, {
+    owner,
+    planFingerprint,
+    storage,
+  })
+
+  const agentInitFingerprint = fingerprintAgentInits(resolvedAgentInits)
   const base = baseDecision({
     runId,
     owner,
@@ -253,12 +418,12 @@ export async function preflightPermission({
     checkedAt: nowSec,
     reviewedBudgets: budgetsView(reviewedBudgets),
     durationSeconds,
-    reviewedAgentInits: agentInits.map(toReviewedAgentInit),
+    reviewedAgentInits: resolvedAgentInits.map(toReviewedAgentInit),
   })
 
   // Base allocations are never reused, and never even attempt a proof for the rest of the run —
   // a Base leg always needs a fresh mandate + CCTP burn.
-  if (agentInits.some((a) => Number(a.kind) === AGENT_KIND_BRIDGE)) {
+  if (resolvedAgentInits.some((a) => Number(a.kind) === AGENT_KIND_BRIDGE)) {
     return freshDecision(base, 'base-required')
   }
 
@@ -278,7 +443,7 @@ export async function preflightPermission({
   // Allowance sufficiency: the proven current amount per token must cover what THIS reviewed set
   // now needs, and the receipt's own expiry must still clear the ledger-space safety margin.
   const requiredByToken = new Map()
-  for (const a of agentInits) {
+  for (const a of resolvedAgentInits) {
     requiredByToken.set(a.token, (requiredByToken.get(a.token) ?? 0n) + BigInt(a.cap.units))
   }
   for (const [token, required] of requiredByToken) {
@@ -292,7 +457,7 @@ export async function preflightPermission({
   }
 
   // Per-agent on-chain scope validation, ALL-OR-NOTHING across every reviewed allocation.
-  const targets = [...new Set(agentInits.map((a) => a.target))]
+  const targets = [...new Set(resolvedAgentInits.map((a) => a.target))]
   const candidatesByTarget = new Map()
   for (const target of targets) {
     candidatesByTarget.set(
@@ -300,7 +465,7 @@ export async function preflightPermission({
       await inspectAgents({ owner, vault: target, network, nowSec, server, storage })
     )
   }
-  const selection = selectAgents(agentInits, candidatesByTarget, { owner, nowSec })
+  const selection = selectAgents(resolvedAgentInits, candidatesByTarget, { owner, nowSec })
   if (!selection.ok) return freshDecision(base, selection.reason)
 
   return reuseDecision(base, {

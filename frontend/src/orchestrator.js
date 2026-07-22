@@ -19,7 +19,7 @@ import {
   ZERO32,
   evmAddrToBytes32,
 } from './stellar/cctpBurn.js'
-import { deriveCctpTransferUnits } from './stellar/format.js'
+import { deriveCctpTransferUnits, toBaseUnits } from './stellar/format.js'
 import { readStoredBaseMandate } from './mergeFlowHelpers.js'
 import {
   SOROBAN_TOKEN_ADDRESS,
@@ -46,6 +46,36 @@ const SCOPE_TTL_SECONDS = 3600
 const BASE_UNIT = 10 ** SOROBAN_DECIMALS // 1 VFUSD = 10_000_000 (7-dp)
 // Gap between serial worker dispatches — keeps the relay off its per-IP rate limit.
 const DISPATCH_INTERVAL_MS = 2000
+
+/** hex string (0x-prefixed or not) -> 32-byte Uint8Array, for a reviewed AgentInit's
+ * `mintRecipient` (reusePreflight.js stores it hex-encoded via `bytesToHex`). */
+function hexToBytes32(hex) {
+  const clean = hex.startsWith('0x') ? hex.slice(2) : hex
+  const bytes = new Uint8Array(32)
+  for (let i = 0; i < 32 && i * 2 < clean.length; i++)
+    bytes[i] = parseInt(clean.substr(i * 2, 2), 16)
+  return bytes
+}
+
+/**
+ * Bigint-safe per-vault unit split for the legacy `{vaults:[{allocation}]}` shape (review round 2
+ * fix — `orchestrator.js`'s previous `BigInt(Math.floor(totalAmount * v.allocation * BASE_UNIT))`
+ * let float multiplication corrupt the final on-chain unit value directly). Each ratio is scaled
+ * to an integer numerator (parts per 1e10 — ample precision for a JS float ratio) BEFORE any
+ * bigint arithmetic touches the total. `localTotalUnits` is what THIS array's own ratios
+ * collectively represent (1 for a pure-Stellar run, less than 1 for the Stellar-only slice of a
+ * mixed run) — shares floor-divide against it, and any rounding remainder goes to the earliest
+ * indices one unit at a time, mirroring planModel.js's `splitEven` remainder rule so no unit of
+ * the user's money is silently dropped to truncation.
+ */
+function splitUnitsByRatio(totalUnits, ratios) {
+  const SCALE = 10_000_000_000n
+  const scale = (r) => BigInt(Math.round(r * 1e10))
+  const localTotalUnits = (totalUnits * scale(ratios.reduce((a, b) => a + b, 0))) / SCALE
+  const shares = ratios.map((r) => (totalUnits * scale(r)) / SCALE)
+  const remainder = localTotalUnits - shares.reduce((a, b) => a + b, 0n)
+  return shares.map((s, i) => (remainder > 0n && BigInt(i) < remainder ? s + 1n : s))
+}
 
 /**
  * Orchestrator Agent — receives the AI plan, authorizes + funds each agent on Stellar (one
@@ -149,9 +179,19 @@ export class OrchestratorAgent {
     let workers
     let confirmed
     if (permissionDecision.mode === 'reuse') {
-      const revalidated = await this.revalidateReuse(strategyPlan, permissionDecision, planAgents)
-      workers = await this.buildReuseWorkers(planAgents, revalidated)
-      const expiryLedger = revalidated.allowanceExpiryProof?.approvals?.[0]?.expiryLedger ?? null
+      const { revalidated, credentialByAllocation } = await this.revalidateReuse(
+        strategyPlan,
+        permissionDecision,
+        planAgents
+      )
+      workers = this.buildReuseWorkers(planAgents, revalidated, credentialByAllocation)
+      // Matched by the actual budgeted token, never approvals[0] — a multi-token receipt's first
+      // approval is not guaranteed to be the one this run's deposit budget cares about.
+      const primaryToken = permissionDecision.reviewedBudgets?.[0]?.token
+      const matchingApproval = revalidated.allowanceExpiryProof?.approvals?.find(
+        (a) => a.amount?.token === primaryToken
+      )
+      const expiryLedger = matchingApproval?.expiryLedger ?? null
       confirmed = {
         version: 1,
         runId: strategyPlan.runId,
@@ -264,9 +304,11 @@ export class OrchestratorAgent {
   /** Both modes: reject before any wallet/provider/movement when the reviewed decision no longer
    * describes THIS exact plan — a stale planFingerprint, or a reviewed agent whose cap/expiry/
    * period/target drifted from what the plan now says. `PermissionPhaseError(phase:'preflight')`.
-   * Deliberately excludes signer/salt from the comparison: a fresh-mode signer is generated once,
-   * right here, for a first-time grant that has no prior signer to preserve; reuse mode's OWN
-   * signer continuity is instead re-proven on-chain by `revalidateReuse` below. */
+   * Deliberately excludes signer/salt from this STRUCTURAL comparison — that verification is
+   * mode-specific and happens separately, immediately before either mode's material actually gets
+   * used: fresh mode's `grantFreshFromDecision` fetches + fingerprint-verifies the prepared
+   * execution material (`fetchPreparedExecutionMaterial`, never regenerates it); reuse mode's
+   * `revalidateReuse` re-proves signer continuity on-chain. */
   assertPermissionMatchesPlan(strategyPlan, permissionDecision, planAgents) {
     if (
       !permissionDecision ||
@@ -309,13 +351,18 @@ export class OrchestratorAgent {
    * Reuse mode's ONE revalidation gate, run immediately before the first pull. Never builds or
    * submits a grant, never touches the wallet/provider — it re-runs Task 5's own
    * `preflightPermission` (a fresh latest-ledger capture, a fresh no-later-mutation proof, a fresh
-   * per-agent on-chain scope re-check) against the SAME reviewed agent set, restoring each
-   * candidate's session key from the cache Task 5 already pointed at
-   * (`permissionDecision.agents[i].executionCredentialRef`, agentCache.js). Any drift — mode flips
-   * away from reuse, the receipt/agent-init fingerprint changes, a picked address or its scope
-   * fingerprint changes, or a session key is no longer cached — is evidence the world moved since
-   * review: `PermissionPhaseError(phase:'reuse-revalidation', code:'VF_REUSE_EVIDENCE_CHANGED')`,
-   * never a silent fallback to a fresh wallet signature.
+   * per-agent on-chain scope re-check) against the SAME reviewed agent set. Signer/salt are
+   * deliberately OMITTED from the structural agentInits passed in — `preflightPermission` resolves
+   * them itself from the SAME prepared-execution material this candidate's original fresh review
+   * generated (reusePreflight.js), reproducing the review-time fingerprint exactly instead of this
+   * method reconstructing (and hoping to match) it. Session-key AVAILABILITY (can we still sign
+   * with the deployed agent?) is a separate, explicit check against agentCache.js, read exactly
+   * once here and returned as `credentialByAllocation` so `buildReuseWorkers` never re-reads it.
+   * Any drift — mode flips away from reuse, the receipt/agent-init fingerprint changes, a picked
+   * address or its scope fingerprint changes, or a session key is no longer cached — is evidence
+   * the world moved since review: `PermissionPhaseError(phase:'reuse-revalidation',
+   * code:'VF_REUSE_EVIDENCE_CHANGED')`, never a silent fallback to a fresh wallet signature.
+   * @returns {Promise<{revalidated:object, credentialByAllocation:Map}>}
    */
   async revalidateReuse(strategyPlan, permissionDecision, planAgents) {
     const { loadCachedAgents } = await import('./stellar/agentCache.js')
@@ -329,6 +376,7 @@ export class OrchestratorAgent {
       ])
     )
 
+    const credentialByAllocation = new Map()
     const agentInits = planAgents.map((agent) => {
       const picked = pickedByAllocation.get(agent.allocationId)
       const cached = picked ? cachedByAddress.get(picked.agentAddress) : null
@@ -339,11 +387,9 @@ export class OrchestratorAgent {
           message: `The session key for allocation ${agent.allocationId} is no longer available.`,
         })
       }
-      const sessionKey = newSessionKey(cached.secret)
+      credentialByAllocation.set(agent.allocationId, { agentAddress: picked.agentAddress, cached })
       return {
         allocationId: agent.allocationId,
-        signer: sessionKey.rawPublicKey,
-        salt: null,
         cap: { token: agent.cap.token, units: agent.cap.units, decimals: agent.cap.decimals },
         token: agent.cap.token,
         target: SOROBAN_ACTIVE_VAULT_ADDRESS,
@@ -400,7 +446,7 @@ export class OrchestratorAgent {
       })
     }
 
-    return revalidated
+    return { revalidated, credentialByAllocation }
   }
 
   /** Task 2's `toDispatchStrategy` already narrows a StrategyPlan to eligible-only allocations
@@ -420,20 +466,24 @@ export class OrchestratorAgent {
     }
   }
 
-  /** Reuse-mode worker construction: EXACTLY the credentials `revalidateReuse` just re-proved —
-   * never a fresh deploy, never a different cache pick. */
-  async buildReuseWorkers(planAgents, revalidated) {
-    const { loadCachedAgents } = await import('./stellar/agentCache.js')
+  /** Reuse-mode worker construction: EXACTLY the credentials `revalidateReuse` just re-proved and
+   * already read once (`credentialByAllocation`) — never a fresh deploy, never a different cache
+   * pick, and never a SECOND cache read (a race between the two reads could otherwise disagree
+   * with what was just revalidated). A credential missing here — it was already checked once in
+   * `revalidateReuse`, so this is belt-and-braces, not the primary gate — is a typed
+   * `PermissionPhaseError`, never a raw `TypeError` from indexing into `undefined`. */
+  buildReuseWorkers(planAgents, revalidated, credentialByAllocation) {
     const pickedByAllocation = new Map(revalidated.agents.map((a) => [a.allocationId, a]))
-    const cachedByAddress = new Map(
-      loadCachedAgents({ owner: this.user, vault: SOROBAN_ACTIVE_VAULT_ADDRESS }).map((e) => [
-        e.agentAddress,
-        e,
-      ])
-    )
     return planAgents.map((agent) => {
       const picked = pickedByAllocation.get(agent.allocationId)
-      const cached = cachedByAddress.get(picked.agentAddress)
+      const credential = credentialByAllocation.get(agent.allocationId)
+      if (!picked || !credential) {
+        throw new PermissionPhaseError({
+          phase: 'reuse-revalidation',
+          code: 'VF_REUSE_EVIDENCE_CHANGED',
+          message: `No validated credential for allocation ${agent.allocationId}.`,
+        })
+      }
       return new WorkerAgent({
         agentId: agent.allocationId,
         allocationId: agent.allocationId,
@@ -444,8 +494,8 @@ export class OrchestratorAgent {
         amount: BigInt(agent.cap.units),
         sessionId: this.sessionId,
         onEvent: this.onEvent,
-        agentAddress: picked.agentAddress,
-        sessionKey: newSessionKey(cached.secret),
+        agentAddress: credential.agentAddress,
+        sessionKey: newSessionKey(credential.cached.secret),
         eligibilityToken: this.reviewedEligibilityToken(),
       })
     })
@@ -472,27 +522,50 @@ export class OrchestratorAgent {
 
   /**
    * Fresh mode's ONE grant. Builds AgentInits strictly from `permissionDecision.reviewedAgentInits`
-   * — cap/token/target/kind/period/expiry are never regenerated from the plan or a fresh
-   * `Date.now()` expiry, only the per-worker session key is generated here (a first-time grant has
-   * no prior signer to preserve). Any wallet rejection, build/simulation failure, submission
-   * failure, or unconfirmed on-chain deployment is `PermissionPhaseError(phase:'fresh-grant')` —
-   * no worker ever starts. Calls `submitGrant` exactly once; never touches the reuse cache reads.
+   * — cap/token/target/kind/period/expiry/mintRecipient/destinationDomain are never regenerated
+   * from the plan or a fresh `Date.now()` expiry. Critical fix (review round 2): the signer/salt
+   * are ALSO never regenerated here — `w.setupKey()` and grant.js's random-salt fallback used to
+   * mint UNREVIEWED material at dispatch time, poisoning the saved receipt's fingerprint forever
+   * (a later preflight could never reproduce it, so `mode:'reuse'` became permanently
+   * unreachable). Instead this fetches the material `preflightPermission` generated + persisted at
+   * REVIEW time (reusePreflight.js's `fetchPreparedExecutionMaterial`) and VERIFIES it still
+   * matches `reviewedAgentInits[].signerFingerprint`/`.saltFingerprint` before using it. Missing or
+   * mismatched material invalidates the reviewed run — `PermissionPhaseError(phase:'fresh-grant',
+   * code:'VF_PREPARED_MATERIAL_MISSING')` — never a silent re-generation. Any wallet rejection,
+   * build/simulation failure, submission failure, or unconfirmed on-chain deployment is also
+   * `PermissionPhaseError(phase:'fresh-grant')` — no worker ever starts. Calls `submitGrant`
+   * exactly once; never touches the reuse cache reads.
    */
   async grantFreshFromDecision(strategyPlan, workers, permissionDecision) {
     const reviewedByAllocation = new Map(
       (permissionDecision.reviewedAgentInits || []).map((r) => [r.allocationId, r])
     )
-    for (const w of workers) await w.setupKey() // fresh signer, generated exactly once
+    const { fetchPreparedExecutionMaterial } = await import('./strategy/reusePreflight.js')
 
     const agentInits = workers.map((w) => {
       const r = reviewedByAllocation.get(w.allocationId)
+      const material = fetchPreparedExecutionMaterial({
+        owner: this.user,
+        planFingerprint: strategyPlan.planFingerprint,
+        allocationId: w.allocationId,
+        reviewedAgentInit: r,
+      })
+      if (!material) {
+        throw new PermissionPhaseError({
+          phase: 'fresh-grant',
+          code: 'VF_PREPARED_MATERIAL_MISSING',
+          message: `No prepared execution material for allocation ${w.allocationId} matches the reviewed decision. This run must be re-reviewed.`,
+        })
+      }
+      w.sessionKey = newSessionKey(material.signerSecret)
       return {
-        signer: w.sessionKey.rawPublicKey,
+        signer: material.signer,
+        salt: material.salt,
         cap: BigInt(r.cap.units),
         token: r.cap.token,
         target: r.target,
         kind: r.kind,
-        mintRecipient: ZERO32,
+        mintRecipient: r.mintRecipient ? hexToBytes32(r.mintRecipient) : ZERO32,
         destinationDomain: r.destinationDomain ?? 0,
         periodDuration: r.periodSeconds,
         expiry: r.expiry,
@@ -657,6 +730,16 @@ export class OrchestratorAgent {
     // settled branch of Promise.allSettled alongside the Base leg below.
     const runStellarLegs = async () => {
       try {
+        // Review round 2 fix: the per-vault ON-CHAIN unit amount is derived via
+        // decimalToUnits(totalAmount) + a bigint-exact ratio split (splitUnitsByRatio above) —
+        // never `Math.floor(totalAmount * v.allocation * BASE_UNIT)`, whose float multiplication
+        // landed directly in the deploy/fund/deposit amount. `amountVfusd` stays float — it is
+        // display-only (skill-gen prompt text), never converted to an on-chain unit itself.
+        const runTotalUnits = toBaseUnits(totalAmount)
+        const perVaultUnits = splitUnitsByRatio(
+          runTotalUnits,
+          stellarStrategy.vaults.map((v) => v.allocation)
+        )
         const vaultPlans = stellarStrategy.vaults.map((v, i) => ({
           index: i,
           agentId: makeAgentId(i, this.sessionId),
@@ -664,7 +747,7 @@ export class OrchestratorAgent {
           protocolSlug: v.protocolSlug || null,
           eligibilityToken: v.eligibilityToken || null,
           amountVfusd: totalAmount * v.allocation,
-          amountUnits: BigInt(Math.floor(totalAmount * v.allocation * BASE_UNIT)),
+          amountUnits: perVaultUnits[i],
         }))
 
         this.onEvent('orchestrator-started', {

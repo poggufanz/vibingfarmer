@@ -124,6 +124,25 @@ describe('orchestrator (Stellar deploy + fund + dispatch)', () => {
     expect(res.completed).toBe(2)
   })
 
+  it('splits an odd ratio set (thirds) into exact bigint units — never the float-truncated total (review round 2 fix)', async () => {
+    // Under the OLD `BigInt(Math.floor(totalAmount * v.allocation * BASE_UNIT))` computation, each
+    // third independently floors: Math.floor(100 * (1/3) * 1e7) = 333333333 -> three of them sum to
+    // 999999999, ONE UNIT SHORT of decimalToUnits(100) = 1000000000. The fix must never drop that
+    // unit: the earliest vault absorbs the remainder, exactly mirroring planModel.js's splitEven.
+    const thirds = {
+      vaults: [
+        { address: 'CV1', allocation: 1 / 3 },
+        { address: 'CV2', allocation: 1 / 3 },
+        { address: 'CV3', allocation: 1 / 3 },
+      ],
+    }
+    const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 's-thirds', onEvent: () => {} })
+    await orch.dispatch(thirds, 100)
+    const caps = deployAgentForSessionMock.mock.calls.map((c) => c[0].cap)
+    expect(caps).toEqual([333_333_334n, 333_333_333n, 333_333_333n])
+    expect(caps.reduce((a, b) => a + b, 0n)).toBe(1_000_000_000n) // exactly decimalToUnits(100)
+  })
+
   it('runs the user-signed setup chain STRICTLY sequentially: agent 1 fully set up before agent 2 starts', async () => {
     const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 'sq', onEvent: () => {} })
     await orch.dispatch(strategy, 100)

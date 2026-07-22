@@ -7,6 +7,8 @@ import {
   preflightPermission,
   toPermissionDecisionView,
   fingerprintAgentInits,
+  loadPreparedExecutionMaterial,
+  fetchPreparedExecutionMaterial,
 } from './reusePreflight.js'
 import { AGENT_KIND_DEPOSIT, AGENT_KIND_BRIDGE } from '../stellar/grant.js'
 
@@ -36,6 +38,27 @@ function agentInit(over = {}) {
     destinationDomain: 0,
     mintRecipient: new Uint8Array(32),
     ...over,
+  }
+}
+
+// A structural-only spec — no signer/salt — the shape a first-time review supplies now that
+// `preflightPermission` itself generates + persists that material (critical fix, review round 2).
+function structuralAgentInit(over = {}) {
+  const { signer: _signer, salt: _salt, ...rest } = agentInit(over)
+  return rest
+}
+
+// A REAL (Map-backed) storage double — unlike the plain `{}` used elsewhere in this file (which
+// every OTHER test's fully-injected loadReceipt/proveAllowance/inspectAgents never actually read
+// or write), the prepared-execution store genuinely persists to whatever `storage` it is given,
+// so these tests need one that actually works, isolated per test (never the module's shared
+// in-memory fallback, which would leak material between tests using the same fixture allocationId).
+function memoryStorage() {
+  const m = new Map()
+  return {
+    getItem: (k) => (m.has(k) ? m.get(k) : null),
+    setItem: (k, v) => m.set(k, v),
+    removeItem: (k) => m.delete(k),
   }
 }
 
@@ -409,5 +432,153 @@ describe('never touches a wallet/provider/transaction builder', () => {
     delete deps.storage
     const out = await preflightPermission(deps)
     expect(out.mode).toBe('reuse')
+  })
+})
+
+// Critical fix (review round 2): a FRESH decision must generate its execution material ONCE and
+// persist it — otherwise the fingerprint it promises can never be reproduced by a later grant,
+// permanently poisoning reuse (mode:'reuse' becomes unreachable after any fresh grant).
+describe('prepared execution material (fresh-mode signer/salt threading)', () => {
+  test('generates material once and reuses the SAME material on a repeat call for the same (owner, planFingerprint, allocationId)', async () => {
+    const storage = memoryStorage()
+    const first = await preflightPermission(
+      baseDeps({ agentInits: [structuralAgentInit()], loadReceipt: vi.fn(() => null), storage })
+    )
+    expect(first.mode).toBe('fresh')
+    expect(first.reviewedAgentInits[0].signerFingerprint).toMatch(/^0x[0-9a-f]{64}$/)
+    expect(first.reviewedAgentInits[0].saltFingerprint).toMatch(/^0x[0-9a-f]{64}$/)
+
+    const second = await preflightPermission(
+      baseDeps({ agentInits: [structuralAgentInit()], loadReceipt: vi.fn(() => null), storage })
+    )
+    expect(second.agentInitFingerprint).toBe(first.agentInitFingerprint)
+    expect(second.reviewedAgentInits[0].signerFingerprint).toBe(
+      first.reviewedAgentInits[0].signerFingerprint
+    )
+    expect(second.reviewedAgentInits[0].saltFingerprint).toBe(
+      first.reviewedAgentInits[0].saltFingerprint
+    )
+  })
+
+  test('a caller-supplied full signer+salt (reuse-revalidation) is used as-is, never overridden by stored material', async () => {
+    const storage = memoryStorage()
+    // Prime the store with DIFFERENT material for the same allocation first.
+    await preflightPermission(
+      baseDeps({ agentInits: [structuralAgentInit()], loadReceipt: vi.fn(() => null), storage })
+    )
+    const out = await preflightPermission(baseDeps({ storage })) // agentInit() supplies real signer+salt
+    // The caller's own bytes (rawSigner/rawSalt, filled with 7s/9s) win — never silently swapped
+    // for whatever the store generated a moment ago for the same allocationId.
+    const expectedFingerprint = fingerprintAgentInits([agentInit()])
+    expect(out.agentInitFingerprint).toBe(expectedFingerprint)
+  })
+
+  test('never leaks the generated signer secret into the decision, fresh mode included', async () => {
+    const storage = memoryStorage()
+    const out = await preflightPermission(
+      baseDeps({ agentInits: [structuralAgentInit()], loadReceipt: vi.fn(() => null), storage })
+    )
+    const material = loadPreparedExecutionMaterial({
+      owner: OWNER,
+      planFingerprint: '0xplan',
+      allocationId: 'run-1:deposit:0',
+      storage,
+    })
+    expect(material).not.toBeNull()
+    expect(JSON.stringify(out)).not.toContain(material.signerSecret)
+    expect(JSON.stringify(toPermissionDecisionView(out))).not.toContain(material.signerSecret)
+  })
+
+  test('closes the loop end to end: a fresh grant, once its receipt is saved, is reusable on the very next preflight', async () => {
+    const storage = memoryStorage()
+    const structural = structuralAgentInit()
+
+    // Step 1 — first-ever review: no receipt yet, no caller-supplied secrets -> fresh, material
+    // generated + persisted (what a real "review this plan" call would do).
+    const freshOut = await preflightPermission(
+      baseDeps({ agentInits: [structural], loadReceipt: vi.fn(() => null), storage })
+    )
+    expect(freshOut.mode).toBe('fresh')
+
+    // Step 2 — dispatch fetches that SAME material to build the real grant (grantFreshFromDecision's
+    // job); simulate it here to derive the on-chain signer a real deploy would have produced.
+    const material = fetchPreparedExecutionMaterial({
+      owner: OWNER,
+      planFingerprint: '0xplan',
+      allocationId: 'run-1:deposit:0',
+      reviewedAgentInit: freshOut.reviewedAgentInits[0],
+      storage,
+    })
+    expect(material).not.toBeNull()
+    const signerPub = StrKey.encodeEd25519PublicKey(material.signer)
+    const confirmedReceipt = receipt({ agentInitFingerprint: freshOut.agentInitFingerprint })
+
+    // Step 3 — a SUBSEQUENT preflight for the SAME plan (still no caller-supplied secrets) must
+    // resolve the SAME persisted material, reproducing the SAME agentInitFingerprint the receipt
+    // was saved under, and — given a valid on-chain scope for that exact signer — land on reuse.
+    const reuseOut = await preflightPermission(
+      baseDeps({
+        agentInits: [structural],
+        loadReceipt: vi.fn(() => confirmedReceipt),
+        inspectAgents: vi.fn(async () => [
+          {
+            ...cachedRow({ entry: { ...cachedRow().entry, signerPub } }),
+            signer: material.signer,
+          },
+        ]),
+        storage,
+      })
+    )
+    expect(reuseOut.mode).toBe('reuse')
+    expect(reuseOut.freshReason).toBeNull()
+  })
+})
+
+describe('fetchPreparedExecutionMaterial', () => {
+  test('returns null when nothing has been prepared yet', () => {
+    const out = fetchPreparedExecutionMaterial({
+      owner: OWNER,
+      planFingerprint: '0xplan',
+      allocationId: 'run-1:deposit:0',
+      reviewedAgentInit: { signerFingerprint: '0xabc', saltFingerprint: '0xdef' },
+      storage: {},
+    })
+    expect(out).toBeNull()
+  })
+
+  test('returns null when stored material no longer matches the reviewed fingerprints', async () => {
+    const storage = memoryStorage()
+    const out = await preflightPermission(
+      baseDeps({ agentInits: [structuralAgentInit()], loadReceipt: vi.fn(() => null), storage })
+    )
+    const mismatched = fetchPreparedExecutionMaterial({
+      owner: OWNER,
+      planFingerprint: '0xplan',
+      allocationId: 'run-1:deposit:0',
+      reviewedAgentInit: {
+        ...out.reviewedAgentInits[0],
+        signerFingerprint: '0x' + 'ff'.repeat(32),
+      },
+      storage,
+    })
+    expect(mismatched).toBeNull()
+  })
+
+  test('returns the material when it matches the reviewed fingerprints', async () => {
+    const storage = memoryStorage()
+    const out = await preflightPermission(
+      baseDeps({ agentInits: [structuralAgentInit()], loadReceipt: vi.fn(() => null), storage })
+    )
+    const material = fetchPreparedExecutionMaterial({
+      owner: OWNER,
+      planFingerprint: '0xplan',
+      allocationId: 'run-1:deposit:0',
+      reviewedAgentInit: out.reviewedAgentInits[0],
+      storage,
+    })
+    expect(material).not.toBeNull()
+    expect(material.signer).toBeInstanceOf(Uint8Array)
+    expect(material.salt).toBeInstanceOf(Uint8Array)
+    expect(material.signerSecret).toMatch(/^S/)
   })
 })
