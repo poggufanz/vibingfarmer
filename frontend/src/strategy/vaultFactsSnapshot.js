@@ -3,6 +3,17 @@
 // record (audit, adminKey, oracleType, poolClass — no public API states these reliably) AND the
 // offline fallback when the live fetch fails. refreshVaultFacts.mjs remains the offline snapshot
 // updater. Provenance honesty: asOf is the CAPTURE date, never Date.now().
+//
+// Strategy Task 1 (truthful venue data): 'blend-usdc' is the ONE fact slug the live Stellar
+// catalog entry (config.js's VAULT_CATALOG, now a single real record) actually keys into. The
+// 'aave-v3' / 'morpho-blue' / 'pendle-v2' / 'fluid' top-level keys below are KEPT — no Stellar
+// catalog entry keys into them any more, but they remain valid, independently-tested general
+// mainnet reference facts (see vaultFacts.test.js) and are NOT re-purposed as venue truth for
+// anything this app executes. The three '*-base' keys are the real fact slugs the Base custody
+// proxies key into (via factSlug, see basketFilter.js's slugFor) — their `meta.label` values
+// (e.g. "Aave v3 (Base)") describe WHICH mainnet protocol's reputation was borrowed to curate
+// these facts, not a live execution claim; that truthful disclosure comes from
+// strategy/venueTruth.js instead (see basketFilter.js's computeBasket).
 export const CAPTURED_AT = Date.parse('2026-06-28T00:00:00Z')
 
 const f = (value) => ({ value, source: 'snapshot', asOf: CAPTURED_AT })

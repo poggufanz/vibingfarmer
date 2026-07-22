@@ -2,6 +2,7 @@
 // sum 1, and reports all-fail so the caller can hard-stop before dispatch.
 import { resolve } from './vaultFacts.js'
 import { evaluate } from './eligibilityGate.js'
+import { venueDisclosure } from './venueTruth.js'
 
 // Base catalog entries set factSlug because `protocol` alone collides with the Stellar
 // mainnet-analog entries (e.g. both carry 'aave-v3'); factSlug disambiguates the fact lookup.
@@ -34,14 +35,20 @@ export function computeBasket(agents, nowMs = Date.now()) {
   const verdictBySlug = {}
   for (const a of agents) {
     const slug = slugFor(a)
+    // `disclosure` is sourced from venueTruth.js (the agent's own `vault` record), NEVER from the
+    // eligibility snapshot's `meta.label` — a Base proxy's fact slug is keyed to reputational facts
+    // borrowed from its mainnet analog (e.g. 'aave-v3-base' <- 'aave-v3'), and that label must not
+    // leak out as if the proxy were a live Aave/Morpho/Moonwell position.
+    const disclosure = venueDisclosure(a.vault)
     try {
-      verdictBySlug[slug] = evaluate(resolve(slug), nowMs)
+      verdictBySlug[slug] = { ...evaluate(resolve(slug), nowMs), disclosure }
     } catch (err) {
       verdictBySlug[slug] = {
         protocol: slug,
         eligible: false,
         reasons: [`Eligibility data is unavailable: ${err.message}`],
         isFixture: false,
+        disclosure,
       }
     }
   }
