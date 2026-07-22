@@ -9,8 +9,14 @@ const AREA = `${CURVE} L 292 116 L 8 116 Z`
 
 export function YieldLine({ height = 132 }) {
   return (
-    <svg className="sig-yield" viewBox="0 0 300 120" height={height}
-         role="img" aria-label="Yield climbing over time" preserveAspectRatio="none">
+    <svg
+      className="sig-yield"
+      viewBox="0 0 300 120"
+      height={height}
+      role="img"
+      aria-label="Yield climbing over time"
+      preserveAspectRatio="none"
+    >
       <g className="sig-grid">
         <line x1="0" y1="40" x2="300" y2="40" />
         <line x1="0" y1="80" x2="300" y2="80" />

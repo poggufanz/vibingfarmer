@@ -10,35 +10,62 @@ export default function OnboardingScreen({ onGetStarted }) {
       title: 'Coordination Swarm',
       desc: 'Venice AI coordinator maps strategy, while parallel worker agents execute swap and deposit actions autonomously.',
       icon: (
-        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <svg
+          width="64"
+          height="64"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="var(--accent)"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
           <circle cx="12" cy="12" r="4"></circle>
           <path d="M12 2v6M12 16v6M4.93 4.93l4.24 4.24M14.83 14.83l4.24 4.24M2 12h6M16 12h6M4.93 19.07l4.24-4.24M14.83 9.17l4.24-4.24"></path>
         </svg>
-      )
+      ),
     },
     {
       id: 2,
       title: 'Secure Boundaries',
       desc: 'Enforce ed25519 session-key limits on-chain. Smart contracts prevent agents from exceeding approved amount limits.',
       icon: (
-        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <svg
+          width="64"
+          height="64"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="var(--accent)"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
           <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
           <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
           <path d="M12 15v3"></path>
         </svg>
-      )
+      ),
     },
     {
       id: 3,
       title: 'Gasless Relaying',
       desc: 'Pay zero transaction fees. Every agent operation is fee-bump relayer sponsored on Stellar testnet.',
       icon: (
-        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <svg
+          width="64"
+          height="64"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="var(--accent)"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
           <line x1="12" y1="1" x2="12" y2="23"></line>
           <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
         </svg>
-      )
-    }
+      ),
+    },
   ]
 
   const current = slides[slide - 1]
@@ -47,8 +74,7 @@ export default function OnboardingScreen({ onGetStarted }) {
     if (slide < 3) {
       setDirection('forward')
       setSlide(slide + 1)
-    }
-    else onGetStarted()
+    } else onGetStarted()
   }
 
   const handleBack = () => {
@@ -77,9 +103,7 @@ export default function OnboardingScreen({ onGetStarted }) {
 
       {/* ── Slide Content Card ── */}
       <div className="ob-content" data-direction={direction} key={slide}>
-        <div className="ob-icon-wrapper">
-          {current.icon}
-        </div>
+        <div className="ob-icon-wrapper">{current.icon}</div>
         <h2 className="ob-title">{current.title}</h2>
         <p className="ob-desc">{current.desc}</p>
       </div>
@@ -102,7 +126,15 @@ export default function OnboardingScreen({ onGetStarted }) {
       <div className="ob-actions">
         {slide > 1 && (
           <button className="vf-btn ghost" onClick={handleBack} style={{ flex: 1 }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginRight: 6 }}>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              style={{ marginRight: 6 }}
+            >
               <path d="M19 12H5M12 19l-7-7 7-7"></path>
             </svg>
             Back
@@ -113,14 +145,30 @@ export default function OnboardingScreen({ onGetStarted }) {
           {slide === 3 ? (
             <>
               Get Started
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginLeft: 6 }}>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                style={{ marginLeft: 6 }}
+              >
                 <path d="M5 12h14M12 5l7 7-7 7"></path>
               </svg>
             </>
           ) : (
             <>
               Next
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginLeft: 6 }}>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                style={{ marginLeft: 6 }}
+              >
                 <path d="M5 12h14M12 5l7 7-7 7"></path>
               </svg>
             </>

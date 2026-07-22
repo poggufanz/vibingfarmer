@@ -47,7 +47,7 @@ export async function signTransactionForContract({ tx, contractId, kit, sdk }) {
     }
   }
   if (!signedAny) {
-    throw new Error("VF Wallet found no auth entry in this transaction for its own account")
+    throw new Error('VF Wallet found no auth entry in this transaction for its own account')
   }
   return tx.toEnvelope().toXDR('base64')
 }

@@ -295,13 +295,13 @@ export default function WithdrawModal({
 
               {agentAddresses.length === 0 ? (
                 <div className="wd-callout wd-callout--danger" role="status">
-                  No active agent holds this position, so there is nothing to sweep. If you just made
-                  a deposit, wait for agent permissions to load and reopen this.
+                  No active agent holds this position, so there is nothing to sweep. If you just
+                  made a deposit, wait for agent permissions to load and reopen this.
                 </div>
               ) : (
                 <div className="wd-callout">
-                  Held by {agentAddresses.length}{' '}
-                  {agentAddresses.length === 1 ? 'agent' : 'agents'}.{' '}
+                  Held by {agentAddresses.length} {agentAddresses.length === 1 ? 'agent' : 'agents'}
+                  .{' '}
                   {ONE_SIGNATURE_EXIT
                     ? `${
                         signaturesFor(agentAddresses.length) === 1
@@ -392,11 +392,7 @@ export default function WithdrawModal({
                     No agents available for partial withdraw.
                   </div>
                 ) : (
-                  <div
-                    className="wd-agent-list"
-                    role="radiogroup"
-                    aria-labelledby="pw-agent-label"
-                  >
+                  <div className="wd-agent-list" role="radiogroup" aria-labelledby="pw-agent-label">
                     {agentInfo.map((a, i) => {
                       const selected = chosen === a.address
                       const maxUsdc = toDisplay(a.maxUnits).toFixed(2)
@@ -483,10 +479,7 @@ export default function WithdrawModal({
                       </button>
                     ))}
                   </div>
-                  <span
-                    id="pw-amount-hint"
-                    className={`wd-hint${overMax ? ' wd-hint--err' : ''}`}
-                  >
+                  <span id="pw-amount-hint" className={`wd-hint${overMax ? ' wd-hint--err' : ''}`}>
                     {overMax
                       ? `Exceeds this agent's max (${maxDisplay.toFixed(2)} USDC).`
                       : `Available on this agent: ${maxDisplay.toFixed(2)} USDC. Remainder stays in the vault.`}

@@ -39,8 +39,9 @@ export async function loadVaultSkill() {
   // Priority 4: hardcoded fallback (should never reach here)
   console.warn('[SkillLoader] All skill sources failed, using minimal fallback')
   return {
-    content: 'You are a DeFi yield advisor. Recommend vaults from the provided catalog based on user risk level. Respond in JSON only.',
-    source: 'fallback'
+    content:
+      'You are a DeFi yield advisor. Recommend vaults from the provided catalog based on user risk level. Respond in JSON only.',
+    source: 'fallback',
   }
 }
 

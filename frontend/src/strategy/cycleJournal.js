@@ -41,7 +41,11 @@ export function getCycles() {
 }
 
 export function clearCycles() {
-  try { localStorage.removeItem(KEY) } catch { /* ignore */ }
+  try {
+    localStorage.removeItem(KEY)
+  } catch {
+    /* ignore */
+  }
 }
 
 /** Aggregate verdict counts + last cycle number. */

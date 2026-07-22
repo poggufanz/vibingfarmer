@@ -68,12 +68,12 @@ if (!globalThis.chrome.storage) {
     },
     clear: async () => {
       store.clear()
-    }
+    },
   })
 
   globalThis.chrome.storage = {
     local: mockStorage(globalThis.localStorage),
-    session: mockStorage(globalThis.sessionStorage)
+    session: mockStorage(globalThis.sessionStorage),
   }
 }
 
@@ -84,8 +84,8 @@ if (!globalThis.chrome.alarms) {
     onAlarm: {
       addListener: () => {},
       removeListener: () => {},
-      hasListener: () => false
-    }
+      hasListener: () => false,
+    },
   }
 }
 
@@ -94,7 +94,7 @@ if (!globalThis.chrome.runtime) {
     onMessage: {
       addListener: () => {},
       removeListener: () => {},
-      hasListener: () => false
-    }
+      hasListener: () => false,
+    },
   }
 }

@@ -5,7 +5,10 @@ import { reflect } from './reflector.js'
 describe('reflect (ACE counter update)', () => {
   it('marks cited rules helpful on successful execution', () => {
     const inc = vi.fn()
-    reflect({ verdict: 'keep', citedRules: ['yield-uplift', 'market-gas-positive'], outcome: 'success' }, { increment: inc })
+    reflect(
+      { verdict: 'keep', citedRules: ['yield-uplift', 'market-gas-positive'], outcome: 'success' },
+      { increment: inc }
+    )
     expect(inc).toHaveBeenCalledWith('yield-uplift', 'helpful')
     expect(inc).toHaveBeenCalledWith('market-gas-positive', 'helpful')
     expect(inc).toHaveBeenCalledTimes(2)
@@ -13,7 +16,10 @@ describe('reflect (ACE counter update)', () => {
 
   it('marks cited rules harmful on failed execution', () => {
     const inc = vi.fn()
-    reflect({ verdict: 'keep', citedRules: ['yield-uplift'], outcome: 'failure' }, { increment: inc })
+    reflect(
+      { verdict: 'keep', citedRules: ['yield-uplift'], outcome: 'failure' },
+      { increment: inc }
+    )
     expect(inc).toHaveBeenCalledWith('yield-uplift', 'harmful')
   })
 
@@ -25,7 +31,11 @@ describe('reflect (ACE counter update)', () => {
   })
 
   it('never throws if playbook increment throws', () => {
-    const inc = vi.fn(() => { throw new Error('storage') })
-    expect(() => reflect({ verdict: 'keep', citedRules: ['x'], outcome: 'success' }, { increment: inc })).not.toThrow()
+    const inc = vi.fn(() => {
+      throw new Error('storage')
+    })
+    expect(() =>
+      reflect({ verdict: 'keep', citedRules: ['x'], outcome: 'success' }, { increment: inc })
+    ).not.toThrow()
   })
 })

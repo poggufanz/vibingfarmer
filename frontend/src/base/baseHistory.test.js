@@ -45,7 +45,9 @@ describe('fetchBaseHistory', () => {
     expect(
       await fetchBaseHistory({
         account: K,
-        fetchImpl: vi.fn().mockResolvedValue({ ok: true, json: async () => ({ result: 'rate limited' }) }),
+        fetchImpl: vi
+          .fn()
+          .mockResolvedValue({ ok: true, json: async () => ({ result: 'rate limited' }) }),
       })
     ).toEqual([])
     expect(

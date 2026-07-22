@@ -31,14 +31,9 @@ export default function NotificationCenter({
     return true
   })
   const count = visible.length
-  const highCount = visible.filter(
-    (a) => a.severity === 'high' || a.kind === 'risk_alert'
-  ).length
+  const highCount = visible.filter((a) => a.severity === 'high' || a.kind === 'risk_alert').length
   const actionCount = visible.filter(
-    (a) =>
-      a.kind === 'harvest_ready' ||
-      a.kind === 'rebalance_proposal' ||
-      a.kind === 'risk_alert'
+    (a) => a.kind === 'harvest_ready' || a.kind === 'rebalance_proposal' || a.kind === 'risk_alert'
   ).length
   useEffect(() => {
     if (!open) return

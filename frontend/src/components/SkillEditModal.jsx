@@ -42,8 +42,7 @@ export default function SkillEditModal({ agent, skill, onClose, onSave }) {
   const hoursNum = Math.max(1, parseInt(expiresHours, 10) || 24)
   const amountNum = parseInt(maxAmount, 10)
   const amountValid = Number.isFinite(amountNum) && amountNum > 0
-  const hoursLabel =
-    hoursNum === 1 ? '1 hour' : hoursNum === 168 ? '7 days' : `${hoursNum} hours`
+  const hoursLabel = hoursNum === 1 ? '1 hour' : hoursNum === 168 ? '7 days' : `${hoursNum} hours`
   const riskLabel = RISK_OPTS.find((r) => r.id === risk)?.label || risk
 
   const handleSave = () => {
@@ -155,7 +154,11 @@ export default function SkillEditModal({ agent, skill, onClose, onSave }) {
               <span className="skill-edit-label" id="se-risk-label">
                 Risk profile
               </span>
-              <div className="risk-row skill-edit-risk" role="group" aria-labelledby="se-risk-label">
+              <div
+                className="risk-row skill-edit-risk"
+                role="group"
+                aria-labelledby="se-risk-label"
+              >
                 {RISK_OPTS.map((r) => (
                   <button
                     key={r.id}
@@ -172,7 +175,11 @@ export default function SkillEditModal({ agent, skill, onClose, onSave }) {
             </div>
           </div>
 
-          <div className="grant-receipt skill-edit-receipt" role="region" aria-label="Updated limits">
+          <div
+            className="grant-receipt skill-edit-receipt"
+            role="region"
+            aria-label="Updated limits"
+          >
             <div className="grant-receipt-row">
               <span className="grant-receipt-k">Maximum</span>
               <span className="grant-receipt-v mono tnum">

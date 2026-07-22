@@ -7,8 +7,12 @@ describe('cycleJournal', () => {
     const store = {}
     vi.stubGlobal('localStorage', {
       getItem: (k) => (k in store ? store[k] : null),
-      setItem: (k, v) => { store[k] = String(v) },
-      removeItem: (k) => { delete store[k] },
+      setItem: (k, v) => {
+        store[k] = String(v)
+      },
+      removeItem: (k) => {
+        delete store[k]
+      },
     })
   })
 
@@ -56,8 +60,12 @@ describe('getJournalSummary gated count', () => {
     const store = {}
     vi.stubGlobal('localStorage', {
       getItem: (k) => (k in store ? store[k] : null),
-      setItem: (k, v) => { store[k] = String(v) },
-      removeItem: (k) => { delete store[k] },
+      setItem: (k, v) => {
+        store[k] = String(v)
+      },
+      removeItem: (k) => {
+        delete store[k]
+      },
     })
   })
 

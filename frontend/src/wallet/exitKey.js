@@ -1,13 +1,13 @@
 // frontend/src/wallet/exitKey.js
 // Ephemeral ed25519 exit keypair management and on-chain contract registration.
 
-import { buildInvokeTx, submitUserTx } from '../stellar/client.js';
-import { signTxXdr } from '../stellar/walletKit.js';
+import { buildInvokeTx, submitUserTx } from '../stellar/client.js'
+import { signTxXdr } from '../stellar/walletKit.js'
 
-let _sdk = null;
+let _sdk = null
 async function sdk() {
-  if (!_sdk) _sdk = await import('@stellar/stellar-sdk');
-  return _sdk;
+  if (!_sdk) _sdk = await import('@stellar/stellar-sdk')
+  return _sdk
 }
 
 /**
@@ -15,37 +15,37 @@ async function sdk() {
  * @returns {Promise<{ publicKey: string, secret: string }>}
  */
 export async function generateExitKey() {
-  const { Keypair } = await sdk();
-  const kp = Keypair.random();
+  const { Keypair } = await sdk()
+  const kp = Keypair.random()
   return {
     publicKey: kp.publicKey(),
-    secret: kp.secret()
-  };
+    secret: kp.secret(),
+  }
 }
 
 /** Cache key for storing exit signer credentials. */
-const cacheKey = (agentAddress) => `yv_exit_key_${agentAddress.toLowerCase()}`;
+const cacheKey = (agentAddress) => `yv_exit_key_${agentAddress.toLowerCase()}`
 
 /** Save the generated key to local storage. */
 export function saveExitKey(agentAddress, { publicKey, secret }) {
-  localStorage.setItem(cacheKey(agentAddress), JSON.stringify({ publicKey, secret }));
+  localStorage.setItem(cacheKey(agentAddress), JSON.stringify({ publicKey, secret }))
 }
 
 /** Load the exit key credentials from local storage. */
 export function loadExitKey(agentAddress) {
-  const stored = localStorage.getItem(cacheKey(agentAddress));
-  if (!stored) return null;
+  const stored = localStorage.getItem(cacheKey(agentAddress))
+  if (!stored) return null
   try {
-    const parsed = JSON.parse(stored);
-    return parsed;
+    const parsed = JSON.parse(stored)
+    return parsed
   } catch {
-    return null;
+    return null
   }
 }
 
 /** Delete the exit key credentials. */
 export function clearExitKey(agentAddress) {
-  localStorage.removeItem(cacheKey(agentAddress));
+  localStorage.removeItem(cacheKey(agentAddress))
 }
 
 /**
@@ -53,16 +53,16 @@ export function clearExitKey(agentAddress) {
  * Calls `set_exit_signer(exit_pubkey: BytesN<32>)` — owner-signed.
  */
 export async function registerExitSigner({ owner, agentAddress, exitPublicKey }) {
-  const { StrKey } = await sdk();
-  const pubBytes = StrKey.decodeEd25519PublicKey(exitPublicKey);
+  const { StrKey } = await sdk()
+  const pubBytes = StrKey.decodeEd25519PublicKey(exitPublicKey)
 
   const { xdr } = await buildInvokeTx({
     source: owner,
     contract: agentAddress,
     method: 'set_exit_signer',
-    args: [{ bytes32: pubBytes }]
-  });
+    args: [{ bytes32: pubBytes }],
+  })
 
-  const signed = await signTxXdr(xdr);
-  return submitUserTx({ signedXdr: signed });
+  const signed = await signTxXdr(xdr)
+  return submitUserTx({ signedXdr: signed })
 }

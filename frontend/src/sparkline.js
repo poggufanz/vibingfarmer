@@ -3,10 +3,10 @@
 // Returns an SVG string for injection via dangerouslySetInnerHTML.
 // Palette aligned to Vibing Farmer tokens: accent #cfff3d (up), danger #ff7479 (down).
 
-const ACCENT_UP = '#cfff3d'   // --accent (lime)
+const ACCENT_UP = '#cfff3d' // --accent (lime)
 const ACCENT_DOWN = '#ff7479' // --danger (coral)
 const ACCENT_FLAT = 'rgba(255,255,255,0.4)'
-const TREND_EPS = 0.1         // pp threshold for up/down vs flat
+const TREND_EPS = 0.1 // pp threshold for up/down vs flat
 
 /**
  * Generate an inline SVG sparkline from APY data points (oldest → newest).
@@ -38,8 +38,8 @@ export function generateSparkline(values, opts = {}) {
 
   // Trend-based color unless explicitly overridden
   const trend = values[values.length - 1] - values[0]
-  const lineColor = color
-    || (trend > TREND_EPS ? ACCENT_UP : trend < -TREND_EPS ? ACCENT_DOWN : ACCENT_FLAT)
+  const lineColor =
+    color || (trend > TREND_EPS ? ACCENT_UP : trend < -TREND_EPS ? ACCENT_DOWN : ACCENT_FLAT)
 
   const [dotX, dotY] = points[points.length - 1].split(',')
 

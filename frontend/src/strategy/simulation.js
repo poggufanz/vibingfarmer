@@ -76,7 +76,8 @@ function distribution(values, alpha = 0.05) {
   const n = sorted.length || 1
   const mean = sorted.reduce((s, x) => s + x, 0) / n
   const variance = sorted.reduce((s, x) => s + (x - mean) ** 2, 0) / n
-  const pct = (p) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor(p * (sorted.length - 1))))]
+  const pct = (p) =>
+    sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor(p * (sorted.length - 1))))]
   const profit = sorted.filter((x) => x > 0).length
   const { VaR, CVaR } = computeVarCvar(sorted, alpha)
   return {
@@ -175,7 +176,8 @@ export function runSimulation(allocations, state, opts = {}) {
     scenarios.reduce((s, sc, i) => s + sc.mean * (Number(params[i].weight) || 0), 0) / totalWeight
   ).toFixed(2)
   const probProfit = +(
-    scenarios.reduce((s, sc, i) => s + sc.probProfit * (Number(params[i].weight) || 0), 0) / totalWeight
+    scenarios.reduce((s, sc, i) => s + sc.probProfit * (Number(params[i].weight) || 0), 0) /
+    totalWeight
   ).toFixed(3)
   const weightedVaR = +(
     scenarios.reduce((s, sc, i) => s + sc.VaR * (Number(params[i].weight) || 0), 0) / totalWeight
@@ -210,7 +212,7 @@ export function allocationsFromStrategy(strategy) {
   const total = Number(strategy?.total) || 0
   return (strategy?.agents || []).map((a) => ({
     address: a.vault?.addr,
-    allocation: total ? +(((Number(a.allocation) || 0) / total)).toFixed(4) : 0,
+    allocation: total ? +((Number(a.allocation) || 0) / total).toFixed(4) : 0,
     apy: Number(a.vault?.apy) || 0,
   }))
 }

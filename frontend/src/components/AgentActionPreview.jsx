@@ -38,7 +38,11 @@ export default function AgentActionPreview({ preview, onConfirm, onCancel }) {
           {isWithdraw ? 'Emergency withdraw preview' : 'Harvest preview'}
         </h3>
 
-        <div className="grant-receipt agent-preview-receipt" role="region" aria-label="Action summary">
+        <div
+          className="grant-receipt agent-preview-receipt"
+          role="region"
+          aria-label="Action summary"
+        >
           {isWithdraw ? (
             <>
               <div className="grant-receipt-row">
@@ -100,12 +104,7 @@ export default function AgentActionPreview({ preview, onConfirm, onCancel }) {
           <button type="button" className="btn btn-ghost" onClick={onCancel}>
             Cancel
           </button>
-          <button
-            ref={confirmRef}
-            type="button"
-            className="btn btn-primary"
-            onClick={onConfirm}
-          >
+          <button ref={confirmRef} type="button" className="btn btn-primary" onClick={onConfirm}>
             {isWithdraw ? 'Confirm withdraw' : 'Claim rewards'}
           </button>
         </div>

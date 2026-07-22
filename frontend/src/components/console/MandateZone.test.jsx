@@ -37,7 +37,9 @@ describe('MandateZone', () => {
     expect(screen.getByText(/1 exited agent hidden/)).toBeTruthy()
   })
   it('all scopes revoked reads as a completed exit, not an empty account', () => {
-    render(<MandateZone scopes={scopes.map((s) => ({ ...s, revoked: true }))} onRevoke={() => {}} />)
+    render(
+      <MandateZone scopes={scopes.map((s) => ({ ...s, revoked: true }))} onRevoke={() => {}} />
+    )
     expect(screen.getByText(/All 2 agents exited — funds swept back to your wallet/)).toBeTruthy()
     expect(screen.queryByText(/Max at risk/)).toBeNull()
   })

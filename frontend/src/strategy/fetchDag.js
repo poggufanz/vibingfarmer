@@ -24,9 +24,7 @@ import { deriveSignals } from './mdp.js'
  */
 
 function now() {
-  return (typeof performance !== 'undefined' && performance.now)
-    ? performance.now()
-    : Date.now()
+  return typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
 }
 
 /**
@@ -52,25 +50,30 @@ export async function runFetchDag(nodes, base = {}, onEvent) {
     if (ready.length === 0) {
       // No node can advance (missing/cyclic dep) — resolve the rest as null
       // rather than hang the wizard.
-      for (const n of remaining) { results[n.id] = null; done.add(n.id) }
+      for (const n of remaining) {
+        results[n.id] = null
+        done.add(n.id)
+      }
       break
     }
 
-    await Promise.allSettled(ready.map(async (n) => {
-      const start = now()
-      onEvent?.({ id: n.id, phase: 'start' })
-      try {
-        const ctx = { ...base }
-        for (const d of n.deps) ctx[d] = results[d]
-        results[n.id] = await n.run(ctx)
-        timings[n.id] = now() - start
-        onEvent?.({ id: n.id, phase: 'end', ms: timings[n.id], ok: true })
-      } catch {
-        results[n.id] = null
-        timings[n.id] = now() - start
-        onEvent?.({ id: n.id, phase: 'end', ms: timings[n.id], ok: false })
-      }
-    }))
+    await Promise.allSettled(
+      ready.map(async (n) => {
+        const start = now()
+        onEvent?.({ id: n.id, phase: 'start' })
+        try {
+          const ctx = { ...base }
+          for (const d of n.deps) ctx[d] = results[d]
+          results[n.id] = await n.run(ctx)
+          timings[n.id] = now() - start
+          onEvent?.({ id: n.id, phase: 'end', ms: timings[n.id], ok: true })
+        } catch {
+          results[n.id] = null
+          timings[n.id] = now() - start
+          onEvent?.({ id: n.id, phase: 'end', ms: timings[n.id], ok: false })
+        }
+      })
+    )
 
     for (const n of ready) done.add(n.id)
     remaining = remaining.filter((n) => !done.has(n.id))
@@ -99,15 +102,28 @@ export async function runFetchDag(nodes, base = {}, onEvent) {
  * @returns {Promise<{ skill:any, pools:any, gas:any, positions:any, marketContext:any, signals:any, timings:Object, wallMs:number }>}
  */
 export async function runStrategyFetchDag({
-  riskLevel, address, useStaticVaults, marketContextEnabled,
-  loadVaultSkill, fetchMarketContext, onEvent,
+  riskLevel,
+  address,
+  useStaticVaults,
+  marketContextEnabled,
+  loadVaultSkill,
+  fetchMarketContext,
+  onEvent,
 }) {
   const nodes = [
     { id: 'skill', deps: [], run: () => loadVaultSkill() },
     { id: 'pools', deps: [], run: () => (useStaticVaults ? null : fetchDeFiLlamaVaults()) },
     { id: 'gas', deps: [], run: () => fetchGasSnapshot() },
-    { id: 'positions', deps: [], run: () => (address ? reconcilePositionsFromChain(address) : null) },
-    { id: 'market', deps: [], run: () => (marketContextEnabled ? fetchMarketContext(riskLevel) : null) },
+    {
+      id: 'positions',
+      deps: [],
+      run: () => (address ? reconcilePositionsFromChain(address) : null),
+    },
+    {
+      id: 'market',
+      deps: [],
+      run: () => (marketContextEnabled ? fetchMarketContext(riskLevel) : null),
+    },
     { id: 'signals', deps: ['market', 'gas'], run: (ctx) => deriveSignals(ctx.market, ctx.gas) },
   ]
 
