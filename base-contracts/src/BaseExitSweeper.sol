@@ -149,12 +149,19 @@ contract BaseExitSweeper is ReentrancyGuard {
         emit Swept(owner, burned, exited, skipped);
     }
 
-    /// @dev knownPool is a permanent, unrevocable allowlist, so membership alone
-    /// is not enough — YieldRouter re-runs these same checks on every call for
-    /// the same reason (a pool that decayed or was reconfigured after
-    /// whitelisting is still knownPool forever).
+    /// @dev The live 2026-07-05 router (0xF80aa8F571E6d24Ea72F051Fc6F9A9C516727B6d)
+    /// exposes only `allowedPool` — an owner-revocable *deposit* allowlist, not
+    /// a permanent exit-eligibility one. Ceiling: if the owner disables a pool
+    /// via allowedPool after depositing into it, this sweep SKIPS that pool
+    /// (reported honestly via `skipped`, not silently) — funds stay in the pool,
+    /// still recoverable by the owner calling pool.redeem directly. The
+    /// per-call re-validation below (code size + asset match) still holds
+    /// regardless. When the hardened router (with the permanent `knownPool`
+    /// mapping — see YieldRouter.sol) is deployed, switch this back to
+    /// knownPool and redeploy this stateless sweeper; see
+    /// BaseExitSweeper.t.sol's selector-pin test for the tripwire.
     function _eligible(address pool) private view returns (bool) {
-        if (!router.knownPool(pool)) return false;
+        if (!router.allowedPool(pool)) return false;
         if (pool.code.length == 0) return false;
         try IERC4626(pool).asset() returns (address a) {
             return a == address(usdc);
