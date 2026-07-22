@@ -56,8 +56,10 @@ const MANDATE_WINDOW_SECONDS = 7 * 24 * 3600
 // ponytail: a setup-time mandate doesn't know any future run's allocation yet, so every catalog
 // pool gets the same flat ceiling (used only to derive the CallPolicy's single aggregate per-call
 // cap — see policyEngine.js's module note; the pool allowlist itself is enforced on-chain by
-// YieldRouter, not this policy). Bump this — or make it configurable — if a real run's Base
-// allocation would ever exceed it.
+// YieldRouter, not this policy). Signed off 2026-07-22 for TESTNET: 10,000 keeps demos clear of
+// the ceiling. Before MAINNET cutover, lower to ~2,500 (≈2x the largest planned run + a repeat;
+// research note: no AA vendor documents a sizing formula — Safe/Coinbase precedent is bounded
+// per-period caps, and incident data (LI.FI 2024) shows bounded approvals contain the damage).
 const MANDATE_SETUP_CAP_UNITS = 10_000_000_000n // 10,000 USDC at 6dp
 
 /**
