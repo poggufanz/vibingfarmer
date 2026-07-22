@@ -203,6 +203,60 @@ describe('Pocket Crew CSS theme parity', () => {
     expect(css).toMatch(/background-image:\s*none\s*!important/i)
     expect(css).toMatch(/animation:\s*none\s*!important/i)
   })
+
+  it('wins the legacy disabled-button opacity cascade and covers owned-surface self states (finding 1)', () => {
+    const legacy = document.createElement('style')
+    legacy.textContent = readFileSync(resolve(process.cwd(), 'style.css'), 'utf8')
+    // Mirror main.jsx's real load order: legacy style.css first, Pocket Crew after.
+    document.head.insertBefore(legacy, style)
+    applyTheme('forest')
+
+    // Behavioral: `.btn-primary:disabled`/`.btn-gradient:disabled`/`.btn-ghost:disabled` in
+    // style.css set opacity 0.32/0.4 at equal-or-higher specificity than Pocket Crew's reset,
+    // which otherwise wins regardless of import order — jsdom resolves plain numeric opacity
+    // through the real cascade, so this is a faithful regression check.
+    ;['btn-primary', 'btn-gradient', 'btn-ghost'].forEach((cls) => {
+      const btn = document.createElement('button')
+      btn.className = cls
+      btn.disabled = true
+      document.body.append(btn)
+      expect(getComputedStyle(btn).opacity, cls).toBe('1')
+      btn.remove()
+    })
+    legacy.remove()
+
+    // Structural: jsdom's computed style doesn't resolve `!important` on var()-valued color
+    // declarations, so the color half of the same fix (and the owned-surface self coverage)
+    // is verified against the authored rule text instead of a computed value.
+    const css = readFileSync(resolve(process.cwd(), 'src/design/pocket-crew.css'), 'utf8')
+    expect(css).toMatch(/color:\s*var\(--pc-disabled\)\s*!important/)
+    expect(css).toMatch(/opacity:\s*1\s*!important/)
+    expect(css).toMatch(/:where\(\.pc-owned,\s*\[data-pc-surface='owned'\]\):disabled/)
+    expect(css).toMatch(
+      /:where\(\.pc-owned,\s*\[data-pc-surface='owned'\]\)\[aria-disabled='true'\]/
+    )
+    expect(css).toMatch(/color:\s*var\(--pc-disabled-on-light\)\s*!important/)
+  })
+
+  it('applies the surface-aware focus ring to the focused owned/Harvest/primary-button/gradient-button element itself, not only descendants (finding 2)', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/design/pocket-crew.css'), 'utf8')
+
+    expect(css).toMatch(
+      /:where\(\s*\.pc-owned,\s*\[data-pc-surface='owned'\],\s*\.pc-harvest,\s*\[data-pc-surface='harvest'\],\s*\.btn-primary,\s*\.btn-gradient\s*\):focus-visible/
+    )
+  })
+
+  it('extends the 44px touch rule to links and summary disclosure triggers (finding 4)', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/design/pocket-crew.css'), 'utf8')
+    const touchBlock = css.match(
+      /@media \(hover: none\), \(pointer: coarse\), \(max-width: 767px\) \{([\s\S]*?)\n\s*\}\n\}/
+    )
+
+    expect(touchBlock).not.toBeNull()
+    expect(touchBlock[1]).toMatch(/\ba\[href\]/)
+    expect(touchBlock[1]).toMatch(/(?:^|[\s,])summary(?=[\s,)])/m)
+    expect(touchBlock[1]).toMatch(/min-height:\s*44px/)
+  })
 })
 
 describe('local font policy', () => {

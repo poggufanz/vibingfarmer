@@ -181,22 +181,35 @@ body {
   box-shadow: 0 0 0 5px var(--focus-ring-contrast);
 }
 
+:where(
+  .pc-owned,
+  [data-pc-surface='owned'],
+  .pc-harvest,
+  [data-pc-surface='harvest'],
+  .btn-primary,
+  .btn-gradient
+):focus-visible,
 :where(.pc-owned, [data-pc-surface='owned'], .pc-harvest, [data-pc-surface='harvest'])
   :focus-visible {
   outline-color: var(--pc-focus-on-light);
   box-shadow: 0 0 0 5px var(--pc-owned);
 }
 
+/* !important: a legacy `.btn-primary:disabled`/`.btn-gradient:disabled`/`.btn-ghost:disabled`
+   opacity rule in style.css shares this rule's specificity (or beats it, for opacity) and
+   would otherwise wash out the disabled ink color below the 4.5:1 floor. */
 :where(button, input, select, textarea):disabled,
 [aria-disabled='true'] {
-  color: var(--pc-disabled);
+  color: var(--pc-disabled) !important;
   cursor: not-allowed;
-  opacity: 1;
+  opacity: 1 !important;
 }
 
 :where(.pc-owned, [data-pc-surface='owned']) :where(button, input, select, textarea):disabled,
-:where(.pc-owned, [data-pc-surface='owned']) [aria-disabled='true'] {
-  color: var(--pc-disabled-on-light);
+:where(.pc-owned, [data-pc-surface='owned']) [aria-disabled='true'],
+:where(.pc-owned, [data-pc-surface='owned']):disabled,
+:where(.pc-owned, [data-pc-surface='owned'])[aria-disabled='true'] {
+  color: var(--pc-disabled-on-light) !important;
 }
 
 .btn-primary,
@@ -231,6 +244,8 @@ body {
   :where(
     button,
     [role='button'],
+    a[href],
+    summary,
     input:not([type='checkbox']):not([type='radio']),
     select,
     textarea

@@ -4,33 +4,42 @@
 
 import { isLightTheme } from '../design/theme.js'
 
+// `skipped` used to reuse forest.ownedMuted (#536159), a tone calibrated for light
+// surfaces only — it read below the 3:1 graphical threshold against the dark canvas
+// and workspace. `#7A8F82` / `#6F7D74` are dedicated dark-safe / light-safe grays that
+// also keep skipped visually distinct from idle (the day theme previously reused the
+// same hex for both, erasing the difference between "never ran" and "deliberately
+// skipped"). Group colors for orchestrator/vault previously mirrored the running/
+// confirmed state colors exactly, so an idle orchestrator or vault node was
+// indistinguishable from an actively running/confirmed one; they now fall back to
+// the idle-family grays instead. `pool` no longer collides with `keeper`.
 export const GRAPH_COLOR = {
   idle: '#8C9B93',
   running: '#DFF56C',
   confirmed: '#F2F5EF',
-  skipped: '#536159',
+  skipped: '#7A8F82',
   failed: '#E26E67',
 }
 export const GRAPH_COLOR_LIGHT = {
   idle: '#5F6C65',
   running: '#17251F',
   confirmed: '#20342B',
-  skipped: '#5F6C65',
+  skipped: '#6F7D74',
   failed: '#A8403C',
 }
 export const GROUP_BASE = {
-  orchestrator: '#DFF56C',
-  vault: '#F2F5EF',
+  orchestrator: '#A8B5AD',
+  vault: '#8C9B93',
   keeper: '#A8B5AD',
   strategy: '#8C9B93',
-  pool: '#A8B5AD',
+  pool: '#7A8F82',
 }
 export const GROUP_BASE_LIGHT = {
-  orchestrator: '#17251F',
-  vault: '#20342B',
+  orchestrator: '#536159',
+  vault: '#5F6C65',
   keeper: '#536159',
   strategy: '#5F6C65',
-  pool: '#536159',
+  pool: '#6F7D74',
 }
 export const PULSE_COLOR = '#DFF56C'
 export const NODE_R = {
@@ -53,7 +62,9 @@ export const paletteFor = (themeOrLight) => {
   return {
     state: isLight ? GRAPH_COLOR_LIGHT : GRAPH_COLOR,
     group: isLight ? GROUP_BASE_LIGHT : GROUP_BASE,
-    line: '#536159',
+    // Line color mirrors `skipped` and must stay theme-aware — it used to be a
+    // hardcoded light-surface tone that fell below 3:1 against the dark canvas.
+    line: isLight ? GRAPH_COLOR_LIGHT.skipped : GRAPH_COLOR.skipped,
     label: isLight ? '#17251F' : '#F2F5EF',
     current: isLight ? '#17251F' : PULSE_COLOR,
     dust: isLight ? '#5F6C65' : '#8C9B93',
