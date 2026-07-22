@@ -1,6 +1,13 @@
 // frontend/src/strategy/councilReview.test.js
 import { describe, it, expect, vi } from 'vitest'
-import { buildCouncilInput, synthesize, councilReview } from './councilReview.js'
+import {
+  buildCouncilInput,
+  buildSpecialistPrompt,
+  buildDebateInput,
+  synthesize,
+  councilReview,
+  councilDebate,
+} from './councilReview.js'
 
 const baseInput = {
   amountUsdc: 100,
@@ -60,6 +67,86 @@ describe('buildCouncilInput', () => {
     expect(inp.violations).toEqual(['x'])
     expect(inp.vaults[0].allocationPct).toBe(60)
     expect(inp.maxDrawdown).toBe(3)
+  })
+
+  it('preserves null apy per vault and reports projection unavailable for a bridge/proxy row', () => {
+    const strategy = {
+      total: 100,
+      risk: 'med',
+      blendedApy: '3.1',
+      reward: { projectedAnnualUsdc: 3.1, riskAdjustedScore: 2.6, riskPenalty: 0.1 },
+      mdpState: { turbulence: 'calm' },
+      agents: [
+        {
+          allocation: 40,
+          vault: { name: 'Base bridge', protocol: 'cctp', apy: null, drawdown: 0, risk: 'low' },
+        },
+        {
+          allocation: 60,
+          vault: { name: 'A', protocol: 'aave-v3', apy: '5', drawdown: 3, risk: 'low' },
+        },
+      ],
+    }
+    const inp = buildCouncilInput(strategy)
+    expect(inp.vaults[0].apy).toBeNull()
+    expect(inp.vaults[1].apy).toBe(5)
+    // Legacy reward without a `.projection` field falls back on projectedAnnualUsdc being
+    // defined — buildCouncilInput itself does not invent unavailability from vault-level nulls.
+    expect(inp.projection.state).toBe('known')
+  })
+
+  it('consumes reward.projection when Task 2 provides it', () => {
+    const strategy = {
+      total: 100,
+      reward: {
+        projectedAnnualUsdc: 3.1,
+        riskAdjustedScore: 2.6,
+        riskPenalty: 0.1,
+        projection: { state: 'unavailable', value: null },
+      },
+      agents: [],
+    }
+    const inp = buildCouncilInput(strategy)
+    expect(inp.projection).toEqual({ state: 'unavailable', value: null })
+  })
+})
+
+describe('buildSpecialistPrompt — honest yield text (no fabricated 0% APY)', () => {
+  const inputWithNullApy = {
+    ...baseInput,
+    projection: { state: 'unavailable', value: null },
+    vaults: [
+      {
+        name: 'Base bridge',
+        protocol: 'cctp',
+        apy: null,
+        drawdown: 0,
+        allocationPct: 40,
+        riskTier: 'low',
+      },
+      { name: 'A', protocol: 'aave-v3', apy: 5, drawdown: 3, allocationPct: 60, riskTier: 'low' },
+    ],
+  }
+
+  it('never renders "0% APY" for a vault whose yield is null', () => {
+    const prompt = buildSpecialistPrompt('yield', inputWithNullApy, [])
+    expect(prompt).not.toMatch(/Base bridge \(cctp\) 0%/)
+    expect(prompt).toContain('Base bridge (cctp) not available APY')
+    expect(prompt).toContain('A (aave-v3) 5% APY') // a real APY still renders as a number
+  })
+
+  it('reports the blended/projected yield line as unavailable instead of a fabricated number', () => {
+    const prompt = buildSpecialistPrompt('yield', inputWithNullApy, [])
+    expect(prompt).toContain('Blended APY: not available')
+    expect(prompt).toContain('Projected annual (risk-adjusted): not available')
+  })
+
+  it('a known projection still renders the real numbers (no regression)', () => {
+    const prompt = buildSpecialistPrompt('yield', baseInput, [])
+    expect(prompt).toContain(`Blended APY: ${baseInput.blendedApy}%`)
+    expect(prompt).toContain(
+      `Projected annual (risk-adjusted): ${baseInput.projectedAnnualUsdc} USDC`
+    )
   })
 })
 
@@ -141,5 +228,97 @@ describe('councilReview orchestration (AI-only)', () => {
     expect(r.resolvedBy).toBe('unavailable')
     expect(r.citedRules).toEqual([])
     expect(r.specialists.length).toBe(2) // only the ones that succeeded
+  })
+})
+
+describe('buildDebateInput — nullable yield', () => {
+  const strategyWithBridgeRow = {
+    total: 100,
+    reward: { projectedAnnualUsdc: 3.1, riskAdjustedScore: 2.6, riskPenalty: 0.1 },
+    agents: [
+      {
+        allocation: 100,
+        vault: { name: 'Base bridge', protocol: 'cctp', apy: null, risk: 'low' },
+      },
+    ],
+  }
+
+  it('preserves null apy per vault', () => {
+    const inp = buildDebateInput(strategyWithBridgeRow, null)
+    expect(inp.vaults[0].apy).toBeNull()
+  })
+
+  it('prefers sim.projection over reward.projection when both are given', () => {
+    const sim = { VaR: -1, CVaR: -2, projection: { state: 'unavailable', value: null } }
+    const inp = buildDebateInput(strategyWithBridgeRow, sim)
+    expect(inp.projection).toEqual({ state: 'unavailable', value: null })
+  })
+
+  it('falls back to reward.projectedAnnualUsdc when neither sim nor reward carry .projection', () => {
+    const inp = buildDebateInput(strategyWithBridgeRow, null)
+    expect(inp.projection.state).toBe('known') // 3.1 is defined — no invented unavailability
+  })
+})
+
+describe('councilDebate — honest yield prompts end to end (no fabricated 0% APY)', () => {
+  const strategyWithBridgeRow = {
+    total: 100,
+    reward: { projectedAnnualUsdc: 3.1, riskAdjustedScore: 2.6, riskPenalty: 0.1 },
+    agents: [
+      {
+        allocation: 100,
+        vault: { name: 'Base bridge', protocol: 'cctp', apy: null, risk: 'low' },
+      },
+    ],
+  }
+  const sim = {
+    VaR: -1,
+    CVaR: -2,
+    expectedValue: 0,
+    probProfit: 0.5,
+    projection: { state: 'unavailable', value: null },
+  }
+
+  it('never sends "0% APY" / a fabricated blended APY to the proposer or risk/compliance role', async () => {
+    const input = buildDebateInput(strategyWithBridgeRow, sim)
+    const prompts = []
+    const proposer = vi.fn(async ({ userPrompt }) => {
+      prompts.push(userPrompt)
+      return {
+        action: 'HOLD',
+        reasoning: 'no data',
+        confidence: 0.5,
+        arguments: [],
+        citedRules: [],
+      }
+    })
+    const riskCompliance = vi.fn(async ({ userPrompt }) => {
+      prompts.push(userPrompt)
+      return {
+        action: 'HOLD',
+        confidence: 0.5,
+        violationsFound: [],
+        regulationsCited: [],
+        concerns: [],
+        compliancePass: true,
+      }
+    })
+    const validator = vi.fn(async ({ userPrompt }) => {
+      prompts.push(userPrompt)
+      return {
+        consistent: true,
+        VaRAcceptable: true,
+        CVaRAcceptable: true,
+        simMatches: true,
+        concerns: [],
+        confidence: 0.5,
+      }
+    })
+    await councilDebate(input, { proposer, riskCompliance, validator, maxIterations: 1 })
+    for (const p of prompts) {
+      expect(p).not.toMatch(/Base bridge \(cctp\) 0%/)
+      expect(p).not.toMatch(/Blended APY: 0%/)
+    }
+    expect(prompts.some((p) => p.includes('not available'))).toBe(true)
   })
 })

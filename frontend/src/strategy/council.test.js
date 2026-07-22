@@ -8,6 +8,14 @@ const reward = (riskAdjustedScore, projectedAnnualUsdc) => ({
   riskAdjustedScore,
   projectedAnnualUsdc,
 })
+// A null-apy bridge/proxy row: mdp.scoreReward/runSimulation report this as
+// projection:{state:'unavailable'} while riskAdjustedScore/projectedAnnualUsdc stay the
+// legacy-coerced 0 (Strategy Task 2). Specialists must not read that 0 as a real number.
+const rewardUnavailable = (riskAdjustedScore = 0, projectedAnnualUsdc = 0) => ({
+  riskAdjustedScore,
+  projectedAnnualUsdc,
+  projection: { state: 'unavailable', value: null },
+})
 // neutral playbook + a resolver we can assert is/ isn't called
 const deps = (resolver) => ({
   weight: () => 1.0,
@@ -146,5 +154,62 @@ describe('councilVerdict (TradingAgents council)', () => {
     )
     const y = r.specialists.find((s) => s.role === 'yield')
     expect(y.confidence).toBeGreaterThan(0.6) // boosted by weight
+  })
+})
+
+describe('councilVerdict — nullable yield (unavailable projection)', () => {
+  it('does not read a null-apy bridge row baseline as a confirmed yield-uplift', async () => {
+    // currentReward is a null-apy bridge/proxy position: riskAdjustedScore/projectedAnnualUsdc
+    // are legacy-coerced to 0, but the yield is UNKNOWN, not confirmed zero. Comparing against
+    // it must not read as a real 6.5-point uplift.
+    const r = await councilVerdict(
+      {
+        action: { kind: 'rebalance', violations: [] },
+        currentReward: rewardUnavailable(),
+        projectedReward: reward(6.5, 140),
+        state: calm,
+        estGasUsdc: 0.5,
+      },
+      deps()
+    )
+    const y = r.specialists.find((s) => s.role === 'yield')
+    expect(y.citedRules).not.toContain('yield-uplift')
+    expect(y.concerns.join(' ')).toMatch(/unavailable/i)
+    const m = r.specialists.find((s) => s.role === 'market')
+    expect(m.citedRules).not.toContain('market-gas-positive')
+  })
+
+  it('does not read the CURRENT position as a confirmed yield-uplift when the TARGET is a null-apy row', async () => {
+    const r = await councilVerdict(
+      {
+        action: { kind: 'rebalance', violations: [] },
+        currentReward: reward(5.0, 100),
+        projectedReward: rewardUnavailable(),
+        state: calm,
+        estGasUsdc: 0.5,
+      },
+      deps()
+    )
+    const y = r.specialists.find((s) => s.role === 'yield')
+    expect(y.citedRules).not.toContain('yield-no-uplift')
+    expect(y.concerns.join(' ')).toMatch(/unavailable/i)
+    const m = r.specialists.find((s) => s.role === 'market')
+    expect(m.citedRules).not.toContain('market-gas-negative')
+  })
+
+  it('still allows a harvest to keep even when both rewards carry unavailable yield (does not block review)', async () => {
+    const resolveConflict = vi.fn()
+    const r = await councilVerdict(
+      {
+        action: { kind: 'harvest', violations: [] },
+        currentReward: rewardUnavailable(),
+        projectedReward: rewardUnavailable(),
+        state: calm,
+        estGasUsdc: 0.5,
+      },
+      deps(resolveConflict)
+    )
+    expect(r.verdict).toBe('keep')
+    expect(resolveConflict).not.toHaveBeenCalled()
   })
 })

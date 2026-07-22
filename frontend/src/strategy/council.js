@@ -12,10 +12,28 @@ const VETO_CONF = 0.85
 
 const clampConf = (c) => Math.max(0, Math.min(1, +Number(c).toFixed(3)))
 
+/** projection is additive (mdp.scoreReward/simulation.runSimulation); a legacy caller/test
+ * reward without it falls back on whether the yield value itself is null/undefined — never
+ * invents a confirmed number where the source only ever provided nothing. */
+function resolveProjection(reward) {
+  if (reward?.projection) return reward.projection
+  const value = reward?.projectedAnnualUsdc
+  return value == null ? { state: 'unavailable', value: null } : { state: 'known', value }
+}
+
+/** True when either side of the comparison rests on an unavailable yield (e.g. a null-apy
+ * bridge/proxy row) — its riskAdjustedScore/projectedAnnualUsdc are legacy-coerced to 0, and a
+ * raw subtraction against/from that 0 would fabricate a confident uplift or net-return number. */
+function yieldUnknown(currentReward, projectedReward) {
+  return (
+    resolveProjection(currentReward).state === 'unavailable' ||
+    resolveProjection(projectedReward).state === 'unavailable'
+  )
+}
+
 /** Yield Analyst — risk-adjusted uplift. Harvest = free reward claim → DEPOSIT. */
 function yieldSpecialist({ action, currentReward, projectedReward }, weight) {
   const isHarvest = action.kind === 'harvest'
-  const uplift = projectedReward.riskAdjustedScore - currentReward.riskAdjustedScore
   if (isHarvest) {
     return {
       role: 'yield',
@@ -25,6 +43,18 @@ function yieldSpecialist({ action, currentReward, projectedReward }, weight) {
       concerns: [],
     }
   }
+  if (yieldUnknown(currentReward, projectedReward)) {
+    return {
+      role: 'yield',
+      signal: 'HOLD',
+      confidence: clampConf(0.5 * weight('yield-unavailable')),
+      citedRules: ['yield-unavailable'],
+      concerns: [
+        'Yield data is unavailable for one or more vaults; the uplift cannot be assessed.',
+      ],
+    }
+  }
+  const uplift = projectedReward.riskAdjustedScore - currentReward.riskAdjustedScore
   if (uplift > 0) {
     const base = Math.min(0.95, 0.6 + Math.abs(uplift) * 0.2)
     return {
@@ -84,6 +114,15 @@ function marketSpecialist({ action, currentReward, projectedReward, estGasUsdc =
       confidence: clampConf(0.75 * weight('market-harvest-timing')),
       citedRules: ['market-harvest-timing'],
       concerns: [],
+    }
+  }
+  if (yieldUnknown(currentReward, projectedReward)) {
+    return {
+      role: 'market',
+      signal: 'HOLD',
+      confidence: clampConf(0.5 * weight('market-yield-unavailable')),
+      citedRules: ['market-yield-unavailable'],
+      concerns: ['Yield data is unavailable; the net return versus fees cannot be assessed.'],
     }
   }
   const netUsdc =

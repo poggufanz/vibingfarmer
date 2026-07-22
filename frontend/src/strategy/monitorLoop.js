@@ -117,7 +117,10 @@ export function createMonitorLoop({
           cycle,
           phase: 'evaluate',
           verdict: 'discard',
-          score: projectedReward.riskAdjustedScore,
+          score:
+            projectedReward.projection?.state === 'unavailable'
+              ? null
+              : projectedReward.riskAdjustedScore,
           confidence: v.confidence,
           reason: v.reason,
           citedRules: v.citedRules,
@@ -137,7 +140,10 @@ export function createMonitorLoop({
           cycle,
           phase: 'execute',
           verdict: 'keep',
-          score: projectedReward.riskAdjustedScore,
+          score:
+            projectedReward.projection?.state === 'unavailable'
+              ? null
+              : projectedReward.riskAdjustedScore,
           confidence: v.confidence,
           citedRules: v.citedRules,
           txHash,
