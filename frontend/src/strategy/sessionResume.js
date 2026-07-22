@@ -19,6 +19,11 @@
 import { loadRunJournal, clearRunJournal } from './runJournal.js'
 
 const keyFor = (address) => `yv_resume_${String(address).toLowerCase()}`
+// ONE canonical case for both keys: the resume-snapshot key above and the runJournal owner below
+// both derive from this same lowercase transform, so a differently-cased `address` argument (or a
+// differently-cased owner a future direct runJournal writer might use) never silently misses a
+// real journal -- closing the exact seam a case mismatch would otherwise fail open through.
+const canonicalOwner = (address) => String(address).toLowerCase()
 
 const hasAgents = (snap) => Array.isArray(snap?.strategy?.agents) && snap.strategy.agents.length > 0
 
@@ -66,8 +71,13 @@ export function loadResume(address) {
   try {
     const snap = JSON.parse(raw)
     if (!hasAgents(snap)) return null
-    const journal = snap.runId ? loadRunJournal({ owner: address, runId: snap.runId }) : null
-    return { ...snap, resumeAction: journal?.resumeAction ?? null }
+    if (!snap.runId) return { ...snap, resumeAction: null } // nothing to reconcile against
+    const journal = loadRunJournal({ owner: canonicalOwner(address), runId: snap.runId })
+    // FAIL CLOSED: a runId with no journal (missing, corrupt/tampered, a lost write, or a
+    // pre-normalization case mismatch) is NOT "nothing happened" -- it is exactly the case this
+    // module exists to catch, so it forces reconciliation rather than falling back to the stale
+    // `stage` field.
+    return { ...snap, resumeAction: journal?.resumeAction ?? 'reconcile' }
   } catch {
     // Corrupt/partial value — drop it and behave as "no session".
     try {
@@ -92,5 +102,5 @@ export function clearResume(address, runId) {
   } catch {
     /* ignore */
   }
-  if (runId) clearRunJournal({ owner: address, runId })
+  if (runId) clearRunJournal({ owner: canonicalOwner(address), runId })
 }

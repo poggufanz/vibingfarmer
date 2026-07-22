@@ -35,21 +35,41 @@ function planHasEligibleAgent(plan) {
   return Array.isArray(plan?.agents) && plan.agents.length > 0
 }
 
+const KNOWN_BASE_JOB_STATUSES = new Set(['submitted', 'bridged', 'bridge-failed'])
+
+// Every worker/bridge event carries `allocationId` -- the SAME id as the plan's
+// `agents[].allocationId` (Task 2's stable-ID contract, never an array-position index). `custody`
+// is keyed by that same allocationId, so `isReceiptComplete` below can look a plan agent's outcome
+// up directly with no translation step.
 function applyCustodyEvent(custody, event) {
-  const { agentId } = event
-  if (!agentId) return custody
-  const row = custody[agentId]
+  const { allocationId } = event
+  if (!allocationId) return custody
+  const row = custody[allocationId]
   switch (event.type) {
+    case 'WORKER_QUEUED':
+      return { ...custody, [allocationId]: { ...row, status: 'queued' } }
+    case 'WORKER_STARTED':
+      return { ...custody, [allocationId]: { ...row, status: 'started' } }
     case 'PULL_CONFIRMED':
-      return { ...custody, [agentId]: { ...row, status: 'pulled' } }
+      return { ...custody, [allocationId]: { ...row, status: 'pulled' } }
     case 'PULL_FAILED':
-      return { ...custody, [agentId]: { ...row, status: 'failed', error: event.error ?? null } }
+      return {
+        ...custody,
+        [allocationId]: { ...row, status: 'failed', error: event.error ?? null },
+      }
     case 'DEPOSIT_CONFIRMED':
-      return { ...custody, [agentId]: { ...row, status: 'deposited' } }
+      return { ...custody, [allocationId]: { ...row, status: 'deposited' } }
     case 'DEPOSIT_FAILED':
-      return { ...custody, [agentId]: { ...row, status: 'failed', error: event.error ?? null } }
-    case 'BASE_JOB_UPDATED':
-      return { ...custody, [agentId]: { ...row, status: event.status, jobId: event.jobId } }
+      return {
+        ...custody,
+        [allocationId]: { ...row, status: 'failed', error: event.error ?? null },
+      }
+    case 'BASE_JOB_UPDATED': {
+      // Unknown/garbage statuses never count as terminal -- a stray or malformed relay payload
+      // must never be mistaken for 'deposited' or any other terminal state (see CUSTODY_TERMINAL).
+      const status = KNOWN_BASE_JOB_STATUSES.has(event.status) ? event.status : 'unknown'
+      return { ...custody, [allocationId]: { ...row, status, jobId: event.jobId } }
+    }
     default:
       return custody
   }
@@ -96,7 +116,11 @@ export function strategyFlowReducer(state = initialStrategyFlowState, event) {
       }
 
     case 'GRANT_REQUESTED':
+      // Symmetric with the reuse path below: only a reviewed preflight decision (or a retry after
+      // a prior wallet rejection/failure, which already went through one) may request a grant --
+      // never straight from 'idle', which would leave `permission` null.
       if (state.moment !== 'protect') return state
+      if (!['preflight-ready', 'rejected'].includes(state.permissionStatus)) return state
       return {
         ...state,
         permissionStatus: 'grant-requested',
@@ -143,6 +167,16 @@ export function strategyFlowReducer(state = initialStrategyFlowState, event) {
         protectMessage: null,
       }
 
+    case 'WORKER_STARTED': {
+      // Per-lane ordering: a lane must have been queued before it can start. Gated here (not
+      // inside applyCustodyEvent) so an out-of-order or pre-Start WORKER_STARTED returns the exact
+      // same state reference, same as every other inapplicable event.
+      if (state.moment !== 'start') return state
+      if (state.custody[event.allocationId]?.status !== 'queued') return state
+      return { ...state, custody: applyCustodyEvent(state.custody, event) }
+    }
+
+    case 'WORKER_QUEUED':
     case 'PULL_CONFIRMED':
     case 'PULL_FAILED':
     case 'DEPOSIT_CONFIRMED':
@@ -169,8 +203,8 @@ const CUSTODY_TERMINAL = new Set(['deposited', 'failed', 'bridged', 'bridge-fail
  * A receipt is complete only when EVERY planned allocation (state.plan.agents, post-eligibility)
  * has reached an explicit, terminal custody state -- deposited/failed for a deposit lane,
  * bridged/bridge-failed for a bridge lane. An allocation with no custody entry yet, or one stuck
- * mid-flight (e.g. only 'pulled', or a non-terminal base-job status), is not complete. Ignores
- * `state.attestation` entirely (see ATTESTATION_RECEIVED above).
+ * mid-flight (e.g. only 'queued'/'started'/'pulled', or a non-terminal/'unknown' base-job status),
+ * is not complete. Ignores `state.attestation` entirely (see ATTESTATION_RECEIVED above).
  * @param {object} state strategyFlowReducer state
  * @returns {boolean}
  */

@@ -166,6 +166,12 @@ describe('Entering Start', () => {
     s = strategyFlowReducer(s, { type: 'GRANT_REQUESTED' })
     expect(s.moment).toBe('protect')
   })
+
+  it('GRANT_REQUESTED requires a prior PREFLIGHT_READY (symmetry with the reuse path) -- idle cannot skip straight to a grant request', () => {
+    const s = toProtect()
+    const after = strategyFlowReducer(s, { type: 'GRANT_REQUESTED' })
+    expect(after).toBe(s) // ignored: permissionStatus is still 'idle', permission is still null
+  })
 })
 
 describe('Start moment gating', () => {
@@ -173,7 +179,7 @@ describe('Start moment gating', () => {
     const before = initialStrategyFlowState
     const after = strategyFlowReducer(before, {
       type: 'PULL_CONFIRMED',
-      agentId: 'run-1:deposit:0',
+      allocationId: 'run-1:deposit:0',
     })
     expect(after).toBe(before) // untouched — the event is simply not applicable yet
   })
@@ -185,15 +191,38 @@ describe('Start moment gating', () => {
     const before = s
     const after = strategyFlowReducer(s, {
       type: 'DEPOSIT_CONFIRMED',
-      agentId: 'run-1:deposit:0',
+      allocationId: 'run-1:deposit:0',
     })
     expect(after).toBe(before)
   })
 
   it('worker/bridge events apply once Start is reached', () => {
     let s = toStartViaFreshGrant()
-    s = strategyFlowReducer(s, { type: 'PULL_CONFIRMED', agentId: 'run-1:deposit:0' })
+    s = strategyFlowReducer(s, { type: 'PULL_CONFIRMED', allocationId: 'run-1:deposit:0' })
     expect(s.custody['run-1:deposit:0'].status).toBe('pulled')
+  })
+
+  it('WORKER_QUEUED/WORKER_STARTED cannot run before permission confirmation', () => {
+    const before = initialStrategyFlowState
+    expect(strategyFlowReducer(before, { type: 'WORKER_QUEUED', allocationId: 'a' })).toBe(before)
+    expect(strategyFlowReducer(before, { type: 'WORKER_STARTED', allocationId: 'a' })).toBe(before)
+  })
+
+  it('a lane must be queued before it can start (same-reference ignore otherwise)', () => {
+    const s = toStartViaFreshGrant()
+    const after = strategyFlowReducer(s, {
+      type: 'WORKER_STARTED',
+      allocationId: 'run-1:deposit:0',
+    })
+    expect(after).toBe(s) // never queued -- ignored
+  })
+
+  it('WORKER_QUEUED then WORKER_STARTED tracks per-lane progress in order', () => {
+    let s = toStartViaFreshGrant()
+    s = strategyFlowReducer(s, { type: 'WORKER_QUEUED', allocationId: 'run-1:deposit:0' })
+    expect(s.custody['run-1:deposit:0'].status).toBe('queued')
+    s = strategyFlowReducer(s, { type: 'WORKER_STARTED', allocationId: 'run-1:deposit:0' })
+    expect(s.custody['run-1:deposit:0'].status).toBe('started')
   })
 })
 
@@ -208,10 +237,14 @@ describe('Partial branch results', () => {
     s = strategyFlowReducer(s, { type: 'PREFLIGHT_READY', decision: decision() })
     s = strategyFlowReducer(s, { type: 'GRANT_REQUESTED' })
     s = strategyFlowReducer(s, { type: 'GRANT_CONFIRMED' })
-    s = strategyFlowReducer(s, { type: 'PULL_CONFIRMED', agentId: 'a' })
-    s = strategyFlowReducer(s, { type: 'DEPOSIT_CONFIRMED', agentId: 'a' })
-    s = strategyFlowReducer(s, { type: 'PULL_CONFIRMED', agentId: 'b' })
-    s = strategyFlowReducer(s, { type: 'DEPOSIT_FAILED', agentId: 'b', error: 'relay-timeout' })
+    s = strategyFlowReducer(s, { type: 'PULL_CONFIRMED', allocationId: 'a' })
+    s = strategyFlowReducer(s, { type: 'DEPOSIT_CONFIRMED', allocationId: 'a' })
+    s = strategyFlowReducer(s, { type: 'PULL_CONFIRMED', allocationId: 'b' })
+    s = strategyFlowReducer(s, {
+      type: 'DEPOSIT_FAILED',
+      allocationId: 'b',
+      error: 'relay-timeout',
+    })
     expect(s.custody.a.status).toBe('deposited')
     expect(s.custody.b.status).toBe('failed')
   })
@@ -228,8 +261,8 @@ describe('Receipt completion', () => {
     s = strategyFlowReducer(s, { type: 'PREFLIGHT_READY', decision: decision() })
     s = strategyFlowReducer(s, { type: 'GRANT_REQUESTED' })
     s = strategyFlowReducer(s, { type: 'GRANT_CONFIRMED' })
-    s = strategyFlowReducer(s, { type: 'PULL_CONFIRMED', agentId: 'a' })
-    s = strategyFlowReducer(s, { type: 'DEPOSIT_CONFIRMED', agentId: 'a' })
+    s = strategyFlowReducer(s, { type: 'PULL_CONFIRMED', allocationId: 'a' })
+    s = strategyFlowReducer(s, { type: 'DEPOSIT_CONFIRMED', allocationId: 'a' })
     expect(isReceiptComplete(s)).toBe(false) // b has no custody state at all yet
   })
 
@@ -243,10 +276,14 @@ describe('Receipt completion', () => {
     s = strategyFlowReducer(s, { type: 'PREFLIGHT_READY', decision: decision() })
     s = strategyFlowReducer(s, { type: 'GRANT_REQUESTED' })
     s = strategyFlowReducer(s, { type: 'GRANT_CONFIRMED' })
-    s = strategyFlowReducer(s, { type: 'PULL_CONFIRMED', agentId: 'a' })
-    s = strategyFlowReducer(s, { type: 'DEPOSIT_CONFIRMED', agentId: 'a' })
-    s = strategyFlowReducer(s, { type: 'PULL_CONFIRMED', agentId: 'b' })
-    s = strategyFlowReducer(s, { type: 'DEPOSIT_FAILED', agentId: 'b', error: 'relay-timeout' })
+    s = strategyFlowReducer(s, { type: 'PULL_CONFIRMED', allocationId: 'a' })
+    s = strategyFlowReducer(s, { type: 'DEPOSIT_CONFIRMED', allocationId: 'a' })
+    s = strategyFlowReducer(s, { type: 'PULL_CONFIRMED', allocationId: 'b' })
+    s = strategyFlowReducer(s, {
+      type: 'DEPOSIT_FAILED',
+      allocationId: 'b',
+      error: 'relay-timeout',
+    })
     expect(isReceiptComplete(s)).toBe(true)
   })
 
@@ -259,18 +296,35 @@ describe('Receipt completion', () => {
     s = strategyFlowReducer(s, { type: 'GRANT_CONFIRMED' })
     s = strategyFlowReducer(s, {
       type: 'BASE_JOB_UPDATED',
-      agentId: 'br',
+      allocationId: 'br',
       jobId: 'job-1',
       status: 'submitted',
     })
     expect(isReceiptComplete(s)).toBe(false)
     s = strategyFlowReducer(s, {
       type: 'BASE_JOB_UPDATED',
-      agentId: 'br',
+      allocationId: 'br',
       jobId: 'job-1',
       status: 'bridged',
     })
     expect(isReceiptComplete(s)).toBe(true)
+  })
+
+  it('an unrecognized base-job status is stored as "unknown", never terminal -- even if it spoofs a terminal word like "deposited"', () => {
+    const plan = eligiblePlan([{ allocationId: 'br', kind: 'bridge' }])
+    let s = strategyFlowReducer(initialStrategyFlowState, { type: 'PLAN_READY', plan })
+    s = strategyFlowReducer(s, { type: 'PROTECT_OPENED' })
+    s = strategyFlowReducer(s, { type: 'PREFLIGHT_READY', decision: decision() })
+    s = strategyFlowReducer(s, { type: 'GRANT_REQUESTED' })
+    s = strategyFlowReducer(s, { type: 'GRANT_CONFIRMED' })
+    s = strategyFlowReducer(s, {
+      type: 'BASE_JOB_UPDATED',
+      allocationId: 'br',
+      jobId: 'job-1',
+      status: 'deposited', // not a real base-job status -- must not be trusted verbatim
+    })
+    expect(s.custody.br.status).toBe('unknown')
+    expect(isReceiptComplete(s)).toBe(false)
   })
 })
 
@@ -289,8 +343,8 @@ describe('Attestation never changes deposit completion', () => {
     expect(s.attestation).toEqual({ proof: '0xdeadbeef' })
     expect(isReceiptComplete(s)).toBe(false)
     const before = isReceiptComplete(s)
-    s = strategyFlowReducer(s, { type: 'PULL_CONFIRMED', agentId: 'a' })
-    s = strategyFlowReducer(s, { type: 'DEPOSIT_CONFIRMED', agentId: 'a' })
+    s = strategyFlowReducer(s, { type: 'PULL_CONFIRMED', allocationId: 'a' })
+    s = strategyFlowReducer(s, { type: 'DEPOSIT_CONFIRMED', allocationId: 'a' })
     expect(isReceiptComplete(s)).toBe(true)
     expect(before).toBe(false) // attestation alone never moved the needle
   })
@@ -302,8 +356,8 @@ describe('Attestation never changes deposit completion', () => {
     s = strategyFlowReducer(s, { type: 'PREFLIGHT_READY', decision: decision() })
     s = strategyFlowReducer(s, { type: 'GRANT_REQUESTED' })
     s = strategyFlowReducer(s, { type: 'GRANT_CONFIRMED' })
-    s = strategyFlowReducer(s, { type: 'PULL_CONFIRMED', agentId: 'a' })
-    s = strategyFlowReducer(s, { type: 'DEPOSIT_CONFIRMED', agentId: 'a' })
+    s = strategyFlowReducer(s, { type: 'PULL_CONFIRMED', allocationId: 'a' })
+    s = strategyFlowReducer(s, { type: 'DEPOSIT_CONFIRMED', allocationId: 'a' })
     expect(isReceiptComplete(s)).toBe(true)
     s = strategyFlowReducer(s, { type: 'ATTESTATION_RECEIVED', attestation: { proof: '0xabc' } })
     expect(isReceiptComplete(s)).toBe(true)

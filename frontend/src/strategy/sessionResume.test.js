@@ -74,10 +74,30 @@ describe('sessionResume', () => {
 // A saved strategy snapshot is no longer, by itself, taken to mean the run finished ('done').
 // `loadResume` now attaches the safe, journal-derived `resumeAction` (Task 6's runJournal.js) for
 // whatever runId the snapshot carries — read-only, never a grant/pull/burn/deposit/withdraw call.
+//
+// Journal calls below use OWNER (ADDR.toLowerCase()) directly -- the SAME canonical form
+// loadResume/clearResume normalize `address` to internally, so these tests exercise a genuine
+// match rather than coasting on the fail-closed fallback.
+const OWNER = ADDR.toLowerCase()
+
 describe('sessionResume + runJournal (safe resume, replaces the old "any saved strategy = done" assumption)', () => {
   it('a snapshot with no runId (nothing to reconcile against) resolves resumeAction to null', () => {
     saveResume(ADDR, { stage: 'done', amount: '100', risk: 'med', strategy: STRATEGY })
     expect(loadResume(ADDR).resumeAction).toBeNull()
+  })
+
+  it('a runId with nothing journaled yet (missing/corrupt/tampered/quota-lost write) fails CLOSED to reconcile, never trusts stale "done"', () => {
+    saveResume(ADDR, {
+      stage: 'done',
+      amount: '100',
+      risk: 'med',
+      strategy: STRATEGY,
+      runId: RUN_ID,
+    })
+    // no appendMilestone call at all -- simulates a missing/corrupt/never-written journal
+    const snap = loadResume(ADDR)
+    expect(snap.stage).toBe('done') // the stale field is still there, but is not trusted alone
+    expect(snap.resumeAction).toBe('reconcile')
   })
 
   it('stage="done" alone does NOT imply the run is complete -- mid-execution journal state forces reconcile', () => {
@@ -88,8 +108,8 @@ describe('sessionResume + runJournal (safe resume, replaces the old "any saved s
       strategy: STRATEGY,
       runId: RUN_ID,
     })
-    appendMilestone({ owner: ADDR, runId: RUN_ID, kind: RUN_MILESTONES.GRANT_CONFIRMED })
-    appendMilestone({ owner: ADDR, runId: RUN_ID, kind: pullMilestone('worker-1') })
+    appendMilestone({ owner: OWNER, runId: RUN_ID, kind: RUN_MILESTONES.GRANT_CONFIRMED })
+    appendMilestone({ owner: OWNER, runId: RUN_ID, kind: pullMilestone('worker-1') })
     const snap = loadResume(ADDR)
     expect(snap.stage).toBe('done') // the stale field is still there, but is not trusted alone
     expect(snap.resumeAction).toBe('reconcile')
@@ -103,8 +123,8 @@ describe('sessionResume + runJournal (safe resume, replaces the old "any saved s
       strategy: STRATEGY,
       runId: RUN_ID,
     })
-    appendMilestone({ owner: ADDR, runId: RUN_ID, kind: RUN_MILESTONES.GRANT_CONFIRMED })
-    appendMilestone({ owner: ADDR, runId: RUN_ID, kind: RUN_MILESTONES.RECEIPT_READY })
+    appendMilestone({ owner: OWNER, runId: RUN_ID, kind: RUN_MILESTONES.GRANT_CONFIRMED })
+    appendMilestone({ owner: OWNER, runId: RUN_ID, kind: RUN_MILESTONES.RECEIPT_READY })
     expect(loadResume(ADDR).resumeAction).toBe('show-receipt')
   })
 
@@ -116,8 +136,21 @@ describe('sessionResume + runJournal (safe resume, replaces the old "any saved s
       strategy: STRATEGY,
       runId: RUN_ID,
     })
-    appendMilestone({ owner: ADDR, runId: RUN_ID, kind: RUN_MILESTONES.REUSE_CONFIRMED })
+    appendMilestone({ owner: OWNER, runId: RUN_ID, kind: RUN_MILESTONES.REUSE_CONFIRMED })
     expect(loadResume(ADDR).resumeAction).toBe('offer-explicit-resume')
+  })
+
+  it('resumeAction is case-insensitive on the address argument -- one canonical case closes the seam between the snapshot key and the journal key', () => {
+    saveResume(ADDR, {
+      stage: 'done',
+      amount: '100',
+      risk: 'med',
+      strategy: STRATEGY,
+      runId: RUN_ID,
+    })
+    appendMilestone({ owner: OWNER, runId: RUN_ID, kind: RUN_MILESTONES.RECEIPT_READY })
+    expect(loadResume(ADDR.toUpperCase())?.resumeAction).toBe('show-receipt')
+    expect(loadResume(ADDR.toLowerCase())?.resumeAction).toBe('show-receipt')
   })
 
   it('reading the resume snapshot never itself calls grant/pull/burn/deposit/withdraw -- loadResume stays a pure read', () => {
@@ -128,10 +161,10 @@ describe('sessionResume + runJournal (safe resume, replaces the old "any saved s
       strategy: STRATEGY,
       runId: RUN_ID,
     })
-    appendMilestone({ owner: ADDR, runId: RUN_ID, kind: RUN_MILESTONES.GRANT_REQUESTED })
-    const before = loadRunJournal({ owner: ADDR, runId: RUN_ID })
+    appendMilestone({ owner: OWNER, runId: RUN_ID, kind: RUN_MILESTONES.GRANT_REQUESTED })
+    const before = loadRunJournal({ owner: OWNER, runId: RUN_ID })
     loadResume(ADDR)
-    const after = loadRunJournal({ owner: ADDR, runId: RUN_ID })
+    const after = loadRunJournal({ owner: OWNER, runId: RUN_ID })
     expect(after).toEqual(before) // untouched by the read
   })
 
@@ -143,10 +176,10 @@ describe('sessionResume + runJournal (safe resume, replaces the old "any saved s
       strategy: STRATEGY,
       runId: RUN_ID,
     })
-    appendMilestone({ owner: ADDR, runId: RUN_ID, kind: RUN_MILESTONES.GRANT_CONFIRMED })
+    appendMilestone({ owner: OWNER, runId: RUN_ID, kind: RUN_MILESTONES.GRANT_CONFIRMED })
     clearResume(ADDR, RUN_ID)
     expect(loadResume(ADDR)).toBeNull()
-    expect(loadRunJournal({ owner: ADDR, runId: RUN_ID })).toBeNull()
+    expect(loadRunJournal({ owner: OWNER, runId: RUN_ID })).toBeNull()
   })
 
   it('clearResume(address) with no runId still clears the snapshot but leaves the journal alone', () => {
@@ -157,11 +190,11 @@ describe('sessionResume + runJournal (safe resume, replaces the old "any saved s
       strategy: STRATEGY,
       runId: RUN_ID,
     })
-    appendMilestone({ owner: ADDR, runId: RUN_ID, kind: RUN_MILESTONES.GRANT_CONFIRMED })
+    appendMilestone({ owner: OWNER, runId: RUN_ID, kind: RUN_MILESTONES.GRANT_CONFIRMED })
     clearResume(ADDR)
     expect(loadResume(ADDR)).toBeNull()
     // journal is untouched -- no runId was given to clear it
-    expect(loadRunJournal({ owner: ADDR, runId: RUN_ID })?.resumeAction).toBe(
+    expect(loadRunJournal({ owner: OWNER, runId: RUN_ID })?.resumeAction).toBe(
       'offer-explicit-resume'
     )
   })
