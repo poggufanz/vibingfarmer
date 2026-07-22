@@ -39,8 +39,11 @@ export function computeBasket(agents, nowMs = Date.now()) {
     // eligibility snapshot's `meta.label` — a Base proxy's fact slug is keyed to reputational facts
     // borrowed from its mainnet analog (e.g. 'aave-v3-base' <- 'aave-v3'), and that label must not
     // leak out as if the proxy were a live Aave/Morpho/Moonwell position.
-    const disclosure = venueDisclosure(a.vault)
+    // Reading it happens INSIDE the try: a contradictory record (AI-hallucinated `chain` vs a
+    // validated address) makes venueDisclosure throw, and that must sink only THIS agent's
+    // verdict fail-closed — never crash computeBasket for every other agent in the same call.
     try {
+      const disclosure = venueDisclosure(a.vault)
       verdictBySlug[slug] = { ...evaluate(resolve(slug), nowMs), disclosure }
     } catch (err) {
       verdictBySlug[slug] = {
@@ -48,7 +51,7 @@ export function computeBasket(agents, nowMs = Date.now()) {
         eligible: false,
         reasons: [`Eligibility data is unavailable: ${err.message}`],
         isFixture: false,
-        disclosure,
+        disclosure: null,
       }
     }
   }
