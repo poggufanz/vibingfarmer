@@ -12,13 +12,17 @@
     "poolsNote": "3 honest ERC-4626 vaults (MockERC4626) wrapping REAL Circle/CCTP USDC (0x036CbD…). They do 1:1 custody of the real bridged USDC — no fabricated yield. They are NOT external lending markets: the SP0 gate (2026-07-09, relayer/scripts/check-aave-usdc.mjs) proved no real yield protocol on Base Sepolia accepts CCTP USDC (Aave lists a faucet token; Morpho/Moonwell/Compound are Base-mainnet only). Real external yield is demonstrated on the Stellar leg via Blend. Pool1 from SP1; pool2 (0x5E84…) + pool3 (0xadD3…) added 2026-07-06 for the SP3 3-pool catalog."
   },
   "baseExitSweeper": {
-    "address": "0xf0D7FB54FA54146114cb2cEff73D971F94c5024c",
-    "deployTx": "0x15c7f665e111fb230a039bb4ad2bcfc5ed0ff37a06ef945f66f0d516a61e77da",
+    "address": "0x5451a6dc234d07F3C80752E3c0E798913E53de6D",
+    "deployTx": "0x51f12be7ca9ae11042388e2500a516a0cd205746944197cd592520ad71a3ee1e",
     "usdc": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
     "router": "0xF80aa8F571E6d24Ea72F051Fc6F9A9C516727B6d",
     "tokenMessenger": "0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA",
-    "deployedAt": "2026-07-20T15:07:28Z",
-    "note": "Stateless full-exit sweeper. No owner, no admin surface, no rescue path by design: one instance serves every user, so an owner-gated sweep could take funds in flight for another user's transaction. Reads balances at execution time because a userOp's calldata is fixed at signing and CCTP v2 has no max sentinel."
+    "deployedAt": "2026-07-22T08:40:32.921Z",
+    "note": "Stateless full-exit sweeper. No owner, no admin surface, no rescue path by design: one instance serves every user, so an owner-gated sweep could take funds in flight for another user's transaction. Reads balances at execution time because a userOp's calldata is fixed at signing and CCTP v2 has no max sentinel.",
+    "supersedes": {
+      "address": "0xf0D7FB54FA54146114cb2cEff73D971F94c5024c",
+      "reason": "compiled against IYieldRouter.knownPool, a getter the live router (deployed 2026-07-05) never shipped — every exitAllAndBurn reverted. Redeployed against allowedPool, the live router's actual ABI."
+    }
   },
   "mainnetAdapter": {
     "note": "AaveV3Adapter4626 is the MAINNET-READY replacement for the testnet demo vaults (unit-tested + proven against real Aave via Base-mainnet fork test — base-contracts/test/AaveV3Adapter.fork.t.sol). NOT deployed on testnet (Aave Base Sepolia lists faucet USDC, not Circle USDC). At the mainnet flip: deploy 3× AaveV3Adapter4626 against the targets below and swap YieldRouter.allowedPools to the adapter addresses (script pattern: base-contracts/script/DeployAdapters.s.sol).",
