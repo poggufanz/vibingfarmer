@@ -648,3 +648,20 @@ body {
   line-height: 1.6;
   margin: 0;
 }
+
+/* ---------------------------------------------------------------------------------------------
+   Foundation Task 8 -- final compatibility override: retired lava-gradient buttons never animate
+   or replay their gradient sweep on shared/disconnected routes, in either theme. `.mandate-revoke`
+   was missing from every earlier hover/focus reset, so its console.css `.pos-cta` hover rule still
+   played the sweep; `!important` here guarantees this wins regardless of load order or the other
+   rule's higher selector specificity. Only `animation`/`background-image` are touched -- focus-ring
+   (outline/box-shadow) and danger colors (color/border-color) are declared elsewhere and stay more
+   specific, so disabling the sweep never erases that state feedback.
+   ------------------------------------------------------------------------------------------- */
+[data-theme] .btn-primary,
+[data-theme] .btn-ghost,
+[data-theme] .btn-chip,
+[data-theme] .mandate-revoke {
+  animation: none !important;
+  background-image: none !important;
+}

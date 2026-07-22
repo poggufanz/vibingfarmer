@@ -1292,7 +1292,7 @@ export default function HomePage({
                     onClick={() => handleSort(key)}
                     style={{
                       ...pillBtn,
-                      color: sortBy === key ? 'var(--text-primary, #e8e8e8)' : 'var(--text-muted)',
+                      color: sortBy === key ? 'var(--text)' : 'var(--text-muted)',
                       borderColor:
                         sortBy === key ? 'rgba(255,255,255,.28)' : 'rgba(255,255,255,.12)',
                     }}
@@ -1325,8 +1325,7 @@ export default function HomePage({
                     onClick={() => setFilterRisk(k)}
                     style={{
                       ...pillBtn,
-                      color:
-                        filterRisk === k ? 'var(--text-primary, #e8e8e8)' : 'var(--text-muted)',
+                      color: filterRisk === k ? 'var(--text)' : 'var(--text-muted)',
                       borderColor:
                         filterRisk === k ? 'rgba(255,255,255,.28)' : 'rgba(255,255,255,.12)',
                     }}

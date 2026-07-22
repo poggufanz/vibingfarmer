@@ -29,3 +29,107 @@ test.describe('Pocket Crew foundation', () => {
     await expect(page).toHaveScreenshot('foundation-reduced-motion.png', { fullPage: true })
   })
 })
+
+// Foundation Task 8 -- compact compatibility smoke over the six disconnected/shared routes, real
+// app (not the /visual/ fixture harness), desktop-1440 only. Named "disconnected compatibility"
+// (not "Pocket Crew foundation") so Step 5's `--grep "Pocket Crew foundation"` gate does not also
+// re-run these against live testnet data (Explorer's vault TVL) -- Step 4 is this group's only
+// capture/verify pass in this task.
+const disconnectedRoutes = Object.freeze([
+  { id: 'landing', path: '/', skipLanding: false },
+  { id: 'home', path: '/home', skipLanding: true },
+  { id: 'history', path: '/history', skipLanding: true },
+  { id: 'settings', path: '/settings', skipLanding: true },
+  { id: 'explorer', path: '/explorer', skipLanding: false },
+  { id: 'developers', path: '/developers', skipLanding: false },
+])
+const compatibilityThemes = Object.freeze(['forest', 'day-field'])
+
+// The most stable visible landmark per route. Home/History/Settings render no semantic <h1> yet
+// (a pre-existing gap outside this task's file list) so a blanket heading-role query would miss
+// them -- each entry names the actual visible connect/page/landing text instead.
+// /developers currently redirects a disconnected visitor to the same Landing takeover as "/"
+// (app.jsx's `!skipLanding && !realAddress` gate runs before the /developers route ever mounts,
+// and app.jsx is not in this task's file list) -- this asserts what genuinely renders today, not
+// a fixed IA.
+const ROUTE_LANDMARKS = Object.freeze({
+  landing: { role: 'heading', name: /One signature/i },
+  home: { role: 'button', name: 'Connect Wallet' },
+  history: { text: 'History, on-chain explorer' },
+  settings: { text: 'Agent Configuration' },
+  explorer: { role: 'heading', name: 'Explorer' },
+  developers: { role: 'heading', name: /One signature/i },
+})
+
+test.describe('Pocket Crew disconnected compatibility', () => {
+  for (const theme of compatibilityThemes) {
+    for (const route of disconnectedRoutes) {
+      test(`${route.id} -- ${theme}`, async ({ page }, testInfo) => {
+        test.skip(
+          testInfo.project.name !== 'desktop-1440',
+          'disconnected compatibility group is desktop-1440 only'
+        )
+
+        if (route.skipLanding) {
+          // ONLY these two flags -- never an address/wallet/position/grant/balance, so the
+          // captured state is genuinely the disconnected/no-wallet experience.
+          await page.addInitScript(() => {
+            localStorage.setItem('yv_skip_landing', 'true')
+            localStorage.setItem('yv_onboarded', 'true')
+          })
+        }
+
+        const pageErrors = []
+        page.on('pageerror', (err) => pageErrors.push(String(err)))
+        const failedImages = []
+        page.on('response', (res) => {
+          if (res.request().resourceType() === 'image' && !res.ok()) {
+            failedImages.push(`${res.status()} ${res.url()}`)
+          }
+        })
+
+        await page.goto(route.path)
+        await page.evaluate((t) => document.documentElement.setAttribute('data-theme', t), theme)
+        await page.emulateMedia({ reducedMotion: 'reduce' })
+        await page.evaluate(() => document.fonts.ready)
+        // Explorer's Vault TVL is a real Soroban RPC read (readTotalAssets), not a fixture --
+        // give it a beat to settle (success or the caught-error "Not available") before the
+        // screenshot so the loading skeleton is never what gets captured.
+        await page.waitForTimeout(1000)
+
+        expect(pageErrors, `pageerror on ${route.id}/${theme}`).toEqual([])
+        expect(failedImages, `missing brand/network image on ${route.id}/${theme}`).toEqual([])
+
+        const overflow = await page.evaluate(
+          () => document.documentElement.scrollWidth - document.documentElement.clientWidth
+        )
+        expect(overflow, `horizontal overflow on ${route.id}/${theme}`).toBeLessThanOrEqual(0)
+
+        const landmark = ROUTE_LANDMARKS[route.id]
+        const locator = landmark.role
+          ? page.getByRole(landmark.role, { name: landmark.name })
+          : page.getByText(landmark.text)
+        await expect(locator.first()).toBeVisible()
+
+        if (route.id !== 'landing') {
+          const lavaButtonCount = await page.evaluate(
+            () =>
+              Array.from(document.querySelectorAll('button, a')).filter((el) =>
+                getComputedStyle(el)
+                  .animationName.split(',')
+                  .map((s) => s.trim())
+                  .includes('btn-lava')
+              ).length
+          )
+          expect(lavaButtonCount, `btn-lava animation computed on ${route.id}/${theme}`).toBe(0)
+        }
+
+        // snapshotPathTemplate appends "-{projectName}" itself (see playwright.config.js), so the
+        // arg here is the exact `compat-<id>-<theme>-desktop-1440.png` baseline minus that suffix.
+        await expect(page).toHaveScreenshot(`compat-${route.id}-${theme}.png`, {
+          fullPage: true,
+        })
+      })
+    }
+  }
+})
