@@ -12,9 +12,17 @@
     "POOL_1": "CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF", "POOL_2": "",
     "USDC": "CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU",
     "BLND": "CB22KRA3YZVCNCQI64JQ5WE7UY2VAV7WFLK6A2JN3HEX56T2EDAFO7QF",
-    "SOROSWAP_ROUTER": "CCJUD55AG6W5HAI5LRVNKAE5WDP5XGZBUDS5WNTIVDU7O264UZZE7BRD"
+    "SOROSWAP_ROUTER": "CCJUD55AG6W5HAI5LRVNKAE5WDP5XGZBUDS5WNTIVDU7O264UZZE7BRD",
+    // Pocket Crew My Money (Task 3) — the protected agent-index ingest endpoint. Cadence is the
+    // existing 15-min cron above (no separate trigger); syncAgentIndex just no-ops if this or the
+    // secret below is unset. Non-secret — the URL alone grants nothing without the bearer secret.
+    "AGENT_INDEX_URL": "https://vibing-farmer.pages.dev/api/agent-index"
   }
   // secret: STELLAR_KEEPER_SECRET via `wrangler secret put` (user-run at deploy) — the keeper's
   // own identity, deliberately separate from STELLAR_RELAYER_SECRET (the user-facing gasless
   // relay used elsewhere in the app).
+  // secret: AGENT_INDEX_INGEST_SECRET via `wrangler secret put` — must match the same secret set
+  // on the frontend Pages project (`wrangler pages secret put AGENT_INDEX_INGEST_SECRET`); it
+  // gates the internal POST /api/agent-index?action=ingest route (handler.js: constant-time
+  // compare, 401 on mismatch, 503 if either side left it unset).
 }
