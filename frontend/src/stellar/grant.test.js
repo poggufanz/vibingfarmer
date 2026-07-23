@@ -31,6 +31,7 @@ import {
   AllowanceReadError,
   readConfirmedLedger,
   runAgentPull,
+  revokeGrant,
   AGENT_KIND_DEPOSIT,
   AGENT_KIND_BRIDGE,
 } from './grant.js'
@@ -93,6 +94,7 @@ const sampleBudgets = [{ budget: 100_000_000n, token: TOKEN }]
 beforeEach(() => {
   submitViaRelayMock.mockReset()
   getRelayerAddressMock.mockReset()
+  signOwnerAuthEntryMock.mockReset()
 })
 
 describe('AGENT_KIND_* constants', () => {
@@ -375,8 +377,6 @@ describe('submitGrant - a single signature', () => {
 })
 
 describe('submitGrant - C owner (passkey), routed through OwnerAuthorizationV1', () => {
-  beforeEach(() => signOwnerAuthEntryMock.mockReset())
-
   it('sources the grant from the relayer, signs via the passkey ceremony, and submits relay-only', async () => {
     const server = fakeServer({ latest: 1000, retval: agentsRetval([AGENT_1]) })
     getRelayerAddressMock.mockResolvedValue(RELAYER_G)
@@ -503,6 +503,56 @@ describe('readConfirmedLedger - GrantReceiptV1.confirmedAt source (never Date.no
   it('throws when the RPC omits ledger/createdAt even on SUCCESS (never falls back to Date.now())', async () => {
     const server = { getTransaction: async () => ({ status: 'SUCCESS' }) }
     await expect(readConfirmedLedger({ hash: 'H', server })).rejects.toThrow()
+  })
+})
+
+describe('revokeGrant — router allowance kill switch', () => {
+  describe('G owner (default, direct)', () => {
+    it('signs the envelope once and submits directly; the relay is never consulted', async () => {
+      const server = fakeServer({ latest: 1000 })
+      const sign = vi.fn(async (x) => `SIGNED:${x}`)
+      const out = await revokeGrant({ owner: OWNER, server, sign })
+      expect(sign).toHaveBeenCalledTimes(1)
+      expect(submitViaRelayMock).not.toHaveBeenCalled()
+      expect(out).toEqual({ hash: 'HDIRECT', status: 'SUCCESS' })
+    })
+
+    it('throws when the revoke is not confirmed SUCCESS', async () => {
+      const server = fakeServer({ latest: 1000 })
+      server.getTransaction = async () => ({ status: 'PENDING' })
+      await expect(
+        revokeGrant({ owner: OWNER, server, sign: async (x) => x })
+      ).rejects.toThrow(/not confirmed/i)
+    })
+  })
+
+  describe('C owner (passkey, relay-only)', () => {
+    it('sources from the relayer, signs a passkey auth entry, submits relay-only', async () => {
+      const server = fakeServer({ latest: 1000 })
+      getRelayerAddressMock.mockResolvedValue(RELAYER_G)
+      signOwnerAuthEntryMock.mockResolvedValue('SIGNED_C')
+      submitViaRelayMock.mockResolvedValue({ hash: 'rc1', status: 'SUCCESS' })
+
+      const out = await revokeGrant({
+        owner: OWNER_C,
+        server,
+        activeAccount: { kind: 'C', address: OWNER_C },
+      })
+
+      expect(signOwnerAuthEntryMock).toHaveBeenCalledWith(
+        expect.objectContaining({ contractId: OWNER_C })
+      )
+      expect(out).toEqual({ hash: 'rc1', status: 'SUCCESS' })
+    })
+
+    it('has no user-funded fallback: fails BEFORE the passkey ceremony when no relayer is funded', async () => {
+      const server = fakeServer({ latest: 1000 })
+      getRelayerAddressMock.mockResolvedValue(null)
+      await expect(
+        revokeGrant({ owner: OWNER_C, server, activeAccount: { kind: 'C', address: OWNER_C } })
+      ).rejects.toMatchObject({ code: 'VF_FEE_PAYER_UNAVAILABLE' })
+      expect(signOwnerAuthEntryMock).not.toHaveBeenCalled()
+    })
   })
 })
 

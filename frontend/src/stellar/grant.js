@@ -8,7 +8,7 @@
 // worker funding is a RELAYED router.pull (agent session-key signs the pull auth entry; the relay
 // fee-bumps) — zero further signatures. Revoke is the owner setting the SEP-41 allowance back to 0.
 import { xdr } from '@stellar/stellar-sdk'
-import { rpcServer, buildInvokeTx, submitUserTx, readContract } from './client.js'
+import { rpcServer, buildInvokeTx, readContract } from './client.js'
 import { signAgentDepositEntries } from './agentDeposit.js'
 import { getRelayerAddress, submitViaRelay } from './relay.js'
 import { signWithTimeout } from './agentSetup.js'
@@ -420,11 +420,17 @@ export async function readConfirmedLedger({ hash, server }) {
 }
 
 /**
- * Kill switch — the owner sets the SEP-41 allowance back to 0. One user-signed wallet signature,
- * submitted DIRECTLY (not via the relay) so revocation still works when the relayer is down; that
- * independence is what backs the "user can revoke any time" guarantee (mirrors stellar/revoke.js).
+ * Kill switch — the owner sets the SEP-41 router allowance back to 0, routed through
+ * OwnerAuthorizationV1. A classic G owner signs the envelope and submits DIRECTLY (never via the
+ * relay) so revocation still works when the relayer is down — that independence is what backs the
+ * "user can revoke any time" guarantee (mirrors stellar/revoke.js's agent kill switch). A passkey
+ * C owner can never source that envelope at all, so it signs a Soroban auth entry on a
+ * relayer-sourced tx and submits relay-only (no user-funded fallback — see ownerAuthorization.js).
+ * `activeAccount` defaults to a classic G owner, so every existing caller is unaffected.
  * expiration_ledger is a harmless current+1 (the SAC ignores it for a zero allowance).
- * @param {{owner:string, router?:string, token?:string, server?:object, sign?:Function}} p
+ * @param {{owner:string, router?:string, token?:string, server?:object, sign?:Function,
+ *          activeAccount?:{kind:'G'|'C', address:string}, getRelayerAddress?:Function,
+ *          kit?:object}} p
  * @returns {Promise<{hash:string, status:string}>}
  */
 export async function revokeGrant({
@@ -433,18 +439,31 @@ export async function revokeGrant({
   token = SOROBAN_TOKEN_ADDRESS,
   server,
   sign = signWithTimeout,
+  activeAccount = { kind: 'G', address: owner },
+  getRelayerAddress: getRelayer = getRelayerAddress,
+  kit,
 }) {
   const s = server || (await rpcServer())
+  const model = await resolveOwnerTxModel({ owner, activeAccount, getRelayerAddress: getRelayer })
   const latest = await s.getLatestLedger()
-  const { xdr: unsigned } = await buildInvokeTx({
-    source: owner,
+  const built = await buildInvokeTx({
+    source: model.source,
     contract: token,
     method: 'approve',
     args: [{ addr: owner }, { addr: router }, { i128: 0n }, { u32: latest.sequence + 1 }],
     server: s,
   })
-  const signed = await sign(unsigned, 'revoke grant')
-  const res = await submitUserTx({ signedXdr: signed, server })
+  const res = await submitOwnerAuthorizedTx({
+    model,
+    build: async () => built,
+    sign:
+      model.kind === 'G'
+        ? async () => sign(built.xdr, 'revoke grant')
+        : async () => signOwnerAuthEntry({ tx: built.tx, contractId: model.contractId, server: s, kit }),
+    server: s,
+    label: 'revoke grant',
+    classicSubmission: 'direct',
+  })
   if (res.status !== 'SUCCESS') throw new Error(`Revocation was not confirmed: ${res.status}.`)
-  return res
+  return { hash: res.hash, status: res.status }
 }
