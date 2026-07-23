@@ -20,6 +20,7 @@ vi.mock('./ownerAuthorization.js', async (importOriginal) => {
 
 import { xdr, Keypair } from '@stellar/stellar-sdk'
 import { buildInvokeTx, submitUserTx } from './client.js'
+import { signTxXdr } from './walletKit.js'
 import { ownerWithdraw, sweepAgents } from './exit.js'
 import { i128ScVal } from './scval.js'
 
@@ -41,6 +42,7 @@ beforeEach(() => {
   submitViaRelayMock.mockReset()
   getRelayerAddressMock.mockReset()
   signOwnerAuthEntryMock.mockReset()
+  signTxXdr.mockClear()
 })
 
 describe('ownerWithdraw', () => {
@@ -121,6 +123,23 @@ describe('sweepAgents', () => {
     expect(call.args[1].vec()).toHaveLength(2)
     expect(out.swept).toEqual([50_000_000n, 20_000_000n])
     expect(out.txHashes).toEqual(['sweep1', 'sweep1'])
+  })
+
+  it('uses an injected sign (e.g. a script signing off-browser) instead of the wallet-kit default', async () => {
+    // Regression: sign used to be silently dropped, so scripts/exit-router-smoke.mjs's local-
+    // keypair signer (and its popup count, the script's whole assertion) went unused.
+    submitUserTx.mockResolvedValueOnce({
+      hash: 'sweep1',
+      status: 'SUCCESS',
+      returnValue: sweptScVal([50_000_000n, 20_000_000n]),
+    })
+    const sign = vi.fn(async (x) => `SIGNED_INJECTED:${x}`)
+    await sweepAgents({ owner: OWNER, agentAddresses: AGENTS, to: OWNER, router: ROUTER, sign })
+    expect(sign).toHaveBeenCalledTimes(1)
+    expect(submitUserTx).toHaveBeenCalledWith(
+      expect.objectContaining({ signedXdr: 'SIGNED_INJECTED:BUILT' })
+    )
+    expect(signTxXdr).not.toHaveBeenCalled()
   })
 
   it('decodes a partial sweep as the zeros the chain reported', async () => {

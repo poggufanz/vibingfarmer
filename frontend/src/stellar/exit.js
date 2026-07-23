@@ -35,10 +35,11 @@ export const MAX_AGENTS_PER_SWEEP = 3
 // invocation, so an over-large sweep moves nothing at all rather than partially succeeding.
 const isBudgetError = (e) => /Budget|ExceededLimit|ResourceLimitExceeded/i.test(e?.message || '')
 
-/** G signs the envelope directly; a C owner signs a Soroban auth entry sourced by the relayer. */
-function ownerSign({ built, model, server, kit }) {
+/** G signs the envelope directly (via the injectable `sign`, default signTxXdr — the wallet-kit
+ *  popup); a C owner signs a Soroban auth entry sourced by the relayer. */
+function ownerSign({ built, model, server, kit, sign = signTxXdr }) {
   return model.kind === 'G'
-    ? signTxXdr(built.xdr)
+    ? sign(built.xdr)
     : signOwnerAuthEntry({ tx: built.tx, contractId: model.contractId, server, kit })
 }
 
@@ -47,7 +48,7 @@ function ownerSign({ built, model, server, kit }) {
  * position in the caller's full list). Halves and retries on a budget overrun: simulation raises
  * that inside buildInvokeTx, BEFORE any signature, so shrinking costs the user nothing.
  */
-async function sweepChunk({ agents, to, router, server, model, kit, out }) {
+async function sweepChunk({ agents, to, router, server, model, kit, sign, out }) {
   try {
     const result = await submitOwnerAuthorizedTx({
       model,
@@ -63,7 +64,7 @@ async function sweepChunk({ agents, to, router, server, model, kit, out }) {
           ],
           server,
         }),
-      sign: (built) => ownerSign({ built, model, server, kit }),
+      sign: (built) => ownerSign({ built, model, server, kit, sign }),
       server,
       label: 'exit sweep',
       classicSubmission: 'direct',
@@ -85,8 +86,8 @@ async function sweepChunk({ agents, to, router, server, model, kit, out }) {
   } catch (e) {
     if (agents.length > 1 && isBudgetError(e)) {
       const mid = Math.ceil(agents.length / 2)
-      await sweepChunk({ agents: agents.slice(0, mid), to, router, server, model, kit, out })
-      await sweepChunk({ agents: agents.slice(mid), to, router, server, model, kit, out })
+      await sweepChunk({ agents: agents.slice(0, mid), to, router, server, model, kit, sign, out })
+      await sweepChunk({ agents: agents.slice(mid), to, router, server, model, kit, sign, out })
       return
     }
     // One batch failing must not strand the others — record why, per agent, and let the rest run.
@@ -114,7 +115,10 @@ async function sweepChunk({ agents, to, router, server, model, kit, out }) {
  * one dead agent reads the same here as it does on the per-agent path.
  * @param {{owner:string, agentAddresses:string[], to?:string, router?:string, server?:object,
  *          chunkSize?:number, activeAccount?:{kind:'G'|'C', address:string},
- *          getRelayerAddress?:Function, kit?:object}} p
+ *          getRelayerAddress?:Function, kit?:object, sign?:Function}} p sign is the G-envelope
+ *          signer (default signTxXdr, the wallet-kit popup) — injectable so callers off the
+ *          browser (e.g. scripts/exit-router-smoke.mjs) can sign with a local keypair instead.
+ *          Unused for a C owner, which always signs via the passkey ceremony.
  * @returns {Promise<{swept:bigint[], txHashes:string[], errors:(string|undefined)[]}>}
  */
 export async function sweepAgents({
@@ -127,6 +131,7 @@ export async function sweepAgents({
   activeAccount = { kind: 'G', address: owner },
   getRelayerAddress: getRelayer = getRelayerAddress,
   kit,
+  sign = signTxXdr,
 }) {
   if (!router) throw new Error('The exit router is not configured.')
   if (!agentAddresses?.length) throw new Error('sweepAgents requires at least one agentAddress.')
@@ -145,6 +150,7 @@ export async function sweepAgents({
       server,
       model,
       kit,
+      sign,
       out,
     })
   }
