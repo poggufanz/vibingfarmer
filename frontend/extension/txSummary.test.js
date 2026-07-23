@@ -115,7 +115,9 @@ describe('txSummary — funding_router.grant decoding', () => {
         new Contract(SOROBAN_FUNDING_ROUTER_ADDRESS).call(
           'grant',
           addrScVal(owner),
-          xdr.ScVal.scvVec([tokenBudgetScVal({ budget: 5_000_000n, token: SOROBAN_TOKEN_ADDRESS })]),
+          xdr.ScVal.scvVec([
+            tokenBudgetScVal({ budget: 5_000_000n, token: SOROBAN_TOKEN_ADDRESS }),
+          ]),
           u32ScVal(1_000_000),
           xdr.ScVal.scvVec([
             agentInitScVal({
@@ -146,7 +148,9 @@ describe('txSummary — funding_router.grant decoding', () => {
     expect(s.grant).not.toBeNull()
     expect(s.grant.kind).toBe('funding-router-grant')
     expect(s.grant.owner).toBe(owner)
-    expect(s.grant.budgets).toEqual([{ token: SOROBAN_TOKEN_ADDRESS, units: 5_000_000n, decimals: 7 }])
+    expect(s.grant.budgets).toEqual([
+      { token: SOROBAN_TOKEN_ADDRESS, units: 5_000_000n, decimals: 7 },
+    ])
     expect(s.grant.agents).toHaveLength(1)
     expect(s.grant.agents[0].destination.classification).toBe('known-stellar-vault')
   })
