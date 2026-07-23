@@ -52,6 +52,44 @@ describe('ensureExitSigner', () => {
     await expect(ensureExitSigner({ owner: 'G', agentAddress: 'C', deps })).rejects.toThrow()
     expect(save).not.toHaveBeenCalled()
   })
+
+  test('forwards activeAccount/getRelayerAddress/kit to registerExitSigner (owner-model routing)', async () => {
+    const getRelayerAddress = vi.fn()
+    const kit = {}
+    const activeAccount = { kind: 'C', address: 'CAGENTOWNER' }
+    const registerExitSigner = vi.fn(async () => ({ status: 'SUCCESS' }))
+    const deps = {
+      loadExitKey: () => null,
+      generateExitKey: async () => ({ publicKey: 'GNEW', secret: 'SNEW' }),
+      registerExitSigner,
+      saveExitKey: vi.fn(),
+    }
+    await ensureExitSigner({
+      owner: 'CAGENTOWNER',
+      agentAddress: 'CAGENT',
+      activeAccount,
+      getRelayerAddress,
+      kit,
+      deps,
+    })
+    expect(registerExitSigner).toHaveBeenCalledWith(
+      expect.objectContaining({ activeAccount, getRelayerAddress, kit })
+    )
+  })
+
+  test('defaults activeAccount to a classic G owner when not given', async () => {
+    const registerExitSigner = vi.fn(async () => ({ status: 'SUCCESS' }))
+    const deps = {
+      loadExitKey: () => null,
+      generateExitKey: async () => ({ publicKey: 'GNEW', secret: 'SNEW' }),
+      registerExitSigner,
+      saveExitKey: vi.fn(),
+    }
+    await ensureExitSigner({ owner: 'GOWNER', agentAddress: 'CAGENT', deps })
+    expect(registerExitSigner).toHaveBeenCalledWith(
+      expect.objectContaining({ activeAccount: { kind: 'G', address: 'GOWNER' } })
+    )
+  })
 })
 
 describe('partialWithdraw', () => {

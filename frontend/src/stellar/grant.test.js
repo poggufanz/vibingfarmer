@@ -1,6 +1,6 @@
 // frontend/src/stellar/grant.test.js
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { Account, Address, xdr, nativeToScVal } from '@stellar/stellar-sdk'
+import { Account, Address, Keypair, xdr, nativeToScVal } from '@stellar/stellar-sdk'
 
 // Relay is the only network dependency submitGrant/runAgentPull reach for; mock it so the tests
 // run offline. Each test reconfigures the two fns it needs.
@@ -10,6 +10,16 @@ vi.mock('./relay.js', () => ({
   submitViaRelay: (...a) => submitViaRelayMock(...a),
   getRelayerAddress: (...a) => getRelayerAddressMock(...a),
 }))
+
+// signOwnerAuthEntry does a real passkey-ceremony + re-simulate round trip (covered on its own in
+// ownerAuthorization.test.js) — grant.test.js's fakeServer never populates real auth entries, so
+// only the C-routing (which contractId, which channel) is this file's concern; resolveOwnerTxModel
+// and submitOwnerAuthorizedTx stay REAL so the G-path tests below still exercise the real adapter.
+const signOwnerAuthEntryMock = vi.fn()
+vi.mock('./ownerAuthorization.js', async (importOriginal) => {
+  const actual = await importOriginal()
+  return { ...actual, signOwnerAuthEntry: (...a) => signOwnerAuthEntryMock(...a) }
+})
 
 import {
   agentInitScVal,
@@ -31,6 +41,8 @@ const AGENT_1 = 'CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC'
 const AGENT_2 = 'CBEI5VJKKWLXKQUUUETBAPZSQQLH7I57TSIDTMV4WJMBKIGVF7NSNOFY'
 const VAULT = 'CB5VKYDUIYX3RZWGVLKKNBPG7V7Z5JIHF2QPNQKWKAHVA3IPSLFZJDYU'
 const TOKEN = 'CAEQSCIJBEEQSCIJBEEQSCIJBEEQSCIJBEEQSCIJBEEQSCIJBEEQTD2L'
+const OWNER_C = 'CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC'
+const RELAYER_G = Keypair.random().publicKey() // any well-formed G — never asserted by value
 const ZERO32 = new Uint8Array(32)
 
 // Vec<Address> retval the router's grant returns — the deployed agent addresses in input order.
@@ -250,6 +262,20 @@ describe('buildGrantTx', () => {
     expect(bridgeAgentAddress).toBeNull()
   })
 
+  it('sources the tx from txSource (relayer G) when given, leaving the grant() owner arg unchanged', async () => {
+    const server = fakeServer({ latest: 100, retval: agentsRetval([AGENT_1]) })
+    const { tx } = await buildGrantTx({
+      owner: OWNER_C, // the C address stays the `grant` call's owner argument
+      budgets: sampleBudgets,
+      durationSeconds: 60,
+      agentInits: [sampleInits[0]],
+      server,
+      txSource: RELAYER_G, // but a C address can never be the tx source
+    })
+    expect(tx.source).toBe(RELAYER_G)
+    expect(tx.source).not.toBe(OWNER_C)
+  })
+
   it('rejects an empty agent list and a missing router', async () => {
     const server = fakeServer({ latest: 1, retval: agentsRetval([]) })
     await expect(
@@ -344,6 +370,68 @@ describe('submitGrant - a single signature', () => {
         sign: async (x) => x,
       })
     ).rejects.toThrow(/grant relay returned FAILED/)
+  })
+
+})
+
+describe('submitGrant - C owner (passkey), routed through OwnerAuthorizationV1', () => {
+  beforeEach(() => signOwnerAuthEntryMock.mockReset())
+
+  it('sources the grant from the relayer, signs via the passkey ceremony, and submits relay-only', async () => {
+    const server = fakeServer({ latest: 1000, retval: agentsRetval([AGENT_1]) })
+    getRelayerAddressMock.mockResolvedValue(RELAYER_G)
+    signOwnerAuthEntryMock.mockResolvedValue('SIGNED_C_XDR')
+    submitViaRelayMock.mockResolvedValue({ hash: 'HC', status: 'SUCCESS' })
+
+    const out = await submitGrant({
+      owner: OWNER_C,
+      budgets: sampleBudgets,
+      durationSeconds: 60,
+      agentInits: [sampleInits[0]],
+      server,
+      activeAccount: { kind: 'C', address: OWNER_C },
+    })
+
+    expect(signOwnerAuthEntryMock).toHaveBeenCalledWith(
+      expect.objectContaining({ contractId: OWNER_C })
+    )
+    expect(submitViaRelayMock).toHaveBeenCalledWith({ xdr: 'SIGNED_C_XDR' })
+    expect(out).toMatchObject({ hash: 'HC', status: 'SUCCESS', agentAddresses: [AGENT_1] })
+  })
+
+  it('has no user-funded fallback: an unreachable relay throws instead of billing the C owner', async () => {
+    const server = fakeServer({ latest: 1000, retval: agentsRetval([AGENT_1]) })
+    getRelayerAddressMock.mockResolvedValue(RELAYER_G)
+    signOwnerAuthEntryMock.mockResolvedValue('SIGNED_C_XDR')
+    submitViaRelayMock.mockResolvedValue(null) // relay unreachable AFTER the ceremony already ran
+
+    await expect(
+      submitGrant({
+        owner: OWNER_C,
+        budgets: sampleBudgets,
+        durationSeconds: 60,
+        agentInits: [sampleInits[0]],
+        server,
+        activeAccount: { kind: 'C', address: OWNER_C },
+      })
+    ).rejects.toMatchObject({ code: 'VF_SUBMISSION_UNKNOWN' })
+  })
+
+  it('fails BEFORE the passkey ceremony when no relayer is funded', async () => {
+    const server = fakeServer({ latest: 1000, retval: agentsRetval([AGENT_1]) })
+    getRelayerAddressMock.mockResolvedValue(null)
+
+    await expect(
+      submitGrant({
+        owner: OWNER_C,
+        budgets: sampleBudgets,
+        durationSeconds: 60,
+        agentInits: [sampleInits[0]],
+        server,
+        activeAccount: { kind: 'C', address: OWNER_C },
+      })
+    ).rejects.toMatchObject({ code: 'VF_FEE_PAYER_UNAVAILABLE' })
+    expect(signOwnerAuthEntryMock).not.toHaveBeenCalled()
   })
 })
 

@@ -44,6 +44,16 @@ describe('withdrawFromVault', () => {
     await expect(withdrawFromVault(VAULT, '1000', USER)).rejects.toThrow(/agent/i)
     expect(ownerWithdraw).not.toHaveBeenCalled()
   })
+
+  it('forwards the owner-authorization model (activeAccount/getRelayerAddress/kit) to ownerWithdraw', async () => {
+    const activeAccount = { kind: 'C', address: 'CAGENTOWNER' }
+    const getRelayerAddress = vi.fn()
+    const kit = {}
+    await withdrawFromVault(VAULT, '1000', USER, AGENT, { activeAccount, getRelayerAddress, kit })
+    expect(ownerWithdraw).toHaveBeenCalledWith(
+      expect.objectContaining({ activeAccount, getRelayerAddress, kit })
+    )
+  })
 })
 
 describe('withdrawAllFromVault — one-signature sweep', () => {
@@ -105,6 +115,20 @@ describe('withdrawAllFromVault — one-signature sweep', () => {
   it('throws when there is no agent to sweep rather than doing nothing quietly', async () => {
     await expect(withdrawAllFromVault(VAULT, USER, [])).rejects.toThrow(/at least one agent/i)
     expect(sweepAgents).not.toHaveBeenCalled()
+  })
+
+  it('forwards the owner-authorization model (activeAccount/getRelayerAddress/kit) to sweepAgents', async () => {
+    const activeAccount = { kind: 'C', address: 'CAGENTOWNER' }
+    const getRelayerAddress = vi.fn()
+    const kit = {}
+    await withdrawAllFromVault(VAULT, USER, AGENTS, undefined, {
+      activeAccount,
+      getRelayerAddress,
+      kit,
+    })
+    expect(sweepAgents).toHaveBeenCalledWith(
+      expect.objectContaining({ activeAccount, getRelayerAddress, kit })
+    )
   })
 })
 

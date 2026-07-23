@@ -13,6 +13,11 @@ import { signAgentDepositEntries } from './agentDeposit.js'
 import { getRelayerAddress, submitViaRelay } from './relay.js'
 import { signWithTimeout } from './agentSetup.js'
 import {
+  resolveOwnerTxModel,
+  submitOwnerAuthorizedTx,
+  signOwnerAuthEntry,
+} from './ownerAuthorization.js'
+import {
   NETWORK_PASSPHRASE,
   SOROBAN_FUNDING_ROUTER_ADDRESS,
   SOROBAN_TOKEN_ADDRESS,
@@ -103,14 +108,18 @@ function randomSalt() {
 }
 
 /**
- * Build + simulate-assemble the ONE grant tx (source = owner). Returns the assembled unsigned XDR
- * plus the deployed agent addresses read from the pre-simulation retval. The `deploy_v2` addresses
- * are salt-derived and deterministic, so the simulated `Vec<Address>` matches what submit produces.
+ * Build + simulate-assemble the ONE grant tx. `txSource` is the transaction's envelope source —
+ * the owner itself for a classic G account, or a funded relayer G when the owner is a passkey C
+ * account (which can never be a transaction source; see ownerAuthorization.js). The `grant` call's
+ * `owner` ARGUMENT is unaffected either way — only WHO pays/sources the envelope changes. Returns
+ * the assembled unsigned XDR plus the deployed agent addresses read from the pre-simulation
+ * retval. The `deploy_v2` addresses are salt-derived and deterministic, so the simulated
+ * `Vec<Address>` matches what submit produces.
  * @param {{owner:string, budgets:Array<{budget:bigint|number, token:string}>,
  *          durationSeconds:number, agentInits:Array<{signer:Uint8Array, salt?:Uint8Array,
  *          cap:bigint, token:string, target:string, kind:number,
  *          mintRecipient:Uint8Array|string, destinationDomain:number, periodDuration:number,
- *          expiry:number}>, router?:string, server?:object}} p
+ *          expiry:number}>, router?:string, server?:object, txSource?:string}} p
  * @returns {Promise<{tx:object, xdr:string, agentAddresses:string[], expiryLedger:number,
  *          bridgeAgentAddress:string|null}>}
  */
@@ -121,6 +130,7 @@ export async function buildGrantTx({
   agentInits,
   router = SOROBAN_FUNDING_ROUTER_ADDRESS,
   server,
+  txSource = owner,
 }) {
   if (!router) throw new Error('The funding router is not configured.')
   if (!agentInits || agentInits.length === 0)
@@ -149,7 +159,7 @@ export async function buildGrantTx({
   )
   const agentsVec = xdr.ScVal.scvVec(encoded)
 
-  const account = await s.getAccount(owner)
+  const account = await s.getAccount(txSource)
   const raw = new TransactionBuilder(account, {
     fee: BASE_FEE,
     networkPassphrase: NETWORK_PASSPHRASE,
@@ -196,12 +206,17 @@ export async function buildGrantTx({
 }
 
 /**
- * Full single-signature grant: build → wallet-sign (timeout-capped) → submit. Prefers the relay fee-bump
- * (the relay now allowlists router.grant, so the user pays 0 XLM); falls back to a direct user-paid
- * submit only when the relay is unconfigured (returns null).
+ * Full single-signature grant: build → authorize (wallet-sign for G, passkey auth entry for C) →
+ * submit, routed through OwnerAuthorizationV1 (ownerAuthorization.js). A G owner prefers the relay
+ * fee-bump (the relay allowlists router.grant, so the user pays 0 XLM) and safely falls back to a
+ * direct user-paid submit only when the relay is unreachable. A C owner (passkey smart account)
+ * can never source a classic transaction at all — its grant is sourced by a funded relayer G and
+ * authorized via a Soroban auth entry, relay-only, with no user-funded fallback.
+ * `activeAccount` defaults to a classic G owner, so every existing G-only caller is unaffected.
  * @param {{owner:string, budgets:Array<{budget:bigint|number, token:string}>,
  *          durationSeconds:number, agentInits:Array, router?:string, server?:object,
- *          sign?:Function}} p
+ *          sign?:Function, activeAccount?:{kind:'G'|'C', address:string},
+ *          getRelayerAddress?:Function, kit?:object}} p
  * @returns {Promise<{hash:string, status:string, relayer?:string, agentAddresses:string[],
  *          expiryLedger:number, bridgeAgentAddress:string|null}>}
  */
@@ -213,7 +228,11 @@ export async function submitGrant({
   router,
   server,
   sign = signWithTimeout,
+  activeAccount = { kind: 'G', address: owner },
+  getRelayerAddress: getRelayer = getRelayerAddress,
+  kit,
 }) {
+  const model = await resolveOwnerTxModel({ owner, activeAccount, getRelayerAddress: getRelayer })
   const built = await buildGrantTx({
     owner,
     budgets,
@@ -221,26 +240,30 @@ export async function submitGrant({
     agentInits,
     router,
     server,
+    txSource: model.source,
   })
-  const signed = await sign(built.xdr, 'grant')
-  const relayed = await submitViaRelay({ xdr: signed })
-  if (relayed) {
-    if (relayed.status !== 'SUCCESS') throw new Error(`The grant relay returned ${relayed.status}.`)
-    return {
-      hash: relayed.hash,
-      status: relayed.status,
-      relayer: relayed.relayer,
-      agentAddresses: built.agentAddresses,
-      expiryLedger: built.expiryLedger,
-      bridgeAgentAddress: built.bridgeAgentAddress,
-    }
+  const result = await submitOwnerAuthorizedTx({
+    model,
+    build: async () => built,
+    sign:
+      model.kind === 'G'
+        ? async () => sign(built.xdr, 'grant')
+        : async () => signOwnerAuthEntry({ tx: built.tx, contractId: model.contractId, server, kit }),
+    server,
+    label: 'grant',
+    classicSubmission: 'prefer-relay',
+  })
+  if (result.status !== 'SUCCESS') {
+    throw new Error(
+      result.channel === 'relay'
+        ? `The grant relay returned ${result.status}.`
+        : `The grant was not confirmed: ${result.status}.`
+    )
   }
-  // Relay off → direct user-paid submit.
-  const res = await submitUserTx({ signedXdr: signed, server })
-  if (res.status !== 'SUCCESS') throw new Error(`The grant was not confirmed: ${res.status}.`)
   return {
-    hash: res.hash,
-    status: res.status,
+    hash: result.hash,
+    status: result.status,
+    relayer: result.relayer,
     agentAddresses: built.agentAddresses,
     expiryLedger: built.expiryLedger,
     bridgeAgentAddress: built.bridgeAgentAddress,

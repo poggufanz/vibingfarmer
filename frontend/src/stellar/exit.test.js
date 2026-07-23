@@ -5,13 +5,27 @@ vi.mock('./client.js', () => ({
   submitUserTx: vi.fn(async () => ({ hash: 'h1', status: 'SUCCESS' })),
 }))
 vi.mock('./walletKit.js', () => ({ signTxXdr: vi.fn(async () => 'SIGNED') }))
+const submitViaRelayMock = vi.fn()
+const getRelayerAddressMock = vi.fn()
+vi.mock('./relay.js', () => ({
+  submitViaRelay: (...a) => submitViaRelayMock(...a),
+  getRelayerAddress: (...a) => getRelayerAddressMock(...a),
+  RelayRejectedError: class RelayRejectedError extends Error {},
+}))
+const signOwnerAuthEntryMock = vi.fn()
+vi.mock('./ownerAuthorization.js', async (importOriginal) => {
+  const actual = await importOriginal()
+  return { ...actual, signOwnerAuthEntry: (...a) => signOwnerAuthEntryMock(...a) }
+})
 
-import { xdr } from '@stellar/stellar-sdk'
+import { xdr, Keypair } from '@stellar/stellar-sdk'
 import { buildInvokeTx, submitUserTx } from './client.js'
 import { ownerWithdraw, sweepAgents } from './exit.js'
 import { i128ScVal } from './scval.js'
 
 const OWNER = 'GCIOUP4UJAAFDBJNP5DY5CFJHBLEKGLHZ5E2AYRIIQ5VOZFVSTPRYHNS'
+const OWNER_C = 'CCDXZ6BUA7TPR3EXQWJWUD7EYR6OUMJRYIKYXPE53HRJOJFY5CXEHTN5'
+const RELAYER_G = Keypair.random().publicKey() // any well-formed G — never asserted by value
 const AGENT = 'CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC'
 const AGENT2 = 'CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77'
 const ROUTER = 'CDGDIPHBN3MSNURDX33IZBXXQTJPT7THAXSMVBAIOIXLOA6OF32IRS2J'
@@ -24,6 +38,9 @@ beforeEach(() => {
   buildInvokeTx.mockResolvedValue({ xdr: 'BUILT' })
   submitUserTx.mockReset()
   submitUserTx.mockResolvedValue({ hash: 'h1', status: 'SUCCESS' })
+  submitViaRelayMock.mockReset()
+  getRelayerAddressMock.mockReset()
+  signOwnerAuthEntryMock.mockReset()
 })
 
 describe('ownerWithdraw', () => {
@@ -51,6 +68,28 @@ describe('ownerWithdraw', () => {
   it('returns the hash and status on a confirmed exit', async () => {
     const out = await ownerWithdraw({ owner: OWNER, agentAddress: AGENT, to: OWNER })
     expect(out).toMatchObject({ hash: 'h1', status: 'SUCCESS' })
+  })
+
+  it('C owner: sources from the relayer, signs a passkey auth entry, relay-only', async () => {
+    getRelayerAddressMock.mockResolvedValue(RELAYER_G)
+    signOwnerAuthEntryMock.mockResolvedValue('SIGNED_C')
+    submitViaRelayMock.mockResolvedValue({ hash: 'hc1', status: 'SUCCESS' })
+
+    const out = await ownerWithdraw({
+      owner: OWNER_C,
+      agentAddress: AGENT,
+      to: OWNER_C,
+      activeAccount: { kind: 'C', address: OWNER_C },
+    })
+
+    expect(buildInvokeTx).toHaveBeenCalledWith(
+      expect.objectContaining({ source: RELAYER_G, contract: AGENT, method: 'owner_withdraw' })
+    )
+    expect(signOwnerAuthEntryMock).toHaveBeenCalledWith(
+      expect.objectContaining({ contractId: OWNER_C })
+    )
+    expect(submitUserTx).not.toHaveBeenCalled()
+    expect(out).toMatchObject({ hash: 'hc1', status: 'SUCCESS' })
   })
 })
 
@@ -192,5 +231,42 @@ describe('sweepAgents', () => {
       /not configured/i
     )
     expect(submitUserTx).not.toHaveBeenCalled()
+  })
+
+  it('C owner: sweeps sourced from the relayer, signs a passkey auth entry, relay-only', async () => {
+    getRelayerAddressMock.mockResolvedValue(RELAYER_G)
+    signOwnerAuthEntryMock.mockResolvedValue('SIGNED_C')
+    submitViaRelayMock.mockResolvedValue({
+      hash: 'sweepC',
+      status: 'SUCCESS',
+      returnValue: sweptScVal([5n, 5n]),
+    })
+
+    const out = await sweepAgents({
+      owner: OWNER_C,
+      agentAddresses: AGENTS,
+      router: ROUTER,
+      activeAccount: { kind: 'C', address: OWNER_C },
+    })
+
+    expect(buildInvokeTx).toHaveBeenCalledWith(
+      expect.objectContaining({ source: RELAYER_G, contract: ROUTER, method: 'sweep' })
+    )
+    expect(submitUserTx).not.toHaveBeenCalled()
+    expect(out.swept).toEqual([5n, 5n])
+  })
+
+  it('C owner: fails BEFORE the passkey ceremony when no relayer is funded', async () => {
+    getRelayerAddressMock.mockResolvedValue(null)
+    await expect(
+      sweepAgents({
+        owner: OWNER_C,
+        agentAddresses: AGENTS,
+        router: ROUTER,
+        activeAccount: { kind: 'C', address: OWNER_C },
+      })
+    ).rejects.toMatchObject({ code: 'VF_FEE_PAYER_UNAVAILABLE' })
+    expect(signOwnerAuthEntryMock).not.toHaveBeenCalled()
+    expect(buildInvokeTx).not.toHaveBeenCalled()
   })
 })

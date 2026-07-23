@@ -89,13 +89,25 @@ async function handleWorkerMessage(e) {
 // to SOROBAN_DEMO_AGENT, which is owned by vf-deployer and holds none of the user's funds: every
 // withdraw invoked a stranger's account, failed on-chain, and still reported success.
 
-/** Manual exit from the dashboard. Returns { txHash, status }. */
-export async function withdrawFromVault(vaultAddress, amount, userAddress, agentAddress) {
+/** Manual exit from the dashboard. Returns { txHash, status }.
+ * `activeAccount` (VFW1's ActiveAccountV1 record) picks the owner-authorization model —
+ * classic G envelope vs. passkey C auth entry (see stellar/exit.js / ownerAuthorization.js).
+ * Defaults to a classic G owner, so every existing caller is unaffected. */
+export async function withdrawFromVault(
+  vaultAddress,
+  amount,
+  userAddress,
+  agentAddress,
+  { activeAccount, getRelayerAddress, kit } = {}
+) {
   if (!agentAddress) throw new Error('withdrawFromVault requires the run’s agentAddress.')
   const { hash, status } = await ownerWithdraw({
     owner: userAddress,
     agentAddress,
     to: userAddress,
+    activeAccount,
+    getRelayerAddress,
+    kit,
   })
   return { txHash: hash, status }
 }
@@ -119,9 +131,18 @@ export async function withdrawFromVault(vaultAddress, amount, userAddress, agent
  * @param {string[]} agentAddresses
  * @param {(p: {index: number, total: number, agentAddress: string}) => void} [onProgress]
  *        Only fires on the per-agent fallback — the sweep is a single step with nothing to count.
+ * @param {{activeAccount?:object, getRelayerAddress?:Function, kit?:object}} [ownerAuth]
+ *        Owner-authorization model — classic G envelope vs. passkey C auth entry. Defaults to a
+ *        classic G owner, so every existing caller is unaffected.
  * @returns {Promise<Array<{agentAddress: string, ok: boolean, txHash?: string, error?: string}>>}
  */
-export async function withdrawAllFromVault(vaultAddress, userAddress, agentAddresses, onProgress) {
+export async function withdrawAllFromVault(
+  vaultAddress,
+  userAddress,
+  agentAddresses,
+  onProgress,
+  { activeAccount, getRelayerAddress, kit } = {}
+) {
   if (!agentAddresses?.length)
     throw new Error('withdrawAllFromVault requires at least one agentAddress.')
 
@@ -130,6 +151,9 @@ export async function withdrawAllFromVault(vaultAddress, userAddress, agentAddre
       owner: userAddress,
       agentAddresses,
       to: userAddress,
+      activeAccount,
+      getRelayerAddress,
+      kit,
     })
     // `swept[i]` is what agent i actually gave up: 0 means it refused or held nothing. A sweep tx
     // succeeding says only that SOME agent in it paid out, so mapping every agent to ok here would
@@ -153,7 +177,11 @@ export async function withdrawAllFromVault(vaultAddress, userAddress, agentAddre
     const agentAddress = agentAddresses[index]
     onProgress?.({ index, total: agentAddresses.length, agentAddress })
     try {
-      const { txHash } = await withdrawFromVault(vaultAddress, null, userAddress, agentAddress)
+      const { txHash } = await withdrawFromVault(vaultAddress, null, userAddress, agentAddress, {
+        activeAccount,
+        getRelayerAddress,
+        kit,
+      })
       results.push({ agentAddress, ok: true, txHash })
     } catch (err) {
       results.push({ agentAddress, ok: false, error: err?.message || String(err) })

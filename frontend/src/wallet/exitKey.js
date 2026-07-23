@@ -1,8 +1,14 @@
 // frontend/src/wallet/exitKey.js
 // Ephemeral ed25519 exit keypair management and on-chain contract registration.
 
-import { buildInvokeTx, submitUserTx } from '../stellar/client.js'
+import { buildInvokeTx } from '../stellar/client.js'
 import { signTxXdr } from '../stellar/walletKit.js'
+import { getRelayerAddress } from '../stellar/relay.js'
+import {
+  resolveOwnerTxModel,
+  submitOwnerAuthorizedTx,
+  signOwnerAuthEntry,
+} from '../stellar/ownerAuthorization.js'
 
 let _sdk = null
 async function sdk() {
@@ -49,20 +55,44 @@ export function clearExitKey(agentAddress) {
 }
 
 /**
- * Register the exit signer public key on the agent smart contract.
- * Calls `set_exit_signer(exit_pubkey: BytesN<32>)` — owner-signed.
+ * Register the exit signer public key on the agent smart contract — `set_exit_signer(exit_pubkey:
+ * BytesN<32>)`, owner-authorized, routed through OwnerAuthorizationV1. A classic G owner signs
+ * the envelope and submits directly; a passkey C owner (which can never source that envelope)
+ * signs a Soroban auth entry on a relayer-sourced tx and submits relay-only. `activeAccount`
+ * defaults to a classic G owner, so every existing caller is unaffected.
+ * @param {{owner:string, agentAddress:string, exitPublicKey:string,
+ *          activeAccount?:{kind:'G'|'C', address:string}, getRelayerAddress?:Function,
+ *          kit?:object, server?:object}} p
  */
-export async function registerExitSigner({ owner, agentAddress, exitPublicKey }) {
+export async function registerExitSigner({
+  owner,
+  agentAddress,
+  exitPublicKey,
+  activeAccount = { kind: 'G', address: owner },
+  getRelayerAddress: getRelayer = getRelayerAddress,
+  kit,
+  server,
+}) {
   const { StrKey } = await sdk()
   const pubBytes = StrKey.decodeEd25519PublicKey(exitPublicKey)
 
-  const { xdr } = await buildInvokeTx({
-    source: owner,
-    contract: agentAddress,
-    method: 'set_exit_signer',
-    args: [{ bytes32: pubBytes }],
+  const model = await resolveOwnerTxModel({ owner, activeAccount, getRelayerAddress: getRelayer })
+  return submitOwnerAuthorizedTx({
+    model,
+    build: () =>
+      buildInvokeTx({
+        source: model.source,
+        contract: agentAddress,
+        method: 'set_exit_signer',
+        args: [{ bytes32: pubBytes }],
+        server,
+      }),
+    sign: (built) =>
+      model.kind === 'G'
+        ? signTxXdr(built.xdr)
+        : signOwnerAuthEntry({ tx: built.tx, contractId: model.contractId, server, kit }),
+    server,
+    label: 'set exit signer',
+    classicSubmission: 'direct',
   })
-
-  const signed = await signTxXdr(xdr)
-  return submitUserTx({ signedXdr: signed })
 }

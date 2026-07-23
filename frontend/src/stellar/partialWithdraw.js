@@ -53,11 +53,21 @@ export async function readAgentScope(agentAddress, { server } = {}) {
 }
 
 /**
- * Load-or-register the exit signer for this agent. Registration = ONE wallet signature
- * (set_exit_signer, owner-gated) and only persists the key AFTER on-chain success — a saved
+ * Load-or-register the exit signer for this agent. Registration = ONE owner authorization
+ * (set_exit_signer, owner-gated), routed through OwnerAuthorizationV1 — a classic G owner signs
+ * the envelope directly, a passkey C owner signs a Soroban auth entry sourced by a funded relayer
+ * G (see wallet/exitKey.js's registerExitSigner). `activeAccount` defaults to a classic G owner,
+ * so every existing caller is unaffected. Only persists the key AFTER on-chain success — a saved
  * key the chain never accepted would brick every later withdraw.
  */
-export async function ensureExitSigner({ owner, agentAddress, deps = {} }) {
+export async function ensureExitSigner({
+  owner,
+  agentAddress,
+  activeAccount = { kind: 'G', address: owner },
+  getRelayerAddress,
+  kit,
+  deps = {},
+}) {
   const {
     loadExitKey = _loadExitKey,
     generateExitKey = _generateExitKey,
@@ -67,7 +77,14 @@ export async function ensureExitSigner({ owner, agentAddress, deps = {} }) {
   const existing = loadExitKey(agentAddress)
   if (existing) return existing
   const key = await generateExitKey()
-  const res = await registerExitSigner({ owner, agentAddress, exitPublicKey: key.publicKey })
+  const res = await registerExitSigner({
+    owner,
+    agentAddress,
+    exitPublicKey: key.publicKey,
+    activeAccount,
+    getRelayerAddress,
+    kit,
+  })
   if (res?.status !== 'SUCCESS') {
     throw new Error(`Exit-signer registration was not confirmed: ${res?.status || 'no result'}.`)
   }
