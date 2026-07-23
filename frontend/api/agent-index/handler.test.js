@@ -6,7 +6,7 @@ import { createRequire } from 'node:module'
 import { nativeToScVal } from '@stellar/stellar-sdk'
 import { symbolScVal, addrScVal } from '../../src/stellar/scval.js'
 import { createAgentIndexStore } from './store.js'
-import { handleIngest, handleRead, LIVE_MANIFEST } from './handler.js'
+import { handleIngest, handleRead, handleBackfillCommit, LIVE_MANIFEST } from './handler.js'
 import { AGENT_CREATORS } from '../../src/stellar/agentCreatorManifest.js'
 
 // ── same in-memory-D1 helper as store.test.js / indexer.test.js ──
@@ -281,5 +281,72 @@ describe('handleRead — end-to-end after ingest', () => {
     })
     // Only one of five manifest sources has ever been ingested — can never be 'complete'.
     expect(out.body.status).toBe('partial')
+  })
+})
+
+describe('handleBackfillCommit — secret gate (mirrors handleIngest)', () => {
+  it('503s when the backfill secret is not configured', async () => {
+    const out = await handleBackfillCommit({ secret: '', providedSecret: 'x', store: {}, audit: {} })
+    expect(out.status).toBe(503)
+    expect(out.body.configured).toBe(false)
+  })
+
+  it('401s on a missing bearer token', async () => {
+    const out = await handleBackfillCommit({ secret: 'topsecret', providedSecret: '', store: {}, audit: {} })
+    expect(out.status).toBe(401)
+  })
+
+  it('401s on a wrong token', async () => {
+    const out = await handleBackfillCommit({ secret: 'topsecret', providedSecret: 'nope', store: {}, audit: {} })
+    expect(out.status).toBe(401)
+  })
+
+  it('503s when the store is unavailable', async () => {
+    const out = await handleBackfillCommit({ secret: 's', providedSecret: 's', store: null, audit: {} })
+    expect(out.status).toBe(503)
+    expect(out.body.configured).toBe(false)
+  })
+})
+
+describe('handleBackfillCommit — posts only verified memberships through the protected handler', () => {
+  it('commits a verified audit and returns its verdict/counts', async () => {
+    const store = createAgentIndexStore(fakeD1())
+    const audit = {
+      auditId: 'audit-h1',
+      networkId: ROUTER_V1.networkId,
+      fromLedger: 1,
+      throughLedger: 100,
+      directSetupCutoffLedger: 3_600_000,
+      creatorManifestVersion: 'v1',
+      sources: [
+        {
+          kind: 'funding-router',
+          address: ROUTER_V1.address,
+          providerId: 'archival-rpc',
+          oldestAvailableLedger: 1,
+          fromLedger: 1,
+          throughLedger: 100,
+          contiguous: true,
+          evidenceHash: '0xabc',
+        },
+      ],
+      candidates: [],
+      verifiedAgents: [],
+      rejectedCandidates: [],
+      unresolvedCandidates: [],
+      verdict: 'verified',
+      completedAt: 1700000000,
+    }
+    const out = await handleBackfillCommit({ secret: 's', providedSecret: 's', store, audit })
+    expect(out.status).toBe(200)
+    expect(out.body).toMatchObject({ ok: true, verdict: 'verified', membershipsPosted: 0, auditRowsWritten: 1 })
+  })
+
+  it('400s a malformed audit rather than writing anything', async () => {
+    const store = createAgentIndexStore(fakeD1())
+    const out = await handleBackfillCommit({ secret: 's', providedSecret: 's', store, audit: { verdict: 'verified' } })
+    expect(out.status).toBe(400)
+    const coverage = await store.readCoverage({ networkId: ROUTER_V1.networkId })
+    expect(coverage.backfillAudits).toHaveLength(0)
   })
 })

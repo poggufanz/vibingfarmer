@@ -2,6 +2,7 @@
 // (that glue lives in ../agent-index.js, which is untested by design: everything worth testing
 // here is testable without touching a network or a real Cloudflare binding).
 import { ingestAgentIndexPage, coverageProof } from './indexer.js'
+import { commitBackfillAudit } from './backfill.js'
 import {
   AGENT_CREATORS,
   AGENT_CREATOR_MANIFEST_HASH,
@@ -80,6 +81,33 @@ export async function handleIngest({
   })
   const failed = results.filter((r) => !r.ok).length
   return { status: 200, body: { results, ok: results.length - failed, failed } }
+}
+
+/**
+ * `POST /api/agent-index?action=backfill-commit`. The ONLY protected write path a historical
+ * backfill audit (Task 4 — scripts/agent-index/backfill-legacy-agents.mjs) may post through: same
+ * secret gate as `handleIngest`, then delegates entirely to `backfill.js`'s `commitBackfillAudit`
+ * — this function adds no membership-writing logic of its own on purpose, so there is exactly one
+ * place in the codebase that can turn audit evidence into D1 rows.
+ * @param {object} p
+ * @param {string} p.secret configured backfill secret ('' = not configured)
+ * @param {string} p.providedSecret bearer token from the request
+ * @param {ReturnType<import('./store').createAgentIndexStore>|null} p.store
+ * @param {object} p.audit a `BackfillAuditV1` (see backfill.js toBackfillAuditV1)
+ * @returns {Promise<{status: number, body: object}>}
+ */
+export async function handleBackfillCommit({ secret, providedSecret, store, audit }) {
+  if (!secret) return { status: 503, body: { error: 'Agent index backfill not configured', configured: false } }
+  if (!providedSecret || !(await constantTimeEqual(providedSecret, secret))) {
+    return { status: 401, body: { error: 'Unauthorized' } }
+  }
+  if (!store) return { status: 503, body: { error: 'Agent index store unavailable', configured: false } }
+  try {
+    const result = await commitBackfillAudit({ store, audit })
+    return { status: 200, body: { ok: true, ...result } }
+  } catch (err) {
+    return { status: 400, body: { error: err.message } }
+  }
 }
 
 function unavailableBody({ networkId, owner, manifest, now }) {

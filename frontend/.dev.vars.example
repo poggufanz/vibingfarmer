@@ -66,3 +66,12 @@ TRANSAK_REFERRER_DOMAIN=vibing-farmer.pages.dev
 # the relayer requires on x-vf-relayer-key (must equal the VM's RELAYER_PROXY_KEY).
 RELAYER_ORIGIN=https://vf-relayer.example.com
 RELAYER_PROXY_KEY=change-me
+
+# ─── Agent index historical backfill (Pocket Crew My Money Task 4, read by
+# scripts/agent-index/backfill-legacy-agents.mjs) ───
+# Archival Soroban RPC/events provider (implements the same getEvents contract the live indexer
+# uses, Task 3) — full retention back to ledger 1, unlike the short-retention public RPC above.
+# Server-only: even when the provider needs no credentials, this stays out of the client bundle
+# (never VITE_). Leave unset to run the backfill script with router/registry archival sources
+# honestly reported unavailable (--dry-run still works; the audit lands on 'partial').
+AGENT_INDEX_ARCHIVAL_RPC_URL=
