@@ -91,6 +91,13 @@ function decodeSourceEvent(source, rec) {
  *     could be only partially fetched. Never claim that ledger scanned, and never keep its
  *     (possibly incomplete) events for this page — they're dropped here so the NEXT page
  *     re-requests that ledger whole, rather than a deploy silently vanishing with no gap row.
+ *     Truncation evidence ALWAYS overrides tip arithmetic below — in production `endLedger` is
+ *     the pre-call tip snapshot and `latestLedger` is ~the same ledger moments later, so
+ *     `endLedger >= latestLedger` is true on almost every call INCLUDING a truncated one. Trusting
+ *     tip arithmetic there would silently drop everything past the `limit` cut (worse than the
+ *     original bug this fixed). A response counts as truncated when it returned `limit` events, or
+ *     when it returned ANY events alongside a `cursor` — only a genuinely EMPTY response with a
+ *     cursor is the ambiguous case tip arithmetic gets to resolve (Livelock check 8 below).
  *   - Livelock check 8 (reachedTip robustness): if the SDK sets `cursor` on every response, even
  *     a complete/empty one, cursor presence alone can never prove "at tip" — an empty window
  *     would throw forever. `latestLedger` (the RPC's own reported chain tip AS OF THIS RESPONSE)
@@ -99,12 +106,13 @@ function decodeSourceEvent(source, rec) {
  *     at all is the genuinely ambiguous case — it falls back to the old cursor-only check, which
  *     stays fail-safe (never claims tip on a false premise; retries next tick).
  * @param {{ events: Array<{ledger?: number}>, cursor: string|null|undefined, latestLedger?: number,
- *   startLedger: number, endLedger: number }} p
+ *   startLedger: number, endLedger: number, limit?: number }} p
  * @returns {{ events: Array, scannedThroughLedger: number, latestLedger: number|null }}
  */
-export function scanRpcEventsPage({ events = [], cursor, latestLedger, startLedger, endLedger }) {
+export function scanRpcEventsPage({ events = [], cursor, latestLedger, startLedger, endLedger, limit }) {
   const tipKnown = Number.isInteger(latestLedger)
-  const reachedTip = tipKnown ? endLedger >= latestLedger : !cursor
+  const truncated = (Number.isInteger(limit) && events.length >= limit) || (!!cursor && events.length > 0)
+  const reachedTip = !truncated && (tipKnown ? endLedger >= latestLedger : !cursor)
   const maxSeenLedger = events.reduce((m, e) => Math.max(m, e.ledger || 0), startLedger - 1)
   if (reachedTip) {
     return {

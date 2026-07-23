@@ -378,6 +378,53 @@ describe('ingestAgentIndexPage — scanRpcEventsPage never loses a mid-ledger-tr
     expect(ownedByA.map((r) => r.address)).toEqual([AGENT_A])
     expect(ownedByB.map((r) => r.address)).toEqual([AGENT_B])
   })
+
+  it('nothing is lost in the REALISTIC production shape — endLedger === latestLedger, limit-capped, cursor set (regression re-fix)', async () => {
+    const store = freshStore()
+    const start = ROUTER_V1.coverageStartLedger
+    const boundaryLedger = start + 50
+    const tip = start + 5000
+
+    // The adapter's endLedger IS the pre-call tip snapshot, and latestLedger is ~the same ledger —
+    // this is exactly the shape the earlier fix's tip-arithmetic-first logic mishandled: with
+    // endLedger === latestLedger, `endLedger >= latestLedger` is trivially true even though the
+    // page was cut off by `limit`. Truncation evidence must win.
+    const es1 = {
+      providerId: 'test-rpc',
+      endpointClass: 'live',
+      oldestAvailableLedger: start,
+      latestAvailableLedger: tip,
+      async getEvents({ startLedger, endLedger }) {
+        const rec = deployedRecord({ owner: OWNER_A, agent: AGENT_A, ledger: boundaryLedger, txHash: 'TX-FIRST' })
+        const page = scanRpcEventsPage({ events: [rec], cursor: 'more', latestLedger: endLedger, startLedger, endLedger, limit: 1 })
+        return { events: page.events, cursor: null, scannedThroughLedger: page.scannedThroughLedger, latestLedger: page.latestLedger }
+      },
+    }
+    const out1 = await ingestAgentIndexPage({ source: ROUTER_V1, store, eventSource: es1, finalizedLedger: tip, pageLimit: 1 })
+    expect(out1.throughLedger).toBe(boundaryLedger - 1) // cursor must NOT advance past the last complete ledger
+    expect(out1.membershipCount).toBe(0) // TX-FIRST held back, not lost — just not committed yet
+
+    const es2 = {
+      providerId: 'test-rpc',
+      endpointClass: 'live',
+      oldestAvailableLedger: start,
+      latestAvailableLedger: tip,
+      async getEvents({ startLedger, endLedger }) {
+        const recs = [
+          deployedRecord({ owner: OWNER_A, agent: AGENT_A, ledger: boundaryLedger, txHash: 'TX-FIRST' }),
+          deployedRecord({ owner: OWNER_B, agent: AGENT_B, ledger: boundaryLedger, txHash: 'TX-SECOND' }),
+        ]
+        const page = scanRpcEventsPage({ events: recs, cursor: null, latestLedger: endLedger, startLedger, endLedger })
+        return { events: page.events, cursor: null, scannedThroughLedger: page.scannedThroughLedger, latestLedger: page.latestLedger }
+      },
+    }
+    const out2 = await ingestAgentIndexPage({ source: ROUTER_V1, store, eventSource: es2, finalizedLedger: tip })
+    expect(out2.membershipCount).toBe(2) // BOTH deploys land — TX-SECOND was never lost
+    const ownedByA = await store.readOwnerMemberships({ networkId: ROUTER_V1.networkId, owner: OWNER_A })
+    const ownedByB = await store.readOwnerMemberships({ networkId: ROUTER_V1.networkId, owner: OWNER_B })
+    expect(ownedByA.map((r) => r.address)).toEqual([AGENT_A])
+    expect(ownedByB.map((r) => r.address)).toEqual([AGENT_B])
+  })
 })
 
 describe('scanRpcEventsPage — pure unit coverage (Critical 2 + Livelock check 8)', () => {
@@ -415,6 +462,22 @@ describe('scanRpcEventsPage — pure unit coverage (Critical 2 + Livelock check 
       endLedger: 5000,
     })
     expect(page.scannedThroughLedger).toBeLessThan(100) // < fromLedger — ingestAgentIndexPage will throw on this
+  })
+
+  it('truncation OVERRIDES tip arithmetic — realistic production shape (endLedger === latestLedger, limit-capped, cursor set) must not silently claim the boundary ledger complete', () => {
+    // The production adapter's endLedger IS the pre-call tip snapshot, and res.latestLedger is
+    // ~the same ledger a few seconds later — endLedger >= latestLedger is true on almost every
+    // truncated call too. Truncation evidence (limit-capped response) must win regardless.
+    const page = scanRpcEventsPage({
+      events: [{ ledger: 100 }, { ledger: 100 }, { ledger: 101 }, { ledger: 101 }, { ledger: 102 }], // 5 events == limit
+      cursor: 'more',
+      latestLedger: 5000,
+      startLedger: 100,
+      endLedger: 5000, // == latestLedger — the exact shape the old tip-arithmetic branch mishandled
+      limit: 5,
+    })
+    expect(page.scannedThroughLedger).toBe(101) // NOT 5000 — ledger 102 may be only partially fetched
+    expect(page.events.every((e) => e.ledger < 102)).toBe(true)
   })
 })
 
