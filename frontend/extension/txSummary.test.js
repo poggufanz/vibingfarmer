@@ -12,7 +12,11 @@ import {
   NETWORK_PASSPHRASE,
   SOROBAN_AUTOFARM_VAULT_ADDRESS,
   SOROBAN_DEMO_AGENT,
+  SOROBAN_FUNDING_ROUTER_ADDRESS,
+  SOROBAN_TOKEN_ADDRESS,
 } from '../src/stellar/config.js'
+import { agentInitScVal, tokenBudgetScVal, AGENT_KIND_DEPOSIT } from '../src/stellar/grant.js'
+import { addrScVal, i128ScVal, u32ScVal } from '../src/stellar/scval.js'
 import { summarizeTransaction, summarizeAuthEntry, shortAddr, formatArg } from './txSummary.js'
 
 function buildDepositTxXdr() {
@@ -97,5 +101,58 @@ describe('txSummary', () => {
     expect(formatArg(SOROBAN_DEMO_AGENT)).toBe(shortAddr(SOROBAN_DEMO_AGENT))
     expect(formatArg('hello')).toBe('hello')
     expect(formatArg(true)).toBe('true')
+  })
+})
+
+// A funding_router.grant transaction is the ONE thing this popup exists to make truthful — it
+// must decode into a real FundingGrantSummaryV1 (grant.kind === 'funding-router-grant'), never
+// just fall back to a generic arg dump. Everything else (a non-router tx) must see grant: null.
+describe('txSummary — funding_router.grant decoding', () => {
+  function buildGrantTxXdr(owner) {
+    const source = new Account(owner, '0')
+    return new TransactionBuilder(source, { fee: '100', networkPassphrase: NETWORK_PASSPHRASE })
+      .addOperation(
+        new Contract(SOROBAN_FUNDING_ROUTER_ADDRESS).call(
+          'grant',
+          addrScVal(owner),
+          xdr.ScVal.scvVec([tokenBudgetScVal({ budget: 5_000_000n, token: SOROBAN_TOKEN_ADDRESS })]),
+          u32ScVal(1_000_000),
+          xdr.ScVal.scvVec([
+            agentInitScVal({
+              signer: Buffer.alloc(32, 1),
+              salt: Buffer.alloc(32, 2),
+              cap: 1_000_000n,
+              token: SOROBAN_TOKEN_ADDRESS,
+              target: SOROBAN_AUTOFARM_VAULT_ADDRESS,
+              kind: AGENT_KIND_DEPOSIT,
+              mintRecipient: new Uint8Array(32),
+              destinationDomain: 0,
+              periodDuration: 86400,
+              expiry: 2_000_000,
+            }),
+          ])
+        )
+      )
+      .setTimeout(300)
+      .build()
+      .toXDR()
+  }
+
+  it('summarizeTransaction attaches a decoded grant summary for the live router', () => {
+    const owner = Keypair.random().publicKey()
+    const s = summarizeTransaction(buildGrantTxXdr(owner))
+    expect(s.contract).toBe(SOROBAN_FUNDING_ROUTER_ADDRESS)
+    expect(s.fn).toBe('grant')
+    expect(s.grant).not.toBeNull()
+    expect(s.grant.kind).toBe('funding-router-grant')
+    expect(s.grant.owner).toBe(owner)
+    expect(s.grant.budgets).toEqual([{ token: SOROBAN_TOKEN_ADDRESS, units: 5_000_000n, decimals: 7 }])
+    expect(s.grant.agents).toHaveLength(1)
+    expect(s.grant.agents[0].destination.classification).toBe('known-stellar-vault')
+  })
+
+  it('a non-router transaction (deposit) never gets a grant summary', () => {
+    const s = summarizeTransaction(buildDepositTxXdr())
+    expect(s.grant).toBeNull()
   })
 })

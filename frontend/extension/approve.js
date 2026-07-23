@@ -15,6 +15,7 @@ import { rpcServer } from '../src/stellar/client.js'
 import { NETWORK_PASSPHRASE, STELLAR_NETWORK_LABEL } from '../src/stellar/config.js'
 import { resolveActiveAccount } from '../src/wallet/activeAccount.js'
 import { validateRequestSnapshot } from '../src/wallet/consentStore.js'
+import { toDisplay } from '../src/stellar/format.js'
 import { summarizeTransaction, summarizeAuthEntry, shortAddr } from './txSummary.js'
 
 // How many ledgers a dapp-requested auth-entry signature stays valid — mirrors
@@ -42,6 +43,47 @@ export async function verifyStillValid(req, storageLocal = chrome.storage.local)
 /** Exact CEREMONY_RESULT for a user rejection (SEP-43 -4). */
 export function rejectionResult(rid) {
   return { type: 'CEREMONY_RESULT', rid, ok: false, code: -4, error: 'User rejected the request' }
+}
+
+// Canonical truth copy for a decoded funding_router.grant (Task 3 Step 3) — every grant screen
+// carries these; two more are appended conditionally (mixed-token, bridge) below. This grant
+// signature deploys accounts/permissions; it is NOT proof that any deposit has happened.
+const GRANT_TRUTHS = [
+  'This grant creates isolated agent accounts and permissions — it does NOT mean any deposit has completed.',
+  'Each agent has its own spending limit, expiry, and session signer.',
+  'Current Stellar deposit agents all share the same destination: Autofarm Vault → Blend Capital v2.',
+  'That shared destination is operational isolation (separate agents/keys), not multiple different Stellar protocols.',
+]
+const GRANT_MIXED_TOKEN_TRUTH =
+  'This grant covers more than one token — each token’s allowance budget and each agent’s cap ceiling are shown separately below. Later execution may use less than either ceiling; the two numbers are never the same thing and are never added together.'
+const GRANT_BRIDGE_TRUTH =
+  'The bridge route is Stellar testnet → Circle CCTP → Base Sepolia. Base-side pools are custody proxies holding real Circle USDC — there is no live protocol yield there.'
+
+/** Pure view-rows for a decoded FundingGrantSummaryV1 (grantDecoder.decodeFundingRouterGrant's
+ *  kind:'funding-router-grant' result) — allowance budgets, cap ceilings, and expiry are ALWAYS
+ *  shown as separate ceilings, never summed across tokens and never presented as "the deposit
+ *  amount" (see grantDecoder.js's module doc for why). Exported for direct testing. */
+export function grantRows(grant) {
+  const truths = [...GRANT_TRUTHS]
+  if (grant.budgets.length > 1) truths.push(GRANT_MIXED_TOKEN_TRUTH)
+  if (grant.agents.some((a) => a.kind === 'bridge')) truths.push(GRANT_BRIDGE_TRUTH)
+  const rows = truths.map((t, i) => [i === 0 ? 'What this grant does' : '', t])
+
+  grant.budgets.forEach((b, i) => {
+    rows.push([
+      i === 0 ? 'Allowance budget (ceiling)' : '',
+      `${toDisplay(b.units)} ${shortAddr(b.token)} — not a deposit amount`,
+    ])
+  })
+  rows.push(['Grant expires', `ledger ${grant.expiryLedger}`])
+  grant.agents.forEach((a) => {
+    const dest = a.destination.routeLabel ?? `unlabeled destination ${shortAddr(a.destination.targetAddress)}`
+    rows.push([
+      `Agent #${a.index}`,
+      `${a.kind} · cap ${toDisplay(a.capPerPeriod.units)} ${shortAddr(a.capPerPeriod.token)} / period · ${dest}`,
+    ])
+  })
+  return rows
 }
 
 /**
@@ -86,7 +128,19 @@ export function screenModel(req, { address, summary, kind, unlocked } = {}) {
     ])
   }
   if (summary?.fn) rows.push(['Function', summary.fn])
-  ;(summary?.args ?? []).forEach((a, i) => rows.push([i === 0 ? 'Args' : '', a]))
+  const grant = summary?.grant ?? null
+  if (grant?.kind === 'funding-router-grant') {
+    // A recognized grant replaces the raw arg dump with the truthful, per-token/per-agent
+    // breakdown — never both (a wall of raw ScVal args next to the readable version invites
+    // skimming the wrong one).
+    rows.push(...grantRows(grant))
+  } else {
+    // Known router, but the args didn't match its pinned schema (or this isn't `grant` at all) —
+    // surface the mismatch loudly, then still show raw args (fail-closed transparency, never a
+    // fabricated summary).
+    if (grant?.kind === 'schema-mismatch') rows.push(['Warning', grant.warning])
+    ;(summary?.args ?? []).forEach((a, i) => rows.push([i === 0 ? 'Args' : '', a]))
+  }
   return {
     variant: 'sign',
     origin: req.origin,

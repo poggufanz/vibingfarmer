@@ -5,12 +5,13 @@ import {
   screenKind,
   verifyStillValid,
   approveSignClassic,
+  grantRows,
 } from './approve.js'
 import { installChromeMock } from '../src/wallet/testUtils.js'
 import { createRequestSnapshot } from '../src/wallet/consentStore.js'
 import { importFromSecret } from '../src/wallet/classicAccount.js'
 import { Account, TransactionBuilder, Operation } from '@stellar/stellar-sdk'
-import { NETWORK_PASSPHRASE } from '../src/stellar/config.js'
+import { NETWORK_PASSPHRASE, SOROBAN_AUTOFARM_VAULT_ADDRESS } from '../src/stellar/config.js'
 
 const ORIGIN = 'https://vibing-farmer.pages.dev'
 
@@ -270,5 +271,179 @@ describe('approveSignClassic — session-key pinned to the snapshot address', ()
       address: publicKey,
     })
     expect(result.signedTxXdr).toBeTruthy()
+  })
+})
+
+// The approve popup is the ONE place a user reads a grant before signing — Task 3's decoded
+// summary must render as a truthful breakdown, never a wall of raw args, and never inflate
+// budgets/caps/agent counts beyond what grantDecoder.js actually decoded.
+describe('grantRows — truthful funding_router.grant breakdown', () => {
+  const singleTokenGrant = {
+    kind: 'funding-router-grant',
+    schemaVersion: 2,
+    owner: 'GOWNER',
+    expiryLedger: 1_000_000,
+    budgets: [{ token: 'CTOKEN1111111111111111111111111111111111111111111111', units: 5_000_000n, decimals: 7 }],
+    agents: [
+      {
+        index: 0,
+        kind: 'deposit',
+        capPerPeriod: { token: 'CTOKEN1111111111111111111111111111111111111111111111', units: 1_000_000n, decimals: 7 },
+        destination: {
+          classification: 'known-stellar-vault',
+          routeLabel: 'Autofarm Vault → Blend Capital v2',
+          targetAddress: SOROBAN_AUTOFARM_VAULT_ADDRESS,
+        },
+      },
+    ],
+  }
+
+  it('always leads with the canonical truth copy — grant ≠ completed deposit', () => {
+    const rows = grantRows(singleTokenGrant)
+    const truthRow = rows.find(([k]) => k === 'What this grant does')
+    expect(truthRow[1]).toMatch(/does NOT mean any deposit has completed/)
+  })
+
+  it('shows the allowance budget as a ceiling, explicitly not a deposit amount', () => {
+    const rows = grantRows(singleTokenGrant)
+    const budgetRow = rows.find(([k]) => k === 'Allowance budget (ceiling)')
+    expect(budgetRow[1]).toContain('not a deposit amount')
+    expect(budgetRow[1]).toContain('0.5') // 5_000_000 base units / 1e7
+  })
+
+  it('shows each agent with its own cap ceiling and route label, never a total', () => {
+    const rows = grantRows(singleTokenGrant)
+    const agentRow = rows.find(([k]) => k === 'Agent #0')
+    expect(agentRow[1]).toContain('deposit')
+    expect(agentRow[1]).toContain('Autofarm Vault → Blend Capital v2')
+    // Never a bare "total"/"amount" row — only per-agent, per-token ceilings.
+    expect(rows.some(([k]) => /^total$/i.test(k))).toBe(false)
+  })
+
+  it('does not surface the mixed-token or bridge truth bullets for a single-token, deposit-only grant', () => {
+    const rows = grantRows(singleTokenGrant)
+    expect(rows.some(([, v]) => /more than one token/.test(v))).toBe(false)
+    expect(rows.some(([, v]) => /Circle CCTP/.test(v))).toBe(false)
+  })
+
+  it('adds the mixed-token truth bullet when budgets cover more than one token, keeping each budget separate', () => {
+    const grant = {
+      ...singleTokenGrant,
+      budgets: [
+        { token: 'CTOKEN1111111111111111111111111111111111111111111111', units: 5_000_000n, decimals: 7 },
+        { token: 'CTOKEN2222222222222222222222222222222222222222222222', units: 2_000_000n, decimals: 7 },
+      ],
+    }
+    const rows = grantRows(grant)
+    expect(rows.some(([, v]) => /more than one token/.test(v))).toBe(true)
+    const budgetRows = rows.filter(([k]) => k === 'Allowance budget (ceiling)' || k === '')
+      .filter(([, v]) => v.includes('not a deposit amount'))
+    expect(budgetRows).toHaveLength(2)
+  })
+
+  it('adds the bridge/CCTP truth bullet only when a bridge-kind agent is present', () => {
+    const grant = {
+      ...singleTokenGrant,
+      agents: [
+        ...singleTokenGrant.agents,
+        {
+          index: 1,
+          kind: 'bridge',
+          capPerPeriod: { token: 'CTOKEN1111111111111111111111111111111111111111111111', units: 500_000n, decimals: 7 },
+          destination: {
+            classification: 'known-cctp-messenger',
+            routeLabel: 'Stellar testnet → Circle CCTP → Base Sepolia',
+            targetAddress: 'CMESSENGER11111111111111111111111111111111111111111',
+          },
+        },
+      ],
+    }
+    const rows = grantRows(grant)
+    expect(rows.some(([, v]) => /Circle CCTP/.test(v))).toBe(true)
+    const bridgeAgentRow = rows.find(([k]) => k === 'Agent #1')
+    expect(bridgeAgentRow[1]).toContain('bridge')
+    expect(bridgeAgentRow[1]).toContain('Stellar testnet → Circle CCTP → Base Sepolia')
+  })
+})
+
+describe('screenModel — funding_router.grant sign screen', () => {
+  const grantSummary = {
+    network: 'TESTNET',
+    contract: 'CROUTER11111111111111111111111111111111111111111111',
+    contractLabel: 'funding router',
+    fn: 'grant',
+    args: ['owner', '5000000 (0.5)', '1000000', '[...]'],
+    signer: null,
+    grant: {
+      kind: 'funding-router-grant',
+      schemaVersion: 2,
+      owner: 'GOWNER',
+      expiryLedger: 1_000_000,
+      budgets: [{ token: 'CTOKEN1111111111111111111111111111111111111111111111', units: 5_000_000n, decimals: 7 }],
+      agents: [
+        {
+          index: 0,
+          kind: 'deposit',
+          capPerPeriod: { token: 'CTOKEN1111111111111111111111111111111111111111111111', units: 1_000_000n, decimals: 7 },
+          destination: {
+            classification: 'known-stellar-vault',
+            routeLabel: 'Autofarm Vault → Blend Capital v2',
+            targetAddress: SOROBAN_AUTOFARM_VAULT_ADDRESS,
+          },
+        },
+      ],
+    },
+  }
+
+  it('a decoded grant replaces the raw Args rows with the truthful breakdown', () => {
+    const m = screenModel(
+      { method: 'signTransaction', params: { xdr: 'RAWXDR' }, origin: ORIGIN },
+      { address: 'CACCT', summary: grantSummary }
+    )
+    expect(m.variant).toBe('sign')
+    expect(m.rows.some(([k]) => k === 'What this grant does')).toBe(true)
+    expect(m.rows.some(([k]) => k === 'Allowance budget (ceiling)')).toBe(true)
+    expect(m.rows.some(([k]) => k === 'Agent #0')).toBe(true)
+    expect(m.rows.some(([k]) => k === 'Args')).toBe(false)
+    // Raw XDR is still available for a user who wants to verify it themselves.
+    expect(m.raw).toBe('RAWXDR')
+  })
+
+  it('a known-router schema mismatch surfaces a Warning row AND still shows raw args (fail closed)', () => {
+    const mismatchSummary = {
+      ...grantSummary,
+      grant: {
+        kind: 'schema-mismatch',
+        schemaVersion: 2,
+        warning: 'Args did not match the known funding_router v2 grant schema.',
+      },
+    }
+    const m = screenModel(
+      { method: 'signTransaction', params: { xdr: 'RAWXDR' }, origin: ORIGIN },
+      { address: 'CACCT', summary: mismatchSummary }
+    )
+    const warningRow = m.rows.find(([k]) => k === 'Warning')
+    expect(warningRow[1]).toMatch(/did not match/)
+    expect(m.rows.some(([k]) => k === 'Args')).toBe(true)
+  })
+
+  it('a non-grant summary (grant: null) keeps the existing generic Args rows unchanged', () => {
+    const m = screenModel(
+      { method: 'signTransaction', params: { xdr: 'RAWXDR' }, origin: ORIGIN },
+      {
+        address: 'CACCT',
+        summary: {
+          network: 'TESTNET',
+          contract: SOROBAN_AUTOFARM_VAULT_ADDRESS,
+          contractLabel: 'autofarm vault',
+          fn: 'deposit',
+          args: ['CDLV…K3QP', '5000000 (0.5)'],
+          signer: null,
+          grant: null,
+        },
+      }
+    )
+    expect(m.rows.some(([k]) => k === 'What this grant does')).toBe(false)
+    expect(m.rows.filter(([k]) => k === 'Args' || k === '')).toHaveLength(2)
   })
 })

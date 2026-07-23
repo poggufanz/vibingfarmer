@@ -12,6 +12,7 @@ import {
   SOROBAN_VAULT_ADDRESS,
   STELLAR_NETWORK_LABEL,
 } from '../src/stellar/config.js'
+import { decodeFundingRouterGrant } from './grantDecoder.js'
 
 const CONTRACT_LABELS = {
   [SOROBAN_FUNDING_ROUTER_ADDRESS]: 'funding router',
@@ -45,12 +46,19 @@ export function formatArg(v) {
 
 function summarizeInvokeArgs(inv) {
   const contract = Address.fromScAddress(inv.contractAddress()).toString()
+  const fn = inv.functionName().toString()
+  const rawArgs = inv.args()
+  // Always attempted, never fabricated: decodeFundingRouterGrant itself fails closed to
+  // kind:'unknown' for anything that isn't a pinned router schema, so this is safe on every
+  // invocation — only a real funding_router.grant call ever surfaces a `grant` summary.
+  const grant = decodeFundingRouterGrant({ contractId: contract, functionName: fn, args: rawArgs })
   return {
     network: STELLAR_NETWORK_LABEL,
     contract,
     contractLabel: labelForContract(contract),
-    fn: inv.functionName().toString(),
-    args: inv.args().map((a) => formatArg(scValToNative(a))),
+    fn,
+    args: rawArgs.map((a) => formatArg(scValToNative(a))),
+    grant: grant.kind === 'unknown' ? null : grant,
   }
 }
 
@@ -77,6 +85,7 @@ export function summarizeTransaction(xdrB64, passphrase = NETWORK_PASSPHRASE) {
       fn: (tx.operations ?? []).map((o) => o.type).join(', ') || null,
       args: [],
       signer: null,
+      grant: null,
     }
   } catch {
     return null
