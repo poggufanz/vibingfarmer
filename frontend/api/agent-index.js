@@ -8,6 +8,7 @@
 // instead of inline, since handler.js needed to be testable without a real D1/RPC.
 import { createAgentIndexStore } from './agent-index/store.js'
 import { handleIngest, handleRead } from './agent-index/handler.js'
+import { scanRpcEventsPage } from './agent-index/indexer.js'
 import { rateLimit } from './_guard.js'
 import { symbolScVal } from '../src/stellar/scval.js'
 import { AGENT_INDEX_FINALITY_LEDGERS } from '../src/stellar/agentCreatorManifest.js'
@@ -40,11 +41,9 @@ async function retentionFloor(server) {
  * Real StellarEventSourceV1 for `source`, backed by the live Soroban RPC.
  * ponytail: one non-cursor ledger-range `getEvents` call per ingestAgentIndexPage invocation —
  * cross-tick resumption already comes from the store's own persisted cursor column (an opaque
- * string this adapter never has to interpret), not the RPC's native events cursor. `events`
- * empty AND the tip not yet reached is the one case this can't move past honestly (it reports the
- * range it actually confirmed rather than guessing); ingestAgentIndexPage then throws and the
- * next scheduled tick retries — fine for a page this bounded, given real windows run ~2-3k
- * ledgers (see stellar/routerEvents.js's own header note on the same RPC).
+ * string this adapter never has to interpret), not the RPC's native events cursor. Interpreting
+ * the raw response (truncation-safe scan bound, tip-arithmetic reachedTip) is `scanRpcEventsPage`
+ * (indexer.js) — kept there, not here, so it's unit-testable without a real RPC/D1.
  */
 async function buildEventSource(source, server, sdkMod) {
   const [oldestAvailableLedger, latest] = await Promise.all([retentionFloor(server), server.getLatestLedger()])
@@ -63,11 +62,14 @@ async function buildEventSource(source, server, sdkMod) {
         filters: [{ type: 'contract', contractIds: [source.address], topics }],
         limit,
       })
-      const events = res.events || []
-      const reachedTip = !res.cursor
-      const maxSeenLedger = events.reduce((m, e) => Math.max(m, e.ledger || 0), startLedger - 1)
-      const scannedThroughLedger = reachedTip ? Math.min(endLedger, res.latestLedger ?? endLedger) : maxSeenLedger
-      return { events, cursor: null, scannedThroughLedger }
+      const page = scanRpcEventsPage({
+        events: res.events || [],
+        cursor: res.cursor,
+        latestLedger: res.latestLedger,
+        startLedger,
+        endLedger,
+      })
+      return { events: page.events, cursor: null, scannedThroughLedger: page.scannedThroughLedger, latestLedger: page.latestLedger }
     },
     // Registry `authorize()` never pins a wasm — only funding-router sources skip this (the
     // manifest's own supportedAgentWasmHashes already proves their generation, see indexer.js).
@@ -95,8 +97,9 @@ export default async function handler(req, res) {
     if (!rateLimit(req, res, { max: 60, windowMs: 60_000, bucket: 'agent-index-read' })) return
     const networkId = url.searchParams.get('network') || ''
     const owner = url.searchParams.get('owner') || ''
+    const limitParam = url.searchParams.get('limit')
     const store = req.env?.VF_DB ? createAgentIndexStore(req.env.VF_DB) : null
-    const out = await handleRead({ networkId, owner, store })
+    const out = await handleRead({ networkId, owner, store, limit: limitParam ?? undefined })
     return json(res, out.status, out.body)
   }
 

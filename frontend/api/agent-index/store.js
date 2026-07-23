@@ -117,6 +117,17 @@ export function createAgentIndexStore(db) {
       .run()
   }
 
+  async function readMembershipsByAgentAddresses({ networkId, agentAddresses }) {
+    if (!networkId) throw new Error('readMembershipsByAgentAddresses requires networkId')
+    if (!Array.isArray(agentAddresses) || agentAddresses.length === 0) return []
+    const placeholders = agentAddresses.map(() => '?').join(',')
+    const { results } = await db
+      .prepare(`SELECT * FROM agent_memberships WHERE network_id = ? AND agent_address IN (${placeholders})`)
+      .bind(networkId, ...agentAddresses)
+      .all()
+    return (results ?? []).map(parseMembershipRow)
+  }
+
   async function readOwnerMemberships({ networkId, owner }) {
     if (!networkId || !owner) throw new Error('readOwnerMemberships requires networkId and owner')
     const { results } = await db
@@ -163,7 +174,80 @@ export function createAgentIndexStore(db) {
    * single-writer-per-source usage this app has (one keeper cron per source); a second concurrent
    * writer for the SAME source could race past this check. Upgrade to a WHERE-guarded conditional
    * UPDATE inside the same batch if a second writer per source is ever introduced. */
-  async function commitSourcePage({ sourceId, fromLedger, throughLedger, finalizedThroughLedger, cursor, memberships }) {
+  /** Idempotent no-op if the source row already exists. Inserts the "nothing indexed yet"
+   * sentinel row (indexed_through_ledger = indexed_from_ledger - 1, see the migration's own
+   * comment) so `agent_index_gaps`' FK against `agent_index_sources` can be satisfied by
+   * `recordGap` even on a source's very first-ever page — WITHOUT ever needing to commit
+   * substantive page contents (or an empty spanning page) before the gap row exists. This is what
+   * lets a caller always run `recordGap` before the corresponding `commitSourcePage`, uniformly,
+   * regardless of whether the source has ever been seen before (store.js issue tracked as
+   * "gap-branch atomicity ordering" — a crash between the two now always leaves a recorded gap
+   * behind a cursor that hasn't moved past it, never the reverse). */
+  async function ensureSourceRow({
+    sourceId,
+    networkId,
+    creatorAddress,
+    fromLedger,
+    providerId = null,
+    endpointClass = null,
+    reportedOldestLedger = null,
+    reportedLatestLedger = null,
+  }) {
+    if (!Number.isInteger(fromLedger)) throw new Error('ensureSourceRow requires an integer fromLedger')
+    await db
+      .prepare(
+        `INSERT INTO agent_index_sources
+           (source_id, network_id, creator_address, manifest_hash, manifest_version, schema_version,
+            indexed_from_ledger, indexed_through_ledger, finalized_through_ledger, cursor,
+            provider_id, endpoint_class, reported_oldest_ledger, reported_latest_ledger,
+            status, last_success_at, last_error_at, last_error_message)
+         VALUES (?,?,?,?,?,?,?,?,?,NULL,?,?,?,?, 'ok', NULL, NULL, NULL)
+         ON CONFLICT(source_id) DO NOTHING`
+      )
+      .bind(
+        sourceId,
+        networkId,
+        creatorAddress,
+        AGENT_CREATOR_MANIFEST_HASH,
+        AGENT_CREATOR_MANIFEST_VERSION,
+        AGENT_INDEX_SCHEMA_VERSION,
+        fromLedger,
+        fromLedger - 1,
+        fromLedger - 1,
+        providerId,
+        endpointClass,
+        reportedOldestLedger,
+        reportedLatestLedger
+      )
+      .run()
+  }
+
+  /** Fail-closed decode-error path: marks the source `status = 'error'` with a `last_error_*`
+   * trail WITHOUT touching `indexed_through_ledger` or `cursor` — the caller never advances past
+   * a page it could not fully decode, so the next tick retries the exact same range. Reuses
+   * `ensureSourceRow` for the FK-safety a source's very first page needs (same reasoning as the
+   * gap path above). */
+  async function recordSourceError({ sourceId, networkId, creatorAddress, fromLedger, message }) {
+    await ensureSourceRow({ sourceId, networkId, creatorAddress, fromLedger })
+    const now = nowSeconds()
+    await db
+      .prepare(`UPDATE agent_index_sources SET status = 'error', last_error_at = ?, last_error_message = ? WHERE source_id = ?`)
+      .bind(now, String(message ?? ''), sourceId)
+      .run()
+  }
+
+  async function commitSourcePage({
+    sourceId,
+    fromLedger,
+    throughLedger,
+    finalizedThroughLedger,
+    cursor,
+    memberships,
+    providerId = null,
+    endpointClass = null,
+    reportedOldestLedger = null,
+    reportedLatestLedger = null,
+  }) {
     const { networkId, creatorAddress } = parseSourceId(sourceId)
     if (!Number.isInteger(fromLedger)) throw new Error('commitSourcePage requires an integer fromLedger')
     if (!Number.isInteger(throughLedger) || throughLedger < fromLedger)
@@ -199,8 +283,9 @@ export function createAgentIndexStore(db) {
         `INSERT INTO agent_index_sources
            (source_id, network_id, creator_address, manifest_hash, manifest_version, schema_version,
             indexed_from_ledger, indexed_through_ledger, finalized_through_ledger, cursor,
+            provider_id, endpoint_class, reported_oldest_ledger, reported_latest_ledger,
             status, last_success_at, last_error_at, last_error_message)
-         VALUES (?,?,?,?,?,?,?,?,?,?,'ok',?,NULL,NULL)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'ok',?,NULL,NULL)
          ON CONFLICT(source_id) DO UPDATE SET
            manifest_hash = excluded.manifest_hash,
            manifest_version = excluded.manifest_version,
@@ -208,6 +293,10 @@ export function createAgentIndexStore(db) {
            indexed_through_ledger = excluded.indexed_through_ledger,
            finalized_through_ledger = excluded.finalized_through_ledger,
            cursor = excluded.cursor,
+           provider_id = excluded.provider_id,
+           endpoint_class = excluded.endpoint_class,
+           reported_oldest_ledger = excluded.reported_oldest_ledger,
+           reported_latest_ledger = excluded.reported_latest_ledger,
            status = excluded.status,
            last_success_at = excluded.last_success_at`
       )
@@ -222,6 +311,10 @@ export function createAgentIndexStore(db) {
         throughLedger,
         finalizedThroughLedger,
         cursor ?? null,
+        providerId,
+        endpointClass,
+        reportedOldestLedger,
+        reportedLatestLedger,
         now
       )
 
@@ -262,9 +355,12 @@ export function createAgentIndexStore(db) {
     upsertMembership,
     upsertRunAllocation,
     readOwnerMemberships,
+    readMembershipsByAgentAddresses,
     readCoverage,
+    ensureSourceRow,
     commitSourcePage,
     recordGap,
+    recordSourceError,
     recordBackfillAudit,
   }
 }

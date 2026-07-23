@@ -105,8 +105,11 @@ function unavailableBody({ networkId, owner, manifest, now }) {
   }
 }
 
+const DEFAULT_READ_LIMIT = 200
+const MAX_READ_LIMIT = 500
+
 /**
- * `GET /api/agent-index?network=<networkId>&owner=<G-or-C-StrKey>`. Public, read-only,
+ * `GET /api/agent-index?network=<networkId>&owner=<G-or-C-StrKey>&limit=<n>`. Public, read-only,
  * on-chain-derived data. An unreachable store returns a STRUCTURED `unavailable` response —
  * never `agents: []` mislabeled `complete`.
  * @param {object} p
@@ -115,17 +118,27 @@ function unavailableBody({ networkId, owner, manifest, now }) {
  * @param {ReturnType<import('./store').createAgentIndexStore>|null} p.store
  * @param {object} [p.manifest] defaults to the live AGENT_CREATORS manifest identity
  * @param {number} [p.now]
+ * @param {string|number} [p.limit] optional page-size cap on `agents`, 1..500 (default 200);
+ *   reject a malformed value rather than silently clamping it — never guess what the caller meant.
  * @returns {Promise<{status: number, body: object}>}
  */
-export async function handleRead({ networkId, owner, store, manifest = LIVE_MANIFEST, now = Date.now() }) {
+export async function handleRead({ networkId, owner, store, manifest = LIVE_MANIFEST, now = Date.now(), limit }) {
   if (typeof networkId !== 'string' || !networkId) {
     return { status: 400, body: { error: 'Invalid network' } }
   }
   const { StrKey } = await import('@stellar/stellar-sdk')
-  const validOwner =
-    typeof owner === 'string' && owner && (StrKey.isValidEd25519PublicKey(owner) || StrKey.isValidContract(owner))
-  if (!validOwner) {
+  const isValidAddress = (a) =>
+    typeof a === 'string' && !!a && (StrKey.isValidEd25519PublicKey(a) || StrKey.isValidContract(a))
+  if (!isValidAddress(owner)) {
     return { status: 400, body: { error: 'Invalid owner' } }
+  }
+  let effectiveLimit = DEFAULT_READ_LIMIT
+  if (limit !== undefined && limit !== null && limit !== '') {
+    const n = Number(limit)
+    if (!Number.isInteger(n) || n < 1 || n > MAX_READ_LIMIT) {
+      return { status: 400, body: { error: 'Invalid limit' } }
+    }
+    effectiveLimit = n
   }
   if (!store) {
     return { status: 200, body: unavailableBody({ networkId, owner, manifest, now }) }
@@ -150,16 +163,21 @@ export async function handleRead({ networkId, owner, store, manifest = LIVE_MANI
     now,
   })
   const { status, ...coverageOut } = proof
-  const agents = memberships.map((m) => ({
-    address: m.address,
-    kind: m.kind,
-    creator: m.creator,
-    createdLedger: m.createdLedger,
-    createdTxHash: m.createdTxHash,
-    runId: m.runId,
-    runOrdinal: m.runOrdinal,
-    grantTxHash: m.grantTxHash,
-    provenance: m.provenance,
-  }))
+  // Never trust stored rows blindly to be well-formed StrKeys — a membership whose address or
+  // creator fails validation is dropped from the response, never guessed or coerced (Minor 7).
+  const agents = memberships
+    .filter((m) => isValidAddress(m.address) && isValidAddress(m.creator))
+    .slice(0, effectiveLimit)
+    .map((m) => ({
+      address: m.address,
+      kind: m.kind,
+      creator: m.creator,
+      createdLedger: m.createdLedger,
+      createdTxHash: m.createdTxHash,
+      runId: m.runId,
+      runOrdinal: m.runOrdinal,
+      grantTxHash: m.grantTxHash,
+      provenance: m.provenance,
+    }))
   return { status: 200, body: { version: 1, networkId, owner, status, agents, coverage: coverageOut } }
 }

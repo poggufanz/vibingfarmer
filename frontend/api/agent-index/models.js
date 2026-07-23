@@ -219,5 +219,12 @@ export function parseSourceRow(row) {
     lastSuccessAt: row.last_success_at,
     lastErrorAt: row.last_error_at,
     lastErrorMessage: row.last_error_message,
+    // 0003_agent_index_bounds.sql — provider identity + reported chain-tip/retention bounds.
+    // `undefined` (pre-migration row shape in an old test double) normalizes to `null`, same as a
+    // genuinely never-reported column — coverageProof treats both as "no tip known".
+    providerId: row.provider_id ?? null,
+    endpointClass: row.endpoint_class ?? null,
+    reportedOldestLedger: row.reported_oldest_ledger ?? null,
+    reportedLatestLedger: row.reported_latest_ledger ?? null,
   }
 }

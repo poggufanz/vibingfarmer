@@ -23,6 +23,7 @@ function fakeD1() {
   const sqlite = new DatabaseSync(':memory:')
   sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0001_vf_gate.sql'), 'utf8'))
   sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0002_agent_index.sql'), 'utf8'))
+  sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0003_agent_index_bounds.sql'), 'utf8'))
 
   function bound(sql, args) {
     return {
@@ -96,9 +97,12 @@ describe('createAgentIndexStore', () => {
         'upsertMembership',
         'upsertRunAllocation',
         'readOwnerMemberships',
+        'readMembershipsByAgentAddresses',
         'readCoverage',
+        'ensureSourceRow',
         'commitSourcePage',
         'recordGap',
+        'recordSourceError',
         'recordBackfillAudit',
       ].sort()
     )
@@ -382,6 +386,110 @@ describe('commitSourcePage', () => {
         memberships: [membership({ creatorAddress: 'CROUTER-OTHER' })],
       })
     ).rejects.toThrow()
+  })
+
+  it('persists provider identity + reported bounds (Spec-missing 5) and updates them on a later page', async () => {
+    await store.commitSourcePage({
+      sourceId: SOURCE_ID,
+      fromLedger: 100,
+      throughLedger: 150,
+      finalizedThroughLedger: 148,
+      cursor: 'c1',
+      memberships: [],
+      providerId: 'soroban-rpc',
+      endpointClass: 'live',
+      reportedOldestLedger: 1,
+      reportedLatestLedger: 500,
+    })
+    let { sources } = await store.readCoverage({ networkId: NETWORK })
+    expect(sources[0]).toMatchObject({
+      providerId: 'soroban-rpc',
+      endpointClass: 'live',
+      reportedOldestLedger: 1,
+      reportedLatestLedger: 500,
+    })
+    await store.commitSourcePage({
+      sourceId: SOURCE_ID,
+      fromLedger: 151,
+      throughLedger: 200,
+      finalizedThroughLedger: 198,
+      cursor: 'c2',
+      memberships: [],
+      providerId: 'soroban-rpc',
+      endpointClass: 'live',
+      reportedOldestLedger: 1,
+      reportedLatestLedger: 600,
+    })
+    ;({ sources } = await store.readCoverage({ networkId: NETWORK }))
+    expect(sources[0].reportedLatestLedger).toBe(600)
+  })
+
+  it('leaves provider bounds NULL (never a guessed value) when the caller omits them', async () => {
+    await store.commitSourcePage({
+      sourceId: SOURCE_ID,
+      fromLedger: 100,
+      throughLedger: 150,
+      finalizedThroughLedger: 148,
+      cursor: 'c1',
+      memberships: [],
+    })
+    const { sources } = await store.readCoverage({ networkId: NETWORK })
+    expect(sources[0]).toMatchObject({ providerId: null, endpointClass: null, reportedOldestLedger: null, reportedLatestLedger: null })
+  })
+})
+
+describe('ensureSourceRow', () => {
+  it('seeds the "nothing indexed yet" sentinel row for a brand-new source', async () => {
+    await store.ensureSourceRow({ sourceId: SOURCE_ID, networkId: NETWORK, creatorAddress: CREATOR, fromLedger: 500 })
+    const { sources } = await store.readCoverage({ networkId: NETWORK })
+    expect(sources).toHaveLength(1)
+    expect(sources[0]).toMatchObject({ indexedFromLedger: 500, indexedThroughLedger: 499, finalizedThroughLedger: 499, status: 'ok' })
+  })
+
+  it('is a no-op when the source row already exists — never regresses an already-advanced cursor', async () => {
+    await store.commitSourcePage({ sourceId: SOURCE_ID, fromLedger: 100, throughLedger: 150, finalizedThroughLedger: 148, cursor: 'c1', memberships: [] })
+    await store.ensureSourceRow({ sourceId: SOURCE_ID, networkId: NETWORK, creatorAddress: CREATOR, fromLedger: 100 })
+    const { sources } = await store.readCoverage({ networkId: NETWORK })
+    expect(sources).toHaveLength(1)
+    expect(sources[0].indexedThroughLedger).toBe(150) // untouched, not reset to the sentinel
+  })
+
+  it('lets a subsequent recordGap satisfy its FK even on a source that has never committed a real page', async () => {
+    await store.ensureSourceRow({ sourceId: SOURCE_ID, networkId: NETWORK, creatorAddress: CREATOR, fromLedger: 100 })
+    await store.recordGap({ sourceId: SOURCE_ID, networkId: NETWORK, fromLedger: 100, throughLedger: 199, reason: 'below-oldest-available-ledger' })
+    const { gaps } = await store.readCoverage({ networkId: NETWORK })
+    expect(gaps).toHaveLength(1)
+  })
+})
+
+describe('recordSourceError', () => {
+  it('marks the source status=error with a last_error trail WITHOUT moving the cursor, even on a first-ever page', async () => {
+    await store.recordSourceError({ sourceId: SOURCE_ID, networkId: NETWORK, creatorAddress: CREATOR, fromLedger: 100, message: 'schema drift' })
+    const { sources } = await store.readCoverage({ networkId: NETWORK })
+    expect(sources).toHaveLength(1)
+    expect(sources[0]).toMatchObject({ status: 'error', indexedThroughLedger: 99, lastErrorMessage: 'schema drift' })
+    expect(sources[0].lastErrorAt).not.toBeNull()
+  })
+
+  it('marks an existing source status=error without advancing indexed_through_ledger', async () => {
+    await store.commitSourcePage({ sourceId: SOURCE_ID, fromLedger: 100, throughLedger: 150, finalizedThroughLedger: 148, cursor: 'c1', memberships: [] })
+    await store.recordSourceError({ sourceId: SOURCE_ID, networkId: NETWORK, creatorAddress: CREATOR, fromLedger: 151, message: 'schema drift again' })
+    const { sources } = await store.readCoverage({ networkId: NETWORK })
+    expect(sources[0]).toMatchObject({ status: 'error', indexedThroughLedger: 150, lastErrorMessage: 'schema drift again' })
+  })
+})
+
+describe('readMembershipsByAgentAddresses', () => {
+  it('returns only the requested (network, address) rows', async () => {
+    await store.upsertMembership(membership())
+    await store.upsertMembership(membership({ agentAddress: 'CAGENT2', ownerAddress: 'GOWNER2' }))
+    await store.upsertMembership(membership({ agentAddress: 'CAGENT-OTHER-NET', networkId: 'base-sepolia' }))
+    const rows = await store.readMembershipsByAgentAddresses({ networkId: NETWORK, agentAddresses: ['CAGENT1', 'CAGENT2', 'CAGENT-NEVER-WRITTEN'] })
+    expect(rows.map((r) => r.address).sort()).toEqual(['CAGENT1', 'CAGENT2'])
+  })
+
+  it('returns [] for an empty address list without touching the DB', async () => {
+    expect(await store.readMembershipsByAgentAddresses({ networkId: NETWORK, agentAddresses: [] })).toEqual([])
   })
 })
 

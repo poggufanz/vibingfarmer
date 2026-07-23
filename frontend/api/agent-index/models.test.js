@@ -272,6 +272,38 @@ describe('parseSourceRow', () => {
       lastSuccessAt: null,
       lastErrorAt: null,
       lastErrorMessage: null,
+      providerId: null,
+      endpointClass: null,
+      reportedOldestLedger: null,
+      reportedLatestLedger: null,
+    })
+  })
+  it('round-trips the 0003_agent_index_bounds.sql provider-identity/reported-bound columns', () => {
+    const row = {
+      source_id: 'stellar-testnet:CROUTER1',
+      network_id: 'stellar-testnet',
+      creator_address: 'CROUTER1',
+      manifest_hash: '0xabc',
+      manifest_version: 'v1',
+      schema_version: 1,
+      indexed_from_ledger: 100,
+      indexed_through_ledger: 5000,
+      finalized_through_ledger: 4998,
+      cursor: null,
+      status: 'ok',
+      last_success_at: 1,
+      last_error_at: null,
+      last_error_message: null,
+      provider_id: 'soroban-rpc',
+      endpoint_class: 'live',
+      reported_oldest_ledger: 1,
+      reported_latest_ledger: 5002,
+    }
+    expect(parseSourceRow(row)).toMatchObject({
+      providerId: 'soroban-rpc',
+      endpointClass: 'live',
+      reportedOldestLedger: 1,
+      reportedLatestLedger: 5002,
     })
   })
   it('returns null for a missing row', () => {

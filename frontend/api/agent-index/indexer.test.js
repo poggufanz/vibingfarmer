@@ -6,13 +6,14 @@ import { createRequire } from 'node:module'
 import { nativeToScVal } from '@stellar/stellar-sdk'
 import { symbolScVal, addrScVal } from '../../src/stellar/scval.js'
 import { createAgentIndexStore } from './store.js'
-import { ingestAgentIndexPage, coverageProof } from './indexer.js'
+import { ingestAgentIndexPage, coverageProof, scanRpcEventsPage } from './indexer.js'
 import {
   AGENT_CREATORS,
   AGENT_CREATOR_MANIFEST_HASH,
   AGENT_CREATOR_MANIFEST_VERSION,
   AGENT_INDEX_SCHEMA_VERSION,
   AGENT_INDEX_MAX_LAG_MS,
+  AGENT_INDEX_FINALITY_LEDGERS,
 } from '../../src/stellar/agentCreatorManifest.js'
 
 // ── same in-memory-D1 helper as store.test.js (MM2) — real node:sqlite running the actual
@@ -25,6 +26,7 @@ function fakeD1() {
   const sqlite = new DatabaseSync(':memory:')
   sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0001_vf_gate.sql'), 'utf8'))
   sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0002_agent_index.sql'), 'utf8'))
+  sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0003_agent_index_bounds.sql'), 'utf8'))
   function bound(sql, args) {
     return {
       run() {
@@ -261,6 +263,197 @@ describe('ingestAgentIndexPage — duplicate/replay safety', () => {
     expect(ownedByA.map((r) => r.address)).toEqual([AGENT_A]) // not duplicated
     expect(ownedByB.map((r) => r.address)).toEqual([AGENT_B])
   })
+
+  it('a duplicate deployed event in a LATER page can never rewrite an already-indexed agent (Spec-partial 6)', async () => {
+    const store = freshStore()
+    const start = ROUTER_V1.coverageStartLedger
+    const first = deployedRecord({ owner: OWNER_A, agent: AGENT_A, ledger: start + 1, txHash: 'TX-REAL' })
+    const es1 = fakeEventSource({ events: [first], oldestAvailableLedger: start, scannedThroughLedger: start + 5 })
+    const out1 = await ingestAgentIndexPage({ source: ROUTER_V1, store, eventSource: es1, finalizedLedger: start + 100 })
+    expect(out1.membershipCount).toBe(1)
+
+    // A LATER page (later ledger, cross-tick) re-emits AGENT_A under a different owner — a spoof
+    // or a corrupt replay. It must be dropped, never flow into commitSourcePage's ON CONFLICT.
+    const spoof = deployedRecord({ owner: OWNER_B, agent: AGENT_A, ledger: start + 6, txHash: 'TX-SPOOF' })
+    const es2 = fakeEventSource({ events: [spoof], oldestAvailableLedger: start, scannedThroughLedger: start + 10 })
+    const out2 = await ingestAgentIndexPage({ source: ROUTER_V1, store, eventSource: es2, finalizedLedger: start + 100 })
+    expect(out2.membershipCount).toBe(0)
+    expect(out2.duplicateCount).toBe(1)
+
+    const ownedByA = await store.readOwnerMemberships({ networkId: ROUTER_V1.networkId, owner: OWNER_A })
+    const ownedByB = await store.readOwnerMemberships({ networkId: ROUTER_V1.networkId, owner: OWNER_B })
+    expect(ownedByA.map((r) => r.address)).toEqual([AGENT_A]) // ownership never moved
+    expect(ownedByB).toEqual([])
+  })
+
+  it('an identical re-emission in a later page is a harmless no-op, not counted as a rewrite', async () => {
+    const store = freshStore()
+    const start = ROUTER_V1.coverageStartLedger
+    const first = deployedRecord({ owner: OWNER_A, agent: AGENT_A, ledger: start + 1, txHash: 'TX-REAL' })
+    const es1 = fakeEventSource({ events: [first], oldestAvailableLedger: start, scannedThroughLedger: start + 5 })
+    await ingestAgentIndexPage({ source: ROUTER_V1, store, eventSource: es1, finalizedLedger: start + 100 })
+
+    const echo = deployedRecord({ owner: OWNER_A, agent: AGENT_A, ledger: start + 1, txHash: 'TX-REAL', pagingToken: 'later-page-echo' })
+    const es2 = fakeEventSource({ events: [echo], oldestAvailableLedger: start, scannedThroughLedger: start + 10 })
+    const out2 = await ingestAgentIndexPage({ source: ROUTER_V1, store, eventSource: es2, finalizedLedger: start + 100 })
+    expect(out2.membershipCount).toBe(0)
+    expect(out2.duplicateCount).toBeUndefined() // identical — nothing to flag
+  })
+})
+
+describe('ingestAgentIndexPage — decode failure fails closed (Important 4)', () => {
+  it('a matching-topic record that fails to decode aborts the whole page — never commits, marks the source error, next tick can retry', async () => {
+    const store = freshStore()
+    const start = ROUTER_V1.coverageStartLedger
+    // topic matches 'deployed' but the value body is missing `cap` — schema drift.
+    const bad = {
+      ledger: start + 1,
+      txHash: 'TX-BAD',
+      pagingToken: `${start + 1}-TX-BAD`,
+      topic: [symbolScVal('deployed'), addrScVal(OWNER_A), addrScVal(AGENT_A)],
+      value: nativeToScVal({}),
+    }
+    const es = fakeEventSource({ events: [bad], oldestAvailableLedger: start })
+    await expect(
+      ingestAgentIndexPage({ source: ROUTER_V1, store, eventSource: es, finalizedLedger: start + 10 })
+    ).rejects.toThrow(/schema drift|failed to decode/)
+
+    const { sources } = await store.readCoverage({ networkId: ROUTER_V1.networkId })
+    expect(sources).toHaveLength(1)
+    expect(sources[0].status).toBe('error')
+    expect(sources[0].indexedThroughLedger).toBe(start - 1) // cursor never advanced past the bad page
+    expect(sources[0].lastErrorMessage).toMatch(/schema drift|failed to decode/)
+
+    // Next tick retries the exact same range — no membership was ever written.
+    const owned = await store.readOwnerMemberships({ networkId: ROUTER_V1.networkId, owner: OWNER_A })
+    expect(owned).toEqual([])
+  })
+})
+
+describe('ingestAgentIndexPage — scanRpcEventsPage never loses a mid-ledger-truncated deploy (Critical 2)', () => {
+  it('a truncated page followed by the next page delivers BOTH of a boundary ledger\'s deploys, never one', async () => {
+    const store = freshStore()
+    const start = ROUTER_V1.coverageStartLedger
+    const boundaryLedger = start + 50
+
+    // First RPC response: truncated by `limit` mid-ledger — only the FIRST of two deploys at the
+    // boundary ledger came back before the cutoff, and `latestLedger` proves the real chain tip
+    // is still far ahead (a genuine truncation, not "we reached the tip and it's just sparse").
+    const es1 = {
+      providerId: 'test-rpc',
+      endpointClass: 'live',
+      oldestAvailableLedger: start,
+      latestAvailableLedger: start + 10_000,
+      async getEvents({ startLedger, endLedger }) {
+        const rec = deployedRecord({ owner: OWNER_A, agent: AGENT_A, ledger: boundaryLedger, txHash: 'TX-FIRST' })
+        // The real chain tip (as reported by THIS response) is far beyond our bounded request
+        // window — proves this is a genuine mid-window truncation, not "sparse but at tip".
+        const page = scanRpcEventsPage({ events: [rec], cursor: 'more', latestLedger: start + 1_000_000, startLedger, endLedger })
+        return { events: page.events, cursor: null, scannedThroughLedger: page.scannedThroughLedger, latestLedger: page.latestLedger }
+      },
+    }
+    const out1 = await ingestAgentIndexPage({ source: ROUTER_V1, store, eventSource: es1, finalizedLedger: start + 10_000 })
+    expect(out1.throughLedger).toBe(boundaryLedger - 1) // boundary ledger NOT claimed complete
+    expect(out1.membershipCount).toBe(0) // its (possibly partial) events were held back, not written
+
+    // Second page starts exactly at the boundary ledger — the RPC now returns BOTH deploys for it.
+    const es2 = {
+      providerId: 'test-rpc',
+      endpointClass: 'live',
+      oldestAvailableLedger: start,
+      latestAvailableLedger: start + 10_000,
+      async getEvents({ startLedger, endLedger }) {
+        const recs = [
+          deployedRecord({ owner: OWNER_A, agent: AGENT_A, ledger: boundaryLedger, txHash: 'TX-FIRST' }),
+          deployedRecord({ owner: OWNER_B, agent: AGENT_B, ledger: boundaryLedger, txHash: 'TX-SECOND' }),
+        ]
+        const page = scanRpcEventsPage({ events: recs, cursor: null, latestLedger: start + 10_000, startLedger, endLedger })
+        return { events: page.events, cursor: null, scannedThroughLedger: page.scannedThroughLedger, latestLedger: page.latestLedger }
+      },
+    }
+    const out2 = await ingestAgentIndexPage({ source: ROUTER_V1, store, eventSource: es2, finalizedLedger: start + 10_000 })
+    expect(out2.membershipCount).toBe(2) // BOTH deploys land — the second one was never lost
+    const ownedByA = await store.readOwnerMemberships({ networkId: ROUTER_V1.networkId, owner: OWNER_A })
+    const ownedByB = await store.readOwnerMemberships({ networkId: ROUTER_V1.networkId, owner: OWNER_B })
+    expect(ownedByA.map((r) => r.address)).toEqual([AGENT_A])
+    expect(ownedByB.map((r) => r.address)).toEqual([AGENT_B])
+  })
+})
+
+describe('scanRpcEventsPage — pure unit coverage (Critical 2 + Livelock check 8)', () => {
+  it('advances only through the last COMPLETE ledger when truncated, dropping the boundary ledger\'s events', () => {
+    const page = scanRpcEventsPage({
+      events: [{ ledger: 100 }, { ledger: 100 }, { ledger: 101 }],
+      cursor: 'more',
+      latestLedger: 5000, // real chain tip is far ahead — genuine truncation, not sparse-at-tip
+      startLedger: 100,
+      endLedger: 4990,
+    })
+    expect(page.scannedThroughLedger).toBe(100)
+    expect(page.events.every((e) => e.ledger === 100)).toBe(true)
+    expect(page.events).toHaveLength(2)
+  })
+
+  it('an empty window AT the chain tip completes honestly even if the SDK always sets a cursor', () => {
+    const page = scanRpcEventsPage({
+      events: [],
+      cursor: 'sdk-always-sets-this', // the exact livelock trigger: cursor present on a complete result
+      latestLedger: 5000,
+      startLedger: 4900,
+      endLedger: 5000, // our request already reaches the reported tip
+    })
+    expect(page.scannedThroughLedger).toBe(5000) // proven complete via ledger arithmetic, not cursor
+    expect(page.events).toEqual([])
+  })
+
+  it('an ambiguous empty window (no latestLedger reported) stays fail-safe, never claims completion', () => {
+    const page = scanRpcEventsPage({
+      events: [],
+      cursor: 'more',
+      latestLedger: undefined,
+      startLedger: 100,
+      endLedger: 5000,
+    })
+    expect(page.scannedThroughLedger).toBeLessThan(100) // < fromLedger — ingestAgentIndexPage will throw on this
+  })
+})
+
+describe('ingestAgentIndexPage — livelock check 8, end-to-end via a fake eventSource', () => {
+  it('completes an empty window at tip without throwing (no permanent stall)', async () => {
+    const store = freshStore()
+    const start = ROUTER_V1.coverageStartLedger
+    const es = {
+      providerId: 'test-rpc',
+      endpointClass: 'live',
+      oldestAvailableLedger: start,
+      latestAvailableLedger: start,
+      async getEvents({ startLedger, endLedger }) {
+        const page = scanRpcEventsPage({ events: [], cursor: 'sdk-always-sets-this', latestLedger: start, startLedger, endLedger })
+        return { events: page.events, cursor: null, scannedThroughLedger: page.scannedThroughLedger, latestLedger: page.latestLedger }
+      },
+    }
+    const out = await ingestAgentIndexPage({ source: ROUTER_V1, store, eventSource: es, finalizedLedger: start })
+    expect(out.status).toBe('committed')
+    expect(out.throughLedger).toBe(start)
+  })
+
+  it('throws (never falsely completes) on a genuinely ambiguous not-at-tip empty window', async () => {
+    const store = freshStore()
+    const start = ROUTER_V1.coverageStartLedger
+    const es = {
+      providerId: 'test-rpc',
+      endpointClass: 'live',
+      oldestAvailableLedger: start,
+      latestAvailableLedger: start + 5000,
+      async getEvents({ startLedger, endLedger }) {
+        const page = scanRpcEventsPage({ events: [], cursor: 'more', latestLedger: undefined, startLedger, endLedger })
+        return { events: page.events, cursor: null, scannedThroughLedger: page.scannedThroughLedger, latestLedger: page.latestLedger }
+      },
+    }
+    await expect(
+      ingestAgentIndexPage({ source: ROUTER_V1, store, eventSource: es, finalizedLedger: start + 5000 })
+    ).rejects.toThrow(/no confirmed scanned range/)
+  })
 })
 
 describe('ingestAgentIndexPage — retention-floor gaps', () => {
@@ -276,6 +469,63 @@ describe('ingestAgentIndexPage — retention-floor gaps', () => {
     expect(gaps[0]).toMatchObject({ fromLedger: start, throughLedger: start + 99, status: 'open' })
     // The proof can never call this contiguous while the gap is open.
     expect(coverageProof({ manifest: { creators: [] }, sources, gaps, backfillAudit: [] }).contiguous).toBe(false)
+  })
+})
+
+describe('ingestAgentIndexPage — gap-branch atomicity ordering (Important 3)', () => {
+  it('records the gap before the empty spanning commit — even on a source\'s very first page (FK satisfied via ensureSourceRow first)', async () => {
+    const store = freshStore()
+    const calls = []
+    const spiedStore = {
+      ...store,
+      ensureSourceRow: async (p) => {
+        calls.push('ensureSourceRow')
+        return store.ensureSourceRow(p)
+      },
+      recordGap: async (g) => {
+        calls.push('recordGap')
+        return store.recordGap(g)
+      },
+      commitSourcePage: async (p) => {
+        calls.push('commitSourcePage')
+        return store.commitSourcePage(p)
+      },
+    }
+    const start = ROUTER_V1.coverageStartLedger
+    const es = fakeEventSource({ events: [], oldestAvailableLedger: start + 100, latestAvailableLedger: start + 500 })
+    await ingestAgentIndexPage({ source: ROUTER_V1, store: spiedStore, eventSource: es, finalizedLedger: start + 500 })
+    expect(calls).toEqual(['ensureSourceRow', 'recordGap', 'commitSourcePage'])
+  })
+
+  it('records the gap before the commit when the source row already exists (retention floor advances mid-catch-up; ensureSourceRow is a harmless idempotent no-op here)', async () => {
+    const store = freshStore()
+    const start = ROUTER_V1.coverageStartLedger
+    // A normal committed page first establishes the source row.
+    const es1 = fakeEventSource({ events: [], oldestAvailableLedger: start, scannedThroughLedger: start + 10 })
+    await ingestAgentIndexPage({ source: ROUTER_V1, store, eventSource: es1, finalizedLedger: start + 20 })
+
+    const calls = []
+    const spiedStore = {
+      ...store,
+      ensureSourceRow: async (p) => {
+        calls.push('ensureSourceRow')
+        return store.ensureSourceRow(p)
+      },
+      recordGap: async (g) => {
+        calls.push('recordGap')
+        return store.recordGap(g)
+      },
+      commitSourcePage: async (p) => {
+        calls.push('commitSourcePage')
+        return store.commitSourcePage(p)
+      },
+    }
+    // The retention floor jumps ahead of what's indexed — a hole opens for an EXISTING source.
+    const es2 = fakeEventSource({ events: [], oldestAvailableLedger: start + 200, latestAvailableLedger: start + 500 })
+    await ingestAgentIndexPage({ source: ROUTER_V1, store: spiedStore, eventSource: es2, finalizedLedger: start + 500 })
+    // ensureSourceRow always runs first (idempotent ON CONFLICT DO NOTHING) — the invariant that
+    // matters is recordGap strictly before commitSourcePage, which holds either way.
+    expect(calls).toEqual(['ensureSourceRow', 'recordGap', 'commitSourcePage'])
   })
 })
 
@@ -333,7 +583,21 @@ function creator({ address, coverageStartLedger, deployedLedger = coverageStartL
   }
 }
 
-function sourceRow({ address, coverageStartLedger, indexedThroughLedger = 5000, status = 'ok', lastSuccessAt, manifestHash = AGENT_CREATOR_MANIFEST_HASH, manifestVersion = AGENT_CREATOR_MANIFEST_VERSION, schemaVersion = AGENT_INDEX_SCHEMA_VERSION }) {
+// `reportedLatestLedger` defaults to exactly "at tip" (indexedThroughLedger + the finality
+// margin) — a healthy/fresh/gap-free fixture should also be at-tip by default so the many
+// existing 'complete' scenarios below don't all have to spell it out. Pass `reportedLatestLedger`
+// explicitly (or `null`) to build a mid-catch-up / no-tip-known fixture (Critical 1).
+function sourceRow({
+  address,
+  coverageStartLedger,
+  indexedThroughLedger = 5000,
+  status = 'ok',
+  lastSuccessAt,
+  manifestHash = AGENT_CREATOR_MANIFEST_HASH,
+  manifestVersion = AGENT_CREATOR_MANIFEST_VERSION,
+  schemaVersion = AGENT_INDEX_SCHEMA_VERSION,
+  reportedLatestLedger = indexedThroughLedger + AGENT_INDEX_FINALITY_LEDGERS,
+}) {
   return {
     sourceId: `${NET}:${address}`,
     networkId: NET,
@@ -349,6 +613,10 @@ function sourceRow({ address, coverageStartLedger, indexedThroughLedger = 5000, 
     lastSuccessAt: lastSuccessAt ?? Math.floor(NOW / 1000),
     lastErrorAt: null,
     lastErrorMessage: null,
+    providerId: 'test-rpc',
+    endpointClass: 'live',
+    reportedOldestLedger: 1,
+    reportedLatestLedger,
   }
 }
 
@@ -379,6 +647,35 @@ describe('coverageProof — completeness requires every source, no gaps, within 
     const row = sourceRow({ address: CURRENT.address, coverageStartLedger: 1000 })
     row.indexedFromLedger = 1050 // missed the first 50 ledgers of this creator's history
     const proof = coverageProof({ manifest, sources: [row], gaps: [], backfillAudit: [], now: NOW })
+    expect(proof.status).toBe('partial')
+  })
+})
+
+describe('coverageProof — chain-tip bound (Critical 1)', () => {
+  it('is partial (mid-catch-up) even when a source is internally gap-free at indexedThroughLedger:5000 but far behind the reported tip', () => {
+    const CURRENT = creator({ address: 'CTIP1AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', coverageStartLedger: 1000 })
+    const manifest = { version: AGENT_CREATOR_MANIFEST_VERSION, hash: AGENT_CREATOR_MANIFEST_HASH, schemaVersion: AGENT_INDEX_SCHEMA_VERSION, creators: [CURRENT] }
+    const sources = [sourceRow({ address: CURRENT.address, coverageStartLedger: 1000, indexedThroughLedger: 5000, reportedLatestLedger: 50_000 })]
+    const proof = coverageProof({ manifest, sources, gaps: [], backfillAudit: [], now: NOW })
+    expect(proof.contiguous).toBe(true) // gap-free...
+    expect(proof.status).toBe('partial') // ...but nowhere near the real tip — never 'complete'
+  })
+
+  it('is complete once indexed coverage reaches the tip within the finality margin', () => {
+    const CURRENT = creator({ address: 'CTIP2AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', coverageStartLedger: 1000 })
+    const manifest = { version: AGENT_CREATOR_MANIFEST_VERSION, hash: AGENT_CREATOR_MANIFEST_HASH, schemaVersion: AGENT_INDEX_SCHEMA_VERSION, creators: [CURRENT] }
+    const sources = [
+      sourceRow({ address: CURRENT.address, coverageStartLedger: 1000, indexedThroughLedger: 5000, reportedLatestLedger: 5000 + AGENT_INDEX_FINALITY_LEDGERS }),
+    ]
+    const proof = coverageProof({ manifest, sources, gaps: [], backfillAudit: [], now: NOW })
+    expect(proof.status).toBe('complete')
+  })
+
+  it('is partial when no tip has ever been reported for a source — never guesses completeness', () => {
+    const CURRENT = creator({ address: 'CTIP3AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', coverageStartLedger: 1000 })
+    const manifest = { version: AGENT_CREATOR_MANIFEST_VERSION, hash: AGENT_CREATOR_MANIFEST_HASH, schemaVersion: AGENT_INDEX_SCHEMA_VERSION, creators: [CURRENT] }
+    const sources = [sourceRow({ address: CURRENT.address, coverageStartLedger: 1000, reportedLatestLedger: null })]
+    const proof = coverageProof({ manifest, sources, gaps: [], backfillAudit: [], now: NOW })
     expect(proof.status).toBe('partial')
   })
 })

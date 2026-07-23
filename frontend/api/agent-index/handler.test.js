@@ -18,6 +18,7 @@ function fakeD1() {
   const sqlite = new DatabaseSync(':memory:')
   sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0001_vf_gate.sql'), 'utf8'))
   sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0002_agent_index.sql'), 'utf8'))
+  sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0003_agent_index_bounds.sql'), 'utf8'))
   function bound(sql, args) {
     return {
       run() {
@@ -149,6 +150,79 @@ describe('handleRead — input validation', () => {
     const out = await handleRead({ networkId: 'stellar-testnet', owner: AGENT_A, store: null })
     expect(out.status).toBe(200)
     expect(out.body.status).toBe('unavailable')
+  })
+})
+
+describe('handleRead — limit validation (Minor 7)', () => {
+  it('400s a non-integer limit', async () => {
+    const out = await handleRead({ networkId: 'stellar-testnet', owner: OWNER_A, store: {}, limit: 'abc' })
+    expect(out.status).toBe(400)
+  })
+
+  it('400s a zero/negative limit', async () => {
+    const out = await handleRead({ networkId: 'stellar-testnet', owner: OWNER_A, store: {}, limit: 0 })
+    expect(out.status).toBe(400)
+  })
+
+  it('400s a limit above the max', async () => {
+    const out = await handleRead({ networkId: 'stellar-testnet', owner: OWNER_A, store: {}, limit: 5000 })
+    expect(out.status).toBe(400)
+  })
+
+  it('accepts an unset limit (default) and a within-bounds explicit limit', async () => {
+    const out1 = await handleRead({ networkId: 'stellar-testnet', owner: OWNER_A, store: null })
+    expect(out1.status).toBe(200)
+    const out2 = await handleRead({ networkId: 'stellar-testnet', owner: OWNER_A, store: null, limit: 10 })
+    expect(out2.status).toBe(200)
+  })
+
+  it('truncates the agents array to the requested limit', async () => {
+    const store = createAgentIndexStore(fakeD1())
+    const AGENT_C = 'CACAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAINCW' // valid C-StrKey (used elsewhere as AGENT_B)
+    const rec1 = deployedRecord({ owner: OWNER_A, agent: AGENT_A, ledger: ROUTER_V1.coverageStartLedger + 1, txHash: 'TX1' })
+    const rec2 = deployedRecord({ owner: OWNER_A, agent: AGENT_C, ledger: ROUTER_V1.coverageStartLedger + 2, txHash: 'TX2' })
+    await handleIngest({
+      secret: 's',
+      providedSecret: 's',
+      store,
+      sources: [ROUTER_V1],
+      eventSourceFor: async () => fakeEventSource({ events: [rec1, rec2], oldestAvailableLedger: ROUTER_V1.coverageStartLedger }),
+      finalizedLedgerFor: async () => ROUTER_V1.coverageStartLedger + 10,
+    })
+    const out = await handleRead({ networkId: ROUTER_V1.networkId, owner: OWNER_A, store, limit: 1 })
+    expect(out.body.agents).toHaveLength(1)
+  })
+})
+
+describe('handleRead — output addresses are StrKey-validated, never trusted blindly (Minor 7)', () => {
+  it('drops a membership row whose stored agent address fails StrKey validation', async () => {
+    const store = createAgentIndexStore(fakeD1())
+    await store.commitSourcePage({
+      sourceId: `${ROUTER_V1.networkId}:${ROUTER_V1.address}`,
+      fromLedger: ROUTER_V1.coverageStartLedger,
+      throughLedger: ROUTER_V1.coverageStartLedger + 1,
+      finalizedThroughLedger: ROUTER_V1.coverageStartLedger + 1,
+      cursor: null,
+      memberships: [
+        {
+          networkId: ROUTER_V1.networkId,
+          agentAddress: 'not-a-real-strkey',
+          ownerAddress: OWNER_A,
+          creatorAddress: ROUTER_V1.address,
+          schemaVersion: 1,
+          kind: 'deposit',
+          creationLedger: ROUTER_V1.coverageStartLedger,
+          creationTx: 'TXBAD',
+          grantTxHash: 'TXBAD',
+          runId: null,
+          runOrdinal: null,
+          provenance: {},
+        },
+      ],
+    })
+    const out = await handleRead({ networkId: ROUTER_V1.networkId, owner: OWNER_A, store })
+    expect(out.status).toBe(200)
+    expect(out.body.agents).toEqual([])
   })
 })
 

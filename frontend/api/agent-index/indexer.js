@@ -9,6 +9,7 @@
 // `decodeEvent`. This module owns none of the raw ScVal decoding.
 import { decodeDeployedEvent } from '../../src/stellar/routerEvents.js'
 import { decodeEvent } from '../../src/stellar/events.js'
+import { fromScVal } from '../../src/stellar/scval.js'
 import { sourceIdFor } from './models.js'
 import {
   AGENT_INDEX_FINALITY_LEDGERS,
@@ -18,29 +19,107 @@ import {
 } from '../../src/stellar/agentCreatorManifest.js'
 
 /**
- * Decode one raw event record into `{agentAddress, ownerAddress, ledger, txHash}`, or `null` for
- * anything that isn't a `Deployed`/`agent_authorized` record this creator's kind is known to
- * emit, or that fails to decode. One malformed record never breaks the page.
+ * Classify one raw event record against `source`'s expected schema. Three outcomes:
+ *   - `{ matched: false }` — the topic isn't this source's event at all. Safe to drop silently;
+ *     the page still commits (a filtered RPC feed can still carry occasional off-topic noise).
+ *   - `{ matched: true, decoded }` — the topic matched and the body decoded cleanly.
+ *   - `{ matched: true, error }` — the topic matched but the body failed to decode (schema
+ *     drift). Fail-closed: the caller MUST abort the whole page on this, never silently drop a
+ *     membership while the page still commits and coverage still claims the range (Important 4).
  */
 function decodeSourceEvent(source, rec) {
   if (source.kind === 'funding-router') {
+    let topic0
+    try {
+      topic0 = fromScVal(rec.topic[0])
+    } catch {
+      return { matched: false }
+    }
+    if (topic0 !== 'deployed') return { matched: false }
     const d = decodeDeployedEvent(rec)
-    if (!d || !d.agent || !d.owner || !d.txHash) return null
-    return { agentAddress: d.agent, ownerAddress: d.owner, ledger: d.ledger, txHash: d.txHash }
+    if (!d || !d.agent || !d.owner || !d.txHash) {
+      return {
+        matched: true,
+        error: new Error(
+          `decodeSourceEvent: 'deployed' event failed to decode (pagingToken ${rec.pagingToken}) — schema drift?`
+        ),
+      }
+    }
+    return { matched: true, decoded: { agentAddress: d.agent, ownerAddress: d.owner, ledger: d.ledger, txHash: d.txHash } }
   }
   if (source.kind === 'registry') {
+    let type
+    try {
+      type = fromScVal(rec.topic[0])
+    } catch {
+      return { matched: false }
+    }
+    if (type !== 'agent_authorized') return { matched: false }
     try {
       const e = decodeEvent(rec)
-      if (e.type !== 'agent_authorized') return null
       const agentAddress = e.data?.agent
       const ownerAddress = e.data?.owner
-      if (!agentAddress || !ownerAddress || !e.txHash) return null
-      return { agentAddress, ownerAddress, ledger: e.ledger, txHash: e.txHash }
-    } catch {
-      return null
+      if (!agentAddress || !ownerAddress || !e.txHash) {
+        return {
+          matched: true,
+          error: new Error(
+            `decodeSourceEvent: 'agent_authorized' event missing required fields (pagingToken ${rec.pagingToken}) — schema drift?`
+          ),
+        }
+      }
+      return { matched: true, decoded: { agentAddress, ownerAddress, ledger: e.ledger, txHash: e.txHash } }
+    } catch (err) {
+      return {
+        matched: true,
+        error: new Error(
+          `decodeSourceEvent: 'agent_authorized' event failed to decode (pagingToken ${rec.pagingToken}): ${err.message}`
+        ),
+      }
     }
   }
-  return null
+  return { matched: false }
+}
+
+/**
+ * Turn one raw Soroban RPC `getEvents()` response into an honest `StellarEventSourceV1` page.
+ * Pure — no I/O — so the real RPC adapter (`api/agent-index.js`) stays a thin, untested pass-
+ * through while the actual interpretation logic here is fully unit-tested.
+ *
+ * Two review fixes live here:
+ *   - Critical 2 (mid-ledger truncation loses deploys): a `cursor` in the response means the RPC
+ *     may have cut the page off at `limit` mid-ledger — the boundary ledger (`maxSeenLedger`)
+ *     could be only partially fetched. Never claim that ledger scanned, and never keep its
+ *     (possibly incomplete) events for this page — they're dropped here so the NEXT page
+ *     re-requests that ledger whole, rather than a deploy silently vanishing with no gap row.
+ *   - Livelock check 8 (reachedTip robustness): if the SDK sets `cursor` on every response, even
+ *     a complete/empty one, cursor presence alone can never prove "at tip" — an empty window
+ *     would throw forever. `latestLedger` (the RPC's own reported chain tip AS OF THIS RESPONSE)
+ *     is ledger-arithmetic proof instead: `endLedger >= latestLedger` means our request already
+ *     reached the real tip, regardless of what `cursor` says. No `latestLedger` in the response
+ *     at all is the genuinely ambiguous case — it falls back to the old cursor-only check, which
+ *     stays fail-safe (never claims tip on a false premise; retries next tick).
+ * @param {{ events: Array<{ledger?: number}>, cursor: string|null|undefined, latestLedger?: number,
+ *   startLedger: number, endLedger: number }} p
+ * @returns {{ events: Array, scannedThroughLedger: number, latestLedger: number|null }}
+ */
+export function scanRpcEventsPage({ events = [], cursor, latestLedger, startLedger, endLedger }) {
+  const tipKnown = Number.isInteger(latestLedger)
+  const reachedTip = tipKnown ? endLedger >= latestLedger : !cursor
+  const maxSeenLedger = events.reduce((m, e) => Math.max(m, e.ledger || 0), startLedger - 1)
+  if (reachedTip) {
+    return {
+      events,
+      scannedThroughLedger: Math.min(endLedger, latestLedger ?? endLedger),
+      latestLedger: tipKnown ? latestLedger : null,
+    }
+  }
+  return {
+    // Truncated (or ambiguous, no latestLedger to prove otherwise): only ledgers strictly before
+    // the boundary are provably complete.
+    events: events.filter((e) => (e.ledger || 0) < maxSeenLedger),
+    scannedThroughLedger: maxSeenLedger - 1,
+    latestLedger: tipKnown ? latestLedger : null,
+  }
 }
 
 /**
@@ -122,11 +201,14 @@ function toMembership(source, decoded, generation, runOrdinal, provenanceSource)
  *   oldestAvailableLedger: number,
  *   latestAvailableLedger: number,
  *   getEvents: (p: {startLedger:number, endLedger:number, cursor?:string, limit:number}) =>
- *     Promise<{events: Array, cursor: string|null, scannedThroughLedger: number}>,
+ *     Promise<{events: Array, cursor: string|null, scannedThroughLedger: number, latestLedger?: number}>,
  *   getAgentWasmHash?: (agentAddress: string) => Promise<string|null>,
  * }} p.eventSource a `StellarEventSourceV1`. `scannedThroughLedger` is the RPC-CONFIRMED inclusive
  *   ledger this call actually scanned (<= endLedger) — real providers may window-cap a request
  *   short of what was asked; this field is how an empty page still advances honestly.
+ *   `latestLedger`, when the provider reports it, is the chain tip AS OF THIS RESPONSE — persisted
+ *   per source (0003_agent_index_bounds.sql) and is what `coverageProof` binds completeness to
+ *   (Critical 1: gap-free is not enough, coverage must also reach the real tip).
  * @param {number} p.finalizedLedger the already finality-margined ledger ceiling (caller applies
  *   AGENT_INDEX_FINALITY_LEDGERS before calling this) — the commit never claims `finalized`
  *   coverage past this, even when it scanned further into unsettled recent ledgers.
@@ -152,25 +234,34 @@ export async function ingestAgentIndexPage({
   const existing = sources.find((s) => s.sourceId === sourceId)
   const fromLedger = existing ? existing.indexedThroughLedger + 1 : source.coverageStartLedger
 
+  const reportedLatestAvailable = Number.isInteger(eventSource.latestAvailableLedger)
+    ? eventSource.latestAvailableLedger
+    : null
+
   // Live-provider retention floor (also covers an archival provider's own bounded window): this
   // provider can never certify a range older than what it reports it has. Commit an empty page
   // spanning exactly the hole — the documented store.js resume protocol — so the cursor advances
-  // past ledgers this call could never have proven, then record the gap (agent_index_gaps.source_id
-  // is a real FK against agent_index_sources — on a source's very first-ever page there is no
-  // source row yet, so the commit MUST land first). The gap stays on record forever regardless of
-  // order — coverageProof's `contiguous` never goes true until something closes it.
+  // past ledgers this call could never have proven, then record the gap.
   if (Number.isInteger(eventSource.oldestAvailableLedger) && fromLedger < eventSource.oldestAvailableLedger) {
     const gapThrough = Math.min(eventSource.oldestAvailableLedger - 1, finalizedLedger)
     if (gapThrough < fromLedger) {
       return { sourceId, status: 'idle' }
     }
-    await store.commitSourcePage({
+    // agent_index_gaps.source_id is a real FK against agent_index_sources — on a source's very
+    // first-ever page there is no row yet. `ensureSourceRow` seeds the "nothing indexed yet"
+    // sentinel row FIRST (a no-op if the row already exists), so `recordGap` can ALWAYS run
+    // before the substantive commit below, uniformly — a crash between recordGap and the commit
+    // then always leaves the gap on record behind a cursor that hasn't moved past it, never the
+    // reverse (Important 3: gap-branch atomicity ordering).
+    await store.ensureSourceRow({
       sourceId,
+      networkId: source.networkId,
+      creatorAddress: source.address,
       fromLedger,
-      throughLedger: gapThrough,
-      finalizedThroughLedger: gapThrough,
-      cursor: existing?.cursor ?? null,
-      memberships: [],
+      providerId: eventSource.providerId,
+      endpointClass: eventSource.endpointClass,
+      reportedOldestLedger: eventSource.oldestAvailableLedger,
+      reportedLatestLedger: reportedLatestAvailable,
     })
     await store.recordGap({
       sourceId,
@@ -179,12 +270,22 @@ export async function ingestAgentIndexPage({
       throughLedger: gapThrough,
       reason: `${eventSource.endpointClass}-provider:${eventSource.providerId}:below-oldest-available-ledger`,
     })
+    await store.commitSourcePage({
+      sourceId,
+      fromLedger,
+      throughLedger: gapThrough,
+      finalizedThroughLedger: gapThrough,
+      cursor: existing?.cursor ?? null,
+      memberships: [],
+      providerId: eventSource.providerId,
+      endpointClass: eventSource.endpointClass,
+      reportedOldestLedger: eventSource.oldestAvailableLedger,
+      reportedLatestLedger: reportedLatestAvailable,
+    })
     return { sourceId, status: 'gapped', fromLedger, throughLedger: gapThrough }
   }
 
-  const requestEnd = Number.isInteger(eventSource.latestAvailableLedger)
-    ? eventSource.latestAvailableLedger
-    : finalizedLedger
+  const requestEnd = reportedLatestAvailable ?? finalizedLedger
   if (requestEnd < fromLedger) {
     return { sourceId, status: 'idle' } // chain hasn't moved past what's already indexed
   }
@@ -200,10 +301,16 @@ export async function ingestAgentIndexPage({
   }
   // Never advance further than the RPC actually confirmed, even on an empty page.
   const throughLedger = Math.min(res.scannedThroughLedger, requestEnd)
+  // Critical 1 / Spec-missing 5: the response's own reported chain tip, persisted per-source so
+  // coverageProof can bind completeness to it. Falls back to the pre-call snapshot
+  // (`eventSource.latestAvailableLedger`) when this particular getEvents() call didn't report one.
+  const reportedLatestLedger = Number.isInteger(res.latestLedger) ? res.latestLedger : reportedLatestAvailable
 
   // Stable paging-token order → dedupe by pagingToken (raw duplicate records) then by agent
   // address (a LATER duplicate for an already-seen agent can never change its owner/creator —
-  // first occurrence wins, everything else in this page is dropped for that agent).
+  // first occurrence wins within this page; everything else is dropped for that agent). A
+  // matching-topic record that fails to decode is fail-closed: abort the WHOLE page rather than
+  // silently dropping membership while coverage still advances (Important 4).
   const seenPagingToken = new Set()
   const byAgent = new Map()
   for (const rec of res.events || []) {
@@ -212,16 +319,53 @@ export async function ingestAgentIndexPage({
       if (seenPagingToken.has(pt)) continue
       seenPagingToken.add(pt)
     }
-    const decoded = decodeSourceEvent(source, rec)
-    if (!decoded) continue
-    if (!byAgent.has(decoded.agentAddress)) byAgent.set(decoded.agentAddress, decoded)
+    const result = decodeSourceEvent(source, rec)
+    if (result.error) {
+      await store.recordSourceError({
+        sourceId,
+        networkId: source.networkId,
+        creatorAddress: source.address,
+        fromLedger,
+        message: result.error.message,
+      })
+      throw result.error
+    }
+    if (!result.decoded) continue
+    if (!byAgent.has(result.decoded.agentAddress)) byAgent.set(result.decoded.agentAddress, result.decoded)
+  }
+
+  // Spec-partial 6: a duplicate `deployed`/`agent_authorized` event for an agent ALREADY indexed
+  // by a prior page must never rewrite its identity via commitSourcePage's ON CONFLICT DO UPDATE.
+  // Drop (and count) any candidate whose agent address already has a membership row — an
+  // identical re-emission has nothing to change (a harmless no-op skip); one with different
+  // immutable fields (owner/creator/creation ledger/tx — a spoof or corrupt replay) is exactly
+  // the rewrite this guard exists to prevent.
+  const candidateAddresses = [...byAgent.keys()]
+  const existingMemberships = candidateAddresses.length
+    ? await store.readMembershipsByAgentAddresses({ networkId: source.networkId, agentAddresses: candidateAddresses })
+    : []
+  const existingByAddress = new Map(existingMemberships.map((m) => [m.address, m]))
+  let duplicateCount = 0
+  const toResolve = []
+  for (const decoded of byAgent.values()) {
+    const priorRow = existingByAddress.get(decoded.agentAddress)
+    if (priorRow) {
+      const isIdentical =
+        priorRow.owner === decoded.ownerAddress &&
+        priorRow.creator === source.address &&
+        priorRow.createdLedger === decoded.ledger &&
+        priorRow.createdTxHash === decoded.txHash
+      if (!isIdentical) duplicateCount += 1
+      continue
+    }
+    toResolve.push(decoded)
   }
 
   const provenanceSource =
     source.discoverySources?.[0] ?? (source.kind === 'funding-router' ? 'router-event' : 'registry-event')
   const ordinalByTx = new Map()
   const memberships = []
-  for (const decoded of byAgent.values()) {
+  for (const decoded of toResolve) {
     const generation = await resolveAgentGeneration(source, decoded.agentAddress, eventSource)
     if (!generation) {
       throw new Error(
@@ -249,8 +393,19 @@ export async function ingestAgentIndexPage({
     finalizedThroughLedger,
     cursor: res.cursor ?? null,
     memberships,
+    providerId: eventSource.providerId,
+    endpointClass: eventSource.endpointClass,
+    reportedOldestLedger: Number.isInteger(eventSource.oldestAvailableLedger) ? eventSource.oldestAvailableLedger : null,
+    reportedLatestLedger,
   })
-  return { sourceId, status: 'committed', fromLedger, throughLedger, membershipCount: memberships.length }
+  return {
+    sourceId,
+    status: 'committed',
+    fromLedger,
+    throughLedger,
+    membershipCount: memberships.length,
+    ...(duplicateCount > 0 ? { duplicateCount } : {}),
+  }
 }
 
 /**
@@ -294,7 +449,13 @@ export function coverageProof({ manifest, sources = [], gaps = [], backfillAudit
       row.schemaVersion === manifest.schemaVersion
     const startsAtCreator = row.indexedFromLedger <= creator.coverageStartLedger
     const fresh = Number.isFinite(row.lastSuccessAt) && now - row.lastSuccessAt * 1000 <= AGENT_INDEX_MAX_LAG_MS
-    if (!identityMatches || !startsAtCreator || !fresh || row.status !== 'ok') {
+    // Critical 1: completeness requires coverage to reach the real chain tip, not merely to be
+    // internally gap-free. `reportedLatestLedger` is the provider's OWN reported tip, persisted
+    // per source at ingest time (0003_agent_index_bounds.sql) — no tip ever known for this source
+    // means this can never claim complete, only an honest catching-up 'partial'.
+    const tipKnown = Number.isInteger(row.reportedLatestLedger)
+    const atTip = tipKnown && row.indexedThroughLedger >= row.reportedLatestLedger - AGENT_INDEX_FINALITY_LEDGERS
+    if (!identityMatches || !startsAtCreator || !fresh || row.status !== 'ok' || !atTip) {
       everyCreatorCoveredAndFresh = false
     }
   }
