@@ -16,7 +16,7 @@ import {
   SOROBAN_TOKEN_ADDRESS,
 } from '../src/stellar/config.js'
 import { agentInitScVal, tokenBudgetScVal, AGENT_KIND_DEPOSIT } from '../src/stellar/grant.js'
-import { addrScVal, i128ScVal, u32ScVal } from '../src/stellar/scval.js'
+import { addrScVal, u32ScVal } from '../src/stellar/scval.js'
 import { summarizeTransaction, summarizeAuthEntry, shortAddr, formatArg } from './txSummary.js'
 
 function buildDepositTxXdr() {

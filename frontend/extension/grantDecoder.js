@@ -18,6 +18,10 @@
 // a `grant` field to its invocation summary), so this module must stay a leaf — an import back
 // the other way would be a circular ES module dependency.
 import { scValToNative } from '@stellar/stellar-sdk'
+// Explicit import (not a bare global) so this module decodes correctly regardless of import
+// order — unlike approve.js's shims.js, which installs Buffer onto globalThis for the classic-
+// wallet chunk, this decoder must not depend on having been imported after that shim ran.
+import { Buffer } from 'buffer'
 import { resolveRouterSchema, AGENT_KIND_DEPOSIT, AGENT_KIND_BRIDGE } from '../src/stellar/routerSchema.js'
 import { SOROBAN_DECIMALS, SOROBAN_AUTOFARM_VAULT_ADDRESS, STELLAR_NETWORK_LABEL } from '../src/stellar/config.js'
 import { STELLAR_TOKEN_MESSENGER_MINTER, CCTP_BASE_DOMAIN } from '../src/stellar/cctpBurn.js'
