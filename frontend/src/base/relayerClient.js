@@ -7,7 +7,7 @@
 // catch-all pattern (frontend/functions/api/vf/[[path]].js -> frontend/api/vf/_router.js). If
 // SP2 lands a different path or response shape, only this file's URL-building and response
 // parsing need to change — crossChainFarm.js and the screens never construct URLs themselves.
-import { toBaseChainUnits } from './config.js'
+import { toBaseChainUnits, BASE_USDC_DECIMALS } from './config.js'
 
 const DEFAULT_BASE_URL = import.meta.env?.VITE_CROSS_RELAYER_BASE || '/api/vf-cross'
 const DEFAULT_POLL_INTERVAL_MS = 3000
@@ -131,17 +131,41 @@ function serializeAllocations(allocations) {
   }))
 }
 
+// VF Wallet Task 6 wire envelope: wraps the already-quantized/serialized allocation (still
+// computed by quantizeAllocations/serializeAllocations above, untouched — this is a precision-
+// critical path with its own dedicated test coverage) into the binding plan's cross-boundary
+// shape `{allocationId, poolAddress, amount:{token,units,decimals}}`. minShares rides along as an
+// extra field (not in the plan's example, but dropping it would silently remove the live-quoted
+// slippage floor baseLeg.js computes per pool — see base/quotes.js).
+function toWireAllocations(allocations, runId) {
+  return serializeAllocations(allocations).map((a, i) => ({
+    allocationId: `${runId ?? 'run'}-${i}`,
+    poolAddress: a.pool,
+    amount: { token: 'USDC', units: a.amount, decimals: BASE_USDC_DECIMALS },
+    minShares: a.minShares,
+  }))
+}
+
 /**
  * Dispatch the farm flow: relay the Stellar burn (forward CCTP) then fan out session-key
- * deposits across `allocations`. Returns immediately with a job id to poll.
- * @param {{ burnTxHash: string, sourceDomain: number, serializedApproval: string, allocations: Array<object>, baseUrl?: string, deps?: { fetchImpl?: Function } }} p
+ * deposits across `allocations`. Returns immediately with a job id to poll. `burnTxHash` may be
+ * null — a job can be queued/accepted before a burn hash is observed; a later attach/callback
+ * fills it in (relayer side, Task 7's job). stellarOwner/kernelAddress bind the dispatch to the
+ * owner it was mandated for; bridgeAgent/runId/grantTxHash default to null when the caller
+ * doesn't have them yet (both are threaded through by baseLeg.js/crossChainFarm.js when known).
+ * @param {{ burnTxHash: string|null, sourceDomain: number, serializedApproval: string, stellarOwner?: string, kernelAddress?: string, bridgeAgent?: string, runId?: string, grantTxHash?: string, allocations: Array<object>, baseUrl?: string, deps?: { fetchImpl?: Function } }} p
  * @returns {Promise<{ jobId: string }>}
  */
 export async function postFarm({
-  burnTxHash,
+  burnTxHash = null,
   sourceDomain,
   serializedApproval,
   allocations,
+  stellarOwner = null,
+  kernelAddress = null,
+  bridgeAgent = null,
+  runId = null,
+  grantTxHash = null,
   baseUrl = DEFAULT_BASE_URL,
   deps = {},
 }) {
@@ -153,7 +177,12 @@ export async function postFarm({
       burnTxHash,
       sourceDomain,
       serializedApproval,
-      allocations: serializeAllocations(allocations),
+      stellarOwner,
+      kernelAddress,
+      bridgeAgent,
+      runId,
+      grantTxHash,
+      allocations: toWireAllocations(allocations, runId),
     }),
   })
   if (!res.ok) throw new Error(`farm dispatch failed (${res.status})`)
@@ -190,17 +219,21 @@ export async function pollFarmStatus({
  * subsequent farm requests reference the mandate by `serializedApproval` alone, so the session
  * private key crosses the wire exactly one time per mandate, not once per farm dispatch. The
  * relayer stores it in-memory keyed by `serializedApproval` (see relayer/src/httpRouter.mjs).
- * `expiry` (unix seconds) sets how long the relayer will honor it — baseLeg.js requests a 7-day
- * window (MANDATE_WINDOW_SECONDS) so a repeat run can reuse it via getMandateStatus below instead
- * of repeating the wallet ceremony every time.
+ * `expiresAt` (unix seconds) sets how long the relayer will honor it — baseLeg.js requests a
+ * 7-day window (MANDATE_WINDOW_SECONDS) so a repeat run can reuse it via getMandateStatus below
+ * instead of repeating the wallet ceremony every time. stellarOwner/kernelAddress bind the
+ * registration to the owner it was minted for (VF Wallet Task 6).
  * Never log `sessionPrivateKey` — this function only ever passes it through to the request body.
- * @param {{ serializedApproval: string, sessionPrivateKey: string, expiry: number, baseUrl?: string, deps?: { fetchImpl?: Function } }} p
+ * @param {{ serializedApproval: string, sessionPrivateKey: string, sessionKeyAddress?: string, expiresAt: number, stellarOwner?: string, kernelAddress?: string, baseUrl?: string, deps?: { fetchImpl?: Function } }} p
  * @returns {Promise<{ ok: boolean }>}
  */
 export async function postMandate({
   serializedApproval,
   sessionPrivateKey,
-  expiry,
+  sessionKeyAddress,
+  expiresAt,
+  stellarOwner,
+  kernelAddress,
   baseUrl = DEFAULT_BASE_URL,
   deps = {},
 }) {
@@ -208,29 +241,80 @@ export async function postMandate({
   const res = await fetchImpl(`${baseUrl}/mandate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ serializedApproval, sessionPrivateKey, expiry }),
+    body: JSON.stringify({
+      serializedApproval,
+      sessionPrivateKey,
+      sessionKeyAddress,
+      expiresAt,
+      stellarOwner,
+      kernelAddress,
+    }),
   })
   if (!res.ok) throw new Error(`mandate registration failed (${res.status})`)
   return res.json()
 }
 
+// Normalizes whatever the relayer answers into the canonical BaseMandateStatusV2 shape (binding
+// plan §3). The real relayer server is not migrated by this task (Task 7's job) and today answers
+// the older `{valid, expiresAt}` shape — `status` falls back to 'active'/'unknown' from `valid`
+// so callers can rely on `.status` regardless of which relayer generation answers. Unknown fields
+// are null, never guessed, per the "never render unknown as healthy" rule — 'unknown' fails every
+// gate the same way 'expired'/'missing' do (only 'active' passes).
+function normalizeMandateStatus(body = {}, { stellarOwner, kernelAddress } = {}) {
+  return {
+    stellarOwner: body.stellarOwner ?? stellarOwner ?? null,
+    kernelAddress: body.kernelAddress ?? kernelAddress ?? null,
+    sessionKeyAddress: body.sessionKeyAddress ?? null,
+    relayerOrigin: body.relayerOrigin ?? null,
+    expiresAt: body.expiresAt ?? null,
+    status: body.status ?? (body.valid ? 'active' : 'unknown'),
+    bindingId: body.bindingId ?? null,
+    bindingHash: body.bindingHash ?? null,
+  }
+}
+
 /**
  * Check whether a previously-registered mandate is still reusable, WITHOUT ever getting the
- * session key back — the relayer's GET /mandate/valid only ever answers {valid, expiresAt}. Lets
- * baseLeg.js skip the owner ceremony + a fresh mandate mint on a repeat run.
+ * session key back. Lets baseLeg.js skip the owner ceremony + a fresh mandate mint on a repeat
+ * run. stellarOwner/kernelAddress (VF Wallet Task 6) travel with the request so the relayer can
+ * confirm the binding, not just that the approval blob itself is unexpired somewhere.
  * @param {string} serializedApproval
- * @param {{ baseUrl?: string, deps?: { fetchImpl?: Function } }} [p]
- * @returns {Promise<{ valid: boolean, expiresAt?: number }>}
+ * @param {{ stellarOwner?: string, kernelAddress?: string, baseUrl?: string, deps?: { fetchImpl?: Function } }} [p]
+ * @returns {Promise<import('../wallet/baseBinding.js').BaseMandateStatusV2>}
  */
 export async function getMandateStatus(
   serializedApproval,
-  { baseUrl = DEFAULT_BASE_URL, deps = {} } = {}
+  { stellarOwner, kernelAddress, baseUrl = DEFAULT_BASE_URL, deps = {} } = {}
 ) {
   const { fetchImpl = fetch } = deps
-  const res = await fetchImpl(
-    `${baseUrl}/mandate/valid?approval=${encodeURIComponent(serializedApproval)}`
-  )
+  let qs = `approval=${encodeURIComponent(serializedApproval)}`
+  if (stellarOwner) qs += `&stellarOwner=${encodeURIComponent(stellarOwner)}`
+  if (kernelAddress) qs += `&kernelAddress=${encodeURIComponent(kernelAddress)}`
+  const res = await fetchImpl(`${baseUrl}/mandate/valid?${qs}`)
   if (!res.ok) throw new Error(`mandate status check failed (${res.status})`)
+  return normalizeMandateStatus(await res.json(), { stellarOwner, kernelAddress })
+}
+
+/**
+ * Revoke a registered mandate. stellarOwner/kernelAddress let the relayer authenticate the revoke
+ * against the binding it stored at registration time rather than trusting the approval blob alone.
+ * @param {{ serializedApproval: string, stellarOwner?: string, kernelAddress?: string, baseUrl?: string, deps?: { fetchImpl?: Function } }} p
+ * @returns {Promise<{ ok: boolean }>}
+ */
+export async function postMandateRevoke({
+  serializedApproval,
+  stellarOwner,
+  kernelAddress,
+  baseUrl = DEFAULT_BASE_URL,
+  deps = {},
+}) {
+  const { fetchImpl = fetch } = deps
+  const res = await fetchImpl(`${baseUrl}/mandate/revoke`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ serializedApproval, stellarOwner, kernelAddress }),
+  })
+  if (!res.ok) throw new Error(`mandate revoke failed (${res.status})`)
   return res.json()
 }
 

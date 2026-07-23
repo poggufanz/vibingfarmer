@@ -85,6 +85,7 @@ import {
   pollBaseLegUntilSettled,
 } from './mergeFlowHelpers.js'
 import { getMandateStatus } from './base/relayerClient.js'
+import { readBaseOwner, baseOwnerStorageKey } from './wallet/baseBinding.js'
 import { readTokenBalance } from './stellar/agentDeposit.js'
 import { STELLAR_USDC_SAC } from './stellar/cctpBurn.js'
 import { evaluateExit } from './strategy/autoExit/engine.js'
@@ -819,7 +820,7 @@ const App = () => {
       const startedAt = Date.now()
       // vf-base-dashboard Task 10 — piggybacks this SAME 15s poll (never a second interval).
       // loadBasePositions never throws (see its own guard/catch); [] for Stellar-only users.
-      loadBasePositions().then((bp) => {
+      loadBasePositions({ stellarOwner: realAddress }).then((bp) => {
         if (alive) setBasePositions(bp)
       })
       // Prefer the scope-derived agent list (per-run grant agents — kept fresh via
@@ -1750,12 +1751,27 @@ const App = () => {
     // kernel — the withdraw userOp then reverts in simulation with an unreadable AA error, and
     // ensureBaseOwner's persist clobbers the good marker with the wrong address (seen live
     // 2026-07-20). Guard: mismatch → restore the marker + a retry-with-another-passkey message.
-    const expected = localStorage.getItem('vf_base_owner_address')
+    //
+    // VF Wallet Task 6: `expected` is sourced from the owner-scoped v2 record (readBaseOwner)
+    // instead of the blind global vf_base_owner_address key — a different connected wallet's
+    // leftover ceremony must never be read as "expected" here. ensureBaseOwner (unchanged)
+    // still dual-writes BOTH the legacy keys and the v2 record on every resolution, so a
+    // mismatch/failure restore must put BOTH back, or one storage location would keep the
+    // wrong-passkey clobber even after "restoring" the other.
+    const ownerRecordBefore = readBaseOwner(realAddress)
+    const expected = ownerRecordBefore?.kernelAddress || null
+    const restoreOwnerRecord = () => {
+      if (!realAddress) return
+      if (expected) localStorage.setItem('vf_base_owner_address', expected)
+      if (ownerRecordBefore) {
+        localStorage.setItem(baseOwnerStorageKey(realAddress), JSON.stringify(ownerRecordBefore))
+      }
+    }
     try {
       const { ensureBaseOwner } = await import('./wallet/passkeyBridge.js')
       const owner = await ensureBaseOwner({ connectedAddress: realAddress })
       if (expected && owner.address?.toLowerCase() !== expected.toLowerCase()) {
-        localStorage.setItem('vf_base_owner_address', expected)
+        restoreOwnerRecord()
         setBaseWithdrawError(
           `That passkey opens a different Base account (${owner.address.slice(0, 6)}…) than the one holding these positions (${expected.slice(0, 6)}…). Retry and pick another passkey.`
         )
@@ -1775,7 +1791,7 @@ const App = () => {
         publicClient: owner.publicClient,
       })
     } catch (err) {
-      if (expected) localStorage.setItem('vf_base_owner_address', expected)
+      restoreOwnerRecord()
       setBaseWithdrawError(err.message)
     }
   }
@@ -1792,7 +1808,7 @@ const App = () => {
     try {
       const { ensureBaseOwner } = await import('./wallet/passkeyBridge.js')
       await ensureBaseOwner({ connectedAddress: realAddress, preferLogin: true })
-      const bp = await loadBasePositions()
+      const bp = await loadBasePositions({ stellarOwner: realAddress })
       setBasePositions(bp)
       if (!bp.length) setBaseWithdrawError('Base account connected — no open positions found.')
     } catch (err) {
@@ -1809,7 +1825,10 @@ const App = () => {
     setBaseMandateError(null)
     try {
       await setupBaseMandate({ connectedAddress: realAddress })
-      const mandateOk = await checkStoredBaseMandate({ getMandateStatus })()
+      const mandateOk = await checkStoredBaseMandate({
+        getMandateStatus,
+        stellarOwner: realAddress,
+      })()
       setNeedsBaseMandate(needsBaseMandateSetup({ healthy: true, mandateOk }))
     } catch (e) {
       setBaseMandateError(e.message)
@@ -1878,7 +1897,7 @@ const App = () => {
         // those states never show the button. Fire-and-forget: never blocks strategy generation.
         Promise.all([
           checkRelayerHealth({ signal: ctrl.signal }),
-          checkStoredBaseMandate({ getMandateStatus })(),
+          checkStoredBaseMandate({ getMandateStatus, stellarOwner: realAddress })(),
         ])
           .then(([healthy, mandateOk]) => {
             if (!cancelled) setNeedsBaseMandate(needsBaseMandateSetup({ healthy, mandateOk }))
@@ -1891,7 +1910,7 @@ const App = () => {
         // the catalog rather than surface an error the user can't act on mid strategy-generation.
         const { baseAvailable } = resolveBaseAvailability({
           checkHealth: () => checkRelayerHealth({ signal: ctrl.signal }),
-          checkMandate: checkStoredBaseMandate({ getMandateStatus }),
+          checkMandate: checkStoredBaseMandate({ getMandateStatus, stellarOwner: realAddress }),
           checkFunding: checkCircleUsdcFunding({
             address: realAddress || null,
             readTokenBalance,
@@ -2666,7 +2685,7 @@ const App = () => {
           if (summary.baseLeg.success) {
             // Don't wait for the 15s poll tick: surface the fresh Base positions now.
             // Base token activity is on History → Base (fetched when that tab opens).
-            loadBasePositions().then((bp) => setBasePositions(bp))
+            loadBasePositions({ stellarOwner: realAddress }).then((bp) => setBasePositions(bp))
             // Dispatch's own poll window is ~2 min; a CCTP leg can take far longer. Keep asking
             // slowly so the graph + log settle on the truth instead of freezing on "still
             // settling" after the deposits have already landed (live 2026-07-20: 60 USDC farmed
@@ -2680,7 +2699,10 @@ const App = () => {
                 }).then((settled) => {
                   if (!settled) return
                   paintBaseNodes(mapBaseLegEvent('farm-completed', { jobId, finalStatus: settled }))
-                  if (settled === 'done') loadBasePositions().then((bp) => setBasePositions(bp))
+                  if (settled === 'done')
+                    loadBasePositions({ stellarOwner: realAddress }).then((bp) =>
+                      setBasePositions(bp)
+                    )
                 })
               )
             }
@@ -3342,7 +3364,7 @@ const App = () => {
               </div>
             }
           />
-          <Route path="/history" element={<HistoryPanel />} />
+          <Route path="/history" element={<HistoryPanel connectedAddress={realAddress} />} />
           <Route
             path="/settings"
             element={
@@ -3450,7 +3472,7 @@ const App = () => {
             stellarRecipient={realAddress}
             onClose={() => setBaseWithdraw(null)}
             onDone={() => {
-              loadBasePositions().then((bp) => setBasePositions(bp))
+              loadBasePositions({ stellarOwner: realAddress }).then((bp) => setBasePositions(bp))
             }}
           />
         </Suspense>

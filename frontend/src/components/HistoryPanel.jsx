@@ -1,7 +1,10 @@
 /* ============================================
    VIBING FARMER — History (Etherscan-style explorer)
    Stellar rows: localStorage via history.js.
-   Base rows: Blockscout tokentx for vf_base_owner_address (on-chain, not clearable).
+   Base rows: Blockscout tokentx for the connected wallet's Base kernel address (on-chain, not
+   clearable) — VF Wallet Task 6: owner-scoped BaseOwnerRecordV2 (wallet/baseBinding.js), not the
+   old global vf_base_owner_address key, so a different connected wallet never inherits another
+   wallet's Base history.
    ============================================ */
 import React, { useState, useEffect } from 'react'
 import { Icon } from '../components.jsx'
@@ -9,6 +12,7 @@ import { getTransactions, getStrategies, getReasoningLog, clearAllHistory } from
 import { loadSettings } from '../settingsStore.js'
 import { useNavigateTo } from '../router.js'
 import { fetchBaseHistory } from '../base/baseHistory.js'
+import { readBaseOwner } from '../wallet/baseBinding.js'
 
 const BASE_EXPLORER_TX = 'https://base-sepolia.blockscout.com/tx/'
 
@@ -224,7 +228,7 @@ const ReasonList = ({ rows }) => {
   )
 }
 
-const HistoryPanel = () => {
+const HistoryPanel = ({ connectedAddress }) => {
   const [tab, setTab] = useState('transactions')
   const [nonce, setNonce] = useState(0) // bump to re-read local history after clear
   const [data, setData] = useState({ transactions: [], strategies: [], reasoning: [] })
@@ -247,7 +251,7 @@ const HistoryPanel = () => {
   // shown or after Clear (nonce) so post-farm visits still get a fresh read without app-level state.
   useEffect(() => {
     if (tab !== 'base') return
-    const account = localStorage.getItem('vf_base_owner_address')
+    const account = readBaseOwner(connectedAddress)?.kernelAddress || null
     setBaseAccount(account)
     if (!account) {
       setBaseRows([])
@@ -265,7 +269,7 @@ const HistoryPanel = () => {
     return () => {
       dead = true
     }
-  }, [tab, nonce])
+  }, [tab, nonce, connectedAddress])
 
   const handleTabChange = (newTab) => {
     setTab(newTab)

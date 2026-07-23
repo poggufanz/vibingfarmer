@@ -5,6 +5,7 @@
 import React, { useState, useMemo } from 'react'
 import SkillDetailModal from './components/SkillDetailModal.jsx'
 import SkillEditModal from './components/SkillEditModal.jsx'
+import { readBaseOwner } from './wallet/baseBinding.js'
 
 /* ---------- Protocol display names ---------- */
 const PROTOCOL_NAMES = {
@@ -87,7 +88,10 @@ const SkillCard = ({ agent, skill, state, onApprove, onViewDetail, connectedAddr
   // VF wallets are NOT exempt (see wallet/passkeyBridge.js: the SDK never durably persists the
   // P-256 pubkey behind a VF passkey credential, so VF reuse as the Base owner key is impossible;
   // ensureBaseOwner runs the same register/login ceremony regardless of wallet type).
-  const needsPasskeySetup = isBase && !localStorage.getItem('vf_base_owner')
+  // VF Wallet Task 6: owner-scoped lookup — a leftover ceremony from a DIFFERENT connected wallet
+  // must not read as "already set up" here (readBaseOwner returns null for both "never set up"
+  // and "no wallet connected yet", so this still fails safely to "needs setup").
+  const needsPasskeySetup = isBase && !readBaseOwner(connectedAddress)
 
   return (
     <div className={`skill-card2 ${isApproved ? 'approved' : 'pending'}`}>

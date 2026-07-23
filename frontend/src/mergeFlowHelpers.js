@@ -7,6 +7,11 @@ import { isVfWallet, ensureBaseOwner as defaultEnsureBaseOwner } from './wallet/
 import { createMandate as defaultCreateMandate } from './wallet/mandate.js'
 import { postMandate as defaultPostMandate } from './base/relayerClient.js'
 import { BASE_POOL_CATALOG } from './config.js'
+import {
+  baseMandateStorageKey,
+  readBaseMandate,
+  validateBaseMandate,
+} from './wallet/baseBinding.js'
 
 // One place that decides what the strategy step tells the strategist about Base. Returns the
 // combined-check PROMISE (not its resolved value) so the ~3s relayer probe (and the optional
@@ -23,6 +28,14 @@ import { BASE_POOL_CATALOG } from './config.js'
 // Design (docs/superpowers/specs/2026-07-21-grant-covers-burn-design.md §4-5): mandate setup is
 // its OWN per-window ceremony (a chip + 1-tap renew, not part of a run) — a run NEVER creates a
 // mandate on demand, so "nothing stored yet" gates Base off exactly like an invalid one.
+//
+// VF Wallet Task 6: this signature is a PRESERVED LEGACY OVERLOAD — app.jsx's shipped Base
+// preflight still calls it exactly this way (checkHealth/checkMandate/checkFunding closures it
+// builds itself), and app.strategy.merge.test.jsx locks that shape. The owner-scoping for Task 6
+// happened one layer down, in checkStoredBaseMandate below (now stellarOwner-scoped) — this
+// function stays untouched because it was already agnostic to what its check closures do
+// internally. Do not remove or reshape this signature; that migration is Strategy Task 13's job
+// (Wave 5), not this task's.
 export function resolveBaseAvailability({ checkHealth, checkMandate, checkFunding }) {
   const baseAvailable = (async () => {
     try {
@@ -80,17 +93,40 @@ export function readStoredBaseMandate(storage) {
 /**
  * `checkMandate` factory for resolveBaseAvailability. INVERTED from the first draft per the design
  * spec: mandate setup is its own per-window ceremony, never something a run performs — so "nothing
- * stored yet" is exactly as gating as a stored-and-invalid one. true only for a stored mandate the
- * relayer confirms is still valid.
- * @param {{getMandateStatus: (approval:string) => Promise<{valid:boolean}>, storage?: object}} p
+ * stored yet" is exactly as gating as a stored-and-invalid one. true only for a stored mandate,
+ * BOUND to the current stellarOwner, the relayer also confirms is still active.
+ *
+ * VF Wallet Task 6: a SECOND preserved legacy overload, discovered via the existing
+ * app.strategy.merge.test.jsx (untouched by this task) which unit-tests the bare
+ * `{getMandateStatus, storage}` shape directly against the global vf_base_mandate key. Omitting
+ * `stellarOwner` reproduces that exact old behavior byte-for-byte (same no-try/catch shape, same
+ * bare `getMandateStatus(approval)` call). Passing `stellarOwner` (app.jsx's 3 call sites, all
+ * migrated in this task) switches to the owner-scoped v2 record + validateBaseMandate's fail-
+ * closed classification before the relayer is even asked.
+ * @param {{getMandateStatus: Function, storage?: object, stellarOwner?: string}} p
  * @returns {() => Promise<boolean>}
  */
-export function checkStoredBaseMandate({ getMandateStatus, storage } = {}) {
+export function checkStoredBaseMandate({ getMandateStatus, storage, stellarOwner } = {}) {
+  if (!stellarOwner) {
+    return async () => {
+      const stored = readStoredBaseMandate(storage)
+      if (!stored) return false
+      const status = await getMandateStatus(stored.serializedApproval)
+      return !!status?.valid
+    }
+  }
   return async () => {
-    const stored = readStoredBaseMandate(storage)
-    if (!stored) return false
-    const status = await getMandateStatus(stored.serializedApproval)
-    return !!status?.valid
+    const record = readBaseMandate(stellarOwner, storage)
+    if (validateBaseMandate(record, { stellarOwner }) !== 'active') return false
+    try {
+      const status = await getMandateStatus(record.serializedApproval, {
+        stellarOwner,
+        kernelAddress: record.kernelAddress,
+      })
+      return status?.status === 'active'
+    } catch {
+      return false
+    }
   }
 }
 
@@ -121,10 +157,13 @@ export async function setupBaseMandate({ connectedAddress, deps = {} }) {
     pools: BASE_POOL_CATALOG.map((p) => ({ pool: p.address, cap: MANDATE_SETUP_CAP_UNITS })),
     expiry,
   })
-  await postMandate({
+  const posted = await postMandate({
     serializedApproval: mandate.serializedApproval,
     sessionPrivateKey: mandate.sessionPrivateKey, // crosses the wire exactly once, then dropped
-    expiry: mandate.expiry,
+    sessionKeyAddress: mandate.sessionKeyAddress,
+    expiresAt: mandate.expiry,
+    stellarOwner: connectedAddress,
+    kernelAddress: owner.address,
   })
   // NON-secret metadata only (binding constraint: NEVER the private key) — same write shape the
   // run path's old (now-removed) ceremony branch used.
@@ -136,6 +175,28 @@ export async function setupBaseMandate({ connectedAddress, deps = {} }) {
         sessionKeyAddress: mandate.sessionKeyAddress,
         kernelAddress: owner.address,
         expiry: mandate.expiry,
+      })
+    )
+    // Owner-scoped v2 mandate record (VF Wallet Task 6) — dual-written beside the legacy global
+    // key above. baseLeg.js's dispatch-time re-check reads this one; orchestrator.js's grant-time
+    // read still goes through readStoredBaseMandate/the legacy key (untouched — not this task's
+    // file). relayerOrigin/bindingId/bindingHash come from the relayer's response when it
+    // supplies them (Task 7 migrates the server); default to null rather than a value we didn't
+    // actually observe.
+    storage.setItem(
+      baseMandateStorageKey(connectedAddress),
+      JSON.stringify({
+        version: 2,
+        stellarOwner: connectedAddress,
+        kernelAddress: owner.address,
+        serializedApproval: mandate.serializedApproval,
+        sessionKeyAddress: mandate.sessionKeyAddress,
+        relayerOrigin: posted?.relayerOrigin ?? null,
+        expiresAt: mandate.expiry,
+        status: 'active',
+        bindingId: posted?.bindingId ?? null,
+        bindingHash: posted?.bindingHash ?? null,
+        createdAt: Math.floor(Date.now() / 1000),
       })
     )
   }

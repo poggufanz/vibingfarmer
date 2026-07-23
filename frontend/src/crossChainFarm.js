@@ -14,11 +14,14 @@ const CCTP_STELLAR_DOMAIN = 27
 /**
  * @param {{
  *   stellarWallet: { address: string, signBurn: Function },
- *   baseRecipientAddress: string,
+ *   baseRecipientAddress: string,        // also the Base kernel address for this leg's owner binding
  *   sessionKeyAddress: string,
  *   serializedApproval: string,
  *   allocations: Array<{ pool: string, amount: number, amountBaseUnits: bigint, minShares: bigint }>,
  *   burnUnits7: bigint,           // authoritative total burn input, 7dp Stellar units
+ *   bridgeAgentAddress?: string,  // VF Wallet Task 6 wire field (postFarm's `bridgeAgent`) — recovery handle
+ *   runId?: string,               // not yet plumbed this deep from orchestrator.js; null until it is
+ *   grantTxHash?: string,
  *   onEvent?: (name: string, data: object) => void,
  *   deps?: { burn?: Function, postFarm?: Function, pollFarmStatus?: Function },
  * }} p
@@ -31,6 +34,9 @@ export async function runFarmFlow({
   serializedApproval,
   allocations,
   burnUnits7,
+  bridgeAgentAddress = null,
+  runId = null,
+  grantTxHash = null,
   onEvent = () => {},
   deps = {},
 }) {
@@ -91,6 +97,13 @@ export async function runFarmFlow({
       burnTxHash: burnResult.burnHash,
       sourceDomain: CCTP_STELLAR_DOMAIN,
       serializedApproval,
+      // VF Wallet Task 6: stellarOwner/kernelAddress bind this dispatch to the mandate it was
+      // validated against — derived from params already threaded here, no new args needed.
+      stellarOwner: stellarWallet.address,
+      kernelAddress: baseRecipientAddress,
+      bridgeAgent: bridgeAgentAddress,
+      runId,
+      grantTxHash,
       allocations,
     })
   } catch (err) {

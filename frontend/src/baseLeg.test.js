@@ -3,17 +3,21 @@ import { executeBaseLeg } from './baseLeg.js'
 
 const KERNEL = '0x0000000000000000000000000000000000000AA1'
 const BRIDGE_AGENT = 'CBRIDGEAGENT'
+const STELLAR_OWNER = 'GUSER'
 
 const storedMandate = () => ({
+  version: 2,
+  stellarOwner: STELLAR_OWNER,
   serializedApproval: 'APPROVAL',
   sessionKeyAddress: '0xSESSION',
   kernelAddress: KERNEL,
-  expiry: 9999999999,
+  expiresAt: 9999999999,
+  status: 'active',
 })
 
 const okDeps = () => ({
   readStoredMandate: vi.fn(() => storedMandate()),
-  getMandateStatus: vi.fn().mockResolvedValue({ valid: true }),
+  getMandateStatus: vi.fn().mockResolvedValue({ status: 'active' }),
   makePublicClient: vi.fn(() => ({})),
   runFarmFlow: vi.fn().mockResolvedValue({ burnHash: 'BURN', jobId: 'job-1', finalStatus: 'done' }),
   estimateMinShares: vi.fn(async () => 98505000n),
@@ -51,7 +55,21 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
       finalStatus: 'done',
       baseAccount: KERNEL,
     })
-    expect(deps.getMandateStatus).toHaveBeenCalledWith('APPROVAL')
+    // VF Wallet Task 6: the owner-scoped mandate lookup + the relayer confirmation both carry the
+    // binding (stellarOwner, kernelAddress), not just the bare approval blob.
+    expect(deps.readStoredMandate).toHaveBeenCalledWith(STELLAR_OWNER)
+    expect(deps.getMandateStatus).toHaveBeenCalledWith('APPROVAL', {
+      stellarOwner: STELLAR_OWNER,
+      kernelAddress: KERNEL,
+    })
+  })
+
+  it('threads bridgeAgentAddress through to runFarmFlow (postFarm wire field, recovery handle)', async () => {
+    const deps = okDeps()
+    await run({ deps })
+    expect(deps.runFarmFlow).toHaveBeenCalledWith(
+      expect.objectContaining({ bridgeAgentAddress: BRIDGE_AGENT })
+    )
   })
 
   it('never calls ensureBaseOwner/createMandate/postMandate — those deps no longer exist on this function', async () => {
@@ -91,10 +109,30 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
 
   it('a stored-but-invalid mandate (TOCTOU: valid at strategy-generation time, revoked since) settles, never throws', async () => {
     const deps = okDeps()
-    deps.getMandateStatus.mockResolvedValue({ valid: false })
+    deps.getMandateStatus.mockResolvedValue({ status: 'revoked' })
     const out = await run({ deps })
     expect(out).toMatchObject({ success: false, stage: 'mandate' })
     expect(out.error).toMatch(/no longer valid/i)
+  })
+
+  it('kernelAddress mismatch between the threaded param and the stored mandate fails closed BEFORE the burn (VF Wallet Task 6)', async () => {
+    const deps = okDeps()
+    const staleKernel = '0x0000000000000000000000000000000000000BB2'
+    deps.readStoredMandate = vi.fn(() => ({ ...storedMandate(), kernelAddress: staleKernel }))
+    const out = await run({ deps, kernelAddress: KERNEL })
+    expect(out).toMatchObject({ success: false, stage: 'mandate' })
+    expect(out.error).toMatch(/mismatched/i)
+    expect(deps.getMandateStatus).not.toHaveBeenCalled()
+    expect(deps.runFarmFlow).not.toHaveBeenCalled()
+  })
+
+  it('stellarOwner mismatch between connectedAddress and the stored mandate fails closed (no silent adoption on wallet switch)', async () => {
+    const deps = okDeps()
+    deps.readStoredMandate = vi.fn(() => ({ ...storedMandate(), stellarOwner: 'GDIFFERENTOWNER' }))
+    const out = await run({ deps, connectedAddress: STELLAR_OWNER })
+    expect(out).toMatchObject({ success: false, stage: 'mandate' })
+    expect(out.error).toMatch(/mismatched/i)
+    expect(deps.runFarmFlow).not.toHaveBeenCalled()
   })
 
   it('a getMandateStatus rejection (relayer blip) degrades to invalid, never throws', async () => {
@@ -155,11 +193,11 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
 
   it('mint_recipient is derived from the THREADED kernelAddress param, never re-read from storage (IMPORTANT 2 fix)', async () => {
     const deps = okDeps()
-    // The stored mandate carries a DIFFERENT kernelAddress than the param — proves the burn arg
-    // follows the caller's param (the value orchestrator.js actually pinned on-chain at grant
-    // time), not whatever happens to be in storage right now (a mid-run rotation risk otherwise).
-    const staleKernel = '0x0000000000000000000000000000000000000BB2'
-    deps.readStoredMandate = vi.fn(() => ({ ...storedMandate(), kernelAddress: staleKernel }))
+    // VF Wallet Task 6 tightened this further: a threaded kernelAddress that DISAGREES with the
+    // stored mandate now fails closed before reaching the burn at all (see the "kernelAddress
+    // mismatch" test above) — so the only case that still reaches runAgentBurn is agreement.
+    // What this test still locks: mint_recipient comes from the caller's PARAM, not by re-reading
+    // storage a second time inside the burn dep.
     let burnArgs
     deps.runAgentBurn = vi.fn(async (args) => {
       burnArgs = args
@@ -173,7 +211,7 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
     expect(Buffer.from(burnArgs.mintRecipient).toString('hex').slice(-40)).toBe(
       '0000000000000000000000000000000000000aa1'
     )
-    expect(out.baseAccount).toBe(KERNEL) // not staleKernel
+    expect(out.baseAccount).toBe(KERNEL)
   })
 
   it('a failed relayed pull surfaces as a farm-stage failure, never silently burning zero, and carries NO stranded-funds flag (nothing moved yet)', async () => {

@@ -9,7 +9,9 @@ import {
   readStoredBaseMandate,
   checkStoredBaseMandate,
   needsBaseMandateSetup,
+  resolveBaseAvailability,
 } from './mergeFlowHelpers.js'
+import { readBaseMandate } from './wallet/baseBinding.js'
 
 function fakeStorage(initial = {}) {
   const m = new Map(Object.entries(initial))
@@ -20,24 +22,24 @@ function fakeStorage(initial = {}) {
   }
 }
 
-describe('setupBaseMandate — the 1-tap setup ceremony (never run automatically by a run)', () => {
-  const okDeps = () => ({
-    ensureBaseOwner: vi.fn().mockResolvedValue({
-      address: '0x0000000000000000000000000000000000000AA1',
-      kernelAccount: {},
-      publicClient: {},
-      passkeyValidator: {},
-      ownerMode: 'ceremony',
-    }),
-    createMandate: vi.fn().mockResolvedValue({
-      serializedApproval: 'APPROVAL',
-      sessionKeyAddress: '0xSESSION',
-      sessionPrivateKey: '0xPRIV',
-      expiry: 9999999999,
-    }),
-    postMandate: vi.fn().mockResolvedValue({ ok: true }),
-  })
+const okDeps = () => ({
+  ensureBaseOwner: vi.fn().mockResolvedValue({
+    address: '0x0000000000000000000000000000000000000AA1',
+    kernelAccount: {},
+    publicClient: {},
+    passkeyValidator: {},
+    ownerMode: 'ceremony',
+  }),
+  createMandate: vi.fn().mockResolvedValue({
+    serializedApproval: 'APPROVAL',
+    sessionKeyAddress: '0xSESSION',
+    sessionPrivateKey: '0xPRIV',
+    expiry: 9999999999,
+  }),
+  postMandate: vi.fn().mockResolvedValue({ ok: true }),
+})
 
+describe('setupBaseMandate — the 1-tap setup ceremony (never run automatically by a run)', () => {
   it('happy path: owner -> mandate -> register -> writes vf_base_mandate, never the private key', async () => {
     const deps = okDeps()
     const storage = fakeStorage()
@@ -85,13 +87,83 @@ describe('setupBaseMandate — the 1-tap setup ceremony (never run automatically
   it('gate recheck: checkStoredBaseMandate flips to true once the fresh mandate is written (the affordance clears itself)', async () => {
     const deps = okDeps()
     const storage = fakeStorage()
-    const getMandateStatus = vi.fn().mockResolvedValue({ valid: true })
+    const getMandateStatus = vi.fn().mockResolvedValue({ status: 'active' })
     // Before setup: nothing stored, gate stays closed.
-    expect(await checkStoredBaseMandate({ getMandateStatus, storage })()).toBe(false)
+    expect(
+      await checkStoredBaseMandate({ getMandateStatus, storage, stellarOwner: 'GUSER' })()
+    ).toBe(false)
     await setupBaseMandate({ connectedAddress: 'GUSER', deps: { ...deps, storage } })
     // After setup: the relayer confirms the just-written mandate, gate opens.
+    expect(
+      await checkStoredBaseMandate({ getMandateStatus, storage, stellarOwner: 'GUSER' })()
+    ).toBe(true)
+    expect(getMandateStatus).toHaveBeenCalledWith('APPROVAL', {
+      stellarOwner: 'GUSER',
+      kernelAddress: '0x0000000000000000000000000000000000000AA1',
+    })
+  })
+
+  it('writes an owner-scoped BaseMandateRecordV2 beside the legacy vf_base_mandate key', async () => {
+    const deps = okDeps()
+    const storage = fakeStorage()
+    await setupBaseMandate({ connectedAddress: 'GUSER', deps: { ...deps, storage } })
+    const v2 = readBaseMandate('GUSER', storage)
+    expect(v2).toMatchObject({
+      version: 2,
+      stellarOwner: 'GUSER',
+      kernelAddress: '0x0000000000000000000000000000000000000AA1',
+      serializedApproval: 'APPROVAL',
+      sessionKeyAddress: '0xSESSION',
+      expiresAt: 9999999999,
+      status: 'active',
+    })
+    // A different owner never sees this record.
+    expect(readBaseMandate('SOMEONE_ELSE', storage)).toBeNull()
+  })
+})
+
+describe('checkStoredBaseMandate — owner-scoped gating (VF Wallet Task 6)', () => {
+  it('omitting stellarOwner uses the preserved legacy unscoped path (app.strategy.merge.test.jsx locks this)', async () => {
+    const getMandateStatus = vi.fn().mockResolvedValue({ valid: true })
+    const storage = fakeStorage({
+      vf_base_mandate: JSON.stringify({ serializedApproval: 'LEGACY' }),
+    })
     expect(await checkStoredBaseMandate({ getMandateStatus, storage })()).toBe(true)
-    expect(getMandateStatus).toHaveBeenCalledWith('APPROVAL')
+    expect(getMandateStatus).toHaveBeenCalledWith('LEGACY')
+  })
+
+  it('a mandate set up for owner A is not visible to owner B (no silent adoption on wallet switch)', async () => {
+    const deps = okDeps()
+    const storage = fakeStorage()
+    const getMandateStatus = vi.fn().mockResolvedValue({ status: 'active' })
+    await setupBaseMandate({ connectedAddress: 'GOWNERA', deps: { ...deps, storage } })
+    expect(
+      await checkStoredBaseMandate({ getMandateStatus, storage, stellarOwner: 'GOWNERB' })()
+    ).toBe(false)
+    expect(getMandateStatus).not.toHaveBeenCalled()
+  })
+})
+
+describe('resolveBaseAvailability — legacy overload stays live (VF Wallet Task 6 hard gate)', () => {
+  it('still resolves purely from checkHealth/checkMandate/checkFunding closures, no stellarOwner required', async () => {
+    const { baseAvailable } = resolveBaseAvailability({
+      checkHealth: async () => true,
+      checkMandate: async () => true,
+      checkFunding: async () => true,
+    })
+    expect(await baseAvailable).toBe(true)
+  })
+
+  it('an owner-scoped checkStoredBaseMandate closure plugs straight into the unchanged legacy shape', async () => {
+    const deps = okDeps()
+    const storage = fakeStorage()
+    const getMandateStatus = vi.fn().mockResolvedValue({ status: 'active' })
+    await setupBaseMandate({ connectedAddress: 'GUSER', deps: { ...deps, storage } })
+    const { baseAvailable } = resolveBaseAvailability({
+      checkHealth: async () => true,
+      checkMandate: checkStoredBaseMandate({ getMandateStatus, storage, stellarOwner: 'GUSER' }),
+    })
+    expect(await baseAvailable).toBe(true)
   })
 })
 

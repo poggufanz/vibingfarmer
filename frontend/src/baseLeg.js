@@ -23,7 +23,7 @@ import { deriveCctpTransferUnits } from './stellar/format.js'
 import { BASE_POOL_CATALOG } from './config.js'
 import { estimateMinShares as defaultEstimateMinShares } from './base/quotes.js'
 import { defaultMakePublicClient } from './wallet/passkeyBase.js'
-import { readStoredBaseMandate } from './mergeFlowHelpers.js'
+import { readBaseMandate, validateBaseMandate } from './wallet/baseBinding.js'
 
 /**
  * @param {{
@@ -62,7 +62,10 @@ export async function executeBaseLeg({
     makePublicClient = defaultMakePublicClient,
     runAgentPull = defaultRunAgentPull,
     runAgentBurn = defaultRunAgentBurn,
-    readStoredMandate = readStoredBaseMandate,
+    // VF Wallet Task 6: owner+kernel-scoped v2 mandate (wallet/baseBinding.js), not the legacy
+    // global vf_base_mandate record — the whole point of this task is that a mismatched owner or
+    // kernel fails closed HERE, before any funds move, rather than trusting storage content alone.
+    readStoredMandate = readBaseMandate,
   } = deps || {}
 
   const safeEmit = (name, data) => {
@@ -87,15 +90,32 @@ export async function executeBaseLeg({
     // Re-validate right before spending it (TOCTOU guard: the app.jsx preflight checked this
     // during strategy generation, which can be minutes before dispatch). No ceremony fallback —
     // mandate setup is its own per-window moment, never something a run performs.
-    const storedMandate = readStoredMandate()
-    if (!storedMandate) throw new Error('No durable Base mandate is stored.')
-    let valid = false
-    try {
-      valid = (await getMandateStatus(storedMandate.serializedApproval)).valid
-    } catch {
-      valid = false
+    //
+    // VF Wallet Task 6: fail-closed BINDING check first (owner + kernel must match what this
+    // grant actually pinned on-chain), then a live relayer confirmation. A binding mismatch is
+    // reported distinctly from "expired" — it means the wrong mandate is in storage for this
+    // owner/kernel pair, not merely a stale-but-otherwise-correct one.
+    const storedMandate = readStoredMandate(connectedAddress)
+    const localStatus = validateBaseMandate(storedMandate, {
+      stellarOwner: connectedAddress,
+      kernelAddress,
+    })
+    if (localStatus === 'missing') throw new Error('No durable Base mandate is stored.')
+    if (localStatus !== 'active') {
+      throw new Error(`The stored Base mandate is ${localStatus} for this owner/kernel.`)
     }
-    if (!valid) throw new Error('The stored Base mandate is no longer valid.')
+    let remoteStatus = 'unknown'
+    try {
+      remoteStatus = (
+        await getMandateStatus(storedMandate.serializedApproval, {
+          stellarOwner: connectedAddress,
+          kernelAddress,
+        })
+      ).status
+    } catch {
+      remoteStatus = 'unknown'
+    }
+    if (remoteStatus !== 'active') throw new Error('The stored Base mandate is no longer valid.')
 
     // ownerAddress comes from the CALLER's kernelAddress param (the exact value orchestrator.js
     // already used to pin this grant's mint_recipient on-chain), never re-read from storage here —
@@ -165,6 +185,10 @@ export async function executeBaseLeg({
       serializedApproval: storedMandate.serializedApproval,
       allocations: quotedAllocations,
       burnUnits7,
+      // Threaded through to postFarm's wire contract (VF Wallet Task 6) — the bridge agent is
+      // the recovery handle for a stranded-funds sweep either way; runId/grantTxHash are not yet
+      // plumbed this deep from orchestrator.js, so they travel as null until a later task adds them.
+      bridgeAgentAddress,
       onEvent,
       deps: {
         burn: async ({ amountUnits }) => {

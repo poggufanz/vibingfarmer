@@ -40,7 +40,38 @@ describe('runFarmFlow', () => {
         sourceDomain: 27,
         serializedApproval: 'approval-blob',
         allocations,
+        // VF Wallet Task 6: stellarOwner/kernelAddress bind the dispatch, derived from the
+        // params already passed in (no new required args); bridgeAgent/runId/grantTxHash
+        // default to null when the caller doesn't supply them.
+        stellarOwner: 'GWALLET',
+        kernelAddress: '0xBASEACCT',
+        bridgeAgent: null,
+        runId: null,
+        grantTxHash: null,
       })
+    )
+  })
+
+  test('threads bridgeAgentAddress/runId/grantTxHash through to postFarm when the caller supplies them', async () => {
+    const deps = {
+      burn: vi.fn(async () => ({ approveHash: 'a', burnHash: 'burn-1' })),
+      postFarm: vi.fn(async () => ({ jobId: 'job-1' })),
+      pollFarmStatus: vi.fn(async () => ({ status: 'done', steps: {} })),
+    }
+    await runFarmFlow({
+      stellarWallet: { address: 'GWALLET', signBurn: vi.fn() },
+      baseRecipientAddress: '0xBASEACCT',
+      sessionKeyAddress: '0xSESSION',
+      serializedApproval: 'approval-blob',
+      allocations: [{ pool: '0xAAAA', amount: 100, amountBaseUnits: 100_000_000n, minShares: 99n }],
+      burnUnits7: 1_000_000_000n,
+      bridgeAgentAddress: 'CBRIDGE',
+      runId: 'run-42',
+      grantTxHash: 'HGRANT',
+      deps,
+    })
+    expect(deps.postFarm).toHaveBeenCalledWith(
+      expect.objectContaining({ bridgeAgent: 'CBRIDGE', runId: 'run-42', grantTxHash: 'HGRANT' })
     )
   })
 
