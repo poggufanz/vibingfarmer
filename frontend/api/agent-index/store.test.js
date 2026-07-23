@@ -335,6 +335,42 @@ describe('commitSourcePage', () => {
     expect(owned).toEqual([]) // neither otherwise-valid membership survived the rollback
   })
 
+  it('resumes past a recorded gap by committing an empty page spanning it — the documented continuation protocol', async () => {
+    await store.commitSourcePage({
+      sourceId: SOURCE_ID,
+      fromLedger: 100,
+      throughLedger: 150,
+      finalizedThroughLedger: 148,
+      cursor: 'c1',
+      memberships: [],
+    })
+    // The hole is unindexable (e.g. an RPC gap) — record it explicitly...
+    await store.recordGap({ sourceId: SOURCE_ID, networkId: NETWORK, fromLedger: 151, throughLedger: 159, reason: 'rpc-timeout' })
+    // ...then commit a page spanning the same range with no memberships to actually advance the
+    // cursor. recordGap alone never moves indexed_through_ledger — this empty page is what does.
+    await store.commitSourcePage({
+      sourceId: SOURCE_ID,
+      fromLedger: 151,
+      throughLedger: 159,
+      finalizedThroughLedger: 159,
+      cursor: 'c1-gap',
+      memberships: [],
+    })
+    // Normal indexing resumes past the hole without being wedged.
+    await store.commitSourcePage({
+      sourceId: SOURCE_ID,
+      fromLedger: 160,
+      throughLedger: 200,
+      finalizedThroughLedger: 198,
+      cursor: 'c2',
+      memberships: [],
+    })
+    const { sources, gaps } = await store.readCoverage({ networkId: NETWORK })
+    expect(sources[0].indexedThroughLedger).toBe(200)
+    expect(gaps).toHaveLength(1) // the gap stays on record even though the cursor moved past it
+    expect(gaps[0]).toMatchObject({ sourceId: SOURCE_ID, fromLedger: 151, throughLedger: 159, status: 'open' })
+  })
+
   it('rejects a membership whose networkId/creatorAddress does not match the source', async () => {
     await expect(
       store.commitSourcePage({

@@ -151,9 +151,14 @@ export function createAgentIndexStore(db) {
 
   /** One D1 batch/transaction: membership writes + the contiguous cursor advance for `sourceId`
    * either all commit or none commit. `fromLedger` must equal the source's current
-   * indexed_through_ledger + 1 (or be the source's very first page) — a caller that needs to
-   * skip ledgers must `recordGap` for that range explicitly; commitSourcePage never silently
-   * advances past unindexed history.
+   * indexed_through_ledger + 1 (or be the source's very first page) — commitSourcePage never
+   * silently advances past unindexed history; contiguity is judged only against
+   * indexed_through_ledger, never against agent_index_gaps.
+   * To skip over ledgers that are genuinely unavailable (e.g. an RPC hole), a caller must do BOTH:
+   * (1) `recordGap` for that range — this only records the hole, it does NOT move the cursor —
+   * and (2) `commitSourcePage` a page spanning the same range with `memberships: []` — this is
+   * what actually advances indexed_through_ledger past the hole. The gap row stays on record
+   * (readCoverage still reports it as open) even after the cursor has moved past it.
    * ponytail: the contiguity check reads current state, then writes, as two steps — safe for the
    * single-writer-per-source usage this app has (one keeper cron per source); a second concurrent
    * writer for the SAME source could race past this check. Upgrade to a WHERE-guarded conditional
@@ -181,7 +186,9 @@ export function createAgentIndexStore(db) {
     if (fromLedger !== expectedFrom) {
       throw new Error(
         `commitSourcePage: non-contiguous page for ${sourceId} — expected fromLedger ${expectedFrom}, got ${fromLedger}. ` +
-          `Call recordGap for ledgers ${expectedFrom}..${fromLedger - 1} first if they are genuinely unavailable.`
+          `If ledgers ${expectedFrom}..${fromLedger - 1} are genuinely unavailable: recordGap for that range AND ` +
+          `commitSourcePage a page spanning it (memberships: [] is fine) to actually advance past it — ` +
+          `recordGap alone does not move indexed_through_ledger.`
       )
     }
     const indexedFromLedger = existing ? existing.indexed_from_ledger : fromLedger
