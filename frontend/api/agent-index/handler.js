@@ -84,11 +84,14 @@ export async function handleIngest({
 }
 
 /**
- * `POST /api/agent-index?action=backfill-commit`. The ONLY protected write path a historical
- * backfill audit (Task 4 — scripts/agent-index/backfill-legacy-agents.mjs) may post through: same
- * secret gate as `handleIngest`, then delegates entirely to `backfill.js`'s `commitBackfillAudit`
- * — this function adds no membership-writing logic of its own on purpose, so there is exactly one
- * place in the codebase that can turn audit evidence into D1 rows.
+ * The ONLY protected write path a historical backfill audit may post through. NOT wired to an
+ * HTTP route today — `scripts/agent-index/backfill-legacy-agents.mjs` (Task 4) calls this
+ * in-process (a direct ESM import), passing a locally-opened D1 store and
+ * `AGENT_INDEX_INGEST_SECRET` as both `secret` and `providedSecret`. Same secret-gate shape as
+ * `handleIngest` on purpose (a future `POST /api/agent-index?action=backfill-commit` route in
+ * api/agent-index.js could wrap this unchanged), then delegates entirely to `backfill.js`'s
+ * `commitBackfillAudit` — this function adds no membership-writing logic of its own, so there is
+ * exactly one place in the codebase that can turn audit evidence into D1 rows.
  * @param {object} p
  * @param {string} p.secret configured backfill secret ('' = not configured)
  * @param {string} p.providedSecret bearer token from the request

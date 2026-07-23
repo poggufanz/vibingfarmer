@@ -30,12 +30,15 @@
 import { existsSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
+import { hash } from '@stellar/stellar-sdk'
 import { rpcServer } from '../../src/stellar/client.js'
 import { readAgentScope } from '../../src/stellar/agentCache.js'
 import { decodeDeployedEvent } from '../../src/stellar/routerEvents.js'
 import { decodeEvent } from '../../src/stellar/events.js'
 import { fromScVal, symbolScVal } from '../../src/stellar/scval.js'
+import { canonicalizeStrategy } from '../../src/strategy/canonicalStrategy.js'
 import { AGENT_CREATORS, AGENT_CREATOR_MANIFEST_VERSION } from '../../src/stellar/agentCreatorManifest.js'
+import { scanRpcEventsPage } from '../../api/agent-index/indexer.js'
 import { createAgentIndexStore } from '../../api/agent-index/store.js'
 import { buildBackfillAudit } from '../../api/agent-index/backfill.js'
 import { handleBackfillCommit } from '../../api/agent-index/handler.js'
@@ -65,6 +68,46 @@ export const KNOWN_DIRECT_DEPLOY_LOGS = [
     kind: 'deposit',
   },
 ]
+
+// Review finding 1 (MAJOR, structural verified-gate): the brief conditions a 'verified' verdict
+// on vault deposit-holder history (bullet 3) and owner-linked Horizon operations (bullet 4) too —
+// neither has an automated collector (see module header). Without something in `sources[]` for
+// them, `deriveVerdict` (backfill.js) is blind to their absence: once every OTHER check lines up
+// (e.g. the demo agent's provenance gets filled in), it would return 'verified' despite those two
+// channels never having been consulted. These two PERMANENT placeholder entries close that hole
+// structurally — `contiguous: false` makes 'verified' unreachable regardless of how complete
+// everything else becomes. Delete an entry here ONLY when its real collector lands and produces a
+// genuine source entry in its place.
+export const UNIMPLEMENTED_CHANNEL_SOURCES = [
+  {
+    kind: 'vault',
+    address: 'unimplemented-channel:vault-deposit-holder-history',
+    providerId: null,
+    oldestAvailableLedger: null,
+    fromLedger: 1,
+    throughLedger: 1,
+    contiguous: false,
+    evidenceHash: null,
+  },
+  {
+    kind: 'horizon-account',
+    address: 'unimplemented-channel:owner-linked-horizon-operations',
+    providerId: null,
+    oldestAvailableLedger: null,
+    fromLedger: 1,
+    throughLedger: 1,
+    contiguous: false,
+    evidenceHash: null,
+  },
+]
+
+// Review finding 3 (evidence hash): deterministic hash over one source's actual evidence, same
+// canonical-hash idiom as agentCreatorManifest.js's computeManifestHash (key-sorted JSON, sha256).
+// Two calls over the same evidence MUST hash identically regardless of caller key order; any
+// change to the evidence changes the hash — that's the whole point of persisting it.
+export function evidenceHashFor(payload) {
+  return '0x' + hash(JSON.stringify(canonicalizeStrategy(payload))).toString('hex')
+}
 
 export function parseArgs(argv) {
   return { dryRun: argv.includes('--dry-run') }
@@ -155,6 +198,26 @@ export async function pageArchivalSource({ creator, eventSource, limit = 200, ma
   return { events, contiguous: false, scannedThroughLedger: startLedger - 1, latestLedger: eventSource.latestAvailableLedger ?? null }
 }
 
+// Review finding 2 (HIGH, pager truncation): a raw `getEvents` response can be TRUNCATED (a
+// cursor present, or `limit` events returned) well short of `endLedger` — claiming the full
+// requested range was scanned in that case would silently drop every event past the truncation
+// boundary the very next time this page is (falsely) treated as complete. Reuses
+// indexer.js's own `scanRpcEventsPage` — the exact same truncation-safety logic the live (Task 3)
+// ingest path already relies on (see its own doc comment) — rather than re-deriving a second,
+// easier-to-get-wrong version of the same check here.
+export function interpretArchivalPage({ res, startLedger, endLedger }) {
+  const page = scanRpcEventsPage({
+    events: res.events || [],
+    cursor: res.cursor,
+    latestLedger: res.latestLedger,
+    startLedger,
+    endLedger,
+  })
+  // cursor is always null out of this adapter — resumption is ledger-arithmetic
+  // (scannedThroughLedger + 1), matching api/agent-index.js's own live-RPC adapter convention.
+  return { events: page.events, cursor: null, scannedThroughLedger: page.scannedThroughLedger, latestLedger: page.latestLedger }
+}
+
 async function buildArchivalEventSource(creator) {
   const url = process.env.AGENT_INDEX_ARCHIVAL_RPC_URL
   if (!url) return null
@@ -176,10 +239,18 @@ async function buildArchivalEventSource(creator) {
     creator.kind === 'funding-router'
       ? [[symbolScVal('deployed').toXDR('base64'), '*', '*']]
       : [[symbolScVal('agent_authorized').toXDR('base64')]]
+  // Review finding 4: AGENT_INDEX_ARCHIVAL_OLDEST_LEDGER (wrangler.jsonc, non-secret) is the
+  // documented archival-floor fallback for a provider whose getHealth() doesn't report
+  // oldestLedger — only used when the live health probe has nothing to say.
+  const configuredFloor = Number(process.env.AGENT_INDEX_ARCHIVAL_OLDEST_LEDGER)
   return {
     providerId: process.env.AGENT_INDEX_ARCHIVAL_PROVIDER_ID || 'archival-rpc',
     endpointClass: 'archival',
-    oldestAvailableLedger: Number.isFinite(health?.oldestLedger) ? health.oldestLedger : 1,
+    oldestAvailableLedger: Number.isFinite(health?.oldestLedger)
+      ? health.oldestLedger
+      : Number.isInteger(configuredFloor) && configuredFloor > 0
+        ? configuredFloor
+        : 1,
     latestAvailableLedger: latest.sequence,
     async getEvents({ startLedger, endLedger, cursor, limit }) {
       const res = await server.getEvents({
@@ -188,7 +259,7 @@ async function buildArchivalEventSource(creator) {
         filters: [{ type: 'contract', contractIds: [creator.address], topics }],
         limit,
       })
-      return { events: res.events || [], cursor: res.cursor ?? null, latestLedger: res.latestLedger, scannedThroughLedger: endLedger }
+      return interpretArchivalPage({ res, startLedger, endLedger })
     },
   }
 }
@@ -230,7 +301,14 @@ async function collectArchivalSource(creator) {
       fromLedger: creator.coverageStartLedger,
       throughLedger: Math.max(page.scannedThroughLedger, creator.coverageStartLedger),
       contiguous: page.contiguous,
-      evidenceHash: null,
+      // Review finding 3: deterministic hash over the actual raw evidence this source's
+      // contiguous/candidate claims rest on — never over derived state, so a change to the
+      // underlying events always changes the hash.
+      evidenceHash: evidenceHashFor({
+        kind: creator.kind,
+        address: creator.address,
+        events: page.events.map((e) => ({ ledger: e.ledger, txHash: e.txHash, pagingToken: e.pagingToken })),
+      }),
     },
     candidates: page.events.map(decode).filter(Boolean),
   }
@@ -297,7 +375,10 @@ async function main() {
   const legacyCreators = AGENT_CREATORS.filter((c) => c.coverageStartLedger === 1)
 
   const collected = await Promise.all(legacyCreators.map((c) => collectArchivalSource(c)))
-  const sources = collected.map((c) => c.sourceEntry)
+  // UNIMPLEMENTED_CHANNEL_SOURCES is the structural verified-gate (review finding 1) — see its
+  // own comment. Always appended, never conditionally, so 'verified' stays unreachable until
+  // bullets 3+4 get real collectors.
+  const sources = [...collected.map((c) => c.sourceEntry), ...UNIMPLEMENTED_CHANNEL_SOURCES]
   const rawCandidates = [...collected.flatMap((c) => c.candidates), ...KNOWN_DIRECT_DEPLOY_LOGS]
 
   const server = await rpcServer()
