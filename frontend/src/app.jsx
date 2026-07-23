@@ -2680,7 +2680,7 @@ const App = () => {
         if (summary.baseLeg) {
           // Writes the dashboard's owner-address markers (backup for a wiped localStorage) and
           // returns a log line that matches the job's real final status — see mergeFlowHelpers.
-          const outcome = applyBaseLegOutcome(summary.baseLeg)
+          const outcome = applyBaseLegOutcome(summary.baseLeg, { stellarOwner: realAddress })
           if (outcome) addLog(outcome)
           if (summary.baseLeg.success) {
             // Don't wait for the 15s poll tick: surface the fresh Base positions now.

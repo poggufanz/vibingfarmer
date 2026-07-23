@@ -8,7 +8,9 @@ import { createMandate as defaultCreateMandate } from './wallet/mandate.js'
 import { postMandate as defaultPostMandate } from './base/relayerClient.js'
 import { BASE_POOL_CATALOG } from './config.js'
 import {
+  baseOwnerStorageKey,
   baseMandateStorageKey,
+  readBaseOwner,
   readBaseMandate,
   validateBaseMandate,
 } from './wallet/baseBinding.js'
@@ -368,15 +370,19 @@ export function mapBaseLegEvent(evName, data = {}) {
   }
 }
 
-// One place that turns the settled Base leg summary into the dashboard's owner-address write
-// plus an HONEST log line. finalStatus is pollFarmStatus's last word: 'done' = deposits landed,
-// 'error' = relay failed AFTER the burn (funds are minted/recoverable on Base — never imply
-// they're gone), anything else = polling gave up while the job was still settling. The old
+// One place that turns the settled Base leg summary into the dashboard's owner-record backup
+// write plus an HONEST log line. finalStatus is pollFarmStatus's last word: 'done' = deposits
+// landed, 'error' = relay failed AFTER the burn (funds are minted/recoverable on Base — never
+// imply they're gone), anything else = polling gave up while the job was still settling. The old
 // message claimed "deposited" for every success:true leg, which lied whenever polling timed out.
-// The localStorage write mirrors passkeyBridge's own persist (same keys the dashboard's
-// loadBasePositions gates on) — proven live 2026-07-19: a run whose markers were missing left a
-// fully-deposited position invisible in the UI with no code path to ever show it.
-export function applyBaseLegOutcome(baseLeg, { storage } = {}) {
+//
+// VF Wallet Task 6 re-review fix: the legacy vf_base_owner/vf_base_owner_address write below is
+// dual-write only now — every real reader (dashboardPositions.js, skills.jsx, HistoryPanel.jsx,
+// app.jsx's withdraw guard) gates on the owner-scoped v2 record instead. Passing `stellarOwner`
+// ALSO restores/refreshes that v2 record here, so a wiped/corrupt v2 record at settle time can't
+// leave a fully-deposited position invisible on the dashboard — the exact 2026-07-19 incident
+// this function exists to prevent, just one storage layer down from where it was proven live.
+export function applyBaseLegOutcome(baseLeg, { storage, stellarOwner } = {}) {
   if (!baseLeg) return null
   if (!baseLeg.success) {
     return {
@@ -391,6 +397,21 @@ export function applyBaseLegOutcome(baseLeg, { storage } = {}) {
       store.setItem('vf_base_owner', JSON.stringify({ mode: 'ceremony' }))
     }
     store.setItem('vf_base_owner_address', baseLeg.baseAccount)
+    if (stellarOwner) {
+      const existing = readBaseOwner(stellarOwner, store)
+      const now = Date.now()
+      store.setItem(
+        baseOwnerStorageKey(stellarOwner),
+        JSON.stringify({
+          version: 2,
+          stellarOwner,
+          kernelAddress: baseLeg.baseAccount,
+          passkeyName: existing?.passkeyName ?? null,
+          createdAt: existing?.createdAt ?? now,
+          updatedAt: now,
+        })
+      )
+    }
   }
   if (baseLeg.finalStatus === 'done') {
     return {

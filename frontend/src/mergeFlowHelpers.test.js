@@ -1,5 +1,7 @@
 // frontend/src/mergeFlowHelpers.test.js — applyBaseLegOutcome: honest status lines + the
-// dashboard-marker backup write (loadBasePositions gates on these exact localStorage keys).
+// dashboard owner-record backup write (dashboardPositions.js/skills.jsx/HistoryPanel.jsx/app.jsx
+// all gate on the owner-scoped v2 record now — the legacy vf_base_owner*  keys are dual-write
+// only, see applyBaseLegOutcome's own doc comment).
 import { describe, it, expect, vi } from 'vitest'
 import {
   applyBaseLegOutcome,
@@ -11,7 +13,7 @@ import {
   needsBaseMandateSetup,
   resolveBaseAvailability,
 } from './mergeFlowHelpers.js'
-import { readBaseMandate } from './wallet/baseBinding.js'
+import { readBaseMandate, readBaseOwner } from './wallet/baseBinding.js'
 
 function fakeStorage(initial = {}) {
   const m = new Map(Object.entries(initial))
@@ -235,6 +237,58 @@ describe('applyBaseLegOutcome', () => {
     expect(out.event).toBe('OrchestratorPlanned')
     expect(out.meta).toContain('settling')
     expect(out.meta).not.toContain('deposited on Base')
+  })
+
+  // VF Wallet Task 6 re-review fix: dashboardPositions.js/skills.jsx/HistoryPanel.jsx/app.jsx's
+  // withdraw guard all gate on the v2 owner record now, not the legacy keys — this backup must
+  // restore THAT, or a wiped/corrupt v2 record at settle time reproduces the 2026-07-19 incident
+  // one layer down (deposited position invisible on the dashboard).
+  it('given stellarOwner, restores the v2 owner record when it was missing at settle time', () => {
+    const storage = fakeStorage()
+    applyBaseLegOutcome(
+      { success: true, jobId: 'j1', finalStatus: 'done', baseAccount: '0x66fe' },
+      { storage, stellarOwner: 'GUSER' }
+    )
+    expect(readBaseOwner('GUSER', storage)).toMatchObject({
+      version: 2,
+      stellarOwner: 'GUSER',
+      kernelAddress: '0x66fe',
+    })
+  })
+
+  it('given stellarOwner, restores the v2 owner record when it was corrupt at settle time', () => {
+    const storage = fakeStorage({ 'vf_base_owner_v2:GUSER': '{not valid json' })
+    applyBaseLegOutcome(
+      { success: true, jobId: 'j1', finalStatus: 'done', baseAccount: '0x66fe' },
+      { storage, stellarOwner: 'GUSER' }
+    )
+    expect(readBaseOwner('GUSER', storage).kernelAddress).toBe('0x66fe')
+  })
+
+  it('given stellarOwner, an existing v2 record keeps its passkeyName/createdAt (kernelAddress + updatedAt refresh)', () => {
+    const storage = fakeStorage()
+    applyBaseLegOutcome(
+      { success: true, jobId: 'j0', finalStatus: 'done', baseAccount: '0xOLD' },
+      { storage, stellarOwner: 'GUSER' }
+    )
+    const first = readBaseOwner('GUSER', storage)
+    applyBaseLegOutcome(
+      { success: true, jobId: 'j1', finalStatus: 'done', baseAccount: '0x66fe' },
+      { storage, stellarOwner: 'GUSER' }
+    )
+    const second = readBaseOwner('GUSER', storage)
+    expect(second.kernelAddress).toBe('0x66fe')
+    expect(second.createdAt).toBe(first.createdAt)
+  })
+
+  it('without stellarOwner, writes only the legacy keys (no crash, no v2 write) — pre-migration callers still work', () => {
+    const storage = fakeStorage()
+    applyBaseLegOutcome(
+      { success: true, jobId: 'j1', finalStatus: 'done', baseAccount: '0x66fe' },
+      { storage }
+    )
+    expect(storage.dump()['vf_base_owner_address']).toBe('0x66fe')
+    expect(Object.keys(storage.dump()).some((k) => k.startsWith('vf_base_owner_v2:'))).toBe(false)
   })
 })
 
