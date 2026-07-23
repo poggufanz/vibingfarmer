@@ -30,12 +30,18 @@ import {
 import {
   addrScVal,
   i128ScVal,
+  u32ScVal,
   u64ScVal,
   bytes32ScVal,
   boolScVal,
   voidScVal,
   structScVal,
 } from './scval.js'
+// AGENT_KIND_DEPOSIT / ZERO32 already exist for the router-deploy path's AgentInit (see
+// orchestrator.js grantFreshAgents) — reused here rather than redeclared for this deploy's
+// Bridge-only (harmless for Deposit) AgentScope fields.
+import { AGENT_KIND_DEPOSIT } from './grant.js'
+import { ZERO32 } from './cctpBurn.js'
 
 const DEFAULT_PERIOD_DURATION = 86400
 // A wallet signature left unanswered must not hang the run: reject after this long.
@@ -126,7 +132,8 @@ async function ensureUserTrustline(owner) {
  * Deploy a fresh agent_account for THIS run's session key (Option B: fresh agent per run).
  * create-from-wasm-hash (the wasm is already uploaded on-chain — no upload step); the
  * constructor pins `sessionKey.rawPublicKey` as the account's signer and self-approves
- * scope.vault to pull up to `cap` of scope.token. User-signed AND user-paid: the relay only
+ * scope.target (agent_account v3; was scope.vault pre-bridge) to pull up to `cap` of
+ * scope.token. User-signed AND user-paid: the relay only
  * fee-bumps vault-deposit invokes (server allowlist, fail-closed), so a deploy could never go
  * through it. period_start 0 → enforce()'s rolling reset starts the window on first deposit.
  * @param {{ owner:string, sessionKey:{rawPublicKey:Uint8Array}, cap:bigint|number,
@@ -142,11 +149,17 @@ export async function deployAgentForSession({
   expiry,
   server,
 }) {
-  // AgentScope struct (soroban/contracts/agent_account/src/types.rs) — Rust field order.
+  // AgentScope struct (soroban/contracts/agent_account/src/types.rs, v3) — Rust field order.
+  // vault -> target (Task 1 rename); kind/mint_recipient/destination_domain are Bridge-only
+  // fields the Rust side ignores for kind 0 (Deposit) — pinned to the same harmless
+  // zero/Deposit values grantFreshAgents' AgentInit uses for its own Deposit-kind agents.
   const scope = structScVal({
     owner: addrScVal(owner),
-    vault: addrScVal(vault),
+    target: addrScVal(vault),
     token: addrScVal(SOROBAN_TOKEN_ADDRESS),
+    kind: u32ScVal(AGENT_KIND_DEPOSIT),
+    mint_recipient: bytes32ScVal(ZERO32),
+    destination_domain: u32ScVal(0),
     cap_per_period: i128ScVal(BigInt(cap)),
     period_duration: u64ScVal(periodDuration),
     spent_in_period: i128ScVal(0n),

@@ -7,6 +7,7 @@ import {
   estimateSupplyAprBps,
   readSupplyAprBps,
   readLifeboatState,
+  readPendingUpgrade,
 } from './vaultReads.js'
 
 // Stand-in strkeys (same ones agentDeposit.test.js already uses) — any syntactically valid
@@ -190,5 +191,29 @@ describe('readLifeboatState', () => {
   test('returns null on simulation failure rather than throwing', async () => {
     const fakeServer = { simulateTransaction: async () => ({ error: 'boom' }) }
     expect(await readLifeboatState(VAULT, { server: fakeServer })).toBeNull()
+  })
+})
+
+describe('readPendingUpgrade', () => {
+  test('decodes wasm_hash to hex and eta to Number when an upgrade is scheduled', async () => {
+    const wasmHash = Buffer.from('cd'.repeat(32), 'hex')
+    const pending = { wasm_hash: wasmHash, eta: 1_900_000_000n }
+    const fakeServer = {
+      simulateTransaction: async () => ({ result: { retval: nativeToScVal(pending) } }),
+    }
+    const v = await readPendingUpgrade(VAULT, { server: fakeServer })
+    expect(v).toEqual({ wasmHashHex: wasmHash.toString('hex'), eta: 1_900_000_000 })
+  })
+
+  test('returns null when no upgrade is pending (Option::None decodes to void)', async () => {
+    const fakeServer = {
+      simulateTransaction: async () => ({ result: { retval: xdr.ScVal.scvVoid() } }),
+    }
+    expect(await readPendingUpgrade(VAULT, { server: fakeServer })).toBeNull()
+  })
+
+  test('returns null on simulation failure rather than throwing', async () => {
+    const fakeServer = { simulateTransaction: async () => ({ error: 'boom' }) }
+    expect(await readPendingUpgrade(VAULT, { server: fakeServer })).toBeNull()
   })
 })

@@ -82,6 +82,21 @@ A separate lifeboat radar process evaluates pool health about once per Stellar l
 
 If any signal breaches its engage threshold and you have an active, unexpired mandate (one signature, renewed in the ops console, typically for 24 hours), the radar can call `emergency_derisk()` to pull every strategy back to vault-idle. Without a live mandate it only logs an alarm and takes no action at all — funds are never moved autonomously without a permission you granted and can let lapse. Resuming also requires the all-clear to hold for roughly 10 minutes straight (100 consecutive ledgers), plus a still-live mandate.
 
+## Vault upgrade timelock
+
+A pending change to the vault's own contract code has to clear a public delay before it can take effect, the same protection a multisig timelock gives a protocol's admin. All four moves are admin-only:
+
+| Function | What it does |
+|---|---|
+| Schedule | Records the target wasm hash and sets an eta 3 days out; scheduling again before that eta resets the full delay |
+| Execute | Fails outright if called before the eta — the timelock is enforced on-chain, not just in the UI — and otherwise swaps the contract's code without re-running its constructor, so existing vault storage (shares, strategies, keeper config) survives the upgrade |
+| Cancel | Clears the pending schedule at any point before it executes |
+| Pending view | Read-only; lets anyone check what's queued and when, with no signature required |
+
+The frontend and the lifeboat radar both surface a pending upgrade without acting on it. The homepage polls for one on a periodic interval and shows a banner naming the eta and reminding you that funds can be withdrawn before it lands; the same schedule, execution, and cancellation events populate the alert feed with plain-language explanations. The radar logs a one-time warning the first time a schedule appears or changes, and an info line once it clears, but never derisks or otherwise reacts to an upgrade on its own — an upgrade is surfaced as information, and withdrawing ahead of one you don't like remains your decision.
+
+This feature is live on the deployed testnet vault as of the 2026-07-20 in-place upgrade: `schedule_upgrade`, `execute_upgrade`, `cancel_upgrade`, and `pending_upgrade` are all callable today, the old instant upgrade is gone, and the dedicated smoke test proved the schedule, the timelock block, the cancel path, and the 2-of-3 multisig admin proof against the real vault.
+
 ## Wallets and on-ramp
 
 Use the passkey-based VF Wallet (no seed phrase, optional browser extension) with a built-in testnet faucet, or bring Freighter, xBull, or Albedo through a shared wallet-kit interface.

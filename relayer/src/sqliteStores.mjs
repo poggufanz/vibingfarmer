@@ -50,9 +50,11 @@ export function createSqliteStores(path, { ttlMs = HOUR_MS, now = () => Date.now
   };
 
   const mandates = {
-    set(key, value) {
+    // expiresAt (ms epoch), when given, overrides the now()+ttlMs default — same contract as
+    // mandateStore.mjs's set(), so httpRouter's handleMandate works unchanged against either store.
+    set(key, value, expiresAt) {
       db.prepare('INSERT INTO mandates (approval, session_key, expires_at) VALUES (?, ?, ?) ON CONFLICT(approval) DO UPDATE SET session_key = excluded.session_key, expires_at = excluded.expires_at')
-        .run(key, value, now() + ttlMs);
+        .run(key, value, expiresAt ?? now() + ttlMs);
     },
     get(key) {
       const row = db.prepare('SELECT session_key, expires_at FROM mandates WHERE approval = ?').get(key);
@@ -62,6 +64,17 @@ export function createSqliteStores(path, { ttlMs = HOUR_MS, now = () => Date.now
         return undefined;
       }
       return row.session_key;
+    },
+    // Reuse-check lookup for GET /mandate/valid: same shape + semantics as mandateStore.mjs's
+    // status() — reports validity + expiry WITHOUT ever handing back the session key.
+    status(key) {
+      const row = db.prepare('SELECT expires_at FROM mandates WHERE approval = ?').get(key);
+      if (!row) return { valid: false };
+      if (now() >= row.expires_at) {
+        db.prepare('DELETE FROM mandates WHERE approval = ?').run(key);
+        return { valid: false };
+      }
+      return { valid: true, expiresAt: row.expires_at };
     },
     delete(key) {
       return db.prepare('DELETE FROM mandates WHERE approval = ?').run(key).changes > 0;

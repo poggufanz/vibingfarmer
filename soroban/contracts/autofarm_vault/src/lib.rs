@@ -141,6 +141,10 @@ impl AutofarmVault {
     pub fn lifeboat_state(e: &Env) -> types::LifeboatState {
         vault::lifeboat_state(e)
     }
+    /// The currently scheduled upgrade (wasm hash + eta), or None. Read-only.
+    pub fn pending_upgrade(e: &Env) -> Option<types::PendingUpgrade> {
+        vault::pending_upgrade(e)
+    }
     /// Keeper-only, mandate-gated. Drains every strategy best-effort and engages the
     /// Derisked flag, blocking compound/rebalance until `resume`. Idempotent.
     pub fn emergency_derisk(e: &Env, reason_code: u32) -> Result<i128, types::VaultError> {
@@ -178,9 +182,17 @@ impl AutofarmVault {
     pub fn emergency_withdraw(e: &Env, strategy: Address) {
         vault::emergency_withdraw(e, strategy)
     }
-    /// Admin-only. Swaps the contract's wasm.
-    pub fn upgrade(e: &Env, new_wasm_hash: BytesN<32>) {
-        vault::upgrade(e, new_wasm_hash)
+    /// Admin-only. Announces an upgrade; executable after the timelock delay.
+    pub fn schedule_upgrade(e: &Env, new_wasm_hash: BytesN<32>) -> Result<(), types::VaultError> {
+        vault::schedule_upgrade(e, new_wasm_hash)
+    }
+    /// Admin-only. Executes a scheduled upgrade once its timelock has elapsed.
+    pub fn execute_upgrade(e: &Env) -> Result<(), types::VaultError> {
+        vault::execute_upgrade(e)
+    }
+    /// Admin-only. Cancels a scheduled upgrade.
+    pub fn cancel_upgrade(e: &Env) -> Result<(), types::VaultError> {
+        vault::cancel_upgrade(e)
     }
 }
 

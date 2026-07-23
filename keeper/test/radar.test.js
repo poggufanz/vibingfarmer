@@ -115,6 +115,43 @@ describe('radarTick', () => {
   });
 });
 
+describe('radarTick - pending vault upgrade (surface-only, dedupe log)', () => {
+  it('logs a WARN once when an upgrade is first seen, not again on an unchanged repeat tick', async () => {
+    const pendingUpgrade = { wasmHashHex: 'ab'.repeat(32), eta: 2_000_000_000 };
+    const submit = vi.fn(async () => 'tx');
+    const ctx = mkCtx(async () => ({ ...calm, pendingUpgrade }), submit);
+    await radarTick(ctx);
+    await radarTick(ctx);
+    expect(ctx.deps.log.warn).toHaveBeenCalledTimes(1);
+    expect(submit).not.toHaveBeenCalled(); // surface only — radar never acts on this signal
+  });
+
+  it('logs again when the scheduled hash/eta changes', async () => {
+    const reads = [
+      { ...calm, pendingUpgrade: { wasmHashHex: 'cd'.repeat(32), eta: 2_000_000_001 } },
+      { ...calm, pendingUpgrade: { wasmHashHex: 'cd'.repeat(32), eta: 2_000_000_002 } },
+    ];
+    const ctx = mkCtx(async () => reads.shift());
+    await radarTick(ctx);
+    await radarTick(ctx);
+    expect(ctx.deps.log.warn).toHaveBeenCalledTimes(2);
+  });
+
+  it('logs once (info) when a pending upgrade clears, and stays quiet after that', async () => {
+    const reads = [
+      { ...calm, pendingUpgrade: { wasmHashHex: 'ef'.repeat(32), eta: 2_000_000_003 } },
+      { ...calm, pendingUpgrade: null },
+      { ...calm, pendingUpgrade: null },
+    ];
+    const ctx = mkCtx(async () => reads.shift());
+    await radarTick(ctx); // scheduled -> warn
+    await radarTick(ctx); // cleared -> info
+    await radarTick(ctx); // still clear -> no new log
+    expect(ctx.deps.log.warn).toHaveBeenCalledTimes(1);
+    expect(ctx.deps.log.info).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('divergenceBps', () => {
   it('abs distance from the ref median in bps', () => {
     expect(divergenceBps(1.25, [1.0, 1.0, 1.02])).toBe(2500);

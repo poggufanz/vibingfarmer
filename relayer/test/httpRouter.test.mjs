@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createRelayerRouter } from '../src/httpRouter.mjs';
+import { createMandateStore } from '../src/mandateStore.mjs';
 
 function mockRes() {
   return {
@@ -18,7 +19,10 @@ describe('createRelayerRouter', () => {
 
   beforeEach(() => {
     jobs = new Map();
-    mandates = new Map();
+    // createMandateStore (not a plain Map) so the /mandate/valid tests below can call
+    // mandates.status() — a strict superset of Map's get/set/size, so every existing test that
+    // only uses get/set/size is unaffected.
+    mandates = createMandateStore();
     nextId = 0;
     genId = () => `job-${++nextId}`;
     farmFn = vi.fn(async () => ({
@@ -45,6 +49,8 @@ describe('createRelayerRouter', () => {
   });
 
   describe('POST /mandate', () => {
+    const nowS = () => Math.floor(Date.now() / 1000);
+
     it('400s when serializedApproval or sessionPrivateKey is missing', async () => {
       const res = mockRes();
       await router(mk('POST', '/api/vf-cross/mandate', { serializedApproval: 'approval-1' }), res);
@@ -52,15 +58,109 @@ describe('createRelayerRouter', () => {
       expect(mandates.size).toBe(0);
     });
 
-    it('stores the mandate and responds ok, never echoing the key back in the response', async () => {
+    it('stores the mandate and responds ok, never echoing the key back in the response — expiresAt is expiry (seconds) * 1000', async () => {
+      const expiry = nowS() + 100; // unix seconds, as the client sends it
       const res = mockRes();
       await router(mk('POST', '/api/vf-cross/mandate', {
-        serializedApproval: 'approval-1', sessionPrivateKey: '0xsecret-session-key',
+        serializedApproval: 'approval-1', sessionPrivateKey: '0xsecret-session-key', expiry,
       }), res);
       expect(res.statusCode).toBe(200);
       expect(jsonOf(res)).toEqual({ ok: true });
       expect(res.body).not.toContain('0xsecret-session-key');
       expect(mandates.get('approval-1')).toBe('0xsecret-session-key');
+      expect(mandates.status('approval-1')).toEqual({ valid: true, expiresAt: expiry * 1000 });
+    });
+
+    it('400s when expiry is missing or not a number', async () => {
+      const res = mockRes();
+      await router(mk('POST', '/api/vf-cross/mandate', {
+        serializedApproval: 'approval-1', sessionPrivateKey: '0xsecret-session-key',
+      }), res);
+      expect(res.statusCode).toBe(400);
+      expect(mandates.size).toBe(0);
+    });
+
+    it('400s when expiry is in the past', async () => {
+      const res = mockRes();
+      await router(mk('POST', '/api/vf-cross/mandate', {
+        serializedApproval: 'approval-1', sessionPrivateKey: '0xsecret-session-key', expiry: nowS() - 100,
+      }), res);
+      expect(res.statusCode).toBe(400);
+      expect(mandates.size).toBe(0);
+    });
+
+    it('400s when expiry is more than 30 days out', async () => {
+      const res = mockRes();
+      await router(mk('POST', '/api/vf-cross/mandate', {
+        serializedApproval: 'approval-1',
+        sessionPrivateKey: '0xsecret-session-key',
+        expiry: nowS() + 30 * 24 * 3600 + 60, // 30 days + a minute — just over the cap
+      }), res);
+      expect(res.statusCode).toBe(400);
+      expect(mandates.size).toBe(0);
+    });
+
+    it('accepts an expiry exactly at the 7-day window baseLeg actually requests', async () => {
+      const expiry = nowS() + 7 * 24 * 3600;
+      const res = mockRes();
+      await router(mk('POST', '/api/vf-cross/mandate', {
+        serializedApproval: 'approval-1', sessionPrivateKey: '0xsecret-session-key', expiry,
+      }), res);
+      expect(res.statusCode).toBe(200);
+      expect(mandates.status('approval-1').valid).toBe(true);
+    });
+  });
+
+  describe('GET /mandate/valid', () => {
+    const nowS = () => Math.floor(Date.now() / 1000);
+
+    it('valid:true with the stored expiresAt for a freshly-registered mandate', async () => {
+      const expiry = nowS() + 100;
+      await router(mk('POST', '/api/vf-cross/mandate', {
+        serializedApproval: 'approval-1', sessionPrivateKey: '0xsecret-session-key', expiry,
+      }), mockRes());
+
+      const res = mockRes();
+      await router(mk('GET', '/api/vf-cross/mandate/valid?approval=approval-1'), res);
+      expect(res.statusCode).toBe(200);
+      expect(jsonOf(res)).toEqual({ valid: true, expiresAt: expiry * 1000 });
+    });
+
+    it('never echoes the session key back in the response body', async () => {
+      const expiry = nowS() + 100;
+      await router(mk('POST', '/api/vf-cross/mandate', {
+        serializedApproval: 'approval-1', sessionPrivateKey: '0xsecret-session-key', expiry,
+      }), mockRes());
+
+      const res = mockRes();
+      await router(mk('GET', '/api/vf-cross/mandate/valid?approval=approval-1'), res);
+      expect(res.body).not.toContain('0xsecret-session-key');
+      expect(Object.keys(jsonOf(res)).sort()).toEqual(['expiresAt', 'valid']);
+    });
+
+    it('valid:false for an approval that was never registered', async () => {
+      const res = mockRes();
+      await router(mk('GET', '/api/vf-cross/mandate/valid?approval=never-registered'), res);
+      expect(res.statusCode).toBe(200);
+      expect(jsonOf(res)).toEqual({ valid: false });
+    });
+
+    it('valid:false once the mandate has passed its expiry', async () => {
+      let t = 1_000_000;
+      const clockedMandates = createMandateStore({ now: () => t });
+      const clockedRouter = createRelayerRouter({ buildFarm, relayUnwindMint, jobs, mandates: clockedMandates, genId });
+      clockedMandates.set('approval-1', '0xsecret-session-key', t + 1000);
+      t += 1000; // expiresAt is inclusive
+
+      const res = mockRes();
+      await clockedRouter(mk('GET', '/api/vf-cross/mandate/valid?approval=approval-1'), res);
+      expect(jsonOf(res)).toEqual({ valid: false });
+    });
+
+    it('400s when the approval query param is missing', async () => {
+      const res = mockRes();
+      await router(mk('GET', '/api/vf-cross/mandate/valid'), res);
+      expect(res.statusCode).toBe(400);
     });
   });
 

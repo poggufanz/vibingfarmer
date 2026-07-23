@@ -21,7 +21,12 @@ export function isVfWallet(connectedAddress) {
   return !!connectedAddress && localStorage.getItem('vf_wallet_contract') === connectedAddress
 }
 
-export async function ensureBaseOwner({ connectedAddress, deps = {} }) {
+// preferLogin: recovery semantics — an existing account is PRESUMED (the user clicked
+// "recover"), so start with a discoverable login even when no local record exists. Without it,
+// the no-record path registers first, and an authenticator that doesn't refuse duplicates
+// happily mints a brand-new credential → a brand-new EMPTY kernel account (seen live
+// 2026-07-20: "recover" on the same phone found no positions).
+export async function ensureBaseOwner({ connectedAddress, preferLogin = false, deps = {} }) {
   if (!connectedAddress) throw new Error('ensureBaseOwner: connectedAddress is required')
   let { createBaseSmartAccount } = deps
   if (!createBaseSmartAccount) {
@@ -35,10 +40,28 @@ export async function ensureBaseOwner({ connectedAddress, deps = {} }) {
   } catch {
     stored = null
   }
-  const mode = stored ? 'login' : 'register'
+  const mode = stored || preferLogin ? 'login' : 'register'
   const passkeyName = stored?.passkeyName || `vibing-farmer-base-${connectedAddress.slice(0, 8)}`
 
-  const account = await createBaseSmartAccount({ passkeyName, mode })
+  // Two-way fallback — the OWNER_KEY record is a per-browser hint, not the truth. The truth is
+  // the passkey itself (synced/phone-held), and login is DISCOVERABLE: the same credential
+  // always derives the same kernel account, so both directions recover without any server-side
+  // record:
+  //   no record + register refused (credential already exists — new laptop, same wallet) → login
+  //   record present + login failed (credential gone — wiped authenticator, stale record) → register
+  // Deliberately swallows the first error only to try the one other mode; a double failure
+  // rethrows the ORIGINAL error so a user cancel reads as a cancel, not a mystery.
+  let account
+  try {
+    account = await createBaseSmartAccount({ passkeyName, mode })
+  } catch (err) {
+    const fallbackMode = mode === 'login' ? 'register' : 'login'
+    try {
+      account = await createBaseSmartAccount({ passkeyName, mode: fallbackMode })
+    } catch {
+      throw err
+    }
+  }
 
   const ownerMode = 'ceremony'
   localStorage.setItem(OWNER_KEY, JSON.stringify({ mode: ownerMode, passkeyName }))

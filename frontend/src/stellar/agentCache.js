@@ -121,7 +121,8 @@ export function isScopeReusable({ scope, owner, vault, amount, nowSec }) {
   if (!scope) return false
   if (scope.revoked) return false
   if (String(scope.owner) !== String(owner)) return false
-  if (String(scope.vault) !== String(vault)) return false
+  // agent_account v3 renamed AgentScope.vault -> target; both generations are live on testnet.
+  if (String(scope.target ?? scope.vault) !== String(vault)) return false
   if (Number(scope.expiry ?? 0) <= nowSec + EXPIRY_MARGIN_SECONDS) return false
   return scopeHeadroom(scope, nowSec) >= BigInt(amount)
 }

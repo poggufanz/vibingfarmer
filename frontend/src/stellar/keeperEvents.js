@@ -13,7 +13,21 @@ const REBALANCE_TOPIC = 'vault_rebalance'
 const DERISK_TOPIC = 'vault_derisk'
 const RESUME_TOPIC = 'vault_resume'
 const MANDATE_TOPIC = 'vault_mandate'
-const KNOWN_TOPICS = [COMPOUND_TOPIC, REBALANCE_TOPIC, DERISK_TOPIC, RESUME_TOPIC, MANDATE_TOPIC]
+// Upgrade timelock visibility (surface-only) — schedule_upgrade/execute_upgrade/cancel_upgrade
+// (soroban/contracts/autofarm_vault/src/vault.rs).
+const UPGRADE_SCHEDULED_TOPIC = 'vault_upgrade_scheduled'
+const UPGRADE_EXECUTED_TOPIC = 'vault_upgrade_executed'
+const UPGRADE_CANCELLED_TOPIC = 'vault_upgrade_cancelled'
+const KNOWN_TOPICS = [
+  COMPOUND_TOPIC,
+  REBALANCE_TOPIC,
+  DERISK_TOPIC,
+  RESUME_TOPIC,
+  MANDATE_TOPIC,
+  UPGRADE_SCHEDULED_TOPIC,
+  UPGRADE_EXECUTED_TOPIC,
+  UPGRADE_CANCELLED_TOPIC,
+]
 
 // Ledgers to look back when no cursor is known yet (cold start) — same constant ExplorerPage.jsx
 // uses for the attestation feed. ~8000 ledgers is comfortably inside the RPC retention window
@@ -26,7 +40,8 @@ const DEFAULT_LOOKBACK_LEDGERS = 8000
  * malformed/unexpected record never breaks the whole batch.
  * @param {{ topic: unknown[], value: unknown, ledger: number, txHash?: string }} rec
  * @returns {{
- *   type: 'compound' | 'rebalance' | 'derisk' | 'resume' | 'mandate',
+ *   type: 'compound' | 'rebalance' | 'derisk' | 'resume' | 'mandate' | 'upgrade_scheduled'
+ *     | 'upgrade_executed' | 'upgrade_cancelled',
  *   ledger: number,
  *   txHash?: string,
  *   totalGain?: bigint,
@@ -39,6 +54,8 @@ const DEFAULT_LOOKBACK_LEDGERS = 8000
  *   idle?: bigint,
  *   authority?: string,
  *   expiry?: bigint,
+ *   wasmHashHex?: string,
+ *   eta?: number,
  * } | null}
  */
 export function decodeKeeperEvent(rec) {
@@ -68,6 +85,28 @@ export function decodeKeeperEvent(rec) {
     }
     if (topic === MANDATE_TOPIC) {
       return { ...base, type: 'mandate', authority: data.authority, expiry: data.expiry }
+    }
+    if (topic === UPGRADE_SCHEDULED_TOPIC) {
+      return {
+        ...base,
+        type: 'upgrade_scheduled',
+        wasmHashHex: Buffer.from(data.wasm_hash).toString('hex'),
+        eta: Number(data.eta),
+      }
+    }
+    if (topic === UPGRADE_EXECUTED_TOPIC) {
+      return {
+        ...base,
+        type: 'upgrade_executed',
+        wasmHashHex: Buffer.from(data.wasm_hash).toString('hex'),
+      }
+    }
+    if (topic === UPGRADE_CANCELLED_TOPIC) {
+      return {
+        ...base,
+        type: 'upgrade_cancelled',
+        wasmHashHex: Buffer.from(data.wasm_hash).toString('hex'),
+      }
     }
     return { ...base, type: 'rebalance', from: data.from, to: data.to, amount: data.amount }
   } catch {

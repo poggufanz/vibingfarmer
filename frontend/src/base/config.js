@@ -24,6 +24,11 @@ function requireAddress(name, value) {
 
 export const ZERODEV_PROJECT_ID = import.meta.env?.VITE_ZERODEV_PROJECT_ID || ''
 export const ZERODEV_PASSKEY_SERVER_URL = import.meta.env?.VITE_ZERODEV_PASSKEY_SERVER_URL || ''
+// The rp.id the ZeroDev dashboard registered for this project's passkey server. The hosted
+// server ignores client-sent rpID, so this is the scope EVERY ceremony must use — see
+// wallet/passkeyBase.js signWithRpId for why sign-side needs it spelled out.
+export const ZERODEV_PASSKEY_RP_ID =
+  import.meta.env?.VITE_ZERODEV_PASSKEY_RP_ID || 'vibing-farmer.pages.dev'
 export const BASE_SEPOLIA_RPC_URL =
   import.meta.env?.VITE_BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org'
 
@@ -84,6 +89,44 @@ export const YIELD_ROUTER_ABI = [
       { name: 'pool', type: 'address', indexed: true },
       { name: 'assets', type: 'uint256', indexed: false },
       { name: 'shares', type: 'uint256', indexed: false },
+    ],
+  },
+]
+
+export const BASE_EXIT_SWEEPER_ADDRESS = requireAddress(
+  'BASE_EXIT_SWEEPER_ADDRESS',
+  import.meta.env?.VITE_BASE_EXIT_SWEEPER_ADDRESS || '0x5451a6dc234d07F3C80752E3c0E798913E53de6D'
+)
+
+export const BASE_EXIT_SWEEPER_ABI = [
+  {
+    type: 'function',
+    name: 'exitAllAndBurn',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'pools', type: 'address[]' },
+      { name: 'minAssetsPerPool', type: 'uint256[]' },
+      { name: 'mintRecipient', type: 'bytes32' },
+      { name: 'destinationCaller', type: 'bytes32' },
+      { name: 'destinationDomain', type: 'uint32' },
+      { name: 'maxFee', type: 'uint256' },
+      { name: 'minFinalityThreshold', type: 'uint32' },
+      { name: 'hookData', type: 'bytes' },
+    ],
+    outputs: [
+      { name: 'burned', type: 'uint256' },
+      { name: 'exited', type: 'uint256' },
+      { name: 'skipped', type: 'uint256' },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'Swept',
+    inputs: [
+      { name: 'owner', type: 'address', indexed: true },
+      { name: 'burned', type: 'uint256', indexed: false },
+      { name: 'exited', type: 'uint256', indexed: false },
+      { name: 'skipped', type: 'uint256', indexed: false },
     ],
   },
 ]

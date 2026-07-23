@@ -45,4 +45,16 @@ describe('chain-aware validateStrategyResponse', () => {
     const catalog = buildMergedCatalog({ baseAvailable: false })
     expect(() => validateStrategyResponse(mixedResponse(), catalog)).toThrow(/hallucinated/)
   })
+  it('snaps an LLM-mangled address casing back to the catalog canonical string', () => {
+    // LLMs mangle hex casing; a mixed-case address that fails EIP-55 is rejected by viem at
+    // the first contract read (live 2026-07-20, mandate stage). Membership check is
+    // case-insensitive — the kept string must be the CATALOG's, never the model's.
+    const catalog = buildMergedCatalog({ baseAvailable: true }).map((v, i) =>
+      i === 0 ? { ...v, address: STELLAR_ADDRESS } : v
+    )
+    const r = mixedResponse()
+    r.selected_vaults[1].address = BASE_ADDRESS.toUpperCase().replace('0X', '0x')
+    const out = validateStrategyResponse(r, catalog)
+    expect(out.selected_vaults[1].address).toBe(BASE_ADDRESS)
+  })
 })

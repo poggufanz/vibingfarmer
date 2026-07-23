@@ -9,8 +9,7 @@
 import {
   rpc, Contract, TransactionBuilder, Address, nativeToScVal, xdr, BASE_FEE,
 } from '@stellar/stellar-sdk';
-
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+import { confirmStellarTx } from './stellarTx.mjs';
 
 // EVM 0x address (20 bytes) -> left-padded 32-byte Buffer for Soroban BytesN<32>.
 export function evmAddrToBytes32(addr) {
@@ -31,14 +30,7 @@ async function invokeStellar({ server, kp, sourcePub, passphrase, op, label }) {
   prepared.sign(kp);
   const sent = await server.sendTransaction(prepared);
   if (sent.status === 'ERROR') throw new Error(`${label} send ERROR: ${JSON.stringify(sent.errorResult ?? sent)}`);
-  for (let i = 0; i < 30; i += 1) {
-    await sleep(2000);
-    const got = await server.getTransaction(sent.hash);
-    if (got.status === 'NOT_FOUND') continue;
-    if (got.status === 'SUCCESS') return sent.hash;
-    throw new Error(`${label} FAILED: ${got.status} ${JSON.stringify(got.resultXdr ?? '')}`);
-  }
-  throw new Error(`${label} not confirmed: ${sent.hash}`);
+  return confirmStellarTx({ server, hash: sent.hash, label });
 }
 
 /**

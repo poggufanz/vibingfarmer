@@ -25,6 +25,7 @@ This document explains every feature of Vibing Farmer for two audiences at once:
    - [3.12 Wallets + On-Ramp](#312-wallets--on-ramp)
    - [3.13 Backend API](#313-backend-api)
    - [3.14 User Interface](#314-user-interface)
+   - [3.15 Vault Upgrade Timelock](#315-vault-upgrade-timelock)
 4. [Architecture at a Glance](#4-architecture-at-a-glance)
 5. [Live Deployments](#5-live-deployments)
 6. [Security & Trust Model](#6-security--trust-model)
@@ -461,6 +462,8 @@ This is the crux of the "fail-closed" design: **danger without a live mandate pr
 
 **Hysteresis, deliberately:** the resume threshold is stricter than the engage threshold, and a 100-ledger "all clear" streak is required before resuming — this prevents the radar from flapping in and out of the emergency state on a noisy signal.
 
+**Also surface-only:** every radar tick reads the vault's `pending_upgrade()` view and logs — but never acts on — a scheduled contract upgrade, the same fail-closed "alarm, not action" posture applied to a different kind of risk; see [§3.15](#315-vault-upgrade-timelock).
+
 **Key files:** `keeper/src/radar-runner.mjs`, `keeper/src/radar.js`, `keeper/src/lifeboat.js`, `keeper/src/chain.js`, `soroban/contracts/autofarm_vault/src/vault.rs` (lines ~442–519), `keeper/src/decide.js` (Worker keeper), `frontend/src/components/console/LifeboatZone.jsx`, `frontend/src/stellar/keeperEvents.js`.
 
 **For judges:** this is one of the most carefully reasoned pieces of the system — "autonomous" is only true within a scope the user explicitly and repeatedly re-authorizes; an emergency without permission produces a log line, not an action.
@@ -639,6 +642,39 @@ The three public pages (`/explorer`, `/ecosystem`, `/replay`) are deliberately r
 
 ---
 
+### 3.15 Vault Upgrade Timelock
+
+**What & why.** Every other admin lever on the vault (pause deposits, set the keeper, register a strategy) is bounded and reversible, so it takes effect the moment it's called. Replacing the vault's own bytecode is different in kind — new code could redefine what "deposit" or "redeem" even do — so an upgrade doesn't happen immediately. The admin has to announce it, then wait out a fixed public delay before it can execute, and the announcement itself is broadcast on three independent surfaces a holder might actually be looking at. The delay isn't meant to slow down a legitimate upgrade. It exists so anyone watching has a real window to notice and exit before new code goes live.
+
+**The contract:** `autofarm_vault` (`soroban/contracts/autofarm_vault/src/vault.rs`), the same live deployment as [§3.8](#38-real-yield). Four functions, gated by the same `require_admin()` check every other admin-only vault call already uses (`add_strategy`, `set_keeper`, `set_limits`, and so on) — there is no separate "upgrade admin" role to reason about.
+
+| Function | Signature | Who can call | What it does |
+|---|---|---|---|
+| `schedule_upgrade` | `schedule_upgrade(e: &Env, new_wasm_hash: BytesN<32>) -> Result<(), VaultError>` | Admin only | Stores `{wasm_hash, eta}` where `eta = now + TIMELOCK_DELAY_S`, and emits `UpgradeScheduled`. Calling it again while one is already pending overwrites the old schedule and resets the full delay — there is no way to shorten a pending wait by re-announcing over it. |
+| `execute_upgrade` | `execute_upgrade(e: &Env) -> Result<(), VaultError>` | Admin only | Fails with `NoPendingUpgrade` (error 24) if nothing is scheduled, or `TimelockNotElapsed` (error 25) if called before `eta`. On success it clears the pending record *before* swapping the bytecode, so if the swap itself traps (an invalid or never-uploaded wasm hash), the whole transaction reverts and the schedule survives — a bad hash can't silently burn the pending slot. |
+| `cancel_upgrade` | `cancel_upgrade(e: &Env) -> Result<(), VaultError>` | Admin only | Clears a pending schedule and emits `UpgradeCancelled`. Fails with `NoPendingUpgrade` if nothing is scheduled. |
+| `pending_upgrade` | `pending_upgrade(e: &Env) -> Option<PendingUpgrade>` | Anyone — read-only view, no auth required | Returns the currently scheduled `{wasm_hash, eta}`, or nothing if none is pending. This is the one call every surface below polls. |
+
+**The delay:** `TIMELOCK_DELAY_S = 259_200` (3 days) is a compile-time constant, not a stored value with a setter. That's deliberate: a settable delay would itself be a bypass (set it to 0, then upgrade instantly). Changing the delay at all requires shipping a new wasm through this same 3-day process.
+
+**What the swap itself does:** `execute_upgrade` calls Soroban's `e.deployer().update_current_contract_wasm(wasm_hash)`, which replaces the contract's bytecode without re-running its constructor and without touching existing instance storage — shares, registered strategies, the keeper address, and the lifeboat mandate all survive the swap untouched. (A future wasm that changed the shape of an already-stored type would trap on first read of the old value and need a separate migration step — flagged in the contract's own comments as something to check on any upgrade that touches existing types.) All three admin calls — schedule, execute, cancel — finish by calling `extend_instance()`, the same storage-TTL housekeeping every other state-changing vault call performs, so the upgrade path can't be the one code path that lets the contract's storage quietly expire.
+
+**How a pending upgrade actually gets seen — three independent, read-only surfaces:**
+
+1. **The lifeboat radar** (`keeper/src/radar.js`, `keeper/src/chain.js`) — every tick already reads `lifeboat_state`; it now also reads `pending_upgrade()` as a best-effort call (an RPC failure returns `null`, never a guessed state) and logs on any change. The first time a schedule appears, or its hash or eta changes, the radar logs one WARN line with the wasm hash, the eta, and an explicit "no automatic action taken." When the pending upgrade clears — executed or cancelled — it logs one INFO line. A module-level dedupe key means this fires once per state change, not on every ~5-second tick.
+2. **Event alerts in the app** (`frontend/src/stellar/keeperEvents.js`, `frontend/src/app.jsx`) — the vault emits `UpgradeScheduled`, `UpgradeExecuted`, and `UpgradeCancelled` on the `vault_upgrade_scheduled` / `vault_upgrade_executed` / `vault_upgrade_cancelled` topics. `decodeKeeperEvent()` decodes all three alongside the compound/rebalance/derisk events it already watched, and `app.jsx` routes them into the same alert bell (`handleAgentEvent`) as every other keeper event, so a holder sees "Vault upgrade scheduled, executable `<date>`" the same way they'd see a compound or a derisk. None of these three alert kinds trigger any auto-derisk or other on-chain action — they only inform.
+3. **A banner on `/home`** (`frontend/src/components/HomePage.jsx`) — a `useEffect` calls `readPendingUpgrade()` (`frontend/src/stellar/vaultReads.js`, a thin wrapper over the `pending_upgrade()` view) on mount and on the same 10-minute poll interval the page already uses for its Market Pulse data, rather than opening a third polling loop. If a pending upgrade is set, a warning-styled banner appears above the position list: "Vault upgrade scheduled — Executes after `<eta date>`. Funds can be withdrawn before then." It disappears on its own once nothing is pending.
+
+**Multisig runbook status.** The vault admin was cut over to a dedicated 2-of-3 native Stellar multisig (`vf-vault-admin`) on 2026-07-20 — `transfer_admin_role` from the deployer, then a 2-of-3 `accept_admin_transfer`, both on-chain. The smoke test (`scripts/soroban/upgrade-timelock-smoke.sh`) proved it live in `MULTISIG=1` mode: it builds one `schedule_upgrade` transaction, signs it with a single signer and asserts the network rejects it for insufficient signing weight (`TxBadAuth`), then adds a second signature to the same envelope and asserts it succeeds — a live proof that one compromised signer can't schedule an upgrade alone. (`MULTISIG=0` mode remains for single-key replays.)
+
+**Deployed vs. branch.** LIVE since 2026-07-20: the testnet vault (`CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77`, same address — upgraded **in place**, no redeploy) now runs wasm `a073c7af…bb78a0` (`24dc5ec8…cc32d84` is prior history). `schedule_upgrade`, `execute_upgrade`, `cancel_upgrade`, and `pending_upgrade` are all callable on the live contract today, and the old instant `upgrade` no longer exists on it.
+
+**Key files:** `soroban/contracts/autofarm_vault/src/vault.rs`, `soroban/contracts/autofarm_vault/src/types.rs`, `soroban/contracts/autofarm_vault/src/storage.rs`, `keeper/src/radar.js`, `keeper/src/chain.js`, `frontend/src/stellar/keeperEvents.js`, `frontend/src/stellar/vaultReads.js`, `frontend/src/components/HomePage.jsx`, `frontend/src/components/AlertCard.jsx`, `frontend/src/app.jsx`, `scripts/soroban/upgrade-timelock-smoke.sh`.
+
+**For judges:** what actually stops a silent bytecode swap isn't a promise to announce one — it's that `execute_upgrade` is incapable of succeeding before `eta`, and `eta` is public and polled from three independent places the moment it's set. Even in the worst case, a fully compromised admin key, the earliest an upgrade can land is 3 days after anyone with an RPC connection could already see it coming.
+
+---
+
 ## 4. Architecture at a Glance
 
 ```
@@ -791,6 +827,8 @@ All addresses are drawn from `deployments/stellar-testnet.json` and `deployments
 3. **Vault-level pause:** the vault admin can pause new deposits — but `redeem` is deliberately *not* pause-gated, so a pause can never trap a user's funds; exits always work.
 4. **Emergency de-risk:** under an active mandate, the lifeboat can pull *all* strategy capital back to vault-idle in response to a detected market threat.
 
+**Upgrade governance.** The `funding_router` has no admin and no upgrade path at all — its logic is fixed forever the moment it's deployed, by design (see [§3.4](#34-one-signature-grant)). The vault does have an upgrade path, but it can never be a silent one: a new admin key would still have to schedule an upgrade, wait out the fixed on-chain delay, and by then the pending change has already been broadcast on-chain and echoed into the radar log, the alert bell, and a banner on `/home` (live on the testnet vault since the 2026-07-20 in-place upgrade — see [§3.15](#315-vault-upgrade-timelock)). There is no code path that swaps the vault's bytecode without first making that swap public and giving holders time to exit.
+
 **Separation of duties.** The relayer's signing key (pays gas) and the keeper's signing key (executes compound/rebalance/derisk) are deliberately distinct identities — a compromise of one does not grant the powers of the other.
 
 ---
@@ -812,6 +850,7 @@ Judges reward honesty. Here is exactly what's real, what's an honest testnet sta
 | **Demo agent (`CCY452UM...`)** | ⚠️ Smoke-test fixture | A seeded agent with a fixed, constructor-only scope, kept for explorer/smoke checks; product flows always deploy fresh session agents via the grant path instead |
 | **View-as dev override** (`/agent?as=`) | ⚠️ Dev-only | Behind `import.meta.env.DEV`, dead-code-eliminated in production builds, used only to demo the ops console with a different address's real positions |
 | **Registry contract** | ⚠️ Legacy, live but unused | Still deployed and readable, but the current router + agent-account flow does not call it; superseded by per-agent on-chain scoping |
+| **Vault upgrade timelock** (`schedule_upgrade`/`execute_upgrade`/`cancel_upgrade`) | ✅ Real, live-proven | Live on testnet since the 2026-07-20 in-place upgrade (same vault address, wasm `a073c7af…bb78a0`); admin is the `vf-vault-admin` 2-of-3 multisig; two-phase smoke incl. multisig proof all-PASS on the live vault |
 | **"Parallel" agent dispatch** | ⚠️ Precision note | Workers are dispatched in sequence with a 2-second gap (to respect relay rate limits), not literally simultaneously; the safety property that matters — one worker's failure never blocking or aborting another's — is genuinely implemented |
 | **VF Wallet classic (ed25519)** | ⚠️ Implemented, UI pending | Keypair generation, import, and encrypted storage exist in code; onboarding UI integration into the main app flow is not yet complete |
 | **Coinbase on-ramp fallback** | ⚠️ Stubbed | Returns `501 Not Implemented`; Transak is the working primary on-ramp |

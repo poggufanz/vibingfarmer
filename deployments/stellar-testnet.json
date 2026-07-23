@@ -28,7 +28,11 @@
       "deposit": "3fbdfd2f449a9e4b504f786294c5194c03ea8580ae71e65e647a9b80efd74970"
     },
     "note": "One-popup grant factory + funding gate (zero custody), hardened: no admin/upgrade path, only factory-deployed agents can pull (and only from their recorded owner), owner-bound deployment salts. Constructor pins (agent wasm v3 hash d61ceaaa…a2ba, token). owner.grant() is the single wallet popup (covers the nested SEP-41 token.approve + deploys the run's agents via the pinned wasm); relayed router.pull() funds each agent within the token allowance — the router never holds funds. The server relay guard's SOROBAN_ROUTER_ADDRESS env must equal address or grant/pull fee-bumps are refused. Deployer: vf-deployer (GCIOUP4U…RYHNS). Legacy router (pre-hardening): CBEI5VJKKWLXKQUUUETBAPZSQQLH7I57TSIDTMV4WJMBKIGVF7NSNOFY.",
-    "legacyAddress": "CBEI5VJKKWLXKQUUUETBAPZSQQLH7I57TSIDTMV4WJMBKIGVF7NSNOFY"
+    "legacyAddress": "CBEI5VJKKWLXKQUUUETBAPZSQQLH7I57TSIDTMV4WJMBKIGVF7NSNOFY",
+    "addressV2": "CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE",
+    "routerWasmHashV2": "01d4a58bd8ccfa527a8ac3af579cefcd324afc695acd5a234fd8eaf153d89b78",
+    "agentWasmHashV3New": "1fdbe175ddeb6d237a178c3c117b4e6c168122eec7d94f06a4b27ee4026efbe1",
+    "v2Note": "grant-covers-burn plan (2026-07-22): multi-token `budgets` (Vec<TokenBudget>, one SEP-41 approve per budgeted token) + bridge-kind `AgentInit` (kind 0 Deposit / kind 1 Bridge, target = vault or CDNG7HXA…SLRTHP TokenMessengerMinter, mint_recipient/destination_domain for Bridge). Constructor arg = agentWasmHashV3New (agent_account rebuilt with the same bridge-scope fields — NOT the same wasm as the OLDER agentAccountWasmHash/agentWasmHashV3 above despite the confusingly-reused 'v3' label from the earlier 2026-07-14 hardening pass; that hash predates target/kind/bridge scope entirely). Deploy: upload tx c8a9bc3b434f4d65e35926dcbe28207ef909d15230c204f94f390f2fb5144451 (agent wasm), router upload tx fd743a569a27432fbbb26b7488f9a2cac682e357630b7accbfbf8867da739f12, deploy tx e8e145660c9923ec9433dc5e7906502ee9981977653a5b1907b34f14ead68e18. Deployer: fresh vf-deployer identity GA2RIV5IILMNAL2U6ZT5RP5YVIAIN7MRDMAAVKAKUZYNTF2PIR7D2DFG (this box's stellar-cli keystore did not have the original vf-deployer secret — deploying does not require the historical G-address). v1 (address above) stays live untouched — dual-support via relay env CSV lists (SOROBAN_ROUTER_ADDRESSES=<v2>,<v1>, SOROBAN_AGENT_WASM_HASHES=<agentWasmHashV3New>,<agentAccountWasmHash>). Frontend (frontend/src/stellar/config.js NET.fundingRouter, NET.agentWasmHash) points at v2/agentWasmHashV3New; the app's live router is v2 as of this deploy. e2e smoke: relayer/smoke/grant-burn-e2e.mjs, log in relayer/SMOKE.md."
   },
   "exitRouter": {
     "address": "CDGDIPHBN3MSNURDX33IZBXXQTJPT7THAXSMVBAIOIXLOA6OF32IRS2J",
@@ -48,7 +52,7 @@
   },
   "autofarmVault": {
     "address": "CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77",
-    "wasmHash": "24dc5ec86a8833331d285581215b715e3c2ecf6c714714af9d91ece4ecc32d84",
+    "wasmHash": "a073c7af75db169ec115b4af8af63bc7b7b88c58b90be348ac343a0432bb78a0",
     "deployTx": "804495db9965084af3b2b76ae4ae8dad28050a64b886d13c9d3df394de142a4b",
     "deployedAt": "2026-07-14",
     "renameNote": "2026-07-17: source crate renamed rwa_vault -> autofarm_vault (legacy name from the cancelled RWA-Fi pivot). This deployed instance is unchanged — the wasmHash above was built while the crate was still named rwa_vault. No redeploy.",
@@ -56,12 +60,18 @@
     "decimals": 7,
     "shareSymbol": "vfVLT",
     "name": "Vibing Farmer Autofarm",
-    "strategies": ["CAR7XFFRKMUYSERYBSLQ4LXRY2E2W7G7WG4VQI55FWLSJWQVLNTAFVBE"],
+    "strategies": [
+      "CAR7XFFRKMUYSERYBSLQ4LXRY2E2W7G7WG4VQI55FWLSJWQVLNTAFVBE"
+    ],
     "keeper": "GA2CMBS3LRY5MH64KKMHOYVA6WTLPMKRMIWEJDOIGHYPB7WMC3QHRCBU",
     "mandateAuthority": "GDRT7VBM3IRUSM6LQNRVDFJYVOWLUNIFBT2KTYHGMNYH3XCGNPZLHCOC",
     "mandateAuthorityNote": "2026-07-16: moved from vf-deployer to the demo user's wallet on THIS vault (tx 75964038baea72e310600fd31189a5bff65b932deaaefed73e06e5593b761d95, verified via lifeboat_state) so in-app 'Renew 24h mandate' signs with the connected wallet, per the set_mandate_authority design comment in vault.rs. The earlier 2026-07-15 attempt (tx f472ef716c055ba8a391cefb77d829972e2310daf09f1b956baf20fad2005ff1) succeeded but targeted the RETIRED vault CB5VKYDU…JDYU, so the live vault stayed on vf-deployer until now.",
     "keeperNote": "Dedicated keeper identity (split from the relayer). Secret lives ONLY in frontend/.env.local STELLAR_KEEPER_SECRET (local) / wrangler secret (deployed keeper).",
-    "note": "Hardened redeploy 2026-07-14 (fresh instance, NOT an in-place upgrade — the pre-hardening vault CB5VKYDUIYX3RZWGVLKKNBPG7V7Z5JIHF2QPNQKWKAHVA3IPSLFZJDYU is retired). Hardening live-verified: dead-shares inflation guard on first deposit, observed-token-delta accounting, faulty-strategy isolation (try_-calls + quarantine), live NAV from Blend pool books, finite crisis withdrawals. Lifeboat drill on THIS instance: compound idle-sweep tx 4e993949…3b268, derisk tx 00628504…94c2 (drained_total 20000999), resume tx 3f2b8085…8c25. Single-strategy: a self-deployed second Blend pool can't reach Active status without seeding real backstop capital, so this vault runs strategy1 only and relies on the de-risk-to-idle path."
+    "note": "Hardened redeploy 2026-07-14 (fresh instance, NOT an in-place upgrade — the pre-hardening vault CB5VKYDUIYX3RZWGVLKKNBPG7V7Z5JIHF2QPNQKWKAHVA3IPSLFZJDYU is retired). Subsequently upgraded IN PLACE 2026-07-20 to the timelock wasm a073c7af… at the same address — see adminNote. Hardening live-verified: dead-shares inflation guard on first deposit, observed-token-delta accounting, faulty-strategy isolation (try_-calls + quarantine), live NAV from Blend pool books, finite crisis withdrawals. Lifeboat drill on THIS instance: compound idle-sweep tx 4e993949…3b268, derisk tx 00628504…94c2 (drained_total 20000999), resume tx 3f2b8085…8c25. Single-strategy: a self-deployed second Blend pool can't reach Active status without seeding real backstop capital, so this vault runs strategy1 only and relies on the de-risk-to-idle path.",
+    "previousWasmHash": "24dc5ec86a8833331d285581215b715e3c2ecf6c714714af9d91ece4ecc32d84",
+    "admin": "GDYIPNMLQMP6VUI3VJ7B6CCUODVQI4RIWEQZIND7DRDDU4QJTXZUXZUQ",
+    "adminNote": "2-of-3 native Stellar multisig (vf-vault-admin; signers: master GDYIPNML…XZUQ, vf-admin-2 GDATHEMBMV53VL4TB2QAKLOWGZF6JG5H4KVRHMULXCFUSEN5XDE2MO7U, vf-admin-3 GAAFBERVIDXEVG6B4VXNP3PRDJRWLXR7PZIYRSLOIKO5A4FNLWZPWKAH; all thresholds 2). Transferred from single-key vf-deployer 2026-07-20: initiate tx 86e1b8c8…8861, accept (2-of-3) tx 65d9d089…9f91. upgrade is TIMELOCKED: instant upgrade removed (bootstrap tx f9103d9d…4de5), schedule_upgrade -> 3-day const delay -> execute_upgrade, cancel_upgrade aborts; redeem is never pause-gated. Two-phase smoke incl. multisig proof all-PASS 2026-07-20: scripts/soroban/upgrade-timelock-smoke.sh (1-sig schedule TxBadAuth, 2-sig ok, execute blocked Error(Contract,#25), cancel cleared). Keeper + mandateAuthority stay single-key by design.",
+    "upgradedAt": "2026-07-20"
   },
   "strategy1": {
     "address": "CAR7XFFRKMUYSERYBSLQ4LXRY2E2W7G7WG4VQI55FWLSJWQVLNTAFVBE",

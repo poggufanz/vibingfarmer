@@ -311,7 +311,8 @@ export async function readState(env) {
  * logs and skips rather than acting on a guess.
  * @param {object} env same env object `readState` takes (+ optional POOL_ORACLE)
  * @returns {Promise<{utilizationBps: number|null, availableLiquidity: bigint|null,
- *   poolPrice: number|null, derisked: boolean, mandateExpiry: number, nowTs: number}>}
+ *   poolPrice: number|null, derisked: boolean, mandateExpiry: number, nowTs: number,
+ *   pendingUpgrade: {wasmHashHex: string, eta: number}|null}>}
  */
 export async function readLifeboatChainState(env) {
   const server = rpcServer(env);
@@ -357,6 +358,20 @@ export async function readLifeboatChainState(env) {
 
   const nowTs = await bestEffort('lifeboat:nowTs', () => readLedgerNowTs(server), Math.floor(Date.now() / 1000));
 
+  // Upgrade timelock visibility (surface-only — see radar.js, which only logs this, never acts
+  // on it). `pending_upgrade()` returns `Option<PendingUpgrade>`; scValToNative decodes
+  // Option::None to null/undefined (`== null` catches both), matching readBlndClaimable's
+  // Option-decode convention above.
+  const pendingUpgrade = await bestEffort(
+    'lifeboat:pendingUpgrade',
+    async () => {
+      const val = await simCall(server, env, simSource, env.VAULT_ADDRESS, 'pending_upgrade', []);
+      if (val == null) return null;
+      return { wasmHashHex: Buffer.from(val.wasm_hash).toString('hex'), eta: Number(val.eta) };
+    },
+    null,
+  );
+
   return {
     utilizationBps: utilization,
     availableLiquidity,
@@ -364,6 +379,7 @@ export async function readLifeboatChainState(env) {
     derisked: Boolean(ls.derisked),
     mandateExpiry: Number(ls.mandate_expiry),
     nowTs,
+    pendingUpgrade,
   };
 }
 

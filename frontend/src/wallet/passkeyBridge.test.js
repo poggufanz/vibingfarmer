@@ -70,4 +70,60 @@ describe('ensureBaseOwner', () => {
       'ensureBaseOwner: connectedAddress is required'
     )
   })
+
+  it('cross-device: register refused (credential already exists) -> falls back to login, same account', async () => {
+    // No stored record (fresh laptop) but the wallet's passkey exists on the phone/synced store.
+    const createBase = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('InvalidStateError: credential already registered'))
+      .mockResolvedValueOnce(fakeAccount)
+    const out = await ensureBaseOwner({
+      connectedAddress: 'GFREIGHTER',
+      deps: { createBaseSmartAccount: createBase },
+    })
+    expect(createBase).toHaveBeenNthCalledWith(1, expect.objectContaining({ mode: 'register' }))
+    expect(createBase).toHaveBeenNthCalledWith(2, expect.objectContaining({ mode: 'login' }))
+    expect(out.address).toBe('0xOWNER')
+    expect(localStorage.getItem('vf_base_owner_address')).toBe('0xOWNER')
+  })
+
+  it('stale record: login fails (credential gone) -> falls back to a fresh register', async () => {
+    localStorage.setItem('vf_base_owner', JSON.stringify({ mode: 'ceremony', passkeyName: 'x' }))
+    const createBase = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('NotAllowedError'))
+      .mockResolvedValueOnce(fakeAccount)
+    const out = await ensureBaseOwner({
+      connectedAddress: 'GFREIGHTER',
+      deps: { createBaseSmartAccount: createBase },
+    })
+    expect(createBase).toHaveBeenNthCalledWith(1, expect.objectContaining({ mode: 'login' }))
+    expect(createBase).toHaveBeenNthCalledWith(2, expect.objectContaining({ mode: 'register' }))
+    expect(out.address).toBe('0xOWNER')
+  })
+
+  it('preferLogin (recover path): starts with a discoverable login even with NO stored record', async () => {
+    const createBase = vi.fn().mockResolvedValue(fakeAccount)
+    await ensureBaseOwner({
+      connectedAddress: 'GFREIGHTER',
+      preferLogin: true,
+      deps: { createBaseSmartAccount: createBase },
+    })
+    // Register-first here minted a brand-new empty kernel account on authenticators that
+    // don't refuse duplicate creation — recovery must never create.
+    expect(createBase).toHaveBeenNthCalledWith(1, expect.objectContaining({ mode: 'login' }))
+    expect(localStorage.getItem('vf_base_owner_address')).toBe('0xOWNER')
+  })
+
+  it('double failure rethrows the ORIGINAL error (a cancel reads as a cancel)', async () => {
+    const createBase = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('original register failure'))
+      .mockRejectedValueOnce(new Error('secondary login failure'))
+    await expect(
+      ensureBaseOwner({ connectedAddress: 'GFREIGHTER', deps: { createBaseSmartAccount: createBase } })
+    ).rejects.toThrow('original register failure')
+    // A failed resolution must not poison the record for the next attempt.
+    expect(localStorage.getItem('vf_base_owner_address')).toBeNull()
+  })
 })

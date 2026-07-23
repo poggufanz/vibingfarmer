@@ -70,7 +70,20 @@ import {
 } from './stellar/vaultReads.js'
 import { grantMandate } from './stellar/lifeboat.js'
 import { signWithTimeout } from './stellar/agentSetup.js'
-import { resolveBaseAvailability, buildBaseLegContext } from './mergeFlowHelpers.js'
+import {
+  resolveBaseAvailability,
+  checkStoredBaseMandate,
+  checkCircleUsdcFunding,
+  needsBaseMandateSetup,
+  setupBaseMandate,
+  buildBaseLegContext,
+  applyBaseLegOutcome,
+  mapBaseLegEvent,
+  pollBaseLegUntilSettled,
+} from './mergeFlowHelpers.js'
+import { getMandateStatus } from './base/relayerClient.js'
+import { readTokenBalance } from './stellar/agentDeposit.js'
+import { STELLAR_USDC_SAC } from './stellar/cctpBurn.js'
 import { evaluateExit } from './strategy/autoExit/engine.js'
 import { runAutonomousExit } from './agents/exitExecutor.js'
 import {
@@ -105,6 +118,7 @@ const OpsConsole = lazy(() => import('./components/console/OpsConsole.jsx'))
 const Withdraw = lazy(() => import('./screens/Withdraw.jsx'))
 import NotificationCenter from './components/NotificationCenter.jsx'
 import { loadBasePositions } from './base/dashboardPositions.js'
+import { readIdleUsdc } from './base/readPositions.js'
 import HomePage from './components/HomePage.jsx'
 const LandingHero = lazy(() => import('./components/LandingHero.jsx'))
 const ExplorerPage = lazy(() => import('./components/ExplorerPage.jsx'))
@@ -445,6 +459,11 @@ const App = () => {
   const [strategyAttestation, setStrategyAttestation] = useS(null)
   const [attesting, setAttesting] = useS(false)
   const [skillSource, setSkillSource] = useS('default')
+  // Grant-covers-burn design §4/§5: mandate setup is its OWN 1-tap ceremony, outside a run. This
+  // affordance shows only when the relayer is healthy but no valid mandate is stored yet.
+  const [needsBaseMandate, setNeedsBaseMandate] = useS(false)
+  const [settingUpBaseMandate, setSettingUpBaseMandate] = useS(false)
+  const [baseMandateError, setBaseMandateError] = useS(null)
   const [marketLive, setMarketLive] = useS(null) // Tavily live market context used? null until first generation
   const [vaultLive, setVaultLive] = useS(null) // DeFiLlama live vault data used? null until first generation
   const [skillDrawerOpen, setSkillDrawerOpen] = useS(false)
@@ -895,6 +914,24 @@ const App = () => {
             // (type/reasonCode/drainedTotal/txHash) rather than remapped into keeperActivity's
             // kind-based alert objects; see lifeboatActivity state comment above for why.
             newLifeboatActivity.push({ ...ev, timestamp: Date.now() })
+          } else if (
+            ev.type === 'upgrade_scheduled' ||
+            ev.type === 'upgrade_executed' ||
+            ev.type === 'upgrade_cancelled'
+          ) {
+            // Upgrade timelock visibility (surface-only — no auto-derisk, no on-chain action).
+            // Straight into the alert bell via handleAgentEvent, same as compound/rebalance
+            // above, so a holder actually sees a pending bytecode swap before the 3-day exit
+            // window closes.
+            handleAgentEvent({
+              id: `${ev.type}:${ev.ledger}`,
+              kind: `vault_${ev.type}`,
+              vaultName: 'Autofarm vault',
+              wasmHashHex: ev.wasmHashHex,
+              eta: ev.eta,
+              txHash: ev.txHash,
+              timestamp: Date.now(),
+            })
           }
         }
         if (newActivity.length) {
@@ -1701,18 +1738,78 @@ const App = () => {
   // once the owner kernel account resolves. Dynamic import: keeps passkeyBridge.js (and the
   // ZeroDev/viem chain behind it) out of the eager bundle — mirrors orchestrator.js's
   // baseLeg.js gating (Task 8).
-  const handleBaseWithdrawClick = async (position) => {
+  const handleBaseWithdrawClick = async () => {
     setBaseWithdrawError(null)
+    // The positions on screen belong to THIS account; the ceremony below is discoverable, and
+    // a user with several look-alike passkeys can pick one that derives a different (empty)
+    // kernel — the withdraw userOp then reverts in simulation with an unreadable AA error, and
+    // ensureBaseOwner's persist clobbers the good marker with the wrong address (seen live
+    // 2026-07-20). Guard: mismatch → restore the marker + a retry-with-another-passkey message.
+    const expected = localStorage.getItem('vf_base_owner_address')
     try {
       const { ensureBaseOwner } = await import('./wallet/passkeyBridge.js')
       const owner = await ensureBaseOwner({ connectedAddress: realAddress })
+      if (expected && owner.address?.toLowerCase() !== expected.toLowerCase()) {
+        localStorage.setItem('vf_base_owner_address', expected)
+        setBaseWithdrawError(
+          `That passkey opens a different Base account (${owner.address.slice(0, 6)}…) than the one holding these positions (${expected.slice(0, 6)}…). Retry and pick another passkey.`
+        )
+        return
+      }
+      // Full exit: every open Base position, not the row that was clicked. The
+      // sweeper reads live balances, so this list is only used for the pool
+      // addresses, the per-pool slippage floors, and the pre-signature summary.
+      const idleUsdc = await readIdleUsdc({
+        account: owner.address,
+        publicClient: owner.publicClient,
+      })
       setBaseWithdraw({
-        position,
+        positions: basePositions,
+        idleUsdc,
         ownerKernelAccount: owner.kernelAccount,
         publicClient: owner.publicClient,
       })
     } catch (err) {
+      if (expected) localStorage.setItem('vf_base_owner_address', expected)
       setBaseWithdrawError(err.message)
+    }
+  }
+
+  // Cross-device recovery: the Base owner markers live in localStorage, but the passkey itself
+  // is synced (phone / password manager) and login is discoverable — one tap on a NEW device
+  // re-derives the SAME kernel account (passkeyBridge's two-way fallback), re-persists the
+  // markers, and the positions panel comes back. Without this, positions farmed on another
+  // laptop were invisible here with no code path to ever show them.
+  // Base token activity is loaded on History → Base (not home), so recover only refreshes positions.
+  const handleBaseRecover = async () => {
+    if (!realAddress) return
+    setBaseWithdrawError(null)
+    try {
+      const { ensureBaseOwner } = await import('./wallet/passkeyBridge.js')
+      await ensureBaseOwner({ connectedAddress: realAddress, preferLogin: true })
+      const bp = await loadBasePositions()
+      setBasePositions(bp)
+      if (!bp.length) setBaseWithdrawError('Base account connected — no open positions found.')
+    } catch (err) {
+      setBaseWithdrawError(err.message)
+    }
+  }
+
+  // 1-tap Base activation (grant-covers-burn design §4/§5) — a SETUP moment, never something a
+  // run performs. On success, re-runs the same gate the affordance itself is driven by, so a
+  // silently-failed relayer registration cannot leave a stale "activated" state.
+  const handleSetupBaseMandate = async () => {
+    if (!realAddress) return
+    setSettingUpBaseMandate(true)
+    setBaseMandateError(null)
+    try {
+      await setupBaseMandate({ connectedAddress: realAddress })
+      const mandateOk = await checkStoredBaseMandate({ getMandateStatus })()
+      setNeedsBaseMandate(needsBaseMandateSetup({ healthy: true, mandateOk }))
+    } catch (e) {
+      setBaseMandateError(e.message)
+    } finally {
+      setSettingUpBaseMandate(false)
     }
   }
 
@@ -1771,8 +1868,30 @@ const App = () => {
         // Not awaited here — the promise is handed to generateStrategy, which awaits it AFTER its
         // own DAG fetch so the ~3s relayer probe overlaps that network wait instead of serializing
         // before it (perf: overlap relayer health probe with strategy generation).
+        // Independent, narrower probe (health + mandate only) driving the "Activate Base"
+        // affordance — a relayer outage or missing funding are not fixed by a mandate tap, so
+        // those states never show the button. Fire-and-forget: never blocks strategy generation.
+        Promise.all([
+          checkRelayerHealth({ signal: ctrl.signal }),
+          checkStoredBaseMandate({ getMandateStatus })(),
+        ])
+          .then(([healthy, mandateOk]) => {
+            if (!cancelled) setNeedsBaseMandate(needsBaseMandateSetup({ healthy, mandateOk }))
+          })
+          .catch(() => {
+            if (!cancelled) setNeedsBaseMandate(false)
+          })
+        // Fail-closed preflight beyond bare relayer reachability: a stored-but-invalid Base
+        // mandate, or a connected wallet with no Circle USDC to burn, both quietly drop Base from
+        // the catalog rather than surface an error the user can't act on mid strategy-generation.
         const { baseAvailable } = resolveBaseAvailability({
           checkHealth: () => checkRelayerHealth({ signal: ctrl.signal }),
+          checkMandate: checkStoredBaseMandate({ getMandateStatus }),
+          checkFunding: checkCircleUsdcFunding({
+            address: realAddress || null,
+            readTokenBalance,
+            token: STELLAR_USDC_SAC,
+          }),
         })
         const veniceResult = await generateStrategy({
           amount: Number(amount),
@@ -2194,16 +2313,7 @@ const App = () => {
       result: 'approved',
     })
 
-    // Pre-compute sessionId and build hex→designId map BEFORE orchestrator starts.
-    // Orchestrator uses makeAgentId(index, sessionId) — same function, same sessionId = same hex.
     const sessionId = `session-${Date.now()}`
-    const agentMap = {}
-    strategy.agents.forEach((a, i) => {
-      const hexId = makeAgentId(i, sessionId)
-      agentMap[hexId] = a.id // 'worker-1', 'worker-2', etc.
-    })
-    agentMapRef.current = agentMap
-
     const init = makeInitialExecState(strategy.agents)
     setExecMap(init)
 
@@ -2221,6 +2331,59 @@ const App = () => {
       setStage('permission') // stay on the approval card; do NOT dispatch
       return
     }
+    // Build hex→designId map to mirror the orchestrator's numbering EXACTLY: it calls
+    // makeAgentId(i, sessionId) over the STELLAR vaults of the DISPATCHED strategy only (base
+    // vaults settle as one leg, no per-agent hex id). The old map indexed every designed agent
+    // pre-eligibility, so one dropped or base vault ordered ahead of a stellar one shifted
+    // every hex id — painting worker events onto the wrong (even a Base) graph node.
+    const agentMap = {}
+    survivors
+      .filter((a) => a.vault.chain !== 'base')
+      .forEach((a, i) => {
+        agentMap[makeAgentId(i, sessionId)] = a.id // 'worker-1', 'worker-2', etc.
+      })
+    agentMapRef.current = agentMap
+    // Base vault design nodes: leg-level baseleg-*/farm-* events paint ALL of them (below).
+    const baseWorkerIds = survivors.filter((a) => a.vault.chain === 'base').map((a) => a.id)
+
+    // Applies one mapBaseLegEvent recipe to every Base vault node. Hoisted out of onEvent so the
+    // post-dispatch settlement re-poll below can reuse it verbatim.
+    const paintBaseNodes = (upd) => {
+      if (!upd || baseWorkerIds.length === 0) return
+      const terminal = upd.status === 'completed' || upd.status === 'failed'
+      setExecMap((prev) => {
+        const next = { ...prev }
+        baseWorkerIds.forEach((bId) => {
+          const cur = next[bId] || makeInitialExecState([{ id: bId }])[bId]
+          next[bId] = {
+            ...cur,
+            status: upd.status || cur.status || 'running',
+            activeStep: terminal ? null : upd.step || cur.activeStep,
+            steps: upd.step ? { ...(cur.steps || {}), [upd.step]: upd.stepStatus } : cur.steps,
+            hashes: upd.hash
+              ? { ...(cur.hashes || {}), [upd.step || 'swap']: upd.hash }
+              : cur.hashes,
+            memory: [...(cur.memory || []), { ...upd.memory, t: nowT() }],
+            metrics: terminal
+              ? {
+                  ...(cur.metrics || {}),
+                  completedAt: Date.now(),
+                  successRate: upd.status === 'completed' ? 1 : 0,
+                }
+              : cur.metrics || {},
+          }
+        })
+        return next
+      })
+      if (upd.log) {
+        addLog({
+          event: upd.log,
+          agent: baseWorkerIds[0],
+          meta: `${upd.memory.title} — ${upd.memory.meta}`,
+        })
+      }
+    }
+
     // dispatchSet ⊆ survivors: only survivors get a plan; allocations re-normalized to sum 1.
     // Each survivor carries a freshly-minted eligibility token (Enforcement B asserts it worker-side).
     // protocolSlug/verdictBySlug lookup keyed via slugFor — the SAME key computeBasket used to
@@ -2290,6 +2453,13 @@ const App = () => {
               { ...summary, agentId: data.agentId, revoked: false, authorized: data.authorized },
             ]
           })
+          return
+        }
+
+        // Base leg events are leg-level (no per-agent hex id) — paint them onto every Base
+        // vault design node so the graph shows the cross-chain lifecycle instead of dropping it.
+        if (evName.startsWith('baseleg-') || evName.startsWith('farm-')) {
+          paintBaseNodes(mapBaseLegEvent(evName, data))
           return
         }
 
@@ -2484,12 +2654,32 @@ const App = () => {
         deployedAgentsRef.current = addrs
         if (addrs.length) saveDeployedAgents(realAddress, addrs)
         if (summary.baseLeg) {
-          addLog({
-            event: summary.baseLeg.success ? 'OrchestratorPlanned' : 'AgentFailed',
-            meta: summary.baseLeg.success
-              ? `Cross-chain leg deposited on Base (job ${summary.baseLeg.jobId}).`
-              : `Cross-chain leg failed at ${summary.baseLeg.stage}: ${summary.baseLeg.error}`,
-          })
+          // Writes the dashboard's owner-address markers (backup for a wiped localStorage) and
+          // returns a log line that matches the job's real final status — see mergeFlowHelpers.
+          const outcome = applyBaseLegOutcome(summary.baseLeg)
+          if (outcome) addLog(outcome)
+          if (summary.baseLeg.success) {
+            // Don't wait for the 15s poll tick: surface the fresh Base positions now.
+            // Base token activity is on History → Base (fetched when that tab opens).
+            loadBasePositions().then((bp) => setBasePositions(bp))
+            // Dispatch's own poll window is ~2 min; a CCTP leg can take far longer. Keep asking
+            // slowly so the graph + log settle on the truth instead of freezing on "still
+            // settling" after the deposits have already landed (live 2026-07-20: 60 USDC farmed
+            // into 3 pools on-chain while the UI still showed the deposit phase).
+            const jobId = summary.baseLeg.jobId
+            if (jobId && summary.baseLeg.finalStatus !== 'done') {
+              import('./base/relayerClient.js').then(({ pollFarmStatus }) =>
+                pollBaseLegUntilSettled({
+                  jobId,
+                  pollOnce: (id) => pollFarmStatus({ jobId: id, maxTries: 1 }),
+                }).then((settled) => {
+                  if (!settled) return
+                  paintBaseNodes(mapBaseLegEvent('farm-completed', { jobId, finalStatus: settled }))
+                  if (settled === 'done') loadBasePositions().then((bp) => setBasePositions(bp))
+                })
+              )
+            }
+          }
         }
       })
       .catch((err) => {
@@ -2805,21 +2995,40 @@ const App = () => {
         if (strategyPhase === 'thinking')
           return <ThinkingCard phase={thinkingPhase} times={thinkTimes} />
         return (
-          <StrategyCard
-            strategy={strategy}
-            skillSource={skillSource}
-            onProceed={handleAcceptStrategy}
-            onRegenerate={handleRegenerate}
-            strategyHash={rawStrategy?.strategyHash}
-            attestation={strategyAttestation}
-            attesting={attesting}
-            simulation={simulation}
-            council={debateResult || council}
-            onCouncilRetry={handleRunCouncil}
-            onRunCouncil={handleRunCouncil}
-            debateRunning={debateRunning}
-            showRunCouncil={!debateResult}
-          />
+          <>
+            {needsBaseMandate && (
+              <div className="lede" style={{ marginBottom: 12 }}>
+                <span>Base pools need one-time activation. </span>
+                <button
+                  className="btn btn-ghost"
+                  onClick={handleSetupBaseMandate}
+                  disabled={settingUpBaseMandate}
+                >
+                  {settingUpBaseMandate ? 'Activating…' : 'Activate Base (1 tap)'}
+                </button>
+                {baseMandateError && (
+                  <div role="alert" style={{ color: 'var(--danger)', fontSize: 11, marginTop: 6 }}>
+                    {baseMandateError}
+                  </div>
+                )}
+              </div>
+            )}
+            <StrategyCard
+              strategy={strategy}
+              skillSource={skillSource}
+              onProceed={handleAcceptStrategy}
+              onRegenerate={handleRegenerate}
+              strategyHash={rawStrategy?.strategyHash}
+              attestation={strategyAttestation}
+              attesting={attesting}
+              simulation={simulation}
+              council={debateResult || council}
+              onCouncilRetry={handleRunCouncil}
+              onRunCouncil={handleRunCouncil}
+              debateRunning={debateRunning}
+              showRunCouncil={!debateResult}
+            />
+          </>
         )
       case 'connect':
         return (
@@ -3026,6 +3235,7 @@ const App = () => {
                 scopes={scopes}
                 basePositions={basePositions}
                 onBaseWithdraw={handleBaseWithdrawClick}
+                onBaseRecover={handleBaseRecover}
                 baseWithdrawError={baseWithdrawError}
               />
             }
@@ -3199,26 +3409,19 @@ const App = () => {
       )}
 
       {baseWithdraw && (
-        <div className="modal-backdrop">
-          <div className="modal" role="dialog" aria-modal="true">
-            <div className="modal-eyebrow">Base withdraw</div>
-            <h3 className="modal-title">{baseWithdraw.position.poolName}</h3>
-            <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
-              <Withdraw
-                ownerKernelAccount={baseWithdraw.ownerKernelAccount}
-                publicClient={baseWithdraw.publicClient}
-                withdrawals={[baseWithdraw.position]}
-                stellarRecipient={realAddress}
-                totalAssetsForBurn={baseWithdraw.position.minAssets}
-              />
-            </Suspense>
-            <div className="modal-actions">
-              <button className="btn btn-ghost" onClick={() => setBaseWithdraw(null)}>
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
+        <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
+          <Withdraw
+            positions={baseWithdraw.positions}
+            idleUsdc={baseWithdraw.idleUsdc}
+            ownerKernelAccount={baseWithdraw.ownerKernelAccount}
+            publicClient={baseWithdraw.publicClient}
+            stellarRecipient={realAddress}
+            onClose={() => setBaseWithdraw(null)}
+            onDone={() => {
+              loadBasePositions().then((bp) => setBasePositions(bp))
+            }}
+          />
+        </Suspense>
       )}
 
       {devMode && (

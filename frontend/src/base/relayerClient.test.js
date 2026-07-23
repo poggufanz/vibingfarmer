@@ -2,7 +2,7 @@
 import { describe, test, expect, vi } from 'vitest'
 import * as relayerClient from './relayerClient.js'
 
-const { postFarm, pollFarmStatus, postUnwind, postMandate } = relayerClient
+const { postFarm, pollFarmStatus, postUnwind, postMandate, getMandateStatus } = relayerClient
 
 describe('quantizeAllocations', () => {
   test('quantizes a 100 / 3 split once while preserving display amounts', () => {
@@ -230,11 +230,13 @@ describe('pollFarmStatus', () => {
 })
 
 describe('postMandate', () => {
-  test('POSTs the serializedApproval + sessionPrivateKey once, returns {ok: true}', async () => {
+  test('POSTs the serializedApproval + sessionPrivateKey + expiry once, returns {ok: true}', async () => {
     const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ ok: true }) }))
+    const expiry = Math.floor(Date.now() / 1000) + 7 * 24 * 3600
     const result = await postMandate({
       serializedApproval: 'approval-blob',
       sessionPrivateKey: '0xSECRETKEY',
+      expiry,
       baseUrl: 'https://example.test/api/vf-cross',
       deps: { fetchImpl: fetchMock },
     })
@@ -244,7 +246,11 @@ describe('postMandate', () => {
     expect(url).toBe('https://example.test/api/vf-cross/mandate')
     expect(opts.method).toBe('POST')
     const body = JSON.parse(opts.body)
-    expect(body).toEqual({ serializedApproval: 'approval-blob', sessionPrivateKey: '0xSECRETKEY' })
+    expect(body).toEqual({
+      serializedApproval: 'approval-blob',
+      sessionPrivateKey: '0xSECRETKEY',
+      expiry,
+    })
   })
 
   test('throws a clear error on a non-ok response', async () => {
@@ -253,10 +259,53 @@ describe('postMandate', () => {
       postMandate({
         serializedApproval: 'approval-blob',
         sessionPrivateKey: '0xSECRETKEY',
+        expiry: Math.floor(Date.now() / 1000) + 100,
         baseUrl: 'https://example.test/api/vf-cross',
         deps: { fetchImpl: fetchMock },
       })
     ).rejects.toThrow(/mandate registration failed \(400\)/)
+  })
+})
+
+describe('getMandateStatus', () => {
+  test('GETs /mandate/valid with the approval urlencoded as a query param, returns {valid, expiresAt}', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ valid: true, expiresAt: 1234567890000 }),
+    }))
+    const result = await getMandateStatus('approval blob/with+special=chars', {
+      baseUrl: 'https://example.test/api/vf-cross',
+      deps: { fetchImpl: fetchMock },
+    })
+    expect(result).toEqual({ valid: true, expiresAt: 1234567890000 })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url] = fetchMock.mock.calls[0]
+    expect(url).toBe(
+      'https://example.test/api/vf-cross/mandate/valid?approval=' +
+        encodeURIComponent('approval blob/with+special=chars')
+    )
+  })
+
+  test('never leaks key material — the relayer response shape has no key field, and the client just passes it through', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ valid: true, expiresAt: 999 }),
+    }))
+    const result = await getMandateStatus('approval-blob', {
+      baseUrl: 'https://example.test/api/vf-cross',
+      deps: { fetchImpl: fetchMock },
+    })
+    expect(Object.keys(result).sort()).toEqual(['expiresAt', 'valid'])
+  })
+
+  test('throws a clear error on a non-ok response', async () => {
+    const fetchMock = vi.fn(async () => ({ ok: false, status: 500 }))
+    await expect(
+      getMandateStatus('approval-blob', {
+        baseUrl: 'https://example.test/api/vf-cross',
+        deps: { fetchImpl: fetchMock },
+      })
+    ).rejects.toThrow(/mandate status check failed \(500\)/)
   })
 })
 

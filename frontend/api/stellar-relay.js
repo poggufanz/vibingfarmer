@@ -8,8 +8,12 @@
 // Task 4) — including the SOROBAN_AGENT_ALLOWLIST exact-match check AND, for dynamic per-run
 // agents that can't live in a static allowlist, a fail-closed pinned-wasm-hash fallback
 // (SOROBAN_AGENT_WASM_HASH, Task 3) — on F11 exit-leg-2 token transfers — so the relayer never
-// sponsors an unrelated transaction. The relayer SECRET is server-held (STELLAR_RELAYER_SECRET)
-// — never in the client bundle.
+// sponsors an unrelated transaction. Router address(es) and agent wasm hash(es) are CSV env
+// LISTS (SOROBAN_ROUTER_ADDRESSES / SOROBAN_AGENT_WASM_HASHES, each falling back to the
+// single-value env) so v1 and v2/v3 contracts relay side by side during migration; the same
+// wasm-hash list is the sole gate on sponsoring deposit_for_burn on the CCTP TokenMessengerMinter
+// (SOROBAN_TOKEN_MESSENGER_ADDRESS — unset = that branch dead, fail closed). The relayer SECRET
+// is server-held (STELLAR_RELAYER_SECRET) — never in the client bundle.
 //
 // Actions:
 //   { action: 'wallet' }            → { address }           (relayer pubkey — fund it)
@@ -23,19 +27,31 @@ const RPC_URL = () => process.env.SOROBAN_RPC_URL || 'https://soroban-testnet.st
 const RELAYER_SECRET = () => process.env.STELLAR_RELAYER_SECRET || ''
 const VAULT_ADDR = () => process.env.SOROBAN_VAULT_ADDRESS || ''
 const TOKEN_ADDR = () => process.env.SOROBAN_TOKEN_ADDRESS || ''
-// funding_router for the single-signature grant flow; unset = router relaying disabled (fail closed).
-const ROUTER_ADDR = () => process.env.SOROBAN_ROUTER_ADDRESS || ''
+// funding_router(s) for the single-signature grant flow — CSV list so v1 and v2 relay side by
+// side during migration (SOROBAN_ROUTER_ADDRESSES), falling back to the single-value
+// SOROBAN_ROUTER_ADDRESS. Empty list = router relaying disabled (fail closed).
+const ROUTER_ADDRS = () =>
+  parseAllowlist(process.env.SOROBAN_ROUTER_ADDRESSES || process.env.SOROBAN_ROUTER_ADDRESS)
 const AGENT_ALLOWLIST = () => process.env.SOROBAN_AGENT_ALLOWLIST || ''
 // Content-addressed pin of the OZ smart-account wasm SAK deploys (see wallet/config.js
 // ACCOUNT_WASM_HASH — same inline-constant discipline). Env-overridable, never secret.
 const ACCOUNT_WASM_HASH = () =>
   process.env.SOROBAN_ACCOUNT_WASM_HASH ||
   'a12e8fa9621efd20315753bd4007d974390e31fbcb4a7ddc4dd0a0dec728bf2e'
-// Content-addressed pin of the agent_account wasm the funding_router deploys
-// (deployments/stellar-testnet.json agentAccountWasmHash, v3). Never secret.
-const AGENT_WASM_HASH = () =>
-  process.env.SOROBAN_AGENT_WASM_HASH ||
-  'd61ceaaaf5a3fd9fd25987eba0f843ccb79880f3eaa137e066b5f63ab9eaa2ba'
+// Content-addressed pin(s) of the agent_account wasm the funding_router deploys
+// (deployments/stellar-testnet.json agentAccountWasmHash) — CSV list so v1 and v3 wasm both
+// count as "pinned" during migration (SOROBAN_AGENT_WASM_HASHES), falling back to the
+// single-value SOROBAN_AGENT_WASM_HASH, then this hardcoded v3 default. Never secret.
+const AGENT_WASM_HASHES = () =>
+  parseAllowlist(
+    process.env.SOROBAN_AGENT_WASM_HASHES ||
+      process.env.SOROBAN_AGENT_WASM_HASH ||
+      'd61ceaaaf5a3fd9fd25987eba0f843ccb79880f3eaa137e066b5f63ab9eaa2ba'
+  )
+// CCTP TokenMessengerMinter (testnet) — sponsors deposit_for_burn only when its `from` arg is a
+// pinned agent_account (see assertVaultDeposit). No hardcoded default: unset = messenger
+// sponsorship dead, fail closed — never default-allow an arbitrary burn source.
+const TOKEN_MESSENGER = () => process.env.SOROBAN_TOKEN_MESSENGER_ADDRESS || ''
 
 // Fee-bump base fee = inner fee + this margin (stroops). 0.1 XLM is generous on testnet and
 // safely clears the SDK's "fee-bump fee >= inner fee" floor for our single-op deposit txs.
@@ -87,10 +103,18 @@ function parseAllowlist(raw) {
  * FAIL CLOSED: no pin (default '') → every deploy rejected; V1 createContract and non-wasm
  * executables (SAC) rejected unconditionally.
  *
- * When `routerAddr` is set (SOROBAN_ROUTER_ADDRESS — the funding_router of the single-signature
- * grant flow), ALSO sponsors `routerAddr`.grant / `routerAddr`.pull — nothing else on that
- * contract. FAIL CLOSED: routerAddr unset (default '') → every router call rejected,
- * byte-identical to the pre-router guard.
+ * When `routerAddrs` is non-empty (SOROBAN_ROUTER_ADDRESSES/SOROBAN_ROUTER_ADDRESS — the
+ * funding_router(s) of the single-signature grant flow, v1 and v2 relaying side by side during
+ * migration), ALSO sponsors `.grant` / `.pull` on ANY listed router — nothing else on those
+ * contracts. FAIL CLOSED: empty list → every router call rejected, byte-identical to the
+ * pre-router guard.
+ *
+ * When `messengerAddr` is set (SOROBAN_TOKEN_MESSENGER_ADDRESS — the CCTP TokenMessengerMinter),
+ * ALSO sponsors `messengerAddr`.deposit_for_burn, but ONLY when its `from` arg (args[0], same
+ * address-decode as the token.transfer branch) is a contract whose wasm hash is in
+ * `agentWasmHashes` — an agent burning ITS OWN funds, never an arbitrary caller. FAIL CLOSED:
+ * messengerAddr unset (default '') → branch dead; any other function on the messenger, a wasm
+ * lookup miss, or a hash outside the list all reject.
  */
 export async function assertVaultDeposit(
   inner,
@@ -99,9 +123,10 @@ export async function assertVaultDeposit(
   tokenAddr = '',
   agentAllowlist = '',
   accountWasmHash = '',
-  routerAddr = '',
-  agentWasmHash = '',
-  getWasmHash = null
+  routerAddrs = [],
+  agentWasmHashes = [],
+  getWasmHash = null,
+  messengerAddr = ''
 ) {
   if (!vaultAddr) return
   const ops = inner.operations || []
@@ -133,9 +158,26 @@ export async function assertVaultDeposit(
     }
     return
   }
-  if (routerAddr && contract === routerAddr) {
+  if (routerAddrs.length && routerAddrs.includes(contract)) {
     if (fnName !== 'grant' && fnName !== 'pull') {
       throw new RelayError('inner tx is not a router grant/pull')
+    }
+    return
+  }
+  if (messengerAddr && contract === messengerAddr) {
+    if (fnName !== 'deposit_for_burn') {
+      throw new RelayError('messenger: only deposit_for_burn is relayable')
+    }
+    const from = sdk.Address.fromScVal(ic.args()[0]).toString()
+    if (!getWasmHash) throw new RelayError('messenger: wasm lookup unavailable')
+    let hash = null
+    try {
+      hash = await getWasmHash(from)
+    } catch {
+      throw new RelayError('messenger: agent wasm lookup failed')
+    }
+    if (!hash || !agentWasmHashes.includes(hash)) {
+      throw new RelayError('messenger: from is not a pinned agent')
     }
     return
   }
@@ -143,18 +185,18 @@ export async function assertVaultDeposit(
     const from = sdk.Address.fromScVal(ic.args()[0]).toString()
     if (parseAllowlist(agentAllowlist).includes(from)) return
     // Dynamic per-run agents can't live in a static env allowlist. Fallback: sponsor iff the
-    // from-contract RUNS the pinned agent_account wasm — its own __check_auth then pins the
+    // from-contract RUNS a pinned agent_account wasm — its own __check_auth then pins the
     // destination to scope.owner on-chain, so the worst case is an attacker deploying our wasm
     // to get free gas moving THEIR funds to THEIR owner (griefing, bounded by the rate limit).
-    // FAIL CLOSED: no pin, no lookup fn, lookup error, or hash mismatch → reject.
-    if (agentWasmHash && getWasmHash) {
+    // FAIL CLOSED: no pins, no lookup fn, lookup error, or hash outside the list → reject.
+    if (agentWasmHashes.length && getWasmHash) {
       let hash = null
       try {
         hash = await getWasmHash(from)
       } catch {
         throw new RelayError('agent wasm lookup failed')
       }
-      if (hash === agentWasmHash) return
+      if (agentWasmHashes.includes(hash)) return
     }
     throw new RelayError('relay sponsors allowlisted agent-account transfers only')
   }
@@ -179,11 +221,14 @@ async function pollResult(rpcServer, hash, tries, intervalMs) {
  * @param {string} p.passphrase     network passphrase
  * @param {string} p.vaultAddr      allowlisted deposit target ('' = skip the guard)
  * @param {string} p.agentAllowlist comma-separated agent accounts allowed as transfer 'from'
- * @param {string} p.routerAddr     funding_router allowed for grant/pull ('' = router disabled)
- * @param {string} p.agentWasmHash  pinned agent_account wasm hash (hex) — dynamic-agent transfer
- *                                  fallback when 'from' misses agentAllowlist ('' = disabled)
+ * @param {string[]} p.routerAddrs  funding_router(s) allowed for grant/pull ([] = router disabled)
+ * @param {string[]} p.agentWasmHashes pinned agent_account wasm hashes (hex) — dynamic-agent
+ *                                  transfer fallback when 'from' misses agentAllowlist, AND the
+ *                                  only gate on messenger deposit_for_burn ([] = both disabled)
  * @param {Function} p.getWasmHash  async (contractId) => wasmHashHex|null — required alongside
- *                                  agentWasmHash to use the fallback (null = disabled)
+ *                                  agentWasmHashes to use either fallback (null = disabled)
+ * @param {string} p.messengerAddr  CCTP TokenMessengerMinter allowed for deposit_for_burn
+ *                                  ('' = messenger sponsorship disabled)
  * @param {object} p.sdk            { TransactionBuilder, FeeBumpTransaction, Keypair, Address }
  * @param {object} p.rpcServer      { sendTransaction, getTransaction }
  * @returns {Promise<{ hash, status, relayer }>}
@@ -196,9 +241,10 @@ export async function feeBumpAndSubmit({
   tokenAddr = '',
   agentAllowlist = '',
   accountWasmHash = '',
-  routerAddr = '',
-  agentWasmHash = '',
+  routerAddrs = [],
+  agentWasmHashes = [],
   getWasmHash = null,
+  messengerAddr = '',
   sdk,
   rpcServer,
   pollTries = 10,
@@ -217,9 +263,10 @@ export async function feeBumpAndSubmit({
     tokenAddr,
     agentAllowlist,
     accountWasmHash,
-    routerAddr,
-    agentWasmHash,
-    getWasmHash
+    routerAddrs,
+    agentWasmHashes,
+    getWasmHash,
+    messengerAddr
   )
 
   // Replay short-circuit (don't pay to re-broadcast a spent inner tx).
@@ -329,9 +376,10 @@ export default async function handler(req, res) {
           tokenAddr: TOKEN_ADDR(),
           agentAllowlist: AGENT_ALLOWLIST(),
           accountWasmHash: ACCOUNT_WASM_HASH(),
-          routerAddr: ROUTER_ADDR(),
-          agentWasmHash: AGENT_WASM_HASH(),
+          routerAddrs: ROUTER_ADDRS(),
+          agentWasmHashes: AGENT_WASM_HASHES(),
           getWasmHash,
+          messengerAddr: TOKEN_MESSENGER(),
           sdk,
           rpcServer,
         })

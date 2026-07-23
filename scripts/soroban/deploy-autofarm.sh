@@ -73,7 +73,9 @@ STRATEGY1=$(stellar contract deploy --wasm "$WASM_DIR/blend_strategy.wasm" \
      --reserve_token_id "$RESERVE_TOKEN_ID")
 echo "STRATEGY_1=$STRATEGY1"
 
-# ---- wire strategy + keeper on the vault (admin-only, vf-deployer IS the admin) ----
+# ---- wire strategy + keeper on the vault (admin-only; at deploy time the constructor makes
+# vf-deployer the admin — the LIVE vault's admin has since moved to the vf-vault-admin 2-of-3
+# multisig, so these calls only work as-is on a FRESH deploy, not against the live vault) ----
 stellar contract invoke --id "$VAULT" --source vf-deployer --network "$NET" --send=yes \
   -- add_strategy --strategy "$STRATEGY1"
 stellar contract invoke --id "$VAULT" --source vf-deployer --network "$NET" --send=yes \

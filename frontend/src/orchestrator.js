@@ -2,12 +2,25 @@ import { WorkerAgent, makeAgentId } from './worker.js'
 import { generateAgentSkills } from './strategist.js'
 import { saveSkill } from './skills.js'
 import { deployAgentForSession, fundAgent, registryAuthorizeAgent } from './stellar/agentSetup.js'
-import { submitGrant, runAgentPull, readAllowance } from './stellar/grant.js'
+import {
+  submitGrant,
+  runAgentPull,
+  readAllowance,
+  AGENT_KIND_DEPOSIT,
+  AGENT_KIND_BRIDGE,
+} from './stellar/grant.js'
 import { saveCachedAgent, takeReusableAgent } from './stellar/agentCache.js'
 import { newSessionKey } from './stellar/sessionKey.js'
 import { readTokenBalance } from './stellar/agentDeposit.js'
-import { STELLAR_USDC_SAC } from './stellar/cctpBurn.js'
+import {
+  STELLAR_USDC_SAC,
+  STELLAR_TOKEN_MESSENGER_MINTER,
+  CCTP_BASE_DOMAIN,
+  ZERO32,
+  evmAddrToBytes32,
+} from './stellar/cctpBurn.js'
 import { deriveCctpTransferUnits } from './stellar/format.js'
+import { readStoredBaseMandate } from './mergeFlowHelpers.js'
 import {
   SOROBAN_TOKEN_ADDRESS,
   SOROBAN_DECIMALS,
@@ -36,7 +49,10 @@ export class OrchestratorAgent {
    * @param {string} config.sessionId
    * @param {function} config.onEvent - (eventName, data) => void
    * @param {object|null} config.baseLegContext - { connectedAddress, signTx } — required only when
-   *   strategy.vaults contains a chain:'base' entry (drives the Base leg via executeBaseLeg).
+   *   strategy.vaults contains a chain:'base' entry (only .connectedAddress is read; signTx is
+   *   unused since the grant-covers-burn rework — the Base leg's bridge agent is authorized by the
+   *   SAME single funding_router grant as the Stellar deposit workers, signed once via the default
+   *   wallet-kit path in grantFreshAgents, never through this context).
    */
   constructor({
     user,
@@ -100,158 +116,210 @@ export class OrchestratorAgent {
       }
     }
     const stellarStrategy = { ...strategy, vaults: stellarVaults }
+    const scopeTtl = this.grantDurationSeconds || SCOPE_TTL_SECONDS
+    const expiry = Math.floor(Date.now() / 1000) + scopeTtl
+
+    // Grant-covers-burn (docs/superpowers/specs/2026-07-21-grant-covers-burn-design.md §4-5): a
+    // mixed run's bridge agent joins the SAME single grant as the Stellar deposit workers — never
+    // a second signature ("Run campuran: 1 ttd grant, 0 passkey"). mint_recipient is pinned to the
+    // ALREADY-valid stored Base mandate's kernel address; app.jsx's preflight
+    // (checkStoredBaseMandate) guarantees one exists before Base is ever offered as a strategy
+    // option, so this is a read, never a fresh ceremony.
+    let bridgeInit = null
+    let bridgeSessionKey = null
+    // Threaded into executeBaseLeg below (never re-read from storage there) — the exact
+    // kernelAddress this grant pinned as mint_recipient, so a mid-run mandate rotation can't
+    // desync the runtime burn arg from what's actually on-chain (see baseLeg.js's own doc).
+    let bridgeKernelAddress = null
+    if (baseVaults.length > 0) {
+      const mandate = readStoredBaseMandate()
+      if (!mandate) {
+        throw new Error('No durable Base mandate is stored for the cross-chain leg.')
+      }
+      bridgeKernelAddress = mandate.kernelAddress
+      const legAmount = baseVaults.reduce((sum, v) => sum + totalAmount * v.allocation, 0)
+      const { burnUnits7: bridgeCap } = deriveCctpTransferUnits(legAmount)
+      bridgeSessionKey = newSessionKey()
+      bridgeInit = {
+        signer: bridgeSessionKey.rawPublicKey,
+        cap: bridgeCap,
+        token: STELLAR_USDC_SAC,
+        target: STELLAR_TOKEN_MESSENGER_MINTER,
+        kind: AGENT_KIND_BRIDGE,
+        mintRecipient: evmAddrToBytes32(bridgeKernelAddress),
+        destinationDomain: CCTP_BASE_DOMAIN,
+        periodDuration: PERIOD_DURATION,
+        expiry,
+      }
+    }
+
+    // Resolves once the run's grant (or the no-grant-needed/legacy path) names the bridge agent.
+    // The Base leg branch below awaits this before doing any work, so Promise.allSettled still
+    // fires both branches immediately, but the Base leg's real work blocks on the SAME grant the
+    // Stellar branch triggers inside setupViaRouter — one signature covers both legs. `finally`
+    // (in runStellarLegs below) guarantees this always settles even if the Stellar branch throws
+    // before ever reaching setup (e.g. the VFUSD preflight) — otherwise the Base leg would hang.
+    let resolveBridgeAgent
+    const bridgeAgentReady = new Promise((resolve) => {
+      resolveBridgeAgent = resolve
+    })
 
     // Stellar leg — MOVED verbatim from the pre-Task-8 dispatch body (only `strategy` →
     // `stellarStrategy` at the vaultPlans line changed) into a local closure so it can run as one
     // settled branch of Promise.allSettled alongside the Base leg below.
     const runStellarLegs = async () => {
-      const scopeTtl = this.grantDurationSeconds || SCOPE_TTL_SECONDS
-      const expiry = Math.floor(Date.now() / 1000) + scopeTtl
-      const vaultPlans = stellarStrategy.vaults.map((v, i) => ({
-        index: i,
-        agentId: makeAgentId(i, this.sessionId),
-        vault: v.address,
-        protocolSlug: v.protocolSlug || null,
-        eligibilityToken: v.eligibilityToken || null,
-        amountVfusd: totalAmount * v.allocation,
-        amountUnits: BigInt(Math.floor(totalAmount * v.allocation * BASE_UNIT)),
-      }))
+      try {
+        const vaultPlans = stellarStrategy.vaults.map((v, i) => ({
+          index: i,
+          agentId: makeAgentId(i, this.sessionId),
+          vault: v.address,
+          protocolSlug: v.protocolSlug || null,
+          eligibilityToken: v.eligibilityToken || null,
+          amountVfusd: totalAmount * v.allocation,
+          amountUnits: BigInt(Math.floor(totalAmount * v.allocation * BASE_UNIT)),
+        }))
 
-      this.onEvent('orchestrator-started', {
-        sessionId: this.sessionId,
-        totalAgents: vaultPlans.length,
-        vaults: vaultPlans.map((p) => p.vault),
-      })
+        this.onEvent('orchestrator-started', {
+          sessionId: this.sessionId,
+          totalAgents: vaultPlans.length,
+          vaults: vaultPlans.map((p) => p.vault),
+        })
 
-      // Generate skills for all agents (parallel).
-      this.onEvent('orchestrator-step', { step: 'generating-skills', status: 'pending' })
-      const skillsResults = await Promise.allSettled(
-        vaultPlans.map((plan) =>
-          generateAgentSkills({
-            agentId: plan.agentId,
-            vault: plan.vault,
-            amount: plan.amountVfusd,
-            veniceAuth: this.veniceAuth,
-            devApiKey: this.devApiKey,
-          }).then((skill) => {
-            saveSkill(plan.agentId, skill)
-            return { agentId: plan.agentId, skill }
-          })
+        // Generate skills for all agents (parallel).
+        this.onEvent('orchestrator-step', { step: 'generating-skills', status: 'pending' })
+        const skillsResults = await Promise.allSettled(
+          vaultPlans.map((plan) =>
+            generateAgentSkills({
+              agentId: plan.agentId,
+              vault: plan.vault,
+              amount: plan.amountVfusd,
+              veniceAuth: this.veniceAuth,
+              devApiKey: this.devApiKey,
+            }).then((skill) => {
+              saveSkill(plan.agentId, skill)
+              return { agentId: plan.agentId, skill }
+            })
+          )
         )
-      )
-      this.onEvent('orchestrator-step', { step: 'generating-skills', status: 'done' })
+        this.onEvent('orchestrator-step', { step: 'generating-skills', status: 'done' })
 
-      // Surface skill-gen failures (e.g. Venice 401/402) — fallback still lets the agent run.
-      skillsResults.forEach((r, i) => {
-        const skill = r.value?.skill
-        if (skill?.error) {
-          this.onEvent('skill-gen-failed', { agentId: vaultPlans[i].agentId, error: skill.error })
-        }
-      })
-
-      const totalUnits = vaultPlans.reduce((acc, p) => acc + p.amountUnits, 0n)
-
-      // Pre-flight: block BEFORE any wallet signature if the asset balance can't cover the total.
-      const bal = await readTokenBalance(this.user)
-      if (bal != null && bal < totalUnits) {
-        const msg = `Insufficient VFUSD: have ${(Number(bal) / BASE_UNIT).toFixed(2)}, need ${(Number(totalUnits) / BASE_UNIT).toFixed(2)} for this deposit.`
-        this.onEvent('orchestrator-step', {
-          step: 'authorizing-scope',
-          status: 'error',
-          error: msg,
+        // Surface skill-gen failures (e.g. Venice 401/402) — fallback still lets the agent run.
+        skillsResults.forEach((r, i) => {
+          const skill = r.value?.skill
+          if (skill?.error) {
+            this.onEvent('skill-gen-failed', { agentId: vaultPlans[i].agentId, error: skill.error })
+          }
         })
-        throw new Error(msg)
-      }
 
-      // Option B (fresh agent per run): each worker gets its OWN agent_account instance, deployed
-      // below with that worker's fresh session-key pubkey as the constructor-pinned signer. The
-      // shared pre-deployed demo agent only accepts ITS constructor-pinned key — depositing with
-      // any fresh key failed __check_auth ed25519 verification (Error(Auth, InvalidAction)).
-      const workers = vaultPlans.map(
-        (p) =>
-          new WorkerAgent({
-            agentId: p.agentId,
-            user: this.user,
-            vault: p.vault,
-            amount: p.amountUnits,
-            sessionId: this.sessionId,
-            onEvent: this.onEvent,
-            agentAddress: null, // set right after the per-worker deploy below
-            eligibilityToken: p.eligibilityToken,
+        const totalUnits = vaultPlans.reduce((acc, p) => acc + p.amountUnits, 0n)
+
+        // Pre-flight: block BEFORE any wallet signature if the asset balance can't cover the total.
+        const bal = await readTokenBalance(this.user)
+        if (bal != null && bal < totalUnits) {
+          const msg = `Insufficient VFUSD: have ${(Number(bal) / BASE_UNIT).toFixed(2)}, need ${(Number(totalUnits) / BASE_UNIT).toFixed(2)} for this deposit.`
+          this.onEvent('orchestrator-step', {
+            step: 'authorizing-scope',
+            status: 'error',
+            error: msg,
           })
-      )
+          throw new Error(msg)
+        }
 
-      // Agent setup — ONE of two paths, chosen by the config knob USE_FUNDING_ROUTER:
-      //   • Router (DEFAULT once funding_router is deployed): ONE owner-signed grant deploys every
-      //     agent + sets the SEP-41 budget behind a single signature; worker funding is a relayed
-      //     router.pull (0 further signatures). Repeat runs can be signature-free. — setupViaRouter
-      //   • Legacy (router unset, or VITE_LEGACY_AGENT_SETUP=1): per-agent deploy + fund, each a
-      //     user signature. — setupLegacy
-      // Both isolate a single agent's setup failure (that worker fails, the run continues) and abort
-      // only when EVERY agent failed. The pending/error/done step events are emitted HERE so both
-      // paths report identically.
-      this.onEvent('orchestrator-step', { step: 'authorizing-scope', status: 'pending' })
-      if (USE_FUNDING_ROUTER) {
-        await this.setupViaRouter(workers, expiry)
-      } else {
-        await this.setupLegacy(workers, expiry)
-      }
-      if (workers.length > 0 && workers.every((w) => w.setupFailed)) {
-        const msg = `Agent setup failed for all ${workers.length} agents: ${workers[0].setupError}`
-        this.onEvent('orchestrator-step', {
-          step: 'authorizing-scope',
-          status: 'error',
-          error: msg,
+        // Option B (fresh agent per run): each worker gets its OWN agent_account instance, deployed
+        // below with that worker's fresh session-key pubkey as the constructor-pinned signer. The
+        // shared pre-deployed demo agent only accepts ITS constructor-pinned key — depositing with
+        // any fresh key failed __check_auth ed25519 verification (Error(Auth, InvalidAction)).
+        const workers = vaultPlans.map(
+          (p) =>
+            new WorkerAgent({
+              agentId: p.agentId,
+              user: this.user,
+              vault: p.vault,
+              amount: p.amountUnits,
+              sessionId: this.sessionId,
+              onEvent: this.onEvent,
+              agentAddress: null, // set right after the per-worker deploy below
+              eligibilityToken: p.eligibilityToken,
+            })
+        )
+
+        // Agent setup — ONE of two paths, chosen by the config knob USE_FUNDING_ROUTER:
+        //   • Router (DEFAULT once funding_router is deployed): ONE owner-signed grant deploys every
+        //     agent + sets the SEP-41 budget behind a single signature; worker funding is a relayed
+        //     router.pull (0 further signatures). Repeat runs can be signature-free. — setupViaRouter
+        //   • Legacy (router unset, or VITE_LEGACY_AGENT_SETUP=1): per-agent deploy + fund, each a
+        //     user signature. — setupLegacy
+        // Both isolate a single agent's setup failure (that worker fails, the run continues) and abort
+        // only when EVERY agent failed. The pending/error/done step events are emitted HERE so both
+        // paths report identically.
+        this.onEvent('orchestrator-step', { step: 'authorizing-scope', status: 'pending' })
+        if (USE_FUNDING_ROUTER) {
+          await this.setupViaRouter(workers, expiry, bridgeInit, resolveBridgeAgent)
+        } else {
+          await this.setupLegacy(workers, expiry)
+        }
+        if (workers.length > 0 && workers.every((w) => w.setupFailed)) {
+          const msg = `Agent setup failed for all ${workers.length} agents: ${workers[0].setupError}`
+          this.onEvent('orchestrator-step', {
+            step: 'authorizing-scope',
+            status: 'error',
+            error: msg,
+          })
+          throw new Error(msg)
+        }
+        this.onEvent('orchestrator-step', { step: 'authorizing-scope', status: 'done' })
+
+        // Dispatch workers SERIALLY — one completes before the next starts; the gap keeps the relay
+        // off its per-IP rate limit. Promise.allSettled-equivalent: a thrown worker is captured, not
+        // propagated, so one agent's failure never aborts the others.
+        this.onEvent('orchestrator-step', { step: 'dispatching-agents', status: 'pending' })
+        const workerResults = []
+        for (let i = 0; i < workers.length; i++) {
+          // A worker whose setup failed was already surfaced ('failed' event) — record and move on.
+          if (workers[i].setupFailed) {
+            workerResults.push({ status: 'rejected', reason: new Error(workers[i].setupError) })
+            continue
+          }
+          try {
+            const res = await workers[i].execute()
+            workerResults.push({ status: 'fulfilled', value: res })
+          } catch (e) {
+            workerResults.push({ status: 'rejected', reason: e })
+          }
+          if (i < workers.length - 1) await new Promise((r) => setTimeout(r, DISPATCH_INTERVAL_MS))
+        }
+        this.onEvent('orchestrator-step', { step: 'dispatching-agents', status: 'done' })
+
+        const results = workerResults.map((r, i) => ({
+          agentId: vaultPlans[i].agentId,
+          vault: vaultPlans[i].vault,
+          success: r.status === 'fulfilled' && r.value?.success,
+          txHash: r.value?.txHash,
+          error: r.reason?.message || r.value?.error,
+        }))
+
+        const completed = results.filter((r) => r.success).length
+        const failed = results.length - completed
+
+        this.onEvent('orchestrator-completed', {
+          sessionId: this.sessionId,
+          completed,
+          failed,
+          results,
         })
-        throw new Error(msg)
-      }
-      this.onEvent('orchestrator-step', { step: 'authorizing-scope', status: 'done' })
 
-      // Dispatch workers SERIALLY — one completes before the next starts; the gap keeps the relay
-      // off its per-IP rate limit. Promise.allSettled-equivalent: a thrown worker is captured, not
-      // propagated, so one agent's failure never aborts the others.
-      this.onEvent('orchestrator-step', { step: 'dispatching-agents', status: 'pending' })
-      const workerResults = []
-      for (let i = 0; i < workers.length; i++) {
-        // A worker whose setup failed was already surfaced ('failed' event) — record and move on.
-        if (workers[i].setupFailed) {
-          workerResults.push({ status: 'rejected', reason: new Error(workers[i].setupError) })
-          continue
+        return {
+          completed,
+          failed,
+          results,
+          sessionId: this.sessionId,
+          agentAddresses: workers.map((w) => w.agentAddress).filter(Boolean),
         }
-        try {
-          const res = await workers[i].execute()
-          workerResults.push({ status: 'fulfilled', value: res })
-        } catch (e) {
-          workerResults.push({ status: 'rejected', reason: e })
-        }
-        if (i < workers.length - 1) await new Promise((r) => setTimeout(r, DISPATCH_INTERVAL_MS))
-      }
-      this.onEvent('orchestrator-step', { step: 'dispatching-agents', status: 'done' })
-
-      const results = workerResults.map((r, i) => ({
-        agentId: vaultPlans[i].agentId,
-        vault: vaultPlans[i].vault,
-        success: r.status === 'fulfilled' && r.value?.success,
-        txHash: r.value?.txHash,
-        error: r.reason?.message || r.value?.error,
-      }))
-
-      const completed = results.filter((r) => r.success).length
-      const failed = results.length - completed
-
-      this.onEvent('orchestrator-completed', {
-        sessionId: this.sessionId,
-        completed,
-        failed,
-        results,
-      })
-
-      return {
-        completed,
-        failed,
-        results,
-        sessionId: this.sessionId,
-        agentAddresses: workers.map((w) => w.agentAddress).filter(Boolean),
+      } finally {
+        // Guarantees bridgeAgentReady always settles, even when this closure throws before ever
+        // reaching setupViaRouter (e.g. the VFUSD preflight above) — a no-op if setupViaRouter
+        // already resolved it (resolving an already-settled promise is a safe no-op in JS).
+        resolveBridgeAgent(null)
       }
     }
 
@@ -261,19 +329,33 @@ export class OrchestratorAgent {
     // client, ZeroDev farm flow) out of the Stellar-only path's load AND out of its failure mode:
     // a Base dep-chain resolution error now settles into the baseLeg-rejection mapping below
     // instead of ever reaching a pure-Stellar dispatch. Run as a settled sibling: one leg's
-    // failure can never abort the other.
+    // failure can never abort the other. The Base branch first awaits bridgeAgentReady — the
+    // Stellar branch's grant (or its finally-guaranteed null) — so both branches start together
+    // but the Base leg's real work only begins once the shared grant has actually resolved.
     const [stellarSettled, baseSettled] = await Promise.allSettled([
       runStellarLegs(),
       baseVaults.length > 0
-        ? import('./baseLeg.js').then(({ executeBaseLeg }) =>
-            executeBaseLeg({
-              connectedAddress: this.baseLegContext.connectedAddress,
-              signTx: this.baseLegContext.signTx,
-              baseVaults,
-              totalAmount,
-              onEvent: (name, data) => this.onEvent(name, data),
-            })
-          )
+        ? bridgeAgentReady.then((bridgeAgentAddress) => {
+            if (!bridgeAgentAddress) {
+              // Either the grant itself failed (see the Stellar branch's own error/event for that
+              // case) or USE_FUNDING_ROUTER is off — a bridge agent can only be deployed via the
+              // router's kind:Bridge AgentInit, never the legacy per-agent deploy path.
+              throw new Error(
+                'No bridge agent was deployed for the cross-chain leg (either the grant failed, or the funding router is unavailable — Base legs require it).'
+              )
+            }
+            return import('./baseLeg.js').then(({ executeBaseLeg }) =>
+              executeBaseLeg({
+                connectedAddress: this.baseLegContext.connectedAddress,
+                bridgeAgentAddress,
+                bridgeSessionKey,
+                kernelAddress: bridgeKernelAddress,
+                baseVaults,
+                totalAmount,
+                onEvent: (name, data) => this.onEvent(name, data),
+              })
+            )
+          })
         : Promise.resolve(null),
     ])
 
@@ -389,32 +471,53 @@ export class OrchestratorAgent {
    * ROUTER setup (single-signature grant flow). Fresh agents can ONLY be created BY a grant (grant deploys
    * them), so the only signature-free path is reusing STILL-VALID cached agents. Sequence:
    *   1. Try to fill EVERY worker from cache with the router's allowance still covering the run
-   *      total → 0 further signatures (tryReuseAllCached).
-   *   2. Otherwise a single grant signature deploys a fresh agent per worker + (re)sets the budget
-   *      (grantFreshAgents). A grant failure marks every worker failed (no agents deployed).
+   *      total → 0 further signatures (tryReuseAllCached). Skipped entirely when a bridge agent is
+   *      needed — it can NEVER be served from cache (never cached, by design — see baseLeg.js's
+   *      grant-covers-burn note), so a grant is unavoidable whenever `bridgeInit` is present, and
+   *      it may as well cover every Stellar worker too rather than leave some half-cached.
+   *   2. Otherwise a single grant signature deploys a fresh agent per worker (+ the bridge agent,
+   *      when present) and (re)sets the budget(s) (grantFreshAgents). A grant failure marks every
+   *      worker failed (no agents deployed) and resolves the bridge agent as null.
    *   3. Fund each worker via a RELAYED router.pull (agent session-key signed; 0 further signatures), unless it
    *      already holds enough of the asset. One worker's pull failure isolates that worker.
+   * @param {Array} workers
+   * @param {number} expiry
+   * @param {object|null} [bridgeInit] - a Bridge-kind AgentInit to fold into the SAME grant
+   * @param {(bridgeAgentAddress:string|null)=>void} [resolveBridgeAgent] - settles once the bridge
+   *   agent's address is known (or null, when no grant ran or it failed)
    */
-  async setupViaRouter(workers, expiry) {
+  async setupViaRouter(workers, expiry, bridgeInit = null, resolveBridgeAgent = () => {}) {
     const nowSec = Math.floor(Date.now() / 1000)
     const totalUnits = workers.reduce((acc, w) => acc + w.amount, 0n)
 
-    const reused = await this.tryReuseAllCached(workers, totalUnits, nowSec)
+    const reused = bridgeInit ? false : await this.tryReuseAllCached(workers, totalUnits, nowSec)
     if (!reused) {
       for (const w of workers) await w.setupKey() // fresh keys the grant pins as agent signers
+      let bridgeAgentAddress = null
       try {
-        await this.grantFreshAgents(workers, totalUnits, expiry, nowSec)
+        bridgeAgentAddress = await this.grantFreshAgents(
+          workers,
+          totalUnits,
+          expiry,
+          nowSec,
+          bridgeInit
+        )
       } catch (err) {
-        // A grant covers ALL workers under one signature — its failure (dismissed signature request, sim
-        // error) leaves NO agents deployed, so the whole run's setup failed. Mark every worker;
-        // dispatch's all-failed check then emits the error step + throws, exactly like legacy.
+        // A grant covers ALL workers (+ the bridge agent) under one signature — its failure
+        // (dismissed signature request, sim error) leaves NOTHING deployed, so the whole run's
+        // setup failed. Mark every worker; dispatch's all-failed check then emits the error step +
+        // throws, exactly like legacy. The bridge leg settles separately (null -> Base leg fails).
         for (const w of workers) {
           w.setupFailed = true
           w.setupError = `Setup failed: ${err.message}`
           this.onEvent('failed', { agentId: w.agentId, vault: w.vault, error: w.setupError })
         }
+        resolveBridgeAgent(null)
         return
       }
+      resolveBridgeAgent(bridgeAgentAddress)
+    } else {
+      resolveBridgeAgent(null) // cache-reuse path never grants — never reached when bridgeInit is set
     }
 
     for (const w of workers) {
@@ -498,27 +601,48 @@ export class OrchestratorAgent {
   }
 
   /**
-   * THE ONE POPUP: a single owner-signed grant that deploys one fresh agent per worker and (re)sets
-   * the SEP-41 budget. Budget = run total (or a larger user-chosen budget for signature-free repeat
-   * headroom), clamped up so it can never be below the run total. Caps per agent bound each deposit.
-   * The returned Vec<Address> maps by index to the workers; each is cached for reuse.
+   * THE ONE SIGNATURE: an owner-signed grant that deploys one fresh agent per worker — PLUS the
+   * run's bridge agent, when `bridgeInit` is present (folded into the SAME agentInits/budgets, per
+   * the grant-covers-burn design: a mixed run costs exactly one grant, never two) — and (re)sets
+   * the SEP-41 budget(s). The Stellar-deposit budget is run total (or a larger user-chosen budget
+   * for signature-free repeat headroom), clamped up so it can never be below the run total; the
+   * bridge budget is always exact (never inflated — a bridge agent is spent once, never reused).
+   * The returned Vec<Address> maps by input order: workers first, the bridge agent last (if any) —
+   * grant.js's own `bridgeAgentAddress` field already names that last entry, reused verbatim here.
+   * @returns {Promise<string|null>} the deployed bridge agent's address, or null when none was requested
    */
-  async grantFreshAgents(workers, totalUnits, expiry, nowSec) {
+  async grantFreshAgents(workers, totalUnits, expiry, nowSec, bridgeInit = null) {
     const budget =
       this.grantBudgetUnits != null && this.grantBudgetUnits > totalUnits
         ? this.grantBudgetUnits
         : totalUnits
     const durationSeconds = Math.max(1, expiry - nowSec)
+    // v2 AgentInit (funding_router/src/types.rs): kind 0 = Deposit, target = the vault the agent
+    // deposits into. mintRecipient/destinationDomain are Bridge-only fields — a Deposit agent's
+    // scope never reads them, so they're pinned to the same harmless zero/none the Rust side
+    // ignores for this kind (ZERO32 imported from cctpBurn.js, never redeclared).
     const agentInits = workers.map((w) => ({
       signer: w.sessionKey.rawPublicKey,
       cap: w.amount,
-      vault: SOROBAN_ACTIVE_VAULT_ADDRESS,
+      token: SOROBAN_TOKEN_ADDRESS,
+      target: SOROBAN_ACTIVE_VAULT_ADDRESS,
+      kind: AGENT_KIND_DEPOSIT,
+      mintRecipient: ZERO32,
+      destinationDomain: 0,
       periodDuration: PERIOD_DURATION,
       expiry,
     }))
-    const { agentAddresses } = await submitGrant({
+    // budgets carries one entry per distinct token spent by this grant — omitted entirely when
+    // there are no Stellar deposit workers (an all-Base strategy grants the bridge init only).
+    const budgets = []
+    if (workers.length > 0) budgets.push({ budget, token: SOROBAN_TOKEN_ADDRESS })
+    if (bridgeInit) {
+      agentInits.push(bridgeInit)
+      budgets.push({ budget: bridgeInit.cap, token: bridgeInit.token })
+    }
+    const { agentAddresses, bridgeAgentAddress } = await submitGrant({
       owner: this.user,
-      budgetBaseUnits: budget,
+      budgets,
       durationSeconds,
       agentInits,
     })
@@ -543,5 +667,6 @@ export class OrchestratorAgent {
         reused: false,
       })
     })
+    return bridgeAgentAddress
   }
 }

@@ -15,6 +15,7 @@ import { toDisplay } from '../stellar/format.js'
 import { fromBaseChainUnits } from '../base/config.js'
 import { pickVaultAgents } from '../positionsStore.js'
 import { Icon } from '../components.jsx'
+import { readPendingUpgrade } from '../stellar/vaultReads.js'
 
 const POLL_MS = 10 * 60 * 1000
 const u = toDisplay
@@ -202,6 +203,7 @@ export default function HomePage({
   onWithdrawSuccess,
   scopes = [],
   basePositions = [],
+  onBaseRecover,
   onBaseWithdraw,
   baseWithdrawError = null,
 }) {
@@ -215,6 +217,7 @@ export default function HomePage({
   const [sortDir, setSortDir] = useState('desc')
   const [filterRisk, setFilterRisk] = useState('all')
   const [apyHistories, setApyHistories] = useState({})
+  const [pendingUpgrade, setPendingUpgrade] = useState(null)
 
   // Read settings once, before any early return (was declared after the no-wallet return → TDZ crash)
   const settings = loadSettings()
@@ -241,6 +244,20 @@ export default function HomePage({
       })
     }
     if (!pulseCache || !pulseCache.fetchedAt || Date.now() - pulseCache.fetchedAt > POLL_MS) load()
+    const id = setInterval(load, POLL_MS)
+    return () => {
+      alive = false
+      clearInterval(id)
+    }
+  }, [userAddress])
+
+  // Pending vault upgrade (surface-only — see UpgradeNoticeBanner below): fetch on mount, poll
+  // on the same cadence as Market Pulse above rather than opening a third interval loop.
+  useEffect(() => {
+    if (!userAddress) return
+    let alive = true
+    const load = () => readPendingUpgrade().then((v) => alive && setPendingUpgrade(v))
+    load()
     const id = setInterval(load, POLL_MS)
     return () => {
       alive = false
@@ -310,7 +327,19 @@ export default function HomePage({
   const now = Date.now()
   const apyOf = (addr) => vaultMeta[addr.toLowerCase()]?.apy || 0
   const totalUnits = posList.reduce((s, [, p]) => s + Number(p.balance || 0), 0)
-  const earnedToday = posList.reduce((s, [a, p]) => s + (u(p.balance) * (apyOf(a) / 100)) / 365, 0)
+  // Portfolio totals span BOTH chains: a mixed strategy parks real capital in Base pools, and
+  // counting only Stellar vaults under-reported "Total deposited" by the whole Base leg (live
+  // 2026-07-20: 60 USDC farmed to Base showed as 0). `assets` is the pool's own valuation of the
+  // shares — never `minAssets`, which is a withdraw floor 0.5% below the true balance.
+  const baseUsdc = basePositions.reduce((s, p) => s + fromBaseChainUnits(p.assets ?? 0n), 0)
+  const totalDeposited = u(totalUnits) + baseUsdc
+  const earnedToday =
+    posList.reduce((s, [a, p]) => s + (u(p.balance) * (apyOf(a) / 100)) / 365, 0) +
+    basePositions.reduce(
+      (s, p) => s + (fromBaseChainUnits(p.assets ?? 0n) * (Number(p.apy) || 0)) / 100 / 365,
+      0
+    )
+  const vaultCount = posList.length + basePositions.length
   const mode = autoHarvest ? 'Autopilot' : 'Co-pilot'
 
   // Risk/agent alerts now surface only through the top-bar bell (NotificationCenter);
@@ -403,6 +432,30 @@ export default function HomePage({
   return (
     <div className="enter" style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 28 }}>
       <div style={{ maxWidth: 820, margin: '0 auto', width: '100%' }}>
+        {pendingUpgrade && (
+          <div
+            role="status"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 12,
+              marginBottom: 20,
+              padding: '10px 14px',
+              borderRadius: 'var(--radius-md)',
+              border: '1px solid var(--warn)',
+              background: 'var(--bg-card)',
+            }}
+          >
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 500 }}>{'⚠️'} Vault upgrade scheduled</div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                Executes after {new Date(pendingUpgrade.eta * 1000).toLocaleString()}. Funds can be
+                withdrawn before then.
+              </div>
+            </div>
+          </div>
+        )}
+
         {sessionResumed && (
           <div
             role="status"
@@ -886,11 +939,16 @@ export default function HomePage({
                     className="tnum"
                     style={{ fontSize: 28, fontWeight: 600, letterSpacing: '-0.03em' }}
                   >
-                    {fmtAmt(u(totalUnits))}
+                    {fmtAmt(totalDeposited)}
                   </span>
                   <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 6 }}>
                     USDC
                   </span>
+                  {baseUsdc > 0 && (
+                    <div style={{ fontSize: 10.5, color: 'var(--text-faint)', marginTop: 3 }}>
+                      {fmtAmt(u(totalUnits))} Stellar, {fmtAmt(baseUsdc)} Base
+                    </div>
+                  )}
                 </div>
                 <span style={{ width: 1, height: 36, background: 'var(--border)' }} />
                 <div>
@@ -909,7 +967,7 @@ export default function HomePage({
                 </div>
                 <span style={{ width: 1, height: 22, background: 'var(--border)' }} />
                 <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                  {posList.length} vault{posList.length === 1 ? '' : 's'}
+                  {vaultCount} vault{vaultCount === 1 ? '' : 's'}
                 </span>
                 <button
                   className="link-btn"
@@ -1043,11 +1101,12 @@ export default function HomePage({
                       }}
                     >
                       <span style={{ fontSize: 13, fontWeight: 500 }}>{p.poolName}</span>
-                      <span
-                        className="mono tnum"
-                        style={{ fontSize: 12, color: 'var(--text-muted)' }}
-                      >
-                        {fromBaseChainUnits(p.shares).toFixed(2)} shares
+                      <span className="mono tnum" style={{ fontSize: 12 }}>
+                        {fromBaseChainUnits(p.assets ?? 0n).toFixed(2)} USDC
+                        {p.apy ? `, ${Number(p.apy).toFixed(1)}% APY` : ''}
+                        <span style={{ color: 'var(--text-faint)', marginLeft: 6 }}>
+                          {fromBaseChainUnits(p.shares).toFixed(2)} shares
+                        </span>
                       </span>
                       <button
                         className="pill-btn"
@@ -1059,6 +1118,25 @@ export default function HomePage({
                     </div>
                   ))}
                 </div>
+                {baseWithdrawError && (
+                  <p role="alert" style={{ color: 'var(--danger)', fontSize: 11, marginTop: 8 }}>
+                    {baseWithdrawError}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Cross-device recovery: markers are per-browser, the passkey is not — one
+                discoverable-login tap re-derives the same Base account and restores the panel.
+                Base token activity lives on History → Base (Blockscout), not here. */}
+            {basePositions.length === 0 && onBaseRecover && (
+              <div style={{ ...section, marginTop: 4 }}>
+                <button className="pill-btn" style={pillBtn} onClick={onBaseRecover}>
+                  Recover Base positions
+                </button>
+                <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 10 }}>
+                  Farmed on Base from another device? One passkey tap restores them here.
+                </span>
                 {baseWithdrawError && (
                   <p role="alert" style={{ color: 'var(--danger)', fontSize: 11, marginTop: 8 }}>
                     {baseWithdrawError}
@@ -1117,9 +1195,10 @@ export default function HomePage({
               </div>
             )}
 
-            {/* ── MARKET PULSE (collapsed by default) ── */}
+            {/* ── MARKET PULSE (open by default) ── */}
             <Collapsible
               title={t(lang, 'marketPulse')}
+              defaultOpen
               count={(pulse.vaults || []).length}
               meta={
                 <span

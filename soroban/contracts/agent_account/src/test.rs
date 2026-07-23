@@ -4,11 +4,14 @@ use crate::{AgentAccount, AgentAccountClient};
 use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _};
 use soroban_sdk::{Address, BytesN, Env};
 
-fn scope(_env: &Env, owner: &Address, vault: &Address, token: &Address) -> AgentScope {
+fn scope(env: &Env, owner: &Address, vault: &Address, token: &Address) -> AgentScope {
     AgentScope {
         owner: owner.clone(),
-        vault: vault.clone(),
+        target: vault.clone(),
         token: token.clone(),
+        kind: 0,
+        mint_recipient: BytesN::from_array(env, &[0u8; 32]),
+        destination_domain: 0,
         cap_per_period: 1_000_000_000, // 1,000 units @ 6dp
         period_duration: 86_400,       // 1 day
         spent_in_period: 0,
@@ -42,7 +45,7 @@ fn test_constructor_stores_scope_and_key() {
     let client = AgentAccountClient::new(&env, &id);
 
     let got = client.scope_of();
-    assert_eq!(got.vault, vault);
+    assert_eq!(got.target, vault);
     assert_eq!(got.cap_per_period, 1_000_000_000);
     assert!(!got.revoked);
     assert_eq!(client.signer(), pubkey);
@@ -342,8 +345,11 @@ fn constructor_self_approves_vault_for_cap() {
     let cap: i128 = 100_000_000;
     let s = AgentScope {
         owner: owner.clone(),
-        vault: vault.clone(),
+        target: vault.clone(),
         token: token.clone(),
+        kind: 0,
+        mint_recipient: BytesN::from_array(&env, &[0u8; 32]),
+        destination_domain: 0,
         cap_per_period: cap,
         period_duration: 3600,
         spent_in_period: 0,
@@ -383,8 +389,11 @@ fn owner_withdraw_sweeps_principal_back_to_owner() {
     let cap: i128 = 100_000_000;
     let s = AgentScope {
         owner: owner.clone(),
-        vault: vault.clone(),
+        target: vault.clone(),
         token: token.clone(),
+        kind: 0,
+        mint_recipient: BytesN::from_array(&env, &[0u8; 32]),
+        destination_domain: 0,
         cap_per_period: cap,
         period_duration: 3600,
         spent_in_period: 0,
@@ -431,8 +440,11 @@ fn owner_withdraw_rejects_non_owner() {
     let signer = BytesN::from_array(&env, &[7u8; 32]);
     let s = AgentScope {
         owner: owner.clone(),
-        vault,
+        target: vault,
         token,
+        kind: 0,
+        mint_recipient: BytesN::from_array(&env, &[0u8; 32]),
+        destination_domain: 0,
         cap_per_period: 1,
         period_duration: 3600,
         spent_in_period: 0,
@@ -464,8 +476,11 @@ fn session_key_path_still_rejects_non_deposit_contexts() {
     let signer = BytesN::from_array(&env, &[7u8; 32]);
     let s = AgentScope {
         owner: Address::generate(&env),
-        vault: vault.clone(),
+        target: vault.clone(),
         token: token.clone(),
+        kind: 0,
+        mint_recipient: BytesN::from_array(&env, &[0u8; 32]),
+        destination_domain: 0,
         cap_per_period: 1_000,
         period_duration: 3600,
         spent_in_period: 0,
@@ -642,8 +657,11 @@ fn owner_revoke_flips_scope_clears_allowance_blocks_sessions_and_is_idempotent()
     let cap: i128 = 100_000_000;
     let s = AgentScope {
         owner: owner.clone(),
-        vault: vault.clone(),
+        target: vault.clone(),
         token: token.clone(),
+        kind: 0,
+        mint_recipient: BytesN::from_array(&env, &[0u8; 32]),
+        destination_domain: 0,
         cap_per_period: cap,
         period_duration: 3600,
         spent_in_period: 0,
@@ -732,8 +750,11 @@ fn owner_withdraw_clears_vault_allowance() {
     let cap: i128 = 100_000_000;
     let s = AgentScope {
         owner: owner.clone(),
-        vault: vault.clone(),
+        target: vault.clone(),
         token: token.clone(),
+        kind: 0,
+        mint_recipient: BytesN::from_array(&env, &[0u8; 32]),
+        destination_domain: 0,
         cap_per_period: cap,
         period_duration: 3600,
         spent_in_period: 0,
@@ -948,4 +969,344 @@ fn session_key_pull_still_gated_by_revoked_and_expiry() {
         AgentAccount::enforce_scope_for_test(env2.clone(), ctx2)
     });
     assert_eq!(res2, Err(AccountError::Expired));
+}
+
+// --- Task 1 (v3): owner_withdraw on a Bridge-kind scope skips the vault redeem ---
+
+#[test]
+fn test_owner_withdraw_bridge_skips_redeem_and_sweeps() {
+    // scope kind=1, target = a dummy address that is NOT a vault (stand-in for
+    // TokenMessengerMinter), token = a real SAC. Mint token to the agent, call
+    // owner_withdraw(to=owner) → balance moves to owner. No redeem call happens
+    // (would panic if `target` were treated as a vault).
+    let env = Env::default();
+    env.mock_all_auths();
+    let owner = Address::generate(&env);
+    let token = sac_token(&env);
+    let messenger = Address::generate(&env);
+    let signer = BytesN::from_array(&env, &[7u8; 32]);
+    let mut s = scope(&env, &owner, &messenger, &token);
+    s.kind = 1;
+    let id = env.register(AgentAccount, (owner.clone(), signer, s, None::<Address>));
+    soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&id, &500i128);
+    let client = AgentAccountClient::new(&env, &id);
+    assert_eq!(client.owner_withdraw(&owner), 500i128);
+    assert_eq!(
+        soroban_sdk::token::TokenClient::new(&env, &token).balance(&owner),
+        500i128
+    );
+}
+
+// --- Task 2 (v3): enforce() bridge branch (kind=1, session-key deposit_for_burn) ---
+
+// A kind=1 (Bridge) scope on top of the kind=0 `scope()` base: destination_domain and
+// mint_recipient are only meaningful for Bridge, so they get real (nonzero) values here.
+fn bridge_scope(env: &Env, owner: &Address, messenger: &Address, token: &Address) -> AgentScope {
+    let mut s = scope(env, owner, messenger, token);
+    s.kind = 1;
+    s.destination_domain = 6;
+    s.mint_recipient = BytesN::from_array(env, &[7u8; 32]);
+    s
+}
+
+// Build a `deposit_for_burn` auth context on `scope.target`, arg order:
+// (from, amount, destination_domain, mint_recipient, burn_token, destination_caller,
+//  max_fee, min_finality_threshold) — pinned to the live burn signature. `agent` fills
+// `from`; the last three (dest_caller/max_fee/min_finality) are always the pinned values
+// (zero/zero/2000) here — tests that need those wrong build the Context by hand.
+fn burn_ctx(env: &Env, agent: &Address, scope: &AgentScope, amount: i128) -> Context {
+    Context::Contract(ContractContext {
+        contract: scope.target.clone(),
+        fn_name: soroban_sdk::Symbol::new(env, "deposit_for_burn"),
+        args: soroban_sdk::vec![
+            env,
+            agent.into_val(env),
+            amount.into_val(env),
+            scope.destination_domain.into_val(env),
+            scope.mint_recipient.into_val(env),
+            scope.token.into_val(env),
+            BytesN::<32>::from_array(env, &[0u8; 32]).into_val(env),
+            0i128.into_val(env),
+            2000u32.into_val(env),
+        ],
+    })
+}
+
+#[test]
+fn bridge_allows_valid_burn_and_counts_cap() {
+    let env = Env::default();
+    env.ledger().set_timestamp(1000);
+    let owner = Address::generate(&env);
+    let messenger = Address::generate(&env);
+    let token = sac_token(&env);
+    let pubkey = BytesN::from_array(&env, &[1u8; 32]);
+    let s = bridge_scope(&env, &owner, &messenger, &token);
+    let id = env.register(AgentAccount, (owner, pubkey, s.clone(), None::<Address>));
+
+    let ctx = burn_ctx(&env, &id, &s, 500_000_000); // half of the 1,000,000,000 cap
+    let res = env.as_contract(&id, || {
+        AgentAccount::enforce_scope_for_test(env.clone(), soroban_sdk::vec![&env, ctx])
+    });
+    assert!(res.is_ok());
+    assert_eq!(
+        AgentAccountClient::new(&env, &id).scope_of().spent_in_period,
+        500_000_000
+    );
+}
+
+#[test]
+fn bridge_rejects_wrong_mint_recipient() {
+    let env = Env::default();
+    env.ledger().set_timestamp(1000);
+    let owner = Address::generate(&env);
+    let messenger = Address::generate(&env);
+    let token = sac_token(&env);
+    let pubkey = BytesN::from_array(&env, &[1u8; 32]);
+    let s = bridge_scope(&env, &owner, &messenger, &token);
+    let id = env.register(AgentAccount, (owner, pubkey, s.clone(), None::<Address>));
+
+    let mut wrong = s;
+    wrong.mint_recipient = BytesN::from_array(&env, &[9u8; 32]);
+    let ctx = burn_ctx(&env, &id, &wrong, 100);
+    let res = env.as_contract(&id, || {
+        AgentAccount::enforce_scope_for_test(env.clone(), soroban_sdk::vec![&env, ctx])
+    });
+    assert_eq!(res, Err(AccountError::BridgeArgMismatch));
+}
+
+#[test]
+fn bridge_rejects_wrong_domain() {
+    let env = Env::default();
+    env.ledger().set_timestamp(1000);
+    let owner = Address::generate(&env);
+    let messenger = Address::generate(&env);
+    let token = sac_token(&env);
+    let pubkey = BytesN::from_array(&env, &[1u8; 32]);
+    let s = bridge_scope(&env, &owner, &messenger, &token);
+    let id = env.register(AgentAccount, (owner, pubkey, s.clone(), None::<Address>));
+
+    let mut wrong = s;
+    wrong.destination_domain = 99;
+    let ctx = burn_ctx(&env, &id, &wrong, 100);
+    let res = env.as_contract(&id, || {
+        AgentAccount::enforce_scope_for_test(env.clone(), soroban_sdk::vec![&env, ctx])
+    });
+    assert_eq!(res, Err(AccountError::BridgeArgMismatch));
+}
+
+#[test]
+fn bridge_rejects_wrong_token() {
+    let env = Env::default();
+    env.ledger().set_timestamp(1000);
+    let owner = Address::generate(&env);
+    let messenger = Address::generate(&env);
+    let token = sac_token(&env);
+    let pubkey = BytesN::from_array(&env, &[1u8; 32]);
+    let s = bridge_scope(&env, &owner, &messenger, &token);
+    let id = env.register(AgentAccount, (owner, pubkey, s.clone(), None::<Address>));
+
+    let mut wrong = s;
+    wrong.token = Address::generate(&env);
+    let ctx = burn_ctx(&env, &id, &wrong, 100);
+    let res = env.as_contract(&id, || {
+        AgentAccount::enforce_scope_for_test(env.clone(), soroban_sdk::vec![&env, ctx])
+    });
+    assert_eq!(res, Err(AccountError::BridgeArgMismatch));
+}
+
+#[test]
+fn bridge_rejects_nonzero_dest_caller() {
+    let env = Env::default();
+    env.ledger().set_timestamp(1000);
+    let owner = Address::generate(&env);
+    let messenger = Address::generate(&env);
+    let token = sac_token(&env);
+    let pubkey = BytesN::from_array(&env, &[1u8; 32]);
+    let s = bridge_scope(&env, &owner, &messenger, &token);
+    let id = env.register(AgentAccount, (owner, pubkey, s.clone(), None::<Address>));
+
+    // burn_ctx always pins dest_caller to zero — build the context by hand to set it
+    // to something nonzero.
+    let ctx = Context::Contract(ContractContext {
+        contract: s.target.clone(),
+        fn_name: soroban_sdk::Symbol::new(&env, "deposit_for_burn"),
+        args: soroban_sdk::vec![
+            &env,
+            id.into_val(&env),
+            100i128.into_val(&env),
+            s.destination_domain.into_val(&env),
+            s.mint_recipient.into_val(&env),
+            s.token.into_val(&env),
+            BytesN::<32>::from_array(&env, &[1u8; 32]).into_val(&env), // nonzero dest_caller
+            0i128.into_val(&env),
+            2000u32.into_val(&env),
+        ],
+    });
+    let res = env.as_contract(&id, || {
+        AgentAccount::enforce_scope_for_test(env.clone(), soroban_sdk::vec![&env, ctx])
+    });
+    assert_eq!(res, Err(AccountError::BridgeArgMismatch));
+}
+
+#[test]
+fn bridge_rejects_nonzero_max_fee_or_fast_finality() {
+    let env = Env::default();
+    env.ledger().set_timestamp(1000);
+    let owner = Address::generate(&env);
+    let messenger = Address::generate(&env);
+    let token = sac_token(&env);
+    let pubkey = BytesN::from_array(&env, &[1u8; 32]);
+    let s = bridge_scope(&env, &owner, &messenger, &token);
+    let id = env.register(AgentAccount, (owner, pubkey, s.clone(), None::<Address>));
+    let zero = BytesN::<32>::from_array(&env, &[0u8; 32]);
+
+    // Nonzero max_fee (args[6]) — the burn must be free, per the pinned convention.
+    let ctx_fee = Context::Contract(ContractContext {
+        contract: s.target.clone(),
+        fn_name: soroban_sdk::Symbol::new(&env, "deposit_for_burn"),
+        args: soroban_sdk::vec![
+            &env,
+            id.into_val(&env),
+            100i128.into_val(&env),
+            s.destination_domain.into_val(&env),
+            s.mint_recipient.into_val(&env),
+            s.token.into_val(&env),
+            zero.clone().into_val(&env),
+            1i128.into_val(&env), // nonzero max_fee
+            2000u32.into_val(&env),
+        ],
+    });
+    assert_eq!(
+        env.as_contract(&id, || AgentAccount::enforce_scope_for_test(
+            env.clone(),
+            soroban_sdk::vec![&env, ctx_fee]
+        )),
+        Err(AccountError::BridgeArgMismatch)
+    );
+
+    // Fast (non-standard) finality threshold (args[7]) — only the pinned 2000 is allowed.
+    let ctx_finality = Context::Contract(ContractContext {
+        contract: s.target.clone(),
+        fn_name: soroban_sdk::Symbol::new(&env, "deposit_for_burn"),
+        args: soroban_sdk::vec![
+            &env,
+            id.into_val(&env),
+            100i128.into_val(&env),
+            s.destination_domain.into_val(&env),
+            s.mint_recipient.into_val(&env),
+            s.token.into_val(&env),
+            zero.into_val(&env),
+            0i128.into_val(&env),
+            1000u32.into_val(&env), // fast finality, not the pinned 2000
+        ],
+    });
+    assert_eq!(
+        env.as_contract(&id, || AgentAccount::enforce_scope_for_test(
+            env.clone(),
+            soroban_sdk::vec![&env, ctx_finality]
+        )),
+        Err(AccountError::BridgeArgMismatch)
+    );
+}
+
+#[test]
+fn bridge_rejects_from_not_self() {
+    let env = Env::default();
+    env.ledger().set_timestamp(1000);
+    let owner = Address::generate(&env);
+    let messenger = Address::generate(&env);
+    let token = sac_token(&env);
+    let pubkey = BytesN::from_array(&env, &[1u8; 32]);
+    let s = bridge_scope(&env, &owner, &messenger, &token);
+    let id = env.register(AgentAccount, (owner, pubkey, s.clone(), None::<Address>));
+
+    // args[0] (`from`) is some other address, not the agent contract itself.
+    let ctx = burn_ctx(&env, &Address::generate(&env), &s, 100);
+    let res = env.as_contract(&id, || {
+        AgentAccount::enforce_scope_for_test(env.clone(), soroban_sdk::vec![&env, ctx])
+    });
+    assert_eq!(res, Err(AccountError::BridgeArgMismatch));
+}
+
+#[test]
+fn bridge_cap_exceeded() {
+    let env = Env::default();
+    env.ledger().set_timestamp(1000);
+    let owner = Address::generate(&env);
+    let messenger = Address::generate(&env);
+    let token = sac_token(&env);
+    let pubkey = BytesN::from_array(&env, &[1u8; 32]);
+    let s = bridge_scope(&env, &owner, &messenger, &token);
+    let id = env.register(AgentAccount, (owner, pubkey, s.clone(), None::<Address>));
+
+    let ctx = burn_ctx(&env, &id, &s, 2_000_000_000); // > 1,000,000,000 cap
+    let res = env.as_contract(&id, || {
+        AgentAccount::enforce_scope_for_test(env.clone(), soroban_sdk::vec![&env, ctx])
+    });
+    assert_eq!(res, Err(AccountError::CapExceeded));
+}
+
+#[test]
+fn bridge_rejects_vault_deposit_context() {
+    // A kind=1 (Bridge) scope must not accept the kind=0 `deposit` function, even
+    // though the contract address (`target`) matches.
+    let env = Env::default();
+    env.ledger().set_timestamp(1000);
+    let owner = Address::generate(&env);
+    let messenger = Address::generate(&env);
+    let token = sac_token(&env);
+    let pubkey = BytesN::from_array(&env, &[1u8; 32]);
+    let s = bridge_scope(&env, &owner, &messenger, &token);
+    let id = env.register(AgentAccount, (owner, pubkey, s, None::<Address>));
+
+    let ctx = deposit_ctx(&env, &messenger, &id, 100);
+    let res = env.as_contract(&id, || {
+        AgentAccount::enforce_scope_for_test(env.clone(), ctx)
+    });
+    assert_eq!(res, Err(AccountError::FnNotAllowed));
+}
+
+#[test]
+fn deposit_kind_rejects_burn_context() {
+    // A kind=0 (Deposit) scope must not accept `deposit_for_burn`, even though the
+    // contract address (`target`) matches.
+    let env = Env::default();
+    env.ledger().set_timestamp(1000);
+    let owner = Address::generate(&env);
+    let vault = Address::generate(&env);
+    let token = sac_token(&env);
+    let pubkey = BytesN::from_array(&env, &[1u8; 32]);
+    let s = scope(&env, &owner, &vault, &token); // kind=0
+    let id = env.register(AgentAccount, (owner, pubkey, s.clone(), None::<Address>));
+
+    let ctx = burn_ctx(&env, &id, &s, 100);
+    let res = env.as_contract(&id, || {
+        AgentAccount::enforce_scope_for_test(env.clone(), soroban_sdk::vec![&env, ctx])
+    });
+    assert_eq!(res, Err(AccountError::FnNotAllowed));
+}
+
+// --- Task 1 review gap: enforce_exit's redeem branch is gated on scope.kind == 0 ---
+
+#[test]
+fn exit_signer_redeem_context_on_bridge_kind_is_rejected() {
+    // A kind=1 (Bridge) scope has no vault to redeem from. enforce_exit only special-cases
+    // redeem for kind==0; here contract == scope.target but kind != 0, so the redeem branch
+    // doesn't match, contract != scope.token either, and it falls through to the final
+    // catch-all: VaultMismatch (current logic — not a dedicated bridge error).
+    let env = Env::default();
+    env.ledger().set_timestamp(1000);
+    let owner = Address::generate(&env);
+    let messenger = Address::generate(&env);
+    let token = sac_token(&env);
+    let pubkey = BytesN::from_array(&env, &[1u8; 32]);
+    let mut s = scope(&env, &owner, &messenger, &token);
+    s.kind = 1;
+    let id = env.register(AgentAccount, (owner, pubkey, s, None::<Address>));
+
+    let ctx = redeem_ctx(&env, &messenger, &id, 100);
+    let res = env.as_contract(&id, || {
+        AgentAccount::enforce_exit_scope_for_test(env.clone(), ctx)
+    });
+    assert_eq!(res, Err(AccountError::VaultMismatch));
 }

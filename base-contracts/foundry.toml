@@ -6,6 +6,13 @@ script = "script"
 libs = ["lib"]
 solc = "0.8.23"
 
+additional_compiler_profiles = [
+  { name = "via-ir", via_ir = true },
+]
+compilation_restrictions = [
+  { paths = "src/BaseExitSweeper.sol", via_ir = true },
+]
+
 [invariant]
 runs = 256
 depth = 100

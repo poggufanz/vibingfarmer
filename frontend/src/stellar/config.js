@@ -32,15 +32,19 @@ const NETWORKS = {
     // Pre-seeded demo agent custom account (1a, v3 — scope pins the AUTOFARM vault; constructor
     // self-approves it for the cap). Owner = vf-deployer; signer in deployments JSON.
     demoAgent: 'CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC',
-    // agent_account wasm v3 (hardened redeploy 2026-07-14, already uploaded on-chain) —
-    // deployAgentForSession + the funding router deploy per-run agents from this hash. v3 adds
-    // on-chain enforced revoke, owner_withdraw terminal exit, and scope_of() for the registry's
-    // derived records. The demo agent above stays on the OLD v1 wasm (8c607112ba…dda62).
-    agentWasmHash: 'd61ceaaaf5a3fd9fd25987eba0f843ccb79880f3eaa137e066b5f63ab9eaa2ba',
-    // Single-signature grant factory + funding gate (funding_router). Owner signs ONE grant tx (nested
-    // SEP-41 approve + agent deploys); worker funding = relayed router.pull (0 further signatures). The
-    // server relay guard's SOROBAN_ROUTER_ADDRESS env MUST match this exact address.
-    fundingRouter: 'CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5',
+    // agent_account wasm — grant-covers-burn plan (2026-07-22): rebuilt with bridge-scope fields
+    // (target/kind/mint_recipient/destination_domain, deposit_for_burn enforcement) alongside the
+    // matching funding_router v2 below. deployments/stellar-testnet.json fundingRouter.agentWasmHashV3New
+    // (upload tx c8a9bc3b…451). Legacy hashes this app no longer deploys but the relay still recognizes
+    // (dual-support): d61ceaaa…a2ba (pre-bridge v3, hardened redeploy 2026-07-14), v2
+    // 7ced45e7…ca717, v1 8c607112…dda62 (pre-seeded demo agent only).
+    agentWasmHash: '1fdbe175ddeb6d237a178c3c117b4e6c168122eec7d94f06a4b27ee4026efbe1',
+    // Single-signature grant factory + funding gate (funding_router v2 — multi-token budgets,
+    // bridge-kind agents, per-agent pull; grant-covers-burn plan 2026-07-22). Owner signs ONE grant
+    // tx (nested SEP-41 approve per budgeted token + agent deploys); worker funding = relayed
+    // router.pull (0 further signatures). The server relay guard's SOROBAN_ROUTER_ADDRESSES env
+    // MUST include this address (v1 CCEWWRQV…6CYE5 relays side by side, dual-support).
+    fundingRouter: 'CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE',
     // The exit-side mirror of the grant (exit_router). `sweep(owner, agents, to)` batches one
     // owner_withdraw per agent into the ONE host-function invocation a tx allows, so leaving N
     // agents costs ONE signature instead of N. Stateless, no admin, zero custody.
@@ -152,9 +156,20 @@ export const STELLAR_NETWORK_LABEL = NET.label
 // extension origin (chrome-extension://<id>/api/...) and 404s. Web app + headless smokes leave
 // VF_API_BASE unset → relative path / the VF_RELAY_URL knob, exactly as before (tests see defaults).
 const isExt = typeof window !== 'undefined' && window.location.protocol === 'chrome-extension:'
+// Extension fallback = the DEPLOYED backend, never localhost: a packed build that missed
+// VF_API_BASE used to bake http://localhost:8788 in, so passkey registration (SAK relayerUrl)
+// fetched a dead port on every user machine — "Failed to deploy smart account contract:
+// Failed to fetch". Dev extension builds override via VF_API_BASE=http://localhost:5173.
+const EXT_DEFAULT_API_BASE = 'https://vibing-farmer.pages.dev'
+// The import.meta.env literal is what the extension build's `define` replaces (see
+// vite.config.extension.js) — unlike the process.env clause it is NOT gated on a runtime
+// `process` global (extension pages only get one if a polyfill chunk loads first), so a
+// build-time VF_API_BASE override (e.g. the dev/preview origin) always wins. Web builds
+// must NOT set VITE_VF_API_BASE in .env — the deployed app needs the relative path.
 const API_BASE =
+  (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_VF_API_BASE) ||
   (typeof process !== 'undefined' && process.env && process.env.VF_API_BASE) ||
-  (isExt ? 'http://localhost:8788' : '')
+  (isExt ? EXT_DEFAULT_API_BASE : '')
 const VF_RELAY = (typeof process !== 'undefined' && process.env && process.env.VF_RELAY_URL) || ''
 export const RELAY_PROXY_URL = API_BASE
   ? `${API_BASE}/api/stellar-relay`

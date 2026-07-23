@@ -116,6 +116,63 @@ describe('decodeKeeperEvent - lifeboat topics', () => {
   })
 })
 
+describe('decodeKeeperEvent - upgrade timelock topics', () => {
+  const wasmHash = Buffer.from('ab'.repeat(32), 'hex')
+  const wasmHashHex = wasmHash.toString('hex')
+
+  it('decodes vault_upgrade_scheduled (wasm_hash -> hex, eta -> Number)', () => {
+    const rec = fakeRecord({
+      type: 'vault_upgrade_scheduled',
+      fields: { wasm_hash: wasmHash, eta: 1_900_000_000n },
+      ledger: 105,
+      pagingToken: '0008',
+    })
+    expect(decodeKeeperEvent(rec)).toEqual({
+      type: 'upgrade_scheduled',
+      ledger: rec.ledger,
+      txHash: rec.txHash,
+      wasmHashHex,
+      eta: 1_900_000_000,
+    })
+  })
+
+  it('decodes vault_upgrade_executed', () => {
+    const rec = fakeRecord({
+      type: 'vault_upgrade_executed',
+      fields: { wasm_hash: wasmHash },
+      ledger: 106,
+      pagingToken: '0009',
+    })
+    expect(decodeKeeperEvent(rec)).toEqual({
+      type: 'upgrade_executed',
+      ledger: rec.ledger,
+      txHash: rec.txHash,
+      wasmHashHex,
+    })
+  })
+
+  it('decodes vault_upgrade_cancelled', () => {
+    const rec = fakeRecord({
+      type: 'vault_upgrade_cancelled',
+      fields: { wasm_hash: wasmHash },
+      ledger: 107,
+      pagingToken: '0010b',
+    })
+    expect(decodeKeeperEvent(rec)).toEqual({
+      type: 'upgrade_cancelled',
+      ledger: rec.ledger,
+      txHash: rec.txHash,
+      wasmHashHex,
+    })
+  })
+
+  it('skips a malformed vault_upgrade_scheduled record instead of throwing', () => {
+    const rec = fakeRecord({ type: 'vault_upgrade_scheduled', fields: null, ledger: 108, pagingToken: '0011' })
+    expect(() => decodeKeeperEvent(rec)).not.toThrow()
+    expect(decodeKeeperEvent(rec)).toBeNull()
+  })
+})
+
 describe('fetchKeeperEvents', () => {
   it('parses a batch of getEvents records into typed keeper events', async () => {
     const recCompound = fakeRecord({
