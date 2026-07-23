@@ -69,4 +69,113 @@ describe('sqliteStores', () => {
     expect(second.jobs.get('j1').status).toBe('pending');
     expect(second.mandates.get('appr')).toBe('0xkey');
   });
+
+  // VF Wallet Task 7: mandates_v2 — parity with mandateStore.mjs's createMandateStoreV2 (same
+  // method shapes, same key-triple, same status()/expired-vs-missing distinction). A NEW table
+  // beside the legacy `mandates` table above — that one is untouched, still exercised by the
+  // tests above it, and stays queryable for rollback.
+  describe('mandatesV2', () => {
+    const rec = (over = {}) => ({
+      serializedApproval: 'approval-1',
+      sessionPrivateKey: '0xsecret-session-key',
+      sessionKeyAddress: '0xSessionKey',
+      stellarOwner: 'GOWNERAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+      kernelAddress: '0xKernelA',
+      relayerOrigin: 'https://relayer.example',
+      expiresAt: 2_000_000,
+      status: 'active',
+      bindingId: 'binding-1',
+      bindingHash: 'hash-1',
+      createdAt: 1_000_000,
+      ...over,
+    });
+
+    it('round-trips the full record, keyed on approval+owner+kernel together', () => {
+      const { mandatesV2 } = createSqliteStores(freshPath(), { now: () => 1_500_000 });
+      mandatesV2.set(rec());
+      expect(mandatesV2.get({ serializedApproval: 'approval-1', stellarOwner: rec().stellarOwner, kernelAddress: '0xKernelA' }))
+        .toEqual(rec());
+      expect(mandatesV2.size).toBe(1);
+    });
+
+    it('the same approval under a different kernel or a different owner is a distinct row', () => {
+      const { mandatesV2 } = createSqliteStores(freshPath(), { now: () => 1_500_000 });
+      mandatesV2.set(rec());
+      expect(mandatesV2.get({ serializedApproval: 'approval-1', stellarOwner: rec().stellarOwner, kernelAddress: '0xKernelB' }))
+        .toBeUndefined();
+      expect(mandatesV2.get({ serializedApproval: 'approval-1', stellarOwner: 'GOTHERBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB', kernelAddress: '0xKernelA' }))
+        .toBeUndefined();
+    });
+
+    it('get() lazily evicts once expiresAt has passed', () => {
+      let t = 1_500_000;
+      const { mandatesV2 } = createSqliteStores(freshPath(), { now: () => t });
+      mandatesV2.set(rec());
+      t = 2_000_000; // expiresAt is inclusive
+      expect(mandatesV2.get({ serializedApproval: 'approval-1', stellarOwner: rec().stellarOwner, kernelAddress: '0xKernelA' }))
+        .toBeUndefined();
+      expect(mandatesV2.size).toBe(0);
+    });
+
+    it('status() reports the canonical shape WITHOUT sessionPrivateKey', () => {
+      const { mandatesV2 } = createSqliteStores(freshPath(), { now: () => 1_500_000 });
+      mandatesV2.set(rec());
+      const status = mandatesV2.status({ serializedApproval: 'approval-1', stellarOwner: rec().stellarOwner, kernelAddress: '0xKernelA' });
+      expect(status).toEqual({
+        stellarOwner: rec().stellarOwner,
+        kernelAddress: '0xKernelA',
+        sessionKeyAddress: '0xSessionKey',
+        relayerOrigin: 'https://relayer.example',
+        expiresAt: 2_000_000,
+        status: 'active',
+        bindingId: 'binding-1',
+        bindingHash: 'hash-1',
+      });
+      expect(JSON.stringify(status)).not.toContain('0xsecret-session-key');
+    });
+
+    it('status() distinguishes "expired" (row found, past window) from "missing" (no such triple)', () => {
+      let t = 1_500_000;
+      const { mandatesV2 } = createSqliteStores(freshPath(), { now: () => t });
+      mandatesV2.set(rec());
+      t = 2_000_000;
+      expect(mandatesV2.status({ serializedApproval: 'approval-1', stellarOwner: rec().stellarOwner, kernelAddress: '0xKernelA' }).status)
+        .toBe('expired');
+      expect(mandatesV2.status({ serializedApproval: 'never-registered', stellarOwner: rec().stellarOwner, kernelAddress: '0xKernelA' }))
+        .toEqual({
+          stellarOwner: null, kernelAddress: null, sessionKeyAddress: null, relayerOrigin: null,
+          expiresAt: null, status: 'missing', bindingId: null, bindingHash: null,
+        });
+    });
+
+    it('delete() removes the exact triple only', () => {
+      const { mandatesV2 } = createSqliteStores(freshPath(), { now: () => 1_500_000 });
+      mandatesV2.set(rec());
+      mandatesV2.set(rec({ kernelAddress: '0xKernelB' }));
+      expect(mandatesV2.delete({ serializedApproval: 'approval-1', stellarOwner: rec().stellarOwner, kernelAddress: '0xKernelA' })).toBe(true);
+      expect(mandatesV2.delete({ serializedApproval: 'approval-1', stellarOwner: rec().stellarOwner, kernelAddress: '0xKernelA' })).toBe(false);
+      expect(mandatesV2.get({ serializedApproval: 'approval-1', stellarOwner: rec().stellarOwner, kernelAddress: '0xKernelB' })).toBeDefined();
+      expect(mandatesV2.size).toBe(1);
+    });
+
+    it('sweep drops every expired row and returns the removed count', () => {
+      let t = 1_000_000;
+      const { mandatesV2 } = createSqliteStores(freshPath(), { now: () => t });
+      mandatesV2.set(rec({ kernelAddress: '0xKernelA', expiresAt: 1_100_000 }));
+      mandatesV2.set(rec({ kernelAddress: '0xKernelB', expiresAt: 9_000_000 }));
+      t = 1_200_000;
+      expect(mandatesV2.sweep()).toBe(1);
+      expect(mandatesV2.size).toBe(1);
+    });
+
+    it('SURVIVES REOPEN: mandatesV2 rows persist across a new createSqliteStores on the same file', () => {
+      const path = freshPath();
+      const first = createSqliteStores(path, { now: () => 1_500_000 });
+      first.mandatesV2.set(rec());
+      first.db.close();
+      const second = createSqliteStores(path, { now: () => 1_500_000 });
+      expect(second.mandatesV2.get({ serializedApproval: 'approval-1', stellarOwner: rec().stellarOwner, kernelAddress: '0xKernelA' }))
+        .toEqual(rec());
+    });
+  });
 });
