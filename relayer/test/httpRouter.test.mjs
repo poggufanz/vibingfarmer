@@ -476,19 +476,24 @@ describe('createRelayerRouter', () => {
       expect(JSON.stringify(jobs.get(jobId))).not.toContain(SESSION_PRIVATE_KEY);
     });
 
-    it('lands the job in error status (message only, never the key) when the farm flow rejects', async () => {
+    // Re-review fix: a failed job used to drop runId/bridgeAgent/grantTxHash entirely (recordError
+    // replaced the whole job object) — exactly where My Money's durable index needs the
+    // association most (this project's known "relayer 'failed' != bridge failed" hazard).
+    it('lands the job in error status (message only, never the key) when the farm flow rejects — runId/bridgeAgent/grantTxHash survive on the error record', async () => {
       const { body } = await registerMandate(router);
       farmFn.mockRejectedValueOnce(new Error(`deposit into ${POOL_ADDRESS} was mined but did not succeed`));
       const res = mockRes();
       await router(mk('POST', '/api/vf-cross/farm', {
         burnTxHash: 'burn-1', serializedApproval: body.serializedApproval,
         stellarOwner: STELLAR_OWNER, kernelAddress: KERNEL_ADDRESS,
+        bridgeAgent: 'CBRIDGE', runId: 'run-42', grantTxHash: 'HGRANT',
         allocations: [wireAllocation()],
       }), res);
       const { jobId } = jsonOf(res);
       await vi.waitFor(() => expect(jobs.get(jobId).status).toBe('error'));
       expect(JSON.stringify(jobs.get(jobId))).toMatch(/was mined but did not succeed/);
       expect(JSON.stringify(jobs.get(jobId))).not.toContain(SESSION_PRIVATE_KEY);
+      expect(jobs.get(jobId)).toMatchObject({ runId: 'run-42', bridgeAgent: 'CBRIDGE', grantTxHash: 'HGRANT' });
     });
   });
 

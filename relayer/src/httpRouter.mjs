@@ -95,12 +95,15 @@ export function createRelayerRouter({
 }) {
   // Record a failed job. Client-facing message is generic when sanitizeErrors is on; the real
   // error is always available server-side (console.error) for debugging. Never stores the key.
-  function recordError(jobId, step, err) {
+  // `context` (runId/bridgeAgent/grantTxHash for a farm job; omitted for unwind, which has none)
+  // survives onto the error record — a failed job is exactly where My Money's durable index needs
+  // that association most (see the "relayer 'failed' != bridge failed" bookkeeping hazard).
+  function recordError(jobId, step, err, context = {}) {
     if (sanitizeErrors) {
       console.error(`[relayer] job ${jobId} step ${step} failed:`, err);
-      jobs.set(jobId, { status: 'error', steps: [{ step, status: 'error', message: 'internal error' }] });
+      jobs.set(jobId, { ...context, status: 'error', steps: [{ step, status: 'error', message: 'internal error' }] });
     } else {
-      jobs.set(jobId, { status: 'error', steps: [{ step, status: 'error', message: errorMessage(err) }] });
+      jobs.set(jobId, { ...context, status: 'error', steps: [{ step, status: 'error', message: errorMessage(err) }] });
     }
   }
   // Durable mandate window: the client (baseLeg.js) requests a 7-day expiry so a repeat run can
@@ -201,8 +204,11 @@ export function createRelayerRouter({
         ],
       });
     } catch (err) {
-      // Error only — the sessionPrivateKey must never end up in a job record.
-      recordError(jobId, 'farm', err);
+      // Error only — the sessionPrivateKey must never end up in a job record. Run/bridge context
+      // (already known from the request, not re-derived) still rides along onto the error record.
+      recordError(jobId, 'farm', err, {
+        runId: farmParams.runId, bridgeAgent: farmParams.bridgeAgent, grantTxHash: farmParams.grantTxHash,
+      });
     }
   }
 
