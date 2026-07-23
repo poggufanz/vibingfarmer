@@ -22,8 +22,17 @@ import { scValToNative } from '@stellar/stellar-sdk'
 // order — unlike approve.js's shims.js, which installs Buffer onto globalThis for the classic-
 // wallet chunk, this decoder must not depend on having been imported after that shim ran.
 import { Buffer } from 'buffer'
-import { resolveRouterSchema, AGENT_KIND_DEPOSIT, AGENT_KIND_BRIDGE } from '../src/stellar/routerSchema.js'
-import { SOROBAN_DECIMALS, SOROBAN_AUTOFARM_VAULT_ADDRESS, STELLAR_NETWORK_LABEL } from '../src/stellar/config.js'
+import {
+  resolveRouterSchema,
+  AGENT_KIND_DEPOSIT,
+  AGENT_KIND_BRIDGE,
+} from '../src/stellar/routerSchema.js'
+import {
+  SOROBAN_DECIMALS,
+  SOROBAN_AUTOFARM_VAULT_ADDRESS,
+  SOROBAN_TOKEN_ADDRESS,
+  STELLAR_NETWORK_LABEL,
+} from '../src/stellar/config.js'
 import { STELLAR_TOKEN_MESSENGER_MINTER, CCTP_BASE_DOMAIN } from '../src/stellar/cctpBurn.js'
 
 // Deliberately plainer than txSummary.js's formatArg (no strkey truncation, no 7dp display
@@ -45,8 +54,16 @@ function hex(bytes) {
   return bytes ? `0x${Buffer.from(bytes).toString('hex')}` : null
 }
 
+// Only the pinned 7dp SAC ever earns an asserted `decimals` — a v2 grant may carry ANY token
+// address in its budgets, and this is a pure XDR decode with no RPC reads, so a non-pinned
+// token's decimals are genuinely unknown. `null` (never a guessed/fabricated 7) is the
+// fail-closed value; approve.js's grantRows must render raw units, not toDisplay, when it sees it.
 function tokenAmount(token, units) {
-  return { token, units: BigInt(units), decimals: SOROBAN_DECIMALS }
+  return {
+    token,
+    units: BigInt(units),
+    decimals: token === SOROBAN_TOKEN_ADDRESS ? SOROBAN_DECIMALS : null,
+  }
 }
 
 /** Only an EXACT target-address match against an allowlisted, deployments-verified contract may
@@ -159,7 +176,7 @@ export function decodeFundingRouterGrant({ contractId, functionName, args }) {
     return {
       kind: 'schema-mismatch',
       schemaVersion: schema.version,
-      warning: `This is the known funding_router v${schema.version}, but "${functionName}" is not its grant call — showing raw facts only.`,
+      warning: `This is the known funding_router v${schema.version}, but "${functionName}" is not its grant call. Showing raw facts only.`,
       ...rawFacts(contractId, functionName, args),
     }
   }
@@ -206,7 +223,7 @@ export function decodeFundingRouterGrant({ contractId, functionName, args }) {
     return {
       kind: 'schema-mismatch',
       schemaVersion: schema.version,
-      warning: `Args did not match the known funding_router v${schema.version} grant schema (${err.message}) — showing raw facts only.`,
+      warning: `Args did not match the known funding_router v${schema.version} grant schema (${err.message}). Showing raw facts only.`,
       ...rawFacts(contractId, functionName, args),
     }
   }

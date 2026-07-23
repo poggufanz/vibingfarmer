@@ -283,12 +283,22 @@ describe('grantRows — truthful funding_router.grant breakdown', () => {
     schemaVersion: 2,
     owner: 'GOWNER',
     expiryLedger: 1_000_000,
-    budgets: [{ token: 'CTOKEN1111111111111111111111111111111111111111111111', units: 5_000_000n, decimals: 7 }],
+    budgets: [
+      {
+        token: 'CTOKEN1111111111111111111111111111111111111111111111',
+        units: 5_000_000n,
+        decimals: 7,
+      },
+    ],
     agents: [
       {
         index: 0,
         kind: 'deposit',
-        capPerPeriod: { token: 'CTOKEN1111111111111111111111111111111111111111111111', units: 1_000_000n, decimals: 7 },
+        capPerPeriod: {
+          token: 'CTOKEN1111111111111111111111111111111111111111111111',
+          units: 1_000_000n,
+          decimals: 7,
+        },
         destination: {
           classification: 'known-stellar-vault',
           routeLabel: 'Autofarm Vault → Blend Capital v2',
@@ -330,15 +340,96 @@ describe('grantRows — truthful funding_router.grant breakdown', () => {
     const grant = {
       ...singleTokenGrant,
       budgets: [
-        { token: 'CTOKEN1111111111111111111111111111111111111111111111', units: 5_000_000n, decimals: 7 },
-        { token: 'CTOKEN2222222222222222222222222222222222222222222222', units: 2_000_000n, decimals: 7 },
+        {
+          token: 'CTOKEN1111111111111111111111111111111111111111111111',
+          units: 5_000_000n,
+          decimals: 7,
+        },
+        {
+          token: 'CTOKEN2222222222222222222222222222222222222222222222',
+          units: 2_000_000n,
+          decimals: 7,
+        },
       ],
     }
     const rows = grantRows(grant)
     expect(rows.some(([, v]) => /more than one token/.test(v))).toBe(true)
-    const budgetRows = rows.filter(([k]) => k === 'Allowance budget (ceiling)' || k === '')
+    const budgetRows = rows
+      .filter(([k]) => k === 'Allowance budget (ceiling)' || k === '')
       .filter(([, v]) => v.includes('not a deposit amount'))
     expect(budgetRows).toHaveLength(2)
+  })
+
+  it('renders raw units (never a /1e7 value) for a budget whose token decimals are unknown (Finding 2)', () => {
+    const grant = {
+      ...singleTokenGrant,
+      budgets: [
+        {
+          token: 'CTOKEN1111111111111111111111111111111111111111111111',
+          units: 5_000_000n,
+          decimals: 7,
+        },
+        {
+          token: 'COTHERTOKEN22222222222222222222222222222222222222222',
+          units: 123_456n,
+          decimals: null, // e.g. a v2 grant's second TokenBudget on a non-pinned token
+        },
+      ],
+    }
+    const rows = grantRows(grant)
+    const unknownRow = rows.find(([, v]) => v.includes('COTH'))
+    expect(unknownRow).toBeTruthy()
+    expect(unknownRow[1]).toContain('123456 raw units')
+    expect(unknownRow[1]).toContain('token decimals unknown')
+    expect(unknownRow[1]).toContain('not a deposit amount')
+    // Never the fixed /1e7 display for an unknown-decimals amount.
+    expect(unknownRow[1]).not.toMatch(/0\.0123456/)
+  })
+
+  it('renders raw units (never a /1e7 value) for an agent cap whose token decimals are unknown (Finding 2)', () => {
+    const grant = {
+      ...singleTokenGrant,
+      agents: [
+        {
+          index: 0,
+          kind: 'deposit',
+          capPerPeriod: {
+            token: 'COTHERTOKEN22222222222222222222222222222222222222222',
+            units: 987_654n,
+            decimals: null,
+          },
+          destination: {
+            classification: 'known-stellar-vault',
+            routeLabel: 'Autofarm Vault → Blend Capital v2',
+            targetAddress: SOROBAN_AUTOFARM_VAULT_ADDRESS,
+          },
+        },
+      ],
+    }
+    const rows = grantRows(grant)
+    const agentRow = rows.find(([k]) => k === 'Agent #0')
+    expect(agentRow[1]).toContain('987654 raw units')
+    expect(agentRow[1]).toContain('token decimals unknown')
+    expect(agentRow[1]).not.toMatch(/0\.0987654/)
+  })
+
+  it('appends each agent\'s OWN expiry when present, distinct from the grant-level allowance expiry (Finding 3)', () => {
+    const grant = {
+      ...singleTokenGrant,
+      agents: [{ ...singleTokenGrant.agents[0], expiryTimestamp: 1_800_000_000 }],
+    }
+    const rows = grantRows(grant)
+    const agentRow = rows.find(([k]) => k === 'Agent #0')
+    expect(agentRow[1]).toContain('1800000000')
+    const grantExpiryRow = rows.find(([k]) => /allowance expires/i.test(k))
+    expect(grantExpiryRow).toBeTruthy()
+    expect(grantExpiryRow[1]).toContain(String(singleTokenGrant.expiryLedger))
+  })
+
+  it('omits per-agent expiry text (never shows zero/unknown as a value) when expiryTimestamp is absent', () => {
+    const rows = grantRows(singleTokenGrant) // fixture agents carry no expiryTimestamp field
+    const agentRow = rows.find(([k]) => k === 'Agent #0')
+    expect(agentRow[1]).not.toMatch(/expires/i)
   })
 
   it('adds the bridge/CCTP truth bullet only when a bridge-kind agent is present', () => {
@@ -349,7 +440,11 @@ describe('grantRows — truthful funding_router.grant breakdown', () => {
         {
           index: 1,
           kind: 'bridge',
-          capPerPeriod: { token: 'CTOKEN1111111111111111111111111111111111111111111111', units: 500_000n, decimals: 7 },
+          capPerPeriod: {
+            token: 'CTOKEN1111111111111111111111111111111111111111111111',
+            units: 500_000n,
+            decimals: 7,
+          },
           destination: {
             classification: 'known-cctp-messenger',
             routeLabel: 'Stellar testnet → Circle CCTP → Base Sepolia',
@@ -379,12 +474,22 @@ describe('screenModel — funding_router.grant sign screen', () => {
       schemaVersion: 2,
       owner: 'GOWNER',
       expiryLedger: 1_000_000,
-      budgets: [{ token: 'CTOKEN1111111111111111111111111111111111111111111111', units: 5_000_000n, decimals: 7 }],
+      budgets: [
+        {
+          token: 'CTOKEN1111111111111111111111111111111111111111111111',
+          units: 5_000_000n,
+          decimals: 7,
+        },
+      ],
       agents: [
         {
           index: 0,
           kind: 'deposit',
-          capPerPeriod: { token: 'CTOKEN1111111111111111111111111111111111111111111111', units: 1_000_000n, decimals: 7 },
+          capPerPeriod: {
+            token: 'CTOKEN1111111111111111111111111111111111111111111111',
+            units: 1_000_000n,
+            decimals: 7,
+          },
           destination: {
             classification: 'known-stellar-vault',
             routeLabel: 'Autofarm Vault → Blend Capital v2',

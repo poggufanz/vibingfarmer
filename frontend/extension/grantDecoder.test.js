@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest'
-import { Account, Address, Contract, Keypair, StrKey, TransactionBuilder, xdr } from '@stellar/stellar-sdk'
+import {
+  Account,
+  Address,
+  Contract,
+  Keypair,
+  StrKey,
+  TransactionBuilder,
+  xdr,
+} from '@stellar/stellar-sdk'
 import {
   NETWORK_PASSPHRASE,
   SOROBAN_TOKEN_ADDRESS,
@@ -9,8 +17,20 @@ import {
   STELLAR_NETWORK_LABEL,
 } from '../src/stellar/config.js'
 import { STELLAR_TOKEN_MESSENGER_MINTER, CCTP_BASE_DOMAIN } from '../src/stellar/cctpBurn.js'
-import { addrScVal, i128ScVal, u32ScVal, u64ScVal, bytes32ScVal, structScVal } from '../src/stellar/scval.js'
-import { agentInitScVal, tokenBudgetScVal, AGENT_KIND_DEPOSIT, AGENT_KIND_BRIDGE } from '../src/stellar/grant.js'
+import {
+  addrScVal,
+  i128ScVal,
+  u32ScVal,
+  u64ScVal,
+  bytes32ScVal,
+  structScVal,
+} from '../src/stellar/scval.js'
+import {
+  agentInitScVal,
+  tokenBudgetScVal,
+  AGENT_KIND_DEPOSIT,
+  AGENT_KIND_BRIDGE,
+} from '../src/stellar/grant.js'
 import { decodeFundingRouterGrant } from './grantDecoder.js'
 
 const ROUTER_V2 = 'CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE'
@@ -45,7 +65,10 @@ function agentInitV1ScVal({ signer, salt, cap, vault, periodDuration, expiry }) 
  *  summarizeInvokeArgs). That triple is the decoder's real input. */
 function invocationFor(contractId, fn, argsScVals) {
   const source = new Account(Keypair.random().publicKey(), '0')
-  const xdrB64 = new TransactionBuilder(source, { fee: '100', networkPassphrase: NETWORK_PASSPHRASE })
+  const xdrB64 = new TransactionBuilder(source, {
+    fee: '100',
+    networkPassphrase: NETWORK_PASSPHRASE,
+  })
     .addOperation(new Contract(contractId).call(fn, ...argsScVals))
     .setTimeout(300)
     .build()
@@ -225,7 +248,9 @@ describe('decodeFundingRouterGrant — v2 (per-budget, multi-token) router', () 
     expect(result.budgets).toEqual(
       expect.arrayContaining([
         { token: SOROBAN_TOKEN_ADDRESS, units: 10_000_000n, decimals: SOROBAN_DECIMALS },
-        { token: OTHER_TOKEN, units: 2_000_000n, decimals: SOROBAN_DECIMALS },
+        // OTHER_TOKEN is not the pinned 7dp SAC — its decimals are genuinely unknown from a pure
+        // XDR decode, so this must be null, never a fabricated 7 (Finding 2).
+        { token: OTHER_TOKEN, units: 2_000_000n, decimals: null },
       ])
     )
     expect(result.budgets).toHaveLength(2)
@@ -236,14 +261,14 @@ describe('decodeFundingRouterGrant — v2 (per-budget, multi-token) router', () 
     expect(result.aggregateCapsByToken).toEqual(
       expect.arrayContaining([
         { token: SOROBAN_TOKEN_ADDRESS, units: 7_000_000n, decimals: SOROBAN_DECIMALS },
-        { token: OTHER_TOKEN, units: 1_500_000n, decimals: SOROBAN_DECIMALS },
+        { token: OTHER_TOKEN, units: 1_500_000n, decimals: null },
       ])
     )
     expect(result.aggregateCapsByToken).toHaveLength(2)
     expect(result.allowanceHeadroomByToken).toEqual(
       expect.arrayContaining([
         { token: SOROBAN_TOKEN_ADDRESS, units: 3_000_000n, decimals: SOROBAN_DECIMALS },
-        { token: OTHER_TOKEN, units: 500_000n, decimals: SOROBAN_DECIMALS },
+        { token: OTHER_TOKEN, units: 500_000n, decimals: null },
       ])
     )
   })
@@ -338,6 +363,48 @@ describe('decodeFundingRouterGrant — v2 (per-budget, multi-token) router', () 
     )
     expect(result.agents[0].destination.classification).toBe('unknown')
     expect(result.agents[0].destination.routeLabel).toBeNull()
+  })
+
+  it('an AgentInit.kind outside {0,1} (e.g. a future/unrecognized kind) decodes as kind:"unknown" with no route/venue label and no invented cap semantics', () => {
+    const owner = Keypair.random().publicKey()
+    const result = decodeFundingRouterGrant(
+      grantV2(owner, {
+        budgets: [{ budget: 1_000_000n, token: SOROBAN_TOKEN_ADDRESS }],
+        expiryLedger: 2_000_000,
+        agents: [
+          {
+            signer: b32(6),
+            salt: b32(6),
+            cap: 250_000n,
+            token: SOROBAN_TOKEN_ADDRESS,
+            // A real, known target address — even so, an unrecognized kind must NOT be
+            // classified as a deposit (or bridge) route just because the target matches one.
+            target: SOROBAN_AUTOFARM_VAULT_ADDRESS,
+            kind: 2, // neither AGENT_KIND_DEPOSIT (0) nor AGENT_KIND_BRIDGE (1)
+            mintRecipient: new Uint8Array(32),
+            destinationDomain: 0,
+            periodDuration: 86400,
+            expiry: 1_800_000,
+          },
+        ],
+      })
+    )
+    expect(result.kind).toBe('funding-router-grant')
+    const agent = result.agents[0]
+    expect(agent.kind).toBe('unknown')
+    expect(agent.destination).toEqual({
+      network: STELLAR_NETWORK_LABEL,
+      targetAddress: SOROBAN_AUTOFARM_VAULT_ADDRESS,
+      classification: 'unknown',
+      routeLabel: null,
+      venueLabel: null,
+    })
+    // Still a real, decoded cap ceiling — an unrecognized kind must not suppress or invent it.
+    expect(agent.capPerPeriod).toEqual({
+      token: SOROBAN_TOKEN_ADDRESS,
+      units: 250_000n,
+      decimals: SOROBAN_DECIMALS,
+    })
   })
 })
 

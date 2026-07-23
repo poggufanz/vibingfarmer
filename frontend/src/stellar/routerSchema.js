@@ -8,11 +8,12 @@
 // A router address absent here is UNKNOWN by design: the extension must never guess an ABI it
 // hasn't pinned against a committed fixture — grantDecoder.js's fail-closed contract.
 import { SOROBAN_TOKEN_ADDRESS } from './config.js'
+// `AgentInit.kind` discriminants (v2 only; v1's AgentInit has no `kind` field at all, every v1
+// agent is implicitly a deposit agent) — single source of truth lives in grant.js (the encoder),
+// re-exported here so decoders never redefine the same constants.
+import { AGENT_KIND_DEPOSIT, AGENT_KIND_BRIDGE } from './grant.js'
 
-/** `AgentInit.kind` — mirrors funding_router/src/types.rs (v2 only; v1's AgentInit has no
- *  `kind` field at all, every v1 agent is implicitly a deposit agent). */
-export const AGENT_KIND_DEPOSIT = 0
-export const AGENT_KIND_BRIDGE = 1
+export { AGENT_KIND_DEPOSIT, AGENT_KIND_BRIDGE }
 
 /**
  * contractId -> known funding_router ABI shape.

@@ -12,7 +12,11 @@ import { signTransactionForContract, signAuthEntryString } from '../src/wallet/s
 import { unlockWallet, withSecret } from '../src/wallet/classicAccount.js'
 import { isUnlocked } from '../src/wallet/session.js'
 import { rpcServer } from '../src/stellar/client.js'
-import { NETWORK_PASSPHRASE, STELLAR_NETWORK_LABEL } from '../src/stellar/config.js'
+import {
+  NETWORK_PASSPHRASE,
+  SOROBAN_DECIMALS,
+  STELLAR_NETWORK_LABEL,
+} from '../src/stellar/config.js'
 import { resolveActiveAccount } from '../src/wallet/activeAccount.js'
 import { validateRequestSnapshot } from '../src/wallet/consentStore.js'
 import { toDisplay } from '../src/stellar/format.js'
@@ -49,15 +53,15 @@ export function rejectionResult(rid) {
 // carries these; two more are appended conditionally (mixed-token, bridge) below. This grant
 // signature deploys accounts/permissions; it is NOT proof that any deposit has happened.
 const GRANT_TRUTHS = [
-  'This grant creates isolated agent accounts and permissions — it does NOT mean any deposit has completed.',
+  'This grant creates isolated agent accounts and permissions; it does NOT mean any deposit has completed.',
   'Each agent has its own spending limit, expiry, and session signer.',
   'Current Stellar deposit agents all share the same destination: Autofarm Vault → Blend Capital v2.',
   'That shared destination is operational isolation (separate agents/keys), not multiple different Stellar protocols.',
 ]
 const GRANT_MIXED_TOKEN_TRUTH =
-  'This grant covers more than one token — each token’s allowance budget and each agent’s cap ceiling are shown separately below. Later execution may use less than either ceiling; the two numbers are never the same thing and are never added together.'
+  'This grant covers more than one token: each token’s allowance budget and each agent’s cap ceiling are shown separately below. Later execution may use less than either ceiling; the two numbers are never the same thing and are never added together.'
 const GRANT_BRIDGE_TRUTH =
-  'The bridge route is Stellar testnet → Circle CCTP → Base Sepolia. Base-side pools are custody proxies holding real Circle USDC — there is no live protocol yield there.'
+  'The bridge route is Stellar testnet → Circle CCTP → Base Sepolia. Base-side pools are custody proxies holding real Circle USDC; there is no live protocol yield there.'
 
 /** Pure view-rows for a decoded FundingGrantSummaryV1 (grantDecoder.decodeFundingRouterGrant's
  *  kind:'funding-router-grant' result) — allowance budgets, cap ceilings, and expiry are ALWAYS
@@ -70,20 +74,34 @@ export function grantRows(grant) {
   const rows = truths.map((t, i) => [i === 0 ? 'What this grant does' : '', t])
 
   grant.budgets.forEach((b, i) => {
-    rows.push([
-      i === 0 ? 'Allowance budget (ceiling)' : '',
-      `${toDisplay(b.units)} ${shortAddr(b.token)} — not a deposit amount`,
-    ])
+    rows.push([i === 0 ? 'Allowance budget (ceiling)' : '', amountText(b, 'not a deposit amount')])
   })
-  rows.push(['Grant expires', `ledger ${grant.expiryLedger}`])
+  // Labeled distinctly from each agent's OWN expiry below — this is the allowance/grant-level
+  // ceiling's expiry, never a shared per-agent value.
+  rows.push(['Grant allowance expires', `ledger ${grant.expiryLedger}`])
   grant.agents.forEach((a) => {
-    const dest = a.destination.routeLabel ?? `unlabeled destination ${shortAddr(a.destination.targetAddress)}`
+    const dest =
+      a.destination.routeLabel ?? `unlabeled destination ${shortAddr(a.destination.targetAddress)}`
+    const expiry = a.expiryTimestamp != null ? ` · agent expires ${a.expiryTimestamp}` : ''
     rows.push([
       `Agent #${a.index}`,
-      `${a.kind} · cap ${toDisplay(a.capPerPeriod.units)} ${shortAddr(a.capPerPeriod.token)} / period · ${dest}`,
+      `${a.kind} · cap ${amountText(a.capPerPeriod)} / period · ${dest}${expiry}`,
     ])
   })
   return rows
+}
+
+// Honest amount rendering: toDisplay(units) (fixed /1e7) is only truthful for the pinned 7dp
+// token. A v2 grant may carry any token address, and grantDecoder.js sets decimals:null (never a
+// fabricated 7) for anything else; this must render the raw integer, never divide by an assumed
+// scale (see grantDecoder.js's tokenAmount doc).
+function amountText({ units, token, decimals }, suffix) {
+  const tail = suffix ? ` (${suffix})` : ''
+  if (decimals === SOROBAN_DECIMALS) return `${toDisplay(units)} ${shortAddr(token)}${tail}`
+  const unknownTail = suffix
+    ? ` (token decimals unknown; ${suffix})`
+    : ' (token decimals unknown)'
+  return `${units} raw units ${shortAddr(token)}${unknownTail}`
 }
 
 /**
@@ -260,7 +278,7 @@ if (typeof window !== 'undefined' && globalThis.chrome?.storage?.session) {
       const got = await chrome.storage.session.get(`vf_req_${rid}`)
       const req = got[`vf_req_${rid}`]
       if (!req || Date.now() > req.expiresAt) {
-        setStatus('Request expired — close this window and retry from the site.')
+        setStatus('Request expired: close this window and retry from the site.')
         return
       }
       const account = req.account ?? null
@@ -294,7 +312,7 @@ if (typeof window !== 'undefined' && globalThis.chrome?.storage?.session) {
               rid,
               ok: false,
               code: -1,
-              error: 'No wallet created in VF Wallet yet — create one, then retry.',
+              error: 'No wallet created in VF Wallet yet; create one, then retry.',
             })
             window.close()
             return
