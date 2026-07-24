@@ -46,6 +46,31 @@ const MEMBERSHIP_UPSERT_SQL = `
     provenance = excluded.provenance
 `
 
+function sameAssociationEvidence(existing, association) {
+  if (!existing) return false
+  return (
+    existing.allocationId === association.allocationId &&
+    existing.networkId === association.networkId &&
+    existing.runId === association.runId &&
+    existing.ownerAddress === association.ownerAddress &&
+    existing.bridgeAgentAddress === association.bridgeAgentAddress &&
+    existing.poolAddress?.toLowerCase() === association.poolAddress?.toLowerCase() &&
+    existing.amount?.token === association.amount?.token &&
+    existing.amount?.units === association.amount?.units &&
+    existing.amount?.decimals === association.amount?.decimals &&
+    existing.proxyTarget === association.proxyTarget &&
+    existing.baseJobId === association.baseJobId &&
+    existing.txHash === association.txHash &&
+    existing.executionStatus === association.executionStatus &&
+    existing.custodyLocation === association.custodyLocation &&
+    existing.grantTxHash === association.grantTxHash &&
+    existing.kernelAddress?.toLowerCase() === association.kernelAddress?.toLowerCase() &&
+    existing.mandateBindingId === association.mandateBindingId &&
+    existing.mandateBindingHash === association.mandateBindingHash &&
+    existing.associationSource === association.associationSource
+  )
+}
+
 /** D1 repository. `db` is a Cloudflare D1 binding (prepare/bind/run/first/all + batch) — or, in
  * tests, an in-memory double with the same surface (see store.test.js). */
 export function createAgentIndexStore(db) {
@@ -224,6 +249,26 @@ export function createAgentIndexStore(db) {
                AND (
                  agent_run_allocations.tx_id IS NULL
                  OR agent_run_allocations.tx_id = excluded.tx_id
+                 OR (
+                   excluded.tx_id IS NOT NULL
+                   AND CASE excluded.execution_status
+                     WHEN 'queued' THEN 0
+                     WHEN 'accepted' THEN 1
+                     WHEN 'burn-confirmed' THEN 2
+                     WHEN 'minted' THEN 3
+                     WHEN 'deposited' THEN 4
+                     WHEN 'held' THEN 5
+                     WHEN 'failed' THEN 6
+                   END > CASE agent_run_allocations.execution_status
+                     WHEN 'queued' THEN 0
+                     WHEN 'accepted' THEN 1
+                     WHEN 'burn-confirmed' THEN 2
+                     WHEN 'minted' THEN 3
+                     WHEN 'deposited' THEN 4
+                     WHEN 'held' THEN 5
+                     WHEN 'failed' THEN 6
+                   END
+                 )
                )
                AND (
                  agent_run_allocations.execution_status NOT IN ('deposited', 'held', 'failed')
@@ -262,10 +307,57 @@ export function createAgentIndexStore(db) {
       .prepare(
         `INSERT INTO agent_association_events
            (idempotency_key, network_id, run_id, allocation_id, execution_status, tx_hash, reported_at)
-         VALUES (?,?,?,?,?,?,?)`
+         SELECT ?,
+           CASE WHEN EXISTS (
+             SELECT 1
+             FROM agent_run_allocations
+             WHERE id = ?
+               AND network_id = ?
+               AND run_id = ?
+               AND owner_address = ?
+               AND bridge_agent_address = ?
+               AND lower(base_child_address) = lower(?)
+               AND token = ?
+               AND units = ?
+               AND decimals = ?
+               AND proxy_target = ?
+               AND job_id = ?
+               AND tx_id IS ?
+               AND execution_status = ?
+               AND custody_location = ?
+               AND grant_tx_hash = ?
+               AND lower(kernel_address) = lower(?)
+               AND mandate_binding_id = ?
+               AND mandate_binding_hash = ?
+               AND association_source = ?
+               AND reported_at = ?
+               AND scope_checked_at = ?
+           ) THEN ? ELSE NULL END,
+           ?, ?, ?, ?, ?`
       )
       .bind(
         idempotencyKey,
+        row.id,
+        row.network_id,
+        row.run_id,
+        row.owner_address,
+        row.bridge_agent_address,
+        row.base_child_address,
+        row.token,
+        row.units,
+        row.decimals,
+        row.proxy_target,
+        row.job_id,
+        row.tx_id,
+        row.execution_status,
+        row.custody_location,
+        row.grant_tx_hash,
+        row.kernel_address,
+        row.mandate_binding_id,
+        row.mandate_binding_hash,
+        row.association_source,
+        row.reported_at,
+        row.scope_checked_at,
         row.network_id,
         row.run_id,
         row.id,
@@ -273,7 +365,24 @@ export function createAgentIndexStore(db) {
         row.tx_id,
         row.reported_at
       )
-    await db.batch([associationStatement, eventStatement])
+    try {
+      const results = await db.batch([associationStatement, eventStatement])
+      const associationChanges = Number(results?.[0]?.meta?.changes ?? 0)
+      const eventChanges = Number(results?.[1]?.meta?.changes ?? 0)
+      if (associationChanges !== 1 || eventChanges !== 1) {
+        throw new Error('association conflict rejected before durable journaling')
+      }
+      return { written: 1, duplicates: 0 }
+    } catch (error) {
+      const [eventExists, existing] = await Promise.all([
+        hasAssociationEvent({ idempotencyKey }),
+        readRunAllocation({ networkId: row.network_id, allocationId: row.id }),
+      ])
+      if (eventExists && sameAssociationEvidence(existing, association)) {
+        return { written: 0, duplicates: 1 }
+      }
+      throw new Error('association conflict rejected before durable journaling', { cause: error })
+    }
   }
 
   async function readMembershipsByAgentAddresses({ networkId, agentAddresses }) {

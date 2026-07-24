@@ -27,6 +27,7 @@ const USDC_ADDRESS = `0x${'b2'.repeat(20)}`;
 const KERNEL_ADDRESS = `0x${'c3'.repeat(20)}`;
 const OTHER_KERNEL_ADDRESS = `0x${'d4'.repeat(20)}`;
 const POOL_ADDRESS = `0x${'e5'.repeat(20)}`;
+const SECOND_POOL_ADDRESS = `0x${'f6'.repeat(20)}`;
 const STELLAR_OWNER = `G${'A'.repeat(55)}`;
 const OTHER_STELLAR_OWNER = `G${'B'.repeat(55)}`;
 const SESSION_PRIVATE_KEY = `0x${'22'.repeat(32)}`;
@@ -60,7 +61,7 @@ function buildFakeApproval({ accountAddress = KERNEL_ADDRESS, cap = MAX_CALL_CAP
   });
 }
 
-function wireAllocation({ allocationId = 'run-0', pool = POOL_ADDRESS, units = 100n, minShares = '90' } = {}) {
+function wireAllocation({ allocationId = 'run-42:bridge:aave-v3', pool = POOL_ADDRESS, units = 100n, minShares = '90' } = {}) {
   return { allocationId, poolAddress: pool, amount: { token: 'USDC', units: units.toString(), decimals: 6 }, minShares };
 }
 
@@ -393,6 +394,7 @@ describe('createRelayerRouter', () => {
       await router(mk('POST', '/api/vf-cross/farm', {
         burnTxHash: 'burn-1', serializedApproval: body.serializedApproval,
         stellarOwner: STELLAR_OWNER, kernelAddress: KERNEL_ADDRESS,
+        bridgeAgent: 'CBRIDGE', runId: 'run-42', grantTxHash: 'HGRANT',
         allocations: [wireAllocation({ units: MAX_CALL_CAP_UNITS + 1n })],
       }), res);
       expect(res.statusCode).toBe(400);
@@ -408,7 +410,10 @@ describe('createRelayerRouter', () => {
           burnTxHash: `burn-${i}`, serializedApproval: body.serializedApproval,
           stellarOwner: STELLAR_OWNER, kernelAddress: KERNEL_ADDRESS,
           bridgeAgent: 'CBRIDGE', runId: `run-${i}`, grantTxHash: 'HGRANT',
-          allocations: [wireAllocation({ units: MAX_CALL_CAP_UNITS })],
+          allocations: [wireAllocation({
+            allocationId: `run-${i}:bridge:aave-v3`,
+            units: MAX_CALL_CAP_UNITS,
+          })],
         }), res);
         expect(res.statusCode, `call ${i}`).toBe(200);
       }
@@ -433,6 +438,179 @@ describe('createRelayerRouter', () => {
       }
       expect(farmFn).not.toHaveBeenCalled();
       expect(agentIndexReporter.report).not.toHaveBeenCalled();
+    });
+
+    it('queues a null-burn job with unknown custody and keeps attach context private', async () => {
+      const { body, respBody } = await registerMandate(router);
+      const res = mockRes();
+      await router(mk('POST', '/api/vf-cross/farm', {
+        burnTxHash: null,
+        serializedApproval: body.serializedApproval,
+        stellarOwner: STELLAR_OWNER,
+        kernelAddress: KERNEL_ADDRESS,
+        bridgeAgent: 'CBRIDGE',
+        runId: 'run-42',
+        grantTxHash: 'HGRANT',
+        allocations: [wireAllocation()],
+      }), res);
+
+      expect(res.statusCode).toBe(200);
+      const { jobId } = jsonOf(res);
+      expect(jobs.get(jobId)).toMatchObject({
+        status: 'queued',
+        runId: 'run-42',
+        bridgeAgent: 'CBRIDGE',
+        grantTxHash: 'HGRANT',
+      });
+      expect(jobs.get(jobId)._attach).toMatchObject({
+        serializedApproval: body.serializedApproval,
+        stellarOwner: STELLAR_OWNER,
+        kernelAddress: KERNEL_ADDRESS,
+        bindingId: respBody.bindingId,
+        bindingHash: respBody.bindingHash,
+        attachedBurnTxHash: null,
+      });
+      expect(JSON.stringify(jobs.get(jobId))).not.toContain(SESSION_PRIVATE_KEY);
+      expect(buildFarm).not.toHaveBeenCalled();
+
+      await vi.waitFor(() => expect(agentIndexReporter.report).toHaveBeenCalledTimes(1));
+      expect(agentIndexReporter.report.mock.calls[0][0].allocations).toEqual([
+        expect.objectContaining({
+          allocationId: 'run-42:bridge:aave-v3',
+          executionStatus: 'queued',
+          custody: { location: 'unknown' },
+          txHash: null,
+        }),
+      ]);
+
+      const statusRes = mockRes();
+      await router(mk('GET', `/api/vf-cross/status/${jobId}`), statusRes);
+      expect(statusRes.statusCode).toBe(200);
+      expect(statusRes.body).not.toContain('_attach');
+      expect(statusRes.body).not.toContain(body.serializedApproval);
+      expect(statusRes.body).not.toContain(SESSION_PRIVATE_KEY);
+    });
+
+    it('authenticates and idempotently attaches one burn, then reports only observed mint movement', async () => {
+      const { body } = await registerMandate(router);
+      let resolveFarm;
+      farmFn.mockImplementationOnce(() => new Promise((resolve) => { resolveFarm = resolve; }));
+      const queuedRes = mockRes();
+      await router(mk('POST', '/api/vf-cross/farm', {
+        burnTxHash: null,
+        serializedApproval: body.serializedApproval,
+        stellarOwner: STELLAR_OWNER,
+        kernelAddress: KERNEL_ADDRESS,
+        bridgeAgent: 'CBRIDGE',
+        runId: 'run-42',
+        grantTxHash: 'HGRANT',
+        allocations: [wireAllocation()],
+      }), queuedRes);
+      const { jobId } = jsonOf(queuedRes);
+      await vi.waitFor(() => expect(agentIndexReporter.report).toHaveBeenCalledTimes(1));
+
+      const attachBody = {
+        jobId,
+        burnTxHash: 'burn-observed',
+        serializedApproval: body.serializedApproval,
+        stellarOwner: STELLAR_OWNER,
+        kernelAddress: KERNEL_ADDRESS,
+      };
+      const attachRes = mockRes();
+      await router(mk('POST', '/api/vf-cross/farm/attach', attachBody), attachRes);
+      expect(attachRes.statusCode).toBe(200);
+      expect(jsonOf(attachRes)).toMatchObject({ jobId, attached: true });
+      await vi.waitFor(() => expect(buildFarm).toHaveBeenCalledTimes(1));
+      expect(buildFarm).toHaveBeenCalledTimes(1);
+      expect(buildFarm).toHaveBeenCalledWith(SESSION_PRIVATE_KEY);
+      expect(jobs.get(jobId)._attach.attachedBurnTxHash).toBe('burn-observed');
+      expect(JSON.stringify(jobs.get(jobId))).not.toContain(SESSION_PRIVATE_KEY);
+
+      await vi.waitFor(() => expect(agentIndexReporter.report).toHaveBeenCalledTimes(2));
+      expect(agentIndexReporter.report.mock.calls[1][0].allocations[0]).toMatchObject({
+        executionStatus: 'accepted',
+        custody: { location: 'unknown' },
+        txHash: null,
+      });
+
+      const farmParams = farmFn.mock.calls[0][0];
+      await farmParams.onMintConfirmed({
+        status: 'minted',
+        mintTxHash: '0xobserved-mint',
+      });
+      await vi.waitFor(() => expect(agentIndexReporter.report).toHaveBeenCalledTimes(3));
+      expect(agentIndexReporter.report.mock.calls[2][0].allocations[0]).toMatchObject({
+        executionStatus: 'minted',
+        custody: { location: 'agent' },
+        txHash: '0xobserved-mint',
+      });
+
+      const repeated = mockRes();
+      await router(mk('POST', '/api/vf-cross/farm/attach', attachBody), repeated);
+      expect(repeated.statusCode).toBe(200);
+      expect(buildFarm).toHaveBeenCalledTimes(1);
+
+      const conflicting = mockRes();
+      await router(mk('POST', '/api/vf-cross/farm/attach', {
+        ...attachBody,
+        burnTxHash: 'different-burn',
+      }), conflicting);
+      expect(conflicting.statusCode).toBe(409);
+      expect(buildFarm).toHaveBeenCalledTimes(1);
+
+      resolveFarm({
+        mintResult: { status: 'minted', mintTxHash: '0xobserved-mint' },
+        depositResults: [],
+        runId: 'run-42',
+        bridgeAgent: 'CBRIDGE',
+        grantTxHash: 'HGRANT',
+      });
+    });
+
+    it('rejects attach when approval/owner/kernel or the stored mandate binding changed', async () => {
+      const { body } = await registerMandate(router);
+      const queuedRes = mockRes();
+      await router(mk('POST', '/api/vf-cross/farm', {
+        burnTxHash: null,
+        serializedApproval: body.serializedApproval,
+        stellarOwner: STELLAR_OWNER,
+        kernelAddress: KERNEL_ADDRESS,
+        bridgeAgent: 'CBRIDGE',
+        runId: 'run-42',
+        grantTxHash: 'HGRANT',
+        allocations: [wireAllocation()],
+      }), queuedRes);
+      const { jobId } = jsonOf(queuedRes);
+
+      for (const changed of [
+        { serializedApproval: 'different-approval' },
+        { stellarOwner: OTHER_STELLAR_OWNER },
+        { kernelAddress: OTHER_KERNEL_ADDRESS },
+      ]) {
+        const res = mockRes();
+        await router(mk('POST', '/api/vf-cross/farm/attach', {
+          jobId,
+          burnTxHash: 'burn-1',
+          serializedApproval: body.serializedApproval,
+          stellarOwner: STELLAR_OWNER,
+          kernelAddress: KERNEL_ADDRESS,
+          ...changed,
+        }), res);
+        expect(res.statusCode).toBe(400);
+      }
+
+      await registerMandate(router);
+      const changedBinding = mockRes();
+      await router(mk('POST', '/api/vf-cross/farm/attach', {
+        jobId,
+        burnTxHash: 'burn-1',
+        serializedApproval: body.serializedApproval,
+        stellarOwner: STELLAR_OWNER,
+        kernelAddress: KERNEL_ADDRESS,
+      }), changedBinding);
+      expect(changedBinding.statusCode).toBe(400);
+      expect(jsonOf(changedBinding).error).toMatch(/binding/i);
+      expect(buildFarm).not.toHaveBeenCalled();
     });
 
     it('400s "unknown mandate" once the registered record\'s own expiresAt has passed — mandatesV2.get() itself evicts it, before touching buildFarm', async () => {
@@ -485,11 +663,12 @@ describe('createRelayerRouter', () => {
       expect(res.statusCode).toBe(200);
       const { jobId } = jsonOf(res);
       expect(jobs.get(jobId)).toMatchObject({ status: 'pending', runId: 'run-42', bridgeAgent: 'CBRIDGE', grantTxHash: 'HGRANT' });
+      await vi.waitFor(() => expect(buildFarm).toHaveBeenCalledTimes(1));
       expect(buildFarm).toHaveBeenCalledWith(SESSION_PRIVATE_KEY);
       expect(farmFn).toHaveBeenCalledWith({
         burnTxHash: 'burn-1', execId: 'burn-1', approval: body.serializedApproval,
         allocations: [{
-          allocationId: 'run-0',
+          allocationId: 'run-42:bridge:aave-v3',
           pool: POOL_ADDRESS,
           amount: 100n,
           minShares: 90n,
@@ -497,6 +676,7 @@ describe('createRelayerRouter', () => {
           proxyTarget: 'aave-v3',
         }],
         runId: 'run-42', bridgeAgent: 'CBRIDGE', grantTxHash: 'HGRANT',
+        onMintConfirmed: expect.any(Function),
       });
 
       resolveFarm({
@@ -507,6 +687,77 @@ describe('createRelayerRouter', () => {
       await vi.waitFor(() => expect(jobs.get(jobId).status).toBe('done'));
       expect(jobs.get(jobId)).toMatchObject({ runId: 'run-42', bridgeAgent: 'CBRIDGE', grantTxHash: 'HGRANT' });
       expect(JSON.stringify(jobs.get(jobId))).not.toContain(SESSION_PRIVATE_KEY);
+    });
+
+    it('rejects missing, cross-run, or noncanonical allocation IDs before accepting a job', async () => {
+      const { body } = await registerMandate(router);
+      for (const allocation of [
+        { ...wireAllocation(), allocationId: undefined },
+        wireAllocation({ allocationId: 'run-other:bridge:aave-v3' }),
+        wireAllocation({ allocationId: 'run-42:bridge:moonwell' }),
+      ]) {
+        const res = mockRes();
+        await router(mk('POST', '/api/vf-cross/farm', {
+          burnTxHash: 'burn-1',
+          serializedApproval: body.serializedApproval,
+          stellarOwner: STELLAR_OWNER,
+          kernelAddress: KERNEL_ADDRESS,
+          bridgeAgent: 'CBRIDGE',
+          runId: 'run-42',
+          grantTxHash: 'HGRANT',
+          allocations: [allocation],
+        }), res);
+        expect(res.statusCode).toBe(400);
+        expect(jsonOf(res).error).toMatch(/allocationId|canonical|proxy/i);
+      }
+      expect(buildFarm).not.toHaveBeenCalled();
+      expect(agentIndexReporter.report).not.toHaveBeenCalled();
+    });
+
+    it('preserves reordered canonical allocation IDs instead of reconstructing array positions', async () => {
+      const reorderedRouter = makeRouter({
+        poolTargets: new Map([
+          [POOL_ADDRESS.toLowerCase(), 'aave-v3'],
+          [SECOND_POOL_ADDRESS.toLowerCase(), 'moonwell'],
+        ]),
+      });
+      const { body } = await registerMandate(reorderedRouter);
+      let resolveFarm;
+      farmFn.mockImplementationOnce(() => new Promise((resolve) => { resolveFarm = resolve; }));
+      const res = mockRes();
+      await reorderedRouter(mk('POST', '/api/vf-cross/farm', {
+        burnTxHash: 'burn-1',
+        serializedApproval: body.serializedApproval,
+        stellarOwner: STELLAR_OWNER,
+        kernelAddress: KERNEL_ADDRESS,
+        bridgeAgent: 'CBRIDGE',
+        runId: 'run-42',
+        grantTxHash: 'HGRANT',
+        allocations: [
+          wireAllocation({
+            allocationId: 'run-42:bridge:moonwell',
+            pool: SECOND_POOL_ADDRESS,
+          }),
+          wireAllocation({
+            allocationId: 'run-42:bridge:aave-v3',
+            pool: POOL_ADDRESS,
+          }),
+        ],
+      }), res);
+
+      expect(res.statusCode).toBe(200);
+      await vi.waitFor(() => expect(farmFn).toHaveBeenCalledTimes(1));
+      expect(farmFn.mock.calls[0][0].allocations.map((a) => a.allocationId)).toEqual([
+        'run-42:bridge:moonwell',
+        'run-42:bridge:aave-v3',
+      ]);
+      resolveFarm({
+        mintResult: { status: 'minted', mintTxHash: '0xmint' },
+        depositResults: [],
+        runId: 'run-42',
+        bridgeAgent: 'CBRIDGE',
+        grantTxHash: 'HGRANT',
+      });
     });
 
     it('reports exact binding and canonical pool identity at acceptance, then reports each terminal child result', async () => {
@@ -541,12 +792,28 @@ describe('createRelayerRouter', () => {
             proxyTarget: 'aave-v3',
             amount: { token: 'USDC', units: '100', decimals: 6 },
             executionStatus: 'accepted',
-            custody: { location: 'in-transit' },
+            custody: { location: 'unknown' },
             txHash: null,
           }],
         },
         { bindingId: respBody.bindingId, bindingHash: respBody.bindingHash },
       ]);
+
+      await vi.waitFor(() => expect(farmFn).toHaveBeenCalledTimes(1));
+      await farmFn.mock.calls[0][0].onMintConfirmed({
+        status: 'minted',
+        mintTxHash: '0xmint',
+      });
+      await vi.waitFor(() => expect(agentIndexReporter.report).toHaveBeenCalledTimes(2));
+      expect(agentIndexReporter.report.mock.calls[1][0].allocations).toEqual([{
+        allocationId: 'run-42:bridge:aave-v3',
+        poolAddress: POOL_ADDRESS,
+        proxyTarget: 'aave-v3',
+        amount: { token: 'USDC', units: '100', decimals: 6 },
+        executionStatus: 'minted',
+        custody: { location: 'agent' },
+        txHash: '0xmint',
+      }]);
 
       resolveFarm({
         mintResult: { status: 'minted', mintTxHash: '0xmint' },
@@ -560,8 +827,8 @@ describe('createRelayerRouter', () => {
         }],
         runId: 'run-42', bridgeAgent: 'CBRIDGE', grantTxHash: 'HGRANT',
       });
-      await vi.waitFor(() => expect(agentIndexReporter.report).toHaveBeenCalledTimes(2));
-      expect(agentIndexReporter.report.mock.calls[1][0].allocations).toEqual([{
+      await vi.waitFor(() => expect(agentIndexReporter.report).toHaveBeenCalledTimes(3));
+      expect(agentIndexReporter.report.mock.calls[2][0].allocations).toEqual([{
         allocationId: 'run-42:bridge:aave-v3',
         poolAddress: POOL_ADDRESS,
         proxyTarget: 'aave-v3',
@@ -571,6 +838,113 @@ describe('createRelayerRouter', () => {
         txHash: '0xdeposit',
       }]);
       expect(JSON.stringify(agentIndexReporter.report.mock.calls)).not.toContain(SESSION_PRIVATE_KEY);
+    });
+
+    it('orders reports without letting a stalled index reporter block farm execution', async () => {
+      const { body } = await registerMandate(router);
+      let releaseAccepted;
+      agentIndexReporter.report.mockImplementationOnce(
+        () => new Promise((resolve) => { releaseAccepted = resolve; }),
+      );
+      const res = mockRes();
+      await router(mk('POST', '/api/vf-cross/farm', {
+        burnTxHash: 'burn-1',
+        serializedApproval: body.serializedApproval,
+        stellarOwner: STELLAR_OWNER,
+        kernelAddress: KERNEL_ADDRESS,
+        bridgeAgent: 'CBRIDGE',
+        runId: 'run-42',
+        grantTxHash: 'HGRANT',
+        allocations: [wireAllocation()],
+      }), res);
+
+      expect(res.statusCode).toBe(200);
+      await vi.waitFor(() => expect(agentIndexReporter.report).toHaveBeenCalledTimes(1));
+      expect(buildFarm).toHaveBeenCalledTimes(1);
+      await farmFn.mock.calls[0][0].onMintConfirmed({
+        status: 'minted',
+        mintTxHash: '0xmint-after-stall',
+      });
+      expect(agentIndexReporter.report).toHaveBeenCalledTimes(1);
+      releaseAccepted({ ok: true, reported: 1, warnings: [] });
+      await vi.waitFor(() => expect(agentIndexReporter.report).toHaveBeenCalledTimes(2));
+      expect(agentIndexReporter.report.mock.calls[1][0].allocations[0]).toMatchObject({
+        executionStatus: 'minted',
+        txHash: '0xmint-after-stall',
+      });
+    });
+
+    it('keeps observed mint custody and hash when a deposit is held', async () => {
+      const { body } = await registerMandate(router);
+      let resolveFarm;
+      farmFn.mockImplementationOnce(() => new Promise((resolve) => { resolveFarm = resolve; }));
+      const res = mockRes();
+      await router(mk('POST', '/api/vf-cross/farm', {
+        burnTxHash: 'burn-1',
+        serializedApproval: body.serializedApproval,
+        stellarOwner: STELLAR_OWNER,
+        kernelAddress: KERNEL_ADDRESS,
+        bridgeAgent: 'CBRIDGE',
+        runId: 'run-42',
+        grantTxHash: 'HGRANT',
+        allocations: [wireAllocation()],
+      }), res);
+      await vi.waitFor(() => expect(farmFn).toHaveBeenCalledTimes(1));
+      await farmFn.mock.calls[0][0].onMintConfirmed({
+        status: 'minted',
+        mintTxHash: '0xmint-held',
+      });
+      resolveFarm({
+        mintResult: { status: 'minted', mintTxHash: '0xmint-held' },
+        depositResults: [{
+          allocationId: 'run-42:bridge:aave-v3',
+          executionStatus: 'held',
+          custody: { location: 'agent' },
+          txHash: null,
+        }],
+        runId: 'run-42',
+        bridgeAgent: 'CBRIDGE',
+        grantTxHash: 'HGRANT',
+      });
+
+      await vi.waitFor(() => expect(agentIndexReporter.report).toHaveBeenCalledTimes(3));
+      expect(agentIndexReporter.report.mock.calls[2][0].allocations[0]).toMatchObject({
+        executionStatus: 'held',
+        custody: { location: 'agent' },
+        txHash: '0xmint-held',
+      });
+    });
+
+    it('keeps observed mint custody and hash when the farm later throws', async () => {
+      const { body } = await registerMandate(router);
+      let rejectFarm;
+      farmFn.mockImplementationOnce(
+        () => new Promise((_resolve, reject) => { rejectFarm = reject; }),
+      );
+      const res = mockRes();
+      await router(mk('POST', '/api/vf-cross/farm', {
+        burnTxHash: 'burn-1',
+        serializedApproval: body.serializedApproval,
+        stellarOwner: STELLAR_OWNER,
+        kernelAddress: KERNEL_ADDRESS,
+        bridgeAgent: 'CBRIDGE',
+        runId: 'run-42',
+        grantTxHash: 'HGRANT',
+        allocations: [wireAllocation()],
+      }), res);
+      await vi.waitFor(() => expect(farmFn).toHaveBeenCalledTimes(1));
+      await farmFn.mock.calls[0][0].onMintConfirmed({
+        status: 'minted',
+        mintTxHash: '0xmint-failed',
+      });
+      rejectFarm(new Error('deposit dispatch failed after mint'));
+
+      await vi.waitFor(() => expect(agentIndexReporter.report).toHaveBeenCalledTimes(3));
+      expect(agentIndexReporter.report.mock.calls[2][0].allocations[0]).toMatchObject({
+        executionStatus: 'failed',
+        custody: { location: 'agent' },
+        txHash: '0xmint-failed',
+      });
     });
 
     it('rejects an unallowlisted pool before accepting or reporting the job', async () => {

@@ -15,8 +15,18 @@ export function createFarmFlow({ watcher, orchestrator, domains }) {
    * @param {string|null} [params.bridgeAgent] - the Stellar bridge-agent address for this run
    * @param {string|null} [params.grantTxHash] - the funding_router grant tx this run spent from
    */
-  async function farm({ burnTxHash, execId, approval, allocations, runId = null, bridgeAgent = null, grantTxHash = null }) {
+  async function farm({
+    burnTxHash,
+    execId,
+    approval,
+    allocations,
+    runId = null,
+    bridgeAgent = null,
+    grantTxHash = null,
+    onMintConfirmed = null,
+  }) {
     const mintResult = await watcher.relayMint({ sourceDomain: domains.stellar, burnTxHash, execId });
+    if (onMintConfirmed) await onMintConfirmed(mintResult);
     // dispatchDeposits preserves allocationId and emits custody separately from executionStatus;
     // the reporter consumes that explicit evidence and never infers custody from fulfilled/rejected.
     const depositResults = await orchestrator.dispatchDeposits(approval, allocations);

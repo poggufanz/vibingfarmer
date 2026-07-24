@@ -257,12 +257,13 @@ describe('durable relayer associations', () => {
   })
 
   it('atomically records the latest association and its exact idempotency tuple', async () => {
-    await store.commitAssociation({
+    const result = await store.commitAssociation({
       association: association(),
       idempotencyKey:
         '["stellar-testnet","run-1","run-1:bridge:aave-v3","accepted",null]',
     })
 
+    expect(result).toEqual({ written: 1, duplicates: 0 })
     expect(
       await store.readRunAllocation({
         networkId: NETWORK,
@@ -301,7 +302,20 @@ describe('durable relayer associations', () => {
     ).toBeNull()
   })
 
-  it('the SQL conflict guard refuses late terminal regression and changed exact evidence', async () => {
+  it('rejects an out-of-order pre-read loser without journaling evidence it did not apply', async () => {
+    const acceptedKey = 'late-accepted-key'
+    expect(
+      await store.readRunAllocation({
+        networkId: NETWORK,
+        allocationId: 'run-1:bridge:aave-v3',
+      })
+    ).toBeNull()
+    expect(
+      await store.readRunAllocation({
+        networkId: NETWORK,
+        allocationId: 'run-1:bridge:aave-v3',
+      })
+    ).toBeNull()
     await store.commitAssociation({
       association: association({
         executionStatus: 'deposited',
@@ -310,17 +324,19 @@ describe('durable relayer associations', () => {
       }),
       idempotencyKey: 'terminal-key',
     })
-    await store.commitAssociation({
-      association: association({
-        amount: { token: 'USDC', units: '2', decimals: 6 },
-        baseJobId: 'changed-job',
-        grantTxHash: 'changed-grant',
-        executionStatus: 'accepted',
-        custodyLocation: 'unknown',
-        txHash: null,
-      }),
-      idempotencyKey: 'late-accepted-key',
-    })
+    await expect(
+      store.commitAssociation({
+        association: association({
+          amount: { token: 'USDC', units: '2', decimals: 6 },
+          baseJobId: 'changed-job',
+          grantTxHash: 'changed-grant',
+          executionStatus: 'accepted',
+          custodyLocation: 'unknown',
+          txHash: null,
+        }),
+        idempotencyKey: acceptedKey,
+      })
+    ).rejects.toThrow(/conflict|rejected/i)
 
     expect(
       await store.readRunAllocation({
@@ -335,6 +351,86 @@ describe('durable relayer associations', () => {
       custodyLocation: 'base-proxy',
       txHash: '0xdeposit',
     })
+    expect(await store.hasAssociationEvent({ idempotencyKey: acceptedKey })).toBe(false)
+  })
+
+  it('returns a true same-tuple race as idempotent without applying or journaling twice', async () => {
+    const key = 'same-tuple-race'
+    expect(
+      await store.commitAssociation({ association: association(), idempotencyKey: key })
+    ).toEqual({ written: 1, duplicates: 0 })
+    expect(
+      await store.commitAssociation({ association: association(), idempotencyKey: key })
+    ).toEqual({ written: 0, duplicates: 1 })
+    expect(
+      db._raw
+        .prepare('SELECT COUNT(*) AS n FROM agent_association_events WHERE idempotency_key = ?')
+        .get(key).n
+    ).toBe(1)
+  })
+
+  it('allows a later lifecycle phase to replace the prior phase transaction hash', async () => {
+    await store.commitAssociation({
+      association: association({
+        executionStatus: 'minted',
+        custodyLocation: 'agent',
+        txHash: '0xmint',
+      }),
+      idempotencyKey: 'minted-key',
+    })
+    await store.commitAssociation({
+      association: association({
+        executionStatus: 'deposited',
+        custodyLocation: 'base-proxy',
+        txHash: '0xdeposit',
+      }),
+      idempotencyKey: 'deposited-key',
+    })
+
+    expect(
+      await store.readRunAllocation({
+        networkId: NETWORK,
+        allocationId: 'run-1:bridge:aave-v3',
+      })
+    ).toMatchObject({
+      executionStatus: 'deposited',
+      custodyLocation: 'base-proxy',
+      txHash: '0xdeposit',
+    })
+  })
+
+  it('does not let an advanced failed/null callback erase an observed mint transaction', async () => {
+    await store.commitAssociation({
+      association: association({
+        executionStatus: 'minted',
+        custodyLocation: 'agent',
+        txHash: '0xmint',
+      }),
+      idempotencyKey: 'mint-observed-key',
+    })
+    await expect(
+      store.commitAssociation({
+        association: association({
+          executionStatus: 'failed',
+          custodyLocation: 'unknown',
+          txHash: null,
+        }),
+        idempotencyKey: 'failed-without-evidence-key',
+      })
+    ).rejects.toThrow(/conflict|rejected/i)
+    expect(
+      await store.readRunAllocation({
+        networkId: NETWORK,
+        allocationId: 'run-1:bridge:aave-v3',
+      })
+    ).toMatchObject({
+      executionStatus: 'minted',
+      custodyLocation: 'agent',
+      txHash: '0xmint',
+    })
+    expect(
+      await store.hasAssociationEvent({ idempotencyKey: 'failed-without-evidence-key' })
+    ).toBe(false)
   })
 
   it('keeps a historical row association-unknown when no relayer proof exists', async () => {

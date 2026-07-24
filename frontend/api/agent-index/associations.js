@@ -1,3 +1,8 @@
+import {
+  AGENT_INDEX_SCHEMA_VERSION,
+  AGENT_WASM_GENERATIONS,
+} from '../../src/stellar/agentCreatorManifest.js'
+
 const EXECUTION_STATUSES = [
   'queued',
   'accepted',
@@ -26,6 +31,25 @@ const ALLOCATION_FIELDS = new Set([
   'custody',
   'txHash',
 ])
+const REPORT_FIELDS = new Set([
+  'version',
+  'networkId',
+  'owner',
+  'bridgeAgent',
+  'runId',
+  'grantTxHash',
+  'kernelAddress',
+  'mandateBindingId',
+  'mandateBindingHash',
+  'baseJobId',
+  'allocations',
+])
+const AMOUNT_FIELDS = new Set(['token', 'units', 'decimals'])
+const CUSTODY_FIELDS = new Set(['location'])
+const LIVE_BRIDGE_GENERATION = AGENT_WASM_GENERATIONS.find(
+  (generation) => generation.generation === 'agent-v3-bridge'
+)
+const LIVE_BRIDGE_CREATORS = new Set(LIVE_BRIDGE_GENERATION?.creatorAddresses ?? [])
 
 function requiredString(value, field) {
   if (typeof value !== 'string' || !value) throw new Error(`${field} must be a non-empty string`)
@@ -35,6 +59,14 @@ function requiredString(value, field) {
 function requiredInteger(value, field) {
   if (!Number.isInteger(value)) throw new Error(`${field} must be an integer`)
   return value
+}
+
+function requireExactFields(value, allowed, field) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${field} must be an object`)
+  }
+  const unexpected = Object.keys(value).find((key) => !allowed.has(key))
+  if (unexpected) throw new Error(`unexpected ${field} field: ${unexpected}`)
 }
 
 function canonicalPoolTarget(poolTargets, poolAddress) {
@@ -57,10 +89,7 @@ function expectedMintRecipient(kernelAddress) {
 }
 
 function validateAllocation(allocation, poolTargets, scopeRequirements) {
-  if (!allocation || typeof allocation !== 'object') throw new Error('allocation is required')
-  for (const field of Object.keys(allocation)) {
-    if (!ALLOCATION_FIELDS.has(field)) throw new Error(`unexpected allocation field: ${field}`)
-  }
+  requireExactFields(allocation, ALLOCATION_FIELDS, 'allocation')
   requiredString(allocation.allocationId, 'allocationId')
   const canonicalTarget = canonicalPoolTarget(poolTargets, allocation.poolAddress)
   if (!canonicalTarget) throw new Error('poolAddress is not allowlisted')
@@ -76,7 +105,15 @@ function validateAllocation(allocation, poolTargets, scopeRequirements) {
   if (allocation.txHash !== null && allocation.txHash !== undefined) {
     requiredString(allocation.txHash, 'txHash')
   }
+  if (
+    ['queued', 'accepted'].includes(allocation.executionStatus) &&
+    (allocation.txHash != null || allocation.custody.location !== 'unknown')
+  ) {
+    throw new Error('queued or accepted evidence cannot claim observed custody or a transaction')
+  }
   const amount = allocation.amount
+  requireExactFields(amount, AMOUNT_FIELDS, 'amount')
+  requireExactFields(allocation.custody, CUSTODY_FIELDS, 'custody')
   if (!amount || amount.token !== scopeRequirements.reportToken) {
     throw new Error('allocation token does not match the supported report token')
   }
@@ -88,6 +125,23 @@ function validateAllocation(allocation, poolTargets, scopeRequirements) {
     throw new Error('amount.units must be a positive integer string')
   }
   return canonicalTarget
+}
+
+function validateMembership(membership, report) {
+  if (!membership || membership.owner !== report.owner) {
+    throw new Error('bridge agent is not an indexed membership for this owner')
+  }
+  if (membership.grantTxHash !== report.grantTxHash) {
+    throw new Error('bridge membership grant transaction does not match the association')
+  }
+  if (
+    membership.schemaVersion !== AGENT_INDEX_SCHEMA_VERSION ||
+    membership.provenance?.source !== 'router-event' ||
+    membership.provenance?.generation !== LIVE_BRIDGE_GENERATION?.generation ||
+    !LIVE_BRIDGE_CREATORS.has(membership.creator)
+  ) {
+    throw new Error('bridge membership provenance is not a supported live bridge generation')
+  }
 }
 
 function validateScope({ scope, report, allocation, requirements, now }) {
@@ -138,13 +192,20 @@ function validateImmutable(existing, report, allocation) {
 function validateMonotonic(existing, allocation) {
   const before = existing.executionStatus
   const after = allocation.executionStatus
+  const beforeRank = STATUS_RANK.get(before) ?? -1
+  const afterRank = STATUS_RANK.get(after) ?? -1
   if (TERMINAL_STATUSES.has(before) && before !== after) {
     throw new Error('terminal association evidence cannot change')
   }
-  if ((STATUS_RANK.get(after) ?? -1) < (STATUS_RANK.get(before) ?? -1)) {
+  if (afterRank < beforeRank) {
     throw new Error('association evidence cannot regress')
   }
-  if (existing.txHash && allocation.txHash && existing.txHash !== allocation.txHash) {
+  if (
+    existing.txHash &&
+    allocation.txHash &&
+    existing.txHash !== allocation.txHash &&
+    afterRank <= beforeRank
+  ) {
     throw new Error('observed transaction evidence cannot change')
   }
   if (existing.txHash && !allocation.txHash) {
@@ -179,6 +240,7 @@ export async function ingestAssociationReport({
   supportedNetworkId = 'stellar-testnet',
   now = Date.now(),
 }) {
+  requireExactFields(report, REPORT_FIELDS, 'report')
   if (report?.version !== 1) throw new Error('unsupported association report version')
   if (report?.networkId !== supportedNetworkId) {
     throw new Error(`association network must be ${supportedNetworkId}`)
@@ -200,7 +262,10 @@ export async function ingestAssociationReport({
     throw new Error('one allocation is required per association idempotency key')
   }
   const allocation = report.allocations[0]
-  validateAllocation(allocation, poolTargets, scopeRequirements)
+  const canonicalTarget = validateAllocation(allocation, poolTargets, scopeRequirements)
+  if (allocation.allocationId !== `${report.runId}:bridge:${canonicalTarget}`) {
+    throw new Error('allocationId does not match the reviewed run and canonical proxy target')
+  }
   const expectedKey = associationIdempotencyKey(report, allocation)
   if (idempotencyKey !== expectedKey) throw new Error('idempotency key does not match report tuple')
   const existing = await store.readRunAllocation({
@@ -230,9 +295,7 @@ export async function ingestAssociationReport({
       agentAddresses: [report.bridgeAgent],
     })
     const membership = memberships.find((row) => row.address === report.bridgeAgent)
-    if (!membership || membership.owner !== report.owner) {
-      throw new Error('bridge agent is not an indexed membership for this owner')
-    }
+    validateMembership(membership, report)
     const scope = await scopeReader({
       networkId: report.networkId,
       bridgeAgent: report.bridgeAgent,
@@ -272,8 +335,12 @@ export async function ingestAssociationReport({
     reportedAt: now,
     scopeCheckedAt,
   }
-  await store.commitAssociation({ association, idempotencyKey })
-  return { written: 1, duplicates: 0 }
+  return (
+    (await store.commitAssociation({ association, idempotencyKey })) ?? {
+      written: 1,
+      duplicates: 0,
+    }
+  )
 }
 
 export function joinBaseAssociations({
@@ -314,9 +381,15 @@ export function joinBaseAssociations({
       freshness,
       baseChildren: rows.map((row) => ({
         allocationId: row.allocationId,
+        runId: row.runId,
         poolAddress: row.poolAddress,
         proxyTarget: row.proxyTarget,
         amount: row.amount,
+        grantTxHash: row.grantTxHash,
+        baseJobId: row.baseJobId,
+        kernelAddress: row.kernelAddress,
+        mandateBindingId: row.mandateBindingId,
+        mandateBindingHash: row.mandateBindingHash,
         executionStatus: row.executionStatus,
         custody: { location: row.custodyLocation },
         txHash: row.txHash ?? null,

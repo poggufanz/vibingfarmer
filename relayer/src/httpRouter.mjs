@@ -50,6 +50,35 @@ function errorMessage(err) {
   return err?.message || String(err);
 }
 
+const WIRE_ALLOCATION_FIELDS = new Set(['allocationId', 'poolAddress', 'amount', 'minShares']);
+const WIRE_AMOUNT_FIELDS = new Set(['token', 'units', 'decimals']);
+const FARM_FIELDS = new Set([
+  'burnTxHash',
+  'sourceDomain',
+  'serializedApproval',
+  'allocations',
+  'stellarOwner',
+  'kernelAddress',
+  'bridgeAgent',
+  'runId',
+  'grantTxHash',
+]);
+const FARM_ATTACH_FIELDS = new Set([
+  'jobId',
+  'burnTxHash',
+  'serializedApproval',
+  'stellarOwner',
+  'kernelAddress',
+]);
+
+function requireExactFields(value, allowed, label) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${label} must be an object`);
+  }
+  const unexpected = Object.keys(value).find((field) => !allowed.has(field));
+  if (unexpected) throw new Error(`unexpected ${label} field: ${unexpected}`);
+}
+
 // Binding attestation for My Money Task 5 (the "binding plan" of the class doc): bindingId is a
 // fresh opaque id per registration (from the same genId the caller already injects for jobs);
 // bindingHash is a deterministic digest of the binding's identity fields, so two independent
@@ -94,6 +123,8 @@ export function createRelayerRouter({
   relayerOrigin = null, sanitizeErrors = false, networkId = 'stellar-testnet',
   poolTargets = new Map(), agentIndexReporter = null,
 }) {
+  const associationReportTails = new Map();
+
   async function reportAssociation(record, binding) {
     if (!agentIndexReporter?.report) {
       console.warn('[relayer] non-custodial agent index warning', {
@@ -112,6 +143,16 @@ export function createRelayerRouter({
         warning: 'agent index reporting failed',
       });
     }
+  }
+
+  function enqueueAssociation(jobId, record, binding) {
+    const prior = associationReportTails.get(jobId) ?? Promise.resolve();
+    const next = prior.then(() => reportAssociation(record, binding));
+    associationReportTails.set(jobId, next);
+    void next.finally(() => {
+      if (associationReportTails.get(jobId) === next) associationReportTails.delete(jobId);
+    });
+    return next;
   }
   // Record a failed job. Client-facing message is generic when sanitizeErrors is on; the real
   // error is always available server-side (console.error) for debugging. Never stores the key.
@@ -200,11 +241,13 @@ export function createRelayerRouter({
   // Wire shape from frontend/src/base/relayerClient.js's toWireAllocations: {allocationId,
   // poolAddress, amount:{token,units,decimals}, minShares}. Internal execution keeps the
   // {pool,amount,minShares} shape orchestrator.mjs/farm.mjs already expect — only this boundary
-  // translates. allocationId is NOT used as a dedup/uniqueness key anywhere (Task 6 reviewer
-  // note: it collides across runs, e.g. "run-0", while runId is null).
-  function parseWireAllocations(allocations) {
+  // translates. Every allocationId is the reviewed `${runId}:bridge:${proxyTarget}` identity;
+  // array position is never part of that identity.
+  function parseWireAllocations(allocations, runId) {
     const seen = new Set();
     return allocations.map((a) => {
+      requireExactFields(a, WIRE_ALLOCATION_FIELDS, 'allocation');
+      requireExactFields(a.amount, WIRE_AMOUNT_FIELDS, 'amount');
       const pool = a.poolAddress;
       const units = a.amount?.units;
       if (!a.allocationId || seen.has(a.allocationId)) throw new Error('invalid or duplicate allocationId');
@@ -213,6 +256,9 @@ export function createRelayerRouter({
         ? poolTargets.get(String(pool || '').toLowerCase())
         : poolTargets?.[String(pool || '').toLowerCase()];
       if (!proxyTarget) throw new Error('poolAddress is not allowlisted');
+      if (a.allocationId !== `${runId}:bridge:${proxyTarget}`) {
+        throw new Error('allocationId does not match the reviewed run and canonical proxy target');
+      }
       if (!pool || units == null || a.minShares == null
         || a.amount?.token !== 'USDC' || a.amount?.decimals !== 6) {
         throw new Error('invalid allocation');
@@ -228,13 +274,69 @@ export function createRelayerRouter({
     });
   }
 
-  async function runFarmJob(jobId, sessionPrivateKey, farmParams, reportBase, binding) {
+  function revalidatedMandate({ serializedApproval, stellarOwner, kernelAddress }) {
+    const record = mandatesV2.get({ serializedApproval, stellarOwner, kernelAddress });
+    if (!record) return { error: 'unknown mandate' };
+    if (relayerOrigin && record.relayerOrigin !== relayerOrigin) {
+      return { error: 'relayer origin mismatch' };
+    }
+    const recheck = validateMandateBinding({
+      serializedApproval,
+      sessionPrivateKey: record.sessionPrivateKey,
+      sessionKeyAddress: record.sessionKeyAddress,
+      stellarOwner,
+      kernelAddress,
+      usdcAddress,
+      yieldRouterAddress,
+      now: Math.floor(Date.now() / 1000),
+    });
+    return recheck.ok ? { record } : { error: recheck.reason };
+  }
+
+  function reportAllocations(allocations, executionStatus, custodyLocation, txHash) {
+    return allocations.map((allocation) => ({
+      allocationId: allocation.allocationId,
+      poolAddress: allocation.pool,
+      proxyTarget: allocation.proxyTarget,
+      amount: allocation.reportAmount,
+      executionStatus,
+      custody: { location: custodyLocation },
+      txHash,
+    }));
+  }
+
+  function storedWireAllocations(allocations) {
+    return allocations.map((allocation) => ({
+      allocationId: allocation.allocationId,
+      poolAddress: allocation.pool,
+      amount: allocation.reportAmount,
+      minShares: allocation.minShares.toString(),
+    }));
+  }
+
+  function publicJob(job) {
+    if (!job) return job;
+    const { _attach, ...safe } = job;
+    void _attach;
+    return safe;
+  }
+
+  async function runFarmJob(
+    jobId,
+    sessionPrivateKey,
+    farmParams,
+    reportBase,
+    binding,
+    enqueueReport,
+  ) {
     try {
       const { farm } = buildFarm(sessionPrivateKey);
       const { mintResult, depositResults, runId, bridgeAgent, grantTxHash } = await farm(farmParams);
+      const attachContext = jobs.get(jobId)?._attach;
       jobs.set(jobId, {
         status: 'done',
         runId, bridgeAgent, grantTxHash,
+        _attach: attachContext,
         steps: [
           { step: 'mint', status: mintResult.status, mintTxHash: mintResult.mintTxHash },
           { step: 'deposits', results: depositResults },
@@ -246,6 +348,9 @@ export function createRelayerRouter({
       const terminalAllocations = depositResults.flatMap((result) => {
         const allocation = byAllocationId.get(result?.allocationId);
         if (!allocation || !result.executionStatus || !result.custody?.location) return [];
+        const txHash = result.txHash
+          ?? (result.custody.location === 'agent' ? mintResult.mintTxHash : null)
+          ?? null;
         return [{
           allocationId: allocation.allocationId,
           poolAddress: allocation.pool,
@@ -253,11 +358,11 @@ export function createRelayerRouter({
           amount: allocation.reportAmount,
           executionStatus: result.executionStatus,
           custody: { location: result.custody.location },
-          txHash: result.txHash ?? null,
+          txHash,
         }];
       });
       if (terminalAllocations.length > 0) {
-        await reportAssociation(
+        await enqueueReport(
           { ...reportBase, allocations: terminalAllocations },
           binding,
         );
@@ -265,10 +370,14 @@ export function createRelayerRouter({
     } catch (err) {
       // Error only — the sessionPrivateKey must never end up in a job record. Run/bridge context
       // (already known from the request, not re-derived) still rides along onto the error record.
+      const observedMintTxHash = jobs.get(jobId)?.steps
+        ?.find((step) => step.step === 'mint' && step.mintTxHash)
+        ?.mintTxHash ?? null;
       recordError(jobId, 'farm', err, {
         runId: farmParams.runId, bridgeAgent: farmParams.bridgeAgent, grantTxHash: farmParams.grantTxHash,
+        _attach: jobs.get(jobId)?._attach,
       });
-      await reportAssociation(
+      await enqueueReport(
         {
           ...reportBase,
           allocations: farmParams.allocations.map((allocation) => ({
@@ -277,8 +386,8 @@ export function createRelayerRouter({
             proxyTarget: allocation.proxyTarget,
             amount: allocation.reportAmount,
             executionStatus: 'failed',
-            custody: { location: 'unknown' },
-            txHash: null,
+            custody: { location: observedMintTxHash ? 'agent' : 'unknown' },
+            txHash: observedMintTxHash,
           })),
         },
         binding,
@@ -286,58 +395,105 @@ export function createRelayerRouter({
     }
   }
 
+  function startFarmJob({ jobId, job, record, burnTxHash, parsedAllocations }) {
+    const attachContext = { ...job._attach, attachedBurnTxHash: burnTxHash };
+    const binding = {
+      bindingId: attachContext.bindingId,
+      bindingHash: attachContext.bindingHash,
+    };
+    const reportBase = attachContext.reportBase;
+    jobs.set(jobId, {
+      ...job,
+      status: 'pending',
+      steps: [],
+      _attach: attachContext,
+    });
+    const enqueueReport = (report, expectedBinding) =>
+      enqueueAssociation(jobId, report, expectedBinding);
+    void enqueueReport(
+      {
+        ...reportBase,
+        allocations: reportAllocations(parsedAllocations, 'accepted', 'unknown', null),
+      },
+      binding,
+    );
+
+    const onMintConfirmed = (mintResult) => {
+      if (!mintResult?.mintTxHash) return;
+      const current = jobs.get(jobId) || job;
+      jobs.set(jobId, {
+        ...current,
+        status: 'depositing',
+        steps: [{ step: 'mint', status: mintResult.status, mintTxHash: mintResult.mintTxHash }],
+        _attach: attachContext,
+      });
+      void enqueueReport(
+        {
+          ...reportBase,
+          allocations: reportAllocations(
+            parsedAllocations,
+            'minted',
+            'agent',
+            mintResult.mintTxHash,
+          ),
+        },
+        binding,
+      );
+    };
+
+    // Fire-and-forget: the client polls GET /status/:jobId. The client's `sourceDomain` is
+    // intentionally ignored — createFarmFlow hardcodes domains.stellar as the mint source.
+    void runFarmJob(jobId, record.sessionPrivateKey, {
+      burnTxHash,
+      execId: burnTxHash,
+      approval: attachContext.serializedApproval,
+      allocations: parsedAllocations,
+      runId: job.runId,
+      bridgeAgent: job.bridgeAgent,
+      grantTxHash: job.grantTxHash,
+      onMintConfirmed,
+    }, reportBase, binding, enqueueReport);
+  }
+
   function handleFarm(req, res) {
+    try {
+      requireExactFields(req.body || {}, FARM_FIELDS, 'farm');
+    } catch (err) {
+      return sendJson(res, 400, { error: errorMessage(err) });
+    }
     const {
       burnTxHash, serializedApproval, allocations, stellarOwner, kernelAddress,
       bridgeAgent = null, runId = null, grantTxHash = null,
     } = req.body || {};
-    if (!burnTxHash || !serializedApproval || !stellarOwner || !kernelAddress
+    if ((burnTxHash !== null && (typeof burnTxHash !== 'string' || !burnTxHash))
+      || !serializedApproval || !stellarOwner || !kernelAddress
       || !Array.isArray(allocations) || allocations.length === 0) {
       return sendJson(res, 400, {
-        error: 'burnTxHash, serializedApproval, stellarOwner, kernelAddress and allocations are all required',
+        error: 'burnTxHash (string or null), serializedApproval, stellarOwner, kernelAddress and allocations are all required',
       });
     }
 
-    // Exact-bound lookup — approval alone is never enough (Step 5: owner A's approval cannot
-    // execute for owner B or a second kernel). A legacy (pre-Task-7) or never-registered triple
-    // both miss here identically.
-    const record = mandatesV2.get({ serializedApproval, stellarOwner, kernelAddress });
-    if (!record) return sendJson(res, 400, { error: 'unknown mandate' });
-
-    // Validate AGAIN before this operation (Step 2) — mandatesV2.get() above already lazily
-    // evicted the row (and returned undefined -> "unknown mandate") if expiresAt had passed, so
-    // expiry itself needs no separate check here. What CAN still change between registration and
-    // dispatch is this server's own configuration, or (defense in depth) the stored record
-    // somehow no longer satisfying the policy. Reject before the key is ever handed to buildFarm.
-    if (relayerOrigin && record.relayerOrigin !== relayerOrigin) {
-      return sendJson(res, 400, { error: 'relayer origin mismatch' });
-    }
-    const nowSeconds = Math.floor(Date.now() / 1000);
-    const recheck = validateMandateBinding({
-      serializedApproval, sessionPrivateKey: record.sessionPrivateKey, sessionKeyAddress: record.sessionKeyAddress,
-      stellarOwner, kernelAddress, usdcAddress, yieldRouterAddress, now: nowSeconds,
-    });
-    if (!recheck.ok) return sendJson(res, 400, { error: recheck.reason });
-
-    let parsedAllocations;
-    try {
-      parsedAllocations = parseWireAllocations(allocations);
-    } catch (err) {
-      return sendJson(res, 400, { error: errorMessage(err) });
-    }
-    // Per-call, non-cumulative cap — checked against each allocation's own amount, nothing summed.
-    const overCap = parsedAllocations.find((a) => a.amount > MAX_CALL_CAP_UNITS);
-    if (overCap) return sendJson(res, 400, { error: 'allocation exceeds the 10,000 USDC per-call cap' });
+    // Exact-bound lookup — approval alone is never enough. The same full validation runs again
+    // on /farm/attach before a queued job can gain a burn hash.
+    const mandate = revalidatedMandate({ serializedApproval, stellarOwner, kernelAddress });
+    if (mandate.error) return sendJson(res, 400, { error: mandate.error });
+    const { record } = mandate;
     if (!bridgeAgent || !runId || !grantTxHash) {
       return sendJson(res, 400, {
         error: 'bridgeAgent, runId and grantTxHash are required for exact farm association',
       });
     }
 
-    const jobId = genId();
-    jobs.set(jobId, { status: 'pending', steps: [], runId, bridgeAgent, grantTxHash });
-    sendJson(res, 200, { jobId });
+    let parsedAllocations;
+    try {
+      parsedAllocations = parseWireAllocations(allocations, runId);
+    } catch (err) {
+      return sendJson(res, 400, { error: errorMessage(err) });
+    }
+    const overCap = parsedAllocations.find((a) => a.amount > MAX_CALL_CAP_UNITS);
+    if (overCap) return sendJson(res, 400, { error: 'allocation exceeds the 10,000 USDC per-call cap' });
 
+    const jobId = genId();
     const binding = { bindingId: record.bindingId, bindingHash: record.bindingHash };
     const reportBase = {
       version: 1,
@@ -351,34 +507,95 @@ export function createRelayerRouter({
       mandateBindingHash: record.bindingHash,
       baseJobId: jobId,
     };
-    void reportAssociation(
-      {
-        ...reportBase,
-        allocations: parsedAllocations.map((allocation) => ({
-          allocationId: allocation.allocationId,
-          poolAddress: allocation.pool,
-          proxyTarget: allocation.proxyTarget,
-          amount: allocation.reportAmount,
-          executionStatus: 'accepted',
-          custody: { location: 'in-transit' },
-          txHash: null,
-        })),
+    const job = {
+      status: burnTxHash === null ? 'queued' : 'pending',
+      steps: [],
+      runId,
+      bridgeAgent,
+      grantTxHash,
+      _attach: {
+        serializedApproval,
+        stellarOwner,
+        kernelAddress,
+        bindingId: record.bindingId,
+        bindingHash: record.bindingHash,
+        allocations: storedWireAllocations(parsedAllocations),
+        reportBase,
+        attachedBurnTxHash: null,
       },
-      binding,
-    );
+    };
+    jobs.set(jobId, job);
+    sendJson(res, 200, { jobId });
 
-    // Fire-and-forget: the client polls GET /status/:jobId. The client's `sourceDomain` is
-    // intentionally ignored — createFarmFlow hardcodes domains.stellar as the mint source.
-    void runFarmJob(jobId, record.sessionPrivateKey, {
-      burnTxHash, execId: burnTxHash, approval: serializedApproval, allocations: parsedAllocations,
-      runId, bridgeAgent, grantTxHash,
-    }, reportBase, binding);
+    if (burnTxHash === null) {
+      void enqueueAssociation(
+        jobId,
+        {
+          ...reportBase,
+          allocations: reportAllocations(parsedAllocations, 'queued', 'unknown', null),
+        },
+        binding,
+      );
+      return;
+    }
+    void startFarmJob({ jobId, job, record, burnTxHash, parsedAllocations });
+  }
+
+  function handleFarmAttach(req, res) {
+    try {
+      requireExactFields(req.body || {}, FARM_ATTACH_FIELDS, 'farm attach');
+    } catch (err) {
+      return sendJson(res, 400, { error: errorMessage(err) });
+    }
+    const { jobId, burnTxHash, serializedApproval, stellarOwner, kernelAddress } = req.body || {};
+    if (!jobId || !burnTxHash || !serializedApproval || !stellarOwner || !kernelAddress) {
+      return sendJson(res, 400, {
+        error: 'jobId, burnTxHash, serializedApproval, stellarOwner and kernelAddress are required',
+      });
+    }
+    const job = jobs.get(jobId);
+    if (!job) return sendJson(res, 404, { error: 'unknown jobId' });
+    const context = job._attach;
+    if (!context) return sendJson(res, 409, { error: 'job does not accept a burn attachment' });
+    if (
+      context.serializedApproval !== serializedApproval
+      || context.stellarOwner !== stellarOwner
+      || context.kernelAddress !== kernelAddress
+    ) {
+      return sendJson(res, 400, { error: 'farm attach approval, owner, or kernel mismatch' });
+    }
+    const mandate = revalidatedMandate({ serializedApproval, stellarOwner, kernelAddress });
+    if (mandate.error) return sendJson(res, 400, { error: mandate.error });
+    const { record } = mandate;
+    if (
+      record.bindingId !== context.bindingId
+      || record.bindingHash !== context.bindingHash
+    ) {
+      return sendJson(res, 400, { error: 'farm attach mandate binding mismatch' });
+    }
+    if (context.attachedBurnTxHash) {
+      if (context.attachedBurnTxHash !== burnTxHash) {
+        return sendJson(res, 409, { error: 'farm job already has a different burn hash' });
+      }
+      return sendJson(res, 200, { jobId, attached: true, status: job.status });
+    }
+    if (job.status !== 'queued') {
+      return sendJson(res, 409, { error: 'farm job is not waiting for a burn hash' });
+    }
+    let parsedAllocations;
+    try {
+      parsedAllocations = parseWireAllocations(context.allocations, job.runId);
+    } catch (err) {
+      return sendJson(res, 400, { error: errorMessage(err) });
+    }
+    void startFarmJob({ jobId, job, record, burnTxHash, parsedAllocations });
+    return sendJson(res, 200, { jobId, attached: true, status: 'pending' });
   }
 
   function handleStatus(res, jobId) {
     const job = jobs.get(jobId);
     if (!job) return sendJson(res, 404, { error: 'unknown jobId' });
-    return sendJson(res, 200, job);
+    return sendJson(res, 200, publicJob(job));
   }
 
   async function runUnwindJob(jobId, unwindTxHash, stellarRecipient) {
@@ -422,6 +639,7 @@ export function createRelayerRouter({
     if (req.method === 'POST' && path === '/mandate') return handleMandate(req, res);
     if (req.method === 'POST' && path === '/mandate/revoke') return handleMandateRevoke(req, res);
     if (req.method === 'POST' && path === '/farm') return handleFarm(req, res);
+    if (req.method === 'POST' && path === '/farm/attach') return handleFarmAttach(req, res);
     if (req.method === 'POST' && path === '/unwind') return handleUnwind(req, res);
     if (req.method === 'GET') {
       const statusMatch = path.match(/^\/status\/([^/]+)$/);

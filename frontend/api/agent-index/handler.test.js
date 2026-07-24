@@ -495,6 +495,16 @@ describe('handleRead — Base association envelope', () => {
     })
     expect(known.baseChildren[0]).toMatchObject({
       allocationId: 'run-42:bridge:aave-v3',
+      runId: 'run-42',
+      grantTxHash: 'grant-42',
+      baseJobId: 'job-42',
+      kernelAddress: `0x${'12'.repeat(20)}`,
+      mandateBindingId: 'binding-42',
+      mandateBindingHash: 'binding-hash-42',
+      associationSource: 'relayer-attested',
+      reportedAt: 2_000_000_000_000,
+      scopeCheckedAt: 2_000_000_000_000,
+      freshness: 'fresh',
       txHash: null,
       custody: { location: 'in-transit' },
     })

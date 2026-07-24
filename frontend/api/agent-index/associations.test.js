@@ -13,6 +13,7 @@ const MESSENGER = `C${'D'.repeat(55)}`
 const TOKEN = `C${'E'.repeat(55)}`
 const POOL = `0x${'34'.repeat(20)}`
 const NOW = 2_000_000_000_000
+const LIVE_BRIDGE_ROUTER = 'CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE'
 
 const POOL_TARGETS = new Map([[POOL.toLowerCase(), 'aave-v3']])
 const SCOPE_REQUIREMENTS = {
@@ -31,7 +32,7 @@ function allocation(overrides = {}) {
     proxyTarget: 'aave-v3',
     amount: { token: 'USDC', units: '1000000', decimals: 6 },
     executionStatus: 'accepted',
-    custody: { location: 'in-transit' },
+    custody: { location: 'unknown' },
     txHash: null,
     ...overrides,
   }
@@ -69,7 +70,7 @@ function scope(overrides = {}) {
   }
 }
 
-function memoryStore({ membershipOwner = OWNER_A } = {}) {
+function memoryStore({ membershipOwner = OWNER_A, membership = {} } = {}) {
   const rows = new Map()
   const events = new Set()
   return {
@@ -77,7 +78,16 @@ function memoryStore({ membershipOwner = OWNER_A } = {}) {
     events,
     async readMembershipsByAgentAddresses({ agentAddresses }) {
       return agentAddresses.includes(BRIDGE)
-        ? [{ address: BRIDGE, owner: membershipOwner, kind: 'unknown' }]
+        ? [{
+            address: BRIDGE,
+            owner: membershipOwner,
+            creator: LIVE_BRIDGE_ROUTER,
+            schemaVersion: 1,
+            kind: 'unknown',
+            grantTxHash: 'grant-42',
+            provenance: { source: 'router-event', generation: 'agent-v3-bridge' },
+            ...membership,
+          }]
         : []
     },
     async readRunAllocation({ networkId, runId, allocationId }) {
@@ -130,7 +140,7 @@ describe('ingestAssociationReport', () => {
       poolAddress: POOL,
       proxyTarget: 'aave-v3',
       executionStatus: 'accepted',
-      custodyLocation: 'in-transit',
+      custodyLocation: 'unknown',
       txHash: null,
       mandateBindingId: 'binding-42',
       mandateBindingHash: 'binding-hash-42',
@@ -181,6 +191,48 @@ describe('ingestAssociationReport', () => {
     await expect(
       ingest({ report: report({ allocations: [allocation({ apy: 12 })] }) })
     ).rejects.toThrow(/field|apy/i)
+    await expect(ingest({ report: report({ apy: 12 }) })).rejects.toThrow(/field|apy/i)
+    await expect(
+      ingest({
+        report: report({
+          allocations: [allocation({ amount: { ...allocation().amount, apy: 12 } })],
+        }),
+      })
+    ).rejects.toThrow(/field|apy/i)
+    await expect(
+      ingest({
+        report: report({
+          allocations: [allocation({ custody: { location: 'unknown', apy: 12 } })],
+        }),
+      })
+    ).rejects.toThrow(/field|apy/i)
+  })
+
+  it.each([
+    ['grant transaction', { grantTxHash: 'different-grant' }],
+    ['creator', { creator: `C${'F'.repeat(55)}` }],
+    ['generation', { provenance: { source: 'router-event', generation: 'agent-v3' } }],
+    ['provenance', { provenance: { source: 'registry-event', generation: 'agent-v3-bridge' } }],
+  ])('rejects first association with wrong live bridge %s evidence', async (_label, membership) => {
+    await expect(ingest({ store: memoryStore({ membership }) })).rejects.toThrow(
+      /grant|provenance|generation|creator/i
+    )
+  })
+
+  it('rejects a first association whose allocation ID belongs to another reviewed run', async () => {
+    await expect(
+      ingest({ report: report({ runId: 'run-other' }) })
+    ).rejects.toThrow(/allocationId|run/i)
+  })
+
+  it('rejects unobserved acceptance that claims funds are already in transit', async () => {
+    await expect(
+      ingest({
+        report: report({
+          allocations: [allocation({ custody: { location: 'in-transit' }, txHash: null })],
+        }),
+      })
+    ).rejects.toThrow(/accept|custody|observ/i)
   })
 
   it('rejects a foreign network before a testnet membership or scope read', async () => {
@@ -245,13 +297,93 @@ describe('ingestAssociationReport', () => {
     expect(scopeReader).toHaveBeenCalledTimes(1)
   })
 
+  it('propagates the store result when a true duplicate wins after the pre-read', async () => {
+    const store = memoryStore()
+    store.commitAssociation = vi.fn(async () => ({ written: 0, duplicates: 1 }))
+    await expect(ingest({ store })).resolves.toEqual({ written: 0, duplicates: 1 })
+  })
+
+  it('allows transaction evidence to advance from mint to deposit but not change in-place', async () => {
+    const store = memoryStore()
+    const minted = report({
+      allocations: [
+        allocation({
+          executionStatus: 'minted',
+          custody: { location: 'agent' },
+          txHash: '0xmint',
+        }),
+      ],
+    })
+    const deposited = report({
+      allocations: [
+        allocation({
+          executionStatus: 'deposited',
+          custody: { location: 'base-proxy' },
+          txHash: '0xdeposit',
+        }),
+      ],
+    })
+    await ingest({ report: minted, store })
+    await expect(ingest({ report: deposited, store })).resolves.toEqual({
+      written: 1,
+      duplicates: 0,
+    })
+    await expect(
+      ingest({
+        report: report({
+          allocations: [
+            allocation({
+              executionStatus: 'deposited',
+              custody: { location: 'base-proxy' },
+              txHash: '0xdifferent-deposit',
+            }),
+          ],
+        }),
+        store,
+      })
+    ).rejects.toThrow(/transaction|terminal/i)
+  })
+
+  it.each(['held', 'failed'])(
+    'accepts minted/agent evidence advancing to %s without erasing its mint hash',
+    async (executionStatus) => {
+      const store = memoryStore()
+      await ingest({
+        store,
+        report: report({
+          allocations: [
+            allocation({
+              executionStatus: 'minted',
+              custody: { location: 'agent' },
+              txHash: '0xmint-retained',
+            }),
+          ],
+        }),
+      })
+      await expect(
+        ingest({
+          store,
+          report: report({
+            allocations: [
+              allocation({
+                executionStatus,
+                custody: { location: 'agent' },
+                txHash: '0xmint-retained',
+              }),
+            ],
+          }),
+        })
+      ).resolves.toEqual({ written: 1, duplicates: 0 })
+    }
+  )
+
   it('requires the HTTP idempotency key to equal the canonical tuple', async () => {
     await expect(ingest({ idempotencyKey: 'wrong' })).rejects.toThrow(/idempotency/i)
   })
 })
 
 describe('joinBaseAssociations', () => {
-  it('labels known children with source/timestamps/freshness and old bridge jobs as unknown', () => {
+  it('keeps two reviewed runs on one bridge distinguishable with exact public evidence', () => {
     const agents = [
       { address: BRIDGE, kind: 'unknown' },
       { address: `C${'F'.repeat(55)}`, kind: 'bridge' },
@@ -259,13 +391,40 @@ describe('joinBaseAssociations', () => {
     const associations = [
       {
         allocationId: 'run-42:bridge:aave-v3',
+        runId: 'run-42',
         bridgeAgentAddress: BRIDGE,
         poolAddress: POOL,
+        proxyTarget: 'aave-v3',
+        amount: { token: 'USDC', units: '1000000', decimals: 6 },
+        baseJobId: 'job-42',
+        grantTxHash: 'grant-42',
+        kernelAddress: KERNEL,
+        mandateBindingId: 'binding-42',
+        mandateBindingHash: 'binding-hash-42',
         associationSource: 'relayer-attested',
         reportedAt: NOW - 1_000,
         scopeCheckedAt: NOW - 2_000,
         executionStatus: 'accepted',
-        custodyLocation: 'in-transit',
+        custodyLocation: 'unknown',
+        txHash: null,
+      },
+      {
+        allocationId: 'run-43:bridge:aave-v3',
+        runId: 'run-43',
+        bridgeAgentAddress: BRIDGE,
+        poolAddress: POOL,
+        proxyTarget: 'aave-v3',
+        amount: { token: 'USDC', units: '2000000', decimals: 6 },
+        baseJobId: 'job-43',
+        grantTxHash: 'grant-43',
+        kernelAddress: `0x${'56'.repeat(20)}`,
+        mandateBindingId: 'binding-43',
+        mandateBindingHash: 'binding-hash-43',
+        associationSource: 'relayer-attested',
+        reportedAt: NOW - 2_000,
+        scopeCheckedAt: NOW - 3_000,
+        executionStatus: 'queued',
+        custodyLocation: 'unknown',
         txHash: null,
       },
     ]
@@ -278,12 +437,34 @@ describe('joinBaseAssociations', () => {
       scopeCheckedAt: NOW - 2_000,
       freshness: 'fresh',
     })
-    expect(joined[0].baseChildren[0]).toMatchObject({
-      association: 'known',
-      txHash: null,
-      executionStatus: 'accepted',
-      custody: { location: 'in-transit' },
-    })
+    expect(joined[0].baseChildren).toHaveLength(2)
+    expect(joined[0].baseChildren).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          allocationId: 'run-42:bridge:aave-v3',
+          runId: 'run-42',
+          grantTxHash: 'grant-42',
+          baseJobId: 'job-42',
+          kernelAddress: KERNEL,
+          mandateBindingId: 'binding-42',
+          mandateBindingHash: 'binding-hash-42',
+          association: 'known',
+          associationSource: 'relayer-attested',
+          reportedAt: NOW - 1_000,
+          scopeCheckedAt: NOW - 2_000,
+          freshness: 'fresh',
+        }),
+        expect.objectContaining({
+          allocationId: 'run-43:bridge:aave-v3',
+          runId: 'run-43',
+          grantTxHash: 'grant-43',
+          baseJobId: 'job-43',
+          kernelAddress: `0x${'56'.repeat(20)}`,
+          mandateBindingId: 'binding-43',
+          mandateBindingHash: 'binding-hash-43',
+        }),
+      ])
+    )
     expect(joined[1]).toMatchObject({
       association: 'unknown',
       associationSource: null,

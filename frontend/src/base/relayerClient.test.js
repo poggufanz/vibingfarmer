@@ -2,7 +2,15 @@
 import { describe, test, expect, vi } from 'vitest'
 import * as relayerClient from './relayerClient.js'
 
-const { postFarm, pollFarmStatus, postUnwind, postMandate, getMandateStatus, postMandateRevoke } =
+const {
+  postFarm,
+  postFarmAttach,
+  pollFarmStatus,
+  postUnwind,
+  postMandate,
+  getMandateStatus,
+  postMandateRevoke,
+} =
   relayerClient
 
 describe('quantizeAllocations', () => {
@@ -25,14 +33,19 @@ describe('quantizeAllocations', () => {
   test('uses the explicit CCTP mint target for one and multiple 0.1234567 allocations', async () => {
     const scenarios = [
       {
-        allocations: [{ pool: '0xAAAA', amount: 0.1234567, minShares: 1n }],
+        allocations: [{
+          allocationId: 'run-q:bridge:aave-v3',
+          pool: '0xAAAA',
+          amount: 0.1234567,
+          minShares: 1n,
+        }],
         expected: [123_456n],
       },
       {
         allocations: [
-          { pool: '0xAAAA', amount: 0.1234567 * 0.5, minShares: 1n },
-          { pool: '0xBBBB', amount: 0.1234567 * 0.3, minShares: 1n },
-          { pool: '0xCCCC', amount: 0.1234567 * 0.2, minShares: 1n },
+          { allocationId: 'run-q:bridge:aave-v3', pool: '0xAAAA', amount: 0.1234567 * 0.5, minShares: 1n },
+          { allocationId: 'run-q:bridge:moonwell', pool: '0xBBBB', amount: 0.1234567 * 0.3, minShares: 1n },
+          { allocationId: 'run-q:bridge:morpho-blue', pool: '0xCCCC', amount: 0.1234567 * 0.2, minShares: 1n },
         ],
         expected: [61_728n, 37_037n, 24_691n],
       },
@@ -50,6 +63,7 @@ describe('quantizeAllocations', () => {
         burnTxHash: 'burn-precision',
         sourceDomain: 27,
         serializedApproval: 'approval-blob',
+        runId: 'run-q',
         allocations: quantized,
         baseUrl: 'https://example.test/api/vf-cross',
         deps: { fetchImpl: fetchMock },
@@ -80,7 +94,13 @@ describe('postFarm', () => {
       burnTxHash: 'abcd',
       sourceDomain: 27,
       serializedApproval: 'approval-blob',
-      allocations: [{ pool: '0xAAAA', amount: 100, minShares: 99n }],
+      runId: 'run-42',
+      allocations: [{
+        allocationId: 'run-42:bridge:aave-v3',
+        pool: '0xAAAA',
+        amount: 100,
+        minShares: 99n,
+      }],
       baseUrl: 'https://example.test/api/vf-cross',
       deps: { fetchImpl: fetchMock },
     })
@@ -107,7 +127,12 @@ describe('postFarm', () => {
       bridgeAgent: 'CBRIDGE',
       runId: 'run-42',
       grantTxHash: 'HGRANT',
-      allocations: [{ pool: '0xAAAA', amount: 100, minShares: 99n }],
+      allocations: [{
+        allocationId: 'run-42:bridge:aave-v3',
+        pool: '0xAAAA',
+        amount: 100,
+        minShares: 99n,
+      }],
       baseUrl: 'https://example.test/api/vf-cross',
       deps: { fetchImpl: fetchMock },
     })
@@ -119,20 +144,25 @@ describe('postFarm', () => {
     expect(body.runId).toBe('run-42')
     expect(body.grantTxHash).toBe('HGRANT')
     expect(body.allocations[0]).toEqual({
-      allocationId: 'run-42-0',
+      allocationId: 'run-42:bridge:aave-v3',
       poolAddress: '0xAAAA',
       amount: { token: 'USDC', units: '100000000', decimals: 6 },
       minShares: '99',
     })
   })
 
-  test('binding/routing fields default to null when the caller has none of them yet', async () => {
+  test('preserves an explicit reviewed allocation ID when optional binding fields are absent', async () => {
     const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ jobId: 'job-1' }) }))
     await postFarm({
       burnTxHash: 'abcd',
       sourceDomain: 27,
       serializedApproval: 'approval-blob',
-      allocations: [{ pool: '0xAAAA', amount: 100, minShares: 99n }],
+      allocations: [{
+        allocationId: 'reviewed-run:bridge:aave-v3',
+        pool: '0xAAAA',
+        amount: 100,
+        minShares: 99n,
+      }],
       baseUrl: 'https://example.test/api/vf-cross',
       deps: { fetchImpl: fetchMock },
     })
@@ -142,7 +172,7 @@ describe('postFarm', () => {
     expect(body.bridgeAgent).toBeNull()
     expect(body.runId).toBeNull()
     expect(body.grantTxHash).toBeNull()
-    expect(body.allocations[0].allocationId).toBe('run-0') // no runId -> 'run' fallback prefix
+    expect(body.allocations[0].allocationId).toBe('reviewed-run:bridge:aave-v3')
   })
 
   test('preserves the strategy canonical allocationId instead of rebuilding it from array order', async () => {
@@ -166,6 +196,73 @@ describe('postFarm', () => {
 
     const body = JSON.parse(fetchMock.mock.calls[0][1].body)
     expect(body.allocations[0].allocationId).toBe('run-42:bridge:morpho-blue')
+  })
+
+  test('fails before fetch when any Task-5 allocation lacks its reviewed allocationId', async () => {
+    const fetchMock = vi.fn()
+    await expect(
+      postFarm({
+        burnTxHash: null,
+        sourceDomain: 27,
+        serializedApproval: 'approval-blob',
+        runId: 'run-42',
+        allocations: [{ pool: '0xAAAA', amount: 100, minShares: 99n }],
+        deps: { fetchImpl: fetchMock },
+      })
+    ).rejects.toThrow(/allocationId/i)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  test('fails before fetch when an allocationId belongs to a different reviewed run', async () => {
+    const fetchMock = vi.fn()
+    await expect(
+      postFarm({
+        burnTxHash: null,
+        sourceDomain: 27,
+        serializedApproval: 'approval-blob',
+        runId: 'run-42',
+        allocations: [{
+          allocationId: 'run-other:bridge:aave-v3',
+          pool: '0xAAAA',
+          amount: 100,
+          minShares: 99n,
+        }],
+        deps: { fetchImpl: fetchMock },
+      })
+    ).rejects.toThrow(/run|allocationId/i)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  test('preserves canonical allocation IDs verbatim when the input order changes', async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ jobId: 'job-1' }) }))
+    const allocations = [
+      {
+        allocationId: 'run-42:bridge:aave-v3',
+        pool: '0xAAAA',
+        amount: 60,
+        minShares: 1n,
+      },
+      {
+        allocationId: 'run-42:bridge:moonwell',
+        pool: '0xBBBB',
+        amount: 40,
+        minShares: 1n,
+      },
+    ]
+    await postFarm({
+      burnTxHash: null,
+      sourceDomain: 27,
+      serializedApproval: 'approval-blob',
+      runId: 'run-42',
+      allocations: [...allocations].reverse(),
+      deps: { fetchImpl: fetchMock },
+    })
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body.allocations.map((allocation) => allocation.allocationId)).toEqual([
+      'run-42:bridge:moonwell',
+      'run-42:bridge:aave-v3',
+    ])
   })
 
   test('throws a clear error on a non-ok response', async () => {
@@ -194,7 +291,12 @@ describe('postFarm', () => {
       burnTxHash: 'abcd',
       sourceDomain: 27,
       serializedApproval: 'approval-blob',
-      allocations: [{ pool: '0xAAAA', amount: fractional, minShares: 99n }],
+      allocations: [{
+        allocationId: 'run-f:bridge:aave-v3',
+        pool: '0xAAAA',
+        amount: fractional,
+        minShares: 99n,
+      }],
       baseUrl: 'https://example.test/api/vf-cross',
       deps: { fetchImpl: fetchMock },
     })
@@ -217,9 +319,9 @@ describe('postFarm', () => {
       sourceDomain: 27,
       serializedApproval: 'approval-blob',
       allocations: [
-        { pool: '0xAAAA', amount: third, minShares: 1n },
-        { pool: '0xBBBB', amount: third, minShares: 1n },
-        { pool: '0xCCCC', amount: third, minShares: 1n },
+        { allocationId: 'run-m:bridge:aave-v3', pool: '0xAAAA', amount: third, minShares: 1n },
+        { allocationId: 'run-m:bridge:moonwell', pool: '0xBBBB', amount: third, minShares: 1n },
+        { allocationId: 'run-m:bridge:morpho-blue', pool: '0xCCCC', amount: third, minShares: 1n },
       ],
       baseUrl: 'https://example.test/api/vf-cross',
       deps: { fetchImpl: fetchMock },
@@ -235,9 +337,9 @@ describe('postFarm', () => {
     const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ jobId: 'job-1' }) }))
     const third = 100 / 3
     const quantized = relayerClient.quantizeAllocations([
-      { pool: '0xAAAA', amount: third, minShares: 1n },
-      { pool: '0xBBBB', amount: third, minShares: 1n },
-      { pool: '0xCCCC', amount: third, minShares: 1n },
+      { allocationId: 'run-p:bridge:aave-v3', pool: '0xAAAA', amount: third, minShares: 1n },
+      { allocationId: 'run-p:bridge:moonwell', pool: '0xBBBB', amount: third, minShares: 1n },
+      { allocationId: 'run-p:bridge:morpho-blue', pool: '0xCCCC', amount: third, minShares: 1n },
     ])
     // Deliberately move the remainder to pool 2. If the wire seam quantizes the display values a
     // second time it will move the unit back to pool 1 and this assertion will fail.
@@ -271,7 +373,12 @@ describe('postFarm', () => {
       burnTxHash: 'abcd',
       sourceDomain: 27,
       serializedApproval: 'approval-blob',
-      allocations: [{ pool: '0xAAAA', amount: 60_000_000n, minShares: 99n }],
+      allocations: [{
+        allocationId: 'run-b:bridge:aave-v3',
+        pool: '0xAAAA',
+        amount: 60_000_000n,
+        minShares: 99n,
+      }],
       baseUrl: 'https://example.test/api/vf-cross',
       deps: { fetchImpl: fetchMock },
     })
@@ -308,6 +415,36 @@ describe('pollFarmStatus', () => {
     })
     expect(result.status).toBe('pending')
     expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+})
+
+describe('postFarmAttach', () => {
+  test('attaches an observed burn using exact public binding context and no session key', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ jobId: 'job-42', attached: true }),
+    }))
+    const result = await postFarmAttach({
+      jobId: 'job-42',
+      burnTxHash: 'burn-observed',
+      serializedApproval: 'approval-blob',
+      stellarOwner: 'GUSER',
+      kernelAddress: '0xKERNEL',
+      baseUrl: 'https://example.test/api/vf-cross',
+      deps: { fetchImpl: fetchMock },
+    })
+
+    expect(result).toEqual({ jobId: 'job-42', attached: true })
+    const [url, options] = fetchMock.mock.calls[0]
+    expect(url).toBe('https://example.test/api/vf-cross/farm/attach')
+    expect(JSON.parse(options.body)).toEqual({
+      jobId: 'job-42',
+      burnTxHash: 'burn-observed',
+      serializedApproval: 'approval-blob',
+      stellarOwner: 'GUSER',
+      kernelAddress: '0xKERNEL',
+    })
+    expect(options.body).not.toMatch(/sessionPrivateKey/i)
   })
 })
 

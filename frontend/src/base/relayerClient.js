@@ -138,12 +138,20 @@ function serializeAllocations(allocations) {
 // extra field (not in the plan's example, but dropping it would silently remove the live-quoted
 // slippage floor baseLeg.js computes per pool — see base/quotes.js).
 function toWireAllocations(allocations, runId) {
-  return serializeAllocations(allocations).map((a, i) => ({
-    allocationId: a.allocationId || `${runId ?? 'run'}-${i}`,
-    poolAddress: a.pool,
-    amount: { token: 'USDC', units: a.amount, decimals: BASE_USDC_DECIMALS },
-    minShares: a.minShares,
-  }))
+  return serializeAllocations(allocations).map((a) => {
+    if (typeof a.allocationId !== 'string' || !a.allocationId) {
+      throw new Error('every farm allocation requires its reviewed allocationId')
+    }
+    if (runId && !a.allocationId.startsWith(`${runId}:bridge:`)) {
+      throw new Error('allocationId does not belong to the reviewed run')
+    }
+    return {
+      allocationId: a.allocationId,
+      poolAddress: a.pool,
+      amount: { token: 'USDC', units: a.amount, decimals: BASE_USDC_DECIMALS },
+      minShares: a.minShares,
+    }
+  })
 }
 
 /**
@@ -186,6 +194,36 @@ export async function postFarm({
     }),
   })
   if (!res.ok) throw new Error(`farm dispatch failed (${res.status})`)
+  return res.json()
+}
+
+/**
+ * Attach the observed Stellar burn to a previously queued farm job. The relayer revalidates the
+ * exact mandate approval/owner/kernel/binding before it starts execution; session key material is
+ * deliberately absent from this transition.
+ */
+export async function postFarmAttach({
+  jobId,
+  burnTxHash,
+  serializedApproval,
+  stellarOwner,
+  kernelAddress,
+  baseUrl = DEFAULT_BASE_URL,
+  deps = {},
+}) {
+  const { fetchImpl = fetch } = deps
+  const res = await fetchImpl(`${baseUrl}/farm/attach`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jobId,
+      burnTxHash,
+      serializedApproval,
+      stellarOwner,
+      kernelAddress,
+    }),
+  })
+  if (!res.ok) throw new Error(`farm burn attach failed (${res.status})`)
   return res.json()
 }
 
