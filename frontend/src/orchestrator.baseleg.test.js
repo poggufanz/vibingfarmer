@@ -63,6 +63,7 @@ vi.mock('./strategist.js', () => ({ generateAgentSkills: vi.fn(async () => ({}))
 vi.mock('./skills.js', () => ({ saveSkill: vi.fn() }))
 
 const workerInstances = []
+const workerExecuteMock = vi.fn()
 vi.mock('./worker.js', () => ({
   WorkerAgent: class {
     constructor(c) {
@@ -80,7 +81,7 @@ vi.mock('./worker.js', () => ({
       return this.sessionKey
     }
     async execute() {
-      return { success: true, txHash: '0xW' }
+      return workerExecuteMock(this)
     }
   },
   makeAgentId: (i, s) => `0x${i}${s}`,
@@ -90,8 +91,9 @@ const executeBaseLegMock = vi.fn()
 vi.mock('./baseLeg.js', () => ({
   executeBaseLeg: (...a) => executeBaseLegMock(...a),
 }))
+const readBaseMandateMock = vi.fn()
 vi.mock('./wallet/baseBinding.js', () => ({
-  readBaseMandate: () => ({ kernelAddress: KERNEL }),
+  readBaseMandate: (...a) => readBaseMandateMock(...a),
 }))
 
 const fetchPreparedExecutionMaterialMock = vi.fn()
@@ -123,8 +125,91 @@ function fakeSubmitGrant({ agentInits }) {
   return { hash: 'HG', status: 'SUCCESS', agentAddresses, bridgeAgentAddress, expiryLedger: 9999 }
 }
 
+function permissionedMixedFixture(runId = 'run-regression') {
+  const plan = {
+    runId,
+    planFingerprint: `PLAN-${runId}`,
+    agents: [
+      {
+        allocationId: `${runId}:deposit:0`,
+        kind: 'deposit',
+        cap: { token: 'CTOKEN', units: '600000000', decimals: 7 },
+        allocation: { token: 'CTOKEN', units: '600000000', decimals: 7 },
+        periodSeconds: 3600,
+        expiry: 2000000000,
+      },
+      {
+        allocationId: `${runId}:bridge:base`,
+        kind: 'bridge',
+        cap: { token: STELLAR_USDC_SAC, units: '400000000', decimals: 7 },
+        allocation: { token: STELLAR_USDC_SAC, units: '400000000', decimals: 7 },
+        periodSeconds: 3600,
+        expiry: 2000000000,
+        children: [
+          {
+            allocationId: `${runId}:bridge:pool-a`,
+            address: '0x389250872044368759D3db5C09b2706A6628d4e0',
+            allocation: { token: 'USDC', units: '40000000', decimals: 6 },
+          },
+        ],
+      },
+    ],
+  }
+  const reviewedAgentInits = [
+    {
+      allocationId: plan.agents[0].allocationId,
+      kind: 0,
+      token: 'CTOKEN',
+      target: 'CACTIVEVAULT',
+      cap: { ...plan.agents[0].cap },
+      periodSeconds: 3600,
+      expiry: 2000000000,
+      mintRecipient: '00'.repeat(32),
+      destinationDomain: 0,
+    },
+    {
+      allocationId: plan.agents[1].allocationId,
+      kind: 1,
+      token: STELLAR_USDC_SAC,
+      target: STELLAR_TOKEN_MESSENGER_MINTER,
+      cap: { ...plan.agents[1].cap },
+      periodSeconds: 3600,
+      expiry: 2000000000,
+      mintRecipient: Array.from(evmAddrToBytes32(KERNEL), (byte) =>
+        byte.toString(16).padStart(2, '0')
+      ).join(''),
+      destinationDomain: CCTP_BASE_DOMAIN,
+    },
+  ]
+  return {
+    plan,
+    permissionDecision: {
+      mode: 'fresh',
+      runId,
+      planFingerprint: plan.planFingerprint,
+      agentInitFingerprint: `AI-${runId}`,
+      reviewedBudgets: [
+        { token: 'CTOKEN', units: '600000000', decimals: 7 },
+        { token: STELLAR_USDC_SAC, units: '400000000', decimals: 7 },
+      ],
+      reviewedAgentInits,
+    },
+  }
+}
+
+function permissionedOrchestrator() {
+  return new OrchestratorAgent({
+    user: 'GUSER',
+    sessionId: 'permissioned-regression',
+    onEvent: vi.fn(),
+    baseLegContext: { connectedAddress: 'GUSER', signTx: vi.fn() },
+  })
+}
+
 beforeEach(() => {
   workerInstances.length = 0
+  workerExecuteMock.mockReset()
+  workerExecuteMock.mockResolvedValue({ success: true, txHash: '0xW' })
   submitGrantMock.mockReset()
   submitGrantMock.mockImplementation(async (args) => fakeSubmitGrant(args))
   runAgentPullMock.mockReset()
@@ -151,6 +236,8 @@ beforeEach(() => {
     sessionKeyAddress: '0xSESSION',
     expiry: 9999999999,
   })
+  readBaseMandateMock.mockReset()
+  readBaseMandateMock.mockReturnValue({ kernelAddress: KERNEL })
   executeBaseLegMock.mockReset()
   executeBaseLegMock.mockResolvedValue({ success: true, burnHash: 'B', jobId: 'j1' })
 })
@@ -603,5 +690,323 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
     ).rejects.toThrow(/base leg context/i)
     expect(executeBaseLegMock).not.toHaveBeenCalled()
     expect(submitGrantMock).not.toHaveBeenCalled()
+  })
+
+  it('[A] resolves a legacy mixed receipt when the Stellar worker rejects and retains successful Base custody', async () => {
+    workerExecuteMock.mockRejectedValueOnce(new Error('stellar worker rejected'))
+    executeBaseLegMock.mockResolvedValueOnce({
+      success: true,
+      finalStatus: 'done',
+      burnHash: 'BURN-A',
+      jobId: 'JOB-A',
+      allocations: [
+        {
+          allocationId: 'run-a:bridge:0',
+          amount: { token: 'USDC', units: '40000000', decimals: 6 },
+          success: true,
+          finalStatus: 'done',
+          depositTxHash: 'BASE-DEPOSIT-A',
+          bridgeAgentAddress: 'CFRESH2',
+          kernelAddress: KERNEL,
+          recovery: { jobId: 'JOB-A' },
+          custody: { location: 'base-proxy', confirmed: true, checkedAt: 101 },
+        },
+      ],
+    })
+    const summary = await new OrchestratorAgent({
+      user: 'GUSER',
+      sessionId: 'run-a',
+      onEvent: vi.fn(),
+      baseLegContext: { connectedAddress: 'GUSER', signTx: vi.fn() },
+    }).dispatch(
+      {
+        runId: 'run-a',
+        vaults: [
+          { address: 'CSTELLAR', allocation: 0.6, chain: 'stellar' },
+          { address: '0xBASE', allocation: 0.4, chain: 'base' },
+        ],
+      },
+      100
+    )
+
+    expect(summary.receipt.branches).toMatchObject({
+      stellar: { status: 'failed' },
+      base: { status: 'succeeded' },
+    })
+    expect(summary.receipt.allocations.find((entry) => entry.allocationId === 'run-a:bridge:0')).toMatchObject({
+      executionStatus: 'succeeded',
+      custody: { location: 'base-proxy', confirmed: true },
+      evidence: {
+        depositTxHash: 'BASE-DEPOSIT-A',
+        bridgeAgentAddress: 'CFRESH2',
+        kernelAddress: KERNEL,
+        recovery: { jobId: 'JOB-A' },
+      },
+    })
+  })
+
+  it('[B] rejects a permissioned bridge child without a token before grant or either branch starts', async () => {
+    const fixture = permissionedMixedFixture('run-b')
+    fixture.plan.agents[1].children[0].allocation.token = ''
+
+    await expect(
+      permissionedOrchestrator().dispatch(fixture.plan, {
+        permissionDecision: fixture.permissionDecision,
+      })
+    ).rejects.toMatchObject({
+      name: 'PermissionPhaseError',
+      movement: 'none',
+      phase: 'preflight',
+    })
+    expect(submitGrantMock).not.toHaveBeenCalled()
+    expect(runAgentPullMock).not.toHaveBeenCalled()
+    expect(workerExecuteMock).not.toHaveBeenCalled()
+    expect(executeBaseLegMock).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    {
+      label: 'sum',
+      mutate: ({ plan }) => {
+        plan.agents[1].children[0].allocation.units = '39999999'
+      },
+    },
+    {
+      label: 'token pairing',
+      mutate: ({ plan }) => {
+        plan.agents[1].children[0].allocation.token = 'DAI'
+      },
+    },
+    {
+      label: 'decimal pairing',
+      mutate: ({ plan }) => {
+        plan.agents[1].children[0].allocation.decimals = 7
+      },
+    },
+  ])('[C] rejects a bridge parent/child $label mismatch before grant', async ({ mutate }) => {
+    const fixture = permissionedMixedFixture(`run-c-${String(Math.random()).slice(2)}`)
+    mutate(fixture)
+
+    await expect(
+      permissionedOrchestrator().dispatch(fixture.plan, {
+        permissionDecision: fixture.permissionDecision,
+      })
+    ).rejects.toMatchObject({ name: 'PermissionPhaseError', movement: 'none', phase: 'preflight' })
+    expect(submitGrantMock).not.toHaveBeenCalled()
+    expect(runAgentPullMock).not.toHaveBeenCalled()
+    expect(executeBaseLegMock).not.toHaveBeenCalled()
+  })
+
+  it('[D] rejects a duplicate allocationId before grant or movement', async () => {
+    const fixture = permissionedMixedFixture('run-d-duplicate')
+    fixture.plan.agents[1].children[0].allocationId = fixture.plan.agents[0].allocationId
+
+    await expect(
+      permissionedOrchestrator().dispatch(fixture.plan, {
+        permissionDecision: fixture.permissionDecision,
+      })
+    ).rejects.toMatchObject({ name: 'PermissionPhaseError', movement: 'none', phase: 'preflight' })
+    expect(submitGrantMock).not.toHaveBeenCalled()
+    expect(runAgentPullMock).not.toHaveBeenCalled()
+    expect(executeBaseLegMock).not.toHaveBeenCalled()
+  })
+
+  it('[D] rejects multiple bridge agents before grant or movement', async () => {
+    const fixture = permissionedMixedFixture('run-d-cardinality')
+    const secondBridge = structuredClone(fixture.plan.agents[1])
+    secondBridge.allocationId = 'run-d-cardinality:bridge:second'
+    secondBridge.children[0].allocationId = 'run-d-cardinality:bridge:pool-b'
+    fixture.plan.agents.push(secondBridge)
+
+    await expect(
+      permissionedOrchestrator().dispatch(fixture.plan, {
+        permissionDecision: fixture.permissionDecision,
+      })
+    ).rejects.toMatchObject({
+      name: 'PermissionPhaseError',
+      movement: 'none',
+      code: 'VF_MULTIPLE_BRIDGE_AGENTS',
+    })
+    expect(submitGrantMock).not.toHaveBeenCalled()
+    expect(runAgentPullMock).not.toHaveBeenCalled()
+    expect(executeBaseLegMock).not.toHaveBeenCalled()
+  })
+
+  it('[E] settles an unexpected Base rejection after permission confirmation with unknown custody', async () => {
+    const fixture = permissionedMixedFixture('run-e')
+    executeBaseLegMock.mockRejectedValueOnce(new Error('base implementation rejected'))
+
+    const summary = await permissionedOrchestrator().dispatch(fixture.plan, {
+      permissionDecision: fixture.permissionDecision,
+    })
+
+    expect(submitGrantMock).toHaveBeenCalledTimes(1)
+    expect(summary.receipt.permission).toMatchObject({
+      mode: 'fresh',
+      status: 'confirmed',
+      confirmationCount: 1,
+      txHash: 'HG',
+    })
+    expect(summary.receipt.branches.base.status).toBe('failed')
+    expect(summary.receipt.allocations.find((entry) => entry.allocationId.endsWith('pool-a'))).toMatchObject({
+      executionStatus: 'failed',
+      custody: { location: 'unknown', confirmed: false, checkedAt: null },
+      error: 'base implementation rejected',
+    })
+    expect(summary.receipt.allocations.find((entry) => entry.allocationId.endsWith('pool-a')).custody.location).not.toBe('owner')
+  })
+
+  it('[F] keeps failed Base recovery evidence in the receipt and strips all key material', async () => {
+    const fixture = permissionedMixedFixture('run-f')
+    executeBaseLegMock.mockResolvedValueOnce({
+      success: false,
+      stage: 'attestation',
+      error: 'attestation rejected',
+      allocations: [
+        {
+          allocationId: 'run-f:bridge:pool-a',
+          amount: { token: 'USDC', units: '40000000', decimals: 6 },
+          success: false,
+          error: 'attestation rejected',
+          finalStatus: 'error',
+          bridgeAgentAddress: 'CFRESH2',
+          kernelAddress: KERNEL,
+          jobId: 'JOB-F',
+          attestation: { status: 'rejected' },
+          recovery: {
+            action: 'resume-job',
+            jobId: 'JOB-F',
+            sessionPrivateKey: '0xNESTED-SECRET',
+            bridgeSessionKey: { secret: 'SBRIDGE-NESTED' },
+          },
+          custody: { location: 'in-transit', confirmed: true, checkedAt: 606 },
+          sessionPrivateKey: '0xSECRET',
+          bridgeSessionKey: { secret: 'SSECRET' },
+        },
+      ],
+    })
+
+    const summary = await permissionedOrchestrator().dispatch(fixture.plan, {
+      permissionDecision: fixture.permissionDecision,
+    })
+    const failed = summary.receipt.allocations.find((entry) => entry.allocationId.endsWith('pool-a'))
+
+    expect(failed.evidence).toMatchObject({
+      bridgeAgentAddress: 'CFRESH2',
+      kernelAddress: KERNEL,
+      jobId: 'JOB-F',
+      attestation: { status: 'rejected' },
+      recovery: { action: 'resume-job', jobId: 'JOB-F' },
+    })
+    expect(JSON.stringify(summary.receipt)).not.toMatch(
+      /session|private|0xSECRET|SSECRET|0xNESTED-SECRET|SBRIDGE-NESTED/i
+    )
+  })
+
+  it('[G] normalizes a malformed stored kernel as no-movement PermissionPhaseError before grant', async () => {
+    const fixture = permissionedMixedFixture('run-g')
+    readBaseMandateMock.mockReturnValueOnce({ kernelAddress: 'not-an-evm-address' })
+
+    await expect(
+      permissionedOrchestrator().dispatch(fixture.plan, {
+        permissionDecision: fixture.permissionDecision,
+      })
+    ).rejects.toMatchObject({
+      name: 'PermissionPhaseError',
+      movement: 'none',
+      phase: 'preflight',
+      code: 'VF_BASE_KERNEL_INVALID',
+    })
+    expect(submitGrantMock).not.toHaveBeenCalled()
+    expect(runAgentPullMock).not.toHaveBeenCalled()
+    expect(executeBaseLegMock).not.toHaveBeenCalled()
+  })
+
+  it('[H] reports actual reused permission evidence for a legacy Stellar-only cached run', async () => {
+    readAllowanceMock.mockResolvedValue({ amount: 2_000_000_000n, liveUntilLedger: 9999 })
+    takeReusableAgentMock.mockResolvedValue({
+      agentAddress: 'CCACHED',
+      secret: 'SCACHED',
+      expiry: 2000000000,
+    })
+    readTokenBalanceMock.mockImplementation(async (address) =>
+      address === 'CCACHED' ? 2_000_000_000n : null
+    )
+
+    const summary = await new OrchestratorAgent({
+      user: 'GUSER',
+      sessionId: 'run-h',
+      onEvent: vi.fn(),
+    }).dispatch({ runId: 'run-h', vaults: [{ address: 'CSTELLAR', allocation: 1 }] }, 100)
+
+    expect(submitGrantMock).not.toHaveBeenCalled()
+    expect(summary.receipt.permission).toEqual({
+      mode: 'reuse',
+      status: 'reused',
+      confirmationCount: 0,
+      txHash: null,
+      grantReceiptFingerprint: null,
+      expiryLedger: 9999,
+      agentAddresses: ['CCACHED'],
+    })
+  })
+
+  it.each([
+    {
+      label: 'nonempty parent token',
+      mutate: ({ plan, permissionDecision }) => {
+        plan.agents[1].cap.token = '   '
+        plan.agents[1].allocation.token = '   '
+        permissionDecision.reviewedAgentInits[1].token = '   '
+        permissionDecision.reviewedAgentInits[1].cap.token = '   '
+      },
+    },
+    {
+      label: 'integer child units',
+      mutate: ({ plan }) => {
+        plan.agents[1].children[0].allocation.units = '40000000.5'
+      },
+    },
+    {
+      label: 'nonnegative parent units',
+      mutate: ({ plan, permissionDecision }) => {
+        plan.agents[1].cap.units = '-400000000'
+        plan.agents[1].allocation.units = '-400000000'
+        permissionDecision.reviewedAgentInits[1].cap.units = '-400000000'
+      },
+    },
+    {
+      label: 'integer decimals',
+      mutate: ({ plan, permissionDecision }) => {
+        plan.agents[1].cap.decimals = 7.5
+        plan.agents[1].allocation.decimals = 7.5
+        permissionDecision.reviewedAgentInits[1].cap.decimals = 7.5
+      },
+    },
+    {
+      label: 'nonempty allocationId',
+      mutate: ({ plan, permissionDecision }) => {
+        plan.agents[0].allocationId = ''
+        permissionDecision.reviewedAgentInits[0].allocationId = ''
+      },
+    },
+    {
+      label: 'cap and allocation reconciliation',
+      mutate: ({ plan }) => {
+        plan.agents[0].allocation.units = '599999999'
+      },
+    },
+  ])('[J] validates canonical $label before permission or movement', async ({ mutate }) => {
+    const fixture = permissionedMixedFixture(`run-j-${String(Math.random()).slice(2)}`)
+    mutate(fixture)
+
+    await expect(
+      permissionedOrchestrator().dispatch(fixture.plan, {
+        permissionDecision: fixture.permissionDecision,
+      })
+    ).rejects.toMatchObject({ name: 'PermissionPhaseError', movement: 'none', phase: 'preflight' })
+    expect(submitGrantMock).not.toHaveBeenCalled()
+    expect(runAgentPullMock).not.toHaveBeenCalled()
+    expect(executeBaseLegMock).not.toHaveBeenCalled()
   })
 })

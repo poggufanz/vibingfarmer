@@ -191,25 +191,86 @@ export class OrchestratorAgent {
         message: 'Base bridge allocations require a fresh reviewed grant.',
       })
     }
-    this.assertPermissionMatchesPlan(strategyPlan, permissionDecision, planAgents)
     try {
+      this.assertPermissionMatchesPlan(strategyPlan, permissionDecision, planAgents)
       const ids = new Set()
+      const validatedAmounts = new Map()
+      const canonicalAmount = (amount, allocationId) => {
+        if (
+          !amount ||
+          typeof amount.token !== 'string' ||
+          amount.token.trim().length === 0 ||
+          !/^[0-9]+$/.test(String(amount.units)) ||
+          !Number.isInteger(amount.decimals) ||
+          amount.decimals < 0
+        ) {
+          throw new Error(`Invalid canonical amount for ${allocationId}.`)
+        }
+        return {
+          token: amount.token,
+          units: BigInt(amount.units),
+          decimals: amount.decimals,
+        }
+      }
+      const sameAmount = (left, right) =>
+        left.token === right.token &&
+        left.units === right.units &&
+        left.decimals === right.decimals
+
       for (const agent of planAgents) {
-        for (const allocation of agent.kind === 'bridge' ? [agent, ...(agent.children || [])] : [agent]) {
-          const amount = allocation.allocation || allocation.cap
-          if (!allocation.allocationId || ids.has(allocation.allocationId) || !amount || !amount.token || !/^[0-9]+$/.test(String(amount.units)) || !Number.isInteger(amount.decimals) || amount.decimals < 0) {
-            throw new Error(`Invalid canonical amount for ${allocation.allocationId}.`)
+        const allocations = agent.kind === 'bridge' ? [agent, ...(agent.children || [])] : [agent]
+        for (const allocation of allocations) {
+          if (
+            typeof allocation.allocationId !== 'string' ||
+            allocation.allocationId.trim().length === 0 ||
+            ids.has(allocation.allocationId)
+          ) {
+            throw new Error(`Invalid or duplicate allocationId ${allocation.allocationId}.`)
           }
           ids.add(allocation.allocationId)
+          const amount = canonicalAmount(
+            allocation.allocation || allocation.cap,
+            allocation.allocationId
+          )
+          validatedAmounts.set(allocation, amount)
+          if (allocation.cap && allocation.allocation) {
+            const cap = canonicalAmount(allocation.cap, allocation.allocationId)
+            const allocationAmount = canonicalAmount(
+              allocation.allocation,
+              allocation.allocationId
+            )
+            if (!sameAmount(cap, allocationAmount)) {
+              throw new Error(`Cap and allocation do not reconcile for ${allocation.allocationId}.`)
+            }
+          }
         }
         if (agent.kind === 'bridge') {
-          const childrenTotal = (agent.children || []).reduce((sum, child) => sum + BigInt(child.allocation?.units || 0) * 10n, 0n)
-          if (BigInt(agent.allocation?.units || -1) !== childrenTotal) {
+          const parent = validatedAmounts.get(agent)
+          const children = agent.children || []
+          if (
+            parent.token !== STELLAR_USDC_SAC ||
+            parent.decimals !== SOROBAN_DECIMALS ||
+            children.some((child) => {
+              const amount = validatedAmounts.get(child)
+              return amount.token !== 'USDC' || amount.decimals !== 6
+            })
+          ) {
+            throw new Error(`Bridge token/decimal pairing is invalid for ${agent.allocationId}.`)
+          }
+          const childrenTotal = children.reduce((sum, child) => {
+            const amount = validatedAmounts.get(child)
+            return sum + amount.units * 10n ** BigInt(parent.decimals - amount.decimals)
+          }, 0n)
+          if (parent.units !== childrenTotal) {
             throw new Error(`Bridge child amounts do not reconcile for ${agent.allocationId}.`)
           }
         }
       }
+      for (const [index, budget] of (permissionDecision?.reviewedBudgets || []).entries()) {
+        canonicalAmount(budget, `reviewed budget ${index}`)
+      }
     } catch (cause) {
+      if (cause instanceof PermissionPhaseError) throw cause
       throw new PermissionPhaseError({
         phase: 'preflight',
         code: 'VF_CANONICAL_AMOUNT_INVALID',
@@ -1025,6 +1086,9 @@ export class OrchestratorAgent {
     const bridgeAgentReady = new Promise((resolve) => {
       resolveBridgeAgent = resolve
     })
+    // Captured at the setup boundary before either execution branch moves funds. Keeping it
+    // outside the Stellar closure preserves confirmed permission truth if execution later rejects.
+    let legacyPermissionEvidence = null
 
     // Stellar leg — MOVED verbatim from the pre-Task-8 dispatch body (only `strategy` →
     // `stellarStrategy` at the vaultPlans line changed) into a local closure so it can run as one
@@ -1131,14 +1195,19 @@ export class OrchestratorAgent {
         // reports identically.
         this.onEvent('orchestrator-step', { step: 'authorizing-scope', status: 'pending' })
         if (USE_FUNDING_ROUTER) {
-          await this.setupViaRouter(workers, expiry, bridgeInit, resolveBridgeAgent)
+          legacyPermissionEvidence = await this.setupViaRouter(
+            workers,
+            expiry,
+            bridgeInit,
+            resolveBridgeAgent
+          )
         } else if (
           isLegacyDirectSetupAllowed({
             mode: import.meta.env.MODE,
             explicitFlag: import.meta.env.VITE_ENABLE_LEGACY_AGENT_SETUP,
           })
         ) {
-          await this.setupLegacy(workers, expiry)
+          legacyPermissionEvidence = await this.setupLegacy(workers, expiry)
         } else {
           throw new Error('Pocket Crew requires the funding router; no transaction was submitted.')
         }
@@ -1329,15 +1398,14 @@ export class OrchestratorAgent {
           : []),
       ],
     }
+    // A legacy all-Base grant failure historically settles as branch data. With no confirmed
+    // permission, omit the receipt rather than synthesizing a confirmation that never happened.
+    if (!legacyPermissionEvidence) {
+      return { ...stellarSummary, baseLeg, receipt: null }
+    }
     const receipt = buildDispatchReceipt({
       plan: receiptPlan,
-      permission: {
-        mode: 'fresh',
-        txHash: baseLeg?.grantTxHash || null,
-        grantReceiptFingerprint: null,
-        expiryLedger: null,
-        agentAddresses: stellarSummary.agentAddresses || [],
-      },
+      permission: legacyPermissionEvidence,
       branches: {
         stellar: { results: stellarSummary.results },
         base: {
@@ -1361,6 +1429,7 @@ export class OrchestratorAgent {
   async setupLegacy(workers, expiry) {
     const nowSec = Math.floor(Date.now() / 1000)
     const takenThisRun = new Set() // one cached agent must not serve two workers of this run
+    let allReused = workers.length > 0
     for (const w of workers) {
       try {
         // Reuse a cached agent when its ON-CHAIN scope still allows this deposit (expiry,
@@ -1377,6 +1446,7 @@ export class OrchestratorAgent {
           await w.setupKey() // idempotent — keeps the restored key, emits the key-setup step
           w.agentAddress = cached.agentAddress
         } else {
+          allReused = false
           await w.setupKey() // fresh ed25519 session key (the on-chain agent signer)
           // Deploy BEFORE fund — it needs the fresh agent's address. User-signed and user-paid:
           // the relay's allowlist only fee-bumps vault-deposit invokes, never a deploy.
@@ -1434,9 +1504,17 @@ export class OrchestratorAgent {
         // Surface + isolate: THIS worker is out (drives the tile/log 'failed' state), the rest
         // of the run continues. No infinite "started" limbo, no all-or-nothing abort.
         w.setupFailed = true
+        allReused = false
         w.setupError = `Setup failed: ${err.message}`
         this.onEvent('failed', { agentId: w.agentId, vault: w.vault, error: w.setupError })
       }
+    }
+    return {
+      mode: allReused ? 'reuse' : 'fresh',
+      txHash: null,
+      grantReceiptFingerprint: null,
+      expiryLedger: allReused ? null : expiry,
+      agentAddresses: workers.map((worker) => worker.agentAddress).filter(Boolean),
     }
   }
 
@@ -1463,12 +1541,15 @@ export class OrchestratorAgent {
     const nowSec = Math.floor(Date.now() / 1000)
     const totalUnits = workers.reduce((acc, w) => acc + w.amount, 0n)
 
-    const reused = bridgeInit ? false : await this.tryReuseAllCached(workers, totalUnits, nowSec)
-    if (!reused) {
+    const reuseEvidence = bridgeInit
+      ? null
+      : await this.tryReuseAllCached(workers, totalUnits, nowSec)
+    let permissionEvidence
+    if (!reuseEvidence) {
       for (const w of workers) await w.setupKey() // fresh keys the grant pins as agent signers
-      let bridgeAgentAddress = null
+      let granted
       try {
-        bridgeAgentAddress = await this.grantFreshAgents(
+        granted = await this.grantFreshAgents(
           workers,
           totalUnits,
           expiry,
@@ -1486,10 +1567,24 @@ export class OrchestratorAgent {
           this.onEvent('failed', { agentId: w.agentId, vault: w.vault, error: w.setupError })
         }
         resolveBridgeAgent(null)
-        return
+        return null
       }
-      resolveBridgeAgent(bridgeAgentAddress)
+      permissionEvidence = {
+        mode: 'fresh',
+        txHash: granted.txHash,
+        grantReceiptFingerprint: null,
+        expiryLedger: granted.expiryLedger,
+        agentAddresses: granted.agentAddresses,
+      }
+      resolveBridgeAgent(granted.bridgeAgentAddress)
     } else {
+      permissionEvidence = {
+        mode: 'reuse',
+        txHash: null,
+        grantReceiptFingerprint: null,
+        expiryLedger: reuseEvidence.expiryLedger,
+        agentAddresses: workers.map((worker) => worker.agentAddress),
+      }
       resolveBridgeAgent(null) // cache-reuse path never grants — never reached when bridgeInit is set
     }
 
@@ -1531,6 +1626,7 @@ export class OrchestratorAgent {
         this.onEvent('failed', { agentId: w.agentId, vault: w.vault, error: w.setupError })
       }
     }
+    return permissionEvidence
   }
 
   /**
@@ -1544,7 +1640,7 @@ export class OrchestratorAgent {
    */
   async tryReuseAllCached(workers, totalUnits, nowSec) {
     const allowance = await readAllowance({ owner: this.user })
-    if (!allowance || allowance.amount < totalUnits) return false
+    if (!allowance || allowance.amount < totalUnits) return null
     const taken = new Set()
     const picks = []
     for (const w of workers) {
@@ -1555,7 +1651,7 @@ export class OrchestratorAgent {
         nowSec,
         exclude: taken,
       })
-      if (!cached) return false // can't fill every worker from cache → a grant is required
+      if (!cached) return null // can't fill every worker from cache → a grant is required
       picks.push([w, cached])
       taken.add(cached.agentAddress)
     }
@@ -1570,7 +1666,7 @@ export class OrchestratorAgent {
         reused: true,
       })
     }
-    return true
+    return { expiryLedger: allowance.liveUntilLedger ?? null }
   }
 
   /**
@@ -1613,12 +1709,20 @@ export class OrchestratorAgent {
       agentInits.push(bridgeInit)
       budgets.push({ budget: bridgeInit.cap, token: bridgeInit.token })
     }
-    const { agentAddresses, bridgeAgentAddress } = await submitGrant({
+    const { hash, agentAddresses, bridgeAgentAddress, expiryLedger } = await submitGrant({
       owner: this.user,
       budgets,
       durationSeconds,
       agentInits,
     })
+    if (
+      typeof hash !== 'string' ||
+      hash.length === 0 ||
+      !Array.isArray(agentAddresses) ||
+      agentAddresses.length !== agentInits.length
+    ) {
+      throw new Error('The funding router did not return complete confirmed grant evidence.')
+    }
     workers.forEach((w, i) => {
       w.agentAddress = agentAddresses[i]
       saveCachedAgent({
@@ -1640,6 +1744,6 @@ export class OrchestratorAgent {
         reused: false,
       })
     })
-    return bridgeAgentAddress
+    return { bridgeAgentAddress, agentAddresses, txHash: hash, expiryLedger: expiryLedger ?? null }
   }
 }

@@ -274,6 +274,36 @@ describe('buildDispatchReceipt', () => {
     expect(receipt.allocations[1].networkContext.currentCustodyNetwork).toBeNull()
   })
 
+  it('[I] leaves pending in-transit custody without an invented current Base network', () => {
+    const receipt = buildDispatchReceipt({
+      plan: plan(),
+      permission: permission(),
+      branches: {
+        base: {
+          results: [
+            {
+              allocationId: 'run-mixed-8:bridge:base-a',
+              finalStatus: 'pending',
+              custody: { location: 'in-transit', confirmed: true, checkedAt: 808 },
+            },
+          ],
+        },
+      },
+    })
+    const pending = receipt.allocations.find((entry) => entry.allocationId.endsWith('base-a'))
+
+    expect(pending.networkContext.currentCustodyNetwork).toBeNull()
+    expect(pending.networkContext.transit).toBe(true)
+  })
+
+  it('[I] leaves unknown Stellar custody without an invented current Stellar network', () => {
+    const receipt = buildDispatchReceipt({ plan: plan(), permission: permission(), branches: {} })
+    const unknown = receipt.allocations.find((entry) => entry.allocationId.endsWith('deposit:0'))
+
+    expect(unknown.custody).toEqual({ location: 'unknown', confirmed: false, checkedAt: null })
+    expect(unknown.networkContext.currentCustodyNetwork).toBeNull()
+  })
+
   it('rejects negative units, duplicate IDs, and a bridge parent/child mismatch', () => {
     const invalid = plan()
     invalid.agents[0].allocation.units = '-1'

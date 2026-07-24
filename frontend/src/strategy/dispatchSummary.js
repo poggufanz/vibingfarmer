@@ -65,6 +65,26 @@ function txHash(raw) {
   return raw?.depositTxHash || raw?.mintTxHash || raw?.txHash || raw?.burnHash || raw?.pullTxHash || null
 }
 
+function sanitizedEvidence(value, seen = new WeakSet()) {
+  if (value == null || typeof value !== 'object') return value
+  if (seen.has(value)) return null
+  seen.add(value)
+  if (Array.isArray(value)) return value.map((entry) => sanitizedEvidence(entry, seen))
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => {
+        const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, '')
+        return (
+          !normalized.endsWith('sessionkey') &&
+          !normalized.includes('privatekey') &&
+          normalized !== 'secret' &&
+          !normalized.endsWith('secret')
+        )
+      })
+      .map(([key, entry]) => [key, sanitizedEvidence(entry, seen)])
+  )
+}
+
 function networkContext(raw, branch, custody) {
   if (raw?.networkContext) return raw.networkContext
   if (branch === 'stellar') {
@@ -104,7 +124,11 @@ function safeEvidence(raw) {
     'recovery',
     'stage',
   ]
-  return Object.fromEntries(keys.filter((key) => raw?.[key] != null).map((key) => [key, raw[key]]))
+  return Object.fromEntries(
+    keys
+      .filter((key) => raw?.[key] != null)
+      .map((key) => [key, sanitizedEvidence(raw[key])])
+  )
 }
 
 function normalizeOutcome(planned, raw) {

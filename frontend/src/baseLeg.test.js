@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { executeBaseLeg } from './baseLeg.js'
+import { buildDispatchReceipt } from './strategy/dispatchSummary.js'
 
 const KERNEL = '0x0000000000000000000000000000000000000AA1'
 const BRIDGE_AGENT = 'CBRIDGEAGENT'
@@ -113,6 +114,97 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
     })
     expect(JSON.stringify(out)).not.toContain('rawPublicKey')
     expect(JSON.stringify(out)).not.toContain('sessionKey')
+  })
+
+  it('[F] carries a failed child bridge, kernel, job, attestation, and recovery evidence through the receipt without a key', async () => {
+    const deps = okDeps()
+    const allocationId = 'run-f-real:bridge:pool-a'
+    deps.runFarmFlow.mockResolvedValue({
+      success: false,
+      stage: 'attestation',
+      error: 'attestation rejected',
+      burnHash: 'BURN-F',
+      jobId: 'JOB-F',
+      finalStatus: 'error',
+      attestation: { status: 'rejected' },
+      recovery: {
+        action: 'resume-job',
+        jobId: 'JOB-F',
+        sessionPrivateKey: '0xNESTED-SECRET',
+        bridgeSessionKey: { secret: 'SBRIDGE-NESTED' },
+      },
+      allocations: [
+        {
+          allocationId,
+          success: false,
+          error: 'attestation rejected',
+          finalStatus: 'error',
+          attestation: { status: 'rejected' },
+          recovery: {
+            action: 'resume-job',
+            jobId: 'JOB-F',
+            sessionPrivateKey: '0xNESTED-SECRET',
+            bridgeSessionKey: { secret: 'SBRIDGE-NESTED' },
+          },
+          custody: { location: 'in-transit', confirmed: true, checkedAt: 606 },
+          bridgeAgentAddress: 'CUNTRUSTED',
+          kernelAddress: '0xUNTRUSTED',
+          sessionPrivateKey: '0xSECRET',
+        },
+      ],
+    })
+    const out = await run({
+      deps,
+      runId: 'run-f-real',
+      grantTxHash: 'GRANT-F',
+      baseVaults: [
+        {
+          ...baseVaults[0],
+          allocationId,
+          allocationAmount: { token: 'USDC', units: '100000000', decimals: 6 },
+          amountBaseUnits: 100000000n,
+        },
+      ],
+    })
+    const receipt = buildDispatchReceipt({
+      plan: {
+        runId: 'run-f-real',
+        planFingerprint: 'PLAN-F',
+        agents: [
+          {
+            allocationId: 'run-f-real:bridge',
+            kind: 'bridge',
+            allocation: { token: 'STELLAR-USDC', units: '1000000000', decimals: 7 },
+            children: [
+              {
+                allocationId,
+                allocation: { token: 'USDC', units: '100000000', decimals: 6 },
+              },
+            ],
+          },
+        ],
+      },
+      permission: { mode: 'fresh', txHash: 'GRANT-F' },
+      branches: { base: { status: 'failed', results: out.allocations } },
+    })
+    const failed = receipt.allocations[0]
+
+    expect(out.success).toBe(false)
+    expect(failed).toMatchObject({
+      executionStatus: 'failed',
+      error: 'attestation rejected',
+      custody: { location: 'in-transit', confirmed: true, checkedAt: 606 },
+      evidence: {
+        bridgeAgentAddress: BRIDGE_AGENT,
+        kernelAddress: KERNEL,
+        jobId: 'JOB-F',
+        attestation: { status: 'rejected' },
+        recovery: { action: 'resume-job', jobId: 'JOB-F' },
+      },
+    })
+    expect(JSON.stringify({ out, receipt })).not.toMatch(
+      /sessionPrivateKey|bridgeSessionKey|0xSECRET|0xNESTED-SECRET|SBRIDGE-NESTED|CUNTRUSTED|0xUNTRUSTED/
+    )
   })
 
   it('uses reviewed child bigint units directly for a permissioned bridge, never totalAmount float math', async () => {

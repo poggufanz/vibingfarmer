@@ -25,6 +25,26 @@ import { estimateMinShares as defaultEstimateMinShares } from './base/quotes.js'
 import { defaultMakePublicClient } from './wallet/passkeyBase.js'
 import { readBaseMandate, validateBaseMandate } from './wallet/baseBinding.js'
 
+function sanitizedEvidence(value, seen = new WeakSet()) {
+  if (value == null || typeof value !== 'object') return value
+  if (seen.has(value)) return null
+  seen.add(value)
+  if (Array.isArray(value)) return value.map((entry) => sanitizedEvidence(entry, seen))
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => {
+        const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, '')
+        return (
+          !normalized.endsWith('sessionkey') &&
+          !normalized.includes('privatekey') &&
+          normalized !== 'secret' &&
+          !normalized.endsWith('secret')
+        )
+      })
+      .map(([key, entry]) => [key, sanitizedEvidence(entry, seen)])
+  )
+}
+
 /**
  * @param {{
  *   connectedAddress: string,          // Stellar wallet — used only for logging/identity, never signs here
@@ -235,6 +255,10 @@ export async function executeBaseLeg({
       const remote = (result.allocations || []).find(
         (entry) => entry?.allocationId === allocation.allocationId
       ) || {}
+      const childError =
+        remote.error || (result.success === false ? result.error || 'Base leg failed.' : null)
+      const childSuccess =
+        remote.success !== false && remote.finalStatus !== 'error' && !childError
       return {
         allocationId: allocation.allocationId || `${runId ?? 'run'}-${i}`,
         amount: allocation.allocationAmount || {
@@ -246,16 +270,27 @@ export async function executeBaseLeg({
         jobId: result.jobId || null,
         bridgeAgentAddress,
         kernelAddress: ownerAddress,
-        attestation: remote.attestation || result.attestation || result.attestationState || null,
-        recovery: remote.recovery || null,
+        attestation: sanitizedEvidence(
+          remote.attestation || result.attestation || result.attestationState || null
+        ),
+        recovery: sanitizedEvidence(remote.recovery || result.recovery || null),
         finalStatus: remote.finalStatus || result.finalStatus || null,
         mintTxHash: remote.mintTxHash || null,
         depositTxHash: remote.depositTxHash || null,
         custody: custodyFor(remote),
+        success: childSuccess,
+        error: childError,
       }
     })
+    const success = result.success !== false && childResults.every((child) => child.success)
+    const error =
+      success
+        ? null
+        : result.error ||
+          childResults.find((child) => child.error)?.error ||
+          'Base leg failed.'
     return {
-      success: true,
+      success,
       runId,
       grantTxHash,
       burnHash: result.burnHash,
@@ -264,13 +299,17 @@ export async function executeBaseLeg({
       baseAccount: ownerAddress,
       bridgeAgentAddress,
       kernelAddress: ownerAddress,
-      attestation: result.attestation || result.attestationState || null,
+      stage: success ? undefined : result.stage || 'farm',
+      error,
+      attestation: sanitizedEvidence(result.attestation || result.attestationState || null),
+      recovery: sanitizedEvidence(result.recovery || null),
       allocations: childResults,
     }
   } catch (err) {
     // A dependency can reject with anything (bare string, null, plain object) — never assume
     // Error shape, or reading .message here would itself throw and break the never-throws contract.
     const message = err instanceof Error ? err.message : String(err)
+    const failureEvidence = err && typeof err === 'object' ? err : {}
     // Stranded-funds observability: once the pull confirmed, the bridge agent is holding the
     // owner's USDC — surface that + the recovery handle (bridgeAgentAddress, for an owner_withdraw
     // sweep) in BOTH the event and the return value, so a pull-ok/burn-fails outcome is never
@@ -290,6 +329,13 @@ export async function executeBaseLeg({
       finalStatus: 'error',
       custody: failureCustody,
       error: message,
+      bridgeAgentAddress: bridgeAgentAddress || null,
+      kernelAddress: kernelAddress || null,
+      jobId: failureEvidence.jobId || null,
+      attestation: sanitizedEvidence(
+        failureEvidence.attestation || failureEvidence.attestationState || null
+      ),
+      recovery: sanitizedEvidence(failureEvidence.recovery || null),
     }))
     safeEmit('baseleg-failed', { stage, error: message, ...strandedFunds })
     return {
@@ -302,6 +348,11 @@ export async function executeBaseLeg({
       // actually stranded funds. `bridgeAgent` still identifies the deployed agent for receipts.
       bridgeAgent: bridgeAgentAddress || null,
       kernelAddress: kernelAddress || null,
+      jobId: failureEvidence.jobId || null,
+      attestation: sanitizedEvidence(
+        failureEvidence.attestation || failureEvidence.attestationState || null
+      ),
+      recovery: sanitizedEvidence(failureEvidence.recovery || null),
       allocations,
       ...strandedFunds,
     }
