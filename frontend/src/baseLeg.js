@@ -131,12 +131,17 @@ export async function executeBaseLeg({
     const publicClient = makePublicClient()
     safeEmit('baseleg-owner', { status: 'done', ownerMode: 'mandate', address: ownerAddress })
 
-    const legAmount = baseVaults.reduce((sum, v) => sum + totalAmount * v.allocation, 0)
+    const exactBaseUnits = baseVaults.every((vault) => typeof vault.amountBaseUnits === 'bigint')
+      ? baseVaults.reduce((sum, vault) => sum + vault.amountBaseUnits, 0n)
+      : null
     // NOTE (reality vs brief): deriveCctpTransferUnits returns
     // { requestedUnits7, baseTargetUnits6, burnUnits7, retainedDustUnits7 } — there is no
     // units7/units6 pair. burnUnits7 is the 7dp burn amount; baseTargetUnits6 is the exact 6dp
     // Base-side total that quantizeAllocations must apportion across (burnUnits7 = baseTargetUnits6 * 10n).
-    const { burnUnits7, baseTargetUnits6 } = deriveCctpTransferUnits(legAmount)
+    const { burnUnits7, baseTargetUnits6 } =
+      exactBaseUnits != null
+        ? { burnUnits7: exactBaseUnits * 10n, baseTargetUnits6: exactBaseUnits }
+        : deriveCctpTransferUnits(baseVaults.reduce((sum, v) => sum + totalAmount * v.allocation, 0))
     const allocations = quantizeAllocations(
       baseVaults.map((v) => {
         const cat = BASE_POOL_CATALOG.find(
@@ -145,6 +150,7 @@ export async function executeBaseLeg({
         return {
           allocationId: v.allocationId || null,
           allocationAmount: v.allocationAmount || null,
+          amountBaseUnits: v.amountBaseUnits,
           pool: v.address,
           protocol: cat?.protocol,
           amount: totalAmount * v.allocation,

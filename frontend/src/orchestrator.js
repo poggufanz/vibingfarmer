@@ -175,8 +175,36 @@ export class OrchestratorAgent {
    * @returns {Promise<{completed:number, failed:number, results:Array, sessionId:string, permission:object}>}
    */
   async dispatchPermissioned(strategyPlan, { permissionDecision }) {
-    const planAgents = (strategyPlan.agents || []).filter((a) => a.kind !== 'bridge')
+    const planAgents = strategyPlan.agents || []
+    const bridgeAgents = planAgents.filter((agent) => agent.kind === 'bridge')
+    const depositAgents = planAgents.filter((agent) => agent.kind !== 'bridge')
+    if (bridgeAgents.length > 0 && permissionDecision?.mode === 'reuse') {
+      throw new PermissionPhaseError({
+        phase: 'preflight',
+        code: 'VF_BASE_REQUIRES_FRESH_GRANT',
+        message: 'Base bridge allocations require a fresh reviewed grant.',
+      })
+    }
     this.assertPermissionMatchesPlan(strategyPlan, permissionDecision, planAgents)
+    let baseMandate = null
+    if (bridgeAgents.length > 0) {
+      if (!this.baseLegContext) {
+        throw new PermissionPhaseError({
+          phase: 'preflight',
+          code: 'VF_BASE_CONTEXT_MISSING',
+          message: 'Base bridge allocations require an owner-bound Base context.',
+        })
+      }
+      const { readBaseMandate } = await import('./wallet/baseBinding.js')
+      baseMandate = readBaseMandate(this.user)
+      if (!baseMandate?.kernelAddress) {
+        throw new PermissionPhaseError({
+          phase: 'preflight',
+          code: 'VF_BASE_MANDATE_MISSING',
+          message: 'No owner-bound Base mandate is available for this bridge allocation.',
+        })
+      }
+    }
 
     let workers
     let confirmed
@@ -186,7 +214,7 @@ export class OrchestratorAgent {
         permissionDecision,
         planAgents
       )
-      workers = this.buildReuseWorkers(planAgents, revalidated, credentialByAllocation)
+      workers = this.buildReuseWorkers(depositAgents, revalidated, credentialByAllocation)
       // Matched by the actual budgeted token, never approvals[0] — a multi-token receipt's first
       // approval is not guaranteed to be the one this run's deposit budget cares about.
       const primaryToken = permissionDecision.reviewedBudgets?.[0]?.token
@@ -239,6 +267,16 @@ export class OrchestratorAgent {
         phase: 'preflight',
         code: 'VF_UNKNOWN_PERMISSION_MODE',
         message: `Unknown permission mode: ${permissionDecision?.mode}`,
+      })
+    }
+
+    if (bridgeAgents.length > 0) {
+      return this.dispatchConfirmedMixed({
+        strategyPlan,
+        confirmed,
+        workers,
+        bridgeAgent: bridgeAgents[0],
+        baseMandate,
       })
     }
 
@@ -303,6 +341,132 @@ export class OrchestratorAgent {
     return { completed, failed, results, sessionId: this.sessionId, permission: confirmed }
   }
 
+  /** After the shared fresh grant confirms, both execution branches are settled data. A Base
+   * failure must therefore never erase completed Stellar deposits (and vice versa). */
+  async dispatchConfirmedMixed({ strategyPlan, confirmed, workers, bridgeAgent, baseMandate }) {
+    const mandate = baseMandate
+    const bridgeWorker = workers.find((worker) => worker.allocationId === bridgeAgent.allocationId)
+    if (!bridgeWorker?.agentAddress || !bridgeWorker.sessionKey) {
+      throw new PermissionPhaseError({
+        phase: 'fresh-grant',
+        code: 'VF_BRIDGE_GRANT_EVIDENCE_MISSING',
+        message: 'The confirmed grant did not return the reviewed bridge agent material.',
+      })
+    }
+    const stellarWorkers = workers.filter((worker) => worker !== bridgeWorker)
+    stellarWorkers.forEach((worker, index) => {
+      this.onEvent('worker-queued', {
+        allocationId: worker.allocationId,
+        agentId: worker.agentId,
+        agent: worker.agentAddress,
+        queueIndex: index,
+      })
+    })
+    const runStellar = async () => {
+      const settled = []
+      for (let index = 0; index < stellarWorkers.length; index++) {
+        const worker = stellarWorkers[index]
+        this.onEvent('worker-started', {
+          allocationId: worker.allocationId,
+          agentId: worker.agentId,
+          agent: worker.agentAddress,
+          queueIndex: index,
+        })
+        try {
+          const balance = await readTokenBalance(worker.agentAddress)
+          if (balance == null || balance < worker.amount) {
+            const pulled = await runAgentPull({
+              agentAddress: worker.agentAddress,
+              amount: worker.amount,
+              sessionKey: worker.sessionKey,
+            })
+            if (!pulled) throw new Error('The Stellar relay is unavailable.')
+            if (pulled.status !== 'SUCCESS') throw new Error(`The funding router returned ${pulled.status}.`)
+          }
+          settled.push({ status: 'fulfilled', value: await worker.execute() })
+        } catch (reason) {
+          settled.push({ status: 'rejected', reason })
+        }
+        if (index < stellarWorkers.length - 1) await new Promise((resolve) => setTimeout(resolve, DISPATCH_INTERVAL_MS))
+      }
+      return settled.map((entry, index) => ({
+        allocationId: stellarWorkers[index].allocationId,
+        agentId: stellarWorkers[index].agentId,
+        vault: stellarWorkers[index].vault,
+        success: entry.status === 'fulfilled' && entry.value?.success,
+        txHash: entry.value?.txHash,
+        error: entry.reason?.message || entry.value?.error,
+      }))
+    }
+    const baseVaults = (bridgeAgent.children || []).map((child) => ({
+      address: child.address,
+      allocationId: child.allocationId,
+      allocationAmount: child.allocation,
+      amountBaseUnits: BigInt(child.allocation.units),
+      allocation: 1,
+    }))
+    const [stellarSettled, baseSettled] = await Promise.allSettled([
+      runStellar(),
+      import('./baseLeg.js').then(({ executeBaseLeg }) =>
+        executeBaseLeg({
+          connectedAddress: this.baseLegContext.connectedAddress,
+          bridgeAgentAddress: bridgeWorker.agentAddress,
+          bridgeSessionKey: bridgeWorker.sessionKey,
+          kernelAddress: mandate.kernelAddress,
+          baseVaults,
+          totalAmount: 0,
+          runId: strategyPlan.runId,
+          grantTxHash: confirmed.txHash,
+          onEvent: (name, data) => this.onEvent(name, data),
+        })
+      ),
+    ])
+    const stellarResults =
+      stellarSettled.status === 'fulfilled'
+        ? stellarSettled.value
+        : stellarWorkers.map((worker) => ({
+            allocationId: worker.allocationId,
+            success: false,
+            error: stellarSettled.reason?.message || String(stellarSettled.reason),
+          }))
+    const baseLeg =
+      baseSettled.status === 'fulfilled'
+        ? baseSettled.value
+        : {
+            success: false,
+            runId: strategyPlan.runId,
+            grantTxHash: confirmed.txHash,
+            bridgeAgent: bridgeWorker.agentAddress,
+            kernelAddress: mandate.kernelAddress,
+            error: baseSettled.reason?.message || String(baseSettled.reason),
+            allocations: baseVaults.map((vault) => ({
+              allocationId: vault.allocationId,
+              amount: vault.allocationAmount,
+              success: false,
+              custody: { location: 'owner', confirmed: true, checkedAt: null },
+              error: baseSettled.reason?.message || String(baseSettled.reason),
+            })),
+          }
+    const receipt = buildDispatchReceipt({
+      plan: strategyPlan,
+      permission: confirmed,
+      branches: {
+        stellar: { results: stellarResults },
+        base: { status: baseLeg.success === false ? 'failed' : undefined, results: baseLeg.allocations || [] },
+      },
+    })
+    const completed = stellarResults.filter((result) => result.success).length
+    return {
+      completed,
+      failed: stellarResults.length - completed,
+      results: stellarResults,
+      sessionId: this.sessionId,
+      permission: confirmed,
+      baseLeg,
+      receipt,
+    }
+  }
+
   /** Both modes: reject before any wallet/provider/movement when the reviewed decision no longer
    * describes THIS exact plan — a stale planFingerprint, or a reviewed agent whose cap/expiry/
    * period/target drifted from what the plan now says. `PermissionPhaseError(phase:'preflight')`.
@@ -331,7 +495,7 @@ export class OrchestratorAgent {
           r &&
           r.allocationId === agent.allocationId &&
           r.kind === (agent.kind === 'bridge' ? AGENT_KIND_BRIDGE : AGENT_KIND_DEPOSIT) &&
-          r.target === SOROBAN_ACTIVE_VAULT_ADDRESS &&
+          (agent.kind === 'bridge' || r.target === SOROBAN_ACTIVE_VAULT_ADDRESS) &&
           r.token === agent.cap.token &&
           r.cap?.token === agent.cap.token &&
           String(r.cap?.units) === String(agent.cap.units) &&

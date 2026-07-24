@@ -13,10 +13,12 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 const submitGrantMock = vi.fn()
 const runAgentPullMock = vi.fn()
 const readAllowanceMock = vi.fn()
+const readConfirmedLedgerMock = vi.fn()
 vi.mock('./stellar/grant.js', () => ({
   submitGrant: (...a) => submitGrantMock(...a),
   runAgentPull: (...a) => runAgentPullMock(...a),
   readAllowance: (...a) => readAllowanceMock(...a),
+  readConfirmedLedger: (...a) => readConfirmedLedgerMock(...a),
   AGENT_KIND_DEPOSIT: 0,
   AGENT_KIND_BRIDGE: 1,
 }))
@@ -54,6 +56,7 @@ vi.mock('./stellar/config.js', () => ({
   SOROBAN_TOKEN_ADDRESS: 'CTOKEN',
   SOROBAN_DECIMALS: 7,
   SOROBAN_ACTIVE_VAULT_ADDRESS: 'CACTIVEVAULT',
+  SOROBAN_FUNDING_ROUTER_ADDRESS: 'CROUTER',
   USE_FUNDING_ROUTER: true,
 }))
 vi.mock('./strategist.js', () => ({ generateAgentSkills: vi.fn(async () => ({})) }))
@@ -87,6 +90,19 @@ const executeBaseLegMock = vi.fn()
 vi.mock('./baseLeg.js', () => ({
   executeBaseLeg: (...a) => executeBaseLegMock(...a),
 }))
+vi.mock('./wallet/baseBinding.js', () => ({
+  readBaseMandate: () => ({ kernelAddress: KERNEL }),
+}))
+
+const fetchPreparedExecutionMaterialMock = vi.fn()
+vi.mock('./strategy/reusePreflight.js', () => ({
+  fetchPreparedExecutionMaterial: (...a) => fetchPreparedExecutionMaterialMock(...a),
+}))
+vi.mock('./stellar/grantReceiptStore.js', () => ({
+  buildGrantReceiptV1: (value) => value,
+  saveGrantReceipt: vi.fn(),
+  fingerprintGrantReceipt: () => 'GRANT-RECEIPT',
+}))
 
 import { OrchestratorAgent } from './orchestrator.js'
 import { STELLAR_USDC_SAC } from './stellar/cctpBurn.js'
@@ -110,6 +126,14 @@ beforeEach(() => {
   runAgentPullMock.mockResolvedValue({ hash: 'HP', status: 'SUCCESS' })
   readAllowanceMock.mockReset()
   readAllowanceMock.mockResolvedValue({ amount: 0n, liveUntilLedger: null }) // forces the grant path
+  readConfirmedLedgerMock.mockReset()
+  readConfirmedLedgerMock.mockResolvedValue({ confirmedLedger: 123, confirmedAt: 456 })
+  fetchPreparedExecutionMaterialMock.mockReset()
+  fetchPreparedExecutionMaterialMock.mockImplementation(({ allocationId }) => ({
+    signer: new Uint8Array(32).fill(1),
+    salt: new Uint8Array(32).fill(2),
+    signerSecret: `S-${allocationId}`,
+  }))
   takeReusableAgentMock.mockReset()
   takeReusableAgentMock.mockResolvedValue(null)
   saveCachedAgentMock.mockClear()
@@ -127,6 +151,159 @@ beforeEach(() => {
 })
 
 describe('orchestrator base leg — mixed run costs exactly ONE grant signature', () => {
+  it('permissioned fresh mixed plan shares the reviewed grant, settles both branches, and returns one custody receipt', async () => {
+    const plan = {
+      runId: 'run-permissioned-mixed',
+      planFingerprint: 'PLAN-MIXED',
+      agents: [
+        {
+          allocationId: 'run-permissioned-mixed:deposit:0',
+          kind: 'deposit',
+          cap: { token: 'CTOKEN', units: '600000000', decimals: 7 },
+          allocation: { token: 'CTOKEN', units: '600000000', decimals: 7 },
+          periodSeconds: 3600,
+          expiry: 2000000000,
+        },
+        {
+          allocationId: 'run-permissioned-mixed:bridge:base',
+          kind: 'bridge',
+          cap: { token: STELLAR_USDC_SAC, units: '400000000', decimals: 7 },
+          allocation: { token: STELLAR_USDC_SAC, units: '400000000', decimals: 7 },
+          periodSeconds: 3600,
+          expiry: 2000000000,
+          children: [
+            {
+              allocationId: 'run-permissioned-mixed:bridge:pool-a',
+              address: '0xBASE',
+              allocation: { token: 'USDC', units: '40000000', decimals: 6 },
+            },
+          ],
+        },
+      ],
+    }
+    const reviewedAgentInits = [
+      {
+        allocationId: plan.agents[0].allocationId,
+        kind: 0,
+        token: 'CTOKEN',
+        target: 'CACTIVEVAULT',
+        cap: plan.agents[0].cap,
+        periodSeconds: 3600,
+        expiry: 2000000000,
+        mintRecipient: '00'.repeat(32),
+        destinationDomain: 0,
+      },
+      {
+        allocationId: plan.agents[1].allocationId,
+        kind: 1,
+        token: STELLAR_USDC_SAC,
+        target: 'CTOKENMESSENGER',
+        cap: plan.agents[1].cap,
+        periodSeconds: 3600,
+        expiry: 2000000000,
+        mintRecipient: '00'.repeat(32),
+        destinationDomain: 6,
+      },
+    ]
+    executeBaseLegMock.mockResolvedValueOnce({
+      success: true,
+      runId: plan.runId,
+      grantTxHash: 'HG',
+      burnHash: 'BURN',
+      jobId: 'job-8',
+      finalStatus: 'pending',
+      bridgeAgentAddress: 'CFRESH2',
+      kernelAddress: KERNEL,
+      allocations: [
+        {
+          allocationId: 'run-permissioned-mixed:bridge:pool-a',
+          amount: { token: 'USDC', units: '40000000', decimals: 6 },
+          burnHash: 'BURN',
+          jobId: 'job-8',
+          finalStatus: 'pending',
+          custody: { location: 'in-transit', confirmed: true, checkedAt: 1 },
+        },
+      ],
+    })
+    const orch = new OrchestratorAgent({
+      user: 'GUSER',
+      sessionId: 'permissioned',
+      onEvent: vi.fn(),
+      baseLegContext: { connectedAddress: 'GUSER', signTx: vi.fn() },
+    })
+    const summary = await orch.dispatch(plan, {
+      permissionDecision: {
+        mode: 'fresh',
+        runId: plan.runId,
+        planFingerprint: plan.planFingerprint,
+        agentInitFingerprint: 'AI-MIXED',
+        reviewedBudgets: [
+          { token: 'CTOKEN', units: '600000000', decimals: 7 },
+          { token: STELLAR_USDC_SAC, units: '400000000', decimals: 7 },
+        ],
+        reviewedAgentInits,
+      },
+    })
+
+    expect(submitGrantMock).toHaveBeenCalledTimes(1)
+    expect(executeBaseLegMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: plan.runId,
+        grantTxHash: 'HG',
+        bridgeAgentAddress: 'CFRESH2',
+        bridgeSessionKey: expect.objectContaining({ secret: `S-${plan.agents[1].allocationId}` }),
+      })
+    )
+    expect(summary.receipt).toMatchObject({
+      runId: plan.runId,
+      permission: { status: 'confirmed', txHash: 'HG', confirmationCount: 1 },
+      branches: { stellar: { status: 'succeeded' }, base: { status: 'in-transit' } },
+    })
+    expect(summary.receipt.allocations.map((allocation) => allocation.allocationId)).toEqual([
+      'run-permissioned-mixed:deposit:0',
+      'run-permissioned-mixed:bridge:pool-a',
+    ])
+  })
+
+  it('rejects a permissioned bridge without owner-bound Base context before the shared grant', async () => {
+    const plan = {
+      runId: 'run-preflight-base',
+      planFingerprint: 'PLAN-PREFLIGHT',
+      agents: [
+        {
+          allocationId: 'run-preflight-base:bridge:base',
+          kind: 'bridge',
+          cap: { token: STELLAR_USDC_SAC, units: '10', decimals: 7 },
+          allocation: { token: STELLAR_USDC_SAC, units: '10', decimals: 7 },
+          periodSeconds: 3600,
+          expiry: 2000000000,
+          children: [],
+        },
+      ],
+    }
+    await expect(
+      new OrchestratorAgent({ user: 'GUSER', onEvent: vi.fn() }).dispatch(plan, {
+        permissionDecision: {
+          mode: 'fresh',
+          planFingerprint: plan.planFingerprint,
+          reviewedAgentInits: [
+            {
+              allocationId: plan.agents[0].allocationId,
+              kind: 1,
+              token: STELLAR_USDC_SAC,
+              target: 'CTOKENMESSENGER',
+              cap: plan.agents[0].cap,
+              periodSeconds: 3600,
+              expiry: 2000000000,
+            },
+          ],
+        },
+      })
+    ).rejects.toMatchObject({ name: 'PermissionPhaseError', movement: 'none', phase: 'preflight' })
+    expect(submitGrantMock).not.toHaveBeenCalled()
+    expect(executeBaseLegMock).not.toHaveBeenCalled()
+  })
+
   it('splits mixed strategy: stellar vaults go to workers, base vaults to executeBaseLeg, ONE grant covers both', async () => {
     const orch = new OrchestratorAgent({
       user: 'GUSER',

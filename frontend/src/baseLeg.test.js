@@ -115,6 +115,27 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
     expect(JSON.stringify(out)).not.toContain('sessionKey')
   })
 
+  it('uses reviewed child bigint units directly for a permissioned bridge, never totalAmount float math', async () => {
+    const deps = okDeps()
+    const out = await run({
+      deps,
+      totalAmount: 0,
+      baseVaults: [
+        {
+          ...baseVaults[0],
+          allocationId: 'run-exact:bridge:pool-a',
+          allocationAmount: { token: 'USDC', units: '123456789', decimals: 6 },
+          amountBaseUnits: 123456789n,
+          allocation: 1,
+        },
+      ],
+    })
+    expect(out.success).toBe(true)
+    expect(deps.runFarmFlow).toHaveBeenCalledWith(
+      expect.objectContaining({ burnUnits7: 1234567890n })
+    )
+  })
+
   it('never calls ensureBaseOwner/createMandate/postMandate — those deps no longer exist on this function', async () => {
     // Regression guard: passing them (as if the old ceremony API still applied) must be silently
     // ignored, not wired to anything — proves the ceremony branch is gone, not just unused.
