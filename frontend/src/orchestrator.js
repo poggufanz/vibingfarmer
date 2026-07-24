@@ -186,6 +186,23 @@ export class OrchestratorAgent {
       })
     }
     this.assertPermissionMatchesPlan(strategyPlan, permissionDecision, planAgents)
+    try {
+      for (const agent of planAgents) {
+        for (const allocation of agent.kind === 'bridge' ? agent.children || [] : [agent]) {
+          const amount = allocation.allocation || allocation.cap
+          if (!amount || !/^[0-9]+$/.test(String(amount.units)) || !Number.isInteger(amount.decimals) || amount.decimals < 0) {
+            throw new Error(`Invalid canonical amount for ${allocation.allocationId}.`)
+          }
+        }
+      }
+    } catch (cause) {
+      throw new PermissionPhaseError({
+        phase: 'preflight',
+        code: 'VF_CANONICAL_AMOUNT_INVALID',
+        message: cause.message,
+        cause,
+      })
+    }
     let baseMandate = null
     if (bridgeAgents.length > 0) {
       if (!this.baseLegContext) {
@@ -402,10 +419,11 @@ export class OrchestratorAgent {
           agent: worker.agentAddress,
           queueIndex: index,
         })
+        let pullTxHash = null
+        let movedToAgent = false
         try {
           const balance = await readTokenBalance(worker.agentAddress)
-          let pullTxHash = null
-          let movedToAgent = balance != null && balance >= worker.amount
+          movedToAgent = balance != null && balance >= worker.amount
           if (balance == null || balance < worker.amount) {
             const pulled = await runAgentPull({
               agentAddress: worker.agentAddress,
@@ -425,12 +443,7 @@ export class OrchestratorAgent {
               agentAddress: worker.agentAddress,
               pullTxHash,
               depositTxHash: deposited?.txHash || null,
-              custody: deposited?.custody ||
-                (deposited?.success
-                  ? { location: 'stellar-vault', confirmed: true, checkedAt: null }
-                  : movedToAgent
-                    ? { location: 'agent', confirmed: true, checkedAt: null }
-                    : { location: 'unknown', confirmed: false, checkedAt: null }),
+              custody: deposited?.custody || { location: 'unknown', confirmed: false, checkedAt: null },
             },
           })
         } catch (reason) {
@@ -439,7 +452,10 @@ export class OrchestratorAgent {
             reason,
             value: {
               agentAddress: worker.agentAddress,
-              custody: { location: 'unknown', confirmed: false, checkedAt: null },
+              pullTxHash,
+              custody: movedToAgent
+                ? { location: 'agent', confirmed: true, checkedAt: null }
+                : { location: 'unknown', confirmed: false, checkedAt: null },
             },
           })
         }
@@ -1207,21 +1223,38 @@ export class OrchestratorAgent {
     // Stellar-only strategies must behave byte-identically to pre-Task-8 dispatch — including
     // rejecting with the SAME error (insufficient balance / all-agents-setup-failed). Re-throw
     // rather than let allSettled swallow it.
-    if (stellarSettled.status === 'rejected') {
-      throw stellarSettled.reason
-    }
-
     // Base leg contract says it never rejects — this is belt-and-braces in case a future change
     // (or a bug) breaks that contract; map to the same shape executeBaseLeg would have returned.
     const baseLeg =
       baseSettled.status === 'fulfilled'
         ? baseSettled.value
         : { success: false, stage: 'dispatch', error: baseSettled.reason?.message }
+    if (
+      stellarSettled.status === 'rejected' &&
+      (baseVaults.length === 0 || /No bridge agent was deployed/.test(baseLeg?.error || ''))
+    ) {
+      throw stellarSettled.reason
+    }
+    const stellarSummary =
+      stellarSettled.status === 'fulfilled'
+        ? stellarSettled.value
+        : {
+            completed: 0,
+            failed: stellarVaults.length,
+            results: stellarVaults.map((vault, index) => ({
+              allocationId: vault.allocationId || `${receiptRunId}:deposit:${index}`,
+              success: false,
+              custody: { location: 'unknown', confirmed: false, checkedAt: null },
+              error: stellarSettled.reason?.message || String(stellarSettled.reason),
+            })),
+            sessionId: this.sessionId,
+            agentAddresses: [],
+          }
 
     // Legacy callers have not yet migrated to StrategyPlan/PermissionConfirmedV1, but a mixed
     // execution still deserves the exact same custody receipt. Its synthetic plan is derived
     // solely from the integer amounts used by this dispatch; it never converts display floats.
-    const stellarPlan = stellarSettled.value.results.map((result, index) => ({
+    const stellarPlan = stellarSummary.results.map((result, index) => ({
       allocationId: result.allocationId,
       kind: 'deposit',
       allocation: {
@@ -1279,17 +1312,17 @@ export class OrchestratorAgent {
         txHash: baseLeg?.grantTxHash || null,
         grantReceiptFingerprint: null,
         expiryLedger: null,
-        agentAddresses: stellarSettled.value.agentAddresses || [],
+        agentAddresses: stellarSummary.agentAddresses || [],
       },
       branches: {
-        stellar: { results: stellarSettled.value.results },
+        stellar: { results: stellarSummary.results },
         base: {
           status: baseLeg?.success === false ? 'failed' : undefined,
           results: baseEvidence,
         },
       },
     })
-    return { ...stellarSettled.value, baseLeg, receipt }
+    return { ...stellarSummary, baseLeg, receipt }
   }
 
   /**

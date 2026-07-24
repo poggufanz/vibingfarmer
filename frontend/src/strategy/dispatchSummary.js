@@ -70,7 +70,9 @@ function networkContext(raw, branch, custody) {
   if (branch === 'stellar') {
     return {
       executionNetwork: 'stellar-testnet',
-      currentCustodyNetwork: 'stellar-testnet',
+      currentCustodyNetwork: ['owner', 'agent', 'stellar-vault'].includes(custody.location)
+        ? 'stellar-testnet'
+        : null,
       transit: false,
     }
   }
@@ -78,7 +80,7 @@ function networkContext(raw, branch, custody) {
     executionNetwork: 'stellar-testnet',
     sourceNetwork: 'stellar-testnet',
     destinationNetwork: 'base-sepolia',
-    currentCustodyNetwork: custody.location === 'base-proxy' ? 'base-sepolia' : 'stellar-testnet',
+    currentCustodyNetwork: custody.location === 'base-proxy' ? 'base-sepolia' : null,
     transit: custody.location === 'in-transit',
   }
 }
@@ -112,7 +114,7 @@ function normalizeOutcome(planned, raw) {
   if (
     !amount ||
     typeof amount.token !== 'string' ||
-    !/^-?\d+$/.test(String(amount.units)) ||
+    !/^\d+$/.test(String(amount.units)) ||
     !Number.isInteger(amount.decimals) ||
     amount.decimals < 0
   ) {
