@@ -178,6 +178,12 @@ export class OrchestratorAgent {
     const planAgents = strategyPlan.agents || []
     const bridgeAgents = planAgents.filter((agent) => agent.kind === 'bridge')
     const depositAgents = planAgents.filter((agent) => agent.kind !== 'bridge')
+    if (bridgeAgents.length > 1) {
+      throw new PermissionPhaseError({
+        phase: 'preflight', code: 'VF_MULTIPLE_BRIDGE_AGENTS',
+        message: 'A reviewed execution may contain exactly one Base bridge agent.',
+      })
+    }
     if (bridgeAgents.length > 0 && permissionDecision?.mode === 'reuse') {
       throw new PermissionPhaseError({
         phase: 'preflight',
@@ -187,11 +193,19 @@ export class OrchestratorAgent {
     }
     this.assertPermissionMatchesPlan(strategyPlan, permissionDecision, planAgents)
     try {
+      const ids = new Set()
       for (const agent of planAgents) {
-        for (const allocation of agent.kind === 'bridge' ? agent.children || [] : [agent]) {
+        for (const allocation of agent.kind === 'bridge' ? [agent, ...(agent.children || [])] : [agent]) {
           const amount = allocation.allocation || allocation.cap
-          if (!amount || !/^[0-9]+$/.test(String(amount.units)) || !Number.isInteger(amount.decimals) || amount.decimals < 0) {
+          if (!allocation.allocationId || ids.has(allocation.allocationId) || !amount || !amount.token || !/^[0-9]+$/.test(String(amount.units)) || !Number.isInteger(amount.decimals) || amount.decimals < 0) {
             throw new Error(`Invalid canonical amount for ${allocation.allocationId}.`)
+          }
+          ids.add(allocation.allocationId)
+        }
+        if (agent.kind === 'bridge') {
+          const childrenTotal = (agent.children || []).reduce((sum, child) => sum + BigInt(child.allocation?.units || 0) * 10n, 0n)
+          if (BigInt(agent.allocation?.units || -1) !== childrenTotal) {
+            throw new Error(`Bridge child amounts do not reconcile for ${agent.allocationId}.`)
           }
         }
       }
@@ -230,14 +244,21 @@ export class OrchestratorAgent {
           message: 'No owner-bound Base mandate is available for this bridge allocation.',
         })
       }
-      const reviewedBridge = (permissionDecision.reviewedAgentInits || []).find(
+      let reviewedBridge
+      let expectedRecipient
+      let actualRecipient
+      try {
+        reviewedBridge = (permissionDecision.reviewedAgentInits || []).find(
         (init) => init.allocationId === bridgeAgents[0].allocationId
-      )
-      const expectedRecipient = evmAddrToBytes32(baseMandate.kernelAddress)
-      const actualRecipient =
+        )
+        expectedRecipient = evmAddrToBytes32(baseMandate.kernelAddress)
+        actualRecipient =
         typeof reviewedBridge?.mintRecipient === 'string'
           ? hexToBytes32(reviewedBridge.mintRecipient)
           : reviewedBridge?.mintRecipient
+      } catch (cause) {
+        throw new PermissionPhaseError({ phase: 'preflight', code: 'VF_BASE_KERNEL_INVALID', message: 'The owner-bound Base kernel is malformed.', cause })
+      }
       const recipientMatches =
         actualRecipient instanceof Uint8Array &&
         actualRecipient.length === expectedRecipient.length &&
@@ -529,14 +550,17 @@ export class OrchestratorAgent {
             success: false,
             runId: strategyPlan.runId,
             grantTxHash: confirmed.txHash,
-            bridgeAgent: bridgeWorker.agentAddress,
+            bridgeAgent: bridgeWorker?.agentAddress || null,
             kernelAddress: mandate.kernelAddress,
             error: baseSettled.reason?.message || String(baseSettled.reason),
             allocations: bridgeChildren.map((child) => ({
               allocationId: child.allocationId,
               amount: child.allocation,
               success: false,
-              custody: { location: 'owner', confirmed: true, checkedAt: null },
+              bridgeAgentAddress: bridgeWorker?.agentAddress || null,
+              kernelAddress: mandate.kernelAddress,
+              recovery: { kind: 'base-branch-rejected' },
+              custody: { location: 'unknown', confirmed: false, checkedAt: null },
               error: baseSettled.reason?.message || String(baseSettled.reason),
             })),
           }

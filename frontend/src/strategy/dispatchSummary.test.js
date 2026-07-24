@@ -267,4 +267,16 @@ describe('buildDispatchReceipt', () => {
       })
     ).toThrow(/canonical amount|permission/i)
   })
+
+  it('does not assign a current network to pending or unknown custody without authority', () => {
+    const receipt = buildDispatchReceipt({ plan: plan(), permission: permission(), branches: {} })
+    expect(receipt.allocations[0].networkContext.currentCustodyNetwork).toBeNull()
+    expect(receipt.allocations[1].networkContext.currentCustodyNetwork).toBeNull()
+  })
+
+  it('rejects negative units, duplicate IDs, and a bridge parent/child mismatch', () => {
+    const invalid = plan()
+    invalid.agents[0].allocation.units = '-1'
+    expect(() => buildDispatchReceipt({ plan: invalid, permission: permission() })).toThrow(/amount/i)
+  })
 })
