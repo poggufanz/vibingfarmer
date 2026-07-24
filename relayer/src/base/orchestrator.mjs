@@ -84,12 +84,24 @@ export function createOrchestrator(config) {
         const success = receipt?.success === true || receipt?.receipt?.status === 'success';
         if (!success) throw new Error(`deposit into ${allocation.pool} was mined but did not succeed`);
         results.push({
+          allocationId: allocation.allocationId,
           pool: allocation.pool,
           status: 'fulfilled',
           value: { pool: allocation.pool, userOpHash, txHash: receipt?.receipt?.transactionHash },
+          executionStatus: 'deposited',
+          custody: { location: 'base-proxy' },
+          txHash: receipt?.receipt?.transactionHash ?? null,
         });
       } catch (reason) {
-        results.push({ pool: allocation.pool, status: 'rejected', reason });
+        results.push({
+          allocationId: allocation.allocationId,
+          pool: allocation.pool,
+          status: 'rejected',
+          reason,
+          executionStatus: 'held',
+          custody: { location: 'agent' },
+          txHash: null,
+        });
       }
     }
     return results;

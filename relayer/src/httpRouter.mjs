@@ -91,8 +91,28 @@ const REVOKE_NOTE = 'This relayer deleted its own copy of the session key. The s
  */
 export function createRelayerRouter({
   buildFarm, relayUnwindMint, jobs, mandatesV2, genId, usdcAddress, yieldRouterAddress,
-  relayerOrigin = null, sanitizeErrors = false,
+  relayerOrigin = null, sanitizeErrors = false, networkId = 'stellar-testnet',
+  poolTargets = new Map(), agentIndexReporter = null,
 }) {
+  async function reportAssociation(record, binding) {
+    if (!agentIndexReporter?.report) {
+      console.warn('[relayer] non-custodial agent index warning', {
+        networkId: record.networkId,
+        runId: record.runId,
+        warning: 'agent index reporting is not configured',
+      });
+      return;
+    }
+    try {
+      await agentIndexReporter.report(record, binding);
+    } catch {
+      console.warn('[relayer] non-custodial agent index warning', {
+        networkId: record.networkId,
+        runId: record.runId,
+        warning: 'agent index reporting failed',
+      });
+    }
+  }
   // Record a failed job. Client-facing message is generic when sanitizeErrors is on; the real
   // error is always available server-side (console.error) for debugging. Never stores the key.
   // `context` (runId/bridgeAgent/grantTxHash for a farm job; omitted for unwind, which has none)
@@ -183,15 +203,32 @@ export function createRelayerRouter({
   // translates. allocationId is NOT used as a dedup/uniqueness key anywhere (Task 6 reviewer
   // note: it collides across runs, e.g. "run-0", while runId is null).
   function parseWireAllocations(allocations) {
+    const seen = new Set();
     return allocations.map((a) => {
       const pool = a.poolAddress;
       const units = a.amount?.units;
-      if (!pool || units == null || a.minShares == null) throw new Error('invalid allocation');
-      return { pool, amount: BigInt(units), minShares: BigInt(a.minShares) };
+      if (!a.allocationId || seen.has(a.allocationId)) throw new Error('invalid or duplicate allocationId');
+      seen.add(a.allocationId);
+      const proxyTarget = poolTargets instanceof Map
+        ? poolTargets.get(String(pool || '').toLowerCase())
+        : poolTargets?.[String(pool || '').toLowerCase()];
+      if (!proxyTarget) throw new Error('poolAddress is not allowlisted');
+      if (!pool || units == null || a.minShares == null
+        || a.amount?.token !== 'USDC' || a.amount?.decimals !== 6) {
+        throw new Error('invalid allocation');
+      }
+      return {
+        allocationId: a.allocationId,
+        pool,
+        amount: BigInt(units),
+        minShares: BigInt(a.minShares),
+        reportAmount: { token: 'USDC', units: String(units), decimals: 6 },
+        proxyTarget,
+      };
     });
   }
 
-  async function runFarmJob(jobId, sessionPrivateKey, farmParams) {
+  async function runFarmJob(jobId, sessionPrivateKey, farmParams, reportBase, binding) {
     try {
       const { farm } = buildFarm(sessionPrivateKey);
       const { mintResult, depositResults, runId, bridgeAgent, grantTxHash } = await farm(farmParams);
@@ -203,12 +240,49 @@ export function createRelayerRouter({
           { step: 'deposits', results: depositResults },
         ],
       });
+      const byAllocationId = new Map(
+        farmParams.allocations.map((allocation) => [allocation.allocationId, allocation])
+      );
+      const terminalAllocations = depositResults.flatMap((result) => {
+        const allocation = byAllocationId.get(result?.allocationId);
+        if (!allocation || !result.executionStatus || !result.custody?.location) return [];
+        return [{
+          allocationId: allocation.allocationId,
+          poolAddress: allocation.pool,
+          proxyTarget: allocation.proxyTarget,
+          amount: allocation.reportAmount,
+          executionStatus: result.executionStatus,
+          custody: { location: result.custody.location },
+          txHash: result.txHash ?? null,
+        }];
+      });
+      if (terminalAllocations.length > 0) {
+        await reportAssociation(
+          { ...reportBase, allocations: terminalAllocations },
+          binding,
+        );
+      }
     } catch (err) {
       // Error only — the sessionPrivateKey must never end up in a job record. Run/bridge context
       // (already known from the request, not re-derived) still rides along onto the error record.
       recordError(jobId, 'farm', err, {
         runId: farmParams.runId, bridgeAgent: farmParams.bridgeAgent, grantTxHash: farmParams.grantTxHash,
       });
+      await reportAssociation(
+        {
+          ...reportBase,
+          allocations: farmParams.allocations.map((allocation) => ({
+            allocationId: allocation.allocationId,
+            poolAddress: allocation.pool,
+            proxyTarget: allocation.proxyTarget,
+            amount: allocation.reportAmount,
+            executionStatus: 'failed',
+            custody: { location: 'unknown' },
+            txHash: null,
+          })),
+        },
+        binding,
+      );
     }
   }
 
@@ -248,23 +322,57 @@ export function createRelayerRouter({
     let parsedAllocations;
     try {
       parsedAllocations = parseWireAllocations(allocations);
-    } catch {
-      return sendJson(res, 400, { error: 'invalid allocation amount/minShares' });
+    } catch (err) {
+      return sendJson(res, 400, { error: errorMessage(err) });
     }
     // Per-call, non-cumulative cap — checked against each allocation's own amount, nothing summed.
     const overCap = parsedAllocations.find((a) => a.amount > MAX_CALL_CAP_UNITS);
     if (overCap) return sendJson(res, 400, { error: 'allocation exceeds the 10,000 USDC per-call cap' });
+    if (!bridgeAgent || !runId || !grantTxHash) {
+      return sendJson(res, 400, {
+        error: 'bridgeAgent, runId and grantTxHash are required for exact farm association',
+      });
+    }
 
     const jobId = genId();
     jobs.set(jobId, { status: 'pending', steps: [], runId, bridgeAgent, grantTxHash });
     sendJson(res, 200, { jobId });
+
+    const binding = { bindingId: record.bindingId, bindingHash: record.bindingHash };
+    const reportBase = {
+      version: 1,
+      networkId,
+      owner: stellarOwner,
+      bridgeAgent,
+      runId,
+      grantTxHash,
+      kernelAddress,
+      mandateBindingId: record.bindingId,
+      mandateBindingHash: record.bindingHash,
+      baseJobId: jobId,
+    };
+    void reportAssociation(
+      {
+        ...reportBase,
+        allocations: parsedAllocations.map((allocation) => ({
+          allocationId: allocation.allocationId,
+          poolAddress: allocation.pool,
+          proxyTarget: allocation.proxyTarget,
+          amount: allocation.reportAmount,
+          executionStatus: 'accepted',
+          custody: { location: 'in-transit' },
+          txHash: null,
+        })),
+      },
+      binding,
+    );
 
     // Fire-and-forget: the client polls GET /status/:jobId. The client's `sourceDomain` is
     // intentionally ignored — createFarmFlow hardcodes domains.stellar as the mint source.
     void runFarmJob(jobId, record.sessionPrivateKey, {
       burnTxHash, execId: burnTxHash, approval: serializedApproval, allocations: parsedAllocations,
       runId, bridgeAgent, grantTxHash,
-    });
+    }, reportBase, binding);
   }
 
   function handleStatus(res, jobId) {

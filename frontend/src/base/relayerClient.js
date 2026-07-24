@@ -139,7 +139,7 @@ function serializeAllocations(allocations) {
 // slippage floor baseLeg.js computes per pool — see base/quotes.js).
 function toWireAllocations(allocations, runId) {
   return serializeAllocations(allocations).map((a, i) => ({
-    allocationId: `${runId ?? 'run'}-${i}`,
+    allocationId: a.allocationId || `${runId ?? 'run'}-${i}`,
     poolAddress: a.pool,
     amount: { token: 'USDC', units: a.amount, decimals: BASE_USDC_DECIMALS },
     minShares: a.minShares,

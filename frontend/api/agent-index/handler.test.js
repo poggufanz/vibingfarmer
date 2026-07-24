@@ -6,7 +6,13 @@ import { createRequire } from 'node:module'
 import { nativeToScVal } from '@stellar/stellar-sdk'
 import { symbolScVal, addrScVal } from '../../src/stellar/scval.js'
 import { createAgentIndexStore } from './store.js'
-import { handleIngest, handleRead, handleBackfillCommit, LIVE_MANIFEST } from './handler.js'
+import {
+  handleIngest,
+  handleRead,
+  handleBackfillCommit,
+  handleAssociationReport,
+  LIVE_MANIFEST,
+} from './handler.js'
 import { AGENT_CREATORS } from '../../src/stellar/agentCreatorManifest.js'
 
 // ── same in-memory-D1 helper as store.test.js / indexer.test.js ──
@@ -19,6 +25,7 @@ function fakeD1() {
   sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0001_vf_gate.sql'), 'utf8'))
   sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0002_agent_index.sql'), 'utf8'))
   sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0003_agent_index_bounds.sql'), 'utf8'))
+  sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0004_agent_associations.sql'), 'utf8'))
   function bound(sql, args) {
     return {
       run() {
@@ -348,5 +355,153 @@ describe('handleBackfillCommit — posts only verified memberships through the p
     expect(out.status).toBe(400)
     const coverage = await store.readCoverage({ networkId: ROUTER_V1.networkId })
     expect(coverage.backfillAudits).toHaveLength(0)
+  })
+})
+
+describe('handleAssociationReport — server-only authentication', () => {
+  const association = {
+    version: 1,
+    networkId: ROUTER_V1.networkId,
+    owner: OWNER_A,
+    bridgeAgent: AGENT_A,
+    runId: 'run-42',
+    grantTxHash: 'grant-42',
+    kernelAddress: `0x${'12'.repeat(20)}`,
+    mandateBindingId: 'binding-42',
+    mandateBindingHash: 'binding-hash-42',
+    baseJobId: 'job-42',
+    allocations: [
+      {
+        allocationId: 'run-42:bridge:aave-v3',
+        poolAddress: `0x${'34'.repeat(20)}`,
+        proxyTarget: 'aave-v3',
+        amount: { token: 'USDC', units: '1000000', decimals: 6 },
+        executionStatus: 'accepted',
+        custody: { location: 'in-transit' },
+        txHash: null,
+      },
+    ],
+  }
+
+  it('rejects browser/missing-secret writes before any scope or store read', async () => {
+    const scopeReader = async () => {
+      throw new Error('must not run')
+    }
+    const store = {
+      readMembershipsByAgentAddresses: async () => {
+        throw new Error('must not run')
+      },
+    }
+    const missing = await handleAssociationReport({
+      secret: 'server-secret',
+      providedSecret: '',
+      idempotencyKey: 'anything',
+      store,
+      scopeReader,
+      report: association,
+    })
+    const wrong = await handleAssociationReport({
+      secret: 'server-secret',
+      providedSecret: 'browser-token',
+      idempotencyKey: 'anything',
+      store,
+      scopeReader,
+      report: association,
+    })
+    expect(missing.status).toBe(401)
+    expect(wrong.status).toBe(401)
+  })
+
+  it('503s when the dedicated reporter secret is not configured', async () => {
+    const out = await handleAssociationReport({
+      secret: '',
+      providedSecret: '',
+      idempotencyKey: 'anything',
+      store: {},
+      report: association,
+    })
+    expect(out).toMatchObject({ status: 503, body: { configured: false } })
+  })
+})
+
+describe('handleRead — Base association envelope', () => {
+  it('joins only durable owner-bound children and leaves an old bridge membership unknown', async () => {
+    const store = createAgentIndexStore(fakeD1())
+    const oldBridge = 'CACAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAINCW'
+    const records = [
+      deployedRecord({
+        owner: OWNER_A,
+        agent: AGENT_A,
+        ledger: ROUTER_V1.coverageStartLedger + 1,
+        txHash: 'TX1',
+      }),
+      deployedRecord({
+        owner: OWNER_A,
+        agent: oldBridge,
+        ledger: ROUTER_V1.coverageStartLedger + 2,
+        txHash: 'TX2',
+      }),
+    ]
+    await handleIngest({
+      secret: 's',
+      providedSecret: 's',
+      store,
+      sources: [ROUTER_V1],
+      eventSourceFor: async () =>
+        fakeEventSource({
+          events: records,
+          oldestAvailableLedger: ROUTER_V1.coverageStartLedger,
+        }),
+      finalizedLedgerFor: async () => ROUTER_V1.coverageStartLedger + 10,
+    })
+    await store.commitAssociation({
+      idempotencyKey:
+        '["stellar-testnet","run-42","run-42:bridge:aave-v3","accepted",null]',
+      association: {
+        allocationId: 'run-42:bridge:aave-v3',
+        networkId: ROUTER_V1.networkId,
+        runId: 'run-42',
+        ownerAddress: OWNER_A,
+        bridgeAgentAddress: AGENT_A,
+        poolAddress: `0x${'34'.repeat(20)}`,
+        amount: { token: 'USDC', units: '1000000', decimals: 6 },
+        proxyTarget: 'aave-v3',
+        baseJobId: 'job-42',
+        txHash: null,
+        executionStatus: 'accepted',
+        custodyLocation: 'in-transit',
+        grantTxHash: 'grant-42',
+        kernelAddress: `0x${'12'.repeat(20)}`,
+        mandateBindingId: 'binding-42',
+        mandateBindingHash: 'binding-hash-42',
+        associationSource: 'relayer-attested',
+        reportedAt: 2_000_000_000_000,
+        scopeCheckedAt: 2_000_000_000_000,
+      },
+    })
+
+    const out = await handleRead({
+      networkId: ROUTER_V1.networkId,
+      owner: OWNER_A,
+      store,
+      now: 2_000_000_001_000,
+    })
+    const known = out.body.agents.find((agent) => agent.address === AGENT_A)
+    const unknown = out.body.agents.find((agent) => agent.address === oldBridge)
+    expect(known).toMatchObject({
+      association: 'known',
+      associationSource: 'relayer-attested',
+      freshness: 'fresh',
+    })
+    expect(known.baseChildren[0]).toMatchObject({
+      allocationId: 'run-42:bridge:aave-v3',
+      txHash: null,
+      custody: { location: 'in-transit' },
+    })
+    expect(unknown).toMatchObject({
+      association: 'unknown',
+      associationSource: null,
+      baseChildren: [],
+    })
   })
 })

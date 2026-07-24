@@ -10,6 +10,8 @@ import {
   parseMembershipRow,
   toRunAllocationRow,
   parseRunAllocationRow,
+  toAssociationRow,
+  parseAssociationRow,
   toGapRow,
   parseGapRow,
   toBackfillAuditRow,
@@ -165,6 +167,71 @@ describe('toRunAllocationRow / parseRunAllocationRow', () => {
   })
   it('parseRunAllocationRow returns null for a missing row', () => {
     expect(parseRunAllocationRow(null)).toBeNull()
+  })
+})
+
+describe('toAssociationRow / parseAssociationRow', () => {
+  const association = {
+    allocationId: 'run-1:bridge:aave-v3',
+    networkId: 'stellar-testnet',
+    runId: 'run-1',
+    ownerAddress: 'GOWNER1',
+    bridgeAgentAddress: 'CAGENT1',
+    poolAddress: '0xpool',
+    amount: { token: 'USDC', units: '1000000', decimals: 6 },
+    proxyTarget: 'aave-v3',
+    baseJobId: 'job-1',
+    txHash: null,
+    executionStatus: 'accepted',
+    custodyLocation: 'in-transit',
+    grantTxHash: 'grant-1',
+    kernelAddress: '0xkernel',
+    mandateBindingId: 'binding-1',
+    mandateBindingHash: 'binding-hash-1',
+    associationSource: 'relayer-attested',
+    reportedAt: 1000,
+    scopeCheckedAt: 999,
+  }
+
+  it('round-trips the complete relayer attestation without inventing evidence', () => {
+    const row = toAssociationRow(association)
+    const parsed = parseAssociationRow({
+      id: row.id,
+      network_id: row.network_id,
+      run_id: row.run_id,
+      owner_address: row.owner_address,
+      bridge_agent_address: row.bridge_agent_address,
+      base_child_address: row.base_child_address,
+      token: row.token,
+      units: row.units,
+      decimals: row.decimals,
+      proxy_target: row.proxy_target,
+      job_id: row.job_id,
+      tx_id: row.tx_id,
+      execution_status: row.execution_status,
+      custody_location: row.custody_location,
+      grant_tx_hash: row.grant_tx_hash,
+      kernel_address: row.kernel_address,
+      mandate_binding_id: row.mandate_binding_id,
+      mandate_binding_hash: row.mandate_binding_hash,
+      association_source: row.association_source,
+      reported_at: row.reported_at,
+      scope_checked_at: row.scope_checked_at,
+      created_at: 900,
+      updated_at: 1000,
+    })
+    expect(parsed).toEqual({ ...association, createdAt: 900, updatedAt: 1000 })
+    expect(parsed.txHash).toBeNull()
+  })
+
+  it('rejects missing binding/timestamp fields and unsupported association sources', () => {
+    expect(() => toAssociationRow({ ...association, mandateBindingId: null })).toThrow(/binding/i)
+    expect(() => toAssociationRow({ ...association, scopeCheckedAt: null })).toThrow(
+      /scopeCheckedAt/
+    )
+    expect(() => toAssociationRow({ ...association, associationSource: 'browser' })).toThrow(
+      /associationSource/
+    )
   })
 })
 

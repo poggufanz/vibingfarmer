@@ -12,6 +12,10 @@ import { createFarmFlow } from './flows/farm.mjs';
 import { createRelayerRouter } from './httpRouter.mjs';
 import { createMandateStoreV2 } from './mandateStore.mjs';
 import { createSqliteStores } from './sqliteStores.mjs';
+import {
+  BASE_SEPOLIA_POOL_TARGETS,
+  createAgentIndexReporter,
+} from './agentIndexReporter.mjs';
 
 const MANDATE_SWEEP_MS = 10 * 60 * 1000; // evict expired session keys every 10 min
 
@@ -58,6 +62,10 @@ export function createRelayerServer(config) {
   // below. Also what every /mandate + /mandate/valid response reports as `relayerOrigin`, so the
   // client (frontend/src/wallet/baseBinding.js) can start enforcing it.
   const relayerOrigin = process.env.RELAYER_PUBLIC_ORIGIN || null;
+  const agentIndexReporter = createAgentIndexReporter({
+    endpoint: process.env.AGENT_INDEX_REPORTER_URL || '',
+    secret: process.env.AGENT_INDEX_REPORTER_SECRET || '',
+  });
 
   // Per-request: each /farm call brings its own ephemeral session key, so the orchestrator (and
   // the kernel client it reconstructs) is built fresh per key rather than shared/cached.
@@ -98,6 +106,9 @@ export function createRelayerServer(config) {
       yieldRouterAddress: config.base.yieldRouterAddress,
       relayerOrigin,
       sanitizeErrors: process.env.RELAYER_DEBUG_ERRORS !== '1',
+      networkId: 'stellar-testnet',
+      poolTargets: BASE_SEPOLIA_POOL_TARGETS,
+      agentIndexReporter,
     }),
     process.env.RELAYER_PROXY_KEY || '',
   );

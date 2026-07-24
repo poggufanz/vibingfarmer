@@ -138,6 +138,69 @@ export function parseRunAllocationRow(row) {
   }
 }
 
+/** Shapes a fully verified relayer association for the additive 0004 columns. */
+export function toAssociationRow(record) {
+  const r = record || {}
+  return {
+    id: requireString(r.allocationId, 'allocationId'),
+    network_id: requireString(r.networkId, 'networkId'),
+    run_id: requireString(r.runId, 'runId'),
+    owner_address: requireString(r.ownerAddress, 'ownerAddress'),
+    bridge_agent_address: requireString(r.bridgeAgentAddress, 'bridgeAgentAddress'),
+    base_child_address: requireString(r.poolAddress, 'poolAddress'),
+    token: requireString(r.amount?.token, 'amount.token'),
+    units: requireDecimalString(r.amount?.units, 'amount.units'),
+    decimals: requireInt(r.amount?.decimals, 'amount.decimals'),
+    proxy_target: requireOneOf(
+      r.proxyTarget,
+      ['aave-v3', 'morpho-blue', 'moonwell'],
+      'proxyTarget'
+    ),
+    job_id: requireString(r.baseJobId, 'baseJobId'),
+    tx_id: optionalString(r.txHash, 'txHash'),
+    execution_status: requireOneOf(r.executionStatus, EXECUTION_STATUSES, 'executionStatus'),
+    custody_location: requireOneOf(r.custodyLocation, CUSTODY_LOCATIONS, 'custodyLocation'),
+    grant_tx_hash: requireString(r.grantTxHash, 'grantTxHash'),
+    kernel_address: requireString(r.kernelAddress, 'kernelAddress'),
+    mandate_binding_id: requireString(r.mandateBindingId, 'mandateBindingId'),
+    mandate_binding_hash: requireString(r.mandateBindingHash, 'mandateBindingHash'),
+    association_source: requireOneOf(
+      r.associationSource,
+      ['relayer-attested'],
+      'associationSource'
+    ),
+    reported_at: requireInt(r.reportedAt, 'reportedAt'),
+    scope_checked_at: requireInt(r.scopeCheckedAt, 'scopeCheckedAt'),
+  }
+}
+
+export function parseAssociationRow(row) {
+  if (!row) return null
+  return {
+    allocationId: row.id,
+    networkId: row.network_id,
+    runId: row.run_id,
+    ownerAddress: row.owner_address,
+    bridgeAgentAddress: row.bridge_agent_address,
+    poolAddress: row.base_child_address,
+    amount: { token: row.token, units: row.units, decimals: row.decimals },
+    proxyTarget: row.proxy_target,
+    baseJobId: row.job_id,
+    txHash: row.tx_id,
+    executionStatus: row.execution_status,
+    custodyLocation: row.custody_location,
+    grantTxHash: row.grant_tx_hash ?? null,
+    kernelAddress: row.kernel_address ?? null,
+    mandateBindingId: row.mandate_binding_id ?? null,
+    mandateBindingHash: row.mandate_binding_hash ?? null,
+    associationSource: row.association_source ?? null,
+    reportedAt: row.reported_at ?? null,
+    scopeCheckedAt: row.scope_checked_at ?? null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
 /** Shapes+validates a `recordGap` input. */
 export function toGapRow(gap) {
   const g = gap || {}

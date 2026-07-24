@@ -145,6 +145,29 @@ describe('postFarm', () => {
     expect(body.allocations[0].allocationId).toBe('run-0') // no runId -> 'run' fallback prefix
   })
 
+  test('preserves the strategy canonical allocationId instead of rebuilding it from array order', async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ jobId: 'job-1' }) }))
+    await postFarm({
+      burnTxHash: null,
+      sourceDomain: 27,
+      serializedApproval: 'approval-blob',
+      runId: 'run-42',
+      allocations: [
+        {
+          allocationId: 'run-42:bridge:morpho-blue',
+          pool: '0xAAAA',
+          amount: 100,
+          minShares: 99n,
+        },
+      ],
+      baseUrl: 'https://example.test/api/vf-cross',
+      deps: { fetchImpl: fetchMock },
+    })
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body.allocations[0].allocationId).toBe('run-42:bridge:morpho-blue')
+  })
+
   test('throws a clear error on a non-ok response', async () => {
     const fetchMock = vi.fn(async () => ({ ok: false, status: 502 }))
     await expect(

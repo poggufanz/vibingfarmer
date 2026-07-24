@@ -24,6 +24,7 @@ function fakeD1() {
   sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0001_vf_gate.sql'), 'utf8'))
   sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0002_agent_index.sql'), 'utf8'))
   sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0003_agent_index_bounds.sql'), 'utf8'))
+  sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0004_agent_associations.sql'), 'utf8'))
 
   function bound(sql, args) {
     return {
@@ -96,6 +97,10 @@ describe('createAgentIndexStore', () => {
       [
         'upsertMembership',
         'upsertRunAllocation',
+        'readRunAllocation',
+        'readOwnerRunAllocations',
+        'hasAssociationEvent',
+        'commitAssociation',
         'readOwnerMemberships',
         'readMembershipsByAgentAddresses',
         'readCoverage',
@@ -224,6 +229,138 @@ describe('upsertRunAllocation', () => {
         )
         .run()
     ).toThrow(/CHECK/)
+  })
+})
+
+describe('durable relayer associations', () => {
+  const association = (over = {}) => ({
+    allocationId: 'run-1:bridge:aave-v3',
+    networkId: NETWORK,
+    runId: 'run-1',
+    ownerAddress: 'GOWNER1',
+    bridgeAgentAddress: 'CAGENT1',
+    poolAddress: '0xpool',
+    amount: { token: 'USDC', units: '1000000', decimals: 6 },
+    proxyTarget: 'aave-v3',
+    baseJobId: 'job-1',
+    txHash: null,
+    executionStatus: 'accepted',
+    custodyLocation: 'in-transit',
+    grantTxHash: 'grant-1',
+    kernelAddress: '0xkernel',
+    mandateBindingId: 'binding-1',
+    mandateBindingHash: 'binding-hash-1',
+    associationSource: 'relayer-attested',
+    reportedAt: 1000,
+    scopeCheckedAt: 999,
+    ...over,
+  })
+
+  it('atomically records the latest association and its exact idempotency tuple', async () => {
+    await store.commitAssociation({
+      association: association(),
+      idempotencyKey:
+        '["stellar-testnet","run-1","run-1:bridge:aave-v3","accepted",null]',
+    })
+
+    expect(
+      await store.readRunAllocation({
+        networkId: NETWORK,
+        allocationId: 'run-1:bridge:aave-v3',
+      })
+    ).toMatchObject(association())
+    expect(
+      await store.hasAssociationEvent({
+        idempotencyKey:
+          '["stellar-testnet","run-1","run-1:bridge:aave-v3","accepted",null]',
+      })
+    ).toBe(true)
+    expect(
+      await store.readOwnerRunAllocations({ networkId: NETWORK, owner: 'GOWNER1' })
+    ).toHaveLength(1)
+  })
+
+  it('rolls back the association row if the duplicate event key makes the batch fail', async () => {
+    const key = 'same-key'
+    await store.commitAssociation({ association: association(), idempotencyKey: key })
+    await expect(
+      store.commitAssociation({
+        association: association({
+          allocationId: 'run-1:bridge:moonwell',
+          poolAddress: '0xother',
+          proxyTarget: 'moonwell',
+        }),
+        idempotencyKey: key,
+      })
+    ).rejects.toThrow()
+    expect(
+      await store.readRunAllocation({
+        networkId: NETWORK,
+        allocationId: 'run-1:bridge:moonwell',
+      })
+    ).toBeNull()
+  })
+
+  it('the SQL conflict guard refuses late terminal regression and changed exact evidence', async () => {
+    await store.commitAssociation({
+      association: association({
+        executionStatus: 'deposited',
+        custodyLocation: 'base-proxy',
+        txHash: '0xdeposit',
+      }),
+      idempotencyKey: 'terminal-key',
+    })
+    await store.commitAssociation({
+      association: association({
+        amount: { token: 'USDC', units: '2', decimals: 6 },
+        baseJobId: 'changed-job',
+        grantTxHash: 'changed-grant',
+        executionStatus: 'accepted',
+        custodyLocation: 'unknown',
+        txHash: null,
+      }),
+      idempotencyKey: 'late-accepted-key',
+    })
+
+    expect(
+      await store.readRunAllocation({
+        networkId: NETWORK,
+        allocationId: 'run-1:bridge:aave-v3',
+      })
+    ).toMatchObject({
+      amount: { token: 'USDC', units: '1000000', decimals: 6 },
+      baseJobId: 'job-1',
+      grantTxHash: 'grant-1',
+      executionStatus: 'deposited',
+      custodyLocation: 'base-proxy',
+      txHash: '0xdeposit',
+    })
+  })
+
+  it('keeps a historical row association-unknown when no relayer proof exists', async () => {
+    await store.upsertRunAllocation({
+      id: 'legacy-allocation',
+      networkId: NETWORK,
+      runId: 'legacy-run',
+      ownerAddress: 'GOWNER1',
+      bridgeAgentAddress: 'CAGENT1',
+      baseChildAddress: null,
+      token: 'USDC',
+      units: '1',
+      decimals: 6,
+      proxyTarget: null,
+      jobId: null,
+      txId: null,
+      executionStatus: 'queued',
+      custodyLocation: 'unknown',
+    })
+    const rows = await store.readOwnerRunAllocations({ networkId: NETWORK, owner: 'GOWNER1' })
+    expect(rows[0]).toMatchObject({
+      allocationId: 'legacy-allocation',
+      associationSource: null,
+      reportedAt: null,
+      scopeCheckedAt: null,
+    })
   })
 })
 

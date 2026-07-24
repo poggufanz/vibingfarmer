@@ -6,6 +6,8 @@ import {
   toMembershipRow,
   parseMembershipRow,
   toRunAllocationRow,
+  toAssociationRow,
+  parseAssociationRow,
   toGapRow,
   parseGapRow,
   toBackfillAuditRow,
@@ -115,6 +117,163 @@ export function createAgentIndexStore(db) {
         now
       )
       .run()
+  }
+
+  async function readRunAllocation({ networkId, allocationId }) {
+    if (!networkId || !allocationId)
+      throw new Error('readRunAllocation requires networkId and allocationId')
+    const row = await db
+      .prepare(`SELECT * FROM agent_run_allocations WHERE network_id = ? AND id = ?`)
+      .bind(networkId, allocationId)
+      .first()
+    return parseAssociationRow(row)
+  }
+
+  async function readOwnerRunAllocations({ networkId, owner }) {
+    if (!networkId || !owner)
+      throw new Error('readOwnerRunAllocations requires networkId and owner')
+    const { results } = await db
+      .prepare(
+        `SELECT * FROM agent_run_allocations
+         WHERE network_id = ? AND owner_address = ?
+         ORDER BY created_at ASC, id ASC`
+      )
+      .bind(networkId, owner)
+      .all()
+    return (results ?? []).map(parseAssociationRow)
+  }
+
+  async function hasAssociationEvent({ idempotencyKey }) {
+    if (!idempotencyKey) throw new Error('hasAssociationEvent requires idempotencyKey')
+    const row = await db
+      .prepare(`SELECT idempotency_key FROM agent_association_events WHERE idempotency_key = ?`)
+      .bind(idempotencyKey)
+      .first()
+    return !!row
+  }
+
+  async function commitAssociation({ association, idempotencyKey }) {
+    if (!idempotencyKey) throw new Error('commitAssociation requires idempotencyKey')
+    const row = toAssociationRow(association)
+    const now = nowSeconds()
+    const associationStatement = db
+      .prepare(
+        `INSERT INTO agent_run_allocations
+           (id, network_id, run_id, owner_address, bridge_agent_address, base_child_address,
+            token, units, decimals, proxy_target, job_id, tx_id, execution_status,
+            custody_location, created_at, updated_at, grant_tx_hash, kernel_address,
+            mandate_binding_id, mandate_binding_hash, association_source, reported_at,
+            scope_checked_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         ON CONFLICT(id) DO UPDATE SET
+           token = excluded.token,
+           units = excluded.units,
+           decimals = excluded.decimals,
+           base_child_address = excluded.base_child_address,
+           proxy_target = excluded.proxy_target,
+           job_id = excluded.job_id,
+           tx_id = excluded.tx_id,
+           execution_status = excluded.execution_status,
+           custody_location = excluded.custody_location,
+           updated_at = excluded.updated_at,
+           grant_tx_hash = excluded.grant_tx_hash,
+           kernel_address = excluded.kernel_address,
+           mandate_binding_id = excluded.mandate_binding_id,
+           mandate_binding_hash = excluded.mandate_binding_hash,
+           association_source = excluded.association_source,
+           reported_at = excluded.reported_at,
+           scope_checked_at = excluded.scope_checked_at
+         WHERE agent_run_allocations.network_id = excluded.network_id
+           AND agent_run_allocations.run_id = excluded.run_id
+           AND agent_run_allocations.owner_address = excluded.owner_address
+           AND agent_run_allocations.bridge_agent_address = excluded.bridge_agent_address
+           AND (
+             agent_run_allocations.association_source IS NULL
+             OR (
+               lower(agent_run_allocations.base_child_address) = lower(excluded.base_child_address)
+               AND lower(agent_run_allocations.kernel_address) = lower(excluded.kernel_address)
+               AND agent_run_allocations.mandate_binding_id = excluded.mandate_binding_id
+               AND agent_run_allocations.mandate_binding_hash = excluded.mandate_binding_hash
+               AND agent_run_allocations.token = excluded.token
+               AND agent_run_allocations.units = excluded.units
+               AND agent_run_allocations.decimals = excluded.decimals
+               AND agent_run_allocations.proxy_target = excluded.proxy_target
+               AND agent_run_allocations.job_id = excluded.job_id
+               AND agent_run_allocations.grant_tx_hash = excluded.grant_tx_hash
+               AND (
+                 agent_run_allocations.execution_status NOT IN ('deposited', 'held', 'failed')
+                 OR agent_run_allocations.execution_status = excluded.execution_status
+               )
+               AND CASE excluded.execution_status
+                 WHEN 'queued' THEN 0
+                 WHEN 'accepted' THEN 1
+                 WHEN 'burn-confirmed' THEN 2
+                 WHEN 'minted' THEN 3
+                 WHEN 'deposited' THEN 4
+                 WHEN 'held' THEN 5
+                 WHEN 'failed' THEN 6
+               END >= CASE agent_run_allocations.execution_status
+                 WHEN 'queued' THEN 0
+                 WHEN 'accepted' THEN 1
+                 WHEN 'burn-confirmed' THEN 2
+                 WHEN 'minted' THEN 3
+                 WHEN 'deposited' THEN 4
+                 WHEN 'held' THEN 5
+                 WHEN 'failed' THEN 6
+               END
+               AND (
+                 agent_run_allocations.tx_id IS NULL
+                 OR agent_run_allocations.tx_id = excluded.tx_id
+               )
+               AND (
+                 agent_run_allocations.execution_status NOT IN ('deposited', 'held', 'failed')
+                 OR agent_run_allocations.custody_location = 'unknown'
+                 OR excluded.custody_location <> 'unknown'
+               )
+             )
+           )`
+      )
+      .bind(
+        row.id,
+        row.network_id,
+        row.run_id,
+        row.owner_address,
+        row.bridge_agent_address,
+        row.base_child_address,
+        row.token,
+        row.units,
+        row.decimals,
+        row.proxy_target,
+        row.job_id,
+        row.tx_id,
+        row.execution_status,
+        row.custody_location,
+        now,
+        now,
+        row.grant_tx_hash,
+        row.kernel_address,
+        row.mandate_binding_id,
+        row.mandate_binding_hash,
+        row.association_source,
+        row.reported_at,
+        row.scope_checked_at
+      )
+    const eventStatement = db
+      .prepare(
+        `INSERT INTO agent_association_events
+           (idempotency_key, network_id, run_id, allocation_id, execution_status, tx_hash, reported_at)
+         VALUES (?,?,?,?,?,?,?)`
+      )
+      .bind(
+        idempotencyKey,
+        row.network_id,
+        row.run_id,
+        row.id,
+        row.execution_status,
+        row.tx_id,
+        row.reported_at
+      )
+    await db.batch([associationStatement, eventStatement])
   }
 
   async function readMembershipsByAgentAddresses({ networkId, agentAddresses }) {
@@ -354,6 +513,10 @@ export function createAgentIndexStore(db) {
   return {
     upsertMembership,
     upsertRunAllocation,
+    readRunAllocation,
+    readOwnerRunAllocations,
+    hasAssociationEvent,
+    commitAssociation,
     readOwnerMemberships,
     readMembershipsByAgentAddresses,
     readCoverage,

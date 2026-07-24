@@ -1,0 +1,296 @@
+import { describe, expect, it, vi } from 'vitest'
+import {
+  associationIdempotencyKey,
+  ingestAssociationReport,
+  joinBaseAssociations,
+} from './associations.js'
+
+const OWNER_A = `G${'A'.repeat(55)}`
+const OWNER_B = `G${'B'.repeat(55)}`
+const BRIDGE = `C${'C'.repeat(55)}`
+const KERNEL = `0x${'12'.repeat(20)}`
+const MESSENGER = `C${'D'.repeat(55)}`
+const TOKEN = `C${'E'.repeat(55)}`
+const POOL = `0x${'34'.repeat(20)}`
+const NOW = 2_000_000_000_000
+
+const POOL_TARGETS = new Map([[POOL.toLowerCase(), 'aave-v3']])
+const SCOPE_REQUIREMENTS = {
+  messenger: MESSENGER,
+  token: TOKEN,
+  destinationDomain: 6,
+  reportToken: 'USDC',
+  reportDecimals: 6,
+  scopeDecimals: 7,
+}
+
+function allocation(overrides = {}) {
+  return {
+    allocationId: 'run-42:bridge:aave-v3',
+    poolAddress: POOL,
+    proxyTarget: 'aave-v3',
+    amount: { token: 'USDC', units: '1000000', decimals: 6 },
+    executionStatus: 'accepted',
+    custody: { location: 'in-transit' },
+    txHash: null,
+    ...overrides,
+  }
+}
+
+function report(overrides = {}) {
+  return {
+    version: 1,
+    networkId: 'stellar-testnet',
+    owner: OWNER_A,
+    bridgeAgent: BRIDGE,
+    runId: 'run-42',
+    grantTxHash: 'grant-42',
+    kernelAddress: KERNEL,
+    mandateBindingId: 'binding-42',
+    mandateBindingHash: 'binding-hash-42',
+    baseJobId: 'job-42',
+    allocations: [allocation()],
+    ...overrides,
+  }
+}
+
+function scope(overrides = {}) {
+  return {
+    owner: OWNER_A,
+    target: MESSENGER,
+    token: TOKEN,
+    kind: 1,
+    mint_recipient: Buffer.from(KERNEL.slice(2).padStart(64, '0'), 'hex'),
+    destination_domain: 6,
+    cap_per_period: 10_000_000n,
+    expiry: BigInt(Math.floor(NOW / 1000) + 3600),
+    revoked: false,
+    ...overrides,
+  }
+}
+
+function memoryStore({ membershipOwner = OWNER_A } = {}) {
+  const rows = new Map()
+  const events = new Set()
+  return {
+    rows,
+    events,
+    async readMembershipsByAgentAddresses({ agentAddresses }) {
+      return agentAddresses.includes(BRIDGE)
+        ? [{ address: BRIDGE, owner: membershipOwner, kind: 'unknown' }]
+        : []
+    },
+    async readRunAllocation({ networkId, runId, allocationId }) {
+      void runId
+      return rows.get(`${networkId}|${allocationId}`) ?? null
+    },
+    async hasAssociationEvent({ idempotencyKey }) {
+      return events.has(idempotencyKey)
+    },
+    async commitAssociation({ association, idempotencyKey }) {
+      rows.set(
+        `${association.networkId}|${association.allocationId}`,
+        association
+      )
+      events.add(idempotencyKey)
+    },
+  }
+}
+
+function ingest(overrides = {}) {
+  const incoming = overrides.report ?? report()
+  return ingestAssociationReport({
+    report: incoming,
+    idempotencyKey:
+      overrides.idempotencyKey ??
+      associationIdempotencyKey(incoming, incoming.allocations[0]),
+    store: overrides.store ?? memoryStore(),
+    scopeReader: overrides.scopeReader ?? vi.fn(async () => scope()),
+    poolTargets: POOL_TARGETS,
+    scopeRequirements: SCOPE_REQUIREMENTS,
+    now: NOW,
+  })
+}
+
+describe('ingestAssociationReport', () => {
+  it('verifies indexed membership and live bridge scope before the first durable association', async () => {
+    const store = memoryStore()
+    const scopeReader = vi.fn(async () => scope())
+    const out = await ingest({ store, scopeReader })
+
+    expect(out).toEqual({ written: 1, duplicates: 0 })
+    expect(scopeReader).toHaveBeenCalledWith({
+      networkId: 'stellar-testnet',
+      bridgeAgent: BRIDGE,
+    })
+    expect([...store.rows.values()][0]).toMatchObject({
+      allocationId: 'run-42:bridge:aave-v3',
+      ownerAddress: OWNER_A,
+      bridgeAgentAddress: BRIDGE,
+      poolAddress: POOL,
+      proxyTarget: 'aave-v3',
+      executionStatus: 'accepted',
+      custodyLocation: 'in-transit',
+      txHash: null,
+      mandateBindingId: 'binding-42',
+      mandateBindingHash: 'binding-hash-42',
+      associationSource: 'relayer-attested',
+      reportedAt: NOW,
+      scopeCheckedAt: NOW,
+    })
+  })
+
+  it('rejects owner B attaching to owner A membership or live scope', async () => {
+    await expect(
+      ingest({ report: report({ owner: OWNER_B }), store: memoryStore() })
+    ).rejects.toThrow(/owner|membership/i)
+    await expect(
+      ingest({ scopeReader: vi.fn(async () => scope({ owner: OWNER_B })) })
+    ).rejects.toThrow(/owner/i)
+  })
+
+  it.each([
+    ['kind', { kind: 0 }],
+    ['messenger', { target: `C${'F'.repeat(55)}` }],
+    ['mint recipient', { mint_recipient: Buffer.alloc(32) }],
+    ['token', { token: `C${'F'.repeat(55)}` }],
+    ['destination domain', { destination_domain: 27 }],
+    ['cap', { cap_per_period: 9_999_999n }],
+    ['expiry', { expiry: BigInt(Math.floor(NOW / 1000) - 1) }],
+    ['revoked', { revoked: true }],
+  ])('rejects a bridge scope with invalid %s coverage', async (_label, changed) => {
+    await expect(
+      ingest({ scopeReader: vi.fn(async () => scope(changed)) })
+    ).rejects.toThrow(/scope/i)
+  })
+
+  it('rejects missing binding attestation, unallowlisted pools, proxy spoofing, and APY invention', async () => {
+    await expect(
+      ingest({ report: report({ mandateBindingId: null }) })
+    ).rejects.toThrow(/binding/i)
+    await expect(
+      ingest({
+        report: report({
+          allocations: [allocation({ poolAddress: `0x${'99'.repeat(20)}` })],
+        }),
+      })
+    ).rejects.toThrow(/pool/i)
+    await expect(
+      ingest({ report: report({ allocations: [allocation({ proxyTarget: 'moonwell' })] }) })
+    ).rejects.toThrow(/proxy/i)
+    await expect(
+      ingest({ report: report({ allocations: [allocation({ apy: 12 })] }) })
+    ).rejects.toThrow(/field|apy/i)
+  })
+
+  it('rejects a foreign network before a testnet membership or scope read', async () => {
+    const store = memoryStore()
+    const scopeReader = vi.fn(async () => scope())
+    await expect(
+      ingest({ report: report({ networkId: 'stellar-mainnet' }), store, scopeReader })
+    ).rejects.toThrow(/network/i)
+    expect(scopeReader).not.toHaveBeenCalled()
+  })
+
+  it('rejects a changed pool, owner, run, or terminal result for an existing allocation', async () => {
+    const store = memoryStore()
+    await ingest({ store })
+    for (const changed of [
+      report({ owner: OWNER_B }),
+      report({ runId: 'run-other' }),
+      report({ allocations: [allocation({ poolAddress: `0x${'56'.repeat(20)}` })] }),
+      report({ allocations: [allocation({ amount: { token: 'USDC', units: '2', decimals: 6 } })] }),
+      report({ baseJobId: 'job-other' }),
+      report({ grantTxHash: 'grant-other' }),
+    ]) {
+      await expect(ingest({ report: changed, store })).rejects.toThrow()
+    }
+
+    const deposited = report({
+      allocations: [
+        allocation({
+          executionStatus: 'deposited',
+          custody: { location: 'base-proxy' },
+          txHash: `0x${'78'.repeat(32)}`,
+        }),
+      ],
+    })
+    await ingest({ report: deposited, store })
+    const regressed = report({ allocations: [allocation({ executionStatus: 'minted' })] })
+    await expect(ingest({ report: regressed, store })).rejects.toThrow(/regress|terminal/i)
+    const changedTerminal = report({
+      allocations: [allocation({ executionStatus: 'failed', custody: { location: 'agent' } })],
+    })
+    await expect(ingest({ report: changedTerminal, store })).rejects.toThrow(/terminal/i)
+    const erasedTerminalCustody = report({
+      allocations: [
+        allocation({
+          executionStatus: 'deposited',
+          custody: { location: 'unknown' },
+          txHash: `0x${'78'.repeat(32)}`,
+        }),
+      ],
+    })
+    await expect(ingest({ report: erasedTerminalCustody, store })).rejects.toThrow(
+      /custody|terminal/i
+    )
+  })
+
+  it('is idempotent on the exact tuple and skips a second scope read', async () => {
+    const store = memoryStore()
+    const scopeReader = vi.fn(async () => scope())
+    await ingest({ store, scopeReader })
+    const out = await ingest({ store, scopeReader })
+    expect(out).toEqual({ written: 0, duplicates: 1 })
+    expect(scopeReader).toHaveBeenCalledTimes(1)
+  })
+
+  it('requires the HTTP idempotency key to equal the canonical tuple', async () => {
+    await expect(ingest({ idempotencyKey: 'wrong' })).rejects.toThrow(/idempotency/i)
+  })
+})
+
+describe('joinBaseAssociations', () => {
+  it('labels known children with source/timestamps/freshness and old bridge jobs as unknown', () => {
+    const agents = [
+      { address: BRIDGE, kind: 'unknown' },
+      { address: `C${'F'.repeat(55)}`, kind: 'bridge' },
+    ]
+    const associations = [
+      {
+        allocationId: 'run-42:bridge:aave-v3',
+        bridgeAgentAddress: BRIDGE,
+        poolAddress: POOL,
+        associationSource: 'relayer-attested',
+        reportedAt: NOW - 1_000,
+        scopeCheckedAt: NOW - 2_000,
+        executionStatus: 'accepted',
+        custodyLocation: 'in-transit',
+        txHash: null,
+      },
+    ]
+
+    const joined = joinBaseAssociations({ agents, associations, now: NOW, freshnessMs: 60_000 })
+    expect(joined[0]).toMatchObject({
+      association: 'known',
+      associationSource: 'relayer-attested',
+      reportedAt: NOW - 1_000,
+      scopeCheckedAt: NOW - 2_000,
+      freshness: 'fresh',
+    })
+    expect(joined[0].baseChildren[0]).toMatchObject({
+      association: 'known',
+      txHash: null,
+      executionStatus: 'accepted',
+      custody: { location: 'in-transit' },
+    })
+    expect(joined[1]).toMatchObject({
+      association: 'unknown',
+      associationSource: null,
+      reportedAt: null,
+      scopeCheckedAt: null,
+      freshness: 'unknown',
+      baseChildren: [],
+    })
+  })
+})

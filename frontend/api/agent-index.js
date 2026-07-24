@@ -7,14 +7,33 @@
 // "proxy wiring" and business logic, just with the business logic factored into its own module
 // instead of inline, since handler.js needed to be testable without a real D1/RPC.
 import { createAgentIndexStore } from './agent-index/store.js'
-import { handleIngest, handleRead } from './agent-index/handler.js'
+import { handleAssociationReport, handleIngest, handleRead } from './agent-index/handler.js'
 import { scanRpcEventsPage } from './agent-index/indexer.js'
 import { rateLimit } from './_guard.js'
 import { symbolScVal } from '../src/stellar/scval.js'
+import { readContract } from '../src/stellar/client.js'
 import { AGENT_INDEX_FINALITY_LEDGERS } from '../src/stellar/agentCreatorManifest.js'
 
 const RPC_URL = () => process.env.SOROBAN_RPC_URL || 'https://soroban-testnet.stellar.org'
 const INGEST_SECRET = () => process.env.AGENT_INDEX_INGEST_SECRET || ''
+const REPORTER_SECRET = () => process.env.AGENT_INDEX_REPORTER_SECRET || ''
+const POOL_TARGETS = new Map([
+  ['0x389250872044368759d3db5c09b2706a6628d4e0', 'aave-v3'],
+  ['0x5e843a639f0555e2a6669601621befc887bdb479', 'morpho-blue'],
+  ['0xadd3c1a75c7cef2516b51750959bd829a4ad4761', 'moonwell'],
+])
+const SCOPE_REQUIREMENTS = {
+  messenger:
+    process.env.SOROBAN_CCTP_TOKEN_MESSENGER ||
+    'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP',
+  token:
+    process.env.SOROBAN_CCTP_USDC_ADDRESS ||
+    'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+  destinationDomain: 6,
+  reportToken: 'USDC',
+  reportDecimals: 6,
+  scopeDecimals: 7,
+}
 
 function json(res, status, obj) {
   res.statusCode = status
@@ -115,6 +134,26 @@ export default async function handler(req, res) {
       eventSourceFor: (source) => buildEventSource(source, server, sdkMod),
       finalizedLedgerFor: async (_source, eventSource) =>
         Math.max(1, eventSource.latestAvailableLedger - AGENT_INDEX_FINALITY_LEDGERS),
+    })
+    return json(res, out.status, out.body)
+  }
+
+  if (req.method === 'POST' && url.searchParams.get('action') === 'associate') {
+    if (!rateLimit(req, res, { max: 120, windowMs: 60_000, bucket: 'agent-index-associate' }))
+      return
+    const store = req.env?.VF_DB ? createAgentIndexStore(req.env.VF_DB) : null
+    const sdkMod = await import('@stellar/stellar-sdk')
+    const server = new sdkMod.rpc.Server(RPC_URL())
+    const out = await handleAssociationReport({
+      secret: REPORTER_SECRET(),
+      providedSecret: bearer(req),
+      idempotencyKey: req.headers?.['idempotency-key'] || '',
+      store,
+      report: req.body,
+      scopeReader: ({ bridgeAgent }) =>
+        readContract({ contract: bridgeAgent, method: 'scope_of', server }),
+      poolTargets: POOL_TARGETS,
+      scopeRequirements: SCOPE_REQUIREMENTS,
     })
     return json(res, out.status, out.body)
   }

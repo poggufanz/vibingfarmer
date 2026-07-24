@@ -3,6 +3,7 @@
 // here is testable without touching a network or a real Cloudflare binding).
 import { ingestAgentIndexPage, coverageProof } from './indexer.js'
 import { commitBackfillAudit } from './backfill.js'
+import { ingestAssociationReport, joinBaseAssociations } from './associations.js'
 import {
   AGENT_CREATORS,
   AGENT_CREATOR_MANIFEST_HASH,
@@ -113,6 +114,52 @@ export async function handleBackfillCommit({ secret, providedSecret, store, audi
   }
 }
 
+/** Protected server-to-server relayer association write. The binding attestation is accepted
+ * only after indexed membership + a fresh on-chain scope_of read prove the owner-bound bridge
+ * scope. Reporting remains analytics-only: callers decide how to surface this response and must
+ * never change farm custody because this endpoint is unavailable. */
+export async function handleAssociationReport({
+  secret,
+  providedSecret,
+  idempotencyKey,
+  store,
+  report,
+  scopeReader,
+  poolTargets,
+  scopeRequirements,
+  now = Date.now(),
+}) {
+  if (!secret) {
+    return {
+      status: 503,
+      body: { error: 'Agent index reporter not configured', configured: false },
+    }
+  }
+  if (!providedSecret || !(await constantTimeEqual(providedSecret, secret))) {
+    return { status: 401, body: { error: 'Unauthorized' } }
+  }
+  if (!store) {
+    return { status: 503, body: { error: 'Agent index store unavailable', configured: false } }
+  }
+  if (!scopeReader || !poolTargets || !scopeRequirements) {
+    return { status: 500, body: { error: 'Association ingest misconfigured' } }
+  }
+  try {
+    const result = await ingestAssociationReport({
+      report,
+      idempotencyKey,
+      store,
+      scopeReader,
+      poolTargets,
+      scopeRequirements,
+      now,
+    })
+    return { status: 200, body: { ok: true, ...result } }
+  } catch (err) {
+    return { status: 400, body: { error: err.message } }
+  }
+}
+
 function unavailableBody({ networkId, owner, manifest, now }) {
   return {
     version: 1,
@@ -177,10 +224,14 @@ export async function handleRead({ networkId, owner, store, manifest = LIVE_MANI
 
   let memberships
   let coverage
+  let associations
   try {
-    ;[memberships, coverage] = await Promise.all([
+    ;[memberships, coverage, associations] = await Promise.all([
       store.readOwnerMemberships({ networkId, owner }),
       store.readCoverage({ networkId }),
+      typeof store.readOwnerRunAllocations === 'function'
+        ? store.readOwnerRunAllocations({ networkId, owner })
+        : [],
     ])
   } catch {
     return { status: 200, body: unavailableBody({ networkId, owner, manifest, now }) }
@@ -210,5 +261,6 @@ export async function handleRead({ networkId, owner, store, manifest = LIVE_MANI
       grantTxHash: m.grantTxHash,
       provenance: m.provenance,
     }))
-  return { status: 200, body: { version: 1, networkId, owner, status, agents, coverage: coverageOut } }
+  const associatedAgents = joinBaseAssociations({ agents, associations, now })
+  return { status: 200, body: { version: 1, networkId, owner, status, agents: associatedAgents, coverage: coverageOut } }
 }
