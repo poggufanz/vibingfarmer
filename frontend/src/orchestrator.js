@@ -29,6 +29,7 @@ import {
 } from './stellar/config.js'
 import { isLegacyDirectSetupAllowed } from './stellar/agentCreatorManifest.js'
 import { PermissionPhaseError } from './strategy/permissionError.js'
+import { buildDispatchReceipt } from './strategy/dispatchSummary.js'
 // NOTE (Strategy Task 7): every OTHER new dependency this file needed for the permission-locked
 // path (`./strategy/reusePreflight.js`, `./stellar/grantReceiptStore.js`, and `readConfirmedLedger`
 // from `./stellar/grant.js`, plus `loadCachedAgents`/`SOROBAN_FUNDING_ROUTER_ADDRESS`) is imported
@@ -656,7 +657,13 @@ export class OrchestratorAgent {
 
   async dispatchLegacy(strategy, totalAmount) {
     const allVaults = strategy.vaults || []
-    const baseVaults = allVaults.filter((v) => v.chain === 'base')
+    const receiptRunId = strategy.runId || this.sessionId
+    const baseVaults = allVaults
+      .filter((v) => v.chain === 'base')
+      .map((vault, index) => ({
+        ...vault,
+        allocationId: vault.allocationId || `${receiptRunId}:bridge:${index}`,
+      }))
     const stellarVaults = allVaults.filter((v) => v.chain !== 'base')
     if (baseVaults.length > 0 && !this.baseLegContext) {
       throw new Error('strategy contains base vaults but no base leg context was provided')
@@ -744,6 +751,7 @@ export class OrchestratorAgent {
         const vaultPlans = stellarStrategy.vaults.map((v, i) => ({
           index: i,
           agentId: makeAgentId(i, this.sessionId),
+          allocationId: v.allocationId || `${receiptRunId}:deposit:${i}`,
           vault: v.address,
           protocolSlug: v.protocolSlug || null,
           eligibilityToken: v.eligibilityToken || null,
@@ -805,6 +813,7 @@ export class OrchestratorAgent {
           (p) =>
             new WorkerAgent({
               agentId: p.agentId,
+              allocationId: p.allocationId,
               user: this.user,
               vault: p.vault,
               amount: p.amountUnits,
@@ -874,6 +883,7 @@ export class OrchestratorAgent {
 
         const results = workerResults.map((r, i) => ({
           agentId: vaultPlans[i].agentId,
+          allocationId: vaultPlans[i].allocationId,
           vault: vaultPlans[i].vault,
           success: r.status === 'fulfilled' && r.value?.success,
           txHash: r.value?.txHash,
@@ -955,7 +965,80 @@ export class OrchestratorAgent {
         ? baseSettled.value
         : { success: false, stage: 'dispatch', error: baseSettled.reason?.message }
 
-    return { ...stellarSettled.value, baseLeg }
+    // Legacy callers have not yet migrated to StrategyPlan/PermissionConfirmedV1, but a mixed
+    // execution still deserves the exact same custody receipt. Its synthetic plan is derived
+    // solely from the integer amounts used by this dispatch; it never converts display floats.
+    const stellarPlan = stellarSettled.value.results.map((result, index) => ({
+      allocationId: result.allocationId,
+      kind: 'deposit',
+      allocation: {
+        token: SOROBAN_TOKEN_ADDRESS,
+        units: String(
+          // vaultPlans is local to runStellarLegs, so the worker amount is reflected in the
+          // result only indirectly. Recompute with the same exact splitter used above.
+          splitUnitsByRatio(
+            toBaseUnits(totalAmount),
+            stellarStrategy.vaults.map((vault) => vault.allocation)
+          )[index] || 0n
+        ),
+        decimals: SOROBAN_DECIMALS,
+      },
+    }))
+    const baseEvidence =
+      baseLeg?.allocations?.length > 0
+        ? baseLeg.allocations
+        : baseVaults.map((vault, index) => {
+            const { baseTargetUnits6 } = deriveCctpTransferUnits(totalAmount * vault.allocation)
+            return {
+              allocationId: vault.allocationId,
+              amount: { token: 'USDC', units: String(baseTargetUnits6), decimals: 6 },
+              success: baseLeg?.success === true,
+              finalStatus: baseLeg?.finalStatus || (baseLeg?.success ? 'done' : 'error'),
+              error: baseLeg?.error || null,
+              custody: baseLeg?.success
+                ? { location: 'base-proxy', confirmed: true, checkedAt: null }
+                : { location: 'owner', confirmed: true, checkedAt: null },
+              ...baseLeg,
+              allocationId: vault.allocationId,
+            }
+          })
+    const receiptPlan = {
+      runId: receiptRunId,
+      planFingerprint: strategy.planFingerprint || null,
+      agents: [
+        ...stellarPlan,
+        ...(baseVaults.length
+          ? [
+              {
+                allocationId: `${receiptRunId}:bridge`,
+                kind: 'bridge',
+                children: baseEvidence.map((entry) => ({
+                  allocationId: entry.allocationId,
+                  allocation: entry.amount,
+                })),
+              },
+            ]
+          : []),
+      ],
+    }
+    const receipt = buildDispatchReceipt({
+      plan: receiptPlan,
+      permission: {
+        mode: 'fresh',
+        txHash: baseLeg?.grantTxHash || null,
+        grantReceiptFingerprint: null,
+        expiryLedger: null,
+        agentAddresses: stellarSettled.value.agentAddresses || [],
+      },
+      branches: {
+        stellar: { results: stellarSettled.value.results },
+        base: {
+          status: baseLeg?.success === false ? 'failed' : undefined,
+          results: baseEvidence,
+        },
+      },
+    })
+    return { ...stellarSettled.value, baseLeg, receipt }
   }
 
   /**

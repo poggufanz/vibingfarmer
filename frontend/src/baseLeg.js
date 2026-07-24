@@ -36,6 +36,8 @@ import { readBaseMandate, validateBaseMandate } from './wallet/baseBinding.js'
  *                                      // runtime burn arg from what's actually pinned on-chain.
  *   baseVaults: Array<{address:string, allocation:number}>,
  *   totalAmount: number,
+ *   runId?: string,
+ *   grantTxHash?: string,
  *   onEvent?: Function,
  *   deps?: object,
  * }} p
@@ -50,6 +52,8 @@ export async function executeBaseLeg({
   kernelAddress,
   baseVaults,
   totalAmount,
+  runId = null,
+  grantTxHash = null,
   onEvent = () => {},
   deps = {},
 }) {
@@ -139,6 +143,8 @@ export async function executeBaseLeg({
           (p) => p.address.toLowerCase() === v.address.toLowerCase()
         )
         return {
+          allocationId: v.allocationId || null,
+          allocationAmount: v.allocationAmount || null,
           pool: v.address,
           protocol: cat?.protocol,
           amount: totalAmount * v.allocation,
@@ -185,10 +191,12 @@ export async function executeBaseLeg({
       serializedApproval: storedMandate.serializedApproval,
       allocations: quotedAllocations,
       burnUnits7,
-      // Threaded through to postFarm's wire contract (VF Wallet Task 6) — the bridge agent is
-      // the recovery handle for a stranded-funds sweep either way; runId/grantTxHash are not yet
-      // plumbed this deep from orchestrator.js, so they travel as null until a later task adds them.
+      // Threaded through to postFarm's owner-bound wire contract. The bridge agent is the
+      // recovery handle for a stranded-funds sweep; runId/grantTxHash correlate this job to the
+      // shared grant receipt without exposing its session key.
       bridgeAgentAddress,
+      runId,
+      grantTxHash,
       onEvent,
       deps: {
         burn: async ({ amountUnits }) => {
@@ -213,12 +221,44 @@ export async function executeBaseLeg({
         },
       },
     })
+    const custodyFor = (remote = {}) => {
+      if (remote.custody?.location) return remote.custody
+      if (result.finalStatus === 'done' || remote.mintTxHash || remote.depositTxHash) {
+        return { location: 'base-proxy', confirmed: true, checkedAt: null }
+      }
+      return { location: 'in-transit', confirmed: !!result.burnHash, checkedAt: null }
+    }
+    const childResults = quotedAllocations.map((allocation, i) => {
+      const remote = (result.allocations || []).find(
+        (entry) => entry?.allocationId === allocation.allocationId
+      ) || {}
+      return {
+        allocationId: allocation.allocationId || `${runId ?? 'run'}-${i}`,
+        amount: allocation.allocationAmount || {
+          token: 'USDC',
+          units: String(allocation.amountBaseUnits),
+          decimals: 6,
+        },
+        burnHash: result.burnHash || null,
+        jobId: result.jobId || null,
+        finalStatus: remote.finalStatus || result.finalStatus || null,
+        mintTxHash: remote.mintTxHash || null,
+        depositTxHash: remote.depositTxHash || null,
+        custody: custodyFor(remote),
+      }
+    })
     return {
       success: true,
+      runId,
+      grantTxHash,
       burnHash: result.burnHash,
       jobId: result.jobId,
       finalStatus: result.finalStatus,
       baseAccount: ownerAddress,
+      bridgeAgentAddress,
+      kernelAddress: ownerAddress,
+      attestation: result.attestation || result.attestationState || null,
+      allocations: childResults,
     }
   } catch (err) {
     // A dependency can reject with anything (bare string, null, plain object) — never assume
@@ -229,7 +269,34 @@ export async function executeBaseLeg({
     // sweep) in BOTH the event and the return value, so a pull-ok/burn-fails outcome is never
     // indistinguishable from a nothing-moved one.
     const strandedFunds = fundsPulled ? { pulled: true, bridgeAgentAddress } : {}
+    const failureCustody = fundsPulled
+      ? { location: 'agent', confirmed: true, checkedAt: null }
+      : { location: 'owner', confirmed: true, checkedAt: null }
+    const allocations = (baseVaults || []).map((vault, i) => ({
+      allocationId: vault.allocationId || `${runId ?? 'run'}-${i}`,
+      amount:
+        vault.allocationAmount || {
+          token: 'USDC',
+          units: String(deriveCctpTransferUnits(totalAmount * vault.allocation).baseTargetUnits6),
+          decimals: 6,
+        },
+      finalStatus: 'error',
+      custody: failureCustody,
+      error: message,
+    }))
     safeEmit('baseleg-failed', { stage, error: message, ...strandedFunds })
-    return { success: false, stage, error: message, ...strandedFunds }
+    return {
+      success: false,
+      runId,
+      grantTxHash,
+      stage,
+      error: message,
+      // Preserve the established recovery signal: bridgeAgentAddress appears only once a pull
+      // actually stranded funds. `bridgeAgent` still identifies the deployed agent for receipts.
+      bridgeAgent: bridgeAgentAddress || null,
+      kernelAddress: kernelAddress || null,
+      allocations,
+      ...strandedFunds,
+    }
   }
 }

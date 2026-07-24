@@ -174,6 +174,24 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
     expect(summary.baseLeg).toMatchObject({ success: true, jobId: 'j1' })
     expect(summary.completed).toBe(1)
     expect(summary.failed).toBe(0)
+    expect(summary.receipt).toMatchObject({
+      version: 1,
+      runId: 's1',
+      permission: { status: 'confirmed', confirmationCount: 1 },
+      branches: { stellar: { status: 'succeeded' }, base: { status: 'succeeded' } },
+    })
+    expect(summary.receipt.allocations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          executionStatus: 'succeeded',
+          custody: expect.objectContaining({ location: 'stellar-vault' }),
+        }),
+        expect.objectContaining({
+          executionStatus: 'succeeded',
+          custody: expect.objectContaining({ location: 'base-proxy' }),
+        }),
+      ])
+    )
   })
 
   it('an all-Base strategy (zero Stellar deposit workers) still grants — bridge init only, no deposit budget entry', async () => {
@@ -313,6 +331,12 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
     // No stellar vaults in this strategy -> the (empty) stellar leg still "succeeds" with 0 agents.
     expect(summary.completed).toBe(0)
     expect(summary.failed).toBe(0)
+    expect(summary.receipt.branches.base.status).toBe('failed')
+    expect(summary.receipt.allocations[0]).toMatchObject({
+      executionStatus: 'failed',
+      custody: { location: 'owner', confirmed: true },
+      error: 'down',
+    })
   })
 
   it('a rejected base leg promise (belt-and-braces) maps to a failed baseLeg summary, dispatch still resolves', async () => {

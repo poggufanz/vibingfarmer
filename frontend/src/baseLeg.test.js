@@ -72,6 +72,49 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
     )
   })
 
+  it('returns durable run and child-allocation custody evidence without returning the session key', async () => {
+    const deps = okDeps()
+    const childVaults = [
+      {
+        ...baseVaults[0],
+        allocationId: 'run-8:bridge:base-a',
+        allocationAmount: { token: 'USDC', units: '100000000', decimals: 6 },
+      },
+    ]
+    const out = await run({
+      deps,
+      runId: 'run-8',
+      grantTxHash: 'grant-8',
+      baseVaults: childVaults,
+    })
+
+    expect(deps.runFarmFlow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: 'run-8',
+        grantTxHash: 'grant-8',
+        bridgeAgentAddress: BRIDGE_AGENT,
+      })
+    )
+    expect(out).toMatchObject({
+      success: true,
+      runId: 'run-8',
+      grantTxHash: 'grant-8',
+      bridgeAgentAddress: BRIDGE_AGENT,
+      kernelAddress: KERNEL,
+      allocations: [
+        expect.objectContaining({
+          allocationId: 'run-8:bridge:base-a',
+          burnHash: 'BURN',
+          jobId: 'job-1',
+          finalStatus: 'done',
+          custody: { location: 'base-proxy', confirmed: true, checkedAt: null },
+        }),
+      ],
+    })
+    expect(JSON.stringify(out)).not.toContain('rawPublicKey')
+    expect(JSON.stringify(out)).not.toContain('sessionKey')
+  })
+
   it('never calls ensureBaseOwner/createMandate/postMandate — those deps no longer exist on this function', async () => {
     // Regression guard: passing them (as if the old ceremony API still applied) must be silently
     // ignored, not wired to anything — proves the ceremony branch is gone, not just unused.
@@ -226,6 +269,12 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
     expect(deps.runAgentBurn).not.toHaveBeenCalled()
     expect(out.pulled).toBeUndefined()
     expect(out.bridgeAgentAddress).toBeUndefined()
+    expect(out.allocations).toEqual([
+      expect.objectContaining({
+        amount: { token: 'USDC', units: '100000000', decimals: 6 },
+        custody: { location: 'owner', confirmed: true, checkedAt: null },
+      }),
+    ])
   })
 
   it('pull-ok/burn-fails (stranded funds): the failure payload carries pulled:true + bridgeAgentAddress as the recovery handle, in BOTH the event and the return value', async () => {
