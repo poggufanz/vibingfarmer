@@ -13,6 +13,7 @@ import {
   needsBaseMandateSetup,
   resolveBaseAvailability,
 } from './mergeFlowHelpers.js'
+import { toBaseMandateView } from './strategy/baseMandateView.js'
 import { readBaseMandate, readBaseOwner } from './wallet/baseBinding.js'
 
 function fakeStorage(initial = {}) {
@@ -166,6 +167,67 @@ describe('resolveBaseAvailability — legacy overload stays live (VF Wallet Task
       checkMandate: checkStoredBaseMandate({ getMandateStatus, storage, stellarOwner: 'GUSER' }),
     })
     expect(await baseAvailable).toBe(true)
+  })
+})
+
+describe('resolveBaseAvailability — canonical bound-mandate contract (Strategy Task 9)', () => {
+  const now = Math.floor(Date.now() / 1000)
+  const connection = {
+    connected: true,
+    stellarOwner: 'GUSER',
+    kernelAddress: '0x0000000000000000000000000000000000000AA1',
+    relayerOrigin: 'https://relayer.example',
+  }
+  const mandate = {
+    stellarOwner: 'GUSER',
+    kernelAddress: '0x0000000000000000000000000000000000000aa1',
+    sessionKeyAddress: '0x0000000000000000000000000000000000000BB2',
+    relayerOrigin: 'https://relayer.example',
+    expiresAt: now + 3600,
+    status: 'active',
+    bindingId: 'binding-1',
+    bindingHash: '0xhash',
+  }
+
+  it('offers Base only when the connected, active record and relayer health are all valid', async () => {
+    const result = resolveBaseAvailability({ mandate, connection, health: true })
+
+    expect(result.mandateView).toEqual(toBaseMandateView({ mandate, ...connection }))
+    expect(await result.baseAvailable).toBe(true)
+    expect(result.action).toBeNull()
+  })
+
+  it('keeps a disconnected first plan Stellar-only and offers connection instead of Base', async () => {
+    const result = resolveBaseAvailability({
+      mandate,
+      connection: { stellarOwner: null, kernelAddress: null, relayerOrigin: null, connected: false },
+      health: true,
+    })
+
+    expect(await result.baseAvailable).toBe(false)
+    expect(result.mandateView.status).toBe('unavailable')
+    expect(result.action).toEqual({ label: 'Connect to check Base testnet', invalidatesPlan: false })
+  })
+
+  it('returns Rebuild plan after setup instead of inserting Base into a reviewed plan', async () => {
+    const result = resolveBaseAvailability({
+      mandate,
+      connection: { ...connection, setupSucceeded: true },
+      health: true,
+    })
+
+    expect(await result.baseAvailable).toBe(true)
+    expect(result.action).toEqual({ label: 'Rebuild plan', invalidatesPlan: true })
+  })
+
+  it('fails closed for a relayer outage, malformed active record, or missing expected relayer origin', async () => {
+    for (const input of [
+      { mandate, connection, health: false },
+      { mandate: { ...mandate, sessionKeyAddress: null }, connection, health: true },
+      { mandate, connection: { ...connection, relayerOrigin: null }, health: true },
+    ]) {
+      expect(await resolveBaseAvailability(input).baseAvailable).toBe(false)
+    }
   })
 })
 

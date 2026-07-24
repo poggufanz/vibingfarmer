@@ -14,6 +14,7 @@ import {
   readBaseMandate,
   validateBaseMandate,
 } from './wallet/baseBinding.js'
+import { toBaseMandateView } from './strategy/baseMandateView.js'
 
 // One place that decides what the strategy step tells the strategist about Base. Returns the
 // combined-check PROMISE (not its resolved value) so the ~3s relayer probe (and the optional
@@ -38,7 +39,36 @@ import {
 // function stays untouched because it was already agnostic to what its check closures do
 // internally. Do not remove or reshape this signature; that migration is Strategy Task 13's job
 // (Wave 5), not this task's.
-export function resolveBaseAvailability({ checkHealth, checkMandate, checkFunding }) {
+export function resolveBaseAvailability(input) {
+  // Keep app.jsx's production preflight shape fully live until Strategy Task 13 migrates it.
+  if (
+    Object.hasOwn(input, 'checkHealth') ||
+    Object.hasOwn(input, 'checkMandate') ||
+    Object.hasOwn(input, 'checkFunding')
+  ) {
+    return resolveLegacyBaseAvailability(input)
+  }
+
+  const { mandate, connection = {}, health } = input
+  const mandateView = toBaseMandateView({ mandate, ...connection })
+  const baseAvailable = (async () => {
+    try {
+      const healthy = await (typeof health === 'function' ? health() : health)
+      return connection.connected !== false && healthy === true && mandateView.ready
+    } catch {
+      return false
+    }
+  })()
+  const action =
+    connection.setupSucceeded === true
+      ? { label: 'Rebuild plan', invalidatesPlan: true }
+      : connection.connected === false
+        ? { label: 'Connect to check Base testnet', invalidatesPlan: false }
+        : null
+  return { baseAvailable, mandateView, action }
+}
+
+function resolveLegacyBaseAvailability({ checkHealth, checkMandate, checkFunding }) {
   const baseAvailable = (async () => {
     try {
       if (!(await checkHealth())) return false
