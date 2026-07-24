@@ -24,26 +24,7 @@ import { BASE_POOL_CATALOG } from './config.js'
 import { estimateMinShares as defaultEstimateMinShares } from './base/quotes.js'
 import { defaultMakePublicClient } from './wallet/passkeyBase.js'
 import { readBaseMandate, validateBaseMandate } from './wallet/baseBinding.js'
-
-function sanitizedEvidence(value, seen = new WeakSet()) {
-  if (value == null || typeof value !== 'object') return value
-  if (seen.has(value)) return null
-  seen.add(value)
-  if (Array.isArray(value)) return value.map((entry) => sanitizedEvidence(entry, seen))
-  return Object.fromEntries(
-    Object.entries(value)
-      .filter(([key]) => {
-        const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, '')
-        return (
-          !normalized.endsWith('sessionkey') &&
-          !normalized.includes('privatekey') &&
-          normalized !== 'secret' &&
-          !normalized.endsWith('secret')
-        )
-      })
-      .map(([key, entry]) => [key, sanitizedEvidence(entry, seen)])
-  )
-}
+import { sanitizeReceiptData } from './strategy/dispatchSummary.js'
 
 /**
  * @param {{
@@ -270,10 +251,10 @@ export async function executeBaseLeg({
         jobId: result.jobId || null,
         bridgeAgentAddress,
         kernelAddress: ownerAddress,
-        attestation: sanitizedEvidence(
+        attestation: sanitizeReceiptData(
           remote.attestation || result.attestation || result.attestationState || null
         ),
-        recovery: sanitizedEvidence(remote.recovery || result.recovery || null),
+        recovery: sanitizeReceiptData(remote.recovery || result.recovery || null),
         finalStatus: remote.finalStatus || result.finalStatus || null,
         mintTxHash: remote.mintTxHash || null,
         depositTxHash: remote.depositTxHash || null,
@@ -301,8 +282,8 @@ export async function executeBaseLeg({
       kernelAddress: ownerAddress,
       stage: success ? undefined : result.stage || 'farm',
       error,
-      attestation: sanitizedEvidence(result.attestation || result.attestationState || null),
-      recovery: sanitizedEvidence(result.recovery || null),
+      attestation: sanitizeReceiptData(result.attestation || result.attestationState || null),
+      recovery: sanitizeReceiptData(result.recovery || null),
       allocations: childResults,
     }
   } catch (err) {
@@ -332,10 +313,10 @@ export async function executeBaseLeg({
       bridgeAgentAddress: bridgeAgentAddress || null,
       kernelAddress: kernelAddress || null,
       jobId: failureEvidence.jobId || null,
-      attestation: sanitizedEvidence(
+      attestation: sanitizeReceiptData(
         failureEvidence.attestation || failureEvidence.attestationState || null
       ),
-      recovery: sanitizedEvidence(failureEvidence.recovery || null),
+      recovery: sanitizeReceiptData(failureEvidence.recovery || null),
     }))
     safeEmit('baseleg-failed', { stage, error: message, ...strandedFunds })
     return {
@@ -349,10 +330,10 @@ export async function executeBaseLeg({
       bridgeAgent: bridgeAgentAddress || null,
       kernelAddress: kernelAddress || null,
       jobId: failureEvidence.jobId || null,
-      attestation: sanitizedEvidence(
+      attestation: sanitizeReceiptData(
         failureEvidence.attestation || failureEvidence.attestationState || null
       ),
-      recovery: sanitizedEvidence(failureEvidence.recovery || null),
+      recovery: sanitizeReceiptData(failureEvidence.recovery || null),
       allocations,
       ...strandedFunds,
     }

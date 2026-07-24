@@ -206,6 +206,45 @@ function permissionedOrchestrator() {
   })
 }
 
+async function expectPermissionPreflightRejection(fixture) {
+  await expect(
+    permissionedOrchestrator().dispatch(fixture.plan, {
+      permissionDecision: fixture.permissionDecision,
+    })
+  ).rejects.toMatchObject({
+    name: 'PermissionPhaseError',
+    movement: 'none',
+    phase: 'preflight',
+  })
+  expect(submitGrantMock).not.toHaveBeenCalled()
+  expect(runAgentPullMock).not.toHaveBeenCalled()
+  expect(workerExecuteMock).not.toHaveBeenCalled()
+  expect(executeBaseLegMock).not.toHaveBeenCalled()
+}
+
+function successfulBaseLeg(runId) {
+  return {
+    success: true,
+    runId,
+    burnHash: `BURN-${runId}`,
+    jobId: `JOB-${runId}`,
+    finalStatus: 'done',
+    allocations: [
+      {
+        allocationId: `${runId}:bridge:pool-a`,
+        amount: { token: 'USDC', units: '40000000', decimals: 6 },
+        success: true,
+        finalStatus: 'done',
+        depositTxHash: `BASE-DEPOSIT-${runId}`,
+        bridgeAgentAddress: 'CFRESH2',
+        kernelAddress: KERNEL,
+        recovery: { action: 'inspect-job', jobId: `JOB-${runId}` },
+        custody: { location: 'base-proxy', confirmed: true, checkedAt: 909 },
+      },
+    ],
+  }
+}
+
 beforeEach(() => {
   workerInstances.length = 0
   workerExecuteMock.mockReset()
@@ -1008,5 +1047,117 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
     expect(submitGrantMock).not.toHaveBeenCalled()
     expect(runAgentPullMock).not.toHaveBeenCalled()
     expect(executeBaseLegMock).not.toHaveBeenCalled()
+  })
+
+  it('[Budget] rejects a missing reviewed budget set before grant or either branch', async () => {
+    const fixture = permissionedMixedFixture('run-budget-missing')
+    delete fixture.permissionDecision.reviewedBudgets
+
+    await expectPermissionPreflightRejection(fixture)
+  })
+
+  it('[Budget] rejects duplicate reviewed entries for one token before grant or either branch', async () => {
+    const fixture = permissionedMixedFixture('run-budget-duplicate')
+    fixture.permissionDecision.reviewedBudgets = [
+      { token: 'CTOKEN', units: '300000000', decimals: 7 },
+      { token: 'CTOKEN', units: '300000000', decimals: 7 },
+      { token: STELLAR_USDC_SAC, units: '400000000', decimals: 7 },
+    ]
+
+    await expectPermissionPreflightRejection(fixture)
+  })
+
+  it('[Budget] rejects a reviewed budget for the wrong token before grant or either branch', async () => {
+    const fixture = permissionedMixedFixture('run-budget-token')
+    fixture.permissionDecision.reviewedBudgets[0].token = 'CWRONGTOKEN'
+
+    await expectPermissionPreflightRejection(fixture)
+  })
+
+  it('[Budget] rejects a reviewed budget with wrong decimals before grant or either branch', async () => {
+    const fixture = permissionedMixedFixture('run-budget-decimals')
+    fixture.permissionDecision.reviewedBudgets[0].decimals = 6
+
+    await expectPermissionPreflightRejection(fixture)
+  })
+
+  it('[Budget] rejects an undersized reviewed per-token total before grant or either branch', async () => {
+    const fixture = permissionedMixedFixture('run-budget-under')
+    fixture.permissionDecision.reviewedBudgets[0].units = '599999999'
+
+    await expectPermissionPreflightRejection(fixture)
+  })
+
+  it('[Budget] rejects an oversized reviewed per-token total before grant or either branch', async () => {
+    const fixture = permissionedMixedFixture('run-budget-over')
+    fixture.permissionDecision.reviewedBudgets[0].units = '600000001'
+
+    await expectPermissionPreflightRejection(fixture)
+  })
+
+  it('[Budget] rejects total-preserving mutation between reviewed token budgets before grant or either branch', async () => {
+    const fixture = permissionedMixedFixture('run-budget-mutated')
+    fixture.permissionDecision.reviewedBudgets[0].units = '700000000'
+    fixture.permissionDecision.reviewedBudgets[1].units = '300000000'
+
+    await expectPermissionPreflightRejection(fixture)
+  })
+
+  it('[Observer] a throwing grant-confirmed listener cannot erase a confirmed mixed receipt', async () => {
+    const fixture = permissionedMixedFixture('run-observer-grant')
+    executeBaseLegMock.mockResolvedValueOnce(successfulBaseLeg(fixture.plan.runId))
+    const orch = new OrchestratorAgent({
+      user: 'GUSER',
+      sessionId: 'observer-grant',
+      baseLegContext: { connectedAddress: 'GUSER', signTx: vi.fn() },
+      onEvent: (name) => {
+        if (name === 'grant-confirmed') throw new Error('observer grant crash')
+      },
+    })
+
+    const summary = await orch.dispatch(fixture.plan, {
+      permissionDecision: fixture.permissionDecision,
+    })
+
+    expect(summary.receipt.permission).toMatchObject({ status: 'confirmed', txHash: 'HG' })
+    expect(summary.receipt.branches).toMatchObject({
+      stellar: { status: 'succeeded' },
+      base: { status: 'succeeded' },
+    })
+    expect(summary.receipt.allocations.map((entry) => entry.allocationId)).toEqual([
+      'run-observer-grant:deposit:0',
+      'run-observer-grant:bridge:pool-a',
+    ])
+  })
+
+  it('[Observer] a throwing worker-queued listener cannot erase a successful Base sibling', async () => {
+    const fixture = permissionedMixedFixture('run-observer-queued')
+    workerExecuteMock.mockRejectedValueOnce(new Error('stellar worker failed'))
+    executeBaseLegMock.mockResolvedValueOnce(successfulBaseLeg(fixture.plan.runId))
+    const orch = new OrchestratorAgent({
+      user: 'GUSER',
+      sessionId: 'observer-queued',
+      baseLegContext: { connectedAddress: 'GUSER', signTx: vi.fn() },
+      onEvent: (name) => {
+        if (name === 'worker-queued') throw new Error('observer queue crash')
+      },
+    })
+
+    const summary = await orch.dispatch(fixture.plan, {
+      permissionDecision: fixture.permissionDecision,
+    })
+    const base = summary.receipt.allocations.find((entry) => entry.allocationId.endsWith('pool-a'))
+
+    expect(summary.receipt.branches).toMatchObject({
+      stellar: { status: 'failed' },
+      base: { status: 'succeeded' },
+    })
+    expect(base).toMatchObject({
+      custody: { location: 'base-proxy', confirmed: true },
+      evidence: {
+        depositTxHash: 'BASE-DEPOSIT-run-observer-queued',
+        recovery: { action: 'inspect-job', jobId: 'JOB-run-observer-queued' },
+      },
+    })
   })
 })

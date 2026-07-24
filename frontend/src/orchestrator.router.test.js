@@ -160,6 +160,19 @@ function reviewedInitFor(agent) {
   }
 }
 
+function reviewedBudgetsFor(plan) {
+  const budgetsByToken = new Map()
+  for (const agent of plan.agents) {
+    const previous = budgetsByToken.get(agent.cap.token)
+    budgetsByToken.set(agent.cap.token, {
+      token: agent.cap.token,
+      units: String(BigInt(previous?.units ?? 0) + BigInt(agent.cap.units)),
+      decimals: agent.cap.decimals,
+    })
+  }
+  return [...budgetsByToken.values()]
+}
+
 function freshDecisionFor(plan) {
   return {
     version: 1,
@@ -168,7 +181,7 @@ function freshDecisionFor(plan) {
     planFingerprint: plan.planFingerprint,
     agentInitFingerprint: '0xAI',
     checkedAt: 1000,
-    reviewedBudgets: [{ token: 'CTOKEN', units: '1000000000', decimals: 7 }],
+    reviewedBudgets: reviewedBudgetsFor(plan),
     durationSeconds: 3600,
     reviewedAgentInits: plan.agents.map(reviewedInitFor),
     mode: 'fresh',

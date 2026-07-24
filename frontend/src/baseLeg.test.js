@@ -30,6 +30,20 @@ const baseVaults = [
   { address: '0x389250872044368759D3db5C09b2706A6628d4e0', allocation: 1, expected_apy: 5.1 },
 ]
 
+const poisonedRecoveryEvidence = () => ({
+  action: 'resume-job',
+  jobId: 'JOB-SECURITY',
+  secretKey: 'LEAK-SECRET-KEY',
+  signerSecretKey: 'LEAK-SIGNER-SECRET-KEY',
+  sessionKeyMaterial: { bytes: 'LEAK-SESSION-MATERIAL' },
+  SeCrEtKeY: 'LEAK-MIXED-CASE',
+  steps: [
+    { label: 'safe-step-one', SECRETkey: 'LEAK-ARRAY-ONE' },
+    { note: 'safe-step-two', SessionKEYMaterial: 'LEAK-ARRAY-TWO' },
+    { signerSecretKey: 'LEAK-ARRAY-ONLY' },
+  ],
+})
+
 const run = (overrides = {}) =>
   executeBaseLeg({
     connectedAddress: 'GUSER',
@@ -204,6 +218,78 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
     })
     expect(JSON.stringify({ out, receipt })).not.toMatch(
       /sessionPrivateKey|bridgeSessionKey|0xSECRET|0xNESTED-SECRET|SBRIDGE-NESTED|CUNTRUSTED|0xUNTRUSTED/
+    )
+  })
+
+  it('[Security] strips every nested secret-key variant from Base child, branch, and receipt evidence', async () => {
+    const deps = okDeps()
+    const allocationId = 'run-security:bridge:pool-a'
+    deps.runFarmFlow.mockResolvedValue({
+      success: false,
+      stage: 'attestation',
+      error: 'attestation rejected',
+      burnHash: 'BURN-SECURITY',
+      jobId: 'JOB-SECURITY',
+      finalStatus: 'error',
+      recovery: poisonedRecoveryEvidence(),
+      allocations: [
+        {
+          allocationId,
+          success: false,
+          error: 'attestation rejected',
+          finalStatus: 'error',
+          recovery: poisonedRecoveryEvidence(),
+          custody: { location: 'in-transit', confirmed: true, checkedAt: 707 },
+        },
+      ],
+    })
+    const out = await run({
+      deps,
+      runId: 'run-security',
+      grantTxHash: 'GRANT-SECURITY',
+      baseVaults: [
+        {
+          ...baseVaults[0],
+          allocationId,
+          allocationAmount: { token: 'USDC', units: '100000000', decimals: 6 },
+          amountBaseUnits: 100000000n,
+        },
+      ],
+    })
+    const receipt = buildDispatchReceipt({
+      plan: {
+        runId: 'run-security',
+        planFingerprint: 'PLAN-SECURITY',
+        agents: [
+          {
+            allocationId: 'run-security:bridge',
+            kind: 'bridge',
+            allocation: { token: 'STELLAR-USDC', units: '1000000000', decimals: 7 },
+            children: [
+              {
+                allocationId,
+                allocation: { token: 'USDC', units: '100000000', decimals: 6 },
+              },
+            ],
+          },
+        ],
+      },
+      permission: { mode: 'fresh', txHash: 'GRANT-SECURITY' },
+      branches: { base: { status: 'failed', results: out.allocations } },
+    })
+    const childRecovery = out.allocations[0].recovery
+    const branchRecovery = receipt.branches.base.results[0].evidence.recovery
+    const allocationRecovery = receipt.allocations[0].evidence.recovery
+
+    expect(childRecovery).toEqual({
+      action: 'resume-job',
+      jobId: 'JOB-SECURITY',
+      steps: [{ label: 'safe-step-one' }, { note: 'safe-step-two' }],
+    })
+    expect(branchRecovery).toEqual(childRecovery)
+    expect(allocationRecovery).toEqual(childRecovery)
+    expect(JSON.stringify({ out, receipt })).not.toMatch(
+      /LEAK-|secretKey|signerSecretKey|sessionKeyMaterial/i
     )
   })
 

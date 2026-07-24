@@ -304,6 +304,73 @@ describe('buildDispatchReceipt', () => {
     expect(unknown.networkContext.currentCustodyNetwork).toBeNull()
   })
 
+  it('[Security] sanitizes nested arrays and caller network context while retaining safe recovery evidence', () => {
+    const receipt = buildDispatchReceipt({
+      plan: plan(),
+      permission: permission(),
+      branches: {
+        base: {
+          results: [
+            {
+              allocationId: 'run-mixed-8:bridge:base-a',
+              success: false,
+              error: 'recoverable',
+              custody: { location: 'in-transit', confirmed: true, checkedAt: 919 },
+              recovery: {
+                action: 'resume-job',
+                jobId: 'JOB-SAFE',
+                secretKey: 'LEAK-SECRET-KEY',
+                signerSecretKey: 'LEAK-SIGNER-SECRET-KEY',
+                sessionKeyMaterial: { bytes: 'LEAK-SESSION-MATERIAL' },
+                SeCrEtKeY: 'LEAK-MIXED-CASE',
+                steps: [
+                  { label: 'safe-one', SECRETkey: 'LEAK-ARRAY-ONE' },
+                  { note: 'safe-two', SessionKEYMaterial: 'LEAK-ARRAY-TWO' },
+                  { signerSecretKey: 'LEAK-ARRAY-ONLY' },
+                ],
+              },
+              networkContext: {
+                executionNetwork: 'stellar-testnet',
+                destinationNetwork: 'base-sepolia',
+                currentCustodyNetwork: null,
+                transit: true,
+                secretKey: 'LEAK-NETWORK-SECRET',
+                nested: {
+                  route: 'safe-route',
+                  SignerSECRETKey: 'LEAK-NETWORK-NESTED',
+                },
+                hops: [
+                  { network: 'stellar-testnet', sessionKEYMaterial: 'LEAK-NETWORK-ARRAY' },
+                  { network: 'base-sepolia' },
+                ],
+              },
+            },
+          ],
+        },
+      },
+    })
+    const branch = receipt.branches.base.results.find((entry) => entry.allocationId.endsWith('base-a'))
+    const allocation = receipt.allocations.find((entry) => entry.allocationId.endsWith('base-a'))
+
+    expect(branch.evidence.recovery).toEqual({
+      action: 'resume-job',
+      jobId: 'JOB-SAFE',
+      steps: [{ label: 'safe-one' }, { note: 'safe-two' }],
+    })
+    expect(allocation.evidence.recovery).toEqual(branch.evidence.recovery)
+    expect(branch.networkContext).toEqual({
+      executionNetwork: 'stellar-testnet',
+      destinationNetwork: 'base-sepolia',
+      currentCustodyNetwork: null,
+      transit: true,
+      nested: { route: 'safe-route' },
+      hops: [{ network: 'stellar-testnet' }, { network: 'base-sepolia' }],
+    })
+    expect(JSON.stringify(receipt)).not.toMatch(
+      /LEAK-|secretKey|signerSecretKey|sessionKeyMaterial/i
+    )
+  })
+
   it('rejects negative units, duplicate IDs, and a bridge parent/child mismatch', () => {
     const invalid = plan()
     invalid.agents[0].allocation.units = '-1'

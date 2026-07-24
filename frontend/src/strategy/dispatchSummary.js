@@ -65,28 +65,41 @@ function txHash(raw) {
   return raw?.depositTxHash || raw?.mintTxHash || raw?.txHash || raw?.burnHash || raw?.pullTxHash || null
 }
 
-function sanitizedEvidence(value, seen = new WeakSet()) {
+function isEmptyContainer(value) {
+  if (Array.isArray(value)) return value.length === 0
+  return value != null && typeof value === 'object' && Object.keys(value).length === 0
+}
+
+function isSensitiveProperty(key) {
+  const normalized = String(key).toLowerCase().replace(/[^a-z0-9]/g, '')
+  return (
+    normalized.includes('secret') ||
+    normalized.includes('privatekey') ||
+    normalized.includes('sessionkey')
+  )
+}
+
+/** Recursively keep receipt-safe JSON evidence while dropping all key material by property name.
+ * Exported so Base-leg output and final receipt normalization cannot drift apart. */
+export function sanitizeReceiptData(value, seen = new WeakSet()) {
   if (value == null || typeof value !== 'object') return value
   if (seen.has(value)) return null
   seen.add(value)
-  if (Array.isArray(value)) return value.map((entry) => sanitizedEvidence(entry, seen))
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => sanitizeReceiptData(entry, seen))
+      .filter((entry) => !isEmptyContainer(entry))
+  }
   return Object.fromEntries(
     Object.entries(value)
-      .filter(([key]) => {
-        const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, '')
-        return (
-          !normalized.endsWith('sessionkey') &&
-          !normalized.includes('privatekey') &&
-          normalized !== 'secret' &&
-          !normalized.endsWith('secret')
-        )
-      })
-      .map(([key, entry]) => [key, sanitizedEvidence(entry, seen)])
+      .filter(([key]) => !isSensitiveProperty(key))
+      .map(([key, entry]) => [key, sanitizeReceiptData(entry, seen)])
+      .filter(([, entry]) => !isEmptyContainer(entry))
   )
 }
 
 function networkContext(raw, branch, custody) {
-  if (raw?.networkContext) return raw.networkContext
+  if (raw?.networkContext) return sanitizeReceiptData(raw.networkContext)
   if (branch === 'stellar') {
     return {
       executionNetwork: 'stellar-testnet',
@@ -127,7 +140,7 @@ function safeEvidence(raw) {
   return Object.fromEntries(
     keys
       .filter((key) => raw?.[key] != null)
-      .map((key) => [key, sanitizedEvidence(raw[key])])
+      .map((key) => [key, sanitizeReceiptData(raw[key])])
   )
 }
 

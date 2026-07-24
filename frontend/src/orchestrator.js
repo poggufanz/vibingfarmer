@@ -112,7 +112,15 @@ export class OrchestratorAgent {
     this.user = user
     this.veniceAuth = veniceAuth || null
     this.devApiKey = devApiKey || null
-    this.onEvent = onEvent || (() => {})
+    const observer = typeof onEvent === 'function' ? onEvent : null
+    this.onEvent = (name, data) => {
+      try {
+        observer?.(name, data)
+      } catch {
+        // UI/telemetry observers are outside the custody operation boundary. Their exceptions
+        // must never erase confirmed permission or settled sibling evidence.
+      }
+    }
     this.sessionId = sessionId || `session-${Date.now()}`
     this.baseLegContext = baseLegContext
     // Single-signature grant knobs (router path only). Budget defaults to the run total; a larger budget
@@ -266,8 +274,41 @@ export class OrchestratorAgent {
           }
         }
       }
-      for (const [index, budget] of (permissionDecision?.reviewedBudgets || []).entries()) {
-        canonicalAmount(budget, `reviewed budget ${index}`)
+      const expectedBudgets = new Map()
+      for (const agent of planAgents) {
+        const cap = canonicalAmount(agent.cap, `${agent.allocationId} cap`)
+        const existing = expectedBudgets.get(cap.token)
+        if (existing && existing.decimals !== cap.decimals) {
+          throw new Error(`Agent cap decimals disagree for token ${cap.token}.`)
+        }
+        expectedBudgets.set(cap.token, {
+          token: cap.token,
+          units: (existing?.units || 0n) + cap.units,
+          decimals: cap.decimals,
+        })
+      }
+      const reviewedBudgets = permissionDecision?.reviewedBudgets
+      if (
+        !Array.isArray(reviewedBudgets) ||
+        reviewedBudgets.length !== expectedBudgets.size
+      ) {
+        throw new Error('The reviewed budget set does not match the immutable plan.')
+      }
+      const reviewedTokens = new Set()
+      for (const [index, budget] of reviewedBudgets.entries()) {
+        const reviewed = canonicalAmount(budget, `reviewed budget ${index}`)
+        if (reviewedTokens.has(reviewed.token)) {
+          throw new Error(`Duplicate reviewed budget for token ${reviewed.token}.`)
+        }
+        reviewedTokens.add(reviewed.token)
+        const expected = expectedBudgets.get(reviewed.token)
+        if (
+          !expected ||
+          expected.units !== reviewed.units ||
+          expected.decimals !== reviewed.decimals
+        ) {
+          throw new Error(`Reviewed budget does not match plan scopes for token ${reviewed.token}.`)
+        }
       }
     } catch (cause) {
       if (cause instanceof PermissionPhaseError) throw cause
