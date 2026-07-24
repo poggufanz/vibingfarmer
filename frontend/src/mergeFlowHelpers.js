@@ -50,11 +50,17 @@ export function resolveBaseAvailability(input) {
   }
 
   const { mandate, connection = {}, health } = input
-  const mandateView = toBaseMandateView({ mandate, ...connection })
+  const connected = connection.connected === true
+  const boundMandateView = toBaseMandateView({ mandate, ...connection })
+  // A matching local record is not evidence that this browser is currently connected. Preserve
+  // the raw mandate for the supplied adapter, but keep the canonical availability view closed.
+  const mandateView = connected
+    ? boundMandateView
+    : { ...boundMandateView, status: 'unavailable', ready: false }
   const baseAvailable = (async () => {
     try {
       const healthy = await (typeof health === 'function' ? health() : health)
-      return connection.connected !== false && healthy === true && mandateView.ready
+      return connected && healthy === true && mandateView.ready
     } catch {
       return false
     }
@@ -62,7 +68,7 @@ export function resolveBaseAvailability(input) {
   const action =
     connection.setupSucceeded === true
       ? { label: 'Rebuild plan', invalidatesPlan: true }
-      : connection.connected === false
+      : !connected
         ? { label: 'Connect to check Base testnet', invalidatesPlan: false }
         : null
   return { baseAvailable, mandateView, action }

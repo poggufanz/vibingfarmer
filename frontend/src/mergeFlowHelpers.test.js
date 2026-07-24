@@ -197,6 +197,20 @@ describe('resolveBaseAvailability — canonical bound-mandate contract (Strategy
     expect(result.action).toBeNull()
   })
 
+  it('requires an explicit connected state before a matching mandate can be ready', async () => {
+    const { connected, ...connectionWithoutState } = connection
+    const result = resolveBaseAvailability({
+      mandate,
+      connection: connectionWithoutState,
+      health: true,
+    })
+
+    expect(await result.baseAvailable).toBe(false)
+    expect(result.mandateView.status).toBe('unavailable')
+    expect(result.mandateView.ready).toBe(false)
+    expect(result.action).toEqual({ label: 'Connect to check Base testnet', invalidatesPlan: false })
+  })
+
   it('keeps a disconnected first plan Stellar-only and offers connection instead of Base', async () => {
     const result = resolveBaseAvailability({
       mandate,
