@@ -195,13 +195,46 @@ export class OrchestratorAgent {
           message: 'Base bridge allocations require an owner-bound Base context.',
         })
       }
-      const { readBaseMandate } = await import('./wallet/baseBinding.js')
-      baseMandate = readBaseMandate(this.user)
+      try {
+        const { readBaseMandate } = await import('./wallet/baseBinding.js')
+        baseMandate = readBaseMandate(this.user)
+      } catch (cause) {
+        throw new PermissionPhaseError({
+          phase: 'preflight',
+          code: 'VF_BASE_MANDATE_UNREADABLE',
+          message: 'The owner-bound Base mandate could not be read safely.',
+          cause,
+        })
+      }
       if (!baseMandate?.kernelAddress) {
         throw new PermissionPhaseError({
           phase: 'preflight',
           code: 'VF_BASE_MANDATE_MISSING',
           message: 'No owner-bound Base mandate is available for this bridge allocation.',
+        })
+      }
+      const reviewedBridge = (permissionDecision.reviewedAgentInits || []).find(
+        (init) => init.allocationId === bridgeAgents[0].allocationId
+      )
+      const expectedRecipient = evmAddrToBytes32(baseMandate.kernelAddress)
+      const actualRecipient =
+        typeof reviewedBridge?.mintRecipient === 'string'
+          ? hexToBytes32(reviewedBridge.mintRecipient)
+          : reviewedBridge?.mintRecipient
+      const recipientMatches =
+        actualRecipient instanceof Uint8Array &&
+        actualRecipient.length === expectedRecipient.length &&
+        actualRecipient.every((byte, index) => byte === expectedRecipient[index])
+      if (
+        !reviewedBridge ||
+        reviewedBridge.target !== STELLAR_TOKEN_MESSENGER_MINTER ||
+        reviewedBridge.destinationDomain !== CCTP_BASE_DOMAIN ||
+        !recipientMatches
+      ) {
+        throw new PermissionPhaseError({
+          phase: 'preflight',
+          code: 'VF_BRIDGE_SCOPE_MISMATCH',
+          message: 'The reviewed bridge scope no longer matches the owner-bound Base mandate.',
         })
       }
     }
@@ -346,13 +379,10 @@ export class OrchestratorAgent {
   async dispatchConfirmedMixed({ strategyPlan, confirmed, workers, bridgeAgent, baseMandate }) {
     const mandate = baseMandate
     const bridgeWorker = workers.find((worker) => worker.allocationId === bridgeAgent.allocationId)
-    if (!bridgeWorker?.agentAddress || !bridgeWorker.sessionKey) {
-      throw new PermissionPhaseError({
-        phase: 'fresh-grant',
-        code: 'VF_BRIDGE_GRANT_EVIDENCE_MISSING',
-        message: 'The confirmed grant did not return the reviewed bridge agent material.',
-      })
-    }
+    const bridgeMaterialError =
+      !bridgeWorker?.agentAddress || !bridgeWorker.sessionKey
+        ? 'The confirmed grant did not return the reviewed bridge agent material.'
+        : null
     const stellarWorkers = workers.filter((worker) => worker !== bridgeWorker)
     stellarWorkers.forEach((worker, index) => {
       this.onEvent('worker-queued', {
@@ -374,6 +404,8 @@ export class OrchestratorAgent {
         })
         try {
           const balance = await readTokenBalance(worker.agentAddress)
+          let pullTxHash = null
+          let movedToAgent = balance != null && balance >= worker.amount
           if (balance == null || balance < worker.amount) {
             const pulled = await runAgentPull({
               agentAddress: worker.agentAddress,
@@ -382,10 +414,34 @@ export class OrchestratorAgent {
             })
             if (!pulled) throw new Error('The Stellar relay is unavailable.')
             if (pulled.status !== 'SUCCESS') throw new Error(`The funding router returned ${pulled.status}.`)
+            pullTxHash = pulled.hash || null
+            movedToAgent = true
           }
-          settled.push({ status: 'fulfilled', value: await worker.execute() })
+          const deposited = await worker.execute()
+          settled.push({
+            status: 'fulfilled',
+            value: {
+              ...deposited,
+              agentAddress: worker.agentAddress,
+              pullTxHash,
+              depositTxHash: deposited?.txHash || null,
+              custody: deposited?.custody ||
+                (deposited?.success
+                  ? { location: 'stellar-vault', confirmed: true, checkedAt: null }
+                  : movedToAgent
+                    ? { location: 'agent', confirmed: true, checkedAt: null }
+                    : { location: 'unknown', confirmed: false, checkedAt: null }),
+            },
+          })
         } catch (reason) {
-          settled.push({ status: 'rejected', reason })
+          settled.push({
+            status: 'rejected',
+            reason,
+            value: {
+              agentAddress: worker.agentAddress,
+              custody: { location: 'unknown', confirmed: false, checkedAt: null },
+            },
+          })
         }
         if (index < stellarWorkers.length - 1) await new Promise((resolve) => setTimeout(resolve, DISPATCH_INTERVAL_MS))
       }
@@ -394,32 +450,53 @@ export class OrchestratorAgent {
         agentId: stellarWorkers[index].agentId,
         vault: stellarWorkers[index].vault,
         success: entry.status === 'fulfilled' && entry.value?.success,
-        txHash: entry.value?.txHash,
+        txHash: entry.value?.depositTxHash || entry.value?.txHash,
+        pullTxHash: entry.value?.pullTxHash || null,
+        depositTxHash: entry.value?.depositTxHash || null,
+        agentAddress: entry.value?.agentAddress || stellarWorkers[index].agentAddress,
+        custody: entry.value?.custody,
         error: entry.reason?.message || entry.value?.error,
       }))
     }
-    const baseVaults = (bridgeAgent.children || []).map((child) => ({
-      address: child.address,
-      allocationId: child.allocationId,
-      allocationAmount: child.allocation,
-      amountBaseUnits: BigInt(child.allocation.units),
-      allocation: 1,
-    }))
-    const [stellarSettled, baseSettled] = await Promise.allSettled([
-      runStellar(),
-      import('./baseLeg.js').then(({ executeBaseLeg }) =>
-        executeBaseLeg({
-          connectedAddress: this.baseLegContext.connectedAddress,
-          bridgeAgentAddress: bridgeWorker.agentAddress,
-          bridgeSessionKey: bridgeWorker.sessionKey,
-          kernelAddress: mandate.kernelAddress,
-          baseVaults,
-          totalAmount: 0,
+    const bridgeChildren = bridgeAgent.children || []
+    const runBase = async () => {
+      if (bridgeMaterialError) {
+        return {
+          success: false,
           runId: strategyPlan.runId,
           grantTxHash: confirmed.txHash,
-          onEvent: (name, data) => this.onEvent(name, data),
-        })
-      ),
+          error: bridgeMaterialError,
+          allocations: bridgeChildren.map((child) => ({
+            allocationId: child.allocationId,
+            amount: child.allocation,
+            error: bridgeMaterialError,
+            custody: { location: 'unknown', confirmed: false, checkedAt: null },
+          })),
+        }
+      }
+      const baseVaults = bridgeChildren.map((child) => ({
+        address: child.address,
+        allocationId: child.allocationId,
+        allocationAmount: child.allocation,
+        amountBaseUnits: BigInt(child.allocation.units),
+        allocation: 1,
+      }))
+      const { executeBaseLeg } = await import('./baseLeg.js')
+      return executeBaseLeg({
+        connectedAddress: this.baseLegContext.connectedAddress,
+        bridgeAgentAddress: bridgeWorker.agentAddress,
+        bridgeSessionKey: bridgeWorker.sessionKey,
+        kernelAddress: mandate.kernelAddress,
+        baseVaults,
+        totalAmount: 0,
+        runId: strategyPlan.runId,
+        grantTxHash: confirmed.txHash,
+        onEvent: (name, data) => this.onEvent(name, data),
+      })
+    }
+    const [stellarSettled, baseSettled] = await Promise.allSettled([
+      runStellar(),
+      runBase(),
     ])
     const stellarResults =
       stellarSettled.status === 'fulfilled'
@@ -439,9 +516,9 @@ export class OrchestratorAgent {
             bridgeAgent: bridgeWorker.agentAddress,
             kernelAddress: mandate.kernelAddress,
             error: baseSettled.reason?.message || String(baseSettled.reason),
-            allocations: baseVaults.map((vault) => ({
-              allocationId: vault.allocationId,
-              amount: vault.allocationAmount,
+            allocations: bridgeChildren.map((child) => ({
+              allocationId: child.allocationId,
+              amount: child.allocation,
               success: false,
               custody: { location: 'owner', confirmed: true, checkedAt: null },
               error: baseSettled.reason?.message || String(baseSettled.reason),
@@ -756,6 +833,18 @@ export class OrchestratorAgent {
         code: err instanceof PermissionPhaseError ? err.code : 'VF_GRANT_FAILED',
         message: err.message,
         cause: err,
+      })
+    }
+    if (
+      !submitted?.hash ||
+      !Array.isArray(submitted.agentAddresses) ||
+      submitted.agentAddresses.length !== workers.length ||
+      submitted.agentAddresses.some((address) => typeof address !== 'string' || address.length === 0)
+    ) {
+      throw new PermissionPhaseError({
+        phase: 'fresh-grant',
+        code: 'VF_GRANT_EVIDENCE_MISSING',
+        message: 'The grant did not return a complete reviewed agent deployment record.',
       })
     }
 
@@ -1159,9 +1248,7 @@ export class OrchestratorAgent {
               success: baseLeg?.success === true,
               finalStatus: baseLeg?.finalStatus || (baseLeg?.success ? 'done' : 'error'),
               error: baseLeg?.error || null,
-              custody: baseLeg?.success
-                ? { location: 'base-proxy', confirmed: true, checkedAt: null }
-                : { location: 'owner', confirmed: true, checkedAt: null },
+              custody: { location: 'unknown', confirmed: false, checkedAt: null },
               ...baseLeg,
               allocationId: vault.allocationId,
             }

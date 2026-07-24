@@ -105,7 +105,12 @@ vi.mock('./stellar/grantReceiptStore.js', () => ({
 }))
 
 import { OrchestratorAgent } from './orchestrator.js'
-import { STELLAR_USDC_SAC } from './stellar/cctpBurn.js'
+import {
+  STELLAR_USDC_SAC,
+  STELLAR_TOKEN_MESSENGER_MINTER,
+  CCTP_BASE_DOMAIN,
+  evmAddrToBytes32,
+} from './stellar/cctpBurn.js'
 
 const KERNEL = '0x0000000000000000000000000000000000000AA1'
 
@@ -197,12 +202,12 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
         allocationId: plan.agents[1].allocationId,
         kind: 1,
         token: STELLAR_USDC_SAC,
-        target: 'CTOKENMESSENGER',
+        target: STELLAR_TOKEN_MESSENGER_MINTER,
         cap: plan.agents[1].cap,
         periodSeconds: 3600,
         expiry: 2000000000,
-        mintRecipient: '00'.repeat(32),
-        destinationDomain: 6,
+        mintRecipient: Array.from(evmAddrToBytes32(KERNEL), (byte) => byte.toString(16).padStart(2, '0')).join(''),
+        destinationDomain: CCTP_BASE_DOMAIN,
       },
     ]
     executeBaseLegMock.mockResolvedValueOnce({
@@ -361,11 +366,11 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
       expect.arrayContaining([
         expect.objectContaining({
           executionStatus: 'succeeded',
-          custody: expect.objectContaining({ location: 'stellar-vault' }),
+          custody: expect.objectContaining({ location: 'unknown', confirmed: false }),
         }),
         expect.objectContaining({
           executionStatus: 'succeeded',
-          custody: expect.objectContaining({ location: 'base-proxy' }),
+          custody: expect.objectContaining({ location: 'unknown', confirmed: false }),
         }),
       ])
     )
@@ -511,7 +516,7 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
     expect(summary.receipt.branches.base.status).toBe('failed')
     expect(summary.receipt.allocations[0]).toMatchObject({
       executionStatus: 'failed',
-      custody: { location: 'owner', confirmed: true },
+      custody: { location: 'unknown', confirmed: false },
       error: 'down',
     })
   })

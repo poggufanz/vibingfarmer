@@ -58,19 +58,7 @@ function inferredCustody(raw, branch, status) {
       checkedAt: typeof raw.custody.checkedAt === 'number' ? raw.custody.checkedAt : null,
     }
   }
-  if (branch === 'stellar') {
-    if (status === 'succeeded') return { location: 'stellar-vault', confirmed: true, checkedAt: null }
-    if (raw?.pulled || raw?.agentAddress) return { location: 'agent', confirmed: true, checkedAt: null }
-    return { location: 'owner', confirmed: status === 'not-started', checkedAt: null }
-  }
-  if (raw?.finalStatus === 'done' || raw?.mintTxHash || raw?.depositTxHash) {
-    return { location: 'base-proxy', confirmed: true, checkedAt: null }
-  }
-  if (raw?.burnHash) return { location: 'in-transit', confirmed: true, checkedAt: null }
-  if (raw?.pulled || raw?.bridgeAgentAddress || raw?.bridgeAgent) {
-    return { location: 'agent', confirmed: true, checkedAt: null }
-  }
-  return { location: 'owner', confirmed: status === 'not-started', checkedAt: null }
+  return { location: 'unknown', confirmed: false, checkedAt: null }
 }
 
 function txHash(raw) {
@@ -110,6 +98,8 @@ function safeEvidence(raw) {
     'kernelAddress',
     'grantTxHash',
     'baseAccount',
+    'attestation',
+    'recovery',
     'stage',
   ]
   return Object.fromEntries(keys.filter((key) => raw?.[key] != null).map((key) => [key, raw[key]]))
@@ -118,12 +108,22 @@ function safeEvidence(raw) {
 function normalizeOutcome(planned, raw) {
   const status = executionStatus(raw, planned.branch)
   const custody = inferredCustody(raw, planned.branch, status)
+  const amount = planned.allocation || planned.cap
+  if (
+    !amount ||
+    typeof amount.token !== 'string' ||
+    !/^-?\d+$/.test(String(amount.units)) ||
+    !Number.isInteger(amount.decimals) ||
+    amount.decimals < 0
+  ) {
+    throw new Error(`Invalid canonical amount for allocation ${planned.allocationId}.`)
+  }
   return {
     allocationId: planned.allocationId,
     amount: {
-      token: planned.allocation?.token || planned.cap?.token,
-      units: String(planned.allocation?.units ?? planned.cap?.units ?? '0'),
-      decimals: Number(planned.allocation?.decimals ?? planned.cap?.decimals ?? 0),
+      token: amount.token,
+      units: String(amount.units),
+      decimals: amount.decimals,
     },
     networkContext: networkContext(raw, planned.branch, custody),
     executionStatus: status,
@@ -147,6 +147,9 @@ function branchStatus(branch, planned, outcomes, declared) {
 }
 
 function normalizePermission(permission = {}) {
+  if (permission.mode !== 'fresh' && permission.mode !== 'reuse') {
+    throw new Error('Invalid PermissionConfirmedV1 mode.')
+  }
   const reuse = permission.mode === 'reuse'
   return {
     mode: reuse ? 'reuse' : 'fresh',

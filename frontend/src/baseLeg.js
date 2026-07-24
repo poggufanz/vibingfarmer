@@ -229,10 +229,7 @@ export async function executeBaseLeg({
     })
     const custodyFor = (remote = {}) => {
       if (remote.custody?.location) return remote.custody
-      if (result.finalStatus === 'done' || remote.mintTxHash || remote.depositTxHash) {
-        return { location: 'base-proxy', confirmed: true, checkedAt: null }
-      }
-      return { location: 'in-transit', confirmed: !!result.burnHash, checkedAt: null }
+      return { location: 'unknown', confirmed: false, checkedAt: null }
     }
     const childResults = quotedAllocations.map((allocation, i) => {
       const remote = (result.allocations || []).find(
@@ -247,6 +244,10 @@ export async function executeBaseLeg({
         },
         burnHash: result.burnHash || null,
         jobId: result.jobId || null,
+        bridgeAgentAddress,
+        kernelAddress: ownerAddress,
+        attestation: remote.attestation || result.attestation || result.attestationState || null,
+        recovery: remote.recovery || null,
         finalStatus: remote.finalStatus || result.finalStatus || null,
         mintTxHash: remote.mintTxHash || null,
         depositTxHash: remote.depositTxHash || null,

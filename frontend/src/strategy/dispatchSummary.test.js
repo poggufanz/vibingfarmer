@@ -99,6 +99,7 @@ describe('buildDispatchReceipt', () => {
               allocationId: 'run-mixed-8:deposit:0',
               success: true,
               depositTxHash: 'stellar-deposit',
+              custody: { location: 'stellar-vault', confirmed: true, checkedAt: 103 },
             },
           ],
         },
@@ -111,6 +112,7 @@ describe('buildDispatchReceipt', () => {
               pulled: true,
               bridgeAgentAddress: 'CBRIDGE',
               error: 'burn rejected',
+              custody: { location: 'agent', confirmed: true, checkedAt: 103 },
             },
           ],
         },
@@ -217,6 +219,7 @@ describe('buildDispatchReceipt', () => {
               success: false,
               burnHash: 'burn-hash',
               error: 'relayer unavailable; retry with burn hash',
+              custody: { location: 'in-transit', confirmed: true, checkedAt: 104 },
             },
           ],
         },
@@ -231,5 +234,37 @@ describe('buildDispatchReceipt', () => {
       error: 'relayer unavailable; retry with burn hash',
     })
     expect(outcome.error).not.toMatch(/vanished|lost/i)
+  })
+
+  it('fails closed on missing custody evidence and never promotes a mint hash to Base proxy custody', () => {
+    const receipt = buildDispatchReceipt({
+      plan: plan(),
+      permission: permission(),
+      branches: {
+        base: {
+          results: [
+            {
+              allocationId: 'run-mixed-8:bridge:base-a',
+              finalStatus: 'done',
+              mintTxHash: 'mint-without-deposit-proof',
+            },
+          ],
+        },
+      },
+    })
+    expect(receipt.allocations.find((a) => a.allocationId === 'run-mixed-8:bridge:base-a').custody).toEqual({
+      location: 'unknown',
+      confirmed: false,
+      checkedAt: null,
+    })
+  })
+
+  it('rejects malformed canonical amounts and unknown permission modes', () => {
+    expect(() =>
+      buildDispatchReceipt({
+        plan: { runId: 'bad', planFingerprint: 'bad', agents: [{ allocationId: 'bad:0', kind: 'deposit' }] },
+        permission: { mode: 'surprise' },
+      })
+    ).toThrow(/canonical amount|permission/i)
   })
 })

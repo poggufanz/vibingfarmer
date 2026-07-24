@@ -107,7 +107,7 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
           burnHash: 'BURN',
           jobId: 'job-1',
           finalStatus: 'done',
-          custody: { location: 'base-proxy', confirmed: true, checkedAt: null },
+          custody: { location: 'unknown', confirmed: false, checkedAt: null },
         }),
       ],
     })
