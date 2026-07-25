@@ -599,6 +599,5 @@ pre,
   margin: 0;
   min-height: var(--pc-space-4);
   color: var(--pc-muted);
-  font-family: var(--pc-font-mono);
   font-size: var(--pc-type-technical);
 }

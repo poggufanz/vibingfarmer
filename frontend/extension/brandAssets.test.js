@@ -6,7 +6,6 @@
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -22,7 +21,6 @@ import { describe, expect, it } from 'vitest'
 const FRONTEND_DIR = resolve(import.meta.dirname, '..')
 const EXT_DIR = resolve(FRONTEND_DIR, 'extension')
 const PUBLIC_DIR = resolve(FRONTEND_DIR, 'public')
-const DIST_DIR = resolve(FRONTEND_DIR, 'extension-dist')
 const GEN_SCRIPT = resolve(FRONTEND_DIR, 'scripts/gen-ext-icons.mjs')
 const MANIFEST_JSON = resolve(EXT_DIR, 'manifest.json')
 const MARK_SVG = resolve(PUBLIC_DIR, 'brand/vibing-farmer-mark.svg')
@@ -131,14 +129,22 @@ describe('extension brand asset contract', () => {
       execFileSync('node', [runA.scriptPath], { stdio: 'pipe' })
       execFileSync('node', [runB.scriptPath], { stdio: 'pipe' })
 
-      for (const size of ICON_SIZES) {
+      ICON_SIZES.forEach((size, i) => {
         const pngA = readFileSync(resolve(runA.iconsDir, `icon-${size}.png`))
         const pngB = readFileSync(resolve(runB.iconsDir, `icon-${size}.png`))
         expect(readPngSize(pngA), `icon-${size}.png`).toEqual({ width: size, height: size })
         expect(sha256(pngA), `icon-${size}.png byte-stability across independent runs`).toBe(
           sha256(pngB)
         )
-      }
+        // Ties generator output to the COMMITTED icon, not just to itself across two fresh runs --
+        // run-to-run stability alone proves the pipeline is deterministic but not that the tracked
+        // PNG actually came from this source SVG. A hand-edited or stale tracked icon would pass
+        // every assertion above (and the unchanged-since check below, which only proves the test
+        // itself didn't mutate it) without this line ever comparing it to real generator output.
+        expect(sha256(pngA), `icon-${size}.png must match the committed icon`).toBe(
+          trackedIconsBefore[i]
+        )
+      })
     } finally {
       runA.cleanup()
       runB.cleanup()
@@ -160,7 +166,20 @@ describe('extension brand asset contract', () => {
     const dir = setupTmpGenDir()
     try {
       writeFileSync(dir.svgPath, '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"></svg>\n')
-      expect(() => execFileSync('node', [dir.scriptPath], { stdio: 'pipe' })).toThrow()
+      let failure
+      try {
+        execFileSync('node', [dir.scriptPath], { stdio: 'pipe' })
+      } catch (err) {
+        failure = err
+      }
+      expect(failure, 'gen-ext-icons.mjs must exit non-zero on a hash mismatch').toBeTruthy()
+      // A bare .toThrow() here also passes when the *harness* is broken (e.g. a missing/broken
+      // node_modules symlink -> ERR_MODULE_NOT_FOUND) without the frozen-hash guard in
+      // gen-ext-icons.mjs ever firing. Match the guard's own message text so only that specific
+      // guard satisfies this test.
+      expect(String(failure.stderr)).toMatch(
+        /does not match the frozen mark hash in assets\.manifest\.json/
+      )
     } finally {
       dir.cleanup()
     }
@@ -239,6 +258,36 @@ describe('extension brand asset contract', () => {
     expect(approval).toMatch(/\.pc-wallet-approval-actions\s*\{[^}]*grid-template-columns:\s*1fr 1\.35fr/)
   })
 
+  // Fix loop 2, checklist item 5: "#status" (approve.js/ceremony.js full-sentence user guidance,
+  // e.g. "Wrong password.", "Request expired: close this window and retry from the site.") is
+  // friendly copy in a <p>, not an address/hash/amount -- it must not resolve to the mono stack.
+  // jsdom does not load external stylesheets or resolve CSS custom properties, so a computed-style
+  // assertion can't observe this; asserting the rule's absence from the stylesheet text is the
+  // available proxy (brief's documented fallback).
+  it('approval.css does not set the mono font-family on #status (friendly copy stays in the body font)', () => {
+    const css = readFileSync(resolve(EXT_DIR, 'approval.css'), 'utf8')
+    const statusBlock = css.match(/#status\s*\{([^}]*)\}/)
+    expect(statusBlock, 'approval.css must define #status').toBeTruthy()
+    expect(statusBlock[1]).not.toMatch(/font-family\s*:\s*var\(--pc-font-mono\)/)
+    // The size token (--pc-type-technical) is unaffected by this fix and must remain.
+    expect(statusBlock[1]).toMatch(/font-size\s*:\s*var\(--pc-type-technical\)/)
+  })
+
+  // Fix loop 2, minor: wallet.css's header claims each extension stylesheet is a COMPLETE copy of
+  // its slice of the contract; approval.css's header claims it carries "the same token/primitive
+  // slice wallet.css carries". Both were false while wallet.css omitted the contract's base h1/h2
+  // rules that approval.css had. Guard both claims by pinning wallet.css to the same verbatim
+  // rules approval.css already asserts elsewhere in this file.
+  it('wallet.css declares the contract base h1/h2 rules verbatim (same slice approval.css carries)', () => {
+    const wallet = readFileSync(resolve(EXT_DIR, 'wallet.css'), 'utf8')
+    expect(wallet).toMatch(
+      /h1\s*\{[^}]*max-width:\s*15ch;[^}]*font-size:\s*var\(--pc-type-page\);[^}]*font-weight:\s*700;/
+    )
+    expect(wallet).toMatch(
+      /h2\s*\{[^}]*font-size:\s*var\(--pc-type-section\);[^}]*font-weight:\s*650;/
+    )
+  })
+
   it('no critical-screen stylesheet defines a gradient, glow, shimmer, pulse, or infinite animation', () => {
     for (const file of ['wallet.css', 'approval.css']) {
       const css = readFileSync(resolve(EXT_DIR, file), 'utf8')
@@ -257,28 +306,15 @@ describe('extension brand asset contract', () => {
     }
   })
 
-  it('extension-dist ships the reviewed brand mark and network subset with no remote resource in the built HTML', () => {
-    execFileSync('npm', ['run', 'build:ext'], { cwd: FRONTEND_DIR, stdio: 'pipe' })
-
-    expect(existsSync(resolve(DIST_DIR, 'brand/vibing-farmer-mark.svg'))).toBe(true)
-    expect(existsSync(resolve(DIST_DIR, 'brand/vibing-farmer-mark-forest.svg'))).toBe(true)
-    expect(existsSync(resolve(DIST_DIR, 'brand/vibing-farmer-mark-day.svg'))).toBe(true)
-    expect(existsSync(resolve(DIST_DIR, 'brand/vibing-farmer-lockup-forest.svg'))).toBe(true)
-    expect(existsSync(resolve(DIST_DIR, 'brand/networks/stellar.svg'))).toBe(true)
-    expect(existsSync(resolve(DIST_DIR, 'brand/networks/stellar-white.svg'))).toBe(true)
-    expect(existsSync(resolve(DIST_DIR, 'brand/networks/base.svg'))).toBe(true)
-    expect(existsSync(resolve(DIST_DIR, 'manifest.json'))).toBe(true)
-    for (const size of ICON_SIZES) {
-      expect(existsSync(resolve(DIST_DIR, `icons/icon-${size}.png`))).toBe(true)
-    }
-
-    for (const file of PAGES) {
-      const html = readFileSync(resolve(DIST_DIR, file), 'utf8')
-      // A built page may legitimately embed a data:image/svg+xml,... URI whose payload contains
-      // the SVG namespace string "http://www.w3.org/2000/svg" -- that is a fully-inlined asset,
-      // not a fetch. Only a real fetchable attribute/url() pointed at a remote origin counts.
-      expect(html, file).not.toMatch(/(?:href|src)\s*=\s*["']https?:\/\//)
-      expect(html, file).not.toMatch(/url\(\s*['"]?https?:\/\//)
-    }
-  }, 30000)
+  // Fix loop 2, minor: this suite used to also run `npm run build:ext` here and assert against
+  // extension-dist/ (brand/network asset copy, dist HTML free of remote hrefs). That cost every
+  // `npm test` invocation a full second Vite build (~3s, verified non-mutating but still paid on
+  // every run) for coverage this file cannot otherwise exercise cheaply -- extension-dist/ has no
+  // other producer to assert against. Dropped in favor of the standalone `npm run build:ext` gate
+  // (already a Process Requirement of this fix loop, run and pasted in the report). Known gap left
+  // by this choice: .github/workflows/frontend.yml's frontend job runs `npm test` and `npm run
+  // build` but never `npm run build:ext`, so nothing currently re-runs that gate in CI on every
+  // push/PR -- wiring it in is a `.github/workflows/frontend.yml` change outside this fix loop's
+  // authorized file list (approval.css, wallet.css, brandAssets.test.js only) and is left as a
+  // follow-up, not silently absorbed here.
 })

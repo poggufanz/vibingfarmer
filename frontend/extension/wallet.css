@@ -198,6 +198,24 @@ textarea {
   font-family: var(--pc-font-body);
 }
 
+h1 {
+  max-width: 15ch;
+  margin-bottom: var(--pc-space-4);
+  font-size: var(--pc-type-page);
+  font-weight: 700;
+  line-height: var(--pc-leading-title);
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+
+h2 {
+  margin-bottom: var(--pc-space-3);
+  font-size: var(--pc-type-section);
+  font-weight: 650;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
 p {
   max-width: 64ch;
 }
