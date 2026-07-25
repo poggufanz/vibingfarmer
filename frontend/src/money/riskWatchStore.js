@@ -42,13 +42,11 @@ function write(key, rows) {
 export function recordRecommendation(networkId, owner, recommendation, { now = Date.now() } = {}) {
   const key = scopedKey(networkId, owner)
   if (!key) return
-  try {
-    const rows = read(key)
-    rows.push({ ...recommendation, recordedAt: now, scope: 'local' })
-    write(key, rows)
-  } catch (err) {
-    console.warn('[RiskWatchStore] recordRecommendation failed:', err.message)
-  }
+  // Dead catch removed (Fix 6, review loop 1): read()/write() already swallow everything
+  // themselves — this wrapper could never actually catch anything.
+  const rows = read(key)
+  rows.push({ ...recommendation, recordedAt: now, scope: 'local' })
+  write(key, rows)
 }
 
 /** @returns newest-first array of recommendations for this network+owner. Never falls back to

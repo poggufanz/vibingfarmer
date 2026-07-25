@@ -22,11 +22,15 @@ import { classifyFreshness } from './freshness.js'
  *   executionBreakdown: Record<string,number>,
  *   agentCount: number, problemAgentCount: number,
  *   agents: Array<{address:string, problems?:string[], amount:{token:string,units:string,decimals:number}|null}>,
- *   checkedAt: number,
+ *   checkedAt: number, confirmedLedger?: number|null, confirmedBlock?: number|null, source?: string|null,
  * }} MoneySnapshot readOwnerMoney.js's aggregateOwnerPositions() output, plus its `agents` (the
- *   raw readOwnerMoney().agents rows — needed here for confirmed-problem detection) and its own
- *   `checkedAt`. This module never mutates or re-fetches it; the caller is responsible for
- *   assembling `{ ...aggregateOwnerPositions(reads), agents: reads.agents, checkedAt: reads.checkedAt }`.
+ *   raw readOwnerMoney().agents rows — needed here for confirmed-problem detection) and the full
+ *   freshness triple (freshness.js): its own `checkedAt`, `confirmedLedger`/`confirmedBlock`
+ *   (whichever chain confirmed the read — genuinely unknown carries `null`, never `0`), and
+ *   `source`. This module never mutates or re-fetches it; the caller is responsible for assembling
+ *   `{ ...aggregateOwnerPositions(reads), agents: reads.agents, checkedAt: reads.checkedAt,
+ *   confirmedLedger: reads.confirmedLedger ?? null, confirmedBlock: reads.confirmedBlock ?? null,
+ *   source: reads.source ?? null }`.
  * @typedef {{status:'complete'|'partial'|'unavailable', agents:Array}} DiscoverySnapshot
  *   OwnerDiscoveryV1 (ownerDiscovery.js's discoverOwnerScopes() output).
  * @typedef {{state:'engaged'|'armed'|'disarmed'|'unavailable', authority:string|null, mandateExpiry:number|null}} ProtectionSnapshot
@@ -43,8 +47,20 @@ const CONFIRMED_PROBLEM_MARKERS = new Set(['scope-revoked', 'scope-expired', 'ba
 // lapsing, not "could someday lapse".
 const URGENT_RENEWAL_WITHIN_S = 2 * 3600
 
+// A malformed `units` string must degrade to an honest unknown, never crash the whole route
+// (Fix 6, review loop 1: this is a pure view model with no try/catch upstream of these reads).
+function safeBigInt(v) {
+  try {
+    return BigInt(v)
+  } catch {
+    return null
+  }
+}
+
 function isKnownPositiveAmount(amount) {
-  return amount != null && BigInt(amount.units) > 0n
+  if (amount == null) return false
+  const units = safeBigInt(amount.units)
+  return units != null && units > 0n
 }
 
 /** Addresses of agents with a CONFIRMED (not merely unread) custody/recovery problem AND real
@@ -66,7 +82,9 @@ function hasKnownPositiveUnattributed(unattributed) {
 
 function hasKnownVaultMoney(money) {
   const units = money?.custodyBreakdown?.['stellar-vault']
-  return units != null && BigInt(units) > 0n
+  if (units == null) return false
+  const n = safeBigInt(units)
+  return n != null && n > 0n
 }
 
 /** Fresh money wins when it succeeded; a failed/absent fresh read falls back to a known-good
@@ -113,6 +131,12 @@ function finishModel({ state, owner, money, protection, automation, cache, now, 
     problemAgentCount: money?.problemAgentCount ?? null,
     freshness,
     checkedAt: money?.checkedAt ?? null,
+    // Freshness triple (Fix 5, review loop 1): confirmedLedger/confirmedBlock/source must survive
+    // to the finished model, not just checkedAt. `??` never lets a genuinely unread confirmation
+    // height fall back to 0 — unknown stays null.
+    confirmedLedger: money?.confirmedLedger ?? null,
+    confirmedBlock: money?.confirmedBlock ?? null,
+    source: money?.source ?? null,
     problemAgents,
     protection: resolvedProtection,
     automation: automation ?? null,
@@ -191,7 +215,10 @@ export function buildMyMoneyModel({
   const discoveryStatus = discovery?.status ?? cache?.discovery?.status ?? 'unavailable'
 
   // Precedence: incomplete evidence anywhere in the picture — never presented as a confident total.
-  if (discoveryStatus === 'partial' || md.confirmedTotal.state === 'partial') {
+  // A total enumeration failure ('unavailable' — discovery null or itself failed) must be at least
+  // as cautious as a partial one; it is not silently upgraded to a confident 'current' just because
+  // the money read itself succeeded (Fix 2, review loop 1).
+  if (discoveryStatus === 'partial' || discoveryStatus === 'unavailable' || md.confirmedTotal.state === 'partial') {
     return finishModel({
       state: 'partial-discovery',
       owner,
@@ -205,13 +232,17 @@ export function buildMyMoneyModel({
     })
   }
 
-  // Precedence 3: authoritatively empty. Requires PROVEN-complete coverage (never claim "nothing
-  // here" from a partial enumeration), a KNOWN zero total, and no doubt hiding in the
-  // unattributed (Base kernel idle) bucket — an unavailable entry there means we can't be sure,
-  // and a known-positive entry there means it's not actually empty.
-  const totalUnits = BigInt(md.confirmedTotal.amount.units)
+  // Precedence 3: authoritatively empty. Requires PROVEN-complete coverage from a FRESH discovery
+  // read (never a cached discoveryStatus — that would rest 'empty' on two layers of non-fresh
+  // evidence at once), a FRESH money read (freshness === 'current' — a stale cached zero is not
+  // proof of zero right now; it downgrades to 'stale' below instead, per Fix 1, review loop 1), a
+  // KNOWN zero total, and no doubt hiding in the unattributed (Base kernel idle) bucket — an
+  // unavailable entry there means we can't be sure, and a known-positive entry there means it's
+  // not actually empty.
+  const totalUnits = safeBigInt(md.confirmedTotal.amount.units)
   const authoritativelyEmpty =
-    discoveryStatus === 'complete' &&
+    freshness === 'current' &&
+    discovery?.status === 'complete' &&
     totalUnits === 0n &&
     !hasUnknownUnattributed(md.unattributed) &&
     !hasKnownPositiveUnattributed(md.unattributed)

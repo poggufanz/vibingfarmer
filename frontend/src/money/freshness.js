@@ -17,6 +17,13 @@ export const FRESHNESS_STATES = ['current', 'stale', 'unavailable']
 // own 15s sync poll for one missed cycle before calling it stale rather than crying wolf.
 export const DEFAULT_STALE_AFTER_MS = 2 * 60 * 1000
 
+// Real client/chain clock skew is seconds, not hours — a `checkedAt` further in the future than
+// this is not skew, it is implausible/bogus data (a chain close time is always in the past). Left
+// unclamped, an unbounded future timestamp read as 'current' and let a corrupt reading manufacture
+// 'healthy' automation evidence (see classifyKeeperAutomation) out of a reading that never actually
+// happened (Fix 6, review loop 1).
+export const MAX_CLOCK_SKEW_MS = 60 * 1000
+
 /**
  * Classify a single `checkedAt` timestamp against `now`. A `checkedAt` that was never set (no
  * read ever happened) is always 'unavailable' — there is no reading to be stale about.
@@ -25,7 +32,12 @@ export const DEFAULT_STALE_AFTER_MS = 2 * 60 * 1000
 export function classifyFreshness({ checkedAt, now, staleAfterMs = DEFAULT_STALE_AFTER_MS } = {}) {
   if (checkedAt == null || !Number.isFinite(checkedAt) || !Number.isFinite(now)) return 'unavailable'
   const age = now - checkedAt
-  if (age < 0) return 'current' // clock skew — never punish a reading that looks "from the future"
+  if (age < 0) {
+    // Small clock skew still reads as current — never punish a reading that looks "from the
+    // future" by a plausible margin. Anything further ahead than that is not skew; it is bad data
+    // and must never be rewarded with 'current'.
+    return -age <= MAX_CLOCK_SKEW_MS ? 'current' : 'unavailable'
+  }
   return age <= staleAfterMs ? 'current' : 'stale'
 }
 
@@ -43,7 +55,18 @@ export function withCacheFallback({ cached, fresh, now, staleAfterMs = DEFAULT_S
   if (cached && cached.state && cached.state !== 'unavailable') {
     return { ...cached, freshness: 'stale' }
   }
-  return { state: 'unavailable', amount: null, checkedAt: null, freshness: 'unavailable' }
+  // Nothing usable — every field of the freshness triple is genuinely unknown, carried as null,
+  // never coerced to 0 (a confirmedLedger/confirmedBlock of 0 would read as a real, very early
+  // confirmation height, not "never checked").
+  return {
+    state: 'unavailable',
+    amount: null,
+    checkedAt: null,
+    confirmedLedger: null,
+    confirmedBlock: null,
+    source: null,
+    freshness: 'unavailable',
+  }
 }
 
 /**

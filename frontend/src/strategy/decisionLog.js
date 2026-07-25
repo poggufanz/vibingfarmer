@@ -76,8 +76,12 @@ const LEGACY_KEY = 'yv_decision_log'
 const MAX_ROWS = 100
 const ROLES = ['yield', 'risk', 'market']
 
+// Fix 6 (minor, review loop 1): a missing network drops the write (null key), matching
+// riskWatchStore.js's own policy — never invent a shared 'unknown' bucket that merges every
+// network-less write for one owner (Stellar G-addresses are identical across testnet and mainnet).
 function scopedKey(network, owner) {
-  return `yv_decision_log:${network || 'unknown'}:${owner}`
+  if (!network || !owner) return null
+  return `yv_decision_log:${network}:${owner}`
 }
 
 function read(key) {
@@ -116,40 +120,46 @@ export function recordDecision(ownerOrCtx, ctx, { network } = {}) {
     return
   }
   if (!ownerOrCtx) return
-  try {
-    const key = scopedKey(network, ownerOrCtx)
-    const rows = read(key)
-    rows.push(buildDecisionRecord(ctx))
-    write(key, rows)
-  } catch (err) {
-    console.warn('[DecisionLog] recordDecision failed:', err.message)
-  }
+  // Dead catch removed (Fix 6, review loop 1): read()/write() already swallow everything
+  // themselves — this wrapper could never actually catch anything.
+  const key = scopedKey(network, ownerOrCtx)
+  if (!key) return // no network — dropped, never guessed (see scopedKey)
+  const rows = read(key)
+  rows.push(buildDecisionRecord(ctx))
+  write(key, rows)
 }
 
 /**
  * @returns newest-first array of decision records.
- * - Legacy form `getDecisions()`: reads the hidden legacy bucket.
+ * - Legacy form `getDecisions()`: reads the hidden legacy bucket (true zero-arg call only — an
+ *   explicit `getDecisions(undefined, {network})` from a not-yet-loaded owner is NOT the legacy
+ *   call and must not read the unowned bucket; Fix 6, review loop 1).
  * - Scoped form `getDecisions(owner, { network })`: reads only that owner+network's bucket; `[]`
- *   when `owner` is falsy.
+ *   when `owner` or `network` is falsy.
  */
 export function getDecisions(owner, { network } = {}) {
-  if (owner === undefined) return read(LEGACY_KEY).reverse()
+  if (arguments.length === 0) return read(LEGACY_KEY).reverse()
   if (!owner) return []
-  return read(scopedKey(network, owner)).reverse()
+  const key = scopedKey(network, owner)
+  if (!key) return []
+  return read(key).reverse()
 }
 
 /**
- * - Legacy form `clearDecisions()`: clears the hidden legacy bucket.
+ * - Legacy form `clearDecisions()`: clears the hidden legacy bucket (true zero-arg call only; see
+ *   getDecisions' own note — Fix 6, review loop 1).
  * - Scoped form `clearDecisions(owner, { network })`: clears only that owner+network's bucket.
  */
 export function clearDecisions(owner, { network } = {}) {
   try {
-    if (owner === undefined) {
+    if (arguments.length === 0) {
       localStorage.removeItem(LEGACY_KEY)
       return
     }
     if (!owner) return
-    localStorage.removeItem(scopedKey(network, owner))
+    const key = scopedKey(network, owner)
+    if (!key) return
+    localStorage.removeItem(key)
   } catch {
     /* ignore */
   }

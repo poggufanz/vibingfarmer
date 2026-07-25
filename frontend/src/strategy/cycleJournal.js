@@ -16,8 +16,12 @@
 const LEGACY_KEY = 'yv_cycle_journal'
 const MAX_ROWS = 100
 
+// Fix 6 (minor, review loop 1): a missing network drops the write (null key), matching
+// riskWatchStore.js's own policy — never invent a shared 'unknown' bucket that merges every
+// network-less write for one owner (Stellar G-addresses are identical across testnet and mainnet).
 function scopedKey(network, owner) {
-  return `yv_cycle_journal:${network || 'unknown'}:${owner}`
+  if (!network || !owner) return null
+  return `yv_cycle_journal:${network}:${owner}`
 }
 
 function read(key) {
@@ -56,40 +60,46 @@ export function saveCycle(ownerOrRow, row, { network } = {}) {
     return
   }
   if (!ownerOrRow) return
-  try {
-    const key = scopedKey(network, ownerOrRow)
-    const rows = read(key)
-    rows.push({ ...row, ts: Date.now() })
-    write(key, rows)
-  } catch (err) {
-    console.warn('[CycleJournal] saveCycle failed:', err.message)
-  }
+  // Dead catch removed (Fix 6, review loop 1): read()/write() already swallow everything
+  // themselves — this wrapper could never actually catch anything.
+  const key = scopedKey(network, ownerOrRow)
+  if (!key) return // no network — dropped, never guessed (see scopedKey)
+  const rows = read(key)
+  rows.push({ ...row, ts: Date.now() })
+  write(key, rows)
 }
 
 /**
  * @returns newest-first array of cycle records.
- * - Legacy form `getCycles()`: reads the hidden legacy bucket.
+ * - Legacy form `getCycles()`: reads the hidden legacy bucket (true zero-arg call only — an
+ *   explicit `getCycles(undefined, {network})` from a not-yet-loaded owner is NOT the legacy call
+ *   and must not read the unowned bucket; Fix 6, review loop 1).
  * - Scoped form `getCycles(owner, { network })`: reads only that owner+network's bucket; `[]`
- *   when `owner` is falsy — never another wallet's data or the shared legacy bucket.
+ *   when `owner` or `network` is falsy — never another wallet's data or the shared legacy bucket.
  */
 export function getCycles(owner, { network } = {}) {
-  if (owner === undefined) return read(LEGACY_KEY).reverse()
+  if (arguments.length === 0) return read(LEGACY_KEY).reverse()
   if (!owner) return []
-  return read(scopedKey(network, owner)).reverse()
+  const key = scopedKey(network, owner)
+  if (!key) return []
+  return read(key).reverse()
 }
 
 /**
- * - Legacy form `clearCycles()`: clears the hidden legacy bucket.
+ * - Legacy form `clearCycles()`: clears the hidden legacy bucket (true zero-arg call only; see
+ *   getCycles' own note — Fix 6, review loop 1).
  * - Scoped form `clearCycles(owner, { network })`: clears only that owner+network's bucket.
  */
 export function clearCycles(owner, { network } = {}) {
   try {
-    if (owner === undefined) {
+    if (arguments.length === 0) {
       localStorage.removeItem(LEGACY_KEY)
       return
     }
     if (!owner) return
-    localStorage.removeItem(scopedKey(network, owner))
+    const key = scopedKey(network, owner)
+    if (!key) return
+    localStorage.removeItem(key)
   } catch {
     /* ignore */
   }

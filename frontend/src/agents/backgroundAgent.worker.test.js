@@ -79,9 +79,13 @@ describe('backgroundAgent.worker', () => {
     expect(posted.some((m) => m.type === 'REBALANCE_OPPORTUNITY')).toBe(false)
   })
 
-  it('posts RISK_FACT with the real matched pool data, regardless of chain field', async () => {
+  // Fix 4 (review loop 1): the real vault's protocol slug is 'blend-usdc' (config.js) but
+  // DeFiLlama's own project field for that protocol is 'blend' (see vaultFactsLive.js's canonical
+  // slug map) — a realistic DeFiLlama pool object never carries `project: 'blend-usdc'`. This
+  // fixture now matches what the real API actually returns.
+  it('posts RISK_FACT with the real matched pool data via the canonical blend-usdc -> blend slug mapping', async () => {
     global.fetch = vi.fn(async () => ({
-      json: async () => ({ data: [{ project: 'blend-usdc', chain: 'Stellar', apy: 7.5, tvlUsd: 4_000_000 }] }),
+      json: async () => ({ data: [{ project: 'blend', chain: 'Stellar', symbol: 'USDC', apy: 7.5, tvlUsd: 4_000_000 }] }),
     }))
     const { fakeSelf, posted } = await loadWorker()
     fakeSelf.onmessage({
@@ -100,6 +104,78 @@ describe('backgroundAgent.worker', () => {
     const facts = posted.filter((m) => m.type === 'RISK_FACT')
     expect(facts).toHaveLength(1)
     expect(facts[0].payload).toMatchObject({ state: 'known', apy: 7.5, tvlUsd: 4_000_000, source: 'defillama' })
+  })
+
+  it('never matches the blend project on a foreign chain — the mapping requires the Stellar pool specifically', async () => {
+    global.fetch = vi.fn(async () => ({
+      json: async () => ({ data: [{ project: 'blend', chain: 'Ethereum', symbol: 'USDC', apy: 99, tvlUsd: 1 }] }),
+    }))
+    const { fakeSelf, posted } = await loadWorker()
+    fakeSelf.onmessage({
+      data: {
+        type: 'INIT',
+        payload: {
+          userAddress: 'GOWNER',
+          activeVaults: [{ name: 'Autofarm', address: 'CVAULT', protocol: 'blend-usdc' }],
+          thresholds: { riskMonitoring: false },
+        },
+      },
+    })
+    await flush()
+    fakeSelf.onmessage({ data: { type: 'STOP' } })
+
+    const facts = posted.filter((m) => m.type === 'RISK_FACT')
+    expect(facts[0].payload.state).toBe('unavailable')
+  })
+
+  it('never matches the blend project on the right chain but the wrong asset (e.g. the XLM pool)', async () => {
+    global.fetch = vi.fn(async () => ({
+      json: async () => ({ data: [{ project: 'blend', chain: 'Stellar', symbol: 'XLM', apy: 15, tvlUsd: 1 }] }),
+    }))
+    const { fakeSelf, posted } = await loadWorker()
+    fakeSelf.onmessage({
+      data: {
+        type: 'INIT',
+        payload: {
+          userAddress: 'GOWNER',
+          activeVaults: [{ name: 'Autofarm', address: 'CVAULT', protocol: 'blend-usdc' }],
+          thresholds: { riskMonitoring: false },
+        },
+      },
+    })
+    await flush()
+    fakeSelf.onmessage({ data: { type: 'STOP' } })
+
+    const facts = posted.filter((m) => m.type === 'RISK_FACT')
+    expect(facts[0].payload.state).toBe('unavailable')
+  })
+
+  it('never attributes a stranger pool to a legacy protocol slug this app has no confirmed venue for', async () => {
+    // 'aave-v3' is a real DeFiLlama project name with real pools across many chains/assets — this
+    // app never invested in any specific one of them (see vaultFactsSnapshot.js's own header: no
+    // Stellar catalog entry keys into it any more). A vault still carrying that legacy slug (e.g.
+    // an older held position) must never get an unrelated real-world pool's APY labelled 'known'.
+    global.fetch = vi.fn(async () => ({
+      json: async () => ({ data: [{ project: 'aave-v3', chain: 'Ethereum', symbol: 'USDC', apy: 12.3, tvlUsd: 999 }] }),
+    }))
+    const { fakeSelf, posted } = await loadWorker()
+    fakeSelf.onmessage({
+      data: {
+        type: 'INIT',
+        payload: {
+          userAddress: 'GOWNER',
+          activeVaults: [{ name: 'Legacy', address: 'CLEGACY', protocol: 'aave-v3' }],
+          thresholds: { riskMonitoring: false },
+        },
+      },
+    })
+    await flush()
+    fakeSelf.onmessage({ data: { type: 'STOP' } })
+
+    const facts = posted.filter((m) => m.type === 'RISK_FACT')
+    expect(facts).toHaveLength(1)
+    expect(facts[0].payload.state).toBe('unavailable')
+    expect(facts[0].payload.apy).toBeNull()
   })
 
   it('posts MONITOR_ERROR, never throws, when the facts fetch fails', async () => {

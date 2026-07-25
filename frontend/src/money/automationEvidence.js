@@ -44,7 +44,10 @@ export function classifyKeeperAutomation({ events = [], now, healthyWithinMs = K
  * one-time configuration read; this label only ever says 'configured' or 'unavailable'.
  */
 export function classifyStrategyConfiguration({ pricePerShare, registered } = {}) {
-  const known = registered === true || (pricePerShare != null && Number.isFinite(Number(pricePerShare)))
+  // A share price of exactly 0 is never a plausible confirmed reading for a real vault — it reads
+  // as an unset/failed default, not evidence of configuration (Fix 6, review loop 1).
+  const known =
+    registered === true || (pricePerShare != null && Number.isFinite(Number(pricePerShare)) && Number(pricePerShare) > 0)
   return { label: known ? 'configured' : 'unavailable' }
 }
 
@@ -56,11 +59,19 @@ export function classifyStrategyConfiguration({ pricePerShare, registered } = {}
  * unknown, never presented as confidently off.
  */
 export function classifyLifeboatAutomation({ derisked, mandateExpiry, authority, now } = {}) {
-  if (derisked == null && mandateExpiry == null) {
+  // `derisked === true` is itself a confirmed positive fact — 'engaged' is knowable directly, no
+  // mandateExpiry needed. Anything else (derisked false/null/undefined) needs a REAL mandateExpiry
+  // to tell armed from disarmed; a null expiry there is unread, never a confident 'disarmed' (Fix
+  // 3, review loop 1 — this is the exact shape a failed upstream read carries: `derisked: false`,
+  // `mandateExpiry: null`, which used to slip past a guard that only fired when BOTH were null).
+  if (derisked === true) {
+    return { state: 'engaged', authority: authority ?? null, scope: 'vault-wide' }
+  }
+  if (mandateExpiry == null) {
     return { state: 'unavailable', authority: authority ?? null, scope: 'vault-wide' }
   }
   const nowS = Math.floor((now ?? Date.now()) / 1000)
-  const state = derisked ? 'engaged' : mandateExpiry > nowS ? 'armed' : 'disarmed'
+  const state = mandateExpiry > nowS ? 'armed' : 'disarmed'
   return { state, authority: authority ?? null, scope: 'vault-wide' }
 }
 

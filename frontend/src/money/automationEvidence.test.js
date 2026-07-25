@@ -93,6 +93,13 @@ describe('classifyStrategyConfiguration', () => {
     expect(out.label).not.toBe('healthy')
     expect(out.label).not.toBe('running')
   })
+
+  // Fix 6 (minor, review loop 1): a pricePerShare of exactly 0 is not a plausible confirmed
+  // reading for a real vault share price — it reads as an unset/failed default, never 'configured'.
+  it('is unavailable from a pricePerShare of exactly 0 — not a plausible confirmed reading', () => {
+    expect(classifyStrategyConfiguration({ pricePerShare: 0 })).toEqual({ label: 'unavailable' })
+    expect(classifyStrategyConfiguration({ pricePerShare: 0n })).toEqual({ label: 'unavailable' })
+  })
 })
 
 describe('classifyLifeboatAutomation', () => {
@@ -132,6 +139,21 @@ describe('classifyLifeboatAutomation', () => {
   it('always labels the state vault-wide, never scoped to one owner', () => {
     const out = classifyLifeboatAutomation({ derisked: false, mandateExpiry: 2000, authority: 'GAUTH', now: 1000 })
     expect(out.scope).toBe('vault-wide')
+  })
+
+  // Fix 3 (review loop 1): reproduces the reviewer's exact scenario — the shape a failed
+  // OwnerDiscoveryV1-derived protection read carries (`derisked: false`, `mandateExpiry: null`).
+  // An unread mandate expiry must never be reported as a confident 'disarmed' — "no evidence" is
+  // not "protection off".
+  it('is unavailable, never disarmed, when derisked is false but mandateExpiry was never read', () => {
+    const out = classifyLifeboatAutomation({ derisked: false, mandateExpiry: null, authority: 'GAUTH', now: 1000 })
+    expect(out.state).toBe('unavailable')
+    expect(out.state).not.toBe('disarmed')
+  })
+
+  it('is still engaged when derisked is confirmed true even without a readable mandateExpiry', () => {
+    const out = classifyLifeboatAutomation({ derisked: true, mandateExpiry: null, authority: 'GAUTH', now: 1000 })
+    expect(out.state).toBe('engaged')
   })
 })
 

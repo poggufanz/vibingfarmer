@@ -114,6 +114,30 @@ describe('cycleJournal — owner+network scoped (Pocket Crew Task 8)', () => {
     expect(getCycles('GOWNER', { network: 'stellar-testnet' })).toEqual([])
     expect(getCycles('OTHER', { network: 'stellar-testnet' })).toHaveLength(1)
   })
+
+  // Fix 6 (minor, review loop 1): a caller passing a not-yet-loaded owner (explicitly `undefined`,
+  // e.g. before a wallet connects) must never be treated as the zero-arg LEGACY call — that would
+  // read or wipe the hidden, unowned journal from inside what was meant to be a wallet-scoped call.
+  it('does not fall through to the legacy bucket when owner is explicitly undefined (not omitted)', () => {
+    saveCycle({ cycle: 1, verdict: 'keep' }) // real legacy write
+    expect(getCycles(undefined, { network: 'stellar-testnet' })).toEqual([])
+    clearCycles(undefined, { network: 'stellar-testnet' }) // must not wipe the legacy bucket
+    expect(getCycles()).toHaveLength(1)
+  })
+
+  // Fix 6 (minor, review loop 1): missing network must drop the write, matching riskWatchStore's
+  // policy — never invent an 'unknown' bucket that merges every network-less write for one owner
+  // (Stellar G-addresses are identical across testnet and mainnet).
+  it('drops a scoped write with no network — never invents a shared "unknown" bucket', () => {
+    saveCycle('GOWNER', { cycle: 1, verdict: 'keep' }) // no {network} at all — must be a true no-op
+    expect(getCycles('GOWNER', {})).toEqual([])
+    expect(getCycles('GOWNER', { network: 'stellar-testnet' })).toEqual([])
+  })
+
+  it('returns [] for a scoped read with no network', () => {
+    saveCycle('GOWNER', { cycle: 1, verdict: 'keep' }, { network: 'stellar-testnet' })
+    expect(getCycles('GOWNER', {})).toEqual([])
+  })
 })
 
 describe('getJournalSummary gated count', () => {

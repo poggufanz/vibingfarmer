@@ -113,6 +113,81 @@ describe('buildMyMoneyModel — authoritative emptiness', () => {
     const m = buildMyMoneyModel({ owner: 'GOWNER', discovery: discoveryOf('partial'), money, now: NOW })
     expect(m.state).not.toBe('empty')
   })
+
+  // Fix 1 (review loop 1): reproduces the reviewer's exact scenario — a cached zero total from an
+  // hour ago plus a failed fresh read must never manufacture 'empty'. An owner who deposited and
+  // then lost connectivity must not be told they have nothing.
+  it('never claims empty from a stale cached zero total when the fresh read failed', () => {
+    const cachedZero = knownMoney({ units: 0n, checkedAt: NOW - 60 * 60 * 1000 }) // checked an hour ago
+    const failedMoney = { status: 'unavailable', confirmedTotal: { state: 'unavailable', amount: null }, agents: [] }
+    const m = buildMyMoneyModel({
+      owner: 'GOWNER',
+      discovery: discoveryOf('complete'),
+      money: failedMoney,
+      cache: { money: cachedZero, discovery: discoveryOf('complete') },
+      now: NOW,
+    })
+    expect(m.state).not.toBe('empty')
+    expect(m.freshness).toBe('stale')
+  })
+
+  it('still claims empty when a zero total is confirmed by a FRESH read', () => {
+    const money = knownMoney({ units: 0n, checkedAt: NOW })
+    const m = buildMyMoneyModel({ owner: 'GOWNER', discovery: discoveryOf('complete'), money, now: NOW })
+    expect(m.state).toBe('empty')
+  })
+
+  it('never claims empty from a cached-only discovery.status — the FRESH discovery must itself be complete', () => {
+    const money = knownMoney({ units: 0n, checkedAt: NOW }) // fresh, known zero
+    const m = buildMyMoneyModel({
+      owner: 'GOWNER',
+      discovery: null, // never attempted this time
+      money,
+      cache: { discovery: discoveryOf('complete') }, // only the CACHE says complete
+      now: NOW,
+    })
+    expect(m.state).not.toBe('empty')
+  })
+})
+
+describe('buildMyMoneyModel — discovery completeness (Fix 2, review loop 1)', () => {
+  // A total enumeration failure must be at least as cautious as a partial one — never upgraded to
+  // a confident 'current'.
+  it('is partial-discovery, not current, when discovery is explicitly unavailable', () => {
+    const money = knownMoney({ units: 100n })
+    const m = buildMyMoneyModel({
+      owner: 'GOWNER',
+      discovery: { status: 'unavailable', agents: [] },
+      money,
+      now: NOW,
+    })
+    expect(m.state).toBe('partial-discovery')
+  })
+
+  it('is partial-discovery, not current, when discovery is entirely absent (null)', () => {
+    const money = knownMoney({ units: 100n })
+    const m = buildMyMoneyModel({ owner: 'GOWNER', discovery: null, money, now: NOW })
+    expect(m.state).toBe('partial-discovery')
+  })
+})
+
+describe('buildMyMoneyModel — freshness triple survives finishModel (Fix 5, review loop 1)', () => {
+  it('carries checkedAt, confirmedLedger, and source through to the finished model', () => {
+    const money = { ...knownMoney({ units: 100n }), confirmedLedger: 123456, source: 'soroban-rpc' }
+    const m = buildMyMoneyModel({ owner: 'GOWNER', discovery: discoveryOf('complete'), money, now: NOW })
+    expect(m.checkedAt).toBe(NOW)
+    expect(m.confirmedLedger).toBe(123456)
+    expect(m.source).toBe('soroban-rpc')
+    expect(m.confirmedBlock).toBeNull() // never read for this Stellar source — stays unknown
+  })
+
+  it('never substitutes 0 for a genuinely unknown confirmation height — unread carries null', () => {
+    const money = knownMoney({ units: 100n }) // no confirmedLedger/confirmedBlock/source supplied
+    const m = buildMyMoneyModel({ owner: 'GOWNER', discovery: discoveryOf('complete'), money, now: NOW })
+    expect(m.confirmedLedger).toBeNull()
+    expect(m.confirmedBlock).toBeNull()
+    expect(m.source).toBeNull()
+  })
 })
 
 describe('buildMyMoneyModel — current with a real position', () => {

@@ -27,8 +27,17 @@ describe('classifyFreshness', () => {
     expect(classifyFreshness({ checkedAt: 0, now: 500, staleAfterMs: 1000 })).toBe('current')
   })
 
-  it('treats a future checkedAt (clock skew) as current, never a crash', () => {
+  it('treats a small future checkedAt (ordinary clock skew) as current, never a crash', () => {
     expect(classifyFreshness({ checkedAt: 5000, now: 1000 })).toBe('current')
+  })
+
+  // Fix 6 (minor, review loop 1): a chain close time is always in the past — an unbounded future
+  // timestamp is not clock skew, it is implausible/bogus data (classifyKeeperAutomation would
+  // otherwise report 'healthy' from a bogus future ledger-close time). Clamp it instead of
+  // rewarding it with 'current'.
+  it('does not treat a far-future checkedAt as current — a chain close time is never that far ahead', () => {
+    const out = classifyFreshness({ checkedAt: 1000 + 60 * 60 * 1000, now: 1000 }) // 1 hour "ahead"
+    expect(out).not.toBe('current')
   })
 
   it('is unavailable when now is not a finite number', () => {
@@ -65,6 +74,41 @@ describe('withCacheFallback', () => {
     expect(out.state).toBe('unavailable')
     expect(out.amount).toBeNull()
     expect(out.freshness).toBe('unavailable')
+  })
+
+  // Fix 5 (missed requirement, review loop 1): every source carries checkedAt,
+  // confirmedLedger/confirmedBlock, AND source — not just checkedAt.
+  it('carries the full freshness triple (confirmedLedger/confirmedBlock + source) through the fresh path', () => {
+    const fresh = {
+      state: 'known',
+      amount: { token: 'USDC', units: '300', decimals: 7 },
+      checkedAt: 1000,
+      confirmedLedger: 555,
+      source: 'soroban-rpc',
+    }
+    const out = withCacheFallback({ cached: null, fresh, now: 1000 })
+    expect(out.confirmedLedger).toBe(555)
+    expect(out.source).toBe('soroban-rpc')
+  })
+
+  it('carries the full freshness triple through the cache-fallback path too', () => {
+    const cachedTriple = {
+      state: 'known',
+      amount: { token: 'USDC', units: '100', decimals: 7 },
+      checkedAt: 0,
+      confirmedBlock: 42,
+      source: 'base-rpc',
+    }
+    const out = withCacheFallback({ cached: cachedTriple, fresh: null, now: 1000 })
+    expect(out.confirmedBlock).toBe(42)
+    expect(out.source).toBe('base-rpc')
+  })
+
+  it('never substitutes 0 for a genuinely unknown confirmation height — the unavailable case carries null, not 0', () => {
+    const out = withCacheFallback({ cached: null, fresh: null, now: 1000 })
+    expect(out.confirmedLedger).toBeNull()
+    expect(out.confirmedBlock).toBeNull()
+    expect(out.source).toBeNull()
   })
 })
 

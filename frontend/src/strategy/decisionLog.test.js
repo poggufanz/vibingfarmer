@@ -304,4 +304,26 @@ describe('decisionLog — owner+network scoped (Pocket Crew Task 8)', () => {
     expect(getDecisions('GOWNER', { network: 'stellar-testnet' })).toEqual([])
     expect(getDecisions('OTHER', { network: 'stellar-testnet' })).toHaveLength(1)
   })
+
+  // Fix 6 (minor, review loop 1): mirrors cycleJournal's fix exactly — a not-yet-loaded owner
+  // (explicit `undefined`) must never fall through to the legacy, unowned bucket.
+  it('does not fall through to the legacy bucket when owner is explicitly undefined (not omitted)', () => {
+    recordDecision(ctxFor(1, 'DEPOSIT')) // real legacy write
+    expect(getDecisions(undefined, { network: 'stellar-testnet' })).toEqual([])
+    clearDecisions(undefined, { network: 'stellar-testnet' }) // must not wipe the legacy bucket
+    expect(getDecisions()).toHaveLength(1)
+  })
+
+  // Fix 6 (minor, review loop 1): missing network must drop the write, matching riskWatchStore's
+  // policy — never invent an 'unknown' bucket that merges every network-less write for one owner.
+  it('drops a scoped write with no network — never invents a shared "unknown" bucket', () => {
+    recordDecision('GOWNER', ctxFor(1, 'DEPOSIT')) // no {network} at all — must be a true no-op
+    expect(getDecisions('GOWNER', {})).toEqual([])
+    expect(getDecisions('GOWNER', { network: 'stellar-testnet' })).toEqual([])
+  })
+
+  it('returns [] for a scoped read with no network', () => {
+    recordDecision('GOWNER', ctxFor(1, 'DEPOSIT'), { network: 'stellar-testnet' })
+    expect(getDecisions('GOWNER', {})).toEqual([])
+  })
 })

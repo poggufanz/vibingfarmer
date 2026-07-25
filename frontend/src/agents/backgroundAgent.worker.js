@@ -48,6 +48,34 @@ function stopMonitoring() {
 // Position reconciliation is NOT a worker monitor — the main thread reads vault shares from
 // Soroban (reconcilePositionsFromChain) on mount, on each sync tick, and after withdraws.
 
+// Fix 4 (review loop 1): canonical protocol -> DeFiLlama pool identity for THIS app's one real
+// yield venue. Mirrors the mapping vaultFactsLive.js's own LLAMA_SLUG already defines
+// ('blend-usdc' -> 'blend', see that file's header comment) — duplicated here rather than
+// imported because this fix loop's authorized file list does not include
+// vaultFactsLive.js/vaultFacts.js/api/vf/vault-facts.js (and the API handler is server-only —
+// unimportable into a client worker bundle regardless). Every OTHER protocol slug a stale
+// position might still carry (legacy Aave/Morpho/Pendle/Fluid, or a Base custody-proxy slug) has
+// NO confirmed real-world pool behind it in this app any more (see config.js's VAULT_CATALOG and
+// vaultFactsSnapshot.js's own header: "no Stellar catalog entry keys into them any more") —
+// matching one by project name alone across every DeFiLlama chain and asset would misattribute a
+// stranger's real-world APY to a position that was never actually there. Only the one confirmed
+// real venue is ever looked up; everything else honestly reports 'unavailable'.
+const REAL_YIELD_VENUE = { protocol: 'blend-usdc', project: 'blend', chain: 'Stellar', symbolIncludes: 'USDC' }
+
+function findRealPool(pools, protocol) {
+  if (protocol !== REAL_YIELD_VENUE.protocol) return null
+  return (
+    (pools || []).find(
+      (p) =>
+        String(p.project).toLowerCase() === REAL_YIELD_VENUE.project &&
+        String(p.chain) === REAL_YIELD_VENUE.chain &&
+        String(p.symbol ?? '')
+          .toUpperCase()
+          .includes(REAL_YIELD_VENUE.symbolIncludes)
+    ) ?? null
+  )
+}
+
 // ─── Monitor: canonical protocol facts (DeFiLlama) ─────────────────────────────
 // Pocket Crew "My money" Task 8: this used to match `vault.protocol` against Ethereum-mainnet
 // DeFiLlama pools (`chain === 'Ethereum'`) and, on a miss — which is EVERY real position, since
@@ -56,18 +84,18 @@ function stopMonitoring() {
 // header) — fell back to a HARDCODED per-protocol drawdown map (`{'aave-v3': -1.2, ...}`) to
 // manufacture a DRAWDOWN_ALERT out of thin air, and proposed rebalancing into unaudited strangers'
 // pools from that same unfiltered map. A missing fact reads 'unavailable', never a synthetic
-// number — this monitor now looks up the REAL protocol slug for each active position (no chain
-// filter — DeFiLlama's own `project` field is the match, not an assumption about which chain it
-// lives on) and reports whatever it verifiably finds, or honestly nothing.
+// number — this monitor looks up the real protocol's own DeFiLlama pool identity (project + chain
+// + asset symbol, see REAL_YIELD_VENUE above — a project-name match alone is not enough:
+// DeFiLlama's 'blend' project spans multiple pools/assets, and other protocol names like
+// 'aave-v3' span many unrelated chains) and reports whatever it verifiably finds, or honestly
+// nothing.
 async function runFactsCheck() {
   if (!config) return
   try {
     const res = await fetch('https://yields.llama.fi/pools')
     const { data } = await res.json()
     for (const vault of config.activeVaults ?? []) {
-      const pool = (data || []).find(
-        (p) => String(p.project).toLowerCase() === String(vault.protocol).toLowerCase()
-      )
+      const pool = findRealPool(data, vault.protocol)
       self.postMessage({
         type: 'RISK_FACT',
         payload: {
