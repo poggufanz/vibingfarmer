@@ -18,7 +18,7 @@ import {
   clearAllHistory,
 } from '../history.js'
 import { fmtRemaining } from '../ui.js'
-import AutoExitSettings from './AutoExitSettings.jsx'
+import LegacyAutoExitCleanup from './settings/LegacyAutoExitCleanup.jsx'
 import { getTokenUsageHistory, clearTokenUsageHistory } from '../strategist.js'
 import { BrandLockup } from './pocket/BrandLockup.jsx'
 import { CreditsAbout } from './pocket/CreditsAbout.jsx'
@@ -64,7 +64,6 @@ const TABS = [
   { id: 'agent', label: 'Agent' },
   { id: 'strategy', label: 'Strategy' },
   { id: 'alerts', label: 'Alerts' },
-  { id: 'auto-exit', label: 'Auto-Exit' },
   { id: 'wallet', label: 'Wallet' },
   { id: 'data', label: 'Data & Privacy' },
   { id: 'about', label: 'About' },
@@ -913,8 +912,6 @@ export default function SettingsPage({
             </Section>
           )}
 
-          {tab === 'auto-exit' && <AutoExitSettings realAddress={userAddress} addLog={addLog} />}
-
           {/* ── SECTION 4: Wallet & Network ── */}
           {tab === 'wallet' && (
             <Section title="Wallet & Network">
@@ -1169,6 +1166,11 @@ export default function SettingsPage({
                 >
                   Clear Telemetry History
                 </button>
+              </div>
+              <Divider />
+              <SubLabel>Legacy auto-exit data</SubLabel>
+              <div style={{ marginTop: 4 }}>
+                <LegacyAutoExitCleanup addLog={addLog} />
               </div>
               <Divider />
               <SubLabel>Privacy Notes</SubLabel>

@@ -88,8 +88,6 @@ import { getMandateStatus } from './base/relayerClient.js'
 import { readBaseOwner, baseOwnerStorageKey } from './wallet/baseBinding.js'
 import { readTokenBalance } from './stellar/agentDeposit.js'
 import { STELLAR_USDC_SAC } from './stellar/cctpBurn.js'
-import { evaluateExit } from './strategy/autoExit/engine.js'
-import { runAutonomousExit } from './agents/exitExecutor.js'
 import {
   loadPersistedPositions,
   persistPositions,
@@ -1258,121 +1256,14 @@ const App = () => {
     setLoopRestartTick((t) => t + 1)
   }, [agentData.positions, agentEnabled, realAddress])
 
-  // ── Autonomous Auto-Exit monitor loop ──
-  useE(() => {
-    if (!realAddress || stage !== 'done' || !agentEnabled) return
-    let active = true
-
-    const checkExit = async () => {
-      const storedRules = localStorage.getItem(`yv_exit_rules_${realAddress}`)
-      if (!storedRules) return
-      const rules = JSON.parse(storedRules)
-      if (!rules.authorized) return
-
-      const stateForExit = {
-        portfolio: { holdings: agentData.positions },
-        universe: Object.keys(agentData.positions).map((addr) => {
-          const cat = VAULT_CATALOG.find((v) => v.addr.toLowerCase() === addr.toLowerCase()) || {}
-          const pos = agentData.positions[addr] || {}
-          return {
-            address: addr,
-            protocol: cat.protocol || 'blend',
-            apy: Number(cat.apy || 6.5),
-            tvl: cat.tvl || 25_000_000,
-            drawdown: Number(pos.drawdown || 0),
-          }
-        }),
-        market: {
-          utilization: 0.96, // default utilization for simulation
-          signals: [],
-        },
-      }
-
-      const result = evaluateExit(rules, stateForExit, {
-        nowMs: Date.now(),
-        lastExitTripAt: Number(localStorage.getItem(`yv_last_exit_trip_${realAddress}`) || '0'),
-      })
-
-      if (result.tripped && active) {
-        localStorage.setItem(`yv_last_exit_trip_${realAddress}`, String(Date.now()))
-        addLog({
-          event: 'AgentFailed',
-          meta: `Auto-Exit Triggered: ${result.reason}`,
-          detail: `Trigger: ${result.trigger}. Launching autonomous exit...`,
-        })
-
-        // Surface a critical risk alert
-        setAgentData((d) => ({
-          ...d,
-          alerts: [
-            {
-              id: `exit-alert-${Date.now()}`,
-              kind: 'risk_alert',
-              severity: 'critical',
-              vaultName: 'VFUSD Yield Vault',
-              vaultAddress: SOROBAN_ACTIVE_VAULT_ADDRESS,
-              message: `Auto-Exit Triggered: ${result.reason}`,
-              timestamp: Date.now(),
-            },
-            ...d.alerts,
-          ],
-        }))
-
-        // Every per-run agent holds its own slice of the position and its own exit key, so the
-        // autonomous exit is one run per agent. Agents whose exit signer was never registered throw
-        // "No exit key is authorized" — surfaced, not swallowed, because the funds stay at risk.
-        const exitAgents = pickVaultAgents(scopes, SOROBAN_ACTIVE_VAULT_ADDRESS)
-        const exited = []
-        const exitFailed = []
-        for (const agentAddress of exitAgents) {
-          try {
-            exited.push(await runAutonomousExit({ agentAddress, ownerAddress: realAddress }))
-          } catch (err) {
-            console.error('[AutoExit] Autonomous exit failed for', agentAddress, err)
-            exitFailed.push({ agentAddress, error: err.message })
-          }
-        }
-
-        if (!exitAgents.length) {
-          addLog({
-            event: 'AgentFailed',
-            meta: 'Automatic exit stopped. No active agent holds this position.',
-            detail: 'Please execute emergency withdraw manually.',
-          })
-        }
-        if (exited.length) {
-          addLog({
-            event: 'AgentCompleted',
-            meta: `Autonomous exit swept ${exited.length} of ${exitAgents.length} agents. Transaction: ${exited[0].hash.slice(0, 8)}...`,
-            detail: 'Vault shares redeemed and USDC principal returned to owner wallet.',
-          })
-          const chain = await reconcileWithRetry(realAddress)
-          if (chain) {
-            setAgentData((d) => ({
-              ...d,
-              positions: applyChainPositions(d.positions, chain),
-              lastUpdated: Date.now(),
-            }))
-          }
-        }
-        if (exitFailed.length) {
-          addLog({
-            event: 'AgentFailed',
-            meta: `Automatic exit failed for ${exitFailed.length} of ${exitAgents.length} agents: ${exitFailed[0].error}`,
-            detail: 'Please execute emergency withdraw manually for the agents that did not exit.',
-          })
-        }
-      }
-    }
-
-    const intervalId = setInterval(checkExit, 15000)
-    checkExit()
-
-    return () => {
-      active = false
-      clearInterval(intervalId)
-    }
-  }, [realAddress, stage, agentEnabled, agentData.positions])
+  // The browser-driven autonomous Auto-Exit monitor loop (a 15s polling effect) that used to live
+  // here has been removed — risk watch is observe-only (money/riskWatchStore.js) and no legacy
+  // local rule may autonomously move production funds. Any leftover yv_exit_rules_*,
+  // yv_last_exit_trip_*, yv_exit_key_*, or vf_exit_inflight_* browser data from that removed
+  // feature is inspected (never auto-deleted) by money/legacyAutoExit.js, surfaced under Settings
+  // → Data & Privacy → "Legacy auto-exit data" (components/settings/LegacyAutoExitCleanup.jsx).
+  // Manual partial withdrawal is unaffected — it goes through stellar/partialWithdraw.js and the
+  // owner-scoped v2 exit-key namespace, which this removal never touches.
 
   // Persist a resume snapshot whenever the user is in an active ('done') session, so a
   // refresh can re-enter it (the mount effect reads this back). Only 'done' sessions —
