@@ -35,7 +35,7 @@ describe('ensureExitSigner', () => {
       loadExitKey: () => null,
       generateExitKey: async () => ({ publicKey: 'GNEW', secret: 'SNEW' }),
       registerExitSigner: async () => (calls.push('register'), { status: 'SUCCESS' }),
-      saveExitKey: (agent, key) => calls.push(`save:${key.publicKey}`),
+      saveExitKey: ({ publicKey }) => calls.push(`save:${publicKey}`),
     }
     const key = await ensureExitSigner({ owner: 'GOWNER', agentAddress: 'CAGENT', deps })
     expect(key.publicKey).toBe('GNEW')
@@ -51,6 +51,29 @@ describe('ensureExitSigner', () => {
     }
     await expect(ensureExitSigner({ owner: 'G', agentAddress: 'C', deps })).rejects.toThrow()
     expect(save).not.toHaveBeenCalled()
+  })
+
+  // Pocket Crew "My money" Task 9: the exit key is a MANUAL partial-exit key (see
+  // wallet/exitKey.js's v2 owner-scoped namespace) — load/save must be threaded BOTH the owner and
+  // the agent, never the agent alone, so an account switch in the same browser cannot hand a
+  // different owner's flow a stale signer keypair.
+  test('threads {owner, agent} to loadExitKey and {owner, agent, publicKey, secret} to saveExitKey', async () => {
+    const loadExitKey = vi.fn(async () => null)
+    const saveExitKey = vi.fn()
+    const deps = {
+      loadExitKey,
+      generateExitKey: async () => ({ publicKey: 'GNEW', secret: 'SNEW' }),
+      registerExitSigner: async () => ({ status: 'SUCCESS' }),
+      saveExitKey,
+    }
+    await ensureExitSigner({ owner: 'GOWNER', agentAddress: 'CAGENT', deps })
+    expect(loadExitKey).toHaveBeenCalledWith({ owner: 'GOWNER', agent: 'CAGENT' })
+    expect(saveExitKey).toHaveBeenCalledWith({
+      owner: 'GOWNER',
+      agent: 'CAGENT',
+      publicKey: 'GNEW',
+      secret: 'SNEW',
+    })
   })
 
   test('forwards activeAccount/getRelayerAddress/kit to registerExitSigner (owner-model routing)', async () => {
@@ -129,6 +152,17 @@ describe('partialWithdraw', () => {
     expect(out.redeemed).toBe(20_000_000n)
     expect(out.redeemHash).toBe('H:XDR:redeem')
     expect(out.transferHash).toBe('H:XDR:transfer')
+  })
+  test('reads the exit key from the owner-scoped v2 namespace, not the agent alone', async () => {
+    const deps = baseDeps()
+    const loadExitKey = vi.fn(deps.loadExitKey)
+    await partialWithdraw({
+      owner: 'GOWNER',
+      agentAddress: 'CAGENT',
+      amountUnits: 20_000_000n,
+      deps: { ...deps, loadExitKey },
+    })
+    expect(loadExitKey).toHaveBeenCalledWith({ owner: 'GOWNER', agent: 'CAGENT' })
   })
   test('no relayer → throws, nothing submitted', async () => {
     const deps = { ...baseDeps(), getRelayerAddress: async () => null }

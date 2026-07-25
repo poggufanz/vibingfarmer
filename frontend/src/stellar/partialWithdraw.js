@@ -19,8 +19,8 @@ import {
 } from './relay.js'
 import {
   generateExitKey as _generateExitKey,
-  loadExitKey as _loadExitKey,
-  saveExitKey as _saveExitKey,
+  loadManualExitKey as _loadExitKey,
+  saveManualExitKey as _saveExitKey,
   registerExitSigner as _registerExitSigner,
 } from '../wallet/exitKey.js'
 import { SOROBAN_ACTIVE_VAULT_ADDRESS, SOROBAN_TOKEN_ADDRESS } from './config.js'
@@ -59,6 +59,11 @@ export async function readAgentScope(agentAddress, { server } = {}) {
  * G (see wallet/exitKey.js's registerExitSigner). `activeAccount` defaults to a classic G owner,
  * so every existing caller is unaffected. Only persists the key AFTER on-chain success — a saved
  * key the chain never accepted would brick every later withdraw.
+ *
+ * The stored key itself is a MANUAL partial-exit key: load/save go through wallet/exitKey.js's v2
+ * owner-scoped namespace (`vf.manualExitKey.v2|<network>|<owner>|<agent>`), never the legacy
+ * agent-only cache — a browser account switch must not hand a different owner's flow a signer
+ * keypair that was never theirs (Pocket Crew "My money" Task 9).
  */
 export async function ensureExitSigner({
   owner,
@@ -74,7 +79,7 @@ export async function ensureExitSigner({
     saveExitKey = _saveExitKey,
     registerExitSigner = _registerExitSigner,
   } = deps
-  const existing = loadExitKey(agentAddress)
+  const existing = await loadExitKey({ owner, agent: agentAddress })
   if (existing) return existing
   const key = await generateExitKey()
   const res = await registerExitSigner({
@@ -88,7 +93,7 @@ export async function ensureExitSigner({
   if (res?.status !== 'SUCCESS') {
     throw new Error(`Exit-signer registration was not confirmed: ${res?.status || 'no result'}.`)
   }
-  saveExitKey(agentAddress, key)
+  saveExitKey({ owner, agent: agentAddress, publicKey: key.publicKey, secret: key.secret })
   return key
 }
 
@@ -131,7 +136,7 @@ export async function partialWithdraw({
   const relayer = await getRelayerAddress()
   if (!relayer) throw new Error('The gasless relay is unreachable — partial withdraw needs it.')
 
-  const key = loadExitKey(agentAddress)
+  const key = await loadExitKey({ owner, agent: agentAddress })
   if (!key) throw new Error('No exit key for this agent — run ensureExitSigner first.')
   const { Keypair } = await sdk()
   const kp = Keypair.fromSecret(key.secret)

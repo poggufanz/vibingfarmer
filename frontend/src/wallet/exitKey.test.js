@@ -26,7 +26,13 @@ vi.mock('../stellar/client.js', () => ({
 }))
 
 import { Keypair } from '@stellar/stellar-sdk'
-import { registerExitSigner } from './exitKey.js'
+import {
+  registerExitSigner,
+  saveManualExitKey,
+  loadManualExitKey,
+  clearManualExitKey,
+  saveExitKey,
+} from './exitKey.js'
 import { buildInvokeTx, submitUserTx } from '../stellar/client.js'
 import { signTxXdr } from '../stellar/walletKit.js'
 
@@ -37,6 +43,7 @@ const AGENT = 'CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77'
 // asserted on by value here.
 const EXIT_PUBKEY = Keypair.random().publicKey()
 
+const store = {}
 beforeEach(() => {
   buildInvokeTx.mockClear()
   submitUserTx.mockReset()
@@ -45,6 +52,16 @@ beforeEach(() => {
   submitViaRelayMock.mockReset()
   getRelayerAddressMock.mockReset()
   signOwnerAuthEntryMock.mockReset()
+  for (const k in store) delete store[k]
+  globalThis.localStorage = {
+    getItem: (k) => store[k] ?? null,
+    setItem: (k, v) => {
+      store[k] = v
+    },
+    removeItem: (k) => {
+      delete store[k]
+    },
+  }
 })
 
 describe('registerExitSigner — G owner (default, direct)', () => {
@@ -99,5 +116,86 @@ describe('registerExitSigner — C owner (passkey, relay-only)', () => {
     ).rejects.toMatchObject({ code: 'VF_FEE_PAYER_UNAVAILABLE' })
     expect(signOwnerAuthEntryMock).not.toHaveBeenCalled()
     expect(buildInvokeTx).not.toHaveBeenCalled()
+  })
+})
+
+// v2 owner-scoped MANUAL partial-exit key namespace (Pocket Crew "My money" Task 9). The legacy
+// yv_exit_key_* cache above is agent-only; these tests prove the v2 cache is owner+agent scoped
+// and fails closed on every form of untrustworthy stored data, per the task brief's literal
+// requirement list: account switch, owner mismatch, corrupt secret/public-key mismatch, agent
+// mismatch, and never falling back to reading the legacy namespace.
+describe('saveManualExitKey / loadManualExitKey / clearManualExitKey — v2 owner-scoped', () => {
+  const OWNER_A = 'GOWNERA'
+  const OWNER_B = 'GOWNERB'
+  const AGENT_1 = 'CAGENT1'
+  const AGENT_2 = 'CAGENT2'
+  // A real ed25519 keypair (test.rs-style fixture) so Keypair.fromSecret's derived public key can
+  // be asserted against — a syntactically valid but arbitrary strkey, never asserted by value.
+  const REAL = Keypair.random()
+
+  test('round-trips: what is saved is what is loaded, for the same owner+agent', async () => {
+    saveManualExitKey({ owner: OWNER_A, agent: AGENT_1, publicKey: REAL.publicKey(), secret: REAL.secret() })
+    const loaded = await loadManualExitKey({ owner: OWNER_A, agent: AGENT_1 })
+    expect(loaded).toEqual({ publicKey: REAL.publicKey(), secret: REAL.secret() })
+  })
+
+  test('account switch: a different owner reads nothing, never the previous owner’s key', async () => {
+    saveManualExitKey({ owner: OWNER_A, agent: AGENT_1, publicKey: REAL.publicKey(), secret: REAL.secret() })
+    expect(await loadManualExitKey({ owner: OWNER_B, agent: AGENT_1 })).toBeNull()
+  })
+
+  test('agent mismatch: the same owner reading a different agent finds nothing', async () => {
+    saveManualExitKey({ owner: OWNER_A, agent: AGENT_1, publicKey: REAL.publicKey(), secret: REAL.secret() })
+    expect(await loadManualExitKey({ owner: OWNER_A, agent: AGENT_2 })).toBeNull()
+  })
+
+  test('owner mismatch INSIDE the stored payload fails closed even under the right storage key', async () => {
+    // Simulate corruption/collision: the payload's own `owner` field disagrees with what this
+    // storage key is supposed to hold. Never trust a value that doesn't vouch for itself.
+    const key = `vf.manualExitKey.v2|stellar-testnet|${OWNER_A}|${AGENT_1}`
+    localStorage.setItem(
+      key,
+      JSON.stringify({ owner: 'GSOMEONEELSE', agent: AGENT_1, publicKey: REAL.publicKey(), secret: REAL.secret() })
+    )
+    expect(await loadManualExitKey({ owner: OWNER_A, agent: AGENT_1 })).toBeNull()
+  })
+
+  test('agent mismatch INSIDE the stored payload fails closed', async () => {
+    const key = `vf.manualExitKey.v2|stellar-testnet|${OWNER_A}|${AGENT_1}`
+    localStorage.setItem(
+      key,
+      JSON.stringify({ owner: OWNER_A, agent: 'CSOMEOTHERAGENT', publicKey: REAL.publicKey(), secret: REAL.secret() })
+    )
+    expect(await loadManualExitKey({ owner: OWNER_A, agent: AGENT_1 })).toBeNull()
+  })
+
+  test('corrupt/undecodable secret fails closed rather than throwing', async () => {
+    saveManualExitKey({ owner: OWNER_A, agent: AGENT_1, publicKey: REAL.publicKey(), secret: 'NOT_A_REAL_SECRET' })
+    await expect(loadManualExitKey({ owner: OWNER_A, agent: AGENT_1 })).resolves.toBeNull()
+  })
+
+  test('secret/public-key mismatch fails closed', async () => {
+    const OTHER = Keypair.random()
+    saveManualExitKey({ owner: OWNER_A, agent: AGENT_1, publicKey: OTHER.publicKey(), secret: REAL.secret() })
+    expect(await loadManualExitKey({ owner: OWNER_A, agent: AGENT_1 })).toBeNull()
+  })
+
+  test('never reads the legacy yv_exit_key_* namespace as a v2 manual key', async () => {
+    // Legacy, agent-only key present — but loadManualExitKey must look ONLY at its own v2,
+    // owner-scoped storage key and never fall back to this one.
+    saveExitKey(AGENT_1, { publicKey: REAL.publicKey(), secret: REAL.secret() })
+    expect(await loadManualExitKey({ owner: OWNER_A, agent: AGENT_1 })).toBeNull()
+  })
+
+  test('clearManualExitKey removes only the v2 entry, leaving the legacy cache untouched', async () => {
+    saveManualExitKey({ owner: OWNER_A, agent: AGENT_1, publicKey: REAL.publicKey(), secret: REAL.secret() })
+    saveExitKey(AGENT_1, { publicKey: 'GLEGACY', secret: 'SLEGACY' })
+    clearManualExitKey({ owner: OWNER_A, agent: AGENT_1 })
+    expect(await loadManualExitKey({ owner: OWNER_A, agent: AGENT_1 })).toBeNull()
+    expect(localStorage.getItem(`yv_exit_key_${AGENT_1.toLowerCase()}`)).not.toBeNull()
+  })
+
+  test('absent key: null, no throw', async () => {
+    expect(await loadManualExitKey({ owner: 'GNOBODY', agent: 'CNOBODY' })).toBeNull()
   })
 })
