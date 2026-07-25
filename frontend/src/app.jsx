@@ -1544,7 +1544,7 @@ const App = () => {
         addLog({
           event: 'AgentFailed',
           meta: `Emergency withdrawal incomplete: ${failed.length} of ${results.length} agents failed.`,
-          detail: failed[0].error,
+          detail: failed[0].error?.message ?? failed[0].error,
         })
         return
       }

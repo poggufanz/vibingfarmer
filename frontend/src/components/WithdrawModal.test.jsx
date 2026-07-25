@@ -26,6 +26,10 @@ const clearManualExitKey = vi.fn()
 vi.mock('../wallet/exitKey.js', () => ({
   clearManualExitKey: (...a) => clearManualExitKey(...a),
 }))
+const withdrawAllFromVault = vi.fn()
+vi.mock('../agents/agentController.js', () => ({
+  withdrawAllFromVault: (...a) => withdrawAllFromVault(...a),
+}))
 
 import WithdrawModal from './WithdrawModal.jsx'
 
@@ -97,5 +101,40 @@ describe('WithdrawModal partial mode', () => {
       owner: registeredWith.owner,
       agent: registeredWith.agentAddress,
     })
+  })
+})
+
+describe('WithdrawModal full mode sweep failure', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  // Regression for WithdrawModal.jsx:171. My Money Task 9 turned a failed agent's error into a
+  // structured {message, code, submission} object so 'confirmed failed' and 'unknown' stay
+  // distinct, but this render still interpolated it as a string, showing "[object Object]".
+  test('a structured sweep error renders its human-readable message', async () => {
+    withdrawAllFromVault.mockResolvedValueOnce([
+      { ok: true, txHash: 'H1' },
+      {
+        ok: false,
+        error: { message: 'Relay lost the submission.', code: 'VF_SUBMISSION_UNKNOWN', submission: 'unknown' },
+      },
+    ])
+    render(<WithdrawModal {...props} />)
+    fireEvent.click(screen.getByRole('button', { name: /^withdraw$/i }))
+    await waitFor(() => expect(withdrawAllFromVault).toHaveBeenCalled())
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('Relay lost the submission.')
+    expect(alert.textContent).not.toContain('[object Object]')
+  })
+
+  // A legacy plain-string error (still a valid shape) must keep rendering exactly as before.
+  test('a plain string sweep error still renders unchanged', async () => {
+    withdrawAllFromVault.mockResolvedValueOnce([
+      { ok: true, txHash: 'H1' },
+      { ok: false, error: 'Insufficient trustline balance.' },
+    ])
+    render(<WithdrawModal {...props} />)
+    fireEvent.click(screen.getByRole('button', { name: /^withdraw$/i }))
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('Insufficient trustline balance.')
   })
 })

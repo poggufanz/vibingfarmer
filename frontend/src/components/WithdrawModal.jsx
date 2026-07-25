@@ -168,7 +168,7 @@ export default function WithdrawModal({
         // if the vault ever exposes a per-sweep event to size them from.
         setError(
           `Swept ${results.length - failed.length} of ${results.length} agents. ` +
-            `${failed.length} failed: ${failed[0].error}`
+            `${failed.length} failed: ${failed[0].error?.message ?? failed[0].error}`
         )
         setStatus('idle')
         setProgress(null)
