@@ -10,7 +10,7 @@ import { MAX_AGENTS_PER_SWEEP } from '../stellar/exit.js'
 import { partialWithdraw, ensureExitSigner, readAgentScope } from '../stellar/partialWithdraw.js'
 import { readVaultShares } from '../stellar/agentDeposit.js'
 import { readPricePerShare } from '../stellar/vaultReads.js'
-import { clearExitKey } from '../wallet/exitKey.js'
+import { clearManualExitKey } from '../wallet/exitKey.js'
 
 const PPS_SCALE = 10_000_000n
 
@@ -238,7 +238,7 @@ export default function WithdrawModal({
     } catch (err) {
       // A stale exit key (localStorage from a lost registration, or re-registered elsewhere)
       // fails auth on-chain; drop it so the retry re-registers fresh.
-      if (/signature|auth/i.test(err?.message || '')) clearExitKey(chosen)
+      if (/signature|auth/i.test(err?.message || '')) clearManualExitKey({ owner: userAddress, agent: chosen })
       setError(friendlyError(err))
       setStatus('idle')
     }

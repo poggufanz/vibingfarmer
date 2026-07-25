@@ -93,6 +93,35 @@ describe('planFullExit', () => {
     expect(plan.targets).toHaveLength(4) // every one of them present — revoked is never dropped as "already handled"
   })
 
+  test('Fix 2 (fix loop 1): a revoked agent with an unavailable balance read is "revoked-unknown", never classified as if it were already swept', () => {
+    const discovery = { status: 'complete', agents: [discoveryRow('CA1', { revoked: true })] }
+    const position = { agents: [moneyRow('CA1', { amount: null })] }
+    const plan = planFullExit({ discovery, position, account: { kind: 'G', address: 'GOWNER' } })
+    expect(plan.targets[0].state).toBe('revoked-unknown')
+  })
+
+  test('Fix 2: a revoked agent with a PROVEN zero balance still classifies as plain "revoked"', () => {
+    const discovery = { status: 'complete', agents: [discoveryRow('CA1', { revoked: true })] }
+    const position = { agents: [moneyRow('CA1', { amount: usdc(0) })] }
+    const plan = planFullExit({ discovery, position, account: { kind: 'G', address: 'GOWNER' } })
+    expect(plan.targets[0].state).toBe('revoked')
+  })
+
+  test('Fix 2: a revoked-but-funded agent is unaffected by the new unknown state', () => {
+    const discovery = { status: 'complete', agents: [discoveryRow('CA1', { revoked: true })] }
+    const position = { agents: [moneyRow('CA1', { amount: usdc(5_000_000) })] }
+    const plan = planFullExit({ discovery, position, account: { kind: 'G', address: 'GOWNER' } })
+    expect(plan.targets[0].state).toBe('revoked-funded')
+  })
+
+  test('Fix 2: the same unknown-balance distinction applies symmetrically to an expired agent', () => {
+    const nowSec = 1_700_000_000
+    const discovery = { status: 'complete', agents: [discoveryRow('CA1', { expiry: nowSec - 5 })] }
+    const position = { agents: [moneyRow('CA1', { amount: null })] }
+    const plan = planFullExit({ discovery, position, account: { kind: 'G', address: 'GOWNER' }, now: nowSec * 1000 })
+    expect(plan.targets[0].state).toBe('expired-unknown')
+  })
+
   test('a scope read failure targets as "unknown" rather than being dropped or guessed active', () => {
     const discovery = { status: 'partial', agents: [discoveryRow('CA1', { scopeReadStatus: 'failed', revoked: null, expiry: null, authorized: null })] }
     const plan = planFullExit({ discovery, position: { agents: [] }, account: { kind: 'G', address: 'GOWNER' } })
@@ -369,6 +398,11 @@ describe('ownerActionOutcome', () => {
       'confirmed-failed'
     )
   })
+  test('a result object with neither an ok/status nor an error is unknown, not a fabricated confirmed-failed', () => {
+    // Fix 1 (fix loop 1), second half: the default branch used to map ANY error-less/unrecognized
+    // result to confirmed-failed. A result that says nothing at all is not proof of a failure.
+    expect(ownerActionOutcome({ agentAddress: 'CA1' }).outcome).toBe('unknown')
+  })
 })
 
 describe('reconcileOwnerAction', () => {
@@ -482,6 +516,35 @@ describe('reconcileOwnerAction', () => {
     expect(byAddr.CA1).toBe('confirmed-success') // never demoted by CA2's failure
     expect(byAddr.CA2).toBe('confirmed-failed')
     expect(out.complete).toBe(false) // the ACTION as a whole is not fully complete
+  })
+
+  test('Fix 4 bullet 5 (fix loop 1): a mix of not-submitted and confirmed-success is NOT the all-not-submitted shortcut — it re-reads and stays partial, not complete', async () => {
+    const readOwnerMoney = vi.fn(async () => ({
+      checkedAt: 2,
+      agents: [
+        { address: 'CA1', vaultShares: { state: 'known', amount: usdc(0) }, idleToken: { state: 'known', amount: usdc(0) } },
+        { address: 'CA2', vaultShares: { state: 'known', amount: usdc(0) }, idleToken: { state: 'known', amount: usdc(0) } },
+      ],
+    }))
+    const notSubmittedErr = new OwnerActionSubmissionError('refused', 'VF_RELAY_REFUSED', 'not-submitted')
+    const out = await reconcileOwnerAction({
+      action: { kind: 'full-exit', targets: [{ address: 'CA1' }, { address: 'CA2' }] },
+      result: [
+        { agentAddress: 'CA1', error: notSubmittedErr },
+        { agentAddress: 'CA2', ok: true, txHash: 'h1' },
+      ],
+      readOwnerMoney,
+      beforeRevision: 0,
+    })
+    // Only ALL-not-submitted skips the re-read; one confirmed sibling means something DID reach
+    // the chain, so the honest move is still to re-read, not to shortcut.
+    expect(readOwnerMoney).toHaveBeenCalled()
+    const byAddr = Object.fromEntries(out.outcomes.map((o) => [o.agentAddress, o.outcome]))
+    expect(byAddr.CA1).toBe('not-submitted')
+    expect(byAddr.CA2).toBe('confirmed-success')
+    // Not every target reached confirmed-success, so the action as a whole cannot be 'complete'.
+    expect(out.complete).toBe(false)
+    expect(out.status).toBe('partial')
   })
 
   test('a readOwnerMoney failure never manufactures a false complete', async () => {

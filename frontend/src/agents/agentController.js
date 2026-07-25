@@ -134,7 +134,12 @@ export async function withdrawFromVault(
  * @param {{activeAccount?:object, getRelayerAddress?:Function, kit?:object}} [ownerAuth]
  *        Owner-authorization model — classic G envelope vs. passkey C auth entry. Defaults to a
  *        classic G owner, so every existing caller is unaffected.
- * @returns {Promise<Array<{agentAddress: string, ok: boolean, txHash?: string, error?: string}>>}
+ * @returns {Promise<Array<{agentAddress: string, ok: boolean, txHash?: string,
+ *   error?: string|{message:string, code?:string, submission?:string}}>>} On the sweep path,
+ *   `error` is whatever exit.js's `sweepAgents` reported for that agent — an
+ *   OwnerActionSubmissionError-shaped object (Fix 1, fix loop 1) when the chain call itself threw,
+ *   so money/ownerActions.js's ownerActionOutcome can still tell a post-sign relay loss apart from
+ *   a genuine confirmed failure. Only the "nothing to sweep" default below is a plain string.
  */
 export async function withdrawAllFromVault(
   vaultAddress,

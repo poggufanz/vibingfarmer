@@ -35,10 +35,6 @@ function isKnownZeroRead(read) {
   }
 }
 
-function isKnownRead(read) {
-  return read?.state === 'known' && read.amount != null
-}
-
 function chunk(arr, size) {
   const out = []
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size))
@@ -62,6 +58,21 @@ function hasBaseAssociation(agent) {
 // planFullExit
 // ---------------------------------------------------------------------------------------------
 
+// Fix 2 (fix loop 1): isKnownPositiveAmount collapses "proven zero" and "unavailable/missing" to
+// the same `false` — exactly right for a GATE (never treat unread money as safe to skip), but
+// wrong for a LABEL: a revoked/expired agent whose balance could not be read must say so, not
+// silently read as plain "revoked"/"expired" (implying already swept, i.e. rendering unknown money
+// as zero). Keeps all three apart: 'unknown' | 'zero' | 'positive'.
+function fundedState(moneyRow) {
+  const amount = moneyRow?.amount
+  if (amount == null) return 'unknown'
+  try {
+    return BigInt(amount.units) > 0n ? 'positive' : 'zero'
+  } catch {
+    return 'unknown'
+  }
+}
+
 // Full exit enumeration must include active, expired, revoked, AND revoked-but-funded agents —
 // owner_withdraw has no scope gate on-chain (soroban/contracts/agent_account/src/lib.rs:
 // owner.require_auth() only; unlike enforce()/enforce_exit(), it never checks scope.revoked or
@@ -72,10 +83,11 @@ function targetState(discoveryRow, moneyRow, nowSec) {
   const revoked = Boolean(discoveryRow.revoked)
   const expiry = Number(discoveryRow.expiry ?? 0)
   const expired = Number.isFinite(expiry) && expiry > 0 && expiry <= nowSec
-  const funded = isKnownPositiveAmount(moneyRow?.amount)
-  if (revoked) return funded ? 'revoked-funded' : 'revoked'
-  if (expired) return funded ? 'expired-funded' : 'expired'
-  return 'active'
+  if (!revoked && !expired) return 'active'
+  const label = revoked ? 'revoked' : 'expired'
+  const funded = fundedState(moneyRow)
+  if (funded === 'unknown') return `${label}-unknown`
+  return funded === 'positive' ? `${label}-funded` : label
 }
 
 /**
@@ -149,6 +161,11 @@ export function planFullExit({ discovery, position, account, now = Date.now() })
     // signs — a G owner signs each batch's envelope directly, a C owner signs a Soroban auth entry
     // per batch via the relayer (ownerAuthorization.js) — the COUNT is the same either way; only
     // the ceremony per confirmation differs, which is stellar/exit.js's concern, not planning's.
+    //
+    // Fix 4 bullet 1 (fix loop 1): this is a FLOOR, not a guaranteed count. sweepChunk
+    // (stellar/exit.js) halves and re-submits a batch that blows the resource budget, and each
+    // half is its own owner-signed confirmation — so a real run can cost MORE popups than this
+    // number promises, never fewer. Do not surface it to the owner as an exact signature count.
     expectedConfirmations: batches.length,
     account: account ?? null,
     model: account?.kind ?? 'G',
@@ -193,6 +210,17 @@ function stellarVaultMaxUnits(agent) {
   }
 }
 
+// Fix 4 bullet 4 (fix loop 1) — recorded, not fixed here (wallet/exitKey.js is off-limits for this
+// fix loop): the v2 owner-scoped manual exit-signer namespace this task introduced
+// (wallet/exitKey.js's `manualKeyV2`) is keyed by owner+agent, so it starts EMPTY for every
+// existing user regardless of a prior legacy (agent-only) registration. The first partial withdraw
+// after this ships will therefore find no v2 key, call `ensureExitSigner` -> `registerExitSigner`,
+// and cost ONE EXTRA owner signature to register a fresh exit signer on-chain — a one-time cost per
+// agent, not per withdraw. Safe because `set_exit_signer(exit_pubkey)` overwrites unconditionally
+// (soroban/contracts/agent_account/src/lib.rs:240-251) rather than requiring the old key first; the
+// superseded legacy secret is simply left behind under the old `yv_exit_key_*` localStorage key
+// indefinitely (dead weight, not a leak — it no longer authorizes anything once overwritten
+// on-chain, and nothing reads that namespace as a manual key anymore).
 /**
  * Plan a partial exit from ONE agent. Pure. Either a real partial-exit plan, a truthful fallback
  * to full exit (revoked/expired scope), or a rejection (bad amount, balance unknown/insufficient).
@@ -348,6 +376,12 @@ export function ownerActionOutcome(r) {
   const submission = err && typeof err === 'object' ? err.submission : undefined
   if (submission === 'not-submitted') return { agentAddress, outcome: 'not-submitted', message: err.message }
   if (submission === 'unknown') return { agentAddress, outcome: 'unknown', message: err.message }
+  // A result carrying none of ok/status/error proves nothing either way — a channel-level gap, not
+  // a confirmed failure. Fabricating "confirmed-failed" from silence is the same collapse Fix 1's
+  // first half fixes for a submission-unknown error; this closes it for a genuinely empty result.
+  if (r?.ok === undefined && r?.status === undefined && err === undefined) {
+    return { agentAddress, outcome: 'unknown', message: 'No result was reported for this agent.' }
+  }
   const message = typeof err === 'string' ? err : (err?.message ?? 'Action failed.')
   return { agentAddress, outcome: 'confirmed-failed', message }
 }
@@ -416,6 +450,17 @@ export async function reconcileOwnerAction({ action, result, readOwnerMoney, bef
   if (action?.kind === 'revoke') {
     // Chain state is the source of truth for a revoke, not the submission channel — an 'unknown'
     // channel outcome still reconciles to complete once the fresh scope itself shows revoked.
+    //
+    // Fix 4 bullet 3 (fix loop 1): unlike the exit branch below, `allConfirmedSuccess` alone (no
+    // fresh-chain cross-check) is enough here. This is intentionally asymmetric, not an oversight:
+    // a revoke's 'confirmed-success' outcome (ownerActionOutcome) only fires on `status ===
+    // 'SUCCESS'`, and that status itself already comes from the chain — submitOwnerAuthorizedTx
+    // polls the ledger until the revoke tx confirms (ownerAuthorization.js / exit.js's `pollTries`
+    // pattern), not from an optimistic local guess. A confirmed exit sweep, by contrast, proves
+    // only that a `sweep`/`owner_withdraw` invocation succeeded — it says nothing about whether
+    // OTHER money (e.g. idle dust deposited after the read that built the plan) is still sitting on
+    // the agent, which is exactly what the fresh re-read below is for. A revoke has no such
+    // "other money" case: scope.revoked is a single boolean the SUCCESS tx already set.
     complete =
       allConfirmedSuccess ||
       (sawEveryTarget && freshAgents.every((a) => a.scope?.state === 'known' && a.scope.value?.revoked === true))
@@ -423,10 +468,14 @@ export async function reconcileOwnerAction({ action, result, readOwnerMoney, bef
     // Full/partial exit: complete requires BOTH a clean confirmed result across every target AND
     // chain-verified zero remaining shares/idle balance — a confirmed tx with an unread or
     // still-positive follow-up balance stays 'partial', never an optimistic 'complete'.
+    //
+    // Fix 4 bullet 2 (fix loop 1): remainingKnownZero already requires every fresh agent's reads to
+    // be `state:'known'` (isKnownZeroRead's own gate) AND sawEveryTarget true — so it already
+    // implies "nothing is unknown". A separate `!remainingUnknown` conjunct here was always true
+    // whenever remainingKnownZero was true; dead weight, removed rather than kept for show.
     const remainingKnownZero =
       sawEveryTarget && freshAgents.every((a) => isKnownZeroRead(a.vaultShares) && isKnownZeroRead(a.idleToken))
-    const remainingUnknown = !sawEveryTarget || freshAgents.some((a) => !isKnownRead(a.vaultShares) || !isKnownRead(a.idleToken))
-    complete = allConfirmedSuccess && remainingKnownZero && !remainingUnknown
+    complete = allConfirmedSuccess && remainingKnownZero
   }
 
   const status = complete ? 'complete' : anyUnknown ? 'checking' : 'partial'

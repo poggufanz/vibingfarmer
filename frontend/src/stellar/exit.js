@@ -92,10 +92,16 @@ async function sweepChunk({ agents, to, router, server, model, kit, sign, out })
     }
     // One batch failing must not strand the others — record why, per agent, and let the rest run.
     // The reason has to reach the caller: "the agent was empty" and "the RPC dropped the tx" look
-    // identical from a 0, and only one of them is worth retrying.
+    // identical from a 0, and only one of them is worth retrying. `code`/`submission` ride along
+    // too (undefined for a bare on-chain Error) — a post-sign relay loss is an
+    // OwnerActionSubmissionError (ownerAuthorization.js) with `code:'VF_SUBMISSION_UNKNOWN'` and
+    // `submission:'unknown'`, and money/ownerActions.js's ownerActionOutcome reads exactly these
+    // fields to keep that case distinct from a genuine confirmed failure. Fix 1 (fix loop 1): this
+    // used to flatten to a bare string here, which erased that distinction before any consumer
+    // could see it.
     const reason = e?.message || String(e)
     agents.forEach((a) => {
-      out.errors[a.index] = reason
+      out.errors[a.index] = { message: reason, code: e?.code, submission: e?.submission }
     })
   }
 }
@@ -119,7 +125,10 @@ async function sweepChunk({ agents, to, router, server, model, kit, sign, out })
  *          signer (default signTxXdr, the wallet-kit popup) — injectable so callers off the
  *          browser (e.g. scripts/exit-router-smoke.mjs) can sign with a local keypair instead.
  *          Unused for a C owner, which always signs via the passkey ceremony.
- * @returns {Promise<{swept:bigint[], txHashes:string[], errors:(string|undefined)[]}>}
+ * @returns {Promise<{swept:bigint[], txHashes:string[],
+ *   errors:({message:string, code?:string, submission?:string}|undefined)[]}>} `errors[i].code`/
+ *   `.submission` carry an OwnerActionSubmissionError's channel classification through undamaged
+ *   (undefined for a bare on-chain failure) — money/ownerActions.js's ownerActionOutcome reads them.
  */
 export async function sweepAgents({
   owner,

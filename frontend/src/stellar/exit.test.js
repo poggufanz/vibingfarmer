@@ -23,6 +23,10 @@ import { buildInvokeTx, submitUserTx } from './client.js'
 import { signTxXdr } from './walletKit.js'
 import { ownerWithdraw, sweepAgents } from './exit.js'
 import { i128ScVal } from './scval.js'
+// Fix 1 (fix loop 1): closes the loop from a real thrown OwnerActionSubmissionError, through
+// sweepChunk's catch and out.errors, all the way to ownerActionOutcome — the exact path that used
+// to flatten a post-sign relay loss into a string and lose it.
+import { ownerActionOutcome } from '../money/ownerActions.js'
 
 const OWNER = 'GCIOUP4UJAAFDBJNP5DY5CFJHBLEKGLHZ5E2AYRIIQ5VOZFVSTPRYHNS'
 const OWNER_C = 'CCDXZ6BUA7TPR3EXQWJWUD7EYR6OUMJRYIKYXPE53HRJOJFY5CXEHTN5'
@@ -164,7 +168,7 @@ describe('sweepAgents', () => {
     submitUserTx.mockResolvedValueOnce({ hash: 'h2', status: 'PENDING' })
     const out = await sweepAgents({ owner: OWNER, agentAddresses: AGENTS, router: ROUTER })
     expect(out.swept).toEqual([0n, 0n])
-    expect(out.errors[0]).toMatch(/not confirmed/i)
+    expect(out.errors[0].message).toMatch(/not confirmed/i)
   })
 
   it('splits a position too big for one transaction instead of failing it', async () => {
@@ -213,7 +217,7 @@ describe('sweepAgents', () => {
       chunkSize: 1,
     })
     expect(out.swept).toEqual([9n, 0n])
-    expect(out.errors).toEqual([undefined, 'Transaction xyz failed on-chain.'])
+    expect(out.errors).toEqual([undefined, expect.objectContaining({ message: 'Transaction xyz failed on-chain.' })])
   })
 
   it('reports the chain error per agent rather than a bare row of zeros', async () => {
@@ -223,9 +227,13 @@ describe('sweepAgents', () => {
     const out = await sweepAgents({ owner: OWNER, agentAddresses: AGENTS, router: ROUTER })
     expect(out.swept).toEqual([0n, 0n])
     expect(out.errors).toEqual([
-      'Transaction xyz failed on-chain.',
-      'Transaction xyz failed on-chain.',
+      expect.objectContaining({ message: 'Transaction xyz failed on-chain.' }),
+      expect.objectContaining({ message: 'Transaction xyz failed on-chain.' }),
     ])
+    // A bare on-chain Error carries no code/submission — ownerActionOutcome must still read this as
+    // a genuine confirmed failure, never a maybe (the regression Fix 1 guards against in reverse).
+    expect(out.errors[0].code).toBeUndefined()
+    expect(out.errors[0].submission).toBeUndefined()
   })
 
   it('resolves an array even when every batch fails, like the per-agent path does', async () => {
@@ -273,6 +281,29 @@ describe('sweepAgents', () => {
     )
     expect(submitUserTx).not.toHaveBeenCalled()
     expect(out.swept).toEqual([5n, 5n])
+  })
+
+  it('C owner: a post-sign relay loss carries code+submission through out.errors, and ownerActionOutcome reads it as unknown, never confirmed-failed', async () => {
+    // Fix 1: the ceremony (WebAuthn) already ran, then the relay went silent — relayOnly throws
+    // OwnerActionSubmissionError('...', 'VF_SUBMISSION_UNKNOWN', 'unknown'). Before Fix 1,
+    // sweepChunk's catch flattened this to `e.message`, so ownerActionOutcome could never see
+    // `.submission` and reported the sweep as a confirmed failure — inviting a retry of a
+    // transaction that may already have landed.
+    getRelayerAddressMock.mockResolvedValue(RELAYER_G)
+    signOwnerAuthEntryMock.mockResolvedValue('SIGNED_C')
+    submitViaRelayMock.mockResolvedValue(null) // relay unreachable AFTER signing
+
+    const out = await sweepAgents({
+      owner: OWNER_C,
+      agentAddresses: [AGENT],
+      router: ROUTER,
+      activeAccount: { kind: 'C', address: OWNER_C },
+    })
+
+    expect(out.swept).toEqual([0n])
+    expect(out.errors[0]).toMatchObject({ code: 'VF_SUBMISSION_UNKNOWN', submission: 'unknown' })
+    const outcome = ownerActionOutcome({ agentAddress: AGENT, ok: false, error: out.errors[0] })
+    expect(outcome.outcome).toBe('unknown')
   })
 
   it('C owner: fails BEFORE the passkey ceremony when no relayer is funded', async () => {
