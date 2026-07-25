@@ -35,6 +35,9 @@ const EXIT_LOCK_TTL_MS = 120_000
 const ALL_PREFIXES = [PREFIX_EXIT_RULES, PREFIX_LAST_TRIP, PREFIX_EXIT_KEY, PREFIX_EXIT_INFLIGHT]
 const TRIGGER_NAMES = ['utilization', 'apyCollapse', 'protocolRisk', 'drawdown']
 
+/** @returns {{keys: string[], failed: boolean}} `failed` distinguishes "storage threw" (unknown —
+ *  the scan did not run) from "storage returned zero keys" (genuinely nothing there). The caller
+ *  must never collapse those into the same "nothing to clean up" message. */
 function safeKeys() {
   const out = []
   try {
@@ -43,9 +46,10 @@ function safeKeys() {
       if (k) out.push(k)
     }
   } catch {
-    // No localStorage (SSR / locked-down environment) — an empty scan, never a throw.
+    // No localStorage (SSR / locked-down environment) — the scan could not run at all.
+    return { keys: out, failed: true }
   }
-  return out
+  return { keys: out, failed: false }
 }
 
 function safeGet(key) {
@@ -138,11 +142,13 @@ function describeExitInflight(key, now) {
  * Inspect this browser's legacy auto-exit localStorage. Read-only: never deletes, never reads or
  * writes the v2 manual partial-withdraw namespace, never touches the chain. Every entry that
  * exists but can't be parsed is still returned with `readable: false` — an unreadable legacy key
- * is never silently treated as "nothing to clean up".
- * @returns {{rows: object[], count: number}}
+ * is never silently treated as "nothing to clean up". Same rule one level up: if storage itself
+ * could not be read, `failed` is true and `rows` is empty-but-unknown, never reported as "found
+ * nothing".
+ * @returns {{rows: object[], count: number, failed: boolean}}
  */
 export function scanLegacyAutoExit({ now = Date.now() } = {}) {
-  const allKeys = safeKeys()
+  const { keys: allKeys, failed } = safeKeys()
   const manualAgents = new Set(allKeys.map(manualKeyAgent).filter(Boolean))
 
   const rows = []
@@ -152,7 +158,7 @@ export function scanLegacyAutoExit({ now = Date.now() } = {}) {
     else if (key.startsWith(PREFIX_EXIT_KEY)) rows.push(describeExitKey(key, manualAgents))
     else if (key.startsWith(PREFIX_EXIT_INFLIGHT)) rows.push(describeExitInflight(key, now))
   }
-  return { rows, count: rows.length }
+  return { rows, count: rows.length, failed }
 }
 
 /** True only for the four legacy auto-exit prefixes above — never for the v2 manual exit-key

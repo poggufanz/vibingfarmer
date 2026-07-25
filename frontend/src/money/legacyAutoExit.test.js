@@ -3,7 +3,7 @@
 // deletion over the four localStorage families the (now-deleted) autonomous auto-exit path used
 // to write. It must never redeem, transfer, relay, or sign anything, and it must never silently
 // treat an unreadable legacy key as "nothing to clean up".
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import {
@@ -187,6 +187,32 @@ describe('scanLegacyAutoExit', () => {
   })
 })
 
+describe('scanLegacyAutoExit — storage failure must never read as "found nothing"', () => {
+  afterEach(() => {
+    delete globalThis.localStorage
+  })
+
+  it('reports failed:true and an empty row list when localStorage itself throws on access', () => {
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      get() {
+        throw new Error('SecurityError: storage disabled')
+      },
+    })
+    const { rows, count, failed } = scanLegacyAutoExit()
+    expect(rows).toEqual([])
+    expect(count).toBe(0)
+    expect(failed).toBe(true)
+  })
+
+  it('reports failed:false when the scan genuinely ran and found nothing', () => {
+    stubStorage()
+    const { rows, failed } = scanLegacyAutoExit()
+    expect(rows).toEqual([])
+    expect(failed).toBe(false)
+  })
+})
+
 describe('isLegacyAutoExitKey', () => {
   it('is true only for the four legacy prefixes', () => {
     expect(isLegacyAutoExitKey('yv_exit_rules_GOWNER')).toBe(true)
@@ -235,5 +261,17 @@ describe('deleteLegacyAutoExitKeys', () => {
   it('returns empty results for no input, and never throws', () => {
     expect(deleteLegacyAutoExitKeys()).toEqual({ deleted: [], skipped: [] })
     expect(deleteLegacyAutoExitKeys([])).toEqual({ deleted: [], skipped: [] })
+  })
+
+  it('skips (never crashes on) a key whose removeItem throws', () => {
+    localStorage.setItem('yv_exit_rules_GOWNER', '{"authorized":true}')
+    const originalRemoveItem = localStorage.removeItem
+    localStorage.removeItem = (k) => {
+      if (k === 'yv_exit_rules_GOWNER') throw new Error('QuotaExceededError')
+      return originalRemoveItem(k)
+    }
+    const { deleted, skipped } = deleteLegacyAutoExitKeys(['yv_exit_rules_GOWNER'])
+    expect(deleted).toEqual([])
+    expect(skipped).toEqual(['yv_exit_rules_GOWNER'])
   })
 })

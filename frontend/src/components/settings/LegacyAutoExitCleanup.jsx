@@ -35,7 +35,7 @@ function rowSubject(row) {
 // computed; this function never re-derives or guesses at on-chain state.
 function rowDetail(row) {
   if (!row.readable) {
-    return 'Could not be read — the stored value is missing or corrupted.'
+    return 'Could not be read. The stored value is missing or corrupted.'
   }
   switch (row.kind) {
     case 'exitRules': {
@@ -48,10 +48,10 @@ function rowDetail(row) {
       return `Last tripped ${new Date(row.lastTrippedAt).toLocaleString()}`
     case 'exitKey':
       return row.supersededByManualKey
-        ? 'A newer manual withdraw key exists for this agent — this legacy key no longer matches the on-chain signer.'
-        : 'No newer manual withdraw key found for this agent on this device — whether this legacy key still matches the on-chain signer cannot be confirmed here.'
+        ? 'A newer manual withdraw key exists for this agent. This legacy key likely no longer matches the on-chain signer.'
+        : 'No newer manual withdraw key was found for this agent on this device. Whether this legacy key still matches the on-chain signer cannot be confirmed here.'
     case 'exitInflight':
-      return row.expired ? 'Lock expired — safe to clear.' : 'Lock still within its expiry window.'
+      return row.expired ? 'Lock expired. Safe to clear.' : 'Lock still within its expiry window.'
     default:
       return ''
   }
@@ -91,12 +91,23 @@ export default function LegacyAutoExitCleanup({ addLog } = {}) {
     setConfirming(false)
   }
 
+  if (scan.failed) {
+    return (
+      <div>
+        <p style={{ margin: 0, fontSize: 13, color: 'var(--danger)', lineHeight: 1.55 }}>
+          This browser's storage could not be scanned right now, so it is unknown whether any
+          legacy auto-exit data remains. Nothing has been deleted.
+        </p>
+      </div>
+    )
+  }
+
   if (rows.length === 0) {
     return (
       <div>
-        <p style={{ margin: 0, fontSize: 12.5, color: 'var(--text-muted)', lineHeight: 1.6 }}>
-          No legacy auto-exit data found on this device. The autonomous auto-exit feature has been
-          removed from the app — it no longer moves money, on this device or any other.
+        <p style={{ margin: 0, fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.55 }}>
+          No legacy auto-exit data found on this device. The autonomous auto-exit feature has
+          been removed from the app. This app no longer moves money on its own.
         </p>
       </div>
     )
@@ -104,8 +115,8 @@ export default function LegacyAutoExitCleanup({ addLog } = {}) {
 
   return (
     <div>
-      <p style={{ margin: '0 0 14px', fontSize: 12.5, color: 'var(--text-muted)', lineHeight: 1.6 }}>
-        The autonomous auto-exit feature has been removed — this app no longer moves money on its
+      <p style={{ margin: '0 0 16px', fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.55 }}>
+        The autonomous auto-exit feature has been removed. This app no longer moves money on its
         own. Below are leftover browser records from that older feature. Deleting them only clears
         this browser; it does not change any on-chain signer registration.
       </p>
@@ -118,9 +129,9 @@ export default function LegacyAutoExitCleanup({ addLog } = {}) {
               key={row.key}
               style={{
                 display: 'flex',
-                gap: 10,
+                gap: 12,
                 alignItems: 'flex-start',
-                padding: '10px 0',
+                padding: '12px 0',
                 borderBottom: '1px solid var(--border)',
                 minWidth: 0,
               }}
@@ -130,18 +141,18 @@ export default function LegacyAutoExitCleanup({ addLog } = {}) {
                 aria-label={label}
                 checked={selected.has(row.key)}
                 onChange={() => toggleRow(row.key)}
-                style={{ marginTop: 3, flex: 'none' }}
+                style={{ marginTop: 4, flex: 'none' }}
               />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 13, fontWeight: 600 }}>{KIND_LABEL[row.kind] || row.kind}</div>
-                <div style={{ fontSize: 11.5, color: 'var(--text-muted)', wordBreak: 'break-word' }}>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', wordBreak: 'break-word' }}>
                   {subject.role}: <span className="pc-technical">{short(subject.address)}</span>
                 </div>
                 <div
                   style={{
-                    fontSize: 11.5,
+                    fontSize: 12,
                     color: row.readable ? 'var(--text-muted)' : 'var(--danger)',
-                    marginTop: 2,
+                    marginTop: 4,
                   }}
                 >
                   {rowDetail(row)}
@@ -151,7 +162,7 @@ export default function LegacyAutoExitCleanup({ addLog } = {}) {
           )
         })}
       </ul>
-      <div style={{ marginTop: 14 }}>
+      <div style={{ marginTop: 16 }}>
         <button
           type="button"
           disabled={selectedKeys.length === 0}
@@ -165,7 +176,7 @@ export default function LegacyAutoExitCleanup({ addLog } = {}) {
             font: 'inherit',
             fontSize: 12,
             fontWeight: 600,
-            padding: '8px 14px',
+            padding: '8px 16px',
             cursor: selectedKeys.length === 0 ? 'not-allowed' : 'pointer',
             opacity: selectedKeys.length === 0 ? 0.5 : 1,
           }}
@@ -193,7 +204,7 @@ export default function LegacyAutoExitCleanup({ addLog } = {}) {
                 font: 'inherit',
                 fontSize: 12,
                 fontWeight: 600,
-                padding: '8px 14px',
+                padding: '8px 16px',
                 cursor: 'pointer',
               }}
             >
@@ -207,11 +218,11 @@ export default function LegacyAutoExitCleanup({ addLog } = {}) {
                 border: '1px solid var(--danger)',
                 borderRadius: 'var(--radius-sm)',
                 background: 'var(--danger)',
-                color: 'var(--pc-owned-ink, #17251f)',
+                color: 'var(--pc-owned-ink)',
                 font: 'inherit',
                 fontSize: 12,
                 fontWeight: 700,
-                padding: '8px 14px',
+                padding: '8px 16px',
                 cursor: 'pointer',
               }}
             >

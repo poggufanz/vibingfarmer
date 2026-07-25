@@ -5,7 +5,7 @@
 // never silently delete on load, must never render unreadable data as "nothing to clean up", and
 // must never call the deleted action "revocation" (deleting a local key does not change an
 // on-chain registered signer).
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { axe } from 'vitest-axe'
 import * as axeMatchers from 'vitest-axe/matchers'
@@ -50,6 +50,30 @@ describe('LegacyAutoExitCleanup — no legacy data', () => {
   it('has no accessibility violations in the empty state', async () => {
     const { container } = render(<LegacyAutoExitCleanup />)
     expect(await axe(container)).toHaveNoViolations()
+  })
+
+  it('contains no em-dash/en-dash design separators in the empty-state copy', () => {
+    const { container } = render(<LegacyAutoExitCleanup />)
+    expect(container.textContent).not.toMatch(/[–—]/)
+  })
+})
+
+describe('LegacyAutoExitCleanup — storage scan failed', () => {
+  afterEach(() => {
+    delete globalThis.localStorage
+  })
+
+  it('reports the scan failed instead of claiming there is nothing to clean up', () => {
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      get() {
+        throw new Error('SecurityError: storage disabled')
+      },
+    })
+    render(<LegacyAutoExitCleanup />)
+    expect(screen.queryByText(/no legacy auto-exit data/i)).toBeNull()
+    expect(screen.getByText(/could not be scanned/i)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /delete/i })).toBeNull()
   })
 })
 
@@ -140,23 +164,14 @@ describe('LegacyAutoExitCleanup — with legacy data', () => {
     ).not.toBeNull()
   })
 
-  it('never calls a redeem/transfer/relay/sign function — deletion is pure local storage removal', () => {
-    const relaySpy = vi.fn()
-    globalThis.__vfSubmitViaRelaySpy = relaySpy // nothing in this component could call this; sentinel only
-    render(<LegacyAutoExitCleanup />)
-
-    fireEvent.click(screen.getByLabelText(/exit-signer key cache/i))
-    fireEvent.click(screen.getByRole('button', { name: /delete selected/i }))
-    const dialog = screen.getByRole('dialog')
-    fireEvent.click(within(dialog).getByRole('button', { name: /^delete/i }))
-
-    expect(relaySpy).not.toHaveBeenCalled()
-    delete globalThis.__vfSubmitViaRelaySpy
-  })
-
-  it('labels an exit key still relevant to a live manual partial-withdraw registration', () => {
+  it('labels an exit key as superseded when a live manual partial-withdraw registration exists', () => {
     render(<LegacyAutoExitCleanup />)
     expect(screen.getByText(/newer manual withdraw key exists/i)).toBeTruthy()
+  })
+
+  it('contains no em-dash/en-dash design separators in the rendered copy', () => {
+    const { container } = render(<LegacyAutoExitCleanup />)
+    expect(container.textContent).not.toMatch(/[–—]/)
   })
 
   it('has no accessibility violations with rows and an open confirmation dialog', async () => {
