@@ -1,28 +1,58 @@
 import { describe, it, expect, vi } from 'vitest'
+
+// A throwing rpcServer() (SDK load failure) must degrade discoverOwnerScopes to "no server", not
+// crash it (Fix 4a). Preserve every other real export (readContract etc.) via importOriginal —
+// only rpcServer needs to be independently controllable per test.
+const rpcServerMock = vi.fn(async () => ({}))
+vi.mock('./client.js', async (importOriginal) => {
+  const actual = await importOriginal()
+  return { ...actual, rpcServer: (...a) => rpcServerMock(...a) }
+})
+
 import { discoverOwnerScopes, DEFAULT_NETWORK_ID } from './ownerDiscovery.js'
 
 const OWNER = 'GOWNER234567234567234567234567234567234567234567234567AB'
 const NETWORK = DEFAULT_NETWORK_ID
 
+// The coverage shape here must stay something fetchOwnerAgentIndex could actually PRODUCE for the
+// requested status (Fix 4d) — a fixture pairing status:'complete' with contiguous:false/pending
+// backfill teaches a wrong mental model, since the real client can never emit that combination.
 function client(overrides = {}) {
+  const status = overrides.status ?? 'partial'
+  const coverage =
+    status === 'complete'
+      ? {
+          manifestVersion: 'v',
+          manifestHash: '0xabc',
+          schemaVersion: 1,
+          indexedFromLedger: 1,
+          indexedThroughLedger: 100,
+          finalizedThroughLedger: 98,
+          contiguous: true,
+          gaps: [],
+          historicalBackfill: 'verified',
+          requiredFinalityLedgers: 2,
+          checkedAt: 123,
+        }
+      : {
+          manifestVersion: 'v',
+          manifestHash: '0xabc',
+          schemaVersion: 1,
+          indexedFromLedger: null,
+          indexedThroughLedger: null,
+          finalizedThroughLedger: null,
+          contiguous: false,
+          gaps: [],
+          historicalBackfill: 'pending',
+          requiredFinalityLedgers: 2,
+          checkedAt: 0,
+        }
   return {
-    status: 'partial',
+    status,
     networkId: NETWORK,
     owner: OWNER,
     agents: [],
-    coverage: {
-      manifestVersion: 'v',
-      manifestHash: '0xabc',
-      schemaVersion: 1,
-      indexedFromLedger: null,
-      indexedThroughLedger: null,
-      finalizedThroughLedger: null,
-      contiguous: false,
-      gaps: [],
-      historicalBackfill: 'pending',
-      requiredFinalityLedgers: 2,
-      checkedAt: 0,
-    },
+    coverage,
     ...overrides,
   }
 }
@@ -37,13 +67,14 @@ const scope = ({ owner = OWNER, revoked = false, expiry = 1000 } = {}) => ({
   revoked,
 })
 
-function seams({ clientResult = client(), cache = [], rpc = [], registry = [], scopes = {} } = {}) {
+function seams({ clientResult = client(), cache = [], rpc = [], registry = [], vault = [], scopes = {} } = {}) {
   return {
     server: {},
     fetchClient: vi.fn(async () => clientResult),
     loadCache: () => cache.map((agentAddress) => ({ agentAddress })),
     fetchRpcEvents: async () => rpc.map((agent) => ({ agent })),
     queryRegistry: async () => registry,
+    discoverVaultAgents: async () => vault,
     readScope: async (agent) => (agent in scopes ? scopes[agent] : null),
   }
 }
@@ -121,6 +152,32 @@ describe('discoverOwnerScopes', () => {
     expect(d.agents.find((a) => a.address === 'CFAIL').scopeReadStatus).toBe('failed')
   })
 
+  it('never admits a hint-only candidate whose scope read fails, and never reports partial on the strength of it alone', async () => {
+    // Only a local-cache hint claims CUNVERIFIED — D1 never indexed it (no apiRow) — and the one
+    // read that could vouch for it fails. Zero evidence backs membership: it must not become a
+    // row, and it must not by itself flip an honest `unavailable` (no other evidence at all) into
+    // a false `partial`.
+    const s = seams({
+      clientResult: { status: 'unavailable', networkId: NETWORK, owner: OWNER, agents: [], coverage: null },
+      cache: ['CUNVERIFIED'], // CUNVERIFIED has no entry in `scopes` -> readScope resolves null
+    })
+    const d = await discoverOwnerScopes({ owner: OWNER, ...s })
+    expect(d.status).toBe('unavailable')
+    expect(d.agents).toEqual([])
+  })
+
+  it('downgrades a complete status when a hint-only candidate cannot be verified, without admitting it as membership', async () => {
+    const row = { address: 'CKNOWN', kind: 'deposit' }
+    const s = seams({
+      clientResult: client({ status: 'complete', agents: [row] }),
+      cache: ['CUNVERIFIED'], // hint-only, scope_of read fails -> coverage discrepancy, not a row
+      scopes: { CKNOWN: scope() },
+    })
+    const d = await discoverOwnerScopes({ owner: OWNER, ...s })
+    expect(d.status).toBe('partial')
+    expect(d.agents.map((a) => a.address)).toEqual(['CKNOWN'])
+  })
+
   it('dedupes the same address seen via the API, cache, RPC events, and registry without losing provenance', async () => {
     const row = { address: 'CAGENT1', kind: 'deposit', runId: 'run1' }
     const s = seams({
@@ -178,9 +235,10 @@ describe('discoverOwnerScopes', () => {
       cache: ['C1'],
       rpc: ['C2'],
       registry: ['C3'],
+      vault: ['C4'],
     })
     const d = await discoverOwnerScopes({ owner: OWNER, ...s })
-    expect(d.hints).toEqual({ localCacheCount: 1, rpcEventCount: 1, registryCount: 1 })
+    expect(d.hints).toEqual({ localCacheCount: 1, rpcEventCount: 1, registryCount: 1, vaultEventCount: 1 })
   })
 
   it('returns unavailable with no owner, never guessing a demo/view-as address', async () => {
@@ -191,8 +249,46 @@ describe('discoverOwnerScopes', () => {
       owner: null,
       agents: [],
       coverage: null,
-      hints: { localCacheCount: 0, rpcEventCount: 0, registryCount: 0 },
+      hints: { localCacheCount: 0, rpcEventCount: 0, registryCount: 0, vaultEventCount: 0 },
     })
+  })
+
+  it('adds a verified vault-discovery candidate the API missed and downgrades a complete status', async () => {
+    // app.jsx's live positions poll already falls back to discoverAgentsFromVault when router
+    // events and the registry both come up empty (app.jsx:845) — the envelope must not be
+    // strictly narrower on-chain than the path it supersedes (scopeRehydrate.js:91-93 documents
+    // the incident this guards: two agents holding 100 USDC that every withdraw list missed
+    // because the union stopped short of this channel).
+    const s = seams({
+      clientResult: client({ status: 'complete', agents: [] }),
+      vault: ['CVAULTFOUND'],
+      scopes: { CVAULTFOUND: scope() },
+    })
+    const d = await discoverOwnerScopes({ owner: OWNER, ...s })
+    expect(d.agents.map((a) => a.address)).toEqual(['CVAULTFOUND'])
+    expect(d.status).toBe('partial')
+  })
+
+  it('degrades gracefully when the vault-discovery channel throws, and never throws out of discoverOwnerScopes', async () => {
+    const s = seams({
+      clientResult: { status: 'unavailable', networkId: NETWORK, owner: OWNER, agents: [], coverage: null },
+    })
+    s.discoverVaultAgents = async () => {
+      throw new Error('rpc getEvents failed')
+    }
+    const d = await discoverOwnerScopes({ owner: OWNER, ...s })
+    expect(d.status).toBe('unavailable')
+    expect(d.agents).toEqual([])
+  })
+
+  it('degrades gracefully when rpcServer() itself throws, and never throws out of discoverOwnerScopes', async () => {
+    rpcServerMock.mockRejectedValueOnce(new Error('stellar-sdk failed to load'))
+    const { server: _omit, ...s } = seams({
+      clientResult: { status: 'unavailable', networkId: NETWORK, owner: OWNER, agents: [], coverage: null },
+    }) // omit `server` so the internal `server || await rpcServer()` branch actually runs
+    const d = await discoverOwnerScopes({ owner: OWNER, ...s })
+    expect(d.status).toBe('unavailable')
+    expect(d.agents).toEqual([])
   })
 
   it('never references a demo agent fallback', async () => {

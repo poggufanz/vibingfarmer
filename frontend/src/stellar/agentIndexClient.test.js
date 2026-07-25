@@ -127,6 +127,78 @@ describe('fetchOwnerAgentIndex', () => {
     })
   })
 
+  it('returns the empty-agents unavailable shape for an unrecognized status, never a populated agents array', async () => {
+    const fetchImpl = fakeFetch({
+      version: 1,
+      networkId: NETWORK,
+      owner: OWNER,
+      status: 'weird-future-status',
+      agents: [{ address: 'CAGENT1', kind: 'deposit' }],
+      coverage: goodCoverage(),
+    })
+    const res = await fetchOwnerAgentIndex({ owner: OWNER, networkId: NETWORK, fetchImpl })
+    expect(res).toEqual({
+      status: 'unavailable',
+      networkId: NETWORK,
+      owner: OWNER,
+      agents: [],
+      coverage: null,
+      hints: NULL_HINTS,
+    })
+  })
+
+  it('downgrades complete to partial when coverage is not contiguous, even with a valid manifest', async () => {
+    const fetchImpl = fakeFetch({
+      version: 1,
+      networkId: NETWORK,
+      owner: OWNER,
+      status: 'complete',
+      agents: [],
+      coverage: goodCoverage({ contiguous: false }),
+    })
+    const res = await fetchOwnerAgentIndex({ owner: OWNER, networkId: NETWORK, fetchImpl })
+    expect(res.status).toBe('partial')
+  })
+
+  it('downgrades complete to partial when coverage has an open gap, even with a valid manifest', async () => {
+    const fetchImpl = fakeFetch({
+      version: 1,
+      networkId: NETWORK,
+      owner: OWNER,
+      status: 'complete',
+      agents: [],
+      coverage: goodCoverage({ gaps: [{ from: 10, to: 20 }] }),
+    })
+    const res = await fetchOwnerAgentIndex({ owner: OWNER, networkId: NETWORK, fetchImpl })
+    expect(res.status).toBe('partial')
+  })
+
+  it('downgrades complete to partial when the historical backfill is not verified, even with a valid manifest', async () => {
+    const fetchImpl = fakeFetch({
+      version: 1,
+      networkId: NETWORK,
+      owner: OWNER,
+      status: 'complete',
+      agents: [],
+      coverage: goodCoverage({ historicalBackfill: 'pending' }),
+    })
+    const res = await fetchOwnerAgentIndex({ owner: OWNER, networkId: NETWORK, fetchImpl })
+    expect(res.status).toBe('partial')
+  })
+
+  it('downgrades complete to partial when indexedThroughLedger is null (no tip), even with a valid manifest', async () => {
+    const fetchImpl = fakeFetch({
+      version: 1,
+      networkId: NETWORK,
+      owner: OWNER,
+      status: 'complete',
+      agents: [],
+      coverage: goodCoverage({ indexedThroughLedger: null }),
+    })
+    const res = await fetchOwnerAgentIndex({ owner: OWNER, networkId: NETWORK, fetchImpl })
+    expect(res.status).toBe('partial')
+  })
+
   it('returns unavailable on a non-2xx response', async () => {
     const fetchImpl = fakeFetch({ error: 'boom' }, { ok: false, status: 500 })
     const res = await fetchOwnerAgentIndex({ owner: OWNER, networkId: NETWORK, fetchImpl })

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
   mergePositions,
   applyChainPositions,
@@ -15,6 +15,17 @@ vi.mock('./stellar/agentDeposit.js', () => ({ readVaultShares: vi.fn() }))
 vi.mock('./stellar/vaultReads.js', () => ({ readPricePerShare: vi.fn() }))
 import { readVaultShares } from './stellar/agentDeposit.js'
 import { readPricePerShare } from './stellar/vaultReads.js'
+
+// These two mocks are shared module-level state across every describe block below (vi.mock is
+// per-file, not per-describe). Without a file-level clear, one test's call count/resolved value
+// can leak into the next depending on execution order — this already caused one false failure
+// (a test asserting `not.toHaveBeenCalled()` only passed because it happened to manually clear
+// first). Clearing before EVERY test removes the ordering dependency; mockClear() resets calls/
+// results only, never the mockResolvedValue/mockImplementation a test sets up afterward.
+beforeEach(() => {
+  readVaultShares.mockClear()
+  readPricePerShare.mockClear()
+})
 
 describe('reconcilePositionsFromChain (autofarm pps conversion)', () => {
   it('converts the share balance to asset units via price_per_share', async () => {
@@ -42,7 +53,6 @@ describe('reconcilePositionsFromChain (autofarm pps conversion)', () => {
 
 describe('reconcilePositionsFromChain (explicit agent list, no demo-agent default)', () => {
   it('requires an explicit agent list — no agents means null, never a demo-agent guess', async () => {
-    readVaultShares.mockClear()
     expect(await reconcilePositionsFromChain('GOWNER')).toBeNull()
     expect(await reconcilePositionsFromChain('GOWNER', {})).toBeNull()
     expect(await reconcilePositionsFromChain('GOWNER', { agents: [] })).toBeNull()

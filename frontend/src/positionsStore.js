@@ -139,10 +139,19 @@ export async function reconcilePositionsFromChain(address, { agents, server } = 
 }
 
 /**
+ * @deprecated Pocket Crew My Money Task 6 replaced this with `pickDisplayAgents`, which reads
+ * the `OwnerDiscoveryV1` envelope instead of a plain `scopes` array. This function silently
+ * drops revoked agents — the exit-enumeration rule (full exit enumeration includes active,
+ * expired, revoked, AND revoked-but-funded agents) forbids that. Kept only because its existing
+ * callers (app.jsx, HomePage.jsx, PositionsZone.jsx) still depend on the plain-`scopes` shape;
+ * My Money Tasks 11/13 own migrating those callers to `pickDisplayAgents` and deleting this pair.
+ *
  * Choose which agents' vault shares represent the user's positions. View-as (dev) reads the
  * impersonated address's OWN shares; a real run reads the per-run agents the router deployed
  * (scopes[].agent, non-revoked) — where deposit mints the shares. Returns undefined when there
- * is nothing better yet (e.g. before scopes have rehydrated) so reconcile keeps its default.
+ * is nothing better yet (e.g. before scopes have rehydrated) — the caller must then omit `agents`
+ * when calling `reconcilePositionsFromChain`, which reads nothing rather than guessing (no
+ * default exists to "keep" anymore; see that function's own doc).
  *
  * @param {Array<{agent?: string, revoked?: boolean}>} scopes
  * @param {string} [viewAsAddress]
@@ -155,6 +164,14 @@ export function pickPositionsAgents(scopes, viewAsAddress) {
 }
 
 /**
+ * @deprecated Pocket Crew My Money Task 6 replaced this with `pickRecoverableVaultAgents`, which
+ * reads the `OwnerDiscoveryV1` envelope instead of a plain `scopes` array. This function silently
+ * drops revoked agents — the exit-enumeration rule (full exit enumeration includes active,
+ * expired, revoked, AND revoked-but-funded agents) forbids that: a revoked-but-funded agent is
+ * exactly the case a sweep must not skip. Kept only because its existing callers (app.jsx,
+ * HomePage.jsx, PositionsZone.jsx) still depend on the plain-`scopes` shape; My Money Tasks 11/13
+ * own migrating those callers to `pickRecoverableVaultAgents` and deleting this pair.
+ *
  * The agents whose shares back the position shown for `vaultAddress` — i.e. the set `owner_withdraw`
  * must sweep, one user-signed tx each, because a position is the SUM over every agent (see the
  * `total +=` above) while the exit is per-agent.

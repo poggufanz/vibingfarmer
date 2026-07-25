@@ -15,7 +15,7 @@
 import { fetchOwnerAgentIndex } from './agentIndexClient.js'
 import { loadCachedAgents, readAgentScope } from './agentCache.js'
 import { fetchRouterDeployedEvents } from './routerEvents.js'
-import { queryAgentsByOwner } from './events.js'
+import { queryAgentsByOwner, discoverAgentsFromVault } from './events.js'
 import {
   SOROBAN_FUNDING_ROUTER_ADDRESS,
   SOROBAN_ACTIVE_VAULT_ADDRESS,
@@ -30,6 +30,7 @@ const SOURCE_API = 'agent-index-api'
 const SOURCE_CACHE = 'local-cache'
 const SOURCE_RPC = 'rpc-router-events'
 const SOURCE_REGISTRY = 'registry-events'
+const SOURCE_VAULT = 'vault-discovery'
 
 function emptyEnvelope(networkId, owner) {
   return {
@@ -38,7 +39,7 @@ function emptyEnvelope(networkId, owner) {
     owner: owner ?? null,
     agents: [],
     coverage: null,
-    hints: { localCacheCount: 0, rpcEventCount: 0, registryCount: 0 },
+    hints: { localCacheCount: 0, rpcEventCount: 0, registryCount: 0, vaultEventCount: 0 },
   }
 }
 
@@ -67,7 +68,7 @@ function placeholderApiFields(address) {
  * Build the OwnerDiscoveryV1 envelope for `owner`. Read-only; never mutates any cache.
  * @param {{owner:string, networkId?:string, server?:object, vault?:string,
  *   fetchClient?:Function, loadCache?:Function, fetchRpcEvents?:Function,
- *   queryRegistry?:Function, readScope?:Function}} p
+ *   queryRegistry?:Function, discoverVaultAgents?:Function, readScope?:Function}} p
  * @returns {Promise<{status:'complete'|'partial'|'unavailable', networkId:string, owner:string,
  *   agents:Array, coverage:object|null, hints:object}>}
  */
@@ -80,6 +81,7 @@ export async function discoverOwnerScopes({
   loadCache = loadCachedAgents,
   fetchRpcEvents = fetchRouterDeployedEvents,
   queryRegistry = queryAgentsByOwner,
+  discoverVaultAgents = discoverAgentsFromVault,
   readScope = readAgentScope,
 } = {}) {
   if (!owner) return emptyEnvelope(networkId, owner)
@@ -92,19 +94,37 @@ export async function discoverOwnerScopes({
     coverage: null,
   }))
 
-  const s = server || (await rpcServer())
-  const cached = loadCache({ owner, vault, network: NETWORK_PASSPHRASE })
-  const [rpcEvents, registryAgents] = await Promise.all([
+  // Neither of these seams has its own internal try/catch (unlike every fetch below, which is
+  // `.catch`-guarded individually) — a throwing rpcServer() (SDK load failure) or a throwing
+  // injected loadCache must degrade to "no server / no cache hints" rather than crash the whole
+  // envelope build.
+  let s = server ?? null
+  if (!s) {
+    try {
+      s = await rpcServer()
+    } catch {
+      s = null
+    }
+  }
+  let cached = []
+  try {
+    cached = loadCache({ owner, vault, network: NETWORK_PASSPHRASE })
+  } catch {
+    cached = []
+  }
+  const [rpcEvents, registryAgents, vaultAgents] = await Promise.all([
     SOROBAN_FUNDING_ROUTER_ADDRESS
       ? fetchRpcEvents({ server: s, routerAddress: SOROBAN_FUNDING_ROUTER_ADDRESS, owner }).catch(() => [])
       : Promise.resolve([]),
     queryRegistry(owner, { server: s }).catch(() => []),
+    discoverVaultAgents(owner, { server: s }).catch(() => []),
   ])
 
   const hints = {
     localCacheCount: cached.length,
     rpcEventCount: rpcEvents.length,
     registryCount: registryAgents.length,
+    vaultEventCount: vaultAgents.length,
   }
 
   // Candidate union, deduped by address — dedup never drops WHICH sources saw an address
@@ -121,6 +141,7 @@ export async function discoverOwnerScopes({
   for (const entry of cached) addCandidate(entry.agentAddress, SOURCE_CACHE)
   for (const ev of rpcEvents) addCandidate(ev.agent, SOURCE_RPC)
   for (const addr of registryAgents) addCandidate(addr, SOURCE_REGISTRY)
+  for (const addr of vaultAgents) addCandidate(addr, SOURCE_VAULT)
 
   // Chain is authoritative: re-read every candidate's scope. readAgentScope never throws (catches
   // internally), so allSettled here is belt-and-braces, not load-bearing.
@@ -132,15 +153,27 @@ export async function discoverOwnerScopes({
   let sawQuarantine = false
   let sawReadFailure = false
   let sawHintOnlyCandidate = false
+  let sawUnverifiedHint = false
 
   for (const r of settled) {
     if (r.status !== 'fulfilled') continue
     const { address, sources, apiRow, scope } = r.value
     const discoverySources = [...sources].sort()
     if (scope == null) {
+      // apiRow present = the D1 index already proved this address is the owner's — a dead RPC
+      // read must not drop it (see the CFAIL/CGOOD test). apiRow absent = ONLY a hint (local
+      // cache is client-mutable and stale-prone) claimed this address, and the one read that
+      // could vouch for it just failed: zero evidence backs membership, so it must NOT become a
+      // row. It still counts as a coverage discrepancy (an unverifiable candidate the D1 index
+      // never indexed) so a 'complete' claim still downgrades — but never upgrades `unavailable`
+      // to `partial` on its own, because it never reaches `agents`.
+      if (!apiRow) {
+        sawUnverifiedHint = true
+        continue
+      }
       sawReadFailure = true
       agents.push({
-        ...(apiRow || placeholderApiFields(address)),
+        ...apiRow,
         address,
         discoverySources,
         scopeReadStatus: 'failed',
@@ -171,9 +204,12 @@ export async function discoverOwnerScopes({
 
   let status = client.status === 'complete' || client.status === 'partial' ? client.status : 'unavailable'
   if (status === 'unavailable' && agents.length > 0) status = 'partial' // known hints beat empty
-  // A quarantined row, a scope read failure, or a hint-only candidate the API never indexed are
-  // all evidence the D1 index's "complete" claim doesn't fully hold — surface it as a discrepancy.
-  if (status === 'complete' && (sawQuarantine || sawReadFailure || sawHintOnlyCandidate)) status = 'partial'
+  // A quarantined row, a scope read failure, a hint-only candidate the API never indexed, or an
+  // unverifiable hint (couldn't even be read) are all evidence the D1 index's "complete" claim
+  // doesn't fully hold — surface it as a discrepancy. sawUnverifiedHint never contributes to the
+  // `agents.length > 0` upgrade above (it never reaches `agents`), only to this downgrade.
+  if (status === 'complete' && (sawQuarantine || sawReadFailure || sawHintOnlyCandidate || sawUnverifiedHint))
+    status = 'partial'
 
   return { status, networkId, owner, agents, coverage: client.coverage ?? null, hints }
 }

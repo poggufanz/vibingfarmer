@@ -77,7 +77,12 @@ export async function fetchOwnerAgentIndex({
     return unavailableResult(networkId, owner)
   }
 
-  let status = body.status === 'complete' ? 'complete' : body.status === 'partial' ? 'partial' : 'unavailable'
+  // An unrecognized body.status (neither 'complete' nor 'partial') has no trustworthy agents/
+  // coverage attached to it either — short-circuit to the same empty-agents shape every other
+  // `unavailable` result uses, rather than silently carrying the raw body's agents/coverage
+  // through under an 'unavailable' label.
+  if (body.status !== 'complete' && body.status !== 'partial') return unavailableResult(networkId, owner)
+  let status = body.status
 
   const coverage = body.coverage
   // Manifest-identity + finality-margin re-check: a stale/tampered/misconfigured server could
@@ -89,7 +94,19 @@ export async function fetchOwnerAgentIndex({
     coverage.schemaVersion === AGENT_INDEX_SCHEMA_VERSION &&
     Number.isInteger(coverage.requiredFinalityLedgers) &&
     coverage.requiredFinalityLedgers >= AGENT_INDEX_FINALITY_LEDGERS
-  if (status === 'complete' && !manifestTrusted) status = 'partial'
+  // The server derives `status` from exactly this coverage evidence too (api/agent-index/
+  // indexer.js coverageProof) — re-checking only the manifest identity above and trusting the
+  // server's own `status` word for the rest would defeat "never trusts the server's word alone".
+  // Zero open gaps, a verified historical backfill, and a non-null indexed-through tip are the
+  // same three conjuncts the coverage semantics require for 'complete' (a NULL tip is never
+  // complete) — re-derive them here too, not just the manifest identity.
+  const coverageTrusted =
+    coverage.contiguous === true &&
+    Array.isArray(coverage.gaps) &&
+    coverage.gaps.length === 0 &&
+    coverage.historicalBackfill === 'verified' &&
+    coverage.indexedThroughLedger != null
+  if (status === 'complete' && !(manifestTrusted && coverageTrusted)) status = 'partial'
 
   const agents = body.agents
     .filter((a) => a && typeof a.address === 'string' && a.address)
