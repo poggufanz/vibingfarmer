@@ -13,7 +13,10 @@
  * gradient/glow/shimmer/pulse anywhere below. Both approve.html and ceremony.html mark their
  * root [data-pocket-critical], which this file hard-disables animation on.
  *
- * No @layer: each MV3 page loads exactly one stylesheet, so there is no cascade to arbitrate.
+ * No @layer: approve.html and ceremony.html each load this file as their only stylesheet and
+ * never inject a second one at runtime -- unlike popup.jsx, which still renders a whole separate
+ * legacy system inside popup.html (out of scope here; see wallet.css's header) -- so there is no
+ * cascade here to arbitrate.
  */
 
 :root,
@@ -165,14 +168,19 @@ body {
 }
 
 body {
-  display: flex;
-  justify-content: center;
   margin: 0;
   color: var(--pc-ink);
   font-family: var(--pc-font-body);
   font-size: var(--pc-type-body);
   line-height: var(--pc-leading-body);
   text-rendering: optimizelegibility;
+}
+
+/* approve.html/ceremony.html only: centers the single .pc-wallet document. Kept out of the
+   verbatim contract `body` rule above so that rule stays an auditable byte-for-byte copy. */
+body {
+  display: flex;
+  justify-content: center;
 }
 
 h1,
@@ -192,6 +200,24 @@ textarea {
   font-family: var(--pc-font-body);
 }
 
+h1 {
+  max-width: 15ch;
+  margin-bottom: var(--pc-space-4);
+  font-size: var(--pc-type-page);
+  font-weight: 700;
+  line-height: var(--pc-leading-title);
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+
+h2 {
+  margin-bottom: var(--pc-space-3);
+  font-size: var(--pc-type-section);
+  font-weight: 650;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
 p {
   max-width: 64ch;
 }
@@ -201,6 +227,20 @@ pre,
 .pc-technical {
   font-family: var(--pc-font-mono);
   font-size: var(--pc-type-technical);
+}
+
+.pc-wordmark {
+  font-family: var(--pc-font-wordmark);
+}
+
+.pc-money-figure,
+[data-pocket-money] {
+  font-family: var(--pc-font-display);
+  font-size: var(--pc-type-money);
+  font-variant-numeric: tabular-nums lining-nums;
+  font-weight: 720;
+  line-height: var(--pc-leading-tight);
+  letter-spacing: -0.055em;
 }
 
 /* Controls. Buttons are soft rectangles, not pills. Pills are reserved for compact metadata. */
@@ -341,6 +381,24 @@ pre,
   height: 14px;
 }
 
+.pc-network-route {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pc-space-2);
+}
+
+.pc-agent-mark {
+  width: 36px;
+  height: 36px;
+  flex: none;
+}
+
+.pc-agent-mark--hero {
+  width: 52px;
+  height: 52px;
+}
+
 /* VF Wallet: same system, extension-specific density and explicit security hierarchy. */
 .pc-wallet {
   width: 360px;
@@ -381,6 +439,25 @@ pre,
   letter-spacing: -0.03em;
 }
 
+.pc-wallet-balance {
+  font-size: 44px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 720;
+  letter-spacing: -0.05em;
+  line-height: 1;
+}
+
+.pc-wallet-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--pc-space-3);
+}
+
+.pc-wallet-actions .pc-button,
+.pc-wallet-approval-actions .pc-button {
+  width: 100%;
+}
+
 .pc-wallet-origin {
   display: grid;
   gap: var(--pc-space-2);
@@ -402,16 +479,34 @@ pre,
   gap: var(--pc-space-3);
 }
 
-.pc-wallet-approval-actions .pc-button {
-  width: 100%;
-}
-
 .pc-wallet-critical,
 [data-pocket-critical] {
   animation: none !important;
   transition:
     border-color var(--pc-duration-fast) var(--pc-ease-standard),
     background-color var(--pc-duration-fast) var(--pc-ease-standard);
+}
+
+/* Motion hooks. GSAP implementation uses duration .32, y 8, stagger .04, power2.out.
+   It may animate only opacity, x, y, and scale within the local component scope. */
+[data-pocket-enter] {
+  will-change: auto;
+}
+
+[data-pocket-value-changed] {
+  transition: opacity 180ms var(--pc-ease-standard);
+}
+
+/* Mobile. The 360px popup/approval viewport matches this query, so these overrides are live
+   here, not dead weight copied from a desktop-only breakpoint. */
+@media (max-width: 767px) {
+  :root {
+    --pc-route-gutter: 16px;
+    --pc-route-gap: 36px;
+    --pc-dominant-padding: 24px;
+    --pc-type-money: clamp(44px, 15vw, 60px);
+    --pc-type-page: clamp(32px, 10vw, 42px);
+  }
 }
 
 @media (max-width: 359px) {
@@ -432,9 +527,14 @@ pre,
 }
 
 @media (prefers-reduced-motion: reduce) {
+  html:focus-within {
+    scroll-behavior: auto;
+  }
+
   *,
   *::before,
   *::after {
+    scroll-behavior: auto !important;
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
@@ -497,7 +597,7 @@ pre,
 /* --- approve.html + ceremony.html: live status line. Never a color-only cue -- always text. --- */
 #status {
   margin: 0;
-  min-height: 16px;
+  min-height: var(--pc-space-4);
   color: var(--pc-muted);
   font-family: var(--pc-font-mono);
   font-size: var(--pc-type-technical);

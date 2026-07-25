@@ -5,7 +5,17 @@
 // extension/.
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
+import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
@@ -32,6 +42,14 @@ const AGENT_MARK_BODY_D =
 const AGENT_MARK_TAIL_D = 'M9 25L9 30L4 28Z'
 
 const PAGES = ['popup.html', 'approve.html', 'ceremony.html']
+// Brief step 1 asks for a mark "readable at 16px". Not machine-checkable: readability is a
+// perceptual judgment (does the pocket/V silhouette still read as a shape, not mud, at 16 real
+// pixels) that no pixel-level assertion substitutes for -- a check that counted non-transparent
+// pixels or measured contrast could pass on a genuinely unreadable render. The mechanically
+// enforceable proxies actually asserted below are: exact 16px IHDR dimensions (this array), byte-
+// for-byte deterministic output, and the fail-closed hash-drift guard, none of which claim to
+// prove readability. Readability is a visual-review concern (see the visual contract's REQUIRED
+// VISUAL SNAPSHOTS), not a unit-test one.
 const ICON_SIZES = [16, 32, 48, 128]
 
 function sha256(buffer) {
@@ -41,6 +59,33 @@ function sha256(buffer) {
 // Minimal PNG IHDR reader: width/height live at bytes 16-24 of any valid PNG.
 function readPngSize(buffer) {
   return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) }
+}
+
+// gen-ext-icons.mjs hardcodes its input/output paths relative to its own file location
+// (../extension, ../public) -- it takes no path overrides, and it is not in this fix loop's
+// authorized file list, so it cannot be given any. Exercising it safely therefore means mirroring
+// that relative layout inside a real OS tmpdir (never a tracked path) and pointing a COPY of the
+// script at the copy. A symlinked node_modules lets the copy's `import '@resvg/resvg-js'` resolve
+// (Node's ESM resolver walks up parent directories from the importing file looking for
+// node_modules; the tmpdir itself has none, so it needs one) without copying node_modules itself.
+function setupTmpGenDir() {
+  const tmpRoot = mkdtempSync(resolve(tmpdir(), 'vf-gen-ext-icons-'))
+  mkdirSync(resolve(tmpRoot, 'scripts'), { recursive: true })
+  mkdirSync(resolve(tmpRoot, 'extension/icons'), { recursive: true })
+  mkdirSync(resolve(tmpRoot, 'public/brand'), { recursive: true })
+  symlinkSync(resolve(FRONTEND_DIR, 'node_modules'), resolve(tmpRoot, 'node_modules'), 'dir')
+  const scriptPath = resolve(tmpRoot, 'scripts/gen-ext-icons.mjs')
+  writeFileSync(scriptPath, readFileSync(GEN_SCRIPT))
+  writeFileSync(
+    resolve(tmpRoot, 'public/brand/assets.manifest.json'),
+    readFileSync(ASSETS_MANIFEST)
+  )
+  return {
+    scriptPath,
+    svgPath: resolve(tmpRoot, 'extension/vibing_farmer.logo.svg'),
+    iconsDir: resolve(tmpRoot, 'extension/icons'),
+    cleanup: () => rmSync(tmpRoot, { recursive: true, force: true }),
+  }
 }
 
 describe('extension brand asset contract', () => {
@@ -60,38 +105,79 @@ describe('extension brand asset contract', () => {
     expect(content).not.toContain(AGENT_MARK_TAIL_D)
   })
 
-  it('gen-ext-icons.mjs renders 16/32/48/128 PNGs from a source whose hash matches the frozen manifest entry', () => {
-    execFileSync('node', [GEN_SCRIPT], { cwd: FRONTEND_DIR })
+  it('gen-ext-icons.mjs renders 16/32/48/128 PNGs deterministically from a source whose hash matches the frozen manifest entry, without touching any tracked file', () => {
+    // Baseline: prove the generator run below never wrote the tracked icons/logo it exercises
+    // a copy of (the standing worktree-preservation constraint -- a prior version of this test
+    // regenerated the tracked PNGs and overwrote the tracked SVG in place on every `npm test`).
+    const trackedLogoBefore = sha256(readFileSync(LOGO_SVG))
+    const trackedIconsBefore = ICON_SIZES.map((size) =>
+      sha256(readFileSync(resolve(EXT_DIR, `icons/icon-${size}.png`)))
+    )
+
     const manifest = JSON.parse(readFileSync(ASSETS_MANIFEST, 'utf8'))
     const markEntry = manifest.find((e) => e.path === '/brand/vibing-farmer-mark.svg')
     expect(markEntry, 'manifest must record the mark entry').toBeTruthy()
     expect(sha256(readFileSync(LOGO_SVG))).toBe(markEntry.sha256)
 
-    for (const size of ICON_SIZES) {
-      const png = readFileSync(resolve(EXT_DIR, `icons/icon-${size}.png`))
-      expect(readPngSize(png), `icon-${size}.png`).toEqual({ width: size, height: size })
-    }
-  })
-
-  it('gen-ext-icons.mjs fails closed when the source SVG no longer hashes to the manifest entry', () => {
-    const original = readFileSync(LOGO_SVG)
-    writeFileSync(LOGO_SVG, '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"></svg>\n')
+    // Two independent tmpdir runs of the same source SVG: byte-identical PNG output across both
+    // is the deterministic-icon guarantee the brief asks for (a raster pipeline that embedded a
+    // timestamp, random id, or nondeterministic encoder pass would fail this even though IHDR
+    // dimensions alone would still look fine).
+    const runA = setupTmpGenDir()
+    const runB = setupTmpGenDir()
     try {
-      expect(() =>
-        execFileSync('node', [GEN_SCRIPT], { cwd: FRONTEND_DIR, stdio: 'pipe' })
-      ).toThrow()
+      writeFileSync(runA.svgPath, readFileSync(LOGO_SVG))
+      writeFileSync(runB.svgPath, readFileSync(LOGO_SVG))
+      execFileSync('node', [runA.scriptPath], { stdio: 'pipe' })
+      execFileSync('node', [runB.scriptPath], { stdio: 'pipe' })
+
+      for (const size of ICON_SIZES) {
+        const pngA = readFileSync(resolve(runA.iconsDir, `icon-${size}.png`))
+        const pngB = readFileSync(resolve(runB.iconsDir, `icon-${size}.png`))
+        expect(readPngSize(pngA), `icon-${size}.png`).toEqual({ width: size, height: size })
+        expect(sha256(pngA), `icon-${size}.png byte-stability across independent runs`).toBe(
+          sha256(pngB)
+        )
+      }
     } finally {
-      writeFileSync(LOGO_SVG, original)
+      runA.cleanup()
+      runB.cleanup()
     }
+
+    expect(sha256(readFileSync(LOGO_SVG)), 'tracked logo must be unchanged').toBe(
+      trackedLogoBefore
+    )
+    ICON_SIZES.forEach((size, i) => {
+      expect(
+        sha256(readFileSync(resolve(EXT_DIR, `icons/icon-${size}.png`))),
+        `tracked icon-${size}.png must be unchanged`
+      ).toBe(trackedIconsBefore[i])
+    })
   })
 
-  it('manifest.json reports the bumped MV3 version and defines no remote-origin CSP override', () => {
+  it('gen-ext-icons.mjs fails closed when the source SVG no longer hashes to the manifest entry, without ever writing the tracked logo', () => {
+    const trackedLogoBefore = sha256(readFileSync(LOGO_SVG))
+    const dir = setupTmpGenDir()
+    try {
+      writeFileSync(dir.svgPath, '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"></svg>\n')
+      expect(() => execFileSync('node', [dir.scriptPath], { stdio: 'pipe' })).toThrow()
+    } finally {
+      dir.cleanup()
+    }
+    expect(sha256(readFileSync(LOGO_SVG)), 'tracked logo must be unchanged').toBe(
+      trackedLogoBefore
+    )
+  })
+
+  it('manifest.json reports the bumped MV3 version and defines no content_security_policy override, so MV3\'s default script-src \'self\' applies', () => {
     const manifest = JSON.parse(readFileSync(MANIFEST_JSON, 'utf8'))
     expect(manifest.manifest_version).toBe(3)
     expect(manifest.version).toBe('0.3.0')
-    if (manifest.content_security_policy) {
-      expect(JSON.stringify(manifest.content_security_policy)).not.toMatch(/https?:\/\//)
-    }
+    // A previous version of this assertion guarded a remote-origin check behind
+    // `if (manifest.content_security_policy)`, which never runs -- manifest.json declares no
+    // such key, so MV3's built-in default (`script-src 'self'`) governs instead. Assert that
+    // directly rather than leaving a conditional branch that can never execute.
+    expect(manifest.content_security_policy).toBeUndefined()
   })
 
   it('popup/approve/ceremony HTML declare no remote font, script, image, or stylesheet dependency', () => {

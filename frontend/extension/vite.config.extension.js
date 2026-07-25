@@ -53,8 +53,11 @@ export default defineConfig({
 
         cpSync(resolve(__dirname, 'icons'), resolve(OUT, 'icons'), { recursive: true })
 
-        // Reviewed brand mark/lockup/network subset (Wallet Task 8) -- MV3 pages reference these
-        // as local relative paths (./brand/...), never a CDN, so they must ship inside the bundle.
+        // Reviewed brand mark/lockup/network subset (Wallet Task 8) -- no popup/approve/ceremony
+        // page references extension-dist/brand/** yet (nothing here renders it at this commit).
+        // Staged ahead for the wallet surface tasks that add the on-screen brand lockup and
+        // network marks; ship it inside the bundle now so that later work has local relative
+        // paths (./brand/...) to point at rather than a CDN.
         mkdirSync(resolve(BRAND_OUT, 'networks'), { recursive: true })
         for (const file of BRAND_FILES) {
           copyFileSync(resolve(BRAND_SRC, file), resolve(BRAND_OUT, file))

@@ -9,12 +9,17 @@
  * re-derived, never approximated. A locked value here must never be changed without owner
  * approval; if this file and the contract ever disagree, the contract wins.
  *
- * popup.html loads this file. popup.jsx (out of scope for this task) still renders its own
- * legacy inline styles inside #root -- this file wires the outer document (background, favicon
- * context, base tokens) so a future task can migrate popup.jsx onto these classes without a
- * second token source to keep in sync.
+ * popup.html does not load this file (fix loop 1 reverted the link -- popup.jsx still renders
+ * the full legacy "Acid Yield" system inside #root: entry animations on every screen and a
+ * gradient, infinitely-animated primary button, both of which this contract forbids, so wiring
+ * this file underneath it would have shipped a page that fails the visual contract while
+ * claiming Pocket Crew framing it hadn't earned). This file stays ready -- tokens, primitives,
+ * and the .pc-wallet shell -- for the wallet surface tasks that migrate popup.jsx onto it, so
+ * that migration has one token source to land on instead of inventing one mid-task.
  *
- * No @layer: each MV3 page loads exactly one stylesheet, so there is no cascade to arbitrate.
+ * No @layer: not currently loaded by any page, so there is no cascade to arbitrate today. Once
+ * popup.html links this file again post-migration, revisit -- the replacement for popup.jsx must
+ * not inject a second, unlayered stylesheet without @layer coordination.
  */
 
 :root,
@@ -472,6 +477,18 @@ pre,
   transition: opacity 180ms var(--pc-ease-standard);
 }
 
+/* Mobile. The 360px popup viewport matches this query, so these overrides are live here, not
+   dead weight copied from a desktop-only breakpoint. */
+@media (max-width: 767px) {
+  :root {
+    --pc-route-gutter: 16px;
+    --pc-route-gap: 36px;
+    --pc-dominant-padding: 24px;
+    --pc-type-money: clamp(44px, 15vw, 60px);
+    --pc-type-page: clamp(32px, 10vw, 42px);
+  }
+}
+
 @media (max-width: 359px) {
   .pc-wallet {
     width: 100vw;
@@ -490,9 +507,14 @@ pre,
 }
 
 @media (prefers-reduced-motion: reduce) {
+  html:focus-within {
+    scroll-behavior: auto;
+  }
+
   *,
   *::before,
   *::after {
+    scroll-behavior: auto !important;
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;

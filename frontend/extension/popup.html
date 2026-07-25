@@ -1,16 +1,20 @@
 <!doctype html>
-<html lang="en" data-theme="forest">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <title>VF Wallet</title>
     <meta name="color-scheme" content="dark" />
     <link rel="icon" type="image/svg+xml" href="./vibing_farmer.logo.svg" />
-    <link rel="stylesheet" href="./wallet.css" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: #0e0f0c;
+      }
+    </style>
   </head>
   <body>
-    <div class="pc-wallet">
-      <div id="root"></div>
-    </div>
+    <div id="root"></div>
     <script type="module" src="./popup.jsx"></script>
   </body>
 </html>
