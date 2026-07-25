@@ -9,6 +9,7 @@ import {
   readSupplyAprBps,
   readLifeboatState,
   readPendingUpgrade,
+  sharesToAssetUnits,
 } from './vaultReads.js'
 
 // Stand-in strkeys (same ones agentDeposit.test.js already uses) — any syntactically valid
@@ -250,5 +251,27 @@ describe('readPendingUpgrade', () => {
   test('returns null on simulation failure rather than throwing', async () => {
     const fakeServer = { simulateTransaction: async () => ({ error: 'boom' }) }
     expect(await readPendingUpgrade(VAULT, { server: fakeServer })).toBeNull()
+  })
+})
+
+describe('sharesToAssetUnits', () => {
+  test('0 shares is trivially worth 0, even when pps is unknown (RPC failure)', () => {
+    expect(sharesToAssetUnits(0n, null)).toBe(0n)
+  })
+
+  test('0 shares is worth 0 when pps is known too', () => {
+    expect(sharesToAssetUnits(0n, 20_000_000n)).toBe(0n)
+  })
+
+  test('a positive share count with no price (pps read failed) cannot be valued -> null, never a guess', () => {
+    expect(sharesToAssetUnits(1000n, null)).toBeNull()
+  })
+
+  test('converts at 1:1 pps (10_000_000 == 1.0000000)', () => {
+    expect(sharesToAssetUnits(1000n, 10_000_000n)).toBe(1000n)
+  })
+
+  test('converts at a non-1:1 exchange rate (pps has drifted from vault yield)', () => {
+    expect(sharesToAssetUnits(1000n, 20_000_000n)).toBe(2000n)
   })
 })

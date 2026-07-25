@@ -22,6 +22,28 @@ import { estimateSupplyAprBps } from '../../../keeper/src/apr.js'
 
 export { estimateSupplyAprBps }
 
+// price_per_share() is 7-dp fixed point (1_0000000 == 1.0000000) — same scale partialWithdraw.js
+// already uses for its own maxUnits calc. Kept private: sharesToAssetUnits below is the one
+// shared, tested place this conversion happens; no second copy should grow elsewhere.
+const PPS_SCALE = 10_000_000n
+
+/**
+ * Convert a vault share balance into its current token-unit value via `price_per_share()`.
+ * Returns null when the conversion cannot be trusted: a positive share count with an unknown
+ * price (`pps` null, i.e. the price_per_share RPC failed) is a share COUNT, not a token VALUE —
+ * guessing one (e.g. treating it as 1:1) would render money that was never confirmed (see
+ * money/readOwnerMoney.js, Pocket Crew Task 7). `shares === 0n` is trivially worth 0 regardless
+ * of whether `pps` is known — a known zero is zero, it needs no price to state.
+ * @param {bigint} shares
+ * @param {bigint|null} pps
+ * @returns {bigint|null}
+ */
+export function sharesToAssetUnits(shares, pps) {
+  if (shares === 0n) return 0n
+  if (pps == null) return null
+  return (shares * pps) / PPS_SCALE
+}
+
 /**
  * Vault's `price_per_share()` — i128, 7-dp scaled (1_0000000 == 1.0000000). null on RPC failure.
  * @param {string} [vaultAddress]

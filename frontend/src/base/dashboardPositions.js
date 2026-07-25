@@ -10,7 +10,7 @@
 // vf_base_owner_address keys — a pre-migration owner (or a different connected wallet) sees []
 // until Base is set up again, rather than inheriting whichever wallet happened to write the old
 // global keys last.
-import { readPositions as defaultReadPositions } from './readPositions.js'
+import { readPositions as defaultReadPositions, readIdleUsdc as defaultReadIdleUsdc } from './readPositions.js'
 import { BASE_POOL_CATALOG } from '../config.js'
 import { readBaseOwner } from '../wallet/baseBinding.js'
 
@@ -44,4 +44,67 @@ export async function loadBasePositions({ stellarOwner, deps = {} } = {}) {
   } catch {
     return []
   }
+}
+
+/**
+ * Task 7 (Pocket Crew "My money"): live Base custody for the EXACT kernel addresses Task 5's
+ * durable, relayer-attested association already proved for this owner — `indexedBaseAccounts`,
+ * never a locally-scanned set. A new device with no BaseOwnerRecordV2 (no passkey ceremony ever
+ * run here) can still see confirmed historical custody, because the read is keyed off proven
+ * public addresses, not local storage. Additive: `loadBasePositions` above is untouched and every
+ * existing caller of it is unaffected.
+ *
+ * Returns an explicit status rather than fail-soft `[]` — a money read model needs to tell "no
+ * Base association has ever been proven for this owner" (`empty`) apart from "the read couldn't
+ * run right now" (`unavailable`) apart from "we checked and every proven account is genuinely
+ * empty" (`known`, accounts still present with zero positions/idle — a known zero is zero, it is
+ * never dropped). `stellarOwner`'s own local kernel (if any) is compared only for its own
+ * identity, never used to gate the read: a local kernel that differs from every proven account is
+ * `mismatched` (this device's current Base identity is not the one that produced this custody),
+ * but the proven data is still returned alongside that fact — a stale/rotated local kernel must
+ * not blank out real public money.
+ * @param {{ stellarOwner?: string, indexedBaseAccounts?: string[], deps?: object }} p
+ * @returns {Promise<{status: 'unavailable'|'empty'|'known'|'mismatched',
+ *   accounts: Array<{kernelAddress: string, positions: Array, idleUsdc: bigint}>,
+ *   localKernelAddress: string|null}>}
+ */
+export async function loadIndexedBasePositions({
+  stellarOwner,
+  indexedBaseAccounts = [],
+  deps = {},
+} = {}) {
+  const {
+    readPositions = defaultReadPositions,
+    readIdleUsdc = defaultReadIdleUsdc,
+    makePublicClient,
+  } = deps
+
+  const localKernelAddress = readBaseOwner(stellarOwner)?.kernelAddress ?? null
+  const accounts = [...new Set(indexedBaseAccounts.filter(Boolean).map((a) => String(a).toLowerCase()))]
+  if (accounts.length === 0) return { status: 'empty', accounts: [], localKernelAddress }
+
+  let publicClient
+  try {
+    const { defaultMakePublicClient } = await import('../wallet/passkeyBase.js')
+    publicClient = (makePublicClient || defaultMakePublicClient)()
+  } catch {
+    return { status: 'unavailable', accounts: [], localKernelAddress }
+  }
+
+  const settled = await Promise.allSettled(
+    accounts.map(async (account) => {
+      const [positions, idleUsdc] = await Promise.all([
+        readPositions({ pools: BASE_POOL_CATALOG.map((p) => p.address), account, publicClient }),
+        readIdleUsdc({ account, publicClient }),
+      ])
+      return { kernelAddress: account, positions, idleUsdc }
+    })
+  )
+  const okAccounts = settled.filter((r) => r.status === 'fulfilled').map((r) => r.value)
+  if (okAccounts.length === 0) return { status: 'unavailable', accounts: [], localKernelAddress }
+
+  const mismatched =
+    localKernelAddress != null &&
+    !accounts.includes(localKernelAddress.toLowerCase())
+  return { status: mismatched ? 'mismatched' : 'known', accounts: okAccounts, localKernelAddress }
 }
