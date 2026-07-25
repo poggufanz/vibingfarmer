@@ -178,6 +178,65 @@ describe('discoverOwnerScopes', () => {
     expect(d.agents.map((a) => a.address)).toEqual(['CKNOWN'])
   })
 
+  // Fix loop 2, Fix 1: the drop-on-failed-read rule only holds for candidates whose ONLY source
+  // is local-cache (client-mutable, stale-prone, no chain backing at all). rpc-router-events and
+  // registry-events carry an owner topic from chain; vault-discovery has already passed its own
+  // owner-matching scope_of read inside discoverAgentsFromVault (events.js:199-203) before ever
+  // being returned — a candidate carrying any of those sources must be RETAINED on a failed
+  // second read, tagged 'failed', not silently dropped.
+  it('retains a vault-only candidate whose scope read fails, and still downgrades a complete status', async () => {
+    const s = seams({
+      clientResult: client({ status: 'complete', agents: [] }),
+      vault: ['CVAULTFAIL'], // no entry in `scopes` -> readScope resolves null
+    })
+    const d = await discoverOwnerScopes({ owner: OWNER, ...s })
+    expect(d.agents.map((a) => a.address)).toEqual(['CVAULTFAIL'])
+    expect(d.agents[0].scopeReadStatus).toBe('failed')
+    expect(d.status).toBe('partial')
+  })
+
+  it('retains an rpc-router-events-only candidate whose scope read fails', async () => {
+    const s = seams({
+      clientResult: client({ agents: [] }),
+      rpc: ['CRPCFAIL'], // no entry in `scopes` -> readScope resolves null
+    })
+    const d = await discoverOwnerScopes({ owner: OWNER, ...s })
+    expect(d.agents.map((a) => a.address)).toEqual(['CRPCFAIL'])
+    expect(d.agents[0].scopeReadStatus).toBe('failed')
+  })
+
+  it('still drops a local-cache-only candidate whose scope read fails', async () => {
+    const s = seams({
+      clientResult: client({ agents: [] }),
+      cache: ['CCACHEFAIL'], // no entry in `scopes` -> readScope resolves null
+    })
+    const d = await discoverOwnerScopes({ owner: OWNER, ...s })
+    expect(d.agents).toEqual([])
+  })
+
+  it('retains a candidate carrying both local-cache and a chain source on a failed read', async () => {
+    const s = seams({
+      clientResult: client({ agents: [] }),
+      cache: ['CBOTH'],
+      rpc: ['CBOTH'],
+    })
+    const d = await discoverOwnerScopes({ owner: OWNER, ...s })
+    expect(d.agents.map((a) => a.address)).toEqual(['CBOTH'])
+    expect(d.agents[0].discoverySources.sort()).toEqual(['local-cache', 'rpc-router-events'])
+  })
+
+  // Fix loop 2, Fix 2: a dropped (still-unverifiable) candidate must leave an enumerable trace in
+  // `hints` — a consumer can't otherwise tell whether a `partial` came from one unreadable address
+  // or fifty.
+  it('counts unverifiable hint-only candidates in hints.unverifiedCandidateCount', async () => {
+    const s = seams({
+      clientResult: client({ agents: [] }),
+      cache: ['CUNVERIFIED1', 'CUNVERIFIED2'],
+    })
+    const d = await discoverOwnerScopes({ owner: OWNER, ...s })
+    expect(d.hints.unverifiedCandidateCount).toBe(2)
+  })
+
   it('dedupes the same address seen via the API, cache, RPC events, and registry without losing provenance', async () => {
     const row = { address: 'CAGENT1', kind: 'deposit', runId: 'run1' }
     const s = seams({
@@ -238,7 +297,13 @@ describe('discoverOwnerScopes', () => {
       vault: ['C4'],
     })
     const d = await discoverOwnerScopes({ owner: OWNER, ...s })
-    expect(d.hints).toEqual({ localCacheCount: 1, rpcEventCount: 1, registryCount: 1, vaultEventCount: 1 })
+    expect(d.hints).toEqual({
+      localCacheCount: 1,
+      rpcEventCount: 1,
+      registryCount: 1,
+      vaultVerifiedCount: 1,
+      unverifiedCandidateCount: 1, // C1 is local-cache-only with no scope entry -> dropped, not a row
+    })
   })
 
   it('returns unavailable with no owner, never guessing a demo/view-as address', async () => {
@@ -249,7 +314,13 @@ describe('discoverOwnerScopes', () => {
       owner: null,
       agents: [],
       coverage: null,
-      hints: { localCacheCount: 0, rpcEventCount: 0, registryCount: 0, vaultEventCount: 0 },
+      hints: {
+        localCacheCount: 0,
+        rpcEventCount: 0,
+        registryCount: 0,
+        vaultVerifiedCount: 0,
+        unverifiedCandidateCount: 0,
+      },
     })
   })
 
@@ -279,6 +350,7 @@ describe('discoverOwnerScopes', () => {
     const d = await discoverOwnerScopes({ owner: OWNER, ...s })
     expect(d.status).toBe('unavailable')
     expect(d.agents).toEqual([])
+    expect(d.hints.vaultVerifiedCount).toBe(0) // failed channel reports a zero count, not silence
   })
 
   it('degrades gracefully when rpcServer() itself throws, and never throws out of discoverOwnerScopes', async () => {

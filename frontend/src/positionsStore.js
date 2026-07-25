@@ -176,8 +176,8 @@ export function pickPositionsAgents(scopes, viewAsAddress) {
  * must sweep, one user-signed tx each, because a position is the SUM over every agent (see the
  * `total +=` above) while the exit is per-agent.
  *
- * Deliberately NOT pickPositionsAgents: that one is for DISPLAY, so it may fall back to a default
- * and may return a view-as address. An exit must never guess an agent — the user cannot sign for an
+ * Deliberately NOT pickPositionsAgents: that one is for DISPLAY, so it may return undefined (there
+ * is no default) or a view-as address. An exit must never guess an agent — the user cannot sign for an
  * agent they do not own, and a wrong guess is what made every withdraw invoke the demo agent.
  * Empty means empty: the caller must disable the button, not substitute something.
  *

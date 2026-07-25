@@ -14,7 +14,13 @@ import {
 } from './agentCreatorManifest.js'
 
 const AGENT_INDEX_PATH = '/api/agent-index'
-const NULL_HINTS = { localCacheCount: null, rpcEventCount: null, registryCount: null }
+const NULL_HINTS = {
+  localCacheCount: null,
+  rpcEventCount: null,
+  registryCount: null,
+  vaultVerifiedCount: null,
+  unverifiedCandidateCount: null,
+}
 
 function unavailableResult(networkId, owner) {
   return {

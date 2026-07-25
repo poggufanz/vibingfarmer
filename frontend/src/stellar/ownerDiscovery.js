@@ -39,7 +39,13 @@ function emptyEnvelope(networkId, owner) {
     owner: owner ?? null,
     agents: [],
     coverage: null,
-    hints: { localCacheCount: 0, rpcEventCount: 0, registryCount: 0, vaultEventCount: 0 },
+    hints: {
+      localCacheCount: 0,
+      rpcEventCount: 0,
+      registryCount: 0,
+      vaultVerifiedCount: 0,
+      unverifiedCandidateCount: 0,
+    },
   }
 }
 
@@ -117,15 +123,15 @@ export async function discoverOwnerScopes({
       ? fetchRpcEvents({ server: s, routerAddress: SOROBAN_FUNDING_ROUTER_ADDRESS, owner }).catch(() => [])
       : Promise.resolve([]),
     queryRegistry(owner, { server: s }).catch(() => []),
+    // ponytail: discoverVaultAgents() already runs its own getEvents scan (~100k ledgers) plus
+    // batched N+1 scope_of reads to owner-verify each holder (events.js:135-217), and the
+    // Promise.allSettled below re-reads scope_of for every one of these addresses again — every
+    // vault-discovered agent costs two scope_of round-trips per envelope build. Upgrade: have
+    // discoverAgentsFromVault hand back the scope it already read (or accept a shared scope
+    // cache) so the second read below can skip vault-sourced candidates; revisit if build
+    // latency or RPC quota becomes a problem.
     discoverVaultAgents(owner, { server: s }).catch(() => []),
   ])
-
-  const hints = {
-    localCacheCount: cached.length,
-    rpcEventCount: rpcEvents.length,
-    registryCount: registryAgents.length,
-    vaultEventCount: vaultAgents.length,
-  }
 
   // Candidate union, deduped by address — dedup never drops WHICH sources saw an address
   // (discoverySources below), and an API-known row's identity is never overwritten by a hint stub.
@@ -153,7 +159,7 @@ export async function discoverOwnerScopes({
   let sawQuarantine = false
   let sawReadFailure = false
   let sawHintOnlyCandidate = false
-  let sawUnverifiedHint = false
+  let unverifiedCandidateCount = 0
 
   for (const r of settled) {
     if (r.status !== 'fulfilled') continue
@@ -161,19 +167,25 @@ export async function discoverOwnerScopes({
     const discoverySources = [...sources].sort()
     if (scope == null) {
       // apiRow present = the D1 index already proved this address is the owner's — a dead RPC
-      // read must not drop it (see the CFAIL/CGOOD test). apiRow absent = ONLY a hint (local
-      // cache is client-mutable and stale-prone) claimed this address, and the one read that
-      // could vouch for it just failed: zero evidence backs membership, so it must NOT become a
-      // row. It still counts as a coverage discrepancy (an unverifiable candidate the D1 index
-      // never indexed) so a 'complete' claim still downgrades — but never upgrades `unavailable`
-      // to `partial` on its own, because it never reaches `agents`.
-      if (!apiRow) {
-        sawUnverifiedHint = true
+      // read must not drop it (see the CFAIL/CGOOD test). apiRow absent but at least one source
+      // is chain-derived (rpc-router-events / registry-events carry an owner topic from chain;
+      // vault-discovery has already passed its own owner-matching scope_of read inside
+      // discoverAgentsFromVault, events.js:199-203, before it is ever returned) — the failed
+      // second read here is a dead RPC call, not proof the candidate isn't the owner's, so it is
+      // retained too, tagged 'failed' exactly like a D1-proven row. Only a candidate whose ONLY
+      // source is local-cache — client-mutable, stale-prone, and the one source with no chain
+      // backing at all — is dropped on a failed read: zero evidence backs its membership, so it
+      // must NOT become a row. A dropped candidate still counts as a coverage discrepancy
+      // (unverifiedCandidateCount, so a 'complete' claim still downgrades) but never upgrades
+      // `unavailable` to `partial` on its own, because it never reaches `agents`.
+      const chainDerived = discoverySources.some((src) => src !== SOURCE_CACHE)
+      if (!apiRow && !chainDerived) {
+        unverifiedCandidateCount += 1
         continue
       }
       sawReadFailure = true
       agents.push({
-        ...apiRow,
+        ...(apiRow || placeholderApiFields(address)),
         address,
         discoverySources,
         scopeReadStatus: 'failed',
@@ -206,10 +218,19 @@ export async function discoverOwnerScopes({
   if (status === 'unavailable' && agents.length > 0) status = 'partial' // known hints beat empty
   // A quarantined row, a scope read failure, a hint-only candidate the API never indexed, or an
   // unverifiable hint (couldn't even be read) are all evidence the D1 index's "complete" claim
-  // doesn't fully hold — surface it as a discrepancy. sawUnverifiedHint never contributes to the
-  // `agents.length > 0` upgrade above (it never reaches `agents`), only to this downgrade.
-  if (status === 'complete' && (sawQuarantine || sawReadFailure || sawHintOnlyCandidate || sawUnverifiedHint))
+  // doesn't fully hold — surface it as a discrepancy. unverifiedCandidateCount never contributes
+  // to the `agents.length > 0` upgrade above (those candidates never reach `agents`), only to
+  // this downgrade.
+  if (status === 'complete' && (sawQuarantine || sawReadFailure || sawHintOnlyCandidate || unverifiedCandidateCount > 0))
     status = 'partial'
+
+  const hints = {
+    localCacheCount: cached.length,
+    rpcEventCount: rpcEvents.length,
+    registryCount: registryAgents.length,
+    vaultVerifiedCount: vaultAgents.length,
+    unverifiedCandidateCount,
+  }
 
   return { status, networkId, owner, agents, coverage: client.coverage ?? null, hints }
 }

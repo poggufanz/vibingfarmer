@@ -9,7 +9,6 @@ import {
 
 const OWNER = 'GABCDEFGHIJKLMNOPQRSTUVWXYZ234567ABCDEFGHIJKLMNOPQRSTUVWXY'
 const NETWORK = 'stellar-testnet'
-const NULL_HINTS = { localCacheCount: null, rpcEventCount: null, registryCount: null }
 
 function goodCoverage(overrides = {}) {
   return {
@@ -117,13 +116,22 @@ describe('fetchOwnerAgentIndex', () => {
       throw new Error('offline')
     })
     const res = await fetchOwnerAgentIndex({ owner: OWNER, networkId: NETWORK, fetchImpl })
+    // Fix loop 2, Fix 3: asserted as a literal, not a shared NULL_HINTS test constant that would
+    // just mirror the source and drift with it — this is the only thing that actually catches
+    // source/test shape drift on this envelope field.
     expect(res).toEqual({
       status: 'unavailable',
       networkId: NETWORK,
       owner: OWNER,
       agents: [],
       coverage: null,
-      hints: NULL_HINTS,
+      hints: {
+        localCacheCount: null,
+        rpcEventCount: null,
+        registryCount: null,
+        vaultVerifiedCount: null,
+        unverifiedCandidateCount: null,
+      },
     })
   })
 
@@ -143,7 +151,13 @@ describe('fetchOwnerAgentIndex', () => {
       owner: OWNER,
       agents: [],
       coverage: null,
-      hints: NULL_HINTS,
+      hints: {
+        localCacheCount: null,
+        rpcEventCount: null,
+        registryCount: null,
+        vaultVerifiedCount: null,
+        unverifiedCandidateCount: null,
+      },
     })
   })
 
