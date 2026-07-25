@@ -228,3 +228,80 @@ describe('decisionLog store', () => {
     expect(s.byAgent.risk).toMatchObject({ DEPOSIT: 1, HOLD: 1 })
   })
 })
+
+// Pocket Crew "My money" Task 8: owner+network-scoped forms. The legacy single-argument calls
+// above must keep working unchanged — these cover the NEW scoped forms only.
+describe('decisionLog — owner+network scoped (Pocket Crew Task 8)', () => {
+  beforeEach(() => {
+    const store = {}
+    vi.stubGlobal('localStorage', {
+      getItem: (k) => (k in store ? store[k] : null),
+      setItem: (k, v) => {
+        store[k] = String(v)
+      },
+      removeItem: (k) => {
+        delete store[k]
+      },
+    })
+  })
+
+  const ctxFor = (cycle, signal) => ({
+    cycle,
+    idea: { kind: 'rebalance', vaultName: 'V' },
+    state: { market: { turbulence: 'calm' } },
+    verdict: {
+      verdict: signal === 'DEPOSIT' ? 'keep' : 'discard',
+      resolvedBy: 'unanimous',
+      reason: null,
+      citedRules: [],
+      specialists: [
+        { role: 'yield', signal, confidence: 0.7, citedRules: [], concerns: [] },
+        { role: 'risk', signal, confidence: 0.7, citedRules: [], concerns: [] },
+        { role: 'market', signal, confidence: 0.7, citedRules: [], concerns: [] },
+      ],
+    },
+  })
+
+  it('records and reads back scoped to owner+network, newest-first', () => {
+    recordDecision('GOWNER', ctxFor(1, 'DEPOSIT'), { network: 'stellar-testnet' })
+    recordDecision('GOWNER', ctxFor(2, 'HOLD'), { network: 'stellar-testnet' })
+    const rows = getDecisions('GOWNER', { network: 'stellar-testnet' })
+    expect(rows).toHaveLength(2)
+    expect(rows[0].cycle).toBe(2)
+    expect(rows[1].cycle).toBe(1)
+  })
+
+  it('never reuses decision history across wallets', () => {
+    recordDecision('GOWNER_A', ctxFor(1, 'DEPOSIT'), { network: 'stellar-testnet' })
+    expect(getDecisions('GOWNER_B', { network: 'stellar-testnet' })).toEqual([])
+  })
+
+  it('never reuses decision history across networks for the same owner', () => {
+    recordDecision('GOWNER', ctxFor(1, 'DEPOSIT'), { network: 'stellar-testnet' })
+    expect(getDecisions('GOWNER', { network: 'stellar-mainnet' })).toEqual([])
+  })
+
+  it('does not leak into or read from the legacy unowned bucket', () => {
+    recordDecision(ctxFor(1, 'DEPOSIT')) // legacy call — hidden bucket
+    expect(getDecisions('GOWNER', { network: 'stellar-testnet' })).toEqual([])
+    recordDecision('GOWNER', ctxFor(2, 'HOLD'), { network: 'stellar-testnet' })
+    expect(getDecisions()).toHaveLength(1) // legacy bucket still only has its own row
+  })
+
+  it('drops a scoped write with no owner — never guesses whose decision log it is', () => {
+    recordDecision(null, ctxFor(1, 'DEPOSIT'), { network: 'stellar-testnet' })
+    expect(getDecisions('GOWNER', { network: 'stellar-testnet' })).toEqual([])
+  })
+
+  it('returns [] for a scoped read with no owner', () => {
+    expect(getDecisions(null, { network: 'stellar-testnet' })).toEqual([])
+  })
+
+  it('clearDecisions(owner, {network}) empties only that bucket', () => {
+    recordDecision('GOWNER', ctxFor(1, 'DEPOSIT'), { network: 'stellar-testnet' })
+    recordDecision('OTHER', ctxFor(1, 'DEPOSIT'), { network: 'stellar-testnet' })
+    clearDecisions('GOWNER', { network: 'stellar-testnet' })
+    expect(getDecisions('GOWNER', { network: 'stellar-testnet' })).toEqual([])
+    expect(getDecisions('OTHER', { network: 'stellar-testnet' })).toHaveLength(1)
+  })
+})

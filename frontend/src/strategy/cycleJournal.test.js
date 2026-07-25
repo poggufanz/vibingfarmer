@@ -55,6 +55,67 @@ describe('cycleJournal', () => {
   })
 })
 
+// Pocket Crew "My money" Task 8: owner+network-scoped forms. The legacy single-argument calls
+// above must keep working unchanged (never assigned to whichever wallet connects first) — these
+// cover the NEW scoped forms only.
+describe('cycleJournal — owner+network scoped (Pocket Crew Task 8)', () => {
+  beforeEach(() => {
+    const store = {}
+    vi.stubGlobal('localStorage', {
+      getItem: (k) => (k in store ? store[k] : null),
+      setItem: (k, v) => {
+        store[k] = String(v)
+      },
+      removeItem: (k) => {
+        delete store[k]
+      },
+    })
+  })
+
+  it('saves and reads back scoped to owner+network, newest-first', () => {
+    saveCycle('GOWNER', { cycle: 1, phase: 'execute', verdict: 'keep' }, { network: 'stellar-testnet' })
+    saveCycle('GOWNER', { cycle: 2, phase: 'crash', verdict: 'crash' }, { network: 'stellar-testnet' })
+    const rows = getCycles('GOWNER', { network: 'stellar-testnet' })
+    expect(rows).toHaveLength(2)
+    expect(rows[0].verdict).toBe('crash')
+    expect(rows[1].verdict).toBe('keep')
+  })
+
+  it('never reuses journal history across wallets', () => {
+    saveCycle('GOWNER_A', { cycle: 1, verdict: 'keep' }, { network: 'stellar-testnet' })
+    expect(getCycles('GOWNER_B', { network: 'stellar-testnet' })).toEqual([])
+  })
+
+  it('never reuses journal history across networks for the same owner', () => {
+    saveCycle('GOWNER', { cycle: 1, verdict: 'keep' }, { network: 'stellar-testnet' })
+    expect(getCycles('GOWNER', { network: 'stellar-mainnet' })).toEqual([])
+  })
+
+  it('does not leak into or read from the legacy unowned bucket', () => {
+    saveCycle({ cycle: 1, verdict: 'keep' }) // legacy call — hidden bucket
+    expect(getCycles('GOWNER', { network: 'stellar-testnet' })).toEqual([])
+    saveCycle('GOWNER', { cycle: 2, verdict: 'discard' }, { network: 'stellar-testnet' })
+    expect(getCycles()).toHaveLength(1) // legacy bucket still only has its own row
+  })
+
+  it('drops a scoped write with no owner — never guesses whose journal it is', () => {
+    saveCycle(null, { cycle: 1, verdict: 'keep' }, { network: 'stellar-testnet' })
+    expect(getCycles('GOWNER', { network: 'stellar-testnet' })).toEqual([])
+  })
+
+  it('returns [] for a scoped read with no owner', () => {
+    expect(getCycles(null, { network: 'stellar-testnet' })).toEqual([])
+  })
+
+  it('clearCycles(owner, {network}) empties only that bucket', () => {
+    saveCycle('GOWNER', { cycle: 1, verdict: 'keep' }, { network: 'stellar-testnet' })
+    saveCycle('OTHER', { cycle: 1, verdict: 'keep' }, { network: 'stellar-testnet' })
+    clearCycles('GOWNER', { network: 'stellar-testnet' })
+    expect(getCycles('GOWNER', { network: 'stellar-testnet' })).toEqual([])
+    expect(getCycles('OTHER', { network: 'stellar-testnet' })).toHaveLength(1)
+  })
+})
+
 describe('getJournalSummary gated count', () => {
   beforeEach(() => {
     const store = {}

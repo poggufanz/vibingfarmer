@@ -67,54 +67,98 @@ export function buildDecisionRecord({ cycle, idea, state, verdict }) {
   }
 }
 
-const KEY = 'yv_decision_log'
+// Pocket Crew "My money" Task 8: versioned around network + owner, mirroring cycleJournal.js's
+// own scoped forms exactly (see that file's header for the full rationale: the legacy
+// single-argument API is preserved byte-for-byte as a hidden, unowned bucket; a new owner+network
+// bucket is created only on the explicit scoped call, and a write with no owner is dropped rather
+// than guessed).
+const LEGACY_KEY = 'yv_decision_log'
 const MAX_ROWS = 100
 const ROLES = ['yield', 'risk', 'market']
 
-function read() {
+function scopedKey(network, owner) {
+  return `yv_decision_log:${network || 'unknown'}:${owner}`
+}
+
+function read(key) {
   try {
-    const v = JSON.parse(localStorage.getItem(KEY) || '[]')
+    const v = JSON.parse(localStorage.getItem(key) || '[]')
     return Array.isArray(v) ? v : []
   } catch {
     return []
   }
 }
 
-function write(rows) {
+function write(key, rows) {
   try {
-    localStorage.setItem(KEY, JSON.stringify(rows.slice(-MAX_ROWS)))
+    localStorage.setItem(key, JSON.stringify(rows.slice(-MAX_ROWS)))
   } catch (err) {
     console.warn('[DecisionLog] write failed:', err.message)
   }
 }
 
-/** Build + persist a decision record. Never throws. */
-export function recordDecision(ctx) {
+/**
+ * Build + persist a decision record. Never throws.
+ * - Legacy form `recordDecision(ctx)`: no owner/network context — writes the hidden, unowned
+ *   bucket (unchanged behavior for existing callers).
+ * - Scoped form `recordDecision(owner, ctx, { network })`: dropped silently when `owner` is
+ *   falsy — never guesses whose decision log a write belongs to.
+ */
+export function recordDecision(ownerOrCtx, ctx, { network } = {}) {
+  if (ctx === undefined) {
+    try {
+      const rows = read(LEGACY_KEY)
+      rows.push(buildDecisionRecord(ownerOrCtx))
+      write(LEGACY_KEY, rows)
+    } catch (err) {
+      console.warn('[DecisionLog] recordDecision failed:', err.message)
+    }
+    return
+  }
+  if (!ownerOrCtx) return
   try {
-    const rows = read()
+    const key = scopedKey(network, ownerOrCtx)
+    const rows = read(key)
     rows.push(buildDecisionRecord(ctx))
-    write(rows)
+    write(key, rows)
   } catch (err) {
     console.warn('[DecisionLog] recordDecision failed:', err.message)
   }
 }
 
-/** @returns newest-first array of decision records. */
-export function getDecisions() {
-  return read().reverse()
+/**
+ * @returns newest-first array of decision records.
+ * - Legacy form `getDecisions()`: reads the hidden legacy bucket.
+ * - Scoped form `getDecisions(owner, { network })`: reads only that owner+network's bucket; `[]`
+ *   when `owner` is falsy.
+ */
+export function getDecisions(owner, { network } = {}) {
+  if (owner === undefined) return read(LEGACY_KEY).reverse()
+  if (!owner) return []
+  return read(scopedKey(network, owner)).reverse()
 }
 
-export function clearDecisions() {
+/**
+ * - Legacy form `clearDecisions()`: clears the hidden legacy bucket.
+ * - Scoped form `clearDecisions(owner, { network })`: clears only that owner+network's bucket.
+ */
+export function clearDecisions(owner, { network } = {}) {
   try {
-    localStorage.removeItem(KEY)
+    if (owner === undefined) {
+      localStorage.removeItem(LEGACY_KEY)
+      return
+    }
+    if (!owner) return
+    localStorage.removeItem(scopedKey(network, owner))
   } catch {
     /* ignore */
   }
 }
 
-/** Per-agent signal tallies + total — seed for future calibration. */
+/** Per-agent signal tallies + total — seed for future calibration. Legacy/global summary only
+ *  (dev console panel) — reads the hidden legacy bucket, same as before Task 8. */
 export function getDecisionSummary() {
-  const rows = read()
+  const rows = read(LEGACY_KEY)
   const byAgent = {}
   for (const role of ROLES) byAgent[role] = { DEPOSIT: 0, HOLD: 0, WITHDRAW: 0 }
   for (const row of rows) {
