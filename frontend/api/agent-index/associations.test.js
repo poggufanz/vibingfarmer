@@ -244,7 +244,7 @@ describe('ingestAssociationReport', () => {
     expect(scopeReader).not.toHaveBeenCalled()
   })
 
-  it('rejects a changed pool, owner, run, or terminal result for an existing allocation', async () => {
+  it('rejects a run/allocationId mismatch or an unallowlisted pool before any existing row is read', async () => {
     const store = memoryStore()
 
     // Canonical-ID and pool-allowlist checks are unconditional — they reject before any existing
@@ -256,12 +256,21 @@ describe('ingestAssociationReport', () => {
         store,
       })
     ).rejects.toThrow()
+  })
+
+  it('rejects a changed pool, owner, run, or terminal result for an existing allocation', async () => {
+    const store = memoryStore()
 
     // Seed `existing` directly (bypassing ingestAssociationReport, so nothing lands in the
     // idempotency journal for it) — Fix loop 2, Fix 3 makes an exact repeat of already-*applied*
     // evidence idempotent, so proving these identity/terminal guards still hold requires each
     // delivery below to be the first the journal has ever seen for its own tuple, not a genuine
     // retry of one that was already committed live.
+    //
+    // Fix loop 3, Fix 2: seeded at the SAME executionStatus/txHash ('accepted'/null) that every
+    // identity variant below sends, so validateMonotonic (which only fires on a status/txHash
+    // change) cannot also throw here — only validateImmutable can, and the assertion below checks
+    // its exact message so this test fails if validateImmutable is ever weakened or removed.
     const baseRow = {
       allocationId: 'run-42:bridge:aave-v3',
       networkId: 'stellar-testnet',
@@ -272,9 +281,9 @@ describe('ingestAssociationReport', () => {
       amount: { token: 'USDC', units: '1000000', decimals: 6 },
       proxyTarget: 'aave-v3',
       baseJobId: 'job-42',
-      txHash: '0xexisting-mint',
-      executionStatus: 'minted',
-      custodyLocation: 'agent',
+      txHash: null,
+      executionStatus: 'accepted',
+      custodyLocation: 'unknown',
       grantTxHash: 'grant-42',
       kernelAddress: KERNEL,
       mandateBindingId: 'binding-42',
@@ -290,7 +299,9 @@ describe('ingestAssociationReport', () => {
       report({ grantTxHash: 'grant-other' }),
     ]) {
       store.rows.set('stellar-testnet|run-42:bridge:aave-v3', { ...baseRow })
-      await expect(ingest({ report: changed, store })).rejects.toThrow()
+      await expect(ingest({ report: changed, store })).rejects.toThrow(
+        /allocation identity cannot change/i
+      )
     }
 
     // Terminal-state protections, same reasoning: seed a terminal existing row directly.
@@ -399,6 +410,34 @@ describe('ingestAssociationReport', () => {
     })
     await expect(ingest({ report: neverApplied, store, scopeReader })).rejects.toThrow(/regress/i)
   })
+
+  // Fix loop 3, Fix 1: associationIdempotencyKey covers only [networkId, runId, allocationId,
+  // executionStatus, txHash] (:223-231), not ownerAddress/amount.units/baseJobId/grantTxHash/
+  // kernelAddress/mandateBindingId/mandateBindingHash. Before this fix, validateImmutable ran
+  // AFTER the journal short-circuit, so a second report sharing the first's (status, txHash)
+  // tuple but disagreeing on identity hit hasAssociationEvent and returned a false
+  // { written: 0, duplicates: 1 } instead of throwing.
+  it.each([
+    ['ownerAddress', { owner: OWNER_B }],
+    [
+      'amount.units',
+      { allocations: [allocation({ amount: { token: 'USDC', units: '2000000', decimals: 6 } })] },
+    ],
+    ['baseJobId', { baseJobId: 'job-other' }],
+  ])(
+    'rejects a same-tuple report with a different %s even after the tuple is already journaled',
+    async (_label, changed) => {
+      const store = memoryStore()
+      const scopeReader = vi.fn(async () => scope())
+      await ingest({ store, scopeReader })
+
+      // report(changed) keeps the default 'accepted'/null tuple, so its idempotency key equals
+      // the one just journaled above — the short-circuit must not fire for this conflicting body.
+      await expect(
+        ingest({ report: report(changed), store, scopeReader })
+      ).rejects.toThrow(/allocation identity cannot change/i)
+    }
+  )
 
   it('rejects a journaled idempotency key paired with a mismatched report body instead of short-circuiting', async () => {
     const store = memoryStore()

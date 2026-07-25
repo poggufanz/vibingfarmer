@@ -268,22 +268,30 @@ export async function ingestAssociationReport({
   }
   const expectedKey = associationIdempotencyKey(report, allocation)
   if (idempotencyKey !== expectedKey) throw new Error('idempotency key does not match report tuple')
-  // Journal short-circuit BEFORE validateImmutable/validateMonotonic (frontend/migrations/
-  // 0004_agent_associations.sql:12-13): the equality check just above already proved this body
-  // matches the key, so a journaled key means this exact evidence was already durably applied —
-  // the correct response is idempotent success, not a regression error against whatever the
-  // latest row has since advanced to. A tuple that was never applied still falls through to the
-  // validators below, so this can never become a bypass.
-  if (await store.hasAssociationEvent({ idempotencyKey })) {
-    return { written: 0, duplicates: 1 }
-  }
   const existing = await store.readRunAllocation({
     networkId: report.networkId,
     allocationId: allocation.allocationId,
   })
   const hasAssociationProof = existing?.associationSource === 'relayer-attested'
+  // associationIdempotencyKey (:223-231) covers only [networkId, runId, allocationId,
+  // executionStatus, txHash]. A matching key proves that (status, txHash) tuple was seen before —
+  // it proves nothing about the other identity fields validateImmutable checks (ownerAddress,
+  // amount.units, baseJobId, grantTxHash, kernelAddress, mandateBindingId, mandateBindingHash,
+  // ...). So validateImmutable must run BEFORE the journal short-circuit below: a genuine retry
+  // has every field identical and still short-circuits idempotently, but a conflicting-identity
+  // report that happens to share a (status, txHash) tuple now throws here instead of returning a
+  // false idempotent success. validateMonotonic stays AFTER the short-circuit (frontend/
+  // migrations/0004_agent_associations.sql:12-13): a retried, already-applied older tuple is
+  // expected to look like a regression against whatever the row has since advanced to, and the
+  // short-circuit above already returns for it before reaching this check. A tuple that was never
+  // applied still falls through to validateMonotonic, so this can never become a bypass.
   if (hasAssociationProof) {
     validateImmutable(existing, report, allocation)
+  }
+  if (await store.hasAssociationEvent({ idempotencyKey })) {
+    return { written: 0, duplicates: 1 }
+  }
+  if (hasAssociationProof) {
     validateMonotonic(existing, allocation)
   }
   let scopeCheckedAt = existing?.scopeCheckedAt ?? now

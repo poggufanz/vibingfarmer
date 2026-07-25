@@ -28,7 +28,7 @@ const BASE_POOL_PROXY_TARGETS = new Map(
  *   allocations: Array<{ pool: string, amount: number, amountBaseUnits: bigint, minShares: bigint }>,
  *   burnUnits7: bigint,           // authoritative total burn input, 7dp Stellar units
  *   bridgeAgentAddress?: string,  // VF Wallet Task 6 wire field (postFarm's `bridgeAgent`) — recovery handle
- *   runId?: string,               // not yet plumbed this deep from orchestrator.js; null until it is
+ *   runId?: string,               // effectively required: every allocationId must equal `${runId}:bridge:${proxyTarget}`, so a missing runId fails the pre-burn guard below for every allocation
  *   grantTxHash?: string,
  *   onEvent?: (name: string, data: object) => void,
  *   deps?: { burn?: Function, postFarm?: Function, pollFarmStatus?: Function },
