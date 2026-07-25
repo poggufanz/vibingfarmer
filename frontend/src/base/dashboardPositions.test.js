@@ -100,7 +100,7 @@ describe('loadIndexedBasePositions', () => {
       indexedBaseAccounts: [],
       deps: { readPositions, makePublicClient: () => ({}) },
     })
-    expect(out).toEqual({ status: 'empty', accounts: [], localKernelAddress: null })
+    expect(out).toEqual({ status: 'empty', accounts: [], failedAccounts: [], localKernelAddress: null })
     expect(readPositions).not.toHaveBeenCalled()
   })
 
@@ -144,10 +144,19 @@ describe('loadIndexedBasePositions', () => {
       indexedBaseAccounts: ['0xA', '0xB'],
       deps: { readPositions, readIdleUsdc, makePublicClient: () => ({}) },
     })
-    expect(out).toEqual({ status: 'unavailable', accounts: [], localKernelAddress: null })
+    expect(out).toEqual({
+      status: 'unavailable',
+      accounts: [],
+      failedAccounts: ['0xa', '0xb'],
+      localKernelAddress: null,
+    })
   })
 
-  it('one account failing does not blank out an account that succeeded (allSettled)', async () => {
+  // Fix loop 1, Fix 5: `status: 'known'` used to mean "every account that succeeded", silently
+  // dropping any address whose own read failed with no trace — a consumer summing `accounts`
+  // could never tell the total was missing a kernel. The enum itself is unchanged (still no
+  // partial status); the gap now rides along on `failedAccounts` instead.
+  it('one account failing does not blank out an account that succeeded, and the failure rides along visibly (fix loop 1, Fix 5)', async () => {
     const readPositions = vi.fn().mockImplementation(({ account }) =>
       account === '0xbad' ? Promise.reject(new Error('rpc down')) : Promise.resolve([])
     )
@@ -158,6 +167,24 @@ describe('loadIndexedBasePositions', () => {
     })
     expect(out.status).toBe('known')
     expect(out.accounts).toEqual([{ kernelAddress: '0xgood', positions: [], idleUsdc: 0n }])
+    expect(out.failedAccounts).toEqual(['0xbad'])
+  })
+
+  // Fix loop 1, Fix 6: readIdleUsdc() (readPositions.js) fails soft to 0n internally on ANY RPC
+  // error — readPositions.js/its test carry an unstaged owner diff this loop must not touch (see
+  // fix brief), so the gap is closed at this seam instead: loadIndexedBasePositions no longer
+  // uses that fail-soft default for its idle-USDC read; a failure surfaces as `idleUsdc: null`
+  // (unknown), never a fabricated zero, even though the pool-position read for the same account
+  // succeeded in the same allSettled round.
+  it('an idle-USDC RPC failure surfaces as unknown (null), never a fabricated zero, even though positions succeeded (fix loop 1, Fix 6)', async () => {
+    const readPositions = vi.fn().mockResolvedValue([])
+    const publicClient = { readContract: vi.fn().mockRejectedValue(new Error('rpc down')) }
+    const out = await loadIndexedBasePositions({
+      indexedBaseAccounts: ['0xIDLEFAIL'],
+      deps: { readPositions, makePublicClient: () => publicClient },
+    })
+    expect(out.status).toBe('known')
+    expect(out.accounts).toEqual([{ kernelAddress: '0xidlefail', positions: [], idleUsdc: null }])
   })
 
   it('flags a mismatch when this device\'s CURRENT kernel differs from every proven kernel (still returns the proven data)', async () => {

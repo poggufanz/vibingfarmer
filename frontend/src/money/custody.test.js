@@ -33,6 +33,25 @@ describe('custodyForAgent', () => {
     ).toEqual({ location: 'base-proxy' })
   })
 
+  it('a known-positive Stellar leg alongside a durable Base association is a genuine split -> unknown, never a guessed winner (fix loop 1, Fix 3)', () => {
+    expect(
+      custodyForAgent({
+        scope: { state: 'known' },
+        vaultShares: KNOWN('1000000'),
+        idleToken: KNOWN('0'),
+        baseChild: { custody: { location: 'base-proxy' } },
+      })
+    ).toEqual({ location: 'unknown' })
+    expect(
+      custodyForAgent({
+        scope: { state: 'known' },
+        vaultShares: KNOWN('0'),
+        idleToken: KNOWN('500'),
+        baseChild: { custody: { location: 'base-proxy' } },
+      })
+    ).toEqual({ location: 'unknown' })
+  })
+
   it('an association with an unrecognized/missing custody location falls back to unknown, never a guess', () => {
     expect(
       custodyForAgent({

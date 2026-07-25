@@ -10,9 +10,31 @@
 // vf_base_owner_address keys — a pre-migration owner (or a different connected wallet) sees []
 // until Base is set up again, rather than inheriting whichever wallet happened to write the old
 // global keys last.
-import { readPositions as defaultReadPositions, readIdleUsdc as defaultReadIdleUsdc } from './readPositions.js'
+import { readPositions as defaultReadPositions } from './readPositions.js'
 import { BASE_POOL_CATALOG } from '../config.js'
+import { ERC20_ABI } from './config.js'
 import { readBaseOwner } from '../wallet/baseBinding.js'
+
+// Fix loop 1, Fix 6: readPositions.js's own readIdleUsdc() fails soft to 0n on ANY RPC error (a
+// deliberate choice there — a balance read must never block a withdraw modal from opening). That
+// contract is wrong for THIS read model, whose whole point is refusing to fabricate a zero, but
+// readPositions.js/its test carry an unstaged owner diff this fix loop must not touch (see
+// pocket-crew-my-money-task-7-fix1-brief.md). So the gap is closed here at the seam instead: the
+// same balanceOf call, without the swallow — null (unknown), never a confident 0n, on failure.
+const BASE_USDC = '0x036CbD53842c5426634e7929541eC2318f3dCF7e' // Base Sepolia Circle USDC
+async function defaultReadIdleUsdcOrUnknown({ account, publicClient }) {
+  try {
+    const raw = await publicClient.readContract({
+      address: BASE_USDC,
+      abi: ERC20_ABI,
+      functionName: 'balanceOf',
+      args: [account],
+    })
+    return BigInt(raw)
+  } catch {
+    return null
+  }
+}
 
 export async function loadBasePositions({ stellarOwner, deps = {} } = {}) {
   const { readPositions = defaultReadPositions, makePublicClient } = deps
@@ -63,10 +85,14 @@ export async function loadBasePositions({ stellarOwner, deps = {} } = {}) {
  * `mismatched` (this device's current Base identity is not the one that produced this custody),
  * but the proven data is still returned alongside that fact — a stale/rotated local kernel must
  * not blank out real public money.
+ *
+ * Fix loop 1, Fix 5: `status` alone can't say "known" AND "some address dropped out" at once —
+ * the enum stays as-is (no new status added) rather than silently widening it; a per-account
+ * failure instead rides along on `failedAccounts` so a consumer can still see the gap.
  * @param {{ stellarOwner?: string, indexedBaseAccounts?: string[], deps?: object }} p
  * @returns {Promise<{status: 'unavailable'|'empty'|'known'|'mismatched',
- *   accounts: Array<{kernelAddress: string, positions: Array, idleUsdc: bigint}>,
- *   localKernelAddress: string|null}>}
+ *   accounts: Array<{kernelAddress: string, positions: Array, idleUsdc: bigint|null}>,
+ *   failedAccounts: string[], localKernelAddress: string|null}>}
  */
 export async function loadIndexedBasePositions({
   stellarOwner,
@@ -75,20 +101,20 @@ export async function loadIndexedBasePositions({
 } = {}) {
   const {
     readPositions = defaultReadPositions,
-    readIdleUsdc = defaultReadIdleUsdc,
+    readIdleUsdc = defaultReadIdleUsdcOrUnknown,
     makePublicClient,
   } = deps
 
   const localKernelAddress = readBaseOwner(stellarOwner)?.kernelAddress ?? null
   const accounts = [...new Set(indexedBaseAccounts.filter(Boolean).map((a) => String(a).toLowerCase()))]
-  if (accounts.length === 0) return { status: 'empty', accounts: [], localKernelAddress }
+  if (accounts.length === 0) return { status: 'empty', accounts: [], failedAccounts: [], localKernelAddress }
 
   let publicClient
   try {
     const { defaultMakePublicClient } = await import('../wallet/passkeyBase.js')
     publicClient = (makePublicClient || defaultMakePublicClient)()
   } catch {
-    return { status: 'unavailable', accounts: [], localKernelAddress }
+    return { status: 'unavailable', accounts: [], failedAccounts: accounts, localKernelAddress }
   }
 
   const settled = await Promise.allSettled(
@@ -101,10 +127,16 @@ export async function loadIndexedBasePositions({
     })
   )
   const okAccounts = settled.filter((r) => r.status === 'fulfilled').map((r) => r.value)
-  if (okAccounts.length === 0) return { status: 'unavailable', accounts: [], localKernelAddress }
+  const failedAccounts = accounts.filter((_, i) => settled[i].status === 'rejected')
+  if (okAccounts.length === 0) return { status: 'unavailable', accounts: [], failedAccounts, localKernelAddress }
 
   const mismatched =
     localKernelAddress != null &&
     !accounts.includes(localKernelAddress.toLowerCase())
-  return { status: mismatched ? 'mismatched' : 'known', accounts: okAccounts, localKernelAddress }
+  return {
+    status: mismatched ? 'mismatched' : 'known',
+    accounts: okAccounts,
+    failedAccounts,
+    localKernelAddress,
+  }
 }

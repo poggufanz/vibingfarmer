@@ -1,5 +1,9 @@
 import { describe, it, expect, vi } from 'vitest'
 import { readOwnerMoney, aggregateOwnerPositions } from './readOwnerMoney.js'
+// Real catalog addresses (vite.config.js's test env overrides these away from the hardcoded
+// production defaults — see dashboardPositions.test.js's own note on this pattern), needed
+// because Fix 4 makes the live-read path unknown (not zero) for any pool outside this catalog.
+import { BASE_POOL_CATALOG } from '../config.js'
 
 const OWNER = 'GOWNER234567234567234567234567234567234567234567234567AB'
 const NOW = 2_000_000_000_000 // ms
@@ -54,11 +58,16 @@ function baseDeps(result = { status: 'empty', accounts: [] }) {
   return { loadIndexedBasePositions: vi.fn(async () => result) }
 }
 
+// Fix loop 1, Fix 1: the pre-fix fixture had these two backwards (poolAddress: 'CPOOL' [a
+// Stellar-looking address], proxyTarget: '0xPOOL' [an EVM-looking slug]) — a shape no upstream
+// writer can actually produce. proxyTarget is always a venue SLUG (BASE_POOL_CATALOG's
+// `proxyTarget`, e.g. 'aave-v3'); poolAddress is always the EVM pool address readPositions.js
+// returns as `pool`. Real catalog address so Fix 4's queried-catalog check also passes it.
 const baseChild = (overrides = {}) => ({
   allocationId: 'run1:bridge:aave-v3',
   runId: 'run1',
-  poolAddress: 'CPOOL',
-  proxyTarget: '0xPOOL',
+  poolAddress: BASE_POOL_CATALOG[0].address,
+  proxyTarget: BASE_POOL_CATALOG[0].proxyTarget,
   amount: { token: 'USDC', units: '400000', decimals: 6 },
   grantTxHash: '0xgrant',
   baseJobId: 'job1',
@@ -221,7 +230,7 @@ describe('readOwnerMoney', () => {
       accounts: [
         {
           kernelAddress: '0xkernel',
-          positions: [{ pool: '0xPOOL', shares: 5n, assets: 500_000n, minAssets: 495_000n }],
+          positions: [{ pool: BASE_POOL_CATALOG[0].address, shares: 5n, assets: 500_000n, minAssets: 495_000n }],
           idleUsdc: 0n,
         },
       ],
@@ -270,6 +279,147 @@ describe('readOwnerMoney', () => {
     expect(a.executionStatus).toBe('executing')
     expect(a.custody).toEqual({ location: 'in-transit' })
     expect(a.amount).toEqual({ token: 'USDC', units: '2500000', decimals: 7 })
+  })
+
+  // Fix loop 1, Fix 3: the `if (child)` branch used to set `amount` from Base evidence only,
+  // dropping a known-positive Stellar leg (vaultShares/idleToken) entirely, and overriding
+  // `custody` with the Base child's location so custodyBreakdown lost the Stellar money too.
+  it('an agent with both a nonzero Stellar vault balance and a Base child reports a total covering both (fix loop 1, Fix 3)', async () => {
+    const rows = [
+      agentRow({
+        address: 'CSPLIT',
+        association: 'known',
+        baseChildren: [baseChild({ executionStatus: 'deposited', custody: { location: 'base-proxy' } })],
+      }),
+    ]
+    const stellar = stellarDeps({ shares: { CSPLIT: 5_000_000n }, idle: { CSPLIT: 0n } })
+    const base = baseDeps({
+      status: 'known',
+      accounts: [
+        {
+          kernelAddress: '0xkernel',
+          positions: [{ pool: BASE_POOL_CATALOG[0].address, shares: 5n, assets: 500_000n, minAssets: 495_000n }],
+          idleUsdc: 0n,
+        },
+      ],
+    })
+    const result = await readOwnerMoney({ owner: OWNER, discovery: discoveryOf(rows), stellar, base, now: NOW })
+    const a = result.agents[0]
+    // 5_000_000 (Stellar, already 7dp) + 500_000 base units at 6dp -> canonical 5_000_000 = 10_000_000
+    expect(a.amount).toEqual({ token: 'USDC', units: '10000000', decimals: 7 })
+    // A genuine split (both legs known-positive) cannot honestly collapse to one location.
+    expect(a.custody).toEqual({ location: 'unknown' })
+  })
+
+  it('an agent with a failed Base child but a known Stellar idle balance does not null out the known half (fix loop 1, Fix 3)', async () => {
+    const rows = [
+      agentRow({
+        address: 'CFAILEDBASE',
+        association: 'known',
+        baseChildren: [
+          baseChild({
+            executionStatus: 'failed',
+            custody: { location: 'unknown' },
+          }),
+        ],
+      }),
+    ]
+    const stellar = stellarDeps({ shares: { CFAILEDBASE: 0n }, idle: { CFAILEDBASE: 500_0000n } })
+    const result = await readOwnerMoney({
+      owner: OWNER,
+      discovery: discoveryOf(rows),
+      stellar,
+      base: baseDeps(),
+      now: NOW,
+    })
+    const a = result.agents[0]
+    expect(a.problems).toContain('base-execution-failed')
+    // the known Stellar idle balance (5_000_000) must still surface, not be nulled by the failure
+    expect(a.amount).toEqual({ token: 'USDC', units: '5000000', decimals: 7 })
+  })
+
+  // Fix loop 1, Fix 2: a stale reported figure (kept as visible evidence) must not be
+  // indistinguishable from a fresh confirmed read at the aggregate — see the 'is partial when an
+  // agent carries a stale...' test in the aggregateOwnerPositions block below for the downgrade.
+  it('a terminal Base child whose live account cannot be found falls back to the reported figure and flags it stale (fix loop 1, Fix 2)', async () => {
+    const rows = [
+      agentRow({
+        address: 'CSTALE',
+        association: 'known',
+        baseChildren: [baseChild({ executionStatus: 'held', custody: { location: 'base-proxy' } })],
+      }),
+    ]
+    const stellar = stellarDeps({ shares: { CSTALE: 0n }, idle: { CSTALE: 0n } })
+    // Base read runs but never returns THIS kernel's account (e.g. it was mid-rotation) — the map
+    // built from `accounts` simply has no entry, matching the current base-read-unavailable path.
+    const base = baseDeps({ status: 'known', accounts: [] })
+    const result = await readOwnerMoney({ owner: OWNER, discovery: discoveryOf(rows), stellar, base, now: NOW })
+    const a = result.agents[0]
+    expect(a.problems).toContain('base-read-unavailable')
+    // 400_000 reported base units at 6dp -> canonical 7dp: 4_000_000, kept visible as evidence
+    expect(a.amount).toEqual({ token: 'USDC', units: '4000000', decimals: 7 })
+  })
+
+  // Fix loop 1, Fix 4: liveUnitsForPool used to treat "pool absent from the returned positions"
+  // as a confirmed zero even when the pool was never in the queried catalog at all (a historical
+  // or retired allocation) — loadIndexedBasePositions only ever queries BASE_POOL_CATALOG
+  // addresses, so an uncatalogued pool is unknown, not zero.
+  it('a child whose pool is absent from the queried Base catalog yields an unknown amount, never a fabricated zero (fix loop 1, Fix 4)', async () => {
+    const rows = [
+      agentRow({
+        address: 'CUNCATALOGED',
+        association: 'known',
+        baseChildren: [
+          baseChild({
+            poolAddress: '0x000000000000000000000000000000000000dEaD', // not in BASE_POOL_CATALOG
+            proxyTarget: 'retired-venue',
+            executionStatus: 'deposited',
+            custody: { location: 'base-proxy' },
+          }),
+        ],
+      }),
+    ]
+    const stellar = stellarDeps({ shares: { CUNCATALOGED: 0n }, idle: { CUNCATALOGED: 0n } })
+    const base = baseDeps({
+      status: 'known',
+      accounts: [{ kernelAddress: '0xkernel', positions: [], idleUsdc: 0n }],
+    })
+    const result = await readOwnerMoney({ owner: OWNER, discovery: discoveryOf(rows), stellar, base, now: NOW })
+    const a = result.agents[0]
+    expect(a.problems).toContain('base-read-unavailable')
+    // falls back to the reported evidence rather than the liveUnitsForPool fabricated zero
+    // pre-fix (400_000 base units at 6dp -> canonical 7dp: 4_000_000)
+    expect(a.amount).toEqual({ token: 'USDC', units: '4000000', decimals: 7 })
+  })
+
+  // Fix loop 1, Fix 8 (bullet 1): a reported amount at finer precision than the canonical scale
+  // used to be silently truncated via integer BigInt division — decided: reject (unavailable),
+  // never truncate, since truncation is silent money loss with no signal to the caller.
+  it('a reported Base amount finer than canonical precision is rejected, never silently truncated (fix loop 1, Fix 8)', async () => {
+    const rows = [
+      agentRow({
+        address: 'CFINE',
+        association: 'known',
+        baseChildren: [
+          baseChild({
+            executionStatus: 'burn-confirmed', // in-flight: uses the reported amount directly
+            amount: { token: 'USDC', units: '123456789', decimals: 9 }, // finer than canonical 7dp
+          }),
+        ],
+      }),
+    ]
+    // isolate the base leg: both Stellar reads unavailable so a non-null amount can only come
+    // from (mistakenly) truncating the over-precise reported figure
+    const stellar = stellarDeps()
+    const result = await readOwnerMoney({
+      owner: OWNER,
+      discovery: discoveryOf(rows),
+      stellar,
+      base: baseDeps(),
+      now: NOW,
+    })
+    const a = result.agents[0]
+    expect(a.amount).toBeNull()
   })
 
   it('a bridge-capable agent with no durable Base association reads as a plain Stellar-only agent', async () => {
@@ -375,6 +525,50 @@ describe('aggregateOwnerPositions', () => {
     expect(out.confirmedTotal).toEqual({ state: 'unavailable', amount: null })
   })
 
+  // Fix loop 1, Fix 2: a non-null `amount` kept as stale evidence (a Base live read that
+  // couldn't run) must not be indistinguishable from a freshly confirmed one at the aggregate.
+  it('is partial when an agent carries a stale (base-read-unavailable) amount, not a freshly confirmed one', () => {
+    const stale = {
+      amount: { token: 'USDC', units: '400', decimals: 7 },
+      custody: { location: 'base-proxy' },
+      executionStatus: 'succeeded',
+      problems: ['base-read-unavailable'],
+    }
+    const out = aggregateOwnerPositions({ status: 'complete', agents: [known('100'), stale] })
+    expect(out.confirmedTotal.state).toBe('partial')
+    // the honest partial still carries the best-known sum (the stale figure counts as evidence)
+    expect(out.confirmedTotal.amount).toEqual({ token: 'USDC', units: '500', decimals: 7 })
+  })
+
+  // Fix loop 1, Fix 3 (aggregate half): the Stellar-only remainder of a failed Base leg is real
+  // money, but the failed leg itself is a genuine unknown for the owner-level total.
+  it('is partial when an agent carries a base-execution-failed marker, even though its own amount is non-null', () => {
+    const partialLeg = {
+      amount: { token: 'USDC', units: '500', decimals: 7 },
+      custody: { location: 'unknown' },
+      executionStatus: 'failed',
+      problems: ['base-execution-failed'],
+    }
+    const out = aggregateOwnerPositions({ status: 'complete', agents: [partialLeg] })
+    expect(out.confirmedTotal.state).toBe('partial')
+  })
+
+  // Fix loop 1, Fix 8 (missing test named by the review): NOT every non-empty `problems` should
+  // downgrade the aggregate — a revoked/expired agent's balance is fully known (product truth:
+  // revoked-but-funded agents are still enumerated with their real balance), it just can't move
+  // right now. Only problem markers that mean the READ itself was incomplete should downgrade.
+  it('is NOT downgraded by every problem — a revoked-but-fully-read agent stays known', () => {
+    const revokedButKnown = {
+      amount: { token: 'USDC', units: '100', decimals: 7 },
+      custody: { location: 'stellar-vault' },
+      executionStatus: 'idle',
+      problems: ['scope-revoked'],
+    }
+    const out = aggregateOwnerPositions({ status: 'complete', agents: [revokedButKnown] })
+    expect(out.confirmedTotal.state).toBe('known')
+    expect(out.problemAgentCount).toBe(1)
+  })
+
   it('breaks amounts down by custody location and tallies agents by executionStatus', () => {
     const out = aggregateOwnerPositions({
       status: 'complete',
@@ -402,6 +596,19 @@ describe('aggregateOwnerPositions', () => {
       stellarYield: { state: 'live', apy: 4.16 },
     })
     expect(out.yield).toEqual({ state: 'none', apy: null })
+  })
+
+  // Fix loop 1, Fix 7: 'no yield' is a positive claim that no vault money exists anywhere — it
+  // can only be asserted once the total itself is fully known. A partial/unavailable total might
+  // still be hiding a vault agent that simply couldn't be read yet.
+  it('never asserts "no yield" when the total itself is not known — reports unavailable instead', () => {
+    const out = aggregateOwnerPositions({
+      status: 'partial',
+      agents: [known('100', 'base-proxy', 'succeeded')],
+      stellarYield: { state: 'live', apy: 4.16 },
+    })
+    expect(out.confirmedTotal.state).toBe('partial')
+    expect(out.yield).toEqual({ state: 'unavailable', apy: null })
   })
 
   it('never fabricates earned/interest from a zero-rewards placeholder — always unavailable', () => {

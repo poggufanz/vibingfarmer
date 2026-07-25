@@ -18,14 +18,16 @@ import {
 } from '../stellar/vaultReads.js'
 import { loadIndexedBasePositions as _loadIndexedBasePositions } from '../base/dashboardPositions.js'
 import { SOROBAN_DECIMALS, SOROBAN_BLEND_POOL_ADDRESS } from '../stellar/config.js'
+import { BASE_USDC_DECIMALS } from '../base/config.js'
+import { BASE_POOL_CATALOG } from '../config.js'
 import { custodyForAgent } from './custody.js'
 
 const TOKEN = 'USDC'
-// Base Sepolia USDC is 6dp (base/config.js BASE_USDC_DECIMALS); every OwnerMoneyReadV1 amount
-// this module produces is canonicalized to the Stellar side's 7dp so Stellar-vault and Base-proxy
-// money can be summed as plain BigInt units without a per-field decimals lookup at every call site.
-const BASE_DECIMALS = 6
-const BASE_TO_CANONICAL_SCALE = 10n ** BigInt(SOROBAN_DECIMALS - BASE_DECIMALS)
+// Every OwnerMoneyReadV1 amount this module produces is canonicalized to the Stellar side's 7dp
+// so Stellar-vault and Base-proxy money can be summed as plain BigInt units without a per-field
+// decimals lookup at every call site. Fix loop 1, Fix 8: sourced from base/config.js's own
+// BASE_USDC_DECIMALS rather than a second, independently hardcoded '6' here — one rule, not two.
+const BASE_TO_CANONICAL_SCALE = 10n ** BigInt(SOROBAN_DECIMALS - BASE_USDC_DECIMALS)
 const TERMINAL_BASE_STATUSES = new Set(['deposited', 'held'])
 
 function amountOf(units) {
@@ -39,8 +41,11 @@ function canonicalizeReportedAmount(amount) {
   if (!amount) return null
   const decimals = Number(amount.decimals)
   const delta = SOROBAN_DECIMALS - decimals
-  const units =
-    delta >= 0 ? BigInt(amount.units) * 10n ** BigInt(delta) : BigInt(amount.units) / 10n ** BigInt(-delta)
+  // Fix loop 1, Fix 8: a report finer than the canonical scale would need integer division to
+  // rescale down, silently truncating (rounding money away) with no signal to the caller. Decided:
+  // reject (treat as unavailable) rather than truncate — money must never be silently lost.
+  if (delta < 0) return null
+  const units = BigInt(amount.units) * 10n ** BigInt(delta)
   return amountOf(units)
 }
 
@@ -81,12 +86,22 @@ function mapExecutionStatus(associationStatus) {
   }
 }
 
-function liveUnitsForPool(liveAccount, proxyTarget) {
+// Fix loop 1, Fix 1 (CRITICAL): `poolAddress` is the EVM pool address readPositions.js returns
+// as `pool` — NOT `proxyTarget`, which is a venue slug ('aave-v3', 'morpho-blue', 'moonwell';
+// BASE_POOL_CATALOG, config.js) that can never match an on-chain address. Comparing against the
+// slug always missed, so every settled Base allocation with a successful live read was valued at
+// a fabricated zero.
+function liveUnitsForPool(liveAccount, poolAddress) {
+  // Fix loop 1, Fix 4: loadIndexedBasePositions only ever queries BASE_POOL_CATALOG addresses —
+  // a pool absent from that catalog (a historical/retired allocation) was never asked about at
+  // all, so treating its absence from `positions` as a confirmed zero was wrong; it's unknown.
+  const queried = BASE_POOL_CATALOG.some((p) => p.address.toLowerCase() === String(poolAddress).toLowerCase())
+  if (!queried) return null
   const pos = (liveAccount.positions ?? []).find(
-    (p) => String(p.pool).toLowerCase() === String(proxyTarget).toLowerCase()
+    (p) => String(p.pool).toLowerCase() === String(poolAddress).toLowerCase()
   )
-  // readPositions() filters out zero-share pools entirely (base/readPositions.js) — absence here
-  // is a confirmed zero, not a missing read (the whole account was already read successfully).
+  // readPositions() filters out zero-share pools entirely (base/readPositions.js) — absence here,
+  // once we know the pool WAS queried, is a confirmed zero, not a missing read.
   return pos ? BigInt(pos.assets) : 0n
 }
 
@@ -119,6 +134,15 @@ function unreadableRecord(address, now) {
   }
 }
 
+// Fix loop 1, Fix 3: a leg counts toward the sum only when its OWN read is truly 'known' — never
+// treat an 'unavailable' leg as a silent zero contribution.
+function knownLegUnits(read) {
+  return read?.state === 'known' && read.amount != null ? BigInt(read.amount.units) : 0n
+}
+function isLegKnown(read) {
+  return read?.state === 'known' && read.amount != null
+}
+
 async function readOneAgentMoney({ row, readVaultShares, readTokenBalance, pps, baseAccountsMap, now }) {
   const address = row.address
   if (row.scopeReadStatus !== 'ok') return unavailableScopeRecord(address, now)
@@ -127,6 +151,16 @@ async function readOneAgentMoney({ row, readVaultShares, readTokenBalance, pps, 
   if (row.revoked) problems.push('scope-revoked')
   const nowSec = Math.floor(now / 1000)
   if (Number.isFinite(row.expiry) && row.expiry > 0 && row.expiry <= nowSec) problems.push('scope-expired')
+
+  // Fix loop 1, Fix 8 (bullet 4): computed once and reused below (custodyForAgent + the returned
+  // record) instead of a second hardcoded `{ state: 'known' }` literal at the custody call site —
+  // by construction this is always 'known' here (the failed-scope-read case already returned
+  // above), but one computed value can't silently drift out of sync with itself.
+  const scope = {
+    state: 'known',
+    value: { vault: row.vault, revoked: row.revoked, expiry: row.expiry, authorized: row.authorized },
+    checkedAt: now,
+  }
 
   // Belt-and-braces (readVaultShares/readTokenBalance already catch internally and resolve null
   // on RPC failure — see agentDeposit.js): allSettled here guards only against an injected/future
@@ -146,34 +180,52 @@ async function readOneAgentMoney({ row, readVaultShares, readTokenBalance, pps, 
 
   if (child) {
     executionStatus = mapExecutionStatus(child.executionStatus)
+    let baseUnits = null // null = the Base leg contributes nothing known this round
+
     if (TERMINAL_BASE_STATUSES.has(child.executionStatus)) {
       // Funds are claimed to have landed at a queryable proxy — cross-check with a live read
       // rather than trusting the report's snapshot amount forever (the owner may have withdrawn
       // since the association was written; a live read is the current source of truth).
       const live = baseAccountsMap.get(String(child.kernelAddress).toLowerCase())
-      if (live) {
-        amount = amountOf(liveUnitsForPool(live, child.proxyTarget) * BASE_TO_CANONICAL_SCALE)
+      const liveUnits = live ? liveUnitsForPool(live, child.poolAddress) : null
+      if (liveUnits != null) {
+        baseUnits = liveUnits * BASE_TO_CANONICAL_SCALE
       } else {
         problems.push('base-read-unavailable')
         // Fall back to the durable evidence rather than nulling it out — Task 5's association
         // already passed its own on-chain scope re-check before being written; it is stale
-        // evidence, not a guess.
-        amount = canonicalizeReportedAmount(child.amount)
+        // evidence, not a guess. Still visible in `amount` below; aggregateOwnerPositions
+        // downgrades the owner-level total to 'partial' on this same problem marker rather than
+        // trusting it as fresh (fix loop 1, Fix 2).
+        const reported = canonicalizeReportedAmount(child.amount)
+        baseUnits = reported ? BigInt(reported.units) : null
       }
     } else if (child.executionStatus === 'failed') {
       problems.push('base-execution-failed')
-      amount = null // failed evidence cannot say where the money ended up — fail closed
+      // Fix loop 1, Fix 3: failed evidence cannot say where the BASE leg ended up, but it says
+      // nothing about the Stellar leg (read independently above) — only the Base contribution
+      // fails closed here; it no longer nulls the whole agent's amount.
     } else {
       // queued / accepted / burn-confirmed / minted: in flight. No live proxy read applies yet
       // (the funds have not landed anywhere queryable) — the reported amount is the current truth.
-      amount = canonicalizeReportedAmount(child.amount)
+      const reported = canonicalizeReportedAmount(child.amount)
+      baseUnits = reported ? BigInt(reported.units) : null
+    }
+
+    // Fix loop 1, Fix 3: every leg whose balance is actually known contributes — a bridge agent
+    // can hold real money on BOTH sides at once (not yet swept, or swept but still accruing idle
+    // Stellar dust). Only truly nothing-known-anywhere stays null.
+    const stellarUnits = knownLegUnits(vaultShares) + knownLegUnits(idleToken)
+    const stellarKnown = isLegKnown(vaultShares) || isLegKnown(idleToken)
+    if (baseUnits != null || stellarKnown) {
+      amount = amountOf((baseUnits ?? 0n) + stellarUnits)
     }
   } else if (vaultShares.state === 'known' && idleToken.state === 'known') {
     amount = amountOf(BigInt(vaultShares.amount.units) + BigInt(idleToken.amount.units))
   }
 
   const custody = custodyForAgent({
-    scope: { state: 'known' },
+    scope,
     vaultShares,
     idleToken,
     baseChild: child ? { custody: child.custody } : null,
@@ -181,11 +233,7 @@ async function readOneAgentMoney({ row, readVaultShares, readTokenBalance, pps, 
 
   return {
     address,
-    scope: {
-      state: 'known',
-      value: { vault: row.vault, revoked: row.revoked, expiry: row.expiry, authorized: row.authorized },
-      checkedAt: now,
-    },
+    scope,
     vaultShares,
     idleToken,
     amount,
@@ -248,8 +296,12 @@ export async function readOwnerMoney({ owner, discovery, stellar = {}, base = {}
   )
 
   // The vault APR is one shared, owner-independent fact — skip the network call entirely when
-  // nobody's confirmed money is actually in the vault (nothing would use it).
-  const hasVaultCustody = agents.some((a) => a.custody?.location === 'stellar-vault')
+  // nobody's confirmed money is actually in the vault (nothing would use it). Fix loop 1, Fix 8
+  // (bullet 3): same predicate aggregateOwnerPositions uses below (amount-gated, not just
+  // location) — a custody.location can be 'stellar-vault' from a known-positive vaultShares leg
+  // while the agent's overall `amount` is still null (e.g. idleToken unavailable), and the two
+  // spellings used to disagree about whether that counts.
+  const hasVaultCustody = agents.some((a) => a.amount && a.custody?.location === 'stellar-vault')
   let stellarYield = { state: 'unavailable', apy: null }
   if (hasVaultCustody) {
     const aprBps = await readSupplyAprBps(SOROBAN_BLEND_POOL_ADDRESS).catch(() => null)
@@ -275,6 +327,19 @@ export async function readOwnerMoney({ owner, discovery, stellar = {}, base = {}
  * `amount: null` rather than a deceptive $0.
  * @param {{status:string, agents:Array, stellarYield?:object}} reads readOwnerMoney()'s envelope
  */
+// Fix loop 1, Fixes 2 & 3: a per-agent `amount` can be non-null yet still be incomplete evidence
+// — a stale Base figure kept only because the live read couldn't run, or the Stellar-only
+// remainder of a Base leg that outright failed. These problem markers say the underlying READ was
+// incomplete, which is a different axis from scope-revoked/scope-expired (a fully-known balance
+// that simply can't move right now — see the "revoked-but-funded" product truth) and must not be
+// conflated with it.
+const READ_INCOMPLETE_PROBLEMS = new Set([
+  'vault-shares-unavailable',
+  'idle-token-unavailable',
+  'base-read-unavailable',
+  'base-execution-failed',
+])
+
 export function aggregateOwnerPositions(reads) {
   const agents = reads?.agents ?? []
   const status = reads?.status ?? 'unavailable'
@@ -288,6 +353,7 @@ export function aggregateOwnerPositions(reads) {
   for (const a of agents) {
     executionBreakdown[a.executionStatus] = (executionBreakdown[a.executionStatus] ?? 0) + 1
     if (a.problems?.length) problemAgentCount += 1
+    if (a.problems?.some((p) => READ_INCOMPLETE_PROBLEMS.has(p))) anyUnread = true
     if (a.amount) {
       const units = BigInt(a.amount.units)
       knownUnits += units
@@ -300,6 +366,15 @@ export function aggregateOwnerPositions(reads) {
 
   const state = status === 'unavailable' ? 'unavailable' : anyUnread ? 'partial' : 'known'
   const hasVaultCustody = agents.some((a) => a.amount && a.custody?.location === 'stellar-vault')
+  // Fix loop 1, Fix 7: 'no yield' is a positive claim that no vault money exists anywhere for
+  // this owner — it can only be asserted once the total itself is fully known. A 'partial' or
+  // 'unavailable' total might still be hiding a vault agent that simply couldn't be read yet.
+  const yieldInfo =
+    state !== 'known'
+      ? { state: 'unavailable', apy: null }
+      : hasVaultCustody
+        ? (reads?.stellarYield ?? { state: 'unavailable', apy: null })
+        : { state: 'none', apy: null }
 
   return {
     status,
@@ -309,7 +384,7 @@ export function aggregateOwnerPositions(reads) {
     },
     // Base Sepolia pools are honest ERC-4626 1:1 custody proxies, not live yield venues — never
     // attribute Autofarm/Blend's live APR to confirmed money that is entirely Base custody.
-    yield: hasVaultCustody ? (reads?.stellarYield ?? { state: 'unavailable', apy: null }) : { state: 'none', apy: null },
+    yield: yieldInfo,
     // No principal/share-price history is tracked by this read model — an "earned" figure would
     // have to be invented (the exact anti-pattern positionsStore.js's hardcoded
     // `unclaimedRewards: '0'` already commits elsewhere in this codebase). Always unavailable.

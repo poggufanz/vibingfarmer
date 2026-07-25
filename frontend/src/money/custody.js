@@ -26,6 +26,14 @@ export function custodyForAgent(read) {
   // whatever the Stellar-side bridge agent's own token/vault-share balances show — the money has
   // moved chains, so its custody lives wherever the association says, not where it used to sit.
   if (read.baseChild) {
+    // Fix loop 1, Fix 3: a known-positive Stellar leg alongside a Base association is a genuine
+    // split — this agent's money is confirmed in more than one place at once, and a single
+    // `location` field cannot say which one without guessing. Reuses the exact discipline below
+    // (never combine a known zero with an unread balance and guess) rather than inventing a
+    // second rule: two known-positive legs are just as unresolvable as one known and one unread.
+    if (isKnownPositive(read.vaultShares) || isKnownPositive(read.idleToken)) {
+      return { location: 'unknown' }
+    }
     const loc = read.baseChild.custody?.location
     return { location: CUSTODY_LOCATIONS.has(loc) ? loc : 'unknown' }
   }
