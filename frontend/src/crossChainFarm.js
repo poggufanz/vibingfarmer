@@ -8,8 +8,16 @@
 // clear error and leaves funds recoverable).
 import { signAndSubmitStellarBurn } from './stellar/cctpBurn.js'
 import { postFarm, pollFarmStatus } from './base/relayerClient.js'
+import { BASE_POOL_CATALOG } from './config.js'
 
 const CCTP_STELLAR_DOMAIN = 27
+
+// Fix loop 2, Fix 2a: pool address -> proxyTarget, the same lookup relayer/src/httpRouter.mjs's
+// parseWireAllocations does at :255-258 (lowercased address match). Resolved once at module load
+// — BASE_POOL_CATALOG is a static export, not per-request data.
+const BASE_POOL_PROXY_TARGETS = new Map(
+  BASE_POOL_CATALOG.map((entry) => [entry.address.toLowerCase(), entry.proxyTarget])
+)
 
 /**
  * @param {{
@@ -68,6 +76,32 @@ export async function runFarmFlow({
     throw new Error(
       `allocation amountBaseUnits sum is ${allocationTotal}; expected ${expectedBaseUnits}`
     )
+  }
+  // Fix loop 2, Fix 2a: postFarm's canonical-allocationId guard (base/relayerClient.js) only ran
+  // AFTER burn() above had already submitted the CCTP burn — a non-canonical or missing
+  // allocationId meant burned USDC that could never be deposited. Validate the exact identity the
+  // relayer requires (relayer/src/httpRouter.mjs:246-262) HERE, before anything moves. Reject
+  // missing IDs, duplicate IDs, IDs for a pool absent from the catalog, and IDs that don't equal
+  // the canonical string — matching the relayer exactly, not a weakened version of it.
+  const seenAllocationIds = new Set()
+  for (const alloc of allocations) {
+    if (typeof alloc.allocationId !== 'string' || !alloc.allocationId) {
+      throw new Error('every allocation requires its reviewed allocationId')
+    }
+    if (seenAllocationIds.has(alloc.allocationId)) {
+      throw new Error(`duplicate allocationId: ${alloc.allocationId}`)
+    }
+    seenAllocationIds.add(alloc.allocationId)
+    const proxyTarget = BASE_POOL_PROXY_TARGETS.get(String(alloc.pool || '').toLowerCase())
+    if (!proxyTarget) {
+      throw new Error(`allocation pool ${alloc.pool} is not in the Base pool catalog`)
+    }
+    const canonicalId = `${runId}:bridge:${proxyTarget}`
+    if (alloc.allocationId !== canonicalId) {
+      throw new Error(
+        `allocationId ${alloc.allocationId} does not match the canonical ${canonicalId}`
+      )
+    }
   }
   const {
     burn = ({ contractId, amountUnits: amt, baseRecipientAddress: dest, kit }) =>

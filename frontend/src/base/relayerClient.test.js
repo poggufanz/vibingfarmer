@@ -213,6 +213,32 @@ describe('postFarm', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  // Fix loop 2, Fix 2b: `run-42:bridge:0` (produced by frontend/src/orchestrator.js:1060's
+  // `${receiptRunId}:bridge:${index}`) previously passed this check because it only tested
+  // .startsWith(`${runId}:bridge:`) — an array-index suffix satisfies a prefix test. The relayer
+  // rejects it (relayer/src/httpRouter.mjs:246-262 requires the exact canonical proxy-target
+  // string), but only AFTER the CCTP burn already ran. Require the same exact canonical shape
+  // here, before the burn's own dispatch ever reaches fetch.
+  test('fails before fetch when an allocationId is array-index-shaped instead of a canonical proxy target', async () => {
+    const fetchMock = vi.fn()
+    await expect(
+      postFarm({
+        burnTxHash: null,
+        sourceDomain: 27,
+        serializedApproval: 'approval-blob',
+        runId: 'run-42',
+        allocations: [{
+          allocationId: 'run-42:bridge:0',
+          pool: '0xAAAA',
+          amount: 100,
+          minShares: 99n,
+        }],
+        deps: { fetchImpl: fetchMock },
+      })
+    ).rejects.toThrow(/allocationId|canonical/i)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   test('fails before fetch when an allocationId belongs to a different reviewed run', async () => {
     const fetchMock = vi.fn()
     await expect(

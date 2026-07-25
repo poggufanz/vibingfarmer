@@ -246,32 +246,68 @@ describe('ingestAssociationReport', () => {
 
   it('rejects a changed pool, owner, run, or terminal result for an existing allocation', async () => {
     const store = memoryStore()
-    await ingest({ store })
+
+    // Canonical-ID and pool-allowlist checks are unconditional — they reject before any existing
+    // row (or the idempotency journal) is even consulted.
+    await expect(ingest({ report: report({ runId: 'run-other' }), store })).rejects.toThrow()
+    await expect(
+      ingest({
+        report: report({ allocations: [allocation({ poolAddress: `0x${'56'.repeat(20)}` })] }),
+        store,
+      })
+    ).rejects.toThrow()
+
+    // Seed `existing` directly (bypassing ingestAssociationReport, so nothing lands in the
+    // idempotency journal for it) — Fix loop 2, Fix 3 makes an exact repeat of already-*applied*
+    // evidence idempotent, so proving these identity/terminal guards still hold requires each
+    // delivery below to be the first the journal has ever seen for its own tuple, not a genuine
+    // retry of one that was already committed live.
+    const baseRow = {
+      allocationId: 'run-42:bridge:aave-v3',
+      networkId: 'stellar-testnet',
+      runId: 'run-42',
+      ownerAddress: OWNER_A,
+      bridgeAgentAddress: BRIDGE,
+      poolAddress: POOL,
+      amount: { token: 'USDC', units: '1000000', decimals: 6 },
+      proxyTarget: 'aave-v3',
+      baseJobId: 'job-42',
+      txHash: '0xexisting-mint',
+      executionStatus: 'minted',
+      custodyLocation: 'agent',
+      grantTxHash: 'grant-42',
+      kernelAddress: KERNEL,
+      mandateBindingId: 'binding-42',
+      mandateBindingHash: 'binding-hash-42',
+      associationSource: 'relayer-attested',
+      reportedAt: NOW,
+      scopeCheckedAt: NOW,
+    }
     for (const changed of [
       report({ owner: OWNER_B }),
-      report({ runId: 'run-other' }),
-      report({ allocations: [allocation({ poolAddress: `0x${'56'.repeat(20)}` })] }),
       report({ allocations: [allocation({ amount: { token: 'USDC', units: '2', decimals: 6 } })] }),
       report({ baseJobId: 'job-other' }),
       report({ grantTxHash: 'grant-other' }),
     ]) {
+      store.rows.set('stellar-testnet|run-42:bridge:aave-v3', { ...baseRow })
       await expect(ingest({ report: changed, store })).rejects.toThrow()
     }
 
-    const deposited = report({
-      allocations: [
-        allocation({
-          executionStatus: 'deposited',
-          custody: { location: 'base-proxy' },
-          txHash: `0x${'78'.repeat(32)}`,
-        }),
-      ],
+    // Terminal-state protections, same reasoning: seed a terminal existing row directly.
+    store.rows.set('stellar-testnet|run-42:bridge:aave-v3', {
+      ...baseRow,
+      executionStatus: 'deposited',
+      custodyLocation: 'base-proxy',
+      txHash: '0xexisting-deposit',
     })
-    await ingest({ report: deposited, store })
-    const regressed = report({ allocations: [allocation({ executionStatus: 'minted' })] })
+    const regressed = report({
+      allocations: [allocation({ executionStatus: 'minted', txHash: null })],
+    })
     await expect(ingest({ report: regressed, store })).rejects.toThrow(/regress|terminal/i)
     const changedTerminal = report({
-      allocations: [allocation({ executionStatus: 'failed', custody: { location: 'agent' } })],
+      allocations: [
+        allocation({ executionStatus: 'failed', custody: { location: 'agent' }, txHash: null }),
+      ],
     })
     await expect(ingest({ report: changedTerminal, store })).rejects.toThrow(/terminal/i)
     const erasedTerminalCustody = report({
@@ -279,7 +315,7 @@ describe('ingestAssociationReport', () => {
         allocation({
           executionStatus: 'deposited',
           custody: { location: 'unknown' },
-          txHash: `0x${'78'.repeat(32)}`,
+          txHash: '0xexisting-deposit',
         }),
       ],
     })
@@ -301,6 +337,96 @@ describe('ingestAssociationReport', () => {
     const store = memoryStore()
     store.commitAssociation = vi.fn(async () => ({ written: 0, duplicates: 1 }))
     await expect(ingest({ store })).resolves.toEqual({ written: 0, duplicates: 1 })
+  })
+
+  // Fix loop 2, Fix 3: frontend/migrations/0004_agent_associations.sql:12-13 documents that the
+  // journal "makes retries of an older, already-accepted tuple idempotent even after the latest
+  // row has advanced" (e.g. a retried 'accepted' callback arriving after 'minted' was applied).
+  // Before this fix, the journal short-circuit ran AFTER validateMonotonic, so a retried older
+  // tuple hit "association evidence cannot regress" (400) instead of the documented idempotent
+  // success — the journal was idempotent only for the not-yet-advanced case, which never needed
+  // a journal at all.
+  it('makes a retried older tuple idempotent even after a newer tuple has already advanced', async () => {
+    const store = memoryStore()
+    const scopeReader = vi.fn(async () => scope())
+    const acceptedReport = report()
+    const acceptedKey = associationIdempotencyKey(acceptedReport, acceptedReport.allocations[0])
+    await ingest({ report: acceptedReport, store, scopeReader })
+
+    const mintedReport = report({
+      allocations: [
+        allocation({ executionStatus: 'minted', custody: { location: 'agent' }, txHash: '0xmint' }),
+      ],
+    })
+    await ingest({ report: mintedReport, store, scopeReader })
+
+    // Retry delivery of the already-applied older 'accepted' tuple, arriving after 'minted'.
+    const replay = await ingestAssociationReport({
+      report: acceptedReport,
+      idempotencyKey: acceptedKey,
+      store,
+      scopeReader,
+      poolTargets: POOL_TARGETS,
+      scopeRequirements: SCOPE_REQUIREMENTS,
+      now: NOW,
+    })
+    expect(replay).toEqual({ written: 0, duplicates: 1 })
+  })
+
+  it('still rejects a never-applied older report as a regression, proving the journal short-circuit is not a bypass', async () => {
+    const store = memoryStore()
+    const scopeReader = vi.fn(async () => scope())
+    await ingest({
+      report: report({
+        allocations: [
+          allocation({ executionStatus: 'minted', custody: { location: 'agent' }, txHash: '0xmint' }),
+        ],
+      }),
+      store,
+      scopeReader,
+    })
+
+    // This exact ('burn-confirmed', '0xburn-confirmed') tuple was never previously ingested, so
+    // it cannot be sitting in the idempotency journal — the short-circuit must not fire for it.
+    const neverApplied = report({
+      allocations: [
+        allocation({
+          executionStatus: 'burn-confirmed',
+          custody: { location: 'agent' },
+          txHash: '0xburn-confirmed',
+        }),
+      ],
+    })
+    await expect(ingest({ report: neverApplied, store, scopeReader })).rejects.toThrow(/regress/i)
+  })
+
+  it('rejects a journaled idempotency key paired with a mismatched report body instead of short-circuiting', async () => {
+    const store = memoryStore()
+    const scopeReader = vi.fn(async () => scope())
+    const acceptedReport = report()
+    const acceptedKey = associationIdempotencyKey(acceptedReport, acceptedReport.allocations[0])
+    await ingest({ report: acceptedReport, store, scopeReader })
+
+    const differentReport = report({
+      allocations: [
+        allocation({
+          executionStatus: 'burn-confirmed',
+          custody: { location: 'agent' },
+          txHash: '0xother',
+        }),
+      ],
+    })
+    await expect(
+      ingestAssociationReport({
+        report: differentReport,
+        idempotencyKey: acceptedKey, // a journaled key, but it does not match this body's tuple
+        store,
+        scopeReader,
+        poolTargets: POOL_TARGETS,
+        scopeRequirements: SCOPE_REQUIREMENTS,
+        now: NOW,
+      })
+    ).rejects.toThrow(/idempotency/i)
   })
 
   it('allows transaction evidence to advance from mint to deposit but not change in-place', async () => {

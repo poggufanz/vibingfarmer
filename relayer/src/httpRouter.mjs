@@ -79,6 +79,25 @@ function requireExactFields(value, allowed, label) {
   if (unexpected) throw new Error(`unexpected ${label} field: ${unexpected}`);
 }
 
+// Fix loop 2, Fix 1: shared by /farm and /farm/attach (and, transitively, the `_attach` burn-hash
+// comparison at handleFarmAttach — both writers of attachedBurnTxHash now go through this same
+// guard) so the two entry points cannot drift back to a truthiness-only check. A non-string value
+// (number, object, array, boolean) must never reach attachContext.attachedBurnTxHash: it gets
+// JSON-persisted into the relayer jobs table, passed to watcher.relayMint as both burnTxHash and
+// execId, and compared with !== later — an object can never match itself on retry ({} !== {}).
+function isValidBurnTxHash(value) {
+  return typeof value === 'string' && value.length > 0;
+}
+
+// Fix loop 2, Fix 4: mirrors the D1 index's amount.units rule (frontend/api/agent-index/
+// associations.js's `/^\d+$/` + `> 0n` check) at the wire seam, so a report that the index will
+// always reject can never be dispatched in the first place. Canonical = digits only, no sign, no
+// decimal point, no exponent, no surrounding whitespace, no leading '+' — the same shape BigInt()
+// would otherwise silently coerce from a number/boolean or (worse) accept as negative.
+function isCanonicalDecimalString(value) {
+  return typeof value === 'string' && /^\d+$/.test(value);
+}
+
 // Binding attestation for My Money Task 5 (the "binding plan" of the class doc): bindingId is a
 // fresh opaque id per registration (from the same genId the caller already injects for jobs);
 // bindingHash is a deterministic digest of the binding's identity fields, so two independent
@@ -259,10 +278,14 @@ export function createRelayerRouter({
       if (a.allocationId !== `${runId}:bridge:${proxyTarget}`) {
         throw new Error('allocationId does not match the reviewed run and canonical proxy target');
       }
-      if (!pool || units == null || a.minShares == null
+      if (!pool || !isCanonicalDecimalString(units) || !isCanonicalDecimalString(a.minShares)
         || a.amount?.token !== 'USDC' || a.amount?.decimals !== 6) {
         throw new Error('invalid allocation');
       }
+      // minShares MAY legitimately be '0' (a degenerate but real "accept any share price"
+      // deposit — see the report for why); amount.units may not, since a zero/absent burn
+      // amount is never a real deposit.
+      if (BigInt(units) <= 0n) throw new Error('amount.units must be a positive integer string');
       return {
         allocationId: a.allocationId,
         pool,
@@ -465,7 +488,7 @@ export function createRelayerRouter({
       burnTxHash, serializedApproval, allocations, stellarOwner, kernelAddress,
       bridgeAgent = null, runId = null, grantTxHash = null,
     } = req.body || {};
-    if ((burnTxHash !== null && (typeof burnTxHash !== 'string' || !burnTxHash))
+    if ((burnTxHash !== null && !isValidBurnTxHash(burnTxHash))
       || !serializedApproval || !stellarOwner || !kernelAddress
       || !Array.isArray(allocations) || allocations.length === 0) {
       return sendJson(res, 400, {
@@ -548,7 +571,7 @@ export function createRelayerRouter({
       return sendJson(res, 400, { error: errorMessage(err) });
     }
     const { jobId, burnTxHash, serializedApproval, stellarOwner, kernelAddress } = req.body || {};
-    if (!jobId || !burnTxHash || !serializedApproval || !stellarOwner || !kernelAddress) {
+    if (!jobId || !isValidBurnTxHash(burnTxHash) || !serializedApproval || !stellarOwner || !kernelAddress) {
       return sendJson(res, 400, {
         error: 'jobId, burnTxHash, serializedApproval, stellarOwner and kernelAddress are required',
       });

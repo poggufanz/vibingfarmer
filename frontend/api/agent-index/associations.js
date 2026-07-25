@@ -268,6 +268,15 @@ export async function ingestAssociationReport({
   }
   const expectedKey = associationIdempotencyKey(report, allocation)
   if (idempotencyKey !== expectedKey) throw new Error('idempotency key does not match report tuple')
+  // Journal short-circuit BEFORE validateImmutable/validateMonotonic (frontend/migrations/
+  // 0004_agent_associations.sql:12-13): the equality check just above already proved this body
+  // matches the key, so a journaled key means this exact evidence was already durably applied —
+  // the correct response is idempotent success, not a regression error against whatever the
+  // latest row has since advanced to. A tuple that was never applied still falls through to the
+  // validators below, so this can never become a bypass.
+  if (await store.hasAssociationEvent({ idempotencyKey })) {
+    return { written: 0, duplicates: 1 }
+  }
   const existing = await store.readRunAllocation({
     networkId: report.networkId,
     allocationId: allocation.allocationId,
@@ -276,9 +285,6 @@ export async function ingestAssociationReport({
   if (hasAssociationProof) {
     validateImmutable(existing, report, allocation)
     validateMonotonic(existing, allocation)
-  }
-  if (await store.hasAssociationEvent({ idempotencyKey })) {
-    return { written: 0, duplicates: 1 }
   }
   let scopeCheckedAt = existing?.scopeCheckedAt ?? now
   if (!hasAssociationProof) {

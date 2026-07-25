@@ -8,10 +8,23 @@
 // SP2 lands a different path or response shape, only this file's URL-building and response
 // parsing need to change — crossChainFarm.js and the screens never construct URLs themselves.
 import { toBaseChainUnits, BASE_USDC_DECIMALS } from './config.js'
+import { BASE_POOL_CATALOG } from '../config.js'
 
 const DEFAULT_BASE_URL = import.meta.env?.VITE_CROSS_RELAYER_BASE || '/api/vf-cross'
 const DEFAULT_POLL_INTERVAL_MS = 3000
 const DEFAULT_MAX_TRIES = 40 // ~2 minutes at the default interval
+
+// Fix loop 2, Fix 2b: the set of proxy targets a canonical `${runId}:bridge:${proxyTarget}`
+// allocationId may end in — the same vocabulary relayer/src/httpRouter.mjs:246-262 resolves via
+// its own pool-address lookup. `frontend/src/crossChainFarm.js`'s pre-burn guard (Fix 2a) already
+// does the full pool-address-bound resolution for every real caller (both screens/Farm.jsx and
+// baseLeg.js dispatch through runFarmFlow, never postFarm directly), so this client-seam check is
+// deliberately the lighter of the two: it rejects a non-canonical SHAPE (e.g. the array-index
+// suffix `run-42:bridge:0` orchestrator.js:1060 can produce) without re-deriving proxyTarget from
+// `a.pool` — preserving this module's existing "an explicit reviewed allocationId is forwarded
+// verbatim" contract for callers that legitimately don't have a pool-catalog entry to check
+// against yet.
+const KNOWN_BASE_PROXY_TARGETS = new Set(BASE_POOL_CATALOG.map((entry) => entry.proxyTarget))
 
 /**
  * Convert strategist display allocations to exact Base USDC units once, using largest remainder.
@@ -142,8 +155,14 @@ function toWireAllocations(allocations, runId) {
     if (typeof a.allocationId !== 'string' || !a.allocationId) {
       throw new Error('every farm allocation requires its reviewed allocationId')
     }
-    if (runId && !a.allocationId.startsWith(`${runId}:bridge:`)) {
-      throw new Error('allocationId does not belong to the reviewed run')
+    if (runId) {
+      const prefix = `${runId}:bridge:`
+      const proxyTarget = a.allocationId.startsWith(prefix) ? a.allocationId.slice(prefix.length) : null
+      if (!proxyTarget || !KNOWN_BASE_PROXY_TARGETS.has(proxyTarget)) {
+        throw new Error(
+          'allocationId does not match the reviewed run and a canonical Base proxy target'
+        )
+      }
     }
     return {
       allocationId: a.allocationId,

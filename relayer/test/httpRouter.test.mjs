@@ -998,6 +998,118 @@ describe('createRelayerRouter', () => {
       expect(JSON.stringify(jobs.get(jobId))).not.toContain(SESSION_PRIVATE_KEY);
       expect(jobs.get(jobId)).toMatchObject({ runId: 'run-42', bridgeAgent: 'CBRIDGE', grantTxHash: 'HGRANT' });
     });
+
+    // Fix loop 2, Fix 1: /farm/attach guarded only truthiness (`!burnTxHash`), so a number,
+    // object, array, or boolean passed straight through to attachContext.attachedBurnTxHash,
+    // permanently consuming the job's single attach slot. /farm already rejects a non-string,
+    // non-null burnTxHash (see the test above using a real 'burn-1' string) — this locks the same
+    // rule at /farm/attach, via the shared isValidBurnTxHash guard.
+    it('rejects a non-string burnTxHash at /farm/attach before any job mutation', async () => {
+      const { body } = await registerMandate(router);
+      const queuedRes = mockRes();
+      await router(mk('POST', '/api/vf-cross/farm', {
+        burnTxHash: null,
+        serializedApproval: body.serializedApproval,
+        stellarOwner: STELLAR_OWNER,
+        kernelAddress: KERNEL_ADDRESS,
+        bridgeAgent: 'CBRIDGE',
+        runId: 'run-42',
+        grantTxHash: 'HGRANT',
+        allocations: [wireAllocation()],
+      }), queuedRes);
+      const { jobId } = jsonOf(queuedRes);
+
+      for (const badBurnTxHash of [12345, { evil: true }, ['burn-1'], true, '']) {
+        const res = mockRes();
+        await router(mk('POST', '/api/vf-cross/farm/attach', {
+          jobId,
+          burnTxHash: badBurnTxHash,
+          serializedApproval: body.serializedApproval,
+          stellarOwner: STELLAR_OWNER,
+          kernelAddress: KERNEL_ADDRESS,
+        }), res);
+        expect(res.statusCode, JSON.stringify(badBurnTxHash)).toBe(400);
+        expect(jobs.get(jobId)._attach.attachedBurnTxHash).toBeNull();
+        expect(jobs.get(jobId).status).toBe('queued');
+      }
+      expect(buildFarm).not.toHaveBeenCalled();
+
+      // A genuine string burn still attaches normally afterward — the guard doesn't over-reject.
+      const okRes = mockRes();
+      await router(mk('POST', '/api/vf-cross/farm/attach', {
+        jobId,
+        burnTxHash: 'burn-observed',
+        serializedApproval: body.serializedApproval,
+        stellarOwner: STELLAR_OWNER,
+        kernelAddress: KERNEL_ADDRESS,
+      }), okRes);
+      expect(okRes.statusCode).toBe(200);
+    });
+
+    // Fix loop 2, Fix 4: relayer/src/httpRouter.mjs:269-270 did BigInt(units)/BigInt(minShares)
+    // behind only a `!= null` guard, and the cap check only bounds the top. '0', a negative
+    // string, a number, a boolean, exponential notation, and padded whitespace all coerce
+    // successfully via BigInt() yet the D1 index layer (associations.js's amount.units rule,
+    // `/^\d+$/` and `> 0n`) always rejects them downstream — mirror that rule at the wire seam so
+    // both layers agree instead of dispatching a report the index will only ever refuse.
+    for (const badUnits of ['0', '-1', 1234, true, '1e6', ' 12 ']) {
+      it(`rejects a non-canonical amount.units (${JSON.stringify(badUnits)}) at /farm before dispatch`, async () => {
+        const { body } = await registerMandate(router);
+        const res = mockRes();
+        await router(mk('POST', '/api/vf-cross/farm', {
+          burnTxHash: 'burn-1', serializedApproval: body.serializedApproval,
+          stellarOwner: STELLAR_OWNER, kernelAddress: KERNEL_ADDRESS,
+          bridgeAgent: 'CBRIDGE', runId: 'run-42', grantTxHash: 'HGRANT',
+          allocations: [{
+            allocationId: 'run-42:bridge:aave-v3',
+            poolAddress: POOL_ADDRESS,
+            amount: { token: 'USDC', units: badUnits, decimals: 6 },
+            minShares: '90',
+          }],
+        }), res);
+        expect(res.statusCode).toBe(400);
+        expect(farmFn).not.toHaveBeenCalled();
+      });
+    }
+
+    // minShares='0' is deliberately NOT in the rejection list above: unlike amount.units, a zero
+    // minShares floor is a legitimate (if degenerate — "accept any share price") deposit, not
+    // malformed input, so only its canonical-decimal-string shape is enforced, never a > 0n floor.
+    for (const badMinShares of ['-1', 1234, true, '1e6', ' 12 ']) {
+      it(`rejects a non-canonical minShares (${JSON.stringify(badMinShares)}) at /farm before dispatch`, async () => {
+        const { body } = await registerMandate(router);
+        const res = mockRes();
+        await router(mk('POST', '/api/vf-cross/farm', {
+          burnTxHash: 'burn-1', serializedApproval: body.serializedApproval,
+          stellarOwner: STELLAR_OWNER, kernelAddress: KERNEL_ADDRESS,
+          bridgeAgent: 'CBRIDGE', runId: 'run-42', grantTxHash: 'HGRANT',
+          allocations: [wireAllocation({ minShares: badMinShares })],
+        }), res);
+        expect(res.statusCode).toBe(400);
+        expect(farmFn).not.toHaveBeenCalled();
+      });
+    }
+
+    it('accepts minShares "0" as a legitimate no-slippage-floor value, and a valid decimal amount still executes', async () => {
+      const { body } = await registerMandate(router);
+      let resolveFarm;
+      farmFn.mockImplementationOnce(() => new Promise((resolve) => { resolveFarm = resolve; }));
+      const res = mockRes();
+      await router(mk('POST', '/api/vf-cross/farm', {
+        burnTxHash: 'burn-1', serializedApproval: body.serializedApproval,
+        stellarOwner: STELLAR_OWNER, kernelAddress: KERNEL_ADDRESS,
+        bridgeAgent: 'CBRIDGE', runId: 'run-42', grantTxHash: 'HGRANT',
+        allocations: [wireAllocation({ minShares: '0' })],
+      }), res);
+      expect(res.statusCode).toBe(200);
+      await vi.waitFor(() => expect(farmFn).toHaveBeenCalledTimes(1));
+      expect(farmFn.mock.calls[0][0].allocations[0].minShares).toBe(0n);
+      resolveFarm({
+        mintResult: { status: 'minted', mintTxHash: '0xmint' },
+        depositResults: [],
+        runId: 'run-42', bridgeAgent: 'CBRIDGE', grantTxHash: 'HGRANT',
+      });
+    });
   });
 
   describe('GET /status/:jobId', () => {
