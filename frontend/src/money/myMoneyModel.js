@@ -212,7 +212,12 @@ export function buildMyMoneyModel({
     })
   }
 
-  const discoveryStatus = discovery?.status ?? cache?.discovery?.status ?? 'unavailable'
+  // Fix 1, review loop 2: FRESH discovery only — never substitute cache.discovery.status here.
+  // This divert must mirror the fresh-only check the 'empty' branch already uses below (:245,
+  // `discovery?.status === 'complete'`); a warm cache saying "discovery finished last time" is not
+  // proof it finished THIS run, and this module must not return its MOST confident state
+  // ('current') on evidence it explicitly refuses for the strictly weaker 'empty' claim.
+  const discoveryStatus = discovery?.status ?? 'unavailable'
 
   // Precedence: incomplete evidence anywhere in the picture — never presented as a confident total.
   // A total enumeration failure ('unavailable' — discovery null or itself failed) must be at least
@@ -261,8 +266,13 @@ export function buildMyMoneyModel({
     })
   }
 
+  // Fix 2, review loop 2: three-way, mirroring the same absence-never-confidence rule Fix 1 closed
+  // one branch above. Not reachable from readOwnerMoney.js today (it always stamps a finite
+  // checkedAt), but resolveMoney's `freshOk` path only checks confirmedTotal.state — a known total
+  // with a corrupt/missing checkedAt still classifies as freshness 'unavailable' (freshness.js),
+  // and that must never be rounded up to the confident 'current'.
   return finishModel({
-    state: freshness === 'stale' ? 'stale' : 'current',
+    state: freshness === 'stale' ? 'stale' : freshness === 'unavailable' ? 'unavailable' : 'current',
     owner,
     money: md,
     protection,

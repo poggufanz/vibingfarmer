@@ -49,7 +49,12 @@ function write(key, rows) {
  *   never guesses whose journal a write belongs to.
  */
 export function saveCycle(ownerOrRow, row, { network } = {}) {
-  if (row === undefined) {
+  // Fix 4 (minor, review loop 2): arguments.length, not `row === undefined` — the old check could
+  // not tell a true legacy call (`saveCycle(row)`, 1 argument) from a scoped call whose row just
+  // hasn't loaded yet (`saveCycle(owner, undefined, { network })`, 3 arguments); the latter used
+  // to fall through into this branch and write a string-spread record (`{...'GOWNER'}` ->
+  // `{0:'G',1:'O',...}`) into the unowned legacy bucket. Mirrors getCycles' own arity fix.
+  if (arguments.length <= 1) {
     try {
       const rows = read(LEGACY_KEY)
       rows.push({ ...ownerOrRow, ts: Date.now() })

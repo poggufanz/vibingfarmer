@@ -35,9 +35,11 @@ describe('classifyFreshness', () => {
   // timestamp is not clock skew, it is implausible/bogus data (classifyKeeperAutomation would
   // otherwise report 'healthy' from a bogus future ledger-close time). Clamp it instead of
   // rewarding it with 'current'.
+  // Fix 5, review loop 2: pin the exact value — `not.toBe('current')` would also pass for a bogus
+  // third state, masking a regression the way myMoneyModel.test.js:140-150 masked Fix 1.
   it('does not treat a far-future checkedAt as current — a chain close time is never that far ahead', () => {
     const out = classifyFreshness({ checkedAt: 1000 + 60 * 60 * 1000, now: 1000 }) // 1 hour "ahead"
-    expect(out).not.toBe('current')
+    expect(out).toBe('unavailable')
   })
 
   it('is unavailable when now is not a finite number', () => {

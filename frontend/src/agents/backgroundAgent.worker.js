@@ -91,10 +91,18 @@ function findRealPool(pools, protocol) {
 // nothing.
 async function runFactsCheck() {
   if (!config) return
+  const vaults = config.activeVaults ?? []
+  // Fix 5 (minor, review loop 2): findRealPool short-circuits to null at :53 for any protocol
+  // that isn't the one real yield venue, before it ever looks at `pools` — so when no active
+  // vault carries that protocol, fetching the whole response would only be discarded. Skip it.
+  const needsFetch = vaults.some((v) => v.protocol === REAL_YIELD_VENUE.protocol)
   try {
-    const res = await fetch('https://yields.llama.fi/pools')
-    const { data } = await res.json()
-    for (const vault of config.activeVaults ?? []) {
+    let data = []
+    if (needsFetch) {
+      const res = await fetch('https://yields.llama.fi/pools')
+      ;({ data } = await res.json())
+    }
+    for (const vault of vaults) {
       const pool = findRealPool(data, vault.protocol)
       self.postMessage({
         type: 'RISK_FACT',

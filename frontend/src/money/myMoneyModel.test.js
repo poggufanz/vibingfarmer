@@ -137,7 +137,11 @@ describe('buildMyMoneyModel — authoritative emptiness', () => {
     expect(m.state).toBe('empty')
   })
 
-  it('never claims empty from a cached-only discovery.status — the FRESH discovery must itself be complete', () => {
+  // Fix 1, review loop 2: this used to assert only `not.toBe('empty')`, which let a warm cache
+  // manufacture the MOST confident state ('current') instead — the model refuses this exact same
+  // cached-completeness evidence for the weaker 'empty' claim (see :245 below), so it must refuse
+  // it here too. Pin the exact expected state.
+  it('never claims empty (or current) from a cached-only discovery.status — the FRESH discovery must itself be complete', () => {
     const money = knownMoney({ units: 0n, checkedAt: NOW }) // fresh, known zero
     const m = buildMyMoneyModel({
       owner: 'GOWNER',
@@ -146,7 +150,7 @@ describe('buildMyMoneyModel — authoritative emptiness', () => {
       cache: { discovery: discoveryOf('complete') }, // only the CACHE says complete
       now: NOW,
     })
-    expect(m.state).not.toBe('empty')
+    expect(m.state).toBe('partial-discovery')
   })
 })
 
@@ -187,6 +191,19 @@ describe('buildMyMoneyModel — freshness triple survives finishModel (Fix 5, re
     expect(m.confirmedLedger).toBeNull()
     expect(m.confirmedBlock).toBeNull()
     expect(m.source).toBeNull()
+  })
+})
+
+describe('buildMyMoneyModel — latent freshness-triple gaps (Fix 2, review loop 2)', () => {
+  // readOwnerMoney.js always stamps a finite checkedAt today, so this path is latent, not live —
+  // fixed anyway per the brief: the model must not depend on an upstream invariant it cannot
+  // enforce itself. A money read with a known total but a non-finite checkedAt classifies as
+  // freshness 'unavailable' (freshness.js), which must never be rounded up to state 'current'.
+  it('never reports state current from freshness unavailable — a non-finite checkedAt is not proof of "now"', () => {
+    const money = knownMoney({ units: 100n, checkedAt: null })
+    const m = buildMyMoneyModel({ owner: 'GOWNER', discovery: discoveryOf('complete'), money, now: NOW })
+    expect(m.freshness).toBe('unavailable')
+    expect(m.state).toBe('unavailable')
   })
 })
 

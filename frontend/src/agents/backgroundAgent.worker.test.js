@@ -178,6 +178,32 @@ describe('backgroundAgent.worker', () => {
     expect(facts[0].payload.apy).toBeNull()
   })
 
+  // Fix 5 (minor, review loop 2): findRealPool short-circuits to null at :53 for any protocol
+  // that isn't the one real yield venue, before it ever looks at `pools` — fetching the whole
+  // yields.llama.fi/pools response was pure waste on every 10-minute tick when no active vault
+  // carries 'blend-usdc'. This pins that the fetch itself is skipped, not just its result ignored.
+  it('skips the DeFiLlama fetch entirely when no active vault carries the real yield venue protocol', async () => {
+    global.fetch = vi.fn(async () => ({ json: async () => ({ data: [] }) }))
+    const { fakeSelf, posted } = await loadWorker()
+    fakeSelf.onmessage({
+      data: {
+        type: 'INIT',
+        payload: {
+          userAddress: 'GOWNER',
+          activeVaults: [{ name: 'Legacy', address: 'CLEGACY', protocol: 'aave-v3' }],
+          thresholds: { riskMonitoring: false },
+        },
+      },
+    })
+    await flush()
+    fakeSelf.onmessage({ data: { type: 'STOP' } })
+
+    expect(global.fetch).not.toHaveBeenCalled()
+    const facts = posted.filter((m) => m.type === 'RISK_FACT')
+    expect(facts).toHaveLength(1)
+    expect(facts[0].payload).toMatchObject({ state: 'unavailable', apy: null, tvlUsd: null })
+  })
+
   it('posts MONITOR_ERROR, never throws, when the facts fetch fails', async () => {
     global.fetch = vi.fn(async () => {
       throw new Error('network down')

@@ -109,7 +109,13 @@ function write(key, rows) {
  *   falsy — never guesses whose decision log a write belongs to.
  */
 export function recordDecision(ownerOrCtx, ctx, { network } = {}) {
-  if (ctx === undefined) {
+  // Fix 4 (minor, review loop 2): arguments.length, not `ctx === undefined` — the old check could
+  // not tell a true legacy call (`recordDecision(ctx)`, 1 argument) from a scoped call whose ctx
+  // just hasn't loaded yet (`recordDecision(owner, undefined, { network })`, 3 arguments); the
+  // latter used to fall through into this branch and write a bogus record — built from
+  // destructuring the OWNER STRING — into the unowned legacy bucket. Mirrors cycleJournal.js's
+  // own arity fix.
+  if (arguments.length <= 1) {
     try {
       const rows = read(LEGACY_KEY)
       rows.push(buildDecisionRecord(ownerOrCtx))
@@ -120,13 +126,20 @@ export function recordDecision(ownerOrCtx, ctx, { network } = {}) {
     return
   }
   if (!ownerOrCtx) return
-  // Dead catch removed (Fix 6, review loop 1): read()/write() already swallow everything
-  // themselves — this wrapper could never actually catch anything.
   const key = scopedKey(network, ownerOrCtx)
   if (!key) return // no network — dropped, never guessed (see scopedKey)
-  const rows = read(key)
-  rows.push(buildDecisionRecord(ctx))
-  write(key, rows)
+  // Fix 3 (minor, review loop 2): restored. Review loop 1 removed this guard on the premise that
+  // read()/write() already swallow everything themselves — a premise that held for
+  // cycleJournal.js's and riskWatchStore.js's plain `{...row}` spreads (`{...undefined}` cannot
+  // throw) but not here: buildDecisionRecord(ctx) destructures its parameter (see :36 above) and
+  // throws on a null/undefined ctx.
+  try {
+    const rows = read(key)
+    rows.push(buildDecisionRecord(ctx))
+    write(key, rows)
+  } catch (err) {
+    console.warn('[DecisionLog] recordDecision failed:', err.message)
+  }
 }
 
 /**

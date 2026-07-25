@@ -138,6 +138,20 @@ describe('cycleJournal — owner+network scoped (Pocket Crew Task 8)', () => {
     saveCycle('GOWNER', { cycle: 1, verdict: 'keep' }, { network: 'stellar-testnet' })
     expect(getCycles('GOWNER', {})).toEqual([])
   })
+
+  // Fix 4 (minor, review loop 2): the write side of the same arity bug the read side already
+  // hardened above (`does not fall through to the legacy bucket when owner is explicitly
+  // undefined`). `row === undefined` cannot distinguish a true legacy call (`saveCycle(row)`, 1
+  // argument) from a scoped call whose row just hasn't loaded yet (`saveCycle(owner, undefined,
+  // { network })`, 3 arguments) — the latter used to fall through and write a string-spread
+  // record (`{...'GOWNER'}` -> `{0:'G',1:'O',...}`) into the unowned legacy bucket.
+  it('never falls through to the legacy bucket when the scoped row is explicitly undefined', () => {
+    saveCycle({ cycle: 1, verdict: 'keep' }) // baseline real legacy write
+    saveCycle('GOWNER', undefined, { network: 'stellar-testnet' }) // not-yet-loaded row, owner known
+    const legacyRows = getCycles()
+    expect(legacyRows).toHaveLength(1) // untouched by the scoped call
+    expect(legacyRows[0]).not.toHaveProperty('0') // never the string-spread artifact
+  })
 })
 
 describe('getJournalSummary gated count', () => {
