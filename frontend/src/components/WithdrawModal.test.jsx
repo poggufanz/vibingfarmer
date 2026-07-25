@@ -22,6 +22,10 @@ vi.mock('../stellar/agentDeposit.js', () => ({
   readVaultShares: (...a) => readVaultShares(...a),
 }))
 vi.mock('../stellar/vaultReads.js', () => ({ readPricePerShare: async () => 10_000_000n }))
+const clearManualExitKey = vi.fn()
+vi.mock('../wallet/exitKey.js', () => ({
+  clearManualExitKey: (...a) => clearManualExitKey(...a),
+}))
 
 import WithdrawModal from './WithdrawModal.jsx'
 
@@ -74,5 +78,24 @@ describe('WithdrawModal partial mode', () => {
   test('full mode stays the default and keeps the whole-position copy', () => {
     render(<WithdrawModal {...props} />)
     expect(screen.getByText(/your whole position/i)).toBeTruthy()
+  })
+
+  test('Fix 4 (fix loop 2): an auth failure on a stale v2 key clears it under the same {owner, agent} pair ensureExitSigner registered under', async () => {
+    // Regression for WithdrawModal.jsx:241. A stale/lost exit-signer registration fails on-chain
+    // auth; the retry must clear the SAME v2 owner-scoped key ensureExitSigner just registered
+    // under (wallet/exitKey.js's manualKeyV2(owner, agent)), not the legacy agent-only cache — or
+    // the next attempt reloads the same dead key instead of re-registering.
+    partialWithdraw.mockRejectedValueOnce(new Error('signature verification failed'))
+    render(<WithdrawModal {...props} />)
+    fireEvent.click(screen.getByRole('tab', { name: /partial/i }))
+    fireEvent.click(await screen.findByLabelText(/CAGE.*1/i))
+    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '2' } })
+    fireEvent.click(screen.getByRole('button', { name: /withdraw 2/i }))
+    await waitFor(() => expect(clearManualExitKey).toHaveBeenCalled())
+    const registeredWith = ensureExitSigner.mock.calls[0][0]
+    expect(clearManualExitKey).toHaveBeenCalledWith({
+      owner: registeredWith.owner,
+      agent: registeredWith.agentAddress,
+    })
   })
 })

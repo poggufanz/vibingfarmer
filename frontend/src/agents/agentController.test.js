@@ -175,7 +175,24 @@ describe('withdrawAllFromVault — per-agent fallback (exit router unset)', () =
     const out = await withdrawAllFromVault(VAULT, USER, AGENTS)
     expect(ownerWithdraw).toHaveBeenCalledTimes(3)
     expect(out.map((r) => r.ok)).toEqual([true, false, true])
-    expect(out[1].error).toMatch(/not confirmed/i)
+    expect(out[1].error.message).toMatch(/not confirmed/i)
+  })
+
+  it('Fix 3 (fix loop 2): passes a structured owner_withdraw error straight through on the per-agent fallback too, not flattened to a string', async () => {
+    // Dormant on the shipped config (a real exitRouter is pinned), but this fallback is a live UI
+    // mode (WithdrawModal.jsx quotes N signatures for it) — a channel-level error here deserves the
+    // same code/submission fidelity Fix 1 (fix loop 1) already gave the sweep-router path, so
+    // ownerActionOutcome can still tell an unproven channel loss apart from a confirmed failure.
+    const structuredErr = Object.assign(new Error('Lost contact with the relay after signing.'), {
+      code: 'VF_SUBMISSION_UNKNOWN',
+      submission: 'unknown',
+    })
+    ownerWithdraw
+      .mockResolvedValueOnce({ hash: 'h1', status: 'SUCCESS' })
+      .mockRejectedValueOnce(structuredErr)
+      .mockResolvedValueOnce({ hash: 'h3', status: 'SUCCESS' })
+    const out = await withdrawAllFromVault(VAULT, USER, AGENTS)
+    expect(out[1].error).toMatchObject({ code: 'VF_SUBMISSION_UNKNOWN', submission: 'unknown' })
   })
 
   it('reports progress before each wallet popup', async () => {

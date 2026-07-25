@@ -20,6 +20,7 @@ import {
   resolveOwnerTxModel,
   submitOwnerAuthorizedTx,
   signOwnerAuthEntry,
+  OwnerActionSubmissionError,
 } from './ownerAuthorization.js'
 
 // How many agents to attempt per sweep transaction. Calibrated live TWICE, and the numbers
@@ -73,15 +74,41 @@ async function sweepChunk({ agents, to, router, server, model, kit, sign, out })
       // stranded whose funds were already in the owner's wallet.
       pollTries: 30,
     })
-    // Callers zero the position on resolve, so an unconfirmed exit must not resolve.
-    if (result.status !== 'SUCCESS')
-      throw new Error(`The exit was not confirmed: ${result.status}.`)
+    // Callers zero the position on resolve, so an unconfirmed exit must not resolve. Only an
+    // explicit FAILED is the chain's own word that the tx did not land — a genuine confirmed
+    // failure. Fix 1 (fix loop 2): anything else (PENDING and friends) means the confirmation poll
+    // ran out before we SAW an outcome, which is not proof of failure — reporting it as one is the
+    // exact incident exit.js's own comment above (~line 71) documents happening for real.
+    if (result.status !== 'SUCCESS') {
+      if (result.status === 'FAILED')
+        throw new Error(`The exit was not confirmed: ${result.status}.`)
+      throw new OwnerActionSubmissionError(
+        `The exit was not confirmed: ${result.status}. Check the chain before retrying.`,
+        'VF_SUBMISSION_UNKNOWN',
+        'unknown'
+      )
+    }
     // No retval on a SUCCESS is not "0 swept" — it means we cannot tell what moved, and leaving
     // the zeros in place is the honest read. The position reconciles from chain either way.
     const swept = result.returnValue ? fromScVal(result.returnValue) : []
     agents.forEach((a, i) => {
-      out.swept[a.index] = BigInt(swept[i] ?? 0)
       out.txHashes[a.index] = result.hash
+      const decoded = swept[i]
+      if (decoded == null) {
+        // Fix 2 (fix loop 2): a missing slot (no retval at all, or a vec shorter than this batch)
+        // is the SAME "cannot tell what moved" gap the comment above already calls out — never the
+        // chain proving this agent swept zero. Mark it, or agentController.js's fallback default
+        // string (no `.submission`) swallows it into a confirmed failure indistinguishable from a
+        // genuinely empty agent.
+        out.swept[a.index] = 0n
+        out.errors[a.index] = {
+          message: "The sweep confirmed on-chain, but this agent's own result could not be decoded.",
+          code: 'VF_SUBMISSION_UNKNOWN',
+          submission: 'unknown',
+        }
+        return
+      }
+      out.swept[a.index] = BigInt(decoded)
     })
   } catch (e) {
     if (agents.length > 1 && isBudgetError(e)) {
@@ -201,7 +228,16 @@ export async function ownerWithdraw({
     label: 'exit',
     classicSubmission: 'direct',
   })
-  // Callers zero the position on resolve, so an unconfirmed exit must not resolve.
-  if (result.status !== 'SUCCESS') throw new Error(`The exit was not confirmed: ${result.status}.`)
+  // Callers zero the position on resolve, so an unconfirmed exit must not resolve. Same FAILED-vs-
+  // everything-else split as sweepChunk above (Fix 1, fix loop 2): only an explicit FAILED is a
+  // confirmed failure; anything else is an unproven outcome, not a lie that it failed.
+  if (result.status !== 'SUCCESS') {
+    if (result.status === 'FAILED') throw new Error(`The exit was not confirmed: ${result.status}.`)
+    throw new OwnerActionSubmissionError(
+      `The exit was not confirmed: ${result.status}. Check the chain before retrying.`,
+      'VF_SUBMISSION_UNKNOWN',
+      'unknown'
+    )
+  }
   return result
 }

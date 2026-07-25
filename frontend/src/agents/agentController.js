@@ -139,7 +139,8 @@ export async function withdrawFromVault(
  *   `error` is whatever exit.js's `sweepAgents` reported for that agent — an
  *   OwnerActionSubmissionError-shaped object (Fix 1, fix loop 1) when the chain call itself threw,
  *   so money/ownerActions.js's ownerActionOutcome can still tell a post-sign relay loss apart from
- *   a genuine confirmed failure. Only the "nothing to sweep" default below is a plain string.
+ *   a genuine confirmed failure. The per-agent fallback below mirrors this shape too (Fix 3, fix
+ *   loop 2); only the "nothing to sweep" default on the sweep path is a plain string.
  */
 export async function withdrawAllFromVault(
   vaultAddress,
@@ -189,7 +190,16 @@ export async function withdrawAllFromVault(
       })
       results.push({ agentAddress, ok: true, txHash })
     } catch (err) {
-      results.push({ agentAddress, ok: false, error: err?.message || String(err) })
+      // Fix 3 (fix loop 2): same structured passthrough as the sweep-router path above (Fix 1, fix
+      // loop 1) — this fallback loop is dormant on the shipped config but is a live UI mode
+      // (WithdrawModal.jsx quotes N signatures for it), and a channel-level error here deserves the
+      // same code/submission fidelity so ownerActionOutcome can tell it apart from a confirmed
+      // failure.
+      results.push({
+        agentAddress,
+        ok: false,
+        error: { message: err?.message || String(err), code: err?.code, submission: err?.submission },
+      })
     }
   }
   return results

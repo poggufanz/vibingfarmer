@@ -547,6 +547,37 @@ describe('reconcileOwnerAction', () => {
     expect(out.status).toBe('partial')
   })
 
+  test('Fix 1 (fix loop 2): a full-exit sweep with a PENDING-poll-exhaustion leg (VF_SUBMISSION_UNKNOWN) reconciles to "checking", never "partial" with a null label', async () => {
+    // exit.js now raises this for a G owner whose sweep confirmation poll ran out before seeing an
+    // outcome (fix loop 2's Fix 1) instead of a bare Error — this is the reconciliation half of
+    // that fix: reconcileOwnerAction must already route it to the 'checking' state that exists for
+    // exactly this, not read it as an ordinary confirmed failure ('partial', label: null).
+    const err = new OwnerActionSubmissionError(
+      'The exit was not confirmed: PENDING. Check the chain before retrying.',
+      'VF_SUBMISSION_UNKNOWN',
+      'unknown'
+    )
+    const readOwnerMoney = vi.fn(async () => ({
+      checkedAt: 2,
+      agents: [
+        {
+          address: 'CA1',
+          vaultShares: { state: 'known', amount: usdc(5_000_000) },
+          idleToken: { state: 'known', amount: usdc(0) },
+        },
+      ],
+    }))
+    const out = await reconcileOwnerAction({
+      action: { kind: 'full-exit', targets: [{ address: 'CA1' }] },
+      result: [{ agentAddress: 'CA1', ok: false, error: err }],
+      readOwnerMoney,
+      beforeRevision: 0,
+    })
+    expect(out.status).toBe('checking')
+    expect(out.label).toBe('Checking status')
+    expect(out.status).not.toBe('partial')
+  })
+
   test('a readOwnerMoney failure never manufactures a false complete', async () => {
     const readOwnerMoney = vi.fn(async () => {
       throw new Error('RPC down')

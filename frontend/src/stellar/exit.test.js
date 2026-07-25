@@ -71,6 +71,24 @@ describe('ownerWithdraw', () => {
     )
   })
 
+  it('Fix 1 (fix loop 2): a PENDING poll-exhaustion throws OwnerActionSubmissionError(unknown), not a bare Error', async () => {
+    // The poll ran out before we SAW an outcome — that is not proof the exit failed, and a bare
+    // Error here (undefined code/submission) is exactly what used to report a landed transaction
+    // as failed (the incident exit.js:71-73 documents).
+    submitUserTx.mockResolvedValueOnce({ hash: 'h2', status: 'PENDING' })
+    await expect(ownerWithdraw({ owner: OWNER, agentAddress: AGENT, to: OWNER })).rejects.toMatchObject(
+      { code: 'VF_SUBMISSION_UNKNOWN', submission: 'unknown' }
+    )
+  })
+
+  it('Fix 1 (fix loop 2): an explicit FAILED status still throws a bare confirmed failure, never unknown', async () => {
+    submitUserTx.mockResolvedValueOnce({ hash: 'h2', status: 'FAILED' })
+    const err = await ownerWithdraw({ owner: OWNER, agentAddress: AGENT, to: OWNER }).catch((e) => e)
+    expect(err.message).toMatch(/not confirmed/i)
+    expect(err.code).toBeUndefined()
+    expect(err.submission).toBeUndefined()
+  })
+
   it('returns the hash and status on a confirmed exit', async () => {
     const out = await ownerWithdraw({ owner: OWNER, agentAddress: AGENT, to: OWNER })
     expect(out).toMatchObject({ hash: 'h1', status: 'SUCCESS' })
@@ -154,12 +172,29 @@ describe('sweepAgents', () => {
     })
     const out = await sweepAgents({ owner: OWNER, agentAddresses: AGENTS, router: ROUTER })
     expect(out.swept).toEqual([50_000_000n, 0n])
+    // Fix 2 (fix loop 2): a PROVEN zero (the chain's own vec says 0 for this agent) gets no error —
+    // only a MISSING slot does. Collapsing the two was the bug; this guards they stay apart.
+    expect(out.errors).toEqual([undefined, undefined])
   })
 
   it('reports zeros rather than guessing when the chain returns no retval', async () => {
     submitUserTx.mockResolvedValueOnce({ hash: 'sweep1', status: 'SUCCESS' })
     const out = await sweepAgents({ owner: OWNER, agentAddresses: AGENTS, router: ROUTER })
     expect(out.swept).toEqual([0n, 0n])
+  })
+
+  it('Fix 2 (fix loop 2): marks a missing per-agent retval slot as undecodable, so ownerActionOutcome reads it as unknown, never confirmed-failed', async () => {
+    // exit.js's own comment already says a SUCCESS with no retval means "we cannot tell what
+    // moved" — before Fix 2 that landed as a bare 0 with NO error, indistinguishable from the
+    // chain proving this agent swept zero. agentController.js's fallback default string (no
+    // `.submission`) then read it as a confirmed failure it never was.
+    submitUserTx.mockResolvedValueOnce({ hash: 'sweep1', status: 'SUCCESS' })
+    const out = await sweepAgents({ owner: OWNER, agentAddresses: AGENTS, router: ROUTER })
+    expect(out.swept).toEqual([0n, 0n])
+    expect(out.errors[0]).toMatchObject({ code: 'VF_SUBMISSION_UNKNOWN', submission: 'unknown' })
+    expect(out.errors[1]).toMatchObject({ code: 'VF_SUBMISSION_UNKNOWN', submission: 'unknown' })
+    const outcome = ownerActionOutcome({ agentAddress: AGENT, ok: false, error: out.errors[0] })
+    expect(outcome.outcome).toBe('unknown')
   })
 
   it('never reports an unconfirmed sweep as swept', async () => {
@@ -169,6 +204,28 @@ describe('sweepAgents', () => {
     const out = await sweepAgents({ owner: OWNER, agentAddresses: AGENTS, router: ROUTER })
     expect(out.swept).toEqual([0n, 0n])
     expect(out.errors[0].message).toMatch(/not confirmed/i)
+  })
+
+  it('Fix 1 (fix loop 2): G owner — a PENDING poll-exhaustion carries VF_SUBMISSION_UNKNOWN through out.errors, and ownerActionOutcome reads it as unknown, never confirmed-failed', async () => {
+    // The G-owner mirror of the existing C-owner regression test below: a G owner exits several
+    // agents, the sweep is submitted, and ledger congestion pushes confirmation past pollTries —
+    // this must land the SAME unknown outcome the C-owner post-sign relay loss does, not a
+    // confirmed failure that invites retrying a transaction that may still land.
+    submitUserTx.mockResolvedValueOnce({ hash: 'h2', status: 'PENDING' })
+    const out = await sweepAgents({ owner: OWNER, agentAddresses: [AGENT], router: ROUTER })
+    expect(out.swept).toEqual([0n])
+    expect(out.errors[0]).toMatchObject({ code: 'VF_SUBMISSION_UNKNOWN', submission: 'unknown' })
+    const outcome = ownerActionOutcome({ agentAddress: AGENT, ok: false, error: out.errors[0] })
+    expect(outcome.outcome).toBe('unknown')
+  })
+
+  it('Fix 1 (fix loop 2): G owner — an explicit FAILED status stays a genuine confirmed-failed, never unknown', async () => {
+    submitUserTx.mockResolvedValueOnce({ hash: 'h2', status: 'FAILED' })
+    const out = await sweepAgents({ owner: OWNER, agentAddresses: [AGENT], router: ROUTER })
+    expect(out.errors[0].code).toBeUndefined()
+    expect(out.errors[0].submission).toBeUndefined()
+    const outcome = ownerActionOutcome({ agentAddress: AGENT, ok: false, error: out.errors[0] })
+    expect(outcome.outcome).toBe('confirmed-failed')
   })
 
   it('splits a position too big for one transaction instead of failing it', async () => {
