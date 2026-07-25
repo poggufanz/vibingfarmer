@@ -420,6 +420,43 @@ describe('readOwnerMoney', () => {
     })
     const a = result.agents[0]
     expect(a.amount).toBeNull()
+    // Fix loop 2, Fix 3 (bullet 2): the rejection used to fall through with no marker at all —
+    // an aggregate summing this agent's (null) amount alongside a fully-known one could not tell
+    // this agent's Base leg had real, discarded evidence behind it.
+    expect(a.problems).toContain('base-reported-amount-rejected')
+  })
+
+  // Fix loop 2, Fix 1: the CSPLIT fixture above (same setup) shows the whole-amount half of this
+  // bug is already fixed (amount sums both legs) — this covers the two remaining consequences the
+  // review flagged: the owner-level custodyBreakdown must file each leg under its OWN location
+  // (never both collapsing into 'unknown'), and real vault money in a split agent must still earn
+  // yield rather than being shadowed by the collapsed 'unknown' custody summary.
+  it('a split agent files its legs separately in the aggregate custodyBreakdown and still earns real vault yield (fix loop 2, Fix 1)', async () => {
+    const rows = [
+      agentRow({
+        address: 'CSPLIT2',
+        association: 'known',
+        baseChildren: [baseChild({ executionStatus: 'deposited', custody: { location: 'base-proxy' } })],
+      }),
+    ]
+    const stellar = stellarDeps({ shares: { CSPLIT2: 5_000_000n }, idle: { CSPLIT2: 0n }, aprBps: 416 })
+    const base = baseDeps({
+      status: 'known',
+      accounts: [
+        {
+          kernelAddress: '0xkernel',
+          positions: [{ pool: BASE_POOL_CATALOG[0].address, shares: 5n, assets: 500_000n, minAssets: 495_000n }],
+          idleUsdc: 0n,
+        },
+      ],
+    })
+    const result = await readOwnerMoney({ owner: OWNER, discovery: discoveryOf(rows), stellar, base, now: NOW })
+    // sanity: the single collapsed summary is still honestly 'unknown' for a genuine split
+    expect(result.agents[0].custody).toEqual({ location: 'unknown' })
+    const agg = aggregateOwnerPositions(result)
+    expect(agg.custodyBreakdown).toEqual({ 'stellar-vault': '5000000', 'base-proxy': '5000000' })
+    expect(agg.yield).not.toEqual({ state: 'none', apy: null })
+    expect(agg.yield).toEqual({ state: 'live', apy: 4.16 })
   })
 
   it('a bridge-capable agent with no durable Base association reads as a plain Stellar-only agent', async () => {
@@ -482,6 +519,88 @@ describe('readOwnerMoney', () => {
     })
     expect(unavailable.status).toBe('unavailable')
     expect(unavailable.agents).toEqual([])
+  })
+
+  // Fix loop 2, Fix 2: idle USDC left at a shared Base kernel (e.g. after a partial withdraw
+  // drains the pool position back to the kernel) was read every poll via loadIndexedBasePositions
+  // and then dropped — liveUnitsForPool only ever consumed `.positions`. Attributing it to one
+  // agent would double-count across every agent sharing that kernel, so it surfaces on the
+  // aggregate instead, keyed by kernel address, never folded into any agent's own `amount`.
+  it('idle USDC stranded at a kernel after a drained Base pool position surfaces as unattributed, never folded into the agent amount (fix loop 2, Fix 2)', async () => {
+    const rows = [
+      agentRow({
+        address: 'CDRAINED',
+        association: 'known',
+        baseChildren: [baseChild({ executionStatus: 'deposited', custody: { location: 'base-proxy' }, kernelAddress: '0xkernel' })],
+      }),
+    ]
+    const stellar = stellarDeps({ shares: { CDRAINED: 0n }, idle: { CDRAINED: 0n } })
+    const base = baseDeps({
+      status: 'known',
+      // pool position fully drained (empty positions) but 1_230_000 idle USDC (6dp) sits at the kernel
+      accounts: [{ kernelAddress: '0xkernel', positions: [], idleUsdc: 1_230_000n }],
+    })
+    const result = await readOwnerMoney({ owner: OWNER, discovery: discoveryOf(rows), stellar, base, now: NOW })
+    const a = result.agents[0]
+    // the pool position is confirmed drained to zero — this agent's own amount must NOT absorb
+    // the kernel's idle balance
+    expect(a.amount).toEqual({ token: 'USDC', units: '0', decimals: 7 })
+    const agg = aggregateOwnerPositions(result)
+    expect(agg.unattributed).toEqual({
+      '0xkernel': { state: 'known', amount: { token: 'USDC', units: '12300000', decimals: 7 }, checkedAt: NOW },
+    })
+    // and it must not have been folded into confirmedTotal either
+    expect(agg.confirmedTotal.amount).toEqual({ token: 'USDC', units: '0', decimals: 7 })
+  })
+
+  it('a kernel whose idle read failed (null) appears unknown in the unattributed bucket, never a fabricated zero (fix loop 2, Fix 2)', async () => {
+    const rows = [
+      agentRow({
+        address: 'CIDLEFAIL',
+        association: 'known',
+        baseChildren: [baseChild({ executionStatus: 'held', custody: { location: 'base-proxy' }, kernelAddress: '0xkernel' })],
+      }),
+    ]
+    const stellar = stellarDeps({ shares: { CIDLEFAIL: 0n }, idle: { CIDLEFAIL: 0n } })
+    const base = baseDeps({
+      status: 'known',
+      accounts: [
+        {
+          kernelAddress: '0xkernel',
+          positions: [{ pool: BASE_POOL_CATALOG[0].address, shares: 5n, assets: 400_000n, minAssets: 396_000n }],
+          idleUsdc: null, // dashboardPositions.js's honest "the balanceOf call itself failed"
+        },
+      ],
+    })
+    const result = await readOwnerMoney({ owner: OWNER, discovery: discoveryOf(rows), stellar, base, now: NOW })
+    const agg = aggregateOwnerPositions(result)
+    expect(agg.unattributed).toEqual({ '0xkernel': { state: 'unavailable', amount: null, checkedAt: NOW } })
+  })
+
+  it('a kernel with a genuine zero idle balance reports a known zero, not unavailable (fix loop 2, Fix 2)', async () => {
+    const rows = [
+      agentRow({
+        address: 'CIDLEZERO',
+        association: 'known',
+        baseChildren: [baseChild({ executionStatus: 'deposited', custody: { location: 'base-proxy' }, kernelAddress: '0xkernel' })],
+      }),
+    ]
+    const stellar = stellarDeps({ shares: { CIDLEZERO: 0n }, idle: { CIDLEZERO: 0n } })
+    const base = baseDeps({
+      status: 'known',
+      accounts: [
+        {
+          kernelAddress: '0xkernel',
+          positions: [{ pool: BASE_POOL_CATALOG[0].address, shares: 5n, assets: 400_000n, minAssets: 396_000n }],
+          idleUsdc: 0n,
+        },
+      ],
+    })
+    const result = await readOwnerMoney({ owner: OWNER, discovery: discoveryOf(rows), stellar, base, now: NOW })
+    const agg = aggregateOwnerPositions(result)
+    expect(agg.unattributed).toEqual({
+      '0xkernel': { state: 'known', amount: { token: 'USDC', units: '0', decimals: 7 }, checkedAt: NOW },
+    })
   })
 })
 

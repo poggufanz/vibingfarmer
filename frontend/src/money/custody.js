@@ -50,3 +50,34 @@ export function custodyForAgent(read) {
   // Either read is unavailable — never combine a known zero with an unread balance and guess.
   return { location: 'unknown' }
 }
+
+/**
+ * Fix loop 2, Fix 1: `custodyForAgent` collapses a genuine split (known-positive Stellar leg +
+ * Base association) to a single `'unknown'` — honest as a one-value summary, but it throws away
+ * the fact that BOTH legs are individually known. This is the per-leg counterpart: every leg this
+ * agent's evidence actually confirms gets its OWN real location, so an owner-level breakdown can
+ * show "$5 in stellar-vault, $5 in base-proxy" instead of "$10 unknown". A leg that never resolved
+ * (unavailable, or the Base leg's own amount is unresolved) contributes NOTHING here — never a
+ * guessed zero, never a guessed location; readOwnerMoney.js's `problems` markers are what already
+ * carry the "this leg's read was incomplete" signal (see READ_INCOMPLETE_PROBLEMS).
+ *
+ * Scoped to Base-associated agents only (`read.baseChild` present) — that is the ONLY case where
+ * `custodyForAgent` can collapse two independently-known legs into one summary value in the first
+ * place; a plain Stellar-only agent's single `custody.location` already IS its one real location,
+ * so aggregateOwnerPositions keeps using that directly when this returns `[]`.
+ * @param {{scope?: {state:string}, vaultShares?: object, idleToken?: object,
+ *   baseChild?: {custody?: {location?: string}, amount?: {token:string,units:string,decimals:number}|null}|null}} read
+ * @returns {Array<{location: string, amount: {token:string,units:string,decimals:number}}>}
+ */
+export function custodyBreakdownForAgent(read) {
+  if (!read || !read.baseChild || read.scope?.state !== 'known') return []
+
+  const legs = []
+  if (isKnownPositive(read.vaultShares)) legs.push({ location: 'stellar-vault', amount: read.vaultShares.amount })
+  if (isKnownPositive(read.idleToken)) legs.push({ location: 'agent', amount: read.idleToken.amount })
+  if (read.baseChild.amount != null) {
+    const loc = read.baseChild.custody?.location
+    legs.push({ location: CUSTODY_LOCATIONS.has(loc) ? loc : 'unknown', amount: read.baseChild.amount })
+  }
+  return legs
+}

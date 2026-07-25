@@ -20,7 +20,7 @@ import { loadIndexedBasePositions as _loadIndexedBasePositions } from '../base/d
 import { SOROBAN_DECIMALS, SOROBAN_BLEND_POOL_ADDRESS } from '../stellar/config.js'
 import { BASE_USDC_DECIMALS } from '../base/config.js'
 import { BASE_POOL_CATALOG } from '../config.js'
-import { custodyForAgent } from './custody.js'
+import { custodyForAgent, custodyBreakdownForAgent } from './custody.js'
 
 const TOKEN = 'USDC'
 // Every OwnerMoneyReadV1 amount this module produces is canonicalized to the Stellar side's 7dp
@@ -105,6 +105,13 @@ function liveUnitsForPool(liveAccount, poolAddress) {
   return pos ? BigInt(pos.assets) : 0n
 }
 
+// Fix loop 2, Fix 3 (bullet 1): both records below used to hardcode `custody: {location:'unknown'}`
+// inline, which meant custody.js's own `scope.state !== 'known'` guard was never actually reached
+// by the only production caller — routing through custodyForAgent with the real (unavailable)
+// scope state makes that guard live code again, not dead code only exercised by custody.test.js's
+// own unit tests. Output is unchanged (still 'unknown') by construction.
+const UNAVAILABLE_LEG = { state: 'unavailable', amount: null }
+
 function unavailableScopeRecord(address, now) {
   return {
     address,
@@ -113,7 +120,8 @@ function unavailableScopeRecord(address, now) {
     idleToken: { state: 'unavailable', amount: null, checkedAt: now },
     amount: null,
     executionStatus: 'unknown',
-    custody: { location: 'unknown' },
+    custody: custodyForAgent({ scope: { state: 'unavailable' }, vaultShares: UNAVAILABLE_LEG, idleToken: UNAVAILABLE_LEG, baseChild: null }),
+    custodyBreakdown: [],
     problems: ['scope-read-failed'],
   }
 }
@@ -129,9 +137,24 @@ function unreadableRecord(address, now) {
     idleToken: { state: 'unavailable', amount: null, checkedAt: now },
     amount: null,
     executionStatus: 'unknown',
-    custody: { location: 'unknown' },
+    custody: custodyForAgent({ scope: { state: 'unavailable' }, vaultShares: UNAVAILABLE_LEG, idleToken: UNAVAILABLE_LEG, baseChild: null }),
+    custodyBreakdown: [],
     problems: ['unexpected-error'],
   }
+}
+
+// Fix loop 2, Fix 1: the yield gate must key off whether THIS agent's OWN vault-shares leg is
+// confirmed positive, not the collapsed custody.location summary — a split agent (real vault money
+// alongside a Base child) reports custody.location:'unknown' by design (a single value can't
+// honestly name two places at once), but its vault leg is still known and still earns real Blend
+// yield. Falls back to the collapsed location when `vaultShares` isn't present at all, which only
+// happens for aggregateOwnerPositions's own synthetic test fixtures (never a real production
+// record — every real OwnerMoneyReadV1 always carries `vaultShares`).
+function hasKnownVaultLeg(a) {
+  if (a.vaultShares) {
+    return a.vaultShares.state === 'known' && a.vaultShares.amount != null && BigInt(a.vaultShares.amount.units) > 0n
+  }
+  return Boolean(a.amount) && a.custody?.location === 'stellar-vault'
 }
 
 // Fix loop 1, Fix 3: a leg counts toward the sum only when its OWN read is truly 'known' — never
@@ -177,10 +200,11 @@ async function readOneAgentMoney({ row, readVaultShares, readTokenBalance, pps, 
   const child = latestBaseChild(row.baseChildren)
   let amount = null
   let executionStatus = 'idle'
+  let baseUnits = null // null = the Base leg contributes nothing known this round; hoisted out of
+  // the `if (child)` block below so custodyBreakdownForAgent can see it too (fix loop 2, Fix 1).
 
   if (child) {
     executionStatus = mapExecutionStatus(child.executionStatus)
-    let baseUnits = null // null = the Base leg contributes nothing known this round
 
     if (TERMINAL_BASE_STATUSES.has(child.executionStatus)) {
       // Funds are claimed to have landed at a queryable proxy — cross-check with a live read
@@ -209,7 +233,16 @@ async function readOneAgentMoney({ row, readVaultShares, readTokenBalance, pps, 
       // queued / accepted / burn-confirmed / minted: in flight. No live proxy read applies yet
       // (the funds have not landed anywhere queryable) — the reported amount is the current truth.
       const reported = canonicalizeReportedAmount(child.amount)
-      baseUnits = reported ? BigInt(reported.units) : null
+      if (reported) {
+        baseUnits = BigInt(reported.units)
+      } else {
+        baseUnits = null
+        // Fix loop 2, Fix 3 (bullet 2): canonicalizeReportedAmount's own rejection (the reported
+        // figure is finer than canonical precision — see its comment above) used to fall through
+        // silently here with no marker, so a Stellar-only remainder could look like a fully known
+        // amount at the aggregate even though real Base evidence was discarded underneath it.
+        problems.push('base-reported-amount-rejected')
+      }
     }
 
     // Fix loop 1, Fix 3: every leg whose balance is actually known contributes — a bridge agent
@@ -221,6 +254,14 @@ async function readOneAgentMoney({ row, readVaultShares, readTokenBalance, pps, 
       amount = amountOf((baseUnits ?? 0n) + stellarUnits)
     }
   } else if (vaultShares.state === 'known' && idleToken.state === 'known') {
+    // Fix loop 2, Fix 3 (bullet 4): unlike the `if (child)` branch above (which sums whatever legs
+    // are individually known, tolerating one side being unread), a non-bridge agent requires BOTH
+    // legs known before reporting any amount at all. That's safe specifically because there is no
+    // in-flight child to race against: crossChainFarm.js awaits the burn (`burn(...)`, line ~116)
+    // and only writes the durable association afterwards (`postFarmFn(...)`, line ~130) — so a
+    // `queued`/`accepted` child can never exist with its units still sitting in this agent's own
+    // Stellar balances. A plain agent's two legs are independent facts about the SAME idle money,
+    // not a race between two systems, so the stricter both-known rule is the right one here.
     amount = amountOf(BigInt(vaultShares.amount.units) + BigInt(idleToken.amount.units))
   }
 
@@ -229,6 +270,14 @@ async function readOneAgentMoney({ row, readVaultShares, readTokenBalance, pps, 
     vaultShares,
     idleToken,
     baseChild: child ? { custody: child.custody } : null,
+  })
+  // Fix loop 2, Fix 1: per-leg counterpart to `custody` above — empty for any agent without a
+  // Base child (custody.location is already that agent's one real location; nothing to split).
+  const custodyBreakdown = custodyBreakdownForAgent({
+    scope,
+    vaultShares,
+    idleToken,
+    baseChild: child ? { custody: child.custody, amount: baseUnits != null ? amountOf(baseUnits) : null } : null,
   })
 
   return {
@@ -239,6 +288,7 @@ async function readOneAgentMoney({ row, readVaultShares, readTokenBalance, pps, 
     amount,
     executionStatus,
     custody,
+    custodyBreakdown,
     problems,
   }
 }
@@ -250,7 +300,8 @@ async function readOneAgentMoney({ row, readVaultShares, readTokenBalance, pps, 
  *   dashboardPositions.js's loadIndexedBasePositions.
  * @returns {Promise<{status:'complete'|'partial'|'unavailable', owner:string|null,
  *   networkId:string|null, checkedAt:number, agents:Array, baseBindingStatus:string,
- *   stellarYield:{state:string, apy:number|null}}>}
+ *   baseIdle:Array<{kernelAddress:string, state:'known'|'unavailable', amount:object|null,
+ *   checkedAt:number}>, stellarYield:{state:string, apy:number|null}}>}
  */
 export async function readOwnerMoney({ owner, discovery, stellar = {}, base = {}, now = Date.now() }) {
   const {
@@ -288,6 +339,20 @@ export async function readOwnerMoney({ owner, discovery, stellar = {}, base = {}
     (baseResult.accounts ?? []).map((a) => [String(a.kernelAddress).toLowerCase(), a])
   )
 
+  // Fix loop 2, Fix 2: idleUsdc sits at the KERNEL, not any one agent — several bridge agents can
+  // legitimately share the same kernel address, so folding it into any single agent's `amount`
+  // would double-count it across them the moment more than one agent points at that kernel.
+  // Surfaced instead as its own list, keyed by kernel address, for aggregateOwnerPositions to turn
+  // into an owner-level `unattributed` bucket. `idleUsdc: null` (dashboardPositions.js's honest
+  // "the balanceOf call itself failed" — never a guessed 0n) stays 'unavailable' here too, so
+  // Fix loop 1, Fix 6's null finally has a consumer instead of being read and discarded.
+  const baseIdle = (baseResult.accounts ?? []).map((a) => ({
+    kernelAddress: String(a.kernelAddress).toLowerCase(),
+    state: a.idleUsdc == null ? 'unavailable' : 'known',
+    amount: a.idleUsdc == null ? null : amountOf(BigInt(a.idleUsdc) * BASE_TO_CANONICAL_SCALE),
+    checkedAt: now,
+  }))
+
   const settled = await Promise.allSettled(
     rows.map((row) => readOneAgentMoney({ row, readVaultShares, readTokenBalance, pps, baseAccountsMap, now }))
   )
@@ -296,12 +361,11 @@ export async function readOwnerMoney({ owner, discovery, stellar = {}, base = {}
   )
 
   // The vault APR is one shared, owner-independent fact — skip the network call entirely when
-  // nobody's confirmed money is actually in the vault (nothing would use it). Fix loop 1, Fix 8
-  // (bullet 3): same predicate aggregateOwnerPositions uses below (amount-gated, not just
-  // location) — a custody.location can be 'stellar-vault' from a known-positive vaultShares leg
-  // while the agent's overall `amount` is still null (e.g. idleToken unavailable), and the two
-  // spellings used to disagree about whether that counts.
-  const hasVaultCustody = agents.some((a) => a.amount && a.custody?.location === 'stellar-vault')
+  // nobody's confirmed money is actually in the vault (nothing would use it). Fix loop 2, Fix 1:
+  // keys off the agent's own vault-shares leg (hasKnownVaultLeg), not the collapsed
+  // custody.location summary — a split agent (real vault money + a Base child) reports
+  // custody.location:'unknown' by design, but its vault leg is still known and still earns yield.
+  const hasVaultCustody = agents.some(hasKnownVaultLeg)
   let stellarYield = { state: 'unavailable', apy: null }
   if (hasVaultCustody) {
     const aprBps = await readSupplyAprBps(SOROBAN_BLEND_POOL_ADDRESS).catch(() => null)
@@ -315,6 +379,7 @@ export async function readOwnerMoney({ owner, discovery, stellar = {}, base = {}
     checkedAt: now,
     agents,
     baseBindingStatus: baseResult.status,
+    baseIdle,
     stellarYield,
   }
 }
@@ -338,6 +403,7 @@ const READ_INCOMPLETE_PROBLEMS = new Set([
   'idle-token-unavailable',
   'base-read-unavailable',
   'base-execution-failed',
+  'base-reported-amount-rejected',
 ])
 
 export function aggregateOwnerPositions(reads) {
@@ -357,15 +423,26 @@ export function aggregateOwnerPositions(reads) {
     if (a.amount) {
       const units = BigInt(a.amount.units)
       knownUnits += units
-      const loc = a.custody?.location ?? 'unknown'
-      custodyBreakdown[loc] = (custodyBreakdown[loc] ?? 0n) + units
+      // Fix loop 2, Fix 1: a split agent's per-leg breakdown (Base-associated agents only) files
+      // each independently-known leg under its OWN real location instead of collapsing the whole
+      // known amount under the single 'unknown' summary — two known legs must never both land in
+      // the same 'unknown' bucket. Agents without a breakdown (the common, non-split case) keep
+      // the pre-existing whole-amount-under-one-location behavior.
+      if (a.custodyBreakdown?.length) {
+        for (const leg of a.custodyBreakdown) {
+          custodyBreakdown[leg.location] = (custodyBreakdown[leg.location] ?? 0n) + BigInt(leg.amount.units)
+        }
+      } else {
+        const loc = a.custody?.location ?? 'unknown'
+        custodyBreakdown[loc] = (custodyBreakdown[loc] ?? 0n) + units
+      }
     } else {
       anyUnread = true
     }
   }
 
   const state = status === 'unavailable' ? 'unavailable' : anyUnread ? 'partial' : 'known'
-  const hasVaultCustody = agents.some((a) => a.amount && a.custody?.location === 'stellar-vault')
+  const hasVaultCustody = agents.some(hasKnownVaultLeg)
   // Fix loop 1, Fix 7: 'no yield' is a positive claim that no vault money exists anywhere for
   // this owner — it can only be asserted once the total itself is fully known. A 'partial' or
   // 'unavailable' total might still be hiding a vault agent that simply couldn't be read yet.
@@ -375,6 +452,16 @@ export function aggregateOwnerPositions(reads) {
       : hasVaultCustody
         ? (reads?.stellarYield ?? { state: 'unavailable', apy: null })
         : { state: 'none', apy: null }
+
+  // Fix loop 2, Fix 2: idle USDC sitting at a shared Base kernel (e.g. after a partial withdraw
+  // drained the pool position but left money at the kernel) is never attributable to one agent —
+  // reported here on its own, keyed by kernel address, never folded into any agent's `amount` or
+  // into `confirmedTotal`. Each entry keeps its OWN state so a consumer can tell a confirmed zero
+  // (`state:'known'`, `amount` zero) apart from a failed read (`state:'unavailable'`, `amount`
+  // null) instead of a single number pretending both cases look the same.
+  const unattributed = Object.fromEntries(
+    (reads?.baseIdle ?? []).map((k) => [k.kernelAddress, { state: k.state, amount: k.amount, checkedAt: k.checkedAt }])
+  )
 
   return {
     status,
@@ -390,6 +477,7 @@ export function aggregateOwnerPositions(reads) {
     // `unclaimedRewards: '0'` already commits elsewhere in this codebase). Always unavailable.
     earned: { state: 'unavailable', amount: null },
     custodyBreakdown: Object.fromEntries(Object.entries(custodyBreakdown).map(([k, v]) => [k, String(v)])),
+    unattributed,
     executionBreakdown,
     agentCount: agents.length,
     problemAgentCount,
