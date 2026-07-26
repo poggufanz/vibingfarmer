@@ -1,0 +1,251 @@
+/* frontend/src/components/strategy/strategy.css
+ * Strategy Task 10 (Pocket Crew redesign, Wave 5). Every rule below is copied VERBATIM from the
+ * locked visual contract (docs/superpowers/specs/2026-07-23-pocket-crew-visual-contract.css,
+ * local-only, never imported directly) -- selectors, declarations, and values unchanged. Tokens
+ * (--pc-*) already live in frontend/src/design/pocket-crew.css (commit 208843d); this file adds
+ * no new hex/radius/spacing literal that duplicates one.
+ *
+ * Scope: only the contract sections StrategyRoute/StrategyProgress/PlanStage actually render.
+ * Not ported here (out of this task's surface, or already covered elsewhere):
+ *   - .pc-app-shell, .pc-route-header/-intro: the outer app shell + route chrome belong to the
+ *     app frame (Foundation Task 6), not this route's own content; StrategyRoute renders inside
+ *     that shell later (Task 13), it does not reproduce it.
+ *   - .pc-agent-mark(--hero), .pc-visually-hidden, the shared :focus-visible rule: already ported
+ *     into pocket-crew.css (Foundation Task 5/6/7) and loaded globally; re-declaring them here
+ *     would just be a duplicate, not a fix.
+ *   - .pc-network-badge img/svg, .pc-network-badge--compact, .pc-network-route,
+ *     .pc-button--danger, .pc-field > label, .pc-input, .pc-agent-lane(-progress),
+ *     .pc-protect-boundary(-limit): this surface never renders an element carrying these
+ *     classes (no compact/danger/icon/lane/protect markup exists in Plan), so porting their
+ *     rules would be porting rules this surface doesn't use.
+ *   - Grouped selectors that mix an unbuilt sibling surface's class with one of ours (e.g.
+ *     `.pc-allocation-list, .pc-agent-lanes, .pc-position-list, .pc-crew-list` or the
+ *     `.pc-strategy-layout, .pc-protect-boundary, .pc-money-hero` responsive collapse) are kept
+ *     WHOLE, selector list untouched -- splitting a locked selector list to drop classes this
+ *     task doesn't use would itself be an edit to a verbatim rule. The extra selectors are inert
+ *     until those routes exist.
+ */
+
+/* Strategy: Plan, Protect, Start. */
+.pc-strategy-stage-nav {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  max-width: 560px;
+  border-bottom: 1px solid var(--pc-line);
+}
+
+.pc-strategy-stage-nav > * {
+  min-height: var(--pc-touch-target);
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: transparent;
+  color: var(--pc-muted);
+  font-weight: 650;
+  text-align: left;
+}
+
+.pc-strategy-stage-nav > [aria-current='step'] {
+  border-bottom-color: var(--pc-harvest);
+  color: var(--pc-ink);
+}
+
+.pc-route {
+  width: min(100%, calc(var(--pc-shell-max) + (2 * var(--pc-route-gutter))));
+  margin-inline: auto;
+  padding: var(--pc-route-gutter);
+}
+
+.pc-route-stack {
+  display: grid;
+  gap: var(--pc-route-gap);
+}
+
+.pc-strategy-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 8fr) minmax(260px, 4fr);
+  gap: clamp(24px, 4vw, 56px);
+  align-items: start;
+}
+
+.pc-strategy-decision {
+  min-height: 420px;
+}
+
+.pc-strategy-question {
+  max-width: 13ch;
+  margin-bottom: var(--pc-space-6);
+  font-size: var(--pc-type-stage);
+  font-weight: 700;
+  line-height: var(--pc-leading-title);
+  letter-spacing: -0.035em;
+}
+
+.pc-strategy-amount {
+  width: 100%;
+  border: 0;
+  border-bottom: 2px solid currentcolor;
+  border-radius: 0;
+  padding: var(--pc-space-2) 0 var(--pc-space-3);
+  background: transparent;
+  color: currentcolor;
+  font-size: var(--pc-type-money);
+  font-variant-numeric: tabular-nums;
+  font-weight: 720;
+  letter-spacing: -0.055em;
+  line-height: 1;
+}
+
+.pc-strategy-aside {
+  display: grid;
+  gap: var(--pc-space-6);
+  padding-top: var(--pc-space-4);
+}
+
+/* Surface hierarchy. These are roles, not a reusable card grid. */
+.pc-dominant {
+  position: relative;
+  overflow: clip;
+  border-radius: var(--pc-radius-dominant);
+  padding: var(--pc-dominant-padding);
+  box-shadow: var(--pc-shadow-dominant);
+}
+
+.pc-dominant--decision {
+  background: var(--pc-harvest);
+  color: var(--pc-harvest-ink);
+}
+
+.pc-support {
+  border-radius: var(--pc-radius-support);
+  background: var(--pc-workspace);
+  color: var(--pc-ink);
+}
+
+.pc-allocation-list,
+.pc-agent-lanes,
+.pc-position-list,
+.pc-crew-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.pc-allocation-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--pc-space-4);
+  align-items: center;
+  padding-block: var(--pc-space-4);
+  border-bottom: 1px solid currentcolor;
+  border-bottom-color: rgb(23 37 31 / 22%);
+}
+
+.pc-network-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 28px;
+  color: inherit;
+  font-size: var(--pc-type-label);
+  font-weight: 620;
+  white-space: nowrap;
+}
+
+/* Controls. Buttons are soft rectangles, not pills. Pills are reserved for compact metadata. */
+.pc-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: max-content;
+  min-height: var(--pc-control-height);
+  padding: 0 var(--pc-space-6);
+  border: 1px solid transparent;
+  border-radius: var(--pc-radius-control);
+  font-size: var(--pc-type-body-small);
+  font-weight: 700;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    transform var(--pc-duration-fast) var(--pc-ease-standard),
+    background-color var(--pc-duration-fast) var(--pc-ease-standard),
+    border-color var(--pc-duration-fast) var(--pc-ease-standard);
+}
+
+.pc-button--primary {
+  background: var(--pc-harvest);
+  color: var(--pc-harvest-ink);
+}
+
+.pc-button--secondary {
+  border-color: var(--pc-line-strong);
+  background: transparent;
+  color: currentcolor;
+}
+
+.pc-button:active:not(:disabled) {
+  transform: translateY(1px) scale(0.99);
+}
+
+.pc-button:disabled,
+.pc-button[aria-disabled='true'] {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.pc-field {
+  display: grid;
+  gap: var(--pc-space-2);
+}
+
+.pc-field-help,
+.pc-field-error {
+  margin: 0;
+  font-size: var(--pc-type-label);
+}
+
+.pc-field-help {
+  color: var(--pc-muted);
+}
+
+.pc-field-error {
+  color: var(--pc-danger);
+}
+
+/* Tablet. Supporting context moves below the dominant surface. */
+@media (max-width: 1023px) {
+  .pc-strategy-layout,
+  .pc-protect-boundary,
+  .pc-money-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .pc-strategy-aside {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Mobile. Asymmetry collapses to one column and all actions remain reachable. */
+@media (max-width: 767px) {
+  .pc-route {
+    padding-bottom: calc(var(--pc-space-20) + env(safe-area-inset-bottom));
+  }
+
+  .pc-route-header,
+  .pc-strategy-layout,
+  .pc-protect-boundary,
+  .pc-money-hero,
+  .pc-money-section {
+    grid-template-columns: 1fr;
+    gap: var(--pc-space-6);
+  }
+
+  .pc-strategy-aside {
+    grid-template-columns: 1fr;
+  }
+
+  .pc-strategy-decision {
+    min-height: 360px;
+  }
+}
