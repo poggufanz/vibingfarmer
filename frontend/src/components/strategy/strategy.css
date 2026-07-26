@@ -352,4 +352,23 @@
   .pc-strategy-decision {
     min-height: 360px;
   }
+
+  /* Fix loop 3 -- G1 (re-review finding): the contract's own `.pc-button` locks
+   * `min-width: max-content; white-space: nowrap` (contract:349,358, ported verbatim above).
+   * On the disconnected first-visit input phase, `Connect to check Base testnet` (29 chars) is
+   * a 261px intrinsic button; plus this surface's 24px mobile padding on each side, that is a
+   * 309px min-content width forced onto `.pc-strategy-decision`'s single `1fr` grid track (its
+   * min-width defaults to `auto`, i.e. "at least my widest child's min-content"), so the whole
+   * dominant surface -- not just the button -- grows to 309px against `.pc-route`'s 288px content
+   * box at a 320px device, and `document.documentElement.scrollWidth` measures 325. Nothing is
+   * clipped (`.pc-dominant { overflow: clip }` never engages -- the box itself grew, there is no
+   * overflow to clip), so the fix is to stop forcing that min-content width on THIS surface's own
+   * buttons at this breakpoint, not to clip. Letting the label wrap keeps every word visible.
+   * Scoped to `.pc-dominant--decision` only; the contract's own `.pc-button` rule above is
+   * untouched (verbatim, unedited) and every other surface still gets the locked nowrap/max-content
+   * behavior. See PlanStage.test.jsx's G1 regression guard. */
+  .pc-dominant--decision .pc-button {
+    min-width: 0;
+    white-space: normal;
+  }
 }

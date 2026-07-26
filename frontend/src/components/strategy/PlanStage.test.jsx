@@ -16,6 +16,7 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { axe } from 'vitest-axe'
 import * as axeMatchers from 'vitest-axe/matchers'
 import { PlanStage } from './PlanStage.jsx'
+import { StrategyRoute } from './StrategyRoute.jsx'
 import { FIRST_DEPOSIT_MIN_UNITS } from '../../strategy/amountValidation.js'
 import { canonicalizeStrategy } from '../../strategy/canonicalStrategy.js'
 import * as planModel from '../../strategy/planModel.js'
@@ -46,6 +47,54 @@ async function withRealStylesheet(run) {
   } finally {
     styleEl.remove()
   }
+}
+
+// Fix loop 3 -- G1 regression guard. jsdom never runs layout (getBoundingClientRect/scrollWidth
+// are inert there, and `min-width: max-content`/grid-track sizing is never computed) -- that is
+// exactly why the I6/I9 guards two loops ago were computed-style-only and provably could not see
+// their own regressions (see the review's mutation tests). A real overflow -- a grid track forced
+// wider than its container by a button's forced min-content width -- needs a real layout engine to
+// observe. Rather than adding a new devDependency, this launches a Chromium binary this machine
+// already has (either @playwright/test's own managed download, if present, or the OS's installed
+// Chrome/Chromium -- @playwright/test's driver already ships in this repo either way) against the
+// REAL shipped style.css + pocket-crew.css + strategy.css and a real jsdom-rendered DOM dump, and
+// reads back `scrollWidth` the way an actual 320px phone would.
+const LEGACY_STYLESHEET = fs.readFileSync(path.resolve(here, '../../../style.css'), 'utf8')
+const GEIST_FONT_HREF =
+  'file://' + path.resolve(here, '../../../node_modules/@fontsource-variable/geist/index.css')
+
+function buildLayoutHarnessHtml(bodyHtml) {
+  return `<!doctype html><html><head><meta charset="utf-8">
+<link rel="stylesheet" href="${GEIST_FONT_HREF}">
+<style>${LEGACY_STYLESHEET}</style>
+<style>${REAL_STYLESHEET}</style>
+</head><body>${bodyHtml}</body></html>`
+}
+
+// undefined first -- prefer Playwright's own managed browser download when one exists (this is
+// what a CI box with `playwright install` already ran will hit); the explicit paths are a fallback
+// for a dev machine/sandbox that only has a system browser, never a new download.
+const CHROMIUM_CANDIDATES = [
+  undefined,
+  '/usr/bin/google-chrome-stable',
+  '/usr/bin/google-chrome',
+  '/usr/bin/chromium-browser',
+  '/usr/bin/chromium',
+  '/snap/bin/chromium',
+]
+
+async function launchRealChromium() {
+  const { chromium } = await import('playwright-core')
+  let lastErr
+  for (const executablePath of CHROMIUM_CANDIDATES) {
+    if (executablePath && !fs.existsSync(executablePath)) continue
+    try {
+      return await chromium.launch(executablePath ? { executablePath, args: ['--no-sandbox'] } : { args: ['--no-sandbox'] })
+    } catch (err) {
+      lastErr = err
+    }
+  }
+  throw new Error(`G1 layout guard: no usable Chromium binary found for real-layout measurement (${lastErr?.message})`)
 }
 
 const FUNDED_VAULT = 500_0000000n // vault already seeded -- first-deposit floor does not apply
@@ -119,6 +168,53 @@ describe('PlanStage — first visit input', () => {
     )
     expect(await axe(container)).toHaveNoViolations()
   })
+
+  // G1 (re-review after fix loop 2): the disconnected first-visit input phase -- the one state
+  // that renders `Connect to check Base testnet` -- overflowed a 320px device (documentElement
+  // .scrollWidth measured 325 in a real browser). Rendered through StrategyRoute (not PlanStage
+  // alone) so `.pc-route`'s real mobile gutter/width math is in play, exactly as the review
+  // measured it.
+  it(
+    'G1: creates no horizontal overflow at a 320px viewport, measured in a real layout engine',
+    async () => {
+      const { container } = render(
+        <StrategyRoute
+          stage="plan"
+          reached={['plan']}
+          vaultTotalShares={FUNDED_VAULT}
+          base={disconnectedBase}
+          onGenerate={vi.fn()}
+        />
+      )
+      const browser = await launchRealChromium()
+      try {
+        const page = await browser.newPage()
+        await page.setViewportSize({ width: 320, height: 900 })
+        await page.setContent(buildLayoutHarnessHtml(container.innerHTML))
+        const { scrollWidth, decisionRight, maxDescendantRight } = await page.evaluate(() => {
+          const decision = document.querySelector('.pc-dominant--decision')
+          const decisionRect = decision.getBoundingClientRect()
+          let maxRight = 0
+          for (const el of decision.querySelectorAll('*')) {
+            maxRight = Math.max(maxRight, el.getBoundingClientRect().right)
+          }
+          return {
+            scrollWidth: document.documentElement.scrollWidth,
+            decisionRight: decisionRect.right,
+            maxDescendantRight: maxRight,
+          }
+        })
+        expect(scrollWidth).toBe(320)
+        // The fix must trade nothing for clipping: no element inside the decision surface may
+        // extend past the surface's own right edge (that would mean overflow got hidden, not
+        // removed).
+        expect(maxDescendantRight).toBeLessThanOrEqual(decisionRight + 0.5)
+      } finally {
+        await browser.close()
+      }
+    },
+    20000
+  )
 })
 
 describe('PlanStage — Base availability is consumed, never re-derived', () => {
@@ -722,6 +818,20 @@ describe('PlanStage — keyboard operability and reduced motion', () => {
     expect(css).not.toMatch(/@keyframes/i)
     expect(css).not.toMatch(/\banimation(-name)?\s*:/i)
     expect(css).not.toMatch(/gradient/i)
+  })
+
+  // N2 (re-review finding, fix loop 3): the CSS-source check above is blind to a button that
+  // animates via an inline `style={{ animation: ... }}` prop instead of a class rule -- mutation-
+  // verified: injecting `style={{ animation: 'zzpulse 1s infinite' }}` onto the primary button in
+  // PlanStage.jsx left the old guard green. This surface has zero inline styles today (every
+  // visual property is a `.pc-*` class from strategy.css/pocket-crew.css, per repo convention), so
+  // reading the raw JSX source text for `style=` or the word `animation` is a real, falsifiable
+  // check, not a false-positive risk -- it currently matches nothing in any of the three files.
+  it('N2: no component in this surface sets an inline style or an inline animation (rejection checklist item 6, JSX route)', () => {
+    for (const file of ['./PlanStage.jsx', './StrategyRoute.jsx', './StrategyProgress.jsx']) {
+      const source = fs.readFileSync(path.resolve(here, file), 'utf8')
+      expect(source).not.toMatch(/style=|animation/i)
+    }
   })
 })
 

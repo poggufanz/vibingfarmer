@@ -103,9 +103,15 @@ describe('StrategyProgress', () => {
   // `:where()`-wrapped one of equal importance, exactly as measured in Chrome (forest: current
   // rgb(242,245,239) vs sibling rgb(140,155,147); day-field: rgb(23,37,31) vs rgb(95,108,101)).
   // Falsifiable: deleting the override rule from strategy.css fails this (see the fix report).
+  // N3 (re-review finding, fix loop 3): the selector regex hardcoded single quotes
+  // (`[aria-current='step']`), so a behaviour-identical quote-style refactor (a formatter
+  // switching to double quotes) turned this red with no actual regression -- mutation-verified.
+  // `['"]` accepts either quote character the shipped rule (or a formatter) might use, so the
+  // guard tracks the real CSS fact (selector exists, is `!important`, isn't `:where()`-zeroed)
+  // instead of one exact byte sequence.
   it("I9: the current-step override genuinely outranks Foundation's disabled rule (source-level, not jsdom's unreliable :where() cascade)", () => {
     const overrideMatch = REAL_STYLESHEET.match(
-      /\.pc-strategy-stage-nav\s*>\s*\[aria-current='step'\]:disabled\s*\{([^}]*)\}/
+      /\.pc-strategy-stage-nav\s*>\s*\[aria-current=['"]step['"]\]:disabled\s*\{([^}]*)\}/
     )
     expect(overrideMatch).toBeTruthy()
     expect(overrideMatch[1]).toMatch(/color:\s*var\(--pc-ink\)\s*!important/)
