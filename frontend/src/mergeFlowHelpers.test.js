@@ -126,14 +126,9 @@ describe('setupBaseMandate — the 1-tap setup ceremony (never run automatically
 })
 
 describe('checkStoredBaseMandate — owner-scoped gating (VF Wallet Task 6)', () => {
-  it('omitting stellarOwner uses the preserved legacy unscoped path (app.strategy.merge.test.jsx locks this)', async () => {
-    const getMandateStatus = vi.fn().mockResolvedValue({ valid: true })
-    const storage = fakeStorage({
-      vf_base_mandate: JSON.stringify({ serializedApproval: 'LEGACY' }),
-    })
-    expect(await checkStoredBaseMandate({ getMandateStatus, storage })()).toBe(true)
-    expect(getMandateStatus).toHaveBeenCalledWith('LEGACY')
-  })
+  // Strategy Task 13 (decision log #22, obligation D): the unscoped `{getMandateStatus, storage}`
+  // legacy path this test locked is DELETED — checkStoredBaseMandate now requires `stellarOwner`.
+  // Deleted in the same commit as the migration, never before it.
 
   it('a mandate set up for owner A is not visible to owner B (no silent adoption on wallet switch)', async () => {
     const deps = okDeps()
@@ -147,28 +142,12 @@ describe('checkStoredBaseMandate — owner-scoped gating (VF Wallet Task 6)', ()
   })
 })
 
-describe('resolveBaseAvailability — legacy overload stays live (VF Wallet Task 6 hard gate)', () => {
-  it('still resolves purely from checkHealth/checkMandate/checkFunding closures, no stellarOwner required', async () => {
-    const { baseAvailable } = resolveBaseAvailability({
-      checkHealth: async () => true,
-      checkMandate: async () => true,
-      checkFunding: async () => true,
-    })
-    expect(await baseAvailable).toBe(true)
-  })
-
-  it('an owner-scoped checkStoredBaseMandate closure plugs straight into the unchanged legacy shape', async () => {
-    const deps = okDeps()
-    const storage = fakeStorage()
-    const getMandateStatus = vi.fn().mockResolvedValue({ status: 'active' })
-    await setupBaseMandate({ connectedAddress: 'GUSER', deps: { ...deps, storage } })
-    const { baseAvailable } = resolveBaseAvailability({
-      checkHealth: async () => true,
-      checkMandate: checkStoredBaseMandate({ getMandateStatus, storage, stellarOwner: 'GUSER' }),
-    })
-    expect(await baseAvailable).toBe(true)
-  })
-})
+// Strategy Task 13 (decision log #22, obligation D): the whole
+// 'resolveBaseAvailability — legacy overload stays live (VF Wallet Task 6 hard gate)' describe
+// block (the `{checkHealth, checkMandate, checkFunding}` shape and its dispatch branch) is
+// DELETED — app.jsx's Base preflight now calls the canonical `{mandate, connection, health}`
+// contract directly (see the describe block below, and app.jsx's `resolveBaseForPlan`). Deleted
+// in the same commit as the migration, never before it.
 
 describe('resolveBaseAvailability — canonical bound-mandate contract (Strategy Task 9)', () => {
   const now = Math.floor(Date.now() / 1000)

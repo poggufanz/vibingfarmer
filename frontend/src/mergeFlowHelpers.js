@@ -32,23 +32,13 @@ import { toBaseMandateView } from './strategy/baseMandateView.js'
 // its OWN per-window ceremony (a chip + 1-tap renew, not part of a run) — a run NEVER creates a
 // mandate on demand, so "nothing stored yet" gates Base off exactly like an invalid one.
 //
-// VF Wallet Task 6: this signature is a PRESERVED LEGACY OVERLOAD — app.jsx's shipped Base
-// preflight still calls it exactly this way (checkHealth/checkMandate/checkFunding closures it
-// builds itself), and app.strategy.merge.test.jsx locks that shape. The owner-scoping for Task 6
-// happened one layer down, in checkStoredBaseMandate below (now stellarOwner-scoped) — this
-// function stays untouched because it was already agnostic to what its check closures do
-// internally. Do not remove or reshape this signature; that migration is Strategy Task 13's job
-// (Wave 5), not this task's.
+// Strategy Task 13 (Pocket Crew redesign, decision log #22, obligation D): the legacy
+// `{checkHealth, checkMandate, checkFunding}` overload (and its dispatch branch here) is DELETED
+// -- app.jsx's Base preflight now calls the `{mandate, connection, health}` contract below
+// directly (see app.jsx's `resolveBaseForPlan`). The regression tests that locked the legacy shape
+// alive (app.strategy.merge.test.jsx) are deleted in the same commit as this migration, never
+// before it -- see that file's own history for the removed `describe` blocks.
 export function resolveBaseAvailability(input) {
-  // Keep app.jsx's production preflight shape fully live until Strategy Task 13 migrates it.
-  if (
-    Object.hasOwn(input, 'checkHealth') ||
-    Object.hasOwn(input, 'checkMandate') ||
-    Object.hasOwn(input, 'checkFunding')
-  ) {
-    return resolveLegacyBaseAvailability(input)
-  }
-
   const { mandate, connection = {}, health } = input
   const connected = connection.connected === true
   const boundMandateView = toBaseMandateView({ mandate, ...connection })
@@ -72,20 +62,6 @@ export function resolveBaseAvailability(input) {
         ? { label: 'Connect to check Base testnet', invalidatesPlan: false }
         : null
   return { baseAvailable, mandateView, action }
-}
-
-function resolveLegacyBaseAvailability({ checkHealth, checkMandate, checkFunding }) {
-  const baseAvailable = (async () => {
-    try {
-      if (!(await checkHealth())) return false
-      if (checkMandate && !(await checkMandate())) return false
-      if (checkFunding && !(await checkFunding())) return false
-      return true
-    } catch {
-      return false
-    }
-  })()
-  return { baseAvailable }
 }
 
 // Drives app.jsx's "Activate Base (1 tap)" affordance: worth showing only when the 1-tap ceremony
@@ -134,25 +110,15 @@ export function readStoredBaseMandate(storage) {
  * stored yet" is exactly as gating as a stored-and-invalid one. true only for a stored mandate,
  * BOUND to the current stellarOwner, the relayer also confirms is still active.
  *
- * VF Wallet Task 6: a SECOND preserved legacy overload, discovered via the existing
- * app.strategy.merge.test.jsx (untouched by this task) which unit-tests the bare
- * `{getMandateStatus, storage}` shape directly against the global vf_base_mandate key. Omitting
- * `stellarOwner` reproduces that exact old behavior byte-for-byte (same no-try/catch shape, same
- * bare `getMandateStatus(approval)` call). Passing `stellarOwner` (app.jsx's 3 call sites, all
- * migrated in this task) switches to the owner-scoped v2 record + validateBaseMandate's fail-
- * closed classification before the relayer is even asked.
- * @param {{getMandateStatus: Function, storage?: object, stellarOwner?: string}} p
+ * Strategy Task 13 (decision log #22, obligation D): the second preserved legacy overload (the
+ * unscoped `{getMandateStatus, storage}` shape with no `stellarOwner`, which read the bare global
+ * `vf_base_mandate` key) is DELETED — every app.jsx call site already passed `stellarOwner`, so
+ * removing the branch changes nothing observable in production. Its locking test (in
+ * app.strategy.merge.test.jsx) is deleted in the same commit.
+ * @param {{getMandateStatus: Function, storage?: object, stellarOwner: string}} p
  * @returns {() => Promise<boolean>}
  */
-export function checkStoredBaseMandate({ getMandateStatus, storage, stellarOwner } = {}) {
-  if (!stellarOwner) {
-    return async () => {
-      const stored = readStoredBaseMandate(storage)
-      if (!stored) return false
-      const status = await getMandateStatus(stored.serializedApproval)
-      return !!status?.valid
-    }
-  }
+export function checkStoredBaseMandate({ getMandateStatus, storage, stellarOwner }) {
   return async () => {
     const record = readBaseMandate(stellarOwner, storage)
     if (validateBaseMandate(record, { stellarOwner }) !== 'active') return false
