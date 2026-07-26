@@ -73,9 +73,23 @@ export async function executeBaseLeg({
     readStoredMandate = readBaseMandate,
   } = deps || {}
 
+  // Strategy Task 13 (Pocket Crew redesign, decision log #22 obligation C): every leg-level event
+  // this function emits, AND every event crossChainFarm.js's runFarmFlow emits through the onEvent
+  // it is handed below, gets the PARENT bridge agent's own allocationId attached here -- the same
+  // canonical `${runId}:bridge:base` planModel.js's expandAgentSlots mints for a plan's single
+  // top-level bridge agent (allocationId(runId, 'bridge', 'base')). Derivable from `runId` alone
+  // because a reviewed execution may contain at most one bridge agent (orchestrator.js's own
+  // VF_MULTIPLE_BRIDGE_AGENTS guard) -- no new param from the caller is needed. Before this, no
+  // farm-*/baseleg-* event carried allocationId at all (orchestrator.js forwards its onEvent to
+  // executeBaseLeg unwrapped, and executeBaseLeg forwarded it to runFarmFlow unmodified in turn),
+  // so flowState.js's BASE_JOB_UPDATED custody entry for a bridge lane could never be keyed.
+  // Fixed HERE, not in orchestrator.js (owner-modified, off-limits to stage) — this file and
+  // crossChainFarm.js are both clean, and this is the one seam every leg-level event already
+  // funnels through.
+  const bridgeAllocationId = `${runId || 'unrun'}:bridge:base`
   const safeEmit = (name, data) => {
     try {
-      onEvent(name, data)
+      onEvent(name, { ...data, allocationId: bridgeAllocationId })
     } catch {
       // onEvent is caller UI glue — a broken listener must never abort a settled leg.
     }
@@ -204,7 +218,9 @@ export async function executeBaseLeg({
       bridgeAgentAddress,
       runId,
       grantTxHash,
-      onEvent,
+      // safeEmit (not the raw onEvent param) so every farm-* event ALSO carries the bridge
+      // agent's allocationId -- see the safeEmit declaration above.
+      onEvent: safeEmit,
       deps: {
         burn: async ({ amountUnits }) => {
           const pullRes = await runAgentPull({

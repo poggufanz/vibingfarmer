@@ -79,6 +79,39 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
     })
   })
 
+  it('keys every emitted event with the canonical bridge allocationId (Task 13, decision log #22 obligation C)', async () => {
+    // Before this fix, farm-*/baseleg-* events carried no allocationId at all (orchestrator.js
+    // forwards its onEvent to executeBaseLeg unwrapped, and executeBaseLeg forwarded it to
+    // runFarmFlow unmodified) -- a bridge lane's flowState.js BASE_JOB_UPDATED custody entry
+    // could never be keyed. The canonical form matches planModel.js's own
+    // allocationId(runId, 'bridge', 'base').
+    const deps = okDeps()
+    deps.runFarmFlow = vi.fn(async ({ onEvent: farmOnEvent }) => {
+      farmOnEvent('farm-burn-started', { address: 'GUSER', amountUnits: 1_000_000n })
+      farmOnEvent('farm-completed', { jobId: 'job-1', status: 'done' })
+      return { burnHash: 'BURN', jobId: 'job-1', finalStatus: 'done' }
+    })
+    const events = []
+    const onEvent = (name, data) => events.push({ name, data })
+    await run({ deps, runId: 'run-42', onEvent })
+    expect(events.length).toBeGreaterThan(0)
+    expect(events.every((e) => e.data.allocationId === 'run-42:bridge:base')).toBe(true)
+    // Every leg-level event unambiguously belongs to the plan's single bridge allocation
+    // (orchestrator.js's VF_MULTIPLE_BRIDGE_AGENTS guard) -- baseleg-owner/baseleg-mandate
+    // (this file's own safeEmit calls) and farm-* (forwarded from runFarmFlow) both get it.
+    expect(events.some((e) => e.name === 'baseleg-owner')).toBe(true)
+    expect(events.some((e) => e.name === 'farm-burn-started')).toBe(true)
+    expect(events.some((e) => e.name === 'farm-completed')).toBe(true)
+  })
+
+  it('falls back to the same "unrun" runId placeholder planModel.js uses when no runId is supplied', async () => {
+    const deps = okDeps()
+    const events = []
+    const onEvent = (name, data) => events.push({ name, data })
+    await run({ deps, onEvent }) // no runId override
+    expect(events[0].data.allocationId).toBe('unrun:bridge:base')
+  })
+
   it('threads bridgeAgentAddress through to runFarmFlow (postFarm wire field, recovery handle)', async () => {
     const deps = okDeps()
     await run({ deps })
