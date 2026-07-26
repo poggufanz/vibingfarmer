@@ -91,9 +91,72 @@ describe('AgentTeam — real stable identity, never list index', () => {
 })
 
 describe('AgentTeam — Cap and Expiry', () => {
-  it('always renders Cap as an honest Unavailable (no producer emits a real cap at this layer)', () => {
+  // My Money Task 13 Part B item 6: `discovery` is now the real source of `cap` (carried through
+  // ownerDiscovery.js's addCandidate from RouterDeployedEvent). This test no longer supplies
+  // `discovery` at all, so the honest fallback below is because the caller genuinely has nothing to
+  // look up yet -- not because "no producer emits a real cap at this layer" (that premise is now
+  // false; see the two tests immediately after this one).
+  it('renders Cap: Unavailable when no discovery is supplied for this agent', () => {
     render(<AgentTeam agents={[healthyAgent('CAGENT1')]} problemAgents={[]} />)
     expect(screen.getByText('Cap: Unavailable')).toBeTruthy()
+  })
+
+  it('renders the real cap once discovery supplies one for this address', () => {
+    const discovery = {
+      status: 'complete',
+      agents: [{ address: 'CAGENT1', cap: String(500_0000000n) }],
+    }
+    render(
+      <AgentTeam agents={[healthyAgent('CAGENT1')]} problemAgents={[]} discovery={discovery} />
+    )
+    expect(screen.getByText('Cap: 500 USDC')).toBeTruthy()
+  })
+
+  // Mutation guard: a truthy check (`if (cap)`) instead of `cap != null` would collapse a genuine
+  // zero cap into the same branch as "no cap at all" -- the same class of bug ownerDiscovery.test.js
+  // already guards on the producer side (cap != null vs a truthy check).
+  it('renders a literal zero cap as "0 USDC", never coerced into Unavailable', () => {
+    const discovery = { status: 'complete', agents: [{ address: 'CAGENT1', cap: '0' }] }
+    render(
+      <AgentTeam agents={[healthyAgent('CAGENT1')]} problemAgents={[]} discovery={discovery} />
+    )
+    expect(screen.getByText('Cap: 0 USDC')).toBeTruthy()
+  })
+
+  // Mutation guard mirrors WithdrawDialog.jsx's own fix loop 2 (M6): `BigInt('')` returns `0n`
+  // without throwing, so a blank/whitespace-only cap string must be rejected before the parse
+  // attempt, or an unreadable cap renders as a confident (and wrong) "0 USDC".
+  it('renders Cap: Unavailable for a blank/whitespace cap string, never a coerced zero', () => {
+    const discovery = { status: 'partial', agents: [{ address: 'CAGENT1', cap: '   ' }] }
+    render(
+      <AgentTeam agents={[healthyAgent('CAGENT1')]} problemAgents={[]} discovery={discovery} />
+    )
+    expect(screen.getByText('Cap: Unavailable')).toBeTruthy()
+  })
+
+  // Mutation guard: a hardcoded `/ 1e7` here would silently misreport this by two orders of
+  // magnitude for any non-7-decimal amount -- 5000000 base units at 6dp is 5 USDC, not 0.5.
+  it("scales the cap by the agent's own amount decimals, never a hardcoded 7", () => {
+    const sixDpAgent = {
+      ...healthyAgent('CAGENT1'),
+      amount: { token: 'USDC', units: '1', decimals: 6 },
+    }
+    const discovery = { status: 'complete', agents: [{ address: 'CAGENT1', cap: '5000000' }] }
+    render(<AgentTeam agents={[sixDpAgent]} problemAgents={[]} discovery={discovery} />)
+    expect(screen.getByText('Cap: 5 USDC')).toBeTruthy()
+    expect(screen.queryByText('Cap: 0.5 USDC')).toBeNull()
+  })
+
+  // When this agent's own amount is unread (null), there is no per-row decimals to trust yet --
+  // falls back to the network's canonical SOROBAN_DECIMALS constant, not a bare literal.
+  it('falls back to the canonical decimals when this agent has no amount read yet', () => {
+    const noAmountAgent = { ...healthyAgent('CAGENT1'), amount: null }
+    const discovery = {
+      status: 'complete',
+      agents: [{ address: 'CAGENT1', cap: String(500_0000000n) }],
+    }
+    render(<AgentTeam agents={[noAmountAgent]} problemAgents={[]} discovery={discovery} />)
+    expect(screen.getByText('Cap: 500 USDC')).toBeTruthy()
   })
 
   it('renders the real expiry when the scope is known', () => {

@@ -14,30 +14,24 @@
 // deliberately does NOT re-derive that predicate itself -- re-implementing the same rule a second
 // time here would risk drifting from the one the model already computed and tested.
 //
-// Cap: this row intentionally never shows a per-agent budget/cap figure as a real number.
-// readOwnerMoney.js's readOneAgentMoney (:317-327) emits no cap field, ownerDiscovery.js's own
-// agent-row shape (:209-219) only ever adds {vault, revoked, expiry, authorized} on top of the D1
-// apiRow, and the D1 record itself (api/agent-index/models.js's parseMembershipRow, :91-107) has
-// no cap/budget column.
-//
-// Fix loop 2, I3 (corrected -- the prior wording here was wrong): the cap is NOT unreachable from
-// this route. ownerDiscovery.js:17,123 already calls fetchRouterDeployedEvents for this owner on
-// this very /agent path, and decodeDeployedEvent (routerEvents.js:35-42) returns a real per-agent
-// `cap` keyed by the deployed agent address -- it is simply discarded one line before the agent
-// rows are built (ownerDiscovery.js:150: `for (const ev of rpcEvents) addCandidate(ev.agent,
-// SOURCE_RPC)`, dropping `ev.cap`). This component may not edit ownerDiscovery.js (outside this
-// task's twelve-file scope), so rendering an honest "Unavailable" is still the right call HERE --
-// but Task 13 should carry `cap` through `addCandidate` onto the agent row and render it here in
-// place of the literal, falling back to "Unavailable" only for an agent whose deploy event was
-// never seen. Do NOT reach for `PermissionDecisionV1.reviewedAgentInits[].cap` (Strategy's
-// ProtectStage source) instead -- it's a pre-execution, run-scoped artifact keyed by
+// Cap: My Money Task 13 Part B item 6. readOwnerMoney.js's readOneAgentMoney (:317-327) emits no
+// cap field -- but ownerDiscovery.js's `addCandidate` (Task 13's own commit) now carries `cap`
+// (sourced from RouterDeployedEvent, the only place that ever has one -- decodeDeployedEvent,
+// routerEvents.js:35-42) onto the `discovery` prop's own agent rows, serialized as a string. This
+// component reads it from THERE (matching `discovery` by address, the same merge WithdrawDialog.jsx
+// already does for scopeReadStatus/revoked/expiry), never from `agents` (moneyRead.agents), which
+// still has no cap field at all. Do NOT reach for `PermissionDecisionV1.reviewedAgentInits[].cap`
+// (Strategy's ProtectStage source) instead -- it's a pre-execution, run-scoped artifact keyed by
 // `allocationId` with no persisted link to a deployed agent address; the on-chain
-// RouterDeployedEvent above is.
+// RouterDeployedEvent above is. `discovery` is optional here (loads async, same as everywhere else
+// in this component) -- an agent whose deploy event was never seen, or whose discovery hasn't
+// resolved yet, honestly renders "Unavailable", never a coerced zero or a fabricated number.
 import { useState } from 'react'
 import { AgentMark } from '../pocket/AgentMark.jsx'
 import { NetworkBadge } from '../pocket/NetworkIdentity.jsx'
 import { Dialog } from '../pocket/Primitives.jsx'
 import { planFullExit } from '../../money/ownerActions.js'
+import { SOROBAN_DECIMALS } from '../../stellar/config.js'
 
 // Same explorer convention StrategyReceipt.jsx already uses for a Stellar account
 // (StrategyReceipt.jsx:97-99) -- re-declared locally per that file's own sibling-surface rationale
@@ -105,6 +99,31 @@ function agentStateLabel(agent) {
   return 'Active'
 }
 
+// Look up this agent's cap on the `discovery` envelope's own rows (never `agents` -- see this
+// file's header comment on why the two arrays carry different fields for the same address).
+function capFor(agent, discovery) {
+  const row = (discovery?.agents ?? []).find((a) => a.address === agent.address)
+  return row?.cap ?? null
+}
+
+// Fix loop 2, M6 precedent (WithdrawDialog.jsx): `BigInt('')` returns `0n` without throwing, so a
+// blank/whitespace-only cap string must be rejected BEFORE the parse attempt, or an unreadable cap
+// would render as a confident "0 USDC" instead of the honest "Unavailable" it actually is. `decimals`
+// is the agent's OWN `amount.decimals` when a read exists (never a hardcoded 7) -- cap and amount
+// are the same token, so a non-canonical decimals count (a future non-SAC token) must scale both
+// identically, not silently misreport the cap by orders of magnitude.
+function formatCap(cap, decimals) {
+  if (typeof cap !== 'string' || !cap.trim()) return 'Unavailable'
+  let units
+  try {
+    units = BigInt(cap)
+  } catch {
+    return 'Unavailable'
+  }
+  const value = Number(units) / 10 ** decimals
+  return `${value.toLocaleString()} USDC`
+}
+
 function markStateFor(agent, recoveryNeeded) {
   if (recoveryNeeded) return 'failed'
   if (agent.executionStatus === 'failed') return 'failed'
@@ -153,7 +172,13 @@ export function AgentTeam({
                       {agent.address}
                     </a>
                   </p>
-                  <p>Cap: Unavailable</p>
+                  <p>
+                    Cap:{' '}
+                    {formatCap(
+                      capFor(agent, discovery),
+                      agent.amount?.decimals ?? SOROBAN_DECIMALS
+                    )}
+                  </p>
                   <p>
                     Expires:{' '}
                     {formatExpiry(
