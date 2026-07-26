@@ -361,6 +361,90 @@ export function planRevoke({ agent, shareRead, idleBalanceRead, account }) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Presentation copy for exit plans (My Money Task 13 Part B item 7)
+// ---------------------------------------------------------------------------------------------
+// Moved here from WithdrawDialog.jsx (confirmationsCopy/feeModelCopy/targetStateLabel) and
+// WithdrawModal.jsx (signaturesFor/friendlyError) -- MM12's report (concern #5) flagged both as
+// duplicated copy-mapping logic over the SAME vocabulary this file already owns (targetState()'s
+// states above, MAX_AGENTS_PER_SWEEP's own batching math) that belonged next to its source but
+// couldn't move there because ownerActions.js was off-limits to whichever task built each
+// component first. Both callers now import from here; neither keeps a local copy.
+
+/**
+ * A plan's `expectedConfirmations`/`batches.length`, spelled out for an owner. That count is a
+ * FLOOR, not a promise (planFullExit's own doc: a batch that blows the resource budget is halved
+ * and re-submitted, each half its own confirmation) -- hedged language only, never a bare count.
+ */
+export function confirmationsCopy(count) {
+  if (!Number.isFinite(count) || count <= 0) return 'No wallet confirmation is needed.'
+  return count === 1
+    ? 'At least 1 wallet confirmation (a busy network can still split it into more).'
+    : `At least ${count} wallet confirmations, in batches (a busy network can split a batch into more).`
+}
+
+// stellar/ownerAuthorization.js's own G/C split, in plain language: a G keypair signs and pays its
+// own fee; a C (VF Wallet/passkey) account can never hold or spend XLM, so the relay sponsors it.
+export function feeModelCopy(model) {
+  return model === 'C'
+    ? 'Your wallet signs an authorization; our relay sponsors the network fee -- 0 XLM from you.'
+    : 'You sign and submit directly, and you pay the small network fee yourself, in XLM.'
+}
+
+// targetState()'s own vocabulary (above), spelled out in plain English for a full-exit target list.
+export function targetStateLabel(state) {
+  if (state === 'active') return 'active'
+  if (state === 'revoked') return 'revoked, no balance left to confirm'
+  if (state === 'revoked-funded') return 'revoked, still holds a confirmed balance'
+  if (state === 'revoked-unknown') return 'revoked, balance could not be confirmed'
+  if (state === 'expired') return 'expired, no balance left to confirm'
+  if (state === 'expired-funded') return 'expired, still holds a confirmed balance'
+  if (state === 'expired-unknown') return 'expired, balance could not be confirmed'
+  return 'status unknown'
+}
+
+/**
+ * How many owner-signed confirmations a full sweep of `agentCount` agents costs, for a caller that
+ * only has a raw agent count -- not a discovery envelope to build a real planFullExit from
+ * (WithdrawModal.jsx's own legacy call site). Same MAX_AGENTS_PER_SWEEP batching math
+ * planFullExit's `expectedConfirmations` already uses -- kept as ONE formula so the two numbers can
+ * never drift apart. `oneSignatureExit: false` models the pre-exit-router world where each agent is
+ * its own transaction; that toggle stays local to WithdrawModal.jsx (a deploy-config fact — whether
+ * SOROBAN_EXIT_ROUTER_ADDRESS is set — not owner-action vocabulary this file should know about).
+ */
+export function signaturesForSweep(agentCount, { oneSignatureExit = true } = {}) {
+  if (!Number.isFinite(agentCount) || agentCount <= 0) return 0
+  return oneSignatureExit ? Math.ceil(agentCount / MAX_AGENTS_PER_SWEEP) : agentCount
+}
+
+// Map a raw thrown error (wallet rejection, relayer timeout, ...) to a short, human-readable line
+// -- never the raw ACTION_REJECTED/sendTransaction payload dumped into the UI.
+export function friendlyOwnerActionError(err) {
+  const code = err?.code || err?.info?.error?.code
+  const raw = (err?.shortMessage || err?.message || '').toLowerCase()
+  if (
+    code === 'ACTION_REJECTED' ||
+    code === 4001 ||
+    raw.includes('user rejected') ||
+    raw.includes('user denied')
+  ) {
+    return 'You rejected the transaction in your wallet.'
+  }
+  if (raw.includes('insufficient funds') || raw.includes('insufficient balance')) {
+    return 'Insufficient balance to cover this withdrawal.'
+  }
+  if (raw.includes('timeout') || raw.includes('timed out')) {
+    return 'The relayer timed out. Please try again.'
+  }
+  if (raw.includes('expired') || raw.includes('permission')) {
+    return 'Agent permission is no longer active. Re-grant and retry.'
+  }
+  // Fall back to the wallet's own short message when present, else a generic line.
+  const short = err?.shortMessage || err?.reason
+  if (short && short.length < 120) return short
+  return 'Withdraw failed. Please try again.'
+}
+
+// ---------------------------------------------------------------------------------------------
 // Outcome normalization + reconciliation
 // ---------------------------------------------------------------------------------------------
 

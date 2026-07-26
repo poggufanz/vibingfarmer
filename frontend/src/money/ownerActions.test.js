@@ -12,6 +12,11 @@ import {
   planRevoke,
   ownerActionOutcome,
   reconcileOwnerAction,
+  confirmationsCopy,
+  feeModelCopy,
+  targetStateLabel,
+  signaturesForSweep,
+  friendlyOwnerActionError,
 } from './ownerActions.js'
 import { MAX_AGENTS_PER_SWEEP } from '../stellar/exit.js'
 import { OwnerActionSubmissionError } from '../stellar/ownerAuthorization.js'
@@ -30,7 +35,11 @@ const discoveryRow = (address, overrides = {}) => ({
 
 const moneyRow = (address, overrides = {}) => ({
   address,
-  scope: { state: 'known', value: { vault: 'CVAULT', revoked: false, expiry: 0, authorized: true }, checkedAt: 1 },
+  scope: {
+    state: 'known',
+    value: { vault: 'CVAULT', revoked: false, expiry: 0, authorized: true },
+    checkedAt: 1,
+  },
   vaultShares: { state: 'known', amount: usdc(0), checkedAt: 1 },
   idleToken: { state: 'known', amount: usdc(0), checkedAt: 1 },
   amount: usdc(0),
@@ -82,7 +91,12 @@ describe('planFullExit', () => {
         moneyRow('CA_REVOKED_FUNDED', { amount: usdc(5_000_000) }), // still holds money
       ],
     }
-    const plan = planFullExit({ discovery, position, account: { kind: 'G', address: 'GOWNER' }, now })
+    const plan = planFullExit({
+      discovery,
+      position,
+      account: { kind: 'G', address: 'GOWNER' },
+      now,
+    })
     const byAddr = Object.fromEntries(plan.targets.map((t) => [t.address, t.state]))
     expect(byAddr).toEqual({
       CA_ACTIVE: 'active',
@@ -118,25 +132,52 @@ describe('planFullExit', () => {
     const nowSec = 1_700_000_000
     const discovery = { status: 'complete', agents: [discoveryRow('CA1', { expiry: nowSec - 5 })] }
     const position = { agents: [moneyRow('CA1', { amount: null })] }
-    const plan = planFullExit({ discovery, position, account: { kind: 'G', address: 'GOWNER' }, now: nowSec * 1000 })
+    const plan = planFullExit({
+      discovery,
+      position,
+      account: { kind: 'G', address: 'GOWNER' },
+      now: nowSec * 1000,
+    })
     expect(plan.targets[0].state).toBe('expired-unknown')
   })
 
   test('a scope read failure targets as "unknown" rather than being dropped or guessed active', () => {
-    const discovery = { status: 'partial', agents: [discoveryRow('CA1', { scopeReadStatus: 'failed', revoked: null, expiry: null, authorized: null })] }
-    const plan = planFullExit({ discovery, position: { agents: [] }, account: { kind: 'G', address: 'GOWNER' } })
+    const discovery = {
+      status: 'partial',
+      agents: [
+        discoveryRow('CA1', {
+          scopeReadStatus: 'failed',
+          revoked: null,
+          expiry: null,
+          authorized: null,
+        }),
+      ],
+    }
+    const plan = planFullExit({
+      discovery,
+      position: { agents: [] },
+      account: { kind: 'G', address: 'GOWNER' },
+    })
     expect(plan.targets[0]).toMatchObject({ address: 'CA1', state: 'unknown' })
   })
 
   test('rejects a zero (blank) address', () => {
     const discovery = { status: 'complete', agents: [discoveryRow(''), discoveryRow('CA1')] }
-    const plan = planFullExit({ discovery, position: { agents: [] }, account: { kind: 'G', address: 'GOWNER' } })
+    const plan = planFullExit({
+      discovery,
+      position: { agents: [] },
+      account: { kind: 'G', address: 'GOWNER' },
+    })
     expect(plan.targets.map((t) => t.address)).toEqual(['CA1'])
   })
 
   test('rejects a duplicate address — one target, not two', () => {
     const discovery = { status: 'complete', agents: [discoveryRow('CA1'), discoveryRow('CA1')] }
-    const plan = planFullExit({ discovery, position: { agents: [] }, account: { kind: 'G', address: 'GOWNER' } })
+    const plan = planFullExit({
+      discovery,
+      position: { agents: [] },
+      account: { kind: 'G', address: 'GOWNER' },
+    })
     expect(plan.targets).toHaveLength(1)
   })
 
@@ -149,8 +190,15 @@ describe('planFullExit', () => {
 
   test('expected confirmation count derives from actual batch splits (MAX_AGENTS_PER_SWEEP)', () => {
     const n = MAX_AGENTS_PER_SWEEP * 2 + 1 // one full batch short of 3 batches
-    const discovery = { status: 'complete', agents: Array.from({ length: n }, (_, i) => discoveryRow(`CA${i}`)) }
-    const plan = planFullExit({ discovery, position: { agents: [] }, account: { kind: 'G', address: 'GOWNER' } })
+    const discovery = {
+      status: 'complete',
+      agents: Array.from({ length: n }, (_, i) => discoveryRow(`CA${i}`)),
+    }
+    const plan = planFullExit({
+      discovery,
+      position: { agents: [] },
+      account: { kind: 'G', address: 'GOWNER' },
+    })
     expect(plan.expectedConfirmations).toBe(Math.ceil(n / MAX_AGENTS_PER_SWEEP))
     expect(plan.batches).toHaveLength(plan.expectedConfirmations)
   })
@@ -167,13 +215,21 @@ describe('planFullExit', () => {
   })
 
   test('unavailable discovery: not ok, and never silently claims "Exit all"', () => {
-    const plan = planFullExit({ discovery: { status: 'unavailable', agents: [] }, position: { agents: [] }, account: {} })
+    const plan = planFullExit({
+      discovery: { status: 'unavailable', agents: [] },
+      position: { agents: [] },
+      account: {},
+    })
     expect(plan.ok).toBe(false)
     expect(plan.label).not.toBe('Exit all')
   })
 
   test('no agents at all: not ok', () => {
-    const plan = planFullExit({ discovery: { status: 'complete', agents: [] }, position: { agents: [] }, account: {} })
+    const plan = planFullExit({
+      discovery: { status: 'complete', agents: [] },
+      position: { agents: [] },
+      account: {},
+    })
     expect(plan.ok).toBe(false)
   })
 })
@@ -183,7 +239,11 @@ describe('planPartialExit', () => {
 
   test('revoked scope: falls back to full exit, truthfully — never labels the balance lost', () => {
     const agent = moneyRow('CA1', {
-      scope: { state: 'known', value: { vault: 'CVAULT', revoked: true, expiry: 0, authorized: true }, checkedAt: 1 },
+      scope: {
+        state: 'known',
+        value: { vault: 'CVAULT', revoked: true, expiry: 0, authorized: true },
+        checkedAt: 1,
+      },
     })
     agent.scopeReadStatus = 'ok'
     agent.revoked = true
@@ -253,7 +313,10 @@ describe('planPartialExit', () => {
   })
 
   test('plain (non-split) agent: uses custody.location stellar-vault directly', () => {
-    const agent = moneyRow('CA1', { custody: { location: 'stellar-vault' }, amount: usdc(10_000_000) })
+    const agent = moneyRow('CA1', {
+      custody: { location: 'stellar-vault' },
+      amount: usdc(10_000_000),
+    })
     agent.scopeReadStatus = 'ok'
     agent.revoked = false
     agent.expiry = 0
@@ -263,7 +326,10 @@ describe('planPartialExit', () => {
   })
 
   test('amount exceeds the agent max: rejected before any signing', () => {
-    const agent = moneyRow('CA1', { custody: { location: 'stellar-vault' }, amount: usdc(1_000_000) })
+    const agent = moneyRow('CA1', {
+      custody: { location: 'stellar-vault' },
+      amount: usdc(1_000_000),
+    })
     agent.scopeReadStatus = 'ok'
     agent.revoked = false
     agent.expiry = 0
@@ -273,7 +339,10 @@ describe('planPartialExit', () => {
   })
 
   test('no known Stellar-vault balance: rejected as balance-unavailable, never a guessed zero', () => {
-    const agent = moneyRow('CA1', { custody: { location: 'unknown' }, vaultShares: { state: 'unavailable', amount: null } })
+    const agent = moneyRow('CA1', {
+      custody: { location: 'unknown' },
+      vaultShares: { state: 'unavailable', amount: null },
+    })
     agent.scopeReadStatus = 'ok'
     agent.revoked = false
     agent.expiry = 0
@@ -283,7 +352,10 @@ describe('planPartialExit', () => {
   })
 
   test('zero/invalid amount rejected', () => {
-    const agent = moneyRow('CA1', { custody: { location: 'stellar-vault' }, amount: usdc(10_000_000) })
+    const agent = moneyRow('CA1', {
+      custody: { location: 'stellar-vault' },
+      amount: usdc(10_000_000),
+    })
     agent.scopeReadStatus = 'ok'
     const plan = planPartialExit({ agent, amount: usdc(0), account })
     expect(plan.ok).toBe(false)
@@ -376,10 +448,14 @@ describe('planRevoke', () => {
 
 describe('ownerActionOutcome', () => {
   test('ok:true maps to confirmed-success', () => {
-    expect(ownerActionOutcome({ agentAddress: 'CA1', ok: true, txHash: 'h1' }).outcome).toBe('confirmed-success')
+    expect(ownerActionOutcome({ agentAddress: 'CA1', ok: true, txHash: 'h1' }).outcome).toBe(
+      'confirmed-success'
+    )
   })
   test('status: SUCCESS (revoke/ownerWithdraw raw shape) also maps to confirmed-success', () => {
-    expect(ownerActionOutcome({ agentAddress: 'CA1', status: 'SUCCESS', hash: 'h1' }).outcome).toBe('confirmed-success')
+    expect(ownerActionOutcome({ agentAddress: 'CA1', status: 'SUCCESS', hash: 'h1' }).outcome).toBe(
+      'confirmed-success'
+    )
   })
   test('a not-submitted OwnerActionSubmissionError stays not-submitted, distinct from unknown/confirmed', () => {
     const err = new OwnerActionSubmissionError('refused', 'VF_RELAY_REFUSED', 'not-submitted')
@@ -394,9 +470,9 @@ describe('ownerActionOutcome', () => {
     expect(ownerActionOutcome({ agentAddress: 'CA1', error: err }).outcome).toBe('confirmed-failed')
   })
   test('ok:false with a string error is confirmed-failed', () => {
-    expect(ownerActionOutcome({ agentAddress: 'CA1', ok: false, error: 'nothing to sweep' }).outcome).toBe(
-      'confirmed-failed'
-    )
+    expect(
+      ownerActionOutcome({ agentAddress: 'CA1', ok: false, error: 'nothing to sweep' }).outcome
+    ).toBe('confirmed-failed')
   })
   test('a result object with neither an ok/status nor an error is unknown, not a fabricated confirmed-failed', () => {
     // Fix 1 (fix loop 1), second half: the default branch used to map ANY error-less/unrecognized
@@ -463,8 +539,16 @@ describe('reconcileOwnerAction', () => {
     const readOwnerMoney = vi.fn(async () => ({
       checkedAt: 2,
       agents: [
-        { address: 'CA1', vaultShares: { state: 'known', amount: usdc(0) }, idleToken: { state: 'known', amount: usdc(0) } },
-        { address: 'CA2', vaultShares: { state: 'known', amount: usdc(0) }, idleToken: { state: 'known', amount: usdc(0) } },
+        {
+          address: 'CA1',
+          vaultShares: { state: 'known', amount: usdc(0) },
+          idleToken: { state: 'known', amount: usdc(0) },
+        },
+        {
+          address: 'CA2',
+          vaultShares: { state: 'known', amount: usdc(0) },
+          idleToken: { state: 'known', amount: usdc(0) },
+        },
       ],
     }))
     const out = await reconcileOwnerAction({
@@ -483,7 +567,13 @@ describe('reconcileOwnerAction', () => {
   test('confirmed result but a balance is STILL present on re-read: never an optimistic complete', async () => {
     const readOwnerMoney = vi.fn(async () => ({
       checkedAt: 2,
-      agents: [{ address: 'CA1', vaultShares: { state: 'known', amount: usdc(1_000_000) }, idleToken: { state: 'known', amount: usdc(0) } }],
+      agents: [
+        {
+          address: 'CA1',
+          vaultShares: { state: 'known', amount: usdc(1_000_000) },
+          idleToken: { state: 'known', amount: usdc(0) },
+        },
+      ],
     }))
     const out = await reconcileOwnerAction({
       action: { kind: 'full-exit', targets: [{ address: 'CA1' }] },
@@ -499,8 +589,16 @@ describe('reconcileOwnerAction', () => {
     const readOwnerMoney = vi.fn(async () => ({
       checkedAt: 2,
       agents: [
-        { address: 'CA1', vaultShares: { state: 'known', amount: usdc(0) }, idleToken: { state: 'known', amount: usdc(0) } },
-        { address: 'CA2', vaultShares: { state: 'known', amount: usdc(5_000_000) }, idleToken: { state: 'known', amount: usdc(0) } },
+        {
+          address: 'CA1',
+          vaultShares: { state: 'known', amount: usdc(0) },
+          idleToken: { state: 'known', amount: usdc(0) },
+        },
+        {
+          address: 'CA2',
+          vaultShares: { state: 'known', amount: usdc(5_000_000) },
+          idleToken: { state: 'known', amount: usdc(0) },
+        },
       ],
     }))
     const out = await reconcileOwnerAction({
@@ -522,11 +620,23 @@ describe('reconcileOwnerAction', () => {
     const readOwnerMoney = vi.fn(async () => ({
       checkedAt: 2,
       agents: [
-        { address: 'CA1', vaultShares: { state: 'known', amount: usdc(0) }, idleToken: { state: 'known', amount: usdc(0) } },
-        { address: 'CA2', vaultShares: { state: 'known', amount: usdc(0) }, idleToken: { state: 'known', amount: usdc(0) } },
+        {
+          address: 'CA1',
+          vaultShares: { state: 'known', amount: usdc(0) },
+          idleToken: { state: 'known', amount: usdc(0) },
+        },
+        {
+          address: 'CA2',
+          vaultShares: { state: 'known', amount: usdc(0) },
+          idleToken: { state: 'known', amount: usdc(0) },
+        },
       ],
     }))
-    const notSubmittedErr = new OwnerActionSubmissionError('refused', 'VF_RELAY_REFUSED', 'not-submitted')
+    const notSubmittedErr = new OwnerActionSubmissionError(
+      'refused',
+      'VF_RELAY_REFUSED',
+      'not-submitted'
+    )
     const out = await reconcileOwnerAction({
       action: { kind: 'full-exit', targets: [{ address: 'CA1' }, { address: 'CA2' }] },
       result: [
@@ -590,5 +700,118 @@ describe('reconcileOwnerAction', () => {
     })
     expect(out.complete).toBe(false)
     expect(out.revision).toBe(6) // a re-read was attempted — revision still advances
+  })
+})
+
+// -------------------------------------------------------------------------------------------
+// My Money Task 13 Part B item 7: presentation copy moved here from WithdrawDialog.jsx
+// (confirmationsCopy/feeModelCopy/targetStateLabel) and WithdrawModal.jsx
+// (signaturesFor/friendlyError) -- both files now import from here instead of keeping a local
+// copy. See ownerActions.js's own header comment on this section for the MM12 concern it closes.
+// -------------------------------------------------------------------------------------------
+describe('confirmationsCopy', () => {
+  test('zero/non-finite -> no confirmation needed', () => {
+    expect(confirmationsCopy(0)).toBe('No wallet confirmation is needed.')
+    expect(confirmationsCopy(NaN)).toBe('No wallet confirmation is needed.')
+    expect(confirmationsCopy(undefined)).toBe('No wallet confirmation is needed.')
+  })
+  test('exactly 1 -> singular phrasing, never plural', () => {
+    expect(confirmationsCopy(1)).toBe(
+      'At least 1 wallet confirmation (a busy network can still split it into more).'
+    )
+  })
+  test('more than 1 -> plural, batches phrasing', () => {
+    expect(confirmationsCopy(3)).toBe(
+      'At least 3 wallet confirmations, in batches (a busy network can split a batch into more).'
+    )
+  })
+})
+
+describe('feeModelCopy', () => {
+  test('C -> relay-sponsored, 0 XLM', () => {
+    expect(feeModelCopy('C')).toMatch(/relay sponsors the network fee -- 0 XLM/)
+  })
+  test('G (or anything else) -> the owner pays their own fee', () => {
+    expect(feeModelCopy('G')).toMatch(/you pay the small network fee yourself/)
+    expect(feeModelCopy(undefined)).toMatch(/you pay the small network fee yourself/)
+  })
+})
+
+describe('targetStateLabel', () => {
+  test('every targetState() vocabulary word maps to a distinct, honest sentence', () => {
+    const cases = {
+      active: 'active',
+      revoked: 'revoked, no balance left to confirm',
+      'revoked-funded': 'revoked, still holds a confirmed balance',
+      'revoked-unknown': 'revoked, balance could not be confirmed',
+      expired: 'expired, no balance left to confirm',
+      'expired-funded': 'expired, still holds a confirmed balance',
+      'expired-unknown': 'expired, balance could not be confirmed',
+      unknown: 'status unknown',
+    }
+    for (const [state, expected] of Object.entries(cases)) {
+      expect(targetStateLabel(state)).toBe(expected)
+    }
+  })
+})
+
+describe('signaturesForSweep', () => {
+  test('oneSignatureExit (default): matches planFullExit batching exactly (MAX_AGENTS_PER_SWEEP chunks)', () => {
+    // Cross-check against the SAME batching planFullExit's own `expectedConfirmations` produces,
+    // so the two numbers can never silently drift apart.
+    const discovery = {
+      status: 'complete',
+      agents: Array.from({ length: MAX_AGENTS_PER_SWEEP * 2 + 1 }, (_, i) =>
+        discoveryRow(`CA${i}`)
+      ),
+    }
+    const plan = planFullExit({ discovery, position: { agents: [] }, account: { kind: 'G' } })
+    expect(signaturesForSweep(discovery.agents.length)).toBe(plan.expectedConfirmations)
+  })
+  test('oneSignatureExit:false -> one signature per agent, no batching', () => {
+    expect(signaturesForSweep(7, { oneSignatureExit: false })).toBe(7)
+  })
+  test('zero/non-finite agent count -> 0, never NaN or a negative', () => {
+    expect(signaturesForSweep(0)).toBe(0)
+    expect(signaturesForSweep(-1)).toBe(0)
+    expect(signaturesForSweep(NaN)).toBe(0)
+  })
+})
+
+describe('friendlyOwnerActionError', () => {
+  test('user rejection (code or message) -> the same friendly line either way', () => {
+    expect(friendlyOwnerActionError({ code: 'ACTION_REJECTED' })).toBe(
+      'You rejected the transaction in your wallet.'
+    )
+    expect(friendlyOwnerActionError({ code: 4001 })).toBe(
+      'You rejected the transaction in your wallet.'
+    )
+    expect(friendlyOwnerActionError({ message: 'User denied transaction signature.' })).toBe(
+      'You rejected the transaction in your wallet.'
+    )
+  })
+  test('insufficient funds/balance -> insufficient balance copy', () => {
+    expect(friendlyOwnerActionError({ message: 'Insufficient funds for gas' })).toBe(
+      'Insufficient balance to cover this withdrawal.'
+    )
+  })
+  test('timeout -> relayer timed out copy', () => {
+    expect(friendlyOwnerActionError({ message: 'Request timed out' })).toBe(
+      'The relayer timed out. Please try again.'
+    )
+  })
+  test('expired/permission -> re-grant copy', () => {
+    expect(friendlyOwnerActionError({ message: 'permission expired' })).toBe(
+      'Agent permission is no longer active. Re-grant and retry.'
+    )
+  })
+  test('short wallet-provided message with none of the above -> passed through verbatim', () => {
+    expect(friendlyOwnerActionError({ shortMessage: 'Simulation failed: bad auth' })).toBe(
+      'Simulation failed: bad auth'
+    )
+  })
+  test('no usable message at all -> the generic fallback, never undefined/empty', () => {
+    expect(friendlyOwnerActionError({})).toBe('Withdraw failed. Please try again.')
+    expect(friendlyOwnerActionError(undefined)).toBe('Withdraw failed. Please try again.')
   })
 })
