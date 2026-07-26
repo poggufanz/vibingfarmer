@@ -668,4 +668,48 @@ describe('ProtectStage — 320px real layout guard', () => {
     },
     20000
   )
+
+  it(
+    'G: the reuse review renders a full 56-char contract address as plain (always-visible) text with no horizontal overflow at 320px',
+    async () => {
+      const onRetryPreflight = vi.fn().mockResolvedValue(reuseDecisionRaw())
+      const { container } = render(
+        <div className="pc-route">
+          <div className="pc-route-stack">
+            <ProtectStage {...baseProps({ onRetryPreflight })} />
+          </div>
+        </div>
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'Check my permission' }))
+      await screen.findByRole('button', { name: 'Continue' })
+
+      const scrollWidth = await measureScrollWidthAt320(container.innerHTML)
+      expect(scrollWidth).toBe(320)
+    },
+    20000
+  )
+
+  it(
+    'G: the confirmed state renders a full deployed agent address with no horizontal overflow at 320px',
+    async () => {
+      const gen = deferred()
+      const onRequestGrant = vi.fn().mockReturnValue(gen.promise)
+      const { container } = render(
+        <div className="pc-route">
+          <div className="pc-route-stack">
+            <ProtectStage {...baseProps({ onRequestGrant })} />
+          </div>
+        </div>
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'Check my permission' }))
+      await screen.findByRole('button', { name: 'Authorize with wallet' })
+      fireEvent.click(screen.getByRole('button', { name: 'Authorize with wallet' }))
+      gen.resolve({ agentAddresses: [AGENT_1] })
+      await screen.findByText('Confirmed')
+
+      const scrollWidth = await measureScrollWidthAt320(container.innerHTML)
+      expect(scrollWidth).toBe(320)
+    },
+    20000
+  )
 })

@@ -324,14 +324,18 @@
   font-family: var(--pc-font-body);
 }
 
-/* Task 11 -- Protect's TechnicalDetails holds genuinely technical strings with no whitespace to
- * wrap on (session-key fingerprints, contract IDs) -- Foundation's default `overflow-wrap: normal`
- * leaves a 66-char hex string as one unbreakable run, forcing the surface wider than a 320px
- * viewport once expanded (reproduced in a real browser: 617px; see ProtectStage.test.jsx's 320px
- * guard). `anywhere` is a keyword, not a hex/radius/spacing literal, so this adds no duplicated
- * token. Scoped to this surface's own agent-lane usage only; Foundation's rule and Plan's
- * allocation-row override above are both untouched. */
-.pc-agent-lane .pc-technical-details-body {
+/* Task 11 -- Protect renders several genuinely technical, whitespace-free strings as plain text:
+ * session-key fingerprints and contract IDs inside TechnicalDetails, a full deployed agent address
+ * in the reuse receipt, and confirmed agent addresses in the success notice. Foundation's default
+ * `overflow-wrap: normal` leaves any of these as one unbreakable run, forcing the surface wider
+ * than a 320px viewport (reproduced in a real browser at 617px and 552px for two of the three; see
+ * ProtectStage.test.jsx's 320px guards). Rather than chase every individual spot with its own
+ * selector, this is set once, inherited (`overflow-wrap` is an inherited property), on this
+ * surface's own root class -- `anywhere` is a keyword, not a hex/radius/spacing literal, so this
+ * adds no duplicated token, and it is a no-op for ordinary space-separated copy. Scoped to
+ * `.pc-protect-stage` only; no other surface (including Plan, which shares `.pc-dominant--decision`
+ * with this one) is affected. */
+.pc-protect-stage {
   overflow-wrap: anywhere;
 }
 

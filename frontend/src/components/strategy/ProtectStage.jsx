@@ -36,6 +36,11 @@
 //     PRESERVES the decision (nothing about the permission itself was invalidated, only the
 //     signature attempt) and Retry re-runs `onRequestGrant` directly, mirroring flowState.js's own
 //     'rejected' -> GRANT_REQUESTED-allowed-again shape.
+//   - Rice (`.pc-protect-limit`, `--pc-owned`) renders ONLY the reuse-usable receipt: an
+//     already-proven, on-chain-verified headroom (checklist item 4: Rice is reserved for
+//     confirmed money). A fresh decision's "headroom after granting"/"worst case" figures are
+//     still prospective -- true only once the grant actually confirms -- so they render in the
+//     neutral `.pc-support` role instead, never in Rice.
 import { useState } from 'react'
 import { MoneyFigure, StatusNotice, TechnicalDetails, VenueTruth } from '../pocket/Primitives.jsx'
 import { NetworkBadge, NetworkRoute } from '../pocket/NetworkIdentity.jsx'
@@ -195,7 +200,7 @@ export function ProtectStage({
   }
 
   return (
-    <div>
+    <div className="pc-protect-stage">
       <div className="pc-protect-boundary">
         <div className="pc-dominant pc-dominant--decision pc-strategy-decision">
           <h1 className="pc-strategy-question">Protect this run</h1>
@@ -327,9 +332,28 @@ export function ProtectStage({
           )}
         </div>
 
-        <div className="pc-protect-limit">
-          {decision && decision.mode === 'fresh' && (
-            <>
+        {/* Rice (`--pc-owned`) is reserved for user-owned or CONFIRMED money (checklist item 4) --
+            a reuse decision's headroom is an already-proven, on-chain-verified fact, so it alone
+            earns this surface. A fresh decision's "headroom after granting"/"worst case" figures
+            are still prospective (true only once the grant confirms), so they render in the
+            neutral `.pc-support` role below instead, never in Rice. */}
+        {decision && decision.mode === 'reuse' && usableReuse && (
+          <div className="pc-protect-limit">
+            {decision.agents.map((a) => (
+              <div key={a.allocationId}>
+                <p>{a.agentAddress}</p>
+                <p>
+                  Headroom: {unitsToDisplay(a.headroom.units, a.headroom.decimals)} {a.headroom.token}
+                </p>
+                <p>Expires {formatExpiry(a.scopeExpiry)}</p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {decision && decision.mode === 'fresh' && (
+          <div className="pc-support">
+            <div className="pc-support-content">
               {decision.reviewedBudgets.map((b) => (
                 <p key={b.token}>
                   Headroom after granting: {unitsToDisplay(b.units, b.decimals)} {b.token}
@@ -353,23 +377,9 @@ export function ProtectStage({
               <p>Each agent signs with its own separate session key.</p>
               <p>Each agent can be stopped on its own, independent of the others.</p>
               <p>Gas is sponsored -- you pay no XLM for this run.</p>
-            </>
-          )}
-
-          {decision && decision.mode === 'reuse' && usableReuse && (
-            <>
-              {decision.agents.map((a) => (
-                <div key={a.allocationId}>
-                  <p>{a.agentAddress}</p>
-                  <p>
-                    Headroom: {unitsToDisplay(a.headroom.units, a.headroom.decimals)} {a.headroom.token}
-                  </p>
-                  <p>Expires {formatExpiry(a.scopeExpiry)}</p>
-                </div>
-              ))}
-            </>
-          )}
-        </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {decision && decision.mode === 'fresh' && (
