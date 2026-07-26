@@ -47,6 +47,23 @@
 // contract-anchored selector this file claims to port and asserts each has a shipped counterpart,
 // rather than comparing values against a list of previously-found problems -- the shape needed to
 // catch an omitted rule, which a value list structurally cannot.
+//
+// VF Wallet Task 10, Part A1 (owner-directed, closing the VF Wallet Task 9 reviewer's follow-up
+// finding): that hand-pinned CONTRACT_PORTED_RULES list itself had the identical blind spot one
+// level up -- it could only ever re-check selectors a human remembered to add to it, never notice
+// a 26th one. WalletShell.test.jsx's drift guard is now driven by
+// walletContractManifest.generated.json, a GENERATED (not hand-transcribed) manifest produced by
+// scripts/generate-wallet-contract-manifest.mjs parsing the actual (gitignored, local-only)
+// contract file -- see that script's header for the full design. Any future `.pc-wallet-*` rule
+// added to the contract is picked up automatically the next time the manifest is regenerated.
+//
+// Task 10 also adds the rules money-first Home/Send/Receive need (`.pc-wallet-balance`,
+// `.pc-wallet-actions`, `.pc-wallet-origin`, `.pc-wallet-consequence`, `.pc-wallet-approval-actions`,
+// all ported verbatim -- no rescoping needed, each already carries its own distinguishing class)
+// and one thing the contract does NOT specify: an optional bottom tab bar (`.pc-wallet-nav`/
+// `.pc-wallet-tab`) for the beginner Home/Activity/Settings navigation model, built entirely from
+// already-ported tokens and excluded from the manifest guard (no contract rule to have a
+// counterpart to), the same treatment `.bk-prog-*` already established below.
 
 const STYLE = `
 .pc-wallet {
@@ -72,6 +89,7 @@ const STYLE = `
   --pc-font-body: 'Geist Variable', 'Geist', system-ui, sans-serif;
   --pc-font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, monospace;
 
+  --pc-space-1: 4px;
   --pc-space-2: 8px;
   --pc-space-3: 12px;
   --pc-space-4: 16px;
@@ -163,6 +181,76 @@ const STYLE = `
   gap: var(--pc-space-6);
   padding: 20px 18px 24px;
 }
+
+/* VF Wallet Task 10 -- ported verbatim from contract :742-780 for the money-first Home/Send/
+   Receive surfaces (WalletHome.jsx and friends). Byte-identical; no rescoping needed since each
+   selector already carries its own distinguishing pc-wallet-* class. */
+.pc-wallet-balance {
+  font-size: 44px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 720;
+  letter-spacing: -0.05em;
+  line-height: 1;
+}
+
+.pc-wallet-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--pc-space-3);
+}
+
+.pc-wallet-actions .pc-button, .pc-wallet-approval-actions .pc-button { width: 100%; }
+
+.pc-wallet-origin {
+  display: grid;
+  gap: var(--pc-space-2);
+  border-top: 1px solid var(--pc-line);
+  border-bottom: 1px solid var(--pc-line);
+  padding-block: var(--pc-space-4);
+}
+
+.pc-wallet-consequence {
+  border-radius: var(--pc-radius-support);
+  padding: var(--pc-space-5);
+  background: var(--pc-owned);
+  color: var(--pc-owned-ink);
+}
+
+.pc-wallet-approval-actions {
+  display: grid;
+  grid-template-columns: 1fr 1.35fr;
+  gap: var(--pc-space-3);
+}
+
+/* Not in the contract (no bottom tab bar is specified there) -- this component invents it, same
+   as .bk-prog-*/.pc-standard-form below: built entirely from already-ported tokens (line color,
+   spacing, ink/muted, touch target), never a new hex/radius/animation value. Excluded from the
+   manifest-driven drift guard (WalletShell.test.jsx) for the same reason .bk-prog-* is: there is no
+   contract rule for it to have a counterpart to. Renders as the shell's third grid row (the
+   pc-wallet-shell grid already reserves "auto minmax(0, 1fr) auto" -- this is that third row). */
+.pc-wallet-nav {
+  display: flex;
+  justify-content: space-around;
+  border-top: 1px solid var(--pc-line);
+  padding: var(--pc-space-2);
+}
+
+.pc-wallet-tab {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--pc-space-1);
+  min-height: var(--pc-touch-target);
+  padding: var(--pc-space-1) var(--pc-space-3);
+  border: 0;
+  background: transparent;
+  color: var(--pc-muted);
+  font-size: var(--pc-type-label);
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.pc-wallet-tab[aria-current='page'] { color: var(--pc-ink); }
 
 .pc-brand-lockup {
   display: inline-flex;
@@ -366,6 +454,12 @@ export function WalletShell({
   backLabel = 'Back',
   status = null,
   critical = false,
+  // VF Wallet Task 10: an optional bottom tab bar for the beginner navigation model (exactly
+  // Home/Activity/Settings -- see WalletHome.jsx/WalletActivity.jsx). Shape: { tabs: [{id,
+  // label}], active: id, onNav: fn }. Omitted by every onboarding/account-choice screen (the
+  // VFW9 surface this component originally shipped for) -- backward compatible, renders nothing
+  // extra when absent, so none of WalletShell.test.jsx's existing assertions change.
+  nav = null,
 }) {
   return (
     <div className="pc-wallet" data-pocket-critical={critical ? '' : undefined}>
@@ -407,6 +501,21 @@ export function WalletShell({
             {status?.message ?? ''}
           </p>
         </main>
+        {nav && (
+          <nav className="pc-wallet-nav" aria-label="Wallet">
+            {nav.tabs.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                className="pc-wallet-tab"
+                aria-current={tab.id === nav.active ? 'page' : undefined}
+                onClick={() => nav.onNav(tab.id)}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </nav>
+        )}
       </div>
     </div>
   )
