@@ -100,14 +100,21 @@ describe('loadIndexedBasePositions', () => {
       indexedBaseAccounts: [],
       deps: { readPositions, makePublicClient: () => ({}) },
     })
-    expect(out).toEqual({ status: 'empty', accounts: [], failedAccounts: [], localKernelAddress: null })
+    expect(out).toEqual({
+      status: 'empty',
+      accounts: [],
+      failedAccounts: [],
+      localKernelAddress: null,
+    })
     expect(readPositions).not.toHaveBeenCalled()
   })
 
   it('reads public balances for a proven kernel address with no local record at all (new device)', async () => {
-    const readPositions = vi.fn().mockResolvedValue([
-      { pool: BASE_POOL_CATALOG[0].address, shares: 5n, assets: 500_000n, minAssets: 495_000n },
-    ])
+    const readPositions = vi
+      .fn()
+      .mockResolvedValue([
+        { pool: BASE_POOL_CATALOG[0].address, shares: 5n, assets: 500_000n, minAssets: 495_000n },
+      ])
     const readIdleUsdc = vi.fn().mockResolvedValue(1_000_000n)
     const out = await loadIndexedBasePositions({
       indexedBaseAccounts: ['0xKERNEL'],
@@ -157,9 +164,11 @@ describe('loadIndexedBasePositions', () => {
   // could never tell the total was missing a kernel. The enum itself is unchanged (still no
   // partial status); the gap now rides along on `failedAccounts` instead.
   it('one account failing does not blank out an account that succeeded, and the failure rides along visibly (fix loop 1, Fix 5)', async () => {
-    const readPositions = vi.fn().mockImplementation(({ account }) =>
-      account === '0xbad' ? Promise.reject(new Error('rpc down')) : Promise.resolve([])
-    )
+    const readPositions = vi
+      .fn()
+      .mockImplementation(({ account }) =>
+        account === '0xbad' ? Promise.reject(new Error('rpc down')) : Promise.resolve([])
+      )
     const readIdleUsdc = vi.fn().mockResolvedValue(0n)
     const out = await loadIndexedBasePositions({
       indexedBaseAccounts: ['0xBAD', '0xGOOD'],
@@ -187,7 +196,7 @@ describe('loadIndexedBasePositions', () => {
     expect(out.accounts).toEqual([{ kernelAddress: '0xidlefail', positions: [], idleUsdc: null }])
   })
 
-  it('flags a mismatch when this device\'s CURRENT kernel differs from every proven kernel (still returns the proven data)', async () => {
+  it("flags a mismatch when this device's CURRENT kernel differs from every proven kernel (still returns the proven data)", async () => {
     seedOwner(OWNER, '0xCURRENTKERNEL')
     const readPositions = vi.fn().mockResolvedValue([])
     const readIdleUsdc = vi.fn().mockResolvedValue(0n)
@@ -198,7 +207,9 @@ describe('loadIndexedBasePositions', () => {
     })
     expect(out.status).toBe('mismatched')
     expect(out.localKernelAddress).toBe('0xCURRENTKERNEL')
-    expect(out.accounts).toEqual([{ kernelAddress: '0xhistorickernel', positions: [], idleUsdc: 0n }])
+    expect(out.accounts).toEqual([
+      { kernelAddress: '0xhistorickernel', positions: [], idleUsdc: 0n },
+    ])
   })
 
   it('is known (not mismatched) when the local kernel IS one of the proven accounts', async () => {

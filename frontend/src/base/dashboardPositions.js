@@ -106,8 +106,11 @@ export async function loadIndexedBasePositions({
   } = deps
 
   const localKernelAddress = readBaseOwner(stellarOwner)?.kernelAddress ?? null
-  const accounts = [...new Set(indexedBaseAccounts.filter(Boolean).map((a) => String(a).toLowerCase()))]
-  if (accounts.length === 0) return { status: 'empty', accounts: [], failedAccounts: [], localKernelAddress }
+  const accounts = [
+    ...new Set(indexedBaseAccounts.filter(Boolean).map((a) => String(a).toLowerCase())),
+  ]
+  if (accounts.length === 0)
+    return { status: 'empty', accounts: [], failedAccounts: [], localKernelAddress }
 
   let publicClient
   try {
@@ -128,11 +131,11 @@ export async function loadIndexedBasePositions({
   )
   const okAccounts = settled.filter((r) => r.status === 'fulfilled').map((r) => r.value)
   const failedAccounts = accounts.filter((_, i) => settled[i].status === 'rejected')
-  if (okAccounts.length === 0) return { status: 'unavailable', accounts: [], failedAccounts, localKernelAddress }
+  if (okAccounts.length === 0)
+    return { status: 'unavailable', accounts: [], failedAccounts, localKernelAddress }
 
   const mismatched =
-    localKernelAddress != null &&
-    !accounts.includes(localKernelAddress.toLowerCase())
+    localKernelAddress != null && !accounts.includes(localKernelAddress.toLowerCase())
   return {
     status: mismatched ? 'mismatched' : 'known',
     accounts: okAccounts,
