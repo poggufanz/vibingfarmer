@@ -17,6 +17,7 @@
     "build:ext": "vite build -c extension/vite.config.extension.js",
     "brand:build": "node scripts/build-brand-assets.mjs",
     "brand:check": "node scripts/check-brand-assets.mjs",
+    "manifest:check": "node scripts/generate-wallet-contract-manifest.mjs --check",
     "test:visual": "playwright test"
   },
   "dependencies": {

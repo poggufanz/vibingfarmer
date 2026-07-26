@@ -352,6 +352,18 @@ textarea.pc-input { min-height: 72px; padding: var(--pc-space-2) var(--pc-space-
 
 .pc-standard-form { display: grid; gap: var(--pc-space-4); }
 
+/* VF Wallet Task 10 fix loop 1 (I1) -- ported verbatim from contract :319-323. Found genuinely
+   MISSING (no shipped counterpart at all) by the newly-inverted contract manifest guard: the
+   Send screen's confirm/review card has always rendered with className="pc-support"
+   (classic/SendScreen.jsx), but nothing in this file ever defined it, so it rendered with no
+   background/border-radius/color distinction from the surrounding form -- exactly the class of
+   silent omission the manifest guard exists to catch. */
+.pc-support {
+  border-radius: var(--pc-radius-support);
+  background: var(--pc-workspace);
+  color: var(--pc-ink);
+}
+
 .pc-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -453,6 +465,20 @@ svg.vf-token-icon { display: block; overflow: hidden; }
   color: var(--pc-muted);
   cursor: pointer;
 }
+
+/* VF Wallet Task 10 fix loop 1 (M1) -- BackupScreen.jsx's "I've saved my recovery phrase
+   securely" checkbox (step 2, the SAME screen that displays the twelve/24 .pc-technical recovery
+   words above it) carries no class of its own and, without this rule, computes the ordinary
+   .pc-wallet :where(...,input,...) form-control body font (Geist) while the words it confirms
+   render mono -- a real, reviewer-caught inconsistency (same backup flow, two faces), even though
+   a native checkbox renders no glyphs of its own and the mismatch has no visible effect. Fixed
+   here, in this shared shell, rather than by adding a class in BackupScreen.jsx: that file is not
+   in this task's authorized file list. Specificity (0,2,0), a class plus a type selector, safely
+   outranks the (0,1,0) form-control rule regardless of source order -- no fragile tie to maintain,
+   unlike code/pre/.pc-technical's. Not contract-anchored (BackupScreen's confirmation checkbox is
+   this component's own invention, like .bk-prog-*) -- excluded from the manifest guard for the
+   same reason; guarded instead by WalletShell.test.jsx's own dedicated computed-style test. */
+.pc-backup-check input { font-family: var(--pc-font-mono); }
 
 :where(a, button, input, select, textarea, summary):focus-visible {
   outline: 3px solid var(--pc-focus);

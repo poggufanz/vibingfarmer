@@ -9,7 +9,11 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { WalletShell } from './WalletShell.jsx'
-import { parseCss, selectorTokens } from '../../../scripts/generate-wallet-contract-manifest.mjs'
+import {
+  parseCss,
+  selectorTokens,
+  checkManifestFreshness,
+} from '../../../scripts/generate-wallet-contract-manifest.mjs'
 import CONTRACT_MANIFEST from './walletContractManifest.generated.json'
 
 afterEach(cleanup)
@@ -219,6 +223,22 @@ describe('WalletShell — contract manifest drift guard: every manifest entry ha
   it.each(CONTRACT_MANIFEST)('ports $id', (entry) => {
     expect(hasShippedCounterpart(entry, shipped), `no shipped rule covers "${entry.id}"`).toBe(true)
   })
+
+  // VF Wallet Task 10 fix loop 1 (I1 part (ii)): regeneration was previously available but never
+  // enforced -- no package.json script, no CI step, no regenerate-and-diff test, so this file could
+  // silently drift from the local contract with nothing failing. This calls the SAME
+  // checkManifestFreshness() the `manifest:check` npm script uses (never a second, potentially
+  // drifting reimplementation) as a normal assertion, so a stale manifest fails THIS test run, not
+  // just a separately-remembered command. Skips (not fails) when the local, gitignored contract
+  // file is absent -- the identical graceful degradation contractTokens.test.js documents for CI.
+  it('the committed manifest matches a fresh regeneration from the local contract (skips if the gitignored contract is absent)', () => {
+    const result = checkManifestFreshness()
+    if (result.skipped) return
+    expect(
+      result.fresh,
+      'walletContractManifest.generated.json is STALE -- run `node scripts/generate-wallet-contract-manifest.mjs`'
+    ).toBe(true)
+  })
 })
 
 // VF Wallet Task 10, Part A2 (owner-directed): the mono guarantee for `.pc-input.pc-technical`
@@ -244,6 +264,30 @@ describe('WalletShell — pins the .pc-technical mono guarantee against reorderi
     render(
       <WalletShell heading="x">
         <input className="pc-input pc-technical" data-testid="probe" readOnly value="" />
+      </WalletShell>
+    )
+    const fontFamily = getComputedStyle(screen.getByTestId('probe')).fontFamily
+    expect(fontFamily).toBe('var(--pc-font-mono)')
+  })
+})
+
+// VF Wallet Task 10 fix loop 1 (M1): the reviewer measured, in real Chromium on the revealed
+// backup screen, that the twelve/24 recovery words (LI.pc-technical) compute mono while the
+// adjacent "I've saved my recovery phrase securely" confirmation checkbox -- BackupScreen.jsx step
+// 2, no class of its own -- computes Geist: the same backup flow, two faces. Fixed with a
+// `.pc-backup-check input` rule in this file (BackupScreen.jsx itself is not in this task's
+// authorized file list, so the class can't be added there; the checkbox is unclassed by design).
+// This pins that computed value the same way A2 pins .pc-technical, against a rendered element
+// carrying the exact class BackupScreen.jsx actually renders (label.pc-backup-check > input), not
+// a synthetic stand-in.
+describe('WalletShell — pins the backup confirmation checkbox to mono, matching the words it confirms (VF Wallet Task 10 fix loop 1, M1)', () => {
+  it('computes the mono custom-property reference for the unclassed checkbox inside .pc-backup-check', () => {
+    render(
+      <WalletShell heading="x">
+        <label className="pc-backup-check">
+          <input type="checkbox" data-testid="probe" readOnly />
+          I&rsquo;ve saved my recovery phrase securely
+        </label>
       </WalletShell>
     )
     const fontFamily = getComputedStyle(screen.getByTestId('probe')).fontFamily

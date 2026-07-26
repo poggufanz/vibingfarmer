@@ -18,18 +18,18 @@
 // automatically than a human remembering to add a 26th line to a hand list.
 //
 // WHAT COUNTS AS "GENERATED, NOT TRANSCRIBED": the SELECTION of which selectors matter (the
-// WALLET_SCOPE_PATTERN / SHARED_PRIMITIVE_SELECTORS below) is still an authored judgment call --
-// exactly like the `name` column of the old hand list, or contractTokens.test.js's own documented
-// tradeoff (its token VALUES are hand-pinned because the contract is gitignored and unavailable in
-// CI). What changes is that the manifest's CONTENT (which properties a matched rule declares, in
-// which media context) is extracted mechanically from the contract text by parseCss() below, never
-// retyped -- eliminating the transcription-typo/omission failure mode this task was asked to close.
-// Any FUTURE rule whose selector already carries the `.pc-wallet` scope (the convention every
-// wallet-specific contract rule already follows) is picked up automatically on the next
-// regeneration with ZERO generator edits -- that is the "self-maintaining" part. Only a genuinely
-// NEW shared/global primitive (not already scoped under `.pc-wallet`) needs a one-line addition to
-// SHARED_PRIMITIVE_SELECTORS, same as the old hand list needed a one-line addition for a new
-// `.pc-wallet-*` class -- except now that addition only names WHICH rule matters, never its VALUE.
+// EXACT_EXCLUDED_SELECTORS / EXCLUDED_TOKEN_BASES below -- see VF Wallet Task 10 fix loop 1's
+// header comment further down for why this is now an EXCLUSION list, not an allowlist) is still an
+// authored judgment call -- exactly like the `name` column of the old hand list, or
+// contractTokens.test.js's own documented tradeoff (its token VALUES are hand-pinned because the
+// contract is gitignored and unavailable in CI). What changes is that the manifest's CONTENT (which
+// properties a matched rule declares, in which media context) is extracted mechanically from the
+// contract text by parseCss() below, never retyped -- eliminating the transcription-typo/omission
+// failure mode this task was asked to close. Any FUTURE rule is picked up automatically on the next
+// regeneration with ZERO generator edits UNLESS it is deliberately excluded -- that is the
+// "self-maintaining" part, and fix loop 1 strengthened it further: forgetting to list a new shared
+// primitive as relevant is no longer possible, because relevance is the default, not something
+// that has to be granted.
 //
 // The contract file (docs/superpowers/specs/2026-07-23-pocket-crew-visual-contract.css) is
 // local-only/gitignored and will not exist in a clean CI checkout (contractTokens.test.js documents
@@ -39,8 +39,17 @@
 //
 // Usage:
 //   node scripts/generate-wallet-contract-manifest.mjs [--contract=<path>] [--out=<path>]
+//   node scripts/generate-wallet-contract-manifest.mjs --check [--contract=<path>] [--out=<path>]
 // Defaults: contract = ../docs/superpowers/specs/2026-07-23-pocket-crew-visual-contract.css
 // (relative to this repo's frontend/ directory), out = src/wallet/ui/walletContractManifest.generated.json
+//
+// `--check` (VF Wallet Task 10 fix loop 1, I1 part (ii)): regenerates the manifest IN MEMORY and
+// diffs it against the committed file WITHOUT writing -- exits 1 (and prints which entries were
+// added/removed) if they differ, exits 0 if they match. Wired up as `npm run manifest:check`, which
+// WalletShell.test.jsx's own staleness test also invokes as a library call (not a subprocess) so a
+// stale manifest fails the normal `npm test` run, not just a separately-remembered command. Skips
+// (exit 0) when the local contract file is absent -- the same graceful, documented degradation
+// contractTokens.test.js already relies on for CI, where the gitignored contract never exists.
 
 import { readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
@@ -154,41 +163,147 @@ export function selectorTokens(selector) {
   return stripped.length > 0 ? stripped : [normalizeWs(selector)]
 }
 
-// Selectors that are wallet-relevant WITHOUT carrying `.pc-wallet` in their own text -- shared,
-// global primitives a wallet screen depends on. Each entry is the contract's OWN normalized
-// selector text. This list is the one place a genuinely NEW shared primitive needs a manual
-// addition (naming it, never its value) -- see the file header.
-const SHARED_PRIMITIVE_SELECTORS = new Set(
+// VF Wallet Task 10 fix loop 1 (I1 -- closing the reviewer's follow-up finding on Part A1):
+// the ORIGINAL version of this file made "wallet-relevant" an ALLOWLIST (SHARED_PRIMITIVE_SELECTORS,
+// a hand-maintained Set) -- anything not `.pc-wallet`-scoped and not already in that Set was
+// silently dropped. That is the identical blind spot the manifest itself was built to close, one
+// level up: the rule that caused the Arial regression (the global form-control font-family rule)
+// is a SHARED primitive, not `.pc-wallet`-scoped, and it was only in the manifest because a human
+// had already hand-added it to the Set. The next shared primitive added to the contract would be
+// dropped exactly the same way, silently, with nothing failing.
+//
+// FIX: invert the filter to INCLUDE EVERY contract rule BY DEFAULT, and require an explicit,
+// commented EXCLUSION for anything that is not wallet-relevant. Silence now means "ported, or
+// deliberately excluded with a stated reason" -- never "nobody thought about it yet". Dropping a
+// rule from the manifest now requires an affirmative act (adding it to one of the two exclusion
+// sets below), not an act of remembering to add it to an inclusion list.
+//
+// The contract file (976 lines) also styles the Foundation shell, Strategy, My Money, and shared
+// dialog/sheet surfaces this 360px wallet component never renders -- those rules are excluded
+// below, grouped by contract section, each group with ONE reason (not one comment per selector).
+// This is real, verified-by-grep work, not a rubber stamp: every exclusion below was checked
+// against actual usage in frontend/src/wallet/ui/**/*.jsx and frontend/extension/*.jsx before being
+// listed (see the VF Wallet Task 10 fix loop 1 report for the grep transcript). Two rules that
+// LOOKED excludable on a first pass were NOT excluded because they turned out to be genuinely used:
+// `.pc-support` (classic/SendScreen.jsx's confirm card) had no shipped counterpart at all --
+// ported to WalletShell.jsx by this same fix loop, a real gap this inversion caught for real.
+
+// Selectors excluded by EXACT, full (comma-joined) selector text -- document-level rules this
+// self-contained component structurally does not own (see the file header: "this component owns
+// no document-level selector"), the three `:root`-scoped token blocks (contractTokens.test.js
+// already owns token VALUES; color-scheme is extracted separately below via
+// rootColorSchemeEntry), the one bare-tag rule that can never bind inside a 360px-wide box, and the
+// one existing element-scoped exclusion carried from VF Wallet Task 9/10 Part A1.
+const EXACT_EXCLUDED_SELECTORS = new Set(
   [
-    '*, *::before, *::after',
-    'h1, h2, h3, button, input, select, textarea',
-    'code, pre, .pc-technical',
-    ':where(a, button, input, select, textarea, summary):focus-visible',
-    '.pc-button',
-    '.pc-button--primary',
-    '.pc-button--secondary',
-    '.pc-button:active:not(:disabled)',
-    ".pc-button:disabled, .pc-button[aria-disabled='true']",
-    '.pc-field',
-    '.pc-field > label',
-    '.pc-input',
-    '.pc-field-help, .pc-field-error',
-    '.pc-row',
-    '.pc-row:last-child',
-    '.pc-brand-lockup',
-    '.pc-brand-lockup img, .pc-brand-lockup svg',
-    '.pc-brand-lockup--compact img, .pc-brand-lockup--compact svg',
-    '.pc-network-badge',
-    // NOT '.pc-network-badge img, .pc-network-badge svg' (base or --compact, or the 767px
-    // variant): WalletShell's network badge is TEXT-ONLY ("Stellar testnet", no icon element) --
-    // confirmed by grepping the shipped source, not assumed. Requiring an image-sizing rule for an
-    // icon this component never renders would be a false-positive trap, not a real omission (the
-    // rejection checklist's item 9 forbids a logo WITHOUT text, not text without a logo). If a
-    // future task adds an icon to this badge, add these selectors back here.
-    '.pc-route-intro',
-    ":where(button, [role='button'], a[href], summary, input, select, textarea)",
+    ":root, :root[data-theme='forest']", // token values (+ color-scheme, extracted separately)
+    ":root[data-theme='day-field']", // token values; day-field theming not implemented here
+    ':root', // the base token mega-block AND its 767px override block (identical selector text)
+    'html, body', // component owns no document-level selector (file header)
+    'body', // component owns no document-level selector (file header)
+    'p', // `max-width: 64ch` can never bind inside .pc-wallet's fixed 360px/100vw box
+    '.pc-wallet-critical, [data-pocket-critical]', // element-scoped no-op, see below (unchanged)
   ].map(normalizeWs)
 )
+
+// Selectors excluded by TOKEN PREFIX -- a comma-separated selector token is out-of-scope if it
+// STARTS WITH one of these base selectors at a real selector-syntax boundary (whitespace, a
+// combinator, `:`, `[`, or end-of-string -- never a bare hyphen, so `.pc-money-hero` can never
+// accidentally swallow the separately-listed `.pc-money-hero-meta`). A whole rule is excluded only
+// when EVERY one of its comma-separated alternatives is out-of-scope this way -- a mixed selector
+// like `h1, h2, h3, p { margin-top: 0 }` stays wallet-relevant because h1/h2/h3 are not excluded,
+// even though bare `p` is (see EXACT_EXCLUDED_SELECTORS above). This also transparently covers
+// compound/descendant forms of an excluded base (`.pc-money-actions .pc-button`,
+// `.pc-money-section > header`) and repeated media-query variants of the same selector text,
+// without needing a separate entry per breakpoint.
+const EXCLUDED_TOKEN_BASES = [
+  // Foundation desktop app shell + route grid: the 360px wallet popup uses its own
+  // .pc-wallet-shell grid entirely (grep-confirmed zero usage in wallet/ui/**, extension/**).
+  '.pc-app-shell',
+  '.pc-app-main',
+  '.pc-route',
+  '.pc-route-stack',
+  '.pc-route-header',
+  // Foundation/Strategy/My Money "one dominant surface" role classes: the wallet's own
+  // dominant/supporting surfaces are .pc-wallet-consequence and .pc-support (ported into
+  // WalletShell.jsx by this fix loop -- a real gap this inversion caught: classic/SendScreen.jsx's
+  // confirm card used .pc-support with no shipped counterpart at all), never these.
+  '.pc-dominant',
+  '.pc-dominant--decision',
+  '.pc-dominant--owned',
+  '.pc-dominant--workspace',
+  '.pc-support-group',
+  // No destructive/danger-styled pc-button exists anywhere in the wallet today (grep-confirmed
+  // zero usage in wallet/ui/**, extension/**) -- BackupScreen's "Skip for now (risky)" and every
+  // other secondary action uses .pc-button--secondary, not this. Port it if a future task adds one.
+  '.pc-button--danger',
+  // Wordmark + money-figure display: the wallet has no serif brand lockup (grep-confirmed zero
+  // .pc-wordmark usage) and its money display is .pc-wallet-balance (contract :742-748, already
+  // `.pc-wallet`-scoped and ported) -- classic/HomeScreen.jsx does set the `data-pocket-money`
+  // marker attribute on that element for the app-wide motion/testing convention, but the
+  // TYPOGRAPHY comes from .pc-wallet-balance, not this rule (--pc-font-display and --pc-font-body
+  // are the identical font stack in this contract, so no visual difference results either way).
+  '.pc-wordmark',
+  '.pc-money-figure',
+  '[data-pocket-money]',
+  // Multi-network route display + generic agent identity marks: the wallet shows exactly one
+  // network badge per screen via the already-ported bare .pc-network-badge, never a route of
+  // several; it renders no agent marks at all (grep-confirmed zero usage of both).
+  '.pc-network-route',
+  '.pc-agent-mark',
+  '.pc-agent-mark--hero',
+  // .pc-network-badge's icon-sizing rules specifically (base, --compact, and the byte-identical
+  // 767px repeat): WalletShell's badge is TEXT-ONLY ("Stellar testnet"/"Base Sepolia", no icon
+  // element) -- confirmed by grepping the shipped source, not assumed. Requiring an image-sizing
+  // rule for an icon this component never renders would be a false-positive trap, not a real
+  // omission (the rejection checklist's item 9 forbids a logo WITHOUT text, not text without a
+  // logo). If a future task adds an icon to this badge, remove these two entries.
+  '.pc-network-badge img',
+  '.pc-network-badge svg',
+  '.pc-network-badge--compact img',
+  '.pc-network-badge--compact svg',
+  // Strategy surface (Plan/Protect/Start) in its entirety: the wallet has no stage-based question
+  // flow, agent lanes, or allocation list (grep-confirmed zero usage of all of the below).
+  '.pc-strategy-stage-nav',
+  '.pc-strategy-layout',
+  '.pc-strategy-decision',
+  '.pc-strategy-question',
+  '.pc-strategy-amount',
+  '.pc-strategy-aside',
+  '.pc-allocation-list',
+  '.pc-agent-lanes',
+  '.pc-position-list',
+  '.pc-crew-list',
+  '.pc-allocation-row',
+  '.pc-protect-boundary',
+  '.pc-protect-limit',
+  '.pc-agent-lane',
+  '.pc-agent-lane-progress',
+  // My Money surface: the wallet's own money-first Home/Activity/Receive (VF Wallet Task 10) use
+  // .pc-wallet-* classes throughout, never these (grep-confirmed zero usage of all of the below).
+  '.pc-money-hero',
+  '.pc-money-hero-meta',
+  '.pc-money-actions',
+  '.pc-money-section',
+  '.pc-position-row',
+  '.pc-crew-row',
+  // Shared dialog/sheet: every wallet screen is the single WalletShell viewport itself -- no
+  // modal/sheet surface exists here (grep-confirmed zero .pc-dialog usage in wallet/ui/**).
+  '.pc-dialog',
+  '.pc-dialog-panel',
+  '.pc-dialog-actions',
+  // Motion hooks: motion is deliberately deferred entirely for every Task 9/10 wallet surface (see
+  // WalletShell.jsx's file header and the Task 10 report's Concerns) -- neither hook is used.
+  '[data-pocket-enter]',
+  '[data-pocket-value-changed]',
+].map(normalizeWs)
+
+function isExcludedToken(token) {
+  return EXCLUDED_TOKEN_BASES.some((base) => {
+    const escaped = base.replace(/[.[\]]/g, '\\$&')
+    return new RegExp(`^${escaped}(?:[\\s>+~:]|$)`).test(token)
+  })
+}
 
 // :root's mega token-block is out of scope (Foundation's contractTokens.test.js already guards
 // token values) EXCEPT the one bare, non-token declaration living inside it that a wallet screen
@@ -202,20 +317,20 @@ function rootColorSchemeEntry(rules) {
   return { selector: '.pc-wallet', media: null, declarations: [decl] }
 }
 
-// Selectors that DO carry `.pc-wallet` (so the generic predicate below would otherwise flag them)
-// but are DELIBERATELY not ported, for a reasoned reason recorded in WalletShell.jsx's own header
-// history -- not an oversight this guard should chase. `.pc-wallet-critical, [data-pocket-critical]`
-// is the one case today: VF Wallet Task 9 fix loop 1 found the contract's paired
+// `.pc-wallet-critical, [data-pocket-critical]` DOES carry `.pc-wallet` in its own text (so the
+// generic predicate below would otherwise flag it as always-relevant), but is DELIBERATELY not
+// ported, for a reasoned reason recorded in WalletShell.jsx's own header history -- not an
+// oversight this guard should chase. VF Wallet Task 9 fix loop 1 found the contract's paired
 // `animation: none !important` rule for this selector is a NO-OP (the selector is element-scoped,
 // not descendant-scoped, so it never stopped a child from animating) and removed it outright,
 // documenting "keeping a rule that looks like a safety net but is not is worse than no rule." A
 // manifest that forced this rule back in would be reverting a reasoned fix, not catching a bug.
-const EXCLUDED_SELECTORS = new Set([normalizeWs('.pc-wallet-critical, [data-pocket-critical]')])
-
+// (Listed in EXACT_EXCLUDED_SELECTORS above, checked first so it wins over the `.pc-wallet` test.)
 function isWalletRelevant(rule) {
-  if (EXCLUDED_SELECTORS.has(rule.selector)) return false
+  if (EXACT_EXCLUDED_SELECTORS.has(rule.selector)) return false
   if (rule.selector.includes('.pc-wallet')) return true
-  return SHARED_PRIMITIVE_SELECTORS.has(rule.selector)
+  const tokens = rule.selector.split(',').map(normalizeWs)
+  return !tokens.every(isExcludedToken)
 }
 
 // Builds the committed manifest from raw contract CSS text: a flat, generated (never hand-typed)
@@ -242,6 +357,49 @@ export function buildManifest(contractText) {
   }))
 }
 
+export function serializeManifest(manifest) {
+  return JSON.stringify(manifest, null, 2) + '\n'
+}
+
+// VF Wallet Task 10 fix loop 1, I1 part (ii): a stale manifest was previously only detectable by a
+// human remembering to run this script and eyeball a diff. This regenerates the manifest from the
+// local contract IN MEMORY (never writes) and compares it to the committed file's CONTENT (parsed
+// and deep-compared, not a byte-for-byte string diff): the working constraint that formats every
+// changed file with `npx prettier --write` before a commit reflows this JSON's short arrays onto
+// one line (`JSON.stringify(x, null, 2)` never does, always one element per line), so a raw string
+// comparison would report the freshly-formatted, perfectly-correct committed file as "stale" on
+// every single run -- a self-inflicted false positive, not a real drift signal. Comparing parsed
+// content is immune to that formatting churn while still catching every real difference (an added,
+// removed, or changed entry). Exported (not just reachable via the CLI's `--check` flag) so
+// WalletShell.test.jsx can call it directly as a normal vitest assertion -- "wired into the test
+// run" literally, not merely into a separately-remembered npm script. Returns `{ skipped: true }`
+// when the local, gitignored contract file is absent (the documented, graceful degradation
+// contractTokens.test.js already relies on for CI/fresh clones, where the manifest can't be
+// re-derived at all and the committed file is necessarily trusted as-is).
+export function checkManifestFreshness({
+  contractPath = DEFAULT_CONTRACT,
+  outPath = DEFAULT_OUT,
+} = {}) {
+  let contractText
+  try {
+    contractText = readFileSync(contractPath, 'utf8')
+  } catch {
+    return { skipped: true }
+  }
+  const freshManifest = buildManifest(contractText)
+  const freshText = serializeManifest(freshManifest)
+  let committedManifest = null
+  let committedText = null
+  try {
+    committedText = readFileSync(outPath, 'utf8')
+    committedManifest = JSON.parse(committedText)
+  } catch {
+    committedManifest = null
+  }
+  const fresh = JSON.stringify(freshManifest) === JSON.stringify(committedManifest)
+  return { skipped: false, fresh, freshText, committedText }
+}
+
 function parseArgs(argv) {
   const out = {}
   for (const arg of argv) {
@@ -252,9 +410,32 @@ function parseArgs(argv) {
 }
 
 function main() {
-  const args = parseArgs(process.argv.slice(2))
+  const argv = process.argv.slice(2)
+  const args = parseArgs(argv)
   const contractPath = args.contract ? path.resolve(process.cwd(), args.contract) : DEFAULT_CONTRACT
   const outPath = args.out ? path.resolve(process.cwd(), args.out) : DEFAULT_OUT
+
+  if (argv.includes('--check')) {
+    const result = checkManifestFreshness({ contractPath, outPath })
+    if (result.skipped) {
+      console.log(
+        '[generate-wallet-contract-manifest] --check: contract not present locally ' +
+          '(expected in CI/fresh clones) -- skipping.'
+      )
+      process.exit(0)
+    }
+    if (!result.fresh) {
+      console.error(
+        '[generate-wallet-contract-manifest] --check: walletContractManifest.generated.json is STALE.'
+      )
+      console.error(
+        '[generate-wallet-contract-manifest] --check: run `node scripts/generate-wallet-contract-manifest.mjs` to regenerate.'
+      )
+      process.exit(1)
+    }
+    console.log('[generate-wallet-contract-manifest] --check: manifest is up to date.')
+    return
+  }
 
   let contractText
   try {
@@ -269,7 +450,7 @@ function main() {
   }
 
   const manifest = buildManifest(contractText)
-  writeFileSync(outPath, JSON.stringify(manifest, null, 2) + '\n')
+  writeFileSync(outPath, serializeManifest(manifest))
   console.log(`[generate-wallet-contract-manifest] wrote ${manifest.length} entries to ${outPath}`)
 }
 
