@@ -79,7 +79,7 @@ function seams({
     server: {},
     fetchClient: vi.fn(async () => clientResult),
     loadCache: () => cache.map((agentAddress) => ({ agentAddress })),
-    fetchRpcEvents: async () => rpc.map((agent) => ({ agent })),
+    fetchRpcEvents: async () => rpc.map((r) => (typeof r === 'string' ? { agent: r } : r)),
     queryRegistry: async () => registry,
     discoverVaultAgents: async () => vault,
     readScope: async (agent) => (agent in scopes ? scopes[agent] : null),
@@ -405,5 +405,57 @@ describe('discoverOwnerScopes', () => {
       fs.readFile(new URL('./ownerDiscovery.js', import.meta.url), 'utf8')
     )
     expect(src).not.toMatch(/SOROBAN_DEMO_AGENT/)
+  })
+})
+
+// My Money Task 13, Part B item 6: RouterDeployedEvent's own `cap` (fetchRouterDeployedEvents,
+// decodeDeployedEvent) used to be discarded one line after `addCandidate(ev.agent, SOURCE_RPC)` —
+// AgentTeam.jsx rendered a permanent "Cap: Unavailable" as a direct result, even on a scope-known
+// row this same RPC event proved a cap for. These prove the field actually survives to the
+// finished row, for both a scope-known AND a scope-read-failed row (the two branches that push to
+// `agents`) — a fix that only touched one branch would still leave the other regressed.
+describe('discoverOwnerScopes — cap carried from RouterDeployedEvent onto the agent row', () => {
+  it('a scope-known row carries the RPC event cap as a string (never a raw bigint in the envelope)', async () => {
+    const s = seams({
+      clientResult: client({ status: 'complete', agents: [] }),
+      rpc: [{ agent: 'CAGENT1', cap: 5_000_0000000n }],
+      scopes: { CAGENT1: scope() },
+    })
+    const d = await discoverOwnerScopes({ owner: OWNER, ...s })
+    const row = d.agents.find((a) => a.address === 'CAGENT1')
+    expect(row.cap).toBe('50000000000')
+    expect(typeof row.cap).toBe('string')
+  })
+
+  it('a scope-read-failure row (chain-derived, retained per the CFAIL rule) still carries its cap', async () => {
+    const s = seams({
+      clientResult: client({ status: 'complete', agents: [] }),
+      rpc: [{ agent: 'CAGENT2', cap: 900n }],
+      scopes: {}, // readScope returns null for CAGENT2 -> scopeReadStatus:'failed' branch
+    })
+    const d = await discoverOwnerScopes({ owner: OWNER, ...s })
+    const row = d.agents.find((a) => a.address === 'CAGENT2')
+    expect(row.scopeReadStatus).toBe('failed')
+    expect(row.cap).toBe('900')
+  })
+
+  it('an agent no RouterDeployedEvent ever mentioned carries cap:null, never a fabricated 0', async () => {
+    const row = { address: 'CAGENT3', kind: 'deposit' }
+    const s = seams({
+      clientResult: client({ status: 'complete', agents: [row] }),
+      scopes: { CAGENT3: scope() },
+    })
+    const d = await discoverOwnerScopes({ owner: OWNER, ...s })
+    expect(d.agents.find((a) => a.address === 'CAGENT3').cap).toBeNull()
+  })
+
+  it('a cap of literal 0 is carried through (falsy but real -- must not collapse to null)', async () => {
+    const s = seams({
+      clientResult: client({ status: 'complete', agents: [] }),
+      rpc: [{ agent: 'CAGENT4', cap: 0n }],
+      scopes: { CAGENT4: scope() },
+    })
+    const d = await discoverOwnerScopes({ owner: OWNER, ...s })
+    expect(d.agents.find((a) => a.address === 'CAGENT4').cap).toBe('0')
   })
 })

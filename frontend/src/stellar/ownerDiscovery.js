@@ -137,17 +137,26 @@ export async function discoverOwnerScopes({
 
   // Candidate union, deduped by address — dedup never drops WHICH sources saw an address
   // (discoverySources below), and an API-known row's identity is never overwritten by a hint stub.
+  //
+  // My Money Task 13 (Part B item 6): `cap` rides along from a RouterDeployedEvent (the only
+  // source that ever carries one — decodeDeployedEvent, routerEvents.js) onto the candidate, then
+  // onto the finished agent row below. Previously discarded one line after `addCandidate(ev.agent,
+  // SOURCE_RPC)` dropped `ev.cap` — AgentTeam.jsx rendered a permanent "Cap: Unavailable" as a
+  // result, even though this on-chain evidence was already being fetched on this very path
+  // (fetchRouterDeployedEvents above). Never overwritten once set — a later source for the same
+  // address never carries a cap, so there is nothing to conflict with.
   const candidates = new Map()
-  const addCandidate = (address, source, apiRow) => {
+  const addCandidate = (address, source, apiRow, cap) => {
     if (!address) return
-    const c = candidates.get(address) || { address, sources: new Set(), apiRow: null }
+    const c = candidates.get(address) || { address, sources: new Set(), apiRow: null, cap: null }
     c.sources.add(source)
     if (apiRow) c.apiRow = apiRow
+    if (cap != null && c.cap == null) c.cap = String(cap)
     candidates.set(address, c)
   }
   for (const row of client.agents ?? []) addCandidate(row.address, SOURCE_API, row)
   for (const entry of cached) addCandidate(entry.agentAddress, SOURCE_CACHE)
-  for (const ev of rpcEvents) addCandidate(ev.agent, SOURCE_RPC)
+  for (const ev of rpcEvents) addCandidate(ev.agent, SOURCE_RPC, null, ev.cap)
   for (const addr of registryAgents) addCandidate(addr, SOURCE_REGISTRY)
   for (const addr of vaultAgents) addCandidate(addr, SOURCE_VAULT)
 
@@ -168,7 +177,7 @@ export async function discoverOwnerScopes({
 
   for (const r of settled) {
     if (r.status !== 'fulfilled') continue
-    const { address, sources, apiRow, scope } = r.value
+    const { address, sources, apiRow, scope, cap } = r.value
     const discoverySources = [...sources].sort()
     if (scope == null) {
       // apiRow present = the D1 index already proved this address is the owner's — a dead RPC
@@ -198,6 +207,7 @@ export async function discoverOwnerScopes({
         revoked: null,
         expiry: null,
         authorized: null,
+        cap: cap ?? null,
       })
       continue
     }
@@ -216,6 +226,7 @@ export async function discoverOwnerScopes({
       revoked: Boolean(scope.revoked),
       expiry: Number(scope.expiry ?? 0),
       authorized: true,
+      cap: cap ?? null,
     })
   }
 
