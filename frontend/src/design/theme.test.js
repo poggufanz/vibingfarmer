@@ -85,6 +85,23 @@ const normalizedCssValue = (value) =>
     .replace(/\s*\/\s*/g, '/')
     .toUpperCase()
 
+// jsdom's getComputedStyle does not substitute var() references inside a custom property's own
+// computed value -- it returns the declaration text verbatim. The Wave 5 token port (see
+// contractTokens.test.js) aliases several CORE_VARIABLES entries to another custom property
+// (e.g. `--pc-canvas: var(--pc-field)`), so this test has to follow that reference itself to
+// keep asserting the actual resolved color rather than the literal string "var(--pc-field)".
+const resolveComputedVar = (computed, rawValue, depth = 5) => {
+  let value = rawValue.trim()
+  let iterations = 0
+  while (/var\(\s*--[\w-]+\s*\)/.test(value) && iterations < depth) {
+    value = value.replace(/var\(\s*(--[\w-]+)\s*\)/g, (_, name) =>
+      computed.getPropertyValue(name).trim()
+    )
+    iterations += 1
+  }
+  return value
+}
+
 describe('Pocket Crew theme contract', () => {
   it('exports the exact theme ids and deeply immutable theme records', () => {
     expect(THEME_IDS).toEqual({ FOREST: 'forest', DAY_FIELD: 'day-field' })
@@ -164,9 +181,8 @@ describe('Pocket Crew CSS theme parity', () => {
       const tokens = THEMES[themeId]
 
       Object.entries(CORE_VARIABLES).forEach(([property, token]) => {
-        expect(normalizedCssValue(computed.getPropertyValue(property)), property).toBe(
-          tokens[token]
-        )
+        const resolvedValue = resolveComputedVar(computed, computed.getPropertyValue(property))
+        expect(normalizedCssValue(resolvedValue), property).toBe(tokens[token])
       })
       Object.entries(compatibilityValues(tokens, themeId)).forEach(([property, expected]) => {
         expect(normalizedCssValue(computed.getPropertyValue(property)), property).toBe(
