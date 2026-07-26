@@ -17,10 +17,9 @@
 //     `onRetryPreflight`, `onRequestGrant`, `onEditPlan` -- and it is the composition layer
 //     (Task 13) that will make calling them dispatch the real reducer events. `onRetryPreflight`
 //     serves both the FIRST permission check and every later retry (PlanStage's onGenerate/
-//     onRetryLive precedent). `onRequestGrant` serves BOTH the real fresh-grant wallet signature
-//     AND the zero-signature reuse confirmation -- both are "the one action that moves this run
-//     forward," and branching which one happens is `onRequestGrant`'s own job (it knows the
-//     reviewed decision), not a second prop.
+//     onRetryLive precedent). `onRequestGrant`/`onConfirmReuse` together cover "the one action
+//     that moves this run forward" -- see the fix loop 1 / I2 note below for why this component
+//     now picks between two distinctly-named props instead of branching inside one.
 //   - `onConnectWallet` is one small necessary addition beyond those three: connecting a wallet
 //     (address disclosure) is not itself a grant request, and the brief's disconnected-choice
 //     requirement needs a trigger distinct from `onRequestGrant`. `owner` stays a plain prop
@@ -34,13 +33,37 @@
 //     proof the reviewed permission no longer holds -- and Retry re-runs `onRetryPreflight`
 //     (never `onRequestGrant`, so no surprise wallet popup). A plain wallet rejection/failure
 //     PRESERVES the decision (nothing about the permission itself was invalidated, only the
-//     signature attempt) and Retry re-runs `onRequestGrant` directly, mirroring flowState.js's own
-//     'rejected' -> GRANT_REQUESTED-allowed-again shape.
+//     signature attempt) and Retry re-runs the same `onRequestGrant`/`onConfirmReuse` action
+//     directly, mirroring flowState.js's own 'rejected' -> GRANT_REQUESTED-allowed-again shape.
 //   - Rice (`.pc-protect-limit`, `--pc-owned`) renders ONLY the reuse-usable receipt: an
 //     already-proven, on-chain-verified headroom (checklist item 4: Rice is reserved for
 //     confirmed money). A fresh decision's "headroom after granting"/"worst case" figures are
 //     still prospective -- true only once the grant actually confirms -- so they render in the
 //     neutral `.pc-support` role instead, never in Rice.
+//
+// Fix loop 1 notes (review findings, all fixed inside this file only):
+//   - C1 (Critical): `reviewedBudgets[].token`, `reviewedAgentInits[].cap.token`, and reuse
+//     `agents[].headroom.token` are Stellar CONTRACT ADDRESSES in production, never a currency
+//     symbol -- reusePreflight.js only ever copies through whatever `token` a caller's AgentInit
+//     carried (reusePreflight.js:44-46 `capView`, :359 `headroom`), and grant.js's
+//     `agentInitScVal`/`tokenBudgetScVal` (grant.js:88,101) both wrap that same field in
+//     `addrScVal`, which THROWS on anything that isn't a real Stellar Address -- so by the time
+//     any of these three fields reaches this component, it cannot be a friendly literal like
+//     'USDC'. Every render site below now resolves a display symbol via `tokenSymbol()` instead
+//     of printing the field verbatim; the raw address still renders, correctly, inside
+//     TechnicalDetails' "Token contract:" line a few lines below -- that is the one place a raw
+//     identifier belongs.
+//   - I3 (Important): "Cap per period" and "Worst case" now label from the SAME reviewed value's
+//     own token (`reviewed.cap.token` / `r.cap.token`), never `plan.amount.token` -- a mixed-token
+//     plan's second agent can be budgeted in a different Stellar contract than the plan's own
+//     display token names, and labelling it with the wrong asset is exactly the money-truth
+//     defect the brief's mixed-token rule forbids.
+//   - I2 (Important): the single `onRequestGrant` prop used for BOTH the fresh-grant signature and
+//     the zero-signature reuse confirmation let an integration silently dispatch the wrong
+//     reducer event for reuse and deadlock the flow (REUSE_CONFIRMED's guard fails against
+//     GRANT_REQUESTED's state). Split into two distinctly-named props -- `onRequestGrant` (fresh
+//     only) and `onConfirmReuse` (reuse only) -- so which one fires is unambiguous by construction,
+//     not by an integration correctly reading `decision.mode` on its own.
 import { useState } from 'react'
 import { MoneyFigure, StatusNotice, TechnicalDetails, VenueTruth } from '../pocket/Primitives.jsx'
 import { NetworkBadge, NetworkRoute } from '../pocket/NetworkIdentity.jsx'
@@ -49,8 +72,29 @@ import { PermissionPhaseError } from '../../strategy/permissionError.js'
 import { toPermissionDecisionView } from '../../strategy/reusePreflight.js'
 import { maxAtRisk } from '../../strategy/permissionScope.js'
 import { DURATION_PRESETS } from '../GrantPanel.jsx'
+import { SOROBAN_TOKEN_ADDRESS } from '../../stellar/config.js'
+import { STELLAR_USDC_SAC } from '../../stellar/cctpBurn.js'
 
 const DEFAULT_WALLETS = ['VF Wallet', 'Freighter', 'xBull', 'Albedo']
+
+// Fix loop 1 -- C1: the only two Stellar contracts this app ever budgets against today --
+// SOROBAN_TOKEN_ADDRESS (the Autofarm vault's Blend-pool USDC) and STELLAR_USDC_SAC (the CCTP
+// bridge's Circle USDC burn source -- the same asset PlanStage.jsx's own "Bridged as Circle USDC"
+// line already names). Reusing those two already-shipped labels here, rather than inventing new
+// copy, keeps this surface's friendly text consistent with what Plan already told the user. A
+// token this map doesn't recognize still never renders more than a short, visibly-truncated
+// identifier -- never the full 56-char address -- so an unmapped future token can't reopen this
+// defect (or the 320px overflow it originally caused).
+const TOKEN_SYMBOLS = {
+  [SOROBAN_TOKEN_ADDRESS]: 'USDC',
+  [STELLAR_USDC_SAC]: 'Circle USDC',
+}
+
+function tokenSymbol(token) {
+  if (TOKEN_SYMBOLS[token]) return TOKEN_SYMBOLS[token]
+  if (typeof token === 'string' && token.length > 12) return `${token.slice(0, 4)}…${token.slice(-4)}`
+  return token
+}
 
 // Same source network context PlanStage.jsx builds for its own bridge row -- not exported there,
 // so re-declared here identically (PlanStage.jsx is a sibling surface, not a shared module).
@@ -112,6 +156,7 @@ export function ProtectStage({
   onConnectWallet,
   onRetryPreflight,
   onRequestGrant,
+  onConfirmReuse,
   onEditPlan,
 }) {
   const [durationId, setDurationId] = useState('24h')
@@ -169,10 +214,15 @@ export function ProtectStage({
     }
   }
 
-  async function handleRequestGrant() {
+  // Fix loop 1 -- I2: which action fires is decided ONCE, here, from the held decision's own
+  // mode -- never left for an integration to infer from a single ambiguous prop. Retry (below)
+  // re-runs this same function, so a wallet-class retry still dispatches through the correct one
+  // of the two props even though `decision` (and therefore its mode) was never cleared.
+  async function handleAuthorize() {
     setPhase('requesting')
+    const action = decision?.mode === 'reuse' ? onConfirmReuse : onRequestGrant
     try {
-      const result = await onRequestGrant()
+      const result = await action()
       setConfirmedResult(result || {})
       setPhase('confirmed')
     } catch (err) {
@@ -191,7 +241,7 @@ export function ProtectStage({
   }
 
   function handleRetry() {
-    if (failureKind === 'wallet') handleRequestGrant()
+    if (failureKind === 'wallet') handleAuthorize()
     else handleCheckPermission()
   }
 
@@ -280,7 +330,7 @@ export function ProtectStage({
 
           {phase === 'review' && decision && decision.mode === 'fresh' && (
             <>
-              <button type="button" className="pc-button pc-button--primary" onClick={handleRequestGrant}>
+              <button type="button" className="pc-button pc-button--primary" onClick={handleAuthorize}>
                 Authorize with wallet
               </button>
               <button type="button" className="pc-button pc-button--secondary" onClick={handleEdit}>
@@ -291,7 +341,7 @@ export function ProtectStage({
 
           {phase === 'review' && decision && decision.mode === 'reuse' && usableReuse && (
             <>
-              <button type="button" className="pc-button pc-button--primary" onClick={handleRequestGrant}>
+              <button type="button" className="pc-button pc-button--primary" onClick={handleAuthorize}>
                 Continue
               </button>
               <button type="button" className="pc-button pc-button--secondary" onClick={handleEdit}>
@@ -339,11 +389,16 @@ export function ProtectStage({
             neutral `.pc-support` role below instead, never in Rice. */}
         {decision && decision.mode === 'reuse' && usableReuse && (
           <div className="pc-protect-limit">
+            {/* Minor (review finding): a point-in-time on-chain read had no freshness stamp
+                alongside its scope `Expires` -- one line, decision-level (checkedAt is one
+                timestamp for the whole preflight, not per-agent), makes the Rice claim
+                self-evidently sound. */}
+            <p>As of {formatExpiry(decision.checkedAt)}</p>
             {decision.agents.map((a) => (
               <div key={a.allocationId}>
                 <p>{a.agentAddress}</p>
                 <p>
-                  Headroom: {unitsToDisplay(a.headroom.units, a.headroom.decimals)} {a.headroom.token}
+                  Headroom: {unitsToDisplay(a.headroom.units, a.headroom.decimals)} {tokenSymbol(a.headroom.token)}
                 </p>
                 <p>Expires {formatExpiry(a.scopeExpiry)}</p>
               </div>
@@ -356,7 +411,7 @@ export function ProtectStage({
             <div className="pc-support-content">
               {decision.reviewedBudgets.map((b) => (
                 <p key={b.token}>
-                  Headroom after granting: {unitsToDisplay(b.units, b.decimals)} {b.token}
+                  Headroom after granting: {unitsToDisplay(b.units, b.decimals)} {tokenSymbol(b.token)}
                 </p>
               ))}
               {decision.reviewedAgentInits.map((r, i) => {
@@ -365,12 +420,21 @@ export function ProtectStage({
                   periodDuration: r.periodSeconds,
                   expiry: r.expiry,
                   nowSec: decision.checkedAt,
-                  approvedByUser: true,
+                  // Minor (review finding): this is the PRE-approval review screen -- nothing has
+                  // been approved yet, so claiming `approvedByUser: true` here was the wrong
+                  // signal (permissionScope.js's guard exists precisely to catch that claim).
+                  // Omitted, not `false`: `assertScope` only throws on a literal `false` (an
+                  // explicit refusal), and this call is pure display math, never the actual grant
+                  // args (`toAuthorizeArgs`) -- so leaving the field simply unset never claims
+                  // either state one way or the other.
                 })
                 return (
                   <p key={r.allocationId}>
+                    {/* Fix loop 1 -- I3/C1: label from THIS agent's own reviewed cap token, never
+                        plan.amount.token -- a mixed-token plan's second agent can be budgeted in a
+                        different Stellar contract than the plan's display token names. */}
                     Worst case for agent {i + 1}: {unitsToDisplay(exposure.toString(), r.cap.decimals)}{' '}
-                    {plan.amount.token}
+                    {tokenSymbol(r.cap.token)}
                   </p>
                 )
               })}
@@ -399,8 +463,11 @@ export function ProtectStage({
                   {reviewed && (
                     <>
                       <p>
+                        {/* Fix loop 1 -- I3/C1: label from THIS agent's own reviewed cap token, never
+                            plan.amount.token -- a mixed-token plan's second agent can be budgeted in a
+                            different Stellar contract than the plan's display token names. */}
                         Cap per period: {unitsToDisplay(reviewed.cap.units, reviewed.cap.decimals)}{' '}
-                        {plan.amount.token}
+                        {tokenSymbol(reviewed.cap.token)}
                       </p>
                       <p>Resets every {periodLabel(reviewed.periodSeconds)}</p>
                       <p>Expires {formatExpiry(reviewed.expiry)}</p>

@@ -18,6 +18,14 @@ import { axe } from 'vitest-axe'
 import * as axeMatchers from 'vitest-axe/matchers'
 import { ProtectStage } from './ProtectStage.jsx'
 import { PermissionPhaseError } from '../../strategy/permissionError.js'
+// Fix loop 1 -- C1 (review finding): every fixture below used to substitute a human label
+// ('USDC', 'Circle USDC (Base)') into `reviewedBudgets[].token` / `cap.token` / `headroom.token`
+// -- a shape reusePreflight.js/grant.js can never actually produce (grant.js's `addrScVal` throws
+// on anything that isn't a real Stellar Address). Importing the REAL production constants here
+// means these fixtures are byte-identical to what the real producers emit, so the suite can see
+// this class of defect instead of being structurally blind to it.
+import { SOROBAN_TOKEN_ADDRESS } from '../../stellar/config.js'
+import { STELLAR_USDC_SAC } from '../../stellar/cctpBurn.js'
 
 expect.extend(axeMatchers)
 
@@ -107,7 +115,16 @@ function deferred() {
 }
 
 const NOW = 1_800_000_000
-const TOKEN_ADDR = 'CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU'
+// The real vault deposit token (stellar/config.js's SOROBAN_TOKEN_ADDRESS) -- kept as its own
+// named constant (rather than importing-and-using directly at every call site) so a fixture
+// reading `token: TOKEN_ADDR` still reads as "a token", matching the shape reusePreflight.js's
+// own AgentInit/PermissionDecisionV1 fields carry.
+const TOKEN_ADDR = SOROBAN_TOKEN_ADDRESS
+// The real CCTP bridge burn-source token (stellar/cctpBurn.js's STELLAR_USDC_SAC) -- a SECOND,
+// genuinely different Stellar contract from TOKEN_ADDR, used below for the mixed-token fixtures
+// (C1/I3): both are "USDC" to a human, but distinct on-chain assets, exactly the case the brief's
+// mixed-token rule exists to keep distinguishable.
+const BRIDGE_TOKEN_ADDR = STELLAR_USDC_SAC
 const VAULT_ADDR = 'CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77'
 const OWNER = 'GCIOUP4UJAAFDBJNP5DY5CFJHBLEKGLHZ5E2AYRIIQ5VOZFVSTPRYHNS'
 const AGENT_1 = 'CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC'
@@ -185,7 +202,7 @@ function freshDecisionRaw(over = {}) {
     planFingerprint: '0xplan1',
     agentInitFingerprint: '0xagentinit1',
     checkedAt: NOW,
-    reviewedBudgets: [{ token: 'USDC', units: '1000000000', decimals: 7 }],
+    reviewedBudgets: [{ token: TOKEN_ADDR, units: '1000000000', decimals: 7 }],
     durationSeconds: 86400,
     reviewedAgentInits: [reviewedAgentInit()],
     mode: 'fresh',
@@ -204,14 +221,14 @@ function reuseDecisionRaw(over = {}) {
     mode: 'reuse',
     confirmationCount: 0,
     grantReceiptFingerprint: '0xreceipt1',
-    allowanceExpiryProof: { latestLedger: 1000, approvals: [{ amount: { token: 'USDC', units: '900000000' } }] },
+    allowanceExpiryProof: { latestLedger: 1000, approvals: [{ amount: { token: TOKEN_ADDR, units: '900000000' } }] },
     freshReason: null,
     agents: [
       {
         allocationId: 'run-1:deposit:0',
         workerId: 'run-1:deposit:0',
         agentAddress: AGENT_1,
-        headroom: { token: 'USDC', units: '900000000', decimals: 7 },
+        headroom: { token: TOKEN_ADDR, units: '900000000', decimals: 7 },
         scopeExpiry: NOW + 7200,
         scopeFingerprint: '0xscope1',
         executionCredentialRef: SECRET_REF,
@@ -231,6 +248,7 @@ function baseProps(overrides = {}) {
     onConnectWallet: vi.fn().mockResolvedValue(OWNER),
     onRetryPreflight: vi.fn().mockResolvedValue(freshDecisionRaw()),
     onRequestGrant: vi.fn().mockResolvedValue({ agentAddresses: [AGENT_1] }),
+    onConfirmReuse: vi.fn().mockResolvedValue({ agentAddresses: [AGENT_1] }),
     onEditPlan: vi.fn(),
     ...overrides,
   }
@@ -302,24 +320,64 @@ describe('ProtectStage — fresh review content (Step 2: friendly + technical co
   })
 
   it('does not collapse a mixed Stellar allowance + exact bridge budget into one misleading total', async () => {
+    // C1 (review finding): both rows use REAL, DIFFERENT Stellar contract addresses (the vault
+    // deposit token and the CCTP bridge's burn-source token) -- the exact production shape. The
+    // old fixture substituted human labels directly ('USDC', 'Circle USDC (Base)'), a shape
+    // reusePreflight.js/grant.js can never emit, which is why this test could pass even while the
+    // shipped code rendered a raw 56-char address where "Circle USDC" now correctly appears.
     const onRetryPreflight = vi.fn().mockResolvedValue(
       freshDecisionRaw({
         reviewedBudgets: [
-          { token: 'USDC', units: '1000000000', decimals: 7 },
-          { token: 'Circle USDC (Base)', units: '500000000', decimals: 7 },
+          { token: TOKEN_ADDR, units: '1000000000', decimals: 7 },
+          { token: BRIDGE_TOKEN_ADDR, units: '500000000', decimals: 7 },
         ],
       })
     )
     render(<ProtectStage {...baseProps({ plan: PLAN_WITH_BRIDGE, onRetryPreflight })} />)
     await checkPermission()
 
-    // Both budget rows render distinctly...
+    // Both budget rows render distinctly, as human symbols -- never the raw contract address...
     expect(screen.getByText(/Headroom after granting: 100 USDC/)).toBeTruthy()
-    expect(screen.getByText(/Headroom after granting: 50 Circle USDC \(Base\)/)).toBeTruthy()
+    expect(screen.getByText(/Headroom after granting: 50 Circle USDC/)).toBeTruthy()
     // ...and nothing on screen presents their sum (150) as a single ceiling/total.
     expect(screen.queryByText(/150/)).toBeNull()
     // The one true "intended amount" still comes from the reviewed plan, unaffected by budget rows.
     expect(screen.getByText('200 USDC')).toBeTruthy()
+  })
+
+  it('C1: labels each budget row with a human symbol, never the raw 56-char token contract address', async () => {
+    const onRetryPreflight = vi.fn().mockResolvedValue(freshDecisionRaw())
+    render(<ProtectStage {...baseProps({ onRetryPreflight })} />)
+    await checkPermission()
+
+    // The friendly review area (everything outside the collapsed TechnicalDetails disclosure)
+    // must never show the raw contract address -- only the resolved symbol.
+    const friendlyArea = document.querySelector('.pc-support-content')
+    expect(friendlyArea.textContent).toContain('USDC')
+    expect(friendlyArea.textContent).not.toContain(TOKEN_ADDR)
+  })
+
+  it('I3: "Cap per period" and "Worst case" label from EACH agent\'s own reviewed cap token, never plan.amount.token', async () => {
+    // A genuine mixed-token plan: the deposit agent is budgeted in TOKEN_ADDR (-> "USDC"), the
+    // bridge agent in a DIFFERENT real Stellar contract, BRIDGE_TOKEN_ADDR (-> "Circle USDC") --
+    // while plan.amount.token stays the generic 'USDC' literal for both. Before the I3 fix, both
+    // rows read `plan.amount.token` and were therefore identically (and for the bridge row,
+    // wrongly) labelled "USDC" regardless of which contract each agent was actually capped in.
+    const bridgeReviewed = reviewedAgentInit({
+      allocationId: 'run-1:bridge:base',
+      token: BRIDGE_TOKEN_ADDR,
+      cap: { token: BRIDGE_TOKEN_ADDR, units: '500000000', decimals: 7 },
+    })
+    const onRetryPreflight = vi.fn().mockResolvedValue(
+      freshDecisionRaw({ reviewedAgentInits: [reviewedAgentInit(), bridgeReviewed] })
+    )
+    render(<ProtectStage {...baseProps({ plan: PLAN_WITH_BRIDGE, onRetryPreflight })} />)
+    await checkPermission()
+
+    expect(screen.getByText(/Worst case for agent 1.*300 USDC/)).toBeTruthy()
+    expect(screen.getByText(/Worst case for agent 2.*150 Circle USDC/)).toBeTruthy()
+    expect(screen.getByText(/Cap per period: 100 USDC/)).toBeTruthy()
+    expect(screen.getByText(/Cap per period: 50 Circle USDC/)).toBeTruthy()
   })
 
   it('lets the user choose the duration preset before checking', async () => {
@@ -472,6 +530,33 @@ describe('ProtectStage — rejection/failure says "Nothing moved" and offers Ret
   })
 })
 
+describe('ProtectStage — I2: fresh and reuse authorize through distinct actions', () => {
+  it('the fresh review calls onRequestGrant, and never onConfirmReuse', async () => {
+    const onRequestGrant = vi.fn().mockResolvedValue({ agentAddresses: [AGENT_1] })
+    const onConfirmReuse = vi.fn().mockResolvedValue({ agentAddresses: [AGENT_1] })
+    render(<ProtectStage {...baseProps({ onRequestGrant, onConfirmReuse })} />)
+    await checkPermission()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Authorize with wallet' }))
+    await screen.findByText('Confirmed')
+    expect(onRequestGrant).toHaveBeenCalledTimes(1)
+    expect(onConfirmReuse).not.toHaveBeenCalled()
+  })
+
+  it('the reuse review calls onConfirmReuse, and never onRequestGrant -- a single shared action would dispatch GRANT_REQUESTED into REUSE_CONFIRMED\'s guard and deadlock the flow', async () => {
+    const onRetryPreflight = vi.fn().mockResolvedValue(reuseDecisionRaw())
+    const onRequestGrant = vi.fn().mockResolvedValue({ agentAddresses: [AGENT_1] })
+    const onConfirmReuse = vi.fn().mockResolvedValue({ agentAddresses: [AGENT_1] })
+    render(<ProtectStage {...baseProps({ onRetryPreflight, onRequestGrant, onConfirmReuse })} />)
+    await checkPermission()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    await screen.findByText('Confirmed')
+    expect(onConfirmReuse).toHaveBeenCalledTimes(1)
+    expect(onRequestGrant).not.toHaveBeenCalled()
+  })
+})
+
 describe('ProtectStage — PermissionPhaseError rebuilds a fresh review, never a surprise wallet request', () => {
   it('from the initial preflight: Retry re-checks, never opens the wallet', async () => {
     const onRetryPreflight = vi
@@ -494,26 +579,30 @@ describe('ProtectStage — PermissionPhaseError rebuilds a fresh review, never a
       .fn()
       .mockResolvedValueOnce(reuseDecisionRaw())
       .mockResolvedValueOnce(freshDecisionRaw())
-    const onRequestGrant = vi
+    // Reuse revalidation failures surface through onConfirmReuse (I2) -- onRequestGrant, the
+    // fresh-grant wallet action, must never even be called on this path.
+    const onConfirmReuse = vi
       .fn()
       .mockRejectedValueOnce(
         new PermissionPhaseError({ phase: 'reuse-revalidation', code: 'Y', message: 'evidence changed' })
       )
-    render(<ProtectStage {...baseProps({ onRetryPreflight, onRequestGrant })} />)
+    const onRequestGrant = vi.fn().mockResolvedValue({ agentAddresses: [AGENT_1] })
+    render(<ProtectStage {...baseProps({ onRetryPreflight, onConfirmReuse, onRequestGrant })} />)
     await checkPermission()
     expect(screen.getByRole('button', { name: 'Continue' })).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
     await screen.findByText('Nothing moved')
-    expect(onRequestGrant).toHaveBeenCalledTimes(1)
+    expect(onConfirmReuse).toHaveBeenCalledTimes(1)
+    expect(onRequestGrant).not.toHaveBeenCalled()
 
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
     expect(onRetryPreflight).toHaveBeenCalledTimes(2)
     // The stale reuse decision must not still be on screen (it was proven stale).
     await screen.findByRole('button', { name: 'Authorize with wallet' })
     expect(screen.queryByText(/0 wallet confirmations/)).toBeNull()
-    // Retry never re-invoked the wallet-requesting action on its own.
-    expect(onRequestGrant).toHaveBeenCalledTimes(1)
+    // Retry never re-invoked the reuse-confirming action on its own.
+    expect(onConfirmReuse).toHaveBeenCalledTimes(1)
   })
 })
 
