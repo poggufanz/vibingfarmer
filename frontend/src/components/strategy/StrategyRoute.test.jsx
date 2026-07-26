@@ -149,7 +149,11 @@ function succeededAllocation(allocationId) {
   return {
     allocationId,
     amount: amount(TOKEN_ADDR, '1000000000'),
-    networkContext: { executionNetwork: 'stellar-testnet', currentCustodyNetwork: 'stellar-testnet', transit: false },
+    networkContext: {
+      executionNetwork: 'stellar-testnet',
+      currentCustodyNetwork: 'stellar-testnet',
+      transit: false,
+    },
     executionStatus: 'succeeded',
     custody: { location: 'stellar-vault', confirmed: true, checkedAt: NOW },
     txHash: 'a1b2c3d4'.repeat(8),
@@ -240,20 +244,13 @@ describe('StrategyRoute — item 1 (rejection checklist): dominant decision, nev
   }
 })
 
-describe(
-  'StrategyRoute — item 12 (rejection checklist): 320px no overflow, 1240px desktop cap',
-  () => {
-    for (const [label, el] of Object.entries(STATES)) {
-      it(
-        `${label}: 320px creates no horizontal scroll and route content stays within 1240px at 1440px`,
-        async () => {
-          const { container } = render(el)
-          const { scrollWidth320, routeContentWidth1440 } = await measureRouteAt(container.innerHTML)
-          expect(scrollWidth320).toBe(320)
-          expect(routeContentWidth1440).toBeLessThanOrEqual(1240)
-        },
-        20000
-      )
-    }
+describe('StrategyRoute — item 12 (rejection checklist): 320px no overflow, 1240px desktop cap', () => {
+  for (const [label, el] of Object.entries(STATES)) {
+    it(`${label}: 320px creates no horizontal scroll and route content stays within 1240px at 1440px`, async () => {
+      const { container } = render(el)
+      const { scrollWidth320, routeContentWidth1440 } = await measureRouteAt(container.innerHTML)
+      expect(scrollWidth320).toBe(320)
+      expect(routeContentWidth1440).toBeLessThanOrEqual(1240)
+    }, 20000)
   }
-)
+})

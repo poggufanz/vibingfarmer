@@ -31,7 +31,12 @@ import { AGENT_KIND_DEPOSIT, AGENT_KIND_BRIDGE } from './stellar/grant.js'
 import { RouteFocus, SkipLink } from './components/pocket/RouteFocus.jsx'
 import { resolveDocumentTitle } from './appShellTitle.js'
 import { shortAddr } from './screens.jsx'
-import { MemoryModal, buildAutofarmGraphData, rebalancePulseKey, makeInitialExecState } from './agents.jsx'
+import {
+  MemoryModal,
+  buildAutofarmGraphData,
+  rebalancePulseKey,
+  makeInitialExecState,
+} from './agents.jsx'
 import { useTweaks, TweaksPanel, TweakSection, TweakRadio } from './tweaks-panel.jsx'
 import { applyTheme, isLightTheme, normalizeTheme } from './design/theme.js'
 
