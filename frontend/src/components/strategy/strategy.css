@@ -179,6 +179,98 @@
   white-space: nowrap;
 }
 
+/* Task 12 -- Start. Ported verbatim from the contract (lines 605-618); Task 10 explicitly left this
+ * unported because "no in-flight worker progress exists to draw" on Plan/Protect -- Start is
+ * exactly the surface it was reserved for. */
+.pc-agent-lane-progress {
+  height: 3px;
+  margin-top: var(--pc-space-2);
+  background: var(--pc-line);
+  overflow: hidden;
+}
+
+.pc-agent-lane-progress > span {
+  display: block;
+  width: var(--pc-progress, 0%);
+  height: 100%;
+  background: var(--pc-harvest);
+  transform-origin: left center;
+}
+
+/* Task 12 -- Start's own addition (not a contract selector): per-phase progress width, set via a
+ * data attribute on the lane row rather than an inline style -- matching Plan/Protect's convention
+ * of zero inline styles in this route's JSX (see PlanStage.test.jsx/ProtectStage.test.jsx's own
+ * "no component in this surface sets an inline style" guards). The reducer only ever reports which
+ * named milestone was reached, never a continuous percentage, so discrete steps (not a literal
+ * live percentage) are the honest representation here. A finite width transition, never a GSAP
+ * tween -- src/design/usePocketTransition.js may only animate opacity/x/y/scale. */
+.pc-agent-lane-progress > span {
+  transition: width var(--pc-duration-base) var(--pc-ease-standard);
+}
+
+[data-lane-phase='pending'] .pc-agent-lane-progress,
+[data-lane-phase='creating'] .pc-agent-lane-progress,
+[data-lane-phase='ready'] .pc-agent-lane-progress {
+  --pc-progress: 15%;
+}
+
+[data-lane-phase='queued'] .pc-agent-lane-progress {
+  --pc-progress: 30%;
+}
+
+[data-lane-phase='moving'] .pc-agent-lane-progress,
+[data-lane-phase='burning'] .pc-agent-lane-progress {
+  --pc-progress: 50%;
+}
+
+[data-lane-phase='depositing'] .pc-agent-lane-progress,
+[data-lane-phase='awaiting-attestation'] .pc-agent-lane-progress {
+  --pc-progress: 70%;
+}
+
+[data-lane-phase='minting'] .pc-agent-lane-progress,
+[data-lane-phase='in-transit'] .pc-agent-lane-progress {
+  --pc-progress: 85%;
+}
+
+[data-lane-phase='working'] .pc-agent-lane-progress,
+[data-lane-phase='confirmed'] .pc-agent-lane-progress {
+  --pc-progress: 100%;
+}
+
+[data-lane-phase='failed'] .pc-agent-lane-progress > span {
+  background: var(--pc-danger);
+}
+
+/* Task 12 -- Start's custody receipt. `.pc-dominant--owned` (Rice) is ported verbatim from the
+ * contract (lines 308-311) -- unused by Plan/Protect (neither surface has confirmed, settled
+ * money to show), but exactly the role a settled receipt's reconciled totals earn (checklist item
+ * 4: Rice is reserved for user-owned or confirmed money). */
+.pc-dominant--owned {
+  background: var(--pc-owned);
+  color: var(--pc-owned-ink);
+}
+
+/* Task 12 -- Start's own addition: the receipt's two CTAs. Same flex-row shape as the contract's
+ * (not-yet-ported, My-Money-reserved) `.pc-money-actions` -- reused tokens, own selector so this
+ * file never reaches into a sibling route's reserved class before that route exists. */
+.pc-receipt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pc-space-3);
+  margin-top: var(--pc-space-6);
+}
+
+/* Task 12 -- lanes render agent addresses/allocationIds and the receipt renders tx hashes and full
+ * contract addresses inside Technical details -- genuinely technical, whitespace-free strings.
+ * Same fix ProtectStage.jsx needed (its own comment above documents 617px/552px real-browser
+ * overflow before this rule existed) applied to this route's two new roots; `anywhere` is a
+ * keyword, not a duplicated hex/radius/spacing token, and a no-op for ordinary spaced copy. */
+.pc-start-stage,
+.pc-strategy-receipt {
+  overflow-wrap: anywhere;
+}
+
 /* Controls. Buttons are soft rectangles, not pills. Pills are reserved for compact metadata. */
 .pc-button {
   display: inline-flex;
@@ -411,6 +503,26 @@
    * untouched (verbatim, unedited) and every other surface still gets the locked nowrap/max-content
    * behavior. See PlanStage.test.jsx's G1 regression guard. */
   .pc-dominant--decision .pc-button {
+    min-width: 0;
+    white-space: normal;
+  }
+
+  /* Task 12 -- Start's receipt actions stack full-width on mobile, same pattern as the contract's
+   * (not yet ported) `.pc-money-actions`/`.pc-dialog-actions` mobile collapse. */
+  .pc-receipt-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .pc-receipt-actions .pc-button {
+    width: 100%;
+  }
+
+  /* Same G1 rationale as `.pc-dominant--decision` above, applied to Rice's own dominant surface --
+   * the receipt's long agent addresses/tx hashes live inside Technical details (overflow-wrap
+   * handled there), but its own two action buttons still lock min-width/nowrap from the contract's
+   * base `.pc-button` rule and must not force this surface wider than a 320px viewport. */
+  .pc-dominant--owned .pc-button {
     min-width: 0;
     white-space: normal;
   }
