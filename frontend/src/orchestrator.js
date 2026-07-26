@@ -1410,7 +1410,6 @@ export class OrchestratorAgent {
         : baseVaults.map((vault, index) => {
             const { baseTargetUnits6 } = deriveCctpTransferUnits(totalAmount * vault.allocation)
             return {
-              allocationId: vault.allocationId,
               amount: { token: 'USDC', units: String(baseTargetUnits6), decimals: 6 },
               success: baseLeg?.success === true,
               finalStatus: baseLeg?.finalStatus || (baseLeg?.success ? 'done' : 'error'),
