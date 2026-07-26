@@ -1,0 +1,273 @@
+/* frontend/src/components/money/my-money.css
+ * My Money Task 11 (Pocket Crew redesign, Wave 5). Every rule below is copied VERBATIM from the
+ * locked visual contract (docs/superpowers/specs/2026-07-23-pocket-crew-visual-contract.css,
+ * local-only, never imported directly) -- selectors, declarations, and values unchanged. Tokens
+ * (--pc-*) already live in frontend/src/design/pocket-crew.css (commit 208843d); this file adds
+ * no new hex/radius/spacing literal that duplicates one.
+ *
+ * Scope: only the contract sections MyMoneyRoute/MoneyHero/PositionList/AgentTeam/VaultProtection
+ * actually render. Same convention as strategy.css (Strategy Task 10): each route CSS file is its
+ * own independent port -- a visitor who lands on /agent without ever loading /strategy must still
+ * get correctly styled `.pc-dominant`/`.pc-button`/`.pc-money-*` rules, so those contract sections
+ * are re-ported here rather than assumed to already be on the page from strategy.css.
+ *
+ * Not ported here (out of this task's surface, or already covered elsewhere):
+ *   - .pc-app-shell, .pc-route-header/-intro: the outer app shell + route chrome belong to the
+ *     app frame (Foundation Task 6), not this route's own content. (.pc-route/.pc-route-stack
+ *     themselves are NOT Foundation-global -- pocket-crew.css never defines them, only
+ *     strategy.css has ported them so far -- so, same as strategy.css, they ARE re-ported below:
+ *     MyMoneyRoute.jsx renders both classes directly and a real-browser layout guard caught the
+ *     unconstrained-width regression from assuming otherwise.)
+ *   - .pc-agent-mark(--hero), .pc-money(--loading/--empty/--error/--unknown), .pc-money-stale-flag,
+ *     .pc-money-freshness, .pc-status-notice*, .pc-technical-details*, .pc-venue-truth*,
+ *     .pc-dialog*, .pc-visually-hidden, the shared :focus-visible rule: already ported into
+ *     pocket-crew.css (Foundation Task 5/6/7) and loaded globally -- re-declaring them here would
+ *     just be a duplicate, not a fix. This file only adds the narrow, SCOPED contrast overrides
+ *     those globals need once placed on Rice (see the `.pc-dominant--owned` block below).
+ *   - .pc-network-badge img/svg, .pc-network-badge--compact, .pc-agent-lane(-progress),
+ *     .pc-allocation-*, .pc-strategy-*, .pc-protect-*: no such markup exists anywhere on this
+ *     route (My Money never renders Plan/Protect/Start's own surfaces).
+ *   - Grouped selectors that mix an unbuilt/other-route class with one of ours (e.g.
+ *     `.pc-strategy-layout, .pc-protect-boundary, .pc-money-hero` or the
+ *     `.pc-route-header, .pc-strategy-layout, .pc-protect-boundary, .pc-money-hero,
+ *     .pc-money-section` responsive collapse, or `.pc-position-row, .pc-crew-row, .pc-agent-lane`)
+ *     are kept WHOLE, selector list untouched -- splitting a locked selector list to drop classes
+ *     this task doesn't use would itself be an edit to a verbatim rule (same precedent as
+ *     strategy.css). The extra selectors are inert on this route.
+ */
+
+/* Route content wrapper (contract :265-274). Ported here for the same reason `.pc-dominant`/
+ * `.pc-button` are below -- pocket-crew.css does not define `.pc-route`/`.pc-route-stack`; only
+ * strategy.css has ported them so far, and this route must not depend on that file being loaded. */
+.pc-route {
+  width: min(100%, calc(var(--pc-shell-max) + (2 * var(--pc-route-gutter))));
+  margin-inline: auto;
+  padding: var(--pc-route-gutter);
+}
+
+.pc-route-stack {
+  display: grid;
+  gap: var(--pc-route-gap);
+}
+
+/* Surface hierarchy. Roles, not a reusable card grid -- pocket-crew.css does not define these
+ * (only strategy.css has ported them so far), so this route needs its own copy. Only the ONE role
+ * this route's hero actually uses (Rice/owned -- confirmed money) is ported; Harvest/workspace are
+ * not used anywhere on this route (the state-aware primary action is a `.pc-button--primary`
+ * inside the Rice hero, never a whole Harvest decision surface -- My Money's job is showing
+ * confirmed money, not asking a question). */
+.pc-dominant {
+  position: relative;
+  overflow: clip;
+  border-radius: var(--pc-radius-dominant);
+  padding: var(--pc-dominant-padding);
+  box-shadow: var(--pc-shadow-dominant);
+}
+
+.pc-dominant--owned {
+  background: var(--pc-owned);
+  color: var(--pc-owned-ink);
+}
+
+/* Controls. Buttons are soft rectangles, not pills. Pills are reserved for compact metadata. */
+.pc-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: max-content;
+  min-height: var(--pc-control-height);
+  padding: 0 var(--pc-space-6);
+  border: 1px solid transparent;
+  border-radius: var(--pc-radius-control);
+  font-size: var(--pc-type-body-small);
+  font-weight: 700;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    transform var(--pc-duration-fast) var(--pc-ease-standard),
+    background-color var(--pc-duration-fast) var(--pc-ease-standard),
+    border-color var(--pc-duration-fast) var(--pc-ease-standard);
+}
+
+.pc-button--primary {
+  background: var(--pc-harvest);
+  color: var(--pc-harvest-ink);
+}
+
+.pc-button--secondary {
+  border-color: var(--pc-line-strong);
+  background: transparent;
+  color: currentcolor;
+}
+
+.pc-button--danger {
+  border-color: var(--pc-danger);
+  background: transparent;
+  color: var(--pc-danger);
+}
+
+.pc-button:active:not(:disabled) {
+  transform: translateY(1px) scale(0.99);
+}
+
+.pc-button:disabled,
+.pc-button[aria-disabled='true'] {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+/* My Money. Rice is used only when values are confirmed or explicitly marked stale (contract
+ * :620-666). */
+.pc-money-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(240px, 5fr);
+  gap: var(--pc-space-10);
+  min-height: 300px;
+  align-items: end;
+}
+
+.pc-money-hero-meta {
+  display: grid;
+  gap: var(--pc-space-4);
+  align-self: stretch;
+  align-content: end;
+  border-left: 1px solid rgb(23 37 31 / 20%);
+  padding-left: var(--pc-space-8);
+}
+
+.pc-money-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pc-space-3);
+  margin-top: var(--pc-space-8);
+}
+
+.pc-money-section {
+  display: grid;
+  grid-template-columns: minmax(180px, 3fr) minmax(0, 9fr);
+  gap: var(--pc-space-8);
+  align-items: start;
+}
+
+.pc-money-section > header {
+  position: sticky;
+  top: calc(var(--pc-topbar-height) + var(--pc-space-6));
+}
+
+.pc-position-row,
+.pc-crew-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(128px, auto);
+  gap: var(--pc-space-4);
+  align-items: center;
+  min-height: 84px;
+  padding-block: var(--pc-space-4);
+  border-bottom: 1px solid var(--pc-line);
+}
+
+/* This route's own addition (not a contract selector): a bridge agent's Stellar-hosted position
+ * row hosts nested Base custody rows for each of its settled/in-transit legs (Step 3: "its Base
+ * children are separate nested rows"). `grid-column: 1 / -1` puts the nested list on its own full-
+ * width row inside the parent's existing 3-column track rather than fighting for a column; only
+ * existing spacing tokens are used, no new literal. Same pattern as strategy.css's own scoped
+ * additions (`.pc-comfort-group`, `.pc-support-content`). */
+.pc-position-row-children,
+.pc-crew-row-recovery {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: var(--pc-space-3);
+  margin: var(--pc-space-2) 0 0;
+  padding: 0 0 0 var(--pc-space-8);
+  list-style: none;
+}
+
+.pc-crew-row-recovery {
+  padding-left: 0;
+}
+
+/* Fix precedent reused verbatim from strategy.css's own I1 finding (fix loop 1): pocket-crew.css's
+ * global `.pc-money--loading/--empty/--error/--unknown`, `.pc-money-stale-flag`, and
+ * `.pc-money-freshness` rules hardcode `color: var(--pc-muted)` (and `.pc-money--error` hardcodes
+ * `var(--pc-danger)`) -- calibrated for the dark Field/workspace canvas, not for text placed on
+ * this route's light Rice hero (`.pc-dominant--owned`, background `--pc-owned`). Scoped override,
+ * same two replacement tokens strategy.css already established for exactly this situation
+ * (`--pc-owned-muted`, `--pc-danger-on-light`) -- Foundation's own file is untouched, and nothing
+ * outside `.pc-dominant--owned` is affected. */
+.pc-dominant--owned .pc-money--loading,
+.pc-dominant--owned .pc-money--empty,
+.pc-dominant--owned .pc-money--unknown,
+.pc-dominant--owned .pc-money-stale-flag,
+.pc-dominant--owned .pc-money-freshness {
+  color: var(--pc-owned-muted);
+}
+
+.pc-dominant--owned .pc-money--error {
+  color: var(--pc-danger-on-light);
+}
+
+/* Position/agent rows and the technical/receipt disclosures render agent addresses, tx hashes,
+ * and contract ids -- genuinely technical, whitespace-free strings. Same fix strategy.css/
+ * ProtectStage.jsx needed (real-browser 320px overflow before this rule existed); `anywhere` is a
+ * keyword, not a duplicated hex/radius/spacing token, and a no-op for ordinary spaced copy. */
+.pc-my-money-route {
+  overflow-wrap: anywhere;
+}
+
+/* Tablet. Supporting context moves below the dominant surface (contract :800-831, kept whole). */
+@media (max-width: 1023px) {
+  .pc-strategy-layout,
+  .pc-protect-boundary,
+  .pc-money-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .pc-money-hero-meta {
+    border-top: 1px solid rgb(23 37 31 / 20%);
+    border-left: 0;
+    padding-top: var(--pc-space-6);
+    padding-left: 0;
+  }
+}
+
+/* Mobile. Asymmetry collapses to one column and all actions remain reachable (contract :834-914,
+ * kept whole). */
+@media (max-width: 767px) {
+  .pc-route-header,
+  .pc-strategy-layout,
+  .pc-protect-boundary,
+  .pc-money-hero,
+  .pc-money-section {
+    grid-template-columns: 1fr;
+    gap: var(--pc-space-6);
+  }
+
+  .pc-money-section > header {
+    position: static;
+  }
+
+  .pc-money-actions,
+  .pc-dialog-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .pc-money-actions .pc-button,
+  .pc-dialog-actions .pc-button {
+    width: 100%;
+  }
+
+  .pc-position-row,
+  .pc-crew-row,
+  .pc-agent-lane {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .pc-position-row > :last-child,
+  .pc-crew-row > :last-child,
+  .pc-agent-lane > :last-child {
+    grid-column: 2;
+    justify-self: start;
+  }
+}
