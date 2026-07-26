@@ -1,3 +1,26 @@
+// frontend/src/wallet/ui/classic/HistoryScreen.jsx
+// VF Wallet Task 10, Step 3 -- truthful Activity. Recomposed onto the shared pc-* primitives
+// (WalletShell.jsx owns the CSS). Renders the Stellar testnet leg of Activity; WalletActivity.jsx
+// is the account-agnostic orchestrator that also has structural room for a Base Sepolia leg (see
+// its own header for why the wallet extension has no live Base activity source to populate it
+// with yet).
+//
+// Money-truth (Step 3): `items == null` means the read genuinely could not be attempted/completed
+// -- rendered as "unavailable", never silently folded into the same empty state as a confirmed
+// zero-transaction history (`items` as `[]`). Every row here comes from Horizon's payments
+// collection, which by construction only ever lists successfully-applied, ledger-included
+// operations -- there is no "pending"/"failed" Stellar row this data source can produce, so every
+// row is honestly labeled Confirmed (not fabricated optimism; Horizon does not return anything
+// else here).
+//
+// KNOWN GAP (documented, not silently ignored): wallet/history.js's fetchHistory() -- off-limits
+// for this task (not in the Task 10 file list) -- internally catches its own fetch failures and
+// resolves to `[]` rather than rejecting or returning null, so a TRUE network failure and a
+// genuinely empty history are indistinguishable once they reach this component. This component is
+// built to render the correct state for either input it receives (see HistoryScreen.jsx's sibling
+// unit coverage via WalletActivity.test.jsx); popup.jsx initializes its `activity` state to `null`
+// (not `[]`) so at least "never yet loaded" reads as unavailable rather than a false "no
+// activity" -- the remaining silent-failure-to-empty gap lives in fetchHistory itself.
 export default function HistoryScreen({ items }) {
   const truncateAddress = (addr) => {
     if (!addr || typeof addr !== 'string') return '-'
@@ -5,77 +28,57 @@ export default function HistoryScreen({ items }) {
     return `${addr.slice(0, 6)}…${addr.slice(-6)}`
   }
 
-  if (!items?.length)
+  if (items == null) {
     return (
-      <div
-        className="vf-screen"
-        style={{ justifyContent: 'center', alignItems: 'center', minHeight: '240px', gap: '12px' }}
-      >
-        <div
-          style={{
-            width: 48,
-            height: 48,
-            borderRadius: 14,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            background: 'var(--bg-elev)',
-            border: '1px solid var(--border)',
-            boxShadow: '0 4px 16px rgba(0,0,0,.2)',
-          }}
-        >
-          <svg
-            width="22"
-            height="22"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="var(--text-faint)"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
-          </svg>
-        </div>
-        <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '14px', fontWeight: '500' }}>
-          No activity yet
-        </p>
-        <p style={{ margin: 0, color: 'var(--text-faint)', fontSize: '11px' }}>
-          Transactions will appear here once you send or receive.
+      <div data-testid="history-screen">
+        <p className="pc-field-help">Activity is unavailable right now.</p>
+      </div>
+    )
+  }
+
+  if (items.length === 0) {
+    return (
+      <div data-testid="history-screen">
+        <p className="pc-field-help">
+          No activity yet. Transactions will appear here once you send or receive.
         </p>
       </div>
     )
+  }
 
   return (
-    <ul className="vf-screen vf-history">
+    <ul className="pc-activity-list" data-testid="history-screen">
       {items.map((x) => {
         const isRecv = x.direction === 'in'
-        const badgeClass = isRecv ? 'in' : 'out'
-        const directionLabel = isRecv ? 'In' : 'Out'
         const assetCode = x.asset === 'XLM' ? 'XLM' : x.asset.split(':')[0]
-        const actionTitle = isRecv ? `Received ${assetCode}` : `Sent ${assetCode}`
         const counterparty = isRecv ? x.from : x.to
-        const formattedCounterparty = isRecv
-          ? `From: ${truncateAddress(counterparty)}`
-          : `To: ${truncateAddress(counterparty)}`
 
         return (
-          <li key={x.id}>
-            <div className="vf-history-row">
-              <div className="vf-history-left">
-                <div className={`vf-history-badge ${badgeClass}`}>{directionLabel}</div>
-                <div className="vf-history-meta">
-                  <span className="vf-history-title">{actionTitle}</span>
-                  <span className="vf-history-address">{formattedCounterparty}</span>
-                </div>
+          <li key={x.id} className="pc-row">
+            <span className="pc-network-badge">Stellar testnet</span>
+            <div>
+              <div>
+                {isRecv ? 'Received' : 'Sent'} {assetCode}
               </div>
-              <div className="vf-history-right">
-                <span className={`vf-history-amount ${badgeClass}`}>
-                  {isRecv ? '+' : '-'}
-                  {x.amount} {assetCode}
-                </span>
-                <span className="vf-history-time">{x.createdAt}</span>
+              <div className="pc-field-help">
+                {isRecv ? 'From' : 'To'}:{' '}
+                <span className="pc-technical">{truncateAddress(counterparty)}</span>
               </div>
+              <div className="pc-field-help">Confirmed · {x.createdAt}</div>
+            </div>
+            <div>
+              <div className="pc-technical">
+                {isRecv ? '+' : '-'}
+                {x.amount} {assetCode}
+              </div>
+              <a
+                className="pc-field-help"
+                href={`https://stellar.expert/explorer/testnet/op/${x.id}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                View
+              </a>
             </div>
           </li>
         )

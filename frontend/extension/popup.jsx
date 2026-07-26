@@ -5,7 +5,6 @@ import {
   createPasskeyWallet,
   connectPasskeyWallet,
   readBalance,
-  sendToken,
   depositToVault,
   addAgentSigner,
 } from '../src/wallet/account.js'
@@ -26,11 +25,33 @@ import SettingsScreen from '../src/wallet/ui/classic/SettingsScreen.jsx'
 import { pickConfirmIndices } from '../src/wallet/ui/classic/backupConfirm.js'
 import * as C from '../src/wallet/ui/classic/controller.js'
 import { WalletOnboarding } from '../src/wallet/ui/WalletOnboarding.jsx'
+import { WalletShell } from '../src/wallet/ui/WalletShell.jsx'
+import { WalletHome } from '../src/wallet/ui/WalletHome.jsx'
+import { WalletActivity } from '../src/wallet/ui/WalletActivity.jsx'
+import { WalletReceive } from '../src/wallet/ui/WalletReceive.jsx'
 import {
   ACTIVE_ACCOUNT_KEY,
   resolveActiveAccount,
   selectActiveAccount,
 } from '../src/wallet/activeAccount.js'
+
+// VF Wallet Task 10 -- the Passkey (C) account has no portfolio adapter of its own (account.js's
+// readBalance returns a single raw USDC amount, not the {total, complete, rows} shape
+// classic/HomeScreen.jsx expects); this is the one-asset equivalent. `balance` is the raw value
+// readBalance()/refreshBalance() already produce: null while unread, the literal '-' sentinel on a
+// failed read (see refreshBalance below), or a real amount. Both "unread" and "failed" money-truth
+// map onto the SAME `null` portfolio (HomeScreen renders that as "Unavailable", never a coerced
+// $0.00) -- there is no third UI state for "still loading" in this simple, single-asset model, and
+// collapsing loading into "unavailable" is still honest (never a wrong number, only a delayed one).
+function passkeyPortfolio(balance) {
+  if (balance == null || balance === '-') return null
+  const amount = Number(toDisplay(balance))
+  return {
+    total: amount,
+    complete: true,
+    rows: [{ asset: 'USDC', code: 'USDC', balance: toDisplay(balance), usd: amount }],
+  }
+}
 
 // Protocol slug of the live deposit vault (autofarm → Blend USDC). The F8 gate resolves facts
 // by slug — SOROBAN_VAULT_ADDRESS alone carries none and would fail closed.
@@ -458,15 +479,17 @@ function Popup() {
   const [preview, setPreview] = useState(null)
   const [portfolio, setPortfolio] = useState(null)
   const [unfunded, setUnfunded] = useState(false)
-  const [activity, setActivity] = useState([])
+  // VF Wallet Task 10 -- null (not []), so "Activity has never been loaded this session" reads as
+  // Unavailable (HistoryScreen.jsx) rather than a false "No activity yet". Known residual gap
+  // (documented in HistoryScreen.jsx's own header): wallet/history.js's fetchHistory catches its
+  // own fetch failures and resolves to `[]` rather than rejecting, so a genuine network failure
+  // AFTER a load attempt is still indistinguishable from a confirmed-empty history -- fixing that
+  // requires editing fetchHistory itself, which is outside this task's authorized file list.
+  const [activity, setActivity] = useState(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [autoLockMin, setAutoLockMin] = useState(10)
   const [exportForm, setExportForm] = useState({ open: false, pw: '', secret: null, error: '' })
-
-  // Send form
-  const [sendTo, setSendTo] = useState('')
-  const [sendAmount, setSendAmount] = useState('')
 
   // Deposit form
   const [depositAmount, setDepositAmount] = useState('')
@@ -604,6 +627,19 @@ function Popup() {
     setScreen('classic-' + t)
   }
 
+  // VF Wallet Task 10 -- the Passkey (C) equivalent of classicNav, for the same beginner
+  // Home/Activity/Settings bottom nav WalletHome/WalletActivity render. 'settings' routes to the
+  // NEW 'wallet-settings' screen (id deliberately distinct from classic's 'classic-settings') --
+  // Passkey had no Settings screen at all before this task; the account-switch/reset link that
+  // used to live on the old passkey home screen now lives there instead, matching where classic's
+  // own switch-wallet link already lives (classic-settings, not classic-home) rather than
+  // cluttering money-first Home.
+  function passkeyNav(t) {
+    clear()
+    setDepositVerdict(null)
+    setScreen(t === 'settings' ? 'wallet-settings' : t)
+  }
+
   // Recover last ceremony result on reopen (popup may have been dismissed during Face-ID)
   useEffect(() => {
     chrome.storage?.session?.get?.('vf_last_result').then((g) => {
@@ -665,32 +701,6 @@ function Popup() {
           ? 'No wallet found on this device. Tap "Create new wallet · Face ID" to make one first.'
           : e.message
       )
-    }
-  }
-
-  async function handleSend() {
-    clear()
-    const amt = parseFloat(sendAmount)
-    if (isNaN(amt) || amt <= 0) {
-      setError('Amount must be greater than 0')
-      return
-    }
-    const isFederation = sendTo.includes('*')
-    if (!isFederation && !/^[GC][A-Z2-7]{55}$/i.test(sendTo)) {
-      setError('Invalid Stellar destination address')
-      return
-    }
-    try {
-      await sendToken({
-        contractId: wallet.contractId,
-        to: sendTo,
-        amount: sendAmount,
-      })
-      setStatus(
-        "Built the unsigned transfer XDR. On-chain send isn't wired in this build. Deposit is the live on-chain path."
-      )
-    } catch (e) {
-      setError(e.message)
     }
   }
 
@@ -1014,45 +1024,54 @@ function Popup() {
 
   if (screen === 'classic-home') {
     return (
-      <Shell nav active="home" tabs={NAV_TABS_CLASSIC} onNav={classicNav} sub="classic · ed25519">
-        <HomeScreen
-          publicKey={cw.publicKey}
-          portfolio={portfolio}
-          unfunded={unfunded}
-          busy={busy}
-          onFund={async () => {
-            setBusy(true)
-            setErr('')
-            try {
-              await C.doFund(cw.publicKey)
-              await refresh(cw.publicKey)
-            } catch (e) {
-              setErr(String(e?.message || e))
-            } finally {
-              setBusy(false)
-            }
-          }}
-          onSend={() => {
-            setPreview(null)
-            setErr('')
-            setScreen('classic-send')
-          }}
-          onReceive={() => setScreen('classic-receive')}
-          onGetUsdc={handleClassicGetUsdc}
-          onAddAsset={() => {
-            setErr('')
-            setScreen('classic-add-asset')
-          }}
-        />
-        {err && <p className="vf-error">{err}</p>}
+      <WalletHome
+        account={{ kind: 'G', address: cw.publicKey }}
+        onNav={classicNav}
+        securityLabel={cw.unlocked ? 'Unlocked' : 'Locked'}
+        status={err ? { tone: 'error', message: err } : null}
+        portfolio={portfolio}
+        unfunded={unfunded}
+        busy={busy}
+        onSend={() => {
+          setPreview(null)
+          setErr('')
+          setScreen('classic-send')
+        }}
+        onReceive={() => setScreen('classic-receive')}
+        onGetUsdc={handleClassicGetUsdc}
+        onAddAsset={() => {
+          setErr('')
+          setScreen('classic-add-asset')
+        }}
+        onFund={async () => {
+          setBusy(true)
+          setErr('')
+          try {
+            await C.doFund(cw.publicKey)
+            await refresh(cw.publicKey)
+          } catch (e) {
+            setErr(String(e?.message || e))
+          } finally {
+            setBusy(false)
+          }
+        }}
+      >
         <HonestyLabels scope="global" />
-      </Shell>
+      </WalletHome>
     )
   }
 
   if (screen === 'classic-send') {
     return (
-      <Shell nav active="send" tabs={NAV_TABS_CLASSIC} onNav={classicNav} sub="classic · ed25519">
+      <WalletShell
+        heading="Send"
+        account={{ kind: 'G', address: cw.publicKey }}
+        onBack={() => {
+          setErr('')
+          setScreen('classic-home')
+        }}
+        status={err ? { tone: 'error', message: err } : null}
+      >
         <SendScreen
           from={cw.publicKey}
           preview={preview}
@@ -1095,22 +1114,16 @@ function Popup() {
             }
           }}
         />
-        {err && <p className="vf-error">{err}</p>}
-      </Shell>
+      </WalletShell>
     )
   }
 
   if (screen === 'classic-receive') {
     return (
-      <Shell
-        nav
-        active="receive"
-        tabs={NAV_TABS_CLASSIC}
-        onNav={classicNav}
-        sub="classic · ed25519"
-      >
-        <ReceiveScreen publicKey={cw.publicKey} />
-      </Shell>
+      <WalletReceive
+        account={{ kind: 'G', address: cw.publicKey }}
+        onBack={() => setScreen('classic-home')}
+      />
     )
   }
 
@@ -1151,16 +1164,12 @@ function Popup() {
 
   if (screen === 'classic-activity') {
     return (
-      <Shell
-        nav
-        active="activity"
-        tabs={NAV_TABS_CLASSIC}
+      <WalletActivity
+        account={{ kind: 'G', address: cw.publicKey }}
         onNav={classicNav}
-        sub="classic · ed25519"
-      >
-        {err && <p className="vf-error">{err}</p>}
-        <HistoryScreen items={activity} />
-      </Shell>
+        status={err ? { tone: 'error', message: err } : null}
+        items={activity}
+      />
     )
   }
 
@@ -1344,112 +1353,116 @@ function Popup() {
     )
   }
 
+  // VF Wallet Task 10 -- money-first Home, recomposed for the Passkey (C) account onto the same
+  // WalletHome surface classic accounts use. `onAddAsset`/`onFund` are simply never passed: this
+  // account kind has no real add-asset or friendbot-fund support (autoFund already happens at
+  // creation, account.js:29), so HomeScreen never renders those buttons -- no dead buttons, fail
+  // closed, the same rule Send below is built around.
   if (screen === 'home') {
-    let figure = '-'
-    let sub = null
-    if (balance === null) sub = 'reading balance…'
-    else if (balance === '-') sub = 'balance unavailable'
-    else
-      figure = parseFloat(toDisplay(balance).toFixed(7)).toLocaleString('en-US', {
-        maximumFractionDigits: 7,
-      })
-    const short = wallet?.contractId
-      ? `${wallet.contractId.slice(0, 6)}…${wallet.contractId.slice(-4)}`
-      : '-'
     return (
-      <Shell nav active="home" onNav={nav}>
-        <Eyebrow sec="balance" meta="usdc · testnet" />
-        <div className="figure-block">
-          <span className="figure tnum">{figure}</span>
-          <span className="ticker">USDC</span>
-        </div>
-        {sub && <p className="note">{sub}</p>}
-        <div className="doc">
-          <div className="row">
-            <span className="row-k">address</span>
-            <span className="row-v addr">{short}</span>
-            <button
-              className="copy"
-              aria-label="Copy address"
-              onClick={() => navigator.clipboard?.writeText(wallet?.contractId ?? '')}
-            >
-              copy
-            </button>
-          </div>
-        </div>
-        <button className="btn btn-ghost" onClick={handlePasskeyGetUsdc}>
-          Get test USDC
-        </button>
-        {error && <p className="err">{error}</p>}
-        {status && <p className="info">{status}</p>}
-        <p className="vf-hint" style={{ textAlign: 'center', marginTop: 12 }}>
-          <button
-            className="link"
-            onClick={async () => {
-              localStorage.removeItem('vf_wallet_contract')
-              localStorage.removeItem('vf_wallet_credential')
-              localStorage.setItem('vf_wallet_type', 'classic')
-              if (typeof chrome !== 'undefined' && chrome.storage?.local) {
-                // Reset (not a benign switch — this button deletes the passkey account outright),
-                // so the stale active-account pointer must go with it rather than linger for the
-                // next resolveActiveAccount call to self-heal around.
-                await chrome.storage.local.remove([
-                  'vf_wallet_contract',
-                  'vf_wallet_credential',
-                  ACTIVE_ACCOUNT_KEY,
-                ])
-              }
-              setWallet(null)
-              setScreen('classic-onboarding')
-              C.bootstrap().then((b) => {
-                if (b.hasWallet) {
-                  setScreen(b.needsBackup || !b.unlocked ? 'classic-unlock' : 'classic-home')
-                }
-              })
-            }}
-          >
-            Switch to classic wallet / Reset
-          </button>
-        </p>
+      <WalletHome
+        account={{ kind: 'C', address: wallet?.contractId }}
+        onNav={passkeyNav}
+        securityLabel="Secured by Face ID"
+        status={
+          error
+            ? { tone: 'error', message: error }
+            : status
+              ? { tone: 'info', message: status }
+              : null
+        }
+        portfolio={passkeyPortfolio(balance)}
+        onSend={() => setScreen('send')}
+        onReceive={() => setScreen('receive')}
+        onGetUsdc={handlePasskeyGetUsdc}
+      >
         <HonestyLabels scope="global" />
-      </Shell>
+      </WalletHome>
     )
   }
 
+  // NEW: Passkey had no Settings screen at all before this task (only a link buried on Home) --
+  // the beginner nav (Home/Activity/Settings) needs a real destination for its third tab, so the
+  // account-switch/reset action now lives here instead, matching where classic's own equivalent
+  // link already lives (classic-settings, not classic-home).
+  if (screen === 'wallet-settings') {
+    return (
+      <WalletShell
+        heading="Settings"
+        account={{ kind: 'C', address: wallet?.contractId }}
+        nav={{
+          tabs: [
+            { id: 'home', label: 'Home' },
+            { id: 'activity', label: 'Activity' },
+            { id: 'settings', label: 'Settings' },
+          ],
+          active: 'settings',
+          onNav: passkeyNav,
+        }}
+      >
+        <button
+          type="button"
+          className="pc-button pc-button--secondary"
+          onClick={async () => {
+            localStorage.removeItem('vf_wallet_contract')
+            localStorage.removeItem('vf_wallet_credential')
+            localStorage.setItem('vf_wallet_type', 'classic')
+            if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+              // Reset (not a benign switch — this button deletes the passkey account outright),
+              // so the stale active-account pointer must go with it rather than linger for the
+              // next resolveActiveAccount call to self-heal around.
+              await chrome.storage.local.remove([
+                'vf_wallet_contract',
+                'vf_wallet_credential',
+                ACTIVE_ACCOUNT_KEY,
+              ])
+            }
+            setWallet(null)
+            setScreen('classic-onboarding')
+            C.bootstrap().then((b) => {
+              if (b.hasWallet) {
+                setScreen(b.needsBackup || !b.unlocked ? 'classic-unlock' : 'classic-home')
+              }
+            })
+          }}
+        >
+          Switch to classic wallet / Reset
+        </button>
+      </WalletShell>
+    )
+  }
+
+  // VF Wallet Task 10, Step 2 -- Passkey (C) Send has no real submit path yet (the old handler
+  // above only ever built unsigned XDR and said so out loud: "On-chain send isn't wired in this
+  // build"). Transaction BUILDING is not a submit path, so this renders SendScreen's
+  // `supported={false}` state -- a plain, honest message, not a dead form that fails on submit.
+  // Reached as a Home ACTION (Back to Home), not a nav tab, same as Receive.
   if (screen === 'send') {
     return (
-      <Shell nav active="send" onNav={nav}>
-        <Eyebrow sec="send" meta="usdc" />
-        <h1 className="vf-h">Send USDC</h1>
-        <div className="field">
-          <label className="row-k">to</label>
-          <input
-            className="input mono"
-            placeholder="G-address or C-address"
-            value={sendTo}
-            onChange={(e) => setSendTo(e.target.value)}
-          />
-        </div>
-        <div className="amount-row">
-          <input
-            className="amount tnum"
-            type="number"
-            placeholder="0"
-            aria-label="Amount to send, in USDC"
-            value={sendAmount}
-            onChange={(e) => setSendAmount(e.target.value)}
-          />
-          <span className="ticker">USDC</span>
-        </div>
-        {error && <p className="err">{error}</p>}
-        <button className="btn btn-primary" onClick={handleSend} disabled={!sendTo || !sendAmount}>
-          Approve with Face ID
-        </button>
-        <p className="note">
-          Builds unsigned XDR locally. On-chain send isn't wired in this build. Deposit is the live
-          on-chain path.
-        </p>
-      </Shell>
+      <WalletShell
+        heading="Send"
+        account={{ kind: 'C', address: wallet?.contractId }}
+        onBack={() => setScreen('home')}
+      >
+        <SendScreen
+          from={wallet?.contractId}
+          supported={false}
+          preview={null}
+          onPreview={() => {}}
+          onConfirm={() => {}}
+        />
+      </WalletShell>
+    )
+  }
+
+  // VF Wallet Task 10, Step 2 -- Receive is a supported action for every account kind; Passkey had
+  // no Receive screen at all before this task.
+  if (screen === 'receive') {
+    return (
+      <WalletReceive
+        account={{ kind: 'C', address: wallet?.contractId }}
+        onBack={() => setScreen('home')}
+      />
     )
   }
 
@@ -1546,15 +1559,25 @@ function Popup() {
     )
   }
 
+  // VF Wallet Task 10, Step 3 -- Passkey (C) Activity. `items={null}` (Unavailable, not a false
+  // "no activity"): Horizon's payments collection (wallet/history.js's data source) only lists
+  // classic `payment`/`create_account` operations, never Soroban `invoke_host_function` calls --
+  // the ONLY way this account kind moves funds -- so calling it for a C-address would not fail,
+  // it would just silently return an empty list that looks identical to "confirmed no activity"
+  // while actually meaning "this data source cannot see this account's activity at all". That is
+  // exactly the money-truth distinction Step 3 asks for; the honest answer here is Unavailable,
+  // not a fabricated empty read. The direct Stellar Expert account link (unaffected, pre-existing)
+  // stays available as a real alternative.
   if (screen === 'activity') {
     return (
-      <Shell nav active="activity" onNav={nav}>
-        <Eyebrow sec="activity" meta="stellar expert" />
-        <h1 className="vf-h">Activity</h1>
-        <p className="lede">On-chain history lives on Stellar Expert (testnet).</p>
+      <WalletActivity
+        account={{ kind: 'C', address: wallet?.contractId }}
+        onNav={passkeyNav}
+        items={null}
+      >
         {wallet?.contractId && (
           <a
-            className="link"
+            className="pc-field-help"
             href={`https://stellar.expert/explorer/testnet/account/${wallet.contractId}`}
             target="_blank"
             rel="noreferrer"
@@ -1562,7 +1585,7 @@ function Popup() {
             View on Stellar Expert →
           </a>
         )}
-      </Shell>
+      </WalletActivity>
     )
   }
 

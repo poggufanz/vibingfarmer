@@ -362,7 +362,46 @@ textarea.pc-input { min-height: 72px; padding: var(--pc-space-2) var(--pc-space-
   border-bottom: 1px solid var(--pc-line);
 }
 .pc-row:last-child { border-bottom: 0; }
-.pc-account-picker { list-style: none; margin: 0; padding: 0; }
+.pc-account-picker, .pc-asset-list, .pc-activity-list { list-style: none; margin: 0; padding: 0; }
+
+/* Token icon sizing -- relocated verbatim (visually unchanged) from the pre-Task-10 popup.jsx
+   Acid Yield stylesheet, where classic/HomeScreen.jsx's <TokenIcon> (tokenIcons.jsx, off-limits
+   for this task) previously got it from the old <Shell> wrapper. TokenIcon's <svg>/<div> renders
+   with no explicit width/height of its own -- without an equivalent rule somewhere it would fall
+   back to raw browser intrinsic SVG sizing (completely broken), so this has to live wherever
+   HomeScreen now renders, which is inside this shell. Not contract-anchored (tokenIcons.jsx
+   predates the Pocket Crew redesign) -- deliberately excluded from the manifest guard, the same
+   treatment as .bk-prog-*. */
+.vf-token-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--pc-font-mono);
+  font-weight: 700;
+  font-size: 11px;
+  color: #fff;
+  flex-shrink: 0;
+  text-transform: uppercase;
+}
+svg.vf-token-icon { display: block; overflow: hidden; }
+.vf-token-icon.unknown { background: #546e7a; }
+
+/* VF Wallet Task 10 -- real-browser 320px measurement (getBoundingClientRect, not just a
+   screenshot) caught a genuine layout bug: a full, untruncated Stellar address (56-59 chars, no
+   natural break points) inside code/pre/.pc-technical has no word-break of its own (the contract's
+   rule, byte-identical port above, correctly doesn't add one -- most .pc-technical usages are
+   short, already-truncated strings). Inside this shell's CSS-grid layout
+   (.pc-wallet-shell/.pc-wallet-main have no explicit column track), an unbreakable ~420px-wide
+   text node forces the single implicit grid column -- and every row sharing it, header and nav
+   included -- to stretch past the fixed 320/360px box despite .pc-wallet's own overflow-x: clip
+   (clip hides the paint, it does not stop the grid track's content-based sizing). Not
+   contract-anchored (this specific full-address-display need doesn't exist in the contract) --
+   excluded from the manifest guard, the same treatment as .bk-prog-*. classic/ReceiveScreen.jsx is
+   the one caller. */
+.pc-address-full { overflow-wrap: anywhere; word-break: break-all; }
 
 .pc-choice-group { display: grid; gap: var(--pc-space-5); }
 .pc-choice { display: grid; gap: var(--pc-space-2); }

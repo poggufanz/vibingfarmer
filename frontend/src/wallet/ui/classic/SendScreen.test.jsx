@@ -85,3 +85,30 @@ describe('SendScreen', () => {
     expect(onConfirm).not.toHaveBeenCalled()
   })
 })
+
+// VF Wallet Task 10, Step 2 -- Passkey (C) Send has no real submit path yet (popup.jsx's old
+// passkey send handler only ever built unsigned XDR and said so out loud). Rendering the form for
+// an unsupported account would be a dead button that fails on submit, not a fail-closed UI.
+describe('SendScreen — action availability is model-specific (no dead button for an unsupported account)', () => {
+  it('renders the real form by default (supported, the existing Standard/G path)', () => {
+    render(<SendScreen from="GME" onPreview={vi.fn()} onConfirm={vi.fn()} preview={null} />)
+    expect(screen.getByLabelText(/destination/i)).toBeTruthy()
+  })
+
+  it('renders no form and no submit control when supported is false', () => {
+    const onPreview = vi.fn()
+    render(
+      <SendScreen
+        from="CFAKE"
+        onPreview={onPreview}
+        onConfirm={vi.fn()}
+        preview={null}
+        supported={false}
+      />
+    )
+    expect(screen.queryByLabelText(/destination/i)).toBeNull()
+    expect(screen.queryByRole('button', { name: /review/i })).toBeNull()
+    expect(screen.getByText(/not available yet/i)).toBeTruthy()
+    expect(onPreview).not.toHaveBeenCalled()
+  })
+})

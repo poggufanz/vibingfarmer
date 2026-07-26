@@ -1,7 +1,23 @@
 import { useState } from 'react'
 import { ApproveOverlay } from '../ApproveOverlay.jsx'
 
-export default function SendScreen({ from, onPreview, onConfirm, preview, busy, error }) {
+// VF Wallet Task 10, Step 2 -- action availability is model-specific, not a blanket "every
+// account can do everything." Standard (G) Send has an existing, tested submit path (this file's
+// own preview/confirm flow, exercised end-to-end by SendScreen.test.jsx). Passkey (C) Send does
+// not: popup.jsx's old passkey send handler only ever built unsigned XDR and said so out loud
+// ("On-chain send isn't wired in this build") -- transaction BUILDING is not a submit path. Until
+// a real passkey submit path exists and is end-to-end tested, rendering the form here would be a
+// dead button that fails, not fails closed. `supported` defaults to true so every existing
+// Standard caller (and this file's pre-existing tests) is unaffected.
+export default function SendScreen({
+  from,
+  onPreview,
+  onConfirm,
+  preview,
+  busy,
+  error,
+  supported = true,
+}) {
   const [to, setTo] = useState('')
   const [amount, setAmount] = useState('')
   const [memo, setMemo] = useState('')
@@ -29,12 +45,23 @@ export default function SendScreen({ from, onPreview, onConfirm, preview, busy, 
     return true
   }
 
+  if (!supported) {
+    return (
+      <div data-testid="send-screen-unsupported">
+        <p className="pc-field-help">
+          Send is not available yet for this account type. Use Receive to get funds instead.
+        </p>
+      </div>
+    )
+  }
+
   return (
-    <div className="vf-screen vf-send">
-      <h2>Send</h2>
-      <label>
-        Destination
+    <div className="pc-standard-form" data-testid="send-screen">
+      <div className="pc-field">
+        <label htmlFor="send-to">Destination</label>
         <input
+          id="send-to"
+          className="pc-input"
           aria-label="Destination"
           placeholder="G... or federation address"
           value={to}
@@ -43,10 +70,12 @@ export default function SendScreen({ from, onPreview, onConfirm, preview, busy, 
             setLocalError('')
           }}
         />
-      </label>
-      <label>
-        Amount (XLM)
+      </div>
+      <div className="pc-field">
+        <label htmlFor="send-amount">Amount (XLM)</label>
         <input
+          id="send-amount"
+          className="pc-input"
           aria-label="Amount"
           placeholder="0.00"
           value={amount}
@@ -55,10 +84,12 @@ export default function SendScreen({ from, onPreview, onConfirm, preview, busy, 
             setLocalError('')
           }}
         />
-      </label>
-      <label>
-        Memo (optional)
+      </div>
+      <div className="pc-field">
+        <label htmlFor="send-memo">Memo (optional)</label>
         <input
+          id="send-memo"
+          className="pc-input"
           placeholder="Text, ID, or hash"
           value={memo}
           onChange={(e) => {
@@ -66,10 +97,11 @@ export default function SendScreen({ from, onPreview, onConfirm, preview, busy, 
             setLocalError('')
           }}
         />
-      </label>
-      {localError && <p className="vf-error">{localError}</p>}
+      </div>
+      {localError && <p className="pc-field-error">{localError}</p>}
       <button
-        className="vf-btn primary"
+        type="button"
+        className="pc-button pc-button--primary"
         disabled={busy || !to || !amount}
         onClick={() => {
           if (!validate()) return
@@ -81,35 +113,13 @@ export default function SendScreen({ from, onPreview, onConfirm, preview, busy, 
       </button>
 
       {preview && (
-        <div className="vf-confirm-card">
-          <h3>
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M9 11l3 3L22 4"></path>
-              <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
-            </svg>
-            Confirm transaction
-          </h3>
-          <dl>
-            <dt>To</dt>
-            <dd>{preview.confirm.ops[0]?.destination}</dd>
-            <dt>Asset</dt>
-            <dd>{preview.confirm.ops[0]?.asset}</dd>
-            <dt>Amount</dt>
-            <dd>{preview.confirm.ops[0]?.amount}</dd>
-            <dt>Memo</dt>
-            <dd>{preview.confirm.memo || 'None'}</dd>
-            <dt>Fee</dt>
-            <dd>{preview.confirm.fee} stroops</dd>
-          </dl>
+        <div className="pc-support" data-testid="send-confirm-card">
+          <h3>Confirm transaction</h3>
+          <p className="pc-technical">To: {preview.confirm.ops[0]?.destination}</p>
+          <p className="pc-technical">Asset: {preview.confirm.ops[0]?.asset}</p>
+          <p className="pc-technical">Amount: {preview.confirm.ops[0]?.amount}</p>
+          <p className="pc-technical">Memo: {preview.confirm.memo || 'None'}</p>
+          <p className="pc-technical">Fee: {preview.confirm.fee} stroops</p>
           {preview.vault?.hit && (
             <>
               <ApproveOverlay
@@ -119,16 +129,19 @@ export default function SendScreen({ from, onPreview, onConfirm, preview, busy, 
                 }}
                 onReject={() => {}}
               />
-              <p className="vf-warn">
+              <p className="pc-field-help">
                 This is the vault "{preview.vault.name}". A plain payment does not deposit funds.
                 Use Deposit instead.
               </p>
             </>
           )}
-          {error && <p className="vf-error">{error}</p>}
-          {stale && <p className="vf-hint">Inputs changed. Select Review transaction again.</p>}
+          {error && <p className="pc-field-error">{error}</p>}
+          {stale && (
+            <p className="pc-field-help">Inputs changed. Select Review transaction again.</p>
+          )}
           <button
-            className="vf-btn primary"
+            type="button"
+            className="pc-button pc-button--primary"
             disabled={busy || stale}
             onClick={() => onConfirm({ from, to, asset: 'XLM', amount, memo })}
           >
