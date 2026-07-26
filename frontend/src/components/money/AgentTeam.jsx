@@ -51,9 +51,27 @@ function isKnownPositive(amount) {
   }
 }
 
+// Fix loop 1, I1: names for custody.js's own fixed location enum (custody.js:7-14), used to
+// describe each individually-known leg of a split agent below.
+function locationName(location) {
+  if (location === 'stellar-vault') return 'vault'
+  if (location === 'agent') return 'agent balance'
+  if (location === 'base-proxy') return 'Base'
+  if (location === 'in-transit') return 'bridging'
+  return 'unknown location'
+}
+
 // Human, honest state label -- never a guess beyond what this row's own evidence proves. Ordered
 // most-specific-first; a needs-recovery row is labelled separately by the caller (recoveryNeeded),
 // this only covers the OTHERWISE state.
+//
+// Fix loop 1, I1: reads `agent.custodyBreakdown` FIRST, exactly the precedence
+// PositionList.jsx:91-99 already uses, instead of the single collapsed `agent.custody.location`.
+// custody.js:41-43 sets that collapsed value to 'unknown' BY DESIGN for a genuine Stellar+Base
+// split (two independently known-positive legs can't be summarized as one location), so reading
+// it directly here made a split agent fall through every branch to the generic 'Active' -- the
+// same agent PositionList already shows correctly with both real legs. Matching that precedence
+// keeps the two components saying the same true thing about the same agent.
 function agentStateLabel(agent) {
   if (agent.scope?.state !== 'known') return 'Status unknown'
   if (agent.scope.value?.revoked) return 'Revoked'
@@ -63,11 +81,17 @@ function agentStateLabel(agent) {
   if (agent.executionStatus === 'queued') return 'Bridging queued'
   if (agent.executionStatus === 'executing') return 'Bridging in progress'
   if (agent.executionStatus === 'failed') return 'Bridge issue'
-  if (agent.custody?.location === 'stellar-vault') return 'Earning in vault'
-  if (agent.custody?.location === 'base-proxy') return 'Custody on Base'
-  if (agent.custody?.location === 'in-transit') return 'Bridging'
-  if (agent.custody?.location === 'agent' && isKnownPositive(agent.amount))
-    return 'Holding idle balance'
+  if (agent.custodyBreakdown?.length > 1) {
+    return `Split: ${agent.custodyBreakdown.map((leg) => locationName(leg.location)).join(' + ')}`
+  }
+  const location =
+    agent.custodyBreakdown?.length === 1
+      ? agent.custodyBreakdown[0].location
+      : agent.custody?.location
+  if (location === 'stellar-vault') return 'Earning in vault'
+  if (location === 'base-proxy') return 'Custody on Base'
+  if (location === 'in-transit') return 'Bridging'
+  if (location === 'agent' && isKnownPositive(agent.amount)) return 'Holding idle balance'
   return 'Active'
 }
 

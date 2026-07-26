@@ -189,6 +189,40 @@ describe('AgentTeam — actual state is shown for healthy agents', () => {
   })
 })
 
+// Fix loop 1, I1. Mirrors PositionList.test.jsx's own `splitAgent` fixture exactly (same file
+// header there cites custody.js:41-43/79-95 for why this exact shape is what a genuine
+// Stellar+Base split actually produces) -- a known-positive vault leg AND a settled Base
+// association, which collapses `custody.location` to 'unknown' by design.
+function splitAgent(address = 'CBRIDGE1') {
+  return {
+    address,
+    scope: {
+      state: 'known',
+      value: { vault: 'CVAULT', revoked: false, expiry: 0, authorized: true },
+    },
+    vaultShares: { state: 'known', amount: amt(30_0000000n) },
+    idleToken: { state: 'known', amount: amt(0n) },
+    amount: amt(50_0000000n), // 30 vault + 20 base, canonicalized
+    executionStatus: 'succeeded',
+    custody: { location: 'unknown' },
+    custodyBreakdown: [
+      { location: 'stellar-vault', amount: amt(30_0000000n) },
+      { location: 'base-proxy', amount: amt(20_0000000n) },
+    ],
+    problems: [],
+  }
+}
+
+describe('AgentTeam — split-custody agents get a truthful label, not the generic fallback (I1)', () => {
+  it('names both real legs for a genuine Stellar+Base split, never the generic "Active"', () => {
+    // A regression to reading `agent.custody?.location` directly would hit 'unknown', match no
+    // branch, and fall through to 'Active' -- exactly the bug this guards against.
+    render(<AgentTeam agents={[splitAgent()]} problemAgents={[]} />)
+    expect(screen.queryByText('Active')).toBeNull()
+    expect(screen.getByText('Split: vault + Base')).toBeTruthy()
+  })
+})
+
 describe('AgentTeam — DOM list ordering (every agent before any disclosure)', () => {
   it('renders every agent as a real <li> in a plain <ul>, not inside a <details>', () => {
     render(
