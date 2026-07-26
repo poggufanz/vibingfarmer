@@ -24,7 +24,10 @@ function amt(units, decimals = 7) {
 function healthyAgent(address = 'CAGENT1') {
   return {
     address,
-    scope: { state: 'known', value: { vault: 'CVAULT', revoked: false, expiry: 4102444800, authorized: true } },
+    scope: {
+      state: 'known',
+      value: { vault: 'CVAULT', revoked: false, expiry: 4102444800, authorized: true },
+    },
     vaultShares: { state: 'known', amount: amt(100_0000000n) },
     idleToken: { state: 'known', amount: amt(0n) },
     amount: amt(100_0000000n),
@@ -38,7 +41,10 @@ function healthyAgent(address = 'CAGENT1') {
 function revokedFundedAgent(address = 'CREVOKED1') {
   return {
     address,
-    scope: { state: 'known', value: { vault: 'CVAULT', revoked: true, expiry: 0, authorized: true } },
+    scope: {
+      state: 'known',
+      value: { vault: 'CVAULT', revoked: true, expiry: 0, authorized: true },
+    },
     vaultShares: { state: 'known', amount: amt(0n) },
     idleToken: { state: 'known', amount: amt(50_0000000n) },
     amount: amt(50_0000000n),
@@ -50,7 +56,7 @@ function revokedFundedAgent(address = 'CREVOKED1') {
 }
 
 describe('AgentTeam — real stable identity, never list index', () => {
-  it('seeds each AgentMark from the real address: reordering the array never changes either address\'s fill', () => {
+  it("seeds each AgentMark from the real address: reordering the array never changes either address's fill", () => {
     // A list-index-seeded regression (`identity={index}` or any positional string) would still
     // pass a weaker version of this test that only checks "some fill exists" -- the real proof is
     // that CAGENT1's fill is IDENTICAL whether it renders first or second, and likewise for
@@ -78,7 +84,9 @@ describe('AgentTeam — real stable identity, never list index', () => {
   it('renders the real full address as an explorer link', () => {
     render(<AgentTeam agents={[healthyAgent('CAGENT1')]} problemAgents={[]} />)
     const link = screen.getByRole('link', { name: 'CAGENT1' })
-    expect(link.getAttribute('href')).toBe('https://stellar.expert/explorer/testnet/account/CAGENT1')
+    expect(link.getAttribute('href')).toBe(
+      'https://stellar.expert/explorer/testnet/account/CAGENT1'
+    )
   })
 })
 
@@ -103,13 +111,22 @@ describe('AgentTeam — Cap and Expiry', () => {
 
 describe('AgentTeam — revoked-funded rows stay visible as Needs recovery', () => {
   it('shows the literal "Needs recovery" label for a confirmed-problem agent, never dropped from the list', () => {
-    render(<AgentTeam agents={[healthyAgent('CAGENT1'), revokedFundedAgent('CREVOKED1')]} problemAgents={['CREVOKED1']} />)
+    render(
+      <AgentTeam
+        agents={[healthyAgent('CAGENT1'), revokedFundedAgent('CREVOKED1')]}
+        problemAgents={['CREVOKED1']}
+      />
+    )
     expect(screen.getByText('CREVOKED1')).toBeTruthy() // still in the DOM
     expect(screen.getByText('Needs recovery')).toBeTruthy()
   })
 
   it('never labels a revoked agent with NO confirmed funds as "Needs recovery" (nothing urgent to recover)', () => {
-    const emptyRevoked = { ...revokedFundedAgent('CREVOKED2'), amount: amt(0n), idleToken: { state: 'known', amount: amt(0n) } }
+    const emptyRevoked = {
+      ...revokedFundedAgent('CREVOKED2'),
+      amount: amt(0n),
+      idleToken: { state: 'known', amount: amt(0n) },
+    }
     render(<AgentTeam agents={[emptyRevoked]} problemAgents={[]} />)
     expect(screen.queryByText('Needs recovery')).toBeNull()
     expect(screen.getByText('Revoked')).toBeTruthy()
@@ -124,7 +141,13 @@ describe('AgentTeam — revoked-funded rows stay visible as Needs recovery', () 
 
   it('fires onRecoverAgent with the target address on confirm', () => {
     const onRecoverAgent = vi.fn()
-    render(<AgentTeam agents={[revokedFundedAgent('CREVOKED1')]} problemAgents={['CREVOKED1']} onRecoverAgent={onRecoverAgent} />)
+    render(
+      <AgentTeam
+        agents={[revokedFundedAgent('CREVOKED1')]}
+        problemAgents={['CREVOKED1']}
+        onRecoverAgent={onRecoverAgent}
+      />
+    )
     fireEvent.click(screen.getByRole('button', { name: 'Recover funds' }))
     fireEvent.click(screen.getByRole('button', { name: 'Exit all' }))
     expect(onRecoverAgent).toHaveBeenCalledWith('CREVOKED1', null)
@@ -156,7 +179,11 @@ describe('AgentTeam — actual state is shown for healthy agents', () => {
   })
 
   it('labels a bridging agent honestly', () => {
-    const bridging = { ...healthyAgent('CBRIDGE1'), executionStatus: 'executing', custody: { location: 'in-transit' } }
+    const bridging = {
+      ...healthyAgent('CBRIDGE1'),
+      executionStatus: 'executing',
+      custody: { location: 'in-transit' },
+    }
     render(<AgentTeam agents={[bridging]} problemAgents={[]} />)
     expect(screen.getByText('Bridging in progress')).toBeTruthy()
   })
@@ -164,7 +191,12 @@ describe('AgentTeam — actual state is shown for healthy agents', () => {
 
 describe('AgentTeam — DOM list ordering (every agent before any disclosure)', () => {
   it('renders every agent as a real <li> in a plain <ul>, not inside a <details>', () => {
-    render(<AgentTeam agents={[healthyAgent('CAGENT1'), revokedFundedAgent('CREVOKED1')]} problemAgents={['CREVOKED1']} />)
+    render(
+      <AgentTeam
+        agents={[healthyAgent('CAGENT1'), revokedFundedAgent('CREVOKED1')]}
+        problemAgents={['CREVOKED1']}
+      />
+    )
     const list = document.querySelector('ul.pc-crew-list')
     expect(list).toBeTruthy()
     expect(list.closest('details')).toBeNull()
@@ -175,14 +207,17 @@ describe('AgentTeam — DOM list ordering (every agent before any disclosure)', 
 describe('AgentTeam — accessibility', () => {
   it('has zero axe violations with a mixed healthy/needs-recovery team', async () => {
     const { container } = render(
-      <AgentTeam agents={[healthyAgent('CAGENT1'), revokedFundedAgent('CREVOKED1')]} problemAgents={['CREVOKED1']} />
+      <AgentTeam
+        agents={[healthyAgent('CAGENT1'), revokedFundedAgent('CREVOKED1')]}
+        problemAgents={['CREVOKED1']}
+      />
     )
     expect(await axe(container)).toHaveNoViolations()
   })
 })
 
 describe('AgentTeam — no forbidden motion/gradient (rejection checklist item 6)', () => {
-  it('renders no inline style/animation in this component\'s own JSX', () => {
+  it("renders no inline style/animation in this component's own JSX", () => {
     const source = fs.readFileSync(path.resolve(here, './AgentTeam.jsx'), 'utf8')
     expect(source).not.toMatch(/style=|animation/i)
   })

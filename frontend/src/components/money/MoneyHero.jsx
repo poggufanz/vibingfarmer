@@ -44,14 +44,20 @@ function heroFigureState(model) {
   if (
     model.confirmedTotal?.state === 'known' &&
     model.confirmedTotal.amount != null &&
-    (model.state === 'current' || model.state === 'stale' || model.state === 'problem' || model.state === 'partial-discovery')
+    (model.state === 'current' ||
+      model.state === 'stale' ||
+      model.state === 'problem' ||
+      model.state === 'partial-discovery')
   ) {
     return {
       kind: 'known',
       // MoneyFigure's own 'stale' state renders the real number PLUS its built-in "(stale)" flag
       // (Primitives.jsx:42) -- reused as-is rather than re-implemented here.
       figureState: model.state === 'stale' ? 'stale' : 'current',
-      value: unitsToDisplay(model.confirmedTotal.amount.units, model.confirmedTotal.amount.decimals),
+      value: unitsToDisplay(
+        model.confirmedTotal.amount.units,
+        model.confirmedTotal.amount.decimals
+      ),
       currency: model.confirmedTotal.amount.token,
     }
   }
@@ -70,7 +76,11 @@ function hasValidEarned(model) {
 }
 
 function hasLiveYield(model) {
-  return model.yield?.state === 'live' && typeof model.yield.apy === 'number' && Number.isFinite(model.yield.apy)
+  return (
+    model.yield?.state === 'live' &&
+    typeof model.yield.apy === 'number' &&
+    Number.isFinite(model.yield.apy)
+  )
 }
 
 // "Unknown must never render as absent" (brief) applies beyond the formal 'partial-discovery'
@@ -105,7 +115,11 @@ export function MoneyHero({ model, onAction, actionPending = false }) {
           {figure.kind === 'loading' && <MoneyFigure state="loading" />}
           {figure.kind === 'empty' && <MoneyFigure state="empty" />}
           {figure.kind === 'known' && (
-            <MoneyFigure state={figure.figureState} value={figure.value} currency={figure.currency} />
+            <MoneyFigure
+              state={figure.figureState}
+              value={figure.value}
+              currency={figure.currency}
+            />
           )}
           {figure.kind === 'unavailable' && (
             <p className="pc-money pc-money--unknown" role="status">
@@ -124,9 +138,9 @@ export function MoneyHero({ model, onAction, actionPending = false }) {
           {model.state === 'problem' && (
             <StatusNotice state="danger" title="Action needed">
               <p>
-                {model.problemAgents.length} agent{model.problemAgents.length === 1 ? '' : 's'} still hold
-                money under a revoked or expired grant. Owner withdrawal is always allowed regardless of
-                scope state.
+                {model.problemAgents.length} agent{model.problemAgents.length === 1 ? '' : 's'}{' '}
+                still hold money under a revoked or expired grant. Owner withdrawal is always
+                allowed regardless of scope state.
               </p>
             </StatusNotice>
           )}
@@ -144,8 +158,8 @@ export function MoneyHero({ model, onAction, actionPending = false }) {
           {model.state !== 'partial-discovery' && unknownCount > 0 && (
             <StatusNotice state="info" title="Some balances are still unconfirmed">
               <p>
-                {unknownCount} Base balance{unknownCount === 1 ? '' : 's'} could not be confirmed this
-                round -- not zero, just not yet known.
+                {unknownCount} Base balance{unknownCount === 1 ? '' : 's'} could not be confirmed
+                this round -- not zero, just not yet known.
               </p>
             </StatusNotice>
           )}
@@ -169,7 +183,9 @@ export function MoneyHero({ model, onAction, actionPending = false }) {
             aria-disabled={actionPending}
             onClick={() => onAction?.(primary.action)}
           >
-            {actionPending ? PRIMARY_ACTION_PENDING_LABEL[primary.action] || 'Working…' : primary.label}
+            {actionPending
+              ? PRIMARY_ACTION_PENDING_LABEL[primary.action] || 'Working…'
+              : primary.label}
           </button>
         </div>
       )}

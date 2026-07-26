@@ -16,15 +16,23 @@ function formatHeartbeat(lastHeartbeatAt) {
   return Number.isFinite(lastHeartbeatAt) ? new Date(lastHeartbeatAt).toISOString() : 'Unavailable'
 }
 
-const KEEPER_LABEL = Object.freeze({ healthy: 'Healthy', stale: 'Stale', unavailable: 'Unavailable' })
+const KEEPER_LABEL = Object.freeze({
+  healthy: 'Healthy',
+  stale: 'Stale',
+  unavailable: 'Unavailable',
+})
 const STRATEGY_LABEL = Object.freeze({ configured: 'Configured', unavailable: 'Unavailable' })
 
 export function HowMoneyWorks({ keeper, strategyConfig, riskWatch, yieldInfo, venue }) {
   const keeperLabel = KEEPER_LABEL[keeper?.label] ?? 'Unavailable'
   const strategyLabel = STRATEGY_LABEL[strategyConfig?.label] ?? 'Unavailable'
-  const riskWatchLabel = riskWatch?.label && riskWatch.label !== 'unavailable' ? riskWatch.label : 'Unavailable'
+  const riskWatchLabel =
+    riskWatch?.label && riskWatch.label !== 'unavailable' ? riskWatch.label : 'Unavailable'
 
-  const showApy = yieldInfo?.state === 'live' && typeof yieldInfo.apy === 'number' && Number.isFinite(yieldInfo.apy)
+  const showApy =
+    yieldInfo?.state === 'live' &&
+    typeof yieldInfo.apy === 'number' &&
+    Number.isFinite(yieldInfo.apy)
 
   return (
     <section className="pc-money-section" aria-labelledby="how-money-works-heading">
@@ -32,7 +40,11 @@ export function HowMoneyWorks({ keeper, strategyConfig, riskWatch, yieldInfo, ve
         <h2 id="how-money-works-heading">How your money is working</h2>
       </header>
       <div>
-        <VenueTruth kind="stellar-live" venue={venue || 'Autofarm Vault'} apy={showApy ? { state: 'live', value: yieldInfo.apy } : undefined} />
+        <VenueTruth
+          kind="stellar-live"
+          venue={venue || 'Autofarm Vault'}
+          apy={showApy ? { state: 'live', value: yieldInfo.apy } : undefined}
+        />
 
         <p>Keeper automation: {keeperLabel}</p>
         <p>Last keeper heartbeat: {formatHeartbeat(keeper?.lastHeartbeatAt)}</p>

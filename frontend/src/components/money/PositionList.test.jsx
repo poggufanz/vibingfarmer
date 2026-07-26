@@ -20,7 +20,10 @@ function amt(units, decimals = 7) {
 function stellarVaultAgent(address = 'CAGENT1', units = 100_0000000n) {
   return {
     address,
-    scope: { state: 'known', value: { vault: 'CVAULT', revoked: false, expiry: 0, authorized: true } },
+    scope: {
+      state: 'known',
+      value: { vault: 'CVAULT', revoked: false, expiry: 0, authorized: true },
+    },
     vaultShares: { state: 'known', amount: amt(units) },
     idleToken: { state: 'known', amount: amt(0n) },
     amount: amt(units),
@@ -37,7 +40,10 @@ function stellarVaultAgent(address = 'CAGENT1', units = 100_0000000n) {
 function splitAgent(address = 'CBRIDGE1') {
   return {
     address,
-    scope: { state: 'known', value: { vault: 'CVAULT', revoked: false, expiry: 0, authorized: true } },
+    scope: {
+      state: 'known',
+      value: { vault: 'CVAULT', revoked: false, expiry: 0, authorized: true },
+    },
     vaultShares: { state: 'known', amount: amt(30_0000000n) },
     idleToken: { state: 'known', amount: amt(0n) },
     amount: amt(50_0000000n), // 30 vault + 20 base, canonicalized
@@ -72,7 +78,9 @@ describe('PositionList — Base children are separate nested rows under their St
     expect(within(parentRow).getByText('Base Sepolia')).toBeTruthy()
     // Custody-only truth, verbatim (see this file's header + PositionList.jsx's header for why
     // this exact sentence form, not the brief's own two-middle-dot example, is what ships).
-    expect(within(parentRow).getByText('Base Sepolia proxy. Custody only. No protocol yield.')).toBeTruthy()
+    expect(
+      within(parentRow).getByText('Base Sepolia proxy. Custody only. No protocol yield.')
+    ).toBeTruthy()
   })
 
   it('shows both real leg amounts (30 vault + 20 base), never a collapsed single figure', () => {
@@ -93,7 +101,10 @@ describe('PositionList — an in-transit leg uses NetworkRoute, never a settled 
   it('renders a truthful bridge-in-progress route for an in-transit-only leg', () => {
     const agent = {
       address: 'CBRIDGE2',
-      scope: { state: 'known', value: { vault: 'CVAULT', revoked: false, expiry: 0, authorized: true } },
+      scope: {
+        state: 'known',
+        value: { vault: 'CVAULT', revoked: false, expiry: 0, authorized: true },
+      },
       vaultShares: { state: 'known', amount: amt(0n) },
       idleToken: { state: 'known', amount: amt(0n) },
       amount: amt(40_0000000n),
@@ -133,7 +144,13 @@ describe('PositionList — unattributed Base money never renders as absent', () 
 
 describe('PositionList — no confirmed money means an honest empty state, not a fabricated row', () => {
   it('renders a plain honest message when nothing is confirmed anywhere', () => {
-    render(<PositionList agents={[{ address: 'CX', amount: null, custody: { location: 'unknown' }, custodyBreakdown: [] }]} />)
+    render(
+      <PositionList
+        agents={[
+          { address: 'CX', amount: null, custody: { location: 'unknown' }, custodyBreakdown: [] },
+        ]}
+      />
+    )
     expect(screen.getByText('No confirmed positions yet.')).toBeTruthy()
   })
 })
@@ -150,7 +167,9 @@ describe('PositionList — DOM list ordering (every position before any disclosu
 
 describe('PositionList — accessibility', () => {
   it('has zero axe violations with a mixed Stellar/Base position set', async () => {
-    const { container } = render(<PositionList agents={[stellarVaultAgent(), splitAgent('CBRIDGE1')]} />)
+    const { container } = render(
+      <PositionList agents={[stellarVaultAgent(), splitAgent('CBRIDGE1')]} />
+    )
     expect(await axe(container)).toHaveNoViolations()
   })
 })

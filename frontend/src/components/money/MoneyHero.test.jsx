@@ -40,7 +40,13 @@ function baseModel(overrides = {}) {
     confirmedBlock: null,
     source: null,
     problemAgents: [],
-    protection: { state: 'armed', authority: 'GOWNER', mandateExpiry: NOW / 1000 + 100000, urgentRenewal: false, ownerIsAuthority: true },
+    protection: {
+      state: 'armed',
+      authority: 'GOWNER',
+      mandateExpiry: NOW / 1000 + 100000,
+      urgentRenewal: false,
+      ownerIsAuthority: true,
+    },
     automation: null,
     hasKnownVaultMoney: true,
     ...overrides,
@@ -63,7 +69,13 @@ describe('MoneyHero — heading and never-a-coerced-zero', () => {
       agentCount: null,
       problemAgentCount: null,
       hasKnownVaultMoney: false,
-      protection: { state: 'unavailable', authority: null, mandateExpiry: null, urgentRenewal: false, ownerIsAuthority: false },
+      protection: {
+        state: 'unavailable',
+        authority: null,
+        mandateExpiry: null,
+        urgentRenewal: false,
+        ownerIsAuthority: false,
+      },
     })
     render(<MoneyHero model={model} />)
     expect(screen.getByText('Unavailable')).toBeTruthy()
@@ -71,7 +83,11 @@ describe('MoneyHero — heading and never-a-coerced-zero', () => {
   })
 
   it('renders the literal "Unavailable" text for the unavailable-index state, not a placeholder number', () => {
-    const model = baseModel({ state: 'unavailable', confirmedTotal: null, freshness: 'unavailable' })
+    const model = baseModel({
+      state: 'unavailable',
+      confirmedTotal: null,
+      freshness: 'unavailable',
+    })
     render(<MoneyHero model={model} />)
     expect(screen.getByText('Unavailable')).toBeTruthy()
   })
@@ -107,7 +123,7 @@ describe('MoneyHero — earned/APY only with valid evidence', () => {
     expect(screen.getByText('Earning 8.2% APY')).toBeTruthy()
   })
 
-  it('never shows an Earned line while earned evidence is unavailable (today\'s real production shape)', () => {
+  it("never shows an Earned line while earned evidence is unavailable (today's real production shape)", () => {
     render(<MoneyHero model={baseModel()} />)
     expect(screen.queryByText(/^Earned/)).toBeNull()
   })
@@ -177,7 +193,13 @@ describe('MoneyHero — state-aware primary action', () => {
 
   it('offers Renew vault protection only when the owner is the configured authority AND renewal is urgent', () => {
     const urgentModel = baseModel({
-      protection: { state: 'armed', authority: 'GOWNER', mandateExpiry: NOW / 1000 + 100, urgentRenewal: true, ownerIsAuthority: true },
+      protection: {
+        state: 'armed',
+        authority: 'GOWNER',
+        mandateExpiry: NOW / 1000 + 100,
+        urgentRenewal: true,
+        ownerIsAuthority: true,
+      },
     })
     render(<MoneyHero model={urgentModel} />)
     expect(screen.getByRole('button', { name: 'Renew vault protection' })).toBeTruthy()
@@ -185,7 +207,13 @@ describe('MoneyHero — state-aware primary action', () => {
 
   it('falls back to Add money when urgent renewal exists but the owner is NOT the configured authority', () => {
     const model = baseModel({
-      protection: { state: 'armed', authority: 'GSOMEONEELSE', mandateExpiry: NOW / 1000 + 100, urgentRenewal: true, ownerIsAuthority: false },
+      protection: {
+        state: 'armed',
+        authority: 'GSOMEONEELSE',
+        mandateExpiry: NOW / 1000 + 100,
+        urgentRenewal: true,
+        ownerIsAuthority: false,
+      },
     })
     render(<MoneyHero model={model} />)
     expect(screen.getByRole('button', { name: 'Add money' })).toBeTruthy()
@@ -202,7 +230,9 @@ describe('MoneyHero — state-aware primary action', () => {
 
 describe('MoneyHero — accessibility', () => {
   it('has zero axe violations for a current, fully-populated model', async () => {
-    const { container } = render(<MoneyHero model={baseModel({ yield: { state: 'live', apy: 5 } })} />)
+    const { container } = render(
+      <MoneyHero model={baseModel({ yield: { state: 'live', apy: 5 } })} />
+    )
     expect(await axe(container)).toHaveNoViolations()
   })
 
@@ -218,7 +248,7 @@ describe('MoneyHero — accessibility', () => {
 // text rather than a computed style jsdom can't be trusted for. Falsifiable: reintroducing
 // `@keyframes`/`animation:`/a gradient onto this component's own primary action would fail this.
 describe('MoneyHero — no forbidden motion/gradient (rejection checklist item 6)', () => {
-  it('renders no inline style/animation in this component\'s own JSX', () => {
+  it("renders no inline style/animation in this component's own JSX", () => {
     const source = fs.readFileSync(path.resolve(here, './MoneyHero.jsx'), 'utf8')
     expect(source).not.toMatch(/style=|animation/i)
   })

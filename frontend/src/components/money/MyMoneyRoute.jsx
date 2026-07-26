@@ -50,7 +50,13 @@ export function MyMoneyRoute({
           onRecoverAgent={onRecoverAgent}
         />
         <VaultProtection protection={model?.protection} />
-        <HowMoneyWorks keeper={keeper} strategyConfig={strategyConfig} riskWatch={riskWatch} yieldInfo={model?.yield} venue={venue} />
+        <HowMoneyWorks
+          keeper={keeper}
+          strategyConfig={strategyConfig}
+          riskWatch={riskWatch}
+          yieldInfo={model?.yield}
+          venue={venue}
+        />
         <TechnicalMoneyDetails model={model} agents={agents} />
       </div>
     </div>

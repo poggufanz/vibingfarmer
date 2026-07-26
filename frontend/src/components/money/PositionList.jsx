@@ -54,10 +54,22 @@ function shortAddress(address) {
 function legDisplay(location, amount, keySuffix) {
   const key = `${keySuffix}:${location}`
   if (location === 'stellar-vault') {
-    return { key, kind: 'stellar', label: STELLAR_VAULT_DESTINATION, amount, networkId: 'stellar-testnet' }
+    return {
+      key,
+      kind: 'stellar',
+      label: STELLAR_VAULT_DESTINATION,
+      amount,
+      networkId: 'stellar-testnet',
+    }
   }
   if (location === 'agent') {
-    return { key, kind: 'stellar', label: 'Held at your agent (not yet deposited)', amount, networkId: 'stellar-testnet' }
+    return {
+      key,
+      kind: 'stellar',
+      label: 'Held at your agent (not yet deposited)',
+      amount,
+      networkId: 'stellar-testnet',
+    }
   }
   if (location === 'base-proxy') {
     // Step 3 + the approved venueTruth.test.js:162-184 ruling (see this component's header for
@@ -80,7 +92,8 @@ function positionRowFor(agent) {
   const legs = []
   if (agent.custodyBreakdown?.length) {
     for (const leg of agent.custodyBreakdown) {
-      if (isKnownPositive(leg.amount)) legs.push(legDisplay(leg.location, leg.amount, agent.address))
+      if (isKnownPositive(leg.amount))
+        legs.push(legDisplay(leg.location, leg.amount, agent.address))
     }
   } else if (isKnownPositive(agent.amount)) {
     legs.push(legDisplay(agent.custody?.location ?? 'unknown', agent.amount, agent.address))
@@ -126,7 +139,10 @@ export function PositionList({ agents = [], unattributed = {} }) {
                     <p>{row.stellarLeg.label}</p>
                     <MoneyFigure
                       state="current"
-                      value={unitsToDisplay(row.stellarLeg.amount.units, row.stellarLeg.amount.decimals)}
+                      value={unitsToDisplay(
+                        row.stellarLeg.amount.units,
+                        row.stellarLeg.amount.decimals
+                      )}
                       currency={row.stellarLeg.amount.token}
                     />
                   </>

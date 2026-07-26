@@ -19,14 +19,32 @@
 import { StatusNotice } from '../pocket/Primitives.jsx'
 
 const STATE_COPY = Object.freeze({
-  engaged: { statusState: 'warning', title: 'Engaged', body: 'The vault has been de-risked under the lifeboat mandate.' },
-  armed: { statusState: 'info', title: 'Armed', body: 'The lifeboat mandate is armed and ready if the vault needs de-risking.' },
-  disarmed: { statusState: 'warning', title: 'Disarmed', body: 'The lifeboat mandate has lapsed and needs renewal.' },
-  unavailable: { statusState: 'info', title: 'Status unavailable', body: 'The vault protection state could not be confirmed right now.' },
+  engaged: {
+    statusState: 'warning',
+    title: 'Engaged',
+    body: 'The vault has been de-risked under the lifeboat mandate.',
+  },
+  armed: {
+    statusState: 'info',
+    title: 'Armed',
+    body: 'The lifeboat mandate is armed and ready if the vault needs de-risking.',
+  },
+  disarmed: {
+    statusState: 'warning',
+    title: 'Disarmed',
+    body: 'The lifeboat mandate has lapsed and needs renewal.',
+  },
+  unavailable: {
+    statusState: 'info',
+    title: 'Status unavailable',
+    body: 'The vault protection state could not be confirmed right now.',
+  },
 })
 
 function formatExpiry(expirySeconds) {
-  return Number.isFinite(expirySeconds) ? new Date(expirySeconds * 1000).toISOString() : 'Unavailable'
+  return Number.isFinite(expirySeconds)
+    ? new Date(expirySeconds * 1000).toISOString()
+    : 'Unavailable'
 }
 
 export function VaultProtection({ protection }) {
@@ -53,11 +71,13 @@ export function VaultProtection({ protection }) {
         <p>Configured authority: {protection?.authority || 'Unavailable'}</p>
         <p>Mandate expiry: {formatExpiry(protection?.mandateExpiry)}</p>
 
-        {ownerCanRenew && <p>Renewal is due -- use the Renew vault protection action above to renew it.</p>}
+        {ownerCanRenew && (
+          <p>Renewal is due -- use the Renew vault protection action above to renew it.</p>
+        )}
         {authorityBlocked && (
           <p>
-            Renewal is due, but only the configured authority ({protection.authority || 'unavailable'})
-            can renew it.
+            Renewal is due, but only the configured authority (
+            {protection.authority || 'unavailable'}) can renew it.
           </p>
         )}
       </div>

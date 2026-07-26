@@ -66,7 +66,8 @@ function agentStateLabel(agent) {
   if (agent.custody?.location === 'stellar-vault') return 'Earning in vault'
   if (agent.custody?.location === 'base-proxy') return 'Custody on Base'
   if (agent.custody?.location === 'in-transit') return 'Bridging'
-  if (agent.custody?.location === 'agent' && isKnownPositive(agent.amount)) return 'Holding idle balance'
+  if (agent.custody?.location === 'agent' && isKnownPositive(agent.amount))
+    return 'Holding idle balance'
   return 'Active'
 }
 
@@ -79,7 +80,13 @@ function markStateFor(agent, recoveryNeeded) {
   return 'idle'
 }
 
-export function AgentTeam({ agents = [], problemAgents = [], discovery = null, account = null, onRecoverAgent }) {
+export function AgentTeam({
+  agents = [],
+  problemAgents = [],
+  discovery = null,
+  account = null,
+  onRecoverAgent,
+}) {
   const [recoveryAddress, setRecoveryAddress] = useState(null)
   const recoveryTarget = agents.find((a) => a.address === recoveryAddress) ?? null
   const plan =
@@ -99,7 +106,11 @@ export function AgentTeam({ agents = [], problemAgents = [], discovery = null, a
             const recoveryNeeded = problemAgents.includes(agent.address)
             const label = recoveryNeeded ? 'Needs recovery' : agentStateLabel(agent)
             return (
-              <li key={agent.address} className="pc-crew-row" data-agent-state={recoveryNeeded ? 'needs-recovery' : 'ok'}>
+              <li
+                key={agent.address}
+                className="pc-crew-row"
+                data-agent-state={recoveryNeeded ? 'needs-recovery' : 'ok'}
+              >
                 <AgentMark identity={agent.address} state={markStateFor(agent, recoveryNeeded)} />
                 <div>
                   <NetworkBadge networkId="stellar-testnet" />
@@ -109,14 +120,23 @@ export function AgentTeam({ agents = [], problemAgents = [], discovery = null, a
                     </a>
                   </p>
                   <p>Cap: Unavailable</p>
-                  <p>Expires: {formatExpiry(agent.scope?.state === 'known' ? agent.scope.value?.expiry : null)}</p>
+                  <p>
+                    Expires:{' '}
+                    {formatExpiry(
+                      agent.scope?.state === 'known' ? agent.scope.value?.expiry : null
+                    )}
+                  </p>
                 </div>
                 <span>{label}</span>
 
                 {recoveryNeeded && (
                   <ul className="pc-crew-row-recovery">
                     <li>
-                      <button type="button" className="pc-button pc-button--danger" onClick={() => setRecoveryAddress(agent.address)}>
+                      <button
+                        type="button"
+                        className="pc-button pc-button--danger"
+                        onClick={() => setRecoveryAddress(agent.address)}
+                      >
                         Recover funds
                       </button>
                     </li>
@@ -135,7 +155,11 @@ export function AgentTeam({ agents = [], problemAgents = [], discovery = null, a
         onClose={() => setRecoveryAddress(null)}
         actions={
           <>
-            <button type="button" className="pc-button pc-button--secondary" onClick={() => setRecoveryAddress(null)}>
+            <button
+              type="button"
+              className="pc-button pc-button--secondary"
+              onClick={() => setRecoveryAddress(null)}
+            >
               Close
             </button>
             <button
@@ -152,8 +176,8 @@ export function AgentTeam({ agents = [], problemAgents = [], discovery = null, a
         }
       >
         <p>
-          The balance is not lost -- a full exit can recover it. Owner withdrawal is always allowed by
-          the contract, regardless of the current scope state.
+          The balance is not lost -- a full exit can recover it. Owner withdrawal is always allowed
+          by the contract, regardless of the current scope state.
         </p>
         {plan?.limitation && <p>{plan.limitation}</p>}
         {!discovery || !account ? (

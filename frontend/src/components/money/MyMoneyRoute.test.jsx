@@ -57,7 +57,10 @@ function baseModel(overrides = {}) {
 function stellarVaultAgent(address = 'CAGENT1', units = 300_0000000n) {
   return {
     address,
-    scope: { state: 'known', value: { vault: 'CVAULT', revoked: false, expiry: 0, authorized: true } },
+    scope: {
+      state: 'known',
+      value: { vault: 'CVAULT', revoked: false, expiry: 0, authorized: true },
+    },
     vaultShares: { state: 'known', amount: amt(units) },
     idleToken: { state: 'known', amount: amt(0n) },
     amount: amt(units),
@@ -71,7 +74,10 @@ function stellarVaultAgent(address = 'CAGENT1', units = 300_0000000n) {
 function splitAgent(address = 'CBRIDGE1') {
   return {
     address,
-    scope: { state: 'known', value: { vault: 'CVAULT', revoked: false, expiry: 0, authorized: true } },
+    scope: {
+      state: 'known',
+      value: { vault: 'CVAULT', revoked: false, expiry: 0, authorized: true },
+    },
     vaultShares: { state: 'known', amount: amt(30_0000000n) },
     idleToken: { state: 'known', amount: amt(0n) },
     amount: amt(50_0000000n),
@@ -88,7 +94,10 @@ function splitAgent(address = 'CBRIDGE1') {
 function revokedFundedAgent(address = 'CREVOKED1') {
   return {
     address,
-    scope: { state: 'known', value: { vault: 'CVAULT', revoked: true, expiry: 0, authorized: true } },
+    scope: {
+      state: 'known',
+      value: { vault: 'CVAULT', revoked: true, expiry: 0, authorized: true },
+    },
     vaultShares: { state: 'known', amount: amt(0n) },
     idleToken: { state: 'known', amount: amt(50_0000000n) },
     amount: amt(50_0000000n),
@@ -123,7 +132,9 @@ describe('MyMoneyRoute — heading and exact hierarchy order (Step 2)', () => {
 
 describe('MyMoneyRoute — checklist item 1: no 3+ equal rounded cards', () => {
   it('has exactly ONE dominant rounded surface (the Rice hero), not a wall of equal cards', () => {
-    render(<MyMoneyRoute model={baseModel()} agents={[stellarVaultAgent(), revokedFundedAgent()]} />)
+    render(
+      <MyMoneyRoute model={baseModel()} agents={[stellarVaultAgent(), revokedFundedAgent()]} />
+    )
     expect(document.querySelectorAll('.pc-dominant').length).toBe(1)
     expect(document.querySelector('.pc-dominant--owned')).toBeTruthy()
   })
@@ -131,13 +142,22 @@ describe('MyMoneyRoute — checklist item 1: no 3+ equal rounded cards', () => {
 
 describe('MyMoneyRoute — checklist item 4: Rice never holds unconfirmed money without an adjacent stale/unknown state', () => {
   it('a stale total inside Rice carries its own visible stale flag', () => {
-    render(<MyMoneyRoute model={baseModel({ state: 'stale', freshness: 'stale' })} agents={[stellarVaultAgent()]} />)
+    render(
+      <MyMoneyRoute
+        model={baseModel({ state: 'stale', freshness: 'stale' })}
+        agents={[stellarVaultAgent()]}
+      />
+    )
     const rice = document.querySelector('.pc-dominant--owned')
     expect(within(rice).getByText('(stale)')).toBeTruthy()
   })
 
   it('an unavailable total inside Rice renders the literal Unavailable marker, never a bare number', () => {
-    const model = baseModel({ state: 'unavailable', confirmedTotal: null, freshness: 'unavailable' })
+    const model = baseModel({
+      state: 'unavailable',
+      confirmedTotal: null,
+      freshness: 'unavailable',
+    })
     render(<MyMoneyRoute model={model} agents={[]} />)
     const rice = document.querySelector('.pc-dominant--owned')
     expect(within(rice).getByText('Unavailable')).toBeTruthy()
@@ -159,7 +179,13 @@ describe('MyMoneyRoute — Vault protection is Vault-wide and gates renewal to t
 
   it('shows Renew vault protection only when the connected owner IS the configured authority', () => {
     const model = baseModel({
-      protection: { state: 'armed', authority: 'GOWNER', mandateExpiry: NOW / 1000 + 10, urgentRenewal: true, ownerIsAuthority: true },
+      protection: {
+        state: 'armed',
+        authority: 'GOWNER',
+        mandateExpiry: NOW / 1000 + 10,
+        urgentRenewal: true,
+        ownerIsAuthority: true,
+      },
     })
     render(<MyMoneyRoute model={model} agents={[]} onRenewProtection={vi.fn()} />)
     expect(screen.getByRole('button', { name: 'Renew vault protection' })).toBeTruthy()
@@ -167,7 +193,13 @@ describe('MyMoneyRoute — Vault protection is Vault-wide and gates renewal to t
 
   it('never offers renewal when the connected owner is NOT the configured authority, even while urgent', () => {
     const model = baseModel({
-      protection: { state: 'armed', authority: 'GSOMEONEELSE', mandateExpiry: NOW / 1000 + 10, urgentRenewal: true, ownerIsAuthority: false },
+      protection: {
+        state: 'armed',
+        authority: 'GSOMEONEELSE',
+        mandateExpiry: NOW / 1000 + 10,
+        urgentRenewal: true,
+        ownerIsAuthority: false,
+      },
     })
     render(<MyMoneyRoute model={model} agents={[]} />)
     expect(screen.queryByRole('button', { name: 'Renew vault protection' })).toBeNull()
@@ -177,7 +209,12 @@ describe('MyMoneyRoute — Vault protection is Vault-wide and gates renewal to t
 
 describe('MyMoneyRoute — recoverable funded/revoked agent stays visible end to end', () => {
   it('shows Needs recovery for a revoked-funded agent inside the full route composition', () => {
-    render(<MyMoneyRoute model={baseModel({ problemAgents: ['CREVOKED1'] })} agents={[stellarVaultAgent(), revokedFundedAgent('CREVOKED1')]} />)
+    render(
+      <MyMoneyRoute
+        model={baseModel({ problemAgents: ['CREVOKED1'] })}
+        agents={[stellarVaultAgent(), revokedFundedAgent('CREVOKED1')]}
+      />
+    )
     expect(screen.getByText('Needs recovery')).toBeTruthy()
     // Address shows up in both the position row and the agent-team row -- both are real, expected.
     expect(screen.getAllByText('CREVOKED1').length).toBeGreaterThanOrEqual(1)
@@ -195,7 +232,9 @@ describe('MyMoneyRoute — mixed Stellar/Base custody', () => {
 
 describe('MyMoneyRoute — DOM lists contain every position/agent before the optional graph disclosure', () => {
   it('renders the full position list and agent list before the graph disclosure appears in the DOM', () => {
-    render(<MyMoneyRoute model={baseModel()} agents={[stellarVaultAgent(), splitAgent('CBRIDGE1')]} />)
+    render(
+      <MyMoneyRoute model={baseModel()} agents={[stellarVaultAgent(), splitAgent('CBRIDGE1')]} />
+    )
     const positionList = document.querySelector('ul.pc-position-list')
     const crewList = document.querySelector('ul.pc-crew-list')
     const graphDisclosure = screen.getByText('Agent network graph (advanced)').closest('details')
@@ -203,8 +242,12 @@ describe('MyMoneyRoute — DOM lists contain every position/agent before the opt
     expect(crewList).toBeTruthy()
     expect(graphDisclosure).toBeTruthy()
     // DOCUMENT_POSITION_FOLLOWING: the graph disclosure comes AFTER both real lists.
-    expect(positionList.compareDocumentPosition(graphDisclosure) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(crewList.compareDocumentPosition(graphDisclosure) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(
+      positionList.compareDocumentPosition(graphDisclosure) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(
+      crewList.compareDocumentPosition(graphDisclosure) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
     // The graph disclosure never REPLACES the lists -- both still have real rows.
     expect(positionList.querySelectorAll(':scope > li').length).toBeGreaterThan(0)
     expect(crewList.querySelectorAll(':scope > li').length).toBeGreaterThan(0)
@@ -223,13 +266,23 @@ describe('MyMoneyRoute — action-pending state', () => {
 
 describe('MyMoneyRoute — authoritative empty and loading never show a coerced zero', () => {
   it('empty: shows the friendly No balance yet text, not a bare 0', () => {
-    render(<MyMoneyRoute model={baseModel({ state: 'empty', confirmedTotal: { state: 'known', amount: amt(0n) } })} agents={[]} />)
+    render(
+      <MyMoneyRoute
+        model={baseModel({ state: 'empty', confirmedTotal: { state: 'known', amount: amt(0n) } })}
+        agents={[]}
+      />
+    )
     expect(screen.getByText('No balance yet')).toBeTruthy()
     expect(screen.queryByText(/^0\s*USDC/)).toBeNull()
   })
 
   it('loading: shows Loading, never a placeholder number', () => {
-    render(<MyMoneyRoute model={baseModel({ state: 'loading', confirmedTotal: null, checkedAt: null })} agents={[]} />)
+    render(
+      <MyMoneyRoute
+        model={baseModel({ state: 'loading', confirmedTotal: null, checkedAt: null })}
+        agents={[]}
+      />
+    )
     expect(screen.getByText('Loading')).toBeTruthy()
   })
 })
@@ -248,7 +301,11 @@ describe('MyMoneyRoute — accessibility', () => {
   const states = [
     ['current', baseModel(), [stellarVaultAgent()]],
     ['disconnected', baseModel({ state: 'disconnected', owner: null, confirmedTotal: null }), []],
-    ['problem', baseModel({ state: 'problem', problemAgents: ['CREVOKED1'] }), [revokedFundedAgent('CREVOKED1')]],
+    [
+      'problem',
+      baseModel({ state: 'problem', problemAgents: ['CREVOKED1'] }),
+      [revokedFundedAgent('CREVOKED1')],
+    ],
     ['mixed custody', baseModel(), [splitAgent('CBRIDGE1')]],
   ]
   for (const [label, model, agents] of states) {
@@ -332,7 +389,8 @@ const POCKET_CREW_CSS = fs.readFileSync(path.resolve(here, '../../design/pocket-
 const MY_MONEY_CSS = fs.readFileSync(path.resolve(here, './my-money.css'), 'utf8')
 const REAL_STYLESHEET = [POCKET_CREW_CSS, MY_MONEY_CSS].join('\n')
 const LEGACY_STYLESHEET = fs.readFileSync(path.resolve(here, '../../../style.css'), 'utf8')
-const GEIST_FONT_HREF = 'file://' + path.resolve(here, '../../../node_modules/@fontsource-variable/geist/index.css')
+const GEIST_FONT_HREF =
+  'file://' + path.resolve(here, '../../../node_modules/@fontsource-variable/geist/index.css')
 
 function buildLayoutHarnessHtml(bodyHtml) {
   return `<!doctype html><html><head><meta charset="utf-8">
@@ -357,12 +415,16 @@ async function launchRealChromium() {
   for (const executablePath of CHROMIUM_CANDIDATES) {
     if (executablePath && !fs.existsSync(executablePath)) continue
     try {
-      return await chromium.launch(executablePath ? { executablePath, args: ['--no-sandbox'] } : { args: ['--no-sandbox'] })
+      return await chromium.launch(
+        executablePath ? { executablePath, args: ['--no-sandbox'] } : { args: ['--no-sandbox'] }
+      )
     } catch (err) {
       lastErr = err
     }
   }
-  throw new Error(`Layout guard: no usable Chromium binary found for real-layout measurement (${lastErr?.message})`)
+  throw new Error(
+    `Layout guard: no usable Chromium binary found for real-layout measurement (${lastErr?.message})`
+  )
 }
 
 const LAYOUT_STATES = [
@@ -371,50 +433,50 @@ const LAYOUT_STATES = [
   ['current-mixed-custody', baseModel(), [stellarVaultAgent(), splitAgent('CBRIDGE1')]],
   ['stale', baseModel({ state: 'stale', freshness: 'stale' }), [stellarVaultAgent()]],
   ['partial-discovery', baseModel({ state: 'partial-discovery' }), [stellarVaultAgent()]],
-  ['needs-recovery', baseModel({ problemAgents: ['CREVOKED1'] }), [stellarVaultAgent(), revokedFundedAgent('CREVOKED1')]],
+  [
+    'needs-recovery',
+    baseModel({ problemAgents: ['CREVOKED1'] }),
+    [stellarVaultAgent(), revokedFundedAgent('CREVOKED1')],
+  ],
 ]
 
 describe('MyMoneyRoute — real-browser 320px / 1440px layout guards, per route state', () => {
-  it(
-    'creates no horizontal overflow at 320px, and stays within the 1240px content cap at 1440px, for every state built',
-    async () => {
-      const results = []
-      for (const [label, model, agents] of LAYOUT_STATES) {
-        const { container, unmount } = render(<MyMoneyRoute model={model} agents={agents} />)
-        results.push([label, container.innerHTML])
-        unmount()
-      }
+  it('creates no horizontal overflow at 320px, and stays within the 1240px content cap at 1440px, for every state built', async () => {
+    const results = []
+    for (const [label, model, agents] of LAYOUT_STATES) {
+      const { container, unmount } = render(<MyMoneyRoute model={model} agents={agents} />)
+      results.push([label, container.innerHTML])
+      unmount()
+    }
 
-      const browser = await launchRealChromium()
-      try {
-        for (const [label, html] of results) {
-          const page = await browser.newPage()
-          await page.setViewportSize({ width: 320, height: 1400 })
-          await page.setContent(buildLayoutHarnessHtml(html))
-          const at320 = await page.evaluate(() => document.documentElement.scrollWidth)
-          expect(at320, `${label} @320px scrollWidth`).toBe(320)
+    const browser = await launchRealChromium()
+    try {
+      for (const [label, html] of results) {
+        const page = await browser.newPage()
+        await page.setViewportSize({ width: 320, height: 1400 })
+        await page.setContent(buildLayoutHarnessHtml(html))
+        const at320 = await page.evaluate(() => document.documentElement.scrollWidth)
+        expect(at320, `${label} @320px scrollWidth`).toBe(320)
 
-          await page.setViewportSize({ width: 1440, height: 1400 })
-          await page.setContent(buildLayoutHarnessHtml(html))
-          const at1440 = await page.evaluate(() => {
-            const route = document.querySelector('.pc-route')
-            return {
-              scrollWidth: document.documentElement.scrollWidth,
-              routeWidth: route ? route.getBoundingClientRect().width : null,
-            }
-          })
-          expect(at1440.scrollWidth, `${label} @1440px scrollWidth`).toBe(1440)
-          // Content cap: --pc-shell-max (1240px) + 2 * the desktop gutter (clamp(20px,4vw,48px),
-          // clamped to 48px at this width) = 1336px -- the outer .pc-route box is legitimately
-          // this wide (gutter sits OUTSIDE the cap, per the contract's own note); it must never
-          // exceed it.
-          expect(at1440.routeWidth, `${label} @1440px .pc-route width`).toBeLessThanOrEqual(1336.5)
-          await page.close()
-        }
-      } finally {
-        await browser.close()
+        await page.setViewportSize({ width: 1440, height: 1400 })
+        await page.setContent(buildLayoutHarnessHtml(html))
+        const at1440 = await page.evaluate(() => {
+          const route = document.querySelector('.pc-route')
+          return {
+            scrollWidth: document.documentElement.scrollWidth,
+            routeWidth: route ? route.getBoundingClientRect().width : null,
+          }
+        })
+        expect(at1440.scrollWidth, `${label} @1440px scrollWidth`).toBe(1440)
+        // Content cap: --pc-shell-max (1240px) + 2 * the desktop gutter (clamp(20px,4vw,48px),
+        // clamped to 48px at this width) = 1336px -- the outer .pc-route box is legitimately
+        // this wide (gutter sits OUTSIDE the cap, per the contract's own note); it must never
+        // exceed it.
+        expect(at1440.routeWidth, `${label} @1440px .pc-route width`).toBeLessThanOrEqual(1336.5)
+        await page.close()
       }
-    },
-    60000
-  )
+    } finally {
+      await browser.close()
+    }
+  }, 60000)
 })
