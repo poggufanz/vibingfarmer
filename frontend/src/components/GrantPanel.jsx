@@ -1,6 +1,17 @@
 // frontend/src/components/GrantPanel.jsx
 // Single-signature grant step: budget + validity window, then "Grant & run".
 // UX: plain permission receipt (money-app trust), not wizard jargon.
+//
+// Strategy Task 11 (Pocket Crew redesign, Wave 5): this legacy card is DEMOTED, not deleted.
+// `ProtectStage.jsx` (frontend/src/components/strategy/) is now the real, reviewed permission
+// surface for the Plan/Protect/Start flow and reuses `DURATION_PRESETS` below for its own
+// duration picker. This component keeps working unchanged for its one remaining caller --
+// app.jsx's pre-Strategy-integration grant flow (`import GrantPanel from
+// './components/GrantPanel.jsx'`, rendered at app.jsx:2984) -- because removing its export now,
+// before Task 13 migrates app.jsx onto StrategyRoute/ProtectStage, would break that build. Once
+// Task 13 lands, app.jsx's `<GrantPanel .../>` usage and this import become dead, and this whole
+// file (plus GrantPanel.test.jsx) can be deleted -- SkillEditModal.jsx only mentions "GrantPanel"
+// in a comment, it does not import this module, so nothing else keeps it alive.
 import { useState } from 'react'
 
 // ~5s per ledger on Soroban testnet; labels are what the user reasons about.

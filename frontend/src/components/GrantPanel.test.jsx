@@ -51,4 +51,17 @@ describe('GrantPanel', () => {
     expect(screen.getByRole('button', { name: /awaiting wallet/i }).disabled).toBe(true)
     expect(screen.getByLabelText(/grant budget/i).disabled).toBe(true)
   })
+
+  // Strategy Task 11: ProtectStage.jsx imports DURATION_PRESETS from this file for its own
+  // duration picker instead of duplicating the literal (this component is demoted, not deleted --
+  // see the file header). This pins the exact shape ProtectStage relies on, so an edit here that
+  // silently changes it (e.g. dropping `seconds`, renaming `id`) fails loudly at the source instead
+  // of surfacing as a confusing mismatch in a sibling component's tests.
+  it('DURATION_PRESETS keeps the id/label/seconds shape ProtectStage.jsx reuses', () => {
+    expect(DURATION_PRESETS).toEqual([
+      { id: '1h', label: '1 hour', seconds: 3600 },
+      { id: '24h', label: '24 hours', seconds: 86400 },
+      { id: '7d', label: '7 days', seconds: 604800 },
+    ])
+  })
 })

@@ -5,7 +5,8 @@
  * (--pc-*) already live in frontend/src/design/pocket-crew.css (commit 208843d); this file adds
  * no new hex/radius/spacing literal that duplicates one.
  *
- * Scope: only the contract sections StrategyRoute/StrategyProgress/PlanStage actually render.
+ * Scope: only the contract sections StrategyRoute/StrategyProgress/PlanStage/ProtectStage
+ * actually render.
  * Not ported here (out of this task's surface, or already covered elsewhere):
  *   - .pc-app-shell, .pc-route-header/-intro: the outer app shell + route chrome belong to the
  *     app frame (Foundation Task 6), not this route's own content; StrategyRoute renders inside
@@ -14,10 +15,12 @@
  *     into pocket-crew.css (Foundation Task 5/6/7) and loaded globally; re-declaring them here
  *     would just be a duplicate, not a fix.
  *   - .pc-network-badge img/svg, .pc-network-badge--compact, .pc-network-route,
- *     .pc-button--danger, .pc-field > label, .pc-input, .pc-agent-lane(-progress),
- *     .pc-protect-boundary(-limit): this surface never renders an element carrying these
- *     classes (no compact/danger/icon/lane/protect markup exists in Plan), so porting their
- *     rules would be porting rules this surface doesn't use.
+ *     .pc-button--danger, .pc-field > label, .pc-input, .pc-agent-lane-progress: no
+ *     compact/danger/icon/progress markup exists anywhere in Plan or Protect (Protect shows
+ *     nothing moving yet -- there is no in-flight worker progress to draw), so porting these
+ *     rules would be porting rules neither surface uses. (Task 11: .pc-protect-boundary,
+ *     .pc-protect-limit, and .pc-agent-lane themselves ARE now ported below -- Protect is
+ *     exactly the surface Task 10 reserved them for.)
  *   - Grouped selectors that mix an unbuilt sibling surface's class with one of ours (e.g.
  *     `.pc-allocation-list, .pc-agent-lanes, .pc-position-list, .pc-crew-list` or the
  *     `.pc-strategy-layout, .pc-protect-boundary, .pc-money-hero` responsive collapse) are kept
@@ -138,6 +141,31 @@
   padding-block: var(--pc-space-4);
   border-bottom: 1px solid currentcolor;
   border-bottom-color: rgb(23 37 31 / 22%);
+}
+
+/* Task 11 -- Protect. Ported verbatim from the contract (lines 583-603); Task 10 explicitly left
+ * these three unported because Plan never renders them ("this surface never renders an element
+ * carrying these classes") -- Protect is exactly the surface they were reserved for. */
+.pc-protect-boundary {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(260px, 0.7fr);
+  gap: var(--pc-space-8);
+}
+
+.pc-protect-limit {
+  border-radius: var(--pc-radius-support);
+  padding: var(--pc-space-6);
+  background: var(--pc-owned);
+  color: var(--pc-owned-ink);
+}
+
+.pc-agent-lane {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(96px, auto);
+  gap: var(--pc-space-4);
+  align-items: center;
+  min-height: 76px;
+  border-bottom: 1px solid var(--pc-line);
 }
 
 .pc-network-badge {
@@ -294,6 +322,17 @@
 .pc-allocation-row .pc-technical-details-summary,
 .pc-allocation-row .pc-technical-details-body {
   font-family: var(--pc-font-body);
+}
+
+/* Task 11 -- Protect's TechnicalDetails holds genuinely technical strings with no whitespace to
+ * wrap on (session-key fingerprints, contract IDs) -- Foundation's default `overflow-wrap: normal`
+ * leaves a 66-char hex string as one unbreakable run, forcing the surface wider than a 320px
+ * viewport once expanded (reproduced in a real browser: 617px; see ProtectStage.test.jsx's 320px
+ * guard). `anywhere` is a keyword, not a hex/radius/spacing literal, so this adds no duplicated
+ * token. Scoped to this surface's own agent-lane usage only; Foundation's rule and Plan's
+ * allocation-row override above are both untouched. */
+.pc-agent-lane .pc-technical-details-body {
+  overflow-wrap: anywhere;
 }
 
 /* Fix loop 1 -- M3 (review finding): the source/freshness badge is not a network mark, so it
