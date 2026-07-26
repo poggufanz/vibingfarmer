@@ -138,64 +138,28 @@ export async function reconcilePositionsFromChain(address, { agents, server } = 
   return positions
 }
 
-/**
- * @deprecated Pocket Crew My Money Task 6 replaced this with `pickDisplayAgents`, which reads
- * the `OwnerDiscoveryV1` envelope instead of a plain `scopes` array. This function silently
- * drops revoked agents — the exit-enumeration rule (full exit enumeration includes active,
- * expired, revoked, AND revoked-but-funded agents) forbids that. My Money Task 13 retired
- * HomePage.jsx's own caller outright (Step 4's compact launcher has no independent withdraw list
- * to feed) rather than migrating it — the money-accurate replacement is /agent (MyMoneyRoute),
- * not a discovery-based rewrite of a surface that no longer exists. Kept only because app.jsx
- * (three call sites powering the pre-existing NotificationCenter/emergency-withdraw/position-
- * restore machinery, orthogonal to the /agent and /home redesign) and PositionsZone.jsx (legacy
- * OpsConsole, kept for rollback, outside every My Money task's authorized file list) still depend
- * on the plain-`scopes` shape. A future task with those specific files in scope owns migrating
- * them and deleting this pair.
- *
- * Choose which agents' vault shares represent the user's positions. View-as (dev) reads the
- * impersonated address's OWN shares; a real run reads the per-run agents the router deployed
- * (scopes[].agent, non-revoked) — where deposit mints the shares. Returns undefined when there
- * is nothing better yet (e.g. before scopes have rehydrated) — the caller must then omit `agents`
- * when calling `reconcilePositionsFromChain`, which reads nothing rather than guessing (no
- * default exists to "keep" anymore; see that function's own doc).
- *
- * @param {Array<{agent?: string, revoked?: boolean}>} scopes
- * @param {string} [viewAsAddress]
- * @returns {string[]|undefined}
- */
-export function pickPositionsAgents(scopes, viewAsAddress) {
-  if (viewAsAddress) return [viewAsAddress]
-  const deployed = (scopes || []).filter((s) => s && !s.revoked && s.agent).map((s) => s.agent)
-  return deployed.length ? deployed : undefined
-}
-
-/**
- * @deprecated Pocket Crew My Money Task 6 replaced this with `pickRecoverableVaultAgents`, which
- * reads the `OwnerDiscoveryV1` envelope instead of a plain `scopes` array. This function silently
- * drops revoked agents — the exit-enumeration rule (full exit enumeration includes active,
- * expired, revoked, AND revoked-but-funded agents) forbids that: a revoked-but-funded agent is
- * exactly the case a sweep must not skip. My Money Task 13 retired HomePage.jsx's own caller
- * outright (Step 4's compact launcher has no independent withdraw list to feed) rather than
- * migrating it. Kept only because app.jsx (three call sites powering the pre-existing
- * NotificationCenter/emergency-withdraw/position-restore machinery, orthogonal to the /agent and
- * /home redesign) and PositionsZone.jsx (legacy OpsConsole, kept for rollback, outside every My
- * Money task's authorized file list) still depend on the plain-`scopes` shape. A future task with
- * those specific files in scope owns migrating them to `pickRecoverableVaultAgents` and deleting
- * this pair.
- *
- * The agents whose shares back the position shown for `vaultAddress` — i.e. the set `owner_withdraw`
- * must sweep, one user-signed tx each, because a position is the SUM over every agent (see the
- * `total +=` above) while the exit is per-agent.
- *
- * Deliberately NOT pickPositionsAgents: that one is for DISPLAY, so it may return undefined (there
- * is no default) or a view-as address. An exit must never guess an agent — the user cannot sign for an
- * agent they do not own, and a wrong guess is what made every withdraw invoke the demo agent.
- * Empty means empty: the caller must disable the button, not substitute something.
- *
- * @param {Array<{agent?: string, vault?: string, revoked?: boolean}>} scopes
- * @param {string} vaultAddress
- * @returns {string[]} non-revoked agents pinned to that vault, deduped, in scope order
- */
+// My Money Task 13 Part B item 5. `pickPositionsAgents` (deprecated since My Money Task 6) is
+// DELETED outright: it had exactly one remaining caller (app.jsx's `positionsAgents`), now
+// migrated to the discovery-based `pickRecoverableVaultAgents` below (see app.jsx's own comment at
+// that call site).
+//
+// `pickVaultAgents` COULD NOT be deleted the same way, despite carrying the identical defect (both
+// silently dropped revoked agents -- the exit-enumeration rule forbids that, since a revoked-but-
+// funded agent is exactly the one a sweep must not skip). Verified via grep before touching this
+// file: `frontend/src/components/console/PositionsZone.jsx:6,80` still imports and calls it inside
+// its own Withdraw button handler, and `PositionsZone.test.jsx:36` fires that exact click --
+// deleting the export would throw `pickVaultAgents is not a function` inside that test's onClick,
+// a real regression in a file this task has no authorization to edit (PositionsZone.jsx is not in
+// the Part B file list; it is legacy OpsConsole, kept on disk for rollback/tests only, and
+// unreachable from any production route since My Money Task 13's route-composition step). Both of
+// app.jsx's own `pickVaultAgents` call sites ARE migrated (one to `pickRecoverableVaultAgents`, one
+// to a local inline equivalent -- see app.jsx's own comments at each site for why they diverge).
+// `pickVaultAgents` itself, and its own test block below, stay until a future task has
+// `PositionsZone.jsx` in scope to finish this migration and delete this function too.
+//
+// @deprecated see the block comment above -- kept ONLY for PositionsZone.jsx (legacy OpsConsole,
+// outside this task's authorized file list). Do not add a new caller: use
+// `pickRecoverableVaultAgents` (below) instead, which never drops a revoked-but-funded agent.
 export function pickVaultAgents(scopes, vaultAddress) {
   const want = (vaultAddress || '').toLowerCase()
   if (!want) return []

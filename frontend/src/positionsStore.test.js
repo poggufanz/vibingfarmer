@@ -3,7 +3,6 @@ import {
   mergePositions,
   applyChainPositions,
   reconcilePositionsFromChain,
-  pickPositionsAgents,
   pickVaultAgents,
   pickDisplayAgents,
   pickRecoverableVaultAgents,
@@ -166,26 +165,10 @@ describe('pickDisplayAgents / pickRecoverableVaultAgents / buildBulkExitTarget (
   })
 })
 
-describe('pickPositionsAgents (read the fresh per-run agents, not the demo agent)', () => {
-  it('reads the deployed non-revoked agents on a real run', () => {
-    const scopes = [
-      { agent: 'GA_ONE', revoked: false },
-      { agent: 'GA_TWO', revoked: false },
-      { agent: 'GA_GONE', revoked: true },
-    ]
-    expect(pickPositionsAgents(scopes, undefined)).toEqual(['GA_ONE', 'GA_TWO'])
-  })
-
-  it('returns undefined (keep reconcile default) before scopes rehydrate', () => {
-    expect(pickPositionsAgents([], undefined)).toBeUndefined()
-    expect(pickPositionsAgents([{ agent: 'GA_X', revoked: true }], undefined)).toBeUndefined()
-  })
-
-  it('view-as override wins over deployed agents', () => {
-    expect(pickPositionsAgents([{ agent: 'GA_ONE' }], 'GVIEWAS')).toEqual(['GVIEWAS'])
-  })
-})
-
+// My Money Task 13 Part B item 5: pickPositionsAgents (and its 3 tests above this line) is
+// DELETED -- app.jsx's own `positionsAgents` (its one remaining caller) migrated to
+// `pickRecoverableVaultAgents` below. pickVaultAgents stays (see positionsStore.js's own comment
+// on why: PositionsZone.jsx, outside this task's scope, is still a real, tested caller).
 describe('pickVaultAgents (which agents an exit must sweep)', () => {
   const V = 'CVAULT1'
 
