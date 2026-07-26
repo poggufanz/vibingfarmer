@@ -110,30 +110,53 @@ describe('pickDisplayAgents / pickRecoverableVaultAgents / buildBulkExitTarget (
   })
 
   it('keeps a row whose vault is unknown rather than dropping a possibly-funded agent', () => {
-    const discovery = { status: 'partial', agents: [{ address: 'CUNKNOWN', kind: 'deposit', vault: null }] }
+    const discovery = {
+      status: 'partial',
+      agents: [{ address: 'CUNKNOWN', kind: 'deposit', vault: null }],
+    }
     expect(pickRecoverableVaultAgents(discovery, { vault: VAULT })).toEqual(['CUNKNOWN'])
   })
 
   it('excludes a row proven scoped to a different vault', () => {
-    const discovery = { status: 'partial', agents: [{ address: 'COTHER', kind: 'deposit', vault: 'COTHERVAULT' }] }
+    const discovery = {
+      status: 'partial',
+      agents: [{ address: 'COTHER', kind: 'deposit', vault: 'COTHERVAULT' }],
+    }
     expect(pickRecoverableVaultAgents(discovery, { vault: VAULT })).toEqual([])
   })
 
   it('never substitutes a demo/view-as address for an empty result', () => {
-    expect(pickRecoverableVaultAgents({ status: 'complete', agents: [] }, { vault: VAULT })).toEqual([])
+    expect(
+      pickRecoverableVaultAgents({ status: 'complete', agents: [] }, { vault: VAULT })
+    ).toEqual([])
     expect(pickRecoverableVaultAgents(null, { vault: VAULT })).toEqual([])
   })
 
   it('bulk exit is { kind: "all" } only when discovery is complete', () => {
-    const discovery = { status: 'complete', agents: [{ address: 'CAGENT1', kind: 'deposit', vault: VAULT }] }
-    expect(buildBulkExitTarget(discovery, { vault: VAULT })).toEqual({ kind: 'all', agents: ['CAGENT1'] })
+    const discovery = {
+      status: 'complete',
+      agents: [{ address: 'CAGENT1', kind: 'deposit', vault: VAULT }],
+    }
+    expect(buildBulkExitTarget(discovery, { vault: VAULT })).toEqual({
+      kind: 'all',
+      agents: ['CAGENT1'],
+    })
   })
 
   it('bulk exit is { kind: "known-only" } for partial or unavailable discovery, never claiming completeness', () => {
-    const partial = { status: 'partial', agents: [{ address: 'CAGENT1', kind: 'deposit', vault: VAULT }] }
-    expect(buildBulkExitTarget(partial, { vault: VAULT })).toEqual({ kind: 'known-only', agents: ['CAGENT1'] })
+    const partial = {
+      status: 'partial',
+      agents: [{ address: 'CAGENT1', kind: 'deposit', vault: VAULT }],
+    }
+    expect(buildBulkExitTarget(partial, { vault: VAULT })).toEqual({
+      kind: 'known-only',
+      agents: ['CAGENT1'],
+    })
     const unavailable = { status: 'unavailable', agents: [] }
-    expect(buildBulkExitTarget(unavailable, { vault: VAULT })).toEqual({ kind: 'known-only', agents: [] })
+    expect(buildBulkExitTarget(unavailable, { vault: VAULT })).toEqual({
+      kind: 'known-only',
+      agents: [],
+    })
   })
 
   it('pickDisplayAgents returns the enriched rows (not just addresses) for the same candidate set', () => {
