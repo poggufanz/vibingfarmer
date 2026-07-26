@@ -84,6 +84,31 @@ describe('WithdrawModal partial mode', () => {
     expect(screen.getByText(/your whole position/i)).toBeTruthy()
   })
 
+  // Step 3 (My Money Task 12): the old "Estimated time" row was a fabricated formula
+  // (Math.max(30, signatures * 20) seconds), not derived from any real timing model. Removed
+  // outright rather than replaced with another guess.
+  test('never claims an approximate, unmodeled withdrawal time', () => {
+    render(<WithdrawModal {...props} />)
+    expect(screen.queryByText(/estimated time/i)).toBeNull()
+    expect(screen.queryByText(/~\d+\s*seconds/i)).toBeNull()
+  })
+
+  // Step 3 (My Money Task 12): the network-fee line used to unconditionally say "Paid by you, in
+  // XLM" even for a C (VF Wallet/passkey) owner, whose transactions are always relay-sponsored
+  // (stellar/ownerAuthorization.js) -- the owner never pays a fee in that model at all.
+  test('a G owner (classic keypair) is truthfully told they pay the network fee', () => {
+    render(<WithdrawModal {...props} userAddress="GOWNER" />)
+    expect(screen.getByText(/paid by you, in xlm/i)).toBeTruthy()
+  })
+
+  test('a C owner (VF Wallet / passkey) sees the real sponsored fee, never "Paid by you"', () => {
+    render(<WithdrawModal {...props} userAddress="CCONTRACTOWNER1" />)
+    // Mutation guard: a formulation that renders BOTH lines (rather than branching) would still
+    // pass a weaker "sponsored text exists" check -- this also asserts the false claim is absent.
+    expect(screen.getByText(/0 xlm, fee-bump/i)).toBeTruthy()
+    expect(screen.queryByText(/paid by you, in xlm/i)).toBeNull()
+  })
+
   test('Fix 4 (fix loop 2): an auth failure on a stale v2 key clears it under the same {owner, agent} pair ensureExitSigner registered under', async () => {
     // Regression for WithdrawModal.jsx:241. A stale/lost exit-signer registration fails on-chain
     // auth; the retry must clear the SAME v2 owner-scoped key ensureExitSigner just registered

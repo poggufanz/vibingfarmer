@@ -20,10 +20,22 @@
  *     unconstrained-width regression from assuming otherwise.)
  *   - .pc-agent-mark(--hero), .pc-money(--loading/--empty/--error/--unknown), .pc-money-stale-flag,
  *     .pc-money-freshness, .pc-status-notice*, .pc-technical-details*, .pc-venue-truth*,
- *     .pc-dialog*, .pc-visually-hidden, the shared :focus-visible rule: already ported into
- *     pocket-crew.css (Foundation Task 5/6/7) and loaded globally -- re-declaring them here would
- *     just be a duplicate, not a fix. This file only adds the narrow, SCOPED contrast overrides
- *     those globals need once placed on Rice (see the `.pc-dominant--owned` block below).
+ *     .pc-visually-hidden, the shared :focus-visible rule: already ported into pocket-crew.css
+ *     (Foundation Task 5/6/7) and loaded globally -- re-declaring them here would just be a
+ *     duplicate, not a fix. This file only adds the narrow, SCOPED contrast overrides those
+ *     globals need once placed on Rice (see the `.pc-dominant--owned` block below).
+ *   - .pc-dialog*: Task 12 correction -- Foundation's pocket-crew.css `.pc-dialog`/`.pc-dialog-
+ *     panel`/`.pc-dialog-actions` (z-index 1000, `rgb(7 15 11 / 55%)` overlay, 28rem max-width) are
+ *     a Foundation-authored APPROXIMATION, not a verbatim port of the contract's own dialog block
+ *     (contract :668-701 + the standalone mobile override :896-907) -- this task's dialogs
+ *     (WithdrawDialog/StopAccessDialog/RecoveryPanel) are the first callers that need the exact
+ *     contract geometry (480px panel, --pc-z-dialog, --pc-overlay, --pc-radius-dominant padding),
+ *     so it is ported here, verbatim, same convention as `.pc-dominant`/`.pc-button` above. Because
+ *     this file loads AFTER pocket-crew.css (MyMoneyRoute.jsx's own import order) and every
+ *     selector below has the SAME specificity as Foundation's version, this supersedes it globally
+ *     once the /agent route's CSS has loaded -- an intentional, route-triggered correction toward
+ *     the locked contract, not a scoped override (`.pc-dialog` is not, and was never, namespaced
+ *     under `.pc-my-money-route`).
  *   - .pc-network-badge img/svg, .pc-network-badge--compact, .pc-agent-lane(-progress),
  *     .pc-allocation-*, .pc-strategy-*, .pc-protect-*: no such markup exists anywhere on this
  *     route (My Money never renders Plan/Protect/Start's own surfaces).
@@ -116,6 +128,41 @@
 .pc-button[aria-disabled='true'] {
   cursor: not-allowed;
   opacity: 0.58;
+}
+
+/* Shared dialog and mobile sheet (contract :668-701), verbatim -- see the file header's Task 12
+ * note for why this supersedes pocket-crew.css's own approximation once this route's CSS loads. */
+.pc-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: var(--pc-z-dialog);
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  border: 0;
+  padding: var(--pc-space-4);
+  background: var(--pc-overlay);
+}
+
+.pc-dialog-panel {
+  width: min(100%, 480px);
+  max-height: min(760px, calc(100dvh - 32px));
+  overflow: auto;
+  border: 1px solid var(--pc-line);
+  border-radius: var(--pc-radius-dominant);
+  padding: var(--pc-space-8);
+  background: var(--pc-workspace);
+  color: var(--pc-ink);
+  box-shadow: var(--pc-shadow-dominant);
+}
+
+.pc-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--pc-space-3);
+  margin-top: var(--pc-space-8);
 }
 
 /* My Money. Rice is used only when values are confirmed or explicitly marked stale (contract
@@ -269,5 +316,22 @@
   .pc-agent-lane > :last-child {
     grid-column: 2;
     justify-self: start;
+  }
+
+  /* Standalone mobile dialog override (contract :896-907), verbatim -- unconditional on `.pc-dialog`
+   * itself, distinct from the `.pc-money-actions, .pc-dialog-actions` grouped rule above (already
+   * ported) and from pocket-crew.css's own opt-in `.pc-dialog--auto`/`.pc-dialog--sheet` modifiers
+   * (which stay in effect where they're more specific -- see the file header's Task 12 note). */
+  .pc-dialog {
+    align-items: end;
+    padding: 0;
+  }
+
+  .pc-dialog-panel {
+    width: 100%;
+    max-height: 88dvh;
+    border-radius: var(--pc-radius-dominant) var(--pc-radius-dominant) 0 0;
+    padding: var(--pc-space-6) var(--pc-space-5)
+      calc(var(--pc-space-6) + env(safe-area-inset-bottom));
   }
 }

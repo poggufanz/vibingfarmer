@@ -85,6 +85,11 @@ export default function WithdrawModal({
   onSuccess,
 }) {
   const { language: lang } = loadSettings()
+  // stellar/ownerAuthorization.js's G/C split: a G keypair signs and pays its own fee directly; a C
+  // (VF Wallet/passkey) contract address can never hold or spend XLM, so the relay sponsors the fee
+  // instead (submitOwnerAuthorizedTx routes every C action through the relay). Same
+  // address-prefix convention developers/walletSign.js:20 already uses to tell the two apart.
+  const isSponsoredOwner = userAddress?.startsWith('C')
   const balUsdc = toDisplay(balance)
   const rewardsUsdc = toDisplay(unclaimedRewards)
   const [status, setStatus] = useState('idle') // idle | loading | done
@@ -352,13 +357,11 @@ export default function WithdrawModal({
                 </div>
                 <div className="grant-receipt-row">
                   <span className="grant-receipt-k">Network fee</span>
-                  <span className="grant-receipt-v">Paid by you, in XLM</span>
-                </div>
-                <div className="grant-receipt-row">
-                  <span className="grant-receipt-k">Estimated time</span>
-                  <span className="grant-receipt-v mono">
-                    ~{Math.max(30, signaturesFor(agentAddresses.length) * 20)} seconds
-                  </span>
+                  {isSponsoredOwner ? (
+                    <span className="grant-receipt-v grant-receipt-v--ok">0 XLM, fee-bump</span>
+                  ) : (
+                    <span className="grant-receipt-v">Paid by you, in XLM</span>
+                  )}
                 </div>
               </div>
               <p className="wd-footnote">Earnings remain claimable after withdrawal.</p>
