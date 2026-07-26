@@ -147,6 +147,53 @@ describe('WorkerAgent (Stellar)', () => {
     expect(runAgentDeposit).not.toHaveBeenCalled()
   })
 
+  test('emits pull-confirmed once the relay reports SUCCESS, BEFORE the deposit is confirmed (Task 13, decision log #22 obligation B)', async () => {
+    // Before this emit existed, flowState.js's PULL_CONFIRMED event had zero producers in the
+    // tree, so a receipt could never legitimately record a pull leg. The relay's SUCCESS status
+    // is the real, earliest evidence available here -- the deposit's own share-mint confirmation
+    // (verifyMinted, slower) is separate and must not gate this earlier, distinct fact.
+    runAgentDeposit.mockResolvedValue({ hash: 'abc123', status: 'SUCCESS' })
+    readVaultShares.mockResolvedValueOnce(0n).mockResolvedValue(50_000_000n)
+    const events = []
+    const w = new WorkerAgent({
+      agentId: 'worker-1',
+      allocationId: 'run1:deposit:0',
+      user: 'GUSER',
+      vault: 'CCDX...',
+      amount: 50_000_000n,
+      sessionId: 's1',
+      onEvent: (n, d) => events.push({ n, d }),
+      agentAddress: 'CCRG...AGENT',
+      sessionKey: sessionKey(),
+      eligibilityToken: goodToken(),
+    })
+    await w.execute()
+    const pullIdx = events.findIndex((e) => e.n === 'pull-confirmed')
+    const completedIdx = events.findIndex((e) => e.n === 'completed')
+    expect(pullIdx).toBeGreaterThan(-1)
+    expect(pullIdx).toBeLessThan(completedIdx)
+    expect(events[pullIdx].d.allocationId).toBe('run1:deposit:0') // same emit() wrapper, same contract
+  })
+
+  test('does NOT emit pull-confirmed when the relay never reports SUCCESS (a rejected/unconfigured relay pulled nothing)', async () => {
+    runAgentDeposit.mockResolvedValue(null)
+    readVaultShares.mockResolvedValue(0n)
+    const events = []
+    const w = new WorkerAgent({
+      agentId: 'worker-3',
+      user: 'GUSER',
+      vault: 'CCDX...',
+      amount: 10_000_000n,
+      sessionId: 's1',
+      onEvent: (n, d) => events.push({ n, d }),
+      agentAddress: 'CCRG...AGENT',
+      sessionKey: sessionKey(),
+      eligibilityToken: goodToken(),
+    })
+    await w.execute()
+    expect(events.some((e) => e.n === 'pull-confirmed')).toBe(false)
+  })
+
   test('carries allocationId on every emitted event (Task 6 custody-keying contract)', async () => {
     runAgentDeposit.mockResolvedValue({ hash: 'abc123', status: 'SUCCESS' })
     readVaultShares.mockResolvedValueOnce(0n).mockResolvedValue(50_000_000n)

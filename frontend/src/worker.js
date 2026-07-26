@@ -134,6 +134,19 @@ export class WorkerAgent {
         )
       if (res.status !== 'SUCCESS') throw new Error(`The Stellar relay returned ${res.status}.`)
 
+      // Strategy Task 13 (Pocket Crew redesign, decision log #22 obligation B): the funding_router
+      // pull and the vault deposit are ONE atomic Soroban invocation here (the deposit's signed
+      // auth entry authorizes a sub-invocation that pulls from the owner's allowance) -- there is
+      // no separate off-chain "pull" call to hang an event on. The relayer reporting SUCCESS is
+      // exactly the moment that atomic tx landed on-chain, which is real, non-speculative evidence
+      // the pull sub-invocation executed (Soroban auth trees are all-or-nothing: shares could not
+      // mint below without it). Emitted BEFORE verifyMinted below on purpose -- share-mint
+      // confirmation is a slower, separate poll that answers "did the DEPOSIT really work," not
+      // "did funds leave the owner," and PULL_CONFIRMED only ever claims the latter. This is the
+      // real producer flowState.js's PULL_CONFIRMED event needed (previously zero producers
+      // existed in the tree for it, so a receipt could never legitimately complete a pull leg).
+      this.emit('pull-confirmed', {})
+
       // A relayer accepting a job is not a deposit. Confirm shares actually minted.
       const { minted, shares: sharesMinted } = await this.verifyMinted(baseline)
       if (!minted)
