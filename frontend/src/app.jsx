@@ -124,12 +124,35 @@ import {
   onAgentEvent,
   withdrawAllFromVault,
 } from './agents/agentController.js'
-const OpsConsole = lazy(() => import('./components/console/OpsConsole.jsx'))
 const Withdraw = lazy(() => import('./screens/Withdraw.jsx'))
 import NotificationCenter from './components/NotificationCenter.jsx'
-import { loadBasePositions } from './base/dashboardPositions.js'
+import { loadDeviceBasePositions } from './base/dashboardPositions.js'
 import { readIdleUsdc } from './base/readPositions.js'
 import HomePage from './components/HomePage.jsx'
+// My Money Task 13 (Pocket Crew redesign, Wave 5) — the production `/agent` route. Replaces
+// OpsConsole (retired from every production route below; its files stay for rollback/tests, see
+// this task's report for the bundle-scan proof that no production route imports console.css).
+import { MyMoneyRoute } from './components/money/MyMoneyRoute.jsx'
+import { WithdrawDialog } from './components/money/WithdrawDialog.jsx'
+import { StopAccessDialog } from './components/money/StopAccessDialog.jsx'
+import { RecoveryPanel } from './components/money/RecoveryPanel.jsx'
+import { discoverOwnerScopes } from './stellar/ownerDiscovery.js'
+import { readOwnerMoney, aggregateOwnerPositions } from './money/readOwnerMoney.js'
+import { buildMyMoneyModel } from './money/myMoneyModel.js'
+// planFullExit/planPartialExit/planRevoke are NOT called here -- AgentTeam.jsx/WithdrawDialog.jsx/
+// StopAccessDialog.jsx already compute the plan and hand it back via onConfirmFull/onConfirmPartial/
+// onConfirmRevoke/onRecoverAgent; this controller only ever EXECUTES a plan it's given and
+// reconciles the aftermath.
+import { reconcileOwnerAction } from './money/ownerActions.js'
+import {
+  classifyKeeperAutomation,
+  classifyStrategyConfiguration,
+  classifyLifeboatAutomation,
+  describeRiskWatchProvenance,
+} from './money/automationEvidence.js'
+import { nextReconciliationToken, isReconciliationCurrent } from './money/freshness.js'
+import { sweepAgents } from './stellar/exit.js'
+import { ensureExitSigner, partialWithdraw } from './stellar/partialWithdraw.js'
 const LandingHero = lazy(() => import('./components/LandingHero.jsx'))
 const ExplorerPage = lazy(() => import('./components/ExplorerPage.jsx'))
 const EcosystemPage = lazy(() => import('./components/EcosystemPage.jsx'))
@@ -427,6 +450,114 @@ const buildActiveVaults = (positions, strategy) => {
     .filter((v) => v.protocol)
 }
 
+/* ---------- My Money Task 13: pure money-controller helpers ----------
+ * Exported for direct unit testing (app.money.test.jsx) — same convention as
+ * mergeFlowHelpers.js/app.strategy.merge.test.jsx: extract the logic that actually needs
+ * adversarial proof (race conditions, cache assembly, projection) into plain functions app.jsx's
+ * own effects/handlers call, rather than trying to render the whole stateful App in a test. None
+ * of these touch React state, a wallet, or a secret — they only ever see {kind,address} account
+ * shapes and the same read-only envelopes ownerDiscovery.js/readOwnerMoney.js already produce. */
+
+const moneyCacheKey = (owner) => `yv_my_money_cache_${String(owner).toLowerCase()}`
+
+/** Restore the last-known {money, discovery, protection} cache for `owner` (sync, instant) —
+ * same convention as positionsStore.js's loadPersistedPositions. */
+export function loadMoneyCache(owner) {
+  if (!owner) return {}
+  try {
+    return JSON.parse(localStorage.getItem(moneyCacheKey(owner)) || '{}') || {}
+  } catch {
+    return {}
+  }
+}
+
+/** Persist the {money, discovery, protection} cache for `owner`. Safe to call with an empty object. */
+export function saveMoneyCache(owner, cache) {
+  if (!owner) return
+  try {
+    localStorage.setItem(moneyCacheKey(owner), JSON.stringify(cache || {}))
+  } catch {
+    // localStorage unavailable/full — non-fatal, the in-memory cache ref still serves this session.
+  }
+}
+
+/**
+ * Assemble the MoneySnapshot shape myMoneyModel.js documents (its own header JSDoc) from a raw
+ * readOwnerMoney() envelope — the exact `{ ...aggregateOwnerPositions(reads), agents, checkedAt,
+ * confirmedLedger, confirmedBlock, source }` shape buildMyMoneyModel's caller is responsible for
+ * assembling. Pure; never re-fetches.
+ */
+export function buildMoneySnapshot(reads) {
+  if (!reads) return null
+  return {
+    ...aggregateOwnerPositions(reads),
+    agents: reads.agents ?? [],
+    checkedAt: reads.checkedAt ?? null,
+    confirmedLedger: reads.confirmedLedger ?? null,
+    confirmedBlock: reads.confirmedBlock ?? null,
+    source: reads.source ?? null,
+  }
+}
+
+/**
+ * Wallet-switch identity guard (brief Step 2, hazard 1): a resolved fetch is only safe to commit
+ * if the owner it was fetched FOR still matches the owner currently connected — a wallet switch
+ * mid-flight must never let the PRIOR owner's discovery/money/risk journal repaint over the new
+ * owner's (or a disconnect's) state.
+ */
+export function isMoneyFetchForCurrentOwner({ fetchOwner, currentOwner }) {
+  return Boolean(fetchOwner) && fetchOwner === currentOwner
+}
+
+/**
+ * Post-action revision guard (brief Step 2, hazard 3): reuses freshness.js's own monotonic
+ * reconciliation token — the SAME primitive money/ownerActions.js's reconcileOwnerAction already
+ * uses for the identical hazard — so a read that STARTED before a mutating action
+ * (withdraw/revoke/recovery) resolved can never repaint the model over the action's own fresher
+ * reconciliation.
+ *
+ * Both guards are collapsed into ONE decision here (rather than checked separately at each call
+ * site) so there is exactly one place that can get this wrong, and exactly one place mutation
+ * testing has to prove right.
+ */
+export function shouldCommitMoneyFetch({ fetchOwner, currentOwner, readToken, currentToken }) {
+  return (
+    isMoneyFetchForCurrentOwner({ fetchOwner, currentOwner }) &&
+    isReconciliationCurrent({ readToken, currentToken })
+  )
+}
+
+/**
+ * Read-only: discovery -> money -> assembled snapshot for `owner`. No submit/sign/write seam
+ * exists on this function's signature at all — a reload/reconnect that calls this can, by
+ * construction, never replay a transaction (brief Step 2, hazard 2). Injectable seams mirror
+ * ownerDiscovery.js/readOwnerMoney.js's own convention (tests never touch the real network).
+ */
+export async function fetchMyMoneySnapshot({
+  owner,
+  now = Date.now(),
+  discoverScopes = discoverOwnerScopes,
+  readMoney = readOwnerMoney,
+}) {
+  const discovery = await discoverScopes({ owner })
+  const reads = await readMoney({ owner, discovery, now })
+  return { discovery, money: buildMoneySnapshot(reads) }
+}
+
+/**
+ * Home's own small, pure projection (brief Step 4): exactly `{state, total, lastConfirmed}`,
+ * never a second portfolio computation. `total` is the SAME confirmedTotal.amount MoneyHero
+ * renders on /agent when known, `null` otherwise — Home never invents its own number.
+ */
+export function projectMoneyForHome(model) {
+  if (!model) return { state: 'loading', total: null, lastConfirmed: null }
+  return {
+    state: model.state,
+    total: model.confirmedTotal?.state === 'known' ? model.confirmedTotal.amount : null,
+    lastConfirmed: model.checkedAt ?? null,
+  }
+}
+
 /* ---------- App ---------- */
 const App = () => {
   const devMode = isDevMode()
@@ -685,7 +816,7 @@ const App = () => {
   const [autofarmReads, setAutofarmReads] = useS({ pricePerShare: null, strategies: [] })
   const [rebalancePulse, setRebalancePulse] = useS(null) // { key, ts } — force-graph edge pulse
   // vf-base-dashboard Task 10 — read-only Base positions (own poll piggyback, see the 15s
-  // sync() below). Stays [] for Stellar-only users; loadBasePositions never throws.
+  // sync() below). Stays [] for Stellar-only users; loadDeviceBasePositions never throws.
   const [basePositions, setBasePositions] = useS([])
   // Set only once the user actually clicks Withdraw on a Base position: { position,
   // ownerKernelAccount, publicClient } after the one-tap ensureBaseOwner login ceremony.
@@ -839,8 +970,8 @@ const App = () => {
     const sync = async () => {
       const startedAt = Date.now()
       // vf-base-dashboard Task 10 — piggybacks this SAME 15s poll (never a second interval).
-      // loadBasePositions never throws (see its own guard/catch); [] for Stellar-only users.
-      loadBasePositions({ stellarOwner: realAddress }).then((bp) => {
+      // loadDeviceBasePositions never throws (see its own guard/catch); [] for Stellar-only users.
+      loadDeviceBasePositions({ stellarOwner: realAddress }).then((bp) => {
         if (alive) setBasePositions(bp)
       })
       // Prefer the scope-derived agent list (per-run grant agents — kept fresh via
@@ -1475,48 +1606,12 @@ const App = () => {
       detail: `Venice AI flagged ${alert.toProtocol} at ${alert.toApy}% vs ${alert.fromVault} at ${alert.fromApy}% (+${alert.apyGain}%). Rebalancing authorizes a fresh Soroban session-key scope for the new vault.`,
     })
 
-  // Kill switch — user-signed Registry.revoke (works even if the relayer is down).
-  // Optimistically flip the row; the on-chain agent_revoked subscription confirms it.
-  const handleRevokeAgent = async (agent) => {
-    try {
-      // Revoke is a kill switch, not an exit: on-chain it only flips the flag and clears the
-      // allowance — it never redeems shares. Every withdraw list filters revoked agents out, so
-      // revoking a still-funded agent strands its deposit with no in-app way back. Refuse and
-      // point at the exit that actually moves the money. Fails OPEN on a read failure: an RPC
-      // hiccup must not disable the kill switch — a stranded deposit has a second chance
-      // (withdraw first), a live rogue key does not.
-      const scope = scopes.find((r) => r.agent?.toLowerCase() === agent.toLowerCase())
-      const shares = await readContract({
-        contract: scope?.vault || SOROBAN_ACTIVE_VAULT_ADDRESS,
-        method: 'balance',
-        args: [{ addr: agent }],
-      }).catch(() => 0n)
-      if (BigInt(shares ?? 0) > 0n) {
-        addLog({
-          event: 'AgentFailed',
-          meta: `Revocation blocked: agent ${shortAddr(agent)} still holds ${toDisplay(shares).toFixed(2)} vault shares.`,
-          detail:
-            'Withdraw first — a revoked agent disappears from every withdraw list, which would strand these funds.',
-        })
-        return
-      }
-      const { hash: tx } = await revokeAgentOnChain({ owner: realAddress, agent })
-      setScopes((prev) =>
-        prev.map((s) =>
-          s.agent?.toLowerCase() === agent.toLowerCase() ? { ...s, revoked: true } : s
-        )
-      )
-      addLog({
-        event: 'PermissionRevoked',
-        meta: `Revoked agent ${shortAddr(agent)}. Transaction ${shortAddr(tx)}.`,
-        txHash: tx,
-        detail:
-          'Agent scope revoked on-chain. Further deposits by this key now revert (ScopeInactive).',
-      })
-    } catch (e) {
-      addLog({ event: 'AgentFailed', meta: `Revocation failed: ${e.message}` })
-    }
-  }
+  // My Money Task 13: the old OpsConsole-only revoke handler that lived here is DELETED, not
+  // merely orphaned — it was Part B item 1's named defect ("the live revoke treats an unreadable
+  // balance as zero", `.catch(() => 0n)` above the old `shares` read), superseded by
+  // handleConfirmRevoke (StopAccessDialog -> ownerActions.js's planRevoke, which reports an
+  // unreadable balance as a WARNING, never a safe-to-revoke zero). It had zero callers left once
+  // OpsConsole stopped being the production /agent route — confirmed via grep before deletion.
 
   // Live agent_revoked subscription — flips a scope row to "revoked" the instant the event lands,
   // whether revoked from this UI or elsewhere. subscribeAgentRevoked already filters to the owner.
@@ -1722,7 +1817,7 @@ const App = () => {
     try {
       const { ensureBaseOwner } = await import('./wallet/passkeyBridge.js')
       await ensureBaseOwner({ connectedAddress: realAddress, preferLogin: true })
-      const bp = await loadBasePositions({ stellarOwner: realAddress })
+      const bp = await loadDeviceBasePositions({ stellarOwner: realAddress })
       setBasePositions(bp)
       if (!bp.length) setBaseWithdrawError('Base account connected — no open positions found.')
     } catch (err) {
@@ -1843,6 +1938,348 @@ const App = () => {
       setConnectError(err.message)
       addLog({ event: 'AgentFailed', meta: `Connection failed: ${err.message}` })
     }
+  }
+
+  // ========================================================================================
+  // My Money Task 13 (Pocket Crew redesign, Wave 5) — the production `/agent` route (MyMoneyRoute)
+  // + the compact `/home` launcher's projection. This controller owns discovery/money/protection
+  // state, applies the request generation/revision guards (shouldCommitMoneyFetch, above) on
+  // wallet change and post-action refresh, and passes a normalized model + real action handlers
+  // to MyMoneyRoute/WithdrawDialog/StopAccessDialog/RecoveryPanel. It never puts a raw secret or
+  // session key into React state: `moneyAccountValue` below is only ever `{kind:'G', address}` —
+  // signing itself stays inside stellar/exit.js, stellar/revoke.js, stellar/partialWithdraw.js
+  // (wallet-kit popup / relayer ceremony), which this controller only calls, never inspects.
+  const [moneyModel, setMoneyModel] = useS(() => buildMyMoneyModel({ owner: null }))
+  const [moneyDiscovery, setMoneyDiscovery] = useS(null)
+  const [moneyRead, setMoneyRead] = useS(null) // readOwnerMoney-derived MoneySnapshot (buildMoneySnapshot)
+  const [moneyActionPending, setMoneyActionPending] = useS(false)
+  const [moneyWithdrawOpen, setMoneyWithdrawOpen] = useS(false)
+  const [moneyStopAccessAddress, setMoneyStopAccessAddress] = useS(null)
+  const [moneyRecovery, setMoneyRecovery] = useS(null)
+  const moneyRevisionRef = useR(null) // freshness.js's nextReconciliationToken/isReconciliationCurrent
+  const realAddressRef = useR(realAddress)
+  const moneyCacheRef = useR({})
+
+  useE(() => {
+    realAddressRef.current = realAddress
+  }, [realAddress])
+
+  const moneyAccountValue = useM(
+    () => (realAddress ? { kind: 'G', address: realAddress } : null),
+    [realAddress]
+  )
+
+  function moneyProtectionSnapshot() {
+    if (!lifeboatState) return null
+    return classifyLifeboatAutomation({
+      derisked: lifeboatState.derisked,
+      mandateExpiry: lifeboatState.mandateExpiry,
+      authority: lifeboatState.authority,
+      now: Date.now(),
+    })
+  }
+
+  // Read-only refresh: discovery -> money -> model, guarded by shouldCommitMoneyFetch so a wallet
+  // switch or a newer mutating action (bumped moneyRevisionRef) can never let this stale attempt
+  // repaint the screen, however late it resolves.
+  async function refreshMoney(owner) {
+    const readToken = nextReconciliationToken(moneyRevisionRef.current)
+    moneyRevisionRef.current = readToken
+    let snapshot
+    try {
+      snapshot = await fetchMyMoneySnapshot({ owner, now: Date.now() })
+    } catch {
+      return // a failed read leaves the last-good state in place; buildMyMoneyModel's own cache
+      // fallback (still fed from moneyCacheRef) is what downgrades it to stale over time.
+    }
+    if (
+      !shouldCommitMoneyFetch({
+        fetchOwner: owner,
+        currentOwner: realAddressRef.current,
+        readToken,
+        currentToken: moneyRevisionRef.current,
+      })
+    ) {
+      return
+    }
+    const protection = moneyProtectionSnapshot()
+    const nextCache = { money: snapshot.money, discovery: snapshot.discovery, protection }
+    moneyCacheRef.current = nextCache
+    saveMoneyCache(owner, nextCache)
+    setMoneyDiscovery(snapshot.discovery)
+    setMoneyRead(snapshot.money)
+    setMoneyModel(
+      buildMyMoneyModel({
+        owner,
+        discovery: snapshot.discovery,
+        money: snapshot.money,
+        protection,
+        cache: nextCache,
+        now: Date.now(),
+      })
+    )
+  }
+
+  // Wallet change (connect/switch/disconnect): render the cache immediately, marked stale by
+  // buildMyMoneyModel's own freshness math (never a confident 'current' from a cache alone) —
+  // strictly read-only, no transaction replay — then kick off a fresh, guarded refresh. The
+  // `alive` flag scopes every poll tick below to THIS owner's effect lifetime; combined with
+  // shouldCommitMoneyFetch's own owner check inside refreshMoney, a switch mid-flight is guarded
+  // twice over.
+  useE(() => {
+    let alive = true
+    if (!realAddress) {
+      moneyCacheRef.current = {}
+      setMoneyDiscovery(null)
+      setMoneyRead(null)
+      setMoneyModel(buildMyMoneyModel({ owner: null }))
+      return
+    }
+    const cached = loadMoneyCache(realAddress)
+    moneyCacheRef.current = cached
+    setMoneyDiscovery(cached.discovery ?? null)
+    setMoneyRead(cached.money ?? null)
+    setMoneyModel(
+      buildMyMoneyModel({
+        owner: realAddress,
+        discovery: cached.discovery ?? null,
+        money: cached.money ?? null,
+        protection: cached.protection ?? null,
+        cache: cached,
+        now: Date.now(),
+      })
+    )
+    refreshMoney(realAddress)
+    const id = setInterval(() => {
+      if (alive) refreshMoney(realAddress)
+    }, 30_000)
+    return () => {
+      alive = false
+      clearInterval(id)
+    }
+  }, [realAddress])
+
+  // Re-derives the model from an ALREADY-fresh read (an owner action's own reconcileOwnerAction
+  // result) when one is available, avoiding a redundant extra readOwnerMoney round-trip; falls
+  // back to a full refreshMoney() when the action's reconciliation never got a fresh read (e.g.
+  // 'not-submitted'). Guarded the same way as refreshMoney — a wallet switch during a pending
+  // action must not let its aftermath repaint the new owner's screen.
+  async function refreshMoneyAfterAction(freshReads) {
+    if (
+      !isMoneyFetchForCurrentOwner({
+        fetchOwner: realAddress,
+        currentOwner: realAddressRef.current,
+      })
+    ) {
+      return
+    }
+    if (!freshReads) {
+      await refreshMoney(realAddress)
+      return
+    }
+    const money = buildMoneySnapshot(freshReads)
+    const protection = moneyProtectionSnapshot()
+    const nextCache = { money, discovery: moneyDiscovery, protection }
+    moneyCacheRef.current = nextCache
+    saveMoneyCache(realAddress, nextCache)
+    setMoneyRead(money)
+    setMoneyModel(
+      buildMyMoneyModel({
+        owner: realAddress,
+        discovery: moneyDiscovery,
+        money,
+        protection,
+        cache: nextCache,
+        now: Date.now(),
+      })
+    )
+  }
+
+  function boundReadOwnerMoney() {
+    return readOwnerMoney({ owner: realAddress, discovery: moneyDiscovery, now: Date.now() })
+  }
+
+  async function handleMoneyPrimaryAction(action) {
+    if (action === 'connect-wallet') return handleConnect()
+    if (action === 'deposit' || action === 'add-money') {
+      navigate('/strategy')
+      return
+    }
+    if (action === 'renew-protection') return onGrantMandate()
+    if (action === 'review-problem') {
+      setMoneyWithdrawOpen(true)
+      return
+    }
+  }
+
+  function handleRecoverAgent(address, plan) {
+    // AgentTeam.jsx already computed `plan` via planFullExit -- execute it directly (its own
+    // dialog copy: "Owner withdrawal is always allowed by the contract"). Falls back to opening
+    // the full withdraw dialog when discovery hadn't finished loading yet (plan is null there).
+    if (plan?.ok) {
+      handleConfirmFullExit(plan)
+      return
+    }
+    setMoneyWithdrawOpen(true)
+  }
+
+  function openMoneyRecoveryFromOutcomes({ action, outcomes }) {
+    const bad = outcomes.find((o) => o.outcome === 'unknown' || o.outcome === 'not-submitted')
+    if (!bad) return
+    setMoneyRecovery({ action, submission: bad, reconciled: null })
+  }
+
+  async function handleConfirmFullExit(plan) {
+    if (!plan?.ok || !realAddress) return
+    setMoneyActionPending(true)
+    try {
+      const addresses = plan.targets.map((t) => t.address)
+      const swept = await sweepAgents({
+        owner: realAddress,
+        agentAddresses: addresses,
+        to: realAddress,
+      })
+      const perAgent = addresses.map((address, i) => ({
+        agentAddress: address,
+        ok: swept.errors[i] == null,
+        status: swept.errors[i] == null ? 'SUCCESS' : undefined,
+        hash: swept.txHashes[i],
+        error: swept.errors[i],
+      }))
+      const beforeRevision = moneyRevisionRef.current
+      const action = { kind: 'full-exit', targets: plan.targets }
+      const reconciled = await reconcileOwnerAction({
+        action,
+        result: perAgent,
+        readOwnerMoney: boundReadOwnerMoney,
+        beforeRevision,
+      })
+      moneyRevisionRef.current = reconciled.revision
+      await refreshMoneyAfterAction(reconciled.fresh)
+      if (reconciled.complete) setMoneyWithdrawOpen(false)
+      else openMoneyRecoveryFromOutcomes({ action, outcomes: reconciled.outcomes })
+    } finally {
+      setMoneyActionPending(false)
+    }
+  }
+
+  async function handleConfirmPartialExit(plan) {
+    if (!plan?.ok || plan.mode !== 'partial' || !realAddress) return
+    setMoneyActionPending(true)
+    const action = { kind: 'partial-exit', agentAddress: plan.agentAddress }
+    try {
+      await ensureExitSigner({ owner: realAddress, agentAddress: plan.agentAddress })
+      await partialWithdraw({
+        owner: realAddress,
+        agentAddress: plan.agentAddress,
+        amountUnits: BigInt(plan.amount.units),
+      })
+      const beforeRevision = moneyRevisionRef.current
+      const reconciled = await reconcileOwnerAction({
+        action,
+        result: {
+          agentAddress: plan.agentAddress,
+          ok: true,
+          status: 'SUCCESS',
+          amount: plan.amount,
+        },
+        readOwnerMoney: boundReadOwnerMoney,
+        beforeRevision,
+      })
+      moneyRevisionRef.current = reconciled.revision
+      await refreshMoneyAfterAction(reconciled.fresh)
+      if (reconciled.complete) setMoneyWithdrawOpen(false)
+      else openMoneyRecoveryFromOutcomes({ action, outcomes: reconciled.outcomes })
+    } catch (err) {
+      const beforeRevision = moneyRevisionRef.current
+      const reconciled = await reconcileOwnerAction({
+        action,
+        result: { agentAddress: plan.agentAddress, error: err },
+        readOwnerMoney: boundReadOwnerMoney,
+        beforeRevision,
+      })
+      moneyRevisionRef.current = reconciled.revision
+      await refreshMoneyAfterAction(reconciled.fresh)
+      openMoneyRecoveryFromOutcomes({ action, outcomes: reconciled.outcomes })
+    } finally {
+      setMoneyActionPending(false)
+    }
+  }
+
+  async function handleConfirmRevoke(plan) {
+    if (!plan?.ok || !realAddress) return
+    setMoneyActionPending(true)
+    const action = { kind: 'revoke', agentAddress: plan.agentAddress }
+    try {
+      const result = await revokeAgentOnChain({ owner: realAddress, agent: plan.agentAddress })
+      const beforeRevision = moneyRevisionRef.current
+      const reconciled = await reconcileOwnerAction({
+        action,
+        result: {
+          agentAddress: plan.agentAddress,
+          ok: result.status === 'SUCCESS',
+          status: result.status,
+          hash: result.hash,
+        },
+        readOwnerMoney: boundReadOwnerMoney,
+        beforeRevision,
+      })
+      moneyRevisionRef.current = reconciled.revision
+      await refreshMoneyAfterAction(reconciled.fresh)
+      if (reconciled.complete) setMoneyStopAccessAddress(null)
+      else openMoneyRecoveryFromOutcomes({ action, outcomes: reconciled.outcomes })
+    } finally {
+      setMoneyActionPending(false)
+    }
+  }
+
+  function handleConfirmBaseWithdraw() {
+    // Base's real unwind ceremony (passkey ceremony + screens/Withdraw.jsx's step-flow) already
+    // exists and stays off-limits/unmodified for this task — this dialog action re-triggers that
+    // SAME proven flow rather than re-implementing a second one inline.
+    setMoneyWithdrawOpen(false)
+    handleBaseWithdrawClick()
+  }
+
+  async function handleCheckSubmissionStatus() {
+    if (!moneyRecovery?.action) return
+    setMoneyActionPending(true)
+    try {
+      const beforeRevision = moneyRevisionRef.current
+      const reconciled = await reconcileOwnerAction({
+        action: moneyRecovery.action,
+        result: moneyRecovery.submission,
+        readOwnerMoney: boundReadOwnerMoney,
+        beforeRevision,
+      })
+      moneyRevisionRef.current = reconciled.revision
+      await refreshMoneyAfterAction(reconciled.fresh)
+      setMoneyRecovery((prev) =>
+        prev
+          ? {
+              ...prev,
+              reconciled: reconciled.complete
+                ? 'landed'
+                : reconciled.retryAllowed
+                  ? 'not-landed'
+                  : null,
+            }
+          : prev
+      )
+    } finally {
+      setMoneyActionPending(false)
+    }
+  }
+
+  function handleRetrySubmission() {
+    // Reconciliation already proved this never landed (retryEnabled gates on exactly that in
+    // RecoveryPanel) -- route back to the SAME action's own dialog rather than resubmit blindly
+    // from here.
+    const kind = moneyRecovery?.action?.kind
+    const agentAddress = moneyRecovery?.action?.agentAddress
+    setMoneyRecovery(null)
+    if (kind === 'revoke' && agentAddress) setMoneyStopAccessAddress(agentAddress)
+    else setMoneyWithdrawOpen(true)
   }
 
   // ========================================================================================
@@ -2438,7 +2875,7 @@ const App = () => {
         const outcome = applyBaseLegOutcome(summary.baseLeg, { stellarOwner: realAddress })
         if (outcome) addLog(outcome)
         if (summary.baseLeg.success) {
-          loadBasePositions({ stellarOwner: realAddress }).then((bp) => setBasePositions(bp))
+          loadDeviceBasePositions({ stellarOwner: realAddress }).then((bp) => setBasePositions(bp))
         }
       }
       // Reuses the proven position-reconciliation/council-reflect logic (setStage('done') included)
@@ -2855,6 +3292,21 @@ const App = () => {
     )
   }
 
+  // My Money Task 13: automation-evidence labels for HowMoneyWorks, and the Base withdraw preview
+  // for WithdrawDialog's "base" tab -- all derived from state this app already polls every 15s,
+  // never a second fetch of its own.
+  const moneyKeeper = classifyKeeperAutomation({ events: keeperActivity, now: Date.now() })
+  const moneyStrategyConfig = classifyStrategyConfiguration({
+    pricePerShare: autofarmReads.pricePerShare,
+  })
+  const moneyRiskWatch = describeRiskWatchProvenance({
+    owner: realAddress,
+    networkId: 'stellar-testnet',
+  })
+  const moneyBasePlan = { available: basePositions.length > 0, positions: basePositions }
+  const moneyStopAccessAgent =
+    moneyRead?.agents?.find((a) => a.address === moneyStopAccessAddress) ?? null
+
   return (
     <div
       className={`app ${sbExtended ? 'sb-extended' : 'sb-minimized'} ${railCollapsed ? 'rail-collapsed' : ''}`}
@@ -2886,24 +3338,12 @@ const App = () => {
             element={
               <HomePage
                 userAddress={realAddress}
-                positions={agentData.positions}
-                alerts={agentData.alerts}
-                vaultMeta={agentVaultMeta}
-                lastUpdated={agentData.lastUpdated}
-                agentActive={agentEnabled && stage === 'done'}
-                autoHarvest={agentSettings.autoHarvest}
+                moneyProjection={projectMoneyForHome(moneyModel)}
                 sessionResumed={sessionResumed}
                 onDismissResumed={() => setSessionResumed(false)}
                 onConnect={handleConnect}
                 onStartStrategy={handleAgain}
                 onOpenAgent={() => navigate('/agent')}
-                onViewHistory={() => navigate('/history')}
-                onWithdrawSuccess={handleWithdrawSuccess}
-                scopes={scopes}
-                basePositions={basePositions}
-                onBaseWithdraw={handleBaseWithdrawClick}
-                onBaseRecover={handleBaseRecover}
-                baseWithdrawError={baseWithdrawError}
               />
             }
           />
@@ -2923,55 +3363,67 @@ const App = () => {
           <Route
             path="/agent"
             element={
-              <div className="stage">
-                <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
-                  <OpsConsole
-                    positions={agentData.positions}
-                    vaultMeta={agentVaultMeta}
-                    lastUpdated={agentData.lastUpdated}
-                    userAddress={realAddress}
-                    withdrawEnabled={stage !== 'execute' && stage !== 'permission'}
-                    onWithdrawSuccess={handleWithdrawSuccess}
-                    onNewStrategy={handleAgain}
-                    monitorStatus={monitorStatus}
-                    loop={
-                      agentEnabled
-                        ? {
-                            running: loopRef.current?.isRunning() || false,
-                            phase: loopPhase,
-                            cycle: loopRef.current?.getCycle() || 0,
-                            nextTickAt: loopRef.current?.getNextTickAt() || null,
-                            heartbeatMs:
-                              loopRef.current?.getHeartbeatMs() ||
-                              (agentSettings.apyInterval || 10) * 60 * 1000,
-                            rows: getCycles().slice(0, 40),
-                            summary: getJournalSummary(),
-                            decisionsRows: getDecisions().slice(0, 30),
-                            decisionsSummary: getDecisionSummary(),
-                          }
-                        : null
-                    }
-                    keeper={{
-                      events: keeperActivity,
-                      pricePerShare: autofarmReads.pricePerShare,
-                      strategies: autofarmReads.strategies,
-                    }}
-                    lifeboat={{
-                      state: lifeboatState,
-                      events: lifeboatActivity,
-                      busy: lifeboatBusy,
-                      onGrant: onGrantMandate,
-                    }}
-                    scopes={scopes}
-                    onRevoke={handleRevokeAgent}
-                    graph={{
-                      data: autofarmGraphData,
-                      paletteIsLight,
-                      pulseEdge: rebalancePulse,
-                    }}
-                  />
-                </Suspense>
-              </div>
+              <>
+                <MyMoneyRoute
+                  model={moneyModel}
+                  agents={moneyRead?.agents ?? []}
+                  discovery={moneyDiscovery}
+                  account={moneyAccountValue}
+                  keeper={moneyKeeper}
+                  strategyConfig={moneyStrategyConfig}
+                  riskWatch={moneyRiskWatch}
+                  onAction={handleMoneyPrimaryAction}
+                  onRecoverAgent={handleRecoverAgent}
+                  actionPending={moneyActionPending}
+                />
+                <WithdrawDialog
+                  open={moneyWithdrawOpen}
+                  onClose={() => setMoneyWithdrawOpen(false)}
+                  agents={moneyRead?.agents ?? []}
+                  discovery={moneyDiscovery}
+                  account={moneyAccountValue}
+                  basePlan={moneyBasePlan}
+                  pending={moneyActionPending}
+                  onConfirmFull={handleConfirmFullExit}
+                  onConfirmPartial={handleConfirmPartialExit}
+                  onConfirmBase={handleConfirmBaseWithdraw}
+                />
+                <StopAccessDialog
+                  open={Boolean(moneyStopAccessAddress)}
+                  onClose={() => setMoneyStopAccessAddress(null)}
+                  agent={moneyStopAccessAgent}
+                  shareRead={moneyStopAccessAgent?.vaultShares}
+                  idleBalanceRead={moneyStopAccessAgent?.idleToken}
+                  account={moneyAccountValue}
+                  pending={moneyActionPending}
+                  onConfirmRevoke={handleConfirmRevoke}
+                  onGoToWithdraw={() => {
+                    setMoneyStopAccessAddress(null)
+                    setMoneyWithdrawOpen(true)
+                  }}
+                />
+                <RecoveryPanel
+                  open={Boolean(moneyRecovery)}
+                  onClose={() => setMoneyRecovery(null)}
+                  location={moneyRecovery?.location}
+                  amount={moneyRecovery?.amount}
+                  agentAddress={moneyRecovery?.action?.agentAddress}
+                  strandedBridge={moneyRecovery?.strandedBridge}
+                  submission={moneyRecovery?.submission}
+                  reconciled={moneyRecovery?.reconciled}
+                  pending={moneyActionPending}
+                  onRecoverViaFullExit={() => {
+                    setMoneyRecovery(null)
+                    setMoneyWithdrawOpen(true)
+                  }}
+                  onGoToBaseWithdraw={() => {
+                    setMoneyRecovery(null)
+                    handleBaseWithdrawClick()
+                  }}
+                  onCheckStatus={handleCheckSubmissionStatus}
+                  onRetry={handleRetrySubmission}
+                />
+              </>
             }
           />
           <Route path="/history" element={<HistoryPanel connectedAddress={realAddress} />} />
@@ -3061,7 +3513,9 @@ const App = () => {
             stellarRecipient={realAddress}
             onClose={() => setBaseWithdraw(null)}
             onDone={() => {
-              loadBasePositions({ stellarOwner: realAddress }).then((bp) => setBasePositions(bp))
+              loadDeviceBasePositions({ stellarOwner: realAddress }).then((bp) =>
+                setBasePositions(bp)
+              )
             }}
           />
         </Suspense>
