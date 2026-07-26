@@ -22,6 +22,14 @@ export const initialStrategyFlowState = Object.freeze({
   planError: null,
   permission: null, // secret-free PermissionDecisionV1 view (reusePreflight.toPermissionDecisionView)
   permissionStatus: 'idle', // idle | preflight-ready | grant-requested | rejected | grant-confirmed | reuse-confirmed
+  // Strategy Task 13 (decision log #22, obligation A.2/A.3): mirrors `planError`. Populated by
+  // PREFLIGHT_FAILED (a PermissionPhaseError's message -- preflight OR reuse-revalidation) and by
+  // WALLET_REJECTED/WALLET_FAILED (whatever reason/error string the event carries). Before this
+  // field existed, WALLET_REJECTED and WALLET_FAILED wrote byte-identical state -- a caller could
+  // not tell a user's deliberate decline apart from an infrastructure failure. `protectMessage`
+  // stays the single user-facing "Nothing moved" string for all three; `permissionError` is the
+  // detail a caller can log/branch on without re-deriving it from nothing.
+  permissionError: null,
   protectMessage: null,
   retryable: false,
   custody: Object.freeze({}), // allocationId -> { status, ... }
@@ -113,6 +121,41 @@ export function strategyFlowReducer(state = initialStrategyFlowState, event) {
         permissionStatus: 'preflight-ready',
         protectMessage: null,
         retryable: false,
+        permissionError: null,
+      }
+
+    case 'PREFLIGHT_FAILED':
+      // Strategy Task 13 (decision log #22, obligation A). A PermissionPhaseError surfaced during
+      // EITHER the first permission check OR a reuse-revalidation re-check immediately before
+      // authorize (ProtectStage.jsx's own header comment: "preflight OR reuse-revalidation" share
+      // one failure vocabulary at the UI boundary) -- both are "the world moved since this was
+      // reviewed," never a wallet-only hiccup. Deliberately gated on `moment` alone, NOT on
+      // `permissionStatus`, unlike WALLET_REJECTED/WALLET_FAILED above: a first-check failure fires
+      // from 'idle', a re-check failure can fire from 'preflight-ready' (reuse) or even
+      // 'grant-requested' (a fresh grant's own material found stale mid-authorize) -- restricting
+      // this to one permissionStatus would make it inapplicable to the exact moments it exists to
+      // cover. (Considered renaming the event PERMISSION_PHASE_FAILED instead of widening the gate,
+      // per the decision log's "either/or" -- kept the existing name: every producer of this event
+      // is, at the protocol level, a preflight-shaped check (`preflightPermission`'s own re-run for
+      // reuse-revalidation, per orchestrator.js's `revalidateReuse` doc comment), so the name was
+      // never wrong, only the gate was too narrow.)
+      //
+      // `permission` is CLEARED, not preserved: the brief's literal "preserved decision" reading
+      // does not survive ProtectStage.jsx:229-232's own handling of the identical
+      // PermissionPhaseError case (`setDecision(null)` -- "the held decision is proven stale").
+      // Keeping a decision here that ProtectStage itself has already discarded would let this
+      // state disagree with the one surface that consumes it. `permissionStatus` resets to 'idle'
+      // (not 'rejected') because retrying a preflight failure means running the check again, never
+      // jumping straight to GRANT_REQUESTED -- 'rejected' is reserved for the wallet-retry path,
+      // which reuses the ALREADY-preflighted decision GRANT_REQUESTED's own gate expects.
+      if (state.moment !== 'protect') return state
+      return {
+        ...state,
+        permission: null,
+        permissionStatus: 'idle',
+        protectMessage: 'Nothing moved',
+        retryable: true,
+        permissionError: event.error ?? null,
       }
 
     case 'GRANT_REQUESTED':
@@ -142,6 +185,10 @@ export function strategyFlowReducer(state = initialStrategyFlowState, event) {
         permissionStatus: 'rejected',
         protectMessage: 'Nothing moved',
         retryable: true,
+        // Task 13 (obligation A.3): read whatever the caller attached -- WALLET_REJECTED's own
+        // vocabulary is `reason` (a user-facing decline reason), WALLET_FAILED's is `error`. A
+        // caller that supplies neither still gets a defined-but-empty signal, never `undefined`.
+        permissionError: event.reason ?? event.error ?? null,
       }
 
     case 'GRANT_CONFIRMED':

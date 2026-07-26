@@ -97,14 +97,16 @@ describe('Protect moment', () => {
     expect(s.permissionStatus).toBe('grant-requested')
   })
 
-  it('wallet rejection preserves the plan and returns Protect to a retryable state with "Nothing moved"', () => {
+  it('wallet rejection preserves the plan and permission, returns Protect to a retryable state with "Nothing moved"', () => {
     let s = toProtect()
     const before = s.plan
     s = strategyFlowReducer(s, { type: 'PREFLIGHT_READY', decision: decision() })
+    const permissionBefore = s.permission
     s = strategyFlowReducer(s, { type: 'GRANT_REQUESTED' })
     s = strategyFlowReducer(s, { type: 'WALLET_REJECTED', reason: 'user-declined' })
     expect(s.moment).toBe('protect')
     expect(s.plan).toBe(before)
+    expect(s.permission).toBe(permissionBefore) // NOT cleared -- only the signature attempt failed
     expect(s.protectMessage).toBe('Nothing moved')
     expect(s.permissionStatus).toBe('rejected')
     expect(s.retryable).toBe(true)
@@ -118,6 +120,33 @@ describe('Protect moment', () => {
     expect(s.moment).toBe('protect')
     expect(s.protectMessage).toBe('Nothing moved')
     expect(s.retryable).toBe(true)
+  })
+
+  it('wallet rejection populates permissionError from event.reason', () => {
+    let s = toProtect()
+    s = strategyFlowReducer(s, { type: 'PREFLIGHT_READY', decision: decision() })
+    s = strategyFlowReducer(s, { type: 'GRANT_REQUESTED' })
+    s = strategyFlowReducer(s, { type: 'WALLET_REJECTED', reason: 'user-declined' })
+    expect(s.permissionError).toBe('user-declined')
+  })
+
+  it('wallet failure populates permissionError from event.error -- distinguishable from a rejection', () => {
+    let s = toProtect()
+    s = strategyFlowReducer(s, { type: 'PREFLIGHT_READY', decision: decision() })
+    s = strategyFlowReducer(s, { type: 'GRANT_REQUESTED' })
+    s = strategyFlowReducer(s, { type: 'WALLET_FAILED', error: 'network-timeout' })
+    expect(s.permissionError).toBe('network-timeout')
+    // Before this field existed, a rejection and a failure produced byte-identical state --
+    // proven here by showing each's permissionError reflects its OWN distinct real-world cause.
+    expect(s.permissionError).not.toBe('user-declined')
+  })
+
+  it('a WALLET_REJECTED/WALLET_FAILED with no reason/error still defines permissionError (never undefined)', () => {
+    let s = toProtect()
+    s = strategyFlowReducer(s, { type: 'PREFLIGHT_READY', decision: decision() })
+    s = strategyFlowReducer(s, { type: 'GRANT_REQUESTED' })
+    s = strategyFlowReducer(s, { type: 'WALLET_REJECTED' })
+    expect(s.permissionError).toBeNull()
   })
 
   it('WALLET_REJECTED/WALLET_FAILED are no-ops when no grant was ever requested (same-reference ignore)', () => {
@@ -150,6 +179,65 @@ describe('Protect moment', () => {
     expect(s.moment).toBe('protect')
     expect(s.permissionStatus).toBe('grant-requested')
     expect(s.protectMessage).toBeNull()
+  })
+})
+
+describe('PREFLIGHT_FAILED (Task 13, decision log #22 obligation A)', () => {
+  it('fires from idle (the FIRST permission check failing) -- "outside grant-requested", the case WALLET_* cannot reach', () => {
+    const s = toProtect()
+    expect(s.permissionStatus).toBe('idle')
+    const after = strategyFlowReducer(s, { type: 'PREFLIGHT_FAILED', error: 'network-down' })
+    expect(after.moment).toBe('protect')
+    expect(after.permissionStatus).toBe('idle')
+    expect(after.protectMessage).toBe('Nothing moved')
+    expect(after.retryable).toBe(true)
+    expect(after.permissionError).toBe('network-down')
+    expect(after.permission).toBeNull()
+  })
+
+  it('clears an already-held decision -- proven stale, matching ProtectStage.jsx\'s own PermissionPhaseError handling', () => {
+    let s = toProtect()
+    s = strategyFlowReducer(s, { type: 'PREFLIGHT_READY', decision: decision({ mode: 'reuse' }) })
+    expect(s.permission).not.toBeNull()
+    const after = strategyFlowReducer(s, {
+      type: 'PREFLIGHT_FAILED',
+      error: 'reuse evidence changed',
+    })
+    expect(after.permission).toBeNull()
+    expect(after.permissionStatus).toBe('idle')
+  })
+
+  it('also fires mid-authorize, from grant-requested -- a fresh grant whose prepared material went stale', () => {
+    let s = toProtect()
+    s = strategyFlowReducer(s, { type: 'PREFLIGHT_READY', decision: decision() })
+    s = strategyFlowReducer(s, { type: 'GRANT_REQUESTED' })
+    expect(s.permissionStatus).toBe('grant-requested')
+    const after = strategyFlowReducer(s, { type: 'PREFLIGHT_FAILED', error: 'material stale' })
+    expect(after.moment).toBe('protect')
+    expect(after.permissionStatus).toBe('idle')
+    expect(after.permission).toBeNull()
+  })
+
+  it('is a no-op outside the protect moment (same-reference ignore)', () => {
+    const before = initialStrategyFlowState
+    expect(strategyFlowReducer(before, { type: 'PREFLIGHT_FAILED', error: 'x' })).toBe(before)
+    const started = toStartViaFreshGrant()
+    expect(strategyFlowReducer(started, { type: 'PREFLIGHT_FAILED', error: 'x' })).toBe(started)
+  })
+
+  it('a subsequent successful PREFLIGHT_READY clears permissionError (no stale error lingers into a fresh review)', () => {
+    let s = toProtect()
+    s = strategyFlowReducer(s, { type: 'PREFLIGHT_FAILED', error: 'network-down' })
+    expect(s.permissionError).toBe('network-down')
+    s = strategyFlowReducer(s, { type: 'PREFLIGHT_READY', decision: decision() })
+    expect(s.permissionError).toBeNull()
+  })
+
+  it('after a preflight failure, retrying re-enters via a fresh PREFLIGHT_READY -- GRANT_REQUESTED alone cannot skip straight there', () => {
+    let s = toProtect()
+    s = strategyFlowReducer(s, { type: 'PREFLIGHT_FAILED', error: 'network-down' })
+    const after = strategyFlowReducer(s, { type: 'GRANT_REQUESTED' })
+    expect(after).toBe(s) // still 'idle' -- GRANT_REQUESTED's gate only admits preflight-ready/rejected
   })
 })
 
