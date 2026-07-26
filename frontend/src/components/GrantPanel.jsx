@@ -5,13 +5,18 @@
 // Strategy Task 11 (Pocket Crew redesign, Wave 5): this legacy card is DEMOTED, not deleted.
 // `ProtectStage.jsx` (frontend/src/components/strategy/) is now the real, reviewed permission
 // surface for the Plan/Protect/Start flow and reuses `DURATION_PRESETS` below for its own
-// duration picker. This component keeps working unchanged for its one remaining caller --
-// app.jsx's pre-Strategy-integration grant flow (`import GrantPanel from
-// './components/GrantPanel.jsx'`, rendered at app.jsx:2984) -- because removing its export now,
-// before Task 13 migrates app.jsx onto StrategyRoute/ProtectStage, would break that build. Once
-// Task 13 lands, app.jsx's `<GrantPanel .../>` usage and this import become dead, and this whole
-// file (plus GrantPanel.test.jsx) can be deleted -- SkillEditModal.jsx only mentions "GrantPanel"
-// in a comment, it does not import this module, so nothing else keeps it alive.
+// duration picker.
+//
+// Strategy Task 13 update: app.jsx's production `/strategy` route no longer renders this
+// component at all -- `<GrantPanel .../>` (app.jsx's old 'permission' StepRail case) is now
+// reachable only behind app.jsx's `isDevMode() && stage !== 'strategy'` dev/test compatibility
+// seam (TweaksPanel's devMode-gated `jumpTo`), never on any production code path. The default
+// export is genuinely deletable now (verified: SkillEditModal.jsx and stellar/scopeRehydrate.js
+// still only mention "GrantPanel" in comments, never import it) -- left in place only because
+// GrantPanel.test.jsx (which directly tests the default export) is outside Task 13's authorized
+// file list, so deleting the export would break that test without authorization to also retire
+// it. A future task with GrantPanel.jsx + GrantPanel.test.jsx both in scope can delete both.
+// `DURATION_PRESETS` stays live and shared (ProtectStage.jsx's own duration picker).
 import { useState } from 'react'
 
 // ~5s per ledger on Soroban testnet; labels are what the user reasons about.

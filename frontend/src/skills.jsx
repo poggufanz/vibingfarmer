@@ -2,6 +2,13 @@
    VIBING FARMER — Skill Review (step 03)
    Human-readable skill cards. No raw JSON shown to user.
    ============================================ */
+// Strategy Task 13 (Pocket Crew redesign, Wave 5): `SkillReviewCard` below is DEMOTED, not
+// deleted. The production `/strategy` route's Plan surface (PlanStage.jsx) approves current agent
+// instructions together with plan acceptance — a separate skill-review step no longer exists on
+// the production path. app.jsx no longer imports `SkillReviewCard` for its production render
+// path; it remains exported only as an explicit development/test compatibility seam (this file's
+// own skills.render.test.jsx tests it directly, and TweaksPanel's devMode-gated `jumpTo` can still
+// reach it), never presented as a user fallback.
 import React, { useState, useMemo } from 'react'
 import SkillDetailModal from './components/SkillDetailModal.jsx'
 import SkillEditModal from './components/SkillEditModal.jsx'

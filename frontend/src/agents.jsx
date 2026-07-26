@@ -3,6 +3,16 @@
    Graph rendering lives in src/graph/ (PixiJS "Living Current" scene);
    this file keeps strategy/exec-state UI: tiles, memory modal, cards.
    ============================================ */
+// Strategy Task 13 (Pocket Crew redesign, Wave 5): `StrategyCard` and `ExecuteCard` below
+// (with StrategyCard's internal CouncilPanel/DebatePanel/SimulationPanel) are DEMOTED, not
+// deleted — the production `/strategy` route renders PlanStage/StartStage instead. app.jsx no
+// longer imports either for its production render path; both remain exported only for the
+// dev/test compatibility seam (TweaksPanel's devMode-gated `jumpTo`). Everything else this file
+// exports stays live and shared, unaffected by that change: `MemoryModal` (mounted at app-shell
+// level, keyed on `openAgentId`), `DecisionLogPanel` (consumed by
+// components/console/CouncilZone.jsx), `buildAutofarmGraphData`/`rebalancePulseKey` (the `/agent`
+// OpsConsole force-graph), and `buildStrategy`/`makeInitialExecState` (the execution-state
+// contract the orchestrator/keeper machinery depends on).
 import React, { useEffect as useEAg, useRef as useRAg, useState as useSAg } from 'react'
 import { PixiSwarmGraph } from './graph/PixiSwarmGraph.jsx'
 import { Icon } from './components.jsx'

@@ -1,6 +1,15 @@
 /* ============================================
    VIBING FARMER — screens (multi-agent edition)
    ============================================ */
+// Strategy Task 13 (Pocket Crew redesign, Wave 5): InputScreen, ThinkingCard, ConnectCard,
+// PermissionCard, and SuccessCard below are DEMOTED, not deleted. The production `/strategy`
+// route now generates plans and moves funds through PlanStage/ProtectStage/StartStage
+// (frontend/src/components/strategy/) — real strategist calls, real preflight/grant, real
+// orchestrator dispatch, no `speed * ...` timers, no optimistic permission state. app.jsx no
+// longer imports these five for its production render path; they remain exported only for the
+// dev/test compatibility seam (TweaksPanel's devMode-gated `jumpTo`) — never presented as a user
+// fallback. `shortAddr` is unrelated and stays a live, shared export (used throughout app.jsx's
+// orchestrator/activity-log/keeper cluster).
 import React, { useState, useEffect } from 'react'
 import { Icon } from './components.jsx'
 import { loadSettings, t } from './settingsStore.js'

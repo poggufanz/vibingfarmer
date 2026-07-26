@@ -2,11 +2,46 @@
    VIBING FARMER — App (multi-agent + real Web3)
    Design state machine wired to real wallet.js / strategist.js / orchestrator.js
    ============================================ */
-import React, { useState as useS, useEffect as useE, useRef as useR, useMemo as useM } from 'react'
+import React, {
+  useState as useS,
+  useEffect as useE,
+  useRef as useR,
+  useMemo as useM,
+  useReducer as useRed,
+} from 'react'
 import { lazy, Suspense } from 'react'
 import { isDevMode } from './devFlag.js'
 
 import { Icon, Sidebar, TopBar, StepRail, STEPS } from './components.jsx'
+// Strategy Task 13 (Pocket Crew redesign, Wave 5) — the production `/strategy` route. StepRail/
+// STEPS above stay imported/exported for the dev-only jumpTo compatibility seam (see the
+// `/strategy` Route element and the `isDevMode()` gate around it), but no longer drive the
+// route's default rendering — see Step 3 of the task brief.
+//
+// Composes PlanStage/ProtectStage/StartStage + StrategyProgress directly rather than through
+// StrategyRoute.jsx: that file is not in this task's authorized Files list (only PlanStage,
+// ProtectStage, StartStage, StrategyReceipt, StrategyRoute, StrategyProgress are CONSUMED per the
+// task's own instructions — "their real prop and callback signatures govern") and today only
+// wires the Plan branch ("Only the Plan stage exists yet... this file adds their branches when
+// those surfaces exist" — its own header comment). Replicating its `.pc-route`/`.pc-route-stack`
+// wrapper + StrategyProgress markup here (verbatim, read from StrategyRoute.jsx) satisfies the
+// brief's Step 2 functional requirement (a three-step Plan/Protect/Start route with progress nav)
+// without editing a file outside the staging guard. Importing `strategy.css` directly here for the
+// same reason — StrategyRoute.jsx is the only file that imports it today.
+import './components/strategy/strategy.css'
+import { StrategyProgress } from './components/strategy/StrategyProgress.jsx'
+import { PlanStage } from './components/strategy/PlanStage.jsx'
+import { ProtectStage } from './components/strategy/ProtectStage.jsx'
+import { StartStage } from './components/strategy/StartStage.jsx'
+import {
+  strategyFlowReducer,
+  initialStrategyFlowState,
+} from './strategy/flowState.js'
+import { preflightPermission, toPermissionDecisionView } from './strategy/reusePreflight.js'
+import { PermissionPhaseError } from './strategy/permissionError.js'
+import { buildDispatchReceipt } from './strategy/dispatchSummary.js'
+import { buildStrategyViewModel } from './strategy/planModel.js'
+import { AGENT_KIND_DEPOSIT, AGENT_KIND_BRIDGE } from './stellar/grant.js'
 import { RouteFocus, SkipLink } from './components/pocket/RouteFocus.jsx'
 import { resolveDocumentTitle } from './appShellTitle.js'
 import {
@@ -22,7 +57,6 @@ import {
   StrategyCard,
   ExecuteCard,
   MemoryModal,
-  DecisionLogPanel,
   buildAutofarmGraphData,
   rebalancePulseKey,
   buildStrategy,
@@ -48,9 +82,9 @@ import { saveResume, loadResume, clearResume } from './strategy/sessionResume.js
 import { attestStrategyOnChain, formatAttestation } from './attestation.js'
 import OnboardingFlow from './components/OnboardingFlow.jsx'
 import { OrchestratorAgent } from './orchestrator.js'
-import { makeAgentId } from './worker.js'
+import { makeAgentId, WorkerAgent } from './worker.js'
 import { readContract } from './stellar/client.js'
-import { VAULT_CATALOG, VENICE_TIMEOUT_MS } from './config.js'
+import { VAULT_CATALOG, VENICE_TIMEOUT_MS, BASE_POOL_CATALOG } from './config.js'
 import {
   SOROBAN_ACTIVE_VAULT_ADDRESS,
   SOROBAN_RPC_URL,
@@ -70,6 +104,7 @@ import {
   readStrategies,
   readSupplyAprBps,
   readLifeboatState,
+  readTotalShares,
 } from './stellar/vaultReads.js'
 import { grantMandate } from './stellar/lifeboat.js'
 import { signWithTimeout } from './stellar/agentSetup.js'
@@ -85,9 +120,15 @@ import {
   pollBaseLegUntilSettled,
 } from './mergeFlowHelpers.js'
 import { getMandateStatus } from './base/relayerClient.js'
-import { readBaseOwner, baseOwnerStorageKey } from './wallet/baseBinding.js'
+import { readBaseOwner, baseOwnerStorageKey, readBaseMandate } from './wallet/baseBinding.js'
 import { readTokenBalance } from './stellar/agentDeposit.js'
-import { STELLAR_USDC_SAC } from './stellar/cctpBurn.js'
+import {
+  STELLAR_USDC_SAC,
+  STELLAR_TOKEN_MESSENGER_MINTER,
+  CCTP_BASE_DOMAIN,
+  ZERO32,
+  evmAddrToBytes32,
+} from './stellar/cctpBurn.js'
 import {
   loadPersistedPositions,
   persistPositions,
@@ -490,6 +531,51 @@ const App = () => {
   // Per-agent on-chain scopes (single-source summary + Revoke). Keyed by worker agent address.
   const [scopes, setScopes] = useS([])
   const [permExpiresAt, setPermExpiresAt] = useS(null)
+
+  // ===== Strategy Task 13 (Pocket Crew redesign, Wave 5) — Plan/Protect/Start integration =====
+  // The production `/strategy` route's state machine. `strategyFlowReducer` (flowState.js) is
+  // Foundation-owned and pure; the wrapper below adds exactly ONE app-local event, 'STRATEGY_RESET'
+  // (start a brand new run), which flowState.js's own authorized-edit scope (decision log #22)
+  // does not cover — resetting to `initialStrategyFlowState` is an app.jsx integration concern,
+  // not a reducer invariant.
+  const [strategyFlow, dispatchFlow] = useRed((state, event) => {
+    if (event.type === 'STRATEGY_RESET') return initialStrategyFlowState
+    return strategyFlowReducer(state, event)
+  }, initialStrategyFlowState)
+  const strategyFlowRef = useR(strategyFlow)
+  strategyFlowRef.current = strategyFlow
+  const [strategyReached, setStrategyReached] = useS(['plan'])
+  const [runId, setRunId] = useS(() => `run-${Date.now()}`)
+  // Base availability for the Plan surface — CONSUMED by PlanStage as the `base` prop, never
+  // re-derived there (PlanStage.jsx's own header comment). Refreshed on connect and after the
+  // 1-tap mandate setup ceremony.
+  const [baseView, setBaseView] = useS({ connected: false, healthy: null, mandateView: null, action: null })
+  // PlanStage's amount-validation gate (strategy/amountValidation.js) needs the vault's real total
+  // share supply (null while unknown -- distinct from 0n, a genuine first-deposit state).
+  const [vaultTotalShares, setVaultTotalShares] = useS(null)
+  useE(() => {
+    let alive = true
+    readTotalShares()
+      .then((shares) => {
+        if (alive) setVaultTotalShares(shares)
+      })
+      .catch(() => {
+        if (alive) setVaultTotalShares(null)
+      })
+    return () => {
+      alive = false
+    }
+  }, [])
+  const baseSetupSucceededRef = useR(false)
+  // Raw orchestrator/worker/bridge events for THIS run, in arrival order — StartStage's own pure
+  // lane-phase adapters (depositLanePhase/bridgeLanePhase) fold these; never cleared mid-run.
+  const [runEvents, setRunEvents] = useS([])
+  const [runReceipt, setRunReceipt] = useS(null)
+  // In-flight onRequestGrant/onConfirmReuse promise settlers — resolved by the shared orchestrator
+  // event handler the instant 'grant-confirmed'/'reuse-confirmed' fires (ProtectStage must resolve
+  // BEFORE the whole run settles, since Start renders live while dispatch continues in the
+  // background), rejected if the underlying dispatch promise rejects first.
+  const pendingConfirmRef = useR(null)
 
   // True when a refresh re-entered an active session (drives the Home banner).
   const [sessionResumed, setSessionResumed] = useS(false)
@@ -1799,15 +1885,21 @@ const App = () => {
         // Fail-closed preflight beyond bare relayer reachability: a stored-but-invalid Base
         // mandate, or a connected wallet with no Circle USDC to burn, both quietly drop Base from
         // the catalog rather than surface an error the user can't act on mid strategy-generation.
-        const { baseAvailable } = resolveBaseAvailability({
-          checkHealth: () => checkRelayerHealth({ signal: ctrl.signal }),
-          checkMandate: checkStoredBaseMandate({ getMandateStatus, stellarOwner: realAddress }),
-          checkFunding: checkCircleUsdcFunding({
-            address: realAddress || null,
-            readTokenBalance,
-            token: STELLAR_USDC_SAC,
-          }),
-        })
+        // Strategy Task 13 (decision log #22, obligation D): migrated off the deleted
+        // `resolveBaseAvailability({checkHealth, checkMandate, checkFunding})` legacy overload
+        // onto the canonical `{mandate, connection, health}` contract, via the SAME
+        // `resolveBaseForPlan` composition the production Plan surface itself uses (funding gate
+        // included, folded into `health`) — see `resolveBaseForPlan`'s own doc comment below. This
+        // whole dev-seam effect (`handleSubmitPreference`'s `strategyPhase==='thinking'` path) is
+        // unreachable in production (the `/strategy` route always renders the new
+        // Plan/Protect/Start surface while `stage === 'strategy'`), but the call site itself still
+        // had to move off the deleted overload rather than silently degrade to "always
+        // unavailable" against the new function's different parameter shape.
+        const baseAvailable = resolveBaseForPlan({
+          stellarOwner: realAddress,
+          signal: ctrl.signal,
+          setupSucceeded: baseSetupSucceededRef.current,
+        }).then((r) => r.healthy === true)
         const veniceResult = await generateStrategy({
           amount: Number(amount),
           riskLevel,
@@ -2625,6 +2717,694 @@ const App = () => {
       })
   }
 
+  // ========================================================================================
+  // Strategy Task 13 (Pocket Crew redesign, Wave 5) — the production Plan/Protect/Start route.
+  // Everything below this line, down to renderStrategyRoute(), is NEW: it wires the pure
+  // PlanStage/ProtectStage/StartStage/StrategyReceipt components (Tasks 10-12) to real
+  // generation, wallet, preflight/grant, and orchestrator calls. It deliberately builds its OWN
+  // parallel orchestrator dispatch (`runOrchestratorDispatch`/`handleNewRunEvent`) rather than
+  // reworking `startExecution`'s onEvent closure above: that closure's `agentMap`/`paintBaseNodes`/
+  // `baseWorkerIds` are per-run locals built from the LEGACY `survivors`/hex-agentId shape, and
+  // `startExecution` itself stays a reachable dev/test seam (TweaksPanel's `jumpTo('execute')`
+  // still calls it) that must not be disturbed. The new handler is simpler because every real
+  // producer (worker.js's `emit()` wrapper, orchestrator.js's worker-queued/worker-started,
+  // baseLeg.js's now-keyed leg events) already carries `allocationId` directly — no hex-id
+  // translation layer is needed the way the legacy path needed one.
+
+  const STELLAR_VENUE_ENTRY = VAULT_CATALOG[0]
+  const stellarVenueDisplay = {
+    name: STELLAR_VENUE_ENTRY?.name,
+    protocol: STELLAR_VENUE_ENTRY?.protocol,
+    apy: STELLAR_VENUE_ENTRY?.apy,
+    drawdown: STELLAR_VENUE_ENTRY?.drawdown,
+    risk: STELLAR_VENUE_ENTRY?.risk,
+    address: STELLAR_VENUE_ENTRY?.address,
+    role: 'Conservative, lending',
+    roleLabel: 'Conservative',
+    destination: STELLAR_VENUE_ENTRY?.destination || STELLAR_VENUE_ENTRY?.name,
+  }
+
+  // ----- Base availability for the Plan surface -----
+  // Composes the canonical `resolveBaseAvailability({mandate, connection, health})` contract
+  // (mergeFlowHelpers.js, decision log #22 obligation D) with the Circle USDC funding gate that
+  // contract does not itself check (Task 7's fail-closed rule: a mandate can be 'ready' with zero
+  // burn-token balance) -- folded into `health` so a caller of the canonical contract still gets
+  // the full fail-closed preflight the deleted legacy overload used to provide in one call.
+  //
+  // Known gap, disclosed rather than silently guessed: `toBaseMandateView`'s relayer-origin-drift
+  // check compares `mandate.relayerOrigin` (the LOCAL record, captured once at setup) against
+  // `connection.relayerOrigin` -- there is no second, independent LIVE source for "the relayer's
+  // origin right now" anywhere in this codebase today (getMandateStatus's response only carries
+  // one once a mandate already exists), so this passes the same stored value for both. The
+  // mismatch branch therefore never trips in production yet; every other status (missing/expired/
+  // revoked/owner+kernel-mismatch) is unaffected and still fail-closed. Flagged for a future task.
+  async function resolveBaseForPlan({ stellarOwner, signal, setupSucceeded }) {
+    if (!stellarOwner) return { connected: false, healthy: null, mandateView: null, action: null }
+    const record = readBaseMandate(stellarOwner)
+    const { checkRelayerHealth } = await import('./strategy/mergedCatalog.js')
+    const { baseAvailable, mandateView, action } = resolveBaseAvailability({
+      mandate: record,
+      connection: {
+        connected: true,
+        stellarOwner,
+        kernelAddress: record?.kernelAddress ?? null,
+        relayerOrigin: record?.relayerOrigin ?? null,
+        setupSucceeded,
+      },
+      health: async () => {
+        const healthy = await checkRelayerHealth({ signal })
+        if (!healthy) return false
+        return checkCircleUsdcFunding({
+          address: stellarOwner,
+          readTokenBalance,
+          token: STELLAR_USDC_SAC,
+        })()
+      },
+    })
+    const healthy = await baseAvailable
+    return { connected: true, healthy, mandateView, action }
+  }
+
+  async function refreshBaseView() {
+    const result = await resolveBaseForPlan({
+      stellarOwner: realAddress,
+      setupSucceeded: baseSetupSucceededRef.current,
+    })
+    setBaseView(result)
+    return result
+  }
+
+  useE(() => {
+    refreshBaseView()
+  }, [realAddress])
+
+  async function onConnectForBase() {
+    try {
+      const addr = await connectWallet()
+      setRealAddress(addr)
+      setConnectPhase('connected')
+    } catch {
+      // PlanStage's own header comment: no richer connect-error surface belongs on this stage.
+    }
+  }
+
+  async function onSetupBase() {
+    if (!realAddress) return
+    setSettingUpBaseMandate(true)
+    setBaseMandateError(null)
+    try {
+      await setupBaseMandate({ connectedAddress: realAddress })
+      baseSetupSucceededRef.current = true
+      await refreshBaseView()
+    } catch (e) {
+      setBaseMandateError(e.message)
+    } finally {
+      setSettingUpBaseMandate(false)
+    }
+  }
+
+  function onRebuildPlan() {
+    baseSetupSucceededRef.current = false
+    refreshBaseView()
+  }
+
+  // ----- Plan generation (real strategist + council-eligibility, never a `speed * ...` timer) -----
+  async function generateStrategyPlan({ amountUnits, risk, baseEligible }, reportPhase) {
+    const riskLevel = risk === 'med' ? 'medium' : risk
+    const numVaults = { low: 1, med: 2, high: 3 }[risk] || 2
+    const ctrl = new AbortController()
+    reportPhase('Checking destinations')
+    const { checkRelayerHealth } = await import('./strategy/mergedCatalog.js')
+    const healthPromise = baseEligible
+      ? checkRelayerHealth({ signal: ctrl.signal })
+      : Promise.resolve(false)
+    reportPhase('Building bounded allocations')
+    const veniceResult = await generateStrategy({
+      amount: Number(amountUnits) / 10 ** SOROBAN_DECIMALS,
+      riskLevel,
+      numVaults,
+      veniceAuth: null,
+      devApiKey: devApiKey || null,
+      signal: ctrl.signal,
+      address: realAddress || null,
+      baseAvailable: healthPromise,
+    })
+    const generatedBy = veniceResult.generatedBy || 'fallback'
+    const source = generatedBy === 'fallback' ? 'fallback' : generatedBy
+    const sourceState = generatedBy === 'fallback' ? 'deterministic' : 'live-ai'
+    const selected = veniceResult.selected_vaults || []
+
+    // Enforcement A (eligibility gate), run BEFORE the plan is even shown for review -- a
+    // destination that fails eligibility is never offered, not merely dropped after the fact.
+    // The Stellar leg has exactly one real venue (STELLAR_VENUE_ENTRY), so every Stellar-tagged
+    // pick collapses onto the SAME verdict; a Base pick keys its own verdict via factSlug.
+    const eligibilityAgents = selected.map((v) => {
+      const isBase = baseEligible && v.chain === 'base'
+      const cat = isBase
+        ? BASE_POOL_CATALOG.find((p) => p.address.toLowerCase() === String(v.address || '').toLowerCase())
+        : null
+      return {
+        allocation: Number(v.allocation) || 0,
+        vault: {
+          protocol: isBase ? cat?.protocol || v.protocol : stellarVenueDisplay.protocol,
+          factSlug: isBase ? cat?.factSlug || v.factSlug : undefined,
+          chain: isBase ? 'base' : 'stellar',
+          addr: v.address,
+        },
+        __base: isBase,
+        __cat: cat,
+      }
+    })
+    const { survivors, dropped } = computeBasket(eligibilityAgents)
+    dropped.forEach((d) =>
+      addLog({
+        event: 'VaultRejected',
+        meta: (d.verdict.reasons || []).join('; '),
+      })
+    )
+    reportPhase('Safety review')
+
+    const amountFloat = Number(amountUnits) / 10 ** SOROBAN_DECIMALS
+    const baseAllocations = []
+    let baseUnits7Total = 0n
+    for (const a of survivors.filter((s) => s.__base)) {
+      if (!a.__cat) continue // never invent a bridge target outside the allowlisted catalog
+      const units6 = BigInt(Math.max(0, Math.round(amountFloat * a.allocationFraction * 1e6)))
+      if (units6 <= 0n) continue
+      baseAllocations.push({
+        address: a.__cat.address,
+        proxyTarget: a.__cat.proxyTarget,
+        factSlug: a.__cat.factSlug,
+        venueKind: a.__cat.venueKind,
+        chain: 'base',
+        units: units6.toString(),
+      })
+      baseUnits7Total += units6 * 10n
+    }
+    // Defensive fail-closed clamp: a malformed AI response whose Base fractions alone exceed 1
+    // must never produce a negative Stellar remainder.
+    if (baseUnits7Total > amountUnits) {
+      baseAllocations.length = 0
+      baseUnits7Total = 0n
+    }
+    const stellarEligible = survivors.some((s) => !s.__base)
+    // stellarUnits is DERIVED by subtraction, never independently re-estimated from its own
+    // fraction -- guarantees stellarUnits + sum(baseAllocations.units)*10 === amountUnits exactly,
+    // which is what PlanStage's own hard "did not match the amount you entered" check requires.
+    const stellarUnits = stellarEligible ? (amountUnits - baseUnits7Total).toString() : '0'
+
+    return { source, sourceState, stellarUnits, baseAllocations }
+  }
+
+  async function onGenerate(input, reportPhase) {
+    dispatchFlow({ type: 'PLAN_REQUESTED' })
+    try {
+      return await generateStrategyPlan(input, reportPhase)
+    } catch (err) {
+      dispatchFlow({ type: 'PLAN_FAILED', error: err?.message || 'Could not build a plan.' })
+      throw err
+    }
+  }
+
+  // Accepting a plan is the moment it becomes canonical AND opens Protect together (brief Step 2:
+  // "Accepting plan enters Protect; current agent instructions are approved together") --
+  // flowState.js's 3-moment granularity has no separate "reviewing" sub-phase, so PLAN_READY and
+  // PROTECT_OPENED fire back to back here rather than at generation-resolve time (PlanStage builds
+  // the canonical plan object internally; this is the first moment app.jsx ever sees it).
+  function onAcceptPlan({ plan, fingerprint }) {
+    const canonicalPlan = { ...plan, planFingerprint: fingerprint }
+    dispatchFlow({ type: 'PLAN_READY', plan: canonicalPlan })
+    dispatchFlow({ type: 'PROTECT_OPENED' })
+
+    // Bridge into the surviving monitor-loop/resume/background-agent/agentVaultMeta cluster,
+    // which all read the OLD per-agent `strategy` shape (mapVeniceToStrategy/buildStrategy's
+    // shape) -- Task 13's "must not silently detach" obligation (app.jsx:659-3116) covers that
+    // whole cluster, not just orchestrator events, and it is fed by `strategy` state, not `plan`.
+    const viewModel = buildStrategyViewModel({ plan: canonicalPlan, stellarVenue: stellarVenueDisplay })
+    const blended = viewModel.agents.reduce(
+      (acc, a) => acc + (Number(a.vault.apy) || 0) * (a.allocation / (viewModel.total || 1)),
+      0
+    )
+    setStrategy({
+      agents: viewModel.agents,
+      total: viewModel.total,
+      blendedApy: blended.toFixed(1),
+      risk: viewModel.risk,
+      rationale: null,
+      reward: null,
+      mdpState: null,
+    })
+    const sk = {}
+    viewModel.agents.forEach((a) => {
+      sk[a.id] = { state: 'approved', skill: null }
+    })
+    setSkillStates(sk)
+    setStrategyReached(['plan', 'protect'])
+  }
+
+  // ----- Protect: preflight, fresh grant, or reuse confirm -----
+  function planAgentToAgentInit(agent, baseKernelAddress) {
+    const isBridge = agent.kind === 'bridge'
+    return {
+      allocationId: agent.allocationId,
+      cap: { token: agent.cap.token, units: agent.cap.units, decimals: agent.cap.decimals },
+      token: agent.cap.token,
+      target: isBridge ? STELLAR_TOKEN_MESSENGER_MINTER : SOROBAN_ACTIVE_VAULT_ADDRESS,
+      kind: isBridge ? AGENT_KIND_BRIDGE : AGENT_KIND_DEPOSIT,
+      mintRecipient: isBridge && baseKernelAddress ? evmAddrToBytes32(baseKernelAddress) : ZERO32,
+      destinationDomain: isBridge ? CCTP_BASE_DOMAIN : 0,
+      periodSeconds: agent.periodSeconds,
+      expiry: agent.expiry,
+    }
+  }
+
+  function planReviewedBudgets(planAgents) {
+    const byToken = new Map()
+    for (const agent of planAgents) {
+      const cap = agent.cap
+      const existing = byToken.get(cap.token)
+      const existingUnits = existing ? BigInt(existing.units) : 0n
+      byToken.set(cap.token, {
+        token: cap.token,
+        units: (existingUnits + BigInt(cap.units)).toString(),
+        decimals: cap.decimals,
+      })
+    }
+    return [...byToken.values()]
+  }
+
+  async function onConnectWallet() {
+    const addr = await connectWallet()
+    setRealAddress(addr)
+    setConnectPhase('connected')
+    return addr
+  }
+
+  async function onRetryPreflight({ durationSeconds }) {
+    const plan = strategyFlowRef.current.plan
+    const bridgeAgent = plan.agents.find((a) => a.kind === 'bridge')
+    const baseKernel = bridgeAgent ? baseView.mandateView?.kernelAddress : null
+    const agentInits = plan.agents.map((a) => planAgentToAgentInit(a, baseKernel))
+    const reviewedBudgets = planReviewedBudgets(plan.agents)
+    try {
+      const raw = await preflightPermission({
+        runId: plan.runId,
+        owner: realAddress,
+        planFingerprint: plan.planFingerprint,
+        agentInits,
+        reviewedBudgets,
+        durationSeconds,
+      })
+      const decision = toPermissionDecisionView(raw)
+      dispatchFlow({ type: 'PREFLIGHT_READY', decision })
+      return decision
+    } catch (err) {
+      dispatchFlow({
+        type: 'PREFLIGHT_FAILED',
+        error: err?.message || 'Could not check your permission. Try again.',
+      })
+      throw err
+    }
+  }
+
+  function classifyPermissionFailure(err) {
+    if (err instanceof PermissionPhaseError && err.phase !== 'fresh-grant') {
+      // 'preflight' (structural plan/decision mismatch) and 'reuse-revalidation' (the world moved
+      // since review) are both genuine staleness -- the reviewed decision no longer holds.
+      return { kind: 'preflight', message: err.message }
+    }
+    // 'fresh-grant' PermissionPhaseErrors (grantFreshFromDecision wraps EVERYTHING, including a
+    // real wallet rejection, as phase:'fresh-grant') and any plain Error are wallet-class from
+    // ProtectStage's perspective: the reviewed permission is still good, only the signature/
+    // submission attempt failed. Unwrapped to a plain Error so ProtectStage's own
+    // `instanceof PermissionPhaseError` check (which only recognizes preflight/reuse-revalidation
+    // staleness) never misclassifies a submission failure as staleness.
+    const message = err?.message || 'The wallet request did not complete.'
+    const rejected = /declin|reject|denied|cancel/i.test(message)
+    return { kind: rejected ? 'rejected' : 'failed', message }
+  }
+
+  function requestPermissionConfirmation() {
+    return new Promise((resolve, reject) => {
+      pendingConfirmRef.current = { resolve, reject }
+      runOrchestratorDispatch(strategyFlowRef.current.permission).catch((err) => {
+        if (!pendingConfirmRef.current) return // already resolved via a grant-confirmed/reuse-confirmed event
+        pendingConfirmRef.current = null
+        const { kind, message } = classifyPermissionFailure(err)
+        if (kind === 'preflight') {
+          dispatchFlow({ type: 'PREFLIGHT_FAILED', error: message })
+          // ProtectStage's own handleAuthorize distinguishes preflight-class staleness from a
+          // plain wallet failure via `instanceof PermissionPhaseError` -- rejecting with a bare
+          // Error here (as the wallet-class branches correctly do) would make EVERY failure look
+          // wallet-class to ProtectStage, regardless of what classifyPermissionFailure decided.
+          reject(err instanceof PermissionPhaseError ? err : new PermissionPhaseError({ phase: 'preflight', code: 'VF_PERMISSION_STALE', message }))
+        } else if (kind === 'rejected') {
+          dispatchFlow({ type: 'WALLET_REJECTED', reason: message })
+          reject(new Error(message))
+        } else {
+          dispatchFlow({ type: 'WALLET_FAILED', error: message })
+          reject(new Error(message))
+        }
+      })
+    })
+  }
+
+  function onRequestGrant() {
+    dispatchFlow({ type: 'GRANT_REQUESTED' })
+    return requestPermissionConfirmation()
+  }
+
+  function onConfirmReuse() {
+    // No GRANT_REQUESTED here: REUSE_CONFIRMED's own gate only requires a reuse-mode
+    // 'preflight-ready' decision, never a prior grant request (brief journey: "verified reuse
+    // zero-confirmation path with no provider/grant builder call").
+    return requestPermissionConfirmation()
+  }
+
+  // ----- Start: real orchestrator dispatch, live events, settled receipt -----
+  function handleNewRunEvent(evName, data) {
+    setRunEvents((prev) => [...prev, { name: evName, data }])
+
+    // Custody-tracking translation (decision log #22, obligations A-C): the ONLY place real
+    // producer event names/shapes get mapped onto flowState.js's vocabulary.
+    if (evName === 'worker-queued') {
+      dispatchFlow({ type: 'WORKER_QUEUED', allocationId: data.allocationId })
+    } else if (evName === 'worker-started' || evName === 'started') {
+      dispatchFlow({ type: 'WORKER_STARTED', allocationId: data.allocationId })
+    } else if (evName === 'pull-confirmed') {
+      dispatchFlow({ type: 'PULL_CONFIRMED', allocationId: data.allocationId })
+    } else if (evName === 'completed') {
+      dispatchFlow({ type: 'DEPOSIT_CONFIRMED', allocationId: data.allocationId })
+    } else if (evName === 'failed') {
+      dispatchFlow({ type: 'DEPOSIT_FAILED', allocationId: data.allocationId, error: data.error })
+    } else if (evName === 'farm-burn-started') {
+      dispatchFlow({ type: 'BASE_JOB_UPDATED', allocationId: data.allocationId, status: 'submitted', jobId: null })
+    } else if (evName === 'farm-completed' && data.status === 'done') {
+      dispatchFlow({
+        type: 'BASE_JOB_UPDATED',
+        allocationId: data.allocationId,
+        status: 'bridged',
+        jobId: data.jobId,
+      })
+    } else if (
+      (evName === 'farm-completed' && data.status === 'error') ||
+      evName === 'farm-failed' ||
+      evName === 'baseleg-failed'
+    ) {
+      dispatchFlow({
+        type: 'BASE_JOB_UPDATED',
+        allocationId: data.allocationId,
+        status: 'bridge-failed',
+        jobId: data.jobId,
+      })
+    }
+
+    // Resolves the ProtectStage-facing promise the INSTANT permission confirms -- before the run
+    // settles, so Start can render live progress while dispatch continues in the background.
+    if (evName === 'grant-confirmed' || evName === 'reuse-confirmed') {
+      dispatchFlow({ type: evName === 'grant-confirmed' ? 'GRANT_CONFIRMED' : 'REUSE_CONFIRMED' })
+      if (pendingConfirmRef.current) {
+        pendingConfirmRef.current.resolve({ agentAddresses: data.agentAddresses || [] })
+        pendingConfirmRef.current = null
+      }
+    }
+
+    // Feeds the SAME surviving force-graph/memory/keeper cluster the legacy onEvent handler fed
+    // (brief Step 2: "must not silently detach"). Keyed directly by allocationId -- every real
+    // producer already carries it, so no hex-agentId translation layer is needed here.
+    if (evName === 'AgentScopeAuthorized') {
+      const summary = scopeSummary({
+        agent: data.agent,
+        vault: data.vault,
+        token: data.token,
+        capPerPeriod: BigInt(data.capPerPeriod),
+        periodDuration: data.periodDuration,
+        expiry: data.expiry,
+        nowSec: Math.floor(Date.now() / 1000),
+      })
+      setScopes((prev) => {
+        const next = prev.filter((s) => s.agent?.toLowerCase() !== data.agent?.toLowerCase())
+        return [...next, { ...summary, agentId: data.agentId, revoked: false, authorized: data.authorized }]
+      })
+      return
+    }
+    const dId = data?.allocationId
+    if (dId && (evName === 'worker-queued' || evName === 'worker-started' || evName === 'started')) {
+      setExecMap((prev) => {
+        const cur = prev[dId] || makeInitialExecState([{ id: dId }])[dId]
+        return { ...prev, [dId]: { ...cur, status: 'running', activeStep: cur.activeStep || 'swap' } }
+      })
+    }
+    if (dId && evName === 'step') {
+      const stepName = WORKER_STEP_MAP[data.step]
+      if (stepName) {
+        const stepStatus =
+          data.status === 'done' ? 'confirmed' : data.status === 'skipped' ? 'skipped' : 'running'
+        setExecMap((prev) => {
+          const cur = prev[dId] || {}
+          return {
+            ...prev,
+            [dId]: { ...cur, activeStep: stepName, steps: { ...(cur.steps || {}), [stepName]: stepStatus } },
+          }
+        })
+      }
+    }
+    if (dId && evName === 'completed') {
+      setExecMap((prev) => {
+        const cur = prev[dId] || {}
+        return {
+          ...prev,
+          [dId]: {
+            ...cur,
+            status: 'confirmed',
+            activeStep: null,
+            steps: { ...(cur.steps || {}), approve: 'confirmed', deposit: 'confirmed' },
+            metrics: { ...(cur.metrics || {}), completedAt: Date.now(), successRate: 100 },
+          },
+        }
+      })
+      addLog({
+        event: 'AgentCompleted',
+        agent: dId,
+        meta: data.txHash ? `Transaction ${shortAddr(data.txHash)}` : 'Completed. No transaction hash.',
+      })
+    }
+    if (dId && evName === 'failed') {
+      setExecMap((prev) => {
+        const cur = prev[dId] || {}
+        return {
+          ...prev,
+          [dId]: {
+            ...cur,
+            status: 'failed',
+            activeStep: null,
+            metrics: { ...(cur.metrics || {}), completedAt: Date.now(), successRate: 0 },
+          },
+        }
+      })
+      addLog({ event: 'AgentFailed', agent: dId, meta: data.error })
+    }
+    if (dId && (evName.startsWith('baseleg-') || evName.startsWith('farm-'))) {
+      const upd = mapBaseLegEvent(evName, data)
+      if (upd) {
+        setExecMap((prev) => {
+          const cur = prev[dId] || makeInitialExecState([{ id: dId }])[dId]
+          const terminal = upd.status === 'completed' || upd.status === 'failed'
+          return {
+            ...prev,
+            [dId]: {
+              ...cur,
+              status: upd.status || cur.status || 'running',
+              activeStep: terminal ? null : upd.step || cur.activeStep,
+              steps: upd.step ? { ...(cur.steps || {}), [upd.step]: upd.stepStatus } : cur.steps,
+              hashes: upd.hash ? { ...(cur.hashes || {}), [upd.step || 'swap']: upd.hash } : cur.hashes,
+              memory: [...(cur.memory || []), { ...upd.memory, t: nowT() }],
+            },
+          }
+        })
+        if (upd.log) addLog({ event: upd.log, agent: dId, meta: `${upd.memory.title} — ${upd.memory.meta}` })
+      }
+    }
+  }
+
+  function runOrchestratorDispatch(permissionDecision) {
+    const plan = strategyFlowRef.current.plan
+    const sessionId = `session-${runId}`
+    setExecMap((prev) => ({ ...prev, ...makeInitialExecState(plan.agents.map((a) => ({ id: a.allocationId }))) }))
+    setRunEvents([])
+
+    const orch = new OrchestratorAgent({
+      user: realAddress,
+      veniceAuth,
+      devApiKey: devApiKey || null,
+      sessionId,
+      baseLegContext: buildBaseLegContext({
+        connectedAddress: realAddress,
+        kitSignTransaction: (xdr) => signWithTimeout(xdr, 'cross-chain leg'),
+      }),
+      onEvent: handleNewRunEvent,
+    })
+
+    const dispatchPromise = orch.dispatch(plan, { permissionDecision }).then(async (summary) => {
+      addLog({
+        event: 'OrchestratorPlanned',
+        meta: `Completed: ${summary.completed ?? 0} deposited, ${summary.failed ?? 0} failed.`,
+      })
+      const addrs = summary.permission?.agentAddresses || []
+      deployedAgentsRef.current = addrs
+      if (addrs.length) saveDeployedAgents(realAddress, addrs)
+      // dispatchPermissioned's pure-Stellar branch never builds a receipt (only the mixed/bridge
+      // branch does, via buildDispatchReceipt) -- build one here so StrategyReceipt always gets a
+      // real DispatchReceiptV1, never a shape that only exists for runs with a Base leg.
+      const receipt =
+        summary.receipt ||
+        buildDispatchReceipt({
+          plan,
+          permission: summary.permission,
+          branches: { stellar: { results: summary.results || [] }, base: { status: undefined, results: [] } },
+        })
+      setRunReceipt(receipt)
+      if (summary.baseLeg) {
+        const outcome = applyBaseLegOutcome(summary.baseLeg, { stellarOwner: realAddress })
+        if (outcome) addLog(outcome)
+        if (summary.baseLeg.success) {
+          loadBasePositions({ stellarOwner: realAddress }).then((bp) => setBasePositions(bp))
+        }
+      }
+      // Reuses the proven position-reconciliation/council-reflect logic (setStage('done') included)
+      // rather than duplicating it -- the OLD per-agent `strategy` shape it reads is the same one
+      // onAcceptPlan already bridged from the canonical plan.
+      await handleExecDone()
+      return summary
+    })
+    dispatchPromise.catch((err) => {
+      if (pendingConfirmRef.current) return // surfaced via requestPermissionConfirmation's own catch
+      // A post-confirm failure (e.g. a relay outage mid-run) stays on Start and ends in an
+      // aggregate receipt -- never bounces back to Protect (brief: "post-grant branch failures
+      // stay Start and end in aggregate receipt").
+      console.warn('[app] run failed after confirmation:', err?.message || err)
+      addLog({ event: 'AgentFailed', meta: `Run failed: ${err?.message || err}` })
+      setStage('done')
+    })
+    return dispatchPromise
+  }
+
+  // Best-effort single-lane retry: re-runs just the failed allocation's deposit through a fresh
+  // WorkerAgent against the ALREADY-confirmed permission's agent address (never a new grant/
+  // signature) -- fed through the SAME handleNewRunEvent handler so the retry's own progress
+  // shows up on Start exactly like the original attempt did.
+  async function onRetryAllocation(allocationId) {
+    const plan = strategyFlowRef.current.plan
+    const agent = plan?.agents?.find((a) => a.allocationId === allocationId)
+    const permission = strategyFlowRef.current.permission
+    const agentAddress = permission?.agents?.find((a) => a.allocationId === allocationId)?.agentAddress
+    if (!agent || agent.kind === 'bridge' || !agentAddress) {
+      addLog({
+        event: 'AgentFailed',
+        meta: `Retry unavailable for ${allocationId}: no confirmed agent address on record.`,
+      })
+      return
+    }
+    const worker = new WorkerAgent({
+      agentId: allocationId,
+      allocationId,
+      user: realAddress,
+      vault: SOROBAN_ACTIVE_VAULT_ADDRESS,
+      amount: BigInt(agent.cap.units),
+      sessionId: `session-${runId}-retry`,
+      onEvent: handleNewRunEvent,
+      agentAddress,
+      eligibilityToken: {
+        protocolSlug: null,
+        planIndex: 0,
+        eligible: true,
+        verdictHash: 'plan-reviewed',
+        asOf: Date.now(),
+      },
+    })
+    await worker.execute()
+  }
+
+  function onViewMoney() {
+    navigate('/agent')
+  }
+
+  function onMakeAnotherDeposit() {
+    handleAgain()
+  }
+
+  // ProtectStage's "Edit plan" -- flowState.js's moments only move forward by design (its own
+  // header: "the moment machine's whole job is refusing to move forward"), so there is no
+  // reducer-safe way to step Protect back to Plan while preserving the reviewed plan. Resetting to
+  // a fresh Plan review is the one option that violates no invariant; STRATEGY_RESET is the
+  // app-local wrapper event added above for exactly this.
+  function onEditPlan() {
+    dispatchFlow({ type: 'STRATEGY_RESET' })
+    setStrategyReached(['plan'])
+  }
+
+  function onNavigateStrategyStage(stepId) {
+    if (stepId === 'plan' && strategyFlowRef.current.moment !== 'plan') {
+      onEditPlan()
+    }
+  }
+
+  // The route's public state is only Plan, Protect, Start, or receipt (brief's Interfaces
+  // section) — `strategyFlow.moment` drives which of the three stages renders; StartStage renders
+  // StrategyReceipt itself once `receipt` is non-null (StartStage.jsx's own composition).
+  function renderStrategyRoute() {
+    return (
+      <div className="pc-route">
+        <div className="pc-route-stack">
+          <StrategyProgress
+            current={strategyFlow.moment}
+            reached={strategyReached}
+            onNavigate={onNavigateStrategyStage}
+          />
+          {strategyFlow.moment === 'plan' && (
+            <PlanStage
+              vaultTotalShares={vaultTotalShares}
+              stellarVenue={stellarVenueDisplay}
+              base={baseView}
+              runId={runId}
+              onGenerate={onGenerate}
+              onRetryLive={onGenerate}
+              onAcceptPlan={onAcceptPlan}
+              onConnectForBase={onConnectForBase}
+              onSetupBase={onSetupBase}
+              onRebuildPlan={onRebuildPlan}
+            />
+          )}
+          {strategyFlow.moment === 'protect' && strategyFlow.plan && (
+            <ProtectStage
+              plan={strategyFlow.plan}
+              owner={realAddress}
+              baseMandateView={baseView.mandateView}
+              onConnectWallet={onConnectWallet}
+              onRetryPreflight={onRetryPreflight}
+              onRequestGrant={onRequestGrant}
+              onConfirmReuse={onConfirmReuse}
+              onEditPlan={onEditPlan}
+            />
+          )}
+          {strategyFlow.moment === 'start' && strategyFlow.plan && (
+            <StartStage
+              plan={strategyFlow.plan}
+              permission={strategyFlow.permission}
+              events={runEvents}
+              receipt={runReceipt}
+              runId={runId}
+              stellarVenue={stellarVenueDisplay}
+              onRetryAllocation={onRetryAllocation}
+              onViewMoney={onViewMoney}
+              onMakeAnotherDeposit={onMakeAnotherDeposit}
+            />
+          )}
+        </div>
+      </div>
+    )
+  }
+
   // Chain balances can lag 1-2 blocks after a deposit. Retry until at least one
   // vault reports a non-zero balance, then trust the on-chain numbers.
   async function reconcileWithRetry(address, maxAttempts = 3, delayMs = 3000, agents) {
@@ -2741,6 +3521,16 @@ const App = () => {
     setExecMap({})
     setLogs([])
     agentMapRef.current = {}
+
+    // Strategy Task 13 — reset the new Plan/Protect/Start machinery too, so "Start over"/"Make
+    // another deposit" always begins a genuinely fresh run rather than reopening the settled one.
+    dispatchFlow({ type: 'STRATEGY_RESET' })
+    setStrategyReached(['plan'])
+    setRunEvents([])
+    setRunReceipt(null)
+    setRunId(`run-${Date.now()}`)
+    baseSetupSucceededRef.current = false
+    pendingConfirmRef.current = null
 
     if (
       overrideAmount !== undefined &&
@@ -3188,17 +3978,32 @@ const App = () => {
           <Route
             path="/strategy"
             element={
-              <>
-                <StepRail stage={stage} furthest={furthest} onStepClick={goBack} lang={language} />
-                {/* Key only major strategy sub-views so "Run risk review" (stays on ready)
-                    does not remount the whole card like a page refresh. */}
-                <div
-                  className="stage"
-                  key={`${stage}-${strategyPhase === 'thinking' || strategyPhase === 'input' ? strategyPhase : 'plan'}`}
-                >
-                  {renderStage()}
-                </div>
-              </>
+              // Strategy Task 13 (Pocket Crew redesign, Wave 5): the old six-step StepRail/
+              // renderStage() ceremony is production-disabled here, not deleted — Step 3 of the
+              // brief keeps it only "as an explicit development/test compatibility seam,
+              // never presented as a user fallback." `isDevMode()` is this codebase's existing,
+              // already-established dev/prod cutoff (see the `viewAsAddress` dev-only read
+              // override above); no other "creator-cutoff" mechanism exists in this tree. `stage`
+              // never leaves its initial 'strategy' value on any production code path any more
+              // (every handler that used to change it — handleAcceptStrategy, handleGrantAndRun,
+              // handlePermConfirm, etc. — is now reachable ONLY via TweaksPanel's dev-only
+              // `jumpTo`, itself gated by the same `{devMode && <TweaksPanel/>}` check below), so
+              // this branch is unreachable in production even if `isDevMode()` were somehow true.
+              isDevMode() && stage !== 'strategy' ? (
+                <>
+                  <StepRail stage={stage} furthest={furthest} onStepClick={goBack} lang={language} />
+                  {/* Key only major strategy sub-views so "Run risk review" (stays on ready)
+                      does not remount the whole card like a page refresh. */}
+                  <div
+                    className="stage"
+                    key={`${stage}-${strategyPhase === 'thinking' || strategyPhase === 'input' ? strategyPhase : 'plan'}`}
+                  >
+                    {renderStage()}
+                  </div>
+                </>
+              ) : (
+                renderStrategyRoute()
+              )
             }
           />
           <Route

@@ -260,7 +260,15 @@ const TopBar = ({ onReset, railCollapsed, onToggleRail, notifications = null }) 
   )
 }
 
-/* ---------- Step rail (subtle numeric, no wizard chrome) ---------- */
+/* ---------- Step rail (subtle numeric, no wizard chrome) ----------
+   Strategy Task 13 (Pocket Crew redesign, Wave 5): STEPS/StepRail are DEMOTED, not deleted. The
+   production `/strategy` route now renders StrategyProgress (components/strategy/StrategyProgress.jsx)
+   + PlanStage/ProtectStage/StartStage instead — app.jsx only mounts StepRail behind its
+   `isDevMode() && stage !== 'strategy'` dev-seam branch, reachable solely via TweaksPanel's
+   `jumpTo` (itself devMode-gated), never on any production code path (`stage` no longer leaves its
+   initial 'strategy' value in production). Kept exported for that dev/test compatibility seam and
+   because components.sidebar.test.jsx and other direct consumers of this file are unaffected by
+   the route-level change. See app.jsx's `/strategy` Route element for the actual gate. */
 const STEPS = [
   { id: 'strategy', label: 'AI Strategy' },
   { id: 'connect', label: 'Connect & Upgrade' },
