@@ -213,6 +213,92 @@
   color: var(--pc-danger);
 }
 
+/* Fix loop 1 -- I4/M4: the amount input previously carried only an aria-label (no visible
+ * label). Porting the contract's own (previously-unused, hence not-ported) `.pc-field > label`
+ * rule now that PlanStage.jsx actually renders one. */
+.pc-field > label {
+  font-size: var(--pc-type-label);
+  font-weight: 650;
+}
+
+/* Fix loop 1 -- C1 (review finding): `.pc-button--primary` (background: var(--pc-harvest)) sits
+ * directly on `.pc-dominant--decision` (background: var(--pc-harvest)) -- background-color ===
+ * surface background-color, so the primary CTA (and the selected comfort-level radio, which
+ * shares this exact class) is invisible. Fix is Field-on-Harvest: the contract's own two fixed
+ * ink extremes (--pc-field/--pc-rice), reused verbatim -- no new colour invented. This also fixes
+ * the selected radio "losing its outline": a filled Field pill now reads as clearly selected next
+ * to the outlined (`.pc-button--secondary`) unselected options, instead of vanishing into the
+ * surface. Longhand `background-color` (not the shorthand `background`) so this exact override
+ * doubles as a computed-style regression test (see PlanStage.test.jsx); no visual difference vs.
+ * the shorthand since no background-image is set anywhere in this chain. Scoped, new declaration
+ * -- the locked `.pc-button--primary`/`.pc-dominant--decision` rules above are untouched. */
+.pc-dominant--decision .pc-button--primary {
+  background-color: var(--pc-field);
+  color: var(--pc-rice);
+}
+
+/* Foundation's global disabled rule (pocket-crew.css:348-353) sets the disabled ink to whichever
+ * shade fits the PAGE's overall theme (--pc-disabled), not the shade for THIS button's own
+ * (always-dark, Field) background -- in day-field theme that badly under-contrasts against our
+ * now-dark button. --pc-disabled-on-dark is the existing token calibrated for a dark surface
+ * regardless of overall theme. !important + higher specificity to beat Foundation's !important
+ * rule; Foundation's file is untouched. */
+.pc-dominant--decision .pc-button--primary:disabled,
+.pc-dominant--decision .pc-button--primary[aria-disabled='true'] {
+  color: var(--pc-disabled-on-dark) !important;
+}
+
+/* Fix loop 1 -- I1 (review finding): `.pc-field-help`/`.pc-field-error` above are verbatim
+ * contract rules calibrated for the dark canvas, but this surface places them on the light
+ * Harvest fill (measured 2.41:1 in Chrome). Re-scoping the CUSTOM PROPERTIES themselves (not the
+ * locked declarations above, which stay untouched) to their already-shipped light-surface
+ * counterparts fixes both at once for every descendant of the decision surface. */
+.pc-dominant--decision {
+  --pc-muted: var(--pc-owned-muted);
+  --pc-danger: var(--pc-danger-on-light);
+}
+
+/* Fix loop 1 -- I9 (review finding): the current step in StrategyProgress is `disabled` by
+ * design (see StrategyProgress.jsx's `canNavigate`), so Foundation's global disabled `!important`
+ * rule (pocket-crew.css:348-353) defeats this file's own locked current-step colour rule above,
+ * making the current step colour-identical to unreached ones. Scoped, higher-specificity
+ * override; Foundation's file is untouched. */
+.pc-strategy-stage-nav > [aria-current='step']:disabled {
+  color: var(--pc-ink) !important;
+}
+
+/* Fix loop 1 -- owner ruling (decision #19, mono-face gate item): on THIS surface,
+ * TechnicalDetails holds friendly plain-English copy (an agent's own editable deposit
+ * instructions), never raw technical data -- but Foundation's pocket-crew.css:544,548-549 sets
+ * every TechnicalDetails summary/body to the mono face unconditionally. Scoped to this surface's
+ * own allocation rows only, so Foundation's declaration -- and any other surface that reuses
+ * TechnicalDetails for genuinely technical content -- stays untouched. */
+.pc-allocation-row .pc-technical-details-summary,
+.pc-allocation-row .pc-technical-details-body {
+  font-family: var(--pc-font-body);
+}
+
+/* Fix loop 1 -- M3 (review finding): the source/freshness badge is not a network mark, so it
+ * must not reuse the locked `.pc-network-badge` selector (which is meant to match nothing but a
+ * real network mark). Same declarations, own class -- no new literal, only re-used tokens. */
+.pc-source-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 28px;
+  color: inherit;
+  font-size: var(--pc-type-label);
+  font-weight: 620;
+  white-space: nowrap;
+}
+
+/* Fix loop 1 -- M1 (review finding): `.pc-support` deliberately carries no padding (a role, not
+ * a card), so its content touched the surface edge. A padded child, not an edit to the locked
+ * role rule above. */
+.pc-support-content {
+  padding: var(--pc-space-5);
+}
+
 /* Tablet. Supporting context moves below the dominant surface. */
 @media (max-width: 1023px) {
   .pc-strategy-layout,

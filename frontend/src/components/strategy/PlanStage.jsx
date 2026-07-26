@@ -38,6 +38,29 @@ function formatExpiry(expirySeconds) {
   return Number.isFinite(expirySeconds) ? new Date(expirySeconds * 1000).toISOString() : 'Unknown'
 }
 
+// Same boundary math as planModel.js's private unitsToDecimal -- re-declared here because that
+// helper isn't exported and planModel.js is off-limits for this fix loop. Used only for display
+// (Cap), never for anything that becomes a grant/burn unit.
+function unitsToDisplay(units, decimals) {
+  return Number(BigInt(units)) / 10 ** decimals
+}
+
+// Fix loop 1 -- I2 (review finding): the domain has three source states
+// ('live-ai'|'deterministic'|'cached', see planModel.js), not two. Collapsing 'cached' into the
+// same "Safe default plan"/"Fallback" label as a genuine deterministic fallback is a false
+// provenance claim -- a cached LIVE result is not a fallback.
+function sourceBadgeCopy(sourceState) {
+  if (sourceState === 'live-ai') return 'Live AI + live market checks'
+  if (sourceState === 'cached') return 'Live AI (cached)'
+  return 'Safe default plan'
+}
+
+function sourceFreshness(sourceState) {
+  if (sourceState === 'live-ai') return 'Live'
+  if (sourceState === 'cached') return 'Cached'
+  return 'Fallback'
+}
+
 const BRIDGE_NETWORK_CONTEXT = Object.freeze({
   hostNetworkId: 'stellar-testnet',
   sourceNetworkId: 'stellar-testnet',
@@ -50,6 +73,11 @@ export function PlanStage({
   vaultTotalShares = null,
   stellarVenue,
   base = { connected: false, healthy: null, mandateView: null, action: null },
+  // Fix loop 1 -- I4 (review finding): Task 2's ruling is that `runId` "means one REVIEWED
+  // execution" and is "created by the caller at review time," never minted in this component.
+  // Falls through to planModel.js's own 'unrun' fallback when omitted (allocationId(runId, ...)),
+  // same stable behavior the tests already relied on -- just no wall clock involved.
+  runId,
   onGenerate,
   onRetryLive,
   onAcceptPlan,
@@ -67,9 +95,14 @@ export function PlanStage({
   const [phase, setPhase] = useState('input') // 'input' | 'generating' | 'ready' | 'error'
   const [fieldError, setFieldError] = useState(null)
   const [generationError, setGenerationError] = useState(null)
+  // Fix loop 1 -- I10: index into GENERATION_PHASES once the caller has actually reported one via
+  // the `reportPhase` callback runGeneration hands it; null while nothing real has been observed
+  // yet, so we never claim to show progress we can't prove.
+  const [generationPhase, setGenerationPhase] = useState(null)
   const [plan, setPlan] = useState(null)
   const [instructions, setInstructions] = useState({})
   const submissionRef = useRef(null) // last validated { amountUnits, risk }, reused by retry
+  const radioRefs = useRef([]) // roving-tabindex focus targets, one per RISK_IDS entry
 
   const baseConnected = base?.connected === true
   const baseHealthy = base?.healthy === true
@@ -91,10 +124,19 @@ export function PlanStage({
     const { amountUnits, risk: submittedRisk } = submissionRef.current
     setPhase('generating')
     setGenerationError(null)
+    setGenerationPhase(null)
     try {
-      const result = await generate({ amountUnits, risk: submittedRisk, baseEligible })
+      // Fix loop 1 -- I10: a real, caller-driven progress event, never a `speed * ...` timer. A
+      // caller that never calls this (every fixture in this file today, until Task 13 wires a
+      // real strategist that reports phases) leaves generationPhase null the whole time, and the
+      // UI shows one honest "working on it" message instead of a fake simultaneous phase list.
+      const reportPhase = (label) => {
+        const index = GENERATION_PHASES.indexOf(label)
+        if (index !== -1) setGenerationPhase(index)
+      }
+      const result = await generate({ amountUnits, risk: submittedRisk, baseEligible }, reportPhase)
       const nextPlan = normalizeStrategyPlan({
-        runId: `plan-${Date.now()}`,
+        runId,
         risk: submittedRisk,
         source: result.source,
         sourceState: result.sourceState,
@@ -103,6 +145,16 @@ export function PlanStage({
         // returned -- Base is never silently added after the fact.
         baseAllocations: baseEligible ? result.baseAllocations || [] : [],
       })
+      // Fix loop 1 -- C2 (review finding): the plan the user reviews and can accept must be the
+      // plan derived from the amount they typed and validated -- never a different number the
+      // strategist happened to return (reviewer reproduced this with a strategist response whose
+      // Stellar + Base legs summed to 150 USDC against a typed 100 USDC). Fail closed rather than
+      // render/offer a plan for an amount nobody validated.
+      if (BigInt(nextPlan.amount.units) !== amountUnits) {
+        setGenerationError('The generated plan did not match the amount you entered. Try again.')
+        setPhase('error')
+        return
+      }
       setPlan(nextPlan)
       setInstructions(
         Object.fromEntries(nextPlan.agents.map((agent) => [agent.allocationId, defaultInstruction(agent)]))
@@ -125,6 +177,23 @@ export function PlanStage({
     setFieldError(null)
     submissionRef.current = { amountUnits: check.units, risk }
     runGeneration(onGenerate)
+  }
+
+  // Fix loop 1 -- I5 (review finding): real ARIA APG radiogroup keyboard behavior -- arrow keys
+  // both move focus AND change the selection (single-select radiogroup pattern), Home/End jump to
+  // the ends. Paired with the roving tabIndex below (exactly one stop in the group's normal tab
+  // order at a time).
+  function handleRadioKeyDown(e, index) {
+    let nextIndex = null
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') nextIndex = (index + 1) % RISK_IDS.length
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      nextIndex = (index - 1 + RISK_IDS.length) % RISK_IDS.length
+    } else if (e.key === 'Home') nextIndex = 0
+    else if (e.key === 'End') nextIndex = RISK_IDS.length - 1
+    if (nextIndex === null) return
+    e.preventDefault()
+    setRisk(RISK_IDS[nextIndex])
+    radioRefs.current[nextIndex]?.focus()
   }
 
   function handleRetryLive() {
@@ -158,11 +227,12 @@ export function PlanStage({
         {phase === 'input' && (
           <form onSubmit={handleSubmit}>
             <div className="pc-field">
+              <label htmlFor="plan-amount">Amount in USDC</label>
               <input
+                id="plan-amount"
                 className="pc-strategy-amount"
                 type="text"
                 inputMode="decimal"
-                aria-label="Amount in USDC"
                 value={amountValue}
                 onChange={(e) => setAmountValue(e.target.value)}
               />
@@ -174,14 +244,17 @@ export function PlanStage({
             </div>
 
             <div role="radiogroup" aria-label="Comfort level">
-              {RISK_IDS.map((id) => (
+              {RISK_IDS.map((id, index) => (
                 <button
                   key={id}
+                  ref={(el) => (radioRefs.current[index] = el)}
                   type="button"
                   role="radio"
                   aria-checked={risk === id}
+                  tabIndex={(risk ? risk === id : index === 0) ? 0 : -1}
                   className={`pc-button ${risk === id ? 'pc-button--primary' : 'pc-button--secondary'}`}
                   onClick={() => setRisk(id)}
+                  onKeyDown={(e) => handleRadioKeyDown(e, index)}
                 >
                   {RISK_PROFILES[id].label}
                 </button>
@@ -204,11 +277,10 @@ export function PlanStage({
 
         {phase === 'generating' && (
           <StatusNotice state="info" title="Building your plan">
-            <ul>
-              {GENERATION_PHASES.map((label) => (
-                <li key={label}>{label}</li>
-              ))}
-            </ul>
+            {/* Fix loop 1 -- I10: a single label that TRANSITIONS in response to the caller's own
+                reportPhase events (never a static simultaneous list, never a timer). Nothing
+                claims progress this component cannot actually observe. */}
+            <p>{generationPhase === null ? 'Working on it…' : GENERATION_PHASES[generationPhase]}</p>
           </StatusNotice>
         )}
 
@@ -225,9 +297,7 @@ export function PlanStage({
 
         {phase === 'ready' && plan && (
           <div>
-            <span className="pc-network-badge">
-              {plan.sourceState === 'live-ai' ? 'Live AI + live market checks' : 'Safe default plan'}
-            </span>
+            <span className="pc-source-badge">{sourceBadgeCopy(plan.sourceState)}</span>
             {plan.sourceState !== 'live-ai' && (
               <button type="button" className="pc-button pc-button--secondary" onClick={handleRetryLive}>
                 Retry live check
@@ -238,7 +308,7 @@ export function PlanStage({
               state="current"
               value={viewModel.total}
               currency={plan.amount.token}
-              freshness={plan.sourceState === 'live-ai' ? 'Live' : 'Fallback'}
+              freshness={sourceFreshness(plan.sourceState)}
             />
 
             {planInvalidated && (
@@ -271,7 +341,12 @@ export function PlanStage({
                       )}
                       <MoneyFigure state="current" value={agent.allocation} currency={plan.amount.token} />
                       <p>
-                        Cap {agent.allocation} {plan.amount.token}
+                        {/* Fix loop 1 -- I8 (review finding): the grant scope bound the user
+                            approves is `plan.agents[].cap`, never the display allocation --
+                            today they happen to be equal, but the moment they diverge (a
+                            headroom cap, a rounded bridge cap) this must still state the real
+                            cap, not the allocation. */}
+                        Cap {unitsToDisplay(planAgent.cap.units, planAgent.cap.decimals)} {plan.amount.token}
                       </p>
                       <p>Expires {formatExpiry(planAgent.expiry)}</p>
                       {isBridge ? (
@@ -308,30 +383,41 @@ export function PlanStage({
       </div>
 
       <aside className="pc-strategy-aside">
-        {plan && (
+        {/* Fix loop 1 -- M6 (review finding): a bridge-only plan (stellarUnits: 0) has no
+            Stellar deposit leg at all -- rendering "Stellar truth" / "0 live venue" beside the
+            live-venue disclosure would be a false claim. */}
+        {plan && plan.truth.stellarVenueCount > 0 && (
           <div className="pc-support">
-            <h2>Stellar truth</h2>
-            <p>{plan.truth.agentIsolationCount} isolated accounts</p>
-            <p>{plan.truth.stellarVenueCount} live venue</p>
-            <VenueTruth kind="live" venue={stellarVenue?.name} />
+            <div className="pc-support-content">
+              <h2>Stellar truth</h2>
+              <p>{plan.truth.agentIsolationCount} isolated accounts</p>
+              <p>{plan.truth.stellarVenueCount} live venue</p>
+              <VenueTruth kind="live" venue={stellarVenue?.name} />
+            </div>
           </div>
         )}
 
         {plan?.truth.baseUsesProxyVaults && (
           <div className="pc-support">
-            <h2>Base Sepolia bridge</h2>
-            <p>Circle CCTP v2</p>
-            <p>Bridged as Circle USDC.</p>
-            <VenueTruth kind="base-proxy" />
-            {plan.agents
-              .find((a) => a.kind === 'bridge')
-              ?.children.map((child) => (
-                <p key={child.allocationId}>Planned mainnet target: {child.proxyTarget} (not live)</p>
-              ))}
+            <div className="pc-support-content">
+              <h2>Base Sepolia bridge</h2>
+              <p>Circle CCTP v2</p>
+              <p>Bridged as Circle USDC.</p>
+              <VenueTruth kind="base-proxy" />
+              {plan.agents
+                .find((a) => a.kind === 'bridge')
+                ?.children.map((child) => (
+                  <p key={child.allocationId}>Planned mainnet target: {child.proxyTarget} (not live)</p>
+                ))}
+            </div>
           </div>
         )}
 
-        {showBaseSetup && !plan && (
+        {/* Fix loop 1 -- I3 (review finding): dropped `&& !plan` -- this notice already lives in
+            the aside, outside the reviewed plan surface; gating it on "no plan yet" made the
+            brief's setup -> invalidate -> Rebuild plan journey structurally unreachable from the
+            UI (only reachable in tests, by hand-rerendering with a fabricated prop). */}
+        {showBaseSetup && (
           <StatusNotice
             state="warning"
             title="Set up Base testnet"

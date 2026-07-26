@@ -5,6 +5,9 @@
 // navigation to a step the caller has already marked reached/safe, and announce the current step
 // to assistive tech via a polite live region.
 // @vitest-environment jsdom
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { axe } from 'vitest-axe'
@@ -14,6 +17,16 @@ import { StrategyProgress } from './StrategyProgress.jsx'
 expect.extend(axeMatchers)
 
 afterEach(cleanup)
+
+// Fix loop 1 -- I9 regression helper. jsdom's getComputedStyle does not resolve `var()`, but it
+// DOES correctly apply the real cascade (specificity/!important/source order) and echo back
+// whichever declaration's raw text won -- verified against these exact two files. Enough to prove
+// the current-step colour override is winning over Foundation's global disabled `!important` rule.
+const here = path.dirname(fileURLToPath(import.meta.url))
+const REAL_STYLESHEET = [
+  fs.readFileSync(path.resolve(here, '../../design/pocket-crew.css'), 'utf8'),
+  fs.readFileSync(path.resolve(here, './strategy.css'), 'utf8'),
+].join('\n')
 
 describe('StrategyProgress', () => {
   it('renders all three steps as visibly labeled text, never bare dots', () => {
@@ -72,5 +85,29 @@ describe('StrategyProgress', () => {
       <StrategyProgress current="plan" reached={['plan']} onNavigate={() => {}} />
     )
     expect(await axe(container)).toHaveNoViolations()
+  })
+
+  // I9 (review finding): the current step is `disabled` by design (see `canNavigate` above), so
+  // Foundation's global disabled `!important` rule (pocket-crew.css:348-353) defeated this file's
+  // own locked current-step colour rule, measured identical to an unreached step in Chrome
+  // (rgb(140,155,147) both). Injects the REAL shipped stylesheet and proves the current step's
+  // colour declaration is genuinely distinct from a sibling's.
+  it('I9: the current step colour rule wins over Foundation\'s disabled !important rule', () => {
+    const styleEl = document.createElement('style')
+    styleEl.textContent = REAL_STYLESHEET
+    document.head.appendChild(styleEl)
+    try {
+      render(<StrategyProgress current="protect" reached={['plan', 'protect']} />)
+      const current = screen.getByRole('button', { name: 'Protect' })
+      const unreached = screen.getByRole('button', { name: 'Start' })
+      const currentColor = getComputedStyle(current).color
+      const unreachedColor = getComputedStyle(unreached).color
+      // The fix's own override rule (a plain compound selector, no :where()) must be the one
+      // winning for the current step -- that's the exact regression this guards.
+      expect(currentColor).toBe('var(--pc-ink)')
+      expect(currentColor).not.toBe(unreachedColor)
+    } finally {
+      styleEl.remove()
+    }
   })
 })

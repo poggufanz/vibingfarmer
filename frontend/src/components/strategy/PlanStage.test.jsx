@@ -8,16 +8,45 @@
 // resolveBaseAvailability/needsBaseMandateSetup -- this file never re-derives that policy, it
 // only asserts PlanStage renders/gates correctly off of it.
 // @vitest-environment jsdom
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { axe } from 'vitest-axe'
 import * as axeMatchers from 'vitest-axe/matchers'
 import { PlanStage } from './PlanStage.jsx'
 import { FIRST_DEPOSIT_MIN_UNITS } from '../../strategy/amountValidation.js'
+import { canonicalizeStrategy } from '../../strategy/canonicalStrategy.js'
+import * as planModel from '../../strategy/planModel.js'
 
 expect.extend(axeMatchers)
 
 afterEach(cleanup)
+
+// Fix loop 1 -- real-CSS regression helper (used by I6 and the owner mono-face ruling below).
+// jsdom's getComputedStyle does not resolve `var()`, but it DOES correctly apply the cascade
+// (specificity/!important/source order) and echo back whichever declaration's raw text won --
+// verified against these exact two files before relying on it. That is enough to prove a scoped
+// override rule is winning (or an animation rule is genuinely absent), without needing a real
+// browser for every regression run; the two Critical, rendered-colour findings are still verified
+// separately in a real browser (see the fix report).
+const here = path.dirname(fileURLToPath(import.meta.url))
+const REAL_STYLESHEET = [
+  fs.readFileSync(path.resolve(here, '../../design/pocket-crew.css'), 'utf8'),
+  fs.readFileSync(path.resolve(here, './strategy.css'), 'utf8'),
+].join('\n')
+
+async function withRealStylesheet(run) {
+  const styleEl = document.createElement('style')
+  styleEl.textContent = REAL_STYLESHEET
+  document.head.appendChild(styleEl)
+  try {
+    await run()
+  } finally {
+    styleEl.remove()
+  }
+}
 
 const FUNDED_VAULT = 500_0000000n // vault already seeded -- first-deposit floor does not apply
 
@@ -118,7 +147,10 @@ describe('PlanStage — Base availability is consumed, never re-derived', () => 
 
     // The mock (mis-)returned a base allocation -- a disconnected first plan must ignore it
     // rather than silently adding Base.
-    expect(onGenerate).toHaveBeenCalledWith(expect.objectContaining({ baseEligible: false }))
+    expect(onGenerate).toHaveBeenCalledWith(
+      expect.objectContaining({ baseEligible: false }),
+      expect.any(Function)
+    )
     expect(screen.queryByText('Circle CCTP v2')).toBeNull()
     expect(screen.queryByText(/Set up Base testnet/)).toBeNull()
   })
@@ -149,7 +181,9 @@ describe('PlanStage — Base availability is consumed, never re-derived', () => 
     const onGenerate = vi.fn().mockResolvedValue({
       source: 'deepseek',
       sourceState: 'live-ai',
-      stellarUnits: '1000000000',
+      // 50 USDC Stellar + 50 USDC Base (30+20M base 6dp -> 500000000 7dp bridge cap) = 100 USDC,
+      // reconciling with the typed amount below (see C2's fail-closed reconciliation check).
+      stellarUnits: '500000000',
       baseAllocations: [
         { address: '0xAAA', proxyTarget: 'aave-v3', factSlug: 'aave-v3-base', units: '50000000', chain: 'base' },
       ],
@@ -168,7 +202,10 @@ describe('PlanStage — Base availability is consumed, never re-derived', () => 
     )
     await fillAndSubmit({ onGenerate })
     await screen.findByRole('button', { name: 'Accept plan' })
-    expect(onGenerate).toHaveBeenCalledWith(expect.objectContaining({ baseEligible: true }))
+    expect(onGenerate).toHaveBeenCalledWith(
+      expect.objectContaining({ baseEligible: true }),
+      expect.any(Function)
+    )
     expect(screen.getByText('Circle CCTP v2')).toBeTruthy()
   })
 
@@ -214,17 +251,51 @@ describe('PlanStage — Base availability is consumed, never re-derived', () => 
 })
 
 describe('PlanStage — generation is event-driven, not timer-driven', () => {
-  it('shows the three real phases while a promise is pending, with no fake speed*delay timer', async () => {
+  it('shows one honest generating message, never a fake simultaneous 3-phase list, when the caller reports no phases', async () => {
     const gen = deferred()
     const onGenerate = vi.fn().mockReturnValue(gen.promise)
     render(<PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={onGenerate} />)
     await fillAndSubmit({ onGenerate })
 
-    expect(screen.getByText('Checking destinations')).toBeTruthy()
-    expect(screen.getByText('Building bounded allocations')).toBeTruthy()
-    expect(screen.getByText('Safety review')).toBeTruthy()
+    expect(screen.getByText('Working on it…')).toBeTruthy()
+    // The old implementation rendered all three as a static list regardless of any real signal --
+    // that is exactly what this proves is gone: none of the three phase labels is shown unless
+    // the caller actually reported it (see the next test).
+    expect(screen.queryByText('Checking destinations')).toBeNull()
+    expect(screen.queryByText('Building bounded allocations')).toBeNull()
+    expect(screen.queryByText('Safety review')).toBeNull()
     // Still pending: nothing after this point should require fake timers to observe.
     expect(screen.queryByRole('button', { name: 'Accept plan' })).toBeNull()
+
+    gen.resolve({ source: 'deepseek', sourceState: 'live-ai', stellarUnits: '1000000000', baseAllocations: [] })
+    await screen.findByRole('button', { name: 'Accept plan' })
+  })
+
+  it('advances through real caller-reported phases one at a time, in response to genuine events -- never all at once', async () => {
+    const gen = deferred()
+    let reportPhase
+    const onGenerate = vi.fn((_input, report) => {
+      reportPhase = report
+      return gen.promise
+    })
+    render(<PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={onGenerate} />)
+    await fillAndSubmit({ onGenerate })
+
+    expect(screen.getByText('Working on it…')).toBeTruthy()
+    expect(typeof reportPhase).toBe('function')
+
+    act(() => reportPhase('Checking destinations'))
+    expect(screen.getByText('Checking destinations')).toBeTruthy()
+    expect(screen.queryByText('Building bounded allocations')).toBeNull()
+    expect(screen.queryByText('Working on it…')).toBeNull()
+
+    act(() => reportPhase('Building bounded allocations'))
+    expect(screen.getByText('Building bounded allocations')).toBeTruthy()
+    expect(screen.queryByText('Checking destinations')).toBeNull()
+
+    act(() => reportPhase('Safety review'))
+    expect(screen.getByText('Safety review')).toBeTruthy()
+    expect(screen.queryByText('Building bounded allocations')).toBeNull()
 
     gen.resolve({ source: 'deepseek', sourceState: 'live-ai', stellarUnits: '1000000000', baseAllocations: [] })
     await screen.findByRole('button', { name: 'Accept plan' })
@@ -319,7 +390,8 @@ describe('PlanStage — reviewed plan (Stellar-only)', () => {
 
   it('shows a network badge on every allocation', async () => {
     await generateStellarOnlyPlan()
-    expect(screen.getAllByText('Stellar testnet').length).toBeGreaterThanOrEqual(2)
+    // risk 'Balanced' (med) -> exactly 2 deposit agents, one badge each.
+    expect(screen.getAllByText('Stellar testnet')).toHaveLength(2)
   })
 
   it('renders "Yield unavailable" honestly when the venue carries no live yield', async () => {
@@ -332,7 +404,8 @@ describe('PlanStage — reviewed plan (Stellar-only)', () => {
     render(<PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={onGenerate} />)
     await fillAndSubmit({ amount: '100', risk: 'Steady', onGenerate })
     await screen.findByRole('button', { name: 'Accept plan' })
-    expect(screen.getAllByText('Yield unavailable').length).toBeGreaterThan(0)
+    // risk 'Steady' (low) -> exactly 1 deposit agent.
+    expect(screen.getAllByText('Yield unavailable')).toHaveLength(1)
   })
 
   it('edits an agent instruction inside Technical details and approves the edited value in one deliberate action', async () => {
@@ -349,6 +422,47 @@ describe('PlanStage — reviewed plan (Stellar-only)', () => {
     // Uint8Array realm -- see PlanStage's hashPlan doc comment); this only proves PlanStage calls
     // whatever hasher it's given with the exact reviewed (post-edit) plan.
     expect(call.fingerprint).toBe(`0xstub${call.plan.agents.length}`)
+  })
+
+  it('I7: the reviewed-plan shape PlanStage builds is exactly what the REAL canonicalizer (hashStrategy default path) needs', async () => {
+    // hashStrategy's own sha256 step cannot run inside this jsdom file -- a jsdom Buffer/
+    // Uint8Array realm mismatch crashes @noble/hashes even for a bare, no-React call (reproduced
+    // independently by both the implementer and the Task 10 review). That sha256 step is
+    // shape-agnostic (it just hashes whatever JSON string comes out) and is already exercised
+    // against a real StrategyPlan, in vitest's default node environment, by
+    // strategy/canonicalStrategy.test.js. What was never proven is that PlanStage's OWN
+    // construction (frozen plan spread + merged per-agent `instructions`) is a shape the REAL,
+    // unmocked canonicalizeStrategy can actually consume -- this captures that exact construction
+    // and runs the real function on it.
+    let captured = null
+    const onGenerate = vi.fn().mockResolvedValue({
+      source: 'deepseek',
+      sourceState: 'live-ai',
+      stellarUnits: '1000000000',
+      baseAllocations: [],
+    })
+    render(
+      <PlanStage
+        vaultTotalShares={FUNDED_VAULT}
+        base={disconnectedBase}
+        onGenerate={onGenerate}
+        onAcceptPlan={() => {}}
+        hashPlan={(plan) => {
+          captured = plan
+          return '0xcaptured'
+        }}
+      />
+    )
+    await fillAndSubmit({ amount: '100', risk: 'Balanced', onGenerate })
+    await screen.findByRole('button', { name: 'Accept plan' })
+    fireEvent.click(screen.getByRole('button', { name: 'Accept plan' }))
+    expect(captured).toBeTruthy()
+
+    expect(() => JSON.stringify(canonicalizeStrategy(captured))).not.toThrow()
+    const first = JSON.stringify(canonicalizeStrategy(captured))
+    const second = JSON.stringify(canonicalizeStrategy(captured))
+    expect(first).toBe(second) // deterministic, same as hashStrategy requires
+    expect(JSON.parse(first).agents[0].instructions).toBeTruthy()
   })
 
   it('has zero axe violations once a plan is reviewed', async () => {
@@ -379,7 +493,10 @@ describe('PlanStage — reviewed plan with a Base bridge leg', () => {
     const onGenerate = vi.fn().mockResolvedValue({
       source: 'deepseek',
       sourceState: 'live-ai',
-      stellarUnits: '1000000000',
+      // 50 USDC Stellar + 30+20 USDC Base (bridge cap 500000000 7dp = 50 USDC) = 100 USDC,
+      // reconciling with the typed amount below (see C2's fail-closed reconciliation check --
+      // this fixture used to total 150 against a typed 100, the exact bug the review reproduced).
+      stellarUnits: '500000000',
       baseAllocations: [
         { address: '0xAAA', proxyTarget: 'aave-v3', factSlug: 'aave-v3-base', units: '30000000', chain: 'base' },
         { address: '0xBBB', proxyTarget: 'morpho-blue', factSlug: 'morpho-blue-base', units: '20000000', chain: 'base' },
@@ -389,6 +506,11 @@ describe('PlanStage — reviewed plan with a Base bridge leg', () => {
     await fillAndSubmit({ amount: '100', risk: 'Steady', onGenerate })
     await screen.findByRole('button', { name: 'Accept plan' })
   }
+
+  it('reconciles the reviewed total against the typed amount for a bridged plan', async () => {
+    await generateBridgedPlan()
+    expect(screen.getByText('100 USDC')).toBeTruthy()
+  })
 
   it('renders the Base truth: Circle CCTP v2, Circle USDC, custody-only proxy, planned (not live) targets', async () => {
     await generateBridgedPlan()
@@ -414,6 +536,111 @@ describe('PlanStage — reviewed plan with a Base bridge leg', () => {
     expect(within(bridgeRow).getByText('Stellar testnet')).toBeTruthy()
     expect(within(bridgeRow).getByText('Base Sepolia')).toBeTruthy()
     expect(within(bridgeRow).getByRole('img', { name: 'to' })).toBeTruthy()
+  })
+})
+
+describe('PlanStage — C2: the reviewed amount must reconcile with the typed amount', () => {
+  it('fails closed instead of rendering/offering a plan for a different amount than the user typed', async () => {
+    // The reviewer's exact reproduction: typed 100, the strategist's response totals 150
+    // (100 Stellar + 30 + 20 Base) -- the surface must never confidently display 150 USDC or
+    // offer to accept it.
+    const readyBase = {
+      connected: true,
+      healthy: true,
+      mandateView: { status: 'ready', ready: true, primaryCopy: 'Ready copy.' },
+      action: null,
+    }
+    const onGenerate = vi.fn().mockResolvedValue({
+      source: 'deepseek',
+      sourceState: 'live-ai',
+      stellarUnits: '1000000000', // 100 USDC
+      baseAllocations: [
+        { address: '0xAAA', proxyTarget: 'aave-v3', factSlug: 'aave-v3-base', units: '30000000', chain: 'base' },
+        { address: '0xBBB', proxyTarget: 'morpho-blue', factSlug: 'morpho-blue-base', units: '20000000', chain: 'base' },
+      ], // +50 USDC bridge cap -- 150 USDC total against a typed 100
+    })
+    render(<PlanStage vaultTotalShares={FUNDED_VAULT} base={readyBase} onGenerate={onGenerate} />)
+    await fillAndSubmit({ amount: '100', risk: 'Steady', onGenerate })
+
+    await screen.findByRole('alert')
+    expect(screen.queryByText('150 USDC')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Accept plan' })).toBeNull()
+    expect(
+      screen.getByText('The generated plan did not match the amount you entered. Try again.')
+    ).toBeTruthy()
+  })
+})
+
+describe('PlanStage — I2: the cached source state is never mislabeled as the deterministic fallback', () => {
+  it('shows a distinct "cached" badge and freshness, never "Safe default plan"/"Fallback"', async () => {
+    const onGenerate = vi.fn().mockResolvedValue({
+      source: 'deepseek',
+      sourceState: 'cached',
+      stellarUnits: '1000000000',
+      baseAllocations: [],
+    })
+    render(<PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={onGenerate} />)
+    await fillAndSubmit({ amount: '100', risk: 'Steady', onGenerate })
+    await screen.findByRole('button', { name: 'Accept plan' })
+    expect(screen.getByText('Live AI (cached)')).toBeTruthy()
+    expect(screen.queryByText('Safe default plan')).toBeNull()
+    expect(screen.getByText('Cached')).toBeTruthy()
+    expect(screen.queryByText('Fallback')).toBeNull()
+  })
+})
+
+describe('PlanStage — I3: Set up Base testnet stays reachable alongside a reviewed plan', () => {
+  it('keeps rendering the setup notice once a plan exists, so setup -> invalidate -> Rebuild plan is reachable', async () => {
+    const onGenerate = vi.fn().mockResolvedValue({
+      source: 'deepseek',
+      sourceState: 'live-ai',
+      stellarUnits: '1000000000',
+      baseAllocations: [],
+    })
+    render(
+      <PlanStage
+        vaultTotalShares={FUNDED_VAULT}
+        base={{ connected: true, healthy: true, mandateView: { status: 'missing', ready: false }, action: null }}
+        onGenerate={onGenerate}
+      />
+    )
+    await fillAndSubmit({ amount: '100', risk: 'Steady', onGenerate })
+    await screen.findByRole('button', { name: 'Accept plan' })
+    // The setup notice is still on screen, outside the reviewed plan surface -- not hidden just
+    // because a plan now exists.
+    expect(screen.getByRole('button', { name: 'Set up Base testnet' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Accept plan' })).toBeTruthy()
+  })
+})
+
+describe('PlanStage — I4: runId arrives from the caller, never minted internally', () => {
+  it('produces the same agent identities across two generations given the same runId prop (no Date.now() involved)', async () => {
+    const onGenerate = vi.fn().mockResolvedValue({
+      source: 'deepseek',
+      sourceState: 'live-ai',
+      stellarUnits: '1000000000',
+      baseAllocations: [],
+    })
+    const { unmount } = render(
+      <PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} runId="run-fixed" onGenerate={onGenerate} />
+    )
+    await fillAndSubmit({ amount: '100', risk: 'Steady', onGenerate })
+    await screen.findByRole('button', { name: 'Accept plan' })
+    const firstMark = document.querySelector('[data-agent-kind="deposit"] svg')
+    const firstFill = firstMark.querySelector('path').getAttribute('fill')
+    unmount()
+
+    render(
+      <PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} runId="run-fixed" onGenerate={onGenerate} />
+    )
+    await fillAndSubmit({ amount: '100', risk: 'Steady', onGenerate })
+    await screen.findByRole('button', { name: 'Accept plan' })
+    const secondMark = document.querySelector('[data-agent-kind="deposit"] svg')
+    const secondFill = secondMark.querySelector('path').getAttribute('fill')
+
+    // Same runId prop in -> the same allocationId -> the same seeded AgentMark colour. A
+    // Date.now()-minted runId would make this flaky/always-different across two real calls.
+    expect(secondFill).toBe(firstFill)
   })
 })
 
@@ -443,15 +670,70 @@ describe('PlanStage — keyboard operability and reduced motion', () => {
     expect(screen.getByLabelText('Amount in USDC').tagName).toBe('INPUT')
   })
 
-  it('renders the same reviewed plan under prefers-reduced-motion with no timer-driven state', async () => {
-    const original = window.matchMedia
-    window.matchMedia = (query) => ({
-      matches: query.includes('reduce'),
-      media: query,
-      addEventListener() {},
-      removeEventListener() {},
+  // I5 (review finding): the old test only checked tagName -- it could not catch a missing ARIA
+  // APG radiogroup implementation. These press real keys and assert real focus/selection moves.
+  it('I5: arrow keys move focus AND change the comfort-level selection (roving tabindex, real APG radiogroup)', () => {
+    render(<PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={vi.fn()} />)
+    const [steady, balanced, adventurous] = screen.getAllByRole('radio')
+
+    // Roving tabindex: exactly one stop in the tab order before any selection is made.
+    expect(steady.tabIndex).toBe(0)
+    expect(balanced.tabIndex).toBe(-1)
+    expect(adventurous.tabIndex).toBe(-1)
+
+    steady.focus()
+    fireEvent.keyDown(steady, { key: 'ArrowRight' })
+    expect(document.activeElement).toBe(balanced)
+    expect(balanced.getAttribute('aria-checked')).toBe('true')
+    expect(steady.getAttribute('aria-checked')).toBe('false')
+    expect(balanced.tabIndex).toBe(0)
+    expect(steady.tabIndex).toBe(-1)
+
+    fireEvent.keyDown(balanced, { key: 'ArrowRight' })
+    expect(document.activeElement).toBe(adventurous)
+    expect(adventurous.getAttribute('aria-checked')).toBe('true')
+
+    // Wraps at the end.
+    fireEvent.keyDown(adventurous, { key: 'ArrowRight' })
+    expect(document.activeElement).toBe(steady)
+    expect(steady.getAttribute('aria-checked')).toBe('true')
+
+    fireEvent.keyDown(steady, { key: 'End' })
+    expect(document.activeElement).toBe(adventurous)
+    fireEvent.keyDown(adventurous, { key: 'Home' })
+    expect(document.activeElement).toBe(steady)
+  })
+
+  // I6 (review finding): the old test asserted `queryByText(/speed/i)).toBeNull()`, which passes
+  // for every conceivable implementation. This instead injects the REAL shipped CSS (the same
+  // two files the browser loads) and proves no element in the reviewed plan carries a non-'none'
+  // animation -- the actual, falsifiable claim behind "no timer-driven/motion state" and
+  // checklist item 6 ("a button uses a gradient/glow/shimmer/pulse/infinite animation").
+  it('I6: no element in the reviewed plan computes a real animation, under the actual shipped stylesheet', async () => {
+    await withRealStylesheet(async () => {
+      const onGenerate = vi.fn().mockResolvedValue({
+        source: 'deepseek',
+        sourceState: 'live-ai',
+        stellarUnits: '1000000000',
+        baseAllocations: [],
+      })
+      const { container } = render(
+        <PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={onGenerate} />
+      )
+      await fillAndSubmit({ amount: '100', risk: 'Steady', onGenerate })
+      await screen.findByRole('button', { name: 'Accept plan' })
+      const offenders = Array.from(container.querySelectorAll('*')).filter((el) => {
+        const name = getComputedStyle(el).animationName
+        return name && name !== 'none'
+      })
+      expect(offenders).toEqual([])
     })
-    try {
+  })
+})
+
+describe('PlanStage — owner ruling (decision #19): friendly copy never renders in the mono face', () => {
+  it('renders the editable instructions summary and body in the contract body face, not JetBrains Mono', async () => {
+    await withRealStylesheet(async () => {
       const onGenerate = vi.fn().mockResolvedValue({
         source: 'deepseek',
         sourceState: 'live-ai',
@@ -461,9 +743,54 @@ describe('PlanStage — keyboard operability and reduced motion', () => {
       render(<PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={onGenerate} />)
       await fillAndSubmit({ amount: '100', risk: 'Steady', onGenerate })
       await screen.findByRole('button', { name: 'Accept plan' })
-      expect(screen.queryByText(/speed/i)).toBeNull()
+
+      const summary = document.querySelector('.pc-technical-details-summary')
+      const body = document.querySelector('.pc-technical-details-body')
+      // jsdom does not resolve var(), but it DOES correctly resolve which declaration wins the
+      // cascade (verified against these exact two files) -- so the raw winning text tells us
+      // whether the mono override (--font-mono, Foundation's) or this task's body-face override
+      // (--pc-font-body, strategy.css) is the one actually applied. If the mono face returns,
+      // both of these flip back to `var(--font-mono)` and this test fails.
+      expect(getComputedStyle(summary).fontFamily).toBe('var(--pc-font-body)')
+      expect(getComputedStyle(body).fontFamily).toBe('var(--pc-font-body)')
+    })
+  })
+})
+
+describe('PlanStage — I8: Cap renders the plan agent\'s cap, never the display allocation', () => {
+  it('renders a Cap value that tracks plan.agents[].cap even when it diverges from the allocation figure', async () => {
+    // planModel.js (off-limits for this fix loop) always sets cap === allocation today, so a
+    // black-box render can't distinguish "reads cap" from "reads allocation." vi.spyOn on the
+    // real, still-imported module (not a full vi.mock/resetModules module-graph swap, which risks
+    // loading a second React copy for a component test) proves the fix reads the field the review
+    // named, per its suggested fix ("assert the two independently in a test with divergent
+    // fixtures") -- `allocation` is left completely real, only `cap` is perturbed.
+    const originalNormalize = planModel.normalizeStrategyPlan
+    const spy = vi.spyOn(planModel, 'normalizeStrategyPlan').mockImplementation((input) => {
+      const real = originalNormalize(input)
+      return {
+        ...real,
+        agents: real.agents.map((a) => ({
+          ...a,
+          cap: { ...a.cap, units: (BigInt(a.cap.units) * 2n).toString() },
+        })),
+      }
+    })
+    try {
+      const onGenerate = vi.fn().mockResolvedValue({
+        source: 'deepseek',
+        sourceState: 'live-ai',
+        stellarUnits: '1000000000', // 100 USDC allocation
+        baseAllocations: [],
+      })
+      render(<PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={onGenerate} />)
+      await fillAndSubmit({ amount: '100', risk: 'Steady', onGenerate })
+      await screen.findByRole('button', { name: 'Accept plan' })
+      // allocation is 100 USDC; the spy doubled the plan-level cap to 200.
+      expect(screen.getByText('Cap 200 USDC')).toBeTruthy()
+      expect(screen.queryByText('Cap 100 USDC')).toBeNull()
     } finally {
-      window.matchMedia = original
+      spy.mockRestore()
     }
   })
 })
