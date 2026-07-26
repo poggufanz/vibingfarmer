@@ -36,36 +36,39 @@ async function defaultReadIdleUsdcOrUnknown({ account, publicClient }) {
   }
 }
 
-export async function loadBasePositions({ stellarOwner, deps = {} } = {}) {
-  const { readPositions = defaultReadPositions, makePublicClient } = deps
-
+/**
+ * My Money Task 13 (Part B item 4): the retired `loadBasePositions` this function replaces gated
+ * on a purely LOCAL `BaseOwnerRecordV2` and returned `[]` on a new device even when
+ * `loadIndexedBasePositions` (below) — the SAME reader readOwnerMoney.js already uses for the
+ * `/agent` money model — could see real, proven Base custody for that owner. Same device, two
+ * readers, opposite answers: the dashboard showed an empty Base panel beside a money model
+ * reporting Base custody. Collapsed into one: this is now a thin, single-account convenience over
+ * `loadIndexedBasePositions`, scoped to exactly what a withdraw/recover ceremony needs — THIS
+ * device's own currently-bound kernel (the passkey is bound to exactly one) — never a second,
+ * independently gated read path. Same `[]` fail-soft contract the retired function made (no owner
+ * record, no positions, any RPC failure); the underlying reader's own status
+ * ('unavailable'|'empty'|'known'|'mismatched') is deliberately not surfaced here — a caller that
+ * needs the owner-wide picture (proven cross-device custody, not just this device's own kernel)
+ * should call `loadIndexedBasePositions` directly instead, the way readOwnerMoney.js already does.
+ */
+export async function loadDeviceBasePositions({ stellarOwner, deps = {} } = {}) {
   // No Base owner ever created for this stellarOwner -> nothing to read. Bail BEFORE touching
-  // the network (and BEFORE the dynamic import below) so a Stellar-only user's poll never fires
-  // a Base RPC call OR loads the ZeroDev/viem chain.
+  // the network so a Stellar-only user's poll never fires a Base RPC call.
   const owner = readBaseOwner(stellarOwner)
   if (!owner) return []
-  const account = owner.kernelAddress
 
-  try {
-    // Dynamic: no top-level import of passkeyBase.js here (that pulled the whole ZeroDev/viem
-    // chain into the eager main bundle for every user — proven via dist chunk grep). Reached
-    // only once we already know a Base owner exists.
-    const { defaultMakePublicClient } = await import('../wallet/passkeyBase.js')
-    const publicClient = (makePublicClient || defaultMakePublicClient)()
-    const positions = await readPositions({
-      pools: BASE_POOL_CATALOG.map((p) => p.address),
-      account,
-      publicClient,
-    })
-    return positions.map((pos) => {
-      const cat = BASE_POOL_CATALOG.find((p) => p.address.toLowerCase() === pos.pool.toLowerCase())
-      // apy rides along so the dashboard's daily-earnings estimate can include Base pools
-      // instead of silently treating cross-chain capital as idle.
-      return { ...pos, poolName: cat?.name || pos.pool, apy: cat?.apy || 0 }
-    })
-  } catch {
-    return []
-  }
+  const result = await loadIndexedBasePositions({
+    stellarOwner,
+    indexedBaseAccounts: [owner.kernelAddress],
+    deps,
+  })
+  const positions = result.accounts[0]?.positions ?? []
+  return positions.map((pos) => {
+    const cat = BASE_POOL_CATALOG.find((p) => p.address.toLowerCase() === pos.pool.toLowerCase())
+    // apy rides along so the dashboard's daily-earnings estimate can include Base pools
+    // instead of silently treating cross-chain capital as idle.
+    return { ...pos, poolName: cat?.name || pos.pool, apy: cat?.apy || 0 }
+  })
 }
 
 /**
@@ -73,8 +76,8 @@ export async function loadBasePositions({ stellarOwner, deps = {} } = {}) {
  * durable, relayer-attested association already proved for this owner — `indexedBaseAccounts`,
  * never a locally-scanned set. A new device with no BaseOwnerRecordV2 (no passkey ceremony ever
  * run here) can still see confirmed historical custody, because the read is keyed off proven
- * public addresses, not local storage. Additive: `loadBasePositions` above is untouched and every
- * existing caller of it is unaffected.
+ * public addresses, not local storage. My Money Task 13: `loadDeviceBasePositions` above is now
+ * built on top of this reader rather than duplicating its own local-record gate.
  *
  * Returns an explicit status rather than fail-soft `[]` — a money read model needs to tell "no
  * Base association has ever been proven for this owner" (`empty`) apart from "the read couldn't

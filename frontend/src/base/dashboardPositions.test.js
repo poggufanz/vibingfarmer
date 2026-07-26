@@ -1,6 +1,6 @@
 // frontend/src/base/dashboardPositions.test.js
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { loadBasePositions, loadIndexedBasePositions } from './dashboardPositions.js'
+import { loadDeviceBasePositions, loadIndexedBasePositions } from './dashboardPositions.js'
 // The vitest env block (vite.config.js) overrides VITE_BASE_POOL_1_ADDRESS away from the
 // hardcoded production default, so the real catalog address must be read at test time rather
 // than hardcoded here (mirrors strategist.crosschain.test.js's BASE_ADDRESS pattern).
@@ -40,36 +40,38 @@ beforeEach(() => {
   }
 })
 
-describe('loadBasePositions', () => {
+describe('loadDeviceBasePositions', () => {
   it('returns [] when no base owner has ever been created', async () => {
     expect(
-      await loadBasePositions({ stellarOwner: OWNER, deps: { readPositions: vi.fn() } })
+      await loadDeviceBasePositions({ stellarOwner: OWNER, deps: { readPositions: vi.fn() } })
     ).toEqual([])
   })
 
   it('returns [] without a stellarOwner (never a blind global read)', async () => {
     seedOwner(OWNER, '0xACC')
-    expect(await loadBasePositions({ deps: { readPositions: vi.fn() } })).toEqual([])
+    expect(await loadDeviceBasePositions({ deps: { readPositions: vi.fn() } })).toEqual([])
   })
 
-  it('maps positions with catalog pool names', async () => {
+  it('maps positions with catalog pool names, reading through loadIndexedBasePositions', async () => {
     seedOwner(OWNER, '0xACC')
     const readPositions = vi
       .fn()
       .mockResolvedValue([{ pool: BASE_POOL_CATALOG[0].address, shares: 5n, minAssets: 4n }])
-    const out = await loadBasePositions({
+    const out = await loadDeviceBasePositions({
       stellarOwner: OWNER,
       deps: { readPositions, makePublicClient: () => ({}) },
     })
     expect(out[0]).toMatchObject({ poolName: expect.stringContaining('Aave'), shares: 5n })
-    expect(readPositions).toHaveBeenCalledWith(expect.objectContaining({ account: '0xACC' }))
+    // the ONE canonical account this device's own withdraw ceremony cares about -- never a
+    // second, independently-derived kernel address.
+    expect(readPositions).toHaveBeenCalledWith(expect.objectContaining({ account: '0xacc' }))
   })
 
   it('returns [] on RPC failure (dashboard never crashes)', async () => {
     seedOwner(OWNER, '0xACC')
     const readPositions = vi.fn().mockRejectedValue(new Error('rpc down'))
     expect(
-      await loadBasePositions({
+      await loadDeviceBasePositions({
         stellarOwner: OWNER,
         deps: { readPositions, makePublicClient: () => ({}) },
       })
@@ -80,19 +82,27 @@ describe('loadBasePositions', () => {
     seedOwner('GOTHERWALLET', '0xOTHER')
     const readPositions = vi.fn()
     expect(
-      await loadBasePositions({
+      await loadDeviceBasePositions({
         stellarOwner: OWNER,
         deps: { readPositions, makePublicClient: () => ({}) },
       })
     ).toEqual([])
     expect(readPositions).not.toHaveBeenCalled()
   })
+
+  it('never reintroduces the retired local-record-only reader as an export', async () => {
+    const src = await import('node:fs/promises').then((fs) =>
+      fs.readFile(new URL('./dashboardPositions.js', import.meta.url), 'utf8')
+    )
+    expect(src).not.toMatch(/export\s+async\s+function\s+loadBasePositions/)
+  })
 })
 
 // Task 7: a new device (no local BaseOwnerRecordV2, no passkey ceremony ever run here) must
 // still be able to see confirmed historical Base custody, keyed off the exact kernel addresses
 // Task 5's durable relayer-attested association already proved for this owner — never the local
-// wallet record. loadBasePositions (above) stays untouched; this is an additive export.
+// wallet record. loadDeviceBasePositions (above) is now built ON TOP of this reader (My Money
+// Task 13), rather than duplicating its own gate.
 describe('loadIndexedBasePositions', () => {
   it('reports empty (not unavailable, not a silent []) when there are no proven kernel addresses to check', async () => {
     const readPositions = vi.fn()
