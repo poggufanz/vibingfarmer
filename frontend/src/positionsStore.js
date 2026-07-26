@@ -142,9 +142,15 @@ export async function reconcilePositionsFromChain(address, { agents, server } = 
  * @deprecated Pocket Crew My Money Task 6 replaced this with `pickDisplayAgents`, which reads
  * the `OwnerDiscoveryV1` envelope instead of a plain `scopes` array. This function silently
  * drops revoked agents — the exit-enumeration rule (full exit enumeration includes active,
- * expired, revoked, AND revoked-but-funded agents) forbids that. Kept only because its existing
- * callers (app.jsx, HomePage.jsx, PositionsZone.jsx) still depend on the plain-`scopes` shape;
- * My Money Tasks 11/13 own migrating those callers to `pickDisplayAgents` and deleting this pair.
+ * expired, revoked, AND revoked-but-funded agents) forbids that. My Money Task 13 retired
+ * HomePage.jsx's own caller outright (Step 4's compact launcher has no independent withdraw list
+ * to feed) rather than migrating it — the money-accurate replacement is /agent (MyMoneyRoute),
+ * not a discovery-based rewrite of a surface that no longer exists. Kept only because app.jsx
+ * (three call sites powering the pre-existing NotificationCenter/emergency-withdraw/position-
+ * restore machinery, orthogonal to the /agent and /home redesign) and PositionsZone.jsx (legacy
+ * OpsConsole, kept for rollback, outside every My Money task's authorized file list) still depend
+ * on the plain-`scopes` shape. A future task with those specific files in scope owns migrating
+ * them and deleting this pair.
  *
  * Choose which agents' vault shares represent the user's positions. View-as (dev) reads the
  * impersonated address's OWN shares; a real run reads the per-run agents the router deployed
@@ -168,9 +174,14 @@ export function pickPositionsAgents(scopes, viewAsAddress) {
  * reads the `OwnerDiscoveryV1` envelope instead of a plain `scopes` array. This function silently
  * drops revoked agents — the exit-enumeration rule (full exit enumeration includes active,
  * expired, revoked, AND revoked-but-funded agents) forbids that: a revoked-but-funded agent is
- * exactly the case a sweep must not skip. Kept only because its existing callers (app.jsx,
- * HomePage.jsx, PositionsZone.jsx) still depend on the plain-`scopes` shape; My Money Tasks 11/13
- * own migrating those callers to `pickRecoverableVaultAgents` and deleting this pair.
+ * exactly the case a sweep must not skip. My Money Task 13 retired HomePage.jsx's own caller
+ * outright (Step 4's compact launcher has no independent withdraw list to feed) rather than
+ * migrating it. Kept only because app.jsx (three call sites powering the pre-existing
+ * NotificationCenter/emergency-withdraw/position-restore machinery, orthogonal to the /agent and
+ * /home redesign) and PositionsZone.jsx (legacy OpsConsole, kept for rollback, outside every My
+ * Money task's authorized file list) still depend on the plain-`scopes` shape. A future task with
+ * those specific files in scope owns migrating them to `pickRecoverableVaultAgents` and deleting
+ * this pair.
  *
  * The agents whose shares back the position shown for `vaultAddress` — i.e. the set `owner_withdraw`
  * must sweep, one user-signed tx each, because a position is the SUM over every agent (see the
