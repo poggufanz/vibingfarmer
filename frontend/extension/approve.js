@@ -98,9 +98,7 @@ export function grantRows(grant) {
 function amountText({ units, token, decimals }, suffix) {
   const tail = suffix ? ` (${suffix})` : ''
   if (decimals === SOROBAN_DECIMALS) return `${toDisplay(units)} ${shortAddr(token)}${tail}`
-  const unknownTail = suffix
-    ? ` (token decimals unknown; ${suffix})`
-    : ' (token decimals unknown)'
+  const unknownTail = suffix ? ` (token decimals unknown; ${suffix})` : ' (token decimals unknown)'
   return `${units} raw units ${shortAddr(token)}${unknownTail}`
 }
 

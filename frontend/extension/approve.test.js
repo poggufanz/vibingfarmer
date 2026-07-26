@@ -413,7 +413,7 @@ describe('grantRows — truthful funding_router.grant breakdown', () => {
     expect(agentRow[1]).not.toMatch(/0\.0987654/)
   })
 
-  it('appends each agent\'s OWN expiry when present, distinct from the grant-level allowance expiry (Finding 3)', () => {
+  it("appends each agent's OWN expiry when present, distinct from the grant-level allowance expiry (Finding 3)", () => {
     const grant = {
       ...singleTokenGrant,
       agents: [{ ...singleTokenGrant.agents[0], expiryTimestamp: 1_800_000_000 }],
