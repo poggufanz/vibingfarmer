@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { WalletOnboarding } from './WalletOnboarding.jsx'
+import { launchRealChromium, buildHarnessHtml, sweep320 } from './testSupport/sweep320.js'
 
 afterEach(cleanup)
 
@@ -396,44 +397,13 @@ describe('WalletOnboarding — rejection checklist items 5/6/7 across the entire
 })
 
 // ---------------------------------------------------------------------------------------------
-// Real-browser guards (320px layout, and items 6/7 as jsdom cannot compute either): same launch
-// mechanism MyMoneyRoute.test.jsx's/PlanStage.test.jsx's G1 guard already use, reused verbatim
-// rather than reinvented. WalletShell carries its own <style> (popup.html loads neither
-// wallet.css nor pocket-crew.css -- see WalletShell.jsx's header), so `container.innerHTML`
-// after a render already includes the real, complete stylesheet -- no separate CSS file to
-// concatenate.
+// Real-browser guards (320px layout via the shared sweep320 helper -- VF Wallet Task 12, Part A1
+// -- plus items 6/7 as jsdom cannot compute either): same launch mechanism MyMoneyRoute.test.jsx's/
+// PlanStage.test.jsx's G1 guard already use, reused verbatim rather than reinvented. WalletShell
+// carries its own <style> (popup.html loads neither wallet.css nor pocket-crew.css -- see
+// WalletShell.jsx's header), so `container.innerHTML` after a render already includes the real,
+// complete stylesheet -- no separate CSS file to concatenate.
 // ---------------------------------------------------------------------------------------------
-const CHROMIUM_CANDIDATES = [
-  undefined,
-  '/usr/bin/google-chrome-stable',
-  '/usr/bin/google-chrome',
-  '/usr/bin/chromium-browser',
-  '/usr/bin/chromium',
-  '/snap/bin/chromium',
-]
-
-async function launchRealChromium() {
-  const { chromium } = await import('playwright-core')
-  let lastErr
-  for (const executablePath of CHROMIUM_CANDIDATES) {
-    if (executablePath && !fs.existsSync(executablePath)) continue
-    try {
-      return await chromium.launch(
-        executablePath ? { executablePath, args: ['--no-sandbox'] } : { args: ['--no-sandbox'] }
-      )
-    } catch (err) {
-      lastErr = err
-    }
-  }
-  throw new Error(
-    `Layout guard: no usable Chromium binary found for real-layout measurement (${lastErr?.message})`
-  )
-}
-
-function buildHarnessHtml(bodyHtml) {
-  return `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0">${bodyHtml}</body></html>`
-}
-
 const ONBOARDING_STATES = [
   ['choose', { view: 'choose', onChooseStandard: () => {}, onChoosePasskey: () => {} }],
   [
@@ -471,22 +441,7 @@ describe('WalletOnboarding — real-browser 320px layout guard, per onboarding/a
       results.push([label, container.innerHTML])
       unmount()
     }
-
-    const browser = await launchRealChromium()
-    try {
-      for (const [label, html] of results) {
-        const page = await browser.newPage()
-        await page.setViewportSize({ width: 320, height: 900 })
-        await page.setContent(buildHarnessHtml(html))
-        const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth)
-        // eslint-disable-next-line no-console -- reported numbers requested by the task brief
-        console.log(`[320px] ${label}: scrollWidth=${scrollWidth}`)
-        expect(scrollWidth, `${label} @320px scrollWidth`).toBeLessThanOrEqual(320)
-        await page.close()
-      }
-    } finally {
-      await browser.close()
-    }
+    await sweep320(results, { logPrefix: 'WalletOnboarding' })
   }, 60000)
 })
 

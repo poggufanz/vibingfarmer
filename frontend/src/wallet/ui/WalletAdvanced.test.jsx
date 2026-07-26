@@ -7,10 +7,10 @@
 // a submit path to it at all (structural, like WalletShell.test.jsx's "secret material cannot
 // reach this component" guard).
 // @vitest-environment jsdom
-import fs from 'node:fs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { WalletAdvanced } from './WalletAdvanced.jsx'
+import { launchRealChromium, buildHarnessHtml, sweep320 } from './testSupport/sweep320.js'
 
 afterEach(cleanup)
 
@@ -237,47 +237,15 @@ describe('WalletAdvanced — standalone agent-signer preview: structurally inert
 })
 
 // ---------------------------------------------------------------------------------------------
-// Real-browser guards (320px layout, and items 5/6/7 as jsdom cannot compute any of them
-// reliably): same launch mechanism WalletOnboarding.test.jsx's/WalletSettings.test.jsx's guards
-// already use, reused verbatim rather than reinvented. Checks BOTH document-level scrollWidth AND
-// `.pc-wallet`'s own scrollWidth -- see WalletSettings.test.jsx's comment on this same guard for
-// why one metric alone is not enough (`.pc-wallet`'s `overflow-x: clip` can contain an internal
-// grid blowout from ever reaching `document.documentElement`, while the blown-out content is
-// still real, clipped, unreadable overflow inside the 320px popup box). This exact check already
-// caught one real bug during this task (WalletSettings.jsx's "Manage Base testnet in Vibing
-// Farmer" link at 350px .pc-wallet-scrollWidth before being de-buttoned -- see the task report).
+// Real-browser guards (320px layout via the shared sweep320 helper -- VF Wallet Task 12, Part A1
+// -- and items 5/6/7 as jsdom cannot compute any of them reliably): same launch mechanism
+// WalletOnboarding.test.jsx's/WalletSettings.test.jsx's guards already use, reused verbatim
+// rather than reinvented. sweep320 walks every element's own boundingClientRect (see
+// sweep320.js's header) -- a strict superset of the document/`.pc-wallet` two-scrollWidth check
+// this block used to hand-roll. This exact check already caught one real bug during this task
+// (WalletSettings.jsx's "Manage Base testnet in Vibing Farmer" link at 350px .pc-wallet-
+// scrollWidth before being de-buttoned -- see the task report).
 // ---------------------------------------------------------------------------------------------
-const CHROMIUM_CANDIDATES = [
-  undefined,
-  '/usr/bin/google-chrome-stable',
-  '/usr/bin/google-chrome',
-  '/usr/bin/chromium-browser',
-  '/usr/bin/chromium',
-  '/snap/bin/chromium',
-]
-
-async function launchRealChromium() {
-  const { chromium } = await import('playwright-core')
-  let lastErr
-  for (const executablePath of CHROMIUM_CANDIDATES) {
-    if (executablePath && !fs.existsSync(executablePath)) continue
-    try {
-      return await chromium.launch(
-        executablePath ? { executablePath, args: ['--no-sandbox'] } : { args: ['--no-sandbox'] }
-      )
-    } catch (err) {
-      lastErr = err
-    }
-  }
-  throw new Error(
-    `Layout guard: no usable Chromium binary found for real-layout measurement (${lastErr?.message})`
-  )
-}
-
-function buildHarnessHtml(bodyHtml) {
-  return `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0">${bodyHtml}</body></html>`
-}
-
 const ADVANCED_STATES = [
   [
     'faucet-both',
@@ -330,27 +298,7 @@ function renderStates(states) {
 describe('WalletAdvanced — real-browser 320px layout guard, per state', () => {
   it('creates no horizontal overflow at 320px for every state built (page-level and inside .pc-wallet)', async () => {
     const results = renderStates(ADVANCED_STATES)
-    const browser = await launchRealChromium()
-    try {
-      for (const [label, html] of results) {
-        const page = await browser.newPage()
-        await page.setViewportSize({ width: 320, height: 900 })
-        await page.setContent(buildHarnessHtml(html))
-        const { docScrollWidth, walletScrollWidth } = await page.evaluate(() => ({
-          docScrollWidth: document.documentElement.scrollWidth,
-          walletScrollWidth: document.querySelector('.pc-wallet').scrollWidth,
-        }))
-        // eslint-disable-next-line no-console -- reported numbers requested by the task brief
-        console.log(
-          `[320px] WalletAdvanced/${label}: docScrollWidth=${docScrollWidth} walletScrollWidth=${walletScrollWidth}`
-        )
-        expect(docScrollWidth, `${label} @320px document scrollWidth`).toBeLessThanOrEqual(320)
-        expect(walletScrollWidth, `${label} @320px .pc-wallet scrollWidth`).toBeLessThanOrEqual(320)
-        await page.close()
-      }
-    } finally {
-      await browser.close()
-    }
+    await sweep320(results, { logPrefix: 'WalletAdvanced' })
   }, 60000)
 })
 

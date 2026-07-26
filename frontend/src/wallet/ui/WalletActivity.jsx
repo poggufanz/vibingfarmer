@@ -16,6 +16,17 @@
 import { WalletShell } from './WalletShell.jsx'
 import HistoryScreen from './classic/HistoryScreen.jsx'
 
+// VF Wallet Task 12, Part A2 -- HistoryScreen.jsx's own empty-state copy ("No activity yet.
+// Transactions will appear here once you send or receive.") sits under this component's
+// unqualified "Activity" heading, but this component structurally cannot see Base activity (see
+// this file's own header above) -- an unscoped "no activity" claim overclaims what was actually
+// checked (Stellar only). HistoryScreen.jsx is not in this task's authorized file list (and its
+// own empty-state string has no prop to override), so the fix lives here: intercept the exact
+// "genuinely empty" case (items is a non-null, zero-length array) BEFORE handing off to
+// HistoryScreen, and render the Stellar-scoped copy directly. The `items == null` (unavailable)
+// and non-empty (real rows) cases still fall through to HistoryScreen unchanged.
+const isGenuinelyEmpty = (items) => Array.isArray(items) && items.length === 0
+
 const NAV_TABS = [
   { id: 'home', label: 'Home' },
   { id: 'activity', label: 'Activity' },
@@ -37,7 +48,15 @@ export function WalletActivity({
       status={status}
       nav={{ tabs: NAV_TABS, active: 'activity', onNav }}
     >
-      <HistoryScreen items={items} />
+      {isGenuinelyEmpty(items) ? (
+        <div data-testid="history-screen">
+          <p className="pc-field-help">
+            No Stellar activity yet. Stellar transactions will appear here once you send or receive.
+          </p>
+        </div>
+      ) : (
+        <HistoryScreen items={items} />
+      )}
 
       {baseItems != null && baseItems.length > 0 && (
         <div data-testid="base-activity">

@@ -5,10 +5,10 @@
 // synced Base mandate status or offer a working revoke control, and must never imply that
 // revoking on the web app destroys the underlying key everywhere.
 // @vitest-environment jsdom
-import fs from 'node:fs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { WalletSettings } from './WalletSettings.jsx'
+import { launchRealChromium, buildHarnessHtml, sweep320 } from './testSupport/sweep320.js'
 
 afterEach(cleanup)
 
@@ -184,46 +184,16 @@ describe('WalletSettings — honesty labels and extra children', () => {
 })
 
 // ---------------------------------------------------------------------------------------------
-// Real-browser guards (320px layout, and items 5/6/7 as jsdom cannot compute any of them
-// reliably): same launch mechanism WalletOnboarding.test.jsx's guard already uses, reused
-// verbatim rather than reinvented (see that file's header for why jsdom's getComputedStyle
-// cannot answer either question). WalletShell carries its own <style>, so `container.innerHTML`
-// after a render already includes the real, complete stylesheet -- no separate CSS file to
-// concatenate. This surface is the text-heaviest one this task ships (Settings prose, Base
-// mandate summary), so item 5 (friendly copy in monospace) gets its own dedicated check here,
-// not just a shared assumption from WalletShell's guard.
+// Real-browser guards (320px layout via the shared sweep320 helper -- VF Wallet Task 12, Part A1
+// -- and items 5/6/7 as jsdom cannot compute any of them reliably): same launch mechanism
+// WalletOnboarding.test.jsx's guard already uses, reused verbatim rather than reinvented (see
+// that file's header for why jsdom's getComputedStyle cannot answer either question). WalletShell
+// carries its own <style>, so `container.innerHTML` after a render already includes the real,
+// complete stylesheet -- no separate CSS file to concatenate. This surface is the text-heaviest
+// one this task ships (Settings prose, Base mandate summary), so item 5 (friendly copy in
+// monospace) gets its own dedicated check here, not just a shared assumption from WalletShell's
+// guard.
 // ---------------------------------------------------------------------------------------------
-const CHROMIUM_CANDIDATES = [
-  undefined,
-  '/usr/bin/google-chrome-stable',
-  '/usr/bin/google-chrome',
-  '/usr/bin/chromium-browser',
-  '/usr/bin/chromium',
-  '/snap/bin/chromium',
-]
-
-async function launchRealChromium() {
-  const { chromium } = await import('playwright-core')
-  let lastErr
-  for (const executablePath of CHROMIUM_CANDIDATES) {
-    if (executablePath && !fs.existsSync(executablePath)) continue
-    try {
-      return await chromium.launch(
-        executablePath ? { executablePath, args: ['--no-sandbox'] } : { args: ['--no-sandbox'] }
-      )
-    } catch (err) {
-      lastErr = err
-    }
-  }
-  throw new Error(
-    `Layout guard: no usable Chromium binary found for real-layout measurement (${lastErr?.message})`
-  )
-}
-
-function buildHarnessHtml(bodyHtml) {
-  return `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0">${bodyHtml}</body></html>`
-}
-
 function StandardSettingsWithResetOpen() {
   return (
     <WalletSettings
@@ -272,39 +242,17 @@ function renderStates(states) {
 }
 
 describe('WalletSettings — real-browser 320px layout guard, per state', () => {
-  // Checks TWO widths, not one -- a probe run while building this guard (see the task report)
-  // found they can disagree: `.pc-wallet` has `overflow-x: clip`, which contains an internal grid
-  // blowout from ever reaching `document.documentElement` (so the page itself never gains a
-  // horizontal scrollbar), but does NOT stop the blown-out content from being real, clipped,
-  // unreadable overflow *inside* the 320px popup box -- exactly the WalletShell.jsx-documented
-  // "clip hides the paint, it does not stop the grid track's content-based sizing" failure mode.
-  // `document.documentElement.scrollWidth` alone (the pattern WalletOnboarding.test.jsx's sibling
-  // guard uses) would miss that class of defect entirely for THIS component, because none of its
-  // onboarding states happen to render a long unbroken string to exercise it. Checking
-  // `.pc-wallet`'s own scrollWidth catches it directly.
+  // sweep320 (VF Wallet Task 12, Part A1) checks every element's own boundingClientRect, not just
+  // document/`.pc-wallet` scrollWidth -- see sweep320.js's own header for why that is a strictly
+  // stronger replacement for the two-width check this block used to hand-roll: `.pc-wallet` has
+  // `overflow-x: clip`, which contains an internal grid blowout from ever reaching
+  // `document.documentElement` (so the page itself never gains a horizontal scrollbar) without
+  // stopping the blown-out content from being real, clipped, unreadable overflow *inside* the
+  // 320px popup box -- exactly the WalletShell.jsx-documented "clip hides the paint, it does not
+  // stop the grid track's content-based sizing" failure mode.
   it('creates no horizontal overflow at 320px for every state built (page-level and inside .pc-wallet)', async () => {
     const results = renderStates(SETTINGS_STATES)
-    const browser = await launchRealChromium()
-    try {
-      for (const [label, html] of results) {
-        const page = await browser.newPage()
-        await page.setViewportSize({ width: 320, height: 900 })
-        await page.setContent(buildHarnessHtml(html))
-        const { docScrollWidth, walletScrollWidth } = await page.evaluate(() => ({
-          docScrollWidth: document.documentElement.scrollWidth,
-          walletScrollWidth: document.querySelector('.pc-wallet').scrollWidth,
-        }))
-        // eslint-disable-next-line no-console -- reported numbers requested by the task brief
-        console.log(
-          `[320px] WalletSettings/${label}: docScrollWidth=${docScrollWidth} walletScrollWidth=${walletScrollWidth}`
-        )
-        expect(docScrollWidth, `${label} @320px document scrollWidth`).toBeLessThanOrEqual(320)
-        expect(walletScrollWidth, `${label} @320px .pc-wallet scrollWidth`).toBeLessThanOrEqual(320)
-        await page.close()
-      }
-    } finally {
-      await browser.close()
-    }
+    await sweep320(results, { logPrefix: 'WalletSettings' })
   }, 60000)
 })
 

@@ -51,13 +51,22 @@ describe('WalletActivity — Stellar leg (money-truth: unavailable vs genuinely 
   it('says unavailable, not empty, when history could not be read at all', () => {
     render(<WalletActivity account={G_ACCOUNT} onNav={() => {}} items={null} />)
     expect(screen.getByText(/unavailable/i)).toBeTruthy()
-    expect(screen.queryByText(/no activity yet/i)).toBeNull()
+    expect(screen.queryByText(/no stellar activity yet/i)).toBeNull()
   })
 
   it('says no activity yet for a genuinely empty (successfully read) history', () => {
     render(<WalletActivity account={G_ACCOUNT} onNav={() => {}} items={[]} />)
-    expect(screen.getByText(/no activity yet/i)).toBeTruthy()
+    expect(screen.getByText(/no stellar activity yet/i)).toBeTruthy()
     expect(screen.queryByText(/unavailable/i)).toBeNull()
+  })
+
+  // VF Wallet Task 12, Part A2 -- the empty-state copy previously read as an unscoped, unqualified
+  // "Activity" claim ("No activity yet...") on a surface that structurally cannot see Base
+  // activity (see WalletActivity.jsx's own header). Both sentences must name Stellar explicitly.
+  it('scopes the empty-state copy to Stellar explicitly, never an unqualified "Activity" claim', () => {
+    render(<WalletActivity account={G_ACCOUNT} onNav={() => {}} items={[]} />)
+    expect(screen.getByText(/no stellar activity yet/i)).toBeTruthy()
+    expect(screen.getByText(/stellar transactions will appear here/i)).toBeTruthy()
   })
 
   it('renders a Stellar testnet row with direction, amount, confirmed state, time, and an explorer link', () => {
