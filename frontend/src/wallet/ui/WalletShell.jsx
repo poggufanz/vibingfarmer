@@ -34,6 +34,19 @@
 // activeAccount.js's accountShape already produces (activeAccount.js:21-23: version/id/network/
 // address/kind/signer) -- there is no prop here shaped to carry a mnemonic, secret key, password,
 // or session key, so this component structurally cannot receive, hold, or forward one.
+//
+// Fix loop 2: two contract rules were absent from the port entirely (not drifted -- never copied
+// at all), which the loop 1 value-by-value census could not detect because it only re-checked
+// values it already knew to be wrong. Both are now ported verbatim, scoped to `.pc-wallet`: the
+// global form-control font-family rule (contract :199-207 -- form controls do not inherit
+// font-family, so `button`/`input`/`select`/`textarea` computed the UA default face against Geist
+// body text) and `color-scheme: dark` (contract :39 -- native controls, e.g. BackupScreen.jsx:84's
+// checkbox, rendered light-themed on the dark surface). Confirmed by computed style in real
+// Chromium across all 8 onboarding states (WalletOnboarding.test.jsx), not by source diff alone.
+// WalletShell.test.jsx's drift guard was also rewritten this loop: it now enumerates every
+// contract-anchored selector this file claims to port and asserts each has a shipped counterpart,
+// rather than comparing values against a list of previously-found problems -- the shape needed to
+// catch an omitted rule, which a value list structurally cannot.
 
 const STYLE = `
 .pc-wallet {
@@ -83,6 +96,9 @@ const STYLE = `
   width: 360px;
   min-height: 560px;
   overflow-x: clip;
+  /* Contract :39 (:root, :root[data-theme='forest']). Scoped here rather than on :root because
+     this component owns no document-level selector -- see the file header. */
+  color-scheme: dark;
   background: var(--pc-canvas);
   color: var(--pc-ink);
   font-family: var(--pc-font-body);
@@ -110,6 +126,21 @@ const STYLE = `
 }
 
 .pc-wallet p { margin: 0; }
+
+/* Contract :199-207. Form controls do not inherit font-family from an ancestor the way h1/h2/h3/p
+   do, so without this rule button/input/select/textarea compute the UA default face even though
+   .pc-wallet itself correctly declares Geist above. :where() (not a plain descendant selector)
+   keeps this rule's specificity at .pc-wallet alone (0,1,0) -- the same trick the coarse-pointer
+   media query below already uses -- so it stays BELOW code/pre/.pc-technical's specificity tie
+   broken by source order: an input/textarea that also carries .pc-technical (the recovery-phrase
+   confirmation input, BackupScreen.jsx; the secret-key/mnemonic import textarea, ImportScreen.jsx)
+   must keep rendering in the mono face fix loop 1 verified, not switch to this rule's Geist. A
+   plain .pc-wallet input selector has specificity (0,1,1), which would outrank .pc-technical
+   alone (0,1,0) and silently regress that -- confirmed empirically in real Chromium before this
+   rule shipped (see the fix loop 2 report). */
+.pc-wallet :where(h1, h2, h3, button, input, select, textarea) {
+  font-family: var(--pc-font-body);
+}
 
 .pc-wallet-shell {
   display: grid;
@@ -261,6 +292,14 @@ textarea.pc-input { min-height: 72px; padding: var(--pc-space-2) var(--pc-space-
   color: var(--pc-muted);
 }
 .pc-backup-progress li[aria-current='step'] { color: var(--pc-ink); font-weight: 700; }
+/* M6 (fix loop 2): .bk-prog-* breaks the pc- prefix every other selector in this file (and the
+   contract) follows -- documented rather than renamed to .pc-backup-*. These two classes are not
+   contract rules (no .pc-backup-progress-adjacent track/fill exists in the contract for this
+   file to port), they are this component's own invention, and BackupScreen.jsx:50-51 is their only
+   consumer -- renaming here alone would be safe, but BackupScreen.test.jsx (pre-existing,
+   unmodified, and outside this task's authorized file list) queries the DOM by .bk-prog-fill
+   directly, so a rename would require editing a file this task is not allowed to touch. Left
+   as-is; a future task authorized to touch BackupScreen.test.jsx can rename both. */
 .bk-prog-track { height: 3px; background: var(--pc-line); overflow: hidden; }
 .bk-prog-fill {
   width: 100%;

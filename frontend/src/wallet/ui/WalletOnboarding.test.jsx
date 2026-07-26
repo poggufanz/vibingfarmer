@@ -564,3 +564,76 @@ describe('WalletOnboarding — real-Chromium proof of rejection-checklist items 
     }
   }, 60000)
 })
+
+// VF Wallet Task 9 fix loop 2 (I2 re-opened): WalletShell.jsx's <style> omitted the contract's
+// `h1,h2,h3,button,input,select,textarea { font-family: var(--pc-font-body) }` (contract :199-207)
+// and `color-scheme: dark` (contract :39) entirely -- form controls do not inherit font-family, so
+// every button computed the UA default face (Arial) against Geist body text, and native controls
+// (e.g. BackupScreen.jsx:84's checkbox) rendered light-themed on the dark surface. jsdom cannot
+// resolve font-family reliably (the same trap the item-5 mono guard above documents), so this is
+// measured the same way: real Chromium, across all 8 onboarding states. This also proves the fix
+// did NOT regress the one thing that made the naive fix wrong during development: a plain
+// `.pc-wallet button/input/...` selector outranks `.pc-technical` alone on specificity and would
+// have silently switched the secret-key/mnemonic textarea (ImportScreen.jsx) and the
+// recovery-phrase confirmation inputs (BackupScreen.jsx) from mono to Geist -- caught empirically
+// before shipping, fixed with `:where()` (see WalletShell.jsx's comment on the rule).
+describe('WalletOnboarding — real-Chromium proof of the I2 fix loop 2 rules (font-family, color-scheme)', () => {
+  it('every button/input/select/textarea computes the Geist body face, except .pc-technical ones which stay mono, in all 8 states', async () => {
+    const results = []
+    for (const [label, props] of ONBOARDING_STATES) {
+      const { container, unmount } = render(<WalletOnboarding {...props} />)
+      results.push([label, container.innerHTML])
+      unmount()
+    }
+
+    const browser = await launchRealChromium()
+    try {
+      for (const [label, html] of results) {
+        const page = await browser.newPage()
+        await page.setContent(buildHarnessHtml(html))
+        const offenders = await page.evaluate(() =>
+          Array.from(document.querySelectorAll('button, input, select, textarea'))
+            .map((el) => ({
+              tag: el.tagName,
+              technical:
+                Boolean(el.closest('.pc-technical')) || el.classList.contains('pc-technical'),
+              fontFamily: getComputedStyle(el).fontFamily,
+            }))
+            .filter((entry) =>
+              entry.technical
+                ? !/jetbrains mono/i.test(entry.fontFamily)
+                : !/geist/i.test(entry.fontFamily)
+            )
+        )
+        expect(offenders, `${label}: wrong font-family face`).toEqual([])
+        await page.close()
+      }
+    } finally {
+      await browser.close()
+    }
+  }, 60000)
+
+  it('the wallet surface computes color-scheme: dark in all 8 states', async () => {
+    const results = []
+    for (const [label, props] of ONBOARDING_STATES) {
+      const { container, unmount } = render(<WalletOnboarding {...props} />)
+      results.push([label, container.innerHTML])
+      unmount()
+    }
+
+    const browser = await launchRealChromium()
+    try {
+      for (const [label, html] of results) {
+        const page = await browser.newPage()
+        await page.setContent(buildHarnessHtml(html))
+        const colorScheme = await page.evaluate(
+          () => getComputedStyle(document.querySelector('.pc-wallet')).colorScheme
+        )
+        expect(colorScheme, `${label}: .pc-wallet color-scheme`).toBe('dark')
+        await page.close()
+      }
+    } finally {
+      await browser.close()
+    }
+  }, 60000)
+})
