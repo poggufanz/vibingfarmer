@@ -25,7 +25,13 @@
 // eligibility is revocable in real time and this component makes no chain read of its own.
 import { useMemo, useState } from 'react'
 import { Dialog } from '../pocket/Primitives.jsx'
-import { planFullExit, planPartialExit } from '../../money/ownerActions.js'
+import {
+  planFullExit,
+  planPartialExit,
+  confirmationsCopy,
+  feeModelCopy,
+  targetStateLabel,
+} from '../../money/ownerActions.js'
 
 // Same convention as AgentTeam.jsx/PositionList.jsx/StrategyReceipt.jsx: each sibling surface
 // keeps its own tiny copy of these display-only helpers rather than sharing a module across
@@ -44,38 +50,11 @@ function unitsToDisplay(units, decimals) {
   }
 }
 
-// ownerActions.js's targetState() vocabulary ('active'|'revoked'|'expired'|'*-unknown'|'*-funded'),
-// spelled out in plain English for the exact known-vs-partial target-set list -- mirrors
-// AgentTeam.jsx's own agentStateLabel()/locationName() precedent (a per-file copy, not a shared
-// import across unrelated route trees).
-function targetStateLabel(state) {
-  if (state === 'active') return 'active'
-  if (state === 'revoked') return 'revoked, no balance left to confirm'
-  if (state === 'revoked-funded') return 'revoked, still holds a confirmed balance'
-  if (state === 'revoked-unknown') return 'revoked, balance could not be confirmed'
-  if (state === 'expired') return 'expired, no balance left to confirm'
-  if (state === 'expired-funded') return 'expired, still holds a confirmed balance'
-  if (state === 'expired-unknown') return 'expired, balance could not be confirmed'
-  return 'status unknown'
-}
-
-// ownerActions.js's own comment (planFullExit/planPartialExit) is explicit: expectedConfirmations
-// is a FLOOR, not a promise -- a batch that blows the resource budget is halved and re-submitted,
-// each half its own owner-signed confirmation. Hedged language only; never a bare exact count.
-function confirmationsCopy(count) {
-  if (!Number.isFinite(count) || count <= 0) return 'No wallet confirmation is needed.'
-  return count === 1
-    ? 'At least 1 wallet confirmation (a busy network can still split it into more).'
-    : `At least ${count} wallet confirmations, in batches (a busy network can split a batch into more).`
-}
-
-// stellar/ownerAuthorization.js's own G/C split, in plain language: a G keypair signs and pays its
-// own fee; a C (VF Wallet/passkey) account can never hold or spend XLM, so the relay sponsors it.
-function feeModelCopy(model) {
-  return model === 'C'
-    ? 'Your wallet signs an authorization; our relay sponsors the network fee -- 0 XLM from you.'
-    : 'You sign and submit directly, and you pay the small network fee yourself, in XLM.'
-}
+// My Money Task 13 Part B item 7: confirmationsCopy/feeModelCopy/targetStateLabel used to be a
+// local copy of vocabulary ownerActions.js already owns (targetState()'s own states, planFullExit's
+// own expectedConfirmations doc) -- MM12's own report flagged this as the exact duplication that
+// belonged next to its source once ownerActions.js came into scope (see that file's header comment
+// on this section). Now imported from there; this file keeps no local copy.
 
 function amountLine(amount) {
   if (!amount?.units) return 'Unavailable'

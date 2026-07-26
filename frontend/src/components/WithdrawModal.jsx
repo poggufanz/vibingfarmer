@@ -6,11 +6,11 @@ import { saveTransaction } from '../history.js'
 import { loadSettings, t } from '../settingsStore.js'
 import { toDisplay, toBaseUnits } from '../stellar/format.js'
 import { SOROBAN_EXIT_ROUTER_ADDRESS } from '../stellar/config.js'
-import { MAX_AGENTS_PER_SWEEP } from '../stellar/exit.js'
 import { partialWithdraw, ensureExitSigner, readAgentScope } from '../stellar/partialWithdraw.js'
 import { readVaultShares } from '../stellar/agentDeposit.js'
 import { readPricePerShare } from '../stellar/vaultReads.js'
 import { clearManualExitKey } from '../wallet/exitKey.js'
+import { signaturesForSweep, friendlyOwnerActionError } from '../money/ownerActions.js'
 
 const PPS_SCALE = 10_000_000n
 
@@ -18,9 +18,13 @@ const PPS_SCALE = 10_000_000n
 // single signature the deposit does — until a position is spread over more agents than fit one
 // transaction's budget, when it costs one per batch. Unset, it is one per agent. Promising "1
 // signature" and then opening three popups is a worse lie than quoting the real number, so quote it.
+// My Money Task 13 Part B item 7: the Math.ceil/MAX_AGENTS_PER_SWEEP batching math itself moved to
+// ownerActions.js's signaturesForSweep (the SAME formula planFullExit's own expectedConfirmations
+// uses) -- this stays local only because it is a deploy-config fact (is the exit router live at
+// all), not owner-action vocabulary.
 const ONE_SIGNATURE_EXIT = Boolean(SOROBAN_EXIT_ROUTER_ADDRESS)
 const signaturesFor = (agentCount) =>
-  ONE_SIGNATURE_EXIT ? Math.ceil(agentCount / MAX_AGENTS_PER_SWEEP) : agentCount
+  signaturesForSweep(agentCount, { oneSignatureExit: ONE_SIGNATURE_EXIT })
 
 // The v2 vault exposes no per-deposit timestamp, so "time deposited" is unknown (renders "-").
 // Kept as a 0-stub so the modal effect below is unchanged. ponytail: no chain read to wire here.
@@ -40,33 +44,11 @@ const shortAddr = (addr) => {
   return `${addr.slice(0, 4)}…${addr.slice(-4)}`
 }
 
-// Map raw ethers/relayer errors to a short, human-readable line.
-// Avoids dumping the full ACTION_REJECTED / sendTransaction payload into the UI.
-const friendlyError = (err) => {
-  const code = err?.code || err?.info?.error?.code
-  const raw = (err?.shortMessage || err?.message || '').toLowerCase()
-  if (
-    code === 'ACTION_REJECTED' ||
-    code === 4001 ||
-    raw.includes('user rejected') ||
-    raw.includes('user denied')
-  ) {
-    return 'You rejected the transaction in your wallet.'
-  }
-  if (raw.includes('insufficient funds') || raw.includes('insufficient balance')) {
-    return 'Insufficient balance to cover this withdrawal.'
-  }
-  if (raw.includes('timeout') || raw.includes('timed out')) {
-    return 'The relayer timed out. Please try again.'
-  }
-  if (raw.includes('expired') || raw.includes('permission')) {
-    return 'Agent permission is no longer active. Re-grant and retry.'
-  }
-  // Fall back to the wallet's own short message when present, else a generic line.
-  const short = err?.shortMessage || err?.reason
-  if (short && short.length < 120) return short
-  return 'Withdraw failed. Please try again.'
-}
+// My Money Task 13 Part B item 7: this used to be a local `friendlyError` -- moved to
+// ownerActions.js's friendlyOwnerActionError (MM12's report, concern #5) since WithdrawDialog.jsx
+// needed the same raw-error-to-copy mapping and neither file should keep its own copy. Alias kept
+// so every call site below stays byte-identical.
+const friendlyError = friendlyOwnerActionError
 
 const PCT_CHIPS = [
   { id: '25', label: '25%', frac: 0.25 },
