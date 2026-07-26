@@ -115,7 +115,11 @@ describe('WithdrawModal full mode sweep failure', () => {
       { ok: true, txHash: 'H1' },
       {
         ok: false,
-        error: { message: 'Relay lost the submission.', code: 'VF_SUBMISSION_UNKNOWN', submission: 'unknown' },
+        error: {
+          message: 'Relay lost the submission.',
+          code: 'VF_SUBMISSION_UNKNOWN',
+          submission: 'unknown',
+        },
       },
     ])
     render(<WithdrawModal {...props} />)

@@ -238,7 +238,8 @@ export default function WithdrawModal({
     } catch (err) {
       // A stale exit key (localStorage from a lost registration, or re-registered elsewhere)
       // fails auth on-chain; drop it so the retry re-registers fresh.
-      if (/signature|auth/i.test(err?.message || '')) clearManualExitKey({ owner: userAddress, agent: chosen })
+      if (/signature|auth/i.test(err?.message || ''))
+        clearManualExitKey({ owner: userAddress, agent: chosen })
       setError(friendlyError(err))
       setStatus('idle')
     }
