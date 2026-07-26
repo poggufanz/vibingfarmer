@@ -147,6 +147,24 @@
  * single auto column to size to its own CONTENT instead of stretching to fill, which is what
  * actually produced the 162px shrink-to-fit on sparse content (a residual flex property doing grid
  * damage, not a grid property at all). `justify-content: normal` clears it. */
+/* Fix loop 2 (I2 revised, owner decision #27): the contract's `--pc-z-dialog` (90,
+ * pocket-crew.css:232) assumes style.css's legacy overlays are already gone. They are not --
+ * `.modal-backdrop` (style.css:1953) and `.skill-drawer` (style.css:4094) are both `z-index: 100`,
+ * and `.skill-drawer-overlay` (style.css:4088) is `z-index: 99`. Proven with the reviewer's own
+ * `elementFromPoint` check: with a money dialog open at the contract's own 90 and `.modal-backdrop`
+ * mounted, `elementFromPoint` at the panel's own centre returned `modal-backdrop`, not the panel --
+ * a destructive Stop-access or Withdraw confirmation could be visually covered AND have its own
+ * centre click swallowed by the legacy overlay above it. This redefines the TOKEN's computed value
+ * -- not its definition in pocket-crew.css, which stays 90, and not any Foundation dialog outside
+ * this route -- to 1000 (the same z-index Foundation's own pre-port `.pc-dialog` approximation
+ * already used, safely above all three legacy values) for every element inside `.pc-my-money-route`.
+ * REVERT this block to nothing (falling back to the contract's own 90) once style.css's
+ * `.modal-backdrop`/`.skill-drawer`/`.skill-drawer-overlay` are deleted -- that deletion is the
+ * stated precondition for retiring this deviation, not a style preference. */
+.pc-my-money-route {
+  --pc-z-dialog: 1000;
+}
+
 .pc-my-money-route .pc-dialog {
   position: fixed;
   inset: 0;
@@ -312,8 +330,13 @@
     position: static;
   }
 
+  /* Fix loop 2 (M7): scoped to `.pc-my-money-route .pc-dialog-actions` (specificity 0,2,0) so this
+   * mobile stacking rule matches the base rule above it (also 0,2,0) and wins by source order --
+   * the previous bare `.pc-dialog-actions` (0,1,0) lost outright to the scoped base rule regardless
+   * of the media query, so mobile stacking was dead inside this route and `justify-content:
+   * flex-end` pushed the footer's first button off the visible edge at 320px. */
   .pc-money-actions,
-  .pc-dialog-actions {
+  .pc-my-money-route .pc-dialog-actions {
     display: grid;
     grid-template-columns: 1fr;
   }

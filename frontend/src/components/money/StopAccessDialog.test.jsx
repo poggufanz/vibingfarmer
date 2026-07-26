@@ -334,3 +334,57 @@ describe('StopAccessDialog — real-browser 320px layout guard, per state', () =
     }
   }, 60000)
 })
+
+// ---------------------------------------------------------------------------------------------
+// Fix loop 2 (I2 revised, owner decision #27): the money dialog layer must sit ABOVE style.css's
+// legacy `.modal-backdrop`/`.skill-drawer`/`.skill-drawer-overlay` inside the money route, not
+// below it at the contract's bare `--pc-z-dialog: 90`. This is the reviewer's own
+// `elementFromPoint` proof, reused as a permanent regression guard: if the scoped z-index
+// deviation in my-money.css is ever reverted or weakened, this test goes red.
+// ---------------------------------------------------------------------------------------------
+describe('StopAccessDialog — dialog layer regression guard: wins the panel-centre click over every legacy overlay (I2 revised)', () => {
+  it('the panel receives its own centre click over .modal-backdrop, .skill-drawer, and .skill-drawer-overlay', async () => {
+    const dialog = render(
+      <StopAccessDialog
+        open
+        agent={plainAgent()}
+        shareRead={known(50_0000000n)}
+        idleBalanceRead={knownZero}
+        account={account}
+        onClose={() => {}}
+      />
+    )
+    const dialogHtml = dialog.container.innerHTML
+    dialog.unmount()
+
+    // `.skill-drawer` needs its own `.open` modifier class (style.css:4112) -- without it, the
+    // drawer sits `transform: translateX(100%)` / `visibility: hidden` and never overlaps
+    // anything regardless of z-index, which would make this guard pass for the wrong reason.
+    const legacyOverlays = [
+      ['.modal-backdrop', '<div class="modal-backdrop"></div>'],
+      ['.skill-drawer', '<div class="skill-drawer open"></div>'],
+      ['.skill-drawer-overlay', '<div class="skill-drawer-overlay"></div>'],
+    ]
+
+    const browser = await launchRealChromium()
+    try {
+      for (const [label, overlayHtml] of legacyOverlays) {
+        const page = await browser.newPage()
+        await page.setViewportSize({ width: 320, height: 800 })
+        await page.setContent(buildLayoutHarnessHtml(dialogHtml + overlayHtml))
+        const hitIsPanel = await page.evaluate(() => {
+          const panel = document.querySelector('.pc-dialog-panel')
+          const rect = panel.getBoundingClientRect()
+          const cx = rect.left + rect.width / 2
+          const cy = rect.top + rect.height / 2
+          const hit = document.elementFromPoint(cx, cy)
+          return hit === panel || panel.contains(hit)
+        })
+        expect(hitIsPanel, `${label}: panel receives its own centre click`).toBe(true)
+        await page.close()
+      }
+    } finally {
+      await browser.close()
+    }
+  }, 60000)
+})

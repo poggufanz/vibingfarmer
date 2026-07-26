@@ -128,6 +128,37 @@ describe('WithdrawDialog — full exit, exact known-vs-partial target set', () =
   // Fix loop 1, M2 regression -- the total's display decimals must come from the target rows'
   // own amounts, not a hardcoded 7. A 6-decimal token (e.g. a non-SAC asset) summed at the real
   // decimals reads correctly; read at a hardcoded 7 it would silently mis-scale by 10x.
+  // Fix loop 2, M6 -- `BigInt('')` returns `0n` rather than throwing, so an EMPTY units string
+  // passed the fix loop 1 parse gate and was silently summed as a confirmed zero: a leg with an
+  // unknown balance read as a KNOWN zero rather than demoting the whole total. No production
+  // producer emits this shape (readOwnerMoney.js's amountOf always `String(bigint)`), but it is
+  // one condition in the same parse check already fixed here.
+  it('never reads an EMPTY units string as a confirmed zero: it also demotes the WHOLE total to Unavailable', () => {
+    const discovery = discoveryWith([activeRow('CAGENT1'), activeRow('CAGENT2')])
+    const agents = [
+      positionAgent('CAGENT1', 100_0000000n),
+      {
+        address: 'CAGENT2',
+        amount: { token: 'USDC', units: '', decimals: 7 },
+        custody: { location: 'stellar-vault' },
+        custodyBreakdown: [],
+      },
+    ]
+    render(
+      <WithdrawDialog
+        open
+        agents={agents}
+        discovery={discovery}
+        account={gAccount}
+        onClose={() => {}}
+      />
+    )
+    // Mutation guard: a bare `BigInt(units)` parse attempt (fix loop 1's gate, without rejecting
+    // blank strings first) lets this row through -- `BigInt('') === 0n` never throws -- then sums
+    // it as a confirmed zero, rendering "100 USDC" instead of "Unavailable".
+    expect(screen.getByText(/known amount across every target agent: unavailable/i)).toBeTruthy()
+  })
+
   it("formats the known total using the TARGET ROWS' own decimals, not a hardcoded assumption", () => {
     const discovery = discoveryWith([activeRow('CAGENT1'), activeRow('CAGENT2')])
     const agents = [

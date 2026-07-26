@@ -327,3 +327,79 @@ describe('RecoveryPanel — real-browser 320px layout guard, per state', () => {
     }
   }, 60000)
 })
+
+// ---------------------------------------------------------------------------------------------
+// Fix loop 2 (M7): every reconciliation phase of the submission-unknown state renders the SAME
+// three-button footer (Close/Check status/Retry). The scoped `.pc-dialog-actions` base rule
+// (0,2,0) previously beat the contract's own unscoped mobile stacking rule (0,1,0), so at 320px
+// the footer stayed `display: flex; justify-content: flex-end` with no wrap -- pushing the first
+// button (Close) outside the panel's own padding box. `documentElement.scrollWidth` alone cannot
+// see this: the panel's `overflow: auto` absorbs the overflow internally, so item 12 still passed
+// while a control was unreachable. This checks the actual footer-button geometry, not just the
+// page's outer scroll width.
+// ---------------------------------------------------------------------------------------------
+describe('RecoveryPanel — 320px footer-control containment guard, all three submission-reconciliation states (M7)', () => {
+  it('every dialog-actions button stays inside the panel padding box at 320px', async () => {
+    const states = []
+    for (const [label, reconciled] of [
+      ['submission-unreconciled (reconciled: null)', null],
+      ['submission-landed', 'landed'],
+      ['submission-not-landed', 'not-landed'],
+    ]) {
+      const rendered = render(
+        <RecoveryPanel
+          open
+          onClose={() => {}}
+          submission={{
+            outcome: 'unknown',
+            message: 'Relay lost the submission after signing.',
+            hash: 'TXHASH-M7',
+          }}
+          reconciled={reconciled}
+        />
+      )
+      states.push([label, rendered.container.innerHTML])
+      rendered.unmount()
+    }
+
+    const browser = await launchRealChromium()
+    try {
+      for (const [label, html] of states) {
+        const page = await browser.newPage()
+        await page.setViewportSize({ width: 320, height: 1400 })
+        await page.setContent(buildLayoutHarnessHtml(html))
+        const measurement = await page.evaluate(() => {
+          const panel = document.querySelector('.pc-dialog-panel')
+          const panelRect = panel.getBoundingClientRect()
+          const buttons = [...document.querySelectorAll('.pc-dialog-actions button')]
+          return buttons.map((btn) => {
+            const r = btn.getBoundingClientRect()
+            return {
+              label: btn.textContent,
+              left: r.left,
+              right: r.right,
+              panelLeft: panelRect.left,
+              panelRight: panelRect.right,
+            }
+          })
+        })
+        expect(measurement.length, `${label}: has footer buttons`).toBeGreaterThan(0)
+        // 1.5px tolerance for the panel's own 1px border plus subpixel layout rounding -- not a
+        // loosened check, the pre-fix failure mode overflows by tens of pixels.
+        for (const btn of measurement) {
+          expect(
+            btn.left,
+            `${label}: "${btn.label}" left edge inside the panel`
+          ).toBeGreaterThanOrEqual(btn.panelLeft - 1.5)
+          expect(
+            btn.right,
+            `${label}: "${btn.label}" right edge inside the panel`
+          ).toBeLessThanOrEqual(btn.panelRight + 1.5)
+        }
+        await page.close()
+      }
+    } finally {
+      await browser.close()
+    }
+  }, 60000)
+})

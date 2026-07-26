@@ -187,11 +187,17 @@ export function WithdrawDialog({
   // old reducer's own try/catch then silently dropped it from the sum. `BigInt(...)` throws on
   // null/undefined/unparseable alike, so attempting the real parse here is the only check that
   // actually matches what the reducer below needs to succeed.
+  // Fix loop 2 (M6): `BigInt('')` returns `0n` rather than throwing, so a blank units string
+  // passed the parse attempt above and silently contributed 0 to the total -- a leg with an
+  // unknown balance rendered as a known zero. Reject blank/whitespace-only strings before
+  // attempting the parse, closing the one hazard shape a pure try/catch around BigInt cannot see.
   const allAmountsKnown =
     targetRows.length > 0 &&
     targetRows.every((row) => {
+      const units = row?.amount?.units
+      if (typeof units !== 'string' || !units.trim()) return false
       try {
-        BigInt(row?.amount?.units)
+        BigInt(units)
         return true
       } catch {
         return false
