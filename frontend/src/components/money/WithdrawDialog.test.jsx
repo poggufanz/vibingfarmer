@@ -94,6 +94,62 @@ describe('WithdrawDialog — full exit, exact known-vs-partial target set', () =
     expect(screen.getByText(/known amount across every target agent: unavailable/i)).toBeTruthy()
   })
 
+  // Fix loop 1, I1 regression -- the reviewer's exact reproduction: a target whose `amount.units`
+  // is PRESENT but unparseable. The pre-fix gate (`row?.amount?.units != null`) let this row
+  // through, then the reducer's own try/catch silently dropped it, rendering a confident-looking
+  // "Known amount across every target agent: 100 USDC" for a destructive full-exit preview instead
+  // of the honest "Unavailable" -- the second agent's balance vanished with no marker at all.
+  it('never under-counts the known total: one target with an UNPARSEABLE (not missing) amount also demotes the WHOLE total to Unavailable', () => {
+    const discovery = discoveryWith([activeRow('CAGENT1'), activeRow('CAGENT2')])
+    const agents = [
+      positionAgent('CAGENT1', 100_0000000n),
+      {
+        address: 'CAGENT2',
+        amount: { token: 'USDC', units: 'not-a-number', decimals: 7 },
+        custody: { location: 'stellar-vault' },
+        custodyBreakdown: [],
+      },
+    ]
+    render(
+      <WithdrawDialog
+        open
+        agents={agents}
+        discovery={discovery}
+        account={gAccount}
+        onClose={() => {}}
+      />
+    )
+    // Mutation guard: reverting the gate to `row?.amount?.units != null` (a null check instead of a
+    // parse check) passes this row -- `units` IS present -- then the reducer's catch silently drops
+    // it, rendering "100 USDC" instead of "Unavailable".
+    expect(screen.getByText(/known amount across every target agent: unavailable/i)).toBeTruthy()
+  })
+
+  // Fix loop 1, M2 regression -- the total's display decimals must come from the target rows'
+  // own amounts, not a hardcoded 7. A 6-decimal token (e.g. a non-SAC asset) summed at the real
+  // decimals reads correctly; read at a hardcoded 7 it would silently mis-scale by 10x.
+  it("formats the known total using the TARGET ROWS' own decimals, not a hardcoded assumption", () => {
+    const discovery = discoveryWith([activeRow('CAGENT1'), activeRow('CAGENT2')])
+    const agents = [
+      { address: 'CAGENT1', amount: { token: 'USDC', units: '100000000', decimals: 6 } },
+      { address: 'CAGENT2', amount: { token: 'USDC', units: '100000000', decimals: 6 } },
+    ]
+    render(
+      <WithdrawDialog
+        open
+        agents={agents}
+        discovery={discovery}
+        account={gAccount}
+        onClose={() => {}}
+      />
+    )
+    // Mutation guard: a hardcoded `unitsToDisplay(knownTotal.toString(), 7)` would render "20 USDC"
+    // here (200000000 units / 10^7) -- an order-of-magnitude-wrong figure for a real 6-decimal
+    // token. The correct, decimals-derived total is 200.
+    expect(screen.getByText(/known amount across every target agent: 200 usdc/i)).toBeTruthy()
+    expect(screen.queryByText(/known amount across every target agent: 20 usdc/i)).toBeNull()
+  })
+
   it('a partial-discovery envelope shows the honest "known agents only" limitation, not a false "exit all"', () => {
     const discovery = discoveryWith([activeRow('CAGENT1')], 'partial')
     render(
@@ -242,6 +298,53 @@ describe('WithdrawDialog — Cancel alongside the destructive action, disabled w
     const plan = onConfirmFull.mock.calls[0][0]
     expect(plan.ok).toBe(true)
     expect(plan.targets.map((t) => t.address)).toEqual(['CAGENT1'])
+  })
+})
+
+// Fix loop 1 -- this copy existed in the component (both full and partial mode) but had ZERO test
+// coverage: nothing would fail if it were deleted, watered down, or reworded to claim the opposite.
+// Money-truth table row "What happens after partial failure" depends on this copy actually being
+// present and actually saying what it claims.
+describe('WithdrawDialog — partial-failure consequences, honest expectation-setting (fix loop 1)', () => {
+  it('full exit: states plainly that a partial failure is rechecked against the chain, never assumed done or zero', () => {
+    const discovery = discoveryWith([activeRow('CAGENT1')])
+    render(
+      <WithdrawDialog
+        open
+        agents={[positionAgent('CAGENT1', 10_0000000n)]}
+        discovery={discovery}
+        account={gAccount}
+        onClose={() => {}}
+      />
+    )
+    // Mutation guard: a version that drops this paragraph, or waters it down to "we'll retry" /
+    // "your funds are safe" (an assurance, not the actual "we recheck the chain" mechanism) would
+    // fail this specific text match, not just a "some copy exists" check.
+    expect(screen.getByText(/never assume the rest is done or the position is zero/i)).toBeTruthy()
+    expect(
+      screen.getByText(/recheck the real chain balance before calling it complete/i)
+    ).toBeTruthy()
+  })
+
+  it('partial exit: states plainly that no amount is assumed withdrawn until the chain confirms it', async () => {
+    const discovery = discoveryWith([activeRow('CAGENT1')])
+    render(
+      <WithdrawDialog
+        open
+        agents={[positionAgent('CAGENT1', 10_0000000n)]}
+        discovery={discovery}
+        account={gAccount}
+        onClose={() => {}}
+      />
+    )
+    fireEvent.click(screen.getByRole('tab', { name: /partial/i }))
+    fireEvent.click(await screen.findByLabelText(/CAGE.*1/i))
+    // Mutation guard: a version that drops this paragraph, or claims a partial failure "keeps the
+    // remainder safe" without the "no amount is assumed withdrawn" claim, would fail this specific
+    // text match.
+    expect(
+      screen.getByText(/no amount is assumed withdrawn until the chain confirms it/i)
+    ).toBeTruthy()
   })
 })
 
@@ -399,11 +502,15 @@ const GEIST_FONT_HREF =
   'file://' + path.resolve(here, '../../../node_modules/@fontsource-variable/geist/index.css')
 
 function buildLayoutHarnessHtml(bodyHtml) {
+  // Fix loop 1 (I2): the shipped `.pc-dialog*` rules are scoped under `.pc-my-money-route` --
+  // wrapping the harness body the same way the real MyMoneyRoute.jsx tree will is what makes this
+  // guard measure the ACTUAL scoped geometry rather than accidentally falling back to Foundation's
+  // unscoped `.pc-dialog` approximation.
   return `<!doctype html><html><head><meta charset="utf-8">
 <link rel="stylesheet" href="${GEIST_FONT_HREF}">
 <style>${LEGACY_STYLESHEET}</style>
 <style>${REAL_STYLESHEET}</style>
-</head><body>${bodyHtml}</body></html>`
+</head><body><div class="pc-my-money-route">${bodyHtml}</div></body></html>`
 }
 
 const CHROMIUM_CANDIDATES = [

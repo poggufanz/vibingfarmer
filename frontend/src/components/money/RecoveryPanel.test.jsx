@@ -243,11 +243,15 @@ const GEIST_FONT_HREF =
   'file://' + path.resolve(here, '../../../node_modules/@fontsource-variable/geist/index.css')
 
 function buildLayoutHarnessHtml(bodyHtml) {
+  // Fix loop 1 (I2): the shipped `.pc-dialog*` rules are scoped under `.pc-my-money-route` --
+  // wrapping the harness body the same way the real MyMoneyRoute.jsx tree will is what makes this
+  // guard measure the ACTUAL scoped geometry rather than accidentally falling back to Foundation's
+  // unscoped `.pc-dialog` approximation.
   return `<!doctype html><html><head><meta charset="utf-8">
 <link rel="stylesheet" href="${GEIST_FONT_HREF}">
 <style>${LEGACY_STYLESHEET}</style>
 <style>${REAL_STYLESHEET}</style>
-</head><body>${bodyHtml}</body></html>`
+</head><body><div class="pc-my-money-route">${bodyHtml}</div></body></html>`
 }
 
 const CHROMIUM_CANDIDATES = [

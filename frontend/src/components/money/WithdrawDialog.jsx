@@ -177,22 +177,40 @@ export function WithdrawDialog({
   }
 
   // Item 4 (rejection checklist): a total must never look complete when it silently skipped an
-  // unread agent. `every` target's amount must be present and parse cleanly -- one missing/corrupt
+  // unread agent. Every target's amount must be present and parse cleanly -- one missing/corrupt
   // read demotes the WHOLE total to "Unavailable" rather than quietly under-counting it.
   const targetRows = fullPlan?.targets?.length
     ? fullPlan.targets.map((t) => agents.find((a) => a.address === t.address))
     : []
+  // Fix loop 1 (I1): this must be a PARSE check, not a null check -- `row?.amount?.units != null`
+  // let a present-but-unparseable units string (e.g. a corrupt read) through the gate, where the
+  // old reducer's own try/catch then silently dropped it from the sum. `BigInt(...)` throws on
+  // null/undefined/unparseable alike, so attempting the real parse here is the only check that
+  // actually matches what the reducer below needs to succeed.
   const allAmountsKnown =
-    targetRows.length > 0 && targetRows.every((row) => row?.amount?.units != null)
-  const knownTotal = allAmountsKnown
-    ? targetRows.reduce((sum, row) => {
-        try {
-          return sum + BigInt(row.amount.units)
-        } catch {
-          return sum
-        }
-      }, 0n)
+    targetRows.length > 0 &&
+    targetRows.every((row) => {
+      try {
+        BigInt(row?.amount?.units)
+        return true
+      } catch {
+        return false
+      }
+    })
+  // Fix loop 1 (M2): decimals must be read from the target rows' own amounts, never a hardcoded
+  // assumption -- correct for every 7-decimal SAC today, silently wrong (by orders of magnitude)
+  // the moment a non-SAC token appears. Rows disagreeing on decimals is itself a "can't trust this
+  // total" case, same as a missing/unparseable amount -- demote to null rather than guess.
+  const knownDecimals = allAmountsKnown
+    ? targetRows.reduce((decimals, row) => {
+        const d = row.amount.decimals ?? 7
+        return decimals == null || decimals === d ? d : NaN
+      }, null)
     : null
+  const knownTotal =
+    allAmountsKnown && Number.isFinite(knownDecimals)
+      ? targetRows.reduce((sum, row) => sum + BigInt(row.amount.units), 0n)
+      : null
 
   return (
     <Dialog
@@ -299,7 +317,7 @@ export function WithdrawDialog({
               <p>
                 Known amount across every target agent:{' '}
                 {knownTotal != null
-                  ? `${unitsToDisplay(knownTotal.toString(), 7)?.toLocaleString()} USDC`
+                  ? `${unitsToDisplay(knownTotal.toString(), knownDecimals)?.toLocaleString()} USDC`
                   : 'Unavailable'}
                 . Sent to {shortAddr(account?.address)}.
               </p>

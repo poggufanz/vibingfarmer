@@ -24,18 +24,23 @@
  *     (Foundation Task 5/6/7) and loaded globally -- re-declaring them here would just be a
  *     duplicate, not a fix. This file only adds the narrow, SCOPED contrast overrides those
  *     globals need once placed on Rice (see the `.pc-dominant--owned` block below).
- *   - .pc-dialog*: Task 12 correction -- Foundation's pocket-crew.css `.pc-dialog`/`.pc-dialog-
- *     panel`/`.pc-dialog-actions` (z-index 1000, `rgb(7 15 11 / 55%)` overlay, 28rem max-width) are
- *     a Foundation-authored APPROXIMATION, not a verbatim port of the contract's own dialog block
- *     (contract :668-701 + the standalone mobile override :896-907) -- this task's dialogs
- *     (WithdrawDialog/StopAccessDialog/RecoveryPanel) are the first callers that need the exact
- *     contract geometry (480px panel, --pc-z-dialog, --pc-overlay, --pc-radius-dominant padding),
- *     so it is ported here, verbatim, same convention as `.pc-dominant`/`.pc-button` above. Because
- *     this file loads AFTER pocket-crew.css (MyMoneyRoute.jsx's own import order) and every
- *     selector below has the SAME specificity as Foundation's version, this supersedes it globally
- *     once the /agent route's CSS has loaded -- an intentional, route-triggered correction toward
- *     the locked contract, not a scoped override (`.pc-dialog` is not, and was never, namespaced
- *     under `.pc-my-money-route`).
+ *   - .pc-dialog*: Task 12 correction, SCOPED in fix loop 1 (owner decision #26) -- Foundation's
+ *     pocket-crew.css `.pc-dialog`/`.pc-dialog-panel`/`.pc-dialog-actions` (z-index 1000,
+ *     `rgb(7 15 11 / 55%)` overlay, 28rem max-width) are a Foundation-authored APPROXIMATION, not a
+ *     verbatim port of the contract's own dialog block (contract :668-701 + the standalone mobile
+ *     override :896-907) -- this task's dialogs (WithdrawDialog/StopAccessDialog/RecoveryPanel) are
+ *     the first callers that need the exact contract geometry (480px panel, --pc-z-dialog,
+ *     --pc-overlay, --pc-radius-dominant padding), so it is ported here, verbatim, under the
+ *     `.pc-my-money-route` wrapper MyMoneyRoute.jsx already renders. Fix loop 1 found the original,
+ *     UNSCOPED port re-layered every dialog in the app once this file had loaded, including
+ *     dropping the overlay z-index from 1000 to 90 -- BELOW two legacy overlays (style.css's
+ *     `.modal-backdrop`/`.skill-drawer` at z-index 100), a real functional regression, not a
+ *     cosmetic one. Scoping under `.pc-my-money-route` (two classes vs Foundation's one) makes this
+ *     rule always win within the money route regardless of CSS source order, and leaves every
+ *     dialog outside it on Foundation's own approximation, untouched. Moving the verbatim port into
+ *     pocket-crew.css itself, replacing Foundation's approximation app-wide, is the more principled
+ *     end state -- deliberately deferred to its own task with its own before/after review rather
+ *     than shipped as a side effect of this fix.
  *   - .pc-network-badge img/svg, .pc-network-badge--compact, .pc-agent-lane(-progress),
  *     .pc-allocation-*, .pc-strategy-*, .pc-protect-*: no such markup exists anywhere on this
  *     route (My Money never renders Plan/Protect/Start's own surfaces).
@@ -130,14 +135,26 @@
   opacity: 0.58;
 }
 
-/* Shared dialog and mobile sheet (contract :668-701), verbatim -- see the file header's Task 12
- * note for why this supersedes pocket-crew.css's own approximation once this route's CSS loads. */
-.pc-dialog {
+/* Shared dialog and mobile sheet (contract :668-701), verbatim -- SCOPED under `.pc-my-money-route`
+ * (fix loop 1, I2/M1 -- see the file header's Task 12 note for the full rationale). `max-width:
+ * 480px`, `justify-items: stretch`, and `justify-content: normal` are the M1 addition: the
+ * contract's own block declares none of them, so THREE things bled through Foundation's own
+ * `.pc-dialog`/`.pc-dialog-panel` even after scoping -- each an undeclared property falling through
+ * to whatever OTHER matching rule declares it, no matter that rule's specificity. `max-width: 28rem`
+ * capped the intended 480px panel at 448px. And Foundation's `.pc-dialog` is a flex-era rule that
+ * still carries `justify-content: center` -- a property `place-items`/`justify-items` never touch --
+ * so once `display` becomes `grid` (ours wins there) that LEFTOVER flex property forced the grid's
+ * single auto column to size to its own CONTENT instead of stretching to fill, which is what
+ * actually produced the 162px shrink-to-fit on sparse content (a residual flex property doing grid
+ * damage, not a grid property at all). `justify-content: normal` clears it. */
+.pc-my-money-route .pc-dialog {
   position: fixed;
   inset: 0;
   z-index: var(--pc-z-dialog);
   display: grid;
   place-items: center;
+  justify-items: stretch;
+  justify-content: normal;
   width: 100%;
   height: 100%;
   margin: 0;
@@ -146,8 +163,9 @@
   background: var(--pc-overlay);
 }
 
-.pc-dialog-panel {
+.pc-my-money-route .pc-dialog-panel {
   width: min(100%, 480px);
+  max-width: 480px;
   max-height: min(760px, calc(100dvh - 32px));
   overflow: auto;
   border: 1px solid var(--pc-line);
@@ -158,7 +176,7 @@
   box-shadow: var(--pc-shadow-dominant);
 }
 
-.pc-dialog-actions {
+.pc-my-money-route .pc-dialog-actions {
   display: flex;
   justify-content: flex-end;
   gap: var(--pc-space-3);
@@ -318,16 +336,18 @@
     justify-self: start;
   }
 
-  /* Standalone mobile dialog override (contract :896-907), verbatim -- unconditional on `.pc-dialog`
-   * itself, distinct from the `.pc-money-actions, .pc-dialog-actions` grouped rule above (already
-   * ported) and from pocket-crew.css's own opt-in `.pc-dialog--auto`/`.pc-dialog--sheet` modifiers
-   * (which stay in effect where they're more specific -- see the file header's Task 12 note). */
-  .pc-dialog {
+  /* Standalone mobile dialog override (contract :896-907), verbatim -- SCOPED the same as the base
+   * block above (fix loop 1, I2). Unconditional on `.pc-dialog` itself, distinct from the
+   * `.pc-money-actions, .pc-dialog-actions` grouped rule above (already ported, and already scoped
+   * in effect since `.pc-money-actions` only ever exists on this route) and from pocket-crew.css's
+   * own opt-in `.pc-dialog--auto`/`.pc-dialog--sheet` modifiers (which stay in effect where they're
+   * more specific outside this route). */
+  .pc-my-money-route .pc-dialog {
     align-items: end;
     padding: 0;
   }
 
-  .pc-dialog-panel {
+  .pc-my-money-route .pc-dialog-panel {
     width: 100%;
     max-height: 88dvh;
     border-radius: var(--pc-radius-dominant) var(--pc-radius-dominant) 0 0;

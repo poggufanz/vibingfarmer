@@ -129,6 +129,14 @@ describe('StopAccessDialog — a healthy, unfunded, fully-known agent revokes cl
     )
     expect(screen.getByRole('button', { name: /stop access/i }).disabled).toBe(false)
     expect(screen.queryByText(/funding status could not be checked/i)).toBeNull()
+    // Fix loop 1 (swap-test hardening): the text-only assertion above passed even under a mutation
+    // that inverted the warning notice's render condition (`plan.warning &&` -> `!plan.warning &&`)
+    // -- for this healthy agent `plan.warning` is falsy either way, so an inverted condition still
+    // rendered a StatusNotice (with an undefined title, so the literal phrase never appeared) and
+    // the test above missed it. StatusNotice's warning/danger states both render `role="alert"`
+    // (Primitives.jsx) -- asserting NO alert exists at all is what actually proves no notice
+    // rendered, regardless of what its title happens to say.
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 })
 
@@ -244,11 +252,15 @@ const GEIST_FONT_HREF =
   'file://' + path.resolve(here, '../../../node_modules/@fontsource-variable/geist/index.css')
 
 function buildLayoutHarnessHtml(bodyHtml) {
+  // Fix loop 1 (I2): the shipped `.pc-dialog*` rules are scoped under `.pc-my-money-route` --
+  // wrapping the harness body the same way the real MyMoneyRoute.jsx tree will is what makes this
+  // guard measure the ACTUAL scoped geometry rather than accidentally falling back to Foundation's
+  // unscoped `.pc-dialog` approximation.
   return `<!doctype html><html><head><meta charset="utf-8">
 <link rel="stylesheet" href="${GEIST_FONT_HREF}">
 <style>${LEGACY_STYLESHEET}</style>
 <style>${REAL_STYLESHEET}</style>
-</head><body>${bodyHtml}</body></html>`
+</head><body><div class="pc-my-money-route">${bodyHtml}</div></body></html>`
 }
 
 const CHROMIUM_CANDIDATES = [
