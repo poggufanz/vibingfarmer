@@ -199,6 +199,16 @@
   gap: var(--pc-space-2);
 }
 
+/* Fix loop 2 -- Minor (re-review finding): the comfort-level radiogroup had no layout rule, so
+ * the three buttons abutted with zero gap. Not a contract selector (this radiogroup is this
+ * task's own addition, not ported from the contract) -- a new, scoped rule using only existing
+ * spacing tokens. */
+.pc-comfort-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pc-space-2);
+}
+
 .pc-field-help,
 .pc-field-error {
   margin: 0;
@@ -248,14 +258,22 @@
   color: var(--pc-disabled-on-dark) !important;
 }
 
-/* Fix loop 1 -- I1 (review finding): `.pc-field-help`/`.pc-field-error` above are verbatim
- * contract rules calibrated for the dark canvas, but this surface places them on the light
- * Harvest fill (measured 2.41:1 in Chrome). Re-scoping the CUSTOM PROPERTIES themselves (not the
- * locked declarations above, which stay untouched) to their already-shipped light-surface
- * counterparts fixes both at once for every descendant of the decision surface. */
-.pc-dominant--decision {
-  --pc-muted: var(--pc-owned-muted);
-  --pc-danger: var(--pc-danger-on-light);
+/* Fix loop 1 -- I1 (review finding), corrected in fix loop 2 -- N1 (re-review finding):
+ * `.pc-field-help`/`.pc-field-error` above are verbatim contract rules calibrated for the dark
+ * canvas, but this surface places them on the light Harvest fill (measured 2.41:1 in Chrome).
+ * Fix loop 1 re-scoped the `--pc-muted`/`--pc-danger` CUSTOM PROPERTIES themselves on
+ * `.pc-dominant--decision`, which fixed the two rules above but also leaked into every OTHER
+ * descendant reading those same tokens -- including AgentMark's state-badge glyph
+ * (`--pc-muted` for the `idle` state), which dropped from 7.48:1 to 2.44:1 and silently
+ * falsified the registered `forest.stateInk/idle` contrast invariant in src/design/contrast.js.
+ * Targeting the two rules directly instead has zero blast radius: nothing else in this surface
+ * reads `.pc-field-help`/`.pc-field-error`. */
+.pc-dominant--decision .pc-field-help {
+  color: var(--pc-owned-muted);
+}
+
+.pc-dominant--decision .pc-field-error {
+  color: var(--pc-danger-on-light);
 }
 
 /* Fix loop 1 -- I9 (review finding): the current step in StrategyProgress is `disabled` by

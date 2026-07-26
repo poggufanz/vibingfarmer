@@ -243,7 +243,7 @@ export function PlanStage({
               )}
             </div>
 
-            <div role="radiogroup" aria-label="Comfort level">
+            <div className="pc-comfort-group" role="radiogroup" aria-label="Comfort level">
               {RISK_IDS.map((id, index) => (
                 <button
                   key={id}

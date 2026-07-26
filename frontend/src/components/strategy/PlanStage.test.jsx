@@ -173,7 +173,9 @@ describe('PlanStage — Base availability is consumed, never re-derived', () => 
     expect(screen.getByText('Set up Base testnet', { selector: 'p' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Set up Base testnet' }))
     expect(onSetupBase).toHaveBeenCalledTimes(1)
-    // Never rendered inside the reviewed-plan surface -- there is no plan yet at all.
+    // No plan has been generated in this render yet, so there is nothing to accept -- this does
+    // NOT assert that Accept plan and Set up Base testnet can't coexist; see the I3 describe
+    // block below for the test that proves they do.
     expect(screen.queryByRole('button', { name: 'Accept plan' })).toBeNull()
   })
 
@@ -704,30 +706,22 @@ describe('PlanStage — keyboard operability and reduced motion', () => {
     expect(document.activeElement).toBe(steady)
   })
 
-  // I6 (review finding): the old test asserted `queryByText(/speed/i)).toBeNull()`, which passes
-  // for every conceivable implementation. This instead injects the REAL shipped CSS (the same
-  // two files the browser loads) and proves no element in the reviewed plan carries a non-'none'
-  // animation -- the actual, falsifiable claim behind "no timer-driven/motion state" and
-  // checklist item 6 ("a button uses a gradient/glow/shimmer/pulse/infinite animation").
-  it('I6: no element in the reviewed plan computes a real animation, under the actual shipped stylesheet', async () => {
-    await withRealStylesheet(async () => {
-      const onGenerate = vi.fn().mockResolvedValue({
-        source: 'deepseek',
-        sourceState: 'live-ai',
-        stellarUnits: '1000000000',
-        baseAllocations: [],
-      })
-      const { container } = render(
-        <PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={onGenerate} />
-      )
-      await fillAndSubmit({ amount: '100', risk: 'Steady', onGenerate })
-      await screen.findByRole('button', { name: 'Accept plan' })
-      const offenders = Array.from(container.querySelectorAll('*')).filter((el) => {
-        const name = getComputedStyle(el).animationName
-        return name && name !== 'none'
-      })
-      expect(offenders).toEqual([])
-    })
+  // N2 (re-review finding, fix loop 2): the old test asserted on jsdom's
+  // `getComputedStyle(...).animationName`, but jsdom reports "none" for the `animation` SHORTHAND
+  // regardless of its value (verified directly: `.a { animation: k 1s infinite }` ->
+  // animationName === "none"; only the longhand `animation-name: k` is visible to jsdom) -- and
+  // every realistic violation (gradient/glow/shimmer/pulse) is written with the shorthand, so the
+  // old test could never fail. This instead parses the actual shipped strategy.css source text --
+  // the same "read and assert on the real file" mechanism this repo already uses for the
+  // byte-for-byte contract-port checks (and the accepted jsdom/real-cascade tradeoff recorded in
+  // Foundation Task 2) -- and asserts no `@keyframes`, `animation` declaration, or gradient value
+  // exists anywhere in it. Falsifiable: reintroducing `@keyframes zzpulse` +
+  // `animation: zzpulse 1s infinite` on `.pc-button--primary` fails this (see the fix report).
+  it('I6: strategy.css defines no keyframes, animation, or gradient declarations (rejection checklist item 6)', () => {
+    const css = fs.readFileSync(path.resolve(here, './strategy.css'), 'utf8')
+    expect(css).not.toMatch(/@keyframes/i)
+    expect(css).not.toMatch(/\banimation(-name)?\s*:/i)
+    expect(css).not.toMatch(/gradient/i)
   })
 })
 

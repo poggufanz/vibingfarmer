@@ -18,10 +18,10 @@ expect.extend(axeMatchers)
 
 afterEach(cleanup)
 
-// Fix loop 1 -- I9 regression helper. jsdom's getComputedStyle does not resolve `var()`, but it
-// DOES correctly apply the real cascade (specificity/!important/source order) and echo back
-// whichever declaration's raw text won -- verified against these exact two files. Enough to prove
-// the current-step colour override is winning over Foundation's global disabled `!important` rule.
+// I9 regression source, used by the test below. jsdom's cascade does not reliably reproduce a
+// real browser's handling of `:where()` + `!important` (see that test's comment for the
+// mechanism), so this is read as raw text and asserted on structurally rather than rendered and
+// read back via getComputedStyle.
 const here = path.dirname(fileURLToPath(import.meta.url))
 const REAL_STYLESHEET = [
   fs.readFileSync(path.resolve(here, '../../design/pocket-crew.css'), 'utf8'),
@@ -87,27 +87,33 @@ describe('StrategyProgress', () => {
     expect(await axe(container)).toHaveNoViolations()
   })
 
-  // I9 (review finding): the current step is `disabled` by design (see `canNavigate` above), so
-  // Foundation's global disabled `!important` rule (pocket-crew.css:348-353) defeated this file's
-  // own locked current-step colour rule, measured identical to an unreached step in Chrome
-  // (rgb(140,155,147) both). Injects the REAL shipped stylesheet and proves the current step's
-  // colour declaration is genuinely distinct from a sibling's.
-  it('I9: the current step colour rule wins over Foundation\'s disabled !important rule', () => {
-    const styleEl = document.createElement('style')
-    styleEl.textContent = REAL_STYLESHEET
-    document.head.appendChild(styleEl)
-    try {
-      render(<StrategyProgress current="protect" reached={['plan', 'protect']} />)
-      const current = screen.getByRole('button', { name: 'Protect' })
-      const unreached = screen.getByRole('button', { name: 'Start' })
-      const currentColor = getComputedStyle(current).color
-      const unreachedColor = getComputedStyle(unreached).color
-      // The fix's own override rule (a plain compound selector, no :where()) must be the one
-      // winning for the current step -- that's the exact regression this guards.
-      expect(currentColor).toBe('var(--pc-ink)')
-      expect(currentColor).not.toBe(unreachedColor)
-    } finally {
-      styleEl.remove()
-    }
+  // N3 (re-review finding, fix loop 2): the old test rendered the REAL_STYLESHEET into jsdom and
+  // read `getComputedStyle(...).color` -- but jsdom already reported the current step as
+  // `var(--pc-ink)` even with the override deleted (i.e. against the pre-fix, buggy code), because
+  // jsdom's cascade does not reproduce the real-engine behaviour where Foundation's
+  // `:where(button, input, select, textarea):disabled { ... !important }` rule (pocket-crew.css)
+  // beats this file's plain, un-`:where()`-wrapped current-step colour rule. So the old test could
+  // never fail. This instead verifies the actual CSS-cascade fact structurally, by reading the
+  // shipped source text (the same mechanism PlanStage.test.jsx's I6 guard uses, for the identical
+  // jsdom/:where() tradeoff recorded in Foundation Task 2): our override selector must (a) exist,
+  // (b) be `!important` -- required because Foundation's conflicting rule is also `!important`,
+  // and among `!important` declarations specificity decides -- and (c) NOT be specificity-zeroed
+  // by `:where()`, while Foundation's conflicting disabled rule for plain buttons IS entirely
+  // `:where()`-wrapped (0 specificity). A plain compound selector with real specificity beats a
+  // `:where()`-wrapped one of equal importance, exactly as measured in Chrome (forest: current
+  // rgb(242,245,239) vs sibling rgb(140,155,147); day-field: rgb(23,37,31) vs rgb(95,108,101)).
+  // Falsifiable: deleting the override rule from strategy.css fails this (see the fix report).
+  it("I9: the current-step override genuinely outranks Foundation's disabled rule (source-level, not jsdom's unreliable :where() cascade)", () => {
+    const overrideMatch = REAL_STYLESHEET.match(
+      /\.pc-strategy-stage-nav\s*>\s*\[aria-current='step'\]:disabled\s*\{([^}]*)\}/
+    )
+    expect(overrideMatch).toBeTruthy()
+    expect(overrideMatch[1]).toMatch(/color:\s*var\(--pc-ink\)\s*!important/)
+
+    // Confirms the fact the override's specificity edge depends on: Foundation's conflicting
+    // plain-button disabled rule really is entirely wrapped in :where() (0 specificity), so this
+    // file's un-wrapped compound selector (class + attribute + pseudo-class, all real
+    // specificity) outranks it among two `!important` declarations.
+    expect(REAL_STYLESHEET).toMatch(/:where\(button,\s*input,\s*select,\s*textarea\):disabled/)
   })
 })
