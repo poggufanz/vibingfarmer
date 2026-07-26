@@ -8,6 +8,16 @@
     <link rel="stylesheet" href="./approval.css" />
   </head>
   <body>
+    <!--
+      VF Wallet Task 12: the small Pocket Crew logo below is the ONLY static content in this
+      header, deliberately -- it must never outrank the verified origin, consequence/amount, or
+      Cancel, all of which approvalView.js renders into #approval-main below, in the exact order
+      the task brief specifies. approvalView.js owns everything inside #approval-main; the
+      Cancel/Confirm (or Reject/Connect) footer buttons stay static HTML so Cancel is always
+      present alongside Confirm, in that reading order, and approve.js only ever sets their label
+      text -- neither this file nor approvalView.js ever style Confirm more prominently than
+      Cancel (that pairing, `.pc-wallet-approval-actions`, is a locked Visual Contract value).
+    -->
     <div class="pc-wallet pc-wallet-shell" data-pocket-critical>
       <header class="pc-wallet-header">
         <div class="pc-brand-lockup pc-brand-lockup--compact">
@@ -15,26 +25,12 @@
           <span>VF Wallet</span>
         </div>
       </header>
-      <main class="pc-wallet-main">
-        <div class="pc-wallet-origin">
-          <span class="pc-technical" id="origin"></span>
-        </div>
-        <h1 id="title">Loading request</h1>
-        <p id="note"></p>
-        <table class="pc-approval-table">
-          <tbody id="rows"></tbody>
-        </table>
-        <div id="raw-wrap" style="display: none">
-          <details>
-            <summary>Raw XDR</summary>
-            <pre id="raw"></pre>
-          </details>
-        </div>
-        <div class="pc-field" id="pw-wrap" style="display: none">
-          <label for="pw">Password</label>
-          <input class="pc-input" id="pw" type="password" placeholder="Wallet password" />
-        </div>
-        <p id="status"></p>
+      <main class="pc-wallet-main" id="approval-main">
+        <!-- Replaced wholesale by approvalView.renderApprovalView() once the stashed request
+             loads. Left in place (not empty) so an early return before that point (an expired
+             request, or an unhandled error) still shows something readable -- approve.js's
+             `setStatus()` writes into this exact #status node either way. -->
+        <p id="status" role="status" aria-live="polite">Loading request…</p>
       </main>
       <div class="pc-wallet-approval-actions">
         <button class="pc-button pc-button--secondary" id="reject">Reject</button>

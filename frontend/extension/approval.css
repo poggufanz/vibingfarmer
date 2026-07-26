@@ -542,6 +542,45 @@ pre,
   }
 }
 
+/* --- approve.html: VF Wallet Task 12 additions, rendered by approvalView.js. Every declaration
+   below is built from tokens already defined above (spacing/radius/color/type scale) -- none is a
+   new hex/radius/one-off value, the same convention WalletShell.jsx documents for its own
+   non-contract-anchored additions (.pc-wallet-nav, .bk-prog-*, etc.). --- */
+
+/* Account chip -- ported verbatim from WalletShell.jsx's own `.pc-wallet-account-chip` (not a
+   direct contract rule; WalletShell's own invention, built entirely from contract tokens). This
+   file has no shared load with WalletShell.jsx (see this file's own header: MV3 pages cannot
+   share a stylesheet), so it is copied here rather than imported. */
+.pc-wallet-account-chip {
+  padding: var(--pc-space-2) var(--pc-space-3);
+  border-radius: var(--pc-radius-control);
+  background: var(--pc-workspace);
+  color: var(--pc-muted);
+  font-size: var(--pc-type-label);
+}
+
+.pc-wallet-account-chip .pc-technical {
+  color: var(--pc-ink);
+}
+
+/* Connect screen's "what this site requests" list -- a plain list-style reset, same treatment as
+   WalletShell.jsx's `.pc-account-picker`/`.pc-asset-list`/`.pc-activity-list` group. */
+.pc-capability-list {
+  display: grid;
+  gap: var(--pc-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Decoded-grant row nesting (Step 2): a bridge agent's Base-side proxy explanation renders as a
+   nested child directly under that agent's own row, not a top-of-list bullet -- indented with the
+   same spacing token every other rule here uses, never a one-off pixel value. */
+.pc-approval-table tr.pc-approval-row--nested td {
+  padding-left: var(--pc-space-4);
+  color: var(--pc-muted);
+}
+
 /* --- approve.html: the dynamically-rendered request-detail table (approve.js owns the DOM
    generation; this file only styles the resulting table/th/td). --- */
 .pc-approval-table {
@@ -561,12 +600,21 @@ pre,
   font-weight: 600;
 }
 
+/* VF Wallet Task 12 -- rejection-checklist item 5 fix: this used to force EVERY cell into
+   JetBrains Mono unconditionally, but a decoded row here can mix a friendly kind word/venue label
+   with a genuinely technical amount+token (see approvalView.js's agentRowParts). Body font is now
+   the default; approvalView.js wraps only the actual address/hash segments in `.pc-technical`
+   (styled by the mono rule earlier in this file), so mono renders exactly where it belongs and
+   nowhere else. */
 .pc-approval-table td {
   padding: var(--pc-space-1) 0;
   border-bottom: 1px solid var(--pc-line);
   color: var(--pc-ink);
-  font-family: var(--pc-font-mono);
-  font-size: var(--pc-type-technical);
+  font-size: var(--pc-type-body-small);
+  word-break: break-word;
+}
+
+.pc-approval-table td .pc-technical {
   word-break: break-all;
 }
 

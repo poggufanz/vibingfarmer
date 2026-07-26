@@ -2,25 +2,28 @@
 // approve.html?rid=<rid>). Two jobs a normal wallet does that VF Wallet didn't:
 //   connect variant — "this site wants to connect" (once per origin; background persists the
 //     allowlist on ok:true, so this screen never reappears for the same site), and
-//   sign variant — decoded tx/auth-entry summary + Approve/Reject BEFORE the passkey ceremony.
+//   sign variant — decoded tx/auth-entry summary + Confirm/Cancel BEFORE the passkey ceremony.
 // Reading the wallet address needs no passkey (contractId is public, already in storage.local);
-// only Approve on a sign request triggers Face ID. Runs at the extension origin because
+// only Confirm on a sign request triggers Face ID. Runs at the extension origin because
 // WebAuthn credentials are origin-bound — same constraint as ceremony.js.
+//
+// VF Wallet Task 12 -- this file is now pure orchestration (chrome messaging, the sign/unlock
+// ceremonies, and the pre-sign snapshot re-check). Every view-model and DOM-rendering concern
+// (screen ordering, the decoded-grant breakdown, the submission-state vocabulary) moved to
+// approvalView.js, a pure vanilla module with no chrome/DOM dependency of its own — see that
+// file's header for the security rules it enforces (verified-origin-only rendering, fail-closed
+// grant degrade, no coerced-empty values).
 import './shims.js' // must stay first: installs process/Buffer before the classic-wallet chunk evaluates (see shims.js)
 import { makeKit, connectPasskeyWallet } from '../src/wallet/account.js'
 import { signTransactionForContract, signAuthEntryString } from '../src/wallet/signGeneric.js'
 import { unlockWallet, withSecret } from '../src/wallet/classicAccount.js'
 import { isUnlocked } from '../src/wallet/session.js'
 import { rpcServer } from '../src/stellar/client.js'
-import {
-  NETWORK_PASSPHRASE,
-  SOROBAN_DECIMALS,
-  STELLAR_NETWORK_LABEL,
-} from '../src/stellar/config.js'
+import { NETWORK_PASSPHRASE } from '../src/stellar/config.js'
 import { resolveActiveAccount } from '../src/wallet/activeAccount.js'
 import { validateRequestSnapshot } from '../src/wallet/consentStore.js'
-import { toDisplay } from '../src/stellar/format.js'
-import { summarizeTransaction, summarizeAuthEntry, shortAddr } from './txSummary.js'
+import { summarizeTransaction, summarizeAuthEntry } from './txSummary.js'
+import { buildApprovalView, renderApprovalView, SUBMISSION_STATE } from './approvalView.js'
 
 // How many ledgers a dapp-requested auth-entry signature stays valid — mirrors
 // stellar/agentDeposit.js's AUTH_TTL_LEDGERS (same "session-length" signing idiom).
@@ -49,168 +52,7 @@ export function rejectionResult(rid) {
   return { type: 'CEREMONY_RESULT', rid, ok: false, code: -4, error: 'User rejected the request' }
 }
 
-// Canonical truth copy for a decoded funding_router.grant (Task 3 Step 3) — every grant screen
-// carries these; two more are appended conditionally (mixed-token, bridge) below. This grant
-// signature deploys accounts/permissions; it is NOT proof that any deposit has happened.
-const GRANT_TRUTHS = [
-  'This grant creates isolated agent accounts and permissions; it does NOT mean any deposit has completed.',
-  'Each agent has its own spending limit, expiry, and session signer.',
-  'Current Stellar deposit agents all share the same destination: Autofarm Vault → Blend Capital v2.',
-  'That shared destination is operational isolation (separate agents/keys), not multiple different Stellar protocols.',
-]
-const GRANT_MIXED_TOKEN_TRUTH =
-  'This grant covers more than one token: each token’s allowance budget and each agent’s cap ceiling are shown separately below. Later execution may use less than either ceiling; the two numbers are never the same thing and are never added together.'
-const GRANT_BRIDGE_TRUTH =
-  'The bridge route is Stellar testnet → Circle CCTP → Base Sepolia. Base-side pools are custody proxies holding real Circle USDC; there is no live protocol yield there.'
-
-/** Pure view-rows for a decoded FundingGrantSummaryV1 (grantDecoder.decodeFundingRouterGrant's
- *  kind:'funding-router-grant' result) — allowance budgets, cap ceilings, and expiry are ALWAYS
- *  shown as separate ceilings, never summed across tokens and never presented as "the deposit
- *  amount" (see grantDecoder.js's module doc for why). Exported for direct testing. */
-export function grantRows(grant) {
-  const truths = [...GRANT_TRUTHS]
-  if (grant.budgets.length > 1) truths.push(GRANT_MIXED_TOKEN_TRUTH)
-  if (grant.agents.some((a) => a.kind === 'bridge')) truths.push(GRANT_BRIDGE_TRUTH)
-  const rows = truths.map((t, i) => [i === 0 ? 'What this grant does' : '', t])
-
-  grant.budgets.forEach((b, i) => {
-    rows.push([i === 0 ? 'Allowance budget (ceiling)' : '', amountText(b, 'not a deposit amount')])
-  })
-  // Labeled distinctly from each agent's OWN expiry below — this is the allowance/grant-level
-  // ceiling's expiry, never a shared per-agent value.
-  rows.push(['Grant allowance expires', `ledger ${grant.expiryLedger}`])
-  grant.agents.forEach((a) => {
-    const dest =
-      a.destination.routeLabel ?? `unlabeled destination ${shortAddr(a.destination.targetAddress)}`
-    const expiry = a.expiryTimestamp != null ? ` · agent expires ${a.expiryTimestamp}` : ''
-    rows.push([
-      `Agent #${a.index}`,
-      `${a.kind} · cap ${amountText(a.capPerPeriod)} / period · ${dest}${expiry}`,
-    ])
-  })
-  return rows
-}
-
-// Honest amount rendering: toDisplay(units) (fixed /1e7) is only truthful for the pinned 7dp
-// token. A v2 grant may carry any token address, and grantDecoder.js sets decimals:null (never a
-// fabricated 7) for anything else; this must render the raw integer, never divide by an assumed
-// scale (see grantDecoder.js's tokenAmount doc).
-function amountText({ units, token, decimals }, suffix) {
-  const tail = suffix ? ` (${suffix})` : ''
-  if (decimals === SOROBAN_DECIMALS) return `${toDisplay(units)} ${shortAddr(token)}${tail}`
-  const unknownTail = suffix ? ` (token decimals unknown; ${suffix})` : ' (token decimals unknown)'
-  return `${units} raw units ${shortAddr(token)}${unknownTail}`
-}
-
-/**
- * Pure view-model: decides which screen to show and what rows it lists.
- * @param {{method:string, params:object, origin:string}} req  the stashed vf_req_<rid>
- * @param {{address:string|null, summary?:object|null, kind?:'passkey'|'classic', unlocked?:boolean}} ctx
- */
-export function screenModel(req, { address, summary, kind, unlocked } = {}) {
-  if (!address) {
-    return {
-      variant: 'no-wallet',
-      origin: req.origin,
-      title: 'No wallet yet',
-      note: 'Create a wallet in VF Wallet first, then retry from the site.',
-      approveLabel: 'Open VF Wallet',
-      rows: [],
-      raw: null,
-    }
-  }
-  if (req.method === 'getAddress') {
-    return {
-      variant: 'connect',
-      origin: req.origin,
-      title: 'Connection request',
-      note: 'This site will see your address and may request signatures.',
-      approveLabel: 'Connect',
-      rows: [
-        ['Account', shortAddr(address)],
-        ['Network', STELLAR_NETWORK_LABEL],
-      ],
-      raw: null,
-    }
-  }
-  const rows = [
-    ['Network', summary?.network ?? STELLAR_NETWORK_LABEL],
-    ['Signer', shortAddr(summary?.signer ?? address)],
-  ]
-  if (summary?.contract) {
-    rows.push([
-      'Contract',
-      `${shortAddr(summary.contract)}${summary.contractLabel ? ` (${summary.contractLabel})` : ''}`,
-    ])
-  }
-  if (summary?.fn) rows.push(['Function', summary.fn])
-  const grant = summary?.grant ?? null
-  if (grant?.kind === 'funding-router-grant') {
-    // A recognized grant replaces the raw arg dump with the truthful, per-token/per-agent
-    // breakdown — never both (a wall of raw ScVal args next to the readable version invites
-    // skimming the wrong one).
-    rows.push(...grantRows(grant))
-  } else {
-    // Known router, but the args didn't match its pinned schema (or this isn't `grant` at all) —
-    // surface the mismatch loudly, then still show raw args (fail-closed transparency, never a
-    // fabricated summary).
-    if (grant?.kind === 'schema-mismatch') rows.push(['Warning', grant.warning])
-    ;(summary?.args ?? []).forEach((a, i) => rows.push([i === 0 ? 'Args' : '', a]))
-  }
-  return {
-    variant: 'sign',
-    origin: req.origin,
-    title: 'Signature request',
-    note:
-      kind === 'classic'
-        ? 'Approving asks for your wallet password.'
-        : 'Approving opens the passkey (Face ID) prompt.',
-    approveLabel: 'Approve',
-    rows,
-    raw:
-      req.method === 'signTransaction'
-        ? (req.params?.xdr ?? null)
-        : (req.params?.authEntry ?? null),
-    ...(kind === 'classic' && !unlocked ? { needsPassword: true } : {}),
-  }
-}
-
-// ---- real wiring below (no-op under vitest: chrome/storage absent) ----
-
-const setStatus = (t) => {
-  const el = document.getElementById('status')
-  if (el) el.textContent = t
-}
-
-function render(model) {
-  document.getElementById('origin').textContent = model.origin
-  document.getElementById('title').textContent = model.title
-  document.getElementById('note').textContent = model.note
-  document.getElementById('approve').textContent = model.approveLabel
-  const rows = document.getElementById('rows')
-  rows.innerHTML = ''
-  for (const [k, v] of model.rows) {
-    const tr = document.createElement('tr')
-    const th = document.createElement('th')
-    th.textContent = k
-    const td = document.createElement('td')
-    td.textContent = v
-    tr.append(th, td)
-    rows.append(tr)
-  }
-  const rawWrap = document.getElementById('raw-wrap')
-  if (model.raw) {
-    rawWrap.style.display = ''
-    document.getElementById('raw').textContent = model.raw
-  } else {
-    rawWrap.style.display = 'none'
-  }
-  const pwWrap = document.getElementById('pw-wrap')
-  if (pwWrap) pwWrap.style.display = model.needsPassword ? '' : 'none'
-}
-
 async function approveSign(req, rid, address) {
-  setStatus('Awaiting Face ID…')
   const kit = await makeKit()
   const contractId = req.params?.opts?.address ?? address
   await connectPasskeyWallet({ contractId, kit })
@@ -232,7 +74,6 @@ async function approveSign(req, rid, address) {
  *  already unlocked (caller handles the password prompt / wrong-password retry). Exported for
  *  direct testing of the expectedPublicKey fail-closed wiring below. */
 export async function approveSignClassic(req, rid, address) {
-  setStatus('Signing…')
   // expectedPublicKey: an unlocked session left over from a DIFFERENT G-address (multiple
   // vf_classic_wallets entries) must never sign on behalf of the snapshot's account — fail closed
   // (withSecret throws 'locked: unlocked session does not match the active account') rather than
@@ -266,6 +107,31 @@ export async function approveSignClassic(req, rid, address) {
   )
 }
 
+// ---- real wiring below (no-op under vitest: chrome/storage absent) ----
+
+const setStatus = (t) => {
+  const el = document.getElementById('status')
+  if (el) el.textContent = t
+}
+
+/** Renders `view` (approvalView.buildApprovalView's output) into the page: the ordered content
+ *  goes into #approval-main (approvalView.js owns all of that), while the footer's Cancel/
+ *  Confirm buttons stay static HTML (approve.html) whose LABEL text this function sets — the
+ *  small Pocket Crew logo in the static header is untouched by either. */
+function render(view) {
+  const main = document.getElementById('approval-main')
+  if (main) renderApprovalView(main, view)
+  const rejectBtn = document.getElementById('reject')
+  const approveBtn = document.getElementById('approve')
+  if (rejectBtn) rejectBtn.textContent = view.rejectLabel
+  if (approveBtn) {
+    approveBtn.textContent = view.approveLabel ?? ''
+    // blocked-origin carries no confirming action at all — never render a clickable Confirm for
+    // a request this screen could not verify.
+    approveBtn.hidden = view.approveLabel == null
+  }
+}
+
 if (typeof window !== 'undefined' && globalThis.chrome?.storage?.session) {
   ;(async () => {
     try {
@@ -291,19 +157,22 @@ if (typeof window !== 'undefined' && globalThis.chrome?.storage?.session) {
           : req.method === 'signAuthEntry'
             ? summarizeAuthEntry(req.params?.authEntry)
             : null
-      const model = screenModel(
+      const view = buildApprovalView(
         { method: req.method, params: req.params, origin: req.requester?.origin },
-        { address, summary, kind, unlocked }
+        { address, summary, kind, unlocked, submissionState: SUBMISSION_STATE.REVIEWING }
       )
-      render(model)
+      render(view)
 
       document.getElementById('reject').onclick = () => {
         chrome.runtime.sendMessage(rejectionResult(rid))
         window.close()
       }
+
+      if (view.approveLabel == null) return // blocked-origin: no confirming action to wire up
+
       document.getElementById('approve').onclick = async () => {
         try {
-          if (model.variant === 'no-wallet') {
+          if (view.variant === 'no-wallet') {
             chrome.tabs.create({ url: chrome.runtime.getURL('popup.html') })
             chrome.runtime.sendMessage({
               type: 'CEREMONY_RESULT',
@@ -333,12 +202,13 @@ if (typeof window !== 'undefined' && globalThis.chrome?.storage?.session) {
             return
           }
 
-          if (model.variant === 'connect') {
+          if (view.variant === 'connect') {
             chrome.runtime.sendMessage({ type: 'CEREMONY_RESULT', rid, ok: true, address })
             setStatus('Connected.')
             setTimeout(() => window.close(), 400)
             return
           }
+          setStatus(kind === 'classic' ? 'Waiting for password' : 'Waiting for passkey')
           if (kind === 'classic' && !(await isUnlocked(address))) {
             try {
               await unlockWallet(address, document.getElementById('pw')?.value ?? '')
@@ -358,6 +228,10 @@ if (typeof window !== 'undefined' && globalThis.chrome?.storage?.session) {
             if (pw) pw.value = ''
           }
           chrome.runtime.sendMessage(result)
+          // Signed and returned to the requesting origin — this extension never submits a
+          // generic dapp signTransaction/signAuthEntry request itself, so the ceremony ends
+          // here. "Submitted"/"Confirmed" are reserved for a future internal flow that owns
+          // real submission + a transaction hash + reconciliation (see approvalView.js).
           setStatus(`Signed and returned to ${req.requester?.origin ?? 'the site'}.`)
           setTimeout(() => window.close(), 800)
         } catch (e) {

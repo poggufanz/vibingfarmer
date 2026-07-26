@@ -1,110 +1,24 @@
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import {
-  screenModel,
-  rejectionResult,
-  screenKind,
-  verifyStillValid,
-  approveSignClassic,
-  grantRows,
-} from './approve.js'
+import { rejectionResult, screenKind, verifyStillValid, approveSignClassic } from './approve.js'
 import { installChromeMock } from '../src/wallet/testUtils.js'
 import { createRequestSnapshot } from '../src/wallet/consentStore.js'
 import { importFromSecret } from '../src/wallet/classicAccount.js'
 import { Account, TransactionBuilder, Operation } from '@stellar/stellar-sdk'
-import { NETWORK_PASSPHRASE, SOROBAN_AUTOFARM_VAULT_ADDRESS } from '../src/stellar/config.js'
+import { NETWORK_PASSPHRASE } from '../src/stellar/config.js'
 
 const ORIGIN = 'https://vibing-farmer.pages.dev'
+const here = path.dirname(fileURLToPath(import.meta.url))
 
-describe('approve — screen model', () => {
-  it('no wallet stored → no-wallet variant with an onboarding CTA', () => {
-    const m = screenModel({ method: 'getAddress', params: {}, origin: ORIGIN }, { address: null })
-    expect(m.variant).toBe('no-wallet')
-    expect(m.origin).toBe(ORIGIN)
-    expect(m.approveLabel).toBe('Open VF Wallet')
-  })
+// VF Wallet Task 12 -- the pure view-model/DOM-rendering concerns this describe block used to
+// cover (screenModel, grantRows) moved wholesale to approvalView.js/approvalView.test.js: this
+// file is now orchestration-only (chrome messaging, the sign/unlock ceremonies, and the pre-sign
+// snapshot re-check). See approvalView.test.js for buildApprovalView/grant-decode coverage.
 
-  it('getAddress → connect variant showing account + network', () => {
-    const m = screenModel(
-      { method: 'getAddress', params: {}, origin: ORIGIN },
-      { address: 'CDLVXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXK3QP' }
-    )
-    expect(m.variant).toBe('connect')
-    expect(m.title).toBe('Connection request')
-    expect(m.approveLabel).toBe('Connect')
-    expect(m.rows).toContainEqual(['Network', 'TESTNET'])
-    expect(m.rows.find(([k]) => k === 'Account')[1]).toMatch(/^CDLV…K3QP$/)
-  })
-
-  it('signTransaction with a decoded summary → sign variant with contract/function/args rows', () => {
-    const m = screenModel(
-      { method: 'signTransaction', params: { xdr: 'RAWXDR' }, origin: ORIGIN },
-      {
-        address: 'CACCT',
-        summary: {
-          network: 'TESTNET',
-          contract: 'CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5',
-          contractLabel: 'funding router',
-          fn: 'grant',
-          args: ['CDLV…K3QP', '5000000 (0.5)'],
-          signer: null,
-        },
-      }
-    )
-    expect(m.variant).toBe('sign')
-    expect(m.title).toBe('Signature request')
-    expect(m.approveLabel).toBe('Approve')
-    expect(m.raw).toBe('RAWXDR')
-    expect(m.rows).toContainEqual(['Function', 'grant'])
-    expect(m.rows.find(([k]) => k === 'Contract')[1]).toContain('funding router')
-    expect(m.rows.filter(([k]) => k === 'Args' || k === '')).toHaveLength(2)
-  })
-
-  it('signAuthEntry with a null summary still renders a sign screen with the raw entry', () => {
-    const m = screenModel(
-      { method: 'signAuthEntry', params: { authEntry: 'RAWENTRY' }, origin: ORIGIN },
-      { address: 'CACCT', summary: null }
-    )
-    expect(m.variant).toBe('sign')
-    expect(m.raw).toBe('RAWENTRY')
-    expect(m.rows).toContainEqual(['Network', 'TESTNET'])
-  })
-
-  it('classic wallet, locked, sign request → needsPassword: true', () => {
-    const m = screenModel(
-      { method: 'signTransaction', params: { xdr: 'RAWXDR' }, origin: ORIGIN },
-      { address: 'GCLASSIC', kind: 'classic', unlocked: false }
-    )
-    expect(m.variant).toBe('sign')
-    expect(m.needsPassword).toBe(true)
-  })
-
-  it('classic wallet sign request → note asks for wallet password, not Face ID', () => {
-    const m = screenModel(
-      { method: 'signTransaction', params: { xdr: 'RAWXDR' }, origin: ORIGIN },
-      { address: 'GCLASSIC', kind: 'classic', unlocked: false }
-    )
-    expect(m.note).toBe('Approving asks for your wallet password.')
-  })
-
-  it('classic wallet, already unlocked, sign request → no needsPassword', () => {
-    const m = screenModel(
-      { method: 'signTransaction', params: { xdr: 'RAWXDR' }, origin: ORIGIN },
-      { address: 'GCLASSIC', kind: 'classic', unlocked: true }
-    )
-    expect(m.variant).toBe('sign')
-    expect(m.needsPassword).toBeFalsy()
-  })
-
-  it('classic wallet address (no passkey) on getAddress → connect variant, not no-wallet', () => {
-    const m = screenModel(
-      { method: 'getAddress', params: {}, origin: ORIGIN },
-      { address: 'GCLASSIC', kind: 'classic' }
-    )
-    expect(m.variant).toBe('connect')
-    expect(m.rows.find(([k]) => k === 'Account')[1]).toBe('GCLASSIC')
-  })
-
-  it('rejectionResult is the exact SEP-43 -4 CEREMONY_RESULT', () => {
+describe('rejectionResult', () => {
+  it('is the exact SEP-43 -4 CEREMONY_RESULT', () => {
     expect(rejectionResult('rid-9')).toEqual({
       type: 'CEREMONY_RESULT',
       rid: 'rid-9',
@@ -112,6 +26,69 @@ describe('approve — screen model', () => {
       code: -4,
       error: 'User rejected the request',
     })
+  })
+})
+
+// ---------------------------------------------------------------------------------------------
+// VF Wallet Task 12 -- structural, mutation-provable guards on approve.html/approve.js source
+// text. Real Chromium (per this task's A1 sweep) proves layout at 320px; these prove two things a
+// pixel measurement cannot: (a) Cancel/Reject is never absent or reordered after Confirm/Approve
+// in the static markup approve.js wires up, and (b) the generic dapp signTransaction/
+// signAuthEntry ceremony this file drives never claims a Submitted/Confirmed/reconciled state it
+// structurally cannot back (no internal flow here owns real submission + a tx hash).
+// ---------------------------------------------------------------------------------------------
+describe('approve.html — Cancel/Reject is present before (or alongside) Confirm/Approve, never after', () => {
+  it('the reject button appears before the approve button in document order', () => {
+    const html = readFileSync(path.resolve(here, './approve.html'), 'utf8')
+    const rejectIdx = html.indexOf('id="reject"')
+    const approveIdx = html.indexOf('id="approve"')
+    expect(rejectIdx).toBeGreaterThan(-1)
+    expect(approveIdx).toBeGreaterThan(-1)
+    expect(rejectIdx).toBeLessThan(approveIdx)
+  })
+
+  it("mutation-proof: swapping the two buttons' order would fail the check above", () => {
+    const html = readFileSync(path.resolve(here, './approve.html'), 'utf8')
+    const mutated = html
+      .replace('id="reject"', '__TMP__')
+      .replace('id="approve"', 'id="reject"')
+      .replace('__TMP__', 'id="approve"')
+    const rejectIdx = mutated.indexOf('id="reject"')
+    const approveIdx = mutated.indexOf('id="approve"')
+    expect(rejectIdx).toBeGreaterThan(approveIdx) // RED on the mutated markup
+  })
+
+  it('neither button carries autofocus — Confirm is never pre-selected as the easy/default action', () => {
+    const html = readFileSync(path.resolve(here, './approve.html'), 'utf8')
+    expect(html).not.toMatch(/autofocus/i)
+  })
+})
+
+describe('approve.js — never claims a submission/confirmation state this ceremony cannot back', () => {
+  // The generic dapp ceremony (this file's only caller today) ends at "Signed and returned" —
+  // see approvalView.js's DAPP_REACHABLE_STATES. It must never literally set the page's status to
+  // one of the internal-flow-only states, which would falsely claim a completed, reconciled
+  // on-chain outcome for a request this extension never submitted anywhere. Checked against the
+  // text actually passed to setStatus() calls specifically (not the whole file, which legitimately
+  // *discusses* these reserved states in comments) — a substring match against a doc comment would
+  // be a false positive, not a real defect.
+  const FORBIDDEN = [/\bSubmitted\b/, /\bConfirmed\b/, /\bChecking status\b/, /\bNot submitted\b/]
+
+  function setStatusArgs(source) {
+    return [...source.matchAll(/setStatus\(([^)]*)\)/g)].map((m) => m[1])
+  }
+
+  it('no setStatus(...) call anywhere in the file passes one of the internal-flow-only labels', () => {
+    const source = readFileSync(path.resolve(here, './approve.js'), 'utf8')
+    for (const arg of setStatusArgs(source)) {
+      for (const pattern of FORBIDDEN) expect(arg).not.toMatch(pattern)
+    }
+  })
+
+  it('mutation-proof: injecting one of those literal strings into a setStatus call would fail the check above', () => {
+    const mutatedSource = "setStatus('Submitted')"
+    const args = setStatusArgs(mutatedSource)
+    expect(args.some((arg) => FORBIDDEN.some((pattern) => pattern.test(arg)))).toBe(true) // RED
   })
 })
 
@@ -271,284 +248,5 @@ describe('approveSignClassic — session-key pinned to the snapshot address', ()
       address: publicKey,
     })
     expect(result.signedTxXdr).toBeTruthy()
-  })
-})
-
-// The approve popup is the ONE place a user reads a grant before signing — Task 3's decoded
-// summary must render as a truthful breakdown, never a wall of raw args, and never inflate
-// budgets/caps/agent counts beyond what grantDecoder.js actually decoded.
-describe('grantRows — truthful funding_router.grant breakdown', () => {
-  const singleTokenGrant = {
-    kind: 'funding-router-grant',
-    schemaVersion: 2,
-    owner: 'GOWNER',
-    expiryLedger: 1_000_000,
-    budgets: [
-      {
-        token: 'CTOKEN1111111111111111111111111111111111111111111111',
-        units: 5_000_000n,
-        decimals: 7,
-      },
-    ],
-    agents: [
-      {
-        index: 0,
-        kind: 'deposit',
-        capPerPeriod: {
-          token: 'CTOKEN1111111111111111111111111111111111111111111111',
-          units: 1_000_000n,
-          decimals: 7,
-        },
-        destination: {
-          classification: 'known-stellar-vault',
-          routeLabel: 'Autofarm Vault → Blend Capital v2',
-          targetAddress: SOROBAN_AUTOFARM_VAULT_ADDRESS,
-        },
-      },
-    ],
-  }
-
-  it('always leads with the canonical truth copy — grant ≠ completed deposit', () => {
-    const rows = grantRows(singleTokenGrant)
-    const truthRow = rows.find(([k]) => k === 'What this grant does')
-    expect(truthRow[1]).toMatch(/does NOT mean any deposit has completed/)
-  })
-
-  it('shows the allowance budget as a ceiling, explicitly not a deposit amount', () => {
-    const rows = grantRows(singleTokenGrant)
-    const budgetRow = rows.find(([k]) => k === 'Allowance budget (ceiling)')
-    expect(budgetRow[1]).toContain('not a deposit amount')
-    expect(budgetRow[1]).toContain('0.5') // 5_000_000 base units / 1e7
-  })
-
-  it('shows each agent with its own cap ceiling and route label, never a total', () => {
-    const rows = grantRows(singleTokenGrant)
-    const agentRow = rows.find(([k]) => k === 'Agent #0')
-    expect(agentRow[1]).toContain('deposit')
-    expect(agentRow[1]).toContain('Autofarm Vault → Blend Capital v2')
-    // Never a bare "total"/"amount" row — only per-agent, per-token ceilings.
-    expect(rows.some(([k]) => /^total$/i.test(k))).toBe(false)
-  })
-
-  it('does not surface the mixed-token or bridge truth bullets for a single-token, deposit-only grant', () => {
-    const rows = grantRows(singleTokenGrant)
-    expect(rows.some(([, v]) => /more than one token/.test(v))).toBe(false)
-    expect(rows.some(([, v]) => /Circle CCTP/.test(v))).toBe(false)
-  })
-
-  it('adds the mixed-token truth bullet when budgets cover more than one token, keeping each budget separate', () => {
-    const grant = {
-      ...singleTokenGrant,
-      budgets: [
-        {
-          token: 'CTOKEN1111111111111111111111111111111111111111111111',
-          units: 5_000_000n,
-          decimals: 7,
-        },
-        {
-          token: 'CTOKEN2222222222222222222222222222222222222222222222',
-          units: 2_000_000n,
-          decimals: 7,
-        },
-      ],
-    }
-    const rows = grantRows(grant)
-    expect(rows.some(([, v]) => /more than one token/.test(v))).toBe(true)
-    const budgetRows = rows
-      .filter(([k]) => k === 'Allowance budget (ceiling)' || k === '')
-      .filter(([, v]) => v.includes('not a deposit amount'))
-    expect(budgetRows).toHaveLength(2)
-  })
-
-  it('renders raw units (never a /1e7 value) for a budget whose token decimals are unknown (Finding 2)', () => {
-    const grant = {
-      ...singleTokenGrant,
-      budgets: [
-        {
-          token: 'CTOKEN1111111111111111111111111111111111111111111111',
-          units: 5_000_000n,
-          decimals: 7,
-        },
-        {
-          token: 'COTHERTOKEN22222222222222222222222222222222222222222',
-          units: 123_456n,
-          decimals: null, // e.g. a v2 grant's second TokenBudget on a non-pinned token
-        },
-      ],
-    }
-    const rows = grantRows(grant)
-    const unknownRow = rows.find(([, v]) => v.includes('COTH'))
-    expect(unknownRow).toBeTruthy()
-    expect(unknownRow[1]).toContain('123456 raw units')
-    expect(unknownRow[1]).toContain('token decimals unknown')
-    expect(unknownRow[1]).toContain('not a deposit amount')
-    // Never the fixed /1e7 display for an unknown-decimals amount.
-    expect(unknownRow[1]).not.toMatch(/0\.0123456/)
-  })
-
-  it('renders raw units (never a /1e7 value) for an agent cap whose token decimals are unknown (Finding 2)', () => {
-    const grant = {
-      ...singleTokenGrant,
-      agents: [
-        {
-          index: 0,
-          kind: 'deposit',
-          capPerPeriod: {
-            token: 'COTHERTOKEN22222222222222222222222222222222222222222',
-            units: 987_654n,
-            decimals: null,
-          },
-          destination: {
-            classification: 'known-stellar-vault',
-            routeLabel: 'Autofarm Vault → Blend Capital v2',
-            targetAddress: SOROBAN_AUTOFARM_VAULT_ADDRESS,
-          },
-        },
-      ],
-    }
-    const rows = grantRows(grant)
-    const agentRow = rows.find(([k]) => k === 'Agent #0')
-    expect(agentRow[1]).toContain('987654 raw units')
-    expect(agentRow[1]).toContain('token decimals unknown')
-    expect(agentRow[1]).not.toMatch(/0\.0987654/)
-  })
-
-  it("appends each agent's OWN expiry when present, distinct from the grant-level allowance expiry (Finding 3)", () => {
-    const grant = {
-      ...singleTokenGrant,
-      agents: [{ ...singleTokenGrant.agents[0], expiryTimestamp: 1_800_000_000 }],
-    }
-    const rows = grantRows(grant)
-    const agentRow = rows.find(([k]) => k === 'Agent #0')
-    expect(agentRow[1]).toContain('1800000000')
-    const grantExpiryRow = rows.find(([k]) => /allowance expires/i.test(k))
-    expect(grantExpiryRow).toBeTruthy()
-    expect(grantExpiryRow[1]).toContain(String(singleTokenGrant.expiryLedger))
-  })
-
-  it('omits per-agent expiry text (never shows zero/unknown as a value) when expiryTimestamp is absent', () => {
-    const rows = grantRows(singleTokenGrant) // fixture agents carry no expiryTimestamp field
-    const agentRow = rows.find(([k]) => k === 'Agent #0')
-    expect(agentRow[1]).not.toMatch(/expires/i)
-  })
-
-  it('adds the bridge/CCTP truth bullet only when a bridge-kind agent is present', () => {
-    const grant = {
-      ...singleTokenGrant,
-      agents: [
-        ...singleTokenGrant.agents,
-        {
-          index: 1,
-          kind: 'bridge',
-          capPerPeriod: {
-            token: 'CTOKEN1111111111111111111111111111111111111111111111',
-            units: 500_000n,
-            decimals: 7,
-          },
-          destination: {
-            classification: 'known-cctp-messenger',
-            routeLabel: 'Stellar testnet → Circle CCTP → Base Sepolia',
-            targetAddress: 'CMESSENGER11111111111111111111111111111111111111111',
-          },
-        },
-      ],
-    }
-    const rows = grantRows(grant)
-    expect(rows.some(([, v]) => /Circle CCTP/.test(v))).toBe(true)
-    const bridgeAgentRow = rows.find(([k]) => k === 'Agent #1')
-    expect(bridgeAgentRow[1]).toContain('bridge')
-    expect(bridgeAgentRow[1]).toContain('Stellar testnet → Circle CCTP → Base Sepolia')
-  })
-})
-
-describe('screenModel — funding_router.grant sign screen', () => {
-  const grantSummary = {
-    network: 'TESTNET',
-    contract: 'CROUTER11111111111111111111111111111111111111111111',
-    contractLabel: 'funding router',
-    fn: 'grant',
-    args: ['owner', '5000000 (0.5)', '1000000', '[...]'],
-    signer: null,
-    grant: {
-      kind: 'funding-router-grant',
-      schemaVersion: 2,
-      owner: 'GOWNER',
-      expiryLedger: 1_000_000,
-      budgets: [
-        {
-          token: 'CTOKEN1111111111111111111111111111111111111111111111',
-          units: 5_000_000n,
-          decimals: 7,
-        },
-      ],
-      agents: [
-        {
-          index: 0,
-          kind: 'deposit',
-          capPerPeriod: {
-            token: 'CTOKEN1111111111111111111111111111111111111111111111',
-            units: 1_000_000n,
-            decimals: 7,
-          },
-          destination: {
-            classification: 'known-stellar-vault',
-            routeLabel: 'Autofarm Vault → Blend Capital v2',
-            targetAddress: SOROBAN_AUTOFARM_VAULT_ADDRESS,
-          },
-        },
-      ],
-    },
-  }
-
-  it('a decoded grant replaces the raw Args rows with the truthful breakdown', () => {
-    const m = screenModel(
-      { method: 'signTransaction', params: { xdr: 'RAWXDR' }, origin: ORIGIN },
-      { address: 'CACCT', summary: grantSummary }
-    )
-    expect(m.variant).toBe('sign')
-    expect(m.rows.some(([k]) => k === 'What this grant does')).toBe(true)
-    expect(m.rows.some(([k]) => k === 'Allowance budget (ceiling)')).toBe(true)
-    expect(m.rows.some(([k]) => k === 'Agent #0')).toBe(true)
-    expect(m.rows.some(([k]) => k === 'Args')).toBe(false)
-    // Raw XDR is still available for a user who wants to verify it themselves.
-    expect(m.raw).toBe('RAWXDR')
-  })
-
-  it('a known-router schema mismatch surfaces a Warning row AND still shows raw args (fail closed)', () => {
-    const mismatchSummary = {
-      ...grantSummary,
-      grant: {
-        kind: 'schema-mismatch',
-        schemaVersion: 2,
-        warning: 'Args did not match the known funding_router v2 grant schema.',
-      },
-    }
-    const m = screenModel(
-      { method: 'signTransaction', params: { xdr: 'RAWXDR' }, origin: ORIGIN },
-      { address: 'CACCT', summary: mismatchSummary }
-    )
-    const warningRow = m.rows.find(([k]) => k === 'Warning')
-    expect(warningRow[1]).toMatch(/did not match/)
-    expect(m.rows.some(([k]) => k === 'Args')).toBe(true)
-  })
-
-  it('a non-grant summary (grant: null) keeps the existing generic Args rows unchanged', () => {
-    const m = screenModel(
-      { method: 'signTransaction', params: { xdr: 'RAWXDR' }, origin: ORIGIN },
-      {
-        address: 'CACCT',
-        summary: {
-          network: 'TESTNET',
-          contract: SOROBAN_AUTOFARM_VAULT_ADDRESS,
-          contractLabel: 'autofarm vault',
-          fn: 'deposit',
-          args: ['CDLV…K3QP', '5000000 (0.5)'],
-          signer: null,
-          grant: null,
-        },
-      }
-    )
-    expect(m.rows.some(([k]) => k === 'What this grant does')).toBe(false)
-    expect(m.rows.filter(([k]) => k === 'Args' || k === '')).toHaveLength(2)
   })
 })
