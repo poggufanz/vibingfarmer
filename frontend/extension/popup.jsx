@@ -17,19 +17,15 @@ import { ApproveOverlay } from '../src/wallet/ui/ApproveOverlay.jsx'
 import { HonestyLabels } from '../src/wallet/ui/HonestyLabels.jsx'
 import { toDisplay } from '../src/stellar/format.js'
 import { SOROBAN_VAULT_ADDRESS } from '../src/stellar/config.js'
-import CreateScreen from '../src/wallet/ui/classic/CreateScreen.jsx'
-import BackupScreen from '../src/wallet/ui/classic/BackupScreen.jsx'
-import ImportScreen from '../src/wallet/ui/classic/ImportScreen.jsx'
-import OnboardingScreen from '../src/wallet/ui/classic/OnboardingScreen.jsx'
 import HomeScreen from '../src/wallet/ui/classic/HomeScreen.jsx'
 import SendScreen from '../src/wallet/ui/classic/SendScreen.jsx'
 import ReceiveScreen from '../src/wallet/ui/classic/ReceiveScreen.jsx'
 import AddAssetScreen from '../src/wallet/ui/classic/AddAssetScreen.jsx'
 import HistoryScreen from '../src/wallet/ui/classic/HistoryScreen.jsx'
-import UnlockScreen from '../src/wallet/ui/classic/UnlockScreen.jsx'
 import SettingsScreen from '../src/wallet/ui/classic/SettingsScreen.jsx'
 import { pickConfirmIndices } from '../src/wallet/ui/classic/backupConfirm.js'
 import * as C from '../src/wallet/ui/classic/controller.js'
+import { WalletOnboarding } from '../src/wallet/ui/WalletOnboarding.jsx'
 import {
   ACTIVE_ACCOUNT_KEY,
   resolveActiveAccount,
@@ -81,14 +77,13 @@ const CSS = `
   border:1px solid rgba(111,227,154,.15);border-radius:999px;display:flex;align-items:center;gap:5px;
   background:rgba(111,227,154,.04);text-transform:uppercase;font-weight:500}
 
-.net-dot{width:5px;height:5px;border-radius:50%;background:var(--ok)}
-
 /* ───── main ───── */
 .vf-main{padding:16px;display:flex;flex-direction:column;gap:14px;flex:1}
-@keyframes screenIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 
-/* screen transition */
-.vf-screen{display:flex;flex-direction:column;gap:14px;animation:screenIn 220ms var(--ease) forwards}
+/* screen transition -- VF Wallet Task 9: a critical wallet screen must not animate content on
+   entry (rejection-checklist item 7); the old entry-animation keyframe applied to every
+   .vf-screen (including seed/backup/import/unlock) is removed, not merely disabled. */
+.vf-screen{display:flex;flex-direction:column;gap:14px}
 
 /* ───── typography ───── */
 .eyebrow{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11px;color:var(--text-faint)}
@@ -135,17 +130,14 @@ const CSS = `
 /* ───── buttons (passkey) ───── */
 .btn{font-family:var(--font);font-size:13px;font-weight:500;padding:11px 18px;border-radius:var(--r-md);
   border:1px solid transparent;cursor:pointer;transition:background-color 160ms ease,border-color 160ms ease,color 160ms ease,transform 160ms var(--ease);text-align:center}
-.btn-primary{color:var(--accent-fg);border-color:transparent;background-color:var(--accent);
-  background-image:linear-gradient(120deg,var(--accent) 0%,#e8ff6a 18%,#b8f07a 36%,#d4ff55 54%,#a8ee88 72%,#f0ff9c 86%,var(--accent) 100%);
-  background-size:300% 300%;background-position:0% 50%;background-repeat:no-repeat;animation:btn-lava 6s ease infinite}
-.btn-primary:hover:not(:disabled){animation:btn-lava 3s ease infinite}
+/* VF Wallet Task 9: dropped the gradient background-image + infinite btn-lava keyframe animation
+   this primary button used to carry (rejection-checklist item 6: no button may use a gradient,
+   outer glow, shimmer, pulse, or infinite animation) -- a flat, solid accent fill instead. */
+.btn-primary{color:var(--accent-fg);border-color:transparent;background-color:var(--accent)}
 .btn-primary:active:not(:disabled){transform:scale(.97)}
 .btn-ghost{background:transparent;color:var(--text);border-color:var(--border-strong)}
-.btn-ghost:hover:not(:disabled){background-color:var(--bg-elev);
-  background-image:linear-gradient(120deg,var(--bg-elev) 0%,color-mix(in srgb,var(--accent) 22%,var(--bg-elev)) 30%,color-mix(in srgb,var(--ok) 16%,var(--bg-elev)) 55%,var(--bg-elev) 100%);
-  background-size:300% 300%;background-repeat:no-repeat;animation:btn-lava 5s ease infinite}
+.btn-ghost:hover:not(:disabled){background-color:var(--bg-elev)}
 .btn:disabled{opacity:.4;cursor:not-allowed}
-.btn-primary:disabled,.vf-btn.primary:disabled{animation:none;background-image:none;background-color:var(--accent)}
 .btn-row{display:flex;gap:8px;flex-wrap:wrap}
 .btn-row .btn{flex:1}
 .btn-row.col{flex-direction:column}
@@ -160,12 +152,11 @@ const CSS = `
 .approve-verdict{margin:0;font-size:12px}
 .approve-verdict.ok{color:var(--ok)}.approve-verdict.bad{color:var(--danger)}
 
-/* pending marker */
-.pending{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:12px;color:var(--text-muted)}
-.marker{width:9px;height:9px;border-radius:50%;background:var(--accent)}
-.blink{animation:blink 1.1s ease-in-out infinite}
-@keyframes blink{0%,100%{opacity:1}50%{opacity:.25}}
-@keyframes btn-lava{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
+/* pending status line -- VF Wallet Task 9: friendly copy ("working…", "loading…", ceremony
+   status) must not be styled in monospace (rejection-checklist item 5); monospace stays reserved
+   for real technical/secret data (.mono/.addr/.tnum elsewhere in this file). The decorative
+   .marker/.blink dot is dropped outright, not just its animation. */
+.pending{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-muted)}
 
 /* ───── bottom nav — frosted glass ───── */
 .vf-nav{display:flex;justify-content:space-around;padding:6px 8px 8px;
@@ -207,15 +198,12 @@ button.link{background:none;border:none;padding:0;cursor:pointer;font:inherit}
 .vf-btn:hover:not(:disabled){background:var(--bg-elev-2)}
 .vf-btn:active:not(:disabled){transform:scale(.97)}
 .vf-btn:disabled{opacity:.35;cursor:not-allowed}
-.vf-btn.primary{color:var(--accent-fg);border-color:transparent;background-color:var(--accent);
-  background-image:linear-gradient(120deg,var(--accent) 0%,#e8ff6a 18%,#b8f07a 36%,#d4ff55 54%,#a8ee88 72%,#f0ff9c 86%,var(--accent) 100%);
-  background-size:300% 300%;background-position:0% 50%;background-repeat:no-repeat;animation:btn-lava 6s ease infinite}
-.vf-btn.primary:hover:not(:disabled){animation:btn-lava 3s ease infinite}
+/* VF Wallet Task 9: dropped the gradient background-image + infinite btn-lava keyframe animation
+   these classic buttons used to carry -- flat, solid fills only (rejection-checklist item 6). */
+.vf-btn.primary{color:var(--accent-fg);border-color:transparent;background-color:var(--accent)}
 .vf-btn.primary:active:not(:disabled){transform:scale(.97)}
 .vf-btn.ghost{background:transparent;border-color:transparent;color:var(--text-muted)}
-.vf-btn.ghost:hover:not(:disabled){color:var(--text);background-color:var(--bg-elev);
-  background-image:linear-gradient(120deg,var(--bg-elev) 0%,color-mix(in srgb,var(--accent) 22%,var(--bg-elev)) 30%,color-mix(in srgb,var(--ok) 16%,var(--bg-elev)) 55%,var(--bg-elev) 100%);
-  background-size:300% 300%;background-repeat:no-repeat;transform:none;box-shadow:none;animation:btn-lava 5s ease infinite}
+.vf-btn.ghost:hover:not(:disabled){color:var(--text);background-color:var(--bg-elev)}
 
 /* feedback text */
 .vf-hint{margin:0;font-size:11.5px;color:var(--text-faint)}
@@ -326,8 +314,6 @@ svg.vf-token-icon{display:block;overflow:hidden}
 }
 
 @media (prefers-reduced-motion:reduce){
-  .vf-screen,.blink{animation:none}
-  .btn-primary,.btn-ghost:hover:not(:disabled),.vf-btn.primary,.vf-btn.ghost:hover:not(:disabled){animation:none;background-image:none}
   .btn,.copy,.vf-tab,.vf-tab-icon,.vf-btn,.vf-address-copy-btn,.vf-qr{transition:color 160ms ease,background-color 160ms ease,border-color 160ms ease,opacity 160ms ease}
   .btn:hover,.btn:active,.vf-btn:hover,.vf-btn:active,.vf-tab:hover .vf-tab-icon,.vf-tab.active .vf-tab-icon,.vf-qr:hover,.vf-address-copy-btn:active,.copy:active{transform:none}
   .btn:active:not(:disabled),.vf-btn:active:not(:disabled){opacity:.82}
@@ -423,10 +409,7 @@ function Shell({ children, nav, active, tabs, onNav, sub = 'passkey · secp256r1
           <div className="vf-brand-name">VF Wallet</div>
           <div className="vf-brand-sub">{sub}</div>
         </div>
-        <span className="vf-net">
-          <span className="net-dot"></span>
-          testnet
-        </span>
+        <span className="vf-net">testnet</span>
       </header>
       <div className="vf-main">{children}</div>
       {nav && <NavBar tabs={tabs} onNav={onNav} active={active} />}
@@ -865,173 +848,167 @@ function Popup() {
   // Classic is the default wallet type; the passkey screens below are unmodified and remain
   // reachable via the "switch to passkey wallet" links on classic-create/classic-settings.
 
+  // ── Onboarding + account choice (VF Wallet Task 9) ────────────────────────
+  // WalletOnboarding is a pure presentational router (no state of its own -- see its own header
+  // comment); this popup keeps owning every handler/state exactly as before (busy/err/backup/cw),
+  // only the rendering moved onto the shared WalletShell.
   if (screen === 'classic-onboarding') {
     return (
-      <Shell sub="classic · onboarding">
-        <OnboardingScreen onGetStarted={() => setScreen('classic-create')} />
-      </Shell>
+      <WalletOnboarding
+        view="choose"
+        onChooseStandard={() => setScreen('classic-create')}
+        onChoosePasskey={() => {
+          localStorage.setItem('vf_wallet_type', 'passkey')
+          setScreen('welcome')
+        }}
+      />
     )
   }
 
   if (screen === 'classic-create') {
     return (
-      <Shell sub="classic · ed25519">
-        <CreateScreen
-          busy={busy}
-          error={err}
-          onGoImport={() => {
-            setErr('')
-            setScreen('classic-import')
-          }}
-          onCreate={async (label, pw) => {
-            setBusy(true)
-            setErr('')
-            try {
-              const r = await C.doCreate(label, pw)
-              setBackup({ mnemonic: r.mnemonic, indices: r.indices, publicKey: r.publicKey })
-              setScreen('classic-backup')
-            } catch (e) {
-              setErr(String(e?.message || e))
-            } finally {
-              setBusy(false)
-            }
-          }}
-        />
-        <p className="vf-hint">
-          Prefer Face ID?{' '}
-          <button
-            className="link"
-            onClick={() => {
-              localStorage.setItem('vf_wallet_type', 'passkey')
-              setScreen('welcome')
-            }}
-          >
-            Use a passkey wallet instead
-          </button>
-        </p>
-      </Shell>
+      <WalletOnboarding
+        view="standard-create"
+        onBack={() => setScreen('classic-onboarding')}
+        createBusy={busy}
+        createError={err}
+        onGoImport={() => {
+          setErr('')
+          setScreen('classic-import')
+        }}
+        onCreate={async (label, pw) => {
+          setBusy(true)
+          setErr('')
+          try {
+            const r = await C.doCreate(label, pw)
+            setBackup({ mnemonic: r.mnemonic, indices: r.indices, publicKey: r.publicKey })
+            setScreen('classic-backup')
+          } catch (e) {
+            setErr(String(e?.message || e))
+          } finally {
+            setBusy(false)
+          }
+        }}
+      />
     )
   }
 
   if (screen === 'classic-backup') {
     return (
-      <Shell sub="classic · ed25519">
-        <BackupScreen
-          mnemonic={backup.mnemonic}
-          indices={backup.indices}
-          error={err}
-          onConfirm={async () => {
-            setErr('')
-            await C.confirmBackup(backup.publicKey)
-            setCw((s) => ({
-              ...s,
-              hasWallet: true,
-              publicKey: backup.publicKey,
-              unlocked: true,
-              needsBackup: false,
-            }))
-            setBackup(null) // decrypted mnemonic never outlives the backup screen
-            setScreen('classic-home')
-            refresh(backup.publicKey)
-          }}
-          onSkip={async () => {
-            setErr('')
-            await C.confirmBackup(backup.publicKey)
-            setCw((s) => ({
-              ...s,
-              hasWallet: true,
-              publicKey: backup.publicKey,
-              unlocked: true,
-              needsBackup: false,
-            }))
-            setBackup(null) // decrypted mnemonic never outlives the backup screen
-            setScreen('classic-home')
-            refresh(backup.publicKey)
-          }}
-        />
-      </Shell>
+      <WalletOnboarding
+        view="standard-backup"
+        mnemonic={backup.mnemonic}
+        indices={backup.indices}
+        backupError={err}
+        onConfirmBackup={async () => {
+          setErr('')
+          await C.confirmBackup(backup.publicKey)
+          setCw((s) => ({
+            ...s,
+            hasWallet: true,
+            publicKey: backup.publicKey,
+            unlocked: true,
+            needsBackup: false,
+          }))
+          setBackup(null) // decrypted mnemonic never outlives the backup screen
+          setScreen('classic-home')
+          refresh(backup.publicKey)
+        }}
+        onSkipBackup={async () => {
+          setErr('')
+          await C.confirmBackup(backup.publicKey)
+          setCw((s) => ({
+            ...s,
+            hasWallet: true,
+            publicKey: backup.publicKey,
+            unlocked: true,
+            needsBackup: false,
+          }))
+          setBackup(null) // decrypted mnemonic never outlives the backup screen
+          setScreen('classic-home')
+          refresh(backup.publicKey)
+        }}
+      />
     )
   }
 
   if (screen === 'classic-import') {
     return (
-      <Shell sub="classic · ed25519">
-        <ImportScreen
-          busy={busy}
-          error={err}
-          onImport={async (input, pw, label) => {
-            setBusy(true)
-            setErr('')
-            try {
-              const r = await C.doImport(input, pw, label)
-              setCw({ ready: true, hasWallet: true, publicKey: r.publicKey, unlocked: true })
-              setScreen('classic-home')
-              refresh(r.publicKey)
-            } catch (e) {
-              setErr(String(e?.message || e))
-            } finally {
-              setBusy(false)
-            }
-          }}
-        />
-      </Shell>
+      <WalletOnboarding
+        view="standard-import"
+        onBack={() => setScreen('classic-onboarding')}
+        importBusy={busy}
+        importError={err}
+        onImport={async (input, pw, label) => {
+          setBusy(true)
+          setErr('')
+          try {
+            const r = await C.doImport(input, pw, label)
+            setCw({ ready: true, hasWallet: true, publicKey: r.publicKey, unlocked: true })
+            setScreen('classic-home')
+            refresh(r.publicKey)
+          } catch (e) {
+            setErr(String(e?.message || e))
+          } finally {
+            setBusy(false)
+          }
+        }}
+      />
     )
   }
 
   if (screen === 'classic-unlock') {
     return (
-      <Shell sub="classic · ed25519">
-        <UnlockScreen
-          publicKey={cw.publicKey}
-          busy={busy}
-          error={err}
-          onUnlock={async (pw) => {
-            setBusy(true)
-            setErr('')
-            try {
-              await C.doUnlock(cw.publicKey, pw)
-            } catch (e) {
-              setErr('Wrong password.')
-              setBusy(false)
-              return
-            }
-            setCw((s) => ({ ...s, unlocked: true }))
-            if (!cw.needsBackup) {
-              setScreen('classic-home')
-              refresh(cw.publicKey)
-              setBusy(false)
-              return
-            }
-            try {
-              // Pending backup survived a popup close — decrypt the mnemonic with the
-              // password just used to unlock, then route through the same backup-confirm
-              // gate a fresh create would, so it can never be silently skipped.
-              const mnemonic = await C.revealBackup(cw.publicKey, pw)
-              setBackup({
-                mnemonic,
-                indices: pickConfirmIndices(24, 3),
-                publicKey: cw.publicKey,
-              })
-              setScreen('classic-backup')
-            } catch (e) {
-              // The password was already proven correct above — this failure means the
-              // backup blob itself is missing/corrupt, so the words are unrecoverable and
-              // retrying the password cannot help. Do not wedge a healthy, already-unlocked
-              // wallet behind a dead backup gate: clear it, route home, and tell the truth
-              // instead of the misleading "Wrong password." from the outer catch.
-              await C.confirmBackup(cw.publicKey)
-              setCw((s) => ({ ...s, needsBackup: false }))
-              setScreen('classic-home')
-              refresh(cw.publicKey)
-              setErr(
-                'Backup phrase unavailable. Use Settings → Export secret as your wallet backup.'
-              )
-            } finally {
-              setBusy(false)
-            }
-          }}
-        />
-      </Shell>
+      <WalletOnboarding
+        view="standard-unlock"
+        account={{ kind: 'G', address: cw.publicKey }}
+        publicKey={cw.publicKey}
+        unlockBusy={busy}
+        unlockError={err}
+        onUnlock={async (pw) => {
+          setBusy(true)
+          setErr('')
+          try {
+            await C.doUnlock(cw.publicKey, pw)
+          } catch (e) {
+            setErr('Wrong password.')
+            setBusy(false)
+            return
+          }
+          setCw((s) => ({ ...s, unlocked: true }))
+          if (!cw.needsBackup) {
+            setScreen('classic-home')
+            refresh(cw.publicKey)
+            setBusy(false)
+            return
+          }
+          try {
+            // Pending backup survived a popup close — decrypt the mnemonic with the
+            // password just used to unlock, then route through the same backup-confirm
+            // gate a fresh create would, so it can never be silently skipped.
+            const mnemonic = await C.revealBackup(cw.publicKey, pw)
+            setBackup({
+              mnemonic,
+              indices: pickConfirmIndices(24, 3),
+              publicKey: cw.publicKey,
+            })
+            setScreen('classic-backup')
+          } catch (e) {
+            // The password was already proven correct above — this failure means the
+            // backup blob itself is missing/corrupt, so the words are unrecoverable and
+            // retrying the password cannot help. Do not wedge a healthy, already-unlocked
+            // wallet behind a dead backup gate: clear it, route home, and tell the truth
+            // instead of the misleading "Wrong password." from the outer catch.
+            await C.confirmBackup(cw.publicKey)
+            setCw((s) => ({ ...s, needsBackup: false }))
+            setScreen('classic-home')
+            refresh(cw.publicKey)
+            setErr('Backup phrase unavailable. Use Settings → Export secret as your wallet backup.')
+          } finally {
+            setBusy(false)
+          }
+        }}
+      />
     )
   }
 
@@ -1292,26 +1269,11 @@ function Popup() {
   // one — the user must choose, and switching never touches the OTHER account's credentials.
   if (screen === 'select-account') {
     return (
-      <Shell sub="choose account">
-        <Eyebrow sec="accounts" meta="choose one" />
-        <h1 className="vf-h">Choose an account</h1>
-        <p className="lede">
-          More than one wallet is set up on this device. Pick which one to use.
-        </p>
-        <div className="doc">
-          {selectableAccounts.map((a) => (
-            <div className="row" key={a.id}>
-              <span className="row-k">{a.kind === 'C' ? 'passkey' : 'classic'}</span>
-              <span className="row-v addr">
-                {a.address.slice(0, 6)}…{a.address.slice(-4)}
-              </span>
-              <button className="vf-btn" onClick={() => handleSelectAccount(a)}>
-                Use this
-              </button>
-            </div>
-          ))}
-        </div>
-      </Shell>
+      <WalletOnboarding
+        view="select-account"
+        accounts={selectableAccounts}
+        onSelectAccount={handleSelectAccount}
+      />
     )
   }
 
@@ -1319,57 +1281,26 @@ function Popup() {
 
   if (screen === 'welcome') {
     return (
-      <Shell>
-        <Eyebrow sec="welcome" meta="face id" />
-        <h1 className="vf-h">A passkey wallet on Stellar.</h1>
-        <p className="lede">
-          No seed phrase. Your Face ID is the key: a secp256r1 signer on a Soroban smart account.
-        </p>
-        {error && <p className="err">{error}</p>}
-        <div className="btn-row col">
-          <button className="btn btn-primary" onClick={handleCreate}>
-            Create new wallet · Face ID
-          </button>
-          <button className="btn btn-ghost" onClick={handleConnect}>
-            Connect / restore
-          </button>
-        </div>
-        <p className="vf-hint" style={{ textAlign: 'center', marginTop: 12 }}>
-          Prefer seed phrase?{' '}
-          <button
-            className="link"
-            onClick={() => {
-              localStorage.setItem('vf_wallet_type', 'classic')
-              setScreen('classic-onboarding')
-              C.bootstrap().then((b) => {
-                if (b.hasWallet) {
-                  setScreen(b.needsBackup || !b.unlocked ? 'classic-unlock' : 'classic-home')
-                }
-              })
-            }}
-          >
-            Use a classic wallet instead
-          </button>
-        </p>
-        <HonestyLabels scope="global" />
-      </Shell>
+      <WalletOnboarding
+        view="passkey-choose"
+        onBack={() => {
+          localStorage.setItem('vf_wallet_type', 'classic')
+          setScreen('classic-onboarding')
+          C.bootstrap().then((b) => {
+            if (b.hasWallet) {
+              setScreen(b.needsBackup || !b.unlocked ? 'classic-unlock' : 'classic-home')
+            }
+          })
+        }}
+        passkeyError={error}
+        onCreatePasskey={handleCreate}
+        onConnectPasskey={handleConnect}
+      />
     )
   }
 
   if (screen === 'creating') {
-    return (
-      <Shell>
-        <Eyebrow sec="creating" meta="testnet" />
-        <h1 className="vf-h">Setting up your wallet…</h1>
-        <p className="lede">
-          Creating the passkey and Friendbot-funding on Stellar testnet. Approve Face ID if
-          prompted.
-        </p>
-        <div className="pending">
-          <span className="marker blink" /> working…
-        </div>
-      </Shell>
-    )
+    return <WalletOnboarding view="passkey-creating" />
   }
 
   if (screen === 'signing-pending') {
@@ -1377,9 +1308,7 @@ function Popup() {
       <Shell>
         <Eyebrow sec="ceremony" meta="face id" />
         <h1 className="vf-h">Approve in the ceremony tab</h1>
-        <div className="pending">
-          <span className="marker blink" /> {status}
-        </div>
+        <div className="pending">{status}</div>
         <p className="note">
           Face ID opens in a new tab. This popup may close, so reopen it to see the result.
         </p>
@@ -1680,9 +1609,7 @@ function Popup() {
   return (
     <Shell>
       <Eyebrow sec="loading" meta="" />
-      <div className="pending">
-        <span className="marker blink" /> loading…
-      </div>
+      <div className="pending">loading…</div>
     </Shell>
   )
 }

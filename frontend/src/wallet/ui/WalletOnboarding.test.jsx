@@ -1,0 +1,517 @@
+// frontend/src/wallet/ui/WalletOnboarding.test.jsx
+// VF Wallet Task 9 -- rebuilds onboarding and account choice around human consequences. This is
+// the composition-root test file (same role MyMoneyRoute.test.jsx plays for /agent): the full
+// first-run journey, the "no secret material in shared state" structural proof, and the
+// rejection-checklist self-check (items 5/6/7 + the decorative .net-dot/.marker.blink elements
+// Task 8 deliberately deferred here) across the entire twelve-file shipped surface, including
+// popup.jsx. Real-browser 320px layout and real-Chromium animation guards close the loop jsdom
+// cannot see.
+// @vitest-environment jsdom
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { WalletOnboarding } from './WalletOnboarding.jsx'
+
+afterEach(cleanup)
+
+const here = path.dirname(fileURLToPath(import.meta.url))
+const POPUP_PATH = path.resolve(here, '../../../extension/popup.jsx')
+
+// Real shape resolveActiveAccount emits for 'selection-required' (activeAccount.js:21-23,:114).
+const G_ACCOUNT = {
+  version: 1,
+  id: 'stellar-testnet:GCLASSICWALLETADDRESSXXXXXX',
+  network: 'stellar-testnet',
+  address: 'GCLASSICWALLETADDRESSXXXXXX',
+  kind: 'G',
+  signer: 'classic-ed25519',
+}
+const C_ACCOUNT = {
+  version: 1,
+  id: 'stellar-testnet:CPASSKEYWALLETADDRESSXXXXXX',
+  network: 'stellar-testnet',
+  address: 'CPASSKEYWALLETADDRESSXXXXXX',
+  kind: 'C',
+  signer: 'passkey-secp256r1',
+}
+
+// Regex source-parse guards below check the SHIPPED CODE, not this task's own prose explaining
+// what was removed and why (which legitimately names the retired identifiers, e.g. "the old
+// btn-lava keyframe animation is removed") -- comments are stripped first so documentation can
+// never accidentally fail its own guard.
+function stripComments(source) {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
+}
+
+// Extracts every `animation`/`animation-name` declaration's VALUE and returns the ones that are
+// not the literal, non-load-bearing `none` reset. A naive `/animation\s*:(?!\s*none)/` regex is
+// defeated by its own greedy `\s*` backtracking to a position before the whitespace that satisfies
+// the lookahead trivially -- extracting and trimming the actual value sidesteps that entirely.
+function nonNoneAnimationDeclarations(source) {
+  return [...source.matchAll(/\banimation(?:-name)?\s*:\s*([^;}]+)/gi)]
+    .map((m) =>
+      m[1]
+        .replace(/!important/i, '')
+        .trim()
+        .toLowerCase()
+    )
+    .filter((value) => value !== 'none')
+}
+
+const SHIPPED_UI_FILES = [
+  path.resolve(here, './WalletShell.jsx'),
+  path.resolve(here, './AccountPicker.jsx'),
+  path.resolve(here, './WalletOnboarding.jsx'),
+  path.resolve(here, './classic/OnboardingScreen.jsx'),
+  path.resolve(here, './classic/CreateScreen.jsx'),
+  path.resolve(here, './classic/ImportScreen.jsx'),
+  path.resolve(here, './classic/BackupScreen.jsx'),
+  path.resolve(here, './classic/UnlockScreen.jsx'),
+]
+
+describe('WalletOnboarding — first screen: the branch, before backup/recovery instructions diverge', () => {
+  it('says "Create or restore a wallet", "Stellar testnet", and explains Standard vs Passkey in plain language', () => {
+    render(<WalletOnboarding view="choose" onChooseStandard={vi.fn()} onChoosePasskey={vi.fn()} />)
+    expect(
+      screen.getByRole('heading', { level: 1, name: 'Create or restore a wallet' })
+    ).toBeTruthy()
+    expect(screen.getByText('Stellar testnet')).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Standard' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Passkey' })).toBeTruthy()
+    expect(screen.getByText(/password you choose/i)).toBeTruthy()
+    expect(screen.getByText(/Face ID, fingerprint/i)).toBeTruthy()
+  })
+
+  it('never surfaces backup/recovery-phrase specifics before a branch is chosen', () => {
+    render(<WalletOnboarding view="choose" onChooseStandard={vi.fn()} onChoosePasskey={vi.fn()} />)
+    expect(screen.queryByText(/write these 24 words/i)).toBeNull()
+    expect(screen.queryByText(/starts with C/i)).toBeNull()
+  })
+
+  it('fires the exact callback for the branch chosen, never the other one', () => {
+    const onChooseStandard = vi.fn()
+    const onChoosePasskey = vi.fn()
+    render(
+      <WalletOnboarding
+        view="choose"
+        onChooseStandard={onChooseStandard}
+        onChoosePasskey={onChoosePasskey}
+      />
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Use a Passkey wallet' }))
+    expect(onChoosePasskey).toHaveBeenCalledTimes(1)
+    expect(onChooseStandard).not.toHaveBeenCalled()
+  })
+})
+
+describe('WalletOnboarding — Standard path: password unlock + recovery phrase, backup verified before completion', () => {
+  it('names password + recovery phrase, and never completes on unverified words', () => {
+    const mnemonic = Array.from({ length: 24 }, (_, i) => `word${i}`).join(' ')
+    const onConfirmBackup = vi.fn()
+    render(
+      <WalletOnboarding
+        view="standard-backup"
+        mnemonic={mnemonic}
+        indices={[0, 1, 2]}
+        onConfirmBackup={onConfirmBackup}
+        onSkipBackup={vi.fn()}
+      />
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Reveal recovery phrase' }))
+    expect(
+      screen.getByRole('heading', { level: 1, name: 'Save your recovery phrase' })
+    ).toBeTruthy()
+    fireEvent.click(screen.getByLabelText(/saved my recovery phrase/i))
+    fireEvent.click(screen.getByRole('button', { name: 'Continue to verification' }))
+    // Every confirm input is left blank -- checkConfirm must reject this and onConfirm must not fire.
+    fireEvent.click(screen.getByRole('button', { name: /Confirm/ }))
+    expect(onConfirmBackup).not.toHaveBeenCalled()
+  })
+})
+
+describe('WalletOnboarding — Passkey path: device/password-manager passkey, C-account behavior, honest recovery constraints', () => {
+  it('states all three in plain language', () => {
+    render(
+      <WalletOnboarding
+        view="passkey-choose"
+        onCreatePasskey={vi.fn()}
+        onConnectPasskey={vi.fn()}
+      />
+    )
+    expect(screen.getByText(/device or password-manager passkey/i)).toBeTruthy()
+    expect(screen.getByText(/starts with C/i)).toBeTruthy()
+    expect(screen.getByText(/cannot be recovered/i)).toBeTruthy()
+  })
+})
+
+describe('WalletOnboarding — both-account state opens AccountPicker before any address reaches the shell', () => {
+  it('renders AccountPicker and no wallet-account-chip', () => {
+    render(
+      <WalletOnboarding
+        view="select-account"
+        accounts={[G_ACCOUNT, C_ACCOUNT]}
+        onSelectAccount={vi.fn()}
+      />
+    )
+    expect(screen.getByTestId('account-picker')).toBeTruthy()
+    expect(screen.queryByTestId('wallet-account-chip')).toBeNull()
+  })
+
+  it('selecting an account calls onSelectAccount with the exact account chosen', () => {
+    const onSelectAccount = vi.fn()
+    render(
+      <WalletOnboarding
+        view="select-account"
+        accounts={[G_ACCOUNT, C_ACCOUNT]}
+        onSelectAccount={onSelectAccount}
+      />
+    )
+    fireEvent.click(screen.getAllByRole('button', { name: 'Use this wallet' })[0])
+    expect(onSelectAccount).toHaveBeenCalledWith(G_ACCOUNT)
+  })
+})
+
+describe('WalletOnboarding — account type + shortened address stay visible in the shell once known', () => {
+  it('standard-unlock shows the account chip for the wallet being unlocked', () => {
+    render(
+      <WalletOnboarding
+        view="standard-unlock"
+        publicKey="GABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        account={{ kind: 'G', address: 'GABCDEFGHIJKLMNOPQRSTUVWXYZ' }}
+        onUnlock={vi.fn()}
+      />
+    )
+    const chip = screen.getByTestId('wallet-account-chip')
+    expect(chip.textContent).toContain('Standard')
+    expect(chip.textContent).toContain('GABCDE')
+  })
+})
+
+describe('WalletOnboarding — every actionable view keeps exactly one primary action visible', () => {
+  const CASES = [
+    [
+      'standard-create with an error',
+      {
+        view: 'standard-create',
+        createError: 'Something went wrong',
+        onCreate: vi.fn(),
+        onGoImport: vi.fn(),
+      },
+    ],
+    [
+      'standard-create while busy',
+      { view: 'standard-create', createBusy: true, onCreate: vi.fn(), onGoImport: vi.fn() },
+    ],
+    [
+      'standard-import with an error',
+      { view: 'standard-import', importError: 'Bad input', onImport: vi.fn() },
+    ],
+    [
+      'standard-unlock with an error',
+      {
+        view: 'standard-unlock',
+        unlockError: 'Wrong password.',
+        onUnlock: vi.fn(),
+        publicKey: 'GXXXXXXXXXXXXXXXXXXXXXXXXXXX',
+      },
+    ],
+    [
+      'passkey-choose with an error (cancel path)',
+      {
+        view: 'passkey-choose',
+        passkeyError: 'No wallet found.',
+        onCreatePasskey: vi.fn(),
+        onConnectPasskey: vi.fn(),
+      },
+    ],
+  ]
+
+  it.each(CASES)('%s exposes exactly one primary button', (_label, props) => {
+    render(<WalletOnboarding {...props} />)
+    expect(document.querySelectorAll('.pc-button--primary').length).toBe(1)
+  })
+})
+
+describe('WalletOnboarding — success routes to the real handler that selects the created/restored account', () => {
+  // WalletOnboarding forwards straight through to the real onCreate/onImport/onCreatePasskey/
+  // onConnectPasskey callbacks -- the actual "selects the exact created/restored account"
+  // guarantee lives in classicAccount.js/account.js (createClassicWallet/importFromSecret/
+  // importFromMnemonic/createPasskeyWallet/connectPasskeyWallet all call selectActiveAccount --
+  // see activeAccount.js's own "deliberate switch" comments), proven by their own unmodified,
+  // still-green test suites. This proves WalletOnboarding actually wires the click to that real
+  // callback rather than an inert stub.
+  it('Create wallet calls the injected onCreate with the entered label and password', () => {
+    const onCreate = vi.fn()
+    render(<WalletOnboarding view="standard-create" onCreate={onCreate} onGoImport={vi.fn()} />)
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'a-strong-password' } })
+    fireEvent.change(screen.getByLabelText('Confirm password'), {
+      target: { value: 'a-strong-password' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Create wallet' }))
+    expect(onCreate).toHaveBeenCalledWith('Main', 'a-strong-password')
+  })
+
+  it('Create new wallet (passkey) calls the injected onCreatePasskey exactly once', () => {
+    const onCreatePasskey = vi.fn()
+    render(
+      <WalletOnboarding
+        view="passkey-choose"
+        onCreatePasskey={onCreatePasskey}
+        onConnectPasskey={vi.fn()}
+      />
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Create new wallet' }))
+    expect(onCreatePasskey).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('WalletOnboarding — secret material cannot reach shared state (structural)', () => {
+  const SOURCE = stripComments(
+    fs.readFileSync(path.resolve(here, './WalletOnboarding.jsx'), 'utf8')
+  )
+
+  // WalletOnboarding is a pure router: no hook that could accumulate state exists in this file at
+  // all, so there is no shared/context/module-level slot here a secret could land in even by
+  // accident -- mnemonic/publicKey pass straight through, untouched, to BackupScreen/UnlockScreen,
+  // which already keep them in transient, per-render React state only (unchanged by this task).
+  it('holds no state of its own — no useState/useEffect/useReducer/useContext anywhere in this file', () => {
+    expect(SOURCE).not.toMatch(/\buseState\b|\buseEffect\b|\buseReducer\b|\buseContext\b/)
+  })
+
+  it('never references seed/secret/password/session-key identifiers directly', () => {
+    const forbidden = /\b(mnemonicBlob|seedPhrase|secretKey|privateKey|sessionKey)\b/i
+    expect(SOURCE).not.toMatch(forbidden)
+  })
+})
+
+describe('WalletOnboarding — rejection checklist items 5/6/7 across the entire shipped surface (source-parse, mutation-provable)', () => {
+  it('item 7: none of the rebuilt onboarding screens declares an entry keyframe animation', () => {
+    for (const file of SHIPPED_UI_FILES) {
+      const source = stripComments(fs.readFileSync(file, 'utf8'))
+      expect(source, `${file} must declare no @keyframes`).not.toMatch(/@keyframes/i)
+      // `animation: none !important` (the documented, non-load-bearing [data-pocket-critical]
+      // reset) is explicitly allowed; any OTHER animation value is not.
+      expect(
+        nonNoneAnimationDeclarations(source),
+        `${file} must declare no animation value other than none`
+      ).toEqual([])
+    }
+  })
+
+  // BackupScreen.jsx keeps ONE inline style: a transform:scaleX(...) progress fill whose value is
+  // a computed fraction (step/2), not a hardcoded design literal -- the same dynamic-value pattern
+  // the contract itself uses for .pc-agent-lane-progress > span's --pc-progress. It pre-dates this
+  // task (BackupScreen.test.jsx, unmodified, asserts its exact scaleX progression) and was never a
+  // flagged violation, so it is exempted from the blanket "no inline style" check below.
+  const NO_INLINE_STYLE_FILES = SHIPPED_UI_FILES.filter((f) => !f.endsWith('BackupScreen.jsx'))
+
+  it('item 6: none of the rebuilt onboarding screens sets a gradient', () => {
+    for (const file of SHIPPED_UI_FILES) {
+      const source = stripComments(fs.readFileSync(file, 'utf8'))
+      expect(source, `${file} must declare no gradient`).not.toMatch(/gradient/i)
+    }
+  })
+
+  it('item 6: no rebuilt onboarding screen hardcodes a design value via inline style', () => {
+    for (const file of NO_INLINE_STYLE_FILES) {
+      const source = stripComments(fs.readFileSync(file, 'utf8'))
+      expect(source, `${file} must set no inline style=`).not.toMatch(/style=/i)
+    }
+  })
+
+  // The exact regressions VF Wallet Task 8 (73802e8) deliberately deferred to this task:
+  // popup.jsx's shared CSS carried an entry-fade keyframe applied to every .vf-screen (item 7) and
+  // an infinite gradient animation on the primary button (item 6). Run against the pre-fix tree,
+  // these assertions were genuinely red (not synthetic) -- confirmed while writing this guard.
+  // `screenIn`/`btn-lava` are checked file-wide (their @keyframes definitions and every usage must
+  // both be gone); the gradient/infinite check is scoped to the actual button rules -- popup.jsx
+  // legitimately keeps an unrelated, pre-existing, non-button gradient elsewhere (.vf-token-icon.
+  // unknown's fallback avatar background), out of this task's file list to touch.
+  it('popup.jsx no longer declares the screenIn entry animation or the infinite btn-lava button animation', () => {
+    const source = stripComments(fs.readFileSync(POPUP_PATH, 'utf8'))
+    expect(source).not.toMatch(/\bscreenIn\b/i)
+    expect(source).not.toMatch(/\bbtn-lava\b/i)
+    const buttonRules = ['.btn-primary', '.vf-btn.primary', '.btn-ghost', '.vf-btn.ghost']
+      .map((selector) => {
+        const escaped = selector.replace(/[.]/g, '\\.')
+        const re = new RegExp(`${escaped}[a-zA-Z:().-]*\\{[^}]*\\}`, 'g')
+        return source.match(re)?.join('\n') ?? ''
+      })
+      .join('\n')
+    expect(buttonRules).not.toMatch(/gradient/i)
+    expect(buttonRules).not.toMatch(/infinite/i)
+  })
+
+  // Decorative net-dot and blinking marker elements Task 8 also deferred here.
+  it('popup.jsx no longer renders the decorative net-dot dot or the blinking marker element', () => {
+    const source = stripComments(fs.readFileSync(POPUP_PATH, 'utf8'))
+    expect(source).not.toMatch(/net-dot/i)
+    expect(source).not.toMatch(/marker\s+blink/i)
+    expect(source).not.toMatch(/@keyframes\s+blink\b/i)
+  })
+
+  // Item 5: the specific popup.jsx regression Task 8 deferred -- the shared .pending status line
+  // (used by the passkey creating/signing-pending/loading screens) set font-family:var(--mono) on
+  // plain English status text ("working…", "loading…", ceremony status). Scoped to the
+  // .pending{...} rule itself so this can never false-positive on the many correct,
+  // contract-required mono rules elsewhere (.mono/.addr/.pc-technical) that legitimately style
+  // real technical/secret data. Not comment-stripped: this checks the literal CSS rule text.
+  it('item 5: popup.jsx no longer styles the shared friendly status line in monospace', () => {
+    const source = fs.readFileSync(POPUP_PATH, 'utf8')
+    const pendingRule = source.match(/\.pending\{[^}]*\}/)?.[0] ?? ''
+    expect(pendingRule, 'the .pending{...} rule must exist to be checked').not.toBe('')
+    expect(pendingRule).not.toMatch(/font-family:\s*var\(--mono\)/i)
+  })
+
+  it('item 5: friendly onboarding copy never renders inside a monospace/technical wrapper', () => {
+    render(<WalletOnboarding view="passkey-creating" />)
+    const status = screen.getByText('Approve the passkey prompt if asked.')
+    expect(status.closest('.pc-technical')).toBeNull()
+    const body = screen.getByText('Creating the passkey and funding it on Stellar testnet.')
+    expect(body.closest('.pc-technical')).toBeNull()
+  })
+
+  it('no file in the shipped surface names Coordination Swarm, ed25519 session-key, or Gasless Relaying as primary copy', () => {
+    for (const file of [...SHIPPED_UI_FILES, POPUP_PATH]) {
+      const source = stripComments(fs.readFileSync(file, 'utf8'))
+      expect(source, `${file} must not name Coordination Swarm`).not.toMatch(/Coordination Swarm/i)
+      expect(source, `${file} must not name "ed25519 session-key"`).not.toMatch(
+        /ed25519 session-key/i
+      )
+      expect(source, `${file} must not name Gasless Relaying`).not.toMatch(/Gasless Relaying/i)
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------------------------
+// Real-browser guards (320px layout, and items 6/7 as jsdom cannot compute either): same launch
+// mechanism MyMoneyRoute.test.jsx's/PlanStage.test.jsx's G1 guard already use, reused verbatim
+// rather than reinvented. WalletShell carries its own <style> (popup.html loads neither
+// wallet.css nor pocket-crew.css -- see WalletShell.jsx's header), so `container.innerHTML`
+// after a render already includes the real, complete stylesheet -- no separate CSS file to
+// concatenate.
+// ---------------------------------------------------------------------------------------------
+const CHROMIUM_CANDIDATES = [
+  undefined,
+  '/usr/bin/google-chrome-stable',
+  '/usr/bin/google-chrome',
+  '/usr/bin/chromium-browser',
+  '/usr/bin/chromium',
+  '/snap/bin/chromium',
+]
+
+async function launchRealChromium() {
+  const { chromium } = await import('playwright-core')
+  let lastErr
+  for (const executablePath of CHROMIUM_CANDIDATES) {
+    if (executablePath && !fs.existsSync(executablePath)) continue
+    try {
+      return await chromium.launch(
+        executablePath ? { executablePath, args: ['--no-sandbox'] } : { args: ['--no-sandbox'] }
+      )
+    } catch (err) {
+      lastErr = err
+    }
+  }
+  throw new Error(
+    `Layout guard: no usable Chromium binary found for real-layout measurement (${lastErr?.message})`
+  )
+}
+
+function buildHarnessHtml(bodyHtml) {
+  return `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0">${bodyHtml}</body></html>`
+}
+
+const ONBOARDING_STATES = [
+  ['choose', { view: 'choose', onChooseStandard: () => {}, onChoosePasskey: () => {} }],
+  [
+    'select-account',
+    { view: 'select-account', accounts: [G_ACCOUNT, C_ACCOUNT], onSelectAccount: () => {} },
+  ],
+  ['standard-create', { view: 'standard-create', onCreate: () => {}, onGoImport: () => {} }],
+  ['standard-import', { view: 'standard-import', onImport: () => {} }],
+  [
+    'standard-backup',
+    {
+      view: 'standard-backup',
+      mnemonic: Array.from({ length: 24 }, (_, i) => `word${i}`).join(' '),
+      indices: [0, 5, 12],
+      onConfirmBackup: () => {},
+      onSkipBackup: () => {},
+    },
+  ],
+  [
+    'standard-unlock',
+    { view: 'standard-unlock', publicKey: 'GABCDEFGHIJKLMNOPQRSTUVWXYZ', onUnlock: () => {} },
+  ],
+  [
+    'passkey-choose',
+    { view: 'passkey-choose', onCreatePasskey: () => {}, onConnectPasskey: () => {} },
+  ],
+  ['passkey-creating', { view: 'passkey-creating' }],
+]
+
+describe('WalletOnboarding — real-browser 320px layout guard, per onboarding/account-picker state', () => {
+  it('creates no horizontal overflow at 320px for every state built', async () => {
+    const results = []
+    for (const [label, props] of ONBOARDING_STATES) {
+      const { container, unmount } = render(<WalletOnboarding {...props} />)
+      results.push([label, container.innerHTML])
+      unmount()
+    }
+
+    const browser = await launchRealChromium()
+    try {
+      for (const [label, html] of results) {
+        const page = await browser.newPage()
+        await page.setViewportSize({ width: 320, height: 900 })
+        await page.setContent(buildHarnessHtml(html))
+        const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth)
+        // eslint-disable-next-line no-console -- reported numbers requested by the task brief
+        console.log(`[320px] ${label}: scrollWidth=${scrollWidth}`)
+        expect(scrollWidth, `${label} @320px scrollWidth`).toBeLessThanOrEqual(320)
+        await page.close()
+      }
+    } finally {
+      await browser.close()
+    }
+  }, 60000)
+})
+
+describe('WalletOnboarding — real-Chromium proof of rejection-checklist items 6/7 (jsdom cannot see this)', () => {
+  it('no element in any critical view has a running (non-"none") animation in a real browser', async () => {
+    const criticalLabels = [
+      'standard-create',
+      'standard-import',
+      'standard-backup',
+      'standard-unlock',
+      'passkey-creating',
+    ]
+    const results = []
+    for (const [label, props] of ONBOARDING_STATES) {
+      if (!criticalLabels.includes(label)) continue
+      const { container, unmount } = render(<WalletOnboarding {...props} />)
+      results.push([label, container.innerHTML])
+      unmount()
+    }
+
+    const browser = await launchRealChromium()
+    try {
+      for (const [label, html] of results) {
+        const page = await browser.newPage()
+        await page.setContent(buildHarnessHtml(html))
+        const animating = await page.evaluate(() =>
+          Array.from(document.querySelectorAll('*'))
+            .map((el) => getComputedStyle(el).animationName)
+            .filter((name) => name && name !== 'none')
+        )
+        expect(animating, `${label}: entry/infinite animation found in real Chromium`).toEqual([])
+        await page.close()
+      }
+    } finally {
+      await browser.close()
+    }
+  }, 60000)
+})
