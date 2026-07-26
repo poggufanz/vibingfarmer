@@ -156,7 +156,9 @@ export async function executeBaseLeg({
     const { burnUnits7, baseTargetUnits6 } =
       exactBaseUnits != null
         ? { burnUnits7: exactBaseUnits * 10n, baseTargetUnits6: exactBaseUnits }
-        : deriveCctpTransferUnits(baseVaults.reduce((sum, v) => sum + totalAmount * v.allocation, 0))
+        : deriveCctpTransferUnits(
+            baseVaults.reduce((sum, v) => sum + totalAmount * v.allocation, 0)
+          )
     const allocations = quantizeAllocations(
       baseVaults.map((v) => {
         const cat = BASE_POOL_CATALOG.find(
@@ -249,13 +251,13 @@ export async function executeBaseLeg({
       return { location: 'unknown', confirmed: false, checkedAt: null }
     }
     const childResults = quotedAllocations.map((allocation, i) => {
-      const remote = (result.allocations || []).find(
-        (entry) => entry?.allocationId === allocation.allocationId
-      ) || {}
+      const remote =
+        (result.allocations || []).find(
+          (entry) => entry?.allocationId === allocation.allocationId
+        ) || {}
       const childError =
         remote.error || (result.success === false ? result.error || 'Base leg failed.' : null)
-      const childSuccess =
-        remote.success !== false && remote.finalStatus !== 'error' && !childError
+      const childSuccess = remote.success !== false && remote.finalStatus !== 'error' && !childError
       return {
         allocationId: allocation.allocationId || `${runId ?? 'run'}-${i}`,
         amount: allocation.allocationAmount || {
@@ -280,12 +282,9 @@ export async function executeBaseLeg({
       }
     })
     const success = result.success !== false && childResults.every((child) => child.success)
-    const error =
-      success
-        ? null
-        : result.error ||
-          childResults.find((child) => child.error)?.error ||
-          'Base leg failed.'
+    const error = success
+      ? null
+      : result.error || childResults.find((child) => child.error)?.error || 'Base leg failed.'
     return {
       success,
       runId,
@@ -317,12 +316,11 @@ export async function executeBaseLeg({
       : { location: 'owner', confirmed: true, checkedAt: null }
     const allocations = (baseVaults || []).map((vault, i) => ({
       allocationId: vault.allocationId || `${runId ?? 'run'}-${i}`,
-      amount:
-        vault.allocationAmount || {
-          token: 'USDC',
-          units: String(deriveCctpTransferUnits(totalAmount * vault.allocation).baseTargetUnits6),
-          decimals: 6,
-        },
+      amount: vault.allocationAmount || {
+        token: 'USDC',
+        units: String(deriveCctpTransferUnits(totalAmount * vault.allocation).baseTargetUnits6),
+        decimals: 6,
+      },
       finalStatus: 'error',
       custody: failureCustody,
       error: message,

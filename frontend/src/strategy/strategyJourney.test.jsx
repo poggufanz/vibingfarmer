@@ -29,7 +29,13 @@ const FUNDED_VAULT = 5_000_000_000n
 
 const disconnectedBase = { connected: false, healthy: null, mandateView: null, action: null }
 const connectedNoBase = { connected: true, healthy: false, mandateView: null, action: null }
-const readyStellarVenue = { name: 'Vibing Farmer Autofarm', protocol: 'blend-usdc', apy: 6.4, risk: 'low', role: 'Conservative, lending' }
+const readyStellarVenue = {
+  name: 'Vibing Farmer Autofarm',
+  protocol: 'blend-usdc',
+  apy: 6.4,
+  risk: 'low',
+  role: 'Conservative, lending',
+}
 
 function agentInitFor(allocationId, units = '1000000000') {
   return {
@@ -81,7 +87,10 @@ function reuseDecision(runId, allocationId, agentAddress = 'CAGENT1') {
     reviewedAgentInits: [agentInitFor(allocationId)],
     confirmationCount: 0,
     grantReceiptFingerprint: '0xreceipt1',
-    allowanceExpiryProof: { latestLedger: 1000, approvals: [{ amount: { token: SOROBAN_TOKEN_ADDRESS, units: '1000000000' } }] },
+    allowanceExpiryProof: {
+      latestLedger: 1000,
+      approvals: [{ amount: { token: SOROBAN_TOKEN_ADDRESS, units: '1000000000' } }],
+    },
     agents: [
       {
         allocationId,
@@ -109,7 +118,10 @@ function classify(err) {
 // Mirrors app.jsx's real wiring (onGenerate/onAcceptPlan/onRetryPreflight/onRequestGrant/
 // onConfirmReuse/requestPermissionConfirmation/handleNewRunEvent) at the scale this test needs.
 const Harness = forwardRef(function Harness({ mocks, initialFlowState }, ref) {
-  const [flow, dispatch] = useReducer(strategyFlowReducer, initialFlowState || initialStrategyFlowState)
+  const [flow, dispatch] = useReducer(
+    strategyFlowReducer,
+    initialFlowState || initialStrategyFlowState
+  )
   const [events, setEvents] = useState([])
   const [receipt, setReceipt] = useState(null)
   const [reached, setReached] = useState(['plan'])
@@ -118,12 +130,16 @@ const Harness = forwardRef(function Harness({ mocks, initialFlowState }, ref) {
   useImperativeHandle(ref, () => ({
     feedEvent(name, data) {
       setEvents((prev) => [...prev, { name, data }])
-      if (name === 'worker-queued') dispatch({ type: 'WORKER_QUEUED', allocationId: data.allocationId })
+      if (name === 'worker-queued')
+        dispatch({ type: 'WORKER_QUEUED', allocationId: data.allocationId })
       if (name === 'worker-started' || name === 'started')
         dispatch({ type: 'WORKER_STARTED', allocationId: data.allocationId })
-      if (name === 'pull-confirmed') dispatch({ type: 'PULL_CONFIRMED', allocationId: data.allocationId })
-      if (name === 'completed') dispatch({ type: 'DEPOSIT_CONFIRMED', allocationId: data.allocationId })
-      if (name === 'failed') dispatch({ type: 'DEPOSIT_FAILED', allocationId: data.allocationId, error: data.error })
+      if (name === 'pull-confirmed')
+        dispatch({ type: 'PULL_CONFIRMED', allocationId: data.allocationId })
+      if (name === 'completed')
+        dispatch({ type: 'DEPOSIT_CONFIRMED', allocationId: data.allocationId })
+      if (name === 'failed')
+        dispatch({ type: 'DEPOSIT_FAILED', allocationId: data.allocationId, error: data.error })
       if (name === 'grant-confirmed' || name === 'reuse-confirmed') {
         dispatch({ type: name === 'grant-confirmed' ? 'GRANT_CONFIRMED' : 'REUSE_CONFIRMED' })
         pendingRef.current?.resolve({ agentAddresses: data.agentAddresses || [] })
@@ -175,7 +191,11 @@ const Harness = forwardRef(function Harness({ mocks, initialFlowState }, ref) {
         const { kind, message } = classify(err)
         if (kind === 'preflight') {
           dispatch({ type: 'PREFLIGHT_FAILED', error: message })
-          reject(err instanceof PermissionPhaseError ? err : new PermissionPhaseError({ phase: 'preflight', code: 'X', message }))
+          reject(
+            err instanceof PermissionPhaseError
+              ? err
+              : new PermissionPhaseError({ phase: 'preflight', code: 'X', message })
+          )
         } else if (kind === 'rejected') {
           dispatch({ type: 'WALLET_REJECTED', reason: message })
           reject(new Error(message))
@@ -248,7 +268,13 @@ const Harness = forwardRef(function Harness({ mocks, initialFlowState }, ref) {
   )
 })
 
-function generatedPlan({ runId = 'run-1', source = 'deepseek', sourceState = 'live-ai', stellarUnits = '1000000000', baseAllocations = [] } = {}) {
+function generatedPlan({
+  runId = 'run-1',
+  source = 'deepseek',
+  sourceState = 'live-ai',
+  stellarUnits = '1000000000',
+  baseAllocations = [],
+} = {}) {
   return { source, sourceState, stellarUnits, baseAllocations }
 }
 
@@ -275,7 +301,9 @@ describe('Strategy journeys (Task 13, Wave 5) — 22 approved-spec cases', () =>
     const onGenerate = vi.fn().mockResolvedValue(generatedPlan())
     const onRetryPreflight = vi.fn().mockResolvedValue(freshDecision('run-1', 'run-1:deposit:0'))
     const onRequestGrant = vi.fn().mockResolvedValue({ agentAddresses: ['CAGENT1'] })
-    const utils = render(<Harness ref={ref} mocks={{ onGenerate, onRetryPreflight, onRequestGrant }} />)
+    const utils = render(
+      <Harness ref={ref} mocks={{ onGenerate, onRetryPreflight, onRequestGrant }} />
+    )
     await buildPlan(utils)
     await waitFor(() => expect(screen.getByText('Accept plan')).toBeTruthy())
     fireEvent.click(screen.getByText('Accept plan'))
@@ -294,7 +322,9 @@ describe('Strategy journeys (Task 13, Wave 5) — 22 approved-spec cases', () =>
     ref.current.feedEvent('worker-started', { allocationId: 'run-1:deposit:0' })
     ref.current.feedEvent('pull-confirmed', { allocationId: 'run-1:deposit:0' })
     ref.current.feedEvent('completed', { allocationId: 'run-1:deposit:0', txHash: '0xdeadbeef' })
-    await waitFor(() => expect(ref.current.getState().custody['run-1:deposit:0'].status).toBe('deposited'))
+    await waitFor(() =>
+      expect(ref.current.getState().custody['run-1:deposit:0'].status).toBe('deposited')
+    )
     const { isReceiptComplete } = await import('./flowState.js')
     expect(isReceiptComplete(ref.current.getState())).toBe(true)
     ref.current.setReceipt({
@@ -317,7 +347,9 @@ describe('Strategy journeys (Task 13, Wave 5) — 22 approved-spec cases', () =>
   })
 
   it('J3: labeled deterministic fallback shows "Safe default plan", never claims live AI', async () => {
-    const onGenerate = vi.fn().mockResolvedValue(generatedPlan({ source: 'fallback', sourceState: 'deterministic' }))
+    const onGenerate = vi
+      .fn()
+      .mockResolvedValue(generatedPlan({ source: 'fallback', sourceState: 'deterministic' }))
     const utils = render(<Harness ref={{ current: null }} mocks={{ onGenerate }} />)
     await buildPlan(utils)
     await waitFor(() => expect(screen.getByText('Safe default plan')).toBeTruthy())
@@ -326,7 +358,9 @@ describe('Strategy journeys (Task 13, Wave 5) — 22 approved-spec cases', () =>
 
   it('J4: an invalid (too-small) amount is rejected before generation ever runs', async () => {
     const onGenerate = vi.fn()
-    const utils = render(<Harness ref={{ current: null }} mocks={{ onGenerate, vaultTotalShares: 0n }} />)
+    const utils = render(
+      <Harness ref={{ current: null }} mocks={{ onGenerate, vaultTotalShares: 0n }} />
+    )
     fireEvent.change(utils.getByLabelText('Amount in USDC'), { target: { value: '0.0001' } })
     fireEvent.click(utils.getByText('Balanced'))
     fireEvent.click(utils.getByText('Build my plan'))
@@ -350,7 +384,9 @@ describe('Strategy journeys (Task 13, Wave 5) — 22 approved-spec cases', () =>
     const onGenerate = vi.fn().mockResolvedValue(generatedPlan())
     const onRetryPreflight = vi.fn().mockResolvedValue(freshDecision('run-1', 'run-1:deposit:0'))
     const onRequestGrant = vi.fn().mockRejectedValue(new Error('User declined access'))
-    const utils = render(<Harness ref={ref} mocks={{ onGenerate, onRetryPreflight, onRequestGrant }} />)
+    const utils = render(
+      <Harness ref={ref} mocks={{ onGenerate, onRetryPreflight, onRequestGrant }} />
+    )
     await buildPlan(utils)
     await waitFor(() => screen.getByText('Accept plan'))
     fireEvent.click(screen.getByText('Accept plan'))
@@ -373,7 +409,9 @@ describe('Strategy journeys (Task 13, Wave 5) — 22 approved-spec cases', () =>
     const onRetryPreflight = vi.fn().mockResolvedValue(freshDecision('run-1', 'run-1:deposit:0'))
     const onRequestGrant = vi.fn().mockResolvedValue({ agentAddresses: ['CAGENT1'] })
     const onConfirmReuse = vi.fn()
-    const utils = render(<Harness ref={ref} mocks={{ onGenerate, onRetryPreflight, onRequestGrant, onConfirmReuse }} />)
+    const utils = render(
+      <Harness ref={ref} mocks={{ onGenerate, onRetryPreflight, onRequestGrant, onConfirmReuse }} />
+    )
     await buildPlan(utils)
     await waitFor(() => screen.getByText('Accept plan'))
     fireEvent.click(screen.getByText('Accept plan'))
@@ -392,7 +430,9 @@ describe('Strategy journeys (Task 13, Wave 5) — 22 approved-spec cases', () =>
     const onRetryPreflight = vi.fn().mockResolvedValue(reuseDecision('run-1', 'run-1:deposit:0'))
     const onRequestGrant = vi.fn()
     const onConfirmReuse = vi.fn().mockResolvedValue({ agentAddresses: ['CAGENT1'] })
-    const utils = render(<Harness ref={ref} mocks={{ onGenerate, onRetryPreflight, onRequestGrant, onConfirmReuse }} />)
+    const utils = render(
+      <Harness ref={ref} mocks={{ onGenerate, onRetryPreflight, onRequestGrant, onConfirmReuse }} />
+    )
     await buildPlan(utils)
     await waitFor(() => screen.getByText('Accept plan'))
     fireEvent.click(screen.getByText('Accept plan'))
@@ -408,7 +448,9 @@ describe('Strategy journeys (Task 13, Wave 5) — 22 approved-spec cases', () =>
 
   it('J9a: Base is excluded from generation before activation — onGenerate never sees baseEligible:true', async () => {
     const onGenerate = vi.fn().mockResolvedValue(generatedPlan({ baseAllocations: [] }))
-    const utils = render(<Harness ref={{ current: null }} mocks={{ onGenerate, base: connectedNoBase }} />)
+    const utils = render(
+      <Harness ref={{ current: null }} mocks={{ onGenerate, base: connectedNoBase }} />
+    )
     await buildPlan(utils)
     await waitFor(() => expect(onGenerate).toHaveBeenCalled())
     expect(onGenerate.mock.calls[0][0]).toMatchObject({ baseEligible: false })
@@ -418,12 +460,34 @@ describe('Strategy journeys (Task 13, Wave 5) — 22 approved-spec cases', () =>
     const onGenerate = vi
       .fn()
       .mockResolvedValueOnce(generatedPlan({ stellarUnits: '1000000000', baseAllocations: [] }))
-      .mockResolvedValueOnce(generatedPlan({ stellarUnits: '500000000', baseAllocations: [{ address: '0xAAA', proxyTarget: 'aave-v3', factSlug: 'aave-v3-base', units: '50000000', chain: 'base' }] }))
+      .mockResolvedValueOnce(
+        generatedPlan({
+          stellarUnits: '500000000',
+          baseAllocations: [
+            {
+              address: '0xAAA',
+              proxyTarget: 'aave-v3',
+              factSlug: 'aave-v3-base',
+              units: '50000000',
+              chain: 'base',
+            },
+          ],
+        })
+      )
     const onRebuildPlan = vi.fn()
     const utils = render(
       <Harness
         ref={{ current: null }}
-        mocks={{ onGenerate, onRebuildPlan, base: { connected: true, healthy: true, mandateView: { ready: true, status: 'ready' }, action: null } }}
+        mocks={{
+          onGenerate,
+          onRebuildPlan,
+          base: {
+            connected: true,
+            healthy: true,
+            mandateView: { ready: true, status: 'ready' },
+            action: null,
+          },
+        }}
       />
     )
     await buildPlan(utils)
@@ -436,7 +500,12 @@ describe('Strategy journeys (Task 13, Wave 5) — 22 approved-spec cases', () =>
         mocks={{
           onGenerate,
           onRebuildPlan,
-          base: { connected: true, healthy: true, mandateView: { ready: true, status: 'ready' }, action: { label: 'Rebuild plan', invalidatesPlan: true } },
+          base: {
+            connected: true,
+            healthy: true,
+            mandateView: { ready: true, status: 'ready' },
+            action: { label: 'Rebuild plan', invalidatesPlan: true },
+          },
         }}
       />
     )
@@ -449,7 +518,12 @@ describe('Strategy journeys (Task 13, Wave 5) — 22 approved-spec cases', () =>
   it('J10: disconnected first plan stays Stellar-only; connecting alone does not retroactively add Base to the reviewed plan', async () => {
     const onGenerate = vi.fn().mockResolvedValue(generatedPlan({ baseAllocations: [] }))
     const onConnectForBase = vi.fn()
-    const utils = render(<Harness ref={{ current: null }} mocks={{ onGenerate, onConnectForBase, base: disconnectedBase }} />)
+    const utils = render(
+      <Harness
+        ref={{ current: null }}
+        mocks={{ onGenerate, onConnectForBase, base: disconnectedBase }}
+      />
+    )
     expect(screen.getByText('Connect to check Base testnet')).toBeTruthy()
     fireEvent.click(screen.getByText('Connect to check Base testnet'))
     expect(onConnectForBase).toHaveBeenCalledTimes(1)
@@ -467,8 +541,14 @@ describe('Strategy journeys (Task 13, Wave 5) — 22 approved-spec cases', () =>
     ref.current.feedEvent('completed', { allocationId: 'a', txHash: '0xa' })
     ref.current.feedEvent('pull-confirmed', { allocationId: 'b' })
     ref.current.feedEvent('failed', { allocationId: 'b', error: 'relay-timeout' })
-    await waitFor(() => expect(screen.getByText('One or more agents did not complete')).toBeTruthy())
-    expect(screen.getByText('Agents that already finished stay confirmed. This page keeps reflecting the real state.')).toBeTruthy()
+    await waitFor(() =>
+      expect(screen.getByText('One or more agents did not complete')).toBeTruthy()
+    )
+    expect(
+      screen.getByText(
+        'Agents that already finished stay confirmed. This page keeps reflecting the real state.'
+      )
+    ).toBeTruthy()
   })
 
   it('J12: one bridge agent settles N children under a single lane/mark, each with its own destination', async () => {
@@ -488,8 +568,20 @@ describe('Strategy journeys (Task 13, Wave 5) — 22 approved-spec cases', () =>
           expiry: Math.floor(Date.now() / 1000) + 86400,
           destination: 'Base Sepolia bridge',
           children: [
-            { allocationId: 'run-1:bridge:aave-v3', address: '0xAAA', proxyTarget: 'aave-v3', destination: 'aave-v3', allocation: { token: 'USDC', units: '25000000', decimals: 6 } },
-            { allocationId: 'run-1:bridge:morpho', address: '0xBBB', proxyTarget: 'morpho-blue', destination: 'morpho-blue', allocation: { token: 'USDC', units: '25000000', decimals: 6 } },
+            {
+              allocationId: 'run-1:bridge:aave-v3',
+              address: '0xAAA',
+              proxyTarget: 'aave-v3',
+              destination: 'aave-v3',
+              allocation: { token: 'USDC', units: '25000000', decimals: 6 },
+            },
+            {
+              allocationId: 'run-1:bridge:morpho',
+              address: '0xBBB',
+              proxyTarget: 'morpho-blue',
+              destination: 'morpho-blue',
+              allocation: { token: 'USDC', units: '25000000', decimals: 6 },
+            },
           ],
         },
       ],
@@ -499,11 +591,20 @@ describe('Strategy journeys (Task 13, Wave 5) — 22 approved-spec cases', () =>
       <Harness
         ref={ref}
         mocks={{}}
-        initialFlowState={{ ...initialStrategyFlowState, moment: 'start', plan, permission: { mode: 'fresh' } }}
+        initialFlowState={{
+          ...initialStrategyFlowState,
+          moment: 'start',
+          plan,
+          permission: { mode: 'fresh' },
+        }}
       />
     )
     ref.current.feedEvent('farm-burn-started', { allocationId: 'run-1:bridge:base' })
-    await waitFor(() => expect(screen.getAllByText(/Burning on Stellar|aave-v3|morpho-blue/).length).toBeGreaterThan(0))
+    await waitFor(() =>
+      expect(screen.getAllByText(/Burning on Stellar|aave-v3|morpho-blue/).length).toBeGreaterThan(
+        0
+      )
+    )
     // ONE bridge mark (one `.pc-agent-lane[data-agent-kind="bridge"]`), both children listed inside it.
     const lanes = document.querySelectorAll('.pc-agent-lane[data-agent-kind="bridge"]')
     expect(lanes.length).toBe(1)
@@ -582,7 +683,13 @@ describe('Strategy journeys (Task 13, Wave 5) — 22 approved-spec cases', () =>
     const onConfirmReuse = vi.fn()
     // Simulates a page-reload restore straight into 'start' with a fresh, unconfirmed-by-this-tab
     // custody map -- no click, no dispatch, just the restored state itself.
-    render(<Harness ref={ref} mocks={{ onRequestGrant, onConfirmReuse }} initialFlowState={toStartState(['a'])} />)
+    render(
+      <Harness
+        ref={ref}
+        mocks={{ onRequestGrant, onConfirmReuse }}
+        initialFlowState={toStartState(['a'])}
+      />
+    )
     await waitFor(() => expect(screen.getByText('Starting your run')).toBeTruthy())
     expect(onRequestGrant).not.toHaveBeenCalled()
     expect(onConfirmReuse).not.toHaveBeenCalled()
@@ -595,7 +702,17 @@ describe('Strategy journeys (Task 13, Wave 5) — 22 approved-spec cases', () =>
       planFingerprint: '0xp',
       amount: { token: SOROBAN_TOKEN_ADDRESS, units: '1000000000', decimals: 7 },
       agents: [
-        { allocationId: 'a', kind: 'deposit', hostNetworkId: 'stellar-testnet', allocation: { token: SOROBAN_TOKEN_ADDRESS, units: '1000000000', decimals: 7 }, cap: { token: SOROBAN_TOKEN_ADDRESS, units: '1000000000', decimals: 7 }, periodSeconds: 86400, expiry: Math.floor(Date.now() / 1000) + 86400, destination: 'Stellar deposit', children: [] },
+        {
+          allocationId: 'a',
+          kind: 'deposit',
+          hostNetworkId: 'stellar-testnet',
+          allocation: { token: SOROBAN_TOKEN_ADDRESS, units: '1000000000', decimals: 7 },
+          cap: { token: SOROBAN_TOKEN_ADDRESS, units: '1000000000', decimals: 7 },
+          periodSeconds: 86400,
+          expiry: Math.floor(Date.now() / 1000) + 86400,
+          destination: 'Stellar deposit',
+          children: [],
+        },
       ],
       truth: { agentIsolationCount: 1, stellarVenueCount: 1, baseUsesProxyVaults: false },
     }
@@ -603,7 +720,12 @@ describe('Strategy journeys (Task 13, Wave 5) — 22 approved-spec cases', () =>
       <Harness
         ref={ref}
         mocks={{}}
-        initialFlowState={{ ...initialStrategyFlowState, moment: 'start', plan, permission: { mode: 'fresh' } }}
+        initialFlowState={{
+          ...initialStrategyFlowState,
+          moment: 'start',
+          plan,
+          permission: { mode: 'fresh' },
+        }}
       />
     )
     await waitFor(() => expect(screen.getByText(/Stellar Testnet/i)).toBeTruthy())
@@ -615,12 +737,34 @@ describe('Strategy journeys (Task 13, Wave 5) — 22 approved-spec cases', () =>
     // orchestrator event contract" integration case (brief Step 1).
     const ref = { current: null }
     render(<Harness ref={ref} mocks={{}} initialFlowState={toStartState(['run-1:deposit:0'])} />)
-    ref.current.feedEvent('worker-queued', { allocationId: 'run-1:deposit:0', agentId: '0xagent', agent: 'CAGENT1', queueIndex: 0 })
-    ref.current.feedEvent('worker-started', { allocationId: 'run-1:deposit:0', agentId: '0xagent', agent: 'CAGENT1', queueIndex: 0 })
-    ref.current.feedEvent('started', { agentId: '0xagent', vault: 'CVAULT', allocationId: 'run-1:deposit:0' })
+    ref.current.feedEvent('worker-queued', {
+      allocationId: 'run-1:deposit:0',
+      agentId: '0xagent',
+      agent: 'CAGENT1',
+      queueIndex: 0,
+    })
+    ref.current.feedEvent('worker-started', {
+      allocationId: 'run-1:deposit:0',
+      agentId: '0xagent',
+      agent: 'CAGENT1',
+      queueIndex: 0,
+    })
+    ref.current.feedEvent('started', {
+      agentId: '0xagent',
+      vault: 'CVAULT',
+      allocationId: 'run-1:deposit:0',
+    })
     ref.current.feedEvent('pull-confirmed', { agentId: '0xagent', allocationId: 'run-1:deposit:0' })
-    ref.current.feedEvent('completed', { agentId: '0xagent', vault: 'CVAULT', txHash: '0xreal', gasMethod: 'relayer', allocationId: 'run-1:deposit:0' })
-    await waitFor(() => expect(ref.current.getState().custody['run-1:deposit:0'].status).toBe('deposited'))
+    ref.current.feedEvent('completed', {
+      agentId: '0xagent',
+      vault: 'CVAULT',
+      txHash: '0xreal',
+      gasMethod: 'relayer',
+      allocationId: 'run-1:deposit:0',
+    })
+    await waitFor(() =>
+      expect(ref.current.getState().custody['run-1:deposit:0'].status).toBe('deposited')
+    )
     const { isReceiptComplete } = await import('./flowState.js')
     expect(isReceiptComplete(ref.current.getState())).toBe(true)
   })
@@ -636,9 +780,15 @@ describe('Strategy journeys (Task 13, Wave 5) — 22 approved-spec cases', () =>
     const onRequestGrant = vi
       .fn()
       .mockRejectedValueOnce(
-        new PermissionPhaseError({ phase: 'preflight', code: 'VF_PLAN_FINGERPRINT_MISMATCH', message: 'stale' })
+        new PermissionPhaseError({
+          phase: 'preflight',
+          code: 'VF_PLAN_FINGERPRINT_MISMATCH',
+          message: 'stale',
+        })
       )
-    const utils = render(<Harness ref={ref} mocks={{ onGenerate, onRetryPreflight, onRequestGrant }} />)
+    const utils = render(
+      <Harness ref={ref} mocks={{ onGenerate, onRetryPreflight, onRequestGrant }} />
+    )
     await buildPlan(utils)
     await waitFor(() => screen.getByText('Accept plan'))
     fireEvent.click(screen.getByText('Accept plan'))
@@ -655,9 +805,15 @@ describe('Strategy journeys (Task 13, Wave 5) — 22 approved-spec cases', () =>
   })
 
   it('J19: WALLET_REJECTED and WALLET_FAILED are distinguishable via permissionError, never byte-identical', () => {
-    let rejected = strategyFlowReducer(initialStrategyFlowState, { type: 'PLAN_READY', plan: { agents: [{ allocationId: 'a' }] } })
+    let rejected = strategyFlowReducer(initialStrategyFlowState, {
+      type: 'PLAN_READY',
+      plan: { agents: [{ allocationId: 'a' }] },
+    })
     rejected = strategyFlowReducer(rejected, { type: 'PROTECT_OPENED' })
-    rejected = strategyFlowReducer(rejected, { type: 'PREFLIGHT_READY', decision: freshDecision('run-1', 'a') })
+    rejected = strategyFlowReducer(rejected, {
+      type: 'PREFLIGHT_READY',
+      decision: freshDecision('run-1', 'a'),
+    })
     rejected = strategyFlowReducer(rejected, { type: 'GRANT_REQUESTED' })
     let failed = rejected
     rejected = strategyFlowReducer(rejected, { type: 'WALLET_REJECTED', reason: 'user-declined' })
@@ -671,10 +827,26 @@ describe('Strategy journeys (Task 13, Wave 5) — 22 approved-spec cases', () =>
     const onGenerate = vi.fn().mockResolvedValue(
       generatedPlan({
         stellarUnits: '500000000',
-        baseAllocations: [{ address: '0xAAA', proxyTarget: 'aave-v3', factSlug: 'aave-v3-base', units: '50000000', chain: 'base' }],
+        baseAllocations: [
+          {
+            address: '0xAAA',
+            proxyTarget: 'aave-v3',
+            factSlug: 'aave-v3-base',
+            units: '50000000',
+            chain: 'base',
+          },
+        ],
       })
     )
-    const utils = render(<Harness ref={{ current: null }} mocks={{ onGenerate, base: { connected: true, healthy: true, mandateView: { ready: true }, action: null } }} />)
+    const utils = render(
+      <Harness
+        ref={{ current: null }}
+        mocks={{
+          onGenerate,
+          base: { connected: true, healthy: true, mandateView: { ready: true }, action: null },
+        }}
+      />
+    )
     await buildPlan(utils)
     await waitFor(() => expect(screen.getByText(/Planned mainnet target/)).toBeTruthy())
     expect(screen.queryByText(/% APY/)).toBeNull()
@@ -693,7 +865,10 @@ describe('Strategy journeys (Task 13, Wave 5) — 22 approved-spec cases', () =>
     render(<Harness ref={ref} mocks={{}} initialFlowState={toStartState(['a'])} />)
     ref.current.feedEvent('pull-confirmed', { allocationId: 'a' })
     const { isReceiptComplete, strategyFlowReducer: reduce } = await import('./flowState.js')
-    let state = reduce(ref.current.getState(), { type: 'ATTESTATION_RECEIVED', attestation: { proof: '0xabc' } })
+    let state = reduce(ref.current.getState(), {
+      type: 'ATTESTATION_RECEIVED',
+      attestation: { proof: '0xabc' },
+    })
     expect(isReceiptComplete(state)).toBe(false)
     state = reduce(state, { type: 'DEPOSIT_CONFIRMED', allocationId: 'a' })
     expect(isReceiptComplete(state)).toBe(true)
@@ -709,7 +884,11 @@ function toStartState(allocationIds) {
     plan: {
       runId: 'run-1',
       planFingerprint: '0xp',
-      amount: { token: SOROBAN_TOKEN_ADDRESS, units: (each * BigInt(allocationIds.length)).toString(), decimals: 7 },
+      amount: {
+        token: SOROBAN_TOKEN_ADDRESS,
+        units: (each * BigInt(allocationIds.length)).toString(),
+        decimals: 7,
+      },
       agents: allocationIds.map((id) => ({
         allocationId: id,
         kind: 'deposit',

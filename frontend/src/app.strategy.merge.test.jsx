@@ -3,7 +3,11 @@
 // (no jsdom) does not provide globally — the "node env fine" note in the brief only holds for
 // helpers that never touch browser globals. jsdom below, same as components.sidebar.test.jsx.
 import { describe, it, expect, vi } from 'vitest'
-import { checkCircleUsdcFunding, readStoredBaseMandate, buildBaseLegContext } from './mergeFlowHelpers.js'
+import {
+  checkCircleUsdcFunding,
+  readStoredBaseMandate,
+  buildBaseLegContext,
+} from './mergeFlowHelpers.js'
 
 describe('merge flow helpers', () => {
   // Strategy Task 13 (decision log #22, obligation D): the two `resolveBaseAvailability`

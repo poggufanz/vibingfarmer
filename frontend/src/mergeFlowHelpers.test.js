@@ -187,19 +187,30 @@ describe('resolveBaseAvailability — canonical bound-mandate contract (Strategy
     expect(await result.baseAvailable).toBe(false)
     expect(result.mandateView.status).toBe('unavailable')
     expect(result.mandateView.ready).toBe(false)
-    expect(result.action).toEqual({ label: 'Connect to check Base testnet', invalidatesPlan: false })
+    expect(result.action).toEqual({
+      label: 'Connect to check Base testnet',
+      invalidatesPlan: false,
+    })
   })
 
   it('keeps a disconnected first plan Stellar-only and offers connection instead of Base', async () => {
     const result = resolveBaseAvailability({
       mandate,
-      connection: { stellarOwner: null, kernelAddress: null, relayerOrigin: null, connected: false },
+      connection: {
+        stellarOwner: null,
+        kernelAddress: null,
+        relayerOrigin: null,
+        connected: false,
+      },
       health: true,
     })
 
     expect(await result.baseAvailable).toBe(false)
     expect(result.mandateView.status).toBe('unavailable')
-    expect(result.action).toEqual({ label: 'Connect to check Base testnet', invalidatesPlan: false })
+    expect(result.action).toEqual({
+      label: 'Connect to check Base testnet',
+      invalidatesPlan: false,
+    })
   })
 
   it('returns Rebuild plan after setup instead of inserting Base into a reviewed plan', async () => {
