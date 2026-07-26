@@ -3,19 +3,60 @@
 // disclosure sink for this route -- raw scope fields, the freshness triple (checkedAt/
 // confirmedLedger/confirmedBlock/source), custody/execution breakdowns, and (last, per Step 4 +
 // the brief's own DOM-list-before-graph rule) the optional agent-graph disclosure. Exercised via
-// MyMoneyRoute.test.jsx (no dedicated test per the brief's Files list).
+// MyMoneyRoute.test.jsx (no dedicated test per the brief's Files list) AND its own
+// TechnicalMoneyDetails.test.jsx (My Money Task 13 Part B item 8, added once this component could
+// mount PixiSwarmGraph directly).
 //
-// The graph placeholder below is intentionally NOT a real Pixi/force-graph render. Wiring
-// src/graph/PixiSwarmGraph.jsx would mean adapting its `strategy`/`execMap` prop contract (built
-// for the legacy console) to MyMoneyModelV1 -- a real integration task of its own, and outside
-// this task's twelve-file scope (no graph-adapter file appears in the brief's Files list). What
-// Step 1 actually requires is structural: every position/agent DOM list renders BEFORE this
-// disclosure, and the disclosure never replaces those lists. A labeled, honest placeholder proves
-// that ordering without pretending to be a finished graph.
+// My Money Task 13 Part B item 8: the placeholder text below is retired for a REAL graph, built
+// from `agents` -- the exact same real per-agent rows AgentTeam/PositionList (both mounted ahead of
+// this section in MyMoneyRoute) already render as DOM list rows. MyMoneyRoute is a pure
+// composition root (outside this task's authorized file list) that only ever forwards `model` and
+// `agents` into this component -- so the adapter below deliberately stays a pure reshape of props
+// already in hand, no new chain read, no new prop threaded through an unauthorized file.
+//
+// This is NOT the per-run orchestrator/worker/step graph `src/graph/topology.js`'s buildGraphData
+// draws from a live `strategy` object (swap/approve/deposit steps) -- MyMoneyRoute reflects
+// DURABLE chain state via discovery, not an in-memory execution run, so there is no `strategy`
+// shape to adapt to here. Instead this builds the simpler, equally real topology this route DOES
+// have proof of: one node per known agent address, one vault node, and a link for each -- using
+// PixiSwarmGraph's own `graphData` escape hatch (bypasses buildGraphData(strategy) entirely, see
+// PixiSwarmGraph.jsx:42-45), so no `strategy`/`execMap` adaptation is needed at all.
+// What remains out of scope: click-through from a graph node back to its AgentTeam row (no
+// `onAgentClick` wired), and this component has no theme/palette signal to pass as
+// `paletteIsLight` (falls back to PixiSwarmGraph's own default) -- neither affects correctness of
+// what the graph shows, only its polish.
+//
+// PixiSwarmGraph is `lazy()`-loaded here, not a top-level static import: this file is itself a
+// plain (non-lazy) import reached from MyMoneyRoute.jsx -> app.jsx, so a static import of
+// PixiSwarmGraph would pull pixi.js's own weight into the SAME eager chunk every `/agent` visit
+// downloads, even for an owner who never opens this disclosure -- verified via a clean
+// `rm -rf dist && npm run build` A/B (pixi's CanvasContextSystem code present in the eager main
+// chunk with a static import here, absent with lazy()).
+import { lazy, Suspense } from 'react'
 import { TechnicalDetails } from '../pocket/Primitives.jsx'
+import { SOROBAN_ACTIVE_VAULT_ADDRESS } from '../../stellar/config.js'
+
+const PixiSwarmGraph = lazy(() =>
+  import('../../graph/PixiSwarmGraph.jsx').then((m) => ({ default: m.PixiSwarmGraph }))
+)
 
 function rawOrUnavailable(value) {
   return value === null || value === undefined ? 'Unavailable' : String(value)
+}
+
+// Pure reshape of `agents` into PixiSwarmGraph's {nodes, links} contract -- every node id is a
+// REAL address already rendered above (AgentTeam's own <li> rows), never a fabricated one. Agents
+// with no address are skipped (mirrors positionsStore.js's own "zero/blank addresses dropped"
+// convention) rather than rendered as an anonymous node.
+function buildAgentNetworkGraphData(agents) {
+  const nodes = [{ id: SOROBAN_ACTIVE_VAULT_ADDRESS, name: 'Your vault', kind: 'vault' }]
+  const links = []
+  for (const agent of agents) {
+    if (!agent?.address) continue
+    nodes.push({ id: agent.address, name: agent.address, kind: 'worker', agentId: agent.address })
+    links.push({ source: agent.address, target: SOROBAN_ACTIVE_VAULT_ADDRESS })
+  }
+  return { nodes, links }
 }
 
 export function TechnicalMoneyDetails({ model, agents = [] }) {
@@ -56,12 +97,20 @@ export function TechnicalMoneyDetails({ model, agents = [] }) {
 
         {/* Optional graph disclosure -- deliberately LAST, after every real DOM list this route
             renders (PositionList/AgentTeam, both mounted ahead of this section in MyMoneyRoute).
-            See this file's header for why no real graph library is wired here yet. */}
+            See this file's header for the adapter this graph is built from -- it supplements the
+            lists above, it never replaces them (those lists mount unconditionally, above). */}
         <TechnicalDetails summary="Agent network graph (advanced)">
           <p>
-            A visual agent network graph is planned for this space. It will only ever supplement the
-            lists above, never replace them.
+            Your agents and the vault they deposit into, drawn from the same real data as the list
+            above. This never replaces that list -- it only visualizes it.
           </p>
+          {agents.length === 0 ? (
+            <p>No agents yet to graph.</p>
+          ) : (
+            <Suspense fallback={<p>Loading graph…</p>}>
+              <PixiSwarmGraph graphData={buildAgentNetworkGraphData(agents)} />
+            </Suspense>
+          )}
         </TechnicalDetails>
       </div>
     </section>
