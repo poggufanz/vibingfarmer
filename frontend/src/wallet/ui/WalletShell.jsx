@@ -327,6 +327,13 @@ code, pre, .pc-technical {
 
 .pc-button--primary { background: var(--pc-harvest); color: var(--pc-harvest-ink); }
 .pc-button--secondary { border-color: var(--pc-line-strong); background: transparent; color: currentcolor; }
+/* VF Wallet Task 11 -- ported verbatim from contract :377-381. The manifest generator's exclusion
+   comment for .pc-button--danger explicitly anticipated this: "No destructive/danger-styled
+   pc-button exists anywhere in the wallet today ... Port it if a future task adds one." Task 11's
+   Reset wallet (classic/SettingsScreen.jsx) is that first real destructive action -- the
+   generator's EXCLUDED_TOKEN_BASES entry for this selector is removed in the same change so the
+   manifest guard picks it up as a real ported rule instead of silently excusing it forever. */
+.pc-button--danger { border-color: var(--pc-danger); background: transparent; color: var(--pc-danger); }
 .pc-button:active:not(:disabled) { transform: translateY(1px) scale(0.99); }
 .pc-button:disabled, .pc-button[aria-disabled='true'] { cursor: not-allowed; opacity: 0.58; }
 
@@ -470,14 +477,22 @@ svg.vf-token-icon { display: block; overflow: hidden; }
    securely" checkbox (step 2, the SAME screen that displays the twelve/24 .pc-technical recovery
    words above it) carries no class of its own and, without this rule, computes the ordinary
    .pc-wallet :where(...,input,...) form-control body font (Geist) while the words it confirms
-   render mono -- a real, reviewer-caught inconsistency (same backup flow, two faces), even though
-   a native checkbox renders no glyphs of its own and the mismatch has no visible effect. Fixed
-   here, in this shared shell, rather than by adding a class in BackupScreen.jsx: that file is not
-   in this task's authorized file list. Specificity (0,2,0), a class plus a type selector, safely
-   outranks the (0,1,0) form-control rule regardless of source order -- no fragile tie to maintain,
-   unlike code/pre/.pc-technical's. Not contract-anchored (BackupScreen's confirmation checkbox is
-   this component's own invention, like .bk-prog-*) -- excluded from the manifest guard for the
-   same reason; guarded instead by WalletShell.test.jsx's own dedicated computed-style test. */
+   render mono -- a same-flow, two-faces inconsistency in the COMPUTED STYLE. Fixed here, in this
+   shared shell, rather than by adding a class in BackupScreen.jsx: that file was not in Task 10's
+   authorized file list. Specificity (0,2,0), a class plus a type selector, safely outranks the
+   (0,1,0) form-control rule regardless of source order -- no fragile tie to maintain, unlike
+   code/pre/.pc-technical's. Not contract-anchored (BackupScreen's confirmation checkbox is this
+   component's own invention, like .bk-prog-*) -- excluded from the manifest guard for the same
+   reason; guarded instead by WalletShell.test.jsx's own dedicated computed-style test below.
+   VF Wallet Task 11 (M6, carried from the VF Wallet Task 10 review): the reviewer who originally
+   raised this WITHDREW the finding as a false positive on further review -- a native checkbox
+   renders no glyphs of its own, so font-family on it is genuinely unobservable; there was never
+   a visible defect here to fix. Left uncorrected, the paragraph above (unchanged since Task 10)
+   would keep reading as "this fixes a real, visible inconsistency," and a later reader would infer
+   a bug that never existed. It is not: this rule is harmless-but-technically-redundant polish, kept
+   for consistency with the words it sits beside, not because dropping it would regress anything a
+   user could see. The rule and its guard test are left in place (removing either is equally valid
+   per the Task 11 brief; commenting the record straight was the lower-risk of the two options). */
 .pc-backup-check input { font-family: var(--pc-font-mono); }
 
 :where(a, button, input, select, textarea, summary):focus-visible {

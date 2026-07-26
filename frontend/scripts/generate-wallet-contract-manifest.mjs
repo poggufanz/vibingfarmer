@@ -233,10 +233,6 @@ const EXCLUDED_TOKEN_BASES = [
   '.pc-dominant--owned',
   '.pc-dominant--workspace',
   '.pc-support-group',
-  // No destructive/danger-styled pc-button exists anywhere in the wallet today (grep-confirmed
-  // zero usage in wallet/ui/**, extension/**) -- BackupScreen's "Skip for now (risky)" and every
-  // other secondary action uses .pc-button--secondary, not this. Port it if a future task adds one.
-  '.pc-button--danger',
   // Wordmark + money-figure display: the wallet has no serif brand lockup (grep-confirmed zero
   // .pc-wordmark usage) and its money display is .pc-wallet-balance (contract :742-748, already
   // `.pc-wallet`-scoped and ported) -- classic/HomeScreen.jsx does set the `data-pocket-money`

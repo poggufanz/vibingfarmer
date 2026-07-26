@@ -11,6 +11,20 @@
 // mnemonic is only ever held in the caller's transient state, never here) are UNCHANGED --
 // verification before completion still cannot be skipped. Mnemonic words themselves keep
 // `.pc-technical` (monospace reserved for real secret/technical data, not prose).
+//
+// VF Wallet Task 11 (no functional change): re-checked this screen against the brief's "quiet
+// destructive screen" contract (no decorative motion; show consequence, active account, network,
+// Cancel, explicit completion). It already passes -- Task 9 already removed every animation;
+// `.pc-backup-warning` states the consequence before any word is revealed; active account and
+// "Stellar testnet" come for free from the WalletShell this screen is always rendered inside
+// (never duplicated here); "Skip for now (risky)" is this flow's Cancel-equivalent once the
+// phrase is on screen (deliberately not offered before Reveal, so a user cannot skip backup
+// without having been shown the phrase at least once); and onConfirm/onSkip are the caller's
+// explicit-completion signal. The one CSS finding motivated by this screen -- WalletShell.jsx's
+// `.pc-backup-check input { font-family: ... }` rule guarding this file's checkbox -- was
+// withdrawn by the reviewer as a false positive (a checkbox renders no glyphs, so the property
+// is unobservable); see WalletShell.jsx's own comment at that rule for the resolution. Nothing in
+// this file needed to change as a result.
 import { useState, useCallback } from 'react'
 import { checkConfirm } from './backupConfirm.js'
 import { HonestyLabels } from '../HonestyLabels.jsx'

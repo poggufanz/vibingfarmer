@@ -6,11 +6,25 @@
 // the body font throughout (checklist item 5: no friendly copy in monospace). Import wiring
 // (classifyImport / importFromSecret / importFromMnemonic via controller.js's doImport) is
 // untouched -- only the markup changed.
+//
+// VF Wallet Task 11: `heading` is an optional override (default text unchanged, so every existing
+// caller -- WalletOnboarding's pre-wallet "Restore a Standard wallet" flow -- is unaffected). This
+// exact component is also reused, unchanged otherwise, inside WalletAdvanced.jsx's "recovery/import
+// tools appropriate to account model" section for a classic wallet that already exists on this
+// device, where "restore" means "replace the wallet on this device," a materially different
+// consequence from onboarding's blank-slate case -- the caller supplies a heading that says so
+// (WalletAdvanced.jsx also renders its own surrounding replace-warning paragraph; this component
+// stays context-agnostic and does not duplicate that copy itself).
 import { useState } from 'react'
 import { classifyImport } from './importValidate.js'
 import { HonestyLabels } from '../HonestyLabels.jsx'
 
-export default function ImportScreen({ onImport, busy, error }) {
+export default function ImportScreen({
+  onImport,
+  busy,
+  error,
+  heading = 'Restore from a secret key or recovery phrase',
+}) {
   const [input, setInput] = useState('')
   const [pw, setPw] = useState('')
   const [label, setLabel] = useState('Imported')
@@ -19,7 +33,7 @@ export default function ImportScreen({ onImport, busy, error }) {
 
   return (
     <div className="pc-standard-form" data-testid="standard-import">
-      <h2>Restore from a secret key or recovery phrase</h2>
+      <h2>{heading}</h2>
       <HonestyLabels scope="global" />
       <div className="pc-field">
         <label htmlFor="wallet-import-secret">Secret key or recovery phrase</label>

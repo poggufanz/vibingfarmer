@@ -6,7 +6,6 @@ import {
   connectPasskeyWallet,
   readBalance,
   depositToVault,
-  addAgentSigner,
 } from '../src/wallet/account.js'
 import { addRecoverySigner } from '../src/wallet/recovery.js'
 import { eligibility } from '../src/vfapi/client.js'
@@ -21,7 +20,6 @@ import SendScreen from '../src/wallet/ui/classic/SendScreen.jsx'
 import ReceiveScreen from '../src/wallet/ui/classic/ReceiveScreen.jsx'
 import AddAssetScreen from '../src/wallet/ui/classic/AddAssetScreen.jsx'
 import HistoryScreen from '../src/wallet/ui/classic/HistoryScreen.jsx'
-import SettingsScreen from '../src/wallet/ui/classic/SettingsScreen.jsx'
 import { pickConfirmIndices } from '../src/wallet/ui/classic/backupConfirm.js'
 import * as C from '../src/wallet/ui/classic/controller.js'
 import { WalletOnboarding } from '../src/wallet/ui/WalletOnboarding.jsx'
@@ -29,6 +27,8 @@ import { WalletShell } from '../src/wallet/ui/WalletShell.jsx'
 import { WalletHome } from '../src/wallet/ui/WalletHome.jsx'
 import { WalletActivity } from '../src/wallet/ui/WalletActivity.jsx'
 import { WalletReceive } from '../src/wallet/ui/WalletReceive.jsx'
+import { WalletSettings } from '../src/wallet/ui/WalletSettings.jsx'
+import { WalletAdvanced } from '../src/wallet/ui/WalletAdvanced.jsx'
 import {
   ACTIVE_ACCOUNT_KEY,
   resolveActiveAccount,
@@ -345,37 +345,6 @@ svg.vf-token-icon{display:block;overflow:hidden}
 }
 `
 
-const NAV_TABS = ['home', 'send', 'deposit', 'signers', 'recovery', 'activity', 'agent']
-// Classic (seed-phrase) wallet has its own, smaller tab set — deposit-only-via-Send,
-// no signer/agent ceremonies. Kept as a separate const per the plan rather than branching
-// NAV_TABS itself, so the passkey tab list is untouched.
-const NAV_TABS_CLASSIC = ['home', 'send', 'receive', 'activity', 'settings']
-
-// SVG icon paths for the classic nav tabs (Feather-icon style, 20×20 viewBox)
-const TAB_ICONS = {
-  home: <path d="M3 10.5L10 4l7 6.5V17a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-6.5z" />,
-  send: (
-    <>
-      <path d="M17 3L3 10l5 2 2 5 7-14z" />
-      <line x1="17" y1="3" x2="8" y2="12" />
-    </>
-  ),
-  receive: (
-    <>
-      <path d="M4 16v1a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-1" />
-      <polyline points="7 10 10 13 13 10" />
-      <line x1="10" y1="3" x2="10" y2="13" />
-    </>
-  ),
-  activity: <polyline points="3 14 7 10 11 13 17 6" />,
-  settings: (
-    <>
-      <circle cx="10" cy="10" r="3" />
-      <path d="M17.4 11.4a1.2 1.2 0 0 0 .24 1.32l.04.04a1.44 1.44 0 1 1-2.04 2.04l-.04-.04a1.2 1.2 0 0 0-1.32-.24 1.2 1.2 0 0 0-.72 1.08v.12a1.44 1.44 0 0 1-2.88 0v-.06a1.2 1.2 0 0 0-.78-1.08 1.2 1.2 0 0 0-1.32.24l-.04.04a1.44 1.44 0 1 1-2.04-2.04l.04-.04a1.2 1.2 0 0 0 .24-1.32 1.2 1.2 0 0 0-1.08-.72H5.28a1.44 1.44 0 0 1 0-2.88h.06a1.2 1.2 0 0 0 1.08-.78 1.2 1.2 0 0 0-.24-1.32L6.14 5.66a1.44 1.44 0 1 1 2.04-2.04l.04.04a1.2 1.2 0 0 0 1.32.24h.06A1.2 1.2 0 0 0 10.32 2.82V2.7a1.44 1.44 0 0 1 2.88 0v.06a1.2 1.2 0 0 0 .72 1.08 1.2 1.2 0 0 0 1.32-.24l.04-.04a1.44 1.44 0 1 1 2.04 2.04l-.04.04a1.2 1.2 0 0 0-.24 1.32v.06a1.2 1.2 0 0 0 1.08.72h.12a1.44 1.44 0 0 1 0 2.88h-.06a1.2 1.2 0 0 0-1.08.72z" />
-    </>
-  ),
-}
-
 function Eyebrow({ sec, meta }) {
   return (
     <div className="eyebrow">
@@ -387,38 +356,15 @@ function Eyebrow({ sec, meta }) {
   )
 }
 
-function NavBar({ tabs = NAV_TABS, onNav, active }) {
-  return (
-    <nav className="vf-nav">
-      {tabs.map((t) => (
-        <button
-          key={t}
-          className={'vf-tab' + (t === active ? ' active' : '')}
-          aria-current={t === active ? 'page' : undefined}
-          onClick={() => onNav(t)}
-        >
-          <span className="vf-tab-icon">
-            <svg
-              width="18"
-              height="18"
-              viewBox="0 0 20 20"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              {TAB_ICONS[t] || <circle cx="10" cy="10" r="6" />}
-            </svg>
-          </span>
-          {t}
-        </button>
-      ))}
-    </nav>
-  )
-}
-
-function Shell({ children, nav, active, tabs, onNav, sub = 'passkey · secp256r1' }) {
+// VF Wallet Task 11 -- the old bottom NavBar (7-tab passkey set + a separate 5-tab classic set)
+// is removed along with it: every screen that used to render it (deposit/signers/recovery/agent)
+// is gone (see this task's report -- those screens had no route IN from the beginner
+// Home/Activity/Settings nav Task 10 shipped, and 'agent' exposed `addAgentSigner` as a live
+// submit control, which this task's brief forbids outright), and classic-settings/wallet-settings
+// now render through WalletSettings.jsx, which supplies its own pc-wallet-nav via WalletShell. The
+// remaining Shell callers (signing-pending/result/loading fallback) never used `nav` in a way that
+// still has a valid destination, so this component keeps only what they need.
+function Shell({ children, sub = 'passkey · secp256r1' }) {
   return (
     <div className="vf">
       <style>{CSS}</style>
@@ -433,7 +379,6 @@ function Shell({ children, nav, active, tabs, onNav, sub = 'passkey · secp256r1
         <span className="vf-net">testnet</span>
       </header>
       <div className="vf-main">{children}</div>
-      {nav && <NavBar tabs={tabs} onNav={onNav} active={active} />}
     </div>
   )
 }
@@ -497,10 +442,6 @@ function Popup() {
 
   // Recovery form
   const [recoveryG, setRecoveryG] = useState('')
-
-  // Agent form
-  const [agentAddress, setAgentAddress] = useState('')
-  const [agentCap, setAgentCap] = useState('')
 
   // Result
   const [lastTx, setLastTx] = useState(null)
@@ -780,31 +721,11 @@ function Popup() {
     }
   }
 
-  async function handleAddAgent() {
-    clear()
-    if (!/^[G][A-Z2-7]{55}$/i.test(agentAddress)) {
-      setError('Invalid agent G-address')
-      return
-    }
-    const capVal = parseFloat(agentCap)
-    if (isNaN(capVal) || capVal <= 0) {
-      setError('Spending cap must be greater than 0')
-      return
-    }
-    try {
-      await addAgentSigner({
-        agentAddress,
-        cap: agentCap,
-        vault: SOROBAN_VAULT_ADDRESS,
-        expiry: Math.floor(Date.now() / 1000) + 86400 * 7,
-      })
-      setStatus('Agent scope granted. Ceremony required on next deposit.')
-      setAgentAddress('')
-      setAgentCap('')
-    } catch (e) {
-      setError(e.message)
-    }
-  }
+  // VF Wallet Task 11 -- handleAddAgent (a live `addAgentSigner` submit path) is deleted outright,
+  // not merely hidden: the task's brief forbids exposing it as a live action at all ("its
+  // cap-policy contract is undeployed"). WalletAdvanced.jsx's standalone agent-signer section is
+  // read-only documentation with no input and no submit control, so there is no prop shape left
+  // anywhere in this file that could wire a live call to it back in by accident.
 
   // Default top-up = 300 USDC (the per-recipient daily faucet cap), in 7-decimal base units.
   // getTestUsdc loops the 100-cap endpoint to reach it.
@@ -1128,19 +1049,20 @@ function Popup() {
   }
 
   if (screen === 'classic-add-asset') {
+    // VF Wallet Task 11 -- wrapped in the real WalletShell instead of the old unstyled Acid Yield
+    // Shell: AddAssetScreen.jsx now renders pc-* markup (recomposed this task), and pc-* classes
+    // have no declarations at all inside the old Shell's <style>{CSS}</style> -- it would render
+    // unstyled there. WalletShell's own Back control replaces the hand-rolled "← Back" button.
     return (
-      <Shell sub="classic · ed25519">
-        <button
-          type="button"
-          className="vf-btn ghost"
-          style={{ alignSelf: 'flex-start', padding: '6px 4px' }}
-          onClick={() => {
-            setErr('')
-            setScreen('classic-home')
-          }}
-        >
-          ← Back
-        </button>
+      <WalletShell
+        heading="Add asset"
+        account={{ kind: 'G', address: cw.publicKey }}
+        onBack={() => {
+          setErr('')
+          setScreen('classic-home')
+        }}
+        status={err ? { tone: 'error', message: err } : null}
+      >
         <AddAssetScreen
           busy={busy}
           error={err}
@@ -1158,10 +1080,12 @@ function Popup() {
             }
           }}
         />
-      </Shell>
+      </WalletShell>
     )
   }
 
+  // VF Wallet Task 11 (M2, see the passkey 'activity' screen below for the full decision):
+  // `baseItems` is not passed here either, for the same reason -- no authoritative source.
   if (screen === 'classic-activity') {
     return (
       <WalletActivity
@@ -1174,39 +1098,51 @@ function Popup() {
   }
 
   if (screen === 'classic-settings') {
+    // VF Wallet Task 11 -- migrated off the old Acid Yield Shell/NavBar onto WalletSettings, the
+    // same pc-* redesign classic-home/classic-activity already use. The export-secret reveal
+    // (popup.jsx-owned state, unchanged) is restyled onto pc-* classes as WalletSettings children:
+    // the old vf-* classes have no declarations inside WalletShell's <style>, so left as-is they
+    // would render unstyled. The revealed secret carries .pc-address-full -- a 56-char S-key is
+    // exactly the unbreakable-long-technical-string case that guard exists for.
     return (
-      <Shell
-        nav
-        active="settings"
-        tabs={NAV_TABS_CLASSIC}
+      <WalletSettings
+        account={{ kind: 'G', address: cw.publicKey }}
         onNav={classicNav}
-        sub="classic · ed25519"
+        status={err ? { tone: 'error', message: err } : null}
+        securityLabel={cw.unlocked ? 'Unlocked' : 'Locked'}
+        autoLockMin={autoLockMin}
+        onSetAutoLock={setAutoLockMin}
+        onLock={async () => {
+          await C.doLock()
+          setCw((s) => ({ ...s, unlocked: false }))
+          setExportForm({ open: false, pw: '', secret: null, error: '' })
+          setScreen('classic-unlock')
+        }}
+        onExport={() => setExportForm({ open: true, pw: '', secret: null, error: '' })}
+        onReset={async () => {
+          await chrome.storage.local.clear()
+          await chrome.storage.session?.clear()
+          window.location.reload()
+        }}
+        onSwitchAccount={() => {
+          setExportForm({ open: false, pw: '', secret: null, error: '' })
+          localStorage.setItem('vf_wallet_type', 'passkey')
+          setScreen('welcome')
+        }}
+        switchLabel="Switch to passkey wallet"
+        onOpenAdvanced={() => setScreen('classic-advanced')}
       >
-        <SettingsScreen
-          autoLockMin={autoLockMin}
-          onSetAutoLock={setAutoLockMin}
-          onLock={async () => {
-            await C.doLock()
-            setCw((s) => ({ ...s, unlocked: false }))
-            setExportForm({ open: false, pw: '', secret: null, error: '' })
-            setScreen('classic-unlock')
-          }}
-          onExport={() => setExportForm({ open: true, pw: '', secret: null, error: '' })}
-          onReset={async () => {
-            await chrome.storage.local.clear()
-            await chrome.storage.session?.clear()
-            window.location.reload()
-          }}
-        />
         <HonestyLabels scope="session-key" />
 
         {exportForm.open && (
-          <div className="vf-screen vf-export">
+          <div className="pc-support" data-testid="export-secret-form">
             {!exportForm.secret ? (
               <>
-                <label>
-                  Password
+                <div className="pc-field">
+                  <label htmlFor="export-secret-password">Password</label>
                   <input
+                    id="export-secret-password"
+                    className="pc-input"
                     type="password"
                     autoComplete="current-password"
                     value={exportForm.pw}
@@ -1214,11 +1150,19 @@ function Popup() {
                       setExportForm((f) => ({ ...f, pw: e.target.value, error: '' }))
                     }
                   />
-                </label>
-                {exportForm.error && <p className="vf-error">{exportForm.error}</p>}
-                <div className="vf-actions">
+                </div>
+                {exportForm.error && <p className="pc-field-error">{exportForm.error}</p>}
+                <div className="pc-wallet-actions">
                   <button
-                    className="vf-btn primary"
+                    type="button"
+                    className="pc-button pc-button--secondary"
+                    onClick={() => setExportForm({ open: false, pw: '', secret: null, error: '' })}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="pc-button pc-button--primary"
                     disabled={!exportForm.pw}
                     onClick={async () => {
                       try {
@@ -1231,23 +1175,18 @@ function Popup() {
                   >
                     Reveal secret
                   </button>
-                  <button
-                    className="vf-btn ghost"
-                    onClick={() => setExportForm({ open: false, pw: '', secret: null, error: '' })}
-                  >
-                    Cancel
-                  </button>
                 </div>
               </>
             ) : (
               <>
-                <p className="vf-warn">
+                <p className="pc-backup-warning">
                   This is your ONLY secret key. Anyone with it controls this wallet. Shown once — it
                   will not be shown again.
                 </p>
-                <code className="vf-address-full">{exportForm.secret}</code>
+                <code className="pc-technical pc-address-full">{exportForm.secret}</code>
                 <button
-                  className="vf-btn primary"
+                  type="button"
+                  className="pc-button pc-button--primary"
                   onClick={() => setExportForm({ open: false, pw: '', secret: null, error: '' })}
                 >
                   Done — hide it
@@ -1256,20 +1195,51 @@ function Popup() {
             )}
           </div>
         )}
+      </WalletSettings>
+    )
+  }
 
-        <p className="vf-hint">
-          <button
-            className="link"
-            onClick={() => {
-              setExportForm({ open: false, pw: '', secret: null, error: '' })
-              localStorage.setItem('vf_wallet_type', 'passkey')
-              setScreen('welcome')
-            }}
-          >
-            Switch to passkey wallet
-          </button>
-        </p>
-      </Shell>
+  if (screen === 'classic-advanced') {
+    // VF Wallet Task 11 -- consolidates friendbot/faucet + "restore a different wallet" for the
+    // Standard (G) account model. No direct-vault-deposit or recovery-signer section: both are
+    // kit-based Passkey ceremonies (account.js/recovery.js) with no Standard equivalent -- omitted
+    // entirely rather than rendered disabled (no dead button; fail closed).
+    return (
+      <WalletAdvanced
+        account={{ kind: 'G', address: cw.publicKey }}
+        onBack={() => setScreen('classic-settings')}
+        status={err ? { tone: 'error', message: err } : null}
+        busy={busy}
+        onGetUsdc={handleClassicGetUsdc}
+        onFundXlm={async () => {
+          setBusy(true)
+          setErr('')
+          try {
+            await C.doFund(cw.publicKey)
+            await refresh(cw.publicKey)
+          } catch (e) {
+            setErr(String(e?.message || e))
+          } finally {
+            setBusy(false)
+          }
+        }}
+        importBusy={busy}
+        importError={err}
+        onImportWallet={async (input, pw, label) => {
+          setBusy(true)
+          setErr('')
+          try {
+            const r = await C.doImport(input, pw, label)
+            setCw({ ready: true, hasWallet: true, publicKey: r.publicKey, unlocked: true })
+            setScreen('classic-home')
+            refresh(r.publicKey)
+          } catch (e) {
+            setErr(String(e?.message || e))
+          } finally {
+            setBusy(false)
+          }
+        }}
+      />
     )
   }
 
@@ -1330,7 +1300,7 @@ function Popup() {
 
   if (screen === 'result') {
     return (
-      <Shell nav active={null} onNav={nav}>
+      <Shell>
         <Eyebrow sec="result" meta="testnet" />
         <h1 className="vf-h">Done.</h1>
         <p data-testid="result-status" className="info">
@@ -1381,54 +1351,77 @@ function Popup() {
     )
   }
 
-  // NEW: Passkey had no Settings screen at all before this task (only a link buried on Home) --
-  // the beginner nav (Home/Activity/Settings) needs a real destination for its third tab, so the
-  // account-switch/reset action now lives here instead, matching where classic's own equivalent
-  // link already lives (classic-settings, not classic-home).
+  // Passkey had no Settings screen at all before VF Wallet Task 10 (only a link buried on Home) --
+  // the beginner nav (Home/Activity/Settings) needs a real destination for its third tab. VF
+  // Wallet Task 11 migrates it onto WalletSettings (the same Base-mandate summary and
+  // Advanced/Testnet link classic-settings now gets) -- Passkey has no lock/password model, so
+  // WalletSettings renders none of classic/SettingsScreen.jsx's controls for this account kind
+  // (no onLock is ever passed here).
   if (screen === 'wallet-settings') {
     return (
-      <WalletShell
-        heading="Settings"
+      <WalletSettings
         account={{ kind: 'C', address: wallet?.contractId }}
-        nav={{
-          tabs: [
-            { id: 'home', label: 'Home' },
-            { id: 'activity', label: 'Activity' },
-            { id: 'settings', label: 'Settings' },
-          ],
-          active: 'settings',
-          onNav: passkeyNav,
-        }}
-      >
-        <button
-          type="button"
-          className="pc-button pc-button--secondary"
-          onClick={async () => {
-            localStorage.removeItem('vf_wallet_contract')
-            localStorage.removeItem('vf_wallet_credential')
-            localStorage.setItem('vf_wallet_type', 'classic')
-            if (typeof chrome !== 'undefined' && chrome.storage?.local) {
-              // Reset (not a benign switch — this button deletes the passkey account outright),
-              // so the stale active-account pointer must go with it rather than linger for the
-              // next resolveActiveAccount call to self-heal around.
-              await chrome.storage.local.remove([
-                'vf_wallet_contract',
-                'vf_wallet_credential',
-                ACTIVE_ACCOUNT_KEY,
-              ])
+        onNav={passkeyNav}
+        securityLabel="Secured by Face ID"
+        onSwitchAccount={async () => {
+          localStorage.removeItem('vf_wallet_contract')
+          localStorage.removeItem('vf_wallet_credential')
+          localStorage.setItem('vf_wallet_type', 'classic')
+          if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+            // Reset (not a benign switch — this button deletes the passkey account outright), so
+            // the stale active-account pointer must go with it rather than linger for the next
+            // resolveActiveAccount call to self-heal around.
+            await chrome.storage.local.remove([
+              'vf_wallet_contract',
+              'vf_wallet_credential',
+              ACTIVE_ACCOUNT_KEY,
+            ])
+          }
+          setWallet(null)
+          setScreen('classic-onboarding')
+          C.bootstrap().then((b) => {
+            if (b.hasWallet) {
+              setScreen(b.needsBackup || !b.unlocked ? 'classic-unlock' : 'classic-home')
             }
-            setWallet(null)
-            setScreen('classic-onboarding')
-            C.bootstrap().then((b) => {
-              if (b.hasWallet) {
-                setScreen(b.needsBackup || !b.unlocked ? 'classic-unlock' : 'classic-home')
-              }
-            })
-          }}
-        >
-          Switch to classic wallet / Reset
-        </button>
-      </WalletShell>
+          })
+        }}
+        switchLabel="Switch to classic wallet / Reset"
+        onOpenAdvanced={() => setScreen('wallet-advanced')}
+      />
+    )
+  }
+
+  if (screen === 'wallet-advanced') {
+    // VF Wallet Task 11 -- consolidates the direct vault deposit, VF-custodied recovery signer,
+    // and read-only agent-signer preview for the Passkey (C) account model. No friendbot XLM
+    // section: Passkey accounts auto-fund at creation (account.js's createPasskeyWallet) and have
+    // no exposed friendbot-XLM path elsewhere either -- omitted rather than rendered disabled.
+    return (
+      <WalletAdvanced
+        account={{ kind: 'C', address: wallet?.contractId }}
+        onBack={() => setScreen('wallet-settings')}
+        status={
+          error
+            ? { tone: 'error', message: error }
+            : status
+              ? { tone: 'info', message: status }
+              : null
+        }
+        onGetUsdc={handlePasskeyGetUsdc}
+        depositAmount={depositAmount}
+        onDepositAmountChange={(v) => {
+          setDepositAmount(v)
+          setDepositVerdict(null)
+        }}
+        depositVerdict={depositVerdict}
+        onCheckEligibility={handleDepositCheck}
+        onEnableDeposits={handleEnableDeposits}
+        onApproveDeposit={handleDepositApprove}
+        onRejectDeposit={() => setDepositVerdict(null)}
+        recoveryAddress={recoveryG}
+        onRecoveryAddressChange={setRecoveryG}
+        onAddRecoverySigner={handleAddRecovery}
+      />
     )
   }
 
@@ -1466,98 +1459,19 @@ function Popup() {
     )
   }
 
-  if (screen === 'deposit') {
-    return (
-      <Shell nav active="deposit" onNav={nav}>
-        <Eyebrow sec="deposit" meta="vault · blend usdc" />
-        <h1 className="vf-h">Deposit to vault</h1>
-        <div className="amount-row">
-          <input
-            className="amount tnum"
-            type="number"
-            placeholder="0"
-            aria-label="Amount to deposit, in USDC"
-            value={depositAmount}
-            onChange={(e) => {
-              setDepositAmount(e.target.value)
-              setDepositVerdict(null)
-            }}
-          />
-          <span className="ticker">USDC</span>
-        </div>
-        {error && <p className="err">{error}</p>}
-        <div className="btn-row">
-          {!depositVerdict && (
-            <button
-              className="btn btn-ghost"
-              onClick={handleDepositCheck}
-              disabled={!depositAmount}
-            >
-              Check eligibility
-            </button>
-          )}
-          <button className="btn btn-ghost" onClick={handleEnableDeposits}>
-            Enable deposits
-          </button>
-        </div>
-        {depositVerdict && (
-          <ApproveOverlay
-            verdict={depositVerdict}
-            simulate={null}
-            onApprove={handleDepositApprove}
-            onReject={() => setDepositVerdict(null)}
-          />
-        )}
-        <HonestyLabels scope="deposit" />
-      </Shell>
-    )
-  }
-
-  if (screen === 'signers') {
-    return (
-      <Shell nav active="signers" onNav={nav}>
-        <Eyebrow sec="signers" meta="multi-sig" />
-        <h1 className="vf-h">Signers</h1>
-        <div className="doc">
-          <div className="row">
-            <span className="row-k">primary</span>
-            <span className="row-v">Passkey · Face ID</span>
-          </div>
-          <div className="row">
-            <span className="row-k">curve</span>
-            <span className="row-v mono">secp256r1 · on-device</span>
-          </div>
-        </div>
-        <p className="note">Additional signers are managed on the recovery and agent screens.</p>
-        {error && <p className="err">{error}</p>}
-        {status && <p className="info">{status}</p>}
-      </Shell>
-    )
-  }
-
-  if (screen === 'recovery') {
-    return (
-      <Shell nav active="recovery" onNav={nav}>
-        <Eyebrow sec="recovery" meta="vf-custodied" />
-        <h1 className="vf-h">Recovery signer</h1>
-        <div className="field">
-          <label className="row-k">recovery address</label>
-          <input
-            className="input mono"
-            placeholder="Recovery G-address"
-            value={recoveryG}
-            onChange={(e) => setRecoveryG(e.target.value)}
-          />
-        </div>
-        {error && <p className="err">{error}</p>}
-        {status && <p className="info">{status}</p>}
-        <button className="btn btn-primary" onClick={handleAddRecovery} disabled={!recoveryG}>
-          Add recovery signer
-        </button>
-        <HonestyLabels scope="recovery" />
-      </Shell>
-    )
-  }
+  // VF Wallet Task 11 -- the old 'deposit'/'signers'/'recovery'/'agent' Shell screens are deleted
+  // outright, not just unlinked. They were already unreachable dead code before this task (Task
+  // 10's beginner Home/Activity/Settings nav only links to Send/Receive/Add asset/Get test USDC --
+  // nothing routed INTO this cluster once Home stopped rendering the old 7-tab NavBar), and the
+  // 'agent' screen additionally exposed `addAgentSigner` as a LIVE submit control years before its
+  // cap-policy contract is deployed, exactly what this task's brief forbids. Their real
+  // functionality is not lost: direct vault deposit and the recovery-signer form are now real,
+  // reachable sections of WalletAdvanced.jsx (`screen === 'wallet-advanced'`, wired above with the
+  // same handleDepositCheck/handleEnableDeposits/handleDepositApprove/handleAddRecovery this file
+  // already owned), and the agent-signer section there is read-only documentation with no input
+  // and no submit control at all -- see WalletAdvanced.jsx's own header for why that is the
+  // correct shape rather than a disabled version of the old live form. 'signers' had no functional
+  // content beyond restating the account chip's own "Passkey" label and is not migrated anywhere.
 
   // VF Wallet Task 10, Step 3 -- Passkey (C) Activity. `items={null}` (Unavailable, not a false
   // "no activity"): Horizon's payments collection (wallet/history.js's data source) only lists
@@ -1568,6 +1482,20 @@ function Popup() {
   // exactly the money-truth distinction Step 3 asks for; the honest answer here is Unavailable,
   // not a fabricated empty read. The direct Stellar Expert account link (unaffected, pre-existing)
   // stays available as a real alternative.
+  //
+  // VF Wallet Task 11 (M2, carried from the VF Wallet Task 10 review, "wire it or remove it"):
+  // `baseItems` is deliberately never passed here, and this is now a closed decision, not a
+  // pending gap -- this extension has NO authoritative source to wire it to. baseBinding.js's
+  // owner/mandate records live in the WEB APP's window.localStorage (a different origin from this
+  // chrome-extension:// popup) and the relayer's Base activity is reachable only through the web
+  // app's own request flow; nothing in this codebase gives the extension a read path to either.
+  // "Wire it" would mean fabricating or heuristically guessing Base activity, which is exactly the
+  // money-truth violation this whole task is about (the same MM13 dead-branch failure this brief
+  // warns against, one level up: rendering a claim no trigger can honestly produce). WalletActivity
+  // already handles the unpopulated case correctly on its own (baseItems==null or [] renders
+  // nothing -- an absence of a claim, never a false "no Base activity" or a false "unavailable"),
+  // so nothing needed to change in this file's call sites below; this comment exists so the next
+  // reader does not treat the silence as leftover work.
   if (screen === 'activity') {
     return (
       <WalletActivity
@@ -1586,46 +1514,6 @@ function Popup() {
           </a>
         )}
       </WalletActivity>
-    )
-  }
-
-  if (screen === 'agent') {
-    return (
-      <Shell nav active="agent" onNav={nav}>
-        <Eyebrow sec="agent" meta="scoped · 7d expiry" />
-        <h1 className="vf-h">Agent signer</h1>
-        <div className="field">
-          <label className="row-k">agent address</label>
-          <input
-            className="input mono"
-            placeholder="Agent G-address"
-            value={agentAddress}
-            onChange={(e) => setAgentAddress(e.target.value)}
-          />
-        </div>
-        <div className="amount-row">
-          <input
-            className="amount tnum"
-            type="number"
-            placeholder="0"
-            aria-label="Agent spending cap, in USDC"
-            value={agentCap}
-            onChange={(e) => setAgentCap(e.target.value)}
-          />
-          <span className="ticker">USDC cap</span>
-        </div>
-        {error && <p className="err">{error}</p>}
-        {status && <p className="info">{status}</p>}
-        <button
-          className="btn btn-primary"
-          onClick={handleAddAgent}
-          disabled={!agentAddress || !agentCap}
-        >
-          Grant agent scope · ceremony
-        </button>
-        <p className="note">Scope: 7-day expiry, capped at the entered amount, vault-restricted.</p>
-        <HonestyLabels scope="agent" />
-      </Shell>
     )
   }
 
