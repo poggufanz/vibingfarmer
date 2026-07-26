@@ -248,7 +248,7 @@ button.link{background:none;border:none;padding:0;cursor:pointer;font:inherit}
   flex-shrink:0;text-transform:uppercase;box-shadow:0 2px 8px rgba(0,0,0,.25)}
 /* brand mark (tokenIcons.jsx); the marks carry their own round background */
 svg.vf-token-icon{display:block;overflow:hidden}
-.vf-token-icon.unknown{background:linear-gradient(135deg, #78909c 0%, #37474f 100%);border:1px solid rgba(120,144,156,.2)}
+.vf-token-icon.unknown{background:#546e7a;border:1px solid rgba(120,144,156,.2)}
 .vf-token-meta{display:flex;flex-direction:column;line-height:1.3;min-width:0}
 .vf-token-code{font-family:var(--font);font-weight:600;font-size:13px;color:var(--text)}
 .vf-token-name{font-size:11px;color:var(--text-muted)}

@@ -10,6 +10,14 @@
 //
 // Self-contained dark-warn styling (Acid Yield --warn) so it stays legible on the
 // wallet popup without depending on the popup stylesheet. No emoji per DESIGN §1.
+//
+// All six labels are plain-English safety prose, not technical data (no address/hash ever
+// appears here) -- the shared style below MUST NOT set font-family. VF Wallet Task 9 fix loop 1
+// found these labels rendering in "JetBrains Mono" (rejection-checklist item 5: "Body or friendly
+// copy uses monospace") on 5 of 8 onboarding states, including the sentence that tells a user
+// generating a real recovery phrase that the wallet is testnet-grade only. Mono is reserved for
+// addresses/hashes (.pc-technical); this component never renders either, so it inherits the
+// caller's body font instead. HonestyLabels.test.jsx guards this with a source-parse check.
 
 const LABELS = {
   deposit:
@@ -25,7 +33,6 @@ const LABELS = {
 }
 
 const s = {
-  fontFamily: '"JetBrains Mono", ui-monospace, monospace',
   fontSize: 11,
   lineHeight: 1.5,
   color: '#f0b54a',

@@ -326,9 +326,10 @@ describe('WalletOnboarding — rejection checklist items 5/6/7 across the entire
   // an infinite gradient animation on the primary button (item 6). Run against the pre-fix tree,
   // these assertions were genuinely red (not synthetic) -- confirmed while writing this guard.
   // `screenIn`/`btn-lava` are checked file-wide (their @keyframes definitions and every usage must
-  // both be gone); the gradient/infinite check is scoped to the actual button rules -- popup.jsx
-  // legitimately keeps an unrelated, pre-existing, non-button gradient elsewhere (.vf-token-icon.
-  // unknown's fallback avatar background), out of this task's file list to touch.
+  // both be gone); the gradient/infinite check is scoped to the actual button rules. Fix loop 1
+  // (M1) also flattened the one surviving non-button gradient (.vf-token-icon.unknown's fallback
+  // avatar background) to a solid color -- see the dedicated assertion below -- so popup.jsx now
+  // declares no gradient anywhere, not just off of buttons.
   it('popup.jsx no longer declares the screenIn entry animation or the infinite btn-lava button animation', () => {
     const source = stripComments(fs.readFileSync(POPUP_PATH, 'utf8'))
     expect(source).not.toMatch(/\bscreenIn\b/i)
@@ -342,6 +343,15 @@ describe('WalletOnboarding — rejection checklist items 5/6/7 across the entire
       .join('\n')
     expect(buttonRules).not.toMatch(/gradient/i)
     expect(buttonRules).not.toMatch(/infinite/i)
+  })
+
+  // M1 (VF Wallet Task 9 fix loop 1): the contract's non-negotiable visual signature bans
+  // gradients outright ("No gradients, glow, glass blur..."), not just on buttons. The one
+  // surviving gradient in the extension (.vf-token-icon.unknown's fallback avatar background) is
+  // flattened to a solid color -- popup.jsx now declares no gradient anywhere in its CSS.
+  it('M1: popup.jsx declares no gradient anywhere, not just off of buttons', () => {
+    const source = stripComments(fs.readFileSync(POPUP_PATH, 'utf8'))
+    expect(source).not.toMatch(/gradient/i)
   })
 
   // Decorative net-dot and blinking marker elements Task 8 also deferred here.
@@ -472,6 +482,45 @@ describe('WalletOnboarding — real-browser 320px layout guard, per onboarding/a
         // eslint-disable-next-line no-console -- reported numbers requested by the task brief
         console.log(`[320px] ${label}: scrollWidth=${scrollWidth}`)
         expect(scrollWidth, `${label} @320px scrollWidth`).toBeLessThanOrEqual(320)
+        await page.close()
+      }
+    } finally {
+      await browser.close()
+    }
+  }, 60000)
+})
+
+describe('WalletOnboarding — real-Chromium proof of rejection-checklist item 5 (jsdom cannot see this)', () => {
+  // VF Wallet Task 9 fix loop 1: HonestyLabels.jsx applied a hardcoded JetBrains Mono
+  // font-family to six friendly-prose <p> elements. Two of them (the testnet/protocol labels)
+  // rendered in mono on 5 of 8 states in real Chromium, with no .pc-technical ancestor -- the
+  // exact rejection-checklist item 5 condition ("Body or friendly copy uses monospace"). jsdom's
+  // getComputedStyle cannot resolve font-family reliably (same trap items 6/7 hit above), so this
+  // is measured the same way: real Chromium, across every one of the eight onboarding states.
+  it('no text outside .pc-technical/code/pre computes a JetBrains Mono font-family, in any of the 8 states', async () => {
+    const results = []
+    for (const [label, props] of ONBOARDING_STATES) {
+      const { container, unmount } = render(<WalletOnboarding {...props} />)
+      results.push([label, container.innerHTML])
+      unmount()
+    }
+
+    const browser = await launchRealChromium()
+    try {
+      for (const [label, html] of results) {
+        const page = await browser.newPage()
+        await page.setContent(buildHarnessHtml(html))
+        const monoOffenders = await page.evaluate(() =>
+          Array.from(document.querySelectorAll('*'))
+            .filter((el) => el.children.length === 0 && el.textContent.trim())
+            .filter((el) => !el.closest('.pc-technical, code, pre'))
+            .map((el) => ({
+              text: el.textContent.trim().slice(0, 40),
+              fontFamily: getComputedStyle(el).fontFamily,
+            }))
+            .filter((entry) => /jetbrains mono/i.test(entry.fontFamily))
+        )
+        expect(monoOffenders, `${label}: friendly copy rendered in JetBrains Mono`).toEqual([])
         await page.close()
       }
     } finally {

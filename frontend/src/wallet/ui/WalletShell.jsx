@@ -8,7 +8,11 @@
 // that cannot share a stylesheet load. Tokens, hex values, radii, spacing, and motion below are
 // copied VERBATIM from wallet.css's own verbatim port of the visual contract
 // (docs/superpowers/specs/2026-07-23-pocket-crew-visual-contract.css) -- never re-derived, never
-// approximated.
+// approximated. VF Wallet Task 9 fix loop 1 re-ran a selector-by-selector census against the
+// contract and corrected every drifted value found (0 remaining). The only intentional deviations
+// from a byte-identical port are declared as separate, additional, scoped rules with a comment
+// explaining why (the `.pc-brand-lockup--compact`/`textarea.pc-input` overrides below) -- no
+// ported rule's own declared value differs from the contract's.
 //
 // Every onboarding/account-choice screen (WalletOnboarding.jsx) renders exactly one WalletShell as
 // its outermost element, so this is the ONE place in the surface that defines `--pc-*` and the
@@ -16,12 +20,15 @@
 // .pc-network-badge, .pc-row) -- CreateScreen/ImportScreen/BackupScreen/UnlockScreen/
 // OnboardingScreen carry no `<style>` of their own and reference these classes directly.
 //
-// `critical` marks the wrapper [data-pocket-critical] for documentation (contract: "Consent,
-// signing, recovery, revoke, and withdrawal use MOTION_INTENSITY 1-2"), but VF Wallet Task 8's
-// fix-loop-1 recorded that this attribute selector is element-scoped, NOT descendant-scoped -- it
-// does not, by itself, stop a child from animating. The real guarantee here is structural: nothing
-// in this file's <style> (or any screen it wraps) declares an `@keyframes` or `animation` rule at
-// all, proved by WalletOnboarding.test.jsx's cross-file source-parse guard.
+// `critical` marks the wrapper `[data-pocket-critical]` for documentation only (contract:
+// "Consent, signing, recovery, revoke, and withdrawal use MOTION_INTENSITY 1-2") -- Task 9 fix
+// loop 1 removed the `animation: none !important` rule the contract keys off that attribute,
+// because (per VF Wallet Task 8's fix-loop-1 finding) that selector is element-scoped, NOT
+// descendant-scoped, so it never stopped a child from animating; keeping a rule that looks like a
+// safety net but is not is worse than no rule. The attribute stays as a plain, inert marker of
+// which screens are critical. The real guarantee here is structural: nothing in this file's
+// <style> (or any screen it wraps) declares an `@keyframes` or `animation` rule at all, proved by
+// WalletOnboarding.test.jsx's cross-file source-parse guard.
 //
 // Props are plain strings/booleans/functions plus `account`, which is fixed to the public shape
 // activeAccount.js's accountShape already produces (activeAccount.js:21-23: version/id/network/
@@ -88,14 +95,14 @@ const STYLE = `
 .pc-wallet h1 {
   max-width: 12ch;
   margin: 0 0 var(--pc-space-3);
-  font-size: 24px;
+  font-size: 28px;
   font-weight: 700;
   line-height: 1.12;
   letter-spacing: -0.03em;
 }
 
 .pc-wallet h2 {
-  margin: 0 0 var(--pc-space-2);
+  margin: 0 0 var(--pc-space-3);
   font-size: var(--pc-type-section);
   font-weight: 650;
   line-height: 1.2;
@@ -106,7 +113,7 @@ const STYLE = `
 
 .pc-wallet-shell {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   min-height: 560px;
 }
 
@@ -122,7 +129,7 @@ const STYLE = `
 .pc-wallet-main {
   display: grid;
   align-content: start;
-  gap: var(--pc-space-5);
+  gap: var(--pc-space-6);
   padding: 20px 18px 24px;
 }
 
@@ -131,17 +138,19 @@ const STYLE = `
   align-items: center;
   gap: var(--pc-space-2);
   color: currentcolor;
-  font-size: var(--pc-type-label);
-  font-weight: 650;
 }
 
-.pc-brand-lockup img { display: block; width: 20px; height: 20px; flex: none; }
+.pc-brand-lockup img { display: block; width: 24px; height: 24px; flex: none; }
+/* The 360px popup header always uses the contract's --compact lockup size (20px), never the
+   24px base -- scoped override, not an edit of the ported base rule. */
+.pc-brand-lockup--compact img { width: 20px; height: 20px; }
 
 .pc-network-badge {
   display: inline-flex;
   align-items: center;
+  gap: 7px;
   min-height: 28px;
-  color: var(--pc-muted);
+  color: inherit;
   font-size: var(--pc-type-label);
   font-weight: 620;
   white-space: nowrap;
@@ -167,7 +176,7 @@ const STYLE = `
 
 .pc-wallet-status[data-tone='error'] { color: var(--pc-danger); }
 
-.pc-route-intro { color: var(--pc-muted); font-size: var(--pc-type-body-small); }
+.pc-route-intro { margin-bottom: 0; color: var(--pc-muted); font-size: var(--pc-type-body); }
 
 .pc-backup-warning { color: var(--pc-warning); font-size: var(--pc-type-body-small); }
 
@@ -180,7 +189,7 @@ code, pre, .pc-technical {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 100%;
+  min-width: max-content;
   min-height: var(--pc-control-height);
   padding: 0 var(--pc-space-6);
   border: 1px solid transparent;
@@ -188,6 +197,8 @@ code, pre, .pc-technical {
   font-size: var(--pc-type-body-small);
   font-weight: 700;
   line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
   cursor: pointer;
   transition:
     transform var(--pc-duration-fast) var(--pc-ease-standard),
@@ -207,13 +218,16 @@ code, pre, .pc-technical {
   min-height: var(--pc-control-height);
   border: 1px solid var(--pc-line-strong);
   border-radius: var(--pc-radius-control);
-  padding: var(--pc-space-2) var(--pc-space-4);
+  padding: 0 var(--pc-space-4);
   background: transparent;
   color: currentcolor;
   font-size: var(--pc-type-body);
 }
-textarea.pc-input { min-height: 72px; }
-.pc-field-help, .pc-field-error { font-size: var(--pc-type-label); }
+/* The contract's .pc-input has no multi-line variant -- a single-line <input> centers its text
+   vertically for free via UA rendering with zero vertical padding, but a <textarea> does not, so
+   it needs its own breathing room. Scoped here rather than adding padding to the shared rule. */
+textarea.pc-input { min-height: 72px; padding: var(--pc-space-2) var(--pc-space-4); }
+.pc-field-help, .pc-field-error { margin: 0; font-size: var(--pc-type-label); }
 .pc-field-help { color: var(--pc-muted); }
 .pc-field-error { color: var(--pc-danger); }
 
@@ -280,8 +294,6 @@ textarea.pc-input { min-height: 72px; }
   box-shadow: 0 0 0 5px var(--pc-focus-contrast);
 }
 
-.pc-wallet-critical, [data-pocket-critical] { animation: none !important; }
-
 @media (max-width: 359px) {
   .pc-wallet { width: 100vw; min-width: 320px; }
   .pc-wallet-main { padding-inline: 16px; }
@@ -294,7 +306,13 @@ textarea.pc-input { min-height: 72px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  html:focus-within {
+    scroll-behavior: auto;
+  }
   .pc-wallet *, .pc-wallet *::before, .pc-wallet *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     transition-delay: 0ms !important;
   }
@@ -315,7 +333,7 @@ export function WalletShell({
       <style>{STYLE}</style>
       <div className="pc-wallet-shell">
         <header className="pc-wallet-header">
-          <span className="pc-brand-lockup">
+          <span className="pc-brand-lockup pc-brand-lockup--compact">
             <img src="./vibing_farmer.logo.svg" alt="" />
             VF Wallet
           </span>
