@@ -115,7 +115,12 @@ export default function SendScreen({
       {preview && (
         <div className="pc-support" data-testid="send-confirm-card">
           <h3>Confirm transaction</h3>
-          <p className="pc-technical">To: {preview.confirm.ops[0]?.destination}</p>
+          {/* VF Wallet Task 10 fix loop 1 (coordinator follow-up) -- the full, untruncated
+              destination address has no natural break point, same as Receive's full-address
+              display; without .pc-address-full it forces .pc-wallet-main's shared implicit grid
+              column (and every row sharing it, header and nav included) past 320/360px, exactly
+              the mechanism WalletShell.jsx's own .pc-address-full comment documents. */}
+          <p className="pc-technical pc-address-full">To: {preview.confirm.ops[0]?.destination}</p>
           <p className="pc-technical">Asset: {preview.confirm.ops[0]?.asset}</p>
           <p className="pc-technical">Amount: {preview.confirm.ops[0]?.amount}</p>
           <p className="pc-technical">Memo: {preview.confirm.memo || 'None'}</p>

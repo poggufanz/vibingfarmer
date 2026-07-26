@@ -112,3 +112,35 @@ describe('SendScreen — action availability is model-specific (no dead button f
     expect(onPreview).not.toHaveBeenCalled()
   })
 })
+
+// VF Wallet Task 10 fix loop 1 (coordinator follow-up, SendScreen overflow): real-Chromium
+// measurement found the confirm card's full, untruncated destination address forced
+// .pc-wallet-main's shared implicit grid column (header and nav included) to 465.46875px at a 320
+// viewport -- the same mechanism WalletReceive's full address overflow used, fixed the same way
+// (.pc-address-full alongside .pc-technical). jsdom does no layout and cannot re-run that geometry
+// check itself (the same limitation WalletReceive.test.jsx documents for its own guard), so this
+// pins the STRUCTURAL fix instead: the confirm card's destination line must carry
+// .pc-address-full, which is what actually prevents the overflow in a real browser.
+describe('SendScreen — confirm card destination stays within .pc-address-full (VF Wallet Task 10 fix loop 1)', () => {
+  it('applies .pc-address-full alongside .pc-technical to the full destination address', () => {
+    const preview = {
+      confirm: {
+        ops: [
+          {
+            destination: 'GBRPYHILCUFXYVJDXHYQMWZXGWLPKVPMDDIVGXAFTQZTZPMOI4XG3ZC7OX2H',
+            asset: 'XLM',
+            amount: '1',
+          },
+        ],
+        memo: '',
+        fee: 100,
+      },
+      vault: { hit: false },
+    }
+    render(<SendScreen from="GME" onPreview={vi.fn()} onConfirm={vi.fn()} preview={preview} />)
+    const destinationLine = screen.getByText(/^To: G/)
+    expect(destinationLine.className.split(' ')).toEqual(
+      expect.arrayContaining(['pc-technical', 'pc-address-full'])
+    )
+  })
+})
