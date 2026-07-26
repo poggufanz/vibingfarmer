@@ -25,6 +25,7 @@ import {
   shouldCommitMoneyFetch,
   fetchMyMoneySnapshot,
   projectMoneyForHome,
+  hasLiveScopeForVault,
 } from './app.jsx'
 import { buildMyMoneyModel } from './money/myMoneyModel.js'
 
@@ -326,5 +327,47 @@ describe('/agent route source: MyMoneyRoute, never OpsConsole', () => {
 
   it('OpsConsole is not imported as a top-level lazy production route (kept only inside its own retired file)', () => {
     expect(src).not.toMatch(/const OpsConsole = lazy/)
+  })
+})
+
+// ---------------------------------------------------------------------------------------------
+// My Money Task 13 Part B item 5: hasLiveScopeForVault -- the withdraw-success scope-catch-up poll
+// termination condition, extracted from app.jsx's handleWithdrawSuccess so it is unit-testable
+// without a live rehydrateScopes() call. This is the ONE `pickVaultAgents` call site (of three)
+// that could NOT migrate to the discovery-based `pickRecoverableVaultAgents` -- it operates on
+// rehydrateScopes()'s own plain-scope shape ({agent, vault, revoked}), a different shape entirely
+// from an OwnerDiscoveryV1 envelope ({address, vault, revoked, kind}).
+// ---------------------------------------------------------------------------------------------
+describe('hasLiveScopeForVault', () => {
+  const V = 'CVAULT1'
+
+  it('true when a non-revoked row is pinned to this vault', () => {
+    const rows = [
+      { agent: 'CA_ONE', vault: V, revoked: false },
+      { agent: 'CA_TWO', vault: 'COTHER', revoked: false },
+    ]
+    expect(hasLiveScopeForVault(rows, V)).toBe(true)
+  })
+
+  // Mutation guard: dropping the `!s.revoked` check would make a just-swept (now revoked) agent
+  // look "still live", so the poll would never terminate on its own real success condition.
+  it('false when the only row for this vault is revoked (the poll may stop)', () => {
+    const rows = [{ agent: 'CA_ONE', vault: V, revoked: true }]
+    expect(hasLiveScopeForVault(rows, V)).toBe(false)
+  })
+
+  it('false for an empty/null rows array', () => {
+    expect(hasLiveScopeForVault([], V)).toBe(false)
+    expect(hasLiveScopeForVault(null, V)).toBe(false)
+  })
+
+  it('matches vault addresses case-insensitively, same as the deleted pickVaultAgents did', () => {
+    expect(hasLiveScopeForVault([{ agent: 'CA_ONE', vault: 'cvault1', revoked: false }], V)).toBe(
+      true
+    )
+  })
+
+  it('a blank vaultAddress never matches anything (fail closed, not a wildcard)', () => {
+    expect(hasLiveScopeForVault([{ agent: 'CA_ONE', vault: V, revoked: false }], '')).toBe(false)
   })
 })

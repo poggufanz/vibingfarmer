@@ -31,12 +31,7 @@ import { AGENT_KIND_DEPOSIT, AGENT_KIND_BRIDGE } from './stellar/grant.js'
 import { RouteFocus, SkipLink } from './components/pocket/RouteFocus.jsx'
 import { resolveDocumentTitle } from './appShellTitle.js'
 import { shortAddr } from './screens.jsx'
-import {
-  MemoryModal,
-  buildAutofarmGraphData,
-  rebalancePulseKey,
-  makeInitialExecState,
-} from './agents.jsx'
+import { MemoryModal, makeInitialExecState } from './agents.jsx'
 import { useTweaks, TweaksPanel, TweakSection, TweakRadio } from './tweaks-panel.jsx'
 import { applyTheme, isLightTheme, normalizeTheme } from './design/theme.js'
 
@@ -63,20 +58,11 @@ import {
   SOROBAN_ACTIVE_VAULT_ADDRESS,
   SOROBAN_RPC_URL,
   SOROBAN_AUTOFARM_VAULT_ADDRESS,
-  SOROBAN_STRATEGY_1_ADDRESS,
-  SOROBAN_BLEND_POOL_ADDRESS,
-  SOROBAN_KEEPER_ADDRESS,
   SOROBAN_DECIMALS,
 } from './stellar/config.js'
 import { fetchKeeperEvents } from './stellar/keeperEvents.js'
 import { rehydrateScopes } from './stellar/scopeRehydrate.js'
-import {
-  readPricePerShare,
-  readStrategies,
-  readSupplyAprBps,
-  readLifeboatState,
-  readTotalShares,
-} from './stellar/vaultReads.js'
+import { readPricePerShare, readLifeboatState, readTotalShares } from './stellar/vaultReads.js'
 import { grantMandate } from './stellar/lifeboat.js'
 import { signWithTimeout } from './stellar/agentSetup.js'
 import {
@@ -102,8 +88,7 @@ import {
   loadDeployedAgents,
   saveDeployedAgents,
   reconcilePositionsFromChain,
-  pickPositionsAgents,
-  pickVaultAgents,
+  pickRecoverableVaultAgents,
   mergePositions,
   applyChainPositions,
 } from './positionsStore.js'
@@ -182,11 +167,11 @@ import { primeVaultFacts } from './strategy/vaultFactsLive.js'
 import { councilVerdict } from './strategy/council.js'
 import { reflect } from './strategy/reflector.js'
 import { increment as playbookIncrement, weight as playbookWeight } from './strategy/playbook.js'
-import { saveCycle, getCycles, getJournalSummary } from './strategy/cycleJournal.js'
+import { saveCycle } from './strategy/cycleJournal.js'
 import { computeBasket, slugFor } from './strategy/basketFilter.js'
 import { buildEligibilitySentence, vaultEligibilityLabel } from './strategy/eligibilitySentence.js'
 import { SNAPSHOT } from './strategy/vaultFacts.js'
-import { recordDecision, getDecisions, getDecisionSummary } from './strategy/decisionLog.js'
+import { recordDecision } from './strategy/decisionLog.js'
 import {
   resolveCouncilConflict,
   councilSpecialistVerdict,
@@ -204,19 +189,6 @@ import {
 import { councilOutcome } from './strategy/outcome.js'
 import { proposeRule } from './strategy/curator.js'
 import { upsertSeeds, getRules, addRule, replaceAll } from './strategy/ruleStore.js'
-
-// vf-autofarm: strategy address → { label, poolAddress, poolLabel } for the KeeperPanel APR
-// display + the force-graph's strategy→pool edge. Static because the vault contract exposes no
-// strategy→pool lookup and only ONE strategy is live today (Task 1 spike found a self-deployed
-// second pool can't reach Active status on testnet — see
-// docs/superpowers/plans/2026-07-03-vf-autofarm-progress.md). Extend this map when strategy #2 ships.
-const AUTOFARM_STRATEGY_META = {
-  [SOROBAN_STRATEGY_1_ADDRESS]: {
-    label: 'Strategy 1',
-    poolAddress: SOROBAN_BLEND_POOL_ADDRESS,
-    poolLabel: 'TestnetV2 pool',
-  },
-}
 
 /* ---------- Background agent settings (localStorage: yv_agent_settings) ---------- */
 const AGENT_SETTINGS_DEFAULTS = {
@@ -558,6 +530,24 @@ export function projectMoneyForHome(model) {
   }
 }
 
+/**
+ * My Money Task 13 Part B item 5: is any NON-revoked agent still live for `vaultAddress` in `rows`
+ * (rehydrateScopes()'s own plain-scope shape -- {agent, vault, revoked}, NOT an OwnerDiscoveryV1
+ * envelope)? Extracted from the withdraw-success scope-catch-up poll below, whose termination
+ * condition this is: "has the post-sweep on-chain revoke landed on RPC yet". Deliberately NOT
+ * `pickRecoverableVaultAgents` (the discovery-based replacement for the deleted `pickVaultAgents`)
+ * -- that picker expects a completely different shape (`.address`, not `.agent`; no `.kind`) built
+ * for a different question ("who must a sweep target", inclusive of revoked-but-funded agents),
+ * and forcing `rows` through it would silently return every row's `.address` as `undefined`.
+ */
+export function hasLiveScopeForVault(rows, vaultAddress) {
+  const want = (vaultAddress || '').toLowerCase()
+  if (!want) return false
+  return (rows || []).some(
+    (s) => s && !s.revoked && s.agent && (s.vault || '').toLowerCase() === want
+  )
+}
+
 /* ---------- App ---------- */
 const App = () => {
   const devMode = isDevMode()
@@ -581,14 +571,12 @@ const App = () => {
   const [debateResult, setDebateResult] = useS(null) // debate council result
   const [debateRunning, setDebateRunning] = useS(false) // debate in progress
 
-  // Continuous monitor state
-  const [monitorStatus, setMonitorStatus] = useS({
-    lastCheck: null,
-    level: 'idle',
-    score: 0,
-    reason: '',
-  })
-  const monitorTimerRef = useR(null)
+  // My Money Task 13 Part B: `monitorStatus`/`monitorTimerRef` (the council re-eval loop's own
+  // display state) had no reader anywhere in this file -- OpsConsole's own MonitorPanel was the
+  // only consumer, and it is retired from every production route. The monitor LOOP itself
+  // (runCouncilMonitorCheck below, and the `market_signal` branch in handleAgentEvent) keeps
+  // running and doing its real work (fastReeval/councilDebate/saveSnapshot/addLog) -- only the
+  // now-unread status snapshot is removed, not the automation it was reporting on.
   const [skillSource, setSkillSource] = useS('default')
   const [settingUpBaseMandate, setSettingUpBaseMandate] = useS(false)
   const [baseMandateError, setBaseMandateError] = useS(null)
@@ -736,17 +724,32 @@ const App = () => {
   // branch is dead-code-eliminated in prod and scripts/assert-no-dev-dispatch.mjs asserts the
   // __vfDevViewAs marker never ships in dist/.
   const viewAsAddress = getViewAsAddress()
+  // My Money Task 13's own discovery envelope, hoisted up from its controller block (below) --
+  // Part B item 5's `positionsAgents` migration (immediately below) needs it this early, and a
+  // `useState` call's textual position doesn't affect hook order/correctness as long as it fires
+  // unconditionally every render, same as every other hook in this component.
+  const [moneyDiscovery, setMoneyDiscovery] = useS(null)
   // Which agents' vault shares a "position" reads. Priority:
   //   view-as (dev) → the impersonated address's OWN shares;
-  //   real run      → the per-run agents the router deployed (scopes[].agent, non-revoked),
-  //                   which is where deposit mints the shares.
+  //   real run      → every agent this owner's discovery envelope has proven belongs to this
+  //                   vault, where deposit mints the shares.
   // Falling back to reconcile's default (the fixed demo agent) is the bug that emptied the
   // positions card ~15s after a real run: the poll read demo-agent = 0 shares and pruned the
   // vault. Shares sum across agents; withdrawn/other-run agents read 0 and drop out harmlessly.
-  // ponytail: N non-revoked agents = N readVaultShares per 15s poll; fine for a handful of
-  // runs, revisit if an owner accumulates dozens of live grants.
-  const positionsAgents = pickPositionsAgents(scopes, viewAsAddress)
-  // Reconcile effects capture this closure keyed on realAddress, but scopes rehydrate async
+  //
+  // My Money Task 13 Part B item 5: this used to read `pickPositionsAgents(scopes, viewAsAddress)`
+  // -- deleted (positionsStore.js's own comment) because it silently dropped revoked-but-funded
+  // agents, which the full-exit enumeration rule forbids: a revoked agent that still holds vault
+  // shares is exactly the one this reconcile must keep summing, or NotificationCenter/
+  // VaultDetailPage/handleEmergencyWithdraw (all fed by the `agentData.positions` this reconcile
+  // builds) silently under-report the true position. `pickRecoverableVaultAgents` (My Money Task
+  // 6's discovery-based replacement) never drops a revoked-but-funded candidate.
+  // ponytail: N candidate agents = N readVaultShares per 15s poll; fine for a handful of runs,
+  // revisit if an owner accumulates dozens of live grants.
+  const positionsAgents = viewAsAddress
+    ? [viewAsAddress]
+    : pickRecoverableVaultAgents(moneyDiscovery, { vault: SOROBAN_ACTIVE_VAULT_ADDRESS })
+  // Reconcile effects capture this closure keyed on realAddress, but discovery rehydrates async
   // AFTER connect. A latest-value ref lets the already-subscribed poll (and the cold-reconcile
   // that must not prune restored cache) read the current agent list without re-mounting.
   positionsAgentsRef.current = positionsAgents
@@ -806,15 +809,13 @@ const App = () => {
   // vf-autofarm KeeperPanel state — populated by the SAME 15s poll that already fetches
   // keeper events below (keeperLedgerRef), never a second interval.
   const [keeperActivity, setKeeperActivity] = useS([]) // newest-first, capped — feeds KeeperPanel
-  // vf-lifeboat Task 8 — separate from keeperActivity: KeeperPanel's LastAction assumes every
-  // item is a compound/rebalance alert shape (it treats anything without kind==='compound_executed'
-  // as a rebalance row), so mixing derisk/resume/mandate items into that array would render a
-  // broken "Rebalanced" row whenever a lifeboat event became the newest entry.
   const [lifeboatState, setLifeboatState] = useS(null) // {derisked, mandateExpiry, authority} | null
-  const [lifeboatActivity, setLifeboatActivity] = useS([]) // newest-first, capped — feeds LifeboatPanel
-  const [lifeboatBusy, setLifeboatBusy] = useS(false)
-  const [autofarmReads, setAutofarmReads] = useS({ pricePerShare: null, strategies: [] })
-  const [rebalancePulse, setRebalancePulse] = useS(null) // { key, ts } — force-graph edge pulse
+  // My Money Task 13 Part B: `lifeboatActivity` (a second, derisk/resume/mandate-only activity
+  // log) and `lifeboatBusy`/`rebalancePulse` (a mandate-grant spinner and a force-graph edge pulse)
+  // are removed -- OpsConsole's LifeboatPanel/AgentGraph were their only readers, both retired.
+  // derisk/resume/mandate events are now routed straight into the alert bell (see the keeper poll
+  // below); the mandate-grant pending state is now `moneyActionPending` (handleMoneyPrimaryAction).
+  const [autofarmReads, setAutofarmReads] = useS({ pricePerShare: null })
   // vf-base-dashboard Task 10 — read-only Base positions (own poll piggyback, see the 15s
   // sync() below). Stays [] for Stellar-only users; loadDeviceBasePositions never throws.
   const [basePositions, setBasePositions] = useS([])
@@ -1033,7 +1034,6 @@ const App = () => {
         // (handleAgentEvent keeps only the LATEST of each kind for notifications; the panel
         // wants its own short history of real keeper actions).
         const newActivity = []
-        const newLifeboatActivity = []
         for (const ev of events) {
           keeperLedgerRef.current = Math.max(keeperLedgerRef.current || 0, ev.ledger + 1)
           if (ev.type === 'compound') {
@@ -1063,29 +1063,30 @@ const App = () => {
             }
             handleAgentEvent(item)
             newActivity.push(item)
-            // Pulse the force-graph edge between the two strategies/vault this rebalance moved
-            // funds between (rebalancePulseKey is direction-independent — see agents.jsx).
-            setRebalancePulse({ key: rebalancePulseKey(ev.from, ev.to), ts: Date.now() })
-          } else if (ev.type === 'derisk' || ev.type === 'resume' || ev.type === 'mandate') {
-            // Lifeboat activity feed (vf-lifeboat) — kept in decodeKeeperEvent's own shape
-            // (type/reasonCode/drainedTotal/txHash) rather than remapped into keeperActivity's
-            // kind-based alert objects; see lifeboatActivity state comment above for why.
-            newLifeboatActivity.push({ ...ev, timestamp: Date.now() })
           } else if (
+            ev.type === 'derisk' ||
+            ev.type === 'resume' ||
+            ev.type === 'mandate' ||
             ev.type === 'upgrade_scheduled' ||
             ev.type === 'upgrade_executed' ||
             ev.type === 'upgrade_cancelled'
           ) {
-            // Upgrade timelock visibility (surface-only — no auto-derisk, no on-chain action).
-            // Straight into the alert bell via handleAgentEvent, same as compound/rebalance
-            // above, so a holder actually sees a pending bytecode swap before the 3-day exit
-            // window closes.
+            // My Money Task 13 Part B: derisk/resume/mandate used to feed a dedicated
+            // `lifeboatActivity` log array, which had no reader once MyMoneyRoute replaced
+            // OpsConsole's own LifeboatPanel -- VaultProtection/HowMoneyWorks (this task's own
+            // classifyLifeboatAutomation) already surface the CURRENT protection state, but the
+            // EVENT itself (an emergency de-risk is exactly the kind of action an owner must not
+            // miss) would otherwise become fully invisible. Routed into the SAME generic alert-bell
+            // path upgrade_scheduled/upgrade_executed/upgrade_cancelled already use below, rather
+            // than a second, now-readerless log.
             handleAgentEvent({
               id: `${ev.type}:${ev.ledger}`,
               kind: `vault_${ev.type}`,
               vaultName: 'Autofarm vault',
               wasmHashHex: ev.wasmHashHex,
               eta: ev.eta,
+              reasonCode: ev.reasonCode,
+              drainedTotal: ev.drainedTotal,
               txHash: ev.txHash,
               timestamp: Date.now(),
             })
@@ -1094,40 +1095,21 @@ const App = () => {
         if (newActivity.length) {
           setKeeperActivity((prev) => [...newActivity.reverse(), ...prev].slice(0, 20))
         }
-        if (newLifeboatActivity.length) {
-          setLifeboatActivity((prev) => [...newLifeboatActivity.reverse(), ...prev].slice(0, 20))
-        }
       } catch (e) {
         // transient RPC failure — the next 15s tick retries
         console.warn('[app] keeper event read failed:', e)
       }
-      // Live autofarm vault reads for the KeeperPanel: price-per-share + registered strategies,
-      // each paired with a best-effort Blend supply-APR estimate. Best-effort end to end — a
-      // failed read leaves the panel showing "--", never a fake number.
+      // Live autofarm vault read for HowMoneyWorks' classifyStrategyConfiguration: price-per-share
+      // only. My Money Task 13 Part B: this used to also fetch registered strategies + a
+      // per-strategy Blend supply-APR estimate for the force-graph cluster below (buildAutofarmGraphData)
+      // -- that graph had no reader once MyMoneyRoute replaced OpsConsole, so the strategies/APR
+      // fetch is dropped too (it existed only to feed that graph; leaving it would mean an RPC call
+      // every 15s for data nothing renders). Best-effort — a failed read leaves the panel showing
+      // "--", never a fake number.
       try {
-        const [pps, strategyAddrs] = await Promise.all([
-          readPricePerShare(SOROBAN_AUTOFARM_VAULT_ADDRESS),
-          readStrategies(SOROBAN_AUTOFARM_VAULT_ADDRESS),
-        ])
-        if (!alive) return
-        const strategies = await Promise.all(
-          strategyAddrs.map(async (addr) => {
-            const meta = AUTOFARM_STRATEGY_META[addr] || {}
-            const aprBps = meta.poolAddress ? await readSupplyAprBps(meta.poolAddress) : null
-            return {
-              address: addr,
-              label: meta.label || shortAddr(addr),
-              poolAddress: meta.poolAddress || null,
-              poolLabel: meta.poolLabel || null,
-              aprPct: aprBps == null ? null : aprBps / 100,
-            }
-          })
-        )
+        const pps = await readPricePerShare(SOROBAN_AUTOFARM_VAULT_ADDRESS)
         if (alive) {
-          setAutofarmReads({
-            pricePerShare: pps == null ? null : toDisplay(pps).toFixed(4),
-            strategies,
-          })
+          setAutofarmReads({ pricePerShare: pps == null ? null : toDisplay(pps).toFixed(4) })
         }
       } catch (e) {
         // transient RPC failure — the next 15s tick retries; panel keeps its last-known reads
@@ -1220,10 +1202,7 @@ const App = () => {
     }
     if (ev.kind === 'market_signal') {
       const settings = loadSettings()
-      if (!settings.monitorEnabled) {
-        setMonitorStatus((s) => ({ ...s, lastCheck: ev.timestamp, level: 'disabled' }))
-        return
-      }
+      if (!settings.monitorEnabled) return
       // 15s poll handles council monitor even without strategy (page refresh).
       // Only run the check here when a strategy exists (normal session flow).
       if (strategy?.agents?.length) {
@@ -1556,7 +1535,12 @@ const App = () => {
     // NOTE: agentSettings.emergencyPct cannot be honoured — owner_withdraw takes no amount and
     // always sweeps the agent whole. A partial emergency exit needs a vault-level partial redeem;
     // until then this is full-exit only, and the settings copy overpromises.
-    const agents = pickVaultAgents(scopes, alert.vaultAddress)
+    //
+    // My Money Task 13 Part B item 5: migrated off the deleted `pickVaultAgents` (dropped
+    // revoked-but-funded agents -- exactly the ones an emergency sweep must not skip).
+    // `pickRecoverableVaultAgents` (the discovery-based replacement) keeps every candidate this
+    // envelope has proven belongs to this owner for this vault, active or revoked.
+    const agents = pickRecoverableVaultAgents(moneyDiscovery, { vault: alert.vaultAddress })
     if (!agents.length) {
       addLog({
         event: 'AgentFailed',
@@ -1650,17 +1634,20 @@ const App = () => {
   // Lifeboat mandate grant (vf-lifeboat) — user-signed, time-boxed 24h authority. Re-reads
   // lifeboat_state() right after the tx lands so the panel's countdown updates immediately
   // instead of waiting for the next 15s poll tick.
+  //
+  // My Money Task 13 Part B: this used to toggle its own `lifeboatBusy` flag, which had no reader
+  // once MyMoneyRoute replaced OpsConsole's own LifeboatPanel. `handleMoneyPrimaryAction`'s
+  // 'renew-protection' case (below) now wraps this SAME call in `moneyActionPending` -- the
+  // pending flag MoneyHero's primary action button already disables on -- so this call still gets
+  // a real pending indicator, using the mechanism the new route actually renders.
   const onGrantMandate = async () => {
     if (!realAddress) return
-    setLifeboatBusy(true)
     try {
       await grantMandate({ owner: realAddress })
       const s = await readLifeboatState()
       setLifeboatState(s)
     } catch (e) {
       console.error('mandate grant failed', e)
-    } finally {
-      setLifeboatBusy(false)
     }
   }
 
@@ -1705,7 +1692,14 @@ const App = () => {
         const rows = await rehydrateScopes({ owner: realAddress }).catch(() => null)
         if (rows && gen === scopeGenRef.current) setScopes(rows)
         if (scopeTries >= 6) return
-        if (rows && pickVaultAgents(rows, vaultAddress).length === 0) return
+        // My Money Task 13 Part B item 5: `rows` is rehydrateScopes()'s own plain-scope shape
+        // ({agent, vault, revoked}), NOT an OwnerDiscoveryV1 envelope -- forcing it through the
+        // discovery-based `pickRecoverableVaultAgents` would silently break (that picker reads
+        // `.address`, which this shape doesn't have). This is also a genuinely different question
+        // than item 5's exit-enumeration concern: it's asking "has the post-sweep revoke landed on
+        // RPC yet", not "who must a sweep target" -- so it deliberately keeps excluding revoked
+        // rows via the extracted `hasLiveScopeForVault` rather than switching pickers.
+        if (rows && !hasLiveScopeForVault(rows, vaultAddress)) return
         setTimeout(refreshScopes, 2000)
       }
       refreshScopes()
@@ -1805,25 +1799,24 @@ const App = () => {
     }
   }
 
-  // Cross-device recovery: the Base owner markers live in localStorage, but the passkey itself
-  // is synced (phone / password manager) and login is discoverable — one tap on a NEW device
-  // re-derives the SAME kernel account (passkeyBridge's two-way fallback), re-persists the
-  // markers, and the positions panel comes back. Without this, positions farmed on another
-  // laptop were invisible here with no code path to ever show them.
-  // Base token activity is loaded on History → Base (not home), so recover only refreshes positions.
-  const handleBaseRecover = async () => {
-    if (!realAddress) return
-    setBaseWithdrawError(null)
-    try {
-      const { ensureBaseOwner } = await import('./wallet/passkeyBridge.js')
-      await ensureBaseOwner({ connectedAddress: realAddress, preferLogin: true })
-      const bp = await loadDeviceBasePositions({ stellarOwner: realAddress })
-      setBasePositions(bp)
-      if (!bp.length) setBaseWithdrawError('Base account connected — no open positions found.')
-    } catch (err) {
-      setBaseWithdrawError(err.message)
-    }
-  }
+  // My Money Task 13 Part B: `handleBaseRecover` (cross-device Base recovery -- one tap on a new
+  // device re-derives the same kernel account and repopulates `basePositions`) is REMOVED, not
+  // left defined-but-unreachable. It had no UI trigger anywhere on `/agent` even before this pass:
+  // its one natural home is RecoveryPanel.jsx's `location === 'base-proxy'` branch (a "check this
+  // device for Base positions" affordance sitting next to the existing "Go to Base withdraw"
+  // button) or MyMoneyRoute.jsx -- neither is in this task's authorized file list (the Part B
+  // list is AgentTeam/TechnicalMoneyDetails/WithdrawDialog/WithdrawModal/ownerActions/
+  // positionsStore/app.jsx only). WithdrawDialog.jsx's own Base tab is not a substitute: it is
+  // gated on `basePlan.available` (a known position already), which is exactly the case a NEW
+  // device does not have yet -- the trigger would sit behind a tab that hides itself precisely
+  // when recovery is needed. Auto-triggering the passkey ceremony from the existing silent 15s
+  // poll isn't a safe substitute either -- WebAuthn's `navigator.credentials.get()` generally
+  // needs a real user gesture, which every other passkey call site in this file (including
+  // `handleBaseWithdrawClick`) already respects. Between leaving this defined-but-unreachable and
+  // deleting it, deleting is the honest choice; a future task with RecoveryPanel.jsx/
+  // MyMoneyRoute.jsx in scope should add a "Recover Base account" action to RecoveryPanel's
+  // base-proxy branch, wired to the same `loadDeviceBasePositions`/`ensureBaseOwner(preferLogin:
+  // true)` pair this function used.
 
   const runCouncilMonitorCheck = async (settings, apyByVault = {}) => {
     if (!strategy?.agents?.length && Object.keys(agentData.positions).length === 0) return
@@ -1839,13 +1832,6 @@ const App = () => {
     const diff = diffMarket(currentData, snapshot, settings)
     // Full debate requires strategy object — cap to fast re-eval on page refresh (strategy null)
     const safeLevel = !strategy?.agents?.length && diff.level === 'full' ? 'fast' : diff.level
-    setMonitorStatus({
-      lastCheck: Date.now(),
-      level: safeLevel,
-      score: diff.score,
-      reason: diff.reasons[0] || '',
-    })
-
     if (safeLevel === 'skip') return
 
     if (safeLevel === 'fast') {
@@ -1855,17 +1841,11 @@ const App = () => {
       if (result.passed) {
         saveSnapshot(result, currentData)
         if (settings.autoApprove) return
-        setMonitorStatus((s) => ({
-          ...s,
-          result: 'approved',
-          permissionSentence: result.permissionSentence,
-        }))
         addLog({
           event: 'OrchestratorPlanned',
           meta: `Monitor re-eval, fast pass, confidence ${(result.confidence * 100).toFixed(0)}%`,
         })
       } else {
-        setMonitorStatus((s) => ({ ...s, result: 'violation', error: result.error }))
         addLog({
           event: 'AgentFailed',
           meta: `Monitor re-eval, ${result.error}`,
@@ -1909,11 +1889,6 @@ const App = () => {
           convergenceThreshold: 0.15,
         })
         saveSnapshot(result, currentData)
-        setMonitorStatus((s) => ({
-          ...s,
-          result: result.verdict === 'keep' ? 'approved' : 'rejected',
-          debateResultId: Date.now(),
-        }))
         addLog({
           event: result.verdict === 'keep' ? 'OrchestratorPlanned' : 'AgentFailed',
           meta: `Monitor full debate, ${result.verdict}, ${result.iterations} iters, converged: ${result.converged}`,
@@ -1950,7 +1925,8 @@ const App = () => {
   // signing itself stays inside stellar/exit.js, stellar/revoke.js, stellar/partialWithdraw.js
   // (wallet-kit popup / relayer ceremony), which this controller only calls, never inspects.
   const [moneyModel, setMoneyModel] = useS(() => buildMyMoneyModel({ owner: null }))
-  const [moneyDiscovery, setMoneyDiscovery] = useS(null)
+  // moneyDiscovery is declared earlier in this component now (My Money Task 13 Part B item 5's
+  // positionsAgents needs it before this block runs) -- see that declaration's own comment.
   const [moneyRead, setMoneyRead] = useS(null) // readOwnerMoney-derived MoneySnapshot (buildMoneySnapshot)
   const [moneyActionPending, setMoneyActionPending] = useS(false)
   const [moneyWithdrawOpen, setMoneyWithdrawOpen] = useS(false)
@@ -2105,7 +2081,15 @@ const App = () => {
       navigate('/strategy')
       return
     }
-    if (action === 'renew-protection') return onGrantMandate()
+    if (action === 'renew-protection') {
+      setMoneyActionPending(true)
+      try {
+        await onGrantMandate()
+      } finally {
+        setMoneyActionPending(false)
+      }
+      return
+    }
     if (action === 'review-problem') {
       setMoneyWithdrawOpen(true)
       return
@@ -3192,22 +3176,11 @@ const App = () => {
     }
   })
 
-  // vf-autofarm keeper/strategy/pool force-graph cluster (Task 15). Memoized on the strategy
-  // address list (not the whole `autofarmReads.strategies` array, which gets a new reference
-  // every 15s poll even when addresses are unchanged) so the canvas physics don't reheat/jitter
-  // on every tick — only when the registered strategy set actually changes.
-  const autofarmStrategyKey = autofarmReads.strategies
-    .map((s) => `${s.address}:${s.poolAddress || ''}`)
-    .join(',')
-  const autofarmGraphData = useM(
-    () =>
-      buildAutofarmGraphData({
-        vaultAddress: SOROBAN_AUTOFARM_VAULT_ADDRESS,
-        keeperAddress: SOROBAN_KEEPER_ADDRESS,
-        strategies: autofarmReads.strategies,
-      }),
-    [autofarmStrategyKey]
-  )
+  // My Money Task 13 Part B: the vf-autofarm keeper/strategy/pool force-graph cluster (Task 15,
+  // buildAutofarmGraphData) that used to be memoized here fed OpsConsole's own AgentGraph only --
+  // retired along with it (no reader anywhere in the production route tree). Item 8's real agent
+  // network graph lives in TechnicalMoneyDetails.jsx instead, built from `agents`/`model` (props
+  // that component already receives), not this vault-wide automation topology.
 
   // Public pages — standalone full-bleed, own NavBar, no wallet required.
   // Checked before every gate so judges and visitors can browse without connecting.
