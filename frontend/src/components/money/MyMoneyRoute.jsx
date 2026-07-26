@@ -14,6 +14,14 @@
 //                                DOM-list-last graph disclosure)
 // This is the ONLY place these six mount together; each section owns its own literal copy and
 // assertions (see each component's own header comment) so this file stays a thin, honest wire-up.
+//
+// Fix loop 1, I2 (My Money Task 13 review): a 7th, always-rendered "Recover a Base account"
+// action is sited LAST (least-prominent, troubleshooting-shaped, like Technical details one
+// section up) rather than gated behind RecoveryPanel.jsx. RecoveryPanel can't be the trigger: it
+// only opens via app.jsx's openMoneyRecoveryFromOutcomes, i.e. strictly AFTER an owner action has
+// already run -- unreachable on a brand-new device with zero local Base state, which is exactly
+// the case this action exists to unblock. It never claims custody exists; clicking it only
+// triggers a real read (ensureBaseOwner + loadIndexedBasePositions in app.jsx), never a guess.
 import './my-money.css'
 import { MoneyHero } from './MoneyHero.jsx'
 import { PositionList } from './PositionList.jsx'
@@ -33,6 +41,7 @@ export function MyMoneyRoute({
   venue,
   onAction,
   onRecoverAgent,
+  onRecoverBase,
   actionPending = false,
 }) {
   return (
@@ -58,6 +67,24 @@ export function MyMoneyRoute({
           venue={venue}
         />
         <TechnicalMoneyDetails model={model} agents={agents} />
+
+        <section className="pc-money-section" aria-labelledby="recover-base-heading">
+          <header>
+            <h2 id="recover-base-heading">Recover a Base account</h2>
+          </header>
+          <p>
+            Settled USDC on Base from a previous device or browser? Check for it here -- this device
+            has no local Base record yet.
+          </p>
+          <button
+            type="button"
+            className="pc-button pc-button--secondary"
+            disabled={actionPending}
+            onClick={onRecoverBase}
+          >
+            Recover Base account
+          </button>
+        </section>
       </div>
     </div>
   )

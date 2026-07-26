@@ -127,6 +127,9 @@ const SECTION_HEADINGS = [
   'Vault protection',
   'How your money is working',
   'Technical details',
+  // Fix loop 1, I2: the 7th, always-rendered "Recover a Base account" action — see
+  // MyMoneyRoute.jsx's own header comment for why this can't live behind RecoveryPanel instead.
+  'Recover a Base account',
 ]
 
 describe('MyMoneyRoute — heading and exact hierarchy order (Step 2)', () => {
@@ -135,10 +138,49 @@ describe('MyMoneyRoute — heading and exact hierarchy order (Step 2)', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'My money' })).toBeTruthy()
   })
 
-  it('renders exactly the six approved section headings, in the approved order, no more no less', () => {
+  it('renders exactly the seven approved section headings, in the approved order, no more no less', () => {
     render(<MyMoneyRoute model={baseModel()} agents={[stellarVaultAgent()]} />)
     const h2s = [...document.querySelectorAll('h2')].map((el) => el.textContent)
     expect(h2s).toEqual(SECTION_HEADINGS)
+  })
+})
+
+describe('MyMoneyRoute — Fix loop 1, I2: Recover Base account is reachable from a brand-new device with zero local Base state', () => {
+  it('renders the trigger and fires onRecoverBase with no agents/discovery/account data at all', () => {
+    const onRecoverBase = vi.fn()
+    render(
+      <MyMoneyRoute
+        model={buildMyMoneyModel({ owner: 'GOWNER' })} // nothing read/cached yet -- a fresh connect
+        agents={[]}
+        discovery={null}
+        account={null}
+        onRecoverBase={onRecoverBase}
+      />
+    )
+    const btn = screen.getByRole('button', { name: 'Recover Base account' })
+    fireEvent.click(btn)
+    expect(onRecoverBase).toHaveBeenCalledTimes(1)
+  })
+
+  it('the trigger renders even in the disconnected state -- reachability never depends on money/discovery data', () => {
+    render(
+      <MyMoneyRoute
+        model={baseModel({ state: 'disconnected', owner: null, confirmedTotal: null })}
+        agents={[]}
+      />
+    )
+    expect(screen.getByRole('button', { name: 'Recover Base account' })).toBeTruthy()
+  })
+
+  it('disables the trigger while an action is pending, same as the primary action', () => {
+    const onRecoverBase = vi.fn()
+    render(
+      <MyMoneyRoute model={baseModel()} agents={[]} actionPending onRecoverBase={onRecoverBase} />
+    )
+    const btn = screen.getByRole('button', { name: 'Recover Base account' })
+    expect(btn.disabled).toBe(true)
+    fireEvent.click(btn)
+    expect(onRecoverBase).not.toHaveBeenCalled()
   })
 })
 

@@ -24,10 +24,12 @@ import {
   isMoneyFetchForCurrentOwner,
   shouldCommitMoneyFetch,
   fetchMyMoneySnapshot,
+  guardedMoneyFetch,
   projectMoneyForHome,
   hasLiveScopeForVault,
 } from './app.jsx'
 import { buildMyMoneyModel } from './money/myMoneyModel.js'
+import { nextReconciliationToken } from './money/freshness.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 
@@ -122,6 +124,100 @@ describe('shouldCommitMoneyFetch — combined wallet + revision guard', () => {
 })
 
 // ---------------------------------------------------------------------------------------------
+// Fix loop 1, I1: controller-level proof that refreshMoney's OWN call site (guardedMoneyFetch,
+// the function it delegates to with zero guard logic of its own left to duplicate) keeps wiring
+// LIVE owner/revision ref values into shouldCommitMoneyFetch. The describe block above proves
+// shouldCommitMoneyFetch is correct in isolation, in both directions; the review proved by
+// mutation that replacing the CALL SITE's `currentOwner: currentOwnerRef.current` / `currentToken:
+// revisionRef.current` with the tautological `currentOwner: owner` / `currentToken: readToken`
+// left the entire 181-test suite green anyway -- nothing was testing that the caller passed live
+// values. These tests drive guardedMoneyFetch itself (not a parallel reimplementation) with an
+// injected slow fetchSnapshot that mutates the refs mid-flight, exactly as a concurrent wallet
+// switch / mutating action would in production. Mutation proof (both the reviewer's exact edit and
+// a differently-written "stale captured value" variant) is recorded in the report.
+// ---------------------------------------------------------------------------------------------
+describe('guardedMoneyFetch — controller call site keeps live owner/revision refs wired to the guard', () => {
+  it('hazard 1: a wallet switch mid-flight rejects the in-flight fetch for the PRIOR owner', async () => {
+    const currentOwnerRef = { current: 'GA' }
+    const revisionRef = { current: 0 }
+    const onCommit = vi.fn()
+    const fetchSnapshot = vi.fn(async () => {
+      // The wallet switches to GB WHILE this fetch (for GA) is still in flight.
+      currentOwnerRef.current = 'GB'
+      return { money: {}, discovery: {} }
+    })
+    const committed = await guardedMoneyFetch({
+      owner: 'GA',
+      now: 1,
+      fetchSnapshot,
+      currentOwnerRef,
+      revisionRef,
+      onCommit,
+    })
+    expect(committed).toBe(false)
+    expect(onCommit).not.toHaveBeenCalled()
+  })
+
+  it('hazard 3: a mutating action bumping the revision mid-flight rejects the earlier, now-stale poll', async () => {
+    const currentOwnerRef = { current: 'GA' }
+    const revisionRef = { current: 5 }
+    const onCommit = vi.fn()
+    const fetchSnapshot = vi.fn(async () => {
+      // Simulates a withdraw/revoke's own reconcileOwnerAction bumping the SAME revision ref while
+      // this poll's read is still in flight -- exactly the tie case the review's hand trace found
+      // app.jsx:2133's late `beforeRevision` capture closes (a full end-to-end action-handler
+      // simulation isn't needed to prove the guard side of this: this is the one decision every
+      // action handler's post-mutation revision bump and every poll's own read both go through).
+      revisionRef.current = nextReconciliationToken(revisionRef.current)
+      return { money: {}, discovery: {} }
+    })
+    const committed = await guardedMoneyFetch({
+      owner: 'GA',
+      now: 1,
+      fetchSnapshot,
+      currentOwnerRef,
+      revisionRef,
+      onCommit,
+    })
+    expect(committed).toBe(false)
+    expect(onCommit).not.toHaveBeenCalled()
+  })
+
+  it('the ordinary case still commits: same owner, no concurrent mutation', async () => {
+    const currentOwnerRef = { current: 'GA' }
+    const revisionRef = { current: 0 }
+    const onCommit = vi.fn()
+    const snapshot = { money: {}, discovery: {} }
+    const committed = await guardedMoneyFetch({
+      owner: 'GA',
+      now: 1,
+      fetchSnapshot: async () => snapshot,
+      currentOwnerRef,
+      revisionRef,
+      onCommit,
+    })
+    expect(committed).toBe(true)
+    expect(onCommit).toHaveBeenCalledWith(snapshot)
+  })
+
+  it('a failed fetch never commits and never throws out of guardedMoneyFetch', async () => {
+    const onCommit = vi.fn()
+    const committed = await guardedMoneyFetch({
+      owner: 'GA',
+      now: 1,
+      fetchSnapshot: async () => {
+        throw new Error('RPC down')
+      },
+      currentOwnerRef: { current: 'GA' },
+      revisionRef: { current: 0 },
+      onCommit,
+    })
+    expect(committed).toBe(false)
+    expect(onCommit).not.toHaveBeenCalled()
+  })
+})
+
+// ---------------------------------------------------------------------------------------------
 // Race condition 2 (brief Step 1/2): a route reload must render cache as stale, reconcile
 // read-only, and NEVER replay any transaction.
 // ---------------------------------------------------------------------------------------------
@@ -163,6 +259,40 @@ describe('fetchMyMoneySnapshot — read-only by construction', () => {
     })
     expect(model.state).toBe('stale')
     expect(model.freshness).toBe('stale')
+  })
+})
+
+// ---------------------------------------------------------------------------------------------
+// Fix loop 1, I1, hazard 2 (controller level): the [realAddress] reload/switch effect itself --
+// not just fetchMyMoneySnapshot's already-proven write-seam-free signature above -- must prime
+// state via buildMyMoneyModel and kick off only the guarded read path, and must never reach a
+// write-capable function. Source-scoped to the exact block app.jsx marks with
+// MONEY-RELOAD-EFFECT:START/END so a future edit inside that effect stays covered even if the
+// surrounding code moves; a write call added inside it (e.g. an accidental replay on reload) fails
+// this test immediately -- see the report for the insert/remove mutation proof.
+// ---------------------------------------------------------------------------------------------
+describe('[realAddress] reload effect (controller level) — never replays a transaction', () => {
+  const src = fs.readFileSync(path.resolve(here, './app.jsx'), 'utf8')
+
+  function reloadEffectBlock() {
+    const start = src.indexOf('MONEY-RELOAD-EFFECT:START')
+    const end = src.indexOf('MONEY-RELOAD-EFFECT:END')
+    expect(start, 'MONEY-RELOAD-EFFECT:START marker not found').toBeGreaterThan(-1)
+    expect(end, 'MONEY-RELOAD-EFFECT:END marker not found').toBeGreaterThan(start)
+    return src.slice(start, end)
+  }
+
+  it('primes state via buildMyMoneyModel, then kicks off refreshMoney (the guarded read path)', () => {
+    const block = reloadEffectBlock()
+    expect(block).toMatch(/buildMyMoneyModel\(/)
+    expect(block).toMatch(/refreshMoney\(realAddress\)/)
+  })
+
+  it('never calls a write-capable function -- a reload/reconnect cannot replay a transaction', () => {
+    const block = reloadEffectBlock()
+    expect(block).not.toMatch(
+      /sweepAgents\(|partialWithdraw\(|revokeAgentOnChain\(|ensureExitSigner\(|reconcileOwnerAction\(/
+    )
   })
 })
 

@@ -111,7 +111,7 @@ import {
 } from './agents/agentController.js'
 const Withdraw = lazy(() => import('./screens/Withdraw.jsx'))
 import NotificationCenter from './components/NotificationCenter.jsx'
-import { loadDeviceBasePositions } from './base/dashboardPositions.js'
+import { loadDeviceBasePositions, loadIndexedBasePositions } from './base/dashboardPositions.js'
 import { readIdleUsdc } from './base/readPositions.js'
 import HomePage from './components/HomePage.jsx'
 // My Money Task 13 (Pocket Crew redesign, Wave 5) — the production `/agent` route. Replaces
@@ -514,6 +514,51 @@ export async function fetchMyMoneySnapshot({
   const discovery = await discoverScopes({ owner })
   const reads = await readMoney({ owner, discovery, now })
   return { discovery, money: buildMoneySnapshot(reads) }
+}
+
+/**
+ * Fix loop 1, I1: the exact guard-then-commit sequence `refreshMoney` runs in production, factored
+ * out to a plain exported function so a controller-level test can inject a slow `fetchSnapshot` and
+ * mutate `currentOwnerRef`/`revisionRef` OUT FROM UNDER IT mid-flight — proving THIS call site
+ * keeps wiring LIVE ref values into `shouldCommitMoneyFetch`. The pure-function tests above already
+ * prove `shouldCommitMoneyFetch` is correct in isolation in both directions; the reviewer proved by
+ * mutation (replacing `currentOwner: currentOwnerRef.current` / `currentToken: revisionRef.current`
+ * with the tautological `currentOwner: owner` / `currentToken: readToken`) that nothing verified the
+ * CALLER still passed it live values — the whole 181-test suite stayed green. `refreshMoney` below
+ * is a thin wrapper with no guard logic of its own left to drift out of sync with this.
+ * @param {{owner: string, now: number, fetchSnapshot: Function, currentOwnerRef: {current},
+ *   revisionRef: {current}, onCommit: Function}} p
+ * @returns {Promise<boolean>} whether onCommit ran
+ */
+export async function guardedMoneyFetch({
+  owner,
+  now,
+  fetchSnapshot,
+  currentOwnerRef,
+  revisionRef,
+  onCommit,
+}) {
+  const readToken = nextReconciliationToken(revisionRef.current)
+  revisionRef.current = readToken
+  let snapshot
+  try {
+    snapshot = await fetchSnapshot({ owner, now })
+  } catch {
+    return false // a failed read leaves the last-good state in place; buildMyMoneyModel's own cache
+    // fallback (still fed from moneyCacheRef) is what downgrades it to stale over time.
+  }
+  if (
+    !shouldCommitMoneyFetch({
+      fetchOwner: owner,
+      currentOwner: currentOwnerRef.current,
+      readToken,
+      currentToken: revisionRef.current,
+    })
+  ) {
+    return false
+  }
+  onCommit(snapshot)
+  return true
 }
 
 /**
@@ -1799,24 +1844,43 @@ const App = () => {
     }
   }
 
-  // My Money Task 13 Part B: `handleBaseRecover` (cross-device Base recovery -- one tap on a new
-  // device re-derives the same kernel account and repopulates `basePositions`) is REMOVED, not
-  // left defined-but-unreachable. It had no UI trigger anywhere on `/agent` even before this pass:
-  // its one natural home is RecoveryPanel.jsx's `location === 'base-proxy'` branch (a "check this
-  // device for Base positions" affordance sitting next to the existing "Go to Base withdraw"
-  // button) or MyMoneyRoute.jsx -- neither is in this task's authorized file list (the Part B
-  // list is AgentTeam/TechnicalMoneyDetails/WithdrawDialog/WithdrawModal/ownerActions/
-  // positionsStore/app.jsx only). WithdrawDialog.jsx's own Base tab is not a substitute: it is
-  // gated on `basePlan.available` (a known position already), which is exactly the case a NEW
-  // device does not have yet -- the trigger would sit behind a tab that hides itself precisely
-  // when recovery is needed. Auto-triggering the passkey ceremony from the existing silent 15s
-  // poll isn't a safe substitute either -- WebAuthn's `navigator.credentials.get()` generally
-  // needs a real user gesture, which every other passkey call site in this file (including
-  // `handleBaseWithdrawClick`) already respects. Between leaving this defined-but-unreachable and
-  // deleting it, deleting is the honest choice; a future task with RecoveryPanel.jsx/
-  // MyMoneyRoute.jsx in scope should add a "Recover Base account" action to RecoveryPanel's
-  // base-proxy branch, wired to the same `loadDeviceBasePositions`/`ensureBaseOwner(preferLogin:
-  // true)` pair this function used.
+  // Fix loop 1, I2: `handleBaseRecover` restored, re-sited on MyMoneyRoute (not RecoveryPanel --
+  // see MyMoneyRoute.jsx's own header comment for why RecoveryPanel cannot be the trigger: it only
+  // opens via openMoneyRecoveryFromOutcomes, i.e. AFTER an owner action already ran, so it is
+  // unreachable on exactly the brand-new-device/zero-local-state case this fixes). Same shape the
+  // review asked for: a discoverable passkey login (`preferLogin: true` -- an existing account is
+  // PRESUMED, so this never mints a fresh, empty kernel on a device that already has real custody)
+  // followed by the OWNER-WIDE `loadIndexedBasePositions` reader (Part B item 4), never
+  // `loadDeviceBasePositions`'s own local-record gate -- that gate is exactly the device-scoped
+  // assumption this whole gap traces back to. Enrichment (pool name/apy) is the same small map
+  // `loadDeviceBasePositions` itself applies, inlined here rather than exported from
+  // base/dashboardPositions.js, which is outside this fix loop's authorized file list. Never
+  // fabricates a position: `positions` is exactly what this read returns, [] when the ceremony
+  // succeeds but nothing is found there.
+  async function handleRecoverBaseAccount() {
+    if (!realAddress) return
+    setMoneyActionPending(true)
+    setBaseWithdrawError(null)
+    try {
+      const { ensureBaseOwner } = await import('./wallet/passkeyBridge.js')
+      const account = await ensureBaseOwner({ connectedAddress: realAddress, preferLogin: true })
+      const result = await loadIndexedBasePositions({
+        stellarOwner: realAddress,
+        indexedBaseAccounts: [account.address],
+      })
+      const positions = (result.accounts?.[0]?.positions ?? []).map((pos) => {
+        const cat = BASE_POOL_CATALOG.find(
+          (p) => p.address.toLowerCase() === pos.pool.toLowerCase()
+        )
+        return { ...pos, poolName: cat?.name || pos.pool, apy: cat?.apy || 0 }
+      })
+      setBasePositions(positions)
+    } catch (err) {
+      setBaseWithdrawError(err.message)
+    } finally {
+      setMoneyActionPending(false)
+    }
+  }
 
   const runCouncilMonitorCheck = async (settings, apyByVault = {}) => {
     if (!strategy?.agents?.length && Object.keys(agentData.positions).length === 0) return
@@ -1955,45 +2019,38 @@ const App = () => {
     })
   }
 
-  // Read-only refresh: discovery -> money -> model, guarded by shouldCommitMoneyFetch so a wallet
-  // switch or a newer mutating action (bumped moneyRevisionRef) can never let this stale attempt
-  // repaint the screen, however late it resolves.
+  // Read-only refresh: discovery -> money -> model, guarded by guardedMoneyFetch/
+  // shouldCommitMoneyFetch so a wallet switch or a newer mutating action (bumped moneyRevisionRef)
+  // can never let this stale attempt repaint the screen, however late it resolves. Fix loop 1, I1:
+  // ALL of the guard-then-commit decision now lives in the exported guardedMoneyFetch above — this
+  // is a thin wrapper, not a second copy, so a controller-level test on guardedMoneyFetch IS a test
+  // of this call site.
   async function refreshMoney(owner) {
-    const readToken = nextReconciliationToken(moneyRevisionRef.current)
-    moneyRevisionRef.current = readToken
-    let snapshot
-    try {
-      snapshot = await fetchMyMoneySnapshot({ owner, now: Date.now() })
-    } catch {
-      return // a failed read leaves the last-good state in place; buildMyMoneyModel's own cache
-      // fallback (still fed from moneyCacheRef) is what downgrades it to stale over time.
-    }
-    if (
-      !shouldCommitMoneyFetch({
-        fetchOwner: owner,
-        currentOwner: realAddressRef.current,
-        readToken,
-        currentToken: moneyRevisionRef.current,
-      })
-    ) {
-      return
-    }
-    const protection = moneyProtectionSnapshot()
-    const nextCache = { money: snapshot.money, discovery: snapshot.discovery, protection }
-    moneyCacheRef.current = nextCache
-    saveMoneyCache(owner, nextCache)
-    setMoneyDiscovery(snapshot.discovery)
-    setMoneyRead(snapshot.money)
-    setMoneyModel(
-      buildMyMoneyModel({
-        owner,
-        discovery: snapshot.discovery,
-        money: snapshot.money,
-        protection,
-        cache: nextCache,
-        now: Date.now(),
-      })
-    )
+    await guardedMoneyFetch({
+      owner,
+      now: Date.now(),
+      fetchSnapshot: fetchMyMoneySnapshot,
+      currentOwnerRef: realAddressRef,
+      revisionRef: moneyRevisionRef,
+      onCommit: (snapshot) => {
+        const protection = moneyProtectionSnapshot()
+        const nextCache = { money: snapshot.money, discovery: snapshot.discovery, protection }
+        moneyCacheRef.current = nextCache
+        saveMoneyCache(owner, nextCache)
+        setMoneyDiscovery(snapshot.discovery)
+        setMoneyRead(snapshot.money)
+        setMoneyModel(
+          buildMyMoneyModel({
+            owner,
+            discovery: snapshot.discovery,
+            money: snapshot.money,
+            protection,
+            cache: nextCache,
+            now: Date.now(),
+          })
+        )
+      },
+    })
   }
 
   // Wallet change (connect/switch/disconnect): render the cache immediately, marked stale by
@@ -2002,6 +2059,12 @@ const App = () => {
   // `alive` flag scopes every poll tick below to THIS owner's effect lifetime; combined with
   // shouldCommitMoneyFetch's own owner check inside refreshMoney, a switch mid-flight is guarded
   // twice over.
+  // MONEY-RELOAD-EFFECT:START -- Fix loop 1, I1 (hazard 2). app.money.test.jsx source-scans
+  // EXACTLY this block: it must prime state via buildMyMoneyModel and call refreshMoney (the
+  // guarded read path), and must NEVER call a write-capable function (sweepAgents/partialWithdraw/
+  // revokeAgentOnChain/ensureExitSigner/reconcileOwnerAction) — a reload/reconnect must render
+  // cache-as-stale and reconcile read-only, never replay a transaction. Keep these markers directly
+  // wrapping the effect if you touch it.
   useE(() => {
     let alive = true
     if (!realAddress) {
@@ -2034,6 +2097,7 @@ const App = () => {
       clearInterval(id)
     }
   }, [realAddress])
+  // MONEY-RELOAD-EFFECT:END
 
   // Re-derives the model from an ALREADY-fresh read (an owner action's own reconcileOwnerAction
   // result) when one is available, avoiding a redundant extra readOwnerMoney round-trip; falls
@@ -3347,6 +3411,7 @@ const App = () => {
                   riskWatch={moneyRiskWatch}
                   onAction={handleMoneyPrimaryAction}
                   onRecoverAgent={handleRecoverAgent}
+                  onRecoverBase={handleRecoverBaseAccount}
                   actionPending={moneyActionPending}
                 />
                 <WithdrawDialog

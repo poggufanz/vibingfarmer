@@ -1,8 +1,11 @@
 // frontend/src/stellar/vaultReads.js
 // Read-only Autofarm vault state for the KeeperPanel (vf-autofarm Task 15): the vault's
 // exchange-rate `price_per_share()` (7-dp i128 — post-Task-6 this is NOT 1:1 with shares any
-// more, see soroban/contracts/autofarm_vault/src/vault.rs) and its registered `strategies()` list,
-// each paired with a best-effort Blend supply-APR estimate for cross-strategy comparison.
+// more, see soroban/contracts/autofarm_vault/src/vault.rs), paired with a best-effort Blend
+// supply-APR estimate. My Money Task 13 fix loop 1, M2: `readStrategies` (the vault's registered
+// `strategies()` list) is removed — its only consumer was the vault-wide automation-topology graph
+// dropped in the same task (app.jsx's own comment there names the fetch as removed, not preserved
+// dormant); it had zero production callers left. Re-add it if that topology view returns.
 //
 // `estimateSupplyAprBps` is re-exported from `keeper/src/apr.js` (T2 Fix 3 dedup) via a relative
 // cross-package import — it used to be duplicated here verbatim, which is exactly the drift risk
@@ -118,24 +121,6 @@ export async function readTotalShares(
     return BigInt(v)
   } catch {
     return null
-  }
-}
-
-/**
- * Vault's registered strategy addresses. [] on RPC failure — never throws (best-effort read).
- * @param {string} [vaultAddress]
- * @param {{ server?: object }} [opts]
- * @returns {Promise<string[]>}
- */
-export async function readStrategies(
-  vaultAddress = SOROBAN_AUTOFARM_VAULT_ADDRESS,
-  { server } = {}
-) {
-  try {
-    const v = await readContract({ contract: vaultAddress, method: 'strategies', args: [], server })
-    return (v || []).map(String)
-  } catch {
-    return []
   }
 }
 

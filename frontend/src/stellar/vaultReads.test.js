@@ -1,10 +1,9 @@
 // frontend/src/stellar/vaultReads.test.js
 import { describe, test, expect } from 'vitest'
-import { xdr, Address, nativeToScVal } from '@stellar/stellar-sdk'
+import { xdr, nativeToScVal } from '@stellar/stellar-sdk'
 import {
   readPricePerShare,
   readTotalShares,
-  readStrategies,
   estimateSupplyAprBps,
   readSupplyAprBps,
   readLifeboatState,
@@ -12,11 +11,9 @@ import {
   sharesToAssetUnits,
 } from './vaultReads.js'
 
-// Stand-in strkeys (same ones agentDeposit.test.js already uses) — any syntactically valid
+// Stand-in strkey (same one agentDeposit.test.js already uses) — any syntactically valid
 // C-address works since these reads never touch the network.
 const VAULT = 'CCDXZ6BUA7TPR3EXQWJWUD7EYR6OUMJRYIKYXPE53HRJOJFY5CXEHTN5'
-const STRAT_1 = 'CCDXZ6BUA7TPR3EXQWJWUD7EYR6OUMJRYIKYXPE53HRJOJFY5CXEHTN5'
-const STRAT_2 = 'CCRG37UTQ2BRCJSA3WYZIUTSGZVLYQ7C4EET2WYUWLU4NAWTETGB77JW'
 
 // Decode the invoked contract function's name straight off the built tx, so a test can pin
 // EXACTLY which on-chain method a read* function calls. A canned retval alone can't catch a
@@ -67,28 +64,6 @@ describe('readTotalShares', () => {
   test('returns null (not 0n) on simulation failure rather than throwing', async () => {
     const fakeServer = { simulateTransaction: async () => ({ error: 'boom' }) }
     expect(await readTotalShares(VAULT, { server: fakeServer })).toBeNull()
-  })
-})
-
-describe('readStrategies', () => {
-  test('returns decoded strategy addresses', async () => {
-    const fakeServer = {
-      simulateTransaction: async () => ({
-        result: {
-          retval: xdr.ScVal.scvVec([
-            Address.fromString(STRAT_1).toScVal(),
-            Address.fromString(STRAT_2).toScVal(),
-          ]),
-        },
-      }),
-    }
-    const strategies = await readStrategies(VAULT, { server: fakeServer })
-    expect(strategies).toEqual([STRAT_1, STRAT_2])
-  })
-
-  test('returns [] on simulation failure rather than throwing', async () => {
-    const fakeServer = { simulateTransaction: async () => ({ error: 'boom' }) }
-    expect(await readStrategies(VAULT, { server: fakeServer })).toEqual([])
   })
 })
 
