@@ -238,7 +238,12 @@ export function planPartialExit({ agent, amount, account, now = Date.now() }) {
     amountUnits = null
   }
   if (amountUnits == null || amountUnits <= 0n) {
-    return { ok: false, kind: 'partial-exit', reason: 'invalid-amount', agentAddress: agent.address }
+    return {
+      ok: false,
+      kind: 'partial-exit',
+      reason: 'invalid-amount',
+      agentAddress: agent.address,
+    }
   }
 
   const nowSec = Math.floor(now / 1000)
@@ -252,7 +257,8 @@ export function planPartialExit({ agent, amount, account, now = Date.now() }) {
       kind: 'partial-exit',
       reason: 'scope-unknown',
       agentAddress: agent.address,
-      message: "This agent's authorization status could not be confirmed — try again, or use full exit.",
+      message:
+        "This agent's authorization status could not be confirmed — try again, or use full exit.",
     }
   }
   if (blocked === 'scope-revoked' || blocked === 'scope-expired') {
@@ -271,7 +277,12 @@ export function planPartialExit({ agent, amount, account, now = Date.now() }) {
 
   const maxUnits = stellarVaultMaxUnits(agent)
   if (maxUnits == null) {
-    return { ok: false, kind: 'partial-exit', reason: 'balance-unavailable', agentAddress: agent.address }
+    return {
+      ok: false,
+      kind: 'partial-exit',
+      reason: 'balance-unavailable',
+      agentAddress: agent.address,
+    }
   }
   if (amountUnits > maxUnits) {
     return {
@@ -374,7 +385,8 @@ export function ownerActionOutcome(r) {
   }
   const err = r?.error
   const submission = err && typeof err === 'object' ? err.submission : undefined
-  if (submission === 'not-submitted') return { agentAddress, outcome: 'not-submitted', message: err.message }
+  if (submission === 'not-submitted')
+    return { agentAddress, outcome: 'not-submitted', message: err.message }
   if (submission === 'unknown') return { agentAddress, outcome: 'unknown', message: err.message }
   // A result carrying none of ok/status/error proves nothing either way — a channel-level gap, not
   // a confirmed failure. Fabricating "confirmed-failed" from silence is the same collapse Fix 1's
@@ -412,7 +424,8 @@ export async function reconcileOwnerAction({ action, result, readOwnerMoney, bef
   const raw = Array.isArray(result) ? result : [result]
   const outcomes = raw.map(ownerActionOutcome)
 
-  const allNotSubmitted = outcomes.length > 0 && outcomes.every((o) => o.outcome === 'not-submitted')
+  const allNotSubmitted =
+    outcomes.length > 0 && outcomes.every((o) => o.outcome === 'not-submitted')
   if (allNotSubmitted) {
     // A definite refusal before/without submission — nothing changed on-chain, nothing to re-read.
     return {
@@ -444,7 +457,8 @@ export async function reconcileOwnerAction({ action, result, readOwnerMoney, bef
   const sawEveryTarget = targetAddresses.size > 0 && freshAgents.length === targetAddresses.size
 
   const anyUnknown = outcomes.some((o) => o.outcome === 'unknown')
-  const allConfirmedSuccess = outcomes.length > 0 && outcomes.every((o) => o.outcome === 'confirmed-success')
+  const allConfirmedSuccess =
+    outcomes.length > 0 && outcomes.every((o) => o.outcome === 'confirmed-success')
 
   let complete
   if (action?.kind === 'revoke') {
@@ -463,7 +477,8 @@ export async function reconcileOwnerAction({ action, result, readOwnerMoney, bef
     // "other money" case: scope.revoked is a single boolean the SUCCESS tx already set.
     complete =
       allConfirmedSuccess ||
-      (sawEveryTarget && freshAgents.every((a) => a.scope?.state === 'known' && a.scope.value?.revoked === true))
+      (sawEveryTarget &&
+        freshAgents.every((a) => a.scope?.state === 'known' && a.scope.value?.revoked === true))
   } else {
     // Full/partial exit: complete requires BOTH a clean confirmed result across every target AND
     // chain-verified zero remaining shares/idle balance — a confirmed tx with an unread or
@@ -474,7 +489,8 @@ export async function reconcileOwnerAction({ action, result, readOwnerMoney, bef
     // implies "nothing is unknown". A separate `!remainingUnknown` conjunct here was always true
     // whenever remainingKnownZero was true; dead weight, removed rather than kept for show.
     const remainingKnownZero =
-      sawEveryTarget && freshAgents.every((a) => isKnownZeroRead(a.vaultShares) && isKnownZeroRead(a.idleToken))
+      sawEveryTarget &&
+      freshAgents.every((a) => isKnownZeroRead(a.vaultShares) && isKnownZeroRead(a.idleToken))
     complete = allConfirmedSuccess && remainingKnownZero
   }
 
