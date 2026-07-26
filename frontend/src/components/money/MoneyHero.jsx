@@ -35,6 +35,18 @@ function formatCheckedAt(checkedAtMs) {
   return Number.isFinite(checkedAtMs) ? new Date(checkedAtMs).toISOString() : 'Unavailable'
 }
 
+// Fix loop 2, I1: staleness is a property of the model's own freshness triple (freshness.js),
+// NOT of `model.state` alone. `problem` (myMoneyModel.js:196-208) and `partial-discovery`
+// (:254-270) both outrank the 'stale' state assignment (:306-308) in buildMyMoneyModel's
+// precedence while still carrying a genuine `freshness: 'stale'` once DEFAULT_STALE_AFTER_MS (2
+// minutes, freshness.js:18) has passed -- keying off `model.state === 'stale'` alone let 30-day-old
+// money render as a fully confident current figure in either of those two states. Checked by BOTH
+// so the existing `state === 'stale'` case (whose own freshness is always 'stale' too, see the
+// same precedence block) keeps working unchanged.
+function isStale(model) {
+  return model.state === 'stale' || model.freshness === 'stale'
+}
+
 // Maps the model's own state machine (myMoneyModel.js's documented state list) onto exactly what
 // the hero figure may honestly show. Never invents a number: 'known' only when confirmedTotal
 // itself says 'known' AND carries a real amount -- every other case is 'loading' (MoneyFigure's
@@ -49,11 +61,18 @@ function heroFigureState(model) {
       model.state === 'problem' ||
       model.state === 'partial-discovery')
   ) {
+    // Fix loop 2, I1: a known total whose freshness is itself 'unavailable' (corrupt/missing
+    // checkedAt -- only reachable today via 'problem', since 'partial-discovery' can only carry
+    // 'current'/'stale' here and 'current'/'stale' states always agree with their own freshness)
+    // must never be rounded up to a confident current figure either -- mirrors the same
+    // absence-never-confidence rule myMoneyModel.js's own Fix 2 (review loop 2) already enforces
+    // one layer up.
+    if (model.freshness === 'unavailable') return { kind: 'unavailable' }
     return {
       kind: 'known',
       // MoneyFigure's own 'stale' state renders the real number PLUS its built-in "(stale)" flag
       // (Primitives.jsx:42) -- reused as-is rather than re-implemented here.
-      figureState: model.state === 'stale' ? 'stale' : 'current',
+      figureState: isStale(model) ? 'stale' : 'current',
       value: unitsToDisplay(
         model.confirmedTotal.amount.units,
         model.confirmedTotal.amount.decimals
@@ -127,7 +146,11 @@ export function MoneyHero({ model, onAction, actionPending = false }) {
             </p>
           )}
 
-          {hasLiveYield(model) && <p>Earning {model.yield.apy}% APY</p>}
+          {hasLiveYield(model) && (
+            <p>
+              Earning {model.yield.apy}% APY{isStale(model) ? ' (stale)' : ''}
+            </p>
+          )}
           {hasValidEarned(model) && (
             <p>
               Earned {unitsToDisplay(model.earned.amount.units, model.earned.amount.decimals)}{' '}

@@ -14,15 +14,25 @@
 // deliberately does NOT re-derive that predicate itself -- re-implementing the same rule a second
 // time here would risk drifting from the one the model already computed and tested.
 //
-// Cap: this row intentionally never shows a per-agent budget/cap figure as a real number. Verified
-// end to end that no real production interface actually carries one at this layer: readOwnerMoney.js
-// (readOneAgentMoney, :317-327) emits no cap field; ownerDiscovery.js's agent rows (:209-219) only
-// ever add {vault, revoked, expiry, authorized} on top of the D1 apiRow; and the D1 record itself
-// (api/agent-index/models.js's parseMembershipRow, :91-107) has no cap/budget column at all -- the
-// only place a per-agent cap is ever read is routerEvents.js's RouterDeployedEvent (:33,88), which
-// this module never receives. Rather than invent a shape no real function emits (the exact mistake
-// this wave's guard standard exists to catch), Cap renders as an honest "Unavailable" -- the same
-// discipline this whole codebase applies everywhere else money can't be confirmed.
+// Cap: this row intentionally never shows a per-agent budget/cap figure as a real number.
+// readOwnerMoney.js's readOneAgentMoney (:317-327) emits no cap field, ownerDiscovery.js's own
+// agent-row shape (:209-219) only ever adds {vault, revoked, expiry, authorized} on top of the D1
+// apiRow, and the D1 record itself (api/agent-index/models.js's parseMembershipRow, :91-107) has
+// no cap/budget column.
+//
+// Fix loop 2, I3 (corrected -- the prior wording here was wrong): the cap is NOT unreachable from
+// this route. ownerDiscovery.js:17,123 already calls fetchRouterDeployedEvents for this owner on
+// this very /agent path, and decodeDeployedEvent (routerEvents.js:35-42) returns a real per-agent
+// `cap` keyed by the deployed agent address -- it is simply discarded one line before the agent
+// rows are built (ownerDiscovery.js:150: `for (const ev of rpcEvents) addCandidate(ev.agent,
+// SOURCE_RPC)`, dropping `ev.cap`). This component may not edit ownerDiscovery.js (outside this
+// task's twelve-file scope), so rendering an honest "Unavailable" is still the right call HERE --
+// but Task 13 should carry `cap` through `addCandidate` onto the agent row and render it here in
+// place of the literal, falling back to "Unavailable" only for an agent whose deploy event was
+// never seen. Do NOT reach for `PermissionDecisionV1.reviewedAgentInits[].cap` (Strategy's
+// ProtectStage source) instead -- it's a pre-execution, run-scoped artifact keyed by
+// `allocationId` with no persisted link to a deployed agent address; the on-chain
+// RouterDeployedEvent above is.
 import { useState } from 'react'
 import { AgentMark } from '../pocket/AgentMark.jsx'
 import { NetworkBadge } from '../pocket/NetworkIdentity.jsx'

@@ -13,6 +13,7 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/rea
 import { axe } from 'vitest-axe'
 import * as axeMatchers from 'vitest-axe/matchers'
 import { MyMoneyRoute } from './MyMoneyRoute.jsx'
+import { buildMyMoneyModel } from '../../money/myMoneyModel.js'
 
 expect.extend(axeMatchers)
 afterEach(cleanup)
@@ -52,6 +53,17 @@ function baseModel(overrides = {}) {
     hasKnownVaultMoney: true,
     ...overrides,
   }
+}
+
+// Fix loop 2, M5: the old hand-written `loading` fixture kept `baseModel`'s defaults for
+// `yield`/`agentCount`/`freshness` (live APY, agentCount:2, freshness:'current') even though
+// production's real loading model (buildMyMoneyModel, myMoneyModel.js:225-241: `money == null &&
+// cache?.money == null` -> state:'loading', `finishModel` called with `money: null`) sets EVERY
+// money-derived field to null and `freshness: 'unavailable'` -- a shape production can never
+// actually emit. Built from the real function instead so this fixture can't drift from what
+// buildMyMoneyModel genuinely produces, exactly as the review recommended.
+function realLoadingModel() {
+  return buildMyMoneyModel({ owner: 'GOWNER', now: NOW })
 }
 
 function stellarVaultAgent(address = 'CAGENT1', units = 300_0000000n) {
@@ -187,7 +199,10 @@ describe('MyMoneyRoute — Vault protection is Vault-wide and gates renewal to t
         ownerIsAuthority: true,
       },
     })
-    render(<MyMoneyRoute model={model} agents={[]} onRenewProtection={vi.fn()} />)
+    // Fix loop 2, M4: dropped the stray `onRenewProtection={vi.fn()}` -- MyMoneyRoute accepts no
+    // such prop (grep confirms). The button comes from choosePrimaryMoneyAction (myMoneyModel.js),
+    // wired through MoneyHero's own `onAction`, not a dedicated renewal callback.
+    render(<MyMoneyRoute model={model} agents={[]} />)
     expect(screen.getByRole('button', { name: 'Renew vault protection' })).toBeTruthy()
   })
 
@@ -277,13 +292,11 @@ describe('MyMoneyRoute — authoritative empty and loading never show a coerced 
   })
 
   it('loading: shows Loading, never a placeholder number', () => {
-    render(
-      <MyMoneyRoute
-        model={baseModel({ state: 'loading', confirmedTotal: null, checkedAt: null })}
-        agents={[]}
-      />
-    )
+    render(<MyMoneyRoute model={realLoadingModel()} agents={[]} />)
     expect(screen.getByText('Loading')).toBeTruthy()
+    // A fixture that (wrongly) kept a live APY/agentCount could hide an APY line rendering beside
+    // "Loading" -- the real model can't carry one (yield is null), so this must genuinely be absent.
+    expect(screen.queryByText(/APY/)).toBeNull()
   })
 })
 
@@ -372,9 +385,21 @@ describe('MyMoneyRoute — checklist item 9: every network mark carries visible 
   // `<img src="/brand/networks/*.svg">` with no accompanying label). This scans every network mark
   // image on the page, by its real src path, and requires each one to sit inside a `.network-badge`
   // wrapper -- the only structure that guarantees the accompanying visible label text.
-  it('no network mark image ever renders outside the NetworkBadge wrapper that carries its label', () => {
+  //
+  // Fix loop 2, M1: an asset-path scan (`img[src*=...]`) is itself bypassable -- a hand-rolled
+  // inline `<svg>` network mark (no `img`, no `/brand/networks/` src) matches nothing in that
+  // selector and sails through unnoticed (only caught incidentally, by a sibling PositionList
+  // assertion that happens to also require the visible text). Broadened to scan by ELEMENT SHAPE
+  // (any `img` or `svg`) across the two sections that legitimately carry network identity, so a
+  // bypass of any asset shape -- not just an `<img>` -- is caught here directly.
+  it('no network mark of any element shape ever renders outside the NetworkBadge wrapper that carries its label', () => {
     render(<MyMoneyRoute model={baseModel()} agents={[splitAgent('CBRIDGE1')]} />)
-    const marks = document.querySelectorAll('img[src*="/brand/networks/"]')
+    const positionList = document.querySelector('ul.pc-position-list')
+    const crewList = document.querySelector('ul.pc-crew-list')
+    const marks = [
+      ...positionList.querySelectorAll('img, svg'),
+      ...crewList.querySelectorAll('img, svg'),
+    ].filter((mark) => !mark.closest('.pc-agent-mark')) // AgentMark's own identity glyph -- item 10's guard owns it, not this one
     expect(marks.length).toBeGreaterThan(0)
     for (const mark of marks) expect(mark.closest('.network-badge')).toBeTruthy()
   })
@@ -429,7 +454,7 @@ async function launchRealChromium() {
 
 const LAYOUT_STATES = [
   ['disconnected', baseModel({ state: 'disconnected', owner: null, confirmedTotal: null }), []],
-  ['loading', baseModel({ state: 'loading', confirmedTotal: null, checkedAt: null }), []],
+  ['loading', realLoadingModel(), []],
   ['current-mixed-custody', baseModel(), [stellarVaultAgent(), splitAgent('CBRIDGE1')]],
   ['stale', baseModel({ state: 'stale', freshness: 'stale' }), [stellarVaultAgent()]],
   ['partial-discovery', baseModel({ state: 'partial-discovery' }), [stellarVaultAgent()]],

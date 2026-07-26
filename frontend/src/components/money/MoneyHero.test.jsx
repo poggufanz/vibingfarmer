@@ -10,6 +10,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { axe } from 'vitest-axe'
 import * as axeMatchers from 'vitest-axe/matchers'
 import { MoneyHero } from './MoneyHero.jsx'
+import { buildMyMoneyModel } from '../../money/myMoneyModel.js'
 
 expect.extend(axeMatchers)
 afterEach(cleanup)
@@ -112,6 +113,105 @@ describe('MoneyHero — heading and never-a-coerced-zero', () => {
   })
 })
 
+// Fix loop 2, I1: `model.state === 'stale'` alone is not the same claim as `model.freshness ===
+// 'stale'`. `problem` and `partial-discovery` both outrank buildMyMoneyModel's own 'stale' state
+// assignment (myMoneyModel.js:196-208, :254-270 outrank :306-308) while still genuinely carrying
+// `freshness: 'stale'` once DEFAULT_STALE_AFTER_MS (2 minutes, freshness.js:18) has passed -- so a
+// model built from real 30-day-old data must still flag stale in the hero even though its `state`
+// is 'problem' or 'partial-discovery', never 'stale' itself. Built with the REAL
+// buildMyMoneyModel, not a hand-written model literal, exactly as the review demanded: a
+// hand-built fixture lets the author pick `state` and `freshness` independently and can never
+// prove this bug exists.
+describe('MoneyHero — I1 (fix loop 2): staleness comes from the real freshness triple, not model.state alone', () => {
+  const THIRTY_DAYS_MS = 30 * 24 * 3600 * 1000
+
+  // Matches the real MoneySnapshot shape myMoneyModel.js's own JSDoc documents (myMoneyModel.js:14-39).
+  function realMoneySnapshot(overrides = {}) {
+    return {
+      confirmedTotal: { state: 'known', amount: amt(500_0000000n) },
+      yield: { state: 'unavailable', apy: null },
+      earned: { state: 'unavailable', amount: null },
+      custodyBreakdown: { 'stellar-vault': '5000000000' },
+      unattributed: {},
+      executionBreakdown: {},
+      agentCount: 1,
+      problemAgentCount: 0,
+      agents: [],
+      checkedAt: NOW - THIRTY_DAYS_MS,
+      confirmedLedger: null,
+      confirmedBlock: null,
+      source: null,
+      ...overrides,
+    }
+  }
+
+  it('a real "problem" model (revoked-but-funded agent) from 30-day-old data flags stale, never confident-current', () => {
+    const money = realMoneySnapshot({
+      agents: [{ address: 'CREVOKED1', problems: ['scope-revoked'], amount: amt(500_0000000n) }],
+    })
+    const model = buildMyMoneyModel({
+      owner: 'GOWNER',
+      discovery: { status: 'complete', agents: [] },
+      money,
+      now: NOW,
+    })
+    expect(model.state).toBe('problem')
+    expect(model.freshness).toBe('stale')
+    render(<MoneyHero model={model} />)
+    expect(screen.getByText('(stale)')).toBeTruthy()
+  })
+
+  it('a real "partial-discovery" model from 30-day-old data flags stale, never confident-current', () => {
+    const model = buildMyMoneyModel({
+      owner: 'GOWNER',
+      discovery: { status: 'partial', agents: [] },
+      money: realMoneySnapshot(),
+      now: NOW,
+    })
+    expect(model.state).toBe('partial-discovery')
+    expect(model.freshness).toBe('stale')
+    render(<MoneyHero model={model} />)
+    expect(screen.getByText('(stale)')).toBeTruthy()
+  })
+
+  // Not a proof of the state-vs-freshness ternary bug (heroFigureState's own allow-list already
+  // excludes 'disconnected' from ever reaching the 'known' branch, so this passes on both sides of
+  // the I1 fix) -- included because the coordinator asked for one per outranking state, and it
+  // pins down a real, adjacent invariant: disconnected must never leak a known-but-stale figure
+  // either, regardless of what freshness says.
+  it('a real "disconnected" model never shows a known confirmed figure regardless of freshness', () => {
+    const model = buildMyMoneyModel({
+      owner: null,
+      discovery: { status: 'complete', agents: [] },
+      money: realMoneySnapshot(),
+      now: NOW,
+    })
+    expect(model.state).toBe('disconnected')
+    expect(model.freshness).toBe('stale') // computed regardless of connection state (myMoneyModel.js:221)
+    render(<MoneyHero model={model} />)
+    expect(screen.getByText('Unavailable')).toBeTruthy()
+    expect(screen.queryByText(/500/)).toBeNull()
+  })
+
+  it('a real "problem" model with a corrupt/missing checkedAt (freshness: unavailable) renders Unavailable, never a confident current figure', () => {
+    const money = realMoneySnapshot({
+      agents: [{ address: 'CREVOKED1', problems: ['scope-revoked'], amount: amt(500_0000000n) }],
+      checkedAt: null,
+    })
+    const model = buildMyMoneyModel({
+      owner: 'GOWNER',
+      discovery: { status: 'complete', agents: [] },
+      money,
+      now: NOW,
+    })
+    expect(model.state).toBe('problem')
+    expect(model.freshness).toBe('unavailable')
+    render(<MoneyHero model={model} />)
+    expect(screen.getByText('Unavailable')).toBeTruthy()
+    expect(screen.queryByText(/500/)).toBeNull()
+  })
+})
+
 describe('MoneyHero — earned/APY only with valid evidence', () => {
   it('never shows an APY line when yield is unavailable', () => {
     render(<MoneyHero model={baseModel({ yield: { state: 'unavailable', apy: null } })} />)
@@ -121,6 +221,16 @@ describe('MoneyHero — earned/APY only with valid evidence', () => {
   it('shows the APY line only once yield is genuinely live', () => {
     render(<MoneyHero model={baseModel({ yield: { state: 'live', apy: 8.2 } })} />)
     expect(screen.getByText('Earning 8.2% APY')).toBeTruthy()
+  })
+
+  it('qualifies the APY line as stale when the model itself is stale, never showing a cached APY unqualified (I1)', () => {
+    const model = baseModel({
+      state: 'stale',
+      freshness: 'stale',
+      yield: { state: 'live', apy: 8.2 },
+    })
+    render(<MoneyHero model={model} />)
+    expect(screen.getByText('Earning 8.2% APY (stale)')).toBeTruthy()
   })
 
   it("never shows an Earned line while earned evidence is unavailable (today's real production shape)", () => {

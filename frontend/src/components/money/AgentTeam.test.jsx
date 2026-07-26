@@ -153,22 +153,45 @@ describe('AgentTeam — revoked-funded rows stay visible as Needs recovery', () 
     expect(onRecoverAgent).toHaveBeenCalledWith('CREVOKED1', null)
   })
 
-  it('shows a real planFullExit preview once discovery and account are supplied', () => {
+  it('shows a real planFullExit preview once discovery and account are supplied, including the partial-sweep limitation (I2)', () => {
+    // discovery.status: 'complete' would return planFullExit's `label: 'Exit all'` -- BYTE-
+    // IDENTICAL to this component's own null-plan fallback (`{plan?.label || 'Exit all'}`,
+    // AgentTeam.jsx:197), so a test built on 'complete' cannot tell a real plan from `const plan =
+    // null`. 'partial' genuinely diverges: planFullExit (ownerActions.js:156-157) returns
+    // `known: false`, `label: 'Exit known agents'`, and a real `limitation` sentence -- proven
+    // below by setting `const plan = null` in AgentTeam.jsx and confirming this test goes red
+    // (fix loop 2, I2).
     const discovery = {
-      status: 'complete',
+      status: 'partial',
       agents: [{ address: 'CREVOKED1', scopeReadStatus: 'ok', revoked: true, expiry: 0 }],
     }
     const account = { kind: 'G', address: 'GOWNER' }
+    const onRecoverAgent = vi.fn()
     render(
       <AgentTeam
         agents={[revokedFundedAgent('CREVOKED1')]}
         problemAgents={['CREVOKED1']}
         discovery={discovery}
         account={account}
+        onRecoverAgent={onRecoverAgent}
       />
     )
     fireEvent.click(screen.getByRole('button', { name: 'Recover funds' }))
-    expect(screen.getByRole('button', { name: 'Exit all' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Exit known agents' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Exit all' })).toBeNull()
+    // plan.limitation -- the "only known agents, not a guaranteed full sweep" disclosure -- had
+    // ZERO coverage before this loop. This is the exact sentence an owner needs before signing a
+    // recovery sweep on partial discovery.
+    expect(
+      screen.getByText(
+        /this exits only the agents currently known, not a guaranteed full-account sweep/
+      )
+    ).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Exit known agents' }))
+    expect(onRecoverAgent).toHaveBeenCalledWith(
+      'CREVOKED1',
+      expect.objectContaining({ kind: 'full-exit', known: false })
+    )
   })
 })
 
