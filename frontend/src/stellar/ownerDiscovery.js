@@ -120,7 +120,9 @@ export async function discoverOwnerScopes({
   }
   const [rpcEvents, registryAgents, vaultAgents] = await Promise.all([
     SOROBAN_FUNDING_ROUTER_ADDRESS
-      ? fetchRpcEvents({ server: s, routerAddress: SOROBAN_FUNDING_ROUTER_ADDRESS, owner }).catch(() => [])
+      ? fetchRpcEvents({ server: s, routerAddress: SOROBAN_FUNDING_ROUTER_ADDRESS, owner }).catch(
+          () => []
+        )
       : Promise.resolve([]),
     queryRegistry(owner, { server: s }).catch(() => []),
     // ponytail: discoverVaultAgents() already runs its own getEvents scan (~100k ledgers) plus
@@ -152,7 +154,10 @@ export async function discoverOwnerScopes({
   // Chain is authoritative: re-read every candidate's scope. readAgentScope never throws (catches
   // internally), so allSettled here is belt-and-braces, not load-bearing.
   const settled = await Promise.allSettled(
-    [...candidates.values()].map(async (c) => ({ ...c, scope: await readScope(c.address, { server: s }) }))
+    [...candidates.values()].map(async (c) => ({
+      ...c,
+      scope: await readScope(c.address, { server: s }),
+    }))
   )
 
   const agents = []
@@ -214,14 +219,18 @@ export async function discoverOwnerScopes({
     })
   }
 
-  let status = client.status === 'complete' || client.status === 'partial' ? client.status : 'unavailable'
+  let status =
+    client.status === 'complete' || client.status === 'partial' ? client.status : 'unavailable'
   if (status === 'unavailable' && agents.length > 0) status = 'partial' // known hints beat empty
   // A quarantined row, a scope read failure, a hint-only candidate the API never indexed, or an
   // unverifiable hint (couldn't even be read) are all evidence the D1 index's "complete" claim
   // doesn't fully hold — surface it as a discrepancy. unverifiedCandidateCount never contributes
   // to the `agents.length > 0` upgrade above (those candidates never reach `agents`), only to
   // this downgrade.
-  if (status === 'complete' && (sawQuarantine || sawReadFailure || sawHintOnlyCandidate || unverifiedCandidateCount > 0))
+  if (
+    status === 'complete' &&
+    (sawQuarantine || sawReadFailure || sawHintOnlyCandidate || unverifiedCandidateCount > 0)
+  )
     status = 'partial'
 
   const hints = {

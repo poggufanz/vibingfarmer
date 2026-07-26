@@ -67,7 +67,14 @@ const scope = ({ owner = OWNER, revoked = false, expiry = 1000 } = {}) => ({
   revoked,
 })
 
-function seams({ clientResult = client(), cache = [], rpc = [], registry = [], vault = [], scopes = {} } = {}) {
+function seams({
+  clientResult = client(),
+  cache = [],
+  rpc = [],
+  registry = [],
+  vault = [],
+  scopes = {},
+} = {}) {
   return {
     server: {},
     fetchClient: vi.fn(async () => clientResult),
@@ -94,7 +101,13 @@ describe('discoverOwnerScopes', () => {
 
   it('reports partial (not empty) when the API is unavailable but a hint verifies', async () => {
     const s = seams({
-      clientResult: { status: 'unavailable', networkId: NETWORK, owner: OWNER, agents: [], coverage: null },
+      clientResult: {
+        status: 'unavailable',
+        networkId: NETWORK,
+        owner: OWNER,
+        agents: [],
+        coverage: null,
+      },
       cache: ['CAGENT1'],
       scopes: { CAGENT1: scope() },
     })
@@ -105,7 +118,13 @@ describe('discoverOwnerScopes', () => {
 
   it('reports unavailable, never `complete + []`, when the API is down and no hint exists', async () => {
     const s = seams({
-      clientResult: { status: 'unavailable', networkId: NETWORK, owner: OWNER, agents: [], coverage: null },
+      clientResult: {
+        status: 'unavailable',
+        networkId: NETWORK,
+        owner: OWNER,
+        agents: [],
+        coverage: null,
+      },
     })
     const d = await discoverOwnerScopes({ owner: OWNER, ...s })
     expect(d.status).toBe('unavailable')
@@ -158,7 +177,13 @@ describe('discoverOwnerScopes', () => {
     // row, and it must not by itself flip an honest `unavailable` (no other evidence at all) into
     // a false `partial`.
     const s = seams({
-      clientResult: { status: 'unavailable', networkId: NETWORK, owner: OWNER, agents: [], coverage: null },
+      clientResult: {
+        status: 'unavailable',
+        networkId: NETWORK,
+        owner: OWNER,
+        agents: [],
+        coverage: null,
+      },
       cache: ['CUNVERIFIED'], // CUNVERIFIED has no entry in `scopes` -> readScope resolves null
     })
     const d = await discoverOwnerScopes({ owner: OWNER, ...s })
@@ -342,7 +367,13 @@ describe('discoverOwnerScopes', () => {
 
   it('degrades gracefully when the vault-discovery channel throws, and never throws out of discoverOwnerScopes', async () => {
     const s = seams({
-      clientResult: { status: 'unavailable', networkId: NETWORK, owner: OWNER, agents: [], coverage: null },
+      clientResult: {
+        status: 'unavailable',
+        networkId: NETWORK,
+        owner: OWNER,
+        agents: [],
+        coverage: null,
+      },
     })
     s.discoverVaultAgents = async () => {
       throw new Error('rpc getEvents failed')
@@ -356,7 +387,13 @@ describe('discoverOwnerScopes', () => {
   it('degrades gracefully when rpcServer() itself throws, and never throws out of discoverOwnerScopes', async () => {
     rpcServerMock.mockRejectedValueOnce(new Error('stellar-sdk failed to load'))
     const { server: _omit, ...s } = seams({
-      clientResult: { status: 'unavailable', networkId: NETWORK, owner: OWNER, agents: [], coverage: null },
+      clientResult: {
+        status: 'unavailable',
+        networkId: NETWORK,
+        owner: OWNER,
+        agents: [],
+        coverage: null,
+      },
     }) // omit `server` so the internal `server || await rpcServer()` branch actually runs
     const d = await discoverOwnerScopes({ owner: OWNER, ...s })
     expect(d.status).toBe('unavailable')
