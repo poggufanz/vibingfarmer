@@ -200,6 +200,11 @@ export function strategyFlowReducer(state = initialStrategyFlowState, event) {
         moment: 'start',
         permissionStatus: 'grant-confirmed',
         protectMessage: null,
+        // Fix loop 1 (Minor): a rejected-then-retried grant leaves a stale permissionError from the
+        // earlier WALLET_REJECTED/WALLET_FAILED behind; a caller branching on it after a genuine
+        // success must not see the old failure. protectMessage was already cleared above -- this
+        // closes the same gap for the field nothing else in this case touched.
+        permissionError: null,
       }
 
     case 'REUSE_CONFIRMED':
@@ -216,6 +221,9 @@ export function strategyFlowReducer(state = initialStrategyFlowState, event) {
         moment: 'start',
         permissionStatus: 'reuse-confirmed',
         protectMessage: null,
+        // Fix loop 1 (Minor): same clear as GRANT_CONFIRMED, for symmetry -- a confirm is a genuine
+        // success and must never carry a stale permissionError into Start.
+        permissionError: null,
       }
 
     case 'WORKER_STARTED': {

@@ -195,7 +195,7 @@ describe('PREFLIGHT_FAILED (Task 13, decision log #22 obligation A)', () => {
     expect(after.permission).toBeNull()
   })
 
-  it('clears an already-held decision -- proven stale, matching ProtectStage.jsx\'s own PermissionPhaseError handling', () => {
+  it("clears an already-held decision -- proven stale, matching ProtectStage.jsx's own PermissionPhaseError handling", () => {
     let s = toProtect()
     s = strategyFlowReducer(s, { type: 'PREFLIGHT_READY', decision: decision({ mode: 'reuse' }) })
     expect(s.permission).not.toBeNull()
@@ -254,6 +254,36 @@ describe('Entering Start', () => {
     s = strategyFlowReducer(s, { type: 'REUSE_CONFIRMED' })
     expect(s.moment).toBe('start')
     expect(s.permissionStatus).toBe('reuse-confirmed')
+  })
+
+  // Fix loop 1 (Minor, Strategy Task 13 review): reject -> retry -> success used to leave the
+  // FIRST attempt's permissionError sitting in state even though GRANT_CONFIRMED is a genuine
+  // success -- protectMessage was already cleared on confirm, but permissionError was not, so a
+  // caller branching on permissionError (rather than protectMessage) saw a stale failure.
+  it('GRANT_CONFIRMED clears a permissionError left over from an earlier rejected attempt', () => {
+    let s = toProtect()
+    s = strategyFlowReducer(s, { type: 'PREFLIGHT_READY', decision: decision() })
+    s = strategyFlowReducer(s, { type: 'GRANT_REQUESTED' })
+    s = strategyFlowReducer(s, { type: 'WALLET_REJECTED', reason: 'user-declined' })
+    expect(s.permissionError).toBe('user-declined') // sanity: the stale value really is there
+    s = strategyFlowReducer(s, { type: 'GRANT_REQUESTED' }) // retry
+    s = strategyFlowReducer(s, { type: 'GRANT_CONFIRMED' }) // success
+    expect(s.moment).toBe('start')
+    expect(s.permissionError).toBeNull()
+  })
+
+  // REUSE_CONFIRMED's own gate (permissionStatus === 'preflight-ready') can only be reached via a
+  // PREFLIGHT_READY, which already clears permissionError itself -- so this exact stale value is
+  // not reachable through the public event chain today. Constructing the pre-confirm state
+  // directly still proves the invariant the reducer's OWN case must hold on its own terms (the
+  // same defensive clear GRANT_CONFIRMED needed), not merely "unreachable so untested."
+  it('REUSE_CONFIRMED clears permissionError even if the incoming state somehow still carried one', () => {
+    let s = toProtect()
+    s = strategyFlowReducer(s, { type: 'PREFLIGHT_READY', decision: decision({ mode: 'reuse' }) })
+    s = { ...s, permissionError: 'stale-from-elsewhere' }
+    s = strategyFlowReducer(s, { type: 'REUSE_CONFIRMED' })
+    expect(s.moment).toBe('start')
+    expect(s.permissionError).toBeNull()
   })
 
   it('GRANT_CONFIRMED without a prior GRANT_REQUESTED does not enter Start', () => {
