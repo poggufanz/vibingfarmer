@@ -25,7 +25,7 @@
 // names, per this project's "guards must be able to fail" standard.
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { axe } from 'vitest-axe'
 import * as axeMatchers from 'vitest-axe/matchers'
 import { StrategyRoute } from './StrategyRoute.jsx'
@@ -206,7 +206,13 @@ describe('Strategy a11y -- one h1 per stage', () => {
 describe('Strategy a11y -- stage announcement', () => {
   it('announces "Step N of 3: <Label>" for the current stage, and it changes with the stage', () => {
     const { container, rerender } = render(<StrategyProgress current="plan" />)
-    const region = () => container.querySelector('[role="status"][aria-live="polite"]')
+    // m-2 (Strategy Task 14 fix round 1, reviewer finding): a plain querySelector on
+    // [role="status"] finds the element even when it has been pulled out of the accessibility
+    // tree (aria-hidden="true" or the `hidden` attribute) -- the reviewer added `hidden
+    // aria-hidden="true"` to StrategyProgress.jsx's live region and all these assertions stayed
+    // green. within(...).getByRole('status') is testing-library's own accessible-tree-aware
+    // query (it excludes aria-hidden/hidden elements by default), so it throws instead.
+    const region = () => within(container).getByRole('status')
     expect(region().textContent).toBe('Step 1 of 3: Plan')
 
     // CONTROL: a different `current` produces a genuinely different announcement -- proves the
@@ -268,6 +274,45 @@ describe('Strategy a11y -- focus follows a stage change but never a same-stage b
     )
     expect(document.activeElement.tagName).toBe('H1')
     expect(document.activeElement.textContent).toBe('Protect this run')
+  })
+
+  // m-3 (Strategy Task 14 fix round 1, reviewer finding): no test before this one ever returned to
+  // an already-visited stage, so StrategyRoute.jsx:62's `previousStageRef.current = stage` (the
+  // line that keeps the ref current after every render) was unguarded -- deleting it survived the
+  // full 18-test suite. Without it, the ref stays pinned at its ORIGINAL seed value forever, so a
+  // plan -> protect -> plan round trip compares the second 'plan' against the stale initial 'plan'
+  // and wrongly concludes nothing changed.
+  it('re-focuses correctly when navigating back to a previously-visited stage (plan -> protect -> plan)', () => {
+    const { rerender } = render(
+      <StrategyRoute
+        stage="plan"
+        reached={['plan']}
+        vaultTotalShares={500_0000000n}
+        base={disconnectedBase}
+        onGenerate={vi.fn()}
+      />
+    )
+    rerender(
+      <StrategyRoute
+        stage="protect"
+        reached={['plan', 'protect']}
+        plan={PLAN_ONE_DEPOSIT}
+        protectProps={{ owner: null, onConnectWallet: vi.fn(), onEditPlan: vi.fn() }}
+      />
+    )
+    expect(document.activeElement.textContent).toBe('Protect this run')
+
+    rerender(
+      <StrategyRoute
+        stage="plan"
+        reached={['plan', 'protect']}
+        vaultTotalShares={500_0000000n}
+        base={disconnectedBase}
+        onGenerate={vi.fn()}
+      />
+    )
+    expect(document.activeElement.tagName).toBe('H1')
+    expect(document.activeElement.textContent).toBe('How much do you want to put to work?')
   })
 
   it('never moves focus on the very first mount (nothing to transition FROM yet)', () => {
@@ -359,8 +404,11 @@ describe('Strategy a11y -- technical disclosures are native details/summary', ()
 // worker.js sub-step.
 // ---------------------------------------------------------------------------------------------
 describe('Strategy a11y -- batched live status, never a per-sub-step commentary', () => {
+  // m-2 (Strategy Task 14 fix round 1): same accessible-tree-aware query as the stage-announcement
+  // describe block above, scoped with `within` since this block renders two StartStage instances
+  // side by side (a plain global `screen.getByRole` would be ambiguous between them).
   function region(container) {
-    return container.querySelector('[role="status"][aria-live="polite"]')
+    return within(container).getByRole('status')
   }
 
   it('two different raw sub-step sequences that land in the SAME bucket produce an IDENTICAL announcement', () => {

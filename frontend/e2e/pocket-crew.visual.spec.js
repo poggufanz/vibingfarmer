@@ -71,6 +71,32 @@ test.describe('Pocket Crew Strategy', () => {
     ).toBeLessThanOrEqual(overflow.viewportWidth + 0.5)
   }
 
+  // I-2 (fix round 1, reviewer finding): a fixed-width action column can starve a sibling content
+  // track down to a few px WITHOUT ever creating horizontal overflow -- the guard above measures
+  // scrollWidth/rect-right and cannot see this at all (verified: it stayed green through the whole
+  // defect). This checks the vertical form directly: real content (e.g. a 64-char tx hash) forced
+  // into a track under 100px wide wraps to one-to-two characters per line, producing an element
+  // taller than 150px at that width -- a shape no legitimate narrow element in this fixture takes
+  // (icons/marks are narrow AND short). Runs on both mobile projects, not just 320, since the
+  // starved-track defect this guards was never exclusive to exactly 320px.
+  async function assertNoVerticalTextTrap(page, testInfo) {
+    if (!['mobile-320', 'mobile-360'].includes(testInfo.project.name)) return
+    const trapped = await page.evaluate(() => {
+      const hits = []
+      for (const el of document.querySelectorAll('[data-fixture="strategy"] *')) {
+        const rect = el.getBoundingClientRect()
+        if (rect.width > 0 && rect.width < 100 && rect.height > 150) {
+          hits.push({ tag: el.tagName, cls: el.className, width: rect.width, height: rect.height })
+        }
+      }
+      return hits
+    })
+    expect(
+      trapped,
+      `narrow+tall element(s) -- vertical text trap: ${JSON.stringify(trapped)}`
+    ).toEqual([])
+  }
+
   test('forest theme', async ({ page }, testInfo) => {
     await page.goto('/visual/?fixture=strategy&theme=forest')
     await page.waitForFunction(
@@ -79,6 +105,7 @@ test.describe('Pocket Crew Strategy', () => {
     await page.evaluate(() => document.fonts.ready)
     await page.waitForTimeout(500)
     await assertNoOverflowAt320(page, testInfo)
+    await assertNoVerticalTextTrap(page, testInfo)
     await expect(page).toHaveScreenshot('strategy-forest.png', { fullPage: true })
   })
 
@@ -90,16 +117,18 @@ test.describe('Pocket Crew Strategy', () => {
     await page.evaluate(() => document.fonts.ready)
     await page.waitForTimeout(500)
     await assertNoOverflowAt320(page, testInfo)
+    await assertNoVerticalTextTrap(page, testInfo)
     await expect(page).toHaveScreenshot('strategy-day-field.png', { fullPage: true })
   })
 
-  test('forest theme with prefers-reduced-motion', async ({ page }) => {
+  test('forest theme with prefers-reduced-motion', async ({ page }, testInfo) => {
     await page.emulateMedia({ reducedMotion: 'reduce' })
     await page.goto('/visual/?fixture=strategy&theme=forest')
     await page.waitForFunction(
       () => document.querySelectorAll('[data-fixture-pending="true"]').length === 0
     )
     await page.evaluate(() => document.fonts.ready)
+    await assertNoVerticalTextTrap(page, testInfo)
     await expect(page).toHaveScreenshot('strategy-reduced-motion.png', { fullPage: true })
   })
 })

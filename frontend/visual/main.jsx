@@ -422,10 +422,20 @@ function stellarAmount(units, decimals = 7) {
   return { token: TOKEN_ADDR, units, decimals }
 }
 
+// m-7 fix regression (Strategy Task 14 fix round 1, self-caught on re-freeze review): every plan's
+// TOP-LEVEL `amount.token` below is the literal 'USDC', never a real contract address -- matching
+// what production's normalizeStrategyPlan actually puts there (PlanStage.jsx never threads a real
+// token through it) and StartStage.test.jsx's own established `PLAN_TWO_DEPOSITS`/`PLAN_WITH_BRIDGE`
+// precedent. Only PER-AGENT `allocation`/`cap` fields use the real SOROBAN_TOKEN_ADDRESS/
+// STELLAR_USDC_SAC (those genuinely reach reusePreflight.js/grant.js's addrScVal boundary).
+// Fixing m-7 by copying PlanStage.jsx's `{plan.amount.token}` pattern into StartStage.jsx's bridge
+// child row exposed that THIS file's own hand-built plans had it backwards: a real contract
+// address at the top level rendered raw beside "aave-v3: 300" -- the exact I-4 defect shape, freshly
+// reintroduced. Fixed at the source (the data), not by adding a second render-site helper.
 const PLAN_ONE_DEPOSIT = Object.freeze({
   runId: 'run-8',
   planFingerprint: '0xplan8',
-  amount: stellarAmount('1000000000'),
+  amount: { token: 'USDC', units: '1000000000', decimals: 7 },
   agents: [
     {
       allocationId: 'run-8:deposit:0',
@@ -448,7 +458,7 @@ const PLAN_ONE_DEPOSIT = Object.freeze({
 const PLAN_WITH_BRIDGE = Object.freeze({
   runId: 'run-9',
   planFingerprint: '0xplan9',
-  amount: stellarAmount('4000000000'),
+  amount: { token: 'USDC', units: '4000000000', decimals: 7 },
   agents: [
     {
       allocationId: 'run-9:deposit:0',
@@ -520,13 +530,24 @@ function reviewedBridgeInit(over = {}) {
   }
 }
 
-function freshDecisionRaw({ agentInits, budgets } = {}) {
+// I-1 (Strategy Task 14 fix round 1, reviewer finding): runId/planFingerprint/agentInitFingerprint
+// are now overridable -- the Protect-fresh section below reviews PLAN_WITH_BRIDGE (runId 'run-9'),
+// and this function's hardcoded 'run-8'/'0xplan8' defaults (matching PLAN_ONE_DEPOSIT, the other two
+// Protect sections' plan) silently didn't match it. Defaults unchanged, so the reuse/rejected
+// sections (still reviewing PLAN_ONE_DEPOSIT) are unaffected.
+function freshDecisionRaw({
+  agentInits,
+  budgets,
+  runId = 'run-8',
+  planFingerprint = '0xplan8',
+  agentInitFingerprint = '0xagentinit1',
+} = {}) {
   return {
     version: 1,
-    runId: 'run-8',
+    runId,
     owner: OWNER,
-    planFingerprint: '0xplan8',
-    agentInitFingerprint: '0xagentinit1',
+    planFingerprint,
+    agentInitFingerprint,
     checkedAt: NOW_SECONDS,
     reviewedBudgets: budgets || [{ token: TOKEN_ADDR, units: '1000000000', decimals: 7 }],
     durationSeconds: 86400,
@@ -566,6 +587,24 @@ function reuseDecisionRaw() {
 
 function evt(name, data) {
   return { name, data }
+}
+
+// m-5 (Strategy Task 14 fix round 1, reviewer finding): a real settled run always accumulates a
+// live event trail on its way to a receipt (worker.js/orchestrator.js fire these for every
+// allocation) -- an empty `events: []` beside a fully-succeeded receipt is not a shape production
+// can emit. Real event names/shapes, matching StartStage.jsx's own header citations and
+// StartStage.test.jsx's `depositQueuedThenStarted`/`depositCompleted` fixtures.
+function depositCompletedEvents(allocationId, agentId, queueIndex, txHash) {
+  return [
+    evt('worker-queued', { allocationId, agentId, queueIndex }),
+    evt('worker-started', { allocationId, agentId, queueIndex }),
+    evt('started', { agentId, vault: VAULT_ADDR, allocationId }),
+    evt('step', { step: 'key-setup', status: 'pending', allocationId }),
+    evt('step', { step: 'key-setup', status: 'done', allocationId }),
+    evt('step', { step: 'swap', status: 'skipped', allocationId }),
+    evt('step', { step: 'deposit', status: 'pending', allocationId }),
+    evt('completed', { agentId, vault: VAULT_ADDR, txHash, gasMethod: 'relayer', allocationId }),
+  ]
 }
 
 function stellarAllocation(allocationId, over = {}) {
@@ -624,13 +663,19 @@ function findButton(root, name) {
   )
 }
 
+// m-1 (Strategy Task 14 fix round 1, reviewer finding): this fixture freezes Date.now() (above,
+// for the strategy fixture only) so a plan's displayed Expires timestamp never drifts -- but that
+// same freeze made THIS timeout math always read `elapsed === 0`, since `Date.now()` never
+// advances. A stuck `drive()` would then hang forever instead of rejecting loudly per this
+// function's own contract, and AutopilotSection's `.catch()` (below) would silently never fire.
+// performance.now() is real wall-clock elapsed time, untouched by the Date.now() override.
 function waitFor(check, { timeout = 2000, interval = 10 } = {}) {
   return new Promise((resolve, reject) => {
-    const start = Date.now()
+    const start = performance.now()
     ;(function tick() {
       const result = check()
       if (result) return resolve(result)
-      if (Date.now() - start > timeout) {
+      if (performance.now() - start > timeout) {
         reject(new Error('strategy fixture: timed out waiting for a DOM change'))
         return
       }
@@ -752,7 +797,7 @@ const START_QUEUED_PARTIAL_EVENTS = [
 const PLAN_START_LIVE = Object.freeze({
   runId: 'run-9',
   planFingerprint: '0xplan9live',
-  amount: stellarAmount('4000000000'),
+  amount: { token: 'USDC', units: '4000000000', decimals: 7 },
   agents: [
     { ...PLAN_ONE_DEPOSIT.agents[0], allocationId: 'run-9:deposit:0' },
     { ...PLAN_ONE_DEPOSIT.agents[0], allocationId: 'run-9-b:deposit:1' },
@@ -774,7 +819,7 @@ const RECEIPT_ALL_SUCCESS = receiptFor([
 const PLAN_MIXED_RECEIPT = Object.freeze({
   runId: 'run-9',
   planFingerprint: '0xplan9mixed',
-  amount: stellarAmount('1850000000'),
+  amount: { token: 'USDC', units: '1850000000', decimals: 7 },
   agents: [
     {
       allocationId: 'run-9:deposit:0',
@@ -889,8 +934,14 @@ function Section({ title, children }) {
 }
 
 function StrategyFixture() {
+  // I-3 (Strategy Task 14 fix round 1, reviewer ruling): no outer padding here, scoped to THIS
+  // fixture only (Foundation's own `padding: '1.5rem'` above is untouched -- its twelve baselines
+  // are a completed plan's committed artifacts). Every section already wraps its content in a real
+  // `StrategyRoute` (`.pc-route`, its own `--pc-route-gutter`) -- this harness's own extra 24px of
+  // padding sat OUTSIDE that, so the `mobile-320` project was freezing a 272px route / 240px stack,
+  // not the 320px viewport its own name promises. A project named `mobile-320` must test 320.
   return (
-    <main data-fixture="strategy" style={{ padding: '1.5rem', display: 'grid', gap: '2.5rem' }}>
+    <main data-fixture="strategy" style={{ display: 'grid', gap: '2.5rem' }}>
       <h1>Pocket Crew visual harness — Strategy</h1>
 
       <Section title="Plan — input">
@@ -974,7 +1025,18 @@ function StrategyFixture() {
               onRetryPreflight: () =>
                 Promise.resolve(
                   freshDecisionRaw({
-                    agentInits: [reviewedDepositInit(), reviewedBridgeInit()],
+                    // I-1 (fix round 1): PLAN_WITH_BRIDGE's deposit agent is 'run-9:deposit:0'
+                    // (main.jsx's PLAN_WITH_BRIDGE, above) -- reviewedDepositInit()'s default
+                    // 'run-8:deposit:0' matched nothing, so ProtectStage.jsx's `reviewed` lookup
+                    // (by allocationId) found no reviewed init for the deposit lane and rendered
+                    // mark+badge only, no cap/period/expiry/disclosure.
+                    runId: 'run-9',
+                    planFingerprint: '0xplan9',
+                    agentInitFingerprint: '0xagentinit9',
+                    agentInits: [
+                      reviewedDepositInit({ allocationId: 'run-9:deposit:0' }),
+                      reviewedBridgeInit(),
+                    ],
                     budgets: [
                       { token: TOKEN_ADDR, units: '1000000000', decimals: 7 },
                       { token: BRIDGE_TOKEN_ADDR, units: '3000000000', decimals: 7 },
@@ -1052,7 +1114,10 @@ function StrategyFixture() {
           })}
           startProps={{
             permission: { mode: 'fresh', agentAddresses: [AGENT_1, AGENT_2] },
-            events: [],
+            events: [
+              ...depositCompletedEvents('run-8:deposit:0', AGENT_1, 0, REAL_TX_HASH_1),
+              ...depositCompletedEvents('run-8:deposit:1', AGENT_2, 1, REAL_TX_HASH_2),
+            ],
             receipt: RECEIPT_ALL_SUCCESS,
             runId: 'run-8',
             onViewMoney: () => {},
