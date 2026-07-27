@@ -66,26 +66,52 @@ export function TechnicalMoneyDetails({ model, agents = [] }) {
         <h2 id="technical-details-heading">Technical details</h2>
       </header>
       <div>
+        {/* Owner decision #19: the container no longer defaults to mono -- these six raw values
+            are marked .pc-technical individually so they keep rendering in the mono face. */}
         <TechnicalDetails summary="Freshness and provenance">
-          <p>State: {model?.state ?? 'unavailable'}</p>
-          <p>Checked at: {rawOrUnavailable(model?.checkedAt)}</p>
-          <p>Confirmed ledger (Stellar): {rawOrUnavailable(model?.confirmedLedger)}</p>
-          <p>Confirmed block (Base): {rawOrUnavailable(model?.confirmedBlock)}</p>
-          <p>Source: {rawOrUnavailable(model?.source)}</p>
-          <p>Freshness: {rawOrUnavailable(model?.freshness)}</p>
+          <p>
+            State: <span className="pc-technical">{model?.state ?? 'unavailable'}</span>
+          </p>
+          <p>
+            Checked at: <span className="pc-technical">{rawOrUnavailable(model?.checkedAt)}</span>
+          </p>
+          <p>
+            Confirmed ledger (Stellar):{' '}
+            <span className="pc-technical">{rawOrUnavailable(model?.confirmedLedger)}</span>
+          </p>
+          <p>
+            Confirmed block (Base):{' '}
+            <span className="pc-technical">{rawOrUnavailable(model?.confirmedBlock)}</span>
+          </p>
+          <p>
+            Source: <span className="pc-technical">{rawOrUnavailable(model?.source)}</span>
+          </p>
+          <p>
+            Freshness: <span className="pc-technical">{rawOrUnavailable(model?.freshness)}</span>
+          </p>
         </TechnicalDetails>
 
+        {/* Owner decision #19: two raw counts marked .pc-technical individually; the two <pre>
+            blocks already stay mono via pocket-crew.css's Foundation-wide `code, pre, .pc-technical`
+            rule with no change needed here. */}
         <TechnicalDetails summary="Custody and execution breakdown">
-          <p>Agent count: {rawOrUnavailable(model?.agentCount)}</p>
-          <p>Problem agent count: {rawOrUnavailable(model?.problemAgentCount)}</p>
+          <p>
+            Agent count: <span className="pc-technical">{rawOrUnavailable(model?.agentCount)}</span>
+          </p>
+          <p>
+            Problem agent count:{' '}
+            <span className="pc-technical">{rawOrUnavailable(model?.problemAgentCount)}</span>
+          </p>
           <pre>{JSON.stringify(model?.custodyBreakdown ?? {}, null, 2)}</pre>
           <pre>{JSON.stringify(model?.unattributed ?? {}, null, 2)}</pre>
         </TechnicalDetails>
 
+        {/* Owner decision #19: the whole raw-fields line is marked .pc-technical (it is entirely
+            addresses/state/booleans/numbers, no friendly label prefix worth splitting out). */}
         <TechnicalDetails summary="Raw agent scope fields">
           {agents.length === 0 && <p>No agents to show.</p>}
           {agents.map((agent) => (
-            <p key={agent.address}>
+            <p key={agent.address} className="pc-technical">
               {agent.address}: scope={agent.scope?.state ?? 'unavailable'}, revoked=
               {rawOrUnavailable(agent.scope?.value?.revoked)}, expiry=
               {rawOrUnavailable(agent.scope?.value?.expiry)}, executionStatus=

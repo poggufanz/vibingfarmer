@@ -341,8 +341,14 @@ export function StartStage({
   onMakeAnotherDeposit,
 }) {
   const scopeRef = useRef(null)
-  const viewModel = useMemo(() => buildStrategyViewModel({ plan, stellarVenue }), [plan, stellarVenue])
-  const displayByAllocation = useMemo(() => new Map(viewModel.agents.map((a) => [a.id, a])), [viewModel])
+  const viewModel = useMemo(
+    () => buildStrategyViewModel({ plan, stellarVenue }),
+    [plan, stellarVenue]
+  )
+  const displayByAllocation = useMemo(
+    () => new Map(viewModel.agents.map((a) => [a.id, a])),
+    [viewModel]
+  )
 
   const lanes = useMemo(
     () => buildLanes({ plan, permission, events, receipt }),
@@ -359,7 +365,9 @@ export function StartStage({
   return (
     <div ref={scopeRef} className="pc-start-stage">
       <div className="pc-strategy-decision pc-dominant pc-dominant--decision">
-        <h1 className="pc-strategy-question">{receipt ? 'Your run is complete' : 'Starting your run'}</h1>
+        <h1 className="pc-strategy-question">
+          {receipt ? 'Your run is complete' : 'Starting your run'}
+        </h1>
         <p className="pc-visually-hidden" role="status" aria-live="polite">
           {announcement}
         </p>
@@ -368,9 +376,16 @@ export function StartStage({
           {lanes.map((lane, index) => {
             const isBridge = lane.kind === 'bridge'
             const display = displayByAllocation.get(lane.allocationId)
-            const phaseLabel = isBridge ? BRIDGE_PHASE_LABEL[lane.phase] : DEPOSIT_PHASE_LABEL[lane.phase]
+            const phaseLabel = isBridge
+              ? BRIDGE_PHASE_LABEL[lane.phase]
+              : DEPOSIT_PHASE_LABEL[lane.phase]
             return (
-              <li key={lane.allocationId} className="pc-agent-lane" data-agent-kind={lane.kind} data-lane-phase={lane.phase}>
+              <li
+                key={lane.allocationId}
+                className="pc-agent-lane"
+                data-agent-kind={lane.kind}
+                data-lane-phase={lane.phase}
+              >
                 <AgentMark
                   identity={lane.allocationId}
                   state={laneMarkState(lane.phase)}
@@ -394,11 +409,14 @@ export function StartStage({
                   {isBridge && lane.children.length > 0 && (
                     <ul>
                       {lane.children.map((child) => {
-                        const childDisplay = display?.children?.find((c) => c.allocationId === child.allocationId)
+                        const childDisplay = display?.children?.find(
+                          (c) => c.allocationId === child.allocationId
+                        )
                         return (
                           <li key={child.allocationId}>
                             <span>
-                              {child.proxyTarget || child.destination}: {childDisplay?.allocation ?? ''}
+                              {child.proxyTarget || child.destination}:{' '}
+                              {childDisplay?.allocation ?? ''}
                             </span>
                             {child.custodyLabel && <span> {child.custodyLabel}</span>}
                             {child.error && <span role="alert"> {child.error}</span>}
@@ -406,7 +424,9 @@ export function StartStage({
                               <button
                                 type="button"
                                 className="pc-button pc-button--secondary"
-                                onClick={() => onRetryAllocation?.(child.allocationId, child.custody)}
+                                onClick={() =>
+                                  onRetryAllocation?.(child.allocationId, child.custody)
+                                }
                               >
                                 Retry
                               </button>
@@ -418,8 +438,15 @@ export function StartStage({
                   )}
                   {lane.txHash && (
                     <TechnicalDetails summary={`Agent ${index + 1} technical details`}>
-                      <p>Transaction: {lane.txHash}</p>
-                      <p>Allocation: {lane.allocationId}</p>
+                      {/* Owner decision #19: the container no longer defaults to mono -- these two
+                          raw values are marked .pc-technical individually so they keep rendering
+                          in the mono face. */}
+                      <p>
+                        Transaction: <span className="pc-technical">{lane.txHash}</span>
+                      </p>
+                      <p>
+                        Allocation: <span className="pc-technical">{lane.allocationId}</span>
+                      </p>
                     </TechnicalDetails>
                   )}
                 </div>
@@ -439,7 +466,10 @@ export function StartStage({
 
         {anyFailed && !receipt && (
           <StatusNotice state="warning" title="One or more agents did not complete">
-            <p>Agents that already finished stay confirmed. This page keeps reflecting the real state.</p>
+            <p>
+              Agents that already finished stay confirmed. This page keeps reflecting the real
+              state.
+            </p>
           </StatusNotice>
         )}
       </div>

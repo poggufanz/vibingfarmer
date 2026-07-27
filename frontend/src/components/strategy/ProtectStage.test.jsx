@@ -166,9 +166,15 @@ const PLAN_WITH_BRIDGE = Object.freeze({
       expiry: NOW + 3600,
       destination: 'Base Sepolia bridge',
       children: [
-        { allocationId: 'run-1:bridge:aave-v3', proxyTarget: 'aave-v3', destination: 'aave-v3', allocation: 100 },
+        {
+          allocationId: 'run-1:bridge:aave-v3',
+          proxyTarget: 'aave-v3',
+          destination: 'aave-v3',
+          allocation: 100,
+        },
       ],
-      instructions: 'Bridge USDC to the allowlisted Base custody proxies via Circle CCTP v2, then stop.',
+      instructions:
+        'Bridge USDC to the allowlisted Base custody proxies via Circle CCTP v2, then stop.',
     },
   ],
   truth: { agentIsolationCount: 2, stellarVenueCount: 1, baseUsesProxyVaults: true },
@@ -221,7 +227,10 @@ function reuseDecisionRaw(over = {}) {
     mode: 'reuse',
     confirmationCount: 0,
     grantReceiptFingerprint: '0xreceipt1',
-    allowanceExpiryProof: { latestLedger: 1000, approvals: [{ amount: { token: TOKEN_ADDR, units: '900000000' } }] },
+    allowanceExpiryProof: {
+      latestLedger: 1000,
+      approvals: [{ amount: { token: TOKEN_ADDR, units: '900000000' } }],
+    },
     freshReason: null,
     agents: [
       {
@@ -269,7 +278,9 @@ describe('ProtectStage — disconnected: wallet choice', () => {
   })
 
   it('shows only the wallets the caller reports as available', () => {
-    render(<ProtectStage {...baseProps({ owner: null, availableWallets: ['VF Wallet', 'Freighter'] })} />)
+    render(
+      <ProtectStage {...baseProps({ owner: null, availableWallets: ['VF Wallet', 'Freighter'] })} />
+    )
     const text = document.body.textContent
     expect(text).toContain('VF Wallet')
     expect(text).toContain('Freighter')
@@ -368,9 +379,11 @@ describe('ProtectStage — fresh review content (Step 2: friendly + technical co
       token: BRIDGE_TOKEN_ADDR,
       cap: { token: BRIDGE_TOKEN_ADDR, units: '500000000', decimals: 7 },
     })
-    const onRetryPreflight = vi.fn().mockResolvedValue(
-      freshDecisionRaw({ reviewedAgentInits: [reviewedAgentInit(), bridgeReviewed] })
-    )
+    const onRetryPreflight = vi
+      .fn()
+      .mockResolvedValue(
+        freshDecisionRaw({ reviewedAgentInits: [reviewedAgentInit(), bridgeReviewed] })
+      )
     render(<ProtectStage {...baseProps({ plan: PLAN_WITH_BRIDGE, onRetryPreflight })} />)
     await checkPermission()
 
@@ -381,7 +394,9 @@ describe('ProtectStage — fresh review content (Step 2: friendly + technical co
   })
 
   it('lets the user choose the duration preset before checking', async () => {
-    const onRetryPreflight = vi.fn().mockResolvedValue(freshDecisionRaw({ durationSeconds: 604800 }))
+    const onRetryPreflight = vi
+      .fn()
+      .mockResolvedValue(freshDecisionRaw({ durationSeconds: 604800 }))
     render(<ProtectStage {...baseProps({ onRetryPreflight })} />)
     fireEvent.click(screen.getByRole('button', { name: '7 days' }))
     fireEvent.click(screen.getByRole('button', { name: 'Check my permission' }))
@@ -434,12 +449,17 @@ describe('ProtectStage — Base always shows fresh + the full mandate trust disc
     technicalDisclosure: 'The relayer holds the session key. Binding ID: bind-1.',
     renewalCopy: 'Renew the mandate before its expiry to continue using Base testnet.',
     revokeCopy: 'Deleting or revoking the VF relayer copy does not invalidate another copied key.',
-    outageCopy: 'If the relayer has an outage, Base is unavailable until its health check succeeds.',
+    outageCopy:
+      'If the relayer has an outage, Base is unavailable until its health check succeeds.',
   }
 
   it('shows the full trust disclosure regardless of phase, and the decision is always fresh', async () => {
-    const onRetryPreflight = vi.fn().mockResolvedValue(freshDecisionRaw({ freshReason: 'base-required' }))
-    render(<ProtectStage {...baseProps({ plan: PLAN_WITH_BRIDGE, onRetryPreflight, baseMandateView })} />)
+    const onRetryPreflight = vi
+      .fn()
+      .mockResolvedValue(freshDecisionRaw({ freshReason: 'base-required' }))
+    render(
+      <ProtectStage {...baseProps({ plan: PLAN_WITH_BRIDGE, onRetryPreflight, baseMandateView })} />
+    )
 
     // Present even before the user checks permission -- Base's trust story is not conditional on
     // the fresh/reuse outcome, since a bridge leg always forces fresh anyway.
@@ -543,7 +563,7 @@ describe('ProtectStage — I2: fresh and reuse authorize through distinct action
     expect(onConfirmReuse).not.toHaveBeenCalled()
   })
 
-  it('the reuse review calls onConfirmReuse, and never onRequestGrant -- a single shared action would dispatch GRANT_REQUESTED into REUSE_CONFIRMED\'s guard and deadlock the flow', async () => {
+  it("the reuse review calls onConfirmReuse, and never onRequestGrant -- a single shared action would dispatch GRANT_REQUESTED into REUSE_CONFIRMED's guard and deadlock the flow", async () => {
     const onRetryPreflight = vi.fn().mockResolvedValue(reuseDecisionRaw())
     const onRequestGrant = vi.fn().mockResolvedValue({ agentAddresses: [AGENT_1] })
     const onConfirmReuse = vi.fn().mockResolvedValue({ agentAddresses: [AGENT_1] })
@@ -561,7 +581,9 @@ describe('ProtectStage — PermissionPhaseError rebuilds a fresh review, never a
   it('from the initial preflight: Retry re-checks, never opens the wallet', async () => {
     const onRetryPreflight = vi
       .fn()
-      .mockRejectedValueOnce(new PermissionPhaseError({ phase: 'preflight', code: 'X', message: 'stale' }))
+      .mockRejectedValueOnce(
+        new PermissionPhaseError({ phase: 'preflight', code: 'X', message: 'stale' })
+      )
       .mockResolvedValueOnce(freshDecisionRaw())
     const onRequestGrant = vi.fn().mockResolvedValue({ agentAddresses: [AGENT_1] })
     render(<ProtectStage {...baseProps({ onRetryPreflight, onRequestGrant })} />)
@@ -581,11 +603,13 @@ describe('ProtectStage — PermissionPhaseError rebuilds a fresh review, never a
       .mockResolvedValueOnce(freshDecisionRaw())
     // Reuse revalidation failures surface through onConfirmReuse (I2) -- onRequestGrant, the
     // fresh-grant wallet action, must never even be called on this path.
-    const onConfirmReuse = vi
-      .fn()
-      .mockRejectedValueOnce(
-        new PermissionPhaseError({ phase: 'reuse-revalidation', code: 'Y', message: 'evidence changed' })
-      )
+    const onConfirmReuse = vi.fn().mockRejectedValueOnce(
+      new PermissionPhaseError({
+        phase: 'reuse-revalidation',
+        code: 'Y',
+        message: 'evidence changed',
+      })
+    )
     const onRequestGrant = vi.fn().mockResolvedValue({ agentAddresses: [AGENT_1] })
     render(<ProtectStage {...baseProps({ onRetryPreflight, onConfirmReuse, onRequestGrant })} />)
     await checkPermission()
@@ -631,13 +655,20 @@ describe('ProtectStage — keyboard operability and long values', () => {
   it('renders a very large reviewed amount without truncating or crashing', async () => {
     const onRetryPreflight = vi.fn().mockResolvedValue(
       freshDecisionRaw({
-        reviewedAgentInits: [reviewedAgentInit({ cap: { token: TOKEN_ADDR, units: '123456789012345', decimals: 7 } })],
+        reviewedAgentInits: [
+          reviewedAgentInit({ cap: { token: TOKEN_ADDR, units: '123456789012345', decimals: 7 } }),
+        ],
       })
     )
     const bigPlan = {
       ...PLAN_DEPOSIT_ONLY,
       amount: { token: 'USDC', units: '123456789012345', decimals: 7 },
-      agents: [{ ...PLAN_DEPOSIT_ONLY.agents[0], cap: { token: 'USDC', units: '123456789012345', decimals: 7 } }],
+      agents: [
+        {
+          ...PLAN_DEPOSIT_ONLY.agents[0],
+          cap: { token: 'USDC', units: '123456789012345', decimals: 7 },
+        },
+      ],
     }
     render(<ProtectStage {...baseProps({ plan: bigPlan, onRetryPreflight })} />)
     await checkPermission()
@@ -651,7 +682,9 @@ describe('ProtectStage — keyboard operability and long values', () => {
   it('renders a long technical fingerprint inside a disclosure without losing any of it', async () => {
     const longFingerprint = '0x' + 'a1b2c3d4'.repeat(8) // 66 chars, matches a real sha256 hex length
     const onRetryPreflight = vi.fn().mockResolvedValue(
-      freshDecisionRaw({ reviewedAgentInits: [reviewedAgentInit({ signerFingerprint: longFingerprint })] })
+      freshDecisionRaw({
+        reviewedAgentInits: [reviewedAgentInit({ signerFingerprint: longFingerprint })],
+      })
     )
     render(<ProtectStage {...baseProps({ onRetryPreflight })} />)
     await checkPermission()
@@ -672,15 +705,28 @@ describe('ProtectStage — reduced motion / no animation (rejection checklist it
     expect(css).not.toMatch(/gradient/i)
   })
 
-  it('unlike Plan\'s editable-instructions case, this surface\'s TechnicalDetails holds genuinely technical data (fingerprints/contract IDs) -- Foundation\'s default mono face is correct here and needs no override', async () => {
+  // Owner decision #19 (Wave 6 carry): the Foundation-level default for the disclosure container
+  // itself flipped to the body face -- a disclosure's own caption is UI chrome, and its body is not
+  // reliably technical (PlanStage's editable instructions prove that). What DOES need to stay mono
+  // on THIS surface is the raw values inside it (fingerprint/token contract/target), which
+  // ProtectStage.jsx now marks individually with `.pc-technical`. This replaces the old container-
+  // level pin (which asserted the CONTAINER computed mono) with a pin on the actual values, plus an
+  // explicit assertion that the container itself is NOT mono -- so a regression in either direction
+  // (container silently back to mono, or a value losing its .pc-technical mark) goes red.
+  it("unlike Plan's editable-instructions case, this surface's raw values (fingerprint/contract IDs) stay mono via .pc-technical even though the container itself is the friendly body face", async () => {
     await withRealStylesheet(async () => {
       render(<ProtectStage {...baseProps()} />)
       await checkPermission()
       const summary = document.querySelector('.pc-technical-details-summary')
       fireEvent.click(summary)
       const body = document.querySelector('.pc-technical-details-body')
-      expect(getComputedStyle(summary).fontFamily).toBe('var(--font-mono)')
-      expect(getComputedStyle(body).fontFamily).toBe('var(--font-mono)')
+      expect(getComputedStyle(summary).fontFamily).toBe('var(--font-body)')
+      expect(getComputedStyle(body).fontFamily).toBe('var(--font-body)')
+      const values = body.querySelectorAll('.pc-technical')
+      expect(values.length).toBeGreaterThanOrEqual(3) // fingerprint, token contract, target
+      for (const value of values) {
+        expect(getComputedStyle(value).fontFamily).toBe('var(--font-mono)')
+      }
     })
   })
 })
@@ -715,90 +761,76 @@ describe('ProtectStage — axe', () => {
 })
 
 describe('ProtectStage — 320px real layout guard', () => {
-  it(
-    'G: disconnected wallet-choice phase creates no horizontal overflow at 320px',
-    async () => {
-      const { container } = render(
-        <div className="pc-route">
-          <div className="pc-route-stack">
-            <ProtectStage {...baseProps({ owner: null })} />
-          </div>
+  it('G: disconnected wallet-choice phase creates no horizontal overflow at 320px', async () => {
+    const { container } = render(
+      <div className="pc-route">
+        <div className="pc-route-stack">
+          <ProtectStage {...baseProps({ owner: null })} />
         </div>
-      )
-      const scrollWidth = await measureScrollWidthAt320(container.innerHTML)
-      expect(scrollWidth).toBe(320)
-    },
-    20000
-  )
+      </div>
+    )
+    const scrollWidth = await measureScrollWidthAt320(container.innerHTML)
+    expect(scrollWidth).toBe(320)
+  }, 20000)
 
-  it(
-    'G: the fresh review (richest content, including an expanded long technical disclosure) creates no horizontal overflow at 320px',
-    async () => {
-      const longFingerprint = '0x' + 'a1b2c3d4'.repeat(8)
-      const onRetryPreflight = vi.fn().mockResolvedValue(
-        freshDecisionRaw({ reviewedAgentInits: [reviewedAgentInit({ signerFingerprint: longFingerprint })] })
-      )
-      const { container } = render(
-        <div className="pc-route">
-          <div className="pc-route-stack">
-            <ProtectStage {...baseProps({ plan: PLAN_WITH_BRIDGE, onRetryPreflight })} />
-          </div>
+  it('G: the fresh review (richest content, including an expanded long technical disclosure) creates no horizontal overflow at 320px', async () => {
+    const longFingerprint = '0x' + 'a1b2c3d4'.repeat(8)
+    const onRetryPreflight = vi.fn().mockResolvedValue(
+      freshDecisionRaw({
+        reviewedAgentInits: [reviewedAgentInit({ signerFingerprint: longFingerprint })],
+      })
+    )
+    const { container } = render(
+      <div className="pc-route">
+        <div className="pc-route-stack">
+          <ProtectStage {...baseProps({ plan: PLAN_WITH_BRIDGE, onRetryPreflight })} />
         </div>
-      )
-      fireEvent.click(screen.getByRole('button', { name: 'Check my permission' }))
-      await screen.findByRole('button', { name: 'Authorize with wallet' })
-      // Expand every technical-details disclosure so the long fingerprint actually contributes to
-      // layout in the real-browser measurement below (a collapsed <details> body contributes
-      // nothing to box width, which would make this guard unable to see its own regression).
-      for (const el of document.querySelectorAll('.pc-technical-details summary')) fireEvent.click(el)
+      </div>
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Check my permission' }))
+    await screen.findByRole('button', { name: 'Authorize with wallet' })
+    // Expand every technical-details disclosure so the long fingerprint actually contributes to
+    // layout in the real-browser measurement below (a collapsed <details> body contributes
+    // nothing to box width, which would make this guard unable to see its own regression).
+    for (const el of document.querySelectorAll('.pc-technical-details summary')) fireEvent.click(el)
 
-      const scrollWidth = await measureScrollWidthAt320(container.innerHTML)
-      expect(scrollWidth).toBe(320)
-    },
-    20000
-  )
+    const scrollWidth = await measureScrollWidthAt320(container.innerHTML)
+    expect(scrollWidth).toBe(320)
+  }, 20000)
 
-  it(
-    'G: the reuse review renders a full 56-char contract address as plain (always-visible) text with no horizontal overflow at 320px',
-    async () => {
-      const onRetryPreflight = vi.fn().mockResolvedValue(reuseDecisionRaw())
-      const { container } = render(
-        <div className="pc-route">
-          <div className="pc-route-stack">
-            <ProtectStage {...baseProps({ onRetryPreflight })} />
-          </div>
+  it('G: the reuse review renders a full 56-char contract address as plain (always-visible) text with no horizontal overflow at 320px', async () => {
+    const onRetryPreflight = vi.fn().mockResolvedValue(reuseDecisionRaw())
+    const { container } = render(
+      <div className="pc-route">
+        <div className="pc-route-stack">
+          <ProtectStage {...baseProps({ onRetryPreflight })} />
         </div>
-      )
-      fireEvent.click(screen.getByRole('button', { name: 'Check my permission' }))
-      await screen.findByRole('button', { name: 'Continue' })
+      </div>
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Check my permission' }))
+    await screen.findByRole('button', { name: 'Continue' })
 
-      const scrollWidth = await measureScrollWidthAt320(container.innerHTML)
-      expect(scrollWidth).toBe(320)
-    },
-    20000
-  )
+    const scrollWidth = await measureScrollWidthAt320(container.innerHTML)
+    expect(scrollWidth).toBe(320)
+  }, 20000)
 
-  it(
-    'G: the confirmed state renders a full deployed agent address with no horizontal overflow at 320px',
-    async () => {
-      const gen = deferred()
-      const onRequestGrant = vi.fn().mockReturnValue(gen.promise)
-      const { container } = render(
-        <div className="pc-route">
-          <div className="pc-route-stack">
-            <ProtectStage {...baseProps({ onRequestGrant })} />
-          </div>
+  it('G: the confirmed state renders a full deployed agent address with no horizontal overflow at 320px', async () => {
+    const gen = deferred()
+    const onRequestGrant = vi.fn().mockReturnValue(gen.promise)
+    const { container } = render(
+      <div className="pc-route">
+        <div className="pc-route-stack">
+          <ProtectStage {...baseProps({ onRequestGrant })} />
         </div>
-      )
-      fireEvent.click(screen.getByRole('button', { name: 'Check my permission' }))
-      await screen.findByRole('button', { name: 'Authorize with wallet' })
-      fireEvent.click(screen.getByRole('button', { name: 'Authorize with wallet' }))
-      gen.resolve({ agentAddresses: [AGENT_1] })
-      await screen.findByText('Confirmed')
+      </div>
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Check my permission' }))
+    await screen.findByRole('button', { name: 'Authorize with wallet' })
+    fireEvent.click(screen.getByRole('button', { name: 'Authorize with wallet' }))
+    gen.resolve({ agentAddresses: [AGENT_1] })
+    await screen.findByText('Confirmed')
 
-      const scrollWidth = await measureScrollWidthAt320(container.innerHTML)
-      expect(scrollWidth).toBe(320)
-    },
-    20000
-  )
+    const scrollWidth = await measureScrollWidthAt320(container.innerHTML)
+    expect(scrollWidth).toBe(320)
+  }, 20000)
 })

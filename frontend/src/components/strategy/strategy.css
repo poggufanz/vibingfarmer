@@ -405,16 +405,13 @@
   color: var(--pc-ink) !important;
 }
 
-/* Fix loop 1 -- owner ruling (decision #19, mono-face gate item): on THIS surface,
- * TechnicalDetails holds friendly plain-English copy (an agent's own editable deposit
- * instructions), never raw technical data -- but Foundation's pocket-crew.css:544,548-549 sets
- * every TechnicalDetails summary/body to the mono face unconditionally. Scoped to this surface's
- * own allocation rows only, so Foundation's declaration -- and any other surface that reuses
- * TechnicalDetails for genuinely technical content -- stays untouched. */
-.pc-allocation-row .pc-technical-details-summary,
-.pc-allocation-row .pc-technical-details-body {
-  font-family: var(--pc-font-body);
-}
+/* Wave 6 carry (owner decision #19): the scoped override that used to live here (`.pc-allocation-row
+ * .pc-technical-details-summary/-body { font-family: var(--pc-font-body) }`) is retired -- Foundation
+ * itself no longer defaults TechnicalDetails' summary/body to mono (pocket-crew.css:542-552 now
+ * default to the body face; mono moved to the `.pc-technical` value-level marker), so this route's
+ * agent-instructions textarea gets the correct face from the root default with no local override
+ * needed. Verified by measurement (ProtectStage/PlanStage real-stylesheet tests), not left as a
+ * guess -- see PlanStage.test.jsx's "friendly copy never renders in the mono face" test. */
 
 /* Task 11 -- Protect renders several genuinely technical, whitespace-free strings as plain text:
  * session-key fingerprints and contract IDs inside TechnicalDetails, a full deployed agent address

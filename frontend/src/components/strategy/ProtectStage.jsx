@@ -71,11 +71,20 @@ import { AgentMark } from '../pocket/AgentMark.jsx'
 import { PermissionPhaseError } from '../../strategy/permissionError.js'
 import { toPermissionDecisionView } from '../../strategy/reusePreflight.js'
 import { maxAtRisk } from '../../strategy/permissionScope.js'
-import { DURATION_PRESETS } from '../GrantPanel.jsx'
 import { SOROBAN_TOKEN_ADDRESS } from '../../stellar/config.js'
 import { STELLAR_USDC_SAC } from '../../stellar/cctpBurn.js'
 
 const DEFAULT_WALLETS = ['VF Wallet', 'Freighter', 'xBull', 'Albedo']
+
+// Wave 6 carry (Strategy Tasks 11/13): relocated from the now-deleted GrantPanel.jsx (a demoted
+// legacy card whose default export became dead once app.jsx's production /strategy route stopped
+// rendering it in Strategy Task 13 -- this was its only remaining live consumer).
+// ~5s per ledger on Soroban testnet; labels are what the user reasons about.
+export const DURATION_PRESETS = [
+  { id: '1h', label: '1 hour', seconds: 3600 },
+  { id: '24h', label: '24 hours', seconds: 86400 },
+  { id: '7d', label: '7 days', seconds: 604800 },
+]
 
 // Fix loop 1 -- C1: the only two Stellar contracts this app ever budgets against today --
 // SOROBAN_TOKEN_ADDRESS (the Autofarm vault's Blend-pool USDC) and STELLAR_USDC_SAC (the CCTP
@@ -92,7 +101,8 @@ const TOKEN_SYMBOLS = {
 
 function tokenSymbol(token) {
   if (TOKEN_SYMBOLS[token]) return TOKEN_SYMBOLS[token]
-  if (typeof token === 'string' && token.length > 12) return `${token.slice(0, 4)}…${token.slice(-4)}`
+  if (typeof token === 'string' && token.length > 12)
+    return `${token.slice(0, 4)}…${token.slice(-4)}`
   return token
 }
 
@@ -273,8 +283,15 @@ export function ProtectStage({
           {owner && !decision && phase === 'select' && (
             <div>
               <div className="pc-field">
-                <label htmlFor="protect-duration">How long should this permission stay valid?</label>
-                <div id="protect-duration" className="pc-comfort-group" role="group" aria-label="Permission duration">
+                <label htmlFor="protect-duration">
+                  How long should this permission stay valid?
+                </label>
+                <div
+                  id="protect-duration"
+                  className="pc-comfort-group"
+                  role="group"
+                  aria-label="Permission duration"
+                >
                   {DURATION_PRESETS.map((d) => (
                     <button
                       key={d.id}
@@ -288,7 +305,11 @@ export function ProtectStage({
                   ))}
                 </div>
               </div>
-              <button type="button" className="pc-button pc-button--primary" onClick={handleCheckPermission}>
+              <button
+                type="button"
+                className="pc-button pc-button--primary"
+                onClick={handleCheckPermission}
+              >
                 Check my permission
               </button>
             </div>
@@ -322,7 +343,11 @@ export function ProtectStage({
           {decision && decision.mode === 'reuse' && !usableReuse && (
             <StatusNotice state="warning" title="Could not confirm your existing permission">
               <p>This permission's expiry could not be confirmed, so it cannot be reused.</p>
-              <button type="button" className="pc-button pc-button--primary" onClick={handleCheckPermission}>
+              <button
+                type="button"
+                className="pc-button pc-button--primary"
+                onClick={handleCheckPermission}
+              >
                 Check again
               </button>
             </StatusNotice>
@@ -330,7 +355,11 @@ export function ProtectStage({
 
           {phase === 'review' && decision && decision.mode === 'fresh' && (
             <>
-              <button type="button" className="pc-button pc-button--primary" onClick={handleAuthorize}>
+              <button
+                type="button"
+                className="pc-button pc-button--primary"
+                onClick={handleAuthorize}
+              >
                 Authorize with wallet
               </button>
               <button type="button" className="pc-button pc-button--secondary" onClick={handleEdit}>
@@ -341,7 +370,11 @@ export function ProtectStage({
 
           {phase === 'review' && decision && decision.mode === 'reuse' && usableReuse && (
             <>
-              <button type="button" className="pc-button pc-button--primary" onClick={handleAuthorize}>
+              <button
+                type="button"
+                className="pc-button pc-button--primary"
+                onClick={handleAuthorize}
+              >
                 Continue
               </button>
               <button type="button" className="pc-button pc-button--secondary" onClick={handleEdit}>
@@ -365,7 +398,9 @@ export function ProtectStage({
           {phase === 'confirmed' && (
             <StatusNotice state="success" title="Confirmed">
               <p>Ready to start.</p>
-              {confirmedResult?.agentAddresses?.map((addr) => <p key={addr}>{addr}</p>)}
+              {confirmedResult?.agentAddresses?.map((addr) => (
+                <p key={addr}>{addr}</p>
+              ))}
             </StatusNotice>
           )}
 
@@ -398,7 +433,8 @@ export function ProtectStage({
               <div key={a.allocationId}>
                 <p>{a.agentAddress}</p>
                 <p>
-                  Headroom: {unitsToDisplay(a.headroom.units, a.headroom.decimals)} {tokenSymbol(a.headroom.token)}
+                  Headroom: {unitsToDisplay(a.headroom.units, a.headroom.decimals)}{' '}
+                  {tokenSymbol(a.headroom.token)}
                 </p>
                 <p>Expires {formatExpiry(a.scopeExpiry)}</p>
               </div>
@@ -411,7 +447,8 @@ export function ProtectStage({
             <div className="pc-support-content">
               {decision.reviewedBudgets.map((b) => (
                 <p key={b.token}>
-                  Headroom after granting: {unitsToDisplay(b.units, b.decimals)} {tokenSymbol(b.token)}
+                  Headroom after granting: {unitsToDisplay(b.units, b.decimals)}{' '}
+                  {tokenSymbol(b.token)}
                 </p>
               ))}
               {decision.reviewedAgentInits.map((r, i) => {
@@ -433,8 +470,8 @@ export function ProtectStage({
                     {/* Fix loop 1 -- I3/C1: label from THIS agent's own reviewed cap token, never
                         plan.amount.token -- a mixed-token plan's second agent can be budgeted in a
                         different Stellar contract than the plan's display token names. */}
-                    Worst case for agent {i + 1}: {unitsToDisplay(exposure.toString(), r.cap.decimals)}{' '}
-                    {tokenSymbol(r.cap.token)}
+                    Worst case for agent {i + 1}:{' '}
+                    {unitsToDisplay(exposure.toString(), r.cap.decimals)} {tokenSymbol(r.cap.token)}
                   </p>
                 )
               })}
@@ -449,11 +486,21 @@ export function ProtectStage({
       {decision && decision.mode === 'fresh' && (
         <ul className="pc-agent-lanes">
           {plan.agents.map((planAgent, i) => {
-            const reviewed = decision.reviewedAgentInits.find((r) => r.allocationId === planAgent.allocationId)
+            const reviewed = decision.reviewedAgentInits.find(
+              (r) => r.allocationId === planAgent.allocationId
+            )
             const isBridge = planAgent.kind === 'bridge'
             return (
-              <li key={planAgent.allocationId} className="pc-agent-lane" data-agent-kind={planAgent.kind}>
-                <AgentMark identity={planAgent.allocationId} state="planned" label={isBridge ? 'B' : String(i + 1)} />
+              <li
+                key={planAgent.allocationId}
+                className="pc-agent-lane"
+                data-agent-kind={planAgent.kind}
+              >
+                <AgentMark
+                  identity={planAgent.allocationId}
+                  state="planned"
+                  label={isBridge ? 'B' : String(i + 1)}
+                />
                 <div>
                   {isBridge ? (
                     <NetworkRoute context={BRIDGE_NETWORK_CONTEXT} />
@@ -472,9 +519,20 @@ export function ProtectStage({
                       <p>Resets every {periodLabel(reviewed.periodSeconds)}</p>
                       <p>Expires {formatExpiry(reviewed.expiry)}</p>
                       <TechnicalDetails summary={`Agent ${i + 1} technical details`}>
-                        <p>Session key fingerprint: {reviewed.signerFingerprint}</p>
-                        <p>Token contract: {reviewed.token}</p>
-                        <p>Target: {reviewed.target}</p>
+                        {/* Owner decision #19: the container no longer defaults to mono (it holds
+                            friendly prose just as often, see PlanStage.jsx) -- these three raw
+                            values are marked .pc-technical individually so they keep rendering in
+                            the mono face. */}
+                        <p>
+                          Session key fingerprint:{' '}
+                          <span className="pc-technical">{reviewed.signerFingerprint}</span>
+                        </p>
+                        <p>
+                          Token contract: <span className="pc-technical">{reviewed.token}</span>
+                        </p>
+                        <p>
+                          Target: <span className="pc-technical">{reviewed.target}</span>
+                        </p>
                       </TechnicalDetails>
                     </>
                   )}
@@ -490,7 +548,10 @@ export function ProtectStage({
           <div className="pc-support-content">
             <h2>Base Sepolia bridge</h2>
             <VenueTruth kind="base-proxy" />
-            <p>{baseMandateView?.technicalDisclosure || 'Base mandate details are unavailable right now.'}</p>
+            <p>
+              {baseMandateView?.technicalDisclosure ||
+                'Base mandate details are unavailable right now.'}
+            </p>
             {baseMandateView?.renewalCopy && <p>{baseMandateView.renewalCopy}</p>}
             {baseMandateView?.revokeCopy && <p>{baseMandateView.revokeCopy}</p>}
             {baseMandateView?.outageCopy && <p>{baseMandateView.outageCopy}</p>}

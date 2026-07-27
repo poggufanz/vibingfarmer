@@ -89,12 +89,16 @@ async function launchRealChromium() {
   for (const executablePath of CHROMIUM_CANDIDATES) {
     if (executablePath && !fs.existsSync(executablePath)) continue
     try {
-      return await chromium.launch(executablePath ? { executablePath, args: ['--no-sandbox'] } : { args: ['--no-sandbox'] })
+      return await chromium.launch(
+        executablePath ? { executablePath, args: ['--no-sandbox'] } : { args: ['--no-sandbox'] }
+      )
     } catch (err) {
       lastErr = err
     }
   }
-  throw new Error(`G1 layout guard: no usable Chromium binary found for real-layout measurement (${lastErr?.message})`)
+  throw new Error(
+    `G1 layout guard: no usable Chromium binary found for real-layout measurement (${lastErr?.message})`
+  )
 }
 
 const FUNDED_VAULT = 500_0000000n // vault already seeded -- first-deposit floor does not apply
@@ -119,7 +123,9 @@ async function fillAndSubmit({ amount = '100', risk = 'Steady' }) {
 
 describe('PlanStage — first visit input', () => {
   it('shows the amount field and the three Steady/Balanced/Adventurous comfort controls', () => {
-    render(<PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={vi.fn()} />)
+    render(
+      <PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={vi.fn()} />
+    )
     expect(screen.getByLabelText('Amount in USDC')).toBeTruthy()
     expect(screen.getByRole('radio', { name: 'Steady' })).toBeTruthy()
     expect(screen.getByRole('radio', { name: 'Balanced' })).toBeTruthy()
@@ -127,17 +133,23 @@ describe('PlanStage — first visit input', () => {
   })
 
   it('never renders an advanced crew-count input', () => {
-    render(<PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={vi.fn()} />)
+    render(
+      <PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={vi.fn()} />
+    )
     expect(screen.queryByLabelText(/crew|agent count|number of agents/i)).toBeNull()
   })
 
   it('renders the literal "nothing moves" reassurance before any signature', () => {
-    render(<PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={vi.fn()} />)
+    render(
+      <PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={vi.fn()} />
+    )
     expect(screen.getByText(/Nothing moves until you review and confirm/)).toBeTruthy()
   })
 
   it('disables submit until an amount and a comfort level are both chosen', () => {
-    render(<PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={vi.fn()} />)
+    render(
+      <PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={vi.fn()} />
+    )
     const submit = screen.getByRole('button', { name: 'Build my plan' })
     expect(submit.disabled).toBe(true)
     fireEvent.change(screen.getByLabelText('Amount in USDC'), { target: { value: '100' } })
@@ -147,7 +159,9 @@ describe('PlanStage — first visit input', () => {
   })
 
   it('shows an inline field error for an unusable amount instead of proceeding', () => {
-    render(<PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={vi.fn()} />)
+    render(
+      <PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={vi.fn()} />
+    )
     fireEvent.change(screen.getByLabelText('Amount in USDC'), { target: { value: '0' } })
     fireEvent.click(screen.getByRole('radio', { name: 'Steady' }))
     fireEvent.click(screen.getByRole('button', { name: 'Build my plan' }))
@@ -174,47 +188,43 @@ describe('PlanStage — first visit input', () => {
   // .scrollWidth measured 325 in a real browser). Rendered through StrategyRoute (not PlanStage
   // alone) so `.pc-route`'s real mobile gutter/width math is in play, exactly as the review
   // measured it.
-  it(
-    'G1: creates no horizontal overflow at a 320px viewport, measured in a real layout engine',
-    async () => {
-      const { container } = render(
-        <StrategyRoute
-          stage="plan"
-          reached={['plan']}
-          vaultTotalShares={FUNDED_VAULT}
-          base={disconnectedBase}
-          onGenerate={vi.fn()}
-        />
-      )
-      const browser = await launchRealChromium()
-      try {
-        const page = await browser.newPage()
-        await page.setViewportSize({ width: 320, height: 900 })
-        await page.setContent(buildLayoutHarnessHtml(container.innerHTML))
-        const { scrollWidth, decisionRight, maxDescendantRight } = await page.evaluate(() => {
-          const decision = document.querySelector('.pc-dominant--decision')
-          const decisionRect = decision.getBoundingClientRect()
-          let maxRight = 0
-          for (const el of decision.querySelectorAll('*')) {
-            maxRight = Math.max(maxRight, el.getBoundingClientRect().right)
-          }
-          return {
-            scrollWidth: document.documentElement.scrollWidth,
-            decisionRight: decisionRect.right,
-            maxDescendantRight: maxRight,
-          }
-        })
-        expect(scrollWidth).toBe(320)
-        // The fix must trade nothing for clipping: no element inside the decision surface may
-        // extend past the surface's own right edge (that would mean overflow got hidden, not
-        // removed).
-        expect(maxDescendantRight).toBeLessThanOrEqual(decisionRight + 0.5)
-      } finally {
-        await browser.close()
-      }
-    },
-    20000
-  )
+  it('G1: creates no horizontal overflow at a 320px viewport, measured in a real layout engine', async () => {
+    const { container } = render(
+      <StrategyRoute
+        stage="plan"
+        reached={['plan']}
+        vaultTotalShares={FUNDED_VAULT}
+        base={disconnectedBase}
+        onGenerate={vi.fn()}
+      />
+    )
+    const browser = await launchRealChromium()
+    try {
+      const page = await browser.newPage()
+      await page.setViewportSize({ width: 320, height: 900 })
+      await page.setContent(buildLayoutHarnessHtml(container.innerHTML))
+      const { scrollWidth, decisionRight, maxDescendantRight } = await page.evaluate(() => {
+        const decision = document.querySelector('.pc-dominant--decision')
+        const decisionRect = decision.getBoundingClientRect()
+        let maxRight = 0
+        for (const el of decision.querySelectorAll('*')) {
+          maxRight = Math.max(maxRight, el.getBoundingClientRect().right)
+        }
+        return {
+          scrollWidth: document.documentElement.scrollWidth,
+          decisionRight: decisionRect.right,
+          maxDescendantRight: maxRight,
+        }
+      })
+      expect(scrollWidth).toBe(320)
+      // The fix must trade nothing for clipping: no element inside the decision surface may
+      // extend past the surface's own right edge (that would mean overflow got hidden, not
+      // removed).
+      expect(maxDescendantRight).toBeLessThanOrEqual(decisionRight + 0.5)
+    } finally {
+      await browser.close()
+    }
+  }, 20000)
 })
 
 describe('PlanStage — Base availability is consumed, never re-derived', () => {
@@ -224,7 +234,9 @@ describe('PlanStage — Base availability is consumed, never re-derived', () => 
       source: 'deepseek',
       sourceState: 'live-ai',
       stellarUnits: '1000000000',
-      baseAllocations: [{ address: '0xAAA', proxyTarget: 'aave-v3', units: '50000000', chain: 'base' }],
+      baseAllocations: [
+        { address: '0xAAA', proxyTarget: 'aave-v3', units: '50000000', chain: 'base' },
+      ],
     })
     render(
       <PlanStage
@@ -283,7 +295,13 @@ describe('PlanStage — Base availability is consumed, never re-derived', () => 
       // reconciling with the typed amount below (see C2's fail-closed reconciliation check).
       stellarUnits: '500000000',
       baseAllocations: [
-        { address: '0xAAA', proxyTarget: 'aave-v3', factSlug: 'aave-v3-base', units: '50000000', chain: 'base' },
+        {
+          address: '0xAAA',
+          proxyTarget: 'aave-v3',
+          factSlug: 'aave-v3-base',
+          units: '50000000',
+          chain: 'base',
+        },
       ],
     })
     render(
@@ -318,7 +336,12 @@ describe('PlanStage — Base availability is consumed, never re-derived', () => 
     const { rerender } = render(
       <PlanStage
         vaultTotalShares={FUNDED_VAULT}
-        base={{ connected: true, healthy: true, mandateView: { status: 'missing', ready: false }, action: null }}
+        base={{
+          connected: true,
+          healthy: true,
+          mandateView: { status: 'missing', ready: false },
+          action: null,
+        }}
         onGenerate={onGenerate}
         onRebuildPlan={onRebuildPlan}
       />
@@ -352,7 +375,9 @@ describe('PlanStage — generation is event-driven, not timer-driven', () => {
   it('shows one honest generating message, never a fake simultaneous 3-phase list, when the caller reports no phases', async () => {
     const gen = deferred()
     const onGenerate = vi.fn().mockReturnValue(gen.promise)
-    render(<PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={onGenerate} />)
+    render(
+      <PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={onGenerate} />
+    )
     await fillAndSubmit({ onGenerate })
 
     expect(screen.getByText('Working on it…')).toBeTruthy()
@@ -365,7 +390,12 @@ describe('PlanStage — generation is event-driven, not timer-driven', () => {
     // Still pending: nothing after this point should require fake timers to observe.
     expect(screen.queryByRole('button', { name: 'Accept plan' })).toBeNull()
 
-    gen.resolve({ source: 'deepseek', sourceState: 'live-ai', stellarUnits: '1000000000', baseAllocations: [] })
+    gen.resolve({
+      source: 'deepseek',
+      sourceState: 'live-ai',
+      stellarUnits: '1000000000',
+      baseAllocations: [],
+    })
     await screen.findByRole('button', { name: 'Accept plan' })
   })
 
@@ -376,7 +406,9 @@ describe('PlanStage — generation is event-driven, not timer-driven', () => {
       reportPhase = report
       return gen.promise
     })
-    render(<PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={onGenerate} />)
+    render(
+      <PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={onGenerate} />
+    )
     await fillAndSubmit({ onGenerate })
 
     expect(screen.getByText('Working on it…')).toBeTruthy()
@@ -395,13 +427,20 @@ describe('PlanStage — generation is event-driven, not timer-driven', () => {
     expect(screen.getByText('Safety review')).toBeTruthy()
     expect(screen.queryByText('Building bounded allocations')).toBeNull()
 
-    gen.resolve({ source: 'deepseek', sourceState: 'live-ai', stellarUnits: '1000000000', baseAllocations: [] })
+    gen.resolve({
+      source: 'deepseek',
+      sourceState: 'live-ai',
+      stellarUnits: '1000000000',
+      baseAllocations: [],
+    })
     await screen.findByRole('button', { name: 'Accept plan' })
   })
 
   it('surfaces a generation failure without crashing and lets the user try again', async () => {
     const onGenerate = vi.fn().mockRejectedValueOnce(new Error('network down'))
-    render(<PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={onGenerate} />)
+    render(
+      <PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={onGenerate} />
+    )
     await fillAndSubmit({ onGenerate })
     await screen.findByRole('alert')
     expect(screen.getByRole('button', { name: 'Build my plan' })).toBeTruthy()
@@ -422,7 +461,11 @@ describe('PlanStage — reviewed plan (Stellar-only)', () => {
       <PlanStage
         vaultTotalShares={FUNDED_VAULT}
         base={disconnectedBase}
-        stellarVenue={{ name: 'Vibing Farmer Autofarm', chain: 'stellar', yield: { state: 'live', apy: 5.5 } }}
+        stellarVenue={{
+          name: 'Vibing Farmer Autofarm',
+          chain: 'stellar',
+          yield: { state: 'live', apy: 5.5 },
+        }}
         onGenerate={onGenerate}
         onAcceptPlan={onAcceptPlan}
         hashPlan={(plan) => `0xstub${plan.agents.length}`}
@@ -499,7 +542,9 @@ describe('PlanStage — reviewed plan (Stellar-only)', () => {
       stellarUnits: '1000000000',
       baseAllocations: [],
     })
-    render(<PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={onGenerate} />)
+    render(
+      <PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={onGenerate} />
+    )
     await fillAndSubmit({ amount: '100', risk: 'Steady', onGenerate })
     await screen.findByRole('button', { name: 'Accept plan' })
     // risk 'Steady' (low) -> exactly 1 deposit agent.
@@ -596,8 +641,20 @@ describe('PlanStage — reviewed plan with a Base bridge leg', () => {
       // this fixture used to total 150 against a typed 100, the exact bug the review reproduced).
       stellarUnits: '500000000',
       baseAllocations: [
-        { address: '0xAAA', proxyTarget: 'aave-v3', factSlug: 'aave-v3-base', units: '30000000', chain: 'base' },
-        { address: '0xBBB', proxyTarget: 'morpho-blue', factSlug: 'morpho-blue-base', units: '20000000', chain: 'base' },
+        {
+          address: '0xAAA',
+          proxyTarget: 'aave-v3',
+          factSlug: 'aave-v3-base',
+          units: '30000000',
+          chain: 'base',
+        },
+        {
+          address: '0xBBB',
+          proxyTarget: 'morpho-blue',
+          factSlug: 'morpho-blue-base',
+          units: '20000000',
+          chain: 'base',
+        },
       ],
     })
     render(<PlanStage vaultTotalShares={FUNDED_VAULT} base={readyBase} onGenerate={onGenerate} />)
@@ -653,8 +710,20 @@ describe('PlanStage — C2: the reviewed amount must reconcile with the typed am
       sourceState: 'live-ai',
       stellarUnits: '1000000000', // 100 USDC
       baseAllocations: [
-        { address: '0xAAA', proxyTarget: 'aave-v3', factSlug: 'aave-v3-base', units: '30000000', chain: 'base' },
-        { address: '0xBBB', proxyTarget: 'morpho-blue', factSlug: 'morpho-blue-base', units: '20000000', chain: 'base' },
+        {
+          address: '0xAAA',
+          proxyTarget: 'aave-v3',
+          factSlug: 'aave-v3-base',
+          units: '30000000',
+          chain: 'base',
+        },
+        {
+          address: '0xBBB',
+          proxyTarget: 'morpho-blue',
+          factSlug: 'morpho-blue-base',
+          units: '20000000',
+          chain: 'base',
+        },
       ], // +50 USDC bridge cap -- 150 USDC total against a typed 100
     })
     render(<PlanStage vaultTotalShares={FUNDED_VAULT} base={readyBase} onGenerate={onGenerate} />)
@@ -677,7 +746,9 @@ describe('PlanStage — I2: the cached source state is never mislabeled as the d
       stellarUnits: '1000000000',
       baseAllocations: [],
     })
-    render(<PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={onGenerate} />)
+    render(
+      <PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={onGenerate} />
+    )
     await fillAndSubmit({ amount: '100', risk: 'Steady', onGenerate })
     await screen.findByRole('button', { name: 'Accept plan' })
     expect(screen.getByText('Live AI (cached)')).toBeTruthy()
@@ -698,7 +769,12 @@ describe('PlanStage — I3: Set up Base testnet stays reachable alongside a revi
     render(
       <PlanStage
         vaultTotalShares={FUNDED_VAULT}
-        base={{ connected: true, healthy: true, mandateView: { status: 'missing', ready: false }, action: null }}
+        base={{
+          connected: true,
+          healthy: true,
+          mandateView: { status: 'missing', ready: false },
+          action: null,
+        }}
         onGenerate={onGenerate}
       />
     )
@@ -720,7 +796,12 @@ describe('PlanStage — I4: runId arrives from the caller, never minted internal
       baseAllocations: [],
     })
     const { unmount } = render(
-      <PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} runId="run-fixed" onGenerate={onGenerate} />
+      <PlanStage
+        vaultTotalShares={FUNDED_VAULT}
+        base={disconnectedBase}
+        runId="run-fixed"
+        onGenerate={onGenerate}
+      />
     )
     await fillAndSubmit({ amount: '100', risk: 'Steady', onGenerate })
     await screen.findByRole('button', { name: 'Accept plan' })
@@ -729,7 +810,12 @@ describe('PlanStage — I4: runId arrives from the caller, never minted internal
     unmount()
 
     render(
-      <PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} runId="run-fixed" onGenerate={onGenerate} />
+      <PlanStage
+        vaultTotalShares={FUNDED_VAULT}
+        base={disconnectedBase}
+        runId="run-fixed"
+        onGenerate={onGenerate}
+      />
     )
     await fillAndSubmit({ amount: '100', risk: 'Steady', onGenerate })
     await screen.findByRole('button', { name: 'Accept plan' })
@@ -762,7 +848,9 @@ describe('PlanStage — all-blocked plan has no Protect/signing action', () => {
 
 describe('PlanStage — keyboard operability and reduced motion', () => {
   it('exposes every interactive control as a native, keyboard-operable element', () => {
-    render(<PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={vi.fn()} />)
+    render(
+      <PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={vi.fn()} />
+    )
     for (const el of screen.getAllByRole('button')) expect(el.tagName).toBe('BUTTON')
     for (const el of screen.getAllByRole('radio')) expect(el.tagName).toBe('BUTTON')
     expect(screen.getByLabelText('Amount in USDC').tagName).toBe('INPUT')
@@ -771,7 +859,9 @@ describe('PlanStage — keyboard operability and reduced motion', () => {
   // I5 (review finding): the old test only checked tagName -- it could not catch a missing ARIA
   // APG radiogroup implementation. These press real keys and assert real focus/selection moves.
   it('I5: arrow keys move focus AND change the comfort-level selection (roving tabindex, real APG radiogroup)', () => {
-    render(<PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={vi.fn()} />)
+    render(
+      <PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={vi.fn()} />
+    )
     const [steady, balanced, adventurous] = screen.getAllByRole('radio')
 
     // Roving tabindex: exactly one stop in the tab order before any selection is made.
@@ -844,7 +934,13 @@ describe('PlanStage — owner ruling (decision #19): friendly copy never renders
         stellarUnits: '1000000000',
         baseAllocations: [],
       })
-      render(<PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={onGenerate} />)
+      render(
+        <PlanStage
+          vaultTotalShares={FUNDED_VAULT}
+          base={disconnectedBase}
+          onGenerate={onGenerate}
+        />
+      )
       await fillAndSubmit({ amount: '100', risk: 'Steady', onGenerate })
       await screen.findByRole('button', { name: 'Accept plan' })
 
@@ -852,16 +948,19 @@ describe('PlanStage — owner ruling (decision #19): friendly copy never renders
       const body = document.querySelector('.pc-technical-details-body')
       // jsdom does not resolve var(), but it DOES correctly resolve which declaration wins the
       // cascade (verified against these exact two files) -- so the raw winning text tells us
-      // whether the mono override (--font-mono, Foundation's) or this task's body-face override
-      // (--pc-font-body, strategy.css) is the one actually applied. If the mono face returns,
-      // both of these flip back to `var(--font-mono)` and this test fails.
-      expect(getComputedStyle(summary).fontFamily).toBe('var(--pc-font-body)')
-      expect(getComputedStyle(body).fontFamily).toBe('var(--pc-font-body)')
+      // whether the mono face (--font-mono) or the body face (--font-body) is actually applied.
+      // Wave 6 carry (owner decision #19): Foundation's own pocket-crew.css default for
+      // .pc-technical-details-summary/-body is now the body face directly -- the scoped
+      // strategy.css override this test used to pin (`--pc-font-body`) was retired as redundant
+      // once the root default itself stopped being mono. If the mono face returns on either
+      // Foundation's rule or a future regression, this still fails.
+      expect(getComputedStyle(summary).fontFamily).toBe('var(--font-body)')
+      expect(getComputedStyle(body).fontFamily).toBe('var(--font-body)')
     })
   })
 })
 
-describe('PlanStage — I8: Cap renders the plan agent\'s cap, never the display allocation', () => {
+describe("PlanStage — I8: Cap renders the plan agent's cap, never the display allocation", () => {
   it('renders a Cap value that tracks plan.agents[].cap even when it diverges from the allocation figure', async () => {
     // planModel.js (off-limits for this fix loop) always sets cap === allocation today, so a
     // black-box render can't distinguish "reads cap" from "reads allocation." vi.spyOn on the
@@ -887,7 +986,13 @@ describe('PlanStage — I8: Cap renders the plan agent\'s cap, never the display
         stellarUnits: '1000000000', // 100 USDC allocation
         baseAllocations: [],
       })
-      render(<PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={onGenerate} />)
+      render(
+        <PlanStage
+          vaultTotalShares={FUNDED_VAULT}
+          base={disconnectedBase}
+          onGenerate={onGenerate}
+        />
+      )
       await fillAndSubmit({ amount: '100', risk: 'Steady', onGenerate })
       await screen.findByRole('button', { name: 'Accept plan' })
       // allocation is 100 USDC; the spy doubled the plan-level cap to 200.

@@ -21,7 +21,8 @@ const TOKEN_SYMBOLS = {
 
 function tokenSymbol(token) {
   if (TOKEN_SYMBOLS[token]) return TOKEN_SYMBOLS[token]
-  if (typeof token === 'string' && token.length > 12) return `${token.slice(0, 4)}…${token.slice(-4)}`
+  if (typeof token === 'string' && token.length > 12)
+    return `${token.slice(0, 4)}…${token.slice(-4)}`
   return token
 }
 
@@ -116,7 +117,9 @@ export function StrategyReceipt({ receipt, runId, onViewMoney, onMakeAnotherDepo
 
       {anyFailed && (
         <StatusNotice state="warning" title="Some agents did not complete">
-          <p>Agents that already finished stay confirmed -- nothing already deposited was undone.</p>
+          <p>
+            Agents that already finished stay confirmed -- nothing already deposited was undone.
+          </p>
         </StatusNotice>
       )}
       {!anyFailed && !anyPending && allocations.length > 0 && (
@@ -126,7 +129,9 @@ export function StrategyReceipt({ receipt, runId, onViewMoney, onMakeAnotherDepo
       )}
       {!anyFailed && anyPending && (
         <StatusNotice state="info" title="Still in transit">
-          <p>The rest is still moving. This page will keep reflecting the real, reconciled state.</p>
+          <p>
+            The rest is still moving. This page will keep reflecting the real, reconciled state.
+          </p>
         </StatusNotice>
       )}
 
@@ -135,16 +140,30 @@ export function StrategyReceipt({ receipt, runId, onViewMoney, onMakeAnotherDepo
           <li key={`${g.token}:${g.decimals}`} className="pc-allocation-row">
             <div>
               <p>{tokenSymbol(g.token)}</p>
-              <MoneyFigure state="current" value={unitsToDisplay(g.deposited, g.decimals)} currency={tokenSymbol(g.token)} />
+              <MoneyFigure
+                state="current"
+                value={unitsToDisplay(g.deposited, g.decimals)}
+                currency={tokenSymbol(g.token)}
+              />
               <p>Deposited</p>
               {g.inTransit > 0n && (
-                <p>In transit: {unitsToDisplay(g.inTransit, g.decimals)} {tokenSymbol(g.token)}</p>
+                <p>
+                  In transit: {unitsToDisplay(g.inTransit, g.decimals)} {tokenSymbol(g.token)}
+                </p>
               )}
-              {g.held > 0n && <p>Held: {unitsToDisplay(g.held, g.decimals)} {tokenSymbol(g.token)}</p>}
+              {g.held > 0n && (
+                <p>
+                  Held: {unitsToDisplay(g.held, g.decimals)} {tokenSymbol(g.token)}
+                </p>
+              )}
               {g.unmoved > 0n && (
-                <p>Unmoved: {unitsToDisplay(g.unmoved, g.decimals)} {tokenSymbol(g.token)}</p>
+                <p>
+                  Unmoved: {unitsToDisplay(g.unmoved, g.decimals)} {tokenSymbol(g.token)}
+                </p>
               )}
-              <p>Total: {unitsToDisplay(g.total, g.decimals)} {tokenSymbol(g.token)}</p>
+              <p>
+                Total: {unitsToDisplay(g.total, g.decimals)} {tokenSymbol(g.token)}
+              </p>
             </div>
           </li>
         ))}
@@ -154,7 +173,8 @@ export function StrategyReceipt({ receipt, runId, onViewMoney, onMakeAnotherDepo
           when there is more than one token group to blend in the first place. */}
       {groups.length > 1 && (
         <p className="pc-field-help">
-          Nominal total (assumes each token above is worth 1 USDC): {nominalTotal(groups).toLocaleString()}
+          Nominal total (assumes each token above is worth 1 USDC):{' '}
+          {nominalTotal(groups).toLocaleString()}
         </p>
       )}
 
@@ -164,13 +184,27 @@ export function StrategyReceipt({ receipt, runId, onViewMoney, onMakeAnotherDepo
         </StatusNotice>
       )}
 
+      {/* Owner decision #19: the container no longer defaults to mono -- every raw run id/address/
+          tx hash below is marked .pc-technical individually so it keeps rendering in the mono
+          face; "Reused existing permission"/"Fresh grant"/"No transaction yet" stay friendly
+          prose in the body face, which is correct. */}
       <TechnicalDetails summary="Technical details">
-        <p>Run: {effectiveRunId}</p>
-        <p>Grant/permission: {receipt.permission?.mode === 'reuse' ? 'Reused existing permission' : 'Fresh grant'}</p>
+        <p>
+          Run: <span className="pc-technical">{effectiveRunId}</span>
+        </p>
+        <p>
+          Grant/permission:{' '}
+          {receipt.permission?.mode === 'reuse' ? 'Reused existing permission' : 'Fresh grant'}
+        </p>
         {receipt.permission?.txHash && (
           <p>
             Grant transaction:{' '}
-            <a href={explorerTxUrl({ txHash: receipt.permission.txHash })} target="_blank" rel="noreferrer">
+            <a
+              className="pc-technical"
+              href={explorerTxUrl({ txHash: receipt.permission.txHash })}
+              target="_blank"
+              rel="noreferrer"
+            >
               {receipt.permission.txHash}
             </a>
           </p>
@@ -178,16 +212,21 @@ export function StrategyReceipt({ receipt, runId, onViewMoney, onMakeAnotherDepo
         {(receipt.permission?.agentAddresses || []).map((addr) => (
           <p key={addr}>
             Agent:{' '}
-            <a href={explorerAccountUrl(addr)} target="_blank" rel="noreferrer">
+            <a
+              className="pc-technical"
+              href={explorerAccountUrl(addr)}
+              target="_blank"
+              rel="noreferrer"
+            >
               {addr}
             </a>
           </p>
         ))}
         {allocations.map((a) => (
           <p key={a.allocationId}>
-            {a.allocationId}:{' '}
+            <span className="pc-technical">{a.allocationId}</span>:{' '}
             {a.txHash ? (
-              <a href={explorerTxUrl(a)} target="_blank" rel="noreferrer">
+              <a className="pc-technical" href={explorerTxUrl(a)} target="_blank" rel="noreferrer">
                 {a.txHash}
               </a>
             ) : (
@@ -202,7 +241,11 @@ export function StrategyReceipt({ receipt, runId, onViewMoney, onMakeAnotherDepo
         <button type="button" className="pc-button pc-button--primary" onClick={onViewMoney}>
           View my money
         </button>
-        <button type="button" className="pc-button pc-button--secondary" onClick={onMakeAnotherDeposit}>
+        <button
+          type="button"
+          className="pc-button pc-button--secondary"
+          onClick={onMakeAnotherDeposit}
+        >
           Make another deposit
         </button>
       </div>

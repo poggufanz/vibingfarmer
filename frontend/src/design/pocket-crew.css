@@ -539,16 +539,38 @@ body {
   padding: 0.5rem 0.75rem;
 }
 
+/* Owner decision #19: a disclosure's own caption ("Technical details", "Agent 1 instructions") is
+ * always UI chrome, never a raw value -- so it must never default to mono. The body is the same
+ * story: it just as often holds friendly prose (PlanStage's editable per-agent instructions
+ * textarea) as it holds real identifiers (ProtectStage's fingerprint/contract, StartStage's tx
+ * hash, StrategyReceipt's addresses). Mono belongs to the VALUE, not the container -- see the
+ * code/pre/.pc-technical rule below, the same convention frontend/src/wallet/ui/WalletShell.jsx's
+ * own stylesheet already uses. A caller whose disclosure body holds a genuine
+ * identifier/address/hash/fingerprint must mark THAT text `.pc-technical` (or wrap it in
+ * <code>/<pre>) rather than lean on the container default -- ProtectStage.jsx/StartStage.jsx/
+ * StrategyReceipt.jsx do this at their own call sites. PlanStage.jsx's scoped strategy.css override
+ * predates this fix and is now redundant with it (verified by measurement, not left as a guess).
+ */
 .pc-technical-details-summary {
   cursor: pointer;
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 0.9rem;
 }
 
 .pc-technical-details-body {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 0.85rem;
   margin-top: 0.5rem;
+}
+
+/* Foundation-wide technical/raw-value face (owner decision #19). Previously only declared inside
+ * the VF Wallet extension's own component-scoped stylesheet (WalletShell.jsx) -- this is the same
+ * rule at the shared layer, so any `.pc-technical`-marked span/code/pre in the main app (Strategy,
+ * My Money, settings) gets the same guarantee without each route re-declaring it. */
+code,
+pre,
+.pc-technical {
+  font-family: var(--font-mono);
 }
 
 .pc-venue-truth {
