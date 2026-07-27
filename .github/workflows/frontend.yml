@@ -20,8 +20,10 @@ jobs:
       - run: npm ci
       - run: npm run lint
         continue-on-error: true
+      - run: npx playwright install --with-deps chromium
       - run: npm test
       - run: npm run build
+      - run: npm run build:ext
 
   # Cloudflare Pages deploy — gate: only pushes (never PRs from forks), only after tests pass.
   # main → Production; any other pushed branch → Preview (aliased by branch name).
