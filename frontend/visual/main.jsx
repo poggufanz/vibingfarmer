@@ -1899,7 +1899,29 @@ function VfwCeremonyCard({ view, statusOverride = null }) {
 // interaction (WalletOnboarding's own header: "a PURE presentational router... holds no state of
 // its own") -- every state below is reached directly by props, so no AutopilotSection is needed
 // anywhere in this fixture.
+// VFW14 fix round 3 (owner decision #44): the same explicit `data-fixture-pending` readiness
+// gate `VfWalletApprovalFixture` already carries (below), copied rather than invented -- this
+// fixture has no async CSS import to wait on (self-contained WalletShell styling, see this
+// section's own header), so there is nothing for the gate to await except the identical double
+// `requestAnimationFrame` proof-of-paint that fixture's own comment already justifies: a promise
+// resolving is not itself proof the browser has completed a style/layout pass, two rAFs guarantee
+// at least one full paint has happened since mount. Previously this fixture had no explicit
+// readiness signal at all and relied on incidental delay from the geometry sweeps that happen to
+// run before the frozen capture -- harmless today (the real test passes), but not a real gate.
 function VfWalletHomeFixture() {
+  const [ready, setReady] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        if (!cancelled) setReady(true)
+      })
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   return (
     // Fix round 1 (real-Chromium overflow sweep, self-caught before review): NO outer padding
     // here, the same trap Foundation Task 7/Strategy Task 14 both already hit and fixed on this
@@ -1909,7 +1931,11 @@ function VfWalletHomeFixture() {
     // `.pc-wallet` and its descendants, not this fixture root above it), so `padding: '2rem'`
     // measured as a genuine 392px maxRight at the 360 viewport, caught by this task's own
     // overflow guard before a screenshot was ever frozen with it.
-    <main data-fixture="vf-wallet-home" style={{ display: 'grid', gap: '2rem' }}>
+    <main
+      data-fixture="vf-wallet-home"
+      data-fixture-pending={ready ? undefined : 'true'}
+      style={{ display: 'grid', gap: '2rem' }}
+    >
       <h1>Pocket Crew visual harness — VF Wallet (home)</h1>
 
       <Section title="First run — create or restore a wallet">

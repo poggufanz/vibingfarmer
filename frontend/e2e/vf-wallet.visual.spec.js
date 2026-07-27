@@ -196,7 +196,17 @@ test.describe('Pocket Crew VF Wallet', () => {
   // the reviewer used to reproduce the flake on demand): 25/25 raw captures landed on the stable
   // 9327px height with this wait in place, vs 0/20 without it (every cold page's first capture is
   // unconditionally the short one) -- see the report for the full repeat-run log.
-  async function waitForFullPageLayoutSettle(page, maxAttempts = 6) {
+  // VFW14 fix round 3 (reviewer finding: silent exhaustion). Six throwaway captures never
+  // converging degraded to exactly the pre-fix behaviour with zero diagnostic -- indistinguishable
+  // from "this surface has no relayout to wait for" in the test output. Throwing would turn a slow
+  // machine into a red build for what might still be a harmless capture, so this stays non-fatal,
+  // but exhaustion is now recorded where a human (or CI log scraper) will actually see it:
+  // `testInfo.annotations` (shows up in the HTML report against this exact test) plus a console
+  // warning. Ceiling this does NOT close: the two-agree check has no ground truth, so a surface
+  // that needed a THIRD capture to trigger its real relayout would read the same (still-wrong)
+  // height twice, declare itself settled, and return with no warning at all -- this only fires
+  // when captures never agree within maxAttempts, not when they agree too early on a wrong value.
+  async function waitForFullPageLayoutSettle(page, testInfo, maxAttempts = 6) {
     let previous = null
     for (let i = 0; i < maxAttempts; i++) {
       await page.screenshot({ fullPage: true })
@@ -204,6 +214,9 @@ test.describe('Pocket Crew VF Wallet', () => {
       if (height === previous) return
       previous = height
     }
+    const message = `waitForFullPageLayoutSettle: scrollHeight never agreed across ${maxAttempts} full-page captures (last=${previous}px) -- proceeding anyway, capture may be unstable`
+    testInfo?.annotations.push({ type: 'warning', description: message })
+    console.warn(message)
   }
 
   test('forest theme -- vf-wallet-home (360x600, +320px geometry)', async ({ page }, testInfo) => {
@@ -214,12 +227,19 @@ test.describe('Pocket Crew VF Wallet', () => {
     const width = testInfo.project.name === 'mobile-320' ? 320 : 360
     await page.setViewportSize({ width, height: 600 })
     await page.goto('/visual/?fixture=vf-wallet-home&theme=forest')
+    // VFW14 fix round 3 (owner decision #44): the same explicit `data-fixture-pending` wait
+    // every `vf-wallet-approval` test already uses, now that `VfWalletHomeFixture` (visual/main.jsx)
+    // carries the identical marker -- this capture no longer depends on incidental delay from the
+    // geometry sweeps below to have settled past first paint.
+    await page.waitForFunction(
+      () => document.querySelectorAll('[data-fixture-pending="true"]').length === 0
+    )
     await page.evaluate(() => document.fonts.ready)
     await assertNoOverflowAtMobileWidth(page, 'vf-wallet-home')
     await assertNoVerticalTextTrap(page, 'vf-wallet-home')
     await assert44pxControls(page, 'vf-wallet-home')
     if (testInfo.project.name === 'mobile-360') {
-      await waitForFullPageLayoutSettle(page)
+      await waitForFullPageLayoutSettle(page, testInfo)
       await expect(page).toHaveScreenshot('vf-wallet-forest-360x600.png', { fullPage: true })
     }
   })
@@ -246,7 +266,7 @@ test.describe('Pocket Crew VF Wallet', () => {
     await assertNoVerticalTextTrap(page, 'vf-wallet-approval')
     await assert44pxControls(page, 'vf-wallet-approval')
     if (testInfo.project.name === 'mobile-360') {
-      await waitForFullPageLayoutSettle(page)
+      await waitForFullPageLayoutSettle(page, testInfo)
       await expect(page).toHaveScreenshot('vf-wallet-forest-360x800.png', { fullPage: true })
     }
   })
@@ -269,7 +289,7 @@ test.describe('Pocket Crew VF Wallet', () => {
     await assertNoVerticalTextTrap(page, 'vf-wallet-approval')
     await assert44pxControls(page, 'vf-wallet-approval')
     if (testInfo.project.name === 'mobile-360') {
-      await waitForFullPageLayoutSettle(page)
+      await waitForFullPageLayoutSettle(page, testInfo)
       await expect(page).toHaveScreenshot('vf-wallet-day-field-360x800.png', { fullPage: true })
     }
   })
