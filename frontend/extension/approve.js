@@ -23,7 +23,12 @@ import { NETWORK_PASSPHRASE } from '../src/stellar/config.js'
 import { resolveActiveAccount } from '../src/wallet/activeAccount.js'
 import { validateRequestSnapshot } from '../src/wallet/consentStore.js'
 import { summarizeTransaction, summarizeAuthEntry } from './txSummary.js'
-import { buildApprovalView, renderApprovalView, SUBMISSION_STATE } from './approvalView.js'
+import {
+  buildApprovalView,
+  renderApprovalView,
+  submissionStatusText,
+  SUBMISSION_STATE,
+} from './approvalView.js'
 
 // How many ledgers a dapp-requested auth-entry signature stays valid — mirrors
 // stellar/agentDeposit.js's AUTH_TTL_LEDGERS (same "session-length" signing idiom).
@@ -132,6 +137,21 @@ function render(view) {
   }
 }
 
+/** I1 fix: a schema-mismatch (fail-closed, VFW3) consequence sets `view.needsAcknowledgment` --
+ *  Confirm must stay disabled until the user has actually opened the raw technical-details
+ *  disclosure approvalView.js renders (`#raw-details`), never offering the friendly primary action
+ *  for free on a request VF Wallet could not decode. Exported and takes plain injected elements
+ *  (not `document.getElementById` itself) so this is testable with bare fake objects, no jsdom or
+ *  chrome mock required. */
+export function wireAcknowledgmentGate(view, { approveBtn, detailsEl }) {
+  if (!view.needsAcknowledgment || !approveBtn) return
+  approveBtn.disabled = true
+  if (!detailsEl) return
+  detailsEl.addEventListener('toggle', () => {
+    if (detailsEl.open) approveBtn.disabled = false
+  })
+}
+
 if (typeof window !== 'undefined' && globalThis.chrome?.storage?.session) {
   ;(async () => {
     try {
@@ -162,9 +182,15 @@ if (typeof window !== 'undefined' && globalThis.chrome?.storage?.session) {
         { address, summary, kind, unlocked, submissionState: SUBMISSION_STATE.REVIEWING }
       )
       render(view)
+      // I1 fix: gate Confirm on the raw technical-details disclosure for a schema-mismatch.
+      wireAcknowledgmentGate(view, {
+        approveBtn: document.getElementById('approve'),
+        detailsEl: document.getElementById('raw-details'),
+      })
 
       document.getElementById('reject').onclick = () => {
         chrome.runtime.sendMessage(rejectionResult(rid))
+        setStatus(submissionStatusText(SUBMISSION_STATE.REJECTED))
         window.close()
       }
 
@@ -197,25 +223,37 @@ if (typeof window !== 'undefined' && globalThis.chrome?.storage?.session) {
               code: check.code,
               error: check.error,
             })
-            setStatus(check.error)
+            setStatus(submissionStatusText(SUBMISSION_STATE.FAILED, { detail: check.error }))
             setTimeout(() => window.close(), 800)
             return
           }
 
           if (view.variant === 'connect') {
             chrome.runtime.sendMessage({ type: 'CEREMONY_RESULT', rid, ok: true, address })
+            // Connect has no SUBMISSION_STATE of its own -- the vocabulary models the sign/submit
+            // ceremony only (see approvalView.js's module doc); this is a literal, not a divergence.
             setStatus('Connected.')
             setTimeout(() => window.close(), 400)
             return
           }
-          setStatus(kind === 'classic' ? 'Waiting for password' : 'Waiting for passkey')
+          setStatus(
+            submissionStatusText(
+              kind === 'classic'
+                ? SUBMISSION_STATE.WAITING_PASSWORD
+                : SUBMISSION_STATE.WAITING_PASSKEY
+            )
+          )
           if (kind === 'classic' && !(await isUnlocked(address))) {
             try {
               await unlockWallet(address, document.getElementById('pw')?.value ?? '')
             } catch {
               const pw = document.getElementById('pw')
               if (pw) pw.value = ''
-              setStatus('Wrong password.')
+              setStatus(
+                submissionStatusText(SUBMISSION_STATE.WAITING_PASSWORD, {
+                  detail: 'Wrong password.',
+                })
+              )
               return // no CEREMONY_RESULT — window stays open so the user can retry
             }
           }
@@ -231,11 +269,17 @@ if (typeof window !== 'undefined' && globalThis.chrome?.storage?.session) {
           // Signed and returned to the requesting origin — this extension never submits a
           // generic dapp signTransaction/signAuthEntry request itself, so the ceremony ends
           // here. "Submitted"/"Confirmed" are reserved for a future internal flow that owns
-          // real submission + a transaction hash + reconciliation (see approvalView.js).
-          setStatus(`Signed and returned to ${req.requester?.origin ?? 'the site'}.`)
+          // real submission + a transaction hash + reconciliation (see approvalView.js). I2 fix:
+          // sourced from submissionStatusText, not a hand-duplicated string (the module's own copy
+          // and this call site had already drifted -- a trailing period here, none there).
+          setStatus(
+            submissionStatusText(SUBMISSION_STATE.SIGNED_RETURNED, {
+              origin: req.requester?.origin,
+            })
+          )
           setTimeout(() => window.close(), 800)
         } catch (e) {
-          setStatus(`Failed: ${e.message}`)
+          setStatus(submissionStatusText(SUBMISSION_STATE.FAILED, { detail: e.message }))
           chrome.runtime.sendMessage({
             type: 'CEREMONY_RESULT',
             rid,
@@ -248,7 +292,7 @@ if (typeof window !== 'undefined' && globalThis.chrome?.storage?.session) {
         }
       }
     } catch (e) {
-      setStatus(`Failed: ${String(e?.message || e)}`)
+      setStatus(submissionStatusText(SUBMISSION_STATE.FAILED, { detail: String(e?.message || e) }))
     }
   })()
 }

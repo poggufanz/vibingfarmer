@@ -623,6 +623,44 @@ pre,
   border-bottom: 0;
 }
 
+/* Review fix round 1 -- C1: renderConsequence (approvalView.js) now nests .pc-approval-table
+   INSIDE .pc-wallet-consequence, whose background is --pc-owned (rice). --pc-approval-table td's
+   own `color: var(--pc-ink)` resolves to --pc-rice in the forest theme -- identical to the rice
+   background it sits on (measured contrast 1.00: literally invisible). --pc-owned-ink/
+   --pc-owned-muted are the existing tokens the contract already defines for exactly this pairing
+   (see .pc-wallet-consequence itself, and .pc-protect-limit in the shared contract) -- no new
+   value, just scoping the existing ink pair to the surface it is actually painted on. */
+.pc-wallet-consequence .pc-approval-table th {
+  color: var(--pc-owned-muted);
+}
+
+.pc-wallet-consequence .pc-approval-table td,
+.pc-wallet-consequence .pc-approval-table td .pc-technical {
+  color: var(--pc-owned-ink);
+}
+
+/* Review fix round 1 -- C2/I4: neither the verified-origin <p> nor a consequence statement's
+   embedded contract/function name carried a break rule, so an attacker-chosen 63-char DNS label
+   (C2) or a 32-char Soroban Symbol function name (I4) could push the 320px popup to 494px/353.7px
+   while `.pc-wallet`'s `overflow-x: clip` silently swallowed the overflow with no scrollbar --
+   letting an attacker choose which part of the origin the user reads. `overflow-wrap: anywhere`
+   matches the break behavior `.pc-approval-table td .pc-technical` already uses for the same class
+   of unbroken-identifier overflow. */
+.pc-wallet-origin .pc-technical {
+  overflow-wrap: anywhere;
+}
+
+.pc-wallet-consequence p {
+  overflow-wrap: anywhere;
+}
+
+/* Review fix round 1 -- I1: a schema-mismatch consequence (fail-closed, VFW3) must be visibly,
+   not just textually, distinct from the happy-path ceiling breakdown -- a danger-tone border using
+   the existing --pc-danger token, never a new hex value. */
+.pc-wallet-consequence--warning {
+  border: 1px solid var(--pc-danger);
+}
+
 /* --- approve.html: raw XDR disclosure. --- */
 .pc-wallet-main details {
   color: var(--pc-muted);

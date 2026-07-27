@@ -617,6 +617,19 @@ describe('buildApprovalView — Step 2: schema-mismatch fail-closed degrade (VFW
     const decoded = v.sections.find((s) => s.kind === 'decoded')
     expect(decoded.rows.some(([k]) => k === 'Warning')).toBe(true)
     expect(decoded.rows.some(([k]) => k === 'Args')).toBe(true)
+    // I1 fix: the friendly primary Confirm label is never used unqualified on this path, and the
+    // view carries an explicit flag approve.js uses to gate Confirm on the raw-details disclosure.
+    expect(v.needsAcknowledgment).toBe(true)
+    expect(v.approveLabel).toBe('Confirm anyway')
+  })
+
+  it('I1 fix: the happy path never needs acknowledgment and keeps the plain "Confirm" label', () => {
+    const v = buildApprovalView(
+      { method: 'signTransaction', params: { xdr: 'X' }, origin: ORIGIN },
+      { address: 'CACCT', summary: grantSummary(singleTokenGrant) }
+    )
+    expect(v.needsAcknowledgment).toBe(false)
+    expect(v.approveLabel).toBe('Confirm')
   })
 
   it('never guesses a friendly label for an unrecognized contract (grant: null) — falls through to plain args', () => {
@@ -772,6 +785,36 @@ describe('renderApprovalView — DOM order matches the view.sections order exact
     expect(root.querySelector('#pw')).toBeNull()
   })
 
+  it('I1 fix: a schema-mismatch consequence box renders visibly distinct from the happy path (warning class + danger-styled lead statement)', () => {
+    const mismatch = buildApprovalView(
+      { method: 'signTransaction', params: { xdr: 'X' }, origin: ORIGIN },
+      {
+        address: 'CACCT',
+        summary: grantSummary({
+          kind: 'schema-mismatch',
+          schemaVersion: 2,
+          warning: 'Args did not match the known funding_router v2 grant schema.',
+        }),
+      }
+    )
+    const root = document.createElement('main')
+    renderApprovalView(root, mismatch)
+    const box = root.querySelector('.pc-wallet-consequence')
+    expect(box.classList.contains('pc-wallet-consequence--warning')).toBe(true)
+    const leadStatement = box.querySelector('p')
+    expect(leadStatement.classList.contains('pc-field-error')).toBe(true)
+
+    const happy = buildApprovalView(
+      { method: 'signTransaction', params: { xdr: 'X' }, origin: ORIGIN },
+      { address: 'CACCT', summary: grantSummary(singleTokenGrant) }
+    )
+    const happyRoot = document.createElement('main')
+    renderApprovalView(happyRoot, happy)
+    const happyBox = happyRoot.querySelector('.pc-wallet-consequence')
+    expect(happyBox.classList.contains('pc-wallet-consequence--warning')).toBe(false)
+    expect(happyBox.querySelector('.pc-field-error')).toBeNull()
+  })
+
   it('blocked-origin renders a title/note and no interactive rows at all', () => {
     const v = buildApprovalView(
       { method: 'getAddress', params: {}, origin: null },
@@ -905,6 +948,41 @@ const APPROVAL_STATES = [
       { address: 'GCLASSIC', kind: 'classic', unlocked: false },
     ],
   ],
+  // C2 fix: a DNS label may be 63 unbroken [a-z0-9-] characters -- the reviewer measured this
+  // pushing the 320px popup to 494.4px with no scrollbar (overflow-x: clip silently swallowed it),
+  // letting an attacker choose which part of the origin the user reads. Reachable from any dapp.
+  [
+    'sign-long-origin',
+    [
+      {
+        method: 'signTransaction',
+        params: { xdr: 'X' },
+        origin: `https://${'a'.repeat(63)}.com`,
+      },
+      { address: 'CACCT', summary: null },
+    ],
+  ],
+  // I4 fix: 32 characters is the Soroban Symbol maximum, so a max-length function name is
+  // reachable from any dapp, not a synthetic case -- the reviewer measured this pushing the
+  // consequence <p> to 353.7px.
+  [
+    'sign-long-fn',
+    [
+      { method: 'signTransaction', params: { xdr: 'X' }, origin: ORIGIN },
+      {
+        address: 'CACCT',
+        summary: {
+          network: 'TESTNET',
+          contract: 'CUNKNOWN1111111111111111111111111111111111111111111',
+          contractLabel: null,
+          fn: 'abcdefghij_klmnopqrs_tuvwxyz_012',
+          args: ['1'],
+          signer: null,
+          grant: null,
+        },
+      },
+    ],
+  ],
   ['no-wallet', [{ method: 'getAddress', params: {}, origin: ORIGIN }, { address: null }]],
   ['blocked-origin', [{ method: 'getAddress', params: {}, origin: null }, { address: ADDRESS }]],
 ]
@@ -1019,5 +1097,107 @@ describe('renderApprovalView — real-Chromium proof of rejection-checklist item
     } finally {
       await browser.close()
     }
+  }, 60000)
+})
+
+// ---------------------------------------------------------------------------------------------
+// Review fix round 1 -- C1. The allowance ceiling ("0.5 CTOK…1111 (not a deposit amount)") used to
+// render `color: var(--pc-ink)` (which resolves to --pc-rice in the forest theme) directly on the
+// --pc-owned (rice) background `.pc-wallet-consequence` sits on -- literally the same color,
+// measured contrast 1.00. WCAG AA for normal text requires >= 4.5:1; jsdom cannot compute this
+// (it doesn't resolve CSS custom properties or paint), so this is real-Chromium only, per the task
+// brief's own instruction to measure C1 in a real browser.
+// ---------------------------------------------------------------------------------------------
+function parseRgb(str) {
+  const m = str && str.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/)
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null
+}
+
+function relativeLuminance([r, g, b]) {
+  const [R, G, B] = [r, g, b].map((c) => {
+    const s = c / 255
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+  })
+  return 0.2126 * R + 0.7152 * G + 0.0722 * B
+}
+
+function contrastRatio(rgbA, rgbB) {
+  const lA = relativeLuminance(rgbA)
+  const lB = relativeLuminance(rgbB)
+  const lighter = Math.max(lA, lB)
+  const darker = Math.min(lA, lB)
+  return (lighter + 0.05) / (darker + 0.05)
+}
+
+async function measureConsequenceColors(html) {
+  const browser = await launchRealChromium()
+  try {
+    const page = await browser.newPage()
+    await page.setContent(buildHarnessHtml(html))
+    const raw = await page.evaluate(() => {
+      const box = document.querySelector('.pc-wallet-consequence')
+      const td = box.querySelector('.pc-approval-table td')
+      const th = box.querySelector('.pc-approval-table th')
+      const technical = box.querySelector('.pc-approval-table td .pc-technical')
+      const styleOf = (el) => (el ? getComputedStyle(el).color : null)
+      return {
+        bg: getComputedStyle(box).backgroundColor,
+        tdColor: styleOf(td),
+        thColor: styleOf(th),
+        technicalColor: styleOf(technical),
+      }
+    })
+    await page.close()
+    return raw
+  } finally {
+    await browser.close()
+  }
+}
+
+describe('renderConsequence — real-Chromium WCAG AA contrast on the allowance ceiling (C1)', () => {
+  const AA_NORMAL_TEXT = 4.5
+
+  it('the ceiling amount, its token, and the table header meet AA contrast against the rice background', async () => {
+    const html = renderStateHtml(
+      { method: 'signTransaction', params: { xdr: 'X' }, origin: ORIGIN },
+      { address: 'CACCT', summary: grantSummary(singleTokenGrant) }
+    )
+    const { bg, tdColor, thColor, technicalColor } = await measureConsequenceColors(html)
+    const bgRgb = parseRgb(bg)
+    expect(bgRgb, `could not parse background color: ${bg}`).not.toBeNull()
+    const tdRatio = contrastRatio(parseRgb(tdColor), bgRgb)
+    const thRatio = contrastRatio(parseRgb(thColor), bgRgb)
+    const technicalRatio = contrastRatio(parseRgb(technicalColor), bgRgb)
+    expect(
+      tdRatio,
+      `td contrast ${tdRatio.toFixed(2)}:1 (color ${tdColor} on ${bg})`
+    ).toBeGreaterThanOrEqual(AA_NORMAL_TEXT)
+    expect(thRatio, `th contrast ${thRatio.toFixed(2)}:1`).toBeGreaterThanOrEqual(AA_NORMAL_TEXT)
+    expect(
+      technicalRatio,
+      `.pc-technical contrast ${technicalRatio.toFixed(2)}:1`
+    ).toBeGreaterThanOrEqual(AA_NORMAL_TEXT)
+  }, 60000)
+
+  it('mutation-proof: removing the .pc-wallet-consequence-scoped color override reproduces the white-on-white regression', async () => {
+    const html = renderStateHtml(
+      { method: 'signTransaction', params: { xdr: 'X' }, origin: ORIGIN },
+      { address: 'CACCT', summary: grantSummary(singleTokenGrant) }
+    )
+    // Strip exactly the two rules this fix added, reproducing the pre-fix CSS (td inherits the
+    // generic `.pc-approval-table td { color: var(--pc-ink) }`, which is --pc-rice in this theme --
+    // identical to the --pc-owned background it sits on).
+    const mutated = html
+      .replace(/\.pc-wallet-consequence \.pc-approval-table th\s*\{[^}]*\}/, '')
+      .replace(
+        /\.pc-wallet-consequence \.pc-approval-table td,\s*\.pc-wallet-consequence \.pc-approval-table td \.pc-technical\s*\{[^}]*\}/,
+        ''
+      )
+    const { bg, tdColor } = await measureConsequenceColors(mutated)
+    const ratio = contrastRatio(parseRgb(tdColor), parseRgb(bg))
+    expect(
+      ratio,
+      `expected the pre-fix regression to reproduce low contrast, got ${ratio.toFixed(2)}:1`
+    ).toBeLessThan(AA_NORMAL_TEXT)
   }, 60000)
 })

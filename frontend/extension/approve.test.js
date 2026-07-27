@@ -2,12 +2,19 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { rejectionResult, screenKind, verifyStillValid, approveSignClassic } from './approve.js'
+import {
+  rejectionResult,
+  screenKind,
+  verifyStillValid,
+  approveSignClassic,
+  wireAcknowledgmentGate,
+} from './approve.js'
 import { installChromeMock } from '../src/wallet/testUtils.js'
 import { createRequestSnapshot } from '../src/wallet/consentStore.js'
 import { importFromSecret } from '../src/wallet/classicAccount.js'
 import { Account, TransactionBuilder, Operation } from '@stellar/stellar-sdk'
 import { NETWORK_PASSPHRASE } from '../src/stellar/config.js'
+import { SUBMISSION_STATE, DAPP_REACHABLE_STATES } from './approvalView.js'
 
 const ORIGIN = 'https://vibing-farmer.pages.dev'
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -64,31 +71,167 @@ describe('approve.html — Cancel/Reject is present before (or alongside) Confir
   })
 })
 
-describe('approve.js — never claims a submission/confirmation state this ceremony cannot back', () => {
-  // The generic dapp ceremony (this file's only caller today) ends at "Signed and returned" —
-  // see approvalView.js's DAPP_REACHABLE_STATES. It must never literally set the page's status to
-  // one of the internal-flow-only states, which would falsely claim a completed, reconciled
-  // on-chain outcome for a request this extension never submitted anywhere. Checked against the
-  // text actually passed to setStatus() calls specifically (not the whole file, which legitimately
-  // *discusses* these reserved states in comments) — a substring match against a doc comment would
-  // be a false positive, not a real defect.
-  const FORBIDDEN = [/\bSubmitted\b/, /\bConfirmed\b/, /\bChecking status\b/, /\bNot submitted\b/]
+// ---------------------------------------------------------------------------------------------
+// Review fix round 1 -- I3. The prior guard here (`FORBIDDEN` word-boundary regexes matched
+// against a naive `[^)]*` capture of each setStatus(...) argument) was a BLOCKLIST: it could only
+// catch the exact literal string it was written against. The reviewer neutered it three ways
+// without touching the literal:
+//   setStatus(submissionStatusText(SUBMISSION_STATE.SUBMITTED))   -- the uppercase enum name misses
+//                                                                     the \bSubmitted\b regex
+//   const done = 'Submitted'; setStatus(done)                     -- a named constant, no literal
+//                                                                     text at the call site at all
+//   setStatus(statusFor(state, { tx: hash }))                     -- an opaque helper the regex
+//                                                                     has no way to evaluate
+// All three passed GREEN. This is now an ALLOWLIST instead: every setStatus(...) call must be
+// either one of the handful of literal strings this file legitimately uses outside the submission
+// vocabulary (Connected., the password retry prompt, the pre-screen expiry message), or
+// `submissionStatusText(SUBMISSION_STATE.<X>, ...)` where <X> is a member of DAPP_REACHABLE_STATES.
+// Anything else -- a bare literal that slipped past the allowlist, a differently-named helper, a
+// non-dapp-reachable state -- fails by construction, because it simply isn't the one recognized
+// good shape. This closes all three of the reviewer's mutations plus the original literal.
+describe('approve.js — every setStatus(...) call is either an allowlisted literal or a dapp-reachable submissionStatusText(...) call', () => {
+  const ALLOWED_LITERALS = new Set([
+    'Connected.',
+    'Request expired: close this window and retry from the site.',
+  ])
 
+  // Extracts each setStatus(...) call's full argument text with BALANCED paren matching -- the
+  // old `[^)]*` capture silently truncated at the first `)`, which would have mis-parsed this
+  // task's own `submissionStatusText(SUBMISSION_STATE.X, { detail: '...' })` nested calls.
   function setStatusArgs(source) {
-    return [...source.matchAll(/setStatus\(([^)]*)\)/g)].map((m) => m[1])
+    const args = []
+    const callRe = /setStatus\(/g
+    let m
+    while ((m = callRe.exec(source))) {
+      let depth = 1
+      let i = m.index + m[0].length
+      const start = i
+      while (i < source.length && depth > 0) {
+        if (source[i] === '(') depth++
+        else if (source[i] === ')') depth--
+        i++
+      }
+      args.push(source.slice(start, i - 1))
+    }
+    return args
   }
 
-  it('no setStatus(...) call anywhere in the file passes one of the internal-flow-only labels', () => {
+  // The single recognized-good shape. Anything that doesn't match this, and isn't an allowlisted
+  // literal, is rejected -- including a bare 'Submitted' literal, a named constant standing in for
+  // one, or a completely different helper function.
+  function isAllowedSetStatusArg(arg) {
+    const trimmed = arg.trim()
+    const literal = trimmed.replace(/^['"`]|['"`]$/g, '')
+    if (ALLOWED_LITERALS.has(literal)) return true
+    if (!/^submissionStatusText\(/.test(trimmed)) return false
+    // A ternary picking between two states (e.g. WAITING_PASSWORD/WAITING_PASSKEY by account kind)
+    // is legitimate -- collect every SUBMISSION_STATE.<X> reference inside the call and require
+    // ALL of them to be dapp-reachable, not just the first.
+    const stateRefs = [...trimmed.matchAll(/SUBMISSION_STATE\.(\w+)/g)].map((m) => m[1])
+    if (stateRefs.length === 0) return false
+    return stateRefs.every((name) => {
+      const state = SUBMISSION_STATE[name]
+      return state != null && DAPP_REACHABLE_STATES.includes(state)
+    })
+  }
+
+  it('every real setStatus(...) call in the file matches the allowlist', () => {
     const source = readFileSync(path.resolve(here, './approve.js'), 'utf8')
-    for (const arg of setStatusArgs(source)) {
-      for (const pattern of FORBIDDEN) expect(arg).not.toMatch(pattern)
+    const args = setStatusArgs(source)
+    expect(args.length).toBeGreaterThan(0) // sanity: the extractor actually found calls
+    for (const arg of args) {
+      expect(isAllowedSetStatusArg(arg), `disallowed setStatus argument: ${arg}`).toBe(true)
     }
   })
 
-  it('mutation-proof: injecting one of those literal strings into a setStatus call would fail the check above', () => {
-    const mutatedSource = "setStatus('Submitted')"
-    const args = setStatusArgs(mutatedSource)
-    expect(args.some((arg) => FORBIDDEN.some((pattern) => pattern.test(arg)))).toBe(true) // RED
+  it('mutation-proof (reviewer #1): setStatus(submissionStatusText(SUBMISSION_STATE.SUBMITTED)) is rejected', () => {
+    expect(isAllowedSetStatusArg('submissionStatusText(SUBMISSION_STATE.SUBMITTED)')).toBe(false) // RED
+  })
+
+  it('mutation-proof (reviewer #2): a named constant standing in for the literal is rejected', () => {
+    // `const done = 'Submitted'; setStatus(done)` -- the argument at the call site is just `done`.
+    expect(isAllowedSetStatusArg('done')).toBe(false) // RED
+  })
+
+  it('mutation-proof (reviewer #3): an opaque helper wrapper is rejected', () => {
+    expect(isAllowedSetStatusArg('statusFor(state, {tx: hash})')).toBe(false) // RED
+  })
+
+  it('the original literal the old guard injected is still rejected', () => {
+    expect(isAllowedSetStatusArg("'Submitted'")).toBe(false) // RED (still caught, as before)
+  })
+
+  it('positive control: the allowlist is not vacuous -- a dapp-reachable state and an allowed literal both pass', () => {
+    expect(
+      isAllowedSetStatusArg('submissionStatusText(SUBMISSION_STATE.FAILED, { detail: e.message })')
+    ).toBe(true)
+    expect(isAllowedSetStatusArg("'Connected.'")).toBe(true)
+  })
+})
+
+// I2: submissionStatusText's own copy says "Signed and returned to X" (no trailing period); before
+// this fix approve.js hand-wrote "Signed and returned to X." (WITH a trailing period) instead of
+// calling the module it imports from -- the two had already diverged. Pins the fix directly rather
+// than relying on the allowlist test above (which only checks the *shape* of the call, not that
+// the hand-written duplicate is actually gone).
+describe('approve.js — SIGNED_RETURNED status text is sourced from submissionStatusText, not duplicated', () => {
+  it('the file calls submissionStatusText(SUBMISSION_STATE.SIGNED_RETURNED, ...) and no longer hand-writes the string', () => {
+    const source = readFileSync(path.resolve(here, './approve.js'), 'utf8')
+    expect(source).toMatch(/submissionStatusText\(\s*SUBMISSION_STATE\.SIGNED_RETURNED/)
+    expect(source).not.toMatch(/setStatus\(\s*`Signed and returned/)
+  })
+})
+
+// ---------------------------------------------------------------------------------------------
+// Review fix round 1 -- I1. A schema-mismatch consequence (`view.needsAcknowledgment`) must not
+// let Confirm go through for free -- it stays disabled until the user opens the raw
+// technical-details disclosure. Tested with bare fake DOM-like objects (addEventListener/disabled/
+// open) rather than a full jsdom environment or chrome mock, since wireAcknowledgmentGate takes
+// its elements as plain injected arguments.
+// ---------------------------------------------------------------------------------------------
+describe('wireAcknowledgmentGate — Confirm stays disabled until the raw details are opened (I1)', () => {
+  function fakeDetails() {
+    const listeners = []
+    return {
+      open: false,
+      addEventListener(type, cb) {
+        listeners.push([type, cb])
+      },
+      fire(type) {
+        for (const [t, cb] of listeners) if (t === type) cb()
+      },
+    }
+  }
+
+  it('disables Confirm immediately when the view needs acknowledgment', () => {
+    const approveBtn = { disabled: false }
+    wireAcknowledgmentGate({ needsAcknowledgment: true }, { approveBtn, detailsEl: fakeDetails() })
+    expect(approveBtn.disabled).toBe(true)
+  })
+
+  it('re-enables Confirm once the technical details are opened', () => {
+    const approveBtn = { disabled: false }
+    const details = fakeDetails()
+    wireAcknowledgmentGate({ needsAcknowledgment: true }, { approveBtn, detailsEl: details })
+    expect(approveBtn.disabled).toBe(true)
+    details.open = true
+    details.fire('toggle')
+    expect(approveBtn.disabled).toBe(false)
+  })
+
+  it('does nothing on the happy path (no warning) -- Confirm is never disabled it did not already need to be', () => {
+    const approveBtn = { disabled: false }
+    wireAcknowledgmentGate({ needsAcknowledgment: false }, { approveBtn, detailsEl: fakeDetails() })
+    expect(approveBtn.disabled).toBe(false)
+  })
+
+  it('mutation-proof: a differently-written gate that disables via `hidden` instead of `disabled` leaves Confirm clickable', () => {
+    function brokenGate(view, { approveBtn }) {
+      if (view.needsAcknowledgment) approveBtn.hidden = true // wrong property -- still clickable
+    }
+    const approveBtn = { disabled: false, hidden: false }
+    brokenGate({ needsAcknowledgment: true }, { approveBtn })
+    expect(approveBtn.disabled).toBe(false) // RED: the real assertion above requires `true`
   })
 })
 

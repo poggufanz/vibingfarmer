@@ -410,17 +410,24 @@ export function buildApprovalView(req, ctx = {}) {
   const raw =
     req.method === 'signTransaction' ? (req.params?.xdr ?? null) : (req.params?.authEntry ?? null)
 
+  const consequence = buildConsequence(summary)
+  // C1/I1 fix: a schema-mismatch (fail-closed, VFW3) consequence must not offer the same friendly
+  // primary action as a decoded grant -- approve.js gates Confirm on the raw technical-details
+  // disclosure having been opened (see wireAcknowledgmentGate) whenever this is true.
+  const needsAcknowledgment = Boolean(consequence.warning)
+
   return {
     variant: 'sign',
     title: 'Signature request',
     note,
     rejectLabel: 'Cancel',
-    approveLabel: 'Confirm',
+    approveLabel: needsAcknowledgment ? 'Confirm anyway' : 'Confirm',
+    needsAcknowledgment,
     needsPassword,
     raw,
     submissionState,
     sections: [
-      buildConsequence(summary),
+      consequence,
       originSection(req.origin),
       accountSection(kind, address),
       networkSection(),
@@ -495,9 +502,26 @@ function renderNetwork(section) {
 }
 
 function renderConsequence(section) {
-  const box = h('div', { className: 'pc-wallet-consequence' })
+  // I1 fix: a schema-mismatch's `warning: true` used to be a dead field -- this box now renders
+  // visibly differently (a danger-tone border, matching the contract's own --pc-danger token) and
+  // its lead statement (the raw schema-mismatch warning itself) renders in the same danger-red
+  // `.pc-field-error` treatment already used everywhere else in this file for error copy, instead
+  // of identical body-ink prose. See buildApprovalView's `needsAcknowledgment` for the Confirm-gate
+  // half of this fix.
+  const box = h('div', {
+    className: section.warning
+      ? 'pc-wallet-consequence pc-wallet-consequence--warning'
+      : 'pc-wallet-consequence',
+  })
   box.append(h('h1', { attrs: { id: 'title' }, text: 'Signature request' }))
-  for (const statement of section.statements) box.append(h('p', { text: statement }))
+  section.statements.forEach((statement, i) => {
+    box.append(
+      h('p', {
+        className: section.warning && i === 0 ? 'pc-field-error' : undefined,
+        text: statement,
+      })
+    )
+  })
   if (section.ceilingRows.length > 0) {
     const table = h('table', { className: 'pc-approval-table' })
     const tbody = h('tbody')
@@ -546,7 +570,9 @@ function renderDecoded(section) {
 function renderTechnical(section) {
   const wrap = h('div', { attrs: { id: 'raw-wrap' } })
   if (!section.raw) wrap.style.display = 'none'
-  const details = h('details')
+  // id targeted by approve.js's wireAcknowledgmentGate (I1) -- Confirm on a schema-mismatch stays
+  // disabled until this disclosure is opened.
+  const details = h('details', { attrs: { id: 'raw-details' } })
   details.append(h('summary', { text: 'Technical details' }))
   details.append(
     h('pre', { className: 'pc-technical', attrs: { id: 'raw' }, text: section.raw ?? '' })
