@@ -111,8 +111,22 @@ export function WalletSettings({
             37-character required-verbatim link text blows straight through at 320px (measured:
             .pc-wallet's own scrollWidth reached 350px with it as a button -- see the task report).
             .pc-field-help wraps normally like any other prose link, the same convention
-            WalletActivity.jsx's/classic/HistoryScreen.jsx's "View" explorer links already use. */}
-        <a className="pc-field-help" href={VF_WEB_APP_URL} target="_blank" rel="noreferrer">
+            WalletActivity.jsx's/classic/HistoryScreen.jsx's "View" explorer links already use.
+            VFW14 fix round 1 (owner decision #42): the de-blinded 44px sweep now measures every
+            interactive element regardless of `display`, including this one -- a plain
+            `display: inline` text run is genuinely 17px tall (line-height only), failing the
+            touch-target guideline the coarse-pointer contract rule intends. Fixed here, not by
+            widening the guard's exemption: `display: flex` (a block-level box, same as any
+            `.pc-button`) with `min-height: var(--pc-touch-target)` gives the link a real 44px tap
+            area while keeping `white-space` at its normal default -- the text still wraps freely
+            at 320px, so the overflow this link was originally written to dodge does not return. */}
+        <a
+          className="pc-field-help"
+          href={VF_WEB_APP_URL}
+          target="_blank"
+          rel="noreferrer"
+          style={{ display: 'flex', alignItems: 'center', minHeight: 'var(--pc-touch-target)' }}
+        >
           Manage Base testnet in Vibing Farmer
         </a>
       </div>

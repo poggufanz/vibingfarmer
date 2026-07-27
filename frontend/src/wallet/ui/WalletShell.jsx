@@ -504,6 +504,25 @@ svg.vf-token-icon { display: block; overflow: hidden; }
 @media (max-width: 359px) {
   .pc-wallet { width: 100vw; min-width: 320px; }
   .pc-wallet-main { padding-inline: 16px; }
+
+  /* VFW14 fix round 1 (I-1, reviewer finding, hard-gate checklist item 12): .pc-button's own
+     min-width: max-content + white-space: nowrap (ported verbatim from the contract, both
+     correct for a normal-width button) force a two-track .pc-wallet-actions row to its combined
+     max-content width regardless of the grid's minmax(0, 1fr) tracks -- minmax(0, ...) only
+     relaxes the TRACK's own sizing floor, it cannot override an ITEM's own explicit min-width
+     (CSS Grid 1 sec 6.6: an explicit min-width, unlike auto, is used as-is, never replaced by the
+     content-based automatic minimum). Measured on WalletAdvanced.jsx's "Enable deposits" button at
+     320px: 161px intrinsic width inside two 138px tracks in a 288px content box (16px inline
+     padding each side, contract-ported above) -- right edge lands at 327px against a 320px
+     viewport, invisible to document.documentElement.scrollWidth only because .pc-wallet's own
+     overflow-x: clip (above) hides the paint rather than removing the layout overflow. Does not
+     occur at 360px (288+40=328px available, two 161px buttons combine to 322px -- still tight,
+     but confirmed clean by the widened 320+360 sweep) so the frozen 360px baselines are unaffected
+     by this change. Stacking to one column below 360px (matching the same single-column mobile
+     pattern the contract itself already uses for .pc-money-actions/.pc-dialog-actions at a wider
+     breakpoint) removes the two-track squeeze entirely -- each button already computes
+     width: 100% (above), so a single column just lets it use the full 288px it needs. */
+  .pc-wallet-actions { grid-template-columns: 1fr; }
 }
 
 @media (hover: none), (pointer: coarse) {

@@ -32,10 +32,19 @@ const LABELS = {
     'While unlocked, this wallet keeps a key in chrome.storage.session (in-memory). Someone already running code on your machine could read it. Lock this wallet when done. Testnet PoC.',
 }
 
+// VFW14 fix round 1 (reviewer finding): `#f0b54a` is visibly off-token in the frozen Home
+// baseline (WalletOnboarding/WalletSettings/WalletAdvanced all render inside `.pc-wallet`, which
+// declares `--pc-warning: #e8a33d`) -- a different amber, not a token, serving exactly the role a
+// token exists for. `var(--pc-warning, #f0b54a)` routes it through the real token wherever one is
+// in scope, while keeping the identical literal `#f0b54a` as the fallback for the one caller
+// outside the Pocket Crew wallet tree that has no `--pc-warning` in scope at all
+// (extension/popup.jsx's legacy Acid Yield screens -- this file's own header comment: "stays
+// legible on the wallet popup without depending on the popup stylesheet"), so that surface's
+// rendering is untouched.
 const s = {
   fontSize: 11,
   lineHeight: 1.5,
-  color: '#f0b54a',
+  color: 'var(--pc-warning, #f0b54a)',
   background: 'rgba(240,181,74,0.08)',
   border: '1px solid rgba(240,181,74,0.28)',
   borderRadius: 6,
