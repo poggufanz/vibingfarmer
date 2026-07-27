@@ -30,6 +30,80 @@ test.describe('Pocket Crew foundation', () => {
   })
 })
 
+// Strategy Task 14 -- frozen baselines for the deterministic `strategy` fixture (Plan input,
+// safe-default generating/review, mixed Stellar/Base truth review, Protect fresh/reuse/rejected,
+// Start queued/partial-failure/in-transit, all-success and mixed-partial receipts, long
+// address/technical details). Same snapshotPathTemplate mechanism as Foundation above resolves
+// these three base names to the twelve `strategy-{variant}-{projectName}.png` files.
+//
+// `[data-fixture-pending="true"]` is set by visual/main.jsx's `AutopilotSection` for every state
+// reached through real driven interaction (Plan review, Protect decisions) and cleared once that
+// interaction has genuinely settled -- waiting for zero remaining markers means the screenshot
+// never races a still-in-flight click/await chain. The fixed 500ms wait afterward is not a
+// substitute for that: it only lets StartStage's one-shot, non-looping usePocketTransition GSAP
+// entrance (duration 320ms) finish, since Playwright's `animations: 'disabled'` config only forces
+// CSS animations/transitions, not JS/rAF-driven ones. Skipped entirely under reduced motion, where
+// usePocketTransition takes its `gsap.set(...)` (no-animation) branch instead.
+test.describe('Pocket Crew Strategy', () => {
+  // G4 (rejection checklist item 12, this task's own binding constraint 4): 320px must show no
+  // horizontal overflow, checked BOTH via documentElement.scrollWidth AND every descendant's own
+  // bounding rect -- scrollWidth alone stays 320 even when `overflow-x: clip` is hiding real
+  // overflow rather than removing it (the exact trap recorded to have shipped twice on this
+  // project), so a rect that quietly exceeds the viewport is still caught here.
+  async function assertNoOverflowAt320(page, testInfo) {
+    if (testInfo.project.name !== 'mobile-320') return
+    const overflow = await page.evaluate(() => {
+      const viewportWidth = document.documentElement.clientWidth
+      let maxRight = 0
+      for (const el of document.querySelectorAll('[data-fixture="strategy"] *')) {
+        maxRight = Math.max(maxRight, el.getBoundingClientRect().right)
+      }
+      return {
+        scrollWidth: document.documentElement.scrollWidth,
+        viewportWidth,
+        maxDescendantRight: maxRight,
+      }
+    })
+    expect(overflow.scrollWidth, '320px: documentElement.scrollWidth').toBe(320)
+    expect(
+      overflow.maxDescendantRight,
+      '320px: no descendant rect may exceed the viewport, even under overflow-x:clip'
+    ).toBeLessThanOrEqual(overflow.viewportWidth + 0.5)
+  }
+
+  test('forest theme', async ({ page }, testInfo) => {
+    await page.goto('/visual/?fixture=strategy&theme=forest')
+    await page.waitForFunction(
+      () => document.querySelectorAll('[data-fixture-pending="true"]').length === 0
+    )
+    await page.evaluate(() => document.fonts.ready)
+    await page.waitForTimeout(500)
+    await assertNoOverflowAt320(page, testInfo)
+    await expect(page).toHaveScreenshot('strategy-forest.png', { fullPage: true })
+  })
+
+  test('day-field theme', async ({ page }, testInfo) => {
+    await page.goto('/visual/?fixture=strategy&theme=day-field')
+    await page.waitForFunction(
+      () => document.querySelectorAll('[data-fixture-pending="true"]').length === 0
+    )
+    await page.evaluate(() => document.fonts.ready)
+    await page.waitForTimeout(500)
+    await assertNoOverflowAt320(page, testInfo)
+    await expect(page).toHaveScreenshot('strategy-day-field.png', { fullPage: true })
+  })
+
+  test('forest theme with prefers-reduced-motion', async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.goto('/visual/?fixture=strategy&theme=forest')
+    await page.waitForFunction(
+      () => document.querySelectorAll('[data-fixture-pending="true"]').length === 0
+    )
+    await page.evaluate(() => document.fonts.ready)
+    await expect(page).toHaveScreenshot('strategy-reduced-motion.png', { fullPage: true })
+  })
+})
+
 // Foundation Task 8 -- compact compatibility smoke over the six disconnected/shared routes, real
 // app (not the /visual/ fixture harness), desktop-1440 only. Named "disconnected compatibility"
 // (not "Pocket Crew foundation") so Step 5's `--grep "Pocket Crew foundation"` gate does not also
