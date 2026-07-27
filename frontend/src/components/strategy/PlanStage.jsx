@@ -14,9 +14,16 @@ import { useRef, useState } from 'react'
 import { MoneyFigure, StatusNotice, TechnicalDetails, VenueTruth } from '../pocket/Primitives.jsx'
 import { NetworkBadge, NetworkRoute } from '../pocket/NetworkIdentity.jsx'
 import { AgentMark } from '../pocket/AgentMark.jsx'
-import { RISK_PROFILES, normalizeStrategyPlan, buildStrategyViewModel } from '../../strategy/planModel.js'
+import {
+  RISK_PROFILES,
+  normalizeStrategyPlan,
+  buildStrategyViewModel,
+} from '../../strategy/planModel.js'
 import { venueYield } from '../../strategy/venueTruth.js'
-import { validateAmountInput, validateExecutionAllocations } from '../../strategy/amountValidation.js'
+import {
+  validateAmountInput,
+  validateExecutionAllocations,
+} from '../../strategy/amountValidation.js'
 import { needsBaseMandateSetup } from '../../mergeFlowHelpers.js'
 import { hashStrategy } from '../../attestation.js'
 
@@ -111,7 +118,8 @@ export function PlanStage({
   // caller's already-canonical Base view. Never re-derived per render from raw health/mandate
   // fields anywhere else in this component.
   const baseEligible = baseConnected && baseHealthy && mandateReady
-  const showBaseSetup = baseConnected && needsBaseMandateSetup({ healthy: base?.healthy, mandateOk: mandateReady })
+  const showBaseSetup =
+    baseConnected && needsBaseMandateSetup({ healthy: base?.healthy, mandateOk: mandateReady })
   const planInvalidated = phase === 'ready' && Boolean(base?.action?.invalidatesPlan)
 
   const canSubmit = amountValue.trim() !== '' && Boolean(risk) && phase !== 'generating'
@@ -157,7 +165,9 @@ export function PlanStage({
       }
       setPlan(nextPlan)
       setInstructions(
-        Object.fromEntries(nextPlan.agents.map((agent) => [agent.allocationId, defaultInstruction(agent)]))
+        Object.fromEntries(
+          nextPlan.agents.map((agent) => [agent.allocationId, defaultInstruction(agent)])
+        )
       )
       setPhase('ready')
     } catch (err) {
@@ -264,7 +274,11 @@ export function PlanStage({
             <p className="pc-field-help">Nothing moves until you review and confirm.</p>
 
             {!baseConnected && (
-              <button type="button" className="pc-button pc-button--secondary" onClick={() => onConnectForBase?.()}>
+              <button
+                type="button"
+                className="pc-button pc-button--secondary"
+                onClick={() => onConnectForBase?.()}
+              >
                 {base?.action?.label || 'Connect to check Base testnet'}
               </button>
             )}
@@ -280,7 +294,9 @@ export function PlanStage({
             {/* Fix loop 1 -- I10: a single label that TRANSITIONS in response to the caller's own
                 reportPhase events (never a static simultaneous list, never a timer). Nothing
                 claims progress this component cannot actually observe. */}
-            <p>{generationPhase === null ? 'Working on it…' : GENERATION_PHASES[generationPhase]}</p>
+            <p>
+              {generationPhase === null ? 'Working on it…' : GENERATION_PHASES[generationPhase]}
+            </p>
           </StatusNotice>
         )}
 
@@ -299,7 +315,11 @@ export function PlanStage({
           <div>
             <span className="pc-source-badge">{sourceBadgeCopy(plan.sourceState)}</span>
             {plan.sourceState !== 'live-ai' && (
-              <button type="button" className="pc-button pc-button--secondary" onClick={handleRetryLive}>
+              <button
+                type="button"
+                className="pc-button pc-button--secondary"
+                onClick={handleRetryLive}
+              >
                 Retry live check
               </button>
             )}
@@ -313,8 +333,15 @@ export function PlanStage({
 
             {planInvalidated && (
               <StatusNotice state="warning" title="Base testnet was just set up">
-                <p>This reviewed plan was built before Base testnet was ready and no longer reflects it.</p>
-                <button type="button" className="pc-button pc-button--primary" onClick={handleRebuildPlan}>
+                <p>
+                  This reviewed plan was built before Base testnet was ready and no longer reflects
+                  it.
+                </p>
+                <button
+                  type="button"
+                  className="pc-button pc-button--primary"
+                  onClick={handleRebuildPlan}
+                >
                   Rebuild plan
                 </button>
               </StatusNotice>
@@ -332,39 +359,55 @@ export function PlanStage({
                 const planAgent = plan.agents.find((a) => a.allocationId === agent.id)
                 return (
                   <li key={agent.id} className="pc-allocation-row" data-agent-kind={agent.kind}>
-                    <AgentMark identity={agent.id} state="planned" label={isBridge ? 'B' : String(agent.idx)} />
+                    <AgentMark
+                      identity={agent.id}
+                      state="planned"
+                      label={isBridge ? 'B' : String(agent.idx)}
+                    />
                     <div>
                       {isBridge ? (
                         <NetworkRoute context={BRIDGE_NETWORK_CONTEXT} />
                       ) : (
                         <NetworkBadge networkId="stellar-testnet" />
                       )}
-                      <MoneyFigure state="current" value={agent.allocation} currency={plan.amount.token} />
+                      <MoneyFigure
+                        state="current"
+                        value={agent.allocation}
+                        currency={plan.amount.token}
+                      />
                       <p>
                         {/* Fix loop 1 -- I8 (review finding): the grant scope bound the user
                             approves is `plan.agents[].cap`, never the display allocation --
                             today they happen to be equal, but the moment they diverge (a
                             headroom cap, a rounded bridge cap) this must still state the real
                             cap, not the allocation. */}
-                        Cap {unitsToDisplay(planAgent.cap.units, planAgent.cap.decimals)} {plan.amount.token}
+                        Cap {unitsToDisplay(planAgent.cap.units, planAgent.cap.decimals)}{' '}
+                        {plan.amount.token}
                       </p>
                       <p>Expires {formatExpiry(planAgent.expiry)}</p>
                       {isBridge ? (
                         <ul>
                           {agent.children.map((child) => (
                             <li key={child.allocationId}>
-                              {child.proxyTarget || child.destination}: {child.allocation} {plan.amount.token}
+                              {child.proxyTarget || child.destination}: {child.allocation}{' '}
+                              {plan.amount.token}
                             </li>
                           ))}
                         </ul>
                       ) : (
-                        <p>{stellarYield.state === 'live' ? `${stellarYield.apy}% APY` : 'Yield unavailable'}</p>
+                        <p>
+                          {stellarYield.state === 'live'
+                            ? `${stellarYield.apy}% APY`
+                            : 'Yield unavailable'}
+                        </p>
                       )}
                       <TechnicalDetails summary={`${agent.name} instructions`}>
                         <textarea
                           aria-label={`${agent.name} instructions`}
                           value={instructions[agent.id] ?? ''}
-                          onChange={(e) => setInstructions((prev) => ({ ...prev, [agent.id]: e.target.value }))}
+                          onChange={(e) =>
+                            setInstructions((prev) => ({ ...prev, [agent.id]: e.target.value }))
+                          }
                         />
                       </TechnicalDetails>
                     </div>
@@ -407,7 +450,9 @@ export function PlanStage({
               {plan.agents
                 .find((a) => a.kind === 'bridge')
                 ?.children.map((child) => (
-                  <p key={child.allocationId}>Planned mainnet target: {child.proxyTarget} (not live)</p>
+                  <p key={child.allocationId}>
+                    Planned mainnet target: {child.proxyTarget} (not live)
+                  </p>
                 ))}
             </div>
           </div>
@@ -422,12 +467,19 @@ export function PlanStage({
             state="warning"
             title="Set up Base testnet"
             action={
-              <button type="button" className="pc-button pc-button--primary" onClick={() => onSetupBase?.()}>
+              <button
+                type="button"
+                className="pc-button pc-button--primary"
+                onClick={() => onSetupBase?.()}
+              >
                 Set up Base testnet
               </button>
             }
           >
-            <p>{base?.mandateView?.primaryCopy || 'Base testnet needs a one-time setup before it can be used.'}</p>
+            <p>
+              {base?.mandateView?.primaryCopy ||
+                'Base testnet needs a one-time setup before it can be used.'}
+            </p>
           </StatusNotice>
         )}
       </aside>

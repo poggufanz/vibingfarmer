@@ -332,7 +332,9 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
         cap: plan.agents[1].cap,
         periodSeconds: 3600,
         expiry: 2000000000,
-        mintRecipient: Array.from(evmAddrToBytes32(KERNEL), (byte) => byte.toString(16).padStart(2, '0')).join(''),
+        mintRecipient: Array.from(evmAddrToBytes32(KERNEL), (byte) =>
+          byte.toString(16).padStart(2, '0')
+        ).join(''),
         destinationDomain: CCTP_BASE_DOMAIN,
       },
     ]
@@ -772,7 +774,9 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
       stellar: { status: 'failed' },
       base: { status: 'succeeded' },
     })
-    expect(summary.receipt.allocations.find((entry) => entry.allocationId === 'run-a:bridge:0')).toMatchObject({
+    expect(
+      summary.receipt.allocations.find((entry) => entry.allocationId === 'run-a:bridge:0')
+    ).toMatchObject({
       executionStatus: 'succeeded',
       custody: { location: 'base-proxy', confirmed: true },
       evidence: {
@@ -887,12 +891,17 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
       txHash: 'HG',
     })
     expect(summary.receipt.branches.base.status).toBe('failed')
-    expect(summary.receipt.allocations.find((entry) => entry.allocationId.endsWith('pool-a'))).toMatchObject({
+    expect(
+      summary.receipt.allocations.find((entry) => entry.allocationId.endsWith('pool-a'))
+    ).toMatchObject({
       executionStatus: 'failed',
       custody: { location: 'unknown', confirmed: false, checkedAt: null },
       error: 'base implementation rejected',
     })
-    expect(summary.receipt.allocations.find((entry) => entry.allocationId.endsWith('pool-a')).custody.location).not.toBe('owner')
+    expect(
+      summary.receipt.allocations.find((entry) => entry.allocationId.endsWith('pool-a')).custody
+        .location
+    ).not.toBe('owner')
   })
 
   it('[F] keeps failed Base recovery evidence in the receipt and strips all key material', async () => {
@@ -928,7 +937,9 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
     const summary = await permissionedOrchestrator().dispatch(fixture.plan, {
       permissionDecision: fixture.permissionDecision,
     })
-    const failed = summary.receipt.allocations.find((entry) => entry.allocationId.endsWith('pool-a'))
+    const failed = summary.receipt.allocations.find((entry) =>
+      entry.allocationId.endsWith('pool-a')
+    )
 
     expect(failed.evidence).toMatchObject({
       bridgeAgentAddress: 'CFRESH2',

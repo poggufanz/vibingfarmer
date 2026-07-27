@@ -777,15 +777,13 @@ describe('Strategy journeys (Task 13, Wave 5) — 22 approved-spec cases', () =>
     // plan, discovered at the top of dispatchPermissioned before either mode branch runs --
     // genuinely preflight-class (never 'fresh-grant', which classifyPermissionFailure treats as
     // wallet-class since it also covers real wallet rejections).
-    const onRequestGrant = vi
-      .fn()
-      .mockRejectedValueOnce(
-        new PermissionPhaseError({
-          phase: 'preflight',
-          code: 'VF_PLAN_FINGERPRINT_MISMATCH',
-          message: 'stale',
-        })
-      )
+    const onRequestGrant = vi.fn().mockRejectedValueOnce(
+      new PermissionPhaseError({
+        phase: 'preflight',
+        code: 'VF_PLAN_FINGERPRINT_MISMATCH',
+        message: 'stale',
+      })
+    )
     const utils = render(
       <Harness ref={ref} mocks={{ onGenerate, onRetryPreflight, onRequestGrant }} />
     )

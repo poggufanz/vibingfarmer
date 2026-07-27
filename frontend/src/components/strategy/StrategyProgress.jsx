@@ -23,13 +23,16 @@ export function StrategyProgress({ current, reached, onNavigate }) {
   const reachedSet = new Set(reached || [current])
   const currentIndex = STEPS.findIndex((step) => step.id === current)
   const announcement =
-    currentIndex >= 0 ? `Step ${currentIndex + 1} of ${STEPS.length}: ${STEPS[currentIndex].label}` : ''
+    currentIndex >= 0
+      ? `Step ${currentIndex + 1} of ${STEPS.length}: ${STEPS[currentIndex].label}`
+      : ''
 
   return (
     <nav className="pc-strategy-stage-nav" aria-label="Strategy progress">
       {STEPS.map((step) => {
         const isCurrent = step.id === current
-        const canNavigate = !isCurrent && reachedSet.has(step.id) && typeof onNavigate === 'function'
+        const canNavigate =
+          !isCurrent && reachedSet.has(step.id) && typeof onNavigate === 'function'
         return (
           <button
             key={step.id}

@@ -46,7 +46,8 @@ function executionStatus(raw, branch) {
   if (raw?.finalStatus === 'done' || raw?.success === true || raw?.status === 'fulfilled') {
     return 'succeeded'
   }
-  if (raw?.success === false || raw?.error || raw?.reason || raw?.status === 'rejected') return 'failed'
+  if (raw?.success === false || raw?.error || raw?.reason || raw?.status === 'rejected')
+    return 'failed'
   return branch ? 'unknown' : 'not-started'
 }
 
@@ -62,7 +63,9 @@ function inferredCustody(raw, branch, status) {
 }
 
 function txHash(raw) {
-  return raw?.depositTxHash || raw?.mintTxHash || raw?.txHash || raw?.burnHash || raw?.pullTxHash || null
+  return (
+    raw?.depositTxHash || raw?.mintTxHash || raw?.txHash || raw?.burnHash || raw?.pullTxHash || null
+  )
 }
 
 function isEmptyContainer(value) {
@@ -71,7 +74,9 @@ function isEmptyContainer(value) {
 }
 
 function isSensitiveProperty(key) {
-  const normalized = String(key).toLowerCase().replace(/[^a-z0-9]/g, '')
+  const normalized = String(key)
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
   return (
     normalized.includes('secret') ||
     normalized.includes('privatekey') ||
@@ -138,9 +143,7 @@ function safeEvidence(raw) {
     'stage',
   ]
   return Object.fromEntries(
-    keys
-      .filter((key) => raw?.[key] != null)
-      .map((key) => [key, sanitizeReceiptData(raw[key])])
+    keys.filter((key) => raw?.[key] != null).map((key) => [key, sanitizeReceiptData(raw[key])])
   )
 }
 
@@ -174,7 +177,10 @@ function normalizeOutcome(planned, raw) {
 }
 
 function branchStatus(branch, planned, outcomes, declared) {
-  if (declared && ['succeeded', 'partial', 'failed', 'in-transit', 'not-planned'].includes(declared)) {
+  if (
+    declared &&
+    ['succeeded', 'partial', 'failed', 'in-transit', 'not-planned'].includes(declared)
+  ) {
     return declared
   }
   if (planned.length === 0) return 'not-planned'

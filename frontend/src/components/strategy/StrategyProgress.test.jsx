@@ -52,7 +52,9 @@ describe('StrategyProgress', () => {
 
   it('lets the caller navigate to an already-reached, non-current step', () => {
     const onNavigate = vi.fn()
-    render(<StrategyProgress current="protect" reached={['plan', 'protect']} onNavigate={onNavigate} />)
+    render(
+      <StrategyProgress current="protect" reached={['plan', 'protect']} onNavigate={onNavigate} />
+    )
     fireEvent.click(screen.getByRole('button', { name: 'Plan' }))
     expect(onNavigate).toHaveBeenCalledWith('plan')
   })

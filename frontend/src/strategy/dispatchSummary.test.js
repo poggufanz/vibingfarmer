@@ -73,7 +73,12 @@ describe('buildDispatchReceipt', () => {
       version: 1,
       runId: 'run-mixed-8',
       planFingerprint: 'plan-fingerprint-8',
-      permission: { mode: 'fresh', status: 'confirmed', confirmationCount: 1, txHash: 'grant-hash' },
+      permission: {
+        mode: 'fresh',
+        status: 'confirmed',
+        confirmationCount: 1,
+        txHash: 'grant-hash',
+      },
       branches: { stellar: { status: 'failed' }, base: { status: 'succeeded' } },
     })
     expect(receipt.allocations).toEqual(
@@ -119,13 +124,20 @@ describe('buildDispatchReceipt', () => {
       },
     })
 
-    expect(receipt.branches).toMatchObject({ stellar: { status: 'succeeded' }, base: { status: 'failed' } })
-    expect(receipt.allocations.find((a) => a.allocationId === 'run-mixed-8:deposit:0')).toMatchObject({
+    expect(receipt.branches).toMatchObject({
+      stellar: { status: 'succeeded' },
+      base: { status: 'failed' },
+    })
+    expect(
+      receipt.allocations.find((a) => a.allocationId === 'run-mixed-8:deposit:0')
+    ).toMatchObject({
       executionStatus: 'succeeded',
       custody: { location: 'stellar-vault', confirmed: true },
       txHash: 'stellar-deposit',
     })
-    expect(receipt.allocations.find((a) => a.allocationId === 'run-mixed-8:bridge:base-a')).toMatchObject({
+    expect(
+      receipt.allocations.find((a) => a.allocationId === 'run-mixed-8:bridge:base-a')
+    ).toMatchObject({
       executionStatus: 'failed',
       custody: { location: 'agent', confirmed: true },
       error: 'burn rejected',
@@ -252,7 +264,9 @@ describe('buildDispatchReceipt', () => {
         },
       },
     })
-    expect(receipt.allocations.find((a) => a.allocationId === 'run-mixed-8:bridge:base-a').custody).toEqual({
+    expect(
+      receipt.allocations.find((a) => a.allocationId === 'run-mixed-8:bridge:base-a').custody
+    ).toEqual({
       location: 'unknown',
       confirmed: false,
       checkedAt: null,
@@ -262,7 +276,11 @@ describe('buildDispatchReceipt', () => {
   it('rejects malformed canonical amounts and unknown permission modes', () => {
     expect(() =>
       buildDispatchReceipt({
-        plan: { runId: 'bad', planFingerprint: 'bad', agents: [{ allocationId: 'bad:0', kind: 'deposit' }] },
+        plan: {
+          runId: 'bad',
+          planFingerprint: 'bad',
+          agents: [{ allocationId: 'bad:0', kind: 'deposit' }],
+        },
         permission: { mode: 'surprise' },
       })
     ).toThrow(/canonical amount|permission/i)
@@ -349,7 +367,9 @@ describe('buildDispatchReceipt', () => {
         },
       },
     })
-    const branch = receipt.branches.base.results.find((entry) => entry.allocationId.endsWith('base-a'))
+    const branch = receipt.branches.base.results.find((entry) =>
+      entry.allocationId.endsWith('base-a')
+    )
     const allocation = receipt.allocations.find((entry) => entry.allocationId.endsWith('base-a'))
 
     expect(branch.evidence.recovery).toEqual({
@@ -374,6 +394,8 @@ describe('buildDispatchReceipt', () => {
   it('rejects negative units, duplicate IDs, and a bridge parent/child mismatch', () => {
     const invalid = plan()
     invalid.agents[0].allocation.units = '-1'
-    expect(() => buildDispatchReceipt({ plan: invalid, permission: permission() })).toThrow(/amount/i)
+    expect(() => buildDispatchReceipt({ plan: invalid, permission: permission() })).toThrow(
+      /amount/i
+    )
   })
 })

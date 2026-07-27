@@ -18,10 +18,7 @@ function viewStatus({ mandate, stellarOwner, kernelAddress, relayerOrigin, now }
   if (!mandate || mandate.status === 'missing') return 'missing'
   if (mandate.status === 'revoked') return 'revoked'
   const expiry = mandate.expiresAt
-  if (
-    mandate.status === 'expired' ||
-    (Number.isFinite(expiry) && expiry <= now)
-  ) {
+  if (mandate.status === 'expired' || (Number.isFinite(expiry) && expiry <= now)) {
     return 'expired'
   }
   if (mandate.status !== 'active') return 'unavailable'
@@ -80,8 +77,8 @@ export function toBaseMandateView({ mandate, stellarOwner, kernelAddress, relaye
     renewalCopy: 'Renew the mandate before its expiry to continue using Base testnet.',
     revokeCopy:
       'Deleting or revoking the VF relayer copy does not invalidate another copied key before the on-chain timestamp policy expires.',
-    outageCopy: 'If the relayer has an outage, Base is unavailable until its health check succeeds.',
-    technicalDisclosure:
-      `The relayer holds the session key. The Stellar owner to Base kernel association is an application-level association, not a cryptographic binding. Binding ID: ${bindingId ?? 'unavailable'}. Binding hash: ${bindingHash ?? 'unavailable'}. Session key address: ${sessionKeyAddress ?? 'unavailable'}. Base kernel: ${mandateKernel ?? 'unavailable'}. Expiry: ${expiresAt ?? 'unavailable'}. You must renew before expiry. Deleting or revoking the VF relayer copy does not invalidate another copied key before the on-chain timestamp policy expires. During a relayer outage, Base is unavailable.`,
+    outageCopy:
+      'If the relayer has an outage, Base is unavailable until its health check succeeds.',
+    technicalDisclosure: `The relayer holds the session key. The Stellar owner to Base kernel association is an application-level association, not a cryptographic binding. Binding ID: ${bindingId ?? 'unavailable'}. Binding hash: ${bindingHash ?? 'unavailable'}. Session key address: ${sessionKeyAddress ?? 'unavailable'}. Base kernel: ${mandateKernel ?? 'unavailable'}. Expiry: ${expiresAt ?? 'unavailable'}. You must renew before expiry. Deleting or revoking the VF relayer copy does not invalidate another copied key before the on-chain timestamp policy expires. During a relayer outage, Base is unavailable.`,
   }
 }
