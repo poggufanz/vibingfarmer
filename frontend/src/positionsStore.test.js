@@ -3,7 +3,7 @@ import {
   mergePositions,
   applyChainPositions,
   reconcilePositionsFromChain,
-  pickVaultAgents,
+  pickVaultAgentsForExit,
   pickDisplayAgents,
   pickRecoverableVaultAgents,
   buildBulkExitTarget,
@@ -167,25 +167,32 @@ describe('pickDisplayAgents / pickRecoverableVaultAgents / buildBulkExitTarget (
 
 // My Money Task 13 Part B item 5: pickPositionsAgents (and its 3 tests above this line) is
 // DELETED -- app.jsx's own `positionsAgents` (its one remaining caller) migrated to
-// `pickRecoverableVaultAgents` below. pickVaultAgents stays (see positionsStore.js's own comment
-// on why: PositionsZone.jsx, outside this task's scope, is still a real, tested caller).
-describe('pickVaultAgents (which agents an exit must sweep)', () => {
+// `pickRecoverableVaultAgents` below.
+//
+// Wave 6 carry (My Money Task 6, carried through Task 13 Part B, Item 4c): renamed to
+// `pickVaultAgentsForExit` and the revoked-filter deleted (see positionsStore.js's own comment on
+// why it stays scopes-shaped rather than migrating to `pickRecoverableVaultAgents`: PositionsZone.jsx
+// holds `scopes`, not an OwnerDiscoveryV1 envelope). The "skips revoked agents" test below used to
+// assert the identical defect `pickPositionsAgents`/`pickRecoverableVaultAgents` were both fixed
+// for -- a revoked-but-funded agent is exactly the one a sweep must not skip -- so it is now a
+// positive "includes" assertion instead, matching the discovery-shaped picker's own test above.
+describe('pickVaultAgentsForExit (which agents an exit must sweep)', () => {
   const V = 'CVAULT1'
 
-  it('returns every non-revoked agent pinned to that vault', () => {
+  it('returns every agent pinned to that vault', () => {
     const scopes = [
       { agent: 'CA_ONE', vault: V, revoked: false },
       { agent: 'CA_TWO', vault: V, revoked: false },
     ]
-    expect(pickVaultAgents(scopes, V)).toEqual(['CA_ONE', 'CA_TWO'])
+    expect(pickVaultAgentsForExit(scopes, V)).toEqual(['CA_ONE', 'CA_TWO'])
   })
 
-  it('skips revoked agents — their allowance is already cleared', () => {
+  it('includes a revoked-but-possibly-funded agent -- the exit-enumeration rule forbids dropping it', () => {
     const scopes = [
       { agent: 'CA_ONE', vault: V, revoked: true },
       { agent: 'CA_TWO', vault: V, revoked: false },
     ]
-    expect(pickVaultAgents(scopes, V)).toEqual(['CA_TWO'])
+    expect(pickVaultAgentsForExit(scopes, V).sort()).toEqual(['CA_ONE', 'CA_TWO'].sort())
   })
 
   it('skips agents scoped to a different vault', () => {
@@ -193,11 +200,13 @@ describe('pickVaultAgents (which agents an exit must sweep)', () => {
       { agent: 'CA_ONE', vault: 'COTHER', revoked: false },
       { agent: 'CA_TWO', vault: V, revoked: false },
     ]
-    expect(pickVaultAgents(scopes, V)).toEqual(['CA_TWO'])
+    expect(pickVaultAgentsForExit(scopes, V)).toEqual(['CA_TWO'])
   })
 
   it('matches vault addresses case-insensitively', () => {
-    expect(pickVaultAgents([{ agent: 'CA_ONE', vault: 'cvault1' }], 'CVAULT1')).toEqual(['CA_ONE'])
+    expect(pickVaultAgentsForExit([{ agent: 'CA_ONE', vault: 'cvault1' }], 'CVAULT1')).toEqual([
+      'CA_ONE',
+    ])
   })
 
   it('dedupes a repeated agent so it is never swept twice', () => {
@@ -205,13 +214,13 @@ describe('pickVaultAgents (which agents an exit must sweep)', () => {
       { agent: 'CA_ONE', vault: V },
       { agent: 'CA_ONE', vault: V },
     ]
-    expect(pickVaultAgents(scopes, V)).toEqual(['CA_ONE'])
+    expect(pickVaultAgentsForExit(scopes, V)).toEqual(['CA_ONE'])
   })
 
   it('returns [] rather than guessing — never a demo-agent fallback', () => {
-    expect(pickVaultAgents([], V)).toEqual([])
-    expect(pickVaultAgents(null, V)).toEqual([])
-    expect(pickVaultAgents([{ agent: 'CA_ONE', vault: V }], '')).toEqual([])
+    expect(pickVaultAgentsForExit([], V)).toEqual([])
+    expect(pickVaultAgentsForExit(null, V)).toEqual([])
+    expect(pickVaultAgentsForExit([{ agent: 'CA_ONE', vault: V }], '')).toEqual([])
   })
 })
 

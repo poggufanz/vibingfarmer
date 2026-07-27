@@ -143,30 +143,29 @@ export async function reconcilePositionsFromChain(address, { agents, server } = 
 // migrated to the discovery-based `pickRecoverableVaultAgents` below (see app.jsx's own comment at
 // that call site).
 //
-// `pickVaultAgents` COULD NOT be deleted the same way, despite carrying the identical defect (both
-// silently dropped revoked agents -- the exit-enumeration rule forbids that, since a revoked-but-
-// funded agent is exactly the one a sweep must not skip). Verified via grep before touching this
-// file: `frontend/src/components/console/PositionsZone.jsx:6,80` still imports and calls it inside
-// its own Withdraw button handler, and `PositionsZone.test.jsx:36` fires that exact click --
-// deleting the export would throw `pickVaultAgents is not a function` inside that test's onClick,
-// a real regression in a file this task has no authorization to edit (PositionsZone.jsx is not in
-// the Part B file list; it is legacy OpsConsole, kept on disk for rollback/tests only, and
-// unreachable from any production route since My Money Task 13's route-composition step). Both of
-// app.jsx's own `pickVaultAgents` call sites ARE migrated (one to `pickRecoverableVaultAgents`, one
-// to a local inline equivalent -- see app.jsx's own comments at each site for why they diverge).
-// `pickVaultAgents` itself, and its own test block below, stay until a future task has
-// `PositionsZone.jsx` in scope to finish this migration and delete this function too.
+// `pickVaultAgents` carried the identical defect (both silently dropped revoked agents -- the
+// exit-enumeration rule forbids that, since a revoked-but-funded agent is exactly the one a sweep
+// must not skip) and could not simply be deleted: `frontend/src/components/console/
+// PositionsZone.jsx` (legacy OpsConsole, kept on disk for rollback/tests only, unreachable from any
+// production route since My Money Task 13's route-composition step) is still a real, tested caller,
+// and it holds `scopes` (rehydrateScopes()'s plain-scope shape: `.agent`/`.vault`/`.revoked`)
+// rather than an `OwnerDiscoveryV1` envelope -- `pickRecoverableVaultAgents` below expects the
+// latter and would silently return every row's `.address` as `undefined` if forced onto `scopes`
+// (the same shape mismatch app.jsx's own `hasLiveScopeForVault` doc explains).
 //
-// @deprecated see the block comment above -- kept ONLY for PositionsZone.jsx (legacy OpsConsole,
-// outside this task's authorized file list). Do not add a new caller: use
-// `pickRecoverableVaultAgents` (below) instead, which never drops a revoked-but-funded agent.
-export function pickVaultAgents(scopes, vaultAddress) {
+// Wave 6 carry (My Money Task 6, carried through Task 13 Part B): renamed to
+// `pickVaultAgentsForExit` and the revoked-filter deleted -- this IS the explicit-semantics
+// replacement, operating on the scopes shape PositionsZone.jsx actually has, with the same
+// inclusive (never-drop-a-revoked-but-funded-agent) rule `pickRecoverableVaultAgents` already
+// enforces for the discovery shape. Do not add a NEW caller of this scopes-shaped picker without
+// checking whether `pickRecoverableVaultAgents` (discovery-shaped) already covers it instead.
+export function pickVaultAgentsForExit(scopes, vaultAddress) {
   const want = (vaultAddress || '').toLowerCase()
   if (!want) return []
   const seen = new Set()
   const out = []
   for (const s of scopes || []) {
-    if (!s || s.revoked || !s.agent) continue
+    if (!s || !s.agent) continue
     if ((s.vault || '').toLowerCase() !== want) continue
     if (seen.has(s.agent)) continue
     seen.add(s.agent)
@@ -215,9 +214,9 @@ export function applyChainPositions(prev, chain) {
 }
 
 // --- Discovery-driven pickers (Pocket Crew My Money Task 6) -------------------------------
-// `pickPositionsAgents`/`pickVaultAgents` above operate on the LIVE `scopes` array
-// (rehydrateScopes()'s shape) — kept unchanged for their existing callers (app.jsx,
-// PositionsZone.jsx, HomePage.jsx). These three operate on an `OwnerDiscoveryV1` envelope
+// `pickVaultAgentsForExit` above operates on the LIVE `scopes` array
+// (rehydrateScopes()'s shape) — kept unchanged for its existing caller (PositionsZone.jsx). These
+// three operate on an `OwnerDiscoveryV1` envelope
 // (ownerDiscovery.js's discoverOwnerScopes()) instead, whose `status` can be 'partial' or
 // 'unavailable' — information a plain scopes array never carried, and which display/exit
 // actions must not paper over.
@@ -238,7 +237,7 @@ function vaultCandidateAgents(discovery) {
  * Only a row PROVEN scoped to a different vault is excluded; a row whose vault is unread/unknown
  * is kept rather than silently dropped.
  * ponytail: `vault` isn't filtered further than a straight match today (one live vault,
- * SOROBAN_ACTIVE_VAULT_ADDRESS) — the param exists for interface parity with pickVaultAgents;
+ * SOROBAN_ACTIVE_VAULT_ADDRESS) — the param exists for interface parity with pickVaultAgentsForExit;
  * revisit if a second vault ships.
  * @param {{status:string, agents:Array}} discovery an OwnerDiscoveryV1 envelope
  * @param {{vault?: string}} [opts]

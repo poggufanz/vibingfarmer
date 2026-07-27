@@ -2026,12 +2026,19 @@ const App = () => {
   // is a thin wrapper, not a second copy, so a controller-level test on guardedMoneyFetch IS a test
   // of this call site.
   async function refreshMoney(owner) {
+    // REFRESH-MONEY-WIRING:START -- MM13 M5: pinned by a source-scan test (app.money.test.jsx)
+    // asserting these two lines pass the LIVE ref objects, not dead literals -- guardedMoneyFetch's
+    // own tests above prove the guard function is correct in both directions, but nothing short of
+    // reading this exact call site proves THIS caller still wires it live (see the report: swapping
+    // these two lines for `{current: owner}` / `{current: null}` left all 35 tests green before
+    // this guard existed).
     await guardedMoneyFetch({
       owner,
       now: Date.now(),
       fetchSnapshot: fetchMyMoneySnapshot,
       currentOwnerRef: realAddressRef,
       revisionRef: moneyRevisionRef,
+      // REFRESH-MONEY-WIRING:END
       onCommit: (snapshot) => {
         const protection = moneyProtectionSnapshot()
         const nextCache = { money: snapshot.money, discovery: snapshot.discovery, protection }

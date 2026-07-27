@@ -148,11 +148,22 @@ export async function runCeremony({
     //
     // Fix round 1, I3: the snapshot's clock is stamped from `p.requestedAt` (the real moment
     // popup.jsx's postSignRequest fired, threaded through background.js's SIGN_REQUEST params
-    // verbatim) whenever the caller supplies it, falling back to this ceremony's own `now()` only
-    // for a caller that doesn't (keeps this backward-compatible). Before this, the snapshot was
-    // stamped from ceremony.js's OWN now() at the top of this function -- so "expired" could only
-    // ever measure this function's own elapsed runtime, never a genuinely stale request that was
-    // already past its TTL before the ceremony tab even finished opening.
+    // verbatim) -- before this, the snapshot was stamped from ceremony.js's OWN now() at the top
+    // of this function, so "expired" could only ever measure this function's own elapsed runtime,
+    // never a genuinely stale request that was already past its TTL before the ceremony tab even
+    // finished opening.
+    //
+    // Wave 6 carry (VF Wallet Task 13 re-review, Minor): the fallback to this ceremony's own
+    // now() for a caller that omits requestedAt was a weak seam on the two actions that actually
+    // move money -- a future edit that drops requestedAt from popup.jsx's postSignRequest would
+    // silently revert to the pre-fix behaviour with no test catching it. deposit/approve fail
+    // closed instead of guessing a timestamp; the other actions (connect/signTransaction/
+    // signAuthEntry) are unaffected and keep the same fallback they always had.
+    if ((action === 'deposit' || action === 'approve') && typeof p.requestedAt !== 'number') {
+      throw new Error(
+        'VF Wallet: missing requestedAt for a value-moving ceremony action — refusing to guess a timestamp'
+      )
+    }
     const requestedAddress = p.contractId ?? p.opts?.address ?? null
     const accountAtStart = await resolveSnapshotAccount(chromeApi)
     const snapshot = createRequestSnapshot({

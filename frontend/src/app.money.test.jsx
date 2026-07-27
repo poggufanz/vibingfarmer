@@ -297,6 +297,53 @@ describe('[realAddress] reload effect (controller level) — never replays a tra
 })
 
 // ---------------------------------------------------------------------------------------------
+// MM13 M5: guardedMoneyFetch (tested exhaustively above) is only as good as its ONE real call
+// site's wiring. Fix loop 1 (I1) pinned the guard FUNCTION in both directions; the reviewer then
+// proved by mutation that replacing refreshMoney's `currentOwnerRef: realAddressRef, revisionRef:
+// moneyRevisionRef` with dead literals (`{current: owner}` / `{current: null}`) left all 35 tests
+// green -- nothing checked that THIS caller still passes the live refs, one level out from I1's own
+// fix. refreshMoney itself is a non-exported closure (app.jsx's App component is too heavy to
+// render in a unit test), so this uses the same source-scan technique as the reload-effect guard
+// immediately above, scoped to the REFRESH-MONEY-WIRING markers so it survives the surrounding code
+// moving.
+// ---------------------------------------------------------------------------------------------
+describe('refreshMoney (controller level, MM13 M5) — wires the LIVE refs into guardedMoneyFetch, not dead literals', () => {
+  const src = fs.readFileSync(path.resolve(here, './app.jsx'), 'utf8')
+
+  function refreshMoneyWiringBlock() {
+    const start = src.indexOf('REFRESH-MONEY-WIRING:START')
+    const end = src.indexOf('REFRESH-MONEY-WIRING:END')
+    expect(start, 'REFRESH-MONEY-WIRING:START marker not found').toBeGreaterThan(-1)
+    expect(end, 'REFRESH-MONEY-WIRING:END marker not found').toBeGreaterThan(start)
+    return src.slice(start, end)
+  }
+
+  it('passes currentOwnerRef: realAddressRef and revisionRef: moneyRevisionRef verbatim', () => {
+    const block = refreshMoneyWiringBlock()
+    expect(block).toMatch(/currentOwnerRef:\s*realAddressRef\s*,/)
+    expect(block).toMatch(/revisionRef:\s*moneyRevisionRef\s*,/)
+  })
+
+  it("mutation guard: a dead-literal formulation (the reviewer's exact swap) is rejected by the pattern above", () => {
+    // Differently-written from the real bug (a hand-written string standing in for the mutated
+    // source, not a live edit to app.jsx) -- proves the regex actually discriminates rather than
+    // matching anything containing the word "currentOwnerRef".
+    const mutated = `
+      await guardedMoneyFetch({
+        owner,
+        now: Date.now(),
+        fetchSnapshot: fetchMyMoneySnapshot,
+        currentOwnerRef: { current: owner },
+        revisionRef: { current: null },
+        onCommit: (snapshot) => {},
+      })
+    `
+    expect(mutated).not.toMatch(/currentOwnerRef:\s*realAddressRef\s*,/)
+    expect(mutated).not.toMatch(/revisionRef:\s*moneyRevisionRef\s*,/)
+  })
+})
+
+// ---------------------------------------------------------------------------------------------
 // Step 1: disconnected/loading/partial/current state is preserved through the app's own adapters
 // (buildMoneySnapshot's assembly), not just myMoneyModel.js's internals.
 // ---------------------------------------------------------------------------------------------

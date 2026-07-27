@@ -3,7 +3,7 @@ import ZoneFrame from './ZoneFrame.jsx'
 import WithdrawModal from '../WithdrawModal.jsx'
 import { agoText } from './consoleUtils.js'
 import { toDisplay } from '../../stellar/format.js'
-import { pickVaultAgents } from '../../positionsStore.js'
+import { pickVaultAgentsForExit } from '../../positionsStore.js'
 
 export default function PositionsZone({
   positions = {},
@@ -76,8 +76,9 @@ export default function PositionsZone({
                       balance: p.balance,
                       unclaimedRewards: p.unclaimedRewards,
                       // A position is the sum over every agent; the exit is per-agent. Resolve the
-                      // set at click time so a scope revoked mid-session is not swept.
-                      agentAddresses: pickVaultAgents(scopes, addr),
+                      // set at click time. A revoked-but-funded agent must still be swept (the
+                      // exit-enumeration rule) -- pickVaultAgentsForExit never filters on revoked.
+                      agentAddresses: pickVaultAgentsForExit(scopes, addr),
                     })
                   }
                 >

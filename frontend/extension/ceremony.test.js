@@ -196,7 +196,12 @@ describe('runCeremony — Step 2/I1: consequence-first disclosure is real, verif
 
     const runPromise = ceremony.runCeremony({
       action: 'deposit',
-      params: { contractId: 'C_REQUESTED', amount: '1.5', protocol: 'blend-usdc' },
+      params: {
+        contractId: 'C_REQUESTED',
+        amount: '1.5',
+        protocol: 'blend-usdc',
+        requestedAt: Date.now(),
+      },
       tabId: 40,
       ...browser,
     })
@@ -218,7 +223,12 @@ describe('runCeremony — Step 2/I1: consequence-first disclosure is real, verif
 
     await ceremony.runCeremony({
       action: 'deposit',
-      params: { contractId: 'C_REQUESTED', amount: '1.5', protocol: 'blend-usdc' },
+      params: {
+        contractId: 'C_REQUESTED',
+        amount: '1.5',
+        protocol: 'blend-usdc',
+        requestedAt: Date.now(),
+      },
       tabId: 41,
       ...browser,
     })
@@ -244,7 +254,12 @@ describe('runCeremony submit wiring', () => {
 
     await ceremony.runCeremony({
       action: 'deposit',
-      params: { contractId: 'C_REQUESTED', amount: '1.5', protocol: 'blend-usdc' },
+      params: {
+        contractId: 'C_REQUESTED',
+        amount: '1.5',
+        protocol: 'blend-usdc',
+        requestedAt: Date.now(),
+      },
       tabId: 7,
       ...browser,
     })
@@ -320,7 +335,7 @@ describe('runCeremony submit wiring', () => {
 
     await ceremony.runCeremony({
       action: 'approve',
-      params: { contractId: 'C_REQUESTED' },
+      params: { contractId: 'C_REQUESTED', requestedAt: Date.now() },
       tabId: 8,
       ...browser,
     })
@@ -354,7 +369,7 @@ describe('runCeremony submit wiring', () => {
 
     await ceremony.runCeremony({
       action: 'approve',
-      params: { contractId: 'C_REQUESTED' },
+      params: { contractId: 'C_REQUESTED', requestedAt: Date.now() },
       tabId: 10,
       ...browser,
     })
@@ -379,7 +394,7 @@ describe('runCeremony submit wiring', () => {
 
     await ceremony.runCeremony({
       action: 'approve',
-      params: { contractId: 'C_REQUESTED' },
+      params: { contractId: 'C_REQUESTED', requestedAt: Date.now() },
       tabId: 11,
       ...browser,
     })
@@ -402,7 +417,7 @@ describe('runCeremony submit wiring', () => {
 
     await ceremony.runCeremony({
       action: 'approve',
-      params: { contractId: 'C_REQUESTED' },
+      params: { contractId: 'C_REQUESTED', requestedAt: Date.now() },
       tabId: 12,
       ...browser,
     })
@@ -438,7 +453,12 @@ describe('runCeremony — Step 3: shares-delta confirmed copy gated on out.statu
 
     await ceremony.runCeremony({
       action: 'deposit',
-      params: { contractId: 'C_REQUESTED', amount: '1.5', protocol: 'blend-usdc' },
+      params: {
+        contractId: 'C_REQUESTED',
+        amount: '1.5',
+        protocol: 'blend-usdc',
+        requestedAt: Date.now(),
+      },
       tabId: 13,
       ...browser,
     })
@@ -465,7 +485,12 @@ describe('runCeremony — Step 3: shares-delta confirmed copy gated on out.statu
 
     await ceremony.runCeremony({
       action: 'deposit',
-      params: { contractId: 'C_REQUESTED', amount: '1.5', protocol: 'blend-usdc' },
+      params: {
+        contractId: 'C_REQUESTED',
+        amount: '1.5',
+        protocol: 'blend-usdc',
+        requestedAt: Date.now(),
+      },
       tabId: 14,
       ...browser,
     })
@@ -485,7 +510,12 @@ describe('runCeremony — security: snapshot revalidated before WebAuthn; mismat
 
     await ceremony.runCeremony({
       action: 'deposit',
-      params: { contractId: 'C_REQUESTED', amount: '1.5', protocol: 'blend-usdc' },
+      params: {
+        contractId: 'C_REQUESTED',
+        amount: '1.5',
+        protocol: 'blend-usdc',
+        requestedAt: Date.now(),
+      },
       tabId: 20,
       ...browser,
     })
@@ -504,7 +534,7 @@ describe('runCeremony — security: snapshot revalidated before WebAuthn; mismat
 
     await ceremony.runCeremony({
       action: 'approve',
-      params: { contractId: 'C_REQUESTED' },
+      params: { contractId: 'C_REQUESTED', requestedAt: Date.now() },
       tabId: 21,
       ...browser,
     })
@@ -565,7 +595,50 @@ describe('runCeremony — security: snapshot revalidated before WebAuthn; mismat
     expect(ok).toBeTruthy()
   })
 
-  it("a caller that never supplies requestedAt at all (backward compatibility) falls back to this ceremony's own clock, unchanged from before this fix", async () => {
+  // Wave 6 carry (VF Wallet Task 13 re-review, Minor, folded in here): this used to be a
+  // "backward compatibility" test proving a caller that omits requestedAt falls back to this
+  // ceremony's own clock. That fallback was the weak seam the re-review flagged: it means a future
+  // edit that drops requestedAt from popup.jsx's postSignRequest silently REVERTS to the pre-fix
+  // behaviour (a request already stale before the ceremony page loaded submits anyway), and this
+  // exact test kept it green. deposit/approve now fail closed instead of guessing a timestamp — no
+  // fallback branch exists for either action any more.
+  it('deposit: a caller that never supplies requestedAt submits NOTHING — fails closed instead of guessing a timestamp', async () => {
+    const browser = browserHarness()
+
+    await ceremony.runCeremony({
+      action: 'deposit',
+      params: { contractId: 'C_REQUESTED', amount: '1.5', protocol: 'blend-usdc' },
+      tabId: 39,
+      ...browser,
+    })
+
+    expect(makeKit).not.toHaveBeenCalled()
+    expect(submitDeposit).not.toHaveBeenCalled()
+    const fail = failResult(browser.chromeApi.runtime.sendMessage)
+    expect(fail.error).toMatch(/requestedAt/i)
+    expect(browser.scheduleClose).not.toHaveBeenCalled()
+  })
+
+  it('approve: a caller that never supplies requestedAt submits NOTHING — fails closed instead of guessing a timestamp', async () => {
+    const browser = browserHarness()
+
+    await ceremony.runCeremony({
+      action: 'approve',
+      params: { contractId: 'C_REQUESTED' },
+      tabId: 42,
+      ...browser,
+    })
+
+    expect(makeKit).not.toHaveBeenCalled()
+    expect(submitApprove).not.toHaveBeenCalled()
+    const fail = failResult(browser.chromeApi.runtime.sendMessage)
+    expect(fail.error).toMatch(/requestedAt/i)
+    expect(browser.scheduleClose).not.toHaveBeenCalled()
+  })
+
+  // Positive control (the TTL test above already proves the OTHER half): a deposit that DOES
+  // supply requestedAt still proceeds normally -- this probe is not vacuously closed.
+  it('positive control: supplying requestedAt still proceeds normally for both actions', async () => {
     submitDeposit.mockResolvedValue({
       hash: 'deposit-hash',
       status: 'SUCCESS',
@@ -573,13 +646,16 @@ describe('runCeremony — security: snapshot revalidated before WebAuthn; mismat
       sharesAfter: '5',
     })
     const browser = browserHarness()
-    const now = () => 1_000 // no requestedAt in params — every now() call must return this same value
 
     await ceremony.runCeremony({
       action: 'deposit',
-      params: { contractId: 'C_REQUESTED', amount: '1.5', protocol: 'blend-usdc' },
-      tabId: 39,
-      now,
+      params: {
+        contractId: 'C_REQUESTED',
+        amount: '1.5',
+        protocol: 'blend-usdc',
+        requestedAt: Date.now(),
+      },
+      tabId: 43,
       ...browser,
     })
 
@@ -615,7 +691,12 @@ describe('runCeremony — security: snapshot revalidated again before result del
 
     await ceremony.runCeremony({
       action: 'deposit',
-      params: { contractId: 'C_REQUESTED', amount: '1.5', protocol: 'blend-usdc' },
+      params: {
+        contractId: 'C_REQUESTED',
+        amount: '1.5',
+        protocol: 'blend-usdc',
+        requestedAt: Date.now(),
+      },
       tabId: 25,
       ...browser,
     })
@@ -640,7 +721,12 @@ describe('runCeremony — security: snapshot revalidated again before result del
 
     await ceremony.runCeremony({
       action: 'deposit',
-      params: { contractId: 'C_REQUESTED', amount: '1.5', protocol: 'blend-usdc' },
+      params: {
+        contractId: 'C_REQUESTED',
+        amount: '1.5',
+        protocol: 'blend-usdc',
+        requestedAt: Date.now(),
+      },
       tabId: 26,
       ...browser,
     })
