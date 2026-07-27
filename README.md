@@ -1,8 +1,6 @@
 # Vibing Farmer
 
-<div align="center"><img src=".gitbook/assets/vibing_farmer.logo (1).png" alt="Vibing Farmer Logo" width="100%"></div>
-
-## Vibing Farmer
+<div align="center"><img src=".gitbook/assets/vibing_farmer.logo.png" alt="Vibing Farmer Logo" width="100%"></div>
 
 > **Set once. Vibe forever.** An AI agent swarm that farms yield for you on Stellar, under limits you sign once and the chain enforces.
 
@@ -21,7 +19,7 @@ The AI does not get custody of your funds. Each agent runs in a disposable on-ch
 
 ***
 
-### Try it in two minutes
+## Try it in two minutes
 
 1. Open [vibing-farmer.pages.dev](https://vibing-farmer.pages.dev).
 2. Create a VF Wallet (passkey-based, no seed phrase, no extension required). Freighter, xBull, and Albedo work on testnet if you prefer those.
@@ -31,7 +29,7 @@ The AI does not get custody of your funds. Each agent runs in a disposable on-ch
 
 Everything runs on Stellar testnet. No real funds.
 
-### How it works
+## How it works
 
 1. **Strategy.** You set deposit amount, risk, and vault count. The AI returns an allocation plan and a skill file per agent, using live DeFiLlama data. A Monte Carlo pass stress-tests the allocation over 200 scenarios before anything runs.
 2. **AI council.** Three specialists (yield, risk, market) score the proposal on their own. Disagreements go to a synthesis round. Verdict, cited playbook rules, and conflict resolution are logged for review.
@@ -45,7 +43,7 @@ Everything runs on Stellar testnet. No real funds.
    * **Global:** `token.approve(router, 0)` — zero the allowance and funding stops.
    * **Per agent:** `agent_account.revoke()` — flips an on-chain flag that authorization checks fail closed on.
 
-#### Optional Base leg
+### Optional Base leg
 
 A Base pool only appears in the plan when the cross-chain relayer answers healthy. It settles alongside the Stellar workers in step 5, but it is not gas-free-by-one-signature — it costs extra prompts:
 
@@ -54,7 +52,7 @@ A Base pool only appears in the plan when the cross-chain relayer answers health
 
 Withdraw that position anytime from the dashboard.
 
-### Security
+## Security
 
 Scope is enforced by contracts, not promises:
 
@@ -67,7 +65,7 @@ Threat model, verified controls, test evidence, and residual risks: [SECURITY.md
 
 ***
 
-### Architecture
+## Architecture
 
 ```
 User input (amount, risk level, vault count)
@@ -102,7 +100,7 @@ Primary chain: Stellar / Soroban. Optional cross-chain leg to Base via Circle CC
 
 ***
 
-### Deployed contracts (Stellar testnet)
+## Deployed contracts (Stellar testnet)
 
 | Contract                                    | Address                                                    |
 | ------------------------------------------- | ---------------------------------------------------------- |
@@ -116,7 +114,7 @@ Look up any address on [Stellar Expert](https://stellar.expert/explorer/testnet)
 
 ***
 
-### Tech stack
+## Tech stack
 
 | Layer                  | Technology                                                                                        |
 | ---------------------- | ------------------------------------------------------------------------------------------------- |
@@ -134,7 +132,7 @@ Look up any address on [Stellar Expert](https://stellar.expert/explorer/testnet)
 
 ***
 
-### Pages
+## Pages
 
 | Route       | Description                                                      |
 | ----------- | ---------------------------------------------------------------- |
@@ -149,7 +147,7 @@ Look up any address on [Stellar Expert](https://stellar.expert/explorer/testnet)
 
 ***
 
-### Skill system
+## Skill system
 
 One typed skill file per agent (deposit-only; amounts in 7-dp base units):
 
@@ -169,9 +167,9 @@ One typed skill file per agent (deposit-only; amounts in 7-dp base units):
 
 ***
 
-### Development
+## Development
 
-#### Run locally
+### Run locally
 
 ```bash
 cd frontend
@@ -183,7 +181,7 @@ npm run dev                      # http://localhost:5173
 
 AI keys are optional. Paste a Venice key in Settings, set a server-side `DEEPSEEK_API_KEY`, or use neither: a deterministic fallback keeps the demo working.
 
-#### Environment variables
+### Environment variables
 
 Server-side only (Cloudflare Pages env / `.dev.vars` — never `VITE_` for secrets):
 
@@ -200,7 +198,7 @@ TAVILY_API_KEY=tvly-...                           # optional market search
 
 Leave host AI keys unset for a lockdown deploy (users bring their own keys).
 
-#### Contracts
+### Contracts
 
 ```bash
 cd soroban
@@ -211,7 +209,7 @@ cargo clippy --all-targets -- -D warnings
 
 Deploy and seed scripts live in `scripts/soroban/`. Addresses land in `deployments/stellar-testnet.json`.
 
-#### Frontend scripts
+### Frontend scripts
 
 ```bash
 cd frontend
@@ -222,11 +220,11 @@ npm run build:ext     # VF Wallet extension → extension-dist/
 npm run pages:dev     # build + wrangler pages dev (Functions locally)
 ```
 
-#### CI/CD
+### CI/CD
 
 `.github/workflows/frontend.yml` runs on every push/PR to `main` and `dev`: lint (soft-fail), full Vitest suite, production build. Pushes then auto-deploy to Cloudflare Pages — `dev` → preview, `main` → production.
 
-#### Directory structure
+### Directory structure
 
 ```
 soroban/contracts/     # funding_router, agent_account, autofarm_vault,
@@ -241,7 +239,7 @@ keeper/                # compound cron Worker + lifeboat radar
 deployments/           # live contract manifests (Stellar testnet, Base Sepolia)
 ```
 
-#### Documentation
+### Documentation
 
 | Document                                        | Focus                                           |
 | ----------------------------------------------- | ----------------------------------------------- |
@@ -253,13 +251,13 @@ deployments/           # live contract manifests (Stellar testnet, Base Sepolia)
 
 ***
 
-### Resources
+## Resources
 
 * [Stellar Developers](https://developers.stellar.org) · [Soroban smart contracts](https://developers.stellar.org/docs/build/smart-contracts)
 * [Blend Capital](https://docs.blend.capital) · [Stellar Wallets Kit](https://stellarwalletskit.dev)
 * [Circle CCTP](https://developers.circle.com/cctp) · [ZeroDev](https://docs.zerodev.app)
 * [Venice AI](https://venice.ai) · [DeFiLlama API](https://defillama.com/docs/api) · [Cloudflare Pages](https://developers.cloudflare.com/pages/)
 
-### License
+## License
 
 MIT
