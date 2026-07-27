@@ -38,13 +38,21 @@ Everything runs on Stellar testnet. No real funds.
 3. **Review.** Skill files open in the Skills Drawer. Edit caps, expiries, or targets. Nothing runs until you approve.
 4. **One signature.** You sign `funding_router.grant` (budget + expiry). A SEP-41 token allowance is the leash: the router deploys a fresh, scoped `agent_account` per worker and can only pull what you approved.
 
-5. **Parallel deposit.** Workers sign with ephemeral ed25519 session keys. A fee-bump relayer sponsors each transaction. One worker failing does not abort the others. You pay 0 gas. If the plan includes a Base pool — offered only when the cross-chain relayer answers healthy — that leg settles alongside the Stellar workers: your first Base run sets up a passkey (once, ever) plus a wallet-signed CCTP approve and burn, worst case 4 prompts (grant + passkey setup + approve + burn); every run after still asks for a passkey login confirmation on top of the 3 wallet signatures (grant + approve + burn) — the login itself never goes away. Withdraw that position anytime from the dashboard.
-
+5. **Parallel deposit.** Workers sign with ephemeral ed25519 session keys. A fee-bump relayer sponsors each transaction. One worker failing does not abort the others. You pay 0 gas. (A Base pool in the plan settles as a sibling leg — see [Optional Base leg](#optional-base-leg) for its extra prompts.)
 6. **Attestation.** The strategy JSON is hashed and written on-chain so anyone with the original file can check what was approved.
 7. **Autonomy.** A monitor loop polls positions, flags APY drift, and can propose rebalances. Each cycle goes back through the council. A keeper compounds on a cron; lifeboat radar can de-risk the vault at ledger speed under a user-signed mandate.
 8. **Kill switch.** Two exits you can sign yourself, even if every server is down:
    * **Global:** `token.approve(router, 0)` — zero the allowance and funding stops.
    * **Per agent:** `agent_account.revoke()` — flips an on-chain flag that authorization checks fail closed on.
+
+#### Optional Base leg
+
+A Base pool only appears in the plan when the cross-chain relayer answers healthy. It settles alongside the Stellar workers in step 5, but it is not gas-free-by-one-signature — it costs extra prompts:
+
+* **First Base run:** worst case 4 prompts — grant + passkey setup (once, ever) + wallet-signed CCTP approve + burn.
+* **Every run after:** 3 wallet signatures (grant + approve + burn) plus a passkey login confirmation. The login never goes away.
+
+Withdraw that position anytime from the dashboard.
 
 ### Security
 
