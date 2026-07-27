@@ -645,7 +645,12 @@ describe('runCeremony — security: snapshot revalidated before WebAuthn; mismat
 
     await ceremony.runCeremony({
       action: 'deposit',
-      params: { contractId: 'C_REQUESTED', amount: '1.5', protocol: 'blend-usdc', requestedAt: NaN },
+      params: {
+        contractId: 'C_REQUESTED',
+        amount: '1.5',
+        protocol: 'blend-usdc',
+        requestedAt: NaN,
+      },
       tabId: 44,
       ...browser,
     })
