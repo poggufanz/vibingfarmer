@@ -199,6 +199,21 @@ test.describe('Pocket Crew disconnected compatibility', () => {
 
         await page.goto(route.path)
         await page.evaluate((t) => document.documentElement.setAttribute('data-theme', t), theme)
+        // Step 0b (My Money Task 14) root-cause fix, found while re-justifying the 5 stale
+        // baselines: BrandLockup's compact mark (Sidebar's top-left `.sb-logo-mark`) resolves its
+        // <img src> from the DOM theme attribute synchronously at React render time and does not
+        // re-render on an external attribute mutation -- production only ever reaches a theme
+        // change through a real React state update (PalettePicker's setTweak), never a raw
+        // setAttribute. This test forces the theme by raw DOM mutation (the line above), so the
+        // mark only self-corrects on whichever incidental app re-render happens to land next
+        // (e.g. the per-route money-model effect, ~90ms after mount) -- a genuine race against the
+        // screenshot below, not a stale/flaky baseline. Wait for it explicitly rather than betting
+        // on that race; a no-op on routes with no sidebar mark (landing/developers redirect there).
+        const expectedMarkFile = theme === 'day-field' ? 'mark-day.svg' : 'mark-forest.svg'
+        await page.waitForFunction((file) => {
+          const img = document.querySelector('.sb-logo-mark img')
+          return !img || img.getAttribute('src')?.endsWith(file)
+        }, expectedMarkFile)
         await page.emulateMedia({ reducedMotion: 'reduce' })
         await page.evaluate(() => document.fonts.ready)
 
