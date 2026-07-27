@@ -79,8 +79,9 @@ const DEFAULT_WALLETS = ['VF Wallet', 'Freighter', 'xBull', 'Albedo']
 // Wave 6 carry (Strategy Tasks 11/13): relocated from the now-deleted GrantPanel.jsx (a demoted
 // legacy card whose default export became dead once app.jsx's production /strategy route stopped
 // rendering it in Strategy Task 13 -- this was its only remaining live consumer).
+// Fix round 1 (reviewer M4): not exported -- this file is now DURATION_PRESETS' only consumer.
 // ~5s per ledger on Soroban testnet; labels are what the user reasons about.
-export const DURATION_PRESETS = [
+const DURATION_PRESETS = [
   { id: '1h', label: '1 hour', seconds: 3600 },
   { id: '24h', label: '24 hours', seconds: 86400 },
   { id: '7d', label: '7 days', seconds: 604800 },
