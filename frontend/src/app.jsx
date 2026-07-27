@@ -562,6 +562,28 @@ export async function guardedMoneyFetch({
 }
 
 /**
+ * Fix round 1 (I1, MM13 M5 blind spot): hoists the argument object `refreshMoney` builds into a
+ * single exported, identity-preserving function, rather than an inline object literal duplicated
+ * at the one real call site. Proves ONLY that whatever refs it is handed pass through to
+ * `guardedMoneyFetch` untouched (`Object.is`, not just deep equality) -- it cannot, on its own,
+ * prove `refreshMoney` hands it the REAL `realAddressRef`/`moneyRevisionRef`: those are per-render
+ * React refs with ~10 other read/write sites throughout this component (wallet-switch sync, five
+ * separate action handlers bumping the revision), so forcing them to module scope purely to make
+ * that provable without ever reading source would be a much larger, riskier refactor of this
+ * file's state ownership than a test-robustness fix warrants. The one remaining line at the real
+ * call site is covered by the comment-stripped, negative-matching source-scan immediately below
+ * instead (see the REFRESH-MONEY-WIRING markers) -- ~app.money.test.jsx has both tests.
+ * @param {string} owner
+ * @param {{currentOwnerRef: {current}, revisionRef: {current}, fetchSnapshot?: Function}} refs
+ */
+export function moneyFetchArgs(
+  owner,
+  { currentOwnerRef, revisionRef, fetchSnapshot = fetchMyMoneySnapshot }
+) {
+  return { owner, now: Date.now(), fetchSnapshot, currentOwnerRef, revisionRef }
+}
+
+/**
  * Home's own small, pure projection (brief Step 4): exactly `{state, total, lastConfirmed}`,
  * never a second portfolio computation. `total` is the SAME confirmedTotal.amount MoneyHero
  * renders on /agent when known, `null` otherwise — Home never invents its own number.
@@ -2026,18 +2048,14 @@ const App = () => {
   // is a thin wrapper, not a second copy, so a controller-level test on guardedMoneyFetch IS a test
   // of this call site.
   async function refreshMoney(owner) {
-    // REFRESH-MONEY-WIRING:START -- MM13 M5: pinned by a source-scan test (app.money.test.jsx)
-    // asserting these two lines pass the LIVE ref objects, not dead literals -- guardedMoneyFetch's
-    // own tests above prove the guard function is correct in both directions, but nothing short of
-    // reading this exact call site proves THIS caller still wires it live (see the report: swapping
-    // these two lines for `{current: owner}` / `{current: null}` left all 35 tests green before
-    // this guard existed).
+    // REFRESH-MONEY-WIRING:START -- MM13 M5, fix round 1: pinned by a source-scan test
+    // (app.money.test.jsx) asserting this line passes the LIVE ref objects, not dead literals.
+    // moneyFetchArgs itself (exported above) is unit-tested for identity-preservation directly;
+    // this one line is what a unit test cannot reach without rendering the whole App, so it stays
+    // covered by a comment-stripped scan with a negative assertion (an inline `{ current: ... }`
+    // anywhere in this line fails it, regardless of exact wording).
     await guardedMoneyFetch({
-      owner,
-      now: Date.now(),
-      fetchSnapshot: fetchMyMoneySnapshot,
-      currentOwnerRef: realAddressRef,
-      revisionRef: moneyRevisionRef,
+      ...moneyFetchArgs(owner, { currentOwnerRef: realAddressRef, revisionRef: moneyRevisionRef }),
       // REFRESH-MONEY-WIRING:END
       onCommit: (snapshot) => {
         const protection = moneyProtectionSnapshot()

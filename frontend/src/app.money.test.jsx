@@ -25,6 +25,7 @@ import {
   shouldCommitMoneyFetch,
   fetchMyMoneySnapshot,
   guardedMoneyFetch,
+  moneyFetchArgs,
   projectMoneyForHome,
   hasLiveScopeForVault,
 } from './app.jsx'
@@ -297,17 +298,52 @@ describe('[realAddress] reload effect (controller level) — never replays a tra
 })
 
 // ---------------------------------------------------------------------------------------------
-// MM13 M5: guardedMoneyFetch (tested exhaustively above) is only as good as its ONE real call
-// site's wiring. Fix loop 1 (I1) pinned the guard FUNCTION in both directions; the reviewer then
-// proved by mutation that replacing refreshMoney's `currentOwnerRef: realAddressRef, revisionRef:
-// moneyRevisionRef` with dead literals (`{current: owner}` / `{current: null}`) left all 35 tests
-// green -- nothing checked that THIS caller still passes the live refs, one level out from I1's own
-// fix. refreshMoney itself is a non-exported closure (app.jsx's App component is too heavy to
-// render in a unit test), so this uses the same source-scan technique as the reload-effect guard
-// immediately above, scoped to the REFRESH-MONEY-WIRING markers so it survives the surrounding code
-// moving.
+// MM13 M5, fix round 1 (reviewer I1): guardedMoneyFetch (tested exhaustively above) is only as
+// good as its ONE real call site's wiring. Fix loop 1 (I1) pinned the guard FUNCTION in both
+// directions; a first fix-loop source-scan test then tried to pin refreshMoney's call site, but
+// the reviewer proved it BLIND to a two-line RESTATEMENT: replacing the real wiring with dead
+// literals while leaving a comment that merely MENTIONS the old code
+// (`// was: currentOwnerRef: realAddressRef,`) satisfied the old regex via the comment text alone
+// -- 37/37 green with both hazards wide open.
+//
+// Two changes close this:
+//   1. The argument object is hoisted into `moneyFetchArgs` (app.jsx, exported, right after
+//      guardedMoneyFetch) -- a test can call it directly and prove, by identity (not just deep
+//      equality), that it never substitutes or clones whatever refs it is handed. This is real
+//      coverage, not a guess from reading text.
+//   2. `moneyFetchArgs` still needs refs it does not own (realAddressRef/moneyRevisionRef are
+//      per-render React refs with ~10 other read/write sites throughout app.jsx's App component --
+//      forcing them to module scope purely to make the ONE remaining call site provable without
+//      ever reading source would be a much larger, riskier refactor of this file's state ownership
+//      than a test-robustness fix warrants). That one line is still covered by a source-scan, but
+//      comments are stripped before matching (so a comment merely NAMING the old code can no
+//      longer satisfy the positive pattern), and a negative half added: an inline `{ current: ...}`
+//      literal ANYWHERE in the line fails it outright, regardless of exact wording -- the shape of
+//      the defect, not one specific spelling of it.
 // ---------------------------------------------------------------------------------------------
-describe('refreshMoney (controller level, MM13 M5) — wires the LIVE refs into guardedMoneyFetch, not dead literals', () => {
+describe('moneyFetchArgs — identity-preserving, never substitutes or clones the refs it is given', () => {
+  it('returns the SAME ref objects it was handed (Object.is, not deep equality)', () => {
+    const currentOwnerRef = { current: 'GA' }
+    const revisionRef = { current: 3 }
+    const fetchSnapshot = vi.fn()
+    const args = moneyFetchArgs('GA', { currentOwnerRef, revisionRef, fetchSnapshot })
+    expect(args.currentOwnerRef).toBe(currentOwnerRef)
+    expect(args.revisionRef).toBe(revisionRef)
+    expect(args.fetchSnapshot).toBe(fetchSnapshot)
+    expect(args.owner).toBe('GA')
+    expect(typeof args.now).toBe('number')
+  })
+
+  it('defaults fetchSnapshot to the real fetchMyMoneySnapshot when the caller omits it', () => {
+    const args = moneyFetchArgs('GA', {
+      currentOwnerRef: { current: null },
+      revisionRef: { current: null },
+    })
+    expect(args.fetchSnapshot).toBe(fetchMyMoneySnapshot)
+  })
+})
+
+describe('refreshMoney (controller level, MM13 M5) — wires the LIVE refs into moneyFetchArgs, not dead literals', () => {
   const src = fs.readFileSync(path.resolve(here, './app.jsx'), 'utf8')
 
   function refreshMoneyWiringBlock() {
@@ -315,31 +351,39 @@ describe('refreshMoney (controller level, MM13 M5) — wires the LIVE refs into 
     const end = src.indexOf('REFRESH-MONEY-WIRING:END')
     expect(start, 'REFRESH-MONEY-WIRING:START marker not found').toBeGreaterThan(-1)
     expect(end, 'REFRESH-MONEY-WIRING:END marker not found').toBeGreaterThan(start)
-    return src.slice(start, end)
+    const raw = src.slice(start, end)
+    // Fix round 1 (reviewer I1): strip line comments before matching -- this is exactly what the
+    // reviewer's mutation exploited (a comment mentioning the old code satisfying the positive
+    // regex even though the real code no longer did).
+    return raw.replace(/\/\/.*$/gm, '')
   }
 
-  it('passes currentOwnerRef: realAddressRef and revisionRef: moneyRevisionRef verbatim', () => {
+  it('passes currentOwnerRef: realAddressRef and revisionRef: moneyRevisionRef verbatim, in real code, not merely in a comment', () => {
     const block = refreshMoneyWiringBlock()
     expect(block).toMatch(/currentOwnerRef:\s*realAddressRef\s*,/)
-    expect(block).toMatch(/revisionRef:\s*moneyRevisionRef\s*,/)
+    expect(block).toMatch(/revisionRef:\s*moneyRevisionRef\b/)
+    // The negative half: an inline object literal shaped like a dead ref (`{ current: ... }`)
+    // anywhere in this block fails it, regardless of exact spelling -- catches the CLASS of
+    // mutation, not one specific string.
+    expect(block).not.toMatch(/\{\s*current\s*:/)
   })
 
-  it("mutation guard: a dead-literal formulation (the reviewer's exact swap) is rejected by the pattern above", () => {
-    // Differently-written from the real bug (a hand-written string standing in for the mutated
-    // source, not a live edit to app.jsx) -- proves the regex actually discriminates rather than
-    // matching anything containing the word "currentOwnerRef".
+  it("mutation guard: a dead-literal formulation (the reviewer's exact swap, restated differently) is rejected", () => {
+    // Differently-written from the real bug -- a hand-written string standing in for a mutated
+    // app.jsx, including a comment that MENTIONS the real code (the exact trick that defeated the
+    // pre-fix-round guard) -- proves comment-stripping and the negative half both actually fire.
     const mutated = `
+      // was: currentOwnerRef: realAddressRef,
+      // was: revisionRef: moneyRevisionRef,
       await guardedMoneyFetch({
-        owner,
-        now: Date.now(),
-        fetchSnapshot: fetchMyMoneySnapshot,
-        currentOwnerRef: { current: owner },
-        revisionRef: { current: null },
+        ...moneyFetchArgs(owner, { currentOwnerRef: { current: owner }, revisionRef: { current: null } }),
         onCommit: (snapshot) => {},
       })
     `
-    expect(mutated).not.toMatch(/currentOwnerRef:\s*realAddressRef\s*,/)
-    expect(mutated).not.toMatch(/revisionRef:\s*moneyRevisionRef\s*,/)
+    const stripped = mutated.replace(/\/\/.*$/gm, '')
+    expect(stripped).not.toMatch(/currentOwnerRef:\s*realAddressRef\s*,/)
+    expect(stripped).not.toMatch(/revisionRef:\s*moneyRevisionRef\b/)
+    expect(stripped).toMatch(/\{\s*current\s*:/)
   })
 })
 
