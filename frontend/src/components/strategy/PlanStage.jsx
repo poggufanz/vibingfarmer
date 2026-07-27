@@ -245,9 +245,16 @@ export function PlanStage({
                 inputMode="decimal"
                 value={amountValue}
                 onChange={(e) => setAmountValue(e.target.value)}
+                // Wave 6 Task 14 (scoped exception, owner-authorized): role="alert" only announces
+                // the error once, at the moment it appears -- a screen-reader user tabbing back to
+                // this field afterwards heard the label and nothing else. aria-describedby makes
+                // the error part of the field's accessible description so it is read every time the
+                // field is focused, not just on the first announcement. Only present while an error
+                // exists (never a dangling reference to an absent element).
+                aria-describedby={fieldError ? 'plan-amount-error' : undefined}
               />
               {fieldError && (
-                <p className="pc-field-error" role="alert">
+                <p id="plan-amount-error" className="pc-field-error" role="alert">
                   {fieldError}
                 </p>
               )}
