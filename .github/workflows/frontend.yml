@@ -24,6 +24,11 @@ jobs:
       - run: npm test
       - run: npm run build
       - run: npm run build:ext
+      - run: npm run manifest:check
+      # build:ext only proves the extension builds; this is the other half of decision #15's
+      # carry -- it must also ship no remote resource. Reuses VF Wallet Task 15's own Step 2
+      # command verbatim rather than inventing a new one.
+      - run: '! rg -n "executeAgentDeposit|executeAgentApprove|runAutonomousExit|https://fonts|vf_base_owner_address" extension-dist'
 
   # Cloudflare Pages deploy — gate: only pushes (never PRs from forks), only after tests pass.
   # main → Production; any other pushed branch → Preview (aliased by branch name).
