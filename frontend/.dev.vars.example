@@ -79,3 +79,11 @@ RELAYER_PROXY_KEY=change-me
 # (never VITE_). Leave unset to run the backfill script with router/registry archival sources
 # honestly reported unavailable (--dry-run still works; the audit lands on 'partial').
 AGENT_INDEX_ARCHIVAL_RPC_URL=
+
+# ─── Agent index ingest gate (read by api/agent-index.js, checked in api/agent-index/handler.js) ───
+# Shared secret the POST /api/agent-index?action=ingest endpoint requires as an Authorization Bearer;
+# scripts/agent-index/backfill-legacy-agents.mjs reads the same name and refuses to write without it.
+# Compared with a constant-time equality check. Server-only (never VITE_). FAILS CLOSED: while this
+# is unset the ingest endpoint answers 503 "Agent index ingest not configured" and indexes nothing —
+# reads are unaffected, so an unset value is a safe default, not a broken one.
+AGENT_INDEX_INGEST_SECRET=
