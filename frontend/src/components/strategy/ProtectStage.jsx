@@ -331,7 +331,7 @@ export function ProtectStage({
               <MoneyFigure
                 state="current"
                 value={unitsToDisplay(plan.amount.units, plan.amount.decimals)}
-                currency={plan.amount.token}
+                currency={tokenSymbol(plan.amount.token)}
               />
               <p>Valid for {preset.label} once confirmed.</p>
             </div>

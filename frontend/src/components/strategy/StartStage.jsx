@@ -415,8 +415,11 @@ export function StartStage({
                         return (
                           <li key={child.allocationId}>
                             <span>
+                              {/* m-7 (Strategy Task 14 fix round 1): matched PlanStage.jsx's
+                                  sibling bridge-child row, which always names the currency
+                                  alongside the amount -- this one silently omitted it. */}
                               {child.proxyTarget || child.destination}:{' '}
-                              {childDisplay?.allocation ?? ''}
+                              {childDisplay?.allocation ?? ''} {plan.amount.token}
                             </span>
                             {child.custodyLabel && <span> {child.custodyLabel}</span>}
                             {child.error && <span role="alert"> {child.error}</span>}

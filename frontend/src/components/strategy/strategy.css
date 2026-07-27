@@ -504,6 +504,34 @@
     white-space: normal;
   }
 
+  /* I-2 (Strategy Task 14 fix round 1, reviewer finding): the contract's own mobile collapse for
+   * `.pc-position-row, .pc-crew-row, .pc-agent-lane` (contract:610-618, two columns + the action
+   * item repositioned to column 2) was never ported for `.pc-agent-lane` specifically -- at a real
+   * mobile width the desktop `auto minmax(0, 1fr) minmax(96px, auto)` template still reserved a
+   * fixed 96px action column, starving the content track down to ~128px and forcing a 64-char tx
+   * hash into a ~54px-wide, 350px-tall single-character-per-line stack (no HORIZONTAL overflow at
+   * all, which is exactly why the 320px scrollWidth/rect-right guard could not see it -- this is
+   * the same class of defect turned ninety degrees).
+   *
+   * Verbatim `minmax(0, 1fr)` from the contract, NOT a hardcoded floor -- a first attempt at
+   * `minmax(200px, 1fr)` regressed into the OTHER direction of the same class of bug this file's
+   * own G1 comment above already documents: a grid item's `min-width` defaults to `auto` (never
+   * smaller than its content's min-content size), so a 200px floor on this track, inside
+   * `.pc-dominant`'s own 24px mobile padding, forced `.pc-dominant` itself past 320px
+   * (`overflow: clip` only clips painting, it does not relax a forced min-content layout size) --
+   * caught by `assertNoOverflowAt320` regressing to scrollWidth 328 on re-freeze. Dropping the
+   * fixed 96px THIRD column (not adding a floor to the second) is what actually fixes I-2: the
+   * content track now gets ALL remaining space after the mark, which is already meaningfully wider
+   * than the original 3-column ~128px -- verified against `assertNoVerticalTextTrap` below. */
+  .pc-agent-lane {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .pc-agent-lane > :last-child {
+    grid-column: 2;
+    justify-self: start;
+  }
+
   /* Task 12 -- Start's receipt actions stack full-width on mobile, same pattern as the contract's
    * (not yet ported) `.pc-money-actions`/`.pc-dialog-actions` mobile collapse. */
   .pc-receipt-actions {
