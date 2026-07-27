@@ -9,6 +9,27 @@
 // The real app's own entry (src/main.jsx) loads the legacy stylesheet, the Pocket Crew semantic
 // layer, and the three self-hosted variable fonts -- this harness mirrors that so the frozen
 // screenshots are the same pixels the product actually ships, not an unstyled stand-in.
+//
+// VF Wallet Task 14: this MUST be the first import in the file (extension/shims.js's own header:
+// "this file must stay the FIRST import of every entry that touches wallet code"). Discovered by
+// running the harness after wiring in the wallet fixtures below: WalletOnboarding.jsx (needed for
+// first-run/account-choice/seed-backup) and WalletAdvanced.jsx (its "Restore a different wallet"
+// section) both statically import extension/classic/ImportScreen.jsx -> importValidate.js ->
+// classicKeypair.js -> the 'ed25519-hd-key' package -> 'hash-base's bundled 'readable-stream',
+// which reads a bare `process` at MODULE-EVALUATION time (not gated behind any prop or runtime
+// branch -- an ES import's transitive graph always evaluates, whichever fixture is active). MV3
+// extension pages have no Node globals either, which is exactly why shims.js already exists and
+// is already the first import of popup.jsx/approve.js/ceremony.js -- this harness has the
+// identical requirement the moment it imports any wallet-onboarding component, for the first time
+// with this task. Confirmed by a real-Chromium run: WITHOUT this import, `?fixture=foundation` and
+// `?fixture=strategy` (fixtures with no relation to wallet code) ALSO crashed with "process is not
+// defined" thrown from ed25519-hd-key's module body -- an uncaught ReferenceError during ES module
+// evaluation aborts the whole module graph, not just the branch that needed it, so this was never
+// a `vf-wallet`-only blast radius. WITH it, all fixtures (old and new) render cleanly -- see the
+// task report for the before/after console-error transcript. Guarded internally
+// (`typeof globalThis.process === 'undefined'`), so it changes nothing observable for every
+// existing fixture, which never reads `process`/`Buffer` themselves.
+import '../extension/shims.js'
 import { createRoot } from 'react-dom/client'
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import '@fontsource-variable/geist'
@@ -23,8 +44,37 @@ import { NetworkBadge, NetworkRoute } from '../src/components/pocket/NetworkIden
 import { NETWORK_IDS } from '../src/design/networks.js'
 import { StrategyRoute } from '../src/components/strategy/StrategyRoute.jsx'
 import { buildMyMoneyModel } from '../src/money/myMoneyModel.js'
-import { SOROBAN_ACTIVE_VAULT_ADDRESS, SOROBAN_TOKEN_ADDRESS } from '../src/stellar/config.js'
-import { STELLAR_USDC_SAC } from '../src/stellar/cctpBurn.js'
+import {
+  SOROBAN_ACTIVE_VAULT_ADDRESS,
+  SOROBAN_TOKEN_ADDRESS,
+  SOROBAN_FUNDING_ROUTER_ADDRESS,
+} from '../src/stellar/config.js'
+import {
+  STELLAR_USDC_SAC,
+  STELLAR_TOKEN_MESSENGER_MINTER,
+  CCTP_BASE_DOMAIN,
+} from '../src/stellar/cctpBurn.js'
+import { VF_TESTNET_ISSUER } from '../src/wallet/trustline.js'
+// VF Wallet Task 14. WalletHome/WalletOnboarding/WalletActivity/WalletAdvanced/WalletSettings all
+// wrap the shared WalletShell, which renders its own <style> tag inline on every mount (see
+// VfWalletHomeFixture's own header comment below for why that makes it safe to import these
+// statically, unlike MyMoneyRoute above) -- plain top-level imports, no lazy() needed.
+import { WalletHome } from '../src/wallet/ui/WalletHome.jsx'
+import { WalletOnboarding } from '../src/wallet/ui/WalletOnboarding.jsx'
+import { WalletActivity } from '../src/wallet/ui/WalletActivity.jsx'
+import { WalletAdvanced } from '../src/wallet/ui/WalletAdvanced.jsx'
+import { WalletSettings } from '../src/wallet/ui/WalletSettings.jsx'
+// Pure vanilla view-model + DOM renderers (extension/approvalView.js, extension/ceremonyView.js)
+// -- not React components, imported for their functions only. No CSS side effect (confirmed by
+// reading both files in full): the stylesheet these need (extension/approval.css) is loaded
+// separately, dynamically, only inside VfWalletApprovalFixture -- see that function's own header
+// comment for why a static import here would repeat My Money's own cascade defect, more widely.
+import {
+  buildApprovalView,
+  renderApprovalView,
+  SUBMISSION_STATE,
+} from '../extension/approvalView.js'
+import { buildCeremonyView, renderCeremonyView, CEREMONY_STATE } from '../extension/ceremonyView.js'
 
 // My Money Task 14: `lazy()`, not a static top-level import, and for a DIFFERENT reason than
 // TechnicalMoneyDetails.jsx's own PixiSwarmGraph lazy-load (bundle size) -- this harness is ONE
@@ -45,9 +95,16 @@ import { STELLAR_USDC_SAC } from '../src/stellar/cctpBurn.js'
 // (strategy.css:466-469) that my-money.css never had. my-money.css's own unconditional
 // `.pc-route { padding: var(--pc-route-gutter) }` re-declares the `padding` SHORTHAND, which
 // zeroes any `padding-bottom` a stylesheet loaded before it contributed -- loaded after
-// strategy.css on this shared page, it silently deleted Strategy's own 80px bottom gutter on
-// every one of the fixture's 8 `.pc-route`s (80px x 8 = the missing ~640px, exactly). This was a
-// REAL production gap too, not just a harness artifact: the contract mandates that same rule
+// strategy.css on this shared page, it silently deleted Strategy's own bottom-gutter override on
+// every one of the fixture's 10 `.pc-route`s (StrategyFixture below mounts exactly ten
+// Section-wrapped StrategyRoutes, each rendering exactly one `.pc-route` -- verified by count, not
+// assumed). VFW14 correction: the arithmetic this comment previously gave here (and the one
+// my-money.css:337 still carries) was wrong on two counts at once -- it named 8 routes where there
+// are 10, and 80px per route where the actual per-route LOSS is 64px, not the full 80px: at mobile
+// the base `.pc-route` gutter is 16px per side (`--pc-route-gutter`) and strategy.css's override
+// replaces only the BOTTOM side with `--pc-space-20` (80px) + safe-area-inset-bottom (0 in headless
+// Chromium) -- my-money.css's later shorthand reset returns that one side to 16px, so each route
+// loses 80 - 16 = 64px, never the full 80. 10 routes x 64px = 640px, exactly. This was a
 // (contract:845-848) and my-money.css never carried it, so My Money's own mobile surface shipped
 // with no safe-area bottom gutter regardless of any other stylesheet on the page. Both are now
 // fixed -- my-money.css carries its own copy of the rule (see its mobile media query) -- so this
@@ -1541,9 +1598,574 @@ function MyMoneyFixture() {
   )
 }
 
+// -------------------------------------------------------------------------------------------
+// VF Wallet Task 14 (Pocket Crew redesign, Wave 6 snapshot freeze -- LAST of the three shared-
+// harness fixtures; this file's last owner). Split into TWO composites, never rendered on the
+// same page load, for two INDEPENDENTLY VERIFIED reasons (not an arbitrary split):
+//
+// 1. CSS isolation. WalletHome/WalletOnboarding/WalletActivity/WalletAdvanced/WalletSettings all
+//    wrap the shared WalletShell (src/wallet/ui/WalletShell.jsx), which renders its own <style>
+//    tag INLINE on every mount -- its own header: "No MV3 page has ever loaded
+//    frontend/extension/wallet.css or pocket-crew.css ... this component is therefore its own
+//    COMPLETE, self-sufficient copy". So `VfWalletHomeFixture` needs no stylesheet import at all
+//    and carries zero cascade risk, exactly like Strategy/My Money's own real components carry
+//    their CSS via a route-level import, just inlined instead. The consent/grant/ceremony
+//    screens are different: extension/approvalView.js and extension/ceremonyView.js are pure
+//    vanilla-DOM renderers with NO self-contained styling -- in production they are styled only
+//    by extension/approval.css, loaded via a <link> in approve.html/ceremony.html, two MV3
+//    documents that never coexist with popup.html (confirmed by reading both files' own header
+//    comments: "popup.html does not load [wallet.css]" / "approve.html and ceremony.html each
+//    load [approval.css] as their only stylesheet"). approval.css re-declares the SAME
+//    `.pc-wallet`/`.pc-wallet-shell/header/main/balance/actions/consequence`/`.pc-button` etc
+//    selectors WalletShell.jsx's inline STYLE defines -- confirmed NOT byte-identical between the
+//    two (approval.css carries an extra money-figure-style treatment WalletShell.jsx's copy
+//    lacks) -- so a plain top-level `import '../extension/approval.css'` would execute on EVERY
+//    `/visual/` page load regardless of `?fixture=` (ES imports are hoisted and always evaluated,
+//    not conditional on which branch of App() actually renders), repeating My Money's own cascade
+//    defect but WIDER: approval.css's `.pc-button`/`.pc-technical`/`.pc-field-help`/
+//    `.pc-network-badge` selectors are also live in Strategy/My Money/Foundation's own fixtures via
+//    pocket-crew.css/strategy.css/my-money.css. Fixed the same way MM14 fixed its own version of
+//    this: a dynamic `import()`, deferred until `VfWalletApprovalFixture` itself actually mounts
+//    (see that function's own `useEffect` below) -- never a static top-level import.
+// 2. Day Field theme support genuinely differs between the two families -- this is not a
+//    convenience choice, it is what "Forest is default; verify Day Field where supported" (this
+//    task's own brief) resolves to once checked. WalletShell.jsx's inline STYLE (read in full)
+//    hardcodes forest hex values with NO `:root[data-theme='day-field']` branch anywhere in it, so
+//    every Home/Onboarding/Advanced/Settings screen renders IDENTICALLY regardless of `?theme=` --
+//    a real, pre-existing production gap (WalletShell.jsx has no Day Field port at all), reported
+//    in the task report, not fixed here (WalletShell.jsx is outside this task's authorized file
+//    list). extension/approval.css DOES carry a `:root[data-theme='day-field']` block
+//    (approval.css:65) -- confirmed by grep. So Day Field is captured for `vf-wallet-approval`
+//    only; there would be nothing for a `vf-wallet-home` Day Field capture to show that Forest
+//    doesn't already show byte-for-byte.
+//
+// A third, smaller finding from the same read-through, reported rather than silently routed
+// around: WalletAdvanced.jsx's "Advanced direct vault action" section renders `ApproveOverlay`
+// (src/wallet/ui/ApproveOverlay.jsx) once `depositVerdict` is set -- that component's own header
+// comment says "Classes resolve from the popup's injected Acid Yield stylesheet" (`.approve`,
+// `.btn-primary`, ...), none of which are Pocket Crew `.pc-*` classes and none of which this
+// harness (or, per wallet.css's own header, popup.html itself) ever loads -- it would render
+// completely unstyled raw HTML inside an otherwise Pocket-Crew-styled screen. `depositVerdict`
+// stays `null` below so this fixture never freezes that known defect into a baseline; a null
+// verdict (before the user has clicked "Check eligibility") is itself a state production can
+// genuinely emit, not an evasion.
+//
+// Both approve.html and ceremony.html reference their header logo as the same-directory-relative
+// `./vibing_farmer.logo.svg` -- correct from the extension's own popup.html/approve.html location,
+// but this harness serves every fixture from `/visual/`, so that same relative reference 404s
+// here (confirmed: WalletShell.jsx's header uses the identical relative path, so this affects
+// BOTH composites below, not just the approval-styled markup this file authors itself). The
+// underlying file is real and unmodified; only the request path differs by page location, so
+// vf-wallet.visual.spec.js's own `page.route()` serves the on-disk asset back for that one
+// filename, regardless of the (wrong-but-harmless) directory prefix the browser resolves it to --
+// a harness-only network fixture, never a production file change. See that spec's own comment.
+
+const VFW_STANDARD_ADDR = 'GVFWALLETSTANDARDFIXTUREAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+const VFW_PASSKEY_ADDR = 'CVFWALLETPASSKEYFIXTUREBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB'
+const VFW_DAPP_ORIGIN = 'https://example-dapp.test'
+const VFW_NOW = 1_800_000_000
+
+const VFW_STANDARD_ACCOUNT = Object.freeze({
+  version: 1,
+  id: `stellar-testnet:${VFW_STANDARD_ADDR}`,
+  network: 'stellar-testnet',
+  address: VFW_STANDARD_ADDR,
+  kind: 'G',
+  signer: 'classic-ed25519',
+})
+const VFW_PASSKEY_ACCOUNT = Object.freeze({
+  version: 1,
+  id: `stellar-testnet:${VFW_PASSKEY_ADDR}`,
+  network: 'stellar-testnet',
+  address: VFW_PASSKEY_ADDR,
+  kind: 'C',
+  signer: 'passkey-secp256r1',
+})
+
+const VFW_PORTFOLIO_STANDARD = Object.freeze({
+  complete: true,
+  total: 812.4,
+  rows: [
+    { asset: 'XLM', code: 'XLM', balance: '120.0000000', usd: 14.4 },
+    { asset: `USDC:${VF_TESTNET_ISSUER}`, code: 'USDC', balance: '798.0000000', usd: 798.0 },
+  ],
+})
+const VFW_PORTFOLIO_PASSKEY = Object.freeze({
+  complete: true,
+  total: 305.0,
+  rows: [{ asset: `USDC:${VF_TESTNET_ISSUER}`, code: 'USDC', balance: '305.0000000', usd: 305.0 }],
+})
+
+// word0..word23 -- clearly-fake, the established repo convention (WalletOnboarding.test.jsx),
+// never real BIP39 words, never a real secret.
+const VFW_MNEMONIC = Array.from({ length: 24 }, (_, i) => `word${i}`).join(' ')
+const VFW_BACKUP_INDICES = [0, 5, 12]
+
+// Not valid XDR/auth-entry bytes -- long, base64-shaped, no natural break points, so the raw
+// technical-details disclosure genuinely exercises the 360px long-identifier wrap column this
+// task's brief names as its own trap, never a short stand-in that would hide that defect class.
+const VFW_FAKE_XDR =
+  'AAAAAgAAAABWRldhbGxldEZpeHR1cmVPbmx5TmV2ZXJBUmVhbFNpZ25lZFRyYW5zYWN0aW9uRW52ZWxvcGVOb3RWYWxpZFhEUg' +
+  'AAAABkAAAAAAAAAAEAAAAAAAAAGAAAAAAAAAABAAAAAAAAAAEAAAAAAAAAAA=='
+const VFW_FAKE_AUTH_ENTRY =
+  'AAAAAQAAAABWRldhbGxldEZpeHR1cmVPbmx5TmV2ZXJBUmVhbFNpZ25lZEF1dGhFbnRyeU5vdFZhbGlkWERSAAAAAGQAAAAA' +
+  'AAAAAQAAAAAAAAAYAAAAAAAAAAEAAAAAAAAAAQAAAAAAAAAA'
+
+// Hand-built to the EXACT shape extension/grantDecoder.js's decodeFundingRouterGrant /
+// extension/txSummary.js's summarizeInvokeArgs actually produce -- never re-derived through real
+// XDR encode/decode (the same discipline StrategyFixture's own freshDecisionRaw()/reuseDecisionRaw()
+// helpers already established above). One deposit agent (Autofarm Vault -> Blend, the one live
+// Stellar destination) and one bridge agent classified against the REAL CCTP TokenMessengerMinter
+// contract + the real Base CCTP domain (grantDecoder.js's own classifyDestination), so the
+// decoded row shows a recognized route label, never an "unknown destination" placeholder where a
+// truthful one is available.
+const VFW_GRANT_SUMMARY = Object.freeze({
+  network: 'TESTNET',
+  contract: SOROBAN_FUNDING_ROUTER_ADDRESS,
+  contractLabel: 'funding router',
+  fn: 'grant',
+  args: [],
+  signer: VFW_PASSKEY_ADDR,
+  grant: Object.freeze({
+    kind: 'funding-router-grant',
+    schemaVersion: 2,
+    owner: VFW_PASSKEY_ADDR,
+    budgets: [
+      { token: SOROBAN_TOKEN_ADDRESS, units: 500_0000000n, decimals: 7 },
+      { token: STELLAR_USDC_SAC, units: 300_0000000n, decimals: 7 },
+    ],
+    expiryLedger: 9001,
+    agents: [
+      {
+        index: 0,
+        kind: 'deposit',
+        signer: `0x${'ab'.repeat(32)}`,
+        token: SOROBAN_TOKEN_ADDRESS,
+        capPerPeriod: { token: SOROBAN_TOKEN_ADDRESS, units: 200_0000000n, decimals: 7 },
+        periodDurationSeconds: 3600,
+        expiryTimestamp: VFW_NOW + 3600,
+        target: SOROBAN_ACTIVE_VAULT_ADDRESS,
+        destinationDomain: null,
+        mintRecipient: null,
+        destination: {
+          network: 'TESTNET',
+          targetAddress: SOROBAN_ACTIVE_VAULT_ADDRESS,
+          classification: 'known-stellar-vault',
+          routeLabel: 'Autofarm Vault → Blend Capital v2',
+          venueLabel: 'Blend Capital v2',
+        },
+      },
+      {
+        index: 1,
+        kind: 'bridge',
+        signer: `0x${'cd'.repeat(32)}`,
+        token: STELLAR_USDC_SAC,
+        capPerPeriod: { token: STELLAR_USDC_SAC, units: 300_0000000n, decimals: 7 },
+        periodDurationSeconds: 3600,
+        expiryTimestamp: VFW_NOW + 3600,
+        target: STELLAR_TOKEN_MESSENGER_MINTER,
+        destinationDomain: CCTP_BASE_DOMAIN,
+        mintRecipient: `0x${'ef'.repeat(20)}`,
+        destination: {
+          network: 'TESTNET',
+          targetAddress: STELLAR_TOKEN_MESSENGER_MINTER,
+          classification: 'known-cctp-messenger',
+          routeLabel: 'Stellar testnet → Circle CCTP → Base Sepolia',
+          venueLabel: null,
+        },
+      },
+    ],
+    aggregateCapsByToken: [
+      { token: SOROBAN_TOKEN_ADDRESS, units: 200_0000000n, decimals: 7 },
+      { token: STELLAR_USDC_SAC, units: 300_0000000n, decimals: 7 },
+    ],
+    allowanceHeadroomByToken: [
+      { token: SOROBAN_TOKEN_ADDRESS, units: 300_0000000n, decimals: 7 },
+      { token: STELLAR_USDC_SAC, units: 0n, decimals: 7 },
+    ],
+  }),
+})
+
+const VFW_MISMATCH_SUMMARY = Object.freeze({
+  network: 'TESTNET',
+  contract: SOROBAN_FUNDING_ROUTER_ADDRESS,
+  contractLabel: 'funding router',
+  fn: 'set_admin',
+  args: [`${VFW_STANDARD_ADDR.slice(0, 4)}…${VFW_STANDARD_ADDR.slice(-4)}`],
+  signer: VFW_STANDARD_ADDR,
+  grant: Object.freeze({
+    kind: 'schema-mismatch',
+    schemaVersion: 2,
+    warning:
+      'This is the known funding_router v2, but "set_admin" is not its grant call. Showing raw facts only.',
+    contractId: SOROBAN_FUNDING_ROUTER_ADDRESS,
+    functionName: 'set_admin',
+    args: [`${VFW_STANDARD_ADDR.slice(0, 4)}…${VFW_STANDARD_ADDR.slice(-4)}`],
+  }),
+})
+
+// Real fail-closed messages from src/wallet/consentStore.js's validateRequestSnapshot() -- both
+// ceremony.js's own revalidateAtDelivery() and approve.js's own verifyStillValid() surface these
+// verbatim on a real account-context change. Reused here rather than invented copy, for states
+// (Step 1's "passkey mismatch" / "relay not submitted") this project's own code already names
+// precisely.
+const VFW_ACCOUNT_CHANGED_DETAIL = 'VF Wallet: active account changed'
+const VFW_CONTEXT_CHANGED_DETAIL = 'VF Wallet: request context changed'
+
+// Mirrors approve.html's static wrapper markup exactly (header + #approval-main + the static
+// Reject/Confirm footer whose LABEL TEXT approve.js sets from `view.rejectLabel`/`approveLabel` --
+// see that file's own `render()`) -- approvalView.js itself owns only the ordered content inside
+// `<main>`, never the surrounding shell, so this wrapper is the harness's one, faithful
+// replacement for what real approve.js/approve.html jointly provide. `wireAcknowledgmentGate`'s
+// OWN disable-until-opened behavior (approve.js) is reproduced directly (disabled = needsAcknowledgment)
+// rather than imported, since that function also wires a live `toggle` listener this frozen fixture
+// has no use for.
+function VfwApprovalCard({ view, openRawDetails = false }) {
+  const mainRef = useRef(null)
+  const approveRef = useRef(null)
+  useEffect(() => {
+    if (!mainRef.current) return
+    renderApprovalView(mainRef.current, view)
+    if (approveRef.current) approveRef.current.disabled = Boolean(view.needsAcknowledgment)
+    if (openRawDetails) {
+      const details = mainRef.current.querySelector('#raw-details')
+      if (details) details.open = true
+    }
+  }, [view, openRawDetails])
+
+  return (
+    <div className="pc-wallet pc-wallet-shell" data-pocket-critical>
+      <header className="pc-wallet-header">
+        <div className="pc-brand-lockup pc-brand-lockup--compact">
+          <img src="./vibing_farmer.logo.svg" alt="Vibing Farmer" />
+          <span>VF Wallet</span>
+        </div>
+      </header>
+      <main className="pc-wallet-main" ref={mainRef}>
+        <p id="status">Loading request…</p>
+      </main>
+      <div className="pc-wallet-approval-actions">
+        <button type="button" className="pc-button pc-button--secondary">
+          {view.rejectLabel}
+        </button>
+        {view.approveLabel != null && (
+          <button type="button" ref={approveRef} className="pc-button pc-button--primary">
+            {view.approveLabel}
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// Mirrors ceremony.html's static wrapper markup exactly (header with the passkey/secp256r1
+// technical badge + #ceremony-main) -- ceremonyView.js owns only the ordered content inside
+// <main>, same discipline as VfwApprovalCard above. `statusOverride`, when supplied, replicates
+// ceremony.js's OWN direct `setStatus(documentRef, ...)` calls that bypass ceremonyStatusText's
+// formal CEREMONY_STATE switch entirely for a few real, literal messages (e.g. ceremony.js's own
+// "Submitted (${out.status || 'unknown'}). Not yet confirmed -- check the shares balance before
+// relying on this number.") -- reproducing that exact real string, not inventing new copy for a
+// state the module's own enum has no dedicated member for.
+function VfwCeremonyCard({ view, statusOverride = null }) {
+  const mainRef = useRef(null)
+  useEffect(() => {
+    if (!mainRef.current) return
+    renderCeremonyView(mainRef.current, view)
+    if (statusOverride) {
+      const statusEl = mainRef.current.querySelector('#status')
+      if (statusEl) statusEl.textContent = statusOverride
+    }
+  }, [view, statusOverride])
+
+  return (
+    <div className="pc-wallet pc-wallet-shell" data-pocket-critical>
+      <header className="pc-wallet-header">
+        <div className="pc-brand-lockup pc-brand-lockup--compact">
+          <img src="./vibing_farmer.logo.svg" alt="Vibing Farmer" />
+          <span>VF Wallet</span>
+        </div>
+        <span className="pc-technical">passkey · secp256r1</span>
+      </header>
+      <main className="pc-wallet-main" ref={mainRef}>
+        <p id="status">Starting passkey ceremony</p>
+      </main>
+    </div>
+  )
+}
+
+// Every screen here mounts through WalletShell (see this section's own header) -- self-contained
+// CSS, no stylesheet import, no lazy() needed. Unlike Strategy's PlanStage/ProtectStage, none of
+// these components hold an internal "review"/"generating" phase reached only through driven
+// interaction (WalletOnboarding's own header: "a PURE presentational router... holds no state of
+// its own") -- every state below is reached directly by props, so no AutopilotSection is needed
+// anywhere in this fixture.
+function VfWalletHomeFixture() {
+  return (
+    // Fix round 1 (real-Chromium overflow sweep, self-caught before review): NO outer padding
+    // here, the same trap Foundation Task 7/Strategy Task 14 both already hit and fixed on this
+    // exact file (see FoundationFixture/StrategyFixture's own comments) -- padding on a
+    // content-box <main> with no explicit width ADDS to the 360px viewport width rather than
+    // eating into it (no box-sizing:border-box reset applies out here; that reset is scoped to
+    // `.pc-wallet` and its descendants, not this fixture root above it), so `padding: '2rem'`
+    // measured as a genuine 392px maxRight at the 360 viewport, caught by this task's own
+    // overflow guard before a screenshot was ever frozen with it.
+    <main data-fixture="vf-wallet-home" style={{ display: 'grid', gap: '2rem' }}>
+      <h1>Pocket Crew visual harness — VF Wallet (home)</h1>
+
+      <Section title="First run — create or restore a wallet">
+        <WalletOnboarding view="choose" onChooseStandard={() => {}} onChoosePasskey={() => {}} />
+      </Section>
+
+      <Section ariaHidden title="Account choice — more than one wallet on this device">
+        <WalletOnboarding
+          view="select-account"
+          accounts={[VFW_STANDARD_ACCOUNT, VFW_PASSKEY_ACCOUNT]}
+          onSelectAccount={() => {}}
+        />
+      </Section>
+
+      <Section ariaHidden title="Standard Home">
+        <WalletHome
+          account={VFW_STANDARD_ACCOUNT}
+          onNav={() => {}}
+          securityLabel="Unlocked"
+          portfolio={VFW_PORTFOLIO_STANDARD}
+          onSend={() => {}}
+          onReceive={() => {}}
+          onAddAsset={() => {}}
+          onFund={() => {}}
+          onGetUsdc={() => {}}
+        />
+      </Section>
+
+      {/* Passkey has no persistent lock state and no friendbot/trustline wiring of its own
+          (WalletHome.jsx's own header) -- onAddAsset/onFund are omitted, never passed as no-ops,
+          matching the "no dead button, fail closed" rule the real composition root follows. */}
+      <Section ariaHidden title="Passkey Home">
+        <WalletHome
+          account={VFW_PASSKEY_ACCOUNT}
+          onNav={() => {}}
+          securityLabel="Secured by Face ID"
+          portfolio={VFW_PORTFOLIO_PASSKEY}
+          onSend={() => {}}
+          onReceive={() => {}}
+          onGetUsdc={() => {}}
+        />
+      </Section>
+
+      <Section ariaHidden title="Home — unknown price / unavailable balance">
+        <WalletHome
+          account={VFW_STANDARD_ACCOUNT}
+          onNav={() => {}}
+          securityLabel="Unlocked"
+          portfolio={null}
+          onSend={() => {}}
+          onReceive={() => {}}
+          onAddAsset={() => {}}
+          onFund={() => {}}
+          onGetUsdc={() => {}}
+        />
+      </Section>
+
+      <Section ariaHidden title="Activity — empty">
+        <WalletActivity account={VFW_STANDARD_ACCOUNT} onNav={() => {}} items={[]} />
+      </Section>
+
+      <Section ariaHidden title="Seed backup warning">
+        <WalletOnboarding
+          view="standard-backup"
+          account={VFW_STANDARD_ACCOUNT}
+          mnemonic={VFW_MNEMONIC}
+          indices={VFW_BACKUP_INDICES}
+          onConfirmBackup={() => {}}
+          onSkipBackup={() => {}}
+        />
+      </Section>
+
+      <Section ariaHidden title="Advanced / Testnet">
+        <WalletAdvanced
+          account={VFW_STANDARD_ACCOUNT}
+          onBack={() => {}}
+          onGetUsdc={() => {}}
+          onFundXlm={() => {}}
+          depositAmount=""
+          onDepositAmountChange={() => {}}
+          depositVerdict={null}
+          onCheckEligibility={() => {}}
+          onEnableDeposits={() => {}}
+          recoveryAddress=""
+          onRecoveryAddressChange={() => {}}
+          onAddRecoverySigner={() => {}}
+          onImportWallet={() => {}}
+        />
+      </Section>
+
+      <Section ariaHidden title="Settings — Base testnet mandate disclosure">
+        <WalletSettings
+          account={VFW_STANDARD_ACCOUNT}
+          onNav={() => {}}
+          securityLabel="Unlocked"
+          autoLockMin={15}
+          onSetAutoLock={() => {}}
+          onLock={() => {}}
+          onExport={() => {}}
+          onReset={() => {}}
+          onSwitchAccount={() => {}}
+          onOpenAdvanced={() => {}}
+        />
+      </Section>
+    </main>
+  )
+}
+
+// approval.css is dynamically imported (never a static top-level import) -- see this section's
+// own header comment for why a static import would contaminate every other fixture on this
+// shared page. `cssReady` gates the composite behind the SAME `data-fixture-pending="true"`
+// convention Strategy/My Money's own AutopilotSection/Suspense already establish, so
+// vf-wallet.visual.spec.js's existing `waitForFunction(() => 0 pending markers)` wait covers this
+// fixture with no new waiting mechanism. Double `requestAnimationFrame` (not just the import()
+// promise resolving) because Vite's dev-mode dynamic CSS import inserts the <style> tag as a side
+// effect of the import executing, and a promise resolving is not itself proof the browser has
+// completed a style/layout pass against the newly inserted rules -- two rAFs guarantee at least
+// one full paint has happened since insertion, the same reasoning MM14's own Suspense-boundary fix
+// documents for a different async gap.
+function VfWalletApprovalFixture() {
+  const [cssReady, setCssReady] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    import('../extension/approval.css').then(() => {
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          if (!cancelled) setCssReady(true)
+        })
+      )
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const connectView = buildApprovalView(
+    { method: 'getAddress', params: {}, origin: VFW_DAPP_ORIGIN },
+    { address: VFW_STANDARD_ADDR, kind: 'classic', submissionState: SUBMISSION_STATE.REVIEWING }
+  )
+  const grantView = buildApprovalView(
+    { method: 'signTransaction', params: { xdr: VFW_FAKE_XDR }, origin: VFW_DAPP_ORIGIN },
+    {
+      address: VFW_PASSKEY_ADDR,
+      kind: 'passkey',
+      summary: VFW_GRANT_SUMMARY,
+      submissionState: SUBMISSION_STATE.REVIEWING,
+    }
+  )
+  const mismatchView = buildApprovalView(
+    { method: 'signTransaction', params: { xdr: VFW_FAKE_XDR }, origin: VFW_DAPP_ORIGIN },
+    {
+      address: VFW_STANDARD_ADDR,
+      kind: 'classic',
+      unlocked: true,
+      summary: VFW_MISMATCH_SUMMARY,
+      submissionState: SUBMISSION_STATE.REVIEWING,
+    }
+  )
+  const wrongPasswordView = buildApprovalView(
+    { method: 'signTransaction', params: { xdr: VFW_FAKE_XDR }, origin: VFW_DAPP_ORIGIN },
+    {
+      address: VFW_STANDARD_ADDR,
+      kind: 'classic',
+      unlocked: false,
+      submissionState: SUBMISSION_STATE.WAITING_PASSWORD,
+      detail: 'Wrong password.',
+    }
+  )
+
+  const signingGrantView = buildCeremonyView(
+    { action: 'signTransaction', params: { xdr: VFW_FAKE_XDR } },
+    {
+      address: VFW_PASSKEY_ADDR,
+      decodedSummary: VFW_GRANT_SUMMARY,
+      submissionState: CEREMONY_STATE.WAITING_PASSKEY,
+    }
+  )
+  const passkeyMismatchView = buildCeremonyView(
+    { action: 'connect', params: {} },
+    {
+      address: VFW_PASSKEY_ADDR,
+      submissionState: CEREMONY_STATE.FAILED,
+      detail: VFW_ACCOUNT_CHANGED_DETAIL,
+    }
+  )
+  const notSubmittedView = buildCeremonyView(
+    { action: 'signAuthEntry', params: { authEntry: VFW_FAKE_AUTH_ENTRY } },
+    {
+      address: VFW_PASSKEY_ADDR,
+      submissionState: CEREMONY_STATE.NOT_SUBMITTED,
+      detail: VFW_CONTEXT_CHANGED_DETAIL,
+    }
+  )
+  const submittedView = buildCeremonyView(
+    { action: 'deposit', params: {} },
+    {
+      address: VFW_PASSKEY_ADDR,
+      amountUnits: 50_0000000n,
+      submissionState: CEREMONY_STATE.SUBMITTED,
+    }
+  )
+
+  return (
+    // Fix round 1: no outer padding here either -- see VfWalletHomeFixture's own comment above
+    // for the exact same trap (Foundation/Strategy's own precedent), caught here by the identical
+    // real-Chromium overflow sweep.
+    <main
+      data-fixture="vf-wallet-approval"
+      data-fixture-pending={cssReady ? undefined : 'true'}
+      style={{ display: 'grid', gap: '2rem' }}
+    >
+      <h1>Pocket Crew visual harness — VF Wallet (approval / ceremony)</h1>
+
+      <Section title="Connection consent">
+        <VfwApprovalCard view={connectView} />
+      </Section>
+
+      <Section ariaHidden title="Decoded multi-agent grant (technical details open)">
+        <VfwApprovalCard view={grantView} openRawDetails />
+      </Section>
+
+      <Section ariaHidden title="Raw / schema-mismatch approval">
+        <VfwApprovalCard view={mismatchView} />
+      </Section>
+
+      <Section ariaHidden title="Passkey ceremony (signing a decoded grant, Base mandate visible)">
+        <VfwCeremonyCard view={signingGrantView} />
+      </Section>
+
+      <Section ariaHidden title="Wrong password">
+        <VfwApprovalCard view={wrongPasswordView} />
+      </Section>
+
+      <Section ariaHidden title="Passkey mismatch">
+        <VfwCeremonyCard view={passkeyMismatchView} />
+      </Section>
+
+      <Section ariaHidden title="Relay not submitted">
+        <VfwCeremonyCard view={notSubmittedView} />
+      </Section>
+
+      <Section ariaHidden title="Submission unknown">
+        <VfwCeremonyCard
+          view={submittedView}
+          statusOverride="Submitted (unknown). Not yet confirmed — check the shares balance before relying on this number."
+        />
+      </Section>
+    </main>
+  )
+}
+
 function App() {
   if (fixture === 'strategy') return <StrategyFixture />
   if (fixture === 'my-money') return <MyMoneyFixture />
+  if (fixture === 'vf-wallet-home') return <VfWalletHomeFixture />
+  if (fixture === 'vf-wallet-approval') return <VfWalletApprovalFixture />
   if (fixture !== 'foundation') {
     return (
       <main data-fixture={fixture}>
