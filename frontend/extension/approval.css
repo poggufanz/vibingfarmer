@@ -661,6 +661,15 @@ pre,
   border: 1px solid var(--pc-danger);
 }
 
+/* Review fix round 2 -- new Important introduced by the I1 fix above: `.pc-field-error` (base rule
+   below) resolves `color: var(--pc-danger)` = #e26e67 against this box's --pc-owned (rice)
+   background -- measured 2.87:1, below the 4.5:1 AA floor the C1 fix enforces two nodes away in
+   the same box. --pc-danger-on-light is the contract's own existing token for danger text on a
+   light/rice surface (measured 5.51:1) -- verbatim, no hand-written hex. */
+.pc-wallet-consequence .pc-field-error {
+  color: var(--pc-danger-on-light);
+}
+
 /* --- approve.html: raw XDR disclosure. --- */
 .pc-wallet-main details {
   color: var(--pc-muted);

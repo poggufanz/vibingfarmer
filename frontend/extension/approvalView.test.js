@@ -1129,75 +1129,156 @@ function contrastRatio(rgbA, rgbB) {
   return (lighter + 0.05) / (darker + 0.05)
 }
 
-async function measureConsequenceColors(html) {
+// Review fix round 2 -- the round-1 version of this check hard-coded three selectors
+// (`.pc-approval-table td`/`th`/`.pc-technical`). That let a NEW text node introduced by the I1
+// fix in the same box (`.pc-field-error`, the schema-mismatch warning sentence) ship at 2.87:1
+// contrast, uncaught, because it matched none of the three selectors. This walks every text leaf
+// inside `.pc-wallet-consequence` and resolves each leaf's own painted background (walking up the
+// DOM from the leaf to the nearest ancestor with a non-transparent backgroundColor, not just
+// assuming the box's own background applies uniformly) -- so the NEXT element added to this box is
+// covered automatically, no one has to remember to add a selector.
+async function measureConsequenceLeafContrasts(html) {
   const browser = await launchRealChromium()
   try {
     const page = await browser.newPage()
     await page.setContent(buildHarnessHtml(html))
-    const raw = await page.evaluate(() => {
-      const box = document.querySelector('.pc-wallet-consequence')
-      const td = box.querySelector('.pc-approval-table td')
-      const th = box.querySelector('.pc-approval-table th')
-      const technical = box.querySelector('.pc-approval-table td .pc-technical')
-      const styleOf = (el) => (el ? getComputedStyle(el).color : null)
-      return {
-        bg: getComputedStyle(box).backgroundColor,
-        tdColor: styleOf(td),
-        thColor: styleOf(th),
-        technicalColor: styleOf(technical),
+    const leaves = await page.evaluate(() => {
+      function resolvedBackground(el) {
+        for (let node = el; node; node = node.parentElement) {
+          const bg = getComputedStyle(node).backgroundColor
+          if (bg && !/^rgba\(0,\s*0,\s*0,\s*0\)$/.test(bg) && bg !== 'transparent') return bg
+        }
+        return null
       }
+      function describe(el) {
+        const cls =
+          el.className && typeof el.className === 'string' && el.className.trim()
+            ? `.${el.className.trim().split(/\s+/).join('.')}`
+            : ''
+        return `${el.tagName.toLowerCase()}${cls}`
+      }
+      const box = document.querySelector('.pc-wallet-consequence')
+      if (!box) return []
+      return Array.from(box.querySelectorAll('*'))
+        .filter((el) => el.children.length === 0 && el.textContent.trim())
+        .map((el) => ({
+          selector: describe(el),
+          text: el.textContent.trim().slice(0, 60),
+          color: getComputedStyle(el).color,
+          background: resolvedBackground(el),
+        }))
     })
     await page.close()
-    return raw
+    return leaves
   } finally {
     await browser.close()
   }
 }
 
-describe('renderConsequence — real-Chromium WCAG AA contrast on the allowance ceiling (C1)', () => {
+function assertLeavesMeetAA(leaves, aaThreshold) {
+  expect(leaves.length).toBeGreaterThan(0) // sanity: the walk actually found text to check
+  for (const leaf of leaves) {
+    const ratio = contrastRatio(parseRgb(leaf.color), parseRgb(leaf.background))
+    expect(
+      ratio,
+      `${leaf.selector} "${leaf.text}" contrast ${ratio.toFixed(2)}:1 (color ${leaf.color} on ${leaf.background})`
+    ).toBeGreaterThanOrEqual(aaThreshold)
+  }
+}
+
+describe('renderConsequence — real-Chromium WCAG AA contrast, every text leaf inside .pc-wallet-consequence (C1, widened in fix round 2)', () => {
   const AA_NORMAL_TEXT = 4.5
 
-  it('the ceiling amount, its token, and the table header meet AA contrast against the rice background', async () => {
+  it('every text leaf in the happy-path ceiling breakdown meets AA contrast against its own resolved background', async () => {
     const html = renderStateHtml(
       { method: 'signTransaction', params: { xdr: 'X' }, origin: ORIGIN },
       { address: 'CACCT', summary: grantSummary(singleTokenGrant) }
     )
-    const { bg, tdColor, thColor, technicalColor } = await measureConsequenceColors(html)
-    const bgRgb = parseRgb(bg)
-    expect(bgRgb, `could not parse background color: ${bg}`).not.toBeNull()
-    const tdRatio = contrastRatio(parseRgb(tdColor), bgRgb)
-    const thRatio = contrastRatio(parseRgb(thColor), bgRgb)
-    const technicalRatio = contrastRatio(parseRgb(technicalColor), bgRgb)
-    expect(
-      tdRatio,
-      `td contrast ${tdRatio.toFixed(2)}:1 (color ${tdColor} on ${bg})`
-    ).toBeGreaterThanOrEqual(AA_NORMAL_TEXT)
-    expect(thRatio, `th contrast ${thRatio.toFixed(2)}:1`).toBeGreaterThanOrEqual(AA_NORMAL_TEXT)
-    expect(
-      technicalRatio,
-      `.pc-technical contrast ${technicalRatio.toFixed(2)}:1`
-    ).toBeGreaterThanOrEqual(AA_NORMAL_TEXT)
+    assertLeavesMeetAA(await measureConsequenceLeafContrasts(html), AA_NORMAL_TEXT)
   }, 60000)
 
-  it('mutation-proof: removing the .pc-wallet-consequence-scoped color override reproduces the white-on-white regression', async () => {
+  it('every text leaf in the schema-mismatch warning state meets AA contrast (covers the I1 .pc-field-error sentence)', async () => {
+    const html = renderStateHtml(
+      { method: 'signTransaction', params: { xdr: 'X' }, origin: ORIGIN },
+      {
+        address: 'CACCT',
+        summary: grantSummary({
+          kind: 'schema-mismatch',
+          schemaVersion: 2,
+          warning: 'Args did not match the known funding_router v2 grant schema.',
+        }),
+      }
+    )
+    assertLeavesMeetAA(await measureConsequenceLeafContrasts(html), AA_NORMAL_TEXT)
+  }, 60000)
+
+  it('mutation-proof: removing the .pc-wallet-consequence-scoped ceiling color override reproduces the white-on-white regression (C1, round 1)', async () => {
     const html = renderStateHtml(
       { method: 'signTransaction', params: { xdr: 'X' }, origin: ORIGIN },
       { address: 'CACCT', summary: grantSummary(singleTokenGrant) }
     )
-    // Strip exactly the two rules this fix added, reproducing the pre-fix CSS (td inherits the
-    // generic `.pc-approval-table td { color: var(--pc-ink) }`, which is --pc-rice in this theme --
-    // identical to the --pc-owned background it sits on).
     const mutated = html
       .replace(/\.pc-wallet-consequence \.pc-approval-table th\s*\{[^}]*\}/, '')
       .replace(
         /\.pc-wallet-consequence \.pc-approval-table td,\s*\.pc-wallet-consequence \.pc-approval-table td \.pc-technical\s*\{[^}]*\}/,
         ''
       )
-    const { bg, tdColor } = await measureConsequenceColors(mutated)
-    const ratio = contrastRatio(parseRgb(tdColor), parseRgb(bg))
+    expect(mutated).not.toBe(html) // sanity: the strip actually matched something
+    const leaves = await measureConsequenceLeafContrasts(mutated)
+    const failing = leaves.filter(
+      (leaf) => contrastRatio(parseRgb(leaf.color), parseRgb(leaf.background)) < AA_NORMAL_TEXT
+    )
     expect(
-      ratio,
-      `expected the pre-fix regression to reproduce low contrast, got ${ratio.toFixed(2)}:1`
-    ).toBeLessThan(AA_NORMAL_TEXT)
+      failing.length,
+      'expected the pre-fix regression to reproduce low contrast'
+    ).toBeGreaterThan(0)
+  }, 60000)
+
+  it('positive control: restoring the pre-fix --pc-danger color on .pc-field-error fails, AND names the offending element (round 2, I1 regression)', async () => {
+    const html = renderStateHtml(
+      { method: 'signTransaction', params: { xdr: 'X' }, origin: ORIGIN },
+      {
+        address: 'CACCT',
+        summary: grantSummary({
+          kind: 'schema-mismatch',
+          schemaVersion: 2,
+          warning: 'Args did not match the known funding_router v2 grant schema.',
+        }),
+      }
+    )
+    const mutated = html.replace(
+      '.pc-wallet-consequence .pc-field-error {\n  color: var(--pc-danger-on-light);\n}',
+      '.pc-wallet-consequence .pc-field-error {\n  color: var(--pc-danger);\n}'
+    )
+    expect(mutated).not.toBe(html) // sanity: the swap actually matched the shipped rule
+    const leaves = await measureConsequenceLeafContrasts(mutated)
+    const failing = leaves.filter(
+      (leaf) => contrastRatio(parseRgb(leaf.color), parseRgb(leaf.background)) < AA_NORMAL_TEXT
+    )
+    expect(failing.length).toBeGreaterThan(0) // RED
+    // Not just "something failed" -- the failure must NAME the offending element, not report a
+    // bare pass/fail. This is exactly what a per-selector test (round 1's) could never do for an
+    // element outside its own three selectors.
+    expect(failing.some((leaf) => leaf.selector.includes('pc-field-error'))).toBe(true)
+  }, 60000)
+
+  it('mutation-proof: a brand-new low-contrast element inside .pc-wallet-consequence, matching NONE of the three original selectors, is still caught', async () => {
+    const html = renderStateHtml(
+      { method: 'signTransaction', params: { xdr: 'X' }, origin: ORIGIN },
+      { address: 'CACCT', summary: grantSummary(singleTokenGrant) }
+    )
+    // A bare inline-styled <span>, injected directly inside the box -- not a <td>, not a <th>, not
+    // a `.pc-technical` span. Round 1's three-selector test structurally could not have seen this;
+    // that is the entire point of widening the check to "every text leaf".
+    const mutated = html.replace(
+      /(<div class="pc-wallet-consequence[^"]*"[^>]*>)/,
+      `$1<span style="color: rgb(240,243,237)">a brand-new footnote no old selector matched</span>`
+    )
+    expect(mutated).not.toBe(html) // sanity: the injection actually landed
+    const leaves = await measureConsequenceLeafContrasts(mutated)
+    const injected = leaves.find((leaf) => leaf.text.includes('brand-new footnote'))
+    expect(injected, 'the leaf walk must pick up the newly-injected element').toBeTruthy()
+    const ratio = contrastRatio(parseRgb(injected.color), parseRgb(injected.background))
+    expect(ratio).toBeLessThan(AA_NORMAL_TEXT) // RED
   }, 60000)
 })
