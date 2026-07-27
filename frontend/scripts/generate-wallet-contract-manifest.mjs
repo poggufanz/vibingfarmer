@@ -436,7 +436,7 @@ function main() {
   let contractText
   try {
     contractText = readFileSync(contractPath, 'utf8')
-  } catch (e) {
+  } catch {
     console.error(`[generate-wallet-contract-manifest] cannot read contract at ${contractPath}`)
     console.error(
       '[generate-wallet-contract-manifest] the contract is gitignored/local-only -- run this ' +
