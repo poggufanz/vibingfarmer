@@ -181,6 +181,31 @@ test.describe('Pocket Crew VF Wallet', () => {
     expect(short, `control(s) under the 44px touch target: ${JSON.stringify(short)}`).toEqual([])
   }
 
+  // VFW14 fix round 2 (N-1, reviewer finding): vf-wallet-home's very first `fullPage` capture on a
+  // freshly-loaded page measures 9199px; every later capture on the SAME page measures 9327px (the
+  // frozen baseline's own height). Not a font-LOAD race -- `document.fonts.ready` had already
+  // resolved and text widths probe identically at both heights -- it is a metrics-application
+  // RELAYOUT: 32 `.pc-button`s sit clamped at the coarse-pointer 44px floor until it runs, then grow
+  // to their natural 48px (`--pc-control-height`), exactly 4px x 32 = 128px = 9327-9199. Waiting on
+  // `fonts.ready` or polling `scrollHeight` across animation frames does NOT trigger it (confirmed
+  // empirically: a plain rAF poll reports "stable" at 9199 forever) -- only a genuine full-document
+  // layout pass does, and a `fullPage` screenshot is itself what forces one (a viewport-only
+  // screenshot does not). So this takes throwaway `fullPage` captures -- discarding the buffers --
+  // until two consecutive ones agree on `document.documentElement.scrollHeight`, before the REAL,
+  // asserted capture ever runs. Verified under synthetic 4-core CPU saturation (the same contention
+  // the reviewer used to reproduce the flake on demand): 25/25 raw captures landed on the stable
+  // 9327px height with this wait in place, vs 0/20 without it (every cold page's first capture is
+  // unconditionally the short one) -- see the report for the full repeat-run log.
+  async function waitForFullPageLayoutSettle(page, maxAttempts = 6) {
+    let previous = null
+    for (let i = 0; i < maxAttempts; i++) {
+      await page.screenshot({ fullPage: true })
+      const height = await page.evaluate(() => document.documentElement.scrollHeight)
+      if (height === previous) return
+      previous = height
+    }
+  }
+
   test('forest theme -- vf-wallet-home (360x600, +320px geometry)', async ({ page }, testInfo) => {
     test.skip(
       !MOBILE_PROJECTS.includes(testInfo.project.name),
@@ -194,6 +219,7 @@ test.describe('Pocket Crew VF Wallet', () => {
     await assertNoVerticalTextTrap(page, 'vf-wallet-home')
     await assert44pxControls(page, 'vf-wallet-home')
     if (testInfo.project.name === 'mobile-360') {
+      await waitForFullPageLayoutSettle(page)
       await expect(page).toHaveScreenshot('vf-wallet-forest-360x600.png', { fullPage: true })
     }
   })
@@ -220,6 +246,7 @@ test.describe('Pocket Crew VF Wallet', () => {
     await assertNoVerticalTextTrap(page, 'vf-wallet-approval')
     await assert44pxControls(page, 'vf-wallet-approval')
     if (testInfo.project.name === 'mobile-360') {
+      await waitForFullPageLayoutSettle(page)
       await expect(page).toHaveScreenshot('vf-wallet-forest-360x800.png', { fullPage: true })
     }
   })
@@ -242,6 +269,7 @@ test.describe('Pocket Crew VF Wallet', () => {
     await assertNoVerticalTextTrap(page, 'vf-wallet-approval')
     await assert44pxControls(page, 'vf-wallet-approval')
     if (testInfo.project.name === 'mobile-360') {
+      await waitForFullPageLayoutSettle(page)
       await expect(page).toHaveScreenshot('vf-wallet-day-field-360x800.png', { fullPage: true })
     }
   })

@@ -32,21 +32,26 @@ const LABELS = {
     'While unlocked, this wallet keeps a key in chrome.storage.session (in-memory). Someone already running code on your machine could read it. Lock this wallet when done. Testnet PoC.',
 }
 
-// VFW14 fix round 1 (reviewer finding): `#f0b54a` is visibly off-token in the frozen Home
-// baseline (WalletOnboarding/WalletSettings/WalletAdvanced all render inside `.pc-wallet`, which
-// declares `--pc-warning: #e8a33d`) -- a different amber, not a token, serving exactly the role a
-// token exists for. `var(--pc-warning, #f0b54a)` routes it through the real token wherever one is
-// in scope, while keeping the identical literal `#f0b54a` as the fallback for the one caller
-// outside the Pocket Crew wallet tree that has no `--pc-warning` in scope at all
-// (extension/popup.jsx's legacy Acid Yield screens -- this file's own header comment: "stays
-// legible on the wallet popup without depending on the popup stylesheet"), so that surface's
-// rendering is untouched.
+// VFW14 fix round 1 (reviewer finding), completed in fix round 2 (deferred-minor finding):
+// `#f0b54a` is visibly off-token in the frozen Home baseline (WalletOnboarding/WalletSettings/
+// WalletAdvanced all render inside `.pc-wallet`, which declares `--pc-warning: #e8a33d`) -- a
+// different amber, not a token, serving exactly the role a token exists for. `var(--pc-warning,
+// #f0b54a)` routes it through the real token wherever one is in scope, while keeping the identical
+// literal `#f0b54a` as the fallback for the one caller outside the Pocket Crew wallet tree that has
+// no `--pc-warning` in scope at all (extension/popup.jsx's legacy Acid Yield screens -- this file's
+// own header comment: "stays legible on the wallet popup without depending on the popup
+// stylesheet"), so that surface's rendering is untouched. Round 1 only routed `color`; round 2
+// finishes `background`/`border` the same way -- `color-mix(in srgb, var(--pc-warning, #f0b54a)
+// N%, transparent)` mixes the SAME token-or-fallback color down to N% opacity against transparent,
+// so the fallback path renders byte-identically to the old literal `rgba(240,181,74, N/100)` (both
+// are just the RGB of #f0b54a at N% alpha), while the Pocket Crew path now tints from the real
+// token instead of a second, independently-hardcoded copy of the old off-token color.
 const s = {
   fontSize: 11,
   lineHeight: 1.5,
   color: 'var(--pc-warning, #f0b54a)',
-  background: 'rgba(240,181,74,0.08)',
-  border: '1px solid rgba(240,181,74,0.28)',
+  background: 'color-mix(in srgb, var(--pc-warning, #f0b54a) 8%, transparent)',
+  border: '1px solid color-mix(in srgb, var(--pc-warning, #f0b54a) 28%, transparent)',
   borderRadius: 6,
   padding: '7px 9px',
   margin: '4px 0',
