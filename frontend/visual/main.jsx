@@ -35,12 +35,27 @@ import { STELLAR_USDC_SAC } from '../src/stellar/cctpBurn.js'
 // strategy.css has ported them so far, and this route must not depend on that file being
 // loaded", written when each route's CSS was assumed to load in isolation, exactly as production
 // code-splitting guarantees but this shared harness does not) -- loading BOTH stylesheets on the
-// same page put my-money.css's copies last in source order, silently winning the cascade for
-// Strategy's own shared classes and shrinking its frozen fixture by ~640px at both mobile
-// projects (found via a controlled A/B: stubbing this import out made Strategy's 12/12 pass
-// again). Lazy-loading means my-money.css is only ever injected when `?fixture=my-money` is
-// actually the page being viewed, the same guarantee production's own route-level code-splitting
-// already provides.
+// same page put my-money.css's copies last in source order, shrinking Strategy's frozen fixture by
+// ~640px at both mobile projects (found via a controlled A/B: stubbing this import out made
+// Strategy's 12/12 pass again).
+//
+// MM14 fix round 1 (I-3, reviewer finding): the ~640px cause IS now identified, and the two
+// files' `.pc-route` declarations are NOT verbatim-identical -- strategy.css carries a mobile
+// `padding-bottom: calc(var(--pc-space-20) + env(safe-area-inset-bottom))` rule
+// (strategy.css:466-469) that my-money.css never had. my-money.css's own unconditional
+// `.pc-route { padding: var(--pc-route-gutter) }` re-declares the `padding` SHORTHAND, which
+// zeroes any `padding-bottom` a stylesheet loaded before it contributed -- loaded after
+// strategy.css on this shared page, it silently deleted Strategy's own 80px bottom gutter on
+// every one of the fixture's 8 `.pc-route`s (80px x 8 = the missing ~640px, exactly). This was a
+// REAL production gap too, not just a harness artifact: the contract mandates that same rule
+// (contract:845-848) and my-money.css never carried it, so My Money's own mobile surface shipped
+// with no safe-area bottom gutter regardless of any other stylesheet on the page. Both are now
+// fixed -- my-money.css carries its own copy of the rule (see its mobile media query) -- so this
+// lazy-load no longer has a real cascade conflict left to guard against. It stays anyway: it is
+// still the correct match for production's own route-level code-splitting (my-money.css should
+// only ever be on the page when `?fixture=my-money` is), and removing it would leave the harness
+// one accidental future shared-selector collision away from silently repeating this exact class of
+// bug.
 const MyMoneyRoute = lazy(() =>
   import('../src/components/money/MyMoneyRoute.jsx').then((m) => ({ default: m.MyMoneyRoute }))
 )
@@ -952,9 +967,28 @@ async function driveOpenTechnicalDetails(root) {
   root.querySelectorAll('.pc-technical-details summary').forEach((s) => s.click())
 }
 
-function Section({ title, children }) {
+// MM14 fix round 1 (M-3, reviewer finding): `ariaHidden`, harness-only, default false (Strategy's
+// own ten Section-wrapped StrategyRoute mounts are unaffected). MyMoneyFixture below mounts the
+// SAME real MyMoneyRoute four times on one page for four different data states -- unlike Strategy's
+// per-stage mounts (each renders a DIFFERENT, mutually-exclusive stage with its own distinct
+// heading), MyMoneyRoute always renders its full, fixed-id heading structure regardless of state, so
+// four mounts on one page means four literal copies of the same seven ids (`my-money-hero-heading`,
+// `your-position-heading`, etc.) and four `<h1>My money</h1>`s -- every `aria-labelledby` in
+// sections 2-4 silently resolves to section 1's own heading (browsers resolve an id reference to
+// the FIRST matching element in the document), which would give a false-clean result to any future
+// a11y test importing this fixture (none does today; `MyMoneyFixture` is not currently exported,
+// unlike `FoundationFixture`). Marking sections 2-4 `aria-hidden="true"` removes their whole subtree
+// from the accessibility tree (and from testing-library's default `hidden:false` role queries and
+// axe's scan) without touching pixels -- `aria-hidden` has no effect on CSS layout/paint, so this
+// changes zero frozen bytes -- leaving section 1's copy as the one, unambiguous, fully-exposed
+// accessible instance. The raw duplicate `id`/`<h1>` attributes still exist in the DOM (this is a
+// harness page, never shipped), but no accessibility-tree consumer can reach them anymore.
+function Section({ title, children, ariaHidden = false }) {
   return (
-    <section aria-labelledby={`strategy-${title.replace(/\s+/g, '-').toLowerCase()}`}>
+    <section
+      aria-labelledby={`strategy-${title.replace(/\s+/g, '-').toLowerCase()}`}
+      aria-hidden={ariaHidden ? 'true' : undefined}
+    >
       <h2 id={`strategy-${title.replace(/\s+/g, '-').toLowerCase()}`}>{title}</h2>
       {children}
     </section>
@@ -1266,13 +1300,31 @@ const MM_AGENTS_ACTIVE = Object.freeze([mmDepositAgent(), mmBridgeAgent(), mmRec
 // (AgentTeam.jsx's own header comment) -- the recovery agent deliberately carries none, so its row
 // honestly renders "Cap: Unavailable" rather than manufacturing one for an agent whose original
 // deploy event may never have been indexed.
+//
+// MM14 fix round 1 (M-4, reviewer finding): these two caps must stay >= every amount MM_AGENT_
+// DEPOSIT/MM_AGENT_BRIDGE are ever shown holding across ALL four fixture sections (300 and 200 USDC
+// respectively -- mmDepositAgent()/mmBridgeAgent() above). The router cap is a hard on-chain bound;
+// an agent holding 3-4x its own cap (the prior 100/50 USDC values against these same 300/200 USDC
+// balances) is a state production can never emit.
+const MM_DEPOSIT_CAP = '5000000000' // 500 USDC (decimals 7) -- exceeds the 300 USDC ever shown.
+const MM_BRIDGE_CAP = '3000000000' // 300 USDC (decimals 7) -- exceeds the 200 USDC ever shown.
 const MM_DISCOVERY_ACTIVE = Object.freeze({
   status: 'complete',
   agents: [
-    { address: MM_AGENT_DEPOSIT, cap: '1000000000' },
-    { address: MM_AGENT_BRIDGE, cap: '500000000' },
+    { address: MM_AGENT_DEPOSIT, cap: MM_DEPOSIT_CAP },
+    { address: MM_AGENT_BRIDGE, cap: MM_BRIDGE_CAP },
   ],
 })
+// MM14 fix round 1 (M-6, reviewer finding): the partial-discovery section reuses this SAME
+// MM_AGENT_DEPOSIT address, and previously had no `discovery` prop of its own -- AgentTeam fell
+// back to "Cap: Unavailable" there while sections 1/2 showed a real cap for the identical address,
+// two different Caps for one agent inside a single frozen image. Shares MM_DEPOSIT_CAP with
+// MM_DISCOVERY_ACTIVE above so the one address that appears in both never disagrees with itself.
+const MM_DISCOVERY_PARTIAL = Object.freeze({
+  status: 'partial',
+  agents: [{ address: MM_AGENT_DEPOSIT, cap: MM_DEPOSIT_CAP }],
+})
+const MM_DISCOVERY_EMPTY = Object.freeze({ status: 'complete', agents: [] })
 
 const MM_KEEPER_HEALTHY = Object.freeze({
   label: 'healthy',
@@ -1308,14 +1360,22 @@ const MM_MODEL_ACTIVE = buildMyMoneyModel({
   now: MM_NOW,
 })
 
+// MM14 fix round 1 (M-5, reviewer finding): the unattributed key below renders (truncated) as the
+// "Unattributed Base balance (...)" address in PositionList.jsx's idle-row display -- it must be a
+// real 56-char strkey shape like every other identity in this file, not a 20-char placeholder, or
+// the truncation this fixture freezes is not the truncation production ever actually produces.
+const MM_KERNEL_UNCONFIRMED = 'GMMKERNELUNCONFIRMEDABCDEFGHIJKLMNOPQRSTUVWXYZ234567ABCD'
+
 const MM_MODEL_PARTIAL = buildMyMoneyModel({
   owner: MM_OWNER,
-  discovery: { status: 'partial', agents: [{ address: MM_AGENT_DEPOSIT, cap: '1000000000' }] },
+  discovery: MM_DISCOVERY_PARTIAL,
   money: {
     confirmedTotal: { state: 'known', amount: mmAmt(300_0000000n) },
     yield: { state: 'live', apy: 7.4 },
     earned: { state: 'unavailable', amount: null },
-    unattributed: { GMMKERNELUNCONFIRMED: { state: 'unavailable', amount: null, checkedAt: null } },
+    unattributed: {
+      [MM_KERNEL_UNCONFIRMED]: { state: 'unavailable', amount: null, checkedAt: null },
+    },
     custodyBreakdown: { 'stellar-vault': '300000000' },
     agentCount: 1,
     problemAgentCount: 0,
@@ -1331,7 +1391,7 @@ const MM_MODEL_PARTIAL = buildMyMoneyModel({
 
 const MM_MODEL_EMPTY = buildMyMoneyModel({
   owner: MM_OWNER,
-  discovery: { status: 'complete', agents: [] },
+  discovery: MM_DISCOVERY_EMPTY,
   money: {
     confirmedTotal: { state: 'known', amount: mmAmt(0n) },
     yield: { state: 'unavailable', apy: null },
@@ -1366,6 +1426,32 @@ async function driveOpenRecoveryDialog(root) {
   // to an explicit role="dialog" <div> where that's unsupported (jsdom). Real Chromium capture
   // needs the tag-name form; both are checked so this drive works under either engine.
   await waitFor(() => root.querySelector('dialog, [role="dialog"]') != null)
+}
+
+// MM14 fix round 1 (owner decision #41, "money changes crossfade only after a new confirmed
+// revision"): harness-only affordance, exposed nowhere in production. `MoneyFigure`/MoneyHero
+// declare no transition/animation at all today (confirmed by reading Primitives.jsx/my-money.css),
+// so this clause is vacuously true -- decision #41 forbids inventing a production crossfade just to
+// exercise it. What CAN be tested in a real browser without inventing anything: a same-revision
+// re-render (a NEW `model` object reference with byte-identical fields, the exact shape a poll tick
+// that returns unchanged chain state would produce) must never visibly animate the money figure.
+// The hidden button below is the only way to drive that from outside the component tree; the e2e
+// spec's "same-revision re-render" test clicks it.
+function MoneySameRevisionHarness({ model, ...rest }) {
+  const [liveModel, setLiveModel] = useState(model)
+  return (
+    <div data-testid="mm-same-revision-harness">
+      <button
+        type="button"
+        className="pc-visually-hidden"
+        data-testid="mm-force-same-revision-rerender"
+        onClick={() => setLiveModel({ ...liveModel })}
+      >
+        Force same-revision re-render (test only)
+      </button>
+      <MyMoneyRoute model={liveModel} {...rest} />
+    </div>
+  )
 }
 
 function MyMoneyFixture() {
@@ -1412,8 +1498,11 @@ function MyMoneyFixture() {
           </AutopilotSection>
         </Section>
 
-        <Section title="Your money — active, three agents (long addresses, Base child, needs recovery), dialog closed">
-          <MyMoneyRoute
+        <Section
+          ariaHidden
+          title="Your money — active, three agents (long addresses, Base child, needs recovery), dialog closed"
+        >
+          <MoneySameRevisionHarness
             model={MM_MODEL_ACTIVE}
             agents={MM_AGENTS_ACTIVE}
             discovery={MM_DISCOVERY_ACTIVE}
@@ -1428,19 +1517,21 @@ function MyMoneyFixture() {
           />
         </Section>
 
-        <Section title="Your money — partial discovery">
+        <Section ariaHidden title="Your money — partial discovery">
           <MyMoneyRoute
             model={MM_MODEL_PARTIAL}
             agents={[mmDepositAgent()]}
+            discovery={MM_DISCOVERY_PARTIAL}
             onAction={() => {}}
             onRecoverBase={() => {}}
           />
         </Section>
 
-        <Section title="Your money — no position (empty)">
+        <Section ariaHidden title="Your money — no position (empty)">
           <MyMoneyRoute
             model={MM_MODEL_EMPTY}
             agents={[]}
+            discovery={MM_DISCOVERY_EMPTY}
             onAction={() => {}}
             onRecoverBase={() => {}}
           />

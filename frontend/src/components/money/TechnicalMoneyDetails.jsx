@@ -69,8 +69,11 @@ function buildAgentNetworkGraphData(agents) {
 // the shared Primitives.jsx <details> wrapper -- every other TechnicalDetails caller across
 // Foundation/Strategy/this route is unaffected) driving PixiSwarmGraph's own new `paused` prop
 // (stops/starts the SAME ticker, never destroys the scene -- see PixiSwarmGraph.jsx's own note).
-// Starts `false` (matching the graph's own initial value, since `TechnicalDetails` defaults to
-// closed) and does nothing until the user actually toggles the disclosure at least once.
+// MM14 fix round 1 (M-1, reviewer finding): `paused` actually starts `true` -- `open` initializes
+// `false` (matching `TechnicalDetails`' own closed-by-default state) and `!open` is what this hook
+// returns, so the graph is paused from first paint. The mount effect also does NOT wait for a user
+// toggle: it runs immediately and calls `setOpen(details.open)` on mount, reconfirming the same
+// `true` value the initial state already had. The prior wording here claimed the opposite of both.
 // ponytail: this reads the closed-source's own DOM state via a plain `toggle` listener rather than
 // widening the shared <details> primitive's prop surface for one caller.
 function useGraphDisclosurePaused() {

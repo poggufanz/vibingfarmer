@@ -192,6 +192,88 @@ test.describe('Pocket Crew My money', () => {
     ).toEqual([])
   }
 
+  // MM14 fix round 1 (I-2, reviewer finding). Generalizes past the one reported row: for every
+  // `.pc-position-row`/`.pc-crew-row` list, each row's CONTENT column (its 2nd child) must start
+  // roughly at the same x as every sibling row in that same list, whether or not that particular row
+  // also carries a trailing full-width nested list (`.pc-position-row-children`/`.pc-crew-row-
+  // recovery`). A row whose state label auto-places into the wrong column widens column 1 and shifts
+  // every row's content start right -- exactly the needs-recovery defect, caught here by per-element
+  // rect, not by overflow (my-money.css:355-358's old `:last-child` bug produced zero horizontal
+  // overflow and sat above `assertNoVerticalTextTrap`'s 100px width threshold, so neither existing
+  // guard saw it). `TOLERANCE_PX` is deliberately looser than pixel-exact: each `.pc-position-row`/
+  // `.pc-crew-row` is its OWN independent grid (not a shared subgrid), so column 1's `auto` track
+  // width legitimately varies a few px row to row with its own icon/badge's intrinsic width (e.g.
+  // "Base Sepolia" vs "Stellar testnet" -- confirmed live, an 8px legitimate difference on the
+  // fixture's own idle-Base row) -- real content-column starvation from a mis-column companion rule
+  // moves this by 70px (measured `32px` vs `102px` on the reported row), an order of magnitude past
+  // this tolerance. Verified by mutation: temporarily reverted my-money.css's `:nth-child(3)` fix
+  // back to `:last-child`, ran this test, got RED (`170px` measured vs `240px` on sibling rows);
+  // restored the fix, GREEN again.
+  async function assertGridRowContentAligns(page, testInfo) {
+    if (!MOBILE_PROJECTS.includes(testInfo.project.name)) return
+    const TOLERANCE_PX = 20
+    const misaligned = await page.evaluate((tolerance) => {
+      const results = []
+      for (const sel of ['.pc-position-row', '.pc-crew-row']) {
+        const rows = [...document.querySelectorAll(`[data-fixture="my-money"] ${sel}`)]
+        if (rows.length < 2) continue
+        const lefts = rows.map((row) => row.children[1]?.getBoundingClientRect().left ?? null)
+        const reference = lefts.find((l) => l !== null)
+        rows.forEach((row, i) => {
+          if (lefts[i] !== null && Math.abs(lefts[i] - reference) > tolerance) {
+            results.push({ sel, index: i, left: lefts[i], expected: reference })
+          }
+        })
+      }
+      return results
+    }, TOLERANCE_PX)
+    expect(
+      misaligned,
+      `sibling rows' content column must start within ${TOLERANCE_PX}px of each other: ${JSON.stringify(misaligned)}`
+    ).toEqual([])
+  }
+
+  // MM14 fix round 1 (I-3, reviewer finding). The contract-mandated mobile safe-area bottom gutter
+  // (contract:845-848) must be present on My Money's own `.pc-route` -- a real production gap, not
+  // just the harness cascade conflict it was originally misdiagnosed as (see visual/main.jsx's own
+  // corrected comment). Verified by mutation: temporarily removed the new rule from my-money.css,
+  // ran this test, got RED (16px measured); restored it, GREEN again (80px, env(safe-area-inset-
+  // bottom) is 0 in this headless Chromium so the computed value collapses to exactly --pc-space-20).
+  async function assertMobileRouteBottomGutter(page, testInfo) {
+    if (!MOBILE_PROJECTS.includes(testInfo.project.name)) return
+    const paddingBottom = await page.evaluate(() => {
+      const route = document.querySelector('[data-fixture="my-money"] .pc-route')
+      return route ? parseFloat(getComputedStyle(route).paddingBottom) : null
+    })
+    expect(paddingBottom, 'expected [data-fixture="my-money"] .pc-route to exist').not.toBeNull()
+    expect(
+      paddingBottom,
+      `My Money .pc-route must carry the contract-mandated 80px mobile bottom gutter, got ${paddingBottom}px`
+    ).toBeGreaterThanOrEqual(80)
+  }
+
+  // MM14 fix round 1 (I-1, reviewer finding). The recovery dialog panel must be horizontally
+  // centered at >=768px (the mobile bottom-sheet override legitimately left-aligns/full-widths it
+  // below that, so this only runs on WIDE_PROJECTS). Per-element rect: measures the real left/right
+  // gap around the panel rather than trusting a screenshot. Verified by mutation: temporarily added
+  // back `justify-items: stretch` to my-money.css's `.pc-my-money-route .pc-dialog`, ran this test,
+  // got RED (`left=16, right=944`); removed it, GREEN again (`left==right`).
+  async function assertDialogPanelCentered(page, testInfo) {
+    if (!WIDE_PROJECTS.includes(testInfo.project.name)) return
+    const centering = await page.evaluate(() => {
+      const panel = document.querySelector('[data-fixture="my-money"] .pc-dialog-panel')
+      if (!panel) return null
+      const rect = panel.getBoundingClientRect()
+      const viewportWidth = document.documentElement.clientWidth
+      return { left: rect.left, right: viewportWidth - rect.right }
+    })
+    expect(centering, 'expected an open dialog panel to measure').not.toBeNull()
+    expect(
+      Math.abs(centering.left - centering.right),
+      `dialog panel must be horizontally centered -- left gap ${centering.left}, right gap ${centering.right}`
+    ).toBeLessThan(1)
+  }
+
   test('forest theme', async ({ page }, testInfo) => {
     test.skip(
       !MOBILE_PROJECTS.includes(testInfo.project.name),
@@ -204,6 +286,8 @@ test.describe('Pocket Crew My money', () => {
     await page.evaluate(() => document.fonts.ready)
     await assertNoOverflowAtMobileWidth(page, testInfo)
     await assertNoVerticalTextTrap(page, testInfo)
+    await assertGridRowContentAligns(page, testInfo)
+    await assertMobileRouteBottomGutter(page, testInfo)
     await expect(page).toHaveScreenshot('my-money-forest.png', { fullPage: true })
   })
 
@@ -217,6 +301,7 @@ test.describe('Pocket Crew My money', () => {
       () => document.querySelectorAll('[data-fixture-pending="true"]').length === 0
     )
     await page.evaluate(() => document.fonts.ready)
+    await assertDialogPanelCentered(page, testInfo)
     await expect(page).toHaveScreenshot('my-money-day-field.png', { fullPage: true })
   })
 
@@ -313,6 +398,126 @@ test.describe('Pocket Crew My money', () => {
     await summary.click()
     await expect(graph).toHaveAttribute('data-graph-paused', 'true')
     await expect(graph).toHaveAttribute('data-ticker-started', 'false')
+  })
+
+  // Owner decision #41 (first clause): the brief's "Disclosure/dialog transitions use opacity/
+  // transform and become instant under reduced motion" is vacuously true today -- My Money declares
+  // no such transition at all (confirmed by reading Primitives.jsx/my-money.css), and decision #41
+  // forbids inventing a production transition just to exercise the clause. This is the PERMANENT
+  // guard instead: it sweeps every real (non-injected) dialog/disclosure element for a live
+  // transition and, for any it finds, requires that transition to still collapse under reduced
+  // motion. Today the sweep finds nothing and this passes vacuously, honestly -- but it is
+  // mutation-proven to catch the realistic regression this clause exists to prevent: a future
+  // component-scoped `transition-duration: ... !important` declaration, which (unlike the plain
+  // injected transition the positive-control test above proves the global override wins over) has
+  // enough specificity to beat pocket-crew.css's universal `*, *::before, *::after {transition-
+  // duration: 0.01ms !important}` override -- CSS's cascade only falls back to specificity/order
+  // among declarations of equal importance, and a class selector always outranks the universal one.
+  // Verified by mutation: temporarily added `.pc-dialog-panel { transition-duration: 600ms
+  // !important }` via page.addStyleTag, ran this test, got RED (600ms still measured under reduced
+  // motion); removed the injection, GREEN again.
+  test('no dialog/disclosure transition on My Money escapes the reduced-motion override', async ({
+    page,
+  }, testInfo) => {
+    test.skip(testInfo.project.name !== 'desktop-1440', 'measured once, not per viewport')
+    await page.goto('/visual/?fixture=my-money&theme=forest')
+    await page.waitForFunction(
+      () => document.querySelectorAll('[data-fixture-pending="true"]').length === 0
+    )
+
+    const selectors = [
+      '.pc-dialog',
+      '.pc-dialog-panel',
+      '.pc-dialog-actions',
+      '.pc-technical-details',
+      '.pc-technical-details-body',
+      'details',
+      'summary',
+    ]
+    const sweep = (thresholdMs) =>
+      page.evaluate(
+        ({ sels, threshold }) => {
+          const out = []
+          for (const sel of sels) {
+            for (const el of document.querySelectorAll(`[data-fixture="my-money"] ${sel}`)) {
+              const durationMs = parseFloat(getComputedStyle(el).transitionDuration) * 1000
+              if (durationMs > threshold) out.push({ sel, className: el.className, durationMs })
+            }
+          }
+          return out
+        },
+        { sels: selectors, threshold: thresholdMs }
+      )
+
+    const liveUnderNormalMotion = await sweep(0)
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    const stillAnimatingUnderReducedMotion = await sweep(1)
+
+    expect(
+      stillAnimatingUnderReducedMotion,
+      `dialog/disclosure element(s) whose transition does NOT collapse under reduced motion: ` +
+        `${JSON.stringify(stillAnimatingUnderReducedMotion)} (${liveUnderNormalMotion.length} live ` +
+        `transition(s) found under normal motion: ${JSON.stringify(liveUnderNormalMotion)})`
+    ).toEqual([])
+  })
+
+  // Owner decision #41 (second clause): "Money changes crossfade only after a new confirmed
+  // revision" is also vacuously true today -- MoneyFigure declares no transition/animation at all
+  // (Primitives.jsx), so nothing crossfades, ever, let alone on a same-revision re-render. Same
+  // discipline as the guard above: no invented production transition, but a real-browser, positive-
+  // controlled check that a same-revision re-render (a NEW `model` object reference with byte-
+  // identical fields -- the shape a poll tick returning unchanged chain state would produce, driven
+  // via the harness-only `MoneySameRevisionHarness`, visual/main.jsx) never visibly changes the
+  // money figure.
+  test('money values crossfade only after a new confirmed revision, not on a same-revision re-render', async ({
+    page,
+  }, testInfo) => {
+    test.skip(testInfo.project.name !== 'desktop-1440', 'measured once, not per viewport')
+    await page.goto('/visual/?fixture=my-money&theme=forest')
+    await page.waitForFunction(
+      () => document.querySelectorAll('[data-fixture-pending="true"]').length === 0
+    )
+
+    const moneyFigure = page
+      .locator('[data-testid="mm-same-revision-harness"] .pc-dominant--owned .pc-money')
+      .first()
+    await expect(moneyFigure).toBeVisible()
+
+    // Positive control: prove the screenshot-diff technique below can actually detect a visible
+    // change on this exact element before trusting it to report "no change" for real.
+    const pulse = await page.addStyleTag({
+      content:
+        '[data-testid="mm-same-revision-harness"] .pc-money { animation: mm-fake-pulse 300ms infinite; } ' +
+        '@keyframes mm-fake-pulse { from { opacity: 1 } to { opacity: 0.35 } }',
+    })
+    const pulseFrame1 = await moneyFigure.screenshot()
+    await page.waitForTimeout(150)
+    const pulseFrame2 = await moneyFigure.screenshot()
+    expect(
+      pulseFrame1.equals(pulseFrame2),
+      'positive control: the injected pulse must be visibly detected by this screenshot diff'
+    ).toBe(false)
+    await pulse.evaluate((el) => el.remove())
+
+    // Real assertion: a same-revision re-render must not change the money figure at all.
+    const before = await moneyFigure.screenshot()
+    // `.pc-visually-hidden` (deliberate -- this button must never appear in a frozen baseline)
+    // fails Playwright's normal actionability check ("element is outside of the viewport"), since
+    // the clip-rect trick leaves nothing for scrollIntoView to target. `dispatchEvent` fires the
+    // real DOM click React's onClick listens for without requiring visibility/viewport actionability.
+    await page.getByTestId('mm-force-same-revision-rerender').dispatchEvent('click')
+    const justAfter = await moneyFigure.screenshot()
+    await page.waitForTimeout(150)
+    const settledAfter = await moneyFigure.screenshot()
+
+    expect(
+      before.equals(justAfter),
+      'a same-revision re-render must not change the money figure at all'
+    ).toBe(true)
+    expect(
+      justAfter.equals(settledAfter),
+      'no crossfade should still be mid-flight after a same-revision re-render'
+    ).toBe(true)
   })
 })
 

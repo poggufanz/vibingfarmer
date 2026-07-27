@@ -137,16 +137,28 @@
 
 /* Shared dialog and mobile sheet (contract :668-701), verbatim -- SCOPED under `.pc-my-money-route`
  * (fix loop 1, I2/M1 -- see the file header's Task 12 note for the full rationale). `max-width:
- * 480px`, `justify-items: stretch`, and `justify-content: normal` are the M1 addition: the
- * contract's own block declares none of them, so THREE things bled through Foundation's own
- * `.pc-dialog`/`.pc-dialog-panel` even after scoping -- each an undeclared property falling through
- * to whatever OTHER matching rule declares it, no matter that rule's specificity. `max-width: 28rem`
- * capped the intended 480px panel at 448px. And Foundation's `.pc-dialog` is a flex-era rule that
- * still carries `justify-content: center` -- a property `place-items`/`justify-items` never touch --
- * so once `display` becomes `grid` (ours wins there) that LEFTOVER flex property forced the grid's
- * single auto column to size to its own CONTENT instead of stretching to fill, which is what
- * actually produced the 162px shrink-to-fit on sparse content (a residual flex property doing grid
- * damage, not a grid property at all). `justify-content: normal` clears it. */
+ * 480px` and `justify-content: normal` are the M1 addition: the contract's own block declares
+ * neither, so TWO things bled through Foundation's own `.pc-dialog`/`.pc-dialog-panel` even after
+ * scoping -- each an undeclared property falling through to whatever OTHER matching rule declares
+ * it, no matter that rule's specificity. `max-width: 28rem` capped the intended 480px panel at
+ * 448px. And Foundation's `.pc-dialog` is a flex-era rule that still carries `justify-content:
+ * center` -- so once `display` becomes `grid` (ours wins there) that LEFTOVER flex property forced
+ * the grid's single auto column to size to its own CONTENT instead of stretching to fill, which is
+ * what actually produced the 162px shrink-to-fit on sparse content. `justify-content: normal`
+ * clears it -- CSS Grid's own track-sizing algorithm already stretches an `auto` column to the
+ * container's full definite width whenever the relevant content-distribution property is `normal`
+ * or `stretch` (spec: "Stretch auto Tracks"), so this ALONE is what fixed the shrink-to-fit; no
+ * `justify-items` override was ever needed for that bug.
+ *
+ * MM14 fix round 1 (I-1, reviewer finding): a THIRD undeclared-property addition, `justify-items:
+ * stretch`, was carried alongside the two above -- redundant for the shrink-to-fit fix (see previous
+ * paragraph) and actively wrong for centering: `.pc-dialog-panel` below has its own definite width
+ * (`min(100%, 480px)`), and a grid item with a definite size does not actually stretch under
+ * `justify-items: stretch` -- per the CSS Box Alignment spec it falls back to `start`, i.e.
+ * left-aligned against the now-full-width column instead of centered in it. Measured live: panel
+ * `x=16, w=480` inside a 1440px dialog. Removed; `place-items: center` above (unchanged) already
+ * gives `justify-items: center`, and a definite-width item centers correctly in a stretched column
+ * under `center`, unlike `stretch`. */
 /* Fix loop 2 (I2 revised, owner decision #27): the contract's `--pc-z-dialog` (90,
  * pocket-crew.css:232) assumes style.css's legacy overlays are already gone. They are not --
  * `.modal-backdrop` (style.css:1953) and `.skill-drawer` (style.css:4094) are both `z-index: 100`,
@@ -171,7 +183,6 @@
   z-index: var(--pc-z-dialog);
   display: grid;
   place-items: center;
-  justify-items: stretch;
   justify-content: normal;
   width: 100%;
   height: 100%;
@@ -317,6 +328,22 @@
 /* Mobile. Asymmetry collapses to one column and all actions remain reachable (contract :834-914,
  * kept whole). */
 @media (max-width: 767px) {
+  /* MM14 fix round 1 (I-3, reviewer finding): missing from this file until now. This route's own
+   * unconditional `.pc-route { padding: var(--pc-route-gutter) }` (top of file, kept whole) resets
+   * the `padding` SHORTHAND, which zeroes out any `padding-bottom` a later-loaded stylesheet tried
+   * to contribute -- strategy.css carries this exact rule for itself, so whenever both files loaded
+   * on the same page (the visual harness, before its own lazy-load fix) my-money.css's copy, being
+   * a straight shorthand re-declaration, silently deleted Strategy's own 80px bottom gutter on every
+   * `.pc-route` on the page (80px x 8 Strategy routes = the "~640px" harness conflict a prior task
+   * chased and never identified). That harness interaction is now fully avoided by the lazy-load in
+   * visual/main.jsx, but it was only ever a symptom: this rule is contract-mandated
+   * (contract:845-848) and My Money's OWN mobile surface was missing its safe-area bottom gutter
+   * regardless of any other stylesheet on the page. Measured live at 320 before this fix: My Money
+   * `.pc-route` padding-bottom 16px vs. Strategy's 80px. Verbatim port, not a scoped addition. */
+  .pc-route {
+    padding-bottom: calc(var(--pc-space-20) + env(safe-area-inset-bottom));
+  }
+
   .pc-route-header,
   .pc-strategy-layout,
   .pc-protect-boundary,
@@ -352,8 +379,21 @@
     grid-template-columns: auto minmax(0, 1fr);
   }
 
-  .pc-position-row > :last-child,
-  .pc-crew-row > :last-child,
+  /* MM14 fix round 1 (I-2, reviewer finding): `.pc-position-row`/`.pc-crew-row` each optionally
+   * render a FOURTH child -- `.pc-position-row-children`/`.pc-crew-row-recovery` (this route's own
+   * addition, above) -- after the state label this rule means to target. `:last-child` is written
+   * for the plain three-child shape (icon, content, label) and is blind to that fourth child: on a
+   * row that has one, `:last-child` matches the nested full-width list instead, forcing it into
+   * column 2 (undoing its own `grid-column: 1 / -1` rule above) while the real label -- now
+   * `:nth-child(3)`, no longer anyone's last child -- gets no explicit placement at all and
+   * auto-flows into column 1, widening that column to fit the label text. Measured on the
+   * needs-recovery row: content column shrank from the sibling rows' `240px` to `170px` (its track
+   * indented 70px past every other row's). Retargeted the label explicitly by position (always the
+   * 3rd child, with or without a trailing list) instead of by `:last-child` -- `.pc-agent-lane`
+   * keeps `:last-child` since it never grows a fourth child on this route (inert markup, kept whole
+   * per the file header's convention). */
+  .pc-position-row > :nth-child(3),
+  .pc-crew-row > :nth-child(3),
   .pc-agent-lane > :last-child {
     grid-column: 2;
     justify-self: start;
