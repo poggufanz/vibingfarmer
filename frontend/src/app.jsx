@@ -2048,15 +2048,19 @@ const App = () => {
   // is a thin wrapper, not a second copy, so a controller-level test on guardedMoneyFetch IS a test
   // of this call site.
   async function refreshMoney(owner) {
-    // REFRESH-MONEY-WIRING:START -- MM13 M5, fix round 1: pinned by a source-scan test
-    // (app.money.test.jsx) asserting this line passes the LIVE ref objects, not dead literals.
-    // moneyFetchArgs itself (exported above) is unit-tested for identity-preservation directly;
-    // this one line is what a unit test cannot reach without rendering the whole App, so it stays
-    // covered by a comment-stripped scan with a negative assertion (an inline `{ current: ... }`
-    // anywhere in this line fails it, regardless of exact wording).
+    // REFRESH-MONEY-WIRING:START -- MM13 M5, fix round 2: pinned by a source-scan test
+    // (app.money.test.jsx) asserting this call passes the LIVE ref objects, not dead literals, and
+    // that nothing after the spread overrides them. moneyFetchArgs itself (exported above) is
+    // unit-tested for identity-preservation directly; the marker spans the WHOLE guardedMoneyFetch
+    // call, through its closing `})`, not just the spread line -- fix round 1's narrower block
+    // (spread line only) left `currentOwnerRef: { current: owner }, revisionRef: { current: null }`
+    // keys ADDED AFTER the spread completely unreachable by construction (a later key wins over an
+    // earlier spread; no-dupe-keys does not flag spread-then-key), so that exact mutation passed
+    // 39/39 green. Comments are stripped before matching; the negative assertion (an inline
+    // `{ current: ... }` literal anywhere in this whole block) now actually covers the space a
+    // plausible "add an override" refactor would use.
     await guardedMoneyFetch({
       ...moneyFetchArgs(owner, { currentOwnerRef: realAddressRef, revisionRef: moneyRevisionRef }),
-      // REFRESH-MONEY-WIRING:END
       onCommit: (snapshot) => {
         const protection = moneyProtectionSnapshot()
         const nextCache = { money: snapshot.money, discovery: snapshot.discovery, protection }
@@ -2076,6 +2080,7 @@ const App = () => {
         )
       },
     })
+    // REFRESH-MONEY-WIRING:END
   }
 
   // Wallet change (connect/switch/disconnect): render the cache immediately, marked stale by
