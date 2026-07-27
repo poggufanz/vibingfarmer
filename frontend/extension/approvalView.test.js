@@ -1159,8 +1159,13 @@ async function measureConsequenceLeafContrasts(html) {
       }
       const box = document.querySelector('.pc-wallet-consequence')
       if (!box) return []
+      // Round 3: `el.children.length === 0` (a "leaf" element) dropped the ceiling <td> itself --
+      // it wraps a `<span class="pc-technical">` child, so it isn't childless even though it has
+      // its own direct text ("0.5  (not a deposit amount)"). Check for an own text NODE instead of
+      // zero child ELEMENTS: any element with a direct, non-whitespace text node is a place actual
+      // rendered text can be mis-colored, whether or not it also has element children.
       return Array.from(box.querySelectorAll('*'))
-        .filter((el) => el.children.length === 0 && el.textContent.trim())
+        .filter((el) => [...el.childNodes].some((n) => n.nodeType === 3 && n.data.trim()))
         .map((el) => ({
           selector: describe(el),
           text: el.textContent.trim().slice(0, 60),
@@ -1232,6 +1237,42 @@ describe('renderConsequence — real-Chromium WCAG AA contrast, every text leaf 
       failing.length,
       'expected the pre-fix regression to reproduce low contrast'
     ).toBeGreaterThan(0)
+  }, 60000)
+
+  it('mutation-proof: reverting ONLY the td color (leaving td .pc-technical fixed) is caught, naming the td (round 3 -- the predicate must cover non-leaf text holders, not just childless elements)', async () => {
+    const html = renderStateHtml(
+      { method: 'signTransaction', params: { xdr: 'X' }, origin: ORIGIN },
+      { address: 'CACCT', summary: grantSummary(singleTokenGrant) }
+    )
+    // A partial C1 regression: only the td's OWN color reverts to --pc-ink (rice-on-rice); the
+    // nested `.pc-technical` span keeps its fix. `el.children.length === 0` would never see this --
+    // the ceiling <td> wraps a `.pc-technical` span, so it is never childless even though it has
+    // its own direct text ("0.5 " / " (not a deposit amount)"). Round 1's own mutation-proof above
+    // only stayed honest by accident: it strips the COMBINED `td, td .pc-technical` selector, so
+    // the span goes white too and the test reds via the SPAN, never via the td's own color.
+    const mutated = html.replace(
+      '.pc-wallet-consequence .pc-approval-table td,\n.pc-wallet-consequence .pc-approval-table td .pc-technical {\n  color: var(--pc-owned-ink);\n}',
+      '.pc-wallet-consequence .pc-approval-table td {\n  color: var(--pc-ink);\n}\n.pc-wallet-consequence .pc-approval-table td .pc-technical {\n  color: var(--pc-owned-ink);\n}'
+    )
+    expect(mutated).not.toBe(html) // sanity: the swap actually matched the shipped rule
+    const leaves = await measureConsequenceLeafContrasts(mutated)
+    const td = leaves.find((leaf) => leaf.selector === 'td')
+    expect(
+      td,
+      'the widened predicate must include the <td> itself, not only its .pc-technical child'
+    ).toBeTruthy()
+    const ratio = contrastRatio(parseRgb(td.color), parseRgb(td.background))
+    expect(
+      ratio,
+      `td contrast ${ratio.toFixed(2)}:1 (color ${td.color} on ${td.background})`
+    ).toBeLessThan(AA_NORMAL_TEXT) // RED, naming the td
+    // The span sibling must stay GREEN in this scenario -- proving the failure is attributable to
+    // the td specifically, not a side effect of the span also breaking.
+    const span = leaves.find((leaf) => leaf.selector === 'span.pc-technical')
+    expect(span).toBeTruthy()
+    expect(contrastRatio(parseRgb(span.color), parseRgb(span.background))).toBeGreaterThanOrEqual(
+      AA_NORMAL_TEXT
+    )
   }, 60000)
 
   it('positive control: restoring the pre-fix --pc-danger color on .pc-field-error fails, AND names the offending element (round 2, I1 regression)', async () => {
