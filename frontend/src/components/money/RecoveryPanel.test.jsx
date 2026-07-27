@@ -10,6 +10,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { axe } from 'vitest-axe'
 import * as axeMatchers from 'vitest-axe/matchers'
 import { RecoveryPanel } from './RecoveryPanel.jsx'
+import { Dialog } from '../pocket/Primitives.jsx'
 
 expect.extend(axeMatchers)
 afterEach(cleanup)
@@ -243,15 +244,20 @@ const GEIST_FONT_HREF =
   'file://' + path.resolve(here, '../../../node_modules/@fontsource-variable/geist/index.css')
 
 function buildLayoutHarnessHtml(bodyHtml) {
-  // Fix loop 1 (I2): the shipped `.pc-dialog*` rules are scoped under `.pc-my-money-route` --
-  // wrapping the harness body the same way the real MyMoneyRoute.jsx tree will is what makes this
-  // guard measure the ACTUAL scoped geometry rather than accidentally falling back to Foundation's
-  // unscoped `.pc-dialog` approximation.
+  // Final-review MUST-FIX 2: this harness used to inject `<div class="pc-my-money-route">` around
+  // the body, with a comment claiming it matched "the real MyMoneyRoute.jsx tree". It never did --
+  // app.jsx renders WithdrawDialog/StopAccessDialog/RecoveryPanel as SIBLINGS of <MyMoneyRoute>,
+  // not descendants, and Primitives.jsx's Dialog uses no portal, so no ancestor of a money dialog
+  // ever carried that class in production. The wrapper manufactured a DOM the app never builds and
+  // the scoped CSS it activated was dead everywhere else. The scope now travels ON the dialog
+  // itself (`pc-money-dialog`, applied by the money dialog components), so the body inserted below
+  // is byte-for-byte what React rendered -- nothing about the shipped cascade is supplied by this
+  // file. Remove the class in any component below and every geometry assertion here goes RED.
   return `<!doctype html><html><head><meta charset="utf-8">
 <link rel="stylesheet" href="${GEIST_FONT_HREF}">
 <style>${LEGACY_STYLESHEET}</style>
 <style>${REAL_STYLESHEET}</style>
-</head><body><div class="pc-my-money-route">${bodyHtml}</div></body></html>`
+</head><body>${bodyHtml}</body></html>`
 }
 
 const CHROMIUM_CANDIDATES = [
@@ -398,6 +404,82 @@ describe('RecoveryPanel — 320px footer-control containment guard, all three su
         }
         await page.close()
       }
+    } finally {
+      await browser.close()
+    }
+  }, 60000)
+})
+
+// ---------------------------------------------------------------------------------------------
+// Final review MUST-FIX 1: owner decision #26's dialog geometry, measured on the tree app.jsx
+// really renders, in both directions.
+//
+// #26 ported the contract's dialog block (contract :668-701) into my-money.css so the money
+// dialogs get 480px / --pc-overlay / --pc-radius-dominant / --pc-space-8 instead of Foundation's
+// 448px approximation, and #27 raised their layer above style.css's legacy overlays. Both were
+// keyed off `.pc-my-money-route`, a class only MyMoneyRoute's own root div carries -- so both
+// landed only on AgentTeam's in-route recovery dialog and MISSED all three route-level dialogs.
+// The scope is now the dialog's own `pc-money-dialog` class, so it travels with the component
+// wherever app.jsx mounts it.
+//
+// Both directions are asserted here on purpose: a fix that delivered 480px by widening
+// Foundation's own `.pc-dialog-panel` would pass the first half and fail the second. The non-money
+// control is a bare Foundation Dialog rendered from the same Primitives.jsx module the money
+// dialogs use, under the same two stylesheets, so the only difference between the two rows below
+// is the class the component itself renders.
+// ---------------------------------------------------------------------------------------------
+describe('money dialog geometry — the real (unwrapped) tree, both directions', () => {
+  it('a money dialog gets the contract 480px/32px/1000 geometry; a non-money Foundation dialog keeps 448px/24px', async () => {
+    const money = render(
+      <RecoveryPanel
+        open
+        onClose={() => {}}
+        submission={{ outcome: 'unknown', message: 'Relay lost the submission.', hash: 'TXGEO' }}
+      />
+    )
+    const moneyHtml = money.container.innerHTML
+    money.unmount()
+
+    const foundation = render(
+      <Dialog open title="Not a money dialog" onClose={() => {}}>
+        <p>Foundation control.</p>
+      </Dialog>
+    )
+    const foundationHtml = foundation.container.innerHTML
+    foundation.unmount()
+
+    const browser = await launchRealChromium()
+    try {
+      const measure = async (html) => {
+        const page = await browser.newPage()
+        await page.setViewportSize({ width: 1440, height: 900 })
+        await page.setContent(buildLayoutHarnessHtml(html))
+        const result = await page.evaluate(() => {
+          const overlay = document.querySelector('.pc-dialog')
+          const panel = document.querySelector('.pc-dialog-panel')
+          const panelStyle = getComputedStyle(panel)
+          return {
+            panelWidth: panel.getBoundingClientRect().width,
+            panelPaddingTop: parseFloat(panelStyle.paddingTop),
+            overlayZIndex: getComputedStyle(overlay).zIndex,
+          }
+        })
+        await page.close()
+        return result
+      }
+
+      const moneyGeometry = await measure(moneyHtml)
+      const foundationGeometry = await measure(foundationHtml)
+
+      expect(moneyGeometry.panelWidth, 'money dialog panel width').toBe(480)
+      expect(moneyGeometry.panelPaddingTop, 'money dialog panel padding (--pc-space-8)').toBe(32)
+      // --pc-z-dialog resolved on the dialog element itself (decision #27). Falls back to the
+      // contract's own :root value of 90 -- below style.css's legacy overlays -- if the scope is
+      // not actually reaching this element.
+      expect(moneyGeometry.overlayZIndex, 'money dialog overlay z-index').toBe('1000')
+
+      expect(foundationGeometry.panelWidth, 'non-money dialog panel width (28rem)').toBe(448)
+      expect(foundationGeometry.panelPaddingTop, 'non-money dialog panel padding (1.5rem)').toBe(24)
     } finally {
       await browser.close()
     }

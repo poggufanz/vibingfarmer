@@ -208,6 +208,11 @@ export function AgentTeam({
       </div>
 
       <Dialog
+        // This dialog IS rendered inside MyMoneyRoute, so it was the only one the old
+        // `.pc-my-money-route` descendant scope ever reached. It carries the class explicitly now
+        // so all four money dialogs get their geometry the same way, from the same rule -- see
+        // my-money.css's `.pc-money-dialog` comment.
+        className="pc-money-dialog"
         open={Boolean(recoveryTarget)}
         title="Recover this agent's funds"
         description="This agent's scope is revoked or expired, so it can no longer act automatically."

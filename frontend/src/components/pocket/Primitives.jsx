@@ -233,6 +233,7 @@ export function Dialog({
   actions,
   mode = 'auto',
   initialFocusRef,
+  className = '',
 }) {
   const dialogRef = useRef(null)
   const titleId = useId()
@@ -281,7 +282,12 @@ export function Dialog({
       // plain <div>/<dialog> isn't focusable at all, `.focus()` is a silent no-op, and a
       // keyboard user is left parked on whatever was focused before the dialog opened.
       tabIndex={-1}
-      className={`pc-dialog pc-dialog--${mode}`}
+      // `className` is how a route carries its own dialog scope onto the dialog element itself.
+      // It has to live here rather than on an ancestor: app.jsx mounts a route's dialogs as
+      // SIBLINGS of the route (see /agent), and this component uses no portal, so a descendant
+      // selector keyed off a route wrapper silently matches nothing for exactly the dialogs that
+      // are mounted at route level. Foundation's own geometry is unchanged when it is omitted.
+      className={`pc-dialog pc-dialog--${mode}${className ? ` ${className}` : ''}`}
       aria-modal="true"
       aria-labelledby={titleId}
       aria-describedby={description ? descriptionId : undefined}

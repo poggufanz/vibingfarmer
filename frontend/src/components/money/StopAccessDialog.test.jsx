@@ -256,15 +256,18 @@ const GEIST_FONT_HREF =
   'file://' + path.resolve(here, '../../../node_modules/@fontsource-variable/geist/index.css')
 
 function buildLayoutHarnessHtml(bodyHtml) {
-  // Fix loop 1 (I2): the shipped `.pc-dialog*` rules are scoped under `.pc-my-money-route` --
-  // wrapping the harness body the same way the real MyMoneyRoute.jsx tree will is what makes this
-  // guard measure the ACTUAL scoped geometry rather than accidentally falling back to Foundation's
-  // unscoped `.pc-dialog` approximation.
+  // Final-review MUST-FIX 2: this harness used to inject `<div class="pc-my-money-route">` around
+  // the body, claiming it matched the real MyMoneyRoute.jsx tree. app.jsx renders this dialog as a
+  // SIBLING of <MyMoneyRoute> and Primitives.jsx's Dialog uses no portal, so no such ancestor ever
+  // existed in production and the wrapper activated CSS that was dead on the shipped surface --
+  // including the elementFromPoint proof below, which was measuring a z-index the real dialog
+  // never had. The scope now travels on the dialog's own `pc-money-dialog` class, so the body
+  // below is exactly what React rendered and nothing about the cascade is supplied by this file.
   return `<!doctype html><html><head><meta charset="utf-8">
 <link rel="stylesheet" href="${GEIST_FONT_HREF}">
 <style>${LEGACY_STYLESHEET}</style>
 <style>${REAL_STYLESHEET}</style>
-</head><body><div class="pc-my-money-route">${bodyHtml}</div></body></html>`
+</head><body>${bodyHtml}</body></html>`
 }
 
 const CHROMIUM_CANDIDATES = [

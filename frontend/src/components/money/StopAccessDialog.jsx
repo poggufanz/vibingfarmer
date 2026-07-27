@@ -47,6 +47,9 @@ export function StopAccessDialog({
 
   return (
     <Dialog
+      // See WithdrawDialog.jsx / my-money.css: the money dialog scope travels on this class
+      // because app.jsx mounts this dialog beside <MyMoneyRoute>, not inside it.
+      className="pc-money-dialog"
       open={open}
       title="Stop access for this agent"
       description="This stops the agent from acting in the future. It never returns money that is already in the vault or agent."

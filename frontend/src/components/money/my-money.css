@@ -30,14 +30,16 @@
  *     verbatim port of the contract's own dialog block (contract :668-701 + the standalone mobile
  *     override :896-907) -- this task's dialogs (WithdrawDialog/StopAccessDialog/RecoveryPanel) are
  *     the first callers that need the exact contract geometry (480px panel, --pc-z-dialog,
- *     --pc-overlay, --pc-radius-dominant padding), so it is ported here, verbatim, under the
- *     `.pc-my-money-route` wrapper MyMoneyRoute.jsx already renders. Fix loop 1 found the original,
- *     UNSCOPED port re-layered every dialog in the app once this file had loaded, including
- *     dropping the overlay z-index from 1000 to 90 -- BELOW two legacy overlays (style.css's
- *     `.modal-backdrop`/`.skill-drawer` at z-index 100), a real functional regression, not a
- *     cosmetic one. Scoping under `.pc-my-money-route` (two classes vs Foundation's one) makes this
- *     rule always win within the money route regardless of CSS source order, and leaves every
- *     dialog outside it on Foundation's own approximation, untouched. Moving the verbatim port into
+ *     --pc-overlay, --pc-radius-dominant padding), so it is ported here, verbatim, scoped to the
+ *     `pc-money-dialog` class those dialog components render on the dialog element itself. Fix
+ *     loop 1 found the original, UNSCOPED port re-layered every dialog in the app once this file
+ *     had loaded, including dropping the overlay z-index from 1000 to 90 -- BELOW two legacy
+ *     overlays (style.css's `.modal-backdrop`/`.skill-drawer` at z-index 100), a real functional
+ *     regression, not a cosmetic one. Scoping (two classes vs Foundation's one) makes this rule
+ *     always win on a money dialog regardless of CSS source order, and leaves every dialog outside
+ *     this route on Foundation's own approximation, untouched. The scope was `.pc-my-money-route
+ *     .pc-dialog*` until the final review found that descendant form matched only ONE of the four
+ *     money dialogs -- see the block's own comment below. Moving the verbatim port into
  *     pocket-crew.css itself, replacing Foundation's approximation app-wide, is the more principled
  *     end state -- deliberately deferred to its own task with its own before/after review rather
  *     than shipped as a side effect of this fix.
@@ -135,7 +137,7 @@
   opacity: 0.58;
 }
 
-/* Shared dialog and mobile sheet (contract :668-701), verbatim -- SCOPED under `.pc-my-money-route`
+/* Shared dialog and mobile sheet (contract :668-701), verbatim -- SCOPED to `.pc-money-dialog`
  * (fix loop 1, I2/M1 -- see the file header's Task 12 note for the full rationale). `max-width:
  * 480px` and `justify-content: normal` are the M1 addition: the contract's own block declares
  * neither, so TWO things bled through Foundation's own `.pc-dialog`/`.pc-dialog-panel` even after
@@ -170,14 +172,33 @@
  * -- not its definition in pocket-crew.css, which stays 90, and not any Foundation dialog outside
  * this route -- to 1000 (the same z-index Foundation's own pre-port `.pc-dialog` approximation
  * already used, safely above all three legacy values) for every element inside `.pc-my-money-route`.
- * REVERT this block to nothing (falling back to the contract's own 90) once style.css's
+ * REVERT this declaration to nothing (falling back to the contract's own 90) once style.css's
  * `.modal-backdrop`/`.skill-drawer`/`.skill-drawer-overlay` are deleted -- that deletion is the
- * stated precondition for retiring this deviation, not a style preference. */
-.pc-my-money-route {
-  --pc-z-dialog: 1000;
-}
+ * stated precondition for retiring this deviation, not a style preference. It is declared on the
+ * dialog element itself below rather than on `.pc-my-money-route`: a custom property inherits to
+ * DESCENDANTS, and three of the four money dialogs are not descendants of the route (see the
+ * `.pc-money-dialog` note below), so the route-level declaration reached only one of them. */
 
-.pc-my-money-route .pc-dialog {
+/* Final review MUST-FIX 1. These rules were scoped `.pc-my-money-route .pc-dialog*` -- which reads
+ * like "the dialogs on the money route" but means "dialogs INSIDE MyMoneyRoute's own <div>".
+ * app.jsx's /agent route renders <WithdrawDialog>/<StopAccessDialog>/<RecoveryPanel> as SIBLINGS
+ * of <MyMoneyRoute> and Primitives.jsx's Dialog uses no portal, so the descendant scope reached
+ * only AgentTeam.jsx's in-route recovery dialog; the other three silently fell back to
+ * Foundation's 448px approximation, taking decisions #26 and #27 with them (measured: panel 448px
+ * not 480px, and at 320px the mobile stacking rule below was dead too, pushing the footer's first
+ * button 42.65px outside the panel).
+ *
+ * The scope is now a class the dialog components render on the dialog element itself
+ * (`pc-money-dialog`, see WithdrawDialog/StopAccessDialog/RecoveryPanel/AgentTeam), so it travels
+ * with the component wherever it is mounted and cannot be broken by moving markup. Specificity is
+ * unchanged at (0,2,0) -- still order-independently above Foundation's (0,1,0) `.pc-dialog*`, and
+ * still incapable of matching a dialog outside this route, which is exactly what decision #26
+ * bought by scoping in the first place. Consolidating the geometry into pocket-crew.css and
+ * dropping this block remains the more principled end state (#26's own carry) and is still a
+ * Foundation-wide change deserving its own before/after review; until then Foundation's
+ * `max-width: 28rem` keeps owning every non-money dialog and this block owns the money ones. */
+.pc-dialog.pc-money-dialog {
+  --pc-z-dialog: 1000;
   position: fixed;
   inset: 0;
   z-index: var(--pc-z-dialog);
@@ -192,7 +213,7 @@
   background: var(--pc-overlay);
 }
 
-.pc-my-money-route .pc-dialog-panel {
+.pc-money-dialog .pc-dialog-panel {
   width: min(100%, 480px);
   max-width: 480px;
   max-height: min(760px, calc(100dvh - 32px));
@@ -205,7 +226,7 @@
   box-shadow: var(--pc-shadow-dominant);
 }
 
-.pc-my-money-route .pc-dialog-actions {
+.pc-money-dialog .pc-dialog-actions {
   display: flex;
   justify-content: flex-end;
   gap: var(--pc-space-3);
@@ -334,8 +355,12 @@
    * to contribute -- strategy.css carries this exact rule for itself, so whenever both files loaded
    * on the same page (the visual harness, before its own lazy-load fix) my-money.css's copy, being
    * a straight shorthand re-declaration, silently deleted Strategy's own 80px bottom gutter on every
-   * `.pc-route` on the page (80px x 8 Strategy routes = the "~640px" harness conflict a prior task
-   * chased and never identified). That harness interaction is now fully avoided by the lazy-load in
+   * `.pc-route` on the page. That is the "~640px" harness conflict a prior task chased and never
+   * identified, and the arithmetic is 10 Strategy `.pc-route`s x 64px, not "80px x 8": the Strategy
+   * fixture renders TEN routes (counted, not assumed -- visual/main.jsx:100), and each loses 64px,
+   * not the full 80, because the shorthand reset returns that one side to the base 16px gutter
+   * (80 - 16 = 64). 10 x 64 = 640, exactly. Same correction visual/main.jsx:101-108 already carries;
+   * this was the last stale copy. That harness interaction is now fully avoided by the lazy-load in
    * visual/main.jsx, but it was only ever a symptom: this rule is contract-mandated
    * (contract:845-848) and My Money's OWN mobile surface was missing its safe-area bottom gutter
    * regardless of any other stylesheet on the page. Measured live at 320 before this fix: My Money
@@ -357,13 +382,16 @@
     position: static;
   }
 
-  /* Fix loop 2 (M7): scoped to `.pc-my-money-route .pc-dialog-actions` (specificity 0,2,0) so this
-   * mobile stacking rule matches the base rule above it (also 0,2,0) and wins by source order --
-   * the previous bare `.pc-dialog-actions` (0,1,0) lost outright to the scoped base rule regardless
-   * of the media query, so mobile stacking was dead inside this route and `justify-content:
-   * flex-end` pushed the footer's first button off the visible edge at 320px. */
+  /* Fix loop 2 (M7): scoped to the money dialog (specificity 0,2,0) so this mobile stacking rule
+   * matches the base rule above it (also 0,2,0) and wins by source order -- the previous bare
+   * `.pc-dialog-actions` (0,1,0) lost outright to the scoped base rule regardless of the media
+   * query, so mobile stacking was dead inside this route and `justify-content: flex-end` pushed
+   * the footer's first button off the visible edge at 320px. (Final review MUST-FIX 1: rescoped
+   * from `.pc-my-money-route .pc-dialog-actions` to the dialog's own class -- the descendant form
+   * left this dead on the three route-level dialogs, which is a live 320px defect, not a cosmetic
+   * one: measured -42.65px on RecoveryPanel's "Close".) */
   .pc-money-actions,
-  .pc-my-money-route .pc-dialog-actions {
+  .pc-money-dialog .pc-dialog-actions {
     display: grid;
     grid-template-columns: 1fr;
   }
@@ -405,12 +433,12 @@
    * in effect since `.pc-money-actions` only ever exists on this route) and from pocket-crew.css's
    * own opt-in `.pc-dialog--auto`/`.pc-dialog--sheet` modifiers (which stay in effect where they're
    * more specific outside this route). */
-  .pc-my-money-route .pc-dialog {
+  .pc-dialog.pc-money-dialog {
     align-items: end;
     padding: 0;
   }
 
-  .pc-my-money-route .pc-dialog-panel {
+  .pc-money-dialog .pc-dialog-panel {
     width: 100%;
     max-height: 88dvh;
     border-radius: var(--pc-radius-dominant) var(--pc-radius-dominant) 0 0;

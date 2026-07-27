@@ -105,6 +105,9 @@ export function RecoveryPanel({
 
   return (
     <Dialog
+      // See WithdrawDialog.jsx / my-money.css: the money dialog scope travels on this class
+      // because app.jsx mounts this dialog beside <MyMoneyRoute>, not inside it.
+      className="pc-money-dialog"
       open={open}
       title="Recovery status"
       description="Where your money actually is right now, and what -- if anything -- you can do about it."

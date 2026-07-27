@@ -199,6 +199,10 @@ export function WithdrawDialog({
 
   return (
     <Dialog
+      // my-money.css's dialog block (owner decisions #26/#27) is keyed off this class, NOT off a
+      // route ancestor -- app.jsx renders this dialog as a sibling of <MyMoneyRoute>, so an
+      // ancestor scope never reaches it. See my-money.css's own `.pc-money-dialog` comment.
+      className="pc-money-dialog"
       open={open}
       title="Withdraw"
       description="Review exactly what this withdraws before you confirm -- nothing moves until you do."
