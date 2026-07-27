@@ -450,34 +450,27 @@ describe('my-money.css — self-retiring --pc-z-dialog:1000 override guard (My M
     expect(anyLegacySelectorPresent([commentOnly])).toBe(false)
   })
 
-  // Positive control, all three cells of the reviewer's mutation matrix that do not require
-  // editing real files: (1) override retired while a legacy selector is synthetically stripped
-  // alongside it -- reads TRUE===TRUE, the correct end state, green (this is the bug fixed by M1:
-  // the old guard went red here). (2) legacy selectors synthetically stripped, override left real
-  // (still present) -- mismatch, would be red. (3) override synthetically retired, legacy
-  // selectors left real (still present) -- mismatch, would be red. `.replaceAll` order matters:
-  // `.skill-drawer-overlay` contains `.skill-drawer` as a substring, so the longer selector is
-  // stripped first to avoid a partial, corrupting match.
+  // Fix round 2 (reviewer M1 residue): all four sides of the three cells below are now LITERAL,
+  // synthetic strings -- none reads MY_MONEY_CSS/LEGACY_STYLESHEET/CONSOLE_CSS. The round-1 version
+  // mixed a synthetic side against a REAL one (e.g. `overridePresent(MY_MONEY_CSS)` -- still `true`
+  // today) -- correct only because today's real files happen to disagree with the synthetic side.
+  // The moment the real files actually retire together, "mismatch" stops being a mismatch and cell
+  // 2/1's `.not.toBe` assertions would flip to comparing two `false`s and fail. Fully synthetic on
+  // both sides means these three cells hold regardless of what the real files ever do.
   it('positive control: the equality check discriminates in both mismatch directions, and is green for the correct retired end state', () => {
-    const legacyRetired = [LEGACY_STYLESHEET, CONSOLE_CSS].map((text) =>
-      text
-        .replaceAll('.skill-drawer-overlay', '.dead-drawer-overlay-x')
-        .replaceAll('.modal-backdrop', '.dead-backdrop-x')
-        .replaceAll('.skill-drawer', '.dead-drawer-x')
-    )
-    const overrideRetired = MY_MONEY_CSS.replace('--pc-z-dialog: 1000', '/* retired */')
-    expect(anyLegacySelectorPresent(legacyRetired)).toBe(false)
-    expect(overridePresent(overrideRetired)).toBe(false)
+    const LEGACY_PRESENT = ['.modal-backdrop { z-index: 100; }']
+    const LEGACY_RETIRED = ['/* .modal-backdrop retired */']
+    const OVERRIDE_PRESENT = '.pc-my-money-route { --pc-z-dialog: 1000; }'
+    const OVERRIDE_RETIRED = '/* --pc-z-dialog override retired */'
 
     // Cell 3 -- the intended end state: both retired together reads green (M1's fix).
-    expect(overridePresent(overrideRetired)).toBe(anyLegacySelectorPresent(legacyRetired))
+    expect(overridePresent(OVERRIDE_RETIRED)).toBe(anyLegacySelectorPresent(LEGACY_RETIRED))
+    expect(overridePresent(OVERRIDE_RETIRED)).toBe(false)
 
-    // Cell 2 -- legacy retired but override left in place: mismatch, would be red.
-    expect(overridePresent(MY_MONEY_CSS)).not.toBe(anyLegacySelectorPresent(legacyRetired))
+    // Cell 2 -- legacy retired but override left in place: mismatch, red.
+    expect(overridePresent(OVERRIDE_PRESENT)).not.toBe(anyLegacySelectorPresent(LEGACY_RETIRED))
 
-    // Cell 1 -- override retired but legacy overlays left in place: mismatch, would be red.
-    expect(overridePresent(overrideRetired)).not.toBe(
-      anyLegacySelectorPresent([LEGACY_STYLESHEET, CONSOLE_CSS])
-    )
+    // Cell 1 -- override retired but legacy overlays left in place: mismatch, red.
+    expect(overridePresent(OVERRIDE_RETIRED)).not.toBe(anyLegacySelectorPresent(LEGACY_PRESENT))
   })
 })
