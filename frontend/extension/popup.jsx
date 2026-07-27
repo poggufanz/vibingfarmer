@@ -59,8 +59,15 @@ const ACTIVE_VAULT_PROTOCOL = 'blend-usdc'
 
 // Ceremony runs in the extension TAB — Face ID closes the popup.
 // Post SIGN_REQUEST to the background SW; it opens ceremony.html in a new tab.
+// requestedAt (Fix round 1, I3): the real moment this click fired, threaded through
+// background.js's SIGN_REQUEST params verbatim so ceremony.js's snapshot TTL check measures
+// actual elapsed time since the user acted, not the ceremony tab's own later, much shorter window.
 function postSignRequest(action, params) {
-  chrome.runtime.sendMessage({ type: 'SIGN_REQUEST', action, params })
+  chrome.runtime.sendMessage({
+    type: 'SIGN_REQUEST',
+    action,
+    params: { ...params, requestedAt: Date.now() },
+  })
 }
 
 // Acid Yield design system (DESIGN.md §2/§3/§6) ported to the wallet popup:

@@ -363,6 +363,12 @@ function renderConsequence(section) {
 // Reuses .pc-wallet-origin's existing (bordered, un-filled) treatment rather than a second
 // .pc-wallet-consequence -- this is a secondary disclosure alongside the primary consequence
 // above it, never a second equally-weighted decision surface on the same screen.
+//
+// Fix round 1, I2: this used to hardcode the literal "not cumulative" instead of reading
+// `section.nonCumulative` (computed at buildBaseMandateSection from the canonical
+// toBaseMandateView) -- the model and the rendered copy could disagree without anything noticing.
+// A wrong cap or a dropped "non-cumulative" on a consent surface is the worst defect class this
+// project has, so the rendered sentence now reads the same field the model already carries.
 function renderBaseMandate(section) {
   const box = h('div', { className: 'pc-wallet-origin' })
   box.append(h('p', { className: 'pc-field-help', text: section.route }))
@@ -370,7 +376,7 @@ function renderBaseMandate(section) {
   box.append(
     h('p', {
       className: 'pc-field-help',
-      text: `Per call, up to ${section.perCallCapUsdc} USDC, not cumulative · ${section.durationDays} days`,
+      text: `Per call, up to ${section.perCallCapUsdc} USDC, ${section.nonCumulative ? 'not cumulative' : 'cumulative'} · ${section.durationDays} days`,
     })
   )
   return box

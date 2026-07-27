@@ -178,6 +178,68 @@ describe('buildCeremonyView — bridge detection uses the canonical Base mandate
     expect(mandate.statements).toContain(canonical.primaryCopy)
     expect(mandate.perCallCapUsdc).toBe('10,000')
     expect(mandate.durationDays).toBe(7)
+    // Fix round 1, I2: the model carries nonCumulative too, matching the canonical source exactly
+    // (never a hardcoded true/false the model and the rendered copy could silently disagree on).
+    expect(mandate.nonCumulative).toBe(canonical.perCallCap.nonCumulative)
+    expect(mandate.nonCumulative).toBe(true)
+  })
+})
+
+// Fix round 1, I2: the reviewer's two mutations (rewriting the RENDERED copy to a wrong cap/
+// cumulative claim, and deleting the section from rendered output) both stayed 29/29 GREEN against
+// the pre-fix suite -- only the MODEL fields were ever asserted, never the DOM the user actually
+// reads. This describe block asserts the rendered text itself.
+describe('renderCeremonyView — Base mandate DOM copy matches the canonical view exactly (I2)', () => {
+  const canonical = toBaseMandateView({
+    mandate: null,
+    stellarOwner: null,
+    kernelAddress: null,
+    relayerOrigin: null,
+  })
+  const bridgeView = () =>
+    buildCeremonyView(
+      { action: 'signTransaction', params: { xdr: 'X' } },
+      {
+        address: ADDRESS,
+        decodedSummary: { fn: 'grant', grant: { agents: [{ kind: 'bridge' }] } },
+      }
+    )
+
+  it('renders the base-mandate section into the DOM at all (sanity: the section is not silently dropped)', () => {
+    const root = document.createElement('main')
+    renderCeremonyView(root, bridgeView())
+    expect(root.querySelector('.pc-wallet-origin')).toBeTruthy()
+    expect(root.textContent).toContain(BASE_ROUTE_LABEL)
+  })
+
+  it('the rendered primary copy is exactly the canonical primaryCopy, never a re-typed paraphrase', () => {
+    const root = document.createElement('main')
+    renderCeremonyView(root, bridgeView())
+    expect(root.textContent).toContain(canonical.primaryCopy)
+  })
+
+  it('the rendered per-call/duration/non-cumulative sentence carries the exact canonical cap, days, and cumulative claim', () => {
+    const root = document.createElement('main')
+    renderCeremonyView(root, bridgeView())
+    const text = root.textContent
+    expect(text).toContain(`Per call, up to ${canonical.perCallCap.usdc} USDC`)
+    expect(text).toContain(`${canonical.durationDays} days`)
+    expect(text).toMatch(/not cumulative/)
+    // canonical.perCallCap.nonCumulative is true today -- if it were ever false, the rendered
+    // sentence must say "cumulative", never keep claiming "not cumulative" regardless of the model.
+    expect(canonical.perCallCap.nonCumulative).toBe(true)
+  })
+
+  it('mutation-proof: renderBaseMandate ignoring section.nonCumulative and hardcoding "not cumulative" is caught by an explicit model/DOM agreement check', () => {
+    // Directly proves the class of defect I2 named: build a view where the MODEL says cumulative,
+    // and confirm the DOM is required to say so too (a hardcoded template could never pass this).
+    const root = document.createElement('main')
+    const view = bridgeView()
+    const mandateSection = view.sections.find((s) => s.kind === 'base-mandate')
+    mandateSection.nonCumulative = false // simulate a future canonical change to cumulative
+    renderCeremonyView(root, view)
+    expect(root.textContent).toMatch(/(?<!not )cumulative/)
+    expect(root.textContent).not.toMatch(/not cumulative/)
   })
 })
 
@@ -439,8 +501,72 @@ const CEREMONY_STATES = [
   ['no-wallet', [{ action: 'deposit', params: {} }, { address: null }]],
 ]
 
+// Fix round 1: the shipped sweep never measured the technical <pre> with <details> actually OPEN
+// -- <details> is closed by default, so a collapsed <pre> contributes ~nothing to layout
+// regardless of its content length, and the sweep silently never exercised this element's
+// word-break/overflow behavior at all. A real signed Soroban tx envelope, base64-encoded, is
+// commonly 1-2 kB with zero whitespace (a single unbroken token) -- this generates a realistic
+// ~1.2 kB one and forces <details open> on the RENDERED HTML string before handing it to the
+// sweep, so the <pre> is genuinely laid out, not hidden.
+const REALISTIC_XDR_1200B = Array.from(
+  { length: 1200 },
+  (_, i) => 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'[i % 64]
+).join('')
+
+function forceDetailsOpen(html) {
+  return html.replace('<details id="raw-details">', '<details id="raw-details" open>')
+}
+
+// m4 (graded Minor, pre-existing -- see approval.css's #status rule): #status had no break rule,
+// so a long, unbroken free-text token silently clipped instead of wrapping (`.pc-wallet`'s
+// `overflow-x: clip` swallows it with no scrollbar). Task 13 added a new free-text funnel into
+// #status (the honest error/status strings ceremony.js now writes there), so these three adversarial
+// shapes -- the exact ones the reviewer measured -- must be in the sweep going forward.
+const HYPHEN_FREE_63 = 'a'.repeat(63)
+const HEX_HASH_64 = 'f'.repeat(64)
+const FULL_C_ADDRESS = `C${'B'.repeat(55)}`
+
 function buildStatesHtml() {
-  return CEREMONY_STATES.map(([label, [req, ctx]]) => [label, renderStateHtml(req, ctx)])
+  const states = CEREMONY_STATES.map(([label, [req, ctx]]) => [label, renderStateHtml(req, ctx)])
+  states.push([
+    'sign-long-xdr-details-open',
+    forceDetailsOpen(
+      renderStateHtml(
+        { action: 'signTransaction', params: { xdr: REALISTIC_XDR_1200B } },
+        { address: ADDRESS, decodedSummary: null }
+      )
+    ),
+  ])
+  states.push([
+    'status-long-hyphen-free-token',
+    renderStateHtml(
+      { action: 'connect', params: {} },
+      { address: ADDRESS, submissionState: CEREMONY_STATE.FAILED, detail: HYPHEN_FREE_63 }
+    ),
+  ])
+  states.push([
+    'status-long-hex-hash-error',
+    renderStateHtml(
+      { action: 'connect', params: {} },
+      {
+        address: ADDRESS,
+        submissionState: CEREMONY_STATE.FAILED,
+        detail: `relay rejected tx ${HEX_HASH_64}`,
+      }
+    ),
+  ])
+  states.push([
+    'status-long-c-address-error',
+    renderStateHtml(
+      { action: 'connect', params: {} },
+      {
+        address: ADDRESS,
+        submissionState: CEREMONY_STATE.FAILED,
+        detail: `no active account matches ${FULL_C_ADDRESS}`,
+      }
+    ),
+  ])
+  return states
 }
 
 describe('renderCeremonyView — real-browser 320px layout guard, every ceremony state (Part A1 sweep)', () => {

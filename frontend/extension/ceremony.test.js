@@ -1,3 +1,7 @@
+// Fix round 1, I1: this file now renders the REAL ceremonyView output into a REAL DOM (jsdom) --
+// the whole point of I1 is that the disclosure must genuinely render before Face ID, which a
+// fake plain-object documentRef could never prove either way.
+// @vitest-environment jsdom
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -33,13 +37,15 @@ vi.mock('../src/stellar/config.js', () => ({
 vi.mock('@stellar/stellar-sdk', () => ({
   TransactionBuilder: { fromXDR: vi.fn(() => ({ mockTx: true })) },
 }))
-// Decode-for-display only feeds the (best-effort, failure-swallowed) consequence-first render —
-// no test below inspects rendered ceremonyView output, so a stub is enough; this also keeps this
-// suite from needing txSummary.js's full real dependency chain (grantDecoder.js + several more
-// stellar/config.js addresses beyond what this file mocks above).
+// Decode-for-display feeds the (now hard-gated, see I1) consequence-first render -- a stub is
+// enough for summarize*, keeping this suite off txSummary.js's full real dependency chain
+// (grantDecoder.js + several more stellar/config.js addresses beyond what this file mocks above).
+// shortAddr IS the real implementation (ceremonyView.js imports it and now genuinely renders, so
+// this mock must behave like the real module for every export it uses, not just the two decoders).
 vi.mock('./txSummary.js', () => ({
   summarizeTransaction: vi.fn(() => null),
   summarizeAuthEntry: vi.fn(() => null),
+  shortAddr: (s) => (s ? (s.length > 12 ? `${s.slice(0, 4)}…${s.slice(-4)}` : s) : ''),
 }))
 
 import { connectPasskeyWallet, makeKit, readBalance } from '../src/wallet/account.js'
@@ -81,24 +87,46 @@ function fakeStorageLocal(initial = {}) {
   }
 }
 
+// Real markup ceremony.html ships (see that file) -- id="ceremony-main" directly on the grid
+// container renderConsequenceFirstView renders into, matching approve.html's #approval-main
+// convention exactly.
+function ceremonyMainHtml() {
+  return `<div class="pc-wallet pc-wallet-shell" data-pocket-critical>
+    <main class="pc-wallet-main" id="ceremony-main">
+      <p id="status">Starting passkey ceremony</p>
+    </main>
+  </div>`
+}
+
 // Default storage reflects a device with exactly one cached passkey wallet, address
 // 'C_REQUESTED' -- matching the contractId every existing deposit/approve test already requests,
 // so resolveActiveAccount resolves 'ready' against it and the new snapshot pre-check passes
 // silently for every test that doesn't deliberately set up a mismatch.
-function browserHarness({ storage = { vf_wallet_contract: 'C_REQUESTED' } } = {}) {
-  const status = { textContent: '' }
-  const els = { status }
-  return {
+//
+// Fix round 1, I1: documentRef is now the REAL jsdom `document`, seeded with ceremony.html's
+// actual markup, so renderConsequenceFirstView genuinely renders (or genuinely throws when
+// `withMain: false` simulates a page that never got a #ceremony-main). `browser.status` stays a
+// live getter over `#status` (not a snapshot taken once) so it always reflects whatever element
+// currently holds that id -- the pre-flight render REPLACES the static fallback node with its own,
+// and every existing `browser.status.textContent` assertion below keeps working unchanged.
+function browserHarness({ storage = { vf_wallet_contract: 'C_REQUESTED' }, withMain = true } = {}) {
+  document.body.innerHTML = withMain
+    ? ceremonyMainHtml()
+    : '<div class="pc-wallet"><p id="status">Starting passkey ceremony</p></div>'
+  const harness = {
     chromeApi: {
       runtime: { sendMessage: vi.fn() },
       storage: { local: fakeStorageLocal(storage) },
     },
-    documentRef: { getElementById: vi.fn((id) => els[id] ?? null) },
+    documentRef: document,
     localStorageRef: { getItem: vi.fn(() => null) },
     scheduleClose: vi.fn(),
-    status,
     windowRef: { close: vi.fn() },
   }
+  Object.defineProperty(harness, 'status', {
+    get: () => ({ textContent: document.getElementById('status')?.textContent ?? '' }),
+  })
+  return harness
 }
 
 function okResult(mock) {
@@ -150,6 +178,57 @@ describe('normalizeDepositAmount — Step 1: exact chain units, never Number*10*
     expect(ceremony.normalizeDepositAmount('8.26220495')).toBe(toBaseUnits('8.26220495'))
     expect(ceremony.normalizeDepositAmount('8.26220495')).toBe(82622050n) // the exact answer
     expect(ceremony.normalizeDepositAmount('8.26220495')).not.toBe(naiveFloatUnits)
+  })
+})
+
+// ---------------------------------------------------------------------------------------------
+// Fix round 1, I1: the consequence-first disclosure (Step 2) must genuinely render into
+// #ceremony-main BEFORE makeKit()/WebAuthn runs, and a ceremony that cannot render it must refuse
+// to proceed rather than silently continue to Face ID and submission. Both halves need REAL DOM
+// (jsdom, see the file-top pragma) -- a fake plain-object documentRef could never distinguish
+// "rendered the right content" from "rendered nothing and moved on anyway".
+// ---------------------------------------------------------------------------------------------
+describe('runCeremony — Step 2/I1: consequence-first disclosure is real, verified, and gates WebAuthn', () => {
+  it('renders the deposit consequence into #ceremony-main BEFORE makeKit (and therefore WebAuthn) resolves', async () => {
+    let resolveMakeKit
+    makeKit.mockImplementation(() => new Promise((res) => (resolveMakeKit = res)))
+    const browser = browserHarness()
+
+    const runPromise = ceremony.runCeremony({
+      action: 'deposit',
+      params: { contractId: 'C_REQUESTED', amount: '1.5', protocol: 'blend-usdc' },
+      tabId: 40,
+      ...browser,
+    })
+
+    await vi.waitFor(() => {
+      expect(document.getElementById('ceremony-main').textContent).toMatch(/1\.5/)
+    })
+    expect(makeKit).toHaveBeenCalledOnce() // confirms we are paused exactly at makeKit, mid-ceremony
+    expect(connectPasskeyWallet).not.toHaveBeenCalled() // WebAuthn has not run yet
+    expect(submitDeposit).not.toHaveBeenCalled()
+
+    resolveMakeKit(kit)
+    await runPromise
+    expect(submitDeposit).toHaveBeenCalledOnce() // the ceremony did go on to complete normally
+  })
+
+  it('refuses to proceed to WebAuthn when the page has no #ceremony-main to render into — no kit, no connect, no submit', async () => {
+    const browser = browserHarness({ withMain: false })
+
+    await ceremony.runCeremony({
+      action: 'deposit',
+      params: { contractId: 'C_REQUESTED', amount: '1.5', protocol: 'blend-usdc' },
+      tabId: 41,
+      ...browser,
+    })
+
+    expect(makeKit).not.toHaveBeenCalled()
+    expect(connectPasskeyWallet).not.toHaveBeenCalled()
+    expect(submitDeposit).not.toHaveBeenCalled()
+    const fail = failResult(browser.chromeApi.runtime.sendMessage)
+    expect(fail.error).toMatch(/could not render the consequence disclosure/i)
+    expect(browser.scheduleClose).not.toHaveBeenCalled()
   })
 })
 
@@ -436,16 +515,21 @@ describe('runCeremony — security: snapshot revalidated before WebAuthn; mismat
     expect(fail.ok).toBe(false)
   })
 
-  it('an expired request (older than the snapshot TTL) submits nothing, independent of the account matching', async () => {
+  // Fix round 1, I3: this used to require an injected TWO-VALUED clock (one value at snapshot
+  // creation, a second past-TTL value a statement later) to ever reach the expired branch — in
+  // production, those two Date.now() calls are one statement apart, so a request that was ALREADY
+  // stale before the ceremony page even loaded still submitted. The fix threads a real
+  // `requestedAt` (the moment popup.jsx's postSignRequest actually fired) through
+  // background.js's SIGN_REQUEST params into runCeremony -- this test supplies it exactly the way
+  // popup.jsx now does, and validates against a SINGLE, realistic "current time" clock.
+  it('a request whose requestedAt is already older than the snapshot TTL submits nothing — using a single realistic clock, not an injected two-valued one', async () => {
     const browser = browserHarness() // storage matches C_REQUESTED — this is NOT a mismatch case
-    let call = 0
-    // First now() call stamps snapshot.createdAt; the second (the pre-check's own `now`) lands
-    // just past REQUEST_TTL_MS later — simulating a stale ceremony tab, not an account switch.
-    const now = () => (call++ === 0 ? 1_000 : 1_000 + REQUEST_TTL_MS + 1)
+    const requestedAt = 1_000 // the real moment popup.jsx's postSignRequest fired
+    const now = () => requestedAt + REQUEST_TTL_MS + 1 // "now", well past the 5-minute TTL
 
     await ceremony.runCeremony({
       action: 'deposit',
-      params: { contractId: 'C_REQUESTED', amount: '1.5', protocol: 'blend-usdc' },
+      params: { contractId: 'C_REQUESTED', amount: '1.5', protocol: 'blend-usdc', requestedAt },
       tabId: 22,
       now,
       ...browser,
@@ -457,7 +541,7 @@ describe('runCeremony — security: snapshot revalidated before WebAuthn; mismat
     expect(fail.error).toMatch(/expired/i)
   })
 
-  it('a fresh (non-expired) request with a matching account proceeds normally (positive control: the TTL check is not vacuously closed)', async () => {
+  it('a request whose requestedAt is within the TTL proceeds normally (positive control: the TTL check is not vacuously closed)', async () => {
     submitDeposit.mockResolvedValue({
       hash: 'deposit-hash',
       status: 'SUCCESS',
@@ -465,11 +549,12 @@ describe('runCeremony — security: snapshot revalidated before WebAuthn; mismat
       sharesAfter: '5',
     })
     const browser = browserHarness()
-    const now = () => 1_000 // both calls return the same, un-expired instant
+    const requestedAt = 1_000
+    const now = () => requestedAt + REQUEST_TTL_MS - 1 // one millisecond inside the TTL
 
     await ceremony.runCeremony({
       action: 'deposit',
-      params: { contractId: 'C_REQUESTED', amount: '1.5', protocol: 'blend-usdc' },
+      params: { contractId: 'C_REQUESTED', amount: '1.5', protocol: 'blend-usdc', requestedAt },
       tabId: 23,
       now,
       ...browser,
@@ -478,6 +563,27 @@ describe('runCeremony — security: snapshot revalidated before WebAuthn; mismat
     expect(submitDeposit).toHaveBeenCalledOnce()
     const ok = okResult(browser.chromeApi.runtime.sendMessage)
     expect(ok).toBeTruthy()
+  })
+
+  it("a caller that never supplies requestedAt at all (backward compatibility) falls back to this ceremony's own clock, unchanged from before this fix", async () => {
+    submitDeposit.mockResolvedValue({
+      hash: 'deposit-hash',
+      status: 'SUCCESS',
+      sharesBefore: '0',
+      sharesAfter: '5',
+    })
+    const browser = browserHarness()
+    const now = () => 1_000 // no requestedAt in params — every now() call must return this same value
+
+    await ceremony.runCeremony({
+      action: 'deposit',
+      params: { contractId: 'C_REQUESTED', amount: '1.5', protocol: 'blend-usdc' },
+      tabId: 39,
+      now,
+      ...browser,
+    })
+
+    expect(submitDeposit).toHaveBeenCalledOnce()
   })
 
   it('connect with no requested address (fresh discovery) is never blocked by the snapshot check even with no cached account', async () => {
@@ -623,7 +729,11 @@ describe('shouldAutoRunCeremony', () => {
     ['missing runtime messaging', { chromeApi: { runtime: { sendMessage: undefined } } }],
     ['missing session storage', { chromeApi: { storage: { session: {} } } }],
     ['missing current-tab API', { chromeApi: { tabs: {} } }],
-    ['missing document', { documentRef: undefined }],
+    // `null`, not `undefined` -- under jsdom (Fix round 1, I1) `globalThis.document` is a real
+    // object, so `documentRef: undefined` would fall through to shouldAutoRunCeremony's own
+    // `documentRef = globalThis.document` default and stop testing "missing" at all. `null`
+    // bypasses the default unconditionally, in any environment.
+    ['missing document', { documentRef: null }],
   ])('does not auto-run for %s', (_label, override) => {
     expect(ceremony.shouldAutoRunCeremony({ ...genuineExtension(), ...override })).toBe(false)
   })

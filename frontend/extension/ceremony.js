@@ -54,10 +54,14 @@ const setStatus = (documentRef, text) => {
 
 // Consequence-first (Task 13, Step 2): renders the full disclosure (origin, active address,
 // network, action/amount/contract consequence, why a passkey touch is requested) into
-// ceremony.html's #ceremony-main BEFORE any WebAuthn call runs. This is a transparency surface,
-// not the money-moving path -- a rendering failure (e.g. a test harness whose documentRef isn't a
-// real DOM, or a caller that never gave this page a #ceremony-main at all) must never abort a real
-// ceremony, so failures here are swallowed rather than propagated.
+// ceremony.html's #ceremony-main BEFORE any WebAuthn call runs.
+//
+// Fix round 1, I1: this used to swallow a rendering failure (missing #ceremony-main, or any
+// throw from buildCeremonyView/renderCeremonyView) and let the ceremony proceed to Face ID and
+// submission anyway -- a ceremony that shows the user nothing must not be allowed to act on their
+// behalf. It now THROWS instead, and is called (see runCeremony) before makeKit/WebAuthn, so a
+// rendering failure is caught by runCeremony's own catch block and reported as an honest ok:false
+// failure -- no kit, no connect, no submit ever runs without the disclosure having rendered first.
 function renderConsequenceFirstView({
   documentRef,
   action,
@@ -67,17 +71,17 @@ function renderConsequenceFirstView({
   decodedSummary,
   submissionState,
 }) {
-  try {
-    const mainEl = documentRef?.getElementById?.('ceremony-main')
-    if (!mainEl || typeof mainEl.append !== 'function') return
-    const view = buildCeremonyView(
-      { action, params },
-      { address, amountUnits, decodedSummary, submissionState }
+  const mainEl = documentRef?.getElementById?.('ceremony-main')
+  if (!mainEl || typeof mainEl.append !== 'function') {
+    throw new Error(
+      'VF Wallet: could not render the consequence disclosure — refusing to proceed to Face ID'
     )
-    renderCeremonyView(mainEl, view)
-  } catch {
-    // Disclosure rendering is best-effort transparency -- see doc above.
   }
+  const view = buildCeremonyView(
+    { action, params },
+    { address, amountUnits, decodedSummary, submissionState }
+  )
+  renderCeremonyView(mainEl, view)
 }
 
 function decodeForDisplay(action, p) {
@@ -141,6 +145,14 @@ export async function runCeremony({
     // convention as approve.js's own verifyStillValid). A mismatched, switching, or expired
     // request submits NOTHING: the throw below happens before makeKit/connectPasskeyWallet/
     // submitDeposit/submitApprove are ever called.
+    //
+    // Fix round 1, I3: the snapshot's clock is stamped from `p.requestedAt` (the real moment
+    // popup.jsx's postSignRequest fired, threaded through background.js's SIGN_REQUEST params
+    // verbatim) whenever the caller supplies it, falling back to this ceremony's own `now()` only
+    // for a caller that doesn't (keeps this backward-compatible). Before this, the snapshot was
+    // stamped from ceremony.js's OWN now() at the top of this function -- so "expired" could only
+    // ever measure this function's own elapsed runtime, never a genuinely stale request that was
+    // already past its TTL before the ceremony tab even finished opening.
     const requestedAddress = p.contractId ?? p.opts?.address ?? null
     const accountAtStart = await resolveSnapshotAccount(chromeApi)
     const snapshot = createRequestSnapshot({
@@ -149,7 +161,7 @@ export async function runCeremony({
       params: { opts: { address: requestedAddress } },
       sender: INTERNAL_SENDER,
       account: accountAtStart,
-      now: now(),
+      now: typeof p.requestedAt === 'number' ? p.requestedAt : now(),
     })
     if (requestedAddress) {
       const preCheck = validateRequestSnapshot(snapshot, {
