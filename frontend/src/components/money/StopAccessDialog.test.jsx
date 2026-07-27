@@ -388,3 +388,59 @@ describe('StopAccessDialog — dialog layer regression guard: wins the panel-cen
     }
   }, 60000)
 })
+
+// ---------------------------------------------------------------------------------------------
+// Wave 6 Task 0, item 2 (My Money Task 12 review, M8): the fix loop 2 deviation (my-money.css's
+// scoped `--pc-z-dialog: 1000` override, see that file's own comment) is a documented, reversible
+// workaround for style.css's legacy `.modal-backdrop`/`.skill-drawer`/`.skill-drawer-overlay`
+// overlays sitting above the contract's bare `--pc-z-dialog: 90`. M8 flagged that nothing enforced
+// the stated revert precondition ("delete this override once those three selectors are gone from
+// style.css") -- this makes it self-retiring: once style.css no longer declares ANY of the three,
+// my-money.css must no longer contain the override.
+//
+// Checked before writing this guard, not assumed: style.css STILL declares all three selectors
+// today, and all three are still ACTIVELY RENDERED outside the Pocket Crew routes -- `.modal-
+// backdrop` in Withdraw.jsx, WithdrawModal.jsx, SkillEditModal.jsx, NotificationCenter.jsx,
+// CouncilZone.jsx, SkillDetailModal.jsx, AgentActionPreview.jsx, screens.jsx, KeysSection.jsx, and
+// agents.jsx; `.skill-drawer`/`.skill-drawer-overlay` in SkillDrawer.jsx. Those are live, non-
+// redesigned surfaces whose full-screen backdrop positioning/z-index depends entirely on this CSS
+// -- deleting it would strip their overlay styling app-wide. So the brief's step 1 ("delete the
+// three legacy overlay rules from style.css") is NOT SAFE to execute in this task: the stated
+// precondition for retiring the deviation is genuinely unmet, not merely undocumented. Only the
+// guard itself lands here; my-money.css's override and style.css's legacy rules are UNCHANGED.
+// ---------------------------------------------------------------------------------------------
+describe('my-money.css — self-retiring --pc-z-dialog:1000 override guard (My Money Task 12 review, M8)', () => {
+  const LEGACY_SELECTORS = ['.modal-backdrop', '.skill-drawer-overlay', '.skill-drawer']
+
+  function anyLegacySelectorPresent(styleCssText) {
+    return LEGACY_SELECTORS.some((sel) => styleCssText.includes(sel))
+  }
+
+  it('today: style.css still declares at least one legacy overlay selector, so the deviation remains justified', () => {
+    expect(anyLegacySelectorPresent(LEGACY_STYLESHEET)).toBe(true)
+  })
+
+  it('once style.css no longer declares ANY of the three legacy overlay selectors, my-money.css must no longer contain the --pc-z-dialog: 1000 override', () => {
+    if (anyLegacySelectorPresent(LEGACY_STYLESHEET)) {
+      return // precondition for retirement not met today -- nothing to assert against the real files
+    }
+    expect(MY_MONEY_CSS).not.toMatch(/--pc-z-dialog:\s*1000/)
+  })
+
+  // Positive control (binding constraint: a null result is worthless without proof the probe can
+  // see a violation). `.replaceAll` order matters: `.skill-drawer-overlay` contains `.skill-drawer`
+  // as a substring, so the longer selector is stripped first to avoid a partial, corrupting match.
+  it('positive control: with the retirement precondition synthetically met, the real my-money.css override IS flagged -- the guard is not vacuously closed', () => {
+    const styleCssWithLegacySelectorsRemoved = LEGACY_STYLESHEET.replaceAll(
+      '.skill-drawer-overlay',
+      '.dead-drawer-overlay-x'
+    )
+      .replaceAll('.modal-backdrop', '.dead-backdrop-x')
+      .replaceAll('.skill-drawer', '.dead-drawer-x')
+    expect(anyLegacySelectorPresent(styleCssWithLegacySelectorsRemoved)).toBe(false)
+    // Under that (synthetic) retired-precondition state, today's REAL my-money.css still contains
+    // the override -- i.e. the guard's own assertion above would fail here. This is the probe
+    // actually seeing the defect it exists to catch, not an untested assumption that it can.
+    expect(MY_MONEY_CSS).toMatch(/--pc-z-dialog:\s*1000/)
+  })
+})
