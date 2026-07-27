@@ -25,12 +25,12 @@
         </div>
         <span class="pc-technical">passkey · secp256r1</span>
       </header>
-      <main class="pc-wallet-main">
-        <h1>Passkey ceremony</h1>
+      <!-- Replaced wholesale by ceremonyView.renderCeremonyView() once params load and the
+           snapshot pre-check passes (see ceremony.js's renderConsequenceFirstView) -- left in
+           place (not empty) so an early failure still shows something readable; ceremony.js's
+           existing setStatus() writes into this exact #status node either way. -->
+      <main class="pc-wallet-main" id="ceremony-main">
         <p id="status">Starting passkey ceremony</p>
-        <p class="pc-field-help">
-          Approve with Face ID when prompted. This tab closes automatically when done.
-        </p>
       </main>
     </div>
     <script type="module" src="./ceremony.js"></script>

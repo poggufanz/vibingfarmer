@@ -5,9 +5,22 @@ import { signAuthEntryString, signTransactionForContract } from '../src/wallet/s
 import { eligibility as vfEligibility, vaultFacts } from '../src/vfapi/client.js'
 import { NETWORK_PASSPHRASE } from '../src/stellar/config.js'
 import { BASE_UNIT, toBaseUnits } from '../src/stellar/format.js'
+import { resolveActiveAccount } from '../src/wallet/activeAccount.js'
+import { createRequestSnapshot, validateRequestSnapshot } from '../src/wallet/consentStore.js'
+import { summarizeTransaction, summarizeAuthEntry } from './txSummary.js'
+import { buildCeremonyView, renderCeremonyView } from './ceremonyView.js'
 
 const ONE_TOKEN = BigInt(BASE_UNIT)
 const APPROVE_CAP = 100n * ONE_TOKEN
+
+// Synthetic requester.origin for createRequestSnapshot/validateRequestSnapshot (src/wallet/
+// consentStore.js), whose module doc explicitly anticipates this reuse: "a later internal-action
+// producer (VFW 13 -- popup-originated ceremonies like deposit/approve) can reuse it unchanged."
+// Those two functions require a truthy requester.origin (they were built for the dapp path, where
+// it is Chrome-verified sender.origin) -- this ceremony never has a dapp sender to verify at all
+// (it is opened by this SAME extension's own popup, never a content script), so a fixed sentinel
+// satisfies the shape without claiming a website origin that does not exist.
+const INTERNAL_SENDER = { origin: 'vf-wallet-internal' }
 
 export function normalizeDepositAmount(amount) {
   const raw = typeof amount === 'string' ? amount.trim() : amount
@@ -39,10 +52,56 @@ const setStatus = (documentRef, text) => {
   if (el) el.textContent = text
 }
 
+// Consequence-first (Task 13, Step 2): renders the full disclosure (origin, active address,
+// network, action/amount/contract consequence, why a passkey touch is requested) into
+// ceremony.html's #ceremony-main BEFORE any WebAuthn call runs. This is a transparency surface,
+// not the money-moving path -- a rendering failure (e.g. a test harness whose documentRef isn't a
+// real DOM, or a caller that never gave this page a #ceremony-main at all) must never abort a real
+// ceremony, so failures here are swallowed rather than propagated.
+function renderConsequenceFirstView({
+  documentRef,
+  action,
+  params,
+  address,
+  amountUnits,
+  decodedSummary,
+  submissionState,
+}) {
+  try {
+    const mainEl = documentRef?.getElementById?.('ceremony-main')
+    if (!mainEl || typeof mainEl.append !== 'function') return
+    const view = buildCeremonyView(
+      { action, params },
+      { address, amountUnits, decodedSummary, submissionState }
+    )
+    renderCeremonyView(mainEl, view)
+  } catch {
+    // Disclosure rendering is best-effort transparency -- see doc above.
+  }
+}
+
+function decodeForDisplay(action, p) {
+  if (action === 'signTransaction') return summarizeTransaction(p.xdr)
+  if (action === 'signAuthEntry') return summarizeAuthEntry(p.authEntry)
+  return null
+}
+
 async function loadParams(chromeApi) {
   const tabId = (await chromeApi.tabs.getCurrent())?.id
   const got = await chromeApi.storage.session.get(`vf_params_${tabId}`)
   return { tabId, params: got[`vf_params_${tabId}`] ?? {} }
+}
+
+async function resolveSnapshotAccount(chromeApi) {
+  try {
+    const result = await resolveActiveAccount({
+      storageLocal: chromeApi?.storage?.local,
+      migrate: false,
+    })
+    return result.status === 'ready' ? result.account : null
+  } catch {
+    return null // an unreadable/corrupt store resolves to "no verified account", never a guess
+  }
 }
 
 // NOTE (Task 4 Step 4 deferred check): connectPasskeyWallet returns only
@@ -60,6 +119,7 @@ export async function runCeremony({
   localStorageRef = globalThis.localStorage,
   windowRef = globalThis.window,
   scheduleClose = globalThis.setTimeout,
+  now = Date.now,
 } = {}) {
   let tabId = suppliedTabId
   let p = suppliedParams ?? {}
@@ -72,6 +132,53 @@ export async function runCeremony({
     }
 
     const depositAmount = action === 'deposit' ? normalizeDepositAmount(p.amount) : null
+
+    // Security (Task 13, Step 1/4): an immutable, expiring snapshot of the active account,
+    // captured BEFORE any WebAuthn call, and revalidated once more right before the result is
+    // delivered -- reusing src/wallet/consentStore.js's createRequestSnapshot/
+    // validateRequestSnapshot exactly as that module's own doc anticipates for this task, and
+    // src/wallet/activeAccount.js's resolveActiveAccount as the one authoritative resolver (same
+    // convention as approve.js's own verifyStillValid). A mismatched, switching, or expired
+    // request submits NOTHING: the throw below happens before makeKit/connectPasskeyWallet/
+    // submitDeposit/submitApprove are ever called.
+    const requestedAddress = p.contractId ?? p.opts?.address ?? null
+    const accountAtStart = await resolveSnapshotAccount(chromeApi)
+    const snapshot = createRequestSnapshot({
+      rid: `ceremony:${action}`,
+      method: action,
+      params: { opts: { address: requestedAddress } },
+      sender: INTERNAL_SENDER,
+      account: accountAtStart,
+      now: now(),
+    })
+    if (requestedAddress) {
+      const preCheck = validateRequestSnapshot(snapshot, {
+        activeAccount: accountAtStart,
+        now: now(),
+      })
+      if (!preCheck.ok) throw new Error(preCheck.error)
+    }
+
+    // Revalidates the SAME snapshot captured above against a FRESHLY re-resolved active account —
+    // never the account captured at the top, never a locally re-derived guess. Nothing to
+    // reconfirm for an untargeted request (e.g. a fresh `connect` with no requestedAddress).
+    async function revalidateAtDelivery() {
+      if (!requestedAddress) return { ok: true }
+      const fresh = await resolveSnapshotAccount(chromeApi)
+      return validateRequestSnapshot(snapshot, { activeAccount: fresh, now: now() })
+    }
+
+    const decodedSummary = decodeForDisplay(action, p)
+    renderConsequenceFirstView({
+      documentRef,
+      action,
+      params: p,
+      address: accountAtStart?.address ?? requestedAddress,
+      amountUnits: action === 'deposit' ? depositAmount : action === 'approve' ? APPROVE_CAP : null,
+      decodedSummary,
+      submissionState: 'waiting-passkey',
+    })
+
     const kit = await makeKit()
 
     // connect/signTransaction/signAuthEntry (the generic wallet-kit actions dispatched by
@@ -97,7 +204,20 @@ export async function runCeremony({
       const sharesBefore = BigInt(out.sharesBefore).toString()
       const sharesAfter = BigInt(out.sharesAfter).toString()
       const mintedShares = BigInt(sharesAfter) - BigInt(sharesBefore)
-      setStatus(documentRef, `Minted ${mintedShares} shares.`)
+      // Security (Task 13, Step 3): a shares-delta "confirmed deposit" claim may appear only once
+      // the transaction is actually confirmed (out.status === 'SUCCESS') -- the relay's own
+      // pollResult can legitimately hand back 'PENDING' (submitted but not yet observed; see
+      // api/stellar-relay.js's pollResult doc) while sharesAfter was still read right after
+      // submission. A pending/unknown status must read as unknown, never as a minted-shares claim
+      // and never as zero.
+      const confirmed = out.status === 'SUCCESS'
+      setStatus(
+        documentRef,
+        confirmed
+          ? `Minted ${mintedShares} shares.`
+          : `Submitted (${out.status || 'unknown'}). Not yet confirmed — check the shares balance before relying on this number.`
+      )
+      const postCheck = await revalidateAtDelivery()
       chromeApi.runtime.sendMessage({
         type: 'CEREMONY_RESULT',
         tabId,
@@ -107,6 +227,8 @@ export async function runCeremony({
         status: out.status,
         sharesBefore,
         sharesAfter,
+        accountSnapshotId: snapshot.account?.id ?? null,
+        ...(postCheck.ok ? {} : { accountSnapshotStale: true }),
       })
     } else if (action === 'approve') {
       setStatus(documentRef, 'Enabling deposits: funding and Face ID…')
@@ -131,6 +253,7 @@ export async function runCeremony({
           ? 'Approval set, but test tokens were not dispensed because the faucet is unavailable. Your balance may be 0; deposit may fail until funded.'
           : 'Deposits enabled.'
       )
+      const postCheck = await revalidateAtDelivery()
       chromeApi.runtime.sendMessage({
         type: 'CEREMONY_RESULT',
         tabId,
@@ -138,17 +261,22 @@ export async function runCeremony({
         ok: true,
         hash: out.hash,
         status: out.status,
+        accountSnapshotId: snapshot.account?.id ?? null,
+        ...(postCheck.ok ? {} : { accountSnapshotStale: true }),
       })
     } else if (action === 'connect') {
       // The kit's getAddress()/isConnected() — connectPasskeyWallet (above) already did the
       // work; this action just reports the resolved contractId back through the ceremony result.
       setStatus(documentRef, 'Connected.')
+      const postCheck = await revalidateAtDelivery()
       chromeApi.runtime.sendMessage({
         type: 'CEREMONY_RESULT',
         tabId,
         action,
         ok: true,
         address: connectedContractId,
+        accountSnapshotId: snapshot.account?.id ?? null,
+        ...(postCheck.ok ? {} : { accountSnapshotStale: true }),
       })
     } else if (action === 'signTransaction') {
       setStatus(documentRef, 'Awaiting Face ID…')
@@ -159,6 +287,16 @@ export async function runCeremony({
         contractId: p.opts?.address || connectedContractId,
         kit,
       })
+      // Security (Task 13, Step 1/4): this ceremony SIGNS ONLY — it never submits the result
+      // anywhere itself. A built-but-not-submitted artifact must never be exposed as completed:
+      // if the active account changed or the request went stale while Face ID was pending, the
+      // signed XDR is discarded here and NEVER included in the CEREMONY_RESULT payload — the
+      // caller sees an honest failure, never a false "signed" success for a context that no
+      // longer holds.
+      const postCheck = await revalidateAtDelivery()
+      if (!postCheck.ok) {
+        throw new Error(`not submitted: ${postCheck.error}`)
+      }
       setStatus(documentRef, 'Transaction signed.')
       chromeApi.runtime.sendMessage({
         type: 'CEREMONY_RESULT',
@@ -167,10 +305,16 @@ export async function runCeremony({
         ok: true,
         signedTxXdr,
         address: connectedContractId,
+        accountSnapshotId: snapshot.account?.id ?? null,
       })
     } else if (action === 'signAuthEntry') {
       setStatus(documentRef, 'Awaiting Face ID…')
       const signedAuthEntry = await signAuthEntryString({ authEntry: p.authEntry, kit })
+      // Same discard-on-staleness rule as signTransaction above — see that branch's doc.
+      const postCheck = await revalidateAtDelivery()
+      if (!postCheck.ok) {
+        throw new Error(`not submitted: ${postCheck.error}`)
+      }
       setStatus(documentRef, 'Authorization signed.')
       chromeApi.runtime.sendMessage({
         type: 'CEREMONY_RESULT',
@@ -179,6 +323,7 @@ export async function runCeremony({
         ok: true,
         signedAuthEntry,
         address: connectedContractId,
+        accountSnapshotId: snapshot.account?.id ?? null,
       })
     } else {
       throw new Error(`unknown ceremony action: ${action}`)

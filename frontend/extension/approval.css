@@ -17,6 +17,17 @@
  * never inject a second one at runtime -- unlike popup.jsx, which still renders a whole separate
  * legacy system inside popup.html (out of scope here; see wallet.css's header) -- so there is no
  * cascade here to arbitrate.
+ *
+ * VF Wallet Task 13 -- ceremonyView.js (ceremony.html's renderer, the internal-action sibling of
+ * approvalView.js below) reuses .pc-wallet-consequence, .pc-wallet-origin, .pc-wallet-account-chip,
+ * .pc-network-badge, .pc-field-help, and .pc-technical UNCHANGED -- no new selector was needed
+ * (verified in ceremonyView.test.js: the real-Chromium 320px sweep, the WCAG AA contrast walk
+ * inside .pc-wallet-consequence, the mono-only-on-.pc-technical check, and the no-entry-animation
+ * check all pass against ceremony.html's states with zero ceremony-specific overrides). This means
+ * ceremony.html AUTOMATICALLY inherits every fix below scoped to these selectors (the C1 contrast
+ * fix, the C2/I4 overflow-wrap fix, the I1 warning treatment) -- and also means a future change to
+ * any of them must be re-verified against BOTH approvalView.test.js AND ceremonyView.test.js, not
+ * just the suite for whichever file the change was made in.
  */
 
 :root,
