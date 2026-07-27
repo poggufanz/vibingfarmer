@@ -70,8 +70,14 @@ const GRANT_SCOPE_JSON = JSON.stringify(
 )
 
 function FoundationFixture() {
+  // Fix round 2 (Strategy Task 14, owner ruling superseding the earlier "leave Foundation alone"
+  // stance): no outer padding here, same reasoning as the Strategy fixture -- every section already
+  // wraps real content, and this harness's own extra padding sat OUTSIDE it, so `mobile-320` was
+  // freezing a 272px route, not 320. A compulsory Foundation re-freeze (owner decision #19's font
+  // change, unrelated to this fix) made bundling this in the same pass strictly better than a
+  // second one later.
   return (
-    <main data-fixture="foundation" style={{ padding: '1.5rem', display: 'grid', gap: '2rem' }}>
+    <main data-fixture="foundation" style={{ display: 'grid', gap: '2rem' }}>
       {/* ponytail: fake, permanent focus ring for the demo buttons below -- a real DOM focus is
           singular per document, so only one of the two surfaces could ever hold a genuine
           :focus-visible at screenshot time. This reproduces the exact same rule pocket-crew.css
