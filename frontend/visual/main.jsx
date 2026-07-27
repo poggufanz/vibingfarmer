@@ -71,11 +71,13 @@ const GRANT_SCOPE_JSON = JSON.stringify(
 
 function FoundationFixture() {
   // Fix round 2 (Strategy Task 14, owner ruling superseding the earlier "leave Foundation alone"
-  // stance): no outer padding here, same reasoning as the Strategy fixture -- every section already
-  // wraps real content, and this harness's own extra padding sat OUTSIDE it, so `mobile-320` was
-  // freezing a 272px route, not 320. A compulsory Foundation re-freeze (owner decision #19's font
-  // change, unrelated to this fix) made bundling this in the same pass strictly better than a
-  // second one later.
+  // stance): no outer padding here. Unlike Strategy, Foundation has no `.pc-route` at all --
+  // `document.querySelector('.pc-route')` is null on this fixture at every width -- so the removed
+  // 24px was its ONLY gutter. This freezes Foundation's primitives at full bleed, not "fixes a
+  // 272px route" (that framing is Strategy's own, whose sections each wrap a real `.pc-route` with
+  // its own `--pc-route-gutter`; see StrategyFixture's comment below). A compulsory Foundation
+  // re-freeze (owner decision #19's font change, unrelated to this fix) made bundling this in the
+  // same pass strictly better than a second one later.
   return (
     <main data-fixture="foundation" style={{ display: 'grid', gap: '2rem' }}>
       {/* ponytail: fake, permanent focus ring for the demo buttons below -- a real DOM focus is
@@ -941,11 +943,13 @@ function Section({ title, children }) {
 
 function StrategyFixture() {
   // I-3 (Strategy Task 14 fix round 1, reviewer ruling): no outer padding here, scoped to THIS
-  // fixture only (Foundation's own `padding: '1.5rem'` above is untouched -- its twelve baselines
-  // are a completed plan's committed artifacts). Every section already wraps its content in a real
-  // `StrategyRoute` (`.pc-route`, its own `--pc-route-gutter`) -- this harness's own extra 24px of
-  // padding sat OUTSIDE that, so the `mobile-320` project was freezing a 272px route / 240px stack,
-  // not the 320px viewport its own name promises. A project named `mobile-320` must test 320.
+  // fixture only. (Fix round 2 later removed FoundationFixture's own padding the same way and
+  // re-froze its twelve baselines -- see that function's comment above; the two removals are
+  // independent edits to separate functions/JSX literals and neither leaks into the other.) Every
+  // section already wraps its content in a real `StrategyRoute` (`.pc-route`, its own
+  // `--pc-route-gutter`) -- this harness's own extra 24px of padding sat OUTSIDE that, so the
+  // `mobile-320` project was freezing a 272px route / 240px stack, not the 320px viewport its own
+  // name promises. A project named `mobile-320` must test 320.
   return (
     <main data-fixture="strategy" style={{ display: 'grid', gap: '2.5rem' }}>
       <h1>Pocket Crew visual harness — Strategy</h1>
