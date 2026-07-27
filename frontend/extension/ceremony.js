@@ -159,7 +159,11 @@ export async function runCeremony({
     // silently revert to the pre-fix behaviour with no test catching it. deposit/approve fail
     // closed instead of guessing a timestamp; the other actions (connect/signTransaction/
     // signAuthEntry) are unaffected and keep the same fallback they always had.
-    if ((action === 'deposit' || action === 'approve') && typeof p.requestedAt !== 'number') {
+    // Fix round 1 (reviewer M5): Number.isFinite, not `typeof x !== 'number'` -- the latter admits
+    // NaN (typeof NaN === 'number'), reopening exactly the hole VF Wallet Task 13 closed: a NaN
+    // requestedAt would sail past this guard and then make the expiry comparison in
+    // validateRequestSnapshot silently always resolve "not expired" (NaN > x is always false).
+    if ((action === 'deposit' || action === 'approve') && !Number.isFinite(p.requestedAt)) {
       throw new Error(
         'VF Wallet: missing requestedAt for a value-moving ceremony action — refusing to guess a timestamp'
       )

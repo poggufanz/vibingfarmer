@@ -636,6 +636,26 @@ describe('runCeremony — security: snapshot revalidated before WebAuthn; mismat
     expect(browser.scheduleClose).not.toHaveBeenCalled()
   })
 
+  // Fix round 1 (reviewer M5): `typeof x !== 'number'` admits NaN (`typeof NaN === 'number'`),
+  // which would sail past a naive guard and then make validateRequestSnapshot's own expiry
+  // comparison silently always resolve "not expired" (`NaN > x` is always false) -- reopening
+  // exactly the hole VF Wallet Task 13 closed. Number.isFinite correctly rejects it.
+  it('deposit: a NaN requestedAt (e.g. a corrupted postMessage payload) submits NOTHING, same as a missing one', async () => {
+    const browser = browserHarness()
+
+    await ceremony.runCeremony({
+      action: 'deposit',
+      params: { contractId: 'C_REQUESTED', amount: '1.5', protocol: 'blend-usdc', requestedAt: NaN },
+      tabId: 44,
+      ...browser,
+    })
+
+    expect(makeKit).not.toHaveBeenCalled()
+    expect(submitDeposit).not.toHaveBeenCalled()
+    const fail = failResult(browser.chromeApi.runtime.sendMessage)
+    expect(fail.error).toMatch(/requestedAt/i)
+  })
+
   // Positive control (the TTL test above already proves the OTHER half): a deposit that DOES
   // supply requestedAt still proceeds normally -- this probe is not vacuously closed.
   it('positive control: supplying requestedAt still proceeds normally for both actions', async () => {
