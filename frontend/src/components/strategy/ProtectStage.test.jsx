@@ -356,16 +356,45 @@ describe('ProtectStage — fresh review content (Step 2: friendly + technical co
     expect(screen.getByText('200 USDC')).toBeTruthy()
   })
 
-  it('C1: labels each budget row with a human symbol, never the raw 56-char token contract address', async () => {
+  // Strategy Task 14 fix round 2 (reviewer finding, concern 4): this guard used to scope itself to
+  // `.pc-support-content` -- the one sub-element Strategy Task 11's review happened to name -- so
+  // the SAME Critical could resurface at a different site (the confirmation-count MoneyFigure,
+  // `.pc-strategy-decision`, a sibling of `.pc-support-content`) and stay green (Strategy Task 14's
+  // I-4). Widened to scan the WHOLE rendered Protect surface for the class of defect, not an
+  // enumerated subset of sites: strip every technical disclosure (Owner decision #19's one
+  // sanctioned place for a raw identifier -- `.pc-technical-details`/`.pc-technical`) and assert no
+  // Stellar CONTRACT address (`C` + 55 base32 chars -- SEP-41 tokens are always contracts, matching
+  // scval.js's addrScVal boundary) survives anywhere else, a real Stellar G-account identity (e.g.
+  // an agent address) is a different, intentionally-visible thing and not what this guards.
+  const STELLAR_CONTRACT_RE = /\bC[A-Z2-7]{55}\b/
+
+  it('C1: no raw Stellar contract address survives anywhere on the friendly Protect surface (only inside a technical disclosure)', async () => {
+    // plan.amount.token is resolved defensively via tokenSymbol() at its one render site
+    // (ProtectStage.jsx's confirmation-count MoneyFigure) regardless of what today's one real
+    // caller (PlanStage.jsx, always the literal 'USDC') happens to pass -- same principle as the
+    // reviewedBudgets/reviewedAgentInits resolution a few lines above. PLAN_DEPOSIT_ONLY's own
+    // `amount.token` is already the literal 'USDC', so it cannot exercise that defensive path
+    // either way -- a guard built on it would pass whether or not the resolution code even
+    // existed. A real contract address here is what actually proves it (mutation-verified: see
+    // the Task 14 fix-round-2 report -- reverting the resolution at ProtectStage.jsx:334 makes
+    // exactly this assertion fail).
+    const planWithRealTopLevelToken = {
+      ...PLAN_DEPOSIT_ONLY,
+      amount: { token: TOKEN_ADDR, units: '1000000000', decimals: 7 },
+    }
     const onRetryPreflight = vi.fn().mockResolvedValue(freshDecisionRaw())
-    render(<ProtectStage {...baseProps({ onRetryPreflight })} />)
+    const { container } = render(
+      <ProtectStage {...baseProps({ plan: planWithRealTopLevelToken, onRetryPreflight })} />
+    )
     await checkPermission()
 
-    // The friendly review area (everything outside the collapsed TechnicalDetails disclosure)
-    // must never show the raw contract address -- only the resolved symbol.
-    const friendlyArea = document.querySelector('.pc-support-content')
-    expect(friendlyArea.textContent).toContain('USDC')
-    expect(friendlyArea.textContent).not.toContain(TOKEN_ADDR)
+    const friendlySurface = container.cloneNode(true)
+    friendlySurface.querySelectorAll('.pc-technical-details, .pc-technical').forEach((el) => {
+      el.remove()
+    })
+    expect(friendlySurface.textContent).toContain('USDC')
+    expect(friendlySurface.textContent).not.toMatch(STELLAR_CONTRACT_RE)
+    expect(friendlySurface.textContent).not.toContain(TOKEN_ADDR)
   })
 
   it('I3: "Cap per period" and "Worst case" label from EACH agent\'s own reviewed cap token, never plan.amount.token', async () => {
