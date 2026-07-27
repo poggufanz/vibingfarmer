@@ -133,6 +133,189 @@ test.describe('Pocket Crew Strategy', () => {
   })
 })
 
+// My Money Task 14 -- frozen baselines for the deterministic `my-money` fixture (recovery dialog
+// open / active-three-agents-dialog-closed / partial-discovery / no-position-empty, all mounting
+// the real /agent composition root, MyMoneyRoute). Declared as exactly FOUR baselines, not the
+// naive eight a theme x all-four-projects test would generate: forest is captured only at the two
+// mobile projects, day-field only at tablet/desktop -- each test below skips outside its own
+// declared projects via testInfo.project.name, the same mechanism the disconnected-compatibility
+// group above already establishes (:171-176), not a new one.
+//
+// `[data-fixture-pending="true"]` (AutopilotSection, visual/main.jsx) is only used by the FIRST
+// section here (opening the recovery dialog via a real click) -- MyMoneyRoute itself is a pure,
+// static composition with no internal "review" phase, unlike Strategy's PlanStage/ProtectStage, so
+// every other section renders synchronously and needs no driven wait at all.
+test.describe('Pocket Crew My money', () => {
+  const MOBILE_PROJECTS = ['mobile-320', 'mobile-360']
+  const WIDE_PROJECTS = ['tablet-768', 'desktop-1440']
+
+  // Same two traps Strategy's own block guards against (:53-98), scoped to this fixture's own
+  // root and to the projects where each is meaningful.
+  async function assertNoOverflowAtMobileWidth(page, testInfo) {
+    if (!MOBILE_PROJECTS.includes(testInfo.project.name)) return
+    const overflow = await page.evaluate(() => {
+      const viewportWidth = document.documentElement.clientWidth
+      let maxRight = 0
+      for (const el of document.querySelectorAll('[data-fixture="my-money"] *')) {
+        maxRight = Math.max(maxRight, el.getBoundingClientRect().right)
+      }
+      return {
+        scrollWidth: document.documentElement.scrollWidth,
+        viewportWidth,
+        maxDescendantRight: maxRight,
+      }
+    })
+    expect(overflow.scrollWidth, `${testInfo.project.name}: documentElement.scrollWidth`).toBe(
+      overflow.viewportWidth
+    )
+    expect(
+      overflow.maxDescendantRight,
+      `${testInfo.project.name}: no descendant rect may exceed the viewport, even under overflow-x:clip`
+    ).toBeLessThanOrEqual(overflow.viewportWidth + 0.5)
+  }
+
+  async function assertNoVerticalTextTrap(page, testInfo) {
+    if (!MOBILE_PROJECTS.includes(testInfo.project.name)) return
+    const trapped = await page.evaluate(() => {
+      const hits = []
+      for (const el of document.querySelectorAll('[data-fixture="my-money"] *')) {
+        const rect = el.getBoundingClientRect()
+        if (rect.width > 0 && rect.width < 100 && rect.height > 150) {
+          hits.push({ tag: el.tagName, cls: el.className, width: rect.width, height: rect.height })
+        }
+      }
+      return hits
+    })
+    expect(
+      trapped,
+      `narrow+tall element(s) -- vertical text trap: ${JSON.stringify(trapped)}`
+    ).toEqual([])
+  }
+
+  test('forest theme', async ({ page }, testInfo) => {
+    test.skip(
+      !MOBILE_PROJECTS.includes(testInfo.project.name),
+      "My money forest is captured mobile-only (see the brief's four declared baselines)"
+    )
+    await page.goto('/visual/?fixture=my-money&theme=forest')
+    await page.waitForFunction(
+      () => document.querySelectorAll('[data-fixture-pending="true"]').length === 0
+    )
+    await page.evaluate(() => document.fonts.ready)
+    await assertNoOverflowAtMobileWidth(page, testInfo)
+    await assertNoVerticalTextTrap(page, testInfo)
+    await expect(page).toHaveScreenshot('my-money-forest.png', { fullPage: true })
+  })
+
+  test('day-field theme', async ({ page }, testInfo) => {
+    test.skip(
+      !WIDE_PROJECTS.includes(testInfo.project.name),
+      "My money day-field is captured tablet/desktop-only (see the brief's four declared baselines)"
+    )
+    await page.goto('/visual/?fixture=my-money&theme=day-field')
+    await page.waitForFunction(
+      () => document.querySelectorAll('[data-fixture-pending="true"]').length === 0
+    )
+    await page.evaluate(() => document.fonts.ready)
+    await expect(page).toHaveScreenshot('my-money-day-field.png', { fullPage: true })
+  })
+
+  // Step 3 (motion, real Chromium only -- jsdom reports animationName:"none" regardless of what's
+  // declared and computes no geometry at all, so this cannot be a vitest guard). Measured once,
+  // not per-viewport: neither assertion below depends on width.
+  test('reduced motion forces an injected dialog/disclosure transition back to instant', async ({
+    page,
+  }, testInfo) => {
+    test.skip(testInfo.project.name !== 'desktop-1440', 'measured once, not per viewport')
+    await page.goto('/visual/?fixture=my-money&theme=forest')
+    await page.waitForFunction(
+      () => document.querySelectorAll('[data-fixture-pending="true"]').length === 0
+    )
+    // Positive control: My Money's own Dialog/TechnicalDetails declare NO transition at all today
+    // (Foundation's shared Primitives.jsx pops them in/out instantly, confirmed by reading
+    // pocket-crew.css/my-money.css) -- so proving pocket-crew.css's global reduced-motion override
+    // (`*, *::before, *::after { transition-duration: 0.01ms !important }`) actually WINS requires
+    // first giving it something real to override. This injects a plausible future transition onto
+    // exactly the two elements Step 3 names.
+    await page.addStyleTag({
+      content:
+        '.pc-dialog-panel, .pc-technical-details-body { transition: opacity 600ms, transform 600ms; }',
+    })
+    const panel = page.locator('.pc-dialog-panel').first()
+    await expect(panel).toBeVisible()
+    const normalDuration = await panel.evaluate((el) => getComputedStyle(el).transitionDuration)
+    expect(normalDuration, 'the injected transition must be honored under normal motion').toMatch(
+      /0\.6s/
+    )
+
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    const reducedDuration = await panel.evaluate((el) => getComputedStyle(el).transitionDuration)
+    // pocket-crew.css's own literal override value (0.01ms == 0.00001s), not a hand-picked
+    // threshold -- any value that isn't ~600ms proves the override fired.
+    expect(
+      parseFloat(reducedDuration),
+      `reduced motion must force the transition back near-instant, got ${reducedDuration}`
+    ).toBeLessThan(0.001)
+  })
+
+  // Step 3, "graph animation pauses when disclosure closes" -- My Money Task 14's own scoped
+  // exception (src/graph/PixiSwarmGraph.jsx's new `paused` prop, src/components/money/
+  // TechnicalMoneyDetails.jsx's native `toggle` listener; see that file's own header comment).
+  // `data-graph-paused` only reflects the wiring's OWN React prop, which is necessary but not
+  // sufficient proof -- a regression could leave that attribute correct while the ticker keeps
+  // running underneath it. `data-ticker-started` is different: PixiSwarmGraph.jsx sets it from
+  // Pixi's OWN `ticker.started` property, read fresh every time the effect runs, so it can only
+  // ever say "true" if the real ticker is actually running (found empirically that a page-wide
+  // requestAnimationFrame counter is far too noisy for this -- Pixi's texture-GC/interaction
+  // systems and other page activity call it continuously regardless of any one graph's state).
+  // Real motion while open is proven separately by an actual canvas screenshot diff, which a
+  // static ticker could never produce two different frames for.
+  test('graph animation pauses when its disclosure closes', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== 'desktop-1440', 'measured once, not per viewport')
+    await page.goto('/visual/?fixture=my-money&theme=forest')
+    await page.waitForFunction(
+      () => document.querySelectorAll('[data-fixture-pending="true"]').length === 0
+    )
+
+    // The fixture's own first section has the recovery dialog open by design (AutopilotSection,
+    // on mount) -- Primitives.jsx's Dialog is a real, viewport-covering top-layer overlay (found
+    // empirically: it blocks a click ANYWHERE on the page, not just its own section, exactly the
+    // focus-trap behavior a modal is supposed to have). Dismiss it the same way a real user would
+    // -- its own Close button -- before interacting with anything else on the page.
+    await page.locator('dialog, [role="dialog"]').getByRole('button', { name: 'Close' }).click()
+    await expect(page.locator('dialog, [role="dialog"]')).toHaveCount(0)
+
+    const summary = page
+      .locator(
+        '[data-fixture="my-money"] .pc-technical-details summary:has-text("Agent network graph (advanced)")'
+      )
+      .first()
+    const graph = page.locator('[data-fixture="my-money"] .agent-graph').first()
+
+    // Closed by default: the ticker has never started.
+    await expect(graph).toHaveAttribute('data-ticker-started', 'false')
+
+    await summary.click()
+    await expect(graph).toHaveAttribute('data-graph-paused', 'false')
+    await expect(graph).toHaveAttribute('data-ticker-started', 'true')
+    await page.waitForSelector('[data-fixture="my-money"] .agent-graph canvas')
+
+    // Real motion, not just a property: two frames half a second apart while genuinely running
+    // must differ (dust drift/corona pulse, scene.js's own continuous per-frame advance).
+    const frame1 = await graph.screenshot()
+    await page.waitForTimeout(500)
+    const frame2 = await graph.screenshot()
+    expect(
+      frame1.equals(frame2),
+      'expected the running graph to render at least one different frame'
+    ).toBe(false)
+
+    await summary.click()
+    await expect(graph).toHaveAttribute('data-graph-paused', 'true')
+    await expect(graph).toHaveAttribute('data-ticker-started', 'false')
+  })
+})
+
 // Foundation Task 8 -- compact compatibility smoke over the six disconnected/shared routes, real
 // app (not the /visual/ fixture harness), desktop-1440 only. Named "disconnected compatibility"
 // (not "Pocket Crew foundation") so Step 5's `--grep "Pocket Crew foundation"` gate does not also

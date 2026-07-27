@@ -32,7 +32,7 @@
 // downloads, even for an owner who never opens this disclosure -- verified via a clean
 // `rm -rf dist && npm run build` A/B (pixi's CanvasContextSystem code present in the eager main
 // chunk with a static import here, absent with lazy()).
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { TechnicalDetails } from '../pocket/Primitives.jsx'
 import { SOROBAN_ACTIVE_VAULT_ADDRESS } from '../../stellar/config.js'
 
@@ -59,7 +59,47 @@ function buildAgentNetworkGraphData(agents) {
   return { nodes, links }
 }
 
+// My Money Task 14 scoped exception (owner-authorized precedent: Strategy Task 14's
+// aria-describedby/focus wiring), surfaced while writing the a11y/motion suite: the brief's Step 3
+// requires the graph to go still once its disclosure closes, but nothing before this task ever
+// stopped PixiSwarmGraph's Pixi ticker on close -- the graph mounts once (TechnicalMoneyDetails.
+// test.jsx's own "renders a real node... " test proves it mounts immediately, NOT gated on the
+// <details> being open) and, absent this wiring, keeps redrawing every frame forever underneath a
+// visually closed disclosure. Fixed via the native `toggle` event (no new prop threaded through
+// the shared Primitives.jsx <details> wrapper -- every other TechnicalDetails caller across
+// Foundation/Strategy/this route is unaffected) driving PixiSwarmGraph's own new `paused` prop
+// (stops/starts the SAME ticker, never destroys the scene -- see PixiSwarmGraph.jsx's own note).
+// Starts `false` (matching the graph's own initial value, since `TechnicalDetails` defaults to
+// closed) and does nothing until the user actually toggles the disclosure at least once.
+// ponytail: this reads the closed-source's own DOM state via a plain `toggle` listener rather than
+// widening the shared <details> primitive's prop surface for one caller.
+function useGraphDisclosurePaused() {
+  const wrapRef = useRef(null)
+  const [open, setOpen] = useState(false)
+  useEffect(() => {
+    const details = wrapRef.current?.querySelector('details')
+    if (!details) return undefined
+    setOpen(details.open)
+    const onToggle = () => setOpen(details.open)
+    details.addEventListener('toggle', onToggle)
+    return () => details.removeEventListener('toggle', onToggle)
+  }, [])
+  return [wrapRef, !open]
+}
+
 export function TechnicalMoneyDetails({ model, agents = [] }) {
+  const [graphWrapRef, graphPaused] = useGraphDisclosurePaused()
+  // My Money Task 14: memoized on `agents` itself, not recomputed on every render. Toggling the
+  // disclosure re-renders this component (useGraphDisclosurePaused's own `open` state) -- an
+  // unmemoized call here would hand PixiSwarmGraph a new `graphData` OBJECT on every toggle, and
+  // its own `data = useMemo(..., [strategy, graphData])` would then see a changed reference and
+  // tear down + recreate the WHOLE Pixi Application on every open/close (found empirically: with
+  // this unmemoized, the pause wiring below appeared to work only because each toggle already
+  // rebuilt a fresh, correctly-initialized app from scratch -- reverting the actual stop()/start()
+  // effect entirely still passed the graph-pause e2e test, which is what exposed this). Real
+  // pause-in-place (positions/particles surviving a close/reopen) requires the app to survive the
+  // toggle, which requires this reference to stay stable across it.
+  const graphData = useMemo(() => buildAgentNetworkGraphData(agents), [agents])
   return (
     <section className="pc-money-section" aria-labelledby="technical-details-heading">
       <header>
@@ -125,19 +165,21 @@ export function TechnicalMoneyDetails({ model, agents = [] }) {
             renders (PositionList/AgentTeam, both mounted ahead of this section in MyMoneyRoute).
             See this file's header for the adapter this graph is built from -- it supplements the
             lists above, it never replaces them (those lists mount unconditionally, above). */}
-        <TechnicalDetails summary="Agent network graph (advanced)">
-          <p>
-            Your agents and the vault they deposit into, drawn from the same real data as the list
-            above. This never replaces that list -- it only visualizes it.
-          </p>
-          {agents.length === 0 ? (
-            <p>No agents yet to graph.</p>
-          ) : (
-            <Suspense fallback={<p>Loading graph…</p>}>
-              <PixiSwarmGraph graphData={buildAgentNetworkGraphData(agents)} />
-            </Suspense>
-          )}
-        </TechnicalDetails>
+        <div ref={graphWrapRef}>
+          <TechnicalDetails summary="Agent network graph (advanced)">
+            <p>
+              Your agents and the vault they deposit into, drawn from the same real data as the list
+              above. This never replaces that list -- it only visualizes it.
+            </p>
+            {agents.length === 0 ? (
+              <p>No agents yet to graph.</p>
+            ) : (
+              <Suspense fallback={<p>Loading graph…</p>}>
+                <PixiSwarmGraph graphData={graphData} paused={graphPaused} />
+              </Suspense>
+            )}
+          </TechnicalDetails>
+        </div>
       </div>
     </section>
   )

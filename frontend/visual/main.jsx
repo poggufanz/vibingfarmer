@@ -10,7 +10,7 @@
 // layer, and the three self-hosted variable fonts -- this harness mirrors that so the frozen
 // screenshots are the same pixels the product actually ships, not an unstyled stand-in.
 import { createRoot } from 'react-dom/client'
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import '@fontsource-variable/geist'
 import '@fontsource-variable/jetbrains-mono'
 import '@fontsource-variable/newsreader'
@@ -22,8 +22,28 @@ import { MoneyFigure, TechnicalDetails, VenueTruth } from '../src/components/poc
 import { NetworkBadge, NetworkRoute } from '../src/components/pocket/NetworkIdentity.jsx'
 import { NETWORK_IDS } from '../src/design/networks.js'
 import { StrategyRoute } from '../src/components/strategy/StrategyRoute.jsx'
-import { SOROBAN_TOKEN_ADDRESS } from '../src/stellar/config.js'
+import { buildMyMoneyModel } from '../src/money/myMoneyModel.js'
+import { SOROBAN_ACTIVE_VAULT_ADDRESS, SOROBAN_TOKEN_ADDRESS } from '../src/stellar/config.js'
 import { STELLAR_USDC_SAC } from '../src/stellar/cctpBurn.js'
+
+// My Money Task 14: `lazy()`, not a static top-level import, and for a DIFFERENT reason than
+// TechnicalMoneyDetails.jsx's own PixiSwarmGraph lazy-load (bundle size) -- this harness is ONE
+// Vite entry serving every `?fixture=` value from the SAME page, so a static import here would
+// mean my-money.css loads on EVERY fixture, always, including `?fixture=strategy`. Found
+// empirically: my-money.css re-declares `.pc-route`/`.pc-dominant`/`.pc-button` etc. verbatim
+// (its own header comment explains why -- "pocket-crew.css does not define these; only
+// strategy.css has ported them so far, and this route must not depend on that file being
+// loaded", written when each route's CSS was assumed to load in isolation, exactly as production
+// code-splitting guarantees but this shared harness does not) -- loading BOTH stylesheets on the
+// same page put my-money.css's copies last in source order, silently winning the cascade for
+// Strategy's own shared classes and shrinking its frozen fixture by ~640px at both mobile
+// projects (found via a controlled A/B: stubbing this import out made Strategy's 12/12 pass
+// again). Lazy-loading means my-money.css is only ever injected when `?fixture=my-money` is
+// actually the page being viewed, the same guarantee production's own route-level code-splitting
+// already provides.
+const MyMoneyRoute = lazy(() =>
+  import('../src/components/money/MyMoneyRoute.jsx').then((m) => ({ default: m.MyMoneyRoute }))
+)
 
 const params = new URLSearchParams(window.location.search)
 const fixture = params.get('fixture') || 'foundation'
@@ -1157,8 +1177,282 @@ function StrategyFixture() {
   )
 }
 
+// -------------------------------------------------------------------------------------------
+// My Money Task 14 (Pocket Crew redesign, Wave 6 snapshot freeze). One deterministic composite
+// over the /agent route's real composition root, MyMoneyRoute -- never a hand-assembled stand-in
+// (same discipline Strategy's own fixture above follows). Unlike Strategy, MyMoneyRoute is a
+// PURE, static composition over whatever `model`/`agents`/discovery props it's given -- there is
+// no internal "review" phase reached only through driven interaction -- so every section below
+// needs no AutopilotSection at all except the last (opening the recovery dialog via a real click).
+//
+// Every model below is built through the REAL buildMyMoneyModel state machine (money/
+// myMoneyModel.js), not hand-typed with a `state` literal: this is what makes the "problem"
+// precedence (a revoked-funded agent among two healthy ones still yields model.state:'problem'
+// overall) and the "empty"/"partial-discovery" gates (freshness, discovery completeness, zero
+// unattributed doubt) shapes production can actually emit, not shapes only a fixture could invent
+// -- the exact discipline the brief's constraint 4 requires and Strategy Task 11's worst miss
+// (a fixture shape production could never produce) was about.
+const MM_NOW = 1_800_000_900_000
+const MM_OWNER = 'GMMVISUALOWNERDJUQ7IYO7QJJBKWHXMLPQ2KABCVQDU5C2WTP6GZIRJ'
+const MM_AGENT_DEPOSIT = 'CMMVISUALDEPOSITAGENTNAURNNAVHOA7SLIIKGAJFYGDVCPRX3TJCTF'
+const MM_AGENT_BRIDGE = 'CMMVISUALBRIDGEAGENTTC7BKWIVVSRY5QJMLNYRIYENDJYGK4WTZ6OA'
+const MM_AGENT_RECOVERY = 'CMMVISUALRECOVERYAGENTUE6SMT6NRAZILYIZUANKVMLZSMZUFWHOSK'
+
+// readOwnerMoney.js:25 hardcodes this literal `token` for every amount this route renders today
+// (`const TOKEN = 'USDC'`) -- not a fixture shortcut, matching the exact same convention Strategy's
+// own PlanStage review UI already established for this file (see StrategyFixture's own comment).
+function mmAmt(units, decimals = 7) {
+  return { token: 'USDC', units: String(units), decimals }
+}
+
+function mmDepositAgent() {
+  return {
+    address: MM_AGENT_DEPOSIT,
+    scope: {
+      state: 'known',
+      value: { vault: SOROBAN_ACTIVE_VAULT_ADDRESS, revoked: false, expiry: 0 },
+    },
+    amount: mmAmt(300_0000000n),
+    executionStatus: 'idle',
+    custody: { location: 'stellar-vault' },
+    custodyBreakdown: [],
+    problems: [],
+  }
+}
+
+// The "Base child" fixture: a real Stellar+Base split -- one agent, two independently-known legs
+// (custody.js's own split-agent contract: the collapsed `custody.location` is 'unknown' by design
+// once two legs are each independently known, PositionList/AgentTeam read `custodyBreakdown` first
+// for exactly that reason).
+function mmBridgeAgent() {
+  return {
+    address: MM_AGENT_BRIDGE,
+    scope: {
+      state: 'known',
+      value: { vault: SOROBAN_ACTIVE_VAULT_ADDRESS, revoked: false, expiry: 0 },
+    },
+    amount: mmAmt(200_0000000n),
+    executionStatus: 'succeeded',
+    custody: { location: 'unknown' },
+    custodyBreakdown: [
+      { location: 'stellar-vault', amount: mmAmt(120_0000000n) },
+      { location: 'base-proxy', amount: mmAmt(80_0000000n) },
+    ],
+    problems: [],
+  }
+}
+
+// The "revoked-funded recovery" fixture: a confirmed scope-revoked agent still holding a known
+// positive balance -- myMoneyModel.js's own confirmedProblemAgents() precedence (checked BEFORE
+// every other branch) is what makes the overall model below 'problem', not a hand-set literal.
+function mmRecoveryAgent() {
+  return {
+    address: MM_AGENT_RECOVERY,
+    scope: {
+      state: 'known',
+      value: { vault: SOROBAN_ACTIVE_VAULT_ADDRESS, revoked: true, expiry: 0 },
+    },
+    amount: mmAmt(150_0000000n),
+    executionStatus: 'idle',
+    custody: { location: 'agent' },
+    custodyBreakdown: [],
+    problems: ['scope-revoked'],
+  }
+}
+
+const MM_AGENTS_ACTIVE = Object.freeze([mmDepositAgent(), mmBridgeAgent(), mmRecoveryAgent()])
+
+// Cap comes from ownerDiscovery.js's own agent rows (RouterDeployedEvent), never from `agents`
+// (AgentTeam.jsx's own header comment) -- the recovery agent deliberately carries none, so its row
+// honestly renders "Cap: Unavailable" rather than manufacturing one for an agent whose original
+// deploy event may never have been indexed.
+const MM_DISCOVERY_ACTIVE = Object.freeze({
+  status: 'complete',
+  agents: [
+    { address: MM_AGENT_DEPOSIT, cap: '1000000000' },
+    { address: MM_AGENT_BRIDGE, cap: '500000000' },
+  ],
+})
+
+const MM_KEEPER_HEALTHY = Object.freeze({
+  label: 'healthy',
+  lastHeartbeatAt: MM_NOW - 30_000,
+  evidence: { source: 'keeper-events' },
+})
+const MM_STRATEGY_CONFIGURED = Object.freeze({ label: 'configured' })
+const MM_RISK_WATCH_LOCAL = Object.freeze({
+  label: 'This device',
+  scope: 'local',
+  owner: MM_OWNER,
+  networkId: 'stellar-testnet',
+})
+
+const MM_MODEL_ACTIVE = buildMyMoneyModel({
+  owner: MM_OWNER,
+  discovery: MM_DISCOVERY_ACTIVE,
+  money: {
+    confirmedTotal: { state: 'known', amount: mmAmt(650_0000000n) },
+    yield: { state: 'live', apy: 8.1 },
+    earned: { state: 'unavailable', amount: null },
+    unattributed: {},
+    custodyBreakdown: { 'stellar-vault': '420000000000000000', 'base-proxy': '80000000' },
+    agentCount: 3,
+    problemAgentCount: 1,
+    agents: MM_AGENTS_ACTIVE,
+    checkedAt: MM_NOW,
+    confirmedLedger: 5551234,
+    confirmedBlock: 42,
+    source: 'stellar-rpc',
+  },
+  protection: { state: 'armed', authority: MM_OWNER, mandateExpiry: MM_NOW / 1000 + 300_000 },
+  now: MM_NOW,
+})
+
+const MM_MODEL_PARTIAL = buildMyMoneyModel({
+  owner: MM_OWNER,
+  discovery: { status: 'partial', agents: [{ address: MM_AGENT_DEPOSIT, cap: '1000000000' }] },
+  money: {
+    confirmedTotal: { state: 'known', amount: mmAmt(300_0000000n) },
+    yield: { state: 'live', apy: 7.4 },
+    earned: { state: 'unavailable', amount: null },
+    unattributed: { GMMKERNELUNCONFIRMED: { state: 'unavailable', amount: null, checkedAt: null } },
+    custodyBreakdown: { 'stellar-vault': '300000000' },
+    agentCount: 1,
+    problemAgentCount: 0,
+    agents: [mmDepositAgent()],
+    checkedAt: MM_NOW,
+    confirmedLedger: 5551200,
+    confirmedBlock: null,
+    source: 'stellar-rpc',
+  },
+  protection: null,
+  now: MM_NOW,
+})
+
+const MM_MODEL_EMPTY = buildMyMoneyModel({
+  owner: MM_OWNER,
+  discovery: { status: 'complete', agents: [] },
+  money: {
+    confirmedTotal: { state: 'known', amount: mmAmt(0n) },
+    yield: { state: 'unavailable', apy: null },
+    earned: { state: 'unavailable', amount: null },
+    unattributed: {},
+    custodyBreakdown: {},
+    agentCount: 0,
+    problemAgentCount: 0,
+    agents: [],
+    checkedAt: MM_NOW,
+    confirmedLedger: 5551300,
+    confirmedBlock: null,
+    source: 'stellar-rpc',
+  },
+  protection: { state: 'disarmed', authority: MM_OWNER, mandateExpiry: MM_NOW / 1000 - 3600 },
+  now: MM_NOW,
+})
+
+function findRecoverFundsButton(root) {
+  return [...root.querySelectorAll('button')].find((b) => b.textContent.includes('Recover funds'))
+}
+
+async function driveOpenRecoveryDialog(root) {
+  // MyMoneyRoute is now `lazy()` (see the module-scoped declaration above) -- on a slow first
+  // load the button genuinely doesn't exist in `root` yet at the moment this drive starts, unlike
+  // every other AutopilotSection drive in this file, which only ever waits on STATE changes
+  // within an already-mounted, eagerly-imported route.
+  await waitFor(() => findRecoverFundsButton(root) != null)
+  findRecoverFundsButton(root).click()
+  // Primitives.jsx's Dialog renders a native <dialog> (implicit role, no role="..." attribute) in
+  // any browser that supports showModal() -- which every real Chromium does -- and only falls back
+  // to an explicit role="dialog" <div> where that's unsupported (jsdom). Real Chromium capture
+  // needs the tag-name form; both are checked so this drive works under either engine.
+  await waitFor(() => root.querySelector('dialog, [role="dialog"]') != null)
+}
+
+function MyMoneyFixture() {
+  return (
+    <main data-fixture="my-money" style={{ display: 'grid', gap: '2.5rem' }}>
+      <h1>Pocket Crew visual harness — My Money</h1>
+
+      {/* One boundary for all four sections below -- MyMoneyRoute is `lazy()` (see its
+          declaration's own comment), but it is the SAME dynamic import every time, so React
+          resolves and caches it once; every section past the first renders synchronously.
+          Fix found empirically: a bare `fallback={null}` removed EVERY marker from the DOM
+          (including AutopilotSection's own `data-fixture-pending`, section 1 only, which lives
+          INSIDE this boundary and so is unmounted along with everything else while suspended) --
+          `waitForFunction(() => 0 pending markers)` then resolved instantly, true but for the
+          wrong reason (nothing had mounted yet, not "nothing left to wait for"), and the
+          screenshot sometimes raced a still-suspended page (1440x1000, the bare viewport, instead
+          of the real ~8871px full page). The fallback below carries its own marker so the wait
+          is correct throughout the whole load, not just after it. */}
+      <Suspense fallback={<div data-fixture-pending="true" />}>
+        {/* Primitives.jsx's Dialog is `position: fixed` (viewport-relative, not DOM-position-
+          relative) -- Chromium's full-page screenshot mode does NOT expand a fixed element's
+          containing block to the whole document height, so an open dialog always paints over
+          roughly the first viewport-height of the page, regardless of which section's own
+          AutopilotSection opened it (found empirically: placing it last visually overlaid section
+          1's unrelated content instead of its own). Placed FIRST so the dimmed backdrop
+          legitimately covers the same section whose own dialog is open, not an unrelated one; the
+          identical state is repeated undimmed in the very next section for a clean, unobstructed
+          view of the same three-agent/Base-child/needs-recovery content. */}
+        <Section title="Your money — recovery dialog open (active, three agents, Base child)">
+          <AutopilotSection drive={driveOpenRecoveryDialog}>
+            <MyMoneyRoute
+              model={MM_MODEL_ACTIVE}
+              agents={MM_AGENTS_ACTIVE}
+              discovery={MM_DISCOVERY_ACTIVE}
+              account={MM_OWNER}
+              keeper={MM_KEEPER_HEALTHY}
+              strategyConfig={MM_STRATEGY_CONFIGURED}
+              riskWatch={MM_RISK_WATCH_LOCAL}
+              venue="Autofarm Vault"
+              onAction={() => {}}
+              onRecoverAgent={() => {}}
+              onRecoverBase={() => {}}
+            />
+          </AutopilotSection>
+        </Section>
+
+        <Section title="Your money — active, three agents (long addresses, Base child, needs recovery), dialog closed">
+          <MyMoneyRoute
+            model={MM_MODEL_ACTIVE}
+            agents={MM_AGENTS_ACTIVE}
+            discovery={MM_DISCOVERY_ACTIVE}
+            account={MM_OWNER}
+            keeper={MM_KEEPER_HEALTHY}
+            strategyConfig={MM_STRATEGY_CONFIGURED}
+            riskWatch={MM_RISK_WATCH_LOCAL}
+            venue="Autofarm Vault"
+            onAction={() => {}}
+            onRecoverAgent={() => {}}
+            onRecoverBase={() => {}}
+          />
+        </Section>
+
+        <Section title="Your money — partial discovery">
+          <MyMoneyRoute
+            model={MM_MODEL_PARTIAL}
+            agents={[mmDepositAgent()]}
+            onAction={() => {}}
+            onRecoverBase={() => {}}
+          />
+        </Section>
+
+        <Section title="Your money — no position (empty)">
+          <MyMoneyRoute
+            model={MM_MODEL_EMPTY}
+            agents={[]}
+            onAction={() => {}}
+            onRecoverBase={() => {}}
+          />
+        </Section>
+      </Suspense>
+    </main>
+  )
+}
+
 function App() {
   if (fixture === 'strategy') return <StrategyFixture />
+  if (fixture === 'my-money') return <MyMoneyFixture />
   if (fixture !== 'foundation') {
     return (
       <main data-fixture={fixture}>

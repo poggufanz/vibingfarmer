@@ -32,12 +32,14 @@ export function PixiSwarmGraph({
   paletteIsLight,
   graphData,
   pulseEdge,
+  paused = false,
 }) {
   const wrapRef = useRef(null)
   const sceneRef = useRef(null)
+  const appRef = useRef(null)
   // latest-value refs so the async init and the scene always see current props
   const latest = useRef({})
-  latest.current = { execMap, paletteIsLight, onAgentClick }
+  latest.current = { execMap, paletteIsLight, onAgentClick, paused }
   const [fallback, setFallback] = useState(false)
   const data = useMemo(
     () => graphData || (strategy ? buildGraphData(strategy) : { nodes: [], links: [] }),
@@ -81,6 +83,16 @@ export function PixiSwarmGraph({
           onWorkerClick: (id) => latest.current.onAgentClick?.(id),
         })
         sceneRef.current = scene
+        appRef.current = app
+        // `paused` may already have flipped true while init() was still resolving (e.g. a
+        // disclosure closed again before Pixi finished loading) -- apply the CURRENT value here
+        // rather than always starting the ticker, or a fast close/reopen would leave it running.
+        if (latest.current.paused) app.ticker.stop()
+        // Reads Pixi's OWN `ticker.started` back onto the DOM -- a test observing only the
+        // `paused` prop below could pass even if the stop()/start() wiring were silently removed
+        // (the prop would still say the right thing; the ticker would not). This is real Pixi
+        // state, not an echo of the prop that requested it.
+        if (el.isConnected) el.dataset.tickerStarted = String(app.ticker.started)
         ro = new ResizeObserver(([entry]) => {
           const { width, height } = entry.contentRect
           if (width > 0 && height > 0) {
@@ -107,6 +119,7 @@ export function PixiSwarmGraph({
       if (mq && onMq) mq.removeEventListener?.('change', onMq)
       sceneRef.current?.destroy()
       sceneRef.current = null
+      appRef.current = null
       safeDestroy(app)
       app = null
     }
@@ -121,9 +134,25 @@ export function PixiSwarmGraph({
   useEffect(() => {
     if (pulseEdge?.key) sceneRef.current?.pulse(pulseEdge.key)
   }, [pulseEdge?.key, pulseEdge?.ts])
+  // `paused` (e.g. driven by a parent disclosure's own open/close) stops/starts the SAME ticker
+  // rather than destroying/recreating the Application -- positions, particles and node state all
+  // survive a close/reopen exactly as they were, only the per-frame advance halts. A no-op default
+  // (false) for every caller that doesn't pass it (src/agents.jsx's always-visible graph).
+  useEffect(() => {
+    const ticker = appRef.current?.ticker
+    if (!ticker) return
+    if (paused) ticker.stop()
+    else ticker.start()
+    if (wrapRef.current) wrapRef.current.dataset.tickerStarted = String(ticker.started)
+  }, [paused])
 
   return (
-    <div className="agent-graph" ref={wrapRef} style={{ position: 'relative' }}>
+    <div
+      className="agent-graph"
+      ref={wrapRef}
+      style={{ position: 'relative' }}
+      data-graph-paused={paused ? 'true' : 'false'}
+    >
       {fallback && (
         <StaticGraphFallback
           data={data}
