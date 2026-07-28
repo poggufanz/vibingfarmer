@@ -16,6 +16,7 @@ import { NetworkBadge, NetworkRoute } from '../pocket/NetworkIdentity.jsx'
 import { AgentMark } from '../pocket/AgentMark.jsx'
 import {
   RISK_PROFILES,
+  expandAgentSlots,
   normalizeStrategyPlan,
   buildStrategyViewModel,
 } from '../../strategy/planModel.js'
@@ -126,23 +127,23 @@ function buildAmountDisplayMap(planAgents, amountKey) {
   return map
 }
 
-// Task 3 (Pocket Crew design alignment) -- the Plan card's crew line shows "each handles about
-// $X" BEFORE generation ever runs (D-28.6: crew count is derived, never user-set), so there is no
-// real plan.agents yet to read a per-agent figure from. Reuses buildAmountDisplayMap's own
-// cents-rounding + remainder-redistribution above -- the exact arithmetic every real allocation
-// row already uses -- instead of inventing a second money formatter; only the amountNumber ->
-// base-units conversion and the even k-way split are new, and neither is display rounding. The
-// group's remainder (if any) only ever lands on the LAST slot (see buildAmountDisplayMap above),
-// so the first slot's figure is stable regardless of k -- safe to read unconditionally.
-function formatShare(amountNumber, targetSlots) {
-  if (!(amountNumber > 0) || !(targetSlots > 0)) return ''
-  const totalUnits = BigInt(Math.round(amountNumber * 10 ** SOROBAN_DECIMALS))
-  const shareUnits = totalUnits / BigInt(targetSlots)
-  const previewAgents = Array.from({ length: targetSlots }, (_, i) => ({
-    allocationId: `preview-${i}`,
-    allocation: { units: shareUnits.toString(), decimals: SOROBAN_DECIMALS },
-  }))
-  return `${buildAmountDisplayMap(previewAgents, 'allocation')['preview-0']} USDC`
+// Task 3 (Pocket Crew design alignment), fix loop 1 -- Important 1/2 (review findings): runs the
+// real expandAgentSlots split (the same one a real generation call makes) instead of a hand-rolled
+// uniform division -- splitEven puts its remainder on the EARLIEST slot, so a floor-only split was
+// systematically 1 base unit low on slot 0, which silently flips the rendered cents whenever
+// floor(total/k) lands 1 unit under a rounding boundary. Number.isFinite guards the one open trust
+// boundary here (the amount field is free text -- "1e999" parses to Infinity, and BigInt(Infinity)
+// throws with no error boundary anywhere in this app).
+function formatShare(amountNumber, risk) {
+  if (!Number.isFinite(amountNumber) || amountNumber <= 0) return ''
+  const agents = expandAgentSlots({
+    risk,
+    stellarUnits: BigInt(Math.round(amountNumber * 10 ** SOROBAN_DECIMALS)),
+    stellarDecimals: SOROBAN_DECIMALS,
+  })
+  return agents.length
+    ? `${buildAmountDisplayMap(agents, 'allocation')[agents[0].allocationId]} USDC`
+    : ''
 }
 
 // Fix loop N -- item 5 (owner report): crew character names, easily editable in one place. No
@@ -230,8 +231,13 @@ export function PlanStage({
   const canSubmit = amountValue.trim() !== '' && Boolean(risk) && phase !== 'generating'
   // Task 3 -- the crew line's own display-only number; never fed back into submissionRef/
   // validateAmountInput (the real submit path parses amountValue as an exact decimal string, see
-  // handleSubmit below -- this Number() coercion never reaches a grant/burn amount).
-  const amountNumber = Number(amountValue) || 0
+  // handleSubmit below -- this Number() coercion never reaches a grant/burn amount). Fix loop 1 --
+  // Important 2 (review finding): the amount field is free text ("1e999" parses to `Infinity`,
+  // exceeding the double max) -- collapsed to 0 here, at the one place this value is derived, so
+  // neither this component's own `amountNumber > 0` check below nor formatShare's guard has to
+  // separately guess whether a caller already sanitized it.
+  const rawAmountNumber = Number(amountValue)
+  const amountNumber = Number.isFinite(rawAmountNumber) ? rawAmountNumber : 0
   const viewModel = plan ? buildStrategyViewModel({ plan, stellarVenue }) : null
   const executionCheck = plan ? validateExecutionAllocations({ plan, vaultTotalShares }) : null
   const canAccept = phase === 'ready' && !planInvalidated && executionCheck?.ok === true
@@ -390,6 +396,7 @@ export function PlanStage({
                 <button
                   key={preset}
                   type="button"
+                  aria-pressed={amountValue === preset}
                   className={`pc-amount-preset${amountValue === preset ? ' pc-amount-preset--active' : ''}`}
                   onClick={() => {
                     setAmountValue(preset)
@@ -426,8 +433,7 @@ export function PlanStage({
               <p className="pc-crew-line">
                 {RISK_PROFILES[risk].targetSlots} crew member
                 {RISK_PROFILES[risk].targetSlots > 1 ? 's' : ''}
-                {amountNumber > 0 &&
-                  ` · each handles about ${formatShare(amountNumber, RISK_PROFILES[risk].targetSlots)}`}
+                {amountNumber > 0 && ` · each handles about ${formatShare(amountNumber, risk)}`}
               </p>
             )}
 

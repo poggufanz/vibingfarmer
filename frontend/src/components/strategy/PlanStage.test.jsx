@@ -1307,4 +1307,51 @@ describe('PlanStage — amount presets and crew line', () => {
     fireEvent.click(screen.getByRole('radio', { name: 'Balanced' }))
     expect(screen.getByText(/2 crew members/i)).toBeTruthy()
   })
+
+  // fix loop 1 -- Important 4 (review finding): the two tests above only exercise the trivial
+  // halves (a preset click; the crew count with an EMPTY amount, so `formatShare` never runs).
+  // `formatShare` -- a money-display function on the route's primary card -- had zero coverage.
+  // 20.0099999 / 2 is chosen because it's DISCRIMINATING: splitEven (planModel.js) puts its
+  // remainder on the EARLIEST slot, so the real first deposit agent gets 100050000 base units
+  // (10.0100000... USDC, displays "10.01"); a naive uniform `total/k` floor -- the bug this fix
+  // loop replaced -- gives every slot the same 100049999 units and displays "10.00" instead. A
+  // test built on an evenly-divisible amount (e.g. 100/3 elsewhere in this file) cannot tell the
+  // two implementations apart; this one can, and was verified against both code paths by hand
+  // before being pinned here (see the fix report).
+  it('pins the exact per-agent share for a non-evenly-divisible amount, matching the real splitEven remainder rule', () => {
+    render(
+      <PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={vi.fn()} />
+    )
+    fireEvent.change(screen.getByLabelText('Amount in USDC'), {
+      target: { value: '20.0099999' },
+    })
+    fireEvent.click(screen.getByRole('radio', { name: 'Balanced' }))
+    expect(screen.getByText('2 crew members · each handles about 10.01 USDC')).toBeTruthy()
+  })
+
+  it('shows the singular "1 crew member" and its share for Steady (the pluralization ternary\'s other branch)', () => {
+    render(
+      <PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={vi.fn()} />
+    )
+    fireEvent.change(screen.getByLabelText('Amount in USDC'), { target: { value: '5' } })
+    fireEvent.click(screen.getByRole('radio', { name: 'Steady' }))
+    expect(screen.getByText('1 crew member · each handles about 5.00 USDC')).toBeTruthy()
+    expect(screen.queryByText(/1 crew members/)).toBeNull()
+  })
+
+  // fix loop 1 -- Important 2 (review finding): the amount field is free text with no
+  // sanitization -- "1e999" parses to `Infinity` (Number("1e999") exceeds the double max), which
+  // used to pass the old `amountNumber > 0` guard and reach `BigInt(Math.round(Infinity))`, an
+  // unrecoverable RangeError with no error boundary anywhere in this app (verified: none exists in
+  // frontend/src). This proves the crash is fixed, not just guarded in a way that silently hides a
+  // wrong number -- the card must render, and it must not crash.
+  it('never crashes on an unparseable/overflowing amount, and shows no bogus share figure', () => {
+    render(
+      <PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={vi.fn()} />
+    )
+    fireEvent.change(screen.getByLabelText('Amount in USDC'), { target: { value: '1e999' } })
+    expect(() => fireEvent.click(screen.getByRole('radio', { name: 'Balanced' }))).not.toThrow()
+    expect(screen.getByText(/2 crew members/i)).toBeTruthy()
+    expect(screen.queryByText(/each handles about/)).toBeNull()
+  })
 })
