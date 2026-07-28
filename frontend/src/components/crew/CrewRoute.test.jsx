@@ -66,15 +66,18 @@ describe('CrewRoute', () => {
     expect(screen.getByRole('heading', { level: 1, name: /the crew, live/i })).toBeTruthy()
     const lanes = container.querySelectorAll('.pc-crew-lane')
     expect(lanes.length).toBe(2)
-    // Scoped to the lane's own address paragraph -- AgentMark's `label` (M11) also renders the
-    // short address as its own SVG text glyph, so an unscoped `getByText` on this substring would
-    // ambiguously match both.
+    // Fix round 2, F6: AgentMark's `label` is now the short 1-based lane number (not the address),
+    // so an unscoped `getByText` on this address substring is unambiguous again. Kept scoped to
+    // `lanes[0]`'s own address paragraph anyway -- it is the STRICTER check: it also catches a
+    // lane-ordering regression (e.g. the array rendered reversed) that an unscoped, page-wide
+    // `getByText` would miss entirely, since the same address text would still be found somewhere
+    // on the page, just in the wrong lane.
     expect(lanes[0].querySelector('.pc-crew-lane-address').textContent).toMatch(
       new RegExp(AGENT.slice(0, 4))
     )
   })
 
-  it('gives each AgentMark a distinct accessible name via its own short address (M11)', () => {
+  it("gives each AgentMark a distinct accessible name via its own lane number (M11, fix round 2: was the full short address, which overflowed AgentMark's visible <text> glyph -- F6)", () => {
     const AGENT_2 = 'C' + 'F'.repeat(55)
     const { container } = renderCrew({ agents: [agentRow(), agentRow({ address: AGENT_2 })] })
     const marks = container.querySelectorAll('.pc-agent-mark')
@@ -84,7 +87,9 @@ describe('CrewRoute', () => {
   it('shows the stat strip from real model fields, including the real confirmed total', () => {
     // A distinct per-agent amount (100 USDC) from the model's own confirmedTotal (250 USDC) so the
     // two don't render identical text -- otherwise `getByText('250 USDC')` would be ambiguous.
-    renderCrew({ agents: [agentRow({ amount: { token: 'USDC', units: '1000000000', decimals: 7 } })] })
+    renderCrew({
+      agents: [agentRow({ amount: { token: 'USDC', units: '1000000000', decimals: 7 } })],
+    })
     expect(screen.getByText(/working for you/i)).toBeTruthy()
     expect(screen.getByText(/1 of 1/)).toBeTruthy()
     expect(screen.getByText(/8\.1%/)).toBeTruthy()

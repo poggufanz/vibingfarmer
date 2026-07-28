@@ -46,15 +46,23 @@ export function CrewLanes({ agents = [], onCancelAgent, actionPending = false })
         Your crew
       </h2>
       <ul className="pc-crew-lanes">
-        {agents.map((agent) => {
+        {agents.map((agent, index) => {
           const revoked = Boolean(agent?.scope?.value?.revoked)
           return (
             <li key={agent.address} className="pc-crew-lane" data-revoked={revoked}>
+              {/* Fix round 2, F6: `label` renders as a real visible <text> glyph inside the mark
+                  body (AgentMark.jsx:143-147), not merely an aria-label -- every other call site
+                  (PlanStage.jsx/StartStage.jsx/ProtectStage.jsx) passes a 1-2 char label for
+                  exactly that reason. The 9-char short address round 1 passed here overflowed the
+                  36px mark. The 1-based lane number matches that same established convention
+                  (`String(index + 1)`) and still gives each lane a distinct accessible name, which
+                  is all M11 asked for -- `identity` (never `index`) remains the real per-agent
+                  color seed, so reordering the array still never reassigns any agent's color. */}
               <AgentMark
                 identity={agent.address}
                 size={36}
                 state={markStateFor(agent)}
-                label={shortAddress(agent.address)}
+                label={String(index + 1)}
               />
               <div>
                 <p className="pc-crew-lane-address">{shortAddress(agent.address)}</p>
