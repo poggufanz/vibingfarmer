@@ -41,15 +41,96 @@ function defaultInstruction(agent) {
     : 'Deposit into the Autofarm vault and hold. Do not withdraw automatically.'
 }
 
-function formatExpiry(expirySeconds) {
-  return Number.isFinite(expirySeconds) ? new Date(expirySeconds * 1000).toISOString() : 'Unknown'
+// Fix loop N -- item 4 (owner report): a raw ISO instant ("Expires 2026-07-28T02:54:50.000Z") is
+// not something a non-technical user reads at a glance. Intl.RelativeTimeFormat covers the two
+// single-unit cases directly (under an hour; a day or more); it has no built-in way to combine two
+// units into one phrase, so the common "a few hours left" case (the owner's own example, "Expires
+// in 2h 4m") is composed by hand from the same diff -- no new dependency, no invented
+// duration-formatting library. Intl.DateTimeFormat renders the absolute LOCAL time (the runtime's
+// own locale/timezone, never hardcoded) as the secondary/tooltip text.
+function formatExpiry(expirySeconds, nowMs = Date.now()) {
+  if (!Number.isFinite(expirySeconds)) return { relative: 'Unknown', absolute: null }
+  const absolute = new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(new Date(expirySeconds * 1000))
+  const diffSeconds = expirySeconds - Math.floor(nowMs / 1000)
+  if (diffSeconds <= 0) return { relative: 'Expired', absolute }
+  const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' })
+  const days = Math.floor(diffSeconds / 86400)
+  if (days >= 1) return { relative: rtf.format(days, 'day'), absolute }
+  const totalMinutes = Math.max(1, Math.round(diffSeconds / 60))
+  const hours = Math.floor(totalMinutes / 60)
+  const minutes = totalMinutes % 60
+  if (hours < 1) return { relative: rtf.format(minutes, 'minute'), absolute }
+  const relative = minutes > 0 ? `in ${hours}h ${minutes}m` : rtf.format(hours, 'hour')
+  return { relative, absolute }
 }
 
-// Same boundary math as planModel.js's private unitsToDecimal -- re-declared here because that
-// helper isn't exported and planModel.js is off-limits for this fix loop. Used only for display
-// (Cap), never for anything that becomes a grant/burn unit.
-function unitsToDisplay(units, decimals) {
-  return Number(BigInt(units)) / 10 ** decimals
+// Fix loop N -- item 3 (owner report): the old `unitsToDisplay` did `Number(units) / 10 **
+// decimals` straight into the Cap line with no rounding at all -- a 100/3 split showed one
+// worker's raw remainder digit (...334) beside its siblings' (...333), and neither was formatted
+// to money's usual 2dp. `splitEven` (planModel.js) stays exact BigInt for the real grant scope --
+// this is a DISPLAY-ONLY remainder redistribution, computed once per render and looked up per row,
+// never touching the units that become a grant/burn amount (planModel.js:188's `totalUnits`
+// exactness is untouched -- nothing here feeds back into the plan). Grouped by kind: only
+// same-kind agents were ever split from the same total by splitEven's single call in
+// expandAgentSlots, so a lone bridge cap is a group of one -- it just rounds, nothing to
+// redistribute.
+// Fix round 1 -- cheap fix (reviewer finding): `cap.decimals`/`allocation.decimals` are always
+// `stellarDecimals` (7) for every agent expandAgentSlots creates (planModel.js:104/124) -- fewer
+// than 2 is unreachable today -- but a negative BigInt exponent throws RangeError, which would
+// take the whole Plan stage render down. Guarded rather than left as a latent throw on a money path.
+function roundCentsBigInt(units, decimals) {
+  if (decimals < 2) return BigInt(units) * 10n ** BigInt(2 - decimals)
+  const denom = 10n ** BigInt(decimals - 2)
+  return (BigInt(units) + denom / 2n) / denom
+}
+
+function formatCents(cents) {
+  const negative = cents < 0n
+  const abs = negative ? -cents : cents
+  const whole = abs / 100n
+  const frac = (abs % 100n).toString().padStart(2, '0')
+  return `${negative ? '-' : ''}${whole}.${frac}`
+}
+
+// Fix round 1 -- I-2 (reviewer finding): generalized from a Cap-only `buildCapDisplayMap` so the
+// SAME redistribute-the-remainder-onto-the-last-agent treatment applies to whichever amount field
+// the caller names -- `cap` and `allocation` happen to hold equal units today
+// (expandAgentSlots sets both from the same `units` value), but the I8 regression test's own
+// premise is that they may diverge, so this reads whichever field it's told, never assumes.
+function buildAmountDisplayMap(planAgents, amountKey) {
+  const map = {}
+  const byKind = new Map()
+  for (const agent of planAgents) {
+    const list = byKind.get(agent.kind) || []
+    list.push(agent)
+    byKind.set(agent.kind, list)
+  }
+  for (const group of byKind.values()) {
+    const cents = group.map((a) => roundCentsBigInt(a[amountKey].units, a[amountKey].decimals))
+    const exactUnits = group.reduce((s, a) => s + BigInt(a[amountKey].units), 0n)
+    const exactCents = roundCentsBigInt(exactUnits, group[0][amountKey].decimals)
+    const diff = exactCents - cents.reduce((s, c) => s + c, 0n)
+    cents[cents.length - 1] += diff
+    group.forEach((a, i) => {
+      map[a.allocationId] = formatCents(cents[i])
+    })
+  }
+  return map
+}
+
+// Fix loop N -- item 5 (owner report): crew character names, easily editable in one place. No
+// name data exists anywhere else in the model -- planModel.js only ever produces positional
+// "Worker N" labels -- so this is this fix's own addition: one obvious exported constant, not
+// scattered literals. Indexed by POSITION within a plan's own agent order (0-based) -- decorative
+// crew flavor only, never an identity claim (AgentMark's own crew-color fill/dedup already keys
+// off the agent's real allocationId, never this list).
+export const CREW_NAMES = Object.freeze(['Sprout', 'Clover', 'Mochi', 'Pepper', 'Juniper', 'Basil'])
+
+function crewNameFor(index) {
+  return CREW_NAMES[index % CREW_NAMES.length]
 }
 
 // Fix loop 1 -- I2 (review finding): the domain has three source states
@@ -127,6 +208,18 @@ export function PlanStage({
   const executionCheck = plan ? validateExecutionAllocations({ plan, vaultTotalShares }) : null
   const canAccept = phase === 'ready' && !planInvalidated && executionCheck?.ok === true
   const stellarYield = venueYield(stellarVenue)
+  // Items 3/6/8 (owner report): computed once per render, looked up per row/once for the hoisted
+  // summary -- never recomputed per call site. `depositAgents`/`planExpiry` back the hoisted
+  // network+expiry+yield summary (every agent from one generation shares the same expiry --
+  // expandAgentSlots applies a single `expiry` value to every agent it creates in one call).
+  const capDisplay = plan ? buildAmountDisplayMap(plan.agents, 'cap') : null
+  // I-2 (reviewer finding): the per-row MoneyFigure ("33.333 USDC") stacked its own unrounded 3dp
+  // on top of Cap's now-correct 2dp, and the three allocations summed to 99.999 against the
+  // header's 100 USDC -- the owner's "format every displayed amount to 2 decimals" was only half
+  // applied. Same map-building treatment, keyed off `allocation` instead of `cap`.
+  const allocationDisplay = plan ? buildAmountDisplayMap(plan.agents, 'allocation') : null
+  const depositAgents = plan ? plan.agents.filter((a) => a.kind === 'deposit') : []
+  const planExpiry = plan?.agents[0] ? formatExpiry(plan.agents[0].expiry) : null
 
   async function runGeneration(generate) {
     const { amountUnits, risk: submittedRisk } = submissionRef.current
@@ -324,23 +417,30 @@ export function PlanStage({
 
         {phase === 'ready' && plan && (
           <div>
-            <span className="pc-source-badge">{sourceBadgeCopy(plan.sourceState)}</span>
-            {plan.sourceState !== 'live-ai' && (
-              <button
-                type="button"
-                className="pc-button pc-button--secondary"
-                onClick={handleRetryLive}
-              >
-                Retry live check
-              </button>
-            )}
+            {/* Fix loop N -- item 1 (owner report): the source badge, the optional Retry-live-check
+                button, and the plan total MoneyFigure were three bare inline siblings with no
+                separating container -- concatenating as "Live AI + live market checks100 USDC"
+                with zero CSS gap between them. A scoped flex row (not a locked contract selector),
+                consistent spacing regardless of which of the three children are present. */}
+            <div className="pc-plan-summary-header">
+              <span className="pc-source-badge">{sourceBadgeCopy(plan.sourceState)}</span>
+              {plan.sourceState !== 'live-ai' && (
+                <button
+                  type="button"
+                  className="pc-button pc-button--secondary"
+                  onClick={handleRetryLive}
+                >
+                  Retry live check
+                </button>
+              )}
 
-            <MoneyFigure
-              state="current"
-              value={viewModel.total}
-              currency={plan.amount.token}
-              freshness={sourceFreshness(plan.sourceState)}
-            />
+              <MoneyFigure
+                state="current"
+                value={viewModel.total}
+                currency={plan.amount.token}
+                freshness={sourceFreshness(plan.sourceState)}
+              />
+            </div>
 
             {planInvalidated && (
               <StatusNotice state="warning" title="Base testnet was just set up">
@@ -364,26 +464,55 @@ export function PlanStage({
               </StatusNotice>
             )}
 
+            {/* Fix loop N -- items 6/8 (owner report): network, expiry, and yield are PLAN-level
+                facts -- every agent from one generation call shares the same expiry
+                (expandAgentSlots applies a single `expiry` to every agent it creates), and every
+                Stellar deposit worker shares the same network/venue. Shown once here instead of
+                once per worker row, which is what "Stellar testnet / Cap / Expires / Yield
+                unavailable" repeating verbatim 3x actually was. Item 8's degraded-yield state gets
+                its own subtle inline (icon + muted colour) treatment, also shown once. */}
+            {planExpiry && (
+              <div className="pc-plan-facts">
+                {depositAgents.length > 0 && <NetworkBadge networkId="stellar-testnet" />}
+                <p>
+                  Expires {planExpiry.relative}
+                  {planExpiry.absolute && (
+                    <span className="pc-field-help"> ({planExpiry.absolute})</span>
+                  )}
+                </p>
+                {depositAgents.length > 0 &&
+                  (stellarYield.state === 'live' ? (
+                    <p>{stellarYield.apy}% APY</p>
+                  ) : (
+                    <p className="pc-field-help">
+                      <span aria-hidden="true">! </span>Yield unavailable
+                    </p>
+                  ))}
+              </div>
+            )}
+
             <ul className="pc-allocation-list">
-              {viewModel.agents.map((agent) => {
+              {viewModel.agents.map((agent, i) => {
                 const isBridge = agent.kind === 'bridge'
-                const planAgent = plan.agents.find((a) => a.allocationId === agent.id)
                 return (
                   <li key={agent.id} className="pc-allocation-row" data-agent-kind={agent.kind}>
+                    {/* Item 5 (owner report): at least 36px (was the AgentMark default of 32,
+                        measured as reading "nearly invisible" in a real browser), pinned to the
+                        row's own start (see strategy.css) so it lines up with the crew-name line
+                        that now leads each row's content instead of centering against the whole,
+                        much taller, multi-line row. */}
                     <AgentMark
                       identity={agent.id}
                       state="planned"
+                      size={36}
                       label={isBridge ? 'B' : String(agent.idx)}
                     />
                     <div>
-                      {isBridge ? (
-                        <NetworkRoute context={BRIDGE_NETWORK_CONTEXT} />
-                      ) : (
-                        <NetworkBadge networkId="stellar-testnet" />
-                      )}
+                      <p className="pc-worker-name">{crewNameFor(i)}</p>
+                      {isBridge && <NetworkRoute context={BRIDGE_NETWORK_CONTEXT} />}
                       <MoneyFigure
                         state="current"
-                        value={agent.allocation}
+                        value={allocationDisplay[agent.id]}
                         currency={plan.amount.token}
                       />
                       <p>
@@ -391,12 +520,12 @@ export function PlanStage({
                             approves is `plan.agents[].cap`, never the display allocation --
                             today they happen to be equal, but the moment they diverge (a
                             headroom cap, a rounded bridge cap) this must still state the real
-                            cap, not the allocation. */}
-                        Cap {unitsToDisplay(planAgent.cap.units, planAgent.cap.decimals)}{' '}
-                        {plan.amount.token}
+                            cap, not the allocation. Item 3 (owner report): capDisplay is a
+                            DISPLAY-only 2dp rounding of that same real cap (buildAmountDisplayMap
+                            above), never a different number. */}
+                        Cap {capDisplay[agent.id]} {plan.amount.token}
                       </p>
-                      <p>Expires {formatExpiry(planAgent.expiry)}</p>
-                      {isBridge ? (
+                      {isBridge && (
                         <ul>
                           {agent.children.map((child) => (
                             <li key={child.allocationId}>
@@ -405,16 +534,17 @@ export function PlanStage({
                             </li>
                           ))}
                         </ul>
-                      ) : (
-                        <p>
-                          {stellarYield.state === 'live'
-                            ? `${stellarYield.apy}% APY`
-                            : 'Yield unavailable'}
-                        </p>
                       )}
-                      <TechnicalDetails summary={`${agent.name} instructions`}>
+                      {/* Item 5 (owner report): the disclosure's own accessible name now matches
+                          the crew name shown right above it, not the internal "Worker N, ..."
+                          label -- a screen-reader user hears the same identity a sighted user
+                          sees. Scoped to this component's own local JSX only; the shared
+                          `agent.name` field from planModel.js/buildStrategyViewModel is
+                          untouched, so StartStage/StrategyReceipt's own displays are unaffected. */}
+                      <TechnicalDetails summary={`${crewNameFor(i)} instructions`}>
                         <textarea
-                          aria-label={`${agent.name} instructions`}
+                          className="pc-instruction-input"
+                          aria-label={`${crewNameFor(i)} instructions`}
                           value={instructions[agent.id] ?? ''}
                           onChange={(e) =>
                             setInstructions((prev) => ({ ...prev, [agent.id]: e.target.value }))
@@ -428,7 +558,11 @@ export function PlanStage({
             </ul>
 
             {canAccept && (
-              <button type="button" className="pc-button pc-button--primary" onClick={handleAccept}>
+              <button
+                type="button"
+                className="pc-button pc-button--primary pc-accept-plan-button"
+                onClick={handleAccept}
+              >
                 Accept plan
               </button>
             )}

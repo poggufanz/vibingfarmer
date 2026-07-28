@@ -475,6 +475,76 @@
   padding: var(--pc-space-5);
 }
 
+/* Strategy Task 14 fix loop N -- owner report, items 1/6/8. Two new, scoped flex rows (neither is
+ * a locked contract selector -- `.pc-plan-summary-header`/`.pc-plan-facts` don't exist in the
+ * contract at all, this route's own addition): the source badge, the optional Retry-live-check
+ * button, and the plan total MoneyFigure were three bare inline siblings with no separating
+ * container, concatenating as "Live AI + live market checks100 USDC" with zero CSS gap (item 1).
+ * `.pc-plan-facts` holds the network/expiry/yield facts PlanStage.jsx now hoists out of every
+ * worker row into one shared line above the list (items 6/8) -- same reused tokens, same
+ * flex+gap shape, so both rows read consistently.
+ */
+.pc-plan-summary-header,
+.pc-plan-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pc-space-3);
+  margin-bottom: var(--pc-space-4);
+}
+
+/* Item 5 (owner report): the crew avatar previously centered against the WHOLE (tall,
+ * multi-line) row via the locked `.pc-allocation-row`'s own `align-items: center` above --
+ * floating in the middle of a block far taller than its own header line, reading as unattached to
+ * any one worker. Pinning it to the row's own start aligns it with the crew-name line that now
+ * leads each row's content, without touching the locked row rule itself (new descendant selector,
+ * only affects the mark).
+ */
+.pc-allocation-row > .pc-agent-mark {
+  align-self: start;
+}
+
+.pc-worker-name {
+  margin: 0 0 var(--pc-space-1);
+  font-weight: 650;
+}
+
+/* Item 2 (owner report), closing Strategy Task 14's own deferred m-4 finding
+ * (PlanStage.jsx:412's bare unstyled `<textarea>`). Measured in a real browser: this surface's
+ * root inherits `color-scheme: dark` (contract `:root`), so an unstyled textarea's UA-default
+ * background renders Chromium's dark form-control fill (measured rgb(59, 59, 59)) while author
+ * CSS gives it this surface's own dark ink (`color: inherit` in style.css, cascading down from
+ * `.pc-dominant--decision`'s `--pc-harvest-ink`) -- dark text on a near-black fill, exactly the
+ * "redacted bar" the owner saw, for both the placeholder-empty and filled states alike (both read
+ * off the same broken pair). `color-scheme: light` asks the UA for its LIGHT native chrome
+ * (scrollbar/resize-handle/selection) to match the always-light Harvest surface this control sits
+ * on regardless of the page's own dark color-scheme; explicit `background`/`color` (never
+ * `inherit`) reuse the exact tinted-surface-on-Harvest recipe `.pc-strategy-amount` above already
+ * established for the same surface -- no new literal invented.
+ */
+.pc-instruction-input {
+  width: 100%;
+  min-height: 96px;
+  margin-top: var(--pc-space-2);
+  border: 1px solid color-mix(in srgb, currentcolor 26%, transparent);
+  border-radius: var(--pc-radius-control);
+  padding: var(--pc-space-2) var(--pc-space-4);
+  background: color-mix(in srgb, currentcolor 5%, transparent);
+  color: currentcolor;
+  color-scheme: light;
+  font-size: var(--pc-type-body-small);
+  font-family: var(--pc-font-body);
+}
+
+/* Item 9 (owner report): `Accept plan` is the primary action of the whole reviewed-plan surface --
+ * full-width instead of shrink-to-content makes it read as the one dominant next step, consistent
+ * with the card's own money-first scale. */
+.pc-accept-plan-button {
+  width: 100%;
+  margin-top: var(--pc-space-6);
+  font-size: var(--pc-type-body);
+}
+
 /* Tablet. Supporting context moves below the dominant surface. */
 @media (max-width: 1023px) {
   .pc-strategy-layout,

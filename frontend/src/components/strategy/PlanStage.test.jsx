@@ -15,7 +15,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { axe } from 'vitest-axe'
 import * as axeMatchers from 'vitest-axe/matchers'
-import { PlanStage } from './PlanStage.jsx'
+import { CREW_NAMES, PlanStage } from './PlanStage.jsx'
 import { StrategyRoute } from './StrategyRoute.jsx'
 import { FIRST_DEPOSIT_MIN_UNITS } from '../../strategy/amountValidation.js'
 import { canonicalizeStrategy } from '../../strategy/canonicalStrategy.js'
@@ -513,12 +513,15 @@ describe('PlanStage — reviewed plan (Stellar-only)', () => {
     expect(onGenerate).toHaveBeenCalledTimes(2)
   })
 
-  it('reviews the real agent count, per-agent allocation/cap/expiry, and yield', async () => {
+  it('reviews the real agent count and per-agent cap, with one shared expiry/yield summary', async () => {
     await generateStellarOnlyPlan()
     // risk 'Balanced' (med) -> exactly 2 real deposit agents, no manual count anywhere.
     expect(screen.getAllByText(/^Cap /)).toHaveLength(2)
-    expect(screen.getAllByText(/^Expires /)).toHaveLength(2)
-    expect(screen.getAllByText('5.5% APY')).toHaveLength(2)
+    // Owner report item 6: expiry and yield are PLAN-level facts -- every deposit agent from one
+    // generation call shares the same expiry/venue -- hoisted into ONE shared summary line above
+    // the worker list instead of repeated once per row.
+    expect(screen.getAllByText(/^Expires /)).toHaveLength(1)
+    expect(screen.getByText('5.5% APY')).toBeTruthy()
     expect(screen.getByText('100 USDC')).toBeTruthy() // review amount total
   })
 
@@ -529,10 +532,12 @@ describe('PlanStage — reviewed plan (Stellar-only)', () => {
     expect(screen.getByText(/Vibing Farmer Autofarm supplies to Blend/)).toBeTruthy()
   })
 
-  it('shows a network badge on every allocation', async () => {
+  it('shows one shared network badge above the worker list, not repeated per allocation', async () => {
     await generateStellarOnlyPlan()
-    // risk 'Balanced' (med) -> exactly 2 deposit agents, one badge each.
-    expect(screen.getAllByText('Stellar testnet')).toHaveLength(2)
+    // risk 'Balanced' (med) -> exactly 2 deposit agents sharing ONE Stellar testnet badge -- an
+    // identical badge repeated per row was exactly the "info blocks repeated 3x" defect the owner
+    // reported (item 6).
+    expect(screen.getAllByText('Stellar testnet')).toHaveLength(1)
   })
 
   it('renders "Yield unavailable" honestly when the venue carries no live yield', async () => {
@@ -548,7 +553,9 @@ describe('PlanStage — reviewed plan (Stellar-only)', () => {
     await fillAndSubmit({ amount: '100', risk: 'Steady', onGenerate })
     await screen.findByRole('button', { name: 'Accept plan' })
     // risk 'Steady' (low) -> exactly 1 deposit agent.
-    expect(screen.getAllByText('Yield unavailable')).toHaveLength(1)
+    // Owner report item 8: the copy now leads with a decorative (aria-hidden) icon glyph, so the
+    // accessible text is "! Yield unavailable" -- a substring match, not the old bare exact string.
+    expect(screen.getAllByText(/Yield unavailable/)).toHaveLength(1)
   })
 
   it('edits an agent instruction inside Technical details and approves the edited value in one deliberate action', async () => {
@@ -995,11 +1002,282 @@ describe("PlanStage — I8: Cap renders the plan agent's cap, never the display 
       )
       await fillAndSubmit({ amount: '100', risk: 'Steady', onGenerate })
       await screen.findByRole('button', { name: 'Accept plan' })
-      // allocation is 100 USDC; the spy doubled the plan-level cap to 200.
-      expect(screen.getByText('Cap 200 USDC')).toBeTruthy()
-      expect(screen.queryByText('Cap 100 USDC')).toBeNull()
+      // allocation is 100 USDC; the spy doubled the plan-level cap to 200. Owner report item 3:
+      // every displayed Cap is formatted to 2dp now, so this is '200.00', not '200'.
+      expect(screen.getByText('Cap 200.00 USDC')).toBeTruthy()
+      expect(screen.queryByText('Cap 100.00 USDC')).toBeNull()
     } finally {
       spy.mockRestore()
     }
   })
+})
+
+// Strategy Task 14 fix loop N -- owner report (strategy-plan-visual-brief.md), Plan review surface.
+describe('PlanStage — owner report: P0 correctness (items 1, 2, 3, 4)', () => {
+  async function generateThreeWaySplit() {
+    const onGenerate = vi.fn().mockResolvedValue({
+      source: 'deepseek',
+      sourceState: 'live-ai',
+      stellarUnits: '1000000000', // 100 USDC, risk 'Adventurous' -> exactly 3 deposit agents
+      baseAllocations: [],
+    })
+    render(
+      <PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={onGenerate} />
+    )
+    await fillAndSubmit({ amount: '100', risk: 'Adventurous', onGenerate })
+    await screen.findByRole('button', { name: 'Accept plan' })
+  }
+
+  it('item 3: a 100/3 split displays 33.33/33.33/33.34 caps that sum exactly to the 100.00 total', async () => {
+    await generateThreeWaySplit()
+    const caps = screen.getAllByText(/^Cap /).map((el) => el.textContent)
+    expect(caps).toHaveLength(3)
+    // The exact multiset the owner's own acceptance check names -- the raw BigInt remainder from
+    // splitEven physically sits on the FIRST agent (planModel.js's own doc comment), but the
+    // human-readable display remainder is redistributed onto the LAST one (buildCapDisplayMap).
+    expect(caps.sort()).toEqual(['Cap 33.33 USDC', 'Cap 33.33 USDC', 'Cap 33.34 USDC'])
+    const centsSum = caps.reduce((s, t) => s + Math.round(Number(t.match(/[\d.]+/)[0]) * 100), 0)
+    expect(centsSum).toBe(10000) // 100.00 USDC, exactly -- no float drift in the sum either
+    // No worker's Cap ever shows raw float digits past 2dp (the original defect: 33.3333334).
+    for (const t of caps) expect(t).toMatch(/^Cap \d+\.\d{2} USDC$/)
+  })
+
+  it('I-2 (reviewer finding): the per-worker allocation figure is also 2dp and sums exactly to the total, not a separate 3dp rounding stacked on top of Cap', async () => {
+    await generateThreeWaySplit()
+    const figures = document.querySelectorAll('.pc-allocation-row .pc-money')
+    expect(figures.length).toBe(3)
+    const values = Array.from(figures).map((el) => el.textContent.replace(/\s+/g, ' ').trim())
+    // Sorted so this doesn't depend on which worker got the redistributed cent.
+    expect(values.sort()).toEqual(['33.33 USDC', '33.33 USDC', '33.34 USDC'])
+    const cents = values.reduce((s, v) => s + Math.round(Number(v.match(/[\d.]+/)[0]) * 100), 0)
+    expect(cents).toBe(10000) // matches the Cap sum and the 100 USDC header total exactly
+  })
+
+  it('items 6/8: network, expiry, and yield stay hoisted to one shared line even with three workers', async () => {
+    await generateThreeWaySplit()
+    expect(screen.getAllByText('Stellar testnet')).toHaveLength(1)
+    expect(screen.getAllByText(/^Expires /)).toHaveLength(1)
+    expect(screen.getAllByText(/Yield unavailable/)).toHaveLength(1)
+  })
+
+  it('item 7: every worker instructions disclosure loads collapsed, uniformly -- no default expand-state mismatch', async () => {
+    await generateThreeWaySplit()
+    const details = document.querySelectorAll('.pc-technical-details')
+    expect(details.length).toBe(3)
+    for (const el of details) expect(el.hasAttribute('open')).toBe(false)
+  })
+
+  it('item 5: replaces generic "Worker N" labels with crew names, and sizes the avatar to at least 36px', async () => {
+    await generateThreeWaySplit()
+    expect(screen.queryByText(/^Worker \d/)).toBeNull()
+    for (const name of CREW_NAMES.slice(0, 3)) expect(screen.getByText(name)).toBeTruthy()
+    const marks = document.querySelectorAll('[data-agent-kind="deposit"] svg.pc-agent-mark')
+    expect(marks.length).toBe(3)
+    for (const svg of marks) {
+      expect(Number(svg.getAttribute('width'))).toBeGreaterThanOrEqual(36)
+      expect(Number(svg.getAttribute('height'))).toBeGreaterThanOrEqual(36)
+    }
+  })
+
+  it('item 4: expiry renders as relative time with the absolute local time alongside it, never a raw ISO instant', async () => {
+    await generateThreeWaySplit()
+    const expires = screen.getByText(/^Expires /)
+    expect(expires.textContent).not.toMatch(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/) // no raw ISO instant
+    expect(expires.textContent).toMatch(/in (\d+h( \d+m)?|\d+ hours?|\d+ minutes?)/)
+    expect(expires.textContent).toMatch(/\(.+\)/) // absolute local time shown alongside it
+  })
+
+  it('item 1: the plan total header (badge, retry button, money) is a real flex row, not bare concatenated siblings', async () => {
+    const onGenerate = vi.fn().mockResolvedValue({
+      source: 'fallback',
+      sourceState: 'deterministic',
+      stellarUnits: '1000000000',
+      baseAllocations: [],
+    })
+    render(
+      <PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={onGenerate} />
+    )
+    await fillAndSubmit({ amount: '100', risk: 'Steady', onGenerate })
+    await screen.findByRole('button', { name: 'Accept plan' })
+    const header = document.querySelector('.pc-plan-summary-header')
+    expect(header).toBeTruthy()
+    expect(header.querySelector('.pc-source-badge')).toBeTruthy()
+    expect(header.querySelector('.pc-money')).toBeTruthy()
+    // Real geometry (the gap actually renders, not just that the class is present) is verified in
+    // a real Chromium layout engine below -- jsdom draws no layout at all.
+  })
+
+  it('item 9: Accept plan carries the full-width primary-action class', async () => {
+    await generateThreeWaySplit()
+    const accept = screen.getByRole('button', { name: 'Accept plan' })
+    expect(accept.className).toMatch(/\bpc-accept-plan-button\b/)
+  })
+})
+
+describe('PlanStage — owner report: real-browser geometry and contrast (items 1, 2, 5, 9)', () => {
+  // [r, g, b] channels (0-255) -> WCAG relative luminance -> contrast ratio. A small local
+  // duplicate of src/design/contrast.js's own formula (that file only accepts hex; these come from
+  // an in-page alpha-compositing walk, see the test below) rather than adding a hex round-trip
+  // layer for one test.
+  function contrastFromRgb([r1, g1, b1], [r2, g2, b2]) {
+    const lin = (c) => {
+      const v = c / 255
+      return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4
+    }
+    const lum = (r, g, b) => 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+    const l1 = lum(r1, g1, b1)
+    const l2 = lum(r2, g2, b2)
+    const lighter = Math.max(l1, l2)
+    const darker = Math.min(l1, l2)
+    return (lighter + 0.05) / (darker + 0.05)
+  }
+
+  it(
+    'items 1/2/5/9: real layout measurement of label/value spacing, textarea contrast, avatar ' +
+      'alignment, and Accept-plan width',
+    async () => {
+      const onGenerate = vi.fn().mockResolvedValue({
+        source: 'deepseek',
+        sourceState: 'live-ai',
+        stellarUnits: '1000000000',
+        baseAllocations: [],
+      })
+      const { container } = render(
+        <PlanStage
+          vaultTotalShares={FUNDED_VAULT}
+          base={disconnectedBase}
+          onGenerate={onGenerate}
+        />
+      )
+      await fillAndSubmit({ amount: '100', risk: 'Adventurous', onGenerate })
+      await screen.findByRole('button', { name: 'Accept plan' })
+
+      const browser = await launchRealChromium()
+      try {
+        const page = await browser.newPage()
+        await page.setViewportSize({ width: 1280, height: 1600 })
+        await page.setContent(buildLayoutHarnessHtml(container.innerHTML))
+        const result = await page.evaluate(() => {
+          document.querySelectorAll('.pc-technical-details-summary').forEach((s) => s.click())
+
+          const header = document.querySelector('.pc-plan-summary-header')
+          const badge = header.querySelector('.pc-source-badge')
+          const money = header.querySelector('.pc-money')
+          const badgeRect = badge.getBoundingClientRect()
+          const moneyRect = money.getBoundingClientRect()
+          // Same visual line (flex row, no wrap at this width) -- assert a real, positive gap
+          // between the two boxes, not just that they don't overlap.
+          const headerGap =
+            Math.abs(badgeRect.top - moneyRect.top) < 4 ? moneyRect.left - badgeRect.right : null
+
+          const textarea = document.querySelector('.pc-instruction-input')
+          const taStyle = getComputedStyle(textarea)
+          // `.pc-instruction-input`'s own background is a deliberately translucent 5% tint (the
+          // same recipe `.pc-strategy-amount` already uses) meant to composite over the Harvest
+          // ancestor's OPAQUE fill -- getComputedStyle only ever returns the element's own
+          // (5%-alpha) declared color, never the visually-composited result, so reading it naively
+          // would report a false near-black background. Walk the real ancestor chain and alpha-
+          // composite each layer "over" the previous one, root to leaf, the same way the browser
+          // actually paints it -- verified against a live Chromium instance of this exact fixture
+          // (rgb(23, 37, 31) ink over an effective ~rgb(213, 235, 104) fill, 12:1).
+          const parseColor = (str) => {
+            if (!str || str === 'transparent') return [0, 0, 0, 0]
+            const m = str.match(/rgba?\(([^)]+)\)/)
+            if (m) {
+              const parts = m[1].split(',').map((s) => Number.parseFloat(s))
+              return [parts[0], parts[1], parts[2], parts.length > 3 ? parts[3] : 1]
+            }
+            const m2 = str.match(/color\(srgb ([\d.]+) ([\d.]+) ([\d.]+)(?:\s*\/\s*([\d.]+))?\)/)
+            if (m2) {
+              return [
+                Number.parseFloat(m2[1]) * 255,
+                Number.parseFloat(m2[2]) * 255,
+                Number.parseFloat(m2[3]) * 255,
+                m2[4] ? Number.parseFloat(m2[4]) : 1,
+              ]
+            }
+            return [0, 0, 0, 1]
+          }
+          const compositeOver = (top, base) => {
+            const [tr, tg, tb, ta2] = top
+            const [br, bg2, bb] = base
+            return [
+              tr * ta2 + br * (1 - ta2),
+              tg * ta2 + bg2 * (1 - ta2),
+              tb * ta2 + bb * (1 - ta2),
+              1,
+            ]
+          }
+          const chain = []
+          let ancestor = textarea
+          while (ancestor) {
+            chain.unshift(ancestor)
+            ancestor = ancestor.parentElement
+          }
+          let effectiveBg = [255, 255, 255, 1]
+          for (const node of chain) {
+            const c = parseColor(getComputedStyle(node).backgroundColor)
+            if (c[3] > 0) effectiveBg = compositeOver(c, effectiveBg)
+          }
+
+          const row = document.querySelector('.pc-allocation-row')
+          const mark = row.querySelector('svg.pc-agent-mark')
+          const name = row.querySelector('.pc-worker-name')
+          const markRect = mark.getBoundingClientRect()
+          const nameRect = name.getBoundingClientRect()
+          const rowRect = row.getBoundingClientRect()
+          const markCenter = markRect.top + markRect.height / 2
+          const nameCenter = nameRect.top + nameRect.height / 2
+          const rowCenter = rowRect.top + rowRect.height / 2
+
+          const acceptButton = Array.from(document.querySelectorAll('button')).find(
+            (b) => b.textContent.trim() === 'Accept plan'
+          )
+          const decision = document.querySelector('.pc-dominant--decision')
+          const decisionStyle = getComputedStyle(decision)
+          const decisionContentWidth =
+            decision.getBoundingClientRect().width -
+            Number.parseFloat(decisionStyle.paddingLeft) -
+            Number.parseFloat(decisionStyle.paddingRight)
+
+          return {
+            headerGap,
+            textareaEffectiveBackground: effectiveBg,
+            textareaColor: parseColor(taStyle.color),
+            markSize: markRect.width,
+            distanceToName: Math.abs(markCenter - nameCenter),
+            distanceToRowCenter: Math.abs(markCenter - rowCenter),
+            acceptButtonWidth: acceptButton.getBoundingClientRect().width,
+            decisionContentWidth,
+          }
+        })
+
+        // Item 1: a real, positive gap between the badge and the money figure (was 0 -- bare
+        // concatenated inline siblings).
+        expect(result.headerGap).not.toBeNull()
+        expect(result.headerGap).toBeGreaterThan(2)
+
+        // Item 2: the instructions textarea is readable -- was rgb(23, 37, 31) ink on a UA dark
+        // rgb(59, 59, 59) fill (contrast far under 1.5:1, measured before this fix); WCAG AA for
+        // body text is 4.5:1.
+        const textareaContrast = contrastFromRgb(
+          result.textareaColor,
+          result.textareaEffectiveBackground
+        )
+        expect(textareaContrast).toBeGreaterThanOrEqual(4.5)
+
+        // Item 5: at least 36px, and closer to the header (crew-name) line it belongs to than to
+        // the vertical center of the whole, much taller, multi-line row (was the reverse -- the
+        // avatar centered on the whole row via the row's own locked `align-items: center`).
+        expect(result.markSize).toBeGreaterThanOrEqual(36)
+        expect(result.distanceToName).toBeLessThan(result.distanceToRowCenter)
+
+        // Item 9: full-width, not a shrink-to-content button.
+        expect(result.acceptButtonWidth).toBeGreaterThanOrEqual(result.decisionContentWidth * 0.9)
+      } finally {
+        await browser.close()
+      }
+    },
+    20000
+  )
 })

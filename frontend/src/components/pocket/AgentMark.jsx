@@ -78,7 +78,11 @@ const STATE_INK_BY_THEME = Object.freeze({
   },
 })
 
-const VALID_SIZES = new Set([16, 20, 32])
+// 36 added for Strategy Task 14 fix (owner report item 5): the Plan review crew avatars measured
+// ~20-32px in a real browser and read as "nearly invisible" -- the contract's own base
+// `.pc-agent-mark` size (pocket-crew.css) is 36px. Purely additive: every existing call site keeps
+// whatever size it already passed, so no other frozen fixture's pixels move from this alone.
+const VALID_SIZES = new Set([16, 20, 32, 36])
 
 // Deterministic djb2-style string hash -- a pure function of `identity`, so the resulting
 // palette index never depends on render order, list position, or remounts.

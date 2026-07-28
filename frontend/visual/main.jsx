@@ -848,11 +848,36 @@ async function driveGenerating(root) {
   await waitFor(() => root.textContent.includes('Building your plan'))
 }
 
+// Strategy Task 14 fix loop N -- item 3 (owner report): 100/Adventurous (3 Stellar-only deposit
+// workers, no Base leg) is the exact repro the owner's own acceptance check names ("100 USDC
+// deposit and 3 workers... caps display 33.33/33.33/33.34 summing to 100.00") -- this section is
+// one of the two Plan review surfaces the brief points at, so it now drives that scenario instead
+// of a round number (500/Balanced) that never exercised the float-precision defect at all.
 async function driveSafeDefaultReady(root) {
-  await fillPlanForm(root, { amount: '500', risk: 'Balanced' })
+  await fillPlanForm(root, { amount: '100', risk: 'Adventurous' })
   await waitFor(() => findButton(root, 'Accept plan'))
 }
 
+// Strategy Task 14 fix loop N -- item 7 (owner report): this used to click exactly the FIRST
+// `.pc-technical-details summary` UNCONDITIONALLY as part of just reaching "ready", leaving one
+// worker's instructions expanded and the others collapsed as an accidental byproduct -- an
+// inconsistent expand state introduced by this fixture's own driver, not by PlanStage.jsx
+// (TechnicalDetails already defaults every disclosure to closed, uniformly, with no extra code --
+// see PlanStage.jsx's own `<TechnicalDetails summary={...}>` call, no `open` prop, and
+// PlanStage.test.jsx's own "every worker instructions disclosure loads collapsed" jsdom test, which
+// proves this independently of anything this fixture does). Judgement call (owner-requested):
+// all-collapsed is the consistent LOAD-TIME default across every worker, matching
+// TechnicalDetails' own default and the contract's own "technical data in disclosures" principle.
+//
+// Fix round 1 -- I-3 (reviewer finding): removing that click entirely left the item-2 textarea fix
+// (contrast/geometry of `.pc-instruction-input`) with ZERO pixel coverage across all 12 frozen
+// baselines -- a future regression there would be invisible to the pixel gate. This does NOT
+// reopen item 7: the click below happens only in THIS ONE section, after the ready state already
+// exists, and represents a real, reachable, deliberate "a user expanded the first worker's
+// instructions to review them" interaction -- not a load-time default. The other Plan review
+// section (`driveSafeDefaultReady`) is left with its real all-collapsed default untouched, so both
+// the default state (there) and the expanded state (here) are each covered by exactly one frozen
+// baseline.
 async function driveMixedReady(root) {
   await fillPlanForm(root, { amount: '1000', risk: 'Adventurous' })
   await waitFor(() => findButton(root, 'Accept plan'))
@@ -1097,7 +1122,10 @@ function StrategyFixture() {
             onGenerate={async () => ({
               source: 'fallback',
               sourceState: 'deterministic',
-              stellarUnits: '5000000000',
+              // 100 USDC at 7dp, matching driveSafeDefaultReady's typed '100' -- PlanStage's own
+              // C2 reconciliation check fails closed (phase 'error') if this doesn't match what
+              // was typed.
+              stellarUnits: '1000000000',
               baseAllocations: [],
             })}
           />
