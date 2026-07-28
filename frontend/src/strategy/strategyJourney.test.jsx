@@ -854,8 +854,8 @@ describe('Strategy journeys (Task 13, Wave 5) — 22 approved-spec cases', () =>
     render(<Harness ref={{ current: null }} mocks={{}} />)
     const nav = screen.getByRole('navigation', { name: 'Strategy progress' })
     expect(within(nav).getByText('Step 1 of 3: Plan')).toBeTruthy()
-    expect(within(nav).getByText('Protect').closest('button').disabled).toBe(true)
-    expect(within(nav).getByText('Start').closest('button').disabled).toBe(true)
+    expect(within(nav).getByText('2 · Protect').closest('button').disabled).toBe(true)
+    expect(within(nav).getByText('3 · Start').closest('button').disabled).toBe(true)
   })
 
   it('J22: a receipt is never claimed complete on attestation alone — ATTESTATION_RECEIVED never flips isReceiptComplete', async () => {
