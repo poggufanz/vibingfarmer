@@ -57,7 +57,7 @@ import { useMemo, useRef } from 'react'
 import { StatusNotice, TechnicalDetails } from '../pocket/Primitives.jsx'
 import { NetworkBadge, NetworkRoute } from '../pocket/NetworkIdentity.jsx'
 import { AgentMark } from '../pocket/AgentMark.jsx'
-import { buildStrategyViewModel } from '../../strategy/planModel.js'
+import { buildStrategyViewModel, buildAmountDisplayMap } from '../../strategy/planModel.js'
 import { usePocketTransition } from '../../design/usePocketTransition.js'
 import { StrategyReceipt } from './StrategyReceipt.jsx'
 
@@ -350,6 +350,14 @@ export function StartStage({
     () => new Map(viewModel.agents.map((a) => [a.id, a])),
     [viewModel]
   )
+  // Fix round 1 (Task 7 review, F1) -- the per-lane cap must show the SAME formatted figure the
+  // Plan stage's own allocation rows show for the identical agent (`PlanStage.jsx`'s
+  // `allocationDisplay`), not `display.allocation`'s raw float (a 100 USDC / 3-agent plan renders
+  // "33.3333333 USDC" from the raw field vs. Plan's "33.33 USDC" -- two stages of the same wizard
+  // disagreeing on the same money). `buildAmountDisplayMap` was lifted to planModel.js (its natural
+  // home, now imported by both PlanStage.jsx and this file) rather than re-implemented here --
+  // re-implementing money rounding is exactly how this repo has reintroduced rounding bugs before.
+  const capDisplay = useMemo(() => buildAmountDisplayMap(plan.agents, 'allocation'), [plan.agents])
 
   const lanes = useMemo(
     () => buildLanes({ plan, permission, events, receipt }),
@@ -400,15 +408,14 @@ export function StartStage({
                       <NetworkBadge networkId="stellar-testnet" />
                     )}
                     <p>{phaseLabel || lane.phase}</p>
-                    {/* Task 7 -- per-lane cap: the same per-agent display amount PlanStage's own
-                        allocation rows read off buildStrategyViewModel (planModel.js:213-269,
-                        `agents[].allocation` -- a plain already-divided display number, never a new
-                        BigInt/multiply on user input). This file already reads that exact field for
-                        every bridge CHILD row a few lines below (`childDisplay?.allocation`); this is
-                        the same field read for the lane's own top-level agent instead. */}
+                    {/* Fix round 1 (F1): the formatted 2dp figure (capDisplay, keyed by
+                        allocationId), never the raw `display.allocation` float -- see capDisplay's
+                        own comment above. Bridge child rows a few lines below intentionally stay
+                        raw (`childDisplay?.allocation`): PlanStage.jsx's own sibling bridge-child
+                        row (line 676) also renders that field raw, so those two already agree. */}
                     {display && (
                       <p className="pc-lane-cap">
-                        {display.allocation} {plan.amount.token}
+                        {capDisplay[lane.allocationId]} {plan.amount.token}
                       </p>
                     )}
                     <div className="pc-agent-lane-progress">
@@ -497,19 +504,29 @@ export function StartStage({
             title is an h3 here (PlanStage.jsx/ProtectStage.jsx's pre-existing aside titles predate
             that convention and are out of this task's file list to revise). */}
         <aside className="pc-strategy-aside" aria-label="If something goes wrong">
-          <h3 className="pc-aside-title">If something goes wrong</h3>
-          <ul className="pc-safety-list">
-            <li>A crew member that fails is retried. The others keep going.</li>
-            <li>Stop everything with one signature, even if our servers are down.</li>
-            <li>Money can only ever come back to your address. Nowhere else.</li>
-          </ul>
-          <details className="pc-signed-details">
-            <summary>What gets signed, exactly</summary>
-            <p className="pc-technical">
-              funding_router.grant(owner, per-agent caps, expiry, agents[{plan.agents.length}])
-              {permission?.mode === 'reuse' ? ' — reused, 0 new signatures this run' : ''}
-            </p>
-          </details>
+          {/* Fix round 1 (F2): `.pc-strategy-aside` is `display: grid; gap: var(--pc-space-6)`
+              (24px) and becomes a 2-column grid at the 768-1023px breakpoint (strategy.css) -- three
+              DIRECT grid-item children (h3/ul/details) would let the title land in a different
+              column/row than the list it labels there, and sit a full 24px+8px away from it even on
+              desktop. PlanStage.jsx's own `.pc-plan-so-far` avoids exactly this by wrapping its
+              title + list in one grid-item block; same pattern here, own class (own selector, not
+              reaching into PlanStage's reserved name) so the aside's grid only ever sees ONE item
+              for this whole panel, at every breakpoint. */}
+          <div className="pc-safety-panel">
+            <h3 className="pc-aside-title">If something goes wrong</h3>
+            <ul className="pc-safety-list">
+              <li>A crew member that fails is retried. The others keep going.</li>
+              <li>Stop everything with one signature, even if our servers are down.</li>
+              <li>Money can only ever come back to your address. Nowhere else.</li>
+            </ul>
+            <details className="pc-signed-details">
+              <summary>What gets signed, exactly</summary>
+              <p className="pc-technical">
+                funding_router.grant(owner, per-agent caps, expiry, agents[{plan.agents.length}])
+                {permission?.mode === 'reuse' ? ' — reused, 0 new signatures this run' : ''}
+              </p>
+            </details>
+          </div>
         </aside>
       </div>
 

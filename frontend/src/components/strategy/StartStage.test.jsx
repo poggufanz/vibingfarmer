@@ -264,14 +264,57 @@ describe('Start polish', () => {
     expect(screen.getByRole('button', { name: 'View my money' })).toBeTruthy()
   })
 
-  it("shows each lane's own capped allocation amount, mono and right-aligned", () => {
-    renderStartStage()
-    const caps = document.querySelectorAll('.pc-lane-cap')
+  it("shows each lane's own capped allocation amount", () => {
+    // M4/M6 (fix round 1 review): scoped to the render container (not `document`, which only
+    // worked by relying on RTL's auto-cleanup), and dropped the tautological className assertion
+    // (querySelectorAll('.pc-lane-cap') already guarantees that class). M5: the claim in the old
+    // test name ("mono and right-aligned") asserted nothing -- jsdom never resolves strategy.css --
+    // dropped from the name rather than left as an unverified claim.
+    const { container } = renderStartStage()
+    const caps = container.querySelectorAll('.pc-lane-cap')
     expect(caps).toHaveLength(PLAN_TWO_DEPOSITS.agents.length)
     for (const cap of caps) {
-      expect(cap.textContent).toBe('100 USDC')
-      expect(cap.className).toContain('pc-lane-cap')
+      expect(cap.textContent).toBe('100.00 USDC')
     }
+  })
+
+  it('formats a non-divisible per-agent split to 2dp, never the raw float (F1 regression)', () => {
+    // M7 (fix round 1 review, load-bearing for F1): the original fixture's round 100-per-agent
+    // split passed identically whether the cap were formatted or raw, so it could never have caught
+    // F1's defect. 100 USDC split three ways is 333333334/333333333/333333333 base units (7dp) --
+    // the same remainder-to-earliest-slot shape the real expandAgentSlots/splitEven produces for
+    // 100/3 -- whose raw floats are 33.3333334/33.3333333/33.3333333. `capDisplay` must format
+    // every one of those to a plain 2dp string; the group's own remainder correction
+    // (buildAmountDisplayMap, planModel.js) lands the extra cent on the LAST agent, never mid-group.
+    const plan = {
+      ...PLAN_TWO_DEPOSITS,
+      agents: [
+        {
+          ...PLAN_TWO_DEPOSITS.agents[0],
+          allocationId: 'run-3:deposit:0',
+          allocation: amount(TOKEN_ADDR, '333333334'),
+        },
+        {
+          ...PLAN_TWO_DEPOSITS.agents[0],
+          allocationId: 'run-3:deposit:1',
+          allocation: amount(TOKEN_ADDR, '333333333'),
+        },
+        {
+          ...PLAN_TWO_DEPOSITS.agents[0],
+          allocationId: 'run-3:deposit:2',
+          allocation: amount(TOKEN_ADDR, '333333333'),
+        },
+      ],
+    }
+    const { container } = renderStartStage({ plan })
+    const caps = [...container.querySelectorAll('.pc-lane-cap')].map((c) => c.textContent)
+    expect(caps).toEqual(['33.33 USDC', '33.33 USDC', '33.34 USDC'])
+  })
+
+  it('renders a formatted cap on the bridge lane too (the parent total, never a child figure)', () => {
+    const { container } = renderStartStage({ plan: PLAN_WITH_BRIDGE })
+    const caps = [...container.querySelectorAll('.pc-lane-cap')].map((c) => c.textContent)
+    expect(caps).toEqual(['100.00 USDC', '100.00 USDC'])
   })
 })
 
@@ -985,5 +1028,40 @@ describe('StartStage -- 320px real layout guard', () => {
     fireEvent.click(document.querySelector('.pc-technical-details summary'))
     const scrollWidth = await measureScrollWidthAt320(container.innerHTML)
     expect(scrollWidth).toBe(320)
+  }, 20000)
+})
+
+// Fix round 1 -- F2 real-layout guard. `.pc-strategy-aside` is `display: grid; gap: var(--pc-space-6)`
+// and becomes a 2-column grid specifically at `@media (max-width: 1023px)` (strategy.css) -- at
+// 767px and below it collapses back to `1fr` (strategy.css:1018-1020), so the EXISTING 320px guards
+// above cannot see this defect at all (confirmed: they stayed green against the un-fixed 3-direct-
+// children markup too). This measures a real 900px viewport (inside the 768-1023px window) and
+// asserts the safety rail's title sits ABOVE its own list, not beside it in an adjacent grid column.
+async function measureAsideStackingAt900(bodyHtml) {
+  const browser = await launchRealChromium()
+  try {
+    const page = await browser.newPage()
+    await page.setViewportSize({ width: 900, height: 1000 })
+    await page.setContent(buildLayoutHarnessHtml(bodyHtml))
+    return await page.evaluate(() => {
+      const title = document.querySelector('.pc-aside-title')
+      const list = document.querySelector('.pc-safety-list')
+      return {
+        titleBottom: title.getBoundingClientRect().bottom,
+        listTop: list.getBoundingClientRect().top,
+      }
+    })
+  } finally {
+    await browser.close()
+  }
+}
+
+describe('StartStage -- 768-1023px real layout guard (F2)', () => {
+  it('G: the safety rail title sits above its own list, not beside it in the aside grid’s second column', async () => {
+    const { container } = renderInRoute(
+      <StartStage plan={PLAN_TWO_DEPOSITS} permission={PERMISSION_FRESH} events={[]} />
+    )
+    const { titleBottom, listTop } = await measureAsideStackingAt900(container.innerHTML)
+    expect(titleBottom).toBeLessThanOrEqual(listTop)
   }, 20000)
 })

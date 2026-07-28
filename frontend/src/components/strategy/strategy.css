@@ -624,7 +624,20 @@
  *     this file (same as every other literal font-weight here, e.g. `.pc-candidate-name` above).
  * Everything else below has an exact --pc-* match and is tokenized, including the ones the brief's
  * own verbatim CSS wrote as raw px (12px/8px/16px/13px/12px/999px all have exact token matches).
+ *
+ * Fix round 1 (F2, review finding): `.pc-safety-panel` added -- the one wrapper block around the
+ * title/list/disclosure so `.pc-strategy-aside`'s own grid (gap 24px, 2 columns at 768-1023px, see
+ * that rule below) only ever sees ONE item for this whole panel, never three that can land in
+ * different columns/rows. Same `display: grid; gap: var(--pc-space-1)` PlanStage.jsx's own sibling
+ * `.pc-plan-so-far` already uses for the identical "title glued to what it labels" job -- own
+ * selector, not reaching into that class (same "own selector" precedent `.pc-receipt-actions`'
+ * comment above documents).
  */
+.pc-safety-panel {
+  display: grid;
+  gap: var(--pc-space-1);
+}
+
 .pc-safety-list {
   list-style: none;
   margin: 0;

@@ -271,6 +271,67 @@ export function buildStrategyViewModel(input) {
   }
 }
 
+// Fix loop N -- item 3 (owner report): the old `unitsToDisplay` did `Number(units) / 10 **
+// decimals` straight into the Cap line with no rounding at all -- a 100/3 split showed one
+// worker's raw remainder digit (...334) beside its siblings' (...333), and neither was formatted
+// to money's usual 2dp. `splitEven` (planModel.js) stays exact BigInt for the real grant scope --
+// this is a DISPLAY-ONLY remainder redistribution, computed once per render and looked up per row,
+// never touching the units that become a grant/burn amount (planModel.js:188's `totalUnits`
+// exactness is untouched -- nothing here feeds back into the plan). Grouped by kind: only
+// same-kind agents were ever split from the same total by splitEven's single call in
+// expandAgentSlots, so a lone bridge cap is a group of one -- it just rounds, nothing to
+// redistribute.
+// Fix round 1 -- cheap fix (reviewer finding): `cap.decimals`/`allocation.decimals` are always
+// `stellarDecimals` (7) for every agent expandAgentSlots creates (planModel.js:104/124) -- fewer
+// than 2 is unreachable today -- but a negative BigInt exponent throws RangeError, which would
+// take the whole Plan stage render down. Guarded rather than left as a latent throw on a money path.
+//
+// Task 7 (Pocket Crew design alignment) fix round 1 -- lifted here verbatim from PlanStage.jsx
+// (this module was already its natural home per that task's review finding): StartStage.jsx's own
+// per-lane cap needs the SAME formatted display map PlanStage's allocation rows use, not a second,
+// re-implemented rounding path -- re-implementing money rounding is exactly how this repo has
+// reintroduced rounding bugs before. No behavior change from the move: same signatures, same
+// guards, same callers (PlanStage.jsx now imports these instead of declaring them locally).
+export function roundCentsBigInt(units, decimals) {
+  if (decimals < 2) return BigInt(units) * 10n ** BigInt(2 - decimals)
+  const denom = 10n ** BigInt(decimals - 2)
+  return (BigInt(units) + denom / 2n) / denom
+}
+
+export function formatCents(cents) {
+  const negative = cents < 0n
+  const abs = negative ? -cents : cents
+  const whole = abs / 100n
+  const frac = (abs % 100n).toString().padStart(2, '0')
+  return `${negative ? '-' : ''}${whole}.${frac}`
+}
+
+// Fix round 1 -- I-2 (reviewer finding): generalized from a Cap-only `buildCapDisplayMap` so the
+// SAME redistribute-the-remainder-onto-the-last-agent treatment applies to whichever amount field
+// the caller names -- `cap` and `allocation` happen to hold equal units today
+// (expandAgentSlots sets both from the same `units` value), but the I8 regression test's own
+// premise is that they may diverge, so this reads whichever field it's told, never assumes.
+export function buildAmountDisplayMap(planAgents, amountKey) {
+  const map = {}
+  const byKind = new Map()
+  for (const agent of planAgents) {
+    const list = byKind.get(agent.kind) || []
+    list.push(agent)
+    byKind.set(agent.kind, list)
+  }
+  for (const group of byKind.values()) {
+    const cents = group.map((a) => roundCentsBigInt(a[amountKey].units, a[amountKey].decimals))
+    const exactUnits = group.reduce((s, a) => s + BigInt(a[amountKey].units), 0n)
+    const exactCents = roundCentsBigInt(exactUnits, group[0][amountKey].decimals)
+    const diff = exactCents - cents.reduce((s, c) => s + c, 0n)
+    cents[cents.length - 1] += diff
+    group.forEach((a, i) => {
+      map[a.allocationId] = formatCents(cents[i])
+    })
+  }
+  return map
+}
+
 /**
  * Drop agents whose destination failed eligibility (per-agent, fail-closed) and recompute truth
  * counts from what survives. `eligibility` maps an agent's `allocationId` to `{eligible}` (mirrors
