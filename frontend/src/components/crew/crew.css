@@ -1,0 +1,257 @@
+/* frontend/src/components/crew/crew.css
+   Task 9 (Pocket Crew design alignment). Token-only (--pc-* from src/design/pocket-crew.css) --
+   no hex literals, no new dependencies. `.pc-button`/`.pc-route`/`.pc-money`/`.pc-money--unknown`
+   are shared global classes already defined elsewhere in the bundle (my-money.css/strategy.css);
+   not redeclared here, same convention those files already follow for each other. */
+
+.pc-crew-route {
+  display: grid;
+  gap: clamp(28px, 4vw, 44px);
+}
+
+.pc-crew-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 24px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--pc-line);
+}
+.pc-crew-stat-label {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--pc-faint);
+}
+.pc-crew-stat-value {
+  margin: 4px 0 0;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.pc-crew-stat-value[data-tone='good'] {
+  color: var(--pc-harvest);
+}
+.pc-crew-stat-value[data-tone='warn'] {
+  color: var(--pc-warning);
+}
+
+.pc-crew-console {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+  gap: clamp(24px, 4vw, 48px);
+  align-items: start;
+}
+
+/* Lanes */
+.pc-crew-lanes-section {
+  display: grid;
+  gap: 12px;
+}
+.pc-crew-lanes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.pc-crew-lane {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  min-height: 76px;
+  padding-block: 14px;
+  border-bottom: 1px solid var(--pc-line);
+}
+.pc-crew-lane[data-revoked='true'] {
+  opacity: 0.55;
+}
+.pc-crew-lane-address {
+  margin: 0;
+  font-family: var(--pc-font-mono);
+  font-size: 14px;
+}
+.pc-crew-lane-note {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--pc-faint);
+}
+.pc-crew-lane-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+/* Emergency guard */
+.pc-crew-guard {
+  border: 1px solid var(--pc-line);
+  border-radius: 16px;
+  padding: 20px;
+  background: var(--pc-canvas);
+}
+.pc-crew-guard-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.pc-crew-guard-head .pc-crew-stat-label {
+  margin: 0;
+}
+.pc-crew-guard-state {
+  font-family: var(--pc-font-mono);
+  font-size: 12px;
+  color: var(--pc-harvest);
+}
+.pc-crew-guard[data-armed='false'] .pc-crew-guard-state {
+  color: var(--pc-danger);
+}
+.pc-crew-radar {
+  position: relative;
+  width: 132px;
+  height: 132px;
+  margin: 16px auto;
+  border-radius: 999px;
+  border: 1px solid var(--pc-line);
+  overflow: hidden;
+}
+.pc-crew-radar-ring {
+  position: absolute;
+  inset: 26px;
+  border-radius: 999px;
+  border: 1px solid var(--pc-line);
+}
+.pc-crew-radar-ring--inner {
+  inset: 52px;
+}
+.pc-crew-radar-sweep {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 2px;
+  height: 50%;
+  transform-origin: top center;
+  background: var(--pc-harvest);
+  opacity: 0.85;
+  animation: pc-crew-sweep 5.5s linear infinite;
+}
+.pc-crew-guard[data-armed='false'] .pc-crew-radar-sweep {
+  background: var(--pc-danger);
+}
+.pc-crew-radar-core {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  border-radius: 999px;
+  background: var(--pc-harvest);
+}
+.pc-crew-guard-clock {
+  margin: 8px 0 16px;
+  font-size: 28px;
+  font-weight: 720;
+  letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums;
+}
+.pc-crew-guard-renew {
+  width: 100%;
+}
+@keyframes pc-crew-sweep {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pc-crew-radar-sweep {
+    animation: none;
+    transform: rotate(45deg);
+  }
+}
+
+/* Activity: keeper feed + decision log */
+.pc-crew-activity {
+  display: grid;
+  gap: 24px;
+}
+.pc-crew-keeper-list,
+.pc-crew-decision-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.pc-crew-keeper-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  padding-block: 8px;
+  border-bottom: 1px solid var(--pc-line);
+}
+.pc-crew-keeper-time {
+  font-family: var(--pc-font-mono);
+  font-size: 12px;
+  color: var(--pc-faint);
+  white-space: nowrap;
+}
+.pc-crew-decision-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  padding-block: 8px;
+  border-bottom: 1px solid var(--pc-line);
+}
+.pc-crew-decision-dot {
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 999px;
+  background: var(--pc-muted);
+}
+.pc-crew-decision-row[data-tone='kept'] .pc-crew-decision-dot {
+  background: var(--pc-harvest);
+}
+.pc-crew-decision-row[data-tone='watch'] .pc-crew-decision-dot {
+  background: var(--pc-warning);
+}
+.pc-crew-decision-row[data-tone='rejected'] .pc-crew-decision-dot {
+  background: var(--pc-danger);
+}
+.pc-crew-decision-title {
+  margin: 0;
+  font-weight: 650;
+}
+.pc-crew-decision-detail {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--pc-faint);
+}
+.pc-crew-decision-time {
+  font-family: var(--pc-font-mono);
+  font-size: 12px;
+  color: var(--pc-faint);
+  white-space: nowrap;
+}
+.pc-crew-empty-note {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--pc-faint);
+}
+
+@media (max-width: 1023px) {
+  .pc-crew-console {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .pc-crew-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 767px) {
+  .pc-crew-stats {
+    grid-template-columns: 1fr;
+  }
+}
