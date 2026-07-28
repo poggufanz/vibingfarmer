@@ -225,6 +225,21 @@ describe('normalizeStrategyPlan', () => {
     })
   })
 
+  it('normalizeStrategyPlan preserves review verbatim', () => {
+    const review = { candidates: [{ protocol: 'X', chain: 'stellar', eligible: true, reasons: [] }] }
+    // reuse the file's existing minimal valid normalize input fixture, spread review onto it
+    const plan = normalizeStrategyPlan({
+      runId: 'run-shape',
+      source: 'fallback',
+      sourceState: 'deterministic',
+      risk: 'med',
+      stellarUnits: U(200),
+      destination: STELLAR_DESTINATION,
+      review,
+    })
+    expect(plan.review).toBe(review)
+  })
+
   it('amount is derived from the expanded agents, so it can never drift from what the crew actually spends', () => {
     const plan = normalizeStrategyPlan({
       runId: 'run-derive',

@@ -357,6 +357,10 @@ export function PlanStage({
         // A disconnected/ineligible Base leg is dropped here regardless of what the strategist
         // returned -- Base is never silently added after the fact.
         baseAllocations: baseEligible ? result.baseAllocations || [] : [],
+        // Task 5: this is the explicit object the brief warned about -- without this line,
+        // result.review (the eligibility gate's verdicts) is silently stripped here and never
+        // reaches normalizeStrategyPlan, even though generateStrategyPlan computed it.
+        review: result.review,
       })
       // Fix loop 1 -- C2 (review finding): the plan the user reviews and can accept must be the
       // plan derived from the amount they typed and validated -- never a different number the

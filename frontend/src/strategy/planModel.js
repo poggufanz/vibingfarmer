@@ -195,6 +195,7 @@ export function normalizeStrategyPlan(input) {
     amount: { token, units: totalUnits.toString(), decimals: stellarDecimals },
     agents,
     truth: computeTruth(agents),
+    review: input?.review ?? null,
   })
 }
 

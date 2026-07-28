@@ -169,6 +169,7 @@ import { reflect } from './strategy/reflector.js'
 import { increment as playbookIncrement, weight as playbookWeight } from './strategy/playbook.js'
 import { saveCycle } from './strategy/cycleJournal.js'
 import { computeBasket, slugFor } from './strategy/basketFilter.js'
+import { buildEligibilityReview } from './strategy/eligibilityReview.js'
 import { buildEligibilitySentence, vaultEligibilityLabel } from './strategy/eligibilitySentence.js'
 import { SNAPSHOT } from './strategy/vaultFacts.js'
 import { recordDecision } from './strategy/decisionLog.js'
@@ -2558,7 +2559,13 @@ const App = () => {
     // which is what PlanStage's own hard "did not match the amount you entered" check requires.
     const stellarUnits = stellarEligible ? (amountUnits - baseUnits7Total).toString() : '0'
 
-    return { source, sourceState, stellarUnits, baseAllocations }
+    return {
+      source,
+      sourceState,
+      stellarUnits,
+      baseAllocations,
+      review: { candidates: buildEligibilityReview({ survivors, dropped }) },
+    }
   }
 
   async function onGenerate(input, reportPhase) {
