@@ -99,7 +99,7 @@ function explorerAccountUrl(address) {
   return `https://stellar.expert/explorer/testnet/account/${address}`
 }
 
-export function StrategyReceipt({ receipt, runId, onViewMoney, onMakeAnotherDeposit }) {
+export function StrategyReceipt({ receipt, runId, onViewMoney, onMakeAnotherDeposit, onViewCrew }) {
   const allocations = receipt.allocations || []
   const groups = reconcileAllocations(allocations)
   const effectiveRunId = runId || receipt.runId
@@ -237,17 +237,48 @@ export function StrategyReceipt({ receipt, runId, onViewMoney, onMakeAnotherDepo
         ))}
       </TechnicalDetails>
 
+      {/* Task 7 (Start polish) -- brief's own file list named only StartStage.jsx/strategy.css/
+          app.jsx as the files to touch for the done-state "Watch the crew"/"Back to my money"
+          actions, describing them as replacing what renders at `.pc-receipt-actions` -- but that
+          markup actually lives here, in this sibling component (StartStage.jsx only composes
+          <StrategyReceipt>, it never renders its own action row). `onViewCrew` is the one addition
+          this task makes to this file: strictly additive and opt-in, so StrategyReceipt.test.jsx's
+          own locked-down "actions are exactly View my money (primary) and Make another deposit
+          (secondary)" test (none of whose call sites pass onViewCrew) keeps passing untouched. Only
+          a caller that supplies onViewCrew (StartStage.jsx, once app.jsx wires it) gets the new
+          three-action row; every other/older caller sees the original two-button behavior,
+          byte-identical to before. */}
       <div className="pc-receipt-actions">
-        <button type="button" className="pc-button pc-button--primary" onClick={onViewMoney}>
-          View my money
-        </button>
-        <button
-          type="button"
-          className="pc-button pc-button--secondary"
-          onClick={onMakeAnotherDeposit}
-        >
-          Make another deposit
-        </button>
+        {onViewCrew ? (
+          <>
+            <button type="button" className="pc-button pc-button--primary" onClick={onViewCrew}>
+              Watch the crew
+            </button>
+            <button type="button" className="pc-button pc-button--secondary" onClick={onViewMoney}>
+              Back to my money
+            </button>
+            <button
+              type="button"
+              className="pc-button pc-button--secondary"
+              onClick={onMakeAnotherDeposit}
+            >
+              Make another deposit
+            </button>
+          </>
+        ) : (
+          <>
+            <button type="button" className="pc-button pc-button--primary" onClick={onViewMoney}>
+              View my money
+            </button>
+            <button
+              type="button"
+              className="pc-button pc-button--secondary"
+              onClick={onMakeAnotherDeposit}
+            >
+              Make another deposit
+            </button>
+          </>
+        )}
       </div>
     </div>
   )

@@ -339,6 +339,7 @@ export function StartStage({
   onRetryAllocation,
   onViewMoney,
   onMakeAnotherDeposit,
+  onViewCrew,
 }) {
   const scopeRef = useRef(null)
   const viewModel = useMemo(
@@ -364,117 +365,152 @@ export function StartStage({
 
   return (
     <div ref={scopeRef} className="pc-start-stage">
-      <div className="pc-strategy-decision pc-dominant pc-dominant--decision">
-        <h2 className="pc-strategy-question">
-          {receipt ? 'Your run is complete' : 'Starting your run'}
-        </h2>
-        <p className="pc-visually-hidden" role="status" aria-live="polite">
-          {announcement}
-        </p>
+      <div className="pc-strategy-layout">
+        <div className="pc-strategy-decision pc-dominant pc-dominant--decision">
+          <h2 className="pc-strategy-question">
+            {receipt ? 'Your run is complete' : 'Starting your run'}
+          </h2>
+          <p className="pc-visually-hidden" role="status" aria-live="polite">
+            {announcement}
+          </p>
 
-        <ul className="pc-agent-lanes">
-          {lanes.map((lane, index) => {
-            const isBridge = lane.kind === 'bridge'
-            const display = displayByAllocation.get(lane.allocationId)
-            const phaseLabel = isBridge
-              ? BRIDGE_PHASE_LABEL[lane.phase]
-              : DEPOSIT_PHASE_LABEL[lane.phase]
-            return (
-              <li
-                key={lane.allocationId}
-                className="pc-agent-lane"
-                data-agent-kind={lane.kind}
-                data-lane-phase={lane.phase}
-              >
-                <AgentMark
-                  identity={lane.allocationId}
-                  state={laneMarkState(lane.phase)}
-                  label={isBridge ? 'B' : String(index + 1)}
-                />
-                <div data-pocket-enter>
-                  {isBridge ? (
-                    <NetworkRoute context={bridgeNetworkContext(lane.phase)} />
-                  ) : (
-                    <NetworkBadge networkId="stellar-testnet" />
-                  )}
-                  <p>{phaseLabel || lane.phase}</p>
-                  <div className="pc-agent-lane-progress">
-                    <span />
+          <ul className="pc-agent-lanes">
+            {lanes.map((lane, index) => {
+              const isBridge = lane.kind === 'bridge'
+              const display = displayByAllocation.get(lane.allocationId)
+              const phaseLabel = isBridge
+                ? BRIDGE_PHASE_LABEL[lane.phase]
+                : DEPOSIT_PHASE_LABEL[lane.phase]
+              return (
+                <li
+                  key={lane.allocationId}
+                  className="pc-agent-lane"
+                  data-agent-kind={lane.kind}
+                  data-lane-phase={lane.phase}
+                >
+                  <AgentMark
+                    identity={lane.allocationId}
+                    state={laneMarkState(lane.phase)}
+                    label={isBridge ? 'B' : String(index + 1)}
+                  />
+                  <div data-pocket-enter>
+                    {isBridge ? (
+                      <NetworkRoute context={bridgeNetworkContext(lane.phase)} />
+                    ) : (
+                      <NetworkBadge networkId="stellar-testnet" />
+                    )}
+                    <p>{phaseLabel || lane.phase}</p>
+                    {/* Task 7 -- per-lane cap: the same per-agent display amount PlanStage's own
+                        allocation rows read off buildStrategyViewModel (planModel.js:213-269,
+                        `agents[].allocation` -- a plain already-divided display number, never a new
+                        BigInt/multiply on user input). This file already reads that exact field for
+                        every bridge CHILD row a few lines below (`childDisplay?.allocation`); this is
+                        the same field read for the lane's own top-level agent instead. */}
+                    {display && (
+                      <p className="pc-lane-cap">
+                        {display.allocation} {plan.amount.token}
+                      </p>
+                    )}
+                    <div className="pc-agent-lane-progress">
+                      <span />
+                    </div>
+                    {!isBridge && lane.custodyLabel && <p>{lane.custodyLabel}</p>}
+                    {!isBridge && lane.error && <p role="alert">{lane.error}</p>}
+                    {/* Step 1: one bridge mark contains ALL Base child destinations -- a single
+                        lane/mark for the whole leg, with every child's own destination, custody, and
+                        (when it failed) retry action listed inside it. */}
+                    {isBridge && lane.children.length > 0 && (
+                      <ul>
+                        {lane.children.map((child) => {
+                          const childDisplay = display?.children?.find(
+                            (c) => c.allocationId === child.allocationId
+                          )
+                          return (
+                            <li key={child.allocationId}>
+                              <span>
+                                {/* m-7 (Strategy Task 14 fix round 1): matched PlanStage.jsx's
+                                    sibling bridge-child row, which always names the currency
+                                    alongside the amount -- this one silently omitted it. */}
+                                {child.proxyTarget || child.destination}:{' '}
+                                {childDisplay?.allocation ?? ''} {plan.amount.token}
+                              </span>
+                              {child.custodyLabel && <span> {child.custodyLabel}</span>}
+                              {child.error && <span role="alert"> {child.error}</span>}
+                              {child.failed && (
+                                <button
+                                  type="button"
+                                  className="pc-button pc-button--secondary"
+                                  onClick={() =>
+                                    onRetryAllocation?.(child.allocationId, child.custody)
+                                  }
+                                >
+                                  Retry
+                                </button>
+                              )}
+                            </li>
+                          )
+                        })}
+                      </ul>
+                    )}
+                    {lane.txHash && (
+                      <TechnicalDetails summary={`Agent ${index + 1} technical details`}>
+                        {/* Owner decision #19: the container no longer defaults to mono -- these
+                            two raw values are marked .pc-technical individually so they keep
+                            rendering in the mono face. */}
+                        <p>
+                          Transaction: <span className="pc-technical">{lane.txHash}</span>
+                        </p>
+                        <p>
+                          Allocation: <span className="pc-technical">{lane.allocationId}</span>
+                        </p>
+                      </TechnicalDetails>
+                    )}
                   </div>
-                  {!isBridge && lane.custodyLabel && <p>{lane.custodyLabel}</p>}
-                  {!isBridge && lane.error && <p role="alert">{lane.error}</p>}
-                  {/* Step 1: one bridge mark contains ALL Base child destinations -- a single
-                      lane/mark for the whole leg, with every child's own destination, custody, and
-                      (when it failed) retry action listed inside it. */}
-                  {isBridge && lane.children.length > 0 && (
-                    <ul>
-                      {lane.children.map((child) => {
-                        const childDisplay = display?.children?.find(
-                          (c) => c.allocationId === child.allocationId
-                        )
-                        return (
-                          <li key={child.allocationId}>
-                            <span>
-                              {/* m-7 (Strategy Task 14 fix round 1): matched PlanStage.jsx's
-                                  sibling bridge-child row, which always names the currency
-                                  alongside the amount -- this one silently omitted it. */}
-                              {child.proxyTarget || child.destination}:{' '}
-                              {childDisplay?.allocation ?? ''} {plan.amount.token}
-                            </span>
-                            {child.custodyLabel && <span> {child.custodyLabel}</span>}
-                            {child.error && <span role="alert"> {child.error}</span>}
-                            {child.failed && (
-                              <button
-                                type="button"
-                                className="pc-button pc-button--secondary"
-                                onClick={() =>
-                                  onRetryAllocation?.(child.allocationId, child.custody)
-                                }
-                              >
-                                Retry
-                              </button>
-                            )}
-                          </li>
-                        )
-                      })}
-                    </ul>
+                  {!isBridge && lane.retryEligible && (
+                    <button
+                      type="button"
+                      className="pc-button pc-button--secondary"
+                      onClick={() => onRetryAllocation?.(lane.allocationId, lane.custody)}
+                    >
+                      Retry
+                    </button>
                   )}
-                  {lane.txHash && (
-                    <TechnicalDetails summary={`Agent ${index + 1} technical details`}>
-                      {/* Owner decision #19: the container no longer defaults to mono -- these two
-                          raw values are marked .pc-technical individually so they keep rendering
-                          in the mono face. */}
-                      <p>
-                        Transaction: <span className="pc-technical">{lane.txHash}</span>
-                      </p>
-                      <p>
-                        Allocation: <span className="pc-technical">{lane.allocationId}</span>
-                      </p>
-                    </TechnicalDetails>
-                  )}
-                </div>
-                {!isBridge && lane.retryEligible && (
-                  <button
-                    type="button"
-                    className="pc-button pc-button--secondary"
-                    onClick={() => onRetryAllocation?.(lane.allocationId, lane.custody)}
-                  >
-                    Retry
-                  </button>
-                )}
-              </li>
-            )
-          })}
-        </ul>
+                </li>
+              )
+            })}
+          </ul>
 
-        {anyFailed && !receipt && (
-          <StatusNotice state="warning" title="One or more agents did not complete">
-            <p>
-              Agents that already finished stay confirmed. This page keeps reflecting the real
-              state.
+          {anyFailed && !receipt && (
+            <StatusNotice state="warning" title="One or more agents did not complete">
+              <p>
+                Agents that already finished stay confirmed. This page keeps reflecting the real
+                state.
+              </p>
+            </StatusNotice>
+          )}
+        </div>
+
+        {/* Task 7 -- Start's own safety rail (mirrors PlanStage.jsx's `.pc-strategy-aside` "The
+            plan so far" panel and ProtectStage.jsx's boundaries section, same two-column layout).
+            Task 2 demoted every STAGE heading to h2 and reserved h1 for the route
+            (StrategyRoute.jsx) -- this is a sub-section under THIS stage's own h2 above, so its
+            title is an h3 here (PlanStage.jsx/ProtectStage.jsx's pre-existing aside titles predate
+            that convention and are out of this task's file list to revise). */}
+        <aside className="pc-strategy-aside" aria-label="If something goes wrong">
+          <h3 className="pc-aside-title">If something goes wrong</h3>
+          <ul className="pc-safety-list">
+            <li>A crew member that fails is retried. The others keep going.</li>
+            <li>Stop everything with one signature, even if our servers are down.</li>
+            <li>Money can only ever come back to your address. Nowhere else.</li>
+          </ul>
+          <details className="pc-signed-details">
+            <summary>What gets signed, exactly</summary>
+            <p className="pc-technical">
+              funding_router.grant(owner, per-agent caps, expiry, agents[{plan.agents.length}])
+              {permission?.mode === 'reuse' ? ' — reused, 0 new signatures this run' : ''}
             </p>
-          </StatusNotice>
-        )}
+          </details>
+        </aside>
       </div>
 
       {receipt && (
@@ -483,6 +519,7 @@ export function StartStage({
           runId={runId}
           onViewMoney={onViewMoney}
           onMakeAnotherDeposit={onMakeAnotherDeposit}
+          onViewCrew={onViewCrew}
         />
       )}
     </div>

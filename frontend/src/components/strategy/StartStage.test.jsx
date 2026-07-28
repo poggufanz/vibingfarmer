@@ -228,6 +228,53 @@ function failedAllocation(
   }
 }
 
+// Task 7 (Start polish) -- a small default-props helper this suite did not already have (every
+// test above builds its own fully-explicit <StartStage> render, deliberate for those since each
+// pins one exact fixture combination). Defaults mirror the same PLAN_TWO_DEPOSITS/PERMISSION_FRESH/
+// no-events baseline several tests above already construct by hand (e.g. the 'reduced motion' and
+// 'reuse mode' describes just below).
+function renderStartStage(overrides = {}) {
+  return render(
+    <StartStage plan={PLAN_TWO_DEPOSITS} permission={PERMISSION_FRESH} events={[]} {...overrides} />
+  )
+}
+
+describe('Start polish', () => {
+  it('renders the safety rail', () => {
+    renderStartStage()
+    expect(screen.getByText(/if something goes wrong/i)).toBeTruthy()
+    expect(screen.getByText(/what gets signed, exactly/i)).toBeTruthy()
+  })
+
+  it('offers Watch the crew and Back to my money after settlement', () => {
+    const receiptFixture = receiptFor({
+      allocations: [succeededAllocation('run-1:deposit:0'), succeededAllocation('run-1:deposit:1')],
+    })
+    renderStartStage({ receipt: receiptFixture, onViewCrew: vi.fn() })
+    expect(screen.getByRole('button', { name: /watch the crew/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /back to my money/i })).toBeTruthy()
+  })
+
+  it('never shows Watch the crew/Back to my money when the caller has no onViewCrew (backward compatibility)', () => {
+    const receiptFixture = receiptFor({
+      allocations: [succeededAllocation('run-1:deposit:0'), succeededAllocation('run-1:deposit:1')],
+    })
+    renderStartStage({ receipt: receiptFixture })
+    expect(screen.queryByRole('button', { name: /watch the crew/i })).toBeNull()
+    expect(screen.getByRole('button', { name: 'View my money' })).toBeTruthy()
+  })
+
+  it("shows each lane's own capped allocation amount, mono and right-aligned", () => {
+    renderStartStage()
+    const caps = document.querySelectorAll('.pc-lane-cap')
+    expect(caps).toHaveLength(PLAN_TWO_DEPOSITS.agents.length)
+    for (const cap of caps) {
+      expect(cap.textContent).toBe('100 USDC')
+      expect(cap.className).toContain('pc-lane-cap')
+    }
+  })
+})
+
 describe('depositLanePhase (pure adapter)', () => {
   it('fresh mode starts at "creating" with no events at all', () => {
     expect(depositLanePhase('a', 'fresh', [])).toBe('creating')

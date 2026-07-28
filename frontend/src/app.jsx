@@ -3083,6 +3083,11 @@ const App = () => {
           onRetryAllocation,
           onViewMoney,
           onMakeAnotherDeposit,
+          // Task 7 (Pocket Crew design alignment) -- the done-state "Watch the crew" action.
+          // `/agent` is the same route `onViewMoney` above already navigates to; once Task 10 makes
+          // `/agent` the crew view specifically, this becomes the real distinct destination (see
+          // that task's own brief) -- wiring it now is harmless, not a guess at unbuilt behavior.
+          onViewCrew: () => navigate('/agent'),
         }}
       />
     )
