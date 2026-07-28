@@ -231,7 +231,9 @@ describe('CrewRoute', () => {
 
   it('renders decision log rows', () => {
     renderCrew()
-    expect(screen.getByText(/every decision, written down/i)).toBeTruthy()
+    // Final-review fix, M6: "Every decision, written down" overclaimed completeness the
+    // selector cannot honour (dropped AgentFailed rows, allowlist-neutralized verdicts).
+    expect(screen.getByText(/decisions we logged/i)).toBeTruthy()
     expect(screen.getByText('Council proposal')).toBeTruthy()
   })
 })

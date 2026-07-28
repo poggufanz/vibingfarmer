@@ -370,7 +370,9 @@
  *     every other literal font-weight in this file.
  *   - `.pc-ceiling-total`'s own addition (the brief only gave verbatim CSS for the row list, not
  *     the "big amount on top" line above it): reuses --pc-type-section/700 rather than inventing a
- *     new scale step.
+ *     new scale step. Final-review fix (bundled with F2): split into a `--pc-type-label`/`--pc-muted`
+ *     caption over a `--pc-type-section`/700/tabular-nums amount -- matches the mock's "small
+ *     caption above a big amount" shape instead of one uniform-size line. Tokens only.
  */
 .pc-boundary-list {
   list-style: none;
@@ -477,8 +479,20 @@
 
 .pc-ceiling-total {
   margin: 0 0 var(--pc-space-2);
+  display: grid;
+  gap: var(--pc-space-1);
+}
+
+.pc-ceiling-total-label {
+  font-size: var(--pc-type-label);
+  font-weight: 500;
+  color: var(--pc-muted);
+}
+
+.pc-ceiling-total-amount {
   font-size: var(--pc-type-section);
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
 .pc-ceiling-rows {

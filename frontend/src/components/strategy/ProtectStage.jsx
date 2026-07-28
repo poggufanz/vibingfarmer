@@ -71,6 +71,7 @@ import { AgentMark } from '../pocket/AgentMark.jsx'
 import { PermissionPhaseError } from '../../strategy/permissionError.js'
 import { toPermissionDecisionView } from '../../strategy/reusePreflight.js'
 import { maxAtRisk } from '../../strategy/permissionScope.js'
+import { buildAmountDisplayMap } from '../../strategy/planModel.js'
 import { SOROBAN_TOKEN_ADDRESS } from '../../stellar/config.js'
 import { STELLAR_USDC_SAC } from '../../stellar/cctpBurn.js'
 
@@ -228,8 +229,28 @@ export function ProtectStage({
       )
   const expiryPhrase = !decision ? `in ${expiryValue}` : `on ${expiryValue}`
   const perAgentCap = firstReuseAgent?.headroom || firstReviewedAgent?.cap
+  // Final-review fix, F2: `unitsToDisplay` is a raw float division -- a 100 USDC / 3-agent split
+  // at 7 decimals rendered "33.3333334 USDC" here while PlanStage/StartStage both show "33.33 USDC"
+  // for the SAME agent via planModel.js's `buildAmountDisplayMap` (lifted there in Task 7 for
+  // exactly this reason). Reuse that SAME exported helper over the real reviewed/reused agent
+  // list rather than re-implementing rounding here -- re-implementing money rounding is how this
+  // repo has reintroduced rounding bugs before. Its only operation on `units` is `BigInt(units)`
+  // (never a multiply-by-float), so this can never hit the BigInt(Math.round(x*N)) overflow class
+  // either. `decision.reviewedAgentInits`/`decision.agents` preserve plan.agents' own order (see
+  // reusePreflight.js's fingerprintAgentInits/selectAgents comments), so `firstReviewedAgent`/
+  // `firstReuseAgent` (index 0) is the SAME agent Plan/Start compute their own displayed figure
+  // for -- and buildAmountDisplayMap's remainder-redistribution only ever touches the LAST member
+  // of a same-kind group, so index 0's formatted cents is byte-identical whether read from the
+  // full-array map (here) or rounded alone (Plan/Start's own per-row lookup).
+  const perAgentDisplayMap = decision
+    ? buildAmountDisplayMap(
+        decision.mode === 'reuse' ? decision.agents : decision.reviewedAgentInits,
+        decision.mode === 'reuse' ? 'headroom' : 'cap'
+      )
+    : {}
+  const perAgentAllocationId = firstReuseAgent?.allocationId ?? firstReviewedAgent?.allocationId
   const perAgentText = perAgentCap
-    ? `${unitsToDisplay(perAgentCap.units, perAgentCap.decimals)} ${tokenSymbol(perAgentCap.token)}`
+    ? `${perAgentDisplayMap[perAgentAllocationId]} ${tokenSymbol(perAgentCap.token)}`
     : 'Unknown'
 
   // Fix round 1 -- F3 (review finding): the heading `<p>` + 4-row `<ul>` ceiling card below used to
@@ -240,7 +261,14 @@ export function ProtectStage({
   // so this fragment carries no class/background of its own).
   const ceilingCard = (
     <>
-      <p className="pc-ceiling-total">Ceiling {totalAmountText}</p>
+      {/* Final-review fix, bundled with F2: was one line at --pc-type-section/700 with no
+          tabular-nums, rendering "Ceiling 400 USDC" as a single uniform-size line where the mock
+          has a small caption above a large tabular-nums amount. Split into a label + amount pair
+          -- tokens only, no new literal. */}
+      <p className="pc-ceiling-total">
+        <span className="pc-ceiling-total-label">Ceiling</span>
+        <span className="pc-ceiling-total-amount">{totalAmountText}</span>
+      </p>
       <ul className="pc-ceiling-rows">
         <li>
           <span>Stops working</span>
@@ -348,8 +376,14 @@ export function ProtectStage({
         <div className="pc-dominant pc-dominant--decision pc-strategy-decision">
           <h2 className="pc-strategy-question">Protect this run</h2>
 
-          <section className="pc-boundaries" aria-label="What the crew can never do">
-            <h2 className="pc-aside-title">Here is what they can never do.</h2>
+          {/* Final-review fix, M2: `aria-label` overrode the section's own visible <h2> as its
+              accessible name, so a landmark list would announce different words than the heading
+              on screen. `aria-labelledby` points AT the h2 instead -- the name and the visible
+              text are now the same string by construction. */}
+          <section className="pc-boundaries" aria-labelledby="protect-boundaries-heading">
+            <h2 id="protect-boundaries-heading" className="pc-aside-title">
+              Here is what they can never do.
+            </h2>
             <ul className="pc-boundary-list">
               <li>
                 They can spend at most {totalAmountText}, ever. The token contract itself refuses

@@ -327,8 +327,13 @@ describe('ProtectStage — fresh review content (Step 2: friendly + technical co
     render(<ProtectStage {...baseProps()} />)
     await checkPermission()
 
-    expect(screen.getByText(/This needs 1 wallet confirmation/)).toBeTruthy()
-    expect(screen.getByText('100 USDC')).toBeTruthy() // plan.amount, the intended amount
+    const confirmationBlock = screen.getByText(/This needs 1 wallet confirmation/).parentElement
+    expect(confirmationBlock).toBeTruthy()
+    // Scoped to the confirmation block (not a bare page-wide query): final-review's ceiling-card
+    // typography split (F2 bundle) added a SECOND element rendering this exact "100 USDC" string
+    // (the total-amount line at the top of the ceiling card, same real number by design), so an
+    // unscoped `getByText` would now throw "multiple elements found" here.
+    expect(within(confirmationBlock).getByText('100 USDC')).toBeTruthy() // plan.amount, the intended amount
     expect(screen.getByText(/Headroom after granting: 100 USDC/)).toBeTruthy()
     // maxAtRisk: cap 100 USDC * ceil(10800/3600 periods) = 300 USDC (see reviewedAgentInit's comment).
     expect(screen.getByText(/Worst case.*300 USDC/)).toBeTruthy()
@@ -363,7 +368,11 @@ describe('ProtectStage — fresh review content (Step 2: friendly + technical co
     // ...and nothing on screen presents their sum (150) as a single ceiling/total.
     expect(screen.queryByText(/150/)).toBeNull()
     // The one true "intended amount" still comes from the reviewed plan, unaffected by budget rows.
-    expect(screen.getByText('200 USDC')).toBeTruthy()
+    // Scoped (see the test above for why): the ceiling card's own total-amount line renders this
+    // SAME real "200 USDC" string by design (it mirrors plan.amount), which would otherwise make
+    // an unscoped `getByText` ambiguous.
+    const confirmationBlock = screen.getByText(/This needs 1 wallet confirmation/).parentElement
+    expect(within(confirmationBlock).getByText('200 USDC')).toBeTruthy()
   })
 
   // Strategy Task 14 fix round 2 (reviewer finding, concern 4): this guard used to scope itself to
@@ -574,8 +583,10 @@ describe('ProtectStage — rejection/failure says "Nothing moved" and offers Ret
     fireEvent.click(screen.getByRole('button', { name: 'Authorize with wallet' }))
     await screen.findByText('Nothing moved')
 
-    // Review facts are preserved, not wiped.
-    expect(screen.getByText('100 USDC')).toBeTruthy()
+    // Review facts are preserved, not wiped. Scoped (see the "fresh review content" describe
+    // block above): the ceiling card's own total-amount line renders this SAME "100 USDC" string.
+    const confirmationBlock = screen.getByText(/This needs 1 wallet confirmation/).parentElement
+    expect(within(confirmationBlock).getByText('100 USDC')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Edit plan' })).toBeTruthy()
 
@@ -722,7 +733,10 @@ describe('ProtectStage — keyboard operability and long values', () => {
     // digits (verified directly: (12345678.9012345).toLocaleString() === '12,345,678.901') --
     // this only proves the huge value renders and is not silently dropped/crashed, not that every
     // digit survives (MoneyFigure's own rounding is Foundation's concern, not this stage's).
-    expect(screen.getByText('12,345,678.901 USDC')).toBeTruthy()
+    // Scoped: the ceiling card's own total-amount line renders this SAME string (it mirrors
+    // plan.amount by design), which would otherwise make an unscoped query ambiguous.
+    const confirmationBlock = screen.getByText(/This needs 1 wallet confirmation/).parentElement
+    expect(within(confirmationBlock).getByText('12,345,678.901 USDC')).toBeTruthy()
   })
 
   it('renders a long technical fingerprint inside a disclosure without losing any of it', async () => {
@@ -793,6 +807,53 @@ describe('ProtectStage — F1: ceiling row separator visible on both surface pol
   })
 })
 
+// Final-review fix, F2: `perAgentText` used to be a raw `unitsToDisplay` float division, with no
+// 2dp formatting -- a 100 USDC / 3-agent split at 7 decimals rendered "33.3333334 USDC" here while
+// PlanStage/StartStage both show "33.33 USDC" for the SAME agent via planModel.js's
+// `buildAmountDisplayMap`/`formatCents`/`roundCentsBigInt`. Reused those SAME exported helpers
+// (Task 7's precedent) rather than re-implementing rounding.
+describe('ProtectStage — F2: the ceiling card\'s per-agent cap matches Plan/Start\'s 2dp figure', () => {
+  it('rounds a non-divisible split to 2dp, the same figure buildAmountDisplayMap gives Plan/Start for the identical agent', async () => {
+    // The exact repro from the review: 100 USDC split 3 ways at 7 decimals leaves one agent with
+    // 333333334 units (33.3333334 USDC raw).
+    const onRetryPreflight = vi.fn().mockResolvedValue(
+      freshDecisionRaw({
+        reviewedAgentInits: [
+          reviewedAgentInit({ cap: { token: TOKEN_ADDR, units: '333333334', decimals: 7 } }),
+        ],
+      })
+    )
+    render(<ProtectStage {...baseProps({ onRetryPreflight })} />)
+    await checkPermission()
+
+    const perAgentRow = Array.from(document.querySelectorAll('.pc-ceiling-rows li')).find((li) =>
+      li.textContent.startsWith('Per crew member')
+    )
+    expect(perAgentRow.textContent).toBe('Per crew member33.33 USDC cap')
+    expect(perAgentRow.textContent).not.toMatch(/33\.3333334/)
+  })
+
+  it('formats the reuse-mode headroom cap to 2dp the same way', async () => {
+    const onRetryPreflight = vi.fn().mockResolvedValue(
+      reuseDecisionRaw({
+        agents: [
+          {
+            ...reuseDecisionRaw().agents[0],
+            headroom: { token: TOKEN_ADDR, units: '333333334', decimals: 7 },
+          },
+        ],
+      })
+    )
+    render(<ProtectStage {...baseProps({ onRetryPreflight })} />)
+    await checkPermission()
+
+    const perAgentRow = Array.from(document.querySelectorAll('.pc-ceiling-rows li')).find((li) =>
+      li.textContent.startsWith('Per crew member')
+    )
+    expect(perAgentRow.textContent).toBe('Per crew member33.33 USDC cap')
+  })
+})
+
 describe('ProtectStage — axe', () => {
   it('has zero violations disconnected', async () => {
     const { container } = render(<ProtectStage {...baseProps({ owner: null })} />)
@@ -823,6 +884,17 @@ describe('ProtectStage — axe', () => {
 })
 
 describe('Protect recompose', () => {
+  // Final-review fix, M2: `aria-label="What the crew can never do"` used to override the section's
+  // own visible <h2>Here is what they can never do.</h2> as its accessible name -- a landmark list
+  // would announce different words than the heading on screen. `aria-labelledby` now points AT the
+  // h2, so the region's computed accessible name IS the visible heading text, by construction.
+  it("the boundaries landmark's accessible name is its own visible heading, not a second, disagreeing string", () => {
+    renderProtectStage({ plan: planFixture })
+    expect(
+      screen.getByRole('region', { name: 'Here is what they can never do.' })
+    ).toBeTruthy()
+  })
+
   it('renders the four boundary bullets from the plan', () => {
     renderProtectStage({ plan: planFixture }) // reuse the file's existing plan fixture/helper
     expect(screen.getByText(/can spend at most/i)).toBeTruthy()

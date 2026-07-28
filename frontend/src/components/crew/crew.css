@@ -267,6 +267,14 @@
 .pc-crew-guard-renew {
   width: 100%;
 }
+/* Final-review fix, F1: honest alternative for every visitor who is not the vault's configured
+ * authority -- same 13px/--pc-faint convention `.pc-crew-empty-note` below already uses (this
+ * file has no --pc-type-* tokens, brief-verbatim precedent). */
+.pc-crew-guard-renew-note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--pc-faint);
+}
 @keyframes pc-crew-sweep {
   to {
     transform: rotate(360deg);

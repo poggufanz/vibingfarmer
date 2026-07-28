@@ -14,6 +14,18 @@
 // likewise forced OFF regardless of any stale `mandateExpiry` it might still carry -- an owner-
 // or system-disarmed mandate must never read as ARMED just because its old expiry timestamp
 // happens to still be in the future.
+//
+// Final-review fix, F1: the lifeboat mandate is a SINGLE vault-wide mandate -- only the
+// vault's configured authority can renew it (VaultProtection.jsx:12-18's own doc comment;
+// myMoneyModel.js:337-343's `choosePrimaryMoneyAction` rule 4 gates the identical action on
+// `protection.ownerIsAuthority`). This card used to render "Renew for 24 hours" unconditionally
+// for every visitor, which for a non-authority owner (the common case) prompts a real wallet
+// signature for a `set_mandate` call the vault will reject -- and `app.jsx`'s `onGrantMandate`
+// swallows that failure into `console.error` with no user-visible error, so the user sees a
+// spinner then nothing. The button now renders ONLY when `protection.ownerIsAuthority === true`;
+// every other visitor sees VaultProtection.jsx:77-82's own honest alternative line instead. The
+// copy below also no longer frames the mandate as personal ("your money") -- it is vault-wide,
+// same as VaultProtection.jsx:9-10 already insists on.
 import { useEffect, useState } from 'react'
 
 function formatClock(totalSeconds) {
@@ -31,11 +43,11 @@ const GUARD_COPY = Object.freeze({
   },
   armed: {
     state: 'ARMED',
-    line: 'Watches the pool continuously. If it turns dangerous it can pull everything to safety without waking you.',
+    line: 'Watches the vault continuously. If it turns dangerous, the vault-wide mandate can de-risk it without waking you.',
   },
   lapsed: {
     state: 'ALARM ONLY',
-    line: 'Permission expired. It will still watch and shout, but it will not move your money.',
+    line: 'Permission expired. It will still watch and shout, but it can no longer move the vault.',
   },
 })
 
@@ -66,6 +78,7 @@ export function CrewGuard({ protection = null, onRenew, pending = false }) {
         ? 'armed'
         : 'lapsed'
   const copy = GUARD_COPY[phase]
+  const canRenew = protection?.ownerIsAuthority === true
 
   return (
     <section
@@ -89,14 +102,18 @@ export function CrewGuard({ protection = null, onRenew, pending = false }) {
       <p className="pc-crew-guard-clock">
         {phase === 'unknown' ? 'Unavailable' : formatClock(remaining)}
       </p>
-      <button
-        type="button"
-        className="pc-button pc-button--primary pc-crew-guard-renew"
-        onClick={onRenew}
-        disabled={pending}
-      >
-        Renew for 24 hours
-      </button>
+      {canRenew ? (
+        <button
+          type="button"
+          className="pc-button pc-button--primary pc-crew-guard-renew"
+          onClick={onRenew}
+          disabled={pending}
+        >
+          Renew for 24 hours
+        </button>
+      ) : (
+        <p className="pc-crew-guard-renew-note">Only the configured authority can renew this.</p>
+      )}
     </section>
   )
 }

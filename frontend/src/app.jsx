@@ -2063,6 +2063,12 @@ const App = () => {
     [realAddress]
   )
 
+  // Final-review fix, M7: `selectCrewDecisions(logs)` used to be called inline in the render body,
+  // unmemoized, over `logs` -- an array that grows without bound (appended at :951-955, cleared
+  // only at flow reset) and is re-derived on every render, including every 15s poll tick, even on
+  // routes other than /agent. Memoized on the only input that can change its output.
+  const crewDecisions = useM(() => selectCrewDecisions(logs), [logs])
+
   function moneyProtectionSnapshot() {
     if (!lifeboatState) return null
     return classifyLifeboatAutomation({
@@ -3515,7 +3521,7 @@ const App = () => {
                 model={moneyModel}
                 keeper={moneyKeeper}
                 keeperEvents={keeperActivity}
-                decisions={selectCrewDecisions(logs)}
+                decisions={crewDecisions}
                 onRenewMandate={() => handleMoneyPrimaryAction('renew-protection')}
                 onCancelAgent={(address) => setMoneyStopAccessAddress(address)}
                 onStartStrategy={() => navigate('/strategy')}

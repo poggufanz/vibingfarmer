@@ -61,8 +61,13 @@ export function CrewActivity({ keeperEvents = [], decisions = [] }) {
       </section>
 
       <section aria-labelledby="crew-decision-log-heading">
+        {/* Final-review fix, M6: "Every decision, written down" is a completeness claim this
+            selector cannot honour -- selectCrewDecisions.js drops every non-council AgentFailed
+            (a worker that failed to deposit the user's money never appears here), and a
+            genuinely-approved council verdict can render as a neutral "Crew update" after the
+            allowlist. Nothing shown is false, but "Every" is. */}
         <h2 id="crew-decision-log-heading" className="pc-crew-stat-label">
-          Every decision, written down
+          Decisions we logged
         </h2>
         {decisions.length === 0 ? (
           <p className="pc-crew-empty-note">No decisions logged yet.</p>

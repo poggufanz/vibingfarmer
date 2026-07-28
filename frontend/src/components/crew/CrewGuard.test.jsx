@@ -7,6 +7,12 @@
 // -- a failed read (`state:'unavailable'`) gets a third, honestly-unknown presentation rather than
 // a manufactured ARMED/ALARM claim, and `state:'disarmed'` is forced off regardless of what its
 // own mandateExpiry number says.
+//
+// Final-review fix, F1: the renew button is gated on `protection.ownerIsAuthority === true` (the
+// same gate `choosePrimaryMoneyAction` already applies to the identical action, myMoneyModel.js:
+// 337-343) -- every other visitor sees the honest alternative line instead of a button that would
+// prompt a doomed wallet signature. Every fixture below that needs the button now says so
+// explicitly via `ownerIsAuthority: true`.
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
@@ -39,11 +45,11 @@ describe('CrewGuard', () => {
     expect(screen.getByText('00:00:00')).toBeTruthy()
   })
 
-  it('renew button fires and disables while pending', () => {
+  it('renew button fires and disables while pending, for the vault authority', () => {
     const onRenew = vi.fn()
     const { rerender } = render(
       <CrewGuard
-        protection={{ state: 'armed', mandateExpiry: 0 }}
+        protection={{ state: 'armed', mandateExpiry: 0, ownerIsAuthority: true }}
         onRenew={onRenew}
         pending={false}
       />
@@ -51,9 +57,31 @@ describe('CrewGuard', () => {
     fireEvent.click(screen.getByRole('button', { name: /renew/i }))
     expect(onRenew).toHaveBeenCalled()
     rerender(
-      <CrewGuard protection={{ state: 'armed', mandateExpiry: 0 }} onRenew={onRenew} pending />
+      <CrewGuard
+        protection={{ state: 'armed', mandateExpiry: 0, ownerIsAuthority: true }}
+        onRenew={onRenew}
+        pending
+      />
     )
     expect(screen.getByRole('button', { name: /renew/i }).disabled).toBe(true)
+  })
+
+  it("hides the renew button for a visitor who is not the vault's configured authority, and shows the honest alternative line instead (F1: was rendered unconditionally, prompting a doomed wallet signature)", () => {
+    render(
+      <CrewGuard
+        protection={{ state: 'armed', mandateExpiry: 0, ownerIsAuthority: false }}
+        onRenew={vi.fn()}
+        pending={false}
+      />
+    )
+    expect(screen.queryByRole('button', { name: /renew/i })).toBeNull()
+    expect(screen.getByText(/only the configured authority can renew this/i)).toBeTruthy()
+  })
+
+  it('also hides the renew button when authority is simply unknown (no protection read, or a read that never says ownerIsAuthority true)', () => {
+    render(<CrewGuard protection={null} onRenew={vi.fn()} pending={false} />)
+    expect(screen.queryByRole('button', { name: /renew/i })).toBeNull()
+    expect(screen.getByText(/only the configured authority can renew this/i)).toBeTruthy()
   })
 
   it('shows a third, honestly-unknown state when protection could not be read at all — never ARMED, never the manufactured ALARM ONLY claim', () => {
