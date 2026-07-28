@@ -341,6 +341,154 @@
   border-bottom: 1px solid var(--pc-line);
 }
 
+/* Task 6 (Pocket Crew design alignment) -- Protect's own addition, not a locked contract selector:
+ * the boundaries list, the eligibility background-check rows, and the right-column ceiling card.
+ * Every literal below was checked against the token scales in pocket-crew.css first; most have an
+ * exact-value match and are tokenized. The ones that do not (documented per rule, same convention
+ * `.pc-plan-so-far`'s comment above already established):
+ *   - `.pc-boundary-list`'s `margin: 0 0 28px`: the --pc-space-* scale steps 24px/32px; 28px sits
+ *     between, no exact match.
+ *   - `.pc-boundary-list`'s own `gap: 14px` and `.pc-candidate-row`'s `padding-block: 14px`: the
+ *     --pc-space-* scale steps 12px/16px; 14px sits between. (--pc-type-body-small is 14px, but
+ *     that is a font-size token -- reusing it for a gap/padding value would be a mismatched-category
+ *     "match" this file has no other precedent for, so it stays literal like `.pc-fact-row`'s own
+ *     un-matched 56px above.)
+ *   - `.pc-candidate-dot`'s `width`/`height: 10px`: the --pc-space-* scale steps 8px/12px; no exact
+ *     match. `transform: rotate(45deg)` is the diamond-marker shape itself, not a token category.
+ *   - `.pc-candidate-name`'s `font-size: 15px` / `font-weight: 650`: no 15px token exists (same as
+ *     `.pc-fact-value`'s own un-matched 15px above); no font-weight token exists anywhere in this
+ *     file.
+ *   - `.pc-candidate-reason`'s `margin-top: 2px`: matches `.pc-route-step`'s own un-tokenized
+ *     `gap: 2px` precedent above, not the --pc-space-* scale (smallest step is 4px).
+ *   - `.pc-ceiling-rows li`'s border-bottom `rgb(23 37 31 / 18%)`: the same un-tokenized
+ *     `--pc-field`-RGB-triple idiom `.pc-allocation-row`/`.pc-amount-preset` above already use for
+ *     their own opacity values (22%/30%) -- no token holds this specific opacity either.
+ *   - `.pc-ceiling-rows li span:last-child`'s `font-weight: 700`: no font-weight token, same as
+ *     every other literal font-weight in this file.
+ *   - `.pc-ceiling-total`'s own addition (the brief only gave verbatim CSS for the row list, not
+ *     the "big amount on top" line above it): reuses --pc-type-section/700 rather than inventing a
+ *     new scale step.
+ */
+.pc-boundary-list {
+  list-style: none;
+  margin: 0 0 28px;
+  padding: 0;
+  display: grid;
+  gap: 14px;
+  max-width: 60ch;
+}
+
+.pc-boundary-list li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--pc-space-3);
+  align-items: start;
+  font-size: var(--pc-type-body);
+  text-wrap: pretty;
+}
+
+.pc-boundary-list li::before {
+  content: '';
+  width: var(--pc-space-2);
+  height: var(--pc-space-2);
+  margin-top: var(--pc-space-2);
+  border-radius: var(--pc-radius-round);
+  background: var(--pc-harvest);
+}
+
+.pc-section-sub {
+  margin: 0 0 var(--pc-space-3);
+  max-width: 56ch;
+  font-size: var(--pc-type-body-small);
+  color: var(--pc-muted);
+}
+
+.pc-candidate-list {
+  list-style: none;
+  margin: 0 0 var(--pc-space-6);
+  padding: 0;
+  border-top: 1px solid var(--pc-line);
+}
+
+.pc-candidate-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--pc-space-4);
+  align-items: center;
+  min-height: var(--pc-space-16);
+  padding-block: 14px;
+  border-bottom: 1px solid var(--pc-line);
+}
+
+.pc-candidate-dot {
+  display: block;
+  width: 10px;
+  height: 10px;
+  transform: rotate(45deg);
+  background: var(--pc-harvest);
+}
+
+.pc-candidate-row[data-eligible='false'] .pc-candidate-dot {
+  background: var(--pc-danger);
+}
+
+.pc-candidate-row[data-eligible='false'] .pc-candidate-name {
+  text-decoration: line-through;
+}
+
+.pc-candidate-name {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.pc-candidate-reason {
+  margin: 2px 0 0;
+  max-width: 56ch;
+  font-size: var(--pc-type-body-small);
+  color: var(--pc-muted);
+}
+
+.pc-candidate-badge {
+  font-family: var(--pc-font-mono);
+  font-size: var(--pc-type-technical);
+  white-space: nowrap;
+  color: var(--pc-harvest);
+}
+
+.pc-candidate-row[data-eligible='false'] .pc-candidate-badge {
+  color: var(--pc-danger);
+}
+
+.pc-ceiling-total {
+  margin: 0 0 var(--pc-space-2);
+  font-size: var(--pc-type-section);
+  font-weight: 700;
+}
+
+.pc-ceiling-rows {
+  list-style: none;
+  margin: var(--pc-space-5) 0 0;
+  padding: 0;
+}
+
+.pc-ceiling-rows li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--pc-space-3);
+  padding-block: var(--pc-space-3);
+  border-bottom: 1px solid rgb(23 37 31 / 18%);
+  font-size: var(--pc-type-body-small);
+}
+
+.pc-ceiling-rows li:last-child {
+  border-bottom: 0;
+}
+
+.pc-ceiling-rows li span:last-child {
+  font-weight: 700;
+}
+
 .pc-network-badge {
   display: inline-flex;
   align-items: center;

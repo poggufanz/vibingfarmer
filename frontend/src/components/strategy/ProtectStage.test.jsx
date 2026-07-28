@@ -268,6 +268,16 @@ async function checkPermission() {
   await screen.findByRole('button', { name: /Authorize with wallet|Continue/ })
 }
 
+// Task 6 (Pocket Crew design alignment) -- the "Protect recompose" tests below use their own
+// small render helper + a `planFixture` alias onto the file's existing PLAN_DEPOSIT_ONLY fixture
+// (this file had no shared render helper before this task -- every earlier test calls
+// `render(<ProtectStage {...baseProps(overrides)} />)` directly; this wraps that same call).
+const planFixture = PLAN_DEPOSIT_ONLY
+
+function renderProtectStage(overrides = {}) {
+  return render(<ProtectStage {...baseProps(overrides)} />)
+}
+
 describe('ProtectStage — disconnected: wallet choice', () => {
   it('lists every available wallet and offers a real connect action', () => {
     render(<ProtectStage {...baseProps({ owner: null })} />)
@@ -786,6 +796,38 @@ describe('ProtectStage — axe', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Authorize with wallet' }))
     await screen.findByText('Nothing moved')
     expect(await axe(container)).toHaveNoViolations()
+  })
+})
+
+describe('Protect recompose', () => {
+  it('renders the four boundary bullets from the plan', () => {
+    renderProtectStage({ plan: planFixture }) // reuse the file's existing plan fixture/helper
+    expect(screen.getByText(/can spend at most/i)).toBeTruthy()
+    expect(screen.getByText(/stops on/i)).toBeTruthy()
+    expect(screen.getByText(/pinned to one vault/i)).toBeTruthy()
+    expect(screen.getByText(/only go back to your address/i)).toBeTruthy()
+  })
+
+  it('renders PASSED and REJECTED background-check rows from plan.review', () => {
+    renderProtectStage({
+      plan: {
+        ...planFixture,
+        review: {
+          candidates: [
+            { protocol: 'Blend Capital v2', chain: 'stellar', eligible: true, reasons: [] },
+            { protocol: 'Aave v3 (proxy)', chain: 'base', eligible: false, reasons: ['facts stale'] },
+          ],
+        },
+      },
+    })
+    expect(screen.getByText('PASSED')).toBeTruthy()
+    expect(screen.getByText('REJECTED')).toBeTruthy()
+    expect(screen.getByText(/facts stale/i)).toBeTruthy()
+  })
+
+  it('omits the background-check section when the plan has no review', () => {
+    renderProtectStage({ plan: { ...planFixture, review: null } })
+    expect(screen.queryByText(/background check/i)).toBeNull()
   })
 })
 

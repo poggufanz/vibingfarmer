@@ -186,6 +186,32 @@ export function ProtectStage({
   const hasBridge = plan.agents.some((a) => a.kind === 'bridge')
   const usableReuse = reuseIsUsable(decision)
 
+  // Task 6 (Pocket Crew design alignment) -- the boundaries list and the ceiling card below both
+  // need the SAME total-amount/expiry/per-agent-cap figures this component already renders in its
+  // review/summary blocks further down (unitsToDisplay/tokenSymbol/formatExpiry -- no new
+  // arithmetic, no new formatter invented for this task). `totalAmountText` mirrors exactly what
+  // the fresh-mode MoneyFigure below prints for `plan.amount` (same two calls, plus the same
+  // `.toLocaleString()` MoneyFigure itself applies -- see Primitives.jsx). `expiryText` follows the
+  // currently selected duration preset before a decision exists (the same `preset.label` the
+  // "Valid for X" line below already reads off), and the reviewed decision's own first-agent
+  // expiry once one does -- every reviewed agent in one preflight call shares the same requested
+  // duration, so the first agent's expiry stands for the decision's. `perAgentText` mirrors
+  // whichever per-agent figure THIS decision mode already renders per agent (reuse's `headroom`,
+  // fresh's `cap` -- the same fields the Rice/`.pc-support` blocks below already print), again the
+  // first agent standing for the (usually uniform) per-crew-member figure.
+  const totalAmountText = `${unitsToDisplay(plan.amount.units, plan.amount.decimals).toLocaleString()} ${tokenSymbol(plan.amount.token)}`
+  const firstReviewedAgent = decision?.mode === 'fresh' ? decision.reviewedAgentInits[0] : null
+  const firstReuseAgent = decision?.mode === 'reuse' ? decision.agents[0] : null
+  const expiryText = !decision
+    ? preset.label
+    : formatExpiry(
+        decision.mode === 'reuse' ? firstReuseAgent?.scopeExpiry : firstReviewedAgent?.expiry
+      )
+  const perAgentCap = firstReuseAgent?.headroom || firstReviewedAgent?.cap
+  const perAgentText = perAgentCap
+    ? `${unitsToDisplay(perAgentCap.units, perAgentCap.decimals)} ${tokenSymbol(perAgentCap.token)}`
+    : 'Unknown'
+
   async function handleConnect() {
     setConnecting(true)
     try {
@@ -265,6 +291,49 @@ export function ProtectStage({
       <div className="pc-protect-boundary">
         <div className="pc-dominant pc-dominant--decision pc-strategy-decision">
           <h2 className="pc-strategy-question">Protect this run</h2>
+
+          <section className="pc-boundaries" aria-label="What the crew can never do">
+            <h2 className="pc-aside-title">Here is what they can never do.</h2>
+            <ul className="pc-boundary-list">
+              <li>
+                They can spend at most {totalAmountText}, ever. The token contract itself refuses
+                more.
+              </li>
+              <li>Everything they can do stops on {expiryText}, with no action from you.</li>
+              <li>Each crew member is pinned to one vault. They cannot send money anywhere else.</li>
+              <li>Anything leaving a crew account can only go back to your address.</li>
+            </ul>
+          </section>
+
+          {plan.review?.candidates?.length > 0 && (
+            <section
+              className="pc-background-check"
+              aria-label="Pools that passed the background check"
+            >
+              <h2 className="pc-aside-title">Pools that passed the background check</h2>
+              <p className="pc-section-sub">Anything we cannot verify is dropped, not assumed safe.</p>
+              <ul className="pc-candidate-list">
+                {plan.review.candidates.map((c, i) => (
+                  <li
+                    key={`${c.protocol}-${i}`}
+                    className="pc-candidate-row"
+                    data-eligible={c.eligible}
+                  >
+                    <span className="pc-candidate-dot" aria-hidden="true" />
+                    <div className="pc-candidate-body">
+                      <p className="pc-candidate-name">{c.protocol}</p>
+                      {!c.eligible && c.reasons.length > 0 && (
+                        <p className="pc-candidate-reason">{c.reasons.join(' · ')}</p>
+                      )}
+                    </div>
+                    <span className="pc-candidate-badge">
+                      {c.eligible ? 'PASSED' : 'REJECTED'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
 
           {!owner && (
             <div>
@@ -425,6 +494,40 @@ export function ProtectStage({
             neutral `.pc-support` role below instead, never in Rice. */}
         {decision && decision.mode === 'reuse' && usableReuse && (
           <div className="pc-protect-limit">
+            {/* Task 6 -- the mock's ceiling card: the same totalAmountText/expiryText/perAgentText
+                this stage already computes above, never re-derived here. `totalAmountText` is
+                embedded in a sentence (not its own bare element) because the fresh-mode review
+                block a few lines up already renders that exact "<n> <TOKEN>" string as its OWN
+                standalone element (MoneyFigure) -- an isolated duplicate leaf with the identical
+                text would make Testing Library's exact `getByText` ambiguous for any plan whose
+                total happens to render the same figure twice on screen at once. */}
+            <p className="pc-ceiling-total">Ceiling {totalAmountText}</p>
+            <ul className="pc-ceiling-rows">
+              <li>
+                <span>Stops working</span>
+                <span>{expiryText}</span>
+              </li>
+              <li>
+                {/* `{perAgentText} cap` (not the bare figure alone): for a single-agent plan the
+                    per-agent cap and the total amount are the SAME number, and the fresh-mode
+                    review block above already renders that exact "<n> <TOKEN>" string as its own
+                    standalone MoneyFigure element -- an isolated duplicate leaf with the identical
+                    bare text would make Testing Library's exact `getByText('<n> <TOKEN>')` throw
+                    "multiple elements found" (reproduced: ProtectStage.test.jsx's pre-existing
+                    "shows one confirmation..." and "preserves the plan and review..." tests both
+                    failed against a bare `<span>{perAgentText}</span>` here, fixed by this suffix). */}
+                <span>Per crew member</span>
+                <span>{perAgentText} cap</span>
+              </li>
+              <li>
+                <span>Can only reach</span>
+                <span>1 vault</span>
+              </li>
+              <li>
+                <span>Cancel any time</span>
+                <span>1 signature</span>
+              </li>
+            </ul>
             {/* Minor (review finding): a point-in-time on-chain read had no freshness stamp
                 alongside its scope `Expires` -- one line, decision-level (checkedAt is one
                 timestamp for the whole preflight, not per-agent), makes the Rice claim
@@ -446,6 +549,34 @@ export function ProtectStage({
         {decision && decision.mode === 'fresh' && (
           <div className="pc-support">
             <div className="pc-support-content">
+              {/* Task 6 -- the mock's ceiling card: see the matching comment in `.pc-protect-limit`
+                  above for why `totalAmountText` is sentence-embedded rather than its own bare
+                  element. */}
+              <p className="pc-ceiling-total">Ceiling {totalAmountText}</p>
+              <ul className="pc-ceiling-rows">
+                <li>
+                  <span>Stops working</span>
+                  <span>{expiryText}</span>
+                </li>
+                <li>
+                  {/* `{perAgentText} cap` (not the bare figure alone): see the matching comment in
+                      `.pc-protect-limit` above -- a bare duplicate leaf here made Testing
+                      Library's exact `getByText('<n> <TOKEN>')` throw "multiple elements found"
+                      whenever a single-agent plan's per-agent cap equals its total amount (the
+                      SAME string the review block above already renders as its own standalone
+                      MoneyFigure element). */}
+                  <span>Per crew member</span>
+                  <span>{perAgentText} cap</span>
+                </li>
+                <li>
+                  <span>Can only reach</span>
+                  <span>1 vault</span>
+                </li>
+                <li>
+                  <span>Cancel any time</span>
+                  <span>1 signature</span>
+                </li>
+              </ul>
               {decision.reviewedBudgets.map((b) => (
                 <p key={b.token}>
                   Headroom after granting: {unitsToDisplay(b.units, b.decimals)}{' '}
