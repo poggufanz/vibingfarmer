@@ -74,7 +74,22 @@
   color: var(--pc-ink);
 }
 
+/* Fix (Task 2 review, Important 2): `.pc-route` was a plain block box with no gap of its own, so
+ * the new `.pc-route-header` (sibling of `.pc-route-stack`, both zero-margin) sat flush against
+ * the stage tabs below it. `display: grid` on `.pc-route` puts a single implicit column/row track
+ * -- with only ever one or two direct children (the header, then `.pc-route-stack`), both already
+ * block-level elements that stretched to the container's full inline size under the PREVIOUS block
+ * layout, `justify-items: stretch`'s default keeps that width unchanged; `gap` only inserts space
+ * BETWEEN rows, so the single-child harnesses several tests build (`.pc-route > .pc-route-stack`
+ * alone, no header) are unaffected -- verified against StrategyRoute.test.jsx's real-Chromium
+ * 320px/1240px guards and the equivalent harnesses in ProtectStage/StartStage/StrategyReceipt/
+ * strategyJourney tests, all still green. Reuses the same `--pc-route-gap` token
+ * `.pc-route-stack` already uses for its own internal gap (pocket-crew.css, with its own 36px
+ * override at <=767px) rather than inventing a second gap value for what is visually the same kind
+ * of vertical rhythm. */
 .pc-route {
+  display: grid;
+  gap: var(--pc-route-gap);
   width: min(100%, calc(var(--pc-shell-max) + (2 * var(--pc-route-gutter))));
   margin-inline: auto;
   padding: var(--pc-route-gutter);
@@ -93,14 +108,14 @@
 .pc-route-header {
   display: grid;
   grid-template-columns: minmax(0, 760px) minmax(180px, 1fr);
-  gap: 32px;
+  gap: var(--pc-space-8);
   align-items: end;
 }
 
 .pc-route-title {
   max-width: 15ch;
-  margin: 0 0 12px;
-  font-size: clamp(34px, 4.4vw, 52px);
+  margin: 0 0 var(--pc-space-3);
+  font-size: var(--pc-type-page);
   font-weight: 700;
   line-height: 1.12;
   letter-spacing: -0.035em;
@@ -123,7 +138,7 @@
 }
 
 .pc-route-step-label {
-  font-size: 13px;
+  font-size: var(--pc-type-label);
   font-weight: 650;
   color: var(--pc-faint);
 }

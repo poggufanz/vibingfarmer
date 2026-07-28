@@ -88,7 +88,16 @@ async function measureRouteAt(bodyHtml) {
       const el = document.querySelector('.pc-route-stack')
       return el.getBoundingClientRect().width
     })
-    return { scrollWidth320, routeContentWidth1440 }
+    // Task 2 review, Important 2: `.pc-route` used to be a plain block box with no gap of its own,
+    // so `.pc-route-header` (zero margin) sat flush against `.pc-route-stack` (zero margin) below
+    // it -- jsdom never lays out, so this real-layout number is the only way to see it.
+    const headerToStackGap1440 = await page.evaluate(() => {
+      const header = document.querySelector('.pc-route-header')
+      const stack = document.querySelector('.pc-route-stack')
+      if (!header || !stack) return null
+      return stack.getBoundingClientRect().top - header.getBoundingClientRect().bottom
+    })
+    return { scrollWidth320, routeContentWidth1440, headerToStackGap1440 }
   } finally {
     await browser.close()
   }
@@ -253,6 +262,21 @@ describe('StrategyRoute — item 12 (rejection checklist): 320px no overflow, 12
       expect(routeContentWidth1440).toBeLessThanOrEqual(1240)
     }, 20000)
   }
+})
+
+// Task 2 review, Important 2: the header markup/CSS is identical across every stage (only its
+// "Step N of 3" text differs), so one real-layout measurement -- not one per STATES entry like
+// item 12 above -- already exercises the defect class; a per-stage repeat would cost four more
+// Chromium sessions to re-check a CSS rule that doesn't vary by stage.
+describe('StrategyRoute — route header sits apart from the stage tabs (real layout)', () => {
+  it('leaves a real, non-zero gap between .pc-route-header and .pc-route-stack at 1440px', async () => {
+    const { container } = render(STATES.Plan)
+    const { headerToStackGap1440 } = await measureRouteAt(container.innerHTML)
+    // Before the fix this measured 0 (flush, zero-margin siblings under a plain block `.pc-route`)
+    // -- a loose ">0" rather than pinning the exact --pc-route-gap px value keeps this from being
+    // a brittle re-assertion of the token's own clamp() math the CSS already declares.
+    expect(headerToStackGap1440).toBeGreaterThan(0)
+  }, 20000)
 })
 
 // Task 2 (Pocket Crew design alignment): the route-level header living above StrategyProgress --

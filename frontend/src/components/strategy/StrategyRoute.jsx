@@ -63,9 +63,16 @@ export function StrategyRoute({
 
   useEffect(() => {
     if (previousStageRef.current !== stage) {
-      // Queries inside stackRef -- the route h1 sits outside the stack (see the header below), so
-      // only the stage's own heading (now an h2) can ever match here.
-      const heading = stackRef.current?.querySelector('h2')
+      // Fix (Task 2 review, Minor 3): a bare `querySelector('h2')` was DOM-order-dependent -- it
+      // only happened to find the stage TITLE first because that's the first h2 in document order
+      // today. PlanStage alone already renders three h2s (the title, plus "Stellar truth"/"Base
+      // Sepolia bridge" asides) and StartStage's settled view adds StrategyReceipt's "Your receipt"
+      // h2 -- an unrelated reorder (e.g. Task 4's Plan aside edits) could silently steal focus onto
+      // the wrong heading with no test failure, since `stackRef.current?.querySelector('h2')` would
+      // still find SOME h2. `.pc-strategy-question` is the one class every stage's own title
+      // carries (PlanStage/ProtectStage/StartStage, verified), so this selects by intent instead of
+      // position.
+      const heading = stackRef.current?.querySelector('.pc-strategy-question')
       if (heading) {
         if (!heading.hasAttribute('tabindex')) heading.setAttribute('tabindex', '-1')
         heading.focus()
