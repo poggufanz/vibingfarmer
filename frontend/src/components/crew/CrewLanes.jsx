@@ -50,7 +50,12 @@ export function CrewLanes({ agents = [], onCancelAgent, actionPending = false })
           const revoked = Boolean(agent?.scope?.value?.revoked)
           return (
             <li key={agent.address} className="pc-crew-lane" data-revoked={revoked}>
-              <AgentMark identity={agent.address} size={36} state={markStateFor(agent)} />
+              <AgentMark
+                identity={agent.address}
+                size={36}
+                state={markStateFor(agent)}
+                label={shortAddress(agent.address)}
+              />
               <div>
                 <p className="pc-crew-lane-address">{shortAddress(agent.address)}</p>
                 <p className="pc-crew-lane-note">{laneNote(agent)}</p>

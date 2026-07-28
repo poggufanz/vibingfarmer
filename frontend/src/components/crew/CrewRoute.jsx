@@ -33,6 +33,21 @@ function liveApy(model) {
   return typeof apy === 'number' && Number.isFinite(apy) ? apy : null
 }
 
+// Fix round 1, F4: `agents.length === 0` alone cannot tell "genuinely no crew" apart from "the
+// read failed/never finished", and both produce the same empty array (readOwnerMoney.js falls
+// back to `discovery?.agents ?? []`). `model.state === 'empty'` is buildMyMoneyModel's own
+// authoritatively-empty verdict (myMoneyModel.js:272-299: PROVEN-complete fresh discovery, a known
+// zero total, no unattributed doubt) -- the one signal that actually earns the confident "no crew
+// members are deployed yet" claim. Every other state (loading/unavailable/disconnected/
+// partial-discovery/problem/stale/current-with-a-stale-zero) with zero agents renders an honestly
+// uncertain line instead, never a confident claim manufactured from an absent or incomplete read.
+function emptyStateCopy(model) {
+  if (model?.state === 'empty') {
+    return 'No crew members are deployed yet. Hire one first — one signature, hard limits.'
+  }
+  return 'We could not confirm your crew on this read — this may not mean you have none. Try again shortly, or start a new one below.'
+}
+
 export function CrewRoute({
   agents = [],
   model,
@@ -55,9 +70,7 @@ export function CrewRoute({
         <header className="pc-route-header">
           <div>
             <h1 className="pc-route-title">The crew, live.</h1>
-            <p className="pc-route-sub">
-              No crew members are deployed yet. Hire one first — one signature, hard limits.
-            </p>
+            <p className="pc-route-sub">{emptyStateCopy(model)}</p>
           </div>
         </header>
         <button type="button" className="pc-button pc-button--primary" onClick={onStartStrategy}>
