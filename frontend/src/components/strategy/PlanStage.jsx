@@ -26,6 +26,7 @@ import {
 } from '../../strategy/amountValidation.js'
 import { needsBaseMandateSetup } from '../../mergeFlowHelpers.js'
 import { hashStrategy } from '../../attestation.js'
+import { SOROBAN_DECIMALS } from '../../stellar/config.js'
 
 const RISK_IDS = Object.keys(RISK_PROFILES) // ['low', 'med', 'high'] -> Steady/Balanced/Adventurous
 
@@ -34,6 +35,10 @@ const GENERATION_PHASES = Object.freeze([
   'Building bounded allocations',
   'Safety review',
 ])
+
+// Task 3 (Pocket Crew design alignment) -- quick amount shortcuts under the amount field. Written
+// into the existing amountValue state, nothing else; no new persistence/state.
+const AMOUNT_PRESETS = Object.freeze(['50', '250', '1000'])
 
 function defaultInstruction(agent) {
   return agent.kind === 'bridge'
@@ -121,6 +126,25 @@ function buildAmountDisplayMap(planAgents, amountKey) {
   return map
 }
 
+// Task 3 (Pocket Crew design alignment) -- the Plan card's crew line shows "each handles about
+// $X" BEFORE generation ever runs (D-28.6: crew count is derived, never user-set), so there is no
+// real plan.agents yet to read a per-agent figure from. Reuses buildAmountDisplayMap's own
+// cents-rounding + remainder-redistribution above -- the exact arithmetic every real allocation
+// row already uses -- instead of inventing a second money formatter; only the amountNumber ->
+// base-units conversion and the even k-way split are new, and neither is display rounding. The
+// group's remainder (if any) only ever lands on the LAST slot (see buildAmountDisplayMap above),
+// so the first slot's figure is stable regardless of k -- safe to read unconditionally.
+function formatShare(amountNumber, targetSlots) {
+  if (!(amountNumber > 0) || !(targetSlots > 0)) return ''
+  const totalUnits = BigInt(Math.round(amountNumber * 10 ** SOROBAN_DECIMALS))
+  const shareUnits = totalUnits / BigInt(targetSlots)
+  const previewAgents = Array.from({ length: targetSlots }, (_, i) => ({
+    allocationId: `preview-${i}`,
+    allocation: { units: shareUnits.toString(), decimals: SOROBAN_DECIMALS },
+  }))
+  return `${buildAmountDisplayMap(previewAgents, 'allocation')['preview-0']} USDC`
+}
+
 // Fix loop N -- item 5 (owner report): crew character names, easily editable in one place. No
 // name data exists anywhere else in the model -- planModel.js only ever produces positional
 // "Worker N" labels -- so this is this fix's own addition: one obvious exported constant, not
@@ -204,6 +228,10 @@ export function PlanStage({
   const planInvalidated = phase === 'ready' && Boolean(base?.action?.invalidatesPlan)
 
   const canSubmit = amountValue.trim() !== '' && Boolean(risk) && phase !== 'generating'
+  // Task 3 -- the crew line's own display-only number; never fed back into submissionRef/
+  // validateAmountInput (the real submit path parses amountValue as an exact decimal string, see
+  // handleSubmit below -- this Number() coercion never reaches a grant/burn amount).
+  const amountNumber = Number(amountValue) || 0
   const viewModel = plan ? buildStrategyViewModel({ plan, stellarVenue }) : null
   const executionCheck = plan ? validateExecutionAllocations({ plan, vaultTotalShares }) : null
   const canAccept = phase === 'ready' && !planInvalidated && executionCheck?.ok === true
@@ -357,6 +385,22 @@ export function PlanStage({
               )}
             </div>
 
+            <div className="pc-amount-presets" role="group" aria-label="Quick amounts">
+              {AMOUNT_PRESETS.map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  className={`pc-amount-preset${amountValue === preset ? ' pc-amount-preset--active' : ''}`}
+                  onClick={() => {
+                    setAmountValue(preset)
+                    setFieldError(null)
+                  }}
+                >
+                  {preset}
+                </button>
+              ))}
+            </div>
+
             <div className="pc-comfort-group" role="radiogroup" aria-label="Comfort level">
               {RISK_IDS.map((id, index) => (
                 <button
@@ -374,6 +418,18 @@ export function PlanStage({
                 </button>
               ))}
             </div>
+
+            {/* Task 3 -- read-only, DERIVED crew count (D-28.6: never user-set -- no control lets
+                the user pick this number, see the "never renders an advanced crew-count input"
+                test). */}
+            {risk && (
+              <p className="pc-crew-line">
+                {RISK_PROFILES[risk].targetSlots} crew member
+                {RISK_PROFILES[risk].targetSlots > 1 ? 's' : ''}
+                {amountNumber > 0 &&
+                  ` · each handles about ${formatShare(amountNumber, RISK_PROFILES[risk].targetSlots)}`}
+              </p>
+            )}
 
             <p className="pc-field-help">Nothing moves until you review and confirm.</p>
 

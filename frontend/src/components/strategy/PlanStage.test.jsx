@@ -1281,3 +1281,30 @@ describe('PlanStage — owner report: real-browser geometry and contrast (items 
     20000
   )
 })
+
+// Task 3 (Pocket Crew design alignment) -- amount preset chips + the read-only, DERIVED crew-count
+// line under the risk group (D-28.6: crew count is never user-set -- no input/select for it
+// anywhere, see the "never renders an advanced crew-count input" guard above, which this task must
+// keep passing). No named render helper exists in this file (every test above calls `render`
+// inline with the same vaultTotalShares/base/onGenerate trio) -- mirrored here rather than inventing
+// a wrapper. `getByLabelText('Amount in USDC')` (exact string, matching this file's own convention
+// everywhere else) rather than a `/amount/i` regex: the new preset group's `aria-label="Quick
+// amounts"` contains the substring "amount", and testing-library's getByLabelText matches aria-label
+// on ANY element, not just form controls -- a regex query would ambiguously match both.
+describe('PlanStage — amount presets and crew line', () => {
+  it('clicking a preset fills the amount input', () => {
+    render(
+      <PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={vi.fn()} />
+    )
+    fireEvent.click(screen.getByRole('button', { name: '250' }))
+    expect(screen.getByLabelText('Amount in USDC').value).toBe('250')
+  })
+
+  it('shows the derived crew count after a risk tier is chosen', () => {
+    render(
+      <PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={vi.fn()} />
+    )
+    fireEvent.click(screen.getByRole('radio', { name: 'Balanced' }))
+    expect(screen.getByText(/2 crew members/i)).toBeTruthy()
+  })
+})

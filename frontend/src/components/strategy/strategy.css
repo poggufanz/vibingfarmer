@@ -443,6 +443,51 @@
   font-weight: 650;
 }
 
+/* Task 3 (Pocket Crew design alignment) -- quick amount-preset chips under the Plan card's amount
+ * field, and the read-only, DERIVED crew-count line under the risk group (PlanStage.jsx). Neither
+ * is a locked contract selector -- this route's own addition, new scoped rules. `gap`/`margin-top`
+ * reuse --pc-space-2/--pc-space-3 (8px/12px, exact token matches); `border-radius` reuses
+ * --pc-radius-round (999px); the two font-sizes reuse --pc-type-label/--pc-type-body-small (13px/
+ * 14px). Two literals have no matching token and stay literal: `min-height: 38px` (the nearest
+ * tokens are --pc-touch-target at 44px and --pc-control-height at 48px, neither exact) and the
+ * crew line's `margin: 10px 0 0` (the --pc-space-* scale steps 8px/12px; 10px sits between, no
+ * exact match). The border tint reuses `.pc-allocation-row`'s own established, un-tokenized
+ * `rgb(23 37 31 / N%)` idiom above (23 37 31 is --pc-field's own RGB triple) -- no --pc-* token
+ * holds exactly 30%, same as that rule's own un-matched 22%. `font-weight: 700` also stays literal
+ * -- no font-weight token exists anywhere in this file (see `.pc-button`/`.pc-route-title` above,
+ * both literal too).
+ */
+.pc-amount-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pc-space-2);
+  margin-top: var(--pc-space-3);
+}
+
+.pc-amount-preset {
+  min-height: 38px;
+  padding: 0 var(--pc-space-4);
+  border: 1px solid rgb(23 37 31 / 30%);
+  border-radius: var(--pc-radius-round);
+  background: transparent;
+  color: var(--pc-harvest-ink);
+  font: inherit;
+  font-size: var(--pc-type-label);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.pc-amount-preset--active {
+  background: var(--pc-field);
+  color: var(--pc-rice);
+}
+
+.pc-crew-line {
+  margin: 10px 0 0;
+  font-size: var(--pc-type-body-small);
+  color: var(--pc-owned-muted);
+}
+
 /* Fix loop 1 -- C1 (review finding): `.pc-button--primary` (background: var(--pc-harvest)) sits
  * directly on `.pc-dominant--decision` (background: var(--pc-harvest)) -- background-color ===
  * surface background-color, so the primary CTA (and the selected comfort-level radio, which
