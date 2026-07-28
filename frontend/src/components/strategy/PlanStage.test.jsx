@@ -594,7 +594,9 @@ describe('PlanStage — reviewed plan (Stellar-only)', () => {
     // in that literal, easy to delete by accident with the suite staying green, since no other
     // test asserts it. This also covers handleAccept's `{...plan, ...}` spread in the same stroke.
     const review = {
-      candidates: [{ protocol: 'Aave v3 (proxy)', chain: 'base', eligible: false, reasons: ['facts stale'] }],
+      candidates: [
+        { protocol: 'Aave v3 (proxy)', chain: 'base', eligible: false, reasons: ['facts stale'] },
+      ],
     }
     const { onAcceptPlan } = await generateStellarOnlyPlan({ review })
     fireEvent.click(screen.getByRole('button', { name: 'Accept plan' }))

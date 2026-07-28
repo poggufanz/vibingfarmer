@@ -73,8 +73,16 @@ describe('cycleJournal — owner+network scoped (Pocket Crew Task 8)', () => {
   })
 
   it('saves and reads back scoped to owner+network, newest-first', () => {
-    saveCycle('GOWNER', { cycle: 1, phase: 'execute', verdict: 'keep' }, { network: 'stellar-testnet' })
-    saveCycle('GOWNER', { cycle: 2, phase: 'crash', verdict: 'crash' }, { network: 'stellar-testnet' })
+    saveCycle(
+      'GOWNER',
+      { cycle: 1, phase: 'execute', verdict: 'keep' },
+      { network: 'stellar-testnet' }
+    )
+    saveCycle(
+      'GOWNER',
+      { cycle: 2, phase: 'crash', verdict: 'crash' },
+      { network: 'stellar-testnet' }
+    )
     const rows = getCycles('GOWNER', { network: 'stellar-testnet' })
     expect(rows).toHaveLength(2)
     expect(rows[0].verdict).toBe('crash')

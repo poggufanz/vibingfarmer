@@ -226,7 +226,9 @@ describe('normalizeStrategyPlan', () => {
   })
 
   it('normalizeStrategyPlan preserves review verbatim', () => {
-    const review = { candidates: [{ protocol: 'X', chain: 'stellar', eligible: true, reasons: [] }] }
+    const review = {
+      candidates: [{ protocol: 'X', chain: 'stellar', eligible: true, reasons: [] }],
+    }
     // reuse the file's existing minimal valid normalize input fixture, spread review onto it
     const plan = normalizeStrategyPlan({
       runId: 'run-shape',

@@ -155,7 +155,7 @@ describe('Sidebar', () => {
   // a bare aria-label on the descendant <span> is never read (an author aria-label on the button
   // wins the accname computation over all descendant content), and the digit itself is
   // aria-hidden so it is never announced twice.
-  it('folds the active-agent count into the crew button\'s own accessible name, and hides the digit from assistive tech', () => {
+  it("folds the active-agent count into the crew button's own accessible name, and hides the digit from assistive tech", () => {
     render(
       <MemoryRouter initialEntries={['/home']}>
         <Sidebar extended onToggle={() => {}} agentCount={3} />
