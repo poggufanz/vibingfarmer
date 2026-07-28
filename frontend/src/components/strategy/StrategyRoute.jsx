@@ -39,6 +39,16 @@ import { PlanStage } from './PlanStage.jsx'
 import { ProtectStage } from './ProtectStage.jsx'
 import { StartStage } from './StartStage.jsx'
 
+// Task 2 (Pocket Crew design alignment): the route owns the single `<h1>` -- each stage's own
+// heading is demoted to `<h2>` (see PlanStage/ProtectStage/StartStage) so there is never more than
+// one h1 on `/strategy` at a time. STAGE_META supplies the "Step N of 3" counter text; frozen like
+// StrategyProgress's own STEPS, for the same reason (it mirrors that fixed 3-stage wizard).
+const STAGE_META = {
+  plan: { num: 1, name: 'Plan' },
+  protect: { num: 2, name: 'Protect' },
+  start: { num: 3, name: 'Start' },
+}
+
 export function StrategyRoute({
   stage = 'plan',
   reached,
@@ -53,7 +63,9 @@ export function StrategyRoute({
 
   useEffect(() => {
     if (previousStageRef.current !== stage) {
-      const heading = stackRef.current?.querySelector('h1')
+      // Queries inside stackRef -- the route h1 sits outside the stack (see the header below), so
+      // only the stage's own heading (now an h2) can ever match here.
+      const heading = stackRef.current?.querySelector('h2')
       if (heading) {
         if (!heading.hasAttribute('tabindex')) heading.setAttribute('tabindex', '-1')
         heading.focus()
@@ -64,6 +76,19 @@ export function StrategyRoute({
 
   return (
     <div className="pc-route">
+      <header className="pc-route-header">
+        <div>
+          <h1 className="pc-route-title">Hire a crew, once.</h1>
+          <p className="pc-route-sub">
+            Three short steps. You sign at the very end, one time, and the limits you set are
+            enforced by the chain — not by us.
+          </p>
+        </div>
+        <p className="pc-route-step">
+          <span className="pc-route-step-label">Step {STAGE_META[stage].num} of 3</span>
+          <span className="pc-route-step-name">{STAGE_META[stage].name}</span>
+        </p>
+      </header>
       <div className="pc-route-stack" ref={stackRef}>
         <StrategyProgress current={stage} reached={reached} onNavigate={onNavigateStage} />
         {stage === 'plan' && <PlanStage {...planStageProps} />}

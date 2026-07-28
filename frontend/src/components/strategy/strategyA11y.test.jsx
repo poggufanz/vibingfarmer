@@ -272,7 +272,9 @@ describe('Strategy a11y -- focus follows a stage change but never a same-stage b
         protectProps={{ owner: null, onConnectWallet: vi.fn(), onEditPlan: vi.fn() }}
       />
     )
-    expect(document.activeElement.tagName).toBe('H1')
+    // Task 2 (Pocket Crew design alignment): stage headings are now h2 -- the route itself owns
+    // the sole h1 ("Hire a crew, once."), so the focus target this effect moves to is an h2.
+    expect(document.activeElement.tagName).toBe('H2')
     expect(document.activeElement.textContent).toBe('Protect this run')
   })
 
@@ -311,7 +313,7 @@ describe('Strategy a11y -- focus follows a stage change but never a same-stage b
         onGenerate={vi.fn()}
       />
     )
-    expect(document.activeElement.tagName).toBe('H1')
+    expect(document.activeElement.tagName).toBe('H2')
     expect(document.activeElement.textContent).toBe('How much do you want to put to work?')
   })
 

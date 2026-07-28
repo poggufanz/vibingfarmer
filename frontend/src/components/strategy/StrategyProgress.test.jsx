@@ -31,9 +31,9 @@ const REAL_STYLESHEET = [
 describe('StrategyProgress', () => {
   it('renders all three steps as visibly labeled text, never bare dots', () => {
     render(<StrategyProgress current="plan" reached={['plan']} />)
-    expect(screen.getByText('Plan')).toBeTruthy()
-    expect(screen.getByText('Protect')).toBeTruthy()
-    expect(screen.getByText('Start')).toBeTruthy()
+    expect(screen.getByText('1 · Plan')).toBeTruthy()
+    expect(screen.getByText('2 · Protect')).toBeTruthy()
+    expect(screen.getByText('3 · Start')).toBeTruthy()
   })
 
   it('marks exactly the current step with aria-current="step"', () => {
@@ -55,14 +55,14 @@ describe('StrategyProgress', () => {
     render(
       <StrategyProgress current="protect" reached={['plan', 'protect']} onNavigate={onNavigate} />
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Plan' }))
+    fireEvent.click(screen.getByRole('button', { name: '1 · Plan' }))
     expect(onNavigate).toHaveBeenCalledWith('plan')
   })
 
   it('never lets the caller jump ahead to an unreached step', () => {
     const onNavigate = vi.fn()
     render(<StrategyProgress current="plan" reached={['plan']} onNavigate={onNavigate} />)
-    const startButton = screen.getByRole('button', { name: 'Start' })
+    const startButton = screen.getByRole('button', { name: '3 · Start' })
     expect(startButton.disabled).toBe(true)
     fireEvent.click(startButton)
     expect(onNavigate).not.toHaveBeenCalled()
@@ -71,7 +71,7 @@ describe('StrategyProgress', () => {
   it('does not treat the current step itself as a navigation target', () => {
     const onNavigate = vi.fn()
     render(<StrategyProgress current="plan" reached={['plan']} onNavigate={onNavigate} />)
-    const planButton = screen.getByRole('button', { name: 'Plan' })
+    const planButton = screen.getByRole('button', { name: '1 · Plan' })
     expect(planButton.disabled).toBe(true)
     fireEvent.click(planButton)
     expect(onNavigate).not.toHaveBeenCalled()
@@ -79,7 +79,7 @@ describe('StrategyProgress', () => {
 
   it('defaults reached to just the current step when omitted', () => {
     render(<StrategyProgress current="plan" />)
-    expect(screen.getByRole('button', { name: 'Protect' }).disabled).toBe(true)
+    expect(screen.getByRole('button', { name: '2 · Protect' }).disabled).toBe(true)
   })
 
   it('has zero axe violations', async () => {

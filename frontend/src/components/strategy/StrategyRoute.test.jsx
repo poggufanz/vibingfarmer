@@ -20,7 +20,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render } from '@testing-library/react'
+import { cleanup, render, screen } from '@testing-library/react'
 import { StrategyRoute } from './StrategyRoute.jsx'
 import { SOROBAN_TOKEN_ADDRESS } from '../../stellar/config.js'
 import { STELLAR_USDC_SAC } from '../../stellar/cctpBurn.js'
@@ -253,4 +253,39 @@ describe('StrategyRoute — item 12 (rejection checklist): 320px no overflow, 12
       expect(routeContentWidth1440).toBeLessThanOrEqual(1240)
     }, 20000)
   }
+})
+
+// Task 2 (Pocket Crew design alignment): the route-level header living above StrategyProgress --
+// a single `<h1>` ("Hire a crew, once.") the route owns, plus a "Step N of 3" counter for the
+// current stage. Demotes each stage's own heading to `<h2>` so this is the only h1 on the route
+// (item 1's a11y invariant, exercised for all three stages by strategyA11y.test.jsx elsewhere).
+const baseProps = {
+  stage: 'plan',
+  reached: ['plan'],
+  onNavigateStage: () => {},
+  plan: null,
+  protectProps: {},
+  startProps: {},
+  onGenerate: vi.fn(),
+  onAcceptPlan: () => {},
+}
+
+describe('StrategyRoute header', () => {
+  it('renders the route h1 and the step counter for the current stage', () => {
+    render(<StrategyRoute {...baseProps} />)
+    expect(screen.getByRole('heading', { level: 1, name: /hire a crew, once/i })).toBeTruthy()
+    expect(screen.getByText('Step 1 of 3')).toBeTruthy()
+  })
+
+  it('numbers the stage tabs', () => {
+    render(<StrategyRoute {...baseProps} />)
+    expect(screen.getByRole('button', { name: /1 · Plan/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /2 · Protect/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /3 · Start/ })).toBeTruthy()
+  })
+
+  it('keeps exactly one h1 on the route', () => {
+    render(<StrategyRoute {...baseProps} />)
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
+  })
 })

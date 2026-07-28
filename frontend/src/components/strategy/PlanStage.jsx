@@ -325,7 +325,7 @@ export function PlanStage({
   return (
     <div className="pc-strategy-layout">
       <div className="pc-strategy-decision pc-dominant pc-dominant--decision">
-        <h1 className="pc-strategy-question">How much do you want to put to work?</h1>
+        <h2 className="pc-strategy-question">How much do you want to put to work?</h2>
 
         {phase === 'input' && (
           <form onSubmit={handleSubmit}>

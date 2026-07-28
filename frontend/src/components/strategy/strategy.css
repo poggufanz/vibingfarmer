@@ -8,9 +8,11 @@
  * Scope: only the contract sections StrategyRoute/StrategyProgress/PlanStage/ProtectStage
  * actually render.
  * Not ported here (out of this task's surface, or already covered elsewhere):
- *   - .pc-app-shell, .pc-route-header/-intro: the outer app shell + route chrome belong to the
- *     app frame (Foundation Task 6), not this route's own content; StrategyRoute renders inside
- *     that shell later (Task 13), it does not reproduce it.
+ *   - .pc-app-shell/.pc-route-intro: the outer app shell belongs to the app frame (Foundation
+ *     Task 6), not this route's own content; StrategyRoute renders inside that shell, it does not
+ *     reproduce it. (.pc-route-header itself is now owned HERE -- Task 2, Pocket Crew design
+ *     alignment -- the route-level "Hire a crew, once." header + step counter that sits above the
+ *     stage tabs; see the rule below and StrategyRoute.jsx.)
  *   - .pc-agent-mark(--hero), .pc-visually-hidden, the shared :focus-visible rule: already ported
  *     into pocket-crew.css (Foundation Task 5/6/7) and loaded globally; re-declaring them here
  *     would just be a duplicate, not a fix.
@@ -81,6 +83,55 @@
 .pc-route-stack {
   display: grid;
   gap: var(--pc-route-gap);
+}
+
+/* Task 2 (Pocket Crew design alignment) -- the route-level header: the single h1 ("Hire a crew,
+ * once.") plus the "Step N of 3" counter for the current stage, sitting above StrategyProgress's
+ * tabs. Mirrors the mock's `.pc-rhead`. Mobile collapse (`grid-template-columns: 1fr`) is already
+ * carried by the locked `@media (max-width: 767px)` selector group at the foot of this file --
+ * `.pc-route-step`'s own mobile realignment lives there too, not duplicated here. */
+.pc-route-header {
+  display: grid;
+  grid-template-columns: minmax(0, 760px) minmax(180px, 1fr);
+  gap: 32px;
+  align-items: end;
+}
+
+.pc-route-title {
+  max-width: 15ch;
+  margin: 0 0 12px;
+  font-size: clamp(34px, 4.4vw, 52px);
+  font-weight: 700;
+  line-height: 1.12;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+
+.pc-route-sub {
+  margin: 0;
+  max-width: 56ch;
+  color: var(--pc-muted);
+  text-wrap: pretty;
+}
+
+.pc-route-step {
+  justify-self: end;
+  text-align: right;
+  display: grid;
+  gap: 2px;
+  margin: 0;
+}
+
+.pc-route-step-label {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--pc-faint);
+}
+
+.pc-route-step-name {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .pc-strategy-layout {
@@ -571,6 +622,14 @@
   .pc-money-section {
     grid-template-columns: 1fr;
     gap: var(--pc-space-6);
+  }
+
+  /* Task 2 -- the step counter right-aligns against the title on desktop (.pc-route-step above);
+   * once the header collapses to one column just above, right-aligned text would sit stranded
+   * under the title instead of reading as its continuation, so it re-joins the same left edge. */
+  .pc-route-step {
+    justify-self: start;
+    text-align: left;
   }
 
   .pc-strategy-aside {

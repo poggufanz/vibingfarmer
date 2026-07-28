@@ -29,7 +29,7 @@ export function StrategyProgress({ current, reached, onNavigate }) {
 
   return (
     <nav className="pc-strategy-stage-nav" aria-label="Strategy progress">
-      {STEPS.map((step) => {
+      {STEPS.map((step, index) => {
         const isCurrent = step.id === current
         const canNavigate =
           !isCurrent && reachedSet.has(step.id) && typeof onNavigate === 'function'
@@ -41,7 +41,7 @@ export function StrategyProgress({ current, reached, onNavigate }) {
             disabled={!canNavigate}
             onClick={canNavigate ? () => onNavigate(step.id) : undefined}
           >
-            {step.label}
+            {`${index + 1} · ${step.label}`}
           </button>
         )
       })}

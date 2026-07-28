@@ -264,7 +264,7 @@ export function ProtectStage({
     <div className="pc-protect-stage">
       <div className="pc-protect-boundary">
         <div className="pc-dominant pc-dominant--decision pc-strategy-decision">
-          <h1 className="pc-strategy-question">Protect this run</h1>
+          <h2 className="pc-strategy-question">Protect this run</h2>
 
           {!owner && (
             <div>

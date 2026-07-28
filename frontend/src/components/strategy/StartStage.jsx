@@ -365,9 +365,9 @@ export function StartStage({
   return (
     <div ref={scopeRef} className="pc-start-stage">
       <div className="pc-strategy-decision pc-dominant pc-dominant--decision">
-        <h1 className="pc-strategy-question">
+        <h2 className="pc-strategy-question">
           {receipt ? 'Your run is complete' : 'Starting your run'}
-        </h1>
+        </h2>
         <p className="pc-visually-hidden" role="status" aria-live="polite">
           {announcement}
         </p>
