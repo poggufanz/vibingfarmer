@@ -536,8 +536,12 @@ describe('PlanStage — reviewed plan (Stellar-only)', () => {
     await generateStellarOnlyPlan()
     // risk 'Balanced' (med) -> exactly 2 deposit agents sharing ONE Stellar testnet badge -- an
     // identical badge repeated per row was exactly the "info blocks repeated 3x" defect the owner
-    // reported (item 6).
-    expect(screen.getAllByText('Stellar testnet')).toHaveLength(1)
+    // reported (item 6). Scoped to `.pc-plan-facts` (the hoisted summary itself) -- Task 4's
+    // aside now ALSO mentions "Stellar testnet" once, in its own unrelated provenance breadcrumb,
+    // so a bare document-wide count is no longer a precise proxy for "not repeated per row".
+    expect(
+      within(document.querySelector('.pc-plan-facts')).getAllByText('Stellar testnet')
+    ).toHaveLength(1)
   })
 
   it('renders "Yield unavailable" honestly when the venue carries no live yield', async () => {
@@ -1055,7 +1059,10 @@ describe('PlanStage — owner report: P0 correctness (items 1, 2, 3, 4)', () => 
 
   it('items 6/8: network, expiry, and yield stay hoisted to one shared line even with three workers', async () => {
     await generateThreeWaySplit()
-    expect(screen.getAllByText('Stellar testnet')).toHaveLength(1)
+    // Scoped to `.pc-plan-facts` -- see the identical Task 4 note on the sibling test above.
+    expect(
+      within(document.querySelector('.pc-plan-facts')).getAllByText('Stellar testnet')
+    ).toHaveLength(1)
     expect(screen.getAllByText(/^Expires /)).toHaveLength(1)
     expect(screen.getAllByText(/Yield unavailable/)).toHaveLength(1)
   })
@@ -1353,5 +1360,137 @@ describe('PlanStage — amount presets and crew line', () => {
     expect(() => fireEvent.click(screen.getByRole('radio', { name: 'Balanced' }))).not.toThrow()
     expect(screen.getByText(/2 crew members/i)).toBeTruthy()
     expect(screen.queryByText(/each handles about/)).toBeNull()
+  })
+})
+
+// Task 4 (Pocket Crew design alignment) -- the aside's FIRST block: a live "plan so far" summary
+// (deployed amount, crew size, zero fees, plus a "Sent to Base" row and a 30-day estimate row
+// only when the caller's own plan/venue actually support them) that renders even before any plan
+// has been generated. The existing Stellar truth card and Base bridge disclosure (rendered below
+// it in the DOM) are untouched -- already covered by the describe blocks above; this block only
+// covers the new summary.
+//
+// `STELLAR_VENUE_FIXTURE` mirrors the REAL production shape (frontend/src/app.jsx's
+// `stellarVenueDisplay`, confirmed at app.jsx:2378-2388): a flat top-level `apy` number sourced
+// from `VAULT_CATALOG[0].apy` (frontend/src/config.js:38, `4.8`). This is deliberately NOT the
+// nested `{yield:{state,apy}}` shape `generateStellarOnlyPlan` above uses -- that shape feeds the
+// unrelated `venueYield()`/`stellarYield`/"X% APY" line (PlanStage.jsx), which intentionally does
+// NOT trust a flat legacy `apy` field as "live" (see venueTruth.js's own doc comment). The new
+// estimate30d row reads `stellarVenue.apy` directly, matching the brief's exact condition and the
+// real prop shape the app actually passes.
+const STELLAR_VENUE_FIXTURE = Object.freeze({ name: 'Vibing Farmer Autofarm', apy: 4.8 })
+
+// No named render helper exists elsewhere in this file for a `stellarVenue`-bearing render (every
+// other describe block above either doesn't need one or inlines `render` directly) -- this one
+// does, several times, so it is factored out here rather than repeated per test.
+function renderPlanStage(props = {}) {
+  return render(
+    <PlanStage
+      vaultTotalShares={FUNDED_VAULT}
+      base={disconnectedBase}
+      stellarVenue={STELLAR_VENUE_FIXTURE}
+      onGenerate={vi.fn()}
+      {...props}
+    />
+  )
+}
+
+describe('the plan so far aside', () => {
+  // Deviation from the task brief's literal `screen.getByLabelText(/amount/i)`: Task 3 already
+  // gave the "Quick amounts" preset group (rendered in the SAME form) `aria-label="Quick
+  // amounts"` -- testing-library's getByLabelText matches any element's `aria-label` attribute,
+  // not just form controls (verified directly: @testing-library/dom's label-text query runs
+  // `queryAllByAttribute('aria-label', ...)` with no role restriction), so `/amount/i` matches
+  // BOTH the amount input's label and that group's aria-label and throws "Found multiple
+  // elements" before the aside is ever queried -- this is exactly why every other test in this
+  // file already uses the exact string `'Amount in USDC'` (see the "amount presets and crew
+  // line" describe block's own header comment above, which documents the identical tradeoff).
+  it('lists deployed amount, crew count and zero fees once inputs are set', () => {
+    renderPlanStage()
+    fireEvent.change(screen.getByLabelText('Amount in USDC'), { target: { value: '250' } })
+    fireEvent.click(screen.getByRole('radio', { name: /balanced/i }))
+    const aside = screen.getByRole('complementary', { name: /the plan so far/i })
+    expect(aside.textContent).toMatch(/blend/i)
+    expect(aside.textContent).toMatch(/network fees/i)
+    expect(aside.textContent).toMatch(/zero/i)
+  })
+
+  // Pins REAL values (Task 3's review lesson: a test that would also pass against an empty aside
+  // does not cover this task) -- proves deployedText/estimate30d are the caller's own typed
+  // amount and venue APY, not a hardcoded string that happens to satisfy the regex test above.
+  // 250 USDC * 4.8% APY * 30/365 days = 0.9863... -> "0.99" (formatDollarNumber's own rounding).
+  it('shows the typed amount, the derived crew count, and the yield estimate before any plan exists', () => {
+    renderPlanStage()
+    fireEvent.change(screen.getByLabelText('Amount in USDC'), { target: { value: '250' } })
+    fireEvent.click(screen.getByRole('radio', { name: /balanced/i }))
+    const aside = screen.getByRole('complementary', { name: /the plan so far/i })
+    expect(within(aside).getByText('250.00 USDC')).toBeTruthy()
+    expect(within(aside).getByText('Crew members').closest('li').textContent).toMatch(/2/)
+    expect(within(aside).getByText('+0.99 USDC')).toBeTruthy()
+  })
+
+  it('shows no crew-members row before a comfort level is chosen -- never a guessed default', () => {
+    renderPlanStage()
+    const aside = screen.getByRole('complementary', { name: /the plan so far/i })
+    expect(within(aside).queryByText('Crew members')).toBeNull()
+  })
+
+  // Constraint: never invent a number. No `stellarVenue` prop at all (the real shape before the
+  // venue catalog has loaded) -- `stellarVenue?.apy` is `undefined`, not a number, so the row
+  // must be omitted entirely rather than substituting a default/placeholder rate.
+  it('omits the estimated-yield row when the venue exposes no numeric APY', () => {
+    render(
+      <PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={vi.fn()} />
+    )
+    fireEvent.change(screen.getByLabelText('Amount in USDC'), { target: { value: '250' } })
+    const aside = screen.getByRole('complementary', { name: /the plan so far/i })
+    expect(within(aside).queryByText(/Estimated in 30 days/)).toBeNull()
+  })
+
+  it('reflects the real reviewed totals and a Sent to Base row once a bridged plan is generated', async () => {
+    const onGenerate = vi.fn().mockResolvedValue({
+      source: 'deepseek',
+      sourceState: 'live-ai',
+      stellarUnits: '600000000', // 60 USDC Stellar
+      baseAllocations: [
+        { address: '0xAAA', proxyTarget: 'aave-v3', units: '25000000', chain: 'base' },
+        { address: '0xBBB', proxyTarget: 'morpho-blue', units: '15000000', chain: 'base' },
+      ], // + 40 USDC bridge cap = 100 USDC total, reconciling with the typed amount below
+    })
+    const readyBase = {
+      connected: true,
+      healthy: true,
+      mandateView: { status: 'ready', ready: true, primaryCopy: 'Ready copy.' },
+      action: null,
+    }
+    renderPlanStage({ base: readyBase, onGenerate })
+    fireEvent.change(screen.getByLabelText('Amount in USDC'), { target: { value: '100' } })
+    fireEvent.click(screen.getByRole('radio', { name: 'Steady' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Build my plan' }))
+    await screen.findByRole('button', { name: 'Accept plan' })
+    const aside = screen.getByRole('complementary', { name: /the plan so far/i })
+    // Deployed to Blend v2 now reflects the REVIEWED plan total (60), not the typed amount (100).
+    expect(within(aside).getByText('60.00 USDC')).toBeTruthy()
+    expect(within(aside).getByText('Sent to Base')).toBeTruthy()
+    expect(within(aside).getByText('40.00 USDC')).toBeTruthy()
+  })
+
+  // A11y: `<aside>` only maps to the `complementary` role when it is not nested inside another
+  // sectioning element -- proven above by the successful `getByRole('complementary', ...)`
+  // queries, not assumed. This adds the explicit contract check plus a real axe pass over the
+  // reviewed-plan phase, which now renders the aside's new content alongside the existing Stellar
+  // truth card.
+  it('has zero axe violations with the new summary rendered alongside a reviewed plan', async () => {
+    const onGenerate = vi.fn().mockResolvedValue({
+      source: 'deepseek',
+      sourceState: 'live-ai',
+      stellarUnits: '1000000000',
+      baseAllocations: [],
+    })
+    const { container } = renderPlanStage({ onGenerate })
+    await fillAndSubmit({ amount: '100', risk: 'Steady', onGenerate })
+    await screen.findByRole('button', { name: 'Accept plan' })
+    expect(screen.getByRole('complementary', { name: /the plan so far/i })).toBeTruthy()
+    expect(await axe(container)).toHaveNoViolations()
   })
 })

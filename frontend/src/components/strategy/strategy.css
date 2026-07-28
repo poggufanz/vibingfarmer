@@ -196,6 +196,87 @@
   padding-top: var(--pc-space-4);
 }
 
+/* Task 4 (Pocket Crew design alignment) -- the aside's live "plan so far" summary (PlanStage.jsx),
+ * first block inside `.pc-strategy-aside` above. Not a locked contract selector -- this route's
+ * own addition, new scoped rules. Most literals below reuse an exact-value --pc-* token (noted
+ * inline); a few genuinely have none and stay literal, same as this file's existing precedent
+ * (`.pc-amount-preset`'s comment above walks the same exercise):
+ *   - `.pc-aside-title`'s `font-size: 21px`: --pc-type-section is a `clamp(21px, 2vw, 28px)`, not
+ *     a static 21px value, so it is not an exact-value match; `font-weight: 650` and
+ *     `letter-spacing: -0.02em` have no matching token at all (-0.02em matches
+ *     `.pc-route-step-name`'s own un-tokenized letter-spacing above, same precedent).
+ *   - `.pc-fact-row`'s `min-height: 56px`: no spacing/control/touch-target token holds 56px, and
+ *     this row is a plain `<li>` (no button/input/a inside it), so pocket-crew.css's global 44px
+ *     touch-target floor (`:where(button, [role='button'], a[href], summary, input, select,
+ *     textarea)`) does not select it in the first place -- nothing here opts out of that floor.
+ *   - `.pc-fact-value`'s `font-size: 15px` / `font-weight: 700`: no 15px token exists; no
+ *     font-weight token exists anywhere in this file (`.pc-button`/`.pc-route-title` above, both
+ *     literal too).
+ *   - `.pc-provenance`'s `font-weight: 620`: no font-weight token exists, but this exact value is
+ *     already the established literal `.pc-network-badge`/`.pc-source-badge` above both use.
+ */
+.pc-plan-so-far {
+  display: grid;
+  gap: var(--pc-space-1);
+}
+
+.pc-aside-title {
+  margin: 0 0 var(--pc-space-2);
+  font-size: 21px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.pc-fact-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.pc-fact-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--pc-space-4);
+  align-items: center;
+  min-height: 56px;
+  padding-block: var(--pc-space-3);
+  border-bottom: 1px solid var(--pc-line);
+  font-size: var(--pc-type-body-small);
+}
+
+.pc-fact-row:last-child {
+  border-bottom: 0;
+}
+
+.pc-fact-dot {
+  display: block;
+  width: var(--pc-space-2);
+  height: var(--pc-space-2);
+  border-radius: var(--pc-radius-round);
+  background: var(--pc-line-strong);
+}
+
+.pc-fact-dot--harvest {
+  background: var(--pc-harvest);
+}
+
+.pc-fact-value {
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.pc-provenance {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pc-space-2);
+  margin: var(--pc-space-3) 0 0;
+  font-size: var(--pc-type-label);
+  font-weight: 620;
+  color: var(--pc-muted);
+}
+
 /* Surface hierarchy. These are roles, not a reusable card grid. */
 .pc-dominant {
   position: relative;

@@ -101,6 +101,27 @@ function formatCents(cents) {
   return `${negative ? '-' : ''}${whole}.${frac}`
 }
 
+// Task 4 (Pocket Crew design alignment) -- adapts a plain JS dollars number (the typed amount
+// before a plan exists, or a computed 30-day yield estimate) into the exact same 2dp string
+// `formatCents` already produces for every other money row in this file (Cap/allocation via
+// buildAmountDisplayMap below). Not a second money formatter: the rounding/sign/2dp logic stays
+// 100% formatCents; this only converts a float-dollars input into the cents BigInt it expects.
+function formatDollarNumber(value) {
+  return formatCents(BigInt(Math.round(value * 100)))
+}
+
+// Task 4 -- sums a GROUP of real plan agents' allocation units (BigInt, exact) and rounds ONCE,
+// the same order buildAmountDisplayMap already uses for a single agent's cap/allocation. Summing
+// already-rounded PER-AGENT strings instead would reproduce the exact "off by one base unit"
+// defect Task 3's review caught (see formatShare's doc comment above) -- this sums the real units
+// first. Returns the honest '0.00' for an empty group (e.g. a bridge-only plan has no deposit
+// agents) rather than a null/undefined placeholder.
+function sumAllocationCents(agents) {
+  if (!agents.length) return '0.00'
+  const totalUnits = agents.reduce((s, a) => s + BigInt(a.allocation.units), 0n)
+  return formatCents(roundCentsBigInt(totalUnits, agents[0].allocation.decimals))
+}
+
 // Fix round 1 -- I-2 (reviewer finding): generalized from a Cap-only `buildCapDisplayMap` so the
 // SAME redistribute-the-remainder-onto-the-last-agent treatment applies to whichever amount field
 // the caller names -- `cap` and `allocation` happen to hold equal units today
@@ -254,6 +275,25 @@ export function PlanStage({
   const allocationDisplay = plan ? buildAmountDisplayMap(plan.agents, 'allocation') : null
   const depositAgents = plan ? plan.agents.filter((a) => a.kind === 'deposit') : []
   const planExpiry = plan?.agents[0] ? formatExpiry(plan.agents[0].expiry) : null
+
+  // Task 4 -- the aside's live "plan so far" summary. Before a plan exists this reflects the
+  // typed amount only; once one does, it reflects the REAL reviewed totals (never a different
+  // number than what Accept plan would sign) -- same fail-closed discipline as C2's amount
+  // reconciliation above.
+  const bridgeAgent = plan ? plan.agents.find((a) => a.kind === 'bridge') : null
+  const deployedText = plan
+    ? `${sumAllocationCents(depositAgents)} ${plan.amount.token}`
+    : `${formatDollarNumber(amountNumber)} USDC`
+  // Never invented: only computed when the caller's own venue object exposes a genuine numeric
+  // APY (frontend/src/app.jsx's stellarVenueDisplay.apy, sourced from VAULT_CATALOG -- confirmed
+  // a flat top-level number, not the nested {state,apy} shape venueYield()/stellarYield above
+  // reads). Guarded here, not just at the JSX render site below, because `stellarVenue` is
+  // optional and most callers/tests never pass one -- an unguarded `stellarVenue.apy` read would
+  // throw on every one of them.
+  const estimate30d =
+    typeof stellarVenue?.apy === 'number' && amountNumber > 0
+      ? `${formatDollarNumber(amountNumber * (stellarVenue.apy / 100) * (30 / 365))} USDC`
+      : null
 
   async function runGeneration(generate) {
     const { amountUnits, risk: submittedRisk } = submissionRef.current
@@ -632,7 +672,55 @@ export function PlanStage({
         )}
       </div>
 
-      <aside className="pc-strategy-aside">
+      <aside className="pc-strategy-aside" aria-label="The plan so far">
+        {/* Task 4 (Pocket Crew design alignment) -- the aside's FIRST block: a live summary of
+            the plan being built, so the aside always shows something truthful even before a
+            plan has been generated. The Stellar truth card and Base bridge disclosure below are
+            unchanged content, just no longer the first thing rendered. */}
+        <div className="pc-plan-so-far">
+          <h2 className="pc-aside-title">The plan so far</h2>
+          <ul className="pc-fact-rows">
+            <li className="pc-fact-row">
+              <span className="pc-fact-dot pc-fact-dot--harvest" aria-hidden="true" />
+              <span>Deployed to Blend v2</span>
+              <span className="pc-fact-value">{deployedText}</span>
+            </li>
+            {bridgeAgent && (
+              <li className="pc-fact-row">
+                <span className="pc-fact-dot" aria-hidden="true" />
+                <span>Sent to Base</span>
+                <span className="pc-fact-value">
+                  {sumAllocationCents([bridgeAgent])} {plan.amount.token}
+                </span>
+              </li>
+            )}
+            {risk && (
+              <li className="pc-fact-row">
+                <span className="pc-fact-dot" aria-hidden="true" />
+                <span>Crew members</span>
+                <span className="pc-fact-value">{RISK_PROFILES[risk].targetSlots}</span>
+              </li>
+            )}
+            {typeof stellarVenue?.apy === 'number' && amountNumber > 0 && (
+              <li className="pc-fact-row">
+                <span className="pc-fact-dot" aria-hidden="true" />
+                <span>Estimated in 30 days</span>
+                <span className="pc-fact-value">+{estimate30d}</span>
+              </li>
+            )}
+            <li className="pc-fact-row">
+              <span className="pc-fact-dot" aria-hidden="true" />
+              <span>Network fees you pay</span>
+              <span className="pc-fact-value">Zero</span>
+            </li>
+          </ul>
+          <p className="pc-provenance">
+            <span>Stellar testnet</span>
+            <span aria-hidden="true">→</span>
+            <span>Blend Capital v2</span>
+          </p>
+        </div>
+
         {/* Fix loop 1 -- M6 (review finding): a bridge-only plan (stellarUnits: 0) has no
             Stellar deposit leg at all -- rendering "Stellar truth" / "0 live venue" beside the
             live-venue disclosure would be a false claim. */}
