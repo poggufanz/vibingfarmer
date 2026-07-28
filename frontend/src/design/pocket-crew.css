@@ -789,6 +789,42 @@ pre,
 }
 
 /* ---------------------------------------------------------------------------------------------
+ * Real-app fixes found by driving /strategy and /agent in Chromium, 2026-07-28. None of these was
+ * reachable from the visual harness: it mounts `.pc-route` standalone, outside the legacy shell,
+ * so every one of the 12 Strategy and 4 My Money baselines is blind to the two defects below.
+ * ------------------------------------------------------------------------------------------- */
+
+/* SCROLL. style.css:350-356 sets `.main { overflow: hidden }` -- correct for the legacy routes it
+ * was written for (/home, /history both measure exactly the viewport height, and /settings scrolls
+ * inside a child of its own). A Pocket Crew route is taller than the shell ever assumed: measured
+ * 723.7px on /strategy and 1734.4px on /agent inside a 629px `.main`, with NO scrollable container
+ * anywhere in the ancestor chain, so 162px and 1105px of real content were simply unreachable.
+ * Scoped with :has() so the legacy routes keep the clip they were built for. Specificity (0,2,0)
+ * beats the bare `.main` (0,1,0) regardless of stylesheet order, so this does not depend on
+ * style.css and pocket-crew.css keeping their current import order in main.jsx. */
+.main:has(.pc-route) {
+  overflow-y: auto;
+}
+
+/* HOVER. `.pc-button` already declares a transition for background-color and border-color
+ * (strategy.css:291-293 and its verbatim twin in my-money.css), but NOTHING in the design system
+ * ever changed either property -- there was not one `:hover` rule for a control anywhere, so every
+ * button animated `transform` alone and read as framed text rather than something pressable.
+ * currentcolor keeps this correct on every surface the buttons sit on, including the lime decision
+ * card, without introducing a new token. Declared here in Foundation rather than in the two route
+ * stylesheets, so the byte-identical `.pc-button` blocks they both carry stay byte-identical. */
+.pc-button:where(:hover, :focus-visible):not(:disabled):not([aria-disabled='true']) {
+  border-color: currentcolor;
+  background-color: color-mix(in srgb, currentcolor 12%, transparent);
+}
+
+/* Primary already has a filled background, so the tint above would wash it out; darken instead.
+ * Same specificity as the rule above, ordered after it so it wins on source order. */
+.pc-button--primary:where(:hover, :focus-visible):not(:disabled):not([aria-disabled='true']) {
+  background-color: color-mix(in srgb, var(--pc-harvest) 86%, var(--pc-ink));
+}
+
+/* ---------------------------------------------------------------------------------------------
    Foundation Task 8 -- final compatibility override: retired lava-gradient buttons never animate
    or replay their gradient sweep on shared/disconnected routes, in either theme. `.mandate-revoke`
    was missing from every earlier hover/focus reset, so its console.css `.pos-cta` hover rule still

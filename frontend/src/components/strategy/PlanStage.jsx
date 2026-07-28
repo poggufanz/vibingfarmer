@@ -243,6 +243,10 @@ export function PlanStage({
                 className="pc-strategy-amount"
                 type="text"
                 inputMode="decimal"
+                // The field had no placeholder, and its own styling gave it no boundary either, so
+                // an empty Plan stage showed a blank area with a hairline under it and nothing to
+                // say it accepted input. Not a label substitute -- the <label> above stays.
+                placeholder="0.00"
                 value={amountValue}
                 onChange={(e) => setAmountValue(e.target.value)}
                 // Wave 6 Task 14 (scoped exception, owner-authorized): role="alert" only announces

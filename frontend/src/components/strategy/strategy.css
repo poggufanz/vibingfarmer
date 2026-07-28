@@ -33,8 +33,28 @@
 .pc-strategy-stage-nav {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  max-width: 560px;
+
+  /* Was `max-width: 560px` -- a constant with no relationship to anything it sits above, so it
+   * could only line up with the decision card by coincidence, and did not: measured 560px against
+   * the card's 530.3px at a 1440 window, the nav overhanging its own content by 29.7px. Derive it
+   * from the SAME tracks `.pc-strategy-layout` uses (8fr of an 8fr/4fr grid, minus one gap) so the
+   * two right edges cannot drift apart at any width. The gap literal is duplicated from
+   * `.pc-strategy-layout` below rather than hoisted to a custom property, because the nav and the
+   * layout are SIBLINGS under Foundation's `.pc-route-stack` -- there is no strategy-owned common
+   * ancestor to hang a variable on, and scoping one onto `.pc-route-stack` from this stylesheet is
+   * exactly the cross-route cascade contamination My Money Task 14 was bitten by. The pairing is
+   * held by a browser test that measures both right edges instead. */
+  width: calc((100% - clamp(24px, 4vw, 56px)) * 8 / 12);
   border-bottom: 1px solid var(--pc-line);
+}
+
+/* Below 1024px `.pc-strategy-layout` collapses to a single `1fr` column (see the media query at the
+ * foot of this file), so the 8/12 derivation above stops describing anything and the nav takes the
+ * full stack width, matching the card again. */
+@media (max-width: 1023px) {
+  .pc-strategy-stage-nav {
+    width: 100%;
+  }
 }
 
 .pc-strategy-stage-nav > * {
@@ -85,11 +105,17 @@
 
 .pc-strategy-amount {
   width: 100%;
-  border: 0;
+
+  /* Was `border: 0` + a bare 2px underline on a transparent background, with no placeholder on the
+   * element either (PlanStage.jsx now supplies one). Rendered, that is a 434x120px transparent area
+   * carrying nothing at all: no boundary, no fill, no hint text -- zero signal that it is typeable,
+   * which is why it reads as plain text rather than a field. The 120px height is NOT a defect and is
+   * left alone: it follows `--pc-type-money` (76px), which the visual contract locks. */
+  border: 1px solid color-mix(in srgb, currentcolor 26%, transparent);
   border-bottom: 2px solid currentcolor;
-  border-radius: 0;
-  padding: var(--pc-space-2) 0 var(--pc-space-3);
-  background: transparent;
+  border-radius: var(--pc-radius-control) var(--pc-radius-control) 0 0;
+  padding: var(--pc-space-2) var(--pc-space-4) var(--pc-space-3);
+  background: color-mix(in srgb, currentcolor 5%, transparent);
   color: currentcolor;
   font-size: var(--pc-type-money);
   font-variant-numeric: tabular-nums;
