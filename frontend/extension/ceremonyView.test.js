@@ -691,7 +691,12 @@ describe('renderCeremonyView — real-Chromium proof of rejection-checklist item
     )
     const mutated = html.replace(
       '</style>',
-      '@keyframes vf-test-spin { from { opacity: 0 } to { opacity: 1 } } .pc-wallet-consequence { animation: vf-test-spin 300ms; }</style>'
+      // `!important` is required since approval.css's critical rule became descendant-scoped:
+      // `[data-pocket-critical] * { animation: none !important }` now legitimately kills a plain
+      // declaration on any child. Equal specificity (0,1,0) plus later source order lets this probe
+      // through, so the control still proves the sweep can SEE an animation -- while an ordinary
+      // production animation added below stays suppressed, which is the guarantee we want.
+      '@keyframes vf-test-spin { from { opacity: 0 } to { opacity: 1 } } .pc-wallet-consequence { animation: vf-test-spin 300ms !important; }</style>'
     )
     expect(mutated).not.toBe(html)
     const browser = await launchRealChromium()

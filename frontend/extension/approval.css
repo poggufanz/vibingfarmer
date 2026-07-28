@@ -11,7 +11,13 @@
  *
  * Consent and signing screens use MOTION_INTENSITY 1-2 (contract DIALS): no entry animation, no
  * gradient/glow/shimmer/pulse anywhere below. Both approve.html and ceremony.html mark their
- * root [data-pocket-critical], which this file hard-disables animation on.
+ * root [data-pocket-critical], which this file hard-disables animation on -- on the root AND its
+ * descendants. The descendant half is load-bearing: the contract's own rule (contract:782-788) is
+ * element-scoped, so marking a root never stopped a CHILD animating. WalletShell.jsx:23-28 resolved
+ * the same defect by deleting its copy outright, on the grounds that a rule which looks like a
+ * safety net but is not is worse than no rule. Here the rule is kept and made real instead, because
+ * approve.html and ceremony.html load this file as their ONLY stylesheet, so it is the sole place
+ * the guarantee can live. Do not re-narrow it to the bare selector.
  *
  * No @layer: approve.html and ceremony.html each load this file as their only stylesheet and
  * never inject a second one at runtime -- unlike popup.jsx, which still renders a whole separate
@@ -490,9 +496,20 @@ pre,
   gap: var(--pc-space-3);
 }
 
+/* Descendant-scoped on purpose -- see this file's header. The bare selector cannot stop a child
+   animating, which is the whole guarantee these screens need. */
+.pc-wallet-critical,
+.pc-wallet-critical *,
+[data-pocket-critical],
+[data-pocket-critical] * {
+  animation: none !important;
+}
+
+/* `transition` stays element-scoped: it is a positive declaration granting two named transitions,
+   not a prohibition, so descendant-scoping it would hand every child a transition it never asked
+   for. Only the prohibition above inherits down the tree. */
 .pc-wallet-critical,
 [data-pocket-critical] {
-  animation: none !important;
   transition:
     border-color var(--pc-duration-fast) var(--pc-ease-standard),
     background-color var(--pc-duration-fast) var(--pc-ease-standard);

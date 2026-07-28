@@ -1098,6 +1098,45 @@ describe('renderApprovalView — real-Chromium proof of rejection-checklist item
       await browser.close()
     }
   }, 60000)
+
+  // The sweep above is vacuous for the rule it appears to protect: it only proves nothing animates
+  // TODAY. Nothing in approval.css declares an animation, so re-narrowing the critical selector back
+  // to `[data-pocket-critical] { ... }` leaves that sweep green while silently removing the
+  // guarantee -- which is exactly how the contract's own copy (contract:782-788) stayed broken from
+  // VF Wallet Task 8 until now. This test supplies the missing positive control: it INJECTS an
+  // animation on a real descendant and requires the rule to kill it. Written with a selector shape
+  // deliberately different from the production rule so it cannot pass by matching its own literal.
+  it('the critical rule kills an animation declared on a DESCENDANT, not just on the root', async () => {
+    const [, html] = buildStatesHtml()[0]
+    const browser = await launchRealChromium()
+    try {
+      const page = await browser.newPage()
+      await page.setContent(buildHarnessHtml(html))
+      const probe = await page.evaluate(() => {
+        const root = document.querySelector('[data-pocket-critical]')
+        if (!root) return { error: 'no [data-pocket-critical] root in this state' }
+        const kid = root.querySelector('*')
+        if (!kid) return { error: 'critical root has no descendant' }
+        const style = document.createElement('style')
+        style.textContent =
+          '@keyframes vfProbeSpin { from { opacity: 1 } to { opacity: 0.4 } }' +
+          '.pc-wallet :where(*) { animation: vfProbeSpin 2s linear infinite }'
+        document.head.appendChild(style)
+        return {
+          animationName: getComputedStyle(kid).animationName,
+          running: kid.getAnimations().length,
+        }
+      })
+      expect(probe.error).toBeUndefined()
+      // Positive control: this exact probe yields 'vfProbeSpin' / 1 against the element-scoped
+      // rule, so a green result here is the descendant half doing real work.
+      expect(probe.animationName).toBe('none')
+      expect(probe.running).toBe(0)
+      await page.close()
+    } finally {
+      await browser.close()
+    }
+  }, 60000)
 })
 
 // ---------------------------------------------------------------------------------------------
