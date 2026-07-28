@@ -21,14 +21,27 @@ import { test, expect } from '@playwright/test'
 // measurement above is from THAT route, still historically accurate for when it was captured) --
 // it is now Task 9's CrewRoute, and dropped from this specific overflow guard. The `.main {
 // overflow: hidden }` fix this guard protects is a SHELL-LEVEL style (style.css, not per-route),
-// so /strategy alone still proves it holds for any `.pc-route`; the reason /agent is not ALSO
+// so one tall `.pc-route` still proves it holds for any of them; the reason /agent is not ALSO
 // re-proven here is a fixture limitation, not a narrowed guard: CrewRoute's only reachable state
 // via the synthetic read-only `VIEW_AS` address below is its empty-crew branch (no real deployed
 // agents exist for a guard-only dummy address on testnet), measured at 369px tall against the
 // 600px forced viewport -- shorter than the viewport, so the guard's own "route fits the viewport,
 // so this guard proved nothing" assertion fires correctly rather than a real clipping regression.
 // Re-add '/agent' here if a fixture ever provides it a real, taller (non-empty) crew state.
-const POCKET_CREW_ROUTES = ['/strategy']
+//
+// Task 11 (re-verified 2026-07-28 against current HEAD): re-ran the /agent case by hand with the
+// guard's own debug fields exposed -- still measures routeBottom=369.296875 against a forced
+// viewportH=600, i.e. unchanged from Task 10's figure. The fixture limitation is real today, not
+// stale. Getting CrewRoute past its empty branch would mean mocking the Soroban RPC read (there is
+// no other way to hand a synthetic address a non-empty crew) -- that is inventing app state this
+// test has no business creating, not a fixture fix, so /agent stays out of THIS array.
+//
+// Task 11 also adds '/home': it is where the historically overflow-prone content (My Money, the
+// very route the 1734.4px figure above was measured on) now lives post-remap, and unlike /agent it
+// is NOT gated behind an empty-state branch -- MyMoneyRoute always renders its full six sections
+// regardless of agent count. Re-measured today: routeBottom=1802.078125 against viewportH=600, a
+// real, current overflow this guard can actually catch a regression in.
+const POCKET_CREW_ROUTES = ['/strategy', '/home']
 
 // `/strategy` and `/agent` render nothing until the app has an address: with no wallet, app.jsx
 // falls through to the landing (`!skipLanding && !realAddress`) and then to the onboarding
@@ -38,6 +51,24 @@ const POCKET_CREW_ROUTES = ['/strategy']
 // Against a production build the param is ignored and these tests fail loudly on the missing
 // `.pc-route` rather than passing vacuously, which is the correct direction to fail.
 const VIEW_AS = 'GCREALSHELLGUARD' + '2'.repeat(56 - 'GCREALSHELLGUARD'.length)
+
+// Route-identity guard (Task 11): pins that each route in the remapped IA renders ITS OWN <h1>,
+// so a future routing regression (e.g. two routes pointed at the same component, or a copy-paste
+// wrong-import) fails here instead of silently reading as "the page rendered something". Deliberately
+// a SEPARATE list from POCKET_CREW_ROUTES above: identity does not depend on content height, so it
+// covers /agent too even though CrewRoute's empty-crew branch (the only state this fixture reaches)
+// is too short to ever prove the overflow guard. Verified against the real rendered source, not the
+// brief that first proposed these three lines -- all three matched on inspection:
+//   - '/strategy' -> StrategyRoute.jsx:88          `<h1 className="pc-route-title">Hire a crew, once.</h1>`
+//   - '/agent'    -> CrewRoute.jsx:72 AND :87       both mutually-exclusive branches render the
+//                     IDENTICAL text `<h1 className="pc-route-title">The crew, live.</h1>` -- so
+//                     this assertion holds regardless of which branch the fixture happens to reach.
+//   - '/home'     -> MyMoneyRoute.jsx:50            `<h1>My money</h1>`
+const ROUTE_H1 = {
+  '/strategy': /hire a crew, once/i,
+  '/agent': /the crew, live/i,
+  '/home': /my money/i,
+}
 
 /** Settle the SPA: the route element exists and has stopped growing between two frames. */
 async function waitForRoute(page) {
@@ -147,4 +178,25 @@ test.describe('real app shell (not the visual harness)', () => {
       `stage nav right edge ${edges.navRight.toFixed(1)} vs card ${edges.cardRight.toFixed(1)}`
     ).toBeLessThan(1)
   })
+})
+
+test.describe('route identity', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      try {
+        localStorage.setItem('yv_skip_landing', 'true')
+        localStorage.setItem('yv_onboarded', 'true')
+      } catch {
+        /* storage blocked — the assertions below will report the real failure */
+      }
+    })
+  })
+
+  for (const route of Object.keys(ROUTE_H1)) {
+    test(`${route} renders its own h1`, async ({ page }) => {
+      await page.goto(`${route}?as=${VIEW_AS}`)
+      await waitForRoute(page)
+      await expect(page.locator('.pc-route h1').first()).toHaveText(ROUTE_H1[route])
+    })
+  }
 })
