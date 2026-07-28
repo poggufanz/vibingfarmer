@@ -8,10 +8,13 @@
 //     post-action stale-poll) via `shouldCommitMoneyFetch` and `fetchMyMoneySnapshot`.
 //   - disconnected/loading/partial/current state fidelity through `buildMoneySnapshot` +
 //     `buildMyMoneyModel` (the app's own glue, not myMoneyModel.js's already-tested internals).
-//   - the `/home` projection (`projectMoneyForHome`) never fabricating a number.
-//   - a structural proof that `/agent` renders MyMoneyRoute, not OpsConsole, and that OpsConsole's
-//     own console.css never reaches a production route (source-level here; the bundle-scan proof
-//     for the SAME claim is run separately against `npm run build`'s dist output — see the report).
+//   - Task 10 (IA remap) C1: `toKeeperHeartbeatEvents` adapts `keeperActivity` into the
+//     {type, closedAt} shape classifyKeeperAutomation actually requires, proven against the real
+//     function (not a mock) so the fix stays honest about automationEvidence.js's real contract.
+//   - a structural proof that `/home` renders MyMoneyRoute and `/agent` renders CrewRoute (Task 10
+//     IA remap), never OpsConsole, and that OpsConsole's own console.css never reaches a production
+//     route (source-level here; the bundle-scan proof for the SAME claim is run separately against
+//     `npm run build`'s dist output — see the report).
 // @vitest-environment node
 import fs from 'node:fs'
 import path from 'node:path'
@@ -26,11 +29,12 @@ import {
   fetchMyMoneySnapshot,
   guardedMoneyFetch,
   moneyFetchArgs,
-  projectMoneyForHome,
+  toKeeperHeartbeatEvents,
   hasLiveScopeForVault,
 } from './app.jsx'
 import { buildMyMoneyModel } from './money/myMoneyModel.js'
 import { nextReconciliationToken } from './money/freshness.js'
+import { classifyKeeperAutomation } from './money/automationEvidence.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 
@@ -457,33 +461,67 @@ describe('buildMoneySnapshot + buildMyMoneyModel — app-adapter state fidelity'
 })
 
 // ---------------------------------------------------------------------------------------------
-// projectMoneyForHome: the ONLY thing /home is allowed to compute from My Money's own model.
+// Task 10 (IA remap) C1: toKeeperHeartbeatEvents -- the adapter from this file's own
+// {kind, timestamp}-shaped keeperActivity items into the {type, closedAt}-shaped events
+// classifyKeeperAutomation (money/automationEvidence.js) actually filters on. Proven against the
+// REAL classifyKeeperAutomation, not a re-implementation of its filter, so this fails honestly if
+// either side's contract ever drifts again.
 // ---------------------------------------------------------------------------------------------
-describe('projectMoneyForHome', () => {
-  it('no model at all (never rendered yet) -> loading, no fabricated total', () => {
-    expect(projectMoneyForHome(null)).toEqual({
-      state: 'loading',
-      total: null,
-      lastConfirmed: null,
+describe('toKeeperHeartbeatEvents (Task 10 C1 fix)', () => {
+  it('maps a real keeperActivity compound item onto classifyKeeperAutomation\'s required shape', () => {
+    const now = 1_000_000_000
+    const keeperActivity = [
+      {
+        id: 'compound:42',
+        kind: 'compound_executed',
+        vaultName: 'Autofarm vault',
+        totalGainUsdc: '1.23',
+        timestamp: now - 60_000, // 1 minute ago -- well within the healthy window
+      },
+    ]
+    const result = classifyKeeperAutomation({
+      events: toKeeperHeartbeatEvents(keeperActivity),
+      now,
     })
+    expect(result.label).toBe('healthy')
+    expect(result.lastHeartbeatAt).toBe(now - 60_000)
   })
 
-  it('known confirmed total rides through untouched', () => {
-    const model = {
-      state: 'current',
-      confirmedTotal: { state: 'known', amount: amount(42_0000000n) },
-      checkedAt: 777,
-    }
-    expect(projectMoneyForHome(model)).toEqual({
-      state: 'current',
-      total: amount(42_0000000n),
-      lastConfirmed: 777,
+  it('maps a rebalance item the same way, and an old one reads as stale, not healthy', () => {
+    const now = 1_000_000_000
+    const keeperActivity = [
+      { id: 'rebalance:7', kind: 'rebalance_executed', timestamp: now - 60 * 60_000 }, // 1h ago
+    ]
+    const result = classifyKeeperAutomation({
+      events: toKeeperHeartbeatEvents(keeperActivity),
+      now,
     })
+    expect(result.label).toBe('stale')
   })
 
-  it('a partial/unavailable confirmedTotal never becomes a total -- null, not a coerced zero', () => {
-    const model = { state: 'partial-discovery', confirmedTotal: { state: 'partial', amount: null } }
-    expect(projectMoneyForHome(model).total).toBeNull()
+  it('drops non-heartbeat kinds (vault_derisk etc.) -- they carry no compound/rebalance evidence', () => {
+    const now = 1_000_000_000
+    const keeperActivity = [{ id: 'vault_derisk:1', kind: 'vault_derisk', timestamp: now }]
+    expect(toKeeperHeartbeatEvents(keeperActivity)).toEqual([])
+    expect(classifyKeeperAutomation({ events: toKeeperHeartbeatEvents(keeperActivity), now }).label).toBe(
+      'unavailable'
+    )
+  })
+
+  // Mutation guard: this is the literal bug being fixed -- feeding classifyKeeperAutomation the
+  // RAW keeperActivity shape (no adapter) reproduces the production defect, label pinned to
+  // 'unavailable' no matter how fresh the event.
+  it('regression proof: the raw keeperActivity shape (no adapter) always reads unavailable', () => {
+    const now = 1_000_000_000
+    const keeperActivity = [
+      { id: 'compound:42', kind: 'compound_executed', timestamp: now - 60_000 },
+    ]
+    expect(classifyKeeperAutomation({ events: keeperActivity, now }).label).toBe('unavailable')
+  })
+
+  it('empty/null keeperActivity maps to an empty array, never throws', () => {
+    expect(toKeeperHeartbeatEvents([])).toEqual([])
+    expect(toKeeperHeartbeatEvents(null)).toEqual([])
   })
 })
 
@@ -518,12 +556,13 @@ describe('loadMoneyCache / saveMoneyCache', () => {
 })
 
 // ---------------------------------------------------------------------------------------------
-// Step 1: `/agent` renders MyMoneyRoute, not OpsConsole. app.jsx is too heavy to render (see
-// header comment), so this is a structural source assertion scoped to JUST the `/agent` Route's
-// own element block — proven adversarially by checking the block never re-admits OpsConsole even
-// if OpsConsole is still imported/used elsewhere in dev-only code.
+// Task 10 (IA remap): `/home` renders MyMoneyRoute, `/agent` renders CrewRoute -- neither ever
+// OpsConsole. app.jsx is too heavy to render (see header comment), so this is a structural source
+// assertion scoped to JUST each Route's own element block — proven adversarially by checking each
+// block never re-admits OpsConsole (or the other route's component) even if still
+// imported/used elsewhere in dev-only code.
 // ---------------------------------------------------------------------------------------------
-describe('/agent route source: MyMoneyRoute, never OpsConsole', () => {
+describe('/home & /agent route source: MyMoneyRoute moved to /home, /agent is now CrewRoute', () => {
   const src = fs.readFileSync(path.resolve(here, './app.jsx'), 'utf8')
 
   function routeBlock(routePath) {
@@ -538,16 +577,57 @@ describe('/agent route source: MyMoneyRoute, never OpsConsole', () => {
     return src.slice(start, nextRoute === -1 ? src.length : nextRoute)
   }
 
-  it('the /agent route element mounts <MyMoneyRoute', () => {
-    expect(routeBlock('/agent')).toMatch(/<MyMoneyRoute/)
+  it('the /home route element mounts <MyMoneyRoute', () => {
+    expect(routeBlock('/home')).toMatch(/<MyMoneyRoute/)
   })
 
-  it('the /agent route element never mounts <OpsConsole', () => {
+  it('the /agent route element mounts <CrewRoute, never <MyMoneyRoute', () => {
+    expect(routeBlock('/agent')).toMatch(/<CrewRoute/)
+    expect(routeBlock('/agent')).not.toMatch(/<MyMoneyRoute/)
+  })
+
+  it('neither /home nor /agent ever mounts <OpsConsole', () => {
+    expect(routeBlock('/home')).not.toMatch(/<OpsConsole/)
     expect(routeBlock('/agent')).not.toMatch(/<OpsConsole/)
   })
 
   it('OpsConsole is not imported as a top-level lazy production route (kept only inside its own retired file)', () => {
     expect(src).not.toMatch(/const OpsConsole = lazy/)
+  })
+
+  it('HomePage is retired -- no longer imported or rendered by app.jsx', () => {
+    expect(src).not.toMatch(/import HomePage/)
+    expect(src).not.toMatch(/<HomePage/)
+  })
+})
+
+// ---------------------------------------------------------------------------------------------
+// Task 10, carried finding C2: onViewMoney ("Back to my money") and onViewCrew ("Watch the crew")
+// used to both navigate('/agent') -- the same screen -- once /agent became the crew route. Proven
+// at the source level (app.jsx too heavy to render, see header comment): each handler's own
+// function body must navigate to its OWN distinct destination.
+// ---------------------------------------------------------------------------------------------
+describe('onViewMoney / onViewCrew (Task 10 C2 fix): distinct destinations, never a duplicate', () => {
+  const src = fs.readFileSync(path.resolve(here, './app.jsx'), 'utf8')
+
+  function fnBody(name) {
+    const marker = `function ${name}(`
+    const start = src.indexOf(marker)
+    expect(start, `${name} not found in app.jsx`).toBeGreaterThan(-1)
+    const end = src.indexOf('\n  }', start)
+    return src.slice(start, end)
+  }
+
+  it('onViewMoney navigates to /home, not /agent', () => {
+    expect(fnBody('onViewMoney')).toMatch(/navigate\(['"]\/home['"]\)/)
+    expect(fnBody('onViewMoney')).not.toMatch(/navigate\(['"]\/agent['"]\)/)
+  })
+
+  it('onViewCrew (StartStage prop, inline arrow) still targets /agent', () => {
+    const marker = 'onViewCrew: () => navigate('
+    const idx = src.indexOf(marker)
+    expect(idx, 'onViewCrew wiring not found in app.jsx').toBeGreaterThan(-1)
+    expect(src.slice(idx, idx + marker.length + 12)).toMatch(/navigate\(['"]\/agent['"]\)/)
   })
 })
 

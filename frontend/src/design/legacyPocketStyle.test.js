@@ -57,8 +57,10 @@ export const COMPAT_TOKEN_FALLBACK_PATTERNS = Object.freeze(
   COMPAT_TOKENS.map((token) => [`${token} hardcoded fallback`, fallbackPatternFor(token)])
 )
 
+// Task 10 (IA remap): HomePage.jsx is retired (/home now mounts MyMoneyRoute, already covered by
+// its own Pocket Crew token audits -- contractTokens.test.js et al.), so its entry is dropped, not
+// replaced -- this list is specifically the shared/disconnected routes outside that port.
 const ROUTE_FILES = Object.freeze([
-  ['HomePage.jsx', resolve(SRC_DIR, 'components/HomePage.jsx')],
   ['HistoryPanel.jsx', resolve(SRC_DIR, 'components/HistoryPanel.jsx')],
   ['SettingsPage.jsx', resolve(SRC_DIR, 'components/SettingsPage.jsx')],
   ['ExplorerPage.jsx', resolve(SRC_DIR, 'components/ExplorerPage.jsx')],

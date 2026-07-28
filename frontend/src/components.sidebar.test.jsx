@@ -75,7 +75,9 @@ describe('Sidebar', () => {
       </MemoryRouter>
     )
 
-    expect(screen.getByRole('button', { name: 'Home' }).getAttribute('aria-current')).toBe('page')
+    expect(screen.getByRole('button', { name: 'My money' }).getAttribute('aria-current')).toBe(
+      'page'
+    )
     const expand = screen.getByRole('button', { name: 'Expand sidebar' })
     expect(expand.getAttribute('aria-expanded')).toBe('false')
     fireEvent.click(expand)
@@ -91,49 +93,73 @@ describe('Sidebar', () => {
     ).toBe('true')
   })
 
-  it('renders the "New deposit" label routing to /strategy, current when active', () => {
+  it('renders the "Put it to work" label routing to /strategy, current when active', () => {
     render(
       <MemoryRouter initialEntries={['/strategy']}>
         <Sidebar extended onToggle={() => {}} />
       </MemoryRouter>
     )
-    const item = screen.getByRole('button', { name: 'New deposit' })
+    const item = screen.getByRole('button', { name: 'Put it to work' })
     expect(item.getAttribute('aria-current')).toBe('page')
   })
 
-  it('navigates to /strategy when "New deposit" is activated', () => {
+  it('navigates to /strategy when "Put it to work" is activated', () => {
     render(
       <MemoryRouter initialEntries={['/home']}>
         <Sidebar extended onToggle={() => {}} />
       </MemoryRouter>
     )
-    fireEvent.click(screen.getByRole('button', { name: 'New deposit' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Put it to work' }))
     // aria-current flips to the newly active item once React Router's location updates.
-    expect(screen.getByRole('button', { name: 'New deposit' }).getAttribute('aria-current')).toBe(
-      'page'
-    )
+    expect(
+      screen.getByRole('button', { name: 'Put it to work' }).getAttribute('aria-current')
+    ).toBe('page')
   })
 
-  it('renders the "My money" label routing to /agent, current when active', () => {
+  it('renders the "The crew" label routing to /agent, current when active', () => {
     render(
       <MemoryRouter initialEntries={['/agent']}>
         <Sidebar extended onToggle={() => {}} />
       </MemoryRouter>
     )
-    const item = screen.getByRole('button', { name: 'My money' })
+    const item = screen.getByRole('button', { name: 'The crew' })
     expect(item.getAttribute('aria-current')).toBe('page')
   })
 
-  it('navigates to /agent when "My money" is activated', () => {
+  it('navigates to /agent when "The crew" is activated', () => {
     render(
       <MemoryRouter initialEntries={['/home']}>
         <Sidebar extended onToggle={() => {}} />
       </MemoryRouter>
     )
-    fireEvent.click(screen.getByRole('button', { name: 'My money' }))
-    expect(screen.getByRole('button', { name: 'My money' }).getAttribute('aria-current')).toBe(
+    fireEvent.click(screen.getByRole('button', { name: 'The crew' }))
+    expect(screen.getByRole('button', { name: 'The crew' }).getAttribute('aria-current')).toBe(
       'page'
     )
+  })
+
+  // Task 10 (IA remap) -- brief's own Step 1 test, plus the zero-count/absence side.
+  it('renders the pocket-crew sidebar labels with the crew badge', () => {
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Sidebar extended onToggle={() => {}} agentCount={3} />
+      </MemoryRouter>
+    )
+    expect(screen.getByRole('button', { name: /my money/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /put it to work/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /the crew/i }).textContent).toContain('3')
+    expect(screen.queryByRole('button', { name: /new deposit/i })).toBeNull()
+  })
+
+  it('renders no badge on "The crew" when there are zero active agents', () => {
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Sidebar extended onToggle={() => {}} agentCount={0} />
+      </MemoryRouter>
+    )
+    const crew = screen.getByRole('button', { name: /the crew/i })
+    expect(crew.querySelector('.sb-badge')).toBeNull()
+    expect(crew.textContent).not.toMatch(/\d/)
   })
 
   it('no longer renders the retired inline logo image / old labels', () => {
@@ -145,6 +171,8 @@ describe('Sidebar', () => {
     expect(document.querySelector('img[src="/vibing_farmer.logo.svg"]')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Strategy' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Dashboard' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'New deposit' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Home' })).toBeNull()
   })
 
   it('renders a compact BrandLockup for the sidebar mark', () => {

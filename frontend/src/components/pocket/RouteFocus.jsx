@@ -9,10 +9,13 @@ import { useEffect, useId } from 'react'
 
 // Ordered so a longer/more specific prefix (e.g. '/vault/') never loses to a shorter one; every
 // entry after the exact-path matches is a prefix match for a param/nested route.
+// Task 10 (IA remap): /home is My money, /strategy is Put it to work, /agent is The crew --
+// these three must track Sidebar's own item labels (components.jsx) exactly, or the live-region
+// announcement drifts from the page the user just navigated to (this file's own header comment).
 const ROUTE_LABELS = [
-  { test: (p) => p === '/home', label: 'Home' },
-  { test: (p) => p === '/strategy', label: 'New deposit' },
-  { test: (p) => p === '/agent', label: 'My money' },
+  { test: (p) => p === '/home', label: 'My money' },
+  { test: (p) => p === '/strategy', label: 'Put it to work' },
+  { test: (p) => p === '/agent', label: 'The crew' },
   { test: (p) => p === '/history', label: 'History' },
   { test: (p) => p === '/settings', label: 'Settings' },
   { test: (p) => p === '/explorer', label: 'Explorer' },

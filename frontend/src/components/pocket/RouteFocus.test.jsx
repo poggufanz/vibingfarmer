@@ -12,9 +12,9 @@ afterEach(cleanup)
 
 describe('routeLabel / routeTitle', () => {
   it('names every known route', () => {
-    expect(routeLabel('/home')).toBe('Home')
-    expect(routeLabel('/strategy')).toBe('New deposit')
-    expect(routeLabel('/agent')).toBe('My money')
+    expect(routeLabel('/home')).toBe('My money')
+    expect(routeLabel('/strategy')).toBe('Put it to work')
+    expect(routeLabel('/agent')).toBe('The crew')
     expect(routeLabel('/history')).toBe('History')
     expect(routeLabel('/settings')).toBe('Settings')
     expect(routeLabel('/explorer')).toBe('Explorer')
@@ -31,7 +31,7 @@ describe('routeLabel / routeTitle', () => {
   })
 
   it('builds a single-middle-dot title, brand-only when there is no page name', () => {
-    expect(routeTitle('/agent')).toBe('My money · Vibing Farmer')
+    expect(routeTitle('/agent')).toBe('The crew · Vibing Farmer')
     expect(routeTitle('/farm')).toBe('Vibing Farmer')
     // exactly one middle dot, never an em/en dash
     expect(routeTitle('/agent').match(/·/g)).toHaveLength(1)
@@ -126,7 +126,7 @@ describe('RouteFocus', () => {
     const { rerender, container } = render(<Shell pathname="/home" />)
     rerender(<Shell pathname="/agent" />)
     const region = container.querySelector('[role="status"][aria-live="polite"]')
-    expect(region.textContent).toBe('Navigated to My money')
+    expect(region.textContent).toBe('Navigated to The crew')
   })
 
   it('never steals focus for a re-render that leaves the pathname unchanged (background update)', () => {

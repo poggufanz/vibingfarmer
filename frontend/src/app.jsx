@@ -113,14 +113,17 @@ const Withdraw = lazy(() => import('./screens/Withdraw.jsx'))
 import NotificationCenter from './components/NotificationCenter.jsx'
 import { loadDeviceBasePositions, loadIndexedBasePositions } from './base/dashboardPositions.js'
 import { readIdleUsdc } from './base/readPositions.js'
-import HomePage from './components/HomePage.jsx'
-// My Money Task 13 (Pocket Crew redesign, Wave 5) — the production `/agent` route. Replaces
+// Task 10 (IA remap) — HomePage is retired; `/home` now mounts MyMoneyRoute directly (the one
+// portfolio authority), and `/agent` becomes the crew's own live console below.
+// My Money Task 13 (Pocket Crew redesign, Wave 5) — the production My money route. Replaces
 // OpsConsole (retired from every production route below; its files stay for rollback/tests, see
 // this task's report for the bundle-scan proof that no production route imports console.css).
 import { MyMoneyRoute } from './components/money/MyMoneyRoute.jsx'
 import { WithdrawDialog } from './components/money/WithdrawDialog.jsx'
 import { StopAccessDialog } from './components/money/StopAccessDialog.jsx'
 import { RecoveryPanel } from './components/money/RecoveryPanel.jsx'
+import { CrewRoute } from './components/crew/CrewRoute.jsx'
+import { selectCrewDecisions } from './components/crew/selectCrewDecisions.js'
 import { discoverOwnerScopes } from './stellar/ownerDiscovery.js'
 import { readOwnerMoney, aggregateOwnerPositions } from './money/readOwnerMoney.js'
 import { buildMyMoneyModel } from './money/myMoneyModel.js'
@@ -584,18 +587,27 @@ export function moneyFetchArgs(
   return { owner, now: Date.now(), fetchSnapshot, currentOwnerRef, revisionRef }
 }
 
-/**
- * Home's own small, pure projection (brief Step 4): exactly `{state, total, lastConfirmed}`,
- * never a second portfolio computation. `total` is the SAME confirmedTotal.amount MoneyHero
- * renders on /agent when known, `null` otherwise — Home never invents its own number.
- */
-export function projectMoneyForHome(model) {
-  if (!model) return { state: 'loading', total: null, lastConfirmed: null }
-  return {
-    state: model.state,
-    total: model.confirmedTotal?.state === 'known' ? model.confirmedTotal.amount : null,
-    lastConfirmed: model.checkedAt ?? null,
-  }
+// Task 10, carried finding C1: classifyKeeperAutomation (money/automationEvidence.js:18,33) only
+// counts events shaped {type: 'compound'|'rebalance', closedAt: <ms>} — but this file's own keeper
+// event producer (below, `keeperActivity`/`setKeeperActivity`) stores items shaped
+// {kind: 'compound_executed'|'rebalance_executed', timestamp: <ms>} instead. Unadapted, the
+// HEARTBEAT_TYPES filter matches nothing and `moneyKeeper.label` pins to 'unavailable' forever —
+// the crew route's Status stat would ship permanently reading "Unavailable" in production. Verified
+// both shapes and units before writing this: `closedAt` is compared against `now = Date.now()`
+// (freshness.js's classifyFreshness does `now - checkedAt` with no unit conversion), and this
+// file's own `timestamp` field is likewise `Date.now()` (app.jsx's keeper-event-poll loop) — both
+// milliseconds, so a direct rename needs no scaling. Adapted at THIS call site only —
+// automationEvidence.js is shared by the My Money route and stays untouched (frozen-system
+// constraint); `keeperActivity` itself is left as-is too, since CrewActivity.jsx's own `keeperEvents`
+// prop still reads the `kind`/`timestamp` shape directly.
+const KEEPER_HEARTBEAT_KIND_TO_TYPE = {
+  compound_executed: 'compound',
+  rebalance_executed: 'rebalance',
+}
+export function toKeeperHeartbeatEvents(keeperActivity) {
+  return (keeperActivity || [])
+    .filter((e) => e && KEEPER_HEARTBEAT_KIND_TO_TYPE[e.kind])
+    .map((e) => ({ ...e, type: KEEPER_HEARTBEAT_KIND_TO_TYPE[e.kind], closedAt: e.timestamp }))
 }
 
 /**
@@ -3019,8 +3031,11 @@ const App = () => {
     await worker.execute()
   }
 
+  // Task 10, carried finding C2: /agent is now the crew route (below), so "Back to my money"
+  // must land on /home -- leaving this pointed at /agent would put it on the exact same screen
+  // "Watch the crew" (onViewCrew, below) already opens.
   function onViewMoney() {
-    navigate('/agent')
+    navigate('/home')
   }
 
   function onMakeAnotherDeposit() {
@@ -3084,9 +3099,8 @@ const App = () => {
           onViewMoney,
           onMakeAnotherDeposit,
           // Task 7 (Pocket Crew design alignment) -- the done-state "Watch the crew" action.
-          // `/agent` is the same route `onViewMoney` above already navigates to; once Task 10 makes
-          // `/agent` the crew view specifically, this becomes the real distinct destination (see
-          // that task's own brief) -- wiring it now is harmless, not a guess at unbuilt behavior.
+          // Task 10 makes /agent the crew route (below) and /home the money route (onViewMoney
+          // above) -- the two buttons are genuinely distinct destinations now, not a duplicate.
           onViewCrew: () => navigate('/agent'),
         }}
       />
@@ -3374,7 +3388,10 @@ const App = () => {
   // My Money Task 13: automation-evidence labels for HowMoneyWorks, and the Base withdraw preview
   // for WithdrawDialog's "base" tab -- all derived from state this app already polls every 15s,
   // never a second fetch of its own.
-  const moneyKeeper = classifyKeeperAutomation({ events: keeperActivity, now: Date.now() })
+  const moneyKeeper = classifyKeeperAutomation({
+    events: toKeeperHeartbeatEvents(keeperActivity),
+    now: Date.now(),
+  })
   const moneyStrategyConfig = classifyStrategyConfiguration({
     pricePerShare: autofarmReads.pricePerShare,
   })
@@ -3391,7 +3408,11 @@ const App = () => {
       className={`app ${sbExtended ? 'sb-extended' : 'sb-minimized'} ${railCollapsed ? 'rail-collapsed' : ''}`}
     >
       <SkipLink />
-      <Sidebar extended={sbExtended} onToggle={toggleSb} />
+      <Sidebar
+        extended={sbExtended}
+        onToggle={toggleSb}
+        agentCount={(moneyRead?.agents ?? []).filter((a) => !a?.scope?.value?.revoked).length}
+      />
       <main id="main-content" className="main" tabIndex={-1}>
         <RouteFocus pathname={location.pathname} />
         <TopBar
@@ -3415,15 +3436,29 @@ const App = () => {
           <Route
             path="/home"
             element={
-              <HomePage
-                userAddress={realAddress}
-                moneyProjection={projectMoneyForHome(moneyModel)}
-                sessionResumed={sessionResumed}
-                onDismissResumed={() => setSessionResumed(false)}
-                onConnect={handleConnect}
-                onStartStrategy={handleAgain}
-                onOpenAgent={() => navigate('/agent')}
-              />
+              <>
+                {sessionResumed && (
+                  <div className="pc-resumed-banner" role="status">
+                    <span>Session resumed — reconnected your wallet.</span>
+                    <button type="button" onClick={() => setSessionResumed(false)}>
+                      Dismiss
+                    </button>
+                  </div>
+                )}
+                <MyMoneyRoute
+                  model={moneyModel}
+                  agents={moneyRead?.agents ?? []}
+                  discovery={moneyDiscovery}
+                  account={moneyAccountValue}
+                  keeper={moneyKeeper}
+                  strategyConfig={moneyStrategyConfig}
+                  riskWatch={moneyRiskWatch}
+                  onAction={handleMoneyPrimaryAction}
+                  onRecoverAgent={handleRecoverAgent}
+                  onRecoverBase={handleRecoverBaseAccount}
+                  actionPending={moneyActionPending}
+                />
+              </>
             }
           />
           <Route
@@ -3442,68 +3477,17 @@ const App = () => {
           <Route
             path="/agent"
             element={
-              <>
-                <MyMoneyRoute
-                  model={moneyModel}
-                  agents={moneyRead?.agents ?? []}
-                  discovery={moneyDiscovery}
-                  account={moneyAccountValue}
-                  keeper={moneyKeeper}
-                  strategyConfig={moneyStrategyConfig}
-                  riskWatch={moneyRiskWatch}
-                  onAction={handleMoneyPrimaryAction}
-                  onRecoverAgent={handleRecoverAgent}
-                  onRecoverBase={handleRecoverBaseAccount}
-                  actionPending={moneyActionPending}
-                />
-                <WithdrawDialog
-                  open={moneyWithdrawOpen}
-                  onClose={() => setMoneyWithdrawOpen(false)}
-                  agents={moneyRead?.agents ?? []}
-                  discovery={moneyDiscovery}
-                  account={moneyAccountValue}
-                  basePlan={moneyBasePlan}
-                  pending={moneyActionPending}
-                  onConfirmFull={handleConfirmFullExit}
-                  onConfirmPartial={handleConfirmPartialExit}
-                  onConfirmBase={handleConfirmBaseWithdraw}
-                />
-                <StopAccessDialog
-                  open={Boolean(moneyStopAccessAddress)}
-                  onClose={() => setMoneyStopAccessAddress(null)}
-                  agent={moneyStopAccessAgent}
-                  shareRead={moneyStopAccessAgent?.vaultShares}
-                  idleBalanceRead={moneyStopAccessAgent?.idleToken}
-                  account={moneyAccountValue}
-                  pending={moneyActionPending}
-                  onConfirmRevoke={handleConfirmRevoke}
-                  onGoToWithdraw={() => {
-                    setMoneyStopAccessAddress(null)
-                    setMoneyWithdrawOpen(true)
-                  }}
-                />
-                <RecoveryPanel
-                  open={Boolean(moneyRecovery)}
-                  onClose={() => setMoneyRecovery(null)}
-                  location={moneyRecovery?.location}
-                  amount={moneyRecovery?.amount}
-                  agentAddress={moneyRecovery?.action?.agentAddress}
-                  strandedBridge={moneyRecovery?.strandedBridge}
-                  submission={moneyRecovery?.submission}
-                  reconciled={moneyRecovery?.reconciled}
-                  pending={moneyActionPending}
-                  onRecoverViaFullExit={() => {
-                    setMoneyRecovery(null)
-                    setMoneyWithdrawOpen(true)
-                  }}
-                  onGoToBaseWithdraw={() => {
-                    setMoneyRecovery(null)
-                    handleBaseWithdrawClick()
-                  }}
-                  onCheckStatus={handleCheckSubmissionStatus}
-                  onRetry={handleRetrySubmission}
-                />
-              </>
+              <CrewRoute
+                agents={moneyRead?.agents ?? []}
+                model={moneyModel}
+                keeper={moneyKeeper}
+                keeperEvents={keeperActivity}
+                decisions={selectCrewDecisions(logs)}
+                onRenewMandate={() => handleMoneyPrimaryAction('renew-protection')}
+                onCancelAgent={(address) => setMoneyStopAccessAddress(address)}
+                onStartStrategy={() => navigate('/strategy')}
+                actionPending={moneyActionPending}
+              />
             }
           />
           <Route path="/history" element={<HistoryPanel connectedAddress={realAddress} />} />
@@ -3549,6 +3533,57 @@ const App = () => {
           <Route path="/farm" element={<Navigate to="/home" replace />} />
           <Route path="*" element={<Navigate to="/home" replace />} />
         </Routes>
+        {/* Task 10 (IA remap): these three overlays are open-state-driven, not route-scoped --
+            hoisted out of any single Route so they work identically from /home (MyMoneyRoute) and
+            /agent (CrewRoute); e.g. StopAccessDialog's "go to withdraw" and CrewRoute's cancel
+            action both open them regardless of which route triggered it. */}
+        <WithdrawDialog
+          open={moneyWithdrawOpen}
+          onClose={() => setMoneyWithdrawOpen(false)}
+          agents={moneyRead?.agents ?? []}
+          discovery={moneyDiscovery}
+          account={moneyAccountValue}
+          basePlan={moneyBasePlan}
+          pending={moneyActionPending}
+          onConfirmFull={handleConfirmFullExit}
+          onConfirmPartial={handleConfirmPartialExit}
+          onConfirmBase={handleConfirmBaseWithdraw}
+        />
+        <StopAccessDialog
+          open={Boolean(moneyStopAccessAddress)}
+          onClose={() => setMoneyStopAccessAddress(null)}
+          agent={moneyStopAccessAgent}
+          shareRead={moneyStopAccessAgent?.vaultShares}
+          idleBalanceRead={moneyStopAccessAgent?.idleToken}
+          account={moneyAccountValue}
+          pending={moneyActionPending}
+          onConfirmRevoke={handleConfirmRevoke}
+          onGoToWithdraw={() => {
+            setMoneyStopAccessAddress(null)
+            setMoneyWithdrawOpen(true)
+          }}
+        />
+        <RecoveryPanel
+          open={Boolean(moneyRecovery)}
+          onClose={() => setMoneyRecovery(null)}
+          location={moneyRecovery?.location}
+          amount={moneyRecovery?.amount}
+          agentAddress={moneyRecovery?.action?.agentAddress}
+          strandedBridge={moneyRecovery?.strandedBridge}
+          submission={moneyRecovery?.submission}
+          reconciled={moneyRecovery?.reconciled}
+          pending={moneyActionPending}
+          onRecoverViaFullExit={() => {
+            setMoneyRecovery(null)
+            setMoneyWithdrawOpen(true)
+          }}
+          onGoToBaseWithdraw={() => {
+            setMoneyRecovery(null)
+            handleBaseWithdrawClick()
+          }}
+          onCheckStatus={handleCheckSubmissionStatus}
+          onRetry={handleRetrySubmission}
+        />
       </main>
       <aside className="rail">
         <WalletPanel phase={walletPhase} address={realAddress} />

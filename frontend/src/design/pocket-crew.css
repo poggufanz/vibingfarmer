@@ -533,6 +533,27 @@ body {
   margin: 0 0 0.15rem;
 }
 
+/* Task 10 (IA remap): the "session resumed" banner app.jsx renders directly (not owned by any
+ * route component) ahead of MyMoneyRoute on /home. Lives in Foundation, not my-money.css --
+ * main.jsx imports this file eagerly on every route, so a banner app.jsx itself renders can
+ * never end up depending on a route stylesheet that hasn't loaded yet (the hazard my-money.css's
+ * own `.pc-route`/`.pc-route-stack` port-forward comment documents). */
+.pc-resumed-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  border-radius: var(--pc-radius-control);
+  border: 1px solid var(--pc-line);
+  background: var(--pc-workspace);
+  padding: 0.625rem 0.875rem;
+  margin-bottom: var(--pc-route-gutter, 1rem);
+}
+
+.pc-resumed-banner span {
+  flex: 1;
+  font-family: var(--font-body);
+}
+
 .pc-technical-details {
   border-radius: var(--pc-radius-sm);
   border: 1px solid var(--border);

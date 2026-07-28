@@ -174,15 +174,18 @@ const Icon = ({ name, size = 16, className = '' }) => {
 }
 
 /* ---------- Sidebar (self-contained with React Router) ---------- */
-const Sidebar = ({ extended, onToggle }) => {
+// Task 10 (IA remap): final IA -- /home is My money, /strategy is Put it to work, /agent is
+// The crew (Task 9's live console). `agentCount` badges the crew item with the count of
+// non-revoked agents (app.jsx's own filter); zero renders no badge at all, never a bare "0".
+const Sidebar = ({ extended, onToggle, agentCount = 0 }) => {
   const navigate = useNavigate()
   const location = useLocation()
   const activePath = getSidebarPath(location.pathname)
 
   const items = [
-    { key: 'home', icon: 'home', path: '/home', label: 'Home' },
-    { key: 'vaults', icon: 'grid', path: '/strategy', label: 'New deposit' },
-    { key: 'agent', icon: 'network', path: '/agent', label: 'My money' },
+    { key: 'money', icon: 'home', path: '/home', label: 'My money' },
+    { key: 'strategy', icon: 'grid', path: '/strategy', label: 'Put it to work' },
+    { key: 'crew', icon: 'network', path: '/agent', label: 'The crew' },
     { key: 'history', icon: 'layers', path: '/history', label: 'History' },
     { key: 'developers', icon: 'code', path: '/developers', label: 'Developers' },
     { key: 'settings', icon: 'settings', path: '/settings', label: 'Settings' },
@@ -205,6 +208,11 @@ const Sidebar = ({ extended, onToggle }) => {
         >
           <Icon name={it.icon} />
           <span className="sb-label">{it.label}</span>
+          {it.key === 'crew' && agentCount > 0 && (
+            <span className="sb-badge" aria-label={`${agentCount} active`}>
+              {agentCount}
+            </span>
+          )}
         </button>
       ))}
       <div className="sb-spacer" style={{ flex: 1 }} />

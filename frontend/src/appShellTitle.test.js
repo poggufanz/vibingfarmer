@@ -46,6 +46,7 @@ describe('resolveDocumentTitle', () => {
   })
 
   it('resolves every other route via routeTitle once past both gates', () => {
+    // Task 10 (IA remap): /agent is now the crew route, not My money (moved to /home).
     expect(
       resolveDocumentTitle({
         pathname: '/agent',
@@ -53,6 +54,6 @@ describe('resolveDocumentTitle', () => {
         realAddress: 'GADDRESS',
         onboarded: true,
       })
-    ).toBe('My money · Vibing Farmer')
+    ).toBe('The crew · Vibing Farmer')
   })
 })
