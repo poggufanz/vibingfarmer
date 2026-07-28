@@ -32,15 +32,35 @@ import { test, expect } from '@playwright/test'
 // Task 11 (re-verified 2026-07-28 against current HEAD): re-ran the /agent case by hand with the
 // guard's own debug fields exposed -- still measures routeBottom=369.296875 against a forced
 // viewportH=600, i.e. unchanged from Task 10's figure. The fixture limitation is real today, not
-// stale. Getting CrewRoute past its empty branch would mean mocking the Soroban RPC read (there is
-// no other way to hand a synthetic address a non-empty crew) -- that is inventing app state this
-// test has no business creating, not a fixture fix, so /agent stays out of THIS array.
+// stale.
+//
+// Fix round 1, M1: the previous version of this comment claimed there was "no other way to hand a
+// synthetic address a non-empty crew" than mocking the Soroban RPC. That is wrong -- there IS one,
+// using a mechanism this very file already relies on: `app.jsx:441`'s `loadMoneyCache(owner)`
+// reads `localStorage['yv_my_money_cache_' + owner.toLowerCase()]` (key at app.jsx:437) and
+// `app.jsx:2139-2142` pushes it into `setMoneyRead` synchronously on mount, before any network
+// call -- CrewRoute's branch predicate is only `if (!agents.length)` (CrewRoute.jsx:67), fed by
+// `agents={moneyRead?.agents ?? []}` (app.jsx:3513), so seeding that cache key in this file's own
+// `addInitScript` WOULD reach the non-empty branch with no RPC mocking at all.
+// The conclusion (/agent stays out of the OVERFLOW list) still holds, but for the real reason:
+// `app.jsx:2152` fires `refreshMoney(realAddress)` immediately on mount (plus a 30s interval), and
+// its `onCommit` (app.jsx:2096-2098) calls `setMoneyRead(snapshot.money)` -- overwriting the seed
+// with the live (empty, for this never-deployed synthetic address) read shortly after paint. An
+// overflow guard built on the cache seed would therefore race that network call rather than
+// reliably reaching a non-empty state -- reachable, but transient, not a hard "impossible."
+// Blocking the RPC to make the seed stick would mean intercepting network requests, which again
+// crosses into inventing app state this guard has no business creating.
 //
 // Task 11 also adds '/home': it is where the historically overflow-prone content (My Money, the
 // very route the 1734.4px figure above was measured on) now lives post-remap, and unlike /agent it
 // is NOT gated behind an empty-state branch -- MyMoneyRoute always renders its full six sections
 // regardless of agent count. Re-measured today: routeBottom=1802.078125 against viewportH=600, a
 // real, current overflow this guard can actually catch a regression in.
+// This does NOT restore /agent's dropped coverage -- it re-proves the same SHELL-LEVEL rule
+// (pocket-crew.css:846, `.main:has(.pc-route) { overflow-y: auto }`) on a second, taller route.
+// What stays uncovered by every test in this file is a CrewRoute-LOCAL clipping regression: an
+// `overflow: hidden` or fixed height added to `.pc-crew-route` or its stats/lanes containers would
+// be invisible here, since /agent never appears in this array.
 const POCKET_CREW_ROUTES = ['/strategy', '/home']
 
 // `/strategy` and `/agent` render nothing until the app has an address: with no wallet, app.jsx
@@ -70,6 +90,26 @@ const ROUTE_H1 = {
   '/home': /my money/i,
 }
 
+// Fix round 1, M2: was duplicated verbatim (minus this comment) in a second `test.describe`'s own
+// `beforeEach` -- if a third first-visit gate is ever added and only one copy gets updated, the
+// other describe's specs fail with a bare `.pc-route` timeout that reads like a routing bug, not
+// a gate (see the gate explanation below). One helper, called from both describes, removes that
+// trap. A fresh browser context has no localStorage, and the app has TWO first-visit gates in
+// front of any route: `app.jsx:3322` renders the marketing landing while
+// `!skipLanding && !realAddress`, and `yv_onboarded` (app.jsx:852) then holds the "Get started"
+// screen. Both must be satisfied or specs time out on `.pc-route`. These two flags are the app's
+// own persisted state, not a test-only backdoor.
+async function skipFirstVisitGates(page) {
+  await page.addInitScript(() => {
+    try {
+      localStorage.setItem('yv_skip_landing', 'true')
+      localStorage.setItem('yv_onboarded', 'true')
+    } catch {
+      /* storage blocked — the assertions below will report the real failure */
+    }
+  })
+}
+
 /** Settle the SPA: the route element exists and has stopped growing between two frames. */
 async function waitForRoute(page) {
   await page.waitForSelector('.pc-route', { timeout: 15000 })
@@ -87,20 +127,8 @@ async function waitForRoute(page) {
 }
 
 test.describe('real app shell (not the visual harness)', () => {
-  // A fresh browser context has no localStorage, and the app has TWO first-visit gates in front of
-  // any route: `app.jsx:3322` renders the marketing landing while `!skipLanding && !realAddress`,
-  // and `yv_onboarded` (app.jsx:852) then holds the "Get started" screen. Both must be satisfied or
-  // the specs below time out on `.pc-route` and read like a routing bug rather than a gate. These
-  // two flags are the app's own persisted state, not a test-only backdoor.
   test.beforeEach(async ({ page }) => {
-    await page.addInitScript(() => {
-      try {
-        localStorage.setItem('yv_skip_landing', 'true')
-        localStorage.setItem('yv_onboarded', 'true')
-      } catch {
-        /* storage blocked — the assertions below will report the real failure */
-      }
-    })
+    await skipFirstVisitGates(page)
   })
 
   for (const path of POCKET_CREW_ROUTES) {
@@ -137,6 +165,12 @@ test.describe('real app shell (not the visual harness)', () => {
       // green. A wheel event goes through the same path a person does.
       await page.mouse.move(page.viewportSize().width / 2, 300)
       for (let i = 0; i < 40; i++) await page.mouse.wheel(0, 500)
+      // Deferred (Task 11 fix round 1 review): /home's content comes from `moneyRead`, which
+      // `refreshMoney` (app.jsx) populates asynchronously and re-polls every 30s -- a commit
+      // landing during this fixed 400ms wait could grow the route and fail spuriously. Graded low
+      // probability (a never-deployed synthetic address renders nothing either way) and NOT worth
+      // restructuring the test for now. If this ever flakes, replace the fixed wait with
+      // `await waitForRoute(page)` here to re-settle on real DOM stability instead of a clock.
       await page.waitForTimeout(400)
 
       const after = await page.evaluate(() => {
@@ -182,21 +216,30 @@ test.describe('real app shell (not the visual harness)', () => {
 
 test.describe('route identity', () => {
   test.beforeEach(async ({ page }) => {
-    await page.addInitScript(() => {
-      try {
-        localStorage.setItem('yv_skip_landing', 'true')
-        localStorage.setItem('yv_onboarded', 'true')
-      } catch {
-        /* storage blocked — the assertions below will report the real failure */
-      }
-    })
+    await skipFirstVisitGates(page)
   })
 
   for (const route of Object.keys(ROUTE_H1)) {
     test(`${route} renders its own h1`, async ({ page }) => {
       await page.goto(`${route}?as=${VIEW_AS}`)
       await waitForRoute(page)
-      await expect(page.locator('.pc-route h1').first()).toHaveText(ROUTE_H1[route])
+
+      // Fix round 1, F1 (plan-mandated, overrides the brief's `.first()` snippet): the plan's
+      // binding constraint is "exactly one h1 per route," but `.first()` alone silently discards a
+      // second h1 instead of pinning its absence -- a route that grows one, or a shell that adds
+      // one, would still pass every other assertion here. This is the only shell-aware guard in
+      // the repo (the unit harness structurally cannot see `.app > .main`), so if this file doesn't
+      // pin the count, nothing does.
+      const h1s = page.locator('.pc-route h1')
+      await expect(h1s, `${route}: expected exactly one h1 inside .pc-route`).toHaveCount(1)
+      await expect(h1s, `${route}: h1 text mismatch`).toHaveText(ROUTE_H1[route])
+
+      // Page-level count: the version the unit harness structurally cannot write (it never mounts
+      // the real shell), and free to assert here since we already have the page open.
+      await expect(
+        page.locator('h1'),
+        `${route}: expected exactly one h1 on the whole page (shell chrome must not add one)`
+      ).toHaveCount(1)
     })
   }
 })
