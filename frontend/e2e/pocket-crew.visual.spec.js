@@ -537,9 +537,15 @@ const disconnectedRoutes = Object.freeze([
 ])
 const compatibilityThemes = Object.freeze(['forest', 'day-field'])
 
-// The most stable visible landmark per route. Home/History/Settings render no semantic <h1> yet
+// The most stable visible landmark per route. History/Settings render no semantic <h1> yet
 // (a pre-existing gap outside this task's file list) so a blanket heading-role query would miss
-// them -- each entry names the actual visible connect/page/landing text instead.
+// them -- each entry names the actual visible connect/page/landing text instead. Home's own
+// button-text landmark predates Task 10's IA remap (My money is `/home` now, HomePage retired) --
+// MyMoneyRoute DOES carry a real `<h1>My money</h1>` today (a heading-role query would work), but
+// the button text is left as the landmark unchanged: it is still the most specific evidence that
+// the real disconnected-CTA content rendered (not just an empty shell with a heading), and this
+// was re-verified against the real disconnected /home render (both themes) as part of that task's
+// fix round rather than assumed still valid.
 // /developers currently redirects a disconnected visitor to the same Landing takeover as "/"
 // (app.jsx's `!skipLanding && !realAddress` gate runs before the /developers route ever mounts,
 // and app.jsx is not in this task's file list) -- this asserts what genuinely renders today, not

@@ -17,7 +17,18 @@
 
 import { test, expect } from '@playwright/test'
 
-const POCKET_CREW_ROUTES = ['/strategy', '/agent']
+// Task 10 (IA remap) fix round 1, F5: `/agent` used to be My Money here (the "1734.4px of /agent"
+// measurement above is from THAT route, still historically accurate for when it was captured) --
+// it is now Task 9's CrewRoute, and dropped from this specific overflow guard. The `.main {
+// overflow: hidden }` fix this guard protects is a SHELL-LEVEL style (style.css, not per-route),
+// so /strategy alone still proves it holds for any `.pc-route`; the reason /agent is not ALSO
+// re-proven here is a fixture limitation, not a narrowed guard: CrewRoute's only reachable state
+// via the synthetic read-only `VIEW_AS` address below is its empty-crew branch (no real deployed
+// agents exist for a guard-only dummy address on testnet), measured at 369px tall against the
+// 600px forced viewport -- shorter than the viewport, so the guard's own "route fits the viewport,
+// so this guard proved nothing" assertion fires correctly rather than a real clipping regression.
+// Re-add '/agent' here if a fixture ever provides it a real, taller (non-empty) crew state.
+const POCKET_CREW_ROUTES = ['/strategy']
 
 // `/strategy` and `/agent` render nothing until the app has an address: with no wallet, app.jsx
 // falls through to the landing (`!skipLanding && !realAddress`) and then to the onboarding

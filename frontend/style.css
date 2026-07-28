@@ -335,12 +335,23 @@ textarea {
   cursor: not-allowed;
 }
 
-/* Task 10 (IA remap): the crew item's active-agent count badge. */
+/* Task 10 (IA remap): the crew item's active-agent count badge. Fix round 1, F4: mirrors
+ * `.sb-label`'s own collapse rule immediately above -- the badge sits right next to the icon in
+ * the collapsed (icon-only) rail, so without this it stayed visible as a bare number beside the
+ * icon while the label text correctly hid. The matching narrow-viewport `display: none` lives
+ * alongside `.sidebar .sb-label { display: none; }` further down (same media block). */
 .sb-badge {
+  opacity: 0;
   margin-left: 6px;
   font-family: var(--font-mono);
   font-size: 12px;
   color: var(--pc-faint);
+  transition: opacity 140ms var(--ease-out);
+}
+
+.app.sb-extended .sb-badge {
+  opacity: 1;
+  transition-delay: 60ms;
 }
 
 .sb-item svg {
@@ -2194,6 +2205,7 @@ textarea {
   .sb-logo-text,
   .sb-item,
   .sb-label,
+  .sb-badge,
   .rail {
     transition: none;
   }
@@ -6505,7 +6517,8 @@ details.yv-collapse[open] > summary .yv-caret {
     justify-content: center;
     border-radius: var(--radius-sm);
   }
-  .sidebar .sb-label {
+  .sidebar .sb-label,
+  .sidebar .sb-badge {
     display: none;
   }
 

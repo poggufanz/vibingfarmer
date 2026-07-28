@@ -590,16 +590,28 @@ export function moneyFetchArgs(
 // Task 10, carried finding C1: classifyKeeperAutomation (money/automationEvidence.js:18,33) only
 // counts events shaped {type: 'compound'|'rebalance', closedAt: <ms>} — but this file's own keeper
 // event producer (below, `keeperActivity`/`setKeeperActivity`) stores items shaped
-// {kind: 'compound_executed'|'rebalance_executed', timestamp: <ms>} instead. Unadapted, the
-// HEARTBEAT_TYPES filter matches nothing and `moneyKeeper.label` pins to 'unavailable' forever —
-// the crew route's Status stat would ship permanently reading "Unavailable" in production. Verified
-// both shapes and units before writing this: `closedAt` is compared against `now = Date.now()`
-// (freshness.js's classifyFreshness does `now - checkedAt` with no unit conversion), and this
-// file's own `timestamp` field is likewise `Date.now()` (app.jsx's keeper-event-poll loop) — both
-// milliseconds, so a direct rename needs no scaling. Adapted at THIS call site only —
-// automationEvidence.js is shared by the My Money route and stays untouched (frozen-system
-// constraint); `keeperActivity` itself is left as-is too, since CrewActivity.jsx's own `keeperEvents`
-// prop still reads the `kind`/`timestamp` shape directly.
+// {kind: 'compound_executed'|'rebalance_executed', timestamp: <ms>, closedAt: <ms|undefined>}.
+// Unadapted, the HEARTBEAT_TYPES filter matches nothing and `moneyKeeper.label` pins to
+// 'unavailable' forever.
+//
+// Fix round 1 (reviewer C1-FIX): this adapter used to map `closedAt: e.timestamp` -- but
+// `timestamp` is `Date.now()` stamped when the poll loop first SAW the event (read time), while
+// automationEvidence.js:21-23 documents the real contract in as many words: "carries a real
+// ledger-close-derived closedAt, never a Date.now() stamped at read time". That was worse than
+// the bug it replaced: `keeperLedgerRef` starts `undefined` (below), so the first poll after every
+// page load falls back to an ~8000-ledger/~11h lookback window (keeperEvents.js's own
+// DEFAULT_LOOKBACK_LEDGERS), and every historical compound/rebalance in it would have been
+// stamped "now" -- reading 'healthy' for up to 35 minutes after load even if the keeper cron died
+// half a day ago. The producer below now carries the REAL ledger-close time as its own `closedAt`
+// (keeperEvents.js's `decodeKeeperEvent` already decodes `ledgerClosedAt` for exactly this), so
+// this adapter reads that field instead -- an event whose record had no `ledgerClosedAt` degrades
+// to `undefined` here, which classifyKeeperAutomation's own `Number.isFinite` filter already drops
+// (-> 'unavailable', an honest gap, never a manufactured 'healthy').
+//
+// Adapted at THIS call site only — automationEvidence.js is shared by the My Money route and
+// stays untouched (frozen-system constraint); `keeperActivity` itself keeps carrying BOTH
+// `timestamp` (CrewActivity.jsx's own "x ago" display, which legitimately wants read-recency) and
+// `closedAt` (this adapter's freshness evidence) — two different questions, two different fields.
 const KEEPER_HEARTBEAT_KIND_TO_TYPE = {
   compound_executed: 'compound',
   rebalance_executed: 'rebalance',
@@ -607,7 +619,7 @@ const KEEPER_HEARTBEAT_KIND_TO_TYPE = {
 export function toKeeperHeartbeatEvents(keeperActivity) {
   return (keeperActivity || [])
     .filter((e) => e && KEEPER_HEARTBEAT_KIND_TO_TYPE[e.kind])
-    .map((e) => ({ ...e, type: KEEPER_HEARTBEAT_KIND_TO_TYPE[e.kind], closedAt: e.timestamp }))
+    .map((e) => ({ ...e, type: KEEPER_HEARTBEAT_KIND_TO_TYPE[e.kind], closedAt: e.closedAt }))
 }
 
 /**
@@ -1125,6 +1137,12 @@ const App = () => {
               pricePerShare: toDisplay(ev.pricePerShare).toFixed(4),
               txHash: ev.txHash,
               timestamp: Date.now(),
+              // Task 10 C1-FIX: the real ledger-close time (keeperEvents.js's own `closedAt`,
+              // decoded from `ledgerClosedAt` -- "the ONLY source for closedAt"), kept alongside
+              // `timestamp` (read time, still used by CrewActivity.jsx's own "x ago" display) so
+              // classifyKeeperAutomation can judge freshness from when the keeper actually acted,
+              // not from whenever this poll happened to first see a historical event.
+              closedAt: ev.closedAt,
             }
             handleAgentEvent(item)
             newActivity.push(item)
@@ -1140,6 +1158,7 @@ const App = () => {
               amountUsdc: toDisplay(ev.amount).toFixed(2),
               txHash: ev.txHash,
               timestamp: Date.now(),
+              closedAt: ev.closedAt, // Task 10 C1-FIX -- see the compound branch's comment above.
             }
             handleAgentEvent(item)
             newActivity.push(item)
@@ -3402,17 +3421,20 @@ const App = () => {
   const moneyBasePlan = { available: basePositions.length > 0, positions: basePositions }
   const moneyStopAccessAgent =
     moneyRead?.agents?.find((a) => a.address === moneyStopAccessAddress) ?? null
+  // Fix round 1, M9: this MUST stay byte-identical to CrewRoute.jsx's own `activeCount` predicate
+  // (`!a?.scope?.value?.revoked && !a?.problems?.length`) -- the badge used to count only
+  // `!revoked`, so an agent with problems made the rail say one more than the crew page's own
+  // "Working for you" stat for the exact same word, "active".
+  const activeAgentCount = (moneyRead?.agents ?? []).filter(
+    (a) => !a?.scope?.value?.revoked && !a?.problems?.length
+  ).length
 
   return (
     <div
       className={`app ${sbExtended ? 'sb-extended' : 'sb-minimized'} ${railCollapsed ? 'rail-collapsed' : ''}`}
     >
       <SkipLink />
-      <Sidebar
-        extended={sbExtended}
-        onToggle={toggleSb}
-        agentCount={(moneyRead?.agents ?? []).filter((a) => !a?.scope?.value?.revoked).length}
-      />
+      <Sidebar extended={sbExtended} onToggle={toggleSb} agentCount={activeAgentCount} />
       <main id="main-content" className="main" tabIndex={-1}>
         <RouteFocus pathname={location.pathname} />
         <TopBar
@@ -3440,7 +3462,18 @@ const App = () => {
                 {sessionResumed && (
                   <div className="pc-resumed-banner" role="status">
                     <span>Session resumed — reconnected your wallet.</span>
-                    <button type="button" onClick={() => setSessionResumed(false)}>
+                    {/* Fix round 1, F3: a classless <button> inherits style.css's `border: none;
+                        background: none` reset -- no padding, no min-height, no visible
+                        affordance, and no zero-specificity :where(...) 44px floor catches it here.
+                        `.pc-button pc-button--secondary` is the same control class
+                        StopAccessDialog.jsx:61 already uses, and MyMoneyRoute (my-money.css) is
+                        always co-rendered with this banner on /home, so the class is guaranteed
+                        loaded whenever this button is. */}
+                    <button
+                      type="button"
+                      className="pc-button pc-button--secondary"
+                      onClick={() => setSessionResumed(false)}
+                    >
                       Dismiss
                     </button>
                   </div>

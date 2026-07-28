@@ -197,24 +197,34 @@ const Sidebar = ({ extended, onToggle, agentCount = 0 }) => {
         <BrandLockup variant="compact" className="sb-logo-mark" />
         <span className="sb-logo-text">Vibing Farmer</span>
       </div>
-      {items.map((it) => (
-        <button
-          key={it.key}
-          className={`sb-item ${activePath === it.path ? 'active' : ''}`}
-          title={it.label}
-          aria-label={it.label}
-          aria-current={activePath === it.path ? 'page' : undefined}
-          onClick={() => navigate(it.path)}
-        >
-          <Icon name={it.icon} />
-          <span className="sb-label">{it.label}</span>
-          {it.key === 'crew' && agentCount > 0 && (
-            <span className="sb-badge" aria-label={`${agentCount} active`}>
-              {agentCount}
-            </span>
-          )}
-        </button>
-      ))}
+      {items.map((it) => {
+        // Fix round 1, F6: the button's own `aria-label` already wins the accessible-name
+        // computation over any descendant content, so a plain `aria-label` on the child <span>
+        // below was never announced -- and `aria-label` on a role-less <span> isn't
+        // name-from-author in the first place. Fold the count into the BUTTON's own name instead
+        // (Global Constraints override the brief's verbatim markup here: a11y invariants win),
+        // and hide the now-decorative digit from assistive tech with `aria-hidden`.
+        const hasBadge = it.key === 'crew' && agentCount > 0
+        const accessibleLabel = hasBadge ? `${it.label}, ${agentCount} active` : it.label
+        return (
+          <button
+            key={it.key}
+            className={`sb-item ${activePath === it.path ? 'active' : ''}`}
+            title={it.label}
+            aria-label={accessibleLabel}
+            aria-current={activePath === it.path ? 'page' : undefined}
+            onClick={() => navigate(it.path)}
+          >
+            <Icon name={it.icon} />
+            <span className="sb-label">{it.label}</span>
+            {hasBadge && (
+              <span className="sb-badge" aria-hidden="true">
+                {agentCount}
+              </span>
+            )}
+          </button>
+        )
+      })}
       <div className="sb-spacer" style={{ flex: 1 }} />
 
       <button

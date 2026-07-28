@@ -537,16 +537,36 @@ body {
  * route component) ahead of MyMoneyRoute on /home. Lives in Foundation, not my-money.css --
  * main.jsx imports this file eagerly on every route, so a banner app.jsx itself renders can
  * never end up depending on a route stylesheet that hasn't loaded yet (the hazard my-money.css's
- * own `.pc-route`/`.pc-route-stack` port-forward comment documents). */
+ * own `.pc-route`/`.pc-route-stack` port-forward comment documents).
+ *
+ * Fix round 1, F2: this banner is a SIBLING before MyMoneyRoute's own `<div class="pc-route">`
+ * (my-money.css:61-65: `width: min(100%, shell-max + 2*gutter)`, `margin-inline: auto`,
+ * `padding: var(--pc-route-gutter)`), not a child of it -- so without matching width/centering it
+ * spanned the full <main>, uncentered, above a gutter-inset centered column. `width`/
+ * `margin-inline` below are the identical expression, so the banner lines up with the route
+ * content column beneath it; `padding-inline` mirrors `.pc-route`'s own horizontal gutter while
+ * `padding-block` stays the banner's own (smaller, single-line) vertical padding.
+ *
+ * Fix round 1, M8: `var(--pc-route-gutter, 1rem)` was a dead inline fallback (the token always
+ * exists, see :196) -- exactly the `var(--token, ...)` shape legacyPocketStyle.test.js:48-52
+ * treats as a violation on audited route files. Also a semantic fix, not just cosmetic:
+ * `--pc-route-gutter` is `.pc-route`'s own EDGE padding (horizontal AND vertical, since its
+ * `padding` shorthand applies it on all four sides); the space between this banner and the
+ * sibling route column below it is a between-elements gap, the same role `.pc-route-stack`'s
+ * `gap: var(--pc-route-gap)` already fills for every other adjacent pair on this route --
+ * `--pc-route-gap` is the correct token for that role, `--pc-route-gutter` was the wrong axis. */
 .pc-resumed-banner {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+  width: min(100%, calc(var(--pc-shell-max) + (2 * var(--pc-route-gutter))));
+  margin-inline: auto;
+  margin-bottom: var(--pc-route-gap);
+  padding-block: 0.625rem;
+  padding-inline: var(--pc-route-gutter);
   border-radius: var(--pc-radius-control);
   border: 1px solid var(--pc-line);
   background: var(--pc-workspace);
-  padding: 0.625rem 0.875rem;
-  margin-bottom: var(--pc-route-gutter, 1rem);
 }
 
 .pc-resumed-banner span {

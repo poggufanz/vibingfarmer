@@ -151,6 +151,20 @@ describe('Sidebar', () => {
     expect(screen.queryByRole('button', { name: /new deposit/i })).toBeNull()
   })
 
+  // Fix round 1, F6: the count must be announced as part of the BUTTON's own accessible name --
+  // a bare aria-label on the descendant <span> is never read (an author aria-label on the button
+  // wins the accname computation over all descendant content), and the digit itself is
+  // aria-hidden so it is never announced twice.
+  it('folds the active-agent count into the crew button\'s own accessible name, and hides the digit from assistive tech', () => {
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Sidebar extended onToggle={() => {}} agentCount={3} />
+      </MemoryRouter>
+    )
+    const crew = screen.getByRole('button', { name: 'The crew, 3 active' })
+    expect(crew.querySelector('.sb-badge').getAttribute('aria-hidden')).toBe('true')
+  })
+
   it('renders no badge on "The crew" when there are zero active agents', () => {
     render(
       <MemoryRouter initialEntries={['/home']}>

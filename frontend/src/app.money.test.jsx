@@ -468,7 +468,12 @@ describe('buildMoneySnapshot + buildMyMoneyModel — app-adapter state fidelity'
 // either side's contract ever drifts again.
 // ---------------------------------------------------------------------------------------------
 describe('toKeeperHeartbeatEvents (Task 10 C1 fix)', () => {
-  it('maps a real keeperActivity compound item onto classifyKeeperAutomation\'s required shape', () => {
+  // Fix round 1 (reviewer C1-FIX): `timestamp` (read time) and `closedAt` (real ledger-close
+  // time) are DELIBERATELY set to different ages below -- a fresh `timestamp` paired with a
+  // stale `closedAt` is exactly the "cold-start replays an 11h-old lookback window" scenario the
+  // reviewer described. If the adapter ever regresses to reading `e.timestamp` again, these two
+  // tests fail (they'd wrongly see 'healthy'/the timestamp-derived heartbeat time instead).
+  it("maps a real keeperActivity compound item using closedAt (real ledger-close time), never timestamp (read time)", () => {
     const now = 1_000_000_000
     const keeperActivity = [
       {
@@ -476,7 +481,8 @@ describe('toKeeperHeartbeatEvents (Task 10 C1 fix)', () => {
         kind: 'compound_executed',
         vaultName: 'Autofarm vault',
         totalGainUsdc: '1.23',
-        timestamp: now - 60_000, // 1 minute ago -- well within the healthy window
+        timestamp: now, // read just now (e.g. cold-start replaying an old ledger event)
+        closedAt: now - 60_000, // but the ledger actually closed 1 minute ago -- still healthy
       },
     ]
     const result = classifyKeeperAutomation({
@@ -487,25 +493,41 @@ describe('toKeeperHeartbeatEvents (Task 10 C1 fix)', () => {
     expect(result.lastHeartbeatAt).toBe(now - 60_000)
   })
 
-  it('maps a rebalance item the same way, and an old one reads as stale, not healthy', () => {
+  it('a stale closedAt reads as stale even when timestamp (read time) is fresh', () => {
     const now = 1_000_000_000
     const keeperActivity = [
-      { id: 'rebalance:7', kind: 'rebalance_executed', timestamp: now - 60 * 60_000 }, // 1h ago
+      {
+        id: 'rebalance:7',
+        kind: 'rebalance_executed',
+        timestamp: now, // this poll just read it...
+        closedAt: now - 60 * 60_000, // ...but the ledger closed 1h ago -- the cron may be dead
+      },
     ]
     const result = classifyKeeperAutomation({
       events: toKeeperHeartbeatEvents(keeperActivity),
       now,
     })
     expect(result.label).toBe('stale')
+    expect(result.lastHeartbeatAt).toBe(now - 60 * 60_000)
+  })
+
+  it('an event with no closedAt at all (record had no ledgerClosedAt) reads unavailable, never a manufactured heartbeat from timestamp', () => {
+    const now = 1_000_000_000
+    const keeperActivity = [
+      { id: 'compound:1', kind: 'compound_executed', timestamp: now, closedAt: undefined },
+    ]
+    expect(
+      classifyKeeperAutomation({ events: toKeeperHeartbeatEvents(keeperActivity), now }).label
+    ).toBe('unavailable')
   })
 
   it('drops non-heartbeat kinds (vault_derisk etc.) -- they carry no compound/rebalance evidence', () => {
     const now = 1_000_000_000
-    const keeperActivity = [{ id: 'vault_derisk:1', kind: 'vault_derisk', timestamp: now }]
+    const keeperActivity = [{ id: 'vault_derisk:1', kind: 'vault_derisk', closedAt: now }]
     expect(toKeeperHeartbeatEvents(keeperActivity)).toEqual([])
-    expect(classifyKeeperAutomation({ events: toKeeperHeartbeatEvents(keeperActivity), now }).label).toBe(
-      'unavailable'
-    )
+    expect(
+      classifyKeeperAutomation({ events: toKeeperHeartbeatEvents(keeperActivity), now }).label
+    ).toBe('unavailable')
   })
 
   // Mutation guard: this is the literal bug being fixed -- feeding classifyKeeperAutomation the
@@ -514,7 +536,7 @@ describe('toKeeperHeartbeatEvents (Task 10 C1 fix)', () => {
   it('regression proof: the raw keeperActivity shape (no adapter) always reads unavailable', () => {
     const now = 1_000_000_000
     const keeperActivity = [
-      { id: 'compound:42', kind: 'compound_executed', timestamp: now - 60_000 },
+      { id: 'compound:42', kind: 'compound_executed', closedAt: now - 60_000 },
     ]
     expect(classifyKeeperAutomation({ events: keeperActivity, now }).label).toBe('unavailable')
   })
@@ -628,6 +650,59 @@ describe('onViewMoney / onViewCrew (Task 10 C2 fix): distinct destinations, neve
     const idx = src.indexOf(marker)
     expect(idx, 'onViewCrew wiring not found in app.jsx').toBeGreaterThan(-1)
     expect(src.slice(idx, idx + marker.length + 12)).toMatch(/navigate\(['"]\/agent['"]\)/)
+  })
+})
+
+// ---------------------------------------------------------------------------------------------
+// Fix round 1, F3: the session-resumed banner's Dismiss button must carry a real control class --
+// a classless <button> inherits style.css's `button { border: none; background: none }` reset
+// with no zero-specificity :where(...) 44px floor to catch it, so it rendered as bare text with no
+// touch target. app.jsx is too heavy to render (see file header), so this is a source-level proof
+// scoped to the banner's own JSX block.
+// ---------------------------------------------------------------------------------------------
+describe('session-resumed banner Dismiss button (Task 10 F3 fix)', () => {
+  const src = fs.readFileSync(path.resolve(here, './app.jsx'), 'utf8')
+
+  function bannerBlock() {
+    const start = src.indexOf('pc-resumed-banner')
+    expect(start, 'pc-resumed-banner not found in app.jsx').toBeGreaterThan(-1)
+    return src.slice(start, src.indexOf('</div>', start))
+  }
+
+  it('the Dismiss button carries the pc-button/pc-button--secondary control classes', () => {
+    expect(bannerBlock()).toMatch(/className="pc-button pc-button--secondary"/)
+  })
+})
+
+// ---------------------------------------------------------------------------------------------
+// Fix round 1, M9: the sidebar badge and CrewRoute.jsx's own "Working for you" stat must count
+// "active" agents the SAME way (!revoked && !problems.length) -- the badge used to count only
+// !revoked, so an agent with problems made the rail say one more than the crew page for the same
+// word. Source-level proof (app.jsx too heavy to render): the badge's own count expression must
+// carry the same predicate CrewRoute.jsx's activeCount uses.
+// ---------------------------------------------------------------------------------------------
+describe('activeAgentCount (Task 10 M9 fix): matches CrewRoute.jsx\'s own "active" definition', () => {
+  const src = fs.readFileSync(path.resolve(here, './app.jsx'), 'utf8')
+  const crewRouteSrc = fs.readFileSync(
+    path.resolve(here, './components/crew/CrewRoute.jsx'),
+    'utf8'
+  )
+
+  function exprBody(constName) {
+    const marker = `const ${constName} = `
+    const start = src.indexOf(marker)
+    expect(start, `${constName} not found in app.jsx`).toBeGreaterThan(-1)
+    return src.slice(start, src.indexOf('\n\n', start))
+  }
+
+  it('counts !revoked && !problems.length, not !revoked alone', () => {
+    const expr = exprBody('activeAgentCount')
+    expect(expr).toMatch(/!a\?\.scope\?\.value\?\.revoked/)
+    expect(expr).toMatch(/!a\?\.problems\?\.length/)
+  })
+
+  it('CrewRoute.jsx\'s own activeCount uses the identical predicate (both fields present)', () => {
+    expect(crewRouteSrc).toMatch(/!a\?\.scope\?\.value\?\.revoked && !a\?\.problems\?\.length/)
   })
 })
 
