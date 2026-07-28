@@ -43,6 +43,11 @@ import { MoneyFigure, TechnicalDetails, VenueTruth } from '../src/components/poc
 import { NetworkBadge, NetworkRoute } from '../src/components/pocket/NetworkIdentity.jsx'
 import { NETWORK_IDS } from '../src/design/networks.js'
 import { StrategyRoute } from '../src/components/strategy/StrategyRoute.jsx'
+// Pure selector, not a React component -- no CSS side effect (confirmed by reading the file in
+// full), so a plain static top-level import here is safe exactly like approvalView.js/
+// ceremonyView.js's own imports below (never a lazy() candidate; lazy() exists only to keep a
+// ROUTE's own stylesheet off every fixture page, and this file has none).
+import { selectCrewDecisions } from '../src/components/crew/selectCrewDecisions.js'
 import { buildMyMoneyModel } from '../src/money/myMoneyModel.js'
 import {
   SOROBAN_ACTIVE_VAULT_ADDRESS,
@@ -115,6 +120,17 @@ import { buildCeremonyView, renderCeremonyView, CEREMONY_STATE } from '../extens
 // bug.
 const MyMoneyRoute = lazy(() =>
   import('../src/components/money/MyMoneyRoute.jsx').then((m) => ({ default: m.MyMoneyRoute }))
+)
+
+// Task 12 (visual harness fixtures): same lazy-load discipline as MyMoneyRoute above, for the same
+// verified reason -- CrewRoute.jsx statically imports its own './crew.css', which (confirmed by
+// reading it) re-declares the SAME `.pc-route { padding: var(--pc-route-gutter) }` shorthand-reset
+// rule my-money.css was found to carry (MM14 fix round 1, this same file's comment above). A static
+// top-level import here would load crew.css on every `?fixture=` page, not only `?fixture=crew`,
+// repeating that exact cascade defect a third time. lazy() keeps it out of the page entirely except
+// when this fixture is the one requested.
+const CrewRoute = lazy(() =>
+  import('../src/components/crew/CrewRoute.jsx').then((m) => ({ default: m.CrewRoute }))
 )
 
 const params = new URLSearchParams(window.location.search)
@@ -482,6 +498,22 @@ if (fixture === 'strategy') {
   const FIXED_NOW_MS = NOW_SECONDS * 1000
   Date.now = () => FIXED_NOW_MS
 }
+
+// Task 12 (visual harness fixtures): CrewGuard.jsx (src/components/crew/CrewGuard.jsx) owns a LIVE
+// clock -- `useState(() => Date.now())` plus a 1s `setInterval(() => setNow(Date.now()))` for its
+// countdown -- unlike anything MyMoneyRoute renders; it reads the wall clock at RENDER time, not
+// just once at fixture-build time the way MM_MODEL_ACTIVE's `now: MM_NOW` param above does.
+// CrewActivity.jsx (`agoText`'s keeper-activity/decision-log "x ago" text) independently calls
+// `Date.now()` too. Threading a `now` prop through CrewGuard alone (as this task's brief first
+// suggests) would need CrewRoute.jsx to forward it -- not in this task's file list -- and would
+// still leave CrewActivity's own call unfrozen. Reusing the SAME fixture-scoped global override the
+// strategy fixture already established immediately above freezes every `Date.now()` reader on the
+// page (CrewGuard's tick AND CrewActivity's read) to one identical instant, with zero production
+// file touched -- confirmed by reading both components in full.
+if (fixture === 'crew') {
+  const FIXED_NOW_MS = NOW_SECONDS * 1000
+  Date.now = () => FIXED_NOW_MS
+}
 const TOKEN_ADDR = SOROBAN_TOKEN_ADDRESS
 const BRIDGE_TOKEN_ADDR = STELLAR_USDC_SAC
 // Real-shaped Stellar identities (56-char contract/account strkeys) and a real 64-hex tx hash --
@@ -522,6 +554,22 @@ function stellarAmount(units, decimals = 7) {
   return { token: TOKEN_ADDR, units, decimals }
 }
 
+// Task 12 (visual harness fixtures): Protect's background-check section (ProtectStage.jsx:366-401,
+// Task 6) only renders when `plan.review?.candidates?.length > 0` -- shared across the plans below
+// so both new-section states (candidates present / `review: null` entirely omitted) are frozen at
+// least once. Values verbatim from the task-12 brief.
+const PLAN_REVIEW_CANDIDATES = Object.freeze({
+  candidates: [
+    { protocol: 'Blend Capital v2', chain: 'stellar', eligible: true, reasons: [] },
+    {
+      protocol: 'Community pool (proxy)',
+      chain: 'base',
+      eligible: false,
+      reasons: ['facts stale', 'no oracle circuit breaker'],
+    },
+  ],
+})
+
 // m-7 fix regression (Strategy Task 14 fix round 1, self-caught on re-freeze review): every plan's
 // TOP-LEVEL `amount.token` below is the literal 'USDC', never a real contract address -- matching
 // what production's normalizeStrategyPlan actually puts there (PlanStage.jsx never threads a real
@@ -550,6 +598,7 @@ const PLAN_ONE_DEPOSIT = Object.freeze({
     },
   ],
   truth: { agentIsolationCount: 1, stellarVenueCount: 1, baseUsesProxyVaults: false },
+  review: PLAN_REVIEW_CANDIDATES,
 })
 
 // Genuinely mixed-token: the deposit agent's cap is denominated in SOROBAN_TOKEN_ADDRESS, the
@@ -592,6 +641,7 @@ const PLAN_WITH_BRIDGE = Object.freeze({
     },
   ],
   truth: { agentIsolationCount: 2, stellarVenueCount: 1, baseUsesProxyVaults: true },
+  review: PLAN_REVIEW_CANDIDATES,
 })
 
 function reviewedDepositInit(over = {}) {
@@ -1223,7 +1273,11 @@ function StrategyFixture() {
           <StrategyRoute
             stage="protect"
             reached={['plan', 'protect']}
-            plan={PLAN_ONE_DEPOSIT}
+            // Task 12: the one Protect scenario that keeps `review: null` -- snapshots the
+            // background-check section's omitted state (ProtectStage.jsx's `> 0` guard), while the
+            // other two Protect baselines (both sharing/reusing PLAN_REVIEW_CANDIDATES above) freeze
+            // the populated state.
+            plan={{ ...PLAN_ONE_DEPOSIT, review: null }}
             protectProps={{
               owner: OWNER,
               onConnectWallet: () => Promise.resolve(OWNER),
@@ -1620,6 +1674,257 @@ function MyMoneyFixture() {
             onAction={() => {}}
             onRecoverBase={() => {}}
           />
+        </Section>
+      </Suspense>
+    </main>
+  )
+}
+
+// -------------------------------------------------------------------------------------------
+// Task 12 (visual harness fixtures + snapshot regeneration). CrewRoute.jsx's own composition root
+// (Tasks 9/10, the /agent route) -- real component, real derived selector
+// (selectCrewDecisions.js), never a hand-assembled stand-in, same discipline Strategy/My Money's
+// own fixtures above already follow. `Date.now()` is frozen for this fixture module above
+// (`if (fixture === 'crew')`, next to the strategy freeze) precisely because CrewGuard.jsx owns a
+// live per-second clock and CrewActivity.jsx's "x ago" text reads Date.now() independently -- see
+// that override's own comment for why a per-component `now` prop would have missed the second one.
+//
+// Reuses MM_AGENT_DEPOSIT/MM_AGENT_BRIDGE/MM_AGENT_RECOVERY (identities) and mmAmt/mmDepositAgent/
+// mmBridgeAgent (shapes) from My Money's own fixture above -- never re-declared. mmRecoveryAgent()
+// itself (revoked AND still holding a confirmed-positive balance -- myMoneyModel.js's
+// confirmedProblemAgents()) is deliberately NOT reused for Section 3 below: My Money's own fixture
+// already freezes that exact "needs recovery" permutation. Section 3's cancelled agent is a
+// genuinely different, equally real one production can emit -- revoked with NOTHING confirmed-
+// positive left (`confirmedProblemAgents`'s own comment: "a revoked/expired agent holding nothing
+// confirmed-positive is not urgent") -- so the crew route's OWN precedence (not a fixture-invented
+// one) is what keeps this section's overall model out of the 'problem' state, unlike My Money's.
+function crewHealthyAgent(address, units) {
+  return {
+    address,
+    scope: { state: 'known', value: { vault: SOROBAN_ACTIVE_VAULT_ADDRESS, revoked: false, expiry: 0 } },
+    amount: mmAmt(units),
+    executionStatus: 'idle',
+    custody: { location: 'stellar-vault' },
+    custodyBreakdown: [],
+    problems: [],
+  }
+}
+
+const CREW_AGENTS_THREE = Object.freeze([
+  mmDepositAgent(),
+  mmBridgeAgent(),
+  // Same address My Money's own fixture uses for its revoked/recovery agent -- healthy here on
+  // purpose (see this section's own header comment above).
+  crewHealthyAgent(MM_AGENT_RECOVERY, 150_0000000n),
+])
+
+const CREW_DISCOVERY_THREE = Object.freeze({
+  status: 'complete',
+  agents: [
+    { address: MM_AGENT_DEPOSIT, cap: MM_DEPOSIT_CAP },
+    { address: MM_AGENT_BRIDGE, cap: MM_BRIDGE_CAP },
+    { address: MM_AGENT_RECOVERY, cap: '2000000000' }, // 200 USDC -- exceeds the 150 USDC shown.
+  ],
+})
+
+// Same 650 USDC total as My Money's own MM_MODEL_ACTIVE above (300 + 200 + 150 -- identical
+// per-agent amounts, all three healthy here instead of one revoked) -- not recomputed, just an
+// honest coincidence of reusing the same three amounts.
+const CREW_MONEY_THREE = Object.freeze({
+  confirmedTotal: { state: 'known', amount: mmAmt(650_0000000n) },
+  yield: { state: 'live', apy: 8.1 },
+  earned: { state: 'unavailable', amount: null },
+  unattributed: {},
+  custodyBreakdown: { 'stellar-vault': '6500000000' },
+  agentCount: 3,
+  problemAgentCount: 0,
+  agents: CREW_AGENTS_THREE,
+  checkedAt: NOW_SECONDS * 1000,
+  confirmedLedger: 5551400,
+  confirmedBlock: 43,
+  source: 'stellar-rpc',
+})
+
+const CREW_MODEL_ARMED = buildMyMoneyModel({
+  owner: MM_OWNER,
+  discovery: CREW_DISCOVERY_THREE,
+  money: CREW_MONEY_THREE,
+  protection: { state: 'armed', authority: MM_OWNER, mandateExpiry: NOW_SECONDS + 5 * 3600 },
+  now: NOW_SECONDS * 1000,
+})
+
+// Same crew/money/discovery as CREW_MODEL_ARMED -- only `protection.mandateExpiry` moves behind
+// the frozen now. CrewGuard.jsx's own header comment: "state:'armed' with a lapsed mandateExpiry
+// must still show ALARM ONLY" -- `state` stays 'armed' on purpose, never 'disarmed', so this
+// exercises that exact decay path, not a separately-disarmed one.
+const CREW_MODEL_ALARM = buildMyMoneyModel({
+  owner: MM_OWNER,
+  discovery: CREW_DISCOVERY_THREE,
+  money: CREW_MONEY_THREE,
+  protection: { state: 'armed', authority: MM_OWNER, mandateExpiry: NOW_SECONDS - 3600 },
+  now: NOW_SECONDS * 1000,
+})
+
+// readOwnerMoney.js:197 -- `if (row.revoked) problems.push('scope-revoked')` -- ALWAYS accompanies
+// a revoked scope in production; there is no real shape where `revoked:true` carries an empty
+// `problems` array. `amount: mmAmt(0n)` is what keeps `isKnownPositiveAmount` (myMoneyModel.js)
+// false despite the marker, which is what keeps this section's overall model out of 'problem'
+// (see this block's own header comment above).
+const CREW_AGENT_CANCELLED = {
+  address: MM_AGENT_BRIDGE,
+  scope: { state: 'known', value: { vault: SOROBAN_ACTIVE_VAULT_ADDRESS, revoked: true, expiry: 0 } },
+  amount: mmAmt(0n),
+  executionStatus: 'idle',
+  custody: { location: 'stellar-vault' },
+  custodyBreakdown: [],
+  problems: ['scope-revoked'],
+}
+const CREW_AGENTS_CANCELLED = Object.freeze([mmDepositAgent(), CREW_AGENT_CANCELLED])
+
+const CREW_DISCOVERY_CANCELLED = Object.freeze({
+  status: 'complete',
+  agents: [
+    { address: MM_AGENT_DEPOSIT, cap: MM_DEPOSIT_CAP },
+    { address: MM_AGENT_BRIDGE, cap: MM_BRIDGE_CAP },
+  ],
+})
+
+const CREW_MODEL_CANCELLED = buildMyMoneyModel({
+  owner: MM_OWNER,
+  discovery: CREW_DISCOVERY_CANCELLED,
+  money: {
+    confirmedTotal: { state: 'known', amount: mmAmt(300_0000000n) },
+    yield: { state: 'live', apy: 7.8 },
+    earned: { state: 'unavailable', amount: null },
+    unattributed: {},
+    custodyBreakdown: { 'stellar-vault': '3000000000' },
+    agentCount: 2,
+    // readOwnerMoney.js:464 -- `if (a.problems?.length) problemAgentCount += 1` counts EVERY
+    // flagged agent, not only confirmed-and-holding ones -- 1 here, honestly, even though this
+    // section's overall model state stays out of 'problem' (a different, stricter gate).
+    problemAgentCount: 1,
+    agents: CREW_AGENTS_CANCELLED,
+    checkedAt: NOW_SECONDS * 1000,
+    confirmedLedger: 5551450,
+    confirmedBlock: 44,
+    source: 'stellar-rpc',
+  },
+  // Guard stays armed/healthy here -- this section's own subject is the cancelled lane, not the
+  // guard card.
+  protection: { state: 'armed', authority: MM_OWNER, mandateExpiry: NOW_SECONDS + 5 * 3600 },
+  now: NOW_SECONDS * 1000,
+})
+
+// Real shape (app.jsx:1131-1162, CrewActivity.jsx's own header comment): totalGainUsdc/
+// pricePerShare/amountUsdc are toFixed() STRINGS, never numbers; txHash/fromLabel/toLabel real-
+// length, matching this file's own established "never a short placeholder" discipline for hashes/
+// addresses. `timestamp` is ms-since-epoch, computed relative to the SAME frozen NOW_SECONDS*1000
+// CrewActivity.jsx's own `Date.now()` read resolves to under this fixture's override -- so the
+// printed "x ago" text is stable on every run, not just non-crashing.
+const CREW_KEEPER_EVENTS = Object.freeze([
+  {
+    id: 'compound:9001',
+    kind: 'compound_executed',
+    vaultName: 'Autofarm vault',
+    totalGainUsdc: '4.82',
+    pricePerShare: '1.0421',
+    txHash: REAL_TX_HASH_1,
+    timestamp: NOW_SECONDS * 1000 - 12 * 60 * 1000, // 12 min before frozen now
+    closedAt: NOW_SECONDS * 1000 - 12 * 60 * 1000,
+  },
+  {
+    id: 'rebalance:9002',
+    kind: 'rebalance_executed',
+    vaultName: 'Autofarm vault',
+    from: VAULT_ADDR,
+    to: BRIDGE_TARGET_STANDIN,
+    // screens.jsx's own shortAddr: `${a.slice(0,6)}…${a.slice(-4)}` -- reproduced literally rather
+    // than importing that module here (a fresh dependency this fixture doesn't otherwise need).
+    fromLabel: `${VAULT_ADDR.slice(0, 6)}…${VAULT_ADDR.slice(-4)}`,
+    toLabel: `${BRIDGE_TARGET_STANDIN.slice(0, 6)}…${BRIDGE_TARGET_STANDIN.slice(-4)}`,
+    amountUsdc: '65.00',
+    txHash: REAL_TX_HASH_2,
+    timestamp: NOW_SECONDS * 1000 - 47 * 60 * 1000, // 47 min before frozen now
+    closedAt: NOW_SECONDS * 1000 - 47 * 60 * 1000,
+  },
+])
+
+// Real `logs` shape ({id, time, event, meta} -- selectCrewDecisions.test.js's own `L()` helper),
+// never a hand-typed {tone,title} literal -- `decisions` below is the SAME selectCrewDecisions()
+// call production wires at app.jsx:3518, run over these two entries. `time` is a fixed literal
+// string (production's own nowT() is never called here) -- no live-clock read this fixture would
+// need to freeze a second way.
+const CREW_LOGS = Object.freeze([
+  {
+    id: 'log-1',
+    time: '14:02:11',
+    event: 'VaultRejected',
+    meta: 'facts stale, Community pool (proxy)',
+  },
+  {
+    id: 'log-2',
+    time: '14:07:45',
+    event: 'OrchestratorPlanned',
+    meta: 'Proposal: hold, Blend Capital v2',
+  },
+])
+
+function CrewFixture() {
+  return (
+    <main data-fixture="crew" style={{ display: 'grid', gap: '2.5rem' }}>
+      <h1>Pocket Crew visual harness — The Crew</h1>
+
+      {/* CrewRoute is lazy() (see its own declaration's comment) for the same CSS-cascade reason
+          MyMoneyRoute is above -- one Suspense boundary, one pending marker, for the whole fixture. */}
+      <Suspense fallback={<div data-fixture-pending="true" />}>
+        <Section title="The crew — armed, three agents">
+          <CrewRoute
+            agents={CREW_AGENTS_THREE}
+            model={CREW_MODEL_ARMED}
+            keeper={MM_KEEPER_HEALTHY}
+            keeperEvents={CREW_KEEPER_EVENTS}
+            decisions={selectCrewDecisions(CREW_LOGS)}
+            onRenewMandate={() => {}}
+            onCancelAgent={() => {}}
+            onStartStrategy={() => {}}
+          />
+        </Section>
+
+        <Section ariaHidden title="The crew — alarm only (mandate lapsed)">
+          <CrewRoute
+            agents={CREW_AGENTS_THREE}
+            model={CREW_MODEL_ALARM}
+            keeper={MM_KEEPER_HEALTHY}
+            keeperEvents={CREW_KEEPER_EVENTS}
+            decisions={selectCrewDecisions(CREW_LOGS)}
+            onRenewMandate={() => {}}
+            onCancelAgent={() => {}}
+            onStartStrategy={() => {}}
+          />
+        </Section>
+
+        {/* Empty keeperEvents/decisions here (unlike the two sections above) -- genuinely new
+            coverage for CrewActivity.jsx's own two "nothing yet" empty-state lines, never reached
+            by the two populated sections above. */}
+        <Section ariaHidden title="The crew — one agent cancelled">
+          <CrewRoute
+            agents={CREW_AGENTS_CANCELLED}
+            model={CREW_MODEL_CANCELLED}
+            keeper={MM_KEEPER_HEALTHY}
+            keeperEvents={[]}
+            decisions={[]}
+            onRenewMandate={() => {}}
+            onCancelAgent={() => {}}
+            onStartStrategy={() => {}}
+          />
+        </Section>
+
+        {/* CrewRoute's own `!agents.length` branch (real code, not a fixture-invented one) --
+            reuses My Money's own MM_MODEL_EMPTY as-is (authoritatively-empty, built the same real
+            buildMyMoneyModel way) so `emptyStateCopy`'s confident "No crew members are deployed
+            yet" line is what's frozen here, not its uncertain-read sibling. */}
+        <Section ariaHidden title="The crew — empty">
+          <CrewRoute agents={[]} model={MM_MODEL_EMPTY} onStartStrategy={() => {}} />
         </Section>
       </Suspense>
     </main>
@@ -2218,6 +2523,7 @@ function VfWalletApprovalFixture() {
 function App() {
   if (fixture === 'strategy') return <StrategyFixture />
   if (fixture === 'my-money') return <MyMoneyFixture />
+  if (fixture === 'crew') return <CrewFixture />
   if (fixture === 'vf-wallet-home') return <VfWalletHomeFixture />
   if (fixture === 'vf-wallet-approval') return <VfWalletApprovalFixture />
   if (fixture !== 'foundation') {

@@ -521,6 +521,123 @@ test.describe('Pocket Crew My money', () => {
   })
 })
 
+// Task 12 (visual harness fixtures + snapshot regeneration) -- frozen baselines for the
+// deterministic `crew` fixture (armed/three-agents, alarm-only/mandate-lapsed,
+// one-agent-cancelled, empty), all mounting the real `/agent` composition root's own CrewRoute
+// (src/components/crew/CrewRoute.jsx). Declared as exactly FOUR baselines, not a naive eight,
+// mirroring My Money's own declared-project split immediately above (:149-153): forest captured
+// only at the two mobile projects, day-field only at tablet/desktop.
+//
+// `[data-fixture-pending="true"]` is used here even though CrewFixture drives no
+// AutopilotSection of its own -- CrewRoute is `lazy()`-loaded in visual/main.jsx for the same
+// CSS-cascade reason MyMoneyRoute is (its own crew.css re-declares `.pc-route`'s padding
+// shorthand, the same defect class My Money's own header comment there documents), so the wait
+// still matters: the fixture is genuinely pending until that dynamic import resolves, exactly as
+// My Money's own header comment (:144-147) explains for its own lazy-loaded route.
+test.describe('Pocket Crew crew', () => {
+  const MOBILE_PROJECTS = ['mobile-320', 'mobile-360']
+  const WIDE_PROJECTS = ['tablet-768', 'desktop-1440']
+
+  // Same two traps Strategy's/My Money's own blocks guard against (:53-98, :154-193), scoped to
+  // this fixture's own root.
+  async function assertNoOverflowAtMobileWidth(page, testInfo) {
+    if (!MOBILE_PROJECTS.includes(testInfo.project.name)) return
+    const overflow = await page.evaluate(() => {
+      const viewportWidth = document.documentElement.clientWidth
+      let maxRight = 0
+      for (const el of document.querySelectorAll('[data-fixture="crew"] *')) {
+        maxRight = Math.max(maxRight, el.getBoundingClientRect().right)
+      }
+      return {
+        scrollWidth: document.documentElement.scrollWidth,
+        viewportWidth,
+        maxDescendantRight: maxRight,
+      }
+    })
+    expect(overflow.scrollWidth, `${testInfo.project.name}: documentElement.scrollWidth`).toBe(
+      overflow.viewportWidth
+    )
+    expect(
+      overflow.maxDescendantRight,
+      `${testInfo.project.name}: no descendant rect may exceed the viewport, even under overflow-x:clip`
+    ).toBeLessThanOrEqual(overflow.viewportWidth + 0.5)
+  }
+
+  async function assertNoVerticalTextTrap(page, testInfo) {
+    if (!MOBILE_PROJECTS.includes(testInfo.project.name)) return
+    const trapped = await page.evaluate(() => {
+      const hits = []
+      for (const el of document.querySelectorAll('[data-fixture="crew"] *')) {
+        const rect = el.getBoundingClientRect()
+        if (rect.width > 0 && rect.width < 100 && rect.height > 150) {
+          hits.push({ tag: el.tagName, cls: el.className, width: rect.width, height: rect.height })
+        }
+      }
+      return hits
+    })
+    expect(
+      trapped,
+      `narrow+tall element(s) -- vertical text trap: ${JSON.stringify(trapped)}`
+    ).toEqual([])
+  }
+
+  test('forest theme', async ({ page }, testInfo) => {
+    test.skip(
+      !MOBILE_PROJECTS.includes(testInfo.project.name),
+      "Crew forest is captured mobile-only (mirrors My money's own declared four baselines)"
+    )
+    await page.goto('/visual/?fixture=crew&theme=forest')
+    await page.waitForFunction(
+      () => document.querySelectorAll('[data-fixture-pending="true"]').length === 0
+    )
+    await page.evaluate(() => document.fonts.ready)
+    await assertNoOverflowAtMobileWidth(page, testInfo)
+    await assertNoVerticalTextTrap(page, testInfo)
+    await expect(page).toHaveScreenshot('crew-forest.png', { fullPage: true })
+  })
+
+  test('day-field theme', async ({ page }, testInfo) => {
+    test.skip(
+      !WIDE_PROJECTS.includes(testInfo.project.name),
+      "Crew day-field is captured tablet/desktop-only (mirrors My money's own declared four baselines)"
+    )
+    await page.goto('/visual/?fixture=crew&theme=day-field')
+    await page.waitForFunction(
+      () => document.querySelectorAll('[data-fixture-pending="true"]').length === 0
+    )
+    await page.evaluate(() => document.fonts.ready)
+    await expect(page).toHaveScreenshot('crew-day-field.png', { fullPage: true })
+  })
+
+  // Step 3 (motion, real Chromium only -- jsdom reports animationName:"none" regardless of what's
+  // declared, same reasoning as My Money's own equivalent test above). CrewGuard.jsx's
+  // `.pc-crew-radar-sweep` runs `pc-crew-sweep 5.5s linear infinite` in every guard phase
+  // (crew.css:218-227) and is forced to `animation: none` under reduced motion, unconditionally
+  // (crew.css:260-263) -- not phase-scoped, so this needs no positive/negative phase selection,
+  // only the fixture's first (armed, fully-exposed) section's own sweep element.
+  test('reduced motion forces the radar sweep animation off', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== 'desktop-1440', 'measured once, not per viewport')
+    await page.goto('/visual/?fixture=crew&theme=forest')
+    await page.waitForFunction(
+      () => document.querySelectorAll('[data-fixture-pending="true"]').length === 0
+    )
+    const sweep = page.locator('[data-fixture="crew"] .pc-crew-radar-sweep').first()
+    await expect(sweep).toBeVisible()
+
+    // Positive control: prove the sweep is genuinely animating under normal motion before trusting
+    // "none" to mean anything once reduced motion is emulated.
+    const normalName = await sweep.evaluate((el) => getComputedStyle(el).animationName)
+    expect(normalName, 'the radar sweep must be animated under normal motion').toBe('pc-crew-sweep')
+
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    const reducedName = await sweep.evaluate((el) => getComputedStyle(el).animationName)
+    expect(
+      reducedName,
+      'the radar sweep animation must collapse under reduced motion'
+    ).toBe('none')
+  })
+})
+
 // Foundation Task 8 -- compact compatibility smoke over the six disconnected/shared routes, real
 // app (not the /visual/ fixture harness), desktop-1440 only. Named "disconnected compatibility"
 // (not "Pocket Crew foundation") so Step 5's `--grep "Pocket Crew foundation"` gate does not also

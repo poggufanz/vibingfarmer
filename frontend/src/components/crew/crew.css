@@ -348,4 +348,23 @@
   .pc-crew-stats {
     grid-template-columns: 1fr;
   }
+
+  /* Task 12 (visual harness fixtures) fix, found via the crew fixture's own
+   * assertNoVerticalTextTrap guard (pocket-crew.visual.spec.js) at mobile-320/360: `.pc-route-
+   * header` is ported from strategy.css (this file's own header comment, :5-11) but that port only
+   * copied the DESKTOP `grid-template-columns: minmax(0,760px) minmax(180px,1fr)` declaration
+   * (:24-29 above), never strategy.css's own `@media (max-width: 767px) { .pc-route-header {
+   * grid-template-columns: 1fr } }` collapse (strategy.css:1014-1021). CrewRoute.jsx's header
+   * (unlike StrategyRoute.jsx's, which always fills column 2 with its own `.pc-route-step`) has
+   * only ONE child -- the empty second column still reserved its 180px minimum track width
+   * regardless, squeezing `.pc-route-title`/`.pc-route-sub` down to a real, confirmed 76px column
+   * on every phone-width visit to `/agent`, not merely a harness artifact. Completes the port
+   * verbatim (strategy.css's own rule, same property/value) rather than inventing a new one.
+   * Verified by mutation: reverted this rule, re-ran the crew fixture's forest-theme test, got RED
+   * (`vertical text trap` at width 76, e.g. `.pc-route-sub` 76x260); restored it, GREEN again.
+   */
+  .pc-route-header {
+    grid-template-columns: 1fr;
+    gap: var(--pc-space-6);
+  }
 }
