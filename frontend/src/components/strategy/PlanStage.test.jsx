@@ -1374,6 +1374,27 @@ describe('PlanStage — amount presets and crew line', () => {
     expect(screen.getByText(/2 crew members/i)).toBeTruthy()
     expect(screen.queryByText(/each handles about/)).toBeNull()
   })
+
+  // Task 4 fix loop 2 (carried review item): `formatShare` had the SAME class of overflow-on-
+  // multiply defect `formatDollarNumber` was fixed for above, at a LOWER threshold (its own
+  // multiplier is `10 ** SOROBAN_DECIMALS` = 1e7, not formatDollarNumber's 100). `1e999` above
+  // cannot discriminate this: it parses to `Infinity`, which is caught by PlanStage's own
+  // `amountNumber` INPUT guard before formatShare is ever called (amountNumber collapses to 0, so
+  // `amountNumber > 0` is false and the "each handles about" clause never even renders). `1e307`
+  // is itself finite -- it survives that guard, so `amountNumber > 0` is true and formatShare IS
+  // called -- and only overflows once multiplied by 1e7 inside formatShare's own multiply.
+  it('never crashes when a finite typed amount overflows formatShare on the multiply', () => {
+    render(
+      <PlanStage vaultTotalShares={FUNDED_VAULT} base={disconnectedBase} onGenerate={vi.fn()} />
+    )
+    fireEvent.change(screen.getByLabelText('Amount in USDC'), { target: { value: '1e307' } })
+    expect(() => fireEvent.click(screen.getByRole('radio', { name: 'Balanced' }))).not.toThrow()
+    // The clause still renders (amountNumber IS > 0, unlike the 1e999 case above) but formatShare
+    // degrades to its own existing empty-string fallback rather than a crash or a bogus number.
+    const crewLine = screen.getByText(/2 crew members/i)
+    expect(crewLine.textContent).toBe('2 crew members · each handles about ')
+    expect(crewLine.textContent).not.toMatch(/Infinity|NaN/)
+  })
 })
 
 // Task 4 (Pocket Crew design alignment) -- the aside's FIRST block: a live "plan so far" summary

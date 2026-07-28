@@ -107,15 +107,19 @@ function formatCents(cents) {
 // buildAmountDisplayMap below). Not a second money formatter: the rounding/sign/2dp logic stays
 // 100% formatCents; this only converts a float-dollars input into the cents BigInt it expects.
 //
-// Fix loop 1 -- Important 1 (review finding): a `value` that is itself finite (already past
-// formatShare's own `Number.isFinite` guard at its call site, e.g. amountNumber) can still
+// Fix loop 1 -- Important 1 (review finding): a `value` that is itself finite (e.g. amountNumber,
+// already past PlanStage's own `Number.isFinite` collapse-to-0 guard at its call site) can still
 // overflow to Infinity once multiplied by 100 here (Number.MAX_VALUE / 100 ~= 1.8e306) --
-// `BigInt(Infinity)` throws, and this file's own comment above documents there is no error
-// boundary anywhere in the app, so that throw would blank the whole Plan stage on render. Guards
-// the PRODUCT, not just the input, mirroring formatShare's own guard -- an amount this large has
-// no real vault/grant behind it anyway, so collapsing to the same 0 sentinel the amount field's
-// own Number.isFinite guard already uses for unusable input (PlanStage's `amountNumber`, above)
-// is consistent, not a second invented number.
+// `BigInt(Infinity)` throws, and this file's own comment documents there is no error boundary
+// anywhere in the app, so that throw would blank the whole Plan stage on render. Guards the
+// PRODUCT, not just the input -- fix loop 2 found `formatShare` below had the exact same class of
+// gap at a LOWER threshold (its own comment used to call its input guard sufficient; it wasn't,
+// see that function's own updated comment), so "mirrors an existing safe precedent" was never an
+// accurate description of what existed here -- this guard and formatShare's are siblings fixed
+// together, not one copying an already-correct other. An amount this large has no real
+// vault/grant behind it anyway, so collapsing to the same 0 sentinel the amount field's own
+// Number.isFinite guard already uses for unusable input (PlanStage's `amountNumber`, above) is
+// consistent, not a second invented number.
 function formatDollarNumber(value) {
   const cents = Math.round(value * 100)
   return formatCents(Number.isFinite(cents) ? BigInt(cents) : 0n)
@@ -163,14 +167,26 @@ function buildAmountDisplayMap(planAgents, amountKey) {
 // real expandAgentSlots split (the same one a real generation call makes) instead of a hand-rolled
 // uniform division -- splitEven puts its remainder on the EARLIEST slot, so a floor-only split was
 // systematically 1 base unit low on slot 0, which silently flips the rendered cents whenever
-// floor(total/k) lands 1 unit under a rounding boundary. Number.isFinite guards the one open trust
-// boundary here (the amount field is free text -- "1e999" parses to Infinity, and BigInt(Infinity)
-// throws with no error boundary anywhere in this app).
+// floor(total/k) lands 1 unit under a rounding boundary. The `Number.isFinite`/`<= 0` check below
+// only ever guarded the INPUT (the amount field is free text -- "1e999" parses to `Infinity`, and
+// this collapses that to an empty share rather than reaching a formatter at all).
+//
+// Fix loop 2 (Task 4 review, carried item): that input guard was NOT sufficient on its own, and
+// this comment previously implied it was -- a `amountNumber` that is itself finite still overflows
+// the multiply below (`amountNumber * 10 ** SOROBAN_DECIMALS`, SOROBAN_DECIMALS = 7) once
+// `amountNumber` exceeds roughly `Number.MAX_VALUE / 1e7 ~= 1.8e301` -- a LOWER threshold than
+// `formatDollarNumber`'s own `1.8e306` (100x multiplier vs. 1e7x here), and reachable the same way:
+// type e.g. `1e307` and pick a comfort tier, which renders this crew line and calls formatShare
+// with no error boundary anywhere in the app. Guards the PRODUCT too now, same fix as
+// formatDollarNumber above, returning the same empty-share fallback this function already uses for
+// bad input -- not a second invented fallback shape.
 function formatShare(amountNumber, risk) {
   if (!Number.isFinite(amountNumber) || amountNumber <= 0) return ''
+  const stellarUnitsNumber = Math.round(amountNumber * 10 ** SOROBAN_DECIMALS)
+  if (!Number.isFinite(stellarUnitsNumber)) return ''
   const agents = expandAgentSlots({
     risk,
-    stellarUnits: BigInt(Math.round(amountNumber * 10 ** SOROBAN_DECIMALS)),
+    stellarUnits: BigInt(stellarUnitsNumber),
     stellarDecimals: SOROBAN_DECIMALS,
   })
   return agents.length
