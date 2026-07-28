@@ -19,5 +19,18 @@ export function buildEligibilityReview({ survivors = [], dropped = [] } = {}) {
     eligible: false,
     reasons: (entry?.verdict?.reasons ?? []).filter((r) => typeof r === 'string'),
   })
-  return [...survivors.map(eligibleRow), ...dropped.map(rejectedRow)]
+  const rows = [...survivors.map(eligibleRow), ...dropped.map(rejectedRow)]
+
+  // app.jsx's Stellar leg has exactly one real venue, so every non-Base pick gets the same
+  // protocol/chain -- risk 'high' alone would otherwise emit the same "PASSED" row 3 times.
+  // Collapse only rows that are byte-identical across every field (reasons compared by content
+  // and order, not array identity); a rejected row never collapses into an eligible one because
+  // `eligible` is part of the key.
+  const seen = new Set()
+  return rows.filter((row) => {
+    const key = JSON.stringify([row.protocol, row.chain, row.eligible, row.reasons])
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 }

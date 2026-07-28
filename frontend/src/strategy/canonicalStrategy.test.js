@@ -60,6 +60,15 @@ describe('canonicalizeStrategy', () => {
     expect(c.source).toBe('venice')
   })
 
+  it("excludes the eligibility gate's review verdicts -- display-only, never part of what the fingerprint attests to", () => {
+    const c = canonicalizeStrategy({
+      source: 'venice',
+      review: { candidates: [{ protocol: 'Aave v3', chain: 'base', eligible: false, reasons: ['x'] }] },
+    })
+    expect(c.review).toBeUndefined()
+    expect(c).toEqual({ source: 'venice' })
+  })
+
   it('excludes transient wallet and wall-clock fields if a caller merges them in', () => {
     const c = canonicalizeStrategy({
       source: 'venice',
@@ -121,6 +130,14 @@ describe('hashStrategy(plan) on a StrategyPlan', () => {
       ],
     })
     expect(hashStrategy(reproxied)).not.toBe(hashStrategy(base))
+  })
+
+  it('does not move when plan.review (eligibility-gate verdicts) differs or is absent', () => {
+    const base = makePlan()
+    const withReview = makePlan({
+      review: { candidates: [{ protocol: 'Aave v3', chain: 'base', eligible: false, reasons: ['facts stale'] }] },
+    })
+    expect(hashStrategy(withReview)).toBe(hashStrategy(base))
   })
 
   it('never lets a wall-clock timestamp into the payload', () => {

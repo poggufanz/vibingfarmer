@@ -34,8 +34,16 @@ describe('buildEligibilityReview', () => {
   // verdictBySlug, exactly like basketFilter.test.js's own tests do.
   it('reads the real filterBasket/computeBasket output shape, where dropped nests under `.agent`', () => {
     const agents = [
-      { id: 'w-ok', allocation: 50, vault: { protocol: 'aave-v3', chain: 'stellar', addr: 'C...' } },
-      { id: 'w-bad', allocation: 50, vault: { protocol: 'hyperfarm', chain: 'base', addr: 'C...' } },
+      {
+        id: 'w-ok',
+        allocation: 50,
+        vault: { protocol: 'aave-v3', chain: 'stellar', addr: 'C...' },
+      },
+      {
+        id: 'w-bad',
+        allocation: 50,
+        vault: { protocol: 'hyperfarm', chain: 'base', addr: 'C...' },
+      },
     ]
     const { survivors, dropped } = filterBasket(agents, {
       'aave-v3': { eligible: true },
@@ -62,5 +70,51 @@ describe('buildEligibilityReview', () => {
 
   it('handles empty input', () => {
     expect(buildEligibilityReview({})).toEqual([])
+  })
+
+  // app.jsx's eligibilityAgents mapping (generateStrategyPlan) assigns every non-Base pick the
+  // SAME stellarVenueDisplay.protocol/chain='stellar' -- the Stellar leg has exactly one real
+  // venue, so risk 'high' (3 deposit agents) produces 3 byte-identical eligible rows here. Task 6
+  // renders plan.review.candidates verbatim, so an uncollapsed row would show "Blend Capital v2 —
+  // PASSED" three times for one venue. Collapse belongs in the adapter (the display shape's owner),
+  // not in app.jsx.
+  it('collapses fully identical rows (same protocol/chain/eligible/reasons) into one', () => {
+    const a = { vault: { protocol: 'Blend Capital v2', chain: 'stellar' } }
+    const b = { vault: { protocol: 'Blend Capital v2', chain: 'stellar' } }
+    const c = { vault: { protocol: 'Blend Capital v2', chain: 'stellar' } }
+    const candidates = buildEligibilityReview({ survivors: [a, b, c], dropped: [] })
+    expect(candidates).toEqual([
+      { protocol: 'Blend Capital v2', chain: 'stellar', eligible: true, reasons: [] },
+    ])
+  })
+
+  it('never collapses rows that differ in any field: reasons content, or eligible vs rejected for the same protocol/chain', () => {
+    const droppedFewerReasons = {
+      agent: { vault: { protocol: 'Aave v3', chain: 'base' } },
+      verdict: { eligible: false, reasons: ['facts stale'] },
+    }
+    const droppedMoreReasons = {
+      agent: { vault: { protocol: 'Aave v3', chain: 'base' } },
+      // differs from droppedFewerReasons by exactly one extra reason -- must stay a separate row
+      verdict: { eligible: false, reasons: ['facts stale', 'no oracle circuit breaker'] },
+    }
+    // same protocol/chain as both dropped rows, but eligible:true -- must never collapse into a
+    // rejected row (or vice versa), regardless of how much else matches.
+    const survivorSameVenue = { vault: { protocol: 'Aave v3', chain: 'base' } }
+
+    const candidates = buildEligibilityReview({
+      survivors: [survivorSameVenue],
+      dropped: [droppedFewerReasons, droppedMoreReasons],
+    })
+    expect(candidates).toEqual([
+      { protocol: 'Aave v3', chain: 'base', eligible: true, reasons: [] },
+      { protocol: 'Aave v3', chain: 'base', eligible: false, reasons: ['facts stale'] },
+      {
+        protocol: 'Aave v3',
+        chain: 'base',
+        eligible: false,
+        reasons: ['facts stale', 'no oracle circuit breaker'],
+      },
+    ])
   })
 })

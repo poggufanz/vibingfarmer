@@ -587,6 +587,21 @@ describe('PlanStage — reviewed plan (Stellar-only)', () => {
     expect(call.fingerprint).toBe(`0xstub${call.plan.agents.length}`)
   })
 
+  it('Task 5 regression: plan.review from the generator survives runGeneration onto the plan handed to onAcceptPlan', async () => {
+    // Guards PlanStage.jsx's runGeneration, which builds an explicit object literal for
+    // normalizeStrategyPlan (only runId/risk/source/sourceState/stellarUnits/baseAllocations,
+    // never a spread of the generator's result) -- `review: result.review` is a deliberate line
+    // in that literal, easy to delete by accident with the suite staying green, since no other
+    // test asserts it. This also covers handleAccept's `{...plan, ...}` spread in the same stroke.
+    const review = {
+      candidates: [{ protocol: 'Aave v3 (proxy)', chain: 'base', eligible: false, reasons: ['facts stale'] }],
+    }
+    const { onAcceptPlan } = await generateStellarOnlyPlan({ review })
+    fireEvent.click(screen.getByRole('button', { name: 'Accept plan' }))
+    const call = onAcceptPlan.mock.calls[0][0]
+    expect(call.plan.review).toEqual(review)
+  })
+
   it('I7: the reviewed-plan shape PlanStage builds is exactly what the REAL canonicalizer (hashStrategy default path) needs', async () => {
     // hashStrategy's own sha256 step cannot run inside this jsdom file -- a jsdom Buffer/
     // Uint8Array realm mismatch crashes @noble/hashes even for a bare, no-React call (reproduced

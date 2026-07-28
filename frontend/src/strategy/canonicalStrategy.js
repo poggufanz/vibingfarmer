@@ -22,6 +22,11 @@ const EXCLUDED_KEYS = new Set([
   'walletAddress',
   'connectedWallet',
   'realAddress',
+  // display-only: the eligibility gate's already-decided verdicts (eligibilityReview.js), shown
+  // in Protect but never part of what the fingerprint attests to -- the gate ran fail-closed
+  // before this plan existed, so which pools it rejected and why must not move the hash of an
+  // otherwise-identical plan.
+  'review',
   // wall-clock artifacts that must never sneak into an otherwise-deterministic payload
   // (this is the exact bug being fixed: the old hashStrategy stamped Date.now() into every hash)
   'timestamp',
