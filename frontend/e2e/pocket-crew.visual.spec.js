@@ -1,5 +1,64 @@
 import { expect, test } from '@playwright/test'
 
+// Task 12 fix round 1, M3: the overflow/vertical-text-trap pair below was hand-copied a THIRD
+// time for the crew block (the brief said to reuse the shared helpers exactly as the my-money
+// block does) -- ~50 lines differing only in the `[data-fixture="..."]` selector string, meaning
+// a threshold improvement had to be made three times or would silently diverge. One factory,
+// closed over the fixture name, used at all three describe blocks below (Strategy/My money/crew).
+// `mobileProjects` defaults to the pair every block already used; Strategy's own prior
+// `assertNoOverflowAt320` only ever ran at mobile-320 and asserted the LITERAL width 320 -- folding
+// it into this shared shape (asserting against the real `viewportWidth` instead) is a strict
+// generalization: at mobile-320 that viewportWidth IS 320, so the assertion is unchanged there,
+// and it now also covers mobile-360 for Strategy, which had no overflow guard at all before this
+// (verified green in the full run recorded in the fix-round-1 report; mutation-verified below to
+// still fail red when the thing it pins breaks).
+function makeFixtureGuards(fixtureName, mobileProjects = ['mobile-320', 'mobile-360']) {
+  const selector = `[data-fixture="${fixtureName}"]`
+
+  async function assertNoOverflowAtMobileWidth(page, testInfo) {
+    if (!mobileProjects.includes(testInfo.project.name)) return
+    const overflow = await page.evaluate((sel) => {
+      const viewportWidth = document.documentElement.clientWidth
+      let maxRight = 0
+      for (const el of document.querySelectorAll(`${sel} *`)) {
+        maxRight = Math.max(maxRight, el.getBoundingClientRect().right)
+      }
+      return {
+        scrollWidth: document.documentElement.scrollWidth,
+        viewportWidth,
+        maxDescendantRight: maxRight,
+      }
+    }, selector)
+    expect(overflow.scrollWidth, `${testInfo.project.name}: documentElement.scrollWidth`).toBe(
+      overflow.viewportWidth
+    )
+    expect(
+      overflow.maxDescendantRight,
+      `${testInfo.project.name}: no descendant rect may exceed the viewport, even under overflow-x:clip`
+    ).toBeLessThanOrEqual(overflow.viewportWidth + 0.5)
+  }
+
+  async function assertNoVerticalTextTrap(page, testInfo) {
+    if (!mobileProjects.includes(testInfo.project.name)) return
+    const trapped = await page.evaluate((sel) => {
+      const hits = []
+      for (const el of document.querySelectorAll(`${sel} *`)) {
+        const rect = el.getBoundingClientRect()
+        if (rect.width > 0 && rect.width < 100 && rect.height > 150) {
+          hits.push({ tag: el.tagName, cls: el.className, width: rect.width, height: rect.height })
+        }
+      }
+      return hits
+    }, selector)
+    expect(
+      trapped,
+      `narrow+tall element(s) -- vertical text trap: ${JSON.stringify(trapped)}`
+    ).toEqual([])
+  }
+
+  return { assertNoOverflowAtMobileWidth, assertNoVerticalTextTrap }
+}
+
 test('visual harness loads', async ({ page }) => {
   await page.goto('/visual/?fixture=foundation&theme=forest')
 
@@ -45,57 +104,21 @@ test.describe('Pocket Crew foundation', () => {
 // CSS animations/transitions, not JS/rAF-driven ones. Skipped entirely under reduced motion, where
 // usePocketTransition takes its `gsap.set(...)` (no-animation) branch instead.
 test.describe('Pocket Crew Strategy', () => {
-  // G4 (rejection checklist item 12, this task's own binding constraint 4): 320px must show no
-  // horizontal overflow, checked BOTH via documentElement.scrollWidth AND every descendant's own
-  // bounding rect -- scrollWidth alone stays 320 even when `overflow-x: clip` is hiding real
-  // overflow rather than removing it (the exact trap recorded to have shipped twice on this
-  // project), so a rect that quietly exceeds the viewport is still caught here.
-  async function assertNoOverflowAt320(page, testInfo) {
-    if (testInfo.project.name !== 'mobile-320') return
-    const overflow = await page.evaluate(() => {
-      const viewportWidth = document.documentElement.clientWidth
-      let maxRight = 0
-      for (const el of document.querySelectorAll('[data-fixture="strategy"] *')) {
-        maxRight = Math.max(maxRight, el.getBoundingClientRect().right)
-      }
-      return {
-        scrollWidth: document.documentElement.scrollWidth,
-        viewportWidth,
-        maxDescendantRight: maxRight,
-      }
-    })
-    expect(overflow.scrollWidth, '320px: documentElement.scrollWidth').toBe(320)
-    expect(
-      overflow.maxDescendantRight,
-      '320px: no descendant rect may exceed the viewport, even under overflow-x:clip'
-    ).toBeLessThanOrEqual(overflow.viewportWidth + 0.5)
-  }
-
+  // G4 (rejection checklist item 12, this task's own binding constraint 4): mobile viewports must
+  // show no horizontal overflow, checked BOTH via documentElement.scrollWidth AND every
+  // descendant's own bounding rect -- scrollWidth alone stays put even when `overflow-x: clip` is
+  // hiding real overflow rather than removing it (the exact trap recorded to have shipped twice on
+  // this project), so a rect that quietly exceeds the viewport is still caught here.
+  //
   // I-2 (fix round 1, reviewer finding): a fixed-width action column can starve a sibling content
   // track down to a few px WITHOUT ever creating horizontal overflow -- the guard above measures
   // scrollWidth/rect-right and cannot see this at all (verified: it stayed green through the whole
-  // defect). This checks the vertical form directly: real content (e.g. a 64-char tx hash) forced
-  // into a track under 100px wide wraps to one-to-two characters per line, producing an element
-  // taller than 150px at that width -- a shape no legitimate narrow element in this fixture takes
-  // (icons/marks are narrow AND short). Runs on both mobile projects, not just 320, since the
-  // starved-track defect this guards was never exclusive to exactly 320px.
-  async function assertNoVerticalTextTrap(page, testInfo) {
-    if (!['mobile-320', 'mobile-360'].includes(testInfo.project.name)) return
-    const trapped = await page.evaluate(() => {
-      const hits = []
-      for (const el of document.querySelectorAll('[data-fixture="strategy"] *')) {
-        const rect = el.getBoundingClientRect()
-        if (rect.width > 0 && rect.width < 100 && rect.height > 150) {
-          hits.push({ tag: el.tagName, cls: el.className, width: rect.width, height: rect.height })
-        }
-      }
-      return hits
-    })
-    expect(
-      trapped,
-      `narrow+tall element(s) -- vertical text trap: ${JSON.stringify(trapped)}`
-    ).toEqual([])
-  }
+  // defect). assertNoVerticalTextTrap checks the vertical form directly: real content (e.g. a
+  // 64-char tx hash) forced into a track under 100px wide wraps to one-to-two characters per line,
+  // producing an element taller than 150px at that width -- a shape no legitimate narrow element
+  // in this fixture takes (icons/marks are narrow AND short). Runs on both mobile projects, not
+  // just 320, since the starved-track defect this guards was never exclusive to exactly 320px.
+  const { assertNoOverflowAtMobileWidth, assertNoVerticalTextTrap } = makeFixtureGuards('strategy')
 
   test('forest theme', async ({ page }, testInfo) => {
     await page.goto('/visual/?fixture=strategy&theme=forest')
@@ -104,7 +127,7 @@ test.describe('Pocket Crew Strategy', () => {
     )
     await page.evaluate(() => document.fonts.ready)
     await page.waitForTimeout(500)
-    await assertNoOverflowAt320(page, testInfo)
+    await assertNoOverflowAtMobileWidth(page, testInfo)
     await assertNoVerticalTextTrap(page, testInfo)
     await expect(page).toHaveScreenshot('strategy-forest.png', { fullPage: true })
   })
@@ -116,7 +139,7 @@ test.describe('Pocket Crew Strategy', () => {
     )
     await page.evaluate(() => document.fonts.ready)
     await page.waitForTimeout(500)
-    await assertNoOverflowAt320(page, testInfo)
+    await assertNoOverflowAtMobileWidth(page, testInfo)
     await assertNoVerticalTextTrap(page, testInfo)
     await expect(page).toHaveScreenshot('strategy-day-field.png', { fullPage: true })
   })
@@ -149,48 +172,13 @@ test.describe('Pocket Crew My money', () => {
   const MOBILE_PROJECTS = ['mobile-320', 'mobile-360']
   const WIDE_PROJECTS = ['tablet-768', 'desktop-1440']
 
-  // Same two traps Strategy's own block guards against (:53-98), scoped to this fixture's own
-  // root and to the projects where each is meaningful.
-  async function assertNoOverflowAtMobileWidth(page, testInfo) {
-    if (!MOBILE_PROJECTS.includes(testInfo.project.name)) return
-    const overflow = await page.evaluate(() => {
-      const viewportWidth = document.documentElement.clientWidth
-      let maxRight = 0
-      for (const el of document.querySelectorAll('[data-fixture="my-money"] *')) {
-        maxRight = Math.max(maxRight, el.getBoundingClientRect().right)
-      }
-      return {
-        scrollWidth: document.documentElement.scrollWidth,
-        viewportWidth,
-        maxDescendantRight: maxRight,
-      }
-    })
-    expect(overflow.scrollWidth, `${testInfo.project.name}: documentElement.scrollWidth`).toBe(
-      overflow.viewportWidth
-    )
-    expect(
-      overflow.maxDescendantRight,
-      `${testInfo.project.name}: no descendant rect may exceed the viewport, even under overflow-x:clip`
-    ).toBeLessThanOrEqual(overflow.viewportWidth + 0.5)
-  }
-
-  async function assertNoVerticalTextTrap(page, testInfo) {
-    if (!MOBILE_PROJECTS.includes(testInfo.project.name)) return
-    const trapped = await page.evaluate(() => {
-      const hits = []
-      for (const el of document.querySelectorAll('[data-fixture="my-money"] *')) {
-        const rect = el.getBoundingClientRect()
-        if (rect.width > 0 && rect.width < 100 && rect.height > 150) {
-          hits.push({ tag: el.tagName, cls: el.className, width: rect.width, height: rect.height })
-        }
-      }
-      return hits
-    })
-    expect(
-      trapped,
-      `narrow+tall element(s) -- vertical text trap: ${JSON.stringify(trapped)}`
-    ).toEqual([])
-  }
+  // Same two traps Strategy's own block guards against (:12-58, the shared makeFixtureGuards
+  // factory -- fix round 1, M3), scoped to this fixture's own root and to the projects where each
+  // is meaningful.
+  const { assertNoOverflowAtMobileWidth, assertNoVerticalTextTrap } = makeFixtureGuards(
+    'my-money',
+    MOBILE_PROJECTS
+  )
 
   // MM14 fix round 1 (I-2, reviewer finding). Generalizes past the one reported row: for every
   // `.pc-position-row`/`.pc-crew-row` list, each row's CONTENT column (its 2nd child) must start
@@ -538,48 +526,13 @@ test.describe('Pocket Crew crew', () => {
   const MOBILE_PROJECTS = ['mobile-320', 'mobile-360']
   const WIDE_PROJECTS = ['tablet-768', 'desktop-1440']
 
-  // Same two traps Strategy's/My Money's own blocks guard against (:53-98, :154-193), scoped to
-  // this fixture's own root.
-  async function assertNoOverflowAtMobileWidth(page, testInfo) {
-    if (!MOBILE_PROJECTS.includes(testInfo.project.name)) return
-    const overflow = await page.evaluate(() => {
-      const viewportWidth = document.documentElement.clientWidth
-      let maxRight = 0
-      for (const el of document.querySelectorAll('[data-fixture="crew"] *')) {
-        maxRight = Math.max(maxRight, el.getBoundingClientRect().right)
-      }
-      return {
-        scrollWidth: document.documentElement.scrollWidth,
-        viewportWidth,
-        maxDescendantRight: maxRight,
-      }
-    })
-    expect(overflow.scrollWidth, `${testInfo.project.name}: documentElement.scrollWidth`).toBe(
-      overflow.viewportWidth
-    )
-    expect(
-      overflow.maxDescendantRight,
-      `${testInfo.project.name}: no descendant rect may exceed the viewport, even under overflow-x:clip`
-    ).toBeLessThanOrEqual(overflow.viewportWidth + 0.5)
-  }
-
-  async function assertNoVerticalTextTrap(page, testInfo) {
-    if (!MOBILE_PROJECTS.includes(testInfo.project.name)) return
-    const trapped = await page.evaluate(() => {
-      const hits = []
-      for (const el of document.querySelectorAll('[data-fixture="crew"] *')) {
-        const rect = el.getBoundingClientRect()
-        if (rect.width > 0 && rect.width < 100 && rect.height > 150) {
-          hits.push({ tag: el.tagName, cls: el.className, width: rect.width, height: rect.height })
-        }
-      }
-      return hits
-    })
-    expect(
-      trapped,
-      `narrow+tall element(s) -- vertical text trap: ${JSON.stringify(trapped)}`
-    ).toEqual([])
-  }
+  // Same two traps Strategy's/My Money's own blocks guard against, via the shared
+  // makeFixtureGuards factory (:12-58 -- fix round 1, M3: this was a third hand-copied verbatim
+  // pair before this fix), scoped to this fixture's own root.
+  const { assertNoOverflowAtMobileWidth, assertNoVerticalTextTrap } = makeFixtureGuards(
+    'crew',
+    MOBILE_PROJECTS
+  )
 
   test('forest theme', async ({ page }, testInfo) => {
     test.skip(
@@ -631,10 +584,7 @@ test.describe('Pocket Crew crew', () => {
 
     await page.emulateMedia({ reducedMotion: 'reduce' })
     const reducedName = await sweep.evaluate((el) => getComputedStyle(el).animationName)
-    expect(
-      reducedName,
-      'the radar sweep animation must collapse under reduced motion'
-    ).toBe('none')
+    expect(reducedName, 'the radar sweep animation must collapse under reduced motion').toBe('none')
   })
 })
 

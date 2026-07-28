@@ -107,8 +107,17 @@
   letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
 }
+/* Task 12 fix round 1, F2: `var(--pc-harvest)` as a bare foreground text color measured 1.02:1
+ * on the day-field canvas (#DFF56C on #E9EEE8) -- effectively invisible; --pc-harvest is a FIXED
+ * brand color across both themes (pocket-crew.css: "Brand identity is unchanged in light mode"),
+ * calibrated only for use as a FILL with --pc-harvest-ink text on top (see the harvestInk/harvest
+ * contrast.js pair), never as bare text on --pc-canvas. `--pc-focus` is the existing token that
+ * already resolves the way `--pc-danger` (ALARM ONLY's own color, same slot) does: forest =
+ * var(--pc-harvest) (byte-identical to what was here -- zero forest regression, verified by
+ * re-running the forest baselines unchanged), day-field = var(--pc-field) (near-black, 13.52:1 on
+ * --pc-canvas). Measured before/after in the fix-round-1 report. */
 .pc-crew-stat-value[data-tone='good'] {
-  color: var(--pc-harvest);
+  color: var(--pc-focus);
 }
 .pc-crew-stat-value[data-tone='warn'] {
   color: var(--pc-warning);
@@ -184,10 +193,16 @@
 .pc-crew-guard-head .pc-crew-stat-label {
   margin: 0;
 }
+/* Task 12 fix round 1, F2: same `--pc-harvest`-as-bare-text defect as `.pc-crew-stat-value[data-
+ * tone='good']` above (see that rule's own comment for the measured contrast and why `--pc-focus`
+ * is the correct existing token) -- this is the ARMED badge the reviewer's F2 finding named
+ * directly. `data-guard-phase='lapsed'`/`='unknown'` below already override this with
+ * `--pc-danger`/`--pc-faint`, both of which are correctly per-theme-calibrated; only the base
+ * (ARMED) rule had the bug. */
 .pc-crew-guard-state {
   font-family: var(--pc-font-mono);
   font-size: 12px;
-  color: var(--pc-harvest);
+  color: var(--pc-focus);
 }
 /* Fix round 1, F3: third `data-guard-phase='unknown'` hook alongside the existing armed/lapsed
    pair -- a failed protection read gets its own neutral (never alarming, never confident) color. */

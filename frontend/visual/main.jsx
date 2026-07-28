@@ -48,6 +48,11 @@ import { StrategyRoute } from '../src/components/strategy/StrategyRoute.jsx'
 // ceremonyView.js's own imports below (never a lazy() candidate; lazy() exists only to keep a
 // ROUTE's own stylesheet off every fixture page, and this file has none).
 import { selectCrewDecisions } from '../src/components/crew/selectCrewDecisions.js'
+// Task 12 fix round 1, M8: the real, shared export app.jsx itself imports from the same place
+// (app.jsx:33, used for its own keeper-event fromLabel/toLabel -- app.jsx:1156-1157) -- not a
+// second hand-copied `slice(0,6)…slice(-4)` this file would need to keep in sync by hand if the
+// real one ever changes shape.
+import { shortAddr } from '../src/screens.jsx'
 import { buildMyMoneyModel } from '../src/money/myMoneyModel.js'
 import {
   SOROBAN_ACTIVE_VAULT_ADDRESS,
@@ -1701,7 +1706,10 @@ function MyMoneyFixture() {
 function crewHealthyAgent(address, units) {
   return {
     address,
-    scope: { state: 'known', value: { vault: SOROBAN_ACTIVE_VAULT_ADDRESS, revoked: false, expiry: 0 } },
+    scope: {
+      state: 'known',
+      value: { vault: SOROBAN_ACTIVE_VAULT_ADDRESS, revoked: false, expiry: 0 },
+    },
     amount: mmAmt(units),
     executionStatus: 'idle',
     custody: { location: 'stellar-vault' },
@@ -1730,12 +1738,19 @@ const CREW_DISCOVERY_THREE = Object.freeze({
 // Same 650 USDC total as My Money's own MM_MODEL_ACTIVE above (300 + 200 + 150 -- identical
 // per-agent amounts, all three healthy here instead of one revoked) -- not recomputed, just an
 // honest coincidence of reusing the same three amounts.
+//
+// Task 12 fix round 1, M6: this aggregate must match CREW_AGENTS_THREE's own per-agent
+// custodyBreakdown, not just the total -- mmBridgeAgent() (200 USDC) splits 120 stellar-vault / 80
+// base-proxy (see its own header comment), so the aggregate is 300 (deposit) + 120 (bridge's
+// stellar leg) + 150 (recovery-address healthy agent) = 570 stellar-vault, 80 base-proxy. Inert
+// today (nothing in CrewRoute renders this aggregate), but wrong before this fix in a fixture
+// whose entire value is being right.
 const CREW_MONEY_THREE = Object.freeze({
   confirmedTotal: { state: 'known', amount: mmAmt(650_0000000n) },
   yield: { state: 'live', apy: 8.1 },
   earned: { state: 'unavailable', amount: null },
   unattributed: {},
-  custodyBreakdown: { 'stellar-vault': '6500000000' },
+  custodyBreakdown: { 'stellar-vault': '5700000000', 'base-proxy': '800000000' },
   agentCount: 3,
   problemAgentCount: 0,
   agents: CREW_AGENTS_THREE,
@@ -1772,7 +1787,10 @@ const CREW_MODEL_ALARM = buildMyMoneyModel({
 // (see this block's own header comment above).
 const CREW_AGENT_CANCELLED = {
   address: MM_AGENT_BRIDGE,
-  scope: { state: 'known', value: { vault: SOROBAN_ACTIVE_VAULT_ADDRESS, revoked: true, expiry: 0 } },
+  scope: {
+    state: 'known',
+    value: { vault: SOROBAN_ACTIVE_VAULT_ADDRESS, revoked: true, expiry: 0 },
+  },
   amount: mmAmt(0n),
   executionStatus: 'idle',
   custody: { location: 'stellar-vault' },
@@ -1815,6 +1833,37 @@ const CREW_MODEL_CANCELLED = buildMyMoneyModel({
   now: NOW_SECONDS * 1000,
 })
 
+// Task 12 fix round 1, M7: My Money's own MM_MODEL_EMPTY is anchored on MM_NOW
+// (1_800_000_900_000), 900 real seconds after this fixture's own frozen `Date.now()`
+// (NOW_SECONDS * 1000 = 1_800_000_000_000, set by the `if (fixture === 'crew')` override above).
+// Reusing MM_MODEL_EMPTY as-is for Section 4 below left the crew fixture's own empty model
+// internally anchored to a clock 900s ahead of the one every live `Date.now()` reader on this
+// page actually observes -- harmless today (CrewRoute's `!agents.length` branch renders no
+// timestamp), but latent if that branch ever grows one. This is the SAME shape as MM_MODEL_EMPTY
+// (same owner/discovery/money/protection), rebuilt with checkedAt/now/mandateExpiry all anchored
+// to the crew fixture's own frozen instant instead -- MM_MODEL_EMPTY itself is left untouched
+// (My Money's own fixture keeps using it, so its baselines are unaffected).
+const CREW_MODEL_EMPTY = buildMyMoneyModel({
+  owner: MM_OWNER,
+  discovery: MM_DISCOVERY_EMPTY,
+  money: {
+    confirmedTotal: { state: 'known', amount: mmAmt(0n) },
+    yield: { state: 'unavailable', apy: null },
+    earned: { state: 'unavailable', amount: null },
+    unattributed: {},
+    custodyBreakdown: {},
+    agentCount: 0,
+    problemAgentCount: 0,
+    agents: [],
+    checkedAt: NOW_SECONDS * 1000,
+    confirmedLedger: 5551300,
+    confirmedBlock: null,
+    source: 'stellar-rpc',
+  },
+  protection: { state: 'disarmed', authority: MM_OWNER, mandateExpiry: NOW_SECONDS - 3600 },
+  now: NOW_SECONDS * 1000,
+})
+
 // Real shape (app.jsx:1131-1162, CrewActivity.jsx's own header comment): totalGainUsdc/
 // pricePerShare/amountUsdc are toFixed() STRINGS, never numbers; txHash/fromLabel/toLabel real-
 // length, matching this file's own established "never a short placeholder" discipline for hashes/
@@ -1838,10 +1887,10 @@ const CREW_KEEPER_EVENTS = Object.freeze([
     vaultName: 'Autofarm vault',
     from: VAULT_ADDR,
     to: BRIDGE_TARGET_STANDIN,
-    // screens.jsx's own shortAddr: `${a.slice(0,6)}…${a.slice(-4)}` -- reproduced literally rather
-    // than importing that module here (a fresh dependency this fixture doesn't otherwise need).
-    fromLabel: `${VAULT_ADDR.slice(0, 6)}…${VAULT_ADDR.slice(-4)}`,
-    toLabel: `${BRIDGE_TARGET_STANDIN.slice(0, 6)}…${BRIDGE_TARGET_STANDIN.slice(-4)}`,
+    // Task 12 fix round 1, M8: the real screens.jsx shortAddr (imported above), not a hand-copied
+    // reimplementation.
+    fromLabel: shortAddr(VAULT_ADDR),
+    toLabel: shortAddr(BRIDGE_TARGET_STANDIN),
     amountUsdc: '65.00',
     txHash: REAL_TX_HASH_2,
     timestamp: NOW_SECONDS * 1000 - 47 * 60 * 1000, // 47 min before frozen now
@@ -1920,11 +1969,13 @@ function CrewFixture() {
         </Section>
 
         {/* CrewRoute's own `!agents.length` branch (real code, not a fixture-invented one) --
-            reuses My Money's own MM_MODEL_EMPTY as-is (authoritatively-empty, built the same real
-            buildMyMoneyModel way) so `emptyStateCopy`'s confident "No crew members are deployed
-            yet" line is what's frozen here, not its uncertain-read sibling. */}
+            CREW_MODEL_EMPTY mirrors My Money's own MM_MODEL_EMPTY shape (authoritatively-empty,
+            built the same real buildMyMoneyModel way) so `emptyStateCopy`'s confident "No crew
+            members are deployed yet" line is what's frozen here, not its uncertain-read sibling --
+            but anchored on this fixture's OWN frozen clock rather than reusing MM_MODEL_EMPTY's
+            (fix round 1, M7: see CREW_MODEL_EMPTY's own comment). */}
         <Section ariaHidden title="The crew — empty">
-          <CrewRoute agents={[]} model={MM_MODEL_EMPTY} onStartStrategy={() => {}} />
+          <CrewRoute agents={[]} model={CREW_MODEL_EMPTY} onStartStrategy={() => {}} />
         </Section>
       </Suspense>
     </main>
