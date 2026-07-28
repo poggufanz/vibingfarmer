@@ -14,7 +14,34 @@
 // (e.g. "Aave v3 (Base)") describe WHICH mainnet protocol's reputation was borrowed to curate
 // these facts, not a live execution claim; that truthful disclosure comes from
 // strategy/venueTruth.js instead (see basketFilter.js's computeBasket).
-export const CAPTURED_AT = Date.parse('2026-06-28T00:00:00Z')
+// RECAPTURE 2026-07-28. The previous stamp was 2026-06-28T00:00:00Z and eligibilityGate's
+// MAX_FACT_AGE_MS is 30 days, so EVERY fact in this file expired at exactly 2026-07-28T00:00:00Z
+// and the fail-closed gate began rejecting every venue -- blend-usdc included, not just the Base
+// leg. The live overlay cannot rescue that: vaultFactsLive.js refreshes `tvl` only, while the gate
+// requires ALL of REQUIRED_FACTS to be fresh.
+//
+// EXACTLY what was re-verified in this recapture, and what was not:
+//
+//   RE-CAPTURED LIVE (api.llama.fi/tvl/<slug>, 2026-07-28T01:39:02Z) -- `tvl` for the five slugs
+//   DeFiLlama actually tracks. Raw values as returned, rounded to whole USD:
+//     blend 127_174_055.75962125 · aave-v3 13_787_613_756.821106 · morpho-blue 7_506_773_961.787037
+//     pendle 1_205_115_256.1037152 · fluid 1_074_585_732.444499 · moonwell 63_869_594.236889765
+//
+//   CARRIED FORWARD, NOT RE-VERIFIED -- everything else. That means every qualitative fact
+//   (audit, adminKey, oracleType, poolClass), every non-tvl numeric (annualizedDistributed,
+//   protocolRevenue, ageDays, collateralLiquidityDepthUsd, supplierConcentrationPct), and ALL
+//   THREE '*-base' entries including their tvl, which are curated estimates for MockERC4626
+//   testnet wrappers with no live number to capture. They now carry today's asOf because a single
+//   CAPTURED_AT stamps the whole file -- treat that date as "re-affirmed", NOT as "re-measured".
+//
+//   STILL OWED, and no script can do it (refreshVaultFacts.mjs prints these as manual work):
+//   oracleType from the Blend pool page, collateralLiquidityDepthUsd from DEX depth, poolClass
+//   from the Blend UI, supplierConcentrationPct from the pool's top-supplier share.
+//
+// This buys exactly 30 more days: the gate closes again on 2026-08-27T01:39:02Z. Nothing warns
+// beforehand. The durable fix is a per-fact-type window -- tvl genuinely goes stale in a month,
+// an audit status does not -- rather than re-stamping this constant every cycle.
+export const CAPTURED_AT = Date.parse('2026-07-28T01:39:02Z')
 
 const f = (value) => ({ value, source: 'snapshot', asOf: CAPTURED_AT })
 
@@ -36,20 +63,26 @@ const audited = (over) => ({
 })
 
 export const SNAPSHOT = {
-  // The product's own vetted vault (single-chain Stellar/Soroban Blend USDC). Same
-  // PLACEHOLDER-provenance discipline as the rest — refresh before demo.
-  'blend-usdc': { facts: audited(), meta: { label: 'Blend USDC (Stellar)' } },
-  'aave-v3': { facts: audited(), meta: { label: 'Aave v3 (mainnet)' } },
+  // 'blend-usdc' is the product's own vetted vault (single-chain Stellar/Soroban Blend USDC).
+  // tvl on these five is LIVE-CAPTURED (see the recapture note at the top); every other fact is
+  // carried forward and still carries PLACEHOLDER provenance — refresh before demo. Each entry
+  // states its own tvl rather than inheriting audited()'s default, so a stale default can never
+  // silently stand in for a real measurement again.
+  'blend-usdc': {
+    facts: audited({ tvl: f(127_174_055) }),
+    meta: { label: 'Blend USDC (Stellar)' },
+  },
+  'aave-v3': { facts: audited({ tvl: f(13_787_613_756) }), meta: { label: 'Aave v3 (mainnet)' } },
   'morpho-blue': {
-    facts: audited({ tvl: f(12_000_000), adminKey: f('multisig') }),
+    facts: audited({ tvl: f(7_506_773_961), adminKey: f('multisig') }),
     meta: { label: 'Morpho Blue (mainnet)' },
   },
   'pendle-v2': {
-    facts: audited({ ageDays: f(540), tvl: f(8_000_000) }),
+    facts: audited({ ageDays: f(540), tvl: f(1_205_115_256) }),
     meta: { label: 'Pendle (mainnet)' },
   },
   fluid: {
-    facts: audited({ tvl: f(5_000_000), adminKey: f('multisig') }),
+    facts: audited({ tvl: f(1_074_585_732), adminKey: f('multisig') }),
     meta: { label: 'Fluid (mainnet)' },
   },
   // Base pools (cross-chain leg, see BASE_POOL_CATALOG factSlug in config.js). Curation
