@@ -13,7 +13,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { axe } from 'vitest-axe'
 import * as axeMatchers from 'vitest-axe/matchers'
 import { ProtectStage } from './ProtectStage.jsx'
@@ -456,6 +456,13 @@ describe('ProtectStage — reuse review content', () => {
     expect(screen.getByText(/Headroom: 90 USDC/)).toBeTruthy()
     expect(screen.getByText(/Expires/)).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Continue' })).toBeTruthy()
+    // Fix round 1 -- F3 (review finding): the ceiling card (heading + 4-row list) used to be
+    // written out separately in each of the two mutually-exclusive branches; it is now one hoisted
+    // element rendered from both. The "fresh review content" describe block below already covers
+    // the `.pc-support` branch (plus the F2 human-date test above); this line is this file's only
+    // coverage of the `.pc-protect-limit` (reuse) branch actually rendering it too.
+    expect(screen.getByText('Stops working')).toBeTruthy()
+    expect(screen.getByText('Cancel any time')).toBeTruthy()
   })
 
   it('never renders the secret execution credential reference', async () => {
@@ -770,6 +777,22 @@ describe('ProtectStage — reduced motion / no animation (rejection checklist it
   })
 })
 
+// Fix round 1 -- F1 (review finding): `.pc-ceiling-rows li`'s shared border-bottom literal
+// (rgb(23 37 31 / 18%), a dark-ink line) is correct on `.pc-protect-limit`'s always-light Rice
+// surface but effectively invisible on `.pc-support`'s near-black default-forest-theme surface --
+// asserted against the raw CSS source (not getComputedStyle) because jsdom's CSS engine does not
+// reliably parse the modern space-separated rgb()-with-alpha syntax, matching this file's own
+// existing "no NEW keyframes" source-text convention above rather than risking a false pass/fail on
+// an unrelated jsdom parsing gap.
+describe('ProtectStage — F1: ceiling row separator visible on both surface polarities', () => {
+  it('overrides the ceiling row separator to the theme --pc-line token on .pc-support, leaving .pc-protect-limit on its light-Rice-tuned literal', () => {
+    const css = fs.readFileSync(path.resolve(here, './strategy.css'), 'utf8')
+    expect(css).toMatch(
+      /\.pc-support\s+\.pc-ceiling-rows\s+li\s*\{[^}]*border-bottom-color:\s*var\(--pc-line\)/
+    )
+  })
+})
+
 describe('ProtectStage — axe', () => {
   it('has zero violations disconnected', async () => {
     const { container } = render(<ProtectStage {...baseProps({ owner: null })} />)
@@ -803,26 +826,91 @@ describe('Protect recompose', () => {
   it('renders the four boundary bullets from the plan', () => {
     renderProtectStage({ plan: planFixture }) // reuse the file's existing plan fixture/helper
     expect(screen.getByText(/can spend at most/i)).toBeTruthy()
-    expect(screen.getByText(/stops on/i)).toBeTruthy()
+    // Fix round 1 -- F2 (review finding): pre-decision this used to read "stops on 24 hours", which
+    // is not a sentence an English speaker would write ("in", not "on", pairs with a duration). The
+    // default fixture never calls checkPermission(), so it stays pre-decision (durationId '24h').
+    expect(screen.getByText(/stops in 24 hours/i)).toBeTruthy()
     expect(screen.getByText(/pinned to one vault/i)).toBeTruthy()
     expect(screen.getByText(/only go back to your address/i)).toBeTruthy()
   })
 
-  it('renders PASSED and REJECTED background-check rows from plan.review', () => {
+  // Fix round 1 -- F2 (review finding): once a decision exists, the same sentence used to read
+  // "stops on 2027-01-15T11:00:00.000Z" -- formatExpiry's raw ISO-with-milliseconds instant, not
+  // English. This pins BOTH the "on" preposition (a date, not a duration, is what follows post-
+  // decision) and the absence of a raw ISO string, scoped to the boundary sentence and the ceiling
+  // row specifically (formatExpiry's own PRE-EXISTING call sites elsewhere on this same screen --
+  // "As of"/"Expires" -- legitimately keep rendering the ISO instant and are untouched by this fix,
+  // so a page-wide assertion would give a false negative).
+  it('renders a human date, not a raw ISO timestamp, in the boundary sentence and ceiling row once a decision exists', async () => {
+    renderProtectStage()
+    await checkPermission()
+
+    const boundarySentence = screen.getByText(/stops on/i)
+    const isoWithMillis = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/
+    expect(boundarySentence.textContent).not.toMatch(isoWithMillis)
+    expect(boundarySentence.textContent).toMatch(/stops on [A-Za-z]{3} \d{1,2}, \d{4}/)
+
+    const stopsWorkingRow = Array.from(document.querySelectorAll('.pc-ceiling-rows li')).find(
+      (li) => li.textContent.startsWith('Stops working')
+    )
+    expect(stopsWorkingRow.textContent).not.toMatch(isoWithMillis)
+  })
+
+  it('renders PASSED and REJECTED background-check rows bound to their own candidate row, not merely present somewhere on the page', () => {
+    // Fix round 1 -- F4 (review finding): the original assertions (`getByText('PASSED')` /
+    // `getByText('REJECTED')` with no scoping) stay green even if the eligible/ineligible mapping
+    // is inverted, since SOME element with each literal string still exists on the page either way.
+    // Scoping each badge to its own row via `within(...).closest(...)`, and asserting `data-eligible`
+    // directly, makes this test fail if the mapping (or the data attribute) is ever flipped.
     renderProtectStage({
       plan: {
         ...planFixture,
         review: {
           candidates: [
             { protocol: 'Blend Capital v2', chain: 'stellar', eligible: true, reasons: [] },
-            { protocol: 'Aave v3 (proxy)', chain: 'base', eligible: false, reasons: ['facts stale'] },
+            {
+              protocol: 'Aave v3 (proxy)',
+              chain: 'base',
+              eligible: false,
+              reasons: ['facts stale'],
+            },
           ],
         },
       },
     })
-    expect(screen.getByText('PASSED')).toBeTruthy()
-    expect(screen.getByText('REJECTED')).toBeTruthy()
-    expect(screen.getByText(/facts stale/i)).toBeTruthy()
+
+    const blendRow = screen.getByText('Blend Capital v2').closest('.pc-candidate-row')
+    const aaveRow = screen.getByText('Aave v3 (proxy)').closest('.pc-candidate-row')
+
+    expect(within(blendRow).getByText('PASSED')).toBeTruthy()
+    expect(within(blendRow).queryByText('REJECTED')).toBeNull()
+    expect(blendRow.getAttribute('data-eligible')).toBe('true')
+
+    expect(within(aaveRow).getByText('REJECTED')).toBeTruthy()
+    expect(within(aaveRow).queryByText('PASSED')).toBeNull()
+    expect(aaveRow.getAttribute('data-eligible')).toBe('false')
+    expect(within(aaveRow).getByText(/facts stale/i)).toBeTruthy()
+  })
+
+  // Fix round 1 -- F5 (review finding, controller-promoted from Minor): `chain` was carried on
+  // every candidate but never rendered, so two candidates for the same protocol on different chains
+  // rendered as pixel-identical rows.
+  it('renders chain alongside protocol so same-protocol candidates on different chains stay visually distinct', () => {
+    renderProtectStage({
+      plan: {
+        ...planFixture,
+        review: {
+          candidates: [
+            { protocol: 'Blend Capital v2', chain: 'stellar', eligible: true, reasons: [] },
+            { protocol: 'Blend Capital v2', chain: 'base', eligible: true, reasons: [] },
+          ],
+        },
+      },
+    })
+    const rows = document.querySelectorAll('.pc-candidate-row')
+    expect(rows).toHaveLength(2)
+    expect(within(rows[0]).getByText('stellar')).toBeTruthy()
+    expect(within(rows[1]).getByText('base')).toBeTruthy()
   })
 
   it('omits the background-check section when the plan has no review', () => {

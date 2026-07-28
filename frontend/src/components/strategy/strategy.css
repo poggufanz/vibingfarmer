@@ -362,7 +362,10 @@
  *     `gap: 2px` precedent above, not the --pc-space-* scale (smallest step is 4px).
  *   - `.pc-ceiling-rows li`'s border-bottom `rgb(23 37 31 / 18%)`: the same un-tokenized
  *     `--pc-field`-RGB-triple idiom `.pc-allocation-row`/`.pc-amount-preset` above already use for
- *     their own opacity values (22%/30%) -- no token holds this specific opacity either.
+ *     their own opacity values (22%/30%) -- no token holds this specific opacity either. Fix round 1
+ *     -- F1 (review finding): this literal is only correct on `.pc-protect-limit`'s light Rice
+ *     surface; `.pc-support .pc-ceiling-rows li` now overrides it to `var(--pc-line)` (see that
+ *     rule's own comment below) since `.pc-support` can be the near-black forest surface.
  *   - `.pc-ceiling-rows li span:last-child`'s `font-weight: 700`: no font-weight token, same as
  *     every other literal font-weight in this file.
  *   - `.pc-ceiling-total`'s own addition (the brief only gave verbatim CSS for the row list, not
@@ -442,6 +445,18 @@
   font-weight: 650;
 }
 
+/* Fix round 1 -- F5 (review finding): `chain` needed its own visibly distinct treatment from the
+ * protocol name so two same-protocol, different-chain rows read as different at a glance. Reuses
+ * `--pc-type-label`/`--pc-muted` (the same pair `.pc-provenance`/`.pc-network-badge` above already
+ * use for secondary metadata) and the `font-weight: 620` literal those two rules already established
+ * (no font-weight token exists anywhere in this file) -- no new literal introduced.
+ */
+.pc-candidate-chain {
+  font-size: var(--pc-type-label);
+  font-weight: 620;
+  color: var(--pc-muted);
+}
+
 .pc-candidate-reason {
   margin: 2px 0 0;
   max-width: 56ch;
@@ -479,6 +494,22 @@
   padding-block: var(--pc-space-3);
   border-bottom: 1px solid rgb(23 37 31 / 18%);
   font-size: var(--pc-type-body-small);
+}
+
+/* Fix round 1 -- F1 (review finding): the literal above is a dark-ink line tuned for
+ * `.pc-protect-limit`'s always-light Rice surface (--pc-owned, Task 11 -- Protect). The SAME rule
+ * also styles `.pc-support`'s rows, but `.pc-support`'s background is --pc-workspace, which in the
+ * default forest theme is near-black (--pc-grove) -- the identical dark-ink-at-18% line is then
+ * effectively invisible over it. `.pc-support` is the FIRST-RUN default path (a fresh grant, no
+ * existing permission to reuse yet), so the common case shipped four separator-less rows. Unlike
+ * the `.pc-allocation-row`/`.pc-amount-preset` literal-RGB precedent this rule originally followed
+ * (both only ever sit on a light surface), this rule now spans two surfaces of opposite polarity, so
+ * the literal-RGB idiom does not transfer here. `--pc-line` is the token calibrated per-theme for
+ * exactly this general-purpose divider role (forest rgb(242 245 239/16%), day-field
+ * rgb(23 37 31/16%)) -- correct on both surfaces regardless of theme, so `.pc-support`'s rows get
+ * the token override while `.pc-protect-limit`'s keep the Rice-tuned literal above. */
+.pc-support .pc-ceiling-rows li {
+  border-bottom-color: var(--pc-line);
 }
 
 .pc-ceiling-rows li:last-child {
