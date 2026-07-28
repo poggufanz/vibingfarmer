@@ -106,8 +106,19 @@ function formatCents(cents) {
 // `formatCents` already produces for every other money row in this file (Cap/allocation via
 // buildAmountDisplayMap below). Not a second money formatter: the rounding/sign/2dp logic stays
 // 100% formatCents; this only converts a float-dollars input into the cents BigInt it expects.
+//
+// Fix loop 1 -- Important 1 (review finding): a `value` that is itself finite (already past
+// formatShare's own `Number.isFinite` guard at its call site, e.g. amountNumber) can still
+// overflow to Infinity once multiplied by 100 here (Number.MAX_VALUE / 100 ~= 1.8e306) --
+// `BigInt(Infinity)` throws, and this file's own comment above documents there is no error
+// boundary anywhere in the app, so that throw would blank the whole Plan stage on render. Guards
+// the PRODUCT, not just the input, mirroring formatShare's own guard -- an amount this large has
+// no real vault/grant behind it anyway, so collapsing to the same 0 sentinel the amount field's
+// own Number.isFinite guard already uses for unusable input (PlanStage's `amountNumber`, above)
+// is consistent, not a second invented number.
 function formatDollarNumber(value) {
-  return formatCents(BigInt(Math.round(value * 100)))
+  const cents = Math.round(value * 100)
+  return formatCents(Number.isFinite(cents) ? BigInt(cents) : 0n)
 }
 
 // Task 4 -- sums a GROUP of real plan agents' allocation units (BigInt, exact) and rounds ONCE,
@@ -284,6 +295,17 @@ export function PlanStage({
   const deployedText = plan
     ? `${sumAllocationCents(depositAgents)} ${plan.amount.token}`
     : `${formatDollarNumber(amountNumber)} USDC`
+  // Fix loop 1 -- Important 3 (review finding): the Blend/Stellar APY may only be applied to
+  // money actually going to Blend. Before a plan exists the split isn't known yet, so the typed
+  // amount is the best available estimate; once a plan DOES exist, `viewModel` (built above) has
+  // the real per-agent decimal totals -- summing only the 'deposit' (Stellar) agents excludes any
+  // Base-bound bridge leg, which this component has no APY claim for at all. Using the full plan
+  // total here (as the brief's literal formula did) overstated the estimate by exactly the
+  // bridged share every time -- the same "never invent a number" constraint that gates whether
+  // this row renders at all also governs what it computes.
+  const estimateAmount = viewModel
+    ? viewModel.agents.filter((a) => a.kind === 'deposit').reduce((s, a) => s + a.allocation, 0)
+    : amountNumber
   // Never invented: only computed when the caller's own venue object exposes a genuine numeric
   // APY (frontend/src/app.jsx's stellarVenueDisplay.apy, sourced from VAULT_CATALOG -- confirmed
   // a flat top-level number, not the nested {state,apy} shape venueYield()/stellarYield above
@@ -291,8 +313,8 @@ export function PlanStage({
   // optional and most callers/tests never pass one -- an unguarded `stellarVenue.apy` read would
   // throw on every one of them.
   const estimate30d =
-    typeof stellarVenue?.apy === 'number' && amountNumber > 0
-      ? `${formatDollarNumber(amountNumber * (stellarVenue.apy / 100) * (30 / 365))} USDC`
+    typeof stellarVenue?.apy === 'number' && estimateAmount > 0
+      ? `${formatDollarNumber(estimateAmount * (stellarVenue.apy / 100) * (30 / 365))} USDC`
       : null
 
   async function runGeneration(generate) {
@@ -701,7 +723,12 @@ export function PlanStage({
                 <span className="pc-fact-value">{RISK_PROFILES[risk].targetSlots}</span>
               </li>
             )}
-            {typeof stellarVenue?.apy === 'number' && amountNumber > 0 && (
+            {/* Fix loop 1 -- minor (review finding): `estimate30d` above is already `null` exactly
+                when this row shouldn't render (same guard, computed once) -- repeating the full
+                `typeof stellarVenue?.apy === 'number' && estimateAmount > 0` condition here was a
+                second copy that could silently drift out of sync with the one that actually
+                gates the value. */}
+            {estimate30d && (
               <li className="pc-fact-row">
                 <span className="pc-fact-dot" aria-hidden="true" />
                 <span>Estimated in 30 days</span>

@@ -536,9 +536,18 @@ describe('PlanStage — reviewed plan (Stellar-only)', () => {
     await generateStellarOnlyPlan()
     // risk 'Balanced' (med) -> exactly 2 deposit agents sharing ONE Stellar testnet badge -- an
     // identical badge repeated per row was exactly the "info blocks repeated 3x" defect the owner
-    // reported (item 6). Scoped to `.pc-plan-facts` (the hoisted summary itself) -- Task 4's
-    // aside now ALSO mentions "Stellar testnet" once, in its own unrelated provenance breadcrumb,
-    // so a bare document-wide count is no longer a precise proxy for "not repeated per row".
+    // reported (item 6). Fix loop 1 -- Important 2 (review finding): a plain document-wide count
+    // stopped being a precise proxy once Task 4's aside ALSO mentions "Stellar testnet" once, in
+    // its own unrelated provenance breadcrumb (`.pc-plan-so-far`) -- but disambiguating that by
+    // scoping ONLY to `.pc-plan-facts` (the hoisted summary itself) silently dropped the actual
+    // regression this test exists to catch: the worker rows it guards live in the SIBLING
+    // `.pc-allocation-list`, entirely outside `.pc-plan-facts`, so a badge reintroduced per row
+    // there would never be seen by a `.pc-plan-facts`-only query. Asserting BOTH -- zero inside
+    // the worker list, exactly one inside the hoisted summary -- restores the original coverage
+    // while still tolerating the new breadcrumb.
+    expect(
+      within(document.querySelector('.pc-allocation-list')).queryAllByText('Stellar testnet')
+    ).toHaveLength(0)
     expect(
       within(document.querySelector('.pc-plan-facts')).getAllByText('Stellar testnet')
     ).toHaveLength(1)
@@ -1059,7 +1068,11 @@ describe('PlanStage — owner report: P0 correctness (items 1, 2, 3, 4)', () => 
 
   it('items 6/8: network, expiry, and yield stay hoisted to one shared line even with three workers', async () => {
     await generateThreeWaySplit()
-    // Scoped to `.pc-plan-facts` -- see the identical Task 4 note on the sibling test above.
+    // Fix loop 1 -- Important 2: same restored zero-in-worker-list + one-in-summary pair as the
+    // sibling test above, so this variant keeps guarding a badge reintroduced per row too.
+    expect(
+      within(document.querySelector('.pc-allocation-list')).queryAllByText('Stellar testnet')
+    ).toHaveLength(0)
     expect(
       within(document.querySelector('.pc-plan-facts')).getAllByText('Stellar testnet')
     ).toHaveLength(1)
@@ -1473,6 +1486,40 @@ describe('the plan so far aside', () => {
     expect(within(aside).getByText('60.00 USDC')).toBeTruthy()
     expect(within(aside).getByText('Sent to Base')).toBeTruthy()
     expect(within(aside).getByText('40.00 USDC')).toBeTruthy()
+    // Fix loop 1 -- Important 3 (review finding): the 30-day estimate must apply the 4.8% APY
+    // only to the 60 USDC that actually went to Blend (60 * 0.048 * 30/365 = 0.2367... -> "0.24"),
+    // never to the full 100 USDC typed amount (which would have given the wrong "0.39" -- the
+    // exact bug this fix closes, asserted absent below too).
+    expect(within(aside).getByText('+0.24 USDC')).toBeTruthy()
+    expect(within(aside).queryByText('+0.39 USDC')).toBeNull()
+  })
+
+  // Fix loop 1 -- Important 1 (review finding): `amountNumber` (1e307) is itself finite -- the
+  // upstream Number.isFinite guard never collapses it to 0 -- but `formatDollarNumber`'s own
+  // `value * 100` overflows to Infinity (Number.MAX_VALUE / 100 ~= 1.8e306), and `BigInt(Infinity)`
+  // used to throw with no error boundary anywhere in the app, blanking the whole Plan stage. The
+  // pre-existing `1e999` regression test can't catch this: `1e999` parses to `Infinity` and is
+  // already collapsed to 0 by the amountNumber guard before it ever reaches a formatter.
+  it('does not crash when a finite typed amount overflows on the cents multiply', () => {
+    renderPlanStage()
+    expect(() =>
+      fireEvent.change(screen.getByLabelText('Amount in USDC'), { target: { value: '1e307' } })
+    ).not.toThrow()
+    const aside = screen.getByRole('complementary', { name: /the plan so far/i })
+    // Collapses to the same 0 sentinel the amount field's own Number.isFinite guard already uses
+    // for unusable input -- not a crash, and not a fabricated non-zero number either.
+    expect(within(aside).getByText('0.00 USDC')).toBeTruthy()
+  })
+
+  // Bundled minor (review finding): the existing no-APY test omits `stellarVenue` entirely, which
+  // only exercises the `?.` optional-chain -- this pins the `typeof ... === 'number'` check
+  // itself against a venue that HAS an `apy` field, just not a numeric one (e.g. a not-yet-parsed
+  // string from an upstream source).
+  it('omits the estimated-yield row when apy is present but not a number', () => {
+    renderPlanStage({ stellarVenue: { name: 'Vibing Farmer Autofarm', apy: '4.8' } })
+    fireEvent.change(screen.getByLabelText('Amount in USDC'), { target: { value: '250' } })
+    const aside = screen.getByRole('complementary', { name: /the plan so far/i })
+    expect(within(aside).queryByText(/Estimated in 30 days/)).toBeNull()
   })
 
   // A11y: `<aside>` only maps to the `complementary` role when it is not nested inside another
