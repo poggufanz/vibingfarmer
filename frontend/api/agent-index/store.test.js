@@ -119,12 +119,19 @@ describe('upsertMembership / readOwnerMemberships', () => {
     await store.upsertMembership(membership())
     const rows = await store.readOwnerMemberships({ networkId: NETWORK, owner: 'GOWNER1' })
     expect(rows).toHaveLength(1)
-    expect(rows[0]).toMatchObject({ address: 'CAGENT1', owner: 'GOWNER1', kind: 'deposit', creator: CREATOR })
+    expect(rows[0]).toMatchObject({
+      address: 'CAGENT1',
+      owner: 'GOWNER1',
+      kind: 'deposit',
+      creator: CREATOR,
+    })
     expect(rows[0].provenance).toEqual({ source: 'router-event' })
   })
   it('upserts on (network_id, agent_address) conflict instead of duplicating', async () => {
     await store.upsertMembership(membership())
-    await store.upsertMembership(membership({ provenance: { source: 'router-event', updated: true } }))
+    await store.upsertMembership(
+      membership({ provenance: { source: 'router-event', updated: true } })
+    )
     const rows = await store.readOwnerMemberships({ networkId: NETWORK, owner: 'GOWNER1' })
     expect(rows).toHaveLength(1)
     expect(rows[0].provenance).toEqual({ source: 'router-event', updated: true })
@@ -195,10 +202,14 @@ describe('upsertRunAllocation', () => {
     try {
       vi.setSystemTime(1_000_000_000_000)
       await store.upsertRunAllocation(allocation())
-      const before = db._raw.prepare('SELECT * FROM agent_run_allocations WHERE id = ?').get('alloc-1')
+      const before = db._raw
+        .prepare('SELECT * FROM agent_run_allocations WHERE id = ?')
+        .get('alloc-1')
       vi.setSystemTime(1_000_000_010_000) // +10s
       await store.upsertRunAllocation(allocation({ executionStatus: 'accepted' }))
-      const after = db._raw.prepare('SELECT * FROM agent_run_allocations WHERE id = ?').get('alloc-1')
+      const after = db._raw
+        .prepare('SELECT * FROM agent_run_allocations WHERE id = ?')
+        .get('alloc-1')
       expect(after.created_at).toBe(before.created_at)
       expect(after.updated_at).toBeGreaterThan(before.updated_at)
       expect(after.execution_status).toBe('accepted')
@@ -259,8 +270,7 @@ describe('durable relayer associations', () => {
   it('atomically records the latest association and its exact idempotency tuple', async () => {
     const result = await store.commitAssociation({
       association: association(),
-      idempotencyKey:
-        '["stellar-testnet","run-1","run-1:bridge:aave-v3","accepted",null]',
+      idempotencyKey: '["stellar-testnet","run-1","run-1:bridge:aave-v3","accepted",null]',
     })
 
     expect(result).toEqual({ written: 1, duplicates: 0 })
@@ -272,8 +282,7 @@ describe('durable relayer associations', () => {
     ).toMatchObject(association())
     expect(
       await store.hasAssociationEvent({
-        idempotencyKey:
-          '["stellar-testnet","run-1","run-1:bridge:aave-v3","accepted",null]',
+        idempotencyKey: '["stellar-testnet","run-1","run-1:bridge:aave-v3","accepted",null]',
       })
     ).toBe(true)
     expect(
@@ -428,9 +437,9 @@ describe('durable relayer associations', () => {
       custodyLocation: 'agent',
       txHash: '0xmint',
     })
-    expect(
-      await store.hasAssociationEvent({ idempotencyKey: 'failed-without-evidence-key' })
-    ).toBe(false)
+    expect(await store.hasAssociationEvent({ idempotencyKey: 'failed-without-evidence-key' })).toBe(
+      false
+    )
   })
 
   it('keeps a historical row association-unknown when no relayer proof exists', async () => {
@@ -540,7 +549,10 @@ describe('commitSourcePage', () => {
         throughLedger: 150,
         finalizedThroughLedger: 148,
         cursor: 'c1',
-        memberships: [membership({ agentAddress: 'CAGENT-GOOD' }), membership({ agentAddress: 'CAGENT-BAD', kind: 'legacy' })],
+        memberships: [
+          membership({ agentAddress: 'CAGENT-GOOD' }),
+          membership({ agentAddress: 'CAGENT-BAD', kind: 'legacy' }),
+        ],
       })
     ).rejects.toThrow(/kind/)
     const { sources } = await store.readCoverage({ networkId: NETWORK })
@@ -563,7 +575,10 @@ describe('commitSourcePage', () => {
         throughLedger: 150,
         finalizedThroughLedger: -50, // violates CHECK(finalized_through_ledger >= indexed_from_ledger - 1)
         cursor: 'c1',
-        memberships: [membership({ agentAddress: 'CAGENT-GOOD-1' }), membership({ agentAddress: 'CAGENT-GOOD-2' })],
+        memberships: [
+          membership({ agentAddress: 'CAGENT-GOOD-1' }),
+          membership({ agentAddress: 'CAGENT-GOOD-2' }),
+        ],
       })
     ).rejects.toThrow(/CHECK/)
     const { sources } = await store.readCoverage({ networkId: NETWORK })
@@ -582,7 +597,13 @@ describe('commitSourcePage', () => {
       memberships: [],
     })
     // The hole is unindexable (e.g. an RPC gap) — record it explicitly...
-    await store.recordGap({ sourceId: SOURCE_ID, networkId: NETWORK, fromLedger: 151, throughLedger: 159, reason: 'rpc-timeout' })
+    await store.recordGap({
+      sourceId: SOURCE_ID,
+      networkId: NETWORK,
+      fromLedger: 151,
+      throughLedger: 159,
+      reason: 'rpc-timeout',
+    })
     // ...then commit a page spanning the same range with no memberships to actually advance the
     // cursor. recordGap alone never moves indexed_through_ledger — this empty page is what does.
     await store.commitSourcePage({
@@ -605,7 +626,12 @@ describe('commitSourcePage', () => {
     const { sources, gaps } = await store.readCoverage({ networkId: NETWORK })
     expect(sources[0].indexedThroughLedger).toBe(200)
     expect(gaps).toHaveLength(1) // the gap stays on record even though the cursor moved past it
-    expect(gaps[0]).toMatchObject({ sourceId: SOURCE_ID, fromLedger: 151, throughLedger: 159, status: 'open' })
+    expect(gaps[0]).toMatchObject({
+      sourceId: SOURCE_ID,
+      fromLedger: 151,
+      throughLedger: 159,
+      status: 'open',
+    })
   })
 
   it('rejects a membership whose networkId/creatorAddress does not match the source', async () => {
@@ -667,29 +693,67 @@ describe('commitSourcePage', () => {
       memberships: [],
     })
     const { sources } = await store.readCoverage({ networkId: NETWORK })
-    expect(sources[0]).toMatchObject({ providerId: null, endpointClass: null, reportedOldestLedger: null, reportedLatestLedger: null })
+    expect(sources[0]).toMatchObject({
+      providerId: null,
+      endpointClass: null,
+      reportedOldestLedger: null,
+      reportedLatestLedger: null,
+    })
   })
 })
 
 describe('ensureSourceRow', () => {
   it('seeds the "nothing indexed yet" sentinel row for a brand-new source', async () => {
-    await store.ensureSourceRow({ sourceId: SOURCE_ID, networkId: NETWORK, creatorAddress: CREATOR, fromLedger: 500 })
+    await store.ensureSourceRow({
+      sourceId: SOURCE_ID,
+      networkId: NETWORK,
+      creatorAddress: CREATOR,
+      fromLedger: 500,
+    })
     const { sources } = await store.readCoverage({ networkId: NETWORK })
     expect(sources).toHaveLength(1)
-    expect(sources[0]).toMatchObject({ indexedFromLedger: 500, indexedThroughLedger: 499, finalizedThroughLedger: 499, status: 'ok' })
+    expect(sources[0]).toMatchObject({
+      indexedFromLedger: 500,
+      indexedThroughLedger: 499,
+      finalizedThroughLedger: 499,
+      status: 'ok',
+    })
   })
 
   it('is a no-op when the source row already exists — never regresses an already-advanced cursor', async () => {
-    await store.commitSourcePage({ sourceId: SOURCE_ID, fromLedger: 100, throughLedger: 150, finalizedThroughLedger: 148, cursor: 'c1', memberships: [] })
-    await store.ensureSourceRow({ sourceId: SOURCE_ID, networkId: NETWORK, creatorAddress: CREATOR, fromLedger: 100 })
+    await store.commitSourcePage({
+      sourceId: SOURCE_ID,
+      fromLedger: 100,
+      throughLedger: 150,
+      finalizedThroughLedger: 148,
+      cursor: 'c1',
+      memberships: [],
+    })
+    await store.ensureSourceRow({
+      sourceId: SOURCE_ID,
+      networkId: NETWORK,
+      creatorAddress: CREATOR,
+      fromLedger: 100,
+    })
     const { sources } = await store.readCoverage({ networkId: NETWORK })
     expect(sources).toHaveLength(1)
     expect(sources[0].indexedThroughLedger).toBe(150) // untouched, not reset to the sentinel
   })
 
   it('lets a subsequent recordGap satisfy its FK even on a source that has never committed a real page', async () => {
-    await store.ensureSourceRow({ sourceId: SOURCE_ID, networkId: NETWORK, creatorAddress: CREATOR, fromLedger: 100 })
-    await store.recordGap({ sourceId: SOURCE_ID, networkId: NETWORK, fromLedger: 100, throughLedger: 199, reason: 'below-oldest-available-ledger' })
+    await store.ensureSourceRow({
+      sourceId: SOURCE_ID,
+      networkId: NETWORK,
+      creatorAddress: CREATOR,
+      fromLedger: 100,
+    })
+    await store.recordGap({
+      sourceId: SOURCE_ID,
+      networkId: NETWORK,
+      fromLedger: 100,
+      throughLedger: 199,
+      reason: 'below-oldest-available-ledger',
+    })
     const { gaps } = await store.readCoverage({ networkId: NETWORK })
     expect(gaps).toHaveLength(1)
   })
@@ -697,18 +761,45 @@ describe('ensureSourceRow', () => {
 
 describe('recordSourceError', () => {
   it('marks the source status=error with a last_error trail WITHOUT moving the cursor, even on a first-ever page', async () => {
-    await store.recordSourceError({ sourceId: SOURCE_ID, networkId: NETWORK, creatorAddress: CREATOR, fromLedger: 100, message: 'schema drift' })
+    await store.recordSourceError({
+      sourceId: SOURCE_ID,
+      networkId: NETWORK,
+      creatorAddress: CREATOR,
+      fromLedger: 100,
+      message: 'schema drift',
+    })
     const { sources } = await store.readCoverage({ networkId: NETWORK })
     expect(sources).toHaveLength(1)
-    expect(sources[0]).toMatchObject({ status: 'error', indexedThroughLedger: 99, lastErrorMessage: 'schema drift' })
+    expect(sources[0]).toMatchObject({
+      status: 'error',
+      indexedThroughLedger: 99,
+      lastErrorMessage: 'schema drift',
+    })
     expect(sources[0].lastErrorAt).not.toBeNull()
   })
 
   it('marks an existing source status=error without advancing indexed_through_ledger', async () => {
-    await store.commitSourcePage({ sourceId: SOURCE_ID, fromLedger: 100, throughLedger: 150, finalizedThroughLedger: 148, cursor: 'c1', memberships: [] })
-    await store.recordSourceError({ sourceId: SOURCE_ID, networkId: NETWORK, creatorAddress: CREATOR, fromLedger: 151, message: 'schema drift again' })
+    await store.commitSourcePage({
+      sourceId: SOURCE_ID,
+      fromLedger: 100,
+      throughLedger: 150,
+      finalizedThroughLedger: 148,
+      cursor: 'c1',
+      memberships: [],
+    })
+    await store.recordSourceError({
+      sourceId: SOURCE_ID,
+      networkId: NETWORK,
+      creatorAddress: CREATOR,
+      fromLedger: 151,
+      message: 'schema drift again',
+    })
     const { sources } = await store.readCoverage({ networkId: NETWORK })
-    expect(sources[0]).toMatchObject({ status: 'error', indexedThroughLedger: 150, lastErrorMessage: 'schema drift again' })
+    expect(sources[0]).toMatchObject({
+      status: 'error',
+      indexedThroughLedger: 150,
+      lastErrorMessage: 'schema drift again',
+    })
   })
 })
 
@@ -716,13 +807,20 @@ describe('readMembershipsByAgentAddresses', () => {
   it('returns only the requested (network, address) rows', async () => {
     await store.upsertMembership(membership())
     await store.upsertMembership(membership({ agentAddress: 'CAGENT2', ownerAddress: 'GOWNER2' }))
-    await store.upsertMembership(membership({ agentAddress: 'CAGENT-OTHER-NET', networkId: 'base-sepolia' }))
-    const rows = await store.readMembershipsByAgentAddresses({ networkId: NETWORK, agentAddresses: ['CAGENT1', 'CAGENT2', 'CAGENT-NEVER-WRITTEN'] })
+    await store.upsertMembership(
+      membership({ agentAddress: 'CAGENT-OTHER-NET', networkId: 'base-sepolia' })
+    )
+    const rows = await store.readMembershipsByAgentAddresses({
+      networkId: NETWORK,
+      agentAddresses: ['CAGENT1', 'CAGENT2', 'CAGENT-NEVER-WRITTEN'],
+    })
     expect(rows.map((r) => r.address).sort()).toEqual(['CAGENT1', 'CAGENT2'])
   })
 
   it('returns [] for an empty address list without touching the DB', async () => {
-    expect(await store.readMembershipsByAgentAddresses({ networkId: NETWORK, agentAddresses: [] })).toEqual([])
+    expect(
+      await store.readMembershipsByAgentAddresses({ networkId: NETWORK, agentAddresses: [] })
+    ).toEqual([])
   })
 })
 
@@ -738,10 +836,21 @@ describe('recordGap', () => {
       cursor: 'c1',
       memberships: [],
     })
-    await store.recordGap({ sourceId: SOURCE_ID, networkId: NETWORK, fromLedger: 151, throughLedger: 159, reason: 'rpc-timeout' })
+    await store.recordGap({
+      sourceId: SOURCE_ID,
+      networkId: NETWORK,
+      fromLedger: 151,
+      throughLedger: 159,
+      reason: 'rpc-timeout',
+    })
     const { gaps } = await store.readCoverage({ networkId: NETWORK })
     expect(gaps).toHaveLength(1)
-    expect(gaps[0]).toMatchObject({ sourceId: SOURCE_ID, fromLedger: 151, throughLedger: 159, status: 'open' })
+    expect(gaps[0]).toMatchObject({
+      sourceId: SOURCE_ID,
+      fromLedger: 151,
+      throughLedger: 159,
+      status: 'open',
+    })
   })
   it('rejects throughLedger < fromLedger at the SQL layer', () => {
     expect(() =>
@@ -778,7 +887,11 @@ describe('recordBackfillAudit', () => {
     })
     const { backfillAudits } = await store.readCoverage({ networkId: NETWORK })
     expect(backfillAudits).toHaveLength(1)
-    expect(backfillAudits[0]).toMatchObject({ sourceId: SOURCE_ID, result: 'verified', method: 'horizon-tx-scan' })
+    expect(backfillAudits[0]).toMatchObject({
+      sourceId: SOURCE_ID,
+      result: 'verified',
+      method: 'horizon-tx-scan',
+    })
     expect(backfillAudits[0].evidence).toEqual({ txCount: 12 })
   })
   it('has no UPDATE path in the repository — only recordBackfillAudit (insert) and readCoverage (read)', () => {

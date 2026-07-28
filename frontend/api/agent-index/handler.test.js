@@ -62,7 +62,9 @@ function fakeD1() {
   }
 }
 
-const ROUTER_V1 = AGENT_CREATORS.find((c) => c.address === 'CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5')
+const ROUTER_V1 = AGENT_CREATORS.find(
+  (c) => c.address === 'CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5'
+)
 const OWNER_A = 'GAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQDZ7H'
 const AGENT_A = 'CABQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGCK3'
 
@@ -76,7 +78,12 @@ function deployedRecord({ owner, agent, cap = 1000n, ledger, txHash }) {
   }
 }
 
-function fakeEventSource({ events = [], scannedThroughLedger, oldestAvailableLedger = 1, latestAvailableLedger = 10_000_000 } = {}) {
+function fakeEventSource({
+  events = [],
+  scannedThroughLedger,
+  oldestAvailableLedger = 1,
+  latestAvailableLedger = 10_000_000,
+} = {}) {
   return {
     providerId: 'test-rpc',
     endpointClass: 'live',
@@ -96,17 +103,32 @@ describe('handleIngest — secret gate', () => {
   })
 
   it('401s on a missing bearer token', async () => {
-    const out = await handleIngest({ secret: 'topsecret', providedSecret: '', store: {}, sources: [] })
+    const out = await handleIngest({
+      secret: 'topsecret',
+      providedSecret: '',
+      store: {},
+      sources: [],
+    })
     expect(out.status).toBe(401)
   })
 
   it('401s on a wrong-but-same-length token (constant-time path, not just a length check)', async () => {
-    const out = await handleIngest({ secret: 'topsecret', providedSecret: 'wrongsecre', store: {}, sources: [] })
+    const out = await handleIngest({
+      secret: 'topsecret',
+      providedSecret: 'wrongsecre',
+      store: {},
+      sources: [],
+    })
     expect(out.status).toBe(401)
   })
 
   it('401s on a wrong-length token', async () => {
-    const out = await handleIngest({ secret: 'topsecret', providedSecret: 'nope', store: {}, sources: [] })
+    const out = await handleIngest({
+      secret: 'topsecret',
+      providedSecret: 'nope',
+      store: {},
+      sources: [],
+    })
     expect(out.status).toBe(401)
   })
 })
@@ -114,18 +136,31 @@ describe('handleIngest — secret gate', () => {
 describe('handleIngest — bounded ingestion, one page per source, isolated failures', () => {
   it('ingests every source and reports per-source ok/failed without aborting the batch', async () => {
     const store = createAgentIndexStore(fakeD1())
-    const rec = deployedRecord({ owner: OWNER_A, agent: AGENT_A, ledger: ROUTER_V1.coverageStartLedger + 1, txHash: 'TX1' })
-    const goodEventSource = fakeEventSource({ events: [rec], oldestAvailableLedger: ROUTER_V1.coverageStartLedger })
+    const rec = deployedRecord({
+      owner: OWNER_A,
+      agent: AGENT_A,
+      ledger: ROUTER_V1.coverageStartLedger + 1,
+      txHash: 'TX1',
+    })
+    const goodEventSource = fakeEventSource({
+      events: [rec],
+      oldestAvailableLedger: ROUTER_V1.coverageStartLedger,
+    })
 
     const out = await handleIngest({
       secret: 'topsecret',
       providedSecret: 'topsecret',
       store,
-      sources: [ROUTER_V1, { ...ROUTER_V1, address: 'CBEI5VJKKWLXKQUUUETBAPZSQQLH7I57TSIDTMV4WJMBKIGVF7NSNOFY' }],
+      sources: [
+        ROUTER_V1,
+        { ...ROUTER_V1, address: 'CBEI5VJKKWLXKQUUUETBAPZSQQLH7I57TSIDTMV4WJMBKIGVF7NSNOFY' },
+      ],
       eventSourceFor: async (source) =>
-        source.address === ROUTER_V1.address ? goodEventSource : (() => {
-          throw new Error('rpc down')
-        })(),
+        source.address === ROUTER_V1.address
+          ? goodEventSource
+          : (() => {
+              throw new Error('rpc down')
+            })(),
       finalizedLedgerFor: async () => ROUTER_V1.coverageStartLedger + 10,
     })
 
@@ -137,7 +172,10 @@ describe('handleIngest — bounded ingestion, one page per source, isolated fail
     const bad = out.body.results.find((r) => !r.ok)
     expect(bad.error).toMatch(/rpc down/)
 
-    const rows = await store.readOwnerMemberships({ networkId: ROUTER_V1.networkId, owner: OWNER_A })
+    const rows = await store.readOwnerMemberships({
+      networkId: ROUTER_V1.networkId,
+      owner: OWNER_A,
+    })
     expect(rows).toHaveLength(1)
   })
 })
@@ -149,7 +187,11 @@ describe('handleRead — input validation', () => {
   })
 
   it('400s an owner that is neither a valid G nor C StrKey', async () => {
-    const out = await handleRead({ networkId: 'stellar-testnet', owner: 'not-an-address', store: {} })
+    const out = await handleRead({
+      networkId: 'stellar-testnet',
+      owner: 'not-an-address',
+      store: {},
+    })
     expect(out.status).toBe(400)
   })
 
@@ -162,41 +204,80 @@ describe('handleRead — input validation', () => {
 
 describe('handleRead — limit validation (Minor 7)', () => {
   it('400s a non-integer limit', async () => {
-    const out = await handleRead({ networkId: 'stellar-testnet', owner: OWNER_A, store: {}, limit: 'abc' })
+    const out = await handleRead({
+      networkId: 'stellar-testnet',
+      owner: OWNER_A,
+      store: {},
+      limit: 'abc',
+    })
     expect(out.status).toBe(400)
   })
 
   it('400s a zero/negative limit', async () => {
-    const out = await handleRead({ networkId: 'stellar-testnet', owner: OWNER_A, store: {}, limit: 0 })
+    const out = await handleRead({
+      networkId: 'stellar-testnet',
+      owner: OWNER_A,
+      store: {},
+      limit: 0,
+    })
     expect(out.status).toBe(400)
   })
 
   it('400s a limit above the max', async () => {
-    const out = await handleRead({ networkId: 'stellar-testnet', owner: OWNER_A, store: {}, limit: 5000 })
+    const out = await handleRead({
+      networkId: 'stellar-testnet',
+      owner: OWNER_A,
+      store: {},
+      limit: 5000,
+    })
     expect(out.status).toBe(400)
   })
 
   it('accepts an unset limit (default) and a within-bounds explicit limit', async () => {
     const out1 = await handleRead({ networkId: 'stellar-testnet', owner: OWNER_A, store: null })
     expect(out1.status).toBe(200)
-    const out2 = await handleRead({ networkId: 'stellar-testnet', owner: OWNER_A, store: null, limit: 10 })
+    const out2 = await handleRead({
+      networkId: 'stellar-testnet',
+      owner: OWNER_A,
+      store: null,
+      limit: 10,
+    })
     expect(out2.status).toBe(200)
   })
 
   it('truncates the agents array to the requested limit', async () => {
     const store = createAgentIndexStore(fakeD1())
     const AGENT_C = 'CACAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAINCW' // valid C-StrKey (used elsewhere as AGENT_B)
-    const rec1 = deployedRecord({ owner: OWNER_A, agent: AGENT_A, ledger: ROUTER_V1.coverageStartLedger + 1, txHash: 'TX1' })
-    const rec2 = deployedRecord({ owner: OWNER_A, agent: AGENT_C, ledger: ROUTER_V1.coverageStartLedger + 2, txHash: 'TX2' })
+    const rec1 = deployedRecord({
+      owner: OWNER_A,
+      agent: AGENT_A,
+      ledger: ROUTER_V1.coverageStartLedger + 1,
+      txHash: 'TX1',
+    })
+    const rec2 = deployedRecord({
+      owner: OWNER_A,
+      agent: AGENT_C,
+      ledger: ROUTER_V1.coverageStartLedger + 2,
+      txHash: 'TX2',
+    })
     await handleIngest({
       secret: 's',
       providedSecret: 's',
       store,
       sources: [ROUTER_V1],
-      eventSourceFor: async () => fakeEventSource({ events: [rec1, rec2], oldestAvailableLedger: ROUTER_V1.coverageStartLedger }),
+      eventSourceFor: async () =>
+        fakeEventSource({
+          events: [rec1, rec2],
+          oldestAvailableLedger: ROUTER_V1.coverageStartLedger,
+        }),
       finalizedLedgerFor: async () => ROUTER_V1.coverageStartLedger + 10,
     })
-    const out = await handleRead({ networkId: ROUTER_V1.networkId, owner: OWNER_A, store, limit: 1 })
+    const out = await handleRead({
+      networkId: ROUTER_V1.networkId,
+      owner: OWNER_A,
+      store,
+      limit: 1,
+    })
     expect(out.body.agents).toHaveLength(1)
   })
 })
@@ -248,7 +329,11 @@ describe('handleRead — unavailable store never reports complete', () => {
       },
       readCoverage: async () => ({ sources: [], gaps: [], backfillAudits: [] }),
     }
-    const out = await handleRead({ networkId: 'stellar-testnet', owner: OWNER_A, store: throwingStore })
+    const out = await handleRead({
+      networkId: 'stellar-testnet',
+      owner: OWNER_A,
+      store: throwingStore,
+    })
     expect(out.body.status).toBe('unavailable')
   })
 })
@@ -267,19 +352,29 @@ describe('handleRead — empty-but-available store is partial, never a false com
 describe('handleRead — end-to-end after ingest', () => {
   it("shapes an owner's agents and coverage per the documented response contract", async () => {
     const store = createAgentIndexStore(fakeD1())
-    const rec = deployedRecord({ owner: OWNER_A, agent: AGENT_A, ledger: ROUTER_V1.coverageStartLedger + 1, txHash: 'TX1' })
+    const rec = deployedRecord({
+      owner: OWNER_A,
+      agent: AGENT_A,
+      ledger: ROUTER_V1.coverageStartLedger + 1,
+      txHash: 'TX1',
+    })
     await handleIngest({
       secret: 's',
       providedSecret: 's',
       store,
       sources: [ROUTER_V1],
-      eventSourceFor: async () => fakeEventSource({ events: [rec], oldestAvailableLedger: ROUTER_V1.coverageStartLedger }),
+      eventSourceFor: async () =>
+        fakeEventSource({ events: [rec], oldestAvailableLedger: ROUTER_V1.coverageStartLedger }),
       finalizedLedgerFor: async () => ROUTER_V1.coverageStartLedger + 10,
     })
 
     const out = await handleRead({ networkId: ROUTER_V1.networkId, owner: OWNER_A, store })
     expect(out.body.agents).toHaveLength(1)
-    expect(out.body.agents[0]).toMatchObject({ address: AGENT_A, kind: 'deposit', creator: ROUTER_V1.address })
+    expect(out.body.agents[0]).toMatchObject({
+      address: AGENT_A,
+      kind: 'deposit',
+      creator: ROUTER_V1.address,
+    })
     expect(out.body.coverage).toMatchObject({
       manifestHash: LIVE_MANIFEST.hash,
       manifestVersion: LIVE_MANIFEST.version,
@@ -293,23 +388,43 @@ describe('handleRead — end-to-end after ingest', () => {
 
 describe('handleBackfillCommit — secret gate (mirrors handleIngest)', () => {
   it('503s when the backfill secret is not configured', async () => {
-    const out = await handleBackfillCommit({ secret: '', providedSecret: 'x', store: {}, audit: {} })
+    const out = await handleBackfillCommit({
+      secret: '',
+      providedSecret: 'x',
+      store: {},
+      audit: {},
+    })
     expect(out.status).toBe(503)
     expect(out.body.configured).toBe(false)
   })
 
   it('401s on a missing bearer token', async () => {
-    const out = await handleBackfillCommit({ secret: 'topsecret', providedSecret: '', store: {}, audit: {} })
+    const out = await handleBackfillCommit({
+      secret: 'topsecret',
+      providedSecret: '',
+      store: {},
+      audit: {},
+    })
     expect(out.status).toBe(401)
   })
 
   it('401s on a wrong token', async () => {
-    const out = await handleBackfillCommit({ secret: 'topsecret', providedSecret: 'nope', store: {}, audit: {} })
+    const out = await handleBackfillCommit({
+      secret: 'topsecret',
+      providedSecret: 'nope',
+      store: {},
+      audit: {},
+    })
     expect(out.status).toBe(401)
   })
 
   it('503s when the store is unavailable', async () => {
-    const out = await handleBackfillCommit({ secret: 's', providedSecret: 's', store: null, audit: {} })
+    const out = await handleBackfillCommit({
+      secret: 's',
+      providedSecret: 's',
+      store: null,
+      audit: {},
+    })
     expect(out.status).toBe(503)
     expect(out.body.configured).toBe(false)
   })
@@ -346,12 +461,22 @@ describe('handleBackfillCommit — posts only verified memberships through the p
     }
     const out = await handleBackfillCommit({ secret: 's', providedSecret: 's', store, audit })
     expect(out.status).toBe(200)
-    expect(out.body).toMatchObject({ ok: true, verdict: 'verified', membershipsPosted: 0, auditRowsWritten: 1 })
+    expect(out.body).toMatchObject({
+      ok: true,
+      verdict: 'verified',
+      membershipsPosted: 0,
+      auditRowsWritten: 1,
+    })
   })
 
   it('400s a malformed audit rather than writing anything', async () => {
     const store = createAgentIndexStore(fakeD1())
-    const out = await handleBackfillCommit({ secret: 's', providedSecret: 's', store, audit: { verdict: 'verified' } })
+    const out = await handleBackfillCommit({
+      secret: 's',
+      providedSecret: 's',
+      store,
+      audit: { verdict: 'verified' },
+    })
     expect(out.status).toBe(400)
     const coverage = await store.readCoverage({ networkId: ROUTER_V1.networkId })
     expect(coverage.backfillAudits).toHaveLength(0)
@@ -455,8 +580,7 @@ describe('handleRead — Base association envelope', () => {
       finalizedLedgerFor: async () => ROUTER_V1.coverageStartLedger + 10,
     })
     await store.commitAssociation({
-      idempotencyKey:
-        '["stellar-testnet","run-42","run-42:bridge:aave-v3","accepted",null]',
+      idempotencyKey: '["stellar-testnet","run-42","run-42:bridge:aave-v3","accepted",null]',
       association: {
         allocationId: 'run-42:bridge:aave-v3',
         networkId: ROUTER_V1.networkId,
