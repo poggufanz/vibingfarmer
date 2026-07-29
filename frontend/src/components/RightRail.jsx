@@ -103,7 +103,7 @@ const WalletPanel = ({ phase, address }) => {
           justifyContent: 'space-between',
           padding: '12px 14px',
           borderRadius: 'var(--radius-md)',
-          background: 'linear-gradient(135deg, var(--bg-card) 0%, var(--bg-base) 100%)',
+          background: 'var(--bg-card)',
           border: '1px solid var(--border-strong)',
           boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
         }}
@@ -115,7 +115,7 @@ const WalletPanel = ({ phase, address }) => {
               fontFamily: 'var(--font-mono)',
               fontSize: 13,
               fontWeight: 600,
-              background: 'linear-gradient(90deg, var(--accent) 0%, var(--ok) 100%)',
+              background: 'var(--accent)',
               WebkitBackgroundClip: 'text',
               WebkitTextFillColor: 'transparent',
               letterSpacing: '-0.01em',
@@ -268,7 +268,7 @@ const PermissionPanel = ({ active, strategy, onRevoke, expiresAt }) => {
       {active && agents.length > 0 && (
         <div
           style={{
-            background: 'linear-gradient(135deg, var(--bg-card) 0%, var(--bg-base) 100%)',
+            background: 'var(--bg-card)',
             border: '1px solid var(--border-strong)',
             borderRadius: 'var(--radius-md)',
             padding: '12px 14px',
@@ -510,7 +510,7 @@ const ActivityPanel = ({ logs }) => {
                             style={{
                               marginLeft: 6,
                               padding: '1px 5px',
-                              borderRadius: 4,
+                              borderRadius: 'var(--pc-radius-control)',
                               background: 'var(--bg-elev)',
                               color: 'var(--text-muted)',
                               fontSize: 10,
@@ -569,7 +569,7 @@ const ActivityPanel = ({ logs }) => {
                             href={`https://stellar.expert/explorer/testnet/tx/${l.txHash}`}
                             target="_blank"
                             rel="noopener noreferrer"
-                            style={{ color: 'var(--accent)', textDecoration: 'underline' }}
+                            style={{ color: 'var(--accent-text)', textDecoration: 'underline' }}
                           >
                             {shortAddr(l.txHash)}
                           </a>
@@ -666,7 +666,7 @@ const SkillPanel = ({ skillSource, marketLive, vaultLive, onCustomize }) => {
           style={{
             backgroundColor: 'transparent',
             border: 'none',
-            color: 'var(--accent)',
+            color: 'var(--accent-text)',
             cursor: 'pointer',
             fontFamily: 'var(--font-mono)',
             fontSize: '10.5px',
@@ -677,7 +677,7 @@ const SkillPanel = ({ skillSource, marketLive, vaultLive, onCustomize }) => {
       </div>
       <div
         style={{
-          background: 'linear-gradient(135deg, var(--bg-card) 0%, var(--bg-base) 100%)',
+          background: 'var(--bg-card)',
           border: '1px solid var(--border-strong)',
           borderRadius: 'var(--radius-md)',
           padding: '12px 14px',
@@ -766,7 +766,7 @@ const PalettePicker = ({ value, onChange }) => (
                 style={{
                   width: 12,
                   height: 12,
-                  borderRadius: 3,
+                  borderRadius: 'var(--pc-radius-control)',
                   background: c,
                   border: '1px solid rgba(255,255,255,0.08)',
                 }}

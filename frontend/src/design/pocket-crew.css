@@ -39,12 +39,20 @@
   --pc-disabled-on-light: #5f6c65;
   --pc-disabled: #8c9b93;
 
-  /* Existing routes stay on the accessible canvas until they adopt an explicit surface pair. */
+  /* Surface pair, adopted 2026-07-29. These four elevation tokens all used to resolve to the canvas
+     hex, under a note saying existing routes would stay flat "until they adopt an explicit surface
+     pair" -- this is that adoption. While they were flat, 111 declarations across the app asked for
+     an elevated surface and got the canvas back, so every legacy card, panel and rail read as a bare
+     border (the sidebar's active nav item painted #17251f on a #17251f rail and was simply
+     invisible). Mapping them onto Grove -- the contract's one supporting surface -- makes all 111
+     resolve correctly at once, with no per-file edit.
+     --bg-input stays on the canvas on purpose: an input sits ON a card, so it needs to read as
+     inset against Grove rather than merge into it. */
   --bg-base: #17251f;
   --bg-canvas: #17251f;
-  --bg-card: #17251f;
-  --bg-elev: #17251f;
-  --bg-elev-2: #17251f;
+  --bg-card: #20342b;
+  --bg-elev: #20342b;
+  --bg-elev-2: #20342b;
   --bg-input: #17251f;
   --text: #f2f5ef;
   --text-primary: #f2f5ef;
@@ -53,6 +61,13 @@
   --text-dim: #a8b5ad;
   --accent: #dff56c;
   --accent-fg: #17251f;
+  /* Harvest is a SURFACE color, never a text color (contract rule 2 + the "one Harvest decision
+     surface" signature). `--accent` stays the fill; `--accent-text` is what a legacy consumer that
+     wants accent-COLORED TEXT must read instead. On Field the two coincide, which is why the misuse
+     was invisible for so long -- on Day Field lime-on-light measures 1.03:1. Day Field resolves this
+     the same way `--border-accent` and `--focus-ring` already do below: the accent role collapses to
+     Field ink. Deepening Harvest into a new light-mode hex would change a locked contract value. */
+  --accent-text: #dff56c;
   --accent-soft: #20342b;
   --border: #8c9b93;
   --border-strong: #a8b5ad;
@@ -119,11 +134,12 @@
   --pc-disabled-on-light: #5f6c65;
   --pc-disabled: #5f6c65;
 
+  /* Same surface-pair adoption as the Forest block. Day Field's supporting surface is #f7f9f5. */
   --bg-base: #e9eee8;
   --bg-canvas: #e9eee8;
-  --bg-card: #e9eee8;
-  --bg-elev: #e9eee8;
-  --bg-elev-2: #e9eee8;
+  --bg-card: #f7f9f5;
+  --bg-elev: #f7f9f5;
+  --bg-elev-2: #f7f9f5;
   --bg-input: #e9eee8;
   --text: #17251f;
   --text-primary: #17251f;
@@ -132,6 +148,8 @@
   --text-dim: #536159;
   --accent: #dff56c;
   --accent-fg: #17251f;
+  /* See the Forest block's note. Field ink, matching --border-accent/--focus-ring below. */
+  --accent-text: #17251f;
   --accent-soft: #f7f9f5;
   --border: #5f6c65;
   --border-strong: #17251f;
@@ -399,9 +417,8 @@ body {
   animation: none !important;
 }
 
-.wd-loading-fill.is-active::after {
-  display: none;
-}
+/* The `.wd-loading-fill.is-active::after { display: none }` override that lived here is gone: it
+   only existed to hide style.css's shimmer sweep, and that pseudo-element no longer exists there. */
 
 @media (hover: none), (pointer: coarse), (max-width: 767px) {
   :where(
@@ -730,6 +747,43 @@ pre,
     border-radius: var(--pc-radius-lg) var(--pc-radius-lg) 0 0;
     max-height: 85vh;
   }
+}
+
+/* Route geometry, promoted from route CSS to Foundation. It was declared three times over
+   (my-money.css, crew.css, strategy.css -- the latter two byte-identical), which meant a route could
+   only line up with its siblings if it happened to load one of those three stylesheets. The legacy
+   routes load none of them, so /history, /settings, /vault, /tx and /developers each rendered at a
+   different width in a differently-inset column. Declaring it here, in the file both entry points
+   import eagerly, is what lets any route opt in with a single class.
+
+   The three route stylesheets still carry their own copies with identical values (crew/strategy also
+   fold in `display: grid` + the stack gap). Same declarations, so nothing changes visually and no
+   cascade fight is possible -- deduping them is a follow-up, not a prerequisite. */
+.pc-route {
+  width: min(100%, calc(var(--pc-shell-max) + (2 * var(--pc-route-gutter))));
+  margin-inline: auto;
+  padding: var(--pc-route-gutter);
+}
+
+.pc-route-stack {
+  display: grid;
+  gap: var(--pc-route-gap);
+}
+
+/* Same content column, for a route that already owns its own scrolling and padding -- /settings is
+   the one such route: SettingsPage.jsx:490 is a `flex: 1; min-height: 0; overflow-y: auto` pane with
+   its own 28px inset. Giving it `.pc-route` would double the gutter, put a second scrollbar inside
+   the first, and break its `flex: 1` by inserting a plain block between it and `.main`. So this
+   variant carries ONLY the width and centring, stays a flex item that fills `.main`, and passes the
+   flex context through. Deliberately NOT named `.pc-route`, because `.main:has(.pc-route)` must keep
+   matching only routes that actually want `.main` itself to scroll. */
+.pc-route-flush {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  width: min(100%, calc(var(--pc-shell-max) + (2 * var(--pc-route-gutter))));
+  margin-inline: auto;
 }
 
 /* ---------------------------------------------------------------------------------------------

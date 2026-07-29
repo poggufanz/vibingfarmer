@@ -22,9 +22,19 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 // properties in a real Chromium parse (measured: `--bg-base`/`--text-muted` both read back as ''
 // with the BOM present, resolving correctly once stripped) -- a test-harness embedding hazard,
 // not a production defect, so the fix is here, not in the shipped file.
-const LEGACY_STYLESHEET = fs
-  .readFileSync(path.resolve(here, '../style.css'), 'utf8')
+// 2026-07-29: style.css is no longer self-sufficient for colour. Its :root token block (and the
+// three dead [data-palette] blocks beside it) was deleted when Pocket Crew became the single source
+// of truth for colour/radius/font tokens, so rendering style.css alone now leaves every var()
+// unresolved -- which is what this guard measured as a 1:1 ratio. Both real entry points
+// (src/main.jsx:9-10, visual/main.jsx:38-39) load style.css and THEN pocket-crew.css, so the harness
+// has to do the same to reproduce production. Order matters: pocket-crew.css must come second.
+const LEGACY_STYLESHEET = [
+  fs.readFileSync(path.resolve(here, '../style.css'), 'utf8'),
+  fs.readFileSync(path.resolve(here, 'design/pocket-crew.css'), 'utf8'),
+]
+  .join('\n')
   .replace(/^\uFEFF/, '')
+  .replaceAll('\uFEFF', '')
 const CHROMIUM_CANDIDATES = [
   undefined,
   '/usr/bin/google-chrome-stable',

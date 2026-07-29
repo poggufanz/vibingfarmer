@@ -401,21 +401,10 @@ function ExplorerStyle() {
   -webkit-overflow-scrolling: touch;
   background: var(--bg-base);
   color: var(--text);
-  font-family: var(--font-body, "Geist", system-ui, sans-serif);
+  font-family: var(--font-body);
 }
-/* faint grid texture - same atmosphere as the hero */
-.ex-page::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  background-image:
-    linear-gradient(rgba(255,255,255,0.016) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,255,255,0.016) 1px, transparent 1px);
-  background-size: 48px 48px;
-  mask-image: radial-gradient(ellipse 90% 60% at 50% 0%, #000 20%, transparent 100%);
-}
+/* Grid-texture ::before removed: a linear-gradient pair masked by a radial-gradient is still
+   a gradient (contract rule 7 bans them outright), and it was decorative, not load-bearing. */
 
 .ex-main {
   position: relative;
@@ -429,7 +418,7 @@ function ExplorerStyle() {
 .ex-header { padding-bottom: clamp(2rem, 5vw, 3.4rem); border-bottom: 1px solid var(--border); }
 .ex-header__top { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
 .ex-title {
-  font-family: var(--font-display, "Geist", sans-serif);
+  font-family: var(--font-display);
   font-weight: 700;
   letter-spacing: -0.04em;
   line-height: 1;
@@ -440,7 +429,7 @@ function ExplorerStyle() {
   display: inline-flex;
   align-items: center;
   gap: 0.55ch;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: 0.74rem;
   letter-spacing: 0.04em;
   color: var(--text-muted);
@@ -456,7 +445,7 @@ function ExplorerStyle() {
   inset: 0;
   border-radius: inherit;
   background: inherit;
-  animation: ex-pulse 2.4s var(--ease-out, cubic-bezier(0.23,1,0.32,1)) infinite;
+  animation: ex-pulse 2.4s var(--ease-out) infinite;
 }
 @keyframes ex-pulse {
   0% { opacity: 0.55; transform: scale(1); }
@@ -465,7 +454,7 @@ function ExplorerStyle() {
 .ex-lede {
   margin-top: 1.1rem;
   max-width: 60ch;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: clamp(0.82rem, 1.1vw, 0.95rem);
   line-height: 1.7;
   color: var(--text-muted);
@@ -476,17 +465,17 @@ function ExplorerStyle() {
 .ex-section--os { border-bottom: none; }
 .ex-section__head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
 .ex-section__title {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: 0.78rem;
   font-weight: 600;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: var(--accent);
+  color: var(--accent-text);
   margin-bottom: 1.5rem;
 }
 .ex-section__head .ex-section__title { margin-bottom: 0; }
 .ex-section__note, .ex-section__sub {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: 0.72rem;
   letter-spacing: 0.02em;
   color: var(--text-faint);
@@ -497,7 +486,7 @@ function ExplorerStyle() {
 .ex-cards { display: flex; flex-direction: column; gap: 0.7rem; }
 .ex-card {
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-lg, 14px);
+  border-radius: var(--radius-lg);
   background: var(--bg-card);
   padding: clamp(1.05rem, 2.4vw, 1.5rem);
   transition: border-color 220ms ease, transform 220ms cubic-bezier(0.16,1,0.3,1);
@@ -505,21 +494,23 @@ function ExplorerStyle() {
 .ex-card:hover { border-color: var(--border-accent); }
 .ex-card__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
 .ex-card__name {
-  font-family: var(--font-display, "Geist", sans-serif);
+  font-family: var(--font-display);
   font-weight: 600;
   font-size: clamp(1.02rem, 1.6vw, 1.2rem);
   letter-spacing: -0.01em;
   color: var(--text);
 }
-.ex-card__proto { font-family: var(--font-mono, monospace); font-weight: 400; font-size: 0.82em; color: var(--text-muted); }
+/* Mono: a protocol/version string ("Blend v2", "SAC"), not prose. */
+.ex-card__proto { font-family: var(--font-mono); font-weight: 400; font-size: 0.82em; color: var(--text-muted); }
+/* Badge chrome ("CORE CONTRACT" / "VAULT" / "TOKEN"), not a raw value -- body face. */
 .ex-badge {
   flex-shrink: 0;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: 0.62rem;
   font-weight: 600;
   letter-spacing: 0.12em;
   padding: 0.3rem 0.6rem;
-  border-radius: var(--radius-sm, 4px);
+  border-radius: var(--radius-sm);
   text-transform: uppercase;
   white-space: nowrap;
 }
@@ -537,9 +528,9 @@ function ExplorerStyle() {
   cursor: pointer;
   background: var(--bg-base);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm, 4px);
+  border-radius: var(--radius-sm);
   padding: 0.45rem 0.7rem;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
   font-size: 0.78rem;
   color: var(--text);
   transition: border-color 180ms ease, background 180ms ease;
@@ -547,8 +538,11 @@ function ExplorerStyle() {
 .ex-addr:hover { border-color: var(--border-accent); }
 .ex-addr:active { transform: scale(0.97); }
 .ex-addr__text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* "Copy"/"Copied" is a UI action word, not a raw value -- override the mono inherited from
+   .ex-addr (which is correctly mono for the address text itself). */
 .ex-addr__copy {
   flex-shrink: 0;
+  font-family: var(--font-body);
   font-size: 0.64rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -556,11 +550,11 @@ function ExplorerStyle() {
   transition: color 180ms ease;
 }
 .ex-addr:hover .ex-addr__copy { color: var(--text-muted); }
-.ex-addr__copy.is-copied { color: var(--accent); }
+.ex-addr__copy.is-copied { color: var(--accent-text); }
 .ex-addr:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .ex-card__desc {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: 0.78rem;
   line-height: 1.5;
   color: var(--text-muted);
@@ -568,10 +562,10 @@ function ExplorerStyle() {
 .ex-card__links { display: flex; flex-wrap: wrap; gap: 1.2rem; margin-top: 1rem; }
 
 .ex-extlink {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: 0.76rem;
   letter-spacing: 0.01em;
-  color: var(--accent);
+  color: var(--accent-text);
   text-decoration: none;
   display: inline-flex;
   align-items: center;
@@ -591,7 +585,7 @@ function ExplorerStyle() {
 }
 .ex-stat {
   border: 1px solid var(--border);
-  border-radius: var(--radius-md, 8px);
+  border-radius: var(--radius-md);
   background: var(--bg-card);
   padding: 1.3rem 1.1rem;
   display: flex;
@@ -599,7 +593,7 @@ function ExplorerStyle() {
   gap: 0.55rem;
 }
 .ex-stat__value {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
   font-size: clamp(1.35rem, 2.6vw, 1.85rem);
   font-weight: 600;
   letter-spacing: -0.02em;
@@ -610,7 +604,7 @@ function ExplorerStyle() {
   align-items: center;
 }
 .ex-stat__label {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: 0.68rem;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -620,16 +614,19 @@ function ExplorerStyle() {
   display: inline-block;
   width: 60%;
   height: 1em;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   background: var(--bg-elev-2);
   opacity: 0.72;
 }
 
 /* ---------- attestations table ---------- */
-.ex-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; border: 1px solid var(--border-strong); border-radius: var(--radius-lg, 14px); }
+.ex-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; border: 1px solid var(--border-strong); border-radius: var(--radius-lg); }
 .ex-table { width: 100%; border-collapse: collapse; min-width: 460px; }
-.ex-table th, .ex-table td { text-align: left; padding: 0.85rem 1.1rem; font-family: var(--font-mono, monospace); font-size: 0.78rem; }
+/* Base cell rule carries layout only; mono/body split lives on thead th vs. the per-column
+   classes below so a raw hash can stay mono while its header caption reads as prose. */
+.ex-table th, .ex-table td { text-align: left; padding: 0.85rem 1.1rem; font-size: 0.78rem; }
 .ex-table thead th {
+  font-family: var(--font-body);
   font-size: 0.66rem;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -640,15 +637,18 @@ function ExplorerStyle() {
 .ex-table tbody tr { border-bottom: 1px solid var(--border); transition: background 160ms ease; }
 .ex-table tbody tr:last-child { border-bottom: none; }
 .ex-table tbody tr:hover { background: var(--bg-elev); }
-.ex-table__time { color: var(--text-muted); white-space: nowrap; }
-.ex-table__hash { color: var(--accent); }
-.ex-table__proto { color: var(--text); }
+/* Ledger sequence numbers / relative-time strings -- a real ledger reference at least some of
+   the time, so left mono rather than risk demoting a genuine identifier. */
+.ex-table__time { font-family: var(--font-mono); color: var(--text-muted); white-space: nowrap; }
+.ex-table__hash { font-family: var(--font-mono); color: var(--accent-text); }
+/* Protocol/category name (e.g. "Blend v2", "On-chain"), same identifier role as .ex-card__proto. */
+.ex-table__proto { font-family: var(--font-mono); color: var(--text); }
 .ex-empty {
   border: 1px dashed var(--border-strong);
-  border-radius: var(--radius-lg, 14px);
+  border-radius: var(--radius-lg);
   padding: 2.2rem 1.5rem;
   text-align: center;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: 0.8rem;
   color: var(--text-faint);
 }
@@ -658,7 +658,7 @@ function ExplorerStyle() {
 .ex-secitem {
   position: relative;
   padding-left: 1.4rem;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: 0.8rem;
   line-height: 1.5;
   color: var(--text-muted);
@@ -675,12 +675,12 @@ function ExplorerStyle() {
   margin-top: 1.6rem;
   padding: 0.85rem 1.1rem;
   border-left: 2px solid var(--border-accent);
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: 0.76rem;
   line-height: 1.6;
   color: var(--text-faint);
   background: var(--accent-soft);
-  border-radius: 0 var(--radius-sm, 4px) var(--radius-sm, 4px) 0;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 }
 
 /* ---------- open source ---------- */
@@ -696,14 +696,15 @@ function ExplorerStyle() {
 .ex-osrow__k {
   flex-shrink: 0;
   width: 110px;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: 0.7rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-faint);
 }
+/* Mono: renders a URL or a license identifier ("MIT") -- both raw values. */
 .ex-osrow__v {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
   font-size: 0.82rem;
   color: var(--text);
   text-decoration: none;
@@ -711,7 +712,7 @@ function ExplorerStyle() {
   align-items: center;
   gap: 0.5ch;
 }
-a.ex-osrow__v { color: var(--accent); }
+a.ex-osrow__v { color: var(--accent-text); }
 a.ex-osrow__v span { transition: transform 200ms cubic-bezier(0.16,1,0.3,1); }
 
 @media (hover: hover) and (pointer: fine) {
@@ -743,8 +744,8 @@ a.ex-osrow__v span { transition: transform 200ms cubic-bezier(0.16,1,0.3,1); }
   padding-top: 1.8rem;
   border-top: 1px solid var(--border);
 }
-.ex-foot__mark { font-family: var(--font-mono, monospace); font-size: 0.78rem; color: var(--text-muted); }
-.ex-foot__tag { font-family: var(--font-script, "Newsreader", serif); font-style: italic; font-size: 0.95rem; color: var(--text-faint); }
+.ex-foot__mark { font-family: var(--font-body); font-size: 0.78rem; color: var(--text-muted); }
+.ex-foot__tag { font-family: var(--font-script); font-style: italic; font-size: 0.95rem; color: var(--text-faint); }
 
 /* ---------- responsive ---------- */
 @media (max-width: 760px) {

@@ -9,121 +9,27 @@
    - Borders + spacing do the work, not effects
    ============================================ */
 
-/* ---------- Tokens (Acid Yield â€” default) ---------- */
+/* ---------- Tokens ----------
+   The retired default palette and the three alternate [data-palette] palettes (mono-slate, liquid-mint,
+   bone-paper) that used to live here are GONE. They were dead in two independent ways: nothing in
+   src/ ever sets `data-palette` at runtime, and every colour/shape/font token they declared was
+   already re-declared by src/design/pocket-crew.css, which both entry points (src/main.jsx:9-10 and
+   visual/main.jsx:38-39) import immediately after this file. Pocket Crew is now the single source of
+   truth for colour, radius and font tokens -- add new ones there, not here.
+
+   What stays below is the handful of motion/numeric tokens pocket-crew.css does NOT declare, so
+   they have no other home. ---------- */
 :root {
-  --bg-base: #0e0f0c;
-  --bg-canvas: #131410;
-  --bg-card: #1a1b16;
-  --bg-elev: #22231d;
-  --bg-elev-2: #2a2b24;
-  --bg-input: #131410;
-
-  --border: rgba(255, 255, 255, 0.06);
-  --border-strong: rgba(255, 255, 255, 0.13);
-  --border-accent: rgba(207, 255, 61, 0.4);
-
-  --text: #ecebe1;
-  --text-muted: #95958a;
-  --text-faint: #7a7a70;
-
-  --accent: #cfff3d;
-  --accent-soft: rgba(207, 255, 61, 0.08);
-  --accent-fg: #0e0f0c;
-
-  --info: #7a9fff;
-  --warn: #f0b54a;
-  --danger: #ff7479;
-  --ok: #6fe39a;
-
-  --radius-sm: 4px;
-  --radius-md: 8px;
-  --radius-lg: 14px;
-  --radius-xl: 18px;
-
-  --font-display: 'Geist', 'SÃ¶hne', system-ui, sans-serif;
-  --font-body: 'Geist', system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', 'Geist Mono', ui-monospace, monospace;
-  --font-script: 'Newsreader', 'Times New Roman', serif;
-
   /* Tabular numbers everywhere they appear in data context */
   --num-feat: 'tnum' 1, 'lnum' 1, 'ss01' 1;
 
-  /* Motion contract: crisp dashboard motion, no decorative bounce. */
-  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  /* Motion contract: crisp dashboard motion, no decorative bounce. Note pocket-crew.css owns
+     --ease-out and the --pc-duration-* scale; these are the legacy-only extras. */
   --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
   --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
   --duration-press: 160ms;
   --duration-fast: 160ms;
   --duration-ui: 220ms;
-}
-
-/* Palette: Mono Slate (most restrained) â€” full token contract */
-[data-palette='mono-slate'] {
-  --bg-base: #0c0d10;
-  --bg-canvas: #101114;
-  --bg-card: #161820;
-  --bg-elev: #1e2029;
-  --bg-elev-2: #262833;
-  --bg-input: #101114;
-  --border: rgba(255, 255, 255, 0.07);
-  --border-strong: rgba(255, 255, 255, 0.14);
-  --border-accent: rgba(225, 232, 247, 0.4);
-  --accent: #e6edff;
-  --accent-soft: rgba(230, 237, 255, 0.07);
-  --accent-fg: #0c0d10;
-  --text: #e8ebf3;
-  --text-muted: #9aa0b0;
-  --text-faint: #7a8090;
-  --info: #8aa0ff;
-  --warn: #e0b060;
-  --danger: #f08088;
-  --ok: #7ad4a0;
-}
-
-/* Palette: Liquid Mint â€” full token contract */
-[data-palette='liquid-mint'] {
-  --bg-base: #0a1310;
-  --bg-canvas: #0d1814;
-  --bg-card: #11201b;
-  --bg-elev: #18302a;
-  --bg-elev-2: #1f3c34;
-  --bg-input: #0d1814;
-  --border: rgba(255, 255, 255, 0.07);
-  --border-strong: rgba(255, 255, 255, 0.14);
-  --border-accent: rgba(94, 230, 197, 0.4);
-  --accent: #5ee6c5;
-  --accent-soft: rgba(94, 230, 197, 0.08);
-  --accent-fg: #0a1310;
-  --text: #e4f0eb;
-  --text-muted: #8aa89c;
-  --text-faint: #6a8a7c;
-  --info: #7ab8ff;
-  --warn: #e0b060;
-  --danger: #f08088;
-  --ok: #6fe39a;
-}
-
-/* Palette: Bone Paper (light-ish, near-paper) */
-[data-palette='bone-paper'] {
-  --bg-base: #f4f1e9;
-  --bg-canvas: #ece8dd;
-  --bg-card: #e3dfd2;
-  --bg-elev: #d9d4c4;
-  --bg-elev-2: #c9c4b3;
-  --bg-input: #ece8dd;
-  --border: rgba(20, 18, 12, 0.08);
-  --border-strong: rgba(20, 18, 12, 0.18);
-  --border-accent: rgba(120, 60, 0, 0.3);
-  --text: #1a180f;
-  --text-muted: #6a675c;
-  --text-faint: #6a675c;
-  --accent: #1a180f;
-  --accent-soft: rgba(26, 24, 15, 0.06);
-  --accent-fg: #f4f1e9;
-  --info: #3a5a9a;
-  --warn: #9a6a20;
-  --danger: #b04048;
-  --ok: #2a7a50;
 }
 
 /* Density: compact */
@@ -236,7 +142,7 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-weight: 600;
   font-size: 14px;
   letter-spacing: -0.04em;
@@ -319,7 +225,7 @@ textarea {
     opacity 140ms var(--ease-out),
     transform 140ms var(--ease-out);
   margin-left: 10px;
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 11px;
   letter-spacing: 0.02em;
 }
@@ -419,7 +325,7 @@ textarea {
 }
 
 .brand-net {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 11px;
   color: var(--text-faint);
   letter-spacing: -0.01em;
@@ -438,33 +344,12 @@ textarea {
 .brand-net .dot.live {
   background: var(--ok);
 }
-/* Live pulse halo â€” signals "connected / running now" */
-.brand-net .dot.live::after,
-.live-dot::after {
-  content: '';
-  position: absolute;
-  inset: 50%;
-  width: 5px;
-  height: 5px;
-  margin: -2.5px 0 0 -2.5px;
-  border-radius: 50%;
-  background: var(--ok);
-  animation: live-ping 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
-}
-@keyframes live-ping {
-  0% {
-    transform: scale(1);
-    opacity: 0.55;
-  }
-  70% {
-    transform: scale(3.4);
-    opacity: 0;
-  }
-  100% {
-    transform: scale(3.4);
-    opacity: 0;
-  }
-}
+/* The expanding "live pulse halo" that used to sit here -- a second dot scaled 1 -> 3.4 while fading
+   out, on a 1.8s infinite loop -- is deleted along with its `live-ping` keyframe. It is the outer
+   halo contract rule 7 bans, and it never carried information the dot itself did not: `.live-dot`
+   (OnboardingFlow.jsx:101) keeps its solid `--ok` fill and still sits beside the word "Live", so the
+   state is still signalled, just without the ring. The `prefers-reduced-motion` override that hid
+   this pseudo-element goes with it -- there is nothing left to reduce. */
 
 .topbar-right {
   display: flex;
@@ -473,7 +358,7 @@ textarea {
 }
 
 .topbar-meta {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 11px;
   /* Strategy Task 14 fix (owner report item 10): --text-faint measured well under 4.5:1 against
    * this bar's dark background in a real browser. --text-muted is the existing, already-defined
@@ -567,7 +452,7 @@ textarea {
   color: var(--text);
 }
 .step-rail-item.clickable:hover .num {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 /* thinking-step live spinner â€” essential progress feedback (keep running even
@@ -609,7 +494,7 @@ textarea {
   color: var(--text);
 }
 .step-rail-item.active .num {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .step-rail-item.active::after {
@@ -641,7 +526,7 @@ textarea {
 }
 .stage::-webkit-scrollbar-thumb {
   background: var(--bg-elev);
-  border-radius: 3px;
+  border-radius: var(--pc-radius-round);
 }
 .stage::-webkit-scrollbar-track {
   background: transparent;
@@ -664,7 +549,7 @@ textarea {
   display: flex;
   align-items: baseline;
   gap: 10px;
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 11px;
   letter-spacing: -0.01em;
   color: var(--text-muted);
@@ -672,7 +557,7 @@ textarea {
 }
 
 .eyebrow .num {
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 500;
 }
 
@@ -750,23 +635,12 @@ textarea {
 }
 
 /* ---------- Buttons ----------
-   Liquid fill: oversized multi-stop gradient + animated background-position.
-   Use hex intermediates (not oklch color-mix) so the whole background-image
-   declaration never gets dropped by the parser. Full animation shorthand on
-   hover (longhand-only duration can glitch in some engines).
+   Flat fills only. The "liquid fill" system this section used to open with (an oversized multi-stop
+   gradient driven by an animated `background-position` keyframe) is deleted:
+   contract rule 7 bans gradients outright, and an always-drifting button is exactly the decorative
+   motion the money surfaces are supposed to be free of. Hover is now a flat currentcolor tint, the
+   same one pocket-crew.css gives `.pc-button`.
    ---------- */
-
-@keyframes btn-lava {
-  0% {
-    background-position: 0% 50%;
-  }
-  50% {
-    background-position: 100% 50%;
-  }
-  100% {
-    background-position: 0% 50%;
-  }
-}
 
 .btn {
   position: relative;
@@ -803,41 +677,24 @@ textarea {
   transform: scale(0.98) translateY(0.5px);
 }
 
-/* Primary — liquid lime gradient, always drifting */
+/* Primary — one flat Harvest decision surface (contract rule 7: no gradients).
+   The seven-stop lime gradient and its 6s background drift used to live here. pocket-crew.css was
+   already neutralising both from the outside; deleting the source means the override is belt-only,
+   not belt-and-braces-over-a-hole. `--accent` is the fill, `--accent-fg` the ink -- never
+   `--accent-text`, which is the token for accent-COLOURED text on a normal surface. */
 .btn-primary,
 .btn-gradient {
   color: var(--accent-fg);
   border-color: transparent;
-  background-color: var(--accent); /* solid fallback if image fails */
-  background-image: linear-gradient(
-    120deg,
-    var(--accent) 0%,
-    #e8ff6a 18%,
-    #b8f07a 36%,
-    #d4ff55 54%,
-    #a8ee88 72%,
-    #f0ff9c 86%,
-    var(--accent) 100%
-  );
-  background-size: 300% 300%;
-  background-position: 0% 50%;
-  background-repeat: no-repeat;
-  animation: btn-lava 6s ease infinite;
+  background-color: var(--accent);
 }
 
-.btn-primary:hover:not(:disabled),
-.btn-primary:focus-visible:not(:disabled),
-.btn-gradient:hover:not(:disabled),
-.btn-gradient:focus-visible:not(:disabled) {
-  animation: btn-lava 3s ease infinite;
-}
-
+/* Disabled ink/opacity is owned by pocket-crew.css's `:disabled` rule (it has to use !important to
+   beat the old `opacity: 0.32` that lived here and washed the ink below 4.5:1). Only the cursor is
+   still this rule's business. */
 .btn-primary:disabled,
 .btn-gradient:disabled {
-  opacity: 0.32;
   cursor: not-allowed;
-  animation: none !important;
-  background-image: none;
   background-color: var(--accent);
 }
 
@@ -849,22 +706,14 @@ textarea {
   background-image: none;
 }
 
+/* Flat tint, matching pocket-crew.css's `.pc-button:hover` idiom exactly (currentcolor at 12%), so a
+   legacy button and a Pocket Crew button feel identical under the pointer. currentcolor keeps this
+   correct on every surface in both themes without introducing a token. */
 .btn-ghost:hover:not(:disabled),
 .btn-ghost:focus-visible:not(:disabled) {
   color: var(--text);
-  border-color: color-mix(in srgb, var(--accent) 35%, var(--border-strong));
-  background-color: var(--bg-elev);
-  background-image: linear-gradient(
-    120deg,
-    var(--bg-elev) 0%,
-    color-mix(in srgb, var(--accent) 22%, var(--bg-elev)) 30%,
-    color-mix(in srgb, var(--ok) 16%, var(--bg-elev)) 55%,
-    var(--bg-elev) 100%
-  );
-  background-size: 300% 300%;
-  background-position: 0% 50%;
-  background-repeat: no-repeat;
-  animation: btn-lava 5s ease infinite;
+  border-color: currentcolor;
+  background-color: color-mix(in srgb, currentcolor 12%, transparent);
 }
 
 .btn-ghost:disabled {
@@ -919,7 +768,7 @@ textarea {
 }
 
 .risk-review-card__copy {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 12px;
   color: var(--text-muted);
   letter-spacing: -0.01em;
@@ -932,7 +781,7 @@ textarea {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 12.5px;
   color: var(--text-muted);
 }
@@ -950,7 +799,7 @@ textarea {
 }
 
 .amount-label {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 11px;
   color: var(--text-faint);
   letter-spacing: -0.01em;
@@ -1044,14 +893,14 @@ textarea {
 }
 
 .risk-opt-sub {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 10.5px;
   color: var(--text-faint);
   letter-spacing: -0.01em;
 }
 
 .risk-opt.selected .risk-opt-sub {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 /* ---------- Form footer (per-screen action area) ---------- */
@@ -1066,7 +915,7 @@ textarea {
 }
 
 .foot-note {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 11px;
   color: var(--text-muted);
   letter-spacing: -0.01em;
@@ -1110,11 +959,11 @@ textarea {
 }
 
 .rec-hgroup-apy .figure {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .rec-hgroup-apy .label {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 11px;
   color: var(--text-faint);
   letter-spacing: -0.01em;
@@ -1167,7 +1016,7 @@ textarea {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 12px;
   letter-spacing: -0.01em;
 }
@@ -1188,12 +1037,12 @@ textarea {
 }
 
 .rec-tag {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 10.5px;
   color: var(--text-muted);
   padding: 3px 7px;
   border: 1px solid var(--border-strong);
-  border-radius: 3px;
+  border-radius: var(--pc-radius-round);
   letter-spacing: -0.01em;
 }
 
@@ -1211,7 +1060,7 @@ textarea {
 }
 
 .thinking-label {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 11px;
   color: var(--text-faint);
   letter-spacing: -0.01em;
@@ -1238,7 +1087,7 @@ textarea {
   grid-template-columns: 22px 1fr auto;
   gap: 12px;
   align-items: center;
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 13px;
   color: var(--text-faint);
   letter-spacing: -0.01em;
@@ -1308,7 +1157,7 @@ textarea {
 .mm-mark {
   width: 22px;
   height: 22px;
-  border-radius: 4px;
+  border-radius: var(--pc-radius-round);
   background: var(--bg-card);
   border: 1px solid var(--border-strong);
   display: grid;
@@ -1321,20 +1170,20 @@ textarea {
 }
 
 .mm-name {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 11px;
   color: var(--text-muted);
   letter-spacing: -0.01em;
 }
 
 .mm-domain {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 11px;
   color: var(--text-faint);
 }
 
 .mm-body {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 12px;
   color: var(--text-muted);
   line-height: 1.7;
@@ -1355,7 +1204,7 @@ textarea {
 }
 
 .mm-body .v.accent {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 /* ---------- Permission scope (document-grade) ---------- */
@@ -1379,7 +1228,7 @@ textarea {
 }
 
 .perm-doc-k {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 11px;
   color: var(--text-muted);
   letter-spacing: -0.01em;
@@ -1400,7 +1249,7 @@ textarea {
 }
 
 .perm-doc-v .accent {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .perm-doc-v .annot {
@@ -1440,7 +1289,7 @@ textarea {
 }
 
 .exec-progress .label {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 11px;
   color: var(--text-faint);
   letter-spacing: -0.01em;
@@ -1457,7 +1306,7 @@ textarea {
 }
 
 .exec-progress .value.done {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .exec-progress-bar {
@@ -1564,7 +1413,7 @@ textarea {
 }
 
 .exec-title .step-num {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 11px;
   color: var(--text-faint);
   font-weight: 400;
@@ -1572,7 +1421,7 @@ textarea {
 }
 
 .exec-sub {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 12px;
   color: var(--text-muted);
   letter-spacing: -0.01em;
@@ -1592,12 +1441,12 @@ textarea {
 }
 
 .exec-sub .tx:hover {
-  color: var(--accent);
+  color: var(--accent-text);
   border-color: var(--accent);
 }
 
 .exec-status {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 11px;
   letter-spacing: -0.01em;
   color: var(--text-faint);
@@ -1679,7 +1528,7 @@ textarea {
 }
 
 .success-num-cell .label {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 11px;
   color: var(--text-faint);
   letter-spacing: -0.01em;
@@ -1717,7 +1566,7 @@ textarea {
 }
 .rail::-webkit-scrollbar-thumb {
   background: var(--bg-elev);
-  border-radius: 3px;
+  border-radius: var(--pc-radius-round);
 }
 .rail::-webkit-scrollbar-track {
   background: transparent;
@@ -1748,7 +1597,7 @@ textarea {
 }
 
 .panel-meta {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 10.5px;
   letter-spacing: -0.01em;
   color: var(--text-faint);
@@ -1769,7 +1618,7 @@ textarea {
 }
 
 .wallet-type {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 10.5px;
   color: var(--text-faint);
   letter-spacing: -0.01em;
@@ -1777,7 +1626,7 @@ textarea {
 }
 
 .wallet-type.active {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .wallet-actions {
@@ -1826,7 +1675,7 @@ textarea {
 }
 
 .balance-cell .label {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 10.5px;
   color: var(--text-faint);
   letter-spacing: -0.01em;
@@ -1855,14 +1704,14 @@ textarea {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 11.5px;
   color: var(--text-faint);
   letter-spacing: -0.01em;
 }
 
 .perm-status.active {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .perm-status::before {
@@ -1879,7 +1728,7 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 11.5px;
   letter-spacing: -0.01em;
 }
@@ -1904,7 +1753,7 @@ textarea {
   padding: 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 11px;
   letter-spacing: -0.01em;
   color: var(--text-muted);
@@ -1947,7 +1796,7 @@ textarea {
 }
 
 .act-meta {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 11px;
   color: var(--text-faint);
   margin-top: 2px;
@@ -1955,7 +1804,7 @@ textarea {
 }
 
 .act-time {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 10.5px;
   color: var(--text-faint);
   letter-spacing: -0.01em;
@@ -1968,7 +1817,7 @@ textarea {
   padding: 14px 0;
   text-align: left;
   color: var(--text-faint);
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 11.5px;
   letter-spacing: -0.01em;
 }
@@ -2026,7 +1875,7 @@ textarea {
 }
 
 .modal-eyebrow {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 11px;
   color: var(--text-faint);
   letter-spacing: -0.01em;
@@ -2061,14 +1910,14 @@ textarea {
 /* ---------- F8 eligibility panel ---------- */
 .elig-panel {
   margin-top: 16px;
-  border-top: 1px solid var(--line, #2a2a2a);
+  border-top: 1px solid var(--line);
   padding-top: 12px;
 }
 .elig-sentence {
   font-size: 12px;
   line-height: 1.5;
   margin: 0 0 10px;
-  color: var(--text, #e8e8e8);
+  color: var(--text);
 }
 .elig-rows {
   list-style: none;
@@ -2084,14 +1933,14 @@ textarea {
   gap: 2px;
   font-size: 11px;
   padding: 8px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--line, #2a2a2a);
+  border-radius: var(--pc-radius-control);
+  border: 1px solid var(--line);
 }
 .elig-pass {
-  border-left: 2px solid var(--accent, #4ade80);
+  border-left: 2px solid var(--accent);
 }
 .elig-reject {
-  border-left: 2px solid var(--danger, #f87171);
+  border-left: 2px solid var(--danger);
   opacity: 0.85;
 }
 .elig-status {
@@ -2100,21 +1949,21 @@ textarea {
   letter-spacing: 0.04em;
 }
 .elig-reject .elig-status {
-  color: var(--danger, #f87171);
+  color: var(--danger);
 }
 .elig-pass .elig-status {
-  color: var(--accent, #4ade80);
+  color: var(--accent-text);
 }
 .struck {
   text-decoration: line-through;
   opacity: 0.7;
 }
 .elig-label {
-  color: var(--text-dim, #9a9a9a);
+  color: var(--text-dim);
 }
 .elig-mainnet,
 .elig-testnet {
-  color: var(--text-dim, #9a9a9a);
+  color: var(--text-dim);
 }
 .elig-testnet {
   font-style: italic;
@@ -2122,11 +1971,11 @@ textarea {
 .elig-chip {
   font-family: var(--mono, monospace);
   font-size: 10px;
-  color: var(--text-dim, #9a9a9a);
+  color: var(--text-dim);
 }
 .elig-fixture {
   font-size: 10px;
-  color: var(--danger, #f87171);
+  color: var(--danger);
   font-style: italic;
 }
 
@@ -2226,11 +2075,6 @@ textarea {
   .memory-row.running .memory-row-marker {
     animation: none;
   }
-  .live-dot::after,
-  .brand-net .dot.live::after {
-    animation: none !important;
-    display: none;
-  }
   /* .think-spin intentionally kept â€” in-flight work indicator, not decoration */
   .sig-yield .sig-head-ring {
     animation: none !important;
@@ -2251,7 +2095,7 @@ textarea {
 
 /* ---------- Strategy card (multi-agent) ---------- */
 .strategy-sub {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 13px;
   color: var(--text-muted);
   letter-spacing: -0.01em;
@@ -2288,7 +2132,7 @@ textarea {
 .strategy-agent-id .idx {
   font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--accent);
+  color: var(--accent-text);
   letter-spacing: -0.01em;
 }
 
@@ -2372,7 +2216,7 @@ textarea {
 .skill-card-idx {
   font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--accent);
+  color: var(--accent-text);
   letter-spacing: -0.01em;
   padding-top: 2px;
   min-width: 22px;
@@ -2388,7 +2232,7 @@ textarea {
 }
 
 .skill-card-meta {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 11px;
   color: var(--text-faint);
   letter-spacing: -0.01em;
@@ -2396,13 +2240,13 @@ textarea {
 }
 
 .skill-card-status {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 10.5px;
   color: var(--text-faint);
   letter-spacing: -0.01em;
   padding: 4px 8px;
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: var(--pc-radius-round);
   white-space: nowrap;
   align-self: center;
 }
@@ -2412,7 +2256,7 @@ textarea {
   border-color: color-mix(in oklch, var(--ok) 32%, var(--border));
 }
 .skill-card-status.editing {
-  color: var(--accent);
+  color: var(--accent-text);
   border-color: var(--border-accent);
 }
 
@@ -2470,7 +2314,7 @@ textarea {
 
 .skill-json-err {
   padding: 8px 18px;
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 11px;
   color: var(--danger);
   letter-spacing: -0.01em;
@@ -2604,12 +2448,12 @@ textarea {
 .skill-card2-meta {
   font-size: 11px;
   color: var(--text-faint);
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
 }
 
 .skill-card2-status {
   font-size: 11px;
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
 }
 
 .skill-card2-status.pending {
@@ -2669,7 +2513,7 @@ textarea {
 }
 
 .skill-detail-label {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 10px;
   letter-spacing: 0.06em;
   color: var(--text-faint);
@@ -2693,7 +2537,7 @@ textarea {
 }
 
 .skill-detail-link {
-  color: var(--accent);
+  color: var(--accent-text);
   text-decoration: none;
   font-size: 11px;
 }
@@ -2766,7 +2610,7 @@ textarea {
 
 .skill-edit-label {
   display: block;
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 11px;
   color: var(--text-faint);
   letter-spacing: -0.01em;
@@ -2863,7 +2707,7 @@ textarea {
 }
 
 .skill-edit-hint {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 10.5px;
   color: var(--text-faint);
   letter-spacing: -0.01em;
@@ -3004,7 +2848,7 @@ textarea {
 
 .wd-hero-k {
   width: 100%;
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 11px;
   color: var(--text-faint);
   letter-spacing: -0.01em;
@@ -3041,7 +2885,7 @@ textarea {
 }
 
 .wd-section-label {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 11px;
   color: var(--text-faint);
   letter-spacing: -0.01em;
@@ -3135,13 +2979,13 @@ textarea {
 }
 
 .wd-agent-max-unit {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 10px;
   color: var(--text-faint);
 }
 
 .wd-agent-blocked {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 10.5px;
   color: var(--danger);
   max-width: 12ch;
@@ -3208,7 +3052,7 @@ textarea {
 }
 
 .wd-hint {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 10.5px;
   color: var(--text-faint);
   letter-spacing: -0.01em;
@@ -3220,7 +3064,7 @@ textarea {
 }
 
 .wd-callout {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 10.5px;
   line-height: 1.4;
   color: var(--text-muted);
@@ -3249,7 +3093,7 @@ textarea {
 
 .wd-footnote {
   margin: 0;
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 10.5px;
   color: var(--text-faint);
   text-align: right;
@@ -3339,30 +3183,12 @@ textarea {
   overflow: hidden;
 }
 
-.wd-loading-fill.is-active::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: 40%;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    color-mix(in oklch, var(--accent) 55%, white) 50%,
-    transparent 100%
-  );
-  animation: wd-loading-shimmer 1.1s ease-in-out infinite;
-}
-
-@keyframes wd-loading-shimmer {
-  0% {
-    transform: translateX(-120%);
-  }
-  100% {
-    transform: translateX(280%);
-  }
-}
+/* The shimmer sweep that used to live here (a 40%-wide gradient band translated across the fill on
+   a 1.1s infinite loop, plus its `wd-loading-shimmer` keyframe) is deleted. Two contract reasons:
+   rule 7 bans gradients, and withdrawal is a money/consent surface pinned at MOTION_INTENSITY 1-2 --
+   an endlessly sweeping highlight is precisely the attention-grabbing loop that pin exists to
+   prevent. The fill's own width already carries the progress. pocket-crew.css was already hiding
+   this pseudo-element from the outside; the source is now gone too. */
 
 @media (prefers-reduced-motion: reduce) {
   .wd-loading-fill.is-active::after {
@@ -3460,7 +3286,7 @@ textarea {
 }
 
 .wd-stage--done .wd-stage-dot {
-  background: var(--ok, var(--accent));
+  background: var(--ok);
   box-shadow: none;
 }
 
@@ -3493,7 +3319,7 @@ textarea {
 }
 
 .wd-stage-hint {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 10.5px;
   color: var(--text-faint);
   letter-spacing: -0.01em;
@@ -3501,7 +3327,7 @@ textarea {
 }
 
 .wd-stage-hint--ok {
-  color: var(--ok, var(--accent));
+  color: var(--ok);
 }
 
 .wd-stage-hint--err {
@@ -3509,9 +3335,9 @@ textarea {
 }
 
 .wd-callout--ok {
-  color: var(--ok, var(--text));
-  border-color: color-mix(in oklch, var(--ok, var(--accent)) 30%, var(--border));
-  background: color-mix(in oklch, var(--ok, var(--accent)) 8%, transparent);
+  color: var(--ok);
+  border-color: color-mix(in oklch, var(--ok) 30%, var(--border));
+  background: color-mix(in oklch, var(--ok) 8%, transparent);
 }
 
 .sr-only {
@@ -3570,9 +3396,12 @@ textarea {
   height: 15px;
   padding: 0 3px;
   box-sizing: border-box;
-  border-radius: 8px;
+  border-radius: var(--pc-radius-round);
   background: var(--danger);
-  color: #fff;
+  /* Was #fff. Danger is a themed SURFACE, so its ink has to be the themed pair: Forest pairs coral
+     #e26e67 with Field ink, Day Field pairs #a8403c with Rice. A fixed white only cleared 4.5:1 in
+     one of the two. */
+  color: var(--pc-danger-ink);
   font-size: 9px;
   font-weight: 700;
   line-height: 15px;
@@ -3675,7 +3504,7 @@ textarea {
 }
 
 .notif-stat-k {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 10px;
   color: var(--text-faint);
   letter-spacing: -0.01em;
@@ -3861,7 +3690,7 @@ textarea {
 }
 
 .alert-card-sev {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 10px;
   letter-spacing: -0.01em;
   padding: 1px 6px;
@@ -3924,7 +3753,7 @@ textarea {
   appearance: none;
   background: transparent;
   border: none;
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 11px;
   color: var(--text-faint);
   cursor: pointer;
@@ -4033,7 +3862,7 @@ textarea {
 }
 
 .perm-doc-agent-idx {
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 500;
 }
 
@@ -4087,7 +3916,7 @@ textarea {
 }
 .skill-badge.custom {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 /* Skill panel (right rail) */
@@ -4103,7 +3932,7 @@ textarea {
 }
 .skill-sub {
   margin-top: 6px;
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 10.5px;
   color: var(--text-faint);
   letter-spacing: -0.01em;
@@ -4176,7 +4005,7 @@ textarea {
 .skill-foot-note {
   margin-top: 8px;
   text-align: center;
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 10.5px;
   color: var(--text-faint);
 }
@@ -4270,7 +4099,7 @@ textarea {
   padding: 7px 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 11px;
   color: var(--text-muted);
   cursor: pointer;
@@ -4289,12 +4118,12 @@ textarea {
   cursor: not-allowed;
 }
 .skill-hint {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 10.5px;
   color: var(--text-faint);
 }
 .skill-error {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 11px;
   color: var(--danger);
 }
@@ -4320,7 +4149,7 @@ textarea {
 .legend-item .dot {
   width: 8px;
   height: 8px;
-  border-radius: 2px;
+  border-radius: var(--pc-radius-round);
   display: inline-block;
   border: 1px solid var(--border-strong);
 }
@@ -4411,7 +4240,7 @@ textarea {
 .agent-tile-head .idx {
   font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--accent);
+  color: var(--accent-text);
   letter-spacing: -0.01em;
 }
 
@@ -4460,7 +4289,7 @@ textarea {
 .agent-step-pip {
   width: 18px;
   height: 18px;
-  border-radius: 3px;
+  border-radius: var(--pc-radius-round);
   border: 1px solid var(--border-strong);
   display: grid;
   place-items: center;
@@ -4589,7 +4418,7 @@ textarea {
 }
 .memory-log::-webkit-scrollbar-thumb {
   background: var(--bg-elev);
-  border-radius: 3px;
+  border-radius: var(--pc-radius-round);
 }
 
 .memory-row {
@@ -4640,7 +4469,7 @@ textarea {
   letter-spacing: -0.01em;
   padding: 2px 6px;
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: var(--pc-radius-round);
 }
 
 .memory-row.running .memory-row-tag {
@@ -4688,7 +4517,7 @@ textarea {
 }
 
 .memory-row-lesson-key {
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 500;
   margin-right: 6px;
 }
@@ -4731,7 +4560,7 @@ textarea {
 
 .perm-agent-row .idx {
   font-size: 10.5px;
-  color: var(--accent);
+  color: var(--accent-text);
   letter-spacing: -0.01em;
 }
 
@@ -4791,7 +4620,7 @@ textarea {
   margin-left: 6px;
   padding: 1px 5px;
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: var(--pc-radius-round);
 }
 
 .act-title {
@@ -4823,7 +4652,7 @@ textarea {
 
 .success-agent-row .idx {
   font-size: 11px;
-  color: var(--accent);
+  color: var(--accent-text);
   letter-spacing: -0.01em;
 }
 
@@ -4852,14 +4681,9 @@ textarea {
   margin-left: 4px;
 }
 
-/* ---------- Light palette graph adjustments ---------- */
-[data-palette='bone-paper'] .agent-graph {
-  background: var(--bg-elev);
-}
-[data-palette='bone-paper'] .legend-item .dot.idle {
-  background: #95928a;
-  border-color: #95928a;
-}
+/* The two `[data-palette='bone-paper']` graph rules that used to sit here are gone with the palette
+   itself -- nothing sets `data-palette` at runtime, so they never matched. Day Field's own graph
+   treatment comes from the themed tokens the base rules already read. */
 
 /* ============================================
    History â€” Etherscan-style explorer
@@ -4910,11 +4734,11 @@ textarea {
   border-bottom-color: var(--accent);
 }
 .history-tab-count {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 10.5px;
   color: var(--text-muted);
   background: rgba(127, 127, 127, 0.14);
-  border-radius: 5px;
+  border-radius: var(--pc-radius-round);
   padding: 1px 6px;
   font-variant-numeric: tabular-nums;
 }
@@ -4937,7 +4761,7 @@ textarea {
 .history-page-btn {
   padding: 6px 14px;
   font-size: 11px;
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   letter-spacing: 0.04em;
 }
 
@@ -5016,7 +4840,7 @@ a.tx-row-link:hover .tx-hash {
 }
 .hist-card {
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: var(--pc-radius-control);
   padding: 12px 14px;
 }
 .hist-card-head {
@@ -5086,7 +4910,7 @@ a.tx-row-link:hover .tx-hash {
   letter-spacing: -0.01em;
   color: var(--text-faint);
   margin-bottom: 8px;
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
 }
 
 .keeper-empty {
@@ -5194,7 +5018,7 @@ input[type='number']::-webkit-inner-spin-button {
   display: block;
   width: 48px;
   height: 3px;
-  border-radius: 2px;
+  border-radius: var(--pc-radius-round);
   background: var(--border-strong);
 }
 
@@ -5246,7 +5070,7 @@ input[type='number']::-webkit-inner-spin-button {
 }
 
 .apy-change.up {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .apy-change.down {
   color: var(--danger);
@@ -5268,7 +5092,7 @@ input[type='number']::-webkit-inner-spin-button {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 9.5px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -5291,7 +5115,7 @@ input[type='number']::-webkit-inner-spin-button {
 }
 
 .apy-chart-labels .up {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .apy-chart-labels .down {
   color: var(--danger);
@@ -5363,7 +5187,7 @@ details.yv-collapse[open] > summary .yv-caret {
 }
 .onb-link:hover {
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .onb-sig {
   margin-bottom: 18px;
@@ -5374,7 +5198,7 @@ details.yv-collapse[open] > summary .yv-caret {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 10.5px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -5470,7 +5294,7 @@ details.yv-collapse[open] > summary .yv-caret {
   font-size: clamp(26px, 2.4vw, 34px);
 }
 .brand--hero .slash {
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 500;
   display: inline-block;
   transform-origin: 50% 60%;
@@ -5622,7 +5446,7 @@ details.yv-collapse[open] > summary .yv-caret {
   white-space: nowrap;
 }
 .loop-state {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 11px;
   color: var(--text-muted);
   white-space: nowrap;
@@ -5689,7 +5513,7 @@ details.yv-collapse[open] > summary .yv-caret {
   justify-content: space-between;
   align-items: baseline;
   gap: 12px;
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 11px;
 }
 .loop-countdown {
@@ -5779,7 +5603,7 @@ details.yv-collapse[open] > summary .yv-caret {
 .loop-chips {
   display: flex;
   gap: 8px;
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 11px;
   flex-wrap: wrap;
 }
@@ -5804,8 +5628,8 @@ details.yv-collapse[open] > summary .yv-caret {
   color: var(--text-faint);
 }
 .loop-chip.gated {
-  color: var(--warn, #d6a338);
-  border-color: color-mix(in srgb, var(--warn, #d6a338) 35%, transparent);
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 35%, transparent);
 }
 
 /* Cycle journal rows */
@@ -5819,7 +5643,7 @@ details.yv-collapse[open] > summary .yv-caret {
   align-items: center;
   gap: 10px;
   padding: 6px 0;
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 11px;
 }
 .loop-row + .loop-row {
@@ -5832,7 +5656,7 @@ details.yv-collapse[open] > summary .yv-caret {
 }
 .loop-badge {
   padding: 1px 8px;
-  border-radius: 6px;
+  border-radius: var(--pc-radius-round);
   min-width: 64px;
   text-align: center;
   flex-shrink: 0;
@@ -5856,8 +5680,8 @@ details.yv-collapse[open] > summary .yv-caret {
   color: var(--text-faint);
 }
 .loop-badge.gated {
-  background: color-mix(in srgb, var(--warn, #d6a338) 14%, transparent);
-  color: var(--warn, #d6a338);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  color: var(--warn);
 }
 .loop-row-detail {
   flex: 1;
@@ -5874,7 +5698,7 @@ details.yv-collapse[open] > summary .yv-caret {
 }
 .loop-empty {
   padding: 10px 0 4px;
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 11px;
   line-height: 1.6;
   color: var(--text-muted);
@@ -6170,13 +5994,13 @@ details.yv-collapse[open] > summary .yv-caret {
 .council-rule-chip {
   font-size: 9px;
   padding: 1px 6px;
-  border-radius: 4px;
+  border-radius: var(--pc-radius-round);
   background: rgba(127, 127, 127, 0.12);
   color: var(--text-muted);
 }
 .council-concerns {
   font-size: 10px;
-  color: var(--warn, #c87);
+  color: var(--warn);
 }
 
 .debate-log {
@@ -6231,13 +6055,13 @@ details.yv-collapse[open] > summary .yv-caret {
 .debate-side {
   min-width: 0;
   padding: 12px 14px;
-  border-radius: var(--radius-md, 8px);
+  border-radius: var(--radius-md);
   border: 1px solid var(--border);
   background: var(--bg-elev);
   box-sizing: border-box;
 }
 .debate-side--plan {
-  border-color: color-mix(in oklab, var(--warn, #c87) 28%, var(--border));
+  border-color: color-mix(in oklab, var(--warn) 28%, var(--border));
 }
 .debate-side--risk {
   border-color: color-mix(in oklab, var(--ok) 28%, var(--border));
@@ -6621,7 +6445,7 @@ details.yv-collapse[open] > summary .yv-caret {
   border-top: none;
 }
 .grant-receipt-k {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 11px;
   color: var(--text-faint);
 }
@@ -6649,7 +6473,7 @@ details.yv-collapse[open] > summary .yv-caret {
 }
 
 .grant-field-k {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 11px;
   color: var(--text-faint);
   letter-spacing: -0.01em;
@@ -6676,7 +6500,7 @@ details.yv-collapse[open] > summary .yv-caret {
 }
 
 .grant-field-hint {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 10.5px;
 }
 
@@ -6743,7 +6567,7 @@ details.yv-collapse[open] > summary .yv-caret {
   align-self: start;
 }
 .portal-nav a {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 12px;
   letter-spacing: -0.01em;
   color: var(--text-muted);
@@ -6811,7 +6635,7 @@ details.yv-collapse[open] > summary .yv-caret {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 11px;
   color: var(--text-faint);
 }
@@ -6839,7 +6663,7 @@ details.yv-collapse[open] > summary .yv-caret {
 }
 .docs-scope-name {
   font-size: 11px;
-  color: var(--accent);
+  color: var(--accent-text);
   letter-spacing: 0.02em;
 }
 .docs-scope-grant {
@@ -6886,7 +6710,7 @@ details.yv-collapse[open] > summary .yv-caret {
   color: var(--text-muted);
 }
 .docs-method.is-post {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .docs-path {
@@ -6966,7 +6790,7 @@ details.yv-collapse[open] > summary .yv-caret {
   outline-offset: 2px;
 }
 .codeblock-copy.is-copied {
-  color: var(--accent);
+  color: var(--accent-text);
   border-color: var(--accent);
 }
 .codeblock-copy svg {
@@ -6979,7 +6803,7 @@ details.yv-collapse[open] > summary .yv-caret {
 }
 
 /* ─────────────────────────────────────────────────────────────
-   Animate button-LOOKING controls with the same liquid-lava wash the
+   Animate button-LOOKING controls with the same wash the
    .btn-ghost / .btn-primary family uses. Motion is hover/focus only.
    Text links and bare-glyph controls (× close via .modal-close-btn,
    the quiet .btn-text, .link-btn) are intentionally EXCLUDED — a wash
@@ -7004,48 +6828,20 @@ details.yv-collapse[open] > summary .yv-caret {
 .risk-opt:focus-visible:not(:disabled),
 .codeblock-copy:hover:not(:disabled),
 .codeblock-copy:focus-visible:not(:disabled) {
-  background-image: linear-gradient(
-    120deg,
-    var(--bg-elev) 0%,
-    color-mix(in srgb, var(--accent) 22%, var(--bg-elev)) 30%,
-    color-mix(in srgb, var(--ok) 16%, var(--bg-elev)) 55%,
-    var(--bg-elev) 100%
-  );
-  animation: btn-lava 5s ease infinite;
+  border-color: currentcolor;
+  background-color: color-mix(in srgb, currentcolor 12%, transparent);
 }
 
-/* Danger buttons animate too — red wash keeps the semantics */
+/* Revoke keeps its danger semantics through colour, not through a moving red wash. Revoke is a
+   consent/destructive control, which the contract pins at MOTION_INTENSITY 1-2. */
 .perm-revoke:hover:not(:disabled),
 .perm-revoke:focus-visible:not(:disabled) {
-  background-repeat: no-repeat;
-  background-size: 300% 300%;
-  background-image: linear-gradient(
-    120deg,
-    var(--bg-elev) 0%,
-    color-mix(in srgb, var(--danger) 24%, var(--bg-elev)) 32%,
-    color-mix(in srgb, var(--danger) 12%, var(--bg-elev)) 58%,
-    var(--bg-elev) 100%
-  );
-  animation: btn-lava 5s ease infinite;
+  border-color: var(--danger);
+  background-color: color-mix(in srgb, var(--danger) 12%, transparent);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .icon-btn:hover:not(:disabled),
-  .icon-btn:focus-visible:not(:disabled),
-  .wallet-action:hover:not(:disabled),
-  .wallet-action:focus-visible:not(:disabled),
-  .btn-chip:hover:not(:disabled),
-  .btn-chip:focus-visible:not(:disabled),
-  .risk-opt:hover:not(:disabled),
-  .risk-opt:focus-visible:not(:disabled),
-  .codeblock-copy:hover:not(:disabled),
-  .codeblock-copy:focus-visible:not(:disabled),
-  .perm-revoke:hover:not(:disabled),
-  .perm-revoke:focus-visible:not(:disabled) {
-    animation: none !important;
-    background-position: 40% 50%;
-  }
-}
+/* The `prefers-reduced-motion` block that used to sit here only existed to stop that drift. Nothing
+   on these controls animates any more, so there is no motion left to reduce. */
 
 /* HomePage buttons. Only .pill-btn (View agent / withdraw / sort+filter
    pills) READS as a button, so only it gets the wash. .link-btn is a
@@ -7053,11 +6849,10 @@ details.yv-collapse[open] > summary .yv-caret {
    right-rail "Customize →" link — these get a plain color hover, NO
    animation, because a wash on a link looks wrong. */
 .pill-btn {
-  background-repeat: no-repeat;
-  background-size: 300% 300%;
-  background-position: 0% 50%;
-  border: 0.5px solid rgba(255, 255, 255, 0.18);
-  background-color: rgba(255, 255, 255, 0.06);
+  /* Was a hardcoded rgba(255,255,255,…) border and fill: white-on-white in Day Field, so the pill
+     had no visible edge at all in light mode. Tokens carry both themes. */
+  border: 1px solid var(--border);
+  background-color: var(--bg-elev);
   transition:
     color 150ms ease,
     border-color 150ms ease,
@@ -7074,20 +6869,6 @@ details.yv-collapse[open] > summary .yv-caret {
 .pill-btn:hover:not(:disabled),
 .pill-btn:focus-visible:not(:disabled) {
   color: var(--text);
-  background-image: linear-gradient(
-    120deg,
-    var(--bg-elev) 0%,
-    color-mix(in srgb, var(--accent) 22%, var(--bg-elev)) 30%,
-    color-mix(in srgb, var(--ok) 16%, var(--bg-elev)) 55%,
-    var(--bg-elev) 100%
-  );
-  animation: btn-lava 5s ease infinite;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .pill-btn:hover:not(:disabled),
-  .pill-btn:focus-visible:not(:disabled) {
-    animation: none !important;
-    background-position: 40% 50%;
-  }
+  border-color: currentcolor;
+  background-color: color-mix(in srgb, currentcolor 12%, var(--bg-elev));
 }

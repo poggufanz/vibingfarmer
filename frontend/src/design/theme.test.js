@@ -32,9 +32,17 @@ const WARN = Object.freeze({ forest: '#E8A33D', 'day-field': '#8A5A00' })
 const compatibilityValues = (tokens, themeId) => ({
   '--bg-base': tokens.canvas,
   '--bg-canvas': tokens.canvas,
-  '--bg-card': tokens.canvas,
-  '--bg-elev': tokens.canvas,
-  '--bg-elev-2': tokens.canvas,
+  // 2026-07-29: these three used to expect `tokens.canvas`, matching a note in pocket-crew.css that
+  // existing routes would stay flat "until they adopt an explicit surface pair". That adoption has
+  // now happened. While they were flat, 111 declarations across the app asked for an elevated
+  // surface and were handed the canvas back, so every legacy card, panel and rail rendered as a bare
+  // border -- the sidebar's active nav item painted the rail's own colour and was invisible in both
+  // themes. They now resolve to the workspace surface (Grove / #f7f9f5).
+  '--bg-card': tokens.workspace,
+  '--bg-elev': tokens.workspace,
+  '--bg-elev-2': tokens.workspace,
+  // --bg-input stays on the canvas: an input sits ON a card, so it must read as inset against the
+  // workspace rather than merge into it.
   '--bg-input': tokens.canvas,
   '--text': tokens.text,
   '--text-primary': tokens.text,

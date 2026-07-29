@@ -88,7 +88,7 @@ const InputScreen = ({ amount, setAmount, risk, setRisk, onSubmit }) => {
             gap: 8,
             background: 'rgba(255,255,255,.04)',
             border: '1px solid var(--border)',
-            borderRadius: 6,
+            borderRadius: 'var(--pc-radius-control)',
             padding: '9px 14px',
             marginBottom: 16,
             fontFamily: 'var(--font-mono)',
@@ -375,7 +375,7 @@ const UpgradedCallout = ({ onDone }) => (
           className="mono"
           style={{
             fontSize: 11,
-            color: 'var(--accent)',
+            color: 'var(--accent-text)',
             letterSpacing: '-0.01em',
             marginBottom: 8,
           }}
@@ -632,7 +632,7 @@ const SuccessCard = ({ strategy, onAgain, address }) => {
         </div>
         <div className="success-num-cell">
           <span className="label">Estimated monthly yield</span>
-          <span className="figure tnum" style={{ color: 'var(--accent)' }}>
+          <span className="figure tnum" style={{ color: 'var(--accent-text)' }}>
             +{monthly}
             <span className="unit">USDC</span>
           </span>

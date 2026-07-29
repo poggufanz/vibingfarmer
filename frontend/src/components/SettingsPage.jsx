@@ -40,7 +40,7 @@ const card = {
 const miniBtn = {
   appearance: 'none',
   border: '.5px solid var(--border-strong)',
-  borderRadius: 5,
+  borderRadius: 'var(--pc-radius-control)',
   background: 'rgba(255,255,255,.06)',
   color: 'inherit',
   font: 'inherit',
@@ -52,7 +52,7 @@ const dangerBtn = { ...miniBtn, borderColor: 'var(--danger)', color: 'var(--dang
 const inputStyle = {
   background: 'var(--bg-input)',
   border: '1px solid var(--border-strong)',
-  borderRadius: 6,
+  borderRadius: 'var(--pc-radius-control)',
   color: 'inherit',
   font: 'inherit',
   fontSize: 12,
@@ -127,7 +127,7 @@ const Toggle = ({ on, onChange, onLabel = 'ON', offLabel = 'OFF' }) => (
     style={{
       display: 'inline-flex',
       border: '1px solid var(--border-strong)',
-      borderRadius: 6,
+      borderRadius: 'var(--pc-radius-control)',
       overflow: 'hidden',
       fontFamily: 'var(--font-mono)',
       fontSize: 11,
@@ -206,7 +206,7 @@ const Check = ({ on, onChange, label }) => (
       style={{
         width: 16,
         height: 16,
-        borderRadius: 4,
+        borderRadius: 'var(--pc-radius-control)',
         border: '1px solid var(--border-strong)',
         background: on ? 'var(--accent)' : 'transparent',
         color: 'var(--accent-fg)',
@@ -1112,7 +1112,7 @@ export default function SettingsPage({
                   }}
                 >
                   <span>Total Tokens Used</span>
-                  <span className="mono" style={{ color: 'var(--accent)', fontWeight: 600 }}>
+                  <span className="mono" style={{ color: 'var(--accent-text)', fontWeight: 600 }}>
                     {telemetryStats.total}
                   </span>
                 </div>
@@ -1126,7 +1126,7 @@ export default function SettingsPage({
                         maxHeight: 120,
                         overflowY: 'auto',
                         border: '1px solid var(--border)',
-                        borderRadius: 4,
+                        borderRadius: 'var(--pc-radius-control)',
                         padding: '6px 8px',
                         background: 'rgba(0,0,0,0.1)',
                       }}

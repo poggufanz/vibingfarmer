@@ -1,11 +1,13 @@
 // sparkline.js
 // Pure SVG sparkline generator — no chart library.
 // Returns an SVG string for injection via dangerouslySetInnerHTML.
-// Palette aligned to Vibing Farmer tokens: accent #cfff3d (up), danger #ff7479 (down).
+// Palette reads the live theme tokens. This markup is injected inline into the document, so a
+// var() in a stroke attribute resolves against :root -- a private hex here would freeze the
+// sparkline to one theme (it used to hold the retired lime and coral literals).
 
-const ACCENT_UP = '#cfff3d' // --accent (lime)
-const ACCENT_DOWN = '#ff7479' // --danger (coral)
-const ACCENT_FLAT = 'rgba(255,255,255,0.4)'
+const ACCENT_UP = 'var(--accent)'
+const ACCENT_DOWN = 'var(--danger)'
+const ACCENT_FLAT = 'var(--text-faint)'
 const TREND_EPS = 0.1 // pp threshold for up/down vs flat
 
 /**

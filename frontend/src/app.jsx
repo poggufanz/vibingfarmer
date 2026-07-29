@@ -3529,43 +3529,73 @@ const App = () => {
               />
             }
           />
-          <Route path="/history" element={<HistoryPanel connectedAddress={realAddress} />} />
+          {/* The legacy routes below opt into `.pc-route` (pocket-crew.css) so their content column
+              is the same width, centred the same way and inset by the same gutter as My money,
+              Put it to work and The crew -- until now each rendered at whatever width its own markup
+              happened to produce. It also buys them scrolling: `.main` is `overflow: hidden`
+              (style.css) and only `.main:has(.pc-route)` unclips it, which is why a tall legacy route
+              could previously run past the viewport with nothing to scroll. */}
+          <Route
+            path="/history"
+            element={
+              <div className="pc-route">
+                <HistoryPanel connectedAddress={realAddress} />
+              </div>
+            }
+          />
           <Route
             path="/settings"
             element={
-              <SettingsPage
-                userAddress={realAddress}
-                walletPhase={walletPhase}
-                permActive={permActive}
-                permExpiresAt={permExpiresAt}
-                permissionCount={strategy?.agents?.length || 0}
-                agentEnabled={agentEnabled}
-                setAgentEnabled={setAgentEnabled}
-                agentSettings={agentSettings}
-                setAgentSettings={setAgentSettings}
-                skillSource={skillSource}
-                language={language}
-                onLanguageChange={handleLanguageChange}
-                onChangeSkill={() => setSkillDrawerOpen(true)}
-                onResetSkill={handleResetSkill}
-                onResetAgentSettings={handleResetAgentSettings}
-                onConnect={handleConnect}
-                onDisconnect={handleDisconnect}
-                onRevoke={handleRevoke}
-                addLog={addLog}
-              />
+              <div className="pc-route-flush">
+                <SettingsPage
+                  userAddress={realAddress}
+                  walletPhase={walletPhase}
+                  permActive={permActive}
+                  permExpiresAt={permExpiresAt}
+                  permissionCount={strategy?.agents?.length || 0}
+                  agentEnabled={agentEnabled}
+                  setAgentEnabled={setAgentEnabled}
+                  agentSettings={agentSettings}
+                  setAgentSettings={setAgentSettings}
+                  skillSource={skillSource}
+                  language={language}
+                  onLanguageChange={handleLanguageChange}
+                  onChangeSkill={() => setSkillDrawerOpen(true)}
+                  onResetSkill={handleResetSkill}
+                  onResetAgentSettings={handleResetAgentSettings}
+                  onConnect={handleConnect}
+                  onDisconnect={handleDisconnect}
+                  onRevoke={handleRevoke}
+                  addLog={addLog}
+                />
+              </div>
             }
           />
           <Route
             path="/vault/:protocol"
-            element={<VaultDetailPage positions={agentData.positions} />}
+            element={
+              <div className="pc-route">
+                <VaultDetailPage positions={agentData.positions} />
+              </div>
+            }
           />
-          <Route path="/tx/:txHash" element={<TxDetailPage />} />
+          <Route
+            path="/tx/:txHash"
+            element={
+              <div className="pc-route">
+                <TxDetailPage />
+              </div>
+            }
+          />
           <Route
             path="/developers/*"
             element={
               <Suspense fallback={<div className="route-loading" aria-busy="true" />}>
-                <DevelopersLayout />
+                {/* Inside the Suspense boundary, so the wrapper commits with the lazy chunk rather
+                    than framing an empty fallback. */}
+                <div className="pc-route">
+                  <DevelopersLayout />
+                </div>
               </Suspense>
             }
           />

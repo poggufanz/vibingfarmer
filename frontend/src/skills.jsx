@@ -164,15 +164,15 @@ const DelegationChain = ({ agents }) => {
     fontSize: 12,
     lineHeight: 1.95,
   }
-  const muted = { color: 'var(--text-muted, rgba(41,38,27,.55))' }
+  const muted = { color: 'var(--text-muted)' }
   return (
     <div
       style={{
-        border: '.5px solid var(--line, rgba(0,0,0,.12))',
-        borderRadius: 10,
+        border: '.5px solid var(--line)',
+        borderRadius: 'var(--pc-radius-control)',
         padding: '13px 16px',
         margin: '16px 0 20px',
-        background: 'var(--surface-2, rgba(0,0,0,.02))',
+        background: 'var(--bg-elev)',
       }}
     >
       <div
@@ -191,8 +191,8 @@ const DelegationChain = ({ agents }) => {
           style={{
             fontSize: 10,
             ...muted,
-            border: '.5px solid var(--line, rgba(0,0,0,.12))',
-            borderRadius: 5,
+            border: '.5px solid var(--line)',
+            borderRadius: 'var(--pc-radius-control)',
             padding: '2px 7px',
           }}
         >

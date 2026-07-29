@@ -107,16 +107,18 @@ function NavStyle() {
 .nv-bar {
   position: fixed;
   top: 0; left: 0; right: 0;
-  z-index: 100;
+  z-index: var(--pc-z-sticky);
   height: 64px;
   display: flex;
   align-items: center;
   gap: 1.2rem;
   padding: 0 clamp(1rem, 4vw, 2.6rem);
-  background: color-mix(in oklab, var(--bg-base, #0e0f0c) 72%, transparent);
-  -webkit-backdrop-filter: saturate(140%) blur(14px);
-  backdrop-filter: saturate(140%) blur(14px);
-  border-bottom: 1px solid var(--border, rgba(255,255,255,0.06));
+  /* Contract rule 7: no glass blur. This was a 72%-opaque bar over a saturate(140%) blur(14px)
+     backdrop -- the one piece of glassmorphism left in the product, and on the three wallet-free
+     public pages that visitors and judges see first. A solid canvas reads the same at rest, costs
+     no compositing, and keeps the bar legible over any content that scrolls beneath it. */
+  background: var(--bg-base);
+  border-bottom: 1px solid var(--border);
   font-family: var(--font-body, "Geist", system-ui, sans-serif);
 }
 
@@ -141,10 +143,10 @@ function NavStyle() {
   font-family: var(--font-script, "Newsreader", serif);
   font-style: italic;
   font-weight: 500;
-  color: var(--text, #ecebe1);
+  color: var(--text);
 }
 .nv-wordmark__slash {
-  color: var(--text-faint, #7a7a70);
+  color: var(--text-faint);
   transform: translateY(-0.02em);
 }
 .nv-wordmark__farm {
@@ -152,7 +154,7 @@ function NavStyle() {
   font-weight: 500;
   text-transform: lowercase;
   letter-spacing: 0.02em;
-  color: var(--text, #ecebe1);
+  color: var(--text);
 }
 
 /* ---------- links ---------- */
@@ -167,16 +169,16 @@ function NavStyle() {
   background: none;
   border: none;
   cursor: pointer;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: 0.82rem;
   letter-spacing: 0.01em;
   text-decoration: none;
-  color: var(--text-muted, #95958a);
+  color: var(--text-muted);
   padding: 0.55rem 0.65rem;
   min-height: 44px;
   display: inline-flex;
   align-items: center;
-  border-radius: var(--radius-sm, 4px);
+  border-radius: var(--radius-sm);
   position: relative;
   transition: color 180ms ease;
 }
@@ -185,16 +187,16 @@ function NavStyle() {
   position: absolute;
   left: 0.55rem; right: 0.55rem; bottom: 0.28rem;
   height: 1px;
-  background: var(--accent, #cfff3d);
+  background: var(--accent);
   transform: scaleX(0);
   transform-origin: left;
   transition: transform 220ms cubic-bezier(0.16,1,0.3,1);
 }
-.nv-link:hover { color: var(--text, #ecebe1); }
-.nv-link.is-active { color: var(--accent, #cfff3d); }
+.nv-link:hover { color: var(--text); }
+.nv-link.is-active { color: var(--accent-text); }
 .nv-link.is-active::after { transform: scaleX(1); }
 .nv-link:focus-visible {
-  outline: 2px solid var(--accent, #cfff3d);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -202,19 +204,19 @@ function NavStyle() {
 .nv-cta {
   appearance: none;
   cursor: pointer;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-weight: 600;
   font-size: 0.82rem;
-  color: var(--text, #ecebe1);
-  background: var(--bg-elev, #22231d);
-  border: 1px solid var(--border-strong, rgba(255,255,255,0.13));
+  color: var(--text);
+  background: var(--bg-elev);
+  border: 1px solid var(--border-strong);
   padding: 0.55rem 1.05rem;
-  border-radius: var(--radius-md, 8px);
+  border-radius: var(--pc-radius-control);
   display: inline-flex;
   align-items: center;
   gap: 0.5ch;
 }
-.nv-cta:focus-visible { outline: 2px solid var(--accent, #cfff3d); outline-offset: 2px; }
+.nv-cta:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 @media (hover: hover) and (pointer: fine) {
   .nv-link:hover::after { transform: scaleX(1); }
@@ -222,17 +224,13 @@ function NavStyle() {
 }
 
 @media (prefers-reduced-transparency: reduce) {
-  .nv-bar {
-    background: var(--bg-base, #0e0f0c);
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-  }
+  /* The blur-disabling override that lived here is gone with the blur itself. */
 }
 
 @media (prefers-contrast: more) {
   .nv-bar {
-    background: var(--bg-base, #0e0f0c);
-    border-bottom-color: var(--border-strong, rgba(255,255,255,0.13));
+    background: var(--bg-base);
+    border-bottom-color: var(--border-strong);
   }
 }
 
@@ -240,18 +238,18 @@ function NavStyle() {
   display: none;
   appearance: none;
   background: none;
-  border: 1px solid var(--border-strong, rgba(255,255,255,0.13));
-  color: var(--text, #ecebe1);
-  border-radius: var(--radius-sm, 4px);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  border-radius: var(--radius-sm);
   min-width: 44px;
   min-height: 44px;
   margin-left: auto;
   margin-right: 0.5rem;
   cursor: pointer;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-body);
   font-size: 0.75rem;
 }
-.nv-menu-btn:focus-visible { outline: 2px solid var(--accent, #cfff3d); outline-offset: 2px; }
+.nv-menu-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .nv-brand,
 .nv-menu-btn,
@@ -277,8 +275,8 @@ function NavStyle() {
     gap: 0;
     margin-left: 0;
     padding: 0.5rem;
-    background: var(--bg-canvas, #131410);
-    border-bottom: 1px solid var(--border, rgba(255,255,255,0.06));
+    background: var(--bg-canvas);
+    border-bottom: 1px solid var(--border);
     transform: translateY(-8px) scale(0.98);
     transform-origin: top right;
     transition:

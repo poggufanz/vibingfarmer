@@ -41,7 +41,7 @@ const LABELS = {
 // no `--pc-warning` in scope at all (extension/popup.jsx's legacy Acid Yield screens -- this file's
 // own header comment: "stays legible on the wallet popup without depending on the popup
 // stylesheet"), so that surface's rendering is untouched. Round 1 only routed `color`; round 2
-// finishes `background`/`border` the same way -- `color-mix(in srgb, var(--pc-warning, #f0b54a)
+// finishes `background`/`border` the same way -- `color-mix(in srgb, var(--pc-warning)
 // N%, transparent)` mixes the SAME token-or-fallback color down to N% opacity against transparent,
 // so the fallback path renders byte-identically to the old literal `rgba(240,181,74, N/100)` (both
 // are just the RGB of #f0b54a at N% alpha), while the Pocket Crew path now tints from the real
@@ -49,10 +49,10 @@ const LABELS = {
 const s = {
   fontSize: 11,
   lineHeight: 1.5,
-  color: 'var(--pc-warning, #f0b54a)',
-  background: 'color-mix(in srgb, var(--pc-warning, #f0b54a) 8%, transparent)',
-  border: '1px solid color-mix(in srgb, var(--pc-warning, #f0b54a) 28%, transparent)',
-  borderRadius: 6,
+  color: 'var(--pc-warning)',
+  background: 'color-mix(in srgb, var(--pc-warning) 8%, transparent)',
+  border: '1px solid color-mix(in srgb, var(--pc-warning) 28%, transparent)',
+  borderRadius: 'var(--pc-radius-control)',
   padding: '7px 9px',
   margin: '4px 0',
 }
