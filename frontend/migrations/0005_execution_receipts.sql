@@ -54,8 +54,13 @@ WHEN NEW.version <> OLD.version + 1
   OR (OLD.cctp_burn_status = 'confirmed' AND NEW.cctp_burn_status <> 'confirmed')
   OR (OLD.cctp_mint_status = 'confirmed' AND NEW.cctp_mint_status <> 'confirmed')
   OR (OLD.base_deposit_status = 'confirmed' AND NEW.base_deposit_status <> 'confirmed')
+  OR (OLD.custody_confirmed = 1 AND NEW.custody_confirmed <> 1)
+  OR (
+    OLD.custody_confirmed = 1 AND OLD.custody_units IS NOT NULL
+    AND NEW.custody_units IS NULL
+  )
 BEGIN
-  SELECT RAISE(ABORT, 'execution receipt version and confirmed evidence must be monotonic');
+  SELECT RAISE(ABORT, 'execution receipt version, confirmed phase, and custody evidence must be monotonic');
 END;
 
 CREATE TABLE execution_phase_attempts (

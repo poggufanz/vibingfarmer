@@ -20,6 +20,9 @@ import {
   toBaseChildRow,
   parseBaseChildRow,
   canonicalJson,
+  AgentIndexConflictError,
+  AgentIndexStoreError,
+  AgentIndexValidationError,
   BASE_CHILD_LIFECYCLE_STATUSES,
   RECEIPT_PHASES,
   nowSeconds,
@@ -253,6 +256,18 @@ export function createAgentIndexStore(db) {
            SELECT 1 FROM execution_receipt_challenges
            WHERE challenge_id = ? AND consume_token = ? AND consumed_at = ?
          )
+           AND (
+             (? = 0 AND NOT EXISTS (
+               SELECT 1 FROM execution_receipts current
+               WHERE current.network_id = ? AND current.execution_id = ?
+                 AND current.allocation_id = ?
+             ))
+             OR EXISTS (
+               SELECT 1 FROM execution_receipts current
+               WHERE current.network_id = ? AND current.execution_id = ?
+                 AND current.allocation_id = ? AND current.version = ?
+             )
+           )
          ON CONFLICT(network_id, execution_id, allocation_id) DO UPDATE SET
            pull_status = excluded.pull_status,
            stellar_deposit_status = excluded.stellar_deposit_status,
@@ -286,7 +301,12 @@ export function createAgentIndexStore(db) {
            AND (execution_receipts.cctp_mint_status <> 'confirmed'
              OR excluded.cctp_mint_status = 'confirmed')
            AND (execution_receipts.base_deposit_status <> 'confirmed'
-             OR excluded.base_deposit_status = 'confirmed')`
+             OR excluded.base_deposit_status = 'confirmed')
+           AND (execution_receipts.custody_confirmed <> 1
+             OR excluded.custody_confirmed = 1)
+           AND (execution_receipts.custody_confirmed <> 1
+             OR execution_receipts.custody_units IS NULL
+             OR excluded.custody_units IS NOT NULL)`
       )
       .bind(
         row.network_id,
@@ -319,6 +339,14 @@ export function createAgentIndexStore(db) {
         challenge.challengeId,
         consumeToken,
         now,
+        expectedVersion,
+        row.network_id,
+        row.execution_id,
+        row.allocation_id,
+        row.network_id,
+        row.execution_id,
+        row.allocation_id,
+        expectedVersion,
         expectedVersion
       )
     // `receipt_version` is NOT NULL. Its scalar subquery resolves only after both the challenge
@@ -374,19 +402,72 @@ export function createAgentIndexStore(db) {
       if (await consumeExactDuplicate()) {
         return { written: 0, duplicates: 1, version: nextVersion }
       }
-      const current = await readExecutionReceipt({
-        networkId: row.network_id,
-        executionId: row.execution_id,
-        allocationId: row.allocation_id,
-        owner: row.owner_address,
-      })
-      const confirmedRegression = Object.entries(current?.phases ?? {}).some(
-        ([phase, status]) => status === 'confirmed' && receipt.phases?.[phase] !== 'confirmed'
-      )
-      if (confirmedRegression) {
-        throw new Error('confirmed receipt evidence cannot be downgraded', { cause: error })
+      let current
+      let challengeState
+      let collidingAttempt
+      try {
+        ;[current, challengeState, collidingAttempt] = await Promise.all([
+          db
+            .prepare(
+              `SELECT * FROM execution_receipts
+               WHERE network_id = ? AND execution_id = ? AND allocation_id = ?`
+            )
+            .bind(row.network_id, row.execution_id, row.allocation_id)
+            .first(),
+          readReceiptChallenge({ challengeId: challenge.challengeId }),
+          db
+            .prepare(`SELECT * FROM execution_phase_attempts WHERE attempt_id = ?`)
+            .bind(attemptRow.attempt_id)
+            .first(),
+        ])
+      } catch (probeError) {
+        throw new AgentIndexStoreError('Execution receipt store failed', { cause: probeError })
       }
-      throw new Error('receipt version, immutable intent, or attempt conflict', { cause: error })
+      const immutableConflict =
+        current &&
+        (current.receipt_format !== row.receipt_format ||
+          current.owner_address !== row.owner_address ||
+          current.run_id !== row.run_id ||
+          current.parent_allocation_id !== row.parent_allocation_id ||
+          current.child_id !== row.child_id ||
+          current.worker_address !== row.worker_address ||
+          current.agent_address !== row.agent_address ||
+          current.intent_digest !== row.intent_digest ||
+          current.intent_json !== row.intent_json)
+      const versionConflict =
+        (expectedVersion === 0 && current != null) ||
+        (expectedVersion > 0 && current?.version !== expectedVersion)
+      const phaseColumns = {
+        pull: 'pull_status',
+        stellar_deposit: 'stellar_deposit_status',
+        cctp_burn: 'cctp_burn_status',
+        cctp_mint: 'cctp_mint_status',
+        base_deposit: 'base_deposit_status',
+      }
+      const confirmedRegression = Object.entries(phaseColumns).some(
+        ([phase, column]) =>
+          current?.[column] === 'confirmed' && receipt.phases?.[phase] !== 'confirmed'
+      )
+      const custodyRegression =
+        current?.custody_confirmed === 1 &&
+        (row.custody_confirmed !== 1 ||
+          (current.custody_units != null && row.custody_units == null))
+      if (
+        immutableConflict ||
+        versionConflict ||
+        confirmedRegression ||
+        custodyRegression ||
+        challengeState?.consumedAt != null ||
+        collidingAttempt
+      ) {
+        const message = custodyRegression
+          ? 'confirmed custody evidence cannot be erased'
+          : confirmedRegression
+            ? 'confirmed receipt evidence cannot be downgraded'
+            : 'receipt version, immutable intent, challenge, or attempt conflict'
+        throw new AgentIndexConflictError(message, { cause: error })
+      }
+      throw new AgentIndexStoreError('Execution receipt store failed', { cause: error })
     }
   }
 
@@ -575,7 +656,10 @@ export function createAgentIndexStore(db) {
       ) {
         return { written: 0, duplicates: 1, sequence: 0 }
       }
-      throw new Error('immutable Base child intent conflict', { cause: error })
+      if (existing) {
+        throw new AgentIndexConflictError('immutable Base child intent conflict', { cause: error })
+      }
+      throw new AgentIndexStoreError('Base child intent store failed', { cause: error })
     }
   }
 
@@ -586,14 +670,14 @@ export function createAgentIndexStore(db) {
     idempotencyKey,
   }) {
     if (!Number.isInteger(expectedSequence) || lifecycle?.sequence !== expectedSequence + 1) {
-      throw new Error('Base child lifecycle sequence must advance by one')
+      throw new AgentIndexValidationError('Base child lifecycle sequence must advance by one')
     }
     if (!BASE_CHILD_LIFECYCLE_STATUSES.includes(lifecycle.status)) {
-      throw new Error('invalid Base child lifecycle status')
+      throw new AgentIndexValidationError('invalid Base child lifecycle status')
     }
     const evidenceJson = canonicalJson(lifecycle.evidence ?? {})
     if (!Number.isInteger(lifecycle.observedAt))
-      throw new Error('lifecycle.observedAt must be integer')
+      throw new AgentIndexValidationError('lifecycle.observedAt must be integer')
     const update = db
       .prepare(
         `UPDATE base_child_intents
@@ -652,7 +736,51 @@ export function createAgentIndexStore(db) {
       }
       return { written: 1, duplicates: 0, sequence: lifecycle.sequence }
     } catch (error) {
-      throw new Error('Base child lifecycle sequence conflict', { cause: error })
+      let existingEvent
+      let projection
+      try {
+        ;[existingEvent, projection] = await Promise.all([
+          db
+            .prepare(
+              `SELECT * FROM base_child_lifecycle_events
+               WHERE idempotency_key = ?`
+            )
+            .bind(idempotencyKey)
+            .first(),
+          readBaseChildIntent({
+            networkId: identity.networkId,
+            bindingId: identity.bindingId,
+            allocationId: identity.allocationId,
+            childId: identity.childId,
+            owner: identity.owner,
+          }),
+        ])
+      } catch (probeError) {
+        throw new AgentIndexStoreError('Base child lifecycle store failed', { cause: probeError })
+      }
+      const exactEvent =
+        existingEvent?.network_id === identity.networkId &&
+        existingEvent.binding_id === identity.bindingId &&
+        existingEvent.allocation_id === identity.allocationId &&
+        existingEvent.child_id === identity.childId &&
+        existingEvent.sequence === lifecycle.sequence &&
+        existingEvent.status === lifecycle.status &&
+        existingEvent.evidence_json === evidenceJson &&
+        existingEvent.observed_at === lifecycle.observedAt
+      if (exactEvent && projection && projection.lifecycle.sequence >= lifecycle.sequence) {
+        return { written: 0, duplicates: 1, sequence: lifecycle.sequence }
+      }
+      if (
+        existingEvent ||
+        !projection ||
+        projection.lifecycle.sequence !== expectedSequence ||
+        (projection.lifecycle.status === 'confirmed' && lifecycle.status !== 'confirmed')
+      ) {
+        throw new AgentIndexConflictError('Base child lifecycle sequence conflict', {
+          cause: error,
+        })
+      }
+      throw new AgentIndexStoreError('Base child lifecycle store failed', { cause: error })
     }
   }
 

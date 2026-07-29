@@ -3,12 +3,23 @@
 // here is testable without touching a network or a real Cloudflare binding).
 import { ingestAgentIndexPage, coverageProof } from './indexer.js'
 import { commitBackfillAudit } from './backfill.js'
-import { ingestAssociationReport, joinBaseAssociations } from './associations.js'
+import {
+  advanceBaseChildLifecycle,
+  ingestAssociationReport,
+  ingestBaseChildIntent,
+  joinBaseAssociations,
+} from './associations.js'
 import {
   applyAuthenticatedReceiptMutation,
   issueReceiptChallenge,
   ReceiptAuthError,
 } from './executionReceipts.js'
+import {
+  AgentIndexConflictError,
+  AgentIndexStoreError,
+  AgentIndexUnavailableError,
+  AgentIndexValidationError,
+} from './models.js'
 import {
   AGENT_CREATORS,
   AGENT_CREATOR_MANIFEST_HASH,
@@ -24,6 +35,78 @@ export const LIVE_MANIFEST = {
   creators: AGENT_CREATORS,
 }
 
+function agentIndexFailure(error) {
+  if (error instanceof AgentIndexValidationError) {
+    return { status: 400, body: { error: 'Invalid agent-index request' } }
+  }
+  if (error instanceof AgentIndexConflictError) {
+    return { status: 409, body: { error: 'Agent-index mutation conflict' } }
+  }
+  if (error instanceof AgentIndexUnavailableError) {
+    return { status: 503, body: { error: 'Agent-index dependency unavailable' } }
+  }
+  if (error instanceof AgentIndexStoreError) {
+    return { status: 500, body: { error: 'Internal agent-index error' } }
+  }
+  if (error instanceof ReceiptAuthError) {
+    if (error.code === 'replay') {
+      return { status: 409, body: { error: 'Receipt proof was already used' } }
+    }
+    if (['proof', 'expired'].includes(error.code)) {
+      return { status: 401, body: { error: 'Invalid or expired receipt proof' } }
+    }
+    if (error.code === 'authority') {
+      return { status: 403, body: { error: 'Agent authority could not be verified' } }
+    }
+    if (error.code === 'invalid') {
+      return { status: 400, body: { error: 'Invalid receipt mutation' } }
+    }
+  }
+  return { status: 500, body: { error: 'Internal agent-index error' } }
+}
+
+function requireConfiguredNetwork(networkId, configuredNetworkId) {
+  if (!configuredNetworkId) {
+    throw new AgentIndexUnavailableError('Stellar network configuration is unavailable')
+  }
+  if (typeof networkId !== 'string' || !networkId) {
+    throw new AgentIndexValidationError('networkId is required')
+  }
+  if (networkId !== configuredNetworkId) {
+    throw new AgentIndexValidationError('Requested network does not match configured network')
+  }
+}
+
+function requireText(value, field) {
+  if (typeof value !== 'string' || !value) {
+    throw new AgentIndexValidationError(`${field} is required`)
+  }
+}
+
+function validateLease(lease, { release = false } = {}) {
+  for (const field of ['networkId', 'executionId', 'allocationId', 'phase', 'leaseToken']) {
+    requireText(lease?.[field], field)
+  }
+  if (!release) {
+    requireText(lease?.owner, 'owner')
+    requireText(lease?.holder, 'holder')
+    if (!Number.isSafeInteger(lease?.now)) {
+      throw new AgentIndexValidationError('lease.now must be a safe integer')
+    }
+    if (lease.ttlMs != null && (!Number.isSafeInteger(lease.ttlMs) || lease.ttlMs <= 0)) {
+      throw new AgentIndexValidationError('lease.ttlMs must be a positive safe integer')
+    }
+  }
+}
+
+async function reporterGate({ secret, providedSecret }) {
+  if (!secret) return { status: 503, body: { error: 'Agent-index writer is not configured' } }
+  if (!providedSecret || !(await constantTimeEqual(providedSecret, secret))) {
+    return { status: 401, body: { error: 'Unauthorized' } }
+  }
+  return null
+}
+
 export async function handleReceiptChallenge({
   request,
   store,
@@ -35,7 +118,7 @@ export async function handleReceiptChallenge({
     return { status: 503, body: { error: 'Receipt store unavailable', configured: false } }
   }
   if (typeof authorityReader !== 'function') {
-    return { status: 500, body: { error: 'Receipt authority is not configured' } }
+    return { status: 503, body: { error: 'Receipt authority is not configured' } }
   }
   try {
     const challenge = await issueReceiptChallenge({
@@ -47,10 +130,14 @@ export async function handleReceiptChallenge({
     })
     return { status: 201, body: { ok: true, challenge } }
   } catch (error) {
-    if (error instanceof ReceiptAuthError && error.code === 'invalid') {
+    const failure = agentIndexFailure(error)
+    if (failure.status === 400) {
       return { status: 400, body: { error: 'Invalid receipt challenge request' } }
     }
-    return { status: 403, body: { error: 'Agent authority could not be verified' } }
+    if (failure.status === 503) {
+      return { status: 503, body: { error: 'Receipt authority is unavailable' } }
+    }
+    return failure
   }
 }
 
@@ -79,18 +166,139 @@ export async function handleReceiptWrite({
     })
     return { status: 200, body: { ok: true, ...result } }
   } catch (error) {
-    if (error instanceof ReceiptAuthError) {
-      if (['proof', 'replay', 'expired'].includes(error.code)) {
-        return { status: 401, body: { error: 'Invalid or expired receipt proof' } }
-      }
-      if (error.code === 'authority') {
-        return { status: 403, body: { error: 'Agent authority could not be verified' } }
-      }
-      if (error.code === 'invalid') {
-        return { status: 400, body: { error: 'Invalid receipt mutation' } }
-      }
+    const failure = agentIndexFailure(error)
+    if (failure.status === 400) {
+      return { status: 400, body: { error: 'Invalid receipt mutation' } }
     }
-    return { status: 409, body: { error: 'Receipt mutation conflict' } }
+    if (failure.status === 409) {
+      if (error instanceof ReceiptAuthError) return failure
+      return { status: 409, body: { error: 'Receipt mutation conflict' } }
+    }
+    return failure
+  }
+}
+
+export async function handleReceiptRead({
+  networkId,
+  configuredNetworkId,
+  owner,
+  executionId,
+  allocationId,
+  store,
+}) {
+  if (!store?.readExecutionReceipt) {
+    return { status: 503, body: { error: 'Receipt store unavailable', configured: false } }
+  }
+  try {
+    requireConfiguredNetwork(networkId, configuredNetworkId)
+    for (const [value, field] of [
+      [owner, 'owner'],
+      [executionId, 'executionId'],
+      [allocationId, 'allocationId'],
+    ]) {
+      requireText(value, field)
+    }
+    const receipt = await store.readExecutionReceipt({
+      networkId,
+      owner,
+      executionId,
+      allocationId,
+    })
+    return receipt
+      ? { status: 200, body: { receipt } }
+      : { status: 404, body: { error: 'Receipt not found' } }
+  } catch (error) {
+    return agentIndexFailure(error)
+  }
+}
+
+export async function handleRecoveryLeaseAcquire({
+  lease,
+  configuredNetworkId,
+  store,
+  secret,
+  providedSecret,
+}) {
+  const gate = await reporterGate({ secret, providedSecret })
+  if (gate) return gate
+  if (!store?.acquireRecoveryLease) {
+    return { status: 503, body: { error: 'Recovery lease store unavailable', configured: false } }
+  }
+  try {
+    requireConfiguredNetwork(lease?.networkId, configuredNetworkId)
+    validateLease(lease)
+    const result = await store.acquireRecoveryLease(lease)
+    return result.acquired
+      ? { status: 200, body: { ok: true, lease: result } }
+      : { status: 409, body: { error: 'Recovery lease is already held' } }
+  } catch (error) {
+    return agentIndexFailure(error)
+  }
+}
+
+export async function handleRecoveryLeaseRelease({
+  lease,
+  configuredNetworkId,
+  store,
+  secret,
+  providedSecret,
+}) {
+  const gate = await reporterGate({ secret, providedSecret })
+  if (gate) return gate
+  if (!store?.releaseRecoveryLease) {
+    return { status: 503, body: { error: 'Recovery lease store unavailable', configured: false } }
+  }
+  try {
+    requireConfiguredNetwork(lease?.networkId, configuredNetworkId)
+    validateLease(lease, { release: true })
+    const result = await store.releaseRecoveryLease(lease)
+    return result.released
+      ? { status: 200, body: { ok: true } }
+      : { status: 409, body: { error: 'Recovery lease release conflict' } }
+  } catch (error) {
+    return agentIndexFailure(error)
+  }
+}
+
+export async function handleBaseChildIntent({
+  child,
+  configuredNetworkId,
+  store,
+  secret,
+  providedSecret,
+}) {
+  const gate = await reporterGate({ secret, providedSecret })
+  if (gate) return gate
+  if (!store?.createBaseChildIntent) {
+    return { status: 503, body: { error: 'Base child store unavailable', configured: false } }
+  }
+  try {
+    requireConfiguredNetwork(child?.networkId, configuredNetworkId)
+    const result = await ingestBaseChildIntent({ child, store })
+    return { status: result.written ? 201 : 200, body: { ok: true, ...result } }
+  } catch (error) {
+    return agentIndexFailure(error)
+  }
+}
+
+export async function handleBaseChildLifecycle({
+  request,
+  configuredNetworkId,
+  store,
+  secret,
+  providedSecret,
+}) {
+  const gate = await reporterGate({ secret, providedSecret })
+  if (gate) return gate
+  if (!store?.advanceBaseChildLifecycle) {
+    return { status: 503, body: { error: 'Base child store unavailable', configured: false } }
+  }
+  try {
+    requireConfiguredNetwork(request?.identity?.networkId, configuredNetworkId)
+    const result = await advanceBaseChildLifecycle({ ...request, store })
+    return { status: 200, body: { ok: true, ...result } }
+  } catch (error) {
+    return agentIndexFailure(error)
   }
 }
 

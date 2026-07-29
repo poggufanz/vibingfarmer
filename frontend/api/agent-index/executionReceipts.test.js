@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { readFileSync, readdirSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Keypair } from '@stellar/stellar-sdk'
@@ -12,13 +13,17 @@ import {
   receiptRequestDigest,
 } from './executionReceipts.js'
 import { ingestBaseChildIntent, advanceBaseChildLifecycle } from './associations.js'
+import {
+  AgentIndexConflictError,
+  AgentIndexStoreError,
+  AgentIndexValidationError,
+} from './models.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const MIGRATIONS_DIR = join(__dirname, '..', '..', 'migrations')
 const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite')
 
-function fakeD1() {
-  const sqlite = new DatabaseSync(':memory:')
+function applyMigrations(sqlite) {
   const migrations = readdirSync(MIGRATIONS_DIR)
     .filter((name) => /^000[2-6]_.*\.sql$/.test(name))
     .sort()
@@ -32,7 +37,9 @@ function fakeD1() {
   for (const migration of migrations) {
     sqlite.exec(readFileSync(join(MIGRATIONS_DIR, migration), 'utf8'))
   }
+}
 
+function d1Adapter(sqlite) {
   function bound(sql, args) {
     return {
       run() {
@@ -66,6 +73,31 @@ function fakeD1() {
       }
     },
     _raw: sqlite,
+  }
+}
+
+function fakeD1() {
+  const sqlite = new DatabaseSync(':memory:')
+  applyMigrations(sqlite)
+  return d1Adapter(sqlite)
+}
+
+function sharedD1Pair() {
+  const directory = mkdtempSync(join(tmpdir(), 'vf-agent-index-'))
+  const filename = join(directory, 'shared.sqlite')
+  const first = new DatabaseSync(filename)
+  applyMigrations(first)
+  first.exec('PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 1000')
+  const second = new DatabaseSync(filename)
+  second.exec('PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 1000')
+  return {
+    first: d1Adapter(first),
+    second: d1Adapter(second),
+    close() {
+      first.close()
+      second.close()
+      rmSync(directory, { recursive: true, force: true })
+    },
   }
 }
 
@@ -267,6 +299,43 @@ describe('execution receipt migrations and projection repository', () => {
     ).toBe(0)
   })
 
+  it('requires expectedVersion zero for an initial receipt and rolls every write back otherwise', async () => {
+    const body = mutation(OWNER_G, {
+      expectedVersion: 1,
+      attempt: { ...mutation().attempt, attemptId: 'attempt-invalid-initial-version' },
+    })
+    await expect(authenticatedApply({ store, body })).rejects.toBeInstanceOf(
+      AgentIndexConflictError
+    )
+    expect(
+      await store.readReceiptChallenge({ challengeId: 'challenge-attempt-invalid-initial-version' })
+    ).toMatchObject({ consumedAt: null })
+    expect(db._raw.prepare('SELECT COUNT(*) AS count FROM execution_receipts').get().count).toBe(0)
+    expect(
+      db._raw.prepare('SELECT COUNT(*) AS count FROM execution_phase_attempts').get().count
+    ).toBe(0)
+  })
+
+  it.each([-1, 0.5, Number.MAX_SAFE_INTEGER])(
+    'rejects unsafe initial expectedVersion %s without consuming its challenge',
+    async (expectedVersion) => {
+      const attemptId = `attempt-invalid-version-${String(expectedVersion).replaceAll('.', '-')}`
+      const body = mutation(OWNER_G, {
+        expectedVersion,
+        attempt: { ...mutation().attempt, attemptId },
+      })
+      await expect(authenticatedApply({ store, body })).rejects.toBeInstanceOf(
+        AgentIndexValidationError
+      )
+      expect(
+        await store.readReceiptChallenge({ challengeId: `challenge-${attemptId}` })
+      ).toMatchObject({ consumedAt: null })
+      expect(db._raw.prepare('SELECT COUNT(*) AS count FROM execution_receipts').get().count).toBe(
+        0
+      )
+    }
+  )
+
   it('never downgrades a confirmed phase or permits its attempt evidence to be edited/deleted', async () => {
     await authenticatedApply({ store, body: mutation() })
     const confirmedReceipt = receipt(OWNER_G, {
@@ -332,6 +401,135 @@ describe('execution receipt migrations and projection repository', () => {
         .prepare('DELETE FROM execution_phase_attempts WHERE attempt_id = ?')
         .run('attempt-pull-confirmed')
     ).toThrow(/append.only/i)
+  })
+
+  it.each([
+    [
+      'confirmation',
+      {
+        location: 'stellar-agent',
+        confirmed: false,
+        amount: { token: 'USDC', units: '90071992547409931234567890', decimals: 7 },
+        reason: 'late-unconfirmed-read',
+      },
+    ],
+    [
+      'exact units',
+      {
+        location: 'stellar-agent',
+        confirmed: true,
+        amount: null,
+        reason: 'missing-balance-read',
+      },
+    ],
+  ])('never erases confirmed custody %s and rolls back its evidence', async (_label, custody) => {
+    await authenticatedApply({ store, body: mutation() })
+    const body = mutation(OWNER_G, {
+      expectedVersion: 1,
+      receipt: receipt(OWNER_G, {
+        phases: { ...receipt().phases, stellar_deposit: 'submitted' },
+        custody,
+      }),
+      attempt: {
+        attemptId: `attempt-custody-regression-${_label.replace(' ', '-')}`,
+        kind: 'phase',
+        phase: 'stellar_deposit',
+        status: 'submitted',
+        evidence: { observation: 'regressed' },
+        observedAt: NOW + 2,
+      },
+    })
+    await expect(authenticatedApply({ store, body })).rejects.toThrow(/custody|conflict/i)
+    const stored = await store.readExecutionReceipt({
+      networkId: NETWORK,
+      executionId: 'execution-1',
+      allocationId: 'run-1:deposit:0',
+      owner: OWNER_G,
+    })
+    expect(stored).toMatchObject({
+      version: 1,
+      custody: {
+        confirmed: true,
+        amount: { units: '90071992547409931234567890' },
+      },
+    })
+    expect(stored.attempts).toHaveLength(1)
+  })
+
+  it('allows a later confirmed custody location and exact balance transition', async () => {
+    await authenticatedApply({ store, body: mutation() })
+    const body = mutation(OWNER_G, {
+      expectedVersion: 1,
+      receipt: receipt(OWNER_G, {
+        phases: { ...receipt().phases, stellar_deposit: 'confirmed' },
+        custody: {
+          location: 'stellar-vault',
+          confirmed: true,
+          amount: { token: 'USDC', units: '90071992547409930000000000', decimals: 7 },
+          reason: 'vault-ledger-read',
+        },
+      }),
+      attempt: {
+        attemptId: 'attempt-custody-confirmed-transition',
+        kind: 'phase',
+        phase: 'stellar_deposit',
+        status: 'confirmed',
+        evidence: { ledger: 7655000 },
+        observedAt: NOW + 2,
+      },
+    })
+    await expect(authenticatedApply({ store, body })).resolves.toMatchObject({ version: 2 })
+    const stored = await store.readExecutionReceipt({
+      networkId: NETWORK,
+      executionId: 'execution-1',
+      allocationId: 'run-1:deposit:0',
+      owner: OWNER_G,
+    })
+    expect(stored.custody).toMatchObject({
+      location: 'stellar-vault',
+      confirmed: true,
+      amount: { units: '90071992547409930000000000' },
+    })
+  })
+
+  it('enforces confirmed custody monotonicity for direct SQL updates', async () => {
+    await authenticatedApply({ store, body: mutation() })
+    expect(() =>
+      db._raw
+        .prepare(
+          `UPDATE execution_receipts SET custody_confirmed = 0, version = 2
+           WHERE network_id = ? AND execution_id = ? AND allocation_id = ?`
+        )
+        .run(NETWORK, 'execution-1', 'run-1:deposit:0')
+    ).toThrow(/custody|confirmed|monotonic/i)
+    expect(() =>
+      db._raw
+        .prepare(
+          `UPDATE execution_receipts SET custody_units = NULL, custody_token = NULL,
+             custody_decimals = NULL, version = 2
+           WHERE network_id = ? AND execution_id = ? AND allocation_id = ?`
+        )
+        .run(NETWORK, 'execution-1', 'run-1:deposit:0')
+    ).toThrow(/custody|confirmed|monotonic/i)
+  })
+
+  it('classifies an unexpected transactional database fault as a store error', async () => {
+    const brokenDb = fakeD1()
+    const brokenStore = createAgentIndexStore(brokenDb)
+    brokenDb.batch = () => {
+      throw new Error('unexpected sqlite engine fault with database-secret')
+    }
+    await expect(
+      authenticatedApply({
+        store: brokenStore,
+        body: mutation(OWNER_G, {
+          attempt: { ...mutation().attempt, attemptId: 'attempt-store-fault' },
+        }),
+      })
+    ).rejects.toBeInstanceOf(AgentIndexStoreError)
+    expect(
+      await brokenStore.readReceiptChallenge({ challengeId: 'challenge-attempt-store-fault' })
+    ).toMatchObject({ consumedAt: null })
   })
 
   it('rejects secret, private-key, and session-key properties recursively before serialization', () => {
@@ -576,6 +774,42 @@ describe('recovery leases', () => {
       })
     ).resolves.toMatchObject({ acquired: true })
   })
+
+  it('uses database uniqueness and conditional UPSERT across two SQLite connections', async () => {
+    const shared = sharedD1Pair()
+    try {
+      const firstStore = createAgentIndexStore(shared.first)
+      const secondStore = createAgentIndexStore(shared.second)
+      const key = {
+        networkId: NETWORK,
+        owner: OWNER_G,
+        executionId: 'execution-shared',
+        allocationId: 'allocation-shared',
+        childId: 'child-shared',
+        phase: 'cctp_mint',
+        now: NOW,
+      }
+      const outcomes = await Promise.all([
+        firstStore.acquireRecoveryLease({
+          ...key,
+          holder: 'worker-a',
+          leaseToken: 'lease-shared-a',
+        }),
+        secondStore.acquireRecoveryLease({
+          ...key,
+          holder: 'worker-b',
+          leaseToken: 'lease-shared-b',
+        }),
+      ])
+      expect(outcomes.map(({ acquired }) => acquired).sort()).toEqual([false, true])
+      expect(
+        shared.first._raw.prepare('SELECT COUNT(*) AS count FROM execution_recovery_leases').get()
+          .count
+      ).toBe(1)
+    } finally {
+      shared.close()
+    }
+  })
 })
 
 describe('immutable Base child intents', () => {
@@ -677,5 +911,59 @@ describe('immutable Base child intents', () => {
         )
         .run(NETWORK, original.bindingId, original.allocationId, original.childId)
     ).toThrow(/sequence|monotonic/i)
+  })
+
+  it('makes exact lifecycle retries child-scoped and rejects changed retry evidence', async () => {
+    const children = [child('child-a'), child('child-b')]
+    for (const original of children) await ingestBaseChildIntent({ child: original, store })
+
+    for (const original of children) {
+      const request = {
+        identity: {
+          networkId: NETWORK,
+          owner: OWNER_G,
+          bindingId: original.bindingId,
+          allocationId: original.allocationId,
+          childId: original.childId,
+        },
+        expectedSequence: 0,
+        lifecycle: {
+          sequence: 1,
+          status: 'submitted',
+          evidence: { userOpHash: `0x-${original.childId}` },
+          observedAt: NOW + 1,
+        },
+      }
+      await expect(advanceBaseChildLifecycle({ ...request, store })).resolves.toMatchObject({
+        written: 1,
+        duplicates: 0,
+        sequence: 1,
+      })
+      await expect(advanceBaseChildLifecycle({ ...request, store })).resolves.toMatchObject({
+        written: 0,
+        duplicates: 1,
+        sequence: 1,
+      })
+      await expect(
+        advanceBaseChildLifecycle({
+          ...request,
+          lifecycle: {
+            ...request.lifecycle,
+            evidence: { userOpHash: `0x-altered-${original.childId}` },
+          },
+          store,
+        })
+      ).rejects.toThrow(/sequence|conflict/i)
+    }
+
+    const keys = db._raw
+      .prepare(
+        `SELECT idempotency_key FROM base_child_lifecycle_events
+         WHERE binding_id = ? AND sequence = 1 ORDER BY child_id`
+      )
+      .all('binding-shared')
+      .map(({ idempotency_key }) => idempotency_key)
+    expect(keys).toHaveLength(2)
+    expect(new Set(keys).size).toBe(2)
   })
 })

@@ -2,7 +2,12 @@ import {
   AGENT_INDEX_SCHEMA_VERSION,
   AGENT_WASM_GENERATIONS,
 } from '../../src/stellar/agentCreatorManifest.js'
-import { canonicalJson, toBaseChildRow } from './models.js'
+import {
+  AgentIndexValidationError,
+  BASE_CHILD_LIFECYCLE_STATUSES,
+  canonicalJson,
+  toBaseChildRow,
+} from './models.js'
 import { receiptIntentDigest } from './executionReceipts.js'
 
 const EXECUTION_STATUSES = [
@@ -59,8 +64,16 @@ export function baseChildIdempotencyKey(child) {
 
 export async function ingestBaseChildIntent({ child, store }) {
   if (!store?.createBaseChildIntent) throw new Error('Base child intent store is unavailable')
-  const intentDigest = receiptIntentDigest(child?.intent)
-  toBaseChildRow(child, intentDigest)
+  let intentDigest
+  try {
+    intentDigest = receiptIntentDigest(child?.intent)
+    toBaseChildRow(child, intentDigest)
+  } catch (error) {
+    if (error instanceof AgentIndexValidationError) throw error
+    throw new AgentIndexValidationError(error?.message || 'Invalid Base child intent', {
+      cause: error,
+    })
+  }
   return store.createBaseChildIntent({
     child,
     intentDigest,
@@ -71,10 +84,27 @@ export async function ingestBaseChildIntent({ child, store }) {
 export async function advanceBaseChildLifecycle({ identity, expectedSequence, lifecycle, store }) {
   if (!store?.advanceBaseChildLifecycle)
     throw new Error('Base child lifecycle store is unavailable')
-  for (const field of ['networkId', 'owner', 'bindingId', 'allocationId', 'childId']) {
-    requiredString(identity?.[field], `identity.${field}`)
+  try {
+    for (const field of ['networkId', 'owner', 'bindingId', 'allocationId', 'childId']) {
+      requiredString(identity?.[field], `identity.${field}`)
+    }
+    if (!Number.isSafeInteger(expectedSequence) || expectedSequence < 0) {
+      throw new Error('expectedSequence must be a non-negative safe integer')
+    }
+    if (lifecycle?.sequence !== expectedSequence + 1) {
+      throw new Error('lifecycle.sequence must advance expectedSequence by one')
+    }
+    if (!BASE_CHILD_LIFECYCLE_STATUSES.includes(lifecycle?.status)) {
+      throw new Error('invalid Base child lifecycle status')
+    }
+    requiredInteger(lifecycle?.observedAt, 'lifecycle.observedAt')
+    canonicalJson(lifecycle)
+  } catch (error) {
+    if (error instanceof AgentIndexValidationError) throw error
+    throw new AgentIndexValidationError(error?.message || 'Invalid Base child lifecycle', {
+      cause: error,
+    })
   }
-  canonicalJson(lifecycle)
   const idempotencyKey = JSON.stringify([
     identity.networkId,
     identity.bindingId,

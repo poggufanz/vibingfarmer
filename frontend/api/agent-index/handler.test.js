@@ -83,7 +83,7 @@ describe('authenticated receipt handlers', () => {
         store: createAgentIndexStore(fakeD1()),
         authorityReader: null,
       })
-    ).resolves.toMatchObject({ status: 500 })
+    ).resolves.toMatchObject({ status: 503 })
     await expect(
       handleReceiptWrite({ body: {}, proof: {}, store: null, authorityReader: null })
     ).resolves.toMatchObject({ status: 503 })
@@ -102,8 +102,9 @@ describe('authenticated receipt handlers', () => {
         throw new Error('soroban rpc endpoint includes private infrastructure details')
       },
     })
-    expect(out.status).toBe(403)
-    expect(out.body.error).toBe('Agent authority could not be verified')
+    expect(out.status).toBe(503)
+    expect(out.body.error).toBe('Receipt authority is unavailable')
+    expect(JSON.stringify(out.body)).not.toMatch(/soroban|private|infrastructure/i)
   })
 })
 

@@ -43,6 +43,18 @@ export const BASE_CHILD_LIFECYCLE_STATUSES = [
   'unknown',
 ]
 
+export class AgentIndexError extends Error {
+  constructor(message, options) {
+    super(message, options)
+    this.name = new.target.name
+  }
+}
+
+export class AgentIndexValidationError extends AgentIndexError {}
+export class AgentIndexConflictError extends AgentIndexError {}
+export class AgentIndexUnavailableError extends AgentIndexError {}
+export class AgentIndexStoreError extends AgentIndexError {}
+
 /** Deterministic id for one row of `agent_index_sources` — the same shape store.js and any
  * future indexer (Task 3+) must agree on to address a manifest source (a funding_router or
  * registry contract from src/stellar/agentCreatorManifest.js). */

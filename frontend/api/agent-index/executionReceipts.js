@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { Keypair, StrKey } from '@stellar/stellar-sdk'
 import {
+  AgentIndexUnavailableError,
+  AgentIndexValidationError,
   assertNoSensitiveProperties,
   canonicalJson,
   toExecutionReceiptRow,
@@ -21,6 +23,22 @@ export class ReceiptAuthError extends Error {
 
 function authError(code, message) {
   throw new ReceiptAuthError(code, message)
+}
+
+function asValidationError(error) {
+  if (error instanceof AgentIndexValidationError) throw error
+  throw new AgentIndexValidationError(error?.message || 'Invalid receipt data', { cause: error })
+}
+
+async function readAuthority(authorityReader, identity) {
+  try {
+    return await authorityReader(identity)
+  } catch (error) {
+    if (error instanceof AgentIndexValidationError || error instanceof AgentIndexUnavailableError) {
+      throw error
+    }
+    throw new AgentIndexUnavailableError('Receipt authority RPC is unavailable', { cause: error })
+  }
 }
 
 function sha256(value) {
@@ -57,13 +75,21 @@ function validateAuthority({ facts, owner }) {
 }
 
 export function receiptRequestDigest(body) {
-  assertNoSensitiveProperties(body)
-  return sha256(canonicalJson(body))
+  try {
+    assertNoSensitiveProperties(body)
+    return sha256(canonicalJson(body))
+  } catch (error) {
+    asValidationError(error)
+  }
 }
 
 export function receiptIntentDigest(intent) {
-  assertNoSensitiveProperties(intent)
-  return sha256(canonicalJson(intent))
+  try {
+    assertNoSensitiveProperties(intent)
+    return sha256(canonicalJson(intent))
+  } catch (error) {
+    asValidationError(error)
+  }
 }
 
 /** The byte string signed by both G-owned and C-owned agent session keys. */
@@ -96,13 +122,14 @@ export async function issueReceiptChallenge({
 }) {
   const { networkId, owner, agent, requestDigest } = request ?? {}
   assertIdentity({ networkId, owner, agent, requestDigest })
-  if (!store?.issueReceiptChallenge) authError('unavailable', 'Receipt store is unavailable')
+  if (!store?.issueReceiptChallenge)
+    throw new AgentIndexUnavailableError('Receipt store is unavailable')
   if (typeof authorityReader !== 'function')
-    authError('misconfigured', 'Authority reader unavailable')
+    throw new AgentIndexUnavailableError('Receipt authority is not configured')
   if (!Number.isInteger(now) || !Number.isInteger(ttlMs) || ttlMs <= 0) {
     authError('invalid', 'Challenge time is invalid')
   }
-  const facts = await authorityReader({ networkId, owner, agent })
+  const facts = await readAuthority(authorityReader, { networkId, owner, agent })
   validateAuthority({ facts, owner })
   const challenge = {
     networkId,
@@ -172,18 +199,31 @@ export async function applyAuthenticatedReceiptMutation({
   now = Date.now(),
   consumeToken = randomUUID(),
 }) {
-  assertNoSensitiveProperties(body)
+  try {
+    assertNoSensitiveProperties(body)
+  } catch (error) {
+    asValidationError(error)
+  }
   if (!store?.readReceiptChallenge || !store?.commitAuthenticatedReceiptMutation) {
-    authError('unavailable', 'Receipt store is unavailable')
+    throw new AgentIndexUnavailableError('Receipt store is unavailable')
   }
   if (typeof authorityReader !== 'function')
-    authError('misconfigured', 'Authority reader unavailable')
-  if (!Number.isInteger(body?.expectedVersion) || body.expectedVersion < 0) {
-    authError('invalid', 'expectedVersion must be a non-negative integer')
+    throw new AgentIndexUnavailableError('Receipt authority is not configured')
+  if (
+    !Number.isSafeInteger(body?.expectedVersion) ||
+    body.expectedVersion < 0 ||
+    !Number.isSafeInteger(body.expectedVersion + 1)
+  ) {
+    throw new AgentIndexValidationError('expectedVersion must be a non-negative safe integer')
   }
-  const intentDigest = receiptIntentDigest(body?.receipt?.intent)
-  toExecutionReceiptRow(body?.receipt, intentDigest)
-  toPhaseAttemptRow(body?.attempt)
+  let intentDigest
+  try {
+    intentDigest = receiptIntentDigest(body?.receipt?.intent)
+    toExecutionReceiptRow(body?.receipt, intentDigest)
+    toPhaseAttemptRow(body?.attempt)
+  } catch (error) {
+    asValidationError(error)
+  }
   const networkId = body.receipt.networkId
   const owner = body.receipt.owner
   const agent = body.receipt.agent
@@ -207,7 +247,7 @@ export async function applyAuthenticatedReceiptMutation({
     authError('proof', 'Receipt proof challenge identity or request digest mismatch')
   }
 
-  const facts = await authorityReader({ networkId, owner, agent })
+  const facts = await readAuthority(authorityReader, { networkId, owner, agent })
   const currentAuthority = validateAuthority({ facts, owner })
   verifySignature({ challenge, proof, publicKey: currentAuthority.signerPublicKey })
   const attempt = reconciliationAttempt({
