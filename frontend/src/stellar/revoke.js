@@ -3,6 +3,8 @@
 // vault allowance on-chain. The UI subscribes to live agent_revoked events to confirm
 // (AgentAccount emits the same topic/shape the Registry's metadata mirror uses).
 import { buildInvokeTx, rpcServer } from './client.js'
+import { assertActiveOwner } from './activeAccount.js'
+import { signReviewedTransaction } from './walletKit.js'
 import { signTxXdr } from './walletKit.js'
 import { pollEvents } from './events.js'
 import { symbolScVal } from './scval.js'
@@ -38,6 +40,7 @@ export async function revokeAgentOnChain({
   kit,
   server,
 }) {
+  assertActiveOwner({ owner, activeAccount })
   const model = await resolveOwnerTxModel({ owner, activeAccount, getRelayerAddress: getRelayer })
   const built = await buildInvokeTx({
     source: model.source,
@@ -51,7 +54,14 @@ export async function revokeAgentOnChain({
     build: async () => built,
     sign:
       model.kind === 'G'
-        ? async () => signTxXdr(built.xdr)
+        ? async () =>
+            activeAccount?.version === 1
+              ? signReviewedTransaction({
+                  xdr: built.xdr,
+                  activeAccount,
+                  reviewedTxHash: built.tx.hash().toString('hex'),
+                })
+              : signTxXdr(built.xdr)
         : async () =>
             signOwnerAuthEntry({ tx: built.tx, contractId: model.contractId, server, kit }),
     server,

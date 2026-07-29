@@ -11,6 +11,7 @@
 // `ownerWithdraw` is the single-agent primitive underneath, kept as the rollback path for when
 // the exit router is not configured — N agents, N popups, which is what this file used to be.
 import { xdr } from '@stellar/stellar-sdk'
+import { assertActiveOwner } from './activeAccount.js'
 import { buildInvokeTx } from './client.js'
 import { signTxXdr } from './walletKit.js'
 import { getRelayerAddress } from './relay.js'
@@ -170,6 +171,7 @@ export async function sweepAgents({
   kit,
   sign = signTxXdr,
 }) {
+  assertActiveOwner({ owner, activeAccount })
   if (!router) throw new Error('The exit router is not configured.')
   if (!agentAddresses?.length) throw new Error('sweepAgents requires at least one agentAddress.')
   const model = await resolveOwnerTxModel({ owner, activeAccount, getRelayerAddress: getRelayer })
@@ -210,6 +212,7 @@ export async function ownerWithdraw({
   kit,
   server,
 }) {
+  assertActiveOwner({ owner, activeAccount })
   // By-agent, not by-vault: naming the wrong agent is not a harmless no-op, it invokes an account
   // the caller may not own. Never let a caller reach the chain without saying which agent.
   if (!agentAddress) throw new Error('ownerWithdraw requires an agentAddress.')

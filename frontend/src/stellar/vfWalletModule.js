@@ -101,4 +101,13 @@ export class VfWalletModule {
     // Nothing cached locally to clear — see getAddress's docstring. Kept as a real async method
     // (not deleted) because ModuleInterface's duck-typed contract expects it to exist.
   }
+
+  // WalletKit connectors do not all offer change events. VF Wallet does: adapt its DOM event to
+  // the tiny `on()` surface walletKit.js probes, while callers still fresh-read before signing.
+  on(event, listener) {
+    if (event !== 'accountChanged' || typeof window === 'undefined') return () => {}
+    const handler = (change) => listener(change.detail || change)
+    window.addEventListener('vfWallet#accountChanged', handler)
+    return () => window.removeEventListener('vfWallet#accountChanged', handler)
+  }
 }

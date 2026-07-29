@@ -36,7 +36,8 @@ import { useTweaks, TweaksPanel, TweakSection, TweakRadio } from './tweaks-panel
 import { applyTheme, isLightTheme, normalizeTheme } from './design/theme.js'
 
 import {
-  connectWallet,
+  connectActiveAccount,
+  onActiveAccountChange,
   getUserAddress,
   revokeAgentOnChain,
   subscribeAgentRevoked,
@@ -141,6 +142,7 @@ import {
 import { nextReconciliationToken, isReconciliationCurrent } from './money/freshness.js'
 import { sweepAgents } from './stellar/exit.js'
 import { ensureExitSigner, partialWithdraw } from './stellar/partialWithdraw.js'
+import { assertCurrentActiveAccount } from './stellar/activeAccount.js'
 const LandingHero = lazy(() => import('./components/LandingHero.jsx'))
 const ExplorerPage = lazy(() => import('./components/ExplorerPage.jsx'))
 const EcosystemPage = lazy(() => import('./components/EcosystemPage.jsx'))
@@ -438,6 +440,24 @@ const moneyCacheKey = (owner) => `yv_my_money_cache_${String(owner).toLowerCase(
 
 /** Restore the last-known {money, discovery, protection} cache for `owner` (sync, instant) —
  * same convention as positionsStore.js's loadPersistedPositions. */
+/**
+ * A tiny owner-state gate used by the React controller and its async callbacks. Installing a
+ * replacement clears every owner-scoped surface before exposing the next immutable capability.
+ */
+export function createActiveAccountEpochStore({ initial = null, clear = () => {} } = {}) {
+  let active = initial
+  return {
+    current: () => active,
+    capture: () => active,
+    assertCurrent: (captured) => assertCurrentActiveAccount({ captured, current: active }),
+    install(next) {
+      if (active) clear(active)
+      active = next || null
+      return active
+    },
+  }
+}
+
 export function loadMoneyCache(owner) {
   if (!owner) return {}
   try {
@@ -862,6 +882,9 @@ const App = () => {
       console.info('[dev] view-as read override active:', viewAsAddress)
     return viewAsAddress
   })
+  const [activeAccount, setActiveAccount] = useS(null)
+  const activeAccountRef = useR(activeAccount)
+  activeAccountRef.current = activeAccount
   const loopRef = useR(null)
   const latestGasRef = useR(null) // last live gas snapshot { level, gwei } for the monitor loop
   const hydratedRef = useR(null) // address whose cached positions have finished restoring
@@ -2022,8 +2045,7 @@ const App = () => {
     setConnectPhase('connecting')
     setConnectError(null)
     try {
-      const addr = await connectWallet()
-      setRealAddress(addr)
+      const addr = installActiveWalletAccount(await connectActiveAccount()).address
       setConnectPhase('connected')
       addLog({ event: 'Connected', meta: shortAddr(addr) })
     } catch (err) {
@@ -2053,6 +2075,31 @@ const App = () => {
   const moneyRevisionRef = useR(null) // freshness.js's nextReconciliationToken/isReconciliationCurrent
   const realAddressRef = useR(realAddress)
   const moneyCacheRef = useR({})
+
+  function installActiveWalletAccount(next) {
+    const previous = activeAccountRef.current
+    if (previous && previous !== next) {
+      dispatchFlow({ type: 'STRATEGY_RESET' })
+      setStrategy(null)
+      setRunReceipt(null)
+      setExecMap({})
+      setBaseView({ connected: false, healthy: null, mandateView: null, action: null })
+      setMoneyDiscovery(null)
+      setMoneyRead(null)
+      setMoneyModel(buildMyMoneyModel({ owner: null }))
+      setScopes([])
+      moneyRevisionRef.current = nextReconciliationToken(moneyRevisionRef.current)
+    }
+    activeAccountRef.current = next || null
+    setActiveAccount(next || null)
+    setRealAddress(next?.address || null)
+    return next
+  }
+
+  useE(() => onActiveAccountChange(installActiveWalletAccount), [])
+
+  const assertActiveAccount = (captured) =>
+    assertCurrentActiveAccount({ captured, current: activeAccountRef.current })
 
   useE(() => {
     realAddressRef.current = realAddress
@@ -2247,6 +2294,8 @@ const App = () => {
 
   async function handleConfirmFullExit(plan) {
     if (!plan?.ok || !realAddress) return
+    const captured = activeAccount
+    assertActiveAccount(captured)
     setMoneyActionPending(true)
     try {
       const addresses = plan.targets.map((t) => t.address)
@@ -2254,7 +2303,9 @@ const App = () => {
         owner: realAddress,
         agentAddresses: addresses,
         to: realAddress,
+        activeAccount,
       })
+      assertActiveAccount(captured)
       const perAgent = addresses.map((address, i) => ({
         agentAddress: address,
         ok: swept.errors[i] == null,
@@ -2283,13 +2334,17 @@ const App = () => {
     if (!plan?.ok || plan.mode !== 'partial' || !realAddress) return
     setMoneyActionPending(true)
     const action = { kind: 'partial-exit', agentAddress: plan.agentAddress }
+    const captured = activeAccount
+    assertActiveAccount(captured)
     try {
-      await ensureExitSigner({ owner: realAddress, agentAddress: plan.agentAddress })
+      await ensureExitSigner({ owner: realAddress, agentAddress: plan.agentAddress, activeAccount })
       await partialWithdraw({
         owner: realAddress,
         agentAddress: plan.agentAddress,
         amountUnits: BigInt(plan.amount.units),
+        activeAccount,
       })
+      assertActiveAccount(captured)
       const beforeRevision = moneyRevisionRef.current
       const reconciled = await reconcileOwnerAction({
         action,
@@ -2326,8 +2381,15 @@ const App = () => {
     if (!plan?.ok || !realAddress) return
     setMoneyActionPending(true)
     const action = { kind: 'revoke', agentAddress: plan.agentAddress }
+    const captured = activeAccount
+    assertActiveAccount(captured)
     try {
-      const result = await revokeAgentOnChain({ owner: realAddress, agent: plan.agentAddress })
+      const result = await revokeAgentOnChain({
+        owner: realAddress,
+        agent: plan.agentAddress,
+        activeAccount,
+      })
+      assertActiveAccount(captured)
       const beforeRevision = moneyRevisionRef.current
       const reconciled = await reconcileOwnerAction({
         action,
@@ -2481,8 +2543,7 @@ const App = () => {
 
   async function onConnectForBase() {
     try {
-      const addr = await connectWallet()
-      setRealAddress(addr)
+      const addr = installActiveWalletAccount(await connectActiveAccount()).address
       setConnectPhase('connected')
     } catch {
       // PlanStage's own header comment: no richer connect-error surface belongs on this stage.
@@ -2686,8 +2747,7 @@ const App = () => {
   }
 
   async function onConnectWallet() {
-    const addr = await connectWallet()
-    setRealAddress(addr)
+    const addr = installActiveWalletAccount(await connectActiveAccount()).address
     setConnectPhase('connected')
     return addr
   }
@@ -2953,6 +3013,8 @@ const App = () => {
   function runOrchestratorDispatch(permissionDecision) {
     const plan = strategyFlowRef.current.plan
     const sessionId = `session-${runId}`
+    const captured = activeAccount
+    assertActiveAccount(captured)
     setExecMap((prev) => ({
       ...prev,
       ...makeInitialExecState(plan.agents.map((a) => ({ id: a.allocationId }))),
@@ -2961,6 +3023,7 @@ const App = () => {
 
     const orch = new OrchestratorAgent({
       user: realAddress,
+      activeAccount,
       veniceAuth,
       devApiKey: devApiKey || null,
       sessionId,
@@ -2972,6 +3035,7 @@ const App = () => {
     })
 
     const dispatchPromise = orch.dispatch(plan, { permissionDecision }).then(async (summary) => {
+      assertActiveAccount(captured)
       addLog({
         event: 'OrchestratorPlanned',
         meta: `Completed: ${summary.completed ?? 0} deposited, ${summary.failed ?? 0} failed.`,
@@ -3286,7 +3350,7 @@ const App = () => {
   }
   const handleDisconnect = () => {
     stopBackgroundAgent()
-    setRealAddress(null)
+    installActiveWalletAccount(null)
     setConnectPhase('idle')
     setPermActive(false)
     setPermExpiresAt(null)

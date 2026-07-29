@@ -7,6 +7,7 @@
 import { ownerWithdraw, sweepAgents } from '../stellar/exit.js'
 import { SOROBAN_EXIT_ROUTER_ADDRESS } from '../stellar/config.js'
 import { classifyRisk } from '../strategist.js'
+import { assertActiveOwner } from '../stellar/activeAccount.js'
 
 let worker = null
 let currentConfig = null
@@ -101,6 +102,7 @@ export async function withdrawFromVault(
   { activeAccount, getRelayerAddress, kit } = {}
 ) {
   if (!agentAddress) throw new Error('withdrawFromVault requires the run’s agentAddress.')
+  assertActiveOwner({ owner: userAddress, activeAccount })
   const { hash, status } = await ownerWithdraw({
     owner: userAddress,
     agentAddress,
@@ -151,6 +153,7 @@ export async function withdrawAllFromVault(
 ) {
   if (!agentAddresses?.length)
     throw new Error('withdrawAllFromVault requires at least one agentAddress.')
+  assertActiveOwner({ owner: userAddress, activeAccount })
 
   if (SOROBAN_EXIT_ROUTER_ADDRESS) {
     const { swept, txHashes, errors } = await sweepAgents({

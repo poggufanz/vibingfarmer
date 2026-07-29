@@ -6,6 +6,7 @@
 // rides along). Relay-only: the user holds no XLM, a relay refusal is a hard stop, never a
 // user-paid fallback. The agent stays alive — no revoke, remaining shares keep compounding.
 import { rpcServer } from './client.js'
+import { assertActiveOwner } from './activeAccount.js'
 import {
   buildAgentAuthedInvoke as _buildAgentAuthedInvoke,
   readVaultShares as _readVaultShares,
@@ -73,6 +74,7 @@ export async function ensureExitSigner({
   kit,
   deps = {},
 }) {
+  assertActiveOwner({ owner, activeAccount })
   const {
     loadExitKey = _loadExitKey,
     generateExitKey = _generateExitKey,
@@ -120,8 +122,10 @@ export async function partialWithdraw({
   vault = SOROBAN_ACTIVE_VAULT_ADDRESS,
   token = SOROBAN_TOKEN_ADDRESS,
   server,
+  activeAccount,
   deps = {},
 }) {
+  assertActiveOwner({ owner, activeAccount })
   const {
     getRelayerAddress = _getRelayerAddress,
     readVaultShares = _readVaultShares,

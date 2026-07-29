@@ -108,6 +108,7 @@ export class OrchestratorAgent {
     grantBudgetUnits = null,
     grantDurationSeconds = null,
     baseLegContext = null,
+    activeAccount = null,
   }) {
     this.user = user
     this.veniceAuth = veniceAuth || null
@@ -123,6 +124,7 @@ export class OrchestratorAgent {
     }
     this.sessionId = sessionId || `session-${Date.now()}`
     this.baseLegContext = baseLegContext
+    this.activeAccount = activeAccount
     // Single-signature grant knobs (router path only). Budget defaults to the run total; a larger budget
     // buys headroom for signature-free repeat runs. Duration defaults to SCOPE_TTL_SECONDS. The UI's grant
     // step supplies both; null = use defaults.
@@ -969,6 +971,7 @@ export class OrchestratorAgent {
     try {
       submitted = await submitGrant({
         owner: this.user,
+        ...(this.activeAccount ? { activeAccount: this.activeAccount } : {}),
         budgets,
         durationSeconds: permissionDecision.durationSeconds,
         agentInits,
@@ -1751,6 +1754,7 @@ export class OrchestratorAgent {
     }
     const { hash, agentAddresses, bridgeAgentAddress, expiryLedger } = await submitGrant({
       owner: this.user,
+      ...(this.activeAccount ? { activeAccount: this.activeAccount } : {}),
       budgets,
       durationSeconds,
       agentInits,

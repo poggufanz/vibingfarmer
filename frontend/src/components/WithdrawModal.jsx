@@ -62,6 +62,7 @@ export default function WithdrawModal({
   balance,
   unclaimedRewards = 0,
   userAddress,
+  activeAccount = null,
   agentAddresses = [],
   onClose,
   onSuccess,
@@ -144,7 +145,8 @@ export default function WithdrawModal({
         vault.address,
         userAddress,
         agentAddresses,
-        setProgress
+        setProgress,
+        { activeAccount }
       )
       const failed = results.filter((r) => !r.ok)
 
@@ -202,12 +204,13 @@ export default function WithdrawModal({
     setStatus('loading')
     setError(null)
     try {
-      await ensureExitSigner({ owner: userAddress, agentAddress: chosen })
+      await ensureExitSigner({ owner: userAddress, agentAddress: chosen, activeAccount })
       const out = await partialWithdraw({
         owner: userAddress,
         agentAddress: chosen,
         amountUnits,
         vault: vault.address,
+        activeAccount,
       })
       saveTransaction({
         txHash: out.transferHash,

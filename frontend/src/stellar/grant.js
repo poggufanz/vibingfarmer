@@ -8,6 +8,8 @@
 // worker funding is a RELAYED router.pull (agent session-key signs the pull auth entry; the relay
 // fee-bumps) — zero further signatures. Revoke is the owner setting the SEP-41 allowance back to 0.
 import { xdr } from '@stellar/stellar-sdk'
+import { assertActiveOwner } from './activeAccount.js'
+import { signReviewedTransaction } from './walletKit.js'
 import { rpcServer, buildInvokeTx, readContract } from './client.js'
 import { signAgentDepositEntries } from './agentDeposit.js'
 import { getRelayerAddress, submitViaRelay } from './relay.js'
@@ -37,6 +39,15 @@ let _sdk = null
 async function sdk() {
   if (!_sdk) _sdk = await import('@stellar/stellar-sdk')
   return _sdk
+}
+
+function signReviewedOwnerEnvelope({ built, activeAccount, sign, label }) {
+  if (activeAccount?.version !== 1) return sign(built.xdr, label)
+  return signReviewedTransaction({
+    xdr: built.xdr,
+    activeAccount,
+    reviewedTxHash: built.tx.hash().toString('hex'),
+  })
 }
 
 // Soroban testnet closes a ledger about every 5 seconds. The grant sets the SEP-41 allowance
@@ -232,6 +243,7 @@ export async function submitGrant({
   getRelayerAddress: getRelayer = getRelayerAddress,
   kit,
 }) {
+  assertActiveOwner({ owner, activeAccount })
   const model = await resolveOwnerTxModel({ owner, activeAccount, getRelayerAddress: getRelayer })
   const built = await buildGrantTx({
     owner,
@@ -247,7 +259,7 @@ export async function submitGrant({
     build: async () => built,
     sign:
       model.kind === 'G'
-        ? async () => sign(built.xdr, 'grant')
+        ? async () => signReviewedOwnerEnvelope({ built, activeAccount, sign, label: 'grant' })
         : async () =>
             signOwnerAuthEntry({ tx: built.tx, contractId: model.contractId, server, kit }),
     server,
@@ -288,6 +300,7 @@ export async function buildAgentPull({
   router = SOROBAN_FUNDING_ROUTER_ADDRESS,
   server,
 }) {
+  assertActiveOwner({ owner, activeAccount })
   const s = server || (await rpcServer())
   const { tx } = await buildInvokeTx({
     source: relayer,
@@ -459,7 +472,12 @@ export async function revokeGrant({
     build: async () => built,
     sign:
       model.kind === 'G'
-        ? async () => sign(built.xdr, 'revoke grant')
+        ? async () => signReviewedOwnerEnvelope({
+            built,
+            activeAccount,
+            sign,
+            label: 'revoke grant',
+          })
         : async () =>
             signOwnerAuthEntry({ tx: built.tx, contractId: model.contractId, server: s, kit }),
     server: s,
