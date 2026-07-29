@@ -20,6 +20,7 @@ import {
 } from '../src/stellar/config.js'
 import { agentInitScVal, tokenBudgetScVal, AGENT_KIND_DEPOSIT } from '../src/stellar/grant.js'
 import { addrScVal, u32ScVal } from '../src/stellar/scval.js'
+import { buildApprovalView } from './approvalView.js'
 import { summarizeTransaction, summarizeAuthEntry, shortAddr, formatArg } from './txSummary.js'
 
 function buildDepositTxXdr() {
@@ -78,26 +79,30 @@ function buildExitTx({
   extraAuth = false,
   siblingInvocation = false,
   extraArg = false,
+  rawOwnerArg,
+  rawRecipientArg,
+  rawAgentsArg,
+  rawExtraArgs = [],
+  rawContractAddress,
 } = {}) {
   const contract =
     contractOverride ?? (fn === 'sweep' ? SOROBAN_EXIT_ROUTER_ADDRESS : SOROBAN_DEMO_AGENT)
+  const ownerArg = rawOwnerArg ?? new Address(owner).toScVal()
+  const recipientArg = rawRecipientArg ?? new Address(recipient).toScVal()
+  const agentsArg = rawAgentsArg ?? xdr.ScVal.scvVec([new Address(SOROBAN_DEMO_AGENT).toScVal()])
+  const trailingArgs = [...(extraArg ? [xdr.ScVal.scvVoid()] : []), ...rawExtraArgs]
   const args =
     fn === 'sweep'
-      ? [
-          new Address(owner).toScVal(),
-          xdr.ScVal.scvVec([new Address(SOROBAN_DEMO_AGENT).toScVal()]),
-          new Address(recipient).toScVal(),
-          ...(extraArg ? [xdr.ScVal.scvVoid()] : []),
-        ]
-      : [new Address(recipient).toScVal(), ...(extraArg ? [xdr.ScVal.scvVoid()] : [])]
+      ? [ownerArg, agentsArg, recipientArg, ...trailingArgs]
+      : [recipientArg, ...trailingArgs]
+  const contractAddress = rawContractAddress ?? new Address(contract).toScAddress()
+  const invokeArgs = new xdr.InvokeContractArgs({
+    contractAddress,
+    functionName: fn,
+    args,
+  })
   const invocation = new xdr.SorobanAuthorizedInvocation({
-    function: xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
-      new xdr.InvokeContractArgs({
-        contractAddress: new Address(contract).toScAddress(),
-        functionName: fn,
-        args,
-      })
-    ),
+    function: xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(invokeArgs),
     subInvocations: siblingInvocation
       ? [
           new xdr.SorobanAuthorizedInvocation({
@@ -123,13 +128,12 @@ function buildExitTx({
         })
       )
     : xdr.SorobanCredentials.sorobanCredentialsSourceAccount()
-  const call = new Contract(contract).call(fn, ...args)
   const builder = new TransactionBuilder(new Account(source, '0'), {
     fee: '100',
     networkPassphrase: NETWORK_PASSPHRASE,
   }).addOperation(
     Operation.invokeHostFunction({
-      func: call.body().invokeHostFunctionOp().hostFunction(),
+      func: xdr.HostFunction.hostFunctionTypeInvokeContract(invokeArgs),
       auth: [
         new xdr.SorobanAuthorizationEntry({ credentials, rootInvocation: invocation }),
         ...(extraAuth
@@ -166,6 +170,26 @@ function provenOwnerWithdrawContext(xdrB64, owner, overrides = {}) {
     authorizationDigests: authDigests,
     ...overrides,
   }
+}
+
+function expectSchemaMismatchApproval(xdrB64, consentContext = null) {
+  const summary = summarizeTransaction(xdrB64, NETWORK_PASSPHRASE, consentContext)
+  expect(summary.allFunds).toBe(false)
+  expect(summary.token).toBeNull()
+  const view = buildApprovalView(
+    { method: 'signTransaction', params: { xdr: xdrB64 }, origin: 'https://fixture.test' },
+    {
+      address: 'GCIOUP4UJAAFDBJNP5DY5CFJHBLEKGLHZ5E2AYRIIQ5VOZFVSTPRYHNS',
+      summary,
+      kind: 'classic',
+      unlocked: true,
+    }
+  )
+  const consequence = view.sections.find((section) => section.kind === 'consequence')
+  expect(consequence.warning).toBe(true)
+  expect(consequence.statements.join(' ')).toMatch(/Soroban ABI schema mismatch/i)
+  expect(consequence.statements.join(' ')).not.toMatch(/withdraws all funds held/i)
+  expect(view.needsAcknowledgment).toBe(true)
 }
 
 describe('txSummary', () => {
@@ -250,6 +274,107 @@ describe('txSummary', () => {
       allFunds: true,
     })
     expect(summary.authorizationDigests).toHaveLength(1)
+  })
+
+  it.each([
+    [
+      'recipient encoded as scvString with the exact owner text',
+      ({ owner }) => xdr.ScVal.scvString(owner),
+    ],
+    [
+      'recipient encoded as scvBytes containing the exact owner text',
+      ({ owner }) => xdr.ScVal.scvBytes(Buffer.from(owner)),
+    ],
+    ['recipient encoded as a symbol instead of an address', () => xdr.ScVal.scvSymbol('owner')],
+  ])('warns for owner_withdraw with %s', (_label, recipientArgFor) => {
+    const owner = Keypair.random().publicKey()
+    const xdrB64 = buildExitTx({
+      owner,
+      contract: PROVEN_AGENT,
+      rawRecipientArg: recipientArgFor({ owner }),
+    })
+    expectSchemaMismatchApproval(xdrB64, provenOwnerWithdrawContext(xdrB64, owner))
+  })
+
+  it('warns when owner_withdraw carries a token-like extra scvString outside its exact ABI', () => {
+    const owner = Keypair.random().publicKey()
+    const xdrB64 = buildExitTx({
+      owner,
+      contract: PROVEN_AGENT,
+      rawExtraArgs: [xdr.ScVal.scvString(SOROBAN_TOKEN_ADDRESS)],
+    })
+    expectSchemaMismatchApproval(xdrB64, provenOwnerWithdrawContext(xdrB64, owner))
+  })
+
+  it('warns when owner_withdraw invokes an account-kind ScAddress as though it were a contract', () => {
+    const owner = Keypair.random().publicKey()
+    const xdrB64 = buildExitTx({
+      owner,
+      rawContractAddress: new Address(owner).toScAddress(),
+    })
+    expectSchemaMismatchApproval(
+      xdrB64,
+      provenOwnerWithdrawContext(xdrB64, owner, { contract: owner })
+    )
+  })
+
+  it.each([
+    [
+      'owner encoded as scvString with the exact owner text',
+      ({ owner }) => ({ rawOwnerArg: xdr.ScVal.scvString(owner) }),
+    ],
+    [
+      'owner encoded as scvBytes containing the exact owner text',
+      ({ owner }) => ({ rawOwnerArg: xdr.ScVal.scvBytes(Buffer.from(owner)) }),
+    ],
+    [
+      'recipient encoded as scvString with the exact owner text',
+      ({ owner }) => ({ rawRecipientArg: xdr.ScVal.scvString(owner) }),
+    ],
+    [
+      'recipient encoded as scvBytes containing the exact owner text',
+      ({ owner }) => ({ rawRecipientArg: xdr.ScVal.scvBytes(Buffer.from(owner)) }),
+    ],
+    [
+      'agent encoded as scvString with the exact contract text',
+      () => ({
+        rawAgentsArg: xdr.ScVal.scvVec([xdr.ScVal.scvString(SOROBAN_DEMO_AGENT)]),
+      }),
+    ],
+    [
+      'agent encoded as scvBytes containing the exact contract text',
+      () => ({
+        rawAgentsArg: xdr.ScVal.scvVec([xdr.ScVal.scvBytes(Buffer.from(SOROBAN_DEMO_AGENT))]),
+      }),
+    ],
+    [
+      'agent encoded as a symbol instead of an address',
+      () => ({ rawAgentsArg: xdr.ScVal.scvVec([xdr.ScVal.scvSymbol('agent')]) }),
+    ],
+    [
+      'agents vector encoded as bytes',
+      () => ({ rawAgentsArg: xdr.ScVal.scvBytes(Buffer.from(SOROBAN_DEMO_AGENT)) }),
+    ],
+    [
+      'account-kind address inside the agent contract vector',
+      ({ owner }) => ({
+        rawAgentsArg: xdr.ScVal.scvVec([new Address(owner).toScVal()]),
+      }),
+    ],
+  ])('warns for sweep with %s', (_label, rawArgsFor) => {
+    const owner = Keypair.random().publicKey()
+    const xdrB64 = buildExitTx({ fn: 'sweep', owner, ...rawArgsFor({ owner }) })
+    expectSchemaMismatchApproval(xdrB64)
+  })
+
+  it('warns when sweep carries a token-like extra scvString outside its exact ABI', () => {
+    const owner = Keypair.random().publicKey()
+    const xdrB64 = buildExitTx({
+      fn: 'sweep',
+      owner,
+      rawExtraArgs: [xdr.ScVal.scvString(SOROBAN_TOKEN_ADDRESS)],
+    })
+    expectSchemaMismatchApproval(xdrB64)
   })
 
   it.each([

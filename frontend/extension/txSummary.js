@@ -87,7 +87,7 @@ function verifiedOperationAuthorizer(tx, op, invocation) {
 }
 
 const EXIT_CONSENT_WARNING =
-  'The claimed all-funds exit could not be proven from this exact transaction and authorization context. Review the technical details before approving.'
+  'Soroban ABI schema mismatch: the claimed all-funds exit could not be proven from this exact transaction and authorization context. Review the technical details before approving.'
 
 function exactDigestList(left, right) {
   return (
@@ -108,19 +108,45 @@ function failedExitConsent(recipient = null) {
   }
 }
 
+function exactScAddress(scAddress, requiredKind = null) {
+  const kind = scAddress?.switch?.().name
+  if (kind !== 'scAddressTypeAccount' && kind !== 'scAddressTypeContract') return null
+  if (requiredKind === 'contract' && kind !== 'scAddressTypeContract') return null
+  if (requiredKind === 'account' && kind !== 'scAddressTypeAccount') return null
+  try {
+    return Address.fromScAddress(scAddress).toString()
+  } catch {
+    return null
+  }
+}
+
+function exactAddressArg(value, requiredKind = null) {
+  if (value?.switch?.().name !== 'scvAddress') return null
+  return exactScAddress(value.address(), requiredKind)
+}
+
+function exactContractAddressVector(value) {
+  if (value?.switch?.().name !== 'scvVec') return null
+  const values = value.vec() ?? []
+  const contracts = values.map((entry) => exactAddressArg(entry, 'contract'))
+  if (contracts.some((contract) => contract == null)) return null
+  return contracts
+}
+
 function consentOwnership(
   invocation,
   { authorizer, networkPassphrase, bodyDigest, authorizationDigests, consentContext } = {}
 ) {
   const fn = invocation.functionName().toString()
-  const args = invocation.args().map((arg) => scValToNative(arg))
-  const contract = Address.fromScAddress(invocation.contractAddress()).toString()
+  const rawArgs = invocation.args()
+  const contract = exactScAddress(invocation.contractAddress(), 'contract')
   if (fn === 'owner_withdraw') {
-    const recipient = args[0]
+    const recipient = exactAddressArg(rawArgs[0])
     const capability = agentCapabilityFor(consentContext?.wasmHash, 'owner_withdraw')
     const exactContext =
-      args.length === 1 &&
-      typeof recipient === 'string' &&
+      rawArgs.length === 1 &&
+      recipient != null &&
+      contract != null &&
       authorizer != null &&
       recipient === authorizer &&
       networkPassphrase === NETWORK_PASSPHRASE &&
@@ -144,18 +170,17 @@ function consentOwnership(
     }
   }
   if (fn === 'sweep') {
-    const owner = args[0]
-    const agents = args[1]
-    const recipient = args[2]
+    const owner = exactAddressArg(rawArgs[0])
+    const agents = exactContractAddressVector(rawArgs[1])
+    const recipient = exactAddressArg(rawArgs[2])
     const exactSweep =
       contract === SOROBAN_EXIT_ROUTER_ADDRESS &&
       networkPassphrase === NETWORK_PASSPHRASE &&
-      args.length === 3 &&
-      typeof owner === 'string' &&
-      Array.isArray(agents) &&
+      rawArgs.length === 3 &&
+      owner != null &&
+      agents != null &&
       agents.length > 0 &&
-      agents.every((agent) => typeof agent === 'string') &&
-      typeof recipient === 'string' &&
+      recipient != null &&
       authorizer != null &&
       authorizer === owner &&
       recipient === owner
@@ -169,6 +194,7 @@ function consentOwnership(
     }
   }
   if (fn === 'grant') {
+    const args = rawArgs.map((arg) => scValToNative(arg))
     return { owner: authorizer && args[0] === authorizer ? authorizer : null }
   }
   return { owner: authorizer, allFunds: false, consentWarning: null }
@@ -193,9 +219,13 @@ function summarizeInvokeArgs(inv, exact = {}) {
     grant: grant.kind === 'unknown' ? null : grant,
     owner: Object.hasOwn(exact, 'owner') ? exact.owner : fn === 'grant' ? nativeArgs[0] : null,
     token: Object.hasOwn(exact, 'token') ? exact.token : null,
-    recipient:
-      exact.recipient ??
-      (fn === 'owner_withdraw' ? nativeArgs[0] : fn === 'sweep' ? nativeArgs[2] : null),
+    recipient: Object.hasOwn(exact, 'recipient')
+      ? exact.recipient
+      : fn === 'owner_withdraw'
+        ? nativeArgs[0]
+        : fn === 'sweep'
+          ? nativeArgs[2]
+          : null,
     bodyDigest: exact.bodyDigest ?? null,
     authDigest: exact.authDigest ?? null,
     authorizationDigests: exact.authorizationDigests ?? [],
