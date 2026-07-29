@@ -19,6 +19,18 @@ import {
 
 const MANDATE_SWEEP_MS = 10 * 60 * 1000; // evict expired session keys every 10 min
 
+export function runtimeServerConfig(config) {
+  return {
+    relayerOrigin: config.publicOrigin,
+    reporterEndpoint: config.reporter.url,
+    reporterSchema: config.reporter.schema,
+    reporterSecret: config.runtime.reporterSecret,
+    proxyKey: config.runtime.proxyKey,
+    sanitizeErrors: !config.runtime.debugErrors,
+    publicRuntime: config.publicRuntime,
+  };
+}
+
 /** Shared-secret gate between the Cloudflare proxy and this relayer. Empty key = open (local dev). */
 export function withProxyKeyAuth(handler, key) {
   return async function authed(req, res) {
@@ -42,6 +54,7 @@ export function withProxyKeyAuth(handler, key) {
  * @returns {{ handler: Function, listen: (port: number) => import('node:http').Server }}
  */
 export function createRelayerServer(config) {
+  const runtimeConfig = runtimeServerConfig(config);
   // When RELAYER_DB_PATH is set, sqlite backs the idempotency store + jobs + mandates so a restart
   // loses nothing (session keys still die at their 1h TTL either way). Build BEFORE createWatcher so
   // the watcher gets the sqlite-backed idempotency store rather than the file store.
@@ -61,10 +74,10 @@ export function createRelayerServer(config) {
   // Unset = local dev, no compare performed — same "empty = open" posture as RELAYER_PROXY_KEY
   // below. Also what every /mandate + /mandate/valid response reports as `relayerOrigin`, so the
   // client (frontend/src/wallet/baseBinding.js) can start enforcing it.
-  const relayerOrigin = process.env.RELAYER_PUBLIC_ORIGIN || null;
+  const relayerOrigin = runtimeConfig.relayerOrigin;
   const agentIndexReporter = createAgentIndexReporter({
-    endpoint: process.env.AGENT_INDEX_REPORTER_URL || '',
-    secret: process.env.AGENT_INDEX_REPORTER_SECRET || '',
+    endpoint: runtimeConfig.reporterEndpoint,
+    secret: runtimeConfig.reporterSecret,
   });
 
   // Per-request: each /farm call brings its own ephemeral session key, so the orchestrator (and
@@ -105,12 +118,13 @@ export function createRelayerServer(config) {
       usdcAddress: config.base.usdcAddress,
       yieldRouterAddress: config.base.yieldRouterAddress,
       relayerOrigin,
-      sanitizeErrors: process.env.RELAYER_DEBUG_ERRORS !== '1',
+      sanitizeErrors: runtimeConfig.sanitizeErrors,
       networkId: 'stellar-testnet',
       poolTargets: BASE_SEPOLIA_POOL_TARGETS,
       agentIndexReporter,
+      publicRuntime: runtimeConfig.publicRuntime,
     }),
-    process.env.RELAYER_PROXY_KEY || '',
+    runtimeConfig.proxyKey,
   );
 
   function listen(port) {

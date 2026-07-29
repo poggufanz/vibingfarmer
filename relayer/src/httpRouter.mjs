@@ -140,6 +140,7 @@ const REVOKE_NOTE = 'This relayer deleted its own copy of the session key. The s
 export function createRelayerRouter({
   buildFarm, relayUnwindMint, jobs, mandatesV2, genId, usdcAddress, yieldRouterAddress,
   relayerOrigin = null, sanitizeErrors = false, networkId = 'stellar-testnet',
+  publicRuntime = null,
   poolTargets = new Map(), agentIndexReporter = null,
 }) {
   const associationReportTails = new Map();
@@ -665,6 +666,9 @@ export function createRelayerRouter({
     if (req.method === 'POST' && path === '/farm/attach') return handleFarmAttach(req, res);
     if (req.method === 'POST' && path === '/unwind') return handleUnwind(req, res);
     if (req.method === 'GET') {
+      if (path === '/config') {
+        return sendJson(res, 200, publicRuntime ?? { networkId, readiness: { ready: false } });
+      }
       const statusMatch = path.match(/^\/status\/([^/]+)$/);
       if (statusMatch) return handleStatus(res, decodeURIComponent(statusMatch[1]));
       if (path === '/mandate/valid') return handleMandateValid(req, res);

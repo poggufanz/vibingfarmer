@@ -1,4 +1,22 @@
 {
+  "baseMandatePolicy": {
+    "chainId": 84532,
+    "kernelVersion": "0.3.1",
+    "kernelImplementation": "0xBAC849bB641841b44E965fB01A4Bf5F074f84b4D",
+    "entryPointVersion": "0.7",
+    "entryPointAddress": "0x0000000071727De22E5E9d8BAf0edAc6f37da032",
+    "callPolicyVersion": "0.0.4",
+    "callPolicyAddress": "0x9a52283276A0ec8740DF50bF01B28A80D880eaf2",
+    "timestampPolicyAddress": "0xB9f8f524bE6EcD8C945b1b87f9ae5C192FdCE20F",
+    "ecdsaSignerAddress": "0x6A6F069E2a08c2468e7724Ab3250CdBFBA14D4FF",
+    "usdcAddress": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+    "yieldRouterAddress": "0xF80aa8F571E6d24Ea72F051Fc6F9A9C516727B6d",
+    "approveSelector": "0x095ea7b3",
+    "depositSelector": "0x0efe6a8b",
+    "callType": "call",
+    "nativeValue": "0",
+    "executionHorizonSeconds": 2700
+  },
   "yieldRouter": {
     "address": "0xF80aa8F571E6d24Ea72F051Fc6F9A9C516727B6d",
     "deployTx": "0x9252cf9d4b3b131801fcf78e54cd70ab08152cfea39361a6878271791c5cef9c",

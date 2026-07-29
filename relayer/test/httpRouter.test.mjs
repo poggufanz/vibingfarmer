@@ -73,6 +73,12 @@ describe('createRelayerRouter', () => {
       buildFarm, relayUnwindMint, jobs, mandatesV2, genId,
       usdcAddress: USDC_ADDRESS, yieldRouterAddress: YIELD_ROUTER_ADDRESS,
       networkId: 'stellar-testnet',
+      publicRuntime: {
+        networkId: 'stellar-testnet',
+        reporter: { url: 'https://app.example/api/agent-index', schema: 1, hasSecret: true },
+        readiness: { ready: true },
+        digests: { deployments: 'a'.repeat(64), baseMandatePolicy: 'b'.repeat(64) },
+      },
       poolTargets: new Map([[POOL_ADDRESS.toLowerCase(), 'aave-v3']]),
       agentIndexReporter,
       ...overrides,
@@ -129,6 +135,19 @@ describe('createRelayerRouter', () => {
     const res = mockRes();
     await router(mk('GET', '/api/vf-cross/nope'), res);
     expect(res.statusCode).toBe(404);
+  });
+
+  it('GET /config returns immutable public runtime facts without secrets', async () => {
+    const res = mockRes();
+    await router(mk('GET', '/api/vf-cross/config'), res);
+    expect(res.statusCode).toBe(200);
+    expect(jsonOf(res)).toEqual({
+      networkId: 'stellar-testnet',
+      reporter: { url: 'https://app.example/api/agent-index', schema: 1, hasSecret: true },
+      readiness: { ready: true },
+      digests: { deployments: 'a'.repeat(64), baseMandatePolicy: 'b'.repeat(64) },
+    });
+    expect(res.body).not.toMatch(/privateKey|proxyKey/i);
   });
 
   describe('POST /mandate', () => {
