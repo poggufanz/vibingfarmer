@@ -5,9 +5,10 @@
 // §4-5), a mixed run's bridge agent joins the SAME single funding_router grant as the Stellar
 // deposit workers, never a second signature. A bridge agent can only be created via the router
 // (never the legacy per-agent deploy), so this file exercises the ROUTER path — same seam as
-// orchestrator.router.test.js — with executeBaseLeg mocked (its own contract is baseLeg.test.js's
-// job) and mergeFlowHelpers.js's readStoredBaseMandate mocked (its own contract is
-// app.strategy.merge.test.jsx's job).
+// orchestrator.router.test.js — with executeBaseLeg mocked for the isolated cases (its own
+// contract is baseLeg.test.js's job) and mergeFlowHelpers.js's readStoredBaseMandate mocked (its
+// own contract is app.strategy.merge.test.jsx's job). The uncertain-burn integration at the end
+// explicitly forwards this spy into the real executeBaseLeg and its real runFarmFlow.
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 const baseLegHarness = vi.hoisted(() => ({ executeReal: null }))
@@ -122,6 +123,7 @@ import {
   CCTP_BASE_DOMAIN,
   evmAddrToBytes32,
 } from './stellar/cctpBurn.js'
+import { BASE_POOL_CATALOG } from './config.js'
 
 const KERNEL = '0x0000000000000000000000000000000000000AA1'
 
@@ -206,11 +208,11 @@ function permissionedMixedFixture(runId = 'run-regression') {
   }
 }
 
-function permissionedOrchestrator() {
+function permissionedOrchestrator(onEvent = vi.fn()) {
   return new OrchestratorAgent({
     user: 'GUSER',
     sessionId: 'permissioned-regression',
-    onEvent: vi.fn(),
+    onEvent,
     baseLegContext: { connectedAddress: 'GUSER', signTx: vi.fn() },
   })
 }
@@ -1183,8 +1185,16 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
     })
   })
 
-  it('[Custody] real Orchestrator/Base dispatch keeps a possibly-dispatched burn unknown', async () => {
+  it('[Custody] real Orchestrator/Base/farm dispatch keeps a possibly-dispatched burn unknown', async () => {
     const fixture = permissionedMixedFixture('run-uncertain-burn')
+    const onEvent = vi.fn()
+    fixture.plan.agents[1].children[0].allocationId = 'run-uncertain-burn:bridge:aave-v3'
+    fixture.plan.agents[1].children[0].address = BASE_POOL_CATALOG.find(
+      (pool) => pool.proxyTarget === 'aave-v3'
+    ).address
+    // Keep both internal layers real. The injected values below replace only local persistence,
+    // RPC and quote boundaries; runFarmFlow is deliberately absent, so baseLeg uses its actual
+    // crossChainFarm implementation and reaches the external Stellar burn transport mock.
     executeBaseLegMock.mockImplementation((args) =>
       baseLegHarness.executeReal({
         ...args,
@@ -1202,7 +1212,6 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
           getMandateStatus: async () => ({ status: 'active' }),
           makePublicClient: () => ({}),
           estimateMinShares: async () => 39_000_000n,
-          runFarmFlow: async ({ deps }) => deps.burn({ amountUnits: 400_000_000n }),
         },
       })
     )
@@ -1215,10 +1224,10 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
       })
     )
 
-    const summary = await permissionedOrchestrator().dispatch(fixture.plan, {
+    const summary = await permissionedOrchestrator(onEvent).dispatch(fixture.plan, {
       permissionDecision: fixture.permissionDecision,
     })
-    const base = summary.receipt.allocations.find((entry) => entry.allocationId.endsWith('pool-a'))
+    const base = summary.receipt.allocations.find((entry) => entry.allocationId.endsWith('aave-v3'))
 
     expect(summary.baseLeg).toMatchObject({
       success: false,
@@ -1226,6 +1235,7 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
       custody: { location: 'unknown', confirmed: false },
       recovery: {
         action: 'reconcile-cctp-burn',
+        phase: 'cctp_burn',
         evidence: { result: { hash: 'HBURN-MAYBE', status: 'PENDING' } },
       },
     })
@@ -1237,16 +1247,29 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
         stage: 'burn',
         recovery: {
           action: 'reconcile-cctp-burn',
+          phase: 'cctp_burn',
           reason: 'burn response lost after dispatch',
           evidence: {
             submission: 'unknown',
-            stage: 'burn',
+            stage: 'cctp_burn',
+            reportedStage: 'burn',
             result: { hash: 'HBURN-MAYBE', status: 'PENDING' },
           },
         },
       },
     })
     expect(base.custody.location).not.toBe('agent')
+    expect(onEvent).toHaveBeenCalledWith(
+      'farm-burn-started',
+      expect.objectContaining({ allocationId: 'run-uncertain-burn:bridge:base' })
+    )
+    expect(onEvent).toHaveBeenCalledWith(
+      'farm-failed',
+      expect.objectContaining({
+        allocationId: 'run-uncertain-burn:bridge:base',
+        stage: 'burn',
+      })
+    )
     expect(runAgentBurnMock).toHaveBeenCalledOnce()
   })
 })

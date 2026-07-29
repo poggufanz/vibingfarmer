@@ -26,6 +26,14 @@ import { defaultMakePublicClient } from './wallet/passkeyBase.js'
 import { readBaseMandate, validateBaseMandate } from './wallet/baseBinding.js'
 import { sanitizeReceiptData } from './strategy/dispatchSummary.js'
 
+function unknownSubmissionRecoveryPhase(stage) {
+  if (stage === 'pull') return { phase: 'pull', action: 'reconcile-pull' }
+  if (stage === 'burn' || stage === 'cctp_burn') {
+    return { phase: 'cctp_burn', action: 'reconcile-cctp-burn' }
+  }
+  return { phase: 'unknown', action: 'reconcile-unknown-base-submission' }
+}
+
 /**
  * @param {{
  *   connectedAddress: string,          // Stellar wallet — used only for logging/identity, never signs here
@@ -307,13 +315,17 @@ export async function executeBaseLeg({
     const message = err instanceof Error ? err.message : String(err)
     const failureEvidence = err && typeof err === 'object' ? err : {}
     const submissionUnknown = failureEvidence.code === 'VF_SUBMISSION_UNKNOWN'
+    const reportedStage = failureEvidence.stage || stage
+    const reconciliation = unknownSubmissionRecoveryPhase(reportedStage)
     const uncertaintyRecovery = submissionUnknown
       ? {
-          action: 'reconcile-cctp-burn',
+          action: reconciliation.action,
+          phase: reconciliation.phase,
           reason: message,
           evidence: {
             submission: failureEvidence.submission || 'unknown',
-            stage: failureEvidence.stage || stage,
+            stage: reconciliation.phase,
+            ...(reportedStage !== reconciliation.phase ? { reportedStage } : {}),
             ...(failureEvidence.result !== undefined
               ? { result: sanitizeReceiptData(failureEvidence.result) }
               : {}),

@@ -540,7 +540,7 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
     })
   })
 
-  it('projects a possibly-dispatched burn as unknown custody with reconciliation evidence', async () => {
+  it('projects a possibly-dispatched CCTP burn as unknown custody with burn reconciliation evidence', async () => {
     const deps = okDeps()
     deps.runFarmFlow = vi.fn(async ({ deps: farmDeps }) =>
       farmDeps.burn({ amountUnits: 1_000_000n })
@@ -562,10 +562,12 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
       custody: { location: 'unknown', confirmed: false, checkedAt: null },
       recovery: {
         action: 'reconcile-cctp-burn',
+        phase: 'cctp_burn',
         reason: 'burn response lost after dispatch',
         evidence: {
           submission: 'unknown',
-          stage: 'burn',
+          stage: 'cctp_burn',
+          reportedStage: 'burn',
           result: { hash: 'HBURN-MAYBE', status: 'PENDING' },
         },
       },
@@ -575,6 +577,65 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
       recovery: out.recovery,
     })
     expect(out.allocations[0].custody.location).not.toBe('agent')
+  })
+
+  it('projects an uncertain funding pull with pull-specific reconciliation evidence', async () => {
+    const deps = okDeps()
+    deps.runFarmFlow = vi.fn(async ({ deps: farmDeps }) =>
+      farmDeps.burn({ amountUnits: 1_000_000n })
+    )
+    deps.runAgentPull.mockRejectedValue(
+      Object.assign(new Error('pull response lost after dispatch'), {
+        code: 'VF_SUBMISSION_UNKNOWN',
+        submission: 'unknown',
+        stage: 'pull',
+        result: { hash: 'HPULL-MAYBE', status: 'PENDING' },
+      })
+    )
+
+    const out = await run({ deps })
+
+    expect(out).toMatchObject({
+      success: false,
+      custody: { location: 'unknown', confirmed: false, checkedAt: null },
+      recovery: {
+        action: 'reconcile-pull',
+        phase: 'pull',
+        reason: 'pull response lost after dispatch',
+        evidence: {
+          submission: 'unknown',
+          stage: 'pull',
+          result: { hash: 'HPULL-MAYBE', status: 'PENDING' },
+        },
+      },
+    })
+    expect(out.allocations[0]).toMatchObject({ custody: out.custody, recovery: out.recovery })
+  })
+
+  it('uses generic reconciliation for an unrecognized uncertain Base phase', async () => {
+    const deps = okDeps()
+    deps.runFarmFlow.mockRejectedValue(
+      Object.assign(new Error('unknown Base response lost'), {
+        code: 'VF_SUBMISSION_UNKNOWN',
+        submission: 'unknown',
+        stage: 'unexpected-phase',
+        result: { hash: 'HUNKNOWN', status: 'PENDING' },
+      })
+    )
+
+    const out = await run({ deps })
+
+    expect(out.recovery).toMatchObject({
+      action: 'reconcile-unknown-base-submission',
+      phase: 'unknown',
+      evidence: {
+        stage: 'unknown',
+        reportedStage: 'unexpected-phase',
+        result: { hash: 'HUNKNOWN', status: 'PENDING' },
+      },
+    })
+    expect(out.recovery.action).not.toBe('reconcile-cctp-burn')
+    expect(out.custody).toEqual({ location: 'unknown', confirmed: false, checkedAt: null })
   })
 
   it('farm failure is settled, not thrown', async () => {
