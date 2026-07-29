@@ -7,6 +7,27 @@ import { createSqliteStores } from '../src/sqliteStores.mjs';
 
 const freshPath = () => join(mkdtempSync(join(tmpdir(), 'vf-sqlite-')), 'relayer.db');
 
+const executionIdentity = {
+  networkId: 'stellar-testnet',
+  owner: `G${'A'.repeat(55)}`,
+  bindingId: 'binding-1',
+  allocationId: 'run-1:bridge:aave-v3',
+  childId: 'job-1',
+};
+
+function executionReport(sequence, executionStatus = 'accepted') {
+  return {
+    identity: executionIdentity,
+    expectedSequence: sequence - 1,
+    lifecycle: {
+      sequence,
+      status: executionStatus === 'failed' ? 'failed' : 'submitted',
+      evidence: { executionStatus },
+      observedAt: 2_000_000_000_000 + sequence,
+    },
+  };
+}
+
 describe('sqliteStores', () => {
   it('idempotency store: set/get/has/all round-trip', () => {
     const { store } = createSqliteStores(freshPath());
@@ -68,6 +89,88 @@ describe('sqliteStores', () => {
     const second = createSqliteStores(path);
     expect(second.jobs.get('j1').status).toBe('pending');
     expect(second.mandates.get('appr')).toBe('0xkey');
+  });
+
+  describe('durable farm execution work', () => {
+    const queuedJob = {
+      status: 'queued',
+      steps: [],
+      runId: 'run-1',
+      _attach: { jobId: 'job-1', attachedBurnTxHash: null },
+    };
+    const attachedJob = {
+      ...queuedJob,
+      status: 'pending',
+      _attach: {
+        ...queuedJob._attach,
+        attachedBurnTxHash: 'burn-1',
+        associations: [{ allocationId: executionIdentity.allocationId, terminalSequence: null }],
+      },
+    };
+
+    // Defect caught: accepted lifecycle insertion, burn attachment, and executable work were
+    // three crash-separated writes instead of one SQLite transaction.
+    it('atomically persists burn attachment, accepted reports, and pending work', () => {
+      const path = freshPath();
+      const first = createSqliteStores(path);
+      first.jobs.set('job-1', queuedJob);
+      expect(first.farmExecutions.attach({
+        jobId: 'job-1', burnTxHash: 'burn-1', job: attachedJob, reports: [executionReport(1)],
+      })).toMatchObject({ duplicate: false, work: { status: 'pending', attempts: 0 } });
+      first.db.close();
+
+      const second = createSqliteStores(path);
+      expect(second.jobs.get('job-1')).toEqual(attachedJob);
+      expect(second.farmExecutions.get('job-1')).toMatchObject({
+        jobId: 'job-1', burnTxHash: 'burn-1', status: 'pending', attempts: 0,
+      });
+      expect(second.associationOutbox.status('job-1')).toEqual([{
+        allocationId: executionIdentity.allocationId,
+        sequence: 1,
+        status: 'pending',
+        attempts: 0,
+      }]);
+    });
+
+    // Defect caught: an outbox failure could still consume the burn slot and strand a pending job.
+    it('rolls back the job and work row when accepted lifecycle enqueue fails', () => {
+      const stores = createSqliteStores(freshPath());
+      stores.jobs.set('job-1', queuedJob);
+      expect(() => stores.farmExecutions.attach({
+        jobId: 'job-1',
+        burnTxHash: 'burn-1',
+        job: attachedJob,
+        reports: [executionReport(2)],
+      })).toThrow(/sequence|order/i);
+      expect(stores.jobs.get('job-1')).toEqual(queuedJob);
+      expect(stores.farmExecutions.get('job-1')).toBeNull();
+      expect(stores.associationOutbox.status('job-1')).toEqual([]);
+    });
+
+    // Defect caught: restart had no durable dispatcher-owned claim, while same-hash retries either
+    // did nothing or could start a second external flow.
+    it('resumes pending work after reopen and grants only one bounded execution lease', () => {
+      const path = freshPath();
+      const first = createSqliteStores(path);
+      first.jobs.set('job-1', queuedJob);
+      first.farmExecutions.attach({
+        jobId: 'job-1', burnTxHash: 'burn-1', job: attachedJob, reports: [executionReport(1)],
+      });
+      first.db.close();
+
+      const second = createSqliteStores(path);
+      const third = createSqliteStores(path);
+      expect(second.farmExecutions.listRecoverable({ now: 1000 })).toEqual([
+        expect.objectContaining({ jobId: 'job-1', status: 'pending' }),
+      ]);
+      const claimed = second.farmExecutions.claim({ jobId: 'job-1', now: 1000, leaseMs: 100 });
+      expect(claimed).toMatchObject({ status: 'running', attempts: 1, leaseExpiresAt: 1100 });
+      expect(third.farmExecutions.claim({ jobId: 'job-1', now: 1000, leaseMs: 100 })).toBeNull();
+      expect(third.farmExecutions.attach({
+        jobId: 'job-1', burnTxHash: 'burn-1', job: attachedJob, reports: [executionReport(1)],
+      })).toMatchObject({ duplicate: true, work: { status: 'running', attempts: 1 } });
+      expect(third.associationOutbox.status('job-1')).toHaveLength(1);
+    });
   });
 
   // VF Wallet Task 7: mandates_v2 — parity with mandateStore.mjs's createMandateStoreV2 (same

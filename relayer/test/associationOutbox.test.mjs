@@ -91,8 +91,31 @@ describe('SQLite association lifecycle outbox', () => {
     })).toMatchObject({ status: 'dead', attempts: 2 });
     expect(associationOutbox.leaseNext({ now: 9999, leaseMs: 100 })).toBeNull();
     expect(associationOutbox.status('job-42')).toEqual([
-      { sequence: 1, status: 'dead', attempts: 2 },
+      { allocationId: identity.allocationId, sequence: 1, status: 'dead', attempts: 2 },
     ]);
+  });
+
+  // Defect caught: a process death on the final leased attempt made leaseNext increment past the
+  // configured bound forever because only markRetry enforced maxAttempts.
+  it('dead-letters an expired final lease atomically without issuing another attempt', () => {
+    const { associationOutbox } = createSqliteStores(freshPath(), {
+      now: () => 1000,
+      outboxMaxAttempts: 2,
+    });
+    associationOutbox.enqueue(lifecycle(1));
+    const first = associationOutbox.leaseNext({ now: 1000, leaseMs: 10 });
+    associationOutbox.markRetry({
+      id: first.id, leaseToken: first.leaseToken, now: 1001, retryAt: 1002,
+    });
+    expect(associationOutbox.leaseNext({ now: 1002, leaseMs: 10 })).toMatchObject({ attempts: 2 });
+
+    expect(associationOutbox.leaseNext({ now: 1012, leaseMs: 10 })).toBeNull();
+    expect(associationOutbox.status('job-42')).toEqual([{
+      allocationId: identity.allocationId,
+      sequence: 1,
+      status: 'dead',
+      attempts: 2,
+    }]);
   });
 
   // Defect caught: worker delivery used to consume a failed HTTP report as though it were analytics.
@@ -106,8 +129,36 @@ describe('SQLite association lifecycle outbox', () => {
       now: () => 1000,
     });
     await vi.waitFor(() => expect(associationOutbox.status('job-42')).toEqual([
-      { sequence: 1, status: 'pending', attempts: 1 },
+      { allocationId: identity.allocationId, sequence: 1, status: 'pending', attempts: 1 },
     ]));
+    worker.stop();
+  });
+
+  // Defect caught: a reporter success followed by a stale markDelivered fell into markRetry;
+  // that second stale transition rejected from the detached drain as an unhandled promise.
+  it('contains delivery-transition uncertainty without attempting a stale retry transition', async () => {
+    const leased = {
+      id: 1,
+      leaseToken: 'lease-1',
+      attempts: 1,
+      report: lifecycle(1),
+    };
+    const outbox = {
+      leaseNext: vi.fn()
+        .mockReturnValueOnce(leased)
+        .mockReturnValueOnce(null),
+      markDelivered: vi.fn(() => { throw new Error('stale delivered transition'); }),
+      markRetry: vi.fn(() => { throw new Error('must not retry an acknowledged report'); }),
+    };
+    const worker = startAssociationOutboxWorker({
+      outbox,
+      reporter: { reportLifecycle: vi.fn(async () => ({ acknowledged: true })) },
+      intervalMs: 60_000,
+      autoStart: false,
+    });
+
+    await expect(worker.drain()).resolves.toBe(1);
+    expect(outbox.markRetry).not.toHaveBeenCalled();
     worker.stop();
   });
 
