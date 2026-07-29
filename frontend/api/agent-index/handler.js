@@ -290,6 +290,26 @@ export async function handleBaseChildIntent({
   }
 }
 
+export async function handleReporterReadiness({ store, secret, providedSecret }) {
+  const gate = await reporterGate({ secret, providedSecret })
+  if (gate) return gate
+  if (!store?.probeReadiness) {
+    return { status: 503, body: { error: 'Base child store unavailable', configured: false } }
+  }
+  try {
+    const result = await store.probeReadiness()
+    if (result?.writable !== true) {
+      return { status: 503, body: { error: 'Base child store unavailable', configured: true } }
+    }
+    return {
+      status: 200,
+      body: { ready: true, schemaVersion: AGENT_INDEX_SCHEMA_VERSION },
+    }
+  } catch (error) {
+    return agentIndexFailure(error)
+  }
+}
+
 export async function handleBaseChildLifecycle({
   request,
   configuredNetworkId,

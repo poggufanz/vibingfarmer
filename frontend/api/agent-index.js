@@ -11,6 +11,7 @@ import {
   handleAssociationReport,
   handleBaseChildIntent,
   handleBaseChildLifecycle,
+  handleReporterReadiness,
   handleIngest,
   handleRead,
   handleReceiptChallenge,
@@ -306,6 +307,17 @@ export default async function handler(req, res) {
     const out = await handleBaseChildIntent({
       child: req.body?.child,
       configuredNetworkId: configuredNetwork(req)?.networkId,
+      store,
+      secret: REPORTER_SECRET(req),
+      providedSecret: bearer(req),
+    })
+    return json(res, out.status, out.body)
+  }
+
+  if (req.method === 'POST' && action === 'base-child-ready') {
+    if (!rateLimit(req, res, { max: 60, windowMs: 60_000, bucket: 'agent-index-child' })) return
+    const store = req.env?.VF_DB ? createAgentIndexStore(req.env.VF_DB) : null
+    const out = await handleReporterReadiness({
       store,
       secret: REPORTER_SECRET(req),
       providedSecret: bearer(req),

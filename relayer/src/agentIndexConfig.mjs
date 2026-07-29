@@ -10,6 +10,22 @@ function actionUrl(endpoint, action) {
   return url.toString();
 }
 
+function ephemeralDbPath(dbPath) {
+  const value = String(dbPath || '').trim().toLowerCase();
+  if (value === ':memory:' || value.includes(':memory:')) return true;
+  if (value.startsWith('file:')) {
+    try {
+      const url = new URL(value);
+      if (url.searchParams.get('mode') === 'memory') return true;
+    } catch {
+      if (/[?&]mode=memory(?:&|$)/.test(value)) return true;
+    }
+  }
+  return value === '/tmp' || value.startsWith('/tmp/')
+    || value === '/var/tmp' || value.startsWith('/var/tmp/')
+    || value === '/dev/shm' || value.startsWith('/dev/shm/');
+}
+
 export function createAgentIndexConfig({
   endpoint,
   secret,
@@ -23,6 +39,9 @@ export function createAgentIndexConfig({
   const checkedDbPath = required(dbPath, 'RELAYER_DB_PATH', production);
   const checkedOrigin = required(relayerOrigin, 'RELAYER_PUBLIC_ORIGIN', production);
   if (schemaVersion !== 1) throw new Error('env AGENT_INDEX_REPORTER_SCHEMA must equal 1');
+  if (production && ephemeralDbPath(checkedDbPath)) {
+    throw new Error('env RELAYER_DB_PATH must be a durable non-ephemeral SQLite path');
+  }
   const config = {
     intentUrl: actionUrl(checkedEndpoint, 'base-child-intent'),
     lifecycleUrl: actionUrl(checkedEndpoint, 'base-child-lifecycle'),

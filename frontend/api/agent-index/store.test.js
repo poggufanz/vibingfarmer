@@ -104,6 +104,7 @@ describe('createAgentIndexStore', () => {
         'commitAuthenticatedReceiptMutation',
         'acquireRecoveryLease',
         'releaseRecoveryLease',
+        'probeReadiness',
         'createBaseChildIntent',
         'advanceBaseChildLifecycle',
         'readBaseChildIntent',
@@ -124,6 +125,10 @@ describe('createAgentIndexStore', () => {
         'recordBackfillAudit',
       ].sort()
     )
+  })
+
+  it('probes the migrated store through a no-op write statement', async () => {
+    await expect(store.probeReadiness()).resolves.toEqual({ writable: true })
   })
 })
 

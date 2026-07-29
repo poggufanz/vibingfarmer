@@ -110,4 +110,38 @@ describe('durable Base child reporter protocol', () => {
     );
     expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual(request);
   });
+
+  // Defect caught: startup treated configured strings as readiness without authenticating or
+  // proving the remote D1 schema/store was writable.
+  it('authenticates an exact schema/store readiness probe before workers can start', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ ready: true, schemaVersion: 1 }),
+    }));
+    const reporter = createAgentIndexReporter({
+      endpoint: 'https://index.example/api/agent-index', secret: SECRET, schemaVersion: 1, fetchImpl,
+    });
+
+    await expect(reporter.probe()).resolves.toEqual({ ready: true, schemaVersion: 1 });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'https://index.example/api/agent-index?action=base-child-ready',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ Authorization: `Bearer ${SECRET}` }),
+      }),
+    );
+  });
+
+  it.each([
+    ['unauthorized', { ok: false, status: 401, json: async () => ({ error: 'Unauthorized' }) }],
+    ['schema mismatch', { ok: true, status: 200, json: async () => ({ ready: true, schemaVersion: 2 }) }],
+    ['store unavailable', { ok: true, status: 200, json: async () => ({ ready: false, schemaVersion: 1 }) }],
+  ])('fails the readiness probe on %s', async (_label, response) => {
+    const reporter = createAgentIndexReporter({
+      endpoint: 'https://index.example/api/agent-index', secret: SECRET, schemaVersion: 1,
+      fetchImpl: vi.fn(async () => response),
+    });
+    await expect(reporter.probe()).rejects.toThrow(/reporter|schema|ready|HTTP/i);
+  });
 });

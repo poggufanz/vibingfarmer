@@ -94,7 +94,7 @@ export function createAssociationOutbox(db, {
     throw new Error('outbox maxAttempts must be a positive safe integer');
   }
 
-  function enqueue(input) {
+  function enqueue(input, { transaction = true } = {}) {
     const reports = Array.isArray(input) ? input : [input];
     if (reports.length === 0) throw new Error('outbox enqueue requires a lifecycle report');
     const prepared = reports.map((report) => {
@@ -113,7 +113,7 @@ export function createAssociationOutbox(db, {
       return { report, reportJson, digest, identityKey, idempotencyKey };
     });
     const outputs = [];
-    db.exec('BEGIN IMMEDIATE');
+    if (transaction) db.exec('BEGIN IMMEDIATE');
     try {
       for (const item of prepared) {
         const report = item.report;
@@ -155,9 +155,9 @@ export function createAssociationOutbox(db, {
         const row = db.prepare('SELECT * FROM association_outbox WHERE id = ?').get(info.lastInsertRowid);
         outputs.push({ ...rowToRecord(row), duplicate: false });
       }
-      db.exec('COMMIT');
+      if (transaction) db.exec('COMMIT');
     } catch (error) {
-      db.exec('ROLLBACK');
+      if (transaction) db.exec('ROLLBACK');
       throw error;
     }
     return Array.isArray(input) ? outputs : outputs[0];
@@ -168,28 +168,42 @@ export function createAssociationOutbox(db, {
       throw new Error('outbox lease requires safe integer time and positive duration');
     }
     const token = leaseToken();
-    const row = db.prepare(`
-      UPDATE association_outbox
-      SET status = 'leased', attempts = attempts + 1, lease_token = ?,
-          lease_expires_at = ?, updated_at = ?
-      WHERE id = (
-        SELECT candidate.id FROM association_outbox AS candidate
-        WHERE (
-          (candidate.status = 'pending' AND candidate.available_at <= ?)
-          OR (candidate.status = 'leased' AND candidate.lease_expires_at <= ?)
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.prepare(`
+        UPDATE association_outbox
+        SET status = 'dead', lease_token = NULL, lease_expires_at = NULL,
+            last_error = 'delivery lease expired at attempt limit', updated_at = ?
+        WHERE status = 'leased' AND lease_expires_at <= ? AND attempts >= ?
+      `).run(leaseNow, leaseNow, maxAttempts);
+      const row = db.prepare(`
+        UPDATE association_outbox
+        SET status = 'leased', attempts = attempts + 1, lease_token = ?,
+            lease_expires_at = ?, updated_at = ?
+        WHERE id = (
+          SELECT candidate.id FROM association_outbox AS candidate
+          WHERE (
+            (candidate.status = 'pending' AND candidate.available_at <= ?)
+            OR (candidate.status = 'leased' AND candidate.lease_expires_at <= ?)
+          )
+          AND candidate.attempts < ?
+          AND NOT EXISTS (
+            SELECT 1 FROM association_outbox AS prior
+            WHERE prior.identity_key = candidate.identity_key
+              AND prior.sequence < candidate.sequence
+              AND prior.status <> 'delivered'
+          )
+          ORDER BY candidate.created_at ASC, candidate.id ASC
+          LIMIT 1
         )
-        AND NOT EXISTS (
-          SELECT 1 FROM association_outbox AS prior
-          WHERE prior.identity_key = candidate.identity_key
-            AND prior.sequence < candidate.sequence
-            AND prior.status <> 'delivered'
-        )
-        ORDER BY candidate.created_at ASC, candidate.id ASC
-        LIMIT 1
-      )
-      RETURNING *
-    `).get(token, leaseNow + leaseMs, leaseNow, leaseNow, leaseNow);
-    return rowToRecord(row);
+        RETURNING *
+      `).get(token, leaseNow + leaseMs, leaseNow, leaseNow, leaseNow, maxAttempts);
+      db.exec('COMMIT');
+      return rowToRecord(row);
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
   }
 
   function guardedTransition({ id, leaseToken: token, status, timestamp, retryAt = null, error = null }) {
@@ -234,8 +248,9 @@ export function createAssociationOutbox(db, {
   function status(childId) {
     requireText(childId, 'childId');
     return db.prepare(
-      'SELECT sequence, status, attempts FROM association_outbox WHERE child_id = ? ORDER BY sequence ASC'
+      'SELECT sequence, status, attempts, report_json FROM association_outbox WHERE child_id = ? ORDER BY sequence ASC, id ASC'
     ).all(childId).map((row) => ({
+      allocationId: JSON.parse(row.report_json).identity.allocationId,
       sequence: row.sequence,
       status: row.status,
       attempts: row.attempts,
@@ -252,6 +267,7 @@ export function startAssociationOutboxWorker({
   leaseMs = 30_000,
   batchSize = 20,
   now = () => Date.now(),
+  autoStart = true,
 } = {}) {
   if (!outbox || !reporter?.reportLifecycle) throw new Error('association outbox worker is not configured');
   let draining = false;
@@ -267,17 +283,28 @@ export function startAssociationOutboxWorker({
         if (!leased) break;
         try {
           await reporter.reportLifecycle(leased.report);
-          outbox.markDelivered({ id: leased.id, leaseToken: leased.leaseToken, now: now() });
         } catch (error) {
           const attempt = Math.max(1, leased.attempts);
           const delay = Math.min(60_000, 1_000 * (2 ** (attempt - 1)));
-          outbox.markRetry({
-            id: leased.id,
-            leaseToken: leased.leaseToken,
-            error: 'reporter delivery failed',
-            now: now(),
-            retryAt: now() + delay,
-          });
+          try {
+            outbox.markRetry({
+              id: leased.id,
+              leaseToken: leased.leaseToken,
+              error: 'reporter delivery failed',
+              now: now(),
+              retryAt: now() + delay,
+            });
+          } catch {
+            // Lease ownership is uncertain. Leave the durable row for expiry reconciliation.
+          }
+          handled += 1;
+          continue;
+        }
+        try {
+          outbox.markDelivered({ id: leased.id, leaseToken: leased.leaseToken, now: now() });
+        } catch {
+          // The reporter may already have committed. Never turn that acknowledgement into a retry;
+          // the immutable row remains leased until bounded expiry reconciliation can inspect it.
         }
         handled += 1;
       }
@@ -287,9 +314,9 @@ export function startAssociationOutboxWorker({
     }
   }
 
-  const timer = setInterval(() => { void drain(); }, intervalMs);
+  const timer = setInterval(() => { void drain().catch(() => {}); }, intervalMs);
   timer.unref?.();
-  void drain();
+  if (autoStart) void drain().catch(() => {});
   return Object.freeze({
     drain,
     stop() {

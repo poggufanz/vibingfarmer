@@ -188,5 +188,33 @@ export function createAgentIndexReporter({
     );
   }
 
-  return Object.freeze({ commitIntent, reportLifecycle });
+  async function probe() {
+    if (!endpoint || !secret) throw new Error('agent index reporter is not configured');
+    const response = await fetchWithTimeout(fetchImpl, actionUrl(endpoint, 'base-child-ready'), {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${secret}`,
+        'Content-Type': 'application/json',
+      },
+      body: '{}',
+    }, timeoutMs);
+    if (response?.status !== 200 || !response?.ok) {
+      throw new Error(`agent index reporter returned HTTP ${response?.status ?? 'unknown'}`);
+    }
+    let acknowledgement;
+    try {
+      acknowledgement = await response.json();
+    } catch (error) {
+      throw new Error('agent index reporter readiness acknowledgement is malformed', { cause: error });
+    }
+    if (acknowledgement?.ready !== true) {
+      throw new Error('agent index reporter store is not ready');
+    }
+    if (acknowledgement.schemaVersion !== schemaVersion) {
+      throw new Error('agent index reporter schema mismatch');
+    }
+    return acknowledgement;
+  }
+
+  return Object.freeze({ commitIntent, reportLifecycle, probe });
 }

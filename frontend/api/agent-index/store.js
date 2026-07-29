@@ -87,6 +87,11 @@ function sameAssociationEvidence(existing, association) {
 /** D1 repository. `db` is a Cloudflare D1 binding (prepare/bind/run/first/all + batch) — or, in
  * tests, an in-memory double with the same surface (see store.test.js). */
 export function createAgentIndexStore(db) {
+  async function probeReadiness() {
+    await db.prepare('UPDATE agent_index_sources SET status = status WHERE 0').bind().run()
+    return { writable: true }
+  }
+
   async function issueReceiptChallenge(challenge) {
     await db
       .prepare(
@@ -1361,6 +1366,7 @@ export function createAgentIndexStore(db) {
   }
 
   return {
+    probeReadiness,
     issueReceiptChallenge,
     readReceiptChallenge,
     readExecutionReceipt,

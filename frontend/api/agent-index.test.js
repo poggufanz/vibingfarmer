@@ -155,6 +155,7 @@ function fakeStore(overrides = {}) {
       expiresAt: 2_000_000_060_000,
     })),
     releaseRecoveryLease: vi.fn(async () => ({ released: true })),
+    probeReadiness: vi.fn(async () => ({ writable: true })),
     createBaseChildIntent: vi.fn(async () => ({ written: 1, duplicates: 0, sequence: 0 })),
     advanceBaseChildLifecycle: vi.fn(async () => ({ written: 1, duplicates: 0, sequence: 1 })),
     ...overrides,
@@ -578,6 +579,29 @@ describe('/api/agent-index authenticated execution routes', () => {
 })
 
 describe('/api/agent-index operational evidence routes', () => {
+  // Defect caught: the relayer had no authenticated, schema-pinned way to prove that the D1
+  // binding was present and writable before consuming durable outbox rows.
+  it('exposes authenticated Base child schema/store readiness', async () => {
+    const accepted = await call(mockReq({
+      method: 'POST',
+      url: '/api/agent-index?action=base-child-ready',
+      body: {},
+    }))
+    expect(accepted.res.statusCode).toBe(200)
+    expect(accepted.body).toEqual({ ready: true, schemaVersion: 1 })
+    expect(mocked.store.probeReadiness).toHaveBeenCalledTimes(1)
+
+    const deniedReq = mockReq({
+      method: 'POST',
+      url: '/api/agent-index?action=base-child-ready',
+      body: {},
+    })
+    deniedReq.headers.authorization = 'Bearer wrong-secret'
+    const denied = await call(deniedReq)
+    expect(denied.res.statusCode).toBe(401)
+    expect(mocked.store.probeReadiness).toHaveBeenCalledTimes(1)
+  })
+
   it.each([
     [
       'lease acquire',

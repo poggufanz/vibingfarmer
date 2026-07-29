@@ -41,4 +41,21 @@ describe('agent index durable reporter configuration', () => {
       ...changed,
     })).toThrow(new RegExp(name));
   });
+
+  // Defect caught: a presence-only check accepted SQLite memory URIs in production, so every
+  // accepted intent/work row disappeared on restart.
+  it.each([':memory:', 'file::memory:', 'file:relayer?mode=memory']) (
+    'rejects ephemeral production SQLite path %s',
+    async (dbPath) => {
+      const { createAgentIndexConfig } = await import('../src/agentIndexConfig.mjs');
+      expect(() => createAgentIndexConfig({
+        endpoint: 'https://app.example/api/agent-index',
+        secret: 'server-only-secret',
+        schemaVersion: 1,
+        dbPath,
+        relayerOrigin: 'https://relay.example',
+        production: true,
+      })).toThrow(/RELAYER_DB_PATH|ephemeral|memory/i);
+    },
+  );
 });

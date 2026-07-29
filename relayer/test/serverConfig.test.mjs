@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { runtimeServerConfig } from '../src/server.mjs';
+import * as serverModule from '../src/server.mjs';
+
+const { runtimeServerConfig } = serverModule;
 
 describe('runtimeServerConfig', () => {
   it('uses the validated config object and never ambient process.env values', () => {
@@ -28,5 +30,19 @@ describe('runtimeServerConfig', () => {
       sanitizeErrors: true,
       publicRuntime: config.publicRuntime,
     });
+  });
+
+  // Defect caught: the outbox worker and socket started before either local SQLite writability or
+  // authenticated remote schema/store readiness had been proven.
+  it('gates startup on local writable-store and authenticated reporter probes', async () => {
+    const localProbe = { probe: async () => ({ writable: true }) };
+    const reporter = { probe: async () => ({ ready: true, schemaVersion: 1 }) };
+    expect(typeof serverModule.verifyRelayerReadiness).toBe('function');
+    await expect(serverModule.verifyRelayerReadiness({ sqlite: localProbe, reporter }))
+      .resolves.toEqual({ writable: true, reporterSchema: 1 });
+    await expect(serverModule.verifyRelayerReadiness({
+      sqlite: { probe: async () => { throw new Error('read only'); } },
+      reporter,
+    })).rejects.toThrow(/read only/);
   });
 });
