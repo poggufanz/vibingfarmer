@@ -11,6 +11,15 @@ vi.mock('./relay.js', () => ({
   getRelayerAddress: (...a) => getRelayerAddressMock(...a),
 }))
 
+const signAgentDepositEntriesMock = vi.fn()
+vi.mock('./agentDeposit.js', async (importOriginal) => {
+  const actual = await importOriginal()
+  return {
+    ...actual,
+    signAgentDepositEntries: (...a) => signAgentDepositEntriesMock(...a),
+  }
+})
+
 // signOwnerAuthEntry does a real passkey-ceremony + re-simulate round trip (covered on its own in
 // ownerAuthorization.test.js) — grant.test.js's fakeServer never populates real auth entries, so
 // only the C-routing (which contractId, which channel) is this file's concern; resolveOwnerTxModel
@@ -30,6 +39,7 @@ import {
   readAllowanceStrict,
   AllowanceReadError,
   readConfirmedLedger,
+  buildAgentPull,
   runAgentPull,
   revokeGrant,
   AGENT_KIND_DEPOSIT,
@@ -95,6 +105,7 @@ beforeEach(() => {
   submitViaRelayMock.mockReset()
   getRelayerAddressMock.mockReset()
   signOwnerAuthEntryMock.mockReset()
+  signAgentDepositEntriesMock.mockReset()
 })
 
 describe('AGENT_KIND_* constants', () => {
@@ -556,6 +567,26 @@ describe('revokeGrant — router allowance kill switch', () => {
 })
 
 describe('runAgentPull', () => {
+  it('buildAgentPull remains independent of owner-account variables on the session-key path', async () => {
+    const server = fakeServer()
+    signAgentDepositEntriesMock.mockImplementation(async ({ tx }) => ({
+      xdr: tx.toEnvelope().toXDR('base64'),
+    }))
+
+    await expect(
+      buildAgentPull({
+        agentAddress: AGENT_1,
+        amount: 10_000_000n,
+        relayer: RELAYER_G,
+        sessionKey: { rawPublicKey: new Uint8Array(32), sign: () => new Uint8Array(64) },
+        server,
+      })
+    ).resolves.toEqual({ xdr: expect.any(String) })
+    expect(signAgentDepositEntriesMock).toHaveBeenCalledWith(
+      expect.objectContaining({ agentAddress: AGENT_1 })
+    )
+  })
+
   it('returns null when the relay is unconfigured (no relayer address)', async () => {
     getRelayerAddressMock.mockResolvedValue(null)
     const res = await runAgentPull({
@@ -565,5 +596,41 @@ describe('runAgentPull', () => {
     })
     expect(res).toBeNull()
     expect(submitViaRelayMock).not.toHaveBeenCalled()
+  })
+
+  it('classifies an account change after relay dispatch as submission-unknown', async () => {
+    const server = fakeServer()
+    const captured = Object.freeze({
+      version: 1,
+      kind: 'G',
+      address: OWNER,
+      networkPassphrase: 'Test SDF Network ; September 2015',
+      connectorId: 'freighter',
+      epoch: 41,
+    })
+    let current = captured
+    getRelayerAddressMock.mockResolvedValue(RELAYER_G)
+    signAgentDepositEntriesMock.mockImplementation(async ({ tx }) => ({
+      xdr: tx.toEnvelope().toXDR('base64'),
+    }))
+    submitViaRelayMock.mockImplementation(async () => {
+      current = Object.freeze({ ...captured, epoch: 42 })
+      return { hash: 'HPULL', status: 'SUCCESS' }
+    })
+
+    await expect(
+      runAgentPull({
+        agentAddress: AGENT_1,
+        amount: 10_000_000n,
+        sessionKey: { rawPublicKey: new Uint8Array(32), sign: () => new Uint8Array(64) },
+        server,
+        activeAccount: captured,
+        getCurrentActiveAccount: () => current,
+      })
+    ).rejects.toMatchObject({
+      code: 'VF_SUBMISSION_UNKNOWN',
+      submission: 'unknown',
+      result: { hash: 'HPULL', status: 'SUCCESS' },
+    })
   })
 })

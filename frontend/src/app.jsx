@@ -38,7 +38,6 @@ import { applyTheme, isLightTheme, normalizeTheme } from './design/theme.js'
 import {
   connectActiveAccount,
   onActiveAccountChange,
-  getUserAddress,
   revokeAgentOnChain,
   subscribeAgentRevoked,
 } from './stellar/index.js'
@@ -458,6 +457,35 @@ export function createActiveAccountEpochStore({ initial = null, clear = () => {}
   }
 }
 
+/** One orchestration's cancellation + render gate. Stale callbacks are dropped; custody code can
+ * call assertCurrent() to stop the underlying async pipeline at its next boundary. */
+export function createEpochBoundRun({ captured, getCurrent, onEvent = () => {} }) {
+  const controller = new AbortController()
+  const assertCurrent = () => {
+    if (controller.signal.aborted)
+      throw Object.assign(new Error('The active wallet account changed.'), {
+        code: 'ACTIVE_ACCOUNT_CHANGED',
+      })
+    return assertCurrentActiveAccount({ captured, current: getCurrent() })
+  }
+  const commit = (callback) => {
+    try {
+      assertCurrent()
+    } catch {
+      return false
+    }
+    callback()
+    return true
+  }
+  return {
+    signal: controller.signal,
+    assertCurrent,
+    cancel: () => controller.abort(),
+    commit,
+    onEvent: (...args) => commit(() => onEvent(...args)),
+  }
+}
+
 export function loadMoneyCache(owner) {
   if (!owner) return {}
   try {
@@ -762,10 +790,9 @@ const App = () => {
 
   // Wallet reconnect + session resume on page load. Without this, a refresh drops
   // realAddress/stage/strategy (all in-memory) so the app looks logged-out and the monitor loop
-  // never reboots even with an active vault. We ask the wallet kit for its current address; if a
-  // resume snapshot exists we restore stage='done' + strategy, which makes the loop effect (below)
-  // start the monitor loop again. If no wallet is selected yet (fresh reload) getUserAddress
-  // rejects and the catch leaves the app logged-out until the user reconnects. Mount-only.
+  // never reboots even with an active vault. Resume the wallet kit's already-selected module
+  // without opening its modal, installing the same complete epoch capability as an interactive
+  // connect. If no wallet is selected yet, the catch leaves the app logged-out. Mount-only.
   useE(() => {
     window.triggerTestAlert = () => {
       handleAgentEvent({
@@ -781,10 +808,10 @@ const App = () => {
     }
 
     let alive = true
-    getUserAddress()
-      .then((addr) => {
-        if (!alive || !addr) return
-        setRealAddress(addr)
+    connectActiveAccount({ prompt: false })
+      .then((account) => {
+        if (!alive || !account) return
+        const addr = installActiveWalletAccount(account).address
         setConnectPhase('connected')
         const snap = loadResume(addr)
         if (snap?.strategy?.agents?.length) {
@@ -885,6 +912,7 @@ const App = () => {
   const [activeAccount, setActiveAccount] = useS(null)
   const activeAccountRef = useR(activeAccount)
   activeAccountRef.current = activeAccount
+  const activeOrchestrationRef = useR(null)
   const loopRef = useR(null)
   const latestGasRef = useR(null) // last live gas snapshot { level, gwei } for the monitor loop
   const hydratedRef = useR(null) // address whose cached positions have finished restoring
@@ -1005,18 +1033,20 @@ const App = () => {
   // Restore positions on connect (instant from cache) then reconcile against chain.
   // Fixes home resetting to "no positions" after reload/reconnect with same wallet.
   useE(() => {
-    if (!realAddress) return
+    if (!realAddress || !activeAccount) return
+    const captured = activeAccount
+    const isCurrent = () => activeAccountRef.current === captured
     const restored = loadPersistedPositions(realAddress)
-    if (Object.keys(restored).length) {
+    if (isCurrent() && Object.keys(restored).length) {
       setAgentData((d) => ({ ...d, positions: { ...restored, ...d.positions } }))
     }
     // Mark hydrated after this render+effect flush (setTimeout 0), so the restored cache
     // is committed before the persist effect is allowed to write an empty map. Pre-hydration
     // empties stay skipped (anti-clobber); post-hydration empties = real withdraws → persist.
-    const hydrateTimer = setTimeout(() => {
-      hydratedRef.current = realAddress
-    }, 0)
     let alive = true
+    const hydrateTimer = setTimeout(() => {
+      if (alive && isCurrent()) hydratedRef.current = realAddress
+    }, 0)
     const persistedAgents = loadDeployedAgents(realAddress)
     ;(async () => {
       let agents = persistedAgents
@@ -1031,12 +1061,13 @@ const App = () => {
         if (!agents.length) {
           agents = await discoverAgentsFromVault(realAddress).catch(() => [])
         }
+        if (!alive || !isCurrent()) return
         if (agents.length) {
           saveDeployedAgents(realAddress, agents)
           deployedAgentsRef.current = agents
         }
       }
-      if (!alive) return
+      if (!alive || !isCurrent()) return
       // Prefer the scope-derived agent list (per-run grant agents — the authoritative
       // source once scopes rehydrate); discovered agents cover the fresh-browser case.
       const scopeAgents = positionsAgentsRef.current
@@ -1045,7 +1076,7 @@ const App = () => {
         realAddress,
         useAgents.length ? { agents: useAgents } : undefined
       ).catch(() => null)
-      if (!alive || !chain) return // null = no RPC / all reads failed → keep cache
+      if (!alive || !isCurrent() || !chain) return // null = no RPC / all reads failed → keep cache
       // Cold reconnect: cached positions are from a PRIOR session, so they're mined and
       // the chain is authoritative. applyChainPositions replaces balances and PRUNES any
       // vault the chain reports as '0' (withdrawn) — this is what heals a stale cached
@@ -1062,7 +1093,7 @@ const App = () => {
       clearTimeout(hydrateTimer)
       hydratedRef.current = null
     }
-  }, [realAddress])
+  }, [realAddress, activeAccount])
 
   // Persist in-session position changes (deposits, withdraws). Pre-hydration empties are
   // skipped so a fresh-connect {} can't clobber the cached snapshot before restore runs.
@@ -1081,14 +1112,16 @@ const App = () => {
   // can lower a balance (after owner_withdraw) and prune a fully-swept vault. The worker
   // also emits a 'position' event on deposit — this is the cold-reconcile cross-check.
   useE(() => {
-    if (!realAddress) return
+    if (!realAddress || !activeAccount) return
     let alive = true
+    const captured = activeAccount
+    const isCurrent = () => activeAccountRef.current === captured
     const sync = async () => {
       const startedAt = Date.now()
       // vf-base-dashboard Task 10 — piggybacks this SAME 15s poll (never a second interval).
       // loadDeviceBasePositions never throws (see its own guard/catch); [] for Stellar-only users.
       loadDeviceBasePositions({ stellarOwner: realAddress }).then((bp) => {
-        if (alive) setBasePositions(bp)
+        if (alive && isCurrent()) setBasePositions(bp)
       })
       // Prefer the scope-derived agent list (per-run grant agents — kept fresh via
       // positionsAgentsRef); fall back to saved/discovered agents (fresh-browser case),
@@ -1111,6 +1144,7 @@ const App = () => {
         if (!discovered.length) {
           discovered = await discoverAgentsFromVault(realAddress).catch(() => [])
         }
+        if (!alive || !isCurrent()) return
         if (discovered.length) {
           saveDeployedAgents(realAddress, discovered)
           deployedAgentsRef.current = discovered
@@ -1121,7 +1155,7 @@ const App = () => {
         realAddress,
         pollAgents.length ? { agents: pollAgents } : undefined
       ).catch(() => null)
-      if (alive && chain) {
+      if (alive && isCurrent() && chain) {
         // A tick's reads can straddle a withdraw: dispatched before the sweep, resolved after
         // the withdraw's own reconcile corrected the vault — and applyChainPositions REPLACES,
         // so the stale snapshot would repaint the swept balance for a tick. While a vault's
@@ -1144,7 +1178,7 @@ const App = () => {
           SOROBAN_AUTOFARM_VAULT_ADDRESS,
           keeperLedgerRef.current
         )
-        if (!alive) return
+        if (!alive || !isCurrent()) return
         // KeeperPanel activity feed — separate from the deduped/capped-at-8 alerts list above
         // (handleAgentEvent keeps only the LATEST of each kind for notifications; the panel
         // wants its own short history of real keeper actions).
@@ -1230,7 +1264,7 @@ const App = () => {
       // "--", never a fake number.
       try {
         const pps = await readPricePerShare(SOROBAN_AUTOFARM_VAULT_ADDRESS)
-        if (alive) {
+        if (alive && isCurrent()) {
           setAutofarmReads({ pricePerShare: pps == null ? null : toDisplay(pps).toFixed(4) })
         }
       } catch (e) {
@@ -1241,12 +1275,17 @@ const App = () => {
       // already returns null on RPC failure internally); this catch is defensive only.
       try {
         const s = await readLifeboatState(SOROBAN_AUTOFARM_VAULT_ADDRESS)
-        if (alive) setLifeboatState(s)
+        if (alive && isCurrent()) setLifeboatState(s)
       } catch {
-        if (alive) setLifeboatState(null)
+        if (alive && isCurrent()) setLifeboatState(null)
       }
       // Council monitor — check market drift setiap 15s tick.
-      if (alive && agentSettings.riskMonitoring && Object.keys(agentData.positions).length) {
+      if (
+        alive &&
+        isCurrent() &&
+        agentSettings.riskMonitoring &&
+        Object.keys(agentData.positions).length
+      ) {
         try {
           const apyByVault = {}
           for (const addr of Object.keys(agentData.positions)) {
@@ -1266,7 +1305,7 @@ const App = () => {
       alive = false
       clearInterval(id)
     }
-  }, [realAddress])
+  }, [realAddress, activeAccount])
 
   useE(() => {
     localStorage.setItem('yv_agent_enabled', String(agentEnabled))
@@ -1674,9 +1713,16 @@ const App = () => {
     try {
       const captured = activeAccount
       assertActiveAccount(captured)
-      const results = await withdrawAllFromVault(alert.vaultAddress, realAddress, agents, undefined, {
-        activeAccount: captured,
-      })
+      const results = await withdrawAllFromVault(
+        alert.vaultAddress,
+        realAddress,
+        agents,
+        undefined,
+        {
+          activeAccount: captured,
+          getCurrentActiveAccount: () => activeAccountRef.current,
+        }
+      )
       assertActiveAccount(captured)
       const ok = results.filter((r) => r.ok)
       const failed = results.filter((r) => !r.ok)
@@ -1706,6 +1752,7 @@ const App = () => {
       }
       dismissAlert(alert.id)
     } catch (e) {
+      if (e?.code === 'ACTIVE_ACCOUNT_CHANGED') return
       addLog({ event: 'AgentFailed', meta: `Withdrawal failed: ${e.message}` })
     }
   }
@@ -1875,6 +1922,8 @@ const App = () => {
   // ZeroDev/viem chain behind it) out of the eager bundle — mirrors orchestrator.js's
   // baseLeg.js gating (Task 8).
   const handleBaseWithdrawClick = async () => {
+    const captured = activeAccount
+    assertActiveAccount(captured)
     setBaseWithdrawError(null)
     // The positions on screen belong to THIS account; the ceremony below is discoverable, and
     // a user with several look-alike passkeys can pick one that derives a different (empty)
@@ -1899,7 +1948,9 @@ const App = () => {
     }
     try {
       const { ensureBaseOwner } = await import('./wallet/passkeyBridge.js')
+      assertActiveAccount(captured)
       const owner = await ensureBaseOwner({ connectedAddress: realAddress })
+      assertActiveAccount(captured)
       if (expected && owner.address?.toLowerCase() !== expected.toLowerCase()) {
         restoreOwnerRecord()
         setBaseWithdrawError(
@@ -1914,14 +1965,17 @@ const App = () => {
         account: owner.address,
         publicClient: owner.publicClient,
       })
+      assertActiveAccount(captured)
       setBaseWithdraw({
         positions: basePositions,
         idleUsdc,
         ownerKernelAccount: owner.kernelAccount,
         publicClient: owner.publicClient,
+        activeAccount: captured,
       })
     } catch (err) {
       restoreOwnerRecord()
+      if (err?.code === 'ACTIVE_ACCOUNT_CHANGED') return
       setBaseWithdrawError(err.message)
     }
   }
@@ -1940,16 +1994,21 @@ const App = () => {
   // fabricates a position: `positions` is exactly what this read returns, [] when the ceremony
   // succeeds but nothing is found there.
   async function handleRecoverBaseAccount() {
-    if (!realAddress) return
+    if (!realAddress || !activeAccount) return
+    const captured = activeAccount
+    assertActiveAccount(captured)
     setMoneyActionPending(true)
     setBaseWithdrawError(null)
     try {
       const { ensureBaseOwner } = await import('./wallet/passkeyBridge.js')
+      assertActiveAccount(captured)
       const account = await ensureBaseOwner({ connectedAddress: realAddress, preferLogin: true })
+      assertActiveAccount(captured)
       const result = await loadIndexedBasePositions({
         stellarOwner: realAddress,
         indexedBaseAccounts: [account.address],
       })
+      assertActiveAccount(captured)
       const positions = (result.accounts?.[0]?.positions ?? []).map((pos) => {
         const cat = BASE_POOL_CATALOG.find(
           (p) => p.address.toLowerCase() === pos.pool.toLowerCase()
@@ -1958,9 +2017,15 @@ const App = () => {
       })
       setBasePositions(positions)
     } catch (err) {
+      if (err?.code === 'ACTIVE_ACCOUNT_CHANGED') return
       setBaseWithdrawError(err.message)
     } finally {
-      setMoneyActionPending(false)
+      try {
+        assertActiveAccount(captured)
+        setMoneyActionPending(false)
+      } catch {
+        // The account-transition reset already cleared this pending flag.
+      }
     }
   }
 
@@ -2066,7 +2131,7 @@ const App = () => {
   // state, applies the request generation/revision guards (shouldCommitMoneyFetch, above) on
   // wallet change and post-action refresh, and passes a normalized model + real action handlers
   // to MyMoneyRoute/WithdrawDialog/StopAccessDialog/RecoveryPanel. It never puts a raw secret or
-  // session key into React state: `moneyAccountValue` below is only ever `{kind:'G', address}` —
+  // session key into React state: `moneyAccountValue` below is only `{kind, address}` —
   // signing itself stays inside stellar/exit.js, stellar/revoke.js, stellar/partialWithdraw.js
   // (wallet-kit popup / relayer ceremony), which this controller only calls, never inspects.
   const [moneyModel, setMoneyModel] = useS(() => buildMyMoneyModel({ owner: null }))
@@ -2089,16 +2154,38 @@ const App = () => {
       })
       pendingConfirmRef.current?.reject(changed)
       pendingConfirmRef.current = null
+      activeOrchestrationRef.current?.cancel()
+      activeOrchestrationRef.current = null
       dispatchFlow({ type: 'STRATEGY_RESET' })
       setStrategy(null)
       setRunReceipt(null)
       setExecMap({})
+      setOpenAgentId(null)
       setRunEvents([])
+      setLogs([])
+      agentMapRef.current = {}
+      deployedAgentsRef.current = []
+      setPermActive(false)
+      setPermExpiresAt(null)
       setBaseView({ connected: false, healthy: null, mandateView: null, action: null })
+      setBasePositions([])
+      setBaseWithdraw(null)
+      setBaseWithdrawError(null)
+      setBaseMandateError(null)
+      setSettingUpBaseMandate(false)
+      baseSetupSucceededRef.current = false
       setMoneyDiscovery(null)
       setMoneyRead(null)
       setMoneyModel(buildMyMoneyModel({ owner: null }))
+      setMoneyActionPending(false)
+      setMoneyWithdrawOpen(false)
+      setMoneyStopAccessAddress(null)
+      setMoneyRecovery(null)
+      moneyCacheRef.current = {}
       setScopes([])
+      setAgentData({ positions: {}, alerts: [], lastUpdated: null })
+      positionsAgentsRef.current = undefined
+      hydratedRef.current = null
       moneyRevisionRef.current = nextReconciliationToken(moneyRevisionRef.current)
     }
     activeAccountRef.current = next || null
@@ -2117,8 +2204,8 @@ const App = () => {
   }, [realAddress])
 
   const moneyAccountValue = useM(
-    () => (realAddress ? { kind: 'G', address: realAddress } : null),
-    [realAddress]
+    () => (activeAccount ? { kind: activeAccount.kind, address: activeAccount.address } : null),
+    [activeAccount]
   )
 
   // Final-review fix, M7: `selectCrewDecisions(logs)` used to be called inline in the render body,
@@ -2314,7 +2401,8 @@ const App = () => {
         owner: realAddress,
         agentAddresses: addresses,
         to: realAddress,
-        activeAccount,
+        activeAccount: captured,
+        getCurrentActiveAccount: () => activeAccountRef.current,
       })
       assertActiveAccount(captured)
       const perAgent = addresses.map((address, i) => ({
@@ -2332,12 +2420,19 @@ const App = () => {
         readOwnerMoney: boundReadOwnerMoney,
         beforeRevision,
       })
+      assertActiveAccount(captured)
       moneyRevisionRef.current = reconciled.revision
       await refreshMoneyAfterAction(reconciled.fresh)
+      assertActiveAccount(captured)
       if (reconciled.complete) setMoneyWithdrawOpen(false)
       else openMoneyRecoveryFromOutcomes({ action, outcomes: reconciled.outcomes })
     } finally {
-      setMoneyActionPending(false)
+      try {
+        assertActiveAccount(captured)
+        setMoneyActionPending(false)
+      } catch {
+        // The replacement account's transition already cleared this owner-scoped pending state.
+      }
     }
   }
 
@@ -2348,12 +2443,19 @@ const App = () => {
     const captured = activeAccount
     assertActiveAccount(captured)
     try {
-      await ensureExitSigner({ owner: realAddress, agentAddress: plan.agentAddress, activeAccount })
+      await ensureExitSigner({
+        owner: realAddress,
+        agentAddress: plan.agentAddress,
+        activeAccount: captured,
+        getCurrentActiveAccount: () => activeAccountRef.current,
+      })
+      assertActiveAccount(captured)
       await partialWithdraw({
         owner: realAddress,
         agentAddress: plan.agentAddress,
         amountUnits: BigInt(plan.amount.units),
-        activeAccount,
+        activeAccount: captured,
+        getCurrentActiveAccount: () => activeAccountRef.current,
       })
       assertActiveAccount(captured)
       const beforeRevision = moneyRevisionRef.current
@@ -2368,11 +2470,14 @@ const App = () => {
         readOwnerMoney: boundReadOwnerMoney,
         beforeRevision,
       })
+      assertActiveAccount(captured)
       moneyRevisionRef.current = reconciled.revision
       await refreshMoneyAfterAction(reconciled.fresh)
+      assertActiveAccount(captured)
       if (reconciled.complete) setMoneyWithdrawOpen(false)
       else openMoneyRecoveryFromOutcomes({ action, outcomes: reconciled.outcomes })
     } catch (err) {
+      if (err?.code === 'ACTIVE_ACCOUNT_CHANGED') return
       const beforeRevision = moneyRevisionRef.current
       const reconciled = await reconcileOwnerAction({
         action,
@@ -2380,11 +2485,18 @@ const App = () => {
         readOwnerMoney: boundReadOwnerMoney,
         beforeRevision,
       })
+      assertActiveAccount(captured)
       moneyRevisionRef.current = reconciled.revision
       await refreshMoneyAfterAction(reconciled.fresh)
+      assertActiveAccount(captured)
       openMoneyRecoveryFromOutcomes({ action, outcomes: reconciled.outcomes })
     } finally {
-      setMoneyActionPending(false)
+      try {
+        assertActiveAccount(captured)
+        setMoneyActionPending(false)
+      } catch {
+        // Cleared atomically by the account transition.
+      }
     }
   }
 
@@ -2398,7 +2510,8 @@ const App = () => {
       const result = await revokeAgentOnChain({
         owner: realAddress,
         agent: plan.agentAddress,
-        activeAccount,
+        activeAccount: captured,
+        getCurrentActiveAccount: () => activeAccountRef.current,
       })
       assertActiveAccount(captured)
       const beforeRevision = moneyRevisionRef.current
@@ -2413,12 +2526,19 @@ const App = () => {
         readOwnerMoney: boundReadOwnerMoney,
         beforeRevision,
       })
+      assertActiveAccount(captured)
       moneyRevisionRef.current = reconciled.revision
       await refreshMoneyAfterAction(reconciled.fresh)
+      assertActiveAccount(captured)
       if (reconciled.complete) setMoneyStopAccessAddress(null)
       else openMoneyRecoveryFromOutcomes({ action, outcomes: reconciled.outcomes })
     } finally {
-      setMoneyActionPending(false)
+      try {
+        assertActiveAccount(captured)
+        setMoneyActionPending(false)
+      } catch {
+        // Cleared atomically by the account transition.
+      }
     }
   }
 
@@ -2539,18 +2659,23 @@ const App = () => {
     return { connected: true, healthy, mandateView, action }
   }
 
-  async function refreshBaseView() {
+  async function refreshBaseView(captured = activeAccount) {
+    if (!captured) return null
+    assertActiveAccount(captured)
     const result = await resolveBaseForPlan({
       stellarOwner: realAddress,
       setupSucceeded: baseSetupSucceededRef.current,
     })
+    assertActiveAccount(captured)
     setBaseView(result)
     return result
   }
 
   useE(() => {
-    refreshBaseView()
-  }, [realAddress])
+    refreshBaseView(activeAccount).catch(() => {
+      // Fail closed; the Plan surface remains unavailable until the next guarded refresh.
+    })
+  }, [realAddress, activeAccount])
 
   async function onConnectForBase() {
     try {
@@ -2562,23 +2687,34 @@ const App = () => {
   }
 
   async function onSetupBase() {
-    if (!realAddress) return
+    if (!realAddress || !activeAccount) return
+    const captured = activeAccount
+    assertActiveAccount(captured)
     setSettingUpBaseMandate(true)
     setBaseMandateError(null)
     try {
       await setupBaseMandate({ connectedAddress: realAddress })
+      assertActiveAccount(captured)
       baseSetupSucceededRef.current = true
-      await refreshBaseView()
+      await refreshBaseView(captured)
     } catch (e) {
+      if (e?.code === 'ACTIVE_ACCOUNT_CHANGED') return
       setBaseMandateError(e.message)
     } finally {
-      setSettingUpBaseMandate(false)
+      try {
+        assertActiveAccount(captured)
+        setSettingUpBaseMandate(false)
+      } catch {
+        // The account-transition reset already cleared this pending flag.
+      }
     }
   }
 
   function onRebuildPlan() {
     baseSetupSucceededRef.current = false
-    refreshBaseView()
+    refreshBaseView().catch(() => {
+      // Fail closed; the Plan surface remains unavailable until the next guarded refresh.
+    })
   }
 
   // ----- Plan generation (real strategist + council-eligibility, never a `speed * ...` timer) -----
@@ -3026,6 +3162,13 @@ const App = () => {
     const sessionId = `session-${runId}`
     const captured = activeAccount
     assertActiveAccount(captured)
+    activeOrchestrationRef.current?.cancel()
+    const epochRun = createEpochBoundRun({
+      captured,
+      getCurrent: () => activeAccountRef.current,
+      onEvent: handleNewRunEvent,
+    })
+    activeOrchestrationRef.current = epochRun
     setExecMap((prev) => ({
       ...prev,
       ...makeInitialExecState(plan.agents.map((a) => ({ id: a.allocationId }))),
@@ -3034,7 +3177,9 @@ const App = () => {
 
     const orch = new OrchestratorAgent({
       user: realAddress,
-      activeAccount,
+      activeAccount: captured,
+      getCurrentActiveAccount: () => activeAccountRef.current,
+      signal: epochRun.signal,
       veniceAuth,
       devApiKey: devApiKey || null,
       sessionId,
@@ -3042,11 +3187,11 @@ const App = () => {
         connectedAddress: realAddress,
         kitSignTransaction: (xdr) => signWithTimeout(xdr, 'cross-chain leg'),
       }),
-      onEvent: handleNewRunEvent,
+      onEvent: epochRun.onEvent,
     })
 
     const dispatchPromise = orch.dispatch(plan, { permissionDecision }).then(async (summary) => {
-      assertActiveAccount(captured)
+      epochRun.assertCurrent()
       addLog({
         event: 'OrchestratorPlanned',
         meta: `Completed: ${summary.completed ?? 0} deposited, ${summary.failed ?? 0} failed.`,
@@ -3072,16 +3217,20 @@ const App = () => {
         const outcome = applyBaseLegOutcome(summary.baseLeg, { stellarOwner: realAddress })
         if (outcome) addLog(outcome)
         if (summary.baseLeg.success) {
-          loadDeviceBasePositions({ stellarOwner: realAddress }).then((bp) => setBasePositions(bp))
+          loadDeviceBasePositions({ stellarOwner: realAddress }).then((bp) =>
+            epochRun.commit(() => setBasePositions(bp))
+          )
         }
       }
       // Reuses the proven position-reconciliation/council-reflect logic (setStage('done') included)
       // rather than duplicating it -- the OLD per-agent `strategy` shape it reads is the same one
       // onAcceptPlan already bridged from the canonical plan.
-      await handleExecDone()
+      await handleExecDone(epochRun.assertCurrent)
+      epochRun.assertCurrent()
       return summary
     })
     dispatchPromise.catch((err) => {
+      if (!epochRun.commit(() => {})) return
       if (pendingConfirmRef.current) return // surfaced via requestPermissionConfirmation's own catch
       // A post-confirm failure (e.g. a relay outage mid-run) stays on Start and ends in an
       // aggregate receipt -- never bounces back to Protect (brief: "post-grant branch failures
@@ -3090,6 +3239,10 @@ const App = () => {
       addLog({ event: 'AgentFailed', meta: `Run failed: ${err?.message || err}` })
       setStage('done')
     })
+    const clearActiveRun = () => {
+      if (activeOrchestrationRef.current === epochRun) activeOrchestrationRef.current = null
+    }
+    dispatchPromise.then(clearActiveRun, clearActiveRun)
     return dispatchPromise
   }
 
@@ -3098,6 +3251,18 @@ const App = () => {
   // signature) -- fed through the SAME handleNewRunEvent handler so the retry's own progress
   // shows up on Start exactly like the original attempt did.
   async function onRetryAllocation(allocationId) {
+    const captured = activeAccountRef.current
+    if (captured?.version !== 1) {
+      addLog({ event: 'AgentFailed', meta: 'Retry unavailable: reconnect your wallet first.' })
+      return
+    }
+    activeOrchestrationRef.current?.cancel()
+    const epochRun = createEpochBoundRun({
+      captured,
+      getCurrent: () => activeAccountRef.current,
+      onEvent: handleNewRunEvent,
+    })
+    activeOrchestrationRef.current = epochRun
     const plan = strategyFlowRef.current.plan
     const agent = plan?.agents?.find((a) => a.allocationId === allocationId)
     const permission = strategyFlowRef.current.permission
@@ -3105,20 +3270,29 @@ const App = () => {
       (a) => a.allocationId === allocationId
     )?.agentAddress
     if (!agent || agent.kind === 'bridge' || !agentAddress) {
-      addLog({
-        event: 'AgentFailed',
-        meta: `Retry unavailable for ${allocationId}: no confirmed agent address on record.`,
-      })
+      epochRun.commit(() =>
+        addLog({
+          event: 'AgentFailed',
+          meta: `Retry unavailable for ${allocationId}: no confirmed agent address on record.`,
+        })
+      )
+      if (activeOrchestrationRef.current === epochRun) activeOrchestrationRef.current = null
       return
     }
     const worker = new WorkerAgent({
       agentId: allocationId,
       allocationId,
-      user: realAddress,
+      user: captured.address,
       vault: SOROBAN_ACTIVE_VAULT_ADDRESS,
       amount: BigInt(agent.cap.units),
       sessionId: `session-${runId}-retry`,
-      onEvent: handleNewRunEvent,
+      // Worker emits deposit:pending synchronously immediately before its relay call. Throwing at
+      // that boundary prevents a switched owner from reaching transport; later callbacks are
+      // dropped by the same epoch run.
+      onEvent: (name, data) => {
+        epochRun.assertCurrent()
+        epochRun.onEvent(name, data)
+      },
       agentAddress,
       eligibilityToken: {
         protocolSlug: null,
@@ -3128,7 +3302,13 @@ const App = () => {
         asOf: Date.now(),
       },
     })
-    await worker.execute()
+    try {
+      const result = await worker.execute()
+      epochRun.assertCurrent()
+      return result
+    } finally {
+      if (activeOrchestrationRef.current === epochRun) activeOrchestrationRef.current = null
+    }
   }
 
   // Task 10, carried finding C2: /agent is now the crew route (below), so "Back to my money"
@@ -3229,12 +3409,14 @@ const App = () => {
   }
 
   /* ----- DONE (step 06) ----- */
-  const handleExecDone = async () => {
+  const handleExecDone = async (assertCurrent = () => {}) => {
+    assertCurrent()
     setStage('done')
     // ACE loop: credit/debit the rules the council cited at review time, based on
     // how the deposit actually went. Closes review → deposit → reflect end-to-end.
     const { citedRules, verdict } = councilCitedRef.current
     if (verdict === 'keep' && citedRules.length) {
+      assertCurrent()
       const outcome = councilOutcome(execMap, strategy?.agents || [])
       reflect({ verdict, citedRules, outcome }, { increment: playbookIncrement })
       addLog({
@@ -3264,6 +3446,7 @@ const App = () => {
     // If chain unavailable (RPC down / tx not yet mined), ADD seed into existing
     // positions — these are confirmed new deposits, so we sum, not take max.
     const chain = await reconcileWithRetry(realAddress, 3, 3000, deployedAgentsRef.current)
+    assertCurrent()
     if (chain) {
       const finalPositions = mergePositions(seedPositions, chain)
       if (Object.keys(finalPositions).length > 0) {
@@ -3292,6 +3475,7 @@ const App = () => {
       })
     }
     const agentAddrs = deployedAgentsRef.current
+    assertCurrent()
     if (agentAddrs?.length) saveDeployedAgents(realAddress, agentAddrs)
 
     addLog({
@@ -3772,9 +3956,10 @@ const App = () => {
             stellarRecipient={realAddress}
             onClose={() => setBaseWithdraw(null)}
             onDone={() => {
-              loadDeviceBasePositions({ stellarOwner: realAddress }).then((bp) =>
-                setBasePositions(bp)
-              )
+              const captured = baseWithdraw.activeAccount
+              loadDeviceBasePositions({ stellarOwner: realAddress }).then((bp) => {
+                if (activeAccountRef.current === captured) setBasePositions(bp)
+              })
             }}
           />
         </Suspense>

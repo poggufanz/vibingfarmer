@@ -11,6 +11,8 @@ import { readVaultShares } from '../stellar/agentDeposit.js'
 import { readPricePerShare } from '../stellar/vaultReads.js'
 import { clearManualExitKey } from '../wallet/exitKey.js'
 import { signaturesForSweep, friendlyOwnerActionError } from '../money/ownerActions.js'
+import { getActiveAccount } from '../stellar/walletKit.js'
+import { sameActiveAccount } from '../stellar/activeAccount.js'
 
 const PPS_SCALE = 10_000_000n
 
@@ -84,6 +86,17 @@ export default function WithdrawModal({
   const [chosen, setChosen] = useState(null)
   const [amount, setAmount] = useState('')
   const confirmRef = useRef(null)
+  const actionControllerRef = useRef(null)
+  if (!actionControllerRef.current) actionControllerRef.current = new AbortController()
+  const actionSignal = actionControllerRef.current.signal
+  const isCurrentOwner = () =>
+    !actionSignal.aborted &&
+    (activeAccount?.version !== 1 || sameActiveAccount(activeAccount, getActiveAccount()))
+  const commitIfCurrent = (callback) => {
+    if (!isCurrentOwner()) return false
+    callback()
+    return true
+  }
 
   useEffect(() => {
     const prev = document.activeElement
@@ -93,9 +106,10 @@ export default function WithdrawModal({
     }
     window.addEventListener('keydown', onKey)
     readVaultDepositTimestamp(vault.address, userAddress).then((ts) => {
-      if (ts > 0) setDepositedAgoSec(Math.floor(Date.now() / 1000) - ts)
+      if (ts > 0) commitIfCurrent(() => setDepositedAgoSec(Math.floor(Date.now() / 1000) - ts))
     })
     return () => {
+      actionControllerRef.current?.abort()
       window.removeEventListener('keydown', onKey)
       prev?.focus?.()
     }
@@ -137,6 +151,10 @@ export default function WithdrawModal({
 
   const handleConfirm = async () => {
     if (!canWithdraw || status !== 'idle') return
+    if (!isCurrentOwner()) {
+      onClose()
+      return
+    }
     setStatus('loading')
     setError(null)
     setProgress(null)
@@ -145,9 +163,10 @@ export default function WithdrawModal({
         vault.address,
         userAddress,
         agentAddresses,
-        setProgress,
-        { activeAccount }
+        (next) => commitIfCurrent(() => setProgress(next)),
+        { activeAccount, getCurrentActiveAccount: getActiveAccount, signal: actionSignal }
       )
+      if (!isCurrentOwner()) return
       const failed = results.filter((r) => !r.ok)
 
       if (failed.length) {
@@ -155,13 +174,15 @@ export default function WithdrawModal({
         // from here — so claim no amount rather than a wrong one. Reconcile shows what is left.
         // ponytail: the successful legs get no history row on this branch; add per-agent amounts
         // if the vault ever exposes a per-sweep event to size them from.
-        setError(
-          `Swept ${results.length - failed.length} of ${results.length} agents. ` +
-            `${failed.length} failed: ${failed[0].error?.message ?? failed[0].error}`
-        )
-        setStatus('idle')
-        setProgress(null)
-        onSuccess(vault.address, '0') // reconcile from chain, but never a false zero
+        commitIfCurrent(() => {
+          setError(
+            `Swept ${results.length - failed.length} of ${results.length} agents. ` +
+              `${failed.length} failed: ${failed[0].error?.message ?? failed[0].error}`
+          )
+          setStatus('idle')
+          setProgress(null)
+          onSuccess(vault.address, '0') // reconcile from chain, but never a false zero
+        })
         return
       }
 
@@ -175,13 +196,18 @@ export default function WithdrawModal({
         type: 'withdraw',
         network: 'stellar-testnet',
       })
-      setStatus('done')
-      onSuccess(vault.address, balance)
-      setTimeout(onClose, 700)
+      commitIfCurrent(() => {
+        setStatus('done')
+        onSuccess(vault.address, balance)
+        setTimeout(() => commitIfCurrent(onClose), 700)
+      })
     } catch (err) {
-      setError(friendlyError(err))
-      setStatus('idle')
-      setProgress(null)
+      if (err?.code === 'ACTIVE_ACCOUNT_CHANGED' || !isCurrentOwner()) return
+      commitIfCurrent(() => {
+        setError(friendlyError(err))
+        setStatus('idle')
+        setProgress(null)
+      })
     }
   }
 
@@ -201,17 +227,30 @@ export default function WithdrawModal({
 
   const handlePartial = async () => {
     if (!canPartial || status !== 'idle') return
+    if (!isCurrentOwner()) {
+      onClose()
+      return
+    }
     setStatus('loading')
     setError(null)
     try {
-      await ensureExitSigner({ owner: userAddress, agentAddress: chosen, activeAccount })
+      await ensureExitSigner({
+        owner: userAddress,
+        agentAddress: chosen,
+        activeAccount,
+        getCurrentActiveAccount: getActiveAccount,
+        signal: actionSignal,
+      })
       const out = await partialWithdraw({
         owner: userAddress,
         agentAddress: chosen,
         amountUnits,
         vault: vault.address,
         activeAccount,
+        getCurrentActiveAccount: getActiveAccount,
+        signal: actionSignal,
       })
+      if (!isCurrentOwner()) return
       saveTransaction({
         txHash: out.transferHash,
         vaultName: vault.name,
@@ -222,16 +261,21 @@ export default function WithdrawModal({
         type: 'withdraw',
         network: 'stellar-testnet',
       })
-      setStatus('done')
-      onSuccess(vault.address, out.redeemed.toString())
-      setTimeout(onClose, 700)
+      commitIfCurrent(() => {
+        setStatus('done')
+        onSuccess(vault.address, out.redeemed.toString())
+        setTimeout(() => commitIfCurrent(onClose), 700)
+      })
     } catch (err) {
+      if (err?.code === 'ACTIVE_ACCOUNT_CHANGED' || !isCurrentOwner()) return
       // A stale exit key (localStorage from a lost registration, or re-registered elsewhere)
       // fails auth on-chain; drop it so the retry re-registers fresh.
       if (/signature|auth/i.test(err?.message || ''))
         clearManualExitKey({ owner: userAddress, agent: chosen })
-      setError(friendlyError(err))
-      setStatus('idle')
+      commitIfCurrent(() => {
+        setError(friendlyError(err))
+        setStatus('idle')
+      })
     }
   }
 

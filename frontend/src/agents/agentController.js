@@ -7,7 +7,8 @@
 import { ownerWithdraw, sweepAgents } from '../stellar/exit.js'
 import { SOROBAN_EXIT_ROUTER_ADDRESS } from '../stellar/config.js'
 import { classifyRisk } from '../strategist.js'
-import { assertActiveOwner } from '../stellar/activeAccount.js'
+import { assertActiveAccountBoundary, assertActiveOwner } from '../stellar/activeAccount.js'
+import { getActiveAccount } from '../stellar/walletKit.js'
 
 let worker = null
 let currentConfig = null
@@ -99,18 +100,29 @@ export async function withdrawFromVault(
   amount,
   userAddress,
   agentAddress,
-  { activeAccount, getRelayerAddress, kit } = {}
+  { activeAccount, getCurrentActiveAccount = getActiveAccount, getRelayerAddress, kit, signal } = {}
 ) {
   if (!agentAddress) throw new Error('withdrawFromVault requires the run’s agentAddress.')
   assertActiveOwner({ owner: userAddress, activeAccount })
+  const check = () =>
+    assertActiveAccountBoundary({
+      captured: activeAccount,
+      getCurrent: getCurrentActiveAccount,
+      signal,
+      requireV1: true,
+    })
+  check()
   const { hash, status } = await ownerWithdraw({
     owner: userAddress,
     agentAddress,
     to: userAddress,
     activeAccount,
+    getCurrentActiveAccount,
     getRelayerAddress,
     kit,
+    signal,
   })
+  check()
   return { txHash: hash, status }
 }
 
@@ -149,11 +161,19 @@ export async function withdrawAllFromVault(
   userAddress,
   agentAddresses,
   onProgress,
-  { activeAccount, getRelayerAddress, kit } = {}
+  { activeAccount, getCurrentActiveAccount = getActiveAccount, getRelayerAddress, kit, signal } = {}
 ) {
   if (!agentAddresses?.length)
     throw new Error('withdrawAllFromVault requires at least one agentAddress.')
   assertActiveOwner({ owner: userAddress, activeAccount })
+  const check = () =>
+    assertActiveAccountBoundary({
+      captured: activeAccount,
+      getCurrent: getCurrentActiveAccount,
+      signal,
+      requireV1: true,
+    })
+  check()
 
   if (SOROBAN_EXIT_ROUTER_ADDRESS) {
     const { swept, txHashes, errors } = await sweepAgents({
@@ -161,9 +181,12 @@ export async function withdrawAllFromVault(
       agentAddresses,
       to: userAddress,
       activeAccount,
+      getCurrentActiveAccount,
       getRelayerAddress,
       kit,
+      signal,
     })
+    check()
     // `swept[i]` is what agent i actually gave up: 0 means it refused or held nothing. A sweep tx
     // succeeding says only that SOME agent in it paid out, so mapping every agent to ok here would
     // resurrect the exact bug this reports around — a partial sweep shown as done.
@@ -184,15 +207,20 @@ export async function withdrawAllFromVault(
   const results = []
   for (let index = 0; index < agentAddresses.length; index++) {
     const agentAddress = agentAddresses[index]
+    check()
     onProgress?.({ index, total: agentAddresses.length, agentAddress })
     try {
       const { txHash } = await withdrawFromVault(vaultAddress, null, userAddress, agentAddress, {
         activeAccount,
+        getCurrentActiveAccount,
         getRelayerAddress,
         kit,
+        signal,
       })
+      check()
       results.push({ agentAddress, ok: true, txHash })
     } catch (err) {
+      if (err?.code === 'ACTIVE_ACCOUNT_CHANGED') throw err
       // Fix 3 (fix loop 2): same structured passthrough as the sweep-router path above (Fix 1, fix
       // loop 1) — this fallback loop is dormant on the shipped config but is a live UI mode
       // (WithdrawModal.jsx quotes N signatures for it), and a channel-level error here deserves the

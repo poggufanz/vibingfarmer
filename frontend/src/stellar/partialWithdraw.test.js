@@ -2,6 +2,17 @@ import { describe, test, expect, vi } from 'vitest'
 import { sharesForAmount, ensureExitSigner, partialWithdraw } from './partialWithdraw.js'
 
 const PPS_SCALE = 10_000_000n
+const ownerBoundary = (owner = 'GOWNER', epoch = 1) => {
+  const activeAccount = Object.freeze({
+    version: 1,
+    kind: owner.startsWith('C') ? 'C' : 'G',
+    address: owner,
+    networkPassphrase: 'Test SDF Network ; September 2015',
+    connectorId: owner.startsWith('C') ? 'vf-wallet' : 'freighter',
+    epoch,
+  })
+  return { activeAccount, getCurrentActiveAccount: () => activeAccount }
+}
 
 describe('sharesForAmount', () => {
   test('pps 1.0: 1:1, exact', () => {
@@ -25,7 +36,12 @@ describe('ensureExitSigner', () => {
       loadExitKey: () => ({ publicKey: 'GPUB', secret: 'SSEC' }),
       registerExitSigner: vi.fn(),
     }
-    const key = await ensureExitSigner({ owner: 'GOWNER', agentAddress: 'CAGENT', deps })
+    const key = await ensureExitSigner({
+      owner: 'GOWNER',
+      agentAddress: 'CAGENT',
+      ...ownerBoundary(),
+      deps,
+    })
     expect(key.publicKey).toBe('GPUB')
     expect(deps.registerExitSigner).not.toHaveBeenCalled()
   })
@@ -37,7 +53,12 @@ describe('ensureExitSigner', () => {
       registerExitSigner: async () => (calls.push('register'), { status: 'SUCCESS' }),
       saveExitKey: ({ publicKey }) => calls.push(`save:${publicKey}`),
     }
-    const key = await ensureExitSigner({ owner: 'GOWNER', agentAddress: 'CAGENT', deps })
+    const key = await ensureExitSigner({
+      owner: 'GOWNER',
+      agentAddress: 'CAGENT',
+      ...ownerBoundary(),
+      deps,
+    })
     expect(key.publicKey).toBe('GNEW')
     expect(calls).toEqual(['register', 'save:GNEW'])
   })
@@ -49,7 +70,9 @@ describe('ensureExitSigner', () => {
       registerExitSigner: async () => ({ status: 'FAILED' }),
       saveExitKey: save,
     }
-    await expect(ensureExitSigner({ owner: 'G', agentAddress: 'C', deps })).rejects.toThrow()
+    await expect(
+      ensureExitSigner({ owner: 'G', agentAddress: 'C', ...ownerBoundary('G'), deps })
+    ).rejects.toThrow()
     expect(save).not.toHaveBeenCalled()
   })
 
@@ -66,7 +89,12 @@ describe('ensureExitSigner', () => {
       registerExitSigner: async () => ({ status: 'SUCCESS' }),
       saveExitKey,
     }
-    await ensureExitSigner({ owner: 'GOWNER', agentAddress: 'CAGENT', deps })
+    await ensureExitSigner({
+      owner: 'GOWNER',
+      agentAddress: 'CAGENT',
+      ...ownerBoundary(),
+      deps,
+    })
     expect(loadExitKey).toHaveBeenCalledWith({ owner: 'GOWNER', agent: 'CAGENT' })
     expect(saveExitKey).toHaveBeenCalledWith({
       owner: 'GOWNER',
@@ -79,7 +107,7 @@ describe('ensureExitSigner', () => {
   test('forwards activeAccount/getRelayerAddress/kit to registerExitSigner (owner-model routing)', async () => {
     const getRelayerAddress = vi.fn()
     const kit = {}
-    const activeAccount = { kind: 'C', address: 'CAGENTOWNER' }
+    const { activeAccount, getCurrentActiveAccount } = ownerBoundary('CAGENTOWNER')
     const registerExitSigner = vi.fn(async () => ({ status: 'SUCCESS' }))
     const deps = {
       loadExitKey: () => null,
@@ -91,16 +119,22 @@ describe('ensureExitSigner', () => {
       owner: 'CAGENTOWNER',
       agentAddress: 'CAGENT',
       activeAccount,
+      getCurrentActiveAccount,
       getRelayerAddress,
       kit,
       deps,
     })
     expect(registerExitSigner).toHaveBeenCalledWith(
-      expect.objectContaining({ activeAccount, getRelayerAddress, kit })
+      expect.objectContaining({
+        activeAccount,
+        getCurrentActiveAccount,
+        getRelayerAddress,
+        kit,
+      })
     )
   })
 
-  test('defaults activeAccount to a classic G owner when not given', async () => {
+  test('fails closed when the browser owner capability is missing', async () => {
     const registerExitSigner = vi.fn(async () => ({ status: 'SUCCESS' }))
     const deps = {
       loadExitKey: () => null,
@@ -108,10 +142,35 @@ describe('ensureExitSigner', () => {
       registerExitSigner,
       saveExitKey: vi.fn(),
     }
-    await ensureExitSigner({ owner: 'GOWNER', agentAddress: 'CAGENT', deps })
-    expect(registerExitSigner).toHaveBeenCalledWith(
-      expect.objectContaining({ activeAccount: { kind: 'G', address: 'GOWNER' } })
-    )
+    await expect(
+      ensureExitSigner({ owner: 'GOWNER', agentAddress: 'CAGENT', deps })
+    ).rejects.toMatchObject({ code: 'ACTIVE_ACCOUNT_CHANGED' })
+    expect(registerExitSigner).not.toHaveBeenCalled()
+  })
+
+  test('does not persist an exit key when the account changes during registration', async () => {
+    const captured = ownerBoundary()
+    let current = captured.activeAccount
+    const saveExitKey = vi.fn()
+    const deps = {
+      loadExitKey: async () => null,
+      generateExitKey: async () => ({ publicKey: 'GNEW', secret: 'SNEW' }),
+      registerExitSigner: async () => {
+        current = ownerBoundary('GOTHER', 2).activeAccount
+        return { status: 'SUCCESS' }
+      },
+      saveExitKey,
+    }
+    await expect(
+      ensureExitSigner({
+        owner: 'GOWNER',
+        agentAddress: 'CAGENT',
+        activeAccount: captured.activeAccount,
+        getCurrentActiveAccount: () => current,
+        deps,
+      })
+    ).rejects.toMatchObject({ code: 'ACTIVE_ACCOUNT_CHANGED' })
+    expect(saveExitKey).not.toHaveBeenCalled()
   })
 })
 
@@ -146,6 +205,7 @@ describe('partialWithdraw', () => {
       owner: 'GOWNER',
       agentAddress: 'CAGENT',
       amountUnits: 20_000_000n,
+      ...ownerBoundary(),
       deps,
     })
     expect(deps.submitted).toEqual(['XDR:redeem', 'XDR:transfer'])
@@ -160,6 +220,7 @@ describe('partialWithdraw', () => {
       owner: 'GOWNER',
       agentAddress: 'CAGENT',
       amountUnits: 20_000_000n,
+      ...ownerBoundary(),
       deps: { ...deps, loadExitKey },
     })
     expect(loadExitKey).toHaveBeenCalledWith({ owner: 'GOWNER', agent: 'CAGENT' })
@@ -167,14 +228,26 @@ describe('partialWithdraw', () => {
   test('no relayer → throws, nothing submitted', async () => {
     const deps = { ...baseDeps(), getRelayerAddress: async () => null }
     await expect(
-      partialWithdraw({ owner: 'G', agentAddress: 'C', amountUnits: 1n, deps })
+      partialWithdraw({
+        owner: 'G',
+        agentAddress: 'C',
+        amountUnits: 1n,
+        ...ownerBoundary('G'),
+        deps,
+      })
     ).rejects.toThrow(/relay/i)
     expect(deps.submitted).toEqual([])
   })
   test('amount above the agent max → throws before any tx', async () => {
     const deps = baseDeps()
     await expect(
-      partialWithdraw({ owner: 'G', agentAddress: 'C', amountUnits: 999_000_000n, deps })
+      partialWithdraw({
+        owner: 'G',
+        agentAddress: 'C',
+        amountUnits: 999_000_000n,
+        ...ownerBoundary('G'),
+        deps,
+      })
     ).rejects.toThrow(/max/i)
     expect(deps.submitted).toEqual([])
   })
@@ -186,7 +259,13 @@ describe('partialWithdraw', () => {
       return { hash: 'H1', status: 'SUCCESS' }
     }
     await expect(
-      partialWithdraw({ owner: 'G', agentAddress: 'C', amountUnits: 20_000_000n, deps })
+      partialWithdraw({
+        owner: 'G',
+        agentAddress: 'C',
+        amountUnits: 20_000_000n,
+        ...ownerBoundary('G'),
+        deps,
+      })
     ).rejects.toThrow(/agent/i)
   })
   test('vault/token overrides propagate to the balance reads and both invokes', async () => {
@@ -206,10 +285,63 @@ describe('partialWithdraw', () => {
       amountUnits: 20_000_000n,
       vault: 'CVAULT2',
       token: 'CTOKEN2',
+      ...ownerBoundary(),
       deps,
     })
     expect(sharesOpts[0]).toMatchObject({ vault: 'CVAULT2' })
     expect(balanceOpts[0]).toMatchObject({ token: 'CTOKEN2' })
     expect(invokedContracts).toEqual(['CVAULT2', 'CTOKEN2'])
+  })
+
+  test('rejects an account transition after building and before relaying a session-key leg', async () => {
+    const deps = baseDeps()
+    const captured = ownerBoundary()
+    let current = captured.activeAccount
+    const submitViaRelay = vi.fn(deps.submitViaRelay)
+    deps.buildAgentAuthedInvoke = async ({ method }) => {
+      current = ownerBoundary('GOTHER', 2).activeAccount
+      return { xdr: `XDR:${method}` }
+    }
+    deps.submitViaRelay = submitViaRelay
+
+    await expect(
+      partialWithdraw({
+        owner: 'GOWNER',
+        agentAddress: 'CAGENT',
+        amountUnits: 20_000_000n,
+        activeAccount: captured.activeAccount,
+        getCurrentActiveAccount: () => current,
+        deps,
+      })
+    ).rejects.toMatchObject({ code: 'ACTIVE_ACCOUNT_CHANGED' })
+    expect(submitViaRelay).not.toHaveBeenCalled()
+  })
+
+  test('classifies a transition after redeem dispatch as unknown custody, not a clean cancellation', async () => {
+    const deps = baseDeps()
+    const captured = ownerBoundary()
+    let current = captured.activeAccount
+    deps.submitViaRelay = vi.fn(async ({ xdr }) => {
+      deps.submitted.push(xdr)
+      current = ownerBoundary('GOTHER', 2).activeAccount
+      return { hash: `H:${xdr}`, status: 'SUCCESS' }
+    })
+
+    await expect(
+      partialWithdraw({
+        owner: 'GOWNER',
+        agentAddress: 'CAGENT',
+        amountUnits: 20_000_000n,
+        activeAccount: captured.activeAccount,
+        getCurrentActiveAccount: () => current,
+        deps,
+      })
+    ).rejects.toMatchObject({
+      code: 'VF_SUBMISSION_UNKNOWN',
+      submission: 'unknown',
+      stage: 'redeem',
+      custody: { location: 'unknown', confirmed: false },
+    })
+    expect(deps.submitted).toEqual(['XDR:redeem'])
   })
 })

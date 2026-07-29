@@ -6,7 +6,12 @@
 // rides along). Relay-only: the user holds no XLM, a relay refusal is a hard stop, never a
 // user-paid fallback. The agent stays alive — no revoke, remaining shares keep compounding.
 import { rpcServer } from './client.js'
-import { assertActiveOwner } from './activeAccount.js'
+import {
+  activeAccountSubmissionUnknown,
+  assertActiveAccountBoundary,
+  assertActiveOwner,
+} from './activeAccount.js'
+import { getActiveAccount } from './walletKit.js'
 import {
   buildAgentAuthedInvoke as _buildAgentAuthedInvoke,
   readVaultShares as _readVaultShares,
@@ -72,9 +77,19 @@ export async function ensureExitSigner({
   activeAccount = { kind: 'G', address: owner },
   getRelayerAddress,
   kit,
+  getCurrentActiveAccount = getActiveAccount,
+  signal,
   deps = {},
 }) {
   assertActiveOwner({ owner, activeAccount })
+  const check = () =>
+    assertActiveAccountBoundary({
+      captured: activeAccount,
+      getCurrent: getCurrentActiveAccount,
+      signal,
+      requireV1: true,
+    })
+  check()
   const {
     loadExitKey = _loadExitKey,
     generateExitKey = _generateExitKey,
@@ -82,8 +97,10 @@ export async function ensureExitSigner({
     registerExitSigner = _registerExitSigner,
   } = deps
   const existing = await loadExitKey({ owner, agent: agentAddress })
+  check()
   if (existing) return existing
   const key = await generateExitKey()
+  check()
   const res = await registerExitSigner({
     owner,
     agentAddress,
@@ -91,10 +108,14 @@ export async function ensureExitSigner({
     activeAccount,
     getRelayerAddress,
     kit,
+    getCurrentActiveAccount,
+    signal,
   })
+  check()
   if (res?.status !== 'SUCCESS') {
     throw new Error(`Exit-signer registration was not confirmed: ${res?.status || 'no result'}.`)
   }
+  check()
   saveExitKey({ owner, agent: agentAddress, publicKey: key.publicKey, secret: key.secret })
   return key
 }
@@ -123,9 +144,19 @@ export async function partialWithdraw({
   token = SOROBAN_TOKEN_ADDRESS,
   server,
   activeAccount,
+  getCurrentActiveAccount = getActiveAccount,
+  signal,
   deps = {},
 }) {
   assertActiveOwner({ owner, activeAccount })
+  const check = () =>
+    assertActiveAccountBoundary({
+      captured: activeAccount,
+      getCurrent: getCurrentActiveAccount,
+      signal,
+      requireV1: true,
+    })
+  check()
   const {
     getRelayerAddress = _getRelayerAddress,
     readVaultShares = _readVaultShares,
@@ -138,18 +169,36 @@ export async function partialWithdraw({
   } = deps
 
   const relayer = await getRelayerAddress()
+  check()
   if (!relayer) throw new Error('The gasless relay is unreachable — partial withdraw needs it.')
 
   const key = await loadExitKey({ owner, agent: agentAddress })
+  check()
   if (!key) throw new Error('No exit key for this agent — run ensureExitSigner first.')
   const { Keypair } = await sdk()
+  check()
   const kp = Keypair.fromSecret(key.secret)
   const signer = { sign: (payload) => kp.sign(Buffer.from(payload)) }
+  const unknownAfterDispatch = (stage, cause, result) =>
+    activeAccountSubmissionUnknown({
+      stage,
+      cause,
+      result,
+      custody: { location: 'unknown', confirmed: false },
+    })
+  const checkAfterDispatch = (stage, result) => {
+    try {
+      check()
+    } catch (cause) {
+      throw unknownAfterDispatch(stage, cause, result)
+    }
+  }
 
   const [shares, pps] = await Promise.all([
     readVaultShares(agentAddress, { vault, server }),
     readPricePerShare(vault, { server }),
   ])
+  check()
   if (shares == null || pps == null) throw new Error('Could not read the agent position.')
   const maxUnits = (shares * pps) / PPS_SCALE
   if (amountUnits > maxUnits) {
@@ -168,11 +217,29 @@ export async function partialWithdraw({
     relayer,
     server,
   })
-  const redeemRes = await submitViaRelay({ xdr: redeemTx.xdr })
+  check()
+  check()
+  let redeemRes
+  try {
+    redeemRes = await submitViaRelay({
+      xdr: redeemTx.xdr,
+      ...(signal ? { signal } : {}),
+    })
+  } catch (error) {
+    try {
+      check()
+    } catch (cause) {
+      throw unknownAfterDispatch('redeem', cause)
+    }
+    throw error
+  }
+  checkAfterDispatch('redeem', redeemRes)
   if (!redeemRes) throw new Error('The gasless relay is unreachable — partial withdraw needs it.')
   if (redeemRes.status !== 'SUCCESS' && redeemRes.status !== 'duplicate') {
     const s = server || (await rpcServer())
+    checkAfterDispatch('redeem', redeemRes)
     const settled = await waitForTx(redeemRes.hash, s)
+    checkAfterDispatch('redeem', redeemRes)
     if (settled.status !== 'SUCCESS') {
       throw new Error(`The redeem was not confirmed: ${settled.status}.`)
     }
@@ -182,6 +249,7 @@ export async function partialWithdraw({
   // pins `to == owner` on-chain). A failure here strands USDC in the agent — recoverable
   // (retry, or the full sweep) — so the error must say exactly that.
   const bal = await readTokenBalance(agentAddress, { token, server })
+  checkAfterDispatch('redeem', redeemRes)
   if (bal == null || bal <= 0n) {
     throw new Error('Redeemed, but the agent shows no balance to transfer yet — retry in a moment.')
   }
@@ -196,15 +264,35 @@ export async function partialWithdraw({
       relayer,
       server,
     })
-    const transferRes = await submitViaRelay({ xdr: transferTx.xdr })
+    checkAfterDispatch('redeem', redeemRes)
+    checkAfterDispatch('redeem', redeemRes)
+    let transferRes
+    try {
+      transferRes = await submitViaRelay({
+        xdr: transferTx.xdr,
+        ...(signal ? { signal } : {}),
+      })
+    } catch (error) {
+      try {
+        check()
+      } catch (cause) {
+        throw unknownAfterDispatch('transfer', cause)
+      }
+      throw error
+    }
+    checkAfterDispatch('transfer', transferRes)
     if (!transferRes) throw new Error('relay unreachable')
     if (transferRes.status !== 'SUCCESS' && transferRes.status !== 'duplicate') {
       const s = server || (await rpcServer())
+      checkAfterDispatch('transfer', transferRes)
       const settled = await waitForTx(transferRes.hash, s)
+      checkAfterDispatch('transfer', transferRes)
       if (settled.status !== 'SUCCESS') throw new Error(`not confirmed: ${settled.status}`)
     }
+    checkAfterDispatch('transfer', transferRes)
     return { redeemed: bal, redeemHash: redeemRes.hash, transferHash: transferRes.hash }
   } catch (e) {
+    if (e?.code === 'ACTIVE_ACCOUNT_CHANGED' || e?.code === 'VF_SUBMISSION_UNKNOWN') throw e
     throw new Error(
       `Redeemed ${bal} units into the agent but the transfer to your wallet failed ` +
         `(${e?.message || e}). The funds are safe in the agent — retry, or use the full withdraw.`

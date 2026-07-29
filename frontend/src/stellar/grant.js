@@ -8,8 +8,12 @@
 // worker funding is a RELAYED router.pull (agent session-key signs the pull auth entry; the relay
 // fee-bumps) — zero further signatures. Revoke is the owner setting the SEP-41 allowance back to 0.
 import { xdr } from '@stellar/stellar-sdk'
-import { assertActiveOwner } from './activeAccount.js'
-import { signReviewedTransaction } from './walletKit.js'
+import {
+  activeAccountSubmissionUnknown,
+  assertActiveAccountBoundary,
+  assertActiveOwner,
+} from './activeAccount.js'
+import { getActiveAccount, signReviewedTransaction } from './walletKit.js'
 import { rpcServer, buildInvokeTx, readContract } from './client.js'
 import { signAgentDepositEntries } from './agentDeposit.js'
 import { getRelayerAddress, submitViaRelay } from './relay.js'
@@ -41,12 +45,21 @@ async function sdk() {
   return _sdk
 }
 
-function signReviewedOwnerEnvelope({ built, activeAccount, sign, label }) {
+function signReviewedOwnerEnvelope({
+  built,
+  activeAccount,
+  sign,
+  label,
+  getCurrentActiveAccount,
+  signal,
+}) {
   if (activeAccount?.version !== 1) return sign(built.xdr, label)
   return signReviewedTransaction({
     xdr: built.xdr,
     activeAccount,
     reviewedTxHash: built.tx.hash().toString('hex'),
+    getCurrentActiveAccount,
+    signal,
   })
 }
 
@@ -242,9 +255,25 @@ export async function submitGrant({
   activeAccount = { kind: 'G', address: owner },
   getRelayerAddress: getRelayer = getRelayerAddress,
   kit,
+  getCurrentActiveAccount = getActiveAccount,
+  signal,
 }) {
   assertActiveOwner({ owner, activeAccount })
-  const model = await resolveOwnerTxModel({ owner, activeAccount, getRelayerAddress: getRelayer })
+  const check = () =>
+    assertActiveAccountBoundary({
+      captured: activeAccount,
+      getCurrent: getCurrentActiveAccount,
+      signal,
+    })
+  check()
+  const model = await resolveOwnerTxModel({
+    owner,
+    activeAccount,
+    getRelayerAddress: getRelayer,
+    getCurrentActiveAccount,
+    signal,
+  })
+  check()
   const built = await buildGrantTx({
     owner,
     budgets,
@@ -254,18 +283,39 @@ export async function submitGrant({
     server,
     txSource: model.source,
   })
+  check()
   const result = await submitOwnerAuthorizedTx({
     model,
     build: async () => built,
     sign:
       model.kind === 'G'
-        ? async () => signReviewedOwnerEnvelope({ built, activeAccount, sign, label: 'grant' })
+        ? async () =>
+            signReviewedOwnerEnvelope({
+              built,
+              activeAccount,
+              sign,
+              label: 'grant',
+              getCurrentActiveAccount,
+              signal,
+            })
         : async () =>
-            signOwnerAuthEntry({ tx: built.tx, contractId: model.contractId, server, kit }),
+            signOwnerAuthEntry({
+              tx: built.tx,
+              contractId: model.contractId,
+              server,
+              kit,
+              activeAccount,
+              getCurrentActiveAccount,
+              signal,
+            }),
     server,
     label: 'grant',
     classicSubmission: 'prefer-relay',
+    activeAccount,
+    getCurrentActiveAccount,
+    signal,
   })
+  check()
   if (result.status !== 'SUCCESS') {
     throw new Error(
       result.channel === 'relay'
@@ -329,8 +379,25 @@ export async function buildAgentPull({
  * @param {{agentAddress:string, amount:bigint, sessionKey:object, router?:string, server?:object}} p
  * @returns {Promise<{hash:string, status:string, relayer?:string}|null>}
  */
-export async function runAgentPull({ agentAddress, amount, sessionKey, router, server }) {
+export async function runAgentPull({
+  agentAddress,
+  amount,
+  sessionKey,
+  router,
+  server,
+  activeAccount,
+  getCurrentActiveAccount = getActiveAccount,
+  signal,
+}) {
+  const check = () =>
+    assertActiveAccountBoundary({
+      captured: activeAccount,
+      getCurrent: getCurrentActiveAccount,
+      signal,
+    })
+  check()
   const relayer = await getRelayerAddress()
+  check()
   if (!relayer) return null
   const { xdr } = await buildAgentPull({
     agentAddress,
@@ -340,7 +407,25 @@ export async function runAgentPull({ agentAddress, amount, sessionKey, router, s
     router,
     server,
   })
-  return submitViaRelay({ xdr })
+  check()
+  check()
+  let result
+  try {
+    result = await submitViaRelay({ xdr, ...(signal ? { signal } : {}) })
+  } catch (error) {
+    try {
+      check()
+    } catch (cause) {
+      throw activeAccountSubmissionUnknown({ stage: 'pull', cause, result })
+    }
+    throw error
+  }
+  try {
+    check()
+  } catch (cause) {
+    throw activeAccountSubmissionUnknown({ stage: 'pull', cause, result })
+  }
+  return result
 }
 
 /**
@@ -455,10 +540,28 @@ export async function revokeGrant({
   activeAccount = { kind: 'G', address: owner },
   getRelayerAddress: getRelayer = getRelayerAddress,
   kit,
+  getCurrentActiveAccount = getActiveAccount,
+  signal,
 }) {
+  const check = () =>
+    assertActiveAccountBoundary({
+      captured: activeAccount,
+      getCurrent: getCurrentActiveAccount,
+      signal,
+    })
+  check()
   const s = server || (await rpcServer())
-  const model = await resolveOwnerTxModel({ owner, activeAccount, getRelayerAddress: getRelayer })
+  check()
+  const model = await resolveOwnerTxModel({
+    owner,
+    activeAccount,
+    getRelayerAddress: getRelayer,
+    getCurrentActiveAccount,
+    signal,
+  })
+  check()
   const latest = await s.getLatestLedger()
+  check()
   const built = await buildInvokeTx({
     source: model.source,
     contract: token,
@@ -466,23 +569,39 @@ export async function revokeGrant({
     args: [{ addr: owner }, { addr: router }, { i128: 0n }, { u32: latest.sequence + 1 }],
     server: s,
   })
+  check()
   const res = await submitOwnerAuthorizedTx({
     model,
     build: async () => built,
     sign:
       model.kind === 'G'
-        ? async () => signReviewedOwnerEnvelope({
-            built,
-            activeAccount,
-            sign,
-            label: 'revoke grant',
-          })
+        ? async () =>
+            signReviewedOwnerEnvelope({
+              built,
+              activeAccount,
+              sign,
+              label: 'revoke grant',
+              getCurrentActiveAccount,
+              signal,
+            })
         : async () =>
-            signOwnerAuthEntry({ tx: built.tx, contractId: model.contractId, server: s, kit }),
+            signOwnerAuthEntry({
+              tx: built.tx,
+              contractId: model.contractId,
+              server: s,
+              kit,
+              activeAccount,
+              getCurrentActiveAccount,
+              signal,
+            }),
     server: s,
     label: 'revoke grant',
     classicSubmission: 'direct',
+    activeAccount,
+    getCurrentActiveAccount,
+    signal,
   })
+  check()
   if (res.status !== 'SUCCESS') throw new Error(`Revocation was not confirmed: ${res.status}.`)
   return { hash: res.hash, status: res.status }
 }

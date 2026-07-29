@@ -11,8 +11,8 @@
 // `ownerWithdraw` is the single-agent primitive underneath, kept as the rollback path for when
 // the exit router is not configured — N agents, N popups, which is what this file used to be.
 import { xdr } from '@stellar/stellar-sdk'
-import { assertActiveOwner } from './activeAccount.js'
-import { signReviewedTransaction } from './walletKit.js'
+import { assertActiveAccountBoundary, assertActiveOwner } from './activeAccount.js'
+import { getActiveAccount, signReviewedTransaction } from './walletKit.js'
 import { buildInvokeTx } from './client.js'
 import { signTxXdr } from './walletKit.js'
 import { getRelayerAddress } from './relay.js'
@@ -40,16 +40,35 @@ const isBudgetError = (e) => /Budget|ExceededLimit|ResourceLimitExceeded/i.test(
 
 /** G signs the envelope directly (via the injectable `sign`, default signTxXdr — the wallet-kit
  *  popup); a C owner signs a Soroban auth entry sourced by the relayer. */
-function ownerSign({ built, model, server, kit, sign = signTxXdr, activeAccount }) {
+function ownerSign({
+  built,
+  model,
+  server,
+  kit,
+  sign = signTxXdr,
+  activeAccount,
+  getCurrentActiveAccount,
+  signal,
+}) {
   return model.kind === 'G'
     ? activeAccount?.version === 1
       ? signReviewedTransaction({
           xdr: built.xdr,
           activeAccount,
           reviewedTxHash: built.tx.hash().toString('hex'),
+          getCurrentActiveAccount,
+          signal,
         })
       : sign(built.xdr)
-    : signOwnerAuthEntry({ tx: built.tx, contractId: model.contractId, server, kit })
+    : signOwnerAuthEntry({
+        tx: built.tx,
+        contractId: model.contractId,
+        server,
+        kit,
+        activeAccount,
+        getCurrentActiveAccount,
+        signal,
+      })
 }
 
 /**
@@ -57,8 +76,27 @@ function ownerSign({ built, model, server, kit, sign = signTxXdr, activeAccount 
  * position in the caller's full list). Halves and retries on a budget overrun: simulation raises
  * that inside buildInvokeTx, BEFORE any signature, so shrinking costs the user nothing.
  */
-async function sweepChunk({ agents, to, router, server, model, kit, sign, out, activeAccount }) {
+async function sweepChunk({
+  agents,
+  to,
+  router,
+  server,
+  model,
+  kit,
+  sign,
+  out,
+  activeAccount,
+  getCurrentActiveAccount,
+  signal,
+}) {
+  const check = () =>
+    assertActiveAccountBoundary({
+      captured: activeAccount,
+      getCurrent: getCurrentActiveAccount,
+      signal,
+    })
   try {
+    check()
     const result = await submitOwnerAuthorizedTx({
       model,
       build: () =>
@@ -73,7 +111,17 @@ async function sweepChunk({ agents, to, router, server, model, kit, sign, out, a
           ],
           server,
         }),
-      sign: (built) => ownerSign({ built, model, server, kit, sign, activeAccount }),
+      sign: (built) =>
+        ownerSign({
+          built,
+          model,
+          server,
+          kit,
+          sign,
+          activeAccount,
+          getCurrentActiveAccount,
+          signal,
+        }),
       server,
       label: 'exit sweep',
       classicSubmission: 'direct',
@@ -81,7 +129,11 @@ async function sweepChunk({ agents, to, router, server, model, kit, sign, out, a
       // 20s poll declared a tx failed that went on to land — the UI then reported agents as
       // stranded whose funds were already in the owner's wallet.
       pollTries: 30,
+      activeAccount,
+      getCurrentActiveAccount,
+      signal,
     })
+    check()
     // Callers zero the position on resolve, so an unconfirmed exit must not resolve. Only an
     // explicit FAILED is the chain's own word that the tx did not land — a genuine confirmed
     // failure. Fix 1 (fix loop 2): anything else (PENDING and friends) means the confirmation poll
@@ -99,6 +151,7 @@ async function sweepChunk({ agents, to, router, server, model, kit, sign, out, a
     // No retval on a SUCCESS is not "0 swept" — it means we cannot tell what moved, and leaving
     // the zeros in place is the honest read. The position reconciles from chain either way.
     const swept = result.returnValue ? fromScVal(result.returnValue) : []
+    check()
     agents.forEach((a, i) => {
       out.txHashes[a.index] = result.hash
       const decoded = swept[i]
@@ -120,10 +173,37 @@ async function sweepChunk({ agents, to, router, server, model, kit, sign, out, a
       out.swept[a.index] = BigInt(decoded)
     })
   } catch (e) {
+    if (e?.code === 'ACTIVE_ACCOUNT_CHANGED') throw e
     if (agents.length > 1 && isBudgetError(e)) {
       const mid = Math.ceil(agents.length / 2)
-      await sweepChunk({ agents: agents.slice(0, mid), to, router, server, model, kit, sign, out })
-      await sweepChunk({ agents: agents.slice(mid), to, router, server, model, kit, sign, out })
+      await sweepChunk({
+        agents: agents.slice(0, mid),
+        to,
+        router,
+        server,
+        model,
+        kit,
+        sign,
+        out,
+        activeAccount,
+        getCurrentActiveAccount,
+        signal,
+      })
+      check()
+      await sweepChunk({
+        agents: agents.slice(mid),
+        to,
+        router,
+        server,
+        model,
+        kit,
+        sign,
+        out,
+        activeAccount,
+        getCurrentActiveAccount,
+        signal,
+      })
+      check()
       return
     }
     // One batch failing must not strand the others — record why, per agent, and let the rest run.
@@ -177,11 +257,27 @@ export async function sweepAgents({
   getRelayerAddress: getRelayer = getRelayerAddress,
   kit,
   sign = signTxXdr,
+  getCurrentActiveAccount = getActiveAccount,
+  signal,
 }) {
   assertActiveOwner({ owner, activeAccount })
+  const check = () =>
+    assertActiveAccountBoundary({
+      captured: activeAccount,
+      getCurrent: getCurrentActiveAccount,
+      signal,
+    })
+  check()
   if (!router) throw new Error('The exit router is not configured.')
   if (!agentAddresses?.length) throw new Error('sweepAgents requires at least one agentAddress.')
-  const model = await resolveOwnerTxModel({ owner, activeAccount, getRelayerAddress: getRelayer })
+  const model = await resolveOwnerTxModel({
+    owner,
+    activeAccount,
+    getRelayerAddress: getRelayer,
+    getCurrentActiveAccount,
+    signal,
+  })
+  check()
   const out = {
     swept: agentAddresses.map(() => 0n),
     txHashes: agentAddresses.map(() => undefined),
@@ -198,8 +294,11 @@ export async function sweepAgents({
       kit,
       sign,
       activeAccount,
+      getCurrentActiveAccount,
+      signal,
       out,
     })
+    check()
   }
   return out
 }
@@ -219,12 +318,28 @@ export async function ownerWithdraw({
   getRelayerAddress: getRelayer = getRelayerAddress,
   kit,
   server,
+  getCurrentActiveAccount = getActiveAccount,
+  signal,
 }) {
   assertActiveOwner({ owner, activeAccount })
+  const check = () =>
+    assertActiveAccountBoundary({
+      captured: activeAccount,
+      getCurrent: getCurrentActiveAccount,
+      signal,
+    })
+  check()
   // By-agent, not by-vault: naming the wrong agent is not a harmless no-op, it invokes an account
   // the caller may not own. Never let a caller reach the chain without saying which agent.
   if (!agentAddress) throw new Error('ownerWithdraw requires an agentAddress.')
-  const model = await resolveOwnerTxModel({ owner, activeAccount, getRelayerAddress: getRelayer })
+  const model = await resolveOwnerTxModel({
+    owner,
+    activeAccount,
+    getRelayerAddress: getRelayer,
+    getCurrentActiveAccount,
+    signal,
+  })
+  check()
   const result = await submitOwnerAuthorizedTx({
     model,
     build: () =>
@@ -235,11 +350,24 @@ export async function ownerWithdraw({
         args: [{ addr: to || owner }],
         server,
       }),
-    sign: (built) => ownerSign({ built, model, server, kit, activeAccount }),
+    sign: (built) =>
+      ownerSign({
+        built,
+        model,
+        server,
+        kit,
+        activeAccount,
+        getCurrentActiveAccount,
+        signal,
+      }),
     server,
     label: 'exit',
     classicSubmission: 'direct',
+    activeAccount,
+    getCurrentActiveAccount,
+    signal,
   })
+  check()
   // Callers zero the position on resolve, so an unconfirmed exit must not resolve. Same FAILED-vs-
   // everything-else split as sweepChunk above (Fix 1, fix loop 2): only an explicit FAILED is a
   // confirmed failure; anything else is an unproven outcome, not a lie that it failed.

@@ -63,7 +63,7 @@ describe('VfWalletModule', () => {
     expect(await mod.getAddress()).toEqual({ address: 'CNEW' })
   })
 
-  it('signTransaction delegates to window.vfWallet and falls back to opts.address', async () => {
+  it('signTransaction delegates without manufacturing signer metadata the provider omitted', async () => {
     setProvider({
       signTransaction: vi.fn(async () => ({ signedTxXdr: 'SIGNED' })),
     })
@@ -72,7 +72,7 @@ describe('VfWalletModule', () => {
       address: 'CWALLET',
       networkPassphrase: 'Test SDF Network ; September 2015',
     })
-    expect(out).toEqual({ signedTxXdr: 'SIGNED', signerAddress: 'CWALLET' })
+    expect(out).toEqual({ signedTxXdr: 'SIGNED' })
     expect(window.vfWallet.signTransaction).toHaveBeenCalledWith('UNSIGNED', {
       address: 'CWALLET',
       networkPassphrase: 'Test SDF Network ; September 2015',
@@ -86,6 +86,14 @@ describe('VfWalletModule', () => {
     const mod = new VfWalletModule()
     const out = await mod.signAuthEntry('ENTRY', { address: 'CWALLET' })
     expect(out).toEqual({ signedAuthEntry: 'SENTRY', signerAddress: 'CWALLET' })
+  })
+
+  it('signAuthEntry does not manufacture signer metadata the provider omitted', async () => {
+    setProvider({ signAuthEntry: vi.fn(async () => ({ signedAuthEntry: 'SENTRY' })) })
+    const mod = new VfWalletModule()
+    await expect(mod.signAuthEntry('ENTRY', { address: 'CWALLET' })).resolves.toEqual({
+      signedAuthEntry: 'SENTRY',
+    })
   })
 
   it('signMessage rejects - VF Wallet only signs Soroban auth entries', async () => {

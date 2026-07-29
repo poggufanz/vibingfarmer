@@ -71,12 +71,12 @@ export class VfWalletModule {
 
   async signTransaction(xdr, opts) {
     const { signedTxXdr, signerAddress } = await provider().signTransaction(xdr, opts)
-    return { signedTxXdr, signerAddress: signerAddress ?? opts?.address ?? null }
+    return signerAddress == null ? { signedTxXdr } : { signedTxXdr, signerAddress }
   }
 
   async signAuthEntry(authEntry, opts) {
     const { signedAuthEntry, signerAddress } = await provider().signAuthEntry(authEntry, opts)
-    return { signedAuthEntry, signerAddress: signerAddress ?? opts?.address ?? null }
+    return signerAddress == null ? { signedAuthEntry } : { signedAuthEntry, signerAddress }
   }
 
   // Smart-account-kit (the extension's signer) only exposes signAuthEntry in this codebase —

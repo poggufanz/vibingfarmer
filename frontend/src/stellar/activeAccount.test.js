@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Keypair, StrKey } from '@stellar/stellar-sdk'
-import {
-  assertCurrentActiveAccount,
-  classifyActiveAccount,
-} from './activeAccount.js'
+import { assertCurrentActiveAccount, classifyActiveAccount } from './activeAccount.js'
 
 const NETWORK = 'Test SDF Network ; September 2015'
 const G = Keypair.random().publicKey()
@@ -64,16 +61,19 @@ describe('assertCurrentActiveAccount', () => {
     ['network', G, 'Public Global Stellar Network ; September 2015', 'freighter', 2],
     ['connector', G, NETWORK, 'xbull', 2],
     ['disconnect', null, null, null, null],
-  ])('rejects a %s transition with ACTIVE_ACCOUNT_CHANGED', (_, address, networkPassphrase, connectorId, epoch) => {
-    const current = address
-      ? classifyActiveAccount({ address, networkPassphrase, connectorId, epoch })
-      : null
-    let error
-    try {
-      assertCurrentActiveAccount({ captured, current })
-    } catch (caught) {
-      error = caught
+  ])(
+    'rejects a %s transition with ACTIVE_ACCOUNT_CHANGED',
+    (_, address, networkPassphrase, connectorId, epoch) => {
+      const current = address
+        ? classifyActiveAccount({ address, networkPassphrase, connectorId, epoch })
+        : null
+      let error
+      try {
+        assertCurrentActiveAccount({ captured, current })
+      } catch (caught) {
+        error = caught
+      }
+      expect(error).toMatchObject({ code: 'ACTIVE_ACCOUNT_CHANGED' })
     }
-    expect(error).toMatchObject({ code: 'ACTIVE_ACCOUNT_CHANGED' })
-  })
+  )
 })
