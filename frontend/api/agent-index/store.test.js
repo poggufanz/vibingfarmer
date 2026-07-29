@@ -25,6 +25,8 @@ function fakeD1() {
   sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0002_agent_index.sql'), 'utf8'))
   sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0003_agent_index_bounds.sql'), 'utf8'))
   sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0004_agent_associations.sql'), 'utf8'))
+  sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0005_execution_receipts.sql'), 'utf8'))
+  sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0006_base_child_intents.sql'), 'utf8'))
 
   function bound(sql, args) {
     return {
@@ -95,6 +97,17 @@ describe('createAgentIndexStore', () => {
   it('exposes exactly the documented repository API', () => {
     expect(Object.keys(store).sort()).toEqual(
       [
+        'issueReceiptChallenge',
+        'readReceiptChallenge',
+        'readExecutionReceipt',
+        'readOwnerExecutionReceipts',
+        'commitAuthenticatedReceiptMutation',
+        'acquireRecoveryLease',
+        'releaseRecoveryLease',
+        'createBaseChildIntent',
+        'advanceBaseChildLifecycle',
+        'readBaseChildIntent',
+        'readOwnerBaseChildIntents',
         'upsertMembership',
         'upsertRunAllocation',
         'readRunAllocation',

@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  baseChildIdempotencyKey,
   associationIdempotencyKey,
+  ingestBaseChildIntent,
   ingestAssociationReport,
   joinBaseAssociations,
 } from './associations.js'
@@ -24,6 +26,47 @@ const SCOPE_REQUIREMENTS = {
   reportDecimals: 6,
   scopeDecimals: 7,
 }
+
+describe('Base child intent identity', () => {
+  const child = (childId) => ({
+    version: 1,
+    networkId: 'stellar-testnet',
+    owner: OWNER_A,
+    agent: BRIDGE,
+    bindingId: 'binding-shared',
+    allocationId: 'allocation-shared',
+    childId,
+    intent: { token: 'USDC', units: '1000000', decimals: 6, pool: childId },
+    lifecycle: {
+      sequence: 0,
+      status: 'planned',
+      evidence: { reviewed: true },
+      observedAt: NOW,
+    },
+  })
+
+  it('includes childId in the immutable idempotency identity', () => {
+    expect(baseChildIdempotencyKey(child('child-a'))).not.toBe(
+      baseChildIdempotencyKey(child('child-b'))
+    )
+  })
+
+  it('passes the validated immutable child and child-specific key to the repository', async () => {
+    const calls = []
+    const store = {
+      async createBaseChildIntent(input) {
+        calls.push(input)
+        return { written: 1, duplicates: 0 }
+      },
+    }
+    await expect(ingestBaseChildIntent({ child: child('child-a'), store })).resolves.toEqual({
+      written: 1,
+      duplicates: 0,
+    })
+    expect(calls[0].idempotencyKey).toBe(baseChildIdempotencyKey(child('child-a')))
+    expect(calls[0].child).toMatchObject({ childId: 'child-a', bindingId: 'binding-shared' })
+  })
+})
 
 function allocation(overrides = {}) {
   return {

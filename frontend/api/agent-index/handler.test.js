@@ -11,6 +11,8 @@ import {
   handleRead,
   handleBackfillCommit,
   handleAssociationReport,
+  handleReceiptChallenge,
+  handleReceiptWrite,
   LIVE_MANIFEST,
 } from './handler.js'
 import { AGENT_CREATORS } from '../../src/stellar/agentCreatorManifest.js'
@@ -26,6 +28,8 @@ function fakeD1() {
   sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0002_agent_index.sql'), 'utf8'))
   sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0003_agent_index_bounds.sql'), 'utf8'))
   sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0004_agent_associations.sql'), 'utf8'))
+  sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0005_execution_receipts.sql'), 'utf8'))
+  sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0006_base_child_intents.sql'), 'utf8'))
   function bound(sql, args) {
     return {
       run() {
@@ -61,6 +65,47 @@ function fakeD1() {
     _raw: sqlite,
   }
 }
+
+describe('authenticated receipt handlers', () => {
+  it('fails closed when D1 or the on-chain authority reader is unavailable', async () => {
+    const request = {
+      networkId: 'stellar-testnet',
+      owner: OWNER_A,
+      agent: AGENT_A,
+      requestDigest: 'a'.repeat(64),
+    }
+    await expect(
+      handleReceiptChallenge({ request, store: null, authorityReader: null })
+    ).resolves.toMatchObject({ status: 503 })
+    await expect(
+      handleReceiptChallenge({
+        request,
+        store: createAgentIndexStore(fakeD1()),
+        authorityReader: null,
+      })
+    ).resolves.toMatchObject({ status: 500 })
+    await expect(
+      handleReceiptWrite({ body: {}, proof: {}, store: null, authorityReader: null })
+    ).resolves.toMatchObject({ status: 503 })
+  })
+
+  it('does not disclose inner authority or database errors', async () => {
+    const out = await handleReceiptChallenge({
+      request: {
+        networkId: 'stellar-testnet',
+        owner: OWNER_A,
+        agent: AGENT_A,
+        requestDigest: 'a'.repeat(64),
+      },
+      store: { issueReceiptChallenge: async () => {} },
+      authorityReader: async () => {
+        throw new Error('soroban rpc endpoint includes private infrastructure details')
+      },
+    })
+    expect(out.status).toBe(403)
+    expect(out.body.error).toBe('Agent authority could not be verified')
+  })
+})
 
 const ROUTER_V1 = AGENT_CREATORS.find(
   (c) => c.address === 'CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5'

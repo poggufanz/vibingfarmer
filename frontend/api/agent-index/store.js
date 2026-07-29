@@ -13,6 +13,15 @@ import {
   toBackfillAuditRow,
   parseBackfillAuditRow,
   parseSourceRow,
+  toExecutionReceiptRow,
+  toPhaseAttemptRow,
+  parseExecutionReceiptRow,
+  parsePhaseAttemptRow,
+  toBaseChildRow,
+  parseBaseChildRow,
+  canonicalJson,
+  BASE_CHILD_LIFECYCLE_STATUSES,
+  RECEIPT_PHASES,
   nowSeconds,
 } from './models.js'
 import {
@@ -75,6 +84,578 @@ function sameAssociationEvidence(existing, association) {
 /** D1 repository. `db` is a Cloudflare D1 binding (prepare/bind/run/first/all + batch) — or, in
  * tests, an in-memory double with the same surface (see store.test.js). */
 export function createAgentIndexStore(db) {
+  async function issueReceiptChallenge(challenge) {
+    await db
+      .prepare(
+        `INSERT INTO execution_receipt_challenges
+           (challenge_id, network_id, owner_address, agent_address, request_digest,
+            expires_at, created_at, consumed_at, consume_token)
+         VALUES (?,?,?,?,?,?,?,NULL,NULL)`
+      )
+      .bind(
+        challenge.challengeId,
+        challenge.networkId,
+        challenge.owner,
+        challenge.agent,
+        challenge.requestDigest,
+        challenge.expiresAt,
+        challenge.createdAt
+      )
+      .run()
+  }
+
+  async function readReceiptChallenge({ challengeId }) {
+    if (!challengeId) return null
+    const row = await db
+      .prepare(`SELECT * FROM execution_receipt_challenges WHERE challenge_id = ?`)
+      .bind(challengeId)
+      .first()
+    if (!row) return null
+    return {
+      challengeId: row.challenge_id,
+      networkId: row.network_id,
+      owner: row.owner_address,
+      agent: row.agent_address,
+      requestDigest: row.request_digest,
+      expiresAt: row.expires_at,
+      createdAt: row.created_at,
+      consumedAt: row.consumed_at,
+    }
+  }
+
+  async function readExecutionReceipt({ networkId, executionId, allocationId, owner }) {
+    if (!networkId || !executionId || !allocationId || !owner) {
+      throw new Error('readExecutionReceipt requires networkId, executionId, allocationId, owner')
+    }
+    const row = await db
+      .prepare(
+        `SELECT * FROM execution_receipts
+         WHERE network_id = ? AND execution_id = ? AND allocation_id = ? AND owner_address = ?`
+      )
+      .bind(networkId, executionId, allocationId, owner)
+      .first()
+    if (!row) return null
+    const { results } = await db
+      .prepare(
+        `SELECT * FROM execution_phase_attempts
+         WHERE network_id = ? AND execution_id = ? AND allocation_id = ? AND owner_address = ?
+         ORDER BY receipt_version ASC, observed_at ASC, attempt_id ASC`
+      )
+      .bind(networkId, executionId, allocationId, owner)
+      .all()
+    return parseExecutionReceiptRow(row, (results ?? []).map(parsePhaseAttemptRow))
+  }
+
+  async function readOwnerExecutionReceipts({ networkId, owner }) {
+    if (!networkId || !owner) {
+      throw new Error('readOwnerExecutionReceipts requires networkId and owner')
+    }
+    const { results } = await db
+      .prepare(
+        `SELECT * FROM execution_receipts
+         WHERE network_id = ? AND owner_address = ?
+         ORDER BY updated_at DESC, execution_id ASC, allocation_id ASC`
+      )
+      .bind(networkId, owner)
+      .all()
+    return Promise.all(
+      (results ?? []).map((row) =>
+        readExecutionReceipt({
+          networkId: row.network_id,
+          executionId: row.execution_id,
+          allocationId: row.allocation_id,
+          owner: row.owner_address,
+        })
+      )
+    )
+  }
+
+  async function commitAuthenticatedReceiptMutation({
+    challenge,
+    consumeToken,
+    now,
+    expectedVersion,
+    receipt,
+    intentDigest,
+    attempt,
+  }) {
+    const row = toExecutionReceiptRow(receipt, intentDigest)
+    const attemptRow = toPhaseAttemptRow(attempt)
+    const nextVersion = expectedVersion + 1
+    async function consumeExactDuplicate() {
+      const result = await db
+        .prepare(
+          `UPDATE execution_receipt_challenges
+           SET consumed_at = ?, consume_token = ?
+           WHERE challenge_id = ? AND network_id = ? AND owner_address = ? AND agent_address = ?
+             AND request_digest = ? AND expires_at = ? AND expires_at > ?
+             AND consumed_at IS NULL AND consume_token IS NULL
+             AND EXISTS (
+               SELECT 1 FROM execution_phase_attempts a
+               WHERE a.attempt_id = ? AND a.network_id = ? AND a.execution_id = ?
+                 AND a.allocation_id = ? AND a.owner_address = ? AND a.agent_address = ?
+                 AND a.request_digest = ?
+             )`
+        )
+        .bind(
+          now,
+          consumeToken,
+          challenge.challengeId,
+          row.network_id,
+          row.owner_address,
+          row.agent_address,
+          challenge.requestDigest,
+          challenge.expiresAt,
+          now,
+          attemptRow.attempt_id,
+          row.network_id,
+          row.execution_id,
+          row.allocation_id,
+          row.owner_address,
+          row.agent_address,
+          challenge.requestDigest
+        )
+        .run()
+      return Number(result?.meta?.changes ?? 0) === 1
+    }
+    if (await consumeExactDuplicate()) {
+      return { written: 0, duplicates: 1, version: nextVersion }
+    }
+    const consume = db
+      .prepare(
+        `UPDATE execution_receipt_challenges
+         SET consumed_at = ?, consume_token = ?
+         WHERE challenge_id = ? AND network_id = ? AND owner_address = ? AND agent_address = ?
+           AND request_digest = ? AND expires_at = ? AND expires_at > ?
+           AND consumed_at IS NULL AND consume_token IS NULL`
+      )
+      .bind(
+        now,
+        consumeToken,
+        challenge.challengeId,
+        row.network_id,
+        row.owner_address,
+        row.agent_address,
+        challenge.requestDigest,
+        challenge.expiresAt,
+        now
+      )
+    const projection = db
+      .prepare(
+        `INSERT INTO execution_receipts
+           (network_id, execution_id, allocation_id, receipt_format, owner_address, run_id,
+            parent_allocation_id, child_id, worker_address, agent_address, intent_digest,
+            intent_json, pull_status, stellar_deposit_status, cctp_burn_status, cctp_mint_status,
+            base_deposit_status, custody_location, custody_confirmed, custody_token, custody_units,
+            custody_decimals, custody_reason, last_mutation_token, version, created_at, updated_at)
+         SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
+         WHERE EXISTS (
+           SELECT 1 FROM execution_receipt_challenges
+           WHERE challenge_id = ? AND consume_token = ? AND consumed_at = ?
+         )
+         ON CONFLICT(network_id, execution_id, allocation_id) DO UPDATE SET
+           pull_status = excluded.pull_status,
+           stellar_deposit_status = excluded.stellar_deposit_status,
+           cctp_burn_status = excluded.cctp_burn_status,
+           cctp_mint_status = excluded.cctp_mint_status,
+           base_deposit_status = excluded.base_deposit_status,
+           custody_location = excluded.custody_location,
+           custody_confirmed = excluded.custody_confirmed,
+           custody_token = excluded.custody_token,
+           custody_units = excluded.custody_units,
+           custody_decimals = excluded.custody_decimals,
+           custody_reason = excluded.custody_reason,
+           last_mutation_token = excluded.last_mutation_token,
+           version = excluded.version,
+           updated_at = excluded.updated_at
+         WHERE execution_receipts.version = ?
+           AND execution_receipts.receipt_format = excluded.receipt_format
+           AND execution_receipts.owner_address = excluded.owner_address
+           AND execution_receipts.run_id = excluded.run_id
+           AND execution_receipts.parent_allocation_id IS excluded.parent_allocation_id
+           AND execution_receipts.child_id IS excluded.child_id
+           AND execution_receipts.worker_address = excluded.worker_address
+           AND execution_receipts.agent_address = excluded.agent_address
+           AND execution_receipts.intent_digest = excluded.intent_digest
+           AND execution_receipts.intent_json = excluded.intent_json
+           AND (execution_receipts.pull_status <> 'confirmed' OR excluded.pull_status = 'confirmed')
+           AND (execution_receipts.stellar_deposit_status <> 'confirmed'
+             OR excluded.stellar_deposit_status = 'confirmed')
+           AND (execution_receipts.cctp_burn_status <> 'confirmed'
+             OR excluded.cctp_burn_status = 'confirmed')
+           AND (execution_receipts.cctp_mint_status <> 'confirmed'
+             OR excluded.cctp_mint_status = 'confirmed')
+           AND (execution_receipts.base_deposit_status <> 'confirmed'
+             OR excluded.base_deposit_status = 'confirmed')`
+      )
+      .bind(
+        row.network_id,
+        row.execution_id,
+        row.allocation_id,
+        row.receipt_format,
+        row.owner_address,
+        row.run_id,
+        row.parent_allocation_id,
+        row.child_id,
+        row.worker_address,
+        row.agent_address,
+        row.intent_digest,
+        row.intent_json,
+        row.pull_status,
+        row.stellar_deposit_status,
+        row.cctp_burn_status,
+        row.cctp_mint_status,
+        row.base_deposit_status,
+        row.custody_location,
+        row.custody_confirmed,
+        row.custody_token,
+        row.custody_units,
+        row.custody_decimals,
+        row.custody_reason,
+        consumeToken,
+        nextVersion,
+        now,
+        now,
+        challenge.challengeId,
+        consumeToken,
+        now,
+        expectedVersion
+      )
+    // `receipt_version` is NOT NULL. Its scalar subquery resolves only after both the challenge
+    // consume and CAS projection succeeded earlier in this same D1 batch. A loser resolves NULL,
+    // raises a constraint error, and rolls back all three statements.
+    const evidence = db
+      .prepare(
+        `INSERT INTO execution_phase_attempts
+           (attempt_id, network_id, execution_id, allocation_id, owner_address, agent_address,
+            attempt_kind, phase, status, evidence_json, request_digest, observed_at, receipt_version)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,(
+           SELECT r.version FROM execution_receipts r
+           WHERE r.network_id = ? AND r.execution_id = ? AND r.allocation_id = ?
+             AND r.owner_address = ? AND r.agent_address = ? AND r.version = ?
+             AND r.last_mutation_token = ?
+             AND EXISTS (
+               SELECT 1 FROM execution_receipt_challenges c
+               WHERE c.challenge_id = ? AND c.consume_token = ? AND c.consumed_at = ?
+             )
+         ))`
+      )
+      .bind(
+        attemptRow.attempt_id,
+        row.network_id,
+        row.execution_id,
+        row.allocation_id,
+        row.owner_address,
+        row.agent_address,
+        attemptRow.attempt_kind,
+        attemptRow.phase,
+        attemptRow.status,
+        attemptRow.evidence_json,
+        challenge.requestDigest,
+        attemptRow.observed_at,
+        row.network_id,
+        row.execution_id,
+        row.allocation_id,
+        row.owner_address,
+        row.agent_address,
+        nextVersion,
+        consumeToken,
+        challenge.challengeId,
+        consumeToken,
+        now
+      )
+    try {
+      const results = await db.batch([consume, projection, evidence])
+      if (results.some((result) => Number(result?.meta?.changes ?? 0) !== 1)) {
+        throw new Error('receipt atomic mutation did not change every guarded row')
+      }
+      return { written: 1, duplicates: 0, version: nextVersion }
+    } catch (error) {
+      if (await consumeExactDuplicate()) {
+        return { written: 0, duplicates: 1, version: nextVersion }
+      }
+      const current = await readExecutionReceipt({
+        networkId: row.network_id,
+        executionId: row.execution_id,
+        allocationId: row.allocation_id,
+        owner: row.owner_address,
+      })
+      const confirmedRegression = Object.entries(current?.phases ?? {}).some(
+        ([phase, status]) => status === 'confirmed' && receipt.phases?.[phase] !== 'confirmed'
+      )
+      if (confirmedRegression) {
+        throw new Error('confirmed receipt evidence cannot be downgraded', { cause: error })
+      }
+      throw new Error('receipt version, immutable intent, or attempt conflict', { cause: error })
+    }
+  }
+
+  async function acquireRecoveryLease({
+    networkId,
+    owner,
+    executionId,
+    allocationId,
+    childId = '',
+    phase,
+    holder,
+    leaseToken,
+    now,
+    ttlMs = 60_000,
+  }) {
+    if (![networkId, owner, executionId, allocationId, phase, holder, leaseToken].every(Boolean)) {
+      throw new Error('recovery lease identity and holder are required')
+    }
+    if (!RECEIPT_PHASES.includes(phase)) throw new Error('invalid recovery lease phase')
+    if (!Number.isInteger(now) || !Number.isInteger(ttlMs) || ttlMs <= 0) {
+      throw new Error('invalid recovery lease time')
+    }
+    const result = await db
+      .prepare(
+        `INSERT INTO execution_recovery_leases
+           (network_id, execution_id, allocation_id, child_id, phase, owner_address,
+            holder, lease_token, acquired_at, expires_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?)
+         ON CONFLICT(network_id, execution_id, allocation_id, child_id, phase) DO UPDATE SET
+           holder = excluded.holder,
+           lease_token = excluded.lease_token,
+           acquired_at = excluded.acquired_at,
+           expires_at = excluded.expires_at
+         WHERE execution_recovery_leases.owner_address = excluded.owner_address
+           AND (execution_recovery_leases.expires_at <= ?
+             OR execution_recovery_leases.lease_token = excluded.lease_token)`
+      )
+      .bind(
+        networkId,
+        executionId,
+        allocationId,
+        childId ?? '',
+        phase,
+        owner,
+        holder,
+        leaseToken,
+        now,
+        now + ttlMs,
+        now
+      )
+      .run()
+    return {
+      acquired: Number(result?.meta?.changes ?? 0) === 1,
+      leaseToken,
+      expiresAt: now + ttlMs,
+    }
+  }
+
+  async function releaseRecoveryLease({
+    networkId,
+    executionId,
+    allocationId,
+    childId = '',
+    phase,
+    leaseToken,
+  }) {
+    const result = await db
+      .prepare(
+        `DELETE FROM execution_recovery_leases
+         WHERE network_id = ? AND execution_id = ? AND allocation_id = ? AND child_id = ?
+           AND phase = ? AND lease_token = ?`
+      )
+      .bind(networkId, executionId, allocationId, childId ?? '', phase, leaseToken)
+      .run()
+    return { released: Number(result?.meta?.changes ?? 0) === 1 }
+  }
+
+  async function readBaseChildIntent({ networkId, bindingId, allocationId, childId, owner }) {
+    const row = await db
+      .prepare(
+        `SELECT * FROM base_child_intents
+         WHERE network_id = ? AND binding_id = ? AND allocation_id = ? AND child_id = ?
+           AND owner_address = ?`
+      )
+      .bind(networkId, bindingId, allocationId, childId, owner)
+      .first()
+    return parseBaseChildRow(row)
+  }
+
+  async function readOwnerBaseChildIntents({ networkId, owner }) {
+    if (!networkId || !owner)
+      throw new Error('readOwnerBaseChildIntents requires networkId and owner')
+    const { results } = await db
+      .prepare(
+        `SELECT * FROM base_child_intents
+         WHERE network_id = ? AND owner_address = ?
+         ORDER BY created_at ASC, binding_id ASC, allocation_id ASC, child_id ASC`
+      )
+      .bind(networkId, owner)
+      .all()
+    return (results ?? []).map(parseBaseChildRow)
+  }
+
+  async function createBaseChildIntent({ child, intentDigest, idempotencyKey }) {
+    const row = toBaseChildRow(child, intentDigest)
+    const now = row.observed_at
+    const insertIntent = db
+      .prepare(
+        `INSERT INTO base_child_intents
+           (network_id, binding_id, allocation_id, child_id, owner_address, agent_address,
+            intent_digest, intent_json, token, units, decimals, lifecycle_sequence,
+            lifecycle_status, lifecycle_evidence_json, created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         ON CONFLICT(network_id, binding_id, allocation_id, child_id) DO NOTHING`
+      )
+      .bind(
+        row.network_id,
+        row.binding_id,
+        row.allocation_id,
+        row.child_id,
+        row.owner_address,
+        row.agent_address,
+        row.intent_digest,
+        row.intent_json,
+        row.token,
+        row.units,
+        row.decimals,
+        row.lifecycle_sequence,
+        row.lifecycle_status,
+        row.lifecycle_evidence_json,
+        now,
+        now
+      )
+    const insertEvent = db
+      .prepare(
+        `INSERT INTO base_child_lifecycle_events
+           (network_id, binding_id, allocation_id, child_id, sequence, idempotency_key,
+            status, evidence_json, observed_at)
+         VALUES (?,?,?,?,(
+           SELECT lifecycle_sequence FROM base_child_intents
+           WHERE network_id = ? AND binding_id = ? AND allocation_id = ? AND child_id = ?
+             AND owner_address = ? AND agent_address = ? AND intent_digest = ? AND intent_json = ?
+             AND lifecycle_sequence = 0 AND lifecycle_status = ?
+             AND lifecycle_evidence_json = ?
+         ),?,?,?,?)`
+      )
+      .bind(
+        row.network_id,
+        row.binding_id,
+        row.allocation_id,
+        row.child_id,
+        row.network_id,
+        row.binding_id,
+        row.allocation_id,
+        row.child_id,
+        row.owner_address,
+        row.agent_address,
+        row.intent_digest,
+        row.intent_json,
+        row.lifecycle_status,
+        row.lifecycle_evidence_json,
+        idempotencyKey,
+        row.lifecycle_status,
+        row.lifecycle_evidence_json,
+        row.observed_at
+      )
+    try {
+      const results = await db.batch([insertIntent, insertEvent])
+      if (Number(results?.[1]?.meta?.changes ?? 0) !== 1) throw new Error('child event not written')
+      return { written: 1, duplicates: 0, sequence: 0 }
+    } catch (error) {
+      const existing = await readBaseChildIntent({
+        networkId: row.network_id,
+        bindingId: row.binding_id,
+        allocationId: row.allocation_id,
+        childId: row.child_id,
+        owner: row.owner_address,
+      })
+      if (
+        existing?.intentDigest === row.intent_digest &&
+        existing.agent === row.agent_address &&
+        canonicalJson(existing.intent) === row.intent_json &&
+        existing.lifecycle.sequence === 0 &&
+        existing.lifecycle.status === row.lifecycle_status &&
+        canonicalJson(existing.lifecycle.evidence) === row.lifecycle_evidence_json
+      ) {
+        return { written: 0, duplicates: 1, sequence: 0 }
+      }
+      throw new Error('immutable Base child intent conflict', { cause: error })
+    }
+  }
+
+  async function advanceBaseChildLifecycle({
+    identity,
+    expectedSequence,
+    lifecycle,
+    idempotencyKey,
+  }) {
+    if (!Number.isInteger(expectedSequence) || lifecycle?.sequence !== expectedSequence + 1) {
+      throw new Error('Base child lifecycle sequence must advance by one')
+    }
+    if (!BASE_CHILD_LIFECYCLE_STATUSES.includes(lifecycle.status)) {
+      throw new Error('invalid Base child lifecycle status')
+    }
+    const evidenceJson = canonicalJson(lifecycle.evidence ?? {})
+    if (!Number.isInteger(lifecycle.observedAt))
+      throw new Error('lifecycle.observedAt must be integer')
+    const update = db
+      .prepare(
+        `UPDATE base_child_intents
+         SET lifecycle_sequence = ?, lifecycle_status = ?, lifecycle_evidence_json = ?, updated_at = ?
+         WHERE network_id = ? AND binding_id = ? AND allocation_id = ? AND child_id = ?
+           AND owner_address = ? AND lifecycle_sequence = ?
+           AND (lifecycle_status <> 'confirmed' OR ? = 'confirmed')`
+      )
+      .bind(
+        lifecycle.sequence,
+        lifecycle.status,
+        evidenceJson,
+        lifecycle.observedAt,
+        identity.networkId,
+        identity.bindingId,
+        identity.allocationId,
+        identity.childId,
+        identity.owner,
+        expectedSequence,
+        lifecycle.status
+      )
+    const event = db
+      .prepare(
+        `INSERT INTO base_child_lifecycle_events
+           (network_id, binding_id, allocation_id, child_id, sequence, idempotency_key,
+            status, evidence_json, observed_at)
+         VALUES (?,?,?,?,(
+           SELECT lifecycle_sequence FROM base_child_intents
+           WHERE network_id = ? AND binding_id = ? AND allocation_id = ? AND child_id = ?
+             AND owner_address = ? AND lifecycle_sequence = ? AND lifecycle_status = ?
+             AND lifecycle_evidence_json = ?
+         ),?,?,?,?)`
+      )
+      .bind(
+        identity.networkId,
+        identity.bindingId,
+        identity.allocationId,
+        identity.childId,
+        identity.networkId,
+        identity.bindingId,
+        identity.allocationId,
+        identity.childId,
+        identity.owner,
+        lifecycle.sequence,
+        lifecycle.status,
+        evidenceJson,
+        idempotencyKey,
+        lifecycle.status,
+        evidenceJson,
+        lifecycle.observedAt
+      )
+    try {
+      const results = await db.batch([update, event])
+      if (results.some((result) => Number(result?.meta?.changes ?? 0) !== 1)) {
+        throw new Error('Base child lifecycle atomic guard failed')
+      }
+      return { written: 1, duplicates: 0, sequence: lifecycle.sequence }
+    } catch (error) {
+      throw new Error('Base child lifecycle sequence conflict', { cause: error })
+    }
+  }
+
   function bindMembershipRow(row) {
     return db
       .prepare(MEMBERSHIP_UPSERT_SQL)
@@ -652,6 +1233,17 @@ export function createAgentIndexStore(db) {
   }
 
   return {
+    issueReceiptChallenge,
+    readReceiptChallenge,
+    readExecutionReceipt,
+    readOwnerExecutionReceipts,
+    commitAuthenticatedReceiptMutation,
+    acquireRecoveryLease,
+    releaseRecoveryLease,
+    createBaseChildIntent,
+    advanceBaseChildLifecycle,
+    readBaseChildIntent,
+    readOwnerBaseChildIntents,
     upsertMembership,
     upsertRunAllocation,
     readRunAllocation,

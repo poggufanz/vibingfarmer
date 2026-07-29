@@ -5,6 +5,11 @@ import { ingestAgentIndexPage, coverageProof } from './indexer.js'
 import { commitBackfillAudit } from './backfill.js'
 import { ingestAssociationReport, joinBaseAssociations } from './associations.js'
 import {
+  applyAuthenticatedReceiptMutation,
+  issueReceiptChallenge,
+  ReceiptAuthError,
+} from './executionReceipts.js'
+import {
   AGENT_CREATORS,
   AGENT_CREATOR_MANIFEST_HASH,
   AGENT_CREATOR_MANIFEST_VERSION,
@@ -17,6 +22,76 @@ export const LIVE_MANIFEST = {
   hash: AGENT_CREATOR_MANIFEST_HASH,
   schemaVersion: AGENT_INDEX_SCHEMA_VERSION,
   creators: AGENT_CREATORS,
+}
+
+export async function handleReceiptChallenge({
+  request,
+  store,
+  authorityReader,
+  now = Date.now(),
+  challengeId,
+}) {
+  if (!store) {
+    return { status: 503, body: { error: 'Receipt store unavailable', configured: false } }
+  }
+  if (typeof authorityReader !== 'function') {
+    return { status: 500, body: { error: 'Receipt authority is not configured' } }
+  }
+  try {
+    const challenge = await issueReceiptChallenge({
+      request,
+      store,
+      authorityReader,
+      now,
+      challengeId,
+    })
+    return { status: 201, body: { ok: true, challenge } }
+  } catch (error) {
+    if (error instanceof ReceiptAuthError && error.code === 'invalid') {
+      return { status: 400, body: { error: 'Invalid receipt challenge request' } }
+    }
+    return { status: 403, body: { error: 'Agent authority could not be verified' } }
+  }
+}
+
+export async function handleReceiptWrite({
+  body,
+  proof,
+  store,
+  authorityReader,
+  now = Date.now(),
+  consumeToken,
+}) {
+  if (!store) {
+    return { status: 503, body: { error: 'Receipt store unavailable', configured: false } }
+  }
+  if (typeof authorityReader !== 'function') {
+    return { status: 500, body: { error: 'Receipt authority is not configured' } }
+  }
+  try {
+    const result = await applyAuthenticatedReceiptMutation({
+      body,
+      proof,
+      store,
+      authorityReader,
+      now,
+      consumeToken,
+    })
+    return { status: 200, body: { ok: true, ...result } }
+  } catch (error) {
+    if (error instanceof ReceiptAuthError) {
+      if (['proof', 'replay', 'expired'].includes(error.code)) {
+        return { status: 401, body: { error: 'Invalid or expired receipt proof' } }
+      }
+      if (error.code === 'authority') {
+        return { status: 403, body: { error: 'Agent authority could not be verified' } }
+      }
+      if (error.code === 'invalid') {
+        return { status: 400, body: { error: 'Invalid receipt mutation' } }
+      }
+    }
+    return { status: 409, body: { error: 'Receipt mutation conflict' } }
+  }
 }
 
 /** Constant-time secret compare (node:crypto.timingSafeEqual — available under the

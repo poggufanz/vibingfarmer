@@ -2,6 +2,8 @@ import {
   AGENT_INDEX_SCHEMA_VERSION,
   AGENT_WASM_GENERATIONS,
 } from '../../src/stellar/agentCreatorManifest.js'
+import { canonicalJson, toBaseChildRow } from './models.js'
+import { receiptIntentDigest } from './executionReceipts.js'
 
 const EXECUTION_STATUSES = [
   'queued',
@@ -43,6 +45,52 @@ const LIVE_BRIDGE_GENERATION = AGENT_WASM_GENERATIONS.find(
   (generation) => generation.generation === 'agent-v3-bridge'
 )
 const LIVE_BRIDGE_CREATORS = new Set(LIVE_BRIDGE_GENERATION?.creatorAddresses ?? [])
+
+export function baseChildIdempotencyKey(child) {
+  const digest = receiptIntentDigest(child?.intent)
+  return JSON.stringify([
+    child?.networkId,
+    child?.bindingId,
+    child?.allocationId,
+    child?.childId,
+    digest,
+  ])
+}
+
+export async function ingestBaseChildIntent({ child, store }) {
+  if (!store?.createBaseChildIntent) throw new Error('Base child intent store is unavailable')
+  const intentDigest = receiptIntentDigest(child?.intent)
+  toBaseChildRow(child, intentDigest)
+  return store.createBaseChildIntent({
+    child,
+    intentDigest,
+    idempotencyKey: baseChildIdempotencyKey(child),
+  })
+}
+
+export async function advanceBaseChildLifecycle({ identity, expectedSequence, lifecycle, store }) {
+  if (!store?.advanceBaseChildLifecycle)
+    throw new Error('Base child lifecycle store is unavailable')
+  for (const field of ['networkId', 'owner', 'bindingId', 'allocationId', 'childId']) {
+    requiredString(identity?.[field], `identity.${field}`)
+  }
+  canonicalJson(lifecycle)
+  const idempotencyKey = JSON.stringify([
+    identity.networkId,
+    identity.bindingId,
+    identity.allocationId,
+    identity.childId,
+    lifecycle?.sequence,
+    lifecycle?.status,
+    receiptIntentDigest(lifecycle?.evidence ?? {}),
+  ])
+  return store.advanceBaseChildLifecycle({
+    identity,
+    expectedSequence,
+    lifecycle,
+    idempotencyKey,
+  })
+}
 
 function requiredString(value, field) {
   if (typeof value !== 'string' || !value) throw new Error(`${field} must be a non-empty string`)
