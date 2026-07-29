@@ -5,6 +5,7 @@ import { baseSepolia } from 'viem/chains';
 import { CCTP_DOMAIN, STELLAR_TESTNET, BASE_SEPOLIA } from './cctp/constants.mjs';
 import { createFileStore } from './store.mjs';
 import { loadDeploymentFacts } from './deploymentFacts.mjs';
+import { createAgentIndexConfig } from './agentIndexConfig.mjs';
 
 function need(env, key) {
   const value = env[key];
@@ -102,7 +103,15 @@ export function loadConfig(env = process.env) {
   const proxyKey = production ? need(env, 'RELAYER_PROXY_KEY') : optional(env, 'RELAYER_PROXY_KEY');
   const reporterSecret = production ? need(env, 'AGENT_INDEX_REPORTER_SECRET') : optional(env, 'AGENT_INDEX_REPORTER_SECRET');
   const storePath = env.RELAYER_STORE_PATH || './.relayer-store.dev.json';
-  const dbPath = env.RELAYER_DB_PATH || '';
+  const dbPath = production ? need(env, 'RELAYER_DB_PATH') : optional(env, 'RELAYER_DB_PATH');
+  const agentIndex = createAgentIndexConfig({
+    endpoint: reporterUrl,
+    secret: reporterSecret,
+    schemaVersion: reporterSchema,
+    dbPath,
+    relayerOrigin: publicOrigin,
+    production,
+  });
 
   const server = new rpc.Server(sorobanRpcUrl);
   const kp = Keypair.fromSecret(relayerStellarSecret);
@@ -126,7 +135,8 @@ export function loadConfig(env = process.env) {
     baseRelay: secrets.baseRelayer && secrets.zeroDevProject,
     proxyAuth: secrets.proxyAuth,
     reporter: Boolean(reporterUrl) && secrets.reporterAuth,
-    ready: secrets.stellarRelayer && secrets.baseRelayer && secrets.zeroDevProject && (!production || (Boolean(publicOrigin) && secrets.proxyAuth && Boolean(reporterUrl) && secrets.reporterAuth)),
+    ready: secrets.stellarRelayer && secrets.baseRelayer && secrets.zeroDevProject
+      && (!production || (agentIndex.ready && secrets.proxyAuth)),
   });
   const reporter = Object.freeze({ url: reporterUrl, schema: reporterSchema, hasSecret: secrets.reporterAuth });
   const publicRuntime = Object.freeze({
@@ -185,6 +195,7 @@ export function loadConfig(env = process.env) {
     stellar,
   };
   nonEnumerable(config, 'store', createFileStore(storePath));
+  nonEnumerable(config, 'agentIndex', agentIndex);
   nonEnumerable(config, 'runtime', Object.freeze({ proxyKey, reporterSecret, debugErrors: env.RELAYER_DEBUG_ERRORS === '1' }));
   nonEnumerable(config, 'toJSON', () => publicRuntime);
   return Object.freeze(config);

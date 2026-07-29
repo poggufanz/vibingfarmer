@@ -6,10 +6,15 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { createAssociationOutbox } from './associationOutbox.mjs';
 
 const HOUR_MS = 60 * 60 * 1000;
 
-export function createSqliteStores(path, { ttlMs = HOUR_MS, now = () => Date.now() } = {}) {
+export function createSqliteStores(path, {
+  ttlMs = HOUR_MS,
+  now = () => Date.now(),
+  outboxMaxAttempts = 5,
+} = {}) {
   mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
   db.exec(`
@@ -30,7 +35,35 @@ export function createSqliteStores(path, { ttlMs = HOUR_MS, now = () => Date.now
       created_at INTEGER NOT NULL,
       PRIMARY KEY (serialized_approval, stellar_owner, kernel_address)
     );
+    CREATE TABLE IF NOT EXISTS association_outbox (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      idempotency_key TEXT NOT NULL UNIQUE,
+      identity_key TEXT NOT NULL,
+      child_id TEXT NOT NULL,
+      sequence INTEGER NOT NULL CHECK (sequence > 0),
+      report_digest TEXT NOT NULL,
+      report_json TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('pending','leased','delivered','dead')),
+      attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+      available_at INTEGER NOT NULL,
+      lease_token TEXT,
+      lease_expires_at INTEGER,
+      last_error TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      delivered_at INTEGER,
+      UNIQUE(identity_key, sequence)
+    );
+    CREATE INDEX IF NOT EXISTS idx_association_outbox_delivery
+      ON association_outbox (status, available_at, lease_expires_at, id);
+    CREATE INDEX IF NOT EXISTS idx_association_outbox_child
+      ON association_outbox (child_id, sequence);
   `);
+
+  const associationOutbox = createAssociationOutbox(db, {
+    maxAttempts: outboxMaxAttempts,
+    now,
+  });
 
   const store = {
     get(execId) {
@@ -207,5 +240,5 @@ export function createSqliteStores(path, { ttlMs = HOUR_MS, now = () => Date.now
     },
   };
 
-  return { db, store, jobs, mandates, mandatesV2 };
+  return { db, store, jobs, mandates, mandatesV2, associationOutbox };
 }

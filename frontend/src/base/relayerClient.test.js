@@ -12,6 +12,12 @@ const {
   postMandateRevoke,
 } = relayerClient
 
+const intentAck = (jobId = 'job-1') => ({
+  ok: true,
+  status: 201,
+  json: async () => ({ jobId, acknowledged: true, schemaVersion: 1 }),
+})
+
 describe('quantizeAllocations', () => {
   test('quantizes a 100 / 3 split once while preserving display amounts', () => {
     const third = 100 / 3
@@ -74,9 +80,8 @@ describe('quantizeAllocations', () => {
       expect(quantized.map((a) => a.amountBaseUnits)).toEqual(scenario.expected)
       expect(quantized.reduce((sum, a) => sum + a.amountBaseUnits, 0n)).toBe(123_456n)
 
-      const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ jobId: 'job-1' }) }))
+      const fetchMock = vi.fn(async () => intentAck())
       await postFarm({
-        burnTxHash: 'burn-precision',
         sourceDomain: 27,
         serializedApproval: 'approval-blob',
         runId: 'run-q',
@@ -101,13 +106,74 @@ describe('quantizeAllocations', () => {
 })
 
 describe('postFarm', () => {
-  test('POSTs the burn hash + approval + allocations, returns the jobId', async () => {
+  // Defect caught: the browser client still allowed a burn hash on the intent-only custody gate.
+  test('POSTs intent without a burn field and validates the durable 201 acknowledgement', async () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,
-      json: async () => ({ jobId: 'job-123' }),
+      status: 201,
+      json: async () => ({ jobId: 'job-123', acknowledged: true, schemaVersion: 1 }),
     }))
     const result = await postFarm({
-      burnTxHash: 'abcd',
+      sourceDomain: 27,
+      serializedApproval: 'approval-blob',
+      stellarOwner: 'GUSER',
+      kernelAddress: '0xKERNEL',
+      bridgeAgent: 'CBRIDGE',
+      runId: 'run-42',
+      grantTxHash: 'HGRANT',
+      allocations: [
+        {
+          allocationId: 'run-42:bridge:aave-v3',
+          pool: '0xAAAA',
+          amount: 100,
+          minShares: 99n,
+        },
+      ],
+      baseUrl: 'https://example.test/api/vf-cross',
+      deps: { fetchImpl: fetchMock },
+    })
+    expect(result).toEqual({ jobId: 'job-123', acknowledged: true, schemaVersion: 1 })
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body).not.toHaveProperty('burnTxHash')
+  })
+
+  // Defect caught: HTTP success with malformed or stale-schema JSON could incorrectly authorize the burn.
+  test.each([
+    [
+      {
+        ok: true,
+        status: 200,
+        json: async () => ({ jobId: 'job-1', acknowledged: true, schemaVersion: 1 }),
+      },
+      /201/,
+    ],
+    [{ ok: true, status: 201, json: async () => ({ jobId: 'job-1' }) }, /acknowledgement/i],
+    [
+      {
+        ok: true,
+        status: 201,
+        json: async () => ({ jobId: 'job-1', acknowledged: true, schemaVersion: 2 }),
+      },
+      /schema/i,
+    ],
+  ])(
+    'rejects an ambiguous durable-intent response before returning a job',
+    async (response, expected) => {
+      await expect(
+        postFarm({
+          sourceDomain: 27,
+          serializedApproval: 'approval-blob',
+          allocations: [],
+          baseUrl: 'https://example.test/api/vf-cross',
+          deps: { fetchImpl: vi.fn(async () => response) },
+        })
+      ).rejects.toThrow(expected)
+    }
+  )
+
+  test('POSTs approval and allocations without a burn hash, returns the durable acknowledgement', async () => {
+    const fetchMock = vi.fn(async () => intentAck('job-123'))
+    const result = await postFarm({
       sourceDomain: 27,
       serializedApproval: 'approval-blob',
       runId: 'run-42',
@@ -122,12 +188,12 @@ describe('postFarm', () => {
       baseUrl: 'https://example.test/api/vf-cross',
       deps: { fetchImpl: fetchMock },
     })
-    expect(result).toEqual({ jobId: 'job-123' })
+    expect(result).toEqual({ jobId: 'job-123', acknowledged: true, schemaVersion: 1 })
     const [url, opts] = fetchMock.mock.calls[0]
     expect(url).toBe('https://example.test/api/vf-cross/farm')
     expect(opts.method).toBe('POST')
     const body = JSON.parse(opts.body)
-    expect(body.burnTxHash).toBe('abcd')
+    expect(body).not.toHaveProperty('burnTxHash')
     expect(body.allocations[0].minShares).toBe('99') // BigInt serialized as string over JSON
   })
 
@@ -135,9 +201,8 @@ describe('postFarm', () => {
   // amount:{token,units,decimals}}, and the binding/routing fields default to null when the
   // caller doesn't supply them (baseLeg.js/crossChainFarm.js thread them through when known).
   test('builds the {allocationId, poolAddress, amount:{token,units,decimals}} wire shape and forwards binding fields', async () => {
-    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ jobId: 'job-1' }) }))
+    const fetchMock = vi.fn(async () => intentAck())
     await postFarm({
-      burnTxHash: null,
       sourceDomain: 27,
       serializedApproval: 'approval-blob',
       stellarOwner: 'GUSER',
@@ -157,7 +222,7 @@ describe('postFarm', () => {
       deps: { fetchImpl: fetchMock },
     })
     const body = JSON.parse(fetchMock.mock.calls[0][1].body)
-    expect(body.burnTxHash).toBeNull()
+    expect(body).not.toHaveProperty('burnTxHash')
     expect(body.stellarOwner).toBe('GUSER')
     expect(body.kernelAddress).toBe('0xKERNEL')
     expect(body.bridgeAgent).toBe('CBRIDGE')
@@ -172,9 +237,8 @@ describe('postFarm', () => {
   })
 
   test('preserves an explicit reviewed allocation ID when optional binding fields are absent', async () => {
-    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ jobId: 'job-1' }) }))
+    const fetchMock = vi.fn(async () => intentAck())
     await postFarm({
-      burnTxHash: 'abcd',
       sourceDomain: 27,
       serializedApproval: 'approval-blob',
       allocations: [
@@ -198,9 +262,8 @@ describe('postFarm', () => {
   })
 
   test('preserves the strategy canonical allocationId instead of rebuilding it from array order', async () => {
-    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ jobId: 'job-1' }) }))
+    const fetchMock = vi.fn(async () => intentAck())
     await postFarm({
-      burnTxHash: null,
       sourceDomain: 27,
       serializedApproval: 'approval-blob',
       runId: 'run-42',
@@ -286,7 +349,7 @@ describe('postFarm', () => {
   })
 
   test('preserves canonical allocation IDs verbatim when the input order changes', async () => {
-    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ jobId: 'job-1' }) }))
+    const fetchMock = vi.fn(async () => intentAck())
     const allocations = [
       {
         allocationId: 'run-42:bridge:aave-v3',
@@ -302,7 +365,6 @@ describe('postFarm', () => {
       },
     ]
     await postFarm({
-      burnTxHash: null,
       sourceDomain: 27,
       serializedApproval: 'approval-blob',
       runId: 'run-42',
@@ -337,10 +399,9 @@ describe('postFarm', () => {
   // become dust, and a fractional remainder like 100/3 would throw. serializeAllocations converts
   // at this seam so nothing upstream has to change.
   test('serializes a fractional display-float amount to its base-unit string (6dp)', async () => {
-    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ jobId: 'job-1' }) }))
+    const fetchMock = vi.fn(async () => intentAck())
     const fractional = 100 / 3 // 33.333333333333336 — a real 3-way split remainder
     await postFarm({
-      burnTxHash: 'abcd',
       sourceDomain: 27,
       serializedApproval: 'approval-blob',
       allocations: [
@@ -366,10 +427,9 @@ describe('postFarm', () => {
   // pool's deposit was stranded. Largest-remainder rounding makes the base-unit amounts sum
   // EXACTLY to round(total * 1e6).
   test('multi-pool display floats sum to exactly the bridged base-unit total (largest-remainder)', async () => {
-    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ jobId: 'job-1' }) }))
+    const fetchMock = vi.fn(async () => intentAck())
     const third = 100 / 3 // three-way split of 100 USDC — 33.333333333333336 each
     await postFarm({
-      burnTxHash: 'abcd',
       sourceDomain: 27,
       serializedApproval: 'approval-blob',
       allocations: [
@@ -388,7 +448,7 @@ describe('postFarm', () => {
   })
 
   test('serializes pre-quantized exact units verbatim instead of quantizing display values again', async () => {
-    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ jobId: 'job-1' }) }))
+    const fetchMock = vi.fn(async () => intentAck())
     const third = 100 / 3
     const quantized = relayerClient.quantizeAllocations([
       { allocationId: 'run-p:bridge:aave-v3', pool: '0xAAAA', amount: third, minShares: 1n },
@@ -401,7 +461,6 @@ describe('postFarm', () => {
     quantized[1].amountBaseUnits += 1n
 
     await postFarm({
-      burnTxHash: 'abcd',
       sourceDomain: 27,
       serializedApproval: 'approval-blob',
       allocations: quantized,
@@ -422,9 +481,8 @@ describe('postFarm', () => {
   })
 
   test('passes a bigint amount through as-is - it is already base units, never re-scaled', async () => {
-    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ jobId: 'job-1' }) }))
+    const fetchMock = vi.fn(async () => intentAck())
     await postFarm({
-      burnTxHash: 'abcd',
       sourceDomain: 27,
       serializedApproval: 'approval-blob',
       allocations: [

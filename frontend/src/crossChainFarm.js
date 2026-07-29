@@ -1,13 +1,13 @@
 // frontend/src/crossChainFarm.js
-// Deposit -> Farm orchestration (Approach C §6 steps 4-7): passkey-sign the Stellar CCTP burn,
-// hand the burn tx hash + mandate + allocations to the relayer, poll to completion, emit
+// Deposit -> Farm orchestration (Approach C §6 steps 4-7): commit the Base child intent,
+// passkey-sign one Stellar CCTP burn, attach its hash to that intent, poll to completion, and emit
 // progress events the UI (screens/Farm.jsx) and the force-graph consume. Deliberately NOT part
 // of orchestrator.js — see the File Structure rationale note at the top of this plan. Every
 // error is caught at its stage and re-thrown with an onEvent('farm-failed', {stage, ...}) fired
 // first, so the UI always has a clear, staged failure reason (§7: a mid-flow failure surfaces a
 // clear error and leaves funds recoverable).
 import { signAndSubmitStellarBurn } from './stellar/cctpBurn.js'
-import { postFarm, pollFarmStatus } from './base/relayerClient.js'
+import { postFarm, postFarmAttach, pollFarmStatus } from './base/relayerClient.js'
 import { BASE_POOL_CATALOG } from './config.js'
 
 const CCTP_STELLAR_DOMAIN = 27
@@ -31,7 +31,7 @@ const BASE_POOL_PROXY_TARGETS = new Map(
  *   runId?: string,               // effectively required: every allocationId must equal `${runId}:bridge:${proxyTarget}`, so a missing runId fails the pre-burn guard below for every allocation
  *   grantTxHash?: string,
  *   onEvent?: (name: string, data: object) => void,
- *   deps?: { burn?: Function, postFarm?: Function, pollFarmStatus?: Function },
+ *   deps?: { burn?: Function, postFarm?: Function, postFarmAttach?: Function, pollFarmStatus?: Function },
  * }} p
  * @returns {Promise<{ burnHash: string, jobId: string, finalStatus: string }>}
  */
@@ -107,8 +107,35 @@ export async function runFarmFlow({
     burn = ({ contractId, amountUnits: amt, baseRecipientAddress: dest, kit }) =>
       signAndSubmitStellarBurn({ contractId, amountUnits: amt, baseRecipientAddress: dest, kit }),
     postFarm: postFarmFn = postFarm,
+    postFarmAttach: postFarmAttachFn = postFarmAttach,
     pollFarmStatus: pollFn = pollFarmStatus,
   } = deps
+
+  let dispatch
+  try {
+    dispatch = await postFarmFn({
+      sourceDomain: CCTP_STELLAR_DOMAIN,
+      serializedApproval,
+      stellarOwner: stellarWallet.address,
+      kernelAddress: baseRecipientAddress,
+      bridgeAgent: bridgeAgentAddress,
+      runId,
+      grantTxHash,
+      allocations,
+    })
+    if (
+      dispatch?.acknowledged !== true ||
+      dispatch?.schemaVersion !== 1 ||
+      typeof dispatch?.jobId !== 'string' ||
+      !dispatch.jobId
+    ) {
+      throw new Error('farm intent acknowledgement is malformed')
+    }
+  } catch (err) {
+    onEvent('farm-failed', { stage: 'intent', error: err.message })
+    throw err
+  }
+  onEvent('farm-intent-committed', { jobId: dispatch.jobId, schemaVersion: dispatch.schemaVersion })
 
   onEvent('farm-burn-started', { address: stellarWallet.address, amountUnits: burnUnits7 })
   let burnResult
@@ -125,26 +152,19 @@ export async function runFarmFlow({
   }
   onEvent('farm-burn-confirmed', { burnHash: burnResult.burnHash })
 
-  let dispatch
   try {
-    dispatch = await postFarmFn({
+    await postFarmAttachFn({
+      jobId: dispatch.jobId,
       burnTxHash: burnResult.burnHash,
-      sourceDomain: CCTP_STELLAR_DOMAIN,
       serializedApproval,
-      // VF Wallet Task 6: stellarOwner/kernelAddress bind this dispatch to the mandate it was
-      // validated against — derived from params already threaded here, no new args needed.
       stellarOwner: stellarWallet.address,
       kernelAddress: baseRecipientAddress,
-      bridgeAgent: bridgeAgentAddress,
-      runId,
-      grantTxHash,
-      allocations,
     })
   } catch (err) {
     onEvent('farm-failed', {
-      stage: 'relay',
+      stage: 'attach',
       error: err.message,
-      recoveryHint: `USDC was already burned on Stellar (transaction ${burnResult.burnHash}). Funds are in transit through CCTP. Retry the relay dispatch with this burn hash when the relayer is reachable.`,
+      recoveryHint: `Base intent job ${dispatch.jobId} is durable and USDC was already burned on Stellar (transaction ${burnResult.burnHash}). Retry the burn attachment for this exact job and hash when the relayer is reachable.`,
     })
     throw err
   }

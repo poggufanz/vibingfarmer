@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   baseChildIdempotencyKey,
+  baseChildIdentity,
+  advanceBaseChildLifecycle,
   associationIdempotencyKey,
   ingestBaseChildIntent,
   ingestAssociationReport,
@@ -36,7 +38,18 @@ describe('Base child intent identity', () => {
     bindingId: 'binding-shared',
     allocationId: 'allocation-shared',
     childId,
-    intent: { token: 'USDC', units: '1000000', decimals: 6, pool: childId },
+    intent: {
+      token: 'USDC',
+      units: '1000000',
+      decimals: 6,
+      poolAddress: POOL,
+      proxyTarget: 'aave-v3',
+      runId: 'run-42',
+      grantTxHash: 'grant-42',
+      kernelAddress: KERNEL,
+      bindingHash: 'binding-hash',
+      baseJobId: childId,
+    },
     lifecycle: {
       sequence: 0,
       status: 'planned',
@@ -65,6 +78,54 @@ describe('Base child intent identity', () => {
     })
     expect(calls[0].idempotencyKey).toBe(baseChildIdempotencyKey(child('child-a')))
     expect(calls[0].child).toMatchObject({ childId: 'child-a', bindingId: 'binding-shared' })
+  })
+
+  // Defect caught: acknowledgements could omit or re-derive part of the immutable child identity.
+  it('derives the exact acknowledgement identity from owner, binding, allocation, and child', () => {
+    expect(baseChildIdentity(child('child-a'))).toEqual({
+      networkId: 'stellar-testnet',
+      owner: OWNER_A,
+      bindingId: 'binding-shared',
+      allocationId: 'allocation-shared',
+      childId: 'child-a',
+    })
+  })
+
+  // Defect caught: a lifecycle gap could reach the durable store instead of failing validation first.
+  it('rejects out-of-order lifecycle before calling the store', async () => {
+    const store = { advanceBaseChildLifecycle: vi.fn() }
+    await expect(
+      advanceBaseChildLifecycle({
+        identity: baseChildIdentity(child('child-a')),
+        expectedSequence: 0,
+        lifecycle: { sequence: 2, status: 'submitted', evidence: {}, observedAt: NOW + 1 },
+        store,
+      })
+    ).rejects.toThrow(/sequence/i)
+    expect(store.advanceBaseChildLifecycle).not.toHaveBeenCalled()
+  })
+
+  // Defect caught: authenticated D1 writes could accept unbounded mandate/session payloads.
+  it('rejects non-protocol child and lifecycle fields before calling the store', async () => {
+    const intentStore = { createBaseChildIntent: vi.fn() }
+    await expect(
+      ingestBaseChildIntent({
+        child: { ...child('child-a'), serializedApproval: 'full-mandate' },
+        store: intentStore,
+      })
+    ).rejects.toThrow(/unexpected/i)
+    expect(intentStore.createBaseChildIntent).not.toHaveBeenCalled()
+
+    const lifecycleStore = { advanceBaseChildLifecycle: vi.fn() }
+    await expect(
+      advanceBaseChildLifecycle({
+        identity: { ...baseChildIdentity(child('child-a')), sessionPrivateKey: 'secret' },
+        expectedSequence: 0,
+        lifecycle: { sequence: 1, status: 'submitted', evidence: {}, observedAt: NOW + 1 },
+        store: lifecycleStore,
+      })
+    ).rejects.toThrow(/unexpected|private/i)
+    expect(lifecycleStore.advanceBaseChildLifecycle).not.toHaveBeenCalled()
   })
 })
 

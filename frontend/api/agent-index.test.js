@@ -116,7 +116,18 @@ function childIntent(childId = 'child-route-1') {
     bindingId: 'binding-route-1',
     allocationId: 'allocation-route-1',
     childId,
-    intent: { token: 'USDC', units: '1000000', decimals: 6, pool: 'pool-route-1' },
+    intent: {
+      token: 'USDC',
+      units: '1000000',
+      decimals: 6,
+      poolAddress: `0x${'11'.repeat(20)}`,
+      proxyTarget: 'aave-v3',
+      runId: 'run-route-1',
+      grantTxHash: 'grant-route-1',
+      kernelAddress: `0x${'22'.repeat(20)}`,
+      bindingHash: 'binding-hash-route-1',
+      baseJobId: childId,
+    },
     lifecycle: {
       sequence: 0,
       status: 'planned',
@@ -626,7 +637,8 @@ describe('/api/agent-index operational evidence routes', () => {
         mockReq({ method: 'POST', url: `/api/agent-index?action=${action}`, body })
       )
       expect(out.res.statusCode).toBe(status)
-      expect(out.body.ok).toBe(true)
+      if (action.startsWith('base-child-')) expect(out.body.acknowledged).toBe(true)
+      else expect(out.body.ok).toBe(true)
       expect(JSON.stringify(out.body)).not.toMatch(/server-reporter-secret/)
     }
   )

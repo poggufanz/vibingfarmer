@@ -5,6 +5,7 @@ import { ingestAgentIndexPage, coverageProof } from './indexer.js'
 import { commitBackfillAudit } from './backfill.js'
 import {
   advanceBaseChildLifecycle,
+  baseChildIdentity,
   ingestAssociationReport,
   ingestBaseChildIntent,
   joinBaseAssociations,
@@ -275,7 +276,15 @@ export async function handleBaseChildIntent({
   try {
     requireConfiguredNetwork(child?.networkId, configuredNetworkId)
     const result = await ingestBaseChildIntent({ child, store })
-    return { status: result.written ? 201 : 200, body: { ok: true, ...result } }
+    return {
+      status: 201,
+      body: {
+        acknowledged: true,
+        identity: baseChildIdentity(child),
+        schemaVersion: AGENT_INDEX_SCHEMA_VERSION,
+        ...result,
+      },
+    }
   } catch (error) {
     return agentIndexFailure(error)
   }
@@ -296,7 +305,17 @@ export async function handleBaseChildLifecycle({
   try {
     requireConfiguredNetwork(request?.identity?.networkId, configuredNetworkId)
     const result = await advanceBaseChildLifecycle({ ...request, store })
-    return { status: 200, body: { ok: true, ...result } }
+    return {
+      status: 200,
+      body: {
+        acknowledged: true,
+        identity: request.identity,
+        sequence: result.sequence,
+        schemaVersion: AGENT_INDEX_SCHEMA_VERSION,
+        written: result.written,
+        duplicates: result.duplicates,
+      },
+    }
   } catch (error) {
     return agentIndexFailure(error)
   }

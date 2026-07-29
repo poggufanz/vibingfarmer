@@ -5,6 +5,7 @@ import {
 import {
   AgentIndexValidationError,
   BASE_CHILD_LIFECYCLE_STATUSES,
+  assertNoSensitiveProperties,
   canonicalJson,
   toBaseChildRow,
 } from './models.js'
@@ -46,6 +47,37 @@ const REPORT_FIELDS = new Set([
 ])
 const AMOUNT_FIELDS = new Set(['token', 'units', 'decimals'])
 const CUSTODY_FIELDS = new Set(['location'])
+const BASE_CHILD_FIELDS = new Set([
+  'version',
+  'networkId',
+  'owner',
+  'agent',
+  'bindingId',
+  'allocationId',
+  'childId',
+  'intent',
+  'lifecycle',
+])
+const BASE_CHILD_IDENTITY_FIELDS = new Set([
+  'networkId',
+  'owner',
+  'bindingId',
+  'allocationId',
+  'childId',
+])
+const BASE_CHILD_INTENT_FIELDS = new Set([
+  'token',
+  'units',
+  'decimals',
+  'poolAddress',
+  'proxyTarget',
+  'runId',
+  'grantTxHash',
+  'kernelAddress',
+  'bindingHash',
+  'baseJobId',
+])
+const BASE_CHILD_LIFECYCLE_FIELDS = new Set(['sequence', 'status', 'evidence', 'observedAt'])
 const LIVE_BRIDGE_GENERATION = AGENT_WASM_GENERATIONS.find(
   (generation) => generation.generation === 'agent-v3-bridge'
 )
@@ -62,10 +94,23 @@ export function baseChildIdempotencyKey(child) {
   ])
 }
 
+export function baseChildIdentity(child) {
+  return {
+    networkId: requiredString(child?.networkId, 'networkId'),
+    owner: requiredString(child?.owner, 'owner'),
+    bindingId: requiredString(child?.bindingId, 'bindingId'),
+    allocationId: requiredString(child?.allocationId, 'allocationId'),
+    childId: requiredString(child?.childId, 'childId'),
+  }
+}
+
 export async function ingestBaseChildIntent({ child, store }) {
   if (!store?.createBaseChildIntent) throw new Error('Base child intent store is unavailable')
   let intentDigest
   try {
+    requireExactFields(child, BASE_CHILD_FIELDS, 'Base child')
+    requireExactFields(child.intent, BASE_CHILD_INTENT_FIELDS, 'Base child intent')
+    requireExactFields(child.lifecycle, BASE_CHILD_LIFECYCLE_FIELDS, 'Base child lifecycle')
     intentDigest = receiptIntentDigest(child?.intent)
     toBaseChildRow(child, intentDigest)
   } catch (error) {
@@ -85,6 +130,9 @@ export async function advanceBaseChildLifecycle({ identity, expectedSequence, li
   if (!store?.advanceBaseChildLifecycle)
     throw new Error('Base child lifecycle store is unavailable')
   try {
+    requireExactFields(identity, BASE_CHILD_IDENTITY_FIELDS, 'Base child identity')
+    requireExactFields(lifecycle, BASE_CHILD_LIFECYCLE_FIELDS, 'Base child lifecycle')
+    assertNoSensitiveProperties({ identity, lifecycle })
     for (const field of ['networkId', 'owner', 'bindingId', 'allocationId', 'childId']) {
       requiredString(identity?.[field], `identity.${field}`)
     }

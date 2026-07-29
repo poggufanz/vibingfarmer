@@ -927,3 +927,82 @@ describe('migration 0001 tables are untouched', () => {
     expect(() => db._raw.prepare('SELECT * FROM api_keys').all()).not.toThrow()
   })
 })
+
+describe('Base child intent and lifecycle durability', () => {
+  const child = (overrides = {}) => ({
+    version: 1,
+    networkId: NETWORK,
+    owner: 'GOWNER1',
+    agent: 'CAGENT1',
+    bindingId: 'binding-1',
+    allocationId: 'run-1:bridge:aave-v3',
+    childId: 'job-1',
+    intent: { token: 'USDC', units: '1000000', decimals: 6, poolAddress: '0xpool' },
+    lifecycle: { sequence: 0, status: 'planned', evidence: {}, observedAt: 1000 },
+    ...overrides,
+  })
+  const identity = {
+    networkId: NETWORK,
+    owner: 'GOWNER1',
+    bindingId: 'binding-1',
+    allocationId: 'run-1:bridge:aave-v3',
+    childId: 'job-1',
+  }
+
+  // Defect caught: immutable child retries must not duplicate rows, while changed intent under the same identity must conflict.
+  it('is idempotent for exact intent and fail-closed for conflicting intent', async () => {
+    const first = await store.createBaseChildIntent({
+      child: child(),
+      intentDigest: 'digest-1',
+      idempotencyKey: 'intent-key-1',
+    })
+    expect(first).toEqual({ written: 1, duplicates: 0, sequence: 0 })
+    await expect(
+      store.createBaseChildIntent({
+        child: child(),
+        intentDigest: 'digest-1',
+        idempotencyKey: 'intent-key-1',
+      })
+    ).resolves.toEqual({ written: 0, duplicates: 1, sequence: 0 })
+    await expect(
+      store.createBaseChildIntent({
+        child: child({ intent: { ...child().intent, units: '2000000' } }),
+        intentDigest: 'digest-2',
+        idempotencyKey: 'intent-key-2',
+      })
+    ).rejects.toThrow(/immutable|conflict/i)
+  })
+
+  // Defect caught: concurrent/out-of-order lifecycle delivery must be guarded by the durable expected sequence.
+  it('advances exactly one CAS sequence and rejects a stale or skipped sequence', async () => {
+    await store.createBaseChildIntent({
+      child: child(),
+      intentDigest: 'digest-1',
+      idempotencyKey: 'intent-key-1',
+    })
+    const request = {
+      identity,
+      expectedSequence: 0,
+      lifecycle: {
+        sequence: 1,
+        status: 'submitted',
+        evidence: { executionStatus: 'accepted' },
+        observedAt: 1001,
+      },
+      idempotencyKey: 'lifecycle-key-1',
+    }
+    await expect(store.advanceBaseChildLifecycle(request)).resolves.toEqual({
+      written: 1,
+      duplicates: 0,
+      sequence: 1,
+    })
+    await expect(
+      store.advanceBaseChildLifecycle({
+        ...request,
+        expectedSequence: 2,
+        lifecycle: { ...request.lifecycle, sequence: 3, observedAt: 1003 },
+        idempotencyKey: 'lifecycle-key-3',
+      })
+    ).rejects.toThrow(/sequence|conflict/i)
+  })
+})

@@ -1224,9 +1224,27 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
       })
     )
 
-    const summary = await permissionedOrchestrator(onEvent).dispatch(fixture.plan, {
-      permissionDecision: fixture.permissionDecision,
-    })
+    // Task 8: the real flow now requires a durable relayer/D1 intent acknowledgement before it
+    // reaches the burn transport. Keep that boundary real while replacing only the HTTP edge.
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 201,
+      json: async () => ({
+        jobId: 'JOB-INTENT-run-uncertain-burn',
+        acknowledged: true,
+        schemaVersion: 1,
+      }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    let summary
+    try {
+      summary = await permissionedOrchestrator(onEvent).dispatch(fixture.plan, {
+        permissionDecision: fixture.permissionDecision,
+      })
+    } finally {
+      vi.unstubAllGlobals()
+    }
     const base = summary.receipt.allocations.find((entry) => entry.allocationId.endsWith('aave-v3'))
 
     expect(summary.baseLeg).toMatchObject({

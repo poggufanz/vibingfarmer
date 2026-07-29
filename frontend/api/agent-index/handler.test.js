@@ -13,6 +13,8 @@ import {
   handleAssociationReport,
   handleReceiptChallenge,
   handleReceiptWrite,
+  handleBaseChildIntent,
+  handleBaseChildLifecycle,
   LIVE_MANIFEST,
 } from './handler.js'
 import { AGENT_CREATORS } from '../../src/stellar/agentCreatorManifest.js'
@@ -125,6 +127,152 @@ const ROUTER_V1 = AGENT_CREATORS.find(
 )
 const OWNER_A = 'GAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQDZ7H'
 const AGENT_A = 'CABQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGCK3'
+
+describe('authenticated Base child handlers', () => {
+  const secret = 'server-reporter-secret'
+  const child = (overrides = {}) => ({
+    version: 1,
+    networkId: 'stellar-testnet',
+    owner: OWNER_A,
+    agent: AGENT_A,
+    bindingId: 'binding-42',
+    allocationId: 'run-42:bridge:aave-v3',
+    childId: 'job-42',
+    intent: {
+      token: 'USDC',
+      units: '1000000',
+      decimals: 6,
+      poolAddress: `0x${'11'.repeat(20)}`,
+      proxyTarget: 'aave-v3',
+      bindingHash: 'hash-42',
+      runId: 'run-42',
+      grantTxHash: 'grant-42',
+      kernelAddress: `0x${'22'.repeat(20)}`,
+      baseJobId: 'job-42',
+    },
+    lifecycle: { sequence: 0, status: 'planned', evidence: {}, observedAt: 2_000_000_000_000 },
+    ...overrides,
+  })
+  const identity = {
+    networkId: 'stellar-testnet',
+    owner: OWNER_A,
+    bindingId: 'binding-42',
+    allocationId: 'run-42:bridge:aave-v3',
+    childId: 'job-42',
+  }
+
+  // Defect caught: intent responses did not provide the exact identity/schema acknowledgement the relayer must gate custody on.
+  it('authenticates before write and returns an exact 201 durable acknowledgement', async () => {
+    const store = createAgentIndexStore(fakeD1())
+    const denied = await handleBaseChildIntent({
+      child: child(),
+      configuredNetworkId: 'stellar-testnet',
+      store,
+      secret,
+      providedSecret: 'wrong',
+    })
+    expect(denied).toEqual({ status: 401, body: { error: 'Unauthorized' } })
+    await expect(
+      store.readOwnerBaseChildIntents({ networkId: 'stellar-testnet', owner: OWNER_A })
+    ).resolves.toHaveLength(0)
+
+    const accepted = await handleBaseChildIntent({
+      child: child(),
+      configuredNetworkId: 'stellar-testnet',
+      store,
+      secret,
+      providedSecret: secret,
+    })
+    expect(accepted).toEqual({
+      status: 201,
+      body: {
+        acknowledged: true,
+        identity,
+        schemaVersion: LIVE_MANIFEST.schemaVersion,
+        written: 1,
+        duplicates: 0,
+        sequence: 0,
+      },
+    })
+  })
+
+  // Defect caught: an exact retry returned a different HTTP contract while conflicting immutable evidence needed a typed 409.
+  it('returns the same 201 acknowledgement for an exact retry and 409 for a conflicting child', async () => {
+    const store = createAgentIndexStore(fakeD1())
+    const args = {
+      child: child(),
+      configuredNetworkId: 'stellar-testnet',
+      store,
+      secret,
+      providedSecret: secret,
+    }
+    await handleBaseChildIntent(args)
+    await expect(handleBaseChildIntent(args)).resolves.toMatchObject({
+      status: 201,
+      body: { acknowledged: true, identity, duplicates: 1 },
+    })
+    await expect(
+      handleBaseChildIntent({
+        ...args,
+        child: child({ intent: { ...child().intent, units: '2000000' } }),
+      })
+    ).resolves.toMatchObject({ status: 409, body: { error: 'Agent-index mutation conflict' } })
+  })
+
+  // Defect caught: lifecycle acknowledgements lacked identity/sequence and out-of-order CAS conflicts were ambiguous.
+  it('acknowledges one monotonic lifecycle step and rejects a sequence gap', async () => {
+    const store = createAgentIndexStore(fakeD1())
+    await handleBaseChildIntent({
+      child: child(),
+      configuredNetworkId: 'stellar-testnet',
+      store,
+      secret,
+      providedSecret: secret,
+    })
+    const request = {
+      identity,
+      expectedSequence: 0,
+      lifecycle: {
+        sequence: 1,
+        status: 'submitted',
+        evidence: { executionStatus: 'accepted' },
+        observedAt: 2_000_000_000_100,
+      },
+    }
+    await expect(
+      handleBaseChildLifecycle({
+        request,
+        configuredNetworkId: 'stellar-testnet',
+        store,
+        secret,
+        providedSecret: secret,
+      })
+    ).resolves.toEqual({
+      status: 200,
+      body: {
+        acknowledged: true,
+        identity,
+        sequence: 1,
+        schemaVersion: LIVE_MANIFEST.schemaVersion,
+        written: 1,
+        duplicates: 0,
+      },
+    })
+    await expect(
+      handleBaseChildLifecycle({
+        request: {
+          ...request,
+          expectedSequence: 2,
+          lifecycle: { ...request.lifecycle, sequence: 3 },
+        },
+        configuredNetworkId: 'stellar-testnet',
+        store,
+        secret,
+        providedSecret: secret,
+      })
+    ).resolves.toMatchObject({ status: 409 })
+  })
+})
 
 function deployedRecord({ owner, agent, cap = 1000n, ledger, txHash }) {
   return {

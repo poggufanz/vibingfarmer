@@ -1,160 +1,113 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createAgentIndexReporter, associationIdempotencyKey } from '../src/agentIndexReporter.mjs';
+import { createAgentIndexReporter } from '../src/agentIndexReporter.mjs';
 
 const SECRET = 'server-to-server-secret';
-const SESSION_PRIVATE_KEY = `0x${'42'.repeat(32)}`;
 
-function allocation(overrides = {}) {
-  return {
-    allocationId: 'run-42:bridge:aave',
-    poolAddress: `0x${'11'.repeat(20)}`,
-    proxyTarget: 'aave-v3',
-    amount: { token: 'USDC', units: '1000000', decimals: 6 },
-    executionStatus: 'accepted',
-    custody: { location: 'in-transit' },
-    txHash: null,
-    ...overrides,
-  };
-}
-
-function report(overrides = {}) {
-  return {
+describe('durable Base child reporter protocol', () => {
+  const child = {
     version: 1,
     networkId: 'stellar-testnet',
     owner: `G${'A'.repeat(55)}`,
-    bridgeAgent: `C${'B'.repeat(55)}`,
-    runId: 'run-42',
-    grantTxHash: 'grant-hash',
-    kernelAddress: `0x${'22'.repeat(20)}`,
-    mandateBindingId: 'binding-42',
-    mandateBindingHash: 'binding-hash-42',
-    baseJobId: 'job-42',
-    allocations: [allocation()],
-    ...overrides,
+    agent: `C${'B'.repeat(55)}`,
+    bindingId: 'binding-42',
+    allocationId: 'run-42:bridge:aave-v3',
+    childId: 'job-42',
+    intent: {
+      token: 'USDC', units: '1000000', decimals: 6,
+      poolAddress: `0x${'11'.repeat(20)}`, proxyTarget: 'aave-v3',
+      runId: 'run-42', grantTxHash: 'grant-hash', kernelAddress: `0x${'22'.repeat(20)}`,
+      bindingHash: 'binding-hash-42', baseJobId: 'job-42',
+    },
+    lifecycle: { sequence: 0, status: 'planned', evidence: {}, observedAt: 2_000_000_000_000 },
   };
-}
+  const identity = {
+    networkId: child.networkId,
+    owner: child.owner,
+    bindingId: child.bindingId,
+    allocationId: child.allocationId,
+    childId: child.childId,
+  };
 
-describe('associationIdempotencyKey', () => {
-  it('is exactly the network/run/allocation/status/txHash tuple', () => {
-    const first = associationIdempotencyKey(report(), allocation());
-    expect(first).toEqual(
-      JSON.stringify([
-        'stellar-testnet',
-        'run-42',
-        'run-42:bridge:aave',
-        'accepted',
-        null,
-      ])
-    );
-
-    expect(
-      associationIdempotencyKey(
-        report({ baseJobId: 'different-job', mandateBindingId: 'different-binding' }),
-        allocation()
-      )
-    ).toBe(first);
-    expect(associationIdempotencyKey(report(), allocation({ executionStatus: 'deposited' }))).not.toBe(first);
-  });
-});
-
-describe('createAgentIndexReporter', () => {
-  it('posts one exact allocation per idempotency key with server authentication', async () => {
-    const fetchImpl = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ ok: true }) }));
+  // Defect caught: the old reporter treated every response as optional analytics instead of a custody gate.
+  it('accepts only a 201 acknowledgement matching schema and immutable child identity', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 201,
+      json: async () => ({ acknowledged: true, identity, schemaVersion: 1 }),
+    }));
     const reporter = createAgentIndexReporter({
-      endpoint: 'https://index.example/api/agent-index?action=associate',
-      secret: SECRET,
-      fetchImpl,
+      endpoint: 'https://index.example/api/agent-index', secret: SECRET, schemaVersion: 1, fetchImpl,
     });
 
-    const result = await reporter.report(report(), {
-      bindingId: 'binding-42',
-      bindingHash: 'binding-hash-42',
+    await expect(reporter.commitIntent(child)).resolves.toEqual({
+      acknowledged: true, identity, schemaVersion: 1,
     });
-
-    expect(result).toEqual({ ok: true, reported: 1, warnings: [] });
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
     const [url, init] = fetchImpl.mock.calls[0];
-    expect(url).toBe('https://index.example/api/agent-index?action=associate');
-    expect(init.headers).toMatchObject({
-      Authorization: `Bearer ${SECRET}`,
-      'Content-Type': 'application/json',
-      'Idempotency-Key': associationIdempotencyKey(report(), allocation()),
-    });
-    expect(JSON.parse(init.body)).toEqual({ ...report(), allocations: [allocation()] });
+    expect(url).toBe('https://index.example/api/agent-index?action=base-child-intent');
+    expect(init.headers.Authorization).toBe(`Bearer ${SECRET}`);
+    expect(JSON.parse(init.body)).toEqual({ child });
   });
 
-  it('rejects a missing or changed binding before making a network request', async () => {
+  // Defect caught: a caller mistake could forward a full approval/session payload to D1.
+  it('rejects unexpected or sensitive child fields before making a network request', async () => {
     const fetchImpl = vi.fn();
     const reporter = createAgentIndexReporter({
-      endpoint: 'https://index.example/api/agent-index?action=associate',
-      secret: SECRET,
-      fetchImpl,
+      endpoint: 'https://index.example/api/agent-index', secret: SECRET, schemaVersion: 1, fetchImpl,
     });
-
-    await expect(
-      reporter.report(report({ mandateBindingHash: 'changed' }), {
-        bindingId: 'binding-42',
-        bindingHash: 'binding-hash-42',
-      })
-    ).rejects.toThrow(/binding/i);
-    await expect(
-      reporter.report(report({ mandateBindingId: null }), {
-        bindingId: 'binding-42',
-        bindingHash: 'binding-hash-42',
-      })
-    ).rejects.toThrow(/binding/i);
+    await expect(reporter.commitIntent({
+      ...child,
+      serializedApproval: 'full-mandate-payload',
+      sessionPrivateKey: 'must-never-leave-relayer',
+    })).rejects.toThrow(/unexpected|secret|private|approval/i);
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it('retries the same key and returns a warning without throwing when analytics is down', async () => {
-    const fetchImpl = vi.fn(async () => {
-      throw new Error('index unavailable');
-    });
-    const logger = { warn: vi.fn() };
+  // Defect caught: 401, D1 failure, malformed JSON, false acknowledgement, or schema drift could be mistaken for durability.
+  it.each([
+    ['reporter 401', { ok: false, status: 401, json: async () => ({ error: 'Unauthorized' }) }, /401/],
+    ['D1 failure', { ok: false, status: 503, json: async () => ({ error: 'unavailable' }) }, /503/],
+    ['malformed acknowledgement', { ok: true, status: 201, json: async () => ({ ok: true }) }, /acknowledgement/i],
+    ['schema mismatch', { ok: true, status: 201, json: async () => ({ acknowledged: true, identity, schemaVersion: 2 }) }, /schema/i],
+    ['identity mismatch', { ok: true, status: 201, json: async () => ({ acknowledged: true, identity: { ...identity, childId: 'other' }, schemaVersion: 1 }) }, /identity/i],
+  ])('fails closed on %s', async (_label, response, expected) => {
     const reporter = createAgentIndexReporter({
-      endpoint: 'https://index.example/api/agent-index?action=associate',
-      secret: SECRET,
-      fetchImpl,
-      logger,
-      maxAttempts: 3,
+      endpoint: 'https://index.example/api/agent-index', secret: SECRET, schemaVersion: 1,
+      fetchImpl: vi.fn(async () => response),
     });
-
-    const result = await reporter.report(report(), {
-      bindingId: 'binding-42',
-      bindingHash: 'binding-hash-42',
-    });
-
-    expect(result.ok).toBe(false);
-    expect(result.reported).toBe(0);
-    expect(result.warnings).toHaveLength(1);
-    expect(fetchImpl).toHaveBeenCalledTimes(3);
-    const keys = fetchImpl.mock.calls.map(([, init]) => init.headers['Idempotency-Key']);
-    expect(new Set(keys).size).toBe(1);
-    expect(logger.warn).toHaveBeenCalledTimes(1);
+    await expect(reporter.commitIntent(child)).rejects.toThrow(expected);
   });
 
-  it('serializes only the canonical report fields and never forwards or logs session key material', async () => {
-    const fetchImpl = vi.fn(async () => ({ ok: false, status: 503 }));
-    const logger = { warn: vi.fn() };
+  // Defect caught: an unbounded reporter request could leave burn eligibility ambiguous forever.
+  it('aborts a timed-out intent request and reports explicit non-success', async () => {
+    const fetchImpl = vi.fn((_url, { signal }) => new Promise((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(new Error('aborted')));
+    }));
     const reporter = createAgentIndexReporter({
-      endpoint: 'https://index.example/api/agent-index?action=associate',
-      secret: SECRET,
-      fetchImpl,
-      logger,
-      maxAttempts: 1,
+      endpoint: 'https://index.example/api/agent-index', secret: SECRET, schemaVersion: 1,
+      timeoutMs: 5, fetchImpl,
     });
-    const unsafe = {
-      ...report(),
-      sessionPrivateKey: SESSION_PRIVATE_KEY,
-      allocations: [{ ...allocation(), sessionPrivateKey: SESSION_PRIVATE_KEY }],
+    await expect(reporter.commitIntent(child)).rejects.toThrow(/timed out/i);
+  });
+
+  // Defect caught: lifecycle delivery lacked an authenticated, acknowledgement-validated reporter method.
+  it('posts one lifecycle request and validates the acknowledged sequence', async () => {
+    const request = {
+      identity,
+      expectedSequence: 0,
+      lifecycle: { sequence: 1, status: 'submitted', evidence: { executionStatus: 'accepted' }, observedAt: 2_000_000_000_100 },
     };
-
-    await reporter.report(unsafe, {
-      bindingId: 'binding-42',
-      bindingHash: 'binding-hash-42',
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ acknowledged: true, identity, sequence: 1, schemaVersion: 1 }),
+    }));
+    const reporter = createAgentIndexReporter({
+      endpoint: 'https://index.example/api/agent-index', secret: SECRET, schemaVersion: 1, fetchImpl,
     });
-
-    expect(JSON.stringify(fetchImpl.mock.calls)).not.toContain(SESSION_PRIVATE_KEY);
-    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain(SESSION_PRIVATE_KEY);
+    await expect(reporter.reportLifecycle(request)).resolves.toMatchObject({ sequence: 1 });
+    expect(fetchImpl.mock.calls[0][0]).toBe(
+      'https://index.example/api/agent-index?action=base-child-lifecycle'
+    );
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual(request);
   });
 });

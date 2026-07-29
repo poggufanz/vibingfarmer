@@ -12,6 +12,7 @@ import { createFarmFlow } from './flows/farm.mjs';
 import { createRelayerRouter } from './httpRouter.mjs';
 import { createMandateStoreV2 } from './mandateStore.mjs';
 import { createSqliteStores } from './sqliteStores.mjs';
+import { startAssociationOutboxWorker } from './associationOutbox.mjs';
 import {
   BASE_SEPOLIA_POOL_TARGETS,
   createAgentIndexReporter,
@@ -78,7 +79,12 @@ export function createRelayerServer(config) {
   const agentIndexReporter = createAgentIndexReporter({
     endpoint: runtimeConfig.reporterEndpoint,
     secret: runtimeConfig.reporterSecret,
+    schemaVersion: runtimeConfig.reporterSchema,
   });
+  const associationOutbox = sqlite?.associationOutbox ?? null;
+  const associationWorker = associationOutbox
+    ? startAssociationOutboxWorker({ outbox: associationOutbox, reporter: agentIndexReporter })
+    : null;
 
   // Per-request: each /farm call brings its own ephemeral session key, so the orchestrator (and
   // the kernel client it reconstructs) is built fresh per key rather than shared/cached.
@@ -122,6 +128,7 @@ export function createRelayerServer(config) {
       networkId: 'stellar-testnet',
       poolTargets: BASE_SEPOLIA_POOL_TARGETS,
       agentIndexReporter,
+      associationOutbox,
       publicRuntime: runtimeConfig.publicRuntime,
     }),
     runtimeConfig.proxyKey,
@@ -134,6 +141,7 @@ export function createRelayerServer(config) {
     const sweep = setInterval(() => mandatesV2.sweep(), MANDATE_SWEEP_MS);
     sweep.unref?.(); // never keep the process alive just for the sweep
     server.on('close', () => clearInterval(sweep));
+    server.on('close', () => associationWorker?.stop());
     return server;
   }
 

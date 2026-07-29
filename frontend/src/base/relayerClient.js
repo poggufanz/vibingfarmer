@@ -176,17 +176,15 @@ function toWireAllocations(allocations, runId) {
 }
 
 /**
- * Dispatch the farm flow: relay the Stellar burn (forward CCTP) then fan out session-key
- * deposits across `allocations`. Returns immediately with a job id to poll. `burnTxHash` may be
- * null — a job can be queued/accepted before a burn hash is observed; a later attach/callback
- * fills it in (relayer side, Task 7's job). stellarOwner/kernelAddress bind the dispatch to the
+ * Durably commit the immutable Base child intent before the browser is allowed to burn.
+ * Returns only after the relayer has validated D1's authenticated 201 acknowledgement.
+ * stellarOwner/kernelAddress bind the dispatch to the
  * owner it was mandated for; bridgeAgent/runId/grantTxHash default to null when the caller
  * doesn't have them yet (both are threaded through by baseLeg.js/crossChainFarm.js when known).
- * @param {{ burnTxHash: string|null, sourceDomain: number, serializedApproval: string, stellarOwner?: string, kernelAddress?: string, bridgeAgent?: string, runId?: string, grantTxHash?: string, allocations: Array<object>, baseUrl?: string, deps?: { fetchImpl?: Function } }} p
- * @returns {Promise<{ jobId: string }>}
+ * @param {{ sourceDomain: number, serializedApproval: string, stellarOwner?: string, kernelAddress?: string, bridgeAgent?: string, runId?: string, grantTxHash?: string, allocations: Array<object>, baseUrl?: string, deps?: { fetchImpl?: Function } }} p
+ * @returns {Promise<{ jobId: string, acknowledged: true, schemaVersion: 1 }>}
  */
 export async function postFarm({
-  burnTxHash = null,
   sourceDomain,
   serializedApproval,
   allocations,
@@ -203,7 +201,6 @@ export async function postFarm({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      burnTxHash,
       sourceDomain,
       serializedApproval,
       stellarOwner,
@@ -215,7 +212,18 @@ export async function postFarm({
     }),
   })
   if (!res.ok) throw new Error(`farm dispatch failed (${res.status})`)
-  return res.json()
+  if (res.status !== 201) throw new Error(`farm intent expected 201, got ${res.status}`)
+  let acknowledgement
+  try {
+    acknowledgement = await res.json()
+  } catch (error) {
+    throw new Error('farm intent acknowledgement is malformed', { cause: error })
+  }
+  if (acknowledgement?.acknowledged !== true || typeof acknowledgement?.jobId !== 'string') {
+    throw new Error('farm intent acknowledgement is malformed')
+  }
+  if (acknowledgement.schemaVersion !== 1) throw new Error('farm intent schema mismatch')
+  return acknowledgement
 }
 
 /**

@@ -29,6 +29,7 @@ function buildValidEnv(overrides = {}) {
     AGENT_INDEX_REPORTER_SCHEMA: '1',
     AGENT_INDEX_REPORTER_SECRET: 'reporter-secret',
     RELAYER_PROXY_KEY: 'proxy-secret',
+    RELAYER_DB_PATH: './.relayer-test.db',
     ...overrides,
   };
 }
@@ -95,6 +96,7 @@ describe('loadConfig', () => {
       'AGENT_INDEX_REPORTER_SCHEMA',
       'AGENT_INDEX_REPORTER_SECRET',
       'RELAYER_PROXY_KEY',
+      'RELAYER_DB_PATH',
     ];
     for (const key of required) {
       const env = buildValidEnv({
