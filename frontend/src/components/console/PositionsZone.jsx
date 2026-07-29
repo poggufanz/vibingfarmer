@@ -11,6 +11,7 @@ export default function PositionsZone({
   lastUpdated = null,
   nowMs,
   userAddress,
+  activeAccount,
   scopes = [],
   withdrawEnabled = true,
   onWithdrawSuccess,
@@ -95,6 +96,7 @@ export default function PositionsZone({
           balance={withdrawing.balance}
           unclaimedRewards={withdrawing.unclaimedRewards}
           userAddress={userAddress}
+          activeAccount={activeAccount}
           agentAddresses={withdrawing.agentAddresses}
           onClose={() => setWithdrawing(null)}
           onSuccess={onWithdrawSuccess || (() => {})}

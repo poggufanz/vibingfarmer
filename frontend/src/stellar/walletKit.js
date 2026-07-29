@@ -14,7 +14,13 @@ function publish() {
 }
 
 function connectorIdFor(kit, fallback = 'stellar-wallet-kit') {
-  return kit?.productId || kit?.id || kit?.name || fallback
+  const selected = kit?.getSelectedModule?.() || kit?.selectedModule || kit?.activeModule
+  return selected?.productId || selected?.id || kit?.productId || kit?.id || kit?.name || fallback
+}
+
+async function networkFor(kit) {
+  const network = await kit?.getNetwork?.()
+  return network?.networkPassphrase || network?.passphrase || NETWORK_PASSPHRASE
 }
 
 function accountChanged() {
@@ -23,11 +29,11 @@ function accountChanged() {
   return error
 }
 
-function installAccount({ address, kit, connectorId }) {
+function installAccount({ address, kit, connectorId, networkPassphrase = NETWORK_PASSPHRASE }) {
   epoch += 1
   activeAccount = classifyActiveAccount({
     address,
-    networkPassphrase: NETWORK_PASSPHRASE,
+    networkPassphrase,
     connectorId: connectorId || connectorIdFor(kit),
     epoch,
   })
@@ -76,7 +82,8 @@ export function onActiveAccountChange(listener) {
 export async function connectActiveAccount({ connectorId } = {}) {
   const kit = await loadKit()
   const { address } = await kit.authModal()
-  const account = installAccount({ address, kit, connectorId })
+  const networkPassphrase = await networkFor(kit)
+  const account = installAccount({ address, kit, connectorId, networkPassphrase })
   subscribeActiveAccountChanges(kit, { connectorId })
   return account
 }
@@ -130,19 +137,26 @@ export async function signReviewedTransaction({ xdr, activeAccount: captured, re
     throw new Error('A C account is a Soroban authorizer and cannot sign a classic transaction.')
   const connector = kit || (await loadKit())
   const currentAddress = (await connector.getAddress()).address
-  if (currentAddress !== captured?.address) throw accountChanged()
+  const currentNetwork = await networkFor(connector)
+  if (currentAddress !== captured?.address || currentNetwork !== captured?.networkPassphrase)
+    throw accountChanged()
   if (activeAccount) assertCurrentActiveAccount({ captured, current: activeAccount })
   const signed = await connector.signTransaction(xdr, {
     networkPassphrase: captured.networkPassphrase,
     address: captured.address,
   })
   if (
-    signed?.signerAddress !== captured.address ||
-    signed?.networkPassphrase !== captured.networkPassphrase
+    (signed?.signerAddress != null && signed.signerAddress !== captured.address) ||
+    (signed?.networkPassphrase != null && signed.networkPassphrase !== captured.networkPassphrase)
   )
     throw accountChanged()
   const afterAddress = (await connector.getAddress()).address
-  if (afterAddress !== captured.address || (activeAccount && activeAccount.epoch !== captured.epoch))
+  const afterNetwork = await networkFor(connector)
+  if (
+    afterAddress !== captured.address ||
+    afterNetwork !== captured.networkPassphrase ||
+    (activeAccount && activeAccount.epoch !== captured.epoch)
+  )
     throw accountChanged()
   const tx = TransactionBuilder.fromXDR(signed.signedTxXdr, captured.networkPassphrase)
   if (hashText(tx.hash()) !== hashText(reviewedTxHash)) throw accountChanged()

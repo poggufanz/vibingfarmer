@@ -300,7 +300,6 @@ export async function buildAgentPull({
   router = SOROBAN_FUNDING_ROUTER_ADDRESS,
   server,
 }) {
-  assertActiveOwner({ owner, activeAccount })
   const s = server || (await rpcServer())
   const { tx } = await buildInvokeTx({
     source: relayer,

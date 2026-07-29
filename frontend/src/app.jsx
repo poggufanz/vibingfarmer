@@ -1672,7 +1672,12 @@ const App = () => {
       return
     }
     try {
-      const results = await withdrawAllFromVault(alert.vaultAddress, realAddress, agents)
+      const captured = activeAccount
+      assertActiveAccount(captured)
+      const results = await withdrawAllFromVault(alert.vaultAddress, realAddress, agents, undefined, {
+        activeAccount: captured,
+      })
+      assertActiveAccount(captured)
       const ok = results.filter((r) => r.ok)
       const failed = results.filter((r) => !r.ok)
       if (ok.length) {
@@ -2079,10 +2084,16 @@ const App = () => {
   function installActiveWalletAccount(next) {
     const previous = activeAccountRef.current
     if (previous && previous !== next) {
+      const changed = Object.assign(new Error('The active wallet account changed.'), {
+        code: 'ACTIVE_ACCOUNT_CHANGED',
+      })
+      pendingConfirmRef.current?.reject(changed)
+      pendingConfirmRef.current = null
       dispatchFlow({ type: 'STRATEGY_RESET' })
       setStrategy(null)
       setRunReceipt(null)
       setExecMap({})
+      setRunEvents([])
       setBaseView({ connected: false, healthy: null, mandateView: null, action: null })
       setMoneyDiscovery(null)
       setMoneyRead(null)

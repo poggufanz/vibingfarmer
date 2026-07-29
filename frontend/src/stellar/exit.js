@@ -12,6 +12,7 @@
 // the exit router is not configured — N agents, N popups, which is what this file used to be.
 import { xdr } from '@stellar/stellar-sdk'
 import { assertActiveOwner } from './activeAccount.js'
+import { signReviewedTransaction } from './walletKit.js'
 import { buildInvokeTx } from './client.js'
 import { signTxXdr } from './walletKit.js'
 import { getRelayerAddress } from './relay.js'
@@ -39,9 +40,15 @@ const isBudgetError = (e) => /Budget|ExceededLimit|ResourceLimitExceeded/i.test(
 
 /** G signs the envelope directly (via the injectable `sign`, default signTxXdr — the wallet-kit
  *  popup); a C owner signs a Soroban auth entry sourced by the relayer. */
-function ownerSign({ built, model, server, kit, sign = signTxXdr }) {
+function ownerSign({ built, model, server, kit, sign = signTxXdr, activeAccount }) {
   return model.kind === 'G'
-    ? sign(built.xdr)
+    ? activeAccount?.version === 1
+      ? signReviewedTransaction({
+          xdr: built.xdr,
+          activeAccount,
+          reviewedTxHash: built.tx.hash().toString('hex'),
+        })
+      : sign(built.xdr)
     : signOwnerAuthEntry({ tx: built.tx, contractId: model.contractId, server, kit })
 }
 
@@ -50,7 +57,7 @@ function ownerSign({ built, model, server, kit, sign = signTxXdr }) {
  * position in the caller's full list). Halves and retries on a budget overrun: simulation raises
  * that inside buildInvokeTx, BEFORE any signature, so shrinking costs the user nothing.
  */
-async function sweepChunk({ agents, to, router, server, model, kit, sign, out }) {
+async function sweepChunk({ agents, to, router, server, model, kit, sign, out, activeAccount }) {
   try {
     const result = await submitOwnerAuthorizedTx({
       model,
@@ -66,7 +73,7 @@ async function sweepChunk({ agents, to, router, server, model, kit, sign, out })
           ],
           server,
         }),
-      sign: (built) => ownerSign({ built, model, server, kit, sign }),
+      sign: (built) => ownerSign({ built, model, server, kit, sign, activeAccount }),
       server,
       label: 'exit sweep',
       classicSubmission: 'direct',
@@ -190,6 +197,7 @@ export async function sweepAgents({
       model,
       kit,
       sign,
+      activeAccount,
       out,
     })
   }
@@ -227,7 +235,7 @@ export async function ownerWithdraw({
         args: [{ addr: to || owner }],
         server,
       }),
-    sign: (built) => ownerSign({ built, model, server, kit }),
+    sign: (built) => ownerSign({ built, model, server, kit, activeAccount }),
     server,
     label: 'exit',
     classicSubmission: 'direct',
