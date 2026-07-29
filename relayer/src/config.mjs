@@ -1,4 +1,4 @@
-import { rpc, Keypair } from '@stellar/stellar-sdk';
+import { rpc, Keypair, StrKey } from '@stellar/stellar-sdk';
 import { createPublicClient, createWalletClient, http } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { baseSepolia } from 'viem/chains';
@@ -42,6 +42,13 @@ function evmAddress(value, key) {
   return value;
 }
 
+function stellarAccount(value, key) {
+  if (!StrKey.isValidEd25519PublicKey(String(value || ''))) {
+    throw new Error(`env ${key} must be a Stellar G address`);
+  }
+  return value;
+}
+
 function immutableValue(env, key, canonical, { production, validate = (value) => value, equal = (a, b) => a === b }) {
   const configured = optional(env, key);
   if (!configured) return canonical;
@@ -65,7 +72,10 @@ export function loadConfig(env = process.env) {
     equal: (a, b) => a.replace(/\/$/, '') === b.replace(/\/$/, ''),
   });
   const passphrase = immutableValue(env, 'STELLAR_NETWORK_PASSPHRASE', facts.stellar.passphrase, { production });
-  const relayerStellarPublic = immutableValue(env, 'RELAYER_STELLAR_PUBLIC', facts.stellar.relayerPublic, { production });
+  const relayerStellarPublic = immutableValue(env, 'RELAYER_STELLAR_PUBLIC', facts.stellar.relayerPublic, {
+    production,
+    validate: stellarAccount,
+  });
   const yieldRouterAddress = immutableValue(env, 'YIELD_ROUTER_ADDRESS', facts.base.yieldRouterAddress, {
     production,
     validate: evmAddress,
@@ -96,6 +106,9 @@ export function loadConfig(env = process.env) {
 
   const server = new rpc.Server(sorobanRpcUrl);
   const kp = Keypair.fromSecret(relayerStellarSecret);
+  if (kp.publicKey() !== relayerStellarPublic) {
+    throw new Error('env RELAYER_STELLAR_SECRET does not match RELAYER_STELLAR_PUBLIC');
+  }
   const account = privateKeyToAccount(relayerBasePrivkey.startsWith('0x') ? relayerBasePrivkey : `0x${relayerBasePrivkey}`);
   const publicClient = createPublicClient({ chain: baseSepolia, transport: http(baseRpcUrl) });
   const walletClient = createWalletClient({ account, chain: baseSepolia, transport: http(baseRpcUrl) });

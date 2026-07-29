@@ -225,6 +225,17 @@ function stateSection({ submissionState, note, needsPassword, origin, detail }) 
 function buildConsequence(summary) {
   const grant = summary?.grant ?? null
 
+  if (summary?.allFunds === true) {
+    return {
+      kind: 'consequence',
+      statements: [
+        'This approval withdraws all funds held by the selected agent scope to the displayed recipient.',
+      ],
+      ceilingRows: [],
+      warning: false,
+    }
+  }
+
   if (grant?.kind === 'funding-router-grant') {
     const statements = [GRANT_TRUTHS[0]]
     if (grant.budgets.length > 1) statements.push(GRANT_MIXED_TOKEN_TRUTH)

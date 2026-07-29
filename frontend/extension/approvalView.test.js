@@ -44,6 +44,7 @@ describe('buildApprovalView — exact post-simulation consent facts', () => {
       bodyDigest: 'a'.repeat(64),
       authDigest: 'b'.repeat(64),
       consentDigest: 'c'.repeat(64),
+      allFunds: true,
     }
     const view = buildApprovalView(
       { method: 'signTransaction', params: { xdr: 'POST_SIM_XDR' }, origin: ORIGIN },
@@ -60,6 +61,9 @@ describe('buildApprovalView — exact post-simulation consent facts', () => {
     expect(text).toContain(`Authorization digest:${facts.authDigest}`)
     expect(view.consentDigest).toBe(facts.consentDigest)
     expect(view.raw).toBe('POST_SIM_XDR')
+    expect(view.sections.find((section) => section.kind === 'consequence').statements).toContain(
+      'This approval withdraws all funds held by the selected agent scope to the displayed recipient.'
+    )
   })
 })
 

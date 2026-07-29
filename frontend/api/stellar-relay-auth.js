@@ -2,6 +2,7 @@ import {
   Address,
   FeeBumpTransaction,
   Keypair,
+  StrKey,
   TransactionBuilder,
   scValToNative,
 } from '@stellar/stellar-sdk'
@@ -50,19 +51,108 @@ function sameInvocation(a, b) {
   )
 }
 
-function assertFullSignedSource(transaction, owner) {
-  if (!owner.startsWith('G')) fail('a contract owner can never be a classic transaction source')
-  if (transaction.source !== owner) fail('source-account authorization must be sourced by owner')
-  let keypair
-  try {
-    keypair = Keypair.fromPublicKey(owner)
-  } catch {
-    fail('stored owner is not a valid classic account')
+function byte(value, label) {
+  if (!Number.isSafeInteger(value) || value < 0 || value > 255) fail(`${label} is malformed`)
+  return value
+}
+
+function normalizedAuthorization(facts, source) {
+  if (!facts || typeof facts !== 'object') fail('current account authorization is unavailable')
+  if (facts.account !== source) fail('current account authorization belongs to another account')
+  const masterWeight = byte(facts.masterWeight, 'master signer weight')
+  const mediumThreshold = byte(facts.mediumThreshold, 'medium threshold')
+  if (!Array.isArray(facts.signers)) fail('current signer set is malformed')
+  const signers = [{ key: source, weight: masterWeight }]
+  const seen = new Set([source])
+  for (const signer of facts.signers) {
+    if (!signer || !StrKey.isValidEd25519PublicKey(signer.key)) {
+      fail('current signer set contains a malformed ed25519 signer')
+    }
+    if (seen.has(signer.key)) fail('current signer set contains a duplicate signer')
+    seen.add(signer.key)
+    signers.push({ key: signer.key, weight: byte(signer.weight, 'signer weight') })
   }
-  const signed = (transaction.signatures || []).some((decorated) =>
-    keypair.verify(transaction.hash(), decorated.signature())
-  )
-  if (!signed) fail('owner transaction signature is missing or for the wrong network/body')
+  return { masterWeight, mediumThreshold, signers }
+}
+
+/** Decode the current ledger AccountEntry into the narrow immutable facts used by the gate. */
+export function accountAuthorizationFromEntry(entry) {
+  try {
+    const account = StrKey.encodeEd25519PublicKey(entry.accountId().ed25519())
+    const thresholds = Buffer.from(entry.thresholds())
+    if (thresholds.length !== 4) fail('current account thresholds are malformed')
+    const signers = []
+    for (const signer of entry.signers()) {
+      const key = signer.key()
+      if (key.switch().name !== 'signerKeyTypeEd25519') continue
+      signers.push({
+        key: StrKey.encodeEd25519PublicKey(key.ed25519()),
+        weight: signer.weight(),
+      })
+    }
+    return Object.freeze({
+      account,
+      masterWeight: thresholds[0],
+      mediumThreshold: thresholds[2],
+      signers: Object.freeze(signers.map((signer) => Object.freeze(signer))),
+    })
+  } catch (error) {
+    if (error instanceof OwnerWithdrawAuthorizationError) throw error
+    fail('current account authorization entry is malformed')
+  }
+}
+
+/**
+ * Authenticate the inner transaction source before simulation or sponsorship. Relayer-sourced
+ * inners are signed by the relay itself. Every other accepted source is a current classic
+ * account whose valid, correctly hinted envelope signatures reach its medium threshold.
+ */
+export async function assertTransactionSourceAuthorization(
+  transaction,
+  { expectedRelayer, readAccountAuthorization } = {}
+) {
+  const source = transaction?.source
+  if (!StrKey.isValidEd25519PublicKey(String(source || ''))) {
+    fail('inner transaction source is not a valid classic account')
+  }
+  if ((transaction.operations || []).some((operation) => operation.source)) {
+    fail('operation source overrides are forbidden')
+  }
+  if (source === expectedRelayer) return Object.freeze({ kind: 'relayer', source })
+  if (typeof readAccountAuthorization !== 'function') {
+    fail('current-account authorization reader is unavailable')
+  }
+  let current
+  try {
+    current = await readAccountAuthorization(source)
+  } catch {
+    fail('current account authorization could not be read')
+  }
+  const { mediumThreshold, signers } = normalizedAuthorization(current, source)
+  const candidates = signers.filter((signer) => signer.weight > 0)
+  const signatures = transaction.signatures || []
+  if (signatures.length === 0) fail('classic source transaction signature is missing')
+  const signedKeys = new Set()
+  let weight = 0
+  for (const decorated of signatures) {
+    const hint = Buffer.from(decorated.hint?.() || [])
+    const signature = Buffer.from(decorated.signature?.() || [])
+    if (hint.length !== 4 || signature.length !== 64) fail('decorated signature is malformed')
+    const hinted = candidates.filter((candidate) => {
+      const raw = StrKey.decodeEd25519PublicKey(candidate.key)
+      return raw.subarray(raw.length - 4).equals(hint)
+    })
+    const verified = hinted.filter((candidate) =>
+      Keypair.fromPublicKey(candidate.key).verify(transaction.hash(), signature)
+    )
+    if (verified.length !== 1) fail('decorated signature hint/signature is invalid or stale')
+    const signer = verified[0]
+    if (signedKeys.has(signer.key)) fail('duplicate envelope signer does not add weight')
+    signedKeys.add(signer.key)
+    weight += signer.weight
+  }
+  if (weight < mediumThreshold) fail('classic source signatures do not meet medium threshold')
+  return Object.freeze({ kind: 'classic', source, weight, mediumThreshold })
 }
 
 function assertAddressCredentials(credentials, owner, transaction, expectedRelayer, currentLedger) {
@@ -108,6 +198,8 @@ export async function assertOwnerWithdrawAuthorization({
   wasmHash,
   currentLedger,
   readScope,
+  readAccountAuthorization,
+  sourceAuthorization,
 }) {
   if (!networkPassphrase || networkPassphrase !== expectedNetworkPassphrase) {
     fail('owner withdraw network does not match the configured network')
@@ -147,6 +239,18 @@ export async function assertOwnerWithdrawAuthorization({
     fail('owner withdraw auth root does not exactly match the operation')
   }
 
+  const credentials = entry.credentials()
+  let sourceProof = sourceAuthorization
+  if (credentials.switch().name === 'sorobanCredentialsSourceAccount') {
+    sourceProof ??= await assertTransactionSourceAuthorization(parsed, {
+      expectedRelayer,
+      readAccountAuthorization,
+    })
+    if (sourceProof.kind !== 'classic') {
+      fail('source-account credentials require a fully signed owner source')
+    }
+  }
+
   const scope = await readScope(expectedAgent, capability.scopeOfOwnerAbi)
   const stored = scopeOwnerFacts(scope, capability)
   if (stored.owner !== operationCall.args[0])
@@ -155,10 +259,11 @@ export async function assertOwnerWithdrawAuthorization({
   if (stored.vault !== expectedVault) fail('agent scope vault does not match the configured vault')
   if (scope.revoked === true) fail('agent scope is revoked')
 
-  const credentials = entry.credentials()
   switch (credentials.switch().name) {
     case 'sorobanCredentialsSourceAccount':
-      assertFullSignedSource(parsed, stored.owner)
+      if (parsed.source !== stored.owner || sourceProof?.source !== stored.owner) {
+        fail('source-account authorization must be sourced by owner')
+      }
       break
     case 'sorobanCredentialsAddress':
       assertAddressCredentials(credentials, stored.owner, parsed, expectedRelayer, currentLedger)

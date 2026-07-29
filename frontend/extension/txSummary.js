@@ -52,6 +52,64 @@ function authorizationDigests(op) {
   return (op?.auth ?? []).map((entry) => hash(entry.toXDR()).toString('hex'))
 }
 
+function sameScVals(left, right) {
+  return (
+    left.length === right.length &&
+    left.every((value, index) => value.toXDR().equals(right[index].toXDR()))
+  )
+}
+
+function verifiedOperationAuthorizer(op, invocation, txSource) {
+  const entries = op?.auth ?? []
+  if (entries.length !== 1) return null
+  const entry = entries[0]
+  const root = entry.rootInvocation()
+  const fn = root.function()
+  if (fn.switch().name !== 'sorobanAuthorizedFunctionTypeContractFn') return null
+  const rootFn = fn.contractFn()
+  if (
+    !rootFn.contractAddress().toXDR().equals(invocation.contractAddress().toXDR()) ||
+    rootFn.functionName().toString() !== invocation.functionName().toString() ||
+    !sameScVals(rootFn.args(), invocation.args())
+  ) {
+    return null
+  }
+  const credentials = entry.credentials()
+  if (credentials.switch().name === 'sorobanCredentialsSourceAccount') return txSource || null
+  if (credentials.switch().name === 'sorobanCredentialsAddress') {
+    return Address.fromScAddress(credentials.address().address()).toString()
+  }
+  return null
+}
+
+function consentOwnership(invocation, authorizer) {
+  const fn = invocation.functionName().toString()
+  const args = invocation.args().map((arg) => scValToNative(arg))
+  if (fn === 'owner_withdraw') {
+    const recipient = args[0]
+    return {
+      owner: authorizer && recipient === authorizer ? authorizer : null,
+      token: SOROBAN_TOKEN_ADDRESS,
+      recipient,
+      allFunds: true,
+    }
+  }
+  if (fn === 'sweep') {
+    const owner = args[0]
+    const recipient = args[2]
+    return {
+      owner: authorizer && owner === authorizer && recipient === owner ? authorizer : null,
+      token: SOROBAN_TOKEN_ADDRESS,
+      recipient,
+      allFunds: true,
+    }
+  }
+  if (fn === 'grant') {
+    return { owner: authorizer && args[0] === authorizer ? authorizer : null }
+  }
+  return { owner: authorizer }
+}
+
 function summarizeInvokeArgs(inv, exact = {}) {
   const contract = Address.fromScAddress(inv.contractAddress()).toString()
   const fn = inv.functionName().toString()
@@ -69,8 +127,12 @@ function summarizeInvokeArgs(inv, exact = {}) {
     fn,
     args: nativeArgs.map((a) => formatArg(a)),
     grant: grant.kind === 'unknown' ? null : grant,
-    owner: exact.owner ?? (fn === 'grant' ? nativeArgs[0] : null),
-    token: exact.token ?? (fn === 'owner_withdraw' ? SOROBAN_TOKEN_ADDRESS : null),
+    owner: Object.hasOwn(exact, 'owner') ? exact.owner : fn === 'grant' ? nativeArgs[0] : null,
+    token: Object.hasOwn(exact, 'token')
+      ? exact.token
+      : fn === 'owner_withdraw' || fn === 'sweep'
+        ? SOROBAN_TOKEN_ADDRESS
+        : null,
     recipient:
       exact.recipient ??
       (fn === 'owner_withdraw' ? nativeArgs[0] : fn === 'sweep' ? nativeArgs[2] : null),
@@ -78,6 +140,7 @@ function summarizeInvokeArgs(inv, exact = {}) {
     authDigest: exact.authDigest ?? null,
     authorizationDigests: exact.authorizationDigests ?? [],
     consentDigest: exact.consentDigest ?? null,
+    allFunds: exact.allFunds ?? (fn === 'owner_withdraw' || fn === 'sweep'),
   }
 }
 
@@ -102,11 +165,13 @@ export function summarizeTransaction(xdrB64, passphrase = NETWORK_PASSPHRASE) {
           : authDigests.length === 1
             ? authDigests[0]
             : digestParts(authDigests)
-      const owner = tx.source || null
+      const invocation = op.func.invokeContract()
+      const authorizer = verifiedOperationAuthorizer(op, invocation, tx.source)
+      const ownership = consentOwnership(invocation, authorizer)
       return {
-        ...summarizeInvokeArgs(op.func.invokeContract(), {
+        ...summarizeInvokeArgs(invocation, {
           networkPassphrase: passphrase,
-          owner,
+          ...ownership,
           bodyDigest,
           authDigest,
           authorizationDigests: authDigests,
@@ -132,6 +197,7 @@ export function summarizeTransaction(xdrB64, passphrase = NETWORK_PASSPHRASE) {
       authDigest: null,
       authorizationDigests: [],
       consentDigest: digestParts([passphrase, tx.hash().toString('hex')]),
+      allFunds: false,
     }
   } catch {
     return null
@@ -152,9 +218,10 @@ export function summarizeAuthEntry(authEntryB64) {
       signer = Address.fromScAddress(entry.credentials().address().address()).toString()
     }
     const authDigest = hash(entry.toXDR()).toString('hex')
+    const ownership = consentOwnership(fn.contractFn(), signer)
     return {
       ...summarizeInvokeArgs(fn.contractFn(), {
-        owner: signer,
+        ...ownership,
         authDigest,
         authorizationDigests: [authDigest],
         consentDigest: authDigest,

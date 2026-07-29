@@ -9,7 +9,11 @@ import {
   TransactionBuilder,
   xdr,
 } from '@stellar/stellar-sdk'
-import { assertOwnerWithdrawAuthorization } from './stellar-relay-auth.js'
+import {
+  accountAuthorizationFromEntry,
+  assertOwnerWithdrawAuthorization,
+  assertTransactionSourceAuthorization,
+} from './stellar-relay-auth.js'
 import { AGENT_WASM_CAPABILITIES } from './agentCapabilities.js'
 
 const PASS = 'Test SDF Network ; September 2015'
@@ -135,6 +139,12 @@ function assertFixture(
     networkPassphrase = PASS,
     expectedNetworkPassphrase = PASS,
     readScope = vi.fn(async () => scope),
+    readAccountAuthorization = vi.fn(async () => ({
+      account: owner,
+      masterWeight: 1,
+      mediumThreshold: 1,
+      signers: [],
+    })),
   } = {}
 ) {
   return assertOwnerWithdrawAuthorization({
@@ -148,6 +158,7 @@ function assertFixture(
     wasmHash: hash,
     currentLedger: 100,
     readScope,
+    readAccountAuthorization,
   })
 }
 
@@ -157,12 +168,59 @@ describe('AGENT_WASM_CAPABILITIES', () => {
       generation: expect.any(String),
       scopeOfOwnerAbi: expect.any(String),
       allowedRelayOps: expect.arrayContaining(['owner_withdraw']),
+      provenance: {
+        sourceCommit: '5263074',
+        deploymentCommit: '1f84f1c',
+        scopeLayout: ['owner', 'target', 'token', 'kind'],
+        kindConstraint: 'deposit-only',
+      },
     })
     expect(AGENT_WASM_CAPABILITIES[LEGACY_HASH]).toMatchObject({
       scopeOfOwnerAbi: expect.any(String),
       allowedRelayOps: expect.arrayContaining(['owner_withdraw']),
+      provenance: {
+        sourceCommit: '1eeaee2',
+        deploymentCommit: '1eeaee2',
+        scopeLayout: ['owner', 'vault', 'token'],
+        kindConstraint: 'none',
+      },
     })
+    expect(Object.isFrozen(AGENT_WASM_CAPABILITIES[CURRENT_HASH].provenance)).toBe(true)
+    expect(Object.isFrozen(AGENT_WASM_CAPABILITIES[CURRENT_HASH].provenance.scopeLayout)).toBe(true)
     expect(AGENT_WASM_CAPABILITIES[UNPROVEN_LEGACY_HASH]).toBeUndefined()
+  })
+})
+
+describe('accountAuthorizationFromEntry', () => {
+  it('decodes current master/medium weights and ed25519 signers from a real AccountEntry', () => {
+    const signer = Keypair.random()
+    const entry = new xdr.AccountEntry({
+      accountId: xdr.PublicKey.publicKeyTypeEd25519(
+        StrKey.decodeEd25519PublicKey(OWNER_G.publicKey())
+      ),
+      balance: xdr.Int64.fromString('10000000'),
+      seqNum: xdr.Int64.fromString('12'),
+      numSubEntries: 1,
+      inflationDest: null,
+      flags: 0,
+      homeDomain: '',
+      thresholds: Buffer.from([2, 1, 3, 4]),
+      signers: [
+        new xdr.Signer({
+          key: xdr.SignerKey.signerKeyTypeEd25519(
+            StrKey.decodeEd25519PublicKey(signer.publicKey())
+          ),
+          weight: 2,
+        }),
+      ],
+      ext: new xdr.AccountEntryExt(0),
+    })
+    expect(accountAuthorizationFromEntry(entry)).toEqual({
+      account: OWNER_G.publicKey(),
+      masterWeight: 2,
+      mediumThreshold: 3,
+      signers: [{ key: signer.publicKey(), weight: 2 }],
+    })
   })
 })
 
@@ -171,6 +229,84 @@ describe('assertOwnerWithdrawAuthorization — real XDR/auth', () => {
     await expect(assertFixture(buildFixture())).resolves.toMatchObject({
       owner: OWNER_G.publicKey(),
     })
+  })
+
+  it('accepts current weighted multisig only when valid decorated signatures reach medium threshold', async () => {
+    const signer = Keypair.random()
+    const tx = TransactionBuilder.fromXDR(buildFixture(), PASS)
+    tx.sign(signer)
+    await expect(
+      assertFixture(tx.toXDR(), {
+        readAccountAuthorization: vi.fn(async () => ({
+          account: OWNER_G.publicKey(),
+          masterWeight: 1,
+          mediumThreshold: 2,
+          signers: [{ key: signer.publicKey(), weight: 1 }],
+        })),
+      })
+    ).resolves.toMatchObject({ owner: OWNER_G.publicKey() })
+  })
+
+  it.each([
+    [
+      'stale signer state',
+      () => ({ account: OWNER_G.publicKey(), masterWeight: 0, mediumThreshold: 1, signers: [] }),
+    ],
+    [
+      'insufficient weight',
+      () => ({ account: OWNER_G.publicKey(), masterWeight: 1, mediumThreshold: 2, signers: [] }),
+    ],
+    [
+      'malformed duplicate signer set',
+      () => ({
+        account: OWNER_G.publicKey(),
+        masterWeight: 1,
+        mediumThreshold: 1,
+        signers: [
+          { key: OWNER_G.publicKey(), weight: 1 },
+          { key: OWNER_G.publicKey(), weight: 1 },
+        ],
+      }),
+    ],
+  ])(
+    'rejects a cryptographic signature against %s before scope simulation',
+    async (_label, facts) => {
+      const readScope = vi.fn()
+      await expect(
+        assertFixture(buildFixture(), {
+          readScope,
+          readAccountAuthorization: vi.fn(async () => facts()),
+        })
+      ).rejects.toThrow(/source|signer|signature|threshold|authorization/i)
+      expect(readScope).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([
+    ['wrong hint', Buffer.alloc(4, 0), null],
+    ['invalid signature', null, Buffer.alloc(64, 0)],
+  ])(
+    'rejects a %s before scope simulation',
+    async (_label, replacementHint, replacementSignature) => {
+      const tx = TransactionBuilder.fromXDR(buildFixture(), PASS)
+      const original = tx.signatures[0]
+      tx.signatures[0] = new xdr.DecoratedSignature({
+        hint: replacementHint ?? original.hint(),
+        signature: replacementSignature ?? original.signature(),
+      })
+      const readScope = vi.fn()
+      await expect(assertFixture(tx.toXDR(), { readScope })).rejects.toThrow(/signature|hint/i)
+      expect(readScope).not.toHaveBeenCalled()
+    }
+  )
+
+  it('requires an injectable current-account authorization reader for a classic source', async () => {
+    const tx = TransactionBuilder.fromXDR(buildFixture(), PASS)
+    await expect(
+      assertTransactionSourceAuthorization(tx, {
+        expectedRelayer: RELAYER.publicKey(),
+      })
+    ).rejects.toThrow(/reader|authorization/i)
   })
 
   it('accepts a G owner auth entry on a relayer-sponsored transaction', async () => {

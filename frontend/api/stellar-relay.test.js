@@ -1,13 +1,18 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import * as realSdk from '@stellar/stellar-sdk'
 import {
   feeBumpAndSubmit,
+  loadStellarRelayConfig,
   RelayError,
+  STELLAR_RELAY_FACTS,
   _clearSeen,
   assertRelayableTransaction,
 } from './stellar-relay.js'
 
 const PASS = 'Test SDF Network ; September 2015'
 const SECRET = 'SABCD' // never parsed — Keypair.fromSecret is faked below
+const RELAYER_SOURCE = 'GBVJ34MT4GDKZJGILI6DRYGD75ZNUBJGGZIDUV7IPFNVVDWGE5GBLV3X'
+const OTHER_SOURCE = 'GCIOUP4UJAAFDBJNP5DY5CFJHBLEKGLHZ5E2AYRIIQ5VOZFVSTPRYHNS'
 
 const VAULT = 'CCTGGJVVY45DYDDXM3XBFEJ2OT2J2ZT6HIXZEQKXU7Z53TH3YSZJC3PF'
 const TOKEN = 'CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU'
@@ -18,6 +23,8 @@ const EXIT_ROUTER = 'CEXITROUTER'
 const MESSENGER = 'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP'
 const AGENT_HASH = 'd61ceaaaf5a3fd9fd25987eba0f843ccb79880f3eaa137e066b5f63ab9eaa2ba'
 const SAK_WASM = 'a12e8fa9621efd20315753bd4007d974390e31fbcb4a7ddc4dd0a0dec728bf2e'
+const REAL_AGENT = 'CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC'
+const CURRENT_AGENT_HASH = '1fdbe175ddeb6d237a178c3c117b4e6c168122eec7d94f06a4b27ee4026efbe1'
 
 // ── fake op/tx fixtures — mirror the shape TransactionBuilder.fromXDR hands back ──
 
@@ -88,7 +95,7 @@ function makeSdk({
   innerFee = '100000',
   innerHashHex = 'aa',
   alreadyBumped = false,
-  innerSource = undefined,
+  innerSource = RELAYER_SOURCE,
 } = {}) {
   const signSpy = vi.fn()
   const innerSignSpy = vi.fn()
@@ -107,9 +114,14 @@ function makeSdk({
     sdk: {
       TransactionBuilder: { fromXDR: vi.fn(() => inner), buildFeeBumpTransaction },
       FeeBumpTransaction: FakeFeeBump,
-      Keypair: { fromSecret: () => ({ publicKey: () => 'GREL' }) },
+      Keypair: { fromSecret: () => ({ publicKey: () => RELAYER_SOURCE }) },
       Address: sdkAddr.Address,
       scValToNative: nativeOf,
+      rpc: {
+        Api: {
+          isSimulationSuccess: (value) => Boolean(value && 'transactionData' in value),
+        },
+      },
     },
     signSpy,
     innerSignSpy,
@@ -121,7 +133,10 @@ function makeRpc({ sendStatus = 'PENDING', getStatuses = ['SUCCESS'] } = {}) {
   const queue = [...getStatuses]
   return {
     sendTransaction: vi.fn(async () => ({ status: sendStatus, hash: 'OUTERHASH' })),
-    simulateTransaction: vi.fn(async () => ({ result: { retval: {} } })),
+    simulateTransaction: vi.fn(async () => ({
+      transactionData: {},
+      result: { retval: {} },
+    })),
     getTransaction: vi.fn(async () => ({ status: queue.shift() ?? 'NOT_FOUND' })),
   }
 }
@@ -140,7 +155,7 @@ describe('feeBumpAndSubmit', () => {
       sdk,
       rpcServer: rpc,
     })
-    expect(out).toEqual({ hash: 'OUTERHASH', status: 'SUCCESS', relayer: 'GREL' })
+    expect(out).toEqual({ hash: 'OUTERHASH', status: 'SUCCESS', relayer: RELAYER_SOURCE })
     expect(buildFeeBumpTransaction).toHaveBeenCalledOnce()
     expect(signSpy).toHaveBeenCalledOnce()
     expect(rpc.sendTransaction).toHaveBeenCalledOnce()
@@ -149,7 +164,7 @@ describe('feeBumpAndSubmit', () => {
   it('signs the inner tx when the relayer is its source (agent-deposit path), then fee-bumps', async () => {
     const { sdk, innerSignSpy, signSpy, buildFeeBumpTransaction } = makeSdk({
       innerHashHex: '55',
-      innerSource: 'GREL', // inner source == relayer pubkey → relay must sign the inner envelope
+      innerSource: RELAYER_SOURCE,
     })
     const rpc = makeRpc({ getStatuses: ['SUCCESS'] })
     const out = await feeBumpAndSubmit({
@@ -169,7 +184,7 @@ describe('feeBumpAndSubmit', () => {
   it('enforces the signed inner transaction before constructing or sending the fee bump', async () => {
     const { sdk, innerSignSpy, buildFeeBumpTransaction, builtFeeBump } = makeSdk({
       innerHashHex: '57',
-      innerSource: 'GREL',
+      innerSource: RELAYER_SOURCE,
     })
     const rpc = makeRpc({ getStatuses: ['SUCCESS'] })
     const order = []
@@ -178,7 +193,7 @@ describe('feeBumpAndSubmit', () => {
       expect(innerSignSpy).toHaveBeenCalledOnce()
       expect(buildFeeBumpTransaction).not.toHaveBeenCalled()
       order.push('enforcing-simulation')
-      return { result: { retval: {} } }
+      return { transactionData: {}, result: { retval: {} } }
     })
     buildFeeBumpTransaction.mockImplementation(() => {
       order.push('build-fee-bump')
@@ -209,7 +224,7 @@ describe('feeBumpAndSubmit', () => {
   it('fails closed when enforcing simulation rejects the signed inner transaction', async () => {
     const { sdk, buildFeeBumpTransaction } = makeSdk({
       innerHashHex: '58',
-      innerSource: 'GREL',
+      innerSource: RELAYER_SOURCE,
     })
     const rpc = makeRpc()
     rpc.simulateTransaction.mockResolvedValue({ error: 'auth failed' })
@@ -228,18 +243,43 @@ describe('feeBumpAndSubmit', () => {
     expect(rpc.sendTransaction).not.toHaveBeenCalled()
   })
 
-  it('does NOT sign the inner tx when its source differs from the relayer (separate funded source)', async () => {
-    const { sdk, innerSignSpy } = makeSdk({ innerHashHex: '56', innerSource: 'GOTHER' })
+  it.each([
+    ['an empty object', {}],
+    ['success-shaped data without a result payload', { transactionData: {} }],
+    ['a malformed result payload', { transactionData: {}, result: {} }],
+  ])('fails closed on %s before constructing a fee bump', async (_label, simulation) => {
+    const { sdk, buildFeeBumpTransaction } = makeSdk({ innerHashHex: '59' })
+    const rpc = makeRpc()
+    rpc.simulateTransaction.mockResolvedValue(simulation)
+    await expect(
+      feeBumpAndSubmit({
+        xdr: 'INNERXDR',
+        secret: SECRET,
+        passphrase: PASS,
+        vaultAddr: VAULT,
+        sdk,
+        rpcServer: rpc,
+      })
+    ).rejects.toThrow(/simulation/i)
+    expect(buildFeeBumpTransaction).not.toHaveBeenCalled()
+    expect(rpc.sendTransaction).not.toHaveBeenCalled()
+  })
+
+  it('rejects an unproven non-relayer source before simulation or fee-bump construction', async () => {
+    const { sdk, innerSignSpy } = makeSdk({ innerHashHex: '56', innerSource: OTHER_SOURCE })
     const rpc = makeRpc({ getStatuses: ['SUCCESS'] })
-    await feeBumpAndSubmit({
-      xdr: 'INNERXDR',
-      secret: SECRET,
-      passphrase: PASS,
-      vaultAddr: VAULT,
-      sdk,
-      rpcServer: rpc,
-    })
-    expect(innerSignSpy).not.toHaveBeenCalled() // client already signed it; relay only fee-bumps
+    await expect(
+      feeBumpAndSubmit({
+        xdr: 'INNERXDR',
+        secret: SECRET,
+        passphrase: PASS,
+        vaultAddr: VAULT,
+        sdk,
+        rpcServer: rpc,
+      })
+    ).rejects.toThrow(/source|authorization|account/i)
+    expect(innerSignSpy).not.toHaveBeenCalled()
+    expect(rpc.simulateTransaction).not.toHaveBeenCalled()
   })
 
   it('rejects an already-fee-bumped inner tx (the relay must be the fee source)', async () => {
@@ -335,6 +375,212 @@ describe('feeBumpAndSubmit', () => {
       })
     ).rejects.toBeInstanceOf(RelayError)
     expect(rpc.sendTransaction).not.toHaveBeenCalled()
+  })
+})
+
+describe('loadStellarRelayConfig — canonical deployment facts', () => {
+  it('derives the relay network/contracts/RPC entirely from tracked deployment JSON', () => {
+    const config = loadStellarRelayConfig({ NODE_ENV: 'production' })
+    expect(config).toMatchObject(STELLAR_RELAY_FACTS)
+  })
+
+  it.each([
+    ['STELLAR_NETWORK_PASSPHRASE', 'wrong network'],
+    ['SOROBAN_RPC_URL', 'https://rpc.example'],
+    ['SOROBAN_VAULT_ADDRESS', TOKEN],
+    ['SOROBAN_TOKEN_ADDRESS', VAULT],
+    ['SOROBAN_ROUTER_ADDRESSES', STELLAR_RELAY_FACTS.exitRouterAddress],
+    ['SOROBAN_EXIT_ROUTER_ADDRESS', STELLAR_RELAY_FACTS.vaultAddress],
+  ])('rejects production drift for %s', (key, value) => {
+    expect(() => loadStellarRelayConfig({ NODE_ENV: 'production', [key]: value })).toThrow(
+      new RegExp(key)
+    )
+  })
+
+  it.each([
+    ['SOROBAN_RPC_URL', 'file:///tmp/rpc'],
+    ['SOROBAN_VAULT_ADDRESS', 'CNOTASTRKEY'],
+    ['SOROBAN_ROUTER_ADDRESSES', 'CNOTASTRKEY'],
+    ['SOROBAN_AGENT_WASM_HASHES', 'abcd'],
+    ['STELLAR_NETWORK_PASSPHRASE', ''],
+  ])('strictly rejects an invalid development override for %s', (key, value) => {
+    expect(() => loadStellarRelayConfig({ NODE_ENV: 'development', [key]: value })).toThrow(
+      new RegExp(key)
+    )
+  })
+})
+
+describe('fee relay — real signed XDR security path', () => {
+  const relayer = realSdk.Keypair.random()
+  const owner = realSdk.Keypair.random()
+
+  function exitAuthEntry({ ownerAddress, credentials }) {
+    return new realSdk.xdr.SorobanAuthorizationEntry({
+      credentials,
+      rootInvocation: new realSdk.xdr.SorobanAuthorizedInvocation({
+        function: realSdk.xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
+          new realSdk.xdr.InvokeContractArgs({
+            contractAddress: realSdk.Address.fromString(REAL_AGENT).toScAddress(),
+            functionName: 'owner_withdraw',
+            args: [realSdk.Address.fromString(ownerAddress).toScVal()],
+          })
+        ),
+        subInvocations: [],
+      }),
+    })
+  }
+
+  function realExitTx({ ownerAddress = owner.publicKey(), sponsored = false, sign = true } = {}) {
+    const credentials = sponsored
+      ? realSdk.xdr.SorobanCredentials.sorobanCredentialsAddress(
+          new realSdk.xdr.SorobanAddressCredentials({
+            address: realSdk.Address.fromString(ownerAddress).toScAddress(),
+            nonce: realSdk.xdr.Int64.fromString('9'),
+            signatureExpirationLedger: 500,
+            signature: realSdk.xdr.ScVal.scvBytes(Buffer.alloc(64, 7)),
+          })
+        )
+      : realSdk.xdr.SorobanCredentials.sorobanCredentialsSourceAccount()
+    const call = new realSdk.Contract(REAL_AGENT).call(
+      'owner_withdraw',
+      realSdk.Address.fromString(ownerAddress).toScVal()
+    )
+    const tx = new realSdk.TransactionBuilder(
+      new realSdk.Account(sponsored ? relayer.publicKey() : ownerAddress, '12'),
+      { fee: '100', networkPassphrase: PASS }
+    )
+      .addOperation(
+        realSdk.Operation.invokeHostFunction({
+          func: call.body().invokeHostFunctionOp().hostFunction(),
+          auth: [exitAuthEntry({ ownerAddress, credentials })],
+        })
+      )
+      .setTimeout(300)
+      .build()
+    if (sign && !sponsored) tx.sign(owner)
+    return tx
+  }
+
+  function realRpc(simulation = { transactionData: {}, result: { retval: {} } }) {
+    return {
+      getLatestLedger: vi.fn(async () => ({ sequence: 100 })),
+      simulateTransaction: vi.fn(async () => simulation),
+      sendTransaction: vi.fn(async () => ({ status: 'PENDING', hash: 'REALOUTER' })),
+      getTransaction: vi.fn(async () => ({ status: 'SUCCESS' })),
+    }
+  }
+
+  function submitReal(tx, overrides = {}) {
+    const rpcServer = overrides.rpcServer || realRpc()
+    const args = {
+      xdr: tx.toXDR(),
+      secret: relayer.secret(),
+      passphrase: PASS,
+      expectedNetworkPassphrase: PASS,
+      vaultAddr: VAULT,
+      tokenAddr: TOKEN,
+      agentWasmHashes: [CURRENT_AGENT_HASH],
+      getWasmHash: vi.fn(async () => CURRENT_AGENT_HASH),
+      readAgentScope: vi.fn(async () => ({
+        owner: overrides.ownerAddress || owner.publicKey(),
+        target: VAULT,
+        token: TOKEN,
+        kind: 0,
+        revoked: false,
+      })),
+      readAccountAuthorization: vi.fn(async (account) => ({
+        account,
+        masterWeight: 1,
+        mediumThreshold: overrides.mediumThreshold ?? 1,
+        signers: [],
+      })),
+      sdk: realSdk,
+      rpcServer,
+      pollIntervalMs: 0,
+      ...overrides,
+    }
+    delete args.ownerAddress
+    delete args.mediumThreshold
+    return { promise: feeBumpAndSubmit(args), rpcServer }
+  }
+
+  beforeEach(() => _clearSeen())
+
+  it('takes valid signed XDR through current auth, enforcing simulation, real fee bump, and submission', async () => {
+    const { promise, rpcServer } = submitReal(realExitTx())
+    await expect(promise).resolves.toMatchObject({
+      status: 'SUCCESS',
+      relayer: relayer.publicKey(),
+    })
+    expect(rpcServer.simulateTransaction).toHaveBeenCalledOnce()
+    const submitted = rpcServer.sendTransaction.mock.calls[0][0]
+    expect(submitted).toBeInstanceOf(realSdk.FeeBumpTransaction)
+  })
+
+  it.each([
+    ['missing signature', null],
+    [
+      'wrong hint',
+      (tx) => {
+        const signature = tx.signatures[0]
+        tx.signatures[0] = new realSdk.xdr.DecoratedSignature({
+          hint: Buffer.alloc(4, 0),
+          signature: signature.signature(),
+        })
+      },
+    ],
+    [
+      'invalid signature',
+      (tx) => {
+        const signature = tx.signatures[0]
+        tx.signatures[0] = new realSdk.xdr.DecoratedSignature({
+          hint: signature.hint(),
+          signature: Buffer.alloc(64, 0),
+        })
+      },
+    ],
+  ])('rejects %s before simulation', async (_label, mutate) => {
+    const tx = realExitTx({ sign: Boolean(mutate) })
+    mutate?.(tx)
+    const { promise, rpcServer } = submitReal(tx)
+    await expect(promise).rejects.toThrow(/signature|hint/i)
+    expect(rpcServer.simulateTransaction).not.toHaveBeenCalled()
+    expect(rpcServer.sendTransaction).not.toHaveBeenCalled()
+  })
+
+  it('rejects valid crypto with insufficient current signer weight before simulation', async () => {
+    const { promise, rpcServer } = submitReal(realExitTx(), { mediumThreshold: 2 })
+    await expect(promise).rejects.toThrow(/threshold/i)
+    expect(rpcServer.simulateTransaction).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['G', owner.publicKey()],
+    ['C', realSdk.StrKey.encodeContract(Buffer.alloc(32, 9))],
+  ])(
+    'accepts a sponsored %s address-authorized exit and signs the relayer inner source',
+    async (_kind, ownerAddress) => {
+      const tx = realExitTx({ ownerAddress, sponsored: true, sign: false })
+      const { promise, rpcServer } = submitReal(tx, { ownerAddress })
+      await expect(promise).resolves.toMatchObject({ status: 'SUCCESS' })
+      expect(rpcServer.sendTransaction).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('rejects an empty enforcing simulation response before fee-bump construction', async () => {
+    const rpcServer = realRpc({})
+    const { promise } = submitReal(realExitTx(), { rpcServer })
+    await expect(promise).rejects.toThrow(/simulation/i)
+    expect(rpcServer.sendTransaction).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['network', { expectedNetworkPassphrase: 'wrong network' }],
+    ['vault contract', { vaultAddr: TOKEN }],
+  ])('rejects canonical %s drift before sponsorship', async (_label, overrides) => {
+    const { promise, rpcServer } = submitReal(realExitTx(), overrides)
+    await expect(promise).rejects.toThrow(/network|vault|scope|allowlist|configured/i)
+    expect(rpcServer.sendTransaction).not.toHaveBeenCalled()
   })
 })
 

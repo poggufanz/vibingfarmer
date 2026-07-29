@@ -15,7 +15,10 @@ function buildValidEnv(overrides = {}) {
     SOROBAN_RPC_URL: STELLAR_RPC,
     STELLAR_NETWORK_PASSPHRASE: STELLAR_PASSPHRASE,
     RELAYER_STELLAR_SECRET: kp.secret(),
-    RELAYER_STELLAR_PUBLIC: STELLAR_RELAYER,
+    RELAYER_STELLAR_PUBLIC:
+      overrides.NODE_ENV === 'production' || overrides.NODE_ENV === 'staging'
+        ? STELLAR_RELAYER
+        : kp.publicKey(),
     BASE_SEPOLIA_RPC_URL: 'https://sepolia.base.org',
     RELAYER_BASE_PRIVKEY: '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d',
     ZERODEV_PROJECT_ID: 'proj-123',
@@ -67,11 +70,12 @@ describe('loadDeploymentFacts', () => {
 
 describe('loadConfig', () => {
   it('derives immutable addresses and network facts from deployment JSON', () => {
-    const config = loadConfig(buildValidEnv());
+    const env = buildValidEnv();
+    const config = loadConfig(env);
     expect(config.domains).toEqual({ stellar: 27, base: 6 });
     expect(config.base.yieldRouterAddress).toBe(YIELD_ROUTER);
     expect(config.stellar.passphrase).toBe(STELLAR_PASSPHRASE);
-    expect(config.stellar.sourcePub).toBe(STELLAR_RELAYER);
+    expect(config.stellar.sourcePub).toBe(env.RELAYER_STELLAR_PUBLIC);
     expect(config.publicOrigin).toBe('http://localhost:8788');
     expect(config.reporter).toEqual({
       url: 'http://localhost:5173/api/agent-index',
@@ -163,6 +167,15 @@ describe('loadConfig', () => {
     expect(() => loadConfig(buildValidEnv({ SOROBAN_RPC_URL: 'file:///tmp/rpc' }))).toThrow(
       /SOROBAN_RPC_URL/
     );
+    expect(() => loadConfig(buildValidEnv({ RELAYER_STELLAR_PUBLIC: 'not-a-g-address' }))).toThrow(
+      /RELAYER_STELLAR_PUBLIC/
+    );
+  });
+
+  it('rejects a relayer secret/public mismatch before claiming Stellar readiness', () => {
+    expect(() =>
+      loadConfig(buildValidEnv({ RELAYER_STELLAR_PUBLIC: Keypair.random().publicKey() }))
+    ).toThrow(/RELAYER_STELLAR_(SECRET|PUBLIC).*match|match.*RELAYER_STELLAR/i);
   });
 
   it('never serializes secrets and exposes only presence/readiness booleans and digests', () => {

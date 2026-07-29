@@ -4,6 +4,7 @@ import {
   Address,
   Contract,
   Keypair,
+  Operation,
   TransactionBuilder,
   nativeToScVal,
   xdr,
@@ -12,6 +13,7 @@ import {
   NETWORK_PASSPHRASE,
   SOROBAN_AUTOFARM_VAULT_ADDRESS,
   SOROBAN_DEMO_AGENT,
+  SOROBAN_EXIT_ROUTER_ADDRESS,
   SOROBAN_FUNDING_ROUTER_ADDRESS,
   SOROBAN_TOKEN_ADDRESS,
 } from '../src/stellar/config.js'
@@ -61,6 +63,60 @@ function buildAuthEntryXdr() {
   }).toXDR('base64')
 }
 
+function buildExitTx({
+  fn = 'owner_withdraw',
+  owner,
+  source = owner,
+  recipient = owner,
+  addressCredentials = false,
+  signWith = null,
+} = {}) {
+  const contract = fn === 'sweep' ? SOROBAN_EXIT_ROUTER_ADDRESS : SOROBAN_DEMO_AGENT
+  const args =
+    fn === 'sweep'
+      ? [
+          new Address(owner).toScVal(),
+          xdr.ScVal.scvVec([new Address(SOROBAN_DEMO_AGENT).toScVal()]),
+          new Address(recipient).toScVal(),
+        ]
+      : [new Address(recipient).toScVal()]
+  const invocation = new xdr.SorobanAuthorizedInvocation({
+    function: xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
+      new xdr.InvokeContractArgs({
+        contractAddress: new Address(contract).toScAddress(),
+        functionName: fn,
+        args,
+      })
+    ),
+    subInvocations: [],
+  })
+  const credentials = addressCredentials
+    ? xdr.SorobanCredentials.sorobanCredentialsAddress(
+        new xdr.SorobanAddressCredentials({
+          address: new Address(owner).toScAddress(),
+          nonce: xdr.Int64.fromString('7'),
+          signatureExpirationLedger: 500,
+          signature: xdr.ScVal.scvBytes(Buffer.alloc(64, 3)),
+        })
+      )
+    : xdr.SorobanCredentials.sorobanCredentialsSourceAccount()
+  const call = new Contract(contract).call(fn, ...args)
+  const tx = new TransactionBuilder(new Account(source, '0'), {
+    fee: '100',
+    networkPassphrase: NETWORK_PASSPHRASE,
+  })
+    .addOperation(
+      Operation.invokeHostFunction({
+        func: call.body().invokeHostFunctionOp().hostFunction(),
+        auth: [new xdr.SorobanAuthorizationEntry({ credentials, rootInvocation: invocation })],
+      })
+    )
+    .setTimeout(300)
+    .build()
+  if (signWith) tx.sign(signWith)
+  return tx.toXDR()
+}
+
 describe('txSummary', () => {
   it('decodes an invokeContract transaction into contract/fn/args', () => {
     const s = summarizeTransaction(buildDepositTxXdr())
@@ -83,30 +139,56 @@ describe('txSummary', () => {
   })
 
   it('binds consent to exact body/auth digests and full owner/network/function/token/recipient facts', () => {
-    const owner = Keypair.random().publicKey()
-    const tx = new TransactionBuilder(new Account(owner, '0'), {
-      fee: '100',
-      networkPassphrase: NETWORK_PASSPHRASE,
-    })
-      .addOperation(
-        new Contract(SOROBAN_DEMO_AGENT).call('owner_withdraw', new Address(owner).toScVal())
-      )
-      .setTimeout(300)
-      .build()
-    const summary = summarizeTransaction(tx.toXDR())
+    const ownerKey = Keypair.random()
+    const owner = ownerKey.publicKey()
+    const summary = summarizeTransaction(buildExitTx({ owner, signWith: ownerKey }))
     expect(summary).toMatchObject({
       owner,
       networkPassphrase: NETWORK_PASSPHRASE,
       fn: 'owner_withdraw',
       token: SOROBAN_TOKEN_ADDRESS,
       recipient: owner,
+      allFunds: true,
     })
     expect(summary.bodyDigest).toMatch(/^[a-f0-9]{64}$/)
+    expect(summary.authDigest).toMatch(/^[a-f0-9]{64}$/)
     expect(summary.consentDigest).toMatch(/^[a-f0-9]{64}$/)
 
     const authSummary = summarizeAuthEntry(buildAuthEntryXdr())
     expect(authSummary.authDigest).toMatch(/^[a-f0-9]{64}$/)
     expect(authSummary.consentDigest).toBe(authSummary.authDigest)
+  })
+
+  it.each([
+    ['sponsored G owner', Keypair.random().publicKey()],
+    ['sponsored C owner', Address.contract(Buffer.alloc(32, 11)).toString()],
+  ])(
+    'derives %s from the address authorizer rather than the relayer transaction source',
+    (_label, owner) => {
+      const relayer = Keypair.random().publicKey()
+      const summary = summarizeTransaction(
+        buildExitTx({ owner, source: relayer, addressCredentials: true })
+      )
+      expect(summary.owner).toBe(owner)
+      expect(summary.owner).not.toBe(relayer)
+      expect(summary.recipient).toBe(owner)
+      expect(summary.token).toBe(SOROBAN_TOKEN_ADDRESS)
+      expect(summary.allFunds).toBe(true)
+    }
+  )
+
+  it('summarizes sweep with the canonical token and exact owner/recipient/all-funds consequence', () => {
+    const ownerKey = Keypair.random()
+    const owner = ownerKey.publicKey()
+    const summary = summarizeTransaction(buildExitTx({ fn: 'sweep', owner, signWith: ownerKey }))
+    expect(summary).toMatchObject({
+      owner,
+      fn: 'sweep',
+      token: SOROBAN_TOKEN_ADDRESS,
+      recipient: owner,
+      allFunds: true,
+    })
+    expect(summary.authorizationDigests).toHaveLength(1)
   })
 
   it('returns null on undecodable input instead of throwing', () => {

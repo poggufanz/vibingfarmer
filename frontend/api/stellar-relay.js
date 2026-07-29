@@ -21,48 +21,20 @@
 //   { action: 'submit', xdr }       → { hash, status }      (fee-bump + submit + poll)
 
 import { applyCors, rateLimit } from './_guard.js'
-import { agentCapabilityFor, TRACKED_AGENT_WASM_HASHES } from './agentCapabilities.js'
+import { StrKey } from '@stellar/stellar-sdk'
 import {
+  agentCapabilityFor,
+  STELLAR_RELAY_FACTS as TRACKED_STELLAR_RELAY_FACTS,
+} from './agentCapabilities.js'
+import {
+  accountAuthorizationFromEntry,
   assertOwnerWithdrawAuthorization,
+  assertTransactionSourceAuthorization,
   OwnerWithdrawAuthorizationError,
 } from './stellar-relay-auth.js'
 
-const PASSPHRASE = () =>
-  process.env.STELLAR_NETWORK_PASSPHRASE || 'Test SDF Network ; September 2015'
-const RPC_URL = () => process.env.SOROBAN_RPC_URL || 'https://soroban-testnet.stellar.org'
 const RELAYER_SECRET = () => process.env.STELLAR_RELAYER_SECRET || ''
-const VAULT_ADDR = () => process.env.SOROBAN_VAULT_ADDRESS || ''
-const TOKEN_ADDR = () => process.env.SOROBAN_TOKEN_ADDRESS || ''
-// funding_router(s) for the single-signature grant flow — CSV list so v1 and v2 relay side by
-// side during migration (SOROBAN_ROUTER_ADDRESSES), falling back to the single-value
-// SOROBAN_ROUTER_ADDRESS. Empty list = router relaying disabled (fail closed).
-const ROUTER_ADDRS = () =>
-  parseAllowlist(process.env.SOROBAN_ROUTER_ADDRESSES || process.env.SOROBAN_ROUTER_ADDRESS)
-// exit_router (owner_authorization.js's one-popup sweep) — single value, no CSV: unlike the
-// router/agent-wasm migration lists there is only ever one live exit router. Unset = sweep
-// relaying disabled (fail closed) — exit.js's per-agent owner_withdraw rollback path still works.
-const EXIT_ROUTER_ADDR = () => process.env.SOROBAN_EXIT_ROUTER_ADDRESS || ''
 const AGENT_ALLOWLIST = () => process.env.SOROBAN_AGENT_ALLOWLIST || ''
-// Content-addressed pin of the OZ smart-account wasm SAK deploys (see wallet/config.js
-// ACCOUNT_WASM_HASH — same inline-constant discipline). Env-overridable, never secret. Also the
-// pin for a C owner's identity on the SEP-41 revoke-approve and exit-transfer recipient checks
-// (assertRelayableTransaction) — the only wasm a VF passkey wallet can run.
-const ACCOUNT_WASM_HASH = () =>
-  process.env.SOROBAN_ACCOUNT_WASM_HASH ||
-  'a12e8fa9621efd20315753bd4007d974390e31fbcb4a7ddc4dd0a0dec728bf2e'
-// Content-addressed pin(s) of the agent_account wasm the funding_router deploys
-// (deployments/stellar-testnet.json agentAccountWasmHash) — CSV list so v1 and v3 wasm both
-// count as "pinned" during migration (SOROBAN_AGENT_WASM_HASHES), falling back to the
-// single-value SOROBAN_AGENT_WASM_HASH, then this hardcoded v3 default. Never secret.
-const AGENT_WASM_HASHES = () =>
-  parseAllowlist(
-    process.env.SOROBAN_AGENT_WASM_HASHES ||
-      process.env.SOROBAN_AGENT_WASM_HASH ||
-      TRACKED_AGENT_WASM_HASHES.join(',')
-  )
-// CCTP TokenMessengerMinter (testnet) — sponsors deposit_for_burn only when its `from` arg is a
-// pinned agent_account (see assertRelayableTransaction). No hardcoded default: unset = messenger
-// sponsorship dead, fail closed — never default-allow an arbitrary burn source.
 const TOKEN_MESSENGER = () => process.env.SOROBAN_TOKEN_MESSENGER_ADDRESS || ''
 
 // Fee-bump base fee = inner fee + this margin (stroops). 0.1 XLM is generous on testnet and
@@ -70,6 +42,130 @@ const TOKEN_MESSENGER = () => process.env.SOROBAN_TOKEN_MESSENGER_ADDRESS || ''
 const FEE_MARGIN = 1_000_000n
 
 export class RelayError extends Error {}
+
+export const STELLAR_RELAY_FACTS = TRACKED_STELLAR_RELAY_FACTS
+
+function has(env, key) {
+  return Object.prototype.hasOwnProperty.call(env, key)
+}
+
+function validateContract(value, key) {
+  if (!StrKey.isValidContract(String(value || ''))) throw new RelayError(`${key} is invalid`)
+  return value
+}
+
+function validateHash(value, key) {
+  if (!/^[a-f0-9]{64}$/.test(String(value || ''))) throw new RelayError(`${key} is invalid`)
+  return value
+}
+
+function validateRpc(value, key) {
+  let parsed
+  try {
+    parsed = new URL(value)
+  } catch {
+    throw new RelayError(`${key} is invalid`)
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) {
+    throw new RelayError(`${key} is invalid`)
+  }
+  if (parsed.search || parsed.hash) throw new RelayError(`${key} is invalid`)
+  return parsed.toString().replace(/\/$/, '')
+}
+
+function scalarFact(env, key, canonical, { production, validate = (value) => value } = {}) {
+  if (!has(env, key)) return canonical
+  const value = validate(env[key], key)
+  if (production && value !== canonical) {
+    throw new RelayError(`${key} disagrees with tracked deployment facts`)
+  }
+  return value
+}
+
+function listFact(env, keys, canonical, { production, validate }) {
+  const key = keys.find((candidate) => has(env, candidate))
+  if (!key) return canonical
+  const values = parseAllowlist(env[key])
+  if (values.length === 0) throw new RelayError(`${key} is invalid`)
+  values.forEach((value) => validate(value, key))
+  if (new Set(values).size !== values.length) throw new RelayError(`${key} contains duplicates`)
+  if (production && values.join(',') !== canonical.join(',')) {
+    throw new RelayError(`${key} disagrees with tracked deployment facts`)
+  }
+  return Object.freeze(values)
+}
+
+export function loadStellarRelayConfig(env = process.env) {
+  const production = env.NODE_ENV === 'production' || env.NODE_ENV === 'staging'
+  const network = scalarFact(env, 'STELLAR_NETWORK', STELLAR_RELAY_FACTS.network, {
+    production,
+    validate: (value, key) => {
+      if (!['testnet', 'public', 'futurenet', 'standalone'].includes(value)) {
+        throw new RelayError(`${key} is invalid`)
+      }
+      return value
+    },
+  })
+  const passphrase = scalarFact(env, 'STELLAR_NETWORK_PASSPHRASE', STELLAR_RELAY_FACTS.passphrase, {
+    production,
+    validate: (value, key) => {
+      const containsControl =
+        typeof value === 'string' && [...value].some((char) => char.charCodeAt(0) < 32)
+      if (typeof value !== 'string' || !value.trim() || containsControl) {
+        throw new RelayError(`${key} is invalid`)
+      }
+      return value
+    },
+  })
+  const rpcUrl = scalarFact(env, 'SOROBAN_RPC_URL', STELLAR_RELAY_FACTS.rpcUrl, {
+    production,
+    validate: validateRpc,
+  })
+  const vaultAddress = scalarFact(env, 'SOROBAN_VAULT_ADDRESS', STELLAR_RELAY_FACTS.vaultAddress, {
+    production,
+    validate: validateContract,
+  })
+  const tokenAddress = scalarFact(env, 'SOROBAN_TOKEN_ADDRESS', STELLAR_RELAY_FACTS.tokenAddress, {
+    production,
+    validate: validateContract,
+  })
+  const routerAddresses = listFact(
+    env,
+    ['SOROBAN_ROUTER_ADDRESSES', 'SOROBAN_ROUTER_ADDRESS'],
+    STELLAR_RELAY_FACTS.routerAddresses,
+    { production, validate: validateContract }
+  )
+  const exitRouterAddress = scalarFact(
+    env,
+    'SOROBAN_EXIT_ROUTER_ADDRESS',
+    STELLAR_RELAY_FACTS.exitRouterAddress,
+    { production, validate: validateContract }
+  )
+  const accountWasmHash = scalarFact(
+    env,
+    'SOROBAN_ACCOUNT_WASM_HASH',
+    STELLAR_RELAY_FACTS.accountWasmHash,
+    { production, validate: validateHash }
+  )
+  const agentWasmHashes = listFact(
+    env,
+    ['SOROBAN_AGENT_WASM_HASHES', 'SOROBAN_AGENT_WASM_HASH'],
+    STELLAR_RELAY_FACTS.agentWasmHashes,
+    { production, validate: validateHash }
+  )
+  return Object.freeze({
+    network,
+    passphrase,
+    rpcUrl,
+    relayerPublic: STELLAR_RELAY_FACTS.relayerPublic,
+    vaultAddress,
+    tokenAddress,
+    routerAddresses,
+    exitRouterAddress,
+    accountWasmHash,
+    agentWasmHashes,
+  })
+}
 
 // ─── warm-process replay guard, keyed by inner-tx hash (hex) ───
 const _seen = new Map() // innerHash → { state:'in-flight'|'done', out?, at }
@@ -155,6 +251,8 @@ export async function assertRelayableTransaction(
     expectedRelayer = '',
     currentLedger = 0,
     readAgentScope = null,
+    readAccountAuthorization = null,
+    sourceAuthorization = null,
   } = {}
 ) {
   const ops = inner.operations || []
@@ -358,6 +456,8 @@ export async function assertRelayableTransaction(
           wasmHash: agentIdentity.hash,
           currentLedger,
           readScope: readAgentScope,
+          readAccountAuthorization,
+          sourceAuthorization,
         })
       } catch (error) {
         if (error instanceof OwnerWithdrawAuthorizationError) {
@@ -420,6 +520,7 @@ export async function feeBumpAndSubmit({
   xdr,
   secret,
   passphrase,
+  expectedNetworkPassphrase = passphrase,
   vaultAddr,
   tokenAddr = '',
   agentAllowlist = '',
@@ -431,6 +532,7 @@ export async function feeBumpAndSubmit({
   messengerAddr = '',
   currentLedger,
   readAgentScope = null,
+  readAccountAuthorization = null,
   sdk,
   rpcServer,
   pollTries = 10,
@@ -438,6 +540,9 @@ export async function feeBumpAndSubmit({
 }) {
   const { TransactionBuilder, FeeBumpTransaction, Keypair } = sdk
 
+  if (!passphrase || passphrase !== expectedNetworkPassphrase) {
+    throw new RelayError('relay network passphrase disagrees with canonical deployment facts')
+  }
   const inner = TransactionBuilder.fromXDR(xdr, passphrase)
   if (inner instanceof FeeBumpTransaction) {
     throw new RelayError('inner tx is already fee-bumped')
@@ -447,6 +552,16 @@ export async function feeBumpAndSubmit({
   if (latestLedger == null && typeof rpcServer.getLatestLedger === 'function') {
     const latest = await rpcServer.getLatestLedger()
     latestLedger = latest?.sequence ?? latest?.seq ?? 0
+  }
+  let sourceAuthorization
+  try {
+    sourceAuthorization = await assertTransactionSourceAuthorization(inner, {
+      expectedRelayer: kp.publicKey(),
+      readAccountAuthorization,
+    })
+  } catch (error) {
+    if (error instanceof OwnerWithdrawAuthorizationError) throw new RelayError(error.message)
+    throw error
   }
   await assertRelayableTransaction(inner, {
     sdk,
@@ -460,10 +575,12 @@ export async function feeBumpAndSubmit({
     messengerAddr,
     getWasmHash,
     networkPassphrase: passphrase,
-    expectedNetworkPassphrase: passphrase,
+    expectedNetworkPassphrase,
     expectedRelayer: kp.publicKey(),
     currentLedger: latestLedger ?? 0,
     readAgentScope,
+    readAccountAuthorization,
+    sourceAuthorization,
   })
 
   // Replay short-circuit (don't pay to re-broadcast a spent inner tx).
@@ -490,7 +607,16 @@ export async function feeBumpAndSubmit({
       throw new RelayError('RPC enforcing simulation is unavailable')
     }
     const simulation = await rpcServer.simulateTransaction(inner)
-    if (!simulation || simulation.error || simulation.result?.error) {
+    const isSimulationSuccess = sdk.rpc?.Api?.isSimulationSuccess
+    const hasExpectedPayload =
+      simulation?.transactionData &&
+      simulation?.result &&
+      Object.prototype.hasOwnProperty.call(simulation.result, 'retval')
+    if (
+      typeof isSimulationSuccess !== 'function' ||
+      !isSimulationSuccess(simulation) ||
+      !hasExpectedPayload
+    ) {
       throw new RelayError('RPC enforcing simulation rejected the signed transaction')
     }
     const baseFee = (BigInt(inner.fee) + FEE_MARGIN).toString()
@@ -540,6 +666,7 @@ export default async function handler(req, res) {
   }
 
   try {
+    const relayConfig = loadStellarRelayConfig(process.env)
     const body = await readBody(req)
     // Dynamic import so a missing package never breaks the vite.config load.
     const mod = await import('@stellar/stellar-sdk')
@@ -549,10 +676,19 @@ export default async function handler(req, res) {
       Keypair: mod.Keypair,
       Address: mod.Address,
       scValToNative: mod.scValToNative,
+      rpc: mod.rpc,
+    }
+
+    const relayerKeypair = mod.Keypair.fromSecret(secret)
+    if (
+      (process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'staging') &&
+      relayerKeypair.publicKey() !== STELLAR_RELAY_FACTS.relayerPublic
+    ) {
+      throw new RelayError('relayer secret disagrees with tracked deployment identity')
     }
 
     if (body.action === 'wallet') {
-      return res.end(JSON.stringify({ address: mod.Keypair.fromSecret(secret).publicKey() }))
+      return res.end(JSON.stringify({ address: relayerKeypair.publicKey() }))
     }
 
     // SAK's RelayerClient.sendXdr (kit.createWallet autoSubmit) posts a bare { xdr } with no
@@ -560,7 +696,7 @@ export default async function handler(req, res) {
     // only an allowlisted operation shape gets sponsored (assertRelayableTransaction).
     if (body.action === 'submit' || (!body.action && typeof body.xdr === 'string')) {
       if (typeof body.xdr !== 'string' || !body.xdr) return bad(res, 'Invalid xdr')
-      const rpcServer = new mod.rpc.Server(RPC_URL())
+      const rpcServer = new mod.rpc.Server(relayConfig.rpcUrl)
       // Contract-instance ledger read: instance → executable → wasm hash (hex), null for SACs.
       const getWasmHash = async (contractId) => {
         const entry = await rpcServer.getContractData(
@@ -573,10 +709,10 @@ export default async function handler(req, res) {
         return exec.wasmHash().toString('hex')
       }
       const readAgentScope = async (contractId) => {
-        const source = await rpcServer.getAccount(mod.Keypair.fromSecret(secret).publicKey())
+        const source = await rpcServer.getAccount(relayerKeypair.publicKey())
         const tx = new mod.TransactionBuilder(source, {
           fee: mod.BASE_FEE,
-          networkPassphrase: PASSPHRASE(),
+          networkPassphrase: relayConfig.passphrase,
         })
           .addOperation(new mod.Contract(contractId).call('scope_of'))
           .setTimeout(30)
@@ -587,20 +723,24 @@ export default async function handler(req, res) {
         }
         return mod.scValToNative(simulation.result.retval)
       }
+      const readAccountAuthorization = async (account) =>
+        accountAuthorizationFromEntry(await rpcServer.getAccountEntry(account))
       try {
         const out = await feeBumpAndSubmit({
           xdr: body.xdr,
           secret,
-          passphrase: PASSPHRASE(),
-          vaultAddr: VAULT_ADDR(),
-          tokenAddr: TOKEN_ADDR(),
+          passphrase: relayConfig.passphrase,
+          expectedNetworkPassphrase: relayConfig.passphrase,
+          vaultAddr: relayConfig.vaultAddress,
+          tokenAddr: relayConfig.tokenAddress,
           agentAllowlist: AGENT_ALLOWLIST(),
-          accountWasmHash: ACCOUNT_WASM_HASH(),
-          routerAddrs: ROUTER_ADDRS(),
-          exitRouterAddr: EXIT_ROUTER_ADDR(),
-          agentWasmHashes: AGENT_WASM_HASHES(),
+          accountWasmHash: relayConfig.accountWasmHash,
+          routerAddrs: relayConfig.routerAddresses,
+          exitRouterAddr: relayConfig.exitRouterAddress,
+          agentWasmHashes: relayConfig.agentWasmHashes,
           getWasmHash,
           readAgentScope,
+          readAccountAuthorization,
           messengerAddr: TOKEN_MESSENGER(),
           sdk,
           rpcServer,
