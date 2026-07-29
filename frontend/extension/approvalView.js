@@ -225,7 +225,24 @@ function stateSection({ submissionState, note, needsPassword, origin, detail }) 
 function buildConsequence(summary) {
   const grant = summary?.grant ?? null
 
-  if (summary?.allFunds === true) {
+  if (summary?.consentWarning) {
+    return {
+      kind: 'consequence',
+      statements: [
+        summary.consentWarning,
+        'This could not be shown as a proven all-funds exit. Review the technical details below before approving.',
+      ],
+      ceilingRows: [],
+      warning: true,
+    }
+  }
+
+  if (
+    summary?.allFunds === true &&
+    summary?.bodyDigest &&
+    summary?.authDigest &&
+    summary?.consentDigest
+  ) {
     return {
       kind: 'consequence',
       statements: [

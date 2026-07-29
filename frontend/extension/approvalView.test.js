@@ -255,6 +255,33 @@ describe('buildApprovalView — sign ordering (brief Step 1, transaction approva
 })
 
 describe('buildApprovalView — consequence never claims an inferred intended movement (item 1)', () => {
+  it('turns an unproven all-funds exit into an acknowledgment-gated warning, never reassuring copy', () => {
+    const v = buildApprovalView(
+      { method: 'signTransaction', params: { xdr: 'UNPROVEN_EXIT' }, origin: ORIGIN },
+      {
+        address: 'GOWNER',
+        summary: {
+          contract: ADDRESS,
+          fn: 'owner_withdraw',
+          args: ['GOWNER'],
+          grant: null,
+          owner: null,
+          token: null,
+          recipient: 'GOWNER',
+          allFunds: false,
+          consentWarning:
+            'The claimed all-funds exit could not be proven from this exact transaction and authorization context.',
+        },
+      }
+    )
+    const consequence = v.sections.find((s) => s.kind === 'consequence')
+    expect(consequence.warning).toBe(true)
+    expect(consequence.statements.join(' ')).toMatch(/could not be proven/i)
+    expect(consequence.statements.join(' ')).not.toMatch(/withdraws all funds held/i)
+    expect(v.needsAcknowledgment).toBe(true)
+    expect(v.approveLabel).toBe('Confirm anyway')
+  })
+
   it('an undecoded/generic call states plainly that no ceiling can be guaranteed, never a guessed amount/destination', () => {
     const v = buildApprovalView(
       { method: 'signTransaction', params: { xdr: 'X' }, origin: ORIGIN },
