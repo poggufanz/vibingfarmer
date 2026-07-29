@@ -812,7 +812,7 @@ describe('ProtectStage — F1: ceiling row separator visible on both surface pol
 // PlanStage/StartStage both show "33.33 USDC" for the SAME agent via planModel.js's
 // `buildAmountDisplayMap`/`formatCents`/`roundCentsBigInt`. Reused those SAME exported helpers
 // (Task 7's precedent) rather than re-implementing rounding.
-describe('ProtectStage — F2: the ceiling card\'s per-agent cap matches Plan/Start\'s 2dp figure', () => {
+describe("ProtectStage — F2: the ceiling card's per-agent cap matches Plan/Start's 2dp figure", () => {
   it('rounds a non-divisible split to 2dp, the same figure buildAmountDisplayMap gives Plan/Start for the identical agent', async () => {
     // The exact repro from the review: 100 USDC split 3 ways at 7 decimals leaves one agent with
     // 333333334 units (33.3333334 USDC raw).
@@ -890,9 +890,7 @@ describe('Protect recompose', () => {
   // h2, so the region's computed accessible name IS the visible heading text, by construction.
   it("the boundaries landmark's accessible name is its own visible heading, not a second, disagreeing string", () => {
     renderProtectStage({ plan: planFixture })
-    expect(
-      screen.getByRole('region', { name: 'Here is what they can never do.' })
-    ).toBeTruthy()
+    expect(screen.getByRole('region', { name: 'Here is what they can never do.' })).toBeTruthy()
   })
 
   it('renders the four boundary bullets from the plan', () => {

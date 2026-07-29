@@ -198,7 +198,11 @@ export async function withdrawAllFromVault(
       results.push({
         agentAddress,
         ok: false,
-        error: { message: err?.message || String(err), code: err?.code, submission: err?.submission },
+        error: {
+          message: err?.message || String(err),
+          code: err?.code,
+          submission: err?.submission,
+        },
       })
     }
   }

@@ -22,7 +22,8 @@ import {
 } from '../../src/stellar/agentCreatorManifest.js'
 
 function parseSourceId(sourceId) {
-  if (typeof sourceId !== 'string' || !sourceId) throw new Error('sourceId must be a non-empty string')
+  if (typeof sourceId !== 'string' || !sourceId)
+    throw new Error('sourceId must be a non-empty string')
   const idx = sourceId.indexOf(':')
   if (idx < 0) throw new Error(`sourceId must be "networkId:creatorAddress", got ${sourceId}`)
   return { networkId: sourceId.slice(0, idx), creatorAddress: sourceId.slice(idx + 1) }
@@ -390,7 +391,9 @@ export function createAgentIndexStore(db) {
     if (!Array.isArray(agentAddresses) || agentAddresses.length === 0) return []
     const placeholders = agentAddresses.map(() => '?').join(',')
     const { results } = await db
-      .prepare(`SELECT * FROM agent_memberships WHERE network_id = ? AND agent_address IN (${placeholders})`)
+      .prepare(
+        `SELECT * FROM agent_memberships WHERE network_id = ? AND agent_address IN (${placeholders})`
+      )
       .bind(networkId, ...agentAddresses)
       .all()
     return (results ?? []).map(parseMembershipRow)
@@ -411,7 +414,10 @@ export function createAgentIndexStore(db) {
   async function readCoverage({ networkId }) {
     if (!networkId) throw new Error('readCoverage requires networkId')
     const [sourcesRes, gapsRes, auditsRes] = await Promise.all([
-      db.prepare(`SELECT * FROM agent_index_sources WHERE network_id = ? ORDER BY source_id ASC`).bind(networkId).all(),
+      db
+        .prepare(`SELECT * FROM agent_index_sources WHERE network_id = ? ORDER BY source_id ASC`)
+        .bind(networkId)
+        .all(),
       db
         .prepare(
           `SELECT * FROM agent_index_gaps WHERE network_id = ? AND status = 'open'
@@ -419,7 +425,12 @@ export function createAgentIndexStore(db) {
         )
         .bind(networkId)
         .all(),
-      db.prepare(`SELECT * FROM agent_backfill_audits WHERE network_id = ? ORDER BY attempted_at DESC`).bind(networkId).all(),
+      db
+        .prepare(
+          `SELECT * FROM agent_backfill_audits WHERE network_id = ? ORDER BY attempted_at DESC`
+        )
+        .bind(networkId)
+        .all(),
     ])
     return {
       sources: (sourcesRes.results ?? []).map(parseSourceRow),
@@ -461,7 +472,8 @@ export function createAgentIndexStore(db) {
     reportedOldestLedger = null,
     reportedLatestLedger = null,
   }) {
-    if (!Number.isInteger(fromLedger)) throw new Error('ensureSourceRow requires an integer fromLedger')
+    if (!Number.isInteger(fromLedger))
+      throw new Error('ensureSourceRow requires an integer fromLedger')
     await db
       .prepare(
         `INSERT INTO agent_index_sources
@@ -499,7 +511,9 @@ export function createAgentIndexStore(db) {
     await ensureSourceRow({ sourceId, networkId, creatorAddress, fromLedger })
     const now = nowSeconds()
     await db
-      .prepare(`UPDATE agent_index_sources SET status = 'error', last_error_at = ?, last_error_message = ? WHERE source_id = ?`)
+      .prepare(
+        `UPDATE agent_index_sources SET status = 'error', last_error_at = ?, last_error_message = ? WHERE source_id = ?`
+      )
       .bind(now, String(message ?? ''), sourceId)
       .run()
   }
@@ -517,7 +531,8 @@ export function createAgentIndexStore(db) {
     reportedLatestLedger = null,
   }) {
     const { networkId, creatorAddress } = parseSourceId(sourceId)
-    if (!Number.isInteger(fromLedger)) throw new Error('commitSourcePage requires an integer fromLedger')
+    if (!Number.isInteger(fromLedger))
+      throw new Error('commitSourcePage requires an integer fromLedger')
     if (!Number.isInteger(throughLedger) || throughLedger < fromLedger)
       throw new Error('commitSourcePage requires throughLedger >= fromLedger')
     if (!Number.isInteger(finalizedThroughLedger) || finalizedThroughLedger > throughLedger)
@@ -528,12 +543,19 @@ export function createAgentIndexStore(db) {
     const rows = (memberships ?? []).map(toMembershipRow)
     for (const row of rows) {
       if (row.network_id !== networkId)
-        throw new Error(`commitSourcePage: membership networkId "${row.network_id}" does not match source "${sourceId}"`)
+        throw new Error(
+          `commitSourcePage: membership networkId "${row.network_id}" does not match source "${sourceId}"`
+        )
       if (row.creator_address !== creatorAddress)
-        throw new Error(`commitSourcePage: membership creatorAddress "${row.creator_address}" does not match source "${sourceId}"`)
+        throw new Error(
+          `commitSourcePage: membership creatorAddress "${row.creator_address}" does not match source "${sourceId}"`
+        )
     }
 
-    const existing = await db.prepare(`SELECT * FROM agent_index_sources WHERE source_id = ?`).bind(sourceId).first()
+    const existing = await db
+      .prepare(`SELECT * FROM agent_index_sources WHERE source_id = ?`)
+      .bind(sourceId)
+      .first()
     const expectedFrom = existing ? existing.indexed_through_ledger + 1 : fromLedger
     if (fromLedger !== expectedFrom) {
       throw new Error(
@@ -615,7 +637,17 @@ export function createAgentIndexStore(db) {
            (network_id, source_id, attempted_at, method, result, from_ledger, through_ledger, evidence, notes)
          VALUES (?,?,?,?,?,?,?,?,?)`
       )
-      .bind(row.network_id, row.source_id, now, row.method, row.result, row.from_ledger, row.through_ledger, row.evidence, row.notes)
+      .bind(
+        row.network_id,
+        row.source_id,
+        now,
+        row.method,
+        row.result,
+        row.from_ledger,
+        row.through_ledger,
+        row.evidence,
+        row.notes
+      )
       .run()
   }
 

@@ -102,7 +102,8 @@ async function sweepChunk({ agents, to, router, server, model, kit, sign, out })
         // genuinely empty agent.
         out.swept[a.index] = 0n
         out.errors[a.index] = {
-          message: "The sweep confirmed on-chain, but this agent's own result could not be decoded.",
+          message:
+            "The sweep confirmed on-chain, but this agent's own result could not be decoded.",
           code: 'VF_SUBMISSION_UNKNOWN',
           submission: 'unknown',
         }

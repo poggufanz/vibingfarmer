@@ -60,13 +60,24 @@ function fakeD1() {
   }
 }
 
-const LEGACY_ROUTER = AGENT_CREATORS.find((c) => c.address === 'CBEI5VJKKWLXKQUUUETBAPZSQQLH7I57TSIDTMV4WJMBKIGVF7NSNOFY')
-const LEGACY_REGISTRY = AGENT_CREATORS.find((c) => c.address === 'CAEHOZGUGVNRCAFVJCSR3B2EFJ55LEA34S76HTRQGH7XSPBO7YIMNZOQ')
+const LEGACY_ROUTER = AGENT_CREATORS.find(
+  (c) => c.address === 'CBEI5VJKKWLXKQUUUETBAPZSQQLH7I57TSIDTMV4WJMBKIGVF7NSNOFY'
+)
+const LEGACY_REGISTRY = AGENT_CREATORS.find(
+  (c) => c.address === 'CAEHOZGUGVNRCAFVJCSR3B2EFJ55LEA34S76HTRQGH7XSPBO7YIMNZOQ'
+)
 const OWNER_A = 'GCIOUP4UJAAFDBJNP5DY5CFJHBLEKGLHZ5E2AYRIIQ5VOZFVSTPRYHNS'
 const AGENT_A = 'CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC'
 const AGENT_V1_WASM = AGENT_WASM_GENERATIONS.find((g) => g.generation === 'agent-v1').wasmHash
 
-const FULL_SCOPE = { owner: OWNER_A, target: 'CVAULT', token: 'CTOKEN', kind: 'deposit', expiry: 999999, revoked: false }
+const FULL_SCOPE = {
+  owner: OWNER_A,
+  target: 'CVAULT',
+  token: 'CTOKEN',
+  kind: 'deposit',
+  expiry: 999999,
+  revoked: false,
+}
 
 function baseCandidate(overrides = {}) {
   return {
@@ -100,7 +111,10 @@ function sourceEntry(overrides = {}) {
 
 describe('classifyCandidate', () => {
   it('verifies a fully-evidenced candidate', () => {
-    const out = classifyCandidate({ candidate: baseCandidate(), directSetupCutoffLedger: 3_600_000 })
+    const out = classifyCandidate({
+      candidate: baseCandidate(),
+      directSetupCutoffLedger: 3_600_000,
+    })
     expect(out.status).toBe('verified')
     expect(out.membership).toMatchObject({
       agentAddress: AGENT_A,
@@ -118,7 +132,9 @@ describe('classifyCandidate', () => {
   })
 
   it('marks a failed wasm lookup unresolved, never a false reject', () => {
-    const out = classifyCandidate({ candidate: baseCandidate({ wasmLookupFailed: true, wasmHash: null }) })
+    const out = classifyCandidate({
+      candidate: baseCandidate({ wasmLookupFailed: true, wasmHash: null }),
+    })
     expect(out).toMatchObject({ status: 'unresolved', reason: 'wasm-lookup-failed' })
   })
 
@@ -133,14 +149,22 @@ describe('classifyCandidate', () => {
   })
 
   it('verifies a legacy (pre-hardening) scope shape — `vault` not `target`, no `kind` field at all (real on-chain shape for agent-v1/v2)', () => {
-    const legacyScope = { owner: OWNER_A, vault: 'CVAULT', token: 'CTOKEN', expiry: 999999, revoked: false }
+    const legacyScope = {
+      owner: OWNER_A,
+      vault: 'CVAULT',
+      token: 'CTOKEN',
+      expiry: 999999,
+      revoked: false,
+    }
     const out = classifyCandidate({ candidate: baseCandidate({ scope: legacyScope }) })
     expect(out.status).toBe('verified')
   })
 
   it('rejects a claimed owner that does not match the on-chain scope owner (seeded/demo mismatch guard)', () => {
     const out = classifyCandidate({
-      candidate: baseCandidate({ ownerAddress: 'GDIFFERENTOWNERXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX' }),
+      candidate: baseCandidate({
+        ownerAddress: 'GDIFFERENTOWNERXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
+      }),
     })
     expect(out).toMatchObject({ status: 'rejected', reason: 'owner-mismatch' })
   })
@@ -175,11 +199,15 @@ describe('deriveVerdict', () => {
   })
 
   it('partial when any source is non-contiguous', () => {
-    expect(deriveVerdict({ sources: [sourceEntry({ contiguous: false })], unresolvedCandidates: [] })).toBe('partial')
+    expect(
+      deriveVerdict({ sources: [sourceEntry({ contiguous: false })], unresolvedCandidates: [] })
+    ).toBe('partial')
   })
 
   it('partial when there are unresolved candidates even if sources are contiguous', () => {
-    expect(deriveVerdict({ sources: [sourceEntry()], unresolvedCandidates: [{ reason: 'x' }] })).toBe('partial')
+    expect(
+      deriveVerdict({ sources: [sourceEntry()], unresolvedCandidates: [{ reason: 'x' }] })
+    ).toBe('partial')
   })
 
   it('partial (never verified) with zero sources — vacuous truth is not completeness', () => {
@@ -257,7 +285,10 @@ describe('buildBackfillAudit — integration of classify + verdict + shape', () 
       throughLedger: 100,
       directSetupCutoffLedger: 3_600_000,
       creatorManifestVersion: 'v1',
-      sources: [sourceEntry({ kind: 'funding-router', address: LEGACY_ROUTER.address }), sourceEntry({ kind: 'registry', address: LEGACY_REGISTRY.address })],
+      sources: [
+        sourceEntry({ kind: 'funding-router', address: LEGACY_ROUTER.address }),
+        sourceEntry({ kind: 'registry', address: LEGACY_REGISTRY.address }),
+      ],
       candidates: [baseCandidate()],
       completedAt: 1700000000,
     })
@@ -276,7 +307,13 @@ describe('buildBackfillAudit — integration of classify + verdict + shape', () 
       directSetupCutoffLedger: 3_600_000,
       creatorManifestVersion: 'v1',
       sources: [sourceEntry()],
-      candidates: [baseCandidate(), baseCandidate({ address: 'CBEDIFOTUJAZQJ7F643EKDRLG7MT5AWOR23VZ6C3K6V5IBG447T6MNDP', scope: null })],
+      candidates: [
+        baseCandidate(),
+        baseCandidate({
+          address: 'CBEDIFOTUJAZQJ7F643EKDRLG7MT5AWOR23VZ6C3K6V5IBG447T6MNDP',
+          scope: null,
+        }),
+      ],
       completedAt: 1700000000,
     })
     expect(audit.verdict).toBe('partial')
@@ -312,7 +349,11 @@ describe('commitBackfillAudit — the only D1 write path', () => {
 
     const coverage = await store.readCoverage({ networkId: 'stellar-testnet' })
     expect(coverage.backfillAudits).toHaveLength(2)
-    expect(coverage.backfillAudits.every((a) => a.result === 'verified' && a.method === BACKFILL_METHOD_V1)).toBe(true)
+    expect(
+      coverage.backfillAudits.every(
+        (a) => a.result === 'verified' && a.method === BACKFILL_METHOD_V1
+      )
+    ).toBe(true)
   })
 
   it('a partial audit still posts its individually-verified candidates, but writes only "failed" audit rows — never a hand-converted verified', async () => {
@@ -325,7 +366,13 @@ describe('commitBackfillAudit — the only D1 write path', () => {
       directSetupCutoffLedger: 3_600_000,
       creatorManifestVersion: 'v1',
       sources: [sourceEntry({ kind: 'funding-router', address: LEGACY_ROUTER.address })],
-      candidates: [baseCandidate(), baseCandidate({ address: 'CBEDIFOTUJAZQJ7F643EKDRLG7MT5AWOR23VZ6C3K6V5IBG447T6MNDP', scope: null })],
+      candidates: [
+        baseCandidate(),
+        baseCandidate({
+          address: 'CBEDIFOTUJAZQJ7F643EKDRLG7MT5AWOR23VZ6C3K6V5IBG447T6MNDP',
+          scope: null,
+        }),
+      ],
       completedAt: 1700000000,
     })
     expect(audit.verdict).toBe('partial')
@@ -347,7 +394,12 @@ describe('commitBackfillAudit — the only D1 write path', () => {
       throughLedger: 5_000_000,
       directSetupCutoffLedger: 3_600_000,
       creatorManifestVersion: 'v1',
-      sources: [sourceEntry({ kind: 'vault', address: 'CVAULTADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX' })],
+      sources: [
+        sourceEntry({
+          kind: 'vault',
+          address: 'CVAULTADDRESSXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
+        }),
+      ],
       candidates: [],
       completedAt: 1700000000,
     })
@@ -367,7 +419,12 @@ describe('commitBackfillAudit — the only D1 write path', () => {
     }
 
     it('stays "pending" before any audit is committed', () => {
-      const proof = coverageProof({ manifest: manifestFixture, sources: [], gaps: [], backfillAudit: [] })
+      const proof = coverageProof({
+        manifest: manifestFixture,
+        sources: [],
+        gaps: [],
+        backfillAudit: [],
+      })
       expect(proof.historicalBackfill).toBe('pending')
       expect(proof.status).toBe('partial')
     })
@@ -390,7 +447,12 @@ describe('commitBackfillAudit — the only D1 write path', () => {
       })
       await commitBackfillAudit({ store, audit })
       const coverage = await store.readCoverage({ networkId: 'stellar-testnet' })
-      const proof = coverageProof({ manifest: manifestFixture, sources: coverage.sources, gaps: coverage.gaps, backfillAudit: coverage.backfillAudits })
+      const proof = coverageProof({
+        manifest: manifestFixture,
+        sources: coverage.sources,
+        gaps: coverage.gaps,
+        backfillAudit: coverage.backfillAudits,
+      })
       expect(proof.historicalBackfill).toBe('failed')
       expect(proof.status).toBe('partial')
     })
@@ -414,7 +476,12 @@ describe('commitBackfillAudit — the only D1 write path', () => {
       expect(audit.verdict).toBe('verified')
       await commitBackfillAudit({ store, audit })
       const coverage = await store.readCoverage({ networkId: 'stellar-testnet' })
-      const proof = coverageProof({ manifest: manifestFixture, sources: coverage.sources, gaps: coverage.gaps, backfillAudit: coverage.backfillAudits })
+      const proof = coverageProof({
+        manifest: manifestFixture,
+        sources: coverage.sources,
+        gaps: coverage.gaps,
+        backfillAudit: coverage.backfillAudits,
+      })
       expect(proof.historicalBackfill).toBe('verified')
     })
   })

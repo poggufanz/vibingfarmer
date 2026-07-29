@@ -248,7 +248,8 @@ export async function submitGrant({
     sign:
       model.kind === 'G'
         ? async () => sign(built.xdr, 'grant')
-        : async () => signOwnerAuthEntry({ tx: built.tx, contractId: model.contractId, server, kit }),
+        : async () =>
+            signOwnerAuthEntry({ tx: built.tx, contractId: model.contractId, server, kit }),
     server,
     label: 'grant',
     classicSubmission: 'prefer-relay',
@@ -459,7 +460,8 @@ export async function revokeGrant({
     sign:
       model.kind === 'G'
         ? async () => sign(built.xdr, 'revoke grant')
-        : async () => signOwnerAuthEntry({ tx: built.tx, contractId: model.contractId, server: s, kit }),
+        : async () =>
+            signOwnerAuthEntry({ tx: built.tx, contractId: model.contractId, server: s, kit }),
     server: s,
     label: 'revoke grant',
     classicSubmission: 'direct',

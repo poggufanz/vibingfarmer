@@ -4,7 +4,14 @@
 // enums live, so Tasks 3-7 import types/helpers from here rather than re-guessing column names.
 
 export const AGENT_KINDS = ['deposit', 'bridge', 'unknown']
-export const CUSTODY_LOCATIONS = ['owner', 'agent', 'stellar-vault', 'in-transit', 'base-proxy', 'unknown']
+export const CUSTODY_LOCATIONS = [
+  'owner',
+  'agent',
+  'stellar-vault',
+  'in-transit',
+  'base-proxy',
+  'unknown',
+]
 export const EXECUTION_STATUSES = [
   'queued',
   'accepted',
@@ -30,7 +37,8 @@ export function sourceIdFor({ networkId, creatorAddress }) {
 export const nowSeconds = () => Math.floor(Date.now() / 1000)
 
 function requireString(value, field) {
-  if (typeof value !== 'string' || value.length === 0) throw new Error(`${field} must be a non-empty string`)
+  if (typeof value !== 'string' || value.length === 0)
+    throw new Error(`${field} must be a non-empty string`)
   return value
 }
 function requireInt(value, field) {
@@ -54,7 +62,8 @@ function optionalInt(value, field) {
 // "0.0000001" or a unit count above 2^53 never loses precision going through JS number math.
 function requireDecimalString(value, field) {
   requireString(value, field)
-  if (!/^\d+(\.\d+)?$/.test(value)) throw new Error(`${field} must be a decimal string, got ${JSON.stringify(value)}`)
+  if (!/^\d+(\.\d+)?$/.test(value))
+    throw new Error(`${field} must be a decimal string, got ${JSON.stringify(value)}`)
   return value
 }
 

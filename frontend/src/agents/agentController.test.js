@@ -122,7 +122,11 @@ describe('withdrawAllFromVault — one-signature sweep', () => {
     // (Fix 1) so a post-sign relay loss survives to reach ownerActionOutcome. This is a pure
     // passthrough here — errors[i] || <default string> — so it needed no code change, only this
     // regression guard.
-    const structuredError = { message: 'Lost contact with the relay after signing.', code: 'VF_SUBMISSION_UNKNOWN', submission: 'unknown' }
+    const structuredError = {
+      message: 'Lost contact with the relay after signing.',
+      code: 'VF_SUBMISSION_UNKNOWN',
+      submission: 'unknown',
+    }
     sweepAgents.mockResolvedValue({
       swept: [0n, 20n, 30n],
       txHashes: [undefined, 'sweep1', 'sweep1'],

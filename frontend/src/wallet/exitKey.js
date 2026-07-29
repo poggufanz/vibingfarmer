@@ -74,7 +74,10 @@ const manualKeyV2 = (owner, agent) => `vf.manualExitKey.v2|${DEFAULT_NETWORK_ID}
 
 /** Save a manual (user-initiated) partial-exit key under the v2 owner-scoped namespace. */
 export function saveManualExitKey({ owner, agent, publicKey, secret }) {
-  localStorage.setItem(manualKeyV2(owner, agent), JSON.stringify({ owner, agent, publicKey, secret }))
+  localStorage.setItem(
+    manualKeyV2(owner, agent),
+    JSON.stringify({ owner, agent, publicKey, secret })
+  )
 }
 
 /**

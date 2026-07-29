@@ -60,7 +60,12 @@ function stopMonitoring() {
 // matching one by project name alone across every DeFiLlama chain and asset would misattribute a
 // stranger's real-world APY to a position that was never actually there. Only the one confirmed
 // real venue is ever looked up; everything else honestly reports 'unavailable'.
-const REAL_YIELD_VENUE = { protocol: 'blend-usdc', project: 'blend', chain: 'Stellar', symbolIncludes: 'USDC' }
+const REAL_YIELD_VENUE = {
+  protocol: 'blend-usdc',
+  project: 'blend',
+  chain: 'Stellar',
+  symbolIncludes: 'USDC',
+}
 
 function findRealPool(pools, protocol) {
   if (protocol !== REAL_YIELD_VENUE.protocol) return null

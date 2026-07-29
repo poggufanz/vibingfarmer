@@ -373,7 +373,6 @@ describe('submitGrant - a single signature', () => {
       })
     ).rejects.toThrow(/grant relay returned FAILED/)
   })
-
 })
 
 describe('submitGrant - C owner (passkey), routed through OwnerAuthorizationV1', () => {
@@ -520,9 +519,9 @@ describe('revokeGrant — router allowance kill switch', () => {
     it('throws when the revoke is not confirmed SUCCESS', async () => {
       const server = fakeServer({ latest: 1000 })
       server.getTransaction = async () => ({ status: 'PENDING' })
-      await expect(
-        revokeGrant({ owner: OWNER, server, sign: async (x) => x })
-      ).rejects.toThrow(/not confirmed/i)
+      await expect(revokeGrant({ owner: OWNER, server, sign: async (x) => x })).rejects.toThrow(
+        /not confirmed/i
+      )
     })
   })
 

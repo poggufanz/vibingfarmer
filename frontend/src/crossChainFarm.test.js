@@ -114,7 +114,9 @@ describe('runFarmFlow', () => {
         baseRecipientAddress: '0xBASEACCT',
         sessionKeyAddress: '0xSESSION',
         serializedApproval: 'approval-blob',
-        allocations: [{ allocationId: 'run-b:bridge:aave-v3', pool: AAVE_POOL, amountBaseUnits: 1n }],
+        allocations: [
+          { allocationId: 'run-b:bridge:aave-v3', pool: AAVE_POOL, amountBaseUnits: 1n },
+        ],
         burnUnits7: 10n,
         runId: 'run-b',
         onEvent,
@@ -141,7 +143,9 @@ describe('runFarmFlow', () => {
         baseRecipientAddress: '0xBASEACCT',
         sessionKeyAddress: '0xSESSION',
         serializedApproval: 'approval-blob',
-        allocations: [{ allocationId: 'run-r:bridge:aave-v3', pool: AAVE_POOL, amountBaseUnits: 1n }],
+        allocations: [
+          { allocationId: 'run-r:bridge:aave-v3', pool: AAVE_POOL, amountBaseUnits: 1n },
+        ],
         burnUnits7: 10n,
         runId: 'run-r',
         onEvent,
@@ -297,7 +301,11 @@ describe('runFarmFlow allocationId canonical guard (pre-burn)', () => {
       { allocationId: `${RUN_ID}:bridge:0` },
       /allocationId|canonical/i,
     ],
-    ['a foreign-run allocationId', { allocationId: 'run-other:bridge:aave-v3' }, /allocationId|canonical/i],
+    [
+      'a foreign-run allocationId',
+      { allocationId: 'run-other:bridge:aave-v3' },
+      /allocationId|canonical/i,
+    ],
     [
       'an allocationId for a pool absent from the catalog',
       { pool: `0x${'de'.repeat(20)}`, allocationId: `${RUN_ID}:bridge:aave-v3` },

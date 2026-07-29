@@ -254,7 +254,9 @@ describe('deleteLegacyAutoExitKeys', () => {
     )
     expect(localStorage.getItem('yv_exit_rules_GOWNER')).toBeNull()
     expect(localStorage.getItem('yv_exit_key_cagent1')).toBeNull()
-    expect(localStorage.getItem('vf.manualExitKey.v2|stellar-testnet|GOWNER|CAGENT1')).not.toBeNull()
+    expect(
+      localStorage.getItem('vf.manualExitKey.v2|stellar-testnet|GOWNER|CAGENT1')
+    ).not.toBeNull()
     expect(localStorage.getItem('yv_agent_settings')).not.toBeNull()
   })
 

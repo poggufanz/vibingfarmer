@@ -329,8 +329,8 @@ export default function Withdraw({
               <div className="wd-callout" role="status" data-testid="base-withdraw-partial">
                 Exited {outcome.exited} of {outcome.exited + outcome.skipped} pools.{' '}
                 {outcome.skipped} pool{outcome.skipped === 1 ? '' : 's'} could not be exited right
-                now and {outcome.skipped === 1 ? 'its' : 'their'} funds are still on Base, untouched.
-                Try again later.
+                now and {outcome.skipped === 1 ? 'its' : 'their'} funds are still on Base,
+                untouched. Try again later.
               </div>
             )}
             {status === 'done' && !outcome?.skipped && (

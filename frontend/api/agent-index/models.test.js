@@ -107,7 +107,12 @@ describe('toMembershipRow / parseMembershipRow', () => {
   })
   it('defaults provenance to {} and allows grantTxHash/runId/runOrdinal to be omitted', () => {
     const row = toMembershipRow(
-      membership({ grantTxHash: undefined, runId: undefined, runOrdinal: undefined, provenance: undefined })
+      membership({
+        grantTxHash: undefined,
+        runId: undefined,
+        runOrdinal: undefined,
+        provenance: undefined,
+      })
     )
     expect(row.grant_tx_hash).toBeNull()
     expect(row.run_id).toBeNull()
@@ -117,7 +122,13 @@ describe('toMembershipRow / parseMembershipRow', () => {
   it('rejects an unknown agent kind', () => {
     expect(() => toMembershipRow(membership({ kind: 'legacy' }))).toThrow(/kind/)
   })
-  for (const field of ['networkId', 'agentAddress', 'ownerAddress', 'creatorAddress', 'creationTx']) {
+  for (const field of [
+    'networkId',
+    'agentAddress',
+    'ownerAddress',
+    'creatorAddress',
+    'creationTx',
+  ]) {
     it(`rejects a missing ${field} (proof field)`, () => {
       expect(() => toMembershipRow(membership({ [field]: undefined }))).toThrow()
     })
@@ -153,17 +164,25 @@ describe('toRunAllocationRow / parseRunAllocationRow', () => {
       created_at: 1000,
       updated_at: 1000,
     })
-    expect(parsed.amount).toEqual({ token: 'USDC', units: '18446744073709551616.000000001', decimals: 6 })
+    expect(parsed.amount).toEqual({
+      token: 'USDC',
+      units: '18446744073709551616.000000001',
+      decimals: 6,
+    })
   })
   it('rejects a non-decimal-string units value', () => {
     expect(() => toRunAllocationRow(allocation({ units: 'abc' }))).toThrow()
     expect(() => toRunAllocationRow(allocation({ units: 1000000 }))).toThrow()
   })
   it('rejects an unknown executionStatus', () => {
-    expect(() => toRunAllocationRow(allocation({ executionStatus: 'done' }))).toThrow(/executionStatus/)
+    expect(() => toRunAllocationRow(allocation({ executionStatus: 'done' }))).toThrow(
+      /executionStatus/
+    )
   })
   it('rejects an unknown custodyLocation', () => {
-    expect(() => toRunAllocationRow(allocation({ custodyLocation: 'cold-wallet' }))).toThrow(/custodyLocation/)
+    expect(() => toRunAllocationRow(allocation({ custodyLocation: 'cold-wallet' }))).toThrow(
+      /custodyLocation/
+    )
   })
   it('parseRunAllocationRow returns null for a missing row', () => {
     expect(parseRunAllocationRow(null)).toBeNull()
@@ -237,7 +256,13 @@ describe('toAssociationRow / parseAssociationRow', () => {
 
 describe('toGapRow / parseGapRow', () => {
   it('shapes a valid gap', () => {
-    const row = toGapRow({ sourceId: 'stellar-testnet:CROUTER1', networkId: 'stellar-testnet', fromLedger: 10, throughLedger: 20, reason: 'rpc-timeout' })
+    const row = toGapRow({
+      sourceId: 'stellar-testnet:CROUTER1',
+      networkId: 'stellar-testnet',
+      fromLedger: 10,
+      throughLedger: 20,
+      reason: 'rpc-timeout',
+    })
     expect(row).toEqual({
       source_id: 'stellar-testnet:CROUTER1',
       network_id: 'stellar-testnet',
@@ -293,12 +318,26 @@ describe('toBackfillAuditRow / parseBackfillAuditRow', () => {
   })
   it('rejects an unknown result', () => {
     expect(() =>
-      toBackfillAuditRow({ networkId: 'n', sourceId: 's', method: 'm', result: 'pending', fromLedger: 1, throughLedger: 2 })
+      toBackfillAuditRow({
+        networkId: 'n',
+        sourceId: 's',
+        method: 'm',
+        result: 'pending',
+        fromLedger: 1,
+        throughLedger: 2,
+      })
     ).toThrow(/result/)
   })
   it('rejects throughLedger < fromLedger', () => {
     expect(() =>
-      toBackfillAuditRow({ networkId: 'n', sourceId: 's', method: 'm', result: 'verified', fromLedger: 100, throughLedger: 1 })
+      toBackfillAuditRow({
+        networkId: 'n',
+        sourceId: 's',
+        method: 'm',
+        result: 'verified',
+        fromLedger: 100,
+        throughLedger: 1,
+      })
     ).toThrow()
   })
   it('parseBackfillAuditRow returns null for a missing row', () => {
@@ -381,7 +420,14 @@ describe('parseSourceRow', () => {
 describe('enum vocabularies', () => {
   it('are non-empty and stable', () => {
     expect(AGENT_KINDS).toEqual(['deposit', 'bridge', 'unknown'])
-    expect(CUSTODY_LOCATIONS).toEqual(['owner', 'agent', 'stellar-vault', 'in-transit', 'base-proxy', 'unknown'])
+    expect(CUSTODY_LOCATIONS).toEqual([
+      'owner',
+      'agent',
+      'stellar-vault',
+      'in-transit',
+      'base-proxy',
+      'unknown',
+    ])
     expect(EXECUTION_STATUSES).toContain('queued')
     expect(EXECUTION_STATUSES).toContain('failed')
     expect(BACKFILL_RESULTS).toEqual(['verified', 'failed'])

@@ -76,7 +76,9 @@ describe('classifyKeeperAutomation', () => {
 
 describe('classifyStrategyConfiguration', () => {
   it('is configured (not running) from a readable price-per-share', () => {
-    expect(classifyStrategyConfiguration({ pricePerShare: 10_000_000n })).toEqual({ label: 'configured' })
+    expect(classifyStrategyConfiguration({ pricePerShare: 10_000_000n })).toEqual({
+      label: 'configured',
+    })
   })
 
   it('is configured from an explicit registered flag', () => {
@@ -110,7 +112,12 @@ describe('classifyLifeboatAutomation', () => {
   })
 
   it('is engaged when derisked, and reports authority separately from state', () => {
-    const out = classifyLifeboatAutomation({ derisked: true, mandateExpiry: 0, authority: 'GAUTH', now: 1000 })
+    const out = classifyLifeboatAutomation({
+      derisked: true,
+      mandateExpiry: 0,
+      authority: 'GAUTH',
+      now: 1000,
+    })
     expect(out.state).toBe('engaged')
     expect(out.authority).toBe('GAUTH')
     expect(out.scope).toBe('vault-wide')
@@ -137,7 +144,12 @@ describe('classifyLifeboatAutomation', () => {
   })
 
   it('always labels the state vault-wide, never scoped to one owner', () => {
-    const out = classifyLifeboatAutomation({ derisked: false, mandateExpiry: 2000, authority: 'GAUTH', now: 1000 })
+    const out = classifyLifeboatAutomation({
+      derisked: false,
+      mandateExpiry: 2000,
+      authority: 'GAUTH',
+      now: 1000,
+    })
     expect(out.scope).toBe('vault-wide')
   })
 
@@ -146,13 +158,23 @@ describe('classifyLifeboatAutomation', () => {
   // An unread mandate expiry must never be reported as a confident 'disarmed' — "no evidence" is
   // not "protection off".
   it('is unavailable, never disarmed, when derisked is false but mandateExpiry was never read', () => {
-    const out = classifyLifeboatAutomation({ derisked: false, mandateExpiry: null, authority: 'GAUTH', now: 1000 })
+    const out = classifyLifeboatAutomation({
+      derisked: false,
+      mandateExpiry: null,
+      authority: 'GAUTH',
+      now: 1000,
+    })
     expect(out.state).toBe('unavailable')
     expect(out.state).not.toBe('disarmed')
   })
 
   it('is still engaged when derisked is confirmed true even without a readable mandateExpiry', () => {
-    const out = classifyLifeboatAutomation({ derisked: true, mandateExpiry: null, authority: 'GAUTH', now: 1000 })
+    const out = classifyLifeboatAutomation({
+      derisked: true,
+      mandateExpiry: null,
+      authority: 'GAUTH',
+      now: 1000,
+    })
     expect(out.state).toBe('engaged')
   })
 })
@@ -160,7 +182,12 @@ describe('classifyLifeboatAutomation', () => {
 describe('describeRiskWatchProvenance', () => {
   it('labels a local, owner+network-scoped history as "This device"', () => {
     const out = describeRiskWatchProvenance({ owner: 'GABC', networkId: 'stellar-testnet' })
-    expect(out).toEqual({ label: 'This device', scope: 'local', owner: 'GABC', networkId: 'stellar-testnet' })
+    expect(out).toEqual({
+      label: 'This device',
+      scope: 'local',
+      owner: 'GABC',
+      networkId: 'stellar-testnet',
+    })
   })
 
   it('is unavailable without both owner and networkId — never a guessed shared bucket', () => {

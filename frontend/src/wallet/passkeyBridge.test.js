@@ -121,7 +121,10 @@ describe('ensureBaseOwner', () => {
       .mockRejectedValueOnce(new Error('original register failure'))
       .mockRejectedValueOnce(new Error('secondary login failure'))
     await expect(
-      ensureBaseOwner({ connectedAddress: 'GFREIGHTER', deps: { createBaseSmartAccount: createBase } })
+      ensureBaseOwner({
+        connectedAddress: 'GFREIGHTER',
+        deps: { createBaseSmartAccount: createBase },
+      })
     ).rejects.toThrow('original register failure')
     // A failed resolution must not poison the record for the next attempt.
     expect(localStorage.getItem('vf_base_owner_address')).toBeNull()

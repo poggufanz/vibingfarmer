@@ -24,13 +24,22 @@ const HEARTBEAT_TYPES = new Set(['compound', 'rebalance'])
  * only the freshest heartbeat-type event counts.
  * @returns {{label:'healthy'|'stale'|'unavailable', lastHeartbeatAt:number|null, evidence:object|null}}
  */
-export function classifyKeeperAutomation({ events = [], now, healthyWithinMs = KEEPER_HEALTHY_WITHIN_MS } = {}) {
+export function classifyKeeperAutomation({
+  events = [],
+  now,
+  healthyWithinMs = KEEPER_HEALTHY_WITHIN_MS,
+} = {}) {
   const heartbeats = events.filter(
     (e) => e && HEARTBEAT_TYPES.has(e.type) && Number.isFinite(e.closedAt)
   )
-  if (heartbeats.length === 0) return { label: 'unavailable', lastHeartbeatAt: null, evidence: null }
+  if (heartbeats.length === 0)
+    return { label: 'unavailable', lastHeartbeatAt: null, evidence: null }
   const latest = heartbeats.reduce((a, b) => (b.closedAt > a.closedAt ? b : a))
-  const freshness = classifyFreshness({ checkedAt: latest.closedAt, now, staleAfterMs: healthyWithinMs })
+  const freshness = classifyFreshness({
+    checkedAt: latest.closedAt,
+    now,
+    staleAfterMs: healthyWithinMs,
+  })
   return {
     label: freshness === 'current' ? 'healthy' : 'stale',
     lastHeartbeatAt: latest.closedAt,
@@ -47,7 +56,8 @@ export function classifyStrategyConfiguration({ pricePerShare, registered } = {}
   // A share price of exactly 0 is never a plausible confirmed reading for a real vault — it reads
   // as an unset/failed default, not evidence of configuration (Fix 6, review loop 1).
   const known =
-    registered === true || (pricePerShare != null && Number.isFinite(Number(pricePerShare)) && Number(pricePerShare) > 0)
+    registered === true ||
+    (pricePerShare != null && Number.isFinite(Number(pricePerShare)) && Number(pricePerShare) > 0)
   return { label: known ? 'configured' : 'unavailable' }
 }
 
@@ -83,7 +93,12 @@ export function classifyLifeboatAutomation({ derisked, mandateExpiry, authority,
  */
 export function describeRiskWatchProvenance({ owner, networkId } = {}) {
   if (!owner || !networkId) {
-    return { label: 'unavailable', scope: 'local', owner: owner ?? null, networkId: networkId ?? null }
+    return {
+      label: 'unavailable',
+      scope: 'local',
+      owner: owner ?? null,
+      networkId: networkId ?? null,
+    }
   }
   return { label: 'This device', scope: 'local', owner, networkId }
 }

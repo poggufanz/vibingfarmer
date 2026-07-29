@@ -41,7 +41,11 @@ import { classifyFreshness } from './freshness.js'
 // Confirmed FACTS about an agent's scope/execution — never a mere read-incomplete marker (see
 // readOwnerMoney.js's own READ_INCOMPLETE_PROBLEMS, a deliberately DIFFERENT axis: "we couldn't
 // read this yet" is not "we know something is wrong").
-const CONFIRMED_PROBLEM_MARKERS = new Set(['scope-revoked', 'scope-expired', 'base-execution-failed'])
+const CONFIRMED_PROBLEM_MARKERS = new Set([
+  'scope-revoked',
+  'scope-expired',
+  'base-execution-failed',
+])
 
 // Lifeboat mandate windows are a 24-48h refresh cycle (lifeboat.js) — "urgent" means close to
 // lapsing, not "could someday lapse".
@@ -68,7 +72,10 @@ function isKnownPositiveAmount(amount) {
  * urgent; nothing to recover. */
 function confirmedProblemAgents(agents) {
   return (agents ?? [])
-    .filter((a) => a.problems?.some((p) => CONFIRMED_PROBLEM_MARKERS.has(p)) && isKnownPositiveAmount(a.amount))
+    .filter(
+      (a) =>
+        a.problems?.some((p) => CONFIRMED_PROBLEM_MARKERS.has(p)) && isKnownPositiveAmount(a.amount)
+    )
     .map((a) => a.address)
 }
 
@@ -77,7 +84,9 @@ function hasUnknownUnattributed(unattributed) {
 }
 
 function hasKnownPositiveUnattributed(unattributed) {
-  return Object.values(unattributed ?? {}).some((u) => u.state === 'known' && isKnownPositiveAmount(u.amount))
+  return Object.values(unattributed ?? {}).some(
+    (u) => u.state === 'known' && isKnownPositiveAmount(u.amount)
+  )
 }
 
 function hasKnownVaultMoney(money) {
@@ -93,7 +102,8 @@ function hasKnownVaultMoney(money) {
  * level (a MoneySnapshot, not a single source reading). */
 function resolveMoney(fresh, cached, now) {
   const freshOk = fresh && fresh.confirmedTotal && fresh.confirmedTotal.state !== 'unavailable'
-  if (freshOk) return { data: fresh, freshness: classifyFreshness({ checkedAt: fresh.checkedAt, now }) }
+  if (freshOk)
+    return { data: fresh, freshness: classifyFreshness({ checkedAt: fresh.checkedAt, now }) }
   const cachedOk = cached && cached.confirmedTotal && cached.confirmedTotal.state !== 'unavailable'
   if (cachedOk) return { data: cached, freshness: 'stale' }
   return { data: null, freshness: 'unavailable' }
@@ -106,19 +116,37 @@ function resolveProtection({ protection, cache, now }) {
       : cache?.protection && cache.protection.state && cache.protection.state !== 'unavailable'
         ? cache.protection
         : null
-  if (!p) return { state: 'unavailable', authority: null, mandateExpiry: null, urgentRenewal: false }
+  if (!p)
+    return { state: 'unavailable', authority: null, mandateExpiry: null, urgentRenewal: false }
   const nowS = Math.floor(now / 1000)
   const urgentRenewal =
     (p.state === 'armed' || p.state === 'disarmed') &&
     p.mandateExpiry != null &&
     p.mandateExpiry - nowS <= URGENT_RENEWAL_WITHIN_S
-  return { state: p.state, authority: p.authority ?? null, mandateExpiry: p.mandateExpiry ?? null, urgentRenewal }
+  return {
+    state: p.state,
+    authority: p.authority ?? null,
+    mandateExpiry: p.mandateExpiry ?? null,
+    urgentRenewal,
+  }
 }
 
-function finishModel({ state, owner, money, protection, automation, cache, now, problemAgents, freshness }) {
+function finishModel({
+  state,
+  owner,
+  money,
+  protection,
+  automation,
+  cache,
+  now,
+  problemAgents,
+  freshness,
+}) {
   const resolvedProtection = resolveProtection({ protection, cache, now })
   resolvedProtection.ownerIsAuthority =
-    Boolean(owner) && Boolean(resolvedProtection.authority) && resolvedProtection.authority === owner
+    Boolean(owner) &&
+    Boolean(resolvedProtection.authority) &&
+    resolvedProtection.authority === owner
   return {
     state,
     owner: owner ?? null,
@@ -223,7 +251,11 @@ export function buildMyMoneyModel({
   // A total enumeration failure ('unavailable' — discovery null or itself failed) must be at least
   // as cautious as a partial one; it is not silently upgraded to a confident 'current' just because
   // the money read itself succeeded (Fix 2, review loop 1).
-  if (discoveryStatus === 'partial' || discoveryStatus === 'unavailable' || md.confirmedTotal.state === 'partial') {
+  if (
+    discoveryStatus === 'partial' ||
+    discoveryStatus === 'unavailable' ||
+    md.confirmedTotal.state === 'partial'
+  ) {
     return finishModel({
       state: 'partial-discovery',
       owner,
@@ -272,7 +304,8 @@ export function buildMyMoneyModel({
   // with a corrupt/missing checkedAt still classifies as freshness 'unavailable' (freshness.js),
   // and that must never be rounded up to the confident 'current'.
   return finishModel({
-    state: freshness === 'stale' ? 'stale' : freshness === 'unavailable' ? 'unavailable' : 'current',
+    state:
+      freshness === 'stale' ? 'stale' : freshness === 'unavailable' ? 'unavailable' : 'current',
     owner,
     money: md,
     protection,

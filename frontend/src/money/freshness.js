@@ -30,7 +30,8 @@ export const MAX_CLOCK_SKEW_MS = 60 * 1000
  * @returns {'current'|'stale'|'unavailable'}
  */
 export function classifyFreshness({ checkedAt, now, staleAfterMs = DEFAULT_STALE_AFTER_MS } = {}) {
-  if (checkedAt == null || !Number.isFinite(checkedAt) || !Number.isFinite(now)) return 'unavailable'
+  if (checkedAt == null || !Number.isFinite(checkedAt) || !Number.isFinite(now))
+    return 'unavailable'
   const age = now - checkedAt
   if (age < 0) {
     // Small clock skew still reads as current — never punish a reading that looks "from the
@@ -48,9 +49,17 @@ export function classifyFreshness({ checkedAt, now, staleAfterMs = DEFAULT_STALE
  * again just because nothing new came back. With nothing cached either, the honest answer is
  * 'unavailable', never a guessed zero.
  */
-export function withCacheFallback({ cached, fresh, now, staleAfterMs = DEFAULT_STALE_AFTER_MS } = {}) {
+export function withCacheFallback({
+  cached,
+  fresh,
+  now,
+  staleAfterMs = DEFAULT_STALE_AFTER_MS,
+} = {}) {
   if (fresh && fresh.state && fresh.state !== 'unavailable') {
-    return { ...fresh, freshness: classifyFreshness({ checkedAt: fresh.checkedAt, now, staleAfterMs }) }
+    return {
+      ...fresh,
+      freshness: classifyFreshness({ checkedAt: fresh.checkedAt, now, staleAfterMs }),
+    }
   }
   if (cached && cached.state && cached.state !== 'unavailable') {
     return { ...cached, freshness: 'stale' }

@@ -145,7 +145,10 @@ describe('custodyBreakdownForAgent', () => {
         scope: { state: 'unavailable' },
         vaultShares: KNOWN('1000000'),
         idleToken: KNOWN('0'),
-        baseChild: { custody: { location: 'base-proxy' }, amount: { token: 'USDC', units: '500', decimals: 7 } },
+        baseChild: {
+          custody: { location: 'base-proxy' },
+          amount: { token: 'USDC', units: '500', decimals: 7 },
+        },
       })
     ).toEqual([])
   })
@@ -156,7 +159,10 @@ describe('custodyBreakdownForAgent', () => {
         scope: { state: 'known' },
         vaultShares: KNOWN('5000000'),
         idleToken: KNOWN('0'),
-        baseChild: { custody: { location: 'base-proxy' }, amount: { token: 'USDC', units: '5000000', decimals: 7 } },
+        baseChild: {
+          custody: { location: 'base-proxy' },
+          amount: { token: 'USDC', units: '5000000', decimals: 7 },
+        },
       })
     ).toEqual([
       { location: 'stellar-vault', amount: { token: 'USDC', units: '5000000', decimals: 7 } },
@@ -170,7 +176,10 @@ describe('custodyBreakdownForAgent', () => {
         scope: { state: 'known' },
         vaultShares: KNOWN('0'),
         idleToken: KNOWN('500'),
-        baseChild: { custody: { location: 'base-proxy' }, amount: { token: 'USDC', units: '5000000', decimals: 7 } },
+        baseChild: {
+          custody: { location: 'base-proxy' },
+          amount: { token: 'USDC', units: '5000000', decimals: 7 },
+        },
       })
     ).toEqual([
       { location: 'agent', amount: { token: 'USDC', units: '500', decimals: 7 } },
@@ -188,9 +197,14 @@ describe('custodyBreakdownForAgent', () => {
         scope: { state: 'known' },
         vaultShares: UNAVAILABLE,
         idleToken: KNOWN('0'),
-        baseChild: { custody: { location: 'base-proxy' }, amount: { token: 'USDC', units: '4000000', decimals: 7 } },
+        baseChild: {
+          custody: { location: 'base-proxy' },
+          amount: { token: 'USDC', units: '4000000', decimals: 7 },
+        },
       })
-    ).toEqual([{ location: 'base-proxy', amount: { token: 'USDC', units: '4000000', decimals: 7 } }])
+    ).toEqual([
+      { location: 'base-proxy', amount: { token: 'USDC', units: '4000000', decimals: 7 } },
+    ])
   })
 
   it('a Base leg whose own amount is unresolved contributes nothing, even with a known vault leg', () => {
@@ -201,7 +215,9 @@ describe('custodyBreakdownForAgent', () => {
         idleToken: KNOWN('0'),
         baseChild: { custody: { location: 'base-proxy' }, amount: null },
       })
-    ).toEqual([{ location: 'stellar-vault', amount: { token: 'USDC', units: '5000000', decimals: 7 } }])
+    ).toEqual([
+      { location: 'stellar-vault', amount: { token: 'USDC', units: '5000000', decimals: 7 } },
+    ])
   })
 
   // Two known legs must never BOTH collapse to 'unknown' (the pre-fix bug) — an unrecognized Base
@@ -212,7 +228,10 @@ describe('custodyBreakdownForAgent', () => {
         scope: { state: 'known' },
         vaultShares: KNOWN('5000000'),
         idleToken: KNOWN('0'),
-        baseChild: { custody: { location: 'made-up' }, amount: { token: 'USDC', units: '5000000', decimals: 7 } },
+        baseChild: {
+          custody: { location: 'made-up' },
+          amount: { token: 'USDC', units: '5000000', decimals: 7 },
+        },
       })
     ).toEqual([
       { location: 'stellar-vault', amount: { token: 'USDC', units: '5000000', decimals: 7 } },

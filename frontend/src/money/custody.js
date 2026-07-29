@@ -4,7 +4,14 @@
 // already verified (an on-chain scope read, live vault-share/idle-token balances, or a durable
 // relayer-attested Base association) — anything short of that reports 'unknown', never a
 // confident-looking default like 'owner' or 'agent'.
-const CUSTODY_LOCATIONS = new Set(['owner', 'agent', 'stellar-vault', 'in-transit', 'base-proxy', 'unknown'])
+const CUSTODY_LOCATIONS = new Set([
+  'owner',
+  'agent',
+  'stellar-vault',
+  'in-transit',
+  'base-proxy',
+  'unknown',
+])
 
 function isKnownPositive(read) {
   return read?.state === 'known' && read.amount != null && BigInt(read.amount.units) > 0n
@@ -73,11 +80,16 @@ export function custodyBreakdownForAgent(read) {
   if (!read || !read.baseChild || read.scope?.state !== 'known') return []
 
   const legs = []
-  if (isKnownPositive(read.vaultShares)) legs.push({ location: 'stellar-vault', amount: read.vaultShares.amount })
-  if (isKnownPositive(read.idleToken)) legs.push({ location: 'agent', amount: read.idleToken.amount })
+  if (isKnownPositive(read.vaultShares))
+    legs.push({ location: 'stellar-vault', amount: read.vaultShares.amount })
+  if (isKnownPositive(read.idleToken))
+    legs.push({ location: 'agent', amount: read.idleToken.amount })
   if (read.baseChild.amount != null) {
     const loc = read.baseChild.custody?.location
-    legs.push({ location: CUSTODY_LOCATIONS.has(loc) ? loc : 'unknown', amount: read.baseChild.amount })
+    legs.push({
+      location: CUSTODY_LOCATIONS.has(loc) ? loc : 'unknown',
+      amount: read.baseChild.amount,
+    })
   }
   return legs
 }

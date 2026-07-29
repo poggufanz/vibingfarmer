@@ -65,7 +65,10 @@ async function retentionFloor(server) {
  * (indexer.js) — kept there, not here, so it's unit-testable without a real RPC/D1.
  */
 async function buildEventSource(source, server, sdkMod) {
-  const [oldestAvailableLedger, latest] = await Promise.all([retentionFloor(server), server.getLatestLedger()])
+  const [oldestAvailableLedger, latest] = await Promise.all([
+    retentionFloor(server),
+    server.getLatestLedger(),
+  ])
   const topics =
     source.kind === 'funding-router'
       ? [[symbolScVal('deployed').toXDR('base64'), '*', '*']]
@@ -88,7 +91,12 @@ async function buildEventSource(source, server, sdkMod) {
         startLedger,
         endLedger,
       })
-      return { events: page.events, cursor: null, scannedThroughLedger: page.scannedThroughLedger, latestLedger: page.latestLedger }
+      return {
+        events: page.events,
+        cursor: null,
+        scannedThroughLedger: page.scannedThroughLedger,
+        latestLedger: page.latestLedger,
+      }
     },
     // Registry `authorize()` never pins a wasm — only funding-router sources skip this (the
     // manifest's own supportedAgentWasmHashes already proves their generation, see indexer.js).

@@ -216,7 +216,10 @@ describe('signOwnerAuthEntry — C ceremony: sign the entry, then re-simulate fr
     // A real, parseable (if auth-free) envelope — signOwnerAuthEntry must round-trip it through
     // TransactionBuilder.fromXDR, so a stub string is not enough for this half of the ceremony.
     const account = new Account(RELAYER_G, '5')
-    const realTx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: NETWORK_PASSPHRASE })
+    const realTx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: NETWORK_PASSPHRASE,
+    })
       .setTimeout(30)
       .build()
     const realXdr = realTx.toEnvelope().toXDR('base64')

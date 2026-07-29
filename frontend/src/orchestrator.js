@@ -188,7 +188,8 @@ export class OrchestratorAgent {
     const depositAgents = planAgents.filter((agent) => agent.kind !== 'bridge')
     if (bridgeAgents.length > 1) {
       throw new PermissionPhaseError({
-        phase: 'preflight', code: 'VF_MULTIPLE_BRIDGE_AGENTS',
+        phase: 'preflight',
+        code: 'VF_MULTIPLE_BRIDGE_AGENTS',
         message: 'A reviewed execution may contain exactly one Base bridge agent.',
       })
     }
@@ -221,9 +222,7 @@ export class OrchestratorAgent {
         }
       }
       const sameAmount = (left, right) =>
-        left.token === right.token &&
-        left.units === right.units &&
-        left.decimals === right.decimals
+        left.token === right.token && left.units === right.units && left.decimals === right.decimals
 
       for (const agent of planAgents) {
         const allocations = agent.kind === 'bridge' ? [agent, ...(agent.children || [])] : [agent]
@@ -243,10 +242,7 @@ export class OrchestratorAgent {
           validatedAmounts.set(allocation, amount)
           if (allocation.cap && allocation.allocation) {
             const cap = canonicalAmount(allocation.cap, allocation.allocationId)
-            const allocationAmount = canonicalAmount(
-              allocation.allocation,
-              allocation.allocationId
-            )
+            const allocationAmount = canonicalAmount(allocation.allocation, allocation.allocationId)
             if (!sameAmount(cap, allocationAmount)) {
               throw new Error(`Cap and allocation do not reconcile for ${allocation.allocationId}.`)
             }
@@ -288,10 +284,7 @@ export class OrchestratorAgent {
         })
       }
       const reviewedBudgets = permissionDecision?.reviewedBudgets
-      if (
-        !Array.isArray(reviewedBudgets) ||
-        reviewedBudgets.length !== expectedBudgets.size
-      ) {
+      if (!Array.isArray(reviewedBudgets) || reviewedBudgets.length !== expectedBudgets.size) {
         throw new Error('The reviewed budget set does not match the immutable plan.')
       }
       const reviewedTokens = new Set()
@@ -351,15 +344,20 @@ export class OrchestratorAgent {
       let actualRecipient
       try {
         reviewedBridge = (permissionDecision.reviewedAgentInits || []).find(
-        (init) => init.allocationId === bridgeAgents[0].allocationId
+          (init) => init.allocationId === bridgeAgents[0].allocationId
         )
         expectedRecipient = evmAddrToBytes32(baseMandate.kernelAddress)
         actualRecipient =
-        typeof reviewedBridge?.mintRecipient === 'string'
-          ? hexToBytes32(reviewedBridge.mintRecipient)
-          : reviewedBridge?.mintRecipient
+          typeof reviewedBridge?.mintRecipient === 'string'
+            ? hexToBytes32(reviewedBridge.mintRecipient)
+            : reviewedBridge?.mintRecipient
       } catch (cause) {
-        throw new PermissionPhaseError({ phase: 'preflight', code: 'VF_BASE_KERNEL_INVALID', message: 'The owner-bound Base kernel is malformed.', cause })
+        throw new PermissionPhaseError({
+          phase: 'preflight',
+          code: 'VF_BASE_KERNEL_INVALID',
+          message: 'The owner-bound Base kernel is malformed.',
+          cause,
+        })
       }
       const recipientMatches =
         actualRecipient instanceof Uint8Array &&
@@ -554,7 +552,8 @@ export class OrchestratorAgent {
               sessionKey: worker.sessionKey,
             })
             if (!pulled) throw new Error('The Stellar relay is unavailable.')
-            if (pulled.status !== 'SUCCESS') throw new Error(`The funding router returned ${pulled.status}.`)
+            if (pulled.status !== 'SUCCESS')
+              throw new Error(`The funding router returned ${pulled.status}.`)
             pullTxHash = pulled.hash || null
             movedToAgent = true
           }
@@ -566,7 +565,11 @@ export class OrchestratorAgent {
               agentAddress: worker.agentAddress,
               pullTxHash,
               depositTxHash: deposited?.txHash || null,
-              custody: deposited?.custody || { location: 'unknown', confirmed: false, checkedAt: null },
+              custody: deposited?.custody || {
+                location: 'unknown',
+                confirmed: false,
+                checkedAt: null,
+              },
             },
           })
         } catch (reason) {
@@ -582,7 +585,8 @@ export class OrchestratorAgent {
             },
           })
         }
-        if (index < stellarWorkers.length - 1) await new Promise((resolve) => setTimeout(resolve, DISPATCH_INTERVAL_MS))
+        if (index < stellarWorkers.length - 1)
+          await new Promise((resolve) => setTimeout(resolve, DISPATCH_INTERVAL_MS))
       }
       return settled.map((entry, index) => ({
         allocationId: stellarWorkers[index].allocationId,
@@ -633,10 +637,7 @@ export class OrchestratorAgent {
         onEvent: (name, data) => this.onEvent(name, data),
       })
     }
-    const [stellarSettled, baseSettled] = await Promise.allSettled([
-      runStellar(),
-      runBase(),
-    ])
+    const [stellarSettled, baseSettled] = await Promise.allSettled([runStellar(), runBase()])
     const stellarResults =
       stellarSettled.status === 'fulfilled'
         ? stellarSettled.value
@@ -671,7 +672,10 @@ export class OrchestratorAgent {
       permission: confirmed,
       branches: {
         stellar: { results: stellarResults },
-        base: { status: baseLeg.success === false ? 'failed' : undefined, results: baseLeg.allocations || [] },
+        base: {
+          status: baseLeg.success === false ? 'failed' : undefined,
+          results: baseLeg.allocations || [],
+        },
       },
     })
     const completed = stellarResults.filter((result) => result.success).length
@@ -981,7 +985,9 @@ export class OrchestratorAgent {
       !submitted?.hash ||
       !Array.isArray(submitted.agentAddresses) ||
       submitted.agentAddresses.length !== workers.length ||
-      submitted.agentAddresses.some((address) => typeof address !== 'string' || address.length === 0)
+      submitted.agentAddresses.some(
+        (address) => typeof address !== 'string' || address.length === 0
+      )
     ) {
       throw new PermissionPhaseError({
         phase: 'fresh-grant',
@@ -1589,13 +1595,7 @@ export class OrchestratorAgent {
       for (const w of workers) await w.setupKey() // fresh keys the grant pins as agent signers
       let granted
       try {
-        granted = await this.grantFreshAgents(
-          workers,
-          totalUnits,
-          expiry,
-          nowSec,
-          bridgeInit
-        )
+        granted = await this.grantFreshAgents(workers, totalUnits, expiry, nowSec, bridgeInit)
       } catch (err) {
         // A grant covers ALL workers (+ the bridge agent) under one signature — its failure
         // (dismissed signature request, sim error) leaves NOTHING deployed, so the whole run's

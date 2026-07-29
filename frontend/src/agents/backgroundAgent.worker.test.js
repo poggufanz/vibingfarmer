@@ -85,7 +85,9 @@ describe('backgroundAgent.worker', () => {
   // fixture now matches what the real API actually returns.
   it('posts RISK_FACT with the real matched pool data via the canonical blend-usdc -> blend slug mapping', async () => {
     global.fetch = vi.fn(async () => ({
-      json: async () => ({ data: [{ project: 'blend', chain: 'Stellar', symbol: 'USDC', apy: 7.5, tvlUsd: 4_000_000 }] }),
+      json: async () => ({
+        data: [{ project: 'blend', chain: 'Stellar', symbol: 'USDC', apy: 7.5, tvlUsd: 4_000_000 }],
+      }),
     }))
     const { fakeSelf, posted } = await loadWorker()
     fakeSelf.onmessage({
@@ -103,12 +105,19 @@ describe('backgroundAgent.worker', () => {
 
     const facts = posted.filter((m) => m.type === 'RISK_FACT')
     expect(facts).toHaveLength(1)
-    expect(facts[0].payload).toMatchObject({ state: 'known', apy: 7.5, tvlUsd: 4_000_000, source: 'defillama' })
+    expect(facts[0].payload).toMatchObject({
+      state: 'known',
+      apy: 7.5,
+      tvlUsd: 4_000_000,
+      source: 'defillama',
+    })
   })
 
   it('never matches the blend project on a foreign chain — the mapping requires the Stellar pool specifically', async () => {
     global.fetch = vi.fn(async () => ({
-      json: async () => ({ data: [{ project: 'blend', chain: 'Ethereum', symbol: 'USDC', apy: 99, tvlUsd: 1 }] }),
+      json: async () => ({
+        data: [{ project: 'blend', chain: 'Ethereum', symbol: 'USDC', apy: 99, tvlUsd: 1 }],
+      }),
     }))
     const { fakeSelf, posted } = await loadWorker()
     fakeSelf.onmessage({
@@ -130,7 +139,9 @@ describe('backgroundAgent.worker', () => {
 
   it('never matches the blend project on the right chain but the wrong asset (e.g. the XLM pool)', async () => {
     global.fetch = vi.fn(async () => ({
-      json: async () => ({ data: [{ project: 'blend', chain: 'Stellar', symbol: 'XLM', apy: 15, tvlUsd: 1 }] }),
+      json: async () => ({
+        data: [{ project: 'blend', chain: 'Stellar', symbol: 'XLM', apy: 15, tvlUsd: 1 }],
+      }),
     }))
     const { fakeSelf, posted } = await loadWorker()
     fakeSelf.onmessage({
@@ -156,7 +167,9 @@ describe('backgroundAgent.worker', () => {
     // Stellar catalog entry keys into it any more). A vault still carrying that legacy slug (e.g.
     // an older held position) must never get an unrelated real-world pool's APY labelled 'known'.
     global.fetch = vi.fn(async () => ({
-      json: async () => ({ data: [{ project: 'aave-v3', chain: 'Ethereum', symbol: 'USDC', apy: 12.3, tvlUsd: 999 }] }),
+      json: async () => ({
+        data: [{ project: 'aave-v3', chain: 'Ethereum', symbol: 'USDC', apy: 12.3, tvlUsd: 999 }],
+      }),
     }))
     const { fakeSelf, posted } = await loadWorker()
     fakeSelf.onmessage({
@@ -224,13 +237,20 @@ describe('backgroundAgent.worker', () => {
     await flush()
     fakeSelf.onmessage({ data: { type: 'STOP' } })
 
-    expect(posted.some((m) => m.type === 'MONITOR_ERROR' && m.payload.monitor === 'facts')).toBe(true)
+    expect(posted.some((m) => m.type === 'MONITOR_ERROR' && m.payload.monitor === 'facts')).toBe(
+      true
+    )
   })
 
   it('runRiskCheck still posts RISK_SCAN_RESULT with source + freshness for a real position', async () => {
     global.fetch = vi.fn(async (url) => {
       if (String(url).includes('yields.llama.fi')) return { json: async () => ({ data: [] }) }
-      return { json: async () => ({ answer: 'no known issues', results: [{ title: 'T', url: 'https://x' }] }) }
+      return {
+        json: async () => ({
+          answer: 'no known issues',
+          results: [{ title: 'T', url: 'https://x' }],
+        }),
+      }
     })
     const { fakeSelf, posted } = await loadWorker()
     fakeSelf.onmessage({

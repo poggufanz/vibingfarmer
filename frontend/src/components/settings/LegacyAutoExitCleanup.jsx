@@ -95,8 +95,8 @@ export default function LegacyAutoExitCleanup({ addLog } = {}) {
     return (
       <div>
         <p style={{ margin: 0, fontSize: 13, color: 'var(--danger)', lineHeight: 1.55 }}>
-          This browser's storage could not be scanned right now, so it is unknown whether any
-          legacy auto-exit data remains. Nothing has been deleted.
+          This browser's storage could not be scanned right now, so it is unknown whether any legacy
+          auto-exit data remains. Nothing has been deleted.
         </p>
       </div>
     )
@@ -106,8 +106,8 @@ export default function LegacyAutoExitCleanup({ addLog } = {}) {
     return (
       <div>
         <p style={{ margin: 0, fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.55 }}>
-          No legacy auto-exit data found on this device. The autonomous auto-exit feature has
-          been removed from the app. This app no longer moves money on its own.
+          No legacy auto-exit data found on this device. The autonomous auto-exit feature has been
+          removed from the app. This app no longer moves money on its own.
         </p>
       </div>
     )
@@ -144,7 +144,9 @@ export default function LegacyAutoExitCleanup({ addLog } = {}) {
                 style={{ marginTop: 4, flex: 'none' }}
               />
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 600 }}>{KIND_LABEL[row.kind] || row.kind}</div>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>
+                  {KIND_LABEL[row.kind] || row.kind}
+                </div>
                 <div style={{ fontSize: 12, color: 'var(--text-muted)', wordBreak: 'break-word' }}>
                   {subject.role}: <span className="pc-technical">{short(subject.address)}</span>
                 </div>

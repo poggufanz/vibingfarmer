@@ -25,9 +25,27 @@ const C_ACCOUNT = {
   signer: 'passkey-secp256r1',
   selectedAt: 1,
 }
-const CW_LOCKED = { ready: true, hasWallet: true, publicKey: 'GCLASSIC', unlocked: false, needsBackup: false }
-const CW_UNLOCKED = { ready: true, hasWallet: true, publicKey: 'GCLASSIC', unlocked: true, needsBackup: false }
-const CW_NONE = { ready: true, hasWallet: false, publicKey: null, unlocked: false, needsBackup: false }
+const CW_LOCKED = {
+  ready: true,
+  hasWallet: true,
+  publicKey: 'GCLASSIC',
+  unlocked: false,
+  needsBackup: false,
+}
+const CW_UNLOCKED = {
+  ready: true,
+  hasWallet: true,
+  publicKey: 'GCLASSIC',
+  unlocked: true,
+  needsBackup: false,
+}
+const CW_NONE = {
+  ready: true,
+  hasWallet: false,
+  publicKey: null,
+  unlocked: false,
+  needsBackup: false,
+}
 
 describe('resolveEntryScreen — popup routing off the resolution matrix', () => {
   it('empty, no legacy hint -> classic onboarding (fresh-install default, unchanged)', () => {

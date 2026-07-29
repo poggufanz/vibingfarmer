@@ -76,14 +76,16 @@ describe('ownerWithdraw', () => {
     // Error here (undefined code/submission) is exactly what used to report a landed transaction
     // as failed (the incident exit.js:71-73 documents).
     submitUserTx.mockResolvedValueOnce({ hash: 'h2', status: 'PENDING' })
-    await expect(ownerWithdraw({ owner: OWNER, agentAddress: AGENT, to: OWNER })).rejects.toMatchObject(
-      { code: 'VF_SUBMISSION_UNKNOWN', submission: 'unknown' }
-    )
+    await expect(
+      ownerWithdraw({ owner: OWNER, agentAddress: AGENT, to: OWNER })
+    ).rejects.toMatchObject({ code: 'VF_SUBMISSION_UNKNOWN', submission: 'unknown' })
   })
 
   it('Fix 1 (fix loop 2): an explicit FAILED status still throws a bare confirmed failure, never unknown', async () => {
     submitUserTx.mockResolvedValueOnce({ hash: 'h2', status: 'FAILED' })
-    const err = await ownerWithdraw({ owner: OWNER, agentAddress: AGENT, to: OWNER }).catch((e) => e)
+    const err = await ownerWithdraw({ owner: OWNER, agentAddress: AGENT, to: OWNER }).catch(
+      (e) => e
+    )
     expect(err.message).toMatch(/not confirmed/i)
     expect(err.code).toBeUndefined()
     expect(err.submission).toBeUndefined()
@@ -274,7 +276,10 @@ describe('sweepAgents', () => {
       chunkSize: 1,
     })
     expect(out.swept).toEqual([9n, 0n])
-    expect(out.errors).toEqual([undefined, expect.objectContaining({ message: 'Transaction xyz failed on-chain.' })])
+    expect(out.errors).toEqual([
+      undefined,
+      expect.objectContaining({ message: 'Transaction xyz failed on-chain.' }),
+    ])
   })
 
   it('reports the chain error per agent rather than a bare row of zeros', async () => {

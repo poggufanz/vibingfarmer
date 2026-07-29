@@ -157,7 +157,9 @@ function toWireAllocations(allocations, runId) {
     }
     if (runId) {
       const prefix = `${runId}:bridge:`
-      const proxyTarget = a.allocationId.startsWith(prefix) ? a.allocationId.slice(prefix.length) : null
+      const proxyTarget = a.allocationId.startsWith(prefix)
+        ? a.allocationId.slice(prefix.length)
+        : null
       if (!proxyTarget || !KNOWN_BASE_PROXY_TARGETS.has(proxyTarget)) {
         throw new Error(
           'allocationId does not match the reviewed run and a known Base proxy target'

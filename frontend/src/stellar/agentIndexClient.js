@@ -87,7 +87,8 @@ export async function fetchOwnerAgentIndex({
   // coverage attached to it either — short-circuit to the same empty-agents shape every other
   // `unavailable` result uses, rather than silently carrying the raw body's agents/coverage
   // through under an 'unavailable' label.
-  if (body.status !== 'complete' && body.status !== 'partial') return unavailableResult(networkId, owner)
+  if (body.status !== 'complete' && body.status !== 'partial')
+    return unavailableResult(networkId, owner)
   let status = body.status
 
   const coverage = body.coverage

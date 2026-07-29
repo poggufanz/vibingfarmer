@@ -78,16 +78,18 @@ function memoryStore({ membershipOwner = OWNER_A, membership = {} } = {}) {
     events,
     async readMembershipsByAgentAddresses({ agentAddresses }) {
       return agentAddresses.includes(BRIDGE)
-        ? [{
-            address: BRIDGE,
-            owner: membershipOwner,
-            creator: LIVE_BRIDGE_ROUTER,
-            schemaVersion: 1,
-            kind: 'unknown',
-            grantTxHash: 'grant-42',
-            provenance: { source: 'router-event', generation: 'agent-v3-bridge' },
-            ...membership,
-          }]
+        ? [
+            {
+              address: BRIDGE,
+              owner: membershipOwner,
+              creator: LIVE_BRIDGE_ROUTER,
+              schemaVersion: 1,
+              kind: 'unknown',
+              grantTxHash: 'grant-42',
+              provenance: { source: 'router-event', generation: 'agent-v3-bridge' },
+              ...membership,
+            },
+          ]
         : []
     },
     async readRunAllocation({ networkId, runId, allocationId }) {
@@ -98,10 +100,7 @@ function memoryStore({ membershipOwner = OWNER_A, membership = {} } = {}) {
       return events.has(idempotencyKey)
     },
     async commitAssociation({ association, idempotencyKey }) {
-      rows.set(
-        `${association.networkId}|${association.allocationId}`,
-        association
-      )
+      rows.set(`${association.networkId}|${association.allocationId}`, association)
       events.add(idempotencyKey)
     },
   }
@@ -112,8 +111,7 @@ function ingest(overrides = {}) {
   return ingestAssociationReport({
     report: incoming,
     idempotencyKey:
-      overrides.idempotencyKey ??
-      associationIdempotencyKey(incoming, incoming.allocations[0]),
+      overrides.idempotencyKey ?? associationIdempotencyKey(incoming, incoming.allocations[0]),
     store: overrides.store ?? memoryStore(),
     scopeReader: overrides.scopeReader ?? vi.fn(async () => scope()),
     poolTargets: POOL_TARGETS,
@@ -169,15 +167,13 @@ describe('ingestAssociationReport', () => {
     ['expiry', { expiry: BigInt(Math.floor(NOW / 1000) - 1) }],
     ['revoked', { revoked: true }],
   ])('rejects a bridge scope with invalid %s coverage', async (_label, changed) => {
-    await expect(
-      ingest({ scopeReader: vi.fn(async () => scope(changed)) })
-    ).rejects.toThrow(/scope/i)
+    await expect(ingest({ scopeReader: vi.fn(async () => scope(changed)) })).rejects.toThrow(
+      /scope/i
+    )
   })
 
   it('rejects missing binding attestation, unallowlisted pools, proxy spoofing, and APY invention', async () => {
-    await expect(
-      ingest({ report: report({ mandateBindingId: null }) })
-    ).rejects.toThrow(/binding/i)
+    await expect(ingest({ report: report({ mandateBindingId: null }) })).rejects.toThrow(/binding/i)
     await expect(
       ingest({
         report: report({
@@ -220,9 +216,9 @@ describe('ingestAssociationReport', () => {
   })
 
   it('rejects a first association whose allocation ID belongs to another reviewed run', async () => {
-    await expect(
-      ingest({ report: report({ runId: 'run-other' }) })
-    ).rejects.toThrow(/allocationId|run/i)
+    await expect(ingest({ report: report({ runId: 'run-other' }) })).rejects.toThrow(
+      /allocationId|run/i
+    )
   })
 
   it('rejects unobserved acceptance that claims funds are already in transit', async () => {
@@ -390,7 +386,11 @@ describe('ingestAssociationReport', () => {
     await ingest({
       report: report({
         allocations: [
-          allocation({ executionStatus: 'minted', custody: { location: 'agent' }, txHash: '0xmint' }),
+          allocation({
+            executionStatus: 'minted',
+            custody: { location: 'agent' },
+            txHash: '0xmint',
+          }),
         ],
       }),
       store,
@@ -433,9 +433,9 @@ describe('ingestAssociationReport', () => {
 
       // report(changed) keeps the default 'accepted'/null tuple, so its idempotency key equals
       // the one just journaled above — the short-circuit must not fire for this conflicting body.
-      await expect(
-        ingest({ report: report(changed), store, scopeReader })
-      ).rejects.toThrow(/allocation identity cannot change/i)
+      await expect(ingest({ report: report(changed), store, scopeReader })).rejects.toThrow(
+        /allocation identity cannot change/i
+      )
     }
   )
 

@@ -10,8 +10,7 @@ const {
   postMandate,
   getMandateStatus,
   postMandateRevoke,
-} =
-  relayerClient
+} = relayerClient
 
 describe('quantizeAllocations', () => {
   test('quantizes a 100 / 3 split once while preserving display amounts', () => {
@@ -33,19 +32,36 @@ describe('quantizeAllocations', () => {
   test('uses the explicit CCTP mint target for one and multiple 0.1234567 allocations', async () => {
     const scenarios = [
       {
-        allocations: [{
-          allocationId: 'run-q:bridge:aave-v3',
-          pool: '0xAAAA',
-          amount: 0.1234567,
-          minShares: 1n,
-        }],
+        allocations: [
+          {
+            allocationId: 'run-q:bridge:aave-v3',
+            pool: '0xAAAA',
+            amount: 0.1234567,
+            minShares: 1n,
+          },
+        ],
         expected: [123_456n],
       },
       {
         allocations: [
-          { allocationId: 'run-q:bridge:aave-v3', pool: '0xAAAA', amount: 0.1234567 * 0.5, minShares: 1n },
-          { allocationId: 'run-q:bridge:moonwell', pool: '0xBBBB', amount: 0.1234567 * 0.3, minShares: 1n },
-          { allocationId: 'run-q:bridge:morpho-blue', pool: '0xCCCC', amount: 0.1234567 * 0.2, minShares: 1n },
+          {
+            allocationId: 'run-q:bridge:aave-v3',
+            pool: '0xAAAA',
+            amount: 0.1234567 * 0.5,
+            minShares: 1n,
+          },
+          {
+            allocationId: 'run-q:bridge:moonwell',
+            pool: '0xBBBB',
+            amount: 0.1234567 * 0.3,
+            minShares: 1n,
+          },
+          {
+            allocationId: 'run-q:bridge:morpho-blue',
+            pool: '0xCCCC',
+            amount: 0.1234567 * 0.2,
+            minShares: 1n,
+          },
         ],
         expected: [61_728n, 37_037n, 24_691n],
       },
@@ -95,12 +111,14 @@ describe('postFarm', () => {
       sourceDomain: 27,
       serializedApproval: 'approval-blob',
       runId: 'run-42',
-      allocations: [{
-        allocationId: 'run-42:bridge:aave-v3',
-        pool: '0xAAAA',
-        amount: 100,
-        minShares: 99n,
-      }],
+      allocations: [
+        {
+          allocationId: 'run-42:bridge:aave-v3',
+          pool: '0xAAAA',
+          amount: 100,
+          minShares: 99n,
+        },
+      ],
       baseUrl: 'https://example.test/api/vf-cross',
       deps: { fetchImpl: fetchMock },
     })
@@ -127,12 +145,14 @@ describe('postFarm', () => {
       bridgeAgent: 'CBRIDGE',
       runId: 'run-42',
       grantTxHash: 'HGRANT',
-      allocations: [{
-        allocationId: 'run-42:bridge:aave-v3',
-        pool: '0xAAAA',
-        amount: 100,
-        minShares: 99n,
-      }],
+      allocations: [
+        {
+          allocationId: 'run-42:bridge:aave-v3',
+          pool: '0xAAAA',
+          amount: 100,
+          minShares: 99n,
+        },
+      ],
       baseUrl: 'https://example.test/api/vf-cross',
       deps: { fetchImpl: fetchMock },
     })
@@ -157,12 +177,14 @@ describe('postFarm', () => {
       burnTxHash: 'abcd',
       sourceDomain: 27,
       serializedApproval: 'approval-blob',
-      allocations: [{
-        allocationId: 'reviewed-run:bridge:aave-v3',
-        pool: '0xAAAA',
-        amount: 100,
-        minShares: 99n,
-      }],
+      allocations: [
+        {
+          allocationId: 'reviewed-run:bridge:aave-v3',
+          pool: '0xAAAA',
+          amount: 100,
+          minShares: 99n,
+        },
+      ],
       baseUrl: 'https://example.test/api/vf-cross',
       deps: { fetchImpl: fetchMock },
     })
@@ -227,12 +249,14 @@ describe('postFarm', () => {
         sourceDomain: 27,
         serializedApproval: 'approval-blob',
         runId: 'run-42',
-        allocations: [{
-          allocationId: 'run-42:bridge:0',
-          pool: '0xAAAA',
-          amount: 100,
-          minShares: 99n,
-        }],
+        allocations: [
+          {
+            allocationId: 'run-42:bridge:0',
+            pool: '0xAAAA',
+            amount: 100,
+            minShares: 99n,
+          },
+        ],
         deps: { fetchImpl: fetchMock },
       })
     ).rejects.toThrow(/allocationId|canonical/i)
@@ -247,12 +271,14 @@ describe('postFarm', () => {
         sourceDomain: 27,
         serializedApproval: 'approval-blob',
         runId: 'run-42',
-        allocations: [{
-          allocationId: 'run-other:bridge:aave-v3',
-          pool: '0xAAAA',
-          amount: 100,
-          minShares: 99n,
-        }],
+        allocations: [
+          {
+            allocationId: 'run-other:bridge:aave-v3',
+            pool: '0xAAAA',
+            amount: 100,
+            minShares: 99n,
+          },
+        ],
         deps: { fetchImpl: fetchMock },
       })
     ).rejects.toThrow(/run|allocationId/i)
@@ -317,12 +343,14 @@ describe('postFarm', () => {
       burnTxHash: 'abcd',
       sourceDomain: 27,
       serializedApproval: 'approval-blob',
-      allocations: [{
-        allocationId: 'run-f:bridge:aave-v3',
-        pool: '0xAAAA',
-        amount: fractional,
-        minShares: 99n,
-      }],
+      allocations: [
+        {
+          allocationId: 'run-f:bridge:aave-v3',
+          pool: '0xAAAA',
+          amount: fractional,
+          minShares: 99n,
+        },
+      ],
       baseUrl: 'https://example.test/api/vf-cross',
       deps: { fetchImpl: fetchMock },
     })
@@ -399,12 +427,14 @@ describe('postFarm', () => {
       burnTxHash: 'abcd',
       sourceDomain: 27,
       serializedApproval: 'approval-blob',
-      allocations: [{
-        allocationId: 'run-b:bridge:aave-v3',
-        pool: '0xAAAA',
-        amount: 60_000_000n,
-        minShares: 99n,
-      }],
+      allocations: [
+        {
+          allocationId: 'run-b:bridge:aave-v3',
+          pool: '0xAAAA',
+          amount: 60_000_000n,
+          minShares: 99n,
+        },
+      ],
       baseUrl: 'https://example.test/api/vf-cross',
       deps: { fetchImpl: fetchMock },
     })

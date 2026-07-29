@@ -15,11 +15,15 @@ describe('classifyFreshness', () => {
   })
 
   it('is current within the staleness window', () => {
-    expect(classifyFreshness({ checkedAt: 1000, now: 1000 + DEFAULT_STALE_AFTER_MS })).toBe('current')
+    expect(classifyFreshness({ checkedAt: 1000, now: 1000 + DEFAULT_STALE_AFTER_MS })).toBe(
+      'current'
+    )
   })
 
   it('is stale past the staleness window', () => {
-    expect(classifyFreshness({ checkedAt: 1000, now: 1000 + DEFAULT_STALE_AFTER_MS + 1 })).toBe('stale')
+    expect(classifyFreshness({ checkedAt: 1000, now: 1000 + DEFAULT_STALE_AFTER_MS + 1 })).toBe(
+      'stale'
+    )
   })
 
   it('honors a custom staleAfterMs', () => {
@@ -48,10 +52,18 @@ describe('classifyFreshness', () => {
 })
 
 describe('withCacheFallback', () => {
-  const cached = { state: 'known', amount: { token: 'USDC', units: '100', decimals: 7 }, checkedAt: 0 }
+  const cached = {
+    state: 'known',
+    amount: { token: 'USDC', units: '100', decimals: 7 },
+    checkedAt: 0,
+  }
 
   it('uses the fresh read when it succeeded, classified against now', () => {
-    const fresh = { state: 'known', amount: { token: 'USDC', units: '200', decimals: 7 }, checkedAt: 1000 }
+    const fresh = {
+      state: 'known',
+      amount: { token: 'USDC', units: '200', decimals: 7 },
+      checkedAt: 1000,
+    }
     const out = withCacheFallback({ cached, fresh, now: 1000 })
     expect(out.amount.units).toBe('200')
     expect(out.freshness).toBe('current')
@@ -72,7 +84,11 @@ describe('withCacheFallback', () => {
   })
 
   it('is unavailable when both fresh and cache are missing/failed', () => {
-    const out = withCacheFallback({ cached: null, fresh: { state: 'unavailable', amount: null }, now: 1000 })
+    const out = withCacheFallback({
+      cached: null,
+      fresh: { state: 'unavailable', amount: null },
+      now: 1000,
+    })
     expect(out.state).toBe('unavailable')
     expect(out.amount).toBeNull()
     expect(out.freshness).toBe('unavailable')

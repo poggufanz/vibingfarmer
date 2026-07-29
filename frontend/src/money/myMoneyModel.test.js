@@ -41,8 +41,17 @@ describe('buildMyMoneyModel — connection + loading', () => {
   })
 
   it('is unavailable when a read was attempted and failed, with nothing cached', () => {
-    const money = { status: 'unavailable', confirmedTotal: { state: 'unavailable', amount: null }, agents: [] }
-    const m = buildMyMoneyModel({ owner: 'GOWNER', discovery: discoveryOf('unavailable'), money, now: NOW })
+    const money = {
+      status: 'unavailable',
+      confirmedTotal: { state: 'unavailable', amount: null },
+      agents: [],
+    }
+    const m = buildMyMoneyModel({
+      owner: 'GOWNER',
+      discovery: discoveryOf('unavailable'),
+      money,
+      now: NOW,
+    })
     expect(m.state).toBe('unavailable')
     expect(m.confirmedTotal).toBeNull()
   })
@@ -51,7 +60,11 @@ describe('buildMyMoneyModel — connection + loading', () => {
 describe('buildMyMoneyModel — cache-backed staleness', () => {
   it('falls back to cached money and reports stale when the fresh read failed', () => {
     const cachedMoney = knownMoney({ units: 500_0000000n, checkedAt: NOW - 10_000 })
-    const failedMoney = { status: 'unavailable', confirmedTotal: { state: 'unavailable', amount: null }, agents: [] }
+    const failedMoney = {
+      status: 'unavailable',
+      confirmedTotal: { state: 'unavailable', amount: null },
+      agents: [],
+    }
     const m = buildMyMoneyModel({
       owner: 'GOWNER',
       discovery: discoveryOf('complete'),
@@ -66,7 +79,12 @@ describe('buildMyMoneyModel — cache-backed staleness', () => {
 
   it('is stale (not current) purely from an old checkedAt, even without any refresh failure', () => {
     const money = knownMoney({ units: 100n, checkedAt: 0 }) // ancient relative to NOW
-    const m = buildMyMoneyModel({ owner: 'GOWNER', discovery: discoveryOf('complete'), money, now: NOW })
+    const m = buildMyMoneyModel({
+      owner: 'GOWNER',
+      discovery: discoveryOf('complete'),
+      money,
+      now: NOW,
+    })
     expect(m.state).toBe('stale')
   })
 })
@@ -74,13 +92,26 @@ describe('buildMyMoneyModel — cache-backed staleness', () => {
 describe('buildMyMoneyModel — partial discovery', () => {
   it('is partial-discovery when the discovery envelope itself is partial', () => {
     const money = knownMoney({ units: 100n })
-    const m = buildMyMoneyModel({ owner: 'GOWNER', discovery: discoveryOf('partial'), money, now: NOW })
+    const m = buildMyMoneyModel({
+      owner: 'GOWNER',
+      discovery: discoveryOf('partial'),
+      money,
+      now: NOW,
+    })
     expect(m.state).toBe('partial-discovery')
   })
 
   it('is partial-discovery when the aggregate total itself is only partially known', () => {
-    const money = { ...knownMoney({ units: 100n }), confirmedTotal: { state: 'partial', amount: amt(100n) } }
-    const m = buildMyMoneyModel({ owner: 'GOWNER', discovery: discoveryOf('complete'), money, now: NOW })
+    const money = {
+      ...knownMoney({ units: 100n }),
+      confirmedTotal: { state: 'partial', amount: amt(100n) },
+    }
+    const m = buildMyMoneyModel({
+      owner: 'GOWNER',
+      discovery: discoveryOf('complete'),
+      money,
+      now: NOW,
+    })
     expect(m.state).toBe('partial-discovery')
   })
 })
@@ -88,13 +119,26 @@ describe('buildMyMoneyModel — partial discovery', () => {
 describe('buildMyMoneyModel — authoritative emptiness', () => {
   it('is empty only with complete discovery + known zero total + no unattributed doubt', () => {
     const money = knownMoney({ units: 0n })
-    const m = buildMyMoneyModel({ owner: 'GOWNER', discovery: discoveryOf('complete'), money, now: NOW })
+    const m = buildMyMoneyModel({
+      owner: 'GOWNER',
+      discovery: discoveryOf('complete'),
+      money,
+      now: NOW,
+    })
     expect(m.state).toBe('empty')
   })
 
   it('never claims empty when an unattributed bucket is unavailable — unknown cannot manufacture empty', () => {
-    const money = knownMoney({ units: 0n, unattributed: { kernel1: { state: 'unavailable', amount: null } } })
-    const m = buildMyMoneyModel({ owner: 'GOWNER', discovery: discoveryOf('complete'), money, now: NOW })
+    const money = knownMoney({
+      units: 0n,
+      unattributed: { kernel1: { state: 'unavailable', amount: null } },
+    })
+    const m = buildMyMoneyModel({
+      owner: 'GOWNER',
+      discovery: discoveryOf('complete'),
+      money,
+      now: NOW,
+    })
     expect(m.state).not.toBe('empty')
     expect(m.state).toBe('current')
   })
@@ -104,13 +148,23 @@ describe('buildMyMoneyModel — authoritative emptiness', () => {
       units: 0n,
       unattributed: { kernel1: { state: 'known', amount: amt(50n), checkedAt: NOW } },
     })
-    const m = buildMyMoneyModel({ owner: 'GOWNER', discovery: discoveryOf('complete'), money, now: NOW })
+    const m = buildMyMoneyModel({
+      owner: 'GOWNER',
+      discovery: discoveryOf('complete'),
+      money,
+      now: NOW,
+    })
     expect(m.state).not.toBe('empty')
   })
 
   it('never claims empty without proven-complete discovery, even with a known zero total', () => {
     const money = knownMoney({ units: 0n })
-    const m = buildMyMoneyModel({ owner: 'GOWNER', discovery: discoveryOf('partial'), money, now: NOW })
+    const m = buildMyMoneyModel({
+      owner: 'GOWNER',
+      discovery: discoveryOf('partial'),
+      money,
+      now: NOW,
+    })
     expect(m.state).not.toBe('empty')
   })
 
@@ -119,7 +173,11 @@ describe('buildMyMoneyModel — authoritative emptiness', () => {
   // then lost connectivity must not be told they have nothing.
   it('never claims empty from a stale cached zero total when the fresh read failed', () => {
     const cachedZero = knownMoney({ units: 0n, checkedAt: NOW - 60 * 60 * 1000 }) // checked an hour ago
-    const failedMoney = { status: 'unavailable', confirmedTotal: { state: 'unavailable', amount: null }, agents: [] }
+    const failedMoney = {
+      status: 'unavailable',
+      confirmedTotal: { state: 'unavailable', amount: null },
+      agents: [],
+    }
     const m = buildMyMoneyModel({
       owner: 'GOWNER',
       discovery: discoveryOf('complete'),
@@ -133,7 +191,12 @@ describe('buildMyMoneyModel — authoritative emptiness', () => {
 
   it('still claims empty when a zero total is confirmed by a FRESH read', () => {
     const money = knownMoney({ units: 0n, checkedAt: NOW })
-    const m = buildMyMoneyModel({ owner: 'GOWNER', discovery: discoveryOf('complete'), money, now: NOW })
+    const m = buildMyMoneyModel({
+      owner: 'GOWNER',
+      discovery: discoveryOf('complete'),
+      money,
+      now: NOW,
+    })
     expect(m.state).toBe('empty')
   })
 
@@ -178,7 +241,12 @@ describe('buildMyMoneyModel — discovery completeness (Fix 2, review loop 1)', 
 describe('buildMyMoneyModel — freshness triple survives finishModel (Fix 5, review loop 1)', () => {
   it('carries checkedAt, confirmedLedger, and source through to the finished model', () => {
     const money = { ...knownMoney({ units: 100n }), confirmedLedger: 123456, source: 'soroban-rpc' }
-    const m = buildMyMoneyModel({ owner: 'GOWNER', discovery: discoveryOf('complete'), money, now: NOW })
+    const m = buildMyMoneyModel({
+      owner: 'GOWNER',
+      discovery: discoveryOf('complete'),
+      money,
+      now: NOW,
+    })
     expect(m.checkedAt).toBe(NOW)
     expect(m.confirmedLedger).toBe(123456)
     expect(m.source).toBe('soroban-rpc')
@@ -187,7 +255,12 @@ describe('buildMyMoneyModel — freshness triple survives finishModel (Fix 5, re
 
   it('never substitutes 0 for a genuinely unknown confirmation height — unread carries null', () => {
     const money = knownMoney({ units: 100n }) // no confirmedLedger/confirmedBlock/source supplied
-    const m = buildMyMoneyModel({ owner: 'GOWNER', discovery: discoveryOf('complete'), money, now: NOW })
+    const m = buildMyMoneyModel({
+      owner: 'GOWNER',
+      discovery: discoveryOf('complete'),
+      money,
+      now: NOW,
+    })
     expect(m.confirmedLedger).toBeNull()
     expect(m.confirmedBlock).toBeNull()
     expect(m.source).toBeNull()
@@ -201,7 +274,12 @@ describe('buildMyMoneyModel — latent freshness-triple gaps (Fix 2, review loop
   // freshness 'unavailable' (freshness.js), which must never be rounded up to state 'current'.
   it('never reports state current from freshness unavailable — a non-finite checkedAt is not proof of "now"', () => {
     const money = knownMoney({ units: 100n, checkedAt: null })
-    const m = buildMyMoneyModel({ owner: 'GOWNER', discovery: discoveryOf('complete'), money, now: NOW })
+    const m = buildMyMoneyModel({
+      owner: 'GOWNER',
+      discovery: discoveryOf('complete'),
+      money,
+      now: NOW,
+    })
     expect(m.freshness).toBe('unavailable')
     expect(m.state).toBe('unavailable')
   })
@@ -210,7 +288,12 @@ describe('buildMyMoneyModel — latent freshness-triple gaps (Fix 2, review loop
 describe('buildMyMoneyModel — current with a real position', () => {
   it('is current when discovery is complete, total is known and positive, and the read is fresh', () => {
     const money = knownMoney({ units: 1000_0000000n })
-    const m = buildMyMoneyModel({ owner: 'GOWNER', discovery: discoveryOf('complete'), money, now: NOW })
+    const m = buildMyMoneyModel({
+      owner: 'GOWNER',
+      discovery: discoveryOf('complete'),
+      money,
+      now: NOW,
+    })
     expect(m.state).toBe('current')
     expect(m.confirmedTotal.amount.units).toBe('10000000000')
     expect(m.yield).toEqual({ state: 'live', apy: 8.2 })
@@ -225,32 +308,57 @@ describe('buildMyMoneyModel — confirmed custody problem', () => {
 
   it('is problem when a funded agent is confirmed revoked', () => {
     const money = knownMoney({ units: 100n, agents: [agentWith(['scope-revoked'], 100n)] })
-    const m = buildMyMoneyModel({ owner: 'GOWNER', discovery: discoveryOf('complete'), money, now: NOW })
+    const m = buildMyMoneyModel({
+      owner: 'GOWNER',
+      discovery: discoveryOf('complete'),
+      money,
+      now: NOW,
+    })
     expect(m.state).toBe('problem')
     expect(m.problemAgents).toEqual(['CAGENT1'])
   })
 
   it('is problem when a funded agent had a confirmed failed Base execution', () => {
     const money = knownMoney({ units: 100n, agents: [agentWith(['base-execution-failed'], 100n)] })
-    const m = buildMyMoneyModel({ owner: 'GOWNER', discovery: discoveryOf('complete'), money, now: NOW })
+    const m = buildMyMoneyModel({
+      owner: 'GOWNER',
+      discovery: discoveryOf('complete'),
+      money,
+      now: NOW,
+    })
     expect(m.state).toBe('problem')
   })
 
   it('a revoked agent with NO known funds is not a confirmed problem — nothing to review', () => {
     const money = knownMoney({ units: 0n, agents: [agentWith(['scope-revoked'], 0n)] })
-    const m = buildMyMoneyModel({ owner: 'GOWNER', discovery: discoveryOf('complete'), money, now: NOW })
+    const m = buildMyMoneyModel({
+      owner: 'GOWNER',
+      discovery: discoveryOf('complete'),
+      money,
+      now: NOW,
+    })
     expect(m.state).not.toBe('problem')
   })
 
   it('a merely incomplete read (not a confirmed fact) is not a confirmed problem', () => {
     const money = knownMoney({ units: 0n, agents: [agentWith(['vault-shares-unavailable'], null)] })
-    const m = buildMyMoneyModel({ owner: 'GOWNER', discovery: discoveryOf('complete'), money, now: NOW })
+    const m = buildMyMoneyModel({
+      owner: 'GOWNER',
+      discovery: discoveryOf('complete'),
+      money,
+      now: NOW,
+    })
     expect(m.state).not.toBe('problem')
   })
 
   it('problem takes precedence even while disconnected, per the literal precedence order', () => {
     const money = knownMoney({ units: 100n, agents: [agentWith(['scope-expired'], 100n)] })
-    const m = buildMyMoneyModel({ owner: null, discovery: discoveryOf('complete'), money, now: NOW })
+    const m = buildMyMoneyModel({
+      owner: null,
+      discovery: discoveryOf('complete'),
+      money,
+      now: NOW,
+    })
     expect(m.state).toBe('problem')
   })
 })
@@ -301,7 +409,11 @@ describe('buildMyMoneyModel — protection / lifeboat', () => {
       owner: 'GOWNER',
       discovery: discoveryOf('complete'),
       money,
-      protection: { state: 'armed', authority: 'GSOMEONEELSE', mandateExpiry: Math.floor(NOW / 1000) + 60 },
+      protection: {
+        state: 'armed',
+        authority: 'GSOMEONEELSE',
+        mandateExpiry: Math.floor(NOW / 1000) + 60,
+      },
       now: NOW,
     })
     expect(m.protection.ownerIsAuthority).toBe(false)
@@ -317,16 +429,29 @@ describe('choosePrimaryMoneyAction — precedence', () => {
     const model = buildMyMoneyModel({
       owner: 'GOWNER',
       discovery: discoveryOf('complete'),
-      money: knownMoney({ units: 100n, agents: [{ address: 'C1', problems: ['scope-revoked'], amount: amt(100n) }] }),
-      protection: { state: 'armed', authority: 'GOWNER', mandateExpiry: Math.floor(NOW / 1000) + 60 },
+      money: knownMoney({
+        units: 100n,
+        agents: [{ address: 'C1', problems: ['scope-revoked'], amount: amt(100n) }],
+      }),
+      protection: {
+        state: 'armed',
+        authority: 'GOWNER',
+        mandateExpiry: Math.floor(NOW / 1000) + 60,
+      },
       now: NOW,
     })
-    expect(choosePrimaryMoneyAction(model)).toEqual({ action: 'review-problem', label: 'Review problem' })
+    expect(choosePrimaryMoneyAction(model)).toEqual({
+      action: 'review-problem',
+      label: 'Review problem',
+    })
   })
 
   it('2. Connect wallet when disconnected', () => {
     const model = buildMyMoneyModel({ owner: null, discovery: null, money: null, now: NOW })
-    expect(choosePrimaryMoneyAction(model)).toEqual({ action: 'connect-wallet', label: 'Connect wallet' })
+    expect(choosePrimaryMoneyAction(model)).toEqual({
+      action: 'connect-wallet',
+      label: 'Connect wallet',
+    })
   })
 
   it('3. Make a deposit when authoritatively empty', () => {
@@ -344,10 +469,17 @@ describe('choosePrimaryMoneyAction — precedence', () => {
       owner: 'GOWNER',
       discovery: discoveryOf('complete'),
       money: knownMoney({ units: 100_0000000n }),
-      protection: { state: 'armed', authority: 'GOWNER', mandateExpiry: Math.floor(NOW / 1000) + 60 },
+      protection: {
+        state: 'armed',
+        authority: 'GOWNER',
+        mandateExpiry: Math.floor(NOW / 1000) + 60,
+      },
       now: NOW,
     })
-    expect(choosePrimaryMoneyAction(model)).toEqual({ action: 'renew-protection', label: 'Renew vault protection' })
+    expect(choosePrimaryMoneyAction(model)).toEqual({
+      action: 'renew-protection',
+      label: 'Renew vault protection',
+    })
   })
 
   it('falls back to Add money when urgent but the connected owner is not the mandate authority', () => {
@@ -355,7 +487,11 @@ describe('choosePrimaryMoneyAction — precedence', () => {
       owner: 'GOWNER',
       discovery: discoveryOf('complete'),
       money: knownMoney({ units: 100_0000000n }),
-      protection: { state: 'armed', authority: 'GSOMEONEELSE', mandateExpiry: Math.floor(NOW / 1000) + 60 },
+      protection: {
+        state: 'armed',
+        authority: 'GSOMEONEELSE',
+        mandateExpiry: Math.floor(NOW / 1000) + 60,
+      },
       now: NOW,
     })
     expect(choosePrimaryMoneyAction(model)).toEqual({ action: 'add-money', label: 'Add money' })
@@ -365,8 +501,15 @@ describe('choosePrimaryMoneyAction — precedence', () => {
     const model = buildMyMoneyModel({
       owner: 'GOWNER',
       discovery: discoveryOf('complete'),
-      money: knownMoney({ units: 0n, unattributed: { k1: { state: 'known', amount: amt(5n), checkedAt: NOW } } }),
-      protection: { state: 'armed', authority: 'GOWNER', mandateExpiry: Math.floor(NOW / 1000) + 60 },
+      money: knownMoney({
+        units: 0n,
+        unattributed: { k1: { state: 'known', amount: amt(5n), checkedAt: NOW } },
+      }),
+      protection: {
+        state: 'armed',
+        authority: 'GOWNER',
+        mandateExpiry: Math.floor(NOW / 1000) + 60,
+      },
       now: NOW,
     })
     expect(choosePrimaryMoneyAction(model)).toEqual({ action: 'add-money', label: 'Add money' })

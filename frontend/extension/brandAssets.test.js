@@ -150,9 +150,7 @@ describe('extension brand asset contract', () => {
       runB.cleanup()
     }
 
-    expect(sha256(readFileSync(LOGO_SVG)), 'tracked logo must be unchanged').toBe(
-      trackedLogoBefore
-    )
+    expect(sha256(readFileSync(LOGO_SVG)), 'tracked logo must be unchanged').toBe(trackedLogoBefore)
     ICON_SIZES.forEach((size, i) => {
       expect(
         sha256(readFileSync(resolve(EXT_DIR, `icons/icon-${size}.png`))),
@@ -165,7 +163,10 @@ describe('extension brand asset contract', () => {
     const trackedLogoBefore = sha256(readFileSync(LOGO_SVG))
     const dir = setupTmpGenDir()
     try {
-      writeFileSync(dir.svgPath, '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"></svg>\n')
+      writeFileSync(
+        dir.svgPath,
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"></svg>\n'
+      )
       let failure
       try {
         execFileSync('node', [dir.scriptPath], { stdio: 'pipe' })
@@ -183,12 +184,10 @@ describe('extension brand asset contract', () => {
     } finally {
       dir.cleanup()
     }
-    expect(sha256(readFileSync(LOGO_SVG)), 'tracked logo must be unchanged').toBe(
-      trackedLogoBefore
-    )
+    expect(sha256(readFileSync(LOGO_SVG)), 'tracked logo must be unchanged').toBe(trackedLogoBefore)
   })
 
-  it('manifest.json reports the bumped MV3 version and defines no content_security_policy override, so MV3\'s default script-src \'self\' applies', () => {
+  it("manifest.json reports the bumped MV3 version and defines no content_security_policy override, so MV3's default script-src 'self' applies", () => {
     const manifest = JSON.parse(readFileSync(MANIFEST_JSON, 'utf8'))
     expect(manifest.manifest_version).toBe(3)
     expect(manifest.version).toBe('0.3.0')
@@ -255,7 +254,9 @@ describe('extension brand asset contract', () => {
 
   it('approval.css declares the shared wallet approval action grid verbatim', () => {
     const approval = readFileSync(resolve(EXT_DIR, 'approval.css'), 'utf8')
-    expect(approval).toMatch(/\.pc-wallet-approval-actions\s*\{[^}]*grid-template-columns:\s*1fr 1\.35fr/)
+    expect(approval).toMatch(
+      /\.pc-wallet-approval-actions\s*\{[^}]*grid-template-columns:\s*1fr 1\.35fr/
+    )
   })
 
   // Fix loop 2, checklist item 5: "#status" (approve.js/ceremony.js full-sentence user guidance,

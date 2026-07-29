@@ -22,8 +22,18 @@ describe('riskWatchStore', () => {
   })
 
   it('records a recommendation and reads it back newest-first, scoped to network+owner', () => {
-    recordRecommendation('stellar-testnet', 'GOWNER', { kind: 'facts-check', source: 'defillama' }, { now: 1 })
-    recordRecommendation('stellar-testnet', 'GOWNER', { kind: 'security-scan', source: 'tavily' }, { now: 2 })
+    recordRecommendation(
+      'stellar-testnet',
+      'GOWNER',
+      { kind: 'facts-check', source: 'defillama' },
+      { now: 1 }
+    )
+    recordRecommendation(
+      'stellar-testnet',
+      'GOWNER',
+      { kind: 'security-scan', source: 'tavily' },
+      { now: 2 }
+    )
     const rows = getRecommendations('stellar-testnet', 'GOWNER')
     expect(rows).toHaveLength(2)
     expect(rows[0].kind).toBe('security-scan')

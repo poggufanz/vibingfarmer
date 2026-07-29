@@ -134,18 +134,33 @@ describe('saveManualExitKey / loadManualExitKey / clearManualExitKey — v2 owne
   const REAL = Keypair.random()
 
   test('round-trips: what is saved is what is loaded, for the same owner+agent', async () => {
-    saveManualExitKey({ owner: OWNER_A, agent: AGENT_1, publicKey: REAL.publicKey(), secret: REAL.secret() })
+    saveManualExitKey({
+      owner: OWNER_A,
+      agent: AGENT_1,
+      publicKey: REAL.publicKey(),
+      secret: REAL.secret(),
+    })
     const loaded = await loadManualExitKey({ owner: OWNER_A, agent: AGENT_1 })
     expect(loaded).toEqual({ publicKey: REAL.publicKey(), secret: REAL.secret() })
   })
 
   test('account switch: a different owner reads nothing, never the previous owner’s key', async () => {
-    saveManualExitKey({ owner: OWNER_A, agent: AGENT_1, publicKey: REAL.publicKey(), secret: REAL.secret() })
+    saveManualExitKey({
+      owner: OWNER_A,
+      agent: AGENT_1,
+      publicKey: REAL.publicKey(),
+      secret: REAL.secret(),
+    })
     expect(await loadManualExitKey({ owner: OWNER_B, agent: AGENT_1 })).toBeNull()
   })
 
   test('agent mismatch: the same owner reading a different agent finds nothing', async () => {
-    saveManualExitKey({ owner: OWNER_A, agent: AGENT_1, publicKey: REAL.publicKey(), secret: REAL.secret() })
+    saveManualExitKey({
+      owner: OWNER_A,
+      agent: AGENT_1,
+      publicKey: REAL.publicKey(),
+      secret: REAL.secret(),
+    })
     expect(await loadManualExitKey({ owner: OWNER_A, agent: AGENT_2 })).toBeNull()
   })
 
@@ -155,7 +170,12 @@ describe('saveManualExitKey / loadManualExitKey / clearManualExitKey — v2 owne
     const key = `vf.manualExitKey.v2|stellar-testnet|${OWNER_A}|${AGENT_1}`
     localStorage.setItem(
       key,
-      JSON.stringify({ owner: 'GSOMEONEELSE', agent: AGENT_1, publicKey: REAL.publicKey(), secret: REAL.secret() })
+      JSON.stringify({
+        owner: 'GSOMEONEELSE',
+        agent: AGENT_1,
+        publicKey: REAL.publicKey(),
+        secret: REAL.secret(),
+      })
     )
     expect(await loadManualExitKey({ owner: OWNER_A, agent: AGENT_1 })).toBeNull()
   })
@@ -164,19 +184,34 @@ describe('saveManualExitKey / loadManualExitKey / clearManualExitKey — v2 owne
     const key = `vf.manualExitKey.v2|stellar-testnet|${OWNER_A}|${AGENT_1}`
     localStorage.setItem(
       key,
-      JSON.stringify({ owner: OWNER_A, agent: 'CSOMEOTHERAGENT', publicKey: REAL.publicKey(), secret: REAL.secret() })
+      JSON.stringify({
+        owner: OWNER_A,
+        agent: 'CSOMEOTHERAGENT',
+        publicKey: REAL.publicKey(),
+        secret: REAL.secret(),
+      })
     )
     expect(await loadManualExitKey({ owner: OWNER_A, agent: AGENT_1 })).toBeNull()
   })
 
   test('corrupt/undecodable secret fails closed rather than throwing', async () => {
-    saveManualExitKey({ owner: OWNER_A, agent: AGENT_1, publicKey: REAL.publicKey(), secret: 'NOT_A_REAL_SECRET' })
+    saveManualExitKey({
+      owner: OWNER_A,
+      agent: AGENT_1,
+      publicKey: REAL.publicKey(),
+      secret: 'NOT_A_REAL_SECRET',
+    })
     await expect(loadManualExitKey({ owner: OWNER_A, agent: AGENT_1 })).resolves.toBeNull()
   })
 
   test('secret/public-key mismatch fails closed', async () => {
     const OTHER = Keypair.random()
-    saveManualExitKey({ owner: OWNER_A, agent: AGENT_1, publicKey: OTHER.publicKey(), secret: REAL.secret() })
+    saveManualExitKey({
+      owner: OWNER_A,
+      agent: AGENT_1,
+      publicKey: OTHER.publicKey(),
+      secret: REAL.secret(),
+    })
     expect(await loadManualExitKey({ owner: OWNER_A, agent: AGENT_1 })).toBeNull()
   })
 
@@ -188,7 +223,12 @@ describe('saveManualExitKey / loadManualExitKey / clearManualExitKey — v2 owne
   })
 
   test('clearManualExitKey removes only the v2 entry, leaving the legacy cache untouched', async () => {
-    saveManualExitKey({ owner: OWNER_A, agent: AGENT_1, publicKey: REAL.publicKey(), secret: REAL.secret() })
+    saveManualExitKey({
+      owner: OWNER_A,
+      agent: AGENT_1,
+      publicKey: REAL.publicKey(),
+      secret: REAL.secret(),
+    })
     saveExitKey(AGENT_1, { publicKey: 'GLEGACY', secret: 'SLEGACY' })
     clearManualExitKey({ owner: OWNER_A, agent: AGENT_1 })
     expect(await loadManualExitKey({ owner: OWNER_A, agent: AGENT_1 })).toBeNull()

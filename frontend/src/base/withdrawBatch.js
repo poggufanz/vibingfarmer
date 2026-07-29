@@ -10,11 +10,7 @@
 // the session key from wallet/mandate.js is never involved, because its policy never granted
 // withdraw (drain-proof by omission, not by a runtime check).
 import { encodeFunctionData, parseEventLogs } from 'viem'
-import {
-  ERC20_ABI,
-  BASE_EXIT_SWEEPER_ADDRESS,
-  BASE_EXIT_SWEEPER_ABI,
-} from './config.js'
+import { ERC20_ABI, BASE_EXIT_SWEEPER_ADDRESS, BASE_EXIT_SWEEPER_ABI } from './config.js'
 import { buildForwarderHookData, assertHookData } from './hookData.js'
 import { createGaslessKernelClient } from './paymaster.js'
 
@@ -53,12 +49,7 @@ const approveCall = (token, spender, amount) => ({
  * }} p
  * @returns {Array<{to:string, data:string}>}
  */
-export function buildUnwindCalls({
-  positions,
-  stellarRecipient,
-  idleUsdc = 0n,
-  forwarderBytes32,
-}) {
+export function buildUnwindCalls({ positions, stellarRecipient, idleUsdc = 0n, forwarderBytes32 }) {
   const pos = Array.isArray(positions) ? positions : []
   if (pos.length === 0 && idleUsdc === 0n) {
     throw new Error('buildUnwindCalls: nothing to withdraw (no positions and no idle USDC)')

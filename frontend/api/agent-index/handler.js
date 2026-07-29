@@ -58,11 +58,13 @@ export async function handleIngest({
   finalizedLedgerFor,
   pageLimit,
 }) {
-  if (!secret) return { status: 503, body: { error: 'Agent index ingest not configured', configured: false } }
+  if (!secret)
+    return { status: 503, body: { error: 'Agent index ingest not configured', configured: false } }
   if (!providedSecret || !(await constantTimeEqual(providedSecret, secret))) {
     return { status: 401, body: { error: 'Unauthorized' } }
   }
-  if (!store) return { status: 503, body: { error: 'Agent index store unavailable', configured: false } }
+  if (!store)
+    return { status: 503, body: { error: 'Agent index store unavailable', configured: false } }
   if (!eventSourceFor || !finalizedLedgerFor) {
     return { status: 500, body: { error: 'Ingest misconfigured' } }
   }
@@ -101,11 +103,16 @@ export async function handleIngest({
  * @returns {Promise<{status: number, body: object}>}
  */
 export async function handleBackfillCommit({ secret, providedSecret, store, audit }) {
-  if (!secret) return { status: 503, body: { error: 'Agent index backfill not configured', configured: false } }
+  if (!secret)
+    return {
+      status: 503,
+      body: { error: 'Agent index backfill not configured', configured: false },
+    }
   if (!providedSecret || !(await constantTimeEqual(providedSecret, secret))) {
     return { status: 401, body: { error: 'Unauthorized' } }
   }
-  if (!store) return { status: 503, body: { error: 'Agent index store unavailable', configured: false } }
+  if (!store)
+    return { status: 503, body: { error: 'Agent index store unavailable', configured: false } }
   try {
     const result = await commitBackfillAudit({ store, audit })
     return { status: 200, body: { ok: true, ...result } }
@@ -200,7 +207,14 @@ const MAX_READ_LIMIT = 500
  *   reject a malformed value rather than silently clamping it — never guess what the caller meant.
  * @returns {Promise<{status: number, body: object}>}
  */
-export async function handleRead({ networkId, owner, store, manifest = LIVE_MANIFEST, now = Date.now(), limit }) {
+export async function handleRead({
+  networkId,
+  owner,
+  store,
+  manifest = LIVE_MANIFEST,
+  now = Date.now(),
+  limit,
+}) {
   if (typeof networkId !== 'string' || !networkId) {
     return { status: 400, body: { error: 'Invalid network' } }
   }
@@ -262,5 +276,8 @@ export async function handleRead({ networkId, owner, store, manifest = LIVE_MANI
       provenance: m.provenance,
     }))
   const associatedAgents = joinBaseAssociations({ agents, associations, now })
-  return { status: 200, body: { version: 1, networkId, owner, status, agents: associatedAgents, coverage: coverageOut } }
+  return {
+    status: 200,
+    body: { version: 1, networkId, owner, status, agents: associatedAgents, coverage: coverageOut },
+  }
 }

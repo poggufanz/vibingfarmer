@@ -52,9 +52,9 @@ describe('buildUnwindCalls', () => {
   })
 
   it('rejects a call with neither positions nor idle USDC', () => {
-    expect(() => buildUnwindCalls({ positions: [], stellarRecipient: STELLAR, idleUsdc: 0n })).toThrow(
-      /nothing to withdraw/i
-    )
+    expect(() =>
+      buildUnwindCalls({ positions: [], stellarRecipient: STELLAR, idleUsdc: 0n })
+    ).toThrow(/nothing to withdraw/i)
   })
 
   it('accepts idle USDC with zero positions', () => {

@@ -95,7 +95,9 @@ function liveUnitsForPool(liveAccount, poolAddress) {
   // Fix loop 1, Fix 4: loadIndexedBasePositions only ever queries BASE_POOL_CATALOG addresses —
   // a pool absent from that catalog (a historical/retired allocation) was never asked about at
   // all, so treating its absence from `positions` as a confirmed zero was wrong; it's unknown.
-  const queried = BASE_POOL_CATALOG.some((p) => p.address.toLowerCase() === String(poolAddress).toLowerCase())
+  const queried = BASE_POOL_CATALOG.some(
+    (p) => p.address.toLowerCase() === String(poolAddress).toLowerCase()
+  )
   if (!queried) return null
   const pos = (liveAccount.positions ?? []).find(
     (p) => String(p.pool).toLowerCase() === String(poolAddress).toLowerCase()
@@ -120,7 +122,12 @@ function unavailableScopeRecord(address, now) {
     idleToken: { state: 'unavailable', amount: null, checkedAt: now },
     amount: null,
     executionStatus: 'unknown',
-    custody: custodyForAgent({ scope: { state: 'unavailable' }, vaultShares: UNAVAILABLE_LEG, idleToken: UNAVAILABLE_LEG, baseChild: null }),
+    custody: custodyForAgent({
+      scope: { state: 'unavailable' },
+      vaultShares: UNAVAILABLE_LEG,
+      idleToken: UNAVAILABLE_LEG,
+      baseChild: null,
+    }),
     custodyBreakdown: [],
     problems: ['scope-read-failed'],
   }
@@ -137,7 +144,12 @@ function unreadableRecord(address, now) {
     idleToken: { state: 'unavailable', amount: null, checkedAt: now },
     amount: null,
     executionStatus: 'unknown',
-    custody: custodyForAgent({ scope: { state: 'unavailable' }, vaultShares: UNAVAILABLE_LEG, idleToken: UNAVAILABLE_LEG, baseChild: null }),
+    custody: custodyForAgent({
+      scope: { state: 'unavailable' },
+      vaultShares: UNAVAILABLE_LEG,
+      idleToken: UNAVAILABLE_LEG,
+      baseChild: null,
+    }),
     custodyBreakdown: [],
     problems: ['unexpected-error'],
   }
@@ -152,7 +164,11 @@ function unreadableRecord(address, now) {
 // record — every real OwnerMoneyReadV1 always carries `vaultShares`).
 function hasKnownVaultLeg(a) {
   if (a.vaultShares) {
-    return a.vaultShares.state === 'known' && a.vaultShares.amount != null && BigInt(a.vaultShares.amount.units) > 0n
+    return (
+      a.vaultShares.state === 'known' &&
+      a.vaultShares.amount != null &&
+      BigInt(a.vaultShares.amount.units) > 0n
+    )
   }
   return Boolean(a.amount) && a.custody?.location === 'stellar-vault'
 }
@@ -166,14 +182,22 @@ function isLegKnown(read) {
   return read?.state === 'known' && read.amount != null
 }
 
-async function readOneAgentMoney({ row, readVaultShares, readTokenBalance, pps, baseAccountsMap, now }) {
+async function readOneAgentMoney({
+  row,
+  readVaultShares,
+  readTokenBalance,
+  pps,
+  baseAccountsMap,
+  now,
+}) {
   const address = row.address
   if (row.scopeReadStatus !== 'ok') return unavailableScopeRecord(address, now)
 
   const problems = []
   if (row.revoked) problems.push('scope-revoked')
   const nowSec = Math.floor(now / 1000)
-  if (Number.isFinite(row.expiry) && row.expiry > 0 && row.expiry <= nowSec) problems.push('scope-expired')
+  if (Number.isFinite(row.expiry) && row.expiry > 0 && row.expiry <= nowSec)
+    problems.push('scope-expired')
 
   // Fix loop 1, Fix 8 (bullet 4): computed once and reused below (custodyForAgent + the returned
   // record) instead of a second hardcoded `{ state: 'known' }` literal at the custody call site —
@@ -181,14 +205,22 @@ async function readOneAgentMoney({ row, readVaultShares, readTokenBalance, pps, 
   // above), but one computed value can't silently drift out of sync with itself.
   const scope = {
     state: 'known',
-    value: { vault: row.vault, revoked: row.revoked, expiry: row.expiry, authorized: row.authorized },
+    value: {
+      vault: row.vault,
+      revoked: row.revoked,
+      expiry: row.expiry,
+      authorized: row.authorized,
+    },
     checkedAt: now,
   }
 
   // Belt-and-braces (readVaultShares/readTokenBalance already catch internally and resolve null
   // on RPC failure — see agentDeposit.js): allSettled here guards only against an injected/future
   // implementation that throws instead, same non-load-bearing posture as ownerDiscovery.js.
-  const [sharesR, idleR] = await Promise.allSettled([readVaultShares(address), readTokenBalance(address)])
+  const [sharesR, idleR] = await Promise.allSettled([
+    readVaultShares(address),
+    readTokenBalance(address),
+  ])
   const rawShares = sharesR.status === 'fulfilled' ? sharesR.value : null
   const rawIdle = idleR.status === 'fulfilled' ? idleR.value : null
 
@@ -277,7 +309,9 @@ async function readOneAgentMoney({ row, readVaultShares, readTokenBalance, pps, 
     scope,
     vaultShares,
     idleToken,
-    baseChild: child ? { custody: child.custody, amount: baseUnits != null ? amountOf(baseUnits) : null } : null,
+    baseChild: child
+      ? { custody: child.custody, amount: baseUnits != null ? amountOf(baseUnits) : null }
+      : null,
   })
 
   return {
@@ -303,7 +337,13 @@ async function readOneAgentMoney({ row, readVaultShares, readTokenBalance, pps, 
  *   baseIdle:Array<{kernelAddress:string, state:'known'|'unavailable', amount:object|null,
  *   checkedAt:number}>, stellarYield:{state:string, apy:number|null}}>}
  */
-export async function readOwnerMoney({ owner, discovery, stellar = {}, base = {}, now = Date.now() }) {
+export async function readOwnerMoney({
+  owner,
+  discovery,
+  stellar = {},
+  base = {},
+  now = Date.now(),
+}) {
   const {
     readVaultShares = _readVaultShares,
     readTokenBalance = _readTokenBalance,
@@ -354,7 +394,9 @@ export async function readOwnerMoney({ owner, discovery, stellar = {}, base = {}
   }))
 
   const settled = await Promise.allSettled(
-    rows.map((row) => readOneAgentMoney({ row, readVaultShares, readTokenBalance, pps, baseAccountsMap, now }))
+    rows.map((row) =>
+      readOneAgentMoney({ row, readVaultShares, readTokenBalance, pps, baseAccountsMap, now })
+    )
   )
   const agents = settled.map((r, i) =>
     r.status === 'fulfilled' ? r.value : unreadableRecord(rows[i]?.address, now)
@@ -369,7 +411,8 @@ export async function readOwnerMoney({ owner, discovery, stellar = {}, base = {}
   let stellarYield = { state: 'unavailable', apy: null }
   if (hasVaultCustody) {
     const aprBps = await readSupplyAprBps(SOROBAN_BLEND_POOL_ADDRESS).catch(() => null)
-    stellarYield = aprBps != null ? { state: 'live', apy: aprBps / 100 } : { state: 'unavailable', apy: null }
+    stellarYield =
+      aprBps != null ? { state: 'live', apy: aprBps / 100 } : { state: 'unavailable', apy: null }
   }
 
   return {
@@ -430,7 +473,8 @@ export function aggregateOwnerPositions(reads) {
       // the pre-existing whole-amount-under-one-location behavior.
       if (a.custodyBreakdown?.length) {
         for (const leg of a.custodyBreakdown) {
-          custodyBreakdown[leg.location] = (custodyBreakdown[leg.location] ?? 0n) + BigInt(leg.amount.units)
+          custodyBreakdown[leg.location] =
+            (custodyBreakdown[leg.location] ?? 0n) + BigInt(leg.amount.units)
         }
       } else {
         const loc = a.custody?.location ?? 'unknown'
@@ -460,7 +504,10 @@ export function aggregateOwnerPositions(reads) {
   // (`state:'known'`, `amount` zero) apart from a failed read (`state:'unavailable'`, `amount`
   // null) instead of a single number pretending both cases look the same.
   const unattributed = Object.fromEntries(
-    (reads?.baseIdle ?? []).map((k) => [k.kernelAddress, { state: k.state, amount: k.amount, checkedAt: k.checkedAt }])
+    (reads?.baseIdle ?? []).map((k) => [
+      k.kernelAddress,
+      { state: k.state, amount: k.amount, checkedAt: k.checkedAt },
+    ])
   )
 
   return {
@@ -476,7 +523,9 @@ export function aggregateOwnerPositions(reads) {
     // have to be invented (the exact anti-pattern positionsStore.js's hardcoded
     // `unclaimedRewards: '0'` already commits elsewhere in this codebase). Always unavailable.
     earned: { state: 'unavailable', amount: null },
-    custodyBreakdown: Object.fromEntries(Object.entries(custodyBreakdown).map(([k, v]) => [k, String(v)])),
+    custodyBreakdown: Object.fromEntries(
+      Object.entries(custodyBreakdown).map(([k, v]) => [k, String(v)])
+    ),
     unattributed,
     executionBreakdown,
     agentCount: agents.length,

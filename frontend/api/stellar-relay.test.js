@@ -281,9 +281,9 @@ describe('assertRelayableTransaction — structural gate', () => {
   it('rejects a multi-operation tx', async () => {
     const tx = depositTx(VAULT, 'deposit')
     tx.operations.push(tx.operations[0])
-    await expect(assertRelayableTransaction(tx, { sdk: sdkAddr, vaultAddr: VAULT })).rejects.toThrow(
-      RelayError
-    )
+    await expect(
+      assertRelayableTransaction(tx, { sdk: sdkAddr, vaultAddr: VAULT })
+    ).rejects.toThrow(RelayError)
   })
   it('rejects a non-invoke op', async () => {
     await expect(
@@ -383,7 +383,10 @@ describe('assertRelayableTransaction — funding_router grant/pull (schema-valid
   })
   it('rejects any other function on the configured router (no wider loosening)', async () => {
     await expect(
-      assertRelayableTransaction(depositTx(ROUTER, 'sweep'), { sdk: sdkAddr, routerAddrs: [ROUTER] })
+      assertRelayableTransaction(depositTx(ROUTER, 'sweep'), {
+        sdk: sdkAddr,
+        routerAddrs: [ROUTER],
+      })
     ).rejects.toThrow(RelayError)
   })
   it('rejects grant/pull on a different contract even with the router configured', async () => {
@@ -452,7 +455,9 @@ describe('assertRelayableTransaction — exit_router sweep (one-popup full exit)
     ).rejects.toThrow(RelayError)
   })
   it('rejects sweep when any listed agent is not a pinned wasm', async () => {
-    const getWasmHash = vi.fn(async (addr) => (addr === 'CAGENT2' ? 'deadbeef'.repeat(8) : AGENT_HASH))
+    const getWasmHash = vi.fn(async (addr) =>
+      addr === 'CAGENT2' ? 'deadbeef'.repeat(8) : AGENT_HASH
+    )
     await expect(
       assertRelayableTransaction(depositTx(EXIT_ROUTER, 'sweep', sweepArgs('GOWNER')), {
         sdk: sdkAddr,
@@ -465,8 +470,17 @@ describe('assertRelayableTransaction — exit_router sweep (one-popup full exit)
   it('rejects sweep with an empty agents vec', async () => {
     await expect(
       assertRelayableTransaction(
-        depositTx(EXIT_ROUTER, 'sweep', [{ __addr: 'GOWNER' }, { __vec: [] }, { __addr: 'GOWNER' }]),
-        { sdk: sdkAddr, exitRouterAddr: EXIT_ROUTER, agentWasmHashes: [AGENT_HASH], getWasmHash: vi.fn() }
+        depositTx(EXIT_ROUTER, 'sweep', [
+          { __addr: 'GOWNER' },
+          { __vec: [] },
+          { __addr: 'GOWNER' },
+        ]),
+        {
+          sdk: sdkAddr,
+          exitRouterAddr: EXIT_ROUTER,
+          agentWasmHashes: [AGENT_HASH],
+          getWasmHash: vi.fn(),
+        }
       )
     ).rejects.toThrow(RelayError)
   })
@@ -547,7 +561,10 @@ describe('assertRelayableTransaction — pinned agent: revoke / owner_withdraw /
   })
   it('rejects an unrelayable function on an otherwise-pinned agent', async () => {
     await expect(
-      assertRelayableTransaction(depositTx(AGENT, 'deposit', [{ __addr: 'X' }, { __amount: 1n }]), cfg())
+      assertRelayableTransaction(
+        depositTx(AGENT, 'deposit', [{ __addr: 'X' }, { __amount: 1n }]),
+        cfg()
+      )
     ).rejects.toThrow(RelayError)
   })
   it('rejects when the contract is not a pinned agent wasm (fail closed, unknown contract)', async () => {
@@ -613,12 +630,18 @@ describe('assertRelayableTransaction — token approve (SEP-41 revoke path)', ()
   it('rejects when from does not run the pinned smart-account wasm', async () => {
     const getWasmHash = vi.fn(async () => 'deadbeef'.repeat(8))
     await expect(
-      assertRelayableTransaction(depositTx(TOKEN, 'approve', args(0n, ROUTER)), cfg({ getWasmHash }))
+      assertRelayableTransaction(
+        depositTx(TOKEN, 'approve', args(0n, ROUTER)),
+        cfg({ getWasmHash })
+      )
     ).rejects.toThrow(RelayError)
   })
   it('rejects when no smart-account wasm pin is configured (fail closed)', async () => {
     await expect(
-      assertRelayableTransaction(depositTx(TOKEN, 'approve', args(0n, ROUTER)), cfg({ accountWasmHash: '' }))
+      assertRelayableTransaction(
+        depositTx(TOKEN, 'approve', args(0n, ROUTER)),
+        cfg({ accountWasmHash: '' })
+      )
     ).rejects.toThrow(RelayError)
   })
   it('rejects (fail closed) when the wasm lookup itself throws', async () => {
@@ -626,7 +649,10 @@ describe('assertRelayableTransaction — token approve (SEP-41 revoke path)', ()
       throw new Error('rpc down')
     })
     await expect(
-      assertRelayableTransaction(depositTx(TOKEN, 'approve', args(0n, ROUTER)), cfg({ getWasmHash }))
+      assertRelayableTransaction(
+        depositTx(TOKEN, 'approve', args(0n, ROUTER)),
+        cfg({ getWasmHash })
+      )
     ).rejects.toThrow(RelayError)
   })
   it('rejects a malformed approve argument schema', async () => {
@@ -686,9 +712,9 @@ describe('assertRelayableTransaction — token transfer (F11 exit-leg-2 / partia
       { __addr: 'GOWNER' },
       { __amount: 10n },
     ])
-    await expect(assertRelayableTransaction(tx, { sdk: sdkAddr, tokenAddr: TOKEN })).rejects.toThrow(
-      RelayError
-    )
+    await expect(
+      assertRelayableTransaction(tx, { sdk: sdkAddr, tokenAddr: TOKEN })
+    ).rejects.toThrow(RelayError)
   })
   it('accepts a multi-entry allowlist, matching any listed agent (trims whitespace, ignores empty segments)', async () => {
     const tx = depositTx(TOKEN, 'transfer', [
@@ -703,9 +729,9 @@ describe('assertRelayableTransaction — token transfer (F11 exit-leg-2 / partia
   })
   it('rejects non-transfer/approve token functions', async () => {
     const tx = depositTx(TOKEN, 'burn', [{ __addr: 'CAGENT' }])
-    await expect(assertRelayableTransaction(tx, { sdk: sdkAddr, tokenAddr: TOKEN })).rejects.toThrow(
-      RelayError
-    )
+    await expect(
+      assertRelayableTransaction(tx, { sdk: sdkAddr, tokenAddr: TOKEN })
+    ).rejects.toThrow(RelayError)
   })
   it('sponsors a transfer from a NON-allowlisted agent whose wasm hash matches the pin', async () => {
     const tx = depositTx(TOKEN, 'transfer', [
@@ -874,7 +900,11 @@ describe('assertRelayableTransaction - CCTP messenger deposit_for_burn', () => {
     // pinned-agent function either.
     const getWasmHash = vi.fn(async () => null)
     await expect(
-      assertRelayableTransaction(tx, { sdk: sdkAddr, agentWasmHashes: [AGENT_HASH_V3], getWasmHash })
+      assertRelayableTransaction(tx, {
+        sdk: sdkAddr,
+        agentWasmHashes: [AGENT_HASH_V3],
+        getWasmHash,
+      })
     ).rejects.toThrow(RelayError)
   })
   it('rejects any other function on the messenger contract (only deposit_for_burn is relayable)', async () => {

@@ -135,7 +135,14 @@ function describeExitInflight(key, now) {
   const ts = raw == null ? NaN : Number(String(raw).split(':')[0])
   if (!Number.isFinite(ts)) return { key, kind: 'exitInflight', agent, readable: false }
   const ageMs = now - ts
-  return { key, kind: 'exitInflight', agent, readable: true, ageMs, expired: ageMs >= EXIT_LOCK_TTL_MS }
+  return {
+    key,
+    kind: 'exitInflight',
+    agent,
+    readable: true,
+    ageMs,
+    expired: ageMs >= EXIT_LOCK_TTL_MS,
+  }
 }
 
 /**

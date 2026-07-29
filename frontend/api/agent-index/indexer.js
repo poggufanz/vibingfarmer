@@ -45,7 +45,10 @@ function decodeSourceEvent(source, rec) {
         ),
       }
     }
-    return { matched: true, decoded: { agentAddress: d.agent, ownerAddress: d.owner, ledger: d.ledger, txHash: d.txHash } }
+    return {
+      matched: true,
+      decoded: { agentAddress: d.agent, ownerAddress: d.owner, ledger: d.ledger, txHash: d.txHash },
+    }
   }
   if (source.kind === 'registry') {
     let type
@@ -67,7 +70,10 @@ function decodeSourceEvent(source, rec) {
           ),
         }
       }
-      return { matched: true, decoded: { agentAddress, ownerAddress, ledger: e.ledger, txHash: e.txHash } }
+      return {
+        matched: true,
+        decoded: { agentAddress, ownerAddress, ledger: e.ledger, txHash: e.txHash },
+      }
     } catch (err) {
       return {
         matched: true,
@@ -109,9 +115,17 @@ function decodeSourceEvent(source, rec) {
  *   startLedger: number, endLedger: number, limit?: number }} p
  * @returns {{ events: Array, scannedThroughLedger: number, latestLedger: number|null }}
  */
-export function scanRpcEventsPage({ events = [], cursor, latestLedger, startLedger, endLedger, limit }) {
+export function scanRpcEventsPage({
+  events = [],
+  cursor,
+  latestLedger,
+  startLedger,
+  endLedger,
+  limit,
+}) {
   const tipKnown = Number.isInteger(latestLedger)
-  const truncated = (Number.isInteger(limit) && events.length >= limit) || (!!cursor && events.length > 0)
+  const truncated =
+    (Number.isInteger(limit) && events.length >= limit) || (!!cursor && events.length > 0)
   const reachedTip = !truncated && (tipKnown ? endLedger >= latestLedger : !cursor)
   const maxSeenLedger = events.reduce((m, e) => Math.max(m, e.ledger || 0), startLedger - 1)
   if (reachedTip) {
@@ -232,7 +246,9 @@ export async function ingestAgentIndexPage({
   pageLimit = 200,
 }) {
   if (!source || !creatorForAddress(source.address)) {
-    throw new Error(`ingestAgentIndexPage: unknown creator "${source?.address}" — not in the manifest`)
+    throw new Error(
+      `ingestAgentIndexPage: unknown creator "${source?.address}" — not in the manifest`
+    )
   }
   if (!Number.isInteger(finalizedLedger)) {
     throw new Error('ingestAgentIndexPage requires an integer finalizedLedger')
@@ -250,7 +266,10 @@ export async function ingestAgentIndexPage({
   // provider can never certify a range older than what it reports it has. Commit an empty page
   // spanning exactly the hole — the documented store.js resume protocol — so the cursor advances
   // past ledgers this call could never have proven, then record the gap.
-  if (Number.isInteger(eventSource.oldestAvailableLedger) && fromLedger < eventSource.oldestAvailableLedger) {
+  if (
+    Number.isInteger(eventSource.oldestAvailableLedger) &&
+    fromLedger < eventSource.oldestAvailableLedger
+  ) {
     const gapThrough = Math.min(eventSource.oldestAvailableLedger - 1, finalizedLedger)
     if (gapThrough < fromLedger) {
       return { sourceId, status: 'idle' }
@@ -305,14 +324,18 @@ export async function ingestAgentIndexPage({
     limit: pageLimit,
   })
   if (!Number.isInteger(res?.scannedThroughLedger) || res.scannedThroughLedger < fromLedger) {
-    throw new Error(`ingestAgentIndexPage: eventSource reported no confirmed scanned range for ${sourceId}`)
+    throw new Error(
+      `ingestAgentIndexPage: eventSource reported no confirmed scanned range for ${sourceId}`
+    )
   }
   // Never advance further than the RPC actually confirmed, even on an empty page.
   const throughLedger = Math.min(res.scannedThroughLedger, requestEnd)
   // Critical 1 / Spec-missing 5: the response's own reported chain tip, persisted per-source so
   // coverageProof can bind completeness to it. Falls back to the pre-call snapshot
   // (`eventSource.latestAvailableLedger`) when this particular getEvents() call didn't report one.
-  const reportedLatestLedger = Number.isInteger(res.latestLedger) ? res.latestLedger : reportedLatestAvailable
+  const reportedLatestLedger = Number.isInteger(res.latestLedger)
+    ? res.latestLedger
+    : reportedLatestAvailable
 
   // Stable paging-token order → dedupe by pagingToken (raw duplicate records) then by agent
   // address (a LATER duplicate for an already-seen agent can never change its owner/creator —
@@ -339,7 +362,8 @@ export async function ingestAgentIndexPage({
       throw result.error
     }
     if (!result.decoded) continue
-    if (!byAgent.has(result.decoded.agentAddress)) byAgent.set(result.decoded.agentAddress, result.decoded)
+    if (!byAgent.has(result.decoded.agentAddress))
+      byAgent.set(result.decoded.agentAddress, result.decoded)
   }
 
   // Spec-partial 6: a duplicate `deployed`/`agent_authorized` event for an agent ALREADY indexed
@@ -350,7 +374,10 @@ export async function ingestAgentIndexPage({
   // the rewrite this guard exists to prevent.
   const candidateAddresses = [...byAgent.keys()]
   const existingMemberships = candidateAddresses.length
-    ? await store.readMembershipsByAgentAddresses({ networkId: source.networkId, agentAddresses: candidateAddresses })
+    ? await store.readMembershipsByAgentAddresses({
+        networkId: source.networkId,
+        agentAddresses: candidateAddresses,
+      })
     : []
   const existingByAddress = new Map(existingMemberships.map((m) => [m.address, m]))
   let duplicateCount = 0
@@ -370,7 +397,8 @@ export async function ingestAgentIndexPage({
   }
 
   const provenanceSource =
-    source.discoverySources?.[0] ?? (source.kind === 'funding-router' ? 'router-event' : 'registry-event')
+    source.discoverySources?.[0] ??
+    (source.kind === 'funding-router' ? 'router-event' : 'registry-event')
   const ordinalByTx = new Map()
   const memberships = []
   for (const decoded of toResolve) {
@@ -381,10 +409,15 @@ export async function ingestAgentIndexPage({
           `(source ${sourceId}) — refusing to guess`
       )
     }
-    const runOrdinal = source.kind === 'funding-router' ? nextOrdinal(ordinalByTx, decoded.txHash) : null
+    const runOrdinal =
+      source.kind === 'funding-router' ? nextOrdinal(ordinalByTx, decoded.txHash) : null
     memberships.push(
       toMembership(
-        { ...source, _providerId: eventSource.providerId, _endpointClass: eventSource.endpointClass },
+        {
+          ...source,
+          _providerId: eventSource.providerId,
+          _endpointClass: eventSource.endpointClass,
+        },
         decoded,
         generation,
         runOrdinal,
@@ -403,7 +436,9 @@ export async function ingestAgentIndexPage({
     memberships,
     providerId: eventSource.providerId,
     endpointClass: eventSource.endpointClass,
-    reportedOldestLedger: Number.isInteger(eventSource.oldestAvailableLedger) ? eventSource.oldestAvailableLedger : null,
+    reportedOldestLedger: Number.isInteger(eventSource.oldestAvailableLedger)
+      ? eventSource.oldestAvailableLedger
+      : null,
     reportedLatestLedger,
   })
   return {
@@ -431,7 +466,13 @@ export async function ingestAgentIndexPage({
  *   checkedAt: number, status: 'complete'|'partial',
  * }}
  */
-export function coverageProof({ manifest, sources = [], gaps = [], backfillAudit = [], now = Date.now() }) {
+export function coverageProof({
+  manifest,
+  sources = [],
+  gaps = [],
+  backfillAudit = [],
+  now = Date.now(),
+}) {
   const creators = manifest?.creators ?? []
   const bySourceId = new Map(sources.map((s) => [s.sourceId, s]))
   const knownSourceIds = new Set(
@@ -456,13 +497,16 @@ export function coverageProof({ manifest, sources = [], gaps = [], backfillAudit
       row.manifestVersion === manifest.version &&
       row.schemaVersion === manifest.schemaVersion
     const startsAtCreator = row.indexedFromLedger <= creator.coverageStartLedger
-    const fresh = Number.isFinite(row.lastSuccessAt) && now - row.lastSuccessAt * 1000 <= AGENT_INDEX_MAX_LAG_MS
+    const fresh =
+      Number.isFinite(row.lastSuccessAt) && now - row.lastSuccessAt * 1000 <= AGENT_INDEX_MAX_LAG_MS
     // Critical 1: completeness requires coverage to reach the real chain tip, not merely to be
     // internally gap-free. `reportedLatestLedger` is the provider's OWN reported tip, persisted
     // per source at ingest time (0003_agent_index_bounds.sql) — no tip ever known for this source
     // means this can never claim complete, only an honest catching-up 'partial'.
     const tipKnown = Number.isInteger(row.reportedLatestLedger)
-    const atTip = tipKnown && row.indexedThroughLedger >= row.reportedLatestLedger - AGENT_INDEX_FINALITY_LEDGERS
+    const atTip =
+      tipKnown &&
+      row.indexedThroughLedger >= row.reportedLatestLedger - AGENT_INDEX_FINALITY_LEDGERS
     if (!identityMatches || !startsAtCreator || !fresh || row.status !== 'ok' || !atTip) {
       everyCreatorCoveredAndFresh = false
     }
@@ -479,7 +523,10 @@ export function coverageProof({ manifest, sources = [], gaps = [], backfillAudit
     let sawMissing = false
     let sawFailure = false
     for (const creator of needsBackfill) {
-      const sourceId = sourceIdFor({ networkId: creator.networkId, creatorAddress: creator.address })
+      const sourceId = sourceIdFor({
+        networkId: creator.networkId,
+        creatorAddress: creator.address,
+      })
       const rows = backfillAudit.filter((a) => a.sourceId === sourceId)
       if (rows.some((a) => a.result === 'verified')) continue
       if (rows.length === 0) sawMissing = true
@@ -494,7 +541,9 @@ export function coverageProof({ manifest, sources = [], gaps = [], backfillAudit
   const finalizedThroughLedgers = finite(sources.map((s) => s.finalizedThroughLedger))
 
   const status =
-    everyCreatorCoveredAndFresh && contiguous && historicalBackfill === 'verified' ? 'complete' : 'partial'
+    everyCreatorCoveredAndFresh && contiguous && historicalBackfill === 'verified'
+      ? 'complete'
+      : 'partial'
 
   return {
     manifestVersion: manifest.version,
@@ -502,7 +551,9 @@ export function coverageProof({ manifest, sources = [], gaps = [], backfillAudit
     schemaVersion: manifest.schemaVersion,
     indexedFromLedger: indexedFromLedgers.length ? Math.min(...indexedFromLedgers) : null,
     indexedThroughLedger: indexedThroughLedgers.length ? Math.min(...indexedThroughLedgers) : null,
-    finalizedThroughLedger: finalizedThroughLedgers.length ? Math.min(...finalizedThroughLedgers) : null,
+    finalizedThroughLedger: finalizedThroughLedgers.length
+      ? Math.min(...finalizedThroughLedgers)
+      : null,
     contiguous,
     gaps,
     historicalBackfill,

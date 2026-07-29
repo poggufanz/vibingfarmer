@@ -473,7 +473,7 @@ describe('toKeeperHeartbeatEvents (Task 10 C1 fix)', () => {
   // stale `closedAt` is exactly the "cold-start replays an 11h-old lookback window" scenario the
   // reviewer described. If the adapter ever regresses to reading `e.timestamp` again, these two
   // tests fail (they'd wrongly see 'healthy'/the timestamp-derived heartbeat time instead).
-  it("maps a real keeperActivity compound item using closedAt (real ledger-close time), never timestamp (read time)", () => {
+  it('maps a real keeperActivity compound item using closedAt (real ledger-close time), never timestamp (read time)', () => {
     const now = 1_000_000_000
     const keeperActivity = [
       {
@@ -701,7 +701,7 @@ describe('activeAgentCount (Task 10 M9 fix): matches CrewRoute.jsx\'s own "activ
     expect(expr).toMatch(/!a\?\.problems\?\.length/)
   })
 
-  it('CrewRoute.jsx\'s own activeCount uses the identical predicate (both fields present)', () => {
+  it("CrewRoute.jsx's own activeCount uses the identical predicate (both fields present)", () => {
     expect(crewRouteSrc).toMatch(/!a\?\.scope\?\.value\?\.revoked && !a\?\.problems\?\.length/)
   })
 })

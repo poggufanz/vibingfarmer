@@ -52,7 +52,8 @@ export async function revokeAgentOnChain({
     sign:
       model.kind === 'G'
         ? async () => signTxXdr(built.xdr)
-        : async () => signOwnerAuthEntry({ tx: built.tx, contractId: model.contractId, server, kit }),
+        : async () =>
+            signOwnerAuthEntry({ tx: built.tx, contractId: model.contractId, server, kit }),
     server,
     label: 'revoke',
     classicSubmission: 'direct',

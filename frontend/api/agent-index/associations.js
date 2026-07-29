@@ -12,14 +12,7 @@ const EXECUTION_STATUSES = [
   'held',
   'failed',
 ]
-const CUSTODY_LOCATIONS = [
-  'owner',
-  'agent',
-  'stellar-vault',
-  'in-transit',
-  'base-proxy',
-  'unknown',
-]
+const CUSTODY_LOCATIONS = ['owner', 'agent', 'stellar-vault', 'in-transit', 'base-proxy', 'unknown']
 const TERMINAL_STATUSES = new Set(['deposited', 'held', 'failed'])
 const STATUS_RANK = new Map(EXECUTION_STATUSES.map((status, index) => [status, index]))
 const ALLOCATION_FIELDS = new Set([
@@ -166,7 +159,8 @@ function validateScope({ scope, report, allocation, requirements, now }) {
     ['revocation', scope?.revoked === false],
   ]
   const failed = checks.find(([, valid]) => !valid)
-  if (failed) throw new Error(`live bridge scope ${failed[0]} does not cover the association report`)
+  if (failed)
+    throw new Error(`live bridge scope ${failed[0]} does not cover the association report`)
 }
 
 function validateImmutable(existing, report, allocation) {
@@ -185,7 +179,9 @@ function validateImmutable(existing, report, allocation) {
     existing.mandateBindingId !== report.mandateBindingId ||
     existing.mandateBindingHash !== report.mandateBindingHash
   ) {
-    throw new Error('allocation identity cannot change owner, run, bridge, pool, kernel, or binding')
+    throw new Error(
+      'allocation identity cannot change owner, run, bridge, pool, kernel, or binding'
+    )
   }
 }
 

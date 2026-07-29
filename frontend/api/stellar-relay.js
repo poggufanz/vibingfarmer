@@ -226,7 +226,8 @@ export async function assertRelayableTransaction(
       return
     }
     if (fnName === 'pull') {
-      const ok = native.length === 2 && typeof native[0] === 'string' && typeof native[1] === 'bigint'
+      const ok =
+        native.length === 2 && typeof native[0] === 'string' && typeof native[1] === 'bigint'
       if (!ok) throw new RelayError('router.pull: argument schema mismatch')
       return
     }

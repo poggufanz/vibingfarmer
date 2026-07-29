@@ -12,7 +12,10 @@
 //     fully unit-tested here.
 //   - commitBackfillAudit — the only function that touches `store` (D1), gated behind
 //     handler.js's handleBackfillCommit exactly like handleIngest gates ordinary ingestion.
-import { AGENT_INDEX_SCHEMA_VERSION, AGENT_WASM_GENERATIONS } from '../../src/stellar/agentCreatorManifest.js'
+import {
+  AGENT_INDEX_SCHEMA_VERSION,
+  AGENT_WASM_GENERATIONS,
+} from '../../src/stellar/agentCreatorManifest.js'
 import { sourceIdFor } from './models.js'
 
 export const BACKFILL_METHOD_V1 = 'legacy-direct-deploy-audit-v1'
@@ -22,13 +25,20 @@ export const BACKFILL_METHOD_V1 = 'legacy-direct-deploy-audit-v1'
 // supplementary evidence the audit still tracks and reports on but can never produce their own
 // agent_backfill_audits row (that table's source_id is FK'd to agent_index_sources — see
 // migrations/0002_agent_index.sql).
-export const AUDIT_SOURCE_KINDS = ['funding-router', 'registry', 'vault', 'horizon-account', 'relayer-log']
+export const AUDIT_SOURCE_KINDS = [
+  'funding-router',
+  'registry',
+  'vault',
+  'horizon-account',
+  'relayer-log',
+]
 const SOURCE_KINDS_WITH_ROW = new Set(['funding-router', 'registry'])
 
 export const BACKFILL_AUDIT_VERDICTS = ['verified', 'partial', 'failed']
 
 function requireString(value, field) {
-  if (typeof value !== 'string' || value.length === 0) throw new Error(`${field} must be a non-empty string`)
+  if (typeof value !== 'string' || value.length === 0)
+    throw new Error(`${field} must be a non-empty string`)
   return value
 }
 function requireInt(value, field) {
@@ -40,7 +50,8 @@ function requireArray(value, field) {
   return value
 }
 function requireOneOf(value, options, field) {
-  if (!options.includes(value)) throw new Error(`${field} must be one of ${options.join(', ')}, got ${JSON.stringify(value)}`)
+  if (!options.includes(value))
+    throw new Error(`${field} must be one of ${options.join(', ')}, got ${JSON.stringify(value)}`)
   return value
 }
 
@@ -55,8 +66,10 @@ function toSourceCoverageEntry(entry, i) {
     throw new Error(`sources[${i}].oldestAvailableLedger must be an integer or null`)
   requireInt(s.fromLedger, `sources[${i}].fromLedger`)
   requireInt(s.throughLedger, `sources[${i}].throughLedger`)
-  if (s.throughLedger < s.fromLedger) throw new Error(`sources[${i}].throughLedger must be >= fromLedger`)
-  if (typeof s.contiguous !== 'boolean') throw new Error(`sources[${i}].contiguous must be a boolean`)
+  if (s.throughLedger < s.fromLedger)
+    throw new Error(`sources[${i}].throughLedger must be >= fromLedger`)
+  if (typeof s.contiguous !== 'boolean')
+    throw new Error(`sources[${i}].contiguous must be a boolean`)
   if (s.evidenceHash !== null && typeof s.evidenceHash !== 'string')
     throw new Error(`sources[${i}].evidenceHash must be a string or null`)
   return {
@@ -98,7 +111,10 @@ export function toBackfillAuditV1(audit) {
 
   // Every candidate lands in exactly one bucket — a mismatch here means a classification bug
   // silently dropped or double-counted a candidate, never a thing to normalize past.
-  if (verifiedAgents.length + rejectedCandidates.length + unresolvedCandidates.length !== candidates.length) {
+  if (
+    verifiedAgents.length + rejectedCandidates.length + unresolvedCandidates.length !==
+    candidates.length
+  ) {
     throw new Error(
       'toBackfillAuditV1: verifiedAgents + rejectedCandidates + unresolvedCandidates must partition candidates exactly'
     )
@@ -106,9 +122,13 @@ export function toBackfillAuditV1(audit) {
 
   if (verdict === 'verified') {
     if (unresolvedCandidates.length !== 0)
-      throw new Error('toBackfillAuditV1: verdict cannot be "verified" while unresolvedCandidates is non-empty')
+      throw new Error(
+        'toBackfillAuditV1: verdict cannot be "verified" while unresolvedCandidates is non-empty'
+      )
     if (sources.length === 0 || !sources.every((s) => s.contiguous === true))
-      throw new Error('toBackfillAuditV1: verdict cannot be "verified" without every source reporting contiguous coverage')
+      throw new Error(
+        'toBackfillAuditV1: verdict cannot be "verified" without every source reporting contiguous coverage'
+      )
   }
 
   return {
@@ -134,7 +154,8 @@ export function toBackfillAuditV1(audit) {
  * produces 'partial'; 'failed' stays in the type for a caller to flag a run that could not
  * meaningfully attempt anything, but this function never invents that state itself. */
 export function deriveVerdict({ sources, unresolvedCandidates }) {
-  const allContiguous = Array.isArray(sources) && sources.length > 0 && sources.every((s) => s.contiguous === true)
+  const allContiguous =
+    Array.isArray(sources) && sources.length > 0 && sources.every((s) => s.contiguous === true)
   const noUnresolved = (unresolvedCandidates?.length ?? 0) === 0
   return allContiguous && noUnresolved ? 'verified' : 'partial'
 }
@@ -157,7 +178,11 @@ function toVerifiedMembership(c) {
     grantTxHash: isRouter ? c.creationTx : null,
     runId: null,
     runOrdinal: null,
-    provenance: { source: 'backfill-audit', evidenceKind: c.evidenceKind ?? null, evidenceHash: c.evidenceHash ?? null },
+    provenance: {
+      source: 'backfill-audit',
+      evidenceKind: c.evidenceKind ?? null,
+      evidenceHash: c.evidenceHash ?? null,
+    },
   }
 }
 
@@ -173,7 +198,8 @@ export function classifyCandidate({ candidate, directSetupCutoffLedger }) {
   if (!c.address) return { status: 'unresolved', reason: 'missing-address', candidate: c }
 
   // 1. contract wasm hash must be one this manifest recognizes.
-  if (c.wasmLookupFailed) return { status: 'unresolved', reason: 'wasm-lookup-failed', candidate: c }
+  if (c.wasmLookupFailed)
+    return { status: 'unresolved', reason: 'wasm-lookup-failed', candidate: c }
   const knownWasm = AGENT_WASM_GENERATIONS.some((g) => g.wasmHash === c.wasmHash)
   if (!knownWasm) return { status: 'rejected', reason: 'unrecognized-wasm', candidate: c }
 
@@ -191,17 +217,24 @@ export function classifyCandidate({ candidate, directSetupCutoffLedger }) {
 
   // 3. no seeded/demo address assigned to an unrelated owner — generalized: the owner this
   // candidate's evidence CLAIMS must match the owner the agent's own on-chain scope reports.
-  if (owner !== c.ownerAddress) return { status: 'rejected', reason: 'owner-mismatch', candidate: c }
+  if (owner !== c.ownerAddress)
+    return { status: 'rejected', reason: 'owner-mismatch', candidate: c }
 
   // 4. provenance must point to a real creation/funding/registry transaction.
-  if (c.creationLedger == null || !c.creationTx) return { status: 'unresolved', reason: 'missing-provenance', candidate: c }
+  if (c.creationLedger == null || !c.creationTx)
+    return { status: 'unresolved', reason: 'missing-provenance', candidate: c }
 
   // A "direct-deploy" candidate found only via vault/Horizon/relayer-log evidence AFTER the
   // production cutoff (once the router became the mandatory path — see
   // agentCreatorManifest.js isLegacyDirectSetupAllowed) is out of scope for a HISTORICAL audit;
   // anything that recent should already be router/registry-tracked.
-  const isTrackedEvidence = c.evidenceKind === 'router-event' || c.evidenceKind === 'registry-authorization'
-  if (Number.isInteger(directSetupCutoffLedger) && c.creationLedger > directSetupCutoffLedger && !isTrackedEvidence) {
+  const isTrackedEvidence =
+    c.evidenceKind === 'router-event' || c.evidenceKind === 'registry-authorization'
+  if (
+    Number.isInteger(directSetupCutoffLedger) &&
+    c.creationLedger > directSetupCutoffLedger &&
+    !isTrackedEvidence
+  ) {
     return { status: 'rejected', reason: 'post-cutoff-direct-deploy', candidate: c }
   }
 
@@ -224,7 +257,9 @@ export function buildBackfillAudit({
   candidates,
   completedAt,
 }) {
-  const results = (candidates ?? []).map((c) => classifyCandidate({ candidate: c, directSetupCutoffLedger }))
+  const results = (candidates ?? []).map((c) =>
+    classifyCandidate({ candidate: c, directSetupCutoffLedger })
+  )
   const verifiedAgents = results.filter((r) => r.status === 'verified').map((r) => r.membership)
   const rejectedCandidates = results
     .filter((r) => r.status === 'rejected')
