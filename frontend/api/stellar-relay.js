@@ -21,6 +21,11 @@
 //   { action: 'submit', xdr }       → { hash, status }      (fee-bump + submit + poll)
 
 import { applyCors, rateLimit } from './_guard.js'
+import { agentCapabilityFor, TRACKED_AGENT_WASM_HASHES } from './agentCapabilities.js'
+import {
+  assertOwnerWithdrawAuthorization,
+  OwnerWithdrawAuthorizationError,
+} from './stellar-relay-auth.js'
 
 const PASSPHRASE = () =>
   process.env.STELLAR_NETWORK_PASSPHRASE || 'Test SDF Network ; September 2015'
@@ -53,7 +58,7 @@ const AGENT_WASM_HASHES = () =>
   parseAllowlist(
     process.env.SOROBAN_AGENT_WASM_HASHES ||
       process.env.SOROBAN_AGENT_WASM_HASH ||
-      'd61ceaaaf5a3fd9fd25987eba0f843ccb79880f3eaa137e066b5f63ab9eaa2ba'
+      TRACKED_AGENT_WASM_HASHES.join(',')
   )
 // CCTP TokenMessengerMinter (testnet) — sponsors deposit_for_burn only when its `from` arg is a
 // pinned agent_account (see assertRelayableTransaction). No hardcoded default: unset = messenger
@@ -145,6 +150,11 @@ export async function assertRelayableTransaction(
     agentWasmHashes = [],
     messengerAddr = '',
     getWasmHash = null,
+    networkPassphrase = '',
+    expectedNetworkPassphrase = '',
+    expectedRelayer = '',
+    currentLedger = 0,
+    readAgentScope = null,
   } = {}
 ) {
   const ops = inner.operations || []
@@ -176,7 +186,7 @@ export async function assertRelayableTransaction(
   // Wasm-pin-only agent check (SOROBAN_AGENT_WASM_HASHES), no allowlist fallback — used by the
   // sweep, messenger, and pinned-agent-action branches (see docstring on why the allowlist stays
   // scoped to token transfers only).
-  const isPinnedAgentWasm = async (addrStr) => {
+  const pinnedAgent = async (addrStr, relayOperation) => {
     if (!agentWasmHashes.length || !getWasmHash) return false
     let hash = null
     try {
@@ -184,12 +194,17 @@ export async function assertRelayableTransaction(
     } catch {
       return false
     }
-    return Boolean(hash && agentWasmHashes.includes(hash))
+    if (!hash || !agentWasmHashes.includes(hash)) return null
+    const capability = agentCapabilityFor(hash, relayOperation)
+    return capability ? { hash, capability } : null
+  }
+  const isPinnedAgentWasm = async (addrStr, relayOperation) => {
+    return Boolean(await pinnedAgent(addrStr, relayOperation))
   }
   // Allowlist OR wasm-pin — the F11 exit-leg-2 token-transfer gate, unchanged from Task 4.
   const isAllowlistedOrPinnedAgent = async (addrStr) => {
     if (parseAllowlist(agentAllowlist).includes(addrStr)) return true
-    return isPinnedAgentWasm(addrStr)
+    return isPinnedAgentWasm(addrStr, 'token_transfer')
   }
   // Owner-shaped recipient: a classic G account, or a C account running the pinned VF
   // smart-account wasm. No RPC needed for the (common) G case.
@@ -247,7 +262,7 @@ export async function assertRelayableTransaction(
     const [owner, agents, to] = native
     if (to !== owner) throw new RelayError('exit router sweep: to must equal owner')
     for (const agent of agents) {
-      if (!(await isPinnedAgentWasm(agent))) {
+      if (!(await isPinnedAgentWasm(agent, 'exit_router_sweep'))) {
         throw new RelayError('exit router sweep: every agent must run a pinned wasm')
       }
     }
@@ -259,7 +274,7 @@ export async function assertRelayableTransaction(
     if (fnName !== 'deposit_for_burn') {
       throw new RelayError('messenger: only deposit_for_burn is relayable')
     }
-    if (!(await isPinnedAgentWasm(native[0]))) {
+    if (!(await isPinnedAgentWasm(native[0], 'cctp_burn'))) {
       throw new RelayError('messenger: from is not a pinned agent')
     }
     return
@@ -318,14 +333,37 @@ export async function assertRelayableTransaction(
   }
 
   // 7. Pinned agent_account: revoke / owner_withdraw / set_exit_signer.
-  if (await isPinnedAgentWasm(contract)) {
+  const agentIdentity = await pinnedAgent(contract)
+  if (agentIdentity) {
     if (fnName === 'revoke') {
       if (native.length !== 0) throw new RelayError('agent revoke: unexpected arguments')
+      if (!agentCapabilityFor(agentIdentity.hash, 'revoke')) {
+        throw new RelayError('agent revoke: wasm capability is not proven')
+      }
       return
     }
     if (fnName === 'owner_withdraw') {
       if (native.length !== 1 || typeof native[0] !== 'string') {
         throw new RelayError('agent owner_withdraw: argument schema mismatch')
+      }
+      try {
+        await assertOwnerWithdrawAuthorization({
+          transaction: inner,
+          networkPassphrase,
+          expectedNetworkPassphrase,
+          expectedAgent: contract,
+          expectedRelayer,
+          expectedToken: tokenAddr,
+          expectedVault: vaultAddr,
+          wasmHash: agentIdentity.hash,
+          currentLedger,
+          readScope: readAgentScope,
+        })
+      } catch (error) {
+        if (error instanceof OwnerWithdrawAuthorizationError) {
+          throw new RelayError(error.message)
+        }
+        throw error
       }
       return
     }
@@ -334,6 +372,9 @@ export async function assertRelayableTransaction(
       const isBytes32 = key && typeof key.length === 'number' && key.length === 32
       if (native.length !== 1 || !isBytes32) {
         throw new RelayError('agent set_exit_signer: argument schema mismatch')
+      }
+      if (!agentCapabilityFor(agentIdentity.hash, 'set_exit_signer')) {
+        throw new RelayError('agent set_exit_signer: wasm capability is not proven')
       }
       return
     }
@@ -388,6 +429,8 @@ export async function feeBumpAndSubmit({
   agentWasmHashes = [],
   getWasmHash = null,
   messengerAddr = '',
+  currentLedger,
+  readAgentScope = null,
   sdk,
   rpcServer,
   pollTries = 10,
@@ -398,6 +441,12 @@ export async function feeBumpAndSubmit({
   const inner = TransactionBuilder.fromXDR(xdr, passphrase)
   if (inner instanceof FeeBumpTransaction) {
     throw new RelayError('inner tx is already fee-bumped')
+  }
+  const kp = Keypair.fromSecret(secret)
+  let latestLedger = currentLedger
+  if (latestLedger == null && typeof rpcServer.getLatestLedger === 'function') {
+    const latest = await rpcServer.getLatestLedger()
+    latestLedger = latest?.sequence ?? latest?.seq ?? 0
   }
   await assertRelayableTransaction(inner, {
     sdk,
@@ -410,6 +459,11 @@ export async function feeBumpAndSubmit({
     agentWasmHashes,
     messengerAddr,
     getWasmHash,
+    networkPassphrase: passphrase,
+    expectedNetworkPassphrase: passphrase,
+    expectedRelayer: kp.publicKey(),
+    currentLedger: latestLedger ?? 0,
+    readAgentScope,
   })
 
   // Replay short-circuit (don't pay to re-broadcast a spent inner tx).
@@ -424,7 +478,6 @@ export async function feeBumpAndSubmit({
   _seen.set(innerHash, { state: 'in-flight', at: now })
 
   try {
-    const kp = Keypair.fromSecret(secret)
     // Agent-deposit / owner-C-auth path: the inner tx's source IS the relayer (the client cannot
     // sign as the relayer), so the relay signs the inner envelope here. This is tx-level
     // source/sequence auth only — the action itself is authorized by whichever Soroban auth entry
@@ -433,6 +486,13 @@ export async function feeBumpAndSubmit({
     // source differs (a separate funded source, e.g. the relay smoke), the client already signed
     // it — leave it untouched.
     if (inner.source === kp.publicKey()) inner.sign(kp)
+    if (typeof rpcServer.simulateTransaction !== 'function') {
+      throw new RelayError('RPC enforcing simulation is unavailable')
+    }
+    const simulation = await rpcServer.simulateTransaction(inner)
+    if (!simulation || simulation.error || simulation.result?.error) {
+      throw new RelayError('RPC enforcing simulation rejected the signed transaction')
+    }
     const baseFee = (BigInt(inner.fee) + FEE_MARGIN).toString()
     const feeBump = TransactionBuilder.buildFeeBumpTransaction(kp, baseFee, inner, passphrase)
     feeBump.sign(kp)
@@ -512,6 +572,21 @@ export default async function handler(req, res) {
         if (exec.switch().name !== 'contractExecutableWasm') return null
         return exec.wasmHash().toString('hex')
       }
+      const readAgentScope = async (contractId) => {
+        const source = await rpcServer.getAccount(mod.Keypair.fromSecret(secret).publicKey())
+        const tx = new mod.TransactionBuilder(source, {
+          fee: mod.BASE_FEE,
+          networkPassphrase: PASSPHRASE(),
+        })
+          .addOperation(new mod.Contract(contractId).call('scope_of'))
+          .setTimeout(30)
+          .build()
+        const simulation = await rpcServer.simulateTransaction(tx)
+        if (mod.rpc.Api.isSimulationError(simulation) || !simulation.result?.retval) {
+          throw new RelayError('agent scope_of simulation failed')
+        }
+        return mod.scValToNative(simulation.result.retval)
+      }
       try {
         const out = await feeBumpAndSubmit({
           xdr: body.xdr,
@@ -525,6 +600,7 @@ export default async function handler(req, res) {
           exitRouterAddr: EXIT_ROUTER_ADDR(),
           agentWasmHashes: AGENT_WASM_HASHES(),
           getWasmHash,
+          readAgentScope,
           messengerAddr: TOKEN_MESSENGER(),
           sdk,
           rpcServer,

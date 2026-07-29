@@ -3,7 +3,7 @@
 // approve.html entry (this file may import; the classic scripts background/provider* may not).
 // Decode failure returns null — the approval screen then falls back to raw XDR; a decoder bug
 // must never block the consent gate.
-import { Address, TransactionBuilder, scValToNative, xdr } from '@stellar/stellar-sdk'
+import { Address, TransactionBuilder, hash, scValToNative, xdr } from '@stellar/stellar-sdk'
 import {
   NETWORK_PASSPHRASE,
   SOROBAN_AUTOFARM_VAULT_ADDRESS,
@@ -44,21 +44,40 @@ export function formatArg(v) {
   return String(v)
 }
 
-function summarizeInvokeArgs(inv) {
+function digestParts(parts) {
+  return hash(new TextEncoder().encode(JSON.stringify(parts))).toString('hex')
+}
+
+function authorizationDigests(op) {
+  return (op?.auth ?? []).map((entry) => hash(entry.toXDR()).toString('hex'))
+}
+
+function summarizeInvokeArgs(inv, exact = {}) {
   const contract = Address.fromScAddress(inv.contractAddress()).toString()
   const fn = inv.functionName().toString()
   const rawArgs = inv.args()
+  const nativeArgs = rawArgs.map((arg) => scValToNative(arg))
   // Always attempted, never fabricated: decodeFundingRouterGrant itself fails closed to
   // kind:'unknown' for anything that isn't a pinned router schema, so this is safe on every
   // invocation — only a real funding_router.grant call ever surfaces a `grant` summary.
   const grant = decodeFundingRouterGrant({ contractId: contract, functionName: fn, args: rawArgs })
   return {
     network: STELLAR_NETWORK_LABEL,
+    networkPassphrase: exact.networkPassphrase ?? NETWORK_PASSPHRASE,
     contract,
     contractLabel: labelForContract(contract),
     fn,
-    args: rawArgs.map((a) => formatArg(scValToNative(a))),
+    args: nativeArgs.map((a) => formatArg(a)),
     grant: grant.kind === 'unknown' ? null : grant,
+    owner: exact.owner ?? (fn === 'grant' ? nativeArgs[0] : null),
+    token: exact.token ?? (fn === 'owner_withdraw' ? SOROBAN_TOKEN_ADDRESS : null),
+    recipient:
+      exact.recipient ??
+      (fn === 'owner_withdraw' ? nativeArgs[0] : fn === 'sweep' ? nativeArgs[2] : null),
+    bodyDigest: exact.bodyDigest ?? null,
+    authDigest: exact.authDigest ?? null,
+    authorizationDigests: exact.authorizationDigests ?? [],
+    consentDigest: exact.consentDigest ?? null,
   }
 }
 
@@ -75,7 +94,26 @@ export function summarizeTransaction(xdrB64, passphrase = NETWORK_PASSPHRASE) {
       op?.type === 'invokeHostFunction' &&
       op.func.switch().name === 'hostFunctionTypeInvokeContract'
     ) {
-      return { ...summarizeInvokeArgs(op.func.invokeContract()), signer: null }
+      const bodyDigest = tx.hash().toString('hex')
+      const authDigests = authorizationDigests(op)
+      const authDigest =
+        authDigests.length === 0
+          ? null
+          : authDigests.length === 1
+            ? authDigests[0]
+            : digestParts(authDigests)
+      const owner = tx.source || null
+      return {
+        ...summarizeInvokeArgs(op.func.invokeContract(), {
+          networkPassphrase: passphrase,
+          owner,
+          bodyDigest,
+          authDigest,
+          authorizationDigests: authDigests,
+          consentDigest: digestParts([passphrase, bodyDigest, ...authDigests]),
+        }),
+        signer: null,
+      }
     }
     // Non-Soroban fallback: still give the user the op types rather than nothing.
     return {
@@ -86,6 +124,14 @@ export function summarizeTransaction(xdrB64, passphrase = NETWORK_PASSPHRASE) {
       args: [],
       signer: null,
       grant: null,
+      networkPassphrase: passphrase,
+      owner: tx.source || null,
+      token: null,
+      recipient: null,
+      bodyDigest: tx.hash().toString('hex'),
+      authDigest: null,
+      authorizationDigests: [],
+      consentDigest: digestParts([passphrase, tx.hash().toString('hex')]),
     }
   } catch {
     return null
@@ -105,7 +151,16 @@ export function summarizeAuthEntry(authEntryB64) {
     if (entry.credentials().switch().name === 'sorobanCredentialsAddress') {
       signer = Address.fromScAddress(entry.credentials().address().address()).toString()
     }
-    return { ...summarizeInvokeArgs(fn.contractFn()), signer }
+    const authDigest = hash(entry.toXDR()).toString('hex')
+    return {
+      ...summarizeInvokeArgs(fn.contractFn(), {
+        owner: signer,
+        authDigest,
+        authorizationDigests: [authDigest],
+        consentDigest: authDigest,
+      }),
+      signer,
+    }
   } catch {
     return null
   }

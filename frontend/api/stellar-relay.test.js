@@ -121,6 +121,7 @@ function makeRpc({ sendStatus = 'PENDING', getStatuses = ['SUCCESS'] } = {}) {
   const queue = [...getStatuses]
   return {
     sendTransaction: vi.fn(async () => ({ status: sendStatus, hash: 'OUTERHASH' })),
+    simulateTransaction: vi.fn(async () => ({ result: { retval: {} } })),
     getTransaction: vi.fn(async () => ({ status: queue.shift() ?? 'NOT_FOUND' })),
   }
 }
@@ -163,6 +164,68 @@ describe('feeBumpAndSubmit', () => {
     expect(innerSignSpy).toHaveBeenCalledOnce() // the new branch: relayer signs the inner tx
     expect(signSpy).toHaveBeenCalledOnce() // still fee-bumped + signed
     expect(buildFeeBumpTransaction).toHaveBeenCalledOnce()
+  })
+
+  it('enforces the signed inner transaction before constructing or sending the fee bump', async () => {
+    const { sdk, innerSignSpy, buildFeeBumpTransaction, builtFeeBump } = makeSdk({
+      innerHashHex: '57',
+      innerSource: 'GREL',
+    })
+    const rpc = makeRpc({ getStatuses: ['SUCCESS'] })
+    const order = []
+    innerSignSpy.mockImplementation(() => order.push('inner-sign'))
+    rpc.simulateTransaction.mockImplementation(async () => {
+      expect(innerSignSpy).toHaveBeenCalledOnce()
+      expect(buildFeeBumpTransaction).not.toHaveBeenCalled()
+      order.push('enforcing-simulation')
+      return { result: { retval: {} } }
+    })
+    buildFeeBumpTransaction.mockImplementation(() => {
+      order.push('build-fee-bump')
+      return builtFeeBump
+    })
+    rpc.sendTransaction.mockImplementation(async () => {
+      order.push('submit-fee-bump')
+      return { status: 'PENDING', hash: 'OUTERHASH' }
+    })
+
+    await feeBumpAndSubmit({
+      xdr: 'INNERXDR',
+      secret: SECRET,
+      passphrase: PASS,
+      vaultAddr: VAULT,
+      sdk,
+      rpcServer: rpc,
+    })
+
+    expect(order).toEqual([
+      'inner-sign',
+      'enforcing-simulation',
+      'build-fee-bump',
+      'submit-fee-bump',
+    ])
+  })
+
+  it('fails closed when enforcing simulation rejects the signed inner transaction', async () => {
+    const { sdk, buildFeeBumpTransaction } = makeSdk({
+      innerHashHex: '58',
+      innerSource: 'GREL',
+    })
+    const rpc = makeRpc()
+    rpc.simulateTransaction.mockResolvedValue({ error: 'auth failed' })
+
+    await expect(
+      feeBumpAndSubmit({
+        xdr: 'INNERXDR',
+        secret: SECRET,
+        passphrase: PASS,
+        vaultAddr: VAULT,
+        sdk,
+        rpcServer: rpc,
+      })
+    ).rejects.toThrow('RPC enforcing simulation rejected the signed transaction')
+    expect(buildFeeBumpTransaction).not.toHaveBeenCalled()
+    expect(rpc.sendTransaction).not.toHaveBeenCalled()
   })
 
   it('does NOT sign the inner tx when its source differs from the relayer (separate funded source)', async () => {
@@ -530,10 +593,10 @@ describe('assertRelayableTransaction — pinned agent: revoke / owner_withdraw /
       assertRelayableTransaction(depositTx(AGENT, 'revoke', [{ __addr: 'GX' }]), cfg())
     ).rejects.toThrow(RelayError)
   })
-  it('passes agent.owner_withdraw(to)', async () => {
+  it('rejects agent.owner_withdraw without canonical XDR/auth/scope proof', async () => {
     await expect(
       assertRelayableTransaction(depositTx(AGENT, 'owner_withdraw', [{ __addr: 'GOWNER' }]), cfg())
-    ).resolves.toBeUndefined()
+    ).rejects.toThrow(RelayError)
   })
   it('rejects agent.owner_withdraw with a missing/malformed to argument', async () => {
     await expect(
@@ -865,7 +928,7 @@ describe('assertRelayableTransaction - smart-account deploy sponsorship (SAK cre
 })
 
 describe('assertRelayableTransaction - CCTP messenger deposit_for_burn', () => {
-  const AGENT_HASH_V3 = AGENT_HASH
+  const AGENT_HASH_V3 = '1fdbe175ddeb6d237a178c3c117b4e6c168122eec7d94f06a4b27ee4026efbe1'
 
   it('sponsors deposit_for_burn when from (args[0]) is a pinned agent_account wasm', async () => {
     const tx = depositTx(MESSENGER, 'deposit_for_burn', [{ __addr: 'CAGENTV3' }])

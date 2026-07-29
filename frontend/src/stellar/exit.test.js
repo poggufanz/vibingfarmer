@@ -71,6 +71,11 @@ describe('ownerWithdraw', () => {
     )
   })
 
+  it('always derives the ordinary direct-exit recipient from the stored owner', async () => {
+    await ownerWithdraw({ owner: OWNER, agentAddress: AGENT, to: RELAYER_G })
+    expect(buildInvokeTx.mock.calls[0][0].args).toEqual([{ addr: OWNER }])
+  })
+
   it('requires an agentAddress rather than sweeping an implicit default', async () => {
     // owner_withdraw is by-agent: a wrong agent is not a no-op, it is a call against an account
     // the user does not own. Missing must be loud, never defaulted.
@@ -161,6 +166,12 @@ describe('sweepAgents', () => {
     expect(call.args[1].vec()).toHaveLength(2)
     expect(out.swept).toEqual([50_000_000n, 20_000_000n])
     expect(out.txHashes).toEqual(['sweep1', 'sweep1'])
+  })
+
+  it('always derives the ordinary sweep recipient from the stored owner', async () => {
+    submitUserTx.mockResolvedValueOnce({ hash: 'sweep-owner', status: 'SUCCESS' })
+    await sweepAgents({ owner: OWNER, agentAddresses: AGENTS, to: RELAYER_G, router: ROUTER })
+    expect(buildInvokeTx.mock.calls[0][0].args[2]).toEqual({ addr: OWNER })
   })
 
   it('uses an injected sign (e.g. a script signing off-browser) instead of the wallet-kit default', async () => {

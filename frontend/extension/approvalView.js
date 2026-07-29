@@ -299,7 +299,15 @@ function buildDecodedRows(summary) {
       ],
     ])
   }
+  // These are the exact post-simulation consent facts. Unlike the navigational contract/signer
+  // hints above, none may be shortened: this is the identity and digest material the user signs.
+  if (summary?.owner) rows.push(['Owner', [addr(summary.owner)]])
+  if (summary?.networkPassphrase) rows.push(['Network', [addr(summary.networkPassphrase)]])
   if (summary?.fn) rows.push(['Function', [plain(summary.fn)]])
+  if (summary?.token) rows.push(['Token', [addr(summary.token)]])
+  if (summary?.recipient) rows.push(['Recipient', [addr(summary.recipient)]])
+  if (summary?.bodyDigest) rows.push(['Transaction body digest', [addr(summary.bodyDigest)]])
+  if (summary?.authDigest) rows.push(['Authorization digest', [addr(summary.authDigest)]])
   if (summary?.signer) rows.push(['Signer (from request)', [addr(safeShortAddr(summary.signer))]])
 
   const grant = summary?.grant ?? null
@@ -425,6 +433,7 @@ export function buildApprovalView(req, ctx = {}) {
     needsAcknowledgment,
     needsPassword,
     raw,
+    consentDigest: summary?.consentDigest ?? null,
     submissionState,
     sections: [
       consequence,

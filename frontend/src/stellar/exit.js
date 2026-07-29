@@ -78,7 +78,6 @@ function ownerSign({
  */
 async function sweepChunk({
   agents,
-  to,
   router,
   server,
   model,
@@ -107,7 +106,9 @@ async function sweepChunk({
           args: [
             { addr: model.owner },
             xdr.ScVal.scvVec(agents.map((a) => addrScVal(a.address))),
-            { addr: to },
+            // A direct exit has exactly one safe destination: the proven owner. Keep the
+            // historical `to` API parameter for caller compatibility, but never authorize it.
+            { addr: model.owner },
           ],
           server,
         }),
@@ -178,7 +179,6 @@ async function sweepChunk({
       const mid = Math.ceil(agents.length / 2)
       await sweepChunk({
         agents: agents.slice(0, mid),
-        to,
         router,
         server,
         model,
@@ -192,7 +192,6 @@ async function sweepChunk({
       check()
       await sweepChunk({
         agents: agents.slice(mid),
-        to,
         router,
         server,
         model,
@@ -223,7 +222,7 @@ async function sweepChunk({
 }
 
 /**
- * Sweep EVERY agent back to `to`, in as few owner-authorized transactions as the chain allows —
+ * Sweep EVERY agent back to its proven `owner`, in as few owner-authorized transactions as the chain allows —
  * ONE for a normal run, which is the whole point: the deposit costs one signature, so the exit
  * does too. Only a position spread over more agents than fit a single transaction's budget needs
  * more, and then it is ceil(N / ~3) signatures rather than N. Routed through OwnerAuthorizationV1:
@@ -240,7 +239,8 @@ async function sweepChunk({
  *          getRelayerAddress?:Function, kit?:object, sign?:Function}} p sign is the G-envelope
  *          signer (default signTxXdr, the wallet-kit popup) — injectable so callers off the
  *          browser (e.g. scripts/exit-router-smoke.mjs) can sign with a local keypair instead.
- *          Unused for a C owner, which always signs via the passkey ceremony.
+ *          Unused for a C owner, which always signs via the passkey ceremony. `to` is accepted
+ *          only for backwards compatibility and ignored; direct exits always pay the owner.
  * @returns {Promise<{swept:bigint[], txHashes:string[],
  *   errors:({message:string, code?:string, submission?:string}|undefined)[]}>} `errors[i].code`/
  *   `.submission` carry an OwnerActionSubmissionError's channel classification through undamaged
@@ -249,7 +249,6 @@ async function sweepChunk({
 export async function sweepAgents({
   owner,
   agentAddresses,
-  to,
   router = SOROBAN_EXIT_ROUTER_ADDRESS,
   server,
   chunkSize = MAX_AGENTS_PER_SWEEP,
@@ -287,7 +286,6 @@ export async function sweepAgents({
   for (let i = 0; i < indexed.length; i += chunkSize) {
     await sweepChunk({
       agents: indexed.slice(i, i + chunkSize),
-      to: to || owner,
       router,
       server,
       model,
@@ -306,14 +304,13 @@ export async function sweepAgents({
 /**
  * owner_withdraw(to) on the agent account — routed through OwnerAuthorizationV1 (see sweepAgents'
  * docstring for the G-direct vs C-relay-only split). Redeems + sweeps the agent's full position
- * to `to`.
+ * to the proven `owner`. The legacy `to` input is ignored so callers cannot redirect an exit.
  * @param {{owner:string, agentAddress:string, to?:string, activeAccount?:{kind:'G'|'C', address:string},
  *          getRelayerAddress?:Function, kit?:object, server?:object}} p
  */
 export async function ownerWithdraw({
   owner,
   agentAddress,
-  to,
   activeAccount = { kind: 'G', address: owner },
   getRelayerAddress: getRelayer = getRelayerAddress,
   kit,
@@ -347,7 +344,9 @@ export async function ownerWithdraw({
         source: model.source,
         contract: agentAddress,
         method: 'owner_withdraw',
-        args: [{ addr: to || owner }],
+        // Never let an untrusted caller turn an owner-authorized exit into a transfer to an
+        // arbitrary recipient. The relay independently proves this same owner/recipient fact.
+        args: [{ addr: model.owner }],
         server,
       }),
     sign: (built) =>

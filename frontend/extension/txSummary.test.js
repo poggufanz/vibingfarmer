@@ -82,6 +82,33 @@ describe('txSummary', () => {
     expect(s.args).toHaveLength(2)
   })
 
+  it('binds consent to exact body/auth digests and full owner/network/function/token/recipient facts', () => {
+    const owner = Keypair.random().publicKey()
+    const tx = new TransactionBuilder(new Account(owner, '0'), {
+      fee: '100',
+      networkPassphrase: NETWORK_PASSPHRASE,
+    })
+      .addOperation(
+        new Contract(SOROBAN_DEMO_AGENT).call('owner_withdraw', new Address(owner).toScVal())
+      )
+      .setTimeout(300)
+      .build()
+    const summary = summarizeTransaction(tx.toXDR())
+    expect(summary).toMatchObject({
+      owner,
+      networkPassphrase: NETWORK_PASSPHRASE,
+      fn: 'owner_withdraw',
+      token: SOROBAN_TOKEN_ADDRESS,
+      recipient: owner,
+    })
+    expect(summary.bodyDigest).toMatch(/^[a-f0-9]{64}$/)
+    expect(summary.consentDigest).toMatch(/^[a-f0-9]{64}$/)
+
+    const authSummary = summarizeAuthEntry(buildAuthEntryXdr())
+    expect(authSummary.authDigest).toMatch(/^[a-f0-9]{64}$/)
+    expect(authSummary.consentDigest).toBe(authSummary.authDigest)
+  })
+
   it('returns null on undecodable input instead of throwing', () => {
     expect(summarizeTransaction('definitely-not-xdr')).toBeNull()
     expect(summarizeAuthEntry('definitely-not-xdr')).toBeNull()

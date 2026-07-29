@@ -30,6 +30,39 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 const ORIGIN = 'https://vibing-farmer.pages.dev'
 const ADDRESS = 'CDLVXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXK3QP'
 
+describe('buildApprovalView — exact post-simulation consent facts', () => {
+  it('shows full owner/network/function/token/recipient and body/auth digests without truncation', () => {
+    const facts = {
+      contract: ADDRESS,
+      fn: 'owner_withdraw',
+      args: [],
+      grant: null,
+      owner: 'GCIOUP4UJAAFDBJNP5DY5CFJHBLEKGLHZ5E2AYRIIQ5VOZFVSTPRYHNS',
+      networkPassphrase: 'Test SDF Network ; September 2015',
+      token: 'CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU',
+      recipient: 'GCIOUP4UJAAFDBJNP5DY5CFJHBLEKGLHZ5E2AYRIIQ5VOZFVSTPRYHNS',
+      bodyDigest: 'a'.repeat(64),
+      authDigest: 'b'.repeat(64),
+      consentDigest: 'c'.repeat(64),
+    }
+    const view = buildApprovalView(
+      { method: 'signTransaction', params: { xdr: 'POST_SIM_XDR' }, origin: ORIGIN },
+      { address: ADDRESS, summary: facts }
+    )
+    const decoded = view.sections.find((section) => section.kind === 'decoded')
+    const text = decoded.rows.map(([key, value]) => `${key}:${partsToText(value)}`).join('\n')
+    expect(text).toContain(`Owner:${facts.owner}`)
+    expect(text).toContain(`Network:${facts.networkPassphrase}`)
+    expect(text).toContain('Function:owner_withdraw')
+    expect(text).toContain(`Token:${facts.token}`)
+    expect(text).toContain(`Recipient:${facts.recipient}`)
+    expect(text).toContain(`Transaction body digest:${facts.bodyDigest}`)
+    expect(text).toContain(`Authorization digest:${facts.authDigest}`)
+    expect(view.consentDigest).toBe(facts.consentDigest)
+    expect(view.raw).toBe('POST_SIM_XDR')
+  })
+})
+
 describe('buildApprovalView — verified-origin fail-closed gate', () => {
   it('never renders a connect/sign screen when the origin was not Chrome-verified (missing)', () => {
     const v = buildApprovalView(
