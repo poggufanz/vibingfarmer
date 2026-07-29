@@ -306,14 +306,33 @@ export async function executeBaseLeg({
     // Error shape, or reading .message here would itself throw and break the never-throws contract.
     const message = err instanceof Error ? err.message : String(err)
     const failureEvidence = err && typeof err === 'object' ? err : {}
+    const submissionUnknown = failureEvidence.code === 'VF_SUBMISSION_UNKNOWN'
+    const uncertaintyRecovery = submissionUnknown
+      ? {
+          action: 'reconcile-cctp-burn',
+          reason: message,
+          evidence: {
+            submission: failureEvidence.submission || 'unknown',
+            stage: failureEvidence.stage || stage,
+            ...(failureEvidence.result !== undefined
+              ? { result: sanitizeReceiptData(failureEvidence.result) }
+              : {}),
+          },
+        }
+      : null
+    const failureRecovery = sanitizeReceiptData(
+      failureEvidence.recovery || uncertaintyRecovery || null
+    )
     // Stranded-funds observability: once the pull confirmed, the bridge agent is holding the
     // owner's USDC — surface that + the recovery handle (bridgeAgentAddress, for an owner_withdraw
     // sweep) in BOTH the event and the return value, so a pull-ok/burn-fails outcome is never
     // indistinguishable from a nothing-moved one.
     const strandedFunds = fundsPulled ? { pulled: true, bridgeAgentAddress } : {}
-    const failureCustody = fundsPulled
-      ? { location: 'agent', confirmed: true, checkedAt: null }
-      : { location: 'owner', confirmed: true, checkedAt: null }
+    const failureCustody = submissionUnknown
+      ? { location: 'unknown', confirmed: false, checkedAt: null }
+      : fundsPulled
+        ? { location: 'agent', confirmed: true, checkedAt: null }
+        : { location: 'owner', confirmed: true, checkedAt: null }
     const allocations = (baseVaults || []).map((vault, i) => ({
       allocationId: vault.allocationId || `${runId ?? 'run'}-${i}`,
       amount: vault.allocationAmount || {
@@ -322,6 +341,7 @@ export async function executeBaseLeg({
         decimals: 6,
       },
       finalStatus: 'error',
+      stage,
       custody: failureCustody,
       error: message,
       bridgeAgentAddress: bridgeAgentAddress || null,
@@ -330,15 +350,22 @@ export async function executeBaseLeg({
       attestation: sanitizeReceiptData(
         failureEvidence.attestation || failureEvidence.attestationState || null
       ),
-      recovery: sanitizeReceiptData(failureEvidence.recovery || null),
+      recovery: failureRecovery,
     }))
-    safeEmit('baseleg-failed', { stage, error: message, ...strandedFunds })
+    safeEmit('baseleg-failed', {
+      stage,
+      error: message,
+      custody: failureCustody,
+      recovery: failureRecovery,
+      ...strandedFunds,
+    })
     return {
       success: false,
       runId,
       grantTxHash,
       stage,
       error: message,
+      custody: failureCustody,
       // Preserve the established recovery signal: bridgeAgentAddress appears only once a pull
       // actually stranded funds. `bridgeAgent` still identifies the deployed agent for receipts.
       bridgeAgent: bridgeAgentAddress || null,
@@ -347,7 +374,7 @@ export async function executeBaseLeg({
       attestation: sanitizeReceiptData(
         failureEvidence.attestation || failureEvidence.attestationState || null
       ),
-      recovery: sanitizeReceiptData(failureEvidence.recovery || null),
+      recovery: failureRecovery,
       allocations,
       ...strandedFunds,
     }

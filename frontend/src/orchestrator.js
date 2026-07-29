@@ -138,14 +138,22 @@ export function bindBaseLegCustodyDeps({
       check()
       const runAgentBurn = await loadRunAgentBurn()
       check()
-      const result = await runAgentBurn(args)
+      let result
+      try {
+        result = await runAgentBurn(args)
+      } catch (error) {
+        if (error?.code === 'VF_SUBMISSION_UNKNOWN') rememberUnknownCustody(error)
+        throw error
+      }
       try {
         check()
       } catch (cause) {
         // A burnHash is confirmation that the irreversible burn completed. Continue the bridge
         // recovery path; UI callbacks remain epoch-filtered by the parent run.
         if (result?.burnHash) return result
-        throw activeAccountSubmissionUnknown({ stage: 'burn', cause, result })
+        const error = activeAccountSubmissionUnknown({ stage: 'burn', cause, result })
+        rememberUnknownCustody(error)
+        throw error
       }
       return result
     },

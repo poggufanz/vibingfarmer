@@ -371,7 +371,34 @@ describe('user wallet connector', () => {
     ).rejects.toMatchObject({ code: 'ACTIVE_ACCOUNT_CHANGED' })
   })
 
-  it('does not treat undocumented result network metadata as proof', async () => {
+  it.each([
+    ['omitted', undefined],
+    ['matching', TESTNET],
+  ])(
+    'accepts %s returned network metadata after all wallet snapshots agree',
+    async (_, metadata) => {
+      const tx = transaction()
+      const xdr = tx.toEnvelope().toXDR('base64')
+      const activeAccount = await connectActiveAccount()
+      freighter.signTransaction.mockResolvedValue({
+        signedTxXdr: xdr,
+        signerAddress: USER,
+        ...(metadata ? { networkPassphrase: metadata } : {}),
+      })
+
+      await expect(
+        signReviewedTransaction({
+          xdr,
+          activeAccount,
+          reviewedTxHash: tx.hash().toString('hex'),
+          kit: binding,
+          getCurrentActiveAccount: () => activeAccount,
+        })
+      ).resolves.toBe(xdr)
+    }
+  )
+
+  it('rejects returned network metadata that contradicts the reviewed network', async () => {
     const tx = transaction()
     const xdr = tx.toEnvelope().toXDR('base64')
     const activeAccount = await connectActiveAccount()
@@ -389,7 +416,7 @@ describe('user wallet connector', () => {
         kit: binding,
         getCurrentActiveAccount: () => activeAccount,
       })
-    ).resolves.toBe(xdr)
+    ).rejects.toMatchObject({ code: 'ACTIVE_ACCOUNT_CHANGED' })
   })
 
   it('rejects a C contract as a classic transaction signer', async () => {

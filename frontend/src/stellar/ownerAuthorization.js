@@ -54,11 +54,12 @@ async function sdk() {
  *                              only chain/explorer reconciliation is safe.
  */
 export class OwnerActionSubmissionError extends Error {
-  constructor(message, code, submission) {
+  constructor(message, code, submission, cause) {
     super(message)
     this.name = 'OwnerActionSubmissionError'
     this.code = code
     this.submission = submission
+    if (cause !== undefined) this.cause = cause
   }
 }
 

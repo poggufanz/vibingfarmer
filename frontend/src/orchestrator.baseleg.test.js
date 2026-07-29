@@ -10,6 +10,8 @@
 // app.strategy.merge.test.jsx's job).
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
+const baseLegHarness = vi.hoisted(() => ({ executeReal: null }))
+
 const submitGrantMock = vi.fn()
 const runAgentPullMock = vi.fn()
 const readAllowanceMock = vi.fn()
@@ -88,11 +90,18 @@ vi.mock('./worker.js', () => ({
 }))
 
 const executeBaseLegMock = vi.fn()
-vi.mock('./baseLeg.js', () => ({
-  executeBaseLeg: (...a) => executeBaseLegMock(...a),
+vi.mock('./baseLeg.js', async (importOriginal) => {
+  const actual = await importOriginal()
+  baseLegHarness.executeReal = actual.executeBaseLeg
+  return { ...actual, executeBaseLeg: (...a) => executeBaseLegMock(...a) }
+})
+const runAgentBurnMock = vi.fn()
+vi.mock('./stellar/agentBurn.js', () => ({
+  runAgentBurn: (...a) => runAgentBurnMock(...a),
 }))
 const readBaseMandateMock = vi.fn()
-vi.mock('./wallet/baseBinding.js', () => ({
+vi.mock('./wallet/baseBinding.js', async (importOriginal) => ({
+  ...(await importOriginal()),
   readBaseMandate: (...a) => readBaseMandateMock(...a),
 }))
 
@@ -279,6 +288,8 @@ beforeEach(() => {
   readBaseMandateMock.mockReturnValue({ kernelAddress: KERNEL })
   executeBaseLegMock.mockReset()
   executeBaseLegMock.mockResolvedValue({ success: true, burnHash: 'B', jobId: 'j1' })
+  runAgentBurnMock.mockReset()
+  runAgentBurnMock.mockResolvedValue({ burnHash: 'HBURN' })
 })
 
 describe('orchestrator base leg — mixed run costs exactly ONE grant signature', () => {
@@ -1170,5 +1181,72 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
         recovery: { action: 'inspect-job', jobId: 'JOB-run-observer-queued' },
       },
     })
+  })
+
+  it('[Custody] real Orchestrator/Base dispatch keeps a possibly-dispatched burn unknown', async () => {
+    const fixture = permissionedMixedFixture('run-uncertain-burn')
+    executeBaseLegMock.mockImplementation((args) =>
+      baseLegHarness.executeReal({
+        ...args,
+        deps: {
+          ...args.deps,
+          readStoredMandate: () => ({
+            version: 2,
+            stellarOwner: 'GUSER',
+            serializedApproval: 'APPROVAL',
+            sessionKeyAddress: '0xSESSION',
+            kernelAddress: KERNEL,
+            expiresAt: 9999999999,
+            status: 'active',
+          }),
+          getMandateStatus: async () => ({ status: 'active' }),
+          makePublicClient: () => ({}),
+          estimateMinShares: async () => 39_000_000n,
+          runFarmFlow: async ({ deps }) => deps.burn({ amountUnits: 400_000_000n }),
+        },
+      })
+    )
+    runAgentBurnMock.mockRejectedValue(
+      Object.assign(new Error('burn response lost after dispatch'), {
+        code: 'VF_SUBMISSION_UNKNOWN',
+        submission: 'unknown',
+        stage: 'burn',
+        result: { hash: 'HBURN-MAYBE', status: 'PENDING' },
+      })
+    )
+
+    const summary = await permissionedOrchestrator().dispatch(fixture.plan, {
+      permissionDecision: fixture.permissionDecision,
+    })
+    const base = summary.receipt.allocations.find((entry) => entry.allocationId.endsWith('pool-a'))
+
+    expect(summary.baseLeg).toMatchObject({
+      success: false,
+      error: 'burn response lost after dispatch',
+      custody: { location: 'unknown', confirmed: false },
+      recovery: {
+        action: 'reconcile-cctp-burn',
+        evidence: { result: { hash: 'HBURN-MAYBE', status: 'PENDING' } },
+      },
+    })
+    expect(base).toMatchObject({
+      executionStatus: 'failed',
+      custody: { location: 'unknown', confirmed: false },
+      error: 'burn response lost after dispatch',
+      evidence: {
+        stage: 'burn',
+        recovery: {
+          action: 'reconcile-cctp-burn',
+          reason: 'burn response lost after dispatch',
+          evidence: {
+            submission: 'unknown',
+            stage: 'burn',
+            result: { hash: 'HBURN-MAYBE', status: 'PENDING' },
+          },
+        },
+      },
+    })
+    expect(base.custody.location).not.toBe('agent')
+    expect(runAgentBurnMock).toHaveBeenCalledOnce()
   })
 })

@@ -525,6 +525,12 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
       error: 'burn tx rejected',
       pulled: true,
       bridgeAgentAddress: BRIDGE_AGENT,
+      custody: { location: 'agent', confirmed: true, checkedAt: null },
+    })
+    expect(out.allocations[0].custody).toEqual({
+      location: 'agent',
+      confirmed: true,
+      checkedAt: null,
     })
     const failedEvent = events.find((e) => e.name === 'baseleg-failed')
     expect(failedEvent.data).toMatchObject({
@@ -532,6 +538,43 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
       pulled: true,
       bridgeAgentAddress: BRIDGE_AGENT,
     })
+  })
+
+  it('projects a possibly-dispatched burn as unknown custody with reconciliation evidence', async () => {
+    const deps = okDeps()
+    deps.runFarmFlow = vi.fn(async ({ deps: farmDeps }) =>
+      farmDeps.burn({ amountUnits: 1_000_000n })
+    )
+    deps.runAgentBurn.mockRejectedValue(
+      Object.assign(new Error('burn response lost after dispatch'), {
+        code: 'VF_SUBMISSION_UNKNOWN',
+        submission: 'unknown',
+        stage: 'burn',
+        result: { hash: 'HBURN-MAYBE', status: 'PENDING' },
+      })
+    )
+
+    const out = await run({ deps })
+
+    expect(out).toMatchObject({
+      success: false,
+      stage: 'burn',
+      custody: { location: 'unknown', confirmed: false, checkedAt: null },
+      recovery: {
+        action: 'reconcile-cctp-burn',
+        reason: 'burn response lost after dispatch',
+        evidence: {
+          submission: 'unknown',
+          stage: 'burn',
+          result: { hash: 'HBURN-MAYBE', status: 'PENDING' },
+        },
+      },
+    })
+    expect(out.allocations[0]).toMatchObject({
+      custody: { location: 'unknown', confirmed: false, checkedAt: null },
+      recovery: out.recovery,
+    })
+    expect(out.allocations[0].custody.location).not.toBe('agent')
   })
 
   it('farm failure is settled, not thrown', async () => {

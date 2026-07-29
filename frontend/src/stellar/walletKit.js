@@ -274,6 +274,13 @@ export async function signReviewedTransaction({
     address: captured.address,
   })
   check()
+  if (
+    signed?.networkPassphrase != null &&
+    signed.networkPassphrase !== captured.networkPassphrase
+  ) {
+    invalidateCapturedAccount(captured)
+    throw activeAccountChanged()
+  }
   if (signed?.signerAddress != null && signed.signerAddress !== captured.address) {
     invalidateCapturedAccount(captured)
     throw activeAccountChanged()

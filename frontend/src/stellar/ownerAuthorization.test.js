@@ -307,15 +307,23 @@ describe('submitOwnerAuthorizedTx — C, relay-only (every C owner action)', () 
         stage === 'submit'
           ? { code: 'VF_SUBMISSION_UNKNOWN', submission: 'unknown' }
           : { code: 'ACTIVE_ACCOUNT_CHANGED' }
-      await expect(
-        submitOwnerAuthorizedTx({
+      let error
+      try {
+        await submitOwnerAuthorizedTx({
           model,
           build,
           sign,
           activeAccount: captured,
           getCurrentActiveAccount: () => current,
         })
-      ).rejects.toMatchObject(expectedError)
+      } catch (caught) {
+        error = caught
+      }
+      expect(error).toMatchObject(expectedError)
+      if (stage === 'submit') {
+        expect(error).toBeInstanceOf(OwnerActionSubmissionError)
+        expect(error.cause).toMatchObject({ code: 'ACTIVE_ACCOUNT_CHANGED' })
+      }
       if (stage === 'build') expect(sign).not.toHaveBeenCalled()
       if (stage !== 'submit') expect(submitViaRelayMock).not.toHaveBeenCalled()
     }
