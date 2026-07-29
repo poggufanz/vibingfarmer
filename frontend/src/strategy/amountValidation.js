@@ -7,9 +7,9 @@
 // shape so a caller (screens.jsx's InputScreen submit) can focus the right field inline.
 //
 // Boundary-amount ruling (matches planModel.js): parse decimal strings directly into bigint via
-// stellar/format.js's decimalToUnits -- never `Number * 10**decimals` -- for anything that
-// becomes a grant/burn unit.
-import { decimalToUnits } from '../stellar/format.js'
+// money/assetUnits.js -- never `Number * 10**decimals` -- for anything that becomes a grant/burn
+// unit.
+import { parseAssetUnits } from '../money/assetUnits.js'
 import { SOROBAN_DECIMALS } from '../stellar/config.js'
 import { RISK_PROFILES } from './planModel.js'
 
@@ -33,7 +33,9 @@ function toBigIntUnits(units) {
 const PARSE_ERROR_MESSAGES = {
   EMPTY: 'Enter an amount.',
   INVALID_FORMAT: 'Enter a plain decimal amount, like 100 or 12.5.',
+  ZERO: 'Amount must be greater than zero.',
   TOO_PRECISE: (decimals) => `Amount has more than ${decimals} decimal places.`,
+  OVERFLOW: 'Amount is too large for the selected asset.',
 }
 
 /**
@@ -45,32 +47,20 @@ const PARSE_ERROR_MESSAGES = {
  * @returns {{ok:true, code:'OK', field:null, message:null, units:bigint}|{ok:false, code:string, field:null, message:string, units:null}}
  */
 export function parseUsdcInput(value, decimals) {
-  const r = decimalToUnits(value, decimals, { strict: true })
+  const r = parseAssetUnits(value, decimals)
   if (!r.ok) {
-    const msg = PARSE_ERROR_MESSAGES[r.code]
+    // Preserve Task 3's public NEGATIVE result for a plain negative decimal while the shared
+    // unsigned parser correctly reports all signed input as INVALID_FORMAT.
+    const code =
+      r.code === 'INVALID_FORMAT' && typeof value === 'string' && /^-\d+(?:\.\d+)?$/.test(value)
+        ? 'NEGATIVE'
+        : r.code
+    const msg = code === 'NEGATIVE' ? 'Amount cannot be negative.' : PARSE_ERROR_MESSAGES[code]
     return {
       ok: false,
-      code: r.code,
+      code,
       field: null,
       message: typeof msg === 'function' ? msg(decimals) : msg,
-      units: null,
-    }
-  }
-  if (r.units < 0n) {
-    return {
-      ok: false,
-      code: 'NEGATIVE',
-      field: null,
-      message: 'Amount cannot be negative.',
-      units: null,
-    }
-  }
-  if (r.units === 0n) {
-    return {
-      ok: false,
-      code: 'ZERO',
-      field: null,
-      message: 'Amount must be greater than zero.',
       units: null,
     }
   }

@@ -73,6 +73,14 @@ describe('parseUsdcInput', () => {
     expect(r.ok).toBe(false)
     expect(r.code).toBe('TOO_PRECISE')
   })
+
+  // Defect: the strategy amount parser can produce a value larger than Soroban's signed i128.
+  test('rejects an amount one unit above the signed i128 maximum', () => {
+    const r = parseUsdcInput('17014118346046923173168730371588.4105728', 7)
+    expect(r.ok).toBe(false)
+    expect(r.code).toBe('OVERFLOW')
+    expect(r.units).toBeNull()
+  })
 })
 
 describe('validateAmountInput', () => {

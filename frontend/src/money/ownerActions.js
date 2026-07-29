@@ -195,19 +195,14 @@ function scopeBlocksExitSigner(agent, nowSec) {
 // next to an unresolved or Base leg. Falls back to the whole-agent custody/amount only when there
 // is no breakdown at all (the common, non-split case, where custody.location IS the one real
 // location).
-function stellarVaultMaxUnits(agent) {
+function stellarVaultAmount(agent) {
   const legs = agent.custodyBreakdown?.length
     ? agent.custodyBreakdown
     : agent.custody?.location
       ? [{ location: agent.custody.location, amount: agent.amount }]
       : []
   const leg = legs.find((l) => l.location === 'stellar-vault')
-  if (!leg?.amount?.units) return null
-  try {
-    return BigInt(leg.amount.units)
-  } catch {
-    return null
-  }
+  return leg?.amount ?? null
 }
 
 // Fix 4 bullet 4 (fix loop 1) — recorded, not fixed here (wallet/exitKey.js is off-limits for this
@@ -275,7 +270,31 @@ export function planPartialExit({ agent, amount, account, now = Date.now() }) {
     }
   }
 
-  const maxUnits = stellarVaultMaxUnits(agent)
+  const availableAmount = stellarVaultAmount(agent)
+  if (availableAmount == null) {
+    return {
+      ok: false,
+      kind: 'partial-exit',
+      reason: 'balance-unavailable',
+      agentAddress: agent.address,
+    }
+  }
+  if (amount?.token !== availableAmount.token || amount?.decimals !== availableAmount.decimals) {
+    return {
+      ok: false,
+      kind: 'partial-exit',
+      reason: 'asset-mismatch',
+      agentAddress: agent.address,
+      message: "The requested asset no longer matches this agent's Stellar vault balance.",
+    }
+  }
+
+  let maxUnits
+  try {
+    maxUnits = BigInt(availableAmount.units)
+  } catch {
+    maxUnits = null
+  }
   if (maxUnits == null) {
     return {
       ok: false,
@@ -291,6 +310,11 @@ export function planPartialExit({ agent, amount, account, now = Date.now() }) {
       reason: 'exceeds-max',
       agentAddress: agent.address,
       maxUnits: maxUnits.toString(),
+      maxAmount: {
+        token: availableAmount.token,
+        units: maxUnits.toString(),
+        decimals: availableAmount.decimals,
+      },
     }
   }
 
@@ -299,7 +323,11 @@ export function planPartialExit({ agent, amount, account, now = Date.now() }) {
     kind: 'partial-exit',
     mode: 'partial',
     agentAddress: agent.address,
-    amount,
+    amount: {
+      token: amount.token,
+      units: amountUnits.toString(),
+      decimals: amount.decimals,
+    },
     account: account ?? null,
     model: account?.kind ?? 'G',
   }

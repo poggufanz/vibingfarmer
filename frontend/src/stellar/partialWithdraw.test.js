@@ -213,6 +213,25 @@ describe('partialWithdraw', () => {
     expect(out.redeemHash).toBe('H:XDR:redeem')
     expect(out.transferHash).toBe('H:XDR:transfer')
   })
+  // Defect: converting the requested amount through Number changes the i128 sent to the vault.
+  test('passes an above-safe-integer amount to the redeem contract input exactly', async () => {
+    const deps = baseDeps()
+    const calls = []
+    deps.readVaultShares = async () => 9_007_199_254_740_993n
+    deps.buildAgentAuthedInvoke = async (call) => {
+      calls.push(call)
+      return { xdr: `XDR:${call.method}` }
+    }
+    await partialWithdraw({
+      owner: 'GOWNER',
+      agentAddress: 'CAGENT',
+      amountUnits: 9_007_199_254_740_993n,
+      ...ownerBoundary(),
+      deps,
+    })
+    expect(calls[0].method).toBe('redeem')
+    expect(calls[0].args[1]).toEqual({ i128: 9_007_199_254_740_993n })
+  })
   test('reads the exit key from the owner-scoped v2 namespace, not the agent alone', async () => {
     const deps = baseDeps()
     const loadExitKey = vi.fn(deps.loadExitKey)
