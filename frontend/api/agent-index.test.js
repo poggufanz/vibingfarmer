@@ -21,6 +21,7 @@ import { AgentIndexConflictError } from './agent-index/models.js'
 const OWNER = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 21)).publicKey()
 const OTHER_OWNER = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 22)).publicKey()
 const SESSION = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 23))
+const OTHER_SESSION = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 24))
 const AGENT = 'CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5'
 const ROUTER = 'CBEI5VJKT2KZR6TU6NKHKJRIQORXTSTAH5RDUA7MBUNCPZDN6ZLQSYE4'
 const NETWORK = 'stellar-testnet'
@@ -194,7 +195,61 @@ describe('/api/agent-index authenticated execution routes', () => {
     expect(JSON.stringify(body)).not.toMatch(/router|passphrase|reporter|secret/i)
   })
 
-  it('re-reads all authority facts for write and rejects a scope-owner change', async () => {
+  it('rejects a write when router ownership changes after challenge issuance', async () => {
+    authorityReads([
+      {
+        routerOwner: OWNER,
+        scope: { owner: OWNER, revoked: false },
+        signer: SESSION.rawPublicKey(),
+      },
+      {
+        routerOwner: OTHER_OWNER,
+        scope: { owner: OWNER, revoked: false },
+        signer: SESSION.rawPublicKey(),
+      },
+    ])
+    const mutation = receiptMutation()
+    const challengeResponse = await call(
+      mockReq({
+        method: 'POST',
+        url: '/api/agent-index?action=receipt-challenge',
+        body: {
+          networkId: NETWORK,
+          owner: OWNER,
+          agent: AGENT,
+          requestDigest: receiptRequestDigest(mutation),
+        },
+      })
+    )
+    expect(challengeResponse.res.statusCode).toBe(201)
+    const challenge = challengeResponse.body.challenge
+    const proof = {
+      challengeId: challenge.challengeId,
+      expiresAt: challenge.expiresAt,
+      signature: SESSION.sign(Buffer.from(receiptProofMessage(challenge))).toString('base64url'),
+    }
+    const { res, body } = await call(
+      mockReq({
+        method: 'POST',
+        url: '/api/agent-index?action=receipt-write',
+        body: { mutation, proof },
+      })
+    )
+    expect(res.statusCode).toBe(403)
+    expect(body).toEqual({ error: 'Agent authority could not be verified' })
+    expect(mocked.store.commitAuthenticatedReceiptMutation).not.toHaveBeenCalled()
+    expect(
+      mocked.readContract.mock.calls.filter(([arg]) => arg.method === 'owner_of')
+    ).toHaveLength(2)
+    expect(
+      mocked.readContract.mock.calls.filter(([arg]) => arg.method === 'scope_of')
+    ).toHaveLength(2)
+    expect(mocked.readContract.mock.calls.filter(([arg]) => arg.method === 'signer')).toHaveLength(
+      2
+    )
+  })
+
+  it('rejects a write when scope ownership changes after challenge issuance', async () => {
     authorityReads([
       {
         routerOwner: OWNER,
@@ -220,6 +275,7 @@ describe('/api/agent-index authenticated execution routes', () => {
         },
       })
     )
+    expect(challengeResponse.res.statusCode).toBe(201)
     const challenge = challengeResponse.body.challenge
     const proof = {
       challengeId: challenge.challengeId,
@@ -235,6 +291,61 @@ describe('/api/agent-index authenticated execution routes', () => {
     )
     expect(res.statusCode).toBe(403)
     expect(body).toEqual({ error: 'Agent authority could not be verified' })
+    expect(mocked.store.commitAuthenticatedReceiptMutation).not.toHaveBeenCalled()
+    expect(
+      mocked.readContract.mock.calls.filter(([arg]) => arg.method === 'owner_of')
+    ).toHaveLength(2)
+    expect(
+      mocked.readContract.mock.calls.filter(([arg]) => arg.method === 'scope_of')
+    ).toHaveLength(2)
+    expect(mocked.readContract.mock.calls.filter(([arg]) => arg.method === 'signer')).toHaveLength(
+      2
+    )
+  })
+
+  it('rejects a write when the agent signer changes after challenge issuance', async () => {
+    authorityReads([
+      {
+        routerOwner: OWNER,
+        scope: { owner: OWNER, revoked: false },
+        signer: SESSION.rawPublicKey(),
+      },
+      {
+        routerOwner: OWNER,
+        scope: { owner: OWNER, revoked: false },
+        signer: OTHER_SESSION.rawPublicKey(),
+      },
+    ])
+    const mutation = receiptMutation()
+    const challengeResponse = await call(
+      mockReq({
+        method: 'POST',
+        url: '/api/agent-index?action=receipt-challenge',
+        body: {
+          networkId: NETWORK,
+          owner: OWNER,
+          agent: AGENT,
+          requestDigest: receiptRequestDigest(mutation),
+        },
+      })
+    )
+    expect(challengeResponse.res.statusCode).toBe(201)
+    const challenge = challengeResponse.body.challenge
+    const proof = {
+      challengeId: challenge.challengeId,
+      expiresAt: challenge.expiresAt,
+      signature: SESSION.sign(Buffer.from(receiptProofMessage(challenge))).toString('base64url'),
+    }
+    const { res, body } = await call(
+      mockReq({
+        method: 'POST',
+        url: '/api/agent-index?action=receipt-write',
+        body: { mutation, proof },
+      })
+    )
+    expect(res.statusCode).toBe(401)
+    expect(body).toEqual({ error: 'Invalid or expired receipt proof' })
+    expect(mocked.store.commitAuthenticatedReceiptMutation).not.toHaveBeenCalled()
     expect(
       mocked.readContract.mock.calls.filter(([arg]) => arg.method === 'owner_of')
     ).toHaveLength(2)
@@ -319,6 +430,23 @@ describe('/api/agent-index authenticated execution routes', () => {
     )
     expect(noRouter.res.statusCode).toBe(503)
     expect(noRouter.body).toEqual({ error: 'Receipt authority is not configured' })
+  })
+
+  it('maps a missing receipt-write authority dependency to a non-disclosing 503', async () => {
+    const noWriteAuthority = await call(
+      mockReq({
+        method: 'POST',
+        url: '/api/agent-index?action=receipt-write',
+        body: {
+          mutation: { secret: 'private-route-mutation' },
+          proof: { signature: 'private-route-proof' },
+        },
+        requestEnv: env({ SOROBAN_ROUTER_ADDRESS: '' }),
+      })
+    )
+    expect(noWriteAuthority.res.statusCode).toBe(503)
+    expect(noWriteAuthority.body).toEqual({ error: 'Agent-index dependency unavailable' })
+    expect(JSON.stringify(noWriteAuthority.body)).not.toMatch(/private|route|proof|signature/i)
   })
 
   it('maps an invalid secret-bearing receipt body to a non-disclosing 400', async () => {

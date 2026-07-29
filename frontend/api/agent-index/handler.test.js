@@ -89,6 +89,18 @@ describe('authenticated receipt handlers', () => {
     ).resolves.toMatchObject({ status: 503 })
   })
 
+  it('maps a missing receipt-write authority dependency to a non-disclosing 503', async () => {
+    const out = await handleReceiptWrite({
+      body: { secret: 'private-mutation-value' },
+      proof: { signature: 'private-proof-value' },
+      store: createAgentIndexStore(fakeD1()),
+      authorityReader: null,
+    })
+
+    expect(out).toEqual({ status: 503, body: { error: 'Agent-index dependency unavailable' } })
+    expect(JSON.stringify(out.body)).not.toMatch(/private|mutation|proof|signature/i)
+  })
+
   it('does not disclose inner authority or database errors', async () => {
     const out = await handleReceiptChallenge({
       request: {

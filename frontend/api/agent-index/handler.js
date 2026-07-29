@@ -152,10 +152,10 @@ export async function handleReceiptWrite({
   if (!store) {
     return { status: 503, body: { error: 'Receipt store unavailable', configured: false } }
   }
-  if (typeof authorityReader !== 'function') {
-    return { status: 500, body: { error: 'Receipt authority is not configured' } }
-  }
   try {
+    if (typeof authorityReader !== 'function') {
+      throw new AgentIndexUnavailableError('Receipt authority is not configured')
+    }
     const result = await applyAuthenticatedReceiptMutation({
       body,
       proof,
