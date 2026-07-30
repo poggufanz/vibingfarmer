@@ -46,8 +46,11 @@ fn agent_with(f: &Fixture, owner: &Address, seed: u8, funded: i128, deposited: i
     f.env.mock_all_auths();
     let scope = AgentScope {
         owner: owner.clone(),
-        vault: f.vault.clone(),
+        target: f.vault.clone(),
         token: f.token.clone(),
+        kind: 0,
+        mint_recipient: BytesN::from_array(&f.env, &[0u8; 32]),
+        destination_domain: 0,
         cap_per_period: 1_000_000_000,
         period_duration: 3600,
         spent_in_period: 0,
