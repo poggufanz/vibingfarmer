@@ -8,7 +8,7 @@ mod test;
 pub mod types;
 pub mod vault_client;
 
-use types::{AccountError, AgentScope, DataKey};
+use types::{AccountError, AgentScope, DataKey, AGENT_ACCOUNT_GENERATION};
 use vault_client::VaultClient;
 
 // Allowance lives this many ledgers (~30 days at 5s) — long enough to outlast any session scope.
@@ -141,6 +141,13 @@ impl AgentAccount {
             .get(&DataKey::Owner)
             .ok_or(AccountError::NotInit)?;
         owner.require_auth();
+        // Exit sweeps ONLY ever reach the owner itself. Checked immediately after loading the
+        // stored owner and BEFORE any mutation (the revoked flip below) or external call
+        // (redeem/transfer) — an otherwise fully owner-authorized call naming a foreign `to`
+        // must leave shares, balances, revoked state, and allowance untouched.
+        if to != owner {
+            return Err(AccountError::NotOwner);
+        }
 
         let mut scope: AgentScope = env
             .storage()
@@ -266,7 +273,11 @@ impl AgentAccount {
         env.storage().instance().get(&DataKey::Router)
     }
 
+    /// Generation constant (`AGENT_ACCOUNT_GENERATION`) this crate currently builds — 4 adds
+    /// `AgentScope.per_execution_max` on top of the v3 bridge-scope fields. Lets an on-chain
+    /// probe (and the frontend agent-creator manifest) tell fresh generation-4 agents apart from
+    /// the fresh-only V1-V3 ones without guessing from a wasm hash.
     pub fn version(_env: Env) -> u32 {
-        2
+        AGENT_ACCOUNT_GENERATION
     }
 }

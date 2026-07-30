@@ -77,6 +77,13 @@ fn enforce(env: &Env, contexts: &Vec<Context>) -> Result<(), AccountError> {
             if amount <= 0 {
                 return Err(AccountError::InvalidAmount);
             }
+            // v4: a single execution above per_execution_max is rejected even when the rolling
+            // cumulative cap_per_period still has headroom — checked BEFORE the cumulative
+            // accumulation so a too-large single deposit never partially counts against the
+            // period.
+            if amount > scope.per_execution_max {
+                return Err(AccountError::PerExecutionMaxExceeded);
+            }
             let new_spent = scope
                 .spent_in_period
                 .checked_add(amount)
@@ -108,6 +115,12 @@ fn enforce(env: &Env, contexts: &Vec<Context>) -> Result<(), AccountError> {
                 .map_err(|_| AccountError::InvalidAmount)?;
             if amount <= 0 {
                 return Err(AccountError::InvalidAmount);
+            }
+            // v4: same single-execution cap as the deposit branch, checked before the
+            // bridge-arg validation so an oversized burn never reaches the cumulative
+            // accumulation either.
+            if amount > scope.per_execution_max {
+                return Err(AccountError::PerExecutionMaxExceeded);
             }
             let domain: u32 = cc
                 .args

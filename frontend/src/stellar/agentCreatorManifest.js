@@ -296,3 +296,26 @@ export function isLegacyDirectSetupAllowed({ mode, explicitFlag } = {}) {
   if (mode !== 'development' && mode !== 'test') return false
   return explicitFlag === true || explicitFlag === 'true'
 }
+
+/**
+ * Task 4 (IQ Alter remediation): generations that CAN be linked to a bounded, reusable Router V3
+ * permission (`funding_router.grant_v3` / `pull_v3`). Empty today — Task 4 only adds V3/V4
+ * support to the agent_account/funding_router SOURCE; no generation recorded in
+ * AGENT_WASM_GENERATIONS runs it yet (every one predates `AgentScope.per_execution_max` and
+ * `PermissionGrantV3`), so every existing generation stays "fresh-only" per the remediation plan.
+ * An ALLOWLIST, not a blocklist, so a not-yet-deployed/unknown generation string can never
+ * silently read as eligible — extend this list only alongside a real, deployed, `deployTx`-backed
+ * AGENT_WASM_GENERATIONS entry for whatever generation actually gains V3 support.
+ * @type {string[]}
+ */
+export const AGENT_GENERATIONS_ELIGIBLE_FOR_PERMISSION_V3 = []
+
+/**
+ * Whether `generation` (one of `AGENT_WASM_GENERATIONS[].generation`, or any other string) may be
+ * linked to a V3 permission. Fail-closed: unknown/unlisted/undefined always reads as NOT eligible.
+ * @param {string} generation
+ * @returns {boolean}
+ */
+export function isEligibleForPermissionV3(generation) {
+  return AGENT_GENERATIONS_ELIGIBLE_FOR_PERMISSION_V3.includes(generation)
+}

@@ -1130,6 +1130,113 @@ describe('assertRelayableTransaction — funding_router grant/pull (schema-valid
   })
 })
 
+describe('assertRelayableTransaction — funding_router grant_v3/pull_v3 (Task 4, schema-validated)', () => {
+  const grantV3Args = [
+    { __addr: 'GOWNER' },
+    { __addr: 'CTOKEN' },
+    { __amount: 300_000_000n },
+    { __amount: 200_000_000n },
+    { __u32: 1000 },
+    { __vec: [{ __addr: 'CAGENT' }] },
+  ]
+  const pullV3Args = [
+    { __bytes: Buffer.alloc(32, 1) },
+    { __bytes: Buffer.alloc(32, 2) },
+    { __addr: 'CAGENT' },
+    { __amount: 500_000n },
+  ]
+
+  it('rejects router.grant_v3 when no router is configured (fail closed)', async () => {
+    await expect(
+      assertRelayableTransaction(depositTx(ROUTER, 'grant_v3', grantV3Args), { sdk: sdkAddr })
+    ).rejects.toThrow(RelayError)
+  })
+  it('passes router.grant_v3 with a well-formed argument schema', async () => {
+    await expect(
+      assertRelayableTransaction(depositTx(ROUTER, 'grant_v3', grantV3Args), {
+        sdk: sdkAddr,
+        routerAddrs: [ROUTER],
+      })
+    ).resolves.toBeUndefined()
+  })
+  it('passes router.pull_v3 with a well-formed argument schema', async () => {
+    await expect(
+      assertRelayableTransaction(depositTx(ROUTER, 'pull_v3', pullV3Args), {
+        sdk: sdkAddr,
+        routerAddrs: [ROUTER],
+      })
+    ).resolves.toBeUndefined()
+  })
+  it('rejects router.grant_v3 with the wrong argument count', async () => {
+    await expect(
+      assertRelayableTransaction(depositTx(ROUTER, 'grant_v3', grantV3Args.slice(0, 5)), {
+        sdk: sdkAddr,
+        routerAddrs: [ROUTER],
+      })
+    ).rejects.toThrow(RelayError)
+  })
+  it('rejects router.grant_v3 whose token argument is not an address (schema mismatch)', async () => {
+    const bad = [
+      { __addr: 'GOWNER' },
+      { __amount: 1n },
+      { __amount: 300_000_000n },
+      { __amount: 200_000_000n },
+      { __u32: 1000 },
+      { __vec: [] },
+    ]
+    await expect(
+      assertRelayableTransaction(depositTx(ROUTER, 'grant_v3', bad), {
+        sdk: sdkAddr,
+        routerAddrs: [ROUTER],
+      })
+    ).rejects.toThrow(RelayError)
+  })
+  it('rejects router.pull_v3 whose permission_id is not 32 bytes (schema mismatch)', async () => {
+    const bad = [
+      { __bytes: Buffer.alloc(16, 1) },
+      { __bytes: Buffer.alloc(32, 2) },
+      { __addr: 'CAGENT' },
+      { __amount: 500_000n },
+    ]
+    await expect(
+      assertRelayableTransaction(depositTx(ROUTER, 'pull_v3', bad), {
+        sdk: sdkAddr,
+        routerAddrs: [ROUTER],
+      })
+    ).rejects.toThrow(RelayError)
+  })
+  it('rejects router.pull_v3 whose amount argument is not an i128 (schema mismatch)', async () => {
+    const bad = [
+      { __bytes: Buffer.alloc(32, 1) },
+      { __bytes: Buffer.alloc(32, 2) },
+      { __addr: 'CAGENT' },
+      { __addr: 'CWRONGTYPE' },
+    ]
+    await expect(
+      assertRelayableTransaction(depositTx(ROUTER, 'pull_v3', bad), {
+        sdk: sdkAddr,
+        routerAddrs: [ROUTER],
+      })
+    ).rejects.toThrow(RelayError)
+  })
+  it('rejects grant_v3/pull_v3 on a different contract even with the router configured', async () => {
+    await expect(
+      assertRelayableTransaction(depositTx('COTHER', 'pull_v3', pullV3Args), {
+        sdk: sdkAddr,
+        routerAddrs: [ROUTER],
+      })
+    ).rejects.toThrow(RelayError)
+  })
+  it('rejects any other function on the configured router (no wider loosening)', async () => {
+    await expect(
+      assertRelayableTransaction(depositTx(ROUTER, 'sweep'), {
+        sdk: sdkAddr,
+        routerAddrs: [ROUTER],
+      })
+    ).rejects.toThrow(RelayError)
+  })
+})
+
 describe('assertRelayableTransaction — exit_router sweep (one-popup full exit)', () => {
   const sweepArgs = (to) => [
     { __addr: 'GOWNER' },

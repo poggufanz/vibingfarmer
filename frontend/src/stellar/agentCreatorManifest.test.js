@@ -16,6 +16,8 @@ import {
   creatorForAddress,
   assertCompleteCreatorManifest,
   isLegacyDirectSetupAllowed,
+  AGENT_GENERATIONS_ELIGIBLE_FOR_PERMISSION_V3,
+  isEligibleForPermissionV3,
 } from './agentCreatorManifest.js'
 
 const ROUTER_V2 = 'CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE'
@@ -318,5 +320,23 @@ describe('isLegacyDirectSetupAllowed', () => {
     expect(isLegacyDirectSetupAllowed({ mode: 'staging', explicitFlag: 'true' })).toBe(false)
     expect(isLegacyDirectSetupAllowed({ mode: 'preview', explicitFlag: true })).toBe(false)
     expect(isLegacyDirectSetupAllowed({ mode: undefined, explicitFlag: 'true' })).toBe(false)
+  })
+})
+
+describe('isEligibleForPermissionV3 (Task 4)', () => {
+  it('the eligible-generations allowlist is empty — no recorded generation runs V3/V4 source yet', () => {
+    expect(AGENT_GENERATIONS_ELIGIBLE_FOR_PERMISSION_V3).toEqual([])
+  })
+
+  it('is false for every generation currently in AGENT_WASM_GENERATIONS (fresh-only, per the plan)', () => {
+    for (const g of AGENT_WASM_GENERATIONS) {
+      expect(isEligibleForPermissionV3(g.generation)).toBe(false)
+    }
+  })
+
+  it('is an ALLOWLIST — an unknown or not-yet-recorded generation string defaults to false', () => {
+    expect(isEligibleForPermissionV3('agent-v4')).toBe(false)
+    expect(isEligibleForPermissionV3('totally-unknown')).toBe(false)
+    expect(isEligibleForPermissionV3(undefined)).toBe(false)
   })
 })

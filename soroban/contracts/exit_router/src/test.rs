@@ -57,6 +57,9 @@ fn agent_with(f: &Fixture, owner: &Address, seed: u8, funded: i128, deposited: i
         period_start: 0,
         expiry: f.env.ledger().timestamp() + 3600,
         revoked: false,
+        // agent_account v4 (Task 4): adds per_execution_max. Unrestricted here — this fixture
+        // exercises exit_router's sweep, not the deposit-cap enforcement.
+        per_execution_max: 1_000_000_000,
     };
     let agent = f.env.register(
         AgentAccount,

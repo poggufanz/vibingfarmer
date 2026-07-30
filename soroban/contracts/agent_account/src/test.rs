@@ -18,6 +18,9 @@ fn scope(env: &Env, owner: &Address, vault: &Address, token: &Address) -> AgentS
         period_start: 0,
         expiry: 4_000_000_000, // far future
         revoked: false,
+        // Unrestricted sentinel — these existing tests exercise cap_per_period, not the v4
+        // per-execution cap; dedicated per_execution_max tests below use their own tighter value.
+        per_execution_max: i128::MAX,
     }
 }
 
@@ -356,6 +359,7 @@ fn constructor_self_approves_vault_for_cap() {
         period_start: 0,
         expiry: env.ledger().timestamp() + 3600,
         revoked: false,
+        per_execution_max: cap, // unrestricted relative to cap_per_period — not under test here
     };
     // Act: deploy the agent with the constructor.
     let agent = env.register(AgentAccount, (owner.clone(), signer, s, None::<Address>));
@@ -400,6 +404,7 @@ fn owner_withdraw_sweeps_principal_back_to_owner() {
         period_start: 0,
         expiry: env.ledger().timestamp() + 3600,
         revoked: false,
+        per_execution_max: cap, // unrestricted relative to cap_per_period — not under test here
     };
     let agent = env.register(AgentAccount, (owner.clone(), signer, s, None::<Address>));
 
@@ -451,6 +456,7 @@ fn owner_withdraw_rejects_non_owner() {
         period_start: 0,
         expiry: env.ledger().timestamp() + 3600,
         revoked: false,
+        per_execution_max: 1,
     };
     let agent = env.register(AgentAccount, (owner.clone(), signer, s, None::<Address>));
     // Only the stranger authorizes — owner.require_auth() must fail.
@@ -487,6 +493,7 @@ fn session_key_path_still_rejects_non_deposit_contexts() {
         period_start: 0,
         expiry: env.ledger().timestamp() + 3600,
         revoked: false,
+        per_execution_max: 1_000,
     };
     let agent = env.register(
         AgentAccount,
@@ -668,6 +675,7 @@ fn owner_revoke_flips_scope_clears_allowance_blocks_sessions_and_is_idempotent()
         period_start: 0,
         expiry: env.ledger().timestamp() + 3600,
         revoked: false,
+        per_execution_max: cap, // unrestricted relative to cap_per_period — not under test here
     };
     let agent = env.register(AgentAccount, (owner.clone(), signer, s, None::<Address>));
     let client = AgentAccountClient::new(&env, &agent);
@@ -761,6 +769,7 @@ fn owner_withdraw_clears_vault_allowance() {
         period_start: 0,
         expiry: env.ledger().timestamp() + 3600,
         revoked: false,
+        per_execution_max: cap, // unrestricted relative to cap_per_period — not under test here
     };
     let agent = env.register(AgentAccount, (owner.clone(), signer, s, None::<Address>));
     token_admin.mint(&agent, &60_000_000);
@@ -1309,4 +1318,142 @@ fn exit_signer_redeem_context_on_bridge_kind_is_rejected() {
         AgentAccount::enforce_exit_scope_for_test(env.clone(), ctx)
     });
     assert_eq!(res, Err(AccountError::VaultMismatch));
+}
+
+// --- Task 4 (v4): owner_withdraw rejects a foreign `to` BEFORE any mutation ---
+
+#[test]
+fn owner_withdraw_rejects_foreign_recipient_leaves_state_unchanged() {
+    // An otherwise fully owner-authorized owner_withdraw (mock_all_auths stands in for the
+    // owner's real signature) naming a foreign `to` must be rejected before the revoked flip,
+    // the vault redeem, the token sweep, or the allowance clear — shares, balance, revoked
+    // state, and allowance must all be observably unchanged afterward.
+    let env = Env::default();
+    env.mock_all_auths();
+    let owner = Address::generate(&env);
+    let foreign = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(admin.clone());
+    let token = sac.address();
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+    let token_client = soroban_sdk::token::TokenClient::new(&env, &token);
+    let vault = env.register(
+        autofarm_vault::AutofarmVault,
+        (
+            admin.clone(),
+            token.clone(),
+            soroban_sdk::String::from_str(&env, "Vault"),
+            soroban_sdk::String::from_str(&env, "vfVLT"),
+        ),
+    );
+    let signer = BytesN::from_array(&env, &[7u8; 32]);
+    let cap: i128 = 100_000_000;
+    let s = AgentScope {
+        owner: owner.clone(),
+        target: vault.clone(),
+        token: token.clone(),
+        kind: 0,
+        mint_recipient: BytesN::from_array(&env, &[0u8; 32]),
+        destination_domain: 0,
+        cap_per_period: cap,
+        period_duration: 3600,
+        spent_in_period: 0,
+        period_start: 0,
+        expiry: env.ledger().timestamp() + 3600,
+        revoked: false,
+        per_execution_max: cap,
+    };
+    let agent = env.register(AgentAccount, (owner.clone(), signer, s, None::<Address>));
+    token_admin.mint(&agent, &60_000_000);
+    crate::vault_client::VaultClient::new(&env, &vault).deposit(&agent, &50_000_000);
+
+    let shares_before = crate::vault_client::VaultClient::new(&env, &vault).balance(&agent);
+    let balance_before = token_client.balance(&agent);
+    let allowance_before = token_client.allowance(&agent, &vault);
+    // Fixture sanity: every value under test starts strictly inside its bounds (non-zero), so a
+    // mutation the test is meant to catch actually moves an observed value.
+    assert!(shares_before > 0);
+    assert!(balance_before > 0);
+    assert!(allowance_before > 0);
+
+    let client = AgentAccountClient::new(&env, &agent);
+    let res = client.try_owner_withdraw(&foreign);
+    assert!(res.is_err());
+
+    assert_eq!(
+        crate::vault_client::VaultClient::new(&env, &vault).balance(&agent),
+        shares_before
+    );
+    assert_eq!(token_client.balance(&agent), balance_before);
+    assert_eq!(token_client.allowance(&agent, &vault), allowance_before);
+    assert!(!client.scope_of().revoked);
+}
+
+// --- Task 4 (v4): per_execution_max — a single execution above it is rejected even when the
+// rolling cumulative cap_per_period still has headroom ---
+
+#[test]
+fn deposit_rejects_single_execution_above_per_execution_max_within_cumulative_cap() {
+    let env = Env::default();
+    env.ledger().set_timestamp(1000);
+    let owner = Address::generate(&env);
+    let vault = Address::generate(&env);
+    let token = sac_token(&env);
+    let pubkey = BytesN::from_array(&env, &[1u8; 32]);
+    let mut s = scope(&env, &owner, &vault, &token);
+    s.cap_per_period = 1_000_000_000; // cumulative cap stays generous
+    s.per_execution_max = 400_000_000; // strictly tighter than the cumulative cap
+    let id = env.register(AgentAccount, (owner, pubkey, s, None::<Address>));
+
+    // 500,000,000 is comfortably under the 1,000,000,000 cumulative cap (first spend of a fresh
+    // period) but strictly above the 400,000,000 per-execution cap.
+    let ctx = deposit_ctx(&env, &vault, &Address::generate(&env), 500_000_000);
+    let res = env.as_contract(&id, || {
+        AgentAccount::enforce_scope_for_test(env.clone(), ctx)
+    });
+    assert_eq!(res, Err(AccountError::PerExecutionMaxExceeded));
+    // Rejected before any mutation: spent_in_period stays at 0.
+    assert_eq!(
+        AgentAccountClient::new(&env, &id).scope_of().spent_in_period,
+        0
+    );
+}
+
+#[test]
+fn deposit_allows_execution_at_exactly_per_execution_max() {
+    let env = Env::default();
+    env.ledger().set_timestamp(1000);
+    let owner = Address::generate(&env);
+    let vault = Address::generate(&env);
+    let token = sac_token(&env);
+    let pubkey = BytesN::from_array(&env, &[1u8; 32]);
+    let mut s = scope(&env, &owner, &vault, &token);
+    s.cap_per_period = 1_000_000_000;
+    s.per_execution_max = 400_000_000;
+    let id = env.register(AgentAccount, (owner, pubkey, s, None::<Address>));
+
+    let ctx = deposit_ctx(&env, &vault, &Address::generate(&env), 400_000_000); // exactly at the cap
+    let res = env.as_contract(&id, || {
+        AgentAccount::enforce_scope_for_test(env.clone(), ctx)
+    });
+    assert!(res.is_ok());
+}
+
+#[test]
+fn bridge_rejects_single_burn_above_per_execution_max_within_cumulative_cap() {
+    let env = Env::default();
+    env.ledger().set_timestamp(1000);
+    let owner = Address::generate(&env);
+    let messenger = Address::generate(&env);
+    let token = sac_token(&env);
+    let pubkey = BytesN::from_array(&env, &[1u8; 32]);
+    let mut s = bridge_scope(&env, &owner, &messenger, &token);
+    s.per_execution_max = 400_000_000; // strictly tighter than the 1,000,000,000 cumulative cap
+    let id = env.register(AgentAccount, (owner, pubkey, s.clone(), None::<Address>));
+
+    let ctx = burn_ctx(&env, &id, &s, 500_000_000);
+    let res = env.as_contract(&id, || {
+        AgentAccount::enforce_scope_for_test(env.clone(), soroban_sdk::vec![&env, ctx])
+    });
+    assert_eq!(res, Err(AccountError::PerExecutionMaxExceeded));
 }

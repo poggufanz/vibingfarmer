@@ -197,10 +197,13 @@ function parseAllowlist(raw) {
  * Allowed branches, in check order:
  *   1. vault `deposit` / `redeem`               — unchanged from Task 4 (any args; the vault and
  *      the calling agent's own on-chain scope bound abuse, not the relay).
- *   2. router `grant` / `pull`                   — schema-validated: grant's (owner:address,
- *      budgets:vec, expiry:u32, agents:vec) and pull's (agent:address, amount:i128) argument
- *      SHAPES must decode to the right native JS types. Business-rule depth (cap sizes, budget
- *      contents) is the router contract's job, not the relay's.
+ *   2. router `grant` / `pull` / `grant_v3` / `pull_v3` — schema-validated: grant's
+ *      (owner:address, budgets:vec, expiry:u32, agents:vec), pull's (agent:address,
+ *      amount:i128), grant_v3's (owner:address, token:address, mandate_ceiling:i128,
+ *      per_run_max:i128, live_until_ledger:u32, agents:vec), and pull_v3's (permission_id:
+ *      bytes32, execution_id:bytes32, agent:address, amount:i128) argument SHAPES must decode
+ *      to the right native JS types. Business-rule depth (cap sizes, budget contents, ceilings,
+ *      replay, scope drift) is the router contract's job, not the relay's.
  *   3. exit_router `sweep`                        — (owner:address, agents:vec<address>,
  *      to:address); `to` MUST equal `owner` (sweeps only reach the owner itself) and EVERY agent
  *      in the vec must run a pinned agent_account wasm (no allowlist fallback — "pinned" only).
@@ -344,7 +347,34 @@ export async function assertRelayableTransaction(
       if (!ok) throw new RelayError('router.pull: argument schema mismatch')
       return
     }
-    throw new RelayError('inner tx is not a router grant/pull')
+    // v3 (Task 4, bounded reusable grant) — schema-validated the same way; business-rule depth
+    // (ceilings, replay, scope drift) is the router contract's job, not the relay's.
+    // v3 (Task 4, bounded reusable grant) — schema-validated the same way; business-rule depth
+    // (ceilings, replay, scope drift) is the router contract's job, not the relay's.
+    if (fnName === 'grant_v3') {
+      const ok =
+        native.length === 6 &&
+        typeof native[0] === 'string' && // owner
+        typeof native[1] === 'string' && // token
+        typeof native[2] === 'bigint' && // mandate_ceiling
+        typeof native[3] === 'bigint' && // per_run_max
+        typeof native[4] === 'number' && // live_until_ledger
+        Array.isArray(native[5]) // agents
+      if (!ok) throw new RelayError('router.grant_v3: argument schema mismatch')
+      return
+    }
+    if (fnName === 'pull_v3') {
+      const isBytes32 = (v) => Boolean(v) && typeof v.length === 'number' && v.length === 32
+      const ok =
+        native.length === 4 &&
+        isBytes32(native[0]) && // permission_id
+        isBytes32(native[1]) && // execution_id
+        typeof native[2] === 'string' && // agent
+        typeof native[3] === 'bigint' // amount
+      if (!ok) throw new RelayError('router.pull_v3: argument schema mismatch')
+      return
+    }
+    throw new RelayError('inner tx is not a router grant/pull/grant_v3/pull_v3')
   }
 
   // 3. exit_router sweep — to MUST equal owner; every agent MUST be wasm-pinned.

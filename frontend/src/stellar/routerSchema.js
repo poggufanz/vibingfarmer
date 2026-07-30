@@ -43,3 +43,20 @@ export const ROUTER_SCHEMAS = {
 export function resolveRouterSchema(contractId) {
   return ROUTER_SCHEMAS[contractId] ?? null
 }
+
+/**
+ * V3 (Task 4, bounded reusable grant) argument shape — deliberately NOT registered in
+ * `ROUTER_SCHEMAS` (that map is keyed by a LIVE deployed contract address, and no V3 router has
+ * been deployed; inventing an address/hash here would violate the same fail-closed rule that
+ * keeps the legacy router's ABI absent above). Exported so decoders/tests can already recognize
+ * `grant_v3`/`pull_v3`'s argument counts the day a V3 router address is actually deployed and
+ * added to `ROUTER_SCHEMAS`.
+ */
+export const ROUTER_SCHEMA_V3_SHAPE = Object.freeze({
+  version: 3,
+  tokenMode: 'reusable-permission',
+  // grant_v3(owner, token, mandate_ceiling, per_run_max, live_until_ledger, agents)
+  grantArgCount: 6,
+  // pull_v3(permission_id, execution_id, agent, amount)
+  pullArgCount: 4,
+})
