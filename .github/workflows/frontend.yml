@@ -27,9 +27,15 @@ jobs:
       - run: npm run build:ext
       - run: npm run manifest:check
       # build:ext only proves the extension builds; this is the other half of decision #15's
-      # carry -- it must also ship no remote resource. Reuses VF Wallet Task 15's own Step 2
-      # command verbatim rather than inventing a new one.
-      - run: '! rg -n "executeAgentDeposit|executeAgentApprove|runAutonomousExit|https://fonts|vf_base_owner_address" extension-dist'
+      # carry -- it must also ship no remote resource. Final review, Fix 3: the original one-liner
+      # ('! rg -n "..." extension-dist') fails OPEN on a missing `rg` binary (exit 127, negated to
+      # 0) or a missing `extension-dist` directory -- either way the scan silently never ran and
+      # the step still went green. `test -d` guards the directory explicitly; `grep -RIn -E` is a
+      # coreutils tool always present on the runner, never a second binary to go missing.
+      - name: Verify extension bundle ships no bridge/remote-resource strings
+        run: |
+          test -d extension-dist
+          ! grep -RIn -E "executeAgentDeposit|executeAgentApprove|runAutonomousExit|https://fonts|vf_base_owner_address" extension-dist
 
   relayer:
     runs-on: ubuntu-latest
@@ -82,10 +88,32 @@ jobs:
         with:
           targets: wasm32v1-none
           components: clippy
+      # Final review, Fix 4: an uncached from-source `cargo install` took ~15 min with no cache on
+      # the one job that blocks every merge -- a network/MSRV flake surface on every run. `cargo
+      # install` (without `--force`) already skips rebuilding when the exact pinned version is
+      # recorded as installed; caching `~/.cargo/bin` plus its own install ledger
+      # (`.crates.toml`/`.crates2.json`) is enough to make that skip happen on a cache hit. Keyed
+      # on the exact pinned version so a future version bump can never silently restore a stale
+      # binary from an old cache entry.
+      - name: Cache stellar-cli 26.1.0
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/stellar
+            ~/.cargo/.crates.toml
+            ~/.cargo/.crates2.json
+          key: stellar-cli-26.1.0-${{ runner.os }}
       - name: Install stellar-cli 26.1.0
         run: cargo install --locked --version 26.1.0 stellar-cli
+      # Final review, Fix 4: this used to print the three versions and assert nothing -- with a
+      # from-source install, this is the single place a drifted toolchain or stellar-cli would
+      # show, and a printed-but-unchecked version is invisible in a green log. Grep the pinned
+      # strings instead of only printing them.
       - name: Verify pinned toolchain versions
-        run: rustc --version && cargo --version && stellar --version
+        run: |
+          rustc --version | grep -F '1.91.0'
+          cargo --version | grep -F '1.91.0'
+          stellar --version | grep -F '26.1.0'
       - run: stellar contract build
       - run: cargo test --locked
       - run: cargo clippy --locked --all-targets -- -D warnings
