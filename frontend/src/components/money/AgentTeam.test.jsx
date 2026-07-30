@@ -307,6 +307,33 @@ describe('AgentTeam — split-custody agents get a truthful label, not the gener
     expect(screen.queryByText('Active')).toBeNull()
     expect(screen.getByText('Split: vault + Base')).toBeTruthy()
   })
+
+  // Task 10: readOwnerMoney.js can now report TWO distinct Base legs for one agent (two separate
+  // positions, both custody 'base-proxy') -- naming every leg individually used to print the
+  // literal duplicate "Split: vault + Base + Base".
+  it('never repeats the same place twice in the split label when two Base legs exist (Task 10)', () => {
+    const twoBaseLegs = {
+      ...splitAgent('CBRIDGE2'),
+      custodyBreakdown: [
+        { location: 'stellar-vault', amount: amt(30_0000000n) },
+        {
+          location: 'base-proxy',
+          amount: amt(12_0000000n),
+          kernelAddress: '0xk',
+          poolAddress: '0xpa',
+        },
+        {
+          location: 'base-proxy',
+          amount: amt(8_0000000n),
+          kernelAddress: '0xk',
+          poolAddress: '0xpb',
+        },
+      ],
+    }
+    render(<AgentTeam agents={[twoBaseLegs]} problemAgents={[]} />)
+    expect(screen.getByText('Split: vault + Base')).toBeTruthy()
+    expect(screen.queryByText('Split: vault + Base + Base')).toBeNull()
+  })
 })
 
 describe('AgentTeam — DOM list ordering (every agent before any disclosure)', () => {

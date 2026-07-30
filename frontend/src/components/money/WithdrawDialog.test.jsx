@@ -394,7 +394,8 @@ describe('WithdrawDialog — partial exit, delegates its correctness gate to pla
     )
     fireEvent.click(screen.getByRole('tab', { name: /partial/i }))
     fireEvent.click(await screen.findByLabelText(/CAGE.*1/i))
-    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '11' } })
+    // Defect: a numeric input coerces the raw decimal before the shared parser sees it.
+    fireEvent.change(screen.getByRole('textbox', { name: /amount/i }), { target: { value: '11' } })
     expect(screen.getByText(/exceeds this agent's confirmed balance \(10 usdc\)/i)).toBeTruthy()
     expect(screen.queryByRole('button', { name: /withdraw this amount/i })).toBeNull()
   })
@@ -412,7 +413,8 @@ describe('WithdrawDialog — partial exit, delegates its correctness gate to pla
     )
     fireEvent.click(screen.getByRole('tab', { name: /partial/i }))
     fireEvent.click(await screen.findByLabelText(/CAGE.*1/i))
-    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '1' } })
+    // Defect: a numeric input coerces the raw decimal before the shared parser sees it.
+    fireEvent.change(screen.getByRole('textbox', { name: /amount/i }), { target: { value: '1' } })
     expect(screen.getByText(/exit-signer can no longer act on it/i)).toBeTruthy()
     expect(screen.getByRole('button', { name: /use full exit instead/i })).toBeTruthy()
   })
@@ -431,13 +433,95 @@ describe('WithdrawDialog — partial exit, delegates its correctness gate to pla
     )
     fireEvent.click(screen.getByRole('tab', { name: /partial/i }))
     fireEvent.click(await screen.findByLabelText(/CAGE.*1/i))
-    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '2' } })
+    // Defect: a numeric input coerces the raw decimal before the shared parser sees it.
+    fireEvent.change(screen.getByRole('textbox', { name: /amount/i }), { target: { value: '2' } })
     fireEvent.click(screen.getByRole('button', { name: /withdraw this amount/i }))
     expect(onConfirmPartial).toHaveBeenCalledTimes(1)
     const plan = onConfirmPartial.mock.calls[0][0]
     expect(plan.ok).toBe(true)
     expect(plan.mode).toBe('partial')
     expect(plan.agentAddress).toBe('CAGENT1')
+  })
+
+  // Defect: Number/Math.round changes integer units above Number.MAX_SAFE_INTEGER.
+  it('preserves a raw text amount and confirms the exact canonical integer units', async () => {
+    const onConfirmPartial = vi.fn()
+    render(
+      <WithdrawDialog
+        open
+        agents={[positionAgent('CAGENT1', 10_000_000_000_000_000n)]}
+        discovery={discovery}
+        account={gAccount}
+        onClose={() => {}}
+        onConfirmPartial={onConfirmPartial}
+      />
+    )
+    fireEvent.click(screen.getByRole('tab', { name: /partial/i }))
+    fireEvent.click(await screen.findByLabelText(/CAGE.*1/i))
+    const input = screen.getByRole('textbox', { name: /amount/i })
+    expect(input.type).toBe('text')
+    expect(input.inputMode).toBe('decimal')
+    fireEvent.change(input, { target: { value: '0900719925.4740993' } })
+    expect(input.value).toBe('0900719925.4740993')
+    fireEvent.click(screen.getByRole('button', { name: /withdraw this amount/i }))
+    expect(onConfirmPartial).toHaveBeenCalledTimes(1)
+    expect(onConfirmPartial.mock.calls[0][0].amount).toEqual({
+      token: 'USDC',
+      units: '9007199254740993',
+      decimals: 7,
+    })
+  })
+
+  // Defect: the dialog can apply Stellar's seven-decimal scale to a selected six-decimal leg.
+  it('routes the selected Stellar-vault leg decimals through parsing and planning', async () => {
+    const onConfirmPartial = vi.fn()
+    const sixDecimalAmount = { token: 'USDC', units: '12345678', decimals: 6 }
+    const agent = {
+      address: 'CAGENT1',
+      amount: sixDecimalAmount,
+      custody: { location: 'stellar-vault' },
+      custodyBreakdown: [{ location: 'stellar-vault', amount: sixDecimalAmount }],
+    }
+    render(
+      <WithdrawDialog
+        open
+        agents={[agent]}
+        discovery={discovery}
+        account={gAccount}
+        onClose={() => {}}
+        onConfirmPartial={onConfirmPartial}
+      />
+    )
+    fireEvent.click(screen.getByRole('tab', { name: /partial/i }))
+    fireEvent.click(await screen.findByLabelText(/CAGE.*1/i))
+    const input = screen.getByRole('textbox', { name: /amount/i })
+    fireEvent.change(input, { target: { value: '12.345678' } })
+    fireEvent.click(screen.getByRole('button', { name: /withdraw this amount/i }))
+    expect(onConfirmPartial.mock.calls[0][0].amount).toEqual({
+      token: 'USDC',
+      units: '12345678',
+      decimals: 6,
+    })
+  })
+
+  // Defect: excess fractional digits are rounded and submitted instead of being rejected.
+  it('rejects input more precise than the selected Stellar-vault leg', async () => {
+    render(
+      <WithdrawDialog
+        open
+        agents={[positionAgent('CAGENT1', 10_0000000n)]}
+        discovery={discovery}
+        account={gAccount}
+        onClose={() => {}}
+      />
+    )
+    fireEvent.click(screen.getByRole('tab', { name: /partial/i }))
+    fireEvent.click(await screen.findByLabelText(/CAGE.*1/i))
+    fireEvent.change(screen.getByRole('textbox', { name: /amount/i }), {
+      target: { value: '1.00000001' },
+    })
+    expect(screen.getByText(/more than 7 decimal places/i)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /withdraw this amount/i })).toBeNull()
   })
 })
 
@@ -574,6 +658,7 @@ async function launchRealChromium() {
 }
 
 describe('WithdrawDialog — real-browser 320px layout guard, per state', () => {
+  // Defect: changing the amount control can introduce horizontal overflow in the partial state.
   it('creates no horizontal overflow at 320px for full/partial/base states', async () => {
     const discovery = discoveryWith([activeRow('CAGENT1'), revokedFundedRow('CAGENT2')])
     const agents = [positionAgent('CAGENT1', 100_0000000n), positionAgent('CAGENT2', 50_0000000n)]
@@ -612,7 +697,7 @@ describe('WithdrawDialog — real-browser 320px layout guard, per state', () => 
     )
     fireEvent.click(screen.getByRole('tab', { name: /partial/i }))
     fireEvent.click(screen.getByLabelText(/CAGE.*1/i))
-    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '5' } })
+    fireEvent.change(screen.getByRole('textbox', { name: /amount/i }), { target: { value: '5' } })
     states.push(['partial', partial.container.innerHTML])
     partial.unmount()
 

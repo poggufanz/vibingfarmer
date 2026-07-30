@@ -10,10 +10,15 @@
 // vf_base_owner_address keys — a pre-migration owner (or a different connected wallet) sees []
 // until Base is set up again, rather than inheriting whichever wallet happened to write the old
 // global keys last.
-import { readPositions as defaultReadPositions } from './readPositions.js'
+import { readBasePositions as defaultReadBasePositions } from '../money/baseChildPositions.js'
 import { BASE_POOL_CATALOG } from '../config.js'
 import { ERC20_ABI } from './config.js'
 import { readBaseOwner } from '../wallet/baseBinding.js'
+
+// Same withdraw-floor tolerance readPositions.js used to apply per pool -- kept here now that this
+// file computes minAssets itself (Task 10 moved the actual balanceOf/convertToAssets reads into
+// baseChildPositions.js's readBasePositions so they can share one pinned block).
+const DEFAULT_SLIPPAGE_BPS = 50 // 0.5%
 
 // Fix loop 1, Fix 6: readPositions.js's own readIdleUsdc() fails soft to 0n on ANY RPC error (a
 // deliberate choice there — a balance read must never block a withdraw modal from opening). That
@@ -92,6 +97,15 @@ export async function loadDeviceBasePositions({ stellarOwner, deps = {} } = {}) 
  * Fix loop 1, Fix 5: `status` alone can't say "known" AND "some address dropped out" at once —
  * the enum stays as-is (no new status added) rather than silently widening it; a per-account
  * failure instead rides along on `failedAccounts` so a consumer can still see the gap.
+ *
+ * Task 10: valuation itself (balanceOf + convertToAssets per pool) now runs through
+ * baseChildPositions.js's `readBasePositions` instead of readPositions.js's own per-account,
+ * unpinned reads -- every kernel x catalog-pool pair in this call is read against the SAME block,
+ * so two positions valued a heartbeat apart can no longer straddle a block. An account is only
+ * `known` when every one of its own pool reads came back `state:'known'`; any single pool read
+ * failing (or the shared block read failing outright) demotes that WHOLE account into
+ * `failedAccounts` rather than reporting a partial position list — this keeps the exact
+ * all-or-nothing-per-account contract callers already relied on before this task.
  * @param {{ stellarOwner?: string, indexedBaseAccounts?: string[], deps?: object }} p
  * @returns {Promise<{status: 'unavailable'|'empty'|'known'|'mismatched',
  *   accounts: Array<{kernelAddress: string, positions: Array, idleUsdc: bigint|null}>,
@@ -103,7 +117,7 @@ export async function loadIndexedBasePositions({
   deps = {},
 } = {}) {
   const {
-    readPositions = defaultReadPositions,
+    readBasePositions = defaultReadBasePositions,
     readIdleUsdc = defaultReadIdleUsdcOrUnknown,
     makePublicClient,
   } = deps
@@ -123,17 +137,49 @@ export async function loadIndexedBasePositions({
     return { status: 'unavailable', accounts: [], failedAccounts: accounts, localKernelAddress }
   }
 
-  const settled = await Promise.allSettled(
-    accounts.map(async (account) => {
-      const [positions, idleUsdc] = await Promise.all([
-        readPositions({ pools: BASE_POOL_CATALOG.map((p) => p.address), account, publicClient }),
-        readIdleUsdc({ account, publicClient }),
-      ])
-      return { kernelAddress: account, positions, idleUsdc }
-    })
+  const groups = accounts.flatMap((account) =>
+    BASE_POOL_CATALOG.map((pool) => ({ kernelAddress: account, poolAddress: pool.address }))
   )
-  const okAccounts = settled.filter((r) => r.status === 'fulfilled').map((r) => r.value)
-  const failedAccounts = accounts.filter((_, i) => settled[i].status === 'rejected')
+  const [positionsResult, idleSettled] = await Promise.all([
+    readBasePositions({ groups, publicClient }).catch(() => ({
+      status: 'unavailable',
+      blockNumber: null,
+      positions: [],
+    })),
+    Promise.allSettled(accounts.map((account) => readIdleUsdc({ account, publicClient }))),
+  ])
+
+  const positionsByKernel = new Map(accounts.map((a) => [a, []]))
+  const kernelFailed = new Map(accounts.map((a) => [a, positionsResult.status !== 'known']))
+  for (const pos of positionsResult.positions ?? []) {
+    const kernel = pos.kernelAddress.toLowerCase()
+    if (!positionsByKernel.has(kernel)) continue
+    if (pos.state !== 'known') {
+      kernelFailed.set(kernel, true)
+      continue
+    }
+    if (pos.shares === 0n) continue // nothing to withdraw from this pool — no assets to carry
+    const minAssets = (pos.assets * BigInt(10_000 - DEFAULT_SLIPPAGE_BPS)) / 10_000n
+    positionsByKernel
+      .get(kernel)
+      .push({ pool: pos.poolAddress, shares: pos.shares, assets: pos.assets, minAssets })
+  }
+
+  const okAccounts = []
+  const failedAccounts = []
+  accounts.forEach((account, i) => {
+    if (kernelFailed.get(account)) {
+      failedAccounts.push(account)
+      return
+    }
+    const idleR = idleSettled[i]
+    const idleUsdc = idleR.status === 'fulfilled' ? idleR.value : null
+    okAccounts.push({
+      kernelAddress: account,
+      positions: positionsByKernel.get(account),
+      idleUsdc,
+    })
+  })
   if (okAccounts.length === 0)
     return { status: 'unavailable', accounts: [], failedAccounts, localKernelAddress }
 

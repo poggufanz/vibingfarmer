@@ -1,13 +1,26 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import {
+  createHash,
+  createPublicKey,
+  generateKeyPairSync,
+  sign as signP256,
+  verify as verifyP256,
+} from 'node:crypto'
+import * as realSdk from '@stellar/stellar-sdk'
+import stellarDeployment from '../../deployments/stellar-testnet.json'
+import {
   feeBumpAndSubmit,
+  loadStellarRelayConfig,
   RelayError,
+  STELLAR_RELAY_FACTS,
   _clearSeen,
   assertRelayableTransaction,
 } from './stellar-relay.js'
 
 const PASS = 'Test SDF Network ; September 2015'
 const SECRET = 'SABCD' // never parsed — Keypair.fromSecret is faked below
+const RELAYER_SOURCE = 'GBVJ34MT4GDKZJGILI6DRYGD75ZNUBJGGZIDUV7IPFNVVDWGE5GBLV3X'
+const OTHER_SOURCE = 'GCIOUP4UJAAFDBJNP5DY5CFJHBLEKGLHZ5E2AYRIIQ5VOZFVSTPRYHNS'
 
 const VAULT = 'CCTGGJVVY45DYDDXM3XBFEJ2OT2J2ZT6HIXZEQKXU7Z53TH3YSZJC3PF'
 const TOKEN = 'CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU'
@@ -18,6 +31,8 @@ const EXIT_ROUTER = 'CEXITROUTER'
 const MESSENGER = 'CDNG7HXAPBWICI2E3AUBP3YZWZELJLYSB6F5CC7WLDTLTHVM74SLRTHP'
 const AGENT_HASH = 'd61ceaaaf5a3fd9fd25987eba0f843ccb79880f3eaa137e066b5f63ab9eaa2ba'
 const SAK_WASM = 'a12e8fa9621efd20315753bd4007d974390e31fbcb4a7ddc4dd0a0dec728bf2e'
+const REAL_AGENT = 'CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC'
+const CURRENT_AGENT_HASH = '1fdbe175ddeb6d237a178c3c117b4e6c168122eec7d94f06a4b27ee4026efbe1'
 
 // ── fake op/tx fixtures — mirror the shape TransactionBuilder.fromXDR hands back ──
 
@@ -88,7 +103,7 @@ function makeSdk({
   innerFee = '100000',
   innerHashHex = 'aa',
   alreadyBumped = false,
-  innerSource = undefined,
+  innerSource = RELAYER_SOURCE,
 } = {}) {
   const signSpy = vi.fn()
   const innerSignSpy = vi.fn()
@@ -107,9 +122,14 @@ function makeSdk({
     sdk: {
       TransactionBuilder: { fromXDR: vi.fn(() => inner), buildFeeBumpTransaction },
       FeeBumpTransaction: FakeFeeBump,
-      Keypair: { fromSecret: () => ({ publicKey: () => 'GREL' }) },
+      Keypair: { fromSecret: () => ({ publicKey: () => RELAYER_SOURCE }) },
       Address: sdkAddr.Address,
       scValToNative: nativeOf,
+      rpc: {
+        Api: {
+          isSimulationSuccess: (value) => Boolean(value && 'transactionData' in value),
+        },
+      },
     },
     signSpy,
     innerSignSpy,
@@ -121,6 +141,10 @@ function makeRpc({ sendStatus = 'PENDING', getStatuses = ['SUCCESS'] } = {}) {
   const queue = [...getStatuses]
   return {
     sendTransaction: vi.fn(async () => ({ status: sendStatus, hash: 'OUTERHASH' })),
+    simulateTransaction: vi.fn(async () => ({
+      transactionData: {},
+      result: { retval: {} },
+    })),
     getTransaction: vi.fn(async () => ({ status: queue.shift() ?? 'NOT_FOUND' })),
   }
 }
@@ -139,7 +163,7 @@ describe('feeBumpAndSubmit', () => {
       sdk,
       rpcServer: rpc,
     })
-    expect(out).toEqual({ hash: 'OUTERHASH', status: 'SUCCESS', relayer: 'GREL' })
+    expect(out).toEqual({ hash: 'OUTERHASH', status: 'SUCCESS', relayer: RELAYER_SOURCE })
     expect(buildFeeBumpTransaction).toHaveBeenCalledOnce()
     expect(signSpy).toHaveBeenCalledOnce()
     expect(rpc.sendTransaction).toHaveBeenCalledOnce()
@@ -148,7 +172,7 @@ describe('feeBumpAndSubmit', () => {
   it('signs the inner tx when the relayer is its source (agent-deposit path), then fee-bumps', async () => {
     const { sdk, innerSignSpy, signSpy, buildFeeBumpTransaction } = makeSdk({
       innerHashHex: '55',
-      innerSource: 'GREL', // inner source == relayer pubkey → relay must sign the inner envelope
+      innerSource: RELAYER_SOURCE,
     })
     const rpc = makeRpc({ getStatuses: ['SUCCESS'] })
     const out = await feeBumpAndSubmit({
@@ -165,9 +189,29 @@ describe('feeBumpAndSubmit', () => {
     expect(buildFeeBumpTransaction).toHaveBeenCalledOnce()
   })
 
-  it('does NOT sign the inner tx when its source differs from the relayer (separate funded source)', async () => {
-    const { sdk, innerSignSpy } = makeSdk({ innerHashHex: '56', innerSource: 'GOTHER' })
+  it('enforces the signed inner transaction before constructing or sending the fee bump', async () => {
+    const { sdk, innerSignSpy, buildFeeBumpTransaction, builtFeeBump } = makeSdk({
+      innerHashHex: '57',
+      innerSource: RELAYER_SOURCE,
+    })
     const rpc = makeRpc({ getStatuses: ['SUCCESS'] })
+    const order = []
+    innerSignSpy.mockImplementation(() => order.push('inner-sign'))
+    rpc.simulateTransaction.mockImplementation(async () => {
+      expect(innerSignSpy).toHaveBeenCalledOnce()
+      expect(buildFeeBumpTransaction).not.toHaveBeenCalled()
+      order.push('enforcing-simulation')
+      return { transactionData: {}, result: { retval: {} } }
+    })
+    buildFeeBumpTransaction.mockImplementation(() => {
+      order.push('build-fee-bump')
+      return builtFeeBump
+    })
+    rpc.sendTransaction.mockImplementation(async () => {
+      order.push('submit-fee-bump')
+      return { status: 'PENDING', hash: 'OUTERHASH' }
+    })
+
     await feeBumpAndSubmit({
       xdr: 'INNERXDR',
       secret: SECRET,
@@ -176,7 +220,74 @@ describe('feeBumpAndSubmit', () => {
       sdk,
       rpcServer: rpc,
     })
-    expect(innerSignSpy).not.toHaveBeenCalled() // client already signed it; relay only fee-bumps
+
+    expect(order).toEqual([
+      'inner-sign',
+      'enforcing-simulation',
+      'build-fee-bump',
+      'submit-fee-bump',
+    ])
+  })
+
+  it('fails closed when enforcing simulation rejects the signed inner transaction', async () => {
+    const { sdk, buildFeeBumpTransaction } = makeSdk({
+      innerHashHex: '58',
+      innerSource: RELAYER_SOURCE,
+    })
+    const rpc = makeRpc()
+    rpc.simulateTransaction.mockResolvedValue({ error: 'auth failed' })
+
+    await expect(
+      feeBumpAndSubmit({
+        xdr: 'INNERXDR',
+        secret: SECRET,
+        passphrase: PASS,
+        vaultAddr: VAULT,
+        sdk,
+        rpcServer: rpc,
+      })
+    ).rejects.toThrow('RPC enforcing simulation rejected the signed transaction')
+    expect(buildFeeBumpTransaction).not.toHaveBeenCalled()
+    expect(rpc.sendTransaction).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['an empty object', {}],
+    ['success-shaped data without a result payload', { transactionData: {} }],
+    ['a malformed result payload', { transactionData: {}, result: {} }],
+  ])('fails closed on %s before constructing a fee bump', async (_label, simulation) => {
+    const { sdk, buildFeeBumpTransaction } = makeSdk({ innerHashHex: '59' })
+    const rpc = makeRpc()
+    rpc.simulateTransaction.mockResolvedValue(simulation)
+    await expect(
+      feeBumpAndSubmit({
+        xdr: 'INNERXDR',
+        secret: SECRET,
+        passphrase: PASS,
+        vaultAddr: VAULT,
+        sdk,
+        rpcServer: rpc,
+      })
+    ).rejects.toThrow(/simulation/i)
+    expect(buildFeeBumpTransaction).not.toHaveBeenCalled()
+    expect(rpc.sendTransaction).not.toHaveBeenCalled()
+  })
+
+  it('rejects an unproven non-relayer source before simulation or fee-bump construction', async () => {
+    const { sdk, innerSignSpy } = makeSdk({ innerHashHex: '56', innerSource: OTHER_SOURCE })
+    const rpc = makeRpc({ getStatuses: ['SUCCESS'] })
+    await expect(
+      feeBumpAndSubmit({
+        xdr: 'INNERXDR',
+        secret: SECRET,
+        passphrase: PASS,
+        vaultAddr: VAULT,
+        sdk,
+        rpcServer: rpc,
+      })
+    ).rejects.toThrow(/source|authorization|account/i)
+    expect(innerSignSpy).not.toHaveBeenCalled()
+    expect(rpc.simulateTransaction).not.toHaveBeenCalled()
   })
 
   it('rejects an already-fee-bumped inner tx (the relay must be the fee source)', async () => {
@@ -272,6 +383,602 @@ describe('feeBumpAndSubmit', () => {
       })
     ).rejects.toBeInstanceOf(RelayError)
     expect(rpc.sendTransaction).not.toHaveBeenCalled()
+  })
+})
+
+describe('loadStellarRelayConfig — canonical deployment facts', () => {
+  it('derives the relay network/contracts/RPC entirely from tracked deployment JSON', () => {
+    const config = loadStellarRelayConfig({ NODE_ENV: 'production' })
+    expect(config).toMatchObject(STELLAR_RELAY_FACTS)
+  })
+
+  it.each([
+    ['STELLAR_NETWORK_PASSPHRASE', 'wrong network'],
+    ['SOROBAN_RPC_URL', 'https://rpc.example'],
+    ['SOROBAN_VAULT_ADDRESS', TOKEN],
+    ['SOROBAN_TOKEN_ADDRESS', VAULT],
+    ['SOROBAN_ROUTER_ADDRESSES', STELLAR_RELAY_FACTS.exitRouterAddress],
+    ['SOROBAN_EXIT_ROUTER_ADDRESS', STELLAR_RELAY_FACTS.vaultAddress],
+  ])('rejects production drift for %s', (key, value) => {
+    expect(() => loadStellarRelayConfig({ NODE_ENV: 'production', [key]: value })).toThrow(
+      new RegExp(key)
+    )
+  })
+
+  it.each([
+    ['SOROBAN_RPC_URL', 'file:///tmp/rpc'],
+    ['SOROBAN_VAULT_ADDRESS', 'CNOTASTRKEY'],
+    ['SOROBAN_ROUTER_ADDRESSES', 'CNOTASTRKEY'],
+    ['SOROBAN_AGENT_WASM_HASHES', 'abcd'],
+    ['STELLAR_NETWORK_PASSPHRASE', ''],
+  ])('strictly rejects an invalid development override for %s', (key, value) => {
+    expect(() => loadStellarRelayConfig({ NODE_ENV: 'development', [key]: value })).toThrow(
+      new RegExp(key)
+    )
+  })
+})
+
+describe('fee relay — real signed XDR security path', () => {
+  const relayer = realSdk.Keypair.random()
+  const owner = realSdk.Keypair.random()
+  // Pinned to the smart-account-kit 0.2.10 / bindings 0.1.2 path used by ownerAuthorization.js.
+  const webauthnVerifier = stellarDeployment.smartAccount.webauthnVerifierAddress
+  const rpId = 'vibing-farmer.test'
+  const origin = `https://${rpId}`
+  const credentialId = Buffer.from('vf-real-auth-fixture')
+  const p256 = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
+  const wrongP256 = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
+  const p256Jwk = p256.publicKey.export({ format: 'jwk' })
+  const p256PublicKey = Buffer.concat([
+    Buffer.from([4]),
+    Buffer.from(p256Jwk.x, 'base64url'),
+    Buffer.from(p256Jwk.y, 'base64url'),
+  ])
+  const passkeyKeyData = Buffer.concat([p256PublicKey, credentialId])
+  const passkeyOwner = realSdk.StrKey.encodeContract(realSdk.hash(passkeyKeyData))
+
+  function exitAuthEntry({ ownerAddress, credentials }) {
+    return new realSdk.xdr.SorobanAuthorizationEntry({
+      credentials,
+      rootInvocation: new realSdk.xdr.SorobanAuthorizedInvocation({
+        function: realSdk.xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
+          new realSdk.xdr.InvokeContractArgs({
+            contractAddress: realSdk.Address.fromString(REAL_AGENT).toScAddress(),
+            functionName: 'owner_withdraw',
+            args: [realSdk.Address.fromString(ownerAddress).toScVal()],
+          })
+        ),
+        subInvocations: [],
+      }),
+    })
+  }
+
+  function realExitTx({ ownerAddress = owner.publicKey(), sign = true } = {}) {
+    const credentials = realSdk.xdr.SorobanCredentials.sorobanCredentialsSourceAccount()
+    const call = new realSdk.Contract(REAL_AGENT).call(
+      'owner_withdraw',
+      realSdk.Address.fromString(ownerAddress).toScVal()
+    )
+    const tx = new realSdk.TransactionBuilder(new realSdk.Account(ownerAddress, '12'), {
+      fee: '100',
+      networkPassphrase: PASS,
+    })
+      .addOperation(
+        realSdk.Operation.invokeHostFunction({
+          func: call.body().invokeHostFunctionOp().hostFunction(),
+          auth: [exitAuthEntry({ ownerAddress, credentials })],
+        })
+      )
+      .setTimeout(300)
+      .build()
+    if (sign) tx.sign(owner)
+    return tx
+  }
+
+  function unsignedAddressAuthEntry(ownerAddress) {
+    return exitAuthEntry({
+      ownerAddress,
+      credentials: realSdk.xdr.SorobanCredentials.sorobanCredentialsAddress(
+        new realSdk.xdr.SorobanAddressCredentials({
+          address: realSdk.Address.fromString(ownerAddress).toScAddress(),
+          nonce: realSdk.xdr.Int64.fromString('9'),
+          signatureExpirationLedger: 0,
+          signature: realSdk.xdr.ScVal.scvVoid(),
+        })
+      ),
+    })
+  }
+
+  function addressAuthorizedExitTx(ownerAddress, signedEntry) {
+    const call = new realSdk.Contract(REAL_AGENT).call(
+      'owner_withdraw',
+      realSdk.Address.fromString(ownerAddress).toScVal()
+    )
+    return new realSdk.TransactionBuilder(new realSdk.Account(relayer.publicKey(), '12'), {
+      fee: '100',
+      networkPassphrase: PASS,
+    })
+      .addOperation(
+        realSdk.Operation.invokeHostFunction({
+          func: call.body().invokeHostFunctionOp().hostFunction(),
+          auth: [signedEntry],
+        })
+      )
+      .setTimeout(300)
+      .build()
+  }
+
+  async function sponsoredGExitTx({ signer = owner, expiration = 500 } = {}) {
+    const signedEntry = await realSdk.authorizeEntry(
+      unsignedAddressAuthEntry(owner.publicKey()),
+      signer,
+      expiration,
+      PASS,
+      owner.publicKey()
+    )
+    return addressAuthorizedExitTx(owner.publicKey(), signedEntry)
+  }
+
+  function lowS(signature) {
+    const order = BigInt('0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551')
+    const r = signature.subarray(0, 32)
+    let s = BigInt(`0x${signature.subarray(32).toString('hex')}`)
+    if (s > order / 2n) s = order - s
+    return Buffer.concat([r, Buffer.from(s.toString(16).padStart(64, '0'), 'hex')])
+  }
+
+  function signedPasskeyEntry({ expiration = 500, signingKey = p256.privateKey } = {}) {
+    const entry = realSdk.xdr.SorobanAuthorizationEntry.fromXDR(
+      unsignedAddressAuthEntry(passkeyOwner).toXDR()
+    )
+    const credentials = entry.credentials().address()
+    credentials.signatureExpirationLedger(expiration)
+    const payload = canonicalAuthPayload(entry)
+    const clientData = Buffer.from(
+      JSON.stringify({
+        type: 'webauthn.get',
+        challenge: payload.toString('base64url'),
+        origin,
+        crossOrigin: false,
+      })
+    )
+    const authenticatorData = Buffer.concat([
+      createHash('sha256').update(rpId).digest(),
+      Buffer.from([0x05]),
+      Buffer.alloc(4),
+    ])
+    const signedData = Buffer.concat([
+      authenticatorData,
+      createHash('sha256').update(clientData).digest(),
+    ])
+    const signature = lowS(
+      signP256('sha256', signedData, { key: signingKey, dsaEncoding: 'ieee-p1363' })
+    )
+    const signatureData = realSdk.xdr.ScVal.scvMap([
+      new realSdk.xdr.ScMapEntry({
+        key: realSdk.xdr.ScVal.scvSymbol('authenticator_data'),
+        val: realSdk.xdr.ScVal.scvBytes(authenticatorData),
+      }),
+      new realSdk.xdr.ScMapEntry({
+        key: realSdk.xdr.ScVal.scvSymbol('client_data'),
+        val: realSdk.xdr.ScVal.scvBytes(clientData),
+      }),
+      new realSdk.xdr.ScMapEntry({
+        key: realSdk.xdr.ScVal.scvSymbol('signature'),
+        val: realSdk.xdr.ScVal.scvBytes(signature),
+      }),
+    ])
+    const signerId = realSdk.xdr.ScVal.scvVec([
+      realSdk.xdr.ScVal.scvSymbol('External'),
+      realSdk.xdr.ScVal.scvAddress(realSdk.Address.fromString(webauthnVerifier).toScAddress()),
+      realSdk.xdr.ScVal.scvBytes(passkeyKeyData),
+    ])
+    credentials.signature(
+      realSdk.xdr.ScVal.scvVec([
+        realSdk.xdr.ScVal.scvMap([
+          new realSdk.xdr.ScMapEntry({
+            key: signerId,
+            val: realSdk.xdr.ScVal.scvBytes(signatureData.toXDR()),
+          }),
+        ]),
+      ])
+    )
+    return entry
+  }
+
+  function sponsoredCExitTx(options = {}) {
+    return addressAuthorizedExitTx(passkeyOwner, signedPasskeyEntry(options))
+  }
+
+  function replaceGSignature(tx, bytes) {
+    const signerMap = tx.operations[0].auth[0].credentials().address().signature().vec()[0]
+    const entry = signerMap
+      .map()
+      .find((candidate) => candidate.key().sym().toString() === 'signature')
+    entry.val(realSdk.xdr.ScVal.scvBytes(bytes))
+  }
+
+  function replaceCSignature(tx, bytes) {
+    const credentials = tx.operations[0].auth[0].credentials().address()
+    const outerEntry = credentials.signature().vec()[0].map()[0]
+    const signatureData = realSdk.xdr.ScVal.fromXDR(outerEntry.val().bytes())
+    const signatureEntry = signatureData
+      .map()
+      .find((candidate) => candidate.key().sym().toString() === 'signature')
+    signatureEntry.val(realSdk.xdr.ScVal.scvBytes(bytes))
+    outerEntry.val(realSdk.xdr.ScVal.scvBytes(signatureData.toXDR()))
+  }
+
+  function authError(message) {
+    throw new Error(`enforcing simulation auth rejected: ${message}`)
+  }
+
+  function exactMap(scVal, expectedKeys) {
+    if (scVal.switch().name !== 'scvMap') authError('signature value is not a map')
+    const entries = scVal.map() ?? []
+    if (entries.length !== expectedKeys.length) authError('signature map field count mismatch')
+    const out = new Map()
+    for (const entry of entries) {
+      if (entry.key().switch().name !== 'scvSymbol') authError('signature map key is not a symbol')
+      out.set(entry.key().sym().toString(), entry.val())
+    }
+    if (out.size !== expectedKeys.length || expectedKeys.some((key) => !out.has(key))) {
+      authError('signature map schema mismatch')
+    }
+    return out
+  }
+
+  function onlySignatureMap(credentials) {
+    const signature = credentials.signature()
+    if (signature.switch().name !== 'scvVec') authError('signature is not a signer vector')
+    const signers = signature.vec() ?? []
+    if (signers.length !== 1) authError('signature must contain exactly one signer')
+    return signers[0]
+  }
+
+  function enforceSdkGAuthorization(tx, ownerAddress, currentLedger = 100) {
+    const entry = tx.operations[0].auth[0]
+    const credentials = entry.credentials().address()
+    if (realSdk.Address.fromScAddress(credentials.address()).toString() !== ownerAddress) {
+      authError('G authorizer mismatch')
+    }
+    if (Number(credentials.signatureExpirationLedger()) <= currentLedger) authError('expired')
+    const signed = exactMap(onlySignatureMap(credentials), ['public_key', 'signature'])
+    const publicKey = Buffer.from(signed.get('public_key').bytes())
+    const signature = Buffer.from(signed.get('signature').bytes())
+    const encoded = realSdk.StrKey.encodeEd25519PublicKey(publicKey)
+    if (encoded !== ownerAddress) authError('G signing key does not equal authorizer')
+    if (
+      !realSdk.Keypair.fromPublicKey(ownerAddress).verify(canonicalAuthPayload(entry), signature)
+    ) {
+      authError('G signature is invalid')
+    }
+  }
+
+  function enforcePasskeyAuthorization(tx, currentLedger = 100) {
+    const entry = tx.operations[0].auth[0]
+    const credentials = entry.credentials().address()
+    const authorizer = realSdk.Address.fromScAddress(credentials.address()).toString()
+    if (authorizer !== passkeyOwner) authError('C authorizer mismatch')
+    if (Number(credentials.signatureExpirationLedger()) <= currentLedger) authError('expired')
+    const outer = onlySignatureMap(credentials)
+    if (outer.switch().name !== 'scvMap' || (outer.map() ?? []).length !== 1) {
+      authError('C signature must contain one signer map entry')
+    }
+    const signerEntry = outer.map()[0]
+    const signerId = signerEntry.key()
+    if (signerId.switch().name !== 'scvVec') authError('C signer id is malformed')
+    const signerParts = signerId.vec() ?? []
+    if (
+      signerParts.length !== 3 ||
+      signerParts[0].switch().name !== 'scvSymbol' ||
+      signerParts[0].sym().toString() !== 'External' ||
+      signerParts[1].switch().name !== 'scvAddress' ||
+      realSdk.Address.fromScAddress(signerParts[1].address()).toString() !== webauthnVerifier ||
+      signerParts[2].switch().name !== 'scvBytes' ||
+      !Buffer.from(signerParts[2].bytes()).equals(passkeyKeyData)
+    ) {
+      authError('C External signer id/key_data mismatch')
+    }
+    if (signerEntry.val().switch().name !== 'scvBytes')
+      authError('C signature payload is malformed')
+    const signatureData = realSdk.xdr.ScVal.fromXDR(signerEntry.val().bytes())
+    const fields = exactMap(signatureData, ['authenticator_data', 'client_data', 'signature'])
+    const authenticatorData = Buffer.from(fields.get('authenticator_data').bytes())
+    const clientData = Buffer.from(fields.get('client_data').bytes())
+    const signature = Buffer.from(fields.get('signature').bytes())
+    if (authenticatorData.length < 37) authError('authenticator data is too short')
+    if (!authenticatorData.subarray(0, 32).equals(createHash('sha256').update(rpId).digest())) {
+      authError('RP ID hash mismatch')
+    }
+    if ((authenticatorData[32] & 0x05) !== 0x05)
+      authError('user presence/verification flags missing')
+    let client
+    try {
+      client = JSON.parse(clientData.toString('utf8'))
+    } catch {
+      authError('client data is not JSON')
+    }
+    if (
+      client.type !== 'webauthn.get' ||
+      client.challenge !== canonicalAuthPayload(entry).toString('base64url') ||
+      client.origin !== origin ||
+      client.crossOrigin !== false
+    ) {
+      authError('WebAuthn client data does not bind the canonical auth payload')
+    }
+    if (signature.length !== 64) authError('P-256 signature length mismatch')
+    const curveOrder = BigInt('0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551')
+    if (BigInt(`0x${signature.subarray(32).toString('hex')}`) > curveOrder / 2n) {
+      authError('P-256 signature is not low-S')
+    }
+    const signedData = Buffer.concat([
+      authenticatorData,
+      createHash('sha256').update(clientData).digest(),
+    ])
+    const signerPublicKey = createPublicKey({
+      key: {
+        kty: 'EC',
+        crv: 'P-256',
+        x: signerParts[2].bytes().subarray(1, 33).toString('base64url'),
+        y: signerParts[2].bytes().subarray(33, 65).toString('base64url'),
+      },
+      format: 'jwk',
+    })
+    if (
+      !verifyP256(
+        'sha256',
+        signedData,
+        { key: signerPublicKey, dsaEncoding: 'ieee-p1363' },
+        signature
+      )
+    ) {
+      authError('P-256 signature is invalid')
+    }
+  }
+
+  function enforceAddressAuthorization(tx, currentLedger = 100) {
+    if ((tx.operations ?? []).length !== 1) authError('operation count mismatch')
+    const operation = tx.operations[0]
+    if (operation.source) authError('operation source override')
+    if ((operation.auth ?? []).length !== 1) authError('auth count mismatch')
+    const entry = operation.auth[0]
+    const root = entry.rootInvocation()
+    if ((root.subInvocations() ?? []).length !== 0) authError('sibling invocation')
+    if (
+      root.function().switch().name !== 'sorobanAuthorizedFunctionTypeContractFn' ||
+      !root.function().contractFn().toXDR().equals(operation.func.invokeContract().toXDR())
+    ) {
+      authError('auth root does not match operation')
+    }
+    const credentials = entry.credentials()
+    if (credentials.switch().name === 'sorobanCredentialsSourceAccount') return
+    if (credentials.switch().name !== 'sorobanCredentialsAddress') authError('credential kind')
+    const authorizer = realSdk.Address.fromScAddress(credentials.address().address()).toString()
+    if (authorizer.startsWith('G')) enforceSdkGAuthorization(tx, authorizer, currentLedger)
+    else enforcePasskeyAuthorization(tx, currentLedger)
+  }
+
+  function realRpc(
+    simulation = { transactionData: {}, result: { retval: {} } },
+    { currentLedger = 100 } = {}
+  ) {
+    return {
+      getLatestLedger: vi.fn(async () => ({ sequence: currentLedger })),
+      simulateTransaction: vi.fn(async (tx) => {
+        enforceAddressAuthorization(tx, currentLedger)
+        return simulation
+      }),
+      sendTransaction: vi.fn(async () => ({ status: 'PENDING', hash: 'REALOUTER' })),
+      getTransaction: vi.fn(async () => ({ status: 'SUCCESS' })),
+    }
+  }
+
+  function canonicalAuthPayload(entry) {
+    const credentials = entry.credentials().address()
+    const preimage = realSdk.xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
+      new realSdk.xdr.HashIdPreimageSorobanAuthorization({
+        networkId: realSdk.hash(Buffer.from(PASS)),
+        nonce: credentials.nonce(),
+        signatureExpirationLedger: credentials.signatureExpirationLedger(),
+        invocation: entry.rootInvocation(),
+      })
+    )
+    return createHash('sha256').update(preimage.toXDR()).digest()
+  }
+
+  function submitReal(tx, overrides = {}) {
+    const rpcServer = overrides.rpcServer || realRpc()
+    const args = {
+      xdr: tx.toXDR(),
+      secret: relayer.secret(),
+      passphrase: PASS,
+      expectedNetworkPassphrase: PASS,
+      vaultAddr: VAULT,
+      tokenAddr: TOKEN,
+      agentWasmHashes: [CURRENT_AGENT_HASH],
+      getWasmHash: vi.fn(async () => CURRENT_AGENT_HASH),
+      readAgentScope: vi.fn(async () => ({
+        owner: overrides.ownerAddress || owner.publicKey(),
+        target: VAULT,
+        token: TOKEN,
+        kind: 0,
+        revoked: false,
+      })),
+      readAccountAuthorization: vi.fn(async (account) => ({
+        account,
+        masterWeight: 1,
+        mediumThreshold: overrides.mediumThreshold ?? 1,
+        signers: [],
+      })),
+      sdk: realSdk,
+      rpcServer,
+      pollIntervalMs: 0,
+      ...overrides,
+    }
+    delete args.ownerAddress
+    delete args.mediumThreshold
+    return { promise: feeBumpAndSubmit(args), rpcServer }
+  }
+
+  beforeEach(() => _clearSeen())
+
+  it('uses an SDK-produced cryptographically valid sponsored G authorization entry', async () => {
+    const tx = await sponsoredGExitTx()
+    expect(() => enforceSdkGAuthorization(tx, owner.publicKey())).not.toThrow()
+  })
+
+  it('takes valid signed XDR through current auth, enforcing simulation, real fee bump, and submission', async () => {
+    const { promise, rpcServer } = submitReal(realExitTx())
+    await expect(promise).resolves.toMatchObject({
+      status: 'SUCCESS',
+      relayer: relayer.publicKey(),
+    })
+    expect(rpcServer.simulateTransaction).toHaveBeenCalledOnce()
+    const submitted = rpcServer.sendTransaction.mock.calls[0][0]
+    expect(submitted).toBeInstanceOf(realSdk.FeeBumpTransaction)
+  })
+
+  it.each([
+    ['missing signature', null],
+    [
+      'wrong hint',
+      (tx) => {
+        const signature = tx.signatures[0]
+        tx.signatures[0] = new realSdk.xdr.DecoratedSignature({
+          hint: Buffer.alloc(4, 0),
+          signature: signature.signature(),
+        })
+      },
+    ],
+    [
+      'invalid signature',
+      (tx) => {
+        const signature = tx.signatures[0]
+        tx.signatures[0] = new realSdk.xdr.DecoratedSignature({
+          hint: signature.hint(),
+          signature: Buffer.alloc(64, 0),
+        })
+      },
+    ],
+  ])('rejects %s before simulation', async (_label, mutate) => {
+    const tx = realExitTx({ sign: Boolean(mutate) })
+    mutate?.(tx)
+    const { promise, rpcServer } = submitReal(tx)
+    await expect(promise).rejects.toThrow(/signature|hint/i)
+    expect(rpcServer.simulateTransaction).not.toHaveBeenCalled()
+    expect(rpcServer.sendTransaction).not.toHaveBeenCalled()
+  })
+
+  it('rejects valid crypto with insufficient current signer weight before simulation', async () => {
+    const { promise, rpcServer } = submitReal(realExitTx(), { mediumThreshold: 2 })
+    await expect(promise).rejects.toThrow(/threshold/i)
+    expect(rpcServer.simulateTransaction).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['G', () => sponsoredGExitTx(), () => owner.publicKey()],
+    ['C', () => sponsoredCExitTx(), () => passkeyOwner],
+  ])(
+    'takes a real sponsored %s auth entry through authorization, enforcing simulation, fee bump, and submission',
+    async (_kind, build, ownerAddress) => {
+      const tx = await build()
+      const expectedOwner = ownerAddress()
+      const signedAuthXdr = tx.operations[0].auth[0].toXDR('base64')
+      const { promise, rpcServer } = submitReal(tx, { ownerAddress: expectedOwner })
+      await expect(promise).resolves.toMatchObject({ status: 'SUCCESS' })
+      const simulated = rpcServer.simulateTransaction.mock.calls[0][0]
+      expect(simulated.operations[0].auth[0].toXDR('base64')).toBe(signedAuthXdr)
+      expect(rpcServer.sendTransaction).toHaveBeenCalledOnce()
+      expect(rpcServer.sendTransaction.mock.calls[0][0]).toBeInstanceOf(realSdk.FeeBumpTransaction)
+    }
+  )
+
+  it.each([
+    [
+      'mutated sponsored G signature',
+      async () => {
+        const tx = await sponsoredGExitTx()
+        replaceGSignature(tx, Buffer.alloc(64, 1))
+        return { tx, ownerAddress: owner.publicKey() }
+      },
+    ],
+    [
+      'dummy sponsored G signature bytes',
+      async () => {
+        const tx = await sponsoredGExitTx()
+        tx.operations[0].auth[0]
+          .credentials()
+          .address()
+          .signature(realSdk.xdr.ScVal.scvBytes(Buffer.alloc(64, 7)))
+        return { tx, ownerAddress: owner.publicKey() }
+      },
+    ],
+    [
+      'wrong sponsored G key',
+      async () => ({
+        tx: await sponsoredGExitTx({ signer: realSdk.Keypair.random() }),
+        ownerAddress: owner.publicKey(),
+      }),
+    ],
+    [
+      'mutated sponsored C signature',
+      async () => {
+        const tx = sponsoredCExitTx()
+        replaceCSignature(tx, Buffer.alloc(64, 2))
+        return { tx, ownerAddress: passkeyOwner }
+      },
+    ],
+    [
+      'dummy sponsored C signature bytes',
+      async () => {
+        const tx = sponsoredCExitTx()
+        tx.operations[0].auth[0]
+          .credentials()
+          .address()
+          .signature(realSdk.xdr.ScVal.scvBytes(Buffer.alloc(64, 7)))
+        return { tx, ownerAddress: passkeyOwner }
+      },
+    ],
+    [
+      'wrong sponsored C key',
+      async () => ({
+        tx: sponsoredCExitTx({ signingKey: wrongP256.privateKey }),
+        ownerAddress: passkeyOwner,
+      }),
+    ],
+  ])('rejects %s in enforcing simulation before fee-bump submission', async (_label, build) => {
+    const { tx, ownerAddress } = await build()
+    const { promise, rpcServer } = submitReal(tx, { ownerAddress })
+    await expect(promise).rejects.toThrow(/auth|signature|signer/i)
+    expect(rpcServer.simulateTransaction).toHaveBeenCalledOnce()
+    expect(rpcServer.sendTransaction).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['expired sponsored G auth', () => sponsoredGExitTx({ expiration: 100 }), owner.publicKey()],
+    ['expired sponsored C auth', () => sponsoredCExitTx({ expiration: 100 }), passkeyOwner],
+  ])('rejects %s before fee-bump submission', async (_label, build, ownerAddress) => {
+    const tx = await build()
+    const { promise, rpcServer } = submitReal(tx, { ownerAddress })
+    await expect(promise).rejects.toThrow(/expired/i)
+    expect(rpcServer.sendTransaction).not.toHaveBeenCalled()
+  })
+
+  it('rejects an empty enforcing simulation response before fee-bump construction', async () => {
+    const rpcServer = realRpc({})
+    const { promise } = submitReal(realExitTx(), { rpcServer })
+    await expect(promise).rejects.toThrow(/simulation/i)
+    expect(rpcServer.sendTransaction).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['network', { expectedNetworkPassphrase: 'wrong network' }],
+    ['vault contract', { vaultAddr: TOKEN }],
+  ])('rejects canonical %s drift before sponsorship', async (_label, overrides) => {
+    const { promise, rpcServer } = submitReal(realExitTx(), overrides)
+    await expect(promise).rejects.toThrow(/network|vault|scope|allowlist|configured/i)
+    expect(rpcServer.sendTransaction).not.toHaveBeenCalled()
   })
 })
 
@@ -530,10 +1237,10 @@ describe('assertRelayableTransaction — pinned agent: revoke / owner_withdraw /
       assertRelayableTransaction(depositTx(AGENT, 'revoke', [{ __addr: 'GX' }]), cfg())
     ).rejects.toThrow(RelayError)
   })
-  it('passes agent.owner_withdraw(to)', async () => {
+  it('rejects agent.owner_withdraw without canonical XDR/auth/scope proof', async () => {
     await expect(
       assertRelayableTransaction(depositTx(AGENT, 'owner_withdraw', [{ __addr: 'GOWNER' }]), cfg())
-    ).resolves.toBeUndefined()
+    ).rejects.toThrow(RelayError)
   })
   it('rejects agent.owner_withdraw with a missing/malformed to argument', async () => {
     await expect(
@@ -865,7 +1572,7 @@ describe('assertRelayableTransaction - smart-account deploy sponsorship (SAK cre
 })
 
 describe('assertRelayableTransaction - CCTP messenger deposit_for_burn', () => {
-  const AGENT_HASH_V3 = AGENT_HASH
+  const AGENT_HASH_V3 = '1fdbe175ddeb6d237a178c3c117b4e6c168122eec7d94f06a4b27ee4026efbe1'
 
   it('sponsors deposit_for_burn when from (args[0]) is a pinned agent_account wasm', async () => {
     const tx = depositTx(MESSENGER, 'deposit_for_burn', [{ __addr: 'CAGENTV3' }])

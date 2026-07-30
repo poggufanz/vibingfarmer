@@ -30,6 +30,11 @@ import {
 import { isLegacyDirectSetupAllowed } from './stellar/agentCreatorManifest.js'
 import { PermissionPhaseError } from './strategy/permissionError.js'
 import { buildDispatchReceipt } from './strategy/dispatchSummary.js'
+import {
+  activeAccountSubmissionUnknown,
+  assertActiveAccountBoundary,
+} from './stellar/activeAccount.js'
+import { getActiveAccount } from './stellar/walletKit.js'
 // NOTE (Strategy Task 7): every OTHER new dependency this file needed for the permission-locked
 // path (`./strategy/reusePreflight.js`, `./stellar/grantReceiptStore.js`, and `readConfirmedLedger`
 // from `./stellar/grant.js`, plus `loadCachedAgents`/`SOROBAN_FUNDING_ROUTER_ADDRESS`) is imported
@@ -79,6 +84,98 @@ function splitUnitsByRatio(totalUnits, ratios) {
   return shares.map((s, i) => (remainder > 0n && BigInt(i) < remainder ? s + 1n : s))
 }
 
+/** Bind the two Stellar custody mutations inside baseLeg.js to the same owner capability as the
+ * parent run. Quote/mandate work may settle after cancellation, but neither pull nor burn can
+ * start on a stale owner. A change after transport dispatch is surfaced as uncertain custody and
+ * the burn wrapper will not start a later mutation. */
+export function bindBaseLegCustodyDeps({
+  activeAccount,
+  getCurrentActiveAccount = getActiveAccount,
+  signal,
+  runAgentPullFn = runAgentPull,
+  loadRunAgentBurn = async () => (await import('./stellar/agentBurn.js')).runAgentBurn,
+}) {
+  let epochCustody = null
+  const rememberUnknownCustody = (error) => {
+    epochCustody = error?.custody || { location: 'unknown', confirmed: false }
+  }
+  const check = () =>
+    assertActiveAccountBoundary({
+      captured: activeAccount,
+      getCurrent: getCurrentActiveAccount,
+      signal,
+    })
+  return {
+    runAgentPull: async (args) => {
+      check()
+      let result
+      try {
+        result = await runAgentPullFn({
+          ...args,
+          activeAccount,
+          getCurrentActiveAccount,
+          signal,
+        })
+      } catch (error) {
+        // Relay SUCCESS is confirmed custody evidence. Let baseLeg record fundsPulled=true, then
+        // its next (burn) wrapper fails at the pre-dispatch check for the stale account.
+        if (error?.code === 'VF_SUBMISSION_UNKNOWN' && error.result?.status === 'SUCCESS')
+          return error.result
+        if (error?.code === 'VF_SUBMISSION_UNKNOWN') rememberUnknownCustody(error)
+        throw error
+      }
+      try {
+        check()
+      } catch (cause) {
+        if (result?.status === 'SUCCESS') return result
+        const error = activeAccountSubmissionUnknown({ stage: 'pull', cause, result })
+        rememberUnknownCustody(error)
+        throw error
+      }
+      return result
+    },
+    runAgentBurn: async (args) => {
+      check()
+      const runAgentBurn = await loadRunAgentBurn()
+      check()
+      let result
+      try {
+        result = await runAgentBurn(args)
+      } catch (error) {
+        if (error?.code === 'VF_SUBMISSION_UNKNOWN') rememberUnknownCustody(error)
+        throw error
+      }
+      try {
+        check()
+      } catch (cause) {
+        // A burnHash is confirmation that the irreversible burn completed. Continue the bridge
+        // recovery path; UI callbacks remain epoch-filtered by the parent run.
+        if (result?.burnHash) return result
+        const error = activeAccountSubmissionUnknown({ stage: 'burn', cause, result })
+        rememberUnknownCustody(error)
+        throw error
+      }
+      return result
+    },
+    getEpochCustody: () => epochCustody,
+  }
+}
+
+/** baseLeg.js predates epoch-bound account cancellation and assumes every pre-pull failure means
+ * funds are confirmed at the owner. Correct that projection when the account-bound dependency
+ * recorded an actually-unknown transport outcome. */
+export function reconcileBaseLegEpochCustody(result, deps) {
+  const custody = deps?.getEpochCustody?.()
+  if (!result || !custody) return result
+  return {
+    ...result,
+    custody,
+    allocations: Array.isArray(result.allocations)
+      ? result.allocations.map((allocation) => ({ ...allocation, custody }))
+      : result.allocations,
+  }
+}
+
 /**
  * Orchestrator Agent — receives the AI plan, authorizes + funds each agent on Stellar (one
  * user-signed step per agent via the wallet kit), then dispatches Worker Agents that each run a
@@ -108,12 +205,25 @@ export class OrchestratorAgent {
     grantBudgetUnits = null,
     grantDurationSeconds = null,
     baseLegContext = null,
+    activeAccount = null,
+    getCurrentActiveAccount = getActiveAccount,
+    signal,
   }) {
     this.user = user
     this.veniceAuth = veniceAuth || null
     this.devApiKey = devApiKey || null
+    this.activeAccount = activeAccount
+    this.getCurrentActiveAccount = getCurrentActiveAccount
+    this.signal = signal
+    this.assertCurrentAccount = () =>
+      assertActiveAccountBoundary({
+        captured: this.activeAccount,
+        getCurrent: this.getCurrentActiveAccount,
+        signal: this.signal,
+      })
     const observer = typeof onEvent === 'function' ? onEvent : null
     this.onEvent = (name, data) => {
+      this.assertCurrentAccount()
       try {
         observer?.(name, data)
       } catch {
@@ -145,6 +255,7 @@ export class OrchestratorAgent {
    * @returns {Promise<{completed:number, failed:number, results:Array, sessionId:string, baseLeg:object|null}>}
    */
   async dispatch(strategyOrPlan, totalAmountOrOptions) {
+    this.assertCurrentAccount()
     // Strategy Task 7 (Pocket Crew redesign, Wave 1) — dispatch is overloaded by the SHAPE of its
     // second argument, never by an explicit flag, so every pre-Task-7 call site (a plain
     // human-readable `totalAmount` number) is untouched byte-for-byte and keeps taking the legacy
@@ -323,6 +434,7 @@ export class OrchestratorAgent {
       }
       try {
         const { readBaseMandate } = await import('./wallet/baseBinding.js')
+        this.assertCurrentAccount()
         baseMandate = readBaseMandate(this.user)
       } catch (cause) {
         throw new PermissionPhaseError({
@@ -385,6 +497,7 @@ export class OrchestratorAgent {
         permissionDecision,
         planAgents
       )
+      this.assertCurrentAccount()
       workers = this.buildReuseWorkers(depositAgents, revalidated, credentialByAllocation)
       // Matched by the actual budgeted token, never approvals[0] — a multi-token receipt's first
       // approval is not guaranteed to be the one this run's deposit budget cares about.
@@ -414,6 +527,7 @@ export class OrchestratorAgent {
     } else if (permissionDecision.mode === 'fresh') {
       workers = this.buildFreshWorkers(planAgents)
       const granted = await this.grantFreshFromDecision(strategyPlan, workers, permissionDecision)
+      this.assertCurrentAccount()
       confirmed = {
         version: 1,
         runId: strategyPlan.runId,
@@ -477,12 +591,17 @@ export class OrchestratorAgent {
         // rule as the legacy router path. The pull is relayed: the agent's own session key signs
         // the pull auth entry, the relay fee-bumps — zero further wallet signatures either mode.
         const agentBal = await readTokenBalance(w.agentAddress)
+        this.assertCurrentAccount()
         if (agentBal == null || agentBal < w.amount) {
           const res = await runAgentPull({
             agentAddress: w.agentAddress,
             amount: w.amount,
             sessionKey: w.sessionKey,
+            activeAccount: this.activeAccount,
+            getCurrentActiveAccount: this.getCurrentActiveAccount,
+            signal: this.signal,
           })
+          this.assertCurrentAccount()
           if (!res)
             throw new Error(
               'The Stellar relay is unavailable. Funds could not be sent to the agent.'
@@ -491,11 +610,13 @@ export class OrchestratorAgent {
             throw new Error(`The funding router returned ${res.status}.`)
         }
         const res = await w.execute()
+        this.assertCurrentAccount()
         workerResults.push({ status: 'fulfilled', value: res })
       } catch (e) {
         workerResults.push({ status: 'rejected', reason: e })
       }
       if (i < workers.length - 1) await new Promise((r) => setTimeout(r, DISPATCH_INTERVAL_MS))
+      this.assertCurrentAccount()
     }
 
     const results = workerResults.map((r, i) => ({
@@ -544,13 +665,18 @@ export class OrchestratorAgent {
         let movedToAgent = false
         try {
           const balance = await readTokenBalance(worker.agentAddress)
+          this.assertCurrentAccount()
           movedToAgent = balance != null && balance >= worker.amount
           if (balance == null || balance < worker.amount) {
             const pulled = await runAgentPull({
               agentAddress: worker.agentAddress,
               amount: worker.amount,
               sessionKey: worker.sessionKey,
+              activeAccount: this.activeAccount,
+              getCurrentActiveAccount: this.getCurrentActiveAccount,
+              signal: this.signal,
             })
+            this.assertCurrentAccount()
             if (!pulled) throw new Error('The Stellar relay is unavailable.')
             if (pulled.status !== 'SUCCESS')
               throw new Error(`The funding router returned ${pulled.status}.`)
@@ -558,6 +684,7 @@ export class OrchestratorAgent {
             movedToAgent = true
           }
           const deposited = await worker.execute()
+          this.assertCurrentAccount()
           settled.push({
             status: 'fulfilled',
             value: {
@@ -587,6 +714,7 @@ export class OrchestratorAgent {
         }
         if (index < stellarWorkers.length - 1)
           await new Promise((resolve) => setTimeout(resolve, DISPATCH_INTERVAL_MS))
+        this.assertCurrentAccount()
       }
       return settled.map((entry, index) => ({
         allocationId: stellarWorkers[index].allocationId,
@@ -625,7 +753,13 @@ export class OrchestratorAgent {
         allocation: 1,
       }))
       const { executeBaseLeg } = await import('./baseLeg.js')
-      return executeBaseLeg({
+      this.assertCurrentAccount()
+      const baseCustodyDeps = bindBaseLegCustodyDeps({
+        activeAccount: this.activeAccount,
+        getCurrentActiveAccount: this.getCurrentActiveAccount,
+        signal: this.signal,
+      })
+      const result = await executeBaseLeg({
         connectedAddress: this.baseLegContext.connectedAddress,
         bridgeAgentAddress: bridgeWorker.agentAddress,
         bridgeSessionKey: bridgeWorker.sessionKey,
@@ -635,9 +769,12 @@ export class OrchestratorAgent {
         runId: strategyPlan.runId,
         grantTxHash: confirmed.txHash,
         onEvent: (name, data) => this.onEvent(name, data),
+        deps: baseCustodyDeps,
       })
+      return reconcileBaseLegEpochCustody(result, baseCustodyDeps)
     }
     const [stellarSettled, baseSettled] = await Promise.allSettled([runStellar(), runBase()])
+    this.assertCurrentAccount()
     const stellarResults =
       stellarSettled.status === 'fulfilled'
         ? stellarSettled.value
@@ -930,6 +1067,7 @@ export class OrchestratorAgent {
       (permissionDecision.reviewedAgentInits || []).map((r) => [r.allocationId, r])
     )
     const { fetchPreparedExecutionMaterial } = await import('./strategy/reusePreflight.js')
+    this.assertCurrentAccount()
 
     const agentInits = workers.map((w) => {
       const r = reviewedByAllocation.get(w.allocationId)
@@ -969,10 +1107,14 @@ export class OrchestratorAgent {
     try {
       submitted = await submitGrant({
         owner: this.user,
+        ...(this.activeAccount ? { activeAccount: this.activeAccount } : {}),
+        getCurrentActiveAccount: this.getCurrentActiveAccount,
+        signal: this.signal,
         budgets,
         durationSeconds: permissionDecision.durationSeconds,
         agentInits,
       })
+      this.assertCurrentAccount()
     } catch (err) {
       throw new PermissionPhaseError({
         phase: 'fresh-grant',
@@ -1001,6 +1143,7 @@ export class OrchestratorAgent {
     let confirmedAt
     try {
       ;({ confirmedLedger, confirmedAt } = await readConfirmedLedger({ hash: submitted.hash }))
+      this.assertCurrentAccount()
     } catch (err) {
       throw new PermissionPhaseError({
         phase: 'fresh-grant',
@@ -1011,6 +1154,7 @@ export class OrchestratorAgent {
     }
 
     workers.forEach((w, i) => {
+      this.assertCurrentAccount()
       w.agentAddress = submitted.agentAddresses[i]
       saveCachedAgent({
         owner: this.user,
@@ -1031,7 +1175,9 @@ export class OrchestratorAgent {
     // receipt must already be durable when it fires.
     const { buildGrantReceiptV1, saveGrantReceipt, fingerprintGrantReceipt } =
       await import('./stellar/grantReceiptStore.js')
+    this.assertCurrentAccount()
     const { SOROBAN_FUNDING_ROUTER_ADDRESS } = await import('./stellar/config.js')
+    this.assertCurrentAccount()
     const receipt = buildGrantReceiptV1({
       runId: strategyPlan.runId,
       owner: this.user,
@@ -1044,6 +1190,7 @@ export class OrchestratorAgent {
       agentAddresses: submitted.agentAddresses,
       confirmedAt,
     })
+    this.assertCurrentAccount()
     saveGrantReceipt({ receipt })
 
     return {
@@ -1079,6 +1226,7 @@ export class OrchestratorAgent {
       const legAmount = baseVaults.reduce((sum, v) => sum + totalAmount * v.allocation, 0)
       const { burnUnits7 } = deriveCctpTransferUnits(legAmount)
       const burnBal = await readTokenBalance(this.user, { token: STELLAR_USDC_SAC })
+      this.assertCurrentAccount()
       if (burnBal != null && burnBal < burnUnits7) {
         throw new Error(
           `Insufficient USDC for the cross-chain leg: have ${(Number(burnBal) / BASE_UNIT).toFixed(2)}, need ${(Number(burnUnits7) / BASE_UNIT).toFixed(2)} to burn via CCTP.`
@@ -1185,6 +1333,7 @@ export class OrchestratorAgent {
             })
           )
         )
+        this.assertCurrentAccount()
         this.onEvent('orchestrator-step', { step: 'generating-skills', status: 'done' })
 
         // Surface skill-gen failures (e.g. Venice 401/402) — fallback still lets the agent run.
@@ -1199,6 +1348,7 @@ export class OrchestratorAgent {
 
         // Pre-flight: block BEFORE any wallet signature if the asset balance can't cover the total.
         const bal = await readTokenBalance(this.user)
+        this.assertCurrentAccount()
         if (bal != null && bal < totalUnits) {
           const msg = `Insufficient VFUSD: have ${(Number(bal) / BASE_UNIT).toFixed(2)}, need ${(Number(totalUnits) / BASE_UNIT).toFixed(2)} for this deposit.`
           this.onEvent('orchestrator-step', {
@@ -1248,6 +1398,7 @@ export class OrchestratorAgent {
             bridgeInit,
             resolveBridgeAgent
           )
+          this.assertCurrentAccount()
         } else if (
           isLegacyDirectSetupAllowed({
             mode: import.meta.env.MODE,
@@ -1255,6 +1406,7 @@ export class OrchestratorAgent {
           })
         ) {
           legacyPermissionEvidence = await this.setupLegacy(workers, expiry)
+          this.assertCurrentAccount()
         } else {
           throw new Error('Pocket Crew requires the funding router; no transaction was submitted.')
         }
@@ -1282,11 +1434,13 @@ export class OrchestratorAgent {
           }
           try {
             const res = await workers[i].execute()
+            this.assertCurrentAccount()
             workerResults.push({ status: 'fulfilled', value: res })
           } catch (e) {
             workerResults.push({ status: 'rejected', reason: e })
           }
           if (i < workers.length - 1) await new Promise((r) => setTimeout(r, DISPATCH_INTERVAL_MS))
+          this.assertCurrentAccount()
         }
         this.onEvent('orchestrator-step', { step: 'dispatching-agents', status: 'done' })
 
@@ -1345,8 +1499,14 @@ export class OrchestratorAgent {
                 'No bridge agent was deployed for the cross-chain leg (either the grant failed, or the funding router is unavailable — Base legs require it).'
               )
             }
-            return import('./baseLeg.js').then(({ executeBaseLeg }) =>
-              executeBaseLeg({
+            return import('./baseLeg.js').then(({ executeBaseLeg }) => {
+              this.assertCurrentAccount()
+              const baseCustodyDeps = bindBaseLegCustodyDeps({
+                activeAccount: this.activeAccount,
+                getCurrentActiveAccount: this.getCurrentActiveAccount,
+                signal: this.signal,
+              })
+              return executeBaseLeg({
                 connectedAddress: this.baseLegContext.connectedAddress,
                 bridgeAgentAddress,
                 bridgeSessionKey,
@@ -1354,11 +1514,13 @@ export class OrchestratorAgent {
                 baseVaults,
                 totalAmount,
                 onEvent: (name, data) => this.onEvent(name, data),
-              })
-            )
+                deps: baseCustodyDeps,
+              }).then((result) => reconcileBaseLegEpochCustody(result, baseCustodyDeps))
+            })
           })
         : Promise.resolve(null),
     ])
+    this.assertCurrentAccount()
 
     // Stellar-only strategies must behave byte-identically to pre-Task-8 dispatch — including
     // rejecting with the SAME error (insufficient balance / all-agents-setup-failed). Re-throw
@@ -1531,6 +1693,7 @@ export class OrchestratorAgent {
         // Fund only the shortfall case: a reused agent may still hold the asset from a run
         // that failed before its deposit. null (read failed) funds anyway — the safe side.
         const agentBal = await readTokenBalance(w.agentAddress)
+        this.assertCurrentAccount()
         if (agentBal == null || agentBal < w.amount) {
           await fundAgent({ owner: this.user, agentAddress: w.agentAddress, amount: w.amount })
         }
@@ -1635,12 +1798,17 @@ export class OrchestratorAgent {
         // pull is relayed: the agent's session key signs the pull auth entry, the relay fee-bumps
         // (router.pull is now allowlisted) — 0 further signatures.
         const agentBal = await readTokenBalance(w.agentAddress)
+        this.assertCurrentAccount()
         if (agentBal == null || agentBal < w.amount) {
           const res = await runAgentPull({
             agentAddress: w.agentAddress,
             amount: w.amount,
             sessionKey: w.sessionKey,
+            activeAccount: this.activeAccount,
+            getCurrentActiveAccount: this.getCurrentActiveAccount,
+            signal: this.signal,
           })
+          this.assertCurrentAccount()
           if (!res)
             throw new Error(
               'The Stellar relay is unavailable. Funds could not be sent to the agent.'
@@ -1751,10 +1919,14 @@ export class OrchestratorAgent {
     }
     const { hash, agentAddresses, bridgeAgentAddress, expiryLedger } = await submitGrant({
       owner: this.user,
+      ...(this.activeAccount ? { activeAccount: this.activeAccount } : {}),
+      getCurrentActiveAccount: this.getCurrentActiveAccount,
+      signal: this.signal,
       budgets,
       durationSeconds,
       agentInits,
     })
+    this.assertCurrentAccount()
     if (
       typeof hash !== 'string' ||
       hash.length === 0 ||

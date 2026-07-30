@@ -16,9 +16,39 @@ const storedMandate = () => ({
   status: 'active',
 })
 
+const activeEvidence = () => ({
+  version: 2,
+  status: 'active',
+  reasonCodes: [],
+  expected: { chainId: 84532 },
+  observed: {
+    blockNumber: '101',
+    blockHash: '0xblock',
+    blockTime: Date.now(),
+    implementation: '0ximpl',
+    permission: { digest: 'permission-digest' },
+    preparedCallDigest: 'prepared-call-digest',
+  },
+  checks: {
+    chain: true,
+    owner: true,
+    kernel: true,
+    session: true,
+    permission: true,
+    policy: true,
+    binding: true,
+    origin: true,
+    implementation: true,
+    allocation: true,
+    freshness: true,
+    reconstruction: true,
+    prepared: true,
+  },
+})
+
 const okDeps = () => ({
   readStoredMandate: vi.fn(() => storedMandate()),
-  getMandateStatus: vi.fn().mockResolvedValue({ status: 'active' }),
+  getMandateStatus: vi.fn().mockResolvedValue(activeEvidence()),
   makePublicClient: vi.fn(() => ({})),
   runFarmFlow: vi.fn().mockResolvedValue({ burnHash: 'BURN', jobId: 'job-1', finalStatus: 'done' }),
   estimateMinShares: vi.fn(async () => 98505000n),
@@ -76,6 +106,12 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
     expect(deps.getMandateStatus).toHaveBeenCalledWith('APPROVAL', {
       stellarOwner: STELLAR_OWNER,
       kernelAddress: KERNEL,
+      allocation: {
+        allocationId: 'unrun:bridge:base',
+        poolAddress: baseVaults[0].address,
+        amount: { token: 'USDC', units: '100000000', decimals: 6 },
+        minShares: '98505000',
+      },
     })
   })
 
@@ -382,12 +418,16 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
     expect(deps.runFarmFlow).not.toHaveBeenCalled()
   })
 
-  it('a stored-but-invalid mandate (TOCTOU: valid at strategy-generation time, revoked since) settles, never throws', async () => {
+  it('a late remote revoke after the exact quote blocks pull, burn, and farm dispatch', async () => {
     const deps = okDeps()
-    deps.getMandateStatus.mockResolvedValue({ status: 'revoked' })
+    deps.getMandateStatus.mockResolvedValue({ ...activeEvidence(), status: 'revoked' })
     const out = await run({ deps })
     expect(out).toMatchObject({ success: false, stage: 'mandate' })
     expect(out.error).toMatch(/no longer valid/i)
+    expect(deps.estimateMinShares).toHaveBeenCalledTimes(1)
+    expect(deps.runAgentPull).not.toHaveBeenCalled()
+    expect(deps.runAgentBurn).not.toHaveBeenCalled()
+    expect(deps.runFarmFlow).not.toHaveBeenCalled()
   })
 
   it('kernelAddress mismatch between the threaded param and the stored mandate fails closed BEFORE the burn (VF Wallet Task 6)', async () => {
@@ -525,6 +565,12 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
       error: 'burn tx rejected',
       pulled: true,
       bridgeAgentAddress: BRIDGE_AGENT,
+      custody: { location: 'agent', confirmed: true, checkedAt: null },
+    })
+    expect(out.allocations[0].custody).toEqual({
+      location: 'agent',
+      confirmed: true,
+      checkedAt: null,
     })
     const failedEvent = events.find((e) => e.name === 'baseleg-failed')
     expect(failedEvent.data).toMatchObject({
@@ -532,6 +578,104 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
       pulled: true,
       bridgeAgentAddress: BRIDGE_AGENT,
     })
+  })
+
+  it('projects a possibly-dispatched CCTP burn as unknown custody with burn reconciliation evidence', async () => {
+    const deps = okDeps()
+    deps.runFarmFlow = vi.fn(async ({ deps: farmDeps }) =>
+      farmDeps.burn({ amountUnits: 1_000_000n })
+    )
+    deps.runAgentBurn.mockRejectedValue(
+      Object.assign(new Error('burn response lost after dispatch'), {
+        code: 'VF_SUBMISSION_UNKNOWN',
+        submission: 'unknown',
+        stage: 'burn',
+        result: { hash: 'HBURN-MAYBE', status: 'PENDING' },
+      })
+    )
+
+    const out = await run({ deps })
+
+    expect(out).toMatchObject({
+      success: false,
+      stage: 'burn',
+      custody: { location: 'unknown', confirmed: false, checkedAt: null },
+      recovery: {
+        action: 'reconcile-cctp-burn',
+        phase: 'cctp_burn',
+        reason: 'burn response lost after dispatch',
+        evidence: {
+          submission: 'unknown',
+          stage: 'cctp_burn',
+          reportedStage: 'burn',
+          result: { hash: 'HBURN-MAYBE', status: 'PENDING' },
+        },
+      },
+    })
+    expect(out.allocations[0]).toMatchObject({
+      custody: { location: 'unknown', confirmed: false, checkedAt: null },
+      recovery: out.recovery,
+    })
+    expect(out.allocations[0].custody.location).not.toBe('agent')
+  })
+
+  it('projects an uncertain funding pull with pull-specific reconciliation evidence', async () => {
+    const deps = okDeps()
+    deps.runFarmFlow = vi.fn(async ({ deps: farmDeps }) =>
+      farmDeps.burn({ amountUnits: 1_000_000n })
+    )
+    deps.runAgentPull.mockRejectedValue(
+      Object.assign(new Error('pull response lost after dispatch'), {
+        code: 'VF_SUBMISSION_UNKNOWN',
+        submission: 'unknown',
+        stage: 'pull',
+        result: { hash: 'HPULL-MAYBE', status: 'PENDING' },
+      })
+    )
+
+    const out = await run({ deps })
+
+    expect(out).toMatchObject({
+      success: false,
+      custody: { location: 'unknown', confirmed: false, checkedAt: null },
+      recovery: {
+        action: 'reconcile-pull',
+        phase: 'pull',
+        reason: 'pull response lost after dispatch',
+        evidence: {
+          submission: 'unknown',
+          stage: 'pull',
+          result: { hash: 'HPULL-MAYBE', status: 'PENDING' },
+        },
+      },
+    })
+    expect(out.allocations[0]).toMatchObject({ custody: out.custody, recovery: out.recovery })
+  })
+
+  it('uses generic reconciliation for an unrecognized uncertain Base phase', async () => {
+    const deps = okDeps()
+    deps.runFarmFlow.mockRejectedValue(
+      Object.assign(new Error('unknown Base response lost'), {
+        code: 'VF_SUBMISSION_UNKNOWN',
+        submission: 'unknown',
+        stage: 'unexpected-phase',
+        result: { hash: 'HUNKNOWN', status: 'PENDING' },
+      })
+    )
+
+    const out = await run({ deps })
+
+    expect(out.recovery).toMatchObject({
+      action: 'reconcile-unknown-base-submission',
+      phase: 'unknown',
+      evidence: {
+        stage: 'unknown',
+        reportedStage: 'unexpected-phase',
+        result: { hash: 'HUNKNOWN', status: 'PENDING' },
+      },
+    })
+    expect(out.recovery.action).not.toBe('reconcile-cctp-burn')
+    expect(out.custody).toEqual({ location: 'unknown', confirmed: false, checkedAt: null })
   })
 
   it('farm failure is settled, not thrown', async () => {

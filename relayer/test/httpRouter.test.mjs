@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { privateKeyToAccount } from 'viem/accounts';
 import { toCallPolicy, toTimestampPolicy, CallPolicyVersion } from '@zerodev/permissions/policies';
 import { createRelayerRouter } from '../src/httpRouter.mjs';
@@ -6,6 +9,7 @@ import { createMandateStoreV2 } from '../src/mandateStore.mjs';
 import { MAX_CALL_CAP_UNITS } from '../src/base/session.mjs';
 import { APPROVE_ABI, YIELD_ROUTER_ABI } from '../src/base/orchestrator.mjs';
 import { buildFarmPermissions } from '../../frontend/src/base/policyEngine.js';
+import { createSqliteStores } from '../src/sqliteStores.mjs';
 
 function mockRes() {
   return {
@@ -32,6 +36,7 @@ const STELLAR_OWNER = `G${'A'.repeat(55)}`;
 const OTHER_STELLAR_OWNER = `G${'B'.repeat(55)}`;
 const SESSION_PRIVATE_KEY = `0x${'22'.repeat(32)}`;
 const SESSION_KEY_ADDRESS = privateKeyToAccount(SESSION_PRIVATE_KEY).address;
+const PERMISSION_ID = '0xa1b2c3d4';
 const WITHDRAW_ABI = [{
   type: 'function', name: 'withdraw', stateMutability: 'nonpayable',
   inputs: [{ name: 'pool', type: 'address' }, { name: 'shares', type: 'uint256' }, { name: 'minAssets', type: 'uint256' }],
@@ -44,7 +49,14 @@ function serializeParams(params) {
   return Buffer.from(JSON.stringify(params, replacer), 'utf8').toString('base64');
 }
 
-function buildFakeApproval({ accountAddress = KERNEL_ADDRESS, cap = MAX_CALL_CAP_UNITS, expiry = Math.floor(Date.now() / 1000) + 3600, extraPermissions = [] } = {}) {
+function buildFakeApproval({
+  accountAddress = KERNEL_ADDRESS,
+  cap = MAX_CALL_CAP_UNITS,
+  expiry = Math.floor(Date.now() / 1000) + 3600,
+  extraPermissions = [],
+  permissionId = PERMISSION_ID,
+  includePermissionId = true,
+} = {}) {
   const permissions = [
     ...buildFarmPermissions({
       pools: [{ pool: POOL_ADDRESS, cap }],
@@ -57,7 +69,10 @@ function buildFakeApproval({ accountAddress = KERNEL_ADDRESS, cap = MAX_CALL_CAP
   const timestampPolicy = toTimestampPolicy({ validAfter: 0, validUntil: expiry });
   return serializeParams({
     accountParams: { accountAddress, initCode: '0x' },
-    permissionParams: { policies: [callPolicy, timestampPolicy] },
+    permissionParams: {
+      ...(includePermissionId ? { permissionId } : {}),
+      policies: [callPolicy, timestampPolicy],
+    },
   });
 }
 
@@ -65,16 +80,54 @@ function wireAllocation({ allocationId = 'run-42:bridge:aave-v3', pool = POOL_AD
   return { allocationId, poolAddress: pool, amount: { token: 'USDC', units: units.toString(), decimals: 6 }, minShares };
 }
 
+// Fixed once at module load and reused by every call so two independent
+// activeEvidence() calls (one building the mock response, one building the
+// expectation) never race a Date.now() wall-clock tick against each other.
+const FIXED_BLOCK_TIME = Date.now();
+
+const activeEvidence = () => ({
+  version: 2,
+  status: 'active',
+  reasonCodes: [],
+  expected: { owner: STELLAR_OWNER, kernelAddress: KERNEL_ADDRESS },
+  observed: {
+    blockNumber: '101', blockHash: `0x${'12'.repeat(32)}`, blockTime: FIXED_BLOCK_TIME,
+    implementation: `0x${'34'.repeat(20)}`,
+    permission: { digest: 'permission-digest' },
+    preparedCallDigest: 'prepared-call-digest',
+  },
+  checks: { prepared: true },
+});
+
+function mandateUrl({ approval, owner = STELLAR_OWNER, kernel = KERNEL_ADDRESS, allocation = wireAllocation(), extra = '' }) {
+  const qs = new URLSearchParams({
+    approval,
+    stellarOwner: owner,
+    kernelAddress: kernel,
+    allocation: JSON.stringify(allocation),
+  });
+  return `/api/vf-cross/mandate/valid?${qs}${extra}`;
+}
+
 describe('createRelayerRouter', () => {
-  let jobs, mandatesV2, nextId, genId, buildFarm, farmFn, relayUnwindMint, agentIndexReporter, router;
+  let jobs, mandatesV2, nextId, genId, buildFarm, farmFn, relayUnwindMint, agentIndexReporter, associationOutbox, router;
 
   function makeRouter(overrides = {}) {
     return createRelayerRouter({
       buildFarm, relayUnwindMint, jobs, mandatesV2, genId,
       usdcAddress: USDC_ADDRESS, yieldRouterAddress: YIELD_ROUTER_ADDRESS,
       networkId: 'stellar-testnet',
+      publicRuntime: {
+        networkId: 'stellar-testnet',
+        reporter: { url: 'https://app.example/api/agent-index', schema: 1, hasSecret: true },
+        readiness: { ready: true },
+        digests: { deployments: 'a'.repeat(64), baseMandatePolicy: 'b'.repeat(64) },
+      },
       poolTargets: new Map([[POOL_ADDRESS.toLowerCase(), 'aave-v3']]),
+      evaluateMandateStatusFn: vi.fn(async () => activeEvidence()),
+      mandateStatusConfig: { publicOrigin: null, base: {} },
       agentIndexReporter,
+      associationOutbox,
       ...overrides,
     });
   }
@@ -101,6 +154,18 @@ describe('createRelayerRouter', () => {
     return { res, body, respBody: jsonOf(res) };
   }
 
+  async function attachJob(activeRouter, jobId, mandate, burnTxHash = 'burn-1') {
+    const res = mockRes();
+    await activeRouter(mk('POST', '/api/vf-cross/farm/attach', {
+      jobId,
+      burnTxHash,
+      serializedApproval: mandate.serializedApproval,
+      stellarOwner: STELLAR_OWNER,
+      kernelAddress: KERNEL_ADDRESS,
+    }), res);
+    return res;
+  }
+
   beforeEach(() => {
     jobs = new Map();
     mandatesV2 = createMandateStoreV2();
@@ -113,7 +178,23 @@ describe('createRelayerRouter', () => {
     }));
     buildFarm = vi.fn(() => ({ farm: farmFn }));
     relayUnwindMint = vi.fn(async () => ({ status: 'minted', mintTxHash: '0xreverse' }));
-    agentIndexReporter = { report: vi.fn(async () => ({ ok: true, reported: 1, warnings: [] })) };
+    agentIndexReporter = {
+      commitIntent: vi.fn(async (child) => ({
+        acknowledged: true,
+        identity: {
+          networkId: child.networkId,
+          owner: child.owner,
+          bindingId: child.bindingId,
+          allocationId: child.allocationId,
+          childId: child.childId,
+        },
+        schemaVersion: 1,
+      })),
+    };
+    associationOutbox = {
+      enqueue: vi.fn((report) => ({ duplicate: false, status: 'pending', report })),
+      status: vi.fn(() => []),
+    };
     router = makeRouter();
   });
 
@@ -129,6 +210,19 @@ describe('createRelayerRouter', () => {
     const res = mockRes();
     await router(mk('GET', '/api/vf-cross/nope'), res);
     expect(res.statusCode).toBe(404);
+  });
+
+  it('GET /config returns immutable public runtime facts without secrets', async () => {
+    const res = mockRes();
+    await router(mk('GET', '/api/vf-cross/config'), res);
+    expect(res.statusCode).toBe(200);
+    expect(jsonOf(res)).toEqual({
+      networkId: 'stellar-testnet',
+      reporter: { url: 'https://app.example/api/agent-index', schema: 1, hasSecret: true },
+      readiness: { ready: true },
+      digests: { deployments: 'a'.repeat(64), baseMandatePolicy: 'b'.repeat(64) },
+    });
+    expect(res.body).not.toMatch(/privateKey|proxyKey/i);
   });
 
   describe('POST /mandate', () => {
@@ -233,30 +327,69 @@ describe('createRelayerRouter', () => {
 
     it('returns the canonical BaseMandateStatusV2 shape for a freshly-registered mandate, never leaking the key', async () => {
       const { body, respBody } = await registerMandate(router);
-      const qs = `approval=${encodeURIComponent(body.serializedApproval)}&stellarOwner=${STELLAR_OWNER}&kernelAddress=${KERNEL_ADDRESS}`;
       const res = mockRes();
-      await router(mk('GET', `/api/vf-cross/mandate/valid?${qs}`), res);
+      await router(mk('GET', mandateUrl({ approval: body.serializedApproval })), res);
       expect(res.statusCode).toBe(200);
-      expect(jsonOf(res)).toEqual({
-        stellarOwner: STELLAR_OWNER,
-        kernelAddress: KERNEL_ADDRESS,
-        sessionKeyAddress: SESSION_KEY_ADDRESS,
-        relayerOrigin: null,
-        expiresAt: body.expiresAt * 1000,
-        status: 'active',
-        bindingId: respBody.bindingId,
-        bindingHash: respBody.bindingHash,
-      });
+      expect(jsonOf(res)).toEqual(activeEvidence());
+      expect(res.headers['Cache-Control']).toBe('no-store');
       expect(res.body).not.toContain(SESSION_PRIVATE_KEY);
     });
 
-    it('reports "missing" for a never-registered triple', async () => {
-      const res = mockRes();
-      await router(mk('GET', `/api/vf-cross/mandate/valid?approval=never-registered&stellarOwner=${STELLAR_OWNER}&kernelAddress=${KERNEL_ADDRESS}`), res);
-      expect(jsonOf(res)).toEqual({
-        stellarOwner: null, kernelAddress: null, sessionKeyAddress: null, relayerOrigin: null,
-        expiresAt: null, status: 'missing', bindingId: null, bindingHash: null,
+    it('projects the normalized permission identity from a freshly registered SQLite record before evaluation', async () => {
+      const path = join(mkdtempSync(join(tmpdir(), 'vf-router-mandate-')), 'relayer.db');
+      const stores = createSqliteStores(path);
+      const evaluateMandateStatusFn = vi.fn(async () => activeEvidence());
+      const durableRouter = makeRouter({
+        mandatesV2: stores.mandatesV2,
+        evaluateMandateStatusFn,
       });
+      const { body } = await registerMandate(durableRouter, {
+        serializedApproval: buildFakeApproval({ permissionId: '0xA1B2C3D4' }),
+      });
+      const res = mockRes();
+
+      await durableRouter(mk('GET', mandateUrl({ approval: body.serializedApproval })), res);
+
+      expect(res.statusCode).toBe(200);
+      expect(jsonOf(res).status).toBe('active');
+      expect(evaluateMandateStatusFn).toHaveBeenCalledWith(expect.objectContaining({
+        record: expect.objectContaining({
+          serializedApproval: body.serializedApproval,
+          permissionId: PERMISSION_ID,
+        }),
+      }));
+      expect(stores.mandatesV2.get({
+        serializedApproval: body.serializedApproval,
+        stellarOwner: STELLAR_OWNER,
+        kernelAddress: KERNEL_ADDRESS,
+      })).not.toHaveProperty('permissionId');
+    });
+
+    it.each([
+      ['missing', buildFakeApproval({ includePermissionId: false })],
+      ['malformed', buildFakeApproval({ permissionId: 'not-a-permission-id' })],
+    ])('fails closed before evaluation when the persisted serialized permission identity is %s', async (_label, serializedApproval) => {
+      const evaluateMandateStatusFn = vi.fn(async () => activeEvidence());
+      const exactRouter = makeRouter({ evaluateMandateStatusFn });
+      const { res: registration } = await registerMandate(exactRouter, { serializedApproval });
+      expect(registration.statusCode).toBe(200);
+      const res = mockRes();
+
+      await exactRouter(mk('GET', mandateUrl({ approval: serializedApproval })), res);
+
+      expect(jsonOf(res)).toMatchObject({
+        status: 'unknown',
+        reasonCodes: ['APPROVAL_MALFORMED'],
+      });
+      expect(evaluateMandateStatusFn).not.toHaveBeenCalled();
+      expect(res.body).not.toContain(SESSION_PRIVATE_KEY);
+    });
+
+    it('fails closed with v2 unknown for a never-registered triple', async () => {
+      const res = mockRes();
+      await router(mk('GET', mandateUrl({ approval: 'never-registered' })), res);
+      expect(jsonOf(res)).toMatchObject({ version: 2, status: 'unknown', reasonCodes: ['MANDATE_MISSING'] });
+      expect(res.headers['Cache-Control']).toBe('no-store');
     });
 
     // Step 5 acceptance, pinned at the endpoint: owner A's approval cannot execute for owner B
@@ -264,8 +397,8 @@ describe('createRelayerRouter', () => {
     it('reports "missing" when queried under a different stellarOwner than it was registered for', async () => {
       const { body } = await registerMandate(router);
       const res = mockRes();
-      await router(mk('GET', `/api/vf-cross/mandate/valid?approval=${encodeURIComponent(body.serializedApproval)}&stellarOwner=${OTHER_STELLAR_OWNER}&kernelAddress=${KERNEL_ADDRESS}`), res);
-      expect(jsonOf(res).status).toBe('missing');
+      await router(mk('GET', mandateUrl({ approval: body.serializedApproval, owner: OTHER_STELLAR_OWNER })), res);
+      expect(jsonOf(res).status).toBe('unknown');
     });
 
     it('reports "missing" when queried under a different kernelAddress than it was registered for', async () => {
@@ -276,20 +409,58 @@ describe('createRelayerRouter', () => {
         serializedApproval: buildFakeApproval({ accountAddress: OTHER_KERNEL_ADDRESS }),
       });
       const res = mockRes();
-      await router(mk('GET', `/api/vf-cross/mandate/valid?approval=${encodeURIComponent(body.serializedApproval)}&stellarOwner=${STELLAR_OWNER}&kernelAddress=${KERNEL_ADDRESS}`), res);
-      expect(jsonOf(res).status).toBe('missing');
+      await router(mk('GET', mandateUrl({ approval: body.serializedApproval })), res);
+      expect(jsonOf(res).status).toBe('unknown');
     });
 
-    it('reports "expired" once expiresAt has passed', async () => {
+    it('reports unknown once the store has evicted an expired mandate', async () => {
       const past = Date.now() - 1000;
       mandatesV2.set({
         serializedApproval: 'approval-x', sessionPrivateKey: SESSION_PRIVATE_KEY, sessionKeyAddress: SESSION_KEY_ADDRESS,
         stellarOwner: STELLAR_OWNER, kernelAddress: KERNEL_ADDRESS, relayerOrigin: null,
         expiresAt: past, status: 'active', bindingId: 'b1', bindingHash: 'h1', createdAt: Date.now() - 2000,
       });
+      const evaluateMandateStatusFn = vi.fn(async () => ({ ...activeEvidence(), status: 'expired', reasonCodes: ['EXPIRED'] }));
       const res = mockRes();
-      await router(mk('GET', `/api/vf-cross/mandate/valid?approval=approval-x&stellarOwner=${STELLAR_OWNER}&kernelAddress=${KERNEL_ADDRESS}`), res);
-      expect(jsonOf(res).status).toBe('expired');
+      await makeRouter({ evaluateMandateStatusFn })(mk('GET', mandateUrl({ approval: 'approval-x' })), res);
+      expect(jsonOf(res)).toMatchObject({ status: 'unknown', reasonCodes: ['MANDATE_MISSING'] });
+    });
+
+    it('uses only the stored record and canonical config, forwards the exact allocation, and ignores forged expected facts', async () => {
+      const evaluateMandateStatusFn = vi.fn(async () => activeEvidence());
+      const exact = wireAllocation({ units: 777n, minShares: '700' });
+      const exactRouter = makeRouter({ evaluateMandateStatusFn });
+      const { body } = await registerMandate(exactRouter);
+      const res = mockRes();
+      await exactRouter(mk('GET', mandateUrl({
+        approval: body.serializedApproval,
+        allocation: exact,
+        extra: '&expectedOwner=GFORGED&expectedChainId=1',
+      })), res);
+      expect(evaluateMandateStatusFn).toHaveBeenCalledWith(expect.objectContaining({
+        record: expect.objectContaining({
+          stellarOwner: STELLAR_OWNER,
+          kernelAddress: KERNEL_ADDRESS,
+          sessionPrivateKey: SESSION_PRIVATE_KEY,
+        }),
+        allocation: exact,
+        config: { publicOrigin: null, base: {} },
+      }));
+      expect(res.headers['Cache-Control']).toBe('no-store');
+      expect(res.body).not.toContain(SESSION_PRIVATE_KEY);
+      expect(res.body).not.toContain('GFORGED');
+    });
+
+    it('maps evaluator failures to no-store unknown without leaking the error', async () => {
+      const exactRouter = makeRouter({
+        evaluateMandateStatusFn: vi.fn(async () => { throw new Error('rpc secret https://internal'); }),
+      });
+      const { body } = await registerMandate(exactRouter);
+      const res = mockRes();
+      await exactRouter(mk('GET', mandateUrl({ approval: body.serializedApproval })), res);
+      expect(jsonOf(res)).toMatchObject({ version: 2, status: 'unknown', reasonCodes: ['STATUS_ERROR'] });
+      expect(res.headers['Cache-Control']).toBe('no-store');
+      expect(res.body).not.toContain('internal');
     });
   });
 
@@ -333,7 +504,7 @@ describe('createRelayerRouter', () => {
 
       const res = mockRes();
       await router(mk('POST', '/api/vf-cross/farm', {
-        burnTxHash: 'burn-1', serializedApproval: body.serializedApproval,
+        serializedApproval: body.serializedApproval,
         stellarOwner: STELLAR_OWNER, kernelAddress: KERNEL_ADDRESS,
         allocations: [wireAllocation()],
       }), res);
@@ -343,6 +514,30 @@ describe('createRelayerRouter', () => {
   });
 
   describe('POST /farm', () => {
+    it('blocks durable intent acknowledgement when exact mandate evidence is no longer active', async () => {
+      const evaluateMandateStatusFn = vi.fn(async () => ({
+        ...activeEvidence(), status: 'revoked', reasonCodes: ['PERMISSION_REVOKED'],
+      }));
+      const guardedRouter = makeRouter({ evaluateMandateStatusFn });
+      const { body } = await registerMandate(guardedRouter);
+      const res = mockRes();
+      await guardedRouter(mk('POST', '/api/vf-cross/farm', {
+        serializedApproval: body.serializedApproval,
+        stellarOwner: STELLAR_OWNER,
+        kernelAddress: KERNEL_ADDRESS,
+        bridgeAgent: 'CBRIDGE',
+        runId: 'run-42',
+        grantTxHash: 'HGRANT',
+        allocations: [wireAllocation()],
+      }), res);
+
+      expect(res.statusCode).toBe(409);
+      expect(jsonOf(res)).toMatchObject({ evidence: { status: 'revoked' } });
+      expect(agentIndexReporter.commitIntent).not.toHaveBeenCalled();
+      expect(jobs.size).toBe(0);
+      expect(buildFarm).not.toHaveBeenCalled();
+    });
+
     it('400s when required fields are missing', async () => {
       const res = mockRes();
       await router(mk('POST', '/api/vf-cross/farm', { burnTxHash: 'burn-1' }), res);
@@ -353,7 +548,7 @@ describe('createRelayerRouter', () => {
     it('400s "unknown mandate" when the exact (approval, owner, kernel) triple was never registered', async () => {
       const res = mockRes();
       await router(mk('POST', '/api/vf-cross/farm', {
-        burnTxHash: 'burn-1', serializedApproval: 'never-registered',
+        serializedApproval: 'never-registered',
         stellarOwner: STELLAR_OWNER, kernelAddress: KERNEL_ADDRESS,
         allocations: [wireAllocation()],
       }), res);
@@ -367,7 +562,7 @@ describe('createRelayerRouter', () => {
       const { body } = await registerMandate(router);
       const res = mockRes();
       await router(mk('POST', '/api/vf-cross/farm', {
-        burnTxHash: 'burn-1', serializedApproval: body.serializedApproval,
+        serializedApproval: body.serializedApproval,
         stellarOwner: OTHER_STELLAR_OWNER, kernelAddress: KERNEL_ADDRESS,
         allocations: [wireAllocation()],
       }), res);
@@ -380,7 +575,7 @@ describe('createRelayerRouter', () => {
       const { body } = await registerMandate(router);
       const res = mockRes();
       await router(mk('POST', '/api/vf-cross/farm', {
-        burnTxHash: 'burn-1', serializedApproval: body.serializedApproval,
+        serializedApproval: body.serializedApproval,
         stellarOwner: STELLAR_OWNER, kernelAddress: KERNEL_ADDRESS,
         allocations: [{ allocationId: 'run-0', poolAddress: POOL_ADDRESS, amount: { token: 'USDC', units: 'not-a-number', decimals: 6 }, minShares: '90' }],
       }), res);
@@ -392,7 +587,7 @@ describe('createRelayerRouter', () => {
       const { body } = await registerMandate(router);
       const res = mockRes();
       await router(mk('POST', '/api/vf-cross/farm', {
-        burnTxHash: 'burn-1', serializedApproval: body.serializedApproval,
+        serializedApproval: body.serializedApproval,
         stellarOwner: STELLAR_OWNER, kernelAddress: KERNEL_ADDRESS,
         bridgeAgent: 'CBRIDGE', runId: 'run-42', grantTxHash: 'HGRANT',
         allocations: [wireAllocation({ units: MAX_CALL_CAP_UNITS + 1n })],
@@ -407,7 +602,7 @@ describe('createRelayerRouter', () => {
       for (let i = 0; i < 2; i++) {
         const res = mockRes();
         await router(mk('POST', '/api/vf-cross/farm', {
-          burnTxHash: `burn-${i}`, serializedApproval: body.serializedApproval,
+          serializedApproval: body.serializedApproval,
           stellarOwner: STELLAR_OWNER, kernelAddress: KERNEL_ADDRESS,
           bridgeAgent: 'CBRIDGE', runId: `run-${i}`, grantTxHash: 'HGRANT',
           allocations: [wireAllocation({
@@ -415,7 +610,7 @@ describe('createRelayerRouter', () => {
             units: MAX_CALL_CAP_UNITS,
           })],
         }), res);
-        expect(res.statusCode, `call ${i}`).toBe(200);
+        expect(res.statusCode, `call ${i}`).toBe(201);
       }
     });
 
@@ -428,7 +623,7 @@ describe('createRelayerRouter', () => {
       ]) {
         const res = mockRes();
         await router(mk('POST', '/api/vf-cross/farm', {
-          burnTxHash: 'burn-1', serializedApproval: body.serializedApproval,
+          serializedApproval: body.serializedApproval,
           stellarOwner: STELLAR_OWNER, kernelAddress: KERNEL_ADDRESS,
           allocations: [wireAllocation()],
           ...context,
@@ -437,14 +632,91 @@ describe('createRelayerRouter', () => {
         expect(jsonOf(res).error).toMatch(/bridgeAgent, runId and grantTxHash/)
       }
       expect(farmFn).not.toHaveBeenCalled();
-      expect(agentIndexReporter.report).not.toHaveBeenCalled();
+      expect(agentIndexReporter.commitIntent).not.toHaveBeenCalled();
     });
 
-    it('queues a null-burn job with unknown custody and keeps attach context private', async () => {
+    // Defect caught: /farm used to persist a job and return before D1 proved the child intent durable.
+    it('persists the job only after every immutable child intent is synchronously acknowledged', async () => {
+      const { body } = await registerMandate(router);
+      let acknowledge;
+      agentIndexReporter.commitIntent.mockImplementationOnce(
+        (child) => new Promise((resolve) => {
+          acknowledge = () => resolve({
+            acknowledged: true,
+            identity: {
+              networkId: child.networkId,
+              owner: child.owner,
+              bindingId: child.bindingId,
+              allocationId: child.allocationId,
+              childId: child.childId,
+            },
+            schemaVersion: 1,
+          });
+        })
+      );
+      const res = mockRes();
+      const pending = router(mk('POST', '/api/vf-cross/farm', {
+        serializedApproval: body.serializedApproval,
+        stellarOwner: STELLAR_OWNER,
+        kernelAddress: KERNEL_ADDRESS,
+        bridgeAgent: 'CBRIDGE',
+        runId: 'run-42',
+        grantTxHash: 'HGRANT',
+        allocations: [wireAllocation()],
+      }), res);
+      await vi.waitFor(() => expect(agentIndexReporter.commitIntent).toHaveBeenCalledTimes(1));
+      expect(jobs.size).toBe(0);
+      expect(buildFarm).not.toHaveBeenCalled();
+      acknowledge();
+      await pending;
+      expect(res.statusCode).toBe(201);
+      expect(jobs.get(jsonOf(res).jobId)).toMatchObject({ status: 'queued' });
+      expect(buildFarm).not.toHaveBeenCalled();
+    });
+
+    // Defect caught: reporter auth/timeout/schema/D1 ambiguity used to be swallowed after job acceptance.
+    it.each(['HTTP 401', 'timed out', 'malformed acknowledgement', 'schema mismatch', 'HTTP 503'])(
+      'does not persist or execute a job when durable intent fails with %s',
+      async (reason) => {
+        agentIndexReporter.commitIntent.mockRejectedValueOnce(new Error(reason));
+        const { body } = await registerMandate(router);
+        const res = mockRes();
+        await router(mk('POST', '/api/vf-cross/farm', {
+          serializedApproval: body.serializedApproval,
+          stellarOwner: STELLAR_OWNER,
+          kernelAddress: KERNEL_ADDRESS,
+          bridgeAgent: 'CBRIDGE', runId: 'run-42', grantTxHash: 'HGRANT',
+          allocations: [wireAllocation()],
+        }), res);
+        expect(res.statusCode).toBe(503);
+        expect(jsonOf(res)).toEqual({ error: 'Base child intent is unavailable' });
+        expect(jobs.size).toBe(0);
+        expect(buildFarm).not.toHaveBeenCalled();
+      }
+    );
+
+    // Defect caught: a caller could bypass intent-first custody by supplying a burn on /farm.
+    it('rejects any burn hash on the intent-only route before reporter, job, or farm side effects', async () => {
+      const { body } = await registerMandate(router);
+      const res = mockRes();
+      await router(mk('POST', '/api/vf-cross/farm', {
+        burnTxHash: 'already-burned',
+        serializedApproval: body.serializedApproval,
+        stellarOwner: STELLAR_OWNER,
+        kernelAddress: KERNEL_ADDRESS,
+        bridgeAgent: 'CBRIDGE', runId: 'run-42', grantTxHash: 'HGRANT',
+        allocations: [wireAllocation()],
+      }), res);
+      expect(res.statusCode).toBe(400);
+      expect(agentIndexReporter.commitIntent).not.toHaveBeenCalled();
+      expect(jobs.size).toBe(0);
+      expect(buildFarm).not.toHaveBeenCalled();
+    });
+
+    it('queues an acknowledged intent-only job and keeps attach context private', async () => {
       const { body, respBody } = await registerMandate(router);
       const res = mockRes();
       await router(mk('POST', '/api/vf-cross/farm', {
-        burnTxHash: null,
         serializedApproval: body.serializedApproval,
         stellarOwner: STELLAR_OWNER,
         kernelAddress: KERNEL_ADDRESS,
@@ -454,7 +726,7 @@ describe('createRelayerRouter', () => {
         allocations: [wireAllocation()],
       }), res);
 
-      expect(res.statusCode).toBe(200);
+      expect(res.statusCode).toBe(201);
       const { jobId } = jsonOf(res);
       expect(jobs.get(jobId)).toMatchObject({
         status: 'queued',
@@ -469,19 +741,21 @@ describe('createRelayerRouter', () => {
         bindingId: respBody.bindingId,
         bindingHash: respBody.bindingHash,
         attachedBurnTxHash: null,
+        associations: [{
+          allocationId: 'run-42:bridge:aave-v3',
+          terminalSequence: null,
+        }],
       });
       expect(JSON.stringify(jobs.get(jobId))).not.toContain(SESSION_PRIVATE_KEY);
       expect(buildFarm).not.toHaveBeenCalled();
 
-      await vi.waitFor(() => expect(agentIndexReporter.report).toHaveBeenCalledTimes(1));
-      expect(agentIndexReporter.report.mock.calls[0][0].allocations).toEqual([
-        expect.objectContaining({
-          allocationId: 'run-42:bridge:aave-v3',
-          executionStatus: 'queued',
-          custody: { location: 'unknown' },
-          txHash: null,
-        }),
-      ]);
+      expect(agentIndexReporter.commitIntent).toHaveBeenCalledTimes(1);
+      expect(agentIndexReporter.commitIntent.mock.calls[0][0]).toMatchObject({
+        bindingId: respBody.bindingId,
+        allocationId: 'run-42:bridge:aave-v3',
+        childId: jobId,
+        lifecycle: { sequence: 0, status: 'planned' },
+      });
 
       const statusRes = mockRes();
       await router(mk('GET', `/api/vf-cross/status/${jobId}`), statusRes);
@@ -497,7 +771,6 @@ describe('createRelayerRouter', () => {
       farmFn.mockImplementationOnce(() => new Promise((resolve) => { resolveFarm = resolve; }));
       const queuedRes = mockRes();
       await router(mk('POST', '/api/vf-cross/farm', {
-        burnTxHash: null,
         serializedApproval: body.serializedApproval,
         stellarOwner: STELLAR_OWNER,
         kernelAddress: KERNEL_ADDRESS,
@@ -507,7 +780,8 @@ describe('createRelayerRouter', () => {
         allocations: [wireAllocation()],
       }), queuedRes);
       const { jobId } = jsonOf(queuedRes);
-      await vi.waitFor(() => expect(agentIndexReporter.report).toHaveBeenCalledTimes(1));
+      expect(agentIndexReporter.commitIntent).toHaveBeenCalledTimes(1);
+      expect(associationOutbox.enqueue).not.toHaveBeenCalled();
 
       const attachBody = {
         jobId,
@@ -526,11 +800,14 @@ describe('createRelayerRouter', () => {
       expect(jobs.get(jobId)._attach.attachedBurnTxHash).toBe('burn-observed');
       expect(JSON.stringify(jobs.get(jobId))).not.toContain(SESSION_PRIVATE_KEY);
 
-      await vi.waitFor(() => expect(agentIndexReporter.report).toHaveBeenCalledTimes(2));
-      expect(agentIndexReporter.report.mock.calls[1][0].allocations[0]).toMatchObject({
-        executionStatus: 'accepted',
-        custody: { location: 'unknown' },
-        txHash: null,
+      expect(associationOutbox.enqueue).toHaveBeenCalledTimes(1);
+      expect(associationOutbox.enqueue.mock.calls[0][0][0]).toMatchObject({
+        expectedSequence: 0,
+        lifecycle: {
+          sequence: 1,
+          status: 'submitted',
+          evidence: { executionStatus: 'accepted', custodyLocation: 'in-transit', txHash: 'burn-observed' },
+        },
       });
 
       const farmParams = farmFn.mock.calls[0][0];
@@ -538,11 +815,14 @@ describe('createRelayerRouter', () => {
         status: 'minted',
         mintTxHash: '0xobserved-mint',
       });
-      await vi.waitFor(() => expect(agentIndexReporter.report).toHaveBeenCalledTimes(3));
-      expect(agentIndexReporter.report.mock.calls[2][0].allocations[0]).toMatchObject({
-        executionStatus: 'minted',
-        custody: { location: 'agent' },
-        txHash: '0xobserved-mint',
+      expect(associationOutbox.enqueue).toHaveBeenCalledTimes(2);
+      expect(associationOutbox.enqueue.mock.calls[1][0][0]).toMatchObject({
+        expectedSequence: 1,
+        lifecycle: {
+          sequence: 2,
+          status: 'submitted',
+          evidence: { executionStatus: 'minted', custodyLocation: 'agent', txHash: '0xobserved-mint' },
+        },
       });
 
       const repeated = mockRes();
@@ -567,11 +847,331 @@ describe('createRelayerRouter', () => {
       });
     });
 
+    // Defect caught: after a crash persisted attachedBurnTxHash, an exact retry returned 200 but
+    // never resumed the still-pending work. A second retry must not start another external flow.
+    it('same-hash attach resumes pending persisted work exactly once', async () => {
+      const { body, respBody } = await registerMandate(router);
+      let resolveFarm;
+      farmFn.mockImplementationOnce(() => new Promise((resolve) => { resolveFarm = resolve; }));
+      jobs.set('job-retry', {
+        status: 'pending',
+        steps: [],
+        runId: 'run-42',
+        bridgeAgent: 'CBRIDGE',
+        grantTxHash: 'HGRANT',
+        _attach: {
+          serializedApproval: body.serializedApproval,
+          stellarOwner: STELLAR_OWNER,
+          kernelAddress: KERNEL_ADDRESS,
+          bindingId: respBody.bindingId,
+          bindingHash: respBody.bindingHash,
+          networkId: 'stellar-testnet',
+          jobId: 'job-retry',
+          allocations: [wireAllocation()],
+          associations: [{ allocationId: 'run-42:bridge:aave-v3', terminalSequence: null }],
+          attachedBurnTxHash: 'burn-retry',
+        },
+      });
+      const attachBody = {
+        jobId: 'job-retry',
+        burnTxHash: 'burn-retry',
+        serializedApproval: body.serializedApproval,
+        stellarOwner: STELLAR_OWNER,
+        kernelAddress: KERNEL_ADDRESS,
+      };
+
+      const first = mockRes();
+      await router(mk('POST', '/api/vf-cross/farm/attach', attachBody), first);
+      await vi.waitFor(() => expect(buildFarm).toHaveBeenCalledTimes(1));
+      const second = mockRes();
+      await router(mk('POST', '/api/vf-cross/farm/attach', attachBody), second);
+      expect(first.statusCode).toBe(200);
+      expect(second.statusCode).toBe(200);
+      expect(buildFarm).toHaveBeenCalledTimes(1);
+
+      resolveFarm({
+        mintResult: { status: 'minted', mintTxHash: '0xmint' },
+        depositResults: [],
+        runId: 'run-42', bridgeAgent: 'CBRIDGE', grantTxHash: 'HGRANT',
+      });
+    });
+
+    // Defect caught: server startup only restarted the association-delivery worker and never
+    // dispatched durable farm work that crashed after attachment.
+    it('exposes a startup reconciliation pass for persisted pending farm work', async () => {
+      const { body, respBody } = await registerMandate(router);
+      jobs.set('job-restart', {
+        status: 'pending',
+        steps: [],
+        runId: 'run-42',
+        bridgeAgent: 'CBRIDGE',
+        grantTxHash: 'HGRANT',
+        _attach: {
+          serializedApproval: body.serializedApproval,
+          stellarOwner: STELLAR_OWNER,
+          kernelAddress: KERNEL_ADDRESS,
+          bindingId: respBody.bindingId,
+          bindingHash: respBody.bindingHash,
+          networkId: 'stellar-testnet',
+          jobId: 'job-restart',
+          allocations: [wireAllocation()],
+          associations: [{ allocationId: 'run-42:bridge:aave-v3', terminalSequence: null }],
+          attachedBurnTxHash: 'burn-restart',
+        },
+      });
+      farmFn.mockResolvedValueOnce({
+        mintResult: { status: 'minted', mintTxHash: '0xmint' },
+        depositResults: [],
+        runId: 'run-42', bridgeAgent: 'CBRIDGE', grantTxHash: 'HGRANT',
+      });
+
+      expect(typeof router.resumeFarmJobs).toBe('function');
+      await router.resumeFarmJobs();
+      await vi.waitFor(() => expect(buildFarm).toHaveBeenCalledTimes(1));
+    });
+
+    // Defect caught: an expired running lease means the process may have completed a deposit
+    // before crashing. Startup must make that evidence terminal-uncertain, never replay the farm.
+    it('reconciles expired running work as terminal-uncertain without replaying a deposit', async () => {
+      const path = join(mkdtempSync(join(tmpdir(), 'vf-router-recovery-')), 'relayer.db');
+      const stores = createSqliteStores(path);
+      const durableRouter = makeRouter({
+        jobs: stores.jobs,
+        mandatesV2: stores.mandatesV2,
+        associationOutbox: stores.associationOutbox,
+        farmExecutions: stores.farmExecutions,
+      });
+      const { body, respBody } = await registerMandate(durableRouter);
+      const queued = {
+        status: 'queued',
+        steps: [],
+        runId: 'run-42',
+        bridgeAgent: 'CBRIDGE',
+        grantTxHash: 'HGRANT',
+        _attach: {
+          serializedApproval: body.serializedApproval,
+          stellarOwner: STELLAR_OWNER,
+          kernelAddress: KERNEL_ADDRESS,
+          bindingId: respBody.bindingId,
+          bindingHash: respBody.bindingHash,
+          networkId: 'stellar-testnet',
+          jobId: 'job-ambiguous',
+          allocations: [wireAllocation()],
+          associations: [{ allocationId: 'run-42:bridge:aave-v3', terminalSequence: null }],
+          attachedBurnTxHash: null,
+        },
+      };
+      stores.jobs.set('job-ambiguous', queued);
+      const attached = {
+        ...queued,
+        status: 'pending',
+        _attach: { ...queued._attach, attachedBurnTxHash: 'burn-ambiguous' },
+      };
+      stores.farmExecutions.attach({
+        jobId: 'job-ambiguous',
+        burnTxHash: 'burn-ambiguous',
+        job: attached,
+        reports: [{
+          identity: {
+            networkId: 'stellar-testnet', owner: STELLAR_OWNER,
+            bindingId: respBody.bindingId, allocationId: 'run-42:bridge:aave-v3',
+            childId: 'job-ambiguous',
+          },
+          expectedSequence: 0,
+          lifecycle: {
+            sequence: 1, status: 'submitted',
+            evidence: { executionStatus: 'accepted', custodyLocation: 'in-transit', txHash: 'burn-ambiguous' },
+            observedAt: 2_000_000_000_001,
+          },
+        }],
+      });
+      stores.farmExecutions.claim({ jobId: 'job-ambiguous', now: 1, leaseMs: 1 });
+
+      expect(typeof durableRouter.resumeFarmJobs).toBe('function');
+      await durableRouter.resumeFarmJobs();
+
+      expect(buildFarm).not.toHaveBeenCalled();
+      expect(stores.farmExecutions.get('job-ambiguous')).toMatchObject({ status: 'uncertain' });
+      expect(stores.jobs.get('job-ambiguous')).toMatchObject({
+        status: 'uncertain',
+        _attach: {
+          associations: [{ allocationId: 'run-42:bridge:aave-v3', terminalSequence: 2 }],
+        },
+      });
+      expect(stores.associationOutbox.status('job-ambiguous')).toEqual([
+        expect.objectContaining({ allocationId: 'run-42:bridge:aave-v3', sequence: 1 }),
+        expect.objectContaining({ allocationId: 'run-42:bridge:aave-v3', sequence: 2 }),
+      ]);
+      stores.db.close();
+    });
+
+    // Defect caught: a durable terminal transaction could fail after the external farm returned,
+    // leaving the public job as nonterminal/complete-looking until a process restart reconciled it.
+    it('exposes a durable finish failure as immediately uncertain without replaying the farm', async () => {
+      const path = join(mkdtempSync(join(tmpdir(), 'vf-router-finish-')), 'relayer.db');
+      const stores = createSqliteStores(path);
+      const finish = vi.fn(() => { throw new Error('durable finish commit failed'); });
+      const durableRouter = makeRouter({
+        jobs: stores.jobs,
+        mandatesV2: stores.mandatesV2,
+        associationOutbox: stores.associationOutbox,
+        farmExecutions: { ...stores.farmExecutions, finish },
+      });
+      const { body } = await registerMandate(durableRouter);
+      const queued = mockRes();
+      await durableRouter(mk('POST', '/api/vf-cross/farm', {
+        serializedApproval: body.serializedApproval,
+        stellarOwner: STELLAR_OWNER,
+        kernelAddress: KERNEL_ADDRESS,
+        bridgeAgent: 'CBRIDGE',
+        runId: 'run-finish',
+        grantTxHash: 'HGRANT',
+        allocations: [wireAllocation({ allocationId: 'run-finish:bridge:aave-v3' })],
+      }), queued);
+      const { jobId } = jsonOf(queued);
+
+      const attached = await attachJob(durableRouter, jobId, body, 'burn-finish');
+      expect(attached.statusCode).toBe(200);
+      await vi.waitFor(() => expect(finish).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(stores.jobs.get(jobId)).toMatchObject({
+        status: 'error',
+        associationUncertain: true,
+        steps: expect.arrayContaining([
+          expect.objectContaining({
+            step: 'association-persistence',
+            status: 'error',
+            message: 'durable finish commit failed',
+          }),
+        ]),
+      }));
+
+      const status = mockRes();
+      await durableRouter(mk('GET', `/api/vf-cross/status/${jobId}`), status);
+      expect(jsonOf(status)).toMatchObject({
+        status: 'error',
+        associationDelivery: { complete: false, uncertain: true },
+      });
+      expect(jsonOf(status)).not.toHaveProperty('associationUncertain');
+      expect(stores.farmExecutions.get(jobId)).toMatchObject({ status: 'running' });
+
+      const repeated = await attachJob(durableRouter, jobId, body, 'burn-finish');
+      expect(repeated.statusCode).toBe(200);
+      expect(buildFarm).toHaveBeenCalledTimes(1);
+      expect(stores.farmExecutions.get(jobId)).toMatchObject({ status: 'running' });
+      stores.db.close();
+    });
+
+    // Defect caught: when a farm threw after its durable mint checkpoint and the terminal
+    // transaction also failed, the fallback discarded the mint step. Expiry recovery then tried
+    // to replace the immutable sequence-2 minted row with a sequence-2 failure forever.
+    it('recovers a post-mint farm and finish failure at sequence 3 exactly once without replay', async () => {
+      const path = join(mkdtempSync(join(tmpdir(), 'vf-router-post-mint-')), 'relayer.db');
+      let clock = Date.now();
+      const stores = createSqliteStores(path, { now: () => clock });
+      const finish = vi.fn(() => { throw new Error('durable terminal commit failed'); });
+      farmFn.mockImplementationOnce(async ({ onMintConfirmed }) => {
+        await onMintConfirmed({ status: 'minted', mintTxHash: '0xmint-before-failure' });
+        throw new Error('deposit failed after mint');
+      });
+      const durableRouter = makeRouter({
+        jobs: stores.jobs,
+        mandatesV2: stores.mandatesV2,
+        associationOutbox: stores.associationOutbox,
+        farmExecutions: { ...stores.farmExecutions, finish },
+      });
+      const { body } = await registerMandate(durableRouter);
+      const queued = mockRes();
+      await durableRouter(mk('POST', '/api/vf-cross/farm', {
+        serializedApproval: body.serializedApproval,
+        stellarOwner: STELLAR_OWNER,
+        kernelAddress: KERNEL_ADDRESS,
+        bridgeAgent: 'CBRIDGE',
+        runId: 'run-post-mint',
+        grantTxHash: 'HGRANT',
+        allocations: [wireAllocation({ allocationId: 'run-post-mint:bridge:aave-v3' })],
+      }), queued);
+      const { jobId } = jsonOf(queued);
+
+      const attached = await attachJob(durableRouter, jobId, body, 'burn-post-mint');
+      expect(attached.statusCode).toBe(200);
+      await vi.waitFor(() => expect(finish).toHaveBeenCalledTimes(1));
+      const durableMint = JSON.parse(stores.db.prepare(
+        'SELECT report_json FROM association_outbox WHERE child_id = ? AND sequence = 2'
+      ).get(jobId).report_json);
+      const immediate = mockRes();
+      await durableRouter(mk('GET', `/api/vf-cross/status/${jobId}`), immediate);
+      const immediateJob = jsonOf(immediate);
+
+      clock += 30_001;
+      let firstRecoveryError = null;
+      try {
+        await durableRouter.resumeFarmJobs();
+      } catch (error) {
+        firstRecoveryError = error;
+      }
+      const afterFirstRecovery = stores.associationOutbox.status(jobId);
+      let secondRecoveryError = null;
+      try {
+        await durableRouter.resumeFarmJobs();
+      } catch (error) {
+        secondRecoveryError = error;
+      }
+      const afterSecondRecovery = stores.associationOutbox.status(jobId);
+
+      expect({
+        durableMint,
+        immediateJob,
+        firstRecoveryError,
+        secondRecoveryError,
+        workStatus: stores.farmExecutions.get(jobId)?.status,
+        afterFirstRecovery: afterFirstRecovery.map(({ sequence }) => sequence),
+        afterSecondRecovery: afterSecondRecovery.map(({ sequence }) => sequence),
+        farmCalls: farmFn.mock.calls.length,
+        buildCalls: buildFarm.mock.calls.length,
+      }).toMatchObject({
+        durableMint: {
+          lifecycle: {
+            sequence: 2,
+            status: 'submitted',
+            evidence: {
+              executionStatus: 'minted',
+              custodyLocation: 'agent',
+              txHash: '0xmint-before-failure',
+            },
+          },
+        },
+        immediateJob: {
+          status: 'error',
+          steps: expect.arrayContaining([
+            expect.objectContaining({
+              step: 'mint', status: 'minted', mintTxHash: '0xmint-before-failure',
+            }),
+            expect.objectContaining({
+              step: 'farm', status: 'error', message: 'deposit failed after mint',
+            }),
+            expect.objectContaining({
+              step: 'association-persistence',
+              status: 'error',
+              message: 'durable terminal commit failed',
+            }),
+          ]),
+          associationDelivery: { complete: false, uncertain: true },
+        },
+        firstRecoveryError: null,
+        secondRecoveryError: null,
+        workStatus: 'uncertain',
+        afterFirstRecovery: [1, 2, 3],
+        afterSecondRecovery: [1, 2, 3],
+        farmCalls: 1,
+        buildCalls: 1,
+      });
+      stores.db.close();
+    });
+
     it('rejects attach when approval/owner/kernel or the stored mandate binding changed', async () => {
       const { body } = await registerMandate(router);
       const queuedRes = mockRes();
       await router(mk('POST', '/api/vf-cross/farm', {
-        burnTxHash: null,
         serializedApproval: body.serializedApproval,
         stellarOwner: STELLAR_OWNER,
         kernelAddress: KERNEL_ADDRESS,
@@ -590,7 +1190,6 @@ describe('createRelayerRouter', () => {
         const res = mockRes();
         await router(mk('POST', '/api/vf-cross/farm/attach', {
           jobId,
-          burnTxHash: 'burn-1',
           serializedApproval: body.serializedApproval,
           stellarOwner: STELLAR_OWNER,
           kernelAddress: KERNEL_ADDRESS,
@@ -599,7 +1198,7 @@ describe('createRelayerRouter', () => {
         expect(res.statusCode).toBe(400);
       }
 
-      await registerMandate(router);
+      await registerMandate(router, body);
       const changedBinding = mockRes();
       await router(mk('POST', '/api/vf-cross/farm/attach', {
         jobId,
@@ -621,7 +1220,7 @@ describe('createRelayerRouter', () => {
       });
       const res = mockRes();
       await router(mk('POST', '/api/vf-cross/farm', {
-        burnTxHash: 'burn-1', serializedApproval: 'approval-x',
+        serializedApproval: 'approval-x',
         stellarOwner: STELLAR_OWNER, kernelAddress: KERNEL_ADDRESS,
         allocations: [wireAllocation()],
       }), res);
@@ -636,7 +1235,7 @@ describe('createRelayerRouter', () => {
       const routerB = makeRouter({ relayerOrigin: 'https://relayer-b.example' }); // same mandatesV2, different config
       const res = mockRes();
       await routerB(mk('POST', '/api/vf-cross/farm', {
-        burnTxHash: 'burn-1', serializedApproval: body.serializedApproval,
+        serializedApproval: body.serializedApproval,
         stellarOwner: STELLAR_OWNER, kernelAddress: KERNEL_ADDRESS,
         allocations: [wireAllocation()],
       }), res);
@@ -652,7 +1251,6 @@ describe('createRelayerRouter', () => {
 
       const res = mockRes();
       await router(mk('POST', '/api/vf-cross/farm', {
-        burnTxHash: 'burn-1',
         sourceDomain: 999, // must be ignored — the flow hardcodes domains.stellar
         serializedApproval: body.serializedApproval,
         stellarOwner: STELLAR_OWNER, kernelAddress: KERNEL_ADDRESS,
@@ -660,9 +1258,11 @@ describe('createRelayerRouter', () => {
         allocations: [wireAllocation({ units: 100n, minShares: '90' })],
       }), res);
 
-      expect(res.statusCode).toBe(200);
+      expect(res.statusCode).toBe(201);
       const { jobId } = jsonOf(res);
-      expect(jobs.get(jobId)).toMatchObject({ status: 'pending', runId: 'run-42', bridgeAgent: 'CBRIDGE', grantTxHash: 'HGRANT' });
+      expect(jobs.get(jobId)).toMatchObject({ status: 'queued', runId: 'run-42', bridgeAgent: 'CBRIDGE', grantTxHash: 'HGRANT' });
+      const attachRes = await attachJob(router, jobId, body);
+      expect(attachRes.statusCode).toBe(200);
       await vi.waitFor(() => expect(buildFarm).toHaveBeenCalledTimes(1));
       expect(buildFarm).toHaveBeenCalledWith(SESSION_PRIVATE_KEY);
       expect(farmFn).toHaveBeenCalledWith({
@@ -698,7 +1298,6 @@ describe('createRelayerRouter', () => {
       ]) {
         const res = mockRes();
         await router(mk('POST', '/api/vf-cross/farm', {
-          burnTxHash: 'burn-1',
           serializedApproval: body.serializedApproval,
           stellarOwner: STELLAR_OWNER,
           kernelAddress: KERNEL_ADDRESS,
@@ -711,7 +1310,7 @@ describe('createRelayerRouter', () => {
         expect(jsonOf(res).error).toMatch(/allocationId|canonical|proxy/i);
       }
       expect(buildFarm).not.toHaveBeenCalled();
-      expect(agentIndexReporter.report).not.toHaveBeenCalled();
+      expect(agentIndexReporter.commitIntent).not.toHaveBeenCalled();
     });
 
     it('preserves reordered canonical allocation IDs instead of reconstructing array positions', async () => {
@@ -726,7 +1325,6 @@ describe('createRelayerRouter', () => {
       farmFn.mockImplementationOnce(() => new Promise((resolve) => { resolveFarm = resolve; }));
       const res = mockRes();
       await reorderedRouter(mk('POST', '/api/vf-cross/farm', {
-        burnTxHash: 'burn-1',
         serializedApproval: body.serializedApproval,
         stellarOwner: STELLAR_OWNER,
         kernelAddress: KERNEL_ADDRESS,
@@ -745,7 +1343,8 @@ describe('createRelayerRouter', () => {
         ],
       }), res);
 
-      expect(res.statusCode).toBe(200);
+      expect(res.statusCode).toBe(201);
+      await attachJob(reorderedRouter, jsonOf(res).jobId, body);
       await vi.waitFor(() => expect(farmFn).toHaveBeenCalledTimes(1));
       expect(farmFn.mock.calls[0][0].allocations.map((a) => a.allocationId)).toEqual([
         'run-42:bridge:moonwell',
@@ -760,60 +1359,64 @@ describe('createRelayerRouter', () => {
       });
     });
 
-    it('reports exact binding and canonical pool identity at acceptance, then reports each terminal child result', async () => {
+    it('commits exact immutable child intent before burn, then enqueues each lifecycle transition', async () => {
       const { body, respBody } = await registerMandate(router);
       let resolveFarm;
       farmFn.mockImplementationOnce(() => new Promise((resolve) => { resolveFarm = resolve; }));
       const res = mockRes();
       await router(mk('POST', '/api/vf-cross/farm', {
-        burnTxHash: 'burn-1', serializedApproval: body.serializedApproval,
+        serializedApproval: body.serializedApproval,
         stellarOwner: STELLAR_OWNER, kernelAddress: KERNEL_ADDRESS,
         bridgeAgent: 'CBRIDGE', runId: 'run-42', grantTxHash: 'HGRANT',
         allocations: [wireAllocation({ allocationId: 'run-42:bridge:aave-v3' })],
       }), res);
       const { jobId } = jsonOf(res);
 
-      await vi.waitFor(() => expect(agentIndexReporter.report).toHaveBeenCalledTimes(1));
-      expect(agentIndexReporter.report.mock.calls[0]).toEqual([
-        {
-          version: 1,
-          networkId: 'stellar-testnet',
-          owner: STELLAR_OWNER,
-          bridgeAgent: 'CBRIDGE',
-          runId: 'run-42',
-          grantTxHash: 'HGRANT',
-          kernelAddress: KERNEL_ADDRESS,
-          mandateBindingId: respBody.bindingId,
-          mandateBindingHash: respBody.bindingHash,
-          baseJobId: jobId,
-          allocations: [{
-            allocationId: 'run-42:bridge:aave-v3',
-            poolAddress: POOL_ADDRESS,
-            proxyTarget: 'aave-v3',
-            amount: { token: 'USDC', units: '100', decimals: 6 },
-            executionStatus: 'accepted',
-            custody: { location: 'unknown' },
-            txHash: null,
-          }],
+      expect(res.statusCode).toBe(201);
+      expect(agentIndexReporter.commitIntent).toHaveBeenCalledWith({
+        version: 1,
+        networkId: 'stellar-testnet',
+        owner: STELLAR_OWNER,
+        agent: 'CBRIDGE',
+        bindingId: respBody.bindingId,
+        allocationId: 'run-42:bridge:aave-v3',
+        childId: jobId,
+        intent: {
+          token: 'USDC', units: '100', decimals: 6,
+          poolAddress: POOL_ADDRESS, proxyTarget: 'aave-v3',
+          runId: 'run-42', grantTxHash: 'HGRANT', kernelAddress: KERNEL_ADDRESS,
+          bindingHash: respBody.bindingHash, baseJobId: jobId,
         },
-        { bindingId: respBody.bindingId, bindingHash: respBody.bindingHash },
-      ]);
+        lifecycle: { sequence: 0, status: 'planned', evidence: {}, observedAt: expect.any(Number) },
+      });
+      expect(JSON.stringify(agentIndexReporter.commitIntent.mock.calls)).not.toContain(SESSION_PRIVATE_KEY);
+
+      await attachJob(router, jobId, body);
+      expect(associationOutbox.enqueue).toHaveBeenNthCalledWith(1, [{
+        identity: {
+          networkId: 'stellar-testnet', owner: STELLAR_OWNER,
+          bindingId: respBody.bindingId, allocationId: 'run-42:bridge:aave-v3', childId: jobId,
+        },
+        expectedSequence: 0,
+        lifecycle: {
+          sequence: 1, status: 'submitted',
+          evidence: { executionStatus: 'accepted', custodyLocation: 'in-transit', txHash: 'burn-1' },
+          observedAt: expect.any(Number),
+        },
+      }]);
 
       await vi.waitFor(() => expect(farmFn).toHaveBeenCalledTimes(1));
       await farmFn.mock.calls[0][0].onMintConfirmed({
         status: 'minted',
         mintTxHash: '0xmint',
       });
-      await vi.waitFor(() => expect(agentIndexReporter.report).toHaveBeenCalledTimes(2));
-      expect(agentIndexReporter.report.mock.calls[1][0].allocations).toEqual([{
-        allocationId: 'run-42:bridge:aave-v3',
-        poolAddress: POOL_ADDRESS,
-        proxyTarget: 'aave-v3',
-        amount: { token: 'USDC', units: '100', decimals: 6 },
-        executionStatus: 'minted',
-        custody: { location: 'agent' },
-        txHash: '0xmint',
-      }]);
+      expect(associationOutbox.enqueue).toHaveBeenNthCalledWith(2, [expect.objectContaining({
+        expectedSequence: 1,
+        lifecycle: expect.objectContaining({
+          sequence: 2, status: 'submitted',
+          evidence: { executionStatus: 'minted', custodyLocation: 'agent', txHash: '0xmint' },
+        }),
+      })]);
 
       resolveFarm({
         mintResult: { status: 'minted', mintTxHash: '0xmint' },
@@ -827,51 +1430,103 @@ describe('createRelayerRouter', () => {
         }],
         runId: 'run-42', bridgeAgent: 'CBRIDGE', grantTxHash: 'HGRANT',
       });
-      await vi.waitFor(() => expect(agentIndexReporter.report).toHaveBeenCalledTimes(3));
-      expect(agentIndexReporter.report.mock.calls[2][0].allocations).toEqual([{
-        allocationId: 'run-42:bridge:aave-v3',
-        poolAddress: POOL_ADDRESS,
-        proxyTarget: 'aave-v3',
-        amount: { token: 'USDC', units: '100', decimals: 6 },
-        executionStatus: 'deposited',
-        custody: { location: 'base-proxy' },
-        txHash: '0xdeposit',
-      }]);
-      expect(JSON.stringify(agentIndexReporter.report.mock.calls)).not.toContain(SESSION_PRIVATE_KEY);
+      await vi.waitFor(() => expect(associationOutbox.enqueue).toHaveBeenCalledTimes(3));
+      expect(associationOutbox.enqueue).toHaveBeenNthCalledWith(3, [expect.objectContaining({
+        expectedSequence: 2,
+        lifecycle: expect.objectContaining({
+          sequence: 3, status: 'confirmed',
+          evidence: { executionStatus: 'deposited', custodyLocation: 'base-proxy', txHash: '0xdeposit' },
+        }),
+      })]);
+      expect(JSON.stringify(associationOutbox.enqueue.mock.calls)).not.toContain(SESSION_PRIVATE_KEY);
     });
 
-    it('orders reports without letting a stalled index reporter block farm execution', async () => {
-      const { body } = await registerMandate(router);
-      let releaseAccepted;
-      agentIndexReporter.report.mockImplementationOnce(
-        () => new Promise((resolve) => { releaseAccepted = resolve; }),
-      );
-      const res = mockRes();
-      await router(mk('POST', '/api/vf-cross/farm', {
-        burnTxHash: 'burn-1',
+    // Defect caught: incomplete/malformed orchestrator result arrays silently omitted terminal
+    // lifecycle evidence for expected child allocations.
+    it('creates one explicit terminal report for every expected allocation', async () => {
+      const completeRouter = makeRouter({
+        poolTargets: new Map([
+          [POOL_ADDRESS.toLowerCase(), 'aave-v3'],
+          [SECOND_POOL_ADDRESS.toLowerCase(), 'moonwell'],
+        ]),
+      });
+      const { body } = await registerMandate(completeRouter);
+      farmFn.mockImplementationOnce(async (params) => {
+        await params.onMintConfirmed({ status: 'minted', mintTxHash: '0xmint' });
+        return {
+          mintResult: { status: 'minted', mintTxHash: '0xmint' },
+          depositResults: [{
+            allocationId: 'run-42:bridge:aave-v3',
+            executionStatus: 'deposited',
+            custody: { location: 'base-proxy' },
+            txHash: '0xdeposit',
+          }],
+          runId: 'run-42', bridgeAgent: 'CBRIDGE', grantTxHash: 'HGRANT',
+        };
+      });
+      const queued = mockRes();
+      await completeRouter(mk('POST', '/api/vf-cross/farm', {
         serializedApproval: body.serializedApproval,
         stellarOwner: STELLAR_OWNER,
         kernelAddress: KERNEL_ADDRESS,
-        bridgeAgent: 'CBRIDGE',
-        runId: 'run-42',
-        grantTxHash: 'HGRANT',
-        allocations: [wireAllocation()],
-      }), res);
+        bridgeAgent: 'CBRIDGE', runId: 'run-42', grantTxHash: 'HGRANT',
+        allocations: [
+          wireAllocation(),
+          wireAllocation({ allocationId: 'run-42:bridge:moonwell', pool: SECOND_POOL_ADDRESS }),
+        ],
+      }), queued);
+      await attachJob(completeRouter, jsonOf(queued).jobId, body);
 
-      expect(res.statusCode).toBe(200);
-      await vi.waitFor(() => expect(agentIndexReporter.report).toHaveBeenCalledTimes(1));
-      expect(buildFarm).toHaveBeenCalledTimes(1);
-      await farmFn.mock.calls[0][0].onMintConfirmed({
-        status: 'minted',
-        mintTxHash: '0xmint-after-stall',
+      await vi.waitFor(() => expect(associationOutbox.enqueue).toHaveBeenCalledTimes(3));
+      const terminalReports = associationOutbox.enqueue.mock.calls[2][0];
+      expect(terminalReports).toHaveLength(2);
+      expect(terminalReports.find((report) =>
+        report.identity.allocationId === 'run-42:bridge:moonwell'
+      )).toMatchObject({
+        lifecycle: {
+          sequence: 3,
+          status: 'unknown',
+          evidence: { executionStatus: 'unknown', custodyLocation: 'unknown', txHash: null },
+        },
       });
-      expect(agentIndexReporter.report).toHaveBeenCalledTimes(1);
-      releaseAccepted({ ok: true, reported: 1, warnings: [] });
-      await vi.waitFor(() => expect(agentIndexReporter.report).toHaveBeenCalledTimes(2));
-      expect(agentIndexReporter.report.mock.calls[1][0].allocations[0]).toMatchObject({
-        executionStatus: 'minted',
-        txHash: '0xmint-after-stall',
+    });
+
+    // Defect caught: terminal enqueue exceptions were swallowed, leaving the public job looking
+    // complete when association evidence was actually uncertain.
+    it('surfaces terminal lifecycle enqueue uncertainty on the public job', async () => {
+      const { body } = await registerMandate(router);
+      associationOutbox.enqueue
+        .mockImplementationOnce((reports) => ({ status: 'pending', reports }))
+        .mockImplementationOnce((reports) => ({ status: 'pending', reports }))
+        .mockImplementation(() => { throw new Error('sqlite write uncertain'); });
+      farmFn.mockImplementationOnce(async (params) => {
+        await params.onMintConfirmed({ status: 'minted', mintTxHash: '0xmint' });
+        return {
+          mintResult: { status: 'minted', mintTxHash: '0xmint' },
+          depositResults: [{
+            allocationId: 'run-42:bridge:aave-v3',
+            executionStatus: 'deposited',
+            custody: { location: 'base-proxy' },
+            txHash: '0xdeposit',
+          }],
+          runId: 'run-42', bridgeAgent: 'CBRIDGE', grantTxHash: 'HGRANT',
+        };
       });
+      const queued = mockRes();
+      await router(mk('POST', '/api/vf-cross/farm', {
+        serializedApproval: body.serializedApproval,
+        stellarOwner: STELLAR_OWNER,
+        kernelAddress: KERNEL_ADDRESS,
+        bridgeAgent: 'CBRIDGE', runId: 'run-42', grantTxHash: 'HGRANT',
+        allocations: [wireAllocation()],
+      }), queued);
+      const { jobId } = jsonOf(queued);
+      await attachJob(router, jobId, body);
+      await vi.waitFor(() => expect(jobs.get(jobId).status).toBe('error'));
+
+      const status = mockRes();
+      await router(mk('GET', `/api/vf-cross/status/${jobId}`), status);
+      expect(jsonOf(status).associationDelivery).toMatchObject({ complete: false, uncertain: true });
     });
 
     it('keeps observed mint custody and hash when a deposit is held', async () => {
@@ -880,7 +1535,6 @@ describe('createRelayerRouter', () => {
       farmFn.mockImplementationOnce(() => new Promise((resolve) => { resolveFarm = resolve; }));
       const res = mockRes();
       await router(mk('POST', '/api/vf-cross/farm', {
-        burnTxHash: 'burn-1',
         serializedApproval: body.serializedApproval,
         stellarOwner: STELLAR_OWNER,
         kernelAddress: KERNEL_ADDRESS,
@@ -889,6 +1543,7 @@ describe('createRelayerRouter', () => {
         grantTxHash: 'HGRANT',
         allocations: [wireAllocation()],
       }), res);
+      await attachJob(router, jsonOf(res).jobId, body);
       await vi.waitFor(() => expect(farmFn).toHaveBeenCalledTimes(1));
       await farmFn.mock.calls[0][0].onMintConfirmed({
         status: 'minted',
@@ -907,11 +1562,13 @@ describe('createRelayerRouter', () => {
         grantTxHash: 'HGRANT',
       });
 
-      await vi.waitFor(() => expect(agentIndexReporter.report).toHaveBeenCalledTimes(3));
-      expect(agentIndexReporter.report.mock.calls[2][0].allocations[0]).toMatchObject({
-        executionStatus: 'held',
-        custody: { location: 'agent' },
-        txHash: '0xmint-held',
+      await vi.waitFor(() => expect(associationOutbox.enqueue).toHaveBeenCalledTimes(3));
+      expect(associationOutbox.enqueue.mock.calls[2][0][0]).toMatchObject({
+        expectedSequence: 2,
+        lifecycle: {
+          sequence: 3, status: 'unknown', observedAt: expect.any(Number),
+          evidence: { executionStatus: 'held', custodyLocation: 'agent', txHash: '0xmint-held' },
+        },
       });
     });
 
@@ -923,7 +1580,6 @@ describe('createRelayerRouter', () => {
       );
       const res = mockRes();
       await router(mk('POST', '/api/vf-cross/farm', {
-        burnTxHash: 'burn-1',
         serializedApproval: body.serializedApproval,
         stellarOwner: STELLAR_OWNER,
         kernelAddress: KERNEL_ADDRESS,
@@ -932,6 +1588,7 @@ describe('createRelayerRouter', () => {
         grantTxHash: 'HGRANT',
         allocations: [wireAllocation()],
       }), res);
+      await attachJob(router, jsonOf(res).jobId, body);
       await vi.waitFor(() => expect(farmFn).toHaveBeenCalledTimes(1));
       await farmFn.mock.calls[0][0].onMintConfirmed({
         status: 'minted',
@@ -939,11 +1596,13 @@ describe('createRelayerRouter', () => {
       });
       rejectFarm(new Error('deposit dispatch failed after mint'));
 
-      await vi.waitFor(() => expect(agentIndexReporter.report).toHaveBeenCalledTimes(3));
-      expect(agentIndexReporter.report.mock.calls[2][0].allocations[0]).toMatchObject({
-        executionStatus: 'failed',
-        custody: { location: 'agent' },
-        txHash: '0xmint-failed',
+      await vi.waitFor(() => expect(associationOutbox.enqueue).toHaveBeenCalledTimes(3));
+      expect(associationOutbox.enqueue.mock.calls[2][0][0]).toMatchObject({
+        expectedSequence: 2,
+        lifecycle: {
+          sequence: 3, status: 'failed', observedAt: expect.any(Number),
+          evidence: { executionStatus: 'failed', custodyLocation: 'agent', txHash: '0xmint-failed' },
+        },
       });
     });
 
@@ -951,32 +1610,14 @@ describe('createRelayerRouter', () => {
       const { body } = await registerMandate(router);
       const res = mockRes();
       await router(mk('POST', '/api/vf-cross/farm', {
-        burnTxHash: 'burn-1', serializedApproval: body.serializedApproval,
+        serializedApproval: body.serializedApproval,
         stellarOwner: STELLAR_OWNER, kernelAddress: KERNEL_ADDRESS,
         bridgeAgent: 'CBRIDGE', runId: 'run-42', grantTxHash: 'HGRANT',
         allocations: [wireAllocation({ pool: `0x${'99'.repeat(20)}` })],
       }), res);
       expect(res.statusCode).toBe(400);
       expect(jsonOf(res).error).toMatch(/pool/i);
-      expect(agentIndexReporter.report).not.toHaveBeenCalled();
-    });
-
-    it('keeps farm custody successful when non-custodial index reporting warns or rejects', async () => {
-      agentIndexReporter.report.mockRejectedValue(new Error('index down'));
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      const { body } = await registerMandate(router);
-      const res = mockRes();
-      await router(mk('POST', '/api/vf-cross/farm', {
-        burnTxHash: 'burn-1', serializedApproval: body.serializedApproval,
-        stellarOwner: STELLAR_OWNER, kernelAddress: KERNEL_ADDRESS,
-        bridgeAgent: 'CBRIDGE', runId: 'run-42', grantTxHash: 'HGRANT',
-        allocations: [wireAllocation()],
-      }), res);
-      const { jobId } = jsonOf(res);
-      await vi.waitFor(() => expect(jobs.get(jobId).status).toBe('done'));
-      expect(jobs.get(jobId).status).toBe('done');
-      expect(warn).toHaveBeenCalled();
-      warn.mockRestore();
+      expect(agentIndexReporter.commitIntent).not.toHaveBeenCalled();
     });
 
     // Re-review fix: a failed job used to drop runId/bridgeAgent/grantTxHash entirely (recordError
@@ -987,12 +1628,13 @@ describe('createRelayerRouter', () => {
       farmFn.mockRejectedValueOnce(new Error(`deposit into ${POOL_ADDRESS} was mined but did not succeed`));
       const res = mockRes();
       await router(mk('POST', '/api/vf-cross/farm', {
-        burnTxHash: 'burn-1', serializedApproval: body.serializedApproval,
+        serializedApproval: body.serializedApproval,
         stellarOwner: STELLAR_OWNER, kernelAddress: KERNEL_ADDRESS,
         bridgeAgent: 'CBRIDGE', runId: 'run-42', grantTxHash: 'HGRANT',
         allocations: [wireAllocation()],
       }), res);
       const { jobId } = jsonOf(res);
+      await attachJob(router, jobId, body);
       await vi.waitFor(() => expect(jobs.get(jobId).status).toBe('error'));
       expect(JSON.stringify(jobs.get(jobId))).toMatch(/was mined but did not succeed/);
       expect(JSON.stringify(jobs.get(jobId))).not.toContain(SESSION_PRIVATE_KEY);
@@ -1008,7 +1650,6 @@ describe('createRelayerRouter', () => {
       const { body } = await registerMandate(router);
       const queuedRes = mockRes();
       await router(mk('POST', '/api/vf-cross/farm', {
-        burnTxHash: null,
         serializedApproval: body.serializedApproval,
         stellarOwner: STELLAR_OWNER,
         kernelAddress: KERNEL_ADDRESS,
@@ -1057,7 +1698,7 @@ describe('createRelayerRouter', () => {
         const { body } = await registerMandate(router);
         const res = mockRes();
         await router(mk('POST', '/api/vf-cross/farm', {
-          burnTxHash: 'burn-1', serializedApproval: body.serializedApproval,
+          serializedApproval: body.serializedApproval,
           stellarOwner: STELLAR_OWNER, kernelAddress: KERNEL_ADDRESS,
           bridgeAgent: 'CBRIDGE', runId: 'run-42', grantTxHash: 'HGRANT',
           allocations: [{
@@ -1080,7 +1721,7 @@ describe('createRelayerRouter', () => {
         const { body } = await registerMandate(router);
         const res = mockRes();
         await router(mk('POST', '/api/vf-cross/farm', {
-          burnTxHash: 'burn-1', serializedApproval: body.serializedApproval,
+          serializedApproval: body.serializedApproval,
           stellarOwner: STELLAR_OWNER, kernelAddress: KERNEL_ADDRESS,
           bridgeAgent: 'CBRIDGE', runId: 'run-42', grantTxHash: 'HGRANT',
           allocations: [wireAllocation({ minShares: badMinShares })],
@@ -1096,12 +1737,13 @@ describe('createRelayerRouter', () => {
       farmFn.mockImplementationOnce(() => new Promise((resolve) => { resolveFarm = resolve; }));
       const res = mockRes();
       await router(mk('POST', '/api/vf-cross/farm', {
-        burnTxHash: 'burn-1', serializedApproval: body.serializedApproval,
+        serializedApproval: body.serializedApproval,
         stellarOwner: STELLAR_OWNER, kernelAddress: KERNEL_ADDRESS,
         bridgeAgent: 'CBRIDGE', runId: 'run-42', grantTxHash: 'HGRANT',
         allocations: [wireAllocation({ minShares: '0' })],
       }), res);
-      expect(res.statusCode).toBe(200);
+      expect(res.statusCode).toBe(201);
+      await attachJob(router, jsonOf(res).jobId, body);
       await vi.waitFor(() => expect(farmFn).toHaveBeenCalledTimes(1));
       expect(farmFn.mock.calls[0][0].allocations[0].minShares).toBe(0n);
       resolveFarm({
@@ -1119,12 +1761,53 @@ describe('createRelayerRouter', () => {
       expect(res.statusCode).toBe(404);
     });
 
-    it('returns the stored job status verbatim', async () => {
+    it('never treats an empty delivery set as complete', async () => {
       jobs.set('job-x', { status: 'done', steps: [{ step: 'mint', status: 'minted' }] });
       const res = mockRes();
       await router(mk('GET', '/api/vf-cross/status/job-x'), res);
       expect(res.statusCode).toBe(200);
-      expect(jsonOf(res)).toEqual({ status: 'done', steps: [{ step: 'mint', status: 'minted' }] });
+      expect(jsonOf(res)).toEqual({
+        status: 'done',
+        steps: [{ step: 'mint', status: 'minted' }],
+        associationDelivery: { complete: false, uncertain: false, events: [] },
+      });
+    });
+
+    // Defect caught: delivered sequence 1 alone passed Array.every and hid missing terminal rows;
+    // coverage must be contiguous through each persisted allocation's terminal sequence.
+    it('requires contiguous delivered evidence through every expected allocation terminal', async () => {
+      jobs.set('job-coverage', {
+        status: 'done',
+        steps: [],
+        _attach: {
+          associations: [
+            { allocationId: 'allocation-a', terminalSequence: 3 },
+            { allocationId: 'allocation-b', terminalSequence: 2 },
+          ],
+        },
+      });
+      associationOutbox.status.mockReturnValue([
+        { allocationId: 'allocation-a', sequence: 1, status: 'delivered', attempts: 1 },
+        { allocationId: 'allocation-b', sequence: 1, status: 'delivered', attempts: 1 },
+      ]);
+      const incomplete = mockRes();
+      await router(mk('GET', '/api/vf-cross/status/job-coverage'), incomplete);
+      expect(jsonOf(incomplete).associationDelivery).toMatchObject({
+        complete: false,
+        uncertain: true,
+        events: [expect.objectContaining({ allocationId: 'allocation-a' })],
+      });
+
+      associationOutbox.status.mockReturnValue([
+        { allocationId: 'allocation-a', sequence: 1, status: 'delivered', attempts: 1 },
+        { allocationId: 'allocation-a', sequence: 2, status: 'delivered', attempts: 1 },
+        { allocationId: 'allocation-a', sequence: 3, status: 'delivered', attempts: 1 },
+        { allocationId: 'allocation-b', sequence: 1, status: 'delivered', attempts: 1 },
+        { allocationId: 'allocation-b', sequence: 2, status: 'delivered', attempts: 1 },
+      ]);
+      const complete = mockRes();
+      await router(mk('GET', '/api/vf-cross/status/job-coverage'), complete);
+      expect(jsonOf(complete).associationDelivery).toMatchObject({ complete: true, uncertain: false });
     });
   });
 
@@ -1171,12 +1854,13 @@ describe('createRelayerRouter', () => {
       farmFn.mockRejectedValueOnce(new Error('RPC https://secret-node.internal/xyz refused: pool reverted'));
       const res = mockRes();
       await sanitized(mk('POST', '/api/vf-cross/farm', {
-        burnTxHash: 'burn-1', serializedApproval: body.serializedApproval,
+        serializedApproval: body.serializedApproval,
         stellarOwner: STELLAR_OWNER, kernelAddress: KERNEL_ADDRESS,
         bridgeAgent: 'CBRIDGE', runId: 'run-42', grantTxHash: 'HGRANT',
         allocations: [wireAllocation()],
       }), res);
       const { jobId } = jsonOf(res);
+      await attachJob(sanitized, jobId, body);
       await vi.waitFor(() => expect(jobs.get(jobId).status).toBe('error'));
 
       const statusRes = mockRes();

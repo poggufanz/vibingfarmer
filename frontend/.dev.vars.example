@@ -87,3 +87,18 @@ AGENT_INDEX_ARCHIVAL_RPC_URL=
 # is unset the ingest endpoint answers 503 "Agent index ingest not configured" and indexes nothing —
 # reads are unaffected, so an unset value is a safe default, not a broken one.
 AGENT_INDEX_INGEST_SECRET=
+
+# ─── Agent index reporter gate (read by api/agent-index.js, checked in api/agent-index/handler.js
+# reporterGate) ───
+# Shared secret the relayer sends as an Authorization Bearer on every execution-receipt, base-child
+# intent, lifecycle and `action=base-child-ready` write. Must equal the VM's
+# AGENT_INDEX_REPORTER_SECRET. Constant-time compared. Server-only (never VITE_) — the browser never
+# receives it and never calls a D1 write directly. FAILS CLOSED in both directions: unset here, every
+# reporter route answers 503 "Agent-index writer is not configured", and a production relayer will
+# not open its listener at all because its boot readiness probe hits that same route.
+# Generate: openssl rand -hex 32
+AGENT_INDEX_REPORTER_SECRET=
+
+# D1 binding: these routes need the `VF_DB` binding (see wrangler.jsonc) with migrations 0001-0006
+# applied. Migrations 0005 (execution receipts) and 0006 (base child intents) are required before a
+# production relayer can boot — see "Release prerequisites" in GETTING_STARTED.md.

@@ -9,6 +9,7 @@
 // parsing need to change — crossChainFarm.js and the screens never construct URLs themselves.
 import { toBaseChainUnits, BASE_USDC_DECIMALS } from './config.js'
 import { BASE_POOL_CATALOG } from '../config.js'
+import { normalizeBaseMandateStatus, publicBaseMandateEvidence } from './mandateStatus.js'
 
 const DEFAULT_BASE_URL = import.meta.env?.VITE_CROSS_RELAYER_BASE || '/api/vf-cross'
 const DEFAULT_POLL_INTERVAL_MS = 3000
@@ -176,17 +177,15 @@ function toWireAllocations(allocations, runId) {
 }
 
 /**
- * Dispatch the farm flow: relay the Stellar burn (forward CCTP) then fan out session-key
- * deposits across `allocations`. Returns immediately with a job id to poll. `burnTxHash` may be
- * null — a job can be queued/accepted before a burn hash is observed; a later attach/callback
- * fills it in (relayer side, Task 7's job). stellarOwner/kernelAddress bind the dispatch to the
+ * Durably commit the immutable Base child intent before the browser is allowed to burn.
+ * Returns only after the relayer has validated D1's authenticated 201 acknowledgement.
+ * stellarOwner/kernelAddress bind the dispatch to the
  * owner it was mandated for; bridgeAgent/runId/grantTxHash default to null when the caller
  * doesn't have them yet (both are threaded through by baseLeg.js/crossChainFarm.js when known).
- * @param {{ burnTxHash: string|null, sourceDomain: number, serializedApproval: string, stellarOwner?: string, kernelAddress?: string, bridgeAgent?: string, runId?: string, grantTxHash?: string, allocations: Array<object>, baseUrl?: string, deps?: { fetchImpl?: Function } }} p
- * @returns {Promise<{ jobId: string }>}
+ * @param {{ sourceDomain: number, serializedApproval: string, stellarOwner?: string, kernelAddress?: string, bridgeAgent?: string, runId?: string, grantTxHash?: string, allocations: Array<object>, baseUrl?: string, deps?: { fetchImpl?: Function } }} p
+ * @returns {Promise<{ jobId: string, acknowledged: true, schemaVersion: 1 }>}
  */
 export async function postFarm({
-  burnTxHash = null,
   sourceDomain,
   serializedApproval,
   allocations,
@@ -203,7 +202,6 @@ export async function postFarm({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      burnTxHash,
       sourceDomain,
       serializedApproval,
       stellarOwner,
@@ -215,7 +213,18 @@ export async function postFarm({
     }),
   })
   if (!res.ok) throw new Error(`farm dispatch failed (${res.status})`)
-  return res.json()
+  if (res.status !== 201) throw new Error(`farm intent expected 201, got ${res.status}`)
+  let acknowledgement
+  try {
+    acknowledgement = await res.json()
+  } catch (error) {
+    throw new Error('farm intent acknowledgement is malformed', { cause: error })
+  }
+  if (acknowledgement?.acknowledged !== true || typeof acknowledgement?.jobId !== 'string') {
+    throw new Error('farm intent acknowledgement is malformed')
+  }
+  if (acknowledgement.schemaVersion !== 1) throw new Error('farm intent schema mismatch')
+  return acknowledgement
 }
 
 /**
@@ -313,25 +322,6 @@ export async function postMandate({
   return res.json()
 }
 
-// Normalizes whatever the relayer answers into the canonical BaseMandateStatusV2 shape (binding
-// plan §3). The real relayer server is not migrated by this task (Task 7's job) and today answers
-// the older `{valid, expiresAt}` shape — `status` falls back to 'active'/'unknown' from `valid`
-// so callers can rely on `.status` regardless of which relayer generation answers. Unknown fields
-// are null, never guessed, per the "never render unknown as healthy" rule — 'unknown' fails every
-// gate the same way 'expired'/'missing' do (only 'active' passes).
-function normalizeMandateStatus(body = {}, { stellarOwner, kernelAddress } = {}) {
-  return {
-    stellarOwner: body.stellarOwner ?? stellarOwner ?? null,
-    kernelAddress: body.kernelAddress ?? kernelAddress ?? null,
-    sessionKeyAddress: body.sessionKeyAddress ?? null,
-    relayerOrigin: body.relayerOrigin ?? null,
-    expiresAt: body.expiresAt ?? null,
-    status: body.status ?? (body.valid ? 'active' : 'unknown'),
-    bindingId: body.bindingId ?? null,
-    bindingHash: body.bindingHash ?? null,
-  }
-}
-
 /**
  * Check whether a previously-registered mandate is still reusable, WITHOUT ever getting the
  * session key back. Lets baseLeg.js skip the owner ceremony + a fresh mandate mint on a repeat
@@ -343,15 +333,16 @@ function normalizeMandateStatus(body = {}, { stellarOwner, kernelAddress } = {})
  */
 export async function getMandateStatus(
   serializedApproval,
-  { stellarOwner, kernelAddress, baseUrl = DEFAULT_BASE_URL, deps = {} } = {}
+  { stellarOwner, kernelAddress, allocation, baseUrl = DEFAULT_BASE_URL, deps = {} } = {}
 ) {
   const { fetchImpl = fetch } = deps
   let qs = `approval=${encodeURIComponent(serializedApproval)}`
   if (stellarOwner) qs += `&stellarOwner=${encodeURIComponent(stellarOwner)}`
   if (kernelAddress) qs += `&kernelAddress=${encodeURIComponent(kernelAddress)}`
-  const res = await fetchImpl(`${baseUrl}/mandate/valid?${qs}`)
+  if (allocation) qs += `&allocation=${encodeURIComponent(JSON.stringify(allocation))}`
+  const res = await fetchImpl(`${baseUrl}/mandate/valid?${qs}`, { cache: 'no-store' })
   if (!res.ok) throw new Error(`mandate status check failed (${res.status})`)
-  return normalizeMandateStatus(await res.json(), { stellarOwner, kernelAddress })
+  return publicBaseMandateEvidence(normalizeBaseMandateStatus(await res.json()))
 }
 
 /**

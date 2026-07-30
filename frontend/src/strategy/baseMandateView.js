@@ -1,5 +1,6 @@
 // A read-only strategy view over the owner and relayer bound Base mandate. This deliberately
 // does not read storage: callers supply the versioned status received for the connected owner.
+import { isVerifiedBaseMandateStatus, publicBaseMandateEvidence } from '../base/mandateStatus.js'
 
 const WINDOW_DAYS = 7
 const PER_CALL_CAP_UNITS = 10_000_000_000n
@@ -21,7 +22,7 @@ function viewStatus({ mandate, stellarOwner, kernelAddress, relayerOrigin, now }
   if (mandate.status === 'expired' || (Number.isFinite(expiry) && expiry <= now)) {
     return 'expired'
   }
-  if (mandate.status !== 'active') return 'unavailable'
+  if (!isVerifiedBaseMandateStatus(mandate)) return 'unavailable'
   // Expected connection data is part of the trust boundary. It is never optional for a ready view.
   if (!nonEmpty(stellarOwner) || !nonEmpty(kernelAddress) || !nonEmpty(relayerOrigin)) {
     return 'unavailable'
@@ -45,9 +46,16 @@ function viewStatus({ mandate, stellarOwner, kernelAddress, relayerOrigin, now }
  * public mandate metadata and never returns a session private key.
  */
 export function toBaseMandateView({ mandate, stellarOwner, kernelAddress, relayerOrigin }) {
+  const publicMandate = mandate ? publicBaseMandateEvidence(mandate) : null
   const now = Math.floor(Date.now() / 1000)
-  const status = viewStatus({ mandate, stellarOwner, kernelAddress, relayerOrigin, now })
-  const details = mandate || {}
+  const status = viewStatus({
+    mandate: publicMandate,
+    stellarOwner,
+    kernelAddress,
+    relayerOrigin,
+    now,
+  })
+  const details = publicMandate || {}
   const bindingId = details.bindingId ?? null
   const bindingHash = details.bindingHash ?? null
   const sessionKeyAddress = details.sessionKeyAddress ?? null
@@ -74,6 +82,7 @@ export function toBaseMandateView({ mandate, stellarOwner, kernelAddress, relaye
     expiresAt,
     bindingId,
     bindingHash,
+    evidence: publicMandate,
     renewalCopy: 'Renew the mandate before its expiry to continue using Base testnet.',
     revokeCopy:
       'Deleting or revoking the VF relayer copy does not invalidate another copied key before the on-chain timestamp policy expires.',

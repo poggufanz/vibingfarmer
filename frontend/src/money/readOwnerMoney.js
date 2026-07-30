@@ -7,6 +7,13 @@
 // the rest. Unknown money is never rendered as zero: a read that could not be confirmed leaves
 // `amount: null`, never a guessed number, matching the "never coerce a null" discipline
 // ownerDiscovery.js and vaultReads.js already establish for this codebase.
+//
+// Task 10: a bridge agent can carry MORE THAN ONE durable Base child (two separate runs/
+// allocations that both landed real money). The old `latestBaseChild` picked the freshest one and
+// silently discarded any sibling's proven money -- deleted. Every valid child now survives via
+// baseChildPositions.js's `normalizeBaseChildren`, grouped by the real on-chain position it shares
+// with any sibling (same kernel+vault+asset), and valued via `readBasePositions`'s pinned-block
+// reads (delegated through dashboardPositions.js's loadIndexedBasePositions -- see its own header).
 import {
   readVaultShares as _readVaultShares,
   readTokenBalance as _readTokenBalance,
@@ -17,6 +24,7 @@ import {
   sharesToAssetUnits,
 } from '../stellar/vaultReads.js'
 import { loadIndexedBasePositions as _loadIndexedBasePositions } from '../base/dashboardPositions.js'
+import { normalizeBaseChildren } from './baseChildPositions.js'
 import { SOROBAN_DECIMALS, SOROBAN_BLEND_POOL_ADDRESS } from '../stellar/config.js'
 import { BASE_USDC_DECIMALS } from '../base/config.js'
 import { BASE_POOL_CATALOG } from '../config.js'
@@ -29,6 +37,10 @@ const TOKEN = 'USDC'
 // BASE_USDC_DECIMALS rather than a second, independently hardcoded '6' here — one rule, not two.
 const BASE_TO_CANONICAL_SCALE = 10n ** BigInt(SOROBAN_DECIMALS - BASE_USDC_DECIMALS)
 const TERMINAL_BASE_STATUSES = new Set(['deposited', 'held'])
+// Labels HOW every Base figure this module reports was derived — never maxWithdraw (no ABI
+// fragment for it exists in this codebase), never per-child yield attribution. See
+// baseChildPositions.js's readBasePositions docblock for the same rule at the read layer.
+const BASE_VALUATION_KIND = 'convertToAssets-current-estimate'
 
 function amountOf(units) {
   return { token: TOKEN, units: String(units), decimals: SOROBAN_DECIMALS }
@@ -61,29 +73,40 @@ function buildIdleRead(rawIdle, now) {
   return { state: 'known', amount: amountOf(rawIdle), checkedAt: now }
 }
 
-// Most recent baseChildren entry (by reportedAt) — a bridge agent normally carries exactly one
-// live allocation; if several exist, the freshest evidence is what "this agent's money" means.
-function latestBaseChild(children) {
-  if (!children || children.length === 0) return null
-  return children.reduce((a, b) => (b.reportedAt > a.reportedAt ? b : a))
+// Task 10: the multi-child counterpart of the old single-child `mapExecutionStatus` switch (now
+// deleted -- this fully replaces it) — the most-advanced status among every one of this agent's
+// valid Base children wins
+// ('queued' only when EVERY in-flight child is still queued; any child past that is 'executing';
+// no in-flight child but at least one landed is 'succeeded'; otherwise every child failed).
+// Reduces to the exact old per-child result whenever there is only one child (every existing
+// single-child test keeps its exact expectation).
+function summarizeExecutionStatus(children) {
+  const inFlight = children.filter(
+    (c) => c.executionStatus !== 'failed' && !TERMINAL_BASE_STATUSES.has(c.executionStatus)
+  )
+  if (inFlight.length > 0) {
+    return inFlight.every((c) => c.executionStatus === 'queued') ? 'queued' : 'executing'
+  }
+  if (children.some((c) => TERMINAL_BASE_STATUSES.has(c.executionStatus))) return 'succeeded'
+  return 'failed'
 }
 
-function mapExecutionStatus(associationStatus) {
-  switch (associationStatus) {
-    case 'queued':
-      return 'queued'
-    case 'accepted':
-    case 'burn-confirmed':
-    case 'minted':
-      return 'executing'
-    case 'deposited':
-    case 'held':
-      return 'succeeded'
-    case 'failed':
-      return 'failed'
-    default:
-      return 'unknown'
-  }
+// Review round 1, finding 5 (Critical->Important, fixed): 'failed' is deliberately ABSENT from
+// this ranked list. It used to rank above 'deposited'/'held', so a failed sibling could win the
+// representative slot over money a live read just proved landed. An unranked status falls to
+// `?? -1` below, so any real progress (even 'queued') always beats a failed sibling.
+const STATUS_PROGRESS = new Map(
+  ['queued', 'accepted', 'burn-confirmed', 'minted', 'deposited', 'held'].map((s, i) => [s, i])
+)
+// Which child's own `custody` best represents a whole GROUP: the most-advanced one — once any part
+// of a shared position has landed, the group's honest "home" is wherever it landed, not an
+// earlier in-flight claim. For a single child this trivially returns that child.
+function mostAdvancedChild(children) {
+  return children.reduce((a, b) =>
+    (STATUS_PROGRESS.get(b.executionStatus) ?? -1) > (STATUS_PROGRESS.get(a.executionStatus) ?? -1)
+      ? b
+      : a
+  )
 }
 
 // Fix loop 1, Fix 1 (CRITICAL): `poolAddress` is the EVM pool address readPositions.js returns
@@ -105,6 +128,84 @@ function liveUnitsForPool(liveAccount, poolAddress) {
   // readPositions() filters out zero-share pools entirely (base/readPositions.js) — absence here,
   // once we know the pool WAS queried, is a confirmed zero, not a missing read.
   return pos ? BigInt(pos.assets) : 0n
+}
+
+function sumReported(children) {
+  let sum = 0n
+  let anyKnown = false
+  let rejected = false
+  for (const c of children) {
+    const reported = canonicalizeReportedAmount(c.amount)
+    if (reported) {
+      sum += BigInt(reported.units)
+      anyKnown = true
+    } else {
+      rejected = true
+    }
+  }
+  return { sum, anyKnown, rejected }
+}
+
+// Task 10: values ONE Base position group (every child sharing the same kernel+vault+asset — see
+// baseChildPositions.js's normalizeBaseChildren). Terminal children (deposited/held) are merged
+// on-chain already; in-flight children have not landed yet.
+//
+// Review round 1, finding 1 (Critical, fixed): a group is valued from the live on-chain balance
+// OR from reported evidence, NEVER additively from both. The live balance for a kernel+pool
+// already IS the whole current truth the moment it can be read — it was double-counting to also
+// add an in-flight sibling's reported amount on top, because that sibling's money may already be
+// INSIDE the live balance under a stale lifecycle status (a lifecycle report stuck/dead-lettered
+// while the deposit itself already landed). We cannot tell landed-but-unreported apart from
+// genuinely-still-elsewhere, so an in-flight sibling next to a successful live read contributes
+// NOTHING numerically and is flagged `base-inflight-unaccounted` instead — a coverage downgrade,
+// never a guess in either direction. Reported evidence (terminal AND in-flight) is only summed
+// when there is no live read to double-count against at all.
+function valueBaseGroup({ group, children, baseAccountsMap }) {
+  const terminal = children.filter((c) => TERMINAL_BASE_STATUSES.has(c.executionStatus))
+  const inFlight = children.filter(
+    (c) => c.executionStatus !== 'failed' && !TERMINAL_BASE_STATUSES.has(c.executionStatus)
+  )
+  const failed = children.filter((c) => c.executionStatus === 'failed')
+
+  const problems = []
+  let units = 0n
+  let known = false
+  let live = false
+
+  if (terminal.length > 0) {
+    const account = baseAccountsMap.get(group.kernelAddress)
+    const liveUnits = account ? liveUnitsForPool(account, group.poolAddress) : null
+    if (liveUnits != null) {
+      // The live balance IS the whole truth for this kernel+pool right now — report it alone.
+      units = liveUnits * BASE_TO_CANONICAL_SCALE
+      known = true
+      live = true
+      if (inFlight.length > 0) problems.push('base-inflight-unaccounted')
+    } else {
+      problems.push('base-read-unavailable')
+      // No live confirmation exists for this group at all — fall back to the sum of every
+      // child's own reported evidence (terminal AND in-flight; nothing to double-count against).
+      const { sum, anyKnown, rejected } = sumReported([...terminal, ...inFlight])
+      if (rejected) problems.push('base-reported-amount-rejected')
+      if (anyKnown) {
+        units = sum
+        known = true
+      }
+    }
+  } else {
+    // Nothing has landed yet — no live read applies; sum whatever is reported in-flight (mirrors
+    // the pre-Task-10 single-child rule exactly).
+    const { sum, anyKnown, rejected } = sumReported(inFlight)
+    if (rejected) problems.push('base-reported-amount-rejected')
+    if (anyKnown) {
+      units = sum
+      known = true
+    }
+  }
+
+  if (failed.length > 0) problems.push('base-execution-failed')
+
+  return { units: known ? units : null, problems, live }
 }
 
 // Fix loop 2, Fix 3 (bullet 1): both records below used to hardcode `custody: {location:'unknown'}`
@@ -182,6 +283,54 @@ function isLegKnown(read) {
   return read?.state === 'known' && read.amount != null
 }
 
+function isKnownPositiveAmount(amount) {
+  return amount != null && BigInt(amount.units) > 0n
+}
+
+// Fix loop 1, Fixes 2 & 3: a per-agent `amount` can be non-null yet still be incomplete evidence
+// — a stale Base figure kept only because the live read couldn't run, or the Stellar-only
+// remainder of a Base leg that outright failed. These problem markers say the underlying READ was
+// incomplete, which is a different axis from scope-revoked/scope-expired (a fully-known balance
+// that simply can't move right now — see the "revoked-but-funded" product truth) and must not be
+// conflated with it. Hoisted above readOneAgentMoney/readOwnerMoney (was previously declared only
+// beside aggregateOwnerPositions) so readOwnerMoney's own owner-wide completeness gate (review
+// round 1, finding 4) can share this exact set rather than re-deriving it.
+const READ_INCOMPLETE_PROBLEMS = new Set([
+  'vault-shares-unavailable',
+  'idle-token-unavailable',
+  'base-read-unavailable',
+  'base-execution-failed',
+  'base-reported-amount-rejected',
+  'base-child-invalid',
+  'base-child-conflict',
+  'base-inflight-unaccounted',
+])
+
+// Review round 1, finding 8: a real, catalog-backed pool name for a Base leg's identity, so the
+// renderer can show WHICH pool a leg belongs to instead of two visually identical rows.
+function poolNameFor(poolAddress) {
+  const cat = BASE_POOL_CATALOG.find(
+    (p) => p.address.toLowerCase() === String(poolAddress ?? '').toLowerCase()
+  )
+  return cat?.name ?? null
+}
+
+// Review round 1, finding 6: derives a leg's coverage reason from the SIGNAL that actually caused
+// it, instead of the old `live ? null : 'stale'` ternary (which mislabeled every in-flight group
+// and every failed live-re-read as 'stale'). 'stale' is reserved for R2's own meaning — the
+// association RECORD itself hasn't been updated recently (`child.freshness`) — never conflated
+// with a read failure or an ordinary in-flight bridge.
+function coverageReasonFor({ units, groupProblems, groupChildren }) {
+  if (units == null) return 'unavailable'
+  if (
+    groupProblems.includes('base-read-unavailable') ||
+    groupProblems.includes('base-inflight-unaccounted')
+  )
+    return 'unavailable'
+  if (groupChildren.some((c) => c.freshness === 'stale')) return 'stale'
+  return null
+}
+
 async function readOneAgentMoney({
   row,
   readVaultShares,
@@ -229,51 +378,47 @@ async function readOneAgentMoney({
   if (vaultShares.state === 'unavailable') problems.push('vault-shares-unavailable')
   if (idleToken.state === 'unavailable') problems.push('idle-token-unavailable')
 
-  const child = latestBaseChild(row.baseChildren)
+  // Task 10: every valid Base child survives, grouped by the real on-chain position it shares
+  // with any sibling — never a single picked "latest" child.
+  const normalized = normalizeBaseChildren(row.baseChildren)
+  if (normalized.invalid.length > 0) problems.push('base-child-invalid')
+  if (normalized.conflicts.length > 0) problems.push('base-child-conflict')
+
   let amount = null
   let executionStatus = 'idle'
-  let baseUnits = null // null = the Base leg contributes nothing known this round; hoisted out of
-  // the `if (child)` block below so custodyBreakdownForAgent can see it too (fix loop 2, Fix 1).
+  // Every base leg this agent can prove, each carrying its OWN real identity (kernelAddress +
+  // poolAddress) — the fix for PositionList.jsx's key collision (two Base children on one agent
+  // used to render on the exact same React key): each leg here is distinguishable.
+  const baseLegs = []
 
-  if (child) {
-    executionStatus = mapExecutionStatus(child.executionStatus)
+  if (normalized.groups.length > 0) {
+    executionStatus = summarizeExecutionStatus(normalized.children)
 
-    if (TERMINAL_BASE_STATUSES.has(child.executionStatus)) {
-      // Funds are claimed to have landed at a queryable proxy — cross-check with a live read
-      // rather than trusting the report's snapshot amount forever (the owner may have withdrawn
-      // since the association was written; a live read is the current source of truth).
-      const live = baseAccountsMap.get(String(child.kernelAddress).toLowerCase())
-      const liveUnits = live ? liveUnitsForPool(live, child.poolAddress) : null
-      if (liveUnits != null) {
-        baseUnits = liveUnits * BASE_TO_CANONICAL_SCALE
-      } else {
-        problems.push('base-read-unavailable')
-        // Fall back to the durable evidence rather than nulling it out — Task 5's association
-        // already passed its own on-chain scope re-check before being written; it is stale
-        // evidence, not a guess. Still visible in `amount` below; aggregateOwnerPositions
-        // downgrades the owner-level total to 'partial' on this same problem marker rather than
-        // trusting it as fresh (fix loop 1, Fix 2).
-        const reported = canonicalizeReportedAmount(child.amount)
-        baseUnits = reported ? BigInt(reported.units) : null
-      }
-    } else if (child.executionStatus === 'failed') {
-      problems.push('base-execution-failed')
-      // Fix loop 1, Fix 3: failed evidence cannot say where the BASE leg ended up, but it says
-      // nothing about the Stellar leg (read independently above) — only the Base contribution
-      // fails closed here; it no longer nulls the whole agent's amount.
-    } else {
-      // queued / accepted / burn-confirmed / minted: in flight. No live proxy read applies yet
-      // (the funds have not landed anywhere queryable) — the reported amount is the current truth.
-      const reported = canonicalizeReportedAmount(child.amount)
-      if (reported) {
-        baseUnits = BigInt(reported.units)
-      } else {
-        baseUnits = null
-        // Fix loop 2, Fix 3 (bullet 2): canonicalizeReportedAmount's own rejection (the reported
-        // figure is finer than canonical precision — see its comment above) used to fall through
-        // silently here with no marker, so a Stellar-only remainder could look like a fully known
-        // amount at the aggregate even though real Base evidence was discarded underneath it.
-        problems.push('base-reported-amount-rejected')
+    let anyGroupKnown = false
+    let totalBaseUnits = 0n
+    for (const group of normalized.groups) {
+      const groupChildren = normalized.children.filter((c) =>
+        group.childAllocationIds.includes(c.allocationId)
+      )
+      const { units, problems: groupProblems } = valueBaseGroup({
+        group,
+        children: groupChildren,
+        baseAccountsMap,
+      })
+      problems.push(...groupProblems)
+      const representative = mostAdvancedChild(groupChildren)
+      baseLegs.push({
+        location: representative.custody?.location ?? 'unknown',
+        amount: units != null ? amountOf(units) : null,
+        kernelAddress: group.kernelAddress,
+        poolAddress: group.poolAddress,
+        asset: group.asset,
+        poolName: poolNameFor(group.poolAddress),
+        coverageReason: coverageReasonFor({ units, groupProblems, groupChildren }),
+      })
+      if (units != null) {
+        anyGroupKnown = true
+        totalBaseUnits += units
       }
     }
 
@@ -282,11 +427,11 @@ async function readOneAgentMoney({
     // Stellar dust). Only truly nothing-known-anywhere stays null.
     const stellarUnits = knownLegUnits(vaultShares) + knownLegUnits(idleToken)
     const stellarKnown = isLegKnown(vaultShares) || isLegKnown(idleToken)
-    if (baseUnits != null || stellarKnown) {
-      amount = amountOf((baseUnits ?? 0n) + stellarUnits)
+    if (anyGroupKnown || stellarKnown) {
+      amount = amountOf(totalBaseUnits + stellarUnits)
     }
   } else if (vaultShares.state === 'known' && idleToken.state === 'known') {
-    // Fix loop 2, Fix 3 (bullet 4): unlike the `if (child)` branch above (which sums whatever legs
+    // Fix loop 2, Fix 3 (bullet 4): unlike the base-groups branch above (which sums whatever legs
     // are individually known, tolerating one side being unread), a non-bridge agent requires BOTH
     // legs known before reporting any amount at all. That's safe specifically because there is no
     // in-flight child to race against: crossChainFarm.js awaits the burn (`burn(...)`, line ~116)
@@ -297,22 +442,63 @@ async function readOneAgentMoney({
     amount = amountOf(BigInt(vaultShares.amount.units) + BigInt(idleToken.amount.units))
   }
 
-  const custody = custodyForAgent({
-    scope,
-    vaultShares,
-    idleToken,
-    baseChild: child ? { custody: child.custody } : null,
-  })
-  // Fix loop 2, Fix 1: per-leg counterpart to `custody` above — empty for any agent without a
-  // Base child (custody.location is already that agent's one real location; nothing to split).
-  const custodyBreakdown = custodyBreakdownForAgent({
-    scope,
-    vaultShares,
-    idleToken,
-    baseChild: child
-      ? { custody: child.custody, amount: baseUnits != null ? amountOf(baseUnits) : null }
-      : null,
-  })
+  // custody / custodyBreakdown: zero or one base leg routes through custody.js unchanged (byte-
+  // identical to the pre-Task-10 single-child behaviour); two or more distinct base positions
+  // can't be honestly represented by custody.js's single-`baseChild` API, so they're composed
+  // directly here, mirroring its own "two independently-known legs can't be one location" rule.
+  let custody
+  let custodyBreakdown
+  if (baseLegs.length <= 1) {
+    const leg = baseLegs[0] ?? null
+    custody = custodyForAgent({
+      scope,
+      vaultShares,
+      idleToken,
+      baseChild: leg ? { custody: { location: leg.location } } : null,
+    })
+    custodyBreakdown = custodyBreakdownForAgent({
+      scope,
+      vaultShares,
+      idleToken,
+      baseChild: leg ? { custody: { location: leg.location }, amount: leg.amount } : null,
+    }).map((entry) =>
+      leg && entry.amount === leg.amount
+        ? {
+            ...entry,
+            kernelAddress: leg.kernelAddress,
+            poolAddress: leg.poolAddress,
+            asset: leg.asset,
+            poolName: leg.poolName,
+            coverageReason: leg.coverageReason,
+          }
+        : entry
+    )
+  } else {
+    custodyBreakdown = []
+    if (scope.state === 'known') {
+      if (isKnownPositiveAmount(vaultShares.amount) && vaultShares.state === 'known')
+        custodyBreakdown.push({ location: 'stellar-vault', amount: vaultShares.amount })
+      if (isKnownPositiveAmount(idleToken.amount) && idleToken.state === 'known')
+        custodyBreakdown.push({ location: 'agent', amount: idleToken.amount })
+    }
+    for (const leg of baseLegs) {
+      if (leg.amount != null) {
+        custodyBreakdown.push({
+          location: leg.location,
+          amount: leg.amount,
+          kernelAddress: leg.kernelAddress,
+          poolAddress: leg.poolAddress,
+          asset: leg.asset,
+          poolName: leg.poolName,
+          coverageReason: leg.coverageReason,
+        })
+      }
+    }
+    // Two or more distinct Base positions are, by construction, two or more distinct places —
+    // never collapsible to one honest `location` string, regardless of whether every leg's
+    // amount happened to resolve.
+    custody = { location: 'unknown' }
+  }
 
   return {
     address,
@@ -328,20 +514,36 @@ async function readOneAgentMoney({
 }
 
 /**
- * @param {{owner?: string, discovery: object, stellar?: object, base?: object, now?: number}} p
+ * @param {{owner?: string, discovery: object, stellar?: object, base?: object,
+ *   associationDelivery?: {events?: Array<{allocationId?:string, status:string}>}|null,
+ *   now?: number}} p
  *   `discovery` is an OwnerDiscoveryV1 envelope (ownerDiscovery.js). `stellar`/`base` are
  *   injectable read seams (tests); production defaults are the real Stellar RPC reads and
- *   dashboardPositions.js's loadIndexedBasePositions.
+ *   dashboardPositions.js's loadIndexedBasePositions. `associationDelivery` is an OPTIONAL
+ *   injected input (Task 10, R2) -- the relayer's own dead-letter signal
+ *   (`GET /status/:jobId`'s `associationDelivery.events[].status==='dead'`) is not wired through
+ *   any UI-facing code path today (crossChainFarm.js's runFarmFlow drops it -- see
+ *   task-10-interface-notes.md's Known Hazards table); a caller that DOES have it can pass it here.
+ *   Its absence never upgrades `associationCoverage`: per R2's constraint 1, an owner with at
+ *   least one Base child and no supplied `associationDelivery` reads `associationCoverage:
+ *   {state:'unknown', reasons:['unavailable']}` (fail closed) until a caller actually wires this
+ *   through — not `'complete'` merely because nothing contradicted it.
  * @returns {Promise<{status:'complete'|'partial'|'unavailable', owner:string|null,
  *   networkId:string|null, checkedAt:number, agents:Array, baseBindingStatus:string,
  *   baseIdle:Array<{kernelAddress:string, state:'known'|'unavailable', amount:object|null,
- *   checkedAt:number}>, stellarYield:{state:string, apy:number|null}}>}
+ *   checkedAt:number}>, stellarYield:{state:string, apy:number|null},
+ *   stellarSubtotalUnits:bigint, baseSubtotalUnits:bigint, completeBaseTotalUnits:bigint|null,
+ *   overallTotalUnits:bigint|null, baseValuationKind:string,
+ *   associationCoverage:{state:'complete'|'partial'|'unknown', reasons:string[]},
+ *   baseSourceCoverage:{state:'complete'|'unknown'},
+ *   basePositionCoverage:{state:'complete'|'partial'|'unknown', reasons:string[]}}>}
  */
 export async function readOwnerMoney({
   owner,
   discovery,
   stellar = {},
   base = {},
+  associationDelivery = null,
   now = Date.now(),
 }) {
   const {
@@ -415,6 +617,127 @@ export async function readOwnerMoney({
       aprBps != null ? { state: 'live', apy: aprBps / 100 } : { state: 'unavailable', apy: null }
   }
 
+  // --- Task 10: owner-wide subtotal + coverage composition (additive — R7). Computed from the
+  // OWNER-WIDE normalized group set (not summed per-agent) so a kernel+vault shared by more than
+  // one agent is valued exactly once, never double-counted, the same way baseIdle already avoids
+  // double-counting shared kernel idle balances above. ---
+  const allBaseChildren = rows.flatMap((row) => row.baseChildren ?? [])
+  const ownerNormalized = normalizeBaseChildren(allBaseChildren)
+  // Review round 1, finding 2 (Critical, fixed): no producer in this tree ever emits
+  // `baseChildren` as null/missing — `joinBaseAssociations` (associations.js) and
+  // `ownerDiscovery.js`'s `placeholderApiFields` both always stamp `[]`, including the exact
+  // "genuinely unavailable, never indexed" case. Testing for a shape nothing ever produces was a
+  // dead branch that always read `false`, so an unreadable Base source silently passed as
+  // positively-confirmed-empty. The one real, always-present signal for "did we get a complete
+  // enumeration of this owner's agents (and therefore their Base children)" is the envelope's own
+  // `status` — anything short of 'complete' means some agent, and therefore possibly its Base
+  // children, may be missing from `rows` entirely. Fail closed on that instead.
+  const sourceUnknown = discovery?.status !== 'complete'
+
+  const stellarSubtotalUnits = agents.reduce(
+    (sum, a) => sum + knownLegUnits(a.vaultShares) + knownLegUnits(a.idleToken),
+    0n
+  )
+  const stellarFullyKnown =
+    discovery?.status === 'complete' &&
+    agents.every((a) => isLegKnown(a.vaultShares) && isLegKnown(a.idleToken))
+
+  let terminalGroupsTotal = 0
+  let terminalGroupsLive = 0
+  let baseSubtotalUnits = 0n
+  let anyGroupUnknown = false
+  // Review round 1, finding 4 (Important, fixed): the old loop kept only `{units, live}`,
+  // discarding `valueBaseGroup`'s own `problems` — so a group could carry a
+  // READ_INCOMPLETE_PROBLEMS marker (e.g. a failed sibling, an unaccounted in-flight sibling) and
+  // still count as fully complete here, while `aggregateOwnerPositions` downgraded to 'partial' on
+  // the IDENTICAL evidence. Any such marker on any group now clears completeness.
+  let anyGroupIncomplete = false
+  for (const group of ownerNormalized.groups) {
+    const groupChildren = ownerNormalized.children.filter((c) =>
+      group.childAllocationIds.includes(c.allocationId)
+    )
+    const {
+      units,
+      live,
+      problems: groupProblems,
+    } = valueBaseGroup({ group, children: groupChildren, baseAccountsMap })
+    if (group.hasTerminal) {
+      terminalGroupsTotal += 1
+      if (live) terminalGroupsLive += 1
+    }
+    if (units != null) baseSubtotalUnits += units
+    else anyGroupUnknown = true
+    if (groupProblems.some((p) => READ_INCOMPLETE_PROBLEMS.has(p))) anyGroupIncomplete = true
+  }
+
+  const hasTaintedEvidence =
+    ownerNormalized.invalid.length > 0 || ownerNormalized.conflicts.length > 0
+  const hasStaleAssociation = ownerNormalized.children.some((c) => c.freshness === 'stale')
+  const hasDeadLetter = (associationDelivery?.events ?? []).some((e) => e?.status === 'dead')
+  const hasChildren = ownerNormalized.children.length > 0
+  const deliveryEvidenceSupplied = associationDelivery != null
+
+  let associationState = 'complete'
+  const associationReasons = []
+  if (sourceUnknown || (ownerNormalized.children.length === 0 && hasTaintedEvidence)) {
+    // The source itself couldn't be read, or every reported child was untrustworthy — nothing
+    // usable survived to reason about.
+    associationState = 'unknown'
+    associationReasons.push('unavailable')
+  } else if (hasChildren && !deliveryEvidenceSupplied) {
+    // Review round 1, finding 3 (Important, fixed): R2's hard constraint 1 — "not being handed
+    // delivery evidence must never produce 'complete'. Fail closed." — is stricter than the plain
+    // per-signal mapping below. An owner with zero children still stays 'complete' (nothing was
+    // ever expected here); an owner with at least one child but no supplied delivery evidence
+    // cannot claim complete delivery coverage on a signal it never observed.
+    associationState = 'unknown'
+    associationReasons.push('unavailable')
+  } else {
+    if (hasTaintedEvidence) {
+      associationState = 'partial'
+      associationReasons.push('unavailable')
+    }
+    if (hasStaleAssociation) {
+      associationState = 'partial'
+      associationReasons.push('stale')
+    }
+    if (hasDeadLetter) {
+      associationState = 'partial'
+      associationReasons.push('dead-letter')
+    }
+  }
+  const associationCoverage = { state: associationState, reasons: associationReasons }
+  const baseSourceCoverage = { state: sourceUnknown ? 'unknown' : 'complete' }
+
+  // Review round 1, finding 4's second bullet (fixed): an all-failed group has no terminal child
+  // (hasTerminal stays false), so it never touched terminalGroupsTotal/Live at all — the old
+  // `terminalGroupsTotal === 0 -> 'complete'` branch silently called that "complete" even though
+  // its own value is unknown. `anyGroupUnknown` now gates the zero-terminal-groups case too.
+  const basePositionState =
+    terminalGroupsTotal > 0 && terminalGroupsLive < terminalGroupsTotal
+      ? terminalGroupsLive === 0
+        ? 'unknown'
+        : 'partial'
+      : anyGroupUnknown
+        ? 'unknown'
+        : 'complete'
+  const basePositionCoverage = {
+    state: basePositionState,
+    reasons: basePositionState === 'complete' ? [] : ['unavailable'],
+  }
+
+  const baseFullyComplete =
+    !anyGroupUnknown &&
+    !anyGroupIncomplete &&
+    associationState === 'complete' &&
+    basePositionState === 'complete' &&
+    baseSourceCoverage.state === 'complete'
+  const completeBaseTotalUnits = baseFullyComplete ? baseSubtotalUnits : null
+  const overallTotalUnits =
+    stellarFullyKnown && completeBaseTotalUnits != null
+      ? stellarSubtotalUnits + completeBaseTotalUnits
+      : null
+
   return {
     status: discovery?.status ?? 'unavailable',
     owner: owner ?? discovery?.owner ?? null,
@@ -424,30 +747,16 @@ export async function readOwnerMoney({
     baseBindingStatus: baseResult.status,
     baseIdle,
     stellarYield,
+    stellarSubtotalUnits,
+    baseSubtotalUnits,
+    completeBaseTotalUnits,
+    overallTotalUnits,
+    baseValuationKind: BASE_VALUATION_KIND,
+    associationCoverage,
+    baseSourceCoverage,
+    basePositionCoverage,
   }
 }
-
-/**
- * Pure aggregate over a readOwnerMoney() envelope. `confirmedTotal.state` can never read 'known'
- * unless BOTH the discovery envelope was 'complete' AND every enumerated agent's amount was
- * itself known — an incomplete agent set or any single unread agent downgrades to 'partial' (the
- * best-known sum still ships, just honestly labeled), and a wholly unavailable discovery reports
- * `amount: null` rather than a deceptive $0.
- * @param {{status:string, agents:Array, stellarYield?:object}} reads readOwnerMoney()'s envelope
- */
-// Fix loop 1, Fixes 2 & 3: a per-agent `amount` can be non-null yet still be incomplete evidence
-// — a stale Base figure kept only because the live read couldn't run, or the Stellar-only
-// remainder of a Base leg that outright failed. These problem markers say the underlying READ was
-// incomplete, which is a different axis from scope-revoked/scope-expired (a fully-known balance
-// that simply can't move right now — see the "revoked-but-funded" product truth) and must not be
-// conflated with it.
-const READ_INCOMPLETE_PROBLEMS = new Set([
-  'vault-shares-unavailable',
-  'idle-token-unavailable',
-  'base-read-unavailable',
-  'base-execution-failed',
-  'base-reported-amount-rejected',
-])
 
 export function aggregateOwnerPositions(reads) {
   const agents = reads?.agents ?? []
@@ -486,6 +795,23 @@ export function aggregateOwnerPositions(reads) {
   }
 
   const state = status === 'unavailable' ? 'unavailable' : anyUnread ? 'partial' : 'known'
+
+  // Final review, Fix 1 (CRITICAL): a Base kernel+pool shared by more than one agent (several
+  // bridge agents legitimately sharing one kernel -- see this file's own header) folds its WHOLE
+  // live balance into EVERY agent that independently reports a child pointing at it, so summing
+  // agents[].amount double(N)-counts every shared group. readOwnerMoney already computes the
+  // correct, owner-wide-deduped total for exactly this reason -- stellarSubtotalUnits sums each
+  // agent's OWN legs (never shared across agents, so no dedup needed there) and baseSubtotalUnits
+  // sums each owner-wide GROUP exactly once (:637-671) -- use that when the caller supplies it
+  // (every real readOwnerMoney() result does). `knownUnits` (the old per-agent sum, still used
+  // above for `anyUnread`/custodyBreakdown/state) stays the fallback for callers/tests that hand
+  // this function a bare {status, agents} fixture without those fields; `state` itself is entirely
+  // unaffected by this substitution.
+  const dedupedUnits =
+    reads?.stellarSubtotalUnits != null && reads?.baseSubtotalUnits != null
+      ? reads.stellarSubtotalUnits + reads.baseSubtotalUnits
+      : knownUnits
+
   const hasVaultCustody = agents.some(hasKnownVaultLeg)
   // Fix loop 1, Fix 7: 'no yield' is a positive claim that no vault money exists anywhere for
   // this owner — it can only be asserted once the total itself is fully known. A 'partial' or
@@ -514,7 +840,7 @@ export function aggregateOwnerPositions(reads) {
     status,
     confirmedTotal: {
       state,
-      amount: state === 'unavailable' ? null : amountOf(knownUnits),
+      amount: state === 'unavailable' ? null : amountOf(dedupedUnits),
     },
     // Base Sepolia pools are honest ERC-4626 1:1 custody proxies, not live yield venues — never
     // attribute Autofarm/Blend's live APR to confirmed money that is entirely Base custody.

@@ -4,7 +4,12 @@ vi.mock('./client.js', () => ({
   buildInvokeTx: vi.fn(async () => ({ xdr: 'BUILT' })),
   submitUserTx: vi.fn(async () => ({ hash: 'h1', status: 'SUCCESS' })),
 }))
-vi.mock('./walletKit.js', () => ({ signTxXdr: vi.fn(async () => 'SIGNED') }))
+const signReviewedTransactionMock = vi.fn(async () => 'SIGNED_REVIEWED')
+vi.mock('./walletKit.js', () => ({
+  signTxXdr: vi.fn(async () => 'SIGNED'),
+  signReviewedTransaction: (...a) => signReviewedTransactionMock(...a),
+  getActiveAccount: vi.fn(),
+}))
 const submitViaRelayMock = vi.fn()
 const getRelayerAddressMock = vi.fn()
 vi.mock('./relay.js', () => ({
@@ -34,6 +39,14 @@ const RELAYER_G = Keypair.random().publicKey() // any well-formed G — never as
 const AGENT = 'CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC'
 const AGENT2 = 'CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77'
 const ROUTER = 'CDGDIPHBN3MSNURDX33IZBXXQTJPT7THAXSMVBAIOIXLOA6OF32IRS2J'
+const ACTIVE_G = Object.freeze({
+  version: 1,
+  kind: 'G',
+  address: OWNER,
+  networkPassphrase: 'Test SDF Network ; September 2015',
+  connectorId: 'freighter',
+  epoch: 41,
+})
 
 /** A `sweep` retval as the chain sends it: Vec<i128> of the amount each agent gave up. */
 const sweptScVal = (amounts) => xdr.ScVal.scvVec(amounts.map((a) => i128ScVal(a)))
@@ -46,6 +59,7 @@ beforeEach(() => {
   submitViaRelayMock.mockReset()
   getRelayerAddressMock.mockReset()
   signOwnerAuthEntryMock.mockReset()
+  signReviewedTransactionMock.mockClear()
   signTxXdr.mockClear()
 })
 
@@ -55,6 +69,11 @@ describe('ownerWithdraw', () => {
     expect(buildInvokeTx).toHaveBeenCalledWith(
       expect.objectContaining({ source: OWNER, contract: AGENT, method: 'owner_withdraw' })
     )
+  })
+
+  it('always derives the ordinary direct-exit recipient from the stored owner', async () => {
+    await ownerWithdraw({ owner: OWNER, agentAddress: AGENT, to: RELAYER_G })
+    expect(buildInvokeTx.mock.calls[0][0].args).toEqual([{ addr: OWNER }])
   })
 
   it('requires an agentAddress rather than sweeping an implicit default', async () => {
@@ -147,6 +166,12 @@ describe('sweepAgents', () => {
     expect(call.args[1].vec()).toHaveLength(2)
     expect(out.swept).toEqual([50_000_000n, 20_000_000n])
     expect(out.txHashes).toEqual(['sweep1', 'sweep1'])
+  })
+
+  it('always derives the ordinary sweep recipient from the stored owner', async () => {
+    submitUserTx.mockResolvedValueOnce({ hash: 'sweep-owner', status: 'SUCCESS' })
+    await sweepAgents({ owner: OWNER, agentAddresses: AGENTS, to: RELAYER_G, router: ROUTER })
+    expect(buildInvokeTx.mock.calls[0][0].args[2]).toEqual({ addr: OWNER })
   })
 
   it('uses an injected sign (e.g. a script signing off-browser) instead of the wallet-kit default', async () => {
@@ -262,6 +287,36 @@ describe('sweepAgents', () => {
     // 4 blew the budget -> retried as 2 + 2.
     expect(buildInvokeTx.mock.calls.map((c) => c[0].args[1].vec().length)).toEqual([4, 2, 2])
     expect(out.swept).toEqual([7n, 7n, 7n, 7n])
+  })
+
+  it('preserves the reviewed V1 capability across recursive budget splits and signs every G chunk', async () => {
+    buildInvokeTx
+      .mockRejectedValueOnce(new Error('HostError: Error(Budget, ExceededLimit)'))
+      .mockResolvedValue({
+        xdr: 'BUILT',
+        tx: { hash: () => Buffer.from('11'.repeat(32), 'hex') },
+      })
+    submitUserTx.mockResolvedValue({
+      hash: 'half',
+      status: 'SUCCESS',
+      returnValue: sweptScVal([7n, 7n]),
+    })
+
+    await sweepAgents({
+      owner: OWNER,
+      agentAddresses: manyAgents(4),
+      router: ROUTER,
+      chunkSize: 4,
+      activeAccount: ACTIVE_G,
+      getCurrentActiveAccount: () => ACTIVE_G,
+    })
+
+    expect(signReviewedTransactionMock).toHaveBeenCalledTimes(2)
+    for (const [request] of signReviewedTransactionMock.mock.calls) {
+      expect(request.activeAccount).toBe(ACTIVE_G)
+      expect(request.getCurrentActiveAccount()).toBe(ACTIVE_G)
+    }
+    expect(signTxXdr).not.toHaveBeenCalled()
   })
 
   it('keeps a batch that swept, even when another batch fails outright', async () => {

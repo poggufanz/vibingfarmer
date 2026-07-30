@@ -338,6 +338,60 @@ describe('planPartialExit', () => {
     expect(plan.reason).toBe('exceeds-max')
   })
 
+  // Defect: a different token can be compared numerically with the selected Stellar-vault leg.
+  test('rejects an amount token mismatch before comparing the available balance', () => {
+    const agent = moneyRow('CA1', {
+      custody: { location: 'stellar-vault' },
+      amount: usdc(1_000_000),
+    })
+    agent.scopeReadStatus = 'ok'
+    agent.revoked = false
+    agent.expiry = 0
+    const plan = planPartialExit({
+      agent,
+      amount: { token: 'EURC', units: '9000000', decimals: 7 },
+      account,
+    })
+    expect(plan.ok).toBe(false)
+    expect(plan.reason).toBe('asset-mismatch')
+  })
+
+  // Defect: units at different decimal scales can be compared as though they represented one asset.
+  test('rejects an amount decimals mismatch before comparing the available balance', () => {
+    const agent = moneyRow('CA1', {
+      custody: { location: 'stellar-vault' },
+      amount: usdc(1_000_000),
+    })
+    agent.scopeReadStatus = 'ok'
+    agent.revoked = false
+    agent.expiry = 0
+    const plan = planPartialExit({
+      agent,
+      amount: { token: 'USDC', units: '9000000', decimals: 6 },
+      account,
+    })
+    expect(plan.ok).toBe(false)
+    expect(plan.reason).toBe('asset-mismatch')
+  })
+
+  // Defect: a successful plan can preserve padded unit text instead of one canonical integer string.
+  test('returns successful partial-exit units as a canonical integer string', () => {
+    const agent = moneyRow('CA1', {
+      custody: { location: 'stellar-vault' },
+      amount: usdc(1_000_000),
+    })
+    agent.scopeReadStatus = 'ok'
+    agent.revoked = false
+    agent.expiry = 0
+    const plan = planPartialExit({
+      agent,
+      amount: { token: 'USDC', units: '0001000', decimals: 7 },
+      account,
+    })
+    expect(plan.ok).toBe(true)
+    expect(plan.amount).toEqual({ token: 'USDC', units: '1000', decimals: 7 })
+  })
+
   test('no known Stellar-vault balance: rejected as balance-unavailable, never a guessed zero', () => {
     const agent = moneyRow('CA1', {
       custody: { location: 'unknown' },

@@ -11,6 +11,11 @@ import {
   handleRead,
   handleBackfillCommit,
   handleAssociationReport,
+  handleReceiptChallenge,
+  handleReceiptWrite,
+  handleBaseChildIntent,
+  handleBaseChildLifecycle,
+  handleReporterReadiness,
   LIVE_MANIFEST,
 } from './handler.js'
 import { AGENT_CREATORS } from '../../src/stellar/agentCreatorManifest.js'
@@ -26,6 +31,8 @@ function fakeD1() {
   sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0002_agent_index.sql'), 'utf8'))
   sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0003_agent_index_bounds.sql'), 'utf8'))
   sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0004_agent_associations.sql'), 'utf8'))
+  sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0005_execution_receipts.sql'), 'utf8'))
+  sqlite.exec(readFileSync(join(MIGRATIONS_DIR, '0006_base_child_intents.sql'), 'utf8'))
   function bound(sql, args) {
     return {
       run() {
@@ -62,11 +69,255 @@ function fakeD1() {
   }
 }
 
+describe('handleReporterReadiness', () => {
+  it('acknowledges only the canonical receipt and Base-child store proof', async () => {
+    const out = await handleReporterReadiness({
+      store: createAgentIndexStore(fakeD1()),
+      secret: 'reporter-secret',
+      providedSecret: 'reporter-secret',
+    })
+    expect(out).toEqual({
+      status: 200,
+      body: {
+        ready: true,
+        schemaVersion: 1,
+        stores: { executionReceipts: true, baseChildIntents: true },
+      },
+    })
+  })
+
+  it.each([
+    [
+      'wrong schema acknowledgement',
+      {
+        writable: true,
+        schemaVersion: 2,
+        stores: { executionReceipts: true, baseChildIntents: true },
+      },
+    ],
+    [
+      'missing receipt-store acknowledgement',
+      { writable: true, schemaVersion: 1, stores: { baseChildIntents: true } },
+    ],
+    [
+      'missing Base-child-store acknowledgement',
+      { writable: true, schemaVersion: 1, stores: { executionReceipts: true } },
+    ],
+  ])('fails closed on %s', async (_label, readiness) => {
+    const out = await handleReporterReadiness({
+      store: { probeReadiness: async () => readiness },
+      secret: 'reporter-secret',
+      providedSecret: 'reporter-secret',
+    })
+    expect(out).toMatchObject({ status: 503, body: { configured: true } })
+  })
+})
+
+describe('authenticated receipt handlers', () => {
+  it('fails closed when D1 or the on-chain authority reader is unavailable', async () => {
+    const request = {
+      networkId: 'stellar-testnet',
+      owner: OWNER_A,
+      agent: AGENT_A,
+      requestDigest: 'a'.repeat(64),
+    }
+    await expect(
+      handleReceiptChallenge({ request, store: null, authorityReader: null })
+    ).resolves.toMatchObject({ status: 503 })
+    await expect(
+      handleReceiptChallenge({
+        request,
+        store: createAgentIndexStore(fakeD1()),
+        authorityReader: null,
+      })
+    ).resolves.toMatchObject({ status: 503 })
+    await expect(
+      handleReceiptWrite({ body: {}, proof: {}, store: null, authorityReader: null })
+    ).resolves.toMatchObject({ status: 503 })
+  })
+
+  it('maps a missing receipt-write authority dependency to a non-disclosing 503', async () => {
+    const out = await handleReceiptWrite({
+      body: { secret: 'private-mutation-value' },
+      proof: { signature: 'private-proof-value' },
+      store: createAgentIndexStore(fakeD1()),
+      authorityReader: null,
+    })
+
+    expect(out).toEqual({ status: 503, body: { error: 'Agent-index dependency unavailable' } })
+    expect(JSON.stringify(out.body)).not.toMatch(/private|mutation|proof|signature/i)
+  })
+
+  it('does not disclose inner authority or database errors', async () => {
+    const out = await handleReceiptChallenge({
+      request: {
+        networkId: 'stellar-testnet',
+        owner: OWNER_A,
+        agent: AGENT_A,
+        requestDigest: 'a'.repeat(64),
+      },
+      store: { issueReceiptChallenge: async () => {} },
+      authorityReader: async () => {
+        throw new Error('soroban rpc endpoint includes private infrastructure details')
+      },
+    })
+    expect(out.status).toBe(503)
+    expect(out.body.error).toBe('Receipt authority is unavailable')
+    expect(JSON.stringify(out.body)).not.toMatch(/soroban|private|infrastructure/i)
+  })
+})
+
 const ROUTER_V1 = AGENT_CREATORS.find(
   (c) => c.address === 'CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5'
 )
 const OWNER_A = 'GAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQDZ7H'
 const AGENT_A = 'CABQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGCK3'
+
+describe('authenticated Base child handlers', () => {
+  const secret = 'server-reporter-secret'
+  const child = (overrides = {}) => ({
+    version: 1,
+    networkId: 'stellar-testnet',
+    owner: OWNER_A,
+    agent: AGENT_A,
+    bindingId: 'binding-42',
+    allocationId: 'run-42:bridge:aave-v3',
+    childId: 'job-42',
+    intent: {
+      token: 'USDC',
+      units: '1000000',
+      decimals: 6,
+      poolAddress: `0x${'11'.repeat(20)}`,
+      proxyTarget: 'aave-v3',
+      bindingHash: 'hash-42',
+      runId: 'run-42',
+      grantTxHash: 'grant-42',
+      kernelAddress: `0x${'22'.repeat(20)}`,
+      baseJobId: 'job-42',
+    },
+    lifecycle: { sequence: 0, status: 'planned', evidence: {}, observedAt: 2_000_000_000_000 },
+    ...overrides,
+  })
+  const identity = {
+    networkId: 'stellar-testnet',
+    owner: OWNER_A,
+    bindingId: 'binding-42',
+    allocationId: 'run-42:bridge:aave-v3',
+    childId: 'job-42',
+  }
+
+  // Defect caught: intent responses did not provide the exact identity/schema acknowledgement the relayer must gate custody on.
+  it('authenticates before write and returns an exact 201 durable acknowledgement', async () => {
+    const store = createAgentIndexStore(fakeD1())
+    const denied = await handleBaseChildIntent({
+      child: child(),
+      configuredNetworkId: 'stellar-testnet',
+      store,
+      secret,
+      providedSecret: 'wrong',
+    })
+    expect(denied).toEqual({ status: 401, body: { error: 'Unauthorized' } })
+    await expect(
+      store.readOwnerBaseChildIntents({ networkId: 'stellar-testnet', owner: OWNER_A })
+    ).resolves.toHaveLength(0)
+
+    const accepted = await handleBaseChildIntent({
+      child: child(),
+      configuredNetworkId: 'stellar-testnet',
+      store,
+      secret,
+      providedSecret: secret,
+    })
+    expect(accepted).toEqual({
+      status: 201,
+      body: {
+        acknowledged: true,
+        identity,
+        schemaVersion: LIVE_MANIFEST.schemaVersion,
+        written: 1,
+        duplicates: 0,
+        sequence: 0,
+      },
+    })
+  })
+
+  // Defect caught: an exact retry returned a different HTTP contract while conflicting immutable evidence needed a typed 409.
+  it('returns the same 201 acknowledgement for an exact retry and 409 for a conflicting child', async () => {
+    const store = createAgentIndexStore(fakeD1())
+    const args = {
+      child: child(),
+      configuredNetworkId: 'stellar-testnet',
+      store,
+      secret,
+      providedSecret: secret,
+    }
+    await handleBaseChildIntent(args)
+    await expect(handleBaseChildIntent(args)).resolves.toMatchObject({
+      status: 201,
+      body: { acknowledged: true, identity, duplicates: 1 },
+    })
+    await expect(
+      handleBaseChildIntent({
+        ...args,
+        child: child({ intent: { ...child().intent, units: '2000000' } }),
+      })
+    ).resolves.toMatchObject({ status: 409, body: { error: 'Agent-index mutation conflict' } })
+  })
+
+  // Defect caught: lifecycle acknowledgements lacked identity/sequence and out-of-order CAS conflicts were ambiguous.
+  it('acknowledges one monotonic lifecycle step and rejects a sequence gap', async () => {
+    const store = createAgentIndexStore(fakeD1())
+    await handleBaseChildIntent({
+      child: child(),
+      configuredNetworkId: 'stellar-testnet',
+      store,
+      secret,
+      providedSecret: secret,
+    })
+    const request = {
+      identity,
+      expectedSequence: 0,
+      lifecycle: {
+        sequence: 1,
+        status: 'submitted',
+        evidence: { executionStatus: 'accepted' },
+        observedAt: 2_000_000_000_100,
+      },
+    }
+    await expect(
+      handleBaseChildLifecycle({
+        request,
+        configuredNetworkId: 'stellar-testnet',
+        store,
+        secret,
+        providedSecret: secret,
+      })
+    ).resolves.toEqual({
+      status: 200,
+      body: {
+        acknowledged: true,
+        identity,
+        sequence: 1,
+        schemaVersion: LIVE_MANIFEST.schemaVersion,
+        written: 1,
+        duplicates: 0,
+      },
+    })
+    await expect(
+      handleBaseChildLifecycle({
+        request: {
+          ...request,
+          expectedSequence: 2,
+          lifecycle: { ...request.lifecycle, sequence: 3 },
+        },
+        configuredNetworkId: 'stellar-testnet',
+        store,
+        secret,
+        providedSecret: secret,
+      })
+    ).resolves.toMatchObject({ status: 409 })
+  })
+})
 
 function deployedRecord({ owner, agent, cap = 1000n, ledger, txHash }) {
   return {
@@ -335,6 +586,24 @@ describe('handleRead — unavailable store never reports complete', () => {
       store: throwingStore,
     })
     expect(out.body.status).toBe('unavailable')
+  })
+
+  // Final review, Fix 2: a store/version skew missing `readOwnerRunAllocations` (the Base
+  // association join) must never silently masquerade as "complete, no Base children" -- it must
+  // fail the same way `!store` and a thrown read already do, never fall back to `[]`.
+  it('returns unavailable (not agents:[] + complete) when the store lacks readOwnerRunAllocations', async () => {
+    const skewedStore = {
+      readOwnerMemberships: async () => [],
+      readCoverage: async () => ({ sources: [], gaps: [], backfillAudits: [] }),
+    }
+    const out = await handleRead({
+      networkId: 'stellar-testnet',
+      owner: OWNER_A,
+      store: skewedStore,
+    })
+    expect(out.status).toBe(200)
+    expect(out.body.status).toBe('unavailable')
+    expect(out.body.agents).toEqual([])
   })
 })
 

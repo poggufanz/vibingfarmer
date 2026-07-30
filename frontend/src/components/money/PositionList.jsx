@@ -47,12 +47,42 @@ function shortAddress(address) {
     : address
 }
 
+// Task 10: readOneAgentMoney can now report more than one Base leg for the same agent (two
+// distinct Base children that landed in two different kernel/pool positions) -- each leg's real
+// identity (kernelAddress + poolAddress) is threaded through so its React key can never collide
+// with a sibling's, and its own honesty coverage reason (readOwnerMoney.js's per-leg
+// `coverageReason`: 'stale'|'unavailable'|'dead-letter'|null) renders right next to it.
+const COVERAGE_REASON_COPY = {
+  stale: 'Confirmed evidence is a little older than usual -- refreshing.',
+  unavailable: 'Could not reconfirm this round -- last known amount shown, not zero.',
+  'dead-letter': 'Delivery report is stuck -- needs attention.',
+}
+
 // One display leg -> { networkId | routeContext, label, amount, key }. `location` values are
 // custody.js's own fixed enum (custody.js:7-14): 'owner'|'agent'|'stellar-vault'|'in-transit'|
 // 'base-proxy'|'unknown'. Every branch below is a real, reachable custody.js output -- nothing
 // invented.
-function legDisplay(location, amount, keySuffix) {
-  const key = `${keySuffix}:${location}`
+function legDisplay(location, amount, keySuffix, identity = {}) {
+  const {
+    kernelAddress = '',
+    poolAddress = '',
+    asset = '',
+    poolName = null,
+    coverageReason = null,
+  } = identity
+  // Review round 1, finding 7: `asset` joins kernelAddress/poolAddress in the key -- the grouping
+  // layer (baseChildPositions.js's groupKeyFor) explicitly allows two groups to share the same
+  // kernel+pool while differing only by asset (the brief's own "same vault with distinct asset"
+  // case), which the OLD two-field key collided on.
+  const key = `${keySuffix}:${location}:${kernelAddress}:${poolAddress}:${asset}`
+  // Review round 1, finding 8: identity reaching the React key fixes React's reconciliation, not
+  // the USER's ability to tell two Base positions apart -- render it too. Only meaningful for legs
+  // that actually carry a real on-chain position identity (Base/in-transit legs); a Stellar leg's
+  // own label is already its full identity.
+  const identityLabel =
+    kernelAddress && poolAddress
+      ? `${poolName ?? shortAddress(poolAddress)} · ${shortAddress(kernelAddress)}`
+      : null
   if (location === 'stellar-vault') {
     return {
       key,
@@ -60,6 +90,8 @@ function legDisplay(location, amount, keySuffix) {
       label: STELLAR_VAULT_DESTINATION,
       amount,
       networkId: 'stellar-testnet',
+      coverageReason,
+      identityLabel: null,
     }
   }
   if (location === 'agent') {
@@ -69,6 +101,8 @@ function legDisplay(location, amount, keySuffix) {
       label: 'Held at your agent (not yet deposited)',
       amount,
       networkId: 'stellar-testnet',
+      coverageReason,
+      identityLabel: null,
     }
   }
   if (location === 'base-proxy') {
@@ -76,16 +110,32 @@ function legDisplay(location, amount, keySuffix) {
     // why the sentence form, not the brief's own two-middle-dot example, is what ships): Foundation's
     // `VenueTruth` primitive already renders this exact fact -- reused verbatim rather than
     // re-typed, so this route can never drift from that single source of truth.
-    return { key, kind: 'base-settled', label: null, amount, networkId: 'base-sepolia' }
+    return {
+      key,
+      kind: 'base-settled',
+      label: null,
+      amount,
+      networkId: 'base-sepolia',
+      coverageReason,
+      identityLabel,
+    }
   }
   if (location === 'in-transit') {
     // Genuinely between chains and we don't know which CCTP phase -- NetworkIdentity.jsx's own
     // 'unknown' transit copy ("Bridge status unknown") is the honest label; never guess a phase.
-    return { key, kind: 'in-transit', label: null, amount }
+    return { key, kind: 'in-transit', label: null, amount, coverageReason, identityLabel }
   }
   // 'owner' / 'unknown': custody.js never returns these for a real, known-positive amount in
   // practice (see this file's header) but a defensive, honest fallback beats a silent drop.
-  return { key, kind: 'stellar', label: 'Location unknown', amount, networkId: 'stellar-testnet' }
+  return {
+    key,
+    kind: 'stellar',
+    label: 'Location unknown',
+    amount,
+    networkId: 'stellar-testnet',
+    coverageReason,
+    identityLabel: null,
+  }
 }
 
 function positionRowFor(agent) {
@@ -93,7 +143,15 @@ function positionRowFor(agent) {
   if (agent.custodyBreakdown?.length) {
     for (const leg of agent.custodyBreakdown) {
       if (isKnownPositive(leg.amount))
-        legs.push(legDisplay(leg.location, leg.amount, agent.address))
+        legs.push(
+          legDisplay(leg.location, leg.amount, agent.address, {
+            kernelAddress: leg.kernelAddress,
+            poolAddress: leg.poolAddress,
+            asset: leg.asset,
+            poolName: leg.poolName,
+            coverageReason: leg.coverageReason,
+          })
+        )
     }
   } else if (isKnownPositive(agent.amount)) {
     legs.push(legDisplay(agent.custody?.location ?? 'unknown', agent.amount, agent.address))
@@ -172,11 +230,19 @@ export function PositionList({ agents = [], unattributed = {} }) {
                           }}
                         />
                       )}
+                      {leg.identityLabel && (
+                        <p className="pc-position-leg-identity">{leg.identityLabel}</p>
+                      )}
                       <MoneyFigure
                         state="current"
                         value={unitsToDisplay(leg.amount.units, leg.amount.decimals)}
                         currency={leg.amount.token}
                       />
+                      {leg.coverageReason && (
+                        <p className="pc-money pc-money--unknown">
+                          {COVERAGE_REASON_COPY[leg.coverageReason] ?? leg.coverageReason}
+                        </p>
+                      )}
                     </li>
                   ))}
                 </ul>

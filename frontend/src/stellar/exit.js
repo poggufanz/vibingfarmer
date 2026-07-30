@@ -11,6 +11,8 @@
 // `ownerWithdraw` is the single-agent primitive underneath, kept as the rollback path for when
 // the exit router is not configured — N agents, N popups, which is what this file used to be.
 import { xdr } from '@stellar/stellar-sdk'
+import { assertActiveAccountBoundary, assertActiveOwner } from './activeAccount.js'
+import { getActiveAccount, signReviewedTransaction } from './walletKit.js'
 import { buildInvokeTx } from './client.js'
 import { signTxXdr } from './walletKit.js'
 import { getRelayerAddress } from './relay.js'
@@ -38,10 +40,35 @@ const isBudgetError = (e) => /Budget|ExceededLimit|ResourceLimitExceeded/i.test(
 
 /** G signs the envelope directly (via the injectable `sign`, default signTxXdr — the wallet-kit
  *  popup); a C owner signs a Soroban auth entry sourced by the relayer. */
-function ownerSign({ built, model, server, kit, sign = signTxXdr }) {
+function ownerSign({
+  built,
+  model,
+  server,
+  kit,
+  sign = signTxXdr,
+  activeAccount,
+  getCurrentActiveAccount,
+  signal,
+}) {
   return model.kind === 'G'
-    ? sign(built.xdr)
-    : signOwnerAuthEntry({ tx: built.tx, contractId: model.contractId, server, kit })
+    ? activeAccount?.version === 1
+      ? signReviewedTransaction({
+          xdr: built.xdr,
+          activeAccount,
+          reviewedTxHash: built.tx.hash().toString('hex'),
+          getCurrentActiveAccount,
+          signal,
+        })
+      : sign(built.xdr)
+    : signOwnerAuthEntry({
+        tx: built.tx,
+        contractId: model.contractId,
+        server,
+        kit,
+        activeAccount,
+        getCurrentActiveAccount,
+        signal,
+      })
 }
 
 /**
@@ -49,8 +76,26 @@ function ownerSign({ built, model, server, kit, sign = signTxXdr }) {
  * position in the caller's full list). Halves and retries on a budget overrun: simulation raises
  * that inside buildInvokeTx, BEFORE any signature, so shrinking costs the user nothing.
  */
-async function sweepChunk({ agents, to, router, server, model, kit, sign, out }) {
+async function sweepChunk({
+  agents,
+  router,
+  server,
+  model,
+  kit,
+  sign,
+  out,
+  activeAccount,
+  getCurrentActiveAccount,
+  signal,
+}) {
+  const check = () =>
+    assertActiveAccountBoundary({
+      captured: activeAccount,
+      getCurrent: getCurrentActiveAccount,
+      signal,
+    })
   try {
+    check()
     const result = await submitOwnerAuthorizedTx({
       model,
       build: () =>
@@ -61,11 +106,23 @@ async function sweepChunk({ agents, to, router, server, model, kit, sign, out })
           args: [
             { addr: model.owner },
             xdr.ScVal.scvVec(agents.map((a) => addrScVal(a.address))),
-            { addr: to },
+            // A direct exit has exactly one safe destination: the proven owner. Keep the
+            // historical `to` API parameter for caller compatibility, but never authorize it.
+            { addr: model.owner },
           ],
           server,
         }),
-      sign: (built) => ownerSign({ built, model, server, kit, sign }),
+      sign: (built) =>
+        ownerSign({
+          built,
+          model,
+          server,
+          kit,
+          sign,
+          activeAccount,
+          getCurrentActiveAccount,
+          signal,
+        }),
       server,
       label: 'exit sweep',
       classicSubmission: 'direct',
@@ -73,7 +130,11 @@ async function sweepChunk({ agents, to, router, server, model, kit, sign, out })
       // 20s poll declared a tx failed that went on to land — the UI then reported agents as
       // stranded whose funds were already in the owner's wallet.
       pollTries: 30,
+      activeAccount,
+      getCurrentActiveAccount,
+      signal,
     })
+    check()
     // Callers zero the position on resolve, so an unconfirmed exit must not resolve. Only an
     // explicit FAILED is the chain's own word that the tx did not land — a genuine confirmed
     // failure. Fix 1 (fix loop 2): anything else (PENDING and friends) means the confirmation poll
@@ -91,6 +152,7 @@ async function sweepChunk({ agents, to, router, server, model, kit, sign, out })
     // No retval on a SUCCESS is not "0 swept" — it means we cannot tell what moved, and leaving
     // the zeros in place is the honest read. The position reconciles from chain either way.
     const swept = result.returnValue ? fromScVal(result.returnValue) : []
+    check()
     agents.forEach((a, i) => {
       out.txHashes[a.index] = result.hash
       const decoded = swept[i]
@@ -112,10 +174,35 @@ async function sweepChunk({ agents, to, router, server, model, kit, sign, out })
       out.swept[a.index] = BigInt(decoded)
     })
   } catch (e) {
+    if (e?.code === 'ACTIVE_ACCOUNT_CHANGED') throw e
     if (agents.length > 1 && isBudgetError(e)) {
       const mid = Math.ceil(agents.length / 2)
-      await sweepChunk({ agents: agents.slice(0, mid), to, router, server, model, kit, sign, out })
-      await sweepChunk({ agents: agents.slice(mid), to, router, server, model, kit, sign, out })
+      await sweepChunk({
+        agents: agents.slice(0, mid),
+        router,
+        server,
+        model,
+        kit,
+        sign,
+        out,
+        activeAccount,
+        getCurrentActiveAccount,
+        signal,
+      })
+      check()
+      await sweepChunk({
+        agents: agents.slice(mid),
+        router,
+        server,
+        model,
+        kit,
+        sign,
+        out,
+        activeAccount,
+        getCurrentActiveAccount,
+        signal,
+      })
+      check()
       return
     }
     // One batch failing must not strand the others — record why, per agent, and let the rest run.
@@ -135,7 +222,7 @@ async function sweepChunk({ agents, to, router, server, model, kit, sign, out })
 }
 
 /**
- * Sweep EVERY agent back to `to`, in as few owner-authorized transactions as the chain allows —
+ * Sweep EVERY agent back to its proven `owner`, in as few owner-authorized transactions as the chain allows —
  * ONE for a normal run, which is the whole point: the deposit costs one signature, so the exit
  * does too. Only a position spread over more agents than fit a single transaction's budget needs
  * more, and then it is ceil(N / ~3) signatures rather than N. Routed through OwnerAuthorizationV1:
@@ -152,7 +239,8 @@ async function sweepChunk({ agents, to, router, server, model, kit, sign, out })
  *          getRelayerAddress?:Function, kit?:object, sign?:Function}} p sign is the G-envelope
  *          signer (default signTxXdr, the wallet-kit popup) — injectable so callers off the
  *          browser (e.g. scripts/exit-router-smoke.mjs) can sign with a local keypair instead.
- *          Unused for a C owner, which always signs via the passkey ceremony.
+ *          Unused for a C owner, which always signs via the passkey ceremony. `to` is accepted
+ *          only for backwards compatibility and ignored; direct exits always pay the owner.
  * @returns {Promise<{swept:bigint[], txHashes:string[],
  *   errors:({message:string, code?:string, submission?:string}|undefined)[]}>} `errors[i].code`/
  *   `.submission` carry an OwnerActionSubmissionError's channel classification through undamaged
@@ -161,7 +249,6 @@ async function sweepChunk({ agents, to, router, server, model, kit, sign, out })
 export async function sweepAgents({
   owner,
   agentAddresses,
-  to,
   router = SOROBAN_EXIT_ROUTER_ADDRESS,
   server,
   chunkSize = MAX_AGENTS_PER_SWEEP,
@@ -169,10 +256,27 @@ export async function sweepAgents({
   getRelayerAddress: getRelayer = getRelayerAddress,
   kit,
   sign = signTxXdr,
+  getCurrentActiveAccount = getActiveAccount,
+  signal,
 }) {
+  assertActiveOwner({ owner, activeAccount })
+  const check = () =>
+    assertActiveAccountBoundary({
+      captured: activeAccount,
+      getCurrent: getCurrentActiveAccount,
+      signal,
+    })
+  check()
   if (!router) throw new Error('The exit router is not configured.')
   if (!agentAddresses?.length) throw new Error('sweepAgents requires at least one agentAddress.')
-  const model = await resolveOwnerTxModel({ owner, activeAccount, getRelayerAddress: getRelayer })
+  const model = await resolveOwnerTxModel({
+    owner,
+    activeAccount,
+    getRelayerAddress: getRelayer,
+    getCurrentActiveAccount,
+    signal,
+  })
+  check()
   const out = {
     swept: agentAddresses.map(() => 0n),
     txHashes: agentAddresses.map(() => undefined),
@@ -182,14 +286,17 @@ export async function sweepAgents({
   for (let i = 0; i < indexed.length; i += chunkSize) {
     await sweepChunk({
       agents: indexed.slice(i, i + chunkSize),
-      to: to || owner,
       router,
       server,
       model,
       kit,
       sign,
+      activeAccount,
+      getCurrentActiveAccount,
+      signal,
       out,
     })
+    check()
   }
   return out
 }
@@ -197,23 +304,39 @@ export async function sweepAgents({
 /**
  * owner_withdraw(to) on the agent account — routed through OwnerAuthorizationV1 (see sweepAgents'
  * docstring for the G-direct vs C-relay-only split). Redeems + sweeps the agent's full position
- * to `to`.
+ * to the proven `owner`. The legacy `to` input is ignored so callers cannot redirect an exit.
  * @param {{owner:string, agentAddress:string, to?:string, activeAccount?:{kind:'G'|'C', address:string},
  *          getRelayerAddress?:Function, kit?:object, server?:object}} p
  */
 export async function ownerWithdraw({
   owner,
   agentAddress,
-  to,
   activeAccount = { kind: 'G', address: owner },
   getRelayerAddress: getRelayer = getRelayerAddress,
   kit,
   server,
+  getCurrentActiveAccount = getActiveAccount,
+  signal,
 }) {
+  assertActiveOwner({ owner, activeAccount })
+  const check = () =>
+    assertActiveAccountBoundary({
+      captured: activeAccount,
+      getCurrent: getCurrentActiveAccount,
+      signal,
+    })
+  check()
   // By-agent, not by-vault: naming the wrong agent is not a harmless no-op, it invokes an account
   // the caller may not own. Never let a caller reach the chain without saying which agent.
   if (!agentAddress) throw new Error('ownerWithdraw requires an agentAddress.')
-  const model = await resolveOwnerTxModel({ owner, activeAccount, getRelayerAddress: getRelayer })
+  const model = await resolveOwnerTxModel({
+    owner,
+    activeAccount,
+    getRelayerAddress: getRelayer,
+    getCurrentActiveAccount,
+    signal,
+  })
+  check()
   const result = await submitOwnerAuthorizedTx({
     model,
     build: () =>
@@ -221,14 +344,29 @@ export async function ownerWithdraw({
         source: model.source,
         contract: agentAddress,
         method: 'owner_withdraw',
-        args: [{ addr: to || owner }],
+        // Never let an untrusted caller turn an owner-authorized exit into a transfer to an
+        // arbitrary recipient. The relay independently proves this same owner/recipient fact.
+        args: [{ addr: model.owner }],
         server,
       }),
-    sign: (built) => ownerSign({ built, model, server, kit }),
+    sign: (built) =>
+      ownerSign({
+        built,
+        model,
+        server,
+        kit,
+        activeAccount,
+        getCurrentActiveAccount,
+        signal,
+      }),
     server,
     label: 'exit',
     classicSubmission: 'direct',
+    activeAccount,
+    getCurrentActiveAccount,
+    signal,
   })
+  check()
   // Callers zero the position on resolve, so an unconfirmed exit must not resolve. Same FAILED-vs-
   // everything-else split as sweepChunk above (Fix 1, fix loop 2): only an explicit FAILED is a
   // confirmed failure; anything else is an unproven outcome, not a lie that it failed.

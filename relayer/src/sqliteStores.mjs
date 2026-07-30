@@ -6,10 +6,16 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { createAssociationOutbox } from './associationOutbox.mjs';
 
 const HOUR_MS = 60 * 60 * 1000;
 
-export function createSqliteStores(path, { ttlMs = HOUR_MS, now = () => Date.now() } = {}) {
+export function createSqliteStores(path, {
+  ttlMs = HOUR_MS,
+  now = () => Date.now(),
+  outboxMaxAttempts = 5,
+} = {}) {
   mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
   db.exec(`
@@ -30,7 +36,45 @@ export function createSqliteStores(path, { ttlMs = HOUR_MS, now = () => Date.now
       created_at INTEGER NOT NULL,
       PRIMARY KEY (serialized_approval, stellar_owner, kernel_address)
     );
+    CREATE TABLE IF NOT EXISTS association_outbox (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      idempotency_key TEXT NOT NULL UNIQUE,
+      identity_key TEXT NOT NULL,
+      child_id TEXT NOT NULL,
+      sequence INTEGER NOT NULL CHECK (sequence > 0),
+      report_digest TEXT NOT NULL,
+      report_json TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('pending','leased','delivered','dead')),
+      attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+      available_at INTEGER NOT NULL,
+      lease_token TEXT,
+      lease_expires_at INTEGER,
+      last_error TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      delivered_at INTEGER,
+      UNIQUE(identity_key, sequence)
+    );
+    CREATE TABLE IF NOT EXISTS farm_execution_work (
+      job_id TEXT PRIMARY KEY,
+      burn_tx_hash TEXT NOT NULL UNIQUE,
+      status TEXT NOT NULL CHECK (status IN ('pending','running','done','uncertain')),
+      attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+      lease_token TEXT,
+      lease_expires_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_association_outbox_delivery
+      ON association_outbox (status, available_at, lease_expires_at, id);
+    CREATE INDEX IF NOT EXISTS idx_association_outbox_child
+      ON association_outbox (child_id, sequence);
   `);
+
+  const associationOutbox = createAssociationOutbox(db, {
+    maxAttempts: outboxMaxAttempts,
+    now,
+  });
 
   const store = {
     get(execId) {
@@ -62,6 +106,149 @@ export function createSqliteStores(path, { ttlMs = HOUR_MS, now = () => Date.now
         .run(jobId, JSON.stringify(job));
     },
   };
+
+  function writeJob(jobId, job) {
+    db.prepare('INSERT INTO jobs (job_id, job) VALUES (?, ?) ON CONFLICT(job_id) DO UPDATE SET job = excluded.job')
+      .run(jobId, JSON.stringify(job));
+  }
+
+  function workRecord(row) {
+    if (!row) return null;
+    return {
+      jobId: row.job_id,
+      burnTxHash: row.burn_tx_hash,
+      status: row.status,
+      attempts: row.attempts,
+      leaseToken: row.lease_token ?? null,
+      leaseExpiresAt: row.lease_expires_at ?? null,
+    };
+  }
+
+  function transaction(fn) {
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      const result = fn();
+      db.exec('COMMIT');
+      return result;
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  function checkedWork(jobId, status, token) {
+    const row = db.prepare('SELECT * FROM farm_execution_work WHERE job_id = ?').get(jobId);
+    if (!row || row.status !== status || (token != null && row.lease_token !== token)) {
+      throw new Error('farm execution lease is stale or uncertain');
+    }
+    return row;
+  }
+
+  const farmExecutions = {
+    get(jobId) {
+      return workRecord(db.prepare('SELECT * FROM farm_execution_work WHERE job_id = ?').get(jobId));
+    },
+    attach({ jobId, burnTxHash, job, reports }) {
+      return transaction(() => {
+        const existing = db.prepare('SELECT * FROM farm_execution_work WHERE job_id = ?').get(jobId);
+        if (existing) {
+          if (existing.burn_tx_hash !== burnTxHash) {
+            throw new Error('farm execution already has a different burn hash');
+          }
+          return { duplicate: true, work: workRecord(existing) };
+        }
+        const burnOwner = db.prepare('SELECT job_id FROM farm_execution_work WHERE burn_tx_hash = ?').get(burnTxHash);
+        if (burnOwner && burnOwner.job_id !== jobId) {
+          throw new Error('burn hash is already attached to another farm execution');
+        }
+        if (!db.prepare('SELECT 1 FROM jobs WHERE job_id = ?').get(jobId)) {
+          throw new Error('farm execution job is missing');
+        }
+        associationOutbox.enqueue(reports, { transaction: false });
+        writeJob(jobId, job);
+        const timestamp = now();
+        db.prepare(`
+          INSERT INTO farm_execution_work
+            (job_id, burn_tx_hash, status, attempts, lease_token, lease_expires_at, created_at, updated_at)
+          VALUES (?, ?, 'pending', 0, NULL, NULL, ?, ?)
+        `).run(jobId, burnTxHash, timestamp, timestamp);
+        return {
+          duplicate: false,
+          work: workRecord(db.prepare('SELECT * FROM farm_execution_work WHERE job_id = ?').get(jobId)),
+        };
+      });
+    },
+    claim({ jobId, now: claimNow = now(), leaseMs = 30_000 }) {
+      if (!Number.isSafeInteger(claimNow) || !Number.isSafeInteger(leaseMs) || leaseMs <= 0) {
+        throw new Error('farm execution lease requires safe integer time and positive duration');
+      }
+      const token = randomUUID();
+      return workRecord(db.prepare(`
+        UPDATE farm_execution_work
+        SET status = 'running', attempts = attempts + 1, lease_token = ?,
+            lease_expires_at = ?, updated_at = ?
+        WHERE job_id = ? AND status = 'pending'
+        RETURNING *
+      `).get(token, claimNow + leaseMs, claimNow, jobId));
+    },
+    listRecoverable({ now: recoveryNow = now() } = {}) {
+      return db.prepare(`
+        SELECT * FROM farm_execution_work
+        WHERE status = 'pending'
+           OR (status = 'running' AND lease_expires_at <= ?)
+        ORDER BY created_at ASC, job_id ASC
+      `).all(recoveryNow).map(workRecord);
+    },
+    checkpoint({ jobId, leaseToken, job, reports = [], now: checkpointNow = now() }) {
+      return transaction(() => {
+        checkedWork(jobId, 'running', leaseToken);
+        if (reports.length > 0) associationOutbox.enqueue(reports, { transaction: false });
+        writeJob(jobId, job);
+        db.prepare('UPDATE farm_execution_work SET updated_at = ? WHERE job_id = ?')
+          .run(checkpointNow, jobId);
+        return this.get(jobId);
+      });
+    },
+    finish({ jobId, leaseToken, job, reports = [], status = 'done', now: finishNow = now() }) {
+      if (!['done', 'uncertain'].includes(status)) throw new Error('invalid farm execution terminal status');
+      return transaction(() => {
+        checkedWork(jobId, 'running', leaseToken);
+        if (reports.length > 0) associationOutbox.enqueue(reports, { transaction: false });
+        writeJob(jobId, job);
+        db.prepare(`
+          UPDATE farm_execution_work
+          SET status = ?, lease_token = NULL, lease_expires_at = NULL, updated_at = ?
+          WHERE job_id = ?
+        `).run(status, finishNow, jobId);
+        return this.get(jobId);
+      });
+    },
+    reconcileUncertain({ jobId, job, reports = [], now: reconcileNow = now() }) {
+      return transaction(() => {
+        const row = checkedWork(jobId, 'running');
+        if (row.lease_expires_at == null || row.lease_expires_at > reconcileNow) {
+          throw new Error('farm execution lease has not expired');
+        }
+        if (reports.length > 0) associationOutbox.enqueue(reports, { transaction: false });
+        writeJob(jobId, job);
+        db.prepare(`
+          UPDATE farm_execution_work
+          SET status = 'uncertain', lease_token = NULL, lease_expires_at = NULL, updated_at = ?
+          WHERE job_id = ?
+        `).run(reconcileNow, jobId);
+        return this.get(jobId);
+      });
+    },
+  };
+
+  function probe() {
+    return transaction(() => {
+      db.prepare('UPDATE jobs SET job = job WHERE 0').run();
+      db.prepare('SELECT id FROM association_outbox WHERE 0').all();
+      db.prepare('SELECT job_id FROM farm_execution_work WHERE 0').all();
+      return { writable: true };
+    });
+  }
 
   const mandates = {
     // expiresAt (ms epoch), when given, overrides the now()+ttlMs default — same contract as
@@ -207,5 +394,5 @@ export function createSqliteStores(path, { ttlMs = HOUR_MS, now = () => Date.now
     },
   };
 
-  return { db, store, jobs, mandates, mandatesV2 };
+  return { db, store, jobs, mandates, mandatesV2, associationOutbox, farmExecutions, probe };
 }

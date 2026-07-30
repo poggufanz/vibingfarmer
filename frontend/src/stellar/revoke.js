@@ -3,6 +3,8 @@
 // vault allowance on-chain. The UI subscribes to live agent_revoked events to confirm
 // (AgentAccount emits the same topic/shape the Registry's metadata mirror uses).
 import { buildInvokeTx, rpcServer } from './client.js'
+import { assertActiveAccountBoundary, assertActiveOwner } from './activeAccount.js'
+import { getActiveAccount, signReviewedTransaction } from './walletKit.js'
 import { signTxXdr } from './walletKit.js'
 import { pollEvents } from './events.js'
 import { symbolScVal } from './scval.js'
@@ -37,8 +39,25 @@ export async function revokeAgentOnChain({
   getRelayerAddress: getRelayer = getRelayerAddress,
   kit,
   server,
+  getCurrentActiveAccount = getActiveAccount,
+  signal,
 }) {
-  const model = await resolveOwnerTxModel({ owner, activeAccount, getRelayerAddress: getRelayer })
+  assertActiveOwner({ owner, activeAccount })
+  const check = () =>
+    assertActiveAccountBoundary({
+      captured: activeAccount,
+      getCurrent: getCurrentActiveAccount,
+      signal,
+    })
+  check()
+  const model = await resolveOwnerTxModel({
+    owner,
+    activeAccount,
+    getRelayerAddress: getRelayer,
+    getCurrentActiveAccount,
+    signal,
+  })
+  check()
   const built = await buildInvokeTx({
     source: model.source,
     contract: agent,
@@ -46,18 +65,40 @@ export async function revokeAgentOnChain({
     args: [],
     server,
   })
+  check()
   const result = await submitOwnerAuthorizedTx({
     model,
     build: async () => built,
     sign:
       model.kind === 'G'
-        ? async () => signTxXdr(built.xdr)
+        ? async () =>
+            activeAccount?.version === 1
+              ? signReviewedTransaction({
+                  xdr: built.xdr,
+                  activeAccount,
+                  reviewedTxHash: built.tx.hash().toString('hex'),
+                  getCurrentActiveAccount,
+                  signal,
+                })
+              : signTxXdr(built.xdr)
         : async () =>
-            signOwnerAuthEntry({ tx: built.tx, contractId: model.contractId, server, kit }),
+            signOwnerAuthEntry({
+              tx: built.tx,
+              contractId: model.contractId,
+              server,
+              kit,
+              activeAccount,
+              getCurrentActiveAccount,
+              signal,
+            }),
     server,
     label: 'revoke',
     classicSubmission: 'direct',
+    activeAccount,
+    getCurrentActiveAccount,
+    signal,
   })
+  check()
   return { hash: result.hash, status: result.status }
 }
 

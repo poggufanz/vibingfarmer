@@ -32,6 +32,7 @@ import {
   feeModelCopy,
   targetStateLabel,
 } from '../../money/ownerActions.js'
+import { formatAssetUnits, parseAssetUnits } from '../../money/assetUnits.js'
 
 // Same convention as AgentTeam.jsx/PositionList.jsx/StrategyReceipt.jsx: each sibling surface
 // keeps its own tiny copy of these display-only helpers rather than sharing a module across
@@ -44,7 +45,7 @@ function shortAddr(address) {
 
 function unitsToDisplay(units, decimals) {
   try {
-    return Number(BigInt(units)) / 10 ** decimals
+    return formatAssetUnits(units, decimals)
   } catch {
     return null
   }
@@ -59,7 +60,7 @@ function unitsToDisplay(units, decimals) {
 function amountLine(amount) {
   if (!amount?.units) return 'Unavailable'
   const value = unitsToDisplay(amount.units, amount.decimals ?? 7)
-  return value == null ? 'Unavailable' : `${value.toLocaleString()} ${amount.token || 'USDC'}`
+  return value == null ? 'Unavailable' : `${value} ${amount.token || 'USDC'}`
 }
 
 // Stellar-vault leg only (custody.js's own precedence: per-leg breakdown first, whole-agent
@@ -81,10 +82,29 @@ function partialReasonMessage(plan) {
   if (plan.reason === 'balance-unavailable')
     return "This agent's vault balance could not be confirmed -- try again, or use full exit."
   if (plan.reason === 'exceeds-max') {
-    const max = unitsToDisplay(plan.maxUnits, 7)
-    return `Exceeds this agent's confirmed balance${max != null ? ` (${max.toLocaleString()} USDC)` : ''}.`
+    const max = plan.maxAmount
+      ? unitsToDisplay(plan.maxAmount.units, plan.maxAmount.decimals)
+      : null
+    const token = plan.maxAmount?.token || 'USDC'
+    return `Exceeds this agent's confirmed balance${max != null ? ` (${max} ${token})` : ''}.`
   }
   return plan.message || null
+}
+
+function inputReasonMessage(parsed, decimals, availableAmount) {
+  if (!parsed || parsed.ok || parsed.code === 'EMPTY') return null
+  if (parsed.code === 'INVALID_FORMAT') return 'Enter a plain decimal amount, like 100 or 12.5.'
+  if (parsed.code === 'ZERO') return 'Enter an amount greater than zero.'
+  if (parsed.code === 'TOO_PRECISE') return `Amount has more than ${decimals} decimal places.`
+  if (parsed.code === 'OVERFLOW') return 'Amount is too large for the selected asset.'
+  if (parsed.code === 'EXCEEDS_AVAILABLE') {
+    const max = availableAmount
+      ? unitsToDisplay(availableAmount.units, availableAmount.decimals)
+      : null
+    const token = availableAmount?.token || 'USDC'
+    return `Exceeds this agent's confirmed balance${max != null ? ` (${max} ${token})` : ''}.`
+  }
+  return null
 }
 
 export function WithdrawDialog({
@@ -128,23 +148,27 @@ export function WithdrawDialog({
     : null
   const availableAmount = chosenAgent ? stellarVaultAvailable(chosenAgent) : null
   const decimals = availableAmount?.decimals ?? 7
-  const amountUnits = (() => {
-    const n = Number(amountInput)
-    if (!amountInput || !Number.isFinite(n) || n <= 0) return null
+  const exactAvailableUnits = (() => {
+    if (availableAmount?.units == null) return null
     try {
-      return BigInt(Math.round(n * 10 ** decimals))
+      return BigInt(availableAmount.units)
     } catch {
       return null
     }
   })()
+  const parsedAmount = chosenAgent
+    ? parseAssetUnits(amountInput, decimals, {
+        ...(exactAvailableUnits != null ? { availableUnits: exactAvailableUnits } : {}),
+      })
+    : null
 
   const partialPlan =
-    chosenAgent && amountUnits != null && account
+    chosenAgent && parsedAmount?.ok && account
       ? planPartialExit({
           agent: chosenAgent,
           amount: {
             token: availableAmount?.token || 'USDC',
-            units: amountUnits.toString(),
+            units: parsedAmount.units.toString(),
             decimals,
           },
           account,
@@ -306,7 +330,7 @@ export function WithdrawDialog({
               <p>
                 Known amount across every target agent:{' '}
                 {knownTotal != null
-                  ? `${unitsToDisplay(knownTotal.toString(), knownDecimals)?.toLocaleString()} USDC`
+                  ? `${unitsToDisplay(knownTotal.toString(), knownDecimals)} USDC`
                   : 'Unavailable'}
                 . Sent to {shortAddr(account?.address)}.
               </p>
@@ -353,7 +377,9 @@ export function WithdrawDialog({
                     }}
                   />
                   {shortAddr(agent.address)} (agent {i + 1}) --{' '}
-                  {display != null ? `${display.toLocaleString()} USDC available` : 'Unavailable'}
+                  {display != null
+                    ? `${display} ${avail?.token || 'USDC'} available`
+                    : 'Unavailable'}
                 </label>
               )
             })}
@@ -364,16 +390,17 @@ export function WithdrawDialog({
               <label htmlFor="withdraw-dialog-amount">Amount</label>
               <input
                 id="withdraw-dialog-amount"
-                type="number"
-                role="spinbutton"
-                min="0"
-                step="0.01"
+                type="text"
+                inputMode="decimal"
                 disabled={pending}
                 value={amountInput}
                 onChange={(e) => setAmountInput(e.target.value)}
               />
               {account && <p>{feeModelCopy(account.kind)}</p>}
               <p>Sent to {shortAddr(account?.address)}.</p>
+              {inputReasonMessage(parsedAmount, decimals, availableAmount) && (
+                <p>{inputReasonMessage(parsedAmount, decimals, availableAmount)}</p>
+              )}
               {partialPlan && !partialPlan.ok && <p>{partialReasonMessage(partialPlan)}</p>}
               {partialPlan?.mode === 'fallback-full-exit' && <p>{partialPlan.message}</p>}
               {partialPlan?.ok && partialPlan.mode === 'partial' && (

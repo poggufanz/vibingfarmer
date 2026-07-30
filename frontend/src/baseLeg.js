@@ -25,6 +25,15 @@ import { estimateMinShares as defaultEstimateMinShares } from './base/quotes.js'
 import { defaultMakePublicClient } from './wallet/passkeyBase.js'
 import { readBaseMandate, validateBaseMandate } from './wallet/baseBinding.js'
 import { sanitizeReceiptData } from './strategy/dispatchSummary.js'
+import { isVerifiedBaseMandateStatus, toMandateStatusAllocation } from './base/mandateStatus.js'
+
+function unknownSubmissionRecoveryPhase(stage) {
+  if (stage === 'pull') return { phase: 'pull', action: 'reconcile-pull' }
+  if (stage === 'burn' || stage === 'cctp_burn') {
+    return { phase: 'cctp_burn', action: 'reconcile-cctp-burn' }
+  }
+  return { phase: 'unknown', action: 'reconcile-unknown-base-submission' }
+}
 
 /**
  * @param {{
@@ -123,19 +132,6 @@ export async function executeBaseLeg({
     if (localStatus !== 'active') {
       throw new Error(`The stored Base mandate is ${localStatus} for this owner/kernel.`)
     }
-    let remoteStatus = 'unknown'
-    try {
-      remoteStatus = (
-        await getMandateStatus(storedMandate.serializedApproval, {
-          stellarOwner: connectedAddress,
-          kernelAddress,
-        })
-      ).status
-    } catch {
-      remoteStatus = 'unknown'
-    }
-    if (remoteStatus !== 'active') throw new Error('The stored Base mandate is no longer valid.')
-
     // ownerAddress comes from the CALLER's kernelAddress param (the exact value orchestrator.js
     // already used to pin this grant's mint_recipient on-chain), never re-read from storage here —
     // a mid-run mandate rotation must not desync the runtime burn arg from the pinned scope.
@@ -187,6 +183,31 @@ export async function executeBaseLeg({
         }),
       }))
     )
+
+    // Last browser-side gate before runFarmFlow is allowed to durably commit an intent and burn.
+    // The quote supplies the actual minShares, so this verifies and prepares precisely the calls
+    // that this run will submit rather than a broad/no-op probe.
+    for (const allocation of quotedAllocations) {
+      const exactAllocation = toMandateStatusAllocation({
+        allocationId: allocation.allocationId || bridgeAllocationId,
+        poolAddress: allocation.pool,
+        units: allocation.amountBaseUnits,
+        minShares: allocation.minShares,
+      })
+      let evidence = null
+      try {
+        evidence = await getMandateStatus(storedMandate.serializedApproval, {
+          stellarOwner: connectedAddress,
+          kernelAddress,
+          allocation: exactAllocation,
+        })
+      } catch {
+        evidence = null
+      }
+      if (!isVerifiedBaseMandateStatus(evidence)) {
+        throw new Error('The stored Base mandate is no longer valid.')
+      }
+    }
     safeEmit('baseleg-mandate', {
       status: 'done',
       sessionKeyAddress: storedMandate.sessionKeyAddress,
@@ -306,14 +327,37 @@ export async function executeBaseLeg({
     // Error shape, or reading .message here would itself throw and break the never-throws contract.
     const message = err instanceof Error ? err.message : String(err)
     const failureEvidence = err && typeof err === 'object' ? err : {}
+    const submissionUnknown = failureEvidence.code === 'VF_SUBMISSION_UNKNOWN'
+    const reportedStage = failureEvidence.stage || stage
+    const reconciliation = unknownSubmissionRecoveryPhase(reportedStage)
+    const uncertaintyRecovery = submissionUnknown
+      ? {
+          action: reconciliation.action,
+          phase: reconciliation.phase,
+          reason: message,
+          evidence: {
+            submission: failureEvidence.submission || 'unknown',
+            stage: reconciliation.phase,
+            ...(reportedStage !== reconciliation.phase ? { reportedStage } : {}),
+            ...(failureEvidence.result !== undefined
+              ? { result: sanitizeReceiptData(failureEvidence.result) }
+              : {}),
+          },
+        }
+      : null
+    const failureRecovery = sanitizeReceiptData(
+      failureEvidence.recovery || uncertaintyRecovery || null
+    )
     // Stranded-funds observability: once the pull confirmed, the bridge agent is holding the
     // owner's USDC — surface that + the recovery handle (bridgeAgentAddress, for an owner_withdraw
     // sweep) in BOTH the event and the return value, so a pull-ok/burn-fails outcome is never
     // indistinguishable from a nothing-moved one.
     const strandedFunds = fundsPulled ? { pulled: true, bridgeAgentAddress } : {}
-    const failureCustody = fundsPulled
-      ? { location: 'agent', confirmed: true, checkedAt: null }
-      : { location: 'owner', confirmed: true, checkedAt: null }
+    const failureCustody = submissionUnknown
+      ? { location: 'unknown', confirmed: false, checkedAt: null }
+      : fundsPulled
+        ? { location: 'agent', confirmed: true, checkedAt: null }
+        : { location: 'owner', confirmed: true, checkedAt: null }
     const allocations = (baseVaults || []).map((vault, i) => ({
       allocationId: vault.allocationId || `${runId ?? 'run'}-${i}`,
       amount: vault.allocationAmount || {
@@ -322,6 +366,7 @@ export async function executeBaseLeg({
         decimals: 6,
       },
       finalStatus: 'error',
+      stage,
       custody: failureCustody,
       error: message,
       bridgeAgentAddress: bridgeAgentAddress || null,
@@ -330,15 +375,22 @@ export async function executeBaseLeg({
       attestation: sanitizeReceiptData(
         failureEvidence.attestation || failureEvidence.attestationState || null
       ),
-      recovery: sanitizeReceiptData(failureEvidence.recovery || null),
+      recovery: failureRecovery,
     }))
-    safeEmit('baseleg-failed', { stage, error: message, ...strandedFunds })
+    safeEmit('baseleg-failed', {
+      stage,
+      error: message,
+      custody: failureCustody,
+      recovery: failureRecovery,
+      ...strandedFunds,
+    })
     return {
       success: false,
       runId,
       grantTxHash,
       stage,
       error: message,
+      custody: failureCustody,
       // Preserve the established recovery signal: bridgeAgentAddress appears only once a pull
       // actually stranded funds. `bridgeAgent` still identifies the deployed agent for receipts.
       bridgeAgent: bridgeAgentAddress || null,
@@ -347,7 +399,7 @@ export async function executeBaseLeg({
       attestation: sanitizeReceiptData(
         failureEvidence.attestation || failureEvidence.attestationState || null
       ),
-      recovery: sanitizeReceiptData(failureEvidence.recovery || null),
+      recovery: failureRecovery,
       allocations,
       ...strandedFunds,
     }

@@ -2,6 +2,14 @@ import {
   AGENT_INDEX_SCHEMA_VERSION,
   AGENT_WASM_GENERATIONS,
 } from '../../src/stellar/agentCreatorManifest.js'
+import {
+  AgentIndexValidationError,
+  BASE_CHILD_LIFECYCLE_STATUSES,
+  assertNoSensitiveProperties,
+  canonicalJson,
+  toBaseChildRow,
+} from './models.js'
+import { receiptIntentDigest } from './executionReceipts.js'
 
 const EXECUTION_STATUSES = [
   'queued',
@@ -39,10 +47,128 @@ const REPORT_FIELDS = new Set([
 ])
 const AMOUNT_FIELDS = new Set(['token', 'units', 'decimals'])
 const CUSTODY_FIELDS = new Set(['location'])
+const BASE_CHILD_FIELDS = new Set([
+  'version',
+  'networkId',
+  'owner',
+  'agent',
+  'bindingId',
+  'allocationId',
+  'childId',
+  'intent',
+  'lifecycle',
+])
+const BASE_CHILD_IDENTITY_FIELDS = new Set([
+  'networkId',
+  'owner',
+  'bindingId',
+  'allocationId',
+  'childId',
+])
+const BASE_CHILD_INTENT_FIELDS = new Set([
+  'token',
+  'units',
+  'decimals',
+  'poolAddress',
+  'proxyTarget',
+  'runId',
+  'grantTxHash',
+  'kernelAddress',
+  'bindingHash',
+  'baseJobId',
+])
+const BASE_CHILD_LIFECYCLE_FIELDS = new Set(['sequence', 'status', 'evidence', 'observedAt'])
 const LIVE_BRIDGE_GENERATION = AGENT_WASM_GENERATIONS.find(
   (generation) => generation.generation === 'agent-v3-bridge'
 )
 const LIVE_BRIDGE_CREATORS = new Set(LIVE_BRIDGE_GENERATION?.creatorAddresses ?? [])
+
+export function baseChildIdempotencyKey(child) {
+  const digest = receiptIntentDigest(child?.intent)
+  return JSON.stringify([
+    child?.networkId,
+    child?.bindingId,
+    child?.allocationId,
+    child?.childId,
+    digest,
+  ])
+}
+
+export function baseChildIdentity(child) {
+  return {
+    networkId: requiredString(child?.networkId, 'networkId'),
+    owner: requiredString(child?.owner, 'owner'),
+    bindingId: requiredString(child?.bindingId, 'bindingId'),
+    allocationId: requiredString(child?.allocationId, 'allocationId'),
+    childId: requiredString(child?.childId, 'childId'),
+  }
+}
+
+export async function ingestBaseChildIntent({ child, store }) {
+  if (!store?.createBaseChildIntent) throw new Error('Base child intent store is unavailable')
+  let intentDigest
+  try {
+    requireExactFields(child, BASE_CHILD_FIELDS, 'Base child')
+    requireExactFields(child.intent, BASE_CHILD_INTENT_FIELDS, 'Base child intent')
+    requireExactFields(child.lifecycle, BASE_CHILD_LIFECYCLE_FIELDS, 'Base child lifecycle')
+    intentDigest = receiptIntentDigest(child?.intent)
+    toBaseChildRow(child, intentDigest)
+  } catch (error) {
+    if (error instanceof AgentIndexValidationError) throw error
+    throw new AgentIndexValidationError(error?.message || 'Invalid Base child intent', {
+      cause: error,
+    })
+  }
+  return store.createBaseChildIntent({
+    child,
+    intentDigest,
+    idempotencyKey: baseChildIdempotencyKey(child),
+  })
+}
+
+export async function advanceBaseChildLifecycle({ identity, expectedSequence, lifecycle, store }) {
+  if (!store?.advanceBaseChildLifecycle)
+    throw new Error('Base child lifecycle store is unavailable')
+  try {
+    requireExactFields(identity, BASE_CHILD_IDENTITY_FIELDS, 'Base child identity')
+    requireExactFields(lifecycle, BASE_CHILD_LIFECYCLE_FIELDS, 'Base child lifecycle')
+    assertNoSensitiveProperties({ identity, lifecycle })
+    for (const field of ['networkId', 'owner', 'bindingId', 'allocationId', 'childId']) {
+      requiredString(identity?.[field], `identity.${field}`)
+    }
+    if (!Number.isSafeInteger(expectedSequence) || expectedSequence < 0) {
+      throw new Error('expectedSequence must be a non-negative safe integer')
+    }
+    if (lifecycle?.sequence !== expectedSequence + 1) {
+      throw new Error('lifecycle.sequence must advance expectedSequence by one')
+    }
+    if (!BASE_CHILD_LIFECYCLE_STATUSES.includes(lifecycle?.status)) {
+      throw new Error('invalid Base child lifecycle status')
+    }
+    requiredInteger(lifecycle?.observedAt, 'lifecycle.observedAt')
+    canonicalJson(lifecycle)
+  } catch (error) {
+    if (error instanceof AgentIndexValidationError) throw error
+    throw new AgentIndexValidationError(error?.message || 'Invalid Base child lifecycle', {
+      cause: error,
+    })
+  }
+  const idempotencyKey = JSON.stringify([
+    identity.networkId,
+    identity.bindingId,
+    identity.allocationId,
+    identity.childId,
+    lifecycle?.sequence,
+    lifecycle?.status,
+    receiptIntentDigest(lifecycle?.evidence ?? {}),
+  ])
+  return store.advanceBaseChildLifecycle({
+    identity,
+    expectedSequence,
+    lifecycle,
+    idempotencyKey,
+  })
+}
 
 function requiredString(value, field) {
   if (typeof value !== 'string' || !value) throw new Error(`${field} must be a non-empty string`)

@@ -11,8 +11,10 @@ const AAVE_POOL = BASE_POOL_CATALOG.find((p) => p.proxyTarget === 'aave-v3').add
 const MOONWELL_POOL = BASE_POOL_CATALOG.find((p) => p.proxyTarget === 'moonwell').address
 
 describe('runFarmFlow', () => {
-  test('burns on Stellar, dispatches to the relayer, polls to done, emits progress events in order', async () => {
+  // Defect caught: the browser used to burn before the relayer durably acknowledged the Base child intent.
+  test('commits intent, burns once, attaches that burn, then polls in exact custody-safe order', async () => {
     const events = []
+    const calls = []
     const onEvent = (name, data) => events.push({ name, data })
     const allocations = [
       {
@@ -24,9 +26,22 @@ describe('runFarmFlow', () => {
       },
     ]
     const deps = {
-      burn: vi.fn(async () => ({ approveHash: 'a', burnHash: 'burn-1' })),
-      postFarm: vi.fn(async () => ({ jobId: 'job-1' })),
-      pollFarmStatus: vi.fn(async () => ({ status: 'done', steps: { pool1: 'deposited' } })),
+      burn: vi.fn(async () => {
+        calls.push('burn')
+        return { approveHash: 'a', burnHash: 'burn-1' }
+      }),
+      postFarm: vi.fn(async () => {
+        calls.push('intent')
+        return { jobId: 'job-1', acknowledged: true, schemaVersion: 1 }
+      }),
+      postFarmAttach: vi.fn(async () => {
+        calls.push('attach')
+        return { jobId: 'job-1', attached: true }
+      }),
+      pollFarmStatus: vi.fn(async () => {
+        calls.push('poll')
+        return { status: 'done', steps: { pool1: 'deposited' } }
+      }),
     }
 
     const result = await runFarmFlow({
@@ -42,8 +57,10 @@ describe('runFarmFlow', () => {
     })
 
     expect(result).toEqual({ burnHash: 'burn-1', jobId: 'job-1', finalStatus: 'done' })
+    expect(calls).toEqual(['intent', 'burn', 'attach', 'poll'])
     expect(deps.burn).toHaveBeenCalledWith(expect.objectContaining({ amountUnits: 1_000_000_000n }))
     expect(events.map((e) => e.name)).toEqual([
+      'farm-intent-committed',
       'farm-burn-started',
       'farm-burn-confirmed',
       'farm-relay-dispatched',
@@ -51,7 +68,6 @@ describe('runFarmFlow', () => {
     ])
     expect(deps.postFarm).toHaveBeenCalledWith(
       expect.objectContaining({
-        burnTxHash: 'burn-1',
         sourceDomain: 27,
         serializedApproval: 'approval-blob',
         allocations,
@@ -66,12 +82,65 @@ describe('runFarmFlow', () => {
         grantTxHash: null,
       })
     )
+    expect(deps.postFarmAttach).toHaveBeenCalledWith({
+      jobId: 'job-1',
+      burnTxHash: 'burn-1',
+      serializedApproval: 'approval-blob',
+      stellarOwner: 'GWALLET',
+      kernelAddress: '0xBASEACCT',
+    })
   })
+
+  // Defect caught: ambiguous reporter failures previously happened after custody had already left Stellar.
+  test.each([
+    ['reporter 401', 'farm intent failed (401)'],
+    ['reporter timeout', 'farm intent timed out'],
+    ['malformed acknowledgement', 'farm intent acknowledgement is malformed'],
+    ['schema mismatch', 'farm intent schema mismatch'],
+    ['D1 failure', 'farm intent failed (503)'],
+  ])(
+    'does not burn or start follow-up work when %s prevents durable intent',
+    async (_label, message) => {
+      const deps = {
+        postFarm: vi.fn(async () => {
+          throw new Error(message)
+        }),
+        burn: vi.fn(),
+        postFarmAttach: vi.fn(),
+        pollFarmStatus: vi.fn(),
+      }
+      await expect(
+        runFarmFlow({
+          stellarWallet: { address: 'GWALLET', signBurn: vi.fn() },
+          baseRecipientAddress: '0xBASEACCT',
+          sessionKeyAddress: '0xSESSION',
+          serializedApproval: 'approval-blob',
+          allocations: [
+            {
+              allocationId: 'run-safe:bridge:aave-v3',
+              pool: AAVE_POOL,
+              amountBaseUnits: 1n,
+              minShares: 0n,
+            },
+          ],
+          burnUnits7: 10n,
+          bridgeAgentAddress: 'CBRIDGE',
+          runId: 'run-safe',
+          grantTxHash: 'HGRANT',
+          deps,
+        })
+      ).rejects.toThrow(message)
+      expect(deps.burn).not.toHaveBeenCalled()
+      expect(deps.postFarmAttach).not.toHaveBeenCalled()
+      expect(deps.pollFarmStatus).not.toHaveBeenCalled()
+    }
+  )
 
   test('threads bridgeAgentAddress/runId/grantTxHash through to postFarm when the caller supplies them', async () => {
     const deps = {
       burn: vi.fn(async () => ({ approveHash: 'a', burnHash: 'burn-1' })),
-      postFarm: vi.fn(async () => ({ jobId: 'job-1' })),
+      postFarm: vi.fn(async () => ({ jobId: 'job-1', acknowledged: true, schemaVersion: 1 })),
+      postFarmAttach: vi.fn(async () => ({ jobId: 'job-1', attached: true })),
       pollFarmStatus: vi.fn(async () => ({ status: 'done', steps: {} })),
     }
     await runFarmFlow({
@@ -99,13 +168,15 @@ describe('runFarmFlow', () => {
     )
   })
 
-  test('a burn failure surfaces a clear error and never calls the relayer - funds stay on Stellar, recoverable', async () => {
+  // Defect caught: a burn failure must leave only an inert durable intent and must never attach/start it.
+  test('a burn failure surfaces a clear error and never attaches the acknowledged intent', async () => {
     const onEvent = vi.fn()
     const deps = {
       burn: vi.fn(async () => {
         throw new Error('friendbot funding failed (503)')
       }),
-      postFarm: vi.fn(),
+      postFarm: vi.fn(async () => ({ jobId: 'job-safe', acknowledged: true, schemaVersion: 1 })),
+      postFarmAttach: vi.fn(),
       pollFarmStatus: vi.fn(),
     }
     await expect(
@@ -123,16 +194,19 @@ describe('runFarmFlow', () => {
         deps,
       })
     ).rejects.toThrow(/friendbot funding failed/)
-    expect(deps.postFarm).not.toHaveBeenCalled()
+    expect(deps.postFarm).toHaveBeenCalledTimes(1)
+    expect(deps.postFarmAttach).not.toHaveBeenCalled()
     expect(onEvent).toHaveBeenCalledWith('farm-burn-started', expect.anything())
     expect(onEvent).toHaveBeenCalledWith('farm-failed', expect.objectContaining({ stage: 'burn' }))
   })
 
-  test('a relay failure after a successful burn surfaces a clear error naming that funds already left Stellar', async () => {
+  // Defect caught: an attach failure after burn must identify the already-durable job and burn for recovery.
+  test('an attach failure after a successful burn surfaces a recovery hint with job and burn', async () => {
     const onEvent = vi.fn()
     const deps = {
       burn: vi.fn(async () => ({ approveHash: 'a', burnHash: 'burn-1' })),
-      postFarm: vi.fn(async () => {
+      postFarm: vi.fn(async () => ({ jobId: 'job-1', acknowledged: true, schemaVersion: 1 })),
+      postFarmAttach: vi.fn(async () => {
         throw new Error('relayer unreachable')
       }),
       pollFarmStatus: vi.fn(),
@@ -154,7 +228,10 @@ describe('runFarmFlow', () => {
     ).rejects.toThrow(/relayer unreachable/)
     expect(onEvent).toHaveBeenCalledWith(
       'farm-failed',
-      expect.objectContaining({ stage: 'relay', recoveryHint: expect.stringContaining('burn-1') })
+      expect.objectContaining({
+        stage: 'attach',
+        recoveryHint: expect.stringMatching(/job-1.*burn-1|burn-1.*job-1/),
+      })
     )
   })
 
@@ -222,8 +299,8 @@ describe('runFarmFlow', () => {
 })
 
 // Fix loop 2, Fix 2a: frontend/src/base/relayerClient.js's canonical-allocationId guard threw
-// inside postFarm, which crossChainFarm.js only ever calls AFTER the CCTP burn already
-// submitted (see the 'burns on Stellar...' test above — burn happens, then postFarm). So a
+// inside postFarm, which historically ran only AFTER the CCTP burn had already submitted. The
+// flow now validates the same identity before intent commit and before the later burn. So a
 // non-canonical or missing allocationId meant burned USDC that could never be deposited. This
 // block locks the SAME rule — `${runId}:bridge:${proxyTarget}`, proxyTarget resolved from the
 // pool address via BASE_POOL_CATALOG (relayer/src/httpRouter.mjs:246-262's exact rule) — into
@@ -258,7 +335,8 @@ describe('runFarmFlow allocationId canonical guard (pre-burn)', () => {
   test('a canonical allocationId still burns and dispatches unchanged (no behavior change on the healthy path)', async () => {
     const deps = {
       burn: vi.fn(async () => ({ approveHash: 'a', burnHash: 'burn-canon' })),
-      postFarm: vi.fn(async () => ({ jobId: 'job-canon' })),
+      postFarm: vi.fn(async () => ({ jobId: 'job-canon', acknowledged: true, schemaVersion: 1 })),
+      postFarmAttach: vi.fn(async () => ({ jobId: 'job-canon', attached: true })),
       pollFarmStatus: vi.fn(async () => ({ status: 'done', steps: {} })),
     }
     const result = await runFarmFlow({
@@ -275,7 +353,8 @@ describe('runFarmFlow allocationId canonical guard (pre-burn)', () => {
   test('multiple canonical allocations across different catalog pools still burn and dispatch unchanged', async () => {
     const deps = {
       burn: vi.fn(async () => ({ approveHash: 'a', burnHash: 'burn-multi' })),
-      postFarm: vi.fn(async () => ({ jobId: 'job-multi' })),
+      postFarm: vi.fn(async () => ({ jobId: 'job-multi', acknowledged: true, schemaVersion: 1 })),
+      postFarmAttach: vi.fn(async () => ({ jobId: 'job-multi', attached: true })),
       pollFarmStatus: vi.fn(async () => ({ status: 'done', steps: {} })),
     }
     const result = await runFarmFlow({

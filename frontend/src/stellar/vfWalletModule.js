@@ -71,12 +71,12 @@ export class VfWalletModule {
 
   async signTransaction(xdr, opts) {
     const { signedTxXdr, signerAddress } = await provider().signTransaction(xdr, opts)
-    return { signedTxXdr, signerAddress: signerAddress ?? opts?.address ?? null }
+    return signerAddress == null ? { signedTxXdr } : { signedTxXdr, signerAddress }
   }
 
   async signAuthEntry(authEntry, opts) {
     const { signedAuthEntry, signerAddress } = await provider().signAuthEntry(authEntry, opts)
-    return { signedAuthEntry, signerAddress: signerAddress ?? opts?.address ?? null }
+    return signerAddress == null ? { signedAuthEntry } : { signedAuthEntry, signerAddress }
   }
 
   // Smart-account-kit (the extension's signer) only exposes signAuthEntry in this codebase —
@@ -100,5 +100,14 @@ export class VfWalletModule {
   async disconnect() {
     // Nothing cached locally to clear — see getAddress's docstring. Kept as a real async method
     // (not deleted) because ModuleInterface's duck-typed contract expects it to exist.
+  }
+
+  // WalletKit connectors do not all offer change events. VF Wallet does: adapt its DOM event to
+  // the tiny `on()` surface walletKit.js probes, while callers still fresh-read before signing.
+  on(event, listener) {
+    if (event !== 'accountChanged' || typeof window === 'undefined') return () => {}
+    const handler = (change) => listener(change.detail || change)
+    window.addEventListener('vfWallet#accountChanged', handler)
+    return () => window.removeEventListener('vfWallet#accountChanged', handler)
   }
 }

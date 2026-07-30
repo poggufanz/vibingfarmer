@@ -564,7 +564,7 @@ describe('loadMoneyCache / saveMoneyCache', () => {
 
   it('round-trips a cache object per owner, case-insensitively keyed', () => {
     saveMoneyCache('GOwner', { money: { checkedAt: 1 } })
-    expect(loadMoneyCache('gowner')).toEqual({ money: { checkedAt: 1 } })
+    expect(loadMoneyCache('gowner')).toEqual({ money: { checkedAt: 1 }, __schemaVersion: 2 })
   })
   it('no owner -> {} on both read and write (never a blind global key)', () => {
     expect(loadMoneyCache(null)).toEqual({})
@@ -574,6 +574,21 @@ describe('loadMoneyCache / saveMoneyCache', () => {
   it('a corrupt cache entry degrades to {} rather than throwing', () => {
     store[`yv_my_money_cache_gbad`] = '{not json'
     expect(loadMoneyCache('GBAD')).toEqual({})
+  })
+  // Final review, Fix 2: a cache written before the schema was versioned (no `__schemaVersion` at
+  // all -- exactly the pre-Task-10 shape whose `discovery` rows have no `baseChildren` key) must
+  // be treated as a cache miss, never trusted at its old shape. Same for a version stamped by some
+  // future/other schema this reader doesn't recognize.
+  it('a cache with no schema version (pre-versioning shape) is a cache miss, not trusted data', () => {
+    store[`yv_my_money_cache_gold`] = JSON.stringify({ money: { checkedAt: 1 }, discovery: {} })
+    expect(loadMoneyCache('GOld')).toEqual({})
+  })
+  it('a cache stamped with a mismatched schema version is a cache miss', () => {
+    store[`yv_my_money_cache_gmismatch`] = JSON.stringify({
+      money: { checkedAt: 1 },
+      __schemaVersion: 1,
+    })
+    expect(loadMoneyCache('GMismatch')).toEqual({})
   })
 })
 

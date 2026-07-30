@@ -10,6 +10,8 @@
     "preview": "vite preview",
     "test": "vitest run --exclude=\"e2e/**\"",
     "lint": "eslint .",
+    "lint:ci": "node scripts/check-eslint-warning-baseline.mjs",
+    "lint:warnings:update": "node scripts/check-eslint-warning-baseline.mjs --update",
     "format": "prettier --write \"src/**/*.{js,jsx,css}\" \"api/**/*.js\"",
     "format:check": "prettier --check \"src/**/*.{js,jsx,css}\" \"api/**/*.js\"",
     "pages:dev": "npm run build && wrangler pages dev",

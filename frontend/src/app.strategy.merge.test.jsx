@@ -7,9 +7,36 @@ import {
   checkCircleUsdcFunding,
   readStoredBaseMandate,
   buildBaseLegContext,
+  baseMandateAllocationsForPlan,
 } from './mergeFlowHelpers.js'
 
 describe('merge flow helpers', () => {
+  it('derives exact reviewed Base child allocations for the immediate pre-grant check', () => {
+    expect(
+      baseMandateAllocationsForPlan({
+        agents: [
+          {
+            kind: 'bridge',
+            children: [
+              {
+                allocationId: 'run-9:bridge:aave-v3',
+                address: '0x00000000000000000000000000000000000000a1',
+                allocation: { token: 'USDC', units: '1234567', decimals: 6 },
+              },
+            ],
+          },
+        ],
+      })
+    ).toEqual([
+      {
+        allocationId: 'run-9:bridge:aave-v3',
+        poolAddress: '0x00000000000000000000000000000000000000a1',
+        amount: { token: 'USDC', units: '1234567', decimals: 6 },
+        minShares: '0',
+      },
+    ])
+  })
+
   // Strategy Task 13 (decision log #22, obligation D): the two `resolveBaseAvailability`
   // legacy-shape tests that lived here (`{checkHealth}`-only) are DELETED along with the
   // migrated app.jsx call site and the now-removed `resolveLegacyBaseAvailability` branch —

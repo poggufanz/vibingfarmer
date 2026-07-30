@@ -3,7 +3,24 @@
 // here is testable without touching a network or a real Cloudflare binding).
 import { ingestAgentIndexPage, coverageProof } from './indexer.js'
 import { commitBackfillAudit } from './backfill.js'
-import { ingestAssociationReport, joinBaseAssociations } from './associations.js'
+import {
+  advanceBaseChildLifecycle,
+  baseChildIdentity,
+  ingestAssociationReport,
+  ingestBaseChildIntent,
+  joinBaseAssociations,
+} from './associations.js'
+import {
+  applyAuthenticatedReceiptMutation,
+  issueReceiptChallenge,
+  ReceiptAuthError,
+} from './executionReceipts.js'
+import {
+  AgentIndexConflictError,
+  AgentIndexStoreError,
+  AgentIndexUnavailableError,
+  AgentIndexValidationError,
+} from './models.js'
 import {
   AGENT_CREATORS,
   AGENT_CREATOR_MANIFEST_HASH,
@@ -17,6 +34,320 @@ export const LIVE_MANIFEST = {
   hash: AGENT_CREATOR_MANIFEST_HASH,
   schemaVersion: AGENT_INDEX_SCHEMA_VERSION,
   creators: AGENT_CREATORS,
+}
+
+function agentIndexFailure(error) {
+  if (error instanceof AgentIndexValidationError) {
+    return { status: 400, body: { error: 'Invalid agent-index request' } }
+  }
+  if (error instanceof AgentIndexConflictError) {
+    return { status: 409, body: { error: 'Agent-index mutation conflict' } }
+  }
+  if (error instanceof AgentIndexUnavailableError) {
+    return { status: 503, body: { error: 'Agent-index dependency unavailable' } }
+  }
+  if (error instanceof AgentIndexStoreError) {
+    return { status: 500, body: { error: 'Internal agent-index error' } }
+  }
+  if (error instanceof ReceiptAuthError) {
+    if (error.code === 'replay') {
+      return { status: 409, body: { error: 'Receipt proof was already used' } }
+    }
+    if (['proof', 'expired'].includes(error.code)) {
+      return { status: 401, body: { error: 'Invalid or expired receipt proof' } }
+    }
+    if (error.code === 'authority') {
+      return { status: 403, body: { error: 'Agent authority could not be verified' } }
+    }
+    if (error.code === 'invalid') {
+      return { status: 400, body: { error: 'Invalid receipt mutation' } }
+    }
+  }
+  return { status: 500, body: { error: 'Internal agent-index error' } }
+}
+
+function requireConfiguredNetwork(networkId, configuredNetworkId) {
+  if (!configuredNetworkId) {
+    throw new AgentIndexUnavailableError('Stellar network configuration is unavailable')
+  }
+  if (typeof networkId !== 'string' || !networkId) {
+    throw new AgentIndexValidationError('networkId is required')
+  }
+  if (networkId !== configuredNetworkId) {
+    throw new AgentIndexValidationError('Requested network does not match configured network')
+  }
+}
+
+function requireText(value, field) {
+  if (typeof value !== 'string' || !value) {
+    throw new AgentIndexValidationError(`${field} is required`)
+  }
+}
+
+function validateLease(lease, { release = false } = {}) {
+  for (const field of ['networkId', 'executionId', 'allocationId', 'phase', 'leaseToken']) {
+    requireText(lease?.[field], field)
+  }
+  if (!release) {
+    requireText(lease?.owner, 'owner')
+    requireText(lease?.holder, 'holder')
+    if (!Number.isSafeInteger(lease?.now)) {
+      throw new AgentIndexValidationError('lease.now must be a safe integer')
+    }
+    if (lease.ttlMs != null && (!Number.isSafeInteger(lease.ttlMs) || lease.ttlMs <= 0)) {
+      throw new AgentIndexValidationError('lease.ttlMs must be a positive safe integer')
+    }
+  }
+}
+
+async function reporterGate({ secret, providedSecret }) {
+  if (!secret) return { status: 503, body: { error: 'Agent-index writer is not configured' } }
+  if (!providedSecret || !(await constantTimeEqual(providedSecret, secret))) {
+    return { status: 401, body: { error: 'Unauthorized' } }
+  }
+  return null
+}
+
+export async function handleReceiptChallenge({
+  request,
+  store,
+  authorityReader,
+  now = Date.now(),
+  challengeId,
+}) {
+  if (!store) {
+    return { status: 503, body: { error: 'Receipt store unavailable', configured: false } }
+  }
+  if (typeof authorityReader !== 'function') {
+    return { status: 503, body: { error: 'Receipt authority is not configured' } }
+  }
+  try {
+    const challenge = await issueReceiptChallenge({
+      request,
+      store,
+      authorityReader,
+      now,
+      challengeId,
+    })
+    return { status: 201, body: { ok: true, challenge } }
+  } catch (error) {
+    const failure = agentIndexFailure(error)
+    if (failure.status === 400) {
+      return { status: 400, body: { error: 'Invalid receipt challenge request' } }
+    }
+    if (failure.status === 503) {
+      return { status: 503, body: { error: 'Receipt authority is unavailable' } }
+    }
+    return failure
+  }
+}
+
+export async function handleReceiptWrite({
+  body,
+  proof,
+  store,
+  authorityReader,
+  now = Date.now(),
+  consumeToken,
+}) {
+  if (!store) {
+    return { status: 503, body: { error: 'Receipt store unavailable', configured: false } }
+  }
+  try {
+    if (typeof authorityReader !== 'function') {
+      throw new AgentIndexUnavailableError('Receipt authority is not configured')
+    }
+    const result = await applyAuthenticatedReceiptMutation({
+      body,
+      proof,
+      store,
+      authorityReader,
+      now,
+      consumeToken,
+    })
+    return { status: 200, body: { ok: true, ...result } }
+  } catch (error) {
+    const failure = agentIndexFailure(error)
+    if (failure.status === 400) {
+      return { status: 400, body: { error: 'Invalid receipt mutation' } }
+    }
+    if (failure.status === 409) {
+      if (error instanceof ReceiptAuthError) return failure
+      return { status: 409, body: { error: 'Receipt mutation conflict' } }
+    }
+    return failure
+  }
+}
+
+export async function handleReceiptRead({
+  networkId,
+  configuredNetworkId,
+  owner,
+  executionId,
+  allocationId,
+  store,
+}) {
+  if (!store?.readExecutionReceipt) {
+    return { status: 503, body: { error: 'Receipt store unavailable', configured: false } }
+  }
+  try {
+    requireConfiguredNetwork(networkId, configuredNetworkId)
+    for (const [value, field] of [
+      [owner, 'owner'],
+      [executionId, 'executionId'],
+      [allocationId, 'allocationId'],
+    ]) {
+      requireText(value, field)
+    }
+    const receipt = await store.readExecutionReceipt({
+      networkId,
+      owner,
+      executionId,
+      allocationId,
+    })
+    return receipt
+      ? { status: 200, body: { receipt } }
+      : { status: 404, body: { error: 'Receipt not found' } }
+  } catch (error) {
+    return agentIndexFailure(error)
+  }
+}
+
+export async function handleRecoveryLeaseAcquire({
+  lease,
+  configuredNetworkId,
+  store,
+  secret,
+  providedSecret,
+}) {
+  const gate = await reporterGate({ secret, providedSecret })
+  if (gate) return gate
+  if (!store?.acquireRecoveryLease) {
+    return { status: 503, body: { error: 'Recovery lease store unavailable', configured: false } }
+  }
+  try {
+    requireConfiguredNetwork(lease?.networkId, configuredNetworkId)
+    validateLease(lease)
+    const result = await store.acquireRecoveryLease(lease)
+    return result.acquired
+      ? { status: 200, body: { ok: true, lease: result } }
+      : { status: 409, body: { error: 'Recovery lease is already held' } }
+  } catch (error) {
+    return agentIndexFailure(error)
+  }
+}
+
+export async function handleRecoveryLeaseRelease({
+  lease,
+  configuredNetworkId,
+  store,
+  secret,
+  providedSecret,
+}) {
+  const gate = await reporterGate({ secret, providedSecret })
+  if (gate) return gate
+  if (!store?.releaseRecoveryLease) {
+    return { status: 503, body: { error: 'Recovery lease store unavailable', configured: false } }
+  }
+  try {
+    requireConfiguredNetwork(lease?.networkId, configuredNetworkId)
+    validateLease(lease, { release: true })
+    const result = await store.releaseRecoveryLease(lease)
+    return result.released
+      ? { status: 200, body: { ok: true } }
+      : { status: 409, body: { error: 'Recovery lease release conflict' } }
+  } catch (error) {
+    return agentIndexFailure(error)
+  }
+}
+
+export async function handleBaseChildIntent({
+  child,
+  configuredNetworkId,
+  store,
+  secret,
+  providedSecret,
+}) {
+  const gate = await reporterGate({ secret, providedSecret })
+  if (gate) return gate
+  if (!store?.createBaseChildIntent) {
+    return { status: 503, body: { error: 'Base child store unavailable', configured: false } }
+  }
+  try {
+    requireConfiguredNetwork(child?.networkId, configuredNetworkId)
+    const result = await ingestBaseChildIntent({ child, store })
+    return {
+      status: 201,
+      body: {
+        acknowledged: true,
+        identity: baseChildIdentity(child),
+        schemaVersion: AGENT_INDEX_SCHEMA_VERSION,
+        ...result,
+      },
+    }
+  } catch (error) {
+    return agentIndexFailure(error)
+  }
+}
+
+export async function handleReporterReadiness({ store, secret, providedSecret }) {
+  const gate = await reporterGate({ secret, providedSecret })
+  if (gate) return gate
+  if (!store?.probeReadiness) {
+    return { status: 503, body: { error: 'Base child store unavailable', configured: false } }
+  }
+  try {
+    const result = await store.probeReadiness()
+    if (
+      result?.writable !== true ||
+      result?.schemaVersion !== AGENT_INDEX_SCHEMA_VERSION ||
+      result?.stores?.executionReceipts !== true ||
+      result?.stores?.baseChildIntents !== true
+    ) {
+      return { status: 503, body: { error: 'Base child store unavailable', configured: true } }
+    }
+    return {
+      status: 200,
+      body: {
+        ready: true,
+        schemaVersion: result.schemaVersion,
+        stores: { executionReceipts: true, baseChildIntents: true },
+      },
+    }
+  } catch (error) {
+    return agentIndexFailure(error)
+  }
+}
+
+export async function handleBaseChildLifecycle({
+  request,
+  configuredNetworkId,
+  store,
+  secret,
+  providedSecret,
+}) {
+  const gate = await reporterGate({ secret, providedSecret })
+  if (gate) return gate
+  if (!store?.advanceBaseChildLifecycle) {
+    return { status: 503, body: { error: 'Base child store unavailable', configured: false } }
+  }
+  try {
+    requireConfiguredNetwork(request?.identity?.networkId, configuredNetworkId)
+    const result = await advanceBaseChildLifecycle({ ...request, store })
+    return {
+      status: 200,
+      body: {
+        acknowledged: true,
+        identity: request.identity,
+        sequence: result.sequence,
+        schemaVersion: AGENT_INDEX_SCHEMA_VERSION,
+        written: result.written,
+        duplicates: result.duplicates,
+      },
+    }
+  } catch (error) {
+    return agentIndexFailure(error)
+  }
 }
 
 /** Constant-time secret compare (node:crypto.timingSafeEqual — available under the
@@ -235,6 +566,16 @@ export async function handleRead({
   if (!store) {
     return { status: 200, body: unavailableBody({ networkId, owner, manifest, now }) }
   }
+  // Final review, Fix 2: a store/version skew where `readOwnerRunAllocations` is missing must
+  // never silently masquerade as "this owner has no Base associations" -- the old ternary fell
+  // back to `[]`, so `joinBaseAssociations` stamped `baseChildren: []` on every agent while this
+  // handler's own `status` (from coverageProof, membership/coverage-only) has no way to see that
+  // gap, letting a skewed store return `status:'complete'` with EVERY agent's Base money
+  // invisible -- the one path `readOwnerMoney.js`'s `discovery.status` guard structurally cannot
+  // catch. Same fail-closed shape this function already uses for `!store` and a thrown read below.
+  if (typeof store.readOwnerRunAllocations !== 'function') {
+    return { status: 200, body: unavailableBody({ networkId, owner, manifest, now }) }
+  }
 
   let memberships
   let coverage
@@ -243,9 +584,7 @@ export async function handleRead({
     ;[memberships, coverage, associations] = await Promise.all([
       store.readOwnerMemberships({ networkId, owner }),
       store.readCoverage({ networkId }),
-      typeof store.readOwnerRunAllocations === 'function'
-        ? store.readOwnerRunAllocations({ networkId, owner })
-        : [],
+      store.readOwnerRunAllocations({ networkId, owner }),
     ])
   } catch {
     return { status: 200, body: unavailableBody({ networkId, owner, manifest, now }) }

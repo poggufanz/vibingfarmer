@@ -7,7 +7,10 @@ vi.mock('./client.js', () => ({
   submitUserTx: vi.fn().mockResolvedValue({ hash: 'rh1', status: 'SUCCESS' }),
   rpcServer: vi.fn(),
 }))
-vi.mock('./walletKit.js', () => ({ signTxXdr: vi.fn().mockResolvedValue('SIGNED') }))
+vi.mock('./walletKit.js', () => ({
+  getActiveAccount: vi.fn(() => null),
+  signTxXdr: vi.fn().mockResolvedValue('SIGNED'),
+}))
 const submitViaRelayMock = vi.fn()
 const getRelayerAddressMock = vi.fn()
 vi.mock('./relay.js', () => ({

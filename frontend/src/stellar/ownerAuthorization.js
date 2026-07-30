@@ -18,6 +18,13 @@
 import { submitViaRelay, RelayRejectedError } from './relay.js'
 import { submitUserTx, rpcServer } from './client.js'
 import { NETWORK_PASSPHRASE } from './config.js'
+import { activeAccountChanged, assertActiveAccountBoundary } from './activeAccount.js'
+import { assertSelectedWalletSnapshot, getActiveAccount, readSelectedWallet } from './walletKit.js'
+
+// Legacy/versionless callers never need the current V1 record. Keeping this binding lazy means
+// their older injected wallet mocks need not expose an unused getter; every V1 boundary invokes
+// it immediately and still fails closed.
+const readCurrentActiveAccount = () => getActiveAccount()
 
 // Dynamically imported (like wallet/account.js's own makeKit) so that G-only callers — the
 // overwhelming majority of owner actions — never pull wallet/account.js's SAK-adjacent module
@@ -47,11 +54,12 @@ async function sdk() {
  *                              only chain/explorer reconciliation is safe.
  */
 export class OwnerActionSubmissionError extends Error {
-  constructor(message, code, submission) {
+  constructor(message, code, submission, cause) {
     super(message)
     this.name = 'OwnerActionSubmissionError'
     this.code = code
     this.submission = submission
+    if (cause !== undefined) this.cause = cause
   }
 }
 
@@ -63,7 +71,20 @@ export class OwnerActionSubmissionError extends Error {
  * @returns {Promise<{kind:'G', source:string, owner:string}
  *                   |{kind:'C', source:string, owner:string, contractId:string}>}
  */
-export async function resolveOwnerTxModel({ owner, activeAccount, getRelayerAddress }) {
+export async function resolveOwnerTxModel({
+  owner,
+  activeAccount,
+  getRelayerAddress,
+  getCurrentActiveAccount = readCurrentActiveAccount,
+  signal,
+}) {
+  const check = () =>
+    assertActiveAccountBoundary({
+      captured: activeAccount,
+      getCurrent: getCurrentActiveAccount,
+      signal,
+    })
+  check()
   if (!activeAccount || (activeAccount.kind !== 'G' && activeAccount.kind !== 'C')) {
     throw new Error('resolveOwnerTxModel: no active account to authorize this owner action.')
   }
@@ -72,11 +93,17 @@ export async function resolveOwnerTxModel({ owner, activeAccount, getRelayerAddr
   }
   if (activeAccount.kind === 'G') {
     // Classic envelope, source = the owner itself. A C address can never reach this branch.
-    return { kind: 'G', source: owner, owner }
+    return {
+      kind: 'G',
+      source: owner,
+      owner,
+      ...(activeAccount.version === 1 ? { activeAccount, getCurrentActiveAccount, signal } : {}),
+    }
   }
   // C: resolve + validate the funded relayer G BEFORE any ceremony — a missing fee payer must
   // never prompt Face ID for a signature that could not be submitted anyway.
   const relayer = await getRelayerAddress()
+  check()
   if (!relayer) {
     throw new OwnerActionSubmissionError(
       'The gasless relay has no funded fee payer available right now.',
@@ -84,7 +111,13 @@ export async function resolveOwnerTxModel({ owner, activeAccount, getRelayerAddr
       'not-submitted'
     )
   }
-  return { kind: 'C', source: relayer, owner, contractId: owner }
+  return {
+    kind: 'C',
+    source: relayer,
+    owner,
+    contractId: owner,
+    ...(activeAccount.version === 1 ? { activeAccount, getCurrentActiveAccount, signal } : {}),
+  }
 }
 
 /**
@@ -120,37 +153,65 @@ export async function submitOwnerAuthorizedTx({
   classicSubmission = 'direct',
   pollTries,
   pollIntervalMs,
+  activeAccount = model?.activeAccount,
+  getCurrentActiveAccount = model?.getCurrentActiveAccount || readCurrentActiveAccount,
+  signal = model?.signal,
 }) {
+  const check = () =>
+    assertActiveAccountBoundary({
+      captured: activeAccount,
+      getCurrent: getCurrentActiveAccount,
+      signal,
+    })
+  check()
   const built = await build(model)
+  check()
+  check()
   const signed = await sign(built, model, label)
+  check()
 
-  if (model.kind === 'C') return relayOnly(signed, label)
+  if (model.kind === 'C') return relayOnly(signed, label, check, signal)
 
   if (classicSubmission === 'prefer-relay') {
     let relayed
     try {
-      relayed = await submitViaRelay({ xdr: signed })
+      check()
+      relayed = await submitViaRelay({ xdr: signed, ...(signal ? { signal } : {}) })
+      checkAfterDispatch(check, label)
     } catch (e) {
-      throw refusalError(e, label)
+      throw dispatchError(e, label, signal)
     }
-    if (relayed) return { ...relayed, channel: 'relay' }
+    if (relayed) {
+      check()
+      return { ...relayed, channel: 'relay' }
+    }
     // null = relay unreachable (never refused) -> the owner falls back to paying its own fee.
   }
-  const res = await submitUserTx({
-    signedXdr: signed,
-    server,
-    ...(pollTries != null ? { pollTries } : {}),
-    ...(pollIntervalMs != null ? { pollIntervalMs } : {}),
-  })
+  check()
+  let res
+  try {
+    res = await submitUserTx({
+      signedXdr: signed,
+      server,
+      ...(signal ? { signal } : {}),
+      ...(pollTries != null ? { pollTries } : {}),
+      ...(pollIntervalMs != null ? { pollIntervalMs } : {}),
+    })
+    checkAfterDispatch(check, label)
+  } catch (error) {
+    throw dispatchError(error, label, signal)
+  }
   return { ...res, channel: 'direct' }
 }
 
-async function relayOnly(signedXdr, label) {
+async function relayOnly(signedXdr, label, check = () => {}, signal) {
   let relayed
   try {
-    relayed = await submitViaRelay({ xdr: signedXdr })
+    check()
+    relayed = await submitViaRelay({ xdr: signedXdr, ...(signal ? { signal } : {}) })
+    checkAfterDispatch(check, label)
   } catch (e) {
-    throw refusalError(e, label)
+    throw dispatchError(e, label, signal)
   }
   if (!relayed) {
     // The ceremony (WebAuthn) already ran; a C account has no direct fallback to reach for. We
@@ -162,7 +223,36 @@ async function relayOnly(signedXdr, label) {
       'unknown'
     )
   }
+  check()
   return { ...relayed, channel: 'relay' }
+}
+
+function submissionUnknown(label, cause) {
+  return new OwnerActionSubmissionError(
+    `The active account changed after dispatch${label ? ` (${label})` : ''}. Check the chain before retrying.`,
+    'VF_SUBMISSION_UNKNOWN',
+    'unknown',
+    cause
+  )
+}
+
+function checkAfterDispatch(check, label) {
+  try {
+    check()
+  } catch (error) {
+    throw submissionUnknown(label, error)
+  }
+}
+
+function dispatchError(error, label, signal) {
+  if (
+    error?.code === 'VF_SUBMISSION_UNKNOWN' ||
+    error?.code === 'ACTIVE_ACCOUNT_CHANGED' ||
+    error?.name === 'AbortError' ||
+    signal?.aborted
+  )
+    return error?.code === 'VF_SUBMISSION_UNKNOWN' ? error : submissionUnknown(label, error)
+  return refusalError(error, label)
 }
 
 function refusalError(e, label) {
@@ -189,12 +279,80 @@ function refusalError(e, label) {
  * @param {{tx:object, contractId:string, server?:object, kit?:object}} p
  * @returns {Promise<string>} base64 XDR, source = the relayer, ready to relay-submit
  */
-export async function signOwnerAuthEntry({ tx, contractId, server, kit }) {
+export async function signOwnerAuthEntry({
+  tx,
+  contractId,
+  server,
+  kit,
+  activeAccount,
+  getCurrentActiveAccount = readCurrentActiveAccount,
+  signal,
+}) {
+  const check = () =>
+    assertActiveAccountBoundary({
+      captured: activeAccount,
+      getCurrent: getCurrentActiveAccount,
+      signal,
+    })
+  check()
   const { signTransactionForContract } = await signGeneric()
-  const signedXdr = await signTransactionForContract({ tx, contractId, kit })
+  check()
+  let signedXdr
+  if (activeAccount?.version === 1) {
+    const before = await readSelectedWallet({ kit })
+    check()
+    assertSelectedWalletSnapshot({ activeAccount, snapshot: before })
+    const { Address, xdr: sdkXdr } = await sdk()
+    check()
+    const wanted = Address.fromString(contractId).toScAddress().toXDR('base64')
+    let signedAny = false
+    for (const op of tx.operations) {
+      const entries = op.auth || []
+      for (let index = 0; index < entries.length; index++) {
+        const entry = entries[index]
+        if (entry.credentials().switch().name !== 'sorobanCredentialsAddress') continue
+        if (entry.credentials().address().address().toXDR('base64') !== wanted) continue
+        check()
+        const freshBefore = await readSelectedWallet({ kit: before.binding })
+        check()
+        assertSelectedWalletSnapshot({
+          activeAccount,
+          snapshot: freshBefore,
+          module: before.module,
+        })
+        check()
+        const signed = await before.module.signAuthEntry(entry.toXDR('base64'), {
+          address: activeAccount.address,
+          networkPassphrase: activeAccount.networkPassphrase,
+        })
+        check()
+        if (signed?.signerAddress != null && signed.signerAddress !== activeAccount.address)
+          throw activeAccountChanged()
+        const freshAfter = await readSelectedWallet({ kit: before.binding })
+        check()
+        assertSelectedWalletSnapshot({
+          activeAccount,
+          snapshot: freshAfter,
+          module: before.module,
+        })
+        entries[index] = sdkXdr.SorobanAuthorizationEntry.fromXDR(signed?.signedAuthEntry, 'base64')
+        signedAny = true
+      }
+    }
+    if (!signedAny)
+      throw new Error('VF Wallet found no auth entry in this transaction for its own account')
+    signedXdr = tx.toEnvelope().toXDR('base64')
+  } else {
+    signedXdr = await signTransactionForContract({ tx, contractId, kit })
+    check()
+  }
   const { TransactionBuilder } = await sdk()
+  check()
   const s = server || (await rpcServer())
+  check()
   const rebuilt = TransactionBuilder.fromXDR(signedXdr, NETWORK_PASSPHRASE)
+  check()
   const prepared = await s.prepareTransaction(rebuilt)
+  check()
   return prepared.toEnvelope().toXDR('base64')
 }

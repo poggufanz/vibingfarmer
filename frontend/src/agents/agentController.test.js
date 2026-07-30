@@ -17,12 +17,28 @@ vi.mock('../stellar/exit.js', () => ({
 vi.mock('./transactionStore.js', () => ({ saveTransaction: vi.fn() }))
 
 import { ownerWithdraw, sweepAgents } from '../stellar/exit.js'
-import { withdrawFromVault, withdrawAllFromVault } from './agentController.js'
+import {
+  withdrawFromVault as productionWithdrawFromVault,
+  withdrawAllFromVault as productionWithdrawAllFromVault,
+} from './agentController.js'
 
 const USER = 'GCIOUP4UJAAFDBJNP5DY5CFJHBLEKGLHZ5E2AYRIIQ5VOZFVSTPRYHNS'
 const AGENT = 'CDWHNHIHYQ7YSJXFSNVKRJRAJNBS6XXQBGKB5UUFQAEXKFVHMOFKM77A'
 const VAULT = 'CDWHNHIHYQ7YSJXFSNVKRJRAJNBS6XXQBGKB5UUFQAEXKFVHMOFKM77A'
 const AGENTS = ['CA_ONE', 'CA_TWO', 'CA_THREE']
+const ACTIVE = Object.freeze({
+  version: 1,
+  kind: 'G',
+  address: USER,
+  networkPassphrase: 'Test SDF Network ; September 2015',
+  connectorId: 'freighter',
+  epoch: 9,
+})
+const ownerAuth = () => ({ activeAccount: ACTIVE, getCurrentActiveAccount: () => ACTIVE })
+const withdrawFromVault = (vault, amount, user, agent, auth = ownerAuth()) =>
+  productionWithdrawFromVault(vault, amount, user, agent, auth)
+const withdrawAllFromVault = (vault, user, agents, progress, auth = ownerAuth()) =>
+  productionWithdrawAllFromVault(vault, user, agents, progress, auth)
 
 beforeEach(() => {
   exitRouter = 'CDGDIPHBN3MSNURDX33IZBXXQTJPT7THAXSMVBAIOIXLOA6OF32IRS2J'
@@ -35,7 +51,9 @@ beforeEach(() => {
 describe('withdrawFromVault', () => {
   it('sweeps the agent the caller names, to the user wallet', async () => {
     await withdrawFromVault(VAULT, '1000', USER, AGENT)
-    expect(ownerWithdraw).toHaveBeenCalledWith({ owner: USER, agentAddress: AGENT, to: USER })
+    expect(ownerWithdraw).toHaveBeenCalledWith(
+      expect.objectContaining({ owner: USER, agentAddress: AGENT, to: USER, activeAccount: ACTIVE })
+    )
   })
 
   it('throws instead of falling back to a hardcoded demo agent', async () => {
@@ -46,13 +64,40 @@ describe('withdrawFromVault', () => {
   })
 
   it('forwards the owner-authorization model (activeAccount/getRelayerAddress/kit) to ownerWithdraw', async () => {
-    const activeAccount = { kind: 'C', address: 'CAGENTOWNER' }
+    const activeAccount = ACTIVE
+    const getCurrentActiveAccount = () => activeAccount
     const getRelayerAddress = vi.fn()
     const kit = {}
-    await withdrawFromVault(VAULT, '1000', USER, AGENT, { activeAccount, getRelayerAddress, kit })
+    await withdrawFromVault(VAULT, '1000', USER, AGENT, {
+      activeAccount,
+      getCurrentActiveAccount,
+      getRelayerAddress,
+      kit,
+    })
     expect(ownerWithdraw).toHaveBeenCalledWith(
-      expect.objectContaining({ activeAccount, getRelayerAddress, kit })
+      expect.objectContaining({ activeAccount, getCurrentActiveAccount, getRelayerAddress, kit })
     )
+  })
+
+  it('fails closed without a complete V1 browser capability', async () => {
+    await expect(productionWithdrawFromVault(VAULT, '1000', USER, AGENT)).rejects.toMatchObject({
+      code: 'ACTIVE_ACCOUNT_CHANGED',
+    })
+    expect(ownerWithdraw).not.toHaveBeenCalled()
+  })
+
+  it('drops a completion when the account changes while ownerWithdraw is in flight', async () => {
+    let current = ACTIVE
+    ownerWithdraw.mockImplementationOnce(async () => {
+      current = Object.freeze({ ...ACTIVE, address: 'GOTHER', epoch: 10 })
+      return { hash: 'stale', status: 'SUCCESS' }
+    })
+    await expect(
+      productionWithdrawFromVault(VAULT, '1000', USER, AGENT, {
+        activeAccount: ACTIVE,
+        getCurrentActiveAccount: () => current,
+      })
+    ).rejects.toMatchObject({ code: 'ACTIVE_ACCOUNT_CHANGED' })
   })
 })
 
@@ -66,11 +111,14 @@ describe('withdrawAllFromVault — one-signature sweep', () => {
     })
     const out = await withdrawAllFromVault(VAULT, USER, AGENTS)
     expect(sweepAgents).toHaveBeenCalledTimes(1)
-    expect(sweepAgents).toHaveBeenCalledWith({
-      owner: USER,
-      agentAddresses: AGENTS,
-      to: USER,
-    })
+    expect(sweepAgents).toHaveBeenCalledWith(
+      expect.objectContaining({
+        owner: USER,
+        agentAddresses: AGENTS,
+        to: USER,
+        activeAccount: ACTIVE,
+      })
+    )
     expect(ownerWithdraw).not.toHaveBeenCalled()
     expect(out).toEqual([
       { agentAddress: 'CA_ONE', ok: true, txHash: 'sweep1' },
@@ -137,16 +185,18 @@ describe('withdrawAllFromVault — one-signature sweep', () => {
   })
 
   it('forwards the owner-authorization model (activeAccount/getRelayerAddress/kit) to sweepAgents', async () => {
-    const activeAccount = { kind: 'C', address: 'CAGENTOWNER' }
+    const activeAccount = ACTIVE
+    const getCurrentActiveAccount = () => activeAccount
     const getRelayerAddress = vi.fn()
     const kit = {}
     await withdrawAllFromVault(VAULT, USER, AGENTS, undefined, {
       activeAccount,
+      getCurrentActiveAccount,
       getRelayerAddress,
       kit,
     })
     expect(sweepAgents).toHaveBeenCalledWith(
-      expect.objectContaining({ activeAccount, getRelayerAddress, kit })
+      expect.objectContaining({ activeAccount, getCurrentActiveAccount, getRelayerAddress, kit })
     )
   })
 })

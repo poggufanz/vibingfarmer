@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import ZoneFrame from './ZoneFrame.jsx'
 import WithdrawModal from '../WithdrawModal.jsx'
 import { agoText } from './consoleUtils.js'
@@ -11,17 +11,34 @@ export default function PositionsZone({
   lastUpdated = null,
   nowMs,
   userAddress,
+  activeAccount,
   scopes = [],
   withdrawEnabled = true,
   onWithdrawSuccess,
   onNewStrategy,
 }) {
   const [withdrawing, setWithdrawing] = useState(null)
+  const capabilityKey =
+    activeAccount?.version === 1
+      ? `${activeAccount.address}:${activeAccount.networkPassphrase}:${activeAccount.connectorId}:${activeAccount.epoch}`
+      : null
+  useEffect(() => {
+    if (withdrawing && withdrawing.capabilityKey !== capabilityKey) setWithdrawing(null)
+  }, [capabilityKey, withdrawing])
   const list = Object.entries(positions).sort(
     ([, a], [, b]) => Number(b.balance) - Number(a.balance)
   )
   const total = list.reduce((s, [, p]) => s + Number(p.balance || 0), 0)
   const apyOf = (addr) => vaultMeta[addr.toLowerCase()]?.apy ?? null
+  const ownerCapabilityReady = Boolean(
+    activeAccount?.version === 1 &&
+    activeAccount.address === userAddress &&
+    typeof activeAccount.networkPassphrase === 'string' &&
+    activeAccount.networkPassphrase &&
+    typeof activeAccount.connectorId === 'string' &&
+    activeAccount.connectorId &&
+    Number.isSafeInteger(activeAccount.epoch)
+  )
 
   return (
     <ZoneFrame
@@ -64,7 +81,7 @@ export default function PositionsZone({
                 <span className="mono pos-pct tnum">{pct.toFixed(0)}% of portfolio</span>
                 <button
                   className="btn btn-ghost pos-cta"
-                  disabled={!withdrawEnabled}
+                  disabled={!withdrawEnabled || !ownerCapabilityReady}
                   onClick={() =>
                     setWithdrawing({
                       vault: {
@@ -79,6 +96,8 @@ export default function PositionsZone({
                       // set at click time. A revoked-but-funded agent must still be swept (the
                       // exit-enumeration rule) -- pickVaultAgentsForExit never filters on revoked.
                       agentAddresses: pickVaultAgentsForExit(scopes, addr),
+                      activeAccount,
+                      capabilityKey,
                     })
                   }
                 >
@@ -95,6 +114,7 @@ export default function PositionsZone({
           balance={withdrawing.balance}
           unclaimedRewards={withdrawing.unclaimedRewards}
           userAddress={userAddress}
+          activeAccount={withdrawing.activeAccount}
           agentAddresses={withdrawing.agentAddresses}
           onClose={() => setWithdrawing(null)}
           onSuccess={onWithdrawSuccess || (() => {})}

@@ -5,10 +5,13 @@
 // §4-5), a mixed run's bridge agent joins the SAME single funding_router grant as the Stellar
 // deposit workers, never a second signature. A bridge agent can only be created via the router
 // (never the legacy per-agent deploy), so this file exercises the ROUTER path — same seam as
-// orchestrator.router.test.js — with executeBaseLeg mocked (its own contract is baseLeg.test.js's
-// job) and mergeFlowHelpers.js's readStoredBaseMandate mocked (its own contract is
-// app.strategy.merge.test.jsx's job).
+// orchestrator.router.test.js — with executeBaseLeg mocked for the isolated cases (its own
+// contract is baseLeg.test.js's job) and mergeFlowHelpers.js's readStoredBaseMandate mocked (its
+// own contract is app.strategy.merge.test.jsx's job). The uncertain-burn integration at the end
+// explicitly forwards this spy into the real executeBaseLeg and its real runFarmFlow.
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+
+const baseLegHarness = vi.hoisted(() => ({ executeReal: null }))
 
 const submitGrantMock = vi.fn()
 const runAgentPullMock = vi.fn()
@@ -88,11 +91,18 @@ vi.mock('./worker.js', () => ({
 }))
 
 const executeBaseLegMock = vi.fn()
-vi.mock('./baseLeg.js', () => ({
-  executeBaseLeg: (...a) => executeBaseLegMock(...a),
+vi.mock('./baseLeg.js', async (importOriginal) => {
+  const actual = await importOriginal()
+  baseLegHarness.executeReal = actual.executeBaseLeg
+  return { ...actual, executeBaseLeg: (...a) => executeBaseLegMock(...a) }
+})
+const runAgentBurnMock = vi.fn()
+vi.mock('./stellar/agentBurn.js', () => ({
+  runAgentBurn: (...a) => runAgentBurnMock(...a),
 }))
 const readBaseMandateMock = vi.fn()
-vi.mock('./wallet/baseBinding.js', () => ({
+vi.mock('./wallet/baseBinding.js', async (importOriginal) => ({
+  ...(await importOriginal()),
   readBaseMandate: (...a) => readBaseMandateMock(...a),
 }))
 
@@ -113,6 +123,7 @@ import {
   CCTP_BASE_DOMAIN,
   evmAddrToBytes32,
 } from './stellar/cctpBurn.js'
+import { BASE_POOL_CATALOG } from './config.js'
 
 const KERNEL = '0x0000000000000000000000000000000000000AA1'
 
@@ -197,11 +208,11 @@ function permissionedMixedFixture(runId = 'run-regression') {
   }
 }
 
-function permissionedOrchestrator() {
+function permissionedOrchestrator(onEvent = vi.fn()) {
   return new OrchestratorAgent({
     user: 'GUSER',
     sessionId: 'permissioned-regression',
-    onEvent: vi.fn(),
+    onEvent,
     baseLegContext: { connectedAddress: 'GUSER', signTx: vi.fn() },
   })
 }
@@ -279,6 +290,8 @@ beforeEach(() => {
   readBaseMandateMock.mockReturnValue({ kernelAddress: KERNEL })
   executeBaseLegMock.mockReset()
   executeBaseLegMock.mockResolvedValue({ success: true, burnHash: 'B', jobId: 'j1' })
+  runAgentBurnMock.mockReset()
+  runAgentBurnMock.mockResolvedValue({ burnHash: 'HBURN' })
 })
 
 describe('orchestrator base leg — mixed run costs exactly ONE grant signature', () => {
@@ -1170,5 +1183,146 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
         recovery: { action: 'inspect-job', jobId: 'JOB-run-observer-queued' },
       },
     })
+  })
+
+  it('[Custody] real Orchestrator/Base/farm dispatch keeps a possibly-dispatched burn unknown', async () => {
+    const fixture = permissionedMixedFixture('run-uncertain-burn')
+    const onEvent = vi.fn()
+    fixture.plan.agents[1].children[0].allocationId = 'run-uncertain-burn:bridge:aave-v3'
+    fixture.plan.agents[1].children[0].address = BASE_POOL_CATALOG.find(
+      (pool) => pool.proxyTarget === 'aave-v3'
+    ).address
+    // Keep both internal layers real. The injected values below replace only local persistence,
+    // RPC and quote boundaries; runFarmFlow is deliberately absent, so baseLeg uses its actual
+    // crossChainFarm implementation and reaches the external Stellar burn transport mock.
+    executeBaseLegMock.mockImplementation((args) =>
+      baseLegHarness.executeReal({
+        ...args,
+        deps: {
+          ...args.deps,
+          readStoredMandate: () => ({
+            version: 2,
+            stellarOwner: 'GUSER',
+            serializedApproval: 'APPROVAL',
+            sessionKeyAddress: '0xSESSION',
+            kernelAddress: KERNEL,
+            expiresAt: 9999999999,
+            status: 'active',
+          }),
+          // Task 9 hardened isVerifiedBaseMandateStatus to require the full BaseMandateStatusV2
+          // shape (checks/observed/reasonCodes), not a bare `{status:'active'}` flag -- this
+          // fixture predates that (it mirrors baseLeg.test.js's pre-Task-9 okDeps() shape, which
+          // was updated to activeEvidence() in the same commit; this sibling file was missed).
+          // Without the full shape the pre-farm mandate gate now (correctly) fails closed before
+          // ever reaching runFarmFlow, so this scenario's actual subject -- a burn that dispatches
+          // and then goes uncertain -- was never exercised. Mirror the verified shape so the gate
+          // legitimately passes and the real burn-uncertainty path below runs.
+          getMandateStatus: async () => ({
+            version: 2,
+            status: 'active',
+            reasonCodes: [],
+            checks: {
+              chain: true,
+              owner: true,
+              kernel: true,
+              session: true,
+              permission: true,
+              policy: true,
+              binding: true,
+              origin: true,
+              implementation: true,
+              allocation: true,
+              freshness: true,
+              reconstruction: true,
+              prepared: true,
+            },
+            observed: {
+              blockNumber: '101',
+              blockHash: '0xblock',
+              blockTime: Date.now(),
+              implementation: '0ximpl',
+              permission: { digest: 'permission-digest' },
+              preparedCallDigest: 'prepared-call-digest',
+            },
+          }),
+          makePublicClient: () => ({}),
+          estimateMinShares: async () => 39_000_000n,
+        },
+      })
+    )
+    runAgentBurnMock.mockRejectedValue(
+      Object.assign(new Error('burn response lost after dispatch'), {
+        code: 'VF_SUBMISSION_UNKNOWN',
+        submission: 'unknown',
+        stage: 'burn',
+        result: { hash: 'HBURN-MAYBE', status: 'PENDING' },
+      })
+    )
+
+    // Task 8: the real flow now requires a durable relayer/D1 intent acknowledgement before it
+    // reaches the burn transport. Keep that boundary real while replacing only the HTTP edge.
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 201,
+      json: async () => ({
+        jobId: 'JOB-INTENT-run-uncertain-burn',
+        acknowledged: true,
+        schemaVersion: 1,
+      }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    let summary
+    try {
+      summary = await permissionedOrchestrator(onEvent).dispatch(fixture.plan, {
+        permissionDecision: fixture.permissionDecision,
+      })
+    } finally {
+      vi.unstubAllGlobals()
+    }
+    const base = summary.receipt.allocations.find((entry) => entry.allocationId.endsWith('aave-v3'))
+
+    expect(summary.baseLeg).toMatchObject({
+      success: false,
+      error: 'burn response lost after dispatch',
+      custody: { location: 'unknown', confirmed: false },
+      recovery: {
+        action: 'reconcile-cctp-burn',
+        phase: 'cctp_burn',
+        evidence: { result: { hash: 'HBURN-MAYBE', status: 'PENDING' } },
+      },
+    })
+    expect(base).toMatchObject({
+      executionStatus: 'failed',
+      custody: { location: 'unknown', confirmed: false },
+      error: 'burn response lost after dispatch',
+      evidence: {
+        stage: 'burn',
+        recovery: {
+          action: 'reconcile-cctp-burn',
+          phase: 'cctp_burn',
+          reason: 'burn response lost after dispatch',
+          evidence: {
+            submission: 'unknown',
+            stage: 'cctp_burn',
+            reportedStage: 'burn',
+            result: { hash: 'HBURN-MAYBE', status: 'PENDING' },
+          },
+        },
+      },
+    })
+    expect(base.custody.location).not.toBe('agent')
+    expect(onEvent).toHaveBeenCalledWith(
+      'farm-burn-started',
+      expect.objectContaining({ allocationId: 'run-uncertain-burn:bridge:base' })
+    )
+    expect(onEvent).toHaveBeenCalledWith(
+      'farm-failed',
+      expect.objectContaining({
+        allocationId: 'run-uncertain-burn:bridge:base',
+        stage: 'burn',
+      })
+    )
+    expect(runAgentBurnMock).toHaveBeenCalledOnce()
   })
 })

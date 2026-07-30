@@ -225,6 +225,34 @@ function stateSection({ submissionState, note, needsPassword, origin, detail }) 
 function buildConsequence(summary) {
   const grant = summary?.grant ?? null
 
+  if (summary?.consentWarning) {
+    return {
+      kind: 'consequence',
+      statements: [
+        summary.consentWarning,
+        'This could not be shown as a proven all-funds exit. Review the technical details below before approving.',
+      ],
+      ceilingRows: [],
+      warning: true,
+    }
+  }
+
+  if (
+    summary?.allFunds === true &&
+    summary?.bodyDigest &&
+    summary?.authDigest &&
+    summary?.consentDigest
+  ) {
+    return {
+      kind: 'consequence',
+      statements: [
+        'This approval withdraws all funds held by the selected agent scope to the displayed recipient.',
+      ],
+      ceilingRows: [],
+      warning: false,
+    }
+  }
+
   if (grant?.kind === 'funding-router-grant') {
     const statements = [GRANT_TRUTHS[0]]
     if (grant.budgets.length > 1) statements.push(GRANT_MIXED_TOKEN_TRUTH)
@@ -299,7 +327,15 @@ function buildDecodedRows(summary) {
       ],
     ])
   }
+  // These are the exact post-simulation consent facts. Unlike the navigational contract/signer
+  // hints above, none may be shortened: this is the identity and digest material the user signs.
+  if (summary?.owner) rows.push(['Owner', [addr(summary.owner)]])
+  if (summary?.networkPassphrase) rows.push(['Network', [addr(summary.networkPassphrase)]])
   if (summary?.fn) rows.push(['Function', [plain(summary.fn)]])
+  if (summary?.token) rows.push(['Token', [addr(summary.token)]])
+  if (summary?.recipient) rows.push(['Recipient', [addr(summary.recipient)]])
+  if (summary?.bodyDigest) rows.push(['Transaction body digest', [addr(summary.bodyDigest)]])
+  if (summary?.authDigest) rows.push(['Authorization digest', [addr(summary.authDigest)]])
   if (summary?.signer) rows.push(['Signer (from request)', [addr(safeShortAddr(summary.signer))]])
 
   const grant = summary?.grant ?? null
@@ -425,6 +461,7 @@ export function buildApprovalView(req, ctx = {}) {
     needsAcknowledgment,
     needsPassword,
     raw,
+    consentDigest: summary?.consentDigest ?? null,
     submissionState,
     sections: [
       consequence,

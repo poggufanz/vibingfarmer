@@ -30,6 +30,43 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 const ORIGIN = 'https://vibing-farmer.pages.dev'
 const ADDRESS = 'CDLVXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXK3QP'
 
+describe('buildApprovalView — exact post-simulation consent facts', () => {
+  it('shows full owner/network/function/token/recipient and body/auth digests without truncation', () => {
+    const facts = {
+      contract: ADDRESS,
+      fn: 'owner_withdraw',
+      args: [],
+      grant: null,
+      owner: 'GCIOUP4UJAAFDBJNP5DY5CFJHBLEKGLHZ5E2AYRIIQ5VOZFVSTPRYHNS',
+      networkPassphrase: 'Test SDF Network ; September 2015',
+      token: 'CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU',
+      recipient: 'GCIOUP4UJAAFDBJNP5DY5CFJHBLEKGLHZ5E2AYRIIQ5VOZFVSTPRYHNS',
+      bodyDigest: 'a'.repeat(64),
+      authDigest: 'b'.repeat(64),
+      consentDigest: 'c'.repeat(64),
+      allFunds: true,
+    }
+    const view = buildApprovalView(
+      { method: 'signTransaction', params: { xdr: 'POST_SIM_XDR' }, origin: ORIGIN },
+      { address: ADDRESS, summary: facts }
+    )
+    const decoded = view.sections.find((section) => section.kind === 'decoded')
+    const text = decoded.rows.map(([key, value]) => `${key}:${partsToText(value)}`).join('\n')
+    expect(text).toContain(`Owner:${facts.owner}`)
+    expect(text).toContain(`Network:${facts.networkPassphrase}`)
+    expect(text).toContain('Function:owner_withdraw')
+    expect(text).toContain(`Token:${facts.token}`)
+    expect(text).toContain(`Recipient:${facts.recipient}`)
+    expect(text).toContain(`Transaction body digest:${facts.bodyDigest}`)
+    expect(text).toContain(`Authorization digest:${facts.authDigest}`)
+    expect(view.consentDigest).toBe(facts.consentDigest)
+    expect(view.raw).toBe('POST_SIM_XDR')
+    expect(view.sections.find((section) => section.kind === 'consequence').statements).toContain(
+      'This approval withdraws all funds held by the selected agent scope to the displayed recipient.'
+    )
+  })
+})
+
 describe('buildApprovalView — verified-origin fail-closed gate', () => {
   it('never renders a connect/sign screen when the origin was not Chrome-verified (missing)', () => {
     const v = buildApprovalView(
@@ -218,6 +255,33 @@ describe('buildApprovalView — sign ordering (brief Step 1, transaction approva
 })
 
 describe('buildApprovalView — consequence never claims an inferred intended movement (item 1)', () => {
+  it('turns an unproven all-funds exit into an acknowledgment-gated warning, never reassuring copy', () => {
+    const v = buildApprovalView(
+      { method: 'signTransaction', params: { xdr: 'UNPROVEN_EXIT' }, origin: ORIGIN },
+      {
+        address: 'GOWNER',
+        summary: {
+          contract: ADDRESS,
+          fn: 'owner_withdraw',
+          args: ['GOWNER'],
+          grant: null,
+          owner: null,
+          token: null,
+          recipient: 'GOWNER',
+          allFunds: false,
+          consentWarning:
+            'The claimed all-funds exit could not be proven from this exact transaction and authorization context.',
+        },
+      }
+    )
+    const consequence = v.sections.find((s) => s.kind === 'consequence')
+    expect(consequence.warning).toBe(true)
+    expect(consequence.statements.join(' ')).toMatch(/could not be proven/i)
+    expect(consequence.statements.join(' ')).not.toMatch(/withdraws all funds held/i)
+    expect(v.needsAcknowledgment).toBe(true)
+    expect(v.approveLabel).toBe('Confirm anyway')
+  })
+
   it('an undecoded/generic call states plainly that no ceiling can be guaranteed, never a guessed amount/destination', () => {
     const v = buildApprovalView(
       { method: 'signTransaction', params: { xdr: 'X' }, origin: ORIGIN },
