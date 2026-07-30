@@ -80,13 +80,18 @@ function wireAllocation({ allocationId = 'run-42:bridge:aave-v3', pool = POOL_AD
   return { allocationId, poolAddress: pool, amount: { token: 'USDC', units: units.toString(), decimals: 6 }, minShares };
 }
 
+// Fixed once at module load and reused by every call so two independent
+// activeEvidence() calls (one building the mock response, one building the
+// expectation) never race a Date.now() wall-clock tick against each other.
+const FIXED_BLOCK_TIME = Date.now();
+
 const activeEvidence = () => ({
   version: 2,
   status: 'active',
   reasonCodes: [],
   expected: { owner: STELLAR_OWNER, kernelAddress: KERNEL_ADDRESS },
   observed: {
-    blockNumber: '101', blockHash: `0x${'12'.repeat(32)}`, blockTime: Date.now(),
+    blockNumber: '101', blockHash: `0x${'12'.repeat(32)}`, blockTime: FIXED_BLOCK_TIME,
     implementation: `0x${'34'.repeat(20)}`,
     permission: { digest: 'permission-digest' },
     preparedCallDigest: 'prepared-call-digest',

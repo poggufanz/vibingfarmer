@@ -420,7 +420,7 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
 
   it('a late remote revoke after the exact quote blocks pull, burn, and farm dispatch', async () => {
     const deps = okDeps()
-    deps.getMandateStatus.mockResolvedValue({ status: 'revoked' })
+    deps.getMandateStatus.mockResolvedValue({ ...activeEvidence(), status: 'revoked' })
     const out = await run({ deps })
     expect(out).toMatchObject({ success: false, stage: 'mandate' })
     expect(out.error).toMatch(/no longer valid/i)
