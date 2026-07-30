@@ -157,10 +157,14 @@ decision. Nothing in the "needs authority" list has been done.
 ### 8.1 Built and locally verified
 
 `frontend` (`lint:ci`, `npm test`, `npm run build`), `relayer` (`npm test`), `keeper` (`npm test`)
-and `node --test scripts/ci/release-gate.test.mjs` all pass on a Linux dev box. That covers the
+and `node --test scripts/ci/release-gate.test.mjs` all pass on a Linux dev box. That exercises the
 Stellar grant/relay path, the Base mandate + durable-intent path, the agent-index D1 receipt and
 base-child stores, the relayer association outbox, the money/valuation layer and the CI gate's own
 self-test.
+
+Green does not mean complete, and the Base leg specifically is **not** fully covered by the above:
+section 8.8 records one open money-custody defect and one parked coverage gap that sit inside that
+same Base mandate/burn path. Read 8.8 before treating the Base leg as verified.
 
 ### 8.2 Not built — do not read these as "pending verification"
 
@@ -242,6 +246,42 @@ The remediation plan mandated `1.82.0`. That is unbuildable: `soroban/Cargo.toml
 `wasm32v1-none` target did not exist before Rust 1.84. A 1.82.0 pin would make the `soroban` job —
 and therefore `release-gate`, and therefore every merge — permanently red. `1.91.0` is the exact
 minimum that satisfies both the SDK and the "pinned, deterministic, not `stable`" intent.
+
+### 8.8 Open defect and parked coverage gap in the Base leg
+
+Both of these sit in the Base mandate/burn path that section 8.1's green suites otherwise exercise.
+Neither is a regression from recent work; both were found while verifying it and are written down here
+rather than assumed.
+
+**Open defect — a lost burn response is reported as confirmed agent custody.**
+`frontend/src/stellar/agentBurn.js:89-93` re-wraps *every* relay failure as a bare
+`new Error('deposit_for_burn: ' + err.message)`, discarding the `code`, `result` and `submission`
+fields the relay error carried. The `VF_SUBMISSION_UNKNOWN` tag that marks an indeterminate
+submission is one of the things thrown away, so a real relay timeout — where the CCTP burn may well
+have landed on-chain but the response was lost — arrives at `frontend/src/baseLeg.js:330` untagged and
+indistinguishable from a clean failure. Custody is then reported as
+`{ location: 'agent', confirmed: true }`.
+
+Concretely, for an operator: **the USDC can be in CCTP transit while the dashboard states the agent
+still holds it.** Under a lost-response timeout, treat any agent-custody claim on a Base allocation as
+unproven and reconcile against the CCTP burn on-chain and the relayer's own job status before acting
+on it — in particular, do not re-run the allocation on the assumption nothing moved.
+
+This is an **open defect awaiting its own task**, not a known-and-accepted limitation. The fix is to
+preserve the relay error's `code`/`result`/`submission` through the re-wrap so the existing
+indeterminate-submission handling downstream can see them; it was outside the scope of every task in
+the work that found it.
+
+**Parked coverage gap — the pre-grant Base mandate re-check is untested.**
+`runOrchestratorDispatch` (`frontend/src/app.jsx:3176`) re-checks each Base allocation's mandate
+immediately before the Stellar grant, and has **zero** test references — no test mounts `App` with a
+Base allocation, so the block never executes under test. The production code is believed correct on
+inspection, and the same "a revoked mandate blocks the flow" gate is covered one layer down at
+`frontend/src/baseLeg.js:190-210`, which does have tests. So the untested code duplicates a
+covered guarantee rather than being the only thing standing behind it. Parked deliberately: closing it
+needs a new `App`-mounting integration test, judged disproportionate to the risk. Assessed as **not
+merge-blocking** — but it is untested code on a money path, so weigh it yourself rather than taking
+that assessment on trust.
 
 ***
 
