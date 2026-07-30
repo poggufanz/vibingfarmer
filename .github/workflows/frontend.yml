@@ -3,9 +3,10 @@ name: frontend
 on:
   push: { branches: [main, dev] }
   pull_request:
+  merge_group:
 
 jobs:
-  test-build:
+  frontend-unit-build:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -18,9 +19,9 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
-      - run: npm run lint
-        continue-on-error: true
-      - run: npx playwright install --with-deps chromium
+      - run: npm run lint:ci
+      - run: npm run format:check
+      - run: npm run brand:check
       - run: npm test
       - run: npm run build
       - run: npm run build:ext
@@ -30,15 +31,115 @@ jobs:
       # command verbatim rather than inventing a new one.
       - run: '! rg -n "executeAgentDeposit|executeAgentApprove|runAutonomousExit|https://fonts|vf_base_owner_address" extension-dist'
 
-  # Cloudflare Pages deploy — gate: only pushes (never PRs from forks), only after tests pass.
-  # main → Production; any other pushed branch → Preview (aliased by branch name).
-  # Needs repo secrets: CLOUDFLARE_API_TOKEN (Pages:Edit), CLOUDFLARE_ACCOUNT_ID.
-  # Runtime env vars/secrets are NOT set here — they live in the Pages project
-  # (Settings → Variables and Secrets, per Production/Preview environment).
+  relayer:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: relayer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: relayer/package-lock.json
+      - run: npm ci
+      - run: npm test
+
+  keeper:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: keeper
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: keeper/package-lock.json
+      - run: npm ci
+      - run: npm test
+
+  # Pinned Ubuntu 24.04 + Rust 1.82.0 + stellar-cli 26.1.0 — deliberately not the local WSL
+  # toolchain. Gates the existing V2 soroban/ contracts (Router V3/agent V4 work was dropped
+  # from this remediation plan for lack of a WSL host; this job is unaffected by that).
+  soroban:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: soroban
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.82.0
+        with:
+          targets: wasm32v1-none
+          components: clippy
+      - name: Install stellar-cli 26.1.0
+        run: cargo install --locked --version 26.1.0 stellar-cli
+      - name: Verify pinned toolchain versions
+        run: rustc --version && cargo --version && stellar --version
+      - run: stellar contract build
+      - run: cargo test --locked
+      - run: cargo clippy --locked --all-targets -- -D warnings
+
+  playwright:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:visual
+      - name: Upload Playwright report/screenshots/traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: [frontend/playwright-report, frontend/test-results]
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # The single required check. `if: always()` plus a `needs` on every stable job above means
+  # this always reports a result — success or failure — even if one of those jobs fails,
+  # is cancelled, or (should a job-level `if` ever creep back in) gets skipped. release-gate.mjs
+  # treats anything other than "success" on any required job as a gate failure.
+  release-gate:
+    name: release-gate
+    needs: [frontend-unit-build, relayer, keeper, soroban, playwright]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Evaluate release gate
+        env:
+          NEEDS_CONTEXT: ${{ toJSON(needs) }}
+        run: node scripts/ci/release-gate.mjs
+
+  # Cloudflare Pages deploy — needs only release-gate (the single fail-closed check across
+  # frontend-unit-build/relayer/keeper/soroban/playwright); only pushes (never PRs from forks).
+  # main -> Production (protected environment); any other pushed branch -> Preview (aliased by
+  # branch name). Needs repo secrets: CLOUDFLARE_API_TOKEN (Pages:Edit), CLOUDFLARE_ACCOUNT_ID.
+  # Runtime env vars/secrets are NOT set here -- they live in the Pages project
+  # (Settings -> Variables and Secrets, per Production/Preview environment).
   deploy:
-    needs: test-build
+    needs: release-gate
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-${{ github.ref }}
+      cancel-in-progress: false
+    environment: ${{ github.ref_name == 'main' && 'production' || 'preview' }}
     permissions:
       contents: read
       deployments: write
@@ -60,6 +161,8 @@ jobs:
           # ZeroDev passkey-owner step ("VITE_ZERODEV_PASSKEY_SERVER_URL is missing").
           VITE_ZERODEV_PROJECT_ID: ${{ secrets.VITE_ZERODEV_PROJECT_ID }}
           VITE_ZERODEV_PASSKEY_SERVER_URL: ${{ secrets.VITE_ZERODEV_PASSKEY_SERVER_URL }}
+      - name: Readiness check (no secrets -- confirms the build produced output before touching traffic)
+        run: test -f dist/index.html
       - uses: cloudflare/wrangler-action@v3
         with:
           # Pin to the version in frontend/package.json devDependencies — the

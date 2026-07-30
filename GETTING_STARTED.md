@@ -125,10 +125,22 @@ If a doc still says “1Shot”, treat it as historical unless it is this file o
 ## 7. Tests & lint
 
 ```bash
-cd frontend && npm test && npm run lint && npm run build
+cd frontend && npm test && npm run lint:ci && npm run build
 
 wsl -e bash -lc "cd /mnt/c/SharredData/project/competition/vibing-farmer/soroban && cargo test"
 ```
+
+`npm run lint:ci` is what CI actually gates on — ESLint checked against the warning-fingerprint
+baseline in `frontend/scripts/eslint-warning-baseline.json` (new warnings fail, fewer warnings
+always pass). Reviewed a warning change locally and want to update the baseline? Run
+`npm run lint:warnings:update` (it refuses under `CI=true`, so this is always a local, committed
+decision, never something CI does to itself). `npm run lint` still runs plain ESLint with no gate,
+useful while iterating.
+
+CI (`.github/workflows/frontend.yml`) gates merges on one required check, `release-gate`, which
+fails unless `frontend-unit-build`, `relayer`, `keeper`, `soroban` (pinned Rust 1.82.0 +
+`stellar-cli` 26.1.0 on Ubuntu 24.04), and `playwright` all report success — a skipped job fails
+the gate exactly like a failed one. Deploy to Cloudflare Pages needs only `release-gate`.
 
 ***
 

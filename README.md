@@ -206,16 +206,18 @@ Deploy and seed scripts live in `scripts/soroban/`. Addresses land in `deploymen
 
 ```bash
 cd frontend
-npm test              # Vitest suite
-npm run lint          # ESLint flat config
-npm run build         # production → dist/
-npm run build:ext     # VF Wallet extension → extension-dist/
-npm run pages:dev     # build + wrangler pages dev (Functions locally)
+npm test                       # Vitest suite
+npm run lint                   # ESLint flat config (all warnings, no gate)
+npm run lint:ci                # ESLint gated against the checked-in warning-fingerprint baseline
+npm run lint:warnings:update   # regenerate the baseline locally after a reviewed warning change (refuses under CI=true)
+npm run build                  # production → dist/
+npm run build:ext              # VF Wallet extension → extension-dist/
+npm run pages:dev              # build + wrangler pages dev (Functions locally)
 ```
 
 ### CI/CD
 
-`.github/workflows/frontend.yml` runs on every push/PR to `main` and `dev`: lint (soft-fail), full Vitest suite, production build. Pushes then auto-deploy to Cloudflare Pages — `dev` → preview, `main` → production.
+`.github/workflows/frontend.yml` triggers on every `push` to `main`/`dev`, every `pull_request`, and `merge_group` (no narrowing `types`/`paths` filters — the gate always evaluates). Five stable jobs always report a result: `frontend-unit-build` (`npm ci`, `lint:ci`, `format:check`, `brand:check`, unit tests, `build`, `build:ext`, `manifest:check`, banned-string scan), `relayer`, `keeper`, `soroban` (pinned Ubuntu 24.04 + Rust 1.82.0 + `stellar-cli` 26.1.0 — `stellar contract build`, `cargo test --locked`, `cargo clippy --locked --all-targets -- -D warnings`), and `playwright` (`test:visual`, uploads the report/traces on failure). `release-gate` (`if: always()`, `needs` on all five, evaluated by `scripts/ci/release-gate.mjs`) is the single required check — it fails if any job is anything other than `success`, including skipped. `deploy` needs only `release-gate`, so no other job can be bypassed to reach Cloudflare Pages: `dev` → preview, `main` → a protected `production` GitHub Environment, with a non-secret readiness check before the traffic-shifting `wrangler pages deploy` step and serialized (non-cancelling) concurrency per ref.
 
 ### Directory structure
 
