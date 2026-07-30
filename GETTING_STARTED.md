@@ -250,27 +250,49 @@ minimum that satisfies both the SDK and the "pinned, deterministic, not `stable`
 ### 8.8 Open defect and parked coverage gap in the Base leg
 
 Both of these sit in the Base mandate/burn path that section 8.1's green suites otherwise exercise.
-Neither is a regression from recent work; both were found while verifying it and are written down here
-rather than assumed.
 
-**Open defect — a lost burn response is reported as confirmed agent custody.**
-`frontend/src/stellar/agentBurn.js:89-93` re-wraps *every* relay failure as a bare
-`new Error('deposit_for_burn: ' + err.message)`, discarding the `code`, `result` and `submission`
-fields the relay error carried. The `VF_SUBMISSION_UNKNOWN` tag that marks an indeterminate
-submission is one of the things thrown away, so a real relay timeout — where the CCTP burn may well
-have landed on-chain but the response was lost — arrives at `frontend/src/baseLeg.js:330` untagged and
-indistinguishable from a clean failure. Custody is then reported as
-`{ location: 'agent', confirmed: true }`.
+**Open defect — the burn path has no indeterminate-outcome signal at all, so a lost burn response is
+reported as confirmed agent custody.**
+
+The mechanism is an absence, not a discarded field. `frontend/src/stellar/relay.js:31-63`
+`submitViaRelay` **returns `null`** — it does not throw — when the `fetch` itself rejects
+(`:39-41`), when the relay answers HTTP 503 (`:43`), and when it answers `configured: false`
+(`:56`). A network timeout, where the CCTP burn may well have reached the chain but the response was
+lost, is exactly that first case. `frontend/src/stellar/agentBurn.js` therefore never enters its
+`catch` for a lost response; it falls through to `:92-93` and throws
+`new Error('deposit_for_burn: relay returned no response')` — a plain `Error` with no machine-readable
+tag. (The `catch` at `:89-91` fires only for a `RelayRejectedError`, which `relay.js:8-14` defines with
+just `.name` and `.status` — the relay was *reachable and definitely refused*, a determinate failure,
+not this one.)
+
+Downstream, `frontend/src/baseLeg.js:330` decides certainty from
+`failureEvidence.code === 'VF_SUBMISSION_UNKNOWN'`. Nothing in the burn path ever sets that code: its
+only producer is `frontend/src/stellar/activeAccount.js:10-22`, and the one `stage: 'burn'` call site
+(`frontend/src/orchestrator.js:154`) fires solely on an **active-account/epoch change** *after*
+`runAgentBurn` returned — never on a relay outcome, and unreachable when `runAgentBurn` threw. So for
+every burn-stage transport failure the tag is absent by construction, `submissionUnknown` is false,
+and with `fundsPulled` already true (`baseLeg.js:257`) `baseLeg.js:358-359` reports
+`{ location: 'agent', confirmed: true }`. **`baseLeg.js`'s indeterminacy branch cannot be reached by
+any relay outcome on the burn path** — it exists, and the burn path cannot feed it.
 
 Concretely, for an operator: **the USDC can be in CCTP transit while the dashboard states the agent
 still holds it.** Under a lost-response timeout, treat any agent-custody claim on a Base allocation as
 unproven and reconcile against the CCTP burn on-chain and the relayer's own job status before acting
-on it — in particular, do not re-run the allocation on the assumption nothing moved.
+on it — in particular, do not re-run the allocation on the assumption nothing moved. What the product
+*does* get right: `baseLeg.js:355` still surfaces `strandedFunds { pulled: true, bridgeAgentAddress }`,
+so the recovery handle for an `owner_withdraw` sweep is present. It is the `confirmed: true` that
+overstates what is known, not the location.
 
-This is an **open defect awaiting its own task**, not a known-and-accepted limitation. The fix is to
-preserve the relay error's `code`/`result`/`submission` through the re-wrap so the existing
-indeterminate-submission handling downstream can see them; it was outside the scope of every task in
-the work that found it.
+This is an **open defect awaiting its own task**, not a known-and-accepted limitation. The fix is not
+to preserve fields — there are none to preserve. The follow-up task must **create** the indeterminate
+signal for the cases that currently produce an untagged `Error`: a `null`/no-response return and a
+post-submit refusal. `frontend/src/stellar/grant.js:419,426` already does exactly this for
+`stage: 'pull'` via `activeAccountSubmissionUnknown`, so the pattern to copy is in the tree.
+
+**Provenance, since it changes who owns the fix:** `agentBurn.js` was **not touched** by the work that
+found this — `git log ab67f6f..HEAD -- frontend/src/stellar/agentBurn.js` is empty, and the re-wrap
+arrived in `3d4cf26` (2026-07-21), before that work began. It is pre-existing, and finding it was
+incidental to verifying something else.
 
 **Parked coverage gap — the pre-grant Base mandate re-check is untested.**
 `runOrchestratorDispatch` (`frontend/src/app.jsx:3176`) re-checks each Base allocation's mandate
@@ -282,6 +304,12 @@ covered guarantee rather than being the only thing standing behind it. Parked de
 needs a new `App`-mounting integration test, judged disproportionate to the risk. Assessed as **not
 merge-blocking** — but it is untested code on a money path, so weigh it yourself rather than taking
 that assessment on trust.
+
+**Provenance, and unlike the defect above it is not pre-existing:** this gate was *added* by the same
+recent work, in commit `2e04999`. Verified by bisect — `baseMandateRequiresReview` is absent from
+`app.jsx` at that work's base commit and at the three commits before `2e04999`, and present after. So
+this is newly written money-path code that shipped without a test, not an old gap inherited from
+earlier work.
 
 ***
 
