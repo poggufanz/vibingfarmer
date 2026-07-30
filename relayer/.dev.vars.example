@@ -24,8 +24,13 @@ AGENT_INDEX_REPORTER_SECRET=FILL_ME
 # Idempotency store (dev = JSON file; prod swaps to D1, see Task 2.2)
 RELAYER_STORE_PATH=./.relayer-store.dev.json
 
-# Optional: sqlite persistence (jobs + mandates + idempotency survive restarts). Requires Node >= 22.5.
-# When set, it overrides RELAYER_STORE_PATH for the idempotency store and backs jobs/mandates too.
+# SQLite persistence (jobs + mandates + idempotency + the base-child association outbox survive
+# restarts). Requires Node >= 22.5. When set, it overrides RELAYER_STORE_PATH for the idempotency
+# store and backs jobs/mandates too.
+#   dev/test  — optional. Without it there is no association outbox, so POST /farm answers
+#               503 "Base child intent is unavailable" and the cross-chain leg is simply off.
+#   PRODUCTION/STAGING — REQUIRED. config.mjs need()s it, and setting it is also what starts the
+#               association outbox delivery worker (server.mjs startAssociationOutboxWorker).
 # RELAYER_DB_PATH=./.relayer.dev.db
 
 # Optional: shared secret the Cloudflare Pages proxy (functions/api/vf-cross) must send on

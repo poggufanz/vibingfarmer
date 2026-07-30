@@ -137,14 +137,115 @@ always pass). Reviewed a warning change locally and want to update the baseline?
 decision, never something CI does to itself). `npm run lint` still runs plain ESLint with no gate,
 useful while iterating.
 
-CI (`.github/workflows/frontend.yml`) gates merges on one required check, `release-gate`, which
-fails unless `frontend-unit-build`, `relayer`, `keeper`, `soroban` (pinned Rust 1.91.0 +
-`stellar-cli` 26.1.0 on Ubuntu 24.04), and `playwright` all report success — a skipped job fails
-the gate exactly like a failed one. Deploy to Cloudflare Pages needs only `release-gate`.
+CI (`.github/workflows/frontend.yml`) is built around one gate check, `release-gate`, which fails
+unless `frontend-unit-build`, `relayer`, `keeper`, `soroban` (pinned Rust 1.91.0 + `stellar-cli`
+26.1.0 on Ubuntu 24.04), and `playwright` all report success — a skipped job fails the gate exactly
+like a failed one. Deploy to Cloudflare Pages needs only `release-gate`.
+
+Two caveats before you rely on that: `release-gate` is not yet **registered** as the required status
+check in branch protection, and the `playwright` job's visual baselines have never run on a runner.
+Both, plus everything else standing between this branch and a release, are in section 8.
 
 ***
 
-## 8. Checklist — local demo ready
+## 8. Release prerequisites (read before deploying anything)
+
+Local suites being green is **not** release readiness. This section is the honest state of the
+branch, split into what ships, what was never built, and what still needs an explicit human
+decision. Nothing in the "needs authority" list has been done.
+
+### 8.1 Built and locally verified
+
+`frontend` (`lint:ci`, `npm test`, `npm run build`), `relayer` (`npm test`), `keeper` (`npm test`)
+and `node --test scripts/ci/release-gate.test.mjs` all pass on a Linux dev box. That covers the
+Stellar grant/relay path, the Base mandate + durable-intent path, the agent-index D1 receipt and
+base-child stores, the relayer association outbox, the money/valuation layer and the CI gate's own
+self-test.
+
+### 8.2 Not built — do not read these as "pending verification"
+
+**Router V3 and agent-account V4 do not exist.** No `grant_v3`, `pull_v3`, `permission_grant` or
+per-execution scope entry point exists anywhere under `soroban/contracts/`. The live contracts are
+still the V2 generation recorded in `deployments/stellar-testnet.json`. Consequently these are also
+absent, not merely untested: the reviewed **Protect grant** that would read a V3 remaining-budget
+view, the `AllocationReceiptV2` **producer-to-render custody** chain, and **lease-owned recovery**
+(no `selectRecoveryAction`, no `requestRecovery`). There is no V3/V4 contract to deploy, no new WASM
+hash to record, and no deployment JSON to update.
+
+**Soroban build/test/clippy is UNVERIFIED on this branch**, separately from the above: the commands
+in section 4 are WSL-only and were not run. The CI `soroban` job (pinned Rust 1.91.0) is the first
+place they will execute. Treat a green local checkout as saying nothing about the contracts.
+
+**Relayer outbox dead-letters are not observable in the product.** The relayer stores and
+dead-letters correctly, and `GET /status/:jobId` returns `associationDelivery`, but
+`crossChainFarm.js` `runFarmFlow` drops that field and `app.jsx` never passes it to
+`readOwnerMoney`. The money layer therefore reports `associationCoverage: 'unknown'` and a null
+complete-Base total for any owner with a Base child. That is deliberate fail-closed behaviour — the
+proven Stellar subtotal and the known Base subtotal are still retained and rendered — but a
+user-visible dead-letter needs `associationDelivery` wired through the poll path first.
+
+### 8.3 Relayer production boot contract (new — get the order right)
+
+In `production`/`staging` the relayer refuses to open its listener until every one of these holds.
+It is fail-closed by design, so a missed step looks like a boot failure, not silent degradation.
+
+1. **D1 migrations `0005` and `0006` applied first.** Boot probes
+   `POST /api/agent-index?action=base-child-ready` and demands `ready:true`, `schemaVersion:1` and
+   both the `executionReceipts` and `baseChildIntents` stores present. Migrations before relayer,
+   never the other way round.
+2. **`AGENT_INDEX_REPORTER_SECRET` set identically on both sides** — the Pages env and the relayer
+   VM. It is the Bearer credential for every receipt/intent/lifecycle write and for that same boot
+   probe. Server-side only; the browser never receives it.
+3. **`RELAYER_DB_PATH` set** (`config.mjs` `need()`s it in production). It is also what starts the
+   association outbox delivery worker; without it `POST /farm` answers 503.
+4. **`RELAYER_PUBLIC_ORIGIN` and `AGENT_INDEX_REPORTER_URL` over HTTPS**, and the public origin must
+   be an origin only — no credentials, path, query or fragment.
+5. **Deployment facts must match.** The relayer loads `deployments/stellar-testnet.json` and
+   `deployments/base-sepolia.json` at config time and refuses to start if a production env mirror
+   disagrees with the tracked fact (including every `baseMandatePolicy` address and selector). Set
+   env values from those files; never the reverse, and never source secrets from them.
+
+### 8.4 Needs explicit authority — none of this has been done
+
+* Apply D1 `0005` then `0006` per environment, with a backup and a post-migration schema check.
+* Set `RELAYER_DB_PATH`, reporter credentials, `RELAYER_PUBLIC_ORIGIN` and deployment-fact values in
+  the target environment.
+* Enable the relayer outbox worker and validate its retry/dead-letter behaviour against a
+  **non-production** reporter.
+* Push, merge, or enable deploy after CI `release-gate` is green.
+* Deploy contracts. (Nothing to deploy on this branch — see 8.2 — but the authority requirement
+  stands for any contract change.)
+
+### 8.5 Two gate settings that live in repo settings, not in YAML
+
+`release-gate` is only *described* as the required check by `.github/workflows/frontend.yml`. Until
+someone does both of these, "one required check" is aspirational:
+
+* Register `release-gate` as the **required status check** in branch protection.
+* Create and protect the `production` GitHub Environment. `frontend.yml` names it; naming does not
+  create it. Note that adding required reviewers turns every `main` deploy into a manual approval.
+
+### 8.6 Known gate blocker: visual baselines have never run on a runner
+
+`test:visual` is merge-blocking through the `playwright` job, but the 47 baseline PNGs were frozen on
+a developer box and `frontend/playwright.config.js` sets **no** `maxDiffPixels`/`maxDiffPixelRatio`,
+so they are compared at **zero** tolerance on `ubuntu-latest`. `test:visual` has never executed on a
+runner. **Re-freeze the baselines on the runner image (or a matching container) before making
+`release-gate` the required check.** A diff tolerance is deliberately not the fix — it weakens a real
+guard — and `snapshotPathTemplate`'s missing `{platform}` key buys nothing here, since it resolves to
+`linux` on both hosts.
+
+### 8.7 Deliberate deviation to know about: the CI Rust pin is 1.91.0
+
+The remediation plan mandated `1.82.0`. That is unbuildable: `soroban/Cargo.toml` pins
+`soroban-sdk = "26.1.0"`, whose manifest declares `rust-version = "1.91.0"`, and the
+`wasm32v1-none` target did not exist before Rust 1.84. A 1.82.0 pin would make the `soroban` job —
+and therefore `release-gate`, and therefore every merge — permanently red. `1.91.0` is the exact
+minimum that satisfies both the SDK and the "pinned, deterministic, not `stable`" intent.
+
+***
+
+## 9. Checklist — local demo ready
 
 * [ ] `frontend` deps installed; `npm run dev` serves the app
 * [ ] Wallet on **Stellar testnet** with Friendbot XLM
@@ -155,7 +256,7 @@ the gate exactly like a failed one. Deploy to Cloudflare Pages needs only `relea
 
 ***
 
-## 9. Further reading
+## 10. Further reading
 
 | Doc                                             | Use                                           |
 | ----------------------------------------------- | --------------------------------------------- |
