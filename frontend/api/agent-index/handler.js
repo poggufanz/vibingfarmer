@@ -566,6 +566,16 @@ export async function handleRead({
   if (!store) {
     return { status: 200, body: unavailableBody({ networkId, owner, manifest, now }) }
   }
+  // Final review, Fix 2: a store/version skew where `readOwnerRunAllocations` is missing must
+  // never silently masquerade as "this owner has no Base associations" -- the old ternary fell
+  // back to `[]`, so `joinBaseAssociations` stamped `baseChildren: []` on every agent while this
+  // handler's own `status` (from coverageProof, membership/coverage-only) has no way to see that
+  // gap, letting a skewed store return `status:'complete'` with EVERY agent's Base money
+  // invisible -- the one path `readOwnerMoney.js`'s `discovery.status` guard structurally cannot
+  // catch. Same fail-closed shape this function already uses for `!store` and a thrown read below.
+  if (typeof store.readOwnerRunAllocations !== 'function') {
+    return { status: 200, body: unavailableBody({ networkId, owner, manifest, now }) }
+  }
 
   let memberships
   let coverage
@@ -574,9 +584,7 @@ export async function handleRead({
     ;[memberships, coverage, associations] = await Promise.all([
       store.readOwnerMemberships({ networkId, owner }),
       store.readCoverage({ networkId }),
-      typeof store.readOwnerRunAllocations === 'function'
-        ? store.readOwnerRunAllocations({ networkId, owner })
-        : [],
+      store.readOwnerRunAllocations({ networkId, owner }),
     ])
   } catch {
     return { status: 200, body: unavailableBody({ networkId, owner, manifest, now }) }

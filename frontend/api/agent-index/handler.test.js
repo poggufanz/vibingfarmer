@@ -587,6 +587,24 @@ describe('handleRead — unavailable store never reports complete', () => {
     })
     expect(out.body.status).toBe('unavailable')
   })
+
+  // Final review, Fix 2: a store/version skew missing `readOwnerRunAllocations` (the Base
+  // association join) must never silently masquerade as "complete, no Base children" -- it must
+  // fail the same way `!store` and a thrown read already do, never fall back to `[]`.
+  it('returns unavailable (not agents:[] + complete) when the store lacks readOwnerRunAllocations', async () => {
+    const skewedStore = {
+      readOwnerMemberships: async () => [],
+      readCoverage: async () => ({ sources: [], gaps: [], backfillAudits: [] }),
+    }
+    const out = await handleRead({
+      networkId: 'stellar-testnet',
+      owner: OWNER_A,
+      store: skewedStore,
+    })
+    expect(out.status).toBe(200)
+    expect(out.body.status).toBe('unavailable')
+    expect(out.body.agents).toEqual([])
+  })
 })
 
 describe('handleRead — empty-but-available store is partial, never a false complete', () => {

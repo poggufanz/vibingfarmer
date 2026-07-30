@@ -490,10 +490,21 @@ export function createEpochBoundRun({ captured, getCurrent, onEvent = () => {} }
   }
 }
 
+// Final review, Fix 2: the cached envelope's SHAPE, not just its data, can go stale across a
+// deploy. A pre-Task-10 cache stamped `discovery.agents[].baseChildren` nowhere at all; under the
+// current `sourceUnknown = discovery?.status !== 'complete'` predicate (readOwnerMoney.js:635) a
+// `status:'complete'` cache like that reads as a POSITIVELY CONFIRMED EMPTY Base source rather
+// than an unread one, and Fix 1 just wired that field to the rendered headline total for the first
+// time. Bump this whenever a landed task changes what a cached `discovery`/`money` row is allowed
+// to look like; a reader that doesn't recognize the stamped version treats the whole cache as a
+// miss (never partially trusts it) and falls back to a live read instead.
+const MONEY_CACHE_SCHEMA_VERSION = 2
+
 export function loadMoneyCache(owner) {
   if (!owner) return {}
   try {
-    return JSON.parse(localStorage.getItem(moneyCacheKey(owner)) || '{}') || {}
+    const parsed = JSON.parse(localStorage.getItem(moneyCacheKey(owner)) || '{}') || {}
+    return parsed.__schemaVersion === MONEY_CACHE_SCHEMA_VERSION ? parsed : {}
   } catch {
     return {}
   }
@@ -503,7 +514,10 @@ export function loadMoneyCache(owner) {
 export function saveMoneyCache(owner, cache) {
   if (!owner) return
   try {
-    localStorage.setItem(moneyCacheKey(owner), JSON.stringify(cache || {}))
+    localStorage.setItem(
+      moneyCacheKey(owner),
+      JSON.stringify({ ...(cache || {}), __schemaVersion: MONEY_CACHE_SCHEMA_VERSION })
+    )
   } catch {
     // localStorage unavailable/full — non-fatal, the in-memory cache ref still serves this session.
   }
