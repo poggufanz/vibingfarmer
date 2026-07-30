@@ -138,7 +138,7 @@ decision, never something CI does to itself). `npm run lint` still runs plain ES
 useful while iterating.
 
 CI (`.github/workflows/frontend.yml`) gates merges on one required check, `release-gate`, which
-fails unless `frontend-unit-build`, `relayer`, `keeper`, `soroban` (pinned Rust 1.82.0 +
+fails unless `frontend-unit-build`, `relayer`, `keeper`, `soroban` (pinned Rust 1.91.0 +
 `stellar-cli` 26.1.0 on Ubuntu 24.04), and `playwright` all report success — a skipped job fails
 the gate exactly like a failed one. Deploy to Cloudflare Pages needs only `release-gate`.
 
