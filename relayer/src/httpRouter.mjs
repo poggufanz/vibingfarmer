@@ -141,7 +141,10 @@ export function createRelayerRouter({
   relayerOrigin = null, sanitizeErrors = false, networkId = 'stellar-testnet',
   publicRuntime = null,
   poolTargets = new Map(), agentIndexReporter = null, associationOutbox = null,
+  farmExecutions = null,
 }) {
+  const activeFarmJobs = new Set();
+  const memoryFarmWork = new Map();
   // Record a failed job. Client-facing message is generic when sanitizeErrors is on; the real
   // error is always available server-side (console.error) for debugging. Never stores the key.
   // `context` (runId/bridgeAgent/grantTxHash for a farm job; omitted for unwind, which has none)
@@ -337,7 +340,7 @@ export function createRelayerRouter({
   function lifecycleStatus(executionStatus) {
     if (executionStatus === 'deposited') return 'confirmed';
     if (executionStatus === 'failed') return 'failed';
-    if (executionStatus === 'held') return 'unknown';
+    if (executionStatus === 'held' || executionStatus === 'unknown') return 'unknown';
     return 'submitted';
   }
 
@@ -361,130 +364,311 @@ export function createRelayerRouter({
   function publicJob(job, jobId) {
     if (!job) return job;
     const { _attach, ...safe } = job;
-    void _attach;
     const delivery = associationOutbox?.status ? associationOutbox.status(jobId) : [];
+    const expected = Array.isArray(_attach?.associations) ? _attach.associations : [];
+    const contiguous = [];
+    let coverageComplete = expected.length > 0;
+    coverage: for (const { allocationId, terminalSequence } of expected) {
+      if (!Number.isSafeInteger(terminalSequence) || terminalSequence < 1) {
+        coverageComplete = false;
+        break;
+      }
+      for (let sequence = 1; sequence <= terminalSequence; sequence += 1) {
+        const row = delivery.find((candidate) => (
+          candidate.allocationId === allocationId && candidate.sequence === sequence
+        ));
+        if (!row || row.status !== 'delivered') {
+          if (row) contiguous.push(row);
+          coverageComplete = false;
+          break coverage;
+        }
+        contiguous.push(row);
+      }
+    }
+    const complete = coverageComplete;
+    const uncertain = !complete && expected.length > 0 && (
+      ['done', 'error', 'uncertain'].includes(job.status)
+      || expected.some(({ terminalSequence }) => Number.isSafeInteger(terminalSequence))
+      || delivery.some(({ status }) => status === 'dead')
+    );
     return {
       ...safe,
       associationDelivery: {
-        complete: delivery.every((row) => row.status === 'delivered'),
-        events: delivery,
+        complete,
+        uncertain,
+        events: complete
+          ? contiguous
+          : [...contiguous, ...delivery.filter((row) => row.status === 'dead' && !contiguous.includes(row))],
       },
     };
   }
 
-  async function runFarmJob(
-    jobId,
-    sessionPrivateKey,
-    farmParams,
-    attachContext,
-  ) {
+  function associationsWithTerminal(context, terminalSequence) {
+    return (context.associations || []).map((association) => ({
+      allocationId: association.allocationId,
+      terminalSequence,
+    }));
+  }
+
+  function persistenceUncertain(jobId, job, err) {
+    recordError(jobId, 'farm', err, {
+      runId: job.runId,
+      bridgeAgent: job.bridgeAgent,
+      grantTxHash: job.grantTxHash,
+      _attach: job._attach,
+      associationUncertain: true,
+    });
+  }
+
+  function attachWork({ jobId, burnTxHash, job, reports }) {
+    if (farmExecutions?.attach) {
+      return farmExecutions.attach({ jobId, burnTxHash, job, reports });
+    }
+    const existing = memoryFarmWork.get(jobId);
+    if (existing) {
+      if (existing.burnTxHash !== burnTxHash) throw new Error('farm execution already has a different burn hash');
+      return { duplicate: true, work: existing };
+    }
+    associationOutbox.enqueue(reports);
+    jobs.set(jobId, job);
+    const work = { jobId, burnTxHash, status: 'pending', attempts: 0, leaseToken: null };
+    memoryFarmWork.set(jobId, work);
+    return { duplicate: false, work };
+  }
+
+  function claimWork(jobId) {
+    if (farmExecutions?.claim) return farmExecutions.claim({ jobId });
+    if (activeFarmJobs.has(jobId)) return null;
+    let work = memoryFarmWork.get(jobId);
+    const job = jobs.get(jobId);
+    if (!work && job?._attach?.attachedBurnTxHash && job.status === 'pending') {
+      work = {
+        jobId,
+        burnTxHash: job._attach.attachedBurnTxHash,
+        status: 'pending',
+        attempts: 0,
+        leaseToken: null,
+      };
+      memoryFarmWork.set(jobId, work);
+    }
+    if (!work || work.status !== 'pending') return null;
+    const claimed = { ...work, status: 'running', attempts: work.attempts + 1, leaseToken: `memory:${jobId}` };
+    memoryFarmWork.set(jobId, claimed);
+    return claimed;
+  }
+
+  function checkpointWork({ jobId, leaseToken, job, reports }) {
+    if (farmExecutions?.checkpoint) {
+      return farmExecutions.checkpoint({ jobId, leaseToken, job, reports });
+    }
+    associationOutbox.enqueue(reports);
+    jobs.set(jobId, job);
+  }
+
+  function finishWork({ jobId, leaseToken, job, reports }) {
+    if (farmExecutions?.finish) {
+      return farmExecutions.finish({ jobId, leaseToken, job, reports, status: 'done' });
+    }
+    associationOutbox.enqueue(reports);
+    jobs.set(jobId, job);
+    const work = memoryFarmWork.get(jobId);
+    if (work) memoryFarmWork.set(jobId, { ...work, status: 'done', leaseToken: null });
+  }
+
+  async function runFarmJob(jobId, sessionPrivateKey, farmParams, attachContext, leaseToken) {
+    let mintCheckpointed = false;
+    const onMintConfirmed = async (mintResult) => {
+      if (mintCheckpointed || !mintResult?.mintTxHash) return;
+      const reports = lifecycleReports(
+        attachContext, farmParams.allocations, 2, 'minted', 'agent', mintResult.mintTxHash,
+      );
+      const current = jobs.get(jobId) || { status: 'pending', steps: [] };
+      checkpointWork({
+        jobId,
+        leaseToken,
+        reports,
+        job: {
+          ...current,
+          status: 'depositing',
+          steps: [{ step: 'mint', status: mintResult.status, mintTxHash: mintResult.mintTxHash }],
+          _attach: attachContext,
+        },
+      });
+      mintCheckpointed = true;
+    };
+
+    let result;
     try {
       const { farm } = buildFarm(sessionPrivateKey);
-      const { mintResult, depositResults, runId, bridgeAgent, grantTxHash } = await farm(farmParams);
-      const byAllocationId = new Map(
-        farmParams.allocations.map((allocation) => [allocation.allocationId, allocation])
-      );
-      const terminalAllocations = depositResults.flatMap((result) => {
-        const allocation = byAllocationId.get(result?.allocationId);
-        if (!allocation || !result.executionStatus || !result.custody?.location) return [];
-        const txHash = result.txHash
-          ?? (result.custody.location === 'agent' ? mintResult.mintTxHash : null)
-          ?? null;
-        return [{ allocation, executionStatus: result.executionStatus, custodyLocation: result.custody.location, txHash }];
-      });
-      if (terminalAllocations.length > 0) {
-        associationOutbox.enqueue(terminalAllocations.map((terminal) =>
-          lifecycleReports(
-            attachContext,
-            [terminal.allocation],
-            3,
-            terminal.executionStatus,
-            terminal.custodyLocation,
-            terminal.txHash,
-          )[0]
-        ));
+      result = await farm({ ...farmParams, onMintConfirmed });
+      await onMintConfirmed(result.mintResult);
+    } catch (err) {
+      const current = jobs.get(jobId) || { status: 'pending', steps: [] };
+      const observedMintTxHash = current.steps
+        ?.find((step) => step.step === 'mint' && step.mintTxHash)?.mintTxHash ?? null;
+      const terminalSequence = observedMintTxHash ? 3 : 2;
+      const failedContext = {
+        ...attachContext,
+        associations: associationsWithTerminal(attachContext, terminalSequence),
+      };
+      const failedJob = {
+        runId: farmParams.runId,
+        bridgeAgent: farmParams.bridgeAgent,
+        grantTxHash: farmParams.grantTxHash,
+        _attach: failedContext,
+        status: 'error',
+        steps: [{ step: 'farm', status: 'error', message: sanitizeErrors ? 'internal error' : errorMessage(err) }],
+      };
+      if (sanitizeErrors) console.error(`[relayer] job ${jobId} step farm failed:`, err);
+      try {
+        finishWork({
+          jobId,
+          leaseToken,
+          job: failedJob,
+          reports: lifecycleReports(
+            failedContext,
+            farmParams.allocations,
+            terminalSequence,
+            'failed',
+            observedMintTxHash ? 'agent' : 'unknown',
+            observedMintTxHash,
+          ),
+        });
+      } catch (finishError) {
+        if (!farmExecutions) persistenceUncertain(jobId, current, finishError);
       }
-      jobs.set(jobId, {
+      return;
+    }
+
+    const { mintResult, depositResults = [], runId, bridgeAgent, grantTxHash } = result;
+    const results = new Map(depositResults.map((deposit) => [deposit?.allocationId, deposit]));
+    const terminalReports = farmParams.allocations.map((allocation) => {
+      const deposit = results.get(allocation.allocationId);
+      const executionStatus = deposit?.executionStatus || 'unknown';
+      const custodyLocation = deposit?.custody?.location || 'unknown';
+      const txHash = deposit?.txHash
+        ?? (custodyLocation === 'agent' ? mintResult.mintTxHash : null)
+        ?? null;
+      return lifecycleReports(
+        attachContext, [allocation], 3, executionStatus, custodyLocation, txHash,
+      )[0];
+    });
+    const terminalContext = {
+      ...attachContext,
+      associations: associationsWithTerminal(attachContext, 3),
+    };
+    const doneJob = {
         status: 'done',
         runId, bridgeAgent, grantTxHash,
-        _attach: attachContext,
+        _attach: terminalContext,
         steps: [
           { step: 'mint', status: mintResult.status, mintTxHash: mintResult.mintTxHash },
           { step: 'deposits', results: depositResults },
         ],
-      });
+    };
+    try {
+      finishWork({ jobId, leaseToken, job: doneJob, reports: terminalReports });
     } catch (err) {
-      // Error only — the sessionPrivateKey must never end up in a job record. Run/bridge context
-      // (already known from the request, not re-derived) still rides along onto the error record.
-      const observedMintTxHash = jobs.get(jobId)?.steps
-        ?.find((step) => step.step === 'mint' && step.mintTxHash)
-        ?.mintTxHash ?? null;
-      try {
-        associationOutbox.enqueue(lifecycleReports(
-          attachContext,
-          farmParams.allocations,
-          observedMintTxHash ? 3 : 2,
-          'failed',
-          observedMintTxHash ? 'agent' : 'unknown',
-          observedMintTxHash,
-        ));
-      } catch {
-        // The job remains visibly incomplete; never claim lifecycle delivery on SQLite uncertainty.
-      }
-      recordError(jobId, 'farm', err, {
-        runId: farmParams.runId, bridgeAgent: farmParams.bridgeAgent, grantTxHash: farmParams.grantTxHash,
-        _attach: jobs.get(jobId)?._attach,
-      });
+      if (!farmExecutions) persistenceUncertain(jobId, jobs.get(jobId) || doneJob, err);
     }
   }
 
-  function startFarmJob({ jobId, job, record, burnTxHash, parsedAllocations }) {
-    const attachContext = { ...job._attach, attachedBurnTxHash: burnTxHash };
-    associationOutbox.enqueue(lifecycleReports(
-      attachContext,
-      parsedAllocations,
-      1,
-      'accepted',
-      'in-transit',
-      burnTxHash,
-    ));
-    jobs.set(jobId, {
-      ...job,
-      status: 'pending',
-      steps: [],
-      _attach: attachContext,
+  function dispatchFarmWork(jobId) {
+    if (activeFarmJobs.has(jobId)) return false;
+    const job = jobs.get(jobId);
+    const attachContext = job?._attach;
+    if (!job || !attachContext?.attachedBurnTxHash) return false;
+    const claimed = claimWork(jobId);
+    if (!claimed) return false;
+    const mandate = revalidatedMandate({
+      serializedApproval: attachContext.serializedApproval,
+      stellarOwner: attachContext.stellarOwner,
+      kernelAddress: attachContext.kernelAddress,
     });
-    const onMintConfirmed = async (mintResult) => {
-      if (!mintResult?.mintTxHash) return;
-      associationOutbox.enqueue(lifecycleReports(
-        attachContext,
-        parsedAllocations,
-        2,
-        'minted',
-        'agent',
-        mintResult.mintTxHash,
-      ));
-      const current = jobs.get(jobId) || job;
-      jobs.set(jobId, {
-        ...current,
-        status: 'depositing',
-        steps: [{ step: 'mint', status: mintResult.status, mintTxHash: mintResult.mintTxHash }],
-        _attach: attachContext,
-      });
-    };
-
-    // Fire-and-forget: the client polls GET /status/:jobId. The client's `sourceDomain` is
-    // intentionally ignored — createFarmFlow hardcodes domains.stellar as the mint source.
-    void runFarmJob(jobId, record.sessionPrivateKey, {
-      burnTxHash,
-      execId: burnTxHash,
+    let parsedAllocations;
+    try {
+      if (mandate.error) throw new Error(mandate.error);
+      parsedAllocations = parseWireAllocations(attachContext.allocations, job.runId);
+    } catch (err) {
+      const terminalContext = {
+        ...attachContext,
+        associations: associationsWithTerminal(attachContext, 2),
+      };
+      const failedJob = {
+        ...job,
+        status: 'error',
+        _attach: terminalContext,
+        steps: [{ step: 'farm', status: 'error', message: sanitizeErrors ? 'internal error' : errorMessage(err) }],
+      };
+      try {
+        finishWork({
+          jobId,
+          leaseToken: claimed.leaseToken,
+          job: failedJob,
+          reports: lifecycleReports(terminalContext, [], 2, 'failed', 'unknown', null),
+        });
+      } catch {
+        // Durable running work remains for terminal-uncertain reconciliation.
+      }
+      return false;
+    }
+    activeFarmJobs.add(jobId);
+    void runFarmJob(jobId, mandate.record.sessionPrivateKey, {
+      burnTxHash: attachContext.attachedBurnTxHash,
+      execId: attachContext.attachedBurnTxHash,
       approval: attachContext.serializedApproval,
       allocations: parsedAllocations,
       runId: job.runId,
       bridgeAgent: job.bridgeAgent,
       grantTxHash: job.grantTxHash,
-      onMintConfirmed,
-    }, attachContext);
+    }, attachContext, claimed.leaseToken).finally(() => activeFarmJobs.delete(jobId));
+    return true;
+  }
+
+  function reconcileExpiredWork(work) {
+    const job = jobs.get(work.jobId);
+    const context = job?._attach;
+    if (!job || !context || !farmExecutions?.reconcileUncertain) return;
+    let allocations;
+    try {
+      allocations = parseWireAllocations(context.allocations, job.runId);
+    } catch {
+      return;
+    }
+    const mintTxHash = job.steps?.find((step) => step.step === 'mint')?.mintTxHash ?? null;
+    const terminalSequence = mintTxHash ? 3 : 2;
+    const terminalContext = {
+      ...context,
+      associations: associationsWithTerminal(context, terminalSequence),
+    };
+    const uncertainJob = { ...job, status: 'uncertain', _attach: terminalContext };
+    farmExecutions.reconcileUncertain({
+      jobId: work.jobId,
+      job: uncertainJob,
+      reports: lifecycleReports(
+        terminalContext,
+        allocations,
+        terminalSequence,
+        'unknown',
+        mintTxHash ? 'agent' : 'unknown',
+        mintTxHash,
+      ),
+    });
+  }
+
+  async function resumeFarmJobs() {
+    if (farmExecutions?.listRecoverable) {
+      for (const work of farmExecutions.listRecoverable()) {
+        if (work.status === 'running') reconcileExpiredWork(work);
+        else dispatchFarmWork(work.jobId);
+      }
+      return;
+    }
+    if (typeof jobs?.entries === 'function') {
+      for (const [jobId, job] of jobs.entries()) {
+        if (job?.status === 'pending' && job?._attach?.attachedBurnTxHash) dispatchFarmWork(jobId);
+      }
+    }
   }
 
   async function handleFarm(req, res) {
@@ -553,6 +737,10 @@ export function createRelayerRouter({
         networkId,
         jobId,
         allocations: storedWireAllocations(parsedAllocations),
+        associations: parsedAllocations.map(({ allocationId }) => ({
+          allocationId,
+          terminalSequence: null,
+        })),
         attachedBurnTxHash: null,
       },
     };
@@ -600,6 +788,15 @@ export function createRelayerRouter({
       if (context.attachedBurnTxHash !== burnTxHash) {
         return sendJson(res, 409, { error: 'farm job already has a different burn hash' });
       }
+      const work = farmExecutions?.get?.(jobId);
+      if (!work || work.status === 'pending') dispatchFarmWork(jobId);
+      else if (work.status === 'running' && work.leaseExpiresAt <= Date.now()) {
+        try {
+          reconcileExpiredWork(work);
+        } catch {
+          // The durable running row remains observable and will be retried at startup.
+        }
+      }
       return sendJson(res, 200, { jobId, attached: true, status: job.status });
     }
     if (job.status !== 'queued') {
@@ -612,7 +809,22 @@ export function createRelayerRouter({
       return sendJson(res, 400, { error: errorMessage(err) });
     }
     try {
-      startFarmJob({ jobId, job, record, burnTxHash, parsedAllocations });
+      const attachContext = { ...job._attach, attachedBurnTxHash: burnTxHash };
+      const attachedJob = {
+        ...job,
+        status: 'pending',
+        steps: [],
+        _attach: attachContext,
+      };
+      attachWork({
+        jobId,
+        burnTxHash,
+        job: attachedJob,
+        reports: lifecycleReports(
+          attachContext, parsedAllocations, 1, 'accepted', 'in-transit', burnTxHash,
+        ),
+      });
+      dispatchFarmWork(jobId);
     } catch {
       return sendJson(res, 503, { error: 'Base child lifecycle outbox is unavailable' });
     }
@@ -651,7 +863,7 @@ export function createRelayerRouter({
     void runUnwindJob(jobId, unwindTxHash, stellarRecipient);
   }
 
-  return async function relayerRouter(req, res) {
+  const relayerRouter = async function relayerRouter(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -679,4 +891,6 @@ export function createRelayerRouter({
 
     return sendJson(res, 404, { error: 'Not found' });
   };
+  relayerRouter.resumeFarmJobs = resumeFarmJobs;
+  return relayerRouter;
 }

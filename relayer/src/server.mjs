@@ -32,6 +32,30 @@ export function runtimeServerConfig(config) {
   };
 }
 
+export async function verifyRelayerReadiness({ sqlite, reporter }) {
+  if (!sqlite?.probe || !reporter?.probe) throw new Error('relayer durable readiness is not configured');
+  const local = await sqlite.probe();
+  if (local?.writable !== true) throw new Error('relayer SQLite store is not writable');
+  const remote = await reporter.probe();
+  if (remote?.ready !== true || remote?.schemaVersion !== 1) {
+    throw new Error('agent index reporter schema/store is not ready');
+  }
+  return { writable: true, reporterSchema: remote.schemaVersion };
+}
+
+export async function startVerifiedRelayer({
+  verifyReadiness,
+  resumeFarmJobs,
+  startWorker,
+  openListener,
+}) {
+  await verifyReadiness();
+  await resumeFarmJobs();
+  const worker = startWorker();
+  const server = openListener();
+  return { worker, server };
+}
+
 /** Shared-secret gate between the Cloudflare proxy and this relayer. Empty key = open (local dev). */
 export function withProxyKeyAuth(handler, key) {
   return async function authed(req, res) {
@@ -52,7 +76,7 @@ export function withProxyKeyAuth(handler, key) {
 
 /**
  * @param {ReturnType<typeof import('./config.mjs').loadConfig>} config
- * @returns {{ handler: Function, listen: (port: number) => import('node:http').Server }}
+ * @returns {{ handler: Function, listen: (port: number) => Promise<import('node:http').Server> }}
  */
 export function createRelayerServer(config) {
   const runtimeConfig = runtimeServerConfig(config);
@@ -82,9 +106,6 @@ export function createRelayerServer(config) {
     schemaVersion: runtimeConfig.reporterSchema,
   });
   const associationOutbox = sqlite?.associationOutbox ?? null;
-  const associationWorker = associationOutbox
-    ? startAssociationOutboxWorker({ outbox: associationOutbox, reporter: agentIndexReporter })
-    : null;
 
   // Per-request: each /farm call brings its own ephemeral session key, so the orchestrator (and
   // the kernel client it reconstructs) is built fresh per key rather than shared/cached.
@@ -114,8 +135,7 @@ export function createRelayerServer(config) {
   // The Cloudflare Pages proxy (functions/api/vf-cross) sends x-vf-relayer-key on every request;
   // the VM is otherwise tunnel-only, so this shared secret is what makes the tunnel non-open.
   // Empty key = local dev (no gate).
-  const handler = withProxyKeyAuth(
-    createRelayerRouter({
+  const router = createRelayerRouter({
       buildFarm,
       relayUnwindMint,
       jobs,
@@ -129,20 +149,36 @@ export function createRelayerServer(config) {
       poolTargets: BASE_SEPOLIA_POOL_TARGETS,
       agentIndexReporter,
       associationOutbox,
+      farmExecutions: sqlite?.farmExecutions ?? null,
       publicRuntime: runtimeConfig.publicRuntime,
-    }),
+    });
+  const handler = withProxyKeyAuth(
+    router,
     runtimeConfig.proxyKey,
   );
 
-  function listen(port) {
-    const server = createServer(handler);
-    server.listen(port);
+  async function listen(port) {
+    const production = config.mode === 'production' || config.mode === 'staging';
+    const started = await startVerifiedRelayer({
+      verifyReadiness: production
+        ? () => verifyRelayerReadiness({ sqlite, reporter: agentIndexReporter })
+        : async () => ({ writable: Boolean(sqlite), reporterSchema: runtimeConfig.reporterSchema }),
+      resumeFarmJobs: () => router.resumeFarmJobs(),
+      startWorker: () => (associationOutbox
+        ? startAssociationOutboxWorker({ outbox: associationOutbox, reporter: agentIndexReporter })
+        : null),
+      openListener: () => {
+        const server = createServer(handler);
+        server.listen(port);
+        return server;
+      },
+    });
     // Periodically drop expired session keys so they don't wait for a matching /farm to be evicted.
     const sweep = setInterval(() => mandatesV2.sweep(), MANDATE_SWEEP_MS);
     sweep.unref?.(); // never keep the process alive just for the sweep
-    server.on('close', () => clearInterval(sweep));
-    server.on('close', () => associationWorker?.stop());
-    return server;
+    started.server.on('close', () => clearInterval(sweep));
+    started.server.on('close', () => started.worker?.stop());
+    return started.server;
   }
 
   return { handler, listen };

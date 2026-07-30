@@ -582,11 +582,13 @@ describe('/api/agent-index operational evidence routes', () => {
   // Defect caught: the relayer had no authenticated, schema-pinned way to prove that the D1
   // binding was present and writable before consuming durable outbox rows.
   it('exposes authenticated Base child schema/store readiness', async () => {
-    const accepted = await call(mockReq({
-      method: 'POST',
-      url: '/api/agent-index?action=base-child-ready',
-      body: {},
-    }))
+    const accepted = await call(
+      mockReq({
+        method: 'POST',
+        url: '/api/agent-index?action=base-child-ready',
+        body: {},
+      })
+    )
     expect(accepted.res.statusCode).toBe(200)
     expect(accepted.body).toEqual({ ready: true, schemaVersion: 1 })
     expect(mocked.store.probeReadiness).toHaveBeenCalledTimes(1)

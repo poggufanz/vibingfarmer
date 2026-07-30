@@ -45,4 +45,29 @@ describe('runtimeServerConfig', () => {
       reporter,
     })).rejects.toThrow(/read only/);
   });
+
+  // Defect caught: merely exporting readiness checks did not stop eager construction from starting
+  // the outbox/execution workers and socket before those checks had succeeded.
+  it('starts reconciliation, delivery, and the listener only after readiness succeeds', async () => {
+    const order = [];
+    const dependencies = {
+      verifyReadiness: async () => { order.push('ready'); },
+      resumeFarmJobs: async () => { order.push('reconcile'); },
+      startWorker: () => { order.push('worker'); return { stop() {} }; },
+      openListener: () => { order.push('listen'); return { close() {} }; },
+    };
+    expect(typeof serverModule.startVerifiedRelayer).toBe('function');
+    await expect(serverModule.startVerifiedRelayer(dependencies)).resolves.toMatchObject({
+      worker: expect.any(Object),
+      server: expect.any(Object),
+    });
+    expect(order).toEqual(['ready', 'reconcile', 'worker', 'listen']);
+
+    order.length = 0;
+    await expect(serverModule.startVerifiedRelayer({
+      ...dependencies,
+      verifyReadiness: async () => { order.push('rejected'); throw new Error('remote unavailable'); },
+    })).rejects.toThrow(/remote unavailable/);
+    expect(order).toEqual(['rejected']);
+  });
 });

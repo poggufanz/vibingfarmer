@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { privateKeyToAccount } from 'viem/accounts';
 import { toCallPolicy, toTimestampPolicy, CallPolicyVersion } from '@zerodev/permissions/policies';
 import { createRelayerRouter } from '../src/httpRouter.mjs';
@@ -6,6 +9,7 @@ import { createMandateStoreV2 } from '../src/mandateStore.mjs';
 import { MAX_CALL_CAP_UNITS } from '../src/base/session.mjs';
 import { APPROVE_ABI, YIELD_ROUTER_ABI } from '../src/base/orchestrator.mjs';
 import { buildFarmPermissions } from '../../frontend/src/base/policyEngine.js';
+import { createSqliteStores } from '../src/sqliteStores.mjs';
 
 function mockRes() {
   return {
@@ -783,6 +787,81 @@ describe('createRelayerRouter', () => {
       await vi.waitFor(() => expect(buildFarm).toHaveBeenCalledTimes(1));
     });
 
+    // Defect caught: an expired running lease means the process may have completed a deposit
+    // before crashing. Startup must make that evidence terminal-uncertain, never replay the farm.
+    it('reconciles expired running work as terminal-uncertain without replaying a deposit', async () => {
+      const path = join(mkdtempSync(join(tmpdir(), 'vf-router-recovery-')), 'relayer.db');
+      const stores = createSqliteStores(path);
+      const durableRouter = makeRouter({
+        jobs: stores.jobs,
+        mandatesV2: stores.mandatesV2,
+        associationOutbox: stores.associationOutbox,
+        farmExecutions: stores.farmExecutions,
+      });
+      const { body, respBody } = await registerMandate(durableRouter);
+      const queued = {
+        status: 'queued',
+        steps: [],
+        runId: 'run-42',
+        bridgeAgent: 'CBRIDGE',
+        grantTxHash: 'HGRANT',
+        _attach: {
+          serializedApproval: body.serializedApproval,
+          stellarOwner: STELLAR_OWNER,
+          kernelAddress: KERNEL_ADDRESS,
+          bindingId: respBody.bindingId,
+          bindingHash: respBody.bindingHash,
+          networkId: 'stellar-testnet',
+          jobId: 'job-ambiguous',
+          allocations: [wireAllocation()],
+          associations: [{ allocationId: 'run-42:bridge:aave-v3', terminalSequence: null }],
+          attachedBurnTxHash: null,
+        },
+      };
+      stores.jobs.set('job-ambiguous', queued);
+      const attached = {
+        ...queued,
+        status: 'pending',
+        _attach: { ...queued._attach, attachedBurnTxHash: 'burn-ambiguous' },
+      };
+      stores.farmExecutions.attach({
+        jobId: 'job-ambiguous',
+        burnTxHash: 'burn-ambiguous',
+        job: attached,
+        reports: [{
+          identity: {
+            networkId: 'stellar-testnet', owner: STELLAR_OWNER,
+            bindingId: respBody.bindingId, allocationId: 'run-42:bridge:aave-v3',
+            childId: 'job-ambiguous',
+          },
+          expectedSequence: 0,
+          lifecycle: {
+            sequence: 1, status: 'submitted',
+            evidence: { executionStatus: 'accepted', custodyLocation: 'in-transit', txHash: 'burn-ambiguous' },
+            observedAt: 2_000_000_000_001,
+          },
+        }],
+      });
+      stores.farmExecutions.claim({ jobId: 'job-ambiguous', now: 1, leaseMs: 1 });
+
+      expect(typeof durableRouter.resumeFarmJobs).toBe('function');
+      await durableRouter.resumeFarmJobs();
+
+      expect(buildFarm).not.toHaveBeenCalled();
+      expect(stores.farmExecutions.get('job-ambiguous')).toMatchObject({ status: 'uncertain' });
+      expect(stores.jobs.get('job-ambiguous')).toMatchObject({
+        status: 'uncertain',
+        _attach: {
+          associations: [{ allocationId: 'run-42:bridge:aave-v3', terminalSequence: 2 }],
+        },
+      });
+      expect(stores.associationOutbox.status('job-ambiguous')).toEqual([
+        expect.objectContaining({ allocationId: 'run-42:bridge:aave-v3', sequence: 1 }),
+        expect.objectContaining({ allocationId: 'run-42:bridge:aave-v3', sequence: 2 }),
+      ]);
+      stores.db.close();
+    });
+
     it('rejects attach when approval/owner/kernel or the stored mandate binding changed', async () => {
       const { body } = await registerMandate(router);
       const queuedRes = mockRes();
@@ -813,7 +892,7 @@ describe('createRelayerRouter', () => {
         expect(res.statusCode).toBe(400);
       }
 
-      await registerMandate(router);
+      await registerMandate(router, body);
       const changedBinding = mockRes();
       await router(mk('POST', '/api/vf-cross/farm/attach', {
         jobId,
