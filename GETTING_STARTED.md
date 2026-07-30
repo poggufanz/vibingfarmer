@@ -150,6 +150,10 @@ Both, plus everything else standing between this branch and a release, are in se
 
 ## 8. Release prerequisites (read before deploying anything)
 
+This branch is a **partial execution** of the IQ Alter Remediation plan — 8 of its 14 tasks landed,
+F-01..F-11 closure is partial, and Router V3 / agent V4 and everything that depends on them were not
+built; see 8.2 for exactly what that means in practice.
+
 Local suites being green is **not** release readiness. This section is the honest state of the
 branch, split into what ships, what was never built, and what still needs an explicit human
 decision. Nothing in the "needs authority" list has been done.
