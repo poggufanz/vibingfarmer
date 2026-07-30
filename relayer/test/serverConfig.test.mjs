@@ -36,7 +36,11 @@ describe('runtimeServerConfig', () => {
   // authenticated remote schema/store readiness had been proven.
   it('gates startup on local writable-store and authenticated reporter probes', async () => {
     const localProbe = { probe: async () => ({ writable: true }) };
-    const reporter = { probe: async () => ({ ready: true, schemaVersion: 1 }) };
+    const reporter = { probe: async () => ({
+      ready: true,
+      schemaVersion: 1,
+      stores: { executionReceipts: true, baseChildIntents: true },
+    }) };
     expect(typeof serverModule.verifyRelayerReadiness).toBe('function');
     await expect(serverModule.verifyRelayerReadiness({ sqlite: localProbe, reporter }))
       .resolves.toEqual({ writable: true, reporterSchema: 1 });
@@ -44,6 +48,17 @@ describe('runtimeServerConfig', () => {
       sqlite: { probe: async () => { throw new Error('read only'); } },
       reporter,
     })).rejects.toThrow(/read only/);
+  });
+
+  it.each([
+    ['wrong schema acknowledgement', { ready: true, schemaVersion: 2, stores: { executionReceipts: true, baseChildIntents: true } }],
+    ['missing receipt store', { ready: true, schemaVersion: 1, stores: { baseChildIntents: true } }],
+    ['missing Base-child store', { ready: true, schemaVersion: 1, stores: { executionReceipts: true } }],
+  ])('keeps startup closed for %s', async (_label, remote) => {
+    await expect(serverModule.verifyRelayerReadiness({
+      sqlite: { probe: async () => ({ writable: true }) },
+      reporter: { probe: async () => remote },
+    })).rejects.toThrow(/schema\/store is not ready/);
   });
 
   // Defect caught: merely exporting readiness checks did not stop eager construction from starting

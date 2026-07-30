@@ -117,13 +117,21 @@ describe('durable Base child reporter protocol', () => {
     const fetchImpl = vi.fn(async () => ({
       ok: true,
       status: 200,
-      json: async () => ({ ready: true, schemaVersion: 1 }),
+      json: async () => ({
+        ready: true,
+        schemaVersion: 1,
+        stores: { executionReceipts: true, baseChildIntents: true },
+      }),
     }));
     const reporter = createAgentIndexReporter({
       endpoint: 'https://index.example/api/agent-index', secret: SECRET, schemaVersion: 1, fetchImpl,
     });
 
-    await expect(reporter.probe()).resolves.toEqual({ ready: true, schemaVersion: 1 });
+    await expect(reporter.probe()).resolves.toEqual({
+      ready: true,
+      schemaVersion: 1,
+      stores: { executionReceipts: true, baseChildIntents: true },
+    });
     expect(fetchImpl).toHaveBeenCalledWith(
       'https://index.example/api/agent-index?action=base-child-ready',
       expect.objectContaining({
@@ -135,8 +143,10 @@ describe('durable Base child reporter protocol', () => {
 
   it.each([
     ['unauthorized', { ok: false, status: 401, json: async () => ({ error: 'Unauthorized' }) }],
-    ['schema mismatch', { ok: true, status: 200, json: async () => ({ ready: true, schemaVersion: 2 }) }],
-    ['store unavailable', { ok: true, status: 200, json: async () => ({ ready: false, schemaVersion: 1 }) }],
+    ['schema mismatch', { ok: true, status: 200, json: async () => ({ ready: true, schemaVersion: 2, stores: { executionReceipts: true, baseChildIntents: true } }) }],
+    ['store unavailable', { ok: true, status: 200, json: async () => ({ ready: false, schemaVersion: 1, stores: { executionReceipts: true, baseChildIntents: true } }) }],
+    ['receipt store missing', { ok: true, status: 200, json: async () => ({ ready: true, schemaVersion: 1, stores: { baseChildIntents: true } }) }],
+    ['Base-child store missing', { ok: true, status: 200, json: async () => ({ ready: true, schemaVersion: 1, stores: { executionReceipts: true } }) }],
   ])('fails the readiness probe on %s', async (_label, response) => {
     const reporter = createAgentIndexReporter({
       endpoint: 'https://index.example/api/agent-index', secret: SECRET, schemaVersion: 1,

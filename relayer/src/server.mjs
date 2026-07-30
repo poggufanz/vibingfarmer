@@ -37,7 +37,12 @@ export async function verifyRelayerReadiness({ sqlite, reporter }) {
   const local = await sqlite.probe();
   if (local?.writable !== true) throw new Error('relayer SQLite store is not writable');
   const remote = await reporter.probe();
-  if (remote?.ready !== true || remote?.schemaVersion !== 1) {
+  if (
+    remote?.ready !== true
+    || remote?.schemaVersion !== 1
+    || remote?.stores?.executionReceipts !== true
+    || remote?.stores?.baseChildIntents !== true
+  ) {
     throw new Error('agent index reporter schema/store is not ready');
   }
   return { writable: true, reporterSchema: remote.schemaVersion };

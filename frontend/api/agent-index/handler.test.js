@@ -15,6 +15,7 @@ import {
   handleReceiptWrite,
   handleBaseChildIntent,
   handleBaseChildLifecycle,
+  handleReporterReadiness,
   LIVE_MANIFEST,
 } from './handler.js'
 import { AGENT_CREATORS } from '../../src/stellar/agentCreatorManifest.js'
@@ -67,6 +68,50 @@ function fakeD1() {
     _raw: sqlite,
   }
 }
+
+describe('handleReporterReadiness', () => {
+  it('acknowledges only the canonical receipt and Base-child store proof', async () => {
+    const out = await handleReporterReadiness({
+      store: createAgentIndexStore(fakeD1()),
+      secret: 'reporter-secret',
+      providedSecret: 'reporter-secret',
+    })
+    expect(out).toEqual({
+      status: 200,
+      body: {
+        ready: true,
+        schemaVersion: 1,
+        stores: { executionReceipts: true, baseChildIntents: true },
+      },
+    })
+  })
+
+  it.each([
+    [
+      'wrong schema acknowledgement',
+      {
+        writable: true,
+        schemaVersion: 2,
+        stores: { executionReceipts: true, baseChildIntents: true },
+      },
+    ],
+    [
+      'missing receipt-store acknowledgement',
+      { writable: true, schemaVersion: 1, stores: { baseChildIntents: true } },
+    ],
+    [
+      'missing Base-child-store acknowledgement',
+      { writable: true, schemaVersion: 1, stores: { executionReceipts: true } },
+    ],
+  ])('fails closed on %s', async (_label, readiness) => {
+    const out = await handleReporterReadiness({
+      store: { probeReadiness: async () => readiness },
+      secret: 'reporter-secret',
+      providedSecret: 'reporter-secret',
+    })
+    expect(out).toMatchObject({ status: 503, body: { configured: true } })
+  })
+})
 
 describe('authenticated receipt handlers', () => {
   it('fails closed when D1 or the on-chain authority reader is unavailable', async () => {

@@ -363,7 +363,7 @@ export function createRelayerRouter({
 
   function publicJob(job, jobId) {
     if (!job) return job;
-    const { _attach, ...safe } = job;
+    const { _attach, associationUncertain = false, ...safe } = job;
     const delivery = associationOutbox?.status ? associationOutbox.status(jobId) : [];
     const expected = Array.isArray(_attach?.associations) ? _attach.associations : [];
     const contiguous = [];
@@ -387,7 +387,8 @@ export function createRelayerRouter({
     }
     const complete = coverageComplete;
     const uncertain = !complete && expected.length > 0 && (
-      ['done', 'error', 'uncertain'].includes(job.status)
+      associationUncertain === true
+      || ['done', 'error', 'uncertain'].includes(job.status)
       || expected.some(({ terminalSequence }) => Number.isSafeInteger(terminalSequence))
       || delivery.some(({ status }) => status === 'dead')
     );
@@ -411,12 +412,21 @@ export function createRelayerRouter({
   }
 
   function persistenceUncertain(jobId, job, err) {
-    recordError(jobId, 'farm', err, {
-      runId: job.runId,
-      bridgeAgent: job.bridgeAgent,
-      grantTxHash: job.grantTxHash,
-      _attach: job._attach,
+    if (sanitizeErrors) {
+      console.error(`[relayer] job ${jobId} terminal association persistence failed:`, err);
+    }
+    jobs.set(jobId, {
+      ...job,
+      status: 'error',
       associationUncertain: true,
+      steps: [
+        ...(Array.isArray(job.steps) ? job.steps : []),
+        {
+          step: 'association-persistence',
+          status: 'error',
+          message: sanitizeErrors ? 'internal error' : errorMessage(err),
+        },
+      ],
     });
   }
 
@@ -535,7 +545,7 @@ export function createRelayerRouter({
           ),
         });
       } catch (finishError) {
-        if (!farmExecutions) persistenceUncertain(jobId, current, finishError);
+        persistenceUncertain(jobId, failedJob, finishError);
       }
       return;
     }
@@ -569,7 +579,7 @@ export function createRelayerRouter({
     try {
       finishWork({ jobId, leaseToken, job: doneJob, reports: terminalReports });
     } catch (err) {
-      if (!farmExecutions) persistenceUncertain(jobId, jobs.get(jobId) || doneJob, err);
+      persistenceUncertain(jobId, doneJob, err);
     }
   }
 
@@ -607,8 +617,8 @@ export function createRelayerRouter({
           job: failedJob,
           reports: lifecycleReports(terminalContext, [], 2, 'failed', 'unknown', null),
         });
-      } catch {
-        // Durable running work remains for terminal-uncertain reconciliation.
+      } catch (finishError) {
+        persistenceUncertain(jobId, failedJob, finishError);
       }
       return false;
     }

@@ -127,8 +127,36 @@ describe('createAgentIndexStore', () => {
     )
   })
 
-  it('probes the migrated store through a no-op write statement', async () => {
-    await expect(store.probeReadiness()).resolves.toEqual({ writable: true })
+  it('probes the canonical receipt and Base-child stores before acknowledging readiness', async () => {
+    await expect(store.probeReadiness()).resolves.toEqual({
+      writable: true,
+      schemaVersion: 1,
+      stores: { executionReceipts: true, baseChildIntents: true },
+    })
+  })
+
+  it.each(['execution_receipts', 'base_child_intents'])(
+    'fails readiness when canonical table %s is missing',
+    async (table) => {
+      db._raw.exec(`DROP TABLE ${table}`)
+      await expect(store.probeReadiness()).rejects.toThrow()
+    }
+  )
+})
+
+describe('probeReadiness schema contract', () => {
+  it.each([
+    'execution_phase_attempts',
+    'execution_receipt_challenges',
+    'execution_recovery_leases',
+  ])('requires the canonical execution-receipt table %s', async (table) => {
+    db._raw.exec(`DROP TABLE ${table}`)
+    await expect(store.probeReadiness()).rejects.toThrow()
+  })
+
+  it('requires the canonical Base-child lifecycle store', async () => {
+    db._raw.exec('DROP TABLE base_child_lifecycle_events')
+    await expect(store.probeReadiness()).rejects.toThrow()
   })
 })
 

@@ -862,6 +862,62 @@ describe('createRelayerRouter', () => {
       stores.db.close();
     });
 
+    // Defect caught: a durable terminal transaction could fail after the external farm returned,
+    // leaving the public job as nonterminal/complete-looking until a process restart reconciled it.
+    it('exposes a durable finish failure as immediately uncertain without replaying the farm', async () => {
+      const path = join(mkdtempSync(join(tmpdir(), 'vf-router-finish-')), 'relayer.db');
+      const stores = createSqliteStores(path);
+      const finish = vi.fn(() => { throw new Error('durable finish commit failed'); });
+      const durableRouter = makeRouter({
+        jobs: stores.jobs,
+        mandatesV2: stores.mandatesV2,
+        associationOutbox: stores.associationOutbox,
+        farmExecutions: { ...stores.farmExecutions, finish },
+      });
+      const { body } = await registerMandate(durableRouter);
+      const queued = mockRes();
+      await durableRouter(mk('POST', '/api/vf-cross/farm', {
+        serializedApproval: body.serializedApproval,
+        stellarOwner: STELLAR_OWNER,
+        kernelAddress: KERNEL_ADDRESS,
+        bridgeAgent: 'CBRIDGE',
+        runId: 'run-finish',
+        grantTxHash: 'HGRANT',
+        allocations: [wireAllocation({ allocationId: 'run-finish:bridge:aave-v3' })],
+      }), queued);
+      const { jobId } = jsonOf(queued);
+
+      const attached = await attachJob(durableRouter, jobId, body, 'burn-finish');
+      expect(attached.statusCode).toBe(200);
+      await vi.waitFor(() => expect(finish).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(stores.jobs.get(jobId)).toMatchObject({
+        status: 'error',
+        associationUncertain: true,
+        steps: expect.arrayContaining([
+          expect.objectContaining({
+            step: 'association-persistence',
+            status: 'error',
+            message: 'durable finish commit failed',
+          }),
+        ]),
+      }));
+
+      const status = mockRes();
+      await durableRouter(mk('GET', `/api/vf-cross/status/${jobId}`), status);
+      expect(jsonOf(status)).toMatchObject({
+        status: 'error',
+        associationDelivery: { complete: false, uncertain: true },
+      });
+      expect(jsonOf(status)).not.toHaveProperty('associationUncertain');
+      expect(stores.farmExecutions.get(jobId)).toMatchObject({ status: 'running' });
+
+      const repeated = await attachJob(durableRouter, jobId, body, 'burn-finish');
+      expect(repeated.statusCode).toBe(200);
+      expect(buildFarm).toHaveBeenCalledTimes(1);
+      expect(stores.farmExecutions.get(jobId)).toMatchObject({ status: 'running' });
+      stores.db.close();
+    });
+
     it('rejects attach when approval/owner/kernel or the stored mandate binding changed', async () => {
       const { body } = await registerMandate(router);
       const queuedRes = mockRes();

@@ -298,12 +298,21 @@ export async function handleReporterReadiness({ store, secret, providedSecret })
   }
   try {
     const result = await store.probeReadiness()
-    if (result?.writable !== true) {
+    if (
+      result?.writable !== true ||
+      result?.schemaVersion !== AGENT_INDEX_SCHEMA_VERSION ||
+      result?.stores?.executionReceipts !== true ||
+      result?.stores?.baseChildIntents !== true
+    ) {
       return { status: 503, body: { error: 'Base child store unavailable', configured: true } }
     }
     return {
       status: 200,
-      body: { ready: true, schemaVersion: AGENT_INDEX_SCHEMA_VERSION },
+      body: {
+        ready: true,
+        schemaVersion: result.schemaVersion,
+        stores: { executionReceipts: true, baseChildIntents: true },
+      },
     }
   } catch (error) {
     return agentIndexFailure(error)

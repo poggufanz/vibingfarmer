@@ -213,6 +213,12 @@ export function createAgentIndexReporter({
     if (acknowledgement.schemaVersion !== schemaVersion) {
       throw new Error('agent index reporter schema mismatch');
     }
+    if (
+      acknowledgement?.stores?.executionReceipts !== true
+      || acknowledgement?.stores?.baseChildIntents !== true
+    ) {
+      throw new Error('agent index reporter canonical stores are not ready');
+    }
     return acknowledgement;
   }
 

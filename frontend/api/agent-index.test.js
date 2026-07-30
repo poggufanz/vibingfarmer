@@ -155,7 +155,11 @@ function fakeStore(overrides = {}) {
       expiresAt: 2_000_000_060_000,
     })),
     releaseRecoveryLease: vi.fn(async () => ({ released: true })),
-    probeReadiness: vi.fn(async () => ({ writable: true })),
+    probeReadiness: vi.fn(async () => ({
+      writable: true,
+      schemaVersion: 1,
+      stores: { executionReceipts: true, baseChildIntents: true },
+    })),
     createBaseChildIntent: vi.fn(async () => ({ written: 1, duplicates: 0, sequence: 0 })),
     advanceBaseChildLifecycle: vi.fn(async () => ({ written: 1, duplicates: 0, sequence: 1 })),
     ...overrides,
@@ -590,7 +594,11 @@ describe('/api/agent-index operational evidence routes', () => {
       })
     )
     expect(accepted.res.statusCode).toBe(200)
-    expect(accepted.body).toEqual({ ready: true, schemaVersion: 1 })
+    expect(accepted.body).toEqual({
+      ready: true,
+      schemaVersion: 1,
+      stores: { executionReceipts: true, baseChildIntents: true },
+    })
     expect(mocked.store.probeReadiness).toHaveBeenCalledTimes(1)
 
     const deniedReq = mockReq({

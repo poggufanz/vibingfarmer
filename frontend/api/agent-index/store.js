@@ -89,7 +89,70 @@ function sameAssociationEvidence(existing, association) {
 export function createAgentIndexStore(db) {
   async function probeReadiness() {
     await db.prepare('UPDATE agent_index_sources SET status = status WHERE 0').bind().run()
-    return { writable: true }
+    await db
+      .prepare(
+        `UPDATE execution_receipts
+         SET intent_json = intent_json,
+             cctp_burn_status = cctp_burn_status,
+             cctp_mint_status = cctp_mint_status,
+             base_deposit_status = base_deposit_status,
+             custody_location = custody_location,
+             last_mutation_token = last_mutation_token,
+             version = version,
+             updated_at = updated_at
+         WHERE 0`
+      )
+      .bind()
+      .run()
+    await db
+      .prepare(
+        `SELECT attempt_id, network_id, execution_id, allocation_id, attempt_kind,
+                phase, status, evidence_json, request_digest, receipt_version
+         FROM execution_phase_attempts WHERE 0`
+      )
+      .bind()
+      .all()
+    await db
+      .prepare(
+        `SELECT challenge_id, network_id, owner_address, agent_address, request_digest,
+                expires_at, consumed_at, consume_token
+         FROM execution_receipt_challenges WHERE 0`
+      )
+      .bind()
+      .all()
+    await db
+      .prepare(
+        `SELECT network_id, execution_id, allocation_id, child_id, phase, owner_address,
+                holder, lease_token, acquired_at, expires_at
+         FROM execution_recovery_leases WHERE 0`
+      )
+      .bind()
+      .all()
+    await db
+      .prepare(
+        `UPDATE base_child_intents
+         SET intent_json = intent_json,
+             lifecycle_sequence = lifecycle_sequence,
+             lifecycle_status = lifecycle_status,
+             lifecycle_evidence_json = lifecycle_evidence_json,
+             updated_at = updated_at
+         WHERE 0`
+      )
+      .bind()
+      .run()
+    await db
+      .prepare(
+        `SELECT network_id, binding_id, allocation_id, child_id, sequence,
+                idempotency_key, status, evidence_json, observed_at
+         FROM base_child_lifecycle_events WHERE 0`
+      )
+      .bind()
+      .all()
+    return {
+      writable: true,
+      schemaVersion: AGENT_INDEX_SCHEMA_VERSION,
+      stores: { executionReceipts: true, baseChildIntents: true },
+    }
   }
 
   async function issueReceiptChallenge(challenge) {
