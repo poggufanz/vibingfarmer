@@ -1281,12 +1281,44 @@ describe('readOwnerMoney — Task 10 owner-wide subtotals and coverage', () => {
   })
 
   it('never upgrades coverage just because there happens to be no local/cached hint (second device, empty browser cache)', async () => {
-    // Review round 1, finding 14: calling twice with IDENTICAL (absent) device state can't
-    // distinguish "never consults device state" from "consults it and happened to see nothing
-    // both times" -- a coverage-upgrading mutation keyed on `localStorage`/device state would pass
-    // this form unchanged. Vary the actual global between the two calls instead.
-    const rows = [agentRow({ address: 'CFRESHDEVICE' })]
+    // Review round 1, finding 14 (round 2 fix): this test survived round 1's own fix vacuously --
+    // `agentRow({address:'CFRESHDEVICE'})` has NO Base children, so `hasChildren` is false and
+    // associationCoverage was already pinned at its ceiling ({state:'complete', reasons:[]})
+    // regardless of device state. Varying `localStorage` between the two calls had nothing to
+    // upgrade: the mutation this test exists to catch (a local/cached device hint forcing
+    // associationState = 'complete') is a no-op on an empty-children fixture.
+    //
+    // Fixed by giving the row a real Base child. After round 1's finding-3 fix, a valid child with
+    // no supplied `associationDelivery` sits at 'unknown'/'unavailable' by default -- so an upgrade
+    // to 'complete' is now observable, and a hypothetical
+    // `if (readBaseOwner(owner)) associationState = 'complete'` branch keyed on device/local state
+    // added to readOwnerMoney.js's coverage block would make `deviceWithCache` diverge from
+    // `brandNewDevice` below.
+    const rows = [
+      agentRow({
+        address: 'CFRESHDEVICE',
+        association: 'known',
+        baseChildren: [baseChild({ allocationId: 'run1:freshdevice' })],
+      }),
+    ]
     const stellar = stellarDeps({ shares: { CFRESHDEVICE: 0n }, idle: { CFRESHDEVICE: 0n } })
+    const base = baseDeps({
+      status: 'known',
+      accounts: [
+        {
+          kernelAddress: '0xkernel',
+          positions: [
+            {
+              pool: BASE_POOL_CATALOG[0].address,
+              shares: 5n,
+              assets: 500_000n,
+              minAssets: 495_000n,
+            },
+          ],
+          idleUsdc: 0n,
+        },
+      ],
+    })
     globalThis.localStorage = {
       getItem: () => JSON.stringify({ version: 2, kernelAddress: '0xcacheddevice' }),
       setItem: () => {},
@@ -1296,7 +1328,9 @@ describe('readOwnerMoney — Task 10 owner-wide subtotals and coverage', () => {
       owner: OWNER,
       discovery: discoveryOf(rows),
       stellar,
-      base: baseDeps(),
+      base,
+      // associationDelivery deliberately omitted -- the real production shape (app.jsx never
+      // passes it).
       now: NOW,
     })
     delete globalThis.localStorage
@@ -1304,12 +1338,16 @@ describe('readOwnerMoney — Task 10 owner-wide subtotals and coverage', () => {
       owner: OWNER,
       discovery: discoveryOf(rows),
       stellar,
-      base: baseDeps(),
+      base,
       now: NOW,
     })
-    // an owner with genuinely zero Base activity is fully known to have zero — 'complete', never
-    // stuck at 'unknown' just because nothing was ever reported.
-    expect(deviceWithCache.associationCoverage).toEqual({ state: 'complete', reasons: [] })
+    // a real Base child exists and no associationDelivery was ever supplied -- coverage must sit
+    // at 'unknown'/'unavailable' on BOTH calls, never upgraded to 'complete' just because a
+    // local/cached device hint happened to be present on one of them.
+    expect(deviceWithCache.associationCoverage).toEqual({
+      state: 'unknown',
+      reasons: ['unavailable'],
+    })
     expect(brandNewDevice.associationCoverage).toEqual(deviceWithCache.associationCoverage)
   })
 
