@@ -527,7 +527,10 @@ export function createRelayerRouter({
         grantTxHash: farmParams.grantTxHash,
         _attach: failedContext,
         status: 'error',
-        steps: [{ step: 'farm', status: 'error', message: sanitizeErrors ? 'internal error' : errorMessage(err) }],
+        steps: [
+          ...(Array.isArray(current.steps) ? current.steps : []),
+          { step: 'farm', status: 'error', message: sanitizeErrors ? 'internal error' : errorMessage(err) },
+        ],
       };
       if (sanitizeErrors) console.error(`[relayer] job ${jobId} step farm failed:`, err);
       try {

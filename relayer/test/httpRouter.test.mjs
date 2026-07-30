@@ -918,6 +918,113 @@ describe('createRelayerRouter', () => {
       stores.db.close();
     });
 
+    // Defect caught: when a farm threw after its durable mint checkpoint and the terminal
+    // transaction also failed, the fallback discarded the mint step. Expiry recovery then tried
+    // to replace the immutable sequence-2 minted row with a sequence-2 failure forever.
+    it('recovers a post-mint farm and finish failure at sequence 3 exactly once without replay', async () => {
+      const path = join(mkdtempSync(join(tmpdir(), 'vf-router-post-mint-')), 'relayer.db');
+      let clock = Date.now();
+      const stores = createSqliteStores(path, { now: () => clock });
+      const finish = vi.fn(() => { throw new Error('durable terminal commit failed'); });
+      farmFn.mockImplementationOnce(async ({ onMintConfirmed }) => {
+        await onMintConfirmed({ status: 'minted', mintTxHash: '0xmint-before-failure' });
+        throw new Error('deposit failed after mint');
+      });
+      const durableRouter = makeRouter({
+        jobs: stores.jobs,
+        mandatesV2: stores.mandatesV2,
+        associationOutbox: stores.associationOutbox,
+        farmExecutions: { ...stores.farmExecutions, finish },
+      });
+      const { body } = await registerMandate(durableRouter);
+      const queued = mockRes();
+      await durableRouter(mk('POST', '/api/vf-cross/farm', {
+        serializedApproval: body.serializedApproval,
+        stellarOwner: STELLAR_OWNER,
+        kernelAddress: KERNEL_ADDRESS,
+        bridgeAgent: 'CBRIDGE',
+        runId: 'run-post-mint',
+        grantTxHash: 'HGRANT',
+        allocations: [wireAllocation({ allocationId: 'run-post-mint:bridge:aave-v3' })],
+      }), queued);
+      const { jobId } = jsonOf(queued);
+
+      const attached = await attachJob(durableRouter, jobId, body, 'burn-post-mint');
+      expect(attached.statusCode).toBe(200);
+      await vi.waitFor(() => expect(finish).toHaveBeenCalledTimes(1));
+      const durableMint = JSON.parse(stores.db.prepare(
+        'SELECT report_json FROM association_outbox WHERE child_id = ? AND sequence = 2'
+      ).get(jobId).report_json);
+      const immediate = mockRes();
+      await durableRouter(mk('GET', `/api/vf-cross/status/${jobId}`), immediate);
+      const immediateJob = jsonOf(immediate);
+
+      clock += 30_001;
+      let firstRecoveryError = null;
+      try {
+        await durableRouter.resumeFarmJobs();
+      } catch (error) {
+        firstRecoveryError = error;
+      }
+      const afterFirstRecovery = stores.associationOutbox.status(jobId);
+      let secondRecoveryError = null;
+      try {
+        await durableRouter.resumeFarmJobs();
+      } catch (error) {
+        secondRecoveryError = error;
+      }
+      const afterSecondRecovery = stores.associationOutbox.status(jobId);
+
+      expect({
+        durableMint,
+        immediateJob,
+        firstRecoveryError,
+        secondRecoveryError,
+        workStatus: stores.farmExecutions.get(jobId)?.status,
+        afterFirstRecovery: afterFirstRecovery.map(({ sequence }) => sequence),
+        afterSecondRecovery: afterSecondRecovery.map(({ sequence }) => sequence),
+        farmCalls: farmFn.mock.calls.length,
+        buildCalls: buildFarm.mock.calls.length,
+      }).toMatchObject({
+        durableMint: {
+          lifecycle: {
+            sequence: 2,
+            status: 'submitted',
+            evidence: {
+              executionStatus: 'minted',
+              custodyLocation: 'agent',
+              txHash: '0xmint-before-failure',
+            },
+          },
+        },
+        immediateJob: {
+          status: 'error',
+          steps: expect.arrayContaining([
+            expect.objectContaining({
+              step: 'mint', status: 'minted', mintTxHash: '0xmint-before-failure',
+            }),
+            expect.objectContaining({
+              step: 'farm', status: 'error', message: 'deposit failed after mint',
+            }),
+            expect.objectContaining({
+              step: 'association-persistence',
+              status: 'error',
+              message: 'durable terminal commit failed',
+            }),
+          ]),
+          associationDelivery: { complete: false, uncertain: true },
+        },
+        firstRecoveryError: null,
+        secondRecoveryError: null,
+        workStatus: 'uncertain',
+        afterFirstRecovery: [1, 2, 3],
+        afterSecondRecovery: [1, 2, 3],
+        farmCalls: 1,
+        buildCalls: 1,
+      });
+      stores.db.close();
+    });
+
     it('rejects attach when approval/owner/kernel or the stored mandate binding changed', async () => {
       const { body } = await registerMandate(router);
       const queuedRes = mockRes();
