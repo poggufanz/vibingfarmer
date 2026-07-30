@@ -61,9 +61,16 @@ jobs:
       - run: npm ci
       - run: npm test
 
-  # Pinned Ubuntu 24.04 + Rust 1.82.0 + stellar-cli 26.1.0 — deliberately not the local WSL
+  # Pinned Ubuntu 24.04 + Rust 1.91.0 + stellar-cli 26.1.0 — deliberately not the local WSL
   # toolchain. Gates the existing V2 soroban/ contracts (Router V3/agent V4 work was dropped
   # from this remediation plan for lack of a WSL host; this job is unaffected by that).
+  #
+  # 1.91.0, not the remediation plan's stated 1.82.0: soroban/Cargo.toml:6 pins
+  # `soroban-sdk = "26.1.0"`, whose own manifest declares `rust-version = "1.91.0"` — 1.82.0
+  # cannot even complete step 2 (`wasm32v1-none` as a rustup target didn't exist before 1.84),
+  # and would fail the SDK's MSRV regardless. 1.91.0 is the exact minimum that satisfies both
+  # the plan's "pinned deterministic tooling" intent and the SDK it must actually build. Not
+  # `stable` — the pin stays exact.
   soroban:
     runs-on: ubuntu-24.04
     defaults:
@@ -71,7 +78,7 @@ jobs:
         working-directory: soroban
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.82.0
+      - uses: dtolnay/rust-toolchain@1.91.0
         with:
           targets: wasm32v1-none
           components: clippy
@@ -103,7 +110,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report
-          path: [frontend/playwright-report, frontend/test-results]
+          path: |
+            frontend/playwright-report
+            frontend/test-results
           if-no-files-found: ignore
           retention-days: 7
 
@@ -121,6 +130,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Verify the gate itself (workflow structure + evaluateReleaseGate matrix)
+        run: node --test scripts/ci/release-gate.test.mjs
       - name: Evaluate release gate
         env:
           NEEDS_CONTEXT: ${{ toJSON(needs) }}

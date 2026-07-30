@@ -7,22 +7,24 @@
 // No YAML parser is installed anywhere reachable from repo root (no root package.json /
 // node_modules at all — confirmed before writing this). Rather than add a dependency for a
 // handful of structural checks, this file carries a small hand-rolled parser for the exact
-// GitHub Actions YAML subset this workflow is authored in (block mappings/sequences, plus the
-// simple flow collections already used for `on.push` and `needs: [...]`). The workflow is kept
-// inside that subset deliberately (no multi-line block scalars, no flow mappings that embed
-// `${{ }}` expressions) so this parser can stay small and honest instead of a re-implementation
-// of full YAML.
+// GitHub Actions YAML subset this workflow is authored in (block mappings/sequences, literal
+// block scalars for multi-line `path:` inputs, plus the simple flow collections already used
+// for `on.push` and `needs: [...]`). The workflow avoids flow mappings that embed `${{ }}`
+// expressions so this parser can stay small and honest instead of a re-implementation of full
+// YAML.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
+import { spawnSync } from 'node:child_process'
 
 import { evaluateReleaseGate, REQUIRED_JOBS } from './release-gate.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(here, '..', '..')
 const workflowPath = path.join(repoRoot, '.github', 'workflows', 'frontend.yml')
+const releaseGateScript = path.join(here, 'release-gate.mjs')
 
 // ---------------------------------------------------------------------------
 // Minimal YAML-subset parser (block mappings/sequences + simple flow collections).
@@ -134,7 +136,15 @@ function parseYamlSubset(text) {
   }
 
   function assignValue(obj, key, rest, indent) {
-    if (rest === '') {
+    if (rest === '|' || rest === '|-' || rest === '|+' || rest === '>' || rest === '>-' || rest === '>+') {
+      const style = rest[0]
+      const lines = []
+      while (pos < tokens.length && tokens[pos].indent > indent) {
+        lines.push(tokens[pos].content)
+        pos++
+      }
+      obj[key] = lines.join(style === '|' ? '\n' : ' ')
+    } else if (rest === '') {
       if (pos < tokens.length && tokens[pos].indent > indent) {
         obj[key] = parseBlock(tokens[pos].indent)
       } else {
@@ -216,14 +226,18 @@ function loadWorkflow() {
 
 // A trigger is "unfiltered" if it has no keys that would suppress the workflow from
 // running on some subset of real events (types/paths/paths-ignore/branches-ignore/tags...).
-// A plain `branches` restriction is fine — it selects *which* branch, it does not skip the
-// workflow based on file paths or event subtype the way `types`/`paths-ignore` would.
+// `branches` is a separate axis: for `push` it's intentional (selects which branch a push
+// lands on, still every push to it runs) and stays allowed; for `pull_request`/`merge_group`
+// it would silently stop the gate from ever evaluating PRs/merge-queue entries targeting an
+// unlisted branch, which is exactly the kind of narrowing "unfiltered" is meant to rule out —
+// so it is forbidden there too.
 const NARROWING_KEYS = ['types', 'paths', 'paths-ignore', 'branches-ignore', 'tags', 'tags-ignore']
 
-function assertUnfiltered(trigger, label) {
+function assertUnfiltered(trigger, label, { allowBranches = false } = {}) {
   if (trigger === null || trigger === undefined) return // bare trigger — always unfiltered
   assert.equal(typeof trigger, 'object', `${label} trigger should be bare or a plain object`)
-  for (const key of NARROWING_KEYS) {
+  const forbidden = allowBranches ? NARROWING_KEYS : [...NARROWING_KEYS, 'branches']
+  for (const key of forbidden) {
     assert.equal(
       Object.prototype.hasOwnProperty.call(trigger, key),
       false,
@@ -232,13 +246,16 @@ function assertUnfiltered(trigger, label) {
   }
 }
 
-function findAllContinueOnError(node, hits = []) {
+// Asserts the `continue-on-error` key is entirely absent — not merely not `=== true`. A string
+// expression like `continue-on-error: ${{ ... }}` would slip past a `=== true` check while
+// still making the check soft-fail depending on the expression's runtime value.
+function findAllContinueOnErrorKeys(node, hits = []) {
   if (Array.isArray(node)) {
-    for (const item of node) findAllContinueOnError(item, hits)
+    for (const item of node) findAllContinueOnErrorKeys(item, hits)
   } else if (node && typeof node === 'object') {
     for (const [key, value] of Object.entries(node)) {
       if (key === 'continue-on-error') hits.push(value)
-      findAllContinueOnError(value, hits)
+      findAllContinueOnErrorKeys(value, hits)
     }
   }
   return hits
@@ -331,9 +348,17 @@ test('workflow: push, pull_request, and merge_group triggers are all present and
     Object.prototype.hasOwnProperty.call(workflow.on, 'merge_group'),
     'missing merge_group trigger'
   )
-  assertUnfiltered(workflow.on.push, 'push')
+  assertUnfiltered(workflow.on.push, 'push', { allowBranches: true })
   assertUnfiltered(workflow.on.pull_request, 'pull_request')
   assertUnfiltered(workflow.on.merge_group, 'merge_group')
+})
+
+test('workflow: pull_request/merge_group narrowed by `branches` would not prove "unfiltered"', () => {
+  // Regression guard for the assertion itself: a `branches` restriction on pull_request or
+  // merge_group must be rejected even though the same key is fine on push.
+  assert.throws(() => assertUnfiltered({ branches: ['main'] }, 'pull_request'))
+  assert.throws(() => assertUnfiltered({ branches: ['main'] }, 'merge_group'))
+  assert.doesNotThrow(() => assertUnfiltered({ branches: ['main', 'dev'] }, 'push', { allowBranches: true }))
 })
 
 test('workflow: every required job for the release gate exists and always reports (no job-level `if`)', () => {
@@ -348,14 +373,10 @@ test('workflow: every required job for the release gate exists and always report
   }
 })
 
-test('workflow: no blocking check anywhere retains continue-on-error: true', () => {
+test('workflow: no blocking check anywhere uses the continue-on-error key at all', () => {
   const workflow = loadWorkflow()
-  const hits = findAllContinueOnError(workflow.jobs)
-  assert.deepEqual(
-    hits.filter((v) => v === true),
-    [],
-    'no step in this workflow may use continue-on-error: true'
-  )
+  const hits = findAllContinueOnErrorKeys(workflow.jobs)
+  assert.deepEqual(hits, [], 'no step or job in this workflow may use continue-on-error, in any form')
 })
 
 test('workflow: release-gate needs exactly the five required jobs and runs with if: always()', () => {
@@ -402,4 +423,84 @@ test('workflow: deploy runs a non-secret readiness step before the traffic-shift
     (s) => typeof s.run === 'string' && !s.env && /test -f|readiness/i.test(s.name ?? s.run)
   )
   assert.ok(readinessIdx !== -1 && readinessIdx < wranglerIdx, 'a non-secret readiness step must run before the wrangler deploy step')
+})
+
+test('workflow: playwright upload-artifact path is a scalar naming both report directories (not a YAML sequence)', () => {
+  // Action inputs under `with:` become INPUT_* env vars — they must be scalar strings. A YAML
+  // sequence there either invalidates the whole workflow file or silently resolves to nothing,
+  // and `if-no-files-found: ignore` would swallow the latter without ever failing the job.
+  const workflow = loadWorkflow()
+  const playwrightJob = workflow.jobs.playwright
+  const uploadStep = playwrightJob.steps.find(
+    (s) => s.uses && s.uses.startsWith('actions/upload-artifact')
+  )
+  assert.ok(uploadStep, 'playwright job must have an upload-artifact step')
+  const pathValue = uploadStep.with.path
+  assert.equal(typeof pathValue, 'string', 'upload-artifact `path` input must be a scalar string, not a list')
+  assert.ok(pathValue.includes('frontend/playwright-report'), 'path must include the Playwright HTML report dir')
+  assert.ok(pathValue.includes('frontend/test-results'), 'path must include the Playwright test-results dir (screenshots/traces)')
+})
+
+test('workflow: release-gate verifies its own tooling (node --test) before or independently of gate evaluation', () => {
+  const workflow = loadWorkflow()
+  const releaseGate = workflow.jobs['release-gate']
+  const steps = releaseGate.steps
+  const selfTestIdx = steps.findIndex(
+    (s) => typeof s.run === 'string' && s.run.includes('node --test') && s.run.includes('release-gate.test.mjs')
+  )
+  const evaluateIdx = steps.findIndex(
+    (s) => typeof s.run === 'string' && s.run.includes('release-gate.mjs') && !s.run.includes('--test')
+  )
+  assert.ok(selfTestIdx !== -1, 'release-gate must run `node --test scripts/ci/release-gate.test.mjs`')
+  assert.ok(evaluateIdx !== -1, 'release-gate must still evaluate the gate itself')
+  assert.ok(selfTestIdx < evaluateIdx, 'the self-test must run before gate evaluation, so a broken workflow structure fails loudly')
+})
+
+// ---------------------------------------------------------------------------
+// CLI (main()) coverage — the one code path CI actually executes. The pure
+// evaluateReleaseGate() tests above never touch process.argv/env/exit wiring.
+// ---------------------------------------------------------------------------
+
+function runCli(env) {
+  return spawnSync(process.execPath, [releaseGateScript], { env, encoding: 'utf8' })
+}
+
+test('CLI: exits 0 when all required jobs succeed (via NEEDS_CONTEXT)', () => {
+  const needs = Object.fromEntries(REQUIRED_JOBS.map((job) => [job, { result: 'success' }]))
+  const result = runCli({ ...process.env, NEEDS_CONTEXT: JSON.stringify(needs) })
+  assert.equal(result.status, 0)
+  assert.match(result.stdout, /release-gate OK/)
+})
+
+test('CLI: exits non-zero when a required job did not succeed', () => {
+  const needs = Object.fromEntries(REQUIRED_JOBS.map((job) => [job, { result: 'success' }]))
+  needs.soroban = { result: 'failure' }
+  const result = runCli({ ...process.env, NEEDS_CONTEXT: JSON.stringify(needs) })
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, /release-gate FAILED/)
+})
+
+test('CLI: exits non-zero when NEEDS_CONTEXT is missing entirely', () => {
+  const env = { ...process.env }
+  delete env.NEEDS_CONTEXT
+  const result = runCli(env)
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, /no needs context provided/)
+})
+
+test('CLI: exits non-zero when NEEDS_CONTEXT is unparseable JSON', () => {
+  const result = runCli({ ...process.env, NEEDS_CONTEXT: '{ not valid json' })
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, /failed to parse needs context/)
+})
+
+test('CLI: the entrypoint guard actually runs main() (regression guard for the fileURLToPath fix)', () => {
+  // A prior version compared `import.meta.url === \`file://${argv[1]}\`` directly, which is
+  // false whenever the two sides encode differently (e.g. a space or non-ASCII char in the
+  // path) — main() silently never runs and the process exits 0 with no output at all. Running
+  // the real script as a subprocess (rather than importing it) is what actually exercises this
+  // guard the way CI does.
+  const needs = Object.fromEntries(REQUIRED_JOBS.map((job) => [job, { result: 'success' }]))
+  const result = runCli({ ...process.env, NEEDS_CONTEXT: JSON.stringify(needs) })
+  assert.notEqual(result.stdout.trim(), '', 'main() must actually run and print something')
 })
