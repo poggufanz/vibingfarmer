@@ -3,7 +3,7 @@
 // header comment for the exact readOwnerMoney.js row shape (file:line cited there) these fixtures
 // mirror.
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, within } from '@testing-library/react'
 import { axe } from 'vitest-axe'
 import * as axeMatchers from 'vitest-axe/matchers'
@@ -56,6 +56,80 @@ function splitAgent(address = 'CBRIDGE1') {
     problems: [],
   }
 }
+
+// Task 10: an agent with TWO distinct Base children (two different kernel/pool positions -- the
+// exact shape readOwnerMoney.js's readOneAgentMoney now produces once `latestBaseChild` stopped
+// discarding siblings). Each base-flavored custodyBreakdown leg carries a real identity
+// (kernelAddress + poolAddress), the fix for PositionList.jsx's old `${agent.address}:${location}`
+// key collision.
+function twoBaseChildrenAgent(address = 'CTWOBASE1') {
+  return {
+    address,
+    scope: {
+      state: 'known',
+      value: { vault: 'CVAULT', revoked: false, expiry: 0, authorized: true },
+    },
+    vaultShares: { state: 'known', amount: amt(0n) },
+    idleToken: { state: 'known', amount: amt(0n) },
+    amount: amt(70_0000000n),
+    executionStatus: 'succeeded',
+    custody: { location: 'unknown' },
+    custodyBreakdown: [
+      {
+        location: 'base-proxy',
+        amount: amt(50_0000000n),
+        kernelAddress: '0xkernel1',
+        poolAddress: '0xpoolaaaa',
+        coverageReason: null,
+      },
+      {
+        location: 'base-proxy',
+        amount: amt(20_0000000n),
+        kernelAddress: '0xkernel1',
+        poolAddress: '0xpoolbbbb',
+        coverageReason: 'stale',
+      },
+    ],
+    problems: [],
+  }
+}
+
+describe('PositionList — two Base children on one agent render as distinguishable rows (Task 10)', () => {
+  it('renders both Base legs, each with its own amount, never collapsed onto a duplicate key', () => {
+    render(<PositionList agents={[twoBaseChildrenAgent()]} />)
+    const parentRow = document.querySelector('.pc-position-row')
+    const childRows = parentRow.querySelectorAll('.pc-position-row-children > li')
+    expect(childRows).toHaveLength(2)
+    expect(screen.getByText(/50/)).toBeTruthy()
+    expect(screen.getByText(/20/)).toBeTruthy()
+  })
+
+  it('gives each Base leg a real, distinct React key derived from kernel+pool identity (no duplicate-key warning)', () => {
+    // React strips `key` from the rendered DOM, so a stale/colliding key can't be read back off
+    // an <li> after the fact -- the one observable symptom is React's own
+    // "Encountered two children with the same key" console.error during render. Old
+    // `legDisplay` built `key = ${agent.address}:${location}` -- identical for both legs here
+    // (both 'base-proxy' on the same agent) -- so this genuinely distinguishes the fix from the bug.
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    render(<PositionList agents={[twoBaseChildrenAgent()]} />)
+    const duplicateKeyWarning = errorSpy.mock.calls.some((args) =>
+      String(args[0]).includes('same key')
+    )
+    errorSpy.mockRestore()
+    expect(duplicateKeyWarning).toBe(false)
+  })
+
+  it('renders the affected leg coverage reason next to that leg only, never on its sibling', () => {
+    render(<PositionList agents={[twoBaseChildrenAgent()]} />)
+    expect(screen.getByText(/Confirmed evidence is a little older than usual/)).toBeTruthy()
+    const parentRow = document.querySelector('.pc-position-row')
+    const childRows = [...parentRow.querySelectorAll('.pc-position-row-children > li')]
+    const staleRow = childRows.find((li) => /20/.test(li.textContent))
+    const freshRow = childRows.find((li) => /50/.test(li.textContent))
+    expect(staleRow.textContent).toMatch(/older than usual/)
+    expect(freshRow.textContent).not.toMatch(/older than usual/)
+  })
+})
 
 describe('PositionList — Stellar vault destination and network truth', () => {
   it('shows the exact Autofarm -> Blend destination string and a visible Stellar testnet badge', () => {

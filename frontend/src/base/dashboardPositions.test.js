@@ -8,6 +8,7 @@ import { BASE_POOL_CATALOG } from '../config.js'
 import { baseOwnerStorageKey } from '../wallet/baseBinding.js'
 
 const OWNER = 'GUSER'
+const POOL_A = BASE_POOL_CATALOG[0].address
 
 function seedOwner(stellarOwner, kernelAddress) {
   localStorage.setItem(
@@ -40,54 +41,77 @@ beforeEach(() => {
   }
 })
 
+// Task 10: loadIndexedBasePositions now delegates its actual on-chain valuation to
+// baseChildPositions.js's readBasePositions (one pinned block per call) instead of readPositions.js's
+// own per-account, unpinned reads (see dashboardPositions.js's header + R5/R3 in
+// task-10-interface-notes.md). `deps.readBasePositions` replaces the old `deps.readPositions` seam
+// everywhere in this file; readBasePositions.js itself is untouched and out of scope.
+function knownResult(positions = [], blockNumber = 1n) {
+  return { status: 'known', blockNumber, positions }
+}
+
 describe('loadDeviceBasePositions', () => {
   it('returns [] when no base owner has ever been created', async () => {
     expect(
-      await loadDeviceBasePositions({ stellarOwner: OWNER, deps: { readPositions: vi.fn() } })
+      await loadDeviceBasePositions({ stellarOwner: OWNER, deps: { readBasePositions: vi.fn() } })
     ).toEqual([])
   })
 
   it('returns [] without a stellarOwner (never a blind global read)', async () => {
     seedOwner(OWNER, '0xACC')
-    expect(await loadDeviceBasePositions({ deps: { readPositions: vi.fn() } })).toEqual([])
+    expect(await loadDeviceBasePositions({ deps: { readBasePositions: vi.fn() } })).toEqual([])
   })
 
   it('maps positions with catalog pool names, reading through loadIndexedBasePositions', async () => {
     seedOwner(OWNER, '0xACC')
-    const readPositions = vi
-      .fn()
-      .mockResolvedValue([{ pool: BASE_POOL_CATALOG[0].address, shares: 5n, minAssets: 4n }])
+    const readBasePositions = vi.fn().mockResolvedValue(
+      knownResult([
+        {
+          kernelAddress: '0xacc',
+          poolAddress: POOL_A.toLowerCase(),
+          shares: 5n,
+          assets: 5n,
+          state: 'known',
+        },
+      ])
+    )
     const out = await loadDeviceBasePositions({
       stellarOwner: OWNER,
-      deps: { readPositions, makePublicClient: () => ({}) },
+      deps: { readBasePositions, makePublicClient: () => ({}) },
     })
     expect(out[0]).toMatchObject({ poolName: expect.stringContaining('Aave'), shares: 5n })
     // the ONE canonical account this device's own withdraw ceremony cares about -- never a
     // second, independently-derived kernel address.
-    expect(readPositions).toHaveBeenCalledWith(expect.objectContaining({ account: '0xacc' }))
+    expect(readBasePositions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        groups: expect.arrayContaining([expect.objectContaining({ kernelAddress: '0xacc' })]),
+      })
+    )
   })
 
   it('returns [] on RPC failure (dashboard never crashes)', async () => {
     seedOwner(OWNER, '0xACC')
-    const readPositions = vi.fn().mockRejectedValue(new Error('rpc down'))
+    const readBasePositions = vi
+      .fn()
+      .mockResolvedValue({ status: 'unavailable', blockNumber: null, positions: [] })
     expect(
       await loadDeviceBasePositions({
         stellarOwner: OWNER,
-        deps: { readPositions, makePublicClient: () => ({}) },
+        deps: { readBasePositions, makePublicClient: () => ({}) },
       })
     ).toEqual([])
   })
 
   it('a mandate/owner set up for a different Stellar wallet is not visible (wallet switch)', async () => {
     seedOwner('GOTHERWALLET', '0xOTHER')
-    const readPositions = vi.fn()
+    const readBasePositions = vi.fn()
     expect(
       await loadDeviceBasePositions({
         stellarOwner: OWNER,
-        deps: { readPositions, makePublicClient: () => ({}) },
+        deps: { readBasePositions, makePublicClient: () => ({}) },
       })
     ).toEqual([])
-    expect(readPositions).not.toHaveBeenCalled()
+    expect(readBasePositions).not.toHaveBeenCalled()
   })
 
   it('never reintroduces the retired local-record-only reader as an export', async () => {
@@ -105,10 +129,10 @@ describe('loadDeviceBasePositions', () => {
 // Task 13), rather than duplicating its own gate.
 describe('loadIndexedBasePositions', () => {
   it('reports empty (not unavailable, not a silent []) when there are no proven kernel addresses to check', async () => {
-    const readPositions = vi.fn()
+    const readBasePositions = vi.fn()
     const out = await loadIndexedBasePositions({
       indexedBaseAccounts: [],
-      deps: { readPositions, makePublicClient: () => ({}) },
+      deps: { readBasePositions, makePublicClient: () => ({}) },
     })
     expect(out).toEqual({
       status: 'empty',
@@ -116,19 +140,25 @@ describe('loadIndexedBasePositions', () => {
       failedAccounts: [],
       localKernelAddress: null,
     })
-    expect(readPositions).not.toHaveBeenCalled()
+    expect(readBasePositions).not.toHaveBeenCalled()
   })
 
   it('reads public balances for a proven kernel address with no local record at all (new device)', async () => {
-    const readPositions = vi
-      .fn()
-      .mockResolvedValue([
-        { pool: BASE_POOL_CATALOG[0].address, shares: 5n, assets: 500_000n, minAssets: 495_000n },
+    const readBasePositions = vi.fn().mockResolvedValue(
+      knownResult([
+        {
+          kernelAddress: '0xkernel',
+          poolAddress: POOL_A.toLowerCase(),
+          shares: 5n,
+          assets: 500_000n,
+          state: 'known',
+        },
       ])
+    )
     const readIdleUsdc = vi.fn().mockResolvedValue(1_000_000n)
     const out = await loadIndexedBasePositions({
       indexedBaseAccounts: ['0xKERNEL'],
-      deps: { readPositions, readIdleUsdc, makePublicClient: () => ({}) },
+      deps: { readBasePositions, readIdleUsdc, makePublicClient: () => ({}) },
     })
     expect(out.status).toBe('known')
     expect(out.localKernelAddress).toBeNull()
@@ -136,7 +166,12 @@ describe('loadIndexedBasePositions', () => {
       {
         kernelAddress: '0xkernel',
         positions: [
-          { pool: BASE_POOL_CATALOG[0].address, shares: 5n, assets: 500_000n, minAssets: 495_000n },
+          {
+            pool: POOL_A.toLowerCase(),
+            shares: 5n,
+            assets: 500_000n,
+            minAssets: 497_500n, // 500_000 * 0.995
+          },
         ],
         idleUsdc: 1_000_000n,
       },
@@ -144,22 +179,44 @@ describe('loadIndexedBasePositions', () => {
   })
 
   it('a known-empty account (no positions, no idle) is still status known, not unavailable', async () => {
-    const readPositions = vi.fn().mockResolvedValue([])
+    const readBasePositions = vi.fn().mockResolvedValue(knownResult([]))
     const readIdleUsdc = vi.fn().mockResolvedValue(0n)
     const out = await loadIndexedBasePositions({
       indexedBaseAccounts: ['0xEMPTY'],
-      deps: { readPositions, readIdleUsdc, makePublicClient: () => ({}) },
+      deps: { readBasePositions, readIdleUsdc, makePublicClient: () => ({}) },
     })
     expect(out.status).toBe('known')
     expect(out.accounts).toEqual([{ kernelAddress: '0xempty', positions: [], idleUsdc: 0n }])
   })
 
-  it('reports unavailable when every account read fails, never a bare []', async () => {
-    const readPositions = vi.fn().mockRejectedValue(new Error('rpc down'))
-    const readIdleUsdc = vi.fn().mockRejectedValue(new Error('rpc down'))
+  it('a genuinely zero share balance never calls convertToAssets and is simply absent from positions', async () => {
+    const readBasePositions = vi.fn().mockResolvedValue(
+      knownResult([
+        {
+          kernelAddress: '0xkernel',
+          poolAddress: POOL_A.toLowerCase(),
+          shares: 0n,
+          assets: 0n,
+          state: 'known',
+        },
+      ])
+    )
+    const readIdleUsdc = vi.fn().mockResolvedValue(0n)
+    const out = await loadIndexedBasePositions({
+      indexedBaseAccounts: ['0xkernel'],
+      deps: { readBasePositions, readIdleUsdc, makePublicClient: () => ({}) },
+    })
+    expect(out.accounts).toEqual([{ kernelAddress: '0xkernel', positions: [], idleUsdc: 0n }])
+  })
+
+  it('reports unavailable when the shared block/position read fails outright, never a bare []', async () => {
+    const readBasePositions = vi
+      .fn()
+      .mockResolvedValue({ status: 'unavailable', blockNumber: null, positions: [] })
+    const readIdleUsdc = vi.fn().mockResolvedValue(0n)
     const out = await loadIndexedBasePositions({
       indexedBaseAccounts: ['0xA', '0xB'],
-      deps: { readPositions, readIdleUsdc, makePublicClient: () => ({}) },
+      deps: { readBasePositions, readIdleUsdc, makePublicClient: () => ({}) },
     })
     expect(out).toEqual({
       status: 'unavailable',
@@ -169,20 +226,28 @@ describe('loadIndexedBasePositions', () => {
     })
   })
 
-  // Fix loop 1, Fix 5: `status: 'known'` used to mean "every account that succeeded", silently
-  // dropping any address whose own read failed with no trace — a consumer summing `accounts`
-  // could never tell the total was missing a kernel. The enum itself is unchanged (still no
-  // partial status); the gap now rides along on `failedAccounts` instead.
+  // Fix loop 1, Fix 5 (still true under Task 10's batched read): `status: 'known'` used to mean
+  // "every account that succeeded", silently dropping any address whose own read failed with no
+  // trace — a consumer summing `accounts` could never tell the total was missing a kernel. The
+  // enum itself is unchanged (still no partial status); the gap now rides along on
+  // `failedAccounts` instead. Under the new batched readBasePositions, one kernel's OWN pool read
+  // coming back `state:'unavailable'` demotes just that kernel, not its sibling.
   it('one account failing does not blank out an account that succeeded, and the failure rides along visibly (fix loop 1, Fix 5)', async () => {
-    const readPositions = vi
-      .fn()
-      .mockImplementation(({ account }) =>
-        account === '0xbad' ? Promise.reject(new Error('rpc down')) : Promise.resolve([])
-      )
+    const readBasePositions = vi.fn().mockResolvedValue(
+      knownResult([
+        {
+          kernelAddress: '0xbad',
+          poolAddress: POOL_A.toLowerCase(),
+          shares: null,
+          assets: null,
+          state: 'unavailable',
+        },
+      ])
+    )
     const readIdleUsdc = vi.fn().mockResolvedValue(0n)
     const out = await loadIndexedBasePositions({
       indexedBaseAccounts: ['0xBAD', '0xGOOD'],
-      deps: { readPositions, readIdleUsdc, makePublicClient: () => ({}) },
+      deps: { readBasePositions, readIdleUsdc, makePublicClient: () => ({}) },
     })
     expect(out.status).toBe('known')
     expect(out.accounts).toEqual([{ kernelAddress: '0xgood', positions: [], idleUsdc: 0n }])
@@ -194,13 +259,13 @@ describe('loadIndexedBasePositions', () => {
   // fix brief), so the gap is closed at this seam instead: loadIndexedBasePositions no longer
   // uses that fail-soft default for its idle-USDC read; a failure surfaces as `idleUsdc: null`
   // (unknown), never a fabricated zero, even though the pool-position read for the same account
-  // succeeded in the same allSettled round.
+  // succeeded in the same round.
   it('an idle-USDC RPC failure surfaces as unknown (null), never a fabricated zero, even though positions succeeded (fix loop 1, Fix 6)', async () => {
-    const readPositions = vi.fn().mockResolvedValue([])
+    const readBasePositions = vi.fn().mockResolvedValue(knownResult([]))
     const publicClient = { readContract: vi.fn().mockRejectedValue(new Error('rpc down')) }
     const out = await loadIndexedBasePositions({
       indexedBaseAccounts: ['0xIDLEFAIL'],
-      deps: { readPositions, makePublicClient: () => publicClient },
+      deps: { readBasePositions, makePublicClient: () => publicClient },
     })
     expect(out.status).toBe('known')
     expect(out.accounts).toEqual([{ kernelAddress: '0xidlefail', positions: [], idleUsdc: null }])
@@ -208,12 +273,12 @@ describe('loadIndexedBasePositions', () => {
 
   it("flags a mismatch when this device's CURRENT kernel differs from every proven kernel (still returns the proven data)", async () => {
     seedOwner(OWNER, '0xCURRENTKERNEL')
-    const readPositions = vi.fn().mockResolvedValue([])
+    const readBasePositions = vi.fn().mockResolvedValue(knownResult([]))
     const readIdleUsdc = vi.fn().mockResolvedValue(0n)
     const out = await loadIndexedBasePositions({
       stellarOwner: OWNER,
       indexedBaseAccounts: ['0xHISTORICKERNEL'],
-      deps: { readPositions, readIdleUsdc, makePublicClient: () => ({}) },
+      deps: { readBasePositions, readIdleUsdc, makePublicClient: () => ({}) },
     })
     expect(out.status).toBe('mismatched')
     expect(out.localKernelAddress).toBe('0xCURRENTKERNEL')
@@ -224,13 +289,25 @@ describe('loadIndexedBasePositions', () => {
 
   it('is known (not mismatched) when the local kernel IS one of the proven accounts', async () => {
     seedOwner(OWNER, '0xSAMEKERNEL')
-    const readPositions = vi.fn().mockResolvedValue([])
+    const readBasePositions = vi.fn().mockResolvedValue(knownResult([]))
     const readIdleUsdc = vi.fn().mockResolvedValue(0n)
     const out = await loadIndexedBasePositions({
       stellarOwner: OWNER,
       indexedBaseAccounts: ['0xSameKernel'],
-      deps: { readPositions, readIdleUsdc, makePublicClient: () => ({}) },
+      deps: { readBasePositions, readIdleUsdc, makePublicClient: () => ({}) },
     })
     expect(out.status).toBe('known')
+  })
+
+  it('passes every kernel x catalog-pool pair to readBasePositions in a single call (one shared block)', async () => {
+    const readBasePositions = vi.fn().mockResolvedValue(knownResult([]))
+    const readIdleUsdc = vi.fn().mockResolvedValue(0n)
+    await loadIndexedBasePositions({
+      indexedBaseAccounts: ['0xA', '0xB'],
+      deps: { readBasePositions, readIdleUsdc, makePublicClient: () => ({}) },
+    })
+    expect(readBasePositions).toHaveBeenCalledTimes(1)
+    const { groups } = readBasePositions.mock.calls[0][0]
+    expect(groups).toHaveLength(2 * BASE_POOL_CATALOG.length)
   })
 })

@@ -47,12 +47,26 @@ function shortAddress(address) {
     : address
 }
 
+// Task 10: readOneAgentMoney can now report more than one Base leg for the same agent (two
+// distinct Base children that landed in two different kernel/pool positions) -- each leg's real
+// identity (kernelAddress + poolAddress) is threaded through so its React key can never collide
+// with a sibling's, and its own honesty coverage reason (readOwnerMoney.js's per-leg
+// `coverageReason`: 'stale'|'unavailable'|'dead-letter'|null) renders right next to it.
+const COVERAGE_REASON_COPY = {
+  stale: 'Confirmed evidence is a little older than usual -- refreshing.',
+  unavailable: 'Could not reconfirm this round -- last known amount shown, not zero.',
+  'dead-letter': 'Delivery report is stuck -- needs attention.',
+}
+
 // One display leg -> { networkId | routeContext, label, amount, key }. `location` values are
 // custody.js's own fixed enum (custody.js:7-14): 'owner'|'agent'|'stellar-vault'|'in-transit'|
 // 'base-proxy'|'unknown'. Every branch below is a real, reachable custody.js output -- nothing
 // invented.
-function legDisplay(location, amount, keySuffix) {
-  const key = `${keySuffix}:${location}`
+function legDisplay(location, amount, keySuffix, identity = {}) {
+  const { kernelAddress = '', poolAddress = '', coverageReason = null } = identity
+  // kernelAddress/poolAddress make the key unique per real on-chain position, not just per
+  // location string -- two Base children on one agent in different pools used to collide here.
+  const key = `${keySuffix}:${location}:${kernelAddress}:${poolAddress}`
   if (location === 'stellar-vault') {
     return {
       key,
@@ -60,6 +74,7 @@ function legDisplay(location, amount, keySuffix) {
       label: STELLAR_VAULT_DESTINATION,
       amount,
       networkId: 'stellar-testnet',
+      coverageReason,
     }
   }
   if (location === 'agent') {
@@ -69,6 +84,7 @@ function legDisplay(location, amount, keySuffix) {
       label: 'Held at your agent (not yet deposited)',
       amount,
       networkId: 'stellar-testnet',
+      coverageReason,
     }
   }
   if (location === 'base-proxy') {
@@ -76,16 +92,30 @@ function legDisplay(location, amount, keySuffix) {
     // why the sentence form, not the brief's own two-middle-dot example, is what ships): Foundation's
     // `VenueTruth` primitive already renders this exact fact -- reused verbatim rather than
     // re-typed, so this route can never drift from that single source of truth.
-    return { key, kind: 'base-settled', label: null, amount, networkId: 'base-sepolia' }
+    return {
+      key,
+      kind: 'base-settled',
+      label: null,
+      amount,
+      networkId: 'base-sepolia',
+      coverageReason,
+    }
   }
   if (location === 'in-transit') {
     // Genuinely between chains and we don't know which CCTP phase -- NetworkIdentity.jsx's own
     // 'unknown' transit copy ("Bridge status unknown") is the honest label; never guess a phase.
-    return { key, kind: 'in-transit', label: null, amount }
+    return { key, kind: 'in-transit', label: null, amount, coverageReason }
   }
   // 'owner' / 'unknown': custody.js never returns these for a real, known-positive amount in
   // practice (see this file's header) but a defensive, honest fallback beats a silent drop.
-  return { key, kind: 'stellar', label: 'Location unknown', amount, networkId: 'stellar-testnet' }
+  return {
+    key,
+    kind: 'stellar',
+    label: 'Location unknown',
+    amount,
+    networkId: 'stellar-testnet',
+    coverageReason,
+  }
 }
 
 function positionRowFor(agent) {
@@ -93,7 +123,13 @@ function positionRowFor(agent) {
   if (agent.custodyBreakdown?.length) {
     for (const leg of agent.custodyBreakdown) {
       if (isKnownPositive(leg.amount))
-        legs.push(legDisplay(leg.location, leg.amount, agent.address))
+        legs.push(
+          legDisplay(leg.location, leg.amount, agent.address, {
+            kernelAddress: leg.kernelAddress,
+            poolAddress: leg.poolAddress,
+            coverageReason: leg.coverageReason,
+          })
+        )
     }
   } else if (isKnownPositive(agent.amount)) {
     legs.push(legDisplay(agent.custody?.location ?? 'unknown', agent.amount, agent.address))
@@ -177,6 +213,11 @@ export function PositionList({ agents = [], unattributed = {} }) {
                         value={unitsToDisplay(leg.amount.units, leg.amount.decimals)}
                         currency={leg.amount.token}
                       />
+                      {leg.coverageReason && (
+                        <p className="pc-money pc-money--unknown">
+                          {COVERAGE_REASON_COPY[leg.coverageReason] ?? leg.coverageReason}
+                        </p>
+                      )}
                     </li>
                   ))}
                 </ul>

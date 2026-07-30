@@ -86,7 +86,15 @@ function agentStateLabel(agent) {
   if (agent.executionStatus === 'executing') return 'Bridging in progress'
   if (agent.executionStatus === 'failed') return 'Bridge issue'
   if (agent.custodyBreakdown?.length > 1) {
-    return `Split: ${agent.custodyBreakdown.map((leg) => locationName(leg.location)).join(' + ')}`
+    // Task 10: an agent can now carry more than one Base leg (two distinct positions, both
+    // 'base-proxy') -- naming every leg individually used to print "Split: vault + Base + Base".
+    // The distinguishable per-position detail belongs to PositionList.jsx's own rows; this is a
+    // one-line status summary, so distinct PLACES (not distinct positions within a place) is what
+    // it names.
+    const uniqueLocations = [
+      ...new Set(agent.custodyBreakdown.map((leg) => locationName(leg.location))),
+    ]
+    return `Split: ${uniqueLocations.join(' + ')}`
   }
   const location =
     agent.custodyBreakdown?.length === 1

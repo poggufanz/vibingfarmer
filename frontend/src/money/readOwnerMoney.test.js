@@ -735,6 +735,445 @@ describe('readOwnerMoney', () => {
       },
     })
   })
+
+  // Task 10: the `latestBaseChild` picker used to reduce every one of these fixtures down to a
+  // single representative child, discarding any sibling's proven money. These prove every valid
+  // child now survives, whether it lands in the SAME on-chain position as a sibling (must be
+  // valued once, not doubled) or a genuinely different one (must survive as a distinguishable leg).
+  it('two Base children on one agent sharing the same kernel+pool are valued as ONE group, not double-counted', async () => {
+    const rows = [
+      agentRow({
+        address: 'CTWOSAME',
+        association: 'known',
+        baseChildren: [
+          baseChild({
+            allocationId: 'run1:a',
+            executionStatus: 'deposited',
+            reportedAt: NOW - 5000,
+          }),
+          baseChild({
+            allocationId: 'run2:a',
+            executionStatus: 'deposited',
+            reportedAt: NOW - 1000,
+          }),
+        ],
+      }),
+    ]
+    const stellar = stellarDeps({ shares: { CTWOSAME: 0n }, idle: { CTWOSAME: 0n } })
+    const base = baseDeps({
+      status: 'known',
+      accounts: [
+        {
+          kernelAddress: '0xkernel',
+          positions: [
+            {
+              pool: BASE_POOL_CATALOG[0].address,
+              shares: 5n,
+              assets: 500_000n,
+              minAssets: 495_000n,
+            },
+          ],
+          idleUsdc: 0n,
+        },
+      ],
+    })
+    const result = await readOwnerMoney({
+      owner: OWNER,
+      discovery: discoveryOf(rows),
+      stellar,
+      base,
+      now: NOW,
+    })
+    const a = result.agents[0]
+    // ONE live read for the shared group -> 500_000 base units (6dp) canonical 7dp = 5_000_000,
+    // never doubled just because two allocationIds report into it.
+    expect(a.amount).toEqual({ token: 'USDC', units: '5000000', decimals: 7 })
+    expect(a.custody).toEqual({ location: 'base-proxy' })
+    expect(a.custodyBreakdown).toEqual([
+      {
+        location: 'base-proxy',
+        amount: { token: 'USDC', units: '5000000', decimals: 7 },
+        kernelAddress: '0xkernel',
+        poolAddress: BASE_POOL_CATALOG[0].address.toLowerCase(),
+        coverageReason: null,
+      },
+    ])
+  })
+
+  it('two Base children on one agent in DIFFERENT pools both survive as distinct, identifiable legs (the latestBaseChild bug)', async () => {
+    const rows = [
+      agentRow({
+        address: 'CTWODIFF',
+        association: 'known',
+        baseChildren: [
+          baseChild({
+            allocationId: 'run1:a',
+            poolAddress: BASE_POOL_CATALOG[0].address,
+            executionStatus: 'deposited',
+            reportedAt: NOW - 5000,
+          }),
+          baseChild({
+            allocationId: 'run2:b',
+            poolAddress: BASE_POOL_CATALOG[1].address,
+            executionStatus: 'deposited',
+            reportedAt: NOW - 1000,
+            amount: { token: 'USDC', units: '200000', decimals: 6 },
+          }),
+        ],
+      }),
+    ]
+    const stellar = stellarDeps({ shares: { CTWODIFF: 0n }, idle: { CTWODIFF: 0n } })
+    const base = baseDeps({
+      status: 'known',
+      accounts: [
+        {
+          kernelAddress: '0xkernel',
+          positions: [
+            {
+              pool: BASE_POOL_CATALOG[0].address,
+              shares: 5n,
+              assets: 500_000n,
+              minAssets: 495_000n,
+            },
+            {
+              pool: BASE_POOL_CATALOG[1].address,
+              shares: 2n,
+              assets: 200_000n,
+              minAssets: 199_000n,
+            },
+          ],
+          idleUsdc: 0n,
+        },
+      ],
+    })
+    const result = await readOwnerMoney({
+      owner: OWNER,
+      discovery: discoveryOf(rows),
+      stellar,
+      base,
+      now: NOW,
+    })
+    const a = result.agents[0]
+    // both positions' proven money survives: 500_000 + 200_000 base units (6dp) -> canonical 7dp
+    expect(a.amount).toEqual({ token: 'USDC', units: '7000000', decimals: 7 })
+    // two distinct proven places can never honestly collapse to one location string
+    expect(a.custody).toEqual({ location: 'unknown' })
+    expect(a.custodyBreakdown).toHaveLength(2)
+    const identities = a.custodyBreakdown.map((leg) => `${leg.kernelAddress}:${leg.poolAddress}`)
+    expect(new Set(identities).size).toBe(2) // React-key-worthy: each leg is distinguishable
+  })
+
+  it('a Base child missing its mandate binding is excluded from the amount and flagged, never silently trusted', async () => {
+    const rows = [
+      agentRow({
+        address: 'CNOBINDING',
+        association: 'known',
+        baseChildren: [baseChild({ mandateBindingId: '', executionStatus: 'deposited' })],
+      }),
+    ]
+    const stellar = stellarDeps({ shares: { CNOBINDING: 0n }, idle: { CNOBINDING: 0n } })
+    const result = await readOwnerMoney({
+      owner: OWNER,
+      discovery: discoveryOf(rows),
+      stellar,
+      base: baseDeps(),
+      now: NOW,
+    })
+    const a = result.agents[0]
+    expect(a.amount).toEqual({ token: 'USDC', units: '0', decimals: 7 })
+    expect(a.problems).toContain('base-child-invalid')
+  })
+
+  it('two Base children reporting the SAME allocationId with disagreeing pools are a conflict, neither trusted', async () => {
+    const rows = [
+      agentRow({
+        address: 'CCONFLICT',
+        association: 'known',
+        baseChildren: [
+          baseChild({
+            allocationId: 'run1:a',
+            poolAddress: BASE_POOL_CATALOG[0].address,
+            executionStatus: 'deposited',
+          }),
+          baseChild({
+            allocationId: 'run1:a',
+            poolAddress: BASE_POOL_CATALOG[1].address,
+            executionStatus: 'deposited',
+          }),
+        ],
+      }),
+    ]
+    const stellar = stellarDeps({ shares: { CCONFLICT: 0n }, idle: { CCONFLICT: 0n } })
+    const result = await readOwnerMoney({
+      owner: OWNER,
+      discovery: discoveryOf(rows),
+      stellar,
+      base: baseDeps(),
+      now: NOW,
+    })
+    const a = result.agents[0]
+    expect(a.problems).toContain('base-child-conflict')
+    expect(a.amount).toEqual({ token: 'USDC', units: '0', decimals: 7 })
+  })
+})
+
+describe('readOwnerMoney — Task 10 owner-wide subtotals and coverage', () => {
+  it('retains a known Stellar subtotal even when there is no Base evidence at all', async () => {
+    const rows = [agentRow({ address: 'CSTELLARONLY' })]
+    const stellar = stellarDeps({
+      shares: { CSTELLARONLY: 5_000_000n },
+      idle: { CSTELLARONLY: 0n },
+    })
+    const result = await readOwnerMoney({
+      owner: OWNER,
+      discovery: discoveryOf(rows),
+      stellar,
+      base: baseDeps(),
+      now: NOW,
+    })
+    expect(result.stellarSubtotalUnits).toBe(5_000_000n)
+    expect(result.baseSubtotalUnits).toBe(0n)
+    expect(result.associationCoverage).toEqual({ state: 'complete', reasons: [] })
+  })
+
+  it("reports associationCoverage partial with reason 'stale' when a child's association record is stale", async () => {
+    const rows = [
+      agentRow({
+        address: 'CSTALEASSOC',
+        association: 'known',
+        baseChildren: [baseChild({ freshness: 'stale', executionStatus: 'deposited' })],
+      }),
+    ]
+    const stellar = stellarDeps({ shares: { CSTALEASSOC: 0n }, idle: { CSTALEASSOC: 0n } })
+    const base = baseDeps({
+      status: 'known',
+      accounts: [
+        {
+          kernelAddress: '0xkernel',
+          positions: [
+            {
+              pool: BASE_POOL_CATALOG[0].address,
+              shares: 5n,
+              assets: 500_000n,
+              minAssets: 495_000n,
+            },
+          ],
+          idleUsdc: 0n,
+        },
+      ],
+    })
+    const result = await readOwnerMoney({
+      owner: OWNER,
+      discovery: discoveryOf(rows),
+      stellar,
+      base,
+      now: NOW,
+    })
+    expect(result.associationCoverage.state).toBe('partial')
+    expect(result.associationCoverage.reasons).toContain('stale')
+  })
+
+  it("reports associationCoverage partial with reason 'dead-letter' when injected delivery evidence shows a dead event", async () => {
+    const rows = [
+      agentRow({
+        address: 'CDEADLETTER',
+        association: 'known',
+        baseChildren: [baseChild({ allocationId: 'run1:dead', executionStatus: 'deposited' })],
+      }),
+    ]
+    const stellar = stellarDeps({ shares: { CDEADLETTER: 0n }, idle: { CDEADLETTER: 0n } })
+    const base = baseDeps({
+      status: 'known',
+      accounts: [
+        {
+          kernelAddress: '0xkernel',
+          positions: [
+            {
+              pool: BASE_POOL_CATALOG[0].address,
+              shares: 5n,
+              assets: 500_000n,
+              minAssets: 495_000n,
+            },
+          ],
+          idleUsdc: 0n,
+        },
+      ],
+    })
+    const result = await readOwnerMoney({
+      owner: OWNER,
+      discovery: discoveryOf(rows),
+      stellar,
+      base,
+      associationDelivery: { events: [{ allocationId: 'run1:dead', status: 'dead', attempts: 3 }] },
+      now: NOW,
+    })
+    expect(result.associationCoverage.state).toBe('partial')
+    expect(result.associationCoverage.reasons).toContain('dead-letter')
+  })
+
+  it('reports associationCoverage unknown, reason unavailable, when the base-children source itself is unreadable (missing, not an empty array)', async () => {
+    const rows = [
+      {
+        address: 'CNOSOURCE',
+        scopeReadStatus: 'ok',
+        vault: 'CVAULT',
+        revoked: false,
+        expiry: 9_999_999_999,
+        authorized: true,
+        association: 'unknown',
+        // deliberately no `baseChildren` key at all -- distinct from a positively-confirmed []
+      },
+    ]
+    const stellar = stellarDeps({ shares: { CNOSOURCE: 0n }, idle: { CNOSOURCE: 0n } })
+    const result = await readOwnerMoney({
+      owner: OWNER,
+      discovery: discoveryOf(rows),
+      stellar,
+      base: baseDeps(),
+      now: NOW,
+    })
+    expect(result.baseSourceCoverage).toEqual({ state: 'unknown' })
+    expect(result.associationCoverage.state).toBe('unknown')
+    expect(result.associationCoverage.reasons).toContain('unavailable')
+  })
+
+  it('never upgrades coverage just because there happens to be no local/cached hint (second device, empty browser cache)', async () => {
+    // readOwnerMoney takes no localStorage/browser input for this computation at all -- proven
+    // structurally: the SAME discovery envelope produces byte-identical coverage every time.
+    const rows = [agentRow({ address: 'CFRESHDEVICE' })]
+    const stellar = stellarDeps({ shares: { CFRESHDEVICE: 0n }, idle: { CFRESHDEVICE: 0n } })
+    const first = await readOwnerMoney({
+      owner: OWNER,
+      discovery: discoveryOf(rows),
+      stellar,
+      base: baseDeps(),
+      now: NOW,
+    })
+    const second = await readOwnerMoney({
+      owner: OWNER,
+      discovery: discoveryOf(rows),
+      stellar,
+      base: baseDeps(),
+      now: NOW,
+    })
+    // an owner with genuinely zero Base activity is fully known to have zero — 'complete', never
+    // stuck at 'unknown' just because nothing was ever reported.
+    expect(first.associationCoverage).toEqual({ state: 'complete', reasons: [] })
+    expect(second.associationCoverage).toEqual(first.associationCoverage)
+  })
+
+  it('completeBaseTotalUnits and overallTotalUnits stay null while Base coverage is only partial, but the known subtotal is retained', async () => {
+    const rows = [
+      agentRow({
+        address: 'CPARTIALBASE',
+        association: 'known',
+        baseChildren: [baseChild({ executionStatus: 'held' })],
+      }),
+    ]
+    const stellar = stellarDeps({ shares: { CPARTIALBASE: 0n }, idle: { CPARTIALBASE: 0n } })
+    // live read runs but never finds this kernel -> base-read-unavailable, stale reported fallback
+    const base = baseDeps({ status: 'known', accounts: [] })
+    const result = await readOwnerMoney({
+      owner: OWNER,
+      discovery: discoveryOf(rows),
+      stellar,
+      base,
+      now: NOW,
+    })
+    expect(result.completeBaseTotalUnits).toBeNull()
+    expect(result.overallTotalUnits).toBeNull()
+    // the honest partial (stale-but-visible) subtotal is still retained, never erased to zero
+    expect(result.baseSubtotalUnits).toBe(4_000_000n)
+  })
+
+  it('completeBaseTotalUnits and overallTotalUnits are populated once every base group and every stellar leg is fully known', async () => {
+    const rows = [
+      agentRow({
+        address: 'CFULLYKNOWN',
+        association: 'known',
+        baseChildren: [baseChild({ executionStatus: 'deposited' })],
+      }),
+    ]
+    const stellar = stellarDeps({ shares: { CFULLYKNOWN: 3_000_000n }, idle: { CFULLYKNOWN: 0n } })
+    const base = baseDeps({
+      status: 'known',
+      accounts: [
+        {
+          kernelAddress: '0xkernel',
+          positions: [
+            {
+              pool: BASE_POOL_CATALOG[0].address,
+              shares: 5n,
+              assets: 500_000n,
+              minAssets: 495_000n,
+            },
+          ],
+          idleUsdc: 0n,
+        },
+      ],
+    })
+    const result = await readOwnerMoney({
+      owner: OWNER,
+      discovery: discoveryOf(rows),
+      stellar,
+      base,
+      now: NOW,
+    })
+    expect(result.stellarSubtotalUnits).toBe(3_000_000n)
+    expect(result.baseSubtotalUnits).toBe(5_000_000n)
+    expect(result.completeBaseTotalUnits).toBe(5_000_000n)
+    expect(result.overallTotalUnits).toBe(8_000_000n)
+    expect(result.baseValuationKind).toBe('convertToAssets-current-estimate')
+  })
+
+  it('basePositionCoverage is partial when some terminal groups get a live read and others do not', async () => {
+    const rows = [
+      agentRow({
+        address: 'CMIXEDPOS',
+        association: 'known',
+        baseChildren: [
+          baseChild({
+            allocationId: 'run1:known',
+            poolAddress: BASE_POOL_CATALOG[0].address,
+            executionStatus: 'deposited',
+          }),
+          baseChild({
+            allocationId: 'run2:unknown',
+            poolAddress: BASE_POOL_CATALOG[1].address,
+            kernelAddress: '0xOTHERKERNEL',
+            executionStatus: 'held',
+          }),
+        ],
+      }),
+    ]
+    const stellar = stellarDeps({ shares: { CMIXEDPOS: 0n }, idle: { CMIXEDPOS: 0n } })
+    const base = baseDeps({
+      status: 'known',
+      // only the FIRST kernel's account comes back live; the second is absent entirely
+      accounts: [
+        {
+          kernelAddress: '0xkernel',
+          positions: [
+            {
+              pool: BASE_POOL_CATALOG[0].address,
+              shares: 5n,
+              assets: 500_000n,
+              minAssets: 495_000n,
+            },
+          ],
+          idleUsdc: 0n,
+        },
+      ],
+    })
+    const result = await readOwnerMoney({
+      owner: OWNER,
+      discovery: discoveryOf(rows),
+      stellar,
+      base,
+      now: NOW,
+    })
+    expect(result.basePositionCoverage.state).toBe('partial')
+  })
 })
 
 describe('aggregateOwnerPositions', () => {
