@@ -10,6 +10,21 @@ const STATUS_VALUES = new Set([
 
 const SECRET_KEY = /(private.*key|secret|session.*material|raw.*public.*key)/i
 const ALLOCATION_FIELDS = new Set(['allocationId', 'poolAddress', 'units', 'minShares'])
+const MANDATORY_CHECKS = Object.freeze([
+  'chain',
+  'owner',
+  'kernel',
+  'session',
+  'permission',
+  'policy',
+  'binding',
+  'origin',
+  'implementation',
+  'allocation',
+  'freshness',
+  'reconstruction',
+  'prepared',
+])
 
 function scrub(value) {
   if (Array.isArray(value)) return value.map(scrub)
@@ -29,11 +44,7 @@ export function isVerifiedBaseMandateStatus(value) {
   if (!value || value.version !== 2 || value.status !== 'active') return false
   if (!Array.isArray(value.reasonCodes) || value.reasonCodes.length !== 0) return false
   const checks = value.checks
-  if (
-    !checks ||
-    Object.values(checks).length === 0 ||
-    Object.values(checks).some((check) => check !== true)
-  ) {
+  if (!checks || !MANDATORY_CHECKS.every((check) => checks[check] === true)) {
     return false
   }
   const observed = value.observed

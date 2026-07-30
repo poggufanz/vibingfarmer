@@ -1,19 +1,30 @@
 import { createHash } from 'node:crypto';
 import {
   concatHex,
+  encodeAbiParameters,
   encodeFunctionData,
   getAddress,
   isAddress,
+  keccak256,
+  slice,
   zeroAddress,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { KernelV3_1AccountAbi } from '@zerodev/sdk';
-import { ParamCondition } from '@zerodev/permissions/policies';
+import {
+  ParamCondition,
+  toCallPolicy,
+  toTimestampPolicy,
+} from '@zerodev/permissions/policies';
 import { reconstructSessionClient } from './base/session.mjs';
 import { APPROVE_ABI, YIELD_ROUTER_ABI } from './base/orchestrator.mjs';
 
 const EIP1967_IMPLEMENTATION_SLOT =
   '0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc';
+const CANONICAL_PERMISSION_FLAG = '0x0000';
+// Base documents ~2-second sealed L2 block inclusion. Six blocks tolerates ordinary RPC lag
+// while keeping revoke evidence far tighter than the separate 2700-second execution horizon.
+const MAX_BASE_OBSERVATION_AGE_SECONDS = 12;
 const STELLAR_OWNER_RE = /^[GC][A-Z2-7]{55}$/;
 const DECIMAL_RE = /^(0|[1-9]\d*)$/;
 const BASE64_RE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
@@ -91,7 +102,8 @@ function validatePolicy(decoded, config, allocationAmount) {
   // address is proven below from permissionConfig.policyData at the same observed block.
   if (call.policyAddress && !sameAddress(call.policyAddress, policy.callPolicyAddress)) return false;
   if (!sameAddress(timestamp.policyAddress, policy.timestampPolicyAddress)) return false;
-  if (call.policyFlag !== timestamp.policyFlag) return false;
+  if (call.policyFlag !== CANONICAL_PERMISSION_FLAG
+    || timestamp.policyFlag !== CANONICAL_PERMISSION_FLAG) return false;
   const permissions = call.permissions;
   if (!Array.isArray(permissions) || permissions.length !== 2) return false;
   const approve = permissions.find((entry) => entry?.functionName === 'approve');
@@ -132,6 +144,40 @@ function validatePolicy(decoded, config, allocationAmount) {
     || Number(deposit.rules[0]?.offset) !== 32
     || valueOfRule(deposit.rules[0]) !== depositCap) return false;
   return true;
+}
+
+function deriveCanonicalPermissionId(decoded, config, sessionAddress) {
+  const policy = config.base.mandatePolicy;
+  const policies = [
+    toCallPolicy({
+      policyVersion: decoded.call.policyVersion,
+      policyAddress: policy.callPolicyAddress,
+      policyFlag: decoded.call.policyFlag,
+      permissions: decoded.call.permissions,
+    }),
+    toTimestampPolicy({
+      policyAddress: policy.timestampPolicyAddress,
+      policyFlag: decoded.timestamp.policyFlag,
+      validAfter: decoded.timestamp.validAfter,
+      validUntil: decoded.timestamp.validUntil,
+    }),
+  ];
+  const policyId = encodeAbiParameters(
+    [{ name: 'policiesData', type: 'bytes[]' }],
+    [policies.map((entry) => concatHex([
+      entry.getPolicyInfoInBytes(),
+      entry.getPolicyData(),
+    ]))],
+  );
+  const signerId = encodeAbiParameters(
+    [{ name: 'signerData', type: 'bytes' }],
+    [concatHex([policy.ecdsaSignerAddress, sessionAddress])],
+  );
+  const permissionIdData = encodeAbiParameters(
+    [{ name: 'policyAndSignerData', type: 'bytes[]' }],
+    [[policyId, CANONICAL_PERMISSION_FLAG, signerId]],
+  );
+  return slice(keccak256(permissionIdData), 0, 4).toLowerCase();
 }
 
 function parseAllocation(allocation, config) {
@@ -178,6 +224,7 @@ function allChecks() {
     implementation: false,
     allocation: false,
     freshness: false,
+    reconstruction: false,
     prepared: false,
   };
 }
@@ -205,7 +252,7 @@ function statusEnvelope({ status, reasonCodes, expected, observed, checks }) {
  * expected user facts come only from the stored mandate/approval. No request field can replace
  * either source, and this function never calls sendUserOperation.
  */
-export async function evaluateBaseMandateStatus({
+async function evaluateBaseMandateStatusInternal({
   record,
   config,
   allocation,
@@ -231,6 +278,7 @@ export async function evaluateBaseMandateStatus({
       { target: policy.yieldRouterAddress ?? null, selector: policy.depositSelector ?? null },
     ],
     executionHorizonSeconds: policy.executionHorizonSeconds ?? null,
+    observationMaxAgeSeconds: MAX_BASE_OBSERVATION_AGE_SECONDS,
     owner: record?.stellarOwner ?? null,
     kernelAddress: record?.kernelAddress ?? null,
     sessionKeyAddress: record?.sessionKeyAddress ?? null,
@@ -260,7 +308,6 @@ export async function evaluateBaseMandateStatus({
   } catch (error) {
     return finish('mismatch', error.message === 'policy mismatch' ? 'POLICY_MISMATCH' : 'APPROVAL_MALFORMED');
   }
-  expected.permissionId = decoded.permissionId;
   expected.policyDigest = digest(decoded.policies);
 
   if (!STELLAR_OWNER_RE.test(String(record?.stellarOwner || ''))) return finish('mismatch', 'OWNER_MISMATCH');
@@ -275,9 +322,6 @@ export async function evaluateBaseMandateStatus({
   }
   if (!sameAddress(derivedSession, record?.sessionKeyAddress)) return finish('mismatch', 'SESSION_MISMATCH');
   checks.session = true;
-  if (record?.permissionId && String(record.permissionId).toLowerCase() !== decoded.permissionId) {
-    return finish('mismatch', 'PERMISSION_MISMATCH');
-  }
   if (record?.policyDigest && record.policyDigest !== expected.policyDigest) {
     return finish('mismatch', 'POLICY_MISMATCH');
   }
@@ -300,8 +344,27 @@ export async function evaluateBaseMandateStatus({
     return finish('mismatch', 'ALLOCATION_MISMATCH');
   }
   checks.allocation = true;
-  if (!validatePolicy(decoded, config, parsedAllocation.amount)) return finish('mismatch', 'POLICY_MISMATCH');
+  try {
+    if (!validatePolicy(decoded, config, parsedAllocation.amount)) {
+      return finish('mismatch', 'POLICY_MISMATCH');
+    }
+  } catch {
+    return finish('mismatch', 'POLICY_MISMATCH');
+  }
   checks.policy = true;
+
+  let canonicalPermissionId;
+  try {
+    canonicalPermissionId = deriveCanonicalPermissionId(decoded, config, derivedSession);
+  } catch {
+    return finish('mismatch', 'POLICY_MISMATCH');
+  }
+  expected.permissionId = canonicalPermissionId;
+  if (decoded.permissionId !== canonicalPermissionId
+    || (record?.permissionId
+      && String(record.permissionId).toLowerCase() !== canonicalPermissionId)) {
+    return finish('mismatch', 'PERMISSION_MISMATCH');
+  }
 
   const nowSeconds = Math.floor(now / 1000);
   const validAfter = Number(decoded.timestamp.validAfter || 0);
@@ -332,7 +395,7 @@ export async function evaluateBaseMandateStatus({
   checks.chain = true;
   if (!observed.blockHash || !Number.isSafeInteger(observed.blockTime)
     || observed.blockTime > now + 30_000
-    || now - observed.blockTime > Number(policy.executionHorizonSeconds) * 1000) {
+    || now - observed.blockTime > MAX_BASE_OBSERVATION_AGE_SECONDS * 1000) {
     return finish('unknown', 'BLOCK_STALE');
   }
   checks.freshness = true;
@@ -353,7 +416,7 @@ export async function evaluateBaseMandateStatus({
       address: record.kernelAddress,
       abi: KernelV3_1AccountAbi,
       functionName: 'permissionConfig',
-      args: [decoded.permissionId],
+      args: [canonicalPermissionId],
       blockNumber: block.number,
     });
   } catch {
@@ -361,7 +424,7 @@ export async function evaluateBaseMandateStatus({
   }
   const livePolicyData = Array.isArray(permissionConfig?.policyData) ? permissionConfig.policyData : [];
   observed.permission = {
-    permissionId: decoded.permissionId,
+    permissionId: canonicalPermissionId,
     permissionFlag: permissionConfig?.permissionFlag ?? null,
     signer: permissionConfig?.signer ?? null,
     policyData: livePolicyData,
@@ -371,6 +434,9 @@ export async function evaluateBaseMandateStatus({
     return finish('revoked', 'PERMISSION_REVOKED');
   }
   if (!sameAddress(permissionConfig?.signer, policy.ecdsaSignerAddress)) {
+    return finish('mismatch', 'PERMISSION_MISMATCH');
+  }
+  if (permissionConfig?.permissionFlag !== CANONICAL_PERMISSION_FLAG) {
     return finish('mismatch', 'PERMISSION_MISMATCH');
   }
   const wantedPolicyData = expectedPolicyData(decoded, config);
@@ -411,11 +477,19 @@ export async function evaluateBaseMandateStatus({
     if (!sameAddress(kernelClient?.account?.address, record.kernelAddress)) {
       return finish('mismatch', 'KERNEL_MISMATCH');
     }
+    if (kernelClient?.account?.kernelVersion !== policy.kernelVersion) {
+      return finish('mismatch', 'KERNEL_VERSION_MISMATCH');
+    }
+    if (!sameAddress(kernelClient?.account?.entryPoint?.address, policy.entryPointAddress)
+      || kernelClient?.account?.entryPoint?.version !== policy.entryPointVersion) {
+      return finish('mismatch', 'ENTRY_POINT_MISMATCH');
+    }
     const reconstructedPermission = await kernelClient.account.kernelPluginManager?.getIdentifier?.();
     if (reconstructedPermission
-      && String(reconstructedPermission).toLowerCase() !== decoded.permissionId) {
+      && String(reconstructedPermission).toLowerCase() !== canonicalPermissionId) {
       return finish('mismatch', 'PERMISSION_MISMATCH');
     }
+    checks.reconstruction = true;
     const callData = await kernelClient.account.encodeCalls(calls);
     const prepared = await kernelClient.prepareUserOperation({ callData });
     if (!prepared || prepared.callData !== callData
@@ -428,4 +502,26 @@ export async function evaluateBaseMandateStatus({
     return finish('unknown', 'PREPARE_FAILED');
   }
   return finish('active');
+}
+
+export async function evaluateBaseMandateStatus(args) {
+  try {
+    return await evaluateBaseMandateStatusInternal(args);
+  } catch {
+    return {
+      version: 2,
+      stellarOwner: null,
+      kernelAddress: null,
+      sessionKeyAddress: null,
+      relayerOrigin: null,
+      expiresAt: null,
+      bindingId: null,
+      bindingHash: null,
+      status: 'unknown',
+      reasonCodes: ['EVALUATOR_ERROR'],
+      expected: {},
+      observed: {},
+      checks: allChecks(),
+    };
+  }
 }

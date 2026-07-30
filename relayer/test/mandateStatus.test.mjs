@@ -4,9 +4,12 @@ import {
   concatHex,
   createPublicClient,
   decodeFunctionData,
+  encodeAbiParameters,
   encodeFunctionData,
   http,
+  keccak256,
   pad,
+  slice,
   zeroAddress,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
@@ -31,7 +34,6 @@ const ENTRY_POINT = '0x0000000071727De22E5E9d8BAf0edAc6f37da032';
 const CALL_POLICY = '0x9a52283276A0ec8740DF50bF01B28A80D880eaf2';
 const TIMESTAMP_POLICY = '0xB9f8f524bE6EcD8C945b1b87f9ae5C192FdCE20F';
 const ECDSA_SIGNER = '0x6A6F069E2a08c2468e7724Ab3250CdBFBA14D4FF';
-const PERMISSION_ID = '0x12345678';
 const BLOCK_HASH = `0x${'ab'.repeat(32)}`;
 
 function sha256(value) {
@@ -44,11 +46,29 @@ function serialize(value) {
   )), 'utf8').toString('base64');
 }
 
+function protocolPermissionId({ policies, sessionAddress = SESSION }) {
+  const policiesData = encodeAbiParameters(
+    [{ name: 'policiesData', type: 'bytes[]' }],
+    [policies.map((policy) => concatHex([
+      policy.getPolicyInfoInBytes(),
+      policy.getPolicyData(),
+    ]))],
+  );
+  const signerData = encodeAbiParameters(
+    [{ name: 'signerData', type: 'bytes' }],
+    [concatHex([ECDSA_SIGNER, sessionAddress])],
+  );
+  return slice(keccak256(encodeAbiParameters(
+    [{ name: 'policyAndSignerData', type: 'bytes[]' }],
+    [[policiesData, '0x0000', signerData]],
+  )), 0, 4);
+}
+
 function approval({
   accountAddress = KERNEL,
   validAfter = 0,
   validUntil = NOW_SECONDS + 7_200,
-  permissionId = PERMISSION_ID,
+  permissionId = null,
   mutatePermissions = (permissions) => permissions,
 } = {}) {
   const permissions = buildFarmPermissions({
@@ -64,15 +84,17 @@ function approval({
     ...call.policyParams,
     permissions: mutatePermissions(call.policyParams.permissions),
   };
+  const resolvedPermissionId = permissionId ?? protocolPermissionId({ policies: [call, timestamp] });
   return {
     serializedApproval: serialize({
       accountParams: { accountAddress, initCode: '0x' },
       permissionParams: {
-        permissionId,
+        permissionId: resolvedPermissionId,
         policies: [{ policyParams: callPolicyParams }, { policyParams: timestamp.policyParams }],
       },
     }),
     policyData: [call.getPolicyInfoInBytes(), timestamp.getPolicyInfoInBytes()],
+    permissionId: resolvedPermissionId,
     validUntil,
   };
 }
@@ -134,7 +156,7 @@ function makeHarness({ approvalOptions, record: recordOverrides, allocation: all
     },
   };
   const permissionConfig = {
-    permissionFlag: '0x0001',
+    permissionFlag: '0x0000',
     signer: ECDSA_SIGNER,
     policyData: approved.policyData,
   };
@@ -159,8 +181,10 @@ function makeHarness({ approvalOptions, record: recordOverrides, allocation: all
   const kernelClient = {
     account: {
       address: KERNEL,
+      entryPoint: { address: ENTRY_POINT, version: '0.7' },
+      kernelVersion: '0.3.1',
       encodeCalls,
-      kernelPluginManager: { getIdentifier: vi.fn(() => PERMISSION_ID) },
+      kernelPluginManager: { getIdentifier: vi.fn(() => approved.permissionId) },
     },
     prepareUserOperation,
     sendUserOperation,
@@ -216,7 +240,7 @@ describe('evaluateBaseMandateStatus', () => {
       owner: OWNER,
       kernelAddress: KERNEL,
       sessionKeyAddress: SESSION,
-      permissionId: PERMISSION_ID,
+      permissionId: h.approved.permissionId,
       bindingId: 'binding-1',
       bindingHash: h.record.bindingHash,
       expiresAt: h.record.expiresAt,
@@ -228,7 +252,7 @@ describe('evaluateBaseMandateStatus', () => {
       implementation: IMPLEMENTATION,
       preparedCallDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
       permission: {
-        permissionId: PERMISSION_ID,
+        permissionId: h.approved.permissionId,
         signer: ECDSA_SIGNER,
         policyData: h.approved.policyData,
         digest: expect.stringMatching(/^[a-f0-9]{64}$/),
@@ -285,6 +309,26 @@ describe('evaluateBaseMandateStatus', () => {
     expect(h.sendUserOperation).not.toHaveBeenCalled();
   });
 
+  it('rejects a substituted private-key/address pair even when its record binding is recomputed', async () => {
+    const replacementPrivateKey = `0x${'77'.repeat(32)}`;
+    const replacementAddress = privateKeyToAccount(replacementPrivateKey).address;
+    const h = makeHarness();
+    h.record.sessionPrivateKey = replacementPrivateKey;
+    h.record.sessionKeyAddress = replacementAddress;
+    h.record.bindingHash = bindingHash({
+      sessionKeyAddress: replacementAddress,
+      expiresAt: h.record.expiresAt,
+    });
+
+    const result = await h.evaluate();
+
+    expect(result.status).toBe('mismatch');
+    expect(result.reasonCodes).toContain('PERMISSION_MISMATCH');
+    expect(h.makePublicClient).not.toHaveBeenCalled();
+    expect(h.prepareUserOperation).not.toHaveBeenCalled();
+    expect(h.sendUserOperation).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['owner', (h) => { h.record.stellarOwner = 'not-a-stellar-owner'; }, 'OWNER_MISMATCH'],
     ['kernel', (h) => { h.record.kernelAddress = `0x${'33'.repeat(20)}`; }, 'KERNEL_MISMATCH'],
@@ -294,6 +338,7 @@ describe('evaluateBaseMandateStatus', () => {
     ['chain', (h) => { h.publicClient.getChainId.mockResolvedValue(8453); }, 'CHAIN_MISMATCH'],
     ['implementation', (h) => { h.publicClient.getStorageAt.mockResolvedValue(pad(`0x${'55'.repeat(20)}`, { size: 32 })); }, 'IMPLEMENTATION_MISMATCH'],
     ['permission', (h) => { h.permissionConfig.signer = `0x${'66'.repeat(20)}`; }, 'PERMISSION_MISMATCH'],
+    ['permission flag', (h) => { h.permissionConfig.permissionFlag = '0x0001'; }, 'PERMISSION_MISMATCH'],
     ['policy', (h) => { h.permissionConfig.policyData = [concatHex(['0x0001', `0x${'77'.repeat(20)}`])]; }, 'POLICY_MISMATCH'],
   ])('fails closed on %s mismatch', async (_label, mutate, reason) => {
     const h = makeHarness();
@@ -304,6 +349,45 @@ describe('evaluateBaseMandateStatus', () => {
     expect(result.status).toBe('mismatch');
     expect(result.reasonCodes).toContain(reason);
     expect(h.sendUserOperation).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['Kernel version', (h) => { h.kernelClient.account.kernelVersion = '0.3.0'; }, 'KERNEL_VERSION_MISMATCH'],
+    ['EntryPoint address', (h) => { h.kernelClient.account.entryPoint.address = `0x${'88'.repeat(20)}`; }, 'ENTRY_POINT_MISMATCH'],
+    ['EntryPoint version', (h) => { h.kernelClient.account.entryPoint.version = '0.6'; }, 'ENTRY_POINT_MISMATCH'],
+  ])('rejects reconstructed %s drift before preparation', async (_label, mutate, reason) => {
+    const h = makeHarness();
+    mutate(h);
+
+    const result = await h.evaluate();
+
+    expect(result.status).toBe('mismatch');
+    expect(result.reasonCodes).toContain(reason);
+    expect(h.prepareUserOperation).not.toHaveBeenCalled();
+    expect(h.sendUserOperation).not.toHaveBeenCalled();
+  });
+
+  it('accepts a 12-second Base observation but rejects 13 seconds as stale inside the expiry horizon', async () => {
+    const boundary = makeHarness();
+    boundary.publicClient.getBlock.mockResolvedValue({
+      number: 1234n,
+      hash: BLOCK_HASH,
+      timestamp: BigInt(NOW_SECONDS - 12),
+    });
+    await expect(boundary.evaluate()).resolves.toMatchObject({ status: 'active' });
+
+    const stale = makeHarness();
+    stale.publicClient.getBlock.mockResolvedValue({
+      number: 1234n,
+      hash: BLOCK_HASH,
+      timestamp: BigInt(NOW_SECONDS - 13),
+    });
+    const result = await stale.evaluate();
+
+    expect(result.status).toBe('unknown');
+    expect(result.reasonCodes).toContain('BLOCK_STALE');
+    expect(stale.prepareUserOperation).not.toHaveBeenCalled();
+    expect(stale.sendUserOperation).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -379,6 +463,42 @@ describe('evaluateBaseMandateStatus', () => {
     for (const h of [malformed, stale, rpc, prepare]) {
       expect(h.sendUserOperation).not.toHaveBeenCalled();
     }
+  });
+
+  it('maps malformed numeric policy data to mismatch without rejecting the evaluator promise', async () => {
+    const h = makeHarness({
+      approvalOptions: {
+        mutatePermissions: (permissions) => [
+          { ...permissions[0], valueLimit: 'not-a-number' },
+          permissions[1],
+        ],
+      },
+    });
+
+    await expect(h.evaluate()).resolves.toMatchObject({
+      status: 'mismatch',
+      reasonCodes: expect.arrayContaining(['POLICY_MISMATCH']),
+    });
+    expect(h.makePublicClient).not.toHaveBeenCalled();
+    expect(h.sendUserOperation).not.toHaveBeenCalled();
+  });
+
+  it('maps an unexpected evaluator failure to secret-free unknown instead of rejecting', async () => {
+    const h = makeHarness();
+    Object.defineProperty(h.record, 'stellarOwner', {
+      configurable: true,
+      get() { throw new Error('unexpected internal secret'); },
+    });
+
+    const result = await h.evaluate();
+
+    expect(result).toMatchObject({
+      version: 2,
+      status: 'unknown',
+      reasonCodes: ['EVALUATOR_ERROR'],
+    });
+    expect(JSON.stringify(result)).not.toContain('internal secret');
+    expect(h.sendUserOperation).not.toHaveBeenCalled();
   });
 
   it('ignores client-forged global and user expected facts', async () => {

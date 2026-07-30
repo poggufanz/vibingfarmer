@@ -29,7 +29,21 @@ const activeEvidence = () => ({
     permission: { digest: 'permission-digest' },
     preparedCallDigest: 'prepared-call-digest',
   },
-  checks: { chain: true, permission: true, prepared: true },
+  checks: {
+    chain: true,
+    owner: true,
+    kernel: true,
+    session: true,
+    permission: true,
+    policy: true,
+    binding: true,
+    origin: true,
+    implementation: true,
+    allocation: true,
+    freshness: true,
+    reconstruction: true,
+    prepared: true,
+  },
 })
 
 const okDeps = () => ({

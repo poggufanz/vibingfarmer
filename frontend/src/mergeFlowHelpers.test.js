@@ -57,7 +57,21 @@ const activeEvidence = (overrides = {}) => ({
     permission: { digest: 'permission-digest' },
     preparedCallDigest: 'prepared-call-digest',
   },
-  checks: { chain: true, permission: true, prepared: true },
+  checks: {
+    chain: true,
+    owner: true,
+    kernel: true,
+    session: true,
+    permission: true,
+    policy: true,
+    binding: true,
+    origin: true,
+    implementation: true,
+    allocation: true,
+    freshness: true,
+    reconstruction: true,
+    prepared: true,
+  },
   ...overrides,
 })
 
@@ -197,7 +211,21 @@ describe('resolveBaseAvailability — canonical bound-mandate contract (Strategy
       permission: { digest: 'permission-digest' },
       preparedCallDigest: 'prepared-call-digest',
     },
-    checks: { chain: true, permission: true, prepared: true },
+    checks: {
+      chain: true,
+      owner: true,
+      kernel: true,
+      session: true,
+      permission: true,
+      policy: true,
+      binding: true,
+      origin: true,
+      implementation: true,
+      allocation: true,
+      freshness: true,
+      reconstruction: true,
+      prepared: true,
+    },
   }
 
   it('offers Base only when the connected, active record and relayer health are all valid', async () => {

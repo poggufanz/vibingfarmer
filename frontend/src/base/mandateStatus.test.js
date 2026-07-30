@@ -38,6 +38,7 @@ const active = (overrides = {}) => ({
     implementation: true,
     allocation: true,
     freshness: true,
+    reconstruction: true,
     prepared: true,
   },
   ...overrides,
@@ -64,6 +65,30 @@ describe('Base mandate evidence gates', () => {
         active({ observed: { ...active().observed, preparedCallDigest: null } })
       )
     ).toBe(false)
+  })
+
+  it.each([
+    'chain',
+    'owner',
+    'kernel',
+    'session',
+    'permission',
+    'policy',
+    'binding',
+    'origin',
+    'implementation',
+    'allocation',
+    'freshness',
+    'reconstruction',
+    'prepared',
+  ])('rejects active evidence when the mandatory %s check is absent', (missing) => {
+    const complete = {
+      ...active().checks,
+      reconstruction: true,
+    }
+    delete complete[missing]
+
+    expect(isVerifiedBaseMandateStatus(active({ checks: complete }))).toBe(false)
   })
 
   it('treats a revoke or evidence digest change as material, but not a newer confirming block', () => {
