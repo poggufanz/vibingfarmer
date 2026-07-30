@@ -1209,7 +1209,42 @@ describe('orchestrator base leg — mixed run costs exactly ONE grant signature'
             expiresAt: 9999999999,
             status: 'active',
           }),
-          getMandateStatus: async () => ({ status: 'active' }),
+          // Task 9 hardened isVerifiedBaseMandateStatus to require the full BaseMandateStatusV2
+          // shape (checks/observed/reasonCodes), not a bare `{status:'active'}` flag -- this
+          // fixture predates that (it mirrors baseLeg.test.js's pre-Task-9 okDeps() shape, which
+          // was updated to activeEvidence() in the same commit; this sibling file was missed).
+          // Without the full shape the pre-farm mandate gate now (correctly) fails closed before
+          // ever reaching runFarmFlow, so this scenario's actual subject -- a burn that dispatches
+          // and then goes uncertain -- was never exercised. Mirror the verified shape so the gate
+          // legitimately passes and the real burn-uncertainty path below runs.
+          getMandateStatus: async () => ({
+            version: 2,
+            status: 'active',
+            reasonCodes: [],
+            checks: {
+              chain: true,
+              owner: true,
+              kernel: true,
+              session: true,
+              permission: true,
+              policy: true,
+              binding: true,
+              origin: true,
+              implementation: true,
+              allocation: true,
+              freshness: true,
+              reconstruction: true,
+              prepared: true,
+            },
+            observed: {
+              blockNumber: '101',
+              blockHash: '0xblock',
+              blockTime: Date.now(),
+              implementation: '0ximpl',
+              permission: { digest: 'permission-digest' },
+              preparedCallDigest: 'prepared-call-digest',
+            },
+          }),
           makePublicClient: () => ({}),
           estimateMinShares: async () => 39_000_000n,
         },
