@@ -82,6 +82,14 @@ function decodeApproval(serializedApproval) {
   };
 }
 
+export function permissionIdFromSerializedApproval(serializedApproval) {
+  try {
+    return decodeApproval(serializedApproval).permissionId;
+  } catch {
+    return null;
+  }
+}
+
 function valueOfRule(rule) {
   const value = rule?.params?.[0];
   if (typeof value !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(value)) return null;
@@ -361,8 +369,7 @@ async function evaluateBaseMandateStatusInternal({
   }
   expected.permissionId = canonicalPermissionId;
   if (decoded.permissionId !== canonicalPermissionId
-    || (record?.permissionId
-      && String(record.permissionId).toLowerCase() !== canonicalPermissionId)) {
+    || record?.permissionId !== canonicalPermissionId) {
     return finish('mismatch', 'PERMISSION_MISMATCH');
   }
 
@@ -485,8 +492,7 @@ async function evaluateBaseMandateStatusInternal({
       return finish('mismatch', 'ENTRY_POINT_MISMATCH');
     }
     const reconstructedPermission = await kernelClient.account.kernelPluginManager?.getIdentifier?.();
-    if (reconstructedPermission
-      && String(reconstructedPermission).toLowerCase() !== canonicalPermissionId) {
+    if (reconstructedPermission !== canonicalPermissionId) {
       return finish('mismatch', 'PERMISSION_MISMATCH');
     }
     checks.reconstruction = true;

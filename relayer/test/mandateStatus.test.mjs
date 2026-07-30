@@ -117,6 +117,7 @@ function makeHarness({ approvalOptions, record: recordOverrides, allocation: all
     sessionKeyAddress: SESSION,
     stellarOwner: OWNER,
     kernelAddress: KERNEL,
+    permissionId: approved.permissionId,
     relayerOrigin: 'https://relayer.example',
     expiresAt,
     status: 'active',
@@ -275,6 +276,10 @@ describe('evaluateBaseMandateStatus', () => {
       args: [POOL, 1_000_000n, 980_000n],
     });
     expect(h.prepareUserOperation).toHaveBeenCalledWith({ callData: '0xfeed' });
+    expect(h.publicClient.readContract).toHaveBeenCalledWith(expect.objectContaining({
+      functionName: 'permissionConfig',
+      args: [h.approved.permissionId],
+    }));
     expect(h.sendUserOperation).not.toHaveBeenCalled();
     const exposed = JSON.stringify(result);
     expect(exposed).not.toContain(SESSION_PRIVATE_KEY);
@@ -325,6 +330,52 @@ describe('evaluateBaseMandateStatus', () => {
     expect(result.status).toBe('mismatch');
     expect(result.reasonCodes).toContain('PERMISSION_MISMATCH');
     expect(h.makePublicClient).not.toHaveBeenCalled();
+    expect(h.prepareUserOperation).not.toHaveBeenCalled();
+    expect(h.sendUserOperation).not.toHaveBeenCalled();
+  });
+
+  it('rejects a validly shaped but tampered serialized permission identity before RPC', async () => {
+    const h = makeHarness({ approvalOptions: { permissionId: '0xdeadbeef' } });
+
+    const result = await h.evaluate();
+
+    expect(result.status).toBe('mismatch');
+    expect(result.reasonCodes).toContain('PERMISSION_MISMATCH');
+    expect(h.makePublicClient).not.toHaveBeenCalled();
+    expect(h.reconstructSessionClientFn).not.toHaveBeenCalled();
+    expect(h.prepareUserOperation).not.toHaveBeenCalled();
+    expect(h.sendUserOperation).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['malformed', 'not-a-permission-id'],
+    ['mismatched', '0xdeadbeef'],
+  ])('rejects a %s stored permission identity before RPC or preparation', async (_label, permissionId) => {
+    const h = makeHarness({ record: { permissionId } });
+
+    const result = await h.evaluate();
+
+    expect(result.status).toBe('mismatch');
+    expect(result.reasonCodes).toContain('PERMISSION_MISMATCH');
+    expect(h.makePublicClient).not.toHaveBeenCalled();
+    expect(h.reconstructSessionClientFn).not.toHaveBeenCalled();
+    expect(h.prepareUserOperation).not.toHaveBeenCalled();
+    expect(h.sendUserOperation).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['malformed', 'not-a-permission-id'],
+    ['mismatched', '0xdeadbeef'],
+  ])('rejects a %s reconstructed permission identity before preparation', async (_label, permissionId) => {
+    const h = makeHarness();
+    h.kernelClient.account.kernelPluginManager.getIdentifier.mockReturnValue(permissionId);
+
+    const result = await h.evaluate();
+
+    expect(result.status).toBe('mismatch');
+    expect(result.reasonCodes).toContain('PERMISSION_MISMATCH');
     expect(h.prepareUserOperation).not.toHaveBeenCalled();
     expect(h.sendUserOperation).not.toHaveBeenCalled();
   });

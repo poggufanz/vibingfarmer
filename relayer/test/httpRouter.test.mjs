@@ -36,6 +36,7 @@ const STELLAR_OWNER = `G${'A'.repeat(55)}`;
 const OTHER_STELLAR_OWNER = `G${'B'.repeat(55)}`;
 const SESSION_PRIVATE_KEY = `0x${'22'.repeat(32)}`;
 const SESSION_KEY_ADDRESS = privateKeyToAccount(SESSION_PRIVATE_KEY).address;
+const PERMISSION_ID = '0xa1b2c3d4';
 const WITHDRAW_ABI = [{
   type: 'function', name: 'withdraw', stateMutability: 'nonpayable',
   inputs: [{ name: 'pool', type: 'address' }, { name: 'shares', type: 'uint256' }, { name: 'minAssets', type: 'uint256' }],
@@ -48,7 +49,14 @@ function serializeParams(params) {
   return Buffer.from(JSON.stringify(params, replacer), 'utf8').toString('base64');
 }
 
-function buildFakeApproval({ accountAddress = KERNEL_ADDRESS, cap = MAX_CALL_CAP_UNITS, expiry = Math.floor(Date.now() / 1000) + 3600, extraPermissions = [] } = {}) {
+function buildFakeApproval({
+  accountAddress = KERNEL_ADDRESS,
+  cap = MAX_CALL_CAP_UNITS,
+  expiry = Math.floor(Date.now() / 1000) + 3600,
+  extraPermissions = [],
+  permissionId = PERMISSION_ID,
+  includePermissionId = true,
+} = {}) {
   const permissions = [
     ...buildFarmPermissions({
       pools: [{ pool: POOL_ADDRESS, cap }],
@@ -61,7 +69,10 @@ function buildFakeApproval({ accountAddress = KERNEL_ADDRESS, cap = MAX_CALL_CAP
   const timestampPolicy = toTimestampPolicy({ validAfter: 0, validUntil: expiry });
   return serializeParams({
     accountParams: { accountAddress, initCode: '0x' },
-    permissionParams: { policies: [callPolicy, timestampPolicy] },
+    permissionParams: {
+      ...(includePermissionId ? { permissionId } : {}),
+      policies: [callPolicy, timestampPolicy],
+    },
   });
 }
 
@@ -316,6 +327,56 @@ describe('createRelayerRouter', () => {
       expect(res.statusCode).toBe(200);
       expect(jsonOf(res)).toEqual(activeEvidence());
       expect(res.headers['Cache-Control']).toBe('no-store');
+      expect(res.body).not.toContain(SESSION_PRIVATE_KEY);
+    });
+
+    it('projects the normalized permission identity from a freshly registered SQLite record before evaluation', async () => {
+      const path = join(mkdtempSync(join(tmpdir(), 'vf-router-mandate-')), 'relayer.db');
+      const stores = createSqliteStores(path);
+      const evaluateMandateStatusFn = vi.fn(async () => activeEvidence());
+      const durableRouter = makeRouter({
+        mandatesV2: stores.mandatesV2,
+        evaluateMandateStatusFn,
+      });
+      const { body } = await registerMandate(durableRouter, {
+        serializedApproval: buildFakeApproval({ permissionId: '0xA1B2C3D4' }),
+      });
+      const res = mockRes();
+
+      await durableRouter(mk('GET', mandateUrl({ approval: body.serializedApproval })), res);
+
+      expect(res.statusCode).toBe(200);
+      expect(jsonOf(res).status).toBe('active');
+      expect(evaluateMandateStatusFn).toHaveBeenCalledWith(expect.objectContaining({
+        record: expect.objectContaining({
+          serializedApproval: body.serializedApproval,
+          permissionId: PERMISSION_ID,
+        }),
+      }));
+      expect(stores.mandatesV2.get({
+        serializedApproval: body.serializedApproval,
+        stellarOwner: STELLAR_OWNER,
+        kernelAddress: KERNEL_ADDRESS,
+      })).not.toHaveProperty('permissionId');
+    });
+
+    it.each([
+      ['missing', buildFakeApproval({ includePermissionId: false })],
+      ['malformed', buildFakeApproval({ permissionId: 'not-a-permission-id' })],
+    ])('fails closed before evaluation when the persisted serialized permission identity is %s', async (_label, serializedApproval) => {
+      const evaluateMandateStatusFn = vi.fn(async () => activeEvidence());
+      const exactRouter = makeRouter({ evaluateMandateStatusFn });
+      const { res: registration } = await registerMandate(exactRouter, { serializedApproval });
+      expect(registration.statusCode).toBe(200);
+      const res = mockRes();
+
+      await exactRouter(mk('GET', mandateUrl({ approval: serializedApproval })), res);
+
+      expect(jsonOf(res)).toMatchObject({
+        status: 'unknown',
+        reasonCodes: ['APPROVAL_MALFORMED'],
+      });
+      expect(evaluateMandateStatusFn).not.toHaveBeenCalled();
       expect(res.body).not.toContain(SESSION_PRIVATE_KEY);
     });
 

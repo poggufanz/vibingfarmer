@@ -20,7 +20,10 @@
 
 import { createHash } from 'node:crypto';
 import { validateMandateBinding, MAX_CALL_CAP_UNITS } from './base/session.mjs';
-import { evaluateBaseMandateStatus } from './mandateStatus.mjs';
+import {
+  evaluateBaseMandateStatus,
+  permissionIdFromSerializedApproval,
+} from './mandateStatus.mjs';
 
 async function ensureBody(req) {
   if (req.method === 'GET' || req.method === 'HEAD') return;
@@ -220,8 +223,14 @@ export function createRelayerRouter({
 
   async function evaluateStoredMandate(record, allocation) {
     if (!record || !mandateStatusConfig) return unknownMandateStatus(record ? 'STATUS_UNAVAILABLE' : 'MANDATE_MISSING');
+    const permissionId = permissionIdFromSerializedApproval(record.serializedApproval);
+    if (!permissionId) return unknownMandateStatus('APPROVAL_MALFORMED');
     try {
-      return await evaluateMandateStatusFn({ record, config: mandateStatusConfig, allocation });
+      return await evaluateMandateStatusFn({
+        record: { ...record, permissionId },
+        config: mandateStatusConfig,
+        allocation,
+      });
     } catch {
       return unknownMandateStatus('STATUS_ERROR');
     }
