@@ -15,6 +15,43 @@ import {
   validateBaseMandate,
 } from './wallet/baseBinding.js'
 import { toBaseMandateView } from './strategy/baseMandateView.js'
+import {
+  isVerifiedBaseMandateStatus,
+  materialBaseMandateStatusChange,
+  toMandateStatusAllocation,
+} from './base/mandateStatus.js'
+
+export function baseMandateProbeAllocation({ runId = 'catalog-probe' } = {}) {
+  const pool = BASE_POOL_CATALOG[0]
+  if (!pool) throw new Error('Base pool catalog is empty')
+  return toMandateStatusAllocation({
+    allocationId: `${runId}:bridge:${pool.proxyTarget}`,
+    poolAddress: pool.address,
+    units: 1n,
+    minShares: 0n,
+  })
+}
+
+export function baseMandateRequiresReview(previous, next) {
+  return (
+    !isVerifiedBaseMandateStatus(previous) ||
+    !isVerifiedBaseMandateStatus(next) ||
+    materialBaseMandateStatusChange(previous, next)
+  )
+}
+
+export function baseMandateAllocationsForPlan(plan) {
+  const bridge = plan?.agents?.find((agent) => agent.kind === 'bridge')
+  if (!bridge) return []
+  return (bridge.children || []).map((child) =>
+    toMandateStatusAllocation({
+      allocationId: child.allocationId,
+      poolAddress: child.address,
+      units: BigInt(child.allocation.units),
+      minShares: 0n,
+    })
+  )
+}
 
 // One place that decides what the strategy step tells the strategist about Base. Returns the
 // combined-check PROMISE (not its resolved value) so the ~3s relayer probe (and the optional
@@ -118,7 +155,12 @@ export function readStoredBaseMandate(storage) {
  * @param {{getMandateStatus: Function, storage?: object, stellarOwner: string}} p
  * @returns {() => Promise<boolean>}
  */
-export function checkStoredBaseMandate({ getMandateStatus, storage, stellarOwner }) {
+export function checkStoredBaseMandate({
+  getMandateStatus,
+  storage,
+  stellarOwner,
+  allocation = baseMandateProbeAllocation(),
+}) {
   return async () => {
     const record = readBaseMandate(stellarOwner, storage)
     if (validateBaseMandate(record, { stellarOwner }) !== 'active') return false
@@ -126,8 +168,9 @@ export function checkStoredBaseMandate({ getMandateStatus, storage, stellarOwner
       const status = await getMandateStatus(record.serializedApproval, {
         stellarOwner,
         kernelAddress: record.kernelAddress,
+        allocation,
       })
-      return status?.status === 'active'
+      return isVerifiedBaseMandateStatus(status)
     } catch {
       return false
     }

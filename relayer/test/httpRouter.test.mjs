@@ -69,6 +69,30 @@ function wireAllocation({ allocationId = 'run-42:bridge:aave-v3', pool = POOL_AD
   return { allocationId, poolAddress: pool, amount: { token: 'USDC', units: units.toString(), decimals: 6 }, minShares };
 }
 
+const activeEvidence = () => ({
+  version: 2,
+  status: 'active',
+  reasonCodes: [],
+  expected: { owner: STELLAR_OWNER, kernelAddress: KERNEL_ADDRESS },
+  observed: {
+    blockNumber: '101', blockHash: `0x${'12'.repeat(32)}`, blockTime: Date.now(),
+    implementation: `0x${'34'.repeat(20)}`,
+    permission: { digest: 'permission-digest' },
+    preparedCallDigest: 'prepared-call-digest',
+  },
+  checks: { prepared: true },
+});
+
+function mandateUrl({ approval, owner = STELLAR_OWNER, kernel = KERNEL_ADDRESS, allocation = wireAllocation(), extra = '' }) {
+  const qs = new URLSearchParams({
+    approval,
+    stellarOwner: owner,
+    kernelAddress: kernel,
+    allocation: JSON.stringify(allocation),
+  });
+  return `/api/vf-cross/mandate/valid?${qs}${extra}`;
+}
+
 describe('createRelayerRouter', () => {
   let jobs, mandatesV2, nextId, genId, buildFarm, farmFn, relayUnwindMint, agentIndexReporter, associationOutbox, router;
 
@@ -84,6 +108,8 @@ describe('createRelayerRouter', () => {
         digests: { deployments: 'a'.repeat(64), baseMandatePolicy: 'b'.repeat(64) },
       },
       poolTargets: new Map([[POOL_ADDRESS.toLowerCase(), 'aave-v3']]),
+      evaluateMandateStatusFn: vi.fn(async () => activeEvidence()),
+      mandateStatusConfig: { publicOrigin: null, base: {} },
       agentIndexReporter,
       associationOutbox,
       ...overrides,
@@ -285,30 +311,19 @@ describe('createRelayerRouter', () => {
 
     it('returns the canonical BaseMandateStatusV2 shape for a freshly-registered mandate, never leaking the key', async () => {
       const { body, respBody } = await registerMandate(router);
-      const qs = `approval=${encodeURIComponent(body.serializedApproval)}&stellarOwner=${STELLAR_OWNER}&kernelAddress=${KERNEL_ADDRESS}`;
       const res = mockRes();
-      await router(mk('GET', `/api/vf-cross/mandate/valid?${qs}`), res);
+      await router(mk('GET', mandateUrl({ approval: body.serializedApproval })), res);
       expect(res.statusCode).toBe(200);
-      expect(jsonOf(res)).toEqual({
-        stellarOwner: STELLAR_OWNER,
-        kernelAddress: KERNEL_ADDRESS,
-        sessionKeyAddress: SESSION_KEY_ADDRESS,
-        relayerOrigin: null,
-        expiresAt: body.expiresAt * 1000,
-        status: 'active',
-        bindingId: respBody.bindingId,
-        bindingHash: respBody.bindingHash,
-      });
+      expect(jsonOf(res)).toEqual(activeEvidence());
+      expect(res.headers['Cache-Control']).toBe('no-store');
       expect(res.body).not.toContain(SESSION_PRIVATE_KEY);
     });
 
-    it('reports "missing" for a never-registered triple', async () => {
+    it('fails closed with v2 unknown for a never-registered triple', async () => {
       const res = mockRes();
-      await router(mk('GET', `/api/vf-cross/mandate/valid?approval=never-registered&stellarOwner=${STELLAR_OWNER}&kernelAddress=${KERNEL_ADDRESS}`), res);
-      expect(jsonOf(res)).toEqual({
-        stellarOwner: null, kernelAddress: null, sessionKeyAddress: null, relayerOrigin: null,
-        expiresAt: null, status: 'missing', bindingId: null, bindingHash: null,
-      });
+      await router(mk('GET', mandateUrl({ approval: 'never-registered' })), res);
+      expect(jsonOf(res)).toMatchObject({ version: 2, status: 'unknown', reasonCodes: ['MANDATE_MISSING'] });
+      expect(res.headers['Cache-Control']).toBe('no-store');
     });
 
     // Step 5 acceptance, pinned at the endpoint: owner A's approval cannot execute for owner B
@@ -316,8 +331,8 @@ describe('createRelayerRouter', () => {
     it('reports "missing" when queried under a different stellarOwner than it was registered for', async () => {
       const { body } = await registerMandate(router);
       const res = mockRes();
-      await router(mk('GET', `/api/vf-cross/mandate/valid?approval=${encodeURIComponent(body.serializedApproval)}&stellarOwner=${OTHER_STELLAR_OWNER}&kernelAddress=${KERNEL_ADDRESS}`), res);
-      expect(jsonOf(res).status).toBe('missing');
+      await router(mk('GET', mandateUrl({ approval: body.serializedApproval, owner: OTHER_STELLAR_OWNER })), res);
+      expect(jsonOf(res).status).toBe('unknown');
     });
 
     it('reports "missing" when queried under a different kernelAddress than it was registered for', async () => {
@@ -328,20 +343,58 @@ describe('createRelayerRouter', () => {
         serializedApproval: buildFakeApproval({ accountAddress: OTHER_KERNEL_ADDRESS }),
       });
       const res = mockRes();
-      await router(mk('GET', `/api/vf-cross/mandate/valid?approval=${encodeURIComponent(body.serializedApproval)}&stellarOwner=${STELLAR_OWNER}&kernelAddress=${KERNEL_ADDRESS}`), res);
-      expect(jsonOf(res).status).toBe('missing');
+      await router(mk('GET', mandateUrl({ approval: body.serializedApproval })), res);
+      expect(jsonOf(res).status).toBe('unknown');
     });
 
-    it('reports "expired" once expiresAt has passed', async () => {
+    it('reports unknown once the store has evicted an expired mandate', async () => {
       const past = Date.now() - 1000;
       mandatesV2.set({
         serializedApproval: 'approval-x', sessionPrivateKey: SESSION_PRIVATE_KEY, sessionKeyAddress: SESSION_KEY_ADDRESS,
         stellarOwner: STELLAR_OWNER, kernelAddress: KERNEL_ADDRESS, relayerOrigin: null,
         expiresAt: past, status: 'active', bindingId: 'b1', bindingHash: 'h1', createdAt: Date.now() - 2000,
       });
+      const evaluateMandateStatusFn = vi.fn(async () => ({ ...activeEvidence(), status: 'expired', reasonCodes: ['EXPIRED'] }));
       const res = mockRes();
-      await router(mk('GET', `/api/vf-cross/mandate/valid?approval=approval-x&stellarOwner=${STELLAR_OWNER}&kernelAddress=${KERNEL_ADDRESS}`), res);
-      expect(jsonOf(res).status).toBe('expired');
+      await makeRouter({ evaluateMandateStatusFn })(mk('GET', mandateUrl({ approval: 'approval-x' })), res);
+      expect(jsonOf(res)).toMatchObject({ status: 'unknown', reasonCodes: ['MANDATE_MISSING'] });
+    });
+
+    it('uses only the stored record and canonical config, forwards the exact allocation, and ignores forged expected facts', async () => {
+      const evaluateMandateStatusFn = vi.fn(async () => activeEvidence());
+      const exact = wireAllocation({ units: 777n, minShares: '700' });
+      const exactRouter = makeRouter({ evaluateMandateStatusFn });
+      const { body } = await registerMandate(exactRouter);
+      const res = mockRes();
+      await exactRouter(mk('GET', mandateUrl({
+        approval: body.serializedApproval,
+        allocation: exact,
+        extra: '&expectedOwner=GFORGED&expectedChainId=1',
+      })), res);
+      expect(evaluateMandateStatusFn).toHaveBeenCalledWith(expect.objectContaining({
+        record: expect.objectContaining({
+          stellarOwner: STELLAR_OWNER,
+          kernelAddress: KERNEL_ADDRESS,
+          sessionPrivateKey: SESSION_PRIVATE_KEY,
+        }),
+        allocation: exact,
+        config: { publicOrigin: null, base: {} },
+      }));
+      expect(res.headers['Cache-Control']).toBe('no-store');
+      expect(res.body).not.toContain(SESSION_PRIVATE_KEY);
+      expect(res.body).not.toContain('GFORGED');
+    });
+
+    it('maps evaluator failures to no-store unknown without leaking the error', async () => {
+      const exactRouter = makeRouter({
+        evaluateMandateStatusFn: vi.fn(async () => { throw new Error('rpc secret https://internal'); }),
+      });
+      const { body } = await registerMandate(exactRouter);
+      const res = mockRes();
+      await exactRouter(mk('GET', mandateUrl({ approval: body.serializedApproval })), res);
+      expect(jsonOf(res)).toMatchObject({ version: 2, status: 'unknown', reasonCodes: ['STATUS_ERROR'] });
+      expect(res.headers['Cache-Control']).toBe('no-store');
+      expect(res.body).not.toContain('internal');
     });
   });
 
@@ -395,6 +448,30 @@ describe('createRelayerRouter', () => {
   });
 
   describe('POST /farm', () => {
+    it('blocks durable intent acknowledgement when exact mandate evidence is no longer active', async () => {
+      const evaluateMandateStatusFn = vi.fn(async () => ({
+        ...activeEvidence(), status: 'revoked', reasonCodes: ['PERMISSION_REVOKED'],
+      }));
+      const guardedRouter = makeRouter({ evaluateMandateStatusFn });
+      const { body } = await registerMandate(guardedRouter);
+      const res = mockRes();
+      await guardedRouter(mk('POST', '/api/vf-cross/farm', {
+        serializedApproval: body.serializedApproval,
+        stellarOwner: STELLAR_OWNER,
+        kernelAddress: KERNEL_ADDRESS,
+        bridgeAgent: 'CBRIDGE',
+        runId: 'run-42',
+        grantTxHash: 'HGRANT',
+        allocations: [wireAllocation()],
+      }), res);
+
+      expect(res.statusCode).toBe(409);
+      expect(jsonOf(res)).toMatchObject({ evidence: { status: 'revoked' } });
+      expect(agentIndexReporter.commitIntent).not.toHaveBeenCalled();
+      expect(jobs.size).toBe(0);
+      expect(buildFarm).not.toHaveBeenCalled();
+    });
+
     it('400s when required fields are missing', async () => {
       const res = mockRes();
       await router(mk('POST', '/api/vf-cross/farm', { burnTxHash: 'burn-1' }), res);

@@ -12,6 +12,8 @@ import {
   checkStoredBaseMandate,
   needsBaseMandateSetup,
   resolveBaseAvailability,
+  baseMandateProbeAllocation,
+  baseMandateRequiresReview,
 } from './mergeFlowHelpers.js'
 import { toBaseMandateView } from './strategy/baseMandateView.js'
 import { readBaseMandate, readBaseOwner } from './wallet/baseBinding.js'
@@ -40,6 +42,23 @@ const okDeps = () => ({
     expiry: 9999999999,
   }),
   postMandate: vi.fn().mockResolvedValue({ ok: true }),
+})
+
+const activeEvidence = (overrides = {}) => ({
+  version: 2,
+  status: 'active',
+  reasonCodes: [],
+  expected: { chainId: 84532 },
+  observed: {
+    blockNumber: '101',
+    blockHash: '0xblock',
+    blockTime: Date.now(),
+    implementation: '0ximpl',
+    permission: { digest: 'permission-digest' },
+    preparedCallDigest: 'prepared-call-digest',
+  },
+  checks: { chain: true, permission: true, prepared: true },
+  ...overrides,
 })
 
 describe('setupBaseMandate — the 1-tap setup ceremony (never run automatically by a run)', () => {
@@ -90,7 +109,7 @@ describe('setupBaseMandate — the 1-tap setup ceremony (never run automatically
   it('gate recheck: checkStoredBaseMandate flips to true once the fresh mandate is written (the affordance clears itself)', async () => {
     const deps = okDeps()
     const storage = fakeStorage()
-    const getMandateStatus = vi.fn().mockResolvedValue({ status: 'active' })
+    const getMandateStatus = vi.fn().mockResolvedValue(activeEvidence())
     // Before setup: nothing stored, gate stays closed.
     expect(
       await checkStoredBaseMandate({ getMandateStatus, storage, stellarOwner: 'GUSER' })()
@@ -103,6 +122,7 @@ describe('setupBaseMandate — the 1-tap setup ceremony (never run automatically
     expect(getMandateStatus).toHaveBeenCalledWith('APPROVAL', {
       stellarOwner: 'GUSER',
       kernelAddress: '0x0000000000000000000000000000000000000AA1',
+      allocation: baseMandateProbeAllocation(),
     })
   })
 
@@ -133,7 +153,7 @@ describe('checkStoredBaseMandate — owner-scoped gating (VF Wallet Task 6)', ()
   it('a mandate set up for owner A is not visible to owner B (no silent adoption on wallet switch)', async () => {
     const deps = okDeps()
     const storage = fakeStorage()
-    const getMandateStatus = vi.fn().mockResolvedValue({ status: 'active' })
+    const getMandateStatus = vi.fn().mockResolvedValue(activeEvidence())
     await setupBaseMandate({ connectedAddress: 'GOWNERA', deps: { ...deps, storage } })
     expect(
       await checkStoredBaseMandate({ getMandateStatus, storage, stellarOwner: 'GOWNERB' })()
@@ -158,6 +178,7 @@ describe('resolveBaseAvailability — canonical bound-mandate contract (Strategy
     relayerOrigin: 'https://relayer.example',
   }
   const mandate = {
+    version: 2,
     stellarOwner: 'GUSER',
     kernelAddress: '0x0000000000000000000000000000000000000aa1',
     sessionKeyAddress: '0x0000000000000000000000000000000000000BB2',
@@ -166,6 +187,17 @@ describe('resolveBaseAvailability — canonical bound-mandate contract (Strategy
     status: 'active',
     bindingId: 'binding-1',
     bindingHash: '0xhash',
+    reasonCodes: [],
+    expected: { chainId: 84532 },
+    observed: {
+      blockNumber: '101',
+      blockHash: '0xblock',
+      blockTime: Date.now(),
+      implementation: '0ximpl',
+      permission: { digest: 'permission-digest' },
+      preparedCallDigest: 'prepared-call-digest',
+    },
+    checks: { chain: true, permission: true, prepared: true },
   }
 
   it('offers Base only when the connected, active record and relayer health are all valid', async () => {
@@ -232,6 +264,31 @@ describe('resolveBaseAvailability — canonical bound-mandate contract (Strategy
     ]) {
       expect(await resolveBaseAvailability(input).baseAvailable).toBe(false)
     }
+  })
+})
+
+describe('Base mandate evidence review helpers', () => {
+  it('builds a canonical read-only catalog probe', () => {
+    expect(baseMandateProbeAllocation({ runId: 'run-9' })).toMatchObject({
+      allocationId: expect.stringMatching(/^run-9:bridge:/),
+      amount: { token: 'USDC', units: '1', decimals: 6 },
+      minShares: '0',
+    })
+  })
+
+  it('requires review for a material evidence change or any non-verified status', () => {
+    const previous = activeEvidence()
+    expect(baseMandateRequiresReview(previous, activeEvidence())).toBe(false)
+    expect(baseMandateRequiresReview(null, activeEvidence())).toBe(true)
+    expect(baseMandateRequiresReview(previous, activeEvidence({ status: 'revoked' }))).toBe(true)
+    expect(
+      baseMandateRequiresReview(
+        previous,
+        activeEvidence({
+          observed: { ...previous.observed, permission: { digest: 'changed' } },
+        })
+      )
+    ).toBe(true)
   })
 })
 

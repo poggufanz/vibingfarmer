@@ -20,6 +20,7 @@
 
 import { createHash } from 'node:crypto';
 import { validateMandateBinding, MAX_CALL_CAP_UNITS } from './base/session.mjs';
+import { evaluateBaseMandateStatus } from './mandateStatus.mjs';
 
 async function ensureBody(req) {
   if (req.method === 'GET' || req.method === 'HEAD') return;
@@ -140,6 +141,8 @@ export function createRelayerRouter({
   buildFarm, relayUnwindMint, jobs, mandatesV2, genId, usdcAddress, yieldRouterAddress,
   relayerOrigin = null, sanitizeErrors = false, networkId = 'stellar-testnet',
   publicRuntime = null,
+  evaluateMandateStatusFn = evaluateBaseMandateStatus,
+  mandateStatusConfig = publicRuntime?.mandateStatusConfig ?? null,
   poolTargets = new Map(), agentIndexReporter = null, associationOutbox = null,
   farmExecutions = null,
 }) {
@@ -204,7 +207,28 @@ export function createRelayerRouter({
 
   // Lets the client check whether a previously-registered mandate is still reusable WITHOUT ever
   // getting the session key back. Returns the canonical BaseMandateStatusV2 shape.
-  function handleMandateValid(req, res) {
+  function unknownMandateStatus(reasonCode) {
+    return {
+      version: 2,
+      status: 'unknown',
+      reasonCodes: [reasonCode],
+      expected: {},
+      observed: {},
+      checks: {},
+    };
+  }
+
+  async function evaluateStoredMandate(record, allocation) {
+    if (!record || !mandateStatusConfig) return unknownMandateStatus(record ? 'STATUS_UNAVAILABLE' : 'MANDATE_MISSING');
+    try {
+      return await evaluateMandateStatusFn({ record, config: mandateStatusConfig, allocation });
+    } catch {
+      return unknownMandateStatus('STATUS_ERROR');
+    }
+  }
+
+  async function handleMandateValid(req, res) {
+    res.setHeader('Cache-Control', 'no-store');
     const q = new URL(req.url, 'http://local').searchParams;
     const approval = q.get('approval');
     const stellarOwner = q.get('stellarOwner');
@@ -212,7 +236,15 @@ export function createRelayerRouter({
     if (!approval || !stellarOwner || !kernelAddress) {
       return sendJson(res, 400, { error: 'approval, stellarOwner and kernelAddress query params are all required' });
     }
-    return sendJson(res, 200, mandatesV2.status({ serializedApproval: approval, stellarOwner, kernelAddress }));
+    let allocation;
+    try {
+      allocation = JSON.parse(q.get('allocation') || 'null');
+      if (!allocation) throw new Error('missing allocation');
+    } catch {
+      return sendJson(res, 400, { error: 'allocation query param must be canonical JSON' });
+    }
+    const record = mandatesV2.get({ serializedApproval: approval, stellarOwner, kernelAddress });
+    return sendJson(res, 200, await evaluateStoredMandate(record, allocation));
   }
 
   // Design spec §5.5 — Task 7 owns this endpoint. Deletes the exact v2 binding via mandatesV2's
@@ -721,6 +753,17 @@ export function createRelayerRouter({
     const overCap = parsedAllocations.find((a) => a.amount > MAX_CALL_CAP_UNITS);
     if (overCap) return sendJson(res, 400, { error: 'allocation exceeds the 10,000 USDC per-call cap' });
 
+    // This is the last relayer-side seam before the browser is acknowledged and allowed to burn.
+    // Verify every exact durable allocation and prepare its exact approve+deposit operation.
+    const mandateEvidence = [];
+    for (const allocation of storedWireAllocations(parsedAllocations)) {
+      const evidence = await evaluateStoredMandate(record, allocation);
+      if (evidence.status !== 'active') {
+        return sendJson(res, 409, { error: 'Base mandate evidence is not active', evidence });
+      }
+      mandateEvidence.push(evidence);
+    }
+
     const jobId = genId();
     if (!agentIndexReporter?.commitIntent || !associationOutbox?.enqueue) {
       return sendJson(res, 503, { error: 'Base child intent is unavailable' });
@@ -750,6 +793,7 @@ export function createRelayerRouter({
         networkId,
         jobId,
         allocations: storedWireAllocations(parsedAllocations),
+        mandateEvidence,
         associations: parsedAllocations.map(({ allocationId }) => ({
           allocationId,
           terminalSequence: null,

@@ -9,6 +9,7 @@
 // parsing need to change — crossChainFarm.js and the screens never construct URLs themselves.
 import { toBaseChainUnits, BASE_USDC_DECIMALS } from './config.js'
 import { BASE_POOL_CATALOG } from '../config.js'
+import { normalizeBaseMandateStatus, publicBaseMandateEvidence } from './mandateStatus.js'
 
 const DEFAULT_BASE_URL = import.meta.env?.VITE_CROSS_RELAYER_BASE || '/api/vf-cross'
 const DEFAULT_POLL_INTERVAL_MS = 3000
@@ -321,25 +322,6 @@ export async function postMandate({
   return res.json()
 }
 
-// Normalizes whatever the relayer answers into the canonical BaseMandateStatusV2 shape (binding
-// plan §3). The real relayer server is not migrated by this task (Task 7's job) and today answers
-// the older `{valid, expiresAt}` shape — `status` falls back to 'active'/'unknown' from `valid`
-// so callers can rely on `.status` regardless of which relayer generation answers. Unknown fields
-// are null, never guessed, per the "never render unknown as healthy" rule — 'unknown' fails every
-// gate the same way 'expired'/'missing' do (only 'active' passes).
-function normalizeMandateStatus(body = {}, { stellarOwner, kernelAddress } = {}) {
-  return {
-    stellarOwner: body.stellarOwner ?? stellarOwner ?? null,
-    kernelAddress: body.kernelAddress ?? kernelAddress ?? null,
-    sessionKeyAddress: body.sessionKeyAddress ?? null,
-    relayerOrigin: body.relayerOrigin ?? null,
-    expiresAt: body.expiresAt ?? null,
-    status: body.status ?? (body.valid ? 'active' : 'unknown'),
-    bindingId: body.bindingId ?? null,
-    bindingHash: body.bindingHash ?? null,
-  }
-}
-
 /**
  * Check whether a previously-registered mandate is still reusable, WITHOUT ever getting the
  * session key back. Lets baseLeg.js skip the owner ceremony + a fresh mandate mint on a repeat
@@ -351,15 +333,16 @@ function normalizeMandateStatus(body = {}, { stellarOwner, kernelAddress } = {})
  */
 export async function getMandateStatus(
   serializedApproval,
-  { stellarOwner, kernelAddress, baseUrl = DEFAULT_BASE_URL, deps = {} } = {}
+  { stellarOwner, kernelAddress, allocation, baseUrl = DEFAULT_BASE_URL, deps = {} } = {}
 ) {
   const { fetchImpl = fetch } = deps
   let qs = `approval=${encodeURIComponent(serializedApproval)}`
   if (stellarOwner) qs += `&stellarOwner=${encodeURIComponent(stellarOwner)}`
   if (kernelAddress) qs += `&kernelAddress=${encodeURIComponent(kernelAddress)}`
-  const res = await fetchImpl(`${baseUrl}/mandate/valid?${qs}`)
+  if (allocation) qs += `&allocation=${encodeURIComponent(JSON.stringify(allocation))}`
+  const res = await fetchImpl(`${baseUrl}/mandate/valid?${qs}`, { cache: 'no-store' })
   if (!res.ok) throw new Error(`mandate status check failed (${res.status})`)
-  return normalizeMandateStatus(await res.json(), { stellarOwner, kernelAddress })
+  return publicBaseMandateEvidence(normalizeBaseMandateStatus(await res.json()))
 }
 
 /**

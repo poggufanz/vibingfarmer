@@ -139,17 +139,6 @@ export function loadConfig(env = process.env) {
       && (!production || (agentIndex.ready && secrets.proxyAuth)),
   });
   const reporter = Object.freeze({ url: reporterUrl, schema: reporterSchema, hasSecret: secrets.reporterAuth });
-  const publicRuntime = Object.freeze({
-    version: 1,
-    networkId: facts.stellar.networkId,
-    publicOrigin: publicOrigin || null,
-    facts: Object.freeze({ stellar: facts.stellar, base: facts.base }),
-    reporter,
-    secrets,
-    readiness,
-    digests: facts.digests,
-  });
-
   const base = {
     chain: baseSepolia,
     rpcUrl: baseRpcUrl,
@@ -163,6 +152,25 @@ export function loadConfig(env = process.env) {
   };
   nonEnumerable(base, 'publicClient', publicClient);
   nonEnumerable(base, 'walletClient', walletClient);
+  const publicRuntime = {
+    version: 1,
+    networkId: facts.stellar.networkId,
+    publicOrigin: publicOrigin || null,
+    facts: Object.freeze({ stellar: facts.stellar, base: facts.base }),
+    reporter,
+    secrets,
+    readiness,
+    digests: facts.digests,
+  };
+  // The HTTP router receives only publicRuntime from server.mjs. Keep the evidence evaluator's
+  // canonical config available through that existing seam without serializing RPC URLs, clients,
+  // or any other private runtime value through GET /config.
+  nonEnumerable(publicRuntime, 'mandateStatusConfig', Object.freeze({
+    publicOrigin: publicOrigin || null,
+    digests: facts.digests,
+    base,
+  }));
+  Object.freeze(publicRuntime);
   const stellar = {
     sourcePub: relayerStellarPublic,
     passphrase,

@@ -25,6 +25,7 @@ import { estimateMinShares as defaultEstimateMinShares } from './base/quotes.js'
 import { defaultMakePublicClient } from './wallet/passkeyBase.js'
 import { readBaseMandate, validateBaseMandate } from './wallet/baseBinding.js'
 import { sanitizeReceiptData } from './strategy/dispatchSummary.js'
+import { isVerifiedBaseMandateStatus, toMandateStatusAllocation } from './base/mandateStatus.js'
 
 function unknownSubmissionRecoveryPhase(stage) {
   if (stage === 'pull') return { phase: 'pull', action: 'reconcile-pull' }
@@ -131,19 +132,6 @@ export async function executeBaseLeg({
     if (localStatus !== 'active') {
       throw new Error(`The stored Base mandate is ${localStatus} for this owner/kernel.`)
     }
-    let remoteStatus = 'unknown'
-    try {
-      remoteStatus = (
-        await getMandateStatus(storedMandate.serializedApproval, {
-          stellarOwner: connectedAddress,
-          kernelAddress,
-        })
-      ).status
-    } catch {
-      remoteStatus = 'unknown'
-    }
-    if (remoteStatus !== 'active') throw new Error('The stored Base mandate is no longer valid.')
-
     // ownerAddress comes from the CALLER's kernelAddress param (the exact value orchestrator.js
     // already used to pin this grant's mint_recipient on-chain), never re-read from storage here —
     // a mid-run mandate rotation must not desync the runtime burn arg from the pinned scope.
@@ -195,6 +183,31 @@ export async function executeBaseLeg({
         }),
       }))
     )
+
+    // Last browser-side gate before runFarmFlow is allowed to durably commit an intent and burn.
+    // The quote supplies the actual minShares, so this verifies and prepares precisely the calls
+    // that this run will submit rather than a broad/no-op probe.
+    for (const allocation of quotedAllocations) {
+      const exactAllocation = toMandateStatusAllocation({
+        allocationId: allocation.allocationId || bridgeAllocationId,
+        poolAddress: allocation.pool,
+        units: allocation.amountBaseUnits,
+        minShares: allocation.minShares,
+      })
+      let evidence = null
+      try {
+        evidence = await getMandateStatus(storedMandate.serializedApproval, {
+          stellarOwner: connectedAddress,
+          kernelAddress,
+          allocation: exactAllocation,
+        })
+      } catch {
+        evidence = null
+      }
+      if (!isVerifiedBaseMandateStatus(evidence)) {
+        throw new Error('The stored Base mandate is no longer valid.')
+      }
+    }
     safeEmit('baseleg-mandate', {
       status: 'done',
       sessionKeyAddress: storedMandate.sessionKeyAddress,

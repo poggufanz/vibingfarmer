@@ -16,9 +16,25 @@ const storedMandate = () => ({
   status: 'active',
 })
 
+const activeEvidence = () => ({
+  version: 2,
+  status: 'active',
+  reasonCodes: [],
+  expected: { chainId: 84532 },
+  observed: {
+    blockNumber: '101',
+    blockHash: '0xblock',
+    blockTime: Date.now(),
+    implementation: '0ximpl',
+    permission: { digest: 'permission-digest' },
+    preparedCallDigest: 'prepared-call-digest',
+  },
+  checks: { chain: true, permission: true, prepared: true },
+})
+
 const okDeps = () => ({
   readStoredMandate: vi.fn(() => storedMandate()),
-  getMandateStatus: vi.fn().mockResolvedValue({ status: 'active' }),
+  getMandateStatus: vi.fn().mockResolvedValue(activeEvidence()),
   makePublicClient: vi.fn(() => ({})),
   runFarmFlow: vi.fn().mockResolvedValue({ burnHash: 'BURN', jobId: 'job-1', finalStatus: 'done' }),
   estimateMinShares: vi.fn(async () => 98505000n),
@@ -76,6 +92,12 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
     expect(deps.getMandateStatus).toHaveBeenCalledWith('APPROVAL', {
       stellarOwner: STELLAR_OWNER,
       kernelAddress: KERNEL,
+      allocation: {
+        allocationId: 'unrun:bridge:base',
+        poolAddress: baseVaults[0].address,
+        amount: { token: 'USDC', units: '100000000', decimals: 6 },
+        minShares: '98505000',
+      },
     })
   })
 
@@ -382,12 +404,16 @@ describe('executeBaseLeg — grant-covered burn (Task 7 rework: no ceremony, no 
     expect(deps.runFarmFlow).not.toHaveBeenCalled()
   })
 
-  it('a stored-but-invalid mandate (TOCTOU: valid at strategy-generation time, revoked since) settles, never throws', async () => {
+  it('a late remote revoke after the exact quote blocks pull, burn, and farm dispatch', async () => {
     const deps = okDeps()
     deps.getMandateStatus.mockResolvedValue({ status: 'revoked' })
     const out = await run({ deps })
     expect(out).toMatchObject({ success: false, stage: 'mandate' })
     expect(out.error).toMatch(/no longer valid/i)
+    expect(deps.estimateMinShares).toHaveBeenCalledTimes(1)
+    expect(deps.runAgentPull).not.toHaveBeenCalled()
+    expect(deps.runAgentBurn).not.toHaveBeenCalled()
+    expect(deps.runFarmFlow).not.toHaveBeenCalled()
   })
 
   it('kernelAddress mismatch between the threaded param and the stored mandate fails closed BEFORE the burn (VF Wallet Task 6)', async () => {

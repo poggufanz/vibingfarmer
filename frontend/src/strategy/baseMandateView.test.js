@@ -8,6 +8,7 @@ const connection = {
   relayerOrigin: 'https://relayer.example',
 }
 const activeMandate = {
+  version: 2,
   stellarOwner: 'GOWNER',
   kernelAddress: '0x0000000000000000000000000000000000000AA1',
   sessionKeyAddress: '0x0000000000000000000000000000000000000BB2',
@@ -16,6 +17,17 @@ const activeMandate = {
   status: 'active',
   bindingId: 'binding-1',
   bindingHash: '0xabc123',
+  reasonCodes: [],
+  expected: { chainId: 84532 },
+  observed: {
+    blockNumber: '101',
+    blockHash: '0xblock',
+    blockTime: Date.now(),
+    implementation: '0ximpl',
+    permission: { digest: 'permission-digest' },
+    preparedCallDigest: 'prepared-call-digest',
+  },
+  checks: { chain: true, permission: true, prepared: true },
 }
 
 describe('toBaseMandateView', () => {
@@ -45,6 +57,7 @@ describe('toBaseMandateView', () => {
     expect(view.expiresAt).toBe(activeMandate.expiresAt)
     expect(view.bindingId).toBe(activeMandate.bindingId)
     expect(view.bindingHash).toBe(activeMandate.bindingHash)
+    expect(view.evidence).toEqual(activeMandate)
     expect(view.technicalDisclosure).toContain('application-level association')
     expect(view.technicalDisclosure).toContain('renew')
     expect(view.technicalDisclosure).toContain(
@@ -78,5 +91,22 @@ describe('toBaseMandateView', () => {
 
     expect(view.status).toBe(status)
     expect(view.ready).toBe(false)
+  })
+
+  it('never renders a local active record without remote evidence as ready', () => {
+    const localOnly = {
+      stellarOwner: connection.stellarOwner,
+      kernelAddress: connection.kernelAddress,
+      relayerOrigin: connection.relayerOrigin,
+      status: 'active',
+      expiresAt: now + 3600,
+      bindingId: 'local',
+      bindingHash: 'local',
+      sessionKeyAddress: '0x0000000000000000000000000000000000000BB2',
+    }
+    expect(toBaseMandateView({ mandate: localOnly, ...connection })).toMatchObject({
+      status: 'unavailable',
+      ready: false,
+    })
   })
 })

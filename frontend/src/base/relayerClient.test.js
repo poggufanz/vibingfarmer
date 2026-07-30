@@ -642,6 +642,22 @@ describe('postMandateRevoke', () => {
 })
 
 describe('getMandateStatus', () => {
+  const canonical = {
+    version: 2,
+    stellarOwner: 'GUSER',
+    kernelAddress: '0xKERNEL',
+    sessionKeyAddress: '0xSESSION',
+    relayerOrigin: 'https://relayer.example',
+    expiresAt: 999,
+    status: 'active',
+    bindingId: 'bind-1',
+    bindingHash: 'hash-1',
+    reasonCodes: [],
+    expected: { chainId: 84532 },
+    observed: { blockNumber: '10', blockHash: '0xblock', blockTime: 123 },
+    checks: { prepared: true },
+  }
+
   test('GETs /mandate/valid with the approval urlencoded as a query param (no owner params -> not added to the URL)', async () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,
@@ -651,17 +667,18 @@ describe('getMandateStatus', () => {
       baseUrl: 'https://example.test/api/vf-cross',
       deps: { fetchImpl: fetchMock },
     })
-    const [url] = fetchMock.mock.calls[0]
+    const [url, options] = fetchMock.mock.calls[0]
     expect(url).toBe(
       'https://example.test/api/vf-cross/mandate/valid?approval=' +
         encodeURIComponent('approval blob/with+special=chars')
     )
+    expect(options).toEqual({ cache: 'no-store' })
   })
 
   test('stellarOwner + kernelAddress are added to the query string when supplied', async () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,
-      json: async () => ({ status: 'active' }),
+      json: async () => canonical,
     }))
     await getMandateStatus('approval-blob', {
       stellarOwner: 'GUSER',
@@ -679,16 +696,6 @@ describe('getMandateStatus', () => {
   // answers the older {valid, expiresAt} shape today — the client normalizes it into the
   // canonical BaseMandateStatusV2 shape so callers only ever have to branch on `.status`.
   test('normalizes a canonical BaseMandateStatusV2 response through untouched', async () => {
-    const canonical = {
-      stellarOwner: 'GUSER',
-      kernelAddress: '0xKERNEL',
-      sessionKeyAddress: '0xSESSION',
-      relayerOrigin: 'https://relayer.example',
-      expiresAt: 999,
-      status: 'active',
-      bindingId: 'bind-1',
-      bindingHash: 'hash-1',
-    }
     const fetchMock = vi.fn(async () => ({ ok: true, json: async () => canonical }))
     const result = await getMandateStatus('approval-blob', {
       baseUrl: 'https://example.test/api/vf-cross',
@@ -697,7 +704,7 @@ describe('getMandateStatus', () => {
     expect(result).toEqual(canonical)
   })
 
-  test('normalizes the legacy {valid, expiresAt} shape: valid:true -> active, valid:false -> unknown', async () => {
+  test('fails legacy {valid, expiresAt} responses closed as unknown evidence', async () => {
     const fetchTrue = vi.fn(async () => ({
       ok: true,
       json: async () => ({ valid: true, expiresAt: 999 }),
@@ -709,14 +716,12 @@ describe('getMandateStatus', () => {
       deps: { fetchImpl: fetchTrue },
     })
     expect(active).toEqual({
-      stellarOwner: 'GUSER',
-      kernelAddress: '0xKERNEL',
-      sessionKeyAddress: null,
-      relayerOrigin: null,
-      expiresAt: 999,
-      status: 'active',
-      bindingId: null,
-      bindingHash: null,
+      version: 2,
+      status: 'unknown',
+      reasonCodes: ['EVIDENCE_MISSING'],
+      expected: {},
+      observed: {},
+      checks: {},
     })
 
     const fetchFalse = vi.fn(async () => ({ ok: true, json: async () => ({ valid: false }) }))
@@ -727,27 +732,45 @@ describe('getMandateStatus', () => {
     expect(unknown.status).toBe('unknown') // fails closed the same as expired/missing/mismatched
   })
 
-  test('never leaks key material — the response shape has no key field, and the client never asks for one', async () => {
+  test('scrubs accidental key material from nested evidence', async () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,
-      json: async () => ({ valid: true, expiresAt: 999 }),
+      json: async () => ({
+        ...canonical,
+        sessionPrivateKey: '0xLEAK',
+        observed: { ...canonical.observed, sessionKeyMaterial: '0xLEAK2' },
+      }),
     }))
     const result = await getMandateStatus('approval-blob', {
       baseUrl: 'https://example.test/api/vf-cross',
       deps: { fetchImpl: fetchMock },
     })
-    expect(Object.keys(result).sort()).toEqual(
-      [
-        'bindingHash',
-        'bindingId',
-        'expiresAt',
-        'kernelAddress',
-        'relayerOrigin',
-        'sessionKeyAddress',
-        'status',
-        'stellarOwner',
-      ].sort()
-    )
+    expect(JSON.stringify(result)).not.toContain('0xLEAK')
+    expect(result.status).toBe('active')
+  })
+
+  test('sends the exact allocation and ignores client-forged expected facts', async () => {
+    const allocation = {
+      allocationId: 'run-1:bridge:aave-v3',
+      poolAddress: '0xPOOL',
+      amount: { token: 'USDC', units: '123', decimals: 6 },
+      minShares: '100',
+    }
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => canonical }))
+    await getMandateStatus('approval-blob', {
+      stellarOwner: 'GUSER',
+      kernelAddress: '0xKERNEL',
+      allocation,
+      expectedOwner: 'GFORGED',
+      expectedChainId: 1,
+      baseUrl: 'https://example.test/api/vf-cross',
+      deps: { fetchImpl: fetchMock },
+    })
+    const [url, options] = fetchMock.mock.calls[0]
+    expect(new URL(url).searchParams.get('allocation')).toBe(JSON.stringify(allocation))
+    expect(url).not.toContain('GFORGED')
+    expect(url).not.toContain('expectedChainId')
+    expect(options).toEqual({ cache: 'no-store' })
   })
 
   test('throws a clear error on a non-ok response', async () => {

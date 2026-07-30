@@ -72,7 +72,11 @@ import {
   buildBaseLegContext,
   applyBaseLegOutcome,
   mapBaseLegEvent,
+  baseMandateProbeAllocation,
+  baseMandateAllocationsForPlan,
+  baseMandateRequiresReview,
 } from './mergeFlowHelpers.js'
+import { getMandateStatus } from './base/relayerClient.js'
 import { readBaseOwner, baseOwnerStorageKey, readBaseMandate } from './wallet/baseBinding.js'
 import { readTokenBalance } from './stellar/agentDeposit.js'
 import {
@@ -2635,14 +2639,26 @@ const App = () => {
   async function resolveBaseForPlan({ stellarOwner, signal, setupSucceeded }) {
     if (!stellarOwner) return { connected: false, healthy: null, mandateView: null, action: null }
     const record = readBaseMandate(stellarOwner)
+    let mandateEvidence = null
+    if (record?.serializedApproval && record?.kernelAddress) {
+      try {
+        mandateEvidence = await getMandateStatus(record.serializedApproval, {
+          stellarOwner,
+          kernelAddress: record.kernelAddress,
+          allocation: baseMandateProbeAllocation(),
+        })
+      } catch {
+        mandateEvidence = null
+      }
+    }
     const { checkRelayerHealth } = await import('./strategy/mergedCatalog.js')
     const { baseAvailable, mandateView, action } = resolveBaseAvailability({
-      mandate: record,
+      mandate: mandateEvidence,
       connection: {
         connected: true,
         stellarOwner,
-        kernelAddress: record?.kernelAddress ?? null,
-        relayerOrigin: record?.relayerOrigin ?? null,
+        kernelAddress: mandateEvidence?.kernelAddress ?? record?.kernelAddress ?? null,
+        relayerOrigin: mandateEvidence?.relayerOrigin ?? record?.relayerOrigin ?? null,
         setupSucceeded,
       },
       health: async () => {
@@ -3157,8 +3173,43 @@ const App = () => {
     }
   }
 
-  function runOrchestratorDispatch(permissionDecision) {
+  async function runOrchestratorDispatch(permissionDecision) {
     const plan = strategyFlowRef.current.plan
+    const baseAllocations = baseMandateAllocationsForPlan(plan)
+    if (baseAllocations.length > 0) {
+      const record = readBaseMandate(realAddress)
+      const reviewedEvidence = baseView.mandateView?.evidence ?? null
+      for (const allocation of baseAllocations) {
+        let currentEvidence = null
+        try {
+          currentEvidence = await getMandateStatus(record?.serializedApproval, {
+            stellarOwner: realAddress,
+            kernelAddress: record?.kernelAddress,
+            allocation,
+          })
+        } catch {
+          currentEvidence = null
+        }
+        if (baseMandateRequiresReview(reviewedEvidence, currentEvidence)) {
+          setBaseView((previous) => ({
+            ...previous,
+            healthy: false,
+            mandateView: {
+              ...(previous?.mandateView || {}),
+              ready: false,
+              status: currentEvidence?.status || 'unavailable',
+              evidence: currentEvidence,
+            },
+          }))
+          setStrategyReached(['plan'])
+          throw new PermissionPhaseError({
+            phase: 'preflight',
+            code: 'VF_BASE_MANDATE_CHANGED',
+            message: 'Base mandate evidence changed. Rebuild and review the plan before granting.',
+          })
+        }
+      }
+    }
     const sessionId = `session-${runId}`
     const captured = activeAccount
     assertActiveAccount(captured)
