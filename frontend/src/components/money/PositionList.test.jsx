@@ -80,6 +80,8 @@ function twoBaseChildrenAgent(address = 'CTWOBASE1') {
         amount: amt(50_0000000n),
         kernelAddress: '0xkernel1',
         poolAddress: '0xpoolaaaa',
+        asset: 'usdc',
+        poolName: 'Aave v3 USDC (Base)',
         coverageReason: null,
       },
       {
@@ -87,6 +89,8 @@ function twoBaseChildrenAgent(address = 'CTWOBASE1') {
         amount: amt(20_0000000n),
         kernelAddress: '0xkernel1',
         poolAddress: '0xpoolbbbb',
+        asset: 'usdc',
+        poolName: 'Morpho Blue USDC (Base)',
         coverageReason: 'stale',
       },
     ],
@@ -128,6 +132,83 @@ describe('PositionList — two Base children on one agent render as distinguisha
     const freshRow = childRows.find((li) => /50/.test(li.textContent))
     expect(staleRow.textContent).toMatch(/older than usual/)
     expect(freshRow.textContent).not.toMatch(/older than usual/)
+  })
+
+  // Review round 1, finding 8: identity reaching the React key fixes React's own reconciliation,
+  // not the USER's ability to tell two positions apart. Two children with the SAME amount would
+  // render byte-identical DOM/screen-reader text before this fix -- the second half of the bug.
+  it("prints each Base leg's own pool name and kernel address, so equal-amount legs are still distinguishable to the user", () => {
+    const equalAmounts = {
+      ...twoBaseChildrenAgent('CEQUALAMOUNTS'),
+      amount: amt(40_0000000n),
+      custodyBreakdown: [
+        {
+          location: 'base-proxy',
+          amount: amt(20_0000000n),
+          kernelAddress: '0xkernel1',
+          poolAddress: '0xpoolaaaa',
+          asset: 'usdc',
+          poolName: 'Aave v3 USDC (Base)',
+          coverageReason: null,
+        },
+        {
+          location: 'base-proxy',
+          amount: amt(20_0000000n), // SAME amount as the leg above
+          kernelAddress: '0xkernel1',
+          poolAddress: '0xpoolbbbb',
+          asset: 'usdc',
+          poolName: 'Morpho Blue USDC (Base)',
+          coverageReason: null,
+        },
+      ],
+    }
+    render(<PositionList agents={[equalAmounts]} />)
+    const parentRow = document.querySelector('.pc-position-row')
+    const childRows = [...parentRow.querySelectorAll('.pc-position-row-children > li')]
+    expect(childRows).toHaveLength(2)
+    // both rows show the same 20 USDC, but their OWN text must still differ (pool name/kernel)
+    expect(childRows[0].textContent).not.toBe(childRows[1].textContent)
+    expect(screen.getByText(/Aave v3 USDC \(Base\)/)).toBeTruthy()
+    expect(screen.getByText(/Morpho Blue USDC \(Base\)/)).toBeTruthy()
+  })
+
+  // Review round 1, finding 7: leg identity used to carry only kernelAddress+poolAddress while the
+  // grouping layer's own key also includes `asset` -- two groups differing only by asset produced
+  // two legs with an IDENTICAL React key.
+  it('gives two legs sharing the same kernel+pool but differing only by asset distinct keys and rows', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const distinctAssets = {
+      ...twoBaseChildrenAgent('CDISTINCTASSET'),
+      amount: amt(30_0000000n),
+      custodyBreakdown: [
+        {
+          location: 'base-proxy',
+          amount: amt(10_0000000n),
+          kernelAddress: '0xkernel1',
+          poolAddress: '0xpoolaaaa',
+          asset: 'usdc',
+          poolName: 'Aave v3 USDC (Base)',
+          coverageReason: null,
+        },
+        {
+          location: 'base-proxy',
+          amount: amt(20_0000000n),
+          kernelAddress: '0xkernel1',
+          poolAddress: '0xpoolaaaa', // SAME kernel+pool as above
+          asset: 'eurc', // differs ONLY by asset
+          poolName: 'Aave v3 USDC (Base)',
+          coverageReason: null,
+        },
+      ],
+    }
+    render(<PositionList agents={[distinctAssets]} />)
+    const duplicateKeyWarning = errorSpy.mock.calls.some((args) =>
+      String(args[0]).includes('same key')
+    )
+    errorSpy.mockRestore()
+    expect(duplicateKeyWarning).toBe(false)
+    const parentRow = document.querySelector('.pc-position-row')
+    expect(parentRow.querySelectorAll('.pc-position-row-children > li')).toHaveLength(2)
   })
 })
 

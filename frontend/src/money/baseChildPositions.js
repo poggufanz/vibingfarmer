@@ -125,8 +125,15 @@ export function normalizeBaseChildren(children) {
 
   // Order-independence: sort once, at the very end, so the SAME set fed in any input/page order
   // produces a byte-identical result -- never a "latest wins" or "first wins" artifact of order.
+  // Review round 1, finding 11: `invalid` (appended in iteration order) and `conflicts[].entries`
+  // (`rec.all`, also push order) were NOT included in this guarantee -- fixed by sorting both on a
+  // canonical content fingerprint (an invalid entry's own `allocationId` may itself be missing or
+  // malformed, so allocationId alone can't order it; full-content comparison always can).
   validChildren.sort((a, b) => byString(a.allocationId, b.allocationId))
   conflicts.sort((a, b) => byString(a.allocationId, b.allocationId))
+  for (const conflict of conflicts)
+    conflict.entries.sort((a, b) => byString(canonicalJson(a), canonicalJson(b)))
+  invalid.sort((a, b) => byString(canonicalJson(a), canonicalJson(b)))
 
   const groupsByKey = new Map()
   for (const child of validChildren) {

@@ -795,6 +795,8 @@ describe('readOwnerMoney', () => {
         amount: { token: 'USDC', units: '5000000', decimals: 7 },
         kernelAddress: '0xkernel',
         poolAddress: BASE_POOL_CATALOG[0].address.toLowerCase(),
+        asset: 'usdc',
+        poolName: BASE_POOL_CATALOG[0].name,
         coverageReason: null,
       },
     ])
@@ -861,6 +863,201 @@ describe('readOwnerMoney', () => {
     expect(a.custodyBreakdown).toHaveLength(2)
     const identities = a.custodyBreakdown.map((leg) => `${leg.kernelAddress}:${leg.poolAddress}`)
     expect(new Set(identities).size).toBe(2) // React-key-worthy: each leg is distinguishable
+  })
+
+  // Review round 1, finding 1 (Critical): a landed sibling whose stored lifecycle status is still
+  // in-flight (e.g. a 'minted' report stuck/dead-lettered in the relayer outbox after the deposit
+  // already executed) must NOT be summed on top of the live on-chain balance that already contains
+  // it. Before this fix: live 500_000 (canonical 5_000_000) + reported 400_000 (canonical
+  // 4_000_000) = a fabricated 9_000_000 for real money of 5_000_000.
+  it('a landed sibling still marked in-flight is never summed on top of the live balance that already contains it', async () => {
+    const rows = [
+      agentRow({
+        address: 'CDOUBLECOUNT',
+        association: 'known',
+        baseChildren: [
+          baseChild({ allocationId: 'run1:landed', executionStatus: 'deposited' }),
+          baseChild({
+            allocationId: 'run2:stuck',
+            executionStatus: 'minted', // in-flight per its OWN stored status
+            amount: { token: 'USDC', units: '400000', decimals: 6 },
+          }),
+        ],
+      }),
+    ]
+    const stellar = stellarDeps({ shares: { CDOUBLECOUNT: 0n }, idle: { CDOUBLECOUNT: 0n } })
+    const base = baseDeps({
+      status: 'known',
+      accounts: [
+        {
+          kernelAddress: '0xkernel',
+          // the live read already reflects BOTH deposits merged into one kernel+pool balance
+          positions: [
+            {
+              pool: BASE_POOL_CATALOG[0].address,
+              shares: 5n,
+              assets: 500_000n,
+              minAssets: 495_000n,
+            },
+          ],
+          idleUsdc: 0n,
+        },
+      ],
+    })
+    const result = await readOwnerMoney({
+      owner: OWNER,
+      discovery: discoveryOf(rows),
+      stellar,
+      base,
+      now: NOW,
+    })
+    const a = result.agents[0]
+    // exactly the live-confirmed 500_000 base units (6dp) -> canonical 5_000_000, never 9_000_000
+    expect(a.amount).toEqual({ token: 'USDC', units: '5000000', decimals: 7 })
+    expect(a.problems).toContain('base-inflight-unaccounted')
+    // the ambiguity is a real coverage gap, not a silent pass
+    expect(result.completeBaseTotalUnits).toBeNull()
+  })
+
+  // Review round 1, finding 5: 'failed' used to outrank 'deposited'/'held' in the representative
+  // selection, so a failed sibling's custody claim (e.g. a post-mint-failure 'agent' location)
+  // would win over a live read that just proved the money landed on Base.
+  it('a failed sibling never wins the group custody label over a landed one', async () => {
+    const rows = [
+      agentRow({
+        address: 'CFAILEDWINS',
+        association: 'known',
+        baseChildren: [
+          baseChild({
+            allocationId: 'run1:landed',
+            executionStatus: 'deposited',
+            custody: { location: 'base-proxy' },
+            reportedAt: NOW - 1000, // earlier than the failed report below
+          }),
+          baseChild({
+            allocationId: 'run2:failed',
+            executionStatus: 'failed',
+            custody: { location: 'agent' }, // e.g. relayer post-mint-failure custody
+            reportedAt: NOW, // LATER than the landed report -- reportedAt must not decide this
+          }),
+        ],
+      }),
+    ]
+    const stellar = stellarDeps({ shares: { CFAILEDWINS: 0n }, idle: { CFAILEDWINS: 0n } })
+    const base = baseDeps({
+      status: 'known',
+      accounts: [
+        {
+          kernelAddress: '0xkernel',
+          positions: [
+            {
+              pool: BASE_POOL_CATALOG[0].address,
+              shares: 5n,
+              assets: 500_000n,
+              minAssets: 495_000n,
+            },
+          ],
+          idleUsdc: 0n,
+        },
+      ],
+    })
+    const result = await readOwnerMoney({
+      owner: OWNER,
+      discovery: discoveryOf(rows),
+      stellar,
+      base,
+      now: NOW,
+    })
+    const a = result.agents[0]
+    // the landed child's custody wins, never the failed sibling's -- real money stays labeled
+    // where a live read just proved it sits, never "Held at your agent (not yet deposited)".
+    expect(a.custody).toEqual({ location: 'base-proxy' })
+    expect(a.problems).toContain('base-execution-failed')
+  })
+
+  describe('coverageReason is derived from the signal that actually caused it (review round 1, finding 6)', () => {
+    it('an ordinary in-flight (queued) leg gets no coverage warning -- the report IS the current truth', async () => {
+      const rows = [
+        agentRow({
+          address: 'CQUEUEDCLEAN',
+          association: 'known',
+          baseChildren: [baseChild({ executionStatus: 'queued' })],
+        }),
+      ]
+      const stellar = stellarDeps({ shares: { CQUEUEDCLEAN: 0n }, idle: { CQUEUEDCLEAN: 0n } })
+      const result = await readOwnerMoney({
+        owner: OWNER,
+        discovery: discoveryOf(rows),
+        stellar,
+        base: baseDeps(),
+        now: NOW,
+      })
+      const a = result.agents[0]
+      expect(a.amount).toEqual({ token: 'USDC', units: '4000000', decimals: 7 })
+      expect(a.custodyBreakdown[0].coverageReason).toBeNull()
+    })
+
+    it('a terminal group whose live read failed gets "unavailable", never "stale"', async () => {
+      const rows = [
+        agentRow({
+          address: 'CLIVEFAILED',
+          association: 'known',
+          baseChildren: [baseChild({ executionStatus: 'held' })],
+        }),
+      ]
+      const stellar = stellarDeps({ shares: { CLIVEFAILED: 0n }, idle: { CLIVEFAILED: 0n } })
+      // live read runs but never finds this kernel -> base-read-unavailable fallback
+      const base = baseDeps({ status: 'known', accounts: [] })
+      const result = await readOwnerMoney({
+        owner: OWNER,
+        discovery: discoveryOf(rows),
+        stellar,
+        base,
+        now: NOW,
+      })
+      const a = result.agents[0]
+      expect(a.custodyBreakdown[0].coverageReason).toBe('unavailable')
+    })
+
+    it('a live-confirmed leg whose child.freshness is stale gets "stale"', async () => {
+      const rows = [
+        agentRow({
+          address: 'CFRESHNESSSTALE',
+          association: 'known',
+          baseChildren: [baseChild({ executionStatus: 'deposited', freshness: 'stale' })],
+        }),
+      ]
+      const stellar = stellarDeps({
+        shares: { CFRESHNESSSTALE: 0n },
+        idle: { CFRESHNESSSTALE: 0n },
+      })
+      const base = baseDeps({
+        status: 'known',
+        accounts: [
+          {
+            kernelAddress: '0xkernel',
+            positions: [
+              {
+                pool: BASE_POOL_CATALOG[0].address,
+                shares: 5n,
+                assets: 500_000n,
+                minAssets: 495_000n,
+              },
+            ],
+            idleUsdc: 0n,
+          },
+        ],
+      })
+      const result = await readOwnerMoney({
+        owner: OWNER,
+        discovery: discoveryOf(rows),
+        stellar,
+        base,
+        now: NOW,
+      })
+      const a = result.agents[0]
+      expect(a.custodyBreakdown[0].coverageReason).toBe('stale')
+    })
   })
 
   it('a Base child missing its mandate binding is excluded from the amount and flagged, never silently trusted', async () => {
@@ -967,10 +1164,60 @@ describe('readOwnerMoney — Task 10 owner-wide subtotals and coverage', () => {
       discovery: discoveryOf(rows),
       stellar,
       base,
+      // Supplied-but-empty delivery evidence -- proves the 'stale' reason is reachable once the
+      // absence-of-evidence gate (finding 3) is satisfied, without also tripping 'dead-letter'.
+      associationDelivery: { events: [] },
       now: NOW,
     })
     expect(result.associationCoverage.state).toBe('partial')
     expect(result.associationCoverage.reasons).toContain('stale')
+  })
+
+  // Review round 1, finding 3: R2's constraint 1 ("not being handed delivery evidence must never
+  // produce 'complete'. Fail closed.") is stricter than the plain per-signal mapping -- an owner
+  // with at least one otherwise-perfectly-fresh, perfectly-valid Base child still cannot claim
+  // 'complete' association coverage while nothing has ever told this read model whether that
+  // child's lifecycle report is stuck in the relayer outbox.
+  it('caps associationCoverage at unknown/unavailable when associationDelivery was never supplied, even with an otherwise-fresh valid child', async () => {
+    const rows = [
+      agentRow({
+        address: 'CNODELIVERY',
+        association: 'known',
+        baseChildren: [baseChild({ executionStatus: 'deposited' })], // fresh, valid, no conflicts
+      }),
+    ]
+    const stellar = stellarDeps({ shares: { CNODELIVERY: 0n }, idle: { CNODELIVERY: 0n } })
+    const base = baseDeps({
+      status: 'known',
+      accounts: [
+        {
+          kernelAddress: '0xkernel',
+          positions: [
+            {
+              pool: BASE_POOL_CATALOG[0].address,
+              shares: 5n,
+              assets: 500_000n,
+              minAssets: 495_000n,
+            },
+          ],
+          idleUsdc: 0n,
+        },
+      ],
+    })
+    const result = await readOwnerMoney({
+      owner: OWNER,
+      discovery: discoveryOf(rows),
+      stellar,
+      base,
+      // associationDelivery deliberately omitted -- the real production shape (app.jsx never
+      // passes it).
+      now: NOW,
+    })
+    expect(result.associationCoverage).toEqual({ state: 'unknown', reasons: ['unavailable'] })
+    // and the downstream honesty fields follow: no total may claim to be fully known off a
+    // coverage axis that was never actually observed.
+    expect(result.completeBaseTotalUnits).toBeNull()
+    expect(result.overallTotalUnits).toBeNull()
   })
 
   it("reports associationCoverage partial with reason 'dead-letter' when injected delivery evidence shows a dead event", async () => {
@@ -1011,45 +1258,49 @@ describe('readOwnerMoney — Task 10 owner-wide subtotals and coverage', () => {
     expect(result.associationCoverage.reasons).toContain('dead-letter')
   })
 
-  it('reports associationCoverage unknown, reason unavailable, when the base-children source itself is unreadable (missing, not an empty array)', async () => {
-    const rows = [
-      {
-        address: 'CNOSOURCE',
-        scopeReadStatus: 'ok',
-        vault: 'CVAULT',
-        revoked: false,
-        expiry: 9_999_999_999,
-        authorized: true,
-        association: 'unknown',
-        // deliberately no `baseChildren` key at all -- distinct from a positively-confirmed []
-      },
-    ]
+  // Review round 1, finding 2: no producer in this tree ever emits `baseChildren` as null/missing
+  // (`joinBaseAssociations` and ownerDiscovery.js's `placeholderApiFields` both always stamp []),
+  // so a test built on that shape certified a dead branch. The real, always-present signal for an
+  // unreadable/incomplete enumeration is the envelope's own `status` -- this fixture uses the
+  // ACTUAL wire shape ([] baseChildren) with a non-'complete' status, the real path a genuinely
+  // never-indexed or down-API agent produces.
+  it('reports baseSourceCoverage/associationCoverage unknown when discovery itself is not complete, even with a positively-confirmed empty baseChildren array', async () => {
+    const rows = [agentRow({ address: 'CNOSOURCE', baseChildren: [] })]
     const stellar = stellarDeps({ shares: { CNOSOURCE: 0n }, idle: { CNOSOURCE: 0n } })
     const result = await readOwnerMoney({
       owner: OWNER,
-      discovery: discoveryOf(rows),
+      discovery: discoveryOf(rows, { status: 'partial' }),
       stellar,
       base: baseDeps(),
       now: NOW,
     })
     expect(result.baseSourceCoverage).toEqual({ state: 'unknown' })
-    expect(result.associationCoverage.state).toBe('unknown')
-    expect(result.associationCoverage.reasons).toContain('unavailable')
+    expect(result.associationCoverage).toEqual({ state: 'unknown', reasons: ['unavailable'] })
+    expect(result.completeBaseTotalUnits).toBeNull()
+    expect(result.overallTotalUnits).toBeNull()
   })
 
   it('never upgrades coverage just because there happens to be no local/cached hint (second device, empty browser cache)', async () => {
-    // readOwnerMoney takes no localStorage/browser input for this computation at all -- proven
-    // structurally: the SAME discovery envelope produces byte-identical coverage every time.
+    // Review round 1, finding 14: calling twice with IDENTICAL (absent) device state can't
+    // distinguish "never consults device state" from "consults it and happened to see nothing
+    // both times" -- a coverage-upgrading mutation keyed on `localStorage`/device state would pass
+    // this form unchanged. Vary the actual global between the two calls instead.
     const rows = [agentRow({ address: 'CFRESHDEVICE' })]
     const stellar = stellarDeps({ shares: { CFRESHDEVICE: 0n }, idle: { CFRESHDEVICE: 0n } })
-    const first = await readOwnerMoney({
+    globalThis.localStorage = {
+      getItem: () => JSON.stringify({ version: 2, kernelAddress: '0xcacheddevice' }),
+      setItem: () => {},
+      removeItem: () => {},
+    }
+    const deviceWithCache = await readOwnerMoney({
       owner: OWNER,
       discovery: discoveryOf(rows),
       stellar,
       base: baseDeps(),
       now: NOW,
     })
-    const second = await readOwnerMoney({
+    delete globalThis.localStorage
+    const brandNewDevice = await readOwnerMoney({
       owner: OWNER,
       discovery: discoveryOf(rows),
       stellar,
@@ -1058,8 +1309,43 @@ describe('readOwnerMoney — Task 10 owner-wide subtotals and coverage', () => {
     })
     // an owner with genuinely zero Base activity is fully known to have zero — 'complete', never
     // stuck at 'unknown' just because nothing was ever reported.
-    expect(first.associationCoverage).toEqual({ state: 'complete', reasons: [] })
-    expect(second.associationCoverage).toEqual(first.associationCoverage)
+    expect(deviceWithCache.associationCoverage).toEqual({ state: 'complete', reasons: [] })
+    expect(brandNewDevice.associationCoverage).toEqual(deviceWithCache.associationCoverage)
+  })
+
+  // Review round 1, finding 12: the "large units" coverage in baseChildPositions.test.js never
+  // touched real money arithmetic (normalizeBaseChildren returns `.amount` by reference). This
+  // exercises the actual arithmetic path -- canonicalizeReportedAmount's BigInt rescale inside
+  // valueBaseGroup's stale-fallback branch -- at a scale where a float roundtrip would visibly
+  // corrupt the result.
+  it('a 30-digit reported Base amount is valued as the exact BigInt product, never a Number-rounded one', async () => {
+    const hugeUnits = '123456789012345678901234567890' // 6dp reported units
+    const rows = [
+      agentRow({
+        address: 'CHUGEUNITS',
+        association: 'known',
+        baseChildren: [
+          baseChild({
+            executionStatus: 'held',
+            amount: { token: 'USDC', units: hugeUnits, decimals: 6 },
+          }),
+        ],
+      }),
+    ]
+    const stellar = stellarDeps({ shares: { CHUGEUNITS: 0n }, idle: { CHUGEUNITS: 0n } })
+    // live read runs but never finds this kernel -> falls back to the reported evidence, exactly
+    // the arithmetic path (canonicalizeReportedAmount: units * 10n**delta) this test targets.
+    const base = baseDeps({ status: 'known', accounts: [] })
+    const result = await readOwnerMoney({
+      owner: OWNER,
+      discovery: discoveryOf(rows),
+      stellar,
+      base,
+      now: NOW,
+    })
+    const expected = BigInt(hugeUnits) * 10n // 6dp -> canonical 7dp
+    expect(result.agents[0].amount).toEqual({ token: 'USDC', units: String(expected), decimals: 7 })
+    expect(result.baseSubtotalUnits).toBe(expected)
   })
 
   it('completeBaseTotalUnits and overallTotalUnits stay null while Base coverage is only partial, but the known subtotal is retained', async () => {
@@ -1117,6 +1403,9 @@ describe('readOwnerMoney — Task 10 owner-wide subtotals and coverage', () => {
       discovery: discoveryOf(rows),
       stellar,
       base,
+      // Delivery evidence supplied-but-clean -- required since finding 3's fix so 'complete'
+      // association coverage is actually earned, not merely unopposed.
+      associationDelivery: { events: [] },
       now: NOW,
     })
     expect(result.stellarSubtotalUnits).toBe(3_000_000n)
@@ -1173,6 +1462,217 @@ describe('readOwnerMoney — Task 10 owner-wide subtotals and coverage', () => {
       now: NOW,
     })
     expect(result.basePositionCoverage.state).toBe('partial')
+  })
+
+  // Review round 1, finding 4: the owner-wide completeness loop used to discard `valueBaseGroup`'s
+  // own `problems`, so a group carrying a real incompleteness marker (a failed sibling, an
+  // unaccounted in-flight one) could still read `completeBaseTotalUnits` as fully known — directly
+  // contradicting `aggregateOwnerPositions`, which downgrades to 'partial' on the SAME evidence via
+  // READ_INCOMPLETE_PROBLEMS.
+  it('a READ_INCOMPLETE_PROBLEMS marker on any group clears completeBaseTotalUnits/overallTotalUnits, even though the group live-read succeeded', async () => {
+    const rows = [
+      agentRow({
+        address: 'CGROUPHASFAILED',
+        association: 'known',
+        baseChildren: [
+          baseChild({ allocationId: 'run1:a', executionStatus: 'deposited' }),
+          baseChild({ allocationId: 'run2:a', executionStatus: 'failed' }),
+        ],
+      }),
+    ]
+    const stellar = stellarDeps({ shares: { CGROUPHASFAILED: 0n }, idle: { CGROUPHASFAILED: 0n } })
+    const base = baseDeps({
+      status: 'known',
+      accounts: [
+        {
+          kernelAddress: '0xkernel',
+          positions: [
+            {
+              pool: BASE_POOL_CATALOG[0].address,
+              shares: 5n,
+              assets: 500_000n,
+              minAssets: 495_000n,
+            },
+          ],
+          idleUsdc: 0n,
+        },
+      ],
+    })
+    const result = await readOwnerMoney({
+      owner: OWNER,
+      discovery: discoveryOf(rows),
+      stellar,
+      base,
+      associationDelivery: { events: [] },
+      now: NOW,
+    })
+    // the live read itself is a genuine snapshot of the group -- basePositionCoverage's own
+    // read-succeeded axis is unaffected -- but the failed sibling's fate is unaccounted for, so
+    // the STRICTER completeness gate (every child accounted for) must not claim 'complete'.
+    expect(result.basePositionCoverage.state).toBe('complete')
+    expect(result.completeBaseTotalUnits).toBeNull()
+    expect(result.overallTotalUnits).toBeNull()
+    // and the known money is still retained, never erased
+    expect(result.baseSubtotalUnits).toBe(5_000_000n)
+  })
+
+  // Review round 1, finding 4's second bullet: an all-failed group (no terminal, no in-flight
+  // sibling) has no terminal child at all, so it never touched terminalGroupsTotal/Live -- the old
+  // code let `terminalGroupsTotal === 0` alone report 'complete' for a position whose value is
+  // genuinely unknown.
+  it('an all-failed group (no terminal, no in-flight) reports basePositionCoverage unknown, never complete', async () => {
+    const rows = [
+      agentRow({
+        address: 'CALLFAILED',
+        association: 'known',
+        baseChildren: [baseChild({ executionStatus: 'failed' })],
+      }),
+    ]
+    const stellar = stellarDeps({ shares: { CALLFAILED: 0n }, idle: { CALLFAILED: 0n } })
+    const result = await readOwnerMoney({
+      owner: OWNER,
+      discovery: discoveryOf(rows),
+      stellar,
+      base: baseDeps(),
+      associationDelivery: { events: [] },
+      now: NOW,
+    })
+    expect(result.basePositionCoverage.state).toBe('unknown')
+    expect(result.completeBaseTotalUnits).toBeNull()
+  })
+
+  // Review round 1, finding 9: every existing test with incomplete Base evidence used a ZERO
+  // Stellar balance, so the plan's own constraint -- "missing Base data makes Base and overall
+  // coverage partial while RETAINING a known Stellar subtotal" -- was never actually exercised.
+  it('retains a non-zero Stellar subtotal (never coerced to 0n) while Base coverage is incomplete', async () => {
+    const rows = [
+      agentRow({
+        address: 'CSTELLARPLUSBROKENBASE',
+        association: 'known',
+        baseChildren: [baseChild({ executionStatus: 'held' })],
+      }),
+    ]
+    const stellar = stellarDeps({
+      shares: { CSTELLARPLUSBROKENBASE: 5_000_000n },
+      idle: { CSTELLARPLUSBROKENBASE: 0n },
+    })
+    // live read runs but never finds this kernel -> base-read-unavailable, Base stays incomplete
+    const base = baseDeps({ status: 'known', accounts: [] })
+    const result = await readOwnerMoney({
+      owner: OWNER,
+      discovery: discoveryOf(rows),
+      stellar,
+      base,
+      associationDelivery: { events: [] },
+      now: NOW,
+    })
+    expect(result.stellarSubtotalUnits).toBe(5_000_000n)
+    expect(result.overallTotalUnits).toBeNull()
+  })
+
+  it('never publishes a non-null overallTotalUnits when the Stellar side itself failed to read, even with a fully-known Base group', async () => {
+    const rows = [
+      agentRow({
+        address: 'CSTELLARTHROWN',
+        association: 'known',
+        baseChildren: [baseChild({ executionStatus: 'deposited' })],
+      }),
+    ]
+    const stellar = stellarDeps({
+      shares: { CSTELLARTHROWN: 'throw' },
+      idle: { CSTELLARTHROWN: 0n },
+    })
+    const base = baseDeps({
+      status: 'known',
+      accounts: [
+        {
+          kernelAddress: '0xkernel',
+          positions: [
+            {
+              pool: BASE_POOL_CATALOG[0].address,
+              shares: 5n,
+              assets: 500_000n,
+              minAssets: 495_000n,
+            },
+          ],
+          idleUsdc: 0n,
+        },
+      ],
+    })
+    const result = await readOwnerMoney({
+      owner: OWNER,
+      discovery: discoveryOf(rows),
+      stellar,
+      base,
+      associationDelivery: { events: [] },
+      now: NOW,
+    })
+    // Base itself is fully known...
+    expect(result.completeBaseTotalUnits).toBe(5_000_000n)
+    // ...but the Stellar side threw, so the combined total must stay null, never built on a
+    // provably-partial Stellar subtotal.
+    expect(result.overallTotalUnits).toBeNull()
+  })
+
+  // Review round 1, finding 10: no test in the suite gave two AGENTS Base children, so neither the
+  // per-agent double-count nor the owner-wide dedupe meant to be its mitigation was ever verified.
+  // This pins BOTH facts explicitly: the NEW owner-wide totals dedupe correctly (this task's own
+  // deliverable), while the LEGACY per-agent `amount` -- which `aggregateOwnerPositions` sums into
+  // `confirmedTotal`, MoneyHero's headline figure -- still double-counts a kernel+pool shared by
+  // two agents. That per-agent gap is a pre-existing, documented ceiling (see task-10-report.md's
+  // "Issues and concerns" #1), not something this test claims is fixed.
+  it('two agents sharing one kernel+pool: owner-wide totals dedupe the shared group once; per-agent amount still double-counts it (documented ceiling)', async () => {
+    const rows = [
+      agentRow({
+        address: 'CSHAREA',
+        association: 'known',
+        baseChildren: [baseChild({ allocationId: 'run1:a', executionStatus: 'deposited' })],
+      }),
+      agentRow({
+        address: 'CSHAREB',
+        association: 'known',
+        baseChildren: [baseChild({ allocationId: 'run2:b', executionStatus: 'deposited' })],
+      }),
+    ]
+    const stellar = stellarDeps({
+      shares: { CSHAREA: 0n, CSHAREB: 0n },
+      idle: { CSHAREA: 0n, CSHAREB: 0n },
+    })
+    const base = baseDeps({
+      status: 'known',
+      accounts: [
+        {
+          kernelAddress: '0xkernel', // the SAME kernel+pool both agents' children point at
+          positions: [
+            {
+              pool: BASE_POOL_CATALOG[0].address,
+              shares: 5n,
+              assets: 500_000n,
+              minAssets: 495_000n,
+            },
+          ],
+          idleUsdc: 0n,
+        },
+      ],
+    })
+    const result = await readOwnerMoney({
+      owner: OWNER,
+      discovery: discoveryOf(rows),
+      stellar,
+      base,
+      associationDelivery: { events: [] },
+      now: NOW,
+    })
+    // NEW, deduped owner-wide totals: the shared group is counted exactly once.
+    expect(result.baseSubtotalUnits).toBe(5_000_000n)
+    expect(result.completeBaseTotalUnits).toBe(5_000_000n)
+    // LEGACY per-agent amount: each agent independently folds in the WHOLE group value, so their
+    // sum is double the real money. Pinned explicitly so nobody mistakes this for correct.
+    const [a, b] = result.agents
+    expect(a.amount).toEqual({ token: 'USDC', units: '5000000', decimals: 7 })
+    expect(b.amount).toEqual({ token: 'USDC', units: '5000000', decimals: 7 })
+    const agg = aggregateOwnerPositions(result)
+    expect(agg.confirmedTotal.amount).toEqual({ token: 'USDC', units: '10000000', decimals: 7 })
   })
 })
 

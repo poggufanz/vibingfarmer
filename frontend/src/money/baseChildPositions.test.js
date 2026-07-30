@@ -52,10 +52,22 @@ describe('normalizeBaseChildren', () => {
     const a = child({ allocationId: 'run1:a', poolAddress: POOL_A })
     const b = child({ allocationId: 'run2:b', poolAddress: POOL_B, kernelAddress: '0xOTHERKERNEL' })
     const c = child({ allocationId: 'run3:c', poolAddress: POOL_A, reportedAt: 2000 })
+    // Review round 1, finding 11: the original fixture (3 valid, distinct children) left `invalid`
+    // and `conflicts[].entries` empty in every comparison, so it could not detect either bucket
+    // being returned in raw arrival order instead of sorted. One invalid child and one conflicting
+    // pair, fed in the OPPOSITE order between the two calls, close that gap.
+    const invalid1 = child({ allocationId: 'run4:invalid', mandateBindingId: '' })
+    const invalid2 = child({ allocationId: '', mandateBindingId: '' })
+    const conflictX = child({ allocationId: 'run5:conflict', poolAddress: POOL_A })
+    const conflictY = child({ allocationId: 'run5:conflict', poolAddress: POOL_B })
 
-    const forward = normalizeBaseChildren([a, b, c])
-    const scrambled = normalizeBaseChildren([c, a, b])
+    const forward = normalizeBaseChildren([a, b, c, invalid1, invalid2, conflictX, conflictY])
+    const scrambled = normalizeBaseChildren([conflictY, invalid2, c, conflictX, a, invalid1, b])
     expect(scrambled).toEqual(forward)
+    // and prove the buckets are genuinely non-empty in this fixture, not vacuously equal empties
+    expect(forward.invalid).toHaveLength(2)
+    expect(forward.conflicts).toHaveLength(1)
+    expect(forward.conflicts[0].entries).toHaveLength(2)
   })
 
   it('accepts the full concatenation of every page and never truncates it (pagination is the caller problem, R1)', () => {
@@ -141,7 +153,13 @@ describe('normalizeBaseChildren', () => {
     expect(out.groups[0].groupKey).toBe(`${BASE_CHAIN.id}:0xabc:${POOL_A.toLowerCase()}:usdc`)
   })
 
-  it('handles large units without precision loss (BigInt, never Number)', () => {
+  it('passes a large reported units string through unchanged (no arithmetic happens in normalizeBaseChildren itself)', () => {
+    // Review round 1, finding 12: normalizeBaseChildren returns input objects BY REFERENCE and
+    // never touches `.amount` arithmetically -- this only proves the string survives untouched,
+    // not that money math at this scale is safe. The real arithmetic (canonicalizeReportedAmount's
+    // BigInt rescale, valueBaseGroup's summation) lives in readOwnerMoney.js and is exercised at
+    // precision-loss scale there (see readOwnerMoney.test.js's "a 30-digit reported Base amount is
+    // valued as the exact BigInt product, never a Number-rounded one").
     const big = child({
       allocationId: 'run1:a',
       amount: { token: 'USDC', units: '123456789012345678901234567890', decimals: 6 },
@@ -160,12 +178,23 @@ describe('normalizeBaseChildren', () => {
     expect(out2.groups[0].hasTerminal).toBe(true)
   })
 
-  it('a second device with an empty local/browser cache still normalizes purely from the given children (no local hint upgrades coverage)', () => {
-    // normalizeBaseChildren takes no localStorage/browser input at all -- this is a structural
-    // guarantee (same call, same output) rather than something that could vary with device state.
-    const out1 = normalizeBaseChildren([child({ allocationId: 'run1:a' })])
-    const out2 = normalizeBaseChildren([child({ allocationId: 'run1:a' })])
-    expect(out2).toEqual(out1)
+  it('a second device with different/no local storage between calls still normalizes identically (no local hint upgrades coverage)', () => {
+    // Review round 1, finding 14: calling twice with the SAME (absent) device state can't tell a
+    // "never reads localStorage" implementation apart from one that reads it and happens to see
+    // nothing both times -- a coverage-upgrading mutation keyed on device state would pass this
+    // form unchanged. Vary the actual global between the two calls instead: seed a real
+    // BaseOwnerRecordV2-shaped value for the first call, remove localStorage entirely for the
+    // second (matching a genuinely new device), same input children both times.
+    const input = [child({ allocationId: 'run1:a' })]
+    globalThis.localStorage = {
+      getItem: () => JSON.stringify({ version: 2, kernelAddress: '0xdeviceA' }),
+      setItem: () => {},
+      removeItem: () => {},
+    }
+    const deviceWithCache = normalizeBaseChildren(input)
+    delete globalThis.localStorage
+    const brandNewDevice = normalizeBaseChildren(input)
+    expect(brandNewDevice).toEqual(deviceWithCache)
   })
 
   it('an empty input never throws and returns fully empty buckets', () => {
@@ -230,6 +259,25 @@ describe('readBasePositions', () => {
     const assetsCall = publicClient.calls.find((c) => c.functionName === 'convertToAssets')
     expect(balanceCall.blockNumber).toBe(999n)
     expect(assetsCall.blockNumber).toBe(999n)
+  })
+
+  // Review round 1, finding 12 (second half): a balanceOf/convertToAssets pair beyond
+  // Number.MAX_SAFE_INTEGER (2^53-1) proves the BigInt(rawShares)/BigInt(rawAssets) roundtrip
+  // never gets coerced through a lossy float at the actual RPC boundary.
+  it('roundtrips a balanceOf/convertToAssets pair beyond Number.MAX_SAFE_INTEGER without precision loss', async () => {
+    const hugeShares = 12_345_678_901_234_567_890n
+    const hugeAssets = 98_765_432_109_876_543_210n
+    expect(hugeShares).toBeGreaterThan(BigInt(Number.MAX_SAFE_INTEGER))
+    const publicClient = clientWithReads({
+      balances: { [POOL_A.toLowerCase()]: hugeShares },
+      assets: { [POOL_A.toLowerCase()]: hugeAssets },
+    })
+    const out = await readBasePositions({
+      groups: [{ kernelAddress: KERNEL, poolAddress: POOL_A }],
+      publicClient,
+    })
+    expect(out.positions[0].shares).toBe(hugeShares)
+    expect(out.positions[0].assets).toBe(hugeAssets)
   })
 
   it('shares the SAME block across every group in the batch, not one getBlockNumber per group', async () => {

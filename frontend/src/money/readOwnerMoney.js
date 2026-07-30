@@ -91,11 +91,12 @@ function summarizeExecutionStatus(children) {
   return 'failed'
 }
 
+// Review round 1, finding 5 (Critical->Important, fixed): 'failed' is deliberately ABSENT from
+// this ranked list. It used to rank above 'deposited'/'held', so a failed sibling could win the
+// representative slot over money a live read just proved landed. An unranked status falls to
+// `?? -1` below, so any real progress (even 'queued') always beats a failed sibling.
 const STATUS_PROGRESS = new Map(
-  ['queued', 'accepted', 'burn-confirmed', 'minted', 'deposited', 'held', 'failed'].map((s, i) => [
-    s,
-    i,
-  ])
+  ['queued', 'accepted', 'burn-confirmed', 'minted', 'deposited', 'held'].map((s, i) => [s, i])
 )
 // Which child's own `custody` best represents a whole GROUP: the most-advanced one — once any part
 // of a shared position has landed, the group's honest "home" is wherever it landed, not an
@@ -129,12 +130,36 @@ function liveUnitsForPool(liveAccount, poolAddress) {
   return pos ? BigInt(pos.assets) : 0n
 }
 
+function sumReported(children) {
+  let sum = 0n
+  let anyKnown = false
+  let rejected = false
+  for (const c of children) {
+    const reported = canonicalizeReportedAmount(c.amount)
+    if (reported) {
+      sum += BigInt(reported.units)
+      anyKnown = true
+    } else {
+      rejected = true
+    }
+  }
+  return { sum, anyKnown, rejected }
+}
+
 // Task 10: values ONE Base position group (every child sharing the same kernel+vault+asset — see
 // baseChildPositions.js's normalizeBaseChildren). Terminal children (deposited/held) are merged
-// on-chain already, so they're valued ONCE from the live kernel+pool read (falling back to the sum
-// of their own reported evidence, flagged stale, only when that live read can't be found); in-
-// flight children have not landed yet, so their reported amounts are summed directly and never
-// trigger a live read (mirrors the pre-Task-10 single-child rule exactly).
+// on-chain already; in-flight children have not landed yet.
+//
+// Review round 1, finding 1 (Critical, fixed): a group is valued from the live on-chain balance
+// OR from reported evidence, NEVER additively from both. The live balance for a kernel+pool
+// already IS the whole current truth the moment it can be read — it was double-counting to also
+// add an in-flight sibling's reported amount on top, because that sibling's money may already be
+// INSIDE the live balance under a stale lifecycle status (a lifecycle report stuck/dead-lettered
+// while the deposit itself already landed). We cannot tell landed-but-unreported apart from
+// genuinely-still-elsewhere, so an in-flight sibling next to a successful live read contributes
+// NOTHING numerically and is flagged `base-inflight-unaccounted` instead — a coverage downgrade,
+// never a guess in either direction. Reported evidence (terminal AND in-flight) is only summed
+// when there is no live read to double-count against at all.
 function valueBaseGroup({ group, children, baseAccountsMap }) {
   const terminal = children.filter((c) => TERMINAL_BASE_STATUSES.has(c.executionStatus))
   const inFlight = children.filter(
@@ -151,39 +176,30 @@ function valueBaseGroup({ group, children, baseAccountsMap }) {
     const account = baseAccountsMap.get(group.kernelAddress)
     const liveUnits = account ? liveUnitsForPool(account, group.poolAddress) : null
     if (liveUnits != null) {
-      units += liveUnits * BASE_TO_CANONICAL_SCALE
+      // The live balance IS the whole truth for this kernel+pool right now — report it alone.
+      units = liveUnits * BASE_TO_CANONICAL_SCALE
       known = true
       live = true
+      if (inFlight.length > 0) problems.push('base-inflight-unaccounted')
     } else {
       problems.push('base-read-unavailable')
-      // Fall back to the durable evidence rather than nulling it out — Task 5's association
-      // already passed its own on-chain scope re-check before being written; it is stale
-      // evidence, not a guess.
-      let sum = 0n
-      let anyKnown = false
-      for (const c of terminal) {
-        const reported = canonicalizeReportedAmount(c.amount)
-        if (reported) {
-          sum += BigInt(reported.units)
-          anyKnown = true
-        } else {
-          problems.push('base-reported-amount-rejected')
-        }
-      }
+      // No live confirmation exists for this group at all — fall back to the sum of every
+      // child's own reported evidence (terminal AND in-flight; nothing to double-count against).
+      const { sum, anyKnown, rejected } = sumReported([...terminal, ...inFlight])
+      if (rejected) problems.push('base-reported-amount-rejected')
       if (anyKnown) {
-        units += sum
+        units = sum
         known = true
       }
     }
-  }
-
-  for (const c of inFlight) {
-    const reported = canonicalizeReportedAmount(c.amount)
-    if (reported) {
-      units += BigInt(reported.units)
+  } else {
+    // Nothing has landed yet — no live read applies; sum whatever is reported in-flight (mirrors
+    // the pre-Task-10 single-child rule exactly).
+    const { sum, anyKnown, rejected } = sumReported(inFlight)
+    if (rejected) problems.push('base-reported-amount-rejected')
+    if (anyKnown) {
+      units = sum
       known = true
-    } else {
-      problems.push('base-reported-amount-rejected')
     }
   }
 
@@ -271,6 +287,50 @@ function isKnownPositiveAmount(amount) {
   return amount != null && BigInt(amount.units) > 0n
 }
 
+// Fix loop 1, Fixes 2 & 3: a per-agent `amount` can be non-null yet still be incomplete evidence
+// — a stale Base figure kept only because the live read couldn't run, or the Stellar-only
+// remainder of a Base leg that outright failed. These problem markers say the underlying READ was
+// incomplete, which is a different axis from scope-revoked/scope-expired (a fully-known balance
+// that simply can't move right now — see the "revoked-but-funded" product truth) and must not be
+// conflated with it. Hoisted above readOneAgentMoney/readOwnerMoney (was previously declared only
+// beside aggregateOwnerPositions) so readOwnerMoney's own owner-wide completeness gate (review
+// round 1, finding 4) can share this exact set rather than re-deriving it.
+const READ_INCOMPLETE_PROBLEMS = new Set([
+  'vault-shares-unavailable',
+  'idle-token-unavailable',
+  'base-read-unavailable',
+  'base-execution-failed',
+  'base-reported-amount-rejected',
+  'base-child-invalid',
+  'base-child-conflict',
+  'base-inflight-unaccounted',
+])
+
+// Review round 1, finding 8: a real, catalog-backed pool name for a Base leg's identity, so the
+// renderer can show WHICH pool a leg belongs to instead of two visually identical rows.
+function poolNameFor(poolAddress) {
+  const cat = BASE_POOL_CATALOG.find(
+    (p) => p.address.toLowerCase() === String(poolAddress ?? '').toLowerCase()
+  )
+  return cat?.name ?? null
+}
+
+// Review round 1, finding 6: derives a leg's coverage reason from the SIGNAL that actually caused
+// it, instead of the old `live ? null : 'stale'` ternary (which mislabeled every in-flight group
+// and every failed live-re-read as 'stale'). 'stale' is reserved for R2's own meaning — the
+// association RECORD itself hasn't been updated recently (`child.freshness`) — never conflated
+// with a read failure or an ordinary in-flight bridge.
+function coverageReasonFor({ units, groupProblems, groupChildren }) {
+  if (units == null) return 'unavailable'
+  if (
+    groupProblems.includes('base-read-unavailable') ||
+    groupProblems.includes('base-inflight-unaccounted')
+  )
+    return 'unavailable'
+  if (groupChildren.some((c) => c.freshness === 'stale')) return 'stale'
+  return null
+}
+
 async function readOneAgentMoney({
   row,
   readVaultShares,
@@ -340,11 +400,7 @@ async function readOneAgentMoney({
       const groupChildren = normalized.children.filter((c) =>
         group.childAllocationIds.includes(c.allocationId)
       )
-      const {
-        units,
-        problems: groupProblems,
-        live,
-      } = valueBaseGroup({
+      const { units, problems: groupProblems } = valueBaseGroup({
         group,
         children: groupChildren,
         baseAccountsMap,
@@ -356,7 +412,9 @@ async function readOneAgentMoney({
         amount: units != null ? amountOf(units) : null,
         kernelAddress: group.kernelAddress,
         poolAddress: group.poolAddress,
-        coverageReason: units == null ? 'unavailable' : live ? null : 'stale',
+        asset: group.asset,
+        poolName: poolNameFor(group.poolAddress),
+        coverageReason: coverageReasonFor({ units, groupProblems, groupChildren }),
       })
       if (units != null) {
         anyGroupKnown = true
@@ -409,6 +467,8 @@ async function readOneAgentMoney({
             ...entry,
             kernelAddress: leg.kernelAddress,
             poolAddress: leg.poolAddress,
+            asset: leg.asset,
+            poolName: leg.poolName,
             coverageReason: leg.coverageReason,
           }
         : entry
@@ -428,6 +488,8 @@ async function readOneAgentMoney({
           amount: leg.amount,
           kernelAddress: leg.kernelAddress,
           poolAddress: leg.poolAddress,
+          asset: leg.asset,
+          poolName: leg.poolName,
           coverageReason: leg.coverageReason,
         })
       }
@@ -462,7 +524,10 @@ async function readOneAgentMoney({
  *   (`GET /status/:jobId`'s `associationDelivery.events[].status==='dead'`) is not wired through
  *   any UI-facing code path today (crossChainFarm.js's runFarmFlow drops it -- see
  *   task-10-interface-notes.md's Known Hazards table); a caller that DOES have it can pass it here.
- *   Its absence never upgrades `associationCoverage` — it simply cannot detect dead-letter without it.
+ *   Its absence never upgrades `associationCoverage`: per R2's constraint 1, an owner with at
+ *   least one Base child and no supplied `associationDelivery` reads `associationCoverage:
+ *   {state:'unknown', reasons:['unavailable']}` (fail closed) until a caller actually wires this
+ *   through — not `'complete'` merely because nothing contradicted it.
  * @returns {Promise<{status:'complete'|'partial'|'unavailable', owner:string|null,
  *   networkId:string|null, checkedAt:number, agents:Array, baseBindingStatus:string,
  *   baseIdle:Array<{kernelAddress:string, state:'known'|'unavailable', amount:object|null,
@@ -558,10 +623,16 @@ export async function readOwnerMoney({
   // double-counting shared kernel idle balances above. ---
   const allBaseChildren = rows.flatMap((row) => row.baseChildren ?? [])
   const ownerNormalized = normalizeBaseChildren(allBaseChildren)
-  // "Absence of evidence never upgrades coverage": a row missing the baseChildren FIELD entirely
-  // (as opposed to a legitimate, positively-confirmed empty array) means the source itself could
-  // not be read for that agent.
-  const sourceUnknown = rows.some((row) => row.baseChildren == null)
+  // Review round 1, finding 2 (Critical, fixed): no producer in this tree ever emits
+  // `baseChildren` as null/missing — `joinBaseAssociations` (associations.js) and
+  // `ownerDiscovery.js`'s `placeholderApiFields` both always stamp `[]`, including the exact
+  // "genuinely unavailable, never indexed" case. Testing for a shape nothing ever produces was a
+  // dead branch that always read `false`, so an unreadable Base source silently passed as
+  // positively-confirmed-empty. The one real, always-present signal for "did we get a complete
+  // enumeration of this owner's agents (and therefore their Base children)" is the envelope's own
+  // `status` — anything short of 'complete' means some agent, and therefore possibly its Base
+  // children, may be missing from `rows` entirely. Fail closed on that instead.
+  const sourceUnknown = discovery?.status !== 'complete'
 
   const stellarSubtotalUnits = agents.reduce(
     (sum, a) => sum + knownLegUnits(a.vaultShares) + knownLegUnits(a.idleToken),
@@ -575,29 +646,50 @@ export async function readOwnerMoney({
   let terminalGroupsLive = 0
   let baseSubtotalUnits = 0n
   let anyGroupUnknown = false
+  // Review round 1, finding 4 (Important, fixed): the old loop kept only `{units, live}`,
+  // discarding `valueBaseGroup`'s own `problems` — so a group could carry a
+  // READ_INCOMPLETE_PROBLEMS marker (e.g. a failed sibling, an unaccounted in-flight sibling) and
+  // still count as fully complete here, while `aggregateOwnerPositions` downgraded to 'partial' on
+  // the IDENTICAL evidence. Any such marker on any group now clears completeness.
+  let anyGroupIncomplete = false
   for (const group of ownerNormalized.groups) {
     const groupChildren = ownerNormalized.children.filter((c) =>
       group.childAllocationIds.includes(c.allocationId)
     )
-    const { units, live } = valueBaseGroup({ group, children: groupChildren, baseAccountsMap })
+    const {
+      units,
+      live,
+      problems: groupProblems,
+    } = valueBaseGroup({ group, children: groupChildren, baseAccountsMap })
     if (group.hasTerminal) {
       terminalGroupsTotal += 1
       if (live) terminalGroupsLive += 1
     }
     if (units != null) baseSubtotalUnits += units
     else anyGroupUnknown = true
+    if (groupProblems.some((p) => READ_INCOMPLETE_PROBLEMS.has(p))) anyGroupIncomplete = true
   }
 
   const hasTaintedEvidence =
     ownerNormalized.invalid.length > 0 || ownerNormalized.conflicts.length > 0
   const hasStaleAssociation = ownerNormalized.children.some((c) => c.freshness === 'stale')
   const hasDeadLetter = (associationDelivery?.events ?? []).some((e) => e?.status === 'dead')
+  const hasChildren = ownerNormalized.children.length > 0
+  const deliveryEvidenceSupplied = associationDelivery != null
 
   let associationState = 'complete'
   const associationReasons = []
   if (sourceUnknown || (ownerNormalized.children.length === 0 && hasTaintedEvidence)) {
     // The source itself couldn't be read, or every reported child was untrustworthy — nothing
     // usable survived to reason about.
+    associationState = 'unknown'
+    associationReasons.push('unavailable')
+  } else if (hasChildren && !deliveryEvidenceSupplied) {
+    // Review round 1, finding 3 (Important, fixed): R2's hard constraint 1 — "not being handed
+    // delivery evidence must never produce 'complete'. Fail closed." — is stricter than the plain
+    // per-signal mapping below. An owner with zero children still stays 'complete' (nothing was
+    // ever expected here); an owner with at least one child but no supplied delivery evidence
+    // cannot claim complete delivery coverage on a signal it never observed.
     associationState = 'unknown'
     associationReasons.push('unavailable')
   } else {
@@ -617,12 +709,18 @@ export async function readOwnerMoney({
   const associationCoverage = { state: associationState, reasons: associationReasons }
   const baseSourceCoverage = { state: sourceUnknown ? 'unknown' : 'complete' }
 
+  // Review round 1, finding 4's second bullet (fixed): an all-failed group has no terminal child
+  // (hasTerminal stays false), so it never touched terminalGroupsTotal/Live at all — the old
+  // `terminalGroupsTotal === 0 -> 'complete'` branch silently called that "complete" even though
+  // its own value is unknown. `anyGroupUnknown` now gates the zero-terminal-groups case too.
   const basePositionState =
-    terminalGroupsTotal === 0 || terminalGroupsLive === terminalGroupsTotal
-      ? 'complete'
-      : terminalGroupsLive === 0
+    terminalGroupsTotal > 0 && terminalGroupsLive < terminalGroupsTotal
+      ? terminalGroupsLive === 0
         ? 'unknown'
         : 'partial'
+      : anyGroupUnknown
+        ? 'unknown'
+        : 'complete'
   const basePositionCoverage = {
     state: basePositionState,
     reasons: basePositionState === 'complete' ? [] : ['unavailable'],
@@ -630,6 +728,7 @@ export async function readOwnerMoney({
 
   const baseFullyComplete =
     !anyGroupUnknown &&
+    !anyGroupIncomplete &&
     associationState === 'complete' &&
     basePositionState === 'complete' &&
     baseSourceCoverage.state === 'complete'
@@ -658,30 +757,6 @@ export async function readOwnerMoney({
     basePositionCoverage,
   }
 }
-
-/**
- * Pure aggregate over a readOwnerMoney() envelope. `confirmedTotal.state` can never read 'known'
- * unless BOTH the discovery envelope was 'complete' AND every enumerated agent's amount was
- * itself known — an incomplete agent set or any single unread agent downgrades to 'partial' (the
- * best-known sum still ships, just honestly labeled), and a wholly unavailable discovery reports
- * `amount: null` rather than a deceptive $0.
- * @param {{status:string, agents:Array, stellarYield?:object}} reads readOwnerMoney()'s envelope
- */
-// Fix loop 1, Fixes 2 & 3: a per-agent `amount` can be non-null yet still be incomplete evidence
-// — a stale Base figure kept only because the live read couldn't run, or the Stellar-only
-// remainder of a Base leg that outright failed. These problem markers say the underlying READ was
-// incomplete, which is a different axis from scope-revoked/scope-expired (a fully-known balance
-// that simply can't move right now — see the "revoked-but-funded" product truth) and must not be
-// conflated with it.
-const READ_INCOMPLETE_PROBLEMS = new Set([
-  'vault-shares-unavailable',
-  'idle-token-unavailable',
-  'base-read-unavailable',
-  'base-execution-failed',
-  'base-reported-amount-rejected',
-  'base-child-invalid',
-  'base-child-conflict',
-])
 
 export function aggregateOwnerPositions(reads) {
   const agents = reads?.agents ?? []

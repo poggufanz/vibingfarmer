@@ -63,10 +63,26 @@ const COVERAGE_REASON_COPY = {
 // 'base-proxy'|'unknown'. Every branch below is a real, reachable custody.js output -- nothing
 // invented.
 function legDisplay(location, amount, keySuffix, identity = {}) {
-  const { kernelAddress = '', poolAddress = '', coverageReason = null } = identity
-  // kernelAddress/poolAddress make the key unique per real on-chain position, not just per
-  // location string -- two Base children on one agent in different pools used to collide here.
-  const key = `${keySuffix}:${location}:${kernelAddress}:${poolAddress}`
+  const {
+    kernelAddress = '',
+    poolAddress = '',
+    asset = '',
+    poolName = null,
+    coverageReason = null,
+  } = identity
+  // Review round 1, finding 7: `asset` joins kernelAddress/poolAddress in the key -- the grouping
+  // layer (baseChildPositions.js's groupKeyFor) explicitly allows two groups to share the same
+  // kernel+pool while differing only by asset (the brief's own "same vault with distinct asset"
+  // case), which the OLD two-field key collided on.
+  const key = `${keySuffix}:${location}:${kernelAddress}:${poolAddress}:${asset}`
+  // Review round 1, finding 8: identity reaching the React key fixes React's reconciliation, not
+  // the USER's ability to tell two Base positions apart -- render it too. Only meaningful for legs
+  // that actually carry a real on-chain position identity (Base/in-transit legs); a Stellar leg's
+  // own label is already its full identity.
+  const identityLabel =
+    kernelAddress && poolAddress
+      ? `${poolName ?? shortAddress(poolAddress)} · ${shortAddress(kernelAddress)}`
+      : null
   if (location === 'stellar-vault') {
     return {
       key,
@@ -75,6 +91,7 @@ function legDisplay(location, amount, keySuffix, identity = {}) {
       amount,
       networkId: 'stellar-testnet',
       coverageReason,
+      identityLabel: null,
     }
   }
   if (location === 'agent') {
@@ -85,6 +102,7 @@ function legDisplay(location, amount, keySuffix, identity = {}) {
       amount,
       networkId: 'stellar-testnet',
       coverageReason,
+      identityLabel: null,
     }
   }
   if (location === 'base-proxy') {
@@ -99,12 +117,13 @@ function legDisplay(location, amount, keySuffix, identity = {}) {
       amount,
       networkId: 'base-sepolia',
       coverageReason,
+      identityLabel,
     }
   }
   if (location === 'in-transit') {
     // Genuinely between chains and we don't know which CCTP phase -- NetworkIdentity.jsx's own
     // 'unknown' transit copy ("Bridge status unknown") is the honest label; never guess a phase.
-    return { key, kind: 'in-transit', label: null, amount, coverageReason }
+    return { key, kind: 'in-transit', label: null, amount, coverageReason, identityLabel }
   }
   // 'owner' / 'unknown': custody.js never returns these for a real, known-positive amount in
   // practice (see this file's header) but a defensive, honest fallback beats a silent drop.
@@ -115,6 +134,7 @@ function legDisplay(location, amount, keySuffix, identity = {}) {
     amount,
     networkId: 'stellar-testnet',
     coverageReason,
+    identityLabel: null,
   }
 }
 
@@ -127,6 +147,8 @@ function positionRowFor(agent) {
           legDisplay(leg.location, leg.amount, agent.address, {
             kernelAddress: leg.kernelAddress,
             poolAddress: leg.poolAddress,
+            asset: leg.asset,
+            poolName: leg.poolName,
             coverageReason: leg.coverageReason,
           })
         )
@@ -207,6 +229,9 @@ export function PositionList({ agents = [], unattributed = {} }) {
                             transitState: 'unknown',
                           }}
                         />
+                      )}
+                      {leg.identityLabel && (
+                        <p className="pc-position-leg-identity">{leg.identityLabel}</p>
                       )}
                       <MoneyFigure
                         state="current"

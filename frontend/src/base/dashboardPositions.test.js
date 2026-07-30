@@ -91,9 +91,11 @@ describe('loadDeviceBasePositions', () => {
 
   it('returns [] on RPC failure (dashboard never crashes)', async () => {
     seedOwner(OWNER, '0xACC')
-    const readBasePositions = vi
-      .fn()
-      .mockResolvedValue({ status: 'unavailable', blockNumber: null, positions: [] })
+    // Review round 1, finding 13: a resolved {status:'unavailable'} exercises the CALLER'S own
+    // status-check branch, not the `.catch` at dashboardPositions.js's own call site -- a genuine
+    // rejection (a real client shape mismatch, e.g. a viem version bump dropping getBlockNumber)
+    // is the actual production failure mode this file's "Never throws" header promise covers.
+    const readBasePositions = vi.fn().mockRejectedValue(new Error('rpc down'))
     expect(
       await loadDeviceBasePositions({
         stellarOwner: OWNER,
@@ -209,10 +211,29 @@ describe('loadIndexedBasePositions', () => {
     expect(out.accounts).toEqual([{ kernelAddress: '0xkernel', positions: [], idleUsdc: 0n }])
   })
 
-  it('reports unavailable when the shared block/position read fails outright, never a bare []', async () => {
+  it('reports unavailable when the shared block/position read resolves unavailable, never a bare []', async () => {
     const readBasePositions = vi
       .fn()
       .mockResolvedValue({ status: 'unavailable', blockNumber: null, positions: [] })
+    const readIdleUsdc = vi.fn().mockResolvedValue(0n)
+    const out = await loadIndexedBasePositions({
+      indexedBaseAccounts: ['0xA', '0xB'],
+      deps: { readBasePositions, readIdleUsdc, makePublicClient: () => ({}) },
+    })
+    expect(out).toEqual({
+      status: 'unavailable',
+      accounts: [],
+      failedAccounts: ['0xa', '0xb'],
+      localKernelAddress: null,
+    })
+  })
+
+  // Review round 1, finding 13: nothing in the suite exercised the `.catch` at
+  // dashboardPositions.js's own `readBasePositions({...}).catch(...)` call site -- deleting it
+  // left every test green because they all injected a RESOLVED unavailable status instead of a
+  // genuine rejection.
+  it('reports unavailable (never throws) when readBasePositions itself rejects', async () => {
+    const readBasePositions = vi.fn().mockRejectedValue(new Error('rpc down'))
     const readIdleUsdc = vi.fn().mockResolvedValue(0n)
     const out = await loadIndexedBasePositions({
       indexedBaseAccounts: ['0xA', '0xB'],
