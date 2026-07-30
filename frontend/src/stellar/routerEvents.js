@@ -65,8 +65,20 @@ export function decodeGrantedV3Event(rec) {
     const owner = fromScVal(rec.topic[1])
     const permissionId = fromScVal(rec.topic[2])
     const data = fromScVal(rec.value) ?? {}
-    const { token, mandate_ceiling: mandateCeiling, per_run_max: perRunMax, live_until_ledger: liveUntilLedger, agents } = data
-    if (!token || mandateCeiling == null || perRunMax == null || liveUntilLedger == null || agents == null) {
+    const {
+      token,
+      mandate_ceiling: mandateCeiling,
+      per_run_max: perRunMax,
+      live_until_ledger: liveUntilLedger,
+      agents,
+    } = data
+    if (
+      !token ||
+      mandateCeiling == null ||
+      perRunMax == null ||
+      liveUntilLedger == null ||
+      agents == null
+    ) {
       return null
     }
     return {
