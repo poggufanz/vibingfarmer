@@ -795,6 +795,23 @@ export function aggregateOwnerPositions(reads) {
   }
 
   const state = status === 'unavailable' ? 'unavailable' : anyUnread ? 'partial' : 'known'
+
+  // Final review, Fix 1 (CRITICAL): a Base kernel+pool shared by more than one agent (several
+  // bridge agents legitimately sharing one kernel -- see this file's own header) folds its WHOLE
+  // live balance into EVERY agent that independently reports a child pointing at it, so summing
+  // agents[].amount double(N)-counts every shared group. readOwnerMoney already computes the
+  // correct, owner-wide-deduped total for exactly this reason -- stellarSubtotalUnits sums each
+  // agent's OWN legs (never shared across agents, so no dedup needed there) and baseSubtotalUnits
+  // sums each owner-wide GROUP exactly once (:637-671) -- use that when the caller supplies it
+  // (every real readOwnerMoney() result does). `knownUnits` (the old per-agent sum, still used
+  // above for `anyUnread`/custodyBreakdown/state) stays the fallback for callers/tests that hand
+  // this function a bare {status, agents} fixture without those fields; `state` itself is entirely
+  // unaffected by this substitution.
+  const dedupedUnits =
+    reads?.stellarSubtotalUnits != null && reads?.baseSubtotalUnits != null
+      ? reads.stellarSubtotalUnits + reads.baseSubtotalUnits
+      : knownUnits
+
   const hasVaultCustody = agents.some(hasKnownVaultLeg)
   // Fix loop 1, Fix 7: 'no yield' is a positive claim that no vault money exists anywhere for
   // this owner — it can only be asserted once the total itself is fully known. A 'partial' or
@@ -823,7 +840,7 @@ export function aggregateOwnerPositions(reads) {
     status,
     confirmedTotal: {
       state,
-      amount: state === 'unavailable' ? null : amountOf(knownUnits),
+      amount: state === 'unavailable' ? null : amountOf(dedupedUnits),
     },
     // Base Sepolia pools are honest ERC-4626 1:1 custody proxies, not live yield venues — never
     // attribute Autofarm/Blend's live APR to confirmed money that is entirely Base custody.

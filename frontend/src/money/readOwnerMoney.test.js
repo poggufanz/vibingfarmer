@@ -1654,12 +1654,17 @@ describe('readOwnerMoney — Task 10 owner-wide subtotals and coverage', () => {
 
   // Review round 1, finding 10: no test in the suite gave two AGENTS Base children, so neither the
   // per-agent double-count nor the owner-wide dedupe meant to be its mitigation was ever verified.
-  // This pins BOTH facts explicitly: the NEW owner-wide totals dedupe correctly (this task's own
-  // deliverable), while the LEGACY per-agent `amount` -- which `aggregateOwnerPositions` sums into
-  // `confirmedTotal`, MoneyHero's headline figure -- still double-counts a kernel+pool shared by
-  // two agents. That per-agent gap is a pre-existing, documented ceiling (see task-10-report.md's
-  // "Issues and concerns" #1), not something this test claims is fixed.
-  it('two agents sharing one kernel+pool: owner-wide totals dedupe the shared group once; per-agent amount still double-counts it (documented ceiling)', async () => {
+  // Final review, Fix 1 (2026-07-30): the double-count reached the headline figure --
+  // `aggregateOwnerPositions` used to sum agents[].amount directly into `confirmedTotal`
+  // (MoneyHero's headline / CrewRoute's crew total), so this exact two-bridge-agents/one-kernel
+  // case reported 10,000,000 units -- double the real 5,000,000 units of on-chain money -- and
+  // called it 'known'. Fixed by sourcing `confirmedTotal` from the owner-wide, already-deduped
+  // `stellarSubtotalUnits + baseSubtotalUnits` instead. This pins BOTH facts: the owner-wide totals
+  // dedupe correctly (asserted below), and the AGGREGATE built from them now matches that dedupe --
+  // while each agent's own per-agent `amount` still legitimately carries the WHOLE group's value
+  // (a separate, intentional display property for the per-agent leg breakdown, not the headline
+  // total -- see readOneAgentMoney's baseLegs).
+  it('two agents sharing one kernel+pool: owner-wide totals AND the aggregate dedupe the shared group once; per-agent amount still individually carries the whole group value', async () => {
     const rows = [
       agentRow({
         address: 'CSHAREA',
@@ -1704,13 +1709,16 @@ describe('readOwnerMoney — Task 10 owner-wide subtotals and coverage', () => {
     // NEW, deduped owner-wide totals: the shared group is counted exactly once.
     expect(result.baseSubtotalUnits).toBe(5_000_000n)
     expect(result.completeBaseTotalUnits).toBe(5_000_000n)
-    // LEGACY per-agent amount: each agent independently folds in the WHOLE group value, so their
-    // sum is double the real money. Pinned explicitly so nobody mistakes this for correct.
+    // Per-agent `amount`: each agent still independently folds in the WHOLE group value -- this is
+    // a legitimately-documented display property of the per-agent leg (readOneAgentMoney's
+    // baseLegs), not a bug in itself; it is simply not what the aggregate below is built from.
     const [a, b] = result.agents
     expect(a.amount).toEqual({ token: 'USDC', units: '5000000', decimals: 7 })
     expect(b.amount).toEqual({ token: 'USDC', units: '5000000', decimals: 7 })
+    // The AGGREGATE (MoneyHero's headline figure / CrewRoute's crew total) no longer double-counts:
+    // it matches the real 5,000,000 units of on-chain money, not the per-agent sum's 10,000,000.
     const agg = aggregateOwnerPositions(result)
-    expect(agg.confirmedTotal.amount).toEqual({ token: 'USDC', units: '10000000', decimals: 7 })
+    expect(agg.confirmedTotal.amount).toEqual({ token: 'USDC', units: '5000000', decimals: 7 })
   })
 })
 
