@@ -706,6 +706,40 @@ export function hasLiveScopeForVault(rows, vaultAddress) {
   )
 }
 
+// Task 5 chunk C -- compose the final permissionDecision. `proveReusablePermission`'s own return
+// (`raw.version === 3`) carries NONE of `planFingerprint`/`reviewedBudgets`/`reviewedAgentInits`
+// (see permissionGrantV3.js's base object) -- but `dispatchPermissioned`'s entry checks
+// (`assertPermissionMatchesPlan` + the canonical reviewed-budget check, orchestrator.js, both
+// unconditional on mode) require all three on EVERY permissionDecision or throw
+// `VF_PLAN_FINGERPRINT_MISMATCH` before any dispatch code runs. This merges the SAME
+// `planFingerprint`/`reviewedBudgets`/`agentInits` `onRetryPreflight` already built to CALL
+// `preflightPermission` onto its result -- mirroring exactly what reusePreflight.js's own
+// (V2-only) `baseDecision` already assembles internally from the same three inputs. `agentInits`
+// (`planAgentToAgentInit`'s own shape: allocationId, kind, token, target, cap{token,units,decimals},
+// periodSeconds, expiry, plus mintRecipient/destinationDomain) already matches what
+// `assertPermissionMatchesPlan` structurally checks a `reviewedAgentInits[i]` against -- no
+// separate projection needed, and unlike V2's own `reviewedAgentInits` this carries no
+// signer/salt material to leak (V3's agentInits never had any to begin with). Identity return for
+// a V2 decision (`raw.version !== 3`): reusePreflight.js already carries all three there, so this
+// is a no-op on that path.
+// Inert under dormancy: `preflightPermission`'s default `resolveSchema` (`resolveRouterSchema`)
+// resolves no V3 address today, so `raw.version` is never 3 in production -- this is forward
+// wiring for the day a V3 router is registered, not a reachable path now.
+// `checkedAt` mirrors V2's own `baseDecision.checkedAt` (reusePreflight.js's `nowSec`) -- the
+// prover carries no timestamp of its own, and ProtectStage's V3 review renders an "As of"
+// freshness stamp exactly like V2's does. Captured at the moment this check resolves, the same
+// point V2's own timestamp is taken.
+export function composeV3Decision(raw, { plan, reviewedBudgets, agentInits }) {
+  if (raw.version !== 3) return raw
+  return {
+    ...raw,
+    planFingerprint: plan.planFingerprint,
+    reviewedBudgets,
+    reviewedAgentInits: agentInits,
+    checkedAt: Math.floor(Date.now() / 1000),
+  }
+}
+
 /* ---------- App ---------- */
 const App = () => {
   const devMode = isDevMode()
@@ -2935,6 +2969,7 @@ const App = () => {
     const baseKernel = bridgeAgent ? baseView.mandateView?.kernelAddress : null
     const agentInits = plan.agents.map((a) => planAgentToAgentInit(a, baseKernel))
     const reviewedBudgets = planReviewedBudgets(plan.agents)
+    const captured = activeAccount
     try {
       const raw = await preflightPermission({
         runId: plan.runId,
@@ -2943,40 +2978,10 @@ const App = () => {
         agentInits,
         reviewedBudgets,
         durationSeconds,
+        activeAccount: captured,
+        getCurrentActiveAccount: () => activeAccountRef.current,
       })
-      // Task 5 chunk C -- compose the final permissionDecision. `proveReusablePermission`'s own
-      // return (`raw.version === 3`) carries NONE of `planFingerprint`/`reviewedBudgets`/
-      // `reviewedAgentInits` (see permissionGrantV3.js's base object) -- but
-      // `dispatchPermissioned`'s entry checks (`assertPermissionMatchesPlan` + the canonical
-      // reviewed-budget check, orchestrator.js, both unconditional on mode) require all three on
-      // EVERY permissionDecision or throw `VF_PLAN_FINGERPRINT_MISMATCH` before any dispatch code
-      // runs. This merges the SAME `planFingerprint`/`reviewedBudgets`/`agentInits` this function
-      // already built to CALL `preflightPermission` onto its result -- mirroring exactly what
-      // reusePreflight.js's own (V2-only) `baseDecision` already assembles internally from the
-      // same three inputs. `agentInits` (`planAgentToAgentInit`'s own shape: allocationId, kind,
-      // token, target, cap{token,units,decimals}, periodSeconds, expiry, plus mintRecipient/
-      // destinationDomain) already matches what `assertPermissionMatchesPlan` structurally checks
-      // a `reviewedAgentInits[i]` against -- no separate projection needed, and unlike V2's own
-      // `reviewedAgentInits` this carries no signer/salt material to leak (V3's agentInits never
-      // had any to begin with). Left byte-identical for V2 (`raw.version !== 3`): reusePreflight.js
-      // already carries all three there, so this branch never touches it.
-      // Inert under dormancy: `preflightPermission`'s default `resolveSchema` (`resolveRouterSchema`)
-      // resolves no V3 address today, so `raw.version` is never 3 in production -- this is forward
-      // wiring for the day a V3 router is registered, not a reachable path now.
-      // Fix round 1, Minor 2 (reviewer finding): `checkedAt` mirrors V2's own `baseDecision.checkedAt`
-      // (reusePreflight.js's `nowSec`) -- the prover carries no timestamp of its own, and
-      // ProtectStage's V3 review renders an "As of" freshness stamp exactly like V2's does.
-      // Captured at the moment this check resolves, the same point V2's own timestamp is taken.
-      const composed =
-        raw.version === 3
-          ? {
-              ...raw,
-              planFingerprint: plan.planFingerprint,
-              reviewedBudgets,
-              reviewedAgentInits: agentInits,
-              checkedAt: Math.floor(Date.now() / 1000),
-            }
-          : raw
+      const composed = composeV3Decision(raw, { plan, reviewedBudgets, agentInits })
       const decision = toPermissionDecisionView(composed)
       dispatchFlow({ type: 'PREFLIGHT_READY', decision })
       return decision

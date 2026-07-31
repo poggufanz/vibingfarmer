@@ -245,12 +245,13 @@ export async function proveReusablePermission({
   if (agentInits.some((a) => Number(a.kind) === AGENT_KIND_BRIDGE))
     return freshDecision(base, 'base-required')
 
-  // 3. The reviewing account must still be the acting account.
-  if (activeAccount?.version === 1) {
-    const current = typeof getCurrentActiveAccount === 'function' ? getCurrentActiveAccount() : null
-    if (!sameActiveAccount(activeAccount, current)) return freshDecision(base, 'account-stale')
-    if (activeAccount.address !== owner) return freshDecision(base, 'account-stale')
-  }
+  // 3. The reviewing account must still be the acting account. Fail CLOSED, not open, mirroring
+  // the `currentLedger` expiry gate below: no `activeAccount` at all, or any record that is not a
+  // recognized V1 active-account shape, must force fresh rather than silently skip this check.
+  if (activeAccount?.version !== 1) return freshDecision(base, 'account-stale')
+  const current = typeof getCurrentActiveAccount === 'function' ? getCurrentActiveAccount() : null
+  if (!sameActiveAccount(activeAccount, current)) return freshDecision(base, 'account-stale')
+  if (activeAccount.address !== owner) return freshDecision(base, 'account-stale')
 
   // 4. The permission record itself.
   const grant = await readPermissionGrant({ router, permissionId, server })

@@ -34,6 +34,7 @@ const ROUTER = 'CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE'
 const VAULT = 'CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77'
 const TOKEN = 'CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU'
 const AGENT_1 = 'CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC'
+const AGENT_2 = 'CDGDIPHBN3MSNURDX33IZBXXQTJPT7THAXSMVBAIOIXLOA6OF32IRS2J'
 const SECRET = 'SDNJDG6MB2WNZ2VVK5FIHCMPHR7DUGRC6L4LNXGY26YZ6TBRVR23Z2DZ' // realistic-looking secret shape
 const SIGNER_PUB = 'GA2CMBS3LRY5MH64KKMHOYVA6WTLPMKRMIWEJDOIGHYPB7WMC3QHRCBU'
 const NOW = 1_800_000_000
@@ -358,6 +359,60 @@ describe('fresh reasons - per-agent scope validation (ALL-OR-NOTHING)', () => {
     )
     expect(out.mode).toBe('fresh')
     expect(out.freshReason).toBe('agent-missing')
+  })
+})
+
+describe('selectAgents canonicalizes candidate order (finding 3, live V2 path)', () => {
+  test('the SAME candidate set in two different read orders binds identically', async () => {
+    const alloc0 = agentInit({ allocationId: 'run-1:deposit:0' })
+    const alloc1 = agentInit({ allocationId: 'run-1:deposit:1' })
+    const rowFor = (address) => ({
+      ...cachedRow({ agentAddress: address }),
+      signer: signerBytesForPub(),
+    })
+    const rowA = rowFor(AGENT_1)
+    const rowB = rowFor(AGENT_2)
+
+    const sharedOverrides = {
+      agentInits: [alloc0, alloc1],
+      loadReceipt: vi.fn(() =>
+        receipt({
+          agentInitFingerprint: fingerprintAgentInits([alloc0, alloc1]),
+          allowanceBudgets: [{ token: TOKEN, units: '200000000', decimals: 7 }],
+        })
+      ),
+      proveAllowance: vi.fn(async () => ({
+        proven: true,
+        reason: null,
+        proof: provenProof({
+          approvals: [
+            {
+              amount: { token: TOKEN, units: '200000000', decimals: 7 },
+              expiryLedger: NOW + 7200,
+              ledger: 1000,
+              txHash: 'H',
+              eventIndex: 0,
+            },
+          ],
+        }),
+      })),
+    }
+
+    const mapping = (out) =>
+      Object.fromEntries(out.agents.map((a) => [a.allocationId, a.agentAddress]))
+
+    const forward = await preflightPermission(
+      baseDeps({ ...sharedOverrides, inspectAgents: vi.fn(async () => [rowA, rowB]) })
+    )
+    const reversed = await preflightPermission(
+      baseDeps({ ...sharedOverrides, inspectAgents: vi.fn(async () => [rowB, rowA]) })
+    )
+
+    expect(forward.mode).toBe('reuse')
+    expect(reversed.mode).toBe('reuse')
+    // The assertion IS the mapping, not merely that both succeeded -- a reordered chain read must
+    // never reassign which agent serves which allocation.
+    expect(mapping(reversed)).toEqual(mapping(forward))
   })
 })
 

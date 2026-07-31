@@ -110,9 +110,14 @@ vi.mock('./stellar/ownerDiscovery.js', () => ({
   }),
 }))
 
-import App, { createActiveAccountEpochStore, createEpochBoundRun } from './app.jsx'
+import App, {
+  createActiveAccountEpochStore,
+  createEpochBoundRun,
+  composeV3Decision,
+} from './app.jsx'
 import { bindBaseLegCustodyDeps, reconcileBaseLegEpochCustody } from './orchestrator.js'
 import { normalizeStrategyPlan } from './strategy/planModel.js'
+import { preflightPermission } from './strategy/reusePreflight.js'
 
 const G = Object.freeze({
   version: 1,
@@ -360,5 +365,94 @@ describe('active account application state', () => {
       hasReceipt: false,
       owner: G.address,
     })
+  })
+
+  // Finding 2 (final whole-branch review): app.jsx's `onRetryPreflight` used to call
+  // `preflightPermission` with no `activeAccount`/`getCurrentActiveAccount` at all, so the
+  // INITIAL V3 review had no account binding -- only `orchestrator.revalidateReuse` supplied one.
+  // Mirrors the existing wiring every other activeAccount-scoped app.jsx call site already uses
+  // (`handleConfirmFullExit`, `handleConfirmPartialExit`, `handleConfirmRevoke`, etc.).
+  it('binds the initial preflight review to the captured active account', async () => {
+    render(
+      <MemoryRouter
+        initialEntries={['/strategy']}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
+        <App />
+      </MemoryRouter>
+    )
+    await waitFor(() => expect(mountedState().owner).toBe(G.address))
+
+    const plan = normalizeStrategyPlan({
+      runId: 'run-account-binding',
+      risk: 'low',
+      stellarUnits: 100_000_000n,
+    })
+    await act(async () => {
+      mountedHarness.routeProps.onAcceptPlan({ plan, fingerprint: 'PLAN-ACCOUNT-BINDING' })
+    })
+    await waitFor(() => expect(mountedState().stage).toBe('protect'))
+
+    await act(async () => {
+      await mountedHarness.routeProps.protectProps.onRetryPreflight({ durationSeconds: 3600 })
+    })
+
+    expect(preflightPermission).toHaveBeenCalledWith(
+      expect.objectContaining({
+        activeAccount: G,
+        getCurrentActiveAccount: expect.any(Function),
+      })
+    )
+    const call = preflightPermission.mock.calls.at(-1)[0]
+    expect(call.getCurrentActiveAccount()).toBe(G)
+  })
+})
+
+describe('composeV3Decision', () => {
+  const PLAN = Object.freeze({ planFingerprint: '0xplan-compose-test' })
+  const REVIEWED_BUDGETS = Object.freeze([{ token: 'CTOKEN', units: '100', decimals: 7 }])
+  const AGENT_INITS = Object.freeze([{ allocationId: 'run-1:deposit:0', kind: 0 }])
+
+  // This is the SOLE production producer of `planFingerprint`/`reviewedBudgets`/
+  // `reviewedAgentInits`/`checkedAt` on a V3 decision -- `proveReusablePermission`'s own return
+  // carries none of them (permissionGrantV3.js's `base` object), yet orchestrator.js's
+  // `assertPermissionMatchesPlan` and its reviewed-budget check require all three unconditionally.
+  it('merges plan/reviewedBudgets/agentInits onto a V3 decision', () => {
+    const raw = Object.freeze({
+      version: 3,
+      mode: 'reuse',
+      freshReason: null,
+      scopeId: '0x' + 'ab'.repeat(32),
+    })
+    const composed = composeV3Decision(raw, {
+      plan: PLAN,
+      reviewedBudgets: REVIEWED_BUDGETS,
+      agentInits: AGENT_INITS,
+    })
+    expect(composed).toMatchObject({
+      version: 3,
+      mode: 'reuse',
+      freshReason: null,
+      scopeId: raw.scopeId,
+      planFingerprint: PLAN.planFingerprint,
+      reviewedBudgets: REVIEWED_BUDGETS,
+      reviewedAgentInits: AGENT_INITS,
+    })
+    expect(Number.isInteger(composed.checkedAt)).toBe(true)
+  })
+
+  it('returns a V2 decision unchanged (identity, no merge)', () => {
+    const raw = Object.freeze({
+      version: 1,
+      mode: 'fresh',
+      planFingerprint: '0xalready-here',
+      reviewedBudgets: [{ token: 'CTOKEN', units: '1', decimals: 7 }],
+    })
+    const composed = composeV3Decision(raw, {
+      plan: PLAN,
+      reviewedBudgets: REVIEWED_BUDGETS,
+      agentInits: AGENT_INITS,
+    })
+    expect(composed).toBe(raw)
   })
 })

@@ -584,6 +584,25 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
     expect(decision.freshReason).toBe('account-stale')
   })
 
+  // Same fail-open class as the `currentLedger` expiry gate above (both hardened in this round):
+  // an absent `activeAccount`, or any record that is not a recognized V1 shape, must force fresh
+  // rather than silently skip the account-binding check entirely. Before this fix
+  // `if (activeAccount?.version === 1) {...}` skipped BOTH checks below it whenever the condition
+  // was false — including these two cases, which used to sail straight through to a genuine reuse.
+  test('no activeAccount at all forces fresh (fail-closed, not open)', async () => {
+    const decision = await proveReusablePermission(depsWithScope({ activeAccount: undefined }))
+    expect(decision.mode).toBe('fresh')
+    expect(decision.freshReason).toBe('account-stale')
+  })
+
+  test('a non-V1 active account record forces fresh rather than skipping the check', async () => {
+    const decision = await proveReusablePermission(
+      depsWithScope({ activeAccount: { ...activeAccount(), version: 2 } })
+    )
+    expect(decision.mode).toBe('fresh')
+    expect(decision.freshReason).toBe('account-stale')
+  })
+
   test('a missing permission record forces fresh', async () => {
     const decision = await proveReusablePermission(
       depsWithScope({ readPermissionGrant: vi.fn(async () => null) })

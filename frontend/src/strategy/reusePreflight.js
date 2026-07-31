@@ -336,14 +336,21 @@ function scopeStructurallyValid(row, agentInit, { owner, nowSec }) {
  * no candidates at all > an unread (null) scope > a structural mismatch > insufficient headroom —
  * "do we have anything" before "could we read it" before "is it the right shape" before "enough
  * left to spend."
+ *
+ * `candidatesByTarget`'s per-target list is not part of any contract — it is whatever order
+ * `inspectAgents` (a chain read) happened to return. Candidates are therefore canonicalized here
+ * (sorted by `agentAddress`, the same convention permissionGrantV3.js's V3 assignment uses) before
+ * the claim loop below runs, so which agent an allocation binds to is a pure function of the
+ * candidate SET, never of read order — a reordered re-read of the identical set can never
+ * reassign which agent serves which allocation.
  */
 function selectAgents(agentInits, candidatesByTarget, { owner, nowSec }) {
   const used = new Set()
   const agents = []
   for (const a of agentInits) {
-    const candidates = (candidatesByTarget.get(a.target) || []).filter(
-      (c) => !used.has(c.agentAddress)
-    )
+    const candidates = (candidatesByTarget.get(a.target) || [])
+      .filter((c) => !used.has(c.agentAddress))
+      .sort((x, y) => (x.agentAddress < y.agentAddress ? -1 : 1))
     if (candidates.length === 0) return { ok: false, reason: 'agent-missing' }
     if (candidates.some((c) => c.scope == null)) return { ok: false, reason: 'scope-unavailable' }
     const structural = candidates.filter((c) => scopeStructurallyValid(c, a, { owner, nowSec }))
