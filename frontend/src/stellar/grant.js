@@ -229,6 +229,153 @@ export async function buildGrantTx({
   }
 }
 
+// --- Router V3, bounded reusable permission (IQ Alter remediation Task 5) --------------------
+// DORMANT: `resolveRouterSchema` resolves version 3 for no address — no V3 router is deployed, and
+// routerSchema.js:47-54 forbids inventing one — so both builders below throw before touching the
+// network for every router that exists today. They become reachable the day a deployed V3 contract
+// id is registered in `ROUTER_SCHEMAS`. Nothing in the V2 path above changes.
+//
+// `routerSchema.js` imports this module's AGENT_KIND_* constants, so the resolver is pulled in
+// dynamically at call time rather than at module scope — same lazy-import shape as `sdk()` above.
+async function assertRouterV3(router, resolveSchema) {
+  const resolve = resolveSchema || (await import('./routerSchema.js')).resolveRouterSchema
+  if (resolve(router)?.version !== 3)
+    throw new Error('This funding router does not support bounded reusable permissions.')
+}
+
+/**
+ * Build the bounded `grant_v3` transaction from an ALREADY-REVIEWED approval.
+ *
+ * Unlike `buildGrantTx`, this does NOT read a ledger to derive an expiry: `approval.liveUntilLedger`
+ * was serialized once, from a fresh read, at review time (permissionGrantV3.buildReusableApproval)
+ * and recomputing it here would silently move the bound the user actually approved.
+ * @param {{owner:string, token:string, approval:{mandateCeilingUnits:string, liveUntilLedger:number},
+ *          perRunMaxUnits:string, agentInits:Array, router?:string, server?:object,
+ *          txSource?:string, resolveSchema?:Function}} p
+ * @returns {Promise<{tx:object, xdr:string, agentAddresses:string[], liveUntilLedger:number}>}
+ */
+export async function buildGrantV3Tx({
+  owner,
+  token,
+  approval,
+  perRunMaxUnits,
+  agentInits,
+  router = SOROBAN_FUNDING_ROUTER_ADDRESS,
+  server,
+  txSource = owner,
+  resolveSchema,
+}) {
+  if (!router) throw new Error('The funding router is not configured.')
+  await assertRouterV3(router, resolveSchema)
+  if (!agentInits || agentInits.length === 0)
+    throw new Error('The grant requires at least one agent.')
+  if (!approval || typeof approval.liveUntilLedger !== 'number')
+    throw new Error('grant_v3 requires a reviewed approval carrying an absolute liveUntilLedger.')
+
+  const s = server || (await rpcServer())
+  const { Contract, TransactionBuilder, BASE_FEE } = await sdk()
+
+  const agentsVec = xdr.ScVal.scvVec(
+    agentInits.map((a) =>
+      agentInitScVal({
+        signer: a.signer,
+        salt: a.salt || randomSalt(),
+        cap: a.cap,
+        token: a.token,
+        target: a.target,
+        kind: a.kind,
+        mintRecipient: a.mintRecipient,
+        destinationDomain: a.destinationDomain,
+        periodDuration: a.periodDuration,
+        expiry: a.expiry,
+      })
+    )
+  )
+
+  const account = await s.getAccount(txSource)
+  const raw = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: NETWORK_PASSPHRASE,
+  })
+    .addOperation(
+      new Contract(router).call(
+        'grant_v3',
+        addrScVal(owner),
+        addrScVal(token),
+        i128ScVal(BigInt(approval.mandateCeilingUnits)),
+        i128ScVal(BigInt(perRunMaxUnits)),
+        u32ScVal(approval.liveUntilLedger),
+        agentsVec
+      )
+    )
+    .setTimeout(TX_TIMEBOUND_SECONDS)
+    .build()
+
+  const sim = await s.simulateTransaction(raw)
+  if (sim.error || !sim.result)
+    throw new Error(`Grant simulation failed: ${sim.error || 'no result'}`)
+  const retval = fromScVal(sim.result.retval)
+  // grant_v3 returns (permission_id, agent_addresses).
+  const agentAddresses = Array.isArray(retval) ? retval[1] : retval
+
+  const tx = await s.prepareTransaction(raw)
+  return {
+    tx,
+    xdr: tx.toEnvelope().toXDR('base64'),
+    agentAddresses,
+    liveUntilLedger: approval.liveUntilLedger,
+  }
+}
+
+/**
+ * Build one agent-signed `pull_v3`. Same auth-entry shape as `buildAgentPull`, plus the permission
+ * and the DETERMINISTIC execution id that makes an indeterminate resubmission safe — the router
+ * rejects a replayed execution id, so recovery resends this exact envelope rather than rebuilding.
+ * @param {{permissionId:string, executionId:string, agentAddress:string, amount:bigint,
+ *          relayer:string, sessionKey:object, router?:string, server?:object,
+ *          resolveSchema?:Function}} p
+ * @returns {Promise<{xdr:string}>}
+ */
+export async function buildAgentPullV3({
+  permissionId,
+  executionId,
+  agentAddress,
+  amount,
+  relayer,
+  sessionKey,
+  router = SOROBAN_FUNDING_ROUTER_ADDRESS,
+  server,
+  resolveSchema,
+}) {
+  await assertRouterV3(router, resolveSchema)
+  const s = server || (await rpcServer())
+  const { tx } = await buildInvokeTx({
+    source: relayer,
+    contract: router,
+    method: 'pull_v3',
+    args: [
+      { bytes32: permissionId },
+      { bytes32: executionId },
+      { addr: agentAddress },
+      { i128: BigInt(amount) },
+    ],
+    server: s,
+  })
+  const latest = await s.getLatestLedger()
+  const { xdr: signedXdr } = await signAgentDepositEntries({
+    tx,
+    sessionKey,
+    validUntilLedger: latest.sequence + AUTH_TTL_LEDGERS,
+    agentAddress,
+    server: s,
+  })
+  const { TransactionBuilder } = await sdk()
+  const prepared = await s.prepareTransaction(
+    TransactionBuilder.fromXDR(signedXdr, NETWORK_PASSPHRASE)
+  )
+  return { xdr: prepared.toEnvelope().toXDR('base64') }
+}
+
 /**
  * Full single-signature grant: build → authorize (wallet-sign for G, passkey auth entry for C) →
  * submit, routed through OwnerAuthorizationV1 (ownerAuthorization.js). A G owner prefers the relay

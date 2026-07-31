@@ -41,6 +41,8 @@ import {
   readConfirmedLedger,
   buildAgentPull,
   runAgentPull,
+  buildGrantV3Tx,
+  buildAgentPullV3,
   revokeGrant,
   AGENT_KIND_DEPOSIT,
   AGENT_KIND_BRIDGE,
@@ -632,5 +634,173 @@ describe('runAgentPull', () => {
       submission: 'unknown',
       result: { hash: 'HPULL', status: 'SUCCESS' },
     })
+  })
+})
+
+// --- Router V3, bounded reusable permission (IQ Alter remediation Task 5) ---------------------
+
+// Shape-valid contract id standing in for a future deployed V3 router. Deliberately absent from
+// ROUTER_SCHEMAS, so the production resolver treats it exactly like every other live address.
+const ROUTER_V3 = 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC'
+const asV3 = () => ({ version: 3, tokenMode: 'reusable-permission' })
+const PERMISSION_ID = '0x' + '11'.repeat(32)
+const EXECUTION_ID = '0x' + '22'.repeat(32)
+const reviewedApproval = { mandateCeilingUnits: '100000000', liveUntilLedger: 1_412_345 }
+
+// grant_v3 returns (permission_id, agent_addresses).
+function grantV3Retval(addrs) {
+  return xdr.ScVal.scvVec([
+    nativeToScVal(Buffer.alloc(32, 0x11), { type: 'bytes' }),
+    agentsRetval(addrs),
+  ])
+}
+
+function invokeArgs(tx) {
+  return tx.operations[0].func.invokeContract().args()
+}
+
+describe('buildGrantV3Tx / buildAgentPullV3 — dormant until a V3 router is deployed', () => {
+  it('refuses every router that exists today, before touching the network', async () => {
+    const server = fakeServer({ latest: 1000, retval: grantV3Retval([AGENT_1]) })
+    const touched = vi.fn()
+    const watched = { ...server, getAccount: touched, simulateTransaction: touched }
+    await expect(
+      buildGrantV3Tx({
+        owner: OWNER,
+        token: TOKEN,
+        approval: reviewedApproval,
+        perRunMaxUnits: '50000000',
+        agentInits: [sampleInits[0]],
+        router: ROUTER_V3,
+        server: watched,
+      })
+    ).rejects.toThrow(/bounded reusable permissions/i)
+    expect(touched).not.toHaveBeenCalled()
+  })
+
+  it('refuses a pull_v3 against every router that exists today', async () => {
+    await expect(
+      buildAgentPullV3({
+        permissionId: PERMISSION_ID,
+        executionId: EXECUTION_ID,
+        agentAddress: AGENT_1,
+        amount: 1n,
+        relayer: RELAYER_G,
+        sessionKey: {},
+        router: ROUTER_V3,
+        server: fakeServer({ latest: 1000 }),
+      })
+    ).rejects.toThrow(/bounded reusable permissions/i)
+  })
+})
+
+describe('buildGrantV3Tx — the reviewed bound is what gets signed', () => {
+  it('encodes grant_v3 with exactly six args in ABI order', async () => {
+    const server = fakeServer({ latest: 1000, retval: grantV3Retval([AGENT_1, AGENT_2]) })
+    const { tx } = await buildGrantV3Tx({
+      owner: OWNER,
+      token: TOKEN,
+      approval: reviewedApproval,
+      perRunMaxUnits: '50000000',
+      agentInits: sampleInits,
+      router: ROUTER_V3,
+      server,
+      resolveSchema: asV3,
+    })
+    const op = tx.operations[0].func.invokeContract()
+    expect(op.functionName().toString()).toBe('grant_v3')
+    expect(invokeArgs(tx)).toHaveLength(6)
+  })
+
+  it('signs the REVIEWED liveUntilLedger, never one recomputed from the current ledger', async () => {
+    // A latest-ledger far from the reviewed value: any recomputation here would be visible.
+    const server = fakeServer({ latest: 7, retval: grantV3Retval([AGENT_1]) })
+    const { tx, liveUntilLedger } = await buildGrantV3Tx({
+      owner: OWNER,
+      token: TOKEN,
+      approval: reviewedApproval,
+      perRunMaxUnits: '50000000',
+      agentInits: [sampleInits[0]],
+      router: ROUTER_V3,
+      server,
+      resolveSchema: asV3,
+    })
+    expect(liveUntilLedger).toBe(reviewedApproval.liveUntilLedger)
+    expect(invokeArgs(tx)[4].u32()).toBe(reviewedApproval.liveUntilLedger)
+  })
+
+  it('carries the reviewed ceiling exactly, beyond Number precision', async () => {
+    const server = fakeServer({ latest: 1000, retval: grantV3Retval([AGENT_1]) })
+    const { tx } = await buildGrantV3Tx({
+      owner: OWNER,
+      token: TOKEN,
+      approval: { mandateCeilingUnits: '9007199254740993', liveUntilLedger: 1_412_345 },
+      perRunMaxUnits: '50000000',
+      agentInits: [sampleInits[0]],
+      router: ROUTER_V3,
+      server,
+      resolveSchema: asV3,
+    })
+    const ceiling = invokeArgs(tx)[2].i128()
+    const encoded = (BigInt(ceiling.hi().toString()) << 64n) | BigInt(ceiling.lo().toString())
+    expect(encoded).toBe(9007199254740993n)
+  })
+
+  it("reads the deployed agent addresses out of grant_v3's (permission_id, agents) retval", async () => {
+    const server = fakeServer({ latest: 1000, retval: grantV3Retval([AGENT_1, AGENT_2]) })
+    const { agentAddresses } = await buildGrantV3Tx({
+      owner: OWNER,
+      token: TOKEN,
+      approval: reviewedApproval,
+      perRunMaxUnits: '50000000',
+      agentInits: sampleInits,
+      router: ROUTER_V3,
+      server,
+      resolveSchema: asV3,
+    })
+    expect(agentAddresses).toEqual([AGENT_1, AGENT_2])
+  })
+
+  it('refuses an approval with no absolute ledger expiry', async () => {
+    await expect(
+      buildGrantV3Tx({
+        owner: OWNER,
+        token: TOKEN,
+        approval: { mandateCeilingUnits: '1' },
+        perRunMaxUnits: '1',
+        agentInits: [sampleInits[0]],
+        router: ROUTER_V3,
+        server: fakeServer({ latest: 1000 }),
+        resolveSchema: asV3,
+      })
+    ).rejects.toThrow(/liveUntilLedger/i)
+  })
+})
+
+describe('buildAgentPullV3 — permission + deterministic execution id', () => {
+  it('encodes pull_v3(permission_id, execution_id, agent, amount)', async () => {
+    let built = null
+    signAgentDepositEntriesMock.mockImplementation(async ({ tx }) => {
+      built = tx
+      return { xdr: tx.toEnvelope().toXDR('base64') }
+    })
+    await buildAgentPullV3({
+      permissionId: PERMISSION_ID,
+      executionId: EXECUTION_ID,
+      agentAddress: AGENT_1,
+      amount: 25_000_000n,
+      relayer: RELAYER_G,
+      sessionKey: {},
+      router: ROUTER_V3,
+      server: fakeServer({ latest: 1000 }),
+      resolveSchema: asV3,
+    })
+    const op = built.operations[0].func.invokeContract()
+    expect(op.functionName().toString()).toBe('pull_v3')
+    const args = invokeArgs(built)
+    expect(args).toHaveLength(4)
+    expect(args[0].bytes().toString('hex')).toBe('11'.repeat(32))
+    expect(args[1].bytes().toString('hex')).toBe('22'.repeat(32))
+    expect(Address.fromScVal(args[2]).toString()).toBe(AGENT_1)
   })
 })
