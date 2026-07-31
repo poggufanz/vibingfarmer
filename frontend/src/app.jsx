@@ -2944,7 +2944,35 @@ const App = () => {
         reviewedBudgets,
         durationSeconds,
       })
-      const decision = toPermissionDecisionView(raw)
+      // Task 5 chunk C -- compose the final permissionDecision. `proveReusablePermission`'s own
+      // return (`raw.version === 3`) carries NONE of `planFingerprint`/`reviewedBudgets`/
+      // `reviewedAgentInits` (see permissionGrantV3.js's base object) -- but
+      // `dispatchPermissioned`'s entry checks (`assertPermissionMatchesPlan` + the canonical
+      // reviewed-budget check, orchestrator.js, both unconditional on mode) require all three on
+      // EVERY permissionDecision or throw `VF_PLAN_FINGERPRINT_MISMATCH` before any dispatch code
+      // runs. This merges the SAME `planFingerprint`/`reviewedBudgets`/`agentInits` this function
+      // already built to CALL `preflightPermission` onto its result -- mirroring exactly what
+      // reusePreflight.js's own (V2-only) `baseDecision` already assembles internally from the
+      // same three inputs. `agentInits` (`planAgentToAgentInit`'s own shape: allocationId, kind,
+      // token, target, cap{token,units,decimals}, periodSeconds, expiry, plus mintRecipient/
+      // destinationDomain) already matches what `assertPermissionMatchesPlan` structurally checks
+      // a `reviewedAgentInits[i]` against -- no separate projection needed, and unlike V2's own
+      // `reviewedAgentInits` this carries no signer/salt material to leak (V3's agentInits never
+      // had any to begin with). Left byte-identical for V2 (`raw.version !== 3`): reusePreflight.js
+      // already carries all three there, so this branch never touches it.
+      // Inert under dormancy: `preflightPermission`'s default `resolveSchema` (`resolveRouterSchema`)
+      // resolves no V3 address today, so `raw.version` is never 3 in production -- this is forward
+      // wiring for the day a V3 router is registered, not a reachable path now.
+      const composed =
+        raw.version === 3
+          ? {
+              ...raw,
+              planFingerprint: plan.planFingerprint,
+              reviewedBudgets,
+              reviewedAgentInits: agentInits,
+            }
+          : raw
+      const decision = toPermissionDecisionView(composed)
       dispatchFlow({ type: 'PREFLIGHT_READY', decision })
       return decision
     } catch (err) {

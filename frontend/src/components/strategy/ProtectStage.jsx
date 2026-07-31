@@ -88,6 +88,15 @@ const DURATION_PRESETS = [
   { id: '7d', label: '7 days', seconds: 604800 },
 ]
 
+// Task 5 chunk C: the reusable-ceiling control's own validity rule. Same canonical-decimal-integer
+// convention `permissionGrantV3.js`'s (private, unexported) `UNITS_RE` enforces -- re-declared here
+// for the same reason this file already re-declares `unitsToDisplay`/`BRIDGE_NETWORK_CONTEXT`
+// locally: the shared version isn't exported and the source file is off-limits to edit for this
+// chunk. `buildReusableApproval` is the actual gate that will one day consume this value; this
+// regex only decides what the CONTROL itself will let a user commit to, never a second, competing
+// validation authority.
+const CEILING_UNITS_RE = /^(0|[1-9][0-9]*)$/
+
 // Fix loop 1 -- C1: the only two Stellar contracts this app ever budgets against today --
 // SOROBAN_TOKEN_ADDRESS (the Autofarm vault's Blend-pool USDC) and STELLAR_USDC_SAC (the CCTP
 // bridge's Circle USDC burn source -- the same asset PlanStage.jsx's own "Bridged as Circle USDC"
@@ -170,8 +179,24 @@ function periodLabel(seconds) {
 // real, finite on-chain scope expiry -- reusePreflight.js's own selectAgents() already guarantees
 // this for a well-formed decision, but this view treats the decision as untrusted input regardless
 // (defense in depth, and the exact rule the brief names: "unknown expiry cannot show reuse").
+//
+// Task 5 chunk C: a V3 decision (permissionGrantV3.js) carries `executions[]`, never `agents[]` --
+// `toPermissionDecisionView` defaults `agents` to `[]` for exactly this shape, so the V2 branch
+// below would always read "unusable" for a V3 decision (not a crash, just permanently the wrong
+// answer). Branching on `decision.version` here, rather than teaching the V2 branch to also accept
+// `executions`, keeps the V2 branch's own logic (and every test pinned against it) byte-identical --
+// the two shapes are genuinely different facts (an on-chain scope expiry vs. an absolute ledger
+// sequence) and deserve their own usability rule, not a merged one.
 function reuseIsUsable(decision) {
   if (!decision || decision.mode !== 'reuse') return false
+  if (decision.version === 3) {
+    return (
+      Array.isArray(decision.executions) &&
+      decision.executions.length > 0 &&
+      Number.isInteger(decision.liveUntilLedger) &&
+      decision.liveUntilLedger > 0
+    )
+  }
   if (!Array.isArray(decision.agents) || decision.agents.length === 0) return false
   return decision.agents.every((a) => Number.isFinite(a.scopeExpiry) && a.scopeExpiry > 0)
 }
@@ -188,6 +213,17 @@ export function ProtectStage({
   onEditPlan,
 }) {
   const [durationId, setDurationId] = useState('24h')
+  // Task 5 chunk C: the reusable spending ceiling. Defaults BYTE-FOR-BYTE to `plan.amount.units`
+  // (the exact string this run moves, i.e. `plannedUnitsNow`) -- assigned straight from the prop,
+  // never re-serialized through `Number`/`BigInt`, so it starts life identical to the value that
+  // leaves zero repeat headroom once this run spends. `ceilingDraft` is whatever the user is
+  // literally typing (so an invalid/rejected keystroke is still visible to fix); `ceilingUnits` is
+  // the last COMMITTED value -- it only ever moves forward to a value that parsed as a canonical
+  // decimal integer AND was not below `plan.amount.units`. A future reviewer wiring this into
+  // `buildReusableApproval` should read `ceilingUnits`, never `ceilingDraft`.
+  const [ceilingUnits, setCeilingUnits] = useState(plan.amount.units)
+  const [ceilingDraft, setCeilingDraft] = useState(plan.amount.units)
+  const [ceilingError, setCeilingError] = useState(null)
   const [connecting, setConnecting] = useState(false)
   // 'select' (choose duration, ready to check) | 'checking' | 'review' | 'requesting' | 'confirmed'
   // | 'failed'. Distinct from `decision`: the REVIEWED FACTS below render off of `decision` alone
@@ -220,14 +256,31 @@ export function ProtectStage({
   // boundary sentence; the ceiling row is a labelled row ("Stops working  <value>"), so it renders
   // `expiryValue` bare.
   const totalAmountText = `${unitsToDisplay(plan.amount.units, plan.amount.decimals).toLocaleString()} ${tokenSymbol(plan.amount.token)}`
+  // Task 5 chunk C: a V3 reuse decision carries `executions[]`, never V2's `agents[]` -- so
+  // `firstReuseAgent` (and everything below the reads off it) stays `undefined` for V3 by
+  // construction. The fresh-mode path is untouched: `firstReviewedAgent` reads `reviewedAgentInits`,
+  // which chunk C's own decision composition (app.jsx) populates identically for V2 and V3, so
+  // fresh-mode rendering needs no version branch at all.
+  const isV3Reuse = decision?.mode === 'reuse' && decision?.version === 3
   const firstReviewedAgent = decision?.mode === 'fresh' ? decision.reviewedAgentInits[0] : null
   const firstReuseAgent = decision?.mode === 'reuse' ? decision.agents[0] : null
+  // The absolute ledger expiry is a LEDGER SEQUENCE NUMBER, a different fact from a wall-clock
+  // instant -- rendering it through `humanExpiry` (which multiplies by 1000 and treats its input as
+  // Unix seconds) would print a nonsense date. Kept out of `expiryValue` entirely for V3 reuse;
+  // `expiryPhrase` states it in its own honest ledger-sequence terms instead of pretending a
+  // wall-clock precision this fact doesn't have.
   const expiryValue = !decision
     ? preset.label
-    : humanExpiry(
-        decision.mode === 'reuse' ? firstReuseAgent?.scopeExpiry : firstReviewedAgent?.expiry
-      )
-  const expiryPhrase = !decision ? `in ${expiryValue}` : `on ${expiryValue}`
+    : isV3Reuse
+      ? null
+      : humanExpiry(
+          decision.mode === 'reuse' ? firstReuseAgent?.scopeExpiry : firstReviewedAgent?.expiry
+        )
+  const expiryPhrase = !decision
+    ? `in ${expiryValue}`
+    : isV3Reuse
+      ? `at ledger ${decision.liveUntilLedger}`
+      : `on ${expiryValue}`
   const perAgentCap = firstReuseAgent?.headroom || firstReviewedAgent?.cap
   // Final-review fix, F2: `unitsToDisplay` is a raw float division -- a 100 USDC / 3-agent split
   // at 7 decimals rendered "33.3333334 USDC" here while PlanStage/StartStage both show "33.33 USDC"
@@ -252,6 +305,42 @@ export function ProtectStage({
   const perAgentText = perAgentCap
     ? `${perAgentDisplayMap[perAgentAllocationId]} ${tokenSymbol(perAgentCap.token)}`
     : 'Unknown'
+
+  // Task 5 chunk C -- the V3 projection. `decision.agents` is always `[]` on a V3 decision
+  // (toPermissionDecisionView's hardening default), so nothing above this line ever sees a V3
+  // execution; this is the one place that reads `decision.executions` at all. `reviewedByAllocation`
+  // looks up each execution's token/decimals off the composed `reviewedAgentInits` (chunk C's own
+  // app.jsx composition; see that file's `onRetryPreflight`) -- `executions[]` itself carries no
+  // token, since one V3 permission binds exactly one token (permissionGrantV3.js's own header).
+  // Money figures resolve through the SAME tokenSymbol()/buildAmountDisplayMap() this file already
+  // uses everywhere else -- no new formatting logic.
+  const reviewedByAllocation = new Map(
+    (decision?.reviewedAgentInits || []).map((r) => [r.allocationId, r])
+  )
+  const v3TokenDecimals = decision?.reviewedBudgets?.[0]?.decimals
+  const v3Token = decision?.reviewedBudgets?.[0]?.token
+  const v3Figures = isV3Reuse
+    ? {
+        ceiling: `${unitsToDisplay(decision.mandateCeilingUnits, v3TokenDecimals).toLocaleString()} ${tokenSymbol(v3Token)}`,
+        spent: `${unitsToDisplay(decision.confirmedSpentUnits, v3TokenDecimals).toLocaleString()} ${tokenSymbol(v3Token)}`,
+        headroom: `${unitsToDisplay(decision.remainingHeadroomUnits, v3TokenDecimals).toLocaleString()} ${tokenSymbol(v3Token)}`,
+      }
+    : null
+  const executionAmountRows = isV3Reuse
+    ? decision.executions.map((e) => {
+        const reviewed = reviewedByAllocation.get(e.allocationId)
+        return {
+          allocationId: e.allocationId,
+          kind: reviewed?.kind ?? 0,
+          amount: {
+            units: e.amountUnits,
+            decimals: reviewed?.cap?.decimals,
+            token: reviewed?.cap?.token,
+          },
+        }
+      })
+    : []
+  const executionDisplayMap = buildAmountDisplayMap(executionAmountRows, 'amount')
 
   // Fix round 1 -- F3 (review finding): the heading `<p>` + 4-row `<ul>` ceiling card below used to
   // be written out near-verbatim in BOTH `.pc-protect-limit` (reuse) and `.pc-support` (fresh) --
@@ -313,6 +402,31 @@ export function ProtectStage({
     setDurationId(id)
     // A decision reviewed against the OLD duration must never keep displaying next to a changed
     // control -- go back to needing an explicit re-check rather than silently relabeling it.
+    if (decision) {
+      setDecision(null)
+      setPhase('select')
+    }
+  }
+
+  // Task 5 chunk C: raising the ceiling is a real, explicit user edit; lowering it below what this
+  // run moves is rejected outright, not clamped or silently ignored -- the draft stays on screen
+  // (so the user can see and fix what they typed) but `ceilingUnits`, the committed value, never
+  // moves. Same clear-on-edit idiom as `handleDurationChange` above (a decision reviewed against
+  // the OLD ceiling must never keep displaying next to a changed control), fired only on a
+  // successfully committed edit -- an invalid or rejected keystroke commits nothing, so there is
+  // nothing stale to invalidate.
+  function handleCeilingInput(raw) {
+    setCeilingDraft(raw)
+    if (!CEILING_UNITS_RE.test(raw)) {
+      setCeilingError('Enter a whole number of asset units.')
+      return
+    }
+    if (BigInt(raw) < BigInt(plan.amount.units)) {
+      setCeilingError('The ceiling cannot be lower than what this run moves.')
+      return
+    }
+    setCeilingError(null)
+    setCeilingUnits(raw)
     if (decision) {
       setDecision(null)
       setPhase('select')
@@ -474,10 +588,38 @@ export function ProtectStage({
                   ))}
                 </div>
               </div>
+              {/* Task 5 chunk C: the reusable spending ceiling. Reuses `.pc-field`/`.pc-field-help`/
+                  `.pc-field-error` verbatim (already ported, already dark-surface-tuned via
+                  `.pc-dominant--decision .pc-field-help/.pc-field-error`) -- no new CSS, matching
+                  this file's own no-new-CSS-for-a-currently-dormant-control judgment elsewhere. */}
+              <div className="pc-field">
+                <label htmlFor="protect-ceiling">Reusable spending ceiling</label>
+                <input
+                  id="protect-ceiling"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  value={ceilingDraft}
+                  aria-describedby="protect-ceiling-help"
+                  aria-invalid={ceilingError ? 'true' : undefined}
+                  onChange={(e) => handleCeilingInput(e.target.value)}
+                />
+                <p id="protect-ceiling-help" className="pc-field-help">
+                  Applies {unitsToDisplay(ceilingUnits, plan.amount.decimals).toLocaleString()}{' '}
+                  {tokenSymbol(plan.amount.token)} as the most this permission can ever move, across
+                  every future run, until you raise it again.
+                </p>
+                {ceilingError && (
+                  <p className="pc-field-error" role="alert">
+                    {ceilingError}
+                  </p>
+                )}
+              </div>
               <button
                 type="button"
                 className="pc-button pc-button--primary"
                 onClick={handleCheckPermission}
+                disabled={Boolean(ceilingError)}
               >
                 Check my permission
               </button>
@@ -591,7 +733,7 @@ export function ProtectStage({
             earns this surface. A fresh decision's "headroom after granting"/"worst case" figures
             are still prospective (true only once the grant confirms), so they render in the
             neutral `.pc-support` role below instead, never in Rice. */}
-        {decision && decision.mode === 'reuse' && usableReuse && (
+        {decision && decision.mode === 'reuse' && usableReuse && !isV3Reuse && (
           <div className="pc-protect-limit">
             {ceilingCard}
             {/* Minor (review finding): a point-in-time on-chain read had no freshness stamp
@@ -609,6 +751,66 @@ export function ProtectStage({
                 <p>Expires {formatExpiry(a.scopeExpiry)}</p>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* Task 5 chunk C -- the V3 projection. A V3 decision carries `executions[]`, one per
+            reviewed allocation, each already bound to a specific deployed agent (chunk A's
+            `proveReusablePermission`) -- rendered here instead of the V2 `decision.agents.map(...)`
+            above, which a V3 decision can never populate. Four review figures (cumulative ceiling,
+            confirmed spend, remaining headroom, absolute ledger expiry) replace the generic
+            `ceilingCard` -- a V3 permission's real bound is these on-chain-proven numbers, not the
+            plan-derived total/per-agent-cap guess `ceilingCard` shows for V2. `permissionId`/
+            `scopeId`/`executionId` are raw sha256 identifiers, not friendly facts -- each renders
+            only inside a `TechnicalDetails` disclosure, same convention as the fingerprint/token-
+            contract/target facts below (Owner decision #19). */}
+        {decision && decision.mode === 'reuse' && usableReuse && isV3Reuse && (
+          <div className="pc-protect-limit">
+            <p className="pc-ceiling-total">
+              <span className="pc-ceiling-total-label">Cumulative ceiling</span>
+              <span className="pc-ceiling-total-amount">{v3Figures.ceiling}</span>
+            </p>
+            <ul className="pc-ceiling-rows">
+              <li>
+                <span>Confirmed spend</span>
+                <span>{v3Figures.spent}</span>
+              </li>
+              <li>
+                <span>Remaining headroom</span>
+                <span>{v3Figures.headroom}</span>
+              </li>
+              <li>
+                {/* A ledger SEQUENCE NUMBER, never run through `formatExpiry`/`humanExpiry` -- those
+                    treat their input as a Unix-seconds wall-clock instant, and conflating the two
+                    facts is exactly how a user misreads how long they are exposed for. */}
+                <span>Ledger expiry</span>
+                <span>ledger {decision.liveUntilLedger}</span>
+              </li>
+            </ul>
+            <TechnicalDetails summary="Permission technical details">
+              <p>
+                Permission: <span className="pc-technical">{decision.permissionId}</span>
+              </p>
+              <p>
+                Scope: <span className="pc-technical">{decision.scopeId}</span>
+              </p>
+            </TechnicalDetails>
+            {decision.executions.map((e) => {
+              const reviewed = reviewedByAllocation.get(e.allocationId)
+              return (
+                <div key={e.allocationId}>
+                  <p>{e.agentAddress}</p>
+                  <p>
+                    Moves {executionDisplayMap[e.allocationId]} {tokenSymbol(reviewed?.cap?.token)}
+                  </p>
+                  <TechnicalDetails summary="Execution technical details">
+                    <p>
+                      Execution: <span className="pc-technical">{e.executionId}</span>
+                    </p>
+                  </TechnicalDetails>
+                </div>
+              )
+            })}
           </div>
         )}
 

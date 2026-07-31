@@ -247,6 +247,77 @@ function reuseDecisionRaw(over = {}) {
   }
 }
 
+// Task 5 chunk C -- V3 fixtures. Shaped exactly as app.jsx's `onRetryPreflight` composes it (chunk
+// C's own composition: `proveReusablePermission`'s raw return merged with `planFingerprint`/
+// `reviewedBudgets`/`reviewedAgentInits`) -- ProtectStage never composes this itself, it only
+// consumes whatever `onRetryPreflight` resolves with, so a correct test double must already carry
+// all three the way the real composition does. Router V3 is dormant in production (no address in
+// ROUTER_SCHEMAS); these fixtures exercise the UI's OWN handling of the shape, not the dormancy
+// gate itself (permissionGrantV3.test.js/orchestrator.router.test.js already cover that).
+const PERMISSION_ID = '0x' + '11'.repeat(32)
+const SCOPE_ID = '0x' + '22'.repeat(32)
+const EXECUTION_ID = '0x' + '33'.repeat(32)
+
+function reviewedAgentInitV3(over = {}) {
+  return {
+    allocationId: 'run-1:deposit:0',
+    kind: 0,
+    token: TOKEN_ADDR,
+    target: VAULT_ADDR,
+    cap: { token: TOKEN_ADDR, units: '1000000000', decimals: 7 },
+    periodSeconds: 3600,
+    expiry: NOW + 10800,
+    destinationDomain: 0,
+    mintRecipient: null,
+    ...over,
+  }
+}
+
+function reuseDecisionV3Raw(over = {}) {
+  return {
+    version: 3,
+    runId: 'run-1',
+    owner: OWNER,
+    router: 'CROUTERV30000000000000000000000000000000000000000000000',
+    network: 'Test SDF Network ; September 2015',
+    permissionId: PERMISSION_ID,
+    mode: 'reuse',
+    freshReason: null,
+    scopeId: SCOPE_ID,
+    // 200 USDC ceiling, 100 spent, 100 remaining -- confirmedSpent + remaining sums to the ceiling,
+    // a deliberately internally-consistent fixture.
+    mandateCeilingUnits: '2000000000',
+    confirmedSpentUnits: '1000000000',
+    remainingHeadroomUnits: '1000000000',
+    liveUntilLedger: 1409000,
+    planFingerprint: '0xplan1',
+    reviewedBudgets: [{ token: TOKEN_ADDR, units: '1000000000', decimals: 7 }],
+    reviewedAgentInits: [reviewedAgentInitV3()],
+    durationSeconds: 86400,
+    confirmationCount: 0,
+    executions: [
+      {
+        executionId: EXECUTION_ID,
+        runId: 'run-1',
+        allocationId: 'run-1:deposit:0',
+        scopeId: SCOPE_ID,
+        amountUnits: '1000000000',
+        agentAddress: AGENT_1,
+      },
+    ],
+    approval: {
+      plannedUnitsNow: '1000000000',
+      mandateCeilingUnits: '2000000000',
+      durationSeconds: 86400,
+      currentLedger: 1400000,
+      secondsPerLedger: 5,
+      liveUntilLedger: 1409000,
+    },
+    agents: [],
+    ...over,
+  }
+}
+
 const AVAILABLE_WALLETS = ['VF Wallet', 'Freighter', 'xBull', 'Albedo']
 
 function baseProps(overrides = {}) {
@@ -493,6 +564,216 @@ describe('ProtectStage — reuse review content', () => {
     expect(screen.queryByText(/0 wallet confirmations/)).toBeNull()
     expect(screen.queryByRole('button', { name: 'Continue' })).toBeNull()
     expect(screen.getByText(/Could not confirm your existing permission/)).toBeTruthy()
+  })
+})
+
+describe('ProtectStage — Task 5 chunk C: the reusable ceiling control', () => {
+  it('defaults byte-for-byte to plannedUnitsNow (plan.amount.units) -- not merely numerically equal', () => {
+    render(<ProtectStage {...baseProps()} />)
+    const input = screen.getByLabelText('Reusable spending ceiling')
+    // String identity, not a numeric comparison: an implicit buffer, a re-serialization through
+    // Number, or any rounding would break this while still passing `Number(input.value) ===
+    // Number(plan.amount.units)`.
+    expect(input.value === PLAN_DEPOSIT_ONLY.amount.units).toBe(true)
+    expect(screen.getByText(/Applies 100 USDC/)).toBeTruthy()
+  })
+
+  it('accepts an explicit raise above plannedUnitsNow -- raising exposure is a deliberate edit', () => {
+    render(<ProtectStage {...baseProps()} />)
+    const input = screen.getByLabelText('Reusable spending ceiling')
+    fireEvent.change(input, { target: { value: '2000000000' } })
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getByText(/Applies 200 USDC/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Check my permission' }).disabled).toBe(false)
+  })
+
+  it('rejects an edit below plannedUnitsNow -- the committed ceiling never moves', () => {
+    render(<ProtectStage {...baseProps()} />)
+    const input = screen.getByLabelText('Reusable spending ceiling')
+    fireEvent.change(input, { target: { value: '1' } })
+    expect(screen.getByRole('alert').textContent).toMatch(/cannot be lower/i)
+    // The committed value -- what a caller would actually apply -- never moved, even though the
+    // input itself still shows what the user typed (so they can see and fix it).
+    expect(input.value).toBe('1')
+    expect(screen.getByText(/Applies 100 USDC/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Check my permission' }).disabled).toBe(true)
+  })
+
+  it('rejects a non-canonical value (fractional, signed, or non-numeric)', () => {
+    render(<ProtectStage {...baseProps()} />)
+    const input = screen.getByLabelText('Reusable spending ceiling')
+    fireEvent.change(input, { target: { value: '12.5' } })
+    expect(screen.getByRole('alert')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Check my permission' }).disabled).toBe(true)
+  })
+
+  it('a rejected edit does not call onRetryPreflight with anything -- the Check button is disabled, not silently proceeding on a bad value', () => {
+    const onRetryPreflight = vi.fn().mockResolvedValue(freshDecisionRaw())
+    render(<ProtectStage {...baseProps({ onRetryPreflight })} />)
+    const input = screen.getByLabelText('Reusable spending ceiling')
+    fireEvent.change(input, { target: { value: '1' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Check my permission' }))
+    expect(onRetryPreflight).not.toHaveBeenCalled()
+  })
+})
+
+describe('ProtectStage — Task 5 chunk C: V3 reuse review (executions, four figures)', () => {
+  it('renders cumulative ceiling, confirmed spend, remaining headroom, and the absolute ledger expiry as a plain ledger sequence -- never through the wall-clock formatter', async () => {
+    const onRetryPreflight = vi.fn().mockResolvedValue(reuseDecisionV3Raw())
+    render(<ProtectStage {...baseProps({ onRetryPreflight })} />)
+    await checkPermission()
+
+    expect(document.querySelector('.pc-ceiling-total-label').textContent).toBe('Cumulative ceiling')
+    expect(document.querySelector('.pc-ceiling-total-amount').textContent).toBe('200 USDC')
+
+    const rows = () => Array.from(document.querySelectorAll('.pc-ceiling-rows li'))
+    const spentRow = rows().find((li) => li.textContent.startsWith('Confirmed spend'))
+    const headroomRow = rows().find((li) => li.textContent.startsWith('Remaining headroom'))
+    const ledgerRow = rows().find((li) => li.textContent.startsWith('Ledger expiry'))
+    expect(spentRow.textContent).toBe('Confirmed spend100 USDC')
+    expect(headroomRow.textContent).toBe('Remaining headroom100 USDC')
+    expect(ledgerRow.textContent).toBe('Ledger expiryledger 1409000')
+    // Never a date/time string -- a ledger sequence is not a Unix-seconds instant.
+    expect(ledgerRow.textContent).not.toMatch(/\d{4}-\d{2}-\d{2}/)
+  })
+
+  it('renders one row per V3 execution with its own bound agent address and amount', async () => {
+    const onRetryPreflight = vi.fn().mockResolvedValue(reuseDecisionV3Raw())
+    render(<ProtectStage {...baseProps({ onRetryPreflight })} />)
+    await checkPermission()
+
+    expect(screen.getByText(AGENT_1)).toBeTruthy()
+    // buildAmountDisplayMap formats to 2dp (Task 7's precedent, reused here rather than
+    // re-implementing rounding) -- see F2's tests above for the same "100.00", not "100", figure.
+    expect(screen.getByText(/Moves 100\.00 USDC/)).toBeTruthy()
+  })
+
+  it('renders one row per allocation for a multi-allocation V3 permission, each bound to its OWN agent/amount/token by ALLOCATION IDENTITY, not array position', async () => {
+    // The second allocation deliberately uses a DIFFERENT real Stellar contract (BRIDGE_TOKEN_ADDR,
+    // "Circle USDC") at different decimals -- an execution-to-reviewedAgentInit lookup keyed by
+    // ARRAY POSITION rather than `allocationId` would still pass a same-token fixture (nothing to
+    // tell position and identity apart), so this isolates the identity binding the same way the
+    // file's own I3 test does for V2.
+    const decision = reuseDecisionV3Raw({
+      reviewedAgentInits: [
+        reviewedAgentInitV3(),
+        reviewedAgentInitV3({
+          allocationId: 'run-1:deposit:1',
+          token: BRIDGE_TOKEN_ADDR,
+          cap: { token: BRIDGE_TOKEN_ADDR, units: '500000000', decimals: 7 },
+        }),
+      ],
+      executions: [
+        reuseDecisionV3Raw().executions[0],
+        {
+          executionId: '0x' + '44'.repeat(32),
+          runId: 'run-1',
+          allocationId: 'run-1:deposit:1',
+          scopeId: SCOPE_ID,
+          amountUnits: '500000000',
+          agentAddress: 'CV3AGENT2000000000000000000000000000000000000000000000',
+        },
+      ],
+    })
+    const onRetryPreflight = vi.fn().mockResolvedValue(decision)
+    render(<ProtectStage {...baseProps({ onRetryPreflight })} />)
+    await checkPermission()
+
+    expect(screen.getByText(AGENT_1)).toBeTruthy()
+    expect(screen.getByText('CV3AGENT2000000000000000000000000000000000000000000000')).toBeTruthy()
+    expect(screen.getByText(/Moves 100\.00 USDC/)).toBeTruthy()
+    expect(screen.getByText(/Moves 50\.00 Circle USDC/)).toBeTruthy()
+  })
+
+  it('never renders scopeId, permissionId, or executionId outside a technical disclosure', async () => {
+    const decision = reuseDecisionV3Raw()
+    const onRetryPreflight = vi.fn().mockResolvedValue(decision)
+    const { container } = render(<ProtectStage {...baseProps({ onRetryPreflight })} />)
+    await checkPermission()
+
+    const friendlySurface = container.cloneNode(true)
+    friendlySurface.querySelectorAll('.pc-technical-details, .pc-technical').forEach((el) => {
+      el.remove()
+    })
+    expect(friendlySurface.textContent).not.toContain(decision.scopeId)
+    expect(friendlySurface.textContent).not.toContain(decision.permissionId)
+    expect(friendlySurface.textContent).not.toContain(decision.executions[0].executionId)
+    // ...but they ARE present somewhere, inside a technical disclosure -- proves the guard is
+    // exercising real content, not merely the absence of anything.
+    expect(container.textContent).toContain(decision.scopeId)
+    expect(container.textContent).toContain(decision.permissionId)
+    expect(container.textContent).toContain(decision.executions[0].executionId)
+  })
+
+  it('a V3 decision with no executions cannot show reuse -- falls back to a re-check, never a 0-confirmation CTA', async () => {
+    const badReuse = reuseDecisionV3Raw({ executions: [] })
+    const onRetryPreflight = vi.fn().mockResolvedValue(badReuse)
+    render(<ProtectStage {...baseProps({ onRetryPreflight })} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Check my permission' }))
+    await screen.findByRole('button', { name: 'Check again' })
+
+    expect(screen.queryByText(/0 wallet confirmations/)).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Continue' })).toBeNull()
+    expect(screen.queryByText(/Cumulative ceiling/)).toBeNull()
+  })
+
+  it('a V3 decision with a malformed liveUntilLedger cannot show reuse -- falls back to a re-check', async () => {
+    const badReuse = reuseDecisionV3Raw({ liveUntilLedger: undefined })
+    const onRetryPreflight = vi.fn().mockResolvedValue(badReuse)
+    render(<ProtectStage {...baseProps({ onRetryPreflight })} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Check my permission' }))
+    await screen.findByRole('button', { name: 'Check again' })
+    expect(screen.queryByRole('button', { name: 'Continue' })).toBeNull()
+  })
+
+  it('a V3 reuse decision still calls onConfirmReuse (never onRequestGrant) on Continue', async () => {
+    const onRetryPreflight = vi.fn().mockResolvedValue(reuseDecisionV3Raw())
+    const onRequestGrant = vi.fn().mockResolvedValue({ agentAddresses: [AGENT_1] })
+    const onConfirmReuse = vi.fn().mockResolvedValue({ agentAddresses: [AGENT_1] })
+    render(<ProtectStage {...baseProps({ onRetryPreflight, onRequestGrant, onConfirmReuse })} />)
+    await checkPermission()
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    await screen.findByText('Confirmed')
+    expect(onConfirmReuse).toHaveBeenCalledTimes(1)
+    expect(onRequestGrant).not.toHaveBeenCalled()
+  })
+})
+
+describe('ProtectStage — Task 5 chunk C: dormancy -- the live V2 surface renders unchanged', () => {
+  it('a decision carrying no V3 fields renders the SAME reuse surface as before -- no V3 rows appear', async () => {
+    const onRetryPreflight = vi.fn().mockResolvedValue(reuseDecisionRaw())
+    render(<ProtectStage {...baseProps({ onRetryPreflight })} />)
+    await checkPermission()
+
+    expect(screen.queryByText(/Cumulative ceiling/)).toBeNull()
+    expect(screen.queryByText(/Confirmed spend/)).toBeNull()
+    expect(screen.queryByText(/Remaining headroom/)).toBeNull()
+    expect(screen.queryByText(/Ledger expiry/)).toBeNull()
+    expect(screen.queryByText('Permission technical details')).toBeNull()
+    expect(screen.queryByText('Execution technical details')).toBeNull()
+    // The pre-existing V2 content is untouched -- same ceilingCard, same "As of", same agent row.
+    expect(screen.getByText('Ceiling')).toBeTruthy()
+    expect(screen.getByText(/Headroom: 90 USDC/)).toBeTruthy()
+    expect(screen.getByText(/^As of/)).toBeTruthy()
+  })
+
+  it('the boundary sentence keeps its pre-existing human-date expiry for a V2 decision -- never the V3 ledger phrasing', async () => {
+    render(<ProtectStage {...baseProps()} />)
+    await checkPermission()
+    const boundarySentence = screen.getByText(/stops on/i)
+    expect(boundarySentence.textContent).not.toMatch(/ledger/i)
+  })
+
+  it('the boundary sentence states the V3 ledger-sequence expiry honestly -- never a fabricated wall-clock date', async () => {
+    const onRetryPreflight = vi.fn().mockResolvedValue(reuseDecisionV3Raw())
+    render(<ProtectStage {...baseProps({ onRetryPreflight })} />)
+    await checkPermission()
+    const boundarySentence = screen.getByText(/stops at ledger/i)
+    expect(boundarySentence.textContent).toMatch(/stops at ledger 1409000/)
+    // No ISO date, no "an unknown time" -- a ledger sequence pretending to be a wall-clock instant
+    // is exactly the misread this figure must avoid.
+    expect(boundarySentence.textContent).not.toMatch(/unknown time/)
+    expect(boundarySentence.textContent).not.toMatch(/\d{4}-\d{2}-\d{2}/)
   })
 })
 
@@ -860,6 +1141,19 @@ describe('ProtectStage — axe', () => {
     expect(await axe(container)).toHaveNoViolations()
   })
 
+  // Task 5 chunk C: the connected pre-check phase gained a new form control (the reusable ceiling
+  // input) -- previously untested by axe at all, since no phase before this carried a text input.
+  it('has zero violations on the connected pre-check phase (duration + reusable-ceiling controls)', async () => {
+    const { container } = render(<ProtectStage {...baseProps()} />)
+    expect(await axe(container)).toHaveNoViolations()
+  })
+
+  it('has zero violations on the connected pre-check phase with a rejected ceiling edit (aria-invalid + role=alert)', async () => {
+    const { container } = render(<ProtectStage {...baseProps()} />)
+    fireEvent.change(screen.getByLabelText('Reusable spending ceiling'), { target: { value: '1' } })
+    expect(await axe(container)).toHaveNoViolations()
+  })
+
   it('has zero violations on the fresh review', async () => {
     const { container } = render(<ProtectStage {...baseProps()} />)
     await checkPermission()
@@ -879,6 +1173,14 @@ describe('ProtectStage — axe', () => {
     await checkPermission()
     fireEvent.click(screen.getByRole('button', { name: 'Authorize with wallet' }))
     await screen.findByText('Nothing moved')
+    expect(await axe(container)).toHaveNoViolations()
+  })
+
+  // Task 5 chunk C.
+  it('has zero violations on the V3 reuse review (four figures + executions)', async () => {
+    const onRetryPreflight = vi.fn().mockResolvedValue(reuseDecisionV3Raw())
+    const { container } = render(<ProtectStage {...baseProps({ onRetryPreflight })} />)
+    await checkPermission()
     expect(await axe(container)).toHaveNoViolations()
   })
 })
@@ -1058,6 +1360,36 @@ describe('ProtectStage — 320px real layout guard', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Authorize with wallet' }))
     gen.resolve({ agentAddresses: [AGENT_1] })
     await screen.findByText('Confirmed')
+
+    const scrollWidth = await measureScrollWidthAt320(container.innerHTML)
+    expect(scrollWidth).toBe(320)
+  }, 20000)
+
+  // Task 5 chunk C.
+  it('G: the connected pre-check phase (duration + reusable-ceiling controls) creates no horizontal overflow at 320px', async () => {
+    const { container } = render(
+      <div className="pc-route">
+        <div className="pc-route-stack">
+          <ProtectStage {...baseProps()} />
+        </div>
+      </div>
+    )
+    const scrollWidth = await measureScrollWidthAt320(container.innerHTML)
+    expect(scrollWidth).toBe(320)
+  }, 20000)
+
+  it('G: the V3 reuse review (four figures + executions + expanded technical disclosures) creates no horizontal overflow at 320px', async () => {
+    const onRetryPreflight = vi.fn().mockResolvedValue(reuseDecisionV3Raw())
+    const { container } = render(
+      <div className="pc-route">
+        <div className="pc-route-stack">
+          <ProtectStage {...baseProps({ onRetryPreflight })} />
+        </div>
+      </div>
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Check my permission' }))
+    await screen.findByRole('button', { name: 'Continue' })
+    for (const el of document.querySelectorAll('.pc-technical-details summary')) fireEvent.click(el)
 
     const scrollWidth = await measureScrollWidthAt320(container.innerHTML)
     expect(scrollWidth).toBe(320)
