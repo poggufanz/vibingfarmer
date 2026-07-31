@@ -106,12 +106,20 @@ function concatBytes(chunks) {
  * If this function ever stops reproducing those two constants, THIS function has drifted; the
  * fix belongs here, never in the pinned test (see the module `README`/task brief for the vectors).
  *
- * OUTPUT CONVENTION (deliberately different from the retired `buildScopeId`'s `0x`-prefixed hex):
- * lowercase hex, NO `0x` prefix, 64 characters — matching how the Rust vectors above are written
- * and how `AGENT_WASM_GENERATIONS[].wasmHash` is written (agentCreatorManifest.js). Every reader
- * that decodes the chain's `PermissionGrantV3.scope_id` (a raw `BytesN<32>`) into `grant.scopeId`
- * MUST emit THIS form — a caller comparing against the old `0x`-prefixed convention will never
- * match, silently, forever.
+ * OUTPUT CONVENTION (rewritten — supersedes this docblock's earlier, deliberate no-prefix choice,
+ * which was wrong): `0x`-prefixed lowercase hex, 64 characters after the prefix. This is the
+ * repo-wide rule, decided by the controller, for every 32-byte id that crosses a JavaScript
+ * boundary — raw bytes are normalized to this ONE string form at exactly one place, the point of
+ * decode, never left as a second representation for callers to reconcile. `computeScopeFingerprint`
+ * (stellar/agentCache.js) already returns `'0x' + hash(...)`, `AGENT_CREATOR_MANIFEST_HASH` is
+ * `0x`-prefixed, and `orchestrator.js` compares `permissionId` as `0x`-hex with strict `===`
+ * identity — bare hex here made this single function the odd one out, and two byte-identical
+ * `Buffer`s are never `===` while two byte-identical `0x`-hex STRINGS always are, which is exactly
+ * why every other 32-byte id in this codebase normalizes to a string at the point of decode. A
+ * future reader that decodes the chain's `PermissionGrantV3.scope_id` (a raw `BytesN<32>`) into
+ * `grant.scopeId` MUST emit THIS SAME `0x`-prefixed form — that reader belongs to a sibling task,
+ * and this sentence is its contract: anything else silently never matches what this function
+ * returns, forever.
  *
  * Validates and fails LOUD rather than coercing: a `mintRecipient` that is not exactly 32 bytes,
  * or a `kind`/`destinationDomain` outside the u32 range, throws instead of truncating/padding. A
@@ -135,7 +143,7 @@ function concatBytes(chunks) {
  *   this codebase's convention — see grant.js's `agentInitScVal`, which encodes it unconditionally
  *   regardless of kind)
  * @param {number} p.destinationDomain integer, u32 range (0 for a Deposit-kind allocation)
- * @returns {string} lowercase hex, 64 characters, no `0x` prefix
+ * @returns {string} `0x`-prefixed lowercase hex, 64 characters after the prefix
  */
 export function deriveScopeIdV3({ target, token, kind, mintRecipient, destinationDomain }) {
   if (!(mintRecipient instanceof Uint8Array) || mintRecipient.length !== 32)
@@ -151,7 +159,7 @@ export function deriveScopeIdV3({ target, token, kind, mintRecipient, destinatio
     mintRecipient,
     u32BE(destinationDomain),
   ])
-  return hash(preimage).toString('hex')
+  return '0x' + hash(preimage).toString('hex')
 }
 
 /**
@@ -277,6 +285,16 @@ function freshDecision(base, freshReason) {
  * the derivation, by this binding step's own target/token match, and by the cap-drift /
  * `readLinkedPermission` checks that run right after it. `code`/`signerPub` remain an open,
  * documented gap — see `deriveScopeIdV3`'s doc and the task report.
+ *
+ * ANOTHER HONEST, DOCUMENTED GAP (do not "fix" by contriving a test that reaches it — the gate
+ * that makes it unreachable is correct and must stay): `init.mintRecipient` and
+ * `init.destinationDomain` are never exercised THROUGH this function. Gate 2 above returns
+ * `'base-required'` for any allocation with a Bridge `kind`, before a single chain read, so every
+ * `agentInits[i]` that survives to the scope-id derivation in step 7b is a Deposit-kind allocation
+ * whose bridge fields are, by this codebase's own convention, always the zero value. These two
+ * fields are exercised ONLY by `deriveScopeIdV3`'s own direct pinned-vector tests
+ * (`permissionGrantV3.test.js`), never through this function — a comment implying otherwise would
+ * be exactly the kind of false coverage claim this remediation exists to remove.
  */
 export async function proveReusablePermission({
   runId,
@@ -399,15 +417,32 @@ export async function proveReusablePermission({
   // `agentInits` (the REVIEWED allocations), never from `rows` (the deployed agents' on-chain
   // state) — the router itself hashes its OWN `token` ARGUMENT at `grant_v3`, not each agent's, so
   // this uses `grant.token` (never `init.token`, which the check just above already covers).
-  const derivedScopeIds = agentInits.map((init) =>
-    deriveScopeIdV3({
-      target: init.target,
-      token: grant.token,
-      kind: Number(init.kind),
-      mintRecipient: init.mintRecipient,
-      destinationDomain: Number(init.destinationDomain),
-    })
-  )
+  //
+  // A malformed reviewed field (a `mintRecipient` that is not exactly 32 bytes, or a `kind`/
+  // `destinationDomain` outside the u32 range) makes `deriveScopeIdV3` throw LOUDLY — that is
+  // correct and deliberate on ITS side (see that function's own doc: silently coercing a bad
+  // `mintRecipient` would produce a plausible-looking but WRONG hash, the worst failure mode for a
+  // value this security-critical). But THIS function's own contract is ALL-OR-NOTHING: every
+  // missing, drifted, expired, revoked, gapped or unprovable element must force a COMPLETE fresh
+  // decision, never an exception a caller has to catch. So the asymmetry is deliberate and must
+  // stay exactly this way round — the hasher throws, the prover catches. Reported as `scope-drift`:
+  // a malformed field and a provably-different one are operationally identical from here — in
+  // neither case can this run's reviewed allocation shape be confirmed to match what the
+  // permission was originally scoped to, so no separate freshReason is warranted.
+  let derivedScopeIds
+  try {
+    derivedScopeIds = agentInits.map((init) =>
+      deriveScopeIdV3({
+        target: init.target,
+        token: grant.token,
+        kind: Number(init.kind),
+        mintRecipient: init.mintRecipient,
+        destinationDomain: Number(init.destinationDomain),
+      })
+    )
+  } catch {
+    return freshDecision(base, 'scope-drift')
+  }
   if (derivedScopeIds.some((id) => id !== derivedScopeIds[0]))
     return freshDecision(base, 'scope-drift')
   const scopeId = derivedScopeIds[0]

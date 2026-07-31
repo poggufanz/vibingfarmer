@@ -45,10 +45,12 @@ const ROUTER_V3 = 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC'
 // (commit c39f9bf) and independently reproduced, byte-for-byte, in JS using `@stellar/stellar-sdk`.
 // These are NOT hypotheses: if `deriveScopeIdV3` ever stops reproducing them, the JS
 // implementation has drifted from the chain — the fix belongs in `deriveScopeIdV3`, never here.
+// Written `0x`-prefixed (repo-wide 32-byte id convention, Task W2a item 1) — the prefix is
+// presentation only, the 64 hex characters after it are byte-for-byte identical to the Rust vector.
 const PINNED_TARGET = 'CCQKDIVDUSS2NJ5IVGVKXLFNV2X3BMNSWO2LLNVXXC43VO54XW7L65UW'
 const PINNED_TOKEN = 'CCYLDMVTWS23NN5YXG5LXPF5X274BQOCYPCMLRWHZDE4VS6MZXHM6QJS'
-const PINNED_SCOPE_ID_DEPOSIT = '775ad5a5c5f2ec6382447626694b4ca75b25a23d466cfa3fda505596861d3202'
-const PINNED_SCOPE_ID_BRIDGE = '94e42b09c513c85d1d60633877efac275f528c3141a42743d7031523f04991d3'
+const PINNED_SCOPE_ID_DEPOSIT = '0x775ad5a5c5f2ec6382447626694b4ca75b25a23d466cfa3fda505596861d3202'
+const PINNED_SCOPE_ID_BRIDGE = '0x94e42b09c513c85d1d60633877efac275f528c3141a42743d7031523f04991d3'
 const ZERO_MINT_RECIPIENT = new Uint8Array(32)
 const PINNED_MINT_RECIPIENT_BRIDGE = new Uint8Array(32).fill(0xcd)
 
@@ -260,9 +262,19 @@ describe("deriveScopeIdV3 — the mirror of the router's derive_scope_id (Task F
       mintRecipient: new Uint8Array(32),
       destinationDomain: 0,
     })
-    expect(scopeId).toBe('775ad5a5c5f2ec6382447626694b4ca75b25a23d466cfa3fda505596861d3202')
+    expect(scopeId).toBe('0x775ad5a5c5f2ec6382447626694b4ca75b25a23d466cfa3fda505596861d3202')
   })
 
+  // LOAD-BEARING (Task W2a item 4): this is the ONLY test in this whole suite that pins `kind`'s
+  // BIG-ENDIAN byte order. It works only because it uses the kind-1 (Bridge) vector: `kind: 1`
+  // big-endian is 0x00000001, little-endian is 0x01000000 — different bytes, so `u32BE`'s
+  // implementation actually matters here. The kind-0 vector right above this one CANNOT detect an
+  // endianness bug: `kind: 0` is 0x00000000 either way, byte-for-byte identical under BE or LE, so
+  // it stays GREEN even if `u32BE` were silently flipped to little-endian. This test therefore
+  // looks like a redundant duplicate of the kind-0 one above — it is NOT. Deleting it as
+  // "redundant" silently removes ALL coverage of `kind`'s byte order, and a future little-endian
+  // regression would have nothing left to catch it (see the mutation-table entry in the task
+  // report that pins exactly this: kind-1 goes RED, kind-0 stays GREEN, under the same mutation).
   test('reproduces the Rust-pinned vector — kind 1 (Bridge), mint_recipient 0xcd*32, destination_domain 6', () => {
     const scopeId = deriveScopeIdV3({
       target: PINNED_TARGET,
@@ -274,7 +286,7 @@ describe("deriveScopeIdV3 — the mirror of the router's derive_scope_id (Task F
     expect(scopeId).toBe(PINNED_SCOPE_ID_BRIDGE)
   })
 
-  test('output convention: lowercase hex, NO 0x prefix, 64 characters — deliberately different from the retired buildScopeId', () => {
+  test('output convention: 0x-prefixed lowercase hex, 64 characters after the prefix — the repo-wide 32-byte id convention (Task W2a item 1), superseding this suite\'s earlier no-prefix pin', () => {
     const scopeId = deriveScopeIdV3({
       target: VAULT,
       token: TOKEN,
@@ -282,8 +294,8 @@ describe("deriveScopeIdV3 — the mirror of the router's derive_scope_id (Task F
       mintRecipient: ZERO_MINT_RECIPIENT,
       destinationDomain: 0,
     })
-    expect(scopeId).toMatch(/^[0-9a-f]{64}$/)
-    expect(scopeId.startsWith('0x')).toBe(false)
+    expect(scopeId).toMatch(/^0x[0-9a-f]{64}$/)
+    expect(scopeId.startsWith('0x')).toBe(true)
   })
 
   test('is pure — identical inputs hash identically', () => {
@@ -1083,6 +1095,32 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
             inspectedAgent({ agentAddress: AGENT_2, target: VAULT_2 }),
           ]),
         })
+      )
+      expect(decision.mode).toBe('fresh')
+      expect(decision.freshReason).toBe('scope-drift')
+      expect(decision.executions).toEqual([])
+    })
+
+    // Task W2a item 2: a malformed reviewed bridge field must force fresh, never escape as an
+    // exception — `proveReusablePermission`'s own documented all-or-nothing contract (module
+    // header) says every unprovable element produces a COMPLETE fresh decision with a specific
+    // `freshReason`, never a throw a caller has to catch. `deriveScopeIdV3` ITSELF still throws
+    // loudly on exactly this input when called directly (see the `rejects a mintRecipient
+    // truncated to 31 bytes` test above, in the deriveScopeIdV3 describe block) — that asymmetry
+    // is deliberate and preserved: the hasher throws, the prover catches.
+    test('a malformed mintRecipient on a reviewed allocation forces fresh (scope-drift) rather than throwing out of the prover', async () => {
+      const decision = await proveReusablePermission(
+        baseDeps({ agentInits: [agentInit({ mintRecipient: new Uint8Array(31) })] })
+      )
+      expect(decision.mode).toBe('fresh')
+      expect(decision.freshReason).toBe('scope-drift')
+      expect(decision.executions).toEqual([])
+    })
+
+    // Same guard, the OTHER malformed field this step can throw on: an out-of-range destinationDomain.
+    test('an out-of-range destinationDomain on a reviewed allocation forces fresh (scope-drift) rather than throwing out of the prover', async () => {
+      const decision = await proveReusablePermission(
+        baseDeps({ agentInits: [agentInit({ destinationDomain: -1 })] })
       )
       expect(decision.mode).toBe('fresh')
       expect(decision.freshReason).toBe('scope-drift')

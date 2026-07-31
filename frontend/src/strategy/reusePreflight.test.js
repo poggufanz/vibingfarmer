@@ -710,7 +710,9 @@ describe('router-generation branch (Task 5 chunk A)', () => {
   // constant, not whatever the V2 section happens to use.
   const V3_TARGET = 'CCQKDIVDUSS2NJ5IVGVKXLFNV2X3BMNSWO2LLNVXXC43VO54XW7L65UW'
   const V3_TOKEN = 'CCYLDMVTWS23NN5YXG5LXPF5X274BQOCYPCMLRWHZDE4VS6MZXHM6QJS'
-  const PINNED_SCOPE_ID_DEPOSIT = '775ad5a5c5f2ec6382447626694b4ca75b25a23d466cfa3fda505596861d3202'
+  // 0x-prefixed (repo-wide 32-byte id convention, Task W2a item 1) — same 64 hex characters as the
+  // Rust vector, prefix is presentation only.
+  const PINNED_SCOPE_ID_DEPOSIT = '0x775ad5a5c5f2ec6382447626694b4ca75b25a23d466cfa3fda505596861d3202'
   const ZERO_MINT_RECIPIENT = new Uint8Array(32)
 
   const activeAccountFixture = (over = {}) =>
@@ -908,6 +910,20 @@ describe('router-generation branch (Task 5 chunk A)', () => {
   test('the V2 branch never reads eligibleGenerations at all', async () => {
     const POISON = { poisoned: true } // no .includes() — touching this at all would throw
     const withPoison = await preflightPermission(baseDeps({ eligibleGenerations: POISON }))
+    const without = await preflightPermission(baseDeps())
+    expect(withPoison).toEqual(without)
+    expect(proveReusablePermission).not.toHaveBeenCalled()
+  })
+
+  // Task F2: `readLinkedPermission` was added beside `eligibleGenerations` above without the same
+  // guard. Replicates that exact test shape rather than inventing a different one — matching the
+  // established pattern is the point. `readLinkedPermission` is called as a FUNCTION
+  // (`readLinkedPermission({router, agent, server})`), so the poison here is a non-callable value —
+  // touching it at all (even just `typeof x === 'function'` would not throw, but invoking it would)
+  // throws a TypeError the instant the V2 body tries to call it.
+  test('the V2 branch never reads readLinkedPermission at all', async () => {
+    const POISON = { poisoned: true } // not a function — calling this at all would throw
+    const withPoison = await preflightPermission(baseDeps({ readLinkedPermission: POISON }))
     const without = await preflightPermission(baseDeps())
     expect(withPoison).toEqual(without)
     expect(proveReusablePermission).not.toHaveBeenCalled()
