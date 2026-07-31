@@ -432,14 +432,17 @@ export async function buildAgentPullV3({
 // `permissionGrantV3.js`'s own header for the two independent activation gates). Wiring these in is
 // a separate, later task.
 //
-// Repo-wide rule (this file's own `buildGrantV3Tx` doc, above): every 32-byte id crossing a JS
-// boundary is a `0x`-prefixed lowercase hex STRING — no exceptions, no `Buffer` leaking out, no bare
-// hex. `deriveScopeIdV3` (permissionGrantV3.js) emits exactly that shape and is compared against
-// `grant.scopeId` with strict `!==`; a one-character format drift here (missing prefix, wrong case,
-// reversed bytes) makes EVERY V3 reuse decision `scope-drift`, forever — the exact defect class this
-// remediation plan exists to fix. See grant.test.js's pinned round-trip tests for what
-// `scValToNative` (client.js → scval.js) is EMPIRICALLY confirmed to return per Rust type, rather
-// than assumed:
+// Repo DIRECTION, not yet true everywhere (same correction applied to this file's own
+// `buildGrantV3Tx` doc, above — Fix round 1, item 4): every 32-byte id crossing a JS boundary
+// SHOULD be a `0x`-prefixed lowercase hex STRING, no `Buffer` leaking out, no bare hex. This
+// file's producers (`buildGrantV3Tx`'s permissionId) and, as of this section, its readers both
+// conform. `deriveScopeIdV3` (permissionGrantV3.js) emits exactly that shape and is compared
+// against `grant.scopeId` with strict `!==`; a one-character format drift here (missing prefix,
+// wrong case, reversed bytes) makes EVERY V3 reuse decision `scope-drift`, forever — the exact
+// defect class this remediation plan exists to fix. `routerEvents.js:58,105` still types this same
+// 32-byte `permission_id` as a `Buffer` — a known, deliberately untouched remaining exception, out
+// of this section's scope. See grant.test.js's pinned round-trip tests for what `scValToNative`
+// (client.js → scval.js) is EMPIRICALLY confirmed to return per Rust type, rather than assumed:
 //   BytesN<32> (permission_id, scope_id) -> a Buffer/Uint8Array-compatible byte array
 //   Address    (owner, token)            -> a plain string (the strkey), already final
 //   i128       (mandate_ceiling, confirmed_spent, per_run_max) -> BigInt
@@ -472,10 +475,19 @@ function requireDecodedString(value, label) {
 
 // i128 units, canonical-decimal-string convention (Task 11, repo-wide): never `Number()` a unit
 // value — `BigInt.prototype.toString()` never emits a sign, exponent, fraction or leading zero, so
-// the result already satisfies `assertUnits`'s regex (permissionGrantV3.js) without further work.
+// a NON-NEGATIVE bigint already satisfies `assertUnits`'s regex (permissionGrantV3.js) without
+// further work — but a negative one would still `.toString()` to e.g. `'-5'`, which does NOT
+// satisfy that regex. Fix round 1, item 2: this guard used to let a negative value straight
+// through, leaving `readRemainingBudget` as the only place in this file that rejected one — an
+// asymmetry with no justification, since every i128 this file reads (the permission's three
+// ceiling/spend fields, and `remaining_budget`'s own top-level return) is the SAME kind of value,
+// a non-negative asset-unit quantity. Rejecting it HERE, once, is also what lets
+// `readRemainingBudget` below simply delegate to this function instead of duplicating the check.
 function requireI128UnitsString(value, label) {
   if (typeof value !== 'bigint')
     throw new Error(`${label} must decode to a BigInt (i128), got ${typeof value}.`)
+  if (value < 0n)
+    throw new Error(`${label} decoded a negative value (${value}) — refusing to proceed.`)
   return value.toString()
 }
 
@@ -538,8 +550,11 @@ export async function readPermissionGrant({ router, permissionId, server }) {
  * Read the remaining spendable budget under a bounded V3 permission (`funding_router::
  * remaining_budget`), as the canonical decimal-integer STRING every unit value in this codebase
  * uses — the exact shape `assertUnits` (permissionGrantV3.js, regex `/^(0|[1-9][0-9]*)$/`) requires.
- * A negative value is rejected HERE, with a clear error naming this reader, rather than letting a
- * malformed read reach `assertUnits` and throw an unhandled rejection about the wrong layer.
+ * Delegates the BigInt-type check and the negative-value rejection to `requireI128UnitsString` —
+ * the SAME guard `readPermissionGrant`'s three i128 fields use (Fix round 1, item 2) — rather than
+ * a second, hand-duplicated copy of the same two checks. Either failure throws here, with a clear
+ * error naming this reader, rather than letting a malformed read reach `assertUnits` and throw an
+ * unhandled rejection about the wrong layer.
  * @param {{router:string, permissionId:string, server?:object}} p
  * @returns {Promise<string>}
  */
@@ -550,11 +565,7 @@ export async function readRemainingBudget({ router, permissionId, server }) {
     args: [{ bytes32: permissionId }],
     server,
   })
-  if (typeof raw !== 'bigint')
-    throw new Error(`remaining_budget must decode to a BigInt (i128), got ${typeof raw}.`)
-  if (raw < 0n)
-    throw new Error(`remaining_budget read a negative value (${raw}) — refusing to proceed.`)
-  return raw.toString()
+  return requireI128UnitsString(raw, 'remaining_budget')
 }
 
 /**

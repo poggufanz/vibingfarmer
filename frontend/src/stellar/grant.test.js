@@ -1207,6 +1207,36 @@ function v3ReadServer({ grantRetval, remainingRetval } = {}) {
   }
 }
 
+// --- Fix round 1, item 1: exercise each decoded-field type guard INDIVIDUALLY --------------------
+// Review found that disabling bytes32ToHexId's length check, requireDecodedString,
+// requireI128UnitsString's bigint check, and requireU32Integer's number check ALL AT ONCE left the
+// suite green — only requireDecodedBool was ever fed a wrong-typed value. Every test below swaps
+// exactly ONE field of an otherwise-valid grant struct for a wrong-typed ScVal (never a
+// production-code mutation) so each guard is independently proven to matter.
+function withField(sv, key, replacement) {
+  const entries = sv
+    .map()
+    .map((e) =>
+      e.key().sym().toString() === key ? new xdr.ScMapEntry({ key: e.key(), val: replacement }) : e
+    )
+  return xdr.ScVal.scvMap(entries)
+}
+
+function validGrantScVal(over = {}) {
+  return permissionGrantStructScVal({
+    permissionIdHex: '0x' + PERMISSION_ID_RAW_HEX,
+    scopeIdHex: '0x' + SCOPE_ID_RAW_HEX,
+    owner: OWNER,
+    token: TOKEN,
+    mandateCeiling: 1n,
+    confirmedSpent: 1n,
+    perRunMax: 1n,
+    liveUntilLedger: 1_412_345,
+    revoked: false,
+    ...over,
+  })
+}
+
 describe('scValToNative shape — pinned empirically per Rust type, never assumed (Task W2b)', () => {
   it('i128 decodes to a BigInt', () => {
     const decoded = fromScVal(i128ScVal(9_007_199_254_740_993n))
@@ -1437,6 +1467,16 @@ describe('readRemainingBudget — Router V3 (Task W2b)', () => {
     ).rejects.toThrow(/negative/i)
   })
 
+  // Fix round 1, item 1: this reader's OWN bigint guard (now `requireI128UnitsString`, shared with
+  // readPermissionGrant's i128 fields — item 2) was previously untested. A u32 retval decodes to a
+  // `number`, not a `bigint`, so this is a genuine wrong-typed decode, not a contrived value.
+  it('throws when remaining_budget decodes to a non-BigInt (u32, not i128)', async () => {
+    const server = v3ReadServer({ remainingRetval: u32ScVal(5) })
+    await expect(
+      readRemainingBudget({ router: ROUTER_V3, permissionId: PERMISSION_ID, server })
+    ).rejects.toThrow(/remaining_budget must decode to a BigInt/)
+  })
+
   it('a read FAILURE (RPC down / simulation error) THROWS — never masquerades as a budget value', async () => {
     const server = {
       simulateTransaction: async () => {
@@ -1446,6 +1486,76 @@ describe('readRemainingBudget — Router V3 (Task W2b)', () => {
     await expect(
       readRemainingBudget({ router: ROUTER_V3, permissionId: PERMISSION_ID, server })
     ).rejects.toThrow()
+  })
+})
+
+describe('readPermissionGrant — decoded-field type guards, individually exercised (Fix round 1, item 1)', () => {
+  it('bytes32ToHexId: throws when permission_id decodes to the wrong length (16 bytes, not 32)', async () => {
+    const bad = withField(
+      validGrantScVal(),
+      'permission_id',
+      nativeToScVal(new Uint8Array(16), { type: 'bytes' })
+    )
+    const server = v3ReadServer({ grantRetval: bad })
+    await expect(
+      readPermissionGrant({ router: ROUTER_V3, permissionId: PERMISSION_ID, server })
+    ).rejects.toThrow(/permission_id must decode to exactly 32 bytes/)
+  })
+
+  it('bytes32ToHexId: throws when scope_id decodes to the wrong length (16 bytes, not 32)', async () => {
+    const bad = withField(
+      validGrantScVal(),
+      'scope_id',
+      nativeToScVal(new Uint8Array(16), { type: 'bytes' })
+    )
+    const server = v3ReadServer({ grantRetval: bad })
+    await expect(
+      readPermissionGrant({ router: ROUTER_V3, permissionId: PERMISSION_ID, server })
+    ).rejects.toThrow(/scope_id must decode to exactly 32 bytes/)
+  })
+
+  it('requireDecodedString: throws when owner decodes to a non-string (u32, not an Address)', async () => {
+    const bad = withField(validGrantScVal(), 'owner', u32ScVal(5))
+    const server = v3ReadServer({ grantRetval: bad })
+    await expect(
+      readPermissionGrant({ router: ROUTER_V3, permissionId: PERMISSION_ID, server })
+    ).rejects.toThrow(/owner must decode to a non-empty string/)
+  })
+
+  it('requireDecodedString: throws when token decodes to a non-string (u32, not an Address)', async () => {
+    const bad = withField(validGrantScVal(), 'token', u32ScVal(5))
+    const server = v3ReadServer({ grantRetval: bad })
+    await expect(
+      readPermissionGrant({ router: ROUTER_V3, permissionId: PERMISSION_ID, server })
+    ).rejects.toThrow(/token must decode to a non-empty string/)
+  })
+
+  it('requireI128UnitsString: throws when mandate_ceiling decodes to a non-BigInt (u32, not i128)', async () => {
+    const bad = withField(validGrantScVal(), 'mandate_ceiling', u32ScVal(5))
+    const server = v3ReadServer({ grantRetval: bad })
+    await expect(
+      readPermissionGrant({ router: ROUTER_V3, permissionId: PERMISSION_ID, server })
+    ).rejects.toThrow(/mandate_ceiling must decode to a BigInt/)
+  })
+
+  it('requireU32Integer: throws when live_until_ledger decodes to a non-number (i128, not u32)', async () => {
+    const bad = withField(validGrantScVal(), 'live_until_ledger', i128ScVal(5n))
+    const server = v3ReadServer({ grantRetval: bad })
+    await expect(
+      readPermissionGrant({ router: ROUTER_V3, permissionId: PERMISSION_ID, server })
+    ).rejects.toThrow(/live_until_ledger must decode to an integer/)
+  })
+
+  // Fix round 1, item 2: requireI128UnitsString now rejects a negative i128 for EVERY field it
+  // guards, not just readRemainingBudget's top-level return. mandate_ceiling is exercised here;
+  // confirmed_spent and per_run_max share the identical guard function, so this one row proves the
+  // fix for all three (retesting per-field would be redundant, not additional coverage).
+  it('requireI128UnitsString: throws when mandate_ceiling decodes to a negative value', async () => {
+    const bad = withField(validGrantScVal(), 'mandate_ceiling', i128ScVal(-5n))
+    const server = v3ReadServer({ grantRetval: bad })
+    await expect(
+      readPermissionGrant({ router: ROUTER_V3, permissionId: PERMISSION_ID, server })
+    ).rejects.toThrow(/mandate_ceiling decoded a negative value/)
   })
 })
 
@@ -1565,14 +1675,15 @@ describe('readPermissionGrant / readRemainingBudget feed proveReusablePermission
 
     const decision = await proveReusablePermission(seamDeps())
 
+    // This is the ONLY load-bearing assertion in this test (Fix round 1, item 3 — a prior
+    // `expect(decision.scopeId).toBe(expectedScopeId)` here was removed: `proveReusablePermission`
+    // returns its OWN `deriveScopeIdV3` computation, never `grant.scopeId` — see permissionGrantV3.js
+    // step 7b — so that line compared `deriveScopeIdV3`'s output to itself and could never fail).
+    // If `readPermissionGrant`'s `scopeId` format ever drifted from `expectedScopeId` (missing '0x',
+    // wrong case, byte-reversed), gate 7b's `!==` comparison against `grant.scopeId` would force
+    // `mode: 'fresh'` / `freshReason: 'scope-drift'`, and THIS assertion goes RED.
     expect(decision.mode).toBe('reuse')
     expect(decision.freshReason).toBeNull()
-    // decision.scopeId is deriveScopeIdV3's OWN computation (never grant.scopeId directly — see
-    // permissionGrantV3.js step 7b) — proven equal to the value independently derived above, which
-    // is itself the pinned Rust vector. If readPermissionGrant's scopeId format ever drifted from
-    // this (missing '0x', wrong case, byte-reversed), gate 7b's `!==` comparison would force
-    // 'scope-drift' and this assertion — and the `mode` assertion above it — would go RED.
-    expect(decision.scopeId).toBe(expectedScopeId)
     // The exact value survives beyond Number precision through the ENTIRE reader -> prover path.
     expect(decision.mandateCeilingUnits).toBe(BIG_UNITS.toString())
     expect(decision.remainingHeadroomUnits).toBe(BIG_UNITS.toString())
