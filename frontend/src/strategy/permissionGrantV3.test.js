@@ -1,20 +1,28 @@
-// frontend/src/strategy/permissionGrantV3.test.js — IQ Alter remediation Task 5. The reviewed,
+// frontend/src/strategy/permissionGrantV3.test.js — IQ Alter remediation Task F2. The reviewed,
 // BOUNDED Router V3 permission: an explicit cumulative ceiling (defaulting to exactly the planned
 // movement, so a first run leaves ZERO repeat headroom), an absolute ledger expiry serialized once
-// from a fresh ledger read, a run-independent scope identity, deterministic per-allocation
-// execution IDs, and an all-or-nothing on-chain proof that forces fresh on any doubt.
+// from a fresh ledger read, a run-independent scope identity that actually mirrors the router's own
+// `derive_scope_id`, deterministic per-allocation execution IDs, and an all-or-nothing on-chain
+// proof that forces fresh on any doubt.
 //
 // Router V3 is NOT deployed. `resolveRouterSchema` knows no V3 address, so the production default
 // makes `proveReusablePermission` force fresh before it reads anything — the dormancy contract
 // Task 4 established. These tests inject a schema resolver to exercise the live-V3 path.
+//
+// Task F2 retired `buildScopeId`/`scopeFieldsFromAgents` (they hashed a JSON blob the router never
+// produces — every V3 reuse decision was `scope-drift`, forever, by construction) in favor of
+// `deriveScopeIdV3`, a byte-for-byte mirror of the router's `derive_scope_id`. The RULE this task
+// enforces going forward: a cross-layer expectation may never be computed by the layer under test.
+// `PINNED_SCOPE_ID_DEPOSIT`/`PINNED_SCOPE_ID_BRIDGE` below are copied verbatim from
+// `funding_router/src/test.rs`'s `scope_id_matches_pinned_cross_layer_vector` (commit c39f9bf) —
+// never computed by `deriveScopeIdV3` itself — and every fixture's `grant.scopeId` is one of these
+// two literals, never a value this suite derives for itself.
 import { describe, test, expect, vi } from 'vitest'
 import {
   buildReusableApproval,
-  buildScopeId,
+  deriveScopeIdV3,
   makeAllocationExecution,
   proveReusablePermission,
-  scopeFieldsFromAgents,
-  PERMISSION_POLICY_VERSION,
 } from './permissionGrantV3.js'
 import { resolveRouterSchema } from '../stellar/routerSchema.js'
 import { AGENT_KIND_DEPOSIT, AGENT_KIND_BRIDGE } from '../stellar/grant.js'
@@ -31,17 +39,36 @@ const ROUTER_V2 = 'CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE'
 // Shape-valid contract id standing in for a future deployed V3 router. Deliberately NOT added to
 // ROUTER_SCHEMAS — the dormancy contract at routerSchema.js:47-54 forbids inventing an address.
 const ROUTER_V3 = 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC'
-const VAULT = 'CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77'
-const VAULT_2 = 'CBEI5VJKKWLXKQUUUETBAPZSQQLH7I57TSIDTMV4WJMBKIGVF7NSNOFY'
-const TOKEN = 'CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU'
-const TOKEN_2 = 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75'
+
+// --- Pinned cross-layer vectors (Task F2) ------------------------------------------------------
+// Produced by the Rust `funding_router/src/test.rs::scope_id_matches_pinned_cross_layer_vector`
+// (commit c39f9bf) and independently reproduced, byte-for-byte, in JS using `@stellar/stellar-sdk`.
+// These are NOT hypotheses: if `deriveScopeIdV3` ever stops reproducing them, the JS
+// implementation has drifted from the chain — the fix belongs in `deriveScopeIdV3`, never here.
+const PINNED_TARGET = 'CCQKDIVDUSS2NJ5IVGVKXLFNV2X3BMNSWO2LLNVXXC43VO54XW7L65UW'
+const PINNED_TOKEN = 'CCYLDMVTWS23NN5YXG5LXPF5X274BQOCYPCMLRWHZDE4VS6MZXHM6QJS'
+const PINNED_SCOPE_ID_DEPOSIT = '775ad5a5c5f2ec6382447626694b4ca75b25a23d466cfa3fda505596861d3202'
+const PINNED_SCOPE_ID_BRIDGE = '94e42b09c513c85d1d60633877efac275f528c3141a42743d7031523f04991d3'
+const ZERO_MINT_RECIPIENT = new Uint8Array(32)
+const PINNED_MINT_RECIPIENT_BRIDGE = new Uint8Array(32).fill(0xcd)
+
+// Every `proveReusablePermission` fixture below uses these AS its target/token, so a "reuse"
+// decision is a genuine end-to-end proof — real Rust-derived scope_id + real fixture inputs that
+// hash to it via the independently-pinned `deriveScopeIdV3` — never a value the code under test
+// invented for itself and then agreed with.
+const VAULT = PINNED_TARGET
+const TOKEN = PINNED_TOKEN
+// "Not the pinned one" alternates for drift tests — pre-existing, already-valid checksummed
+// addresses from this suite's own history, never fabricated.
+const VAULT_2 = 'CDWHNHIHOGBPXAK23NCU37BCXRRHCNNCEG6IPE4Q7FXBYLTJ7UYYKM77'
+const TOKEN_2 = 'CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU'
 const AGENT_1 = 'CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC'
 const AGENT_2 = 'CDGDIPHBN3MSNURDX33IZBXXQTJPT7THAXSMVBAIOIXLOA6OF32IRS2J'
 const SIGNER_PUB = 'GA2CMBS3LRY5MH64KKMHOYVA6WTLPMKRMIWEJDOIGHYPB7WMC3QHRCBU'
 const SIGNER_PUB_2 = 'GB4XNXQEDPRU7FJTSM2DDDCQ5DRZSLEDG67PIQZC6CV6ZB7TM3UZ6SXQ'
 const CODE_HASH = '0x' + 'c0de'.repeat(16)
-const CODE_HASH_2 = '0x' + 'beef'.repeat(16)
 const PERMISSION_ID = '0x' + '11'.repeat(32)
+const OTHER_PERMISSION_ID = '0x' + '22'.repeat(32)
 
 // Task 5 (agent-generation eligibility gate): REAL cataloged wasm hashes, not placeholders —
 // `generationForWasmHash` looks these up against the actual `AGENT_WASM_GENERATIONS` table, so a
@@ -218,63 +245,165 @@ describe('buildReusableApproval — the reviewed ceiling and its absolute ledger
   })
 })
 
-// --- buildScopeId ----------------------------------------------------------------------------
+// --- deriveScopeIdV3 --------------------------------------------------------------------------
 
-describe('buildScopeId — immutable scope identity, stable across runs', () => {
-  const scope = () => ({
-    network: NETWORK_PASSPHRASE,
-    owner: OWNER,
-    token: TOKEN,
-    router: ROUTER_V3,
-    agent: AGENT_1,
-    code: CODE_HASH,
-    signer: SIGNER_PUB,
-    targetAllowlist: [VAULT],
-    perRunCapUnits: '100000000',
-    cumulativeCapUnits: '100000000',
-    policyVersion: 3,
+describe("deriveScopeIdV3 — the mirror of the router's derive_scope_id (Task F2, pinned cross-layer vectors)", () => {
+  // THE central assertion of this entire task. These two vectors are copied VERBATIM from
+  // `funding_router/src/test.rs`'s `scope_id_matches_pinned_cross_layer_vector` (commit c39f9bf) —
+  // never computed by this suite, never adjusted to fit. If `deriveScopeIdV3` ever stops
+  // reproducing them, this function (not the constants) has drifted.
+  test('reproduces the Rust-pinned vector — kind 0 (Deposit), zero mint_recipient, zero destination_domain', () => {
+    const scopeId = deriveScopeIdV3({
+      target: PINNED_TARGET,
+      token: PINNED_TOKEN,
+      kind: 0,
+      mintRecipient: new Uint8Array(32),
+      destinationDomain: 0,
+    })
+    expect(scopeId).toBe('775ad5a5c5f2ec6382447626694b4ca75b25a23d466cfa3fda505596861d3202')
   })
 
-  test('is a 0x-prefixed sha256 hex string', () => {
-    expect(buildScopeId(scope())).toMatch(HEX32)
+  test('reproduces the Rust-pinned vector — kind 1 (Bridge), mint_recipient 0xcd*32, destination_domain 6', () => {
+    const scopeId = deriveScopeIdV3({
+      target: PINNED_TARGET,
+      token: PINNED_TOKEN,
+      kind: 1,
+      mintRecipient: new Uint8Array(32).fill(0xcd),
+      destinationDomain: 6,
+    })
+    expect(scopeId).toBe(PINNED_SCOPE_ID_BRIDGE)
+  })
+
+  test('output convention: lowercase hex, NO 0x prefix, 64 characters — deliberately different from the retired buildScopeId', () => {
+    const scopeId = deriveScopeIdV3({
+      target: VAULT,
+      token: TOKEN,
+      kind: 0,
+      mintRecipient: ZERO_MINT_RECIPIENT,
+      destinationDomain: 0,
+    })
+    expect(scopeId).toMatch(/^[0-9a-f]{64}$/)
+    expect(scopeId.startsWith('0x')).toBe(false)
+  })
+
+  test('is pure — identical inputs hash identically', () => {
+    const args = {
+      target: VAULT,
+      token: TOKEN,
+      kind: 0,
+      mintRecipient: ZERO_MINT_RECIPIENT,
+      destinationDomain: 0,
+    }
+    expect(deriveScopeIdV3(args)).toBe(deriveScopeIdV3({ ...args }))
   })
 
   test.each([
-    ['runId', { runId: 'run-2' }],
-    ['timestamp', { timestamp: NOW }],
-    ['createdAt', { createdAt: NOW }],
-    ['allocationId', { allocationId: 'run-1:deposit:3' }],
-    ['checkedAt', { checkedAt: NOW }],
-  ])('ignores %s — the same scope in two different runs is the same scope', (_label, extra) => {
-    expect(buildScopeId({ ...scope(), ...extra })).toBe(buildScopeId(scope()))
-  })
-
-  test('ignores target allowlist ORDER — a reordered, unchanged allowlist is the same scope', () => {
-    const a = buildScopeId({ ...scope(), targetAllowlist: [VAULT, VAULT_2] })
-    const b = buildScopeId({ ...scope(), targetAllowlist: [VAULT_2, VAULT] })
-    expect(b).toBe(a)
-  })
-
-  test.each([
-    ['network', { network: 'Other Network ; 2026' }],
-    ['owner', { owner: OWNER_2 }],
+    ['target', { target: VAULT_2 }],
     ['token', { token: TOKEN_2 }],
-    ['router', { router: ROUTER_V2 }],
-    ['agent', { agent: AGENT_2 }],
-    ['code', { code: CODE_HASH_2 }],
-    ['signer', { signer: SIGNER_PUB_2 }],
-    ['target allowlist content', { targetAllowlist: [VAULT_2] }],
-    ['per-run cap', { perRunCapUnits: '100000001' }],
-    ['cumulative cap', { cumulativeCapUnits: '250000000' }],
-    ['policy version', { policyVersion: 4 }],
+    [
+      'kind (with matching bridge fields)',
+      { kind: 1, mintRecipient: PINNED_MINT_RECIPIENT_BRIDGE, destinationDomain: 6 },
+    ],
+    ['mintRecipient', { mintRecipient: new Uint8Array(32).fill(1) }],
+    [
+      'destinationDomain (with a non-zero kind so it is observable)',
+      { kind: 1, mintRecipient: PINNED_MINT_RECIPIENT_BRIDGE, destinationDomain: 7 },
+    ],
   ])('changes when %s changes', (_label, over) => {
-    expect(buildScopeId({ ...scope(), ...over })).not.toBe(buildScopeId(scope()))
+    const base = {
+      target: VAULT,
+      token: TOKEN,
+      kind: 0,
+      mintRecipient: ZERO_MINT_RECIPIENT,
+      destinationDomain: 0,
+    }
+    expect(deriveScopeIdV3({ ...base, ...over })).not.toBe(deriveScopeIdV3(base))
   })
 
-  test('distinguishes caps beyond Number precision', () => {
-    const a = buildScopeId({ ...scope(), cumulativeCapUnits: '9007199254740992' })
-    const b = buildScopeId({ ...scope(), cumulativeCapUnits: '9007199254740993' })
-    expect(b).not.toBe(a)
+  test('rejects a mintRecipient truncated to 31 bytes rather than silently padding it', () => {
+    expect(() =>
+      deriveScopeIdV3({
+        target: VAULT,
+        token: TOKEN,
+        kind: 0,
+        mintRecipient: new Uint8Array(31),
+        destinationDomain: 0,
+      })
+    ).toThrow(/32 bytes/)
+  })
+
+  test('rejects a mintRecipient padded to 33 bytes rather than silently truncating it', () => {
+    expect(() =>
+      deriveScopeIdV3({
+        target: VAULT,
+        token: TOKEN,
+        kind: 0,
+        mintRecipient: new Uint8Array(33),
+        destinationDomain: 0,
+      })
+    ).toThrow(/32 bytes/)
+  })
+
+  test('rejects a mintRecipient that is not a Uint8Array at all (e.g. a hex string)', () => {
+    expect(() =>
+      deriveScopeIdV3({
+        target: VAULT,
+        token: TOKEN,
+        kind: 0,
+        mintRecipient: '00'.repeat(32),
+        destinationDomain: 0,
+      })
+    ).toThrow(/32 bytes/)
+  })
+
+  test.each([
+    ['negative', -1],
+    ['fractional', 1.5],
+    ['NaN', NaN],
+    ['Infinity', Infinity],
+    ['one past u32 max', 0x100000000],
+    ['a numeric string', '1'],
+  ])('rejects kind — %s', (_label, kind) => {
+    expect(() =>
+      deriveScopeIdV3({
+        target: VAULT,
+        token: TOKEN,
+        kind,
+        mintRecipient: ZERO_MINT_RECIPIENT,
+        destinationDomain: 0,
+      })
+    ).toThrow(/u32/)
+  })
+
+  test.each([
+    ['negative', -1],
+    ['fractional', 1.5],
+    ['NaN', NaN],
+    ['Infinity', Infinity],
+    ['one past u32 max', 0x100000000],
+    ['a numeric string', '6'],
+  ])('rejects destinationDomain — %s', (_label, destinationDomain) => {
+    expect(() =>
+      deriveScopeIdV3({
+        target: VAULT,
+        token: TOKEN,
+        kind: 1,
+        mintRecipient: PINNED_MINT_RECIPIENT_BRIDGE,
+        destinationDomain,
+      })
+    ).toThrow(/u32/)
+  })
+
+  test('accepts the maximum u32 value for kind/destinationDomain without throwing', () => {
+    expect(() =>
+      deriveScopeIdV3({
+        target: VAULT,
+        token: TOKEN,
+        kind: 0xffffffff,
+        mintRecipient: ZERO_MINT_RECIPIENT,
+        destinationDomain: 0xffffffff,
+      })
+    ).not.toThrow()
   })
 })
 
@@ -353,6 +482,9 @@ const activeAccount = (over = {}) =>
     ...over,
   })
 
+// Every field here — target/token/kind/mintRecipient/destinationDomain — is EXACTLY the pinned
+// Deposit-kind vector's inputs, so this fixture's derived scope id is `PINNED_SCOPE_ID_DEPOSIT` via
+// the SAME `deriveScopeIdV3` the pinned-vector tests above verify independently against the Rust.
 function agentInit(over = {}) {
   return {
     allocationId: 'run-1:deposit:0',
@@ -362,6 +494,11 @@ function agentInit(over = {}) {
     cap: { token: TOKEN, units: 25_000_000n, decimals: 7 },
     periodSeconds: DAY,
     expiry: NOW + 3600,
+    // Bridge fields: zeroed by convention for a Deposit-kind allocation — grant.js's
+    // `agentInitScVal` encodes them unconditionally regardless of kind, so a real AgentInit always
+    // carries them.
+    mintRecipient: ZERO_MINT_RECIPIENT,
+    destinationDomain: 0,
     ...over,
   }
 }
@@ -369,7 +506,10 @@ function agentInit(over = {}) {
 function permissionGrant(over = {}) {
   return {
     permissionId: PERMISSION_ID,
-    scopeId: null, // filled per-test from buildScopeId
+    // De-tautologized (Task F2): a LITERAL pinned constant, never computed by the code under test.
+    // `agentInit()`'s default fields are exactly the pinned Deposit-kind vector's inputs, so this
+    // is a genuine cross-layer match, not a fixture agreeing with itself.
+    scopeId: PINNED_SCOPE_ID_DEPOSIT,
     owner: OWNER,
     token: TOKEN,
     mandateCeilingUnits: '100000000',
@@ -381,10 +521,10 @@ function permissionGrant(over = {}) {
   }
 }
 
-// `code` defaults to a REAL cataloged wasm hash (not the placeholder CODE_HASH) so this row can
-// resolve to a real generation through `generationForWasmHash` — the eligibility gate (Task 5)
-// runs unconditionally on every path, so any fixture that reaches it needs a code that resolves to
-// SOMETHING for `baseDeps`'s widened `eligibleGenerations` default to have anything to admit.
+// `code` defaults to a REAL cataloged wasm hash (not a placeholder) so this row resolves to a real
+// generation through `generationForWasmHash` — the eligibility gate (Task 5) runs unconditionally.
+// `perRunCapUnits`/`cumulativeCapUnits` default to the SAME numbers `permissionGrant()` records
+// (`perRunMaxUnits`/`mandateCeilingUnits`) — Task F2's new cap-drift check (7e) compares them.
 function inspectedAgent(over = {}) {
   return {
     agentAddress: AGENT_1,
@@ -416,6 +556,11 @@ function provenProof(over = {}) {
   }
 }
 
+// Every default here is already mutually consistent (agentInit hashes to PINNED_SCOPE_ID_DEPOSIT,
+// which is exactly `permissionGrant()`'s default scopeId; `inspectedAgent()`'s caps match
+// `permissionGrant()`'s; `readLinkedPermission` answers PERMISSION_ID) — no depsWithScope-style
+// helper is needed anymore: since the scope id is a literal pinned constant, not a value computed
+// from `rows`, a plain `baseDeps()` call already reaches `reuse` on its own.
 function baseDeps(over = {}) {
   const inits = over.agentInits || [agentInit()]
   return {
@@ -451,55 +596,29 @@ function baseDeps(over = {}) {
     readRemainingBudget: vi.fn(async () => '75000000'),
     proveAllowance: vi.fn(async () => ({ proven: true, reason: null, proof: provenProof() })),
     inspectAgents: vi.fn(async () => [inspectedAgent()]),
+    // Task F2: every bound agent must PROVE, via this injected reader, that it is linked to
+    // exactly THIS permission (the router's `linked_permission`, c39f9bf) — defaults to the happy
+    // path (every queried agent answers with PERMISSION_ID); the `readLinkedPermission` describe
+    // block below overrides this explicitly to exercise `'agent-not-linked'`.
+    readLinkedPermission: vi.fn(async () => PERMISSION_ID),
     fetchCredential: vi.fn(() => ({ agentAddress: AGENT_1, signerPub: SIGNER_PUB })),
     ...over,
     agentInits: inits,
   }
 }
 
-// Wire the fixture's grant to the scopeId its own agent rows hash to, so the module's recomputation
-// has something real to agree with. Built through the module's own projection helper (the hashing
-// RULES are pinned independently by the buildScopeId block above, so this cannot hide a hash bug).
-function depsWithScope(over = {}) {
-  const deps = baseDeps(over)
-  const rows = [inspectedAgent(), inspectedAgent({ agentAddress: AGENT_2 })].slice(
-    0,
-    deps.agentInits.length
-  )
-  const scopeId = buildScopeId({
-    network: deps.network,
-    owner: deps.owner,
-    token: TOKEN,
-    router: deps.router,
-    policyVersion: PERMISSION_POLICY_VERSION,
-    ...scopeFieldsFromAgents(rows),
-  })
-  // Default credential fixture keyed by the SAME per-allocation row this default `inspectAgents`
-  // returns (index-for-index with `deps.agentInits`) — matches the real binding for every test that
-  // doesn't deliberately drift the row set, since the binding is a canonical function of the row
-  // SET (round 2's Critical fix) and this row set is exactly what a passing scope-drift implies.
-  const credentialByAllocation = new Map(
-    deps.agentInits.map((init, i) => [init.allocationId, rows[i]?.agentAddress])
-  )
-  return {
-    ...deps,
-    inspectAgents: over.inspectAgents || vi.fn(async () => rows),
-    fetchCredential:
-      over.fetchCredential ||
-      vi.fn(({ allocationId }) => {
-        const agentAddress = credentialByAllocation.get(allocationId)
-        return agentAddress ? { agentAddress, signerPub: SIGNER_PUB } : null
-      }),
-    readPermissionGrant:
-      over.readPermissionGrant ||
-      vi.fn(async () => permissionGrant({ scopeId, ...(over.grantOver || {}) })),
-    expectedScopeId: scopeId,
-  }
-}
+// Maps allocationId -> the correct bound agent's credential, for the handful of multi-allocation
+// tests below where AGENT_1 alone (baseDeps' default fetchCredential) would wrongly answer for a
+// second allocation actually bound to AGENT_2.
+const twoAgentCredentials = vi.fn(({ allocationId }) =>
+  allocationId === 'run-1:deposit:0'
+    ? { agentAddress: AGENT_1, signerPub: SIGNER_PUB }
+    : { agentAddress: AGENT_2, signerPub: SIGNER_PUB_2 }
+)
 
 describe('proveReusablePermission — dormancy', () => {
   test('forces fresh with ZERO chain reads when the router is not a known V3 address', async () => {
-    const deps = depsWithScope({ resolveSchema: () => ({ version: 2, tokenMode: 'per-budget' }) })
+    const deps = baseDeps({ resolveSchema: () => ({ version: 2, tokenMode: 'per-budget' }) })
     const decision = await proveReusablePermission(deps)
     expect(decision.mode).toBe('fresh')
     expect(decision.freshReason).toBe('router-not-v3')
@@ -510,7 +629,7 @@ describe('proveReusablePermission — dormancy', () => {
   })
 
   test('forces fresh when the router resolves to no schema at all', async () => {
-    const deps = depsWithScope({ resolveSchema: () => null })
+    const deps = baseDeps({ resolveSchema: () => null })
     const decision = await proveReusablePermission(deps)
     expect(decision.mode).toBe('fresh')
     expect(decision.freshReason).toBe('router-not-v3')
@@ -521,7 +640,7 @@ describe('proveReusablePermission — dormancy', () => {
     for (const address of [ROUTER_V2, ROUTER_V3]) {
       expect(resolveRouterSchema(address)?.version).not.toBe(3)
     }
-    const { resolveSchema: _injected, ...withProductionResolver } = depsWithScope()
+    const { resolveSchema: _injected, ...withProductionResolver } = baseDeps()
     const decision = await proveReusablePermission(withProductionResolver)
     expect(decision.mode).toBe('fresh')
     expect(decision.freshReason).toBe('router-not-v3')
@@ -530,18 +649,28 @@ describe('proveReusablePermission — dormancy', () => {
 
 describe('proveReusablePermission — reuse', () => {
   test('reuses a bounded, unexpired, unrevoked permission with proven headroom', async () => {
-    const decision = await proveReusablePermission(depsWithScope())
+    const decision = await proveReusablePermission(baseDeps())
     expect(decision.mode).toBe('reuse')
     expect(decision.freshReason).toBe(null)
     expect(decision.version).toBe(3)
     expect(decision.permissionId).toBe(PERMISSION_ID)
+    // The returned scopeId is the pinned constant, reproduced by the code under test from the
+    // reviewed allocation — never invented, never merely self-consistent.
+    expect(decision.scopeId).toBe(PINNED_SCOPE_ID_DEPOSIT)
   })
 
   test('reports headroom as exact bigint arithmetic, never rounded or estimated', async () => {
     const decision = await proveReusablePermission(
-      depsWithScope({
-        grantOver: { mandateCeilingUnits: '9007199254740993', confirmedSpentUnits: '1' },
+      baseDeps({
+        readPermissionGrant: vi.fn(async () =>
+          permissionGrant({ mandateCeilingUnits: '9007199254740993', confirmedSpentUnits: '1' })
+        ),
         readRemainingBudget: vi.fn(async () => '9007199254740992'),
+        // The bound row's own recorded cumulative cap must track the grant's new ceiling — Task
+        // F2's cap-drift check (7e) compares them directly.
+        inspectAgents: vi.fn(async () => [
+          inspectedAgent({ cumulativeCapUnits: '9007199254740993' }),
+        ]),
       })
     )
     expect(decision.mode).toBe('reuse')
@@ -553,8 +682,8 @@ describe('proveReusablePermission — reuse', () => {
   })
 
   test('is stable across runs — the same scope in a different run reuses the same permission', async () => {
-    const first = await proveReusablePermission(depsWithScope({ runId: 'run-1' }))
-    const second = await proveReusablePermission(depsWithScope({ runId: 'run-2' }))
+    const first = await proveReusablePermission(baseDeps({ runId: 'run-1' }))
+    const second = await proveReusablePermission(baseDeps({ runId: 'run-2' }))
     expect(second.mode).toBe('reuse')
     expect(second.scopeId).toBe(first.scopeId)
     // ...but the executions themselves are per-run, so no two runs share an execution id.
@@ -562,7 +691,7 @@ describe('proveReusablePermission — reuse', () => {
   })
 
   test('mints a well-formed execution for the one reviewed allocation', async () => {
-    const decision = await proveReusablePermission(depsWithScope())
+    const decision = await proveReusablePermission(baseDeps())
     expect(decision.executions).toHaveLength(1)
     expect(decision.executions[0].executionId).toMatch(HEX32)
     expect(decision.executions[0].allocationId).toBe(agentInit().allocationId)
@@ -570,8 +699,13 @@ describe('proveReusablePermission — reuse', () => {
 
   test('mints one unique execution per allocation under a single permission', async () => {
     const decision = await proveReusablePermission(
-      depsWithScope({
+      baseDeps({
         agentInits: [agentInit(), agentInit({ allocationId: 'run-1:deposit:1' })],
+        fetchCredential: twoAgentCredentials,
+        inspectAgents: vi.fn(async () => [
+          inspectedAgent(),
+          inspectedAgent({ agentAddress: AGENT_2 }),
+        ]),
       })
     )
     expect(decision.mode).toBe('reuse')
@@ -584,7 +718,7 @@ describe('proveReusablePermission — reuse', () => {
 
 describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
   test('a Base (bridge) allocation forces fresh BEFORE any chain read', async () => {
-    const deps = depsWithScope({
+    const deps = baseDeps({
       agentInits: [
         agentInit(),
         agentInit({ allocationId: 'run-1:bridge:1', kind: AGENT_KIND_BRIDGE }),
@@ -605,7 +739,7 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
     ['a different connector', { connectorId: 'xbull' }],
   ])('a stale active account forces fresh — %s', async (_label, over) => {
     const decision = await proveReusablePermission(
-      depsWithScope({ getCurrentActiveAccount: () => activeAccount(over) })
+      baseDeps({ getCurrentActiveAccount: () => activeAccount(over) })
     )
     expect(decision.mode).toBe('fresh')
     expect(decision.freshReason).toBe('account-stale')
@@ -617,14 +751,14 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
   // `if (activeAccount?.version === 1) {...}` skipped BOTH checks below it whenever the condition
   // was false — including these two cases, which used to sail straight through to a genuine reuse.
   test('no activeAccount at all forces fresh (fail-closed, not open)', async () => {
-    const decision = await proveReusablePermission(depsWithScope({ activeAccount: undefined }))
+    const decision = await proveReusablePermission(baseDeps({ activeAccount: undefined }))
     expect(decision.mode).toBe('fresh')
     expect(decision.freshReason).toBe('account-stale')
   })
 
   test('a non-V1 active account record forces fresh rather than skipping the check', async () => {
     const decision = await proveReusablePermission(
-      depsWithScope({ activeAccount: { ...activeAccount(), version: 2 } })
+      baseDeps({ activeAccount: { ...activeAccount(), version: 2 } })
     )
     expect(decision.mode).toBe('fresh')
     expect(decision.freshReason).toBe('account-stale')
@@ -632,7 +766,7 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
 
   test('a missing permission record forces fresh', async () => {
     const decision = await proveReusablePermission(
-      depsWithScope({ readPermissionGrant: vi.fn(async () => null) })
+      baseDeps({ readPermissionGrant: vi.fn(async () => null) })
     )
     expect(decision.mode).toBe('fresh')
     expect(decision.freshReason).toBe('permission-missing')
@@ -640,7 +774,7 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
 
   test('a revoked permission forces fresh', async () => {
     const decision = await proveReusablePermission(
-      depsWithScope({ readPermissionGrant: vi.fn(async () => permissionGrant({ revoked: true })) })
+      baseDeps({ readPermissionGrant: vi.fn(async () => permissionGrant({ revoked: true })) })
     )
     expect(decision.mode).toBe('fresh')
     expect(decision.freshReason).toBe('permission-revoked')
@@ -651,7 +785,7 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
     ['past the expiry ledger', 1],
   ])('an expired permission forces fresh — %s', async (_label, past) => {
     const decision = await proveReusablePermission(
-      depsWithScope({
+      baseDeps({
         currentLedger: LEDGER_NOW,
         readPermissionGrant: vi.fn(async () =>
           permissionGrant({ liveUntilLedger: LEDGER_NOW - past })
@@ -674,7 +808,7 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
     ['a non-integer', LEDGER_NOW + 0.5],
     ['a string', String(LEDGER_NOW)],
   ])('a malformed currentLedger forces fresh as expired — %s', async (_label, value) => {
-    const decision = await proveReusablePermission(depsWithScope({ currentLedger: value }))
+    const decision = await proveReusablePermission(baseDeps({ currentLedger: value }))
     expect(decision.mode).toBe('fresh')
     expect(decision.freshReason).toBe('permission-expired')
   })
@@ -691,7 +825,9 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
     ['a string', String(LEDGER_NOW + 10_000)],
   ])('a malformed grant.liveUntilLedger forces fresh as expired — %s', async (_label, value) => {
     const decision = await proveReusablePermission(
-      depsWithScope({ grantOver: { liveUntilLedger: value } })
+      baseDeps({
+        readPermissionGrant: vi.fn(async () => permissionGrant({ liveUntilLedger: value })),
+      })
     )
     expect(decision.mode).toBe('fresh')
     expect(decision.freshReason).toBe('permission-expired')
@@ -702,7 +838,7 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
     ['one unit short', '24999999'],
   ])('insufficient remaining budget forces fresh — %s', async (_label, remaining) => {
     const decision = await proveReusablePermission(
-      depsWithScope({ readRemainingBudget: vi.fn(async () => remaining) })
+      baseDeps({ readRemainingBudget: vi.fn(async () => remaining) })
     )
     expect(decision.mode).toBe('fresh')
     expect(decision.freshReason).toBe('headroom-insufficient')
@@ -710,7 +846,7 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
 
   test('a mutated allowance forces fresh', async () => {
     const decision = await proveReusablePermission(
-      depsWithScope({
+      baseDeps({
         proveAllowance: vi.fn(async () => ({
           proven: false,
           reason: 'mutated',
@@ -727,7 +863,7 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
     ['an unproven latest version', { noLaterMutation: false }],
   ])('a gapped allowance proof forces fresh — %s', async (_label, over) => {
     const decision = await proveReusablePermission(
-      depsWithScope({
+      baseDeps({
         proveAllowance: vi.fn(async () => ({
           proven: true,
           reason: null,
@@ -741,7 +877,7 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
 
   test('a missing agent forces fresh', async () => {
     const decision = await proveReusablePermission(
-      depsWithScope({ inspectAgents: vi.fn(async () => []) })
+      baseDeps({ inspectAgents: vi.fn(async () => []) })
     )
     expect(decision.mode).toBe('fresh')
     expect(decision.freshReason).toBe('agent-missing')
@@ -750,17 +886,18 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
   // Task 5 (IQ Alter remediation): closes the gate Task 4 wrote but never wired —
   // `AGENT_GENERATIONS_ELIGIBLE_FOR_PERMISSION_V3` stays `[]` in production, so every one of these
   // drives eligibility by injecting/widening `eligibleGenerations`, never by mutating that
-  // constant. Runs strictly after `agent-missing` and strictly before `scope-drift` (step 7a).
+  // constant. Runs strictly after `agent-missing` and strictly before the Task F2 scope-drift
+  // derivation below (step 7a, before step 7b).
   describe("agent-generation eligibility (Task 5 closes Task 4's gate)", () => {
     test('a row whose generation is absent from the injected allowlist forces fresh', async () => {
-      const decision = await proveReusablePermission(depsWithScope({ eligibleGenerations: [] }))
+      const decision = await proveReusablePermission(baseDeps({ eligibleGenerations: [] }))
       expect(decision.mode).toBe('fresh')
       expect(decision.freshReason).toBe('agent-generation-ineligible')
     })
 
     test('a row whose generation IS in the injected allowlist passes the gate through to reuse', async () => {
       const decision = await proveReusablePermission(
-        depsWithScope({ eligibleGenerations: [AGENT_V3_GENERATION] })
+        baseDeps({ eligibleGenerations: [AGENT_V3_GENERATION] })
       )
       expect(decision.mode).toBe('reuse')
       expect(decision.freshReason).toBe(null)
@@ -771,7 +908,7 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
     // the injected override OUT (the same technique the dormancy block above uses for
     // `resolveSchema`) forces this call through the function's own default, not a test-supplied one.
     test('the PRODUCTION default allowlist ([]) marks a REAL cataloged generation ineligible — no generation has been added yet', async () => {
-      const { eligibleGenerations: _injected, ...withProductionAllowlist } = depsWithScope()
+      const { eligibleGenerations: _injected, ...withProductionAllowlist } = baseDeps()
       const decision = await proveReusablePermission(withProductionAllowlist)
       expect(decision.mode).toBe('fresh')
       expect(decision.freshReason).toBe('agent-generation-ineligible')
@@ -792,7 +929,7 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
       const original = [...AGENT_GENERATIONS_ELIGIBLE_FOR_PERMISSION_V3]
       try {
         AGENT_GENERATIONS_ELIGIBLE_FOR_PERMISSION_V3.push(AGENT_V3_GENERATION)
-        const { eligibleGenerations: _injected, ...withProductionAllowlist } = depsWithScope()
+        const { eligibleGenerations: _injected, ...withProductionAllowlist } = baseDeps()
         const decision = await proveReusablePermission(withProductionAllowlist)
         expect(decision.mode).toBe('reuse')
         expect(decision.freshReason).toBe(null)
@@ -803,15 +940,9 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
       expect(AGENT_GENERATIONS_ELIGIBLE_FOR_PERMISSION_V3).toEqual([])
     })
 
-    // This ALSO proves ordering (fix-round finding 6 folded the weaker, now-deleted "runs BEFORE
-    // scope-drift" test into this one): `inspectAgents` returns a row whose `code` (CODE_HASH)
-    // differs from what `depsWithScope`'s auto-computed `scopeId` was built from (REAL_CODE_V3),
-    // so scope-drift WOULD genuinely fire here if the eligibility gate ran after it — both
-    // conditions are live in this fixture, unlike the deleted test's byte-identical-to-a-passing-
-    // case setup. The assertion below only holds if eligibility is checked first.
     test('a row whose code maps to no known generation at all forces fresh the same way — fail-closed, never a guess', async () => {
       const decision = await proveReusablePermission(
-        depsWithScope({
+        baseDeps({
           inspectAgents: vi.fn(async () => [inspectedAgent({ code: CODE_HASH })]),
           eligibleGenerations: [AGENT_V3_GENERATION], // widened, but irrelevant: code resolves to null
         })
@@ -822,7 +953,7 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
 
     test('checks EVERY row, not just the first', async () => {
       const decision = await proveReusablePermission(
-        depsWithScope({
+        baseDeps({
           agentInits: [
             agentInit({ allocationId: 'run-1:deposit:0' }),
             agentInit({ allocationId: 'run-1:deposit:1' }),
@@ -840,7 +971,7 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
 
     test('the eligibility gate runs strictly after agent-missing, not before it', async () => {
       const decision = await proveReusablePermission(
-        depsWithScope({
+        baseDeps({
           agentInits: [
             agentInit({ allocationId: 'run-1:deposit:0' }),
             agentInit({ allocationId: 'run-1:deposit:1' }),
@@ -854,28 +985,114 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
     })
   })
 
-  test.each([
-    // A DIFFERENT real cataloged hash (agent-v3-bridge, not agent-v3) — must still pass the
-    // Task 5 eligibility gate (baseDeps's widened eligibleGenerations admits both) so this
-    // isolates scope-drift from eligibility; the placeholder CODE_HASH_2 would resolve to no
-    // generation at all and trip 'agent-generation-ineligible' first instead.
-    ['code', { code: REAL_CODE_V3_BRIDGE }],
-    ['signer', { signerPub: SIGNER_PUB_2 }],
-    ['target', { target: VAULT_2 }],
-    ['token', { token: TOKEN_2 }],
-    ['per-run cap', { perRunCapUnits: '50000001' }],
-    ['cumulative cap', { cumulativeCapUnits: '100000001' }],
-  ])('%s drift against the recorded scope forces fresh', async (_label, over) => {
-    const decision = await proveReusablePermission(
-      depsWithScope({ inspectAgents: vi.fn(async () => [inspectedAgent(over)]) })
+  // --- Task F2: what the scope id does and does NOT bind ---------------------------------------
+  // The false claim this task retired said the (fake) hash "catches code, signer, target, token
+  // and cap drift at once." The real `derive_scope_id` binds ONLY target/token/kind/bridge-config.
+  // These tests replace the old single-hash drift table with checks matching what actually catches
+  // each kind of drift now — several distinct mechanisms, never one hash.
+  describe('what deriveScopeIdV3 does NOT bind — documented, residual gap (code / signerPub)', () => {
+    // Neither `code` (wasm hash) nor `signerPub` (session key) is bound by `derive_scope_id`, and
+    // nothing else in this prover checks them: proving the router's PINNED wasm hash needs a
+    // `config()` read that does not exist on this contract yet (see deriveScopeIdV3's own doc).
+    // These two tests exist to make that gap undeniable, not to celebrate it — a bound row whose
+    // code/signer silently drifted from what the permission was scoped to is NOT currently caught.
+    test('a bound row whose code drifted to a DIFFERENT, still-eligible generation is NOT caught — reuses anyway', async () => {
+      const decision = await proveReusablePermission(
+        baseDeps({
+          inspectAgents: vi.fn(async () => [inspectedAgent({ code: REAL_CODE_V3_BRIDGE })]),
+        })
+      )
+      expect(decision.mode).toBe('reuse')
+    })
+
+    test('a bound row whose signerPub drifted is NOT caught — reuses anyway', async () => {
+      const decision = await proveReusablePermission(
+        baseDeps({
+          inspectAgents: vi.fn(async () => [inspectedAgent({ signerPub: SIGNER_PUB_2 })]),
+        })
+      )
+      expect(decision.mode).toBe('reuse')
+    })
+  })
+
+  describe('what IS still caught, by a specific mechanism (never the retired hash)', () => {
+    test('a bound row whose target drifted is caught at the BINDING step (agent-binding-unproven), not scope-drift', async () => {
+      const decision = await proveReusablePermission(
+        baseDeps({ inspectAgents: vi.fn(async () => [inspectedAgent({ target: VAULT_2 })]) })
+      )
+      expect(decision.mode).toBe('fresh')
+      expect(decision.freshReason).toBe('agent-binding-unproven')
+    })
+
+    test('a bound row whose token drifted from the permission is caught by the KEPT per-row token check (scope-drift)', async () => {
+      const decision = await proveReusablePermission(
+        baseDeps({ inspectAgents: vi.fn(async () => [inspectedAgent({ token: TOKEN_2 })]) })
+      )
+      expect(decision.mode).toBe('fresh')
+      expect(decision.freshReason).toBe('scope-drift')
+    })
+
+    test.each([
+      ['per-run cap', { perRunCapUnits: '50000001' }],
+      ['cumulative cap', { cumulativeCapUnits: '100000001' }],
+    ])(
+      "%s drift against the permission's own recorded ceiling is caught by the NEW cap-drift check",
+      async (_label, over) => {
+        const decision = await proveReusablePermission(
+          baseDeps({ inspectAgents: vi.fn(async () => [inspectedAgent(over)]) })
+        )
+        expect(decision.mode).toBe('fresh')
+        expect(decision.freshReason).toBe('agent-cap-drift')
+      }
     )
-    expect(decision.mode).toBe('fresh')
-    expect(decision.freshReason).toBe('scope-drift')
+  })
+
+  describe('the scope-id derivation itself (Task F2, item 3)', () => {
+    test('an agentInit whose target does not match what the permission is scoped to forces scope-drift — derived from the ALLOCATION, not the row', async () => {
+      const decision = await proveReusablePermission(
+        baseDeps({ agentInits: [agentInit({ target: VAULT_2 })] })
+      )
+      expect(decision.mode).toBe('fresh')
+      expect(decision.freshReason).toBe('scope-drift')
+    })
+
+    // `deriveScopeIdV3` hashes `grant.token` (the PERMISSION's own token), never `init.token` — so
+    // an agentInit with the WRONG token does not change the derived scope id at all. The mismatch
+    // instead surfaces at the binding step, which matches candidate rows on `init.token` directly.
+    test("an agentInit whose OWN token differs from the permission's does not affect the derived scope id — the mismatch surfaces at binding instead", async () => {
+      const decision = await proveReusablePermission(
+        baseDeps({ agentInits: [agentInit({ token: TOKEN_2 })] })
+      )
+      expect(decision.mode).toBe('fresh')
+      expect(decision.freshReason).toBe('agent-binding-unproven')
+    })
+
+    // Mirrors the router's OWN invariant (`grant_v3`'s `ScopeMismatchV3` loop): every reviewed
+    // allocation must derive the IDENTICAL scope id, not just the first. This is the mandatory
+    // mutation the task brief pins: drop the `derivedScopeIds.some(...)` cross-check and this test
+    // goes RED (the decision would incorrectly reach `reuse`, since agentInits[0] alone matches).
+    test('two reviewed allocations that derive DIFFERENT scope ids force scope-drift for the WHOLE decision, even though the first alone matches the grant', async () => {
+      const decision = await proveReusablePermission(
+        baseDeps({
+          agentInits: [
+            agentInit({ allocationId: 'run-1:deposit:0' }), // derives PINNED_SCOPE_ID_DEPOSIT
+            agentInit({ allocationId: 'run-1:deposit:1', target: VAULT_2 }), // derives something else
+          ],
+          inspectAgents: vi.fn(async () => [
+            inspectedAgent(),
+            inspectedAgent({ agentAddress: AGENT_2, target: VAULT_2 }),
+          ]),
+        })
+      )
+      expect(decision.mode).toBe('fresh')
+      expect(decision.freshReason).toBe('scope-drift')
+      expect(decision.executions).toEqual([])
+    })
   })
 
   test('an allocation over the V4 per-execution cap forces fresh', async () => {
     const decision = await proveReusablePermission(
-      depsWithScope({
+      baseDeps({
         agentInits: [agentInit({ cap: { token: TOKEN, units: 25_000_000n, decimals: 7 } })],
         inspectAgents: vi.fn(async () => [inspectedAgent({ perExecutionMaxUnits: '24999999' })]),
       })
@@ -885,9 +1102,9 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
   })
 
   // Defect 2: binding is an ASSIGNMENT (bucket by target/token, skip claimed addresses — V2's
-  // `selectAgents` model), never a positional zip. It runs only after the scope-drift comparison
-  // above already proves the deployed SET matches the permission's recorded scope, so these tests
-  // assert the BINDING itself — the actual allocation→address map — not merely a refusal.
+  // `selectAgents` model), never a positional zip. It runs only after the scope checks above
+  // already prove the reviewed allocation shape matches the permission, so these tests assert the
+  // BINDING itself — the actual allocation→address map — not merely a refusal.
   test('rows arriving in a DIFFERENT ORDER still bind each allocation to the SAME agent — the assignment is a pure function of the row set, not of read order', async () => {
     const agentInits = [
       agentInit({ allocationId: 'run-1:deposit:0' }),
@@ -897,8 +1114,9 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
       new Map(decision.executions.map((e) => [e.allocationId, e.agentAddress]))
 
     const inOrder = await proveReusablePermission(
-      depsWithScope({
+      baseDeps({
         agentInits,
+        fetchCredential: twoAgentCredentials,
         inspectAgents: vi.fn(async () => [
           inspectedAgent(),
           inspectedAgent({ agentAddress: AGENT_2 }),
@@ -906,8 +1124,9 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
       })
     )
     const reversed = await proveReusablePermission(
-      depsWithScope({
+      baseDeps({
         agentInits,
+        fetchCredential: twoAgentCredentials,
         inspectAgents: vi.fn(async () => [
           inspectedAgent({ agentAddress: AGENT_2 }),
           inspectedAgent(),
@@ -923,24 +1142,20 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
     expect(mapOf(inOrder).get('run-1:deposit:1')).toBe(AGENT_2)
   })
 
-  // No `inspectAgents` override: depsWithScope's one auto-derived row (target VAULT, matching the
-  // recorded scope) is left untouched, so scope-drift passes trivially and this isolates the
-  // claim-loop's own match failure — only the AGENTINIT's target changes, not any row's.
   test('an allocation whose target/token matches no candidate row forces fresh, not a guessed address', async () => {
     const decision = await proveReusablePermission(
-      depsWithScope({ agentInits: [agentInit({ target: VAULT_2 })] })
-    )
-    expect(decision.mode).toBe('fresh')
-    expect(decision.freshReason).toBe('agent-binding-unproven')
-  })
-
-  // The `target` case above never exercises the `r.token === init.token` conjunct — same guard,
-  // same isolation technique (no `inspectAgents` override, only the AGENTINIT's token changes), so
-  // this is the one guard anywhere in this function that checks the allocation's OWN token at all
-  // (`grant.token` is compared to rows at the token-drift check, never to `init.token`).
-  test('an allocation whose token matches no candidate row forces fresh, not a guessed address', async () => {
-    const decision = await proveReusablePermission(
-      depsWithScope({ agentInits: [agentInit({ token: TOKEN_2 })] })
+      baseDeps({
+        agentInits: [
+          agentInit({ allocationId: 'run-1:deposit:0' }),
+          agentInit({ allocationId: 'run-1:deposit:1' }),
+        ],
+        inspectAgents: vi.fn(async () => [
+          inspectedAgent(),
+          // Wrong target — no agentInit above wants VAULT_2; both derive PINNED_SCOPE_ID_DEPOSIT
+          // (target=VAULT), so scope checks pass and this isolates the claim-loop's own failure.
+          inspectedAgent({ agentAddress: AGENT_2, target: VAULT_2 }),
+        ]),
+      })
     )
     expect(decision.mode).toBe('fresh')
     expect(decision.freshReason).toBe('agent-binding-unproven')
@@ -949,38 +1164,25 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
   // Two rows sharing an agentAddress is a malformed read: Array#sort is stable, so a comparator
   // that never returns 0 (this one doesn't) would let a tie fall back to whatever order the chain
   // read happened to return — reopening the exact non-determinism `.sort()` exists to close.
-  // scopeId is computed straight from the duplicated row set (mirroring depsWithScope's own
-  // convention) so scope-drift agrees with it and this isolates the duplicate-rejection guard.
   test('two rows sharing an agentAddress force fresh — a malformed read, not a coincidence to sort around', async () => {
-    const rows = [inspectedAgent(), inspectedAgent()]
-    const scopeId = buildScopeId({
-      network: NETWORK_PASSPHRASE,
-      owner: OWNER,
-      token: TOKEN,
-      router: ROUTER_V3,
-      policyVersion: PERMISSION_POLICY_VERSION,
-      ...scopeFieldsFromAgents(rows),
-    })
     const decision = await proveReusablePermission(
-      depsWithScope({
-        inspectAgents: vi.fn(async () => rows),
-        grantOver: { scopeId },
-      })
+      baseDeps({ inspectAgents: vi.fn(async () => [inspectedAgent(), inspectedAgent()]) })
     )
     expect(decision.mode).toBe('fresh')
     expect(decision.freshReason).toBe('agent-binding-unproven')
   })
 
-  // Same row set depsWithScope already proves consistent with the recorded scope (both agentInits
-  // default to VAULT, matching the two auto-derived rows) — only the SECOND allocation's target is
-  // changed, so this isolates the claim-loop's per-allocation match failure from scope-drift.
-  test('one allocation with no plausible candidate forces the WHOLE decision fresh — never a partial bind', async () => {
+  test('one allocation with no plausible candidate row forces the WHOLE decision fresh — never a partial bind', async () => {
     const decision = await proveReusablePermission(
-      depsWithScope({
+      baseDeps({
         agentInits: [
           agentInit({ allocationId: 'run-1:deposit:0' }),
-          agentInit({ allocationId: 'run-1:deposit:1', target: VAULT_2 }),
+          agentInit({ allocationId: 'run-1:deposit:1' }),
         ],
+        inspectAgents: vi.fn(async () => [
+          inspectedAgent(),
+          inspectedAgent({ agentAddress: AGENT_2, target: VAULT_2 }), // no agentInit wants VAULT_2
+        ]),
       })
     )
     expect(decision.mode).toBe('fresh')
@@ -990,7 +1192,7 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
 
   test('too few rows for the reviewed allocations still reports the more specific agent-missing, not agent-binding-unproven', async () => {
     const decision = await proveReusablePermission(
-      depsWithScope({
+      baseDeps({
         agentInits: [
           agentInit({ allocationId: 'run-1:deposit:0' }),
           agentInit({ allocationId: 'run-1:deposit:1' }),
@@ -1010,7 +1212,7 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
   // checks the wrong agent's cap against each allocation and would force fresh; bound[i] passes.
   test('the per-execution cap is checked against the BOUND agent, not whatever row landed at that array index', async () => {
     const decision = await proveReusablePermission(
-      depsWithScope({
+      baseDeps({
         agentInits: [
           agentInit({
             allocationId: 'run-1:deposit:0',
@@ -1021,6 +1223,7 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
             cap: { token: TOKEN, units: 20_000_000n, decimals: 7 },
           }),
         ],
+        fetchCredential: twoAgentCredentials,
         inspectAgents: vi.fn(async () => [
           inspectedAgent({ agentAddress: AGENT_2, perExecutionMaxUnits: '20000000' }),
           inspectedAgent({ agentAddress: AGENT_1, perExecutionMaxUnits: '25000000' }),
@@ -1032,9 +1235,7 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
   })
 
   test('a missing execution credential forces fresh', async () => {
-    const decision = await proveReusablePermission(
-      depsWithScope({ fetchCredential: vi.fn(() => null) })
-    )
+    const decision = await proveReusablePermission(baseDeps({ fetchCredential: vi.fn(() => null) }))
     expect(decision.mode).toBe('fresh')
     expect(decision.freshReason).toBe('credential-missing')
   })
@@ -1045,7 +1246,7 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
   // here — this proves the check itself, not just the existence check it sits behind.
   test('a credential for the WRONG agent forces fresh, not a mismatched signer accepted as reuse', async () => {
     const decision = await proveReusablePermission(
-      depsWithScope({
+      baseDeps({
         // The default single-allocation binding is AGENT_1; hand back a real credential, just for
         // the wrong address.
         fetchCredential: vi.fn(() => ({ agentAddress: AGENT_2, signerPub: SIGNER_PUB })),
@@ -1057,7 +1258,7 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
 
   test('one bad allocation forces the WHOLE decision fresh — never a partial reuse', async () => {
     const decision = await proveReusablePermission(
-      depsWithScope({
+      baseDeps({
         agentInits: [agentInit(), agentInit({ allocationId: 'run-1:deposit:1' })],
         // Only the second allocation's agent is missing.
         inspectAgents: vi.fn(async () => [inspectedAgent()]),
@@ -1069,11 +1270,75 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
 
   test('a fresh decision never carries headroom figures a caller could act on', async () => {
     const decision = await proveReusablePermission(
-      depsWithScope({ readPermissionGrant: vi.fn(async () => null) })
+      baseDeps({ readPermissionGrant: vi.fn(async () => null) })
     )
     expect(decision.mode).toBe('fresh')
     expect(decision.remainingHeadroomUnits).toBe(null)
     expect(decision.confirmedSpentUnits).toBe(null)
     expect(decision.executions).toEqual([])
+  })
+})
+
+// --- readLinkedPermission (Task F2, item 5) ----------------------------------------------------
+// `linked_permission(agent) -> Option<BytesN<32>>` (c39f9bf) closes a fail-open: the browser could
+// previously only trust its OWN local cache that a bound agent belongs to this permission. This
+// injected reader proves it from public on-chain state instead.
+describe('readLinkedPermission — proving a bound agent belongs to THIS permission (Task F2)', () => {
+  test('a bound agent linked to a DIFFERENT permission forces fresh (agent-not-linked)', async () => {
+    const decision = await proveReusablePermission(
+      baseDeps({ readLinkedPermission: vi.fn(async () => OTHER_PERMISSION_ID) })
+    )
+    expect(decision.mode).toBe('fresh')
+    expect(decision.freshReason).toBe('agent-not-linked')
+  })
+
+  test('a bound agent with no recorded link at all forces fresh (agent-not-linked)', async () => {
+    const decision = await proveReusablePermission(
+      baseDeps({ readLinkedPermission: vi.fn(async () => null) })
+    )
+    expect(decision.mode).toBe('fresh')
+    expect(decision.freshReason).toBe('agent-not-linked')
+  })
+
+  test("a read failure (the reader's own documented contract: resolve null/undefined, never throw) forces fresh the same way", async () => {
+    const decision = await proveReusablePermission(
+      baseDeps({ readLinkedPermission: vi.fn(async () => undefined) })
+    )
+    expect(decision.mode).toBe('fresh')
+    expect(decision.freshReason).toBe('agent-not-linked')
+  })
+
+  test('checks EVERY bound agent, not just the first', async () => {
+    const readLinkedPermission = vi.fn(async ({ agent }) =>
+      agent === AGENT_1 ? PERMISSION_ID : OTHER_PERMISSION_ID
+    )
+    const decision = await proveReusablePermission(
+      baseDeps({
+        agentInits: [
+          agentInit({ allocationId: 'run-1:deposit:0' }),
+          agentInit({ allocationId: 'run-1:deposit:1' }),
+        ],
+        fetchCredential: twoAgentCredentials,
+        readLinkedPermission,
+        inspectAgents: vi.fn(async () => [
+          inspectedAgent(),
+          inspectedAgent({ agentAddress: AGENT_2 }),
+        ]),
+      })
+    )
+    expect(decision.mode).toBe('fresh')
+    expect(decision.freshReason).toBe('agent-not-linked')
+    expect(readLinkedPermission).toHaveBeenCalledTimes(2)
+  })
+
+  test('a linked agent reading exactly this permissionId passes the gate through to reuse, and is called with (router, agent)', async () => {
+    const readLinkedPermission = vi.fn(async ({ router, agent }) => {
+      expect(router).toBe(ROUTER_V3)
+      expect(agent).toBe(AGENT_1)
+      return PERMISSION_ID
+    })
+    const decision = await proveReusablePermission(baseDeps({ readLinkedPermission }))
+    expect(decision.mode).toBe('reuse')
+    expect(readLinkedPermission).toHaveBeenCalledTimes(1)
   })
 })

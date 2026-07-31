@@ -11,13 +11,7 @@ import {
   fetchPreparedExecutionMaterial,
 } from './reusePreflight.js'
 import { AGENT_KIND_DEPOSIT, AGENT_KIND_BRIDGE } from '../stellar/grant.js'
-import {
-  proveReusablePermission,
-  buildReusableApproval,
-  buildScopeId,
-  scopeFieldsFromAgents,
-  PERMISSION_POLICY_VERSION,
-} from './permissionGrantV3.js'
+import { proveReusablePermission, buildReusableApproval } from './permissionGrantV3.js'
 import { classifyActiveAccount } from '../stellar/activeAccount.js'
 import { NETWORK_PASSPHRASE } from '../stellar/config.js'
 import { AGENT_WASM_GENERATIONS } from '../stellar/agentCreatorManifest.js'
@@ -695,6 +689,7 @@ describe('router-generation branch (Task 5 chunk A)', () => {
 
   const ROUTER_V3 = 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC' // shape-valid, NOT in ROUTER_SCHEMAS
   const PERMISSION_ID = '0x' + '11'.repeat(32)
+  const OTHER_PERMISSION_ID = '0x' + '22'.repeat(32)
   // Task 5 conflict, found and fixed here (see the report's "reusePreflight.test.js conflict"
   // heading): a fixture that agreed with permissionGrantV3.js on a made-up placeholder hash rather
   // than the real catalog is exactly the "two files green because they agreed on a FIXTURE, not
@@ -706,6 +701,18 @@ describe('router-generation branch (Task 5 chunk A)', () => {
     '0x' + AGENT_WASM_GENERATIONS.find((g) => g.generation === 'agent-v3').wasmHash
   const LEDGER_NOW = 1_400_000
 
+  // --- Task F2: pinned cross-layer vector (scoped to this describe block only) -----------------
+  // Copied verbatim from `funding_router/src/test.rs::scope_id_matches_pinned_cross_layer_vector`
+  // (commit c39f9bf) — never computed by `deriveScopeIdV3` itself (that would be exactly the
+  // tautology the task brief forbids: "a cross-layer expectation may never be computed by the
+  // layer under test"). `VAULT`/`TOKEN` above are this file's OWN, unrelated V2 fixtures — this
+  // block uses its own pinned target/token so the V3 fixtures below hash to a REAL Rust-verified
+  // constant, not whatever the V2 section happens to use.
+  const V3_TARGET = 'CCQKDIVDUSS2NJ5IVGVKXLFNV2X3BMNSWO2LLNVXXC43VO54XW7L65UW'
+  const V3_TOKEN = 'CCYLDMVTWS23NN5YXG5LXPF5X274BQOCYPCMLRWHZDE4VS6MZXHM6QJS'
+  const PINNED_SCOPE_ID_DEPOSIT = '775ad5a5c5f2ec6382447626694b4ca75b25a23d466cfa3fda505596861d3202'
+  const ZERO_MINT_RECIPIENT = new Uint8Array(32)
+
   const activeAccountFixture = (over = {}) =>
     classifyActiveAccount({
       address: OWNER,
@@ -715,15 +722,21 @@ describe('router-generation branch (Task 5 chunk A)', () => {
       ...over,
     })
 
+  // Every field here — target/token/kind/mintRecipient/destinationDomain — is exactly the pinned
+  // Deposit-kind vector's inputs (Task F2), so this fixture's derived scope id is
+  // `PINNED_SCOPE_ID_DEPOSIT` via the SAME `deriveScopeIdV3` permissionGrantV3.test.js's own
+  // pinned-vector tests verify independently against the Rust.
   function v3AgentInit(over = {}) {
     return {
       allocationId: 'run-1:deposit:0',
       kind: AGENT_KIND_DEPOSIT,
-      token: TOKEN,
-      target: VAULT,
-      cap: { token: TOKEN, units: 25_000_000n, decimals: 7 },
+      token: V3_TOKEN,
+      target: V3_TARGET,
+      cap: { token: V3_TOKEN, units: 25_000_000n, decimals: 7 },
       periodSeconds: 86400,
       expiry: NOW + 3600,
+      mintRecipient: ZERO_MINT_RECIPIENT,
+      destinationDomain: 0,
       ...over,
     }
   }
@@ -733,8 +746,8 @@ describe('router-generation branch (Task 5 chunk A)', () => {
       agentAddress: AGENT_1,
       signerPub: SIGNER_PUB,
       code: REAL_CODE_V3,
-      target: VAULT,
-      token: TOKEN,
+      target: V3_TARGET,
+      token: V3_TOKEN,
       perRunCapUnits: '50000000',
       cumulativeCapUnits: '100000000',
       perExecutionMaxUnits: '50000000',
@@ -745,9 +758,11 @@ describe('router-generation branch (Task 5 chunk A)', () => {
   function permissionGrantFixture(over = {}) {
     return {
       permissionId: PERMISSION_ID,
-      scopeId: null,
+      // De-tautologized (Task F2): a LITERAL pinned constant, never computed by the code under
+      // test — `v3AgentInit()`'s default fields are exactly the pinned vector's inputs.
+      scopeId: PINNED_SCOPE_ID_DEPOSIT,
       owner: OWNER,
-      token: TOKEN,
+      token: V3_TOKEN,
       mandateCeilingUnits: '100000000',
       confirmedSpentUnits: '25000000',
       perRunMaxUnits: '50000000',
@@ -759,21 +774,13 @@ describe('router-generation branch (Task 5 chunk A)', () => {
 
   function v3Deps(over = {}) {
     const rows = over.inspectAgentsV3Rows || [inspectedAgentV3()]
-    const scopeId = buildScopeId({
-      network: NETWORK_PASSPHRASE,
-      owner: OWNER,
-      token: TOKEN,
-      router: ROUTER_V3,
-      policyVersion: PERMISSION_POLICY_VERSION,
-      ...scopeFieldsFromAgents(rows),
-    })
     return {
       runId: 'run-1',
       owner: OWNER,
       router: ROUTER_V3,
       planFingerprint: '0xplan',
       agentInits: [v3AgentInit()],
-      reviewedBudgets: [{ token: TOKEN, units: 25_000_000n, decimals: 7 }],
+      reviewedBudgets: [{ token: V3_TOKEN, units: 25_000_000n, decimals: 7 }],
       durationSeconds: 3600,
       nowSec: NOW,
       network: NETWORK_PASSPHRASE,
@@ -797,7 +804,7 @@ describe('router-generation branch (Task 5 chunk A)', () => {
         secondsPerLedger: 5,
       }),
       currentLedger: LEDGER_NOW,
-      readPermissionGrant: vi.fn(async () => permissionGrantFixture({ scopeId })),
+      readPermissionGrant: vi.fn(async () => permissionGrantFixture()),
       readRemainingBudget: vi.fn(async () => '75000000'),
       proveAllowanceV3: vi.fn(async () => ({
         proven: true,
@@ -805,6 +812,10 @@ describe('router-generation branch (Task 5 chunk A)', () => {
         proof: { gapFree: true, noLaterMutation: true },
       })),
       inspectAgentsV3: vi.fn(async () => rows),
+      // Task F2: every bound agent must prove, via this injected reader, that it is linked to
+      // exactly THIS permission (the router's `linked_permission`, c39f9bf) — defaults to the
+      // happy path.
+      readLinkedPermission: vi.fn(async () => PERMISSION_ID),
       fetchCredential: vi.fn(() => ({ agentAddress: AGENT_1, signerPub: SIGNER_PUB })),
       ...over,
     }
@@ -836,6 +847,26 @@ describe('router-generation branch (Task 5 chunk A)', () => {
       'agent-v3',
       'agent-v3-bridge',
     ])
+  })
+
+  // Task F2: `readLinkedPermission` is threaded through exactly like `eligibleGenerations` above
+  // it — proven via the call argument, not inferred from the outcome.
+  test('forwards readLinkedPermission into proveReusablePermission on the V3 path', async () => {
+    const readLinkedPermission = vi.fn(async () => PERMISSION_ID)
+    const deps = v3Deps({ readLinkedPermission })
+    await preflightPermission(deps)
+    expect(proveReusablePermission).toHaveBeenCalledTimes(1)
+    expect(proveReusablePermission.mock.calls[0][0].readLinkedPermission).toBe(readLinkedPermission)
+  })
+
+  test('a V3 router whose bound agent is linked to a DIFFERENT permission forces fresh through the SAME real logic', async () => {
+    const out = await preflightPermission(
+      v3Deps({ readLinkedPermission: vi.fn(async () => OTHER_PERMISSION_ID) })
+    )
+    expect(proveReusablePermission).toHaveBeenCalledTimes(1)
+    expect(out.version).toBe(3)
+    expect(out.mode).toBe('fresh')
+    expect(out.freshReason).toBe('agent-not-linked')
   })
 
   test('a V3 router with no permission record on chain forces fresh through the SAME real logic', async () => {

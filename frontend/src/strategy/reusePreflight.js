@@ -396,9 +396,11 @@ function selectAgents(agentInits, candidatesByTarget, { owner, nowSec }) {
  *          getCurrentActiveAccount?:Function, approval?:object, currentLedger?:number,
  *          readPermissionGrant?:Function, readRemainingBudget?:Function,
  *          proveAllowanceV3?:Function, inspectAgentsV3?:Function, fetchCredential?:Function,
- *          eligibleGenerations?:string[]}} p `eligibleGenerations` is V3-branch-only (Task 5): left
- *   `undefined` unless a caller explicitly supplies it, so `proveReusablePermission`'s own default
- *   (the real, production allowlist) governs production — never read on the V2 path.
+ *          readLinkedPermission?:Function, eligibleGenerations?:string[]}} p `eligibleGenerations`
+ *   is V3-branch-only (Task 5): left `undefined` unless a caller explicitly supplies it, so
+ *   `proveReusablePermission`'s own default (the real, production allowlist) governs production —
+ *   never read on the V2 path. `readLinkedPermission` (Task F2) is V3-branch-only the same way,
+ *   with no default anywhere in the chain (see `proveReusablePermission`'s own header).
  * @returns {Promise<object>} PermissionDecisionV1 (V2 router) or permissionGrantV3's decision (V3 router)
  */
 export async function preflightPermission({
@@ -429,6 +431,11 @@ export async function preflightPermission({
   proveAllowanceV3,
   inspectAgentsV3,
   fetchCredential,
+  // Task F2 (IQ Alter remediation): forwarded ONLY into the V3 branch below, exactly like every
+  // other V3-only chain reader above it. No default here either — `proveReusablePermission` has
+  // none (there is nothing dormant-safe to default it to; see that module's own header note), and
+  // the V2 branch below never reads it.
+  readLinkedPermission,
   // Task 5 (IQ Alter remediation): forwarded ONLY into the V3 branch below, exactly like
   // `resolveSchema`/`readPermissionGrant`/etc. above it — the live V2 branch never reads this and
   // must not (see reusePreflight.test.js's "V2 branch never reads eligibleGenerations" proof).
@@ -464,6 +471,7 @@ export async function preflightPermission({
       proveAllowance: proveAllowanceV3,
       inspectAgents: inspectAgentsV3,
       fetchCredential,
+      readLinkedPermission,
       eligibleGenerations,
     })
   }
