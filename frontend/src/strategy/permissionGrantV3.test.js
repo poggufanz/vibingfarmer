@@ -521,15 +521,11 @@ describe('proveReusablePermission — reuse', () => {
     expect(second.executions[0].executionId).not.toBe(first.executions[0].executionId)
   })
 
-  test('mints one unique execution per allocation under a single permission', async () => {
-    const decision = await proveReusablePermission(
-      depsWithScope({ agentInits: [agentInit(), agentInit({ allocationId: 'run-1:deposit:1' })] })
-    )
-    expect(decision.mode).toBe('reuse')
-    expect(decision.executions).toHaveLength(2)
-    const ids = decision.executions.map((e) => e.executionId)
-    expect(new Set(ids).size).toBe(2)
-    for (const id of ids) expect(id).toMatch(HEX32)
+  test('mints a well-formed execution for the one reviewed allocation', async () => {
+    const decision = await proveReusablePermission(depsWithScope())
+    expect(decision.executions).toHaveLength(1)
+    expect(decision.executions[0].executionId).toMatch(HEX32)
+    expect(decision.executions[0].allocationId).toBe(agentInit().allocationId)
   })
 })
 
@@ -589,6 +585,41 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
           permissionGrant({ liveUntilLedger: LEDGER_NOW - past })
         ),
       })
+    )
+    expect(decision.mode).toBe('fresh')
+    expect(decision.freshReason).toBe('permission-expired')
+  })
+
+  // Fail-CLOSED, not open: `currentLedger` has no production source today (orchestrator.js's
+  // revalidateReuse leaves it unset), and `undefined >= n` is `false` — so without this guard an
+  // absent/malformed ledger reads an EXPIRED permission as live. No other gate substitutes for
+  // expiry, so this must force fresh on its own, never fall through to the comparison.
+  test.each([
+    ['undefined', undefined],
+    ['null', null],
+    ['NaN', NaN],
+    ['Infinity', Infinity],
+    ['a non-integer', LEDGER_NOW + 0.5],
+    ['a string', String(LEDGER_NOW)],
+  ])('a malformed currentLedger forces fresh as expired — %s', async (_label, value) => {
+    const decision = await proveReusablePermission(depsWithScope({ currentLedger: value }))
+    expect(decision.mode).toBe('fresh')
+    expect(decision.freshReason).toBe('permission-expired')
+  })
+
+  // The identical failure one field over: `Number(undefined)` is `NaN`, and every comparison
+  // against `NaN` is `false` — a malformed `grant.liveUntilLedger` is exactly as fail-open as a
+  // malformed `currentLedger` unless it gets the same guard.
+  test.each([
+    ['undefined', undefined],
+    ['null', null],
+    ['NaN', NaN],
+    ['Infinity', Infinity],
+    ['a non-integer', LEDGER_NOW + 0.5],
+    ['a string', String(LEDGER_NOW + 10_000)],
+  ])('a malformed grant.liveUntilLedger forces fresh as expired — %s', async (_label, value) => {
+    const decision = await proveReusablePermission(
+      depsWithScope({ grantOver: { liveUntilLedger: value } })
     )
     expect(decision.mode).toBe('fresh')
     expect(decision.freshReason).toBe('permission-expired')
@@ -668,6 +699,89 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
     )
     expect(decision.mode).toBe('fresh')
     expect(decision.freshReason).toBe('per-execution-cap')
+  })
+
+  // Defect 2: `inspectAgents` is an injected chain read with no ordering — and no SIZE — contract,
+  // and no `AgentInit`/row pair shares any field the other could be matched against (confirmed
+  // against `agentCache.js`'s `inspectReusableAgents`, the closest production candidate — its rows
+  // carry no per-allocation reference at all; see the task report). Binding `executions[i]` to
+  // `rows[i]` by array position lets an allocation land on the wrong agent — the exact address a
+  // real `pull_v3` moves funds to — the instant there is more than one allocation to disambiguate.
+  // With exactly one, position and identity are the same thing; with more than one, nothing here
+  // can tell a correct pairing from an incorrect one, so it forces fresh rather than guess.
+  test('rows longer than agentInits forces fresh — an untracked extra candidate is not evidence', async () => {
+    const decision = await proveReusablePermission(
+      depsWithScope({
+        inspectAgents: vi.fn(async () => [
+          inspectedAgent(),
+          inspectedAgent({ agentAddress: AGENT_2 }),
+        ]),
+      })
+    )
+    expect(decision.mode).toBe('fresh')
+    expect(decision.freshReason).toBe('agent-binding-unproven')
+  })
+
+  // Same underlying evidence as the test above (an agent present that no reviewed allocation
+  // needed), stated from the brief's other angle: a row belongs to zero reviewed allocations.
+  test('a row present for an allocation that was never reviewed forces fresh, not a silent extra candidate', async () => {
+    const decision = await proveReusablePermission(
+      depsWithScope({
+        agentInits: [agentInit()],
+        inspectAgents: vi.fn(async () => [
+          inspectedAgent(),
+          inspectedAgent({ agentAddress: AGENT_2 }), // belongs to no reviewed allocation
+        ]),
+      })
+    )
+    expect(decision.mode).toBe('fresh')
+    expect(decision.freshReason).toBe('agent-binding-unproven')
+  })
+
+  // The proof technique orchestrator.router.test.js's own recent identity-matching fix round used:
+  // reverse the chain read's array relative to review order, and show a swap would have happened.
+  // Here there is no identity signal to fall back on, so — unlike that downstream fix — reordering
+  // can only be handled by refusing to guess: BOTH orders of the SAME two-row set force fresh
+  // identically, proving the decision does not depend on (and so cannot be fooled by) `rows`' order.
+  test.each([
+    ['in review order', [AGENT_1, AGENT_2]],
+    ['reversed — a positional zip would swap the two', [AGENT_2, AGENT_1]],
+  ])(
+    'rows %s still force fresh — a wrong pairing never reaches an execution',
+    async (_label, order) => {
+      const decision = await proveReusablePermission(
+        depsWithScope({
+          agentInits: [
+            agentInit({ allocationId: 'run-1:deposit:0' }),
+            agentInit({ allocationId: 'run-1:deposit:1' }),
+          ],
+          inspectAgents: vi.fn(async () =>
+            order.map((agentAddress) => inspectedAgent({ agentAddress }))
+          ),
+        })
+      )
+      expect(decision.mode).toBe('fresh')
+      expect(decision.freshReason).toBe('agent-binding-unproven')
+      expect(decision.executions).toEqual([])
+    }
+  )
+
+  // "An allocation whose agent is absent from rows entirely" and "a row present for an allocation
+  // that was never reviewed" collapse to the SAME evidence once there is more than one allocation:
+  // whatever the exact mismatch, more than one allocation makes the whole binding unprovable.
+  test('a second allocation with no plausible agent at all still forces fresh, not a partial bind', async () => {
+    const decision = await proveReusablePermission(
+      depsWithScope({
+        agentInits: [
+          agentInit({ allocationId: 'run-1:deposit:0' }),
+          agentInit({ allocationId: 'run-1:deposit:1' }),
+        ],
+        inspectAgents: vi.fn(async () => []),
+      })
+    )
+    expect(decision.mode).toBe('fresh')
+    expect(decision.freshReason).toBe('agent-missing') // too few rows is still the more specific reason
+    expect(decision.executions).toEqual([])
   })
 
   test('a missing execution credential forces fresh', async () => {
