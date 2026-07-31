@@ -539,8 +539,10 @@ function permissionGrant(over = {}) {
 
 // `code` defaults to a REAL cataloged wasm hash (not a placeholder) so this row resolves to a real
 // generation through `generationForWasmHash` — the eligibility gate (Task 5) runs unconditionally.
-// `perRunCapUnits`/`cumulativeCapUnits` default to the SAME numbers `permissionGrant()` records
-// (`perRunMaxUnits`/`mandateCeilingUnits`) — Task F2's new cap-drift check (7e) compares them.
+// `capPerPeriodUnits` (Task W3a — replaces the retired, unprovable `perRunCapUnits`/
+// `cumulativeCapUnits` pair) defaults to the SAME number `agentInit()`'s default `cap.units` records
+// (25,000,000) — the cap-drift check (7e) compares a bound agent's own `capPerPeriodUnits` against
+// the REVIEWED allocation's `cap.units` directly, never against anything on `permissionGrant()`.
 function inspectedAgent(over = {}) {
   return {
     agentAddress: AGENT_1,
@@ -548,8 +550,7 @@ function inspectedAgent(over = {}) {
     code: REAL_CODE_V3,
     target: VAULT,
     token: TOKEN,
-    perRunCapUnits: '50000000',
-    cumulativeCapUnits: '100000000',
+    capPerPeriodUnits: '25000000',
     perExecutionMaxUnits: '50000000',
     ...over,
   }
@@ -682,11 +683,11 @@ describe('proveReusablePermission — reuse', () => {
           permissionGrant({ mandateCeilingUnits: '9007199254740993', confirmedSpentUnits: '1' })
         ),
         readRemainingBudget: vi.fn(async () => '9007199254740992'),
-        // The bound row's own recorded cumulative cap must track the grant's new ceiling — Task
-        // F2's cap-drift check (7e) compares them directly.
-        inspectAgents: vi.fn(async () => [
-          inspectedAgent({ cumulativeCapUnits: '9007199254740993' }),
-        ]),
+        // No inspectAgents override needed (Task W3a): the cap-drift check (7e) compares a bound
+        // row's `capPerPeriodUnits` against the REVIEWED `agentInits[i].cap.units`, never against
+        // `grant.mandateCeilingUnits` — raising the grant's ceiling here has nothing to do with the
+        // row's own cap, so the default `inspectedAgent()` (capPerPeriodUnits '25000000', matching
+        // the default `agentInit().cap.units`) already satisfies it.
       })
     )
     expect(decision.mode).toBe('reuse')
@@ -1048,14 +1049,24 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
       expect(decision.freshReason).toBe('scope-drift')
     })
 
+    // Task W3a: the old two-field table (`perRunCapUnits` vs. `grant.perRunMaxUnits`,
+    // `cumulativeCapUnits` vs. `grant.mandateCeilingUnits`) compared fields no chain read can
+    // produce (see the corrected 7e docblock in permissionGrantV3.js) — replaced with the one
+    // provable comparison: a bound agent's own on-chain `capPerPeriodUnits` against the REVIEWED
+    // `agentInits[0].cap.units` (25,000,000, `agentInit()`'s default). Both directions are pinned,
+    // not just one: a recorded cap ABOVE the reviewed figure and a recorded cap BELOW it are both
+    // real drift, and an equality check accidentally weakened to a one-sided `>`/`<`/`>=`/`<=` (or
+    // with its operands swapped) would still happen to reject one direction while silently letting
+    // the other one through — a single-case test could not distinguish "correct strict inequality"
+    // from "accidentally one-sided," but this pair can.
     test.each([
-      ['per-run cap', { perRunCapUnits: '50000001' }],
-      ['cumulative cap', { cumulativeCapUnits: '100000001' }],
+      ['above the reviewed cap', '25000001'],
+      ['below the reviewed cap', '24999999'],
     ])(
-      "%s drift against the permission's own recorded ceiling is caught by the NEW cap-drift check",
-      async (_label, over) => {
+      "a bound agent's on-chain capPerPeriodUnits drifting %s is caught by the cap-drift check",
+      async (_label, capPerPeriodUnits) => {
         const decision = await proveReusablePermission(
-          baseDeps({ inspectAgents: vi.fn(async () => [inspectedAgent(over)]) })
+          baseDeps({ inspectAgents: vi.fn(async () => [inspectedAgent({ capPerPeriodUnits })]) })
         )
         expect(decision.mode).toBe('fresh')
         expect(decision.freshReason).toBe('agent-cap-drift')
@@ -1300,8 +1311,16 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
           }),
         ],
         fetchCredential: twoAgentCredentials,
+        // capPerPeriodUnits set per row (Task W3a's cap-drift check, 7e, is now indexed and would
+        // otherwise fire on AGENT_2's row for an unrelated reason — its reviewed cap is 20,000,000,
+        // not the fixture default 25,000,000) — kept equal to each allocation's own reviewed cap so
+        // this test isolates ONLY the per-execution-cap behavior it's named for.
         inspectAgents: vi.fn(async () => [
-          inspectedAgent({ agentAddress: AGENT_2, perExecutionMaxUnits: '20000000' }),
+          inspectedAgent({
+            agentAddress: AGENT_2,
+            capPerPeriodUnits: '20000000',
+            perExecutionMaxUnits: '20000000',
+          }),
           inspectedAgent({ agentAddress: AGENT_1, perExecutionMaxUnits: '25000000' }),
         ]),
       })

@@ -751,8 +751,12 @@ describe('router-generation branch (Task 5 chunk A)', () => {
       code: REAL_CODE_V3,
       target: V3_TARGET,
       token: V3_TOKEN,
-      perRunCapUnits: '50000000',
-      cumulativeCapUnits: '100000000',
+      // Task W3a: `perRunCapUnits`/`cumulativeCapUnits` compared fields no chain read can produce
+      // (see permissionGrantV3.js's corrected 7e docblock) — replaced with `capPerPeriodUnits`,
+      // defaulted to the SAME number `v3AgentInit()`'s default `cap.units` records (25,000,000), so
+      // this fixture still reaches `proveReusablePermission`'s `reuse` outcome via the REAL
+      // (spy-wrapped, not stubbed — see this file's `vi.mock` at the top) implementation.
+      capPerPeriodUnits: '25000000',
       perExecutionMaxUnits: '50000000',
       ...over,
     }
