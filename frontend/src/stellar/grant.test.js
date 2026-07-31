@@ -823,6 +823,58 @@ describe('buildGrantV3Tx — the reviewed bound is what gets signed', () => {
   })
 })
 
+describe('buildGrantV3Tx — permissionId 32-byte guard (fail loudly, never a placeholder)', () => {
+  // Feeding a bad INPUT to exercise a validation branch is what testing a guard means — these
+  // stub the chain's own retval so retval[0] is the wrong shape, rather than mutating any
+  // production code, and assert the guard's own throw message.
+  const buildArgs = (server) => ({
+    owner: OWNER,
+    token: TOKEN,
+    approval: reviewedApproval,
+    perRunMaxUnits: '50000000',
+    agentInits: [sampleInits[0]],
+    router: ROUTER_V3,
+    server,
+    resolveSchema: asV3,
+  })
+
+  it('throws when the decoded permission_id is 31 bytes (one short)', async () => {
+    const server = fakeServer({
+      latest: 1000,
+      retval: xdr.ScVal.scvVec([
+        nativeToScVal(Buffer.alloc(31, 0x11), { type: 'bytes' }),
+        agentsRetval([AGENT_1]),
+      ]),
+    })
+    await expect(buildGrantV3Tx(buildArgs(server))).rejects.toThrow(
+      /malformed permission_id \(expected 32 bytes, got 31\)/
+    )
+  })
+
+  it('throws when the decoded permission_id is 33 bytes (one over)', async () => {
+    const server = fakeServer({
+      latest: 1000,
+      retval: xdr.ScVal.scvVec([
+        nativeToScVal(Buffer.alloc(33, 0x11), { type: 'bytes' }),
+        agentsRetval([AGENT_1]),
+      ]),
+    })
+    await expect(buildGrantV3Tx(buildArgs(server))).rejects.toThrow(
+      /malformed permission_id \(expected 32 bytes, got 33\)/
+    )
+  })
+
+  it('throws when the retval is not the (permission_id, agents) tuple at all', async () => {
+    // A single Address ScVal (not wrapped in a Vec) decodes DIRECTLY to a bare string (per this
+    // file's own pinned scValToNative-shape tests below) — Array.isArray(retval) is false, so the
+    // guard sees `undefined`, not merely the wrong type.
+    const server = fakeServer({ latest: 1000, retval: Address.fromString(AGENT_1).toScVal() })
+    await expect(buildGrantV3Tx(buildArgs(server))).rejects.toThrow(
+      /malformed permission_id \(expected 32 bytes, got none\)/
+    )
+  })
+})
+
 describe('buildAgentPullV3 — permission + deterministic execution id', () => {
   it('encodes pull_v3(permission_id, execution_id, agent, amount)', async () => {
     let built = null

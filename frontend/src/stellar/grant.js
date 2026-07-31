@@ -258,16 +258,20 @@ async function assertRouterV3(router, resolveSchema) {
  * submit" reasoning `buildGrantTx` already relies on for the salt-derived `deploy_v2` agent
  * addresses above.
  *
- * Controller ruling (IQ Alter remediation, repo-wide): every 32-byte id crossing a JS boundary is
- * a `0x`-prefixed lowercase hex STRING, normalized at exactly one place — the point of decode. This
- * is that point: `retval[0]` decodes to a raw `Buffer` (via `fromScVal`/`scValToNative`), validated
- * as exactly 32 bytes and converted to hex HERE, never left as a Buffer past this function. Every
- * real consumer already assumes the hex-string shape — `orchestrator.js`'s `===` comparison (a
- * Buffer can never `===` a hex string, even byte-identical, since Buffer equality is by
- * reference), `grantReceiptStore`'s JSON-persisted receipts (`JSON.stringify` turns a bare Buffer
- * into `{"type":"Buffer","data":[...]}`, not the id), `ProtectStage.jsx`'s render, and this file's
- * own `buildAgentPullV3` (`permissionId:string` below) — so a Buffer surfacing from here would
- * silently break every one of them, the exact class of defect this remediation plan exists to fix.
+ * Controller ruling (IQ Alter remediation) — the repo's DIRECTION, not yet true everywhere: every
+ * 32-byte id crossing a JS boundary should be a `0x`-prefixed lowercase hex STRING, normalized at
+ * exactly one place — the point of decode. `grant.js`'s producers now conform to that: `retval[0]`
+ * decodes to a raw `Buffer` (via `fromScVal`/`scValToNative`), validated as exactly 32 bytes and
+ * converted to hex HERE, never left as a Buffer past this function. Every consumer THIS function
+ * feeds already assumes the hex-string shape — `orchestrator.js`'s `===` comparison (a Buffer can
+ * never `===` a hex string, even byte-identical, since Buffer equality is by reference),
+ * `grantReceiptStore`'s JSON-persisted receipts (`JSON.stringify` turns a bare Buffer into
+ * `{"type":"Buffer","data":[...]}`, not the id), `ProtectStage.jsx`'s render, and this file's own
+ * `buildAgentPullV3` (`permissionId:string` below) — so a Buffer surfacing from here would silently
+ * break every one of them, the exact class of defect this remediation plan exists to fix. The
+ * ruling is NOT yet applied repo-wide: `routerEvents.js:58,105` still types this same 32-byte
+ * `permission_id` as a `Buffer` — a known, deliberately untouched exception (out of this function's
+ * scope) for whoever migrates that file next.
  * @param {{owner:string, token:string, approval:{mandateCeilingUnits:string, liveUntilLedger:number},
  *          perRunMaxUnits:string, agentInits:Array, router?:string, server?:object,
  *          txSource?:string, resolveSchema?:Function}} p
