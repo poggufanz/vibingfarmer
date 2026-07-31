@@ -2963,6 +2963,10 @@ const App = () => {
       // Inert under dormancy: `preflightPermission`'s default `resolveSchema` (`resolveRouterSchema`)
       // resolves no V3 address today, so `raw.version` is never 3 in production -- this is forward
       // wiring for the day a V3 router is registered, not a reachable path now.
+      // Fix round 1, Minor 2 (reviewer finding): `checkedAt` mirrors V2's own `baseDecision.checkedAt`
+      // (reusePreflight.js's `nowSec`) -- the prover carries no timestamp of its own, and
+      // ProtectStage's V3 review renders an "As of" freshness stamp exactly like V2's does.
+      // Captured at the moment this check resolves, the same point V2's own timestamp is taken.
       const composed =
         raw.version === 3
           ? {
@@ -2970,6 +2974,7 @@ const App = () => {
               planFingerprint: plan.planFingerprint,
               reviewedBudgets,
               reviewedAgentInits: agentInits,
+              checkedAt: Math.floor(Date.now() / 1000),
             }
           : raw
       const decision = toPermissionDecisionView(composed)

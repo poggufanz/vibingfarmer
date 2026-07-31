@@ -88,14 +88,15 @@ const DURATION_PRESETS = [
   { id: '7d', label: '7 days', seconds: 604800 },
 ]
 
-// Task 5 chunk C: the reusable-ceiling control's own validity rule. Same canonical-decimal-integer
-// convention `permissionGrantV3.js`'s (private, unexported) `UNITS_RE` enforces -- re-declared here
-// for the same reason this file already re-declares `unitsToDisplay`/`BRIDGE_NETWORK_CONTEXT`
-// locally: the shared version isn't exported and the source file is off-limits to edit for this
-// chunk. `buildReusableApproval` is the actual gate that will one day consume this value; this
-// regex only decides what the CONTROL itself will let a user commit to, never a second, competing
-// validation authority.
-const CEILING_UNITS_RE = /^(0|[1-9][0-9]*)$/
+// Task 5 chunk C: the canonical-decimal-integer convention `permissionGrantV3.js`'s (private,
+// unexported) `UNITS_RE` enforces -- re-declared here for the same reason this file already
+// re-declares `unitsToDisplay`/`BRIDGE_NETWORK_CONTEXT` locally: the shared version isn't exported
+// and the source file is off-limits to edit for this chunk. Serves two callers: the reusable-
+// ceiling control's own edit validation (`buildReusableApproval` is the actual gate that will one
+// day consume the committed value; this regex only decides what the CONTROL itself will let a user
+// commit to, never a second, competing validation authority) and `reuseIsUsable`'s V3 defense-in-
+// depth check below (fix round 1, Important 1) -- both need the identical rule, so one shared const.
+const CANONICAL_UNITS_RE = /^(0|[1-9][0-9]*)$/
 
 // Fix loop 1 -- C1: the only two Stellar contracts this app ever budgets against today --
 // SOROBAN_TOKEN_ADDRESS (the Autofarm vault's Blend-pool USDC) and STELLAR_USDC_SAC (the CCTP
@@ -190,12 +191,37 @@ function periodLabel(seconds) {
 function reuseIsUsable(decision) {
   if (!decision || decision.mode !== 'reuse') return false
   if (decision.version === 3) {
-    return (
-      Array.isArray(decision.executions) &&
-      decision.executions.length > 0 &&
-      Number.isInteger(decision.liveUntilLedger) &&
-      decision.liveUntilLedger > 0
+    // Fix round 1, Important 1 (reviewer finding): this used to check ONLY `executions[]`/
+    // `liveUntilLedger`, but the V3 render also reads `reviewedBudgets[0]` (for every money
+    // figure's token/decimals) and a `reviewedAgentInit` per execution `allocationId` (for its own
+    // token/decimals) -- neither was validated, so a decision missing either rendered "NaN
+    // undefined" with an ENABLED Continue button (probed: `reviewedBudgets: []`), or threw
+    // outright (an execution with no matching reviewed init -> `BigInt(NaN)` inside
+    // `buildAmountDisplayMap`). This function's own header says it "treats the decision as
+    // untrusted input regardless" -- this branch now actually does.
+    if (
+      !Array.isArray(decision.executions) ||
+      decision.executions.length === 0 ||
+      !Number.isInteger(decision.liveUntilLedger) ||
+      decision.liveUntilLedger <= 0
     )
+      return false
+    const budget = decision.reviewedBudgets?.[0]
+    if (!budget || typeof budget.token !== 'string' || !Number.isInteger(budget.decimals))
+      return false
+    if (
+      !CANONICAL_UNITS_RE.test(decision.mandateCeilingUnits) ||
+      !CANONICAL_UNITS_RE.test(decision.confirmedSpentUnits) ||
+      !CANONICAL_UNITS_RE.test(decision.remainingHeadroomUnits)
+    )
+      return false
+    const reviewedByAllocation = new Map(
+      (decision.reviewedAgentInits || []).map((r) => [r.allocationId, r])
+    )
+    return decision.executions.every((e) => {
+      const r = reviewedByAllocation.get(e.allocationId)
+      return Boolean(r) && typeof r.cap?.token === 'string' && Number.isInteger(r.cap?.decimals)
+    })
   }
   if (!Array.isArray(decision.agents) || decision.agents.length === 0) return false
   return decision.agents.every((a) => Number.isFinite(a.scopeExpiry) && a.scopeExpiry > 0)
@@ -206,6 +232,16 @@ export function ProtectStage({
   owner = null,
   availableWallets = DEFAULT_WALLETS,
   baseMandateView = null,
+  // Task 5 chunk C fix round 1 (Critical 1 -- reviewer finding): the ONLY signal that a cumulative
+  // ceiling exists at all is the router generation this permission would be checked against --
+  // V2's `funding_router.grant` has no such concept, so rendering the ceiling control
+  // unconditionally on the live pre-check phase made a false claim on the one path that actually
+  // runs in production. No caller can know the router generation before the FIRST check even
+  // resolves (`preflightPermission`'s `resolveSchema` decides it internally and is not exposed
+  // upward), so this defaults to `null` -- "not yet known" -- which gates the control off, the
+  // same dormant-by-default posture every other V3 path in this app already takes. Tests inject
+  // `3` to exercise it; `app.jsx` passes nothing today, so it is unreachable in production.
+  routerVersion = null,
   onConnectWallet,
   onRetryPreflight,
   onRequestGrant,
@@ -269,16 +305,21 @@ export function ProtectStage({
   // Unix seconds) would print a nonsense date. Kept out of `expiryValue` entirely for V3 reuse;
   // `expiryPhrase` states it in its own honest ledger-sequence terms instead of pretending a
   // wall-clock precision this fact doesn't have.
+  // Fix round 1, Minor 1 (reviewer finding): an unusable V3 decision (missing/invalid
+  // `liveUntilLedger`, or any of Important 1's other new checks) must fall back to the SAME
+  // neutral "an unknown time" phrasing V2 already uses for unknown expiry, never "at ledger
+  // undefined" -- gating on `usableReuse` too (not just mode+version) is what makes that so.
+  const v3LedgerExpiryUsable = isV3Reuse && usableReuse
   const expiryValue = !decision
     ? preset.label
-    : isV3Reuse
+    : v3LedgerExpiryUsable
       ? null
       : humanExpiry(
           decision.mode === 'reuse' ? firstReuseAgent?.scopeExpiry : firstReviewedAgent?.expiry
         )
   const expiryPhrase = !decision
     ? `in ${expiryValue}`
-    : isV3Reuse
+    : v3LedgerExpiryUsable
       ? `at ledger ${decision.liveUntilLedger}`
       : `on ${expiryValue}`
   const perAgentCap = firstReuseAgent?.headroom || firstReviewedAgent?.cap
@@ -319,27 +360,34 @@ export function ProtectStage({
   )
   const v3TokenDecimals = decision?.reviewedBudgets?.[0]?.decimals
   const v3Token = decision?.reviewedBudgets?.[0]?.token
-  const v3Figures = isV3Reuse
-    ? {
-        ceiling: `${unitsToDisplay(decision.mandateCeilingUnits, v3TokenDecimals).toLocaleString()} ${tokenSymbol(v3Token)}`,
-        spent: `${unitsToDisplay(decision.confirmedSpentUnits, v3TokenDecimals).toLocaleString()} ${tokenSymbol(v3Token)}`,
-        headroom: `${unitsToDisplay(decision.remainingHeadroomUnits, v3TokenDecimals).toLocaleString()} ${tokenSymbol(v3Token)}`,
-      }
-    : null
-  const executionAmountRows = isV3Reuse
-    ? decision.executions.map((e) => {
-        const reviewed = reviewedByAllocation.get(e.allocationId)
-        return {
-          allocationId: e.allocationId,
-          kind: reviewed?.kind ?? 0,
-          amount: {
-            units: e.amountUnits,
-            decimals: reviewed?.cap?.decimals,
-            token: reviewed?.cap?.token,
-          },
+  // Fix round 1, Important 1 (reviewer finding): gated on `usableReuse` too, not just mode+version
+  // -- `reuseIsUsable`'s V3 branch is what now actually proves `reviewedBudgets[0]` and a reviewed
+  // init per execution exist and are well-formed; computing these BEFORE that proof (as before)
+  // produced "NaN undefined" figures or threw on a malformed decision, even though the render
+  // itself was correctly gated. One shared gate for both the computation and the render.
+  const v3Figures =
+    isV3Reuse && usableReuse
+      ? {
+          ceiling: `${unitsToDisplay(decision.mandateCeilingUnits, v3TokenDecimals).toLocaleString()} ${tokenSymbol(v3Token)}`,
+          spent: `${unitsToDisplay(decision.confirmedSpentUnits, v3TokenDecimals).toLocaleString()} ${tokenSymbol(v3Token)}`,
+          headroom: `${unitsToDisplay(decision.remainingHeadroomUnits, v3TokenDecimals).toLocaleString()} ${tokenSymbol(v3Token)}`,
         }
-      })
-    : []
+      : null
+  const executionAmountRows =
+    isV3Reuse && usableReuse
+      ? decision.executions.map((e) => {
+          const reviewed = reviewedByAllocation.get(e.allocationId)
+          return {
+            allocationId: e.allocationId,
+            kind: reviewed?.kind ?? 0,
+            amount: {
+              units: e.amountUnits,
+              decimals: reviewed?.cap?.decimals,
+              token: reviewed?.cap?.token,
+            },
+          }
+        })
+      : []
   const executionDisplayMap = buildAmountDisplayMap(executionAmountRows, 'amount')
 
   // Fix round 1 -- F3 (review finding): the heading `<p>` + 4-row `<ul>` ceiling card below used to
@@ -417,7 +465,7 @@ export function ProtectStage({
   // nothing stale to invalidate.
   function handleCeilingInput(raw) {
     setCeilingDraft(raw)
-    if (!CEILING_UNITS_RE.test(raw)) {
+    if (!CANONICAL_UNITS_RE.test(raw)) {
       setCeilingError('Enter a whole number of asset units.')
       return
     }
@@ -588,38 +636,52 @@ export function ProtectStage({
                   ))}
                 </div>
               </div>
-              {/* Task 5 chunk C: the reusable spending ceiling. Reuses `.pc-field`/`.pc-field-help`/
+              {/* Fix round 1, Critical 1 (reviewer finding): a cumulative ceiling is a V3-ONLY
+                  concept -- V2's `funding_router.grant` has none -- and this phase is the LIVE
+                  pre-check path every real user reaches today. Rendering it unconditionally made a
+                  false claim ("Applies 100 USDC as the most this permission can ever move...") on
+                  the one surface that actually ships. Gated on `routerVersion === 3`, the only
+                  generation where a cumulative ceiling exists; `routerVersion` defaults to `null`
+                  (not yet known pre-check), so this is unreachable in production today, same as
+                  every other V3 path in this file. Reuses `.pc-field`/`.pc-field-help`/
                   `.pc-field-error` verbatim (already ported, already dark-surface-tuned via
-                  `.pc-dominant--decision .pc-field-help/.pc-field-error`) -- no new CSS, matching
-                  this file's own no-new-CSS-for-a-currently-dormant-control judgment elsewhere. */}
-              <div className="pc-field">
-                <label htmlFor="protect-ceiling">Reusable spending ceiling</label>
-                <input
-                  id="protect-ceiling"
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="off"
-                  value={ceilingDraft}
-                  aria-describedby="protect-ceiling-help"
-                  aria-invalid={ceilingError ? 'true' : undefined}
-                  onChange={(e) => handleCeilingInput(e.target.value)}
-                />
-                <p id="protect-ceiling-help" className="pc-field-help">
-                  Applies {unitsToDisplay(ceilingUnits, plan.amount.decimals).toLocaleString()}{' '}
-                  {tokenSymbol(plan.amount.token)} as the most this permission can ever move, across
-                  every future run, until you raise it again.
-                </p>
-                {ceilingError && (
-                  <p className="pc-field-error" role="alert">
-                    {ceilingError}
+                  `.pc-dominant--decision .pc-field-help/.pc-field-error`) -- no new CSS. */}
+              {routerVersion === 3 && (
+                <div className="pc-field">
+                  <label htmlFor="protect-ceiling">Reusable spending ceiling</label>
+                  <input
+                    id="protect-ceiling"
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    value={ceilingDraft}
+                    // Fix round 1, Critical 2 (reviewer finding): the byte-for-byte constraint is
+                    // about the COMMITTED value (`ceilingUnits`), never the draft the user is mid-
+                    // typing (`ceilingDraft`, which is what `value` above renders). Exposed as its
+                    // own data attribute -- not folded into the help sentence below, which already
+                    // rounds through `.toLocaleString()` and would hide a sub-0.001-unit drift.
+                    data-ceiling-units={ceilingUnits}
+                    aria-describedby="protect-ceiling-help"
+                    aria-invalid={ceilingError ? 'true' : undefined}
+                    onChange={(e) => handleCeilingInput(e.target.value)}
+                  />
+                  <p id="protect-ceiling-help" className="pc-field-help">
+                    Applies {unitsToDisplay(ceilingUnits, plan.amount.decimals).toLocaleString()}{' '}
+                    {tokenSymbol(plan.amount.token)} as the most this permission can ever move,
+                    across every future run, until you raise it again.
                   </p>
-                )}
-              </div>
+                  {ceilingError && (
+                    <p className="pc-field-error" role="alert">
+                      {ceilingError}
+                    </p>
+                  )}
+                </div>
+              )}
               <button
                 type="button"
                 className="pc-button pc-button--primary"
                 onClick={handleCheckPermission}
-                disabled={Boolean(ceilingError)}
+                disabled={routerVersion === 3 && Boolean(ceilingError)}
               >
                 Check my permission
               </button>
@@ -787,6 +849,12 @@ export function ProtectStage({
                 <span>ledger {decision.liveUntilLedger}</span>
               </li>
             </ul>
+            {/* Fix round 1, Minor 2 (reviewer finding): V2's own Rice block carries this exact
+                freshness stamp (a couple hundred lines up) -- an on-chain-proven figure with no
+                as-of timestamp is a regression against V2's own standard on this same surface.
+                `decision.checkedAt` is composed in app.jsx's `onRetryPreflight` at the moment the
+                V3 check resolves, mirroring V2's own `checkedAt` (reusePreflight.js's `nowSec`). */}
+            <p>As of {formatExpiry(decision.checkedAt)}</p>
             <TechnicalDetails summary="Permission technical details">
               <p>
                 Permission: <span className="pc-technical">{decision.permissionId}</span>

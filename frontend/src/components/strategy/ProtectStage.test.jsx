@@ -284,6 +284,10 @@ function reuseDecisionV3Raw(over = {}) {
     mode: 'reuse',
     freshReason: null,
     scopeId: SCOPE_ID,
+    // Fix round 1, Minor 2 (reviewer finding): app.jsx's composition adds `checkedAt` at the
+    // moment the check resolves, mirroring V2's own `baseDecision.checkedAt` -- present here so
+    // fixtures match what onRetryPreflight actually resolves with in production.
+    checkedAt: NOW,
     // 200 USDC ceiling, 100 spent, 100 remaining -- confirmedSpent + remaining sums to the ceiling,
     // a deliberately internally-consistent fixture.
     mandateCeilingUnits: '2000000000',
@@ -487,6 +491,47 @@ describe('ProtectStage — fresh review content (Step 2: friendly + technical co
     expect(friendlySurface.textContent).not.toContain(TOKEN_ADDR)
   })
 
+  // Fix round 1, Important 2 (reviewer finding). Two problems with the guard above: (1) it never
+  // exercised either reuse state (V2 or V3), where `agentAddress` renders raw; (2) `\bC[A-Z2-7]{55}\b`
+  // fails to match when the address abuts another WORD character in the concatenated `textContent`
+  // -- e.g. straight after "ledger 1409000" in the V3 render, the preceding "0" is itself a word
+  // character, so no boundary exists and the match silently fails. Corrected regex, scoped to this
+  // test only (the original test above never renders an agent address, so its own regex is
+  // unaffected either way). This reveals a REAL, PRE-EXISTING leak in both V2 and V3 -- Soroban
+  // agent accounts ARE contracts (56 chars, starts with `C`), not the G-account this file's own
+  // header comment assumed -- reported here and in the task report, not hidden by loosening the
+  // regex back or by silently wrapping it in `.pc-technical` (a product call outside this fix's
+  // scope). What the guard DOES still prove, for both states: no MONEY-relevant token address
+  // (headroom/budget contract) ever leaks -- only the agent's own identity does.
+  it('C1 extended, Important 2: the V2 and V3 reuse states leak no contract-shaped TOKEN address outside a technical disclosure (agentAddress is a documented, tracked, pre-existing exception -- see the report)', async () => {
+    const NO_BOUNDARY_CONTRACT_RE = /C[A-Z2-7]{55}/
+
+    const v2Decision = reuseDecisionRaw()
+    const { container: v2Container, unmount: unmountV2 } = render(
+      <ProtectStage {...baseProps({ onRetryPreflight: vi.fn().mockResolvedValue(v2Decision) })} />
+    )
+    await checkPermission()
+    const v2Friendly = v2Container.cloneNode(true)
+    v2Friendly.querySelectorAll('.pc-technical-details, .pc-technical').forEach((el) => el.remove())
+    expect(v2Friendly.textContent).toMatch(NO_BOUNDARY_CONTRACT_RE)
+    expect(v2Friendly.textContent.match(NO_BOUNDARY_CONTRACT_RE)?.[0]).toBe(AGENT_1)
+    expect(v2Friendly.textContent).not.toContain(TOKEN_ADDR)
+    unmountV2()
+
+    const v3Decision = reuseDecisionV3Raw()
+    const { container: v3Container } = render(
+      <ProtectStage {...baseProps({ onRetryPreflight: vi.fn().mockResolvedValue(v3Decision) })} />
+    )
+    await checkPermission()
+    const v3Friendly = v3Container.cloneNode(true)
+    v3Friendly.querySelectorAll('.pc-technical-details, .pc-technical').forEach((el) => el.remove())
+    expect(v3Friendly.textContent).toMatch(NO_BOUNDARY_CONTRACT_RE)
+    expect(v3Friendly.textContent.match(NO_BOUNDARY_CONTRACT_RE)?.[0]).toBe(
+      v3Decision.executions[0].agentAddress
+    )
+    expect(v3Friendly.textContent).not.toContain(TOKEN_ADDR)
+  })
+
   it('I3: "Cap per period" and "Worst case" label from EACH agent\'s own reviewed cap token, never plan.amount.token', async () => {
     // A genuine mixed-token plan: the deposit agent is budgeted in TOKEN_ADDR (-> "USDC"), the
     // bridge agent in a DIFFERENT real Stellar contract, BRIDGE_TOKEN_ADDR (-> "Circle USDC") --
@@ -567,40 +612,45 @@ describe('ProtectStage — reuse review content', () => {
   })
 })
 
-describe('ProtectStage — Task 5 chunk C: the reusable ceiling control', () => {
+describe('ProtectStage — Task 5 chunk C: the reusable ceiling control (routerVersion={3} only)', () => {
   it('defaults byte-for-byte to plannedUnitsNow (plan.amount.units) -- not merely numerically equal', () => {
-    render(<ProtectStage {...baseProps()} />)
+    render(<ProtectStage {...baseProps({ routerVersion: 3 })} />)
     const input = screen.getByLabelText('Reusable spending ceiling')
-    // String identity, not a numeric comparison: an implicit buffer, a re-serialization through
-    // Number, or any rounding would break this while still passing `Number(input.value) ===
-    // Number(plan.amount.units)`.
-    expect(input.value === PLAN_DEPOSIT_ONLY.amount.units).toBe(true)
+    // Fix round 1, Critical 2 (reviewer finding): `input.value` is `ceilingDraft`, not the
+    // COMMITTED `ceilingUnits` the byte-for-byte constraint is actually about -- asserting on it
+    // let a sub-committed-state buffer slip through invisibly (mutating `ceilingUnits` alone, and
+    // leaving `ceilingDraft` untouched, stayed green under the old assertion). `data-ceiling-units`
+    // exposes the real committed value; string identity, not a numeric comparison, so an implicit
+    // buffer, a re-serialization through Number, or any rounding still breaks this.
+    expect(input.getAttribute('data-ceiling-units') === PLAN_DEPOSIT_ONLY.amount.units).toBe(true)
     expect(screen.getByText(/Applies 100 USDC/)).toBeTruthy()
   })
 
   it('accepts an explicit raise above plannedUnitsNow -- raising exposure is a deliberate edit', () => {
-    render(<ProtectStage {...baseProps()} />)
+    render(<ProtectStage {...baseProps({ routerVersion: 3 })} />)
     const input = screen.getByLabelText('Reusable spending ceiling')
     fireEvent.change(input, { target: { value: '2000000000' } })
     expect(screen.queryByRole('alert')).toBeNull()
+    expect(input.getAttribute('data-ceiling-units')).toBe('2000000000')
     expect(screen.getByText(/Applies 200 USDC/)).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Check my permission' }).disabled).toBe(false)
   })
 
   it('rejects an edit below plannedUnitsNow -- the committed ceiling never moves', () => {
-    render(<ProtectStage {...baseProps()} />)
+    render(<ProtectStage {...baseProps({ routerVersion: 3 })} />)
     const input = screen.getByLabelText('Reusable spending ceiling')
     fireEvent.change(input, { target: { value: '1' } })
     expect(screen.getByRole('alert').textContent).toMatch(/cannot be lower/i)
     // The committed value -- what a caller would actually apply -- never moved, even though the
     // input itself still shows what the user typed (so they can see and fix it).
     expect(input.value).toBe('1')
+    expect(input.getAttribute('data-ceiling-units')).toBe(PLAN_DEPOSIT_ONLY.amount.units)
     expect(screen.getByText(/Applies 100 USDC/)).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Check my permission' }).disabled).toBe(true)
   })
 
   it('rejects a non-canonical value (fractional, signed, or non-numeric)', () => {
-    render(<ProtectStage {...baseProps()} />)
+    render(<ProtectStage {...baseProps({ routerVersion: 3 })} />)
     const input = screen.getByLabelText('Reusable spending ceiling')
     fireEvent.change(input, { target: { value: '12.5' } })
     expect(screen.getByRole('alert')).toBeTruthy()
@@ -609,7 +659,7 @@ describe('ProtectStage — Task 5 chunk C: the reusable ceiling control', () => 
 
   it('a rejected edit does not call onRetryPreflight with anything -- the Check button is disabled, not silently proceeding on a bad value', () => {
     const onRetryPreflight = vi.fn().mockResolvedValue(freshDecisionRaw())
-    render(<ProtectStage {...baseProps({ onRetryPreflight })} />)
+    render(<ProtectStage {...baseProps({ onRetryPreflight, routerVersion: 3 })} />)
     const input = screen.getByLabelText('Reusable spending ceiling')
     fireEvent.change(input, { target: { value: '1' } })
     fireEvent.click(screen.getByRole('button', { name: 'Check my permission' }))
@@ -635,6 +685,10 @@ describe('ProtectStage — Task 5 chunk C: V3 reuse review (executions, four fig
     expect(ledgerRow.textContent).toBe('Ledger expiryledger 1409000')
     // Never a date/time string -- a ledger sequence is not a Unix-seconds instant.
     expect(ledgerRow.textContent).not.toMatch(/\d{4}-\d{2}-\d{2}/)
+    // Fix round 1, Minor 2 (reviewer finding): V2's own Rice block carries this exact freshness
+    // stamp -- an on-chain-proven figure with no as-of timestamp was a regression against V2's own
+    // standard on this same surface.
+    expect(screen.getByText(/^As of/)).toBeTruthy()
   })
 
   it('renders one row per V3 execution with its own bound agent address and amount', async () => {
@@ -724,6 +778,44 @@ describe('ProtectStage — Task 5 chunk C: V3 reuse review (executions, four fig
     fireEvent.click(screen.getByRole('button', { name: 'Check my permission' }))
     await screen.findByRole('button', { name: 'Check again' })
     expect(screen.queryByRole('button', { name: 'Continue' })).toBeNull()
+    // Fix round 1, Minor 1 (reviewer finding): the always-visible boundary sentence must fall back
+    // to the SAME neutral phrasing V2 already uses for unknown expiry, never "at ledger undefined".
+    expect(screen.getByText(/stops on an unknown time/i)).toBeTruthy()
+  })
+
+  // Fix round 1, Important 1 (reviewer finding). The reviewer probed this by hand: a decision with
+  // `reviewedBudgets: []` rendered "Cumulative ceiling NaN undefined", "Confirmed spend NaN
+  // undefined", "Remaining headroom NaN undefined" -- with an ENABLED Continue button. This proves
+  // `reuseIsUsable`'s V3 branch now treats that as unusable rather than presenting garbage figures
+  // as ready to approve.
+  it('a V3 decision with no reviewedBudgets cannot show reuse -- never renders NaN/undefined figures with an enabled Continue', async () => {
+    const badReuse = reuseDecisionV3Raw({ reviewedBudgets: [] })
+    const onRetryPreflight = vi.fn().mockResolvedValue(badReuse)
+    render(<ProtectStage {...baseProps({ onRetryPreflight })} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Check my permission' }))
+    await screen.findByRole('button', { name: 'Check again' })
+    expect(screen.queryByRole('button', { name: 'Continue' })).toBeNull()
+    expect(screen.queryByText(/NaN/)).toBeNull()
+    expect(screen.queryByText(/Cumulative ceiling/)).toBeNull()
+  })
+
+  // Fix round 1, Important 1 (reviewer finding). The reviewer probed this by hand: an execution
+  // whose `allocationId` has no matching `reviewedAgentInits` entry crashed the render entirely
+  // (`buildAmountDisplayMap` -> `BigInt(NaN)`). Proves it now fails closed to the re-check warning
+  // instead of throwing.
+  it('a V3 decision with an execution that has no reviewed init cannot show reuse -- never throws', async () => {
+    const badReuse = reuseDecisionV3Raw({
+      executions: [
+        { ...reuseDecisionV3Raw().executions[0], allocationId: 'run-1:deposit:unreviewed' },
+      ],
+    })
+    const onRetryPreflight = vi.fn().mockResolvedValue(badReuse)
+    render(<ProtectStage {...baseProps({ onRetryPreflight })} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Check my permission' }))
+    // If the render crashed (the pre-fix behaviour), this would time out/error instead of finding
+    // the fallback -- reaching it is the proof nothing threw.
+    await screen.findByRole('button', { name: 'Check again' })
+    expect(screen.queryByRole('button', { name: 'Continue' })).toBeNull()
   })
 
   it('a V3 reuse decision still calls onConfirmReuse (never onRequestGrant) on Continue', async () => {
@@ -740,6 +832,18 @@ describe('ProtectStage — Task 5 chunk C: V3 reuse review (executions, four fig
 })
 
 describe('ProtectStage — Task 5 chunk C: dormancy -- the live V2 surface renders unchanged', () => {
+  // Fix round 1, Critical 1 (reviewer finding): neither pre-fix dormancy test covered the
+  // `select` phase -- the ONE phase every real V2 user actually reaches before a decision exists
+  // -- so the ceiling control rendering there unconditionally (a false claim: V2's
+  // `funding_router.grant` has no cumulative-ceiling concept) went unproven. `routerVersion`
+  // defaults to `null` here (no override), exactly what `app.jsx` passes today.
+  it('the LIVE pre-check phase (no routerVersion override, matching production) renders no ceiling control and is never disabled by it', () => {
+    render(<ProtectStage {...baseProps()} />)
+    expect(screen.queryByLabelText('Reusable spending ceiling')).toBeNull()
+    expect(screen.queryByText(/most this permission can ever move/)).toBeNull()
+    expect(screen.getByRole('button', { name: 'Check my permission' }).disabled).toBe(false)
+  })
+
   it('a decision carrying no V3 fields renders the SAME reuse surface as before -- no V3 rows appear', async () => {
     const onRetryPreflight = vi.fn().mockResolvedValue(reuseDecisionRaw())
     render(<ProtectStage {...baseProps({ onRetryPreflight })} />)
@@ -1020,6 +1124,27 @@ describe('ProtectStage — keyboard operability and long values', () => {
     expect(within(confirmationBlock).getByText('12,345,678.901 USDC')).toBeTruthy()
   })
 
+  // Fix round 1, Minor 3 (reviewer finding): the three V3 headline figures use the SAME
+  // `unitsToDisplay(...).toLocaleString()` pattern as V2's own `totalAmountText` (parity, not a
+  // new bug -- `buildAmountDisplayMap` exists for MULTI-row splits, not single aggregate figures),
+  // but that pattern was only ever proven not to crash/truncate on the fresh-mode figure above.
+  // Extends the same proof to the V3 reuse state's own three figures.
+  it('renders very large V3 headline figures (cumulative ceiling, confirmed spend, remaining headroom) without truncating or crashing', async () => {
+    const bigUnits = '123456789012345'
+    const onRetryPreflight = vi.fn().mockResolvedValue(
+      reuseDecisionV3Raw({
+        mandateCeilingUnits: bigUnits,
+        confirmedSpentUnits: bigUnits,
+        remainingHeadroomUnits: bigUnits,
+      })
+    )
+    render(<ProtectStage {...baseProps({ onRetryPreflight })} />)
+    await checkPermission()
+    expect(document.querySelector('.pc-ceiling-total-amount').textContent).toBe(
+      '12,345,678.901 USDC'
+    )
+  })
+
   it('renders a long technical fingerprint inside a disclosure without losing any of it', async () => {
     const longFingerprint = '0x' + 'a1b2c3d4'.repeat(8) // 66 chars, matches a real sha256 hex length
     const onRetryPreflight = vi.fn().mockResolvedValue(
@@ -1142,14 +1267,15 @@ describe('ProtectStage — axe', () => {
   })
 
   // Task 5 chunk C: the connected pre-check phase gained a new form control (the reusable ceiling
-  // input) -- previously untested by axe at all, since no phase before this carried a text input.
+  // input, routerVersion===3 only) -- previously untested by axe at all, since no phase before
+  // this carried a text input.
   it('has zero violations on the connected pre-check phase (duration + reusable-ceiling controls)', async () => {
-    const { container } = render(<ProtectStage {...baseProps()} />)
+    const { container } = render(<ProtectStage {...baseProps({ routerVersion: 3 })} />)
     expect(await axe(container)).toHaveNoViolations()
   })
 
   it('has zero violations on the connected pre-check phase with a rejected ceiling edit (aria-invalid + role=alert)', async () => {
-    const { container } = render(<ProtectStage {...baseProps()} />)
+    const { container } = render(<ProtectStage {...baseProps({ routerVersion: 3 })} />)
     fireEvent.change(screen.getByLabelText('Reusable spending ceiling'), { target: { value: '1' } })
     expect(await axe(container)).toHaveNoViolations()
   })
@@ -1370,7 +1496,7 @@ describe('ProtectStage — 320px real layout guard', () => {
     const { container } = render(
       <div className="pc-route">
         <div className="pc-route-stack">
-          <ProtectStage {...baseProps()} />
+          <ProtectStage {...baseProps({ routerVersion: 3 })} />
         </div>
       </div>
     )
