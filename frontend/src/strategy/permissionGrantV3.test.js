@@ -20,7 +20,10 @@ import { resolveRouterSchema } from '../stellar/routerSchema.js'
 import { AGENT_KIND_DEPOSIT, AGENT_KIND_BRIDGE } from '../stellar/grant.js'
 import { classifyActiveAccount } from '../stellar/activeAccount.js'
 import { NETWORK_PASSPHRASE } from '../stellar/config.js'
-import { AGENT_WASM_GENERATIONS } from '../stellar/agentCreatorManifest.js'
+import {
+  AGENT_WASM_GENERATIONS,
+  AGENT_GENERATIONS_ELIGIBLE_FOR_PERMISSION_V3,
+} from '../stellar/agentCreatorManifest.js'
 
 const OWNER = 'GCIOUP4UJAAFDBJNP5DY5CFJHBLEKGLHZ5E2AYRIIQ5VOZFVSTPRYHNS'
 const OWNER_2 = 'GDP5XLVDKWCHX2QNJH3XRKUFNHM47KLU3MITVT7BDPWJL2QLY2X3VKLU'
@@ -774,6 +777,38 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
       expect(decision.freshReason).toBe('agent-generation-ineligible')
     })
 
+    // Fix-round finding 8: the test above only pins "the default rejects agent-v3" — an
+    // implementation that replaced the default with a hardcoded `[]` LITERAL (fully decoupled from
+    // the exported constant) would ALSO pass it, and would stay silently green right up until a
+    // real deploy adds a generation to AGENT_GENERATIONS_ELIGIBLE_FOR_PERMISSION_V3, at which point
+    // the decoupled default would still read `[]` forever. This ties the default to the constant
+    // by IDENTITY: arrays are mutable in place, so mutating the real exported array (never
+    // reassigning it, and always restored in `finally`) is visible to every importer holding the
+    // SAME object — including whatever default parameter expression `proveReusablePermission`
+    // evaluates when no override is supplied. A decoupled default would not see this mutation and
+    // would keep reporting ineligible.
+    test('the default eligibleGenerations parameter IS the exported constant by reference, not a decoupled copy', async () => {
+      expect(AGENT_GENERATIONS_ELIGIBLE_FOR_PERMISSION_V3).toEqual([])
+      const original = [...AGENT_GENERATIONS_ELIGIBLE_FOR_PERMISSION_V3]
+      try {
+        AGENT_GENERATIONS_ELIGIBLE_FOR_PERMISSION_V3.push(AGENT_V3_GENERATION)
+        const { eligibleGenerations: _injected, ...withProductionAllowlist } = depsWithScope()
+        const decision = await proveReusablePermission(withProductionAllowlist)
+        expect(decision.mode).toBe('reuse')
+        expect(decision.freshReason).toBe(null)
+      } finally {
+        AGENT_GENERATIONS_ELIGIBLE_FOR_PERMISSION_V3.length = 0
+        AGENT_GENERATIONS_ELIGIBLE_FOR_PERMISSION_V3.push(...original)
+      }
+      expect(AGENT_GENERATIONS_ELIGIBLE_FOR_PERMISSION_V3).toEqual([])
+    })
+
+    // This ALSO proves ordering (fix-round finding 6 folded the weaker, now-deleted "runs BEFORE
+    // scope-drift" test into this one): `inspectAgents` returns a row whose `code` (CODE_HASH)
+    // differs from what `depsWithScope`'s auto-computed `scopeId` was built from (REAL_CODE_V3),
+    // so scope-drift WOULD genuinely fire here if the eligibility gate ran after it — both
+    // conditions are live in this fixture, unlike the deleted test's byte-identical-to-a-passing-
+    // case setup. The assertion below only holds if eligibility is checked first.
     test('a row whose code maps to no known generation at all forces fresh the same way — fail-closed, never a guess', async () => {
       const decision = await proveReusablePermission(
         depsWithScope({
@@ -801,15 +836,6 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
       )
       expect(decision.mode).toBe('fresh')
       expect(decision.freshReason).toBe('agent-generation-ineligible')
-    })
-
-    test('runs BEFORE scope-drift — an ineligible-but-otherwise-scope-matching row reports the more specific reason', async () => {
-      // No inspectAgents override: depsWithScope's own row set (code REAL_CODE_V3) is exactly what
-      // the recorded scope hashes to, so scope-drift would NOT fire on its own — isolating this to
-      // the eligibility gate alone.
-      const decision = await proveReusablePermission(depsWithScope({ eligibleGenerations: [] }))
-      expect(decision.freshReason).toBe('agent-generation-ineligible')
-      expect(decision.freshReason).not.toBe('scope-drift')
     })
 
     test('the eligibility gate runs strictly after agent-missing, not before it', async () => {

@@ -1,7 +1,15 @@
+// @vitest-environment jsdom
 // Pocket Crew My Money Task 1 (Wave 2). Freezes the supported agent-creator manifest + the
 // dev/test-only legacy-setup cutoff gate. Every address/hash below is copied verbatim from
 // deployments/stellar-testnet.json (or its git history for retired values) — never an ellipsis —
 // so a reviewer can diff this file against that JSON directly.
+//
+// Task 5 fix-round note: this whole file runs under jsdom (not the vitest default of node) so
+// that AGENT_CREATOR_MANIFEST_HASH's eager, module-evaluation-time computeManifestHash() call is
+// exercised in the SAME environment class that exposed the TextEncoder regression (see the
+// "computeManifestHash is jsdom-safe" test below) — jsdom is a strict superset of node's globals
+// for the plain-JS logic this file otherwise tests, so nothing else here is expected to behave
+// differently.
 import { describe, it, expect } from 'vitest'
 import { hash } from '@stellar/stellar-sdk'
 import { canonicalizeStrategy } from '../strategy/canonicalStrategy.js'
@@ -33,8 +41,14 @@ const WASM_V2 = '7ced45e735e7e084d96d6a04df7cec6e07bc2b203eedb4d3422949a7e9cca71
 const WASM_V3 = 'd61ceaaaf5a3fd9fd25987eba0f843ccb79880f3eaa137e066b5f63ab9eaa2ba'
 const WASM_V3_BRIDGE = '1fdbe175ddeb6d237a178c3c117b4e6c168122eec7d94f06a4b27ee4026efbe1'
 
+// TextEncoder (not a raw string) for the same reason computeManifestHash uses it in
+// agentCreatorManifest.js — see that file's comment. This file now runs under jsdom (finding 2),
+// so this helper hits the identical Buffer-polyfill/Uint8Array realm mismatch if it ever passes a
+// string straight to hash().
 function sha256Hex(obj) {
-  return '0x' + hash(JSON.stringify(canonicalizeStrategy(obj))).toString('hex')
+  return (
+    '0x' + hash(new TextEncoder().encode(JSON.stringify(canonicalizeStrategy(obj)))).toString('hex')
+  )
 }
 
 describe('module constants', () => {
@@ -195,6 +209,18 @@ describe('AGENT_CREATOR_MANIFEST_HASH', () => {
     expect(AGENT_CREATOR_MANIFEST_HASH).toBe(recomputed)
   })
 
+  // Task 5 fix-round (finding 2): computeManifestHash() runs EAGERLY at module-evaluation time,
+  // and @stellar/stellar-sdk's hash() previously took that computation down under jsdom (a
+  // Buffer-polyfill/Uint8Array realm mismatch — see the fix commit). A Node-environment assertion
+  // on the SAME value proves nothing here: hash()'s old string-argument code path worked fine
+  // under Node either way, so it could never have caught a regression back to it. This whole file
+  // runs under jsdom (see the file-top pragma) specifically so importing the module — which is all
+  // this test does — re-exercises the exact crash site. If computeManifestHash() ever regresses to
+  // passing a raw string into hash() again, this import throws before the assertion even runs.
+  it('computeManifestHash is jsdom-safe — merely importing the module and reading the hash must not throw', () => {
+    expect(AGENT_CREATOR_MANIFEST_HASH).toMatch(/^0x[0-9a-f]{64}$/)
+  })
+
   it('is sensitive to a changed creator address (would require a deliberate version bump)', () => {
     const mutated = sha256Hex({
       version: AGENT_CREATOR_MANIFEST_VERSION,
@@ -350,11 +376,37 @@ describe('isEligibleForPermissionV3 (Task 4)', () => {
     expect(AGENT_GENERATIONS_ELIGIBLE_FOR_PERMISSION_V3).toEqual([])
   })
 
-  it('an empty injected allowlist override still rejects every generation', () => {
+  // Fix-round finding 5: the original version of this test asserted only the `[]` side, which an
+  // implementation that ignores `allowlist` entirely (and falls through to the hardcoded-empty
+  // production default) would ALSO pass — it never proved the parameter is read. Pairing it with
+  // the SAME generation under a widened override, and asserting the two calls DISAGREE, makes the
+  // parameter's effect the thing under test: an implementation that ignores `allowlist` gives the
+  // same answer both times and fails here.
+  it('an empty injected allowlist rejects a generation that the SAME call with a widened allowlist accepts', () => {
     for (const g of AGENT_WASM_GENERATIONS) {
       expect(isEligibleForPermissionV3(g.generation, [])).toBe(false)
+      expect(isEligibleForPermissionV3(g.generation, [g.generation])).toBe(true)
     }
   })
+
+  // Fix-round finding 3: the JSDoc promises fail-closed/never-throws unconditionally, but the
+  // pre-fix body (`allowlist.includes(generation)`) threw on any non-array `allowlist` — not
+  // exploitable today (both production call sites pass nothing, taking the default), but the
+  // contract is unconditional, so a caller passing null/undefined/a non-array explicitly must not
+  // crash either.
+  it.each([
+    ['null', null],
+    ['undefined', undefined],
+    ['a string', 'agent-v3'],
+    ['a number', 42],
+    ['an object', { includes: () => true }],
+  ])(
+    'fails closed (returns false, never throws) for a non-array allowlist — %s',
+    (_label, value) => {
+      expect(() => isEligibleForPermissionV3('agent-v3', value)).not.toThrow()
+      expect(isEligibleForPermissionV3('agent-v3', value)).toBe(false)
+    }
+  )
 })
 
 describe('generationForWasmHash (Task 5 — maps a deployed row.code to its manifest generation)', () => {

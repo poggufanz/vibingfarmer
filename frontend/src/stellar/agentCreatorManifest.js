@@ -330,17 +330,18 @@ export const AGENT_GENERATIONS_ELIGIBLE_FOR_PERMISSION_V3 = []
  * fixtures) — this is the one place that gap is normalized, so no caller has to re-derive it
  * inline and risk getting the direction or casing wrong.
  *
- * Fails closed at every step, never throws: a `code` that is not a non-empty string returns
- * `null`; a normalized hash with no entry in `AGENT_WASM_GENERATIONS` (wrong network, wrong
- * length, or simply unknown) also returns `null` — never a guess. The lookup is an EXACT match on
- * the full normalized string; a hash that merely CONTAINS, or is CONTAINED BY, a real entry's hash
- * is not that generation — a substring/`includes` match would defeat the point of cataloging exact
- * wasm hashes at all.
+ * Fails closed at every step, never throws: a `code` that is not a string (including an empty
+ * string — the exact-match lookup below naturally misses it, no special-cased length check
+ * needed) returns `null`; a normalized hash with no entry in `AGENT_WASM_GENERATIONS` (wrong
+ * network, wrong length, or simply unknown) also returns `null` — never a guess. The lookup is an
+ * EXACT match on the full normalized string; a hash that merely CONTAINS, or is CONTAINED BY, a
+ * real entry's hash is not that generation — a substring/`includes` match would defeat the point
+ * of cataloging exact wasm hashes at all.
  * @param {string} code the deployed agent's wasm code hash, `0x`-prefixed or bare
  * @returns {string|null} the generation string, or `null` when unresolvable
  */
 export function generationForWasmHash(code) {
-  if (typeof code !== 'string' || code.length === 0) return null
+  if (typeof code !== 'string') return null
   const normalized = (code.startsWith('0x') ? code.slice(2) : code).toLowerCase()
   const match = AGENT_WASM_GENERATIONS.find((g) => g.wasmHash === normalized)
   return match ? match.generation : null
@@ -353,12 +354,14 @@ export function generationForWasmHash(code) {
  * @param {string[]} [allowlist] defaults to the module-level `AGENT_GENERATIONS_ELIGIBLE_FOR_PERMISSION_V3`.
  *   A test that needs to drive the TRUE branch — while that constant correctly stays `[]` until a
  *   real V3-capable generation is deployed — passes an explicit override here instead of mutating
- *   the production array.
+ *   the production array. Fail-closed covers this argument too: a non-array `allowlist` (a caller
+ *   passing `null`/`undefined`/anything else explicitly) reads as NOT eligible rather than
+ *   throwing — this function's contract is "never throws", unconditionally.
  * @returns {boolean}
  */
 export function isEligibleForPermissionV3(
   generation,
   allowlist = AGENT_GENERATIONS_ELIGIBLE_FOR_PERMISSION_V3
 ) {
-  return allowlist.includes(generation)
+  return Array.isArray(allowlist) && allowlist.includes(generation)
 }
