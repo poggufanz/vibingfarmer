@@ -1,7 +1,7 @@
 // frontend/src/strategy/reusePreflight.test.js — the proof-carrying fresh/reuse permission
 // preflight. ALL-OR-NOTHING: any missing/unproven/mismatched element anywhere forces a complete
 // fresh decision with a specific freshReason. Base (bridge) allocations always force fresh.
-import { describe, test, expect, vi } from 'vitest'
+import { describe, test, expect, vi, beforeEach } from 'vitest'
 import { StrKey } from '@stellar/stellar-sdk'
 import {
   preflightPermission,
@@ -11,6 +11,23 @@ import {
   fetchPreparedExecutionMaterial,
 } from './reusePreflight.js'
 import { AGENT_KIND_DEPOSIT, AGENT_KIND_BRIDGE } from '../stellar/grant.js'
+import {
+  proveReusablePermission,
+  buildReusableApproval,
+  buildScopeId,
+  scopeFieldsFromAgents,
+  PERMISSION_POLICY_VERSION,
+} from './permissionGrantV3.js'
+import { classifyActiveAccount } from '../stellar/activeAccount.js'
+import { NETWORK_PASSPHRASE } from '../stellar/config.js'
+
+// Real module, wrapped in vi.fn so the "production resolver never reaches V3" test below can spy
+// on call count while every OTHER test in this file still gets the REAL proveReusablePermission
+// (a transparent passthrough spy, not a behavioral mock — see THE DORMANCY CONTRACT test group).
+vi.mock('./permissionGrantV3.js', async (importOriginal) => {
+  const actual = await importOriginal()
+  return { ...actual, proveReusablePermission: vi.fn(actual.proveReusablePermission) }
+})
 
 const OWNER = 'GCIOUP4UJAAFDBJNP5DY5CFJHBLEKGLHZ5E2AYRIIQ5VOZFVSTPRYHNS'
 const ROUTER = 'CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE'
@@ -580,5 +597,212 @@ describe('fetchPreparedExecutionMaterial', () => {
     expect(material.signer).toBeInstanceOf(Uint8Array)
     expect(material.salt).toBeInstanceOf(Uint8Array)
     expect(material.signerSecret).toMatch(/^S/)
+  })
+})
+
+// --- Router-generation branch (Task 5 chunk A) -------------------------------------------------
+// `preflightPermission` is the LIVE V2 fresh/reuse prover. A V3 router (per `resolveSchema`,
+// injected, defaulting to the real `resolveRouterSchema`) delegates whole-hog to
+// `permissionGrantV3.proveReusablePermission`; every other router runs the untouched V2 body
+// below this branch, byte-for-byte, because not a single line of it was edited. Router V3 is NOT
+// deployed (THE DORMANCY CONTRACT, permissionGrantV3.js's own header) — ROUTER_SCHEMAS never gets
+// a fabricated V3 address here, the V3 path is exercised only via an injected `resolveSchema`.
+describe('router-generation branch (Task 5 chunk A)', () => {
+  beforeEach(() => {
+    proveReusablePermission.mockClear()
+  })
+
+  const ROUTER_V3 = 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC' // shape-valid, NOT in ROUTER_SCHEMAS
+  const PERMISSION_ID = '0x' + '11'.repeat(32)
+  const CODE_HASH = '0x' + 'c0de'.repeat(16)
+  const LEDGER_NOW = 1_400_000
+
+  const activeAccountFixture = (over = {}) =>
+    classifyActiveAccount({
+      address: OWNER,
+      networkPassphrase: NETWORK_PASSPHRASE,
+      connectorId: 'freighter',
+      epoch: 3,
+      ...over,
+    })
+
+  function v3AgentInit(over = {}) {
+    return {
+      allocationId: 'run-1:deposit:0',
+      kind: AGENT_KIND_DEPOSIT,
+      token: TOKEN,
+      target: VAULT,
+      cap: { token: TOKEN, units: 25_000_000n, decimals: 7 },
+      periodSeconds: 86400,
+      expiry: NOW + 3600,
+      ...over,
+    }
+  }
+
+  function inspectedAgentV3(over = {}) {
+    return {
+      agentAddress: AGENT_1,
+      signerPub: SIGNER_PUB,
+      code: CODE_HASH,
+      target: VAULT,
+      token: TOKEN,
+      perRunCapUnits: '50000000',
+      cumulativeCapUnits: '100000000',
+      perExecutionMaxUnits: '50000000',
+      ...over,
+    }
+  }
+
+  function permissionGrantFixture(over = {}) {
+    return {
+      permissionId: PERMISSION_ID,
+      scopeId: null,
+      owner: OWNER,
+      token: TOKEN,
+      mandateCeilingUnits: '100000000',
+      confirmedSpentUnits: '25000000',
+      perRunMaxUnits: '50000000',
+      liveUntilLedger: LEDGER_NOW + 10_000,
+      revoked: false,
+      ...over,
+    }
+  }
+
+  function v3Deps(over = {}) {
+    const rows = over.inspectAgentsV3Rows || [inspectedAgentV3()]
+    const scopeId = buildScopeId({
+      network: NETWORK_PASSPHRASE,
+      owner: OWNER,
+      token: TOKEN,
+      router: ROUTER_V3,
+      policyVersion: PERMISSION_POLICY_VERSION,
+      ...scopeFieldsFromAgents(rows),
+    })
+    return {
+      runId: 'run-1',
+      owner: OWNER,
+      router: ROUTER_V3,
+      planFingerprint: '0xplan',
+      agentInits: [v3AgentInit()],
+      reviewedBudgets: [{ token: TOKEN, units: 25_000_000n, decimals: 7 }],
+      durationSeconds: 3600,
+      nowSec: NOW,
+      network: NETWORK_PASSPHRASE,
+      storage: {},
+      // Injected so this module never itself decides which router generation is live — see
+      // permissionGrantV3.test.js's identical convention.
+      resolveSchema: () => ({ version: 3, tokenMode: 'reusable-permission' }),
+      permissionId: PERMISSION_ID,
+      activeAccount: activeAccountFixture(),
+      getCurrentActiveAccount: () => activeAccountFixture(),
+      approval: buildReusableApproval({
+        plannedUnitsNow: '25000000',
+        mandateCeilingUnits: '100000000',
+        currentLedger: LEDGER_NOW,
+        durationSeconds: 86_400,
+        secondsPerLedger: 5,
+      }),
+      currentLedger: LEDGER_NOW,
+      readPermissionGrant: vi.fn(async () => permissionGrantFixture({ scopeId })),
+      readRemainingBudget: vi.fn(async () => '75000000'),
+      proveAllowanceV3: vi.fn(async () => ({
+        proven: true,
+        reason: null,
+        proof: { gapFree: true, noLaterMutation: true },
+      })),
+      inspectAgentsV3: vi.fn(async () => rows),
+      fetchCredential: vi.fn(() => ({ agentAddress: AGENT_1, signerPub: SIGNER_PUB })),
+      ...over,
+    }
+  }
+
+  test('a V3 router delegates to permissionGrantV3.proveReusablePermission and returns its decision as-is', async () => {
+    const deps = v3Deps()
+    const out = await preflightPermission(deps)
+    expect(proveReusablePermission).toHaveBeenCalledTimes(1)
+    expect(out.version).toBe(3)
+    expect(out.mode).toBe('reuse')
+    expect(out.freshReason).toBeNull()
+    expect(out.permissionId).toBe(PERMISSION_ID)
+    expect(deps.readPermissionGrant).toHaveBeenCalledTimes(1)
+    expect(deps.readRemainingBudget).toHaveBeenCalledTimes(1)
+    expect(deps.proveAllowanceV3).toHaveBeenCalledTimes(1)
+    expect(deps.inspectAgentsV3).toHaveBeenCalledTimes(1)
+  })
+
+  test('a V3 router with no permission record on chain forces fresh through the SAME real logic', async () => {
+    const out = await preflightPermission(v3Deps({ readPermissionGrant: vi.fn(async () => null) }))
+    expect(proveReusablePermission).toHaveBeenCalledTimes(1)
+    expect(out.version).toBe(3)
+    expect(out.mode).toBe('fresh')
+    expect(out.freshReason).toBe('permission-missing')
+  })
+
+  test('a V3 router with a bridge allocation forces fresh WITHOUT any chain read (delegation is real, not stubbed)', async () => {
+    const deps = v3Deps({
+      agentInits: [
+        v3AgentInit(),
+        v3AgentInit({ allocationId: 'run-1:bridge:1', kind: AGENT_KIND_BRIDGE }),
+      ],
+    })
+    const out = await preflightPermission(deps)
+    expect(proveReusablePermission).toHaveBeenCalledTimes(1)
+    expect(out.version).toBe(3)
+    expect(out.mode).toBe('fresh')
+    expect(out.freshReason).toBe('base-required')
+    expect(deps.readPermissionGrant).not.toHaveBeenCalled()
+  })
+
+  test('with the PRODUCTION resolver (default), permissionGrantV3.proveReusablePermission is NEVER called for a V2 router', async () => {
+    const out = await preflightPermission(baseDeps())
+    expect(out.mode).toBe('reuse')
+    expect(out.version).toBe(1) // the V2 PermissionDecisionV1 shape, never V3
+    expect(proveReusablePermission).not.toHaveBeenCalled()
+  })
+
+  test('the V2 decision shape (reuse) gains no new field from the V3 branch being added', async () => {
+    const out = await preflightPermission(baseDeps())
+    expect(Object.keys(out).sort()).toEqual(
+      [
+        'version',
+        'runId',
+        'owner',
+        'planFingerprint',
+        'agentInitFingerprint',
+        'checkedAt',
+        'reviewedBudgets',
+        'durationSeconds',
+        'reviewedAgentInits',
+        'mode',
+        'confirmationCount',
+        'grantReceiptFingerprint',
+        'allowanceExpiryProof',
+        'agents',
+        'freshReason',
+      ].sort()
+    )
+  })
+
+  test('the V2 decision shape (fresh) gains no new field from the V3 branch being added', async () => {
+    const out = await preflightPermission(baseDeps({ loadReceipt: vi.fn(() => null) }))
+    expect(Object.keys(out).sort()).toEqual(
+      [
+        'version',
+        'runId',
+        'owner',
+        'planFingerprint',
+        'agentInitFingerprint',
+        'checkedAt',
+        'reviewedBudgets',
+        'durationSeconds',
+        'reviewedAgentInits',
+        'mode',
+        'confirmationCount',
+        'grantReceiptFingerprint',
+        'allowanceExpiryProof',
+        'agents',
+        'freshReason',
+      ].sort()
+    )
   })
 })

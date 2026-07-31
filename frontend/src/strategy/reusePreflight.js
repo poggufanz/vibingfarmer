@@ -21,6 +21,8 @@ import {
   EXPIRY_MARGIN_SECONDS,
 } from '../stellar/agentCache.js'
 import { newSessionKey } from '../stellar/sessionKey.js'
+import { resolveRouterSchema } from '../stellar/routerSchema.js'
+import { proveReusablePermission } from './permissionGrantV3.js'
 import { SOROBAN_FUNDING_ROUTER_ADDRESS, NETWORK_PASSPHRASE } from '../stellar/config.js'
 
 // Mirrors grant.js's SECONDS_PER_LEDGER (not exported there — testnet's ~5s/ledger convention).
@@ -369,12 +371,25 @@ function selectAgents(agentInits, candidatesByTarget, { owner, nowSec }) {
 
 /**
  * Decide fresh vs. reuse for an exact reviewed set of AgentInits. Never calls a wallet, provider,
- * or transaction builder — `loadReceipt` / `proveAllowance` / `inspectAgents` are the only chain
- * touchpoints, all dependency-injected (default to the real implementations).
+ * or transaction builder — `loadReceipt` / `proveAllowance` / `inspectAgents` are the only V2
+ * chain touchpoints, all dependency-injected (default to the real implementations).
+ *
+ * Router-generation branch (Task 5 chunk A): when `resolveSchema(router)` resolves version 3,
+ * this function does none of the above and instead delegates whole-hog to
+ * `permissionGrantV3.proveReusablePermission`, threading through the params below it (distinct
+ * names from the V2 seam because the signatures/return shapes differ — V2 reads a stored
+ * GrantReceiptV1, V3 reads a bounded on-chain permission record directly). `resolveSchema`
+ * defaults to the real `resolveRouterSchema`, which resolves NO V3 address today (THE DORMANCY
+ * CONTRACT, permissionGrantV3.js's own header) — every V2 caller of this function is therefore
+ * unaffected, and the V3 branch is reachable only by injecting `resolveSchema` in a test.
  * @param {{runId, owner, router?, planFingerprint, agentInits:Array, reviewedBudgets:Array,
  *          durationSeconds:number, nowSec?:number, network?:string, server?:object, storage?:object,
- *          loadReceipt?:Function, proveAllowance?:Function, inspectAgents?:Function}} p
- * @returns {Promise<object>} PermissionDecisionV1
+ *          loadReceipt?:Function, proveAllowance?:Function, inspectAgents?:Function,
+ *          resolveSchema?:Function, permissionId?:string, activeAccount?:object,
+ *          getCurrentActiveAccount?:Function, approval?:object, currentLedger?:number,
+ *          readPermissionGrant?:Function, readRemainingBudget?:Function,
+ *          proveAllowanceV3?:Function, inspectAgentsV3?:Function, fetchCredential?:Function}} p
+ * @returns {Promise<object>} PermissionDecisionV1 (V2 router) or permissionGrantV3's decision (V3 router)
  */
 export async function preflightPermission({
   runId,
@@ -391,9 +406,47 @@ export async function preflightPermission({
   loadReceipt = loadGrantReceipt,
   proveAllowance = proveCurrentAllowance,
   inspectAgents = inspectReusableAgents,
+  // --- V3 router-generation branch only (Task 5 chunk A) — untouched by, and never read on, the
+  // V2 path below. See THE DORMANCY CONTRACT note above.
+  resolveSchema = resolveRouterSchema,
+  permissionId,
+  activeAccount,
+  getCurrentActiveAccount,
+  approval,
+  currentLedger,
+  readPermissionGrant,
+  readRemainingBudget,
+  proveAllowanceV3,
+  inspectAgentsV3,
+  fetchCredential,
 }) {
   if (!agentInits || agentInits.length === 0) {
     throw new Error('preflightPermission requires at least one reviewed agent.')
+  }
+
+  if (resolveSchema(router)?.version === 3) {
+    return proveReusablePermission({
+      runId,
+      owner,
+      router,
+      network,
+      planFingerprint,
+      permissionId,
+      activeAccount,
+      getCurrentActiveAccount,
+      approval,
+      agentInits,
+      currentLedger,
+      nowSec,
+      server,
+      storage,
+      resolveSchema,
+      readPermissionGrant,
+      readRemainingBudget,
+      proveAllowance: proveAllowanceV3,
+      inspectAgents: inspectAgentsV3,
+      fetchCredential,
+    })
   }
 
   // Critical fix (review round 2): resolve real signer/salt material BEFORE fingerprinting or

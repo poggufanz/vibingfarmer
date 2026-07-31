@@ -20,7 +20,14 @@ export const initialStrategyFlowState = Object.freeze({
   plan: null,
   planStatus: 'idle', // idle | loading | ready | failed
   planError: null,
-  permission: null, // secret-free PermissionDecisionV1 view (reusePreflight.toPermissionDecisionView)
+  // Secret-free PermissionDecisionV1 view (reusePreflight.toPermissionDecisionView) -- OR, once a
+  // V3 router is live (Task 5 chunk A, permissionGrantV3.js), the analogous `{version:3, mode,
+  // scopeId, permissionId, mandateCeilingUnits, confirmedSpentUnits, remainingHeadroomUnits,
+  // liveUntilLedger, executions, ...}` decision `proveReusablePermission` returns. The reducer
+  // never branches on `version` -- PREFLIGHT_READY stores whatever `event.decision` is BY
+  // REFERENCE (see below), and REUSE_CONFIRMED's `mode === 'reuse'` gate already covers both
+  // shapes with no widening, since a V3 reuse decision also carries `mode: 'reuse'`.
+  permission: null,
   permissionStatus: 'idle', // idle | preflight-ready | grant-requested | rejected | grant-confirmed | reuse-confirmed
   // Strategy Task 13 (decision log #22, obligation A.2/A.3): mirrors `planError`. Populated by
   // PREFLIGHT_FAILED (a PermissionPhaseError's message -- preflight OR reuse-revalidation) and by

@@ -7,6 +7,8 @@ import {
   buildGrantReceiptV1,
   saveGrantReceipt,
   loadGrantReceipt,
+  saveGrantReceiptV3,
+  loadGrantReceiptV3History,
 } from './grantReceiptStore.js'
 
 const OWNER = 'GCIOUP4UJAAFDBJNP5DY5CFJHBLEKGLHZ5E2AYRIIQ5VOZFVSTPRYHNS'
@@ -153,5 +155,109 @@ describe('saveGrantReceipt / loadGrantReceipt', () => {
     expect(
       loadGrantReceipt({ owner: OWNER, router: OTHER_ROUTER, network: NET, storage })
     ).toBeNull()
+  })
+})
+
+// --- V3 additive history lane (Task 5 chunk A) -------------------------------------------------
+// A distinct storage key from the V2 single-slot bucket above (vf.grantReceiptStore.v3 vs
+// vf.grantReceiptStore.v1) — old V3 receipts are never overwritten, they accumulate as history.
+// The V2 bucket shape, buildGrantReceiptV1, saveGrantReceipt, loadGrantReceipt and
+// fingerprintGrantReceipt above are untouched by any of this.
+function receiptV3(over = {}) {
+  return {
+    version: 3,
+    permissionId: '0x' + '11'.repeat(32),
+    scopeId: '0x' + '22'.repeat(32),
+    owner: OWNER,
+    router: ROUTER,
+    network: 'stellar-testnet',
+    mandateCeilingUnits: '100000000',
+    liveUntilLedger: 5000,
+    confirmedAt: 1_700_000_000,
+    ...over,
+  }
+}
+
+describe('saveGrantReceiptV3 / loadGrantReceiptV3History — additive V3 lane', () => {
+  test('saving a V3 receipt leaves an existing V2 receipt at the same bucket byte-identical', () => {
+    const v2 = receipt()
+    saveGrantReceipt({ receipt: v2, network: NET, storage })
+    saveGrantReceiptV3({ receipt: receiptV3(), network: NET, storage })
+    expect(loadGrantReceipt({ owner: OWNER, router: ROUTER, network: NET, storage })).toEqual(v2)
+  })
+
+  test('multiple V3 receipts accumulate as history rather than overwriting each other', () => {
+    saveGrantReceiptV3({
+      receipt: receiptV3({ permissionId: '0x' + '11'.repeat(32) }),
+      network: NET,
+      storage,
+    })
+    saveGrantReceiptV3({
+      receipt: receiptV3({ permissionId: '0x' + '33'.repeat(32) }),
+      network: NET,
+      storage,
+    })
+    const history = loadGrantReceiptV3History({
+      owner: OWNER,
+      router: ROUTER,
+      network: NET,
+      storage,
+    })
+    expect(history).toHaveLength(2)
+    expect(history.map((r) => r.permissionId)).toEqual([
+      '0x' + '11'.repeat(32),
+      '0x' + '33'.repeat(32),
+    ])
+  })
+
+  test('loadGrantReceipt (V2) is unaffected by the presence of V3 history', () => {
+    const v2 = receipt()
+    saveGrantReceipt({ receipt: v2, network: NET, storage })
+    saveGrantReceiptV3({ receipt: receiptV3(), network: NET, storage })
+    saveGrantReceiptV3({
+      receipt: receiptV3({ permissionId: '0x' + '44'.repeat(32) }),
+      network: NET,
+      storage,
+    })
+    expect(loadGrantReceipt({ owner: OWNER, router: ROUTER, network: NET, storage })).toEqual(v2)
+  })
+
+  test('no history loads as an empty array, never null/throw', () => {
+    expect(
+      loadGrantReceiptV3History({ owner: OWNER, router: ROUTER, network: NET, storage })
+    ).toEqual([])
+  })
+
+  test('a tampered V3 history entry (fingerprint mismatch) is dropped, not the whole history', () => {
+    saveGrantReceiptV3({
+      receipt: receiptV3({ permissionId: '0x' + '55'.repeat(32) }),
+      network: NET,
+      storage,
+    })
+    saveGrantReceiptV3({
+      receipt: receiptV3({ permissionId: '0x' + '66'.repeat(32) }),
+      network: NET,
+      storage,
+    })
+    const key = 'vf.grantReceiptStore.v3'
+    const all = JSON.parse(storage.getItem(key))
+    const bucketKey = Object.keys(all)[0]
+    all[bucketKey][0].receipt.mandateCeilingUnits = '999999999' // tamper the first entry only
+    storage.setItem(key, JSON.stringify(all))
+    const history = loadGrantReceiptV3History({
+      owner: OWNER,
+      router: ROUTER,
+      network: NET,
+      storage,
+    })
+    expect(history).toHaveLength(1)
+    expect(history[0].permissionId).toBe('0x' + '66'.repeat(32))
+  })
+
+  test('different (owner, router) buckets stay isolated for V3 history too', () => {
+    saveGrantReceiptV3({ receipt: receiptV3(), network: NET, storage })
+    expect(
+      loadGrantReceiptV3History({ owner: OWNER, router: OTHER_ROUTER, network: NET, storage })
+    ).toEqual([])
   })
 })

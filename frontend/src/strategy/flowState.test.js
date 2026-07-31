@@ -536,3 +536,42 @@ describe('Unknown events', () => {
     expect(after).toBe(before)
   })
 })
+
+// --- A V3 decision (permissionGrantV3.js) is a pass-through, not new reducer logic (Task 5 chunk
+// A). The reducer stores `event.decision` by reference regardless of its shape -- a V3 decision
+// carrying extra fields (scopeId, executions, mandateCeilingUnits, ...) must flow through exactly
+// like a V1 one, and REUSE_CONFIRMED's existing `mode === 'reuse'` guard already covers it with no
+// widening, since permissionGrantV3.proveReusablePermission's reuse decisions carry `mode: 'reuse'`
+// too.
+describe('a V3-shaped decision (Task 5 chunk A) flows through untouched', () => {
+  const decisionV3 = (over = {}) => ({
+    version: 3,
+    runId: 'run-1',
+    owner: 'GOWNER',
+    router: 'CROUTERV3',
+    mode: 'reuse',
+    freshReason: null,
+    scopeId: '0x' + '11'.repeat(32),
+    permissionId: '0x' + '22'.repeat(32),
+    mandateCeilingUnits: '100000000',
+    confirmedSpentUnits: '25000000',
+    remainingHeadroomUnits: '75000000',
+    liveUntilLedger: 1_410_000,
+    executions: [{ executionId: '0x' + '33'.repeat(32), allocationId: 'run-1:deposit:0' }],
+    ...over,
+  })
+
+  it('PREFLIGHT_READY stores a V3-field-carrying decision BY REFERENCE (toBe, not toEqual)', () => {
+    const d = decisionV3()
+    const s = strategyFlowReducer(toProtect(), { type: 'PREFLIGHT_READY', decision: d })
+    expect(s.permission).toBe(d)
+    expect(s.permissionStatus).toBe('preflight-ready')
+  })
+
+  it('REUSE_CONFIRMED accepts a V3 reuse decision through the SAME unmodified mode==="reuse" guard', () => {
+    let s = strategyFlowReducer(toProtect(), { type: 'PREFLIGHT_READY', decision: decisionV3() })
+    s = strategyFlowReducer(s, { type: 'REUSE_CONFIRMED' })
+    expect(s.moment).toBe('start')
+    expect(s.permissionStatus).toBe('reuse-confirmed')
+  })
+})

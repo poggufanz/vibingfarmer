@@ -217,3 +217,16 @@ export async function proveCurrentAllowance({
   const proof = { ...proofBase, proofHash: computeProofHash(proofBase) }
   return { proven: true, reason: null, proof }
 }
+
+/**
+ * V3-facing view of the two boolean evidence fields `proveCurrentAllowance` already computes as
+ * part of AllowanceExpiryProofV1 (`proof.gapFree`/`proof.noLaterMutation` above) — a narrow read
+ * so a V3 caller (permissionGrantV3.js's `proveAllowance` seam) does not need to know
+ * AllowanceExpiryProofV1's full shape. Pure projection, no new computation: `proveCurrentAllowance`
+ * itself, its signature, and its return shape are unchanged.
+ * @param {object|null} proof an AllowanceExpiryProofV1, or null/unproven
+ * @returns {{gapFree:boolean, noLaterMutation:boolean}}
+ */
+export function allowanceGapEvidence(proof) {
+  return { gapFree: !!proof?.gapFree, noLaterMutation: !!proof?.noLaterMutation }
+}

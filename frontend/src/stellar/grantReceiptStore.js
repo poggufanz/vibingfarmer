@@ -137,3 +137,68 @@ export function loadGrantReceipt({ owner, router, network, storage } = {}) {
     return null
   }
 }
+
+// --- V3 additive history lane (Task 5 chunk A, IQ Alter remediation) ---------------------------
+// A distinct storage key from the V2 single-slot bucket above: V3 grant receipts accumulate as
+// history per (network, owner, router) rather than overwriting each other, and never touch
+// STORE_KEY / the V1 bucket shape / buildGrantReceiptV1 / saveGrantReceipt / loadGrantReceipt /
+// fingerprintGrantReceipt above. Router V3 is not deployed (routerSchema.js:47-54) — this lane
+// exists so the storage/proof layer is ready the day it is; nothing here reinterprets a V2
+// receipt or migrates the V2 bucket.
+const STORE_KEY_V3 = 'vf.grantReceiptStore.v3'
+
+function readAllV3(storage) {
+  try {
+    return JSON.parse(resolveStorage(storage).getItem(STORE_KEY_V3) || '{}') || {}
+  } catch {
+    return {}
+  }
+}
+
+function writeAllV3(all, storage) {
+  try {
+    resolveStorage(storage).setItem(STORE_KEY_V3, JSON.stringify(all))
+  } catch {
+    /* quota/serialization failure — best-effort, never fatal */
+  }
+}
+
+/**
+ * Append one V3 grant receipt to its (owner, router, network) history lane, tagged with its own
+ * fingerprint for tamper detection on read (same discipline as `saveGrantReceipt` above). Additive
+ * only: never overwrites a prior V3 entry in the same bucket, and never touches the V2 bucket.
+ * @param {{receipt:object, network?:string, storage?:object}} p
+ */
+export function saveGrantReceiptV3({ receipt, network, storage }) {
+  const all = readAllV3(storage)
+  const key = bucketKey({ owner: receipt.owner, router: receipt.router, network })
+  const history = Array.isArray(all[key]) ? all[key] : []
+  all[key] = [...history, { receipt, fingerprint: fingerprintGrantReceipt(receipt) }]
+  writeAllV3(all, storage)
+}
+
+/**
+ * Load the full, verified V3 receipt history for (owner, router, network), oldest first. Any
+ * entry whose fingerprint no longer matches, or whose own owner/router disagrees with the
+ * requested bucket, is dropped rather than failing the whole read — this lane is a list, not a
+ * single slot, so one corrupt/tampered entry must not hide the rest.
+ * @returns {Array<object>} always an array, never null
+ */
+export function loadGrantReceiptV3History({ owner, router, network, storage } = {}) {
+  const rows = readAllV3(storage)[bucketKey({ owner, router, network })]
+  if (!Array.isArray(rows)) return []
+  return rows
+    .filter((row) => {
+      try {
+        return (
+          row?.receipt &&
+          fingerprintGrantReceipt(row.receipt) === row.fingerprint &&
+          row.receipt.owner === owner &&
+          row.receipt.router === router
+        )
+      } catch {
+        return false
+      }
+    })
+    .map((row) => row.receipt)
+}
