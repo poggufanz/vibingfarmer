@@ -20,6 +20,7 @@ import {
 } from './permissionGrantV3.js'
 import { classifyActiveAccount } from '../stellar/activeAccount.js'
 import { NETWORK_PASSPHRASE } from '../stellar/config.js'
+import { AGENT_WASM_GENERATIONS } from '../stellar/agentCreatorManifest.js'
 
 // Real module, wrapped in vi.fn so the "production resolver never reaches V3" test below can spy
 // on call count while every OTHER test in this file still gets the REAL proveReusablePermission
@@ -694,7 +695,15 @@ describe('router-generation branch (Task 5 chunk A)', () => {
 
   const ROUTER_V3 = 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC' // shape-valid, NOT in ROUTER_SCHEMAS
   const PERMISSION_ID = '0x' + '11'.repeat(32)
-  const CODE_HASH = '0x' + 'c0de'.repeat(16)
+  // Task 5 conflict, found and fixed here (see the report's "reusePreflight.test.js conflict"
+  // heading): a fixture that agreed with permissionGrantV3.js on a made-up placeholder hash rather
+  // than the real catalog is exactly the "two files green because they agreed on a FIXTURE, not
+  // the SEAM" failure mode. `generationForWasmHash` (agentCreatorManifest.js) looks real rows up
+  // against the REAL `AGENT_WASM_GENERATIONS` table, so a row that must pass the Task 5
+  // eligibility gate needs a REAL cataloged hash — the "Hardened generation" (agent-v3) entry,
+  // 0x-prefixed to match on-chain-inspected row shape.
+  const REAL_CODE_V3 =
+    '0x' + AGENT_WASM_GENERATIONS.find((g) => g.generation === 'agent-v3').wasmHash
   const LEDGER_NOW = 1_400_000
 
   const activeAccountFixture = (over = {}) =>
@@ -723,7 +732,7 @@ describe('router-generation branch (Task 5 chunk A)', () => {
     return {
       agentAddress: AGENT_1,
       signerPub: SIGNER_PUB,
-      code: CODE_HASH,
+      code: REAL_CODE_V3,
       target: VAULT,
       token: TOKEN,
       perRunCapUnits: '50000000',
@@ -772,6 +781,11 @@ describe('router-generation branch (Task 5 chunk A)', () => {
       // Injected so this module never itself decides which router generation is live — see
       // permissionGrantV3.test.js's identical convention.
       resolveSchema: () => ({ version: 3, tokenMode: 'reusable-permission' }),
+      // Same dormancy shape one gate deeper (Task 5): the production allowlist is `[]` until a
+      // real V3-capable generation is deployed. This is an activation switch exactly like
+      // `resolveSchema` above it, injected right beside it — widened here (not mutating the
+      // production constant) so `inspectedAgentV3()`'s real cataloged code resolves as eligible.
+      eligibleGenerations: ['agent-v3'],
       permissionId: PERMISSION_ID,
       activeAccount: activeAccountFixture(),
       getCurrentActiveAccount: () => activeAccountFixture(),
@@ -810,6 +824,20 @@ describe('router-generation branch (Task 5 chunk A)', () => {
     expect(deps.inspectAgentsV3).toHaveBeenCalledTimes(1)
   })
 
+  // Task 5: `eligibleGenerations` is threaded through to `proveReusablePermission` exactly like
+  // `resolveSchema`/`readPermissionGrant`/etc. above it — proven directly via the call arguments,
+  // not inferred from the outcome (the "delegates" test above already proves the OUTCOME; this
+  // proves the ARGUMENT actually made the trip).
+  test('forwards eligibleGenerations into proveReusablePermission on the V3 path', async () => {
+    const deps = v3Deps({ eligibleGenerations: ['agent-v3', 'agent-v3-bridge'] })
+    await preflightPermission(deps)
+    expect(proveReusablePermission).toHaveBeenCalledTimes(1)
+    expect(proveReusablePermission.mock.calls[0][0].eligibleGenerations).toEqual([
+      'agent-v3',
+      'agent-v3-bridge',
+    ])
+  })
+
   test('a V3 router with no permission record on chain forces fresh through the SAME real logic', async () => {
     const out = await preflightPermission(v3Deps({ readPermissionGrant: vi.fn(async () => null) }))
     expect(proveReusablePermission).toHaveBeenCalledTimes(1)
@@ -837,6 +865,20 @@ describe('router-generation branch (Task 5 chunk A)', () => {
     const out = await preflightPermission(baseDeps())
     expect(out.mode).toBe('reuse')
     expect(out.version).toBe(1) // the V2 PermissionDecisionV1 shape, never V3
+    expect(proveReusablePermission).not.toHaveBeenCalled()
+  })
+
+  // Task 5: `eligibleGenerations` must be forwarded ONLY into the V3 branch. This is the mutation
+  // this pins — if the V2 body below ever started reading `eligibleGenerations` (instead of
+  // leaving it untouched alongside the V3-only params above it), a POISON value with no
+  // `.includes` method would throw the instant V2 code touched it, and this test would go RED. A
+  // plain array (which DOES have `.includes`) would not catch that same mutation, so the poison is
+  // deliberately shaped to have no such method.
+  test('the V2 branch never reads eligibleGenerations at all', async () => {
+    const POISON = { poisoned: true } // no .includes() — touching this at all would throw
+    const withPoison = await preflightPermission(baseDeps({ eligibleGenerations: POISON }))
+    const without = await preflightPermission(baseDeps())
+    expect(withPoison).toEqual(without)
     expect(proveReusablePermission).not.toHaveBeenCalled()
   })
 

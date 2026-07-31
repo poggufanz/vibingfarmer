@@ -18,6 +18,7 @@ import {
   isLegacyDirectSetupAllowed,
   AGENT_GENERATIONS_ELIGIBLE_FOR_PERMISSION_V3,
   isEligibleForPermissionV3,
+  generationForWasmHash,
 } from './agentCreatorManifest.js'
 
 const ROUTER_V2 = 'CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE'
@@ -338,5 +339,69 @@ describe('isEligibleForPermissionV3 (Task 4)', () => {
     expect(isEligibleForPermissionV3('agent-v4')).toBe(false)
     expect(isEligibleForPermissionV3('totally-unknown')).toBe(false)
     expect(isEligibleForPermissionV3(undefined)).toBe(false)
+  })
+
+  // Task 5: an injected allowlist override drives the TRUE branch without ever mutating the
+  // production `AGENT_GENERATIONS_ELIGIBLE_FOR_PERMISSION_V3` array — which stays `[]` below,
+  // proving the override is a parameter, not a side effect on the module constant.
+  it('accepts an injected allowlist override — driving the TRUE branch without mutating the production constant', () => {
+    expect(isEligibleForPermissionV3('agent-v3', ['agent-v3'])).toBe(true)
+    expect(isEligibleForPermissionV3('agent-v3', ['agent-v1', 'agent-v3-bridge'])).toBe(false)
+    expect(AGENT_GENERATIONS_ELIGIBLE_FOR_PERMISSION_V3).toEqual([])
+  })
+
+  it('an empty injected allowlist override still rejects every generation', () => {
+    for (const g of AGENT_WASM_GENERATIONS) {
+      expect(isEligibleForPermissionV3(g.generation, [])).toBe(false)
+    }
+  })
+})
+
+describe('generationForWasmHash (Task 5 — maps a deployed row.code to its manifest generation)', () => {
+  it('resolves the bare lowercase hash exactly as stored in AGENT_WASM_GENERATIONS', () => {
+    expect(generationForWasmHash(WASM_V1)).toBe('agent-v1')
+    expect(generationForWasmHash(WASM_V2)).toBe('agent-v2')
+    expect(generationForWasmHash(WASM_V3)).toBe('agent-v3')
+    expect(generationForWasmHash(WASM_V3_BRIDGE)).toBe('agent-v3-bridge')
+  })
+
+  it('resolves the SAME hash 0x-prefixed — chain-inspected rows are 0x-prefixed, the table is bare', () => {
+    expect(generationForWasmHash('0x' + WASM_V3)).toBe('agent-v3')
+  })
+
+  it('resolves a 0x-prefixed, mixed-case hash — lowercased before comparison', () => {
+    expect(generationForWasmHash('0x' + WASM_V3.toUpperCase())).toBe('agent-v3')
+  })
+
+  it('returns null for a well-formed but unrecorded wasm hash', () => {
+    expect(generationForWasmHash('ab'.repeat(32))).toBeNull()
+  })
+
+  it.each([
+    ['null', null],
+    ['undefined', undefined],
+    ['empty string', ''],
+    ['a number', 12345],
+    ['a bigint', 12345n],
+    ['an object', { wasmHash: WASM_V3 }],
+    ['an array', [WASM_V3]],
+  ])('fails closed (returns null, never throws) for %s', (_label, value) => {
+    expect(() => generationForWasmHash(value)).not.toThrow()
+    expect(generationForWasmHash(value)).toBeNull()
+  })
+
+  // The mutation this pins: replacing the exact-equality `.find()` comparator with a
+  // substring/`includes` match. A 66-char string built from a real 64-char hash plus two extra
+  // trailing bytes is REJECTED under exact equality (correct — it is not that hash) but would be
+  // WRONGLY accepted under `normalized.includes(g.wasmHash)`, since the real hash is a substring
+  // of it.
+  it('never matches via substring — a hash that merely CONTAINS a real entry is not that generation', () => {
+    expect(generationForWasmHash('0x' + WASM_V3 + 'ff')).toBeNull()
+  })
+
+  // The complementary direction: a 32-char PREFIX of a real hash would be WRONGLY accepted under
+  // `g.wasmHash.includes(normalized)`, since it is a substring of the real (longer) hash.
+  it('never matches via substring the other direction — a hash that IS a substring of a real entry is not that generation', () => {
+    expect(generationForWasmHash(WASM_V3.slice(0, 32))).toBeNull()
   })
 })

@@ -395,7 +395,10 @@ function selectAgents(agentInits, candidatesByTarget, { owner, nowSec }) {
  *          resolveSchema?:Function, permissionId?:string, activeAccount?:object,
  *          getCurrentActiveAccount?:Function, approval?:object, currentLedger?:number,
  *          readPermissionGrant?:Function, readRemainingBudget?:Function,
- *          proveAllowanceV3?:Function, inspectAgentsV3?:Function, fetchCredential?:Function}} p
+ *          proveAllowanceV3?:Function, inspectAgentsV3?:Function, fetchCredential?:Function,
+ *          eligibleGenerations?:string[]}} p `eligibleGenerations` is V3-branch-only (Task 5): left
+ *   `undefined` unless a caller explicitly supplies it, so `proveReusablePermission`'s own default
+ *   (the real, production allowlist) governs production — never read on the V2 path.
  * @returns {Promise<object>} PermissionDecisionV1 (V2 router) or permissionGrantV3's decision (V3 router)
  */
 export async function preflightPermission({
@@ -426,6 +429,14 @@ export async function preflightPermission({
   proveAllowanceV3,
   inspectAgentsV3,
   fetchCredential,
+  // Task 5 (IQ Alter remediation): forwarded ONLY into the V3 branch below, exactly like
+  // `resolveSchema`/`readPermissionGrant`/etc. above it — the live V2 branch never reads this and
+  // must not (see reusePreflight.test.js's "V2 branch never reads eligibleGenerations" proof).
+  // Left undefined here so `proveReusablePermission`'s OWN default (the real, production
+  // `AGENT_GENERATIONS_ELIGIBLE_FOR_PERMISSION_V3`, which is `[]` until a real V3-capable
+  // generation is deployed) is what actually governs production — this function never decides
+  // eligibility itself.
+  eligibleGenerations,
 }) {
   if (!agentInits || agentInits.length === 0) {
     throw new Error('preflightPermission requires at least one reviewed agent.')
@@ -453,6 +464,7 @@ export async function preflightPermission({
       proveAllowance: proveAllowanceV3,
       inspectAgents: inspectAgentsV3,
       fetchCredential,
+      eligibleGenerations,
     })
   }
 

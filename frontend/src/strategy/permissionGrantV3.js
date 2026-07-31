@@ -10,11 +10,13 @@
 // DORMANT UNTIL DEPLOYED. No V3 router address is registered in `ROUTER_SCHEMAS`
 // (routerSchema.js:47-54 — inventing one would violate the same fail-closed rule that keeps the
 // legacy router's ABI absent), so `resolveRouterSchema` resolves version 3 for nothing and
-// `proveReusablePermission` returns `fresh` before reading anything. The activation trigger is a
-// single edit: register the actually-deployed V3 contract id in `ROUTER_SCHEMAS` with
-// `ROUTER_SCHEMA_V3_SHAPE`'s fields, and list the deployed agent generation in
-// `AGENT_GENERATIONS_ELIGIBLE_FOR_PERMISSION_V3` (agentCreatorManifest.js:300-311). Until then the
-// live V2 path in `reusePreflight.js` is the only path that can decide reuse.
+// `proveReusablePermission` returns `fresh` before reading anything. Activation needs TWO
+// independent edits, BOTH required: register the actually-deployed V3 contract id in
+// `ROUTER_SCHEMAS` with `ROUTER_SCHEMA_V3_SHAPE`'s fields, AND list the deployed agent generation
+// in `AGENT_GENERATIONS_ELIGIBLE_FOR_PERMISSION_V3` (agentCreatorManifest.js:300-311) — this
+// module enforces the second gate itself (step 7a below), so a router registered without its
+// generation added still can't reuse. Until both are done the live V2 path in `reusePreflight.js`
+// is the only path that can decide reuse.
 //
 // Like `preflightPermission`, this module NEVER calls a wallet, a provider or a transaction
 // builder — every chain read is dependency-injected, so it is a pure function under test and can
@@ -25,6 +27,11 @@ import { AGENT_KIND_BRIDGE } from '../stellar/grant.js'
 import { resolveRouterSchema } from '../stellar/routerSchema.js'
 import { sameActiveAccount } from '../stellar/activeAccount.js'
 import { SOROBAN_FUNDING_ROUTER_ADDRESS, NETWORK_PASSPHRASE } from '../stellar/config.js'
+import {
+  generationForWasmHash,
+  isEligibleForPermissionV3,
+  AGENT_GENERATIONS_ELIGIBLE_FOR_PERMISSION_V3,
+} from '../stellar/agentCreatorManifest.js'
 
 /** The only two reusable expiry selections that exist. There is no indefinite option. */
 export const REUSABLE_DURATIONS_SECONDS = Object.freeze([86_400, 604_800])
@@ -195,6 +202,12 @@ function freshDecision(base, freshReason) {
  *
  * Every chain read is injected. `resolveSchema` defaults to the production resolver, which knows
  * no V3 address — so in production this returns `fresh` before performing a single read.
+ * `eligibleGenerations` defaults to the production `AGENT_GENERATIONS_ELIGIBLE_FOR_PERMISSION_V3`
+ * allowlist, which is `[]` until a real V3-capable generation is deployed (Task 4) — so every row
+ * is rejected with `'agent-generation-ineligible'` today, same as the router dormancy above but
+ * one gate deeper. The injection point is the ALLOWLIST (a set), never the predicate itself — a
+ * caller can only ever WIDEN which generations pass, never bypass the lookup/fail-closed behavior
+ * that `isEligibleForPermissionV3`/`generationForWasmHash` enforce on every row regardless.
  *
  * `agentInits[i]` and an `inspectAgents` row share no per-allocation identity key (an `AgentInit`
  * names an allocation, a row names a deployed agent), but they DO share `target`/`token` — every
@@ -232,6 +245,12 @@ export async function proveReusablePermission({
   proveAllowance,
   inspectAgents,
   fetchCredential,
+  // Task 5 (IQ Alter remediation): defaults to the real, production allowlist (`[]` until a real
+  // V3-capable generation is deployed — see agentCreatorManifest.js). Injecting the ALLOWLIST
+  // (not a predicate function) means an override can only ever WIDEN the eligible set for a test —
+  // it can never bypass the normalization/lookup/fail-closed-on-unknown behavior below, which runs
+  // unconditionally on every path.
+  eligibleGenerations = AGENT_GENERATIONS_ELIGIBLE_FOR_PERMISSION_V3,
 }) {
   if (!Array.isArray(agentInits) || agentInits.length === 0)
     throw new Error('proveReusablePermission needs at least one reviewed allocation.')
@@ -291,6 +310,21 @@ export async function proveReusablePermission({
   //    once — anything the scope binds cannot move without changing the id.
   const rows = await inspectAgents({ owner, network, nowSec, server, storage })
   if (rows.length < agentInits.length) return freshDecision(base, 'agent-missing')
+
+  // 7a. Task 4 (agentCreatorManifest.js) marks every agent generation that predates
+  // `AgentScope.per_execution_max` / `PermissionGrantV3` fresh-only for reuse — an ALLOWLIST, not
+  // a blocklist, so this closes fresh until a real V3-capable generation is deployed and added.
+  // `row.code` is the deployed agent's wasm hash; map it to a generation and check eligibility
+  // before anything else here — this runs BEFORE the scope-drift comparison below so an
+  // ineligible-but-otherwise-scope-matching row reports the more specific reason. Fails closed on
+  // every malformed/unmapped/unlisted case (`generationForWasmHash` and `isEligibleForPermissionV3`
+  // never throw), never a positional/partial check. `eligibleGenerations` is the ONLY injectable
+  // surface here — a caller can widen the allowlist for a test, but the normalization, the
+  // hash→generation lookup, and the fail-closed-on-unknown behavior all still run unconditionally.
+  if (
+    rows.some((r) => !isEligibleForPermissionV3(generationForWasmHash(r.code), eligibleGenerations))
+  )
+    return freshDecision(base, 'agent-generation-ineligible')
 
   // A permission binds ONE token. `buildScopeId` therefore takes the permission's token, not each
   // agent's, so a drifted per-agent token would otherwise never reach the hash — check it directly.

@@ -172,7 +172,19 @@ function computeManifestHash() {
       wasmGenerations: AGENT_WASM_GENERATIONS,
     })
   )
-  return '0x' + hash(payload).toString('hex')
+  // Found while closing Task 5's eligibility gate (see the report's "reusePreflight.test.js
+  // conflict" heading for the sibling finding): `hash()`'s own string branch
+  // (`Buffer.from(data, 'utf8')`, from the `buffer` browser polyfill @stellar/stellar-sdk depends
+  // on) constructs a Buffer whose `instanceof Uint8Array` check fails under a jsdom test
+  // environment (a realm mismatch in the polyfill, not in this file). This computation runs
+  // EAGERLY below (`AGENT_CREATOR_MANIFEST_HASH = computeManifestHash()`, at module-evaluation
+  // time), so it used to crash the instant ANY consumer imported this module inside a
+  // `// @vitest-environment jsdom` test file — which newly happened once `permissionGrantV3.js`
+  // started importing this module for the eligibility gate. Passing a real, environment-native
+  // Uint8Array (`TextEncoder`, a WHATWG standard available in both Node and jsdom) sidesteps
+  // `hash()`'s string branch entirely — identical sha256-of-UTF-8-bytes result, immune to the
+  // polyfill's realm split.
+  return '0x' + hash(new TextEncoder().encode(payload)).toString('hex')
 }
 
 export const AGENT_CREATOR_MANIFEST_HASH = computeManifestHash()
@@ -311,11 +323,42 @@ export function isLegacyDirectSetupAllowed({ mode, explicitFlag } = {}) {
 export const AGENT_GENERATIONS_ELIGIBLE_FOR_PERMISSION_V3 = []
 
 /**
+ * Task 5 (IQ Alter remediation): resolve a deployed agent's wasm CODE HASH to the generation
+ * string `AGENT_WASM_GENERATIONS` pins it under. The two sides of this lookup do NOT share a
+ * format: `AGENT_WASM_GENERATIONS[].wasmHash` is bare lowercase hex, while an on-chain-inspected
+ * row's `code` is `0x`-prefixed (see `permissionGrantV3.test.js` / `reusePreflight.test.js`
+ * fixtures) — this is the one place that gap is normalized, so no caller has to re-derive it
+ * inline and risk getting the direction or casing wrong.
+ *
+ * Fails closed at every step, never throws: a `code` that is not a non-empty string returns
+ * `null`; a normalized hash with no entry in `AGENT_WASM_GENERATIONS` (wrong network, wrong
+ * length, or simply unknown) also returns `null` — never a guess. The lookup is an EXACT match on
+ * the full normalized string; a hash that merely CONTAINS, or is CONTAINED BY, a real entry's hash
+ * is not that generation — a substring/`includes` match would defeat the point of cataloging exact
+ * wasm hashes at all.
+ * @param {string} code the deployed agent's wasm code hash, `0x`-prefixed or bare
+ * @returns {string|null} the generation string, or `null` when unresolvable
+ */
+export function generationForWasmHash(code) {
+  if (typeof code !== 'string' || code.length === 0) return null
+  const normalized = (code.startsWith('0x') ? code.slice(2) : code).toLowerCase()
+  const match = AGENT_WASM_GENERATIONS.find((g) => g.wasmHash === normalized)
+  return match ? match.generation : null
+}
+
+/**
  * Whether `generation` (one of `AGENT_WASM_GENERATIONS[].generation`, or any other string) may be
  * linked to a V3 permission. Fail-closed: unknown/unlisted/undefined always reads as NOT eligible.
  * @param {string} generation
+ * @param {string[]} [allowlist] defaults to the module-level `AGENT_GENERATIONS_ELIGIBLE_FOR_PERMISSION_V3`.
+ *   A test that needs to drive the TRUE branch — while that constant correctly stays `[]` until a
+ *   real V3-capable generation is deployed — passes an explicit override here instead of mutating
+ *   the production array.
  * @returns {boolean}
  */
-export function isEligibleForPermissionV3(generation) {
-  return AGENT_GENERATIONS_ELIGIBLE_FOR_PERMISSION_V3.includes(generation)
+export function isEligibleForPermissionV3(
+  generation,
+  allowlist = AGENT_GENERATIONS_ELIGIBLE_FOR_PERMISSION_V3
+) {
+  return allowlist.includes(generation)
 }

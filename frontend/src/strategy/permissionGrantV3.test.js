@@ -20,6 +20,7 @@ import { resolveRouterSchema } from '../stellar/routerSchema.js'
 import { AGENT_KIND_DEPOSIT, AGENT_KIND_BRIDGE } from '../stellar/grant.js'
 import { classifyActiveAccount } from '../stellar/activeAccount.js'
 import { NETWORK_PASSPHRASE } from '../stellar/config.js'
+import { AGENT_WASM_GENERATIONS } from '../stellar/agentCreatorManifest.js'
 
 const OWNER = 'GCIOUP4UJAAFDBJNP5DY5CFJHBLEKGLHZ5E2AYRIIQ5VOZFVSTPRYHNS'
 const OWNER_2 = 'GDP5XLVDKWCHX2QNJH3XRKUFNHM47KLU3MITVT7BDPWJL2QLY2X3VKLU'
@@ -38,6 +39,19 @@ const SIGNER_PUB_2 = 'GB4XNXQEDPRU7FJTSM2DDDCQ5DRZSLEDG67PIQZC6CV6ZB7TM3UZ6SXQ'
 const CODE_HASH = '0x' + 'c0de'.repeat(16)
 const CODE_HASH_2 = '0x' + 'beef'.repeat(16)
 const PERMISSION_ID = '0x' + '11'.repeat(32)
+
+// Task 5 (agent-generation eligibility gate): REAL cataloged wasm hashes, not placeholders —
+// `generationForWasmHash` looks these up against the actual `AGENT_WASM_GENERATIONS` table, so a
+// row using a made-up hash like CODE_HASH above can never resolve to a generation at all. Rows
+// that must pass the eligibility gate (an injected, widened `eligibleGenerations`) use these
+// instead; `AGENT_WASM_GENERATIONS[].wasmHash` is bare hex, on-chain-inspected rows are
+// `0x`-prefixed, so the `0x` is added here to match the row shape, not the table shape.
+const AGENT_V3_GENERATION = 'agent-v3'
+const AGENT_V3_BRIDGE_GENERATION = 'agent-v3-bridge'
+const REAL_CODE_V3 =
+  '0x' + AGENT_WASM_GENERATIONS.find((g) => g.generation === AGENT_V3_GENERATION).wasmHash
+const REAL_CODE_V3_BRIDGE =
+  '0x' + AGENT_WASM_GENERATIONS.find((g) => g.generation === AGENT_V3_BRIDGE_GENERATION).wasmHash
 
 const DAY = 86_400
 const WEEK = 604_800
@@ -364,11 +378,15 @@ function permissionGrant(over = {}) {
   }
 }
 
+// `code` defaults to a REAL cataloged wasm hash (not the placeholder CODE_HASH) so this row can
+// resolve to a real generation through `generationForWasmHash` — the eligibility gate (Task 5)
+// runs unconditionally on every path, so any fixture that reaches it needs a code that resolves to
+// SOMETHING for `baseDeps`'s widened `eligibleGenerations` default to have anything to admit.
 function inspectedAgent(over = {}) {
   return {
     agentAddress: AGENT_1,
     signerPub: SIGNER_PUB,
-    code: CODE_HASH,
+    code: REAL_CODE_V3,
     target: VAULT,
     token: TOKEN,
     perRunCapUnits: '50000000',
@@ -420,6 +438,12 @@ function baseDeps(over = {}) {
     // Injected so the module never itself decides which router generation is live: the production
     // default is the real resolveRouterSchema, which knows no V3 address today.
     resolveSchema: () => ({ version: 3, tokenMode: 'reusable-permission' }),
+    // Same dormancy shape one gate deeper (Task 5): the production allowlist
+    // (AGENT_GENERATIONS_ELIGIBLE_FOR_PERMISSION_V3) is `[]` until a real V3-capable generation is
+    // deployed, so it is widened here to admit the two REAL cataloged generations these fixtures'
+    // rows use — never the placeholder CODE_HASH generation (there isn't one; it resolves to
+    // `null` and no allowlist can admit that).
+    eligibleGenerations: [AGENT_V3_GENERATION, AGENT_V3_BRIDGE_GENERATION],
     readPermissionGrant: vi.fn(async () => permissionGrant()),
     readRemainingBudget: vi.fn(async () => '75000000'),
     proveAllowance: vi.fn(async () => ({ proven: true, reason: null, proof: provenProof() })),
@@ -720,8 +744,96 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
     expect(decision.freshReason).toBe('agent-missing')
   })
 
+  // Task 5 (IQ Alter remediation): closes the gate Task 4 wrote but never wired —
+  // `AGENT_GENERATIONS_ELIGIBLE_FOR_PERMISSION_V3` stays `[]` in production, so every one of these
+  // drives eligibility by injecting/widening `eligibleGenerations`, never by mutating that
+  // constant. Runs strictly after `agent-missing` and strictly before `scope-drift` (step 7a).
+  describe("agent-generation eligibility (Task 5 closes Task 4's gate)", () => {
+    test('a row whose generation is absent from the injected allowlist forces fresh', async () => {
+      const decision = await proveReusablePermission(depsWithScope({ eligibleGenerations: [] }))
+      expect(decision.mode).toBe('fresh')
+      expect(decision.freshReason).toBe('agent-generation-ineligible')
+    })
+
+    test('a row whose generation IS in the injected allowlist passes the gate through to reuse', async () => {
+      const decision = await proveReusablePermission(
+        depsWithScope({ eligibleGenerations: [AGENT_V3_GENERATION] })
+      )
+      expect(decision.mode).toBe('reuse')
+      expect(decision.freshReason).toBe(null)
+    })
+
+    // The mutation this pins: change the `eligibleGenerations` DEFAULT parameter from the real
+    // `AGENT_GENERATIONS_ELIGIBLE_FOR_PERMISSION_V3` to a hardcoded non-empty list. Destructuring
+    // the injected override OUT (the same technique the dormancy block above uses for
+    // `resolveSchema`) forces this call through the function's own default, not a test-supplied one.
+    test('the PRODUCTION default allowlist ([]) marks a REAL cataloged generation ineligible — no generation has been added yet', async () => {
+      const { eligibleGenerations: _injected, ...withProductionAllowlist } = depsWithScope()
+      const decision = await proveReusablePermission(withProductionAllowlist)
+      expect(decision.mode).toBe('fresh')
+      expect(decision.freshReason).toBe('agent-generation-ineligible')
+    })
+
+    test('a row whose code maps to no known generation at all forces fresh the same way — fail-closed, never a guess', async () => {
+      const decision = await proveReusablePermission(
+        depsWithScope({
+          inspectAgents: vi.fn(async () => [inspectedAgent({ code: CODE_HASH })]),
+          eligibleGenerations: [AGENT_V3_GENERATION], // widened, but irrelevant: code resolves to null
+        })
+      )
+      expect(decision.mode).toBe('fresh')
+      expect(decision.freshReason).toBe('agent-generation-ineligible')
+    })
+
+    test('checks EVERY row, not just the first', async () => {
+      const decision = await proveReusablePermission(
+        depsWithScope({
+          agentInits: [
+            agentInit({ allocationId: 'run-1:deposit:0' }),
+            agentInit({ allocationId: 'run-1:deposit:1' }),
+          ],
+          inspectAgents: vi.fn(async () => [
+            inspectedAgent(), // agent-v3 — eligible
+            inspectedAgent({ agentAddress: AGENT_2, code: REAL_CODE_V3_BRIDGE }), // NOT allowlisted below
+          ]),
+          eligibleGenerations: [AGENT_V3_GENERATION], // deliberately excludes agent-v3-bridge
+        })
+      )
+      expect(decision.mode).toBe('fresh')
+      expect(decision.freshReason).toBe('agent-generation-ineligible')
+    })
+
+    test('runs BEFORE scope-drift — an ineligible-but-otherwise-scope-matching row reports the more specific reason', async () => {
+      // No inspectAgents override: depsWithScope's own row set (code REAL_CODE_V3) is exactly what
+      // the recorded scope hashes to, so scope-drift would NOT fire on its own — isolating this to
+      // the eligibility gate alone.
+      const decision = await proveReusablePermission(depsWithScope({ eligibleGenerations: [] }))
+      expect(decision.freshReason).toBe('agent-generation-ineligible')
+      expect(decision.freshReason).not.toBe('scope-drift')
+    })
+
+    test('the eligibility gate runs strictly after agent-missing, not before it', async () => {
+      const decision = await proveReusablePermission(
+        depsWithScope({
+          agentInits: [
+            agentInit({ allocationId: 'run-1:deposit:0' }),
+            agentInit({ allocationId: 'run-1:deposit:1' }),
+          ],
+          inspectAgents: vi.fn(async () => []),
+          eligibleGenerations: [], // would ALSO force ineligible if it ran first — it must not
+        })
+      )
+      expect(decision.mode).toBe('fresh')
+      expect(decision.freshReason).toBe('agent-missing')
+    })
+  })
+
   test.each([
-    ['code', { code: CODE_HASH_2 }],
+    // A DIFFERENT real cataloged hash (agent-v3-bridge, not agent-v3) — must still pass the
+    // Task 5 eligibility gate (baseDeps's widened eligibleGenerations admits both) so this
+    // isolates scope-drift from eligibility; the placeholder CODE_HASH_2 would resolve to no
+    // generation at all and trip 'agent-generation-ineligible' first instead.
+    ['code', { code: REAL_CODE_V3_BRIDGE }],
     ['signer', { signerPub: SIGNER_PUB_2 }],
     ['target', { target: VAULT_2 }],
     ['token', { token: TOKEN_2 }],
