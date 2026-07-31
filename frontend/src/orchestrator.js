@@ -491,6 +491,10 @@ export class OrchestratorAgent {
 
     let workers
     let confirmed
+    // Task 5 chunk B — set only for a V3 reuse dispatch: the permissionId + per-allocation proven
+    // execution the serial pull loop below threads into `buildAgentPullV3`, instead of the
+    // untouched V2 `runAgentPull` call. null for every V2/fresh path (unchanged behavior).
+    let v3Pull = null
     if (permissionDecision.mode === 'reuse') {
       const { revalidated, credentialByAllocation } = await this.revalidateReuse(
         strategyPlan,
@@ -499,25 +503,53 @@ export class OrchestratorAgent {
       )
       this.assertCurrentAccount()
       workers = this.buildReuseWorkers(depositAgents, revalidated, credentialByAllocation)
-      // Matched by the actual budgeted token, never approvals[0] — a multi-token receipt's first
-      // approval is not guaranteed to be the one this run's deposit budget cares about.
-      const primaryToken = permissionDecision.reviewedBudgets?.[0]?.token
-      const matchingApproval = revalidated.allowanceExpiryProof?.approvals?.find(
-        (a) => a.amount?.token === primaryToken
-      )
-      const expiryLedger = matchingApproval?.expiryLedger ?? null
-      confirmed = {
-        version: 1,
-        runId: strategyPlan.runId,
-        mode: 'reuse',
-        planFingerprint: strategyPlan.planFingerprint,
-        agentInitFingerprint: permissionDecision.agentInitFingerprint,
-        grantReceiptFingerprint: revalidated.grantReceiptFingerprint,
-        confirmationCount: (permissionDecision.confirmationCount ?? 0) + 1,
-        txHash: null,
-        expiryLedger,
-        agentAddresses: workers.map((w) => w.agentAddress),
-        confirmedAt: Math.floor(Date.now() / 1000),
+      if (revalidated.version === 3) {
+        v3Pull = {
+          permissionId: revalidated.permissionId,
+          executionsByAllocation: new Map(revalidated.executions.map((e) => [e.allocationId, e])),
+        }
+        confirmed = {
+          version: 1,
+          runId: strategyPlan.runId,
+          mode: 'reuse',
+          planFingerprint: strategyPlan.planFingerprint,
+          // V2-only identity fields have no V3 equivalent — null rather than fabricated. The V3
+          // identity (permissionId/scopeId) is carried on its own fields below instead of forced
+          // into a V2-shaped field.
+          agentInitFingerprint: null,
+          grantReceiptFingerprint: null,
+          confirmationCount: (permissionDecision.confirmationCount ?? 0) + 1,
+          txHash: null,
+          // The reviewed absolute ledger expiry the permission itself carries — not a V2-style
+          // approvals[] lookup, which doesn't exist on a V3 decision.
+          expiryLedger: revalidated.liveUntilLedger ?? null,
+          agentAddresses: workers.map((w) => w.agentAddress),
+          confirmedAt: Math.floor(Date.now() / 1000),
+          routerVersion: 3,
+          permissionId: revalidated.permissionId,
+          scopeId: revalidated.scopeId,
+        }
+      } else {
+        // Matched by the actual budgeted token, never approvals[0] — a multi-token receipt's first
+        // approval is not guaranteed to be the one this run's deposit budget cares about.
+        const primaryToken = permissionDecision.reviewedBudgets?.[0]?.token
+        const matchingApproval = revalidated.allowanceExpiryProof?.approvals?.find(
+          (a) => a.amount?.token === primaryToken
+        )
+        const expiryLedger = matchingApproval?.expiryLedger ?? null
+        confirmed = {
+          version: 1,
+          runId: strategyPlan.runId,
+          mode: 'reuse',
+          planFingerprint: strategyPlan.planFingerprint,
+          agentInitFingerprint: permissionDecision.agentInitFingerprint,
+          grantReceiptFingerprint: revalidated.grantReceiptFingerprint,
+          confirmationCount: (permissionDecision.confirmationCount ?? 0) + 1,
+          txHash: null,
+          expiryLedger,
+          agentAddresses: workers.map((w) => w.agentAddress),
+          confirmedAt: Math.floor(Date.now() / 1000),
+        }
       }
       this.onEvent('reuse-confirmed', {
         runId: strategyPlan.runId,
@@ -525,6 +557,18 @@ export class OrchestratorAgent {
         agentAddresses: confirmed.agentAddresses,
       })
     } else if (permissionDecision.mode === 'fresh') {
+      // Task 5 chunk B — fresh-mode V3 fails closed. grant.js exports only `buildGrantV3Tx`
+      // (build-only; no submitGrant-equivalent wallet/relay orchestration exists for V3, and
+      // grant.js is out of this chunk's file scope to add one) — silently routing a V3 fresh
+      // decision through V2's `submitGrant` would invoke the router's `grant`/grant_v2 entry
+      // point, not `grant_v3`. See the task report for this scope line.
+      if (permissionDecision.version === 3) {
+        throw new PermissionPhaseError({
+          phase: 'fresh-grant',
+          code: 'VF_V3_FRESH_GRANT_UNSUPPORTED',
+          message: 'A fresh Router V3 permission grant is not yet supported by this dispatch path.',
+        })
+      }
       workers = this.buildFreshWorkers(planAgents)
       const granted = await this.grantFreshFromDecision(strategyPlan, workers, permissionDecision)
       this.assertCurrentAccount()
@@ -593,14 +637,26 @@ export class OrchestratorAgent {
         const agentBal = await readTokenBalance(w.agentAddress)
         this.assertCurrentAccount()
         if (agentBal == null || agentBal < w.amount) {
-          const res = await runAgentPull({
-            agentAddress: w.agentAddress,
-            amount: w.amount,
-            sessionKey: w.sessionKey,
-            activeAccount: this.activeAccount,
-            getCurrentActiveAccount: this.getCurrentActiveAccount,
-            signal: this.signal,
-          })
+          // Task 5 chunk B — a V3 reuse dispatch pulls through the proven permissionId +
+          // executionId (revalidateReuse's canonical re-read), matched to THIS allocation; every
+          // other dispatch (V2 reuse, V2/fresh) is byte-identical to before: v3Pull stays null.
+          const v3Exec = v3Pull?.executionsByAllocation.get(w.allocationId)
+          const res = v3Exec
+            ? await this.runAgentPullV3({
+                permissionId: v3Pull.permissionId,
+                executionId: v3Exec.executionId,
+                agentAddress: w.agentAddress,
+                amount: w.amount,
+                sessionKey: w.sessionKey,
+              })
+            : await runAgentPull({
+                agentAddress: w.agentAddress,
+                amount: w.amount,
+                sessionKey: w.sessionKey,
+                activeAccount: this.activeAccount,
+                getCurrentActiveAccount: this.getCurrentActiveAccount,
+                signal: this.signal,
+              })
           this.assertCurrentAccount()
           if (!res)
             throw new Error(
@@ -827,6 +883,59 @@ export class OrchestratorAgent {
     }
   }
 
+  /**
+   * Task 5 chunk B — V3 mirror of `runAgentPull` (grant.js): resolve the relayer, build the
+   * agent-signed `pull_v3` envelope, submit via the SAME gasless relay, with the SAME
+   * active-account boundary checks around every await. `permissionId`/`executionId` come from the
+   * decision `revalidateReuse` just canonically re-proved — this method never mints or
+   * recomputes either (Controller ruling 1: `executionId` is deterministic; a minted id would move
+   * real funds twice on an indeterminate-submission retry). `buildAgentPullV3` itself throws
+   * unless the router resolves to version 3 (grant.js's own `assertRouterV3`), so this method can
+   * only ever move funds once a real V3 router is registered — THE DORMANCY CONTRACT, unaffected
+   * by anything in this file.
+   * @returns {Promise<{hash:string, status:string, relayer?:string}|null>}
+   */
+  async runAgentPullV3({ permissionId, executionId, agentAddress, amount, sessionKey }) {
+    const check = () =>
+      assertActiveAccountBoundary({
+        captured: this.activeAccount,
+        getCurrent: this.getCurrentActiveAccount,
+        signal: this.signal,
+      })
+    check()
+    const { getRelayerAddress, submitViaRelay } = await import('./stellar/relay.js')
+    const relayer = await getRelayerAddress()
+    check()
+    if (!relayer) return null
+    const { buildAgentPullV3 } = await import('./stellar/grant.js')
+    const { xdr } = await buildAgentPullV3({
+      permissionId,
+      executionId,
+      agentAddress,
+      amount,
+      relayer,
+      sessionKey,
+    })
+    check()
+    let result
+    try {
+      result = await submitViaRelay({ xdr, ...(this.signal ? { signal: this.signal } : {}) })
+    } catch (error) {
+      try {
+        check()
+      } catch (cause) {
+        throw activeAccountSubmissionUnknown({ stage: 'pull', cause, result })
+      }
+      throw error
+    }
+    try {
+      check()
+    } catch (cause) {
+      throw activeAccountSubmissionUnknown({ stage: 'pull', cause, result })
+    }
+    return result
+  }
+
   /** Both modes: reject before any wallet/provider/movement when the reviewed decision no longer
    * describes THIS exact plan — a stale planFingerprint, or a reviewed agent whose cap/expiry/
    * period/target drifted from what the plan now says. `PermissionPhaseError(phase:'preflight')`.
@@ -892,9 +1001,13 @@ export class OrchestratorAgent {
    */
   async revalidateReuse(strategyPlan, permissionDecision, planAgents) {
     const { loadCachedAgents } = await import('./stellar/agentCache.js')
-    const pickedByAllocation = new Map(
-      (permissionDecision.agents || []).map((a) => [a.allocationId, a])
-    )
+    // Task 5 chunk B: a V3 decision (permissionGrantV3.proveReusablePermission's shape) carries
+    // its originally-picked set as `executions[]`, not V2's `agents[]` — there is no `agents`
+    // field on a V3 decision at all. Both shapes carry `{allocationId, agentAddress, ...}`, so
+    // everything below reads through the SAME `pickedByAllocation` map regardless of version.
+    const pickedList =
+      permissionDecision.version === 3 ? permissionDecision.executions : permissionDecision.agents
+    const pickedByAllocation = new Map((pickedList || []).map((a) => [a.allocationId, a]))
     const cachedByAddress = new Map(
       loadCachedAgents({ owner: this.user, vault: SOROBAN_ACTIVE_VAULT_ADDRESS }).map((e) => [
         e.agentAddress,
@@ -937,6 +1050,21 @@ export class OrchestratorAgent {
         agentInits,
         reviewedBudgets: permissionDecision.reviewedBudgets,
         durationSeconds: permissionDecision.durationSeconds,
+        // Task 5 chunk B — V3-only inputs, read straight off the reviewed decision (never
+        // reconstructed). `preflightPermission`'s V2 branch (the block above this comment in
+        // reusePreflight.js) reads none of these, so passing them on a V2 decision — where
+        // they're simply undefined — is inert. `resolveSchema` is deliberately left unset so it
+        // keeps its real default (`resolveRouterSchema`): THE DORMANCY CONTRACT means this call
+        // can only ever reach permissionGrantV3.proveReusablePermission the day a V3 router
+        // address is actually registered in ROUTER_SCHEMAS, never by anything this file does.
+        // `currentLedger` and the five V3 chain-read seams have no production source yet (see the
+        // task report) and are deliberately left unset rather than guessed — inert under
+        // dormancy, not silently wrong.
+        router: permissionDecision.router,
+        permissionId: permissionDecision.permissionId,
+        approval: permissionDecision.approval,
+        activeAccount: this.activeAccount,
+        getCurrentActiveAccount: this.getCurrentActiveAccount,
       })
     } catch (err) {
       throw new PermissionPhaseError({
@@ -947,24 +1075,43 @@ export class OrchestratorAgent {
       })
     }
 
-    const pickedAddressesMatch =
+    // Evidence-changed gate: V3's identity/drift signals (permissionId, scopeId, the per-
+    // allocation executionId — deterministic over {runId, allocationId, scopeId, amountUnits}, so
+    // any of those drifting changes it) have no V2 equivalent, and vice versa
+    // (agentInitFingerprint/grantReceiptFingerprint/scopeFingerprint don't exist on a V3
+    // decision) — hence the version-gated branch below. A version flip between the reviewed
+    // decision and the fresh re-read (i.e. the router generation itself changed under us) is
+    // ALSO evidence-changed, never a silent shape-mix.
+    const evidenceMatches =
       revalidated.mode === 'reuse' &&
-      revalidated.agents.length === (permissionDecision.agents || []).length &&
-      revalidated.agents.every((a) => {
-        const before = pickedByAllocation.get(a.allocationId)
-        return (
-          before &&
-          before.agentAddress === a.agentAddress &&
-          before.scopeFingerprint === a.scopeFingerprint
-        )
-      })
+      revalidated.version === permissionDecision.version &&
+      (revalidated.version === 3
+        ? revalidated.scopeId === permissionDecision.scopeId &&
+          revalidated.permissionId === permissionDecision.permissionId &&
+          Array.isArray(revalidated.executions) &&
+          revalidated.executions.length === (permissionDecision.executions || []).length &&
+          revalidated.executions.every((e) => {
+            const before = pickedByAllocation.get(e.allocationId)
+            return (
+              before &&
+              before.agentAddress === e.agentAddress &&
+              before.executionId === e.executionId
+            )
+          })
+        : revalidated.agentInitFingerprint === permissionDecision.agentInitFingerprint &&
+          revalidated.grantReceiptFingerprint === permissionDecision.grantReceiptFingerprint &&
+          Array.isArray(revalidated.agents) &&
+          revalidated.agents.length === (permissionDecision.agents || []).length &&
+          revalidated.agents.every((a) => {
+            const before = pickedByAllocation.get(a.allocationId)
+            return (
+              before &&
+              before.agentAddress === a.agentAddress &&
+              before.scopeFingerprint === a.scopeFingerprint
+            )
+          }))
 
-    if (
-      revalidated.mode !== 'reuse' ||
-      revalidated.agentInitFingerprint !== permissionDecision.agentInitFingerprint ||
-      revalidated.grantReceiptFingerprint !== permissionDecision.grantReceiptFingerprint ||
-      !pickedAddressesMatch
-    ) {
+    if (!evidenceMatches) {
       throw new PermissionPhaseError({
         phase: 'reuse-revalidation',
         code: 'VF_REUSE_EVIDENCE_CHANGED',
@@ -999,7 +1146,10 @@ export class OrchestratorAgent {
    * `revalidateReuse`, so this is belt-and-braces, not the primary gate — is a typed
    * `PermissionPhaseError`, never a raw `TypeError` from indexing into `undefined`. */
   buildReuseWorkers(planAgents, revalidated, credentialByAllocation) {
-    const pickedByAllocation = new Map(revalidated.agents.map((a) => [a.allocationId, a]))
+    // Same version-gated shape as revalidateReuse's pickedByAllocation above — a V3 `revalidated`
+    // has `executions[]`, not `agents[]`.
+    const pickedList = revalidated.version === 3 ? revalidated.executions : revalidated.agents
+    const pickedByAllocation = new Map((pickedList || []).map((a) => [a.allocationId, a]))
     return planAgents.map((agent) => {
       const picked = pickedByAllocation.get(agent.allocationId)
       const credential = credentialByAllocation.get(agent.allocationId)

@@ -18,13 +18,27 @@ const submitGrantMock = vi.fn()
 const runAgentPullMock = vi.fn()
 const readAllowanceMock = vi.fn()
 const readConfirmedLedgerMock = vi.fn()
+// Task 5 chunk B: buildAgentPullV3 is dynamically imported from this same module (see
+// orchestrator.js's runAgentPullV3) — it must be reachable through THIS mock factory too, never a
+// second vi.mock() for the same specifier.
+const buildAgentPullV3Mock = vi.fn()
 vi.mock('./stellar/grant.js', () => ({
   submitGrant: (...a) => submitGrantMock(...a),
   runAgentPull: (...a) => runAgentPullMock(...a),
   readAllowance: (...a) => readAllowanceMock(...a),
   readConfirmedLedger: (...a) => readConfirmedLedgerMock(...a),
+  buildAgentPullV3: (...a) => buildAgentPullV3Mock(...a),
   AGENT_KIND_DEPOSIT: 0,
   AGENT_KIND_BRIDGE: 1,
+}))
+
+// Task 5 chunk B: orchestrator.js's V3 pull path dynamically imports the relay client directly
+// (mirroring runAgentPull's own relayer-resolve step) — not needed by any V2 scenario in this file.
+const getRelayerAddressMock = vi.fn()
+const submitViaRelayMock = vi.fn()
+vi.mock('./stellar/relay.js', () => ({
+  getRelayerAddress: (...a) => getRelayerAddressMock(...a),
+  submitViaRelay: (...a) => submitViaRelayMock(...a),
 }))
 
 // Legacy per-agent setup helpers must never be called on the permission-locked path.
@@ -66,6 +80,11 @@ vi.mock('./stellar/config.js', () => ({
   SOROBAN_ACTIVE_VAULT_ADDRESS: 'CACTIVEVAULT',
   SOROBAN_FUNDING_ROUTER_ADDRESS: 'CROUTER',
   USE_FUNDING_ROUTER: true,
+  // Task 5 chunk B — needed by stellar/activeAccount.js's own (unmocked) import of this same
+  // module, so a V1-shaped activeAccount fixture can satisfy assertActiveAccountBoundary's
+  // network check in the V3 threading test below. Every pre-existing test omits `activeAccount`
+  // (defaults to null), so this addition changes nothing for them.
+  NETWORK_PASSPHRASE: 'Test SDF Network ; September 2015',
 }))
 // My Money Task 1: USE_FUNDING_ROUTER stays true for this whole file, so dispatchLegacy's
 // production-cutoff gate (isLegacyDirectSetupAllowed) should never even be consulted here — the
@@ -225,6 +244,55 @@ function reuseDecisionFor(plan, addresses) {
   }
 }
 
+// Task 5 chunk B — a V3-shaped reuse decision, as `permissionGrantV3.proveReusablePermission`
+// returns it (version:3, `executions[]`, no `agents[]`), composed with the plan-level fields
+// `dispatchPermissioned`'s entry validation reads regardless of router generation
+// (`planFingerprint`/`reviewedBudgets`/`reviewedAgentInits` — chunk C's job to assemble this way;
+// see the task report). `router`/`permissionId`/`scopeId`/`approval` are the extra V3 identity
+// fields proveReusablePermission's own `base` + return object carry.
+function reuseDecisionV3For(
+  plan,
+  addresses,
+  { permissionId = '0xPERMISSION', scopeId = '0xSCOPE' } = {}
+) {
+  return {
+    version: 3,
+    runId: plan.runId,
+    owner: 'GUSER',
+    router: 'CROUTERV3',
+    network: 'Test SDF Network ; September 2015',
+    planFingerprint: plan.planFingerprint,
+    permissionId,
+    mode: 'reuse',
+    freshReason: null,
+    scopeId,
+    mandateCeilingUnits: '1000000000',
+    confirmedSpentUnits: '0',
+    remainingHeadroomUnits: '1000000000',
+    liveUntilLedger: 987654,
+    reviewedBudgets: reviewedBudgetsFor(plan),
+    durationSeconds: 3600,
+    reviewedAgentInits: plan.agents.map(reviewedInitFor),
+    confirmationCount: 0,
+    executions: plan.agents.map((a, i) => ({
+      executionId: `0xEXEC${i}`,
+      runId: plan.runId,
+      allocationId: a.allocationId,
+      scopeId,
+      amountUnits: a.cap.units,
+      agentAddress: addresses[i],
+    })),
+    approval: {
+      plannedUnitsNow: '1000000000',
+      mandateCeilingUnits: '1000000000',
+      durationSeconds: 86400,
+      currentLedger: 900000,
+      secondsPerLedger: 5,
+      liveUntilLedger: 987654,
+    },
+  }
+}
+
 beforeEach(() => {
   workerInstances.length = 0
   executeCalls.length = 0
@@ -246,6 +314,12 @@ beforeEach(() => {
   readTokenBalanceMock.mockReset()
   readTokenBalanceMock.mockResolvedValue(0n)
   preflightPermissionMock.mockReset()
+  buildAgentPullV3Mock.mockReset()
+  buildAgentPullV3Mock.mockResolvedValue({ xdr: 'XDR_V3' })
+  getRelayerAddressMock.mockReset()
+  getRelayerAddressMock.mockResolvedValue('GRELAYER')
+  submitViaRelayMock.mockReset()
+  submitViaRelayMock.mockResolvedValue({ hash: 'HPV3', status: 'SUCCESS' })
   saveGrantReceiptMock.mockClear()
   fingerprintGrantReceiptMock.mockClear()
   fingerprintGrantReceiptMock.mockReturnValue('0xRECEIPTFRESH')
@@ -654,6 +728,245 @@ describe('dispatch(strategyPlan, { permissionDecision }) — reuse mode', () => 
     expect(res.completed).toBe(1)
     expect(res.failed).toBe(1)
     expect(res.results.find((r) => !r.success).error).toMatch(/router pull reported FAILED/)
+  })
+})
+
+// Task 5 chunk B — the V3 reuse dispatch path. Unreachable in production today (THE DORMANCY
+// CONTRACT: no V3 router is registered in ROUTER_SCHEMAS), reached here only by injecting a
+// V3-shaped decision straight through the mocked `preflightPermission` — never by registering a
+// fabricated address.
+describe('dispatch(strategyPlan, { permissionDecision }) — V3 reuse mode (bounded permission)', () => {
+  function cacheEntries(addresses) {
+    return addresses.map((agentAddress, i) => ({
+      agentAddress,
+      secret: `S${i}`,
+      signerPub: `GPUB${i}`,
+      cap: PLAN.agents[i].cap.units,
+      expiry: 2000000000,
+    }))
+  }
+
+  // The known blocker (orchestrator.js ~950-952 / ~1002, per the brief): a V3 reuse decision has
+  // `executions[]`, not `agents[]`. Before the fix, `revalidated.agents.length` (and
+  // `revalidated.agents.map(...)` in buildReuseWorkers) threw TypeError for exactly this shape.
+  it('dispatches a V3-shaped reuse decision (executions[], no agents[]) without throwing — the known blocker is fixed', async () => {
+    const addresses = ['CV3AGENT1', 'CV3AGENT2']
+    loadCachedAgentsMock.mockReturnValue(cacheEntries(addresses))
+    const decision = reuseDecisionV3For(PLAN, addresses)
+    preflightPermissionMock.mockResolvedValue(decision)
+    const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 'v3-1', onEvent: () => {} })
+    const res = await orch.dispatch(PLAN, { permissionDecision: decision })
+    expect(res.completed).toBe(2)
+    expect(res.failed).toBe(0)
+    expect(workerInstances.map((w) => w.agentAddress)).toEqual(addresses)
+  })
+
+  it('pulls through buildAgentPullV3 (never runAgentPull/submitGrant), threading permissionId + the proven executionId + agentAddress + amount, matched to each allocation', async () => {
+    const addresses = ['CV3AGENT1', 'CV3AGENT2']
+    loadCachedAgentsMock.mockReturnValue(cacheEntries(addresses))
+    const decision = reuseDecisionV3For(PLAN, addresses)
+    preflightPermissionMock.mockResolvedValue(decision)
+    const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 'v3-2', onEvent: () => {} })
+    await orch.dispatch(PLAN, { permissionDecision: decision })
+
+    expect(runAgentPullMock).not.toHaveBeenCalled()
+    expect(submitGrantMock).not.toHaveBeenCalled()
+    expect(buildAgentPullV3Mock).toHaveBeenCalledTimes(2)
+    expect(buildAgentPullV3Mock.mock.calls[0][0]).toMatchObject({
+      permissionId: '0xPERMISSION',
+      executionId: '0xEXEC0',
+      agentAddress: 'CV3AGENT1',
+      amount: 400000000n,
+      relayer: 'GRELAYER',
+    })
+    expect(buildAgentPullV3Mock.mock.calls[1][0]).toMatchObject({
+      permissionId: '0xPERMISSION',
+      executionId: '0xEXEC1',
+      agentAddress: 'CV3AGENT2',
+      amount: 600000000n,
+      relayer: 'GRELAYER',
+    })
+  })
+
+  it('revalidates through a freshly captured preflight immediately before the first pull, threading permissionId/approval/activeAccount', async () => {
+    const addresses = ['CV3AGENT1', 'CV3AGENT2']
+    loadCachedAgentsMock.mockReturnValue(cacheEntries(addresses))
+    const decision = reuseDecisionV3For(PLAN, addresses)
+    const callOrder = []
+    preflightPermissionMock.mockImplementation(async () => {
+      callOrder.push('preflight')
+      return decision
+    })
+    buildAgentPullV3Mock.mockImplementation(async () => {
+      callOrder.push('pull')
+      return { xdr: 'XDR_V3' }
+    })
+    const activeAccount = {
+      version: 1,
+      kind: 'G',
+      address: 'GUSER',
+      networkPassphrase: 'Test SDF Network ; September 2015',
+      connectorId: 'freighter',
+      epoch: 1,
+    }
+    const orch = new OrchestratorAgent({
+      user: 'GUSER',
+      sessionId: 'v3-3',
+      onEvent: () => {},
+      activeAccount,
+      getCurrentActiveAccount: () => activeAccount,
+    })
+    await orch.dispatch(PLAN, { permissionDecision: decision })
+    expect(preflightPermissionMock).toHaveBeenCalledTimes(1)
+    expect(callOrder[0]).toBe('preflight')
+    expect(callOrder.slice(1)).toEqual(['pull', 'pull'])
+    const call = preflightPermissionMock.mock.calls[0][0]
+    expect(call.permissionId).toBe('0xPERMISSION')
+    expect(call.approval).toEqual(decision.approval)
+    expect(call.activeAccount).toBe(activeAccount)
+    expect(typeof call.getCurrentActiveAccount).toBe('function')
+  })
+
+  it('a drifted executionId on revalidation throws VF_REUSE_EVIDENCE_CHANGED, never a wallet/pull fallback', async () => {
+    const addresses = ['CV3AGENT1', 'CV3AGENT2']
+    loadCachedAgentsMock.mockReturnValue(cacheEntries(addresses))
+    const decision = reuseDecisionV3For(PLAN, addresses)
+    const drifted = reuseDecisionV3For(PLAN, addresses)
+    drifted.executions[0] = { ...drifted.executions[0], executionId: '0xDRIFTED' }
+    preflightPermissionMock.mockResolvedValue(drifted)
+    const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 'v3-4', onEvent: () => {} })
+    await expect(orch.dispatch(PLAN, { permissionDecision: decision })).rejects.toMatchObject({
+      phase: 'reuse-revalidation',
+      code: 'VF_REUSE_EVIDENCE_CHANGED',
+      movement: 'none',
+    })
+    expect(buildAgentPullV3Mock).not.toHaveBeenCalled()
+  })
+
+  it('a drifted scopeId on revalidation throws VF_REUSE_EVIDENCE_CHANGED', async () => {
+    const addresses = ['CV3AGENT1', 'CV3AGENT2']
+    loadCachedAgentsMock.mockReturnValue(cacheEntries(addresses))
+    const decision = reuseDecisionV3For(PLAN, addresses)
+    preflightPermissionMock.mockResolvedValue({ ...decision, scopeId: '0xSCOPEDRIFTED' })
+    const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 'v3-5', onEvent: () => {} })
+    await expect(orch.dispatch(PLAN, { permissionDecision: decision })).rejects.toMatchObject({
+      phase: 'reuse-revalidation',
+      code: 'VF_REUSE_EVIDENCE_CHANGED',
+      movement: 'none',
+    })
+  })
+
+  it('the router-generation flipping under revalidation (V3 reviewed, V2 re-read) throws VF_REUSE_EVIDENCE_CHANGED rather than silently mixing shapes', async () => {
+    const addresses = ['CV3AGENT1', 'CV3AGENT2']
+    loadCachedAgentsMock.mockReturnValue(cacheEntries(addresses))
+    const decision = reuseDecisionV3For(PLAN, addresses)
+    preflightPermissionMock.mockResolvedValue(reuseDecisionFor(PLAN, addresses))
+    const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 'v3-6', onEvent: () => {} })
+    await expect(orch.dispatch(PLAN, { permissionDecision: decision })).rejects.toMatchObject({
+      phase: 'reuse-revalidation',
+      code: 'VF_REUSE_EVIDENCE_CHANGED',
+      movement: 'none',
+    })
+  })
+
+  it('a V3 decision with any Base/bridge child in reuse mode is rejected before any movement, same as V2', async () => {
+    const bridgePlan = {
+      runId: 'run-bridge',
+      planFingerprint: '0xPLANBRIDGE',
+      agents: [
+        planAgent(0, '400000000'),
+        {
+          allocationId: 'run-bridge:bridge:0',
+          kind: 'bridge',
+          cap: { token: 'CTOKEN', units: '600000000', decimals: 7 },
+          children: [
+            {
+              allocationId: 'run-bridge:bridge:0:0',
+              allocation: { token: 'USDC', units: '600000000', decimals: 6 },
+            },
+          ],
+        },
+      ],
+    }
+    const decision = {
+      ...reuseDecisionV3For(PLAN, ['CV3AGENT1']),
+      planFingerprint: bridgePlan.planFingerprint,
+    }
+    const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 'v3-7', onEvent: () => {} })
+    await expect(orch.dispatch(bridgePlan, { permissionDecision: decision })).rejects.toMatchObject(
+      {
+        phase: 'preflight',
+        code: 'VF_BASE_REQUIRES_FRESH_GRANT',
+        movement: 'none',
+      }
+    )
+    expect(preflightPermissionMock).not.toHaveBeenCalled()
+    expect(buildAgentPullV3Mock).not.toHaveBeenCalled()
+  })
+
+  // Fresh-mode V3: grant.js exports only `buildGrantV3Tx` (build-only — no submitGrant-equivalent
+  // wallet/relay orchestration exists for V3, and grant.js is out of this chunk's file scope to
+  // add one). Rather than silently misrouting a V3 fresh decision through V2's `submitGrant`
+  // (which invokes the router's `grant`/grant_v2 entry point, not `grant_v3`), this fails closed.
+  // See the task report for why this scope line was drawn here.
+  it('a fresh V3 decision fails closed (VF_V3_FRESH_GRANT_UNSUPPORTED) instead of silently dispatching through V2 submitGrant', async () => {
+    const decision = {
+      ...reuseDecisionV3For(PLAN, ['CV3AGENT1', 'CV3AGENT2']),
+      mode: 'fresh',
+      freshReason: 'permission-missing',
+      executions: [],
+    }
+    const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 'v3-8', onEvent: () => {} })
+    await expect(orch.dispatch(PLAN, { permissionDecision: decision })).rejects.toMatchObject({
+      phase: 'fresh-grant',
+      code: 'VF_V3_FRESH_GRANT_UNSUPPORTED',
+      movement: 'none',
+    })
+    expect(submitGrantMock).not.toHaveBeenCalled()
+    expect(buildAgentPullV3Mock).not.toHaveBeenCalled()
+  })
+
+  // Requirement 4 from the brief: every existing V2 dispatch shape must never touch a V3-only
+  // dependency. Runs the three representative shapes (permission-locked fresh, permission-locked
+  // reuse, legacy router) end to end and asserts the V3-only mocks stayed untouched throughout.
+  it('never calls any V3-specific dependency (buildAgentPullV3/getRelayerAddress via the V3 path) for any V2 dispatch shape', async () => {
+    freshGrantHappyPath()
+    const orchFresh = new OrchestratorAgent({
+      user: 'GUSER',
+      sessionId: 'v2guard-fresh',
+      onEvent: () => {},
+    })
+    await orchFresh.dispatch(PLAN, { permissionDecision: freshDecisionFor(PLAN) })
+
+    const addresses = ['CCACHED1', 'CCACHED2']
+    loadCachedAgentsMock.mockReturnValue(cacheEntries(addresses))
+    const reuseDecision = reuseDecisionFor(PLAN, addresses)
+    preflightPermissionMock.mockResolvedValue(reuseDecision)
+    const orchReuse = new OrchestratorAgent({
+      user: 'GUSER',
+      sessionId: 'v2guard-reuse',
+      onEvent: () => {},
+    })
+    await orchReuse.dispatch(PLAN, { permissionDecision: reuseDecision })
+
+    readTokenBalanceMock.mockImplementation(async (addr) => (addr === 'GUSER' ? null : 0n))
+    submitGrantMock.mockImplementation(async ({ agentInits }) => ({
+      hash: 'HG',
+      status: 'SUCCESS',
+      agentAddresses: agentInits.map((_, i) => `CFRESH${i + 1}`),
+      expiryLedger: 9999,
+    }))
+    readAllowanceMock.mockResolvedValue({ amount: 0n, liveUntilLedger: null })
+    const orchLegacy = new OrchestratorAgent({
+      user: 'GUSER',
+      sessionId: 'v2guard-legacy',
+      onEvent: () => {},
+    })
+    await orchLegacy.dispatch({ vaults: [{ address: 'CV1', allocation: 1 }] }, 50)
+
+    expect(buildAgentPullV3Mock).not.toHaveBeenCalled()
+    expect(getRelayerAddressMock).not.toHaveBeenCalled()
+    expect(submitViaRelayMock).not.toHaveBeenCalled()
   })
 })
 
