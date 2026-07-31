@@ -309,11 +309,14 @@ function freshDecision(base, freshReason) {
  * `mintRecipient` of the wrong length, an out-of-range `destinationDomain`), which the try/catch
  * below catches and turns into a `'scope-drift'` fresh decision — see the two tests added for that
  * item in `permissionGrantV3.test.js`. What they do NOT exercise: a WELL-FORMED, non-zero
- * `mintRecipient`/`destinationDomain` pair reaching a genuine `reuse` decision through this
- * function — every `reuse` fixture in this suite uses the zero bridge fields. That successful,
- * non-zero path is exercised only by `deriveScopeIdV3`'s own direct pinned-vector test (the kind-1/
- * Bridge vector), never through `proveReusablePermission`. Do not contrive a test reaching it here
- * — see the task report for why.
+ * `mintRecipient`/`destinationDomain` pair reaching a genuine `reuse` decision THROUGH THIS
+ * FUNCTION — every `reuse` fixture in this suite uses the zero bridge fields. (`deriveScopeIdV3`
+ * itself is called directly with well-formed, non-zero bridge fields in more than one test — the
+ * kind-1 pinned-vector test, and the `kind`/`destinationDomain` rows of the `changes when %s
+ * changes` table — but the pinned-vector test is the only one of those that PINS the result to a
+ * known-good, Rust-derived constant; the differential rows only assert it differs from a baseline.
+ * None of them, pinned or differential, runs through `proveReusablePermission`.) Do not contrive a
+ * test reaching it here — see the task report for why.
  */
 export async function proveReusablePermission({
   runId,
@@ -469,7 +472,7 @@ export async function proveReusablePermission({
     // `scope-drift` still has a trace pointing at what actually broke, instead of an anonymous
     // catch that could be hiding a real programming defect forever.
     // eslint-disable-next-line no-console -- intentional diagnostic trace, not a debug leftover
-    console.warn('[permissionGrantV3] scope-id derivation failed — forcing fresh:', err?.message)
+    console.warn('[permissionGrantV3] scope-id derivation failed — forcing fresh:', err)
     return freshDecision(base, 'scope-drift')
   }
   if (derivedScopeIds.some((id) => id !== derivedScopeIds[0]))

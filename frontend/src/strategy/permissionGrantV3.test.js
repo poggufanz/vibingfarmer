@@ -1112,23 +1112,37 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
     // loudly on exactly this input when called directly (see the `rejects a mintRecipient
     // truncated to 31 bytes` test above, in the deriveScopeIdV3 describe block) — that asymmetry
     // is deliberate and preserved: the hasher throws, the prover catches.
+    // Fix round 2, finding 3: this test's only concern is the OUTCOME (mode/freshReason), not the
+    // diagnostic — the diagnostic itself is pinned separately below. Spy-and-swallow the expected
+    // `console.warn` so a fully green suite stays silent instead of printing a stray warning line.
     test('a malformed mintRecipient on a reviewed allocation forces fresh (scope-drift) rather than throwing out of the prover', async () => {
-      const decision = await proveReusablePermission(
-        baseDeps({ agentInits: [agentInit({ mintRecipient: new Uint8Array(31) })] })
-      )
-      expect(decision.mode).toBe('fresh')
-      expect(decision.freshReason).toBe('scope-drift')
-      expect(decision.executions).toEqual([])
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      try {
+        const decision = await proveReusablePermission(
+          baseDeps({ agentInits: [agentInit({ mintRecipient: new Uint8Array(31) })] })
+        )
+        expect(decision.mode).toBe('fresh')
+        expect(decision.freshReason).toBe('scope-drift')
+        expect(decision.executions).toEqual([])
+      } finally {
+        warnSpy.mockRestore()
+      }
     })
 
-    // Same guard, the OTHER malformed field this step can throw on: an out-of-range destinationDomain.
+    // Same guard, the OTHER malformed field this step can throw on: an out-of-range
+    // destinationDomain. Same reason for spying: swallow the expected `console.warn`.
     test('an out-of-range destinationDomain on a reviewed allocation forces fresh (scope-drift) rather than throwing out of the prover', async () => {
-      const decision = await proveReusablePermission(
-        baseDeps({ agentInits: [agentInit({ destinationDomain: -1 })] })
-      )
-      expect(decision.mode).toBe('fresh')
-      expect(decision.freshReason).toBe('scope-drift')
-      expect(decision.executions).toEqual([])
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      try {
+        const decision = await proveReusablePermission(
+          baseDeps({ agentInits: [agentInit({ destinationDomain: -1 })] })
+        )
+        expect(decision.mode).toBe('fresh')
+        expect(decision.freshReason).toBe('scope-drift')
+        expect(decision.executions).toEqual([])
+      } finally {
+        warnSpy.mockRestore()
+      }
     })
 
     // Fix round 1, finding 3: failing closed on a malformed field is correct, but failing closed
