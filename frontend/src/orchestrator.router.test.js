@@ -761,10 +761,16 @@ describe('dispatch(strategyPlan, { permissionDecision }) — V3 reuse mode (boun
     expect(workerInstances.map((w) => w.agentAddress)).toEqual(addresses)
   })
 
-  it('pulls through buildAgentPullV3 (never runAgentPull/submitGrant), threading permissionId + the proven executionId + agentAddress + amount, matched to each allocation', async () => {
+  it('pulls through buildAgentPullV3 (never runAgentPull/submitGrant), threading the proven router + permissionId + executionId + agentAddress + amount, matched to each allocation BY IDENTITY (not array position)', async () => {
     const addresses = ['CV3AGENT1', 'CV3AGENT2']
     loadCachedAgentsMock.mockReturnValue(cacheEntries(addresses))
     const decision = reuseDecisionV3For(PLAN, addresses)
+    // Fix round 1, Important 4: reverse the executions array's POSITION relative to
+    // PLAN.agents/workers order (each entry keeps its own correct allocationId/agentAddress) — a
+    // positional match (e.g. `[...map.values()][i]`) would now hand worker 0 allocation 1's
+    // execution; only an allocationId-keyed lookup (what the production code actually does)
+    // still resolves the assertions below correctly.
+    decision.executions = [...decision.executions].reverse()
     preflightPermissionMock.mockResolvedValue(decision)
     const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 'v3-2', onEvent: () => {} })
     await orch.dispatch(PLAN, { permissionDecision: decision })
@@ -773,17 +779,22 @@ describe('dispatch(strategyPlan, { permissionDecision }) — V3 reuse mode (boun
     expect(submitGrantMock).not.toHaveBeenCalled()
     expect(buildAgentPullV3Mock).toHaveBeenCalledTimes(2)
     expect(buildAgentPullV3Mock.mock.calls[0][0]).toMatchObject({
+      // Fix round 1, Important 1: the router THIS permission was proven against
+      // (`reuseDecisionV3For`'s 'CROUTERV3'), never the config default ('CROUTER') buildAgentPullV3
+      // would silently fall back to if orchestrator dropped it.
+      router: 'CROUTERV3',
       permissionId: '0xPERMISSION',
       executionId: '0xEXEC0',
       agentAddress: 'CV3AGENT1',
-      amount: 400000000n,
+      amount: BigInt(PLAN.agents[0].cap.units),
       relayer: 'GRELAYER',
     })
     expect(buildAgentPullV3Mock.mock.calls[1][0]).toMatchObject({
+      router: 'CROUTERV3',
       permissionId: '0xPERMISSION',
       executionId: '0xEXEC1',
       agentAddress: 'CV3AGENT2',
-      amount: 600000000n,
+      amount: BigInt(PLAN.agents[1].cap.units),
       relayer: 'GRELAYER',
     })
   })
@@ -854,6 +865,7 @@ describe('dispatch(strategyPlan, { permissionDecision }) — V3 reuse mode (boun
       code: 'VF_REUSE_EVIDENCE_CHANGED',
       movement: 'none',
     })
+    expect(buildAgentPullV3Mock).not.toHaveBeenCalled()
   })
 
   it('the router-generation flipping under revalidation (V3 reviewed, V2 re-read) throws VF_REUSE_EVIDENCE_CHANGED rather than silently mixing shapes', async () => {
@@ -867,6 +879,44 @@ describe('dispatch(strategyPlan, { permissionDecision }) — V3 reuse mode (boun
       code: 'VF_REUSE_EVIDENCE_CHANGED',
       movement: 'none',
     })
+    expect(buildAgentPullV3Mock).not.toHaveBeenCalled()
+  })
+
+  // Fix round 1, Important 3: the top-level `revalidated.version === permissionDecision.version`
+  // check is only load-bearing for a NON-3 version flip — both sides here take the SAME (V2/else)
+  // branch of the evidence gate, with every other field held identical, so this isolates that
+  // exact line from the V2 arm's own fingerprint/agents checks (which would otherwise all pass).
+  it('a version-only drift where BOTH sides take the non-V3 branch (reviewed v1, re-read v2) throws VF_REUSE_EVIDENCE_CHANGED', async () => {
+    const addresses = ['CCACHED1', 'CCACHED2']
+    loadCachedAgentsMock.mockReturnValue(cacheEntries(addresses))
+    const decision = reuseDecisionFor(PLAN, addresses)
+    preflightPermissionMock.mockResolvedValue({ ...reuseDecisionFor(PLAN, addresses), version: 2 })
+    const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 'v3-9', onEvent: () => {} })
+    await expect(orch.dispatch(PLAN, { permissionDecision: decision })).rejects.toMatchObject({
+      phase: 'reuse-revalidation',
+      code: 'VF_REUSE_EVIDENCE_CHANGED',
+      movement: 'none',
+    })
+    expect(buildAgentPullV3Mock).not.toHaveBeenCalled()
+    expect(runAgentPullMock).not.toHaveBeenCalled()
+  })
+
+  // Fix round 1, Minor 3: `[].length === [].length` and `[].every(...)` are both vacuously true,
+  // so a zero-execution V3 decision must be rejected explicitly rather than falling through the
+  // gate by accident. A zero-agent plan is the only way both sides' execution counts can be 0
+  // (any real allocation count mismatch is already caught by the pre-existing length-equality
+  // check, which would mask this specific gap).
+  it('a V3 decision with zero proven executions is rejected, not vacuously accepted by an empty-array .every()', async () => {
+    const emptyPlan = { runId: 'run-empty', planFingerprint: '0xPLANEMPTY', agents: [] }
+    const decision = reuseDecisionV3For(emptyPlan, [])
+    preflightPermissionMock.mockResolvedValue(decision)
+    const orch = new OrchestratorAgent({ user: 'GUSER', sessionId: 'v3-10', onEvent: () => {} })
+    await expect(orch.dispatch(emptyPlan, { permissionDecision: decision })).rejects.toMatchObject({
+      phase: 'reuse-revalidation',
+      code: 'VF_REUSE_EVIDENCE_CHANGED',
+      movement: 'none',
+    })
+    expect(buildAgentPullV3Mock).not.toHaveBeenCalled()
   })
 
   it('a V3 decision with any Base/bridge child in reuse mode is rejected before any movement, same as V2', async () => {

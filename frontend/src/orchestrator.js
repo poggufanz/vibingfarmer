@@ -506,6 +506,9 @@ export class OrchestratorAgent {
       if (revalidated.version === 3) {
         v3Pull = {
           permissionId: revalidated.permissionId,
+          // The router this permission was actually proven against — never the global config
+          // default. If they ever diverge, the pull must follow the proof, not fall back.
+          router: revalidated.router,
           executionsByAllocation: new Map(revalidated.executions.map((e) => [e.allocationId, e])),
         }
         confirmed = {
@@ -640,7 +643,19 @@ export class OrchestratorAgent {
           // Task 5 chunk B — a V3 reuse dispatch pulls through the proven permissionId +
           // executionId (revalidateReuse's canonical re-read), matched to THIS allocation; every
           // other dispatch (V2 reuse, V2/fresh) is byte-identical to before: v3Pull stays null.
-          const v3Exec = v3Pull?.executionsByAllocation.get(w.allocationId)
+          const v3Exec = v3Pull ? v3Pull.executionsByAllocation.get(w.allocationId) : null
+          // Fix round 1, Important 2: a V3 dispatch with no matching execution must abort, never
+          // silently fall through to a V2 pull (no permissionId, no executionId, no per-execution
+          // accounting — exactly the defensive-silence shape this chunk's brief bans on a money
+          // path). Unreachable today because buildReuseWorkers already throws first for a missing
+          // pick, but the pull loop must not depend on that as its only guard.
+          if (v3Pull && !v3Exec) {
+            throw new PermissionPhaseError({
+              phase: 'reuse-revalidation',
+              code: 'VF_REUSE_EVIDENCE_CHANGED',
+              message: `No proven execution for allocation ${w.allocationId}.`,
+            })
+          }
           const res = v3Exec
             ? await this.runAgentPullV3({
                 permissionId: v3Pull.permissionId,
@@ -648,6 +663,7 @@ export class OrchestratorAgent {
                 agentAddress: w.agentAddress,
                 amount: w.amount,
                 sessionKey: w.sessionKey,
+                router: v3Pull.router,
               })
             : await runAgentPull({
                 agentAddress: w.agentAddress,
@@ -895,7 +911,7 @@ export class OrchestratorAgent {
    * by anything in this file.
    * @returns {Promise<{hash:string, status:string, relayer?:string}|null>}
    */
-  async runAgentPullV3({ permissionId, executionId, agentAddress, amount, sessionKey }) {
+  async runAgentPullV3({ permissionId, executionId, agentAddress, amount, sessionKey, router }) {
     const check = () =>
       assertActiveAccountBoundary({
         captured: this.activeAccount,
@@ -915,6 +931,10 @@ export class OrchestratorAgent {
       amount,
       relayer,
       sessionKey,
+      // Fix round 1, Important 1: pin to the router THIS permission was proven against
+      // (revalidated.router), never the global config default — the two must never silently
+      // diverge on the money path.
+      router,
     })
     check()
     let result
@@ -1089,6 +1109,7 @@ export class OrchestratorAgent {
         ? revalidated.scopeId === permissionDecision.scopeId &&
           revalidated.permissionId === permissionDecision.permissionId &&
           Array.isArray(revalidated.executions) &&
+          revalidated.executions.length > 0 &&
           revalidated.executions.length === (permissionDecision.executions || []).length &&
           revalidated.executions.every((e) => {
             const before = pickedByAllocation.get(e.allocationId)
