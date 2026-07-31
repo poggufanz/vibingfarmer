@@ -312,6 +312,12 @@ export async function proveReusablePermission({
   // of any contract, so the candidate set is canonicalized first (`sorted()`, same convention as
   // `buildScopeId` above) — the assignment must be a pure function of the row SET, never of
   // whatever order the chain read happened to return it in.
+  // Two rows sharing an `agentAddress` is a malformed read, not evidence of anything: `.sort()`'s
+  // comparator below never returns 0, so a tie would fall back to Array#sort's stability and
+  // silently prefer whichever the chain read happened to list first — exactly the order-dependence
+  // this whole step exists to remove. Reject outright rather than let a duplicate slip through.
+  if (new Set(rows.map((r) => r.agentAddress)).size !== rows.length)
+    return freshDecision(base, 'agent-binding-unproven')
   const candidates = [...rows].sort((a, b) => (a.agentAddress < b.agentAddress ? -1 : 1))
   const claimed = new Set()
   const bound = []
@@ -331,9 +337,23 @@ export async function proveReusablePermission({
       return freshDecision(base, 'per-execution-cap')
   }
 
-  // 9. The signing credential must still be reachable, or nothing can be executed.
-  for (const init of agentInits) {
-    if (!fetchCredential({ owner, planFingerprint, allocationId: init.allocationId, storage }))
+  // 9. The signing credential must still be reachable, AND must belong to the SAME agent this
+  //    allocation was just bound to. `rows` legitimately CAN supersede `agentInits` (a permission
+  //    covering more agents than this run needs), in which case the assignment above binds to the
+  //    lexicographically-first matching candidate — not necessarily the agent whose session key
+  //    was originally minted for this allocation. That mismatch is not exploitable today: a wrong
+  //    credential still has to authorize the BOUND agent's own on-chain scope, so it fails closed
+  //    at `__check_auth` rather than misdirecting funds. But it is exactly the kind of assumption
+  //    ("existence implies correctness") that turns into a real defect the day some other gate
+  //    upstream is relaxed, so it's checked explicitly rather than left implicit.
+  for (let i = 0; i < agentInits.length; i++) {
+    const credential = fetchCredential({
+      owner,
+      planFingerprint,
+      allocationId: agentInits[i].allocationId,
+      storage,
+    })
+    if (!credential || credential.agentAddress !== bound[i].agentAddress)
       return freshDecision(base, 'credential-missing')
   }
 

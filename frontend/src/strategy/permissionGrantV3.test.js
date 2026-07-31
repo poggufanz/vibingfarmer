@@ -447,9 +447,22 @@ function depsWithScope(over = {}) {
     policyVersion: PERMISSION_POLICY_VERSION,
     ...scopeFieldsFromAgents(rows),
   })
+  // Default credential fixture keyed by the SAME per-allocation row this default `inspectAgents`
+  // returns (index-for-index with `deps.agentInits`) — matches the real binding for every test that
+  // doesn't deliberately drift the row set, since the binding is a canonical function of the row
+  // SET (round 2's Critical fix) and this row set is exactly what a passing scope-drift implies.
+  const credentialByAllocation = new Map(
+    deps.agentInits.map((init, i) => [init.allocationId, rows[i]?.agentAddress])
+  )
   return {
     ...deps,
     inspectAgents: over.inspectAgents || vi.fn(async () => rows),
+    fetchCredential:
+      over.fetchCredential ||
+      vi.fn(({ allocationId }) => {
+        const agentAddress = credentialByAllocation.get(allocationId)
+        return agentAddress ? { agentAddress, signerPub: SIGNER_PUB } : null
+      }),
     readPermissionGrant:
       over.readPermissionGrant ||
       vi.fn(async () => permissionGrant({ scopeId, ...(over.grantOver || {}) })),
@@ -764,6 +777,43 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
     expect(decision.freshReason).toBe('agent-binding-unproven')
   })
 
+  // The `target` case above never exercises the `r.token === init.token` conjunct — same guard,
+  // same isolation technique (no `inspectAgents` override, only the AGENTINIT's token changes), so
+  // this is the one guard anywhere in this function that checks the allocation's OWN token at all
+  // (`grant.token` is compared to rows at the token-drift check, never to `init.token`).
+  test('an allocation whose token matches no candidate row forces fresh, not a guessed address', async () => {
+    const decision = await proveReusablePermission(
+      depsWithScope({ agentInits: [agentInit({ token: TOKEN_2 })] })
+    )
+    expect(decision.mode).toBe('fresh')
+    expect(decision.freshReason).toBe('agent-binding-unproven')
+  })
+
+  // Two rows sharing an agentAddress is a malformed read: Array#sort is stable, so a comparator
+  // that never returns 0 (this one doesn't) would let a tie fall back to whatever order the chain
+  // read happened to return — reopening the exact non-determinism `.sort()` exists to close.
+  // scopeId is computed straight from the duplicated row set (mirroring depsWithScope's own
+  // convention) so scope-drift agrees with it and this isolates the duplicate-rejection guard.
+  test('two rows sharing an agentAddress force fresh — a malformed read, not a coincidence to sort around', async () => {
+    const rows = [inspectedAgent(), inspectedAgent()]
+    const scopeId = buildScopeId({
+      network: NETWORK_PASSPHRASE,
+      owner: OWNER,
+      token: TOKEN,
+      router: ROUTER_V3,
+      policyVersion: PERMISSION_POLICY_VERSION,
+      ...scopeFieldsFromAgents(rows),
+    })
+    const decision = await proveReusablePermission(
+      depsWithScope({
+        inspectAgents: vi.fn(async () => rows),
+        grantOver: { scopeId },
+      })
+    )
+    expect(decision.mode).toBe('fresh')
+    expect(decision.freshReason).toBe('agent-binding-unproven')
+  })
+
   // Same row set depsWithScope already proves consistent with the recorded scope (both agentInits
   // default to VAULT, matching the two auto-derived rows) — only the SECOND allocation's target is
   // changed, so this isolates the claim-loop's per-allocation match failure from scope-drift.
@@ -796,9 +846,53 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
     expect(decision.executions).toEqual([])
   })
 
+  // Every multi-row fixture up to this point carries an IDENTICAL perExecutionMaxUnits, so
+  // rows[i] and bound[i] are indistinguishable by outcome. Here they diverge on purpose: rows
+  // arrive in the REVERSE of canonical (sorted) order, and each agent's own cap is exactly enough
+  // for the allocation it's actually bound to but not enough for the OTHER one — rows[i] indexing
+  // checks the wrong agent's cap against each allocation and would force fresh; bound[i] passes.
+  test('the per-execution cap is checked against the BOUND agent, not whatever row landed at that array index', async () => {
+    const decision = await proveReusablePermission(
+      depsWithScope({
+        agentInits: [
+          agentInit({
+            allocationId: 'run-1:deposit:0',
+            cap: { token: TOKEN, units: 25_000_000n, decimals: 7 },
+          }),
+          agentInit({
+            allocationId: 'run-1:deposit:1',
+            cap: { token: TOKEN, units: 20_000_000n, decimals: 7 },
+          }),
+        ],
+        inspectAgents: vi.fn(async () => [
+          inspectedAgent({ agentAddress: AGENT_2, perExecutionMaxUnits: '20000000' }),
+          inspectedAgent({ agentAddress: AGENT_1, perExecutionMaxUnits: '25000000' }),
+        ]),
+      })
+    )
+    expect(decision.mode).toBe('reuse')
+    expect(decision.freshReason).toBe(null)
+  })
+
   test('a missing execution credential forces fresh', async () => {
     const decision = await proveReusablePermission(
       depsWithScope({ fetchCredential: vi.fn(() => null) })
+    )
+    expect(decision.mode).toBe('fresh')
+    expect(decision.freshReason).toBe('credential-missing')
+  })
+
+  // `fetchCredential` returning something is not enough — it must be the credential for the SAME
+  // agent this allocation was just bound to. Fails closed today at on-chain auth even without this
+  // check (see the code comment), but that's a downstream backstop, not a reason to skip checking
+  // here — this proves the check itself, not just the existence check it sits behind.
+  test('a credential for the WRONG agent forces fresh, not a mismatched signer accepted as reuse', async () => {
+    const decision = await proveReusablePermission(
+      depsWithScope({
+        // The default single-allocation binding is AGENT_1; hand back a real credential, just for
+        // the wrong address.
+        fetchCredential: vi.fn(() => ({ agentAddress: AGENT_2, signerPub: SIGNER_PUB })),
+      })
     )
     expect(decision.mode).toBe('fresh')
     expect(decision.freshReason).toBe('credential-missing')
