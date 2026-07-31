@@ -9,6 +9,21 @@ import {
   nativeToScVal,
 } from '@stellar/stellar-sdk'
 import { NETWORK_PASSPHRASE } from './config.js'
+import {
+  fromScVal,
+  structScVal,
+  bytes32ScVal,
+  addrScVal,
+  i128ScVal,
+  u32ScVal,
+  boolScVal,
+} from './scval.js'
+import { classifyActiveAccount } from './activeAccount.js'
+import { AGENT_WASM_GENERATIONS } from './agentCreatorManifest.js'
+// Cross-directory import, read-only: this test proves the seam BETWEEN grant.js's new readers and
+// permissionGrantV3.js's prover (Task W2b's whole point) — mirrors permissionGrantV3.js itself
+// importing AGENT_KIND_BRIDGE back from stellar/grant.js. Nothing in strategy/ is modified.
+import { deriveScopeIdV3, proveReusablePermission } from '../strategy/permissionGrantV3.js'
 
 // Relay is the only network dependency submitGrant/runAgentPull reach for; mock it so the tests
 // run offline. Each test reconfigures the two fns it needs.
@@ -53,6 +68,8 @@ import {
   buildAgentPullV3,
   submitGrantV3,
   revokeGrant,
+  readPermissionGrant,
+  readRemainingBudget,
   AGENT_KIND_DEPOSIT,
   AGENT_KIND_BRIDGE,
 } from './grant.js'
@@ -1076,5 +1093,451 @@ describe('submitGrantV3 - C owner (passkey), routed through OwnerAuthorizationV1
     ).rejects.toMatchObject({ code: 'VF_FEE_PAYER_UNAVAILABLE' })
     expect(signOwnerAuthEntryMock).not.toHaveBeenCalled()
     expect(sign).not.toHaveBeenCalled()
+  })
+})
+
+// --- Router V3 permission readers (Task W2b) --------------------------------------------------
+// `proveReusablePermission` (permissionGrantV3.js) has always taken `readPermissionGrant` and
+// `readRemainingBudget` as injected dependencies and called them unconditionally — but neither
+// existed anywhere in the repo (parameter names with no implementation, no default). This section
+// proves the two functions above ARE that missing seam, and — the point of the whole task — that
+// their ACTUAL output satisfies the exact contract the prover requires: a one-character format
+// drift on a 32-byte id (missing `0x`, wrong case, a byte reversal) makes every V3 reuse decision
+// `scope-drift` forever, which is exactly the defect class this remediation plan exists to fix.
+
+// Deterministic, non-palindromic, letter-containing 32-byte hex fixtures for the UNIT-level
+// readPermissionGrant tests below (never the cross-layer seam test, which uses the REAL Rust-pinned
+// vector instead — see that describe block). Built the same way the brief warns against NOT
+// building fixtures: a round value like `'00'.repeat(32)` or a palindrome would hide exactly the
+// byte-reversal / case bugs these ids exist to catch.
+const SCOPE_ID_RAW_HEX = 'a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b7279'
+const PERMISSION_ID_RAW_HEX = '303b46515c67727d88939ea9b4bfcad5e0ebf6010c17222d38434e59646f7a85'
+
+// Encodes a `PermissionGrantV3` (funding_router/src/types.rs) exactly as the router would return
+// it from `permission_grant` — structScVal sorts the ScMap keys lexicographically itself, so field
+// order here is purely for readability (mirrors the Rust struct's declared order).
+function permissionGrantStructScVal({
+  permissionIdHex,
+  scopeIdHex,
+  owner,
+  token,
+  mandateCeiling,
+  confirmedSpent,
+  perRunMax,
+  liveUntilLedger,
+  revoked,
+}) {
+  return structScVal({
+    permission_id: bytes32ScVal(permissionIdHex),
+    scope_id: bytes32ScVal(scopeIdHex),
+    owner: addrScVal(owner),
+    token: addrScVal(token),
+    mandate_ceiling: i128ScVal(mandateCeiling),
+    confirmed_spent: i128ScVal(confirmedSpent),
+    per_run_max: i128ScVal(perRunMax),
+    live_until_ledger: u32ScVal(liveUntilLedger),
+    revoked: boolScVal(revoked),
+  })
+}
+
+const invokedMethod = (tx) => tx.operations[0].func.invokeContract().functionName().toString()
+
+// One fake RPC server standing in for BOTH `permission_grant` and `remaining_budget` — readContract
+// picks the method via the tx it builds, this just answers whichever one was invoked.
+function v3ReadServer({ grantRetval, remainingRetval } = {}) {
+  return {
+    simulateTransaction: async (tx) => {
+      const method = invokedMethod(tx)
+      if (method === 'permission_grant') return { result: { retval: grantRetval } }
+      if (method === 'remaining_budget') return { result: { retval: remainingRetval } }
+      throw new Error(`v3ReadServer: unexpected method ${method}`)
+    },
+  }
+}
+
+describe('scValToNative shape — pinned empirically per Rust type, never assumed (Task W2b)', () => {
+  it('i128 decodes to a BigInt', () => {
+    const decoded = fromScVal(i128ScVal(9_007_199_254_740_993n))
+    expect(typeof decoded).toBe('bigint')
+    expect(decoded).toBe(9_007_199_254_740_993n)
+  })
+
+  it('u32 decodes to a number satisfying Number.isInteger (never a BigInt)', () => {
+    const decoded = fromScVal(u32ScVal(1_412_345))
+    expect(typeof decoded).toBe('number')
+    expect(Number.isInteger(decoded)).toBe(true)
+    expect(decoded).toBe(1_412_345)
+  })
+
+  it('bool decodes to a boolean', () => {
+    expect(fromScVal(boolScVal(true))).toBe(true)
+    expect(fromScVal(boolScVal(false))).toBe(false)
+  })
+
+  it('a bytes(32) value decodes to a Uint8Array-compatible byte array (a Buffer, in Node)', () => {
+    const decoded = fromScVal(bytes32ScVal('0x' + SCOPE_ID_RAW_HEX))
+    expect(decoded instanceof Uint8Array).toBe(true)
+    expect(decoded.length).toBe(32)
+  })
+
+  it('an Address decodes DIRECTLY to its strkey string — already the final shape, unchanged', () => {
+    const decoded = fromScVal(addrScVal(OWNER))
+    expect(typeof decoded).toBe('string')
+    expect(decoded).toBe(OWNER)
+  })
+
+  it('a #[contracttype] struct (an ScMap of symbol keys) decodes to a plain object keyed by the Rust field names VERBATIM (snake_case, never renamed)', () => {
+    const sv = permissionGrantStructScVal({
+      permissionIdHex: '0x' + PERMISSION_ID_RAW_HEX,
+      scopeIdHex: '0x' + SCOPE_ID_RAW_HEX,
+      owner: OWNER,
+      token: TOKEN,
+      mandateCeiling: 9_007_199_254_740_993n,
+      confirmedSpent: 1n,
+      perRunMax: 50_000_000n,
+      liveUntilLedger: 1_412_345,
+      revoked: false,
+    })
+    const decoded = fromScVal(sv)
+    expect(Object.keys(decoded).sort()).toEqual(
+      [
+        'permission_id',
+        'scope_id',
+        'owner',
+        'token',
+        'mandate_ceiling',
+        'confirmed_spent',
+        'per_run_max',
+        'live_until_ledger',
+        'revoked',
+      ].sort()
+    )
+    expect(typeof decoded.mandate_ceiling).toBe('bigint')
+    expect(typeof decoded.live_until_ledger).toBe('number')
+    expect(typeof decoded.revoked).toBe('boolean')
+    expect(decoded.permission_id instanceof Uint8Array).toBe(true)
+    expect(typeof decoded.owner).toBe('string')
+  })
+
+  it("Option::None decodes to bare null — Soroban's Option<T> has no separate Some/None wrapper, and neither does scValToNative", () => {
+    expect(fromScVal(xdr.ScVal.scvVoid())).toBeNull()
+  })
+})
+
+describe('readPermissionGrant — Router V3 (Task W2b)', () => {
+  // Beyond Number.MAX_SAFE_INTEGER so a stray Number() coercion anywhere in the reader visibly
+  // corrupts it — a round value like '100000000' round-trips through Number perfectly and would
+  // hide the exact same bug.
+  const BIG = 9_007_199_254_740_993n
+
+  function grantScVal(over = {}) {
+    return permissionGrantStructScVal({
+      permissionIdHex: '0x' + PERMISSION_ID_RAW_HEX,
+      scopeIdHex: '0x' + SCOPE_ID_RAW_HEX,
+      owner: OWNER,
+      token: TOKEN,
+      mandateCeiling: BIG,
+      confirmedSpent: 1n,
+      perRunMax: BIG,
+      liveUntilLedger: 1_412_345,
+      revoked: false,
+      ...over,
+    })
+  }
+
+  it('decodes a Some(PermissionGrantV3) into the EXACT camelCase shape the V3 prover requires', async () => {
+    const server = v3ReadServer({ grantRetval: grantScVal() })
+    const grant = await readPermissionGrant({
+      router: ROUTER_V3,
+      permissionId: PERMISSION_ID,
+      server,
+    })
+    expect(grant).toEqual({
+      permissionId: '0x' + PERMISSION_ID_RAW_HEX,
+      scopeId: '0x' + SCOPE_ID_RAW_HEX,
+      owner: OWNER,
+      token: TOKEN,
+      mandateCeilingUnits: '9007199254740993',
+      confirmedSpentUnits: '1',
+      perRunMaxUnits: '9007199254740993',
+      liveUntilLedger: 1_412_345,
+      revoked: false,
+    })
+  })
+
+  it('normalizes both 32-byte ids to 0x-prefixed LOWERCASE hex — the exact format deriveScopeIdV3 emits', async () => {
+    const server = v3ReadServer({ grantRetval: grantScVal() })
+    const grant = await readPermissionGrant({
+      router: ROUTER_V3,
+      permissionId: PERMISSION_ID,
+      server,
+    })
+    expect(grant.scopeId).toMatch(/^0x[0-9a-f]{64}$/)
+    expect(grant.permissionId).toMatch(/^0x[0-9a-f]{64}$/)
+  })
+
+  it('emits liveUntilLedger as a number satisfying Number.isInteger — never a BigInt', async () => {
+    const server = v3ReadServer({ grantRetval: grantScVal() })
+    const grant = await readPermissionGrant({
+      router: ROUTER_V3,
+      permissionId: PERMISSION_ID,
+      server,
+    })
+    expect(typeof grant.liveUntilLedger).toBe('number')
+    expect(Number.isInteger(grant.liveUntilLedger)).toBe(true)
+  })
+
+  it('carries i128 fields beyond Number.MAX_SAFE_INTEGER exactly, as canonical decimal STRINGS — never Number()', async () => {
+    const server = v3ReadServer({ grantRetval: grantScVal() })
+    const grant = await readPermissionGrant({
+      router: ROUTER_V3,
+      permissionId: PERMISSION_ID,
+      server,
+    })
+    expect(grant.mandateCeilingUnits).toBe('9007199254740993')
+    expect(grant.perRunMaxUnits).toBe('9007199254740993')
+    expect(typeof grant.mandateCeilingUnits).toBe('string')
+    expect(typeof grant.perRunMaxUnits).toBe('string')
+  })
+
+  it('returns null for a confirmed-absent permission (Option::None) — never a partial object', async () => {
+    const server = v3ReadServer({ grantRetval: xdr.ScVal.scvVoid() })
+    const grant = await readPermissionGrant({
+      router: ROUTER_V3,
+      permissionId: PERMISSION_ID,
+      server,
+    })
+    expect(grant).toBeNull()
+  })
+
+  it('a read FAILURE (RPC down / simulation error) THROWS — never masquerades as null', async () => {
+    const server = {
+      simulateTransaction: async () => {
+        throw new Error('rpc down')
+      },
+    }
+    await expect(
+      readPermissionGrant({ router: ROUTER_V3, permissionId: PERMISSION_ID, server })
+    ).rejects.toThrow()
+  })
+
+  it('throws when the decoded struct is MISSING a field, rather than returning a half-populated grant', async () => {
+    const full = grantScVal()
+    const entries = full.map().filter((e) => e.key().sym().toString() !== 'revoked')
+    const server = v3ReadServer({ grantRetval: xdr.ScVal.scvMap(entries) })
+    await expect(
+      readPermissionGrant({ router: ROUTER_V3, permissionId: PERMISSION_ID, server })
+    ).rejects.toThrow(/revoked/)
+  })
+
+  it('throws when a field decodes to the WRONG type (revoked encoded as a string, not a bool)', async () => {
+    const full = grantScVal()
+    const entries = full
+      .map()
+      .map((e) =>
+        e.key().sym().toString() === 'revoked'
+          ? new xdr.ScMapEntry({ key: e.key(), val: xdr.ScVal.scvString('nope') })
+          : e
+      )
+    const server = v3ReadServer({ grantRetval: xdr.ScVal.scvMap(entries) })
+    await expect(
+      readPermissionGrant({ router: ROUTER_V3, permissionId: PERMISSION_ID, server })
+    ).rejects.toThrow(/revoked/)
+  })
+})
+
+describe('readRemainingBudget — Router V3 (Task W2b)', () => {
+  it('decodes the i128 remaining budget into a canonical decimal-integer STRING satisfying assertUnits', async () => {
+    const server = v3ReadServer({ remainingRetval: i128ScVal(75_000_000n) })
+    const remaining = await readRemainingBudget({
+      router: ROUTER_V3,
+      permissionId: PERMISSION_ID,
+      server,
+    })
+    expect(remaining).toBe('75000000')
+    expect(typeof remaining).toBe('string')
+  })
+
+  it('carries a value beyond Number.MAX_SAFE_INTEGER exactly, as a string — never Number()', async () => {
+    const server = v3ReadServer({ remainingRetval: i128ScVal(9_007_199_254_740_993n) })
+    const remaining = await readRemainingBudget({
+      router: ROUTER_V3,
+      permissionId: PERMISSION_ID,
+      server,
+    })
+    expect(remaining).toBe('9007199254740993')
+  })
+
+  it('a confirmed zero remaining budget decodes to "0" — not an error', async () => {
+    const server = v3ReadServer({ remainingRetval: i128ScVal(0n) })
+    const remaining = await readRemainingBudget({
+      router: ROUTER_V3,
+      permissionId: PERMISSION_ID,
+      server,
+    })
+    expect(remaining).toBe('0')
+  })
+
+  it('rejects a NEGATIVE remaining_budget HERE, with a clear error — never lets it reach assertUnits as an unhandled rejection', async () => {
+    const server = v3ReadServer({ remainingRetval: i128ScVal(-1n) })
+    await expect(
+      readRemainingBudget({ router: ROUTER_V3, permissionId: PERMISSION_ID, server })
+    ).rejects.toThrow(/negative/i)
+  })
+
+  it('a read FAILURE (RPC down / simulation error) THROWS — never masquerades as a budget value', async () => {
+    const server = {
+      simulateTransaction: async () => {
+        throw new Error('rpc down')
+      },
+    }
+    await expect(
+      readRemainingBudget({ router: ROUTER_V3, permissionId: PERMISSION_ID, server })
+    ).rejects.toThrow()
+  })
+})
+
+describe('readPermissionGrant / readRemainingBudget feed proveReusablePermission — the seam (Task W2b)', () => {
+  // Produced by the Rust `funding_router/src/test.rs::scope_id_matches_pinned_cross_layer_vector`
+  // (commit c39f9bf) — copied verbatim, exactly like permissionGrantV3.test.js's own
+  // PINNED_SCOPE_ID_DEPOSIT — never computed by either side of this test. Using the REAL pinned
+  // vector (rather than an invented fixture) makes this a genuine cross-layer proof: the router's
+  // OWN target/token/kind/mintRecipient/destinationDomain inputs, hashing to the router's OWN
+  // recorded output, decoded by THIS reader off a simulated RPC response and independently
+  // reproduced by deriveScopeIdV3.
+  const PINNED_TARGET = 'CCQKDIVDUSS2NJ5IVGVKXLFNV2X3BMNSWO2LLNVXXC43VO54XW7L65UW'
+  const PINNED_TOKEN = 'CCYLDMVTWS23NN5YXG5LXPF5X274BQOCYPCMLRWHZDE4VS6MZXHM6QJS'
+  const PINNED_SCOPE_ID_DEPOSIT =
+    '0x775ad5a5c5f2ec6382447626694b4ca75b25a23d466cfa3fda505596861d3202'
+  const ZERO_MINT_RECIPIENT = new Uint8Array(32)
+  const LEDGER_NOW = 1_400_000
+  const NOW_SEC = 1_800_000_000
+  // Larger than Number.MAX_SAFE_INTEGER so a stray Number() ANYWHERE on the reader→prover path
+  // visibly corrupts it — never a round value like '25000000', which round-trips through Number
+  // perfectly and would hide the exact same bug (the brief's own instruction).
+  const BIG_UNITS = 9_007_199_254_740_993n
+  const REAL_CODE_V3 =
+    '0x' + AGENT_WASM_GENERATIONS.find((g) => g.generation === 'agent-v3').wasmHash
+
+  const seamActiveAccount = classifyActiveAccount({
+    address: OWNER,
+    networkPassphrase: NETWORK_PASSPHRASE,
+    connectorId: 'freighter',
+    epoch: 3,
+  })
+
+  function grantRetval(over = {}) {
+    return permissionGrantStructScVal({
+      permissionIdHex: PERMISSION_ID,
+      scopeIdHex: PINNED_SCOPE_ID_DEPOSIT,
+      owner: OWNER,
+      token: PINNED_TOKEN,
+      mandateCeiling: BIG_UNITS,
+      confirmedSpent: 1n,
+      perRunMax: BIG_UNITS,
+      liveUntilLedger: LEDGER_NOW + 10_000,
+      revoked: false,
+      ...over,
+    })
+  }
+
+  function seamDeps(over = {}) {
+    const server = v3ReadServer({
+      grantRetval: grantRetval(),
+      remainingRetval: i128ScVal(BIG_UNITS),
+    })
+    return {
+      runId: 'run-1',
+      owner: OWNER,
+      router: ROUTER_V3,
+      planFingerprint: '0x' + 'f0'.repeat(32),
+      permissionId: PERMISSION_ID,
+      activeAccount: seamActiveAccount,
+      getCurrentActiveAccount: () => seamActiveAccount,
+      approval: { mandateCeilingUnits: BIG_UNITS.toString(), liveUntilLedger: LEDGER_NOW + 10_000 },
+      currentLedger: LEDGER_NOW,
+      nowSec: NOW_SEC,
+      server,
+      resolveSchema: asV3,
+      eligibleGenerations: ['agent-v3'],
+      // The functions under test — REAL, not mocked. This IS the seam the brief calls out: if
+      // either reader's output format ever drifts from what deriveScopeIdV3/assertUnits/the prover's
+      // own gates require, THIS is where it breaks.
+      readPermissionGrant,
+      readRemainingBudget,
+      proveAllowance: vi.fn(async () => ({
+        proven: true,
+        proof: { gapFree: true, noLaterMutation: true },
+      })),
+      inspectAgents: vi.fn(async () => [
+        {
+          agentAddress: AGENT_1,
+          target: PINNED_TARGET,
+          token: PINNED_TOKEN,
+          code: REAL_CODE_V3,
+          perRunCapUnits: BIG_UNITS.toString(),
+          cumulativeCapUnits: BIG_UNITS.toString(),
+          perExecutionMaxUnits: null,
+        },
+      ]),
+      readLinkedPermission: vi.fn(async () => PERMISSION_ID),
+      fetchCredential: vi.fn(() => ({ agentAddress: AGENT_1 })),
+      agentInits: [
+        {
+          allocationId: 'run-1:deposit:0',
+          kind: AGENT_KIND_DEPOSIT,
+          token: PINNED_TOKEN,
+          target: PINNED_TARGET,
+          cap: { token: PINNED_TOKEN, units: BIG_UNITS, decimals: 7 },
+          periodSeconds: 86_400,
+          expiry: NOW_SEC + 3600,
+          mintRecipient: ZERO_MINT_RECIPIENT,
+          destinationDomain: 0,
+        },
+      ],
+      ...over,
+    }
+  }
+
+  it("proveReusablePermission reaches 'reuse' fed EXCLUSIVELY by these readers' real output — the point of this task", async () => {
+    const expectedScopeId = deriveScopeIdV3({
+      target: PINNED_TARGET,
+      token: PINNED_TOKEN,
+      kind: AGENT_KIND_DEPOSIT,
+      mintRecipient: ZERO_MINT_RECIPIENT,
+      destinationDomain: 0,
+    })
+    // deriveScopeIdV3's own computation matches the pinned Rust vector — sanity-checks the fixture
+    // itself before trusting anything built on top of it.
+    expect(expectedScopeId).toBe(PINNED_SCOPE_ID_DEPOSIT)
+
+    const decision = await proveReusablePermission(seamDeps())
+
+    expect(decision.mode).toBe('reuse')
+    expect(decision.freshReason).toBeNull()
+    // decision.scopeId is deriveScopeIdV3's OWN computation (never grant.scopeId directly — see
+    // permissionGrantV3.js step 7b) — proven equal to the value independently derived above, which
+    // is itself the pinned Rust vector. If readPermissionGrant's scopeId format ever drifted from
+    // this (missing '0x', wrong case, byte-reversed), gate 7b's `!==` comparison would force
+    // 'scope-drift' and this assertion — and the `mode` assertion above it — would go RED.
+    expect(decision.scopeId).toBe(expectedScopeId)
+    // The exact value survives beyond Number precision through the ENTIRE reader -> prover path.
+    expect(decision.mandateCeilingUnits).toBe(BIG_UNITS.toString())
+    expect(decision.remainingHeadroomUnits).toBe(BIG_UNITS.toString())
+  })
+
+  it('a corrupted grant.scopeId (real reader, but the router disagrees) forces scope-drift, never a silent reuse', async () => {
+    const decision = await proveReusablePermission(
+      seamDeps({
+        server: v3ReadServer({
+          // A DIFFERENT, still well-formed 32-byte scope_id — simulates the router's own record
+          // disagreeing with what this run's reviewed allocation derives to.
+          grantRetval: grantRetval({ scopeIdHex: '0x' + SCOPE_ID_RAW_HEX }),
+          remainingRetval: i128ScVal(BIG_UNITS),
+        }),
+      })
+    )
+    expect(decision.mode).toBe('fresh')
+    expect(decision.freshReason).toBe('scope-drift')
   })
 })

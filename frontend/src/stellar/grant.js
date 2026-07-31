@@ -415,6 +415,144 @@ export async function buildAgentPullV3({
   return { xdr: prepared.toEnvelope().toXDR('base64') }
 }
 
+// --- Router V3 permission readers (IQ Alter remediation Task W2b) ----------------------------
+// `proveReusablePermission` (permissionGrantV3.js) has always taken `readPermissionGrant` and
+// `readRemainingBudget` as injected dependencies and called them unconditionally on every path that
+// reaches step 4 — but neither existed anywhere in the repo (parameter names with no implementation
+// and no default), so a V3 router registered today would throw `readPermissionGrant is not a
+// function` the instant the dormancy gate opened. These two functions are that missing seam.
+//
+// TEST-ONLY for now, deliberately: nothing here is wired into `reusePreflight.js`, `orchestrator.js`
+// or `app.jsx`, and neither is added as a default inside `proveReusablePermission` — the V3 path
+// stays exactly as dormant as it was before this file changed (see `assertRouterV3` above and
+// `permissionGrantV3.js`'s own header for the two independent activation gates). Wiring these in is
+// a separate, later task.
+//
+// Repo-wide rule (this file's own `buildGrantV3Tx` doc, above): every 32-byte id crossing a JS
+// boundary is a `0x`-prefixed lowercase hex STRING — no exceptions, no `Buffer` leaking out, no bare
+// hex. `deriveScopeIdV3` (permissionGrantV3.js) emits exactly that shape and is compared against
+// `grant.scopeId` with strict `!==`; a one-character format drift here (missing prefix, wrong case,
+// reversed bytes) makes EVERY V3 reuse decision `scope-drift`, forever — the exact defect class this
+// remediation plan exists to fix. See grant.test.js's pinned round-trip tests for what
+// `scValToNative` (client.js → scval.js) is EMPIRICALLY confirmed to return per Rust type, rather
+// than assumed:
+//   BytesN<32> (permission_id, scope_id) -> a Buffer/Uint8Array-compatible byte array
+//   Address    (owner, token)            -> a plain string (the strkey), already final
+//   i128       (mandate_ceiling, confirmed_spent, per_run_max) -> BigInt
+//   u32        (live_until_ledger)        -> a number, `Number.isInteger` holds
+//   bool       (revoked)                  -> a boolean
+//   a `#[contracttype]` struct (an ScMap keyed by field-name symbols) -> a plain JS object keyed by
+//     the Rust field names VERBATIM (snake_case) — never camelCase, never renamed by the SDK
+//   `Option::None` -> bare `null` (Soroban encodes it as the un-wrapped `scvVoid`, not some
+//     `{some:false}` wrapper) — see `voidScVal`'s own doc in scval.js for the same convention
+
+// No `Buffer` global here deliberately — this file is NOT on eslint.config.js's browser-Buffer-
+// polyfill allowlist (see this file's own `buildGrantV3Tx` doc for the same rule), so this is pure
+// Uint8Array→hex, exactly like `buildGrantV3Tx`'s own permissionId normalization a few dozen lines
+// above.
+function bytes32ToHexId(value, label) {
+  if (!(value instanceof Uint8Array) || value.length !== 32)
+    throw new Error(
+      `${label} must decode to exactly 32 bytes (got ${
+        value instanceof Uint8Array ? `${value.length} bytes` : typeof value
+      }).`
+    )
+  return '0x' + Array.from(value, (b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+function requireDecodedString(value, label) {
+  if (typeof value !== 'string' || value.length === 0)
+    throw new Error(`${label} must decode to a non-empty string (Address).`)
+  return value
+}
+
+// i128 units, canonical-decimal-string convention (Task 11, repo-wide): never `Number()` a unit
+// value — `BigInt.prototype.toString()` never emits a sign, exponent, fraction or leading zero, so
+// the result already satisfies `assertUnits`'s regex (permissionGrantV3.js) without further work.
+function requireI128UnitsString(value, label) {
+  if (typeof value !== 'bigint')
+    throw new Error(`${label} must decode to a BigInt (i128), got ${typeof value}.`)
+  return value.toString()
+}
+
+// u32 ledger sequence: `Number()` is required and fine HERE (this is the one binding constraint's
+// documented exception) — but only as a type ASSERTION, never a coercion of something that decoded
+// to a different type. A BigInt must be rejected, not silently narrowed.
+function requireU32Integer(value, label) {
+  if (typeof value !== 'number' || !Number.isInteger(value))
+    throw new Error(`${label} must decode to an integer (u32), got ${typeof value}.`)
+  return value
+}
+
+function requireDecodedBool(value, label) {
+  if (typeof value !== 'boolean')
+    throw new Error(`${label} must decode to a boolean, got ${typeof value}.`)
+  return value
+}
+
+/**
+ * Read one bounded V3 permission record (`funding_router::permission_grant`). Fail-closed on every
+ * axis `proveReusablePermission` (permissionGrantV3.js) relies on:
+ *
+ * - `Option::None` (no such permission, or never granted) decodes to bare `null` — returned AS-IS,
+ *   never a partial object — so `if (!grant)` at the call site reads `'permission-missing'`.
+ * - A read that FAILS (RPC unreachable, a simulation error) is left to THROW — never coerced to
+ *   `null` here. Mirrors `readAllowanceStrict` (throws `AllowanceReadError`) rather than
+ *   `readAllowance` (swallows to zero — right for ITS purpose, wrong for a proof): a proof must be
+ *   able to tell "confirmed absent" apart from "the RPC did not answer," and conflating them into
+ *   the same `null` would silently make an unreachable RPC indistinguishable from a permission that
+ *   was never granted.
+ * - A decoded `Some(PermissionGrantV3)` missing a field, or carrying one of the wrong type, throws
+ *   here rather than returning a half-populated grant a caller could mistake for evidence.
+ * @param {{router:string, permissionId:string, server?:object}} p
+ * @returns {Promise<{permissionId:string, scopeId:string, owner:string, token:string,
+ *   mandateCeilingUnits:string, confirmedSpentUnits:string, perRunMaxUnits:string,
+ *   liveUntilLedger:number, revoked:boolean}|null>}
+ */
+export async function readPermissionGrant({ router, permissionId, server }) {
+  const raw = await readContract({
+    contract: router,
+    method: 'permission_grant',
+    args: [{ bytes32: permissionId }],
+    server,
+  })
+  if (raw == null) return null // Option::None — confirmed absent, not a read failure
+  return {
+    permissionId: bytes32ToHexId(raw.permission_id, 'permission_id'),
+    scopeId: bytes32ToHexId(raw.scope_id, 'scope_id'),
+    owner: requireDecodedString(raw.owner, 'owner'),
+    token: requireDecodedString(raw.token, 'token'),
+    mandateCeilingUnits: requireI128UnitsString(raw.mandate_ceiling, 'mandate_ceiling'),
+    confirmedSpentUnits: requireI128UnitsString(raw.confirmed_spent, 'confirmed_spent'),
+    perRunMaxUnits: requireI128UnitsString(raw.per_run_max, 'per_run_max'),
+    liveUntilLedger: requireU32Integer(raw.live_until_ledger, 'live_until_ledger'),
+    revoked: requireDecodedBool(raw.revoked, 'revoked'),
+  }
+}
+
+/**
+ * Read the remaining spendable budget under a bounded V3 permission (`funding_router::
+ * remaining_budget`), as the canonical decimal-integer STRING every unit value in this codebase
+ * uses — the exact shape `assertUnits` (permissionGrantV3.js, regex `/^(0|[1-9][0-9]*)$/`) requires.
+ * A negative value is rejected HERE, with a clear error naming this reader, rather than letting a
+ * malformed read reach `assertUnits` and throw an unhandled rejection about the wrong layer.
+ * @param {{router:string, permissionId:string, server?:object}} p
+ * @returns {Promise<string>}
+ */
+export async function readRemainingBudget({ router, permissionId, server }) {
+  const raw = await readContract({
+    contract: router,
+    method: 'remaining_budget',
+    args: [{ bytes32: permissionId }],
+    server,
+  })
+  if (typeof raw !== 'bigint')
+    throw new Error(`remaining_budget must decode to a BigInt (i128), got ${typeof raw}.`)
+  if (raw < 0n)
+    throw new Error(`remaining_budget read a negative value (${raw}) — refusing to proceed.`)
+  return raw.toString()
+}
+
 /**
  * Full bounded-permission grant (Task 5, IQ Alter remediation): build → authorize (wallet-sign for
  * G, passkey auth entry for C) → submit, routed through the SAME OwnerAuthorizationV1 adapter
