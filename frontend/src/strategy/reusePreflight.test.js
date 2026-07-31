@@ -712,7 +712,8 @@ describe('router-generation branch (Task 5 chunk A)', () => {
   const V3_TOKEN = 'CCYLDMVTWS23NN5YXG5LXPF5X274BQOCYPCMLRWHZDE4VS6MZXHM6QJS'
   // 0x-prefixed (repo-wide 32-byte id convention, Task W2a item 1) — same 64 hex characters as the
   // Rust vector, prefix is presentation only.
-  const PINNED_SCOPE_ID_DEPOSIT = '0x775ad5a5c5f2ec6382447626694b4ca75b25a23d466cfa3fda505596861d3202'
+  const PINNED_SCOPE_ID_DEPOSIT =
+    '0x775ad5a5c5f2ec6382447626694b4ca75b25a23d466cfa3fda505596861d3202'
   const ZERO_MINT_RECIPIENT = new Uint8Array(32)
 
   const activeAccountFixture = (over = {}) =>
@@ -919,8 +920,8 @@ describe('router-generation branch (Task 5 chunk A)', () => {
   // guard. Replicates that exact test shape rather than inventing a different one — matching the
   // established pattern is the point. `readLinkedPermission` is called as a FUNCTION
   // (`readLinkedPermission({router, agent, server})`), so the poison here is a non-callable value —
-  // touching it at all (even just `typeof x === 'function'` would not throw, but invoking it would)
-  // throws a TypeError the instant the V2 body tries to call it.
+  // merely READING the property (e.g. `typeof readLinkedPermission`) would NOT throw; only actually
+  // CALLING it does, throwing a TypeError the instant the V2 body tries to invoke it.
   test('the V2 branch never reads readLinkedPermission at all', async () => {
     const POISON = { poisoned: true } // not a function — calling this at all would throw
     const withPoison = await preflightPermission(baseDeps({ readLinkedPermission: POISON }))

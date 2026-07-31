@@ -265,16 +265,20 @@ describe("deriveScopeIdV3 — the mirror of the router's derive_scope_id (Task F
     expect(scopeId).toBe('0x775ad5a5c5f2ec6382447626694b4ca75b25a23d466cfa3fda505596861d3202')
   })
 
-  // LOAD-BEARING (Task W2a item 4): this is the ONLY test in this whole suite that pins `kind`'s
-  // BIG-ENDIAN byte order. It works only because it uses the kind-1 (Bridge) vector: `kind: 1`
-  // big-endian is 0x00000001, little-endian is 0x01000000 — different bytes, so `u32BE`'s
-  // implementation actually matters here. The kind-0 vector right above this one CANNOT detect an
-  // endianness bug: `kind: 0` is 0x00000000 either way, byte-for-byte identical under BE or LE, so
-  // it stays GREEN even if `u32BE` were silently flipped to little-endian. This test therefore
+  // LOAD-BEARING (Task W2a item 4, extended in fix round 1 finding 4): this is the ONLY test in
+  // this whole suite that pins `kind`'s BIG-ENDIAN byte order — AND the only one that pins
+  // `destinationDomain`'s, for the identical reason. It works only because it uses the kind-1
+  // (Bridge) vector: `kind: 1` big-endian is 0x00000001 vs. little-endian 0x01000000, and
+  // `destinationDomain: 6` big-endian is 0x00000006 vs. little-endian 0x06000000 — both fields are
+  // asymmetric here, so `u32BE`'s implementation actually matters for both. The kind-0 vector right
+  // above this one CANNOT detect an endianness bug in EITHER field: `kind: 0` and
+  // `destinationDomain: 0` are both 0x00000000 either way, byte-for-byte identical under BE or LE,
+  // so it stays GREEN even if `u32BE` were silently flipped to little-endian. This test therefore
   // looks like a redundant duplicate of the kind-0 one above — it is NOT. Deleting it as
-  // "redundant" silently removes ALL coverage of `kind`'s byte order, and a future little-endian
-  // regression would have nothing left to catch it (see the mutation-table entry in the task
-  // report that pins exactly this: kind-1 goes RED, kind-0 stays GREEN, under the same mutation).
+  // "redundant" silently removes ALL coverage of BOTH fields' byte order, and a future
+  // little-endian regression in either one would have nothing left to catch it (see the
+  // mutation-table entry in the task report that pins exactly this: kind-1 goes RED, kind-0 stays
+  // GREEN, under the same mutation).
   test('reproduces the Rust-pinned vector — kind 1 (Bridge), mint_recipient 0xcd*32, destination_domain 6', () => {
     const scopeId = deriveScopeIdV3({
       target: PINNED_TARGET,
@@ -286,7 +290,7 @@ describe("deriveScopeIdV3 — the mirror of the router's derive_scope_id (Task F
     expect(scopeId).toBe(PINNED_SCOPE_ID_BRIDGE)
   })
 
-  test('output convention: 0x-prefixed lowercase hex, 64 characters after the prefix — the repo-wide 32-byte id convention (Task W2a item 1), superseding this suite\'s earlier no-prefix pin', () => {
+  test("output convention: 0x-prefixed lowercase hex, 64 characters after the prefix — the repo-wide 32-byte id convention (Task W2a item 1), superseding this suite's earlier no-prefix pin", () => {
     const scopeId = deriveScopeIdV3({
       target: VAULT,
       token: TOKEN,
@@ -1125,6 +1129,26 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
       expect(decision.mode).toBe('fresh')
       expect(decision.freshReason).toBe('scope-drift')
       expect(decision.executions).toEqual([])
+    })
+
+    // Fix round 1, finding 3: failing closed on a malformed field is correct, but failing closed
+    // SILENTLY is not — the catch above must bind and log the real error rather than swallowing it,
+    // so a malformed `init.target`/`init.token`, a malformed chain-read `grant.token`, or a genuine
+    // bug in `deriveScopeIdV3` still leaves a trace instead of vanishing into an anonymous
+    // `scope-drift`. This is the one test in this file that inspects the DIAGNOSTIC, not just the
+    // outcome — it goes RED the instant the catch stops binding/logging the error.
+    test('a malformed field logs the underlying error for diagnosis, never swallowing it silently', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      try {
+        const decision = await proveReusablePermission(
+          baseDeps({ agentInits: [agentInit({ mintRecipient: new Uint8Array(31) })] })
+        )
+        expect(decision.mode).toBe('fresh')
+        expect(warnSpy).toHaveBeenCalledTimes(1)
+        expect(warnSpy.mock.calls[0].join(' ')).toMatch(/32 bytes/)
+      } finally {
+        warnSpy.mockRestore()
+      }
     })
   })
 

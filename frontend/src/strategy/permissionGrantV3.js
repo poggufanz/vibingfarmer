@@ -286,15 +286,34 @@ function freshDecision(base, freshReason) {
  * `readLinkedPermission` checks that run right after it. `code`/`signerPub` remain an open,
  * documented gap — see `deriveScopeIdV3`'s doc and the task report.
  *
- * ANOTHER HONEST, DOCUMENTED GAP (do not "fix" by contriving a test that reaches it — the gate
- * that makes it unreachable is correct and must stay): `init.mintRecipient` and
- * `init.destinationDomain` are never exercised THROUGH this function. Gate 2 above returns
- * `'base-required'` for any allocation with a Bridge `kind`, before a single chain read, so every
- * `agentInits[i]` that survives to the scope-id derivation in step 7b is a Deposit-kind allocation
- * whose bridge fields are, by this codebase's own convention, always the zero value. These two
- * fields are exercised ONLY by `deriveScopeIdV3`'s own direct pinned-vector tests
- * (`permissionGrantV3.test.js`), never through this function — a comment implying otherwise would
- * be exactly the kind of false coverage claim this remediation exists to remove.
+ * HONEST, DOCUMENTED GAP (rewritten in fix round 1 — the previous revision of this paragraph made
+ * three claims broader than the code actually supports, exactly the kind of comment this
+ * remediation exists to catch; corrected here to state only what is true and checkable):
+ *
+ * Gate 2 above excludes ONLY `kind === AGENT_KIND_BRIDGE`. Every `agentInits[i]` that survives it
+ * therefore has `kind !== AGENT_KIND_BRIDGE` — NOT necessarily "Deposit-kind": the only other kind
+ * value this codebase currently defines is `AGENT_KIND_DEPOSIT` (grant.js), but this function
+ * itself asserts nothing about `kind` beyond "not Bridge" until `assertU32` (inside
+ * `deriveScopeIdV3`) validates it at step 7b below. A malformed or unknown non-Bridge `kind` also
+ * survives gate 2 and reaches that same validation.
+ *
+ * Nothing in THIS function enforces that a surviving allocation's `mintRecipient`/
+ * `destinationDomain` are zero. That is a convention every current CALLER happens to follow for a
+ * Deposit-kind allocation (see grant.js's `agentInitScVal`, which encodes both fields
+ * unconditionally regardless of kind) — not a guarantee this function makes, checks, or relies on.
+ * A malformed value in either field is not excluded by gate 2 either; it flows straight into
+ * `deriveScopeIdV3`'s own validation, caught by the try/catch immediately below (added by item 2 of
+ * this same task round for exactly this reason).
+ *
+ * What this function's OWN tests actually exercise for these two fields: MALFORMED values (a
+ * `mintRecipient` of the wrong length, an out-of-range `destinationDomain`), which the try/catch
+ * below catches and turns into a `'scope-drift'` fresh decision — see the two tests added for that
+ * item in `permissionGrantV3.test.js`. What they do NOT exercise: a WELL-FORMED, non-zero
+ * `mintRecipient`/`destinationDomain` pair reaching a genuine `reuse` decision through this
+ * function — every `reuse` fixture in this suite uses the zero bridge fields. That successful,
+ * non-zero path is exercised only by `deriveScopeIdV3`'s own direct pinned-vector test (the kind-1/
+ * Bridge vector), never through `proveReusablePermission`. Do not contrive a test reaching it here
+ * — see the task report for why.
  */
 export async function proveReusablePermission({
   runId,
@@ -440,7 +459,17 @@ export async function proveReusablePermission({
         destinationDomain: Number(init.destinationDomain),
       })
     )
-  } catch {
+  } catch (err) {
+    // Fails CLOSED, never SILENTLY: every class of failure that can reach here — a malformed
+    // `init.target`/`init.token` (bad strkey), a malformed `mintRecipient` length, an out-of-range
+    // `kind`/`destinationDomain`, a malformed `grant.token` from the chain read above, or a genuine
+    // BUG in `deriveScopeIdV3`/`Address.fromString` itself — collapses to the SAME `scope-drift`
+    // freshReason (deliberately, see the paragraph above). But collapsing the OUTCOME must never
+    // mean erasing the EVIDENCE: bind and log the real error so a caller debugging a surprising
+    // `scope-drift` still has a trace pointing at what actually broke, instead of an anonymous
+    // catch that could be hiding a real programming defect forever.
+    // eslint-disable-next-line no-console -- intentional diagnostic trace, not a debug leftover
+    console.warn('[permissionGrantV3] scope-id derivation failed — forcing fresh:', err?.message)
     return freshDecision(base, 'scope-drift')
   }
   if (derivedScopeIds.some((id) => id !== derivedScopeIds[0]))
