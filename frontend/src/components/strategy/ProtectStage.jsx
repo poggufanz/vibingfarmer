@@ -681,7 +681,12 @@ export function ProtectStage({
                 type="button"
                 className="pc-button pc-button--primary"
                 onClick={handleCheckPermission}
-                disabled={routerVersion === 3 && Boolean(ceilingError)}
+                // Fix round 2, Minor 1 (reviewer finding): `ceilingError` can only ever be
+                // non-null when the ceiling input itself is mounted (`routerVersion === 3` --
+                // it's the ONLY caller of `handleCeilingInput`), so the extra `routerVersion === 3`
+                // conjunct here was redundant and unfalsifiable. Dropped rather than adding a
+                // contrived test for an invariant the component already enforces structurally.
+                disabled={Boolean(ceilingError)}
               >
                 Check my permission
               </button>

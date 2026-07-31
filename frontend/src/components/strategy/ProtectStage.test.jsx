@@ -460,7 +460,14 @@ describe('ProtectStage — fresh review content (Step 2: friendly + technical co
   // Stellar CONTRACT address (`C` + 55 base32 chars -- SEP-41 tokens are always contracts, matching
   // scval.js's addrScVal boundary) survives anywhere else, a real Stellar G-account identity (e.g.
   // an agent address) is a different, intentionally-visible thing and not what this guards.
-  const STELLAR_CONTRACT_RE = /\bC[A-Z2-7]{55}\b/
+  // Fix round 2, Important 2 (reviewer finding): `\b` word boundaries can silently fail to match
+  // when a contract address abuts another word character in concatenated `textContent` (a digit,
+  // or another base32 letter right after it) -- and a bare `.not.toMatch()` only ever checks the
+  // FIRST match, so a second, genuinely new leak sitting right next to an already-expected one
+  // would never be seen. Global, no boundaries, and the caller collects the FULL match set via
+  // `.match(RE)` (an array of every non-overlapping match) and asserts it against an explicit
+  // expected set -- never merely "absent".
+  const STELLAR_CONTRACT_RE = /C[A-Z2-7]{55}/g
 
   it('C1: no raw Stellar contract address survives anywhere on the friendly Protect surface (only inside a technical disclosure)', async () => {
     // plan.amount.token is resolved defensively via tokenSymbol() at its one render site
@@ -487,24 +494,30 @@ describe('ProtectStage — fresh review content (Step 2: friendly + technical co
       el.remove()
     })
     expect(friendlySurface.textContent).toContain('USDC')
-    expect(friendlySurface.textContent).not.toMatch(STELLAR_CONTRACT_RE)
+    // Fresh mode renders no `agentAddress` at all (no agent is deployed yet), so the expected set
+    // is empty -- any match here, of ANY contract, is a leak.
+    expect(friendlySurface.textContent.match(STELLAR_CONTRACT_RE) || []).toEqual([])
     expect(friendlySurface.textContent).not.toContain(TOKEN_ADDR)
   })
 
-  // Fix round 1, Important 2 (reviewer finding). Two problems with the guard above: (1) it never
-  // exercised either reuse state (V2 or V3), where `agentAddress` renders raw; (2) `\bC[A-Z2-7]{55}\b`
-  // fails to match when the address abuts another WORD character in the concatenated `textContent`
-  // -- e.g. straight after "ledger 1409000" in the V3 render, the preceding "0" is itself a word
-  // character, so no boundary exists and the match silently fails. Corrected regex, scoped to this
-  // test only (the original test above never renders an agent address, so its own regex is
-  // unaffected either way). This reveals a REAL, PRE-EXISTING leak in both V2 and V3 -- Soroban
-  // agent accounts ARE contracts (56 chars, starts with `C`), not the G-account this file's own
-  // header comment assumed -- reported here and in the task report, not hidden by loosening the
-  // regex back or by silently wrapping it in `.pc-technical` (a product call outside this fix's
-  // scope). What the guard DOES still prove, for both states: no MONEY-relevant token address
-  // (headroom/budget contract) ever leaks -- only the agent's own identity does.
-  it('C1 extended, Important 2: the V2 and V3 reuse states leak no contract-shaped TOKEN address outside a technical disclosure (agentAddress is a documented, tracked, pre-existing exception -- see the report)', async () => {
-    const NO_BOUNDARY_CONTRACT_RE = /C[A-Z2-7]{55}/
+  // Fix round 1, Important 2 (reviewer finding); STRENGTHENED in fix round 2 (reviewer finding,
+  // still open): `\bC[A-Z2-7]{55}\b` fails to match when the address abuts another WORD character
+  // in the concatenated `textContent` (e.g. straight after "ledger 1409000", the preceding "0" is
+  // itself a word character, so no boundary exists). Round 1 dropped the boundaries but still read
+  // `.match(RE)?.[0]` -- the FIRST match only -- so the reviewer proved this could not catch a
+  // SECOND, genuinely new leak sitting next to the already-expected one: injecting
+  // `reviewed.target` (a real contract, `VAULT_ADDR`) into the V3 execution row stayed GREEN,
+  // because the first match was still the already-expected `agentAddress`. Global regex, collect
+  // the FULL match set via `.match(RE)`, assert it equals the exact expected set (sorted, so
+  // ordering in the DOM can't matter) -- not "a match is present"/"the first match is X". This
+  // reveals a REAL, PRE-EXISTING leak in both V2 and V3 -- Soroban agent accounts ARE contracts
+  // (56 chars, starts with `C`), not the G-account this file's own header comment assumed --
+  // reported here and in the task report as an explicit, tracked, expected entry, not hidden by
+  // loosening the regex back or by silently wrapping it in `.pc-technical` (a product call outside
+  // this fix's scope).
+  it('C1 extended, Important 2: the V2 and V3 reuse states leak EXACTLY the documented agentAddress and nothing else outside a technical disclosure', async () => {
+    const NO_BOUNDARY_CONTRACT_RE = /C[A-Z2-7]{55}/g
+    const matchesIn = (node) => (node.textContent.match(NO_BOUNDARY_CONTRACT_RE) || []).sort()
 
     const v2Decision = reuseDecisionRaw()
     const { container: v2Container, unmount: unmountV2 } = render(
@@ -513,8 +526,7 @@ describe('ProtectStage — fresh review content (Step 2: friendly + technical co
     await checkPermission()
     const v2Friendly = v2Container.cloneNode(true)
     v2Friendly.querySelectorAll('.pc-technical-details, .pc-technical').forEach((el) => el.remove())
-    expect(v2Friendly.textContent).toMatch(NO_BOUNDARY_CONTRACT_RE)
-    expect(v2Friendly.textContent.match(NO_BOUNDARY_CONTRACT_RE)?.[0]).toBe(AGENT_1)
+    expect(matchesIn(v2Friendly)).toEqual([AGENT_1])
     expect(v2Friendly.textContent).not.toContain(TOKEN_ADDR)
     unmountV2()
 
@@ -525,10 +537,7 @@ describe('ProtectStage — fresh review content (Step 2: friendly + technical co
     await checkPermission()
     const v3Friendly = v3Container.cloneNode(true)
     v3Friendly.querySelectorAll('.pc-technical-details, .pc-technical').forEach((el) => el.remove())
-    expect(v3Friendly.textContent).toMatch(NO_BOUNDARY_CONTRACT_RE)
-    expect(v3Friendly.textContent.match(NO_BOUNDARY_CONTRACT_RE)?.[0]).toBe(
-      v3Decision.executions[0].agentAddress
-    )
+    expect(matchesIn(v3Friendly)).toEqual([v3Decision.executions[0].agentAddress])
     expect(v3Friendly.textContent).not.toContain(TOKEN_ADDR)
   })
 
@@ -624,6 +633,21 @@ describe('ProtectStage — Task 5 chunk C: the reusable ceiling control (routerV
     // buffer, a re-serialization through Number, or any rounding still breaks this.
     expect(input.getAttribute('data-ceiling-units') === PLAN_DEPOSIT_ONLY.amount.units).toBe(true)
     expect(screen.getByText(/Applies 100 USDC/)).toBeTruthy()
+  })
+
+  // Fix round 2, Minor 2 (reviewer finding): the test above uses `'1000000000'`, which round-trips
+  // through `Number` exactly -- so `useState(String(Number(plan.amount.units)))`, the precise
+  // transformation the brief's "no... re-serialization through Number" rule names, stayed green
+  // against it. A fixture whose digit count exceeds 2^53 (9,007,199,254,740,992) does NOT survive
+  // that round-trip, so THIS is the one that actually discriminates it.
+  it('defaults byte-for-byte to plannedUnitsNow even beyond Number precision (2^53) -- discriminates a Number re-serialization', () => {
+    const bigPlan = {
+      ...PLAN_DEPOSIT_ONLY,
+      amount: { token: 'USDC', units: '9007199254740993', decimals: 7 },
+    }
+    render(<ProtectStage {...baseProps({ plan: bigPlan, routerVersion: 3 })} />)
+    const input = screen.getByLabelText('Reusable spending ceiling')
+    expect(input.getAttribute('data-ceiling-units')).toBe('9007199254740993')
   })
 
   it('accepts an explicit raise above plannedUnitsNow -- raising exposure is a deliberate edit', () => {
@@ -817,6 +841,30 @@ describe('ProtectStage — Task 5 chunk C: V3 reuse review (executions, four fig
     await screen.findByRole('button', { name: 'Check again' })
     expect(screen.queryByRole('button', { name: 'Continue' })).toBeNull()
   })
+
+  // Fix round 2 (reviewer finding, new Important): the canonical-units guard on
+  // `mandateCeilingUnits`/`confirmedSpentUnits`/`remainingHeadroomUnits` shipped with no test that
+  // could fail -- round 1's report credited it to "the same `if` chain" as the reviewedBudgets
+  // check above, which is false (they are separate `if` statements). Reproduced the reviewer's own
+  // probes: a fractional units string crashes `BigInt()`, `undefined` crashes it too, and a
+  // leading-zero string is non-canonical but numerically parseable, so it would otherwise render a
+  // wrong-but-plausible figure with Continue enabled. All three must fail closed instead.
+  it.each([
+    ['a fractional mandateCeilingUnits', { mandateCeilingUnits: '12.5' }],
+    ['an undefined remainingHeadroomUnits', { remainingHeadroomUnits: undefined }],
+    ['a leading-zero confirmedSpentUnits', { confirmedSpentUnits: '0100' }],
+  ])(
+    'a V3 decision with %s cannot show reuse -- never throws, never renders a wrong figure with an enabled Continue',
+    async (_label, over) => {
+      const badReuse = reuseDecisionV3Raw(over)
+      const onRetryPreflight = vi.fn().mockResolvedValue(badReuse)
+      render(<ProtectStage {...baseProps({ onRetryPreflight })} />)
+      fireEvent.click(screen.getByRole('button', { name: 'Check my permission' }))
+      await screen.findByRole('button', { name: 'Check again' })
+      expect(screen.queryByRole('button', { name: 'Continue' })).toBeNull()
+      expect(screen.queryByText(/Cumulative ceiling/)).toBeNull()
+    }
+  )
 
   it('a V3 reuse decision still calls onConfirmReuse (never onRequestGrant) on Continue', async () => {
     const onRetryPreflight = vi.fn().mockResolvedValue(reuseDecisionV3Raw())
