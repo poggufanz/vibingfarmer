@@ -527,6 +527,19 @@ describe('proveReusablePermission — reuse', () => {
     expect(decision.executions[0].executionId).toMatch(HEX32)
     expect(decision.executions[0].allocationId).toBe(agentInit().allocationId)
   })
+
+  test('mints one unique execution per allocation under a single permission', async () => {
+    const decision = await proveReusablePermission(
+      depsWithScope({
+        agentInits: [agentInit(), agentInit({ allocationId: 'run-1:deposit:1' })],
+      })
+    )
+    expect(decision.mode).toBe('reuse')
+    expect(decision.executions).toHaveLength(2)
+    const ids = decision.executions.map((e) => e.executionId)
+    expect(new Set(ids).size).toBe(2)
+    for (const id of ids) expect(id).toMatch(HEX32)
+  })
 })
 
 describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
@@ -701,75 +714,74 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
     expect(decision.freshReason).toBe('per-execution-cap')
   })
 
-  // Defect 2: `inspectAgents` is an injected chain read with no ordering — and no SIZE — contract,
-  // and no `AgentInit`/row pair shares any field the other could be matched against (confirmed
-  // against `agentCache.js`'s `inspectReusableAgents`, the closest production candidate — its rows
-  // carry no per-allocation reference at all; see the task report). Binding `executions[i]` to
-  // `rows[i]` by array position lets an allocation land on the wrong agent — the exact address a
-  // real `pull_v3` moves funds to — the instant there is more than one allocation to disambiguate.
-  // With exactly one, position and identity are the same thing; with more than one, nothing here
-  // can tell a correct pairing from an incorrect one, so it forces fresh rather than guess.
-  test('rows longer than agentInits forces fresh — an untracked extra candidate is not evidence', async () => {
-    const decision = await proveReusablePermission(
+  // Defect 2: binding is an ASSIGNMENT (bucket by target/token, skip claimed addresses — V2's
+  // `selectAgents` model), never a positional zip. It runs only after the scope-drift comparison
+  // above already proves the deployed SET matches the permission's recorded scope, so these tests
+  // assert the BINDING itself — the actual allocation→address map — not merely a refusal.
+  test('rows arriving in a DIFFERENT ORDER still bind each allocation to the SAME agent — the assignment is a pure function of the row set, not of read order', async () => {
+    const agentInits = [
+      agentInit({ allocationId: 'run-1:deposit:0' }),
+      agentInit({ allocationId: 'run-1:deposit:1' }),
+    ]
+    const mapOf = (decision) =>
+      new Map(decision.executions.map((e) => [e.allocationId, e.agentAddress]))
+
+    const inOrder = await proveReusablePermission(
       depsWithScope({
+        agentInits,
         inspectAgents: vi.fn(async () => [
           inspectedAgent(),
           inspectedAgent({ agentAddress: AGENT_2 }),
         ]),
       })
     )
-    expect(decision.mode).toBe('fresh')
-    expect(decision.freshReason).toBe('agent-binding-unproven')
-  })
-
-  // Same underlying evidence as the test above (an agent present that no reviewed allocation
-  // needed), stated from the brief's other angle: a row belongs to zero reviewed allocations.
-  test('a row present for an allocation that was never reviewed forces fresh, not a silent extra candidate', async () => {
-    const decision = await proveReusablePermission(
+    const reversed = await proveReusablePermission(
       depsWithScope({
-        agentInits: [agentInit()],
+        agentInits,
         inspectAgents: vi.fn(async () => [
+          inspectedAgent({ agentAddress: AGENT_2 }),
           inspectedAgent(),
-          inspectedAgent({ agentAddress: AGENT_2 }), // belongs to no reviewed allocation
         ]),
       })
+    )
+
+    expect(inOrder.mode).toBe('reuse')
+    expect(reversed.mode).toBe('reuse')
+    expect(mapOf(reversed)).toEqual(mapOf(inOrder))
+    // Pin the actual mapping, not just "the two calls agree with each other."
+    expect(mapOf(inOrder).get('run-1:deposit:0')).toBe(AGENT_1)
+    expect(mapOf(inOrder).get('run-1:deposit:1')).toBe(AGENT_2)
+  })
+
+  // No `inspectAgents` override: depsWithScope's one auto-derived row (target VAULT, matching the
+  // recorded scope) is left untouched, so scope-drift passes trivially and this isolates the
+  // claim-loop's own match failure — only the AGENTINIT's target changes, not any row's.
+  test('an allocation whose target/token matches no candidate row forces fresh, not a guessed address', async () => {
+    const decision = await proveReusablePermission(
+      depsWithScope({ agentInits: [agentInit({ target: VAULT_2 })] })
     )
     expect(decision.mode).toBe('fresh')
     expect(decision.freshReason).toBe('agent-binding-unproven')
   })
 
-  // The proof technique orchestrator.router.test.js's own recent identity-matching fix round used:
-  // reverse the chain read's array relative to review order, and show a swap would have happened.
-  // Here there is no identity signal to fall back on, so — unlike that downstream fix — reordering
-  // can only be handled by refusing to guess: BOTH orders of the SAME two-row set force fresh
-  // identically, proving the decision does not depend on (and so cannot be fooled by) `rows`' order.
-  test.each([
-    ['in review order', [AGENT_1, AGENT_2]],
-    ['reversed — a positional zip would swap the two', [AGENT_2, AGENT_1]],
-  ])(
-    'rows %s still force fresh — a wrong pairing never reaches an execution',
-    async (_label, order) => {
-      const decision = await proveReusablePermission(
-        depsWithScope({
-          agentInits: [
-            agentInit({ allocationId: 'run-1:deposit:0' }),
-            agentInit({ allocationId: 'run-1:deposit:1' }),
-          ],
-          inspectAgents: vi.fn(async () =>
-            order.map((agentAddress) => inspectedAgent({ agentAddress }))
-          ),
-        })
-      )
-      expect(decision.mode).toBe('fresh')
-      expect(decision.freshReason).toBe('agent-binding-unproven')
-      expect(decision.executions).toEqual([])
-    }
-  )
+  // Same row set depsWithScope already proves consistent with the recorded scope (both agentInits
+  // default to VAULT, matching the two auto-derived rows) — only the SECOND allocation's target is
+  // changed, so this isolates the claim-loop's per-allocation match failure from scope-drift.
+  test('one allocation with no plausible candidate forces the WHOLE decision fresh — never a partial bind', async () => {
+    const decision = await proveReusablePermission(
+      depsWithScope({
+        agentInits: [
+          agentInit({ allocationId: 'run-1:deposit:0' }),
+          agentInit({ allocationId: 'run-1:deposit:1', target: VAULT_2 }),
+        ],
+      })
+    )
+    expect(decision.mode).toBe('fresh')
+    expect(decision.freshReason).toBe('agent-binding-unproven')
+    expect(decision.executions).toEqual([])
+  })
 
-  // "An allocation whose agent is absent from rows entirely" and "a row present for an allocation
-  // that was never reviewed" collapse to the SAME evidence once there is more than one allocation:
-  // whatever the exact mismatch, more than one allocation makes the whole binding unprovable.
-  test('a second allocation with no plausible agent at all still forces fresh, not a partial bind', async () => {
+  test('too few rows for the reviewed allocations still reports the more specific agent-missing, not agent-binding-unproven', async () => {
     const decision = await proveReusablePermission(
       depsWithScope({
         agentInits: [
@@ -780,7 +792,7 @@ describe('proveReusablePermission — forces fresh, all-or-nothing', () => {
       })
     )
     expect(decision.mode).toBe('fresh')
-    expect(decision.freshReason).toBe('agent-missing') // too few rows is still the more specific reason
+    expect(decision.freshReason).toBe('agent-missing')
     expect(decision.executions).toEqual([])
   })
 

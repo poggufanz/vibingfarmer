@@ -196,21 +196,20 @@ function freshDecision(base, freshReason) {
  * Every chain read is injected. `resolveSchema` defaults to the production resolver, which knows
  * no V3 address — so in production this returns `fresh` before performing a single read.
  *
- * `agentInits[i]` and an `inspectAgents` row share NO stable key today — an `AgentInit` names an
- * allocation, never an agent, and a row names an agent, never an allocation (confirmed against
- * `agentCache.js`'s `inspectReusableAgents`, the closest production candidate: its rows carry no
- * per-allocation reference at all). Binding `rows[i]` to `agentInits[i]` by array POSITION is
- * therefore unprovable the moment there is more than one allocation to disambiguate — `rows` is an
- * injected chain read with no ordering, and no SIZE, contract, so a reordered or padded result can
- * silently swap which agent an allocation's money moves to. With exactly ONE reviewed allocation,
- * position and identity coincide trivially (there is only one row to bind to); with more than one,
- * NO available data can tell a correct pairing from an incorrect one, so this forces fresh with
- * `'agent-binding-unproven'` rather than guess — the same reason a row count that doesn't match
- * `agentInits` exactly gets, since both are "the binding cannot be proven," not "the agent is
- * simply missing" (`'agent-missing'`, reserved for too few rows). Making multi-allocation V3 reuse
- * provable needs a real shared key (e.g. an on-chain agent surfacing its allocation, or the
- * orchestrator threading a previously-picked address back in) — deliberately not invented here;
- * see the task report.
+ * `agentInits[i]` and an `inspectAgents` row share no per-allocation identity key (an `AgentInit`
+ * names an allocation, a row names a deployed agent), but they DO share `target`/`token` — every
+ * fixture in this file and in `reusePreflight.test.js` confirms it. So this does not DISCOVER a
+ * pre-existing pairing; it ASSIGNS one, the same model V2's `selectAgents` (reusePreflight.js)
+ * already uses in production: bucket candidates by (target, token), skip already-claimed
+ * addresses, take one. `rows`' order is not part of any contract, so the candidate set is
+ * canonicalized (sorted by `agentAddress`, the same convention `buildScopeId`'s `sorted()` uses)
+ * before assignment — the binding is a pure function of the row SET, never of whatever order the
+ * chain read happened to return it in, so a reordered re-read can never flip which agent an
+ * allocation binds to. An allocation whose target/token matches no remaining candidate forces
+ * fresh with `'agent-binding-unproven'` — distinct from `'agent-missing'` (too few rows at all).
+ * This runs AFTER the scope-drift comparison below: that comparison already proves the deployed
+ * SET matches the permission's recorded scope (code/signer/target/token/caps), so assignment only
+ * ever picks among agents already known to be legitimate.
  */
 export async function proveReusablePermission({
   runId,
@@ -291,15 +290,6 @@ export async function proveReusablePermission({
   //    once — anything the scope binds cannot move without changing the id.
   const rows = await inspectAgents({ owner, network, nowSec, server, storage })
   if (rows.length < agentInits.length) return freshDecision(base, 'agent-missing')
-  // Binding `rows[i]` to `agentInits[i]` by array position is unprovable the moment there is more
-  // than one allocation to disambiguate: `inspectAgents` is an injected chain read with no
-  // ordering — and no SIZE — contract, and neither an `AgentInit` nor a row carries any field the
-  // other could be matched against (see the module header). With exactly one reviewed allocation,
-  // position and identity coincide trivially, so that case is left to the existing checks below.
-  // An extra/missing row, or more than one allocation to place, is unprovable either way, so both
-  // force fresh the same way rather than guessing.
-  if (rows.length > agentInits.length || agentInits.length > 1)
-    return freshDecision(base, 'agent-binding-unproven')
 
   // A permission binds ONE token. `buildScopeId` therefore takes the permission's token, not each
   // agent's, so a drifted per-agent token would otherwise never reach the hash — check it directly.
@@ -315,11 +305,28 @@ export async function proveReusablePermission({
   })
   if (scopeId !== grant.scopeId) return freshDecision(base, 'scope-drift')
 
-  // 8. The V4 per-execution cap, which the cumulative ceiling does not imply. `rows[i]` is safe to
-  //    index here: the gate above guarantees exactly one allocation and one row by the time this
-  //    runs, so position and identity are the same thing, not an assumption.
+  // 7b. The set of deployed agents is now PROVEN to be the permission's own recorded scope (the
+  // comparison above). Binding each reviewed allocation to one of them is an ASSIGNMENT, not a
+  // discovery — the same model V2's `selectAgents` (reusePreflight.js) already uses in production:
+  // bucket by (target, token), skip already-claimed addresses, take one. `rows`' order is not part
+  // of any contract, so the candidate set is canonicalized first (`sorted()`, same convention as
+  // `buildScopeId` above) — the assignment must be a pure function of the row SET, never of
+  // whatever order the chain read happened to return it in.
+  const candidates = [...rows].sort((a, b) => (a.agentAddress < b.agentAddress ? -1 : 1))
+  const claimed = new Set()
+  const bound = []
+  for (const init of agentInits) {
+    const row = candidates.find(
+      (r) => !claimed.has(r.agentAddress) && r.target === init.target && r.token === init.token
+    )
+    if (!row) return freshDecision(base, 'agent-binding-unproven')
+    claimed.add(row.agentAddress)
+    bound.push(row)
+  }
+
+  // 8. The V4 per-execution cap, which the cumulative ceiling does not imply.
   for (let i = 0; i < agentInits.length; i++) {
-    const cap = rows[i].perExecutionMaxUnits
+    const cap = bound[i].perExecutionMaxUnits
     if (cap != null && BigInt(agentInits[i].cap.units) > BigInt(cap))
       return freshDecision(base, 'per-execution-cap')
   }
@@ -338,7 +345,7 @@ export async function proveReusablePermission({
     mandateCeilingUnits: String(grant.mandateCeilingUnits),
     confirmedSpentUnits: String(grant.confirmedSpentUnits),
     remainingHeadroomUnits: remainingUnits.toString(),
-    liveUntilLedger: Number(grant.liveUntilLedger),
+    liveUntilLedger: grant.liveUntilLedger,
     executions: agentInits.map((init, i) =>
       Object.assign(
         makeAllocationExecution({
@@ -347,7 +354,7 @@ export async function proveReusablePermission({
           scopeId,
           amountUnits: String(init.cap.units),
         }),
-        { agentAddress: rows[i].agentAddress }
+        { agentAddress: bound[i].agentAddress }
       )
     ),
     approval,
