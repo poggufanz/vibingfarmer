@@ -1,6 +1,14 @@
 // frontend/src/stellar/grant.test.js
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { Account, Address, Keypair, xdr, nativeToScVal } from '@stellar/stellar-sdk'
+import {
+  Account,
+  Address,
+  Keypair,
+  TransactionBuilder,
+  xdr,
+  nativeToScVal,
+} from '@stellar/stellar-sdk'
+import { NETWORK_PASSPHRASE } from './config.js'
 
 // Relay is the only network dependency submitGrant/runAgentPull reach for; mock it so the tests
 // run offline. Each test reconfigures the two fns it needs.
@@ -775,8 +783,11 @@ describe('buildGrantV3Tx — the reviewed bound is what gets signed', () => {
       resolveSchema: asV3,
     })
     // grantV3Retval encodes a 32-byte permission_id of all 0x11 — anything else means the decode
-    // path drifted from the chain's own retval.
-    expect(Buffer.from(permissionId).toString('hex')).toBe('11'.repeat(32))
+    // path drifted from the chain's own retval. Compared directly, with NO normalization on
+    // either side: `permissionId` must already be the repo-wide '0x'-prefixed lowercase hex
+    // STRING (never a Buffer) — see this function's own doc comment for why.
+    expect(permissionId).toBe('0x' + '11'.repeat(32))
+    expect(typeof permissionId).toBe('string')
   })
 
   it('refuses an approval with no absolute ledger expiry', async () => {
@@ -855,8 +866,93 @@ describe('submitGrantV3 - a single signature (dormant until a V3 router is deplo
     expect(out.agentAddresses).toEqual([AGENT_1, AGENT_2])
     expect(out.liveUntilLedger).toBe(bigApproval.liveUntilLedger)
     // grantV3Retval's permission_id is 32 bytes of 0x11 — a locally-invented or re-derived value
-    // would not reproduce this exact byte pattern.
-    expect(Buffer.from(out.permissionId).toString('hex')).toBe('11'.repeat(32))
+    // would not reproduce this exact byte pattern. Compared directly (no `Buffer.from(...)`
+    // normalization on either side): a bare Buffer here fails this literal string comparison
+    // immediately, which is the point — only the repo-wide '0x'-prefixed hex string satisfies it.
+    expect(out.permissionId).toBe('0x' + '11'.repeat(32))
+  })
+
+  it('threads mandateCeilingUnits/perRunMaxUnits through submitGrantV3 → buildGrantV3Tx into the BUILT TX exactly, beyond Number precision', async () => {
+    // Unlike a test that only reads submitGrantV3's own return value, this reads the unit values
+    // back out of the actual built transaction (via the xdr the G-owner `sign` step was handed) —
+    // so a stray Number() ANYWHERE in the pass-through (submitGrantV3's own args, or the object it
+    // hands to buildGrantV3Tx) is caught, not just one already covered by buildGrantV3Tx's own
+    // narrower "carries the reviewed ceiling exactly" unit test.
+    const server = fakeServer({ latest: 1000, retval: grantV3Retval([AGENT_1, AGENT_2]) })
+    submitViaRelayMock.mockResolvedValue({ hash: 'HV3REL', status: 'SUCCESS', relayer: 'GR' })
+    let signedXdr = null
+    const sign = vi.fn(async (x) => {
+      signedXdr = x
+      return `SIGNED:${x}`
+    })
+
+    await submitGrantV3({
+      owner: OWNER,
+      token: TOKEN,
+      approval: bigApproval,
+      perRunMaxUnits: bigPerRunMaxUnits,
+      agentInits: sampleInits,
+      router: ROUTER_V3,
+      server,
+      sign,
+      resolveSchema: asV3,
+    })
+
+    const builtTx = TransactionBuilder.fromXDR(signedXdr, NETWORK_PASSPHRASE)
+    const args = invokeArgs(builtTx)
+    const i128ToString = (scv) => {
+      const v = scv.i128()
+      return ((BigInt(v.hi().toString()) << 64n) | BigInt(v.lo().toString())).toString()
+    }
+    // ABI order: owner(0), token(1), mandate_ceiling(2), per_run_max(3), live_until_ledger(4), agents(5).
+    expect(i128ToString(args[2])).toBe(bigApproval.mandateCeilingUnits)
+    expect(i128ToString(args[3])).toBe(bigPerRunMaxUnits)
+  })
+
+  it("crosses the decode→next-use seam: submitGrantV3's own permissionId feeds straight into buildAgentPullV3 with NO conversion at the call site", async () => {
+    const server = fakeServer({ latest: 1000, retval: grantV3Retval([AGENT_1]) })
+    submitViaRelayMock.mockResolvedValue({ hash: 'HV3REL2', status: 'SUCCESS' })
+    const sign = vi.fn(async (x) => `SIGNED:${x}`)
+
+    const granted = await submitGrantV3({
+      owner: OWNER,
+      token: TOKEN,
+      approval: bigApproval,
+      perRunMaxUnits: bigPerRunMaxUnits,
+      agentInits: [sampleInits[0]],
+      router: ROUTER_V3,
+      server,
+      sign,
+      resolveSchema: asV3,
+    })
+
+    // The value itself, UNNORMALIZED on either side — the seam-crossing assertion that actually
+    // matters. `Buffer.from(x).toString('hex')` would erase a representation mismatch (a Buffer
+    // and a hex string of the same bytes both survive that round-trip); a bare `toBe` against the
+    // literal hex string does not.
+    expect(granted.permissionId).toBe('0x' + '11'.repeat(32))
+
+    // Feed it straight into buildAgentPullV3 exactly as a real caller would — no conversion at the
+    // call site — proving the two functions actually agree on the wire, not just that each one
+    // individually claims to use hex in its own JSDoc.
+    let builtPull = null
+    signAgentDepositEntriesMock.mockImplementation(async ({ tx }) => {
+      builtPull = tx
+      return { xdr: tx.toEnvelope().toXDR('base64') }
+    })
+    await buildAgentPullV3({
+      permissionId: granted.permissionId,
+      executionId: EXECUTION_ID,
+      agentAddress: AGENT_1,
+      amount: 1_000_000n,
+      relayer: RELAYER_G,
+      sessionKey: {},
+      router: ROUTER_V3,
+      server: fakeServer({ latest: 1000 }),
+      resolveSchema: asV3,
+    })
+    const pullArgs = invokeArgs(builtPull)
+    expect(pullArgs[0].bytes().toString('hex')).toBe('11'.repeat(32))
   })
 
   it('falls back to a direct user-paid submit when the relay is off (returns null)', async () => {
@@ -905,6 +1001,12 @@ describe('submitGrantV3 - C owner (passkey), routed through OwnerAuthorizationV1
     getRelayerAddressMock.mockResolvedValue(RELAYER_G)
     signOwnerAuthEntryMock.mockResolvedValue('SIGNED_C_XDR_V3')
     submitViaRelayMock.mockResolvedValue({ hash: 'HCV3', status: 'SUCCESS' })
+    // An explicit mock here (rather than relying on the default `signWithTimeout`) is what makes
+    // a mis-routed G-branch mutation fail DETERMINISTICALLY on the assertion below, instead of on
+    // an unrelated environmental crash (a real, unmocked `signWithTimeout` throwing on a Freighter
+    // import in this non-wallet test environment) that happens to also produce a red test but
+    // proves nothing about the routing branch itself.
+    const sign = vi.fn(async (x) => `SIGNED:${x}`)
 
     const out = await submitGrantV3({
       owner: OWNER_C,
@@ -914,6 +1016,7 @@ describe('submitGrantV3 - C owner (passkey), routed through OwnerAuthorizationV1
       agentInits: [sampleInits[0]],
       router: ROUTER_V3,
       server,
+      sign,
       activeAccount: { kind: 'C', address: OWNER_C },
       resolveSchema: asV3,
     })
@@ -921,9 +1024,11 @@ describe('submitGrantV3 - C owner (passkey), routed through OwnerAuthorizationV1
     expect(signOwnerAuthEntryMock).toHaveBeenCalledWith(
       expect.objectContaining({ contractId: OWNER_C })
     )
+    expect(sign).not.toHaveBeenCalled() // C owner never takes the classic-envelope path
     expect(submitViaRelayMock).toHaveBeenCalledWith({ xdr: 'SIGNED_C_XDR_V3' })
     expect(out).toMatchObject({ hash: 'HCV3', status: 'SUCCESS', agentAddresses: [AGENT_1] })
-    expect(Buffer.from(out.permissionId).toString('hex')).toBe('11'.repeat(32))
+    // Direct, unnormalized comparison — see the G-owner test above for why.
+    expect(out.permissionId).toBe('0x' + '11'.repeat(32))
   })
 
   it('has no user-funded fallback: an unreachable relay throws instead of billing the C owner', async () => {
@@ -931,6 +1036,7 @@ describe('submitGrantV3 - C owner (passkey), routed through OwnerAuthorizationV1
     getRelayerAddressMock.mockResolvedValue(RELAYER_G)
     signOwnerAuthEntryMock.mockResolvedValue('SIGNED_C_XDR_V3')
     submitViaRelayMock.mockResolvedValue(null) // relay unreachable AFTER the ceremony already ran
+    const sign = vi.fn(async (x) => `SIGNED:${x}`)
 
     await expect(
       submitGrantV3({
@@ -941,15 +1047,18 @@ describe('submitGrantV3 - C owner (passkey), routed through OwnerAuthorizationV1
         agentInits: [sampleInits[0]],
         router: ROUTER_V3,
         server,
+        sign,
         activeAccount: { kind: 'C', address: OWNER_C },
         resolveSchema: asV3,
       })
     ).rejects.toMatchObject({ code: 'VF_SUBMISSION_UNKNOWN' })
+    expect(sign).not.toHaveBeenCalled()
   })
 
   it('fails BEFORE the passkey ceremony when no relayer is funded', async () => {
     const server = fakeServer({ latest: 1000, retval: grantV3Retval([AGENT_1]) })
     getRelayerAddressMock.mockResolvedValue(null)
+    const sign = vi.fn(async (x) => `SIGNED:${x}`)
 
     await expect(
       submitGrantV3({
@@ -959,11 +1068,13 @@ describe('submitGrantV3 - C owner (passkey), routed through OwnerAuthorizationV1
         perRunMaxUnits: bigPerRunMaxUnits,
         agentInits: [sampleInits[0]],
         router: ROUTER_V3,
+        sign,
         server,
         activeAccount: { kind: 'C', address: OWNER_C },
         resolveSchema: asV3,
       })
     ).rejects.toMatchObject({ code: 'VF_FEE_PAYER_UNAVAILABLE' })
     expect(signOwnerAuthEntryMock).not.toHaveBeenCalled()
+    expect(sign).not.toHaveBeenCalled()
   })
 })

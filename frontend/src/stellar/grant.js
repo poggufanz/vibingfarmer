@@ -253,14 +253,26 @@ async function assertRouterV3(router, resolveSchema) {
  * `permissionId` is decoded from the SAME pre-submit simulation retval `agentAddresses` already
  * comes from (`grant_v3` returns `(permission_id, agent_addresses)`). That is safe to treat as the
  * value the real submit will commit — not a guess — because `derive_permission_id`
- * (funding_router/src/lib.rs) is a deterministic hash of (router, owner, every agent's raw salt),
- * the exact same "simulate matches submit" reasoning `buildGrantTx` already relies on for the
- * salt-derived `deploy_v2` agent addresses above.
+ * (funding_router/src/lib.rs:667-675) is a deterministic sha256 hash of (router, owner, every
+ * agent's raw salt) — no ledger read, no counter, no randomness — the exact same "simulate matches
+ * submit" reasoning `buildGrantTx` already relies on for the salt-derived `deploy_v2` agent
+ * addresses above.
+ *
+ * Controller ruling (IQ Alter remediation, repo-wide): every 32-byte id crossing a JS boundary is
+ * a `0x`-prefixed lowercase hex STRING, normalized at exactly one place — the point of decode. This
+ * is that point: `retval[0]` decodes to a raw `Buffer` (via `fromScVal`/`scValToNative`), validated
+ * as exactly 32 bytes and converted to hex HERE, never left as a Buffer past this function. Every
+ * real consumer already assumes the hex-string shape — `orchestrator.js`'s `===` comparison (a
+ * Buffer can never `===` a hex string, even byte-identical, since Buffer equality is by
+ * reference), `grantReceiptStore`'s JSON-persisted receipts (`JSON.stringify` turns a bare Buffer
+ * into `{"type":"Buffer","data":[...]}`, not the id), `ProtectStage.jsx`'s render, and this file's
+ * own `buildAgentPullV3` (`permissionId:string` below) — so a Buffer surfacing from here would
+ * silently break every one of them, the exact class of defect this remediation plan exists to fix.
  * @param {{owner:string, token:string, approval:{mandateCeilingUnits:string, liveUntilLedger:number},
  *          perRunMaxUnits:string, agentInits:Array, router?:string, server?:object,
  *          txSource?:string, resolveSchema?:Function}} p
  * @returns {Promise<{tx:object, xdr:string, agentAddresses:string[], liveUntilLedger:number,
- *          permissionId:Buffer}>}
+ *          permissionId:string}>}
  */
 export async function buildGrantV3Tx({
   owner,
@@ -324,7 +336,24 @@ export async function buildGrantV3Tx({
     throw new Error(`Grant simulation failed: ${sim.error || 'no result'}`)
   const retval = fromScVal(sim.result.retval)
   // grant_v3 returns (permission_id, agent_addresses).
-  const permissionId = Array.isArray(retval) ? retval[0] : undefined
+  const permissionIdBytes = Array.isArray(retval) ? retval[0] : undefined
+  // Fail loudly: proveReusablePermission keys every future reuse read on this value
+  // (permissionGrantV3.js:257,278), so a missing or malformed permission_id is not a recoverable
+  // condition — never let `undefined`/a wrong-length value silently pass through for a caller to
+  // discover later, and never fabricate a placeholder in its place.
+  if (!(permissionIdBytes instanceof Uint8Array) || permissionIdBytes.length !== 32) {
+    throw new Error(
+      `grant_v3 returned a malformed permission_id (expected 32 bytes, got ${
+        permissionIdBytes ? permissionIdBytes.length : 'none'
+      }).`
+    )
+  }
+  // Normalize to the repo-wide '0x'-prefixed lowercase hex string HERE — see this function's own
+  // doc comment above for why a bare Buffer must never leave this point. Pure Uint8Array→hex, no
+  // `Buffer` global: this file isn't in eslint.config.js's browser-Buffer-polyfill allowlist, and
+  // every consumer needs a plain string regardless of runtime.
+  const permissionId =
+    '0x' + Array.from(permissionIdBytes, (b) => b.toString(16).padStart(2, '0')).join('')
   const agentAddresses = Array.isArray(retval) ? retval[1] : retval
 
   const tx = await s.prepareTransaction(raw)
@@ -403,7 +432,7 @@ export async function buildAgentPullV3({
  *          sign?:Function, activeAccount?:{kind:'G'|'C', address:string},
  *          getRelayerAddress?:Function, kit?:object, resolveSchema?:Function}} p
  * @returns {Promise<{hash:string, status:string, relayer?:string, agentAddresses:string[],
- *          liveUntilLedger:number, permissionId:Buffer}>}
+ *          liveUntilLedger:number, permissionId:string}>}
  */
 export async function submitGrantV3({
   owner,
