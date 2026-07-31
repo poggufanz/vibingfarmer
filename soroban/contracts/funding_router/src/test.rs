@@ -1329,3 +1329,88 @@ fn pull_v3_failed_transfer_does_not_advance_spend_or_mark_execution_used() {
     client.pull_v3(&permission_id, &execution_id, &agent, &50_000_000);
     assert_eq!(TokenClient::new(&s.env, &s.token).balance(&agent), 50_000_000);
 }
+
+// --- new: `linked_permission` is a public read of the SAME LinkedAgentV3 record `pull_v3`
+// itself checks — proves an agent's permission link from public state instead of a local cache. ---
+#[test]
+fn linked_permission_reflects_v3_agent_link_and_none_otherwise() {
+    let s = setup();
+    s.env.mock_all_auths();
+    let owner = Address::generate(&s.env);
+    let client = FundingRouterClient::new(&s.env, &s.router);
+    let inits = vec![&s.env, v3_init(&s.env, &s.token, &s.vault, 1, 100_000_000)];
+
+    let (permission_id, agents) =
+        client.grant_v3(&owner, &s.token, &500_000_000, &200_000_000, &1_000, &inits);
+    let agent = agents.get(0).unwrap();
+
+    assert_eq!(client.linked_permission(&agent), Some(permission_id));
+    // An address nobody ever deployed via grant_v3 has no link.
+    assert_eq!(client.linked_permission(&Address::generate(&s.env)), None);
+    // A V2 grant()-deployed agent lives in a separate namespace — no V3 link either.
+    let v2_agents = client.grant(
+        &owner,
+        &budgets(&s.env, &s.token, 1_000),
+        &1_000,
+        &vec![&s.env, agent_init(&s.env, &s.token, &s.vault, 2, 1_000)],
+    );
+    assert_eq!(client.linked_permission(&v2_agents.get(0).unwrap()), None);
+}
+
+// ─────────────────────────── Pinned cross-layer vector for `derive_scope_id` ───────────────────────────
+//
+// CROSS-LAYER CONTRACT: the two byte vectors asserted below are consumed byte-for-byte by the
+// JavaScript mirror in `frontend/src/strategy/permissionGrantV3.js`. That file hand-reproduces
+// `derive_scope_id`'s exact preimage (domain tag || target XDR || token XDR || kind as a
+// big-endian u32 || mint_recipient (32 raw bytes) || destination_domain as a big-endian u32,
+// then sha256) so the browser can independently recompute a permission's scope_id and compare it
+// against on-chain state, instead of trusting its own local cache. If EITHER assertion below ever
+// changes for the SAME inputs — a different hash, a reordered preimage, a changed domain tag —
+// the JS mirror is broken and MUST be updated to match it. This Rust function is the single
+// source of truth for the algorithm; the JS is a hand-written port of it, never the reverse.
+//
+// `target`/`token` are built via `Address::from_str` from FIXED, hardcoded strkeys — never
+// `Address::generate`, which draws from the test env's PRNG and would make this vector unstable
+// across runs (a pinned vector that moves between runs is worthless). This calls the
+// crate-private `derive_scope_id` directly rather than going through `grant_v3` — test.rs is a
+// child module of the crate root so private items are visible to it (`crate::types::{..}` above
+// already relies on the same visibility), and the hash depends only on its own inputs: no token
+// or vault contract needs to actually exist on-chain for this.
+#[test]
+fn scope_id_matches_pinned_cross_layer_vector() {
+    let env = Env::default();
+
+    // Fixed target/token: synthetic 32-byte payloads (raw bytes 0xA0..0xBF and 0xB0..0xCF
+    // respectively) encoded as Stellar contract strkeys — NOT any real deployed contract, just a
+    // stable, reproducible pair of 32-byte identities for the hash to consume.
+    let target = Address::from_str(&env, "CCQKDIVDUSS2NJ5IVGVKXLFNV2X3BMNSWO2LLNVXXC43VO54XW7L65UW");
+    let token = Address::from_str(&env, "CCYLDMVTWS23NN5YXG5LXPF5X274BQOCYPCMLRWHZDE4VS6MZXHM6QJS");
+
+    // Vector 1: kind = 0 (deposit) — zero mint_recipient/destination_domain, the values every
+    // deposit-kind AgentInit carries (those two fields are semantically unused for kind 0, but
+    // still part of the hashed preimage either way).
+    let zero = BytesN::from_array(&env, &[0u8; 32]);
+    let scope1 = crate::derive_scope_id(&env, &target, &token, 0, &zero, 0);
+    assert_eq!(
+        scope1.to_array(),
+        [
+            0x77, 0x5a, 0xd5, 0xa5, 0xc5, 0xf2, 0xec, 0x63, 0x82, 0x44, 0x76, 0x26, 0x69, 0x4b,
+            0x4c, 0xa7, 0x5b, 0x25, 0xa2, 0x3d, 0x46, 0x6c, 0xfa, 0x3f, 0xda, 0x50, 0x55, 0x96,
+            0x86, 0x1d, 0x32, 0x02,
+        ]
+    );
+
+    // Vector 2: kind = 1 (bridge) — non-zero mint_recipient AND non-zero destination_domain, so
+    // both bridge-only fields are actually exercised in the preimage (`grant_v3` itself rejects
+    // kind == 1 with either one left at zero, so a real bridge permission always looks like this).
+    let mint_recipient = BytesN::from_array(&env, &[0xCDu8; 32]);
+    let scope2 = crate::derive_scope_id(&env, &target, &token, 1, &mint_recipient, 6);
+    assert_eq!(
+        scope2.to_array(),
+        [
+            0x94, 0xe4, 0x2b, 0x09, 0xc5, 0x13, 0xc8, 0x5d, 0x1d, 0x60, 0x63, 0x38, 0x77, 0xef,
+            0xac, 0x27, 0x5f, 0x52, 0x8c, 0x31, 0x41, 0xa4, 0x27, 0x43, 0xd7, 0x03, 0x15, 0x23,
+            0xf0, 0x49, 0x91, 0xd3,
+        ]
+    );
+}

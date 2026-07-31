@@ -582,6 +582,14 @@ impl FundingRouter {
             .unwrap_or(0)
     }
 
+    /// Permission id `agent` is immutably linked to (set once at `grant_v3`), or `None` if
+    /// `agent` was never deployed via `grant_v3`. Public read of the SAME `LinkedAgentV3` record
+    /// `pull_v3` itself checks — lets an off-chain caller PROVE "this agent belongs to this
+    /// permission" from public on-chain state instead of trusting its own local cache.
+    pub fn linked_permission(env: Env, agent: Address) -> Option<BytesN<32>> {
+        env.storage().persistent().get(&DataKey::LinkedAgentV3(agent))
+    }
+
     /// Owner kill switch for a V3 permission (idempotent). Blocks every future `pull_v3` under
     /// it; does NOT touch the linked agents' own on-chain scopes (those still answer to their
     /// own owner-gated `revoke`/`owner_withdraw`).
