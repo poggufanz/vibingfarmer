@@ -249,10 +249,18 @@ async function assertRouterV3(router, resolveSchema) {
  * Unlike `buildGrantTx`, this does NOT read a ledger to derive an expiry: `approval.liveUntilLedger`
  * was serialized once, from a fresh read, at review time (permissionGrantV3.buildReusableApproval)
  * and recomputing it here would silently move the bound the user actually approved.
+ *
+ * `permissionId` is decoded from the SAME pre-submit simulation retval `agentAddresses` already
+ * comes from (`grant_v3` returns `(permission_id, agent_addresses)`). That is safe to treat as the
+ * value the real submit will commit — not a guess — because `derive_permission_id`
+ * (funding_router/src/lib.rs) is a deterministic hash of (router, owner, every agent's raw salt),
+ * the exact same "simulate matches submit" reasoning `buildGrantTx` already relies on for the
+ * salt-derived `deploy_v2` agent addresses above.
  * @param {{owner:string, token:string, approval:{mandateCeilingUnits:string, liveUntilLedger:number},
  *          perRunMaxUnits:string, agentInits:Array, router?:string, server?:object,
  *          txSource?:string, resolveSchema?:Function}} p
- * @returns {Promise<{tx:object, xdr:string, agentAddresses:string[], liveUntilLedger:number}>}
+ * @returns {Promise<{tx:object, xdr:string, agentAddresses:string[], liveUntilLedger:number,
+ *          permissionId:Buffer}>}
  */
 export async function buildGrantV3Tx({
   owner,
@@ -316,6 +324,7 @@ export async function buildGrantV3Tx({
     throw new Error(`Grant simulation failed: ${sim.error || 'no result'}`)
   const retval = fromScVal(sim.result.retval)
   // grant_v3 returns (permission_id, agent_addresses).
+  const permissionId = Array.isArray(retval) ? retval[0] : undefined
   const agentAddresses = Array.isArray(retval) ? retval[1] : retval
 
   const tx = await s.prepareTransaction(raw)
@@ -324,6 +333,7 @@ export async function buildGrantV3Tx({
     xdr: tx.toEnvelope().toXDR('base64'),
     agentAddresses,
     liveUntilLedger: approval.liveUntilLedger,
+    permissionId,
   }
 }
 
@@ -374,6 +384,129 @@ export async function buildAgentPullV3({
     TransactionBuilder.fromXDR(signedXdr, NETWORK_PASSPHRASE)
   )
   return { xdr: prepared.toEnvelope().toXDR('base64') }
+}
+
+/**
+ * Full bounded-permission grant (Task 5, IQ Alter remediation): build → authorize (wallet-sign for
+ * G, passkey auth entry for C) → submit, routed through the SAME OwnerAuthorizationV1 adapter
+ * `submitGrant` uses (ownerAuthorization.js) — identical G/C routing, identical relay-preference
+ * policy, identical confirmation/error handling. Structurally this is `submitGrant` with
+ * `buildGrantV3Tx` swapped in for `buildGrantTx`; every deviation from `submitGrant` below is
+ * called out at its own point rather than left implicit.
+ *
+ * DORMANT for the same reason `buildGrantV3Tx` is: `assertRouterV3` (invoked inside
+ * `buildGrantV3Tx`) throws before any network call for every router that exists today, so this
+ * function has zero production callers until a V3 router is deployed and registered — a separate,
+ * later release action, not performed here.
+ * @param {{owner:string, token:string, approval:{mandateCeilingUnits:string, liveUntilLedger:number},
+ *          perRunMaxUnits:string, agentInits:Array, router?:string, server?:object,
+ *          sign?:Function, activeAccount?:{kind:'G'|'C', address:string},
+ *          getRelayerAddress?:Function, kit?:object, resolveSchema?:Function}} p
+ * @returns {Promise<{hash:string, status:string, relayer?:string, agentAddresses:string[],
+ *          liveUntilLedger:number, permissionId:Buffer}>}
+ */
+export async function submitGrantV3({
+  owner,
+  token,
+  approval,
+  perRunMaxUnits,
+  agentInits,
+  router,
+  server,
+  sign = signWithTimeout,
+  activeAccount = { kind: 'G', address: owner },
+  getRelayerAddress: getRelayer = getRelayerAddress,
+  kit,
+  getCurrentActiveAccount = getActiveAccount,
+  signal,
+  resolveSchema,
+}) {
+  assertActiveOwner({ owner, activeAccount })
+  const check = () =>
+    assertActiveAccountBoundary({
+      captured: activeAccount,
+      getCurrent: getCurrentActiveAccount,
+      signal,
+    })
+  check()
+  const model = await resolveOwnerTxModel({
+    owner,
+    activeAccount,
+    getRelayerAddress: getRelayer,
+    getCurrentActiveAccount,
+    signal,
+  })
+  check()
+  // Deviation from `submitGrant`: calls buildGrantV3Tx (grant_v3 ABI — token/approval/perRunMaxUnits
+  // instead of budgets/durationSeconds) and threads resolveSchema through so a test double can
+  // stand in for a deployed V3 router. Everything else about this call is the same shape.
+  const built = await buildGrantV3Tx({
+    owner,
+    token,
+    approval,
+    perRunMaxUnits,
+    agentInits,
+    router,
+    server,
+    txSource: model.source,
+    resolveSchema,
+  })
+  check()
+  const result = await submitOwnerAuthorizedTx({
+    model,
+    build: async () => built,
+    sign:
+      model.kind === 'G'
+        ? async () =>
+            signReviewedOwnerEnvelope({
+              built,
+              activeAccount,
+              sign,
+              // Deviation from `submitGrant`: label is 'grant_v3', not 'grant' — purely cosmetic
+              // (wallet-prompt / error-message text distinguishing the two grant flows once both
+              // are live); the routing and signing logic themselves are unchanged.
+              label: 'grant_v3',
+              getCurrentActiveAccount,
+              signal,
+            })
+        : async () =>
+            signOwnerAuthEntry({
+              tx: built.tx,
+              contractId: model.contractId,
+              server,
+              kit,
+              activeAccount,
+              getCurrentActiveAccount,
+              signal,
+            }),
+    server,
+    label: 'grant_v3',
+    classicSubmission: 'prefer-relay',
+    activeAccount,
+    getCurrentActiveAccount,
+    signal,
+  })
+  check()
+  if (result.status !== 'SUCCESS') {
+    throw new Error(
+      result.channel === 'relay'
+        ? `The grant relay returned ${result.status}.`
+        : `The grant was not confirmed: ${result.status}.`
+    )
+  }
+  return {
+    hash: result.hash,
+    status: result.status,
+    relayer: result.relayer,
+    agentAddresses: built.agentAddresses,
+    // Deviation from `submitGrant`: liveUntilLedger/permissionId replace expiryLedger/
+    // bridgeAgentAddress — the V3 ABI genuinely has no equivalent of either V2 concept
+    // (grant_v3 takes an already-reviewed absolute ledger, never derives one; and it has no
+    // Bridge-kind "last agent" convention of its own). Both come straight from `built`, i.e. from
+    // `buildGrantV3Tx`'s decode of the chain's own retval — never invented here.
+    liveUntilLedger: built.liveUntilLedger,
+    permissionId: built.permissionId,
+  }
 }
 
 /**

@@ -43,6 +43,7 @@ import {
   runAgentPull,
   buildGrantV3Tx,
   buildAgentPullV3,
+  submitGrantV3,
   revokeGrant,
   AGENT_KIND_DEPOSIT,
   AGENT_KIND_BRIDGE,
@@ -761,6 +762,23 @@ describe('buildGrantV3Tx — the reviewed bound is what gets signed', () => {
     expect(agentAddresses).toEqual([AGENT_1, AGENT_2])
   })
 
+  it("decodes permissionId from the SAME retval agentAddresses comes from (grant_v3's first tuple element), never a fabricated value", async () => {
+    const server = fakeServer({ latest: 1000, retval: grantV3Retval([AGENT_1, AGENT_2]) })
+    const { permissionId } = await buildGrantV3Tx({
+      owner: OWNER,
+      token: TOKEN,
+      approval: reviewedApproval,
+      perRunMaxUnits: '50000000',
+      agentInits: sampleInits,
+      router: ROUTER_V3,
+      server,
+      resolveSchema: asV3,
+    })
+    // grantV3Retval encodes a 32-byte permission_id of all 0x11 — anything else means the decode
+    // path drifted from the chain's own retval.
+    expect(Buffer.from(permissionId).toString('hex')).toBe('11'.repeat(32))
+  })
+
   it('refuses an approval with no absolute ledger expiry', async () => {
     await expect(
       buildGrantV3Tx({
@@ -802,5 +820,150 @@ describe('buildAgentPullV3 — permission + deterministic execution id', () => {
     expect(args[0].bytes().toString('hex')).toBe('11'.repeat(32))
     expect(args[1].bytes().toString('hex')).toBe('22'.repeat(32))
     expect(Address.fromScVal(args[2]).toString()).toBe(AGENT_1)
+  })
+})
+
+// Reviewed approval whose ceiling exceeds Number.MAX_SAFE_INTEGER — a stray Number() coercion
+// anywhere in submitGrantV3's pass-through would visibly corrupt this (unlike a round value like
+// '100000000', which round-trips through Number perfectly and would hide the same bug).
+const bigApproval = { mandateCeilingUnits: '9007199254740993', liveUntilLedger: 1_412_345 }
+const bigPerRunMaxUnits = '9007199254740993'
+
+describe('submitGrantV3 - a single signature (dormant until a V3 router is deployed)', () => {
+  it('signs exactly ONCE (the envelope), relays, and returns the CHAIN-DECODED permissionId (never invented locally)', async () => {
+    const server = fakeServer({ latest: 1000, retval: grantV3Retval([AGENT_1, AGENT_2]) })
+    submitViaRelayMock.mockResolvedValue({ hash: 'HV3REL', status: 'SUCCESS', relayer: 'GR' })
+    const sign = vi.fn(async (x) => `SIGNED:${x}`)
+
+    const out = await submitGrantV3({
+      owner: OWNER,
+      token: TOKEN,
+      approval: bigApproval,
+      perRunMaxUnits: bigPerRunMaxUnits,
+      agentInits: sampleInits,
+      router: ROUTER_V3,
+      server,
+      sign,
+      resolveSchema: asV3,
+    })
+
+    expect(sign).toHaveBeenCalledTimes(1) // a single signature for N=2 agents, same as submitGrant
+    expect(signOwnerAuthEntryMock).not.toHaveBeenCalled() // G owner never takes the C ceremony path
+    expect(submitViaRelayMock).toHaveBeenCalledTimes(1)
+    expect(out.hash).toBe('HV3REL')
+    expect(out.status).toBe('SUCCESS')
+    expect(out.agentAddresses).toEqual([AGENT_1, AGENT_2])
+    expect(out.liveUntilLedger).toBe(bigApproval.liveUntilLedger)
+    // grantV3Retval's permission_id is 32 bytes of 0x11 — a locally-invented or re-derived value
+    // would not reproduce this exact byte pattern.
+    expect(Buffer.from(out.permissionId).toString('hex')).toBe('11'.repeat(32))
+  })
+
+  it('falls back to a direct user-paid submit when the relay is off (returns null)', async () => {
+    const server = fakeServer({ latest: 1000, retval: grantV3Retval([AGENT_1]) })
+    submitViaRelayMock.mockResolvedValue(null) // relay unconfigured
+    const sign = vi.fn(async (x) => `SIGNED:${x}`)
+
+    const out = await submitGrantV3({
+      owner: OWNER,
+      token: TOKEN,
+      approval: bigApproval,
+      perRunMaxUnits: bigPerRunMaxUnits,
+      agentInits: [sampleInits[0]],
+      router: ROUTER_V3,
+      server,
+      sign,
+      resolveSchema: asV3,
+    })
+
+    expect(sign).toHaveBeenCalledTimes(1)
+    expect(out).toMatchObject({ hash: 'HDIRECT', status: 'SUCCESS', agentAddresses: [AGENT_1] })
+  })
+
+  it('throws when the relay reports a non-SUCCESS status (never swallows the refusal into a success)', async () => {
+    const server = fakeServer({ latest: 1, retval: grantV3Retval([AGENT_1]) })
+    submitViaRelayMock.mockResolvedValue({ hash: 'H', status: 'FAILED' })
+    await expect(
+      submitGrantV3({
+        owner: OWNER,
+        token: TOKEN,
+        approval: bigApproval,
+        perRunMaxUnits: bigPerRunMaxUnits,
+        agentInits: [sampleInits[0]],
+        router: ROUTER_V3,
+        server,
+        sign: async (x) => x,
+        resolveSchema: asV3,
+      })
+    ).rejects.toThrow(/grant relay returned FAILED/)
+  })
+})
+
+describe('submitGrantV3 - C owner (passkey), routed through OwnerAuthorizationV1', () => {
+  it('sources the grant from the relayer, signs via the passkey ceremony, and submits relay-only', async () => {
+    const server = fakeServer({ latest: 1000, retval: grantV3Retval([AGENT_1]) })
+    getRelayerAddressMock.mockResolvedValue(RELAYER_G)
+    signOwnerAuthEntryMock.mockResolvedValue('SIGNED_C_XDR_V3')
+    submitViaRelayMock.mockResolvedValue({ hash: 'HCV3', status: 'SUCCESS' })
+
+    const out = await submitGrantV3({
+      owner: OWNER_C,
+      token: TOKEN,
+      approval: bigApproval,
+      perRunMaxUnits: bigPerRunMaxUnits,
+      agentInits: [sampleInits[0]],
+      router: ROUTER_V3,
+      server,
+      activeAccount: { kind: 'C', address: OWNER_C },
+      resolveSchema: asV3,
+    })
+
+    expect(signOwnerAuthEntryMock).toHaveBeenCalledWith(
+      expect.objectContaining({ contractId: OWNER_C })
+    )
+    expect(submitViaRelayMock).toHaveBeenCalledWith({ xdr: 'SIGNED_C_XDR_V3' })
+    expect(out).toMatchObject({ hash: 'HCV3', status: 'SUCCESS', agentAddresses: [AGENT_1] })
+    expect(Buffer.from(out.permissionId).toString('hex')).toBe('11'.repeat(32))
+  })
+
+  it('has no user-funded fallback: an unreachable relay throws instead of billing the C owner', async () => {
+    const server = fakeServer({ latest: 1000, retval: grantV3Retval([AGENT_1]) })
+    getRelayerAddressMock.mockResolvedValue(RELAYER_G)
+    signOwnerAuthEntryMock.mockResolvedValue('SIGNED_C_XDR_V3')
+    submitViaRelayMock.mockResolvedValue(null) // relay unreachable AFTER the ceremony already ran
+
+    await expect(
+      submitGrantV3({
+        owner: OWNER_C,
+        token: TOKEN,
+        approval: bigApproval,
+        perRunMaxUnits: bigPerRunMaxUnits,
+        agentInits: [sampleInits[0]],
+        router: ROUTER_V3,
+        server,
+        activeAccount: { kind: 'C', address: OWNER_C },
+        resolveSchema: asV3,
+      })
+    ).rejects.toMatchObject({ code: 'VF_SUBMISSION_UNKNOWN' })
+  })
+
+  it('fails BEFORE the passkey ceremony when no relayer is funded', async () => {
+    const server = fakeServer({ latest: 1000, retval: grantV3Retval([AGENT_1]) })
+    getRelayerAddressMock.mockResolvedValue(null)
+
+    await expect(
+      submitGrantV3({
+        owner: OWNER_C,
+        token: TOKEN,
+        approval: bigApproval,
+        perRunMaxUnits: bigPerRunMaxUnits,
+        agentInits: [sampleInits[0]],
+        router: ROUTER_V3,
+        server,
+        activeAccount: { kind: 'C', address: OWNER_C },
+        resolveSchema: asV3,
+      })
+    ).rejects.toMatchObject({ code: 'VF_FEE_PAYER_UNAVAILABLE' })
+    expect(signOwnerAuthEntryMock).not.toHaveBeenCalled()
   })
 })
