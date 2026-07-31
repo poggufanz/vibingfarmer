@@ -443,6 +443,31 @@ describe('secret safety', () => {
   })
 })
 
+// --- Fix round 1, Important 2: toPermissionDecisionView must survive a V3-shaped decision --------
+// A V3 decision (permissionGrantV3.proveReusablePermission) has `executions[]`, not `agents[]`.
+// The day a V3 router is registered, `toPermissionDecisionView` is the shared projection called
+// from both app.jsx:2947 and ProtectStage.jsx:329 — a bare `decision.agents.map(...)` throws a
+// TypeError on undefined for that shape. `orchestrator.js:950-952` has the SAME assumption
+// (`revalidated.mode === 'reuse' && revalidated.agents.length === …`) but is OUT OF SCOPE for this
+// chunk (brief: "Do not touch permissionGrantV3.js, grant.js, orchestrator.js, app.jsx, or any
+// component") — that TypeError is a real, currently-unfixed blocker for whichever chunk wires a
+// live V3 router into the orchestrator; see the fix report for the explicit callout.
+describe('toPermissionDecisionView — V3-shaped decisions (fix round 1, Important 2)', () => {
+  test('a V3 decision (agents undefined, executions present) projects to agents:[] without throwing', () => {
+    const v3Decision = {
+      version: 3,
+      mode: 'reuse',
+      freshReason: null,
+      scopeId: '0x' + '11'.repeat(32),
+      permissionId: '0x' + '22'.repeat(32),
+      executions: [{ executionId: '0x' + '33'.repeat(32), allocationId: 'run-1:deposit:0' }],
+      // no `agents` field at all — the V1-only field this function used to assume unconditionally
+    }
+    expect(() => toPermissionDecisionView(v3Decision)).not.toThrow()
+    expect(toPermissionDecisionView(v3Decision).agents).toEqual([])
+  })
+})
+
 describe('never touches a wallet/provider/transaction builder', () => {
   test('runs to completion using only the injected dependencies, no server required', async () => {
     const deps = baseDeps()

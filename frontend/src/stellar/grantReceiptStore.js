@@ -147,6 +147,15 @@ export function loadGrantReceipt({ owner, router, network, storage } = {}) {
 // receipt or migrates the V2 bucket.
 const STORE_KEY_V3 = 'vf.grantReceiptStore.v3'
 
+// Fix round 1 (Important 1): domain-separate the V3 lane's fingerprint from a plain
+// `fingerprintGrantReceipt(receipt)` call, so a receipt with byte-identical content hashed in the
+// V3 lane can never collide with the fingerprint a V2 reuse decision carries in
+// `grantReceiptFingerprint` (reusePreflight.js). Reuses the same primitive (`fingerprintGrantReceipt`,
+// untouched above) under a tagged wrapper — no second hashing implementation.
+function fingerprintGrantReceiptV3(receipt) {
+  return fingerprintGrantReceipt({ lane: 'v3', receipt })
+}
+
 function readAllV3(storage) {
   try {
     return JSON.parse(resolveStorage(storage).getItem(STORE_KEY_V3) || '{}') || {}
@@ -164,16 +173,76 @@ function writeAllV3(all, storage) {
 }
 
 /**
+ * Assemble a GrantReceiptV3 from confirmed submission data — the V3 lane's shape contract,
+ * mirroring `buildGrantReceiptV1` above. `saveGrantReceiptV3` persists whatever object it is
+ * handed verbatim; this constructor is what keeps that object to an explicit field allowlist (any
+ * extra/unlisted field the caller passes — an owner secret, a wallet signature, a relay secret —
+ * is silently dropped, never copied through) so the module-level "no secrets in browser storage"
+ * constraint has something to actually enforce on callers. `confirmedAt` MUST come from the
+ * confirmed ledger's close time (never `Date.now()`), same discipline as V1.
+ * @param {{runId, owner, router, permissionId, scopeId, token, txHash, confirmedLedger:number,
+ *          liveUntilLedger:number, mandateCeilingUnits:bigint|string, agentInitFingerprint:string,
+ *          agentAddresses:string[], confirmedAt:number}} p
+ * @returns {object} GrantReceiptV3
+ */
+export function buildGrantReceiptV3({
+  runId,
+  owner,
+  router,
+  permissionId,
+  scopeId,
+  token,
+  txHash,
+  confirmedLedger,
+  liveUntilLedger,
+  mandateCeilingUnits,
+  agentInitFingerprint,
+  agentAddresses,
+  confirmedAt,
+}) {
+  if (confirmedAt == null || !Number.isFinite(Number(confirmedAt)))
+    throw new Error(
+      'buildGrantReceiptV3 requires a real confirmedAt (confirmed ledger close time).'
+    )
+  return {
+    version: 3,
+    runId,
+    owner,
+    router,
+    network: NETWORK_ID,
+    permissionId,
+    scopeId,
+    token,
+    txHash,
+    confirmedLedger,
+    liveUntilLedger,
+    mandateCeilingUnits:
+      typeof mandateCeilingUnits === 'bigint'
+        ? mandateCeilingUnits.toString()
+        : String(mandateCeilingUnits),
+    agentInitFingerprint,
+    agentAddresses,
+    confirmedAt: Number(confirmedAt),
+  }
+}
+
+/**
  * Append one V3 grant receipt to its (owner, router, network) history lane, tagged with its own
- * fingerprint for tamper detection on read (same discipline as `saveGrantReceipt` above). Additive
- * only: never overwrites a prior V3 entry in the same bucket, and never touches the V2 bucket.
+ * (domain-separated) fingerprint for tamper detection on read (same discipline as
+ * `saveGrantReceipt` above). Additive only: never overwrites a prior V3 entry in the same bucket,
+ * and never touches the V2 bucket. Fix round 1 (Important 1): rejects anything that isn't already
+ * a V3 receipt — the shape contract is `buildGrantReceiptV3` below; a V1-shaped receipt (or any
+ * other version) can never be smuggled into this lane, closing the cross-lane confusion the
+ * reviewer verified by execution (`grantReceiptFingerprint` from a V2 reuse decision must never be
+ * mistaken for V3 evidence).
  * @param {{receipt:object, network?:string, storage?:object}} p
  */
 export function saveGrantReceiptV3({ receipt, network, storage }) {
+  if (receipt?.version !== 3) throw new Error('saveGrantReceiptV3 accepts only a V3 receipt.')
   const all = readAllV3(storage)
   const key = bucketKey({ owner: receipt.owner, router: receipt.router, network })
   const history = Array.isArray(all[key]) ? all[key] : []
-  all[key] = [...history, { receipt, fingerprint: fingerprintGrantReceipt(receipt) }]
+  all[key] = [...history, { receipt, fingerprint: fingerprintGrantReceiptV3(receipt) }]
   writeAllV3(all, storage)
 }
 
@@ -192,7 +261,8 @@ export function loadGrantReceiptV3History({ owner, router, network, storage } = 
       try {
         return (
           row?.receipt &&
-          fingerprintGrantReceipt(row.receipt) === row.fingerprint &&
+          row.receipt.version === 3 &&
+          fingerprintGrantReceiptV3(row.receipt) === row.fingerprint &&
           row.receipt.owner === owner &&
           row.receipt.router === router
         )

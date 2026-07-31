@@ -532,12 +532,19 @@ export async function preflightPermission({
  * Secret-free projection of a PermissionDecisionV1 for UI state, journal records, events, and
  * logs. Strips `executionCredentialRef` from every agent row — the ONLY field on this object
  * that is a lookup key into secret material (agentCache.js), never the secret itself.
- * @param {object} decision PermissionDecisionV1
+ *
+ * Fix round 1 (Important 2): `decision.agents` is a V1-only field — a V3 decision
+ * (permissionGrantV3.proveReusablePermission) carries `executions[]` instead and has no `agents`
+ * at all, so this defaults to `[]` rather than assuming the V1 shape unconditionally. Note:
+ * `orchestrator.js:950-952` has the SAME `decision.agents` assumption for a reuse decision and is
+ * NOT fixed here — out of this chunk's scope (orchestrator.js is not in the file list) — see the
+ * task report for that callout.
+ * @param {object} decision PermissionDecisionV1 (or a V3 decision, which has no `agents`)
  * @returns {object}
  */
 export function toPermissionDecisionView(decision) {
   return {
     ...decision,
-    agents: decision.agents.map(({ executionCredentialRef: _ref, ...rest }) => rest),
+    agents: (decision.agents ?? []).map(({ executionCredentialRef: _ref, ...rest }) => rest),
   }
 }

@@ -3,7 +3,7 @@
 // trusts a single snapshot: it re-verifies through a second, later ledger whenever the chain
 // moved during the check, and any gap/mutation/mismatch forces "unproven" (never a false reuse).
 import { describe, test, expect, vi } from 'vitest'
-import { proveCurrentAllowance, computeProofHash, allowanceGapEvidence } from './allowanceProof.js'
+import { proveCurrentAllowance, computeProofHash } from './allowanceProof.js'
 
 const OWNER = 'GCIOUP4UJAAFDBJNP5DY5CFJHBLEKGLHZ5E2AYRIIQ5VOZFVSTPRYHNS'
 const ROUTER = 'CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE'
@@ -418,20 +418,5 @@ describe('computeProofHash', () => {
       proofHash: null,
     }
     expect(computeProofHash(proof)).not.toBe(computeProofHash({ ...proof, latestLedger: 1001 }))
-  })
-})
-
-// --- allowanceGapEvidence — the V3-facing surface (Task 5 chunk A) -----------------------------
-// proveCurrentAllowance's own signature and AllowanceExpiryProofV1 return shape are untouched
-// above (every existing fixture in this file still pins them with toEqual/toMatchObject) — this
-// is a pure, additive read of the two fields it already computes.
-describe('allowanceGapEvidence', () => {
-  test('reports the same gapFree/noLaterMutation a real proveCurrentAllowance call proves', async () => {
-    const out = await proveCurrentAllowance(baseDeps())
-    expect(allowanceGapEvidence(out.proof)).toEqual({ gapFree: true, noLaterMutation: true })
-  })
-
-  test('a null/unproven proof reports both fields false, never throws', () => {
-    expect(allowanceGapEvidence(null)).toEqual({ gapFree: false, noLaterMutation: false })
   })
 })

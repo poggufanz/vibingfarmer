@@ -9,6 +9,7 @@ import {
   loadGrantReceipt,
   saveGrantReceiptV3,
   loadGrantReceiptV3History,
+  buildGrantReceiptV3,
 } from './grantReceiptStore.js'
 
 const OWNER = 'GCIOUP4UJAAFDBJNP5DY5CFJHBLEKGLHZ5E2AYRIIQ5VOZFVSTPRYHNS'
@@ -259,5 +260,111 @@ describe('saveGrantReceiptV3 / loadGrantReceiptV3History — additive V3 lane', 
     expect(
       loadGrantReceiptV3History({ owner: OWNER, router: OTHER_ROUTER, network: NET, storage })
     ).toEqual([])
+  })
+
+  // --- Fix round 1, Important 1 --------------------------------------------------------------
+  test('rejects a non-V3 receipt — a V1-shaped receipt cannot be smuggled into the V3 lane', () => {
+    const v1Shaped = buildGrantReceiptV1({
+      runId: 'run-1',
+      owner: OWNER,
+      router: ROUTER,
+      txHash: 'HGRANT',
+      confirmedLedger: 1000,
+      expiryLedger: 5000,
+      allowanceBudgets: [{ token: TOKEN, units: 100_000_000n, decimals: 7 }],
+      agentInitFingerprint: '0xabc',
+      agentAddresses: ['CAGENT1'],
+      confirmedAt: 1_700_000_000,
+    })
+    expect(() => saveGrantReceiptV3({ receipt: v1Shaped, network: NET, storage })).toThrow(
+      /V3 receipt/i
+    )
+  })
+
+  test('loadGrantReceiptV3History drops a stored entry whose receipt.version is not 3, even if its fingerprint matches', () => {
+    saveGrantReceiptV3({ receipt: receiptV3(), network: NET, storage })
+    const key = 'vf.grantReceiptStore.v3'
+    const all = JSON.parse(storage.getItem(key))
+    const bucketKey = Object.keys(all)[0]
+    // Simulate legacy/tampered storage: a non-V3 receipt sitting in the V3 lane with an otherwise
+    // internally-consistent fingerprint (computed via the SAME domain-separated formula the store
+    // uses) — isolates the version check from the fingerprint check.
+    const forged = { ...receiptV3(), version: 1 }
+    all[bucketKey] = [
+      { receipt: forged, fingerprint: fingerprintGrantReceipt({ lane: 'v3', receipt: forged }) },
+    ]
+    storage.setItem(key, JSON.stringify(all))
+    expect(
+      loadGrantReceiptV3History({ owner: OWNER, router: ROUTER, network: NET, storage })
+    ).toEqual([])
+  })
+
+  test('the V3 lane fingerprint is domain-separated from a plain fingerprintGrantReceipt(receipt) of the same object (no cross-lane collision)', () => {
+    const r = receiptV3()
+    saveGrantReceiptV3({ receipt: r, network: NET, storage })
+    const all = JSON.parse(storage.getItem('vf.grantReceiptStore.v3'))
+    const bucketKey = Object.keys(all)[0]
+    const storedFingerprint = all[bucketKey][0].fingerprint
+    // The naive, undomained hash a V2 reuse decision's `grantReceiptFingerprint` would carry for
+    // this same object must NOT equal what the V3 lane actually stored.
+    expect(storedFingerprint).not.toBe(fingerprintGrantReceipt(r))
+    expect(storedFingerprint).toBe(fingerprintGrantReceipt({ lane: 'v3', receipt: r }))
+  })
+})
+
+describe('buildGrantReceiptV3 — the V3 lane shape contract (fix round 1, Important 1)', () => {
+  const args = () => ({
+    runId: 'run-1',
+    owner: OWNER,
+    router: ROUTER,
+    permissionId: '0x' + '11'.repeat(32),
+    scopeId: '0x' + '22'.repeat(32),
+    token: TOKEN,
+    txHash: 'HV3GRANT',
+    confirmedLedger: 1000,
+    liveUntilLedger: 5000,
+    mandateCeilingUnits: 100_000_000n,
+    agentInitFingerprint: '0xabc',
+    agentAddresses: ['CAGENT1'],
+    confirmedAt: 1_700_000_000,
+  })
+
+  test('assembles the exact GrantReceiptV3 shape, stringifying bigint units, and drops any unlisted field', () => {
+    const out = buildGrantReceiptV3({
+      ...args(),
+      ownerSecret: 'S-THIS-MUST-NEVER-BE-PERSISTED', // not part of the allowlist
+    })
+    expect(out).toEqual({
+      version: 3,
+      runId: 'run-1',
+      owner: OWNER,
+      router: ROUTER,
+      network: 'stellar-testnet',
+      permissionId: '0x' + '11'.repeat(32),
+      scopeId: '0x' + '22'.repeat(32),
+      token: TOKEN,
+      txHash: 'HV3GRANT',
+      confirmedLedger: 1000,
+      liveUntilLedger: 5000,
+      mandateCeilingUnits: '100000000',
+      agentInitFingerprint: '0xabc',
+      agentAddresses: ['CAGENT1'],
+      confirmedAt: 1_700_000_000,
+    })
+    expect(JSON.stringify(out)).not.toContain('THIS-MUST-NEVER-BE-PERSISTED')
+  })
+
+  test('never accepts Date.now() as confirmedAt implicitly - the caller must supply it', () => {
+    const { confirmedAt: _drop, ...rest } = args()
+    expect(() => buildGrantReceiptV3(rest)).toThrow()
+  })
+
+  test('the assembled receipt is accepted by saveGrantReceiptV3 (version guard satisfied)', () => {
+    const storage2 = makeStorage()
+    const r = buildGrantReceiptV3(args())
+    expect(() => saveGrantReceiptV3({ receipt: r, network: NET, storage: storage2 })).not.toThrow()
+    expect(
+      loadGrantReceiptV3History({ owner: OWNER, router: ROUTER, network: NET, storage: storage2 })
+    ).toEqual([r])
   })
 })
