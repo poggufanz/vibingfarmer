@@ -22,7 +22,14 @@
 //   3. `OLD.custody_confirmed = 1 AND NEW.custody_confirmed <> 1`               -> ABORT
 //   4. `OLD.custody_confirmed = 1 AND OLD.custody_units IS NOT NULL
 //         AND NEW.custody_units IS NULL`                                       -> ABORT
-// This module mirrors all four locally, before a malformed mutation is ever built:
+// This module mirrors clauses #2-#4 locally, before a malformed mutation is ever built. Clause #1
+// (`NEW.version <> OLD.version + 1`) is NOT mirrored here and is not this module's concern: this
+// module's `version: 2` field is the receipt FORMAT (models.js:183 -> the `receipt_format` column,
+// DDL :7) -- a different column entirely from the monotonic ROW version (DDL :39) that the
+// persistence layer tracks as `expectedVersion` (executionReceipts.js's
+// `applyAuthenticatedReceiptMutation`). This module produces receipts; it has no row-version
+// concept and does not apply optimistic-concurrency updates -- that is the transport/persistence
+// layer's job (Chunk B/store.js), not this pure producer's.
 //   - `appendPhase` refuses (throws) to downgrade a `confirmed` phase to anything else (#2).
 //   - `confirmCustody` never un-confirms a confirmed custody (#3) and never drops a confirmed
 //     custody's amount once it is non-null (#4) -- both throw.
@@ -30,7 +37,8 @@
 //     (funds do not move backward through owner -> stellar-agent -> stellar-vault -> cctp-transit
 //     -> base-kernel -> base-vault) -- this is this module's own addition, consistent with the
 //     trigger's spirit though not literally clause #3, since a same-rank-or-forward move is the
-//     only physically possible one once evidence is trusted.
+//     only physically possible one once evidence is trusted (see the CUSTODY LADDER paragraph
+//     below for why that is actually true, not merely asserted).
 //
 // AMBIGUOUS EVIDENCE MUST NOT THROW (fix round 1, Finding 1). Per the trigger's clause #3, custody
 // can never un-confirm -- so an ambiguous/inconclusive read (a stale NOT_FOUND, an RPC gap,
@@ -41,6 +49,21 @@
 // INSERT time, via `createAllocationReceipt`'s optional `initialCustody` param, for a receipt
 // reconstructed for an execution whose pre-movement position was never actually observed -- never
 // as an UPDATE outcome of `confirmCustody` on a receipt that already has proven custody.
+//
+// CUSTODY LADDER (fix round 2 ruling). Every location past `owner` must be claimed on genuine
+// proof, never on mere transport/request acceptance -- `stellar-agent` is the one exception with
+// its own brief-specified rule (an exact successful pull; transaction success alone, because a
+// pull's own completion IS the movement). Every location past that -- `stellar-vault`,
+// `cctp-transit`, `base-kernel`, `base-vault` -- requires a matching confirming event beyond
+// transaction success (a share/deposit event, a burn event, a mint event, a landing-pool event,
+// respectively): a CCTP burn transaction succeeding is transport acceptance, exactly the thing
+// this task exists to stop being mistaken for custody. This is WHY the rank guard above is safe
+// rather than a trap: once every location is claimable only on genuine proof, a backward move is
+// never actually reachable -- insufficient evidence for a forward claim falls to the ambiguous
+// path instead, which preserves the last proven location and never attempts the claim at all.
+// Before this ruling, `cctp-transit` (rank 3) was confirmable on `txSuccess` alone, so a later
+// genuine `stellar-vault` (rank 2) claim -- reachable, since a bridge agent's funds can validly
+// still be at the vault when a cctp-transit read fires first -- would incorrectly throw.
 //
 // Not pure in the strict sense: `appendPhase`'s `attemptId`/`observedAt` defaults
 // (`crypto.randomUUID()`/`Date.now()`) are wall-clock/entropy-derived. Callers that need
@@ -77,8 +100,8 @@ function requireString(value, field) {
   return value
 }
 
-function optionalString(value) {
-  return value == null ? null : requireString(value, 'value')
+function optionalString(value, field = 'value') {
+  return value == null ? null : requireString(value, field)
 }
 
 // One level of copy is enough to stop a caller's later in-place edit of an object it handed us
@@ -153,7 +176,7 @@ function initialCustodyState(initialCustody, amount) {
     location: 'unknown',
     confirmed: false,
     amount: null,
-    reason: optionalString(initialCustody.reason),
+    reason: optionalString(initialCustody.reason, 'initialCustody.reason'),
   }
 }
 
@@ -196,8 +219,8 @@ export function createAllocationReceipt({
     allocationId: requireString(allocationId, 'allocationId'),
     owner: requireString(owner, 'owner'),
     runId: requireString(runId, 'runId'),
-    parentAllocationId: optionalString(parentAllocationId),
-    childId: optionalString(childId),
+    parentAllocationId: optionalString(parentAllocationId, 'parentAllocationId'),
+    childId: optionalString(childId, 'childId'),
     worker: requireString(worker, 'worker'),
     agent: requireString(agent, 'agent'),
     intent: shallowCopy(intent),
@@ -224,8 +247,10 @@ function assertPhaseNotDowngraded(currentStatus, nextStatus, phase) {
  * `res.txHash` silently absorbs both the pull's and the deposit's outcome today). Throws rather
  * than silently drops an attempt that would downgrade an already-`confirmed` phase -- see the
  * module header for why throwing, not ignoring, is the deliberate choice here. `evidence` is
- * shallow-copied at journal time so a caller mutating its own object afterward cannot rewrite
- * history it already handed us.
+ * shallow-copied at journal time -- a caller mutating a TOP-LEVEL `evidence` property afterward
+ * cannot rewrite history it already handed us, but `shallowCopy` (its own comment) is one level
+ * only, so mutating a NESTED object/array inside `evidence` still can (pinned, not fixed, by a
+ * dedicated test -- deepening the copy was judged speculative generality this task doesn't need).
  * @param {object} receipt AllocationReceiptV2
  * @param {{attemptId?:string, kind?:'phase'|'revoked-scope-reconciliation', phase:string,
  *   status:string, evidence?:object, observedAt?:number}} attempt
@@ -267,22 +292,21 @@ export function appendPhase(receipt, attempt) {
   }
 }
 
-// Custody state rules (task-6a-brief.md "The custody state rules"), applied precisely:
+// Custody state rules -- the ladder (module header "CUSTODY LADDER"), applied precisely:
 //  - owner: confirmed with no evidence required -- the state before any movement.
-//  - stellar-vault / base-vault: confirmed ONLY when the deposit transaction succeeded AND a
-//    matching share/deposit event corroborates it -- transaction success alone is never enough.
-//    Both are the same "final landing pool" role, one chain over -- fix round 1 gave base-vault
-//    the same bar as stellar-vault instead of the weaker one it had before.
-//  - stellar-agent, cctp-transit, base-kernel: a reported-successful transaction is the baseline
-//    bar. "Transport acceptance is never final custody" is stated as a general principle in the
-//    brief, not scoped to Stellar alone, so no location is ever confirmed on transport/request
-//    acceptance by itself.
+//  - stellar-agent: confirmed ONLY on an exact successful pull (task-6a-brief.md's own rule --
+//    transaction success alone IS the movement here, the one exception on the ladder).
+//  - stellar-vault / cctp-transit / base-kernel / base-vault: confirmed ONLY when the transaction
+//    succeeded AND a matching confirming event corroborates it (share/deposit, burn, mint, or
+//    landing-pool event respectively) -- transaction success alone is never enough. Fix round 1
+//    gave base-vault matching-event parity with stellar-vault; fix round 2 (controller ruling)
+//    extended the same bar to cctp-transit and base-kernel, which were previously confirmable on
+//    txSuccess alone -- exactly the "transport acceptance mistaken for custody" defect this task
+//    exists to remove, and the reason a later genuine lower-rank claim could incorrectly throw.
 function confirmedCustodyBar(location, { txSuccess, matchingEvent }) {
   if (location === 'owner') return true
-  if (location === 'stellar-vault' || location === 'base-vault') {
-    return txSuccess === true && matchingEvent === true
-  }
-  return txSuccess === true
+  if (location === 'stellar-agent') return txSuccess === true
+  return txSuccess === true && matchingEvent === true
 }
 
 function rejectWeakerCustody(receipt, next) {
@@ -312,16 +336,17 @@ function rejectWeakerCustody(receipt, next) {
 // already exists, it is returned unchanged except for `reason` (the ambiguity is recorded, the
 // fact is not). If none exists yet (the INSERT-time-only unknown/unconfirmed state), there is
 // nothing to preserve, so the ambiguity itself becomes the -- already unconfirmed -- custody value.
+// `fallbackReason` is ALWAYS a non-null string (fix round 2, review item 3): a bare `{location:
+// 'unknown'}` report with no explicit reason must still journal that an ambiguity was reported,
+// not silently no-op the call.
 function custodyAfterAmbiguousEvidence(receipt, { location, reason }) {
   const fallbackReason =
-    location === 'unknown'
-      ? reason
-      : (reason ?? `${location} custody claimed without evidence meeting its confirmation bar`)
+    reason ??
+    (location === 'unknown'
+      ? 'ambiguous custody evidence reported (no confirmable location)'
+      : `${location} custody claimed without evidence meeting its confirmation bar`)
   if (receipt.custody?.confirmed) {
-    return {
-      ...receipt,
-      custody: { ...receipt.custody, reason: fallbackReason ?? receipt.custody.reason },
-    }
+    return { ...receipt, custody: { ...receipt.custody, reason: fallbackReason } }
   }
   return {
     ...receipt,
@@ -354,9 +379,13 @@ export function confirmCustody(receipt, evidence) {
   if (!RECEIPT_CUSTODY_LOCATIONS.includes(location)) {
     throw new Error(`confirmCustody: unknown custody location "${location}"`)
   }
+  // Validated here (fix round 2, review item 4) so a non-string reason fails locally and
+  // immediately, matching `initialCustodyState`'s equivalent validation, rather than only at
+  // models.js:223 once this receipt eventually reaches the server.
+  const validatedReason = optionalString(reason, 'custody.reason')
 
   if (location === 'unknown' || !confirmedCustodyBar(location, { txSuccess, matchingEvent })) {
-    return custodyAfterAmbiguousEvidence(receipt, { location, reason })
+    return custodyAfterAmbiguousEvidence(receipt, { location, reason: validatedReason })
   }
 
   const validatedAmount = assertAmount(amount, 'custody.amount')
@@ -364,6 +393,6 @@ export function confirmCustody(receipt, evidence) {
     location,
     confirmed: true,
     amount: validatedAmount,
-    reason,
+    reason: validatedReason,
   })
 }

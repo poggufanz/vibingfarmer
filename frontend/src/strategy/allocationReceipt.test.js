@@ -105,6 +105,25 @@ describe('createAllocationReceipt', () => {
     intent.kind = 'mutated-after-the-fact'
     expect(r.intent.kind).toBe('deposit')
   })
+
+  // Fix round 2, review item 5 (symmetry with appendPhase's evidence): shallowCopy is one level
+  // only -- pinned here for intent too, not merely described.
+  test('shallow copy only -- a later mutation of a NESTED intent object still leaks through', () => {
+    const intent = { allocationId: ALLOCATION_ID, kind: 'deposit', allocation: { ...AMOUNT } }
+    const r = createAllocationReceipt({
+      networkId: NETWORK_ID,
+      executionId: EXECUTION_ID,
+      allocationId: ALLOCATION_ID,
+      owner: OWNER,
+      runId: RUN_ID,
+      worker: WORKER,
+      agent: AGENT,
+      intent,
+      amount: AMOUNT,
+    })
+    intent.allocation.units = '999999999'
+    expect(r.intent.allocation.units).toBe('999999999')
+  })
 })
 
 describe('appendPhase', () => {
@@ -166,6 +185,21 @@ describe('appendPhase', () => {
     expect(r.attempts[0].kind).toBe('revoked-scope-reconciliation')
   })
 
+  // Review item 6: 'unknown' is a real RECEIPT_PHASE_STATUSES member and assertPhaseNotDowngraded
+  // permits it from any non-confirmed state -- the other half of the ambiguity ruling (custody
+  // preserves the last proven location; a PHASE reports its own inconclusive outcome as 'unknown').
+  test('accepts status "unknown" for an inconclusive phase outcome', () => {
+    const r = appendPhase(baseReceipt(), {
+      attemptId: 'attempt-1',
+      phase: 'stellar_deposit',
+      status: 'unknown',
+      evidence: { reason: 'RPC gap on deposit read' },
+      observedAt: NOW,
+    })
+    expect(r.phases.stellar_deposit).toBe('unknown')
+    expect(r.attempts[0].status).toBe('unknown')
+  })
+
   test('never mutates the input receipt', () => {
     const original = baseReceipt()
     const phasesSnapshot = { ...original.phases }
@@ -193,6 +227,23 @@ describe('appendPhase', () => {
     })
     evidence.txHash = 'mutated-after-the-fact'
     expect(r.attempts[0].evidence.txHash).toBe(PULL_HASH)
+  })
+
+  // Fix round 2, review item 5: shallowCopy is one level only, pinned here rather than merely
+  // described in the JSDoc -- a NESTED evidence object still leaks a later caller mutation
+  // through. This is the documented limit, not a bug: deepening the copy was judged speculative
+  // generality this task doesn't need (module header).
+  test('shallow copy only -- a later mutation of a NESTED evidence object still leaks through', () => {
+    const evidence = { txHash: PULL_HASH, meta: { note: 'original' } }
+    const r = appendPhase(baseReceipt(), {
+      attemptId: 'attempt-1',
+      phase: 'pull',
+      status: 'confirmed',
+      evidence,
+      observedAt: NOW,
+    })
+    evidence.meta.note = 'mutated-after-the-fact'
+    expect(r.attempts[0].evidence.meta.note).toBe('mutated-after-the-fact')
   })
 
   test('never drops an existing attempt when appending another', () => {
@@ -371,6 +422,78 @@ describe('confirmCustody', () => {
     expect(r.custody.confirmed).toBe(true)
   })
 
+  // Fix round 2 controller ruling: cctp-transit previously confirmed on txSuccess alone, which
+  // made a later genuine (lower-rank) stellar-vault claim throw via the rank guard. A CCTP burn
+  // transaction succeeding is transport acceptance, not custody -- a confirmed burn event is
+  // required, same shape as stellar-vault's txSuccess && matchingEvent.
+  test('confirms cctp-transit custody only after the burn transaction succeeds plus a confirmed burn event', () => {
+    const afterPull = confirmCustody(baseReceipt(), {
+      location: 'stellar-agent',
+      txSuccess: true,
+      amount: AMOUNT,
+    })
+    const r = confirmCustody(afterPull, {
+      location: 'cctp-transit',
+      txSuccess: true,
+      matchingEvent: true,
+      amount: AMOUNT,
+    })
+    expect(r.custody).toEqual({ location: 'cctp-transit', confirmed: true, amount: AMOUNT, reason: null })
+  })
+
+  // Mandatory mutation target (controller ruling): "Add a test that cctp-transit on txSuccess
+  // alone does NOT confirm, and mutate it to prove it goes RED."
+  test('a cctp-transit burn transaction succeeding alone does not confirm custody -- keeps the last proven location', () => {
+    const afterPull = confirmCustody(baseReceipt(), {
+      location: 'stellar-agent',
+      txSuccess: true,
+      amount: AMOUNT,
+    })
+    const r = confirmCustody(afterPull, {
+      location: 'cctp-transit',
+      txSuccess: true,
+      matchingEvent: false,
+      amount: AMOUNT,
+    })
+    expect(r.custody.location).toBe('stellar-agent')
+    expect(r.custody.confirmed).toBe(true)
+    expect(r.custody.reason).toMatch(/claimed without evidence meeting its confirmation bar/)
+  })
+
+  // Controller ruling's second bullet: base-kernel likewise requires its own confirming event.
+  test('confirms base-kernel custody only after transaction success plus a matching event', () => {
+    const r = confirmCustody(baseReceipt(), {
+      location: 'base-kernel',
+      txSuccess: true,
+      matchingEvent: true,
+      amount: AMOUNT,
+    })
+    expect(r.custody).toEqual({ location: 'base-kernel', confirmed: true, amount: AMOUNT, reason: null })
+  })
+
+  test('an ambiguous base-kernel deposit does not confirm custody on transaction success alone', () => {
+    const r = confirmCustody(baseReceipt(), {
+      location: 'base-kernel',
+      txSuccess: true,
+      matchingEvent: false,
+      amount: AMOUNT,
+    })
+    expect(r.custody.location).toBe('owner')
+    expect(r.custody.confirmed).toBe(true)
+  })
+
+  // Regression for the exact scenario the reviewer traced: the full Base/CCTP ladder, each rank
+  // claimed only on genuine proof, must be able to advance end to end without the rank guard ever
+  // firing spuriously.
+  test('the full ladder advances end to end when every location is claimed on genuine proof', () => {
+    let r = baseReceipt()
+    r = confirmCustody(r, { location: 'stellar-agent', txSuccess: true, amount: AMOUNT })
+    r = confirmCustody(r, { location: 'cctp-transit', txSuccess: true, matchingEvent: true, amount: AMOUNT })
+    r = confirmCustody(r, { location: 'base-kernel', txSuccess: true, matchingEvent: true, amount: AMOUNT })
+    r = confirmCustody(r, { location: 'base-vault', txSuccess: true, matchingEvent: true, amount: AMOUNT })
+    expect(r.custody).toEqual({ location: 'base-vault', confirmed: true, amount: AMOUNT, reason: null })
+  })
+
   test('never mutates the input receipt', () => {
     const original = baseReceipt()
     const custodySnapshot = { ...original.custody }
@@ -452,6 +575,35 @@ describe('confirmCustody', () => {
       amount: AMOUNT,
       reason: 'stale NOT_FOUND on deposit read',
     })
+  })
+
+  // Fix round 2, review item 3: a bare {location:'unknown'} report with NO explicit reason must
+  // still journal that an ambiguity was reported -- not silently no-op the call.
+  test('an unknown-location report with no explicit reason still journals a generated fallback reason', () => {
+    const r = confirmCustody(baseReceipt(), { location: 'unknown' })
+    expect(r.custody.location).toBe('owner')
+    expect(r.custody.confirmed).toBe(true)
+    expect(r.custody.reason).not.toBeNull()
+    expect(r.custody.reason).toMatch(/ambiguous custody evidence reported/)
+  })
+
+  // Fix round 2, review item 4: `reason` was never validated on either confirmCustody path,
+  // asymmetric with initialCustodyState's equivalent validation of initialCustody.reason.
+  test('rejects a non-string reason locally instead of letting it reach the server unvalidated', () => {
+    // amount: AMOUNT here is deliberate -- baseReceipt() already carries a confirmed AMOUNT at
+    // owner, so omitting amount would trip the Finding-2 amount-drop guard first and mask exactly
+    // which check is under test.
+    expect(() =>
+      confirmCustody(baseReceipt(), {
+        location: 'stellar-agent',
+        txSuccess: true,
+        amount: AMOUNT,
+        reason: 42,
+      })
+    ).toThrow(/custody.reason must be a non-empty string/)
+    expect(() => confirmCustody(baseReceipt(), { location: 'unknown', reason: 42 })).toThrow(
+      /custody.reason must be a non-empty string/
+    )
   })
 
   // Mandatory mutation target: "Emit 'agent' instead of 'stellar-agent' -> RED."
