@@ -106,17 +106,15 @@ function splitUnitsByRatio(totalUnits, ratios) {
  * `dispatchPermissioned`'s plain worker loop and `dispatchConfirmedMixed`'s Stellar leg (the two
  * loops this chunk's brief scopes to; the Base leg keeps its own, separate custody handling via
  * `bindBaseLegCustodyDeps` above, untouched). Builds the receipt in-memory with allocationReceipt.js's
- * pure producer and best-effort posts each mutation via agentIndexReceiptClient.js's
+ * pure producer and durably posts each mutation via agentIndexReceiptClient.js's
  * `postReceiptEvidence`.
  *
- * Evidence TRANSPORT never gates or reverses the underlying pull/deposit outcome: a failed POST
- * (network error, proof rejected, version conflict, an unreachable agent-index, ...) is reported
- * via `onEvent('receipt-evidence-failed', ...)` and swallowed, never thrown -- the
- * `Promise.allSettled` semantics for the allocation itself must never depend on whether the
- * agent-index happened to answer. `.custody(evidence)` is a SEPARATE call from `.record(attempt)`
- * so a caller always decides custody from the pull/deposit's OWN on-chain evidence
- * (`txSuccess`/`matchingEvent`), never from whether the POST itself succeeded -- "transport
- * acceptance is never final custody" (brief). `sessionKey` is passed straight to
+ * A pre-movement intent write is write-ahead: an unverified failure throws and the immediately
+ * following pull/deposit never starts. Ambiguous writes are re-read and retried once with the same
+ * attempt identity; a lost response may proceed only when the authoritative row proves that exact
+ * attempt committed. `.custody(evidence)` remains separate so custody is still decided only from
+ * the pull/deposit's OWN on-chain evidence (`txSuccess`/`matchingEvent`), never from transport
+ * acceptance. `sessionKey` is passed straight to
  * `postReceiptEvidence` as the signer (it only ever calls `.sign()` on it, per Chunk B's own
  * contract) -- never spread into the `evidence`/`intent` bodies this function builds, so a session
  * secret can never reach the wire through this path.
@@ -167,39 +165,95 @@ function createEvidenceRecorder({
   // (store.js:505-506's versionConflict check), incremented to whatever the server actually
   // committed after every accepted write.
   let expectedVersion = 0
-  // Review round 1, Important 4 -- once a POST fails, `expectedVersion` can never recover on its
-  // own: the server's 409 body carries no current-version field to adopt
-  // (`api/agent-index/handler.js:43-44,174-176` -- just `{error:'...conflict'}`), and Chunk B's
-  // client deliberately has no GET receipt-read counterpart to re-derive it from
-  // (agentIndexReceiptClient.js's own header). Re-attempting with a known-stale version would just
-  // 409 forever. Rather than silently degrading to zero durable evidence for the rest of this
-  // receipt's life, `durable` flips to `false` on the FIRST failure and stays false -- surfaced to
-  // the caller (`.durable`) so a run-level "evidence not durable" signal exists, cheaply, without
-  // inventing a new read-side client this chunk was never asked to build. Posts keep being
-  // attempted regardless (fire-and-forget) -- a transient failure that clears on its own should
-  // not be treated as permanently lost.
   let durable = true
+
+  const canonical = (value) => {
+    if (Array.isArray(value)) return value.map(canonical)
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(
+        Object.keys(value)
+          .sort()
+          .map((key) => [key, canonical(value[key])])
+      )
+    }
+    return value
+  }
+
+  const sameAttempt = (persisted, attempt) =>
+    persisted?.attemptId === attempt.attemptId &&
+    persisted.kind === attempt.kind &&
+    persisted.phase === attempt.phase &&
+    persisted.status === attempt.status &&
+    persisted.observedAt === attempt.observedAt &&
+    JSON.stringify(canonical(persisted.evidence)) === JSON.stringify(canonical(attempt.evidence))
+
+  const mayHaveCommitted = (error) =>
+    error?.status === 409 ||
+    error?.step == null ||
+    (error.step === 'write' && ![400, 401, 403].includes(error.status))
+
+  const readAuthoritative = async () => {
+    // Dynamic for the same reason as the permission-locked imports above: legacy orchestrator
+    // tests mock a deliberately narrow agentCache module, while recoveryClient's default resolver
+    // imports loadCachedAgents only when this failure path is actually reached.
+    const { readRecoveryReceipt } = await import('./strategy/recoveryClient.js')
+    const result = await readRecoveryReceipt({
+      networkId: RECEIPT_NETWORK_ID,
+      owner,
+      executionId: receipt.executionId,
+      allocationId,
+    })
+    expectedVersion = result.version
+    return result.receipt
+  }
+
+  const failWrite = (error, phase, status) => {
+    durable = false
+    onEvent?.('receipt-evidence-failed', {
+      allocationId,
+      phase,
+      status,
+      error: error.message,
+      durable,
+    })
+    throw error
+  }
 
   async function record({ phase, status, evidence }) {
     receipt = appendPhase(receipt, { phase, status, evidence })
     const attempt = receipt.attempts[receipt.attempts.length - 1]
-    try {
-      const result = await postReceiptEvidence({
+    const post = () =>
+      postReceiptEvidence({
         activeAccount: owner,
         agentAddress,
         sessionKey,
         body: { expectedVersion, receipt, attempt },
       })
+    try {
+      const result = await post()
       expectedVersion = result.version
     } catch (error) {
-      durable = false
-      onEvent?.('receipt-evidence-failed', {
-        allocationId,
-        phase,
-        status,
-        error: error.message,
-        durable,
-      })
+      if (!mayHaveCommitted(error)) failWrite(error, phase, status)
+      let authoritative
+      try {
+        authoritative = await readAuthoritative()
+      } catch (readError) {
+        failWrite(readError, phase, status)
+      }
+      if (authoritative?.attempts?.some((entry) => sameAttempt(entry, attempt))) return
+      try {
+        const result = await post()
+        expectedVersion = result.version
+      } catch (retryError) {
+        if (!mayHaveCommitted(retryError)) failWrite(retryError, phase, status)
+        try {
+          authoritative = await readAuthoritative()
+        } catch (readError) {
+          failWrite(readError, phase, status)
+        }
+        if (authoritative?.attempts?.some((entry) => sameAttempt(entry, attempt))) return
+        failWrite(retryError, phase, status)
+      }
     }
   }
 
@@ -1006,9 +1060,8 @@ export class OrchestratorAgent {
       pullTxHash: r.value?.pullTxHash ?? null,
       custody: r.value?.receipt?.custody ?? null,
       receipt: r.value?.receipt ?? null,
-      // Review round 1, Important 4 -- run-level "evidence not durable" signal: false once any
-      // POST for this allocation's receipt failed. Never gates `success` (evidence transport is
-      // orthogonal to the underlying financial outcome), purely observability.
+      // False only when a bounded write/read/retry could not prove the evidence durable; the
+      // following movement has already been aborted for write-ahead intent failures.
       receiptEvidenceDurable: r.value?.receiptEvidenceDurable ?? null,
       error: r.reason?.message || r.value?.error,
     }))
@@ -1223,7 +1276,7 @@ export class OrchestratorAgent {
         agentAddress: entry.value?.agentAddress || stellarWorkers[index].agentAddress,
         custody: entry.value?.custody,
         allocationReceipt: entry.value?.allocationReceipt,
-        // Review round 1, Important 4 -- see the plain loop's identical field for the contract.
+        // See the plain loop's identical field for the bounded durability contract.
         receiptEvidenceDurable: entry.value?.receiptEvidenceDurable ?? null,
         error: entry.reason?.message || entry.value?.error,
       }))

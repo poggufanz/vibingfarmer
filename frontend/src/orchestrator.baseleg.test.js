@@ -134,9 +134,15 @@ vi.mock('./stellar/agentIndexReceiptClient.js', () => ({
       super(message)
       this.name = 'ReceiptEvidenceError'
       this.step = opts.step
+      this.status = opts.status ?? null
       this.code = opts.code
+      this.body = opts.body ?? null
     }
   },
+}))
+const readRecoveryReceiptMock = vi.fn()
+vi.mock('./strategy/recoveryClient.js', () => ({
+  readRecoveryReceipt: (...args) => readRecoveryReceiptMock(...args),
 }))
 
 import { OrchestratorAgent } from './orchestrator.js'
@@ -363,6 +369,8 @@ beforeEach(() => {
     duplicates: 0,
     version: (body?.expectedVersion ?? 0) + 1,
   }))
+  readRecoveryReceiptMock.mockReset()
+  readRecoveryReceiptMock.mockRejectedValue(new Error('unexpected receipt read'))
 })
 
 describe('orchestrator base leg — mixed run costs exactly ONE grant signature', () => {
@@ -1631,26 +1639,56 @@ describe('Task 6 chunk C1 — allocation receipt evidence (dispatchPermissioned 
     expect(typeof result.receipt.custody.amount.units).toBe('string')
   })
 
-  it('[Receipt] transport acceptance never sets stellar-vault custody by itself', async () => {
-    // A version-conflict/network failure on EVERY postReceiptEvidence call must never change what
-    // custody the receipt ends up recording -- transport success/failure is orthogonal to custody.
+  it('[Receipt][Write-ahead] an unverifiable pull intent aborts before runAgentPull', async () => {
     postReceiptEvidenceMock.mockRejectedValue(new Error('agent-index unreachable'))
+    readRecoveryReceiptMock.mockResolvedValue({ receipt: null, version: 0 })
     const fixture = permissionedStellarOnlyFixture('run-receipt-transport-down')
-    runAgentPullMock.mockResolvedValue({ hash: 'PULLHASH4', status: 'SUCCESS' })
-    workerExecuteMock.mockResolvedValue({ success: true, txHash: 'DEP-DOWN' })
-    const events = []
 
-    const summary = await permissionedOrchestrator((n, d) => events.push({ n, d })).dispatch(
-      fixture.plan,
-      { permissionDecision: fixture.permissionDecision }
-    )
+    const summary = await permissionedOrchestrator().dispatch(fixture.plan, {
+      permissionDecision: fixture.permissionDecision,
+    })
 
     const result = summary.results[0]
-    // The deposit itself still succeeded on-chain -- evidence transport being down must never
-    // mask or reverse that.
-    expect(result.success).toBe(true)
-    expect(result.receipt.custody.location).toBe('stellar-vault')
-    expect(events.some((e) => e.n === 'receipt-evidence-failed')).toBe(true)
+    expect(result.success).toBe(false)
+    expect(result.receiptEvidenceDurable).toBe(false)
+    expect(runAgentPullMock).not.toHaveBeenCalled()
+    expect(workerExecuteMock).not.toHaveBeenCalled()
+    expect(postReceiptEvidenceMock).toHaveBeenCalledTimes(2)
+    expect(readRecoveryReceiptMock).toHaveBeenCalledTimes(2)
+    const attempts = postReceiptEvidenceMock.mock.calls.map(([args]) => args.body.attempt)
+    expect(attempts[0]).toEqual(attempts[1])
+    expect(attempts[0]).toMatchObject({ phase: 'pull', status: 'submitted' })
+  })
+
+  it('[Receipt][Write-ahead] an unverifiable deposit intent aborts before worker.execute', async () => {
+    let serverReceipt = null
+    let serverVersion = 0
+    postReceiptEvidenceMock.mockImplementation(async ({ body }) => {
+      if (body.attempt.phase === 'stellar_deposit' && body.attempt.status === 'submitted') {
+        throw new Error('deposit intent response lost')
+      }
+      serverReceipt = body.receipt
+      serverVersion += 1
+      return { version: serverVersion }
+    })
+    readRecoveryReceiptMock.mockImplementation(async () => ({
+      receipt: serverReceipt,
+      version: serverVersion,
+    }))
+    const fixture = permissionedStellarOnlyFixture('run-receipt-deposit-intent-down')
+
+    const summary = await permissionedOrchestrator().dispatch(fixture.plan, {
+      permissionDecision: fixture.permissionDecision,
+    })
+
+    expect(runAgentPullMock).toHaveBeenCalledOnce()
+    expect(workerExecuteMock).not.toHaveBeenCalled()
+    expect(summary.results[0]).toMatchObject({ success: false, receiptEvidenceDurable: false })
+    const depositWrites = postReceiptEvidenceMock.mock.calls
+      .map(([args]) => args.body)
+      .filter((body) => body.attempt.phase === 'stellar_deposit')
+    expect(depositWrites).toHaveLength(2)
+    expect(depositWrites[0].attempt).toEqual(depositWrites[1].attempt)
   })
 })
 
@@ -1871,22 +1909,87 @@ describe('Task 6 chunk C1 fix round 1 — dispatchConfirmedMixed evidence + crit
   // test here), and orchestrator.router.test.js already carries the full reuse-mode fixture
   // machinery (preflightPermissionMock, loadCachedAgentsMock, reuseDecisionFor) this needs.
 
-  // Important 4: expectedVersion never recovered from a failed POST -- every evidence POST for
-  // this allocation was made to fail, so `receiptEvidenceDurable` must surface false even though
-  // the underlying financial outcome (deposit success) is completely unaffected.
-  it('[Important 4] surfaces receiptEvidenceDurable:false once any POST fails, without affecting the financial outcome', async () => {
+  it('[Write-ahead][Mixed] an unverifiable pull intent aborts before runAgentPull', async () => {
     postReceiptEvidenceMock.mockRejectedValue(new Error('agent-index unreachable'))
-    const fixture = permissionedStellarOnlyFixture('run-receipt-durable-flag')
-    runAgentPullMock.mockResolvedValue({ hash: 'DURPULL', status: 'SUCCESS' })
-    workerExecuteMock.mockResolvedValue({ success: true, txHash: 'DURDEP' })
+    readRecoveryReceiptMock.mockResolvedValue({ receipt: null, version: 0 })
+    const fixture = permissionedMixedFixture('run-mixed-pull-intent-down')
 
     const summary = await permissionedOrchestrator().dispatch(fixture.plan, {
       permissionDecision: fixture.permissionDecision,
     })
 
     const result = summary.results[0]
-    expect(result.success).toBe(true)
+    expect(result.success).toBe(false)
     expect(result.receiptEvidenceDurable).toBe(false)
+    expect(runAgentPullMock).not.toHaveBeenCalled()
+    expect(workerExecuteMock).not.toHaveBeenCalled()
+  })
+
+  it('[Write-ahead][Mixed] an unverifiable deposit intent aborts before worker.execute', async () => {
+    let serverReceipt = null
+    let serverVersion = 0
+    postReceiptEvidenceMock.mockImplementation(async ({ body }) => {
+      if (body.attempt.phase === 'stellar_deposit' && body.attempt.status === 'submitted') {
+        throw new Error('deposit intent response lost')
+      }
+      serverReceipt = body.receipt
+      serverVersion += 1
+      return { version: serverVersion }
+    })
+    readRecoveryReceiptMock.mockImplementation(async () => ({
+      receipt: serverReceipt,
+      version: serverVersion,
+    }))
+    const fixture = permissionedMixedFixture('run-mixed-deposit-intent-down')
+
+    const summary = await permissionedOrchestrator().dispatch(fixture.plan, {
+      permissionDecision: fixture.permissionDecision,
+    })
+
+    expect(runAgentPullMock).toHaveBeenCalledOnce()
+    expect(workerExecuteMock).not.toHaveBeenCalled()
+    expect(summary.results[0]).toMatchObject({ success: false, receiptEvidenceDurable: false })
+  })
+
+  it('[Write-ahead] bounds read/adopt/retry and reuses one attempt when the retry response is lost after commit', async () => {
+    let firstAttemptId = null
+    let storedReceipt = null
+    let serverVersion = 0
+    let initialAttemptPosts = 0
+    postReceiptEvidenceMock.mockImplementation(async ({ body }) => {
+      if (!firstAttemptId) firstAttemptId = body.attempt.attemptId
+      if (body.attempt.attemptId === firstAttemptId) {
+        initialAttemptPosts += 1
+        if (initialAttemptPosts === 1) throw new Error('first response lost before commit')
+        storedReceipt = body.receipt
+        serverVersion = 1
+        throw new Error('retry response lost after commit')
+      }
+      storedReceipt = body.receipt
+      serverVersion += 1
+      return { version: serverVersion }
+    })
+    readRecoveryReceiptMock.mockImplementation(async () => ({
+      receipt: storedReceipt,
+      version: serverVersion,
+    }))
+    const fixture = permissionedStellarOnlyFixture('run-receipt-lost-response')
+
+    const summary = await permissionedOrchestrator().dispatch(fixture.plan, {
+      permissionDecision: fixture.permissionDecision,
+    })
+
+    expect(summary.results[0]).toMatchObject({ success: true, receiptEvidenceDurable: true })
+    expect(runAgentPullMock).toHaveBeenCalledOnce()
+    expect(workerExecuteMock).toHaveBeenCalledOnce()
+    expect(initialAttemptPosts).toBe(2)
+    expect(readRecoveryReceiptMock).toHaveBeenCalledTimes(2)
+    const initialBodies = postReceiptEvidenceMock.mock.calls
+      .map(([args]) => args.body)
+      .filter((body) => body.attempt.attemptId === firstAttemptId)
+    expect(initialBodies).toHaveLength(2)
+    expect(initialBodies[0].attempt).toEqual(initialBodies[1].attempt)
+    expect(initialBodies[0].receipt.executionId).toBe(initialBodies[1].receipt.executionId)
   })
 
   it('[Important 4] surfaces receiptEvidenceDurable:true when every POST succeeds', async () => {
