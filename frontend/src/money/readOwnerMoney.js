@@ -534,6 +534,7 @@ async function readOneAgentMoney({
  *   checkedAt:number}>, stellarYield:{state:string, apy:number|null},
  *   stellarSubtotalUnits:bigint, baseSubtotalUnits:bigint, completeBaseTotalUnits:bigint|null,
  *   overallTotalUnits:bigint|null, baseValuationKind:string,
+ *   ownerBaseCustodyBreakdown:Record<string,bigint>,
  *   associationCoverage:{state:'complete'|'partial'|'unknown', reasons:string[]},
  *   baseSourceCoverage:{state:'complete'|'unknown'},
  *   basePositionCoverage:{state:'complete'|'partial'|'unknown', reasons:string[]}}>}
@@ -645,6 +646,7 @@ export async function readOwnerMoney({
   let terminalGroupsTotal = 0
   let terminalGroupsLive = 0
   let baseSubtotalUnits = 0n
+  const ownerBaseCustodyBreakdown = {}
   let anyGroupUnknown = false
   // Review round 1, finding 4 (Important, fixed): the old loop kept only `{units, live}`,
   // discarding `valueBaseGroup`'s own `problems` — so a group could carry a
@@ -665,8 +667,12 @@ export async function readOwnerMoney({
       terminalGroupsTotal += 1
       if (live) terminalGroupsLive += 1
     }
-    if (units != null) baseSubtotalUnits += units
-    else anyGroupUnknown = true
+    if (units != null) {
+      baseSubtotalUnits += units
+      const location = mostAdvancedChild(groupChildren)?.custody?.location ?? 'unknown'
+      ownerBaseCustodyBreakdown[location] =
+        (ownerBaseCustodyBreakdown[location] ?? 0n) + units
+    } else anyGroupUnknown = true
     if (groupProblems.some((p) => READ_INCOMPLETE_PROBLEMS.has(p))) anyGroupIncomplete = true
   }
 
@@ -749,6 +755,7 @@ export async function readOwnerMoney({
     stellarYield,
     stellarSubtotalUnits,
     baseSubtotalUnits,
+    ownerBaseCustodyBreakdown,
     completeBaseTotalUnits,
     overallTotalUnits,
     baseValuationKind: BASE_VALUATION_KIND,
@@ -765,6 +772,7 @@ export function aggregateOwnerPositions(reads) {
   let knownUnits = 0n
   let anyUnread = status === 'partial'
   const custodyBreakdown = {}
+  const hasOwnerBaseCustody = reads?.ownerBaseCustodyBreakdown != null
   const executionBreakdown = {}
   let problemAgentCount = 0
 
@@ -782,6 +790,7 @@ export function aggregateOwnerPositions(reads) {
       // the pre-existing whole-amount-under-one-location behavior.
       if (a.custodyBreakdown?.length) {
         for (const leg of a.custodyBreakdown) {
+          if (hasOwnerBaseCustody && leg.kernelAddress && leg.poolAddress) continue
           custodyBreakdown[leg.location] =
             (custodyBreakdown[leg.location] ?? 0n) + BigInt(leg.amount.units)
         }
@@ -791,6 +800,12 @@ export function aggregateOwnerPositions(reads) {
       }
     } else {
       anyUnread = true
+    }
+  }
+
+  if (hasOwnerBaseCustody) {
+    for (const [location, units] of Object.entries(reads.ownerBaseCustodyBreakdown)) {
+      custodyBreakdown[location] = (custodyBreakdown[location] ?? 0n) + BigInt(units)
     }
   }
 

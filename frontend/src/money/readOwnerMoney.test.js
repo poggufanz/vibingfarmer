@@ -1719,6 +1719,7 @@ describe('readOwnerMoney — Task 10 owner-wide subtotals and coverage', () => {
     // it matches the real 5,000,000 units of on-chain money, not the per-agent sum's 10,000,000.
     const agg = aggregateOwnerPositions(result)
     expect(agg.confirmedTotal.amount).toEqual({ token: 'USDC', units: '5000000', decimals: 7 })
+    expect(agg.custodyBreakdown).toEqual({ 'base-proxy': '5000000' })
   })
 })
 
