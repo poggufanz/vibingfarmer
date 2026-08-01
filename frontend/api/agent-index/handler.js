@@ -11,6 +11,7 @@ import {
   ingestAssociationReport,
   ingestBaseChildIntent,
   joinBaseAssociations,
+  mergeOwnerBaseAssociations,
 } from './associations.js'
 import {
   applyAuthenticatedReceiptMutation,
@@ -858,14 +859,13 @@ export async function handleRead({
   if (!store) {
     return { status: 200, body: unavailableBody({ networkId, owner, manifest, now }) }
   }
-  // Final review, Fix 2: a store/version skew where `readOwnerRunAllocations` is missing must
-  // never silently masquerade as "this owner has no Base associations" -- the old ternary fell
-  // back to `[]`, so `joinBaseAssociations` stamped `baseChildren: []` on every agent while this
-  // handler's own `status` (from coverageProof, membership/coverage-only) has no way to see that
-  // gap, letting a skewed store return `status:'complete'` with EVERY agent's Base money
-  // invisible -- the one path `readOwnerMoney.js`'s `discovery.status` guard structurally cannot
-  // catch. Same fail-closed shape this function already uses for `!store` and a thrown read below.
-  if (typeof store.readOwnerRunAllocations !== 'function') {
+  // Both stores remain required during the dual-read migration. The 0006 intent/lifecycle model
+  // is authoritative; 0004 rows are compatibility fallback for children not yet dual-written.
+  // Missing either reader is a deploy/version skew and must never look like a complete empty set.
+  if (
+    typeof store.readOwnerBaseChildIntents !== 'function' ||
+    typeof store.readOwnerRunAllocations !== 'function'
+  ) {
     return { status: 200, body: unavailableBody({ networkId, owner, manifest, now }) }
   }
 
@@ -873,11 +873,16 @@ export async function handleRead({
   let coverage
   let associations
   try {
-    ;[memberships, coverage, associations] = await Promise.all([
+    const [membershipRows, coverageRows, authoritativeChildren, legacyAssociations] =
+      await Promise.all([
       store.readOwnerMemberships({ networkId, owner }),
       store.readCoverage({ networkId }),
+      store.readOwnerBaseChildIntents({ networkId, owner }),
       store.readOwnerRunAllocations({ networkId, owner }),
     ])
+    memberships = membershipRows
+    coverage = coverageRows
+    associations = mergeOwnerBaseAssociations({ authoritativeChildren, legacyAssociations })
   } catch {
     return { status: 200, body: unavailableBody({ networkId, owner, manifest, now }) }
   }

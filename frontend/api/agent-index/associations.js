@@ -78,6 +78,11 @@ const BASE_CHILD_INTENT_FIELDS = new Set([
   'baseJobId',
 ])
 const BASE_CHILD_LIFECYCLE_FIELDS = new Set(['sequence', 'status', 'evidence', 'observedAt'])
+const BASE_CHILD_EVIDENCE_FIELDS = new Set([
+  'executionStatus',
+  'custodyLocation',
+  'txHash',
+])
 const LIVE_BRIDGE_GENERATION = AGENT_WASM_GENERATIONS.find(
   (generation) => generation.generation === 'agent-v3-bridge'
 )
@@ -537,4 +542,169 @@ export function joinBaseAssociations({
       })),
     }
   })
+}
+
+function lifecycleStatusForExecution(executionStatus) {
+  if (executionStatus === 'deposited') return 'confirmed'
+  if (executionStatus === 'failed') return 'failed'
+  if (executionStatus === 'held' || executionStatus === 'unknown') return 'unknown'
+  return 'submitted'
+}
+
+function authoritativeAssociation(child) {
+  if (child?.version !== 1) throw new Error('unsupported Base child version')
+  for (const field of [
+    'networkId',
+    'bindingId',
+    'allocationId',
+    'childId',
+    'owner',
+    'agent',
+  ]) {
+    requiredString(child?.[field], `Base child.${field}`)
+  }
+  requireExactFields(child.intent, BASE_CHILD_INTENT_FIELDS, 'Base child intent')
+  const intent = child.intent
+  for (const field of [
+    'token',
+    'units',
+    'poolAddress',
+    'proxyTarget',
+    'runId',
+    'grantTxHash',
+    'kernelAddress',
+    'bindingHash',
+    'baseJobId',
+  ]) {
+    requiredString(intent?.[field], `Base child intent.${field}`)
+  }
+  if (!/^\d+$/.test(intent.units) || BigInt(intent.units) <= 0n) {
+    throw new Error('Base child intent.units must be a positive integer string')
+  }
+  if (!Number.isSafeInteger(intent.decimals) || intent.decimals < 0) {
+    throw new Error('Base child intent.decimals must be a non-negative safe integer')
+  }
+  if (!['aave-v3', 'morpho-blue', 'moonwell'].includes(intent.proxyTarget)) {
+    throw new Error('Base child intent.proxyTarget is unsupported')
+  }
+  if (child.allocationId !== `${intent.runId}:bridge:${intent.proxyTarget}`) {
+    throw new Error('Base child allocationId does not match its run and proxy target')
+  }
+  if (intent.baseJobId !== child.childId) {
+    throw new Error('Base child intent.baseJobId does not match childId')
+  }
+
+  const lifecycle = child.lifecycle
+  requireExactFields(lifecycle, new Set(['sequence', 'status', 'evidence']), 'Base child lifecycle')
+  if (!Number.isSafeInteger(lifecycle.sequence) || lifecycle.sequence < 0) {
+    throw new Error('Base child lifecycle.sequence must be a non-negative safe integer')
+  }
+  if (!BASE_CHILD_LIFECYCLE_STATUSES.includes(lifecycle.status)) {
+    throw new Error('Base child lifecycle.status is unsupported')
+  }
+
+  let executionStatus = 'queued'
+  let custodyLocation = 'unknown'
+  let txHash = null
+  if (lifecycle.sequence === 0) {
+    if (lifecycle.status !== 'planned' || canonicalJson(lifecycle.evidence) !== '{}') {
+      throw new Error('initial Base child lifecycle must be planned without evidence')
+    }
+  } else {
+    requireExactFields(lifecycle.evidence, BASE_CHILD_EVIDENCE_FIELDS, 'Base child evidence')
+    executionStatus = requiredString(
+      lifecycle.evidence.executionStatus,
+      'Base child evidence.executionStatus'
+    )
+    custodyLocation = requiredString(
+      lifecycle.evidence.custodyLocation,
+      'Base child evidence.custodyLocation'
+    )
+    txHash = lifecycle.evidence.txHash
+    if (![...EXECUTION_STATUSES, 'unknown'].includes(executionStatus)) {
+      throw new Error('Base child evidence.executionStatus is unsupported')
+    }
+    if (!CUSTODY_LOCATIONS.includes(custodyLocation)) {
+      throw new Error('Base child evidence.custodyLocation is unsupported')
+    }
+    if (txHash !== null) requiredString(txHash, 'Base child evidence.txHash')
+    if (lifecycle.status !== lifecycleStatusForExecution(executionStatus)) {
+      throw new Error('Base child lifecycle status does not match its execution evidence')
+    }
+  }
+  requiredInteger(child.createdAt, 'Base child.createdAt')
+  requiredInteger(child.updatedAt, 'Base child.updatedAt')
+
+  return {
+    allocationId: child.allocationId,
+    networkId: child.networkId,
+    runId: intent.runId,
+    ownerAddress: child.owner,
+    bridgeAgentAddress: child.agent,
+    poolAddress: intent.poolAddress,
+    amount: { token: intent.token, units: intent.units, decimals: intent.decimals },
+    proxyTarget: intent.proxyTarget,
+    baseJobId: intent.baseJobId,
+    txHash,
+    executionStatus,
+    custodyLocation,
+    grantTxHash: intent.grantTxHash,
+    kernelAddress: intent.kernelAddress,
+    mandateBindingId: child.bindingId,
+    mandateBindingHash: intent.bindingHash,
+    associationSource: 'relayer-attested',
+    reportedAt: child.updatedAt,
+    scopeCheckedAt: child.updatedAt,
+  }
+}
+
+function immutableAssociationFingerprint(row) {
+  return canonicalJson({
+    allocationId: row.allocationId,
+    networkId: row.networkId,
+    runId: row.runId,
+    ownerAddress: row.ownerAddress,
+    bridgeAgentAddress: row.bridgeAgentAddress,
+    poolAddress: String(row.poolAddress).toLowerCase(),
+    amount: row.amount,
+    proxyTarget: row.proxyTarget,
+    baseJobId: row.baseJobId,
+    grantTxHash: row.grantTxHash,
+    kernelAddress: String(row.kernelAddress).toLowerCase(),
+    mandateBindingId: row.mandateBindingId,
+    mandateBindingHash: row.mandateBindingHash,
+  })
+}
+
+/**
+ * Adapts the authoritative 0006 intent/lifecycle projection to the canonical association shape.
+ * A legacy relayer-attested row remains a migration fallback only when no authoritative child
+ * exists for that allocation. Conflicting dual-written identity fails closed instead of picking
+ * whichever reader happened to settle first.
+ */
+export function mergeOwnerBaseAssociations({ authoritativeChildren, legacyAssociations }) {
+  const merged = new Map()
+  for (const child of authoritativeChildren ?? []) {
+    const row = authoritativeAssociation(child)
+    if (merged.has(row.allocationId)) {
+      throw new AgentIndexValidationError('duplicate authoritative Base child allocation')
+    }
+    merged.set(row.allocationId, row)
+  }
+  for (const row of legacyAssociations ?? []) {
+    if (row?.associationSource !== 'relayer-attested') continue
+    const authoritative = merged.get(row.allocationId)
+    if (!authoritative) {
+      merged.set(row.allocationId, row)
+      continue
+    }
+    if (
+      immutableAssociationFingerprint(authoritative) !== immutableAssociationFingerprint(row)
+    ) {
+      throw new AgentIndexValidationError('conflicting authoritative and legacy Base association')
+    }
+  }
+  return [...merged.values()].sort((a, b) =>
+    a.allocationId < b.allocationId ? -1 : a.allocationId > b.allocationId ? 1 : 0
+  )
 }
