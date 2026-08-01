@@ -1,11 +1,17 @@
 // frontend/src/components/strategy/StrategyReceipt.jsx
-// Strategy Task 12 (Pocket Crew redesign, Wave 5). The durable custody receipt for a settled run.
-// Renders ONLY from an already-built `DispatchReceiptV1` (frontend/src/strategy/dispatchSummary.js's
-// `buildDispatchReceipt`) the caller supplies -- this component never re-derives execution status
-// or custody itself; the receipt producer already did that reconciliation (dispatchSummary.js is
-// off-limits to edit for this task, read-only) and is the single source of truth for "what actually
-// happened." This component's own job is purely: group+sum the already-canonical per-allocation
-// amounts (bigint, never mixing two different tokens' units), and present them truthfully.
+// Strategy Task 12 (Pocket Crew redesign, Wave 5); custody rendering extended by Task 6 chunk C2.
+// The durable custody receipt for a settled run. Renders ONLY from an already-built
+// `DispatchReceiptV1` (frontend/src/strategy/dispatchSummary.js's `buildDispatchReceipt`) the
+// caller supplies -- this component never re-derives execution status or custody itself; the
+// receipt producer already did that reconciliation and is the single source of truth for "what
+// actually happened." (This header previously read "dispatchSummary.js is off-limits to edit for
+// this task, read-only" -- that note was stale, left over from the earlier, different Strategy
+// Task 12 this file was originally built under. Task 6's own file list explicitly includes
+// dispatchSummary.js, ruled on directly by the controller; chunk C2 edits both files together.)
+// This component's own job is purely: group+sum the already-canonical per-allocation amounts
+// (bigint, never mixing two different tokens' units), project each allocation's own custody
+// evidence as-is -- never re-deriving a location or a confirmation dispatchSummary.js did not
+// already assert -- and present it all truthfully.
 import { MoneyFigure, StatusNotice, TechnicalDetails } from '../pocket/Primitives.jsx'
 import { SOROBAN_TOKEN_ADDRESS } from '../../stellar/config.js'
 import { STELLAR_USDC_SAC } from '../../stellar/cctpBurn.js'
@@ -43,9 +49,14 @@ function unitsToDisplay(units, decimals) {
  *                this is the reconciliation-level mirror of that same fact, never resolved by a
  *                timeout on this side).
  * - `held`       failed AND custody.location === 'agent' -- pulled from the owner into an agent
- *                (Stellar deposit agent or Base bridge agent) but never reached its destination;
- *                baseLeg.js's own vocabulary for this is "stranded funds, recoverable via an
- *                owner sweep" (baseLeg.js:294-301,328-330).
+ *                (a Stellar deposit agent, a Stellar bridge agent that pulled funds but never
+ *                burned them, or -- once Task 6's receipt evidence reaches the Base leg --
+ *                a Base-side kernel that received a CCTP mint but never reached the destination
+ *                vault; dispatchSummary.js's `provenCustody` deliberately maps the receipt's own
+ *                'base-kernel' onto this SAME 'agent' bucket, so this reconciliation needs no
+ *                change on that day) but never reached its destination; baseLeg.js's own
+ *                vocabulary for this is "stranded funds, recoverable via an owner sweep"
+ *                (baseLeg.js:294-301,328-330).
  * - `unmoved`    everything else that isn't deposited/in-transit/held: a failed allocation whose
  *                custody is 'owner'/'unknown', OR an allocation with no evidence at all
  *                (`not-started`/`unknown` executionStatus) -- the conservative bucket. Never claim
@@ -97,6 +108,26 @@ function explorerTxUrl(allocation) {
 
 function explorerAccountUrl(address) {
   return `https://stellar.expert/explorer/testnet/account/${address}`
+}
+
+// Task 6 chunk C2 -- projects an allocation's own custody evidence AS EVIDENCE, rather than the
+// page silently treating a proven receipt-sourced verdict and the pre-existing inferred fallback
+// (dispatchSummary.js's CustodyV1 `source:'receipt'|'inferred'`) with the same confidence. Leaving
+// that distinction unrendered would be exactly the "transport acceptance mistaken for custody"
+// defect this task exists to remove, just relocated to the view layer instead of fixed. Reads
+// `custody` as supplied -- never re-derives a location, a confirmation, or an amount from
+// `executionStatus`/`txHash` the way the OLD `inferredCustody()` guessed. `custody.amount` is the
+// receipt's OWN amount (present only when proven); it is never folded into the plan-authoritative
+// `a.amount` reconciliation above (`reconcileAllocations` untouched), and 'unknown' custody's
+// `amount:null` renders as the literal word "unknown" here -- never a coerced/defaulted zero.
+function custodyEvidenceText(custody) {
+  if (!custody) return null
+  const provenance = custody.source === 'receipt' ? 'receipt-confirmed' : 'not receipt-confirmed'
+  if (custody.location === 'unknown' || custody.amount == null) {
+    return `custody unknown (${provenance})`
+  }
+  const amountText = `${unitsToDisplay(custody.amount.units, custody.amount.decimals)} ${tokenSymbol(custody.amount.token)}`
+  return `custody: ${custody.location}, ${amountText} (${provenance})`
 }
 
 export function StrategyReceipt({ receipt, runId, onViewMoney, onMakeAnotherDeposit, onViewCrew }) {
@@ -233,6 +264,9 @@ export function StrategyReceipt({ receipt, runId, onViewMoney, onMakeAnotherDepo
               'No transaction yet'
             )}
             {a.error ? ` -- ${a.error}` : ''}
+            {custodyEvidenceText(a.custody) && (
+              <span className="pc-field-help"> ({custodyEvidenceText(a.custody)})</span>
+            )}
           </p>
         ))}
       </TechnicalDetails>

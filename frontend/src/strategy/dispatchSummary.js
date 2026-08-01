@@ -1,9 +1,32 @@
 // Canonical mixed-branch execution receipt. The receipt deliberately keeps operation progress
 // separate from current custody: a failed relay can still leave USDC in a bridge agent or CCTP.
+//
+// Task 6 chunk C2 -- custody now has TWO sources, and callers must be able to tell them apart:
+//   - PROVEN: a real AllocationReceiptV2 (allocationReceipt.js) exists for this allocation. Its
+//     `custody` is projected VERBATIM (only the location string is renamed onto this module's
+//     vocabulary -- see RECEIPT_TO_CUSTODY_LOCATION below); never re-derived, never "improved."
+//   - INFERRED: the pre-existing, unchanged fallback (`inferredCustody`) for the one live path
+//     that still produces no receipt at all (`dispatchLegacy`, orchestrator.js:1693) and for the
+//     Base branch, which does not yet wire AllocationReceiptV2 (baseLeg.js keeps its own separate
+//     custody handling, out of Task 6's scope).
+// The distinction is carried on CustodyV1 itself as `source:'receipt'|'inferred'` -- a named field
+// rather than a bare boolean, because `confirmed` already exists and means something different
+// (the custody CLAIM is confirmed vs. ambiguous); a second boolean sitting next to it would invite
+// exactly the kind of "which flag means what" confusion this task exists to remove. `checkedAt` is
+// always `null` on the receipt path: the receipt carries no timestamp on `custody` itself (only
+// each phase attempt's `observedAt` does, and reading one of those would be reconstructing a fact
+// the receipt does not actually assert about custody, not projecting one it does) -- the field is
+// kept (not dropped) purely so CustodyV1's shape stays uniform across both sources, and it still
+// carries real data on the inferred path, unchanged from before this chunk.
+//
+// See RECEIPT_TO_CUSTODY_LOCATION's own comment for why 'base-kernel'/'base-vault' map onto this
+// module's EXISTING vocabulary rather than widening it with two new strings.
 
 /**
  * @typedef {{token:string, units:string, decimals:number}} TokenAmount
- * @typedef {{location:'owner'|'agent'|'stellar-vault'|'in-transit'|'base-proxy'|'unknown', confirmed:boolean, checkedAt:number|null}} CustodyV1
+ * @typedef {{location:'owner'|'agent'|'stellar-vault'|'in-transit'|'base-proxy'|'unknown',
+ *   confirmed:boolean, checkedAt:number|null, amount:TokenAmount|null, reason:string|null,
+ *   source:'receipt'|'inferred'}} CustodyV1
  * @typedef {{allocationId:string, amount:TokenAmount, networkContext:object, executionStatus:'succeeded'|'failed'|'pending'|'not-started'|'unknown', custody:CustodyV1, txHash:string|null, error:string|null}} AllocationOutcomeV1
  * @typedef {{status:'succeeded'|'partial'|'failed'|'in-transit'|'not-planned', results:AllocationOutcomeV1[]}} BranchResultV1
  * @typedef {{version:1, runId:string, planFingerprint:string, permission:object, branches:{stellar:BranchResultV1,base:BranchResultV1}, allocations:AllocationOutcomeV1[]}} DispatchReceiptV1
@@ -17,6 +40,41 @@ const CUSTODY_LOCATIONS = new Set([
   'in-transit',
   'base-proxy',
   'unknown',
+])
+
+// The server's authoritative custody vocabulary (frontend/api/agent-index/models.js:29-37's
+// RECEIPT_CUSTODY_LOCATIONS), copied verbatim -- this module has no import from api/ at runtime,
+// the same rule allocationReceipt.js documents at its own header (a pure producer with no network/
+// DB dependency should not reach into api/ at runtime). The copy is pinned against drift by
+// dispatchSummary.test.js, which imports and checks against the REAL models.js export.
+//
+// Mapped onto this module's PRE-EXISTING CustodyV1 vocabulary rather than widening it with new
+// strings:
+//   - 'stellar-agent' -> 'agent' and 'cctp-transit' -> 'in-transit' are lossless renames: the old
+//     vocab already had exactly one bucket for each of those concepts.
+//   - 'base-vault' -> 'base-proxy': the old vocab's only "arrived on Base" bucket, and the
+//     server's 'base-vault' means exactly that (landed in the destination pool).
+//   - 'base-kernel' -> 'agent', deliberately NOT a new distinct value and NOT collapsed onto
+//     'base-proxy' either. This preserves the receipt's real distinction (funds reached an
+//     intermediary Base-side smart account, never the destination vault) using vocabulary this
+//     module's own read-only consumer already interprets correctly: StartStage.jsx's
+//     `custodyLabelFor` already reads 'agent' as a chain-agnostic "held by an intermediary,
+//     recovery available" verdict for BOTH deposit and bridge lanes (StartStage.jsx:216-224), and
+//     its `bridgeSettledPhase` already treats ONLY 'base-proxy' as "confirmed arrived"
+//     (StartStage.jsx:279). Introducing two brand-new 'base-kernel'/'base-vault' CustodyV1 strings
+//     was considered and rejected: StartStage.jsx is out of scope for this chunk (read-only,
+//     under active review) and its `c.custody?.location === 'base-proxy'` string match would never
+//     recognize a new string -- silently regressing a genuinely proven Base arrival back to
+//     "in-transit" forever. Reusing 'agent' means that already-shipped consumer keeps classifying
+//     a proven-but-stranded Base allocation correctly with zero edits to it required.
+const RECEIPT_TO_CUSTODY_LOCATION = new Map([
+  ['owner', 'owner'],
+  ['stellar-agent', 'agent'],
+  ['stellar-vault', 'stellar-vault'],
+  ['cctp-transit', 'in-transit'],
+  ['base-kernel', 'agent'],
+  ['base-vault', 'base-proxy'],
+  ['unknown', 'unknown'],
 ])
 
 function asError(value) {
@@ -57,9 +115,79 @@ function inferredCustody(raw, branch, status) {
       location: raw.custody.location,
       confirmed: raw.custody.confirmed === true,
       checkedAt: typeof raw.custody.checkedAt === 'number' ? raw.custody.checkedAt : null,
+      amount: null,
+      reason: null,
+      source: 'inferred',
     }
   }
-  return { location: 'unknown', confirmed: false, checkedAt: null }
+  return {
+    location: 'unknown',
+    confirmed: false,
+    checkedAt: null,
+    amount: null,
+    reason: null,
+    source: 'inferred',
+  }
+}
+
+// C1 already threads the real AllocationReceiptV2 onto a dispatch result -- under `raw.receipt`
+// for the plain per-worker loop (orchestrator.js's `dispatch`/`dispatchPermissioned` results,
+// :919-920: `custody: r.value?.receipt?.custody ?? null, receipt: r.value?.receipt ?? null`) and
+// under `raw.allocationReceipt` for the mixed Stellar+Base loop (`dispatchConfirmedMixed`,
+// orchestrator.js:1085,1098,1116). That second loop deliberately kept its PRE-EXISTING `custody`
+// field in the OLD legacy shape "so nothing downstream collides" (orchestrator.js:962-966's own
+// comment), so the real receipt lives under the second name there instead -- verified by reading
+// orchestrator.js directly, not assumed from the brief, which only describes the first loop.
+// Checking both names is reading more of the SAME already-committed producer output; it requires
+// no orchestrator.js change.
+function receiptCustodyEvidence(raw) {
+  return raw?.receipt?.custody ?? raw?.allocationReceipt?.custody ?? null
+}
+
+/**
+ * Project one receipt's custody VERBATIM -- never re-derive it. The only transformation applied is
+ * the server-vocabulary -> CustodyV1-vocabulary rename table (RECEIPT_TO_CUSTODY_LOCATION above);
+ * `confirmed`/`amount`/`reason` are copied through unchanged (amount stays a decimal string end to
+ * end -- never routed through `Number()`, which would silently lose precision above
+ * `Number.MAX_SAFE_INTEGER`). Throws on any location outside the server's RECEIPT_CUSTODY_LOCATIONS
+ * vocabulary (fail loudly) rather than silently falling through to 'unknown' -- a vocabulary bug
+ * must never quietly present as an honest "no evidence" verdict.
+ * @param {{location:string, confirmed:boolean, amount:TokenAmount|null, reason:string|null}} receiptCustody
+ * @returns {CustodyV1}
+ */
+function provenCustody(receiptCustody) {
+  const location = RECEIPT_TO_CUSTODY_LOCATION.get(receiptCustody.location)
+  if (location === undefined) {
+    throw new Error(
+      `buildDispatchReceipt: receipt custody location "${receiptCustody.location}" is not in the ` +
+        'server RECEIPT_CUSTODY_LOCATIONS vocabulary -- refusing to silently present it as unknown.'
+    )
+  }
+  return {
+    location,
+    confirmed: receiptCustody.confirmed === true,
+    checkedAt: null,
+    amount:
+      receiptCustody.amount == null
+        ? null
+        : {
+            token: receiptCustody.amount.token,
+            units: String(receiptCustody.amount.units),
+            decimals: receiptCustody.amount.decimals,
+          },
+    reason: receiptCustody.reason ?? null,
+    source: 'receipt',
+  }
+}
+
+/**
+ * Custody comes from the receipt when one exists (verbatim, via `provenCustody`); inference is
+ * only the documented fallback for an allocation with no receipt evidence at all. `source` on the
+ * returned CustodyV1 is how any caller -- including StrategyReceipt.jsx -- tells the two apart.
+ */
+function custodyFor(raw, branch, status) {
+  const receiptCustody = receiptCustodyEvidence(raw)
+  return receiptCustody ? provenCustody(receiptCustody) : inferredCustody(raw, branch, status)
 }
 
 function txHash(raw) {
@@ -149,7 +277,7 @@ function safeEvidence(raw) {
 
 function normalizeOutcome(planned, raw) {
   const status = executionStatus(raw, planned.branch)
-  const custody = inferredCustody(raw, planned.branch, status)
+  const custody = custodyFor(raw, planned.branch, status)
   const amount = planned.allocation || planned.cap
   if (
     !amount ||

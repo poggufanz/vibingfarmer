@@ -294,6 +294,109 @@ describe('StrategyReceipt -- optional attestation is separate and counts its own
   })
 })
 
+describe('Task 6 chunk C2 -- custody evidence is projected as evidence, never re-derived or silently zeroed', () => {
+  it('renders custody exactly as supplied by the receipt -- never re-deriving location/confirmation from executionStatus, txHash, or any other field', () => {
+    // A deliberately adversarial fixture: executionStatus is 'succeeded' (the deposit tx itself
+    // went through), but the receipt's OWN custody evidence says the vault-share event never
+    // matched (confirmed:false, location still 'agent') -- a real, receipt-honest state
+    // (allocationReceipt.js's own "ambiguous evidence" path). If this component re-derived
+    // custody from executionStatus instead of reading it, it would show 'stellar-vault'/confirmed
+    // here; it must show exactly what was supplied.
+    const allocations = [
+      alloc({
+        allocationId: 'a',
+        executionStatus: 'succeeded',
+        custody: {
+          location: 'agent',
+          confirmed: false,
+          checkedAt: null,
+          amount: null,
+          reason: 'ambiguous evidence reported',
+          source: 'receipt',
+        },
+      }),
+    ]
+    render(
+      <StrategyReceipt
+        receipt={receipt(allocations)}
+        onViewMoney={() => {}}
+        onMakeAnotherDeposit={() => {}}
+      />
+    )
+    fireEvent.click(document.querySelector('.pc-technical-details summary'))
+    expect(screen.getByText(/custody unknown \(receipt-confirmed\)/)).toBeTruthy()
+    expect(screen.queryByText(/stellar-vault/)).toBeNull()
+  })
+
+  it('distinguishes a proven (receipt-sourced) allocation from an inferred one in the rendered Technical details, even though both report the same custody location', () => {
+    const allocations = [
+      alloc({
+        allocationId: 'proven-a',
+        custody: {
+          location: 'agent',
+          confirmed: true,
+          checkedAt: null,
+          amount: { token: TOKEN_ADDR, units: '1000000000', decimals: 7 },
+          reason: null,
+          source: 'receipt',
+        },
+      }),
+      alloc({
+        allocationId: 'inferred-b',
+        custody: {
+          location: 'agent',
+          confirmed: true,
+          checkedAt: NOW,
+          amount: null,
+          reason: null,
+          source: 'inferred',
+        },
+      }),
+    ]
+    render(
+      <StrategyReceipt
+        receipt={receipt(allocations)}
+        onViewMoney={() => {}}
+        onMakeAnotherDeposit={() => {}}
+      />
+    )
+    fireEvent.click(document.querySelector('.pc-technical-details summary'))
+    expect(screen.getByText(/custody: agent, 100 USDC \(receipt-confirmed\)/)).toBeTruthy()
+    expect(screen.getByText(/custody unknown \(not receipt-confirmed\)/)).toBeTruthy()
+  })
+
+  it('renders unknown custody with amount:null as the literal word "unknown", never a coerced/defaulted zero', () => {
+    const allocations = [
+      alloc({
+        allocationId: 'a',
+        executionStatus: 'failed',
+        custody: {
+          location: 'unknown',
+          confirmed: false,
+          checkedAt: null,
+          amount: null,
+          reason: null,
+          source: 'receipt',
+        },
+      }),
+    ]
+    render(
+      <StrategyReceipt
+        receipt={receipt(allocations)}
+        onViewMoney={() => {}}
+        onMakeAnotherDeposit={() => {}}
+      />
+    )
+    fireEvent.click(document.querySelector('.pc-technical-details summary'))
+    // Scoped to the custody span itself -- the page legitimately shows "0 USDC" elsewhere (the
+    // Deposited MoneyFigure for a failed, nothing-deposited allocation is correctly zero; that is
+    // NOT the bug this test guards). The custody line must never coerce a null amount into that
+    // same zero, so its OWN text is checked directly rather than searching the whole document.
+    const custodyNote = screen.getByText(/custody unknown \(receipt-confirmed\)/)
+    expect(custodyNote.textContent).not.toMatch(/0 USDC/)
+  })
+})
+
 describe('StrategyReceipt -- actions are exactly "View my money" (primary) and "Make another deposit" (secondary)', () => {
   it('renders both, with the correct roles, and calls the right callback', () => {
     const onViewMoney = vi.fn()
