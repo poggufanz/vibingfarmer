@@ -404,13 +404,23 @@ function buildAgentV4Row({ agentAddress, scope, signer, code }) {
  *     `{scope: null, ...}` shape) — there is no field that could carry "read failed" without a
  *     caller mistaking it for real data, so omission is the only representation that cannot be
  *     misread as evidence.
- *   - Silently returning a short list is itself a fail-open risk in general (task brief) — but not
- *     here: `proveReusablePermission` already treats "fewer rows than reviewed allocations" as
- *     `'agent-missing'` (permissionGrantV3.js:413, unmodified), so a dropped row naturally feeds an
- *     EXISTING fail-closed gate rather than requiring a new one. Throwing per-agent instead would
- *     abort the WHOLE proof over one unreachable cached entry among several — too strict, and
- *     inconsistent with the "soft" contract `readAgentScope`/`readAgentSigner` already establish by
- *     swallowing to `null` instead of throwing.
+ *   - Silently returning a short list is itself a fail-open risk in general (task brief). Corrected
+ *     in fix round 1 (the original wording overclaimed this): `proveReusablePermission`'s
+ *     `rows.length < agentInits.length` gate (permissionGrantV3.js:413, unmodified,
+ *     `'agent-missing'`) only fires in the NON-SUPERSET case — a cache holding strictly fewer
+ *     usable agents than reviewed allocations. It does NOT fire, and cannot be relied on, when the
+ *     cache holds MORE agents than the run needs (permissionGrantV3.js:560-563 documents this as a
+ *     legitimate case — "rows legitimately CAN supersede agentInits"): dropping some failed rows
+ *     there can easily still leave `rows.length >= agentInits.length`. Safety in THAT case does not
+ *     rest on :413 at all — it rests on the binding/verification steps that run on every SURVIVING
+ *     row regardless of how many were dropped: 7c (an allocation only binds a row whose own
+ *     target/token match), 7d (`readLinkedPermission` proves the bound row is actually linked to
+ *     THIS permission on-chain), and 7e (the bound row's own `capPerPeriodUnits` must match the
+ *     reviewed cap). A dropped row can therefore never be silently substituted by a wrong one; it
+ *     can only ever cause the run to (correctly) fail to find a valid binding. Throwing per-agent
+ *     instead of dropping would abort the WHOLE proof over one unreachable cached entry among
+ *     several — too strict, and inconsistent with the "soft" contract `readAgentScope`/
+ *     `readAgentSigner` already establish by swallowing to `null` instead of throwing.
  * The router-wide `code` read (above) is the opposite choice, deliberately: it is a single,
  * infrastructural read that every row depends on, not a per-item one, so it is allowed to throw
  * (like `readPermissionGrant`) rather than silently degrade every row.

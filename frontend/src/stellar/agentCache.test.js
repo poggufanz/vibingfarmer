@@ -390,9 +390,18 @@ describe('inspectReusableAgents (non-mutating)', () => {
 
 describe('inspectAgentsV4', () => {
   const CODE_BYTES = new Uint8Array(32).fill(0xaa)
-  const CODE_HEX = '0x' + toHex(CODE_BYTES)
-  const SIGNER_BYTES = new Uint8Array(32).fill(0xbb)
-  const SIGNER_PUB = StrKey.encodeEd25519PublicKey(SIGNER_BYTES)
+  const CODE_HEX = '0x' + 'aa'.repeat(32)
+  // Fix round 1, Finding 1: PINNED from permissionGrantV3.test.js's own `SIGNER_PUB` literal (the
+  // OTHER side of this cross-layer boundary) — never computed here via
+  // `StrKey.encodeEd25519PublicKey`, which is the exact SDK call the implementation itself makes.
+  // A test whose "expected" value is produced by calling the SAME encoder the code under test
+  // calls can never fail if the WRONG encoding convention were chosen (e.g. `encodeContract`, a
+  // muxed-account encoding, or raw hex) — see the binding constraint this remediation was built to
+  // enforce: a cross-layer expectation may never be computed by the layer under test. Decoding the
+  // pinned literal (never encoding) to obtain the raw bytes fed into the mocked `signer()` is the
+  // inverse operation `inspectAgentsV4` itself never performs, so it introduces no such tautology.
+  const SIGNER_PUB = 'GA2CMBS3LRY5MH64KKMHOYVA6WTLPMKRMIWEJDOIGHYPB7WMC3QHRCBU'
+  const SIGNER_BYTES = StrKey.decodeEd25519PublicKey(SIGNER_PUB)
 
   // A real AgentScope (agent_account/src/types.rs) — full shape for fidelity, even though
   // inspectAgentsV4 only reads target/token/cap_per_period/per_execution_max/expiry/revoked.
@@ -504,11 +513,14 @@ describe('inspectAgentsV4', () => {
   test.each([
     ['scope', { readScope: async () => null }],
     ['signer', { readSigner: async () => null }],
-  ])('a failed %s read drops the agent from the result — never a partial row', async (_label, over) => {
-    seedOneAgent()
-    const rows = await inspectAgentsV4(args(over))
-    expect(rows).toEqual([])
-  })
+  ])(
+    'a failed %s read drops the agent from the result — never a partial row',
+    async (_label, over) => {
+      seedOneAgent()
+      const rows = await inspectAgentsV4(args(over))
+      expect(rows).toEqual([])
+    }
+  )
 
   test('a row never carries signerPub: undefined — a failed signer read is absent, not present-but-empty', async () => {
     seedOneAgent()
@@ -525,12 +537,24 @@ describe('inspectAgentsV4', () => {
     ['negative cap_per_period', { cap_per_period: -1n }],
     ['non-BigInt per_execution_max', { per_execution_max: 50000000 }],
     ['non-BigInt expiry', { expiry: NOW + 3600 }],
+    // Fix round 1 (optional, self-reported gap): exercises u64SafeNumberOrNull's
+    // Number.isSafeInteger branch directly — 2^53+1 round-trips through Number to 2^53, which is
+    // itself NOT a safe integer (Number.MAX_SAFE_INTEGER is 2^53-1), so this must drop the row.
+    [
+      'expiry above Number.MAX_SAFE_INTEGER (fails the round-trip guard)',
+      { expiry: 9007199254740993n },
+    ],
   ])('a structurally invalid scope (%s) drops the row, never throws', async (_label, over) => {
     seedOneAgent()
-    const rows = await inspectAgentsV4(
-      args({ readScope: async () => scopeV4(over) })
-    )
-    await expect(Promise.resolve(rows)).resolves.toEqual([])
+    const rows = await inspectAgentsV4(args({ readScope: async () => scopeV4(over) }))
+    expect(rows).toEqual([])
+  })
+
+  test('revoked: true passes through unchanged — not silently coerced or dropped', async () => {
+    seedOneAgent()
+    const rows = await inspectAgentsV4(args({ readScope: async () => scopeV4({ revoked: true }) }))
+    expect(rows).toHaveLength(1)
+    expect(rows[0].revoked).toBe(true)
   })
 
   test('a malformed router wasm-hash resolution throws rather than silently dropping every row', async () => {
