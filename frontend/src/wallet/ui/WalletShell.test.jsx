@@ -19,7 +19,12 @@ import CONTRACT_MANIFEST from './walletContractManifest.generated.json'
 afterEach(cleanup)
 
 const here = path.dirname(fileURLToPath(import.meta.url))
-const RAW_SOURCE = fs.readFileSync(path.resolve(here, './WalletShell.jsx'), 'utf8')
+// Normalized once here (CRLF -> LF) so every LF-literal marker/slice below (e.g. the
+// `` `\n\nexport function WalletShell` `` marker in shippedStyleRules()) matches regardless of
+// whether this checkout has the component file checked out with CRLF or LF line endings.
+const RAW_SOURCE = fs
+  .readFileSync(path.resolve(here, './WalletShell.jsx'), 'utf8')
+  .replace(/\r\n/g, '\n')
 // Structural/checklist guards below check the SHIPPED CODE, not this file's own header comment
 // (which legitimately names the properties it structurally lacks, e.g. "no password prop") --
 // comments are stripped first so documentation can never accidentally fail its own guard.
