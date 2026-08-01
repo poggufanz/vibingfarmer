@@ -191,6 +191,23 @@ export function createSqliteStores(path, {
         RETURNING *
       `).get(token, claimNow + leaseMs, claimNow, jobId));
     },
+    renew({ jobId, leaseToken, now: renewNow = now(), leaseMs = 30_000 }) {
+      if (!jobId || !leaseToken) {
+        throw new Error('farm execution renewal requires jobId and leaseToken');
+      }
+      if (!Number.isSafeInteger(renewNow) || !Number.isSafeInteger(leaseMs) || leaseMs <= 0) {
+        throw new Error('farm execution lease requires safe integer time and positive duration');
+      }
+      const result = db.prepare(`
+        UPDATE farm_execution_work
+        SET lease_expires_at = ?, updated_at = ?
+        WHERE job_id = ? AND status = 'running' AND lease_token = ?
+      `).run(renewNow + leaseMs, renewNow, jobId, leaseToken);
+      if (result.changes !== 1) {
+        throw new Error('farm execution lease is stale or uncertain');
+      }
+      return this.get(jobId);
+    },
     listRecoverable({ now: recoveryNow = now() } = {}) {
       return db.prepare(`
         SELECT * FROM farm_execution_work

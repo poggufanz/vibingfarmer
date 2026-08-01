@@ -165,6 +165,12 @@ describe('sqliteStores', () => {
       ]);
       const claimed = second.farmExecutions.claim({ jobId: 'job-1', now: 1000, leaseMs: 100 });
       expect(claimed).toMatchObject({ status: 'running', attempts: 1, leaseExpiresAt: 1100 });
+      expect(() => third.farmExecutions.renew({
+        jobId: 'job-1', leaseToken: 'stale-token', now: 1050, leaseMs: 100,
+      })).toThrow(/stale|uncertain/i);
+      expect(third.farmExecutions.renew({
+        jobId: 'job-1', leaseToken: claimed.leaseToken, now: 1050, leaseMs: 100,
+      })).toMatchObject({ status: 'running', attempts: 1, leaseExpiresAt: 1150 });
       expect(third.farmExecutions.claim({ jobId: 'job-1', now: 1000, leaseMs: 100 })).toBeNull();
       expect(third.farmExecutions.attach({
         jobId: 'job-1', burnTxHash: 'burn-1', job: attachedJob, reports: [executionReport(1)],

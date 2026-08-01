@@ -896,6 +896,89 @@ describe('createRelayerRouter', () => {
       });
     });
 
+    it('renews an active durable farm lease and an exact attach retry cannot reconcile it uncertain', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(1_900_000_000_000);
+      const path = join(mkdtempSync(join(tmpdir(), 'vf-router-heartbeat-')), 'relayer.db');
+      const stores = createSqliteStores(path, { now: () => Date.now() });
+      let resolveFarm;
+      farmFn.mockImplementationOnce(() => new Promise((resolve) => { resolveFarm = resolve; }));
+      const durableRouter = makeRouter({
+        jobs: stores.jobs,
+        mandatesV2: stores.mandatesV2,
+        associationOutbox: stores.associationOutbox,
+        farmExecutions: stores.farmExecutions,
+      });
+
+      try {
+        const { body } = await registerMandate(durableRouter);
+        const queued = mockRes();
+        await durableRouter(mk('POST', '/api/vf-cross/farm', {
+          serializedApproval: body.serializedApproval,
+          stellarOwner: STELLAR_OWNER,
+          kernelAddress: KERNEL_ADDRESS,
+          bridgeAgent: 'CBRIDGE',
+          runId: 'run-heartbeat',
+          grantTxHash: 'HGRANT',
+          allocations: [wireAllocation({ allocationId: 'run-heartbeat:bridge:aave-v3' })],
+        }), queued);
+        const { jobId } = jsonOf(queued);
+
+        const attached = await attachJob(durableRouter, jobId, body, 'burn-heartbeat');
+        expect(attached.statusCode).toBe(200);
+        expect(buildFarm).toHaveBeenCalledTimes(1);
+        expect(stores.farmExecutions.get(jobId)).toMatchObject({
+          status: 'running', attempts: 1,
+        });
+
+        await vi.advanceTimersByTimeAsync(30_001);
+        expect(stores.farmExecutions.get(jobId).leaseExpiresAt).toBeGreaterThan(Date.now());
+
+        const repeated = await attachJob(durableRouter, jobId, body, 'burn-heartbeat');
+        expect(repeated.statusCode).toBe(200);
+        expect(buildFarm).toHaveBeenCalledTimes(1);
+        expect(stores.farmExecutions.get(jobId)).toMatchObject({
+          status: 'running', attempts: 1,
+        });
+
+        resolveFarm({
+          mintResult: { status: 'minted', mintTxHash: '0xmint-heartbeat' },
+          depositResults: [{
+            allocationId: 'run-heartbeat:bridge:aave-v3',
+            executionStatus: 'deposited',
+            custody: { location: 'base-proxy' },
+            txHash: '0xdeposit-heartbeat',
+          }],
+          runId: 'run-heartbeat', bridgeAgent: 'CBRIDGE', grantTxHash: 'HGRANT',
+        });
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(stores.farmExecutions.get(jobId)).toMatchObject({
+          status: 'done', attempts: 1, leaseToken: null, leaseExpiresAt: null,
+        });
+        const reports = stores.db.prepare(
+          'SELECT report_json FROM association_outbox WHERE child_id = ? ORDER BY sequence ASC'
+        ).all(jobId).map(({ report_json: reportJson }) => JSON.parse(reportJson));
+        expect(reports).toHaveLength(3);
+        expect(reports.at(-1)).toMatchObject({
+          lifecycle: {
+            sequence: 3,
+            status: 'confirmed',
+            evidence: {
+              executionStatus: 'deposited',
+              custodyLocation: 'base-proxy',
+              txHash: '0xdeposit-heartbeat',
+            },
+          },
+        });
+        expect(reports.some((report) => report.lifecycle.evidence.executionStatus === 'unknown'))
+          .toBe(false);
+      } finally {
+        stores.db.close();
+        vi.useRealTimers();
+      }
+    });
+
     // Defect caught: server startup only restarted the association-delivery worker and never
     // dispatched durable farm work that crashed after attachment.
     it('exposes a startup reconciliation pass for persisted pending farm work', async () => {

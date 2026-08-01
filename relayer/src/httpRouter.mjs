@@ -73,6 +73,8 @@ const FARM_ATTACH_FIELDS = new Set([
   'stellarOwner',
   'kernelAddress',
 ]);
+const FARM_LEASE_MS = 30_000;
+const FARM_HEARTBEAT_MS = 10_000;
 
 function requireExactFields(value, allowed, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -488,7 +490,7 @@ export function createRelayerRouter({
   }
 
   function claimWork(jobId) {
-    if (farmExecutions?.claim) return farmExecutions.claim({ jobId });
+    if (farmExecutions?.claim) return farmExecutions.claim({ jobId, leaseMs: FARM_LEASE_MS });
     if (activeFarmJobs.has(jobId)) return null;
     let work = memoryFarmWork.get(jobId);
     const job = jobs.get(jobId);
@@ -526,7 +528,20 @@ export function createRelayerRouter({
     if (work) memoryFarmWork.set(jobId, { ...work, status: 'done', leaseToken: null });
   }
 
-  async function runFarmJob(jobId, sessionPrivateKey, farmParams, attachContext, leaseToken) {
+  function startFarmLeaseHeartbeat(jobId, leaseToken) {
+    if (!farmExecutions?.renew) return () => {};
+    const timer = setInterval(() => {
+      try {
+        farmExecutions.renew({ jobId, leaseToken, leaseMs: FARM_LEASE_MS });
+      } catch (err) {
+        if (sanitizeErrors) console.error(`[relayer] job ${jobId} lease renewal failed:`, err);
+      }
+    }, FARM_HEARTBEAT_MS);
+    timer.unref?.();
+    return () => clearInterval(timer);
+  }
+
+  async function runFarmJobBody(jobId, sessionPrivateKey, farmParams, attachContext, leaseToken) {
     let mintCheckpointed = false;
     const onMintConfirmed = async (mintResult) => {
       if (mintCheckpointed || !mintResult?.mintTxHash) return;
@@ -627,6 +642,21 @@ export function createRelayerRouter({
     }
   }
 
+  async function runFarmJob(jobId, sessionPrivateKey, farmParams, attachContext, leaseToken) {
+    const stopHeartbeat = startFarmLeaseHeartbeat(jobId, leaseToken);
+    try {
+      return await runFarmJobBody(
+        jobId,
+        sessionPrivateKey,
+        farmParams,
+        attachContext,
+        leaseToken,
+      );
+    } finally {
+      stopHeartbeat();
+    }
+  }
+
   function dispatchFarmWork(jobId) {
     if (activeFarmJobs.has(jobId)) return false;
     const job = jobs.get(jobId);
@@ -713,7 +743,9 @@ export function createRelayerRouter({
   async function resumeFarmJobs() {
     if (farmExecutions?.listRecoverable) {
       for (const work of farmExecutions.listRecoverable()) {
-        if (work.status === 'running') reconcileExpiredWork(work);
+        if (work.status === 'running') {
+          if (!activeFarmJobs.has(work.jobId)) reconcileExpiredWork(work);
+        }
         else dispatchFarmWork(work.jobId);
       }
       return;
@@ -856,7 +888,11 @@ export function createRelayerRouter({
       }
       const work = farmExecutions?.get?.(jobId);
       if (!work || work.status === 'pending') dispatchFarmWork(jobId);
-      else if (work.status === 'running' && work.leaseExpiresAt <= Date.now()) {
+      else if (
+        work.status === 'running'
+        && !activeFarmJobs.has(jobId)
+        && work.leaseExpiresAt <= Date.now()
+      ) {
         try {
           reconcileExpiredWork(work);
         } catch {
