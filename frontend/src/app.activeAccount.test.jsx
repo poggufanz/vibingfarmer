@@ -176,7 +176,9 @@ const BASE_KERNEL = `0x${'11'.repeat(20)}`
 const BASE_SESSION = '0x1563915e194D8CfBA1943570603F7606A3115508'
 const BASE_RELAYER_ORIGIN = 'https://relayer.test'
 const BASE_EXPIRES_AT_MS = 2_000_000_000_000
-const BASE_PERMISSION_ID = '0x12345678'
+// Captured from the relayer evaluator with the production 10,000-USDC cap, this test's exact
+// 40-USDC allocation, and the producer harness's `0xfeed` encoded calls.
+const BASE_PERMISSION_ID = '0x4086748b'
 const BASE_IMPLEMENTATION = '0xBAC849bB641841b44E965fB01A4Bf5F074f84b4D'
 const BASE_ECDSA_SIGNER = '0x6A6F069E2a08c2468e7724Ab3250CdBFBA14D4FF'
 const BASE_CALL_POLICY = '0x9a52283276A0ec8740DF50bF01B28A80D880eaf2'
@@ -246,7 +248,7 @@ function activeBaseWireEvidence() {
       kernelAddress: BASE_KERNEL,
       sessionKeyAddress: BASE_SESSION,
       permissionId: BASE_PERMISSION_ID,
-      policyDigest: 'c'.repeat(64),
+      policyDigest: 'fde7fc639b0f3b04ed2722c20868f2b2c06707d8b3e56398f7bc6f3b35c65ffa',
       bindingId: 'binding-test',
       bindingHash: '761ae6f804c1c9774dc3d91678a4752f46259cb6ffa346c996bef372675c0725',
       expiresAt: BASE_EXPIRES_AT_MS,
@@ -264,7 +266,7 @@ function activeBaseWireEvidence() {
         policyData: BASE_POLICY_DATA,
         digest: '3570159502324ec8b94b984b62452c9fc026c937bffde96e83472c2d4d26655f',
       },
-      preparedCallDigest: 'd'.repeat(64),
+      preparedCallDigest: '24bac97411885d34f4d8248c2a7f5110611280ae97fbaa74e82809425163c490',
     },
     checks: {
       chain: true,
@@ -541,7 +543,7 @@ describe('active account application state', () => {
         status: 'active',
         bindingId: reviewedEvidence.bindingId,
         bindingHash: reviewedEvidence.bindingHash,
-        createdAt: Date.now(),
+        createdAt: Math.floor(Date.now() / 1000),
       })
     )
 
