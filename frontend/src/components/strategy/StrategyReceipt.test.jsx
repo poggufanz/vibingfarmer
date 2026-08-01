@@ -13,6 +13,12 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { axe } from 'vitest-axe'
 import * as axeMatchers from 'vitest-axe/matchers'
 import { StrategyReceipt, reconcileAllocations } from './StrategyReceipt.jsx'
+import { buildDispatchReceipt } from '../../strategy/dispatchSummary.js'
+import {
+  appendPhase,
+  confirmCustody,
+  createAllocationReceipt,
+} from '../../strategy/allocationReceipt.js'
 import { SOROBAN_TOKEN_ADDRESS } from '../../stellar/config.js'
 import { STELLAR_USDC_SAC } from '../../stellar/cctpBurn.js'
 
@@ -205,6 +211,83 @@ describe('StrategyReceipt -- exact amounts and nominal total (Step 3)', () => {
     expect(
       screen.getByText(/Nominal total \(assumes each token above is worth 1 USDC\)/)
     ).toBeTruthy()
+  })
+})
+
+describe('Task 13 -- real receipt producer to rendered custody', () => {
+  it('renders agent-held custody from createAllocationReceipt through buildDispatchReceipt without a hand-built outcome', () => {
+    const allocationId = 'run-producer-render:deposit:0'
+    const exactAmount = { token: TOKEN_ADDR, units: '1000000000', decimals: 7 }
+    let durable = createAllocationReceipt({
+      networkId: 'stellar-testnet',
+      executionId: `run-producer-render:exec:${allocationId}`,
+      allocationId,
+      owner: 'GOWNER',
+      runId: 'run-producer-render',
+      worker: 'GWORKER',
+      agent: AGENT_1,
+      intent: { allocation: exactAmount },
+      amount: exactAmount,
+    })
+    durable = appendPhase(durable, {
+      attemptId: 'pull-confirmed',
+      phase: 'pull',
+      status: 'confirmed',
+      evidence: { txHash: 'pull-hash' },
+      observedAt: NOW,
+    })
+    durable = confirmCustody(durable, {
+      location: 'stellar-agent',
+      txSuccess: true,
+      amount: exactAmount,
+    })
+    durable = appendPhase(durable, {
+      attemptId: 'deposit-failed',
+      phase: 'stellar_deposit',
+      status: 'failed',
+      evidence: { reason: 'vault relay refused before submission' },
+      observedAt: NOW + 1,
+    })
+
+    const projected = buildDispatchReceipt({
+      plan: {
+        runId: 'run-producer-render',
+        planFingerprint: 'producer-render-fingerprint',
+        agents: [{ allocationId, kind: 'deposit', allocation: exactAmount }],
+      },
+      permission: {
+        mode: 'fresh',
+        txHash: REAL_GRANT_HASH,
+        grantReceiptFingerprint: 'producer-render-grant',
+        expiryLedger: 9001,
+        agentAddresses: [AGENT_1],
+      },
+      branches: {
+        stellar: {
+          results: [
+            {
+              allocationId,
+              success: false,
+              error: 'vault relay refused before submission',
+              receipt: durable,
+            },
+          ],
+        },
+      },
+    })
+
+    render(
+      <StrategyReceipt
+        receipt={projected}
+        runId="run-producer-render"
+        onViewMoney={() => {}}
+        onMakeAnotherDeposit={() => {}}
+      />
+    )
+
+    expect(screen.getByText('Held: 100 USDC')).toBeTruthy()
+    expect(screen.getByText(/custody: agent, 100 USDC \(receipt-confirmed\)/)).toBeTruthy()
+    expect(screen.queryByText(/custody: owner/)).toBeNull()
   })
 })
 
