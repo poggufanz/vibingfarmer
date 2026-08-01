@@ -490,9 +490,18 @@ export function joinBaseAssociations({
   now = Date.now(),
   freshnessMs = 5 * 60_000,
 }) {
+  const membershipCounts = new Map()
+  for (const agent of agents ?? []) {
+    membershipCounts.set(agent.address, (membershipCounts.get(agent.address) ?? 0) + 1)
+  }
   const knownByAgent = new Map()
   for (const row of associations ?? []) {
     if (row.associationSource !== 'relayer-attested') continue
+    if (membershipCounts.get(row.bridgeAgentAddress) !== 1) {
+      throw new AgentIndexValidationError(
+        'Base association must join exactly one selected membership'
+      )
+    }
     const list = knownByAgent.get(row.bridgeAgentAddress) ?? []
     list.push(row)
     knownByAgent.set(row.bridgeAgentAddress, list)

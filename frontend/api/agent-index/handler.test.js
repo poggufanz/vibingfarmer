@@ -832,6 +832,172 @@ describe('handleAssociationReport — server-only authentication', () => {
 })
 
 describe('handleRead — Base association envelope', () => {
+  async function writeConfirmedBaseChild({ store, agent, now, suffix }) {
+    const runId = `run-${suffix}`
+    const allocationId = `${runId}:bridge:aave-v3`
+    const childId = `job-${suffix}`
+    const bindingId = `binding-${suffix}`
+    const intent = await handleBaseChildIntent({
+      child: {
+        version: 1,
+        networkId: ROUTER_V1.networkId,
+        owner: OWNER_A,
+        agent,
+        bindingId,
+        allocationId,
+        childId,
+        intent: {
+          token: 'USDC',
+          units: '1000000',
+          decimals: 6,
+          poolAddress: BASE_POOL_CATALOG[0].address,
+          proxyTarget: 'aave-v3',
+          bindingHash: `binding-hash-${suffix}`,
+          runId,
+          grantTxHash: `grant-${suffix}`,
+          kernelAddress: `0x${'14'.repeat(20)}`,
+          baseJobId: childId,
+        },
+        lifecycle: { sequence: 0, status: 'planned', evidence: {}, observedAt: now - 200 },
+      },
+      configuredNetworkId: ROUTER_V1.networkId,
+      store,
+      secret: 'reporter',
+      providedSecret: 'reporter',
+    })
+    expect(intent.status).toBe(201)
+
+    const lifecycle = await handleBaseChildLifecycle({
+      request: {
+        identity: {
+          networkId: ROUTER_V1.networkId,
+          owner: OWNER_A,
+          bindingId,
+          allocationId,
+          childId,
+        },
+        expectedSequence: 0,
+        lifecycle: {
+          sequence: 1,
+          status: 'confirmed',
+          evidence: {
+            executionStatus: 'deposited',
+            custodyLocation: 'base-proxy',
+            txHash: `0xdeposit-${suffix}`,
+          },
+          observedAt: now - 100,
+        },
+      },
+      configuredNetworkId: ROUTER_V1.networkId,
+      store,
+      secret: 'reporter',
+      providedSecret: 'reporter',
+    })
+    expect(lifecycle.status).toBe(200)
+  }
+
+  // Defect caught: a durable authoritative child without an indexed membership became complete known zero.
+  it('fails closed through owner money when a Base child is visible before its membership', async () => {
+    const store = createAgentIndexStore(fakeD1())
+    const now = Date.now()
+    await handleIngest({
+      secret: 's',
+      providedSecret: 's',
+      store,
+      sources: [ROUTER_V1],
+      eventSourceFor: async () =>
+        fakeEventSource({
+          events: [],
+          oldestAvailableLedger: ROUTER_V1.coverageStartLedger,
+        }),
+      finalizedLedgerFor: async () => ROUTER_V1.coverageStartLedger + 10,
+    })
+    await writeConfirmedBaseChild({ store, agent: AGENT_A, now, suffix: 'orphan' })
+
+    const out = await handleRead({
+      networkId: ROUTER_V1.networkId,
+      owner: OWNER_A,
+      store,
+      manifest: { ...LIVE_MANIFEST, creators: [ROUTER_V1] },
+      now,
+    })
+    const reads = await readOwnerMoney({
+      owner: OWNER_A,
+      discovery: out.body,
+      stellar: {
+        readVaultShares: async () => 0n,
+        readTokenBalance: async () => 0n,
+        readPricePerShare: async () => 10_000_000n,
+        readSupplyAprBps: async () => null,
+      },
+      base: {
+        loadIndexedBasePositions: async () => ({ status: 'known', accounts: [] }),
+      },
+      associationDelivery: { events: [] },
+      now,
+    })
+
+    expect({
+      envelopeStatus: out.body.status,
+      envelopeAgents: out.body.agents,
+      moneyStatus: reads.status,
+      completeBaseTotalUnits: reads.completeBaseTotalUnits,
+      overallTotalUnits: reads.overallTotalUnits,
+    }).toEqual({
+      envelopeStatus: 'unavailable',
+      envelopeAgents: [],
+      moneyStatus: 'unavailable',
+      completeBaseTotalUnits: null,
+      overallTotalUnits: null,
+    })
+  })
+
+  // Defect caught: limit slicing dropped a child whose valid membership existed later in the owner set.
+  it('fails closed when limit excludes the membership for an authoritative Base child', async () => {
+    const store = createAgentIndexStore(fakeD1())
+    const now = Date.now()
+    const limitedAgent = 'CACAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAINCW'
+    await handleIngest({
+      secret: 's',
+      providedSecret: 's',
+      store,
+      sources: [ROUTER_V1],
+      eventSourceFor: async () =>
+        fakeEventSource({
+          events: [
+            deployedRecord({
+              owner: OWNER_A,
+              agent: AGENT_A,
+              ledger: ROUTER_V1.coverageStartLedger + 1,
+              txHash: 'TX-LIMIT-FIRST',
+            }),
+            deployedRecord({
+              owner: OWNER_A,
+              agent: limitedAgent,
+              ledger: ROUTER_V1.coverageStartLedger + 2,
+              txHash: 'TX-LIMIT-SECOND',
+            }),
+          ],
+          oldestAvailableLedger: ROUTER_V1.coverageStartLedger,
+        }),
+      finalizedLedgerFor: async () => ROUTER_V1.coverageStartLedger + 10,
+    })
+    await writeConfirmedBaseChild({ store, agent: limitedAgent, now, suffix: 'limited' })
+
+    await expect(
+      store.readOwnerMemberships({ networkId: ROUTER_V1.networkId, owner: OWNER_A })
+    ).resolves.toHaveLength(2)
+    const out = await handleRead({
+      networkId: ROUTER_V1.networkId,
+      owner: OWNER_A,
+      store,
+      manifest: { ...LIVE_MANIFEST, creators: [ROUTER_V1] },
+      now,
+      limit: 1,
+    })
+    expect(out).toMatchObject({ status: 200, body: { status: 'unavailable', agents: [] } })
+  })
+
   it('reads a terminal Base child from the authoritative intent/lifecycle model without a legacy row and includes it once in owner money', async () => {
     const db = fakeD1()
     const store = createAgentIndexStore(db)

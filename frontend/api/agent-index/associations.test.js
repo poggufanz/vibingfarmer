@@ -652,6 +652,26 @@ describe('ingestAssociationReport', () => {
 })
 
 describe('joinBaseAssociations', () => {
+  // Defect caught: duplicate selected membership identities made one Base row join more than once.
+  it('rejects an association matched by multiple memberships', () => {
+    expect(() =>
+      joinBaseAssociations({
+        agents: [
+          { address: BRIDGE, kind: 'bridge' },
+          { address: BRIDGE, kind: 'bridge' },
+        ],
+        associations: [
+          {
+            allocationId: 'run-42:bridge:aave-v3',
+            bridgeAgentAddress: BRIDGE,
+            associationSource: 'relayer-attested',
+          },
+        ],
+        now: NOW,
+      })
+    ).toThrow(/exactly one selected membership/i)
+  })
+
   it('keeps two reviewed runs on one bridge distinguishable with exact public evidence', () => {
     const agents = [
       { address: BRIDGE, kind: 'unknown' },

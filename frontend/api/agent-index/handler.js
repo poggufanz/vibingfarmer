@@ -911,7 +911,12 @@ export async function handleRead({
       grantTxHash: m.grantTxHash,
       provenance: m.provenance,
     }))
-  const associatedAgents = joinBaseAssociations({ agents, associations, now })
+  let associatedAgents
+  try {
+    associatedAgents = joinBaseAssociations({ agents, associations, now })
+  } catch {
+    return { status: 200, body: unavailableBody({ networkId, owner, manifest, now }) }
+  }
   return {
     status: 200,
     body: { version: 1, networkId, owner, status, agents: associatedAgents, coverage: coverageOut },
