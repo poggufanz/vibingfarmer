@@ -499,7 +499,7 @@ async function evaluateBaseMandateStatusInternal({
     const callData = await kernelClient.account.encodeCalls(calls);
     const prepared = await kernelClient.prepareUserOperation({ callData });
     if (!prepared || prepared.callData !== callData
-      || (prepared.sender && !sameAddress(prepared.sender, record.kernelAddress))) {
+      || !sameAddress(prepared.sender, record.kernelAddress)) {
       return finish('unknown', 'PREPARED_OPERATION_MISMATCH');
     }
     observed.preparedCallDigest = digest({ callData, calls });

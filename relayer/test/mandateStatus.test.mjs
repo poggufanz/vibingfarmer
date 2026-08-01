@@ -287,6 +287,27 @@ describe('evaluateBaseMandateStatus', () => {
   });
 
   it.each([
+    ['missing', undefined],
+    ['malformed', 'not-an-address'],
+    ['mismatched', `0x${'77'.repeat(20)}`],
+  ])('rejects a %s prepared operation sender before submission', async (_label, sender) => {
+    const h = makeHarness();
+    h.prepareUserOperation.mockImplementation(async ({ callData }) => ({
+      sender,
+      nonce: 9n,
+      callData,
+      signature: '0x',
+    }));
+
+    const result = await h.evaluate();
+
+    expect(result.status).toBe('unknown');
+    expect(result.reasonCodes).toContain('PREPARED_OPERATION_MISMATCH');
+    expect(result.checks.prepared).toBe(false);
+    expect(h.sendUserOperation).not.toHaveBeenCalled();
+  });
+
+  it.each([
     ['not_yet_valid', { approvalOptions: { validAfter: NOW_SECONDS + 10 } }, 'NOT_YET_VALID'],
     ['expiring', { approvalOptions: { validUntil: NOW_SECONDS + 2_699 } }, 'EXPIRING'],
     ['expired', { approvalOptions: { validUntil: NOW_SECONDS - 1 } }, 'EXPIRED'],
