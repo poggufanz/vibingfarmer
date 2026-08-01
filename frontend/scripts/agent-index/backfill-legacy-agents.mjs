@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+// Run: node scripts/agent-index/backfill-legacy-agents.mjs [--dry-run]
 // Pocket Crew My Money Task 4 (Wave 2). One-time historical audit for legacy DIRECT-DEPLOY
 // agent_accounts — agents with no funding_router `Deployed` event and no registry
 // `agent_authorized` event because they predate both entirely (deploy-seed.sh; see

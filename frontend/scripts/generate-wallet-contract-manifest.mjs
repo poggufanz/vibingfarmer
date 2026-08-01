@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+// Usage: node scripts/generate-wallet-contract-manifest.mjs [--contract=<path>] [--out=<path>]
 // frontend/scripts/generate-wallet-contract-manifest.mjs
 // VF Wallet Task 10, Part A1 (owner-directed fix for the VF Wallet Task 9 reviewer finding).
 //
