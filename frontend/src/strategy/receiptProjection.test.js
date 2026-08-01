@@ -116,6 +116,18 @@ describe('projectRecoveryReceipt', () => {
     })
   })
 
+  it('keeps an existing receipt null child authoritative over caller identity', () => {
+    const receipt = persisted(producedReceipt())
+    const projected = projectRecoveryReceipt({
+      receipt,
+      version: 9,
+      identity: { ...IDENTITY, childId: 'caller-replacement' },
+    })
+
+    expect(projected.requestIdentity).not.toHaveProperty('childId')
+    expect(projected.route.childId).toBeNull()
+  })
+
   it.each([
     ['future-location', { location: 'future-location', confirmed: true, amount: AMOUNT }],
     ['non-string units', { location: 'owner', confirmed: true, amount: { ...AMOUNT, units: 42 } }],
@@ -167,5 +179,45 @@ describe('projectRecoveryReceipt', () => {
       },
     })
     expect(projected.reason).toMatch(/nonce|attestation|UserOperation/i)
+  })
+
+  it('fails closed for the real receipt-null Base child result shape', () => {
+    // Mirrors baseLeg.js's per-child result: Base currently has no execution-receipt producer.
+    const baseResult = {
+      allocationId: 'run-projection:bridge:moonwell',
+      amount: { token: 'USDC', units: '1000000', decimals: 6 },
+      burnHash: 'BURN-HASH',
+      jobId: 'relayer-job-1',
+      bridgeAgentAddress: 'CBRIDGE',
+      kernelAddress: '0x0000000000000000000000000000000000000abc',
+      attestation: null,
+      recovery: { action: 'inspect-job', jobId: 'relayer-job-1' },
+      finalStatus: 'pending',
+      mintTxHash: null,
+      depositTxHash: null,
+      custody: { location: 'unknown', confirmed: false, checkedAt: null },
+      success: false,
+      error: 'Base settlement pending',
+    }
+
+    const projected = projectRecoveryReceipt({
+      receipt: null,
+      version: 0,
+      identity: IDENTITY,
+      baseResult,
+    })
+
+    expect(projected).toMatchObject({
+      action: 'blocked-reconcile',
+      phase: null,
+      reasonCode: RECOVERY_REASON_CODES.BASE_EVIDENCE_UNAVAILABLE,
+      receipt: null,
+      baseDisplay: {
+        allocationId: baseResult.allocationId,
+        jobId: baseResult.jobId,
+        authorization: 'display-only',
+      },
+    })
+    expect(projected.reason).toMatch(/no durable Base execution receipt producer/i)
   })
 })

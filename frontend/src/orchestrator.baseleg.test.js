@@ -146,6 +146,12 @@ vi.mock('./strategy/recoveryClient.js', () => ({
 }))
 
 import { OrchestratorAgent } from './orchestrator.js'
+import { ReceiptEvidenceError } from './stellar/agentIndexReceiptClient.js'
+import {
+  appendPhase,
+  confirmCustody,
+  createAllocationReceipt,
+} from './strategy/allocationReceipt.js'
 import {
   STELLAR_USDC_SAC,
   STELLAR_TOKEN_MESSENGER_MINTER,
@@ -1672,7 +1678,11 @@ describe('Task 6 chunk C1 — allocation receipt evidence (dispatchPermissioned 
       return { version: serverVersion }
     })
     readRecoveryReceiptMock.mockImplementation(async () => ({
-      receipt: serverReceipt,
+      receipt: serverReceipt && {
+        ...serverReceipt,
+        format: serverReceipt.version,
+        version: serverVersion,
+      },
       version: serverVersion,
     }))
     const fixture = permissionedStellarOnlyFixture('run-receipt-deposit-intent-down')
@@ -1937,7 +1947,11 @@ describe('Task 6 chunk C1 fix round 1 — dispatchConfirmedMixed evidence + crit
       return { version: serverVersion }
     })
     readRecoveryReceiptMock.mockImplementation(async () => ({
-      receipt: serverReceipt,
+      receipt: serverReceipt && {
+        ...serverReceipt,
+        format: serverReceipt.version,
+        version: serverVersion,
+      },
       version: serverVersion,
     }))
     const fixture = permissionedMixedFixture('run-mixed-deposit-intent-down')
@@ -1951,29 +1965,55 @@ describe('Task 6 chunk C1 fix round 1 — dispatchConfirmedMixed evidence + crit
     expect(summary.results[0]).toMatchObject({ success: false, receiptEvidenceDurable: false })
   })
 
-  it('[Write-ahead] bounds read/adopt/retry and reuses one attempt when the retry response is lost after commit', async () => {
+  it('[Write-ahead] adopts a nonzero authoritative row without losing its attempts or custody', async () => {
+    let authoritativeReceipt = null
+    let serverVersion = 7
     let firstAttemptId = null
-    let storedReceipt = null
-    let serverVersion = 0
-    let initialAttemptPosts = 0
     postReceiptEvidenceMock.mockImplementation(async ({ body }) => {
-      if (!firstAttemptId) firstAttemptId = body.attempt.attemptId
-      if (body.attempt.attemptId === firstAttemptId) {
-        initialAttemptPosts += 1
-        if (initialAttemptPosts === 1) throw new Error('first response lost before commit')
-        storedReceipt = body.receipt
-        serverVersion = 1
-        throw new Error('retry response lost after commit')
+      if (!authoritativeReceipt) {
+        firstAttemptId = body.attempt.attemptId
+        const amount = body.receipt.custody.amount
+        authoritativeReceipt = confirmCustody(
+          appendPhase(
+            createAllocationReceipt({
+              networkId: body.receipt.networkId,
+              executionId: body.receipt.executionId,
+              allocationId: body.receipt.allocationId,
+              owner: body.receipt.owner,
+              runId: body.receipt.runId,
+              worker: body.receipt.worker,
+              agent: body.receipt.agent,
+              intent: body.receipt.intent,
+              amount,
+            }),
+            {
+              attemptId: 'authoritative-attempt',
+              phase: 'pull',
+              status: 'submitted',
+              evidence: { source: 'other-tab' },
+              observedAt: 1_999_999_999_999,
+            }
+          ),
+          { location: 'stellar-agent', txSuccess: true, amount }
+        )
+        throw new ReceiptEvidenceError('receipt version conflict', {
+          step: 'write',
+          status: 409,
+        })
       }
-      storedReceipt = body.receipt
+      authoritativeReceipt = body.receipt
       serverVersion += 1
       return { version: serverVersion }
     })
     readRecoveryReceiptMock.mockImplementation(async () => ({
-      receipt: storedReceipt,
+      receipt: {
+        ...authoritativeReceipt,
+        format: authoritativeReceipt.version,
+        version: serverVersion,
+      },
       version: serverVersion,
     }))
-    const fixture = permissionedStellarOnlyFixture('run-receipt-lost-response')
+    const fixture = permissionedStellarOnlyFixture('run-receipt-nonzero-adoption')
 
     const summary = await permissionedOrchestrator().dispatch(fixture.plan, {
       permissionDecision: fixture.permissionDecision,
@@ -1982,14 +2022,27 @@ describe('Task 6 chunk C1 fix round 1 — dispatchConfirmedMixed evidence + crit
     expect(summary.results[0]).toMatchObject({ success: true, receiptEvidenceDurable: true })
     expect(runAgentPullMock).toHaveBeenCalledOnce()
     expect(workerExecuteMock).toHaveBeenCalledOnce()
-    expect(initialAttemptPosts).toBe(2)
-    expect(readRecoveryReceiptMock).toHaveBeenCalledTimes(2)
-    const initialBodies = postReceiptEvidenceMock.mock.calls
-      .map(([args]) => args.body)
-      .filter((body) => body.attempt.attemptId === firstAttemptId)
-    expect(initialBodies).toHaveLength(2)
-    expect(initialBodies[0].attempt).toEqual(initialBodies[1].attempt)
-    expect(initialBodies[0].receipt.executionId).toBe(initialBodies[1].receipt.executionId)
+    expect(readRecoveryReceiptMock).toHaveBeenCalledOnce()
+    const writes = postReceiptEvidenceMock.mock.calls.map(([args]) => args.body)
+    expect(writes[1]).toMatchObject({ expectedVersion: 7 })
+    expect(writes[1].receipt).toMatchObject({
+      version: 2,
+      custody: { location: 'stellar-agent', confirmed: true },
+    })
+    expect(writes[1].receipt.attempts.map(({ attemptId }) => attemptId)).toEqual([
+      'authoritative-attempt',
+      firstAttemptId,
+    ])
+    expect(writes[2]).toMatchObject({ expectedVersion: 8 })
+    expect(writes[2].receipt.custody).toMatchObject({
+      location: 'stellar-agent',
+      confirmed: true,
+    })
+    expect(writes[2].receipt.attempts.map(({ attemptId }) => attemptId)).toEqual([
+      'authoritative-attempt',
+      firstAttemptId,
+      writes[2].attempt.attemptId,
+    ])
   })
 
   it('[Important 4] surfaces receiptEvidenceDurable:true when every POST succeeds', async () => {

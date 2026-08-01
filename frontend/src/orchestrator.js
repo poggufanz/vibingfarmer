@@ -187,6 +187,75 @@ function createEvidenceRecorder({
     persisted.observedAt === attempt.observedAt &&
     JSON.stringify(canonical(persisted.evidence)) === JSON.stringify(canonical(attempt.evidence))
 
+  const writableReceipt = (persisted) => {
+    if (persisted?.format !== 2 || !Number.isSafeInteger(persisted.version)) {
+      throw new Error('Authoritative receipt has an invalid row/format version')
+    }
+    const writable = { ...persisted, version: persisted.format }
+    delete writable.format
+    delete writable.intentDigest
+    delete writable.createdAt
+    delete writable.updatedAt
+    return writable
+  }
+
+  const rebaseAttempt = (persisted, local, attempt) => {
+    const authoritative = writableReceipt(persisted)
+    for (const field of [
+      'networkId',
+      'executionId',
+      'allocationId',
+      'owner',
+      'runId',
+      'parentAllocationId',
+      'childId',
+      'worker',
+      'agent',
+      'intent',
+    ]) {
+      if (JSON.stringify(canonical(authoritative[field])) !== JSON.stringify(canonical(local[field]))) {
+        throw new Error(`Authoritative receipt changed immutable field ${field}`)
+      }
+    }
+    if (authoritative.attempts.some((entry) => entry.attemptId === attempt.attemptId)) {
+      throw new Error('Authoritative receipt has a conflicting attempt identity')
+    }
+
+    const custodyOrder = [
+      'owner',
+      'stellar-agent',
+      'stellar-vault',
+      'cctp-transit',
+      'base-kernel',
+      'base-vault',
+    ]
+    const rank = (custody) =>
+      custody?.confirmed === true ? custodyOrder.indexOf(custody.location) : -1
+    const authoritativeRank = rank(authoritative.custody)
+    const localRank = rank(local.custody)
+    let custody = authoritative.custody
+    if (localRank > authoritativeRank) {
+      custody = local.custody
+    } else if (
+      localRank === authoritativeRank &&
+      localRank >= 0 &&
+      authoritative.custody.location === local.custody.location
+    ) {
+      const authoritativeAmount = authoritative.custody.amount
+      const localAmount = local.custody.amount
+      if (
+        authoritativeAmount != null &&
+        localAmount != null &&
+        JSON.stringify(canonical(authoritativeAmount)) !== JSON.stringify(canonical(localAmount))
+      ) {
+        throw new Error('Authoritative receipt custody amount conflicts with local evidence')
+      }
+      if (authoritativeAmount == null && localAmount != null) custody = local.custody
+    }
+
+    return appendPhase({ ...authoritative, custody }, attempt)
+  }
+
   const mayHaveCommitted = (error) =>
     error?.status === 409 ||
     error?.step == null ||
@@ -240,7 +309,15 @@ function createEvidenceRecorder({
       } catch (readError) {
         failWrite(readError, phase, status)
       }
-      if (authoritative?.attempts?.some((entry) => sameAttempt(entry, attempt))) return
+      try {
+        if (authoritative?.attempts?.some((entry) => sameAttempt(entry, attempt))) {
+          receipt = writableReceipt(authoritative)
+          return
+        }
+        if (authoritative) receipt = rebaseAttempt(authoritative, receipt, attempt)
+      } catch (rebaseError) {
+        failWrite(rebaseError, phase, status)
+      }
       try {
         const result = await post()
         expectedVersion = result.version
@@ -251,7 +328,14 @@ function createEvidenceRecorder({
         } catch (readError) {
           failWrite(readError, phase, status)
         }
-        if (authoritative?.attempts?.some((entry) => sameAttempt(entry, attempt))) return
+        if (authoritative?.attempts?.some((entry) => sameAttempt(entry, attempt))) {
+          try {
+            receipt = writableReceipt(authoritative)
+          } catch (rebaseError) {
+            failWrite(rebaseError, phase, status)
+          }
+          return
+        }
         failWrite(retryError, phase, status)
       }
     }

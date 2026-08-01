@@ -4,8 +4,10 @@ import {
   receiptProofMessage,
   receiptRequestDigest,
 } from '../../api/agent-index/executionReceipts.js'
+import { selectRecoveryAction } from '../../api/agent-index/recovery.js'
 import { saveCachedAgent } from '../stellar/agentCache.js'
 import { newSessionKey } from '../stellar/sessionKey.js'
+import { appendPhase, createAllocationReceipt } from './allocationReceipt.js'
 import {
   RecoveryClientError,
   readRecoveryReceipt,
@@ -25,34 +27,35 @@ const IDENTITY = {
 const HUGE_UNITS = '123456789012345678901234567890123456789'
 
 function receipt(overrides = {}) {
+  const rowVersion = overrides.version ?? 7
+  const childId = Object.prototype.hasOwnProperty.call(overrides, 'childId')
+    ? overrides.childId
+    : null
+  const amount = { token: 'USDC', units: HUGE_UNITS, decimals: 7 }
+  const produced = appendPhase(
+    createAllocationReceipt({
+      ...IDENTITY,
+      childId,
+      runId: 'run-client',
+      worker: 'GWORKER',
+      agent: AGENT,
+      intent: { allocationId: IDENTITY.allocationId, kind: 'deposit', allocation: amount },
+      amount,
+    }),
+    {
+      attemptId: 'client-fixture-pull-submitted',
+      phase: 'pull',
+      status: 'submitted',
+      evidence: {},
+      observedAt: 1_899_999_000_000,
+    }
+  )
   return {
-    version: 7,
-    format: 2,
-    ...IDENTITY,
+    ...produced,
+    format: produced.version,
+    version: rowVersion,
     runId: 'run-client',
-    parentAllocationId: null,
-    childId: null,
-    worker: 'GWORKER',
-    agent: AGENT,
     intentDigest: 'ab'.repeat(32),
-    intent: {
-      allocationId: IDENTITY.allocationId,
-      allocation: { token: 'USDC', units: HUGE_UNITS, decimals: 7 },
-    },
-    phases: {
-      pull: 'submitted',
-      stellar_deposit: 'not_started',
-      cctp_burn: 'not_started',
-      cctp_mint: 'not_started',
-      base_deposit: 'not_started',
-    },
-    custody: {
-      location: 'owner',
-      confirmed: true,
-      amount: { token: 'USDC', units: HUGE_UNITS, decimals: 7 },
-      reason: null,
-    },
-    attempts: [],
     ...overrides,
   }
 }
@@ -150,6 +153,8 @@ describe('requestRecoveryAction', () => {
   it('pins the browser digest/proof to server bytes and emits no agent or secret in the business request', async () => {
     const sessionKey = newSessionKey()
     const calls = []
+    const persisted = receipt()
+    const decision = selectRecoveryAction(persisted)
     const fetchImpl = vi.fn(async (url, init) => {
       const body = JSON.parse(init.body)
       calls.push({ url, init, body })
@@ -169,13 +174,15 @@ describe('requestRecoveryAction', () => {
       }
       return response(200, {
         ok: true,
-        action: 'poll',
-        phase: 'pull',
-        reasonCode: 'pull-v2-uncertain',
-        reason: 'fail closed',
+        ...decision,
         version: 7,
-        receipt: receipt(),
-        lease: { holder: 'tab-a', leaseToken: 'server-uuid', expiresAt: 2, phase: 'pull' },
+        receipt: persisted,
+        lease: {
+          holder: 'tab-a',
+          leaseToken: 'server-uuid',
+          expiresAt: 4_000_000_000_000,
+          phase: decision.phase,
+        },
       })
     })
 
@@ -231,7 +238,7 @@ describe('requestRecoveryAction', () => {
     }
   })
 
-  it('requires the absent receipt caller mapping and rejects a mapping that disagrees with receipt evidence', async () => {
+  it('requires one authoritative absent-receipt mapping and rejects scalar or receipt child replacements', async () => {
     const fetchImpl = vi.fn()
     const common = {
       ...IDENTITY,
@@ -240,13 +247,133 @@ describe('requestRecoveryAction', () => {
       resolveCredential: () => ({ ...newSessionKey(), agentAddress: AGENT }),
       fetchImpl,
     }
-    await expect(requestRecoveryAction({ ...common, receipt: null })).rejects.toMatchObject({
-      code: 'missing-agent-mapping',
-    })
+    await expect(
+      requestRecoveryAction({ ...common, receipt: null, agentAddress: AGENT, childId: 'child-a' })
+    ).rejects.toMatchObject({ code: 'missing-allocation-mapping' })
     await expect(
       requestRecoveryAction({ ...common, receipt: receipt(), agentAddress: 'CDIFFERENT' })
     ).rejects.toMatchObject({ code: 'agent-mismatch' })
+    await expect(
+      requestRecoveryAction({ ...common, receipt: receipt(), childId: 'replacement-child' })
+    ).rejects.toMatchObject({ code: 'child-mismatch' })
+    await expect(
+      requestRecoveryAction({ ...common, receipt: receipt({ childId: 'child-a' }), childId: null })
+    ).rejects.toMatchObject({ code: 'child-mismatch' })
+    await expect(
+      requestRecoveryAction({
+        ...common,
+        receipt: null,
+        allocationMapping: {
+          ...IDENTITY,
+          allocationId: 'other-allocation',
+          childId: 'child-a',
+          agentAddress: AGENT,
+        },
+      })
+    ).rejects.toMatchObject({ code: 'allocation-mapping-mismatch' })
     expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('uses one exact allocation mapping for a genuine absent receipt', async () => {
+    const sessionKey = newSessionKey()
+    const decision = selectRecoveryAction(null)
+    const requests = []
+    const fetchImpl = vi.fn(async (url, init) => {
+      const body = JSON.parse(init.body)
+      if (url.includes('action=receipt-challenge')) {
+        return response(201, {
+          ok: true,
+          challenge: {
+            networkId: NETWORK,
+            owner: OWNER,
+            agent: AGENT,
+            challengeId: 'absent-mapping',
+            expiresAt: 4_000_000_000_000,
+            requestDigest: body.requestDigest,
+          },
+        })
+      }
+      requests.push(body.request)
+      return response(200, {
+        ok: true,
+        ...decision,
+        version: 0,
+        receipt: null,
+        lease: {
+          holder: 'tab-a',
+          leaseToken: 'absent-lease',
+          expiresAt: 4_000_000_000_000,
+          phase: decision.phase,
+        },
+      })
+    })
+
+    await requestRecoveryAction({
+      ...IDENTITY,
+      receipt: null,
+      allocationMapping: { ...IDENTITY, childId: 'child-a', agentAddress: AGENT },
+      expectedReceiptVersion: 0,
+      leaseOwner: 'tab-a',
+      resolveCredential: () => ({ ...sessionKey, agentAddress: AGENT }),
+      fetchImpl,
+    })
+
+    expect(requests[0]).toMatchObject({ childId: 'child-a' })
+  })
+
+  it('derives a persisted child identity into the signed business request', async () => {
+    const sessionKey = newSessionKey()
+    const persisted = receipt({ childId: 'child-a' })
+    const decision = selectRecoveryAction(persisted)
+    const requests = []
+    const fetchImpl = vi.fn(async (url, init) => {
+      const body = JSON.parse(init.body)
+      if (url.includes('action=receipt-challenge')) {
+        return response(201, {
+          ok: true,
+          challenge: {
+            networkId: NETWORK,
+            owner: OWNER,
+            agent: AGENT,
+            challengeId: 'child-bound-challenge',
+            expiresAt: 2_000,
+            requestDigest: body.requestDigest,
+          },
+        })
+      }
+      requests.push(body.request)
+      return response(200, {
+        ok: true,
+        ...decision,
+        version: 7,
+        receipt: persisted,
+        lease: {
+          holder: 'tab-a',
+          leaseToken: 'lease-token',
+          expiresAt: 4_000_000_000_000,
+          phase: decision.phase,
+        },
+      })
+    })
+
+    await requestRecoveryAction({
+      ...IDENTITY,
+      receipt: persisted,
+      expectedReceiptVersion: 7,
+      leaseOwner: 'tab-a',
+      resolveCredential: () => ({ ...sessionKey, agentAddress: AGENT }),
+      fetchImpl,
+    })
+
+    expect(requests).toEqual([
+      {
+        executionId: IDENTITY.executionId,
+        allocationId: IDENTITY.allocationId,
+        childId: 'child-a',
+        expectedReceiptVersion: 7,
+        leaseOwner: 'tab-a',
+      },
+    ])
   })
 
   it('gets a fresh consumed challenge for every valid retry and trusts only structured 409 codes', async () => {
@@ -276,16 +403,22 @@ describe('requestRecoveryAction', () => {
             code: 'version-conflict',
             version: 8,
           })
-        : response(200, {
-            ok: true,
-            action: 'complete',
-            phase: null,
-            reasonCode: 'deposit-confirmed',
-            reason: 'done',
-            version: 8,
-            receipt: receipt({ version: 8 }),
-            lease: null,
-          })
+        : (() => {
+            const persisted = receipt({ version: 8 })
+            const decision = selectRecoveryAction(persisted)
+            return response(200, {
+              ok: true,
+              ...decision,
+              version: 8,
+              receipt: persisted,
+              lease: {
+                holder: 'tab-a',
+                leaseToken: 'retry-lease',
+                expiresAt: 4_000_000_000_000,
+                phase: decision.phase,
+              },
+            })
+          })()
     })
     const common = {
       ...IDENTITY,
@@ -300,7 +433,7 @@ describe('requestRecoveryAction', () => {
     ).rejects.toMatchObject({ code: 'version-conflict', status: 409, version: 8 })
     await expect(
       requestRecoveryAction({ ...common, expectedReceiptVersion: 8 })
-    ).resolves.toMatchObject({ ok: true, lease: null })
+    ).resolves.toMatchObject({ ok: true, lease: { holder: 'tab-a' } })
 
     expect(challenge).toBe(2)
     expect(
@@ -345,4 +478,179 @@ describe('requestRecoveryAction', () => {
       ).rejects.toMatchObject({ code: 'conflict', status: 409 })
     }
   )
+
+  it.each([
+    [
+      'version differs from the requested compare-and-swap value',
+      ({ persisted, success }) => ({ ...success, version: 8, receipt: { ...persisted, version: 8 } }),
+    ],
+    ['nonzero version has no receipt', ({ success }) => ({ ...success, receipt: null })],
+    [
+      'receipt child differs from the requested receipt',
+      ({ persisted, success }) => ({
+        ...success,
+        receipt: { ...persisted, childId: 'replacement-child' },
+      }),
+    ],
+    [
+      'decision differs from the server selector',
+      ({ success }) => ({ ...success, reasonCode: 'caller-invented-reason' }),
+    ],
+  ])('rejects malformed successful recovery when %s', async (_label, mutateSuccess) => {
+    const sessionKey = newSessionKey()
+    const persisted = receipt({ childId: 'child-a' })
+    const decision = selectRecoveryAction(persisted)
+    const success = {
+      ok: true,
+      ...decision,
+      version: 7,
+      receipt: persisted,
+      lease: {
+        holder: 'tab-a',
+        leaseToken: 'valid-token',
+        expiresAt: 4_000_000_000_000,
+        phase: decision.phase,
+      },
+    }
+    let call = 0
+    const fetchImpl = vi.fn(async (_url, init) => {
+      call += 1
+      const body = JSON.parse(init.body)
+      return call === 1
+        ? response(201, {
+            ok: true,
+            challenge: {
+              networkId: NETWORK,
+              owner: OWNER,
+              agent: AGENT,
+              challengeId: `malformed-${call}`,
+              expiresAt: 4_000_000_000_000,
+              requestDigest: body.requestDigest,
+            },
+          })
+        : response(200, mutateSuccess({ persisted, success }))
+    })
+
+    await expect(
+      requestRecoveryAction({
+        ...IDENTITY,
+        receipt: persisted,
+        expectedReceiptVersion: 7,
+        leaseOwner: 'tab-a',
+        resolveCredential: () => ({ ...sessionKey, agentAddress: AGENT }),
+        fetchImpl,
+      })
+    ).rejects.toMatchObject({ code: 'invalid-response', step: 'recovery' })
+  })
+
+  it('rejects a zero-version absence response that fabricates a receipt', async () => {
+    const sessionKey = newSessionKey()
+    const fabricated = receipt({ version: 0 })
+    const decision = selectRecoveryAction(fabricated)
+    let call = 0
+    const fetchImpl = vi.fn(async (_url, init) => {
+      call += 1
+      const body = JSON.parse(init.body)
+      return call === 1
+        ? response(201, {
+            ok: true,
+            challenge: {
+              networkId: NETWORK,
+              owner: OWNER,
+              agent: AGENT,
+              challengeId: 'fabricated-zero',
+              expiresAt: 4_000_000_000_000,
+              requestDigest: body.requestDigest,
+            },
+          })
+        : response(200, {
+            ok: true,
+            ...decision,
+            version: 0,
+            receipt: fabricated,
+            lease: {
+              holder: 'tab-a',
+              leaseToken: 'fabricated-token',
+              expiresAt: 4_000_000_000_000,
+              phase: decision.phase,
+            },
+          })
+    })
+
+    await expect(
+      requestRecoveryAction({
+        ...IDENTITY,
+        receipt: null,
+        allocationMapping: { ...IDENTITY, childId: null, agentAddress: AGENT },
+        expectedReceiptVersion: 0,
+        leaseOwner: 'tab-a',
+        resolveCredential: () => ({ ...sessionKey, agentAddress: AGENT }),
+        fetchImpl,
+      })
+    ).rejects.toMatchObject({ code: 'invalid-response', step: 'recovery' })
+  })
+
+  it.each([
+    ['missing', null],
+    [
+      'wrong holder',
+      { holder: 'other-tab', leaseToken: 'valid-token', expiresAt: 4_000_000_000_000, phase: 'pull' },
+    ],
+    [
+      'wrong phase',
+      {
+        holder: 'tab-a',
+        leaseToken: 'valid-token',
+        expiresAt: 4_000_000_000_000,
+        phase: 'stellar_deposit',
+      },
+    ],
+    [
+      'empty token',
+      { holder: 'tab-a', leaseToken: '', expiresAt: 4_000_000_000_000, phase: 'pull' },
+    ],
+    [
+      'expired',
+      { holder: 'tab-a', leaseToken: 'valid-token', expiresAt: 1, phase: 'pull' },
+    ],
+  ])('rejects an actionable success with a %s lease', async (_label, lease) => {
+    const sessionKey = newSessionKey()
+    const persisted = receipt()
+    const decision = selectRecoveryAction(persisted)
+    let call = 0
+    const fetchImpl = vi.fn(async (_url, init) => {
+      call += 1
+      const body = JSON.parse(init.body)
+      return call === 1
+        ? response(201, {
+            ok: true,
+            challenge: {
+              networkId: NETWORK,
+              owner: OWNER,
+              agent: AGENT,
+              challengeId: 'malformed-lease',
+              expiresAt: 4_000_000_000_000,
+              requestDigest: body.requestDigest,
+            },
+          })
+        : response(200, {
+            ok: true,
+            ...decision,
+            version: 7,
+            receipt: persisted,
+            lease,
+          })
+    })
+
+    await expect(
+      requestRecoveryAction({
+        ...IDENTITY,
+        receipt: persisted,
+        expectedReceiptVersion: 7,
+        leaseOwner: 'tab-a',
+        resolveCredential: () => ({ ...sessionKey, agentAddress: AGENT }),
+        fetchImpl,
+      })
+    ).rejects.toMatchObject({ code: 'invalid-response', step: 'recovery' })
+  })
 })

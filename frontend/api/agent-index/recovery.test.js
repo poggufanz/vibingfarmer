@@ -908,7 +908,7 @@ describe('requestRecovery (authenticated lease claim)', () => {
     expect(correct.ok).toBe(true)
   })
 
-  it('R12: a child-scoped claim is independent of its parent allocation claim', async () => {
+  it('R12: caller childId cannot partition a genuine absent-receipt lease', async () => {
     const request = baseRequest()
     const parent = await claim({
       store,
@@ -921,11 +921,11 @@ describe('requestRecovery (authenticated lease claim)', () => {
       challengeId: 'challenge-child-child',
     })
     expect(parent).toMatchObject({ ok: true, action: 'pull' })
-    expect(child).toMatchObject({ ok: true, action: 'pull' })
+    expect(child).toMatchObject({ ok: false, status: 409, code: 'lease-conflict' })
     const leaseRows = db._raw
       .prepare('SELECT child_id FROM execution_recovery_leases ORDER BY child_id')
       .all()
-    expect(leaseRows).toEqual([{ child_id: '' }, { child_id: 'child-1' }])
+    expect(leaseRows).toEqual([{ child_id: '' }])
   })
 
   it('R13: a revoked scope blocks with the 403 authority path, not a silent success', async () => {

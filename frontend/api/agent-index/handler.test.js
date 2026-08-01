@@ -25,6 +25,10 @@ import {
   receiptRequestDigest,
 } from './executionReceipts.js'
 import { AGENT_CREATORS } from '../../src/stellar/agentCreatorManifest.js'
+import {
+  appendPhase,
+  createAllocationReceipt,
+} from '../../src/strategy/allocationReceipt.js'
 
 // ── same in-memory-D1 helper as store.test.js / indexer.test.js ──
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -947,6 +951,32 @@ describe('handleRecoveryRequest', () => {
     }
   }
 
+  function persistedRecoveryReceipt(childId) {
+    const amount = { token: 'USDC', units: '10000000', decimals: 7 }
+    const produced = appendPhase(
+      createAllocationReceipt({
+        networkId: RECOVERY_NETWORK,
+        executionId: recoveryRequestBody().executionId,
+        allocationId: recoveryRequestBody().allocationId,
+        childId,
+        owner: RECOVERY_OWNER,
+        runId: 'run-h',
+        worker: 'GWORKER',
+        agent: RECOVERY_AGENT,
+        intent: { allocationId: recoveryRequestBody().allocationId, allocation: amount },
+        amount,
+      }),
+      {
+        attemptId: 'persisted-pull-attempt',
+        phase: 'pull',
+        status: 'submitted',
+        evidence: {},
+        observedAt: RECOVERY_NOW - 1,
+      }
+    )
+    return { ...produced, format: produced.version, version: 1 }
+  }
+
   async function signedRecoveryCallArgs({
     store,
     request,
@@ -1020,6 +1050,41 @@ describe('handleRecoveryRequest', () => {
       },
     })
     expect(out.body.lease).toMatchObject({ holder: 'holder-h' })
+  })
+
+  it('canonicalizes absent-receipt leases so varying childId cannot acquire parallel claims', async () => {
+    const store = createAgentIndexStore(fakeD1())
+    const first = await authenticatedRecoveryCall({
+      store,
+      request: recoveryRequestBody({ childId: 'caller-child-a', leaseOwner: 'holder-first' }),
+      challengeId: 'challenge-handler-child-a',
+    })
+    const second = await authenticatedRecoveryCall({
+      store,
+      request: recoveryRequestBody({ childId: 'caller-child-b', leaseOwner: 'holder-second' }),
+      challengeId: 'challenge-handler-child-b',
+    })
+
+    expect(first).toMatchObject({ status: 200, body: { phase: 'pull' } })
+    expect(second).toMatchObject({ status: 409, body: { code: 'lease-conflict' } })
+  })
+
+  it('rejects a signed childId that disagrees with the stored receipt', async () => {
+    const d1Store = createAgentIndexStore(fakeD1())
+    const store = {
+      ...d1Store,
+      readExecutionReceipt: async () => persistedRecoveryReceipt('receipt-child'),
+    }
+    const out = await authenticatedRecoveryCall({
+      store,
+      request: recoveryRequestBody({
+        childId: 'caller-replacement',
+        expectedReceiptVersion: 1,
+      }),
+      challengeId: 'challenge-handler-child-mismatch',
+    })
+
+    expect(out).toMatchObject({ status: 400, body: { error: 'Invalid recovery request' } })
   })
 
   it('maps a replayed recovery proof to the stable 409 taxonomy', async () => {

@@ -1,4 +1,4 @@
-import { selectRecoveryAction } from '../../api/agent-index/recovery.js'
+import { RECOVERY_REASON_CODES, selectRecoveryAction } from '../../api/agent-index/recovery.js'
 
 const RECEIPT_TO_UI_CUSTODY = new Map([
   ['owner', 'owner'],
@@ -80,7 +80,18 @@ export function projectRecoveryReceipt({
   baseResult = null,
   strandedBridge = null,
 }) {
-  const decision = selectRecoveryAction(receipt)
+  const selected = selectRecoveryAction(receipt)
+  const decision =
+    receipt == null && baseResult
+      ? {
+          action: 'blocked-reconcile',
+          phase: null,
+          reasonCode: RECOVERY_REASON_CODES.BASE_EVIDENCE_UNAVAILABLE,
+          reason:
+            'a Base child result exists but no durable Base execution receipt producer records ' +
+            'the nonce, attestation, or UserOperation evidence required for automated recovery',
+        }
+      : selected
   const rowVersion = version ?? receipt?.version ?? 0
   if (!Number.isSafeInteger(rowVersion) || rowVersion < 0) {
     throw new Error('projectRecoveryReceipt: version must be a non-negative safe integer')
@@ -92,7 +103,7 @@ export function projectRecoveryReceipt({
   if (!sourceIdentity?.executionId || !sourceIdentity?.allocationId) {
     throw new Error('projectRecoveryReceipt: executionId and allocationId are required')
   }
-  const childId = sourceIdentity.childId ?? identity?.childId ?? null
+  const childId = receipt ? (receipt.childId ?? null) : (identity?.childId ?? null)
   return {
     ...decision,
     version: rowVersion,

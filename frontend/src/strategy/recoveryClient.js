@@ -1,4 +1,5 @@
 import { hash } from '@stellar/stellar-sdk'
+import { selectRecoveryAction } from '../../api/agent-index/recovery.js'
 import { loadCachedAgents } from '../stellar/agentCache.js'
 import { newSessionKey } from '../stellar/sessionKey.js'
 
@@ -120,6 +121,37 @@ function assertReceiptIdentity(receipt, identity, step = 'read') {
   }
 }
 
+function optionalChildId(value) {
+  return value == null || value === '' ? null : requireText(value, 'childId')
+}
+
+function requireAllocationMapping(mapping, identity) {
+  if (!mapping || typeof mapping !== 'object' || Array.isArray(mapping)) {
+    fail('An authoritative allocation mapping is required when no receipt exists', {
+      step: 'credential',
+      code: 'missing-allocation-mapping',
+    })
+  }
+  for (const field of ['networkId', 'owner', 'executionId', 'allocationId']) {
+    if (mapping[field] !== identity[field]) {
+      fail(`Allocation mapping ${field} does not match the recovery request`, {
+        step: 'credential',
+        code: 'allocation-mapping-mismatch',
+      })
+    }
+  }
+  if (!Object.prototype.hasOwnProperty.call(mapping, 'childId')) {
+    fail('Allocation mapping must carry its authoritative child identity', {
+      step: 'credential',
+      code: 'missing-allocation-mapping',
+    })
+  }
+  return {
+    agentAddress: requireText(mapping.agentAddress, 'allocationMapping.agentAddress'),
+    childId: optionalChildId(mapping.childId),
+  }
+}
+
 /** Public, unauthenticated read of one exact execution receipt. */
 export async function readRecoveryReceipt({
   networkId,
@@ -204,6 +236,7 @@ export async function requestRecoveryAction({
   leaseOwner,
   receipt = null,
   agentAddress,
+  allocationMapping,
   vault,
   storage,
   resolveCredential = resolveRecoveryCredential,
@@ -223,19 +256,50 @@ export async function requestRecoveryAction({
     })
   }
   requireText(leaseOwner, 'leaseOwner')
-  if (receipt) assertReceiptIdentity(receipt, identity, 'request')
-  if (receipt?.agent && agentAddress && receipt.agent !== agentAddress) {
-    fail('Caller agent mapping does not match receipt evidence', {
-      step: 'credential',
-      code: 'agent-mismatch',
-    })
-  }
-  const originalAgent = receipt?.agent || agentAddress
-  if (!originalAgent) {
-    fail('An original allocation-to-agent mapping is required when no receipt exists', {
-      step: 'credential',
-      code: 'missing-agent-mapping',
-    })
+  const suppliedChild = childId === undefined ? undefined : optionalChildId(childId)
+  let originalAgent
+  let originalChild
+  if (receipt) {
+    assertReceiptIdentity(receipt, identity, 'request')
+    originalAgent = requireText(receipt.agent, 'receipt.agent')
+    originalChild = optionalChildId(receipt.childId)
+    if (agentAddress && agentAddress !== originalAgent) {
+      fail('Caller agent mapping does not match receipt evidence', {
+        step: 'credential',
+        code: 'agent-mismatch',
+      })
+    }
+    if (suppliedChild !== undefined && suppliedChild !== originalChild) {
+      fail('Caller child mapping does not match receipt evidence', {
+        step: 'credential',
+        code: 'child-mismatch',
+      })
+    }
+    if (allocationMapping) {
+      const mapping = requireAllocationMapping(allocationMapping, identity)
+      if (mapping.agentAddress !== originalAgent || mapping.childId !== originalChild) {
+        fail('Caller allocation mapping does not match receipt evidence', {
+          step: 'credential',
+          code: 'allocation-mapping-mismatch',
+        })
+      }
+    }
+  } else {
+    const mapping = requireAllocationMapping(allocationMapping, identity)
+    originalAgent = mapping.agentAddress
+    originalChild = mapping.childId
+    if (agentAddress && agentAddress !== originalAgent) {
+      fail('Caller agent mapping does not match the authoritative allocation mapping', {
+        step: 'credential',
+        code: 'agent-mismatch',
+      })
+    }
+    if (suppliedChild !== undefined && suppliedChild !== originalChild) {
+      fail('Caller child mapping does not match the authoritative allocation mapping', {
+        step: 'credential',
+        code: 'child-mismatch',
+      })
+    }
   }
   const credential = await resolveCredential({
     ...identity,
@@ -253,7 +317,7 @@ export async function requestRecoveryAction({
   const request = {
     executionId: identity.executionId,
     allocationId: identity.allocationId,
-    ...(childId == null || childId === '' ? {} : { childId: requireText(childId, 'childId') }),
+    ...(originalChild == null ? {} : { childId: originalChild }),
     expectedReceiptVersion,
     leaseOwner,
   }
@@ -335,24 +399,46 @@ export async function requestRecoveryAction({
       body,
     })
   }
-  if (body.receipt) {
-    assertReceiptIdentity(body.receipt, identity, 'recovery')
-    if (body.receipt.agent !== originalAgent || body.receipt.version !== body.version) {
-      fail('Recovery response receipt does not match its signer/version', {
-        step: 'recovery',
-        status: recoveryResult.response.status,
-        code: 'invalid-response',
-        body,
-      })
-    }
-  }
-  if (body.phase == null && body.lease !== null) {
-    fail('No-action recovery verdict unexpectedly carries a lease', {
+  const invalidSuccess = (message) =>
+    fail(message, {
       step: 'recovery',
       status: recoveryResult.response.status,
       code: 'invalid-response',
       body,
     })
+  if (body.version !== expectedReceiptVersion) {
+    invalidSuccess('Recovery response version does not match the requested version')
+  }
+  if ((body.version === 0) !== (body.receipt == null)) {
+    invalidSuccess('Recovery response receipt presence does not match its row version')
+  }
+  if (body.receipt) {
+    assertReceiptIdentity(body.receipt, identity, 'recovery')
+    if (body.receipt.agent !== originalAgent || body.receipt.version !== body.version) {
+      invalidSuccess('Recovery response receipt does not match its signer/version')
+    }
+    if (optionalChildId(body.receipt.childId) !== originalChild) {
+      invalidSuccess('Recovery response receipt child does not match the requested allocation')
+    }
+  }
+  const decision = selectRecoveryAction(body.receipt)
+  for (const field of ['action', 'phase', 'reasonCode', 'reason']) {
+    if (body[field] !== decision[field]) {
+      invalidSuccess(`Recovery response ${field} does not match durable receipt evidence`)
+    }
+  }
+  if (decision.phase == null) {
+    if (body.lease !== null) invalidSuccess('No-action recovery verdict unexpectedly carries a lease')
+  } else if (
+    !body.lease ||
+    body.lease.holder !== leaseOwner ||
+    body.lease.phase !== decision.phase ||
+    typeof body.lease.leaseToken !== 'string' ||
+    body.lease.leaseToken.length === 0 ||
+    !Number.isSafeInteger(body.lease.expiresAt) ||
+    body.lease.expiresAt <= Date.now()
+  ) {
+    invalidSuccess('Actionable recovery verdict does not carry a valid matching lease')
   }
   return body
 }
