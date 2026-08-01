@@ -914,7 +914,8 @@ export async function handleRead({
   let associatedAgents
   try {
     associatedAgents = joinBaseAssociations({ agents, associations, now })
-  } catch {
+  } catch (error) {
+    if (!(error instanceof AgentIndexValidationError)) throw error
     return { status: 200, body: unavailableBody({ networkId, owner, manifest, now }) }
   }
   return {

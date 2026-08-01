@@ -998,6 +998,54 @@ describe('handleRead — Base association envelope', () => {
     expect(out).toMatchObject({ status: 200, body: { status: 'unavailable', agents: [] } })
   })
 
+  // Defect caught: the expected orphan validation boundary also swallowed unrelated join bugs.
+  it('propagates an unexpected join failure instead of disguising it as unavailable', async () => {
+    const store = createAgentIndexStore(fakeD1())
+    const now = Date.now()
+    await handleIngest({
+      secret: 's',
+      providedSecret: 's',
+      store,
+      sources: [ROUTER_V1],
+      eventSourceFor: async () =>
+        fakeEventSource({
+          events: [
+            deployedRecord({
+              owner: OWNER_A,
+              agent: AGENT_A,
+              ledger: ROUTER_V1.coverageStartLedger + 1,
+              txHash: 'TX-UNEXPECTED-JOIN',
+            }),
+          ],
+          oldestAvailableLedger: ROUTER_V1.coverageStartLedger,
+        }),
+      finalizedLedgerFor: async () => ROUTER_V1.coverageStartLedger + 10,
+    })
+    const unexpected = new TypeError('unexpected join failure')
+    let sourceReads = 0
+    store.readOwnerRunAllocations = async () => [
+      {
+        allocationId: 'run-unexpected:bridge:aave-v3',
+        bridgeAgentAddress: AGENT_A,
+        get associationSource() {
+          sourceReads += 1
+          if (sourceReads === 2) throw unexpected
+          return 'relayer-attested'
+        },
+      },
+    ]
+
+    await expect(
+      handleRead({
+        networkId: ROUTER_V1.networkId,
+        owner: OWNER_A,
+        store,
+        manifest: { ...LIVE_MANIFEST, creators: [ROUTER_V1] },
+        now,
+      })
+    ).rejects.toBe(unexpected)
+  })
+
   it('reads a terminal Base child from the authoritative intent/lifecycle model without a legacy row and includes it once in owner money', async () => {
     const db = fakeD1()
     const store = createAgentIndexStore(db)
