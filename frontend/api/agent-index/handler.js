@@ -15,6 +15,7 @@ import {
   issueReceiptChallenge,
   ReceiptAuthError,
 } from './executionReceipts.js'
+import { requestRecovery } from './recovery.js'
 import {
   AgentIndexConflictError,
   AgentIndexStoreError,
@@ -258,6 +259,74 @@ export async function handleRecoveryLeaseRelease({
       : { status: 409, body: { error: 'Recovery lease release conflict' } }
   } catch (error) {
     return agentIndexFailure(error)
+  }
+}
+
+/**
+ * `POST /api/agent-index?action=recovery-request` (S2-D9). Authenticates the caller with the SAME
+ * owner-signed challenge -> proof exchange `receipt-write` uses (a challenge must already exist,
+ * issued via the unchanged `?action=receipt-challenge` route), then delegates to
+ * `requestRecovery` (recovery.js) to read the receipt under the authenticated network/owner,
+ * decide the action, and atomically claim the lease for the phase that action would act on.
+ *
+ * The reporter bearer secret (`AGENT_INDEX_REPORTER_SECRET`) is deliberately NOT used here — that
+ * would put a relay-only secret in the browser (Global Constraint), which is exactly why S2-D9
+ * exists as a separate, owner-proof-gated route instead of extending `lease-acquire`.
+ *
+ * Map fact C: a lease conflict and a stale-receipt-version conflict are DIFFERENT events and must
+ * not share a message (unlike `handleReceiptWrite`'s collapsed generic 409) — `requestRecovery`
+ * already returns those as distinct, non-throwing results (`code: 'lease-conflict'` /
+ * `'version-conflict'`), so they are passed straight through instead of being remapped to one
+ * generic string here.
+ * @param {object} p
+ * @param {{executionId:string, allocationId:string, childId?:string|null,
+ *   expectedReceiptVersion:number, leaseOwner:string}} p.request
+ * @param {{challengeId:string, expiresAt:number, signature:string}} p.proof
+ * @param {ReturnType<import('./store').createAgentIndexStore>|null} p.store
+ * @param {(identity:{networkId:string, agent:string}) => Promise<object>} p.authorityReader
+ * @param {number} [p.now]
+ * @returns {Promise<{status: number, body: object}>}
+ */
+export async function handleRecoveryRequest({ request, proof, store, authorityReader, now = Date.now() }) {
+  if (!store) {
+    return { status: 503, body: { error: 'Receipt store unavailable', configured: false } }
+  }
+  try {
+    if (typeof authorityReader !== 'function') {
+      throw new AgentIndexUnavailableError('Receipt authority is not configured')
+    }
+    const result = await requestRecovery({ request, proof, store, authorityReader, now })
+    if (!result.ok) {
+      return {
+        status: result.status,
+        body: { error: result.error, code: result.code, version: result.version },
+      }
+    }
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        action: result.action,
+        reason: result.reason,
+        phase: result.phase,
+        version: result.version,
+        receipt: result.receipt,
+        lease: result.lease,
+      },
+    }
+  } catch (error) {
+    const failure = agentIndexFailure(error)
+    if (failure.status === 400) {
+      return { status: 400, body: { error: 'Invalid recovery request' } }
+    }
+    if (failure.status === 409) {
+      // requestRecovery returns its OTHER 409s (lease-conflict, version-conflict) as structured,
+      // non-throwing results above so they stay distinguishable per-message (map fact C) -- only a
+      // replayed-challenge ReceiptAuthError reaches this throw path.
+      if (error instanceof ReceiptAuthError) return failure
+      return { status: 409, body: { error: 'Recovery request conflict' } }
+    }
+    return failure
   }
 }
 

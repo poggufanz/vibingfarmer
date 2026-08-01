@@ -19,6 +19,7 @@ import {
   handleReceiptWrite,
   handleRecoveryLeaseAcquire,
   handleRecoveryLeaseRelease,
+  handleRecoveryRequest,
 } from './agent-index/handler.js'
 import { AgentIndexUnavailableError, AgentIndexValidationError } from './agent-index/models.js'
 import { scanRpcEventsPage } from './agent-index/indexer.js'
@@ -268,6 +269,21 @@ export default async function handler(req, res) {
     const { store, authorityReader } = await receiptDependencies(req)
     const out = await handleReceiptWrite({
       body: req.body?.mutation,
+      proof: req.body?.proof,
+      store,
+      authorityReader,
+    })
+    return json(res, out.status, out.body)
+  }
+
+  // S2-D9: recovery-request is authenticated with the SAME owner-signed challenge -> proof
+  // exchange as receipt-write (receiptDependencies(req) below), NOT the reporter bearer secret
+  // lease-acquire/lease-release use -- that secret must never be reachable from the browser.
+  if (req.method === 'POST' && action === 'recovery-request') {
+    if (!rateLimit(req, res, { max: 60, windowMs: 60_000, bucket: 'agent-index-recovery' })) return
+    const { store, authorityReader } = await receiptDependencies(req)
+    const out = await handleRecoveryRequest({
+      request: req.body?.request,
       proof: req.body?.proof,
       store,
       authorityReader,

@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { createRequire } from 'node:module'
-import { nativeToScVal } from '@stellar/stellar-sdk'
+import { nativeToScVal, Keypair } from '@stellar/stellar-sdk'
 import { symbolScVal, addrScVal } from '../../src/stellar/scval.js'
 import { createAgentIndexStore } from './store.js'
 import {
@@ -16,8 +16,10 @@ import {
   handleBaseChildIntent,
   handleBaseChildLifecycle,
   handleReporterReadiness,
+  handleRecoveryRequest,
   LIVE_MANIFEST,
 } from './handler.js'
+import { issueReceiptChallenge, receiptProofMessage, receiptRequestDigest } from './executionReceipts.js'
 import { AGENT_CREATORS } from '../../src/stellar/agentCreatorManifest.js'
 
 // ── same in-memory-D1 helper as store.test.js / indexer.test.js ──
@@ -906,5 +908,132 @@ describe('handleRead — Base association envelope', () => {
       associationSource: null,
       baseChildren: [],
     })
+  })
+})
+
+// ── handleRecoveryRequest (S2-D9): thin HTTP-shape wiring around recovery.js's requestRecovery.
+// Business-logic/state-table coverage lives in recovery.test.js -- this describe block only
+// covers the route-level contract: status codes, non-disclosure, and that the two 409s stay
+// distinguishable at the HTTP layer (map fact C).
+describe('handleRecoveryRequest', () => {
+  const RECOVERY_NETWORK = 'stellar-testnet'
+  const RECOVERY_OWNER = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 31)).publicKey()
+  const RECOVERY_AGENT = 'CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5'
+  const RECOVERY_SESSION = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 32))
+  const RECOVERY_NOW = 2_000_000_000_000
+
+  function recoveryAuthority(overrides = {}) {
+    return {
+      routerOwner: RECOVERY_OWNER,
+      scope: { owner: RECOVERY_OWNER, revoked: false, expiry: 0n },
+      signer: RECOVERY_SESSION.rawPublicKey(),
+      scopeLedger: 1,
+      ...overrides,
+    }
+  }
+
+  function recoveryRequestBody(overrides = {}) {
+    return {
+      executionId: 'run-h:exec:run-h:deposit:0',
+      allocationId: 'run-h:deposit:0',
+      childId: null,
+      expectedReceiptVersion: 0,
+      leaseOwner: 'holder-h',
+      ...overrides,
+    }
+  }
+
+  async function authenticatedRecoveryCall({
+    store,
+    request,
+    challengeId,
+    authorityFacts = recoveryAuthority(),
+    now = RECOVERY_NOW,
+  }) {
+    const digest = receiptRequestDigest(request)
+    const challenge = await issueReceiptChallenge({
+      request: { networkId: RECOVERY_NETWORK, owner: RECOVERY_OWNER, agent: RECOVERY_AGENT, requestDigest: digest },
+      store,
+      authorityReader: async () => authorityFacts,
+      now,
+      challengeId,
+    })
+    const signature = RECOVERY_SESSION.sign(Buffer.from(receiptProofMessage(challenge), 'utf8')).toString(
+      'base64url'
+    )
+    return handleRecoveryRequest({
+      request,
+      proof: { challengeId: challenge.challengeId, expiresAt: challenge.expiresAt, signature },
+      store,
+      authorityReader: async () => authorityFacts,
+      now,
+    })
+  }
+
+  it('fails closed with a non-disclosing 503 when the store or authority reader is unavailable', async () => {
+    await expect(
+      handleRecoveryRequest({ request: recoveryRequestBody(), proof: {}, store: null, authorityReader: null })
+    ).resolves.toMatchObject({ status: 503, body: { error: 'Receipt store unavailable' } })
+    const out = await handleRecoveryRequest({
+      request: recoveryRequestBody(),
+      proof: { signature: 'private-proof-value' },
+      store: createAgentIndexStore(fakeD1()),
+      authorityReader: null,
+    })
+    expect(out).toEqual({ status: 503, body: { error: 'Agent-index dependency unavailable' } })
+    expect(JSON.stringify(out.body)).not.toMatch(/private|signature/i)
+  })
+
+  it('claims the pull lease and returns a 200 for a never-submitted execution', async () => {
+    const store = createAgentIndexStore(fakeD1())
+    const out = await authenticatedRecoveryCall({
+      store,
+      request: recoveryRequestBody(),
+      challengeId: 'challenge-handler-fresh',
+    })
+    expect(out).toMatchObject({
+      status: 200,
+      body: { ok: true, action: 'pull', phase: 'pull', version: 0 },
+    })
+    expect(out.body.lease).toMatchObject({ holder: 'holder-h' })
+  })
+
+  it('returns distinguishable 409s for a lease conflict vs a stale receipt version (map fact C)', async () => {
+    const store = createAgentIndexStore(fakeD1())
+    const first = await authenticatedRecoveryCall({
+      store,
+      request: recoveryRequestBody({ leaseOwner: 'holder-first' }),
+      challengeId: 'challenge-handler-lease-a',
+    })
+    expect(first.status).toBe(200)
+    const leaseConflict = await authenticatedRecoveryCall({
+      store,
+      request: recoveryRequestBody({ leaseOwner: 'holder-second' }),
+      challengeId: 'challenge-handler-lease-b',
+    })
+    expect(leaseConflict).toMatchObject({
+      status: 409,
+      body: { error: 'Recovery lease is already held', code: 'lease-conflict' },
+    })
+
+    const versionConflict = await authenticatedRecoveryCall({
+      store,
+      request: recoveryRequestBody({ leaseOwner: 'holder-third', expectedReceiptVersion: 7 }),
+      challengeId: 'challenge-handler-version',
+    })
+    expect(versionConflict).toMatchObject({ status: 409, body: { code: 'version-conflict' } })
+    expect(versionConflict.body.error).not.toBe(leaseConflict.body.error)
+  })
+
+  it('maps a revoked scope to a 403, not a silent success', async () => {
+    const store = createAgentIndexStore(fakeD1())
+    const revoked = recoveryAuthority({ scope: { owner: RECOVERY_OWNER, revoked: true, expiry: 0n } })
+    const out = await authenticatedRecoveryCall({
+      store,
+      request: recoveryRequestBody(),
+      challengeId: 'challenge-handler-revoked',
+      authorityFacts: revoked,
+    })
+    expect(out.status).toBe(403)
   })
 })
