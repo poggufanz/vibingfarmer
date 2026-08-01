@@ -86,20 +86,35 @@ function configuredNetwork(req) {
   return { networkId, passphrase }
 }
 
+function configuredRouterAddresses(req) {
+  const plural = String(setting(req, 'SOROBAN_ROUTER_ADDRESSES') || '')
+    .split(',')
+    .map((address) => address.trim())
+    .filter(Boolean)
+  if (plural.length > 0) return [...new Set(plural)]
+  const singular = String(setting(req, 'SOROBAN_ROUTER_ADDRESS') || '').trim()
+  return singular ? [singular] : []
+}
+
 /** Fresh production authority adapter. No browser hints or local epochs participate in authority. */
-export function createReceiptAuthorityReader({ network, routerAddress, server }) {
-  if (!network?.networkId || !network.passphrase || !routerAddress || !server) return null
+export function createReceiptAuthorityReader({ network, routerAddresses, server }) {
+  if (!network?.networkId || !network.passphrase || !routerAddresses?.length || !server) return null
   return async ({ networkId, agent }) => {
     if (networkId !== network.networkId) {
       throw new AgentIndexValidationError('Requested network does not match configured network')
     }
     try {
-      const routerOwner = await readContract({
-        contract: routerAddress,
-        method: 'owner_of',
-        args: [{ addr: agent }],
-        server,
-      })
+      let routerOwner = null
+      for (const routerAddress of routerAddresses) {
+        routerOwner = await readContract({
+          contract: routerAddress,
+          method: 'owner_of',
+          args: [{ addr: agent }],
+          server,
+        })
+        if (routerOwner != null) break
+      }
+      if (routerOwner == null) return { routerOwner }
       const [scope, signer] = await Promise.all([
         readContract({ contract: agent, method: 'scope_of', server }),
         readContract({ contract: agent, method: 'signer', server }),
@@ -122,16 +137,18 @@ export function createReceiptAuthorityReader({ network, routerAddress, server })
 async function receiptDependencies(req) {
   const store = req.env?.VF_DB ? createAgentIndexStore(req.env.VF_DB) : null
   const network = configuredNetwork(req)
-  const routerAddress = setting(req, 'SOROBAN_ROUTER_ADDRESS')
+  const routerAddresses = configuredRouterAddresses(req)
   const rpcUrl = RPC_URL(req)
-  if (!network || !routerAddress || !rpcUrl) return { store, network, authorityReader: null }
+  if (!network || routerAddresses.length === 0 || !rpcUrl) {
+    return { store, network, authorityReader: null }
+  }
   try {
     const sdkMod = await import('@stellar/stellar-sdk')
     const server = new sdkMod.rpc.Server(rpcUrl)
     return {
       store,
       network,
-      authorityReader: createReceiptAuthorityReader({ network, routerAddress, server }),
+      authorityReader: createReceiptAuthorityReader({ network, routerAddresses, server }),
     }
   } catch {
     return { store, network, authorityReader: null }

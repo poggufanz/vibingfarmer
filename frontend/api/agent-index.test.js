@@ -24,6 +24,8 @@ const SESSION = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 23))
 const OTHER_SESSION = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 24))
 const AGENT = 'CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5'
 const ROUTER = 'CBEI5VJKT2KZR6TU6NKHKJRIQORXTSTAH5RDUA7MBUNCPZDN6ZLQSYE4'
+const ROUTER_V2 = 'CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE'
+const ROUTER_V1 = 'CCEWWRQVYKEIWTO7GTX2QVHQASC3GIQOZZTDMGTOHFQYKZIX5KJ6CYE5'
 const NETWORK = 'stellar-testnet'
 
 function mockRes() {
@@ -144,6 +146,7 @@ function fakeStore(overrides = {}) {
       challenges.set(challenge.challengeId, challenge)
     ),
     readReceiptChallenge: vi.fn(async ({ challengeId }) => challenges.get(challengeId) ?? null),
+    consumeReceiptChallenge: vi.fn(async () => true),
     commitAuthenticatedReceiptMutation: vi.fn(async ({ challenge, now }) => {
       challenges.set(challenge.challengeId, { ...challenge, consumedAt: now })
       return { written: 1, duplicates: 0, version: 1 }
@@ -179,6 +182,10 @@ function authorityReads(passes) {
   })
 }
 
+function authorityCalls() {
+  return mocked.readContract.mock.calls.map(([{ contract, method }]) => [contract, method])
+}
+
 async function call(request) {
   const res = mockRes()
   await handler(request, res)
@@ -194,7 +201,7 @@ beforeEach(() => {
 })
 
 describe('/api/agent-index authenticated execution routes', () => {
-  it('issues a reachable challenge without returning server configuration or secrets', async () => {
+  it('issues a reachable challenge with singular router compatibility without disclosing configuration', async () => {
     const requestDigest = 'ab'.repeat(32)
     const { res, body } = await call(
       mockReq({
@@ -209,21 +216,175 @@ describe('/api/agent-index authenticated execution routes', () => {
       challenge: { networkId: NETWORK, owner: OWNER, agent: AGENT, requestDigest },
     })
     expect(JSON.stringify(body)).not.toMatch(/router|passphrase|reporter|secret/i)
+    expect(authorityCalls()).toEqual([
+      [ROUTER, 'owner_of'],
+      [AGENT, 'scope_of'],
+      [AGENT, 'signer'],
+    ])
+  })
+
+  it('authorizes a V2-created agent from the production-ordered router list without querying V1', async () => {
+    mocked.readContract.mockImplementation(async ({ contract, method }) => {
+      if (contract === ROUTER_V2 && method === 'owner_of') return OWNER
+      if (contract === ROUTER_V1 && method === 'owner_of') return null
+      if (contract === AGENT && method === 'scope_of') return { owner: OWNER, revoked: false }
+      if (contract === AGENT && method === 'signer') return SESSION.rawPublicKey()
+      throw new Error('unexpected authority read')
+    })
+    const { res } = await call(
+      mockReq({
+        method: 'POST',
+        url: '/api/agent-index?action=receipt-challenge',
+        body: { networkId: NETWORK, owner: OWNER, agent: AGENT, requestDigest: '56'.repeat(32) },
+        requestEnv: env({
+          SOROBAN_ROUTER_ADDRESSES: `${ROUTER_V2},${ROUTER_V1}`,
+          SOROBAN_ROUTER_ADDRESS: ROUTER_V1,
+        }),
+      })
+    )
+    expect(res.statusCode).toBe(201)
+    expect(authorityCalls()).toEqual([
+      [ROUTER_V2, 'owner_of'],
+      [AGENT, 'scope_of'],
+      [AGENT, 'signer'],
+    ])
+  })
+
+  it('trims and deduplicates routers before falling back from V2 undefined lineage to V1', async () => {
+    mocked.readContract.mockImplementation(async ({ contract, method }) => {
+      if (contract === ROUTER_V2 && method === 'owner_of') return undefined
+      if (contract === ROUTER_V1 && method === 'owner_of') return OWNER
+      if (contract === AGENT && method === 'scope_of') return { owner: OWNER, revoked: false }
+      if (contract === AGENT && method === 'signer') return SESSION.rawPublicKey()
+      throw new Error('unexpected authority read')
+    })
+    const { res } = await call(
+      mockReq({
+        method: 'POST',
+        url: '/api/agent-index?action=receipt-challenge',
+        body: { networkId: NETWORK, owner: OWNER, agent: AGENT, requestDigest: '57'.repeat(32) },
+        requestEnv: env({
+          SOROBAN_ROUTER_ADDRESSES: ` ${ROUTER_V2}, ${ROUTER_V2} , ${ROUTER_V1} `,
+          SOROBAN_ROUTER_ADDRESS: ROUTER,
+        }),
+      })
+    )
+    expect(res.statusCode).toBe(201)
+    expect(authorityCalls()).toEqual([
+      [ROUTER_V2, 'owner_of'],
+      [ROUTER_V1, 'owner_of'],
+      [AGENT, 'scope_of'],
+      [AGENT, 'signer'],
+    ])
+  })
+
+  it('returns 403 for unknown lineage without reading agent scope or signer', async () => {
+    mocked.readContract.mockImplementation(async ({ contract, method }) => {
+      if ([ROUTER_V2, ROUTER_V1].includes(contract) && method === 'owner_of') return null
+      throw new Error('agent authority must not be read without router lineage')
+    })
+    const { res, body } = await call(
+      mockReq({
+        method: 'POST',
+        url: '/api/agent-index?action=receipt-challenge',
+        body: { networkId: NETWORK, owner: OWNER, agent: AGENT, requestDigest: '58'.repeat(32) },
+        requestEnv: env({
+          SOROBAN_ROUTER_ADDRESSES: `${ROUTER_V2},${ROUTER_V1}`,
+          SOROBAN_ROUTER_ADDRESS: ROUTER,
+        }),
+      })
+    )
+    expect(res.statusCode).toBe(403)
+    expect(body).toEqual({ error: 'Agent authority could not be verified' })
+    expect(authorityCalls()).toEqual([
+      [ROUTER_V2, 'owner_of'],
+      [ROUTER_V1, 'owner_of'],
+    ])
+  })
+
+  it('binds the first non-null owner and does not fall through after an owner mismatch', async () => {
+    mocked.readContract.mockImplementation(async ({ contract, method }) => {
+      if (contract === ROUTER_V2 && method === 'owner_of') return OTHER_OWNER
+      if (contract === ROUTER_V1 && method === 'owner_of') return OWNER
+      if (contract === AGENT && method === 'scope_of') return { owner: OWNER, revoked: false }
+      if (contract === AGENT && method === 'signer') return SESSION.rawPublicKey()
+      throw new Error('unexpected authority read')
+    })
+    const { res, body } = await call(
+      mockReq({
+        method: 'POST',
+        url: '/api/agent-index?action=receipt-challenge',
+        body: { networkId: NETWORK, owner: OWNER, agent: AGENT, requestDigest: '59'.repeat(32) },
+        requestEnv: env({
+          SOROBAN_ROUTER_ADDRESSES: `${ROUTER_V2},${ROUTER_V1}`,
+          SOROBAN_ROUTER_ADDRESS: ROUTER_V1,
+        }),
+      })
+    )
+    expect(res.statusCode).toBe(403)
+    expect(body).toEqual({ error: 'Agent authority could not be verified' })
+    expect(authorityCalls()).toEqual([
+      [ROUTER_V2, 'owner_of'],
+      [AGENT, 'scope_of'],
+      [AGENT, 'signer'],
+    ])
+  })
+
+  it('returns 503 immediately when a router owner read is indeterminate', async () => {
+    mocked.readContract.mockImplementation(async ({ contract, method }) => {
+      if (contract === ROUTER_V2 && method === 'owner_of') throw new Error('rpc unavailable')
+      if (contract === ROUTER_V1 && method === 'owner_of') return OWNER
+      throw new Error('later authorization must not run')
+    })
+    const { res, body } = await call(
+      mockReq({
+        method: 'POST',
+        url: '/api/agent-index?action=receipt-challenge',
+        body: { networkId: NETWORK, owner: OWNER, agent: AGENT, requestDigest: '5a'.repeat(32) },
+        requestEnv: env({
+          SOROBAN_ROUTER_ADDRESSES: `${ROUTER_V2},${ROUTER_V1}`,
+          SOROBAN_ROUTER_ADDRESS: ROUTER_V1,
+        }),
+      })
+    )
+    expect(res.statusCode).toBe(503)
+    expect(body).toEqual({ error: 'Receipt authority is unavailable' })
+    expect(authorityCalls()).toEqual([[ROUTER_V2, 'owner_of']])
+  })
+
+  it('falls back to the singular router when the plural list is empty', async () => {
+    const { res } = await call(
+      mockReq({
+        method: 'POST',
+        url: '/api/agent-index?action=receipt-challenge',
+        body: { networkId: NETWORK, owner: OWNER, agent: AGENT, requestDigest: '5b'.repeat(32) },
+        requestEnv: env({ SOROBAN_ROUTER_ADDRESSES: ' , ', SOROBAN_ROUTER_ADDRESS: ROUTER }),
+      })
+    )
+    expect(res.statusCode).toBe(201)
+    expect(authorityCalls()).toEqual([
+      [ROUTER, 'owner_of'],
+      [AGENT, 'scope_of'],
+      [AGENT, 'signer'],
+    ])
   })
 
   it('rejects a write when router ownership changes after challenge issuance', async () => {
-    authorityReads([
-      {
-        routerOwner: OWNER,
-        scope: { owner: OWNER, revoked: false },
-        signer: SESSION.rawPublicKey(),
-      },
-      {
-        routerOwner: OTHER_OWNER,
-        scope: { owner: OWNER, revoked: false },
-        signer: SESSION.rawPublicKey(),
-      },
-    ])
+    let ownerRead = 0
+    mocked.readContract.mockImplementation(async ({ contract, method }) => {
+      if (contract === ROUTER_V2 && method === 'owner_of') {
+        ownerRead += 1
+        return ownerRead === 1 ? OWNER : OTHER_OWNER
+      }
+      if (contract === ROUTER_V1 && method === 'owner_of') return OWNER
+      if (contract === AGENT && method === 'scope_of') return { owner: OWNER, revoked: false }
+      if (contract === AGENT && method === 'signer') return SESSION.rawPublicKey()
+      throw new Error('unexpected authority read')
+    })
+    const routerEnv = env({
+      SOROBAN_ROUTER_ADDRESSES: `${ROUTER_V2},${ROUTER_V1}`,
+      SOROBAN_ROUTER_ADDRESS: ROUTER_V1,
+    })
     const mutation = receiptMutation()
     const challengeResponse = await call(
       mockReq({
@@ -235,6 +396,7 @@ describe('/api/agent-index authenticated execution routes', () => {
           agent: AGENT,
           requestDigest: receiptRequestDigest(mutation),
         },
+        requestEnv: routerEnv,
       })
     )
     expect(challengeResponse.res.statusCode).toBe(201)
@@ -249,6 +411,7 @@ describe('/api/agent-index authenticated execution routes', () => {
         method: 'POST',
         url: '/api/agent-index?action=receipt-write',
         body: { mutation, proof },
+        requestEnv: routerEnv,
       })
     )
     expect(res.statusCode).toBe(403)
@@ -263,6 +426,81 @@ describe('/api/agent-index authenticated execution routes', () => {
     expect(mocked.readContract.mock.calls.filter(([arg]) => arg.method === 'signer')).toHaveLength(
       2
     )
+    expect(authorityCalls()).toEqual([
+      [ROUTER_V2, 'owner_of'],
+      [AGENT, 'scope_of'],
+      [AGENT, 'signer'],
+      [ROUTER_V2, 'owner_of'],
+      [AGENT, 'scope_of'],
+      [AGENT, 'signer'],
+    ])
+  })
+
+  it('re-reads the plural router lineage before an authenticated recovery request', async () => {
+    const mutation = receiptMutation()
+    mocked.store = fakeStore({
+      readExecutionReceipt: vi.fn(async () => ({
+        ...mutation.receipt,
+        format: 2,
+        version: 1,
+        attempts: [mutation.attempt],
+      })),
+    })
+    mocked.readContract.mockImplementation(async ({ contract, method }) => {
+      if (contract === ROUTER_V2 && method === 'owner_of') return OWNER
+      if (contract === ROUTER_V1 && method === 'owner_of') return null
+      if (contract === AGENT && method === 'scope_of') return { owner: OWNER, revoked: false }
+      if (contract === AGENT && method === 'signer') return SESSION.rawPublicKey()
+      throw new Error('unexpected authority read')
+    })
+    const routerEnv = env({
+      SOROBAN_ROUTER_ADDRESSES: `${ROUTER_V2},${ROUTER_V1}`,
+      SOROBAN_ROUTER_ADDRESS: ROUTER_V1,
+    })
+    const request = {
+      executionId: mutation.receipt.executionId,
+      allocationId: mutation.receipt.allocationId,
+      expectedReceiptVersion: 1,
+      leaseOwner: 'recovery-route-worker',
+    }
+    const challengeResponse = await call(
+      mockReq({
+        method: 'POST',
+        url: '/api/agent-index?action=receipt-challenge',
+        body: {
+          networkId: NETWORK,
+          owner: OWNER,
+          agent: AGENT,
+          requestDigest: receiptRequestDigest(request),
+        },
+        requestEnv: routerEnv,
+      })
+    )
+    expect(challengeResponse.res.statusCode).toBe(201)
+    const challenge = challengeResponse.body.challenge
+    const proof = {
+      challengeId: challenge.challengeId,
+      expiresAt: challenge.expiresAt,
+      signature: SESSION.sign(Buffer.from(receiptProofMessage(challenge))).toString('base64url'),
+    }
+    const recovery = await call(
+      mockReq({
+        method: 'POST',
+        url: '/api/agent-index?action=recovery-request',
+        body: { request, proof },
+        requestEnv: routerEnv,
+      })
+    )
+    expect(recovery.res.statusCode).toBe(200)
+    expect(recovery.body).toMatchObject({ ok: true, action: 'deposit', version: 1 })
+    expect(authorityCalls()).toEqual([
+      [ROUTER_V2, 'owner_of'],
+      [AGENT, 'scope_of'],
+      [AGENT, 'signer'],
+      [ROUTER_V2, 'owner_of'],
+      [AGENT, 'scope_of'],
+      [AGENT, 'signer'],
+    ])
   })
 
   it('rejects a write when scope ownership changes after challenge issuance', async () => {
