@@ -119,7 +119,8 @@ export function selectRecoveryAction(receipt) {
       case 'submitted':
       case 'unknown': {
         const lastPull = lastAttemptForPhase(receipt.attempts, 'pull')
-        if (V3_EXECUTION_ID.test(lastPull?.evidence?.v3ExecutionId)) {
+        const v3ExecutionId = lastPull?.evidence?.v3ExecutionId
+        if (typeof v3ExecutionId === 'string' && V3_EXECUTION_ID.test(v3ExecutionId)) {
           return {
             action: 'resubmit-identical-envelope',
             phase: 'pull',

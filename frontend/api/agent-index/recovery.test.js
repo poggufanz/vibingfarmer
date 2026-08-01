@@ -87,6 +87,7 @@ const OTHER_AGENT = 'CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE'
 const SESSION = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 22))
 const NOW = 2_000_000_000_000
 const AMOUNT = { token: 'USDC', units: '1000000', decimals: 6 }
+const VALID_V3_EXECUTION_ID = '0x' + 'ab'.repeat(32)
 
 function authority(overrides = {}) {
   return {
@@ -161,7 +162,7 @@ describe('selectRecoveryAction (pure state table)', () => {
     receipt = appendPhase(receipt, {
       phase: 'pull',
       status: 'submitted',
-      evidence: { v3ExecutionId: '0x' + 'ab'.repeat(32) },
+      evidence: { v3ExecutionId: VALID_V3_EXECUTION_ID },
     })
     expect(selectRecoveryAction(receipt)).toMatchObject({
       action: 'resubmit-identical-envelope',
@@ -169,22 +170,28 @@ describe('selectRecoveryAction (pure state table)', () => {
     })
   })
 
-  it.each(['x', true, {}, '0x' + 'AB'.repeat(32), '0x' + 'ab'.repeat(31)])(
-    'rejects malformed truthy v3ExecutionId %j and fails closed to poll',
-    (v3ExecutionId) => {
-      // Attempt evidence is free-form JSON written by the live pull recorder. Only the actual
-      // bytes32 wire shape proves the V3 replay guard; truthiness is not evidence.
-      const receipt = appendPhase(freshReceipt(), {
-        phase: 'pull',
-        status: 'submitted',
-        evidence: { v3ExecutionId },
-      })
-      expect(selectRecoveryAction(receipt)).toMatchObject({
-        action: 'poll',
-        reasonCode: RECOVERY_REASON_CODES.PULL_V2_UNCERTAIN,
-      })
-    }
-  )
+  it.each([
+    'x',
+    true,
+    {},
+    [VALID_V3_EXECUTION_ID],
+    { toString: VALID_V3_EXECUTION_ID },
+    '0x' + 'AB'.repeat(32),
+    '0x' + 'ab'.repeat(31),
+  ])('rejects malformed truthy v3ExecutionId %j and fails closed to poll', (v3ExecutionId) => {
+    // appendPhase and receipt persistence accept free-form JSON attempt evidence. Only a string
+    // with the exact bytes32 wire shape proves the V3 replay guard; JSON coercion is not proof.
+    const receipt = appendPhase(freshReceipt(), {
+      phase: 'pull',
+      status: 'submitted',
+      evidence: { v3ExecutionId },
+    })
+    expect(() => selectRecoveryAction(receipt)).not.toThrow()
+    expect(selectRecoveryAction(receipt)).toMatchObject({
+      action: 'poll',
+      reasonCode: RECOVERY_REASON_CODES.PULL_V2_UNCERTAIN,
+    })
+  })
 
   it('R3: an uncertain pull with NO v3ExecutionId polls and never resubmits (the double-spend guard)', () => {
     // Producer: orchestrator.js:882-890, the pull's VF_SUBMISSION_UNKNOWN catch branch when v3Exec
