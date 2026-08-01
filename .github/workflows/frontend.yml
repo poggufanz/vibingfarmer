@@ -27,15 +27,10 @@ jobs:
       - run: npm run build:ext
       - run: npm run manifest:check
       # build:ext only proves the extension builds; this is the other half of decision #15's
-      # carry -- it must also ship no remote resource. Final review, Fix 3: the original one-liner
-      # ('! rg -n "..." extension-dist') fails OPEN on a missing `rg` binary (exit 127, negated to
-      # 0) or a missing `extension-dist` directory -- either way the scan silently never ran and
-      # the step still went green. `test -d` guards the directory explicitly; `grep -RIn -E` is a
-      # coreutils tool always present on the runner, never a second binary to go missing.
+      # carry -- it must also ship no remote resource. The Node scanner is portable across CI
+      # runners and reserves exit 2 for missing/unreadable inputs so scan errors fail closed.
       - name: Verify extension bundle ships no bridge/remote-resource strings
-        run: |
-          test -d extension-dist
-          ! grep -RIn -E "executeAgentDeposit|executeAgentApprove|runAutonomousExit|https://fonts|vf_base_owner_address" extension-dist
+        run: node ../scripts/ci/extension-banned-scan.mjs extension-dist
 
   relayer:
     runs-on: ubuntu-latest

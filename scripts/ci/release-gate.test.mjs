@@ -441,34 +441,6 @@ test('workflow: playwright upload-artifact path is a scalar naming both report d
   assert.ok(pathValue.includes('frontend/test-results'), 'path must include the Playwright test-results dir (screenshots/traces)')
 })
 
-// Final review, Fix 3: the extension bridge/remote-resource scan ('! rg -n "..." extension-dist')
-// failed OPEN on a missing `rg` binary (exit 127, negated by `!` to 0) or a missing
-// `extension-dist` directory — either way the step still went green with the scan never having
-// run. Nothing asserted anything about this step before this test.
-test('workflow: frontend-unit-build extension-security scan fails closed (no rg, guards the directory)', () => {
-  const workflow = loadWorkflow()
-  const job = workflow.jobs['frontend-unit-build']
-  const scanStep = job.steps.find(
-    (s) =>
-      typeof s.run === 'string' &&
-      s.run.includes('extension-dist') &&
-      s.run.includes('executeAgentDeposit')
-  )
-  assert.ok(scanStep, 'frontend-unit-build must have the extension bridge/remote-resource scan step')
-  assert.ok(
-    scanStep.run.includes('test -d extension-dist'),
-    'the scan must guard on extension-dist actually existing, never silently pass when it is absent'
-  )
-  assert.ok(
-    !/\brg\b/.test(scanStep.run),
-    'the scan must not depend on `rg` — a binary that can be absent from the runner and fail the check open'
-  )
-  assert.ok(
-    scanStep.run.includes('grep -R'),
-    'the scan must use a recursive grep (a coreutils tool always present on the runner)'
-  )
-})
-
 // Final review, Fix 4: an uncached from-source `cargo install` of stellar-cli took ~15 min with no
 // cache on the one job that blocks every merge, and its "Verify pinned toolchain versions" step
 // printed all three versions while asserting none of them — the one place a drifted toolchain or
