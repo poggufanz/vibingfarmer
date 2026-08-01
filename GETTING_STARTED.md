@@ -128,11 +128,41 @@ If a doc still says “1Shot”, treat it as historical unless it is this file o
 
 ## 7. Tests & lint
 
-```bash
-cd frontend && npm run lint:ci && npm test && npm run build
+Run every gate below as an independent serial step. From `frontend/`, run lint and the full suite
+separately:
 
-wsl -e bash -lc "cd /mnt/<drive>/<repo>/soroban && cargo test"
+```bash
+npm run lint:ci
+npm test
 ```
+
+On this Windows checkout, continue only when `npm test` reproduces the accepted **exactly 7
+failures in 5 files** signature described in section 8.1. That result is still **not PASS**. Any
+different test failure or count stops verification. Only after the exact accepted signature, still
+from `frontend/`, run the build independently:
+
+```bash
+npm run build
+```
+
+Then return to the repository root and run the relayer and keeper suites as separate steps:
+
+```bash
+cd relayer && npm test
+cd ..
+cd keeper && npm test
+cd ..
+```
+
+Finally, run the complete contract gate under WSL only, replacing the placeholder with this
+checkout's WSL path:
+
+```bash
+wsl -e bash -lc "cd /mnt/<drive>/<repo>/soroban && stellar contract build && cargo test && cargo clippy --all-targets -- -D warnings"
+```
+
+Every gate other than the accepted frontend 7-in-5 signature must exit 0. Stop verification on any
+other nonzero result.
 
 `npm run lint:ci` is what CI actually gates on — ESLint checked against the warning-fingerprint
 baseline in `frontend/scripts/eslint-warning-baseline.json` (new warnings fail, fewer warnings
@@ -165,7 +195,8 @@ authority" list below was performed by this review.
 
 ### 8.1 Current local verification evidence
 
-The Task 14 rerun uses the commands in section 7 serially. On this Windows checkout:
+The Task 14 rerun ran every gate listed in section 7 as an independent serial step. On this Windows
+checkout:
 
 * `npm run lint:ci` stays within the checked-in warning baseline.
 * `npm test` exits 1 with the accepted Windows baseline: **exactly 7 failures in 5 files** —
@@ -275,9 +306,12 @@ money movement, these three blockers must land in order:
 2. **Provide a relayer → frontend/API/D1 read path for durable Base evidence.** The UserOperation
    hash is captured only inside relayer job state, and no recovery reader exposes the exact
    UserOperation, vault transaction/event, or resulting vault-position evidence.
-3. **Expand the recovery-lease identity space to Base child ids, or unify the identity spaces.**
-   Stellar leases key on execution identity while Base children key on binding/allocation/child
-   identity; the selector cannot safely claim a Base child movement today.
+3. **Bind the full Base-child identity into the recovery lease, or prove a one-to-one mapping.**
+   The existing lease already includes `child_id`, but remains rooted in
+   `(execution_id, allocation_id, child_id)`. Base children instead use the full
+   `(binding_id, allocation_id, child_id)` identity. Bind `binding_id` and that full Base identity
+   into the lease, or prove a one-to-one mapping to the existing execution identity, before the
+   selector can safely claim a Base child movement.
 
 The relayer association outbox still persists retries/dead letters and `GET /status/:jobId`
 returns `associationDelivery`, but `crossChainFarm.js` drops that field before the
