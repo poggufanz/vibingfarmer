@@ -8,9 +8,9 @@
 //
 //   1. `submission` -- an owner ACTION's own outcome (money/ownerActions.js's ownerActionOutcome:
 //      'unknown' or 'not-submitted'). We do not know if it landed. Brief: "submission-unknown
-//      displays explorer/status reconciliation before retry" -- retry stays disabled until the
-//      caller's own onCheckStatus round-trip resolves `reconciled` to 'not-landed'. A blind retry
-//      here risks a double-submission of money that may already have moved.
+//      displays explorer/status reconciliation before resubmission. No resubmit control exists
+//      until the caller proves `reconciled === 'not-landed'`; only then does "Submit again" appear.
+//      A blind resubmission here risks moving money twice.
 //
 //   2. `strandedBridge` -- read-only pass-through of the EXACT stranded-funds payload
 //      frontend/src/baseLeg.js:313 emits on a pull-ok/burn-fails Base-leg failure
@@ -132,14 +132,14 @@ export function RecoveryPanel({
               Check status
             </button>
           )}
-          {showSubmission && (
+          {showSubmission && retryEnabled && (
             <button
               type="button"
               className="pc-button pc-button--primary"
-              disabled={pending || !retryEnabled}
+              disabled={pending}
               onClick={() => onRetry?.(submission)}
             >
-              Retry
+              Submit again
             </button>
           )}
           {showStrandedBridge && (
@@ -189,11 +189,11 @@ export function RecoveryPanel({
           )}
           <p>
             {reconciled == null &&
-              "We haven't reconciled this against the chain yet -- retry stays off until we do."}
+              "We haven't reconciled this against the chain yet -- Submit again stays unavailable until we do."}
             {reconciled === 'landed' &&
-              'This already landed on-chain. Retrying now would resubmit it a second time, so retry stays off.'}
+              'This already landed on-chain. Submitting again would duplicate it, so Submit again stays unavailable.'}
             {reconciled === 'not-landed' &&
-              'We rechecked the chain and this never landed -- retry is now safe.'}
+              'We rechecked the chain and this never landed -- Submit again is now safe.'}
           </p>
         </>
       )}

@@ -491,8 +491,8 @@ describe('StartStage -- successful siblings remain confirmed when one fails', ()
   })
 })
 
-describe('StartStage -- retry only appears when system state supports it', () => {
-  it('offers no Retry while the run is only live (no receipt yet), even for a failed lane', () => {
+describe('StartStage -- evidence-selected recovery actions', () => {
+  it('offers no recovery action while the run is only live (no receipt yet), even for a failed lane', () => {
     const events = [
       ...depositQueuedThenStarted('run-1:deposit:0', 'agent-0', 0),
       depositFailed('run-1:deposit:0', 'agent-0'),
@@ -501,8 +501,7 @@ describe('StartStage -- retry only appears when system state supports it', () =>
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
   })
 
-  it('offers Retry with the exact failed allocationId and reconciled custody once the receipt confirms failure', () => {
-    const onRetryAllocation = vi.fn()
+  it('shows a disabled status check until the failed Stellar allocation has a receipt projection', () => {
     const receipt = receiptFor({
       allocations: [
         succeededAllocation('run-1:deposit:0'),
@@ -515,18 +514,72 @@ describe('StartStage -- retry only appears when system state supports it', () =>
         permission={PERMISSION_FRESH}
         events={[]}
         receipt={receipt}
-        onRetryAllocation={onRetryAllocation}
       />
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
-    expect(onRetryAllocation).toHaveBeenCalledWith('run-1:deposit:1', {
-      location: 'agent',
-      confirmed: true,
-      checkedAt: NOW,
-    })
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Checking status' }).disabled).toBe(true)
   })
 
-  it('never offers Retry for a succeeded allocation', () => {
+  it.each([
+    ['pull', 'Recover'],
+    ['resubmit-identical-envelope', 'Recover'],
+    ['deposit', 'Deposit'],
+    ['poll', 'Poll'],
+  ])('labels %s from the projection and calls the exact allocation only', (action, label) => {
+    const onRecoverAllocation = vi.fn()
+    const allocationId = 'run-1:deposit:1'
+    const receipt = receiptFor({
+      allocations: [
+        succeededAllocation('run-1:deposit:0'),
+        failedAllocation(allocationId, { heldInAgent: true }),
+      ],
+    })
+    render(
+      <StartStage
+        plan={PLAN_TWO_DEPOSITS}
+        permission={PERMISSION_FRESH}
+        events={[]}
+        receipt={receipt}
+        recoveryByAllocation={{ [allocationId]: { action, route: { allocationId } } }}
+        onRecoverAllocation={onRecoverAllocation}
+      />
+    )
+
+    const button = screen.getByRole('button', { name: label })
+    expect(button.disabled).toBe(false)
+    fireEvent.click(button)
+    expect(onRecoverAllocation).toHaveBeenCalledWith(allocationId)
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
+  })
+
+  it('disables a projected action while that exact allocation is pending', () => {
+    const allocationId = 'run-1:deposit:1'
+    const receipt = receiptFor({
+      allocations: [
+        succeededAllocation('run-1:deposit:0'),
+        failedAllocation(allocationId, { heldInAgent: true }),
+      ],
+    })
+    const onRecoverAllocation = vi.fn()
+    render(
+      <StartStage
+        plan={PLAN_TWO_DEPOSITS}
+        permission={PERMISSION_FRESH}
+        events={[]}
+        receipt={receipt}
+        recoveryByAllocation={{ [allocationId]: { action: 'deposit' } }}
+        recoveryPendingAllocations={new Set([allocationId])}
+        onRecoverAllocation={onRecoverAllocation}
+      />
+    )
+
+    const button = screen.getByRole('button', { name: 'Deposit' })
+    expect(button.disabled).toBe(true)
+    fireEvent.click(button)
+    expect(onRecoverAllocation).not.toHaveBeenCalled()
+  })
+
+  it('never offers an action for a succeeded allocation', () => {
     const receipt = receiptFor({
       allocations: [succeededAllocation('run-1:deposit:0'), succeededAllocation('run-1:deposit:1')],
     })
@@ -539,6 +592,7 @@ describe('StartStage -- retry only appears when system state supports it', () =>
       />
     )
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Recover' })).toBeNull()
   })
 })
 
@@ -608,8 +662,8 @@ describe('StartStage -- bridge lane: one mark, all Base child destinations, corr
     expect(screen.getByText(/Arrived on Base Sepolia/)).toBeTruthy()
   })
 
-  it('a bridge failure keeps a per-child Retry action with the exact failed child allocationId', () => {
-    const onRetryAllocation = vi.fn()
+  it('a bridge child failure is display-only and never calls the Stellar recovery handler', () => {
+    const onRecoverAllocation = vi.fn()
     const receipt = receiptFor({
       runId: 'run-2',
       planFingerprint: '0xplan2',
@@ -652,17 +706,27 @@ describe('StartStage -- bridge lane: one mark, all Base child destinations, corr
         permission={PERMISSION_FRESH}
         events={[]}
         receipt={receipt}
-        onRetryAllocation={onRetryAllocation}
+        recoveryByAllocation={{
+          'run-2:bridge:moonwell': {
+            action: 'blocked-reconcile',
+            route: {
+              allocationId: 'run-2:bridge:moonwell',
+              parentAllocationId: 'run-2:bridge:base',
+              childId: 'run-2:bridge:moonwell',
+              source: 'base-child-result',
+            },
+          },
+        }}
+        onRecoverAllocation={onRecoverAllocation}
       />
     )
     expect(screen.getByText('Failed')).toBeTruthy() // the bridge lane's own aggregate phase label
     expect(screen.getByText('Recovery available')).toBeTruthy() // moonwell held in the bridge agent
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
-    expect(onRetryAllocation).toHaveBeenCalledWith('run-2:bridge:moonwell', {
-      location: 'agent',
-      confirmed: true,
-      checkedAt: NOW,
-    })
+    const blocked = screen.getByRole('button', { name: 'Manual review' })
+    expect(blocked.disabled).toBe(true)
+    fireEvent.click(blocked)
+    expect(onRecoverAllocation).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
   })
 
   it('an in-transit (still-pending) child never claims Proxy custody', () => {

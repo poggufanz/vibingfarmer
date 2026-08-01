@@ -51,7 +51,12 @@ import {
 import { saveResume, loadResume, clearResume } from './strategy/sessionResume.js'
 import OnboardingFlow from './components/OnboardingFlow.jsx'
 import { OrchestratorAgent } from './orchestrator.js'
-import { makeAgentId, WorkerAgent } from './worker.js'
+import {
+  readRecoveryReceipt,
+  requestRecoveryAction,
+  resolveRecoveryCredential,
+} from './strategy/recoveryClient.js'
+import { projectRecoveryReceipt } from './strategy/receiptProjection.js'
 import { readContract } from './stellar/client.js'
 import { VAULT_CATALOG, VENICE_TIMEOUT_MS, BASE_POOL_CATALOG } from './config.js'
 import {
@@ -490,6 +495,201 @@ export function createEpochBoundRun({ captured, getCurrent, onEvent = () => {} }
   }
 }
 
+/**
+ * Recoverable Stellar rows are reconstructed only from the confirmed address vector and the same
+ * ordered top-level plan that produced it. Base parents/children are intentionally absent: their
+ * current result evidence is display-only until a durable Base receipt producer exists.
+ */
+export function buildRecoveryAllocationMappings({
+  plan,
+  confirmedPermission,
+  reviewedPermission,
+  owner,
+}) {
+  const agents = Array.isArray(plan?.agents) ? plan.agents : []
+  const addresses = confirmedPermission?.agentAddresses
+  if (
+    !owner ||
+    !plan?.runId ||
+    !Array.isArray(addresses) ||
+    addresses.length !== agents.length ||
+    addresses.some((address) => typeof address !== 'string' || address.length === 0)
+  ) {
+    throw new Error('The confirmed agent address order is incomplete for recovery.')
+  }
+  if (
+    reviewedPermission?.mode &&
+    confirmedPermission?.mode &&
+    reviewedPermission.mode !== confirmedPermission.mode
+  ) {
+    throw new Error('The reviewed permission mode does not match confirmed recovery evidence.')
+  }
+  const reviewedRows =
+    reviewedPermission?.version === 3 ? reviewedPermission.executions : reviewedPermission?.agents
+  const mappings = new Map()
+  agents.forEach((agent, index) => {
+    if (agent?.kind === 'bridge') return
+    const agentAddress = addresses[index]
+    if (Array.isArray(reviewedRows)) {
+      const reviewed = reviewedRows.find((row) => row?.allocationId === agent.allocationId)
+      if (
+        reviewedPermission?.mode === 'reuse' &&
+        (!reviewed || reviewed.agentAddress !== agentAddress)
+      ) {
+        throw new Error(`Reviewed agent evidence disagrees for ${agent.allocationId}.`)
+      }
+    }
+    // Orchestrator workers execute `agent.cap.units` verbatim (buildFreshWorkers/
+    // buildReuseWorkers); recovery must journal and call the identical amount source.
+    const amount = agent?.cap
+    if (
+      !amount ||
+      typeof amount.token !== 'string' ||
+      typeof amount.units !== 'string' ||
+      !/^\d+$/.test(amount.units) ||
+      !Number.isInteger(amount.decimals) ||
+      amount.decimals < 0
+    ) {
+      throw new Error(`Recovery amount is malformed for ${agent?.allocationId || 'allocation'}.`)
+    }
+    mappings.set(agent.allocationId, {
+      networkId: 'stellar-testnet',
+      owner,
+      executionId: `${plan.runId}:exec:${agent.allocationId}`,
+      allocationId: agent.allocationId,
+      childId: null,
+      runId: plan.runId,
+      agentAddress,
+      amount: { token: amount.token, units: amount.units, decimals: amount.decimals },
+    })
+  })
+  return mappings
+}
+
+/** Stable, dependency-injected controller shared by App and app.recovery.test.jsx. */
+export function createRecoveryActionRunner({
+  getActiveAccount,
+  getProjection,
+  getMapping,
+  getPermission,
+  resolveCredential = resolveRecoveryCredential,
+  requestAction = requestRecoveryAction,
+  readReceipt = readRecoveryReceipt,
+  projectReceipt = projectRecoveryReceipt,
+  recoverAllocation,
+  onProjection = () => {},
+  onPending = () => {},
+  onError = () => {},
+  leaseOwner,
+  vault,
+}) {
+  const pending = new Set()
+  const assertCurrent = (captured) =>
+    assertCurrentActiveAccount({ captured, current: getActiveAccount() })
+  const projectAuthoritative = async (mapping, captured) => {
+    const authoritative = await readReceipt({
+      networkId: mapping.networkId,
+      owner: mapping.owner,
+      executionId: mapping.executionId,
+      allocationId: mapping.allocationId,
+    })
+    assertCurrent(captured)
+    const next = projectReceipt({
+      ...authoritative,
+      identity: mapping,
+    })
+    assertCurrent(captured)
+    onProjection(mapping.allocationId, next)
+    return authoritative
+  }
+
+  return {
+    async run(allocationId) {
+      if (pending.has(allocationId)) return { skipped: 'pending' }
+      const projected = getProjection(allocationId)
+      if (
+        projected?.action === 'blocked-reconcile' ||
+        projected?.route?.source === 'base-child-result'
+      ) {
+        return { skipped: 'blocked-reconcile' }
+      }
+      const mapping = getMapping(allocationId)
+      const captured = getActiveAccount()
+      if (
+        !projected?.requestIdentity ||
+        !mapping ||
+        captured?.version !== 1 ||
+        captured.address !== mapping.owner ||
+        projected.route?.allocationId !== allocationId
+      ) {
+        throw new Error(`Recovery is unavailable for allocation ${allocationId}.`)
+      }
+      pending.add(allocationId)
+      onPending(allocationId, true)
+      try {
+        assertCurrent(captured)
+        const credential = await resolveCredential({
+          networkId: mapping.networkId,
+          owner: mapping.owner,
+          vault,
+          agentAddress: mapping.agentAddress,
+        })
+        assertCurrent(captured)
+        const claim = await requestAction({
+          ...projected.requestIdentity,
+          networkId: mapping.networkId,
+          owner: mapping.owner,
+          receipt: projected.receipt,
+          agentAddress: mapping.agentAddress,
+          allocationMapping: mapping,
+          leaseOwner,
+          vault,
+          resolveCredential: () => credential,
+        })
+        assertCurrent(captured)
+        const result = await recoverAllocation({
+          claim,
+          credential,
+          allocationMapping: mapping,
+          permissionEvidence: getPermission(),
+        })
+        assertCurrent(captured)
+        const next = projectReceipt({
+          receipt: result.receipt,
+          version: result.version,
+          identity: mapping,
+        })
+        onProjection(allocationId, next)
+        if (result.error) onError(result.error, allocationId)
+        return result
+      } catch (error) {
+        try {
+          assertCurrent(captured)
+          try {
+            await projectAuthoritative(mapping, captured)
+          } catch {
+            // A refresh failure leaves the existing projection untouched. Re-check the epoch
+            // below so a wallet switch is still silent rather than becoming a stale error toast.
+          }
+          assertCurrent(captured)
+          onError(error, allocationId)
+        } catch {
+          // A stale account owns none of the next account's recovery UI.
+        }
+        throw error
+      } finally {
+        pending.delete(allocationId)
+        try {
+          assertCurrent(captured)
+          onPending(allocationId, false)
+        } catch {
+          // installActiveWalletAccount clears the old owner's pending surface atomically.
+        }
+      }
+    },
+  }
+}
+
 // Final review, Fix 2: the cached envelope's SHAPE, not just its data, can go stale across a
 // deploy. A pre-Task-10 cache stamped `discovery.agents[].baseChildren` nowhere at all; under the
 // current `sourceUnknown = discovery?.status !== 'complete'` predicate (readOwnerMoney.js:635) a
@@ -831,6 +1031,15 @@ const App = () => {
   // lane-phase adapters (depositLanePhase/bridgeLanePhase) fold these; never cleared mid-run.
   const [runEvents, setRunEvents] = useS([])
   const [runReceipt, setRunReceipt] = useS(null)
+  const [recoveryByAllocation, setRecoveryByAllocation] = useS({})
+  const recoveryByAllocationRef = useR(recoveryByAllocation)
+  recoveryByAllocationRef.current = recoveryByAllocation
+  const [recoveryPendingAllocations, setRecoveryPendingAllocations] = useS(() => new Set())
+  const recoveryMappingsRef = useR(new Map())
+  const recoveryRunnerRef = useR(null)
+  const recoveryLeaseOwnerRef = useR(
+    `vf-recovery-${globalThis.crypto?.randomUUID?.() || Date.now()}`
+  )
   // In-flight onRequestGrant/onConfirmReuse promise settlers — resolved by the shared orchestrator
   // event handler the instant 'grant-confirmed'/'reuse-confirmed' fires (ProtectStage must resolve
   // BEFORE the whole run settles, since Start renders live while dispatch continues in the
@@ -2211,6 +2420,9 @@ const App = () => {
       dispatchFlow({ type: 'STRATEGY_RESET' })
       setStrategy(null)
       setRunReceipt(null)
+      setRecoveryByAllocation({})
+      setRecoveryPendingAllocations(new Set())
+      recoveryMappingsRef.current = new Map()
       setExecMap({})
       setOpenAgentId(null)
       setRunEvents([])
@@ -3277,6 +3489,9 @@ const App = () => {
       ...makeInitialExecState(plan.agents.map((a) => ({ id: a.allocationId }))),
     }))
     setRunEvents([])
+    setRecoveryByAllocation({})
+    setRecoveryPendingAllocations(new Set())
+    recoveryMappingsRef.current = new Map()
 
     const orch = new OrchestratorAgent({
       user: realAddress,
@@ -3315,6 +3530,20 @@ const App = () => {
             base: { status: undefined, results: [] },
           },
         })
+      try {
+        recoveryMappingsRef.current = buildRecoveryAllocationMappings({
+          plan,
+          confirmedPermission: receipt.permission,
+          reviewedPermission: permissionDecision,
+          owner: realAddress,
+        })
+      } catch (error) {
+        recoveryMappingsRef.current = new Map()
+        addLog({
+          event: 'AgentFailed',
+          meta: `Recovery mapping unavailable: ${error?.message || error}`,
+        })
+      }
       setRunReceipt(receipt)
       if (summary.baseLeg) {
         const outcome = applyBaseLegOutcome(summary.baseLeg, { stellarOwner: realAddress })
@@ -3349,68 +3578,140 @@ const App = () => {
     return dispatchPromise
   }
 
-  // Best-effort single-lane retry: re-runs just the failed allocation's deposit through a fresh
-  // WorkerAgent against the ALREADY-confirmed permission's agent address (never a new grant/
-  // signature) -- fed through the SAME handleNewRunEvent handler so the retry's own progress
-  // shows up on Start exactly like the original attempt did.
-  async function onRetryAllocation(allocationId) {
-    const captured = activeAccountRef.current
-    if (captured?.version !== 1) {
-      addLog({ event: 'AgentFailed', meta: 'Retry unavailable: reconnect your wallet first.' })
-      return
+  // Project every failed settled lane from durable evidence. Base children deliberately receive
+  // only a blocked display projection; no Stellar identity mapping is ever created for them.
+  useE(() => {
+    const plan = strategyFlow.plan
+    const captured = activeAccount
+    if (!runReceipt || !plan || captured?.version !== 1) return undefined
+    let alive = true
+    const parentByChild = new Map()
+    for (const agent of plan.agents || []) {
+      if (agent.kind !== 'bridge') continue
+      for (const child of agent.children || []) parentByChild.set(child.allocationId, agent)
     }
-    activeOrchestrationRef.current?.cancel()
-    const epochRun = createEpochBoundRun({
-      captured,
-      getCurrent: () => activeAccountRef.current,
-      onEvent: handleNewRunEvent,
+    Promise.all(
+      (runReceipt.allocations || [])
+        .filter((outcome) => outcome?.executionStatus === 'failed')
+        .map(async (outcome) => {
+          const parent = parentByChild.get(outcome.allocationId)
+          if (parent) {
+            return [
+              outcome.allocationId,
+              projectRecoveryReceipt({
+                receipt: null,
+                version: 0,
+                identity: {
+                  executionId: `${plan.runId}:exec:${outcome.allocationId}`,
+                  allocationId: outcome.allocationId,
+                  parentAllocationId: parent.allocationId,
+                  childId: outcome.allocationId,
+                },
+                baseResult: {
+                  allocationId: outcome.allocationId,
+                  jobId: outcome.evidence?.jobId ?? null,
+                },
+                strandedBridge:
+                  outcome.custody?.location === 'agent'
+                    ? {
+                        pulled: true,
+                        bridgeAgentAddress: outcome.evidence?.bridgeAgentAddress ?? null,
+                      }
+                    : null,
+              }),
+            ]
+          }
+          const mapping = recoveryMappingsRef.current.get(outcome.allocationId)
+          if (!mapping) {
+            return [
+              outcome.allocationId,
+              {
+                action: 'manual-review',
+                phase: null,
+                reason: 'The authoritative in-memory agent mapping is unavailable.',
+                route: { allocationId: outcome.allocationId, source: 'unmapped' },
+              },
+            ]
+          }
+          try {
+            const authoritative = await readRecoveryReceipt({
+              networkId: mapping.networkId,
+              owner: mapping.owner,
+              executionId: mapping.executionId,
+              allocationId: mapping.allocationId,
+            })
+            assertCurrentActiveAccount({ captured, current: activeAccountRef.current })
+            return [
+              outcome.allocationId,
+              projectRecoveryReceipt({ ...authoritative, identity: mapping }),
+            ]
+          } catch (error) {
+            return [
+              outcome.allocationId,
+              {
+                action: 'manual-review',
+                phase: null,
+                reason: error?.message || 'Recovery evidence could not be read.',
+                route: { allocationId: outcome.allocationId, source: 'read-failed' },
+              },
+            ]
+          }
+        })
+    ).then((entries) => {
+      if (!alive || activeAccountRef.current !== captured) return
+      setRecoveryByAllocation(Object.fromEntries(entries))
     })
-    activeOrchestrationRef.current = epochRun
-    const plan = strategyFlowRef.current.plan
-    const agent = plan?.agents?.find((a) => a.allocationId === allocationId)
-    const permission = strategyFlowRef.current.permission
-    const agentAddress = permission?.agents?.find(
-      (a) => a.allocationId === allocationId
-    )?.agentAddress
-    if (!agent || agent.kind === 'bridge' || !agentAddress) {
-      epochRun.commit(() =>
+    return () => {
+      alive = false
+    }
+  }, [runReceipt, strategyFlow.plan, activeAccount])
+
+  if (!recoveryRunnerRef.current) {
+    recoveryRunnerRef.current = createRecoveryActionRunner({
+      getActiveAccount: () => activeAccountRef.current,
+      getProjection: (allocationId) => recoveryByAllocationRef.current[allocationId],
+      getMapping: (allocationId) => recoveryMappingsRef.current.get(allocationId),
+      getPermission: () => strategyFlowRef.current.permission,
+      recoverAllocation: async (args) => {
+        const captured = activeAccountRef.current
+        assertCurrentActiveAccount({ captured, current: activeAccountRef.current })
+        const orchestrator = new OrchestratorAgent({
+          user: captured.address,
+          activeAccount: captured,
+          getCurrentActiveAccount: () => activeAccountRef.current,
+          sessionId: `session-${strategyFlowRef.current.plan?.runId || runId}-recovery`,
+          onEvent: handleNewRunEvent,
+        })
+        return orchestrator.recoverAllocation(args)
+      },
+      onProjection: (allocationId, projected) =>
+        setRecoveryByAllocation((previous) => ({
+          ...previous,
+          [allocationId]: projected,
+        })),
+      onPending: (allocationId, pending) =>
+        setRecoveryPendingAllocations((previous) => {
+          const next = new Set(previous)
+          if (pending) next.add(allocationId)
+          else next.delete(allocationId)
+          return next
+        }),
+      onError: (error, allocationId) =>
         addLog({
           event: 'AgentFailed',
-          meta: `Retry unavailable for ${allocationId}: no confirmed agent address on record.`,
-        })
-      )
-      if (activeOrchestrationRef.current === epochRun) activeOrchestrationRef.current = null
-      return
-    }
-    const worker = new WorkerAgent({
-      agentId: allocationId,
-      allocationId,
-      user: captured.address,
+          agent: allocationId,
+          meta: `Recovery: ${error?.message || error}`,
+        }),
+      leaseOwner: recoveryLeaseOwnerRef.current,
       vault: SOROBAN_ACTIVE_VAULT_ADDRESS,
-      amount: BigInt(agent.cap.units),
-      sessionId: `session-${runId}-retry`,
-      // Worker emits deposit:pending synchronously immediately before its relay call. Throwing at
-      // that boundary prevents a switched owner from reaching transport; later callbacks are
-      // dropped by the same epoch run.
-      onEvent: (name, data) => {
-        epochRun.assertCurrent()
-        epochRun.onEvent(name, data)
-      },
-      agentAddress,
-      eligibilityToken: {
-        protocolSlug: null,
-        planIndex: 0,
-        eligible: true,
-        verdictHash: 'plan-reviewed',
-        asOf: Date.now(),
-      },
     })
+  }
+
+  async function onRecoverAllocation(allocationId) {
     try {
-      const result = await worker.execute()
-      epochRun.assertCurrent()
-      return result
-    } finally {
-      if (activeOrchestrationRef.current === epochRun) activeOrchestrationRef.current = null
+      return await recoveryRunnerRef.current.run(allocationId)
+    } catch {
+      return null
     }
   }
 
@@ -3478,7 +3779,9 @@ const App = () => {
           receipt: runReceipt,
           runId,
           stellarVenue: stellarVenueDisplay,
-          onRetryAllocation,
+          recoveryByAllocation,
+          recoveryPendingAllocations,
+          onRecoverAllocation,
           onViewMoney,
           onMakeAnotherDeposit,
           // Task 7 (Pocket Crew design alignment) -- the done-state "Watch the crew" action.
@@ -3612,6 +3915,9 @@ const App = () => {
     setStrategyReached(['plan'])
     setRunEvents([])
     setRunReceipt(null)
+    setRecoveryByAllocation({})
+    setRecoveryPendingAllocations(new Set())
+    recoveryMappingsRef.current = new Map()
     setRunId(`run-${Date.now()}`)
     baseSetupSucceededRef.current = false
     pendingConfirmRef.current = null

@@ -232,7 +232,7 @@ function custodyLabelFor(kind, outcome) {
 function foldDepositReceipt(lane, outcome) {
   if (!outcome) return lane
   if (outcome.executionStatus === 'succeeded') {
-    return { ...lane, phase: 'working', txHash: outcome.txHash, retryEligible: false }
+    return { ...lane, phase: 'working', txHash: outcome.txHash, recoveryEligible: false }
   }
   if (outcome.executionStatus === 'failed') {
     return {
@@ -240,7 +240,7 @@ function foldDepositReceipt(lane, outcome) {
       phase: 'failed',
       custodyLabel: custodyLabelFor('deposit', outcome),
       error: outcome.error,
-      retryEligible: true,
+      recoveryEligible: true,
       custody: outcome.custody,
     }
   }
@@ -295,7 +295,7 @@ function buildLanes({ plan, permission, events, receipt }) {
         kind: 'bridge',
         phase,
         custodyLabel: null,
-        retryEligible: false,
+        recoveryEligible: false,
         txHash: null,
         error: null,
         custody: null,
@@ -308,7 +308,7 @@ function buildLanes({ plan, permission, events, receipt }) {
       kind: 'deposit',
       phase: depositLanePhase(agent.allocationId, permissionMode, events),
       custodyLabel: null,
-      retryEligible: false,
+      recoveryEligible: false,
       txHash: live.txHash,
       error: live.error,
       custody: null,
@@ -329,6 +329,26 @@ function summarizeLanes(lanes) {
   return `${lanes.length} agent${lanes.length === 1 ? '' : 's'}: ${parts.join(', ')}`
 }
 
+function recoveryControl(projection, pending, { baseChild = false } = {}) {
+  if (!projection) return { label: 'Checking status', disabled: true }
+  if (baseChild || projection.action === 'blocked-reconcile') {
+    return { label: 'Manual review', disabled: true }
+  }
+  const labels = {
+    pull: 'Recover',
+    'resubmit-identical-envelope': 'Recover',
+    deposit: 'Deposit',
+    poll: 'Poll',
+    'manual-review': 'Manual review',
+    complete: 'Complete',
+  }
+  const label = labels[projection.action] || 'Manual review'
+  const actionable = ['pull', 'resubmit-identical-envelope', 'deposit', 'poll'].includes(
+    projection.action
+  )
+  return { label, disabled: pending || !actionable }
+}
+
 export function StartStage({
   plan,
   permission = null,
@@ -336,7 +356,9 @@ export function StartStage({
   receipt = null,
   runId,
   stellarVenue,
-  onRetryAllocation,
+  recoveryByAllocation = {},
+  recoveryPendingAllocations = new Set(),
+  onRecoverAllocation,
   onViewMoney,
   onMakeAnotherDeposit,
   onViewCrew,
@@ -425,12 +447,18 @@ export function StartStage({
                     {!isBridge && lane.error && <p role="alert">{lane.error}</p>}
                     {/* Step 1: one bridge mark contains ALL Base child destinations -- a single
                         lane/mark for the whole leg, with every child's own destination, custody, and
-                        (when it failed) retry action listed inside it. */}
+                        (when it failed) evidence-selected recovery action listed inside it. */}
                     {isBridge && lane.children.length > 0 && (
                       <ul>
                         {lane.children.map((child) => {
                           const childDisplay = display?.children?.find(
                             (c) => c.allocationId === child.allocationId
+                          )
+                          const projection = recoveryByAllocation[child.allocationId]
+                          const control = recoveryControl(
+                            projection,
+                            recoveryPendingAllocations.has(child.allocationId),
+                            { baseChild: true }
                           )
                           return (
                             <li key={child.allocationId}>
@@ -447,11 +475,10 @@ export function StartStage({
                                 <button
                                   type="button"
                                   className="pc-button pc-button--secondary"
-                                  onClick={() =>
-                                    onRetryAllocation?.(child.allocationId, child.custody)
-                                  }
+                                  disabled={control.disabled}
+                                  onClick={() => onRecoverAllocation?.(child.allocationId)}
                                 >
-                                  Retry
+                                  {control.label}
                                 </button>
                               )}
                             </li>
@@ -473,15 +500,24 @@ export function StartStage({
                       </TechnicalDetails>
                     )}
                   </div>
-                  {!isBridge && lane.retryEligible && (
-                    <button
-                      type="button"
-                      className="pc-button pc-button--secondary"
-                      onClick={() => onRetryAllocation?.(lane.allocationId, lane.custody)}
-                    >
-                      Retry
-                    </button>
-                  )}
+                  {!isBridge &&
+                    lane.recoveryEligible &&
+                    (() => {
+                      const control = recoveryControl(
+                        recoveryByAllocation[lane.allocationId],
+                        recoveryPendingAllocations.has(lane.allocationId)
+                      )
+                      return (
+                        <button
+                          type="button"
+                          className="pc-button pc-button--secondary"
+                          disabled={control.disabled}
+                          onClick={() => onRecoverAllocation?.(lane.allocationId)}
+                        >
+                          {control.label}
+                        </button>
+                      )
+                    })()}
                 </li>
               )
             })}

@@ -11,7 +11,7 @@ import {
 } from './stellar/grant.js'
 import { saveCachedAgent, takeReusableAgent } from './stellar/agentCache.js'
 import { newSessionKey } from './stellar/sessionKey.js'
-import { readTokenBalance } from './stellar/agentDeposit.js'
+import { readTokenBalance, readVaultShares, runAgentDeposit } from './stellar/agentDeposit.js'
 import {
   STELLAR_USDC_SAC,
   STELLAR_TOKEN_MESSENGER_MINTER,
@@ -47,6 +47,7 @@ import {
   confirmCustody,
 } from './strategy/allocationReceipt.js'
 import { postReceiptEvidence } from './stellar/agentIndexReceiptClient.js'
+import { selectRecoveryAction } from '../api/agent-index/recovery.js'
 // NOTE (Strategy Task 7): every OTHER new dependency this file needed for the permission-locked
 // path (`./strategy/reusePreflight.js`, `./stellar/grantReceiptStore.js`, and `readConfirmedLedger`
 // from `./stellar/grant.js`, plus `loadCachedAgents`/`SOROBAN_FUNDING_ROUTER_ADDRESS`) is imported
@@ -143,6 +144,8 @@ function createEvidenceRecorder({
   worker,
   amount,
   onEvent,
+  persistedReceipt = null,
+  persistedVersion = 0,
 }) {
   let receipt = createAllocationReceipt({
     networkId: RECEIPT_NETWORK_ID,
@@ -199,6 +202,35 @@ function createEvidenceRecorder({
     return writable
   }
 
+  if (persistedReceipt) {
+    if (
+      !Number.isSafeInteger(persistedVersion) ||
+      persistedVersion <= 0 ||
+      persistedReceipt.version !== persistedVersion
+    ) {
+      throw new Error('Authoritative recovery receipt/version does not match')
+    }
+    const adopted = writableReceipt(persistedReceipt)
+    const expectedIdentity = {
+      networkId: RECEIPT_NETWORK_ID,
+      executionId: `${runId}:exec:${allocationId}`,
+      allocationId,
+      owner,
+      runId,
+      worker,
+      agent: agentAddress,
+    }
+    for (const [field, value] of Object.entries(expectedIdentity)) {
+      if (adopted[field] !== value) {
+        throw new Error(`Authoritative recovery receipt changed immutable field ${field}`)
+      }
+    }
+    receipt = adopted
+    expectedVersion = persistedVersion
+  } else if (persistedVersion !== 0) {
+    throw new Error('An absent recovery receipt must have row version 0')
+  }
+
   const rebaseAttempt = (persisted, local, attempt) => {
     const authoritative = writableReceipt(persisted)
     for (const field of [
@@ -213,7 +245,9 @@ function createEvidenceRecorder({
       'agent',
       'intent',
     ]) {
-      if (JSON.stringify(canonical(authoritative[field])) !== JSON.stringify(canonical(local[field]))) {
+      if (
+        JSON.stringify(canonical(authoritative[field])) !== JSON.stringify(canonical(local[field]))
+      ) {
         throw new Error(`Authoritative receipt changed immutable field ${field}`)
       }
     }
@@ -355,6 +389,55 @@ function createEvidenceRecorder({
       return durable
     },
   }
+}
+
+function assertRecoveryText(value, field) {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error(`Recovery ${field} is required`)
+  }
+  return value
+}
+
+function assertRecoveryLease(claim, phase) {
+  const lease = claim?.lease
+  if (
+    claim?.ok !== true ||
+    claim.phase !== phase ||
+    !lease ||
+    lease.phase !== phase ||
+    typeof lease.holder !== 'string' ||
+    lease.holder.length === 0 ||
+    typeof lease.leaseToken !== 'string' ||
+    lease.leaseToken.length === 0 ||
+    !Number.isSafeInteger(lease.expiresAt) ||
+    lease.expiresAt <= Date.now()
+  ) {
+    throw new Error(`Recovery lease for ${phase} is missing, mismatched, or expired`)
+  }
+  return lease
+}
+
+function recoveryAmount(mapping) {
+  const amount = mapping?.amount
+  if (
+    !amount ||
+    typeof amount.token !== 'string' ||
+    typeof amount.units !== 'string' ||
+    !/^\d+$/.test(amount.units) ||
+    !Number.isInteger(amount.decimals) ||
+    amount.decimals < 0
+  ) {
+    throw new Error('Recovery allocation amount must preserve exact integer-string units')
+  }
+  return { token: amount.token, units: amount.units, decimals: amount.decimals }
+}
+
+function lastRecoveryAttempt(receipt, phase) {
+  const attempts = Array.isArray(receipt?.attempts) ? receipt.attempts : []
+  for (let index = attempts.length - 1; index >= 0; index -= 1) {
+    if (attempts[index]?.phase === phase) return attempts[index]
+  }
+  return null
 }
 
 /** Bind the two Stellar custody mutations inside baseLeg.js to the same owner capability as the
@@ -538,6 +621,332 @@ export class OrchestratorAgent {
       return this.dispatchPermissioned(strategyOrPlan, totalAmountOrOptions)
     }
     return this.dispatchLegacy(strategyOrPlan, totalAmountOrOptions)
+  }
+
+  /**
+   * Execute the single action authorized by one fresh, server-leased recovery verdict. This path
+   * deliberately reuses the ordinary AllocationReceipt writer and the original cached signer;
+   * it never creates a WorkerAgent, signer, execution id, or second receipt journal.
+   */
+  async recoverAllocation({ claim, credential, allocationMapping, permissionEvidence = null }) {
+    let actionError = null
+    let identity = null
+    try {
+      this.assertCurrentAccount()
+      const mapping = allocationMapping
+      if (!mapping || typeof mapping !== 'object' || Array.isArray(mapping)) {
+        throw new Error('Recovery requires an authoritative allocation mapping')
+      }
+      identity = {
+        networkId: assertRecoveryText(mapping.networkId, 'networkId'),
+        owner: assertRecoveryText(mapping.owner, 'owner'),
+        executionId: assertRecoveryText(mapping.executionId, 'executionId'),
+        allocationId: assertRecoveryText(mapping.allocationId, 'allocationId'),
+      }
+      if (
+        identity.networkId !== RECEIPT_NETWORK_ID ||
+        identity.owner !== this.user ||
+        identity.executionId !== `${mapping.runId}:exec:${identity.allocationId}` ||
+        mapping.childId !== null
+      ) {
+        throw new Error('Recovery allocation mapping does not match this Stellar execution')
+      }
+      const amount = recoveryAmount(mapping)
+      const agentAddress = assertRecoveryText(mapping.agentAddress, 'agent address')
+      if (
+        credential?.agentAddress !== agentAddress ||
+        typeof credential?.publicKey !== 'string' ||
+        typeof credential?.sign !== 'function'
+      ) {
+        throw new Error('Recovery credential does not match the original agent')
+      }
+      if (!Number.isSafeInteger(claim?.version) || claim.version < 0) {
+        throw new Error('Recovery claim carries an invalid row version')
+      }
+      if ((claim.version === 0) !== (claim.receipt == null)) {
+        throw new Error('Recovery claim receipt/version is inconsistent')
+      }
+      if (claim.receipt) {
+        for (const field of ['networkId', 'owner', 'executionId', 'allocationId']) {
+          if (claim.receipt[field] !== identity[field]) {
+            throw new Error(`Recovery receipt ${field} does not match the allocation mapping`)
+          }
+        }
+        if (
+          claim.receipt.agent !== agentAddress ||
+          claim.receipt.worker !== credential.publicKey ||
+          (claim.receipt.childId ?? null) !== null ||
+          claim.receipt.version !== claim.version
+        ) {
+          throw new Error('Recovery receipt does not match the original agent, signer, or child')
+        }
+      }
+      const selected = selectRecoveryAction(claim.receipt)
+      for (const field of ['action', 'phase', 'reasonCode']) {
+        if (claim?.[field] !== selected[field]) {
+          throw new Error(`Recovery claim ${field} does not match durable receipt evidence`)
+        }
+      }
+      if (selected.phase == null) {
+        if (claim.lease !== null) throw new Error('A no-action recovery claim cannot carry a lease')
+        return await this.readRecoveryAllocation(identity)
+      }
+      assertRecoveryLease(claim, selected.phase)
+
+      const recorder = createEvidenceRecorder({
+        runId: mapping.runId,
+        allocationId: identity.allocationId,
+        owner: identity.owner,
+        agentAddress,
+        sessionKey: credential,
+        worker: credential.publicKey,
+        amount,
+        onEvent: this.onEvent,
+        persistedReceipt: claim.receipt,
+        persistedVersion: claim.version,
+      })
+      const write = async (attempt) => {
+        assertRecoveryLease(claim, selected.phase)
+        this.assertCurrentAccount()
+        await recorder.record(attempt)
+        this.assertCurrentAccount()
+      }
+      const move = async (operation) => {
+        assertRecoveryLease(claim, selected.phase)
+        this.assertCurrentAccount()
+        const result = await operation()
+        this.assertCurrentAccount()
+        return result
+      }
+      const amountUnits = BigInt(amount.units)
+
+      const recordSubmissionFailure = async (error, phase, extraEvidence = {}) => {
+        const unknown = error?.code === 'VF_SUBMISSION_UNKNOWN'
+        await write({
+          phase,
+          status: unknown ? 'unknown' : 'failed',
+          evidence: {
+            reason: error?.message || String(error),
+            ...(error?.result?.hash ? { txHash: error.result.hash } : {}),
+            ...extraEvidence,
+          },
+        })
+      }
+
+      const executePull = async ({ v3 = null } = {}) => {
+        const v3Evidence = v3 ? { v3ExecutionId: v3.executionId } : {}
+        await write({ phase: 'pull', status: 'submitted', evidence: v3Evidence })
+        let result
+        try {
+          result = await move(() =>
+            v3
+              ? this.runAgentPullV3({
+                  permissionId: v3.permissionId,
+                  executionId: v3.executionId,
+                  agentAddress,
+                  amount: amountUnits,
+                  sessionKey: credential,
+                  router: v3.router,
+                })
+              : runAgentPull({
+                  agentAddress,
+                  amount: amountUnits,
+                  sessionKey: credential,
+                  activeAccount: this.activeAccount,
+                  getCurrentActiveAccount: this.getCurrentActiveAccount,
+                  signal: this.signal,
+                })
+          )
+        } catch (error) {
+          await recordSubmissionFailure(error, 'pull', v3Evidence)
+          throw error
+        }
+        if (!result || result.status !== 'SUCCESS') {
+          const error = new Error(
+            result
+              ? `The funding router returned ${result.status}.`
+              : 'The Stellar relay is unavailable.'
+          )
+          await recordSubmissionFailure(error, 'pull', v3Evidence)
+          throw error
+        }
+        recorder.custody({ location: 'stellar-agent', txSuccess: true, amount })
+        await write({
+          phase: 'pull',
+          status: 'confirmed',
+          evidence: { txHash: result.hash ?? null, ...v3Evidence },
+        })
+      }
+
+      if (selected.action === 'pull') {
+        if (permissionEvidence?.version === 3) {
+          throw new Error('A V3 permission cannot be recovered through the V2 pull primitive')
+        }
+        await executePull()
+      } else if (selected.action === 'resubmit-identical-envelope') {
+        const durableId = lastRecoveryAttempt(claim.receipt, 'pull')?.evidence?.v3ExecutionId
+        const exactExecution = permissionEvidence?.executions?.find(
+          (entry) => entry?.allocationId === identity.allocationId
+        )
+        if (
+          permissionEvidence?.version !== 3 ||
+          permissionEvidence?.mode !== 'reuse' ||
+          typeof permissionEvidence.router !== 'string' ||
+          permissionEvidence.router.length === 0 ||
+          typeof permissionEvidence.permissionId !== 'string' ||
+          permissionEvidence.permissionId.length === 0 ||
+          !/^0x[0-9a-f]{64}$/.test(durableId || '') ||
+          exactExecution?.executionId !== durableId ||
+          exactExecution?.agentAddress !== agentAddress ||
+          String(exactExecution?.amountUnits) !== amount.units
+        ) {
+          throw new Error('V3 recovery evidence does not match the durable execution envelope')
+        }
+        await executePull({
+          v3: {
+            permissionId: permissionEvidence.permissionId,
+            executionId: durableId,
+            router: permissionEvidence.router,
+          },
+        })
+      } else if (selected.action === 'deposit') {
+        const preShares = await move(() => readVaultShares(agentAddress))
+        if (preShares == null) {
+          throw new Error('Vault share baseline is unavailable; deposit recovery is blocked')
+        }
+        await write({
+          phase: 'stellar_deposit',
+          status: 'submitted',
+          evidence: { preShareUnits: preShares.toString() },
+        })
+        let result
+        try {
+          result = await move(() =>
+            runAgentDeposit({
+              agentAddress,
+              amount: amountUnits,
+              sessionKey: credential,
+              activeAccount: this.activeAccount,
+              getCurrentActiveAccount: this.getCurrentActiveAccount,
+              signal: this.signal,
+            })
+          )
+        } catch (error) {
+          await recordSubmissionFailure(error, 'stellar_deposit')
+          throw error
+        }
+        if (!result || result.status !== 'SUCCESS') {
+          const error = new Error(
+            result
+              ? `The vault relay returned ${result.status}.`
+              : 'The Stellar relay is unavailable.'
+          )
+          await recordSubmissionFailure(error, 'stellar_deposit')
+          throw error
+        }
+        const postShares = await move(() => readVaultShares(agentAddress))
+        if (postShares != null && postShares > preShares) {
+          recorder.custody({
+            location: 'stellar-vault',
+            txSuccess: true,
+            matchingEvent: true,
+            amount,
+          })
+          await write({
+            phase: 'stellar_deposit',
+            status: 'confirmed',
+            evidence: {
+              txHash: result.hash ?? null,
+              preShareUnits: preShares.toString(),
+              postShareUnits: postShares.toString(),
+            },
+          })
+        } else {
+          await write({
+            phase: 'stellar_deposit',
+            status: 'unknown',
+            evidence: {
+              txHash: result.hash ?? null,
+              preShareUnits: preShares.toString(),
+              postShareUnits: postShares?.toString() ?? null,
+              reason: 'The relay succeeded but no vault-share increase was proven.',
+            },
+          })
+        }
+      } else if (selected.action === 'poll') {
+        const attempt = lastRecoveryAttempt(claim.receipt, selected.phase)
+        const txHash = attempt?.evidence?.txHash
+        if (typeof txHash !== 'string' || txHash.length === 0) {
+          throw new Error(`Recovery poll for ${selected.phase} has no durable transaction hash`)
+        }
+        let confirmation
+        try {
+          const { readConfirmedLedger } = await import('./stellar/grant.js')
+          confirmation = await move(() => readConfirmedLedger({ hash: txHash }))
+        } catch (error) {
+          if (/not confirmed|not found/i.test(error?.message || ''))
+            return await this.readRecoveryAllocation(identity)
+          throw error
+        }
+        if (selected.phase === 'pull') {
+          recorder.custody({ location: 'stellar-agent', txSuccess: true, amount })
+          await write({
+            phase: 'pull',
+            status: 'confirmed',
+            evidence: { txHash, ...confirmation },
+          })
+        } else {
+          const preShareUnits = attempt?.evidence?.preShareUnits
+          if (typeof preShareUnits !== 'string' || !/^\d+$/.test(preShareUnits)) {
+            throw new Error('Deposit poll has no durable pre-submission share baseline')
+          }
+          const postShares = await move(() => readVaultShares(agentAddress))
+          if (postShares != null && postShares > BigInt(preShareUnits)) {
+            recorder.custody({
+              location: 'stellar-vault',
+              txSuccess: true,
+              matchingEvent: true,
+              amount,
+            })
+            await write({
+              phase: 'stellar_deposit',
+              status: 'confirmed',
+              evidence: {
+                txHash,
+                preShareUnits,
+                postShareUnits: postShares.toString(),
+                ...confirmation,
+              },
+            })
+          }
+        }
+      } else {
+        throw new Error(`Recovery action ${selected.action} is not executable`)
+      }
+    } catch (error) {
+      actionError = error
+    }
+
+    if (!identity) {
+      throw actionError
+    }
+    try {
+      const authoritative = await this.readRecoveryAllocation(identity)
+      return actionError ? { ...authoritative, error: actionError } : authoritative
+    } catch (readError) {
+      if (actionError) {
+        throw new AggregateError(
+          [actionError, readError],
+          'Recovery action and authoritative reread failed'
+        )
+      }
+      throw readError
+    }
+  }
+
+  async readRecoveryAllocation(identity) {
+    const { readRecoveryReceipt } = await import('./strategy/recoveryClient.js')
+    return readRecoveryReceipt(identity)
   }
 
   /**

@@ -22,7 +22,7 @@ function amt(units, decimals = 7) {
 }
 
 describe('RecoveryPanel — submission-unknown: reconciliation before any retry', () => {
-  it('retry is disabled before status has been checked, and Check status is offered', () => {
+  it('offers no generic retry before status has been checked, and Check status is offered', () => {
     const onRetry = vi.fn()
     render(
       <RecoveryPanel
@@ -35,10 +35,8 @@ describe('RecoveryPanel — submission-unknown: reconciliation before any retry'
     )
     expect(screen.getByText(/could not confirm whether this went through/i)).toBeTruthy()
     expect(screen.getByText(/relay lost the submission/i)).toBeTruthy()
-    const retryBtn = screen.getByRole('button', { name: /^retry$/i })
-    expect(retryBtn.disabled).toBe(true)
-    // Even a forced click on a disabled native button must never fire the handler.
-    fireEvent.click(retryBtn)
+    expect(screen.queryByRole('button', { name: /^retry$/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /submit again/i })).toBeNull()
     expect(onRetry).not.toHaveBeenCalled()
     expect(screen.getByRole('button', { name: /check status/i })).toBeTruthy()
     expect(
@@ -46,7 +44,7 @@ describe('RecoveryPanel — submission-unknown: reconciliation before any retry'
     ).toBeTruthy()
   })
 
-  it('retry stays disabled even once reconciliation proves it already landed -- never resubmit a confirmed action', () => {
+  it('offers no retry once reconciliation proves it already landed -- never resubmit a confirmed action', () => {
     const onRetry = vi.fn()
     render(
       <RecoveryPanel
@@ -57,14 +55,12 @@ describe('RecoveryPanel — submission-unknown: reconciliation before any retry'
         onRetry={onRetry}
       />
     )
-    // Mutation guard: a version keying retry only off "has reconciliation happened" (any non-null
-    // value) rather than the SPECIFIC 'not-landed' outcome would wrongly enable retry here.
-    const retryBtn = screen.getByRole('button', { name: /^retry$/i })
-    expect(retryBtn.disabled).toBe(true)
+    expect(screen.queryByRole('button', { name: /^retry$/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /submit again/i })).toBeNull()
     expect(screen.getByText(/already landed on-chain/i)).toBeTruthy()
   })
 
-  it('retry becomes enabled and wired only once reconciliation proves it did not land', () => {
+  it('Submit again becomes enabled and wired only once reconciliation proves it did not land', () => {
     const onRetry = vi.fn()
     render(
       <RecoveryPanel
@@ -75,10 +71,11 @@ describe('RecoveryPanel — submission-unknown: reconciliation before any retry'
         onRetry={onRetry}
       />
     )
-    const retryBtn = screen.getByRole('button', { name: /^retry$/i })
+    const retryBtn = screen.getByRole('button', { name: /submit again/i })
     expect(retryBtn.disabled).toBe(false)
     fireEvent.click(retryBtn)
     expect(onRetry).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('button', { name: /^retry$/i })).toBeNull()
   })
 
   it('Check status calls onCheckStatus with the real submission, not a placeholder', () => {
@@ -335,8 +332,8 @@ describe('RecoveryPanel — real-browser 320px layout guard, per state', () => {
 })
 
 // ---------------------------------------------------------------------------------------------
-// Fix loop 2 (M7): every reconciliation phase of the submission-unknown state renders the SAME
-// three-button footer (Close/Check status/Retry). The scoped `.pc-dialog-actions` base rule
+// Fix loop 2 (M7): every reconciliation phase keeps all of its offered footer controls contained
+// (Close/Check status, plus Submit again only after not-landed proof). The scoped actions base rule
 // (0,2,0) previously beat the contract's own unscoped mobile stacking rule (0,1,0), so at 320px
 // the footer stayed `display: flex; justify-content: flex-end` with no wrap -- pushing the first
 // button (Close) outside the panel's own padding box. `documentElement.scrollWidth` alone cannot
