@@ -151,6 +151,7 @@ vi.mock('./strategy/recoveryClient.js', () => ({
 
 import { OrchestratorAgent } from './orchestrator.js'
 import { ReceiptEvidenceError } from './stellar/agentIndexReceiptClient.js'
+import { RelaySubmissionUnknownError } from './stellar/relay.js'
 import {
   appendPhase,
   confirmCustody,
@@ -2237,6 +2238,120 @@ describe('Task 6 chunk C1 fix round 1 — dispatchConfirmedMixed evidence + crit
       expect(runAgentDepositMock).toHaveBeenCalledOnce()
     })
 
+    it('never confirms custody from a backward bare duplicate relay response', async () => {
+      const mapping = recoveryMapping()
+      recoveryServer()
+      runAgentPullMock.mockResolvedValue({ hash: 'HBAREDUPLICATE', status: 'duplicate' })
+
+      const result = await permissionedOrchestrator().recoverAllocation({
+        claim: recoveryClaim(),
+        credential: RECOVERY_CREDENTIAL,
+        allocationMapping: mapping,
+        permissionEvidence: mapping.permission,
+      })
+
+      expect(result.receipt).toMatchObject({
+        phases: { pull: 'unknown' },
+        custody: { location: 'owner', confirmed: true },
+      })
+      expect(result.receipt.attempts.at(-1)).toMatchObject({
+        phase: 'pull',
+        status: 'unknown',
+        evidence: { txHash: 'HBAREDUPLICATE' },
+      })
+      expect(selectRecoveryAction(result.receipt)).toMatchObject({ action: 'poll', phase: 'pull' })
+      expect(runAgentPullMock).toHaveBeenCalledOnce()
+    })
+
+    it('never confirms vault custody from a backward bare duplicate deposit response', async () => {
+      const mapping = recoveryMapping()
+      let receipt = recoveryReceipt(mapping, [
+        {
+          attemptId: 'pull-confirmed-before-bare-duplicate-deposit',
+          phase: 'pull',
+          status: 'confirmed',
+          evidence: { txHash: 'HPULLBEFOREDUPLICATE' },
+          observedAt: 1_999_999_999_009,
+        },
+      ])
+      receipt = confirmCustody(receipt, {
+        location: 'stellar-agent',
+        txSuccess: true,
+        amount: RECOVERY_AMOUNT,
+      })
+      const server = recoveryServer()
+      server.set(receipt, 3)
+      readVaultSharesMock.mockResolvedValueOnce(19n).mockResolvedValueOnce(20n)
+      runAgentDepositMock.mockResolvedValue({ hash: 'HBAREDEPOSITDUPLICATE', status: 'duplicate' })
+
+      const result = await permissionedOrchestrator().recoverAllocation({
+        claim: recoveryClaim({
+          receipt: persistedReceipt(receipt, 3),
+          version: 3,
+          action: 'deposit',
+          phase: 'stellar_deposit',
+        }),
+        credential: RECOVERY_CREDENTIAL,
+        allocationMapping: mapping,
+        permissionEvidence: mapping.permission,
+      })
+
+      expect(result.receipt).toMatchObject({
+        phases: { stellar_deposit: 'unknown' },
+        custody: { location: 'stellar-agent', confirmed: true },
+      })
+      expect(result.receipt.attempts.at(-1)).toMatchObject({
+        phase: 'stellar_deposit',
+        status: 'unknown',
+        evidence: { txHash: 'HBAREDEPOSITDUPLICATE', preShareUnits: '19' },
+      })
+      expect(runAgentDepositMock).toHaveBeenCalledOnce()
+      expect(readVaultSharesMock).toHaveBeenCalledOnce()
+    })
+
+    it('keeps a producer-shaped cached PENDING duplicate unknown and a cached FAILED duplicate definitive', async () => {
+      const mapping = recoveryMapping()
+      const server = recoveryServer()
+      runAgentPullMock.mockRejectedValueOnce(
+        new RelaySubmissionUnknownError('cached transaction remains pending', {
+          hash: 'HCACHEDPENDING',
+          status: 'PENDING',
+          duplicate: true,
+        })
+      )
+
+      const pending = await permissionedOrchestrator().recoverAllocation({
+        claim: recoveryClaim(),
+        credential: RECOVERY_CREDENTIAL,
+        allocationMapping: mapping,
+        permissionEvidence: mapping.permission,
+      })
+      expect(pending.receipt).toMatchObject({
+        phases: { pull: 'unknown' },
+        custody: { location: 'owner', confirmed: true },
+      })
+      expect(selectRecoveryAction(pending.receipt)).toMatchObject({ action: 'poll', phase: 'pull' })
+
+      server.set(null, 0)
+      runAgentPullMock.mockResolvedValueOnce({
+        hash: 'HCACHEDFAILED',
+        status: 'FAILED',
+        duplicate: true,
+      })
+      const failed = await permissionedOrchestrator().recoverAllocation({
+        claim: recoveryClaim(),
+        credential: RECOVERY_CREDENTIAL,
+        allocationMapping: mapping,
+        permissionEvidence: mapping.permission,
+      })
+      expect(failed.receipt).toMatchObject({
+        phases: { pull: 'failed' },
+        custody: { location: 'owner', confirmed: true },
+      })
+      expect(selectRecoveryAction(failed.receipt)).toMatchObject({ action: 'pull', phase: 'pull' })
+      expect(runAgentPullMock).toHaveBeenCalledTimes(2)
+    })
+
     it('writes a durable pull intent before one V2 pull with the original credential, then rereads the row', async () => {
       const mapping = recoveryMapping()
       recoveryServer()
@@ -2332,6 +2447,287 @@ describe('Task 6 chunk C1 fix round 1 — dispatchConfirmedMixed evidence + crit
         version: 1,
         error: expect.any(Error),
       })
+    })
+
+    it.each([
+      ['network loss', () => new Error('receipt-write response lost')],
+      [
+        'write 5xx',
+        () =>
+          new ReceiptEvidenceError('receipt-write upstream failed', {
+            step: 'write',
+            status: 502,
+            code: 'server-error',
+          }),
+      ],
+    ])(
+      'aborts an ambiguous %s when the authoritative receipt advanced with another attempt',
+      async (_label, makeError) => {
+        const mapping = recoveryMapping()
+        const changed = recoveryReceipt(mapping, [
+          {
+            attemptId: 'other-holder-advanced-attempt',
+            phase: 'pull',
+            status: 'submitted',
+            evidence: { holder: 'other-tab' },
+            observedAt: 1_999_999_999_021,
+          },
+        ])
+        postReceiptEvidenceMock.mockRejectedValueOnce(makeError()).mockResolvedValue({ version: 2 })
+        readRecoveryReceiptMock.mockResolvedValue({
+          receipt: persistedReceipt(changed, 1),
+          version: 1,
+        })
+
+        const result = await permissionedOrchestrator().recoverAllocation({
+          claim: recoveryClaim(),
+          credential: RECOVERY_CREDENTIAL,
+          allocationMapping: mapping,
+          permissionEvidence: mapping.permission,
+        })
+
+        expect(postReceiptEvidenceMock).toHaveBeenCalledOnce()
+        expect(runAgentPullMock).not.toHaveBeenCalled()
+        expect(runAgentDepositMock).not.toHaveBeenCalled()
+        expect(result).toMatchObject({
+          version: 1,
+          receipt: { attempts: [{ attemptId: 'other-holder-advanced-attempt' }] },
+          error: { code: 'RECOVERY_RECEIPT_CHANGED' },
+        })
+      }
+    )
+
+    it('does not retry an ambiguous write when the row version is unchanged but its receipt changed', async () => {
+      const mapping = recoveryMapping()
+      let baseline = recoveryReceipt(mapping, [
+        {
+          attemptId: 'same-version-baseline-pull',
+          phase: 'pull',
+          status: 'confirmed',
+          evidence: { txHash: 'HSAMEVERSIONBASELINE' },
+          observedAt: 1_999_999_999_023,
+        },
+      ])
+      baseline = confirmCustody(baseline, {
+        location: 'stellar-agent',
+        txSuccess: true,
+        amount: RECOVERY_AMOUNT,
+      })
+      const changed = appendPhase(baseline, {
+        attemptId: 'same-version-different-receipt',
+        phase: 'stellar_deposit',
+        status: 'submitted',
+        evidence: { holder: 'corrupt-concurrent-writer' },
+        observedAt: 1_999_999_999_024,
+      })
+      postReceiptEvidenceMock
+        .mockRejectedValueOnce(new Error('receipt-write response lost'))
+        .mockResolvedValue({ version: 4 })
+      readRecoveryReceiptMock.mockResolvedValue({
+        receipt: persistedReceipt(changed, 3),
+        version: 3,
+      })
+
+      const result = await permissionedOrchestrator().recoverAllocation({
+        claim: recoveryClaim({
+          receipt: persistedReceipt(baseline, 3),
+          version: 3,
+          action: 'deposit',
+          phase: 'stellar_deposit',
+        }),
+        credential: RECOVERY_CREDENTIAL,
+        allocationMapping: mapping,
+        permissionEvidence: mapping.permission,
+      })
+
+      expect(postReceiptEvidenceMock).toHaveBeenCalledOnce()
+      expect(runAgentDepositMock).not.toHaveBeenCalled()
+      expect(result).toMatchObject({
+        version: 3,
+        error: { code: 'RECOVERY_RECEIPT_CHANGED' },
+      })
+      expect(result.receipt.attempts).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ attemptId: 'same-version-different-receipt' }),
+        ])
+      )
+    })
+
+    it('rejects an exact attempted write when a later authoritative attempt also advanced the row', async () => {
+      const mapping = recoveryMapping()
+      let authoritative
+      postReceiptEvidenceMock.mockImplementationOnce(async ({ body }) => {
+        authoritative = appendPhase(body.receipt, {
+          attemptId: 'later-authoritative-attempt',
+          phase: 'pull',
+          status: 'submitted',
+          evidence: { holder: 'later-claim-holder' },
+          observedAt: 1_999_999_999_025,
+        })
+        throw new Error('receipt-write response lost after later advancement')
+      })
+      readRecoveryReceiptMock.mockImplementation(async () => ({
+        receipt: persistedReceipt(authoritative, 2),
+        version: 2,
+      }))
+
+      const result = await permissionedOrchestrator().recoverAllocation({
+        claim: recoveryClaim(),
+        credential: RECOVERY_CREDENTIAL,
+        allocationMapping: mapping,
+        permissionEvidence: mapping.permission,
+      })
+
+      expect(postReceiptEvidenceMock).toHaveBeenCalledOnce()
+      expect(runAgentPullMock).not.toHaveBeenCalled()
+      expect(result).toMatchObject({
+        version: 2,
+        error: { code: 'RECOVERY_RECEIPT_CHANGED' },
+      })
+      expect(result.receipt.attempts).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ attemptId: 'later-authoritative-attempt' }),
+        ])
+      )
+    })
+
+    it('retries one ambiguous recovery write only when the authoritative row is exactly unchanged', async () => {
+      const mapping = recoveryMapping()
+      let unchanged = recoveryReceipt(mapping, [
+        {
+          attemptId: 'safe-retry-pull-confirmed',
+          phase: 'pull',
+          status: 'confirmed',
+          evidence: { txHash: 'HSAFEPRIORPULL' },
+          observedAt: 1_999_999_999_022,
+        },
+      ])
+      unchanged = confirmCustody(unchanged, {
+        location: 'stellar-agent',
+        txSuccess: true,
+        amount: RECOVERY_AMOUNT,
+      })
+      let authoritative = unchanged
+      let version = 3
+      let posts = 0
+      postReceiptEvidenceMock.mockImplementation(async ({ body }) => {
+        posts += 1
+        if (posts === 1) throw new Error('first write response lost')
+        authoritative = body.receipt
+        version += 1
+        return { version }
+      })
+      readRecoveryReceiptMock.mockImplementation(async () => ({
+        receipt: persistedReceipt(authoritative, version),
+        version,
+      }))
+      readVaultSharesMock.mockResolvedValueOnce(10n).mockResolvedValueOnce(11n)
+
+      const result = await permissionedOrchestrator().recoverAllocation({
+        claim: recoveryClaim({
+          receipt: persistedReceipt(unchanged, 3),
+          version: 3,
+          action: 'deposit',
+          phase: 'stellar_deposit',
+        }),
+        credential: RECOVERY_CREDENTIAL,
+        allocationMapping: mapping,
+        permissionEvidence: mapping.permission,
+      })
+
+      expect(postReceiptEvidenceMock).toHaveBeenCalledTimes(3)
+      expect(postReceiptEvidenceMock.mock.calls[0][0].body).toEqual(
+        postReceiptEvidenceMock.mock.calls[1][0].body
+      )
+      expect(postReceiptEvidenceMock.mock.calls[1][0].body.expectedVersion).toBe(3)
+      expect(runAgentDepositMock).toHaveBeenCalledOnce()
+      expect(result).toMatchObject({
+        version: 5,
+        receipt: { phases: { stellar_deposit: 'confirmed' } },
+      })
+    })
+
+    it('rechecks an expiring lease inside the writer boundary before receipt-write or movement', async () => {
+      const mapping = recoveryMapping()
+      const claim = recoveryClaim()
+      let releaseChallenge
+      let observedBeforeWrite
+      const challengeDelay = new Promise((resolve) => {
+        releaseChallenge = resolve
+      })
+      postReceiptEvidenceMock.mockImplementation(async ({ beforeWrite, body }) => {
+        observedBeforeWrite = beforeWrite
+        await challengeDelay
+        await beforeWrite?.()
+        return { version: body.expectedVersion + 1 }
+      })
+      readRecoveryReceiptMock.mockResolvedValue({ receipt: null, version: 0 })
+
+      const recovery = permissionedOrchestrator().recoverAllocation({
+        claim,
+        credential: RECOVERY_CREDENTIAL,
+        allocationMapping: mapping,
+        permissionEvidence: mapping.permission,
+      })
+      await vi.waitFor(() => expect(postReceiptEvidenceMock).toHaveBeenCalledOnce())
+      claim.lease.expiresAt = Date.now() - 1
+      releaseChallenge()
+      const result = await recovery
+
+      expect(observedBeforeWrite).toBeTypeOf('function')
+      expect(postReceiptEvidenceMock).toHaveBeenCalledOnce()
+      expect(runAgentPullMock).not.toHaveBeenCalled()
+      expect(runAgentDepositMock).not.toHaveBeenCalled()
+      expect(result).toMatchObject({ receipt: null, version: 0, error: expect.any(Error) })
+    })
+
+    it('rechecks the account epoch inside the writer boundary before receipt-write or movement', async () => {
+      const mapping = recoveryMapping()
+      const captured = Object.freeze({
+        version: 1,
+        kind: 'G',
+        address: 'GUSER',
+        networkPassphrase: 'Test SDF Network ; September 2015',
+        connectorId: 'freighter',
+        epoch: 71,
+      })
+      let current = captured
+      let releaseChallenge
+      let observedBeforeWrite
+      const challengeDelay = new Promise((resolve) => {
+        releaseChallenge = resolve
+      })
+      postReceiptEvidenceMock.mockImplementation(async ({ beforeWrite, body }) => {
+        observedBeforeWrite = beforeWrite
+        await challengeDelay
+        await beforeWrite?.()
+        return { version: body.expectedVersion + 1 }
+      })
+      readRecoveryReceiptMock.mockResolvedValue({ receipt: null, version: 0 })
+      const orchestrator = new OrchestratorAgent({
+        user: 'GUSER',
+        sessionId: 'recovery-account-write-boundary',
+        activeAccount: captured,
+        getCurrentActiveAccount: () => current,
+        onEvent: vi.fn(),
+      })
+
+      const recovery = orchestrator.recoverAllocation({
+        claim: recoveryClaim(),
+        credential: RECOVERY_CREDENTIAL,
+        allocationMapping: mapping,
+        permissionEvidence: mapping.permission,
+      })
+      await vi.waitFor(() => expect(postReceiptEvidenceMock).toHaveBeenCalledOnce())
+      current = Object.freeze({ ...captured, epoch: 72 })
+      releaseChallenge()
+      const result = await recovery
+
+      expect(observedBeforeWrite).toBeTypeOf('function')
+      expect(postReceiptEvidenceMock).toHaveBeenCalledOnce()
+      expect(runAgentPullMock).not.toHaveBeenCalled()
+      expect(runAgentDepositMock).not.toHaveBeenCalled()
+      expect(result).toMatchObject({ receipt: null, version: 0, error: expect.any(Error) })
     })
 
     it('checks lease expiry immediately before a recorder retry POST', async () => {
@@ -2736,5 +3132,74 @@ describe('Task 6 chunk C1 fix round 1 — dispatchConfirmedMixed evidence + crit
       expect(expiredResult).toMatchObject({ version: 1, error: expect.any(Error) })
       expect(expiredResult.receipt.phases.pull).toBe('submitted')
     })
+
+    it.each([
+      ['RECOVERY_POLL_TX_HASH_REQUIRED', 'pull', 'missing-hash'],
+      ['RECOVERY_POLL_SHARE_BASELINE_REQUIRED', 'stellar_deposit', 'missing-baseline'],
+    ])(
+      'preserves %s and its phase when the mandatory reread also fails',
+      async (code, phase, fixtureKind) => {
+        const mapping = recoveryMapping()
+        let receipt
+        let version
+        if (fixtureKind === 'missing-hash') {
+          receipt = recoveryReceipt(mapping, [
+            {
+              attemptId: 'aggregate-missing-hash',
+              phase: 'pull',
+              status: 'unknown',
+              evidence: {},
+              observedAt: 1_999_999_999_031,
+            },
+          ])
+          version = 2
+        } else {
+          receipt = recoveryReceipt(mapping, [
+            {
+              attemptId: 'aggregate-prior-pull',
+              phase: 'pull',
+              status: 'confirmed',
+              evidence: { txHash: 'HAGGREGATEPULL' },
+              observedAt: 1_999_999_999_032,
+            },
+            {
+              attemptId: 'aggregate-missing-baseline',
+              phase: 'stellar_deposit',
+              status: 'unknown',
+              evidence: { txHash: 'HAGGREGATEDEPOSIT' },
+              observedAt: 1_999_999_999_033,
+            },
+          ])
+          receipt = confirmCustody(receipt, {
+            location: 'stellar-agent',
+            txSuccess: true,
+            amount: RECOVERY_AMOUNT,
+          })
+          version = 4
+        }
+        readRecoveryReceiptMock.mockRejectedValue(new Error('mandatory reread unavailable'))
+
+        await expect(
+          permissionedOrchestrator().recoverAllocation({
+            claim: recoveryClaim({
+              receipt: persistedReceipt(receipt, version),
+              version,
+              action: 'poll',
+              phase,
+            }),
+            credential: RECOVERY_CREDENTIAL,
+            allocationMapping: mapping,
+            permissionEvidence: mapping.permission,
+          })
+        ).rejects.toMatchObject({
+          name: 'AggregateError',
+          code,
+          phase,
+          primaryError: { code, phase },
+        })
+        expect(readConfirmedLedgerMock).not.toHaveBeenCalled()
+        expect(readVaultSharesMock).not.toHaveBeenCalled()
+      }
+    )
   })
 })

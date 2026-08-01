@@ -54,38 +54,46 @@ export async function submitViaRelay({ xdr, signal }) {
       cause
     )
   }
-  // 503 is the relay's own "I am not configured" — the one non-2xx that means "no relay here".
-  if (res.status === 503) return null
   let d = null
   try {
     d = await res.json()
   } catch {
     d = null // a non-JSON body must not mask the status code below
   }
-  if (!res.ok) {
+  const result = Object.fromEntries(
+    ['hash', 'status', 'relayer', 'duplicate']
+      .filter((field) => Object.prototype.hasOwnProperty.call(d || {}, field))
+      .map((field) => [field, d[field]])
+  )
+  const cleanUnconfigured =
+    res.status === 503 &&
+    d?.configured === false &&
+    d?.error === 'Stellar relay not configured' &&
+    Object.keys(d).length === 2
+  if (cleanUnconfigured) return null
+
+  const unknown = (message) =>
+    new RelaySubmissionUnknownError(message, Object.keys(result).length > 0 ? result : null)
+
+  if (!res.ok && res.status >= 400 && res.status < 500 && res.status !== 409) {
     throw new RelayRejectedError(
       `The Stellar relay refused this transaction (HTTP ${res.status}): ${d?.error || 'no reason given'}`,
       res.status
     )
   }
-  if (d?.configured === false) return null
-  if (d?.error)
-    throw new RelayRejectedError(
-      `The Stellar relay refused this transaction: ${d.error}`,
-      res.status
+  if (!res.ok || d?.submission === 'unknown' || d?.error || d?.configured === false) {
+    throw unknown(
+      `The Stellar relay returned an unproved submission outcome (HTTP ${res.status ?? 'unknown'}): ${
+        d?.error || 'no terminal result'
+      }. Check the chain before retrying.`
     )
-  const result = Object.fromEntries(
-    ['hash', 'status', 'relayer']
-      .filter((field) => Object.prototype.hasOwnProperty.call(d || {}, field))
-      .map((field) => [field, d[field]])
-  )
+  }
   const hashProven = typeof result.hash === 'string' && result.hash.length > 0
-  if (!hashProven || !['SUCCESS', 'FAILED', 'duplicate'].includes(result.status)) {
-    throw new RelaySubmissionUnknownError(
+  if (!hashProven || !['SUCCESS', 'FAILED'].includes(result.status)) {
+    throw unknown(
       `The Stellar relay returned an unproved submission outcome${
         result.status ? ` (${result.status})` : ''
-      }. Check the chain before retrying.`,
-      result
+      }. Check the chain before retrying.`
     )
   }
   return result

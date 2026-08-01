@@ -171,6 +171,7 @@ function createEvidenceRecorder({
   // (store.js:505-506's versionConflict check), incremented to whatever the server actually
   // committed after every accepted write.
   let expectedVersion = 0
+  let durableReceipt = null
   let durable = true
 
   const canonical = (value) => {
@@ -229,6 +230,7 @@ function createEvidenceRecorder({
       }
     }
     receipt = adopted
+    durableReceipt = adopted
     expectedVersion = persistedVersion
   } else if (persistedVersion !== 0) {
     throw new Error('An absent recovery receipt must have row version 0')
@@ -304,14 +306,23 @@ function createEvidenceRecorder({
     // tests mock a deliberately narrow agentCache module, while recoveryClient's default resolver
     // imports loadCachedAgents only when this failure path is actually reached.
     const { readRecoveryReceipt } = await import('./strategy/recoveryClient.js')
-    const result = await readRecoveryReceipt({
+    return readRecoveryReceipt({
       networkId: RECEIPT_NETWORK_ID,
       owner,
       executionId: receipt.executionId,
       allocationId,
     })
-    expectedVersion = result.version
-    return result.receipt
+  }
+
+  const sameReceipt = (left, right) =>
+    JSON.stringify(canonical(left)) === JSON.stringify(canonical(right))
+
+  const recoveryConflict = () => {
+    const conflict = new Error(
+      'Recovery receipt changed under this lease; authoritative evidence must be reprojected'
+    )
+    conflict.code = 'RECOVERY_RECEIPT_CHANGED'
+    return conflict
   }
 
   const failWrite = (error, phase, status) => {
@@ -327,9 +338,12 @@ function createEvidenceRecorder({
   }
 
   async function record({ phase, status, evidence }) {
+    const preWriteVersion = expectedVersion
+    const preWriteDurableReceipt = durableReceipt
     receipt = appendPhase(receipt, { phase, status, evidence })
     const attempt = receipt.attempts[receipt.attempts.length - 1]
-    const post = async () => {
+    const postedReceipt = receipt
+    const guardPost = async () => {
       try {
         await beforePost?.()
       } catch (cause) {
@@ -337,58 +351,92 @@ function createEvidenceRecorder({
         error.code = 'RECOVERY_POST_GUARD_FAILED'
         throw error
       }
+    }
+    const post = async () => {
+      await guardPost()
       return postReceiptEvidence({
         activeAccount: owner,
         agentAddress,
         sessionKey,
         body: { expectedVersion, receipt, attempt },
+        ...(beforePost ? { beforeWrite: guardPost } : {}),
       })
+    }
+    const adoptExactAttempt = (authoritativeResult) => {
+      const authoritative = authoritativeResult.receipt
+      if (!authoritative?.attempts?.some((entry) => sameAttempt(entry, attempt))) return false
+      const adopted = writableReceipt(authoritative)
+      if (
+        abortRecoveryConflict &&
+        (authoritativeResult.version !== preWriteVersion + 1 ||
+          !sameReceipt(adopted, postedReceipt))
+      ) {
+        throw recoveryConflict()
+      }
+      receipt = adopted
+      durableReceipt = adopted
+      expectedVersion = authoritativeResult.version
+      return true
+    }
+    const authoritativeUnchanged = (authoritativeResult) => {
+      if (authoritativeResult.version !== preWriteVersion) return false
+      if (preWriteVersion === 0) {
+        return authoritativeResult.receipt == null && preWriteDurableReceipt == null
+      }
+      if (!authoritativeResult.receipt || !preWriteDurableReceipt) return false
+      return sameReceipt(writableReceipt(authoritativeResult.receipt), preWriteDurableReceipt)
     }
     try {
       const result = await post()
       expectedVersion = result.version
+      durableReceipt = receipt
     } catch (error) {
       if (!mayHaveCommitted(error)) failWrite(error, phase, status)
-      let authoritative
+      let authoritativeResult
       try {
-        authoritative = await readAuthoritative()
+        authoritativeResult = await readAuthoritative()
       } catch (readError) {
         failWrite(readError, phase, status)
       }
       try {
-        if (authoritative?.attempts?.some((entry) => sameAttempt(entry, attempt))) {
-          receipt = writableReceipt(authoritative)
-          return
+        if (adoptExactAttempt(authoritativeResult)) return
+        if (abortRecoveryConflict) {
+          if (!authoritativeUnchanged(authoritativeResult)) {
+            if (authoritativeResult.receipt) {
+              receipt = writableReceipt(authoritativeResult.receipt)
+              durableReceipt = receipt
+            }
+            expectedVersion = authoritativeResult.version
+            failWrite(recoveryConflict(), phase, status)
+          }
+        } else {
+          expectedVersion = authoritativeResult.version
+          if (authoritativeResult.receipt) {
+            durableReceipt = writableReceipt(authoritativeResult.receipt)
+            receipt = rebaseAttempt(authoritativeResult.receipt, receipt, attempt)
+          }
         }
-        if (abortRecoveryConflict && error?.status === 409) {
-          if (authoritative) receipt = writableReceipt(authoritative)
-          const conflict = new Error(
-            'Recovery receipt changed under this lease; authoritative evidence must be reprojected'
-          )
-          conflict.code = 'RECOVERY_RECEIPT_CHANGED'
-          failWrite(conflict, phase, status)
-        }
-        if (authoritative) receipt = rebaseAttempt(authoritative, receipt, attempt)
       } catch (rebaseError) {
         failWrite(rebaseError, phase, status)
       }
       try {
         const result = await post()
         expectedVersion = result.version
+        durableReceipt = receipt
       } catch (retryError) {
         if (!mayHaveCommitted(retryError)) failWrite(retryError, phase, status)
         try {
-          authoritative = await readAuthoritative()
+          authoritativeResult = await readAuthoritative()
         } catch (readError) {
           failWrite(readError, phase, status)
         }
-        if (authoritative?.attempts?.some((entry) => sameAttempt(entry, attempt))) {
-          try {
-            receipt = writableReceipt(authoritative)
-          } catch (rebaseError) {
-            failWrite(rebaseError, phase, status)
+        try {
+          if (adoptExactAttempt(authoritativeResult)) return
+          if (abortRecoveryConflict && !authoritativeUnchanged(authoritativeResult)) {
+            failWrite(recoveryConflict(), phase, status)
           }
-          return
+        } catch (rebaseError) {
+          failWrite(rebaseError, phase, status)
         }
         failWrite(retryError, phase, status)
       }
@@ -861,7 +909,7 @@ export class OrchestratorAgent {
           await recordSubmissionFailure(error, 'pull', v3Evidence)
           throw error
         }
-        if (!result || !['SUCCESS', 'duplicate'].includes(result.status)) {
+        if (!result || result.status !== 'SUCCESS') {
           const error = await recoveryRelayError(result, 'funding router')
           await recordSubmissionFailure(error, 'pull', v3Evidence)
           throw error
@@ -933,7 +981,7 @@ export class OrchestratorAgent {
           })
           throw error
         }
-        if (!result || !['SUCCESS', 'duplicate'].includes(result.status)) {
+        if (!result || result.status !== 'SUCCESS') {
           const error = await recoveryRelayError(result, 'vault')
           await recordSubmissionFailure(error, 'stellar_deposit', {
             preShareUnits: preShares.toString(),
@@ -1043,10 +1091,15 @@ export class OrchestratorAgent {
       return actionError ? { ...authoritative, error: actionError } : authoritative
     } catch (readError) {
       if (actionError) {
-        throw new AggregateError(
+        const aggregate = new AggregateError(
           [actionError, readError],
-          'Recovery action and authoritative reread failed'
+          'Recovery action and authoritative reread failed',
+          { cause: actionError }
         )
+        aggregate.primaryError = actionError
+        if (actionError.code != null) aggregate.code = actionError.code
+        if (actionError.phase != null) aggregate.phase = actionError.phase
+        throw aggregate
       }
       throw readError
     }

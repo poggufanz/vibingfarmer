@@ -235,7 +235,7 @@ export async function partialWithdraw({
   }
   checkAfterDispatch('redeem', redeemRes)
   if (!redeemRes) throw new Error('The gasless relay is unreachable — partial withdraw needs it.')
-  if (redeemRes.status !== 'SUCCESS' && redeemRes.status !== 'duplicate') {
+  if (redeemRes.status !== 'SUCCESS') {
     const s = server || (await rpcServer())
     checkAfterDispatch('redeem', redeemRes)
     const settled = await waitForTx(redeemRes.hash, s)
@@ -282,7 +282,7 @@ export async function partialWithdraw({
     }
     checkAfterDispatch('transfer', transferRes)
     if (!transferRes) throw new Error('relay unreachable')
-    if (transferRes.status !== 'SUCCESS' && transferRes.status !== 'duplicate') {
+    if (transferRes.status !== 'SUCCESS') {
       const s = server || (await rpcServer())
       checkAfterDispatch('transfer', transferRes)
       const settled = await waitForTx(transferRes.hash, s)

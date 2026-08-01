@@ -287,6 +287,49 @@ describe('partialWithdraw', () => {
       })
     ).rejects.toThrow(/agent/i)
   })
+  test('never accepts a bare duplicate without chain-proving the original transaction', async () => {
+    const deps = baseDeps()
+    deps.submitViaRelay = vi.fn(async ({ xdr }) => {
+      deps.submitted.push(xdr)
+      return { hash: `H:${xdr}`, status: 'duplicate' }
+    })
+    deps.waitForTx = vi.fn(async () => ({ status: 'FAILED' }))
+
+    await expect(
+      partialWithdraw({
+        owner: 'GOWNER',
+        agentAddress: 'CAGENT',
+        amountUnits: 20_000_000n,
+        ...ownerBoundary(),
+        deps,
+      })
+    ).rejects.toThrow(/not confirmed|failed/i)
+    expect(deps.waitForTx).toHaveBeenCalledWith('H:XDR:redeem', expect.any(Object))
+    expect(deps.submitted).toEqual(['XDR:redeem'])
+  })
+  test('chain-proves a bare duplicate transfer before reporting the withdraw complete', async () => {
+    const deps = baseDeps()
+    deps.submitViaRelay = vi.fn(async ({ xdr }) => {
+      deps.submitted.push(xdr)
+      return {
+        hash: `H:${xdr}`,
+        status: xdr === 'XDR:transfer' ? 'duplicate' : 'SUCCESS',
+      }
+    })
+    deps.waitForTx = vi.fn(async () => ({ status: 'FAILED' }))
+
+    await expect(
+      partialWithdraw({
+        owner: 'GOWNER',
+        agentAddress: 'CAGENT',
+        amountUnits: 20_000_000n,
+        ...ownerBoundary(),
+        deps,
+      })
+    ).rejects.toThrow(/transfer to your wallet failed|not confirmed/i)
+    expect(deps.waitForTx).toHaveBeenCalledWith('H:XDR:transfer', expect.any(Object))
+    expect(deps.submitted).toEqual(['XDR:redeem', 'XDR:transfer'])
+  })
   test('vault/token overrides propagate to the balance reads and both invokes', async () => {
     const deps = baseDeps()
     const sharesOpts = []

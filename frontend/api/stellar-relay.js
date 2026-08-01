@@ -43,6 +43,31 @@ const FEE_MARGIN = 1_000_000n
 
 export class RelayError extends Error {}
 
+/** The RPC submission may have landed, but no terminal chain result was proved. */
+export class RelaySubmissionUnknownError extends RelayError {
+  constructor(message, { result = null, httpStatus = 502, cause } = {}) {
+    super(message, cause === undefined ? undefined : { cause })
+    this.name = 'RelaySubmissionUnknownError'
+    this.code = 'VF_SUBMISSION_UNKNOWN'
+    this.submission = 'unknown'
+    this.result = result
+    this.httpStatus = httpStatus
+  }
+}
+
+/** Serialize typed ambiguity without dropping producer-known hash/status evidence. */
+export function relayUnknownHttpResponse(error) {
+  const result = error?.result && typeof error.result === 'object' ? error.result : {}
+  return {
+    status: error?.httpStatus === 409 ? 409 : 502,
+    body: {
+      error: error?.message || 'Stellar relay submission outcome is unknown',
+      submission: 'unknown',
+      ...result,
+    },
+  }
+}
+
 export const STELLAR_RELAY_FACTS = TRACKED_STELLAR_RELAY_FACTS
 
 function has(env, key) {
@@ -619,11 +644,16 @@ export async function feeBumpAndSubmit({
   if (_seen.size > SEEN_MAX) pruneSeen(now)
   const prev = _seen.get(innerHash)
   if (prev) {
-    if (prev.state === 'done') return { ...prev.out, status: 'duplicate' }
-    throw new RelayError('inner tx already in flight')
+    if (prev.state === 'done') return { ...prev.out, duplicate: true }
+    throw new RelaySubmissionUnknownError('inner tx already in flight', {
+      result: prev.out ?? null,
+      httpStatus: 409,
+    })
   }
   _seen.set(innerHash, { state: 'in-flight', at: now })
 
+  let submissionStarted = false
+  let pendingResult = null
   try {
     // Agent-deposit / owner-C-auth path: the inner tx's source IS the relayer (the client cannot
     // sign as the relayer), so the relay signs the inner envelope here. This is tx-level
@@ -653,16 +683,43 @@ export async function feeBumpAndSubmit({
     const feeBump = TransactionBuilder.buildFeeBumpTransaction(kp, baseFee, inner, passphrase)
     feeBump.sign(kp)
 
+    submissionStarted = true
     const send = await rpcServer.sendTransaction(feeBump)
     if (send.status === 'ERROR') {
+      submissionStarted = false
       throw new RelayError('RPC rejected the fee-bump submission')
+    }
+    pendingResult = {
+      ...(typeof send.hash === 'string' && send.hash.length > 0 ? { hash: send.hash } : {}),
+      status: 'PENDING',
+      relayer: kp.publicKey(),
+    }
+    _seen.set(innerHash, { state: 'in-flight', out: pendingResult, at: Date.now() })
+    if (!pendingResult.hash) {
+      throw new RelaySubmissionUnknownError('RPC submission returned no transaction hash', {
+        result: pendingResult,
+      })
     }
     const result = await pollResult(rpcServer, send.hash, pollTries, pollIntervalMs)
     const out = { hash: send.hash, status: result.status, relayer: kp.publicKey() }
     _seen.set(innerHash, { state: 'done', out, at: Date.now() })
     return out
   } catch (e) {
-    _seen.delete(innerHash) // failed submit → allow a genuine retry of this inner tx
+    if (e instanceof RelaySubmissionUnknownError) {
+      _seen.set(innerHash, { state: 'in-flight', out: e.result ?? pendingResult, at: Date.now() })
+      throw e
+    }
+    if (submissionStarted) {
+      const unknown = new RelaySubmissionUnknownError(
+        pendingResult
+          ? 'RPC polling failed after fee-bump submission'
+          : 'RPC submission response was unavailable',
+        { result: pendingResult, cause: e }
+      )
+      _seen.set(innerHash, { state: 'in-flight', out: unknown.result, at: Date.now() })
+      throw unknown
+    }
+    _seen.delete(innerHash) // a proved pre-submit failure may safely permit a genuine retry
     throw e
   }
 }
@@ -777,9 +834,10 @@ export default async function handler(req, res) {
         })
         return res.end(JSON.stringify(out))
       } catch (e) {
-        if (e instanceof RelayError && /in flight/.test(e.message)) {
-          res.statusCode = 409
-          return res.end(JSON.stringify({ error: e.message }))
+        if (e instanceof RelaySubmissionUnknownError) {
+          const response = relayUnknownHttpResponse(e)
+          res.statusCode = response.status
+          return res.end(JSON.stringify(response.body))
         }
         throw e
       }

@@ -100,6 +100,73 @@ function runnerHarness(overrides = {}) {
   return { mapping, projected, credential, claim, recovered, deps }
 }
 
+function renderRecoveryControl(mapping, projectedRecovery) {
+  const amount = { token: 'CTOKEN', units: '7000000', decimals: 7 }
+  const uiPlan = {
+    runId: PLAN.runId,
+    planFingerprint: PLAN.planFingerprint,
+    amount,
+    agents: [
+      {
+        ...PLAN.agents[0],
+        hostNetworkId: 'stellar-testnet',
+        allocation: amount,
+        periodSeconds: 3600,
+        expiry: 2_000_000_000,
+        destination: 'Stellar deposit',
+        children: [],
+      },
+    ],
+    truth: {
+      agentIsolationCount: 1,
+      stellarVenueCount: 1,
+      baseUsesProxyVaults: false,
+    },
+  }
+  const outcome = {
+    allocationId: mapping.allocationId,
+    amount,
+    networkContext: {
+      executionNetwork: 'stellar-testnet',
+      currentCustodyNetwork: null,
+      transit: false,
+    },
+    executionStatus: 'failed',
+    custody: { location: 'unknown', confirmed: false, checkedAt: null },
+    txHash: null,
+    error: 'Original dispatch failed.',
+    evidence: { allocationId: mapping.allocationId },
+  }
+  const receipt = {
+    version: 1,
+    runId: PLAN.runId,
+    planFingerprint: PLAN.planFingerprint,
+    permission: {
+      mode: 'fresh',
+      status: 'confirmed',
+      confirmationCount: 1,
+      txHash: 'HGRANT',
+      grantReceiptFingerprint: 'FP',
+      expiryLedger: 9_001,
+      agentAddresses: [mapping.agentAddress],
+    },
+    branches: {
+      stellar: { status: 'failed', results: [outcome] },
+      base: { status: 'not-planned', results: [] },
+    },
+    allocations: [outcome],
+  }
+
+  render(
+    <StartStage
+      plan={uiPlan}
+      permission={{ mode: 'fresh' }}
+      receipt={receipt}
+      recoveryByAllocation={{ [mapping.allocationId]: projectedRecovery }}
+    />
+  )
+}
+
 describe('buildRecoveryAllocationMappings', () => {
   it('pairs confirmed addresses with the same ordered top-level plan rows and never fabricates a Base child mapping', () => {
     const mappings = buildRecoveryAllocationMappings({
@@ -396,6 +463,107 @@ describe('createRecoveryActionRunner', () => {
       expect(screen.queryByRole('button', { name: 'Poll' })).toBeNull()
     }
   )
+
+  it.each([
+    ['RECOVERY_POLL_TX_HASH_REQUIRED', 'pull'],
+    ['RECOVERY_POLL_SHARE_BASELINE_REQUIRED', 'stellar_deposit'],
+  ])(
+    'keeps %s disabled from the claimed receipt when executor and fallback rereads both fail',
+    async (code, phase) => {
+      const primary = Object.assign(new Error('Durable poll evidence is incomplete.'), {
+        code,
+        phase,
+      })
+      const aggregate = Object.assign(
+        new AggregateError([primary, new Error('mandatory reread unavailable')], 'reread failed'),
+        { code, phase, primaryError: primary }
+      )
+      const { mapping, projected, claim, deps } = runnerHarness()
+      claim.action = 'poll'
+      claim.phase = phase
+      claim.receipt = { ...projected.receipt, proofCase: code }
+      claim.version = projected.version
+      deps.getProjection.mockReturnValue({
+        ...projected,
+        action: 'poll',
+        phase,
+        receipt: claim.receipt,
+        version: claim.version,
+      })
+      deps.requestAction.mockResolvedValue(claim)
+      deps.recoverAllocation.mockRejectedValue(aggregate)
+      deps.readReceipt.mockRejectedValue(new Error('fallback reread unavailable'))
+      const runner = createRecoveryActionRunner(deps)
+
+      await expect(runner.run(mapping.allocationId)).rejects.toBe(aggregate)
+
+      const next = deps.onProjection.mock.calls.at(-1)?.[1]
+      expect(next).toMatchObject({
+        action: 'manual-review',
+        phase,
+        reasonCode: code,
+        receipt: claim.receipt,
+        version: claim.version,
+      })
+      renderRecoveryControl(mapping, next)
+      expect(screen.getByRole('button', { name: 'Manual review' }).disabled).toBe(true)
+      expect(screen.queryByRole('button', { name: 'Poll' })).toBeNull()
+    }
+  )
+
+  it('publishes a newer completed fallback reread instead of overlaying stale poll manual-review', async () => {
+    const primary = Object.assign(new Error('The old poll evidence had no hash.'), {
+      code: 'RECOVERY_POLL_TX_HASH_REQUIRED',
+      phase: 'pull',
+    })
+    const aggregate = Object.assign(
+      new AggregateError([primary, new Error('mandatory reread unavailable')], 'reread failed'),
+      {
+        code: primary.code,
+        phase: primary.phase,
+        primaryError: primary,
+      }
+    )
+    const { mapping, projected, claim, deps } = runnerHarness()
+    claim.action = 'poll'
+    claim.phase = 'pull'
+    claim.receipt = { ...projected.receipt, oldPoll: true }
+    const completed = {
+      receipt: { ...projected.receipt, version: 8, completed: true },
+      version: 8,
+    }
+    deps.getProjection.mockReturnValue({
+      ...projected,
+      action: 'poll',
+      phase: 'pull',
+      receipt: claim.receipt,
+      version: claim.version,
+    })
+    deps.requestAction.mockResolvedValue(claim)
+    deps.recoverAllocation.mockRejectedValue(aggregate)
+    deps.readReceipt.mockResolvedValue(completed)
+    deps.projectReceipt.mockImplementation(({ receipt, version }) => ({
+      ...projected,
+      action: receipt.completed ? null : 'poll',
+      phase: receipt.completed ? null : 'pull',
+      receipt,
+      version,
+    }))
+    const runner = createRecoveryActionRunner(deps)
+
+    await expect(runner.run(mapping.allocationId)).rejects.toBe(aggregate)
+
+    expect(deps.onProjection).toHaveBeenLastCalledWith(
+      mapping.allocationId,
+      expect.objectContaining({
+        action: null,
+        phase: null,
+        receipt: completed.receipt,
+        version: completed.version,
+      })
+    )
+    expect(deps.onProjection.mock.calls.at(-1)[1].reasonCode).toBeUndefined()
+  })
 })
 
 describe('createAccountScopedRecoveryConfig', () => {

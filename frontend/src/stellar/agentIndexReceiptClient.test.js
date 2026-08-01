@@ -196,6 +196,51 @@ describe('postReceiptEvidence', () => {
     expect(writeReq.proof.expiresAt).toBe(challenge.expiresAt)
   })
 
+  it.each([
+    ['lease expiry', () => new Error('Recovery lease expired before receipt write')],
+    ['account switch', () => new Error('Active account changed before receipt write')],
+  ])(
+    'runs the optional beforeWrite guard after a delayed challenge and sends no receipt-write on %s',
+    async (_label, guardError) => {
+      const body = mutationFixture()
+      const challenge = challengeFor(body)
+      let releaseChallenge
+      const challengeResponse = new Promise((resolve) => {
+        releaseChallenge = () =>
+          resolve({
+            ok: true,
+            status: 201,
+            json: async () => ({ ok: true, challenge }),
+          })
+      })
+      const fetchImpl = vi.fn(async (url) => {
+        if (url.includes('receipt-challenge')) return challengeResponse
+        throw new Error('receipt-write must not be requested after the guard fails')
+      })
+      let guardMayPass = true
+      const beforeWrite = vi.fn(() => {
+        if (!guardMayPass) throw guardError()
+      })
+
+      const request = postReceiptEvidence({
+        activeAccount: OWNER,
+        agentAddress: AGENT,
+        sessionKey: newSessionKey(),
+        body,
+        fetchImpl,
+        beforeWrite,
+      })
+      await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledOnce())
+      guardMayPass = false
+      releaseChallenge()
+
+      await expect(request).rejects.toThrow(guardError().message)
+      expect(beforeWrite).toHaveBeenCalledOnce()
+      expect(fetchImpl).toHaveBeenCalledOnce()
+      expect(fetchImpl.mock.calls[0][0]).toContain('receipt-challenge')
+    }
+  )
+
   it('computes a request digest matching the server’s own receiptRequestDigest, byte for byte', async () => {
     const fixtures = [
       mutationFixture(),

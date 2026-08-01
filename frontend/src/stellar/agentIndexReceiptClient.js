@@ -235,6 +235,7 @@ function requireField(value, message) {
  *   agentAddress: string,
  *   sessionKey: {sign: (payload: Uint8Array) => Uint8Array, publicKey: string},
  *   body: {expectedVersion: number, receipt: object, attempt: object},
+ *   beforeWrite?: () => void|Promise<void>,
  *   fetchImpl?: typeof fetch,
  *   apiBase?: string,
  * }} params
@@ -245,6 +246,7 @@ export async function postReceiptEvidence({
   agentAddress,
   sessionKey,
   body,
+  beforeWrite,
   fetchImpl = fetch,
   apiBase = '',
 }) {
@@ -317,6 +319,7 @@ export async function postReceiptEvidence({
   const signatureBytes = sessionKey.sign(Buffer.from(proofMessage, 'utf8'))
   const signature = Buffer.from(signatureBytes).toString('base64url')
 
+  await beforeWrite?.()
   const { res: writeRes, body: writeBody } = await postJson({
     apiBase,
     action: 'receipt-write',

@@ -131,8 +131,9 @@ export async function resolveOwnerTxModel({
  *     even when the relay is down.
  *   - G + classicSubmission:'prefer-relay'  the relay is tried first (gasless). An explicit
  *     refusal is NOT permission to bill the user (mirrors relay.js's own contract), so it throws
- *     rather than falling back — but an UNREACHABLE relay (no answer at all) safely falls back to
- *     the direct, user-paid submit.
+ *     rather than falling back. Only the relay's explicit pre-submit `configured:false` response
+ *     permits the direct, user-paid fallback; response loss or any unproved outcome propagates as
+ *     `VF_SUBMISSION_UNKNOWN` so the same transaction is never submitted twice.
  *   - C                                     relay-only, always — `classicSubmission` is not
  *     consulted. A C account holds no XLM and has no user-funded submission to fall back to.
  * @param {{model:object, build:(model:object)=>Promise<{tx?:object, xdr:string}>,
@@ -185,7 +186,7 @@ export async function submitOwnerAuthorizedTx({
       check()
       return { ...relayed, channel: 'relay' }
     }
-    // null = relay unreachable (never refused) -> the owner falls back to paying its own fee.
+    // null = the relay explicitly proved it was unconfigured before submit; direct fallback is safe.
   }
   check()
   let res

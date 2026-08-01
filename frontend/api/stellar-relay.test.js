@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   createHash,
   createPublicKey,
@@ -16,6 +16,8 @@ import {
   _clearSeen,
   assertRelayableTransaction,
 } from './stellar-relay.js'
+import * as relayApi from './stellar-relay.js'
+import { submitViaRelay as submitViaRelayClient } from '../src/stellar/relay.js'
 
 const PASS = 'Test SDF Network ; September 2015'
 const SECRET = 'SABCD' // never parsed — Keypair.fromSecret is faked below
@@ -151,6 +153,7 @@ function makeRpc({ sendStatus = 'PENDING', getStatuses = ['SUCCESS'] } = {}) {
 
 describe('feeBumpAndSubmit', () => {
   beforeEach(() => _clearSeen())
+  afterEach(() => vi.unstubAllGlobals())
 
   it('fee-bumps, signs with the relayer key, submits, polls to SUCCESS', async () => {
     const { sdk, signSpy, buildFeeBumpTransaction } = makeSdk({ innerHashHex: '11' })
@@ -342,8 +345,163 @@ describe('feeBumpAndSubmit', () => {
       sdk: b.sdk,
       rpcServer: rpcB,
     })
-    expect(out.status).toBe('duplicate')
+    expect(out).toEqual({
+      hash: 'OUTERHASH',
+      status: 'SUCCESS',
+      relayer: RELAYER_SOURCE,
+      duplicate: true,
+    })
     expect(rpcB.sendTransaction).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['PENDING', [], '34'],
+    ['FAILED', ['FAILED'], '35'],
+  ])(
+    'preserves cached %s when an identical inner transaction is seen again',
+    async (status, getStatuses, innerHashHex) => {
+      const firstSdk = makeSdk({ innerHashHex })
+      const firstRpc = makeRpc({ getStatuses })
+      await expect(
+        feeBumpAndSubmit({
+          xdr: 'X',
+          secret: SECRET,
+          passphrase: PASS,
+          vaultAddr: VAULT,
+          sdk: firstSdk.sdk,
+          rpcServer: firstRpc,
+          pollTries: status === 'PENDING' ? 1 : 10,
+          pollIntervalMs: 0,
+        })
+      ).resolves.toMatchObject({ hash: 'OUTERHASH', status })
+
+      const duplicateSdk = makeSdk({ innerHashHex })
+      const duplicateRpc = makeRpc()
+      await expect(
+        feeBumpAndSubmit({
+          xdr: 'X',
+          secret: SECRET,
+          passphrase: PASS,
+          vaultAddr: VAULT,
+          sdk: duplicateSdk.sdk,
+          rpcServer: duplicateRpc,
+        })
+      ).resolves.toEqual({
+        hash: 'OUTERHASH',
+        status,
+        relayer: RELAYER_SOURCE,
+        duplicate: true,
+      })
+      expect(duplicateRpc.sendTransaction).not.toHaveBeenCalled()
+    }
+  )
+
+  it('returns a structured 409 unknown for an identical inner transaction already in flight', async () => {
+    let releasePoll
+    const firstSdk = makeSdk({ innerHashHex: '36' })
+    const firstRpc = makeRpc()
+    firstRpc.getTransaction.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releasePoll = resolve
+        })
+    )
+    const first = feeBumpAndSubmit({
+      xdr: 'X',
+      secret: SECRET,
+      passphrase: PASS,
+      vaultAddr: VAULT,
+      sdk: firstSdk.sdk,
+      rpcServer: firstRpc,
+      pollIntervalMs: 0,
+    })
+    await vi.waitFor(() => expect(firstRpc.getTransaction).toHaveBeenCalledOnce())
+
+    const duplicateSdk = makeSdk({ innerHashHex: '36' })
+    const duplicateRpc = makeRpc()
+    let inFlightError
+    try {
+      await feeBumpAndSubmit({
+        xdr: 'X',
+        secret: SECRET,
+        passphrase: PASS,
+        vaultAddr: VAULT,
+        sdk: duplicateSdk.sdk,
+        rpcServer: duplicateRpc,
+      })
+    } catch (error) {
+      inFlightError = error
+    }
+    expect(inFlightError).toMatchObject({
+      name: 'RelaySubmissionUnknownError',
+      code: 'VF_SUBMISSION_UNKNOWN',
+      httpStatus: 409,
+      result: { hash: 'OUTERHASH', status: 'PENDING', relayer: RELAYER_SOURCE },
+    })
+    expect(relayApi.relayUnknownHttpResponse(inFlightError)).toEqual({
+      status: 409,
+      body: {
+        error: 'inner tx already in flight',
+        submission: 'unknown',
+        hash: 'OUTERHASH',
+        status: 'PENDING',
+        relayer: RELAYER_SOURCE,
+      },
+    })
+    expect(duplicateRpc.sendTransaction).not.toHaveBeenCalled()
+
+    releasePoll({ status: 'SUCCESS' })
+    await expect(first).resolves.toMatchObject({ status: 'SUCCESS' })
+  })
+
+  it('turns a post-send poll exception into a hash-preserving API 502 and client unknown', async () => {
+    const { sdk } = makeSdk({ innerHashHex: '37' })
+    const rpc = makeRpc()
+    rpc.getTransaction.mockRejectedValue(new Error('RPC poll unavailable'))
+
+    let producerError
+    try {
+      await feeBumpAndSubmit({
+        xdr: 'X',
+        secret: SECRET,
+        passphrase: PASS,
+        vaultAddr: VAULT,
+        sdk,
+        rpcServer: rpc,
+      })
+    } catch (error) {
+      producerError = error
+    }
+    expect(producerError).toMatchObject({
+      name: 'RelaySubmissionUnknownError',
+      code: 'VF_SUBMISSION_UNKNOWN',
+      httpStatus: 502,
+      result: { hash: 'OUTERHASH', status: 'PENDING', relayer: RELAYER_SOURCE },
+    })
+
+    const produced = relayApi.relayUnknownHttpResponse(producerError)
+    expect(produced).toMatchObject({
+      status: 502,
+      body: {
+        submission: 'unknown',
+        hash: 'OUTERHASH',
+        status: 'PENDING',
+        relayer: RELAYER_SOURCE,
+      },
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: false,
+        status: produced.status,
+        json: async () => produced.body,
+      }))
+    )
+    await expect(submitViaRelayClient({ xdr: 'X' })).rejects.toMatchObject({
+      code: 'VF_SUBMISSION_UNKNOWN',
+      result: { hash: 'OUTERHASH', status: 'PENDING', relayer: RELAYER_SOURCE },
+    })
+    expect(rpc.sendTransaction).toHaveBeenCalledOnce()
   })
 
   it('returns PENDING (not an error) when the tx is still NOT_FOUND after the poll budget', async () => {

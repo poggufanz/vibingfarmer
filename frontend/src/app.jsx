@@ -645,6 +645,7 @@ export function createRecoveryActionRunner({
       }
       pending.add(allocationId)
       onPending(allocationId, true)
+      let claim = null
       try {
         assertCurrent(captured)
         const credential = await resolveCredential({
@@ -654,7 +655,7 @@ export function createRecoveryActionRunner({
           agentAddress: mapping.agentAddress,
         })
         assertCurrent(captured)
-        const claim = await requestAction({
+        claim = await requestAction({
           ...projected.requestIdentity,
           networkId: mapping.networkId,
           owner: mapping.owner,
@@ -695,11 +696,51 @@ export function createRecoveryActionRunner({
       } catch (error) {
         try {
           assertCurrent(captured)
-          try {
-            await projectAuthoritative(mapping, captured)
-          } catch {
-            // A refresh failure leaves the existing projection untouched. Re-check the epoch
-            // below so a wallet switch is still silent rather than becoming a stale error toast.
+          const primaryError = error?.primaryError ?? error
+          if (manualReviewCodes.has(error?.code) && claim) {
+            let authoritative = { receipt: claim.receipt, version: claim.version }
+            let rereadSucceeded = false
+            try {
+              authoritative = await readReceipt({
+                networkId: mapping.networkId,
+                owner: mapping.owner,
+                executionId: mapping.executionId,
+                allocationId: mapping.allocationId,
+              })
+              rereadSucceeded = true
+            } catch {
+              // The claimed receipt/version remains the authoritative input for this local,
+              // disabled projection when both post-action reads are unavailable.
+            }
+            assertCurrent(captured)
+            const next = projectReceipt({
+              ...authoritative,
+              identity: mapping,
+            })
+            assertCurrent(captured)
+            const failedPhase = error.phase ?? primaryError.phase ?? claim.phase
+            const remainsFailedPoll = next.action === 'poll' && next.phase === failedPhase
+            onProjection(
+              allocationId,
+              !rereadSucceeded || remainsFailedPoll
+                ? {
+                    ...next,
+                    action: 'manual-review',
+                    phase: failedPhase ?? next.phase,
+                    reasonCode: error.code,
+                    reason: primaryError.message,
+                    receipt: authoritative.receipt,
+                    version: authoritative.version,
+                  }
+                : next
+            )
+          } else {
+            try {
+              await projectAuthoritative(mapping, captured)
+            } catch {
+              // A refresh failure leaves the existing projection untouched. Re-check the epoch
+              // below so a wallet switch is still silent rather than becoming a stale error toast.
+            }
           }
           assertCurrent(captured)
           onError(error, allocationId)
