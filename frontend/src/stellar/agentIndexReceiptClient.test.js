@@ -13,6 +13,11 @@ import {
   receiptProofMessage,
   receiptRequestDigest,
 } from '../../api/agent-index/executionReceipts.js'
+// Imported only to DERIVE the real server-reported replay message for the pin below (fix round 1,
+// finding 2) -- never to compute a test's expectation with the code under test. handleReceiptWrite
+// is driven end to end with a stubbed store/authorityReader so the string this test compares
+// against is what the server actually says today, not a literal typed independently on both sides.
+import { handleReceiptWrite } from '../../api/agent-index/handler.js'
 
 const NETWORK = 'stellar-testnet'
 const OWNER = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 1)).publicKey()
@@ -101,6 +106,49 @@ function sequenceFetch(responses) {
 
 const writeSuccess = { status: 200, body: { ok: true, written: 1, duplicates: 0, version: 1 } }
 
+/** Drives the REAL server-side handleReceiptWrite (handler.js:145) into its replay path -- a
+ * store whose readReceiptChallenge resolves an already-consumed challenge -- and returns the
+ * exact `body.error` string the server reports for that outcome today. Used to pin
+ * classifyFailure's 'challenge-consumed' discriminator against genuine server output instead of a
+ * literal typed independently in both the client and this test (fix round 1, finding 2). */
+async function deriveConsumedChallengeErrorMessage() {
+  const body = mutationFixture()
+  const consumedChallenge = {
+    networkId: body.receipt.networkId,
+    owner: body.receipt.owner,
+    agent: body.receipt.agent,
+    challengeId: 'already-consumed-challenge',
+    expiresAt: Date.now() + 300_000,
+    requestDigest: receiptRequestDigest(body),
+    consumedAt: Date.now() - 1_000, // non-null -> the server's replay branch, not expiry/proof
+  }
+  const store = {
+    readReceiptChallenge: async () => consumedChallenge,
+    commitAuthenticatedReceiptMutation: async () => {
+      throw new Error('must not be called: the challenge is already consumed')
+    },
+  }
+  const authorityReader = async () => {
+    throw new Error('must not be called: the replay check happens before any authority read')
+  }
+  const result = await handleReceiptWrite({
+    body,
+    proof: {
+      challengeId: consumedChallenge.challengeId,
+      expiresAt: consumedChallenge.expiresAt,
+      signature: 'irrelevant-not-reached-before-the-replay-check',
+    },
+    store,
+    authorityReader,
+  })
+  if (result.status !== 409 || typeof result.body?.error !== 'string') {
+    throw new Error(
+      `expected the real server to report a 409 replay, got ${JSON.stringify(result)}`
+    )
+  }
+  return result.body.error
+}
+
 describe('postReceiptEvidence', () => {
   it('runs challenge -> sign -> write in order and returns the committed version', async () => {
     const body = mutationFixture()
@@ -179,7 +227,10 @@ describe('postReceiptEvidence', () => {
     for (const body of fixtures) {
       const sessionKey = newSessionKey()
       const challenge = challengeFor(body)
-      const fetchImpl = sequenceFetch([{ status: 201, body: { ok: true, challenge } }, writeSuccess])
+      const fetchImpl = sequenceFetch([
+        { status: 201, body: { ok: true, challenge } },
+        writeSuccess,
+      ])
 
       await postReceiptEvidence({
         activeAccount: body.receipt.owner,
@@ -213,7 +264,10 @@ describe('postReceiptEvidence', () => {
     expect(sigBytes.length).toBe(64)
     const expectedMessage = receiptProofMessage(challenge)
     expect(
-      Keypair.fromPublicKey(sessionKey.publicKey).verify(Buffer.from(expectedMessage, 'utf8'), sigBytes)
+      Keypair.fromPublicKey(sessionKey.publicKey).verify(
+        Buffer.from(expectedMessage, 'utf8'),
+        sigBytes
+      )
     ).toBe(true)
   })
 
@@ -270,14 +324,26 @@ describe('postReceiptEvidence', () => {
     ])
 
     await expect(
-      postReceiptEvidence({ activeAccount: OWNER, agentAddress: AGENT, sessionKey, body, fetchImpl })
+      postReceiptEvidence({
+        activeAccount: OWNER,
+        agentAddress: AGENT,
+        sessionKey,
+        body,
+        fetchImpl,
+      })
     ).rejects.toThrow(ReceiptEvidenceError)
   })
 
   it('distinguishes a version conflict, a consumed challenge, and a rejected signature by error code', async () => {
+    // The 'challenge-consumed' fixture is the server's OWN reported string (derived by actually
+    // driving handleReceiptWrite into its replay path above), not a literal re-typed here -- if
+    // the server's wording ever drifts, this fixture drifts with it and classifyFailure's
+    // hardcoded comparison (agentIndexReceiptClient.js) would show up as a real mismatch instead
+    // of two independently-typed literals staying in silent agreement with each other.
+    const replayErrorText = await deriveConsumedChallengeErrorMessage()
     const cases = [
       { status: 409, error: 'Receipt mutation conflict', expectedCode: 'version-conflict' },
-      { status: 409, error: 'Receipt proof was already used', expectedCode: 'challenge-consumed' },
+      { status: 409, error: replayErrorText, expectedCode: 'challenge-consumed' },
       { status: 401, error: 'Invalid or expired receipt proof', expectedCode: 'proof-rejected' },
     ]
     const seenCodes = []
@@ -293,7 +359,13 @@ describe('postReceiptEvidence', () => {
 
       let caught = null
       try {
-        await postReceiptEvidence({ activeAccount: OWNER, agentAddress: AGENT, sessionKey, body, fetchImpl })
+        await postReceiptEvidence({
+          activeAccount: OWNER,
+          agentAddress: AGENT,
+          sessionKey,
+          body,
+          fetchImpl,
+        })
       } catch (err) {
         caught = err
       }
@@ -315,7 +387,13 @@ describe('postReceiptEvidence', () => {
 
     let caught = null
     try {
-      await postReceiptEvidence({ activeAccount: OWNER, agentAddress: AGENT, sessionKey, body, fetchImpl })
+      await postReceiptEvidence({
+        activeAccount: OWNER,
+        agentAddress: AGENT,
+        sessionKey,
+        body,
+        fetchImpl,
+      })
     } catch (err) {
       caught = err
     }
@@ -333,7 +411,13 @@ describe('postReceiptEvidence', () => {
 
     let caught = null
     try {
-      await postReceiptEvidence({ activeAccount: OWNER, agentAddress: AGENT, sessionKey, body, fetchImpl })
+      await postReceiptEvidence({
+        activeAccount: OWNER,
+        agentAddress: AGENT,
+        sessionKey,
+        body,
+        fetchImpl,
+      })
     } catch (err) {
       caught = err
     }
@@ -356,5 +440,129 @@ describe('postReceiptEvidence', () => {
       })
     ).rejects.toThrow(ReceiptEvidenceError)
     expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('rejects a body carrying a nested secret/private/session-key-named field before ever calling fetch', async () => {
+    // fix round 1, finding 1: the digest step must not merely produce the same bytes as the
+    // server's canonicalJson for VALID input -- it must independently refuse to serialize and
+    // transmit a body a caller mistakenly populated with key material, exactly like the server's
+    // assertNoSensitiveProperties would, but BEFORE any network call, not only after a 400.
+    const sessionKey = newSessionKey()
+    const cases = [
+      mutationFixture({
+        attempt: {
+          attemptId: 'attempt-pull-1',
+          kind: 'phase',
+          phase: 'pull',
+          status: 'submitted',
+          evidence: {
+            txHash: 'stellar-tx-1',
+            cachedAgent: { signerPub: 'G...', secret: 'S...LEAK' },
+          },
+          observedAt: 1_700_000_000_000,
+        },
+      }),
+      mutationFixture({
+        receipt: receiptFixture({
+          custody: {
+            location: 'stellar-agent',
+            confirmed: true,
+            amount: null,
+            reason: null,
+            sessionKeyBackup: 'S...LEAK',
+          },
+        }),
+      }),
+    ]
+
+    for (const body of cases) {
+      const fetchImpl = sequenceFetch([])
+      await expect(
+        postReceiptEvidence({
+          activeAccount: OWNER,
+          agentAddress: AGENT,
+          sessionKey,
+          body,
+          fetchImpl,
+        })
+      ).rejects.toThrow(ReceiptEvidenceError)
+      expect(fetchImpl).not.toHaveBeenCalled()
+    }
+  })
+
+  it('rejects circular body data with a clear error rather than a bare RangeError', async () => {
+    const body = mutationFixture()
+    body.attempt.evidence.circular = body.attempt.evidence // self-reference
+    const sessionKey = newSessionKey()
+    const fetchImpl = sequenceFetch([])
+
+    let caught = null
+    try {
+      await postReceiptEvidence({
+        activeAccount: OWNER,
+        agentAddress: AGENT,
+        sessionKey,
+        body,
+        fetchImpl,
+      })
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBeInstanceOf(ReceiptEvidenceError)
+    expect(caught).not.toBeInstanceOf(RangeError)
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('signs using its own request digest (not a tampered echo) when a challenge response disagrees, and fails closed', async () => {
+    const body = mutationFixture()
+    const sessionKey = newSessionKey()
+    const correctDigest = receiptRequestDigest(body)
+    // A tampered/buggy challenge response: its requestDigest field disagrees with what this
+    // client actually sent and stored locally. The real server can never actually produce this
+    // (issueReceiptChallenge stores and returns the identical object -- executionReceipts.js:
+    // 134-144 -- so the two cannot diverge server-side); this simulates a compromised transport
+    // between client and server to confirm the client is not fooled into signing over a digest
+    // it never itself computed.
+    const challenge = challengeFor(body, { requestDigest: 'f'.repeat(64) })
+    // What the real server does if its own stored challenge ever disagreed with a freshly
+    // recomputed digest: reject at the write step (executionReceipts.js:240-248, 'proof' -> 401).
+    const fetchImpl = sequenceFetch([
+      { status: 201, body: { ok: true, challenge } },
+      { status: 401, body: { error: 'Invalid or expired receipt proof' } },
+    ])
+
+    let caught = null
+    try {
+      await postReceiptEvidence({
+        activeAccount: OWNER,
+        agentAddress: AGENT,
+        sessionKey,
+        body,
+        fetchImpl,
+      })
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).toBeInstanceOf(ReceiptEvidenceError)
+    expect(caught.code).toBe('proof-rejected')
+
+    const writeReq = JSON.parse(fetchImpl.mock.calls[1][1].body)
+    const sigBytes = Buffer.from(writeReq.proof.signature, 'base64url')
+    // Signs over its OWN digest, not the tampered echo.
+    const messageOverOwnDigest = receiptProofMessage({ ...challenge, requestDigest: correctDigest })
+    expect(
+      Keypair.fromPublicKey(sessionKey.publicKey).verify(
+        Buffer.from(messageOverOwnDigest, 'utf8'),
+        sigBytes
+      )
+    ).toBe(true)
+    // And does NOT verify against a message built from the tampered echo.
+    const messageOverTamperedDigest = receiptProofMessage(challenge)
+    expect(
+      Keypair.fromPublicKey(sessionKey.publicKey).verify(
+        Buffer.from(messageOverTamperedDigest, 'utf8'),
+        sigBytes
+      )
+    ).toBe(false)
   })
 })

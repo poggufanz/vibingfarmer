@@ -28,6 +28,15 @@
 // receiptProofMessage in agentIndexReceiptClient.test.js (imported there, not here), across
 // fixtures with nested objects, arrays, unicode, and non-default key order.
 //
+// canonicalJson's mirror also reproduces models.js:114-124's assertNoSensitiveProperties guard
+// (same key-name check, same WeakSet circular-reference check) so a caller-supplied body carrying
+// a secret/private/session-key-named field is rejected client-side, before this module ever calls
+// fetch -- not merely relying on the server running the identical guard after the request has
+// already been serialized and sent (executionReceipts.js:79,203). It deliberately does NOT mirror
+// assertExactUnits (models.js:126-140): that is a data-shape validation over Chunk A's receipt/
+// attempt content, not a transport-security guard, and the server enforces it unconditionally
+// regardless of what this client does.
+//
 // Read-path note: a GET receipt-read client is deliberately not implemented here. This module's
 // job is posting evidence, not reading it back; a read-side client (mirroring agentIndexClient.js's
 // existing GET-only pattern) is a separate concern outside postReceiptEvidence's contract.
@@ -62,12 +71,9 @@ export class ReceiptEvidenceError extends Error {
 }
 
 // --- canonicalJson mirror (api/agent-index/models.js:142-160) --------------------------------
-// Same semantics: recursively sort object keys, pass through null/string/boolean, reject
-// non-finite numbers and unsupported value types, recurse arrays in place. Deliberately does NOT
-// mirror assertNoSensitiveProperties/assertExactUnits -- those are the server's input-validation
-// guards over data this client did not produce (Chunk A's receipt/attempt objects); duplicating
-// them here would be validation this module isn't responsible for, not a transport concern, and
-// the server enforces them unconditionally regardless of what this client sends.
+// Same canonicalization semantics: recursively sort object keys, pass through null/string/
+// boolean, reject non-finite numbers and unsupported value types, recurse arrays in place. See
+// the file header for what is and isn't mirrored and why.
 function canonicalize(entry) {
   if (entry === null || typeof entry === 'string' || typeof entry === 'boolean') return entry
   if (typeof entry === 'number') {
@@ -83,7 +89,36 @@ function canonicalize(entry) {
   )
 }
 
+// Mirrors models.js:100-109's sensitiveKey exactly: same normalization, same three substrings.
+function sensitiveKey(key) {
+  const normalized = String(key)
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+  return (
+    normalized.includes('secret') ||
+    normalized.includes('private') ||
+    normalized.includes('sessionkey')
+  )
+}
+
+// Mirrors models.js:114-124's assertNoSensitiveProperties exactly: same recursive key-name walk,
+// same WeakSet cycle guard (so circular input throws a clear Error here instead of a bare
+// RangeError from unbounded recursion).
+function assertNoSensitiveProperties(value, path = '$', seen = new WeakSet()) {
+  if (value == null || typeof value !== 'object') return
+  if (seen.has(value)) throw new Error(`circular data is not serializable at ${path}`)
+  seen.add(value)
+  for (const [key, entry] of Object.entries(value)) {
+    if (sensitiveKey(key)) {
+      throw new Error(`secret/private/session-key property rejected at ${path}.${key}`)
+    }
+    assertNoSensitiveProperties(entry, `${path}.${key}`, seen)
+  }
+  seen.delete(value)
+}
+
 function canonicalJson(value) {
+  assertNoSensitiveProperties(value)
   return JSON.stringify(canonicalize(value))
 }
 
@@ -98,9 +133,15 @@ function computeRequestDigest(body) {
  * both the client signs and the server verifies against. Field order and separator are
  * load-bearing: changing either produces a signature the server will reject. */
 function computeProofMessage({ networkId, owner, agent, challengeId, expiresAt, requestDigest }) {
-  return [PROOF_PREFIX, networkId, owner, agent, challengeId, String(expiresAt), requestDigest].join(
-    '|'
-  )
+  return [
+    PROOF_PREFIX,
+    networkId,
+    owner,
+    agent,
+    challengeId,
+    String(expiresAt),
+    requestDigest,
+  ].join('|')
 }
 
 /** Classifies a failed (status, body) pair into a stable code, using only distinctions the wire
@@ -116,7 +157,9 @@ function classifyFailure(step, status, errorText) {
   if (status === 401) return 'proof-rejected'
   if (status === 403) return 'authority-mismatch'
   if (status === 409) {
-    return errorText === 'Receipt proof was already used' ? 'challenge-consumed' : 'version-conflict'
+    return errorText === 'Receipt proof was already used'
+      ? 'challenge-consumed'
+      : 'version-conflict'
   }
   if (status === 503) return 'unavailable'
   return 'server-error'
@@ -147,7 +190,8 @@ async function postJson({ apiBase, action, step, payload, fetchImpl }) {
 }
 
 function requireField(value, message) {
-  if (!value) throw new ReceiptEvidenceError(message, { step: 'challenge', code: 'invalid-request' })
+  if (!value)
+    throw new ReceiptEvidenceError(message, { step: 'challenge', code: 'invalid-request' })
 }
 
 /**
@@ -227,7 +271,18 @@ export async function postReceiptEvidence({
     })
   }
 
-  const requestDigest = computeRequestDigest(body)
+  let requestDigest
+  try {
+    requestDigest = computeRequestDigest(body)
+  } catch (cause) {
+    // Most commonly assertNoSensitiveProperties rejecting a secret/private/session-key-named
+    // field, or a circular/non-finite-number body -- fails here, before any fetch, not after.
+    throw new ReceiptEvidenceError(cause.message, {
+      step: 'challenge',
+      code: 'invalid-request',
+      cause,
+    })
+  }
 
   const { res: challengeRes, body: challengeBody } = await postJson({
     apiBase,
@@ -273,12 +328,15 @@ export async function postReceiptEvidence({
     fetchImpl,
   })
   if (!writeRes.ok || writeBody?.ok !== true) {
-    throw new ReceiptEvidenceError(writeBody?.error || `Receipt write failed (HTTP ${writeRes.status})`, {
-      step: 'write',
-      status: writeRes.status,
-      code: classifyFailure('write', writeRes.status, writeBody?.error),
-      body: writeBody,
-    })
+    throw new ReceiptEvidenceError(
+      writeBody?.error || `Receipt write failed (HTTP ${writeRes.status})`,
+      {
+        step: 'write',
+        status: writeRes.status,
+        code: classifyFailure('write', writeRes.status, writeBody?.error),
+        body: writeBody,
+      }
+    )
   }
 
   return {
