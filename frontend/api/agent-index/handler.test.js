@@ -19,7 +19,11 @@ import {
   handleRecoveryRequest,
   LIVE_MANIFEST,
 } from './handler.js'
-import { issueReceiptChallenge, receiptProofMessage, receiptRequestDigest } from './executionReceipts.js'
+import {
+  issueReceiptChallenge,
+  receiptProofMessage,
+  receiptRequestDigest,
+} from './executionReceipts.js'
 import { AGENT_CREATORS } from '../../src/stellar/agentCreatorManifest.js'
 
 // ── same in-memory-D1 helper as store.test.js / indexer.test.js ──
@@ -943,7 +947,7 @@ describe('handleRecoveryRequest', () => {
     }
   }
 
-  async function authenticatedRecoveryCall({
+  async function signedRecoveryCallArgs({
     store,
     request,
     challengeId,
@@ -952,27 +956,41 @@ describe('handleRecoveryRequest', () => {
   }) {
     const digest = receiptRequestDigest(request)
     const challenge = await issueReceiptChallenge({
-      request: { networkId: RECOVERY_NETWORK, owner: RECOVERY_OWNER, agent: RECOVERY_AGENT, requestDigest: digest },
+      request: {
+        networkId: RECOVERY_NETWORK,
+        owner: RECOVERY_OWNER,
+        agent: RECOVERY_AGENT,
+        requestDigest: digest,
+      },
       store,
       authorityReader: async () => authorityFacts,
       now,
       challengeId,
     })
-    const signature = RECOVERY_SESSION.sign(Buffer.from(receiptProofMessage(challenge), 'utf8')).toString(
-      'base64url'
-    )
-    return handleRecoveryRequest({
+    const signature = RECOVERY_SESSION.sign(
+      Buffer.from(receiptProofMessage(challenge), 'utf8')
+    ).toString('base64url')
+    return {
       request,
       proof: { challengeId: challenge.challengeId, expiresAt: challenge.expiresAt, signature },
       store,
       authorityReader: async () => authorityFacts,
       now,
-    })
+    }
+  }
+
+  async function authenticatedRecoveryCall(options) {
+    return handleRecoveryRequest(await signedRecoveryCallArgs(options))
   }
 
   it('fails closed with a non-disclosing 503 when the store or authority reader is unavailable', async () => {
     await expect(
-      handleRecoveryRequest({ request: recoveryRequestBody(), proof: {}, store: null, authorityReader: null })
+      handleRecoveryRequest({
+        request: recoveryRequestBody(),
+        proof: {},
+        store: null,
+        authorityReader: null,
+      })
     ).resolves.toMatchObject({ status: 503, body: { error: 'Receipt store unavailable' } })
     const out = await handleRecoveryRequest({
       request: recoveryRequestBody(),
@@ -993,9 +1011,52 @@ describe('handleRecoveryRequest', () => {
     })
     expect(out).toMatchObject({
       status: 200,
-      body: { ok: true, action: 'pull', phase: 'pull', version: 0 },
+      body: {
+        ok: true,
+        action: 'pull',
+        phase: 'pull',
+        reasonCode: 'no-receipt',
+        version: 0,
+      },
     })
     expect(out.body.lease).toMatchObject({ holder: 'holder-h' })
+  })
+
+  it('maps a replayed recovery proof to the stable 409 taxonomy', async () => {
+    const store = createAgentIndexStore(fakeD1())
+    const args = await signedRecoveryCallArgs({
+      store,
+      request: recoveryRequestBody(),
+      challengeId: 'challenge-handler-replay',
+    })
+    await expect(handleRecoveryRequest(args)).resolves.toMatchObject({ status: 200 })
+    await expect(handleRecoveryRequest(args)).resolves.toEqual({
+      status: 409,
+      body: { error: 'Receipt proof was already used' },
+    })
+  })
+
+  it('keeps invalid recovery input at 400 and invalid proof at 401', async () => {
+    const store = createAgentIndexStore(fakeD1())
+    await expect(
+      handleRecoveryRequest({
+        request: {},
+        proof: {},
+        store,
+        authorityReader: async () => recoveryAuthority(),
+      })
+    ).resolves.toMatchObject({ status: 400 })
+
+    const args = await signedRecoveryCallArgs({
+      store,
+      request: recoveryRequestBody(),
+      challengeId: 'challenge-handler-bad-proof',
+    })
+    args.proof.signature = Buffer.alloc(64).toString('base64url')
+    await expect(handleRecoveryRequest(args)).resolves.toEqual({
+      status: 401,
+      body: { error: 'Invalid or expired receipt proof' },
+    })
   })
 
   it('returns distinguishable 409s for a lease conflict vs a stale receipt version (map fact C)', async () => {
@@ -1027,7 +1088,9 @@ describe('handleRecoveryRequest', () => {
 
   it('maps a revoked scope to a 403, not a silent success', async () => {
     const store = createAgentIndexStore(fakeD1())
-    const revoked = recoveryAuthority({ scope: { owner: RECOVERY_OWNER, revoked: true, expiry: 0n } })
+    const revoked = recoveryAuthority({
+      scope: { owner: RECOVERY_OWNER, revoked: true, expiry: 0n },
+    })
     const out = await authenticatedRecoveryCall({
       store,
       request: recoveryRequestBody(),

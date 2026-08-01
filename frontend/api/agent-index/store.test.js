@@ -99,6 +99,7 @@ describe('createAgentIndexStore', () => {
       [
         'issueReceiptChallenge',
         'readReceiptChallenge',
+        'consumeReceiptChallenge',
         'readExecutionReceipt',
         'readOwnerExecutionReceipts',
         'commitAuthenticatedReceiptMutation',
@@ -142,6 +143,29 @@ describe('createAgentIndexStore', () => {
       await expect(store.probeReadiness()).rejects.toThrow()
     }
   )
+})
+
+describe('consumeReceiptChallenge', () => {
+  it('atomically lets exactly one caller consume an unexpired challenge', async () => {
+    const challenge = {
+      challengeId: 'challenge-consume-once',
+      networkId: NETWORK,
+      owner: 'GOWNER1',
+      agent: 'CAGENT1',
+      requestDigest: 'a'.repeat(64),
+      expiresAt: 2_000,
+      createdAt: 1_000,
+    }
+    await store.issueReceiptChallenge(challenge)
+    const results = await Promise.all([
+      store.consumeReceiptChallenge({ challenge, consumeToken: 'token-a', now: 1_500 }),
+      store.consumeReceiptChallenge({ challenge, consumeToken: 'token-b', now: 1_500 }),
+    ])
+    expect(results.filter(Boolean)).toHaveLength(1)
+    await expect(
+      store.readReceiptChallenge({ challengeId: challenge.challengeId })
+    ).resolves.toMatchObject({ consumedAt: 1_500 })
+  })
 })
 
 describe('probeReadiness schema contract', () => {

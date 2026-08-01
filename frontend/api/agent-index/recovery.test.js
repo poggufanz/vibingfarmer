@@ -1,20 +1,16 @@
 // frontend/api/agent-index/recovery.test.js — Task 7 Chunk A.
 //
-// Fixtures for `selectRecoveryAction` are built through the REAL producer
-// (`createAllocationReceipt`/`appendPhase`/`confirmCustody`, frontend/src/strategy/
-// allocationReceipt.js:201,259,370) rather than hand-typed row literals -- there is no shared
-// receipt fixture factory in this repo (map fact H), and building through the real producer makes
-// rule 10b (every fixture must be traceable to a code path that can actually emit it)
-// self-enforcing: a shape the producer's own validation rejects, this file cannot accidentally
-// assert on. Every `it`/`it.each` below that constructs a receipt notes, in its own comment, which
-// orchestrator.js code path produces that exact (phase, custody) combination.
+// Ordinary selector fixtures use the real `createAllocationReceipt`/`appendPhase`/
+// `confirmCustody` producer path. Defensive manual/Base fixtures explicitly say when no production
+// orchestrator caller can emit the shape; corrupted closed-vocabulary rows are hand-built only to
+// prove totality. There is no shared receipt fixture factory in this repo (map fact H).
 //
 // `requestRecovery` tests use the SAME `fakeD1()` (node:sqlite `DatabaseSync(':memory:')` running
 // the real migration SQL) duplicated verbatim in 5 other test files (store.test.js:22-66 is the
 // reference copy) plus the SAME authenticated-proof pattern executionReceipts.test.js already
 // established (`issueReceiptChallenge` + a real Ed25519 `Keypair` signature over
 // `receiptProofMessage`).
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
@@ -27,8 +23,13 @@ import {
   receiptProofMessage,
   receiptRequestDigest,
 } from './executionReceipts.js'
-import { selectRecoveryAction, requestRecovery } from './recovery.js'
-import { createAllocationReceipt, appendPhase, confirmCustody } from '../../src/strategy/allocationReceipt.js'
+import { requestRecovery } from './handler.js'
+import { RECOVERY_REASON_CODES, selectRecoveryAction } from './recovery.js'
+import {
+  createAllocationReceipt,
+  appendPhase,
+  confirmCustody,
+} from '../../src/strategy/allocationReceipt.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const MIGRATIONS_DIR = join(__dirname, '..', '..', 'migrations')
@@ -120,6 +121,25 @@ function freshReceipt(overrides = {}) {
 }
 
 describe('selectRecoveryAction (pure state table)', () => {
+  it('exports the stable machine-readable reason-code contract', () => {
+    expect(RECOVERY_REASON_CODES).toEqual({
+      NO_RECEIPT: 'no-receipt',
+      BASE_EVIDENCE_UNAVAILABLE: 'base-evidence-unavailable',
+      CUSTODY_EVIDENCE_GAP: 'custody-evidence-gap',
+      CONTRADICTORY_STELLAR_EVIDENCE: 'contradictory-stellar-evidence',
+      PULL_NOT_STARTED: 'pull-not-started',
+      PULL_FAILED: 'pull-failed',
+      PULL_V3_UNCERTAIN: 'pull-v3-uncertain',
+      PULL_V2_UNCERTAIN: 'pull-v2-uncertain',
+      PULL_STATUS_UNRECOGNIZED: 'pull-status-unrecognized',
+      DEPOSIT_CONFIRMED: 'deposit-confirmed',
+      DEPOSIT_NOT_STARTED: 'deposit-not-started',
+      DEPOSIT_FAILED: 'deposit-failed',
+      DEPOSIT_UNCERTAIN: 'deposit-uncertain',
+      DEPOSIT_STATUS_UNRECOGNIZED: 'deposit-status-unrecognized',
+    })
+  })
+
   it('R1: an absent receipt (never submitted) permits exactly one pull', () => {
     // Producer: absence itself -- readExecutionReceipt returns null when the run crashed before
     // its first evidence POST ever succeeded (map fact A/E: "not_started" is never persisted).
@@ -149,6 +169,23 @@ describe('selectRecoveryAction (pure state table)', () => {
     })
   })
 
+  it.each(['x', true, {}, '0x' + 'AB'.repeat(32), '0x' + 'ab'.repeat(31)])(
+    'rejects malformed truthy v3ExecutionId %j and fails closed to poll',
+    (v3ExecutionId) => {
+      // Attempt evidence is free-form JSON written by the live pull recorder. Only the actual
+      // bytes32 wire shape proves the V3 replay guard; truthiness is not evidence.
+      const receipt = appendPhase(freshReceipt(), {
+        phase: 'pull',
+        status: 'submitted',
+        evidence: { v3ExecutionId },
+      })
+      expect(selectRecoveryAction(receipt)).toMatchObject({
+        action: 'poll',
+        reasonCode: RECOVERY_REASON_CODES.PULL_V2_UNCERTAIN,
+      })
+    }
+  )
+
   it('R3: an uncertain pull with NO v3ExecutionId polls and never resubmits (the double-spend guard)', () => {
     // Producer: orchestrator.js:882-890, the pull's VF_SUBMISSION_UNKNOWN catch branch when v3Exec
     // is null (a V2/legacy dispatch) -- no v3EvidenceExtra is spread in.
@@ -168,8 +205,16 @@ describe('selectRecoveryAction (pure state table)', () => {
     // Producer: orchestrator.js:867-876 -- record(pull:confirmed) followed by
     // custody({location:'stellar-agent', txSuccess:true}), both landed before the crash.
     let receipt = freshReceipt()
-    receipt = appendPhase(receipt, { phase: 'pull', status: 'confirmed', evidence: { txHash: 'tx-1' } })
-    receipt = confirmCustody(receipt, { location: 'stellar-agent', txSuccess: true, amount: AMOUNT })
+    receipt = appendPhase(receipt, {
+      phase: 'pull',
+      status: 'confirmed',
+      evidence: { txHash: 'tx-1' },
+    })
+    receipt = confirmCustody(receipt, {
+      location: 'stellar-agent',
+      txSuccess: true,
+      amount: AMOUNT,
+    })
     const decision = selectRecoveryAction(receipt)
     expect(decision.action).toBe('deposit')
     expect(decision.action).not.toBe('pull')
@@ -184,7 +229,11 @@ describe('selectRecoveryAction (pure state table)', () => {
     // is the single most serious defect this selector must avoid (brief): once phases.pull is
     // confirmed, pull must never fire again even though custody itself is stale.
     let receipt = freshReceipt()
-    receipt = appendPhase(receipt, { phase: 'pull', status: 'confirmed', evidence: { txHash: 'tx-1' } })
+    receipt = appendPhase(receipt, {
+      phase: 'pull',
+      status: 'confirmed',
+      evidence: { txHash: 'tx-1' },
+    })
     expect(receipt.custody).toMatchObject({ location: 'owner', confirmed: true })
     const decision = selectRecoveryAction(receipt)
     expect(decision.action).not.toBe('pull')
@@ -195,8 +244,16 @@ describe('selectRecoveryAction (pure state table)', () => {
     // Producer: orchestrator.js:923-927 (record(stellar_deposit:confirmed)) followed by
     // custody({location:'stellar-vault', txSuccess:true, matchingEvent:true}).
     let receipt = freshReceipt()
-    receipt = appendPhase(receipt, { phase: 'pull', status: 'confirmed', evidence: { txHash: 'tx-1' } })
-    receipt = confirmCustody(receipt, { location: 'stellar-agent', txSuccess: true, amount: AMOUNT })
+    receipt = appendPhase(receipt, {
+      phase: 'pull',
+      status: 'confirmed',
+      evidence: { txHash: 'tx-1' },
+    })
+    receipt = confirmCustody(receipt, {
+      location: 'stellar-agent',
+      txSuccess: true,
+      amount: AMOUNT,
+    })
     receipt = appendPhase(receipt, {
       phase: 'stellar_deposit',
       status: 'confirmed',
@@ -220,8 +277,16 @@ describe('selectRecoveryAction (pure state table)', () => {
     // succeeded. selectRecoveryAction must treat phases.stellar_deposit==='confirmed' alone as
     // terminal, not require custody.location==='stellar-vault' (see report divergence).
     let receipt = freshReceipt()
-    receipt = appendPhase(receipt, { phase: 'pull', status: 'confirmed', evidence: { txHash: 'tx-1' } })
-    receipt = confirmCustody(receipt, { location: 'stellar-agent', txSuccess: true, amount: AMOUNT })
+    receipt = appendPhase(receipt, {
+      phase: 'pull',
+      status: 'confirmed',
+      evidence: { txHash: 'tx-1' },
+    })
+    receipt = confirmCustody(receipt, {
+      location: 'stellar-agent',
+      txSuccess: true,
+      amount: AMOUNT,
+    })
     receipt = appendPhase(receipt, {
       phase: 'stellar_deposit',
       status: 'confirmed',
@@ -235,29 +300,149 @@ describe('selectRecoveryAction (pure state table)', () => {
     // Producer: orchestrator.js:893-897, the pull's plain-Error catch branch -- no custody() call
     // at all, so custody stays at its owner/confirmed creation default.
     let receipt = freshReceipt()
-    receipt = appendPhase(receipt, { phase: 'pull', status: 'failed', evidence: { reason: 'relay down' } })
+    receipt = appendPhase(receipt, {
+      phase: 'pull',
+      status: 'failed',
+      evidence: { reason: 'relay down' },
+    })
     expect(receipt.custody).toMatchObject({ location: 'owner', confirmed: true })
     expect(selectRecoveryAction(receipt)).toMatchObject({ action: 'pull', phase: 'pull' })
+  })
+
+  it.each([
+    ['failed', 'confirmed'],
+    ['not_started', 'confirmed'],
+    ['failed', 'submitted'],
+    ['not_started', 'failed'],
+  ])(
+    'fails closed for contradictory owner custody with pull:%s and stellar_deposit:%s',
+    (pullStatus, depositStatus) => {
+      // No current production caller emits this cross-phase contradiction: both orchestrator
+      // loops advance pull/custody before recording a deposit. The schema producer accepts it,
+      // however, and the binding review requires these corruption/future-writer shapes to block.
+      let receipt = freshReceipt()
+      if (pullStatus !== 'not_started') {
+        receipt = appendPhase(receipt, {
+          phase: 'pull',
+          status: pullStatus,
+          evidence: { reason: 'fixture contradiction' },
+        })
+      }
+      receipt = appendPhase(receipt, {
+        phase: 'stellar_deposit',
+        status: depositStatus,
+        evidence: { reason: 'fixture contradiction' },
+      })
+      expect(receipt.custody).toMatchObject({ location: 'owner', confirmed: true })
+      expect(selectRecoveryAction(receipt)).toMatchObject({
+        action: 'manual-review',
+        phase: null,
+        reasonCode: RECOVERY_REASON_CODES.CONTRADICTORY_STELLAR_EVIDENCE,
+      })
+    }
+  )
+
+  it('keeps every defensive manual-review branch non-actionable with phase:null', () => {
+    // None of these five shapes has a current production caller: they are constructor-only,
+    // schema-allowed contradictions, or corrupted closed-vocabulary rows. They exist solely to
+    // pin the fail-closed selector contract; they are not claimed as live producer evidence.
+    const custodyGap = createAllocationReceipt({
+      networkId: NETWORK,
+      executionId: 'exec-gap',
+      allocationId: 'alloc-gap',
+      owner: OWNER,
+      runId: 'run-gap',
+      worker: 'worker-gap',
+      agent: AGENT,
+      intent: {},
+      initialCustody: { location: 'unknown', reason: 'unobserved' },
+    })
+    const contradiction = appendPhase(freshReceipt(), {
+      phase: 'stellar_deposit',
+      status: 'failed',
+      evidence: {},
+    })
+    const unknownPull = {
+      ...freshReceipt(),
+      phases: { ...freshReceipt().phases, pull: 'corrupt' },
+    }
+    let vaultContradiction = appendPhase(freshReceipt(), {
+      phase: 'pull',
+      status: 'confirmed',
+      evidence: {},
+    })
+    vaultContradiction = confirmCustody(vaultContradiction, {
+      location: 'stellar-vault',
+      txSuccess: true,
+      matchingEvent: true,
+      amount: AMOUNT,
+    })
+    let unknownDeposit = appendPhase(freshReceipt(), {
+      phase: 'pull',
+      status: 'confirmed',
+      evidence: {},
+    })
+    unknownDeposit = confirmCustody(unknownDeposit, {
+      location: 'stellar-agent',
+      txSuccess: true,
+      amount: AMOUNT,
+    })
+    unknownDeposit = {
+      ...unknownDeposit,
+      phases: { ...unknownDeposit.phases, stellar_deposit: 'corrupt' },
+    }
+
+    for (const receipt of [
+      custodyGap,
+      contradiction,
+      unknownPull,
+      vaultContradiction,
+      unknownDeposit,
+    ]) {
+      expect(selectRecoveryAction(receipt)).toMatchObject({
+        action: 'manual-review',
+        phase: null,
+      })
+    }
   })
 
   it('a failed deposit retries the deposit (never re-pulls) while funds remain with the agent', () => {
     // Producer: orchestrator.js:948-952, the deposit's plain-failure branch.
     let receipt = freshReceipt()
-    receipt = appendPhase(receipt, { phase: 'pull', status: 'confirmed', evidence: { txHash: 'tx-1' } })
-    receipt = confirmCustody(receipt, { location: 'stellar-agent', txSuccess: true, amount: AMOUNT })
+    receipt = appendPhase(receipt, {
+      phase: 'pull',
+      status: 'confirmed',
+      evidence: { txHash: 'tx-1' },
+    })
+    receipt = confirmCustody(receipt, {
+      location: 'stellar-agent',
+      txSuccess: true,
+      amount: AMOUNT,
+    })
     receipt = appendPhase(receipt, {
       phase: 'stellar_deposit',
       status: 'failed',
       evidence: { reason: 'shares not minted' },
     })
-    expect(selectRecoveryAction(receipt)).toMatchObject({ action: 'deposit', phase: 'stellar_deposit' })
+    expect(selectRecoveryAction(receipt)).toMatchObject({
+      action: 'deposit',
+      phase: 'stellar_deposit',
+    })
   })
 
   it('an uncertain deposit polls rather than resubmitting (deposit idempotency is not established)', () => {
     // Producer: orchestrator.js:941-946, the deposit's VF_SUBMISSION_UNKNOWN branch.
     let receipt = freshReceipt()
-    receipt = appendPhase(receipt, { phase: 'pull', status: 'confirmed', evidence: { txHash: 'tx-1' } })
-    receipt = confirmCustody(receipt, { location: 'stellar-agent', txSuccess: true, amount: AMOUNT })
+    receipt = appendPhase(receipt, {
+      phase: 'pull',
+      status: 'confirmed',
+      evidence: { txHash: 'tx-1' },
+    })
+    receipt = confirmCustody(receipt, {
+      location: 'stellar-agent',
+      txSuccess: true,
+      amount: AMOUNT,
+    })
     receipt = appendPhase(receipt, {
       phase: 'stellar_deposit',
       status: 'unknown',
@@ -286,7 +471,11 @@ describe('selectRecoveryAction (pure state table)', () => {
     expect(custodyDecision.reason).toMatch(/nonce|attestation|UserOperation/i)
     expect(custodyDecision.reason).not.toBe('')
 
-    const burnCase = appendPhase(freshReceipt(), { phase: 'cctp_burn', status: 'submitted', evidence: {} })
+    const burnCase = appendPhase(freshReceipt(), {
+      phase: 'cctp_burn',
+      status: 'submitted',
+      evidence: {},
+    })
     const burnDecision = selectRecoveryAction(burnCase)
     expect(burnDecision.action).toBe('blocked-reconcile')
     expect(burnDecision.reason).toMatch(/nonce|attestation|UserOperation/i)
@@ -298,24 +487,6 @@ describe('selectRecoveryAction (pure state table)', () => {
       amount: AMOUNT,
     })
     expect(selectRecoveryAction(vaultCase)).toMatchObject({ action: 'blocked-reconcile' })
-
-    // manual-review must stay reserved for genuinely ambiguous STELLAR evidence, distinguishable
-    // from the Base verdict (brief A3).
-    const stellarGap = selectRecoveryAction(
-      createAllocationReceipt({
-        networkId: NETWORK,
-        executionId: 'exec-gap',
-        allocationId: 'alloc-gap',
-        owner: OWNER,
-        runId: 'run-gap',
-        worker: 'worker-gap',
-        agent: AGENT,
-        intent: {},
-        initialCustody: { location: 'unknown', reason: 'pre-movement position never observed' },
-      })
-    )
-    expect(stellarGap.action).toBe('manual-review')
-    expect(stellarGap.action).not.toBe('blocked-reconcile')
   })
 
   it('R11: every producible (phase, status) crash point maps to a safe, defined action', () => {
@@ -332,27 +503,45 @@ describe('selectRecoveryAction (pure state table)', () => {
       ],
       [
         'pull:confirmed, trailing custody write not yet landed (orchestrator.js:867-871)',
-        () => appendPhase(freshReceipt(), { phase: 'pull', status: 'confirmed', evidence: { txHash: 't' } }),
+        () =>
+          appendPhase(freshReceipt(), {
+            phase: 'pull',
+            status: 'confirmed',
+            evidence: { txHash: 't' },
+          }),
         'deposit',
       ],
       [
         'pull:unknown (orchestrator.js:882-891)',
         () => {
-          let r = appendPhase(freshReceipt(), { phase: 'pull', status: 'unknown', evidence: { reason: 'x' } })
+          let r = appendPhase(freshReceipt(), {
+            phase: 'pull',
+            status: 'unknown',
+            evidence: { reason: 'x' },
+          })
           return confirmCustody(r, { location: 'unknown', reason: 'x' })
         },
         'poll',
       ],
       [
         'pull:failed (orchestrator.js:893-897)',
-        () => appendPhase(freshReceipt(), { phase: 'pull', status: 'failed', evidence: { reason: 'x' } }),
+        () =>
+          appendPhase(freshReceipt(), {
+            phase: 'pull',
+            status: 'failed',
+            evidence: { reason: 'x' },
+          }),
         'pull',
       ],
       // -- stellar_deposit phase (pull already confirmed/skipped -- custody at stellar-agent) --
       [
         'stellar_deposit:submitted (orchestrator.js:915-919)',
         () => {
-          let r = appendPhase(freshReceipt(), { phase: 'pull', status: 'confirmed', evidence: { txHash: 't' } })
+          let r = appendPhase(freshReceipt(), {
+            phase: 'pull',
+            status: 'confirmed',
+            evidence: { txHash: 't' },
+          })
           r = confirmCustody(r, { location: 'stellar-agent', txSuccess: true, amount: AMOUNT })
           return appendPhase(r, { phase: 'stellar_deposit', status: 'submitted', evidence: {} })
         },
@@ -361,18 +550,34 @@ describe('selectRecoveryAction (pure state table)', () => {
       [
         'stellar_deposit:confirmed, trailing vault custody write not yet landed (orchestrator.js:923-936)',
         () => {
-          let r = appendPhase(freshReceipt(), { phase: 'pull', status: 'confirmed', evidence: { txHash: 't' } })
+          let r = appendPhase(freshReceipt(), {
+            phase: 'pull',
+            status: 'confirmed',
+            evidence: { txHash: 't' },
+          })
           r = confirmCustody(r, { location: 'stellar-agent', txSuccess: true, amount: AMOUNT })
-          return appendPhase(r, { phase: 'stellar_deposit', status: 'confirmed', evidence: { txHash: 't2' } })
+          return appendPhase(r, {
+            phase: 'stellar_deposit',
+            status: 'confirmed',
+            evidence: { txHash: 't2' },
+          })
         },
         'complete',
       ],
       [
         'stellar_deposit:unknown (orchestrator.js:941-946)',
         () => {
-          let r = appendPhase(freshReceipt(), { phase: 'pull', status: 'confirmed', evidence: { txHash: 't' } })
+          let r = appendPhase(freshReceipt(), {
+            phase: 'pull',
+            status: 'confirmed',
+            evidence: { txHash: 't' },
+          })
           r = confirmCustody(r, { location: 'stellar-agent', txSuccess: true, amount: AMOUNT })
-          r = appendPhase(r, { phase: 'stellar_deposit', status: 'unknown', evidence: { reason: 'x' } })
+          r = appendPhase(r, {
+            phase: 'stellar_deposit',
+            status: 'unknown',
+            evidence: { reason: 'x' },
+          })
           return confirmCustody(r, { location: 'unknown', reason: 'x' })
         },
         'poll',
@@ -380,9 +585,17 @@ describe('selectRecoveryAction (pure state table)', () => {
       [
         'stellar_deposit:failed (orchestrator.js:948-952)',
         () => {
-          let r = appendPhase(freshReceipt(), { phase: 'pull', status: 'confirmed', evidence: { txHash: 't' } })
+          let r = appendPhase(freshReceipt(), {
+            phase: 'pull',
+            status: 'confirmed',
+            evidence: { txHash: 't' },
+          })
           r = confirmCustody(r, { location: 'stellar-agent', txSuccess: true, amount: AMOUNT })
-          return appendPhase(r, { phase: 'stellar_deposit', status: 'failed', evidence: { reason: 'x' } })
+          return appendPhase(r, {
+            phase: 'stellar_deposit',
+            status: 'failed',
+            evidence: { reason: 'x' },
+          })
         },
         'deposit',
       ],
@@ -392,6 +605,7 @@ describe('selectRecoveryAction (pure state table)', () => {
       const decision = selectRecoveryAction(receipt)
       expect(decision.action, label).toBe(expectedAction)
       expect(typeof decision.action).toBe('string')
+      expect(Object.values(RECOVERY_REASON_CODES)).toContain(decision.reasonCode)
       expect(decision.reason.length > 0, label).toBe(true)
     }
   })
@@ -399,10 +613,14 @@ describe('selectRecoveryAction (pure state table)', () => {
   it('is total: an unrecognized phase status still returns a defined, fail-closed action, never throws/undefined', () => {
     // Not producer-backed (RECEIPT_PHASE_STATUSES is a closed, enforced vocabulary) -- a pure
     // defensive/totality check, hand-built past the real producer's own validation on purpose.
-    const receipt = { ...freshReceipt(), phases: { ...freshReceipt().phases, pull: 'weird-status' } }
+    const receipt = {
+      ...freshReceipt(),
+      phases: { ...freshReceipt().phases, pull: 'weird-status' },
+    }
     const decision = selectRecoveryAction(receipt)
     expect(decision.action).toBeTypeOf('string')
     expect(decision.action).toBe('manual-review')
+    expect(decision).toMatchObject({ phase: null, reasonCode: 'pull-status-unrecognized' })
   })
 })
 
@@ -421,7 +639,7 @@ function baseRequest(overrides = {}) {
   }
 }
 
-async function claim({
+async function signedRecoveryArgs({
   store,
   request,
   challengeId,
@@ -441,20 +659,25 @@ async function claim({
     now: issuedAt,
     challengeId,
   })
-  const signature = signer.sign(Buffer.from(receiptProofMessage(challenge), 'utf8')).toString('base64url')
-  return requestRecovery({
+  const signature = signer
+    .sign(Buffer.from(receiptProofMessage(challenge), 'utf8'))
+    .toString('base64url')
+  return {
     request,
     proof: { challengeId: challenge.challengeId, expiresAt: challenge.expiresAt, signature },
     store,
     authorityReader: async () => authorityFacts,
     now: appliedAt,
     ...(leaseTtlMs != null ? { leaseTtlMs } : {}),
-  })
+  }
 }
 
-function mutationReceipt(overrides = {}) {
-  return {
-    version: 2,
+async function claim(options) {
+  return requestRecovery(await signedRecoveryArgs(options))
+}
+
+function recoveryReceipt() {
+  return createAllocationReceipt({
     networkId: NETWORK,
     owner: OWNER,
     executionId: 'run-2:exec:run-2:deposit:0',
@@ -465,19 +688,21 @@ function mutationReceipt(overrides = {}) {
     worker: 'worker-0',
     agent: AGENT,
     intent: { kind: 'deposit', token: 'USDC', units: '1000000', decimals: 6 },
-    phases: {
-      pull: 'submitted',
-      stellar_deposit: 'not_started',
-      cctp_burn: 'not_started',
-      cctp_mint: 'not_started',
-      base_deposit: 'not_started',
-    },
-    custody: { location: 'owner', confirmed: true, amount: AMOUNT, reason: null },
-    ...overrides,
-  }
+    amount: AMOUNT,
+  })
 }
 
-async function seedReceipt({ store, receipt = mutationReceipt(), attempt, expectedVersion = 0, challengeId }) {
+function mutationReceipt() {
+  return appendPhase(recoveryReceipt(), { phase: 'pull', status: 'submitted', evidence: {} })
+}
+
+async function seedReceipt({
+  store,
+  receipt = mutationReceipt(),
+  attempt,
+  expectedVersion = 0,
+  challengeId,
+}) {
   const body = {
     expectedVersion,
     receipt,
@@ -492,18 +717,27 @@ async function seedReceipt({ store, receipt = mutationReceipt(), attempt, expect
   }
   const digest = receiptRequestDigest(body)
   const challenge = await issueReceiptChallenge({
-    request: { networkId: NETWORK, owner: receipt.owner, agent: receipt.agent, requestDigest: digest },
+    request: {
+      networkId: NETWORK,
+      owner: receipt.owner,
+      agent: receipt.agent,
+      requestDigest: digest,
+    },
     store,
-    authorityReader: async () => authority({ routerOwner: receipt.owner, scope: { owner: receipt.owner, revoked: false } }),
+    authorityReader: async () =>
+      authority({ routerOwner: receipt.owner, scope: { owner: receipt.owner, revoked: false } }),
     now: NOW,
     challengeId,
   })
-  const signature = SESSION.sign(Buffer.from(receiptProofMessage(challenge), 'utf8')).toString('base64url')
+  const signature = SESSION.sign(Buffer.from(receiptProofMessage(challenge), 'utf8')).toString(
+    'base64url'
+  )
   return applyAuthenticatedReceiptMutation({
     body,
     proof: { challengeId: challenge.challengeId, expiresAt: challenge.expiresAt, signature },
     store,
-    authorityReader: async () => authority({ routerOwner: receipt.owner, scope: { owner: receipt.owner, revoked: false } }),
+    authorityReader: async () =>
+      authority({ routerOwner: receipt.owner, scope: { owner: receipt.owner, revoked: false } }),
     now: NOW,
     consumeToken: `consume-${challengeId}`,
   })
@@ -528,6 +762,23 @@ describe('requestRecovery (authenticated lease claim)', () => {
       receipt: null,
     })
     expect(result.lease).toMatchObject({ holder: 'holder-a', phase: 'pull' })
+    expect(result.lease.leaseToken).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+    )
+    expect(result.lease.leaseToken).not.toBe('holder-a')
+  })
+
+  it('consumes a successful recovery proof so the same signed challenge cannot replay', async () => {
+    const args = await signedRecoveryArgs({
+      store,
+      request: baseRequest(),
+      challengeId: 'challenge-one-time',
+    })
+    await expect(requestRecovery(args)).resolves.toMatchObject({ ok: true })
+    await expect(requestRecovery(args)).rejects.toMatchObject({ code: 'replay' })
+    await expect(
+      store.readReceiptChallenge({ challengeId: 'challenge-one-time' })
+    ).resolves.toMatchObject({ consumedAt: NOW })
   })
 
   it('R7: forged wire custody/action fields never change the decision -- it comes only from stored evidence', async () => {
@@ -547,24 +798,64 @@ describe('requestRecovery (authenticated lease claim)', () => {
     expect(result.action).not.toBe('complete')
   })
 
+  it.each([
+    [
+      'manual-review',
+      () =>
+        appendPhase(recoveryReceipt(), {
+          phase: 'stellar_deposit',
+          status: 'failed',
+          evidence: { reason: 'contradictory persisted evidence' },
+        }),
+    ],
+    [
+      'blocked-reconcile',
+      () =>
+        appendPhase(recoveryReceipt(), {
+          phase: 'cctp_burn',
+          status: 'submitted',
+          evidence: {},
+        }),
+    ],
+  ])('returns %s with phase:null and claims no lease', async (action, buildReceipt) => {
+    // Neither defensive fixture has a current production wire producer: orchestrator never emits
+    // the contradiction and the Base leg never writes execution_receipts. This assertion covers
+    // the requestRecovery no-lease contract required for any such stored/future-writer row.
+    const receipt = buildReceipt()
+    vi.spyOn(store, 'readExecutionReceipt').mockResolvedValue(receipt)
+    const result = await claim({
+      store,
+      request: baseRequest({ expectedReceiptVersion: receipt.version }),
+      challengeId: `challenge-no-lease-${action}`,
+    })
+    expect(result).toMatchObject({ ok: true, action, phase: null, lease: null })
+    const leaseCount = db._raw
+      .prepare('SELECT COUNT(*) AS count FROM execution_recovery_leases')
+      .get()
+    expect(leaseCount.count).toBe(0)
+  })
+
   it('R8: two concurrent claims for the same (execution, allocation, child, phase) -- exactly one acquires', async () => {
     const request = baseRequest({ leaseOwner: 'ignored-per-call' })
-    const first = await claim({
-      store,
-      request: { ...request, leaseOwner: 'holder-a' },
-      challengeId: 'challenge-race-a',
-    })
-    const second = await claim({
-      store,
-      request: { ...request, leaseOwner: 'holder-b' },
-      challengeId: 'challenge-race-b',
-    })
-    expect(first).toMatchObject({ ok: true, action: 'pull', phase: 'pull' })
-    expect(first.lease).toMatchObject({ holder: 'holder-a' })
-    expect(second).toMatchObject({ ok: false, status: 409, code: 'lease-conflict' })
-    expect(second.lease).toBeUndefined()
+    const results = await Promise.all([
+      claim({
+        store,
+        request: { ...request, leaseOwner: 'holder-a' },
+        challengeId: 'challenge-race-a',
+      }),
+      claim({
+        store,
+        request: { ...request, leaseOwner: 'holder-b' },
+        challengeId: 'challenge-race-b',
+      }),
+    ])
+    const winner = results.find((result) => result.ok)
+    const loser = results.find((result) => !result.ok)
+    expect(winner).toMatchObject({ ok: true, action: 'pull', phase: 'pull' })
+    expect(loser).toMatchObject({ ok: false, status: 409, code: 'lease-conflict' })
+    expect(loser.lease).toBeUndefined()
     const leaseRows = db._raw.prepare('SELECT holder FROM execution_recovery_leases').all()
-    expect(leaseRows).toEqual([{ holder: 'holder-a' }])
+    expect(leaseRows).toEqual([{ holder: winner.lease.holder }])
   })
 
   it('R9: an expired lease can be taken over by a different holder', async () => {
@@ -597,7 +888,9 @@ describe('requestRecovery (authenticated lease claim)', () => {
     })
     expect(stale).toMatchObject({ ok: false, status: 409, code: 'version-conflict', version: 1 })
     expect(stale.error).not.toBe('Recovery lease is already held')
-    const leaseRows = db._raw.prepare('SELECT COUNT(*) AS count FROM execution_recovery_leases').get()
+    const leaseRows = db._raw
+      .prepare('SELECT COUNT(*) AS count FROM execution_recovery_leases')
+      .get()
     expect(leaseRows.count).toBe(0)
 
     const correct = await claim({
@@ -631,22 +924,39 @@ describe('requestRecovery (authenticated lease claim)', () => {
   it('R13: a revoked scope blocks with the 403 authority path, not a silent success', async () => {
     const revoked = authority({ scope: { owner: OWNER, revoked: true, expiry: 0n } })
     await expect(
-      claim({ store, request: baseRequest(), challengeId: 'challenge-revoked', authorityFacts: revoked })
+      claim({
+        store,
+        request: baseRequest(),
+        challengeId: 'challenge-revoked',
+        authorityFacts: revoked,
+      })
     ).rejects.toThrow(/revoked|replacement signer/i)
-    const leaseRows = db._raw.prepare('SELECT COUNT(*) AS count FROM execution_recovery_leases').get()
+    const leaseRows = db._raw
+      .prepare('SELECT COUNT(*) AS count FROM execution_recovery_leases')
+      .get()
     expect(leaseRows.count).toBe(0)
   })
 
   it('rejects a caller whose proven agent does not match the receipt agent of record', async () => {
     await seedReceipt({ store, challengeId: 'challenge-seed-agent-mismatch' })
     await expect(
-      claim({ store, request: baseRequest(), challengeId: 'challenge-wrong-agent', agent: OTHER_AGENT })
+      claim({
+        store,
+        request: baseRequest(),
+        challengeId: 'challenge-wrong-agent',
+        agent: OTHER_AGENT,
+      })
     ).rejects.toThrow(/agent/i)
   })
 
   it('fails closed (throws) when the store or authority reader is unavailable', async () => {
     await expect(
-      requestRecovery({ request: baseRequest(), proof: {}, store: null, authorityReader: async () => authority() })
+      requestRecovery({
+        request: baseRequest(),
+        proof: {},
+        store: null,
+        authorityReader: async () => authority(),
+      })
     ).rejects.toThrow()
     await expect(
       requestRecovery({ request: baseRequest(), proof: {}, store, authorityReader: null })

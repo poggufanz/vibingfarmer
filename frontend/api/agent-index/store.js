@@ -194,6 +194,33 @@ export function createAgentIndexStore(db) {
     }
   }
 
+  async function consumeReceiptChallenge({ challenge, consumeToken, now }) {
+    if (!challenge?.challengeId || !consumeToken || !Number.isInteger(now)) {
+      throw new Error('receipt challenge, consume token, and time are required')
+    }
+    const result = await db
+      .prepare(
+        `UPDATE execution_receipt_challenges
+         SET consumed_at = ?, consume_token = ?
+         WHERE challenge_id = ? AND network_id = ? AND owner_address = ? AND agent_address = ?
+           AND request_digest = ? AND expires_at = ? AND expires_at > ?
+           AND consumed_at IS NULL AND consume_token IS NULL`
+      )
+      .bind(
+        now,
+        consumeToken,
+        challenge.challengeId,
+        challenge.networkId,
+        challenge.owner,
+        challenge.agent,
+        challenge.requestDigest,
+        challenge.expiresAt,
+        now
+      )
+      .run()
+    return Number(result?.meta?.changes ?? 0) === 1
+  }
+
   async function readExecutionReceipt({ networkId, executionId, allocationId, owner }) {
     if (!networkId || !executionId || !allocationId || !owner) {
       throw new Error('readExecutionReceipt requires networkId, executionId, allocationId, owner')
@@ -1432,6 +1459,7 @@ export function createAgentIndexStore(db) {
     probeReadiness,
     issueReceiptChallenge,
     readReceiptChallenge,
+    consumeReceiptChallenge,
     readExecutionReceipt,
     readOwnerExecutionReceipts,
     commitAuthenticatedReceiptMutation,

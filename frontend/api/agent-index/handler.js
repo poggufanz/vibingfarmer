@@ -1,6 +1,8 @@
 // Pure, DI-friendly route logic for /api/agent-index — no req/res, no real D1/RPC construction
 // (that glue lives in ../agent-index.js, which is untested by design: everything worth testing
 // here is testable without touching a network or a real Cloudflare binding).
+import { randomUUID } from 'node:crypto'
+import { Keypair, StrKey } from '@stellar/stellar-sdk'
 import { ingestAgentIndexPage, coverageProof } from './indexer.js'
 import { commitBackfillAudit } from './backfill.js'
 import {
@@ -14,8 +16,10 @@ import {
   applyAuthenticatedReceiptMutation,
   issueReceiptChallenge,
   ReceiptAuthError,
+  receiptProofMessage,
+  receiptRequestDigest,
 } from './executionReceipts.js'
-import { requestRecovery } from './recovery.js'
+import { selectRecoveryAction } from './recovery.js'
 import {
   AgentIndexConflictError,
   AgentIndexStoreError,
@@ -36,6 +40,8 @@ export const LIVE_MANIFEST = {
   schemaVersion: AGENT_INDEX_SCHEMA_VERSION,
   creators: AGENT_CREATORS,
 }
+
+const DEFAULT_RECOVERY_LEASE_TTL_MS = 60_000
 
 function agentIndexFailure(error) {
   if (error instanceof AgentIndexValidationError) {
@@ -82,6 +88,63 @@ function requireConfiguredNetwork(networkId, configuredNetworkId) {
 function requireText(value, field) {
   if (typeof value !== 'string' || !value) {
     throw new AgentIndexValidationError(`${field} is required`)
+  }
+  return value
+}
+
+function signerPublicKey(value) {
+  if (typeof value === 'string' && StrKey.isValidEd25519PublicKey(value)) return value
+  if (value instanceof Uint8Array || Buffer.isBuffer(value)) {
+    const raw = Buffer.from(value)
+    if (raw.length === 32) return StrKey.encodeEd25519PublicKey(raw)
+  }
+  throw new ReceiptAuthError('authority', 'Agent signer authority is invalid')
+}
+
+async function readRecoveryAuthority(authorityReader, identity) {
+  try {
+    return await authorityReader(identity)
+  } catch (error) {
+    if (error instanceof AgentIndexValidationError || error instanceof AgentIndexUnavailableError) {
+      throw error
+    }
+    throw new AgentIndexUnavailableError('Recovery authority RPC is unavailable', { cause: error })
+  }
+}
+
+function validateRecoveryAuthority({ facts, owner }) {
+  if (!facts || typeof facts !== 'object') {
+    throw new ReceiptAuthError('authority', 'Agent authority is unavailable')
+  }
+  if (facts.routerOwner !== owner) {
+    throw new ReceiptAuthError('authority', 'Router owner authority mismatch')
+  }
+  if (facts.scope?.owner !== owner) {
+    throw new ReceiptAuthError('authority', 'Scope owner authority mismatch')
+  }
+  return { ...facts, signerPublicKey: signerPublicKey(facts.signer) }
+}
+
+function verifyRecoveryProof({ challenge, proof, publicKey }) {
+  if (proof?.expiresAt !== challenge.expiresAt) {
+    throw new ReceiptAuthError('proof', 'Challenge expiry does not match the signed proof')
+  }
+  let signature
+  try {
+    signature = Buffer.from(proof?.signature, 'base64url')
+  } catch {
+    throw new ReceiptAuthError('proof', 'Recovery proof signature is malformed')
+  }
+  if (signature.length !== 64) {
+    throw new ReceiptAuthError('proof', 'Recovery proof signature is malformed')
+  }
+  if (
+    !Keypair.fromPublicKey(publicKey).verify(Buffer.from(receiptProofMessage(challenge)), signature)
+  ) {
+    throw new ReceiptAuthError(
+      'proof',
+      'Recovery proof signature does not match the current agent signer'
+    )
   }
 }
 
@@ -263,10 +326,154 @@ export async function handleRecoveryLeaseRelease({
 }
 
 /**
+ * Authenticates an owner-signed recovery request, consumes its one-time challenge, decides from
+ * stored evidence, and claims the derived phase lease when automation may continue.
+ */
+export async function requestRecovery({
+  request,
+  proof,
+  store,
+  authorityReader,
+  now = Date.now(),
+  leaseTtlMs = DEFAULT_RECOVERY_LEASE_TTL_MS,
+}) {
+  if (!request || typeof request !== 'object') {
+    throw new AgentIndexValidationError('recovery request body is required')
+  }
+  const executionId = requireText(request.executionId, 'executionId')
+  const allocationId = requireText(request.allocationId, 'allocationId')
+  const childId =
+    request.childId == null || request.childId === '' ? '' : requireText(request.childId, 'childId')
+  const leaseOwner = requireText(request.leaseOwner, 'leaseOwner')
+  if (!Number.isSafeInteger(request.expectedReceiptVersion) || request.expectedReceiptVersion < 0) {
+    throw new AgentIndexValidationError(
+      'expectedReceiptVersion must be a non-negative safe integer'
+    )
+  }
+  if (
+    !store?.readReceiptChallenge ||
+    !store?.consumeReceiptChallenge ||
+    !store?.readExecutionReceipt ||
+    !store?.acquireRecoveryLease
+  ) {
+    throw new AgentIndexUnavailableError('Recovery store is unavailable')
+  }
+  if (typeof authorityReader !== 'function') {
+    throw new AgentIndexUnavailableError('Recovery authority is not configured')
+  }
+
+  const challenge = await store.readReceiptChallenge({ challengeId: proof?.challengeId })
+  if (!challenge) throw new ReceiptAuthError('proof', 'Recovery proof challenge does not exist')
+  if (challenge.consumedAt != null) {
+    throw new ReceiptAuthError('replay', 'Recovery proof challenge was already consumed')
+  }
+  if (now >= challenge.expiresAt) {
+    throw new ReceiptAuthError('expired', 'Recovery proof challenge expired')
+  }
+  if (challenge.requestDigest !== receiptRequestDigest(request)) {
+    throw new ReceiptAuthError('proof', 'Recovery proof challenge request digest mismatch')
+  }
+
+  const facts = await readRecoveryAuthority(authorityReader, {
+    networkId: challenge.networkId,
+    owner: challenge.owner,
+    agent: challenge.agent,
+  })
+  const currentAuthority = validateRecoveryAuthority({ facts, owner: challenge.owner })
+  verifyRecoveryProof({ challenge, proof, publicKey: currentAuthority.signerPublicKey })
+  if (currentAuthority.scope?.revoked === true) {
+    throw new ReceiptAuthError(
+      'authority',
+      'Agent scope was revoked; recovery cannot proceed without a replacement signer'
+    )
+  }
+
+  const receipt = await store.readExecutionReceipt({
+    networkId: challenge.networkId,
+    executionId,
+    allocationId,
+    owner: challenge.owner,
+  })
+  if (receipt && receipt.agent !== challenge.agent) {
+    throw new ReceiptAuthError(
+      'authority',
+      'Recovery agent does not match the receipt agent of record'
+    )
+  }
+
+  const actualVersion = receipt?.version ?? 0
+  const decision = selectRecoveryAction(receipt)
+  const consumed = await store.consumeReceiptChallenge({
+    challenge,
+    consumeToken: randomUUID(),
+    now,
+  })
+  if (!consumed) {
+    throw new ReceiptAuthError('replay', 'Recovery proof challenge was already consumed')
+  }
+
+  if (request.expectedReceiptVersion !== actualVersion) {
+    return {
+      ok: false,
+      status: 409,
+      code: 'version-conflict',
+      error: 'Receipt version has moved on since the caller last observed it',
+      version: actualVersion,
+    }
+  }
+
+  if (decision.phase == null) {
+    return {
+      ok: true,
+      ...decision,
+      version: actualVersion,
+      receipt,
+      lease: null,
+    }
+  }
+
+  const leaseToken = randomUUID()
+  const leaseResult = await store.acquireRecoveryLease({
+    networkId: challenge.networkId,
+    owner: challenge.owner,
+    executionId,
+    allocationId,
+    childId,
+    phase: decision.phase,
+    holder: leaseOwner,
+    leaseToken,
+    now,
+    ttlMs: leaseTtlMs,
+  })
+  if (!leaseResult.acquired) {
+    return {
+      ok: false,
+      status: 409,
+      code: 'lease-conflict',
+      error: 'Recovery lease is already held',
+      version: actualVersion,
+    }
+  }
+
+  return {
+    ok: true,
+    ...decision,
+    version: actualVersion,
+    receipt,
+    lease: {
+      holder: leaseOwner,
+      leaseToken: leaseResult.leaseToken,
+      expiresAt: leaseResult.expiresAt,
+      phase: decision.phase,
+    },
+  }
+}
+
+/**
  * `POST /api/agent-index?action=recovery-request` (S2-D9). Authenticates the caller with the SAME
  * owner-signed challenge -> proof exchange `receipt-write` uses (a challenge must already exist,
  * issued via the unchanged `?action=receipt-challenge` route), then delegates to
- * `requestRecovery` (recovery.js) to read the receipt under the authenticated network/owner,
+ * `requestRecovery` to read the receipt under the authenticated network/owner,
  * decide the action, and atomically claim the lease for the phase that action would act on.
  *
  * The reporter bearer secret (`AGENT_INDEX_REPORTER_SECRET`) is deliberately NOT used here — that
@@ -287,7 +494,13 @@ export async function handleRecoveryLeaseRelease({
  * @param {number} [p.now]
  * @returns {Promise<{status: number, body: object}>}
  */
-export async function handleRecoveryRequest({ request, proof, store, authorityReader, now = Date.now() }) {
+export async function handleRecoveryRequest({
+  request,
+  proof,
+  store,
+  authorityReader,
+  now = Date.now(),
+}) {
   if (!store) {
     return { status: 503, body: { error: 'Receipt store unavailable', configured: false } }
   }
@@ -307,6 +520,7 @@ export async function handleRecoveryRequest({ request, proof, store, authorityRe
       body: {
         ok: true,
         action: result.action,
+        reasonCode: result.reasonCode,
         reason: result.reason,
         phase: result.phase,
         version: result.version,
