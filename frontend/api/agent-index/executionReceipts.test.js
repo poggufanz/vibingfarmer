@@ -105,7 +105,7 @@ const NETWORK = 'stellar-testnet'
 const OWNER_G = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 1)).publicKey()
 const OWNER_C = 'CABQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGCK3'
 const OTHER_OWNER = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 2)).publicKey()
-const AGENT = 'CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC'
+const AGENT = 'CAUSSKJJFEUSSKJJFEUSSKJJFEUSSKJJFEUSSKJJFEUSSKJJFEUSS3Y4'
 const SESSION = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 3))
 const WRONG_SESSION = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 4))
 const NOW = 2_000_000_000_000
@@ -871,7 +871,7 @@ describe('immutable Base child intents', () => {
       ingestBaseChildIntent({
         child: {
           ...child('child-a'),
-          agent: 'CB675TTSFM6COTGHGB7K2I7IODPQ3HTHOTTTXU2LJHXXNGTS45NOTRSE',
+          agent: 'CAVCUKRKFIVCUKRKFIVCUKRKFIVCUKRKFIVCUKRKFIVCUKRKFIVCVLQ3',
         },
         store,
       })

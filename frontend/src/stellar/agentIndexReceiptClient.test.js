@@ -21,7 +21,7 @@ import { handleReceiptWrite } from '../../api/agent-index/handler.js'
 
 const NETWORK = 'stellar-testnet'
 const OWNER = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 1)).publicKey()
-const AGENT = 'CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC'
+const AGENT = 'CAUSSKJJFEUSSKJJFEUSSKJJFEUSSKJJFEUSSKJJFEUSSKJJFEUSS3Y4'
 
 function receiptFixture(overrides = {}) {
   return {

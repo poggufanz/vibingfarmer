@@ -926,7 +926,7 @@ describe('handleRead — Base association envelope', () => {
 describe('handleRecoveryRequest', () => {
   const RECOVERY_NETWORK = 'stellar-testnet'
   const RECOVERY_OWNER = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 31)).publicKey()
-  const RECOVERY_AGENT = 'CCY452UMBSDG4VHHECJAW3T5Q5BUK5NJUK22IDI2MQBHAZLTIM256UAC'
+  const RECOVERY_AGENT = 'CAUSSKJJFEUSSKJJFEUSSKJJFEUSSKJJFEUSSKJJFEUSSKJJFEUSS3Y4'
   const RECOVERY_SESSION = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 32))
   const RECOVERY_NOW = 2_000_000_000_000
 
